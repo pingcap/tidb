@@ -1011,7 +1011,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			_, err = txn.Get(ctx, key)
 		}
 		if err == nil {
-			handleStr := getDuplicateErrorHandleString(t, recordID, r)
+			handleStr := getDuplicateErrorHandleString(t.Meta(), recordID, r)
 			return recordID, kv.ErrKeyExists.FastGenByArgs(handleStr, t.Meta().Name.String()+".PRIMARY")
 		} else if !kv.ErrNotExist.Equal(err) {
 			return recordID, err
@@ -1130,7 +1130,6 @@ func genIndexKeyStr(colVals []types.Datum) (string, error) {
 func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r []types.Datum, txn kv.Transaction, opts []table.CreateIdxOptFunc) (kv.Handle, error) {
 	writeBufs := sctx.GetSessionVars().GetWriteStmtBufs()
 	indexVals := writeBufs.IndexValsBuf
-	skipCheck := sctx.GetSessionVars().StmtCtx.BatchCheck
 	for _, v := range t.Indices() {
 		if !IsIndexWritable(v) {
 			continue
@@ -1142,18 +1141,17 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r 
 		if err != nil {
 			return nil, err
 		}
-		var dupErr error
-		if !skipCheck && v.Meta().Unique {
-			entryKey, err := genIndexKeyStr(indexVals)
-			if err != nil {
-				return nil, err
-			}
-			dupErr = kv.ErrKeyExists.FastGenByArgs(entryKey, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String()))
-		}
 		rsData := TryGetHandleRestoredDataWrapper(t.meta, r, nil, v.Meta())
 		if dupHandle, err := v.Create(sctx, txn, indexVals, recordID, rsData, opts...); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
-				return dupHandle, dupErr
+				// Make error message consistent with MySQL.
+				tablecodec.TruncateIndexValues(t.meta, v.Meta(), indexVals)
+				entryKey, err1 := genIndexKeyStr(indexVals)
+				if err1 != nil {
+					// if genIndexKeyStr failed, return the original error.
+					return nil, err
+				}
+				return dupHandle, kv.ErrKeyExists.FastGenByArgs(entryKey, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String()))
 			}
 			return nil, err
 		}
@@ -1528,6 +1526,7 @@ func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, h kv.Handle, vals
 	if _, err := idx.Create(ctx, txn, vals, h, rsData, opts...); err != nil {
 		if kv.ErrKeyExists.Equal(err) {
 			// Make error message consistent with MySQL.
+			tablecodec.TruncateIndexValues(t.meta, idx.Meta(), vals)
 			entryKey, err1 := genIndexKeyStr(vals)
 			if err1 != nil {
 				// if genIndexKeyStr failed, return the original error.
@@ -1974,29 +1973,23 @@ func FindIndexByColName(t table.Table, name string) table.Index {
 	return nil
 }
 
-func getDuplicateErrorHandleString(t table.Table, handle kv.Handle, row []types.Datum) string {
+func getDuplicateErrorHandleString(tblInfo *model.TableInfo, handle kv.Handle, row []types.Datum) string {
 	if handle.IsInt() {
 		return kv.GetDuplicateErrorHandleString(handle)
 	}
-	var pk table.Index
-	for _, idx := range t.Indices() {
-		if idx.Meta().Primary {
-			pk = idx
-			break
-		}
+	// Here pkIdx must not be null because of hanle.IsInt() is false?
+	pkIdx := FindPrimaryIndex(tblInfo)
+	pkDts := make([]types.Datum, 0, len(pkIdx.Columns))
+	for _, idxCol := range pkIdx.Columns {
+		pkDts = append(pkDts, row[idxCol.Offset])
 	}
-	if pk == nil {
+	tablecodec.TruncateIndexValues(tblInfo, pkIdx, pkDts)
+	entryKey, err := genIndexKeyStr(pkDts)
+	if err != nil {
+		// if genIndexKeyStr failed, return DuplicateErrorHandleString.
 		return kv.GetDuplicateErrorHandleString(handle)
 	}
-	var err error
-	str := make([]string, len(pk.Meta().Columns))
-	for i, col := range pk.Meta().Columns {
-		str[i], err = row[col.Offset].ToString()
-		if err != nil {
-			return kv.GetDuplicateErrorHandleString(handle)
-		}
-	}
-	return strings.Join(str, "-")
+	return entryKey
 }
 
 func init() {

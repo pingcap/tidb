@@ -679,6 +679,21 @@ func TestConstraintCheckForUniqueIndex(t *testing.T) {
 	require.Equal(t, 2, <-ch)
 }
 
+// Issue: #44316
+func TestDuplicateErrorOnPrefixIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(20), b varchar(20), unique index idx_a(a(1)))")
+	_, err := tk.Exec("insert into t values ('qwe', 'abc'), ('qwe', 'xyz');")
+	require.Equal(t, "[kv:1062]Duplicate entry 'q' for key 't.idx_a'", err.Error())
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(a varchar(20), b varchar(20),  primary key(a(1)))")
+	_, err = tk.Exec("insert into t2 values ('qwe', 'abc'), ('qwe', 'xyz');")
+	require.Equal(t, "[kv:1062]Duplicate entry 'q' for key 't2.PRIMARY'", err.Error())
+}
+
 func TestViewColumns(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
