@@ -1,0 +1,23 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "txnmanager",
+    srcs = ["txnmanager.go"],
+    importpath = "github.com/pingcap/tidb/pkg/session/txnmanager",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/infoschema",
+        "//pkg/kv",
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/sessionctx",
+        "//pkg/sessiontxn",
+        "//pkg/sessiontxn/isolation",
+        "//pkg/sessiontxn/staleread",
+        "//pkg/util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
+    ],
+)

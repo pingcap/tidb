@@ -12,7 +12,6 @@ go_library(
         "testutil.go",  #keep
         "tidb.go",
         "txn.go",
-        "txnmanager.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/session",
     visibility = ["//visibility:public"],
@@ -58,8 +57,6 @@ go_library(
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",
-        "//pkg/sessiontxn/isolation",
-        "//pkg/sessiontxn/staleread",
         "//pkg/statistics/handle/usage",
         "//pkg/store/driver/error",
         "//pkg/store/driver/txn",
@@ -111,7 +108,6 @@ go_library(
         "@io_etcd_go_etcd_client_v3//concurrency",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
-        "@org_uber_go_zap//zapcore",
     ],
 )
 
