@@ -26,14 +26,14 @@ type TaskTable interface {
 	GetGlobalTasksInStates(states ...interface{}) (task []*proto.Task, err error)
 	GetGlobalTaskByID(taskID int64) (task *proto.Task, err error)
 
-	GetSubtasksInStates(tidbID string, taskID int64, step int64, states ...interface{}) ([]*proto.Subtask, error)
-	GetFirstSubtaskInStates(instanceID string, taskID int64, step int64, states ...interface{}) (*proto.Subtask, error)
+	GetSubtasksInStates(tidbID string, taskID int64, step proto.Step, states ...interface{}) ([]*proto.Subtask, error)
+	GetFirstSubtaskInStates(instanceID string, taskID int64, step proto.Step, states ...interface{}) (*proto.Subtask, error)
 	StartManager(tidbID string, role string) error
 	StartSubtask(subtaskID int64) error
-	UpdateSubtaskStateAndError(subtaskID int64, state string, err error) error
+	UpdateSubtaskStateAndError(subtaskID int64, state proto.TaskState, err error) error
 	FinishSubtask(subtaskID int64, meta []byte) error
 
-	HasSubtasksInStates(tidbID string, taskID int64, step int64, states ...interface{}) (bool, error)
+	HasSubtasksInStates(tidbID string, taskID int64, step proto.Step, states ...interface{}) (bool, error)
 	UpdateErrorToSubtask(tidbID string, taskID int64, err error) error
 	IsSchedulerCanceled(tidbID string, taskID int64) (bool, error)
 	PauseSubtasks(tidbID string, taskID int64) error

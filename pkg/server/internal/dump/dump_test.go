@@ -18,52 +18,51 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
 
 func TestDumpBinaryTime(t *testing.T) {
-	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-	parsedTime, err := types.ParseTimestamp(sc, "0000-00-00 00:00:00.000000")
+	typeCtx := types.DefaultStmtNoWarningContext
+	parsedTime, err := types.ParseTimestamp(typeCtx, "0000-00-00 00:00:00.000000")
 	require.NoError(t, err)
 	d := BinaryDateTime(nil, parsedTime)
 	require.Equal(t, []byte{0}, d)
 
-	parsedTime, err = types.ParseTimestamp(stmtctx.NewStmtCtxWithTimeZone(time.Local), "1991-05-01 01:01:01.100001")
+	parsedTime, err = types.ParseTimestamp(typeCtx.WithLocation(time.Local), "1991-05-01 01:01:01.100001")
 	require.NoError(t, err)
 	d = BinaryDateTime(nil, parsedTime)
 	// 199 & 7 composed to uint16 1991 (litter-endian)
 	// 160 & 134 & 1 & 0 composed to uint32 1000001 (litter-endian)
 	require.Equal(t, []byte{11, 199, 7, 5, 1, 1, 1, 1, 161, 134, 1, 0}, d)
 
-	parsedTime, err = types.ParseDatetime(sc, "0000-00-00 00:00:00.000000")
+	parsedTime, err = types.ParseDatetime(typeCtx, "0000-00-00 00:00:00.000000")
 	require.NoError(t, err)
 	d = BinaryDateTime(nil, parsedTime)
 	require.Equal(t, []byte{0}, d)
 
-	parsedTime, err = types.ParseDatetime(sc, "1993-07-13 01:01:01.000000")
+	parsedTime, err = types.ParseDatetime(typeCtx, "1993-07-13 01:01:01.000000")
 	require.NoError(t, err)
 	d = BinaryDateTime(nil, parsedTime)
 	// 201 & 7 composed to uint16 1993 (litter-endian)
 	require.Equal(t, []byte{7, 201, 7, 7, 13, 1, 1, 1}, d)
 
-	parsedTime, err = types.ParseDate(sc, "0000-00-00")
+	parsedTime, err = types.ParseDate(typeCtx, "0000-00-00")
 	require.NoError(t, err)
 	d = BinaryDateTime(nil, parsedTime)
 	require.Equal(t, []byte{0}, d)
-	parsedTime, err = types.ParseDate(sc, "1992-06-01")
+	parsedTime, err = types.ParseDate(typeCtx, "1992-06-01")
 	require.NoError(t, err)
 	d = BinaryDateTime(nil, parsedTime)
 	// 200 & 7 composed to uint16 1992 (litter-endian)
 	require.Equal(t, []byte{4, 200, 7, 6, 1}, d)
 
-	parsedTime, err = types.ParseDate(sc, "0000-00-00")
+	parsedTime, err = types.ParseDate(typeCtx, "0000-00-00")
 	require.NoError(t, err)
 	d = BinaryDateTime(nil, parsedTime)
 	require.Equal(t, []byte{0}, d)
 
-	myDuration, _, err := types.ParseDuration(sc, "0000-00-00 00:00:00.000000", 6)
+	myDuration, _, err := types.ParseDuration(typeCtx, "0000-00-00 00:00:00.000000", 6)
 	require.NoError(t, err)
 	d = BinaryTime(myDuration.Duration)
 	require.Equal(t, []byte{0}, d)

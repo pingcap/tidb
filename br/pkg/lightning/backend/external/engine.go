@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -41,8 +42,8 @@ type Engine struct {
 	storage         storage.ExternalStorage
 	dataFiles       []string
 	statsFiles      []string
-	minKey          []byte
-	maxKey          []byte
+	startKey        []byte
+	endKey          []byte
 	splitKeys       [][]byte
 	regionSplitSize int64
 	bufPool         *membuf.Pool
@@ -65,8 +66,8 @@ func NewExternalEngine(
 	storage storage.ExternalStorage,
 	dataFiles []string,
 	statsFiles []string,
-	minKey []byte,
-	maxKey []byte,
+	startKey []byte,
+	endKey []byte,
 	splitKeys [][]byte,
 	regionSplitSize int64,
 	keyAdapter common.KeyAdapter,
@@ -81,8 +82,8 @@ func NewExternalEngine(
 		storage:            storage,
 		dataFiles:          dataFiles,
 		statsFiles:         statsFiles,
-		minKey:             minKey,
-		maxKey:             maxKey,
+		startKey:           startKey,
+		endKey:             endKey,
 		splitKeys:          splitKeys,
 		regionSplitSize:    regionSplitSize,
 		bufPool:            membuf.NewPool(),
@@ -197,12 +198,13 @@ func (e *Engine) loadIngestData(
 			hex.EncodeToString(start))
 	}
 
-	now := time.Now()
+	startTs := time.Now()
 	keys := make([][]byte, 0, 1024)
 	values := make([][]byte, 0, 1024)
 	memBuf := e.bufPool.NewBuffer()
 	cnt := 0
 	size := 0
+	totalSize := 0
 	largeRegion := e.regionSplitSize > 2*int64(config.SplitRegionSize)
 	ret := make([]common.DataAndRange, 0, 1)
 	curStart := start
@@ -215,6 +217,7 @@ func (e *Engine) loadIngestData(
 		values = append(values, memBuf.AddBytes(v))
 		cnt++
 		size += len(k) + len(v)
+		totalSize += len(k) + len(v)
 	}
 
 	for iter.Next() {
@@ -241,13 +244,16 @@ func (e *Engine) loadIngestData(
 		values = append(values, memBuf.AddBytes(v))
 		cnt++
 		size += len(k) + len(v)
+		totalSize += len(k) + len(v)
 	}
 	if iter.Error() != nil {
 		return nil, errors.Trace(iter.Error())
 	}
 
+	metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("read_and_sort").Observe(float64(totalSize) / 1024.0 / 1024.0 / time.Since(startTs).Seconds())
+	metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("read_and_sort").Observe(time.Since(startTs).Seconds())
 	logutil.Logger(ctx).Info("load data from external storage",
-		zap.Duration("cost time", time.Since(now)),
+		zap.Duration("cost time", time.Since(startTs)),
 		zap.Int("iterated count", cnt))
 	ret = append(ret, common.DataAndRange{
 		Data:  e.buildIngestData(keys, values, memBuf),
@@ -299,8 +305,8 @@ func (e *Engine) ID() string {
 }
 
 // GetKeyRange implements common.Engine.
-func (e *Engine) GetKeyRange() (firstKey []byte, lastKey []byte, err error) {
-	return e.minKey, e.maxKey, nil
+func (e *Engine) GetKeyRange() (startKey []byte, endKey []byte, err error) {
+	return e.startKey, e.endKey, nil
 }
 
 // SplitRanges split the ranges by split keys provided by external engine.

@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
 
 type dataInfo struct {
@@ -260,7 +259,7 @@ func (e *PipelinedWindowExec) getStart(ctx sessionctx.Context) (uint64, error) {
 	}
 	if e.isRangeFrame {
 		var start uint64
-		for start = mathutil.Max(e.lastStartRow, e.stagedStartRow); start < e.rowCnt; start++ {
+		for start = max(e.lastStartRow, e.stagedStartRow); start < e.rowCnt; start++ {
 			var res int64
 			var err error
 			for i := range e.orderByCols {
@@ -300,7 +299,7 @@ func (e *PipelinedWindowExec) getEnd(ctx sessionctx.Context) (uint64, error) {
 	}
 	if e.isRangeFrame {
 		var end uint64
-		for end = mathutil.Max(e.lastEndRow, e.stagedEndRow); end < e.rowCnt; end++ {
+		for end = max(e.lastEndRow, e.stagedEndRow); end < e.rowCnt; end++ {
 			var res int64
 			var err error
 			for i := range e.orderByCols {
@@ -414,7 +413,7 @@ func (e *PipelinedWindowExec) produce(ctx sessionctx.Context, chk *chunk.Chunk, 
 		produced++
 		remained--
 	}
-	extend := mathutil.Min(e.curRowIdx, e.lastEndRow, e.lastStartRow)
+	extend := min(e.curRowIdx, e.lastEndRow, e.lastStartRow)
 	if extend > e.rowStart {
 		numDrop := extend - e.rowStart
 		e.dropped += numDrop

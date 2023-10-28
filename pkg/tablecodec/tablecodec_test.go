@@ -260,11 +260,11 @@ func TestTimeCodec(t *testing.T) {
 	row := make([]types.Datum, colLen)
 	row[0] = types.NewIntDatum(100)
 	row[1] = types.NewBytesDatum([]byte("abc"))
-	ts, err := types.ParseTimestamp(stmtctx.NewStmtCtxWithTimeZone(time.UTC),
+	ts, err := types.ParseTimestamp(types.DefaultStmtNoWarningContext,
 		"2016-06-23 11:30:45")
 	require.NoError(t, err)
 	row[2] = types.NewDatum(ts)
-	du, _, err := types.ParseDuration(nil, "12:59:59.999999", 6)
+	du, _, err := types.ParseDuration(types.DefaultStmtNoWarningContext, "12:59:59.999999", 6)
 	require.NoError(t, err)
 	row[3] = types.NewDatum(du)
 
@@ -552,6 +552,8 @@ func BenchmarkHasTablePrefixBuiltin(b *testing.B) {
 // Bench result:
 // BenchmarkEncodeValue      5000000           368 ns/op
 func BenchmarkEncodeValue(b *testing.B) {
+	sc := stmtctx.NewStmtCtx()
+
 	row := make([]types.Datum, 7)
 	row[0] = types.NewIntDatum(100)
 	row[1] = types.NewBytesDatum([]byte("abc"))
@@ -565,7 +567,7 @@ func BenchmarkEncodeValue(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		for _, d := range row {
 			encodedCol = encodedCol[:0]
-			_, err := EncodeValue(nil, encodedCol, d)
+			_, err := EncodeValue(sc, encodedCol, d)
 			if err != nil {
 				b.Fatal(err)
 			}

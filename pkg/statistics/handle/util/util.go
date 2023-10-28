@@ -21,8 +21,10 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -30,7 +32,24 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/sqlexec/mock"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/oracle"
+)
+
+const (
+	// StatsMetaHistorySourceAnalyze indicates stats history meta source from analyze
+	StatsMetaHistorySourceAnalyze = "analyze"
+	// StatsMetaHistorySourceLoadStats indicates stats history meta source from load stats
+	StatsMetaHistorySourceLoadStats = "load stats"
+	// StatsMetaHistorySourceFlushStats indicates stats history meta source from flush stats
+	StatsMetaHistorySourceFlushStats = "flush stats"
+	// StatsMetaHistorySourceSchemaChange indicates stats history meta source from schema change
+	StatsMetaHistorySourceSchemaChange = "schema change"
+	// StatsMetaHistorySourceExtendedStats indicates stats history meta source from extended stats
+	StatsMetaHistorySourceExtendedStats = "extended stats"
+
+	// TiDBGlobalStats represents the global-stats for a partitioned table.
+	TiDBGlobalStats = "global"
 )
 
 var (
@@ -47,10 +66,10 @@ type SessionPool interface {
 	Put(pools.Resource)
 }
 
-// FinishTransaction will execute `commit` when error is nil, otherwise `rollback`.
-func FinishTransaction(sctx sessionctx.Context, err error) error {
+// finishTransaction will execute `commit` when error is nil, otherwise `rollback`.
+func finishTransaction(sctx sessionctx.Context, err error) error {
 	if err == nil {
-		_, _, err = ExecRows(sctx, "commit")
+		_, _, err = ExecRows(sctx, "COMMIT")
 	} else {
 		_, _, err1 := ExecRows(sctx, "rollback")
 		terror.Log(errors.Trace(err1))
@@ -155,11 +174,11 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 // WrapTxn uses a transaction here can let different SQLs in this operation have the same data visibility.
 func WrapTxn(sctx sessionctx.Context, f func(sctx sessionctx.Context) error) (err error) {
 	// TODO: check whether this sctx is already in a txn
-	if _, _, err := ExecRows(sctx, "begin"); err != nil {
+	if _, _, err := ExecRows(sctx, "BEGIN PESSIMISTIC"); err != nil {
 		return err
 	}
 	defer func() {
-		err = FinishTransaction(sctx, err)
+		err = finishTransaction(sctx, err)
 	}()
 	err = f(sctx)
 	return
@@ -212,4 +231,66 @@ func ExecWithOpts(sctx sessionctx.Context, opts []sqlexec.OptionFuncAlias, sql s
 // DurationToTS converts duration to timestamp.
 func DurationToTS(d time.Duration) uint64 {
 	return oracle.ComposeTS(d.Nanoseconds()/int64(time.Millisecond), 0)
+}
+
+// GetFullTableName returns the full table name.
+func GetFullTableName(is infoschema.InfoSchema, tblInfo *model.TableInfo) string {
+	for _, schema := range is.AllSchemas() {
+		if t, err := is.TableByName(schema.Name, tblInfo.Name); err == nil {
+			if t.Meta().ID == tblInfo.ID {
+				return schema.Name.O + "." + tblInfo.Name.O
+			}
+		}
+	}
+	return strconv.FormatInt(tblInfo.ID, 10)
+}
+
+// JSONTable is used for dumping statistics.
+type JSONTable struct {
+	Columns           map[string]*JSONColumn `json:"columns"`
+	Indices           map[string]*JSONColumn `json:"indices"`
+	Partitions        map[string]*JSONTable  `json:"partitions"`
+	DatabaseName      string                 `json:"database_name"`
+	TableName         string                 `json:"table_name"`
+	ExtStats          []*JSONExtendedStats   `json:"ext_stats"`
+	Count             int64                  `json:"count"`
+	ModifyCount       int64                  `json:"modify_count"`
+	Version           uint64                 `json:"version"`
+	IsHistoricalStats bool                   `json:"is_historical_stats"`
+}
+
+// JSONExtendedStats is used for dumping extended statistics.
+type JSONExtendedStats struct {
+	StatsName  string  `json:"stats_name"`
+	StringVals string  `json:"string_vals"`
+	ColIDs     []int64 `json:"cols"`
+	ScalarVals float64 `json:"scalar_vals"`
+	Tp         uint8   `json:"type"`
+}
+
+// JSONColumn is used for dumping statistics.
+type JSONColumn struct {
+	Histogram *tipb.Histogram `json:"histogram"`
+	CMSketch  *tipb.CMSketch  `json:"cm_sketch"`
+	FMSketch  *tipb.FMSketch  `json:"fm_sketch"`
+	// StatsVer is a pointer here since the old version json file would not contain version information.
+	StatsVer          *int64  `json:"stats_ver"`
+	NullCount         int64   `json:"null_count"`
+	TotColSize        int64   `json:"tot_col_size"`
+	LastUpdateVersion uint64  `json:"last_update_version"`
+	Correlation       float64 `json:"correlation"`
+}
+
+// TotalMemoryUsage returns the total memory usage of this column.
+func (col *JSONColumn) TotalMemoryUsage() (size int64) {
+	if col.Histogram != nil {
+		size += int64(col.Histogram.Size())
+	}
+	if col.CMSketch != nil {
+		size += int64(col.CMSketch.Size())
+	}
+	if col.FMSketch != nil {
+		size += int64(col.FMSketch.Size())
+	}
+	return size
 }

@@ -152,6 +152,47 @@ func (c *hashRowContainer) GetMatchedRows(probeKey uint64, probeRow chunk.Row, h
 	return matchedRows, err
 }
 
+// GetOneMatchedRow get one matched rows from probeRow.
+func (c *hashRowContainer) GetOneMatchedRow(probeKey uint64, probeRow chunk.Row, hCtx *hashContext) (*chunk.Row, error) {
+	var err error
+	innerEntry := c.hashTable.Get(probeKey)
+	if innerEntry == nil {
+		return nil, err
+	}
+	var matchedRow chunk.Row
+
+	if c.chkBuf != nil {
+		c.chkBuf.Reset()
+	}
+	capacity := 0
+
+	for i := 0; innerEntry != nil; i, innerEntry = i+1, innerEntry.next {
+		ptr := innerEntry.ptr
+		matchedRow, c.chkBuf, err = c.rowContainer.GetRowAndAppendToChunkIfInDisk(ptr, c.chkBuf)
+		if err != nil {
+			return nil, err
+		}
+		var ok bool
+		ok, err = c.matchJoinKey(matchedRow, probeRow, hCtx)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			return &matchedRow, nil
+		}
+		atomic.AddInt64(&c.stat.probeCollision, 1)
+		if i == 0 {
+			capacity = c.chkBuf.Capacity()
+			if capacity < 128 {
+				capacity = 128
+			}
+		} else if (i+1)%capacity == 0 {
+			c.chkBuf.Reset()
+		}
+	}
+	return nil, err
+}
+
 func (c *hashRowContainer) GetAllMatchedRows(probeHCtx *hashContext, probeSideRow chunk.Row,
 	probeKeyNullBits *bitmap.ConcurrentBitmap, matched []chunk.Row, needCheckBuildColPos, needCheckProbeColPos []int, needCheckBuildTypes, needCheckProbeTypes []*types.FieldType) ([]chunk.Row, error) {
 	// for NAAJ probe row with null, we should match them with all build rows.
@@ -232,7 +273,11 @@ const rowPtrSize = int64(unsafe.Sizeof(chunk.RowPtr{}))
 // h and buf.
 func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk.Row, hCtx *hashContext, matched []chunk.Row, matchedPtrs []chunk.RowPtr, needPtr bool) ([]chunk.Row, []chunk.RowPtr, error) {
 	var err error
-	innerPtrs := c.hashTable.Get(probeKey)
+	entry := c.hashTable.Get(probeKey)
+	var innerPtrs []chunk.RowPtr
+	for ; entry != nil; entry = entry.next {
+		innerPtrs = append(innerPtrs, entry.ptr)
+	}
 	if len(innerPtrs) == 0 {
 		return nil, nil, err
 	}
@@ -565,7 +610,12 @@ func (es *entryStore) GetStore() (e *entry, memDelta int64) {
 
 type baseHashTable interface {
 	Put(hashKey uint64, rowPtr chunk.RowPtr)
-	Get(hashKey uint64) (rowPtrs []chunk.RowPtr)
+	// e := Get(hashKey)
+	// for ; e != nil; e = e.next {
+	//    rowPtr := e.ptr
+	//    ...
+	// }
+	Get(hashKey uint64) *entry
 	Len() uint64
 	// GetAndCleanMemoryDelta gets and cleans the memDelta of the baseHashTable. Memory delta will be cleared after each fetch.
 	// It indicates the memory delta of the baseHashTable since the last calling GetAndCleanMemoryDelta().
@@ -611,13 +661,9 @@ func (ht *unsafeHashTable) Put(hashKey uint64, rowPtr chunk.RowPtr) {
 }
 
 // Get gets the values of the "key" and appends them to "values".
-func (ht *unsafeHashTable) Get(hashKey uint64) (rowPtrs []chunk.RowPtr) {
+func (ht *unsafeHashTable) Get(hashKey uint64) *entry {
 	entryAddr := ht.hashMap[hashKey]
-	for entryAddr != nil {
-		rowPtrs = append(rowPtrs, entryAddr.ptr)
-		entryAddr = entryAddr.next
-	}
-	return
+	return entryAddr
 }
 
 // Len returns the number of rowPtrs in the unsafeHashTable, the number of keys may be less than Len
@@ -674,13 +720,9 @@ func (ht *concurrentMapHashTable) Put(hashKey uint64, rowPtr chunk.RowPtr) {
 }
 
 // Get gets the values of the "key" and appends them to "values".
-func (ht *concurrentMapHashTable) Get(hashKey uint64) (rowPtrs []chunk.RowPtr) {
+func (ht *concurrentMapHashTable) Get(hashKey uint64) *entry {
 	entryAddr, _ := ht.hashMap.Get(hashKey)
-	for entryAddr != nil {
-		rowPtrs = append(rowPtrs, entryAddr.ptr)
-		entryAddr = entryAddr.next
-	}
-	return
+	return entryAddr
 }
 
 // Iter gets the every value of the hash table.

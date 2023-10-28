@@ -198,6 +198,7 @@ func appendToSubJobs(m *model.MultiSchemaInfo, job *model.Job) error {
 		Revertible:  true,
 		CtxVars:     job.CtxVars,
 		ReorgTp:     reorgTp,
+		UseCloud:    false,
 	})
 	return nil
 }

@@ -44,7 +44,7 @@ var _ dispatcher.Extension = (*testDispatcherExt)(nil)
 func (*testDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (dsp *testDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ int64) (metas [][]byte, err error) {
+func (dsp *testDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ proto.Step) (metas [][]byte, err error) {
 	if gTask.Step == proto.StepInit {
 		dsp.cnt = 3
 		return [][]byte{
@@ -66,7 +66,7 @@ func (*testDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle,
 	return nil, nil
 }
 
-func (dsp *testDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *proto.Task) int64 {
+func (dsp *testDispatcherExt) GetNextStep(task *proto.Task) proto.Step {
 	switch task.Step {
 	case proto.StepInit:
 		return proto.StepOne
@@ -128,14 +128,14 @@ func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, m *sync.Map, dispat
 	registerTaskMetaInner(t, proto.TaskTypeExample, mockExtension, mockCleanupRountine, dispatcherHandle)
 }
 
-func registerTaskMetaInner(t *testing.T, taskType string, mockExtension scheduler.Extension, mockCleanup dispatcher.CleanUpRoutine, dispatcherHandle dispatcher.Extension) {
+func registerTaskMetaInner(t *testing.T, taskType proto.TaskType, mockExtension scheduler.Extension, mockCleanup dispatcher.CleanUpRoutine, dispatcherHandle dispatcher.Extension) {
 	t.Cleanup(func() {
 		dispatcher.ClearDispatcherFactory()
 		dispatcher.ClearDispatcherCleanUpFactory()
 		scheduler.ClearSchedulers()
 	})
 	dispatcher.RegisterDispatcherFactory(taskType,
-		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
+		func(ctx context.Context, taskMgr dispatcher.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
 			baseDispatcher := dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task)
 			baseDispatcher.Extension = dispatcherHandle
 			return baseDispatcher
@@ -251,7 +251,7 @@ func DispatchAndCancelTask(taskKey string, t *testing.T, m *sync.Map) {
 	})
 }
 
-func DispatchTaskAndCheckState(taskKey string, t *testing.T, m *sync.Map, state string) {
+func DispatchTaskAndCheckState(taskKey string, t *testing.T, m *sync.Map, state proto.TaskState) {
 	task := DispatchTask(taskKey, t)
 	require.Equal(t, state, task.State)
 	m.Range(func(key, value interface{}) bool {
@@ -525,13 +525,16 @@ func TestFrameworkSetLabel(t *testing.T) {
 	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
 	distContext := testkit.NewDistExecutionContext(t, 3)
 	tk := testkit.NewTestKit(t, distContext.Store)
+
 	// 1. all "" role.
 	DispatchTaskAndCheckSuccess("😁", t, &m)
+
 	// 2. one "background" role.
 	tk.MustExec("set global tidb_service_scope=background")
 	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows("background"))
 	tk.MustQuery("select @@tidb_service_scope").Check(testkit.Rows("background"))
 	DispatchTaskAndCheckSuccess("😊", t, &m)
+
 	// 3. 2 "background" role.
 	tk.MustExec("update mysql.dist_framework_meta set role = \"background\" where host = \":4001\"")
 	DispatchTaskAndCheckSuccess("😆", t, &m)

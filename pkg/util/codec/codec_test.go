@@ -520,13 +520,13 @@ func TestBytes(t *testing.T) {
 
 func parseTime(t *testing.T, s string) types.Time {
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-	m, err := types.ParseTime(sc, s, mysql.TypeDatetime, types.DefaultFsp, nil)
+	m, err := types.ParseTime(sc.TypeCtx(), s, mysql.TypeDatetime, types.DefaultFsp, nil)
 	require.NoError(t, err)
 	return m
 }
 
 func parseDuration(t *testing.T, s string) types.Duration {
-	m, _, err := types.ParseDuration(nil, s, types.DefaultFsp)
+	m, _, err := types.ParseDuration(types.DefaultStmtNoWarningContext, s, types.DefaultFsp)
 	require.NoError(t, err)
 	return m
 }
@@ -720,12 +720,12 @@ func TestDecimal(t *testing.T) {
 	}
 	for _, decimalNums := range tblCmp {
 		d1 := types.NewDatum(decimalNums.Arg1)
-		dec1, err := d1.ToDecimal(sc)
+		dec1, err := d1.ToDecimal(sc.TypeCtxOrDefault())
 		require.NoError(t, err)
 		d1.SetMysqlDecimal(dec1)
 
 		d2 := types.NewDatum(decimalNums.Arg2)
-		dec2, err := d2.ToDecimal(sc)
+		dec2, err := d2.ToDecimal(sc.TypeCtxOrDefault())
 		require.NoError(t, err)
 		d2.SetMysqlDecimal(dec2)
 
@@ -778,7 +778,7 @@ func TestDecimal(t *testing.T) {
 	_, err = EncodeDecimal(nil, d, 12, 10)
 	require.Truef(t, terror.ErrorEqual(err, types.ErrOverflow), "err %v", err)
 
-	sc.IgnoreTruncate.Store(true)
+	sc.SetTypeFlags(types.DefaultStmtFlags.WithIgnoreTruncateErr(true))
 	decimalDatum := types.NewDatum(d)
 	decimalDatum.SetLength(20)
 	decimalDatum.SetFrac(5)

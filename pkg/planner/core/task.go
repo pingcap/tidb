@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -308,7 +307,7 @@ func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 // RowSize for cost model ver2 is simplified, always use this function to calculate row size.
 func getAvgRowSize(stats *property.StatsInfo, cols []*expression.Column) (size float64) {
 	if stats.HistColl != nil {
-		size = cardinality.GetAvgRowSizeListInDisk(stats.HistColl, cols)
+		size = cardinality.GetAvgRowSizeDataInDiskByRows(stats.HistColl, cols)
 	} else {
 		// Estimate using just the type info.
 		for _, col := range cols {
@@ -377,7 +376,7 @@ func negotiateCommonType(lType, rType *types.FieldType) (*types.FieldType, bool,
 			cDec = lType.GetDecimal()
 		}
 		lLen, rLen := lType.GetFlen()+lExtend, rType.GetFlen()+rExtend
-		cLen := mathutil.Max(lLen, rLen)
+		cLen := max(lLen, rLen)
 		commonType.SetDecimalUnderLimit(cDec)
 		commonType.SetFlenUnderLimit(cLen)
 	} else if needConvert(lType, commonType) || needConvert(rType, commonType) {
