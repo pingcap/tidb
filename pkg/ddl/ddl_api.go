@@ -1828,16 +1828,26 @@ func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint) {
 
 func checkConstraintNames(tableName model.CIStr, constraints []*ast.Constraint) error {
 	constrNames := map[string]bool{}
-	checkConstraints := make([]*ast.Constraint, 0, len(constraints))
+	fkNames := map[string]bool{}
 
 	// Check not empty constraint name whether is duplicated.
 	for _, constr := range constraints {
-		err := checkDuplicateConstraint(constrNames, constr.Name, constr.Tp)
-		if err != nil {
-			return errors.Trace(err)
+		if constr.Tp == ast.ConstraintForeignKey {
+			err := checkDuplicateConstraint(fkNames, constr.Name, constr.Tp)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		} else {
+			err := checkDuplicateConstraint(constrNames, constr.Name, constr.Tp)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
+	}
 
-		// Set empty constraint names.
+	// Set empty constraint names.
+	checkConstraints := make([]*ast.Constraint, 0, len(constraints))
+	for _, constr := range constraints {
 		if constr.Tp != ast.ConstraintForeignKey {
 			setEmptyConstraintName(constrNames, constr)
 		}
