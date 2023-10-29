@@ -858,3 +858,18 @@ func TestDropTables(t *testing.T) {
 	failedSQL = "show create table t1;"
 	tk.MustGetErrCode(failedSQL, errno.ErrNoSuchTable)
 }
+
+func TestCreateTableWithCheckConstraint(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS t1, t2")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
+	tk.MustExec("CREATE TABLE t1 (id INT PRIMARY KEY, CONSTRAINT c1 CHECK (id<50))")
+	failedSQL := "CREATE TABLE t2 (id INT PRIMARY KEY, CONSTRAINT c1 CHECK (id<50))"
+	tk.MustGetErrCode(failedSQL, errno.ErrCheckConstraintDupName)
+
+	defer tk.MustExec("DROP TABLE IF EXISTS t1, t2")
+}
