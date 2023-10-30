@@ -7028,6 +7028,7 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
+<<<<<<< HEAD
         sha256 = "013685f8bba022b46ff651baad20811d77fdf8d3c625d36e5860e74f9efb6e89",
         strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20240218024828-b13f4be4e6f9",
         urls = [
@@ -7035,6 +7036,15 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240218024828-b13f4be4e6f9.zip",
             "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240218024828-b13f4be4e6f9.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240218024828-b13f4be4e6f9.zip",
+=======
+        sha256 = "b689432454a504f8ba1ad166ebf901584155edc64eed4119a30c07ab52e3af8f",
+        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20231030120815-1362f1e87566",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20231030120815-1362f1e87566.zip",
+            "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20231030120815-1362f1e87566.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20231030120815-1362f1e87566.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20231030120815-1362f1e87566.zip",
+>>>>>>> 1dfcd127f35 (*: update tikv/client-go to fix performance regression (#48109))
         ],
     )
     go_repository(
