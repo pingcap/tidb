@@ -1084,7 +1084,7 @@ func TestConvertJSONToInt(t *testing.T) {
 		j, err := ParseBinaryJSONFromString(tt.in)
 		require.NoError(t, err)
 
-		casted, err := ConvertJSONToInt64(stmtctx.NewStmtCtx(), j, false)
+		casted, err := ConvertJSONToInt64(stmtctx.NewStmtCtx().TypeCtx(), j, false)
 		if tt.err {
 			require.Error(t, err, tt)
 		} else {

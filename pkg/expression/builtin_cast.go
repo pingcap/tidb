@@ -541,7 +541,8 @@ func convertJSON2Tp(evalType types.EvalType) func(*stmtctx.StatementContext, typ
 			if item.TypeCode != types.JSONTypeCodeInt64 && item.TypeCode != types.JSONTypeCodeUint64 {
 				return nil, ErrInvalidJSONForFuncIndex
 			}
-			jsonToInt, err := types.ConvertJSONToInt(sc, item, mysql.HasUnsignedFlag(tp.GetFlag()), tp.GetType())
+			jsonToInt, err := types.ConvertJSONToInt(sc.TypeCtx(), item, mysql.HasUnsignedFlag(tp.GetFlag()), tp.GetType())
+			err = sc.HandleOverflow(err, err)
 			if mysql.HasUnsignedFlag(tp.GetFlag()) {
 				return uint64(jsonToInt), err
 			}
@@ -702,7 +703,9 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDe
 	} else {
 		res = types.NewDecFromUint(uint64(val))
 	}
-	res, err = types.ProduceDecWithSpecifiedTp(res, b.tp, b.ctx.GetSessionVars().StmtCtx)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	res, err = types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), res, b.tp)
+	err = sc.HandleOverflow(err, err)
 	return res, isNull, err
 }
 
@@ -1018,7 +1021,9 @@ func (b *builtinCastRealAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyD
 			return res, false, err
 		}
 	}
-	res, err = types.ProduceDecWithSpecifiedTp(res, b.tp, b.ctx.GetSessionVars().StmtCtx)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	res, err = types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), res, b.tp)
+	err = sc.HandleOverflow(err, err)
 	return res, false, err
 }
 
@@ -1130,7 +1135,8 @@ func (b *builtinCastDecimalAsDecimalSig) evalDecimal(row chunk.Row) (res *types.
 		*res = *evalDecimal
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ProduceDecWithSpecifiedTp(res, b.tp, sc)
+	res, err = types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), res, b.tp)
+	err = sc.HandleOverflow(err, err)
 	return res, false, err
 }
 
@@ -1454,7 +1460,8 @@ func (b *builtinCastStringAsDecimalSig) evalDecimal(row chunk.Row) (res *types.M
 			return res, false, err
 		}
 	}
-	res, err = types.ProduceDecWithSpecifiedTp(res, b.tp, sc)
+	res, err = types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), res, b.tp)
+	err = sc.HandleOverflow(err, err)
 	return res, false, err
 }
 
@@ -1599,7 +1606,8 @@ func (b *builtinCastTimeAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyD
 		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ProduceDecWithSpecifiedTp(val.ToNumber(), b.tp, sc)
+	res, err = types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), val.ToNumber(), b.tp)
+	err = sc.HandleOverflow(err, err)
 	return res, false, err
 }
 
@@ -1732,7 +1740,8 @@ func (b *builtinCastDurationAsDecimalSig) evalDecimal(row chunk.Row) (res *types
 		return res, false, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ProduceDecWithSpecifiedTp(val.ToNumber(), b.tp, sc)
+	res, err = types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), val.ToNumber(), b.tp)
+	err = sc.HandleOverflow(err, err)
 	return res, false, err
 }
 
@@ -1834,7 +1843,8 @@ func (b *builtinCastJSONAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool
 		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ConvertJSONToInt64(sc, val, mysql.HasUnsignedFlag(b.tp.GetFlag()))
+	res, err = types.ConvertJSONToInt64(sc.TypeCtx(), val, mysql.HasUnsignedFlag(b.tp.GetFlag()))
+	err = sc.HandleOverflow(err, err)
 	return
 }
 
@@ -1878,7 +1888,8 @@ func (b *builtinCastJSONAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyD
 	if err != nil {
 		return res, false, err
 	}
-	res, err = types.ProduceDecWithSpecifiedTp(res, b.tp, sc)
+	res, err = types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), res, b.tp)
+	err = sc.HandleOverflow(err, err)
 	return res, false, err
 }
 

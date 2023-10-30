@@ -353,8 +353,8 @@ func TestSetStmtCtxTypeFlags(t *testing.T) {
 	require.Equal(t, typectx.FlagAllowNegativeToUnsigned|typectx.FlagSkipASCIICheck, sc.TypeFlags())
 	require.Equal(t, sc.TypeFlags(), sc.TypeFlags())
 
-	sc.SetTypeFlags(typectx.FlagSkipASCIICheck | typectx.FlagSkipUTF8Check | typectx.FlagInvalidDateAsWarning)
-	require.Equal(t, typectx.FlagSkipASCIICheck|typectx.FlagSkipUTF8Check|typectx.FlagInvalidDateAsWarning, sc.TypeFlags())
+	sc.SetTypeFlags(typectx.FlagSkipASCIICheck | typectx.FlagSkipUTF8Check | typectx.FlagTruncateAsWarning)
+	require.Equal(t, typectx.FlagSkipASCIICheck|typectx.FlagSkipUTF8Check|typectx.FlagTruncateAsWarning, sc.TypeFlags())
 	require.Equal(t, sc.TypeFlags(), sc.TypeFlags())
 }
 
