@@ -7962,3 +7962,14 @@ func TestIssue45410(t *testing.T) {
 	tk.MustExec("INSERT INTO t1 VALUES (0);")
 	tk.MustQuery("SELECT c1>=CAST('-787360724' AS TIME) FROM t1;").Check(testkit.Rows("1"))
 }
+
+func TestIssue41986(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE poi_clearing_time_topic (effective_date datetime DEFAULT NULL , clearing_time int(11) DEFAULT NULL);")
+	tk.MustExec("insert into poi_clearing_time_topic values ('2023:08:25', 1)")
+	// shouldn't report they can't find column error and return the right result.
+	tk.MustQuery("SELECT GROUP_CONCAT(effective_date order by stlmnt_hour DESC) FROM ( SELECT (COALESCE(pct.clearing_time, 0)/3600000) AS stlmnt_hour ,COALESCE(pct.effective_date, '1970-01-01 08:00:00') AS effective_date FROM poi_clearing_time_topic pct ORDER BY pct.effective_date DESC ) a;").Check(testkit.Rows("2023-08-25 00:00:00"))
+}
