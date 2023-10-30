@@ -1852,6 +1852,24 @@ func writeOneKVToLocal(
 	idxDt, rsData []types.Datum,
 	handle kv.Handle,
 ) error {
+	key, distinct, err := index.GenIndexKey(sCtx, idxDt, handle, writeBufs.IndexKeyBuf)
+	if err != nil {
+		return err
+	}
+	idxVal, err := index.GenIndexValue(sCtx, distinct, idxDt, handle, rsData)
+	if err != nil {
+		return err
+	}
+	if !index.Meta().Unique {
+		handle = nil
+	}
+	err = writer.WriteRow(ctx, key, idxVal, handle)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	writeBufs.IndexKeyBuf = key
+	return nil
+
 	iter := index.GenIndexKVIter(sCtx, idxDt, handle, rsData)
 	for iter.Valid() {
 		key, idxVal, _, err := iter.Next(writeBufs.IndexKeyBuf)
