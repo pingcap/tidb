@@ -17,7 +17,11 @@ package external
 import (
 	"bytes"
 	"context"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
+	"os"
 	"path"
+	"runtime/pprof"
 	"slices"
 	"strconv"
 	"testing"
@@ -30,6 +34,43 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
 )
+
+func TestWriteRow(t *testing.T) {
+	seed := time.Now().Unix()
+	rand.Seed(uint64(seed))
+	t.Logf("seed: %d", seed)
+
+	f, err := os.Create("cpu.prof")
+	if err != nil {
+		log.Fatal("could not create CPU profile: ", zap.Any("err", err))
+	}
+	pprof.StartCPUProfile(f)
+	defer pprof.StopCPUProfile()
+
+	totalKV := 100000000
+	kvPairs := make([]common.KvPair, totalKV)
+	for i := range kvPairs {
+		keyBuf := make([]byte, 10)
+		rand.Read(keyBuf)
+		// make sure the key is unique
+		//kvPairs[i].Key = append(keyBuf, byte(i/255), byte(i%255))
+		valBuf := make([]byte, 3)
+		rand.Read(valBuf)
+		kvPairs[i].Val = valBuf
+	}
+
+	store := storage.NewMemStorage()
+	w := NewWriterBuilder().
+		SetMemorySizeLimit(1024*1024*1024).
+		SetPropSizeDistance(uint64(rand.Intn(50)+1)).
+		SetPropKeysDistance(uint64(rand.Intn(10)+1)).
+		Build(store, "/subtask", "1")
+	ts := time.Now()
+	for j := 0; j < totalKV; j++ {
+		w.WriteRow(context.Background(), kvPairs[j].Key, kvPairs[j].Val, nil)
+	}
+	log.Info("write kv", zap.Duration("cost", time.Since(ts)), zap.Any("rate", float64(totalKV)*10/1024/1024/time.Since(ts).Seconds()))
+}
 
 func TestIter(t *testing.T) {
 	seed := time.Now().Unix()
