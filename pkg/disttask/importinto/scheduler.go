@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/docker/go-units"
-	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
@@ -39,14 +38,11 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/asyncloaddata"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"golang.org/x/sync/errgroup"
 )
 
 // importStepExecutor is a executor for import step.
@@ -309,43 +305,17 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	prefix := subtaskPrefix(m.taskID, subtask.ID)
 
-	var dataFilesSlice [][]string
-	batchCount := len(sm.DataFiles) / int(variable.GetDDLReorgWorkerCounter())
-	for i := 0; i < len(sm.DataFiles); i += batchCount {
-		end := i + batchCount
-		if end > len(sm.DataFiles) {
-			end = len(sm.DataFiles)
-		}
-		dataFilesSlice = append(dataFilesSlice, sm.DataFiles[i:end])
-	}
-
-	memTotal, err := memory.MemTotal()
-	if err != nil {
-		return err
-	}
-	memSize := (memTotal / 2) / uint64(len(dataFilesSlice))
-
-	var eg errgroup.Group
-	for _, files := range dataFilesSlice {
-		files := files
-		eg.Go(func() error {
-			return external.MergeOverlappingFiles(
-				ctx,
-				files,
-				m.controller.GlobalSortStore,
-				64*1024,
-				prefix,
-				uuid.New().String(),
-				memSize,
-				getKVGroupBlockSize(sm.KVGroup),
-				8*1024,
-				1*size.MB,
-				8*1024,
-				onClose)
-		})
-	}
-
-	return eg.Wait()
+	return external.MergeOverlappingFiles(
+		ctx,
+		sm.DataFiles,
+		m.controller.GlobalSortStore,
+		64*1024,
+		prefix,
+		getKVGroupBlockSize(sm.KVGroup),
+		8*1024,
+		1*size.MB,
+		8*1024,
+		onClose)
 }
 
 func (m *mergeSortStepExecutor) OnFinished(_ context.Context, subtask *proto.Subtask) error {
