@@ -103,7 +103,7 @@ require (
 	github.com/stretchr/testify v1.8.4
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20231025022411-cad314220659
+	github.com/tikv/client-go/v2 v2.0.8-0.20231030021533-3520f13fc074
 	github.com/tikv/pd/client v0.0.0-20230912103610-2f57a9f050eb
 	github.com/timakin/bodyclose v0.0.0-20230421092635-574207250966
 	github.com/twmb/murmur3 v1.1.6
@@ -313,5 +313,3 @@ replace (
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
 )
-
-replace github.com/tikv/client-go/v2 => github.com/hawkingrei/client-go/v2 v2.0.0-alpha.0.20231028051345-932ff6cc2826
