@@ -62,7 +62,7 @@ func (s *basePropConstSolver) tryToUpdateEQList(col *Column, con *Constant) (boo
 	id := s.getColID(col)
 	oldCon := s.eqList[id]
 	if oldCon != nil {
-		res, err := oldCon.Value.Compare(s.ctx.GetSessionVars().StmtCtx, &con.Value, collate.GetCollator(col.GetType().GetCollate()))
+		res, err := oldCon.Value.Compare(s.ctx.GetSessionVars().StmtCtx.TypeCtx(), &con.Value, collate.GetCollator(col.GetType().GetCollate()))
 		return false, res != 0 || err != nil
 	}
 	s.eqList[id] = con
