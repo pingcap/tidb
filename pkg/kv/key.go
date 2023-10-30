@@ -171,8 +171,6 @@ type Handle interface {
 	MemUsage() uint64
 	// ExtraMemSize returns the memory usage of objects that are pointed to by the Handle.
 	ExtraMemSize() uint64
-
-	SetInt(i int)
 }
 
 var _ Handle = IntHandle(0)
@@ -258,8 +256,8 @@ func (IntHandle) ExtraMemSize() uint64 {
 	return 0
 }
 
-func (h IntHandle) SetInt(i int) {
-	h = IntHandle(i)
+func (ih *IntHandle) SetInt(i int) {
+	*ih = IntHandle(i)
 }
 
 func (IntHandle) SetEncode(encoded []byte) error {
