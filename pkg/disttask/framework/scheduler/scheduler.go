@@ -615,11 +615,13 @@ func (s *BaseScheduler) markSubTaskCanceledOrFailed(ctx context.Context, subtask
 func (s *BaseScheduler) updateErrorToSubtask(ctx context.Context, taskID int64, err error) error {
 	logger := logutil.Logger(s.logCtx)
 	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
-	logger.Warn("update error to subtask", zap.Error(err))
 	err1 := handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
 			return true, s.taskTable.UpdateErrorToSubtask(s.id, taskID, err)
 		},
 	)
+	if err1 == nil {
+		logger.Warn("update error to subtask success", zap.Error(err))
+	}
 	return err1
 }
