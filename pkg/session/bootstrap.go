@@ -183,7 +183,7 @@ const (
 	// Maybe we will put it back to INFORMATION_SCHEMA.
 	CreateGlobalVariablesTable = `CREATE TABLE IF NOT EXISTS mysql.GLOBAL_VARIABLES(
 		VARIABLE_NAME  VARCHAR(64) NOT NULL PRIMARY KEY,
-		VARIABLE_VALUE VARCHAR(1024) DEFAULT NULL);`
+		VARIABLE_VALUE VARCHAR(16383) DEFAULT NULL);`
 	// CreateTiDBTable is the SQL statement creates a table in system db.
 	// This table is a key-value struct contains some information used by TiDB.
 	// Currently we only put bootstrapped in it which indicates if the system is already bootstrapped.
@@ -1020,11 +1020,15 @@ const (
 	// version 178
 	//   write mDDLTableVersion into `mysql.tidb` table
 	version178 = 178
+
+	// vresion 179
+	//   enlarge `VARIABLE_VALUE` of `mysql.global_variables` from `varchar(1024)` to `varchar(16383)`.
+	version179 = 179
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version178
+var currentBootstrapVersion int64 = version179
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1178,6 +1182,7 @@ var (
 		upgradeToVer176,
 		upgradeToVer177,
 		upgradeToVer178,
+		upgradeToVer179,
 	}
 )
 
@@ -2877,6 +2882,13 @@ func upgradeToVer178(s Session, ver int64) {
 		return
 	}
 	writeDDLTableVersion(s)
+}
+
+func upgradeToVer179(s Session, ver int64) {
+	if ver >= version179 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.global_variables MODIFY COLUMN `VARIABLE_VALUE` varchar(16383)")
 }
 
 func writeOOMAction(s Session) {

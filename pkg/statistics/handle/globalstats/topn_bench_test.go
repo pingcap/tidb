@@ -16,6 +16,7 @@ package globalstats
 
 import (
 	"fmt"
+	"math/rand"
 	"testing"
 	"time"
 
@@ -30,29 +31,22 @@ import (
 	"github.com/tiancaiamao/gp"
 )
 
-// cmd: go test -run=^$ -bench=BenchmarkMergePartTopN2GlobalTopNWithHists -benchmem github.com/pingcap/tidb/pkg/statistics/handle/globalstats
-func benchmarkMergePartTopN2GlobalTopNWithHists(partitions int, b *testing.B) {
-	loc := time.UTC
-	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
-	version := 1
-	killer := sqlkiller.SQLKiller{}
-
+func prepareTopNsAndHists(b *testing.B, partitions int, tz *time.Location) ([]*statistics.TopN, []*statistics.Histogram) {
+	sc := stmtctx.NewStmtCtxWithTimeZone(tz)
 	// Prepare TopNs.
 	topNs := make([]*statistics.TopN, 0, partitions)
 	for i := 0; i < partitions; i++ {
-		// Construct TopN, should be key1 -> 2, key2 -> 2, key3 -> 3.
-		topN := statistics.NewTopN(3)
+		// Construct TopN, should be key1 -> rand(0, 1000), key2 -> rand(0, 1000), key3 -> rand(0, 1000)...
+		topN := statistics.NewTopN(500)
 		{
-			key1, err := codec.EncodeKey(sc, nil, types.NewIntDatum(1))
-			require.NoError(b, err)
-			topN.AppendTopN(key1, 2)
-			key2, err := codec.EncodeKey(sc, nil, types.NewIntDatum(2))
-			require.NoError(b, err)
-			topN.AppendTopN(key2, 2)
-			if i%2 == 0 {
-				key3, err := codec.EncodeKey(sc, nil, types.NewIntDatum(3))
+			for j := 1; j <= 500; j++ {
+				// Randomly skip some keys for some partitions.
+				if i%2 == 0 && j%2 == 0 {
+					continue
+				}
+				key, err := codec.EncodeKey(sc, nil, types.NewIntDatum(int64(j)))
 				require.NoError(b, err)
-				topN.AppendTopN(key3, 3)
+				topN.AppendTopN(key, uint64(rand.Intn(1000)))
 			}
 		}
 		topNs = append(topNs, topN)
@@ -62,68 +56,55 @@ func benchmarkMergePartTopN2GlobalTopNWithHists(partitions int, b *testing.B) {
 	hists := make([]*statistics.Histogram, 0, partitions)
 	for i := 0; i < partitions; i++ {
 		// Construct Hist
-		h := statistics.NewHistogram(1, 10, 0, 0, types.NewFieldType(mysql.TypeTiny), chunk.InitialCapacity, 0)
-		h.Bounds.AppendInt64(0, 1)
-		h.Buckets = append(h.Buckets, statistics.Bucket{Repeat: 10, Count: 20})
-		h.Bounds.AppendInt64(0, 2)
-		h.Buckets = append(h.Buckets, statistics.Bucket{Repeat: 10, Count: 30})
-		h.Bounds.AppendInt64(0, 3)
-		h.Buckets = append(h.Buckets, statistics.Bucket{Repeat: 10, Count: 30})
-		h.Bounds.AppendInt64(0, 4)
-		h.Buckets = append(h.Buckets, statistics.Bucket{Repeat: 10, Count: 40})
+		h := statistics.NewHistogram(1, 500, 0, 0, types.NewFieldType(mysql.TypeTiny), chunk.InitialCapacity, 0)
+		for j := 1; j <= 500; j++ {
+			datum := types.NewIntDatum(int64(j))
+			h.AppendBucket(&datum, &datum, int64(10+j*10), 10)
+		}
 		hists = append(hists, h)
 	}
+
+	return topNs, hists
+}
+
+func benchmarkMergePartTopN2GlobalTopNWithHists(partitions int, b *testing.B) {
+	loc := time.UTC
+	version := 1
+	killer := sqlkiller.SQLKiller{}
+	topNs, hists := prepareTopNsAndHists(b, partitions, loc)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		// Benchmark merge 10 topN.
-		_, _, _, _ = MergePartTopN2GlobalTopN(loc, version, topNs, 10, hists, false, &killer)
+		// Benchmark merge 100 topN.
+		_, _, _, _ = MergePartTopN2GlobalTopN(
+			loc,
+			version,
+			topNs,
+			100,
+			hists,
+			false,
+			&killer,
+		)
 	}
 }
 
-// cmd: go test -run=^$ -bench=BenchmarkMergeGlobalStatsTopNByConcurrencyWithHists -benchmem github.com/pingcap/tidb/pkg/statistics/handle/globalstats
+var benchmarkSizes = []int{100, 1000, 2000, 5000, 10000}
+
+// cmd: go test -run=^$ -bench=BenchmarkMergePartTopN2GlobalTopNWithHists -benchmem github.com/pingcap/tidb/pkg/statistics/handle/globalstats
+func BenchmarkMergePartTopN2GlobalTopNWithHists(b *testing.B) {
+	for _, size := range benchmarkSizes {
+		b.Run(fmt.Sprintf("Size%d", size), func(b *testing.B) {
+			benchmarkMergePartTopN2GlobalTopNWithHists(size, b)
+		})
+	}
+}
+
 func benchmarkMergeGlobalStatsTopNByConcurrencyWithHists(partitions int, b *testing.B) {
 	loc := time.UTC
-	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
 	version := 1
 	killer := sqlkiller.SQLKiller{}
 
-	// Prepare TopNs.
-	topNs := make([]*statistics.TopN, 0, partitions)
-	for i := 0; i < partitions; i++ {
-		// Construct TopN, should be key1 -> 2, key2 -> 2, key3 -> 3.
-		topN := statistics.NewTopN(3)
-		{
-			key1, err := codec.EncodeKey(sc, nil, types.NewIntDatum(1))
-			require.NoError(b, err)
-			topN.AppendTopN(key1, 2)
-			key2, err := codec.EncodeKey(sc, nil, types.NewIntDatum(2))
-			require.NoError(b, err)
-			topN.AppendTopN(key2, 2)
-			if i%2 == 0 {
-				key3, err := codec.EncodeKey(sc, nil, types.NewIntDatum(3))
-				require.NoError(b, err)
-				topN.AppendTopN(key3, 3)
-			}
-		}
-		topNs = append(topNs, topN)
-	}
-
-	// Prepare Hists.
-	hists := make([]*statistics.Histogram, 0, partitions)
-	for i := 0; i < partitions; i++ {
-		// Construct Hist
-		h := statistics.NewHistogram(1, 10, 0, 0, types.NewFieldType(mysql.TypeTiny), chunk.InitialCapacity, 0)
-		h.Bounds.AppendInt64(0, 1)
-		h.Buckets = append(h.Buckets, statistics.Bucket{Repeat: 10, Count: 20})
-		h.Bounds.AppendInt64(0, 2)
-		h.Buckets = append(h.Buckets, statistics.Bucket{Repeat: 10, Count: 30})
-		h.Bounds.AppendInt64(0, 3)
-		h.Buckets = append(h.Buckets, statistics.Bucket{Repeat: 10, Count: 30})
-		h.Bounds.AppendInt64(0, 4)
-		h.Buckets = append(h.Buckets, statistics.Bucket{Repeat: 10, Count: 40})
-		hists = append(hists, h)
-	}
+	topNs, hists := prepareTopNsAndHists(b, partitions, loc)
 	wrapper := NewStatsWrapper(hists, topNs)
 	const mergeConcurrency = 4
 	batchSize := len(wrapper.AllTopN) / mergeConcurrency
@@ -136,24 +117,24 @@ func benchmarkMergeGlobalStatsTopNByConcurrencyWithHists(partitions int, b *test
 	defer gpool.Close()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		// Benchmark merge 10 topN.
-		_, _, _, _ = MergeGlobalStatsTopNByConcurrency(gpool, mergeConcurrency, batchSize, wrapper, loc, version, 10, false, &killer)
+		// Benchmark merge 100 topN.
+		_, _, _, _ = MergeGlobalStatsTopNByConcurrency(
+			gpool,
+			mergeConcurrency,
+			batchSize,
+			wrapper,
+			loc,
+			version,
+			100,
+			false,
+			&killer,
+		)
 	}
 }
 
-var benchmarkSizes = []int{100, 1000, 10000, 100000, 1000000, 10000000}
-var benchmarkConcurrencySizes = []int{100, 1000, 10000, 100000}
-
-func BenchmarkMergePartTopN2GlobalTopNWithHists(b *testing.B) {
-	for _, size := range benchmarkSizes {
-		b.Run(fmt.Sprintf("Size%d", size), func(b *testing.B) {
-			benchmarkMergePartTopN2GlobalTopNWithHists(size, b)
-		})
-	}
-}
-
+// cmd: go test -run=^$ -bench=BenchmarkMergeGlobalStatsTopNByConcurrencyWithHists -benchmem github.com/pingcap/tidb/pkg/statistics/handle/globalstats
 func BenchmarkMergeGlobalStatsTopNByConcurrencyWithHists(b *testing.B) {
-	for _, size := range benchmarkConcurrencySizes {
+	for _, size := range benchmarkSizes {
 		b.Run(fmt.Sprintf("Size%d", size), func(b *testing.B) {
 			benchmarkMergeGlobalStatsTopNByConcurrencyWithHists(size, b)
 		})

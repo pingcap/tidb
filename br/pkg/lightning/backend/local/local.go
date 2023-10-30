@@ -961,8 +961,8 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 			store,
 			externalCfg.DataFiles,
 			externalCfg.StatFiles,
-			externalCfg.MinKey,
-			externalCfg.MaxKey,
+			externalCfg.StartKey,
+			externalCfg.EndKey,
 			externalCfg.SplitKeys,
 			externalCfg.RegionSplitSize,
 			local.keyAdapter,
@@ -1073,28 +1073,26 @@ func readAndSplitIntoRange(
 	sizeLimit int64,
 	keysLimit int64,
 ) ([]common.Range, error) {
-	firstKey, lastKey, err := engine.GetKeyRange()
+	startKey, endKey, err := engine.GetKeyRange()
 	if err != nil {
 		return nil, err
 	}
-	if firstKey == nil {
+	if startKey == nil {
 		return nil, errors.New("could not find first pair")
 	}
-
-	endKey := nextKey(lastKey)
 
 	engineFileTotalSize, engineFileLength := engine.KVStatistics()
 
 	if engineFileTotalSize <= sizeLimit && engineFileLength <= keysLimit {
-		ranges := []common.Range{{Start: firstKey, End: endKey}}
+		ranges := []common.Range{{Start: startKey, End: endKey}}
 		return ranges, nil
 	}
 
 	logger := log.FromContext(ctx).With(zap.String("engine", engine.ID()))
-	ranges, err := engine.SplitRanges(firstKey, endKey, sizeLimit, keysLimit, logger)
+	ranges, err := engine.SplitRanges(startKey, endKey, sizeLimit, keysLimit, logger)
 	logger.Info("split engine key ranges",
 		zap.Int64("totalSize", engineFileTotalSize), zap.Int64("totalCount", engineFileLength),
-		logutil.Key("firstKey", firstKey), logutil.Key("lastKey", lastKey),
+		logutil.Key("startKey", startKey), logutil.Key("endKey", endKey),
 		zap.Int("ranges", len(ranges)), zap.Error(err))
 	return ranges, err
 }
