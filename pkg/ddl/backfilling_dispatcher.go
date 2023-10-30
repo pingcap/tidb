@@ -291,7 +291,7 @@ func generateNonPartitionPlan(d *ddl, tblInfo *model.TableInfo, job *model.Job) 
 	}
 
 	subTaskMetas := make([][]byte, 0, 100)
-	regionBatch := 20
+	regionBatch := 100
 	//if len(recordRegionMetas)/100 > 1000 {
 	//	regionBatch = len(recordRegionMetas) / 1000
 	//}

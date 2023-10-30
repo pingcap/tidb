@@ -1805,6 +1805,8 @@ func writeChunkToLocal(
 			unlock()
 		}
 	}()
+	memoryUsage := iter.GetChunk().MemoryUsage()
+	ts := time.Now()
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		handleDataBuf = handleDataBuf[:0]
 		handleDataBuf := extractDatumByOffsets(row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
@@ -1826,6 +1828,7 @@ func writeChunkToLocal(
 		count++
 		lastHandle = handle
 	}
+	metrics.AddIndexScanRate.WithLabelValues("writeChunkToLocal").Observe(float64(memoryUsage) / 1024 / 1024 / time.Since(ts).Seconds())
 	return count, lastHandle, nil
 }
 
