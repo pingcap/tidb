@@ -51,7 +51,7 @@ go_test(
         "//pkg/disttask/framework/proto",
         "//pkg/resourcemanager/pool/spool",
         "//pkg/resourcemanager/util",
-        "@com_github_pkg_errors//:errors",
+        "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_mock//gomock",
     ],
