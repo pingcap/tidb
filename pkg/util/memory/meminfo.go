@@ -171,6 +171,9 @@ func init() {
 }
 
 // InitMemoryHook initializes the memory hook.
+// It is to solve the problem that tidb cannot read cgroup in the systemd.
+// so if we are not in the container, we compare the cgroup memory limit and the physical memory,
+// the cgroup memory limit is smaller, we use the cgroup memory hook.
 func InitMemoryHook() {
 	if !cgroup.InContainer() {
 		cgroupValue, err := cgroup.GetMemoryLimit()
