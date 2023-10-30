@@ -240,7 +240,7 @@ func (la *LogicalAggregation) tryEliminateApply(opt *logicalOptimizeOp) error {
 				proj.Children()[0] = apply.Children()[0]
 			}
 		}
-	} else if _, isApply := aggChild.(*LogicalApply); isApply {
+	} else if _, isApply := aggChild.(*LogicalApply); isApply && la.AggFuncs[0].Name == ast.AggFuncCount && len(expression.ExtractColumns(la.AggFuncs[0].Args[0])) == 0 {
 		// If the child node is a LogicalApply, we can check if the column is used by the parent node.
 		usedlist := expression.GetUsedList(la.Schema().Columns, aggChild.Children()[1].Schema())
 		used := false
