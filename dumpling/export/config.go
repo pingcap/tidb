@@ -351,7 +351,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.Bool(flagTransactionalConsistency, true, "Only support transactional consistency")
 	_ = flags.MarkHidden(flagTransactionalConsistency)
 	flags.StringP(flagCompress, "c", "", "Compress output file type, support 'gzip', 'snappy', 'zstd', 'no-compression' now")
-	flags.String(flagCsvOutputDialect, "", "The dialect of output file, support 'snowflake', 'redshift' now, only take effect when dump whole table to csv")
+	flags.String(flagCsvOutputDialect, "", "The dialect of output CSV file, support 'snowflake', 'redshift' now")
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags
