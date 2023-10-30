@@ -382,6 +382,7 @@ func buildHandle(pkDts []types.Datum, tblInfo *model.TableInfo, pkInfo *model.In
 		}
 		return kv.NewCommonHandle(handleBytes)
 	}
+	return kv.IntHandle(pkDts[0].GetInt64()), nil
 	ih := bufHandle.(*kv.IntHandle)
 	ih.SetInt(int(pkDts[0].GetInt64()))
 	return bufHandle, nil
