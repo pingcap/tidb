@@ -480,7 +480,7 @@ func (s *BaseScheduler) onError(err error) {
 
 	if s.mu.err == nil {
 		s.mu.err = err
-		logutil.Logger(s.logCtx).Error("scheduler meet first error", zap.Error(err))
+		logutil.Logger(s.logCtx).Error("scheduler met first error", zap.Error(err))
 	}
 
 	if s.mu.runtimeCancel != nil {
