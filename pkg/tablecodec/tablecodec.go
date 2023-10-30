@@ -1139,8 +1139,9 @@ func GenIndexKey(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo
 	}
 	if !distinct && h != nil {
 		if h.IsInt() {
-			key = append(key, intFlag)
-			key = codec.EncodeInt(key, h.IntValue())
+			key, err = codec.EncodeKey(sc, key, types.NewDatum(h.IntValue()))
+			//key = append(key, intFlag)
+			//key = codec.EncodeInt(key, h.IntValue())
 		} else {
 			key = append(key, h.Encoded()...)
 		}
