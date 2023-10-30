@@ -979,7 +979,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrInfoSchemaExpired:                mysql.Message("Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV", nil),
 	ErrInfoSchemaChanged:                mysql.Message("Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`", nil),
 	ErrBadNumber:                        mysql.Message("Bad Number", nil),
-	ErrCastAsSignedOverflow:             mysql.Message("Cast to signed converted positive out-of-range integer to it's negative complement", nil),
+	ErrCastAsSignedOverflow:             mysql.Message("Cast to signed converted positive out-of-range integer to its negative complement", nil),
 	ErrCastNegIntAsUnsigned:             mysql.Message("Cast to unsigned converted negative integer to it's positive complement", nil),
 	ErrInvalidYearFormat:                mysql.Message("invalid year format", nil),
 	ErrInvalidYear:                      mysql.Message("invalid year", nil),
