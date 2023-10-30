@@ -44,12 +44,21 @@ func newKVReader(
 	if err != nil {
 		return nil, err
 	}
+	// lance test
+	br.logger = br.logger.With(zap.String("filename", name))
 	return &kvReader{
 		byteReader: br,
 	}, nil
 }
 
 func (r *kvReader) nextKV() (key, val []byte, err error) {
+	defer func() {
+		rec := recover()
+		if rec != nil {
+			r.byteReader.logger.Error("panic in nextKV", zap.Reflect("recover", rec))
+			panic(rec)
+		}
+	}()
 	r.byteReader.reset()
 	lenBytes, err := r.byteReader.readNBytes(8)
 	if err != nil {
