@@ -329,7 +329,7 @@ func (d *ddl) checkAndUpdateClusterState(needUpdate bool) error {
 
 	ownerOp := owner.OpNone
 	if stateInfo.State == syncer.StateUpgrading {
-		ownerOp = owner.OpGetUpgradingState
+		ownerOp = owner.OpSyncUpgradingState
 	}
 	err = d.ownerManager.SetOwnerOpValue(d.ctx, ownerOp)
 	if err != nil {

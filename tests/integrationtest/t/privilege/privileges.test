@@ -47,6 +47,7 @@ connection default;
 drop table t1;
 
 # TestGrantRoutine
+drop user if exists u1;
 CREATE USER u1;
 CREATE TABLE routine_table (a int);
 GRANT CREATE ROUTINE on privilege__privileges.* to u1;
@@ -229,6 +230,7 @@ connection default;
 
 
 # TestRevokePrivileges
+drop user if exists u4, 'hasgrant', 'withoutgrant';
 CREATE USER 'hasgrant';
 CREATE USER 'withoutgrant';
 GRANT ALL ON *.* TO 'hasgrant';

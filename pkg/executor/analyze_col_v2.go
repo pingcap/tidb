@@ -19,7 +19,6 @@ import (
 	stderrors "errors"
 	"math"
 	"sort"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -40,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -277,8 +275,8 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	sc := e.ctx.GetSessionVars().StmtCtx
 
 	// Start workers to merge the result from collectors.
-	mergeResultCh := make(chan *samplingMergeResult, samplingStatsConcurrency)
-	mergeTaskCh := make(chan []byte, samplingStatsConcurrency)
+	mergeResultCh := make(chan *samplingMergeResult, 1)
+	mergeTaskCh := make(chan []byte, 1)
 	var taskEg errgroup.Group
 	// Start read data from resultHandler and send them to mergeTaskCh.
 	taskEg.Go(func() (err error) {
@@ -888,8 +886,8 @@ func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, me
 			dom := domain.GetDomain(ctx)
 			dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
 		})
-		if atomic.LoadUint32(&ctx.GetSessionVars().Killed) == 1 {
-			return errors.Trace(exeerrors.ErrQueryInterrupted)
+		if err := ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+			return err
 		}
 		failpoint.Inject("mockSlowAnalyzeV2", func() {
 			time.Sleep(1000 * time.Second)

@@ -42,7 +42,6 @@ go_library(
         "//pkg/util/domainutil",
         "//pkg/util/execdetails",
         "//pkg/util/logutil",
-        "//pkg/util/mathutil",
         "//pkg/util/mock",
         "//pkg/util/pdapi",
         "//pkg/util/sem",
