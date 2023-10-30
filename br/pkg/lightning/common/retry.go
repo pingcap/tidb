@@ -79,6 +79,8 @@ var retryableErrorIDs = map[errors.ErrorID]struct{}{
 	ErrKVReadIndexNotReady.ID():   {},
 	ErrKVIngestFailed.ID():        {},
 	ErrKVRaftProposalDropped.ID(): {},
+	// litBackendCtxMgr.Register may return the error.
+	ErrCreatePDClient.ID(): {},
 	// during checksum coprocessor will transform error into driver error in handleCopResponse using ToTiDBErr
 	// met ErrRegionUnavailable on free-tier import during checksum, others hasn't met yet
 	drivererr.ErrRegionUnavailable.ID(): {},
