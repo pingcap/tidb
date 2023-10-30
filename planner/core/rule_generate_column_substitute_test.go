@@ -203,7 +203,8 @@ import (
 //
 // Expression hashcode is a lazy utility used for comparison in some cases, if the later usage is not exist, the re-computation of them here is also unnecessary.
 func BenchmarkSubstituteExpression(b *testing.B) {
-	store := testkit.CreateMockStore(b)
+	store, clean := testkit.CreateMockStore(b)
+	defer clean()
 	tk := testkit.NewTestKit(b, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tai")
@@ -273,8 +274,9 @@ func BenchmarkSubstituteExpression(b *testing.B) {
 	}
 	b.ResetTimer()
 	b.StartTimer()
+	sctx := selection.SCtx()
 	for i := 0; i < b.N; i++ {
-		core.SubstituteExpression(selection.(*core.LogicalSelection).Conditions[0], selection, m, selection.Schema(), nil)
+		core.SubstituteExpression(selection.(*core.LogicalSelection).Conditions[0], sctx.GetSessionVars().StmtCtx, sctx, m, selection.Schema())
 	}
 	b.StopTimer()
 }
