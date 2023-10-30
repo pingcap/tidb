@@ -125,14 +125,6 @@ func (w *HashAggFinalWorker) loadFinalResult(sctx sessionctx.Context) {
 
 	execStart := time.Now()
 	for _, results := range w.partialResultMap {
-		if result.IsFull() {
-			w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
-			result, finished = w.receiveFinalResultHolder()
-			if finished {
-				return
-			}
-		}
-
 		for j, af := range w.aggFuncs {
 			if err := af.AppendFinalResult2Chunk(sctx, results[j], result); err != nil {
 				logutil.BgLogger().Error("HashAggFinalWorker failed to append final result to Chunk", zap.Error(err))
@@ -141,6 +133,14 @@ func (w *HashAggFinalWorker) loadFinalResult(sctx sessionctx.Context) {
 
 		if len(w.aggFuncs) == 0 {
 			result.SetNumVirtualRows(result.NumRows() + 1)
+		}
+
+		if result.IsFull() {
+			w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
+			result, finished = w.receiveFinalResultHolder()
+			if finished {
+				return
+			}
 		}
 	}
 
