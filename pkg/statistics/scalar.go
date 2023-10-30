@@ -73,7 +73,7 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 			minTime = types.MinTimestamp
 		}
 		sc := stmtctx.NewStmtCtxWithTimeZone(types.BoundTimezone)
-		return float64(valueTime.Sub(sc, &minTime).Duration)
+		return float64(valueTime.Sub(sc.TypeCtx(), &minTime).Duration)
 	case types.KindString, types.KindBytes:
 		bytes := value.GetBytes()
 		if len(bytes) <= commonPfxLen {
@@ -275,19 +275,19 @@ func EnumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 		}
 		fsp := max(lowTime.Fsp(), highTime.Fsp())
 		var stepSize int64
-		sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
+		typeCtx := types.DefaultStmtNoWarningContext
 		if lowTime.Type() == mysql.TypeDate {
 			stepSize = 24 * int64(time.Hour)
 			lowTime.SetCoreTime(types.FromDate(lowTime.Year(), lowTime.Month(), lowTime.Day(), 0, 0, 0, 0))
 		} else {
 			var err error
-			lowTime, err = lowTime.RoundFrac(sc, fsp)
+			lowTime, err = lowTime.RoundFrac(typeCtx, fsp)
 			if err != nil {
 				return nil
 			}
 			stepSize = int64(math.Pow10(types.MaxFsp-fsp)) * int64(time.Microsecond)
 		}
-		remaining := int64(highTime.Sub(sc, &lowTime).Duration)/stepSize + 1 - int64(exclude)
+		remaining := int64(highTime.Sub(typeCtx, &lowTime).Duration)/stepSize + 1 - int64(exclude)
 		// When `highTime` is much larger than `lowTime`, `remaining` may be overflowed to a negative value.
 		if remaining <= 0 || remaining >= maxNumStep {
 			return nil
@@ -295,14 +295,14 @@ func EnumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 		startValue := lowTime
 		var err error
 		if lowExclude {
-			startValue, err = lowTime.Add(sc, types.Duration{Duration: time.Duration(stepSize), Fsp: fsp})
+			startValue, err = lowTime.Add(typeCtx, types.Duration{Duration: time.Duration(stepSize), Fsp: fsp})
 			if err != nil {
 				return nil
 			}
 		}
 		values := make([]types.Datum, 0, remaining)
 		for i := int64(0); i < remaining; i++ {
-			value, err := startValue.Add(sc, types.Duration{Duration: time.Duration(i * stepSize), Fsp: fsp})
+			value, err := startValue.Add(typeCtx, types.Duration{Duration: time.Duration(i * stepSize), Fsp: fsp})
 			if err != nil {
 				return nil
 			}
