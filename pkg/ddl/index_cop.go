@@ -373,8 +373,7 @@ func extractDatumByOffsets(row chunk.Row, offsets []int, expCols []*expression.C
 	return buf
 }
 
-func buildHandle(pkDts []types.Datum, tblInfo *model.TableInfo,
-	pkInfo *model.IndexInfo, stmtCtx *stmtctx.StatementContext) (kv.Handle, error) {
+func buildHandle(pkDts []types.Datum, tblInfo *model.TableInfo, pkInfo *model.IndexInfo, stmtCtx *stmtctx.StatementContext, bufHandle kv.Handle) (kv.Handle, error) {
 	if tblInfo.IsCommonHandle {
 		tablecodec.TruncateIndexValues(tblInfo, pkInfo, pkDts)
 		handleBytes, err := codec.EncodeKey(stmtCtx, nil, pkDts...)
@@ -383,5 +382,6 @@ func buildHandle(pkDts []types.Datum, tblInfo *model.TableInfo,
 		}
 		return kv.NewCommonHandle(handleBytes)
 	}
-	return kv.IntHandle(pkDts[0].GetInt64()), nil
+	bufHandle.SetInt(int(pkDts[0].GetInt64()))
+	return bufHandle, nil
 }

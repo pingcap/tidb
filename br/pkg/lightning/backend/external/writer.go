@@ -327,8 +327,6 @@ func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tid
 	}
 	encodedKeyLen := keyAdapter.EncodedLen(idxKey, rowID)
 	length := encodedKeyLen + len(idxVal) + lengthBytes*2
-	w.mu.Lock()
-	defer w.mu.Unlock()
 
 	blockIdx, dataBuf, off, allocated := w.kvBuffer.Alloc(length)
 	if !allocated {

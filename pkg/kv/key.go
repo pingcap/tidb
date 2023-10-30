@@ -171,6 +171,8 @@ type Handle interface {
 	MemUsage() uint64
 	// ExtraMemSize returns the memory usage of objects that are pointed to by the Handle.
 	ExtraMemSize() uint64
+
+	SetInt(i int)
 }
 
 var _ Handle = IntHandle(0)
@@ -254,6 +256,14 @@ func (IntHandle) MemUsage() uint64 {
 // ExtraMemSize implements the Handle interface.
 func (IntHandle) ExtraMemSize() uint64 {
 	return 0
+}
+
+func (h IntHandle) SetInt(i int) {
+	h = IntHandle(i)
+}
+
+func (IntHandle) SetEncode(encoded []byte) error {
+	return nil
 }
 
 // CommonHandle implements the Handle interface for non-int64 type handle.
@@ -386,6 +396,36 @@ func (ch *CommonHandle) MemUsage() uint64 {
 func (ch *CommonHandle) ExtraMemSize() uint64 {
 	// colEndOffsets is a slice of uint16.
 	return uint64(cap(ch.encoded) + cap(ch.colEndOffsets)*2)
+}
+
+func (ch *CommonHandle) SetInt(i int) {
+	panic("not supported in CommonHandle")
+}
+
+func (ch *CommonHandle) SetEncode(encoded []byte) error {
+	ch.encoded = encoded
+	if len(encoded) < 9 {
+		padded := make([]byte, 9)
+		copy(padded, encoded)
+		ch.encoded = padded
+	}
+	remain := encoded
+	endOff := uint16(0)
+	for len(remain) > 0 {
+		if remain[0] == 0 {
+			// padded data
+			break
+		}
+		var err error
+		var col []byte
+		col, remain, err = codec.CutOne(remain)
+		if err != nil {
+			return err
+		}
+		endOff += uint16(len(col))
+		ch.colEndOffsets = append(ch.colEndOffsets, endOff)
+	}
+	return nil
 }
 
 // HandleMap is the map for Handle.

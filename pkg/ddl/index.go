@@ -1807,10 +1807,13 @@ func writeChunkToLocal(
 	}()
 	memoryUsage := iter.GetChunk().MemoryUsage()
 	ts := time.Now()
+	var handle kv.Handle
+	var err error
+	buf := make([]byte, 0, 64)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		handleDataBuf = handleDataBuf[:0]
 		handleDataBuf := extractDatumByOffsets(row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
-		handle, err := buildHandle(handleDataBuf, c.TableInfo, c.PrimaryKeyInfo, sCtx)
+		handle, err = buildHandle(handleDataBuf, c.TableInfo, c.PrimaryKeyInfo, sCtx, handle)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
@@ -1820,7 +1823,7 @@ func writeChunkToLocal(
 			idxDataBuf = extractDatumByOffsets(
 				row, copCtx.IndexColumnOutputOffsets(idxID), c.ExprColumnInfos, idxDataBuf)
 			rsData := getRestoreData(c.TableInfo, copCtx.IndexInfo(idxID), c.PrimaryKeyInfo, handleDataBuf)
-			err = writeOneKVToLocal(ctx, writers[i], index, sCtx, writeBufs, idxDataBuf, rsData, handle)
+			err = writeOneKVToLocal(ctx, writers[i], index, sCtx, writeBufs, idxDataBuf, rsData, handle, &buf)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
@@ -1843,20 +1846,14 @@ func maxIndexColumnCount(indexes []table.Index) int {
 	return maxCnt
 }
 
-func writeOneKVToLocal(
-	ctx context.Context,
-	writer ingest.Writer,
-	index table.Index,
-	sCtx *stmtctx.StatementContext,
-	writeBufs *variable.WriteStmtBufs,
-	idxDt, rsData []types.Datum,
-	handle kv.Handle,
-) error {
+func writeOneKVToLocal(ctx context.Context, writer ingest.Writer, index table.Index, sCtx *stmtctx.StatementContext,
+	writeBufs *variable.WriteStmtBufs, idxDt, rsData []types.Datum,
+	handle kv.Handle, buf *[]byte) error {
 	key, distinct, err := index.GenIndexKey(sCtx, idxDt, handle, writeBufs.IndexKeyBuf)
 	if err != nil {
 		return err
 	}
-	idxVal, err := index.GenIndexValue(sCtx, distinct, idxDt, handle, rsData)
+	idxVal, err := index.GenIndexValue(sCtx, distinct, idxDt, handle, rsData, *buf)
 	if err != nil {
 		return err
 	}
