@@ -81,15 +81,16 @@ func (h *mergeHeap[T]) Pop() interface{} {
 }
 
 type mergeIter[T heapElem, R sortedReader[T]] struct {
-	h               mergeHeap[T]
-	readers         []*R
-	curr            T
-	lastReaderIdx   int
-	err             error
-	hotspotMap      map[int]int
-	checkHotspotCnt int
-	lastHotspotIdx  int
-	elemFromHotspot *T
+	h                  mergeHeap[T]
+	readers            []*R
+	curr               T
+	lastReaderIdx      int
+	err                error
+	hotspotMap         map[int]int
+	checkHotspotCnt    int
+	checkHotspotPeriod int
+	lastHotspotIdx     int
+	elemFromHotspot    *T
 
 	logger *zap.Logger
 }
@@ -151,6 +152,8 @@ func newMergeIter[
 		hotspotMap:    make(map[int]int),
 		logger:        logger,
 	}
+	sampleKeySize := 0
+	sampleKeyCnt := 0
 	for j := range i.readers {
 		if i.readers[j] == nil {
 			continue
@@ -179,6 +182,15 @@ func newMergeIter[
 			elem:      e,
 			readerIdx: j,
 		})
+		sampleKeySize += len(e.sortKey())
+		sampleKeyCnt++
+	}
+	// We check the hotspot when the elements size is almost the same as the concurrent reader buffer size.
+	// So that we don't drop too many bytes if the hotspot shifts to other files.
+	if sampleKeySize == 0 || sampleKeySize/sampleKeyCnt == 0 {
+		i.checkHotspotPeriod = 10000
+	} else {
+		i.checkHotspotPeriod = max(1000, ConcurrentReaderBufferSizePerConc*ConcurrentReaderConcurrency/(sampleKeySize/sampleKeyCnt))
 	}
 	heap.Init(&i.h)
 	return i, nil
@@ -210,8 +222,6 @@ func (i *mergeIter[T, R]) currElem() T {
 	return i.curr
 }
 
-var checkHotspotPeriod = 1000
-
 // next forwards the iterator to the next element. It returns false if there is
 // no available element.
 func (i *mergeIter[T, R]) next() bool {
@@ -222,12 +232,12 @@ func (i *mergeIter[T, R]) next() bool {
 		i.checkHotspotCnt++
 
 		// check hotspot every checkPeriod times
-		if i.checkHotspotCnt == checkHotspotPeriod {
+		if i.checkHotspotCnt == i.checkHotspotPeriod {
 			oldHotspotIdx := i.lastHotspotIdx
 			i.lastHotspotIdx = -1
 			for idx, cnt := range i.hotspotMap {
 				// currently only one reader will become hotspot
-				if cnt > (checkHotspotPeriod / 2) {
+				if cnt > (i.checkHotspotPeriod / 2) {
 					i.lastHotspotIdx = idx
 					break
 				}
