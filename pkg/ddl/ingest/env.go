@@ -79,7 +79,7 @@ func InitGlobalLightningEnv(ctx context.Context, sctx sessionctx.Context) {
 	LitInitialized = true
 	logutil.BgLogger().Info(LitInfoEnvInitSucc,
 		zap.String("category", "ddl-ingest"),
-		zap.Uint64("memory limitation", defaultMemoryQuota),
+		zap.Uint64("memory limitation", memTotal),
 		zap.String("disk usage info", LitDiskRoot.UsageInfo()),
 		zap.Uint64("max open file number", LitRLimit),
 		zap.Bool("lightning is initialized", LitInitialized))
