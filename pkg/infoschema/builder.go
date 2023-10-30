@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -420,9 +419,9 @@ func updateAutoIDForExchangePartition(store kv.Storage, ptSchemaID, ptID, ntSche
 
 		// Set both tables to the maximum auto IDs between normal table and partitioned table.
 		newAutoIDs := meta.AutoIDGroup{
-			RowID:       mathutil.Max(ptAutoIDs.RowID, ntAutoIDs.RowID),
-			IncrementID: mathutil.Max(ptAutoIDs.IncrementID, ntAutoIDs.IncrementID),
-			RandomID:    mathutil.Max(ptAutoIDs.RandomID, ntAutoIDs.RandomID),
+			RowID:       max(ptAutoIDs.RowID, ntAutoIDs.RowID),
+			IncrementID: max(ptAutoIDs.IncrementID, ntAutoIDs.IncrementID),
+			RandomID:    max(ptAutoIDs.RandomID, ntAutoIDs.RandomID),
 		}
 		err = t.GetAutoIDAccessors(ptSchemaID, ptID).Put(newAutoIDs)
 		if err != nil {

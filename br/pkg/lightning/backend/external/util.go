@@ -206,41 +206,39 @@ func GetMaxOverlapping(points []Endpoint) int64 {
 
 // SortedKVMeta is the meta of sorted kv.
 type SortedKVMeta struct {
-	MinKey      []byte `json:"min-key"`
-	MaxKey      []byte `json:"max-key"`
-	TotalKVSize uint64 `json:"total-kv-size"`
-	// seems those 2 fields always generated from MultipleFilesStats,
-	// maybe remove them later.
-	DataFiles          []string            `json:"data-files"`
-	StatFiles          []string            `json:"stat-files"`
+	StartKey           []byte              `json:"start-key"`
+	EndKey             []byte              `json:"end-key"` // exclusive
+	TotalKVSize        uint64              `json:"total-kv-size"`
 	MultipleFilesStats []MultipleFilesStat `json:"multiple-files-stats"`
 }
 
-// NewSortedKVMeta creates a SortedKVMeta from a WriterSummary.
+// NewSortedKVMeta creates a SortedKVMeta from a WriterSummary. If the summary
+// is empty, it will return a pointer to zero SortedKVMeta.
 func NewSortedKVMeta(summary *WriterSummary) *SortedKVMeta {
-	meta := &SortedKVMeta{
-		MinKey:             summary.Min.Clone(),
-		MaxKey:             summary.Max.Clone(),
+	if summary == nil || (len(summary.Min) == 0 && len(summary.Max) == 0) {
+		return &SortedKVMeta{}
+	}
+	return &SortedKVMeta{
+		StartKey:           summary.Min.Clone(),
+		EndKey:             summary.Max.Clone().Next(),
 		TotalKVSize:        summary.TotalSize,
 		MultipleFilesStats: summary.MultipleFilesStats,
 	}
-	for _, f := range summary.MultipleFilesStats {
-		for _, filename := range f.Filenames {
-			meta.DataFiles = append(meta.DataFiles, filename[0])
-			meta.StatFiles = append(meta.StatFiles, filename[1])
-		}
-	}
-	return meta
 }
 
 // Merge merges the other SortedKVMeta into this one.
 func (m *SortedKVMeta) Merge(other *SortedKVMeta) {
-	m.MinKey = NotNilMin(m.MinKey, other.MinKey)
-	m.MaxKey = NotNilMax(m.MaxKey, other.MaxKey)
-	m.TotalKVSize += other.TotalKVSize
+	if len(other.StartKey) == 0 && len(other.EndKey) == 0 {
+		return
+	}
+	if len(m.StartKey) == 0 && len(m.EndKey) == 0 {
+		*m = *other
+		return
+	}
 
-	m.DataFiles = append(m.DataFiles, other.DataFiles...)
-	m.StatFiles = append(m.StatFiles, other.StatFiles...)
+	m.StartKey = BytesMin(m.StartKey, other.StartKey)
+	m.EndKey = BytesMax(m.EndKey, other.EndKey)
+	m.TotalKVSize += other.TotalKVSize
 
 	m.MultipleFilesStats = append(m.MultipleFilesStats, other.MultipleFilesStats...)
 }
@@ -250,28 +248,38 @@ func (m *SortedKVMeta) MergeSummary(summary *WriterSummary) {
 	m.Merge(NewSortedKVMeta(summary))
 }
 
-// NotNilMin returns the smallest of a and b, ignoring nil values.
-func NotNilMin(a, b []byte) []byte {
-	if len(a) == 0 {
-		return b
+// GetDataFiles returns all data files in the meta.
+func (m *SortedKVMeta) GetDataFiles() []string {
+	var ret []string
+	for _, stat := range m.MultipleFilesStats {
+		for _, files := range stat.Filenames {
+			ret = append(ret, files[0])
+		}
 	}
-	if len(b) == 0 {
-		return a
+	return ret
+}
+
+// GetStatFiles returns all stat files in the meta.
+func (m *SortedKVMeta) GetStatFiles() []string {
+	var ret []string
+	for _, stat := range m.MultipleFilesStats {
+		for _, files := range stat.Filenames {
+			ret = append(ret, files[1])
+		}
 	}
+	return ret
+}
+
+// BytesMin returns the smallest of byte slice a and b.
+func BytesMin(a, b []byte) []byte {
 	if bytes.Compare(a, b) < 0 {
 		return a
 	}
 	return b
 }
 
-// NotNilMax returns the largest of a and b, ignoring nil values.
-func NotNilMax(a, b []byte) []byte {
-	if len(a) == 0 {
-		return b
-	}
-	if len(b) == 0 {
-		return a
-	}
+// BytesMax returns the largest of byte slice a and b.
+func BytesMax(a, b []byte) []byte {
 	if bytes.Compare(a, b) > 0 {
 		return a
 	}

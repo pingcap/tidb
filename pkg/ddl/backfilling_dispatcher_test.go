@@ -175,11 +175,9 @@ func TestBackfillingDispatcherGlobalSortMode(t *testing.T) {
 	// update meta, same as import into.
 	sortStepMeta := &ddl.BackfillSubTaskMeta{
 		SortedKVMeta: external.SortedKVMeta{
-			MinKey:      []byte("ta"),
-			MaxKey:      []byte("tc"),
+			StartKey:    []byte("ta"),
+			EndKey:      []byte("tc"),
 			TotalKVSize: 12,
-			DataFiles:   []string{"gs://sort-bucket/data/1"},
-			StatFiles:   []string{"gs://sort-bucket/data/1.stat"},
 			MultipleFilesStats: []external.MultipleFilesStat{
 				{
 					Filenames: [][2]string{
@@ -216,11 +214,9 @@ func TestBackfillingDispatcherGlobalSortMode(t *testing.T) {
 	require.NoError(t, err)
 	mergeSortStepMeta := &ddl.BackfillSubTaskMeta{
 		SortedKVMeta: external.SortedKVMeta{
-			MinKey:      []byte("ta"),
-			MaxKey:      []byte("tc"),
+			StartKey:    []byte("ta"),
+			EndKey:      []byte("tc"),
 			TotalKVSize: 12,
-			DataFiles:   []string{"gs://sort-bucket/data/1"},
-			StatFiles:   []string{"gs://sort-bucket/data/1.stat"},
 			MultipleFilesStats: []external.MultipleFilesStat{
 				{
 					Filenames: [][2]string{
