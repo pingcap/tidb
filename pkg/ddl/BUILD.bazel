@@ -16,7 +16,6 @@ go_library(
         "backfilling_dispatcher.go",
         "backfilling_dist_scheduler.go",
         "backfilling_import_cloud.go",
-        "backfilling_import_local.go",
         "backfilling_merge_sort.go",
         "backfilling_operators.go",
         "backfilling_proto.go",
@@ -129,7 +128,11 @@ go_library(
         "//pkg/util/codec",
         "//pkg/util/collate",
         "//pkg/util/dbterror",
+<<<<<<< HEAD
         "//pkg/util/disttask",
+=======
+        "//pkg/util/dbterror/exeerrors",
+>>>>>>> fd3b2cc571a (ddl: eliminate ingest step for add index with local engine (#47982))
         "//pkg/util/domainutil",
         "//pkg/util/filter",
         "//pkg/util/gcutil",
