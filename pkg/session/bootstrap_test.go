@@ -2118,8 +2118,6 @@ func TestTiDBUpgradeToVer177(t *testing.T) {
 	MustExec(t, seV176, "SELECT * from mysql.dist_framework_meta")
 	dom.Close()
 }
-<<<<<<< HEAD
-=======
 
 func TestWriteDDLTableVersionToMySQLTiDB(t *testing.T) {
 	ctx := context.Background()
@@ -2227,4 +2225,3 @@ func TestTiDBUpgradeToVer179(t *testing.T) {
 
 	dom.Close()
 }
->>>>>>> 528932ca2bd (bootstrap: modify `variable_value` column to `varchar(16383)` (#48030))

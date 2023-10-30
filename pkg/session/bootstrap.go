@@ -751,6 +751,8 @@ const (
 	// The variable name in mysql.tidb table and it records the default value of
 	// oom-action when upgrade from v3.0.x to v4.0.11+.
 	tidbDefOOMAction = "default_oom_action"
+	// The variable name in mysql.tidb table and it records the current DDLTableVersion
+	tidbDDLTableVersion = "ddl_table_version"
 	// Const for TiDB server version 2.
 	version2  = 2
 	version3  = 3
@@ -1014,8 +1016,6 @@ const (
 	// version 177
 	//   add `mysql.dist_framework_meta`
 	version177 = 177
-<<<<<<< HEAD
-=======
 
 	// version 178
 	//   write mDDLTableVersion into `mysql.tidb` table
@@ -1024,16 +1024,11 @@ const (
 	// vresion 179
 	//   enlarge `VARIABLE_VALUE` of `mysql.global_variables` from `varchar(1024)` to `varchar(16383)`.
 	version179 = 179
->>>>>>> 528932ca2bd (bootstrap: modify `variable_value` column to `varchar(16383)` (#48030))
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-<<<<<<< HEAD
-var currentBootstrapVersion int64 = version177
-=======
 var currentBootstrapVersion int64 = version179
->>>>>>> 528932ca2bd (bootstrap: modify `variable_value` column to `varchar(16383)` (#48030))
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1186,11 +1181,8 @@ var (
 		upgradeToVer175,
 		upgradeToVer176,
 		upgradeToVer177,
-<<<<<<< HEAD
-=======
 		upgradeToVer178,
 		upgradeToVer179,
->>>>>>> 528932ca2bd (bootstrap: modify `variable_value` column to `varchar(16383)` (#48030))
 	}
 )
 
@@ -2866,8 +2858,6 @@ func upgradeToVer177(s Session, ver int64) {
 	}
 }
 
-<<<<<<< HEAD
-=======
 // writeDDLTableVersion writes mDDLTableVersion into mysql.tidb
 func writeDDLTableVersion(s Session) {
 	var err error
@@ -2901,7 +2891,6 @@ func upgradeToVer179(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.global_variables MODIFY COLUMN `VARIABLE_VALUE` varchar(16383)")
 }
 
->>>>>>> 528932ca2bd (bootstrap: modify `variable_value` column to `varchar(16383)` (#48030))
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -3157,6 +3146,8 @@ func doDMLWorks(s Session) {
 	writeNewCollationParameter(s, config.GetGlobalConfig().NewCollationsEnabledOnFirstBootstrap)
 
 	writeStmtSummaryVars(s)
+
+	writeDDLTableVersion(s)
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	_, err := s.ExecuteInternal(ctx, "COMMIT")
