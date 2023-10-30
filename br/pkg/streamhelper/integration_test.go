@@ -50,8 +50,8 @@ func runEtcd(t *testing.T) (*embed.Etcd, *clientv3.Client) {
 	cfg := embed.NewConfig()
 	cfg.Dir = t.TempDir()
 	clientURL := getRandomLocalAddr()
-	cfg.LCUrls = []url.URL{clientURL}
-	cfg.LPUrls = []url.URL{getRandomLocalAddr()}
+	cfg.ListenClientUrls = []url.URL{clientURL}
+	cfg.ListenPeerUrls = []url.URL{getRandomLocalAddr()}
 	cfg.LogLevel = "fatal"
 	etcd, err := embed.StartEtcd(cfg)
 	if err != nil {
