@@ -34,16 +34,10 @@ const (
 	FlagTruncateAsWarning
 	// FlagAllowNegativeToUnsigned indicates to allow the casting from negative to unsigned int.
 	// When this flag is not set by default, casting a negative value to unsigned results an overflow error.
-	// The overflow will also be controlled by `FlagIgnoreOverflowError` and `FlagOverflowAsWarning`. When any of them is set,
-	// a zero value is returned instead.
-	// Whe this flag is set, casting a negative value to unsigned will be allowed. And the negative value will be cast to
-	// a positive value by adding the max value of the unsigned type.
+	// Otherwise, a negative value will be cast to the corresponding unsigned value without any error.
+	// For example, when casting -1 to an unsigned bigint with `FlagAllowNegativeToUnsigned` set,
+	// we will get `18446744073709551615` which is the biggest unsigned value.
 	FlagAllowNegativeToUnsigned
-	// FlagIgnoreOverflowError indicates to ignore the overflow error.
-	// If this flag is set, `FlagOverflowAsWarning` will be ignored.
-	FlagIgnoreOverflowError
-	// FlagOverflowAsWarning indicates to append the overflow error to warnings instead of returning it to user.
-	FlagOverflowAsWarning
 	// FlagIgnoreZeroDateErr indicates to ignore the zero-date error.
 	// See: https://dev.mysql.com/doc/refman/8.0/en/sql-mode.html#sqlmode_no_zero_date for details about the "zero-date" error.
 	// If this flag is set, `FlagZeroDateAsWarning` will be ignored.
@@ -55,18 +49,12 @@ const (
 	// This flag is the reverse of `NoZeroDate` in #30507. It's set to `true` for most context, and is only set to
 	// `false` for `alter` (and `create`) statements.
 	FlagIgnoreZeroDateErr
-	// FlagZeroDateAsWarning indicates to append the zero-date error to warnings instead of returning it to user.
-	FlagZeroDateAsWarning
 	// FlagIgnoreZeroInDateErr indicates to ignore the zero-in-date error.
 	// See: https://dev.mysql.com/doc/refman/8.0/en/sql-mode.html#sqlmode_no_zero_in_date for details about the "zero-in-date" error.
 	FlagIgnoreZeroInDateErr
-	// FlagZeroInDateAsWarning indicates to append the zero-in-date error to warnings instead of returning it to user.
-	FlagZeroInDateAsWarning
 	// FlagIgnoreInvalidDateErr indicates to ignore the invalid-date error.
 	// See: https://dev.mysql.com/doc/refman/8.0/en/sql-mode.html#sqlmode_allow_invalid_dates for details about the "invalid-date" error.
 	FlagIgnoreInvalidDateErr
-	// FlagInvalidDateAsWarning indicates to append the invalid-date error to warnings instead of returning it to user.
-	FlagInvalidDateAsWarning
 	// FlagSkipASCIICheck indicates to skip the ASCII check when converting the value to an ASCII string.
 	FlagSkipASCIICheck
 	// FlagSkipUTF8Check indicates to skip the UTF8 check when converting the value to an UTF8MB3 string.
