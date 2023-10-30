@@ -22,7 +22,9 @@ import (
 	"github.com/pingcap/sysutil"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/cgroup"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/shirou/gopsutil/v3/mem"
+	"go.uber.org/zap"
 )
 
 // MemTotal returns the total amount of RAM on this system
@@ -50,6 +52,10 @@ func MemTotalNormal() (uint64, error) {
 	if time.Since(t) < 60*time.Second {
 		return total, nil
 	}
+	return memTotalNormal()
+}
+
+func memTotalNormal() (uint64, error) {
 	v, err := mem.VirtualMemory()
 	if err != nil {
 		return 0, err
@@ -139,6 +145,7 @@ func MemUsedCGroup() (uint64, error) {
 	return memo, nil
 }
 
+// it is for test and init.
 func init() {
 	if cgroup.InContainer() {
 		MemTotal = MemTotalCGroup
@@ -161,6 +168,34 @@ func init() {
 	terror.MustNil(err)
 	_, err = MemUsed()
 	terror.MustNil(err)
+}
+
+// InitMemoryHook initializes the memory hook.
+func InitMemoryHook() {
+	if !cgroup.InContainer() {
+		cgroupValue, err := cgroup.GetMemoryLimit()
+		if err != nil {
+			return
+		}
+		physicalValue, err := memTotalNormal()
+		if err != nil {
+			return
+		}
+		if physicalValue > cgroupValue && cgroupValue != 0 {
+			MemTotal = MemTotalCGroup
+			MemUsed = MemUsedCGroup
+			sysutil.RegisterGetMemoryCapacity(MemTotalCGroup)
+			logutil.BgLogger().Info("use cgroup memory hook", zap.Int64("cgroupMemorySize", int64(cgroupValue)), zap.Int64("physicalMemorySize", int64(physicalValue)))
+		} else {
+			logutil.BgLogger().Info("use physical memory hook", zap.Int64("cgroupMemorySize", int64(cgroupValue)), zap.Int64("physicalMemorySize", int64(physicalValue)))
+		}
+		_, err = MemTotal()
+		terror.MustNil(err)
+		_, err = MemUsed()
+		terror.MustNil(err)
+	} else {
+		logutil.BgLogger().Info("use cgroup memory hook because TiDB is in the docker.")
+	}
 }
 
 // InstanceMemUsed returns the memory usage of this TiDB server
