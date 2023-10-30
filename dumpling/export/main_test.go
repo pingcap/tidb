@@ -30,7 +30,6 @@ var appLogger log.Logger
 
 func TestMain(m *testing.M) {
 	initColTypeRowReceiverMap()
-	initUsedBinaryFormat(BinaryFormatUTF8)
 
 	logger, _, err := log.InitAppLogger(&log.Config{
 		Level:  "debug",

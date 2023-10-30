@@ -91,6 +91,8 @@ const (
 	CSVDialectSnowflake
 	// CSVDialectRedshift is the dialect of Redshift
 	CSVDialectRedshift
+	// CSVDialectBase64 is a dialect require base64 binary format, only used for test now.
+	CSVDialectBase64
 )
 
 // BinaryFormat is the format of binary data
@@ -111,6 +113,7 @@ var DialectBinaryFormatMap = map[CSVDialect]BinaryFormat{
 	CSVDialectDefault:   BinaryFormatUTF8,
 	CSVDialectSnowflake: BinaryFormatHEX,
 	CSVDialectRedshift:  BinaryFormatHEX,
+	CSVDialectBase64:    BinaryFormatBase64,
 }
 
 // Config is the dump config for dumpling

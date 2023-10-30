@@ -10,7 +10,6 @@ import (
 )
 
 var colTypeRowReceiverMap = map[string]func() RowReceiverStringer{}
-var usedBinaryFormat BinaryFormat
 
 var (
 	nullValue         = "NULL"
@@ -64,10 +63,6 @@ func initColTypeRowReceiverMap() {
 		dataTypeBin[s] = struct{}{}
 		colTypeRowReceiverMap[s] = SQLTypeBytesMaker
 	}
-}
-
-func initUsedBinaryFormat(bf BinaryFormat) {
-	usedBinaryFormat = bf
 }
 
 var dataTypeString, dataTypeInt, dataTypeBin = make(map[string]struct{}), make(map[string]struct{}), make(map[string]struct{})
@@ -313,7 +308,7 @@ func (s *SQLTypeBytes) WriteToBuffer(bf *bytes.Buffer, _ bool) {
 func (s *SQLTypeBytes) WriteToBufferInCsv(bf *bytes.Buffer, escapeBackslash bool, opt *csvOption) {
 	if s.RawBytes != nil {
 		bf.Write(opt.delimiter)
-		switch usedBinaryFormat {
+		switch opt.binaryFormat {
 		case BinaryFormatHEX:
 			fmt.Fprintf(bf, "%x", s.RawBytes)
 		case BinaryFormatBase64:

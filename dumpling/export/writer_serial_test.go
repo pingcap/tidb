@@ -255,13 +255,12 @@ func TestWriteInsertInCsvWithDialect(t *testing.T) {
 		{"4", "female", "sarah@mail.com", "020-1235", "blob4"},
 	}
 	colTypes := []string{"INT", "SET", "VARCHAR", "VARCHAR", "BLOB"}
-
 	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N", lineTerminator: []byte("\r\n")}
 	conf := configForWriteCSV(cfg, true, opt)
 
 	{
 		// test UTF8
-		initUsedBinaryFormat(BinaryFormatUTF8)
+		conf.CsvOutputDialect = CSVDialectDefault
 		tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
 		m := newMetrics(conf.PromFactory, conf.Labels)
 		bf := storage.NewBufferWriter()
@@ -279,7 +278,7 @@ func TestWriteInsertInCsvWithDialect(t *testing.T) {
 	}
 	{
 		// test HEX
-		initUsedBinaryFormat(BinaryFormatHEX)
+		conf.CsvOutputDialect = CSVDialectRedshift
 		tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
 		m := newMetrics(conf.PromFactory, conf.Labels)
 		bf := storage.NewBufferWriter()
@@ -297,7 +296,7 @@ func TestWriteInsertInCsvWithDialect(t *testing.T) {
 	}
 	{
 		// test Base64
-		initUsedBinaryFormat(BinaryFormatBase64)
+		conf.CsvOutputDialect = CSVDialectBase64
 		tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
 		m := newMetrics(conf.PromFactory, conf.Labels)
 		bf := storage.NewBufferWriter()
