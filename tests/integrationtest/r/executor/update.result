@@ -1,0 +1,386 @@
+drop table if exists t;
+create table t(a bigint, b bigint as (a+1));
+begin;
+insert into t(a) values(1);
+update t set b=6 where b=2;
+Error 3105 (HY000): The value specified for generated column 'b' in table 't' is not allowed.
+commit;
+select * from t;
+a	b
+1	2
+drop table if exists t1, t2, t3;
+create table t1(id int primary key auto_increment, n int);
+create table t2(id int primary key, n float auto_increment, key I_n(n));
+create table t3(id int primary key, n double auto_increment, key I_n(n));
+insert into t1 set n = 1;
+select * from t1 where id = 1;
+id	n
+1	1
+update t1 set id = id+1;
+select * from t1 where id = 2;
+id	n
+2	1
+insert into t1 set n = 2;
+select * from t1 where id = 3;
+id	n
+3	2
+update t1 set id = id + '1.1' where id = 3;
+select * from t1 where id = 4;
+id	n
+4	2
+insert into t1 set n = 3;
+select * from t1 where id = 5;
+id	n
+5	3
+update t1 set id = id + '0.5' where id = 5;
+select * from t1 where id = 6;
+id	n
+6	3
+insert into t1 set n = 4;
+select * from t1 where id = 7;
+id	n
+7	4
+insert into t2 set id = 1;
+select * from t2 where id = 1;
+id	n
+1	1
+update t2 set n = n+1;
+select * from t2 where id = 1;
+id	n
+1	2
+insert into t2 set id = 2;
+select * from t2 where id = 2;
+id	n
+2	3
+update t2 set n = n + '2.2';
+select * from t2 where id = 2;
+id	n
+2	5.2
+insert into t2 set id = 3;
+select * from t2 where id = 3;
+id	n
+3	6
+update t2 set n = n + '0.5' where id = 3;
+select * from t2 where id = 3;
+id	n
+3	6.5
+insert into t2 set id = 4;
+select * from t2 where id = 4;
+id	n
+4	7
+insert into t3 set id = 1;
+select * from t3 where id = 1;
+id	n
+1	1
+update t3 set n = n+1;
+select * from t3 where id = 1;
+id	n
+1	2
+insert into t3 set id = 2;
+select * from t3 where id = 2;
+id	n
+2	3
+update t3 set n = n + '3.3';
+select * from t3 where id = 2;
+id	n
+2	6.3
+insert into t3 set id = 3;
+select * from t3 where id = 3;
+id	n
+3	7
+update t3 set n = n + '0.5' where id = 3;
+select * from t3 where id = 3;
+id	n
+3	7.5
+insert into t3 set id = 4;
+select * from t3 where id = 4;
+id	n
+4	8
+drop table if exists t;
+drop database if exists test2;
+create database test2;
+create table t(a int, b int generated always  as (a+1) virtual);
+create table test2.t(a int, b int generated always  as (a+1) virtual);
+update t, test2.t set executor__update.t.a=1;
+drop database test2;
+drop table if exists t1, t2;
+create table t1 (c_str varchar(40));
+create table t2 (c_str varchar(40));
+insert into t1 values ('Alice');
+insert into t2 values ('Bob');
+select t1.c_str, t2.c_str from t1, t2 where t1.c_str <= t2.c_str;
+c_str	c_str
+Alice	Bob
+update t1, t2 set t1.c_str = t2.c_str, t2.c_str = t1.c_str where t1.c_str <= t2.c_str;
+select t1.c_str, t2.c_str from t1, t2 where t1.c_str <= t2.c_str;
+c_str	c_str
+drop table if exists t;
+create table t (a int, b int);
+insert into t values(1, 2);
+select * from t;
+a	b
+1	2
+update t set a=b, b=a;
+select * from t;
+a	b
+2	1
+drop table if exists t;
+create table t (a int, b int);
+insert into t values (1,3);
+select * from t;
+a	b
+1	3
+update t set a=b, b=a;
+select * from t;
+a	b
+3	1
+drop table if exists t;
+create table t (a int, b int, c int as (-a) virtual, d int as (-b) stored);
+insert into t(a, b) values (10, 11), (20, 22);
+select * from t;
+a	b	c	d
+10	11	-10	-11
+20	22	-20	-22
+update t set a=b, b=a;
+select * from t;
+a	b	c	d
+11	10	-11	-10
+22	20	-22	-20
+update t set b=30, a=b;
+select * from t;
+a	b	c	d
+10	30	-10	-30
+20	30	-20	-30
+drop table if exists t;
+create table t(x int, y int);
+insert into t values();
+update t t1, t t2 set t2.y=1, t1.x=2;
+select * from t;
+x	y
+2	1
+update t t1, t t2 set t1.x=t2.y, t2.y=t1.x;
+select * from t;
+x	y
+1	2
+drop table if exists t;
+create table t(x int, y int, z int as (x+10) stored, w int as (y-10) virtual);
+insert into t(x, y) values(1, 2), (3, 4);
+update t t1, t t2 set t2.y=1, t1.x=2 where t1.x=1;
+select * from t;
+x	y	z	w
+2	1	12	-9
+3	1	13	-9
+update t t1, t t2 set t1.x=5, t2.y=t1.x where t1.x=3;
+select * from t;
+x	y	z	w
+2	3	12	-7
+5	3	15	-7
+drop table if exists t;
+create table t(a int, b int, c int as (a+b) stored);
+insert into t(a, b) values (1, 2);
+update t t1, t t2 set t2.a=3;
+select * from t;
+a	b	c
+3	2	5
+update t t1, t t2 set t1.a=4, t2.b=5;
+select * from t;
+a	b	c
+4	5	9
+drop table if exists t;
+create table t (a int primary key);
+insert into t values (1), (2);
+update t set a=a+2;
+select * from t;
+a
+3
+4
+update t m, t n set m.a = n.a+10 where m.a=n.a;
+select * from t;
+a
+13
+14
+drop table if exists t;
+create table t (a int primary key, b int);
+insert into t values (1,3), (2,4);
+update t m, t n set m.a = n.a+10, n.b = m.b+1 where m.a=n.a;
+Error 1706 (HY000): Primary key/partition key update is not allowed since the table is updated both as 'm' and 'n'.
+drop table if exists t;
+create table t (a int, b int, c int, primary key(a, b));
+insert into t values (1,3,5), (2,4,6);
+update t m, t n set m.a = n.a+10, m.b = n.b+10 where m.a=n.a;
+select * from t;
+a	b	c
+11	13	5
+12	14	6
+update t m, t n, t q set q.c=m.a+n.b, n.c = m.a+1, m.c = n.b+1 where m.b=n.b AND m.a=q.a;
+select * from t;
+a	b	c
+11	13	24
+12	14	26
+update t m, t n, t q set m.a = m.a+1, n.c = n.c-1, q.c = q.a+q.b where m.b=n.b and n.b=q.b;
+Error 1706 (HY000): Primary key/partition key update is not allowed since the table is updated both as 'm' and 'n'.
+set tidb_enable_clustered_index = on;
+drop table if exists t;
+create table t(id varchar(200) primary key, v int);
+insert into t(id, v) values ('abc', 233);
+select id, v from t where id = 'abc';
+id	v
+abc	233
+update t set id = 'dfg' where id = 'abc';
+select * from t;
+id	v
+dfg	233
+update t set id = 'aaa', v = 333 where id = 'dfg';
+select * from t where id = 'aaa';
+id	v
+aaa	333
+update t set v = 222 where id = 'aaa';
+select * from t where id = 'aaa';
+id	v
+aaa	222
+insert into t(id, v) values ('bbb', 111);
+update t set id = 'bbb' where id = 'aaa';
+Error 1062 (23000): Duplicate entry 'bbb' for key 't.PRIMARY'
+drop table if exists ut3pk;
+create table ut3pk(id1 varchar(200), id2 varchar(200), v int, id3 int, primary key(id1, id2, id3));
+insert into ut3pk(id1, id2, v, id3) values ('aaa', 'bbb', 233, 111);
+select id1, id2, id3, v from ut3pk where id1 = 'aaa' and id2 = 'bbb' and id3 = 111;
+id1	id2	id3	v
+aaa	bbb	111	233
+update ut3pk set id1 = 'abc', id2 = 'bbb2', id3 = 222, v = 555 where id1 = 'aaa' and id2 = 'bbb' and id3 = 111;
+select id1, id2, id3, v from ut3pk where id1 = 'abc' and id2 = 'bbb2' and id3 = 222;
+id1	id2	id3	v
+abc	bbb2	222	555
+select id1, id2, id3, v from ut3pk;
+id1	id2	id3	v
+abc	bbb2	222	555
+update ut3pk set v = 666 where id1 = 'abc' and id2 = 'bbb2' and id3 = 222;
+select id1, id2, id3, v from ut3pk;
+id1	id2	id3	v
+abc	bbb2	222	666
+insert into ut3pk(id1, id2, id3, v) values ('abc', 'bbb3', 222, 777);
+update ut3pk set id2 = 'bbb3' where id1 = 'abc' and id2 = 'bbb2' and id3 = 222;
+Error 1062 (23000): Duplicate entry 'abc-bbb3-222' for key 'ut3pk.PRIMARY'
+drop table if exists ut1pku;
+create table ut1pku(id varchar(200) primary key, uk int, v int, unique key ukk(uk));
+insert into ut1pku(id, uk, v) values('a', 1, 2), ('b', 2, 3);
+select * from ut1pku;
+id	uk	v
+a	1	2
+b	2	3
+update ut1pku set uk = 3 where id = 'a';
+select * from ut1pku;
+id	uk	v
+a	3	2
+b	2	3
+update ut1pku set uk = 2 where id = 'a';
+Error 1062 (23000): Duplicate entry '2' for key 'ut1pku.ukk'
+select * from ut1pku;
+id	uk	v
+a	3	2
+b	2	3
+drop table if exists t;
+create table t(a char(10) primary key, b char(10));
+insert into t values('a', 'b');
+update t set a='c' where t.a='a' and b='b';
+select * from t;
+a	b
+c	b
+drop table if exists s;
+create table s (a int, b int, c int, primary key (a, b));
+insert s values (3, 3, 3), (5, 5, 5);
+update s set c = 10 where a = 3;
+select * from s;
+a	b	c
+3	3	10
+5	5	5
+set tidb_enable_clustered_index = default;
+set tidb_enable_clustered_index = on;
+drop table if exists t;
+create table t(id varchar(200) primary key, v int);
+insert into t(id, v) values ('abc', 233);
+delete from t where id = 'abc';
+select * from t;
+id	v
+select * from t where id = 'abc';
+id	v
+drop table if exists it3pk;
+create table it3pk(id1 varchar(200), id2 varchar(200), v int, id3 int, primary key(id1, id2, id3));
+insert into it3pk(id1, id2, v, id3) values ('aaa', 'bbb', 233, 111);
+delete from it3pk where id1 = 'aaa' and id2 = 'bbb' and id3 = 111;
+select * from it3pk;
+id1	id2	v	id3
+select * from it3pk where id1 = 'aaa' and id2 = 'bbb' and id3 = 111;
+id1	id2	v	id3
+insert into it3pk(id1, id2, v, id3) values ('aaa', 'bbb', 433, 111);
+select * from it3pk where id1 = 'aaa' and id2 = 'bbb' and id3 = 111;
+id1	id2	v	id3
+aaa	bbb	433	111
+drop table if exists dt3pku;
+create table dt3pku(id varchar(200) primary key, uk int, v int, unique key uuk(uk));
+insert into dt3pku(id, uk, v) values('a', 1, 2);
+delete from dt3pku where id = 'a';
+select * from dt3pku;
+id	uk	v
+insert into dt3pku(id, uk, v) values('a', 1, 2);
+drop table if exists s1;
+create table s1 (a int, b int, c int, primary key (a, b));
+insert s1 values (3, 3, 3), (5, 5, 5);
+delete from s1 where a = 3;
+select * from s1;
+a	b	c
+5	5	5
+set tidb_enable_clustered_index = default;
+set tidb_enable_clustered_index = on;
+drop table if exists rt1pk;
+create table rt1pk(id varchar(200) primary key, v int);
+replace into rt1pk(id, v) values('abc', 1);
+select * from rt1pk;
+id	v
+abc	1
+replace into rt1pk(id, v) values('bbb', 233), ('abc', 2);
+select * from rt1pk;
+id	v
+abc	2
+bbb	233
+drop table if exists rt3pk;
+create table rt3pk(id1 timestamp, id2 time, v int, id3 year, primary key(id1, id2, id3));
+replace into rt3pk(id1, id2,id3, v) values('2018-01-01 11:11:11', '22:22:22', '2019', 1);
+select * from rt3pk;
+id1	id2	v	id3
+2018-01-01 11:11:11	22:22:22	1	2019
+replace into rt3pk(id1, id2, id3, v) values('2018-01-01 11:11:11', '22:22:22', '2019', 2);
+select * from rt3pk;
+id1	id2	v	id3
+2018-01-01 11:11:11	22:22:22	2	2019
+drop table if exists rt1pk1u;
+create table rt1pk1u(id varchar(200) primary key, uk int, v int, unique key uuk(uk));
+replace into rt1pk1u(id, uk, v) values("abc", 2, 1);
+select * from rt1pk1u;
+id	uk	v
+abc	2	1
+replace into rt1pk1u(id, uk, v) values("aaa", 2, 11);
+select * from rt1pk1u;
+id	uk	v
+aaa	2	11
+set tidb_enable_clustered_index = default;
+drop table if exists t;
+create table t(ts int(10) unsigned NULL DEFAULT NULL);
+insert into t values(1);
+update t set ts = IF(ts < (0 - ts), 1,1) where ts>0;
+Error 1690 (22003): BIGINT UNSIGNED value is out of range in '(0 - executor__update.t.ts)'
+drop table if exists tt;
+create table tt (m0 varchar(64), status tinyint not null);
+insert into tt values('1',0),('1',0),('1',0);
+update tt a inner join (select m0 from tt where status!=1 group by m0 having count(*)>1) b on a.m0=b.m0 set a.status=1;
+drop table if exists t1;
+create table t1(id int, a int unsigned);
+set sql_mode='';
+insert into t1 values(1, 10), (2, 20);
+update t1 set a='-1' where id=1;
+update t1 set a='1000000000000000000' where id=2;
+select id, a from t1 order by id asc;
+id	a
+1	0
+2	4294967295
+set sql_mode=default;
