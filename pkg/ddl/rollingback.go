@@ -565,7 +565,6 @@ func rollingBackAddConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int6
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrCancelledDDLJob
 	}
-	// Is there a case constrInfoInMeta.State become StatePublic that means the constraint have already been added successfully?
 	for i, constr := range tblInfo.Constraints {
 		if constr.Name.L == constrInfoInMeta.Name.L {
 			tblInfo.Constraints = append(tblInfo.Constraints[0:i], tblInfo.Constraints[i+1:]...)

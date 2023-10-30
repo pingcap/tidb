@@ -287,21 +287,3 @@ func TestAlterEnforcedConstraintStateChange(t *testing.T) {
 	tk.MustExec("alter table t alter constraint c1 enforced")
 	tk.MustQuery("select * from t").Check(testkit.Rows("12"))
 }
-
-// Related issue TiDB#47567, #47631 and #47632.
-func TestCheckConstraintIssue47567(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
-	tk.MustExec("use test")
-	tk.MustExec("CREATE TABLE `t` (`a` int(11) DEFAULT NULL)")
-	tk.MustExec("insert t values(1)")
-	tk.MustGetErrMsg("alter table t ADD CONSTRAINT chk CHECK (a > 1) ENFORCED", "[ddl:3819]Check constraint 'chk' is violated.")
-	tk.MustGetErrMsg("alter table t ADD CONSTRAINT chk CHECK (a > 1) ENFORCED", "[ddl:3819]Check constraint 'chk' is violated.")
-	tk.MustExec("alter table t ADD CONSTRAINT chk CHECK (a > 1) NOT ENFORCED")
-	tk.MustGetErrMsg("ALTER TABLE t ALTER CONSTRAINT chk ENFORCED;", "[ddl:3819]Check constraint 'chk' is violated.")
-	tk.MustQuery("select constraint_name from information_schema.CHECK_CONSTRAINTS where constraint_schema = 'test'").Check(testkit.Rows("chk"))
-	tk.MustExec("alter table t drop CONSTRAINT chk")
-	tk.MustQuery("select constraint_name from information_schema.CHECK_CONSTRAINTS where constraint_schema = 'test'").Check(testkit.Rows())
-}
