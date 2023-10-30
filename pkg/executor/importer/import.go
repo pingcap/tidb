@@ -1266,7 +1266,7 @@ func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.Ba
 		DisableAutomaticCompactions: true,
 	}
 	if e.IsRaftKV2 {
-		backendConfig.RaftKV2SwitchModeDuration = config.DefaultSwitchTiKVModeInterval
+		backendConfig.SwitchModeDuration = config.DefaultSwitchTiKVModeInterval
 	}
 	return backendConfig
 }
