@@ -187,7 +187,11 @@ func newMergeIter[
 	}
 	// We check the hotspot when the elements size is almost the same as the concurrent reader buffer size.
 	// So that we don't drop too many bytes if the hotspot shifts to other files.
-	i.checkHotspotPeriod = ConcurrentReaderBufferSizePerConc * ConcurrentReaderConcurrency / (sampleKeySize / sampleKeyCnt)
+	if sampleKeySize == 0 {
+		i.checkHotspotPeriod = 10000
+	} else {
+		i.checkHotspotPeriod = max(1000, ConcurrentReaderBufferSizePerConc*ConcurrentReaderConcurrency/(sampleKeySize/sampleKeyCnt))
+	}
 	heap.Init(&i.h)
 	return i, nil
 }
