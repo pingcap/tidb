@@ -142,12 +142,7 @@ func (w *HashAggPartialWorker) getPartialResultsOfEachRow(groupKey [][]byte, fin
 			w.BInMaps[finalWorkerIdx]++
 		}
 
-		mapperVal := make([]aggfuncs.PartialResult, w.partialResultNumInRow)
-		for i := range mapperVal {
-			mapperVal[i] = w.partialResultsBuffer[lastIdx][i]
-		}
-		mapper[finalWorkerIdx][string(groupKey[i])] = mapperVal
-
+		mapper[finalWorkerIdx][string(groupKey[i])] = w.partialResultsBuffer[lastIdx]
 		allMemDelta += int64(len(groupKey[i]))
 	}
 	w.memTracker.Consume(allMemDelta)
