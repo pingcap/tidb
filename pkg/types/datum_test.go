@@ -26,7 +26,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	typectx "github.com/pingcap/tidb/pkg/types/context"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/stretchr/testify/assert"
@@ -115,7 +114,7 @@ func TestToBool(t *testing.T) {
 func testDatumToInt64(t *testing.T, val interface{}, expect int64) {
 	d := NewDatum(val)
 
-	ctx := DefaultStmtNoWarningContext.WithFlags(typectx.DefaultStmtFlags.WithIgnoreTruncateErr(true))
+	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(true))
 
 	b, err := d.ToInt64(ctx)
 	require.NoError(t, err)
@@ -151,7 +150,7 @@ func TestToInt64(t *testing.T) {
 
 func testDatumToUInt32(t *testing.T, val interface{}, expect uint32, hasError bool) {
 	d := NewDatum(val)
-	ctx := DefaultStmtNoWarningContext.WithFlags(typectx.DefaultStmtFlags.WithIgnoreTruncateErr(true))
+	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(true))
 
 	ft := NewFieldType(mysql.TypeLong)
 	ft.AddFlag(mysql.UnsignedFlag)
@@ -202,7 +201,7 @@ func TestConvertToFloat(t *testing.T) {
 		{NewDatum("281.37"), mysql.TypeFloat, "", 281.37, 281.37},
 	}
 
-	ctx := DefaultStmtNoWarningContext.WithFlags(typectx.DefaultStmtFlags.WithIgnoreTruncateErr(true))
+	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(true))
 	for _, testCase := range testCases {
 		converted, err := testCase.d.ConvertTo(ctx, NewFieldType(testCase.tp))
 		if testCase.errMsg == "" {
@@ -351,7 +350,7 @@ func TestCloneDatum(t *testing.T) {
 		raw,
 	}
 
-	ctx := DefaultStmtNoWarningContext.WithFlags(typectx.DefaultStmtFlags.WithIgnoreTruncateErr(true))
+	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(true))
 
 	for _, tt := range tests {
 		tt1 := *tt.Clone()
@@ -405,7 +404,7 @@ func TestEstimatedMemUsage(t *testing.T) {
 }
 
 func TestChangeReverseResultByUpperLowerBound(t *testing.T) {
-	ctx := DefaultStmtNoWarningContext.WithFlags(typectx.DefaultStmtFlags.WithIgnoreTruncateErr(true))
+	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(true))
 	// TODO: add more reserve convert tests for each pair of convert type.
 	testData := []struct {
 		a         Datum
