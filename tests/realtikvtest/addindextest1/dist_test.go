@@ -1,4 +1,4 @@
-package addindextest1
+package addindextest
 
 import (
 	"testing"
