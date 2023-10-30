@@ -20,3 +20,16 @@ insert into t values (4, 3, 3);
 set @@tidb_txn_assertion_level=default;
 set @@tidb_constraint_check_in_place=default;
 
+# TestDuplicateErrorOnPrefixIndex, Issue: #44316.
+drop table if exists t;
+create table t(a varchar(20), b varchar(20), unique index idx_a(a(1)));
+insert into t values ('qaa', 'abc');
+-- error 1062
+insert into t values ('qbb', 'xyz');
+insert into t values ('rcc', 'xyz');
+select * from t order by a;
+-- error 1062
+update t set a = 'qcc' where a = 'rcc';
+--enable_warnings;
+update ignore t set a = 'qcc' where a = 'rcc';
+--disable_warnings;
