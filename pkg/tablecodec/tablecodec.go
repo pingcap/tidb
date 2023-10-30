@@ -1109,6 +1109,8 @@ func GetIndexKeyBuf(buf []byte, defaultCap int) []byte {
 	return make([]byte, 0, defaultCap)
 }
 
+const intFlag byte = 3
+
 // GenIndexKey generates index key using input physical table id
 func GenIndexKey(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	phyTblID int64, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error) {
@@ -1137,7 +1139,7 @@ func GenIndexKey(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo
 	}
 	if !distinct && h != nil {
 		if h.IsInt() {
-			key = append(key, 3)
+			key = append(key, intFlag)
 			key = codec.EncodeInt(key, h.IntValue())
 		} else {
 			key = append(key, h.Encoded()...)
