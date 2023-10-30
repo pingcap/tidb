@@ -566,12 +566,6 @@ func (em *ErrorManager) ReplaceConflictKeys(
 		// TODO: provide a detailed document to explain the algorithm and link it here
 		// demo for "replace" algorithm: https://github.com/lyzx2001/tidb-conflict-replace
 		// check index KV
-		exec := common.SQLWithRetry{
-			DB:           em.db,
-			Logger:       em.logger,
-			HideQueryLog: redact.NeedRedact(),
-		}
-
 		indexKvRows, err := em.db.QueryContext(
 			gCtx, fmt.Sprintf(selectIndexConflictKeysReplace, em.schemaEscaped),
 			tableName)
@@ -593,7 +587,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 
 			// get the latest value of rawKey from downstream TiDB
 			latestValue, err := fnGetLatest(gCtx, rawKey)
-			if tikverr.IsErrNotFound(err) || latestValue == nil {
+			if tikverr.IsErrNotFound(err) {
 				continue
 			}
 			if err != nil {
@@ -610,7 +604,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			// get the latest value of the row key of the data KV that needs to be deleted
 			overwritten, err := fnGetLatest(gCtx, rawHandle)
 			// if the latest value cannot be found, that means the data KV has been deleted
-			if tikverr.IsErrNotFound(err) || overwritten == nil {
+			if tikverr.IsErrNotFound(err) {
 				continue
 			}
 			if err != nil {
@@ -637,6 +631,13 @@ func (em *ErrorManager) ReplaceConflictKeys(
 
 			// find out all the KV pairs that are contained in the data KV
 			kvPairs := encoder.SessionCtx.TakeKvPairs()
+
+			exec := common.SQLWithRetry{
+				DB:           em.db,
+				Logger:       em.logger,
+				HideQueryLog: redact.NeedRedact(),
+			}
+
 			for _, kvPair := range kvPairs.Pairs {
 				em.logger.Debug("got encoded KV",
 					logutil.Key("key", kvPair.Key),
@@ -671,8 +672,8 @@ func (em *ErrorManager) ReplaceConflictKeys(
 							sqlArgs = append(sqlArgs,
 								em.taskID,
 								tableName,
-								"null",
-								"null",
+								nil,
+								nil,
 								rawHandle,
 								overwritten,
 								1,
@@ -776,7 +777,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 					logutil.Key("key", kvPair.Key),
 					zap.Binary("value", kvPair.Val))
 				kvLatestValue, err := fnGetLatest(gCtx, kvPair.Key)
-				if tikverr.IsErrNotFound(err) || kvLatestValue == nil {
+				if tikverr.IsErrNotFound(err) {
 					continue
 				}
 				if err != nil {
