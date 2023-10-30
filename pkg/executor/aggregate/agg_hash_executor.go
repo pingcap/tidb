@@ -322,6 +322,7 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 		w := HashAggFinalWorker{
 			baseHashAggWorker:   newBaseHashAggWorker(e.Ctx(), e.finishCh, e.FinalAggFuncs, e.MaxChunkSize(), e.memTracker),
 			partialResultMap:    make(AggPartialResultMapper),
+			BInMap:              0,
 			isFirstInput:        true,
 			groupSet:            groupSet,
 			inputCh:             e.partialOutputChs[i],

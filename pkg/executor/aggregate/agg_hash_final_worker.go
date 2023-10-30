@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"go.uber.org/zap"
@@ -42,6 +43,7 @@ type HashAggFinalWorker struct {
 	rowBuffer           []types.Datum
 	mutableRow          chunk.MutRow
 	partialResultMap    AggPartialResultMapper
+	BInMap              int
 	isFirstInput        bool
 	groupSet            set.StringSetWithMemoryUsage
 	inputCh             chan *AggPartialResultMapper
@@ -88,9 +90,13 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 		for key, value := range *input {
 			dstVal, ok := w.partialResultMap[key]
 			if !ok {
-				// The input will be released, so it's equal to transfer the memory of
-				// input to w.partialResultMap and needless to track memory here.
 				w.partialResultMap[key] = value
+
+				// Map will expand when count > bucketNum * loadFactor. The memory usage will double.
+				if len(w.partialResultMap)+1 > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+					w.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMap))
+					w.BInMap++
+				}
 				continue
 			}
 
