@@ -1264,6 +1264,9 @@ func TestAggPushDownUnionAndMPP(t *testing.T) {
 	tk.MustExec("set @@tidb_allow_mpp=1;")
 	tk.MustExec("set @@tidb_enforce_mpp=1;")
 	tk.MustExec("set @@tidb_opt_agg_push_down=1")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
 
 	tk.MustExec("create table c(c_id int)")
 	tk.MustExec("create table o(o_id int, c_id int)")
@@ -1271,6 +1274,13 @@ func TestAggPushDownUnionAndMPP(t *testing.T) {
 	tk.MustExec("insert into o values(1,1),(1,1),(1,2)")
 	tk.MustExec("alter table c set tiflash replica 1")
 	tk.MustExec("alter table o set tiflash replica 1")
+	tb = external.GetTableByName(t, tk, "test", "c")
+	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("alter table o set tiflash replica 1")
+	tb = external.GetTableByName(t, tk, "test", "o")
+	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
 
 	tk.MustQuery("select a, count(*) from (select a, b from t " +
 		"union all " +
