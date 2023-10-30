@@ -1808,6 +1808,7 @@ func writeChunkToLocal(
 	memoryUsage := iter.GetChunk().MemoryUsage()
 	ts := time.Now()
 	var handle kv.Handle
+	handle = kv.IntHandle(0)
 	var err error
 	buf := make([]byte, 0, 64)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
