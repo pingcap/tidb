@@ -859,7 +859,7 @@ func TestDropTables(t *testing.T) {
 	tk.MustGetErrCode(failedSQL, errno.ErrNoSuchTable)
 }
 
-func TestCreateTableWithCheckConstraint(t *testing.T) {
+func TestCreateConstraintForTable(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
@@ -871,5 +871,14 @@ func TestCreateTableWithCheckConstraint(t *testing.T) {
 	failedSQL := "CREATE TABLE t2 (id INT PRIMARY KEY, CONSTRAINT c1 CHECK (id<50))"
 	tk.MustGetErrCode(failedSQL, errno.ErrCheckConstraintDupName)
 
-	defer tk.MustExec("DROP TABLE IF EXISTS t1, t2")
+	tk.MustExec("CREATE TABLE t2 (id INT PRIMARY KEY)")
+	failedSQL = "ALTER TABLE t2 ADD CONSTRAINT c1 CHECK (id<50)"
+	tk.MustGetErrCode(failedSQL, errno.ErrCheckConstraintDupName)
+
+	tk.MustExec("DROP DATABASE IF EXISTS test2")
+	tk.MustExec("CREATE DATABASE test2")
+	tk.MustExec("CREATE TABLE test2.t1 (id INT PRIMARY KEY, CONSTRAINT c1 CHECK (id<50))")
+	rs, err := tk.Exec("SHOW TABLES FROM test2 LIKE 't1'")
+	require.NoError(t, err)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][0], "t1")
 }
