@@ -5,7 +5,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
@@ -14,20 +13,11 @@ import (
 
 // MergeOverlappingFiles reads from given files whose key range may overlap
 // and writes to new sorted, nonoverlapping files.
-func MergeOverlappingFiles(
-	ctx context.Context,
-	paths []string,
-	store storage.ExternalStorage,
-	readBufferSize int,
-	newFilePrefix string,
-	blockSize int,
-	writeBatchCount uint64,
-	propSizeDist uint64,
-	propKeysDist uint64,
-	onClose OnCloseFunc,
-) error {
+func MergeOverlappingFiles(ctx context.Context, paths []string, store storage.ExternalStorage, readBufferSize int,
+	newFilePrefix string, blockSize int, writeBatchCount uint64, propSizeDist uint64, propKeysDist uint64,
+	onClose OnCloseFunc, concurrency int) error {
 	var dataFilesSlice [][]string
-	batchCount := len(paths) / int(variable.GetDDLReorgWorkerCounter())
+	batchCount := len(paths) / concurrency
 	for i := 0; i < len(paths); i += batchCount {
 		end := i + batchCount
 		if end > len(paths) {

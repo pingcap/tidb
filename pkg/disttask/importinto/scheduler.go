@@ -305,17 +305,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	prefix := subtaskPrefix(m.taskID, subtask.ID)
 
-	return external.MergeOverlappingFiles(
-		ctx,
-		sm.DataFiles,
-		m.controller.GlobalSortStore,
-		64*1024,
-		prefix,
-		getKVGroupBlockSize(sm.KVGroup),
-		8*1024,
-		1*size.MB,
-		8*1024,
-		onClose)
+	return external.MergeOverlappingFiles(ctx, sm.DataFiles, m.controller.GlobalSortStore, 64*1024, prefix, getKVGroupBlockSize(sm.KVGroup), 8*1024, 1*size.MB, 8*1024, onClose, int(m.taskMeta.Plan.ThreadCnt))
 }
 
 func (m *mergeSortStepExecutor) OnFinished(_ context.Context, subtask *proto.Subtask) error {
