@@ -2186,3 +2186,42 @@ func TestWriteDDLTableVersionToMySQLTiDBWhenUpgradingTo178(t *testing.T) {
 	require.Equal(t, []byte(fmt.Sprintf("%d", ddlTableVer)), req.GetRow(0).GetBytes(0))
 	require.NoError(t, r.Close())
 }
+
+func TestTiDBUpgradeToVer179(t *testing.T) {
+	ctx := context.Background()
+	store, _ := CreateStoreAndBootstrap(t)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+	ver178 := version178
+	seV178 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(ver178))
+	require.NoError(t, err)
+	MustExec(t, seV178, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver178))
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV178)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver178), ver)
+
+	dom, err := BootstrapSession(store)
+	require.NoError(t, err)
+	ver, err = getBootstrapVersion(seV178)
+	require.NoError(t, err)
+	require.Less(t, int64(ver178), ver)
+
+	r := MustExecToRecodeSet(t, seV178, "desc mysql.global_variables")
+	req := r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 2, req.NumRows())
+	require.Equal(t, []byte("varchar(16383)"), req.GetRow(1).GetBytes(1))
+	require.NoError(t, r.Close())
+
+	dom.Close()
+}
