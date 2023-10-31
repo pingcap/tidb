@@ -434,9 +434,8 @@ func (p *PdController) doPauseSchedulers(ctx context.Context,
 	// PauseSchedulers remove pd scheduler temporarily.
 	removedSchedulers := make([]string, 0, len(schedulers))
 	for _, scheduler := range schedulers {
-		prefix := fmt.Sprintf("%s/%s", pdapi.Schedulers, scheduler)
 		for _, addr := range p.getAllPDAddrs() {
-			_, err = post(ctx, addr, prefix, p.cli, http.MethodPost, bytes.NewBuffer(body))
+			_, err = post(ctx, addr, pdapi.SchedulerWithName(scheduler), p.cli, http.MethodPost, bytes.NewBuffer(body))
 			if err == nil {
 				removedSchedulers = append(removedSchedulers, scheduler)
 				break
@@ -517,9 +516,8 @@ func (p *PdController) resumeSchedulerWith(ctx context.Context, schedulers []str
 		return errors.Trace(err)
 	}
 	for _, scheduler := range schedulers {
-		prefix := fmt.Sprintf("%s/%s", pdapi.Schedulers, scheduler)
 		for _, addr := range p.getAllPDAddrs() {
-			_, err = post(ctx, addr, prefix, p.cli, http.MethodPost, bytes.NewBuffer(body))
+			_, err = post(ctx, addr, pdapi.SchedulerWithName(scheduler), p.cli, http.MethodPost, bytes.NewBuffer(body))
 			if err == nil {
 				break
 			}
@@ -619,8 +617,7 @@ func (p *PdController) doUpdatePDScheduleConfig(
 
 func (p *PdController) doPauseConfigs(ctx context.Context, cfg map[string]interface{}, post pdHTTPRequest) error {
 	// pause this scheduler with 300 seconds
-	prefix := fmt.Sprintf("%s?ttlSecond=%.0f", pdapi.Config, pauseTimeout.Seconds())
-	return p.doUpdatePDScheduleConfig(ctx, cfg, post, prefix)
+	return p.doUpdatePDScheduleConfig(ctx, cfg, post, pdapi.ConfigWithTTLSeconds(pauseTimeout.Seconds()))
 }
 
 func restoreSchedulers(ctx context.Context, pd *PdController, clusterCfg ClusterConfig,

@@ -58,6 +58,11 @@ const (
 	PProfGoroutine         = "/pd/api/v1/debug/pprof/goroutine"
 )
 
+// ConfigWithTTLSeconds returns the config API with the TTL seconds parameter.
+func ConfigWithTTLSeconds(ttlSeconds float64) string {
+	return fmt.Sprintf("%s?ttlSecond=%.0f", Config, ttlSeconds)
+}
+
 // StoreWithID returns the store API with store ID parameter.
 func StoreWithID(id uint64) string {
 	return fmt.Sprintf("%s/%d", store, id)
@@ -71,6 +76,11 @@ func StoreLabelWithID(id uint64) string {
 // RegionStatsWithStartEndKey returns the region stats API with start key and end key parameters.
 func RegionStatsWithStartEndKey(startKey, endKey string) string {
 	return fmt.Sprintf("%s?start_key=%s&end_key=%s", RegionStats, startKey, endKey)
+}
+
+// SchedulerWithName returns the scheduler API with the given scheduler name.
+func SchedulerWithName(name string) string {
+	return fmt.Sprintf("%s/%s", Schedulers, name)
 }
 
 // ScatterRangeSchedulerWithName returns the scatter range scheduler API with name parameter.
