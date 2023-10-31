@@ -1464,8 +1464,8 @@ func init() {
 		if e.err != nil {
 			return nil, e.err
 		}
-		err := executor.Open(ctx)
 		defer terror.Call(executor.Close)
+		err := executor.Open(ctx)
 		if err != nil {
 			return nil, err
 		}
