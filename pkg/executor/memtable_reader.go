@@ -464,9 +464,9 @@ func (e *clusterLogRetriever) startRetrieving(
 			util.WithRecovery(func() {
 				defer close(ch)
 
-				// The TiDB provides diagnostics service via status address
+				// TiDB and TiProxy provide diagnostics service via status address
 				remote := address
-				if serverType == "tidb" {
+				if serverType == "tidb" || serverType == "tiproxy" {
 					remote = statusAddr
 				}
 				conn, err := grpc.Dial(remote, opt)

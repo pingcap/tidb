@@ -62,7 +62,7 @@ func (b *builtinAddDatetimeAndDurationSig) vecEvalTime(input *chunk.Chunk, resul
 
 		// calculate
 
-		output, err := arg0.Add(b.ctx.GetSessionVars().StmtCtx, types.Duration{Duration: arg1, Fsp: -1})
+		output, err := arg0.Add(b.ctx.GetSessionVars().StmtCtx.TypeCtx(), types.Duration{Duration: arg1, Fsp: -1})
 
 		if err != nil {
 			return err
@@ -122,7 +122,7 @@ func (b *builtinAddDatetimeAndStringSig) vecEvalTime(input *chunk.Chunk, result 
 			continue
 		}
 		sc := b.ctx.GetSessionVars().StmtCtx
-		arg1Duration, _, err := types.ParseDuration(sc, arg1, types.GetFsp(arg1))
+		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, types.GetFsp(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
 				sc.AppendWarning(err)
@@ -132,7 +132,7 @@ func (b *builtinAddDatetimeAndStringSig) vecEvalTime(input *chunk.Chunk, result 
 			return err
 		}
 
-		output, err := arg0.Add(sc, arg1Duration)
+		output, err := arg0.Add(sc.TypeCtx(), arg1Duration)
 
 		if err != nil {
 			return err
@@ -248,7 +248,7 @@ func (b *builtinAddDurationAndStringSig) vecEvalDuration(input *chunk.Chunk, res
 			continue
 		}
 		sc := b.ctx.GetSessionVars().StmtCtx
-		arg1Duration, _, err := types.ParseDuration(sc, arg1, types.GetFsp(arg1))
+		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, types.GetFsp(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
 				sc.AppendWarning(err)
@@ -406,7 +406,7 @@ func (b *builtinAddStringAndStringSig) vecEvalString(input *chunk.Chunk, result 
 		// calculate
 
 		sc := b.ctx.GetSessionVars().StmtCtx
-		arg1Duration, _, err := types.ParseDuration(sc, arg1, getFsp4TimeAddSub(arg1))
+		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, getFsp4TimeAddSub(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
 				sc.AppendWarning(err)
@@ -566,7 +566,7 @@ func (b *builtinAddDateAndStringSig) vecEvalString(input *chunk.Chunk, result *c
 			continue
 		}
 		sc := b.ctx.GetSessionVars().StmtCtx
-		arg1Duration, _, err := types.ParseDuration(sc, arg1, getFsp4TimeAddSub(arg1))
+		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, getFsp4TimeAddSub(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
 				sc.AppendWarning(err)
@@ -677,7 +677,7 @@ func (b *builtinSubDatetimeAndDurationSig) vecEvalTime(input *chunk.Chunk, resul
 
 		sc := b.ctx.GetSessionVars().StmtCtx
 		arg1Duration := types.Duration{Duration: arg1, Fsp: -1}
-		output, err := arg0.Add(sc, arg1Duration.Neg())
+		output, err := arg0.Add(sc.TypeCtx(), arg1Duration.Neg())
 
 		if err != nil {
 			return err
@@ -737,7 +737,7 @@ func (b *builtinSubDatetimeAndStringSig) vecEvalTime(input *chunk.Chunk, result 
 			continue
 		}
 		sc := b.ctx.GetSessionVars().StmtCtx
-		arg1Duration, _, err := types.ParseDuration(sc, arg1, types.GetFsp(arg1))
+		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, types.GetFsp(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
 				sc.AppendWarning(err)
@@ -746,7 +746,7 @@ func (b *builtinSubDatetimeAndStringSig) vecEvalTime(input *chunk.Chunk, result 
 			}
 			return err
 		}
-		output, err := arg0.Add(sc, arg1Duration.Neg())
+		output, err := arg0.Add(sc.TypeCtx(), arg1Duration.Neg())
 
 		if err != nil {
 			return err
@@ -862,7 +862,7 @@ func (b *builtinSubDurationAndStringSig) vecEvalDuration(input *chunk.Chunk, res
 			continue
 		}
 		sc := b.ctx.GetSessionVars().StmtCtx
-		arg1Duration, _, err := types.ParseDuration(sc, arg1, types.GetFsp(arg1))
+		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, types.GetFsp(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
 				sc.AppendWarning(err)
@@ -1020,7 +1020,7 @@ func (b *builtinSubStringAndStringSig) vecEvalString(input *chunk.Chunk, result 
 		// calculate
 
 		sc := b.ctx.GetSessionVars().StmtCtx
-		arg1Duration, _, err := types.ParseDuration(sc, arg1, getFsp4TimeAddSub(arg1))
+		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, getFsp4TimeAddSub(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
 				sc.AppendWarning(err)
@@ -1180,7 +1180,7 @@ func (b *builtinSubDateAndStringSig) vecEvalString(input *chunk.Chunk, result *c
 			continue
 		}
 		sc := b.ctx.GetSessionVars().StmtCtx
-		arg1Duration, _, err := types.ParseDuration(sc, arg1, getFsp4TimeAddSub(arg1))
+		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, getFsp4TimeAddSub(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
 				sc.AppendWarning(err)
