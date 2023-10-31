@@ -1164,8 +1164,6 @@ func TestIssue40535(t *testing.T) {
 	tk.MustExec("(select /*+ agg_to_cop()*/ locate(t1.c3, t1.c3) as r0, t1.c3 as r1 from t1 where not( IsNull(t1.c1)) order by r0,r1) union all (select concat_ws(',', t2.c2, t2.c1) as r0, t2.c1 as r1 from t2 order by r0, r1) order by 1 limit 273;")
 	require.Empty(t, tk.Session().LastMessage())
 }
-<<<<<<< HEAD:planner/core/plan_test.go
-=======
 
 func TestIssue47445(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
@@ -1182,11 +1180,3 @@ func TestIssue47445(t *testing.T) {
 	tk.MustExec("UPDATE golang1 a SET procst= (SELECT 1 FROM golang2 c WHERE c.procst = a.procst) WHERE fcbpdt = '20230925' AND fcbpsq = '12023092502158016'")
 	tk.MustQuery("select * from golang1").Check(testkit.Rows("20230925 12023092502158016 1 CI010000 ACSC EAYT 20230925"))
 }
-
-func TestExplainValuesStatement(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustMatchErrMsg("EXPLAIN FORMAT = TRADITIONAL ((VALUES ROW ()) ORDER BY 1)", ".*Unknown table ''.*")
-}
->>>>>>> 1c185556710 (planner: do not convert update to point get if the expr has sub-query (#47454)):pkg/planner/core/plan_test.go
