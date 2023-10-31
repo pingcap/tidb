@@ -22,8 +22,13 @@ import (
 	"github.com/pingcap/sysutil"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/cgroup"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/util/mathutil"
+=======
+	"github.com/pingcap/tidb/pkg/util/logutil"
+>>>>>>> 4667ed9e168 (*: support cgroup with systemd (#48096))
 	"github.com/shirou/gopsutil/v3/mem"
+	"go.uber.org/zap"
 )
 
 // MemTotal returns the total amount of RAM on this system
@@ -51,6 +56,10 @@ func MemTotalNormal() (uint64, error) {
 	if time.Since(t) < 60*time.Second {
 		return total, nil
 	}
+	return memTotalNormal()
+}
+
+func memTotalNormal() (uint64, error) {
 	v, err := mem.VirtualMemory()
 	if err != nil {
 		return 0, err
@@ -140,6 +149,7 @@ func MemUsedCGroup() (uint64, error) {
 	return memo, nil
 }
 
+// it is for test and init.
 func init() {
 	if cgroup.InContainer() {
 		MemTotal = MemTotalCGroup
@@ -159,6 +169,37 @@ func init() {
 		mu: &sync.RWMutex{},
 	}
 	_, err := MemTotal()
+	terror.MustNil(err)
+	_, err = MemUsed()
+	terror.MustNil(err)
+}
+
+// InitMemoryHook initializes the memory hook.
+// It is to solve the problem that tidb cannot read cgroup in the systemd.
+// so if we are not in the container, we compare the cgroup memory limit and the physical memory,
+// the cgroup memory limit is smaller, we use the cgroup memory hook.
+func InitMemoryHook() {
+	if cgroup.InContainer() {
+		logutil.BgLogger().Info("use cgroup memory hook because TiDB is in the container")
+		return
+	}
+	cgroupValue, err := cgroup.GetMemoryLimit()
+	if err != nil {
+		return
+	}
+	physicalValue, err := memTotalNormal()
+	if err != nil {
+		return
+	}
+	if physicalValue > cgroupValue && cgroupValue != 0 {
+		MemTotal = MemTotalCGroup
+		MemUsed = MemUsedCGroup
+		sysutil.RegisterGetMemoryCapacity(MemTotalCGroup)
+		logutil.BgLogger().Info("use cgroup memory hook", zap.Int64("cgroupMemorySize", int64(cgroupValue)), zap.Int64("physicalMemorySize", int64(physicalValue)))
+	} else {
+		logutil.BgLogger().Info("use physical memory hook", zap.Int64("cgroupMemorySize", int64(cgroupValue)), zap.Int64("physicalMemorySize", int64(physicalValue)))
+	}
+	_, err = MemTotal()
 	terror.MustNil(err)
 	_, err = MemUsed()
 	terror.MustNil(err)
