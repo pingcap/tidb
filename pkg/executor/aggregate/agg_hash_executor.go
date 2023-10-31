@@ -407,6 +407,7 @@ func (e *HashAggExec) waitPartialWorkerAndCloseOutputChs(waitGroup *sync.WaitGro
 	for _, ch := range e.partialOutputChs {
 		close(ch)
 	}
+	e.partialWorkers = nil
 }
 
 func (e *HashAggExec) waitAllWorkersAndCloseFinalOutputCh(waitGroups ...*sync.WaitGroup) {
@@ -414,6 +415,7 @@ func (e *HashAggExec) waitAllWorkersAndCloseFinalOutputCh(waitGroups ...*sync.Wa
 		waitGroup.Wait()
 	}
 	close(e.finalOutputCh)
+	e.finalWorkers = nil
 }
 
 func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
