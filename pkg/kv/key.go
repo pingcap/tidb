@@ -256,8 +256,8 @@ func (IntHandle) ExtraMemSize() uint64 {
 	return 0
 }
 
-func (ih *IntHandle) SetInt(i int) {
-	*ih = IntHandle(i)
+func (ih IntHandle) SetInt(i int) {
+	ih = IntHandle(i)
 }
 
 func (IntHandle) SetEncode(encoded []byte) error {

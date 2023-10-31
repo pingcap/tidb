@@ -1812,7 +1812,6 @@ func writeChunkToLocal(
 	var err error
 	buf := make([]byte, 0, 64)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		handleDataBuf = handleDataBuf[:0]
 		handleDataBuf := extractDatumByOffsets(row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
 		handle, err = buildHandle(handleDataBuf, c.TableInfo, c.PrimaryKeyInfo, sCtx, handle)
 		if err != nil {
@@ -1820,11 +1819,10 @@ func writeChunkToLocal(
 		}
 		for i, index := range indexes {
 			idxID := index.Meta().ID
-			idxDataBuf = idxDataBuf[:0]
 			idxDataBuf = extractDatumByOffsets(
 				row, copCtx.IndexColumnOutputOffsets(idxID), c.ExprColumnInfos, idxDataBuf)
 			rsData := getRestoreData(c.TableInfo, copCtx.IndexInfo(idxID), c.PrimaryKeyInfo, handleDataBuf)
-			err = writeOneKVToLocal(ctx, writers[i], index, sCtx, writeBufs, idxDataBuf, rsData, handle, &buf)
+			err = writeOneKVToLocal(ctx, writers[i], index, sCtx, writeBufs, idxDataBuf[:len(c.ExprColumnInfos)], rsData, handle, &buf)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
