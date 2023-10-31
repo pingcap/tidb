@@ -21,7 +21,7 @@ go_test(
     deps = [
         ":ingestrec",
         "//pkg/parser/model",
-        "@com_github_pkg_errors//:errors",
+        "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
     ],
 )

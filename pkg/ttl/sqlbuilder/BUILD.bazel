@@ -13,7 +13,7 @@ go_library(
         "//pkg/ttl/cache",
         "//pkg/types",
         "//pkg/util/sqlescape",
-        "@com_github_pkg_errors//:errors",
+        "@com_github_pingcap_errors//:errors",
     ],
 )
 
