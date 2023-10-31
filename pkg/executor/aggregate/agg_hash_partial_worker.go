@@ -69,7 +69,7 @@ func (w *HashAggPartialWorker) getChildInput() bool {
 
 func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup, finalConcurrency int) {
 	start := time.Now()
-	needShuffle, sc := false, ctx.GetSessionVars().StmtCtx
+	needShuffle, _ := false, ctx.GetSessionVars().StmtCtx
 	defer func() {
 		if r := recover(); r != nil {
 			recoveryHashAgg(w.globalOutputCh, r)
