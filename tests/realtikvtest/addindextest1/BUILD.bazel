@@ -4,7 +4,7 @@ go_test(
     name = "addindextest1_test",
     timeout = "short",
     srcs = [
-        "dist_test.go",
+        "disttask_test.go",
         "main_test.go",
     ],
     flaky = True,

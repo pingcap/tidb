@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
@@ -37,6 +38,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func init() {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Path = "127.0.0.1:2379"
+	})
+}
 func TestAddIndexIngestMemoryUsage(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)

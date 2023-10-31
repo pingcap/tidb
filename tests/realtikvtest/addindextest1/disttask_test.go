@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
@@ -27,6 +28,12 @@ import (
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
+
+func init() {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Path = "127.0.0.1:2379"
+	})
+}
 
 func TestAddIndexDistBasic(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
