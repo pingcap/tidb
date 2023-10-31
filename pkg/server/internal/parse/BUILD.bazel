@@ -17,7 +17,6 @@ go_library(
         "//pkg/util/dbterror",
         "//pkg/util/hack",
         "//pkg/util/logutil",
-        "@com_github_klauspost_compress//zstd",
         "@org_uber_go_zap//:zap",
     ],
 )
