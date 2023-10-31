@@ -19,23 +19,14 @@ import (
 	"math"
 
 	"github.com/pingcap/errors"
-<<<<<<< HEAD:statistics/builder.go
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-=======
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
->>>>>>> d9d5b9c3972 (statistic: fix panic when building topN (#47928)):pkg/statistics/builder.go
 )
 
 // SortedBuilder is used to build histograms for PK and index.
