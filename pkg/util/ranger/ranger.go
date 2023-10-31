@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -153,12 +152,12 @@ func points2Ranges(sctx sessionctx.Context, rangePoints []*point, tp *types.Fiel
 }
 
 func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldType) (*point, error) {
-	sc := sctx.GetSessionVars().StmtCtx
+	tc := sctx.GetSessionVars().StmtCtx.TypeCtx()
 	switch point.value.Kind() {
 	case types.KindMaxValue, types.KindMinNotNull:
 		return point, nil
 	}
-	casted, err := point.value.ConvertTo(sc, tp)
+	casted, err := point.value.ConvertTo(tc, tp)
 	if err != nil {
 		if sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding {
 			// skip plan cache in this case for safety.
@@ -196,7 +195,7 @@ func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldType) (*
 		}
 		//revive:enable:empty-block
 	}
-	valCmpCasted, err := point.value.Compare(sc, &casted, collate.GetCollator(tp.GetCollate()))
+	valCmpCasted, err := point.value.Compare(tc, &casted, collate.GetCollator(tp.GetCollate()))
 	if err != nil {
 		return point, errors.Trace(err)
 	}
@@ -410,7 +409,7 @@ func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types
 // The second return value is the conditions used to build ranges and the third return value is the remained conditions.
 func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.Context, tp *types.FieldType, tableRange bool,
 	colLen int, rangeMaxSize int64) (Ranges, []expression.Expression, []expression.Expression, error) {
-	rb := builder{sc: sctx.GetSessionVars().StmtCtx}
+	rb := builder{tc: sctx.GetSessionVars().StmtCtx.TypeCtx()}
 	rangePoints := getFullRange()
 	for _, cond := range accessConditions {
 		collator := collate.GetCollator(tp.GetCollate())
@@ -484,7 +483,7 @@ func BuildColumnRange(conds []expression.Expression, sctx sessionctx.Context, tp
 
 func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAndInCount int,
 	accessConds []expression.Expression) (Ranges, []expression.Expression, []expression.Expression, error) {
-	rb := builder{sc: d.sctx.GetSessionVars().StmtCtx}
+	rb := builder{tc: d.sctx.GetSessionVars().StmtCtx.TypeCtx()}
 	var (
 		ranges        Ranges
 		rangeFallback bool
@@ -747,7 +746,7 @@ func points2EqOrInCond(ctx sessionctx.Context, points []*point, col *expression.
 }
 
 // RangesToString print a list of Ranges into a string which can appear in an SQL as a condition.
-func RangesToString(sc *stmtctx.StatementContext, rans Ranges, colNames []string) (string, error) {
+func RangesToString(tc types.Context, rans Ranges, colNames []string) (string, error) {
 	for _, ran := range rans {
 		if len(ran.LowVal) != len(ran.HighVal) {
 			return "", errors.New("range length mismatch")
@@ -772,7 +771,7 @@ func RangesToString(sc *stmtctx.StatementContext, rans Ranges, colNames []string
 
 			// sanity check: only last column of the `Range` can be an interval
 			if j < len(ran.LowVal)-1 {
-				cmp, err := ran.LowVal[j].Compare(sc, &ran.HighVal[j], ran.Collators[j])
+				cmp, err := ran.LowVal[j].Compare(tc, &ran.HighVal[j], ran.Collators[j])
 				if err != nil {
 					return "", errors.New("comparing values error: " + err.Error())
 				}
@@ -780,7 +779,7 @@ func RangesToString(sc *stmtctx.StatementContext, rans Ranges, colNames []string
 					return "", errors.New("unexpected form of range")
 				}
 			}
-			str, err := RangeSingleColToString(sc, ran.LowVal[j], ran.HighVal[j], lowExclude, highExclude, colNames[j], ran.Collators[j])
+			str, err := RangeSingleColToString(tc, ran.LowVal[j], ran.HighVal[j], lowExclude, highExclude, colNames[j], ran.Collators[j])
 			if err != nil {
 				return "false", err
 			}
@@ -807,7 +806,7 @@ func RangesToString(sc *stmtctx.StatementContext, rans Ranges, colNames []string
 }
 
 // RangeSingleColToString prints a single column of a Range into a string which can appear in an SQL as a condition.
-func RangeSingleColToString(sc *stmtctx.StatementContext, lowVal, highVal types.Datum, lowExclude, highExclude bool, colName string, collator collate.Collator) (string, error) {
+func RangeSingleColToString(tc types.Context, lowVal, highVal types.Datum, lowExclude, highExclude bool, colName string, collator collate.Collator) (string, error) {
 	// case 1: low and high are both special values(null, min not null, max value)
 	lowKind := lowVal.Kind()
 	highKind := highVal.Kind()
@@ -829,7 +828,7 @@ func RangeSingleColToString(sc *stmtctx.StatementContext, lowVal, highVal types.
 	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
 
 	// case 2: low value and high value are the same, and low value and high value are both inclusive.
-	cmp, err := lowVal.Compare(sc, &highVal, collator)
+	cmp, err := lowVal.Compare(tc, &highVal, collator)
 	if err != nil {
 		return "false", errors.Trace(err)
 	}

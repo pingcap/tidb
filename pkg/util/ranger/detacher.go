@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -527,7 +526,7 @@ func excludeToIncludeForIntPoint(p *point) *point {
 
 // If there exists an interval whose length is large than 0, return nil. Otherwise remove all unsatisfiable intervals
 // and return array of single point intervals.
-func allSinglePoints(sc *stmtctx.StatementContext, points []*point) []*point {
+func allSinglePoints(tc types.Context, points []*point) []*point {
 	pos := 0
 	for i := 0; i < len(points); i += 2 {
 		// Remove unsatisfiable interval. For example, (MaxInt64, +inf) and (-inf, MinInt64) is unsatisfiable.
@@ -544,7 +543,7 @@ func allSinglePoints(sc *stmtctx.StatementContext, points []*point) []*point {
 			return nil
 		}
 		// Since the point's collations are equal to the column's collation, we can use any of them.
-		cmp, err := left.value.Compare(sc, &right.value, collate.GetCollator(left.value.Collation()))
+		cmp, err := left.value.Compare(tc, &right.value, collate.GetCollator(left.value.Collation()))
 		if err != nil || cmp != 0 {
 			return nil
 		}
@@ -607,7 +606,7 @@ func extractValueInfo(expr expression.Expression) *valueInfo {
 func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
 	lengths []int) ([]expression.Expression, []expression.Expression, []expression.Expression, []*valueInfo, bool) {
 	var filters []expression.Expression
-	rb := builder{sc: sctx.GetSessionVars().StmtCtx}
+	rb := builder{tc: sctx.GetSessionVars().StmtCtx.TypeCtx()}
 	accesses := make([]expression.Expression, len(cols))
 	points := make([][]*point, len(cols))
 	mergedAccesses := make([]expression.Expression, len(cols))
@@ -652,7 +651,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 			}
 			continue
 		}
-		points[i] = allSinglePoints(sctx.GetSessionVars().StmtCtx, points[i])
+		points[i] = allSinglePoints(sctx.GetSessionVars().StmtCtx.TypeCtx(), points[i])
 		if points[i] == nil {
 			// There exists an interval whose length is larger than 0
 			accesses[i] = nil
@@ -713,7 +712,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 		length:                   d.lengths[0],
 		optPrefixIndexSingleScan: d.sctx.GetSessionVars().OptPrefixIndexSingleScan,
 	}
-	rb := builder{sc: d.sctx.GetSessionVars().StmtCtx}
+	rb := builder{tc: d.sctx.GetSessionVars().StmtCtx.TypeCtx()}
 	dnfItems := expression.FlattenDNFConditions(condition)
 	newAccessItems := make([]expression.Expression, 0, len(dnfItems))
 	var totalRanges Ranges
@@ -753,7 +752,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 						if valInfo == nil {
 							continue
 						}
-						sameValue, err := isSameValue(d.sctx.GetSessionVars().StmtCtx, valInfo, res.ColumnValues[j])
+						sameValue, err := isSameValue(d.sctx.GetSessionVars().StmtCtx.TypeCtx(), valInfo, res.ColumnValues[j])
 						if err != nil {
 							return nil, nil, nil, false, errors.Trace(err)
 						}
@@ -792,7 +791,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 				columnValues[0] = extractValueInfo(item)
 			} else if columnValues[0] != nil {
 				valInfo := extractValueInfo(item)
-				sameValue, err := isSameValue(d.sctx.GetSessionVars().StmtCtx, columnValues[0], valInfo)
+				sameValue, err := isSameValue(d.sctx.GetSessionVars().StmtCtx.TypeCtx(), columnValues[0], valInfo)
 				if err != nil {
 					return nil, nil, nil, false, errors.Trace(err)
 				}
@@ -821,7 +820,7 @@ type valueInfo struct {
 	mutable bool         // If true, the constant column value depends on mutable constant.
 }
 
-func isSameValue(sc *stmtctx.StatementContext, lhs, rhs *valueInfo) (bool, error) {
+func isSameValue(tc types.Context, lhs, rhs *valueInfo) (bool, error) {
 	// We assume `lhs` and `rhs` are not the same when either `lhs` or `rhs` is mutable to keep it simple. If we consider
 	// mutable valueInfo, we need to set `sc.OptimDependOnMutableConst = true`, which makes the plan not able to be cached.
 	// On the other hand, the equal condition may not be used for optimization. Hence we simply regard mutable valueInfos different
@@ -831,7 +830,7 @@ func isSameValue(sc *stmtctx.StatementContext, lhs, rhs *valueInfo) (bool, error
 		return false, nil
 	}
 	// binary collator may not the best choice, but it can make sure the result is correct.
-	cmp, err := lhs.value.Compare(sc, rhs.value, collate.GetBinaryCollator())
+	cmp, err := lhs.value.Compare(tc, rhs.value, collate.GetBinaryCollator())
 	if err != nil {
 		return false, err
 	}

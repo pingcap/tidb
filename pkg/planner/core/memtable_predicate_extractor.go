@@ -58,7 +58,7 @@ import (
 // 4. Executor sends requests to the target components instead of all of the components
 type MemTablePredicateExtractor interface {
 	// Extracts predicates which can be pushed down and returns the remained predicates
-	Extract(sessionctx.Context, *expression.Schema, []*types.FieldName, []expression.Expression) (remained []expression.Expression)
+	Extract(types.Context, *expression.Schema, []*types.FieldName, []expression.Expression) (remained []expression.Expression)
 	explainInfo(p *PhysicalMemTable) string
 }
 
@@ -410,7 +410,7 @@ func (extractHelper) getStringFunctionName(fn *expression.ScalarFunction) string
 // SELECT * FROM t WHERE time='2019-10-10 10:10:10'
 // SELECT * FROM t WHERE time>'2019-10-10 10:10:10' AND time<'2019-10-11 10:10:10'
 func (helper extractHelper) extractTimeRange(
-	ctx sessionctx.Context,
+	tc types.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -446,7 +446,7 @@ func (helper extractHelper) extractTimeRange(
 		if colName == extractColName {
 			timeType := types.NewFieldType(mysql.TypeDatetime)
 			timeType.SetDecimal(6)
-			timeDatum, err := datums[0].ConvertTo(ctx.GetSessionVars().StmtCtx, timeType)
+			timeDatum, err := datums[0].ConvertTo(tc, timeType)
 			if err != nil || timeDatum.Kind() == types.KindNull {
 				remained = append(remained, expr)
 				continue
@@ -460,7 +460,7 @@ func (helper extractHelper) extractTimeRange(
 				mysqlTime.Minute(),
 				mysqlTime.Second(),
 				mysqlTime.Microsecond()*1000,
-				timezone,
+				tc.Location(),
 			).UnixNano()
 
 			switch fnName {
@@ -599,7 +599,7 @@ type ClusterTableExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *ClusterTableExtractor) Extract(_ sessionctx.Context,
+func (e *ClusterTableExtractor) Extract(_ types.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -666,7 +666,7 @@ type ClusterLogTableExtractor struct {
 
 // Extract implements the MemTablePredicateExtractor Extract interface
 func (e *ClusterLogTableExtractor) Extract(
-	ctx sessionctx.Context,
+	tc types.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -683,7 +683,7 @@ func (e *ClusterLogTableExtractor) Extract(
 		return nil
 	}
 
-	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "time", time.Local)
+	remained, startTime, endTime := e.extractTimeRange(tc, schema, names, remained, "time", time.Local)
 	// The time unit for search log is millisecond.
 	startTime = startTime / int64(time.Millisecond)
 	endTime = endTime / int64(time.Millisecond)
@@ -780,7 +780,7 @@ type HotRegionsHistoryTableExtractor struct {
 
 // Extract implements the MemTablePredicateExtractor Extract interface
 func (e *HotRegionsHistoryTableExtractor) Extract(
-	ctx sessionctx.Context,
+	tc types.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -821,7 +821,7 @@ func (e *HotRegionsHistoryTableExtractor) Extract(
 		e.HotRegionTypes.Insert(HotRegionTypeWrite)
 	}
 
-	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "update_time", ctx.GetSessionVars().StmtCtx.TimeZone())
+	remained, startTime, endTime := e.extractTimeRange(tc, schema, names, remained, "update_time", tc.Location())
 	// The time unit for search hot regions is millisecond
 	startTime = startTime / int64(time.Millisecond)
 	endTime = endTime / int64(time.Millisecond)
@@ -899,7 +899,7 @@ func newMetricTableExtractor() *MetricTableExtractor {
 
 // Extract implements the MemTablePredicateExtractor Extract interface
 func (e *MetricTableExtractor) Extract(
-	ctx sessionctx.Context,
+	tc types.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -913,7 +913,7 @@ func (e *MetricTableExtractor) Extract(
 	}
 
 	// Extract the `time` columns
-	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "time", ctx.GetSessionVars().StmtCtx.TimeZone())
+	remained, startTime, endTime := e.extractTimeRange(tc, schema, names, remained, "time", tc.Location())
 	e.StartTime, e.EndTime = e.getTimeRange(startTime, endTime)
 	e.SkipRequest = e.StartTime.After(e.EndTime)
 	if e.SkipRequest {
@@ -1000,7 +1000,7 @@ type MetricSummaryTableExtractor struct {
 
 // Extract implements the MemTablePredicateExtractor Extract interface
 func (e *MetricSummaryTableExtractor) Extract(
-	_ sessionctx.Context,
+	_ types.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1033,7 +1033,7 @@ type InspectionResultTableExtractor struct {
 
 // Extract implements the MemTablePredicateExtractor Extract interface
 func (e *InspectionResultTableExtractor) Extract(
-	_ sessionctx.Context,
+	_ types.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1071,7 +1071,7 @@ type InspectionSummaryTableExtractor struct {
 
 // Extract implements the MemTablePredicateExtractor Extract interface
 func (e *InspectionSummaryTableExtractor) Extract(
-	_ sessionctx.Context,
+	_ types.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1130,7 +1130,7 @@ type InspectionRuleTableExtractor struct {
 
 // Extract implements the MemTablePredicateExtractor Extract interface
 func (e *InspectionRuleTableExtractor) Extract(
-	_ sessionctx.Context,
+	_ types.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1175,12 +1175,12 @@ type TimeRange struct {
 
 // Extract implements the MemTablePredicateExtractor Extract interface
 func (e *SlowQueryExtractor) Extract(
-	ctx sessionctx.Context,
+	tc types.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) []expression.Expression {
-	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, predicates, "time", ctx.GetSessionVars().StmtCtx.TimeZone())
+	remained, startTime, endTime := e.extractTimeRange(tc, schema, names, predicates, "time", tc.Location())
 	e.setTimeRange(startTime, endTime)
 	e.SkipRequest = e.Enable && e.TimeRanges[0].StartTime.After(e.TimeRanges[0].EndTime)
 	if e.SkipRequest {
@@ -1279,7 +1279,7 @@ type TableStorageStatsExtractor struct {
 
 // Extract implements the MemTablePredicateExtractor Extract interface.
 func (e *TableStorageStatsExtractor) Extract(
-	_ sessionctx.Context,
+	_ types.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1349,7 +1349,7 @@ type TiFlashSystemTableExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *TiFlashSystemTableExtractor) Extract(_ sessionctx.Context,
+func (e *TiFlashSystemTableExtractor) Extract(_ types.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1412,7 +1412,7 @@ type StatementsSummaryExtractor struct {
 
 // Extract implements the MemTablePredicateExtractor Extract interface
 func (e *StatementsSummaryExtractor) Extract(
-	sctx sessionctx.Context,
+	tc types.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1427,7 +1427,7 @@ func (e *StatementsSummaryExtractor) Extract(
 		e.Digests = digests
 	}
 
-	tr := e.findCoarseTimeRange(sctx, schema, names, remained)
+	tr := e.findCoarseTimeRange(tc, schema, names, remained)
 	if tr == nil {
 		return remained
 	}
@@ -1465,14 +1465,14 @@ func (e *StatementsSummaryExtractor) explainInfo(p *PhysicalMemTable) string {
 }
 
 func (e *StatementsSummaryExtractor) findCoarseTimeRange(
-	sctx sessionctx.Context,
+	tc types.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) *TimeRange {
-	tz := sctx.GetSessionVars().StmtCtx.TimeZone()
-	_, _, endTime := e.extractTimeRange(sctx, schema, names, predicates, "summary_begin_time", tz)
-	_, startTime, _ := e.extractTimeRange(sctx, schema, names, predicates, "summary_end_time", tz)
+	tz := tc.Location()
+	_, _, endTime := e.extractTimeRange(tc, schema, names, predicates, "summary_begin_time", tz)
+	_, startTime, _ := e.extractTimeRange(tc, schema, names, predicates, "summary_end_time", tz)
 	return e.buildTimeRange(startTime, endTime)
 }
 
@@ -1513,7 +1513,7 @@ type TikvRegionPeersExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *TikvRegionPeersExtractor) Extract(_ sessionctx.Context,
+func (e *TikvRegionPeersExtractor) Extract(_ types.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1571,7 +1571,7 @@ type ColumnsTableExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *ColumnsTableExtractor) Extract(_ sessionctx.Context,
+func (e *ColumnsTableExtractor) Extract(_ types.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1634,7 +1634,7 @@ type TiKVRegionStatusExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *TiKVRegionStatusExtractor) Extract(_ sessionctx.Context,
+func (e *TiKVRegionStatusExtractor) Extract(_ types.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,

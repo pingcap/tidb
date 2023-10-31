@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
@@ -54,7 +55,7 @@ func BuildExtendedStats(sctx sessionctx.Context,
 			logutil.BgLogger().Error("invalid column_ids in mysql.stats_extended, skip collecting extended stats for this row", zap.String("column_ids", colIDs), zap.Error(err))
 			continue
 		}
-		item = fillExtendedStatsItemVals(sctx, item, cols, collectors)
+		item = fillExtendedStatsItemVals(sctx.GetSessionVars().StmtCtx.TypeCtx(), item, cols, collectors)
 		if item != nil {
 			statsColl.Stats[name] = item
 		}
@@ -65,17 +66,17 @@ func BuildExtendedStats(sctx sessionctx.Context,
 	return statsColl, nil
 }
 
-func fillExtendedStatsItemVals(sctx sessionctx.Context, item *ExtendedStatsItem, cols []*model.ColumnInfo, collectors []*SampleCollector) *ExtendedStatsItem {
+func fillExtendedStatsItemVals(tc types.Context, item *ExtendedStatsItem, cols []*model.ColumnInfo, collectors []*SampleCollector) *ExtendedStatsItem {
 	switch item.Tp {
 	case ast.StatsTypeCardinality, ast.StatsTypeDependency:
 		return nil
 	case ast.StatsTypeCorrelation:
-		return fillExtStatsCorrVals(sctx, item, cols, collectors)
+		return fillExtStatsCorrVals(tc, item, cols, collectors)
 	}
 	return nil
 }
 
-func fillExtStatsCorrVals(sctx sessionctx.Context, item *ExtendedStatsItem, cols []*model.ColumnInfo, collectors []*SampleCollector) *ExtendedStatsItem {
+func fillExtStatsCorrVals(tc types.Context, item *ExtendedStatsItem, cols []*model.ColumnInfo, collectors []*SampleCollector) *ExtendedStatsItem {
 	colOffsets := make([]int, 0, 2)
 	for _, id := range item.ColIDs {
 		for i, col := range cols {
@@ -102,10 +103,8 @@ func fillExtStatsCorrVals(sctx sessionctx.Context, item *ExtendedStatsItem, cols
 		return item
 	}
 
-	sc := sctx.GetSessionVars().StmtCtx
-
 	var err error
-	samplesX, err = SortSampleItems(sc, samplesX)
+	samplesX, err = SortSampleItems(tc, samplesX)
 	if err != nil {
 		return nil
 	}
@@ -118,7 +117,7 @@ func fillExtStatsCorrVals(sctx sessionctx.Context, item *ExtendedStatsItem, cols
 		itemY.Ordinal = i
 		samplesYInXOrder = append(samplesYInXOrder, itemY)
 	}
-	samplesYInYOrder, err := SortSampleItems(sc, samplesYInXOrder)
+	samplesYInYOrder, err := SortSampleItems(tc, samplesYInXOrder)
 	if err != nil {
 		return nil
 	}

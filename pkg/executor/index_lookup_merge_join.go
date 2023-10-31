@@ -659,7 +659,7 @@ func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, 
 		return nil, nil
 	}
 	outerRow := task.outerResult.GetRow(idx)
-	sc := imw.ctx.GetSessionVars().StmtCtx
+	tc := imw.ctx.GetSessionVars().StmtCtx.TypeCtx()
 	keyLen := len(imw.keyCols)
 	dLookupKey := make([]types.Datum, 0, keyLen)
 	for i, keyCol := range imw.outerMergeCtx.keyCols {
@@ -671,7 +671,7 @@ func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, 
 			return nil, nil
 		}
 		innerColType := imw.rowTypes[imw.keyCols[i]]
-		innerValue, err := outerValue.ConvertTo(sc, innerColType)
+		innerValue, err := outerValue.ConvertTo(tc, innerColType)
 		if err != nil {
 			// If the converted outerValue overflows, we don't need to lookup it.
 			if terror.ErrorEqual(err, types.ErrOverflow) || terror.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
@@ -682,7 +682,7 @@ func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, 
 			}
 			return nil, err
 		}
-		cmp, err := outerValue.Compare(sc, &innerValue, imw.keyCollators[i])
+		cmp, err := outerValue.Compare(tc, &innerValue, imw.keyCollators[i])
 		if err != nil {
 			return nil, err
 		}
@@ -699,10 +699,10 @@ func (imw *innerMergeWorker) dedupDatumLookUpKeys(lookUpContents []*indexJoinLoo
 	if len(lookUpContents) < 2 {
 		return lookUpContents
 	}
-	sc := imw.ctx.GetSessionVars().StmtCtx
+	tc := imw.ctx.GetSessionVars().StmtCtx.TypeCtx()
 	deDupedLookUpContents := lookUpContents[:1]
 	for i := 1; i < len(lookUpContents); i++ {
-		cmp := compareRow(sc, lookUpContents[i].keys, lookUpContents[i-1].keys, imw.keyCollators)
+		cmp := compareRow(tc, lookUpContents[i].keys, lookUpContents[i-1].keys, imw.keyCollators)
 		if cmp != 0 || (imw.nextColCompareFilters != nil && imw.nextColCompareFilters.CompareRow(lookUpContents[i].row, lookUpContents[i-1].row) != 0) {
 			deDupedLookUpContents = append(deDupedLookUpContents, lookUpContents[i])
 		}

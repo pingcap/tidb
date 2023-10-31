@@ -1433,7 +1433,7 @@ func isTemporalColumn(expr Expression) bool {
 //
 //	If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
 //	If the op == EQ,NullEQ and the constant can never be equal to the int column, return ‘con’(the input, a non-int constant).
-func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.FieldType, con *Constant) (_ *Constant, isExceptional bool) {
+func tryToConvertConstantInt(tc types.Context, targetFieldType *types.FieldType, con *Constant) (_ *Constant, isExceptional bool) {
 	if con.GetType().EvalType() == types.ETInt {
 		return con, false
 	}
@@ -1441,9 +1441,8 @@ func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.Fiel
 	if err != nil {
 		return con, false
 	}
-	sc := ctx.GetSessionVars().StmtCtx
 
-	dt, err = dt.ConvertTo(sc, targetFieldType)
+	dt, err = dt.ConvertTo(tc, targetFieldType)
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrOverflow) {
 			return &Constant{
@@ -1477,12 +1476,13 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 		return con, false
 	}
 	sc := ctx.GetSessionVars().StmtCtx
+	tc := sc.TypeCtx()
 
 	if targetFieldType.GetType() == mysql.TypeBit {
 		targetFieldType = *types.NewFieldType(mysql.TypeLonglong)
 	}
 	var intDatum types.Datum
-	intDatum, err = dt.ConvertTo(sc, &targetFieldType)
+	intDatum, err = dt.ConvertTo(tc, &targetFieldType)
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrOverflow) {
 			return &Constant{
@@ -1494,7 +1494,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 		}
 		return con, false
 	}
-	c, err := intDatum.Compare(sc, &con.Value, collate.GetBinaryCollator())
+	c, err := intDatum.Compare(tc, &con.Value, collate.GetBinaryCollator())
 	if err != nil {
 		return con, false
 	}
@@ -1510,12 +1510,12 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 	case opcode.LT, opcode.GE:
 		resultExpr := NewFunctionInternal(ctx, ast.Ceil, types.NewFieldType(mysql.TypeUnspecified), con)
 		if resultCon, ok := resultExpr.(*Constant); ok {
-			return tryToConvertConstantInt(ctx, &targetFieldType, resultCon)
+			return tryToConvertConstantInt(tc, &targetFieldType, resultCon)
 		}
 	case opcode.LE, opcode.GT:
 		resultExpr := NewFunctionInternal(ctx, ast.Floor, types.NewFieldType(mysql.TypeUnspecified), con)
 		if resultCon, ok := resultExpr.(*Constant); ok {
-			return tryToConvertConstantInt(ctx, &targetFieldType, resultCon)
+			return tryToConvertConstantInt(tc, &targetFieldType, resultCon)
 		}
 	case opcode.NullEQ, opcode.EQ:
 		switch con.GetType().EvalType() {
@@ -1539,7 +1539,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 			// 3. Suppose the value of `con` is 2, when `targetFieldType.GetType()` is `TypeYear`, the value of `doubleDatum`
 			//    will be 2.0 and the value of `intDatum` will be 2002 in this case.
 			var doubleDatum types.Datum
-			doubleDatum, err = dt.ConvertTo(sc, types.NewFieldType(mysql.TypeDouble))
+			doubleDatum, err = dt.ConvertTo(tc, types.NewFieldType(mysql.TypeDouble))
 			if err != nil {
 				return con, false
 			}
@@ -1638,11 +1638,11 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	RemoveMutableConst(ctx, args)
 
 	if arg0IsCon && !arg1IsCon && matchRefineRule3Pattern(arg0EvalType, arg1Type) {
-		return c.refineNumericConstantCmpDatetime(ctx, args, arg0, 0)
+		return c.refineNumericConstantCmpDatetime(ctx.GetSessionVars().StmtCtx.TypeCtx(), args, arg0, 0)
 	}
 
 	if !arg0IsCon && arg1IsCon && matchRefineRule3Pattern(arg1EvalType, arg0Type) {
-		return c.refineNumericConstantCmpDatetime(ctx, args, arg1, 1)
+		return c.refineNumericConstantCmpDatetime(ctx.GetSessionVars().StmtCtx.TypeCtx(), args, arg1, 1)
 	}
 
 	// int non-constant [cmp] non-int constant
@@ -1729,15 +1729,14 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 }
 
 // see https://github.com/pingcap/tidb/issues/38361 for more details
-func (c *compareFunctionClass) refineNumericConstantCmpDatetime(ctx sessionctx.Context, args []Expression, constArg *Constant, constArgIdx int) []Expression {
+func (c *compareFunctionClass) refineNumericConstantCmpDatetime(tc types.Context, args []Expression, constArg *Constant, constArgIdx int) []Expression {
 	dt, err := constArg.Eval(chunk.Row{})
 	if err != nil || dt.IsNull() {
 		return args
 	}
-	sc := ctx.GetSessionVars().StmtCtx
 	var datetimeDatum types.Datum
 	targetFieldType := types.NewFieldType(mysql.TypeDatetime)
-	datetimeDatum, err = dt.ConvertTo(sc, targetFieldType)
+	datetimeDatum, err = dt.ConvertTo(tc, targetFieldType)
 	if err != nil || datetimeDatum.IsNull() {
 		return args
 	}

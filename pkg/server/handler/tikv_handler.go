@@ -90,9 +90,8 @@ func (t *TikvHandlerTool) GetHandle(tb table.PhysicalTable, params map[string]st
 		for _, idxCol := range pkIdx.Columns {
 			pkCols = append(pkCols, cols[idxCol.Offset])
 		}
-		sc := stmtctx.NewStmtCtx()
-		sc.SetTimeZone(time.UTC)
-		pkDts, err := t.formValue2DatumRow(sc, values, pkCols)
+		sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
+		pkDts, err := t.formValue2DatumRow(sc.TypeCtx(), values, pkCols)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -115,7 +114,7 @@ func (t *TikvHandlerTool) GetMvccByIdxValue(idx table.Index, values url.Values, 
 	// HTTP request is not a database session, set timezone to UTC directly here.
 	// See https://github.com/pingcap/tidb/blob/master/docs/tidb_http_api.md for more details.
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-	idxRow, err := t.formValue2DatumRow(sc, values, idxCols)
+	idxRow, err := t.formValue2DatumRow(sc.TypeCtx(), values, idxCols)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -146,7 +145,7 @@ func (t *TikvHandlerTool) GetMvccByIdxValue(idx table.Index, values url.Values, 
 }
 
 // formValue2DatumRow converts URL query string to a Datum Row.
-func (*TikvHandlerTool) formValue2DatumRow(sc *stmtctx.StatementContext, values url.Values, idxCols []*model.ColumnInfo) ([]types.Datum, error) {
+func (*TikvHandlerTool) formValue2DatumRow(tc types.Context, values url.Values, idxCols []*model.ColumnInfo) ([]types.Datum, error) {
 	data := make([]types.Datum, len(idxCols))
 	for i, col := range idxCols {
 		colName := col.Name.String()
@@ -160,7 +159,7 @@ func (*TikvHandlerTool) formValue2DatumRow(sc *stmtctx.StatementContext, values 
 			data[i].SetNull()
 		case 1:
 			bDatum := types.NewStringDatum(vals[0])
-			cDatum, err := bDatum.ConvertTo(sc, &col.FieldType)
+			cDatum, err := bDatum.ConvertTo(tc, &col.FieldType)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

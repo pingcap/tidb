@@ -318,7 +318,7 @@ func updateIndexResult(
 	if job != nil {
 		UpdateAnalyzeJob(ctx, job, int64(respHist.TotalRowCount()))
 	}
-	hist, err = statistics.MergeHistograms(ctx.GetSessionVars().StmtCtx, hist, respHist, numBuckets, statsVer)
+	hist, err = statistics.MergeHistograms(ctx.GetSessionVars().StmtCtx.TypeCtx(), hist, respHist, numBuckets, statsVer)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}

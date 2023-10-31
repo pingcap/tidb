@@ -60,9 +60,7 @@ func TestTimeEncoding(t *testing.T) {
 
 func TestDateTime(t *testing.T) {
 	var warnings []error
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, func(err error) {
-		warnings = append(warnings, err)
-	})
+	typeCtx := types.NewCtxForText(t, types.FlagIgnoreZeroInDateErr)
 	table := []struct {
 		Input  string
 		Expect string
@@ -209,7 +207,7 @@ func TestTimestamp(t *testing.T) {
 }
 
 func TestDate(t *testing.T) {
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, func(err error) {})
+	typeCtx := types.NewCtxForText(t, types.FlagIgnoreZeroInDateErr)
 	table := []struct {
 		Input  string
 		Expect string
@@ -303,7 +301,7 @@ func TestDate(t *testing.T) {
 }
 
 func TestTime(t *testing.T) {
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, func(err error) {})
+	tc := types.NewCtxForText(t, types.DefaultStmtFlags, types.FlagIgnoreZeroInDateErr)
 	table := []struct {
 		Input  string
 		Expect string
@@ -335,7 +333,7 @@ func TestTime(t *testing.T) {
 	}
 
 	for _, test := range table {
-		duration, isNull, err := types.ParseDuration(typeCtx, test.Input, types.MinFsp)
+		duration, isNull, err := types.ParseDuration(tc, test.Input, types.MinFsp)
 		require.NoError(t, err)
 		require.False(t, isNull)
 		require.Equal(t, test.Expect, duration.String())
@@ -351,7 +349,7 @@ func TestTime(t *testing.T) {
 	}
 
 	for _, test := range table {
-		duration, _, err := types.ParseDuration(typeCtx, test.Input, types.MaxFsp)
+		duration, _, err := types.ParseDuration(tc, test.Input, types.MaxFsp)
 		require.NoError(t, err)
 		require.Equal(t, test.Expect, duration.String())
 	}
@@ -366,7 +364,7 @@ func TestTime(t *testing.T) {
 	}
 
 	for _, test := range table {
-		duration, isNull, err := types.ParseDuration(typeCtx, test.Input, types.MaxFsp)
+		duration, isNull, err := types.ParseDuration(tc, test.Input, types.MaxFsp)
 		require.False(t, isNull)
 		require.True(t, types.ErrTruncatedWrongVal.Equal(err))
 		require.Equal(t, test.Expect, duration.String())
@@ -379,11 +377,11 @@ func TestTime(t *testing.T) {
 	}
 
 	for _, test := range errTable {
-		_, _, err := types.ParseDuration(typeCtx, test, types.DefaultFsp)
+		_, _, err := types.ParseDuration(tc, test, types.DefaultFsp)
 		require.Error(t, err)
 	}
 
-	duration, _, err := types.ParseDuration(typeCtx, "4294967295 0:59:59", types.DefaultFsp)
+	duration, _, err := types.ParseDuration(tc, "4294967295 0:59:59", types.DefaultFsp)
 	require.Error(t, err)
 	require.Equal(t, "838:59:59", duration.String())
 
@@ -449,7 +447,7 @@ func TestDurationAdd(t *testing.T) {
 }
 
 func TestDurationSub(t *testing.T) {
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, func(err error) {})
+	typeCtx := types.NewCtxForText(t, types.FlagIgnoreZeroInDateErr)
 	table := []struct {
 		Input    string
 		Fsp      int
@@ -472,7 +470,7 @@ func TestDurationSub(t *testing.T) {
 }
 
 func TestTimeFsp(t *testing.T) {
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, func(err error) {})
+	typeCtx := types.NewCtxForText(t, types.FlagIgnoreZeroInDateErr)
 	table := []struct {
 		Input  string
 		Fsp    int
@@ -701,7 +699,8 @@ func TestParseTimeFromNum(t *testing.T) {
 func TestToNumber(t *testing.T) {
 	losAngelesTz, err := time.LoadLocation("America/Los_Angeles")
 	require.NoError(t, err)
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), losAngelesTz, func(err error) {})
+	typeCtx := types.NewCtxForText(t, types.FlagIgnoreZeroInDateErr)
+	typeCtx = typeCtx.WithLocation(losAngelesTz)
 	tblDateTime := []struct {
 		Input  string
 		Fsp    int
@@ -773,7 +772,7 @@ func TestToNumber(t *testing.T) {
 }
 
 func TestParseTimeFromFloatString(t *testing.T) {
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, func(err error) {})
+	typeCtx := types.NewCtxForText(t, types.FlagIgnoreZeroInDateErr)
 	table := []struct {
 		Input       string
 		Fsp         int
@@ -840,7 +839,7 @@ func TestParseFrac(t *testing.T) {
 }
 
 func TestRoundFrac(t *testing.T) {
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, func(err error) {})
+	typeCtx := types.NewCtxForText(t, types.FlagIgnoreZeroInDateErr)
 	tbl := []struct {
 		Input  string
 		Fsp    int
@@ -931,7 +930,8 @@ func TestRoundFrac(t *testing.T) {
 
 func TestConvert(t *testing.T) {
 	losAngelesTz, _ := time.LoadLocation("America/Los_Angeles")
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), losAngelesTz, func(err error) {})
+	typeCtx := types.NewCtxForText(t, types.FlagIgnoreZeroInDateErr)
+	typeCtx = typeCtx.WithLocation(losAngelesTz)
 	tbl := []struct {
 		Input  string
 		Fsp    int
@@ -1241,7 +1241,9 @@ func TestCheckTimestamp(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		validTimestamp := types.CheckTimestampTypeForTest(types.NewContext(types.StrictFlags, tt.tz, func(err error) {}), tt.input, nil)
+		tc := types.NewCtxForText(t)
+		tc = tc.WithLocation(tt.tz)
+		validTimestamp := types.CheckTimestampTypeForTest(tc, tt.input, nil)
 		if tt.expectRetError {
 			require.Errorf(t, validTimestamp, "For %s %s", tt.input, tt.tz)
 		} else {
@@ -1298,7 +1300,9 @@ func TestCheckTimestamp(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		validTimestamp := types.CheckTimestampTypeForTest(types.NewContext(types.StrictFlags, tt.tz, func(err error) {}), tt.input, nil)
+		tc := types.NewCtxForText(t)
+		tc = tc.WithLocation(tt.tz)
+		validTimestamp := types.CheckTimestampTypeForTest(tc, tt.input, nil)
 		if tt.expectRetError {
 			require.Errorf(t, validTimestamp, "For %s %s", tt.input, tt.tz)
 		} else {
@@ -1774,7 +1778,7 @@ func TestIsDateFormat(t *testing.T) {
 }
 
 func TestParseTimeFromInt64(t *testing.T) {
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, func(err error) {})
+	typeCtx := types.NewCtxForText(t, types.FlagIgnoreZeroInDateErr)
 
 	input := int64(20190412140000)
 	output, err := types.ParseTimeFromInt64(typeCtx, input)
@@ -1791,7 +1795,7 @@ func TestParseTimeFromInt64(t *testing.T) {
 }
 
 func TestParseTimeFromFloat64(t *testing.T) {
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, func(err error) {})
+	typeCtx := types.NewCtxForText(t, types.FlagIgnoreZeroInDateErr)
 
 	cases := []struct {
 		f   float64
@@ -1834,7 +1838,7 @@ func TestParseTimeFromFloat64(t *testing.T) {
 }
 
 func TestParseTimeFromDecimal(t *testing.T) {
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, func(err error) {})
+	typeCtx := types.NewCtxForText(t, types.FlagIgnoreZeroInDateErr)
 
 	cases := []struct {
 		d   *types.MyDecimal
@@ -1909,7 +1913,7 @@ func TestGetFracIndex(t *testing.T) {
 }
 
 func TestTimeOverflow(t *testing.T) {
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, func(err error) {})
+	typeCtx := types.NewCtxForText(t, types.FlagIgnoreZeroInDateErr)
 	table := []struct {
 		Input  string
 		Output bool
@@ -2001,8 +2005,7 @@ func TestCheckMonthDay(t *testing.T) {
 		{types.FromDate(3200, 2, 29, 0, 0, 0, 0), true},
 	}
 
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreInvalidDateErr(false), time.UTC, func(err error) {})
-
+	typeCtx := types.NewCtxForText(t)
 	for _, tt := range dates {
 		v := types.NewTime(tt.date, mysql.TypeDate, types.DefaultFsp)
 		err := v.Check(typeCtx)
@@ -2166,7 +2169,9 @@ func TestParseWithTimezone(t *testing.T) {
 		},
 	}
 	for ith, ca := range cases {
-		v, err := types.ParseTime(types.NewContext(types.StrictFlags, ca.sysTZ, func(err error) {}), ca.lit, mysql.TypeTimestamp, ca.fsp, nil)
+		tc := types.NewCtxForText(t)
+		tc = tc.WithLocation(ca.sysTZ)
+		v, err := types.ParseTime(tc, ca.lit, mysql.TypeTimestamp, ca.fsp, nil)
 		require.NoErrorf(t, err, "tidb time parse misbehaved on %d", ith)
 		if err != nil {
 			continue

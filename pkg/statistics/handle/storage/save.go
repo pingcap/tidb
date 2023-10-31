@@ -74,7 +74,7 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 	if hg == nil {
 		return
 	}
-	sc := sctx.GetSessionVars().StmtCtx
+	tc := sctx.GetSessionVars().StmtCtx.TypeCtx()
 	for i := 0; i < len(hg.Buckets); {
 		end := i + batchInsertSize
 		if end > len(hg.Buckets) {
@@ -89,7 +89,7 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 				count -= hg.Buckets[j-1].Count
 			}
 			var upperBound types.Datum
-			upperBound, err = hg.GetUpper(j).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
+			upperBound, err = hg.GetUpper(j).ConvertTo(tc, types.NewFieldType(mysql.TypeBlob))
 			if err != nil {
 				return
 			}
@@ -97,7 +97,7 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 				lastAnalyzePos = upperBound.GetBytes()
 			}
 			var lowerBound types.Datum
-			lowerBound, err = hg.GetLower(j).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
+			lowerBound, err = hg.GetLower(j).ConvertTo(tc, types.NewFieldType(mysql.TypeBlob))
 			if err != nil {
 				return
 			}

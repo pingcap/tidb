@@ -394,7 +394,7 @@ func updateRange(p PhysicalPlan, ranges ranger.Ranges, rangeInfo string) {
 //     usage exceeds range mem limit 100B, and range fallback happens and tidb may fetch more rows than users expect.
 func rebuildRange(p Plan) error {
 	sctx := p.SCtx()
-	sc := p.SCtx().GetSessionVars().StmtCtx
+	tc := p.SCtx().GetSessionVars().StmtCtx.TypeCtx()
 	var err error
 	switch x := p.(type) {
 	case *PhysicalIndexHashJoin:
@@ -490,11 +490,11 @@ func rebuildRange(p Plan) error {
 			return errors.New("point get for partition table can not use plan cache")
 		}
 		if x.HandleConstant != nil {
-			dVal, err := convertConstant2Datum(sc, x.HandleConstant, x.handleFieldType)
+			dVal, err := convertConstant2Datum(tc, x.HandleConstant, x.handleFieldType)
 			if err != nil {
 				return err
 			}
-			iv, err := dVal.ToInt64(sc)
+			iv, err := dVal.ToInt64(tc)
 			if err != nil {
 				return err
 			}
@@ -503,7 +503,7 @@ func rebuildRange(p Plan) error {
 		}
 		for i, param := range x.IndexConstants {
 			if param != nil {
-				dVal, err := convertConstant2Datum(sc, param, x.ColsFieldType[i])
+				dVal, err := convertConstant2Datum(tc, param, x.ColsFieldType[i])
 				if err != nil {
 					return err
 				}
@@ -556,11 +556,11 @@ func rebuildRange(p Plan) error {
 		}
 		for i, param := range x.HandleParams {
 			if param != nil {
-				dVal, err := convertConstant2Datum(sc, param, x.HandleType)
+				dVal, err := convertConstant2Datum(tc, param, x.HandleType)
 				if err != nil {
 					return err
 				}
-				iv, err := dVal.ToInt64(sc)
+				iv, err := dVal.ToInt64(tc)
 				if err != nil {
 					return err
 				}
@@ -573,7 +573,7 @@ func rebuildRange(p Plan) error {
 			}
 			for j, param := range params {
 				if param != nil {
-					dVal, err := convertConstant2Datum(sc, param, x.IndexColTypes[j])
+					dVal, err := convertConstant2Datum(tc, param, x.IndexColTypes[j])
 					if err != nil {
 						return err
 					}
@@ -614,17 +614,17 @@ func rebuildRange(p Plan) error {
 	return nil
 }
 
-func convertConstant2Datum(sc *stmtctx.StatementContext, con *expression.Constant, target *types.FieldType) (*types.Datum, error) {
+func convertConstant2Datum(tc types.Context, con *expression.Constant, target *types.FieldType) (*types.Datum, error) {
 	val, err := con.Eval(chunk.Row{})
 	if err != nil {
 		return nil, err
 	}
-	dVal, err := val.ConvertTo(sc, target)
+	dVal, err := val.ConvertTo(tc, target)
 	if err != nil {
 		return nil, err
 	}
 	// The converted result must be same as original datum.
-	cmp, err := dVal.Compare(sc, &val, collate.GetCollator(target.GetCollate()))
+	cmp, err := dVal.Compare(tc, &val, collate.GetCollator(target.GetCollate()))
 	if err != nil || cmp != 0 {
 		return nil, errors.New("Convert constant to datum is failed, because the constant has changed after the covert")
 	}

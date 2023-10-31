@@ -171,6 +171,8 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 			CMSketch:      statistics.NewCMSketch(int32(e.opts[ast.AnalyzeOptCMSketchDepth]), int32(e.opts[ast.AnalyzeOptCMSketchWidth])),
 		}
 	}
+	sc := e.ctx.GetSessionVars().StmtCtx
+	tc := sc.TypeCtx()
 	for {
 		failpoint.Inject("mockKillRunningV1AnalyzeJob", func() {
 			dom := domain.GetDomain(e.ctx)
@@ -208,12 +210,11 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 			colResp = &tipb.AnalyzeColumnsResp{}
 			err = colResp.Unmarshal(data)
 		}
-		sc := e.ctx.GetSessionVars().StmtCtx
 		rowCount := int64(0)
 		if hasPkHist(e.handleCols) {
 			respHist := statistics.HistogramFromProto(colResp.PkHist)
 			rowCount = int64(respHist.TotalRowCount())
-			pkHist, err = statistics.MergeHistograms(sc, pkHist, respHist, int(e.opts[ast.AnalyzeOptNumBuckets]), statistics.Version1)
+			pkHist, err = statistics.MergeHistograms(tc, pkHist, respHist, int(e.opts[ast.AnalyzeOptNumBuckets]), statistics.Version1)
 			if err != nil {
 				return nil, nil, nil, nil, nil, err
 			}
@@ -263,7 +264,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		var err error
 		var topn *statistics.TopN
 		if e.StatsVersion < 2 {
-			hg, err = statistics.BuildColumn(e.ctx, int64(e.opts[ast.AnalyzeOptNumBuckets]), col.ID, collectors[i], &col.FieldType)
+			hg, err = statistics.BuildColumn(tc, int64(e.opts[ast.AnalyzeOptNumBuckets]), col.ID, collectors[i], &col.FieldType)
 		} else {
 			hg, topn, err = statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), col.ID, collectors[i], &col.FieldType, true, nil)
 			topNs = append(topNs, topn)

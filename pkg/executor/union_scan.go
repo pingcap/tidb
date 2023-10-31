@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -209,7 +208,7 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 	} else if snapshotRow == nil {
 		row = addedRow
 	} else {
-		isSnapshotRowInt, err := us.compare(us.Ctx().GetSessionVars().StmtCtx, snapshotRow, addedRow)
+		isSnapshotRowInt, err := us.compare(us.Ctx().GetSessionVars().StmtCtx.TypeCtx(), snapshotRow, addedRow)
 		if err != nil {
 			return nil, err
 		}
@@ -293,12 +292,12 @@ type compareExec struct {
 	handleCols plannercore.HandleCols
 }
 
-func (ce compareExec) compare(sctx *stmtctx.StatementContext, a, b []types.Datum) (ret int, err error) {
+func (ce compareExec) compare(tc types.Context, a, b []types.Datum) (ret int, err error) {
 	var cmp int
 	for _, colOff := range ce.usedIndex {
 		aColumn := a[colOff]
 		bColumn := b[colOff]
-		cmp, err = aColumn.Compare(sctx, &bColumn, ce.collators[colOff])
+		cmp, err = aColumn.Compare(tc, &bColumn, ce.collators[colOff])
 		if err != nil {
 			return 0, err
 		}

@@ -16,10 +16,43 @@ package types
 
 import (
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
+
+// WarningsInTest is used to record warnings during test.
+type WarningsInTest struct {
+	warnings []error
+}
+
+func (w *WarningsInTest) AppendWarning(err error) {
+	w.warnings = append(w.warnings, err)
+}
+
+// GetWarnings returns the warnings in test.
+func (w *WarningsInTest) GetWarnings() []error {
+	return w.warnings
+}
+
+// WarningsInTest clears the inner warnings.
+func (w *WarningsInTest) Clear() {
+	w.warnings = w.warnings[:0]
+}
+
+// NewCtxForText creates a context for test
+func NewCtxForText(t testing.TB, flagsList ...Flags) Context {
+	flags := StrictFlags
+	for _, f := range flagsList {
+		flags |= f
+	}
+
+	return NewContext(flags, time.UTC, func(err error) {
+		require.Error(t, err)
+	})
+}
 
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()

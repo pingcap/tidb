@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -31,7 +30,7 @@ import (
 
 // SortedBuilder is used to build histograms for PK and index.
 type SortedBuilder struct {
-	sc              *stmtctx.StatementContext
+	tc              types.Context
 	hist            *Histogram
 	numBuckets      int64
 	valuesPerBucket int64
@@ -42,9 +41,9 @@ type SortedBuilder struct {
 }
 
 // NewSortedBuilder creates a new SortedBuilder.
-func NewSortedBuilder(sc *stmtctx.StatementContext, numBuckets, id int64, tp *types.FieldType, statsVer int) *SortedBuilder {
+func NewSortedBuilder(tc types.Context, numBuckets, id int64, tp *types.FieldType, statsVer int) *SortedBuilder {
 	return &SortedBuilder{
-		sc:              sc,
+		tc:              tc,
 		numBuckets:      numBuckets,
 		valuesPerBucket: 1,
 		hist:            NewHistogram(id, 0, 0, 0, tp, int(numBuckets), 0),
@@ -71,7 +70,7 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 		b.hist.NDV = 1
 		return nil
 	}
-	cmp, err := b.hist.GetUpper(int(b.bucketIdx)).Compare(b.sc, &data, collate.GetBinaryCollator())
+	cmp, err := b.hist.GetUpper(int(b.bucketIdx)).Compare(b.tc, &data, collate.GetBinaryCollator())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -118,22 +117,21 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 // count: represents the row count for the column.
 // ndv: represents the number of distinct values for the column.
 // nullCount: represents the number of null values for the column.
-func BuildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType, count int64, ndv int64, nullCount int64) (*Histogram, error) {
+func BuildColumnHist(tc types.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType, count int64, ndv int64, nullCount int64) (*Histogram, error) {
 	if ndv > count {
 		ndv = count
 	}
 	if count == 0 || len(collector.Samples) == 0 {
 		return NewHistogram(id, ndv, nullCount, 0, tp, 0, collector.TotalSize), nil
 	}
-	sc := ctx.GetSessionVars().StmtCtx
 	samples := collector.Samples
-	samples, err := SortSampleItems(sc, samples)
+	samples, err := SortSampleItems(tc, samples)
 	if err != nil {
 		return nil, err
 	}
 	hg := NewHistogram(id, ndv, nullCount, 0, tp, int(numBuckets), collector.TotalSize)
 
-	corrXYSum, err := buildHist(sc, hg, samples, count, ndv, numBuckets, nil)
+	corrXYSum, err := buildHist(tc, hg, samples, count, ndv, numBuckets, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +141,7 @@ func BuildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *Sa
 
 // buildHist builds histogram from samples and other information.
 // It stores the built histogram in hg and return corrXYSum used for calculating the correlation.
-func buildHist(sc *stmtctx.StatementContext, hg *Histogram, samples []*SampleItem, count, ndv, numBuckets int64, memTracker *memory.Tracker) (corrXYSum float64, err error) {
+func buildHist(tc types.Context, hg *Histogram, samples []*SampleItem, count, ndv, numBuckets int64, memTracker *memory.Tracker) (corrXYSum float64, err error) {
 	sampleNum := int64(len(samples))
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
 	sampleFactor := float64(count) / float64(sampleNum)
@@ -178,7 +176,7 @@ func buildHist(sc *stmtctx.StatementContext, hg *Histogram, samples []*SampleIte
 			memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
 			memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
 		}
-		cmp, err := upper.Compare(sc, &samples[i].Value, collate.GetBinaryCollator())
+		cmp, err := upper.Compare(tc, &samples[i].Value, collate.GetBinaryCollator())
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -228,8 +226,8 @@ func calcCorrelation(sampleNum int64, corrXYSum float64) float64 {
 }
 
 // BuildColumn builds histogram from samples for column.
-func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType) (*Histogram, error) {
-	return BuildColumnHist(ctx, numBuckets, id, collector, tp, collector.Count, collector.FMSketch.NDV(), collector.NullCount)
+func BuildColumn(tc types.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType) (*Histogram, error) {
+	return BuildColumnHist(tc, numBuckets, id, collector, tp, collector.Count, collector.FMSketch.NDV(), collector.NullCount)
 }
 
 // BuildHistAndTopN build a histogram and TopN for a column or an index from samples.
@@ -276,9 +274,9 @@ func BuildHistAndTopN(
 	if count == 0 || len(collector.Samples) == 0 || ndv == 0 {
 		return NewHistogram(id, ndv, nullCount, 0, tp, 0, collector.TotalSize), nil, nil
 	}
-	sc := ctx.GetSessionVars().StmtCtx
+	tc := ctx.GetSessionVars().StmtCtx.TypeCtx()
 	samples := collector.Samples
-	samples, err := SortSampleItems(sc, samples)
+	samples, err := SortSampleItems(tc, samples)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -432,7 +430,7 @@ func BuildHistAndTopN(
 
 	// Step3: build histogram with the rest samples
 	if len(samples) > 0 {
-		_, err = buildHist(sc, hg, samples, count-int64(topn.TotalCount()), ndv-int64(len(topn.TopN)), int64(numBuckets), memTracker)
+		_, err = buildHist(tc, hg, samples, count-int64(topn.TotalCount()), ndv-int64(len(topn.TopN)), int64(numBuckets), memTracker)
 		if err != nil {
 			return nil, nil, err
 		}

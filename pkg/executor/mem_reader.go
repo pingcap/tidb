@@ -144,8 +144,9 @@ func (m *memIndexReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 	}
 
 	if m.keepOrder && m.table.GetPartitionInfo() != nil {
+		tc := m.ctx.GetSessionVars().StmtCtx.TypeCtx()
 		slices.SortFunc(m.addedRows, func(a, b []types.Datum) int {
-			ret, err1 := m.compare(m.ctx.GetSessionVars().StmtCtx, a, b)
+			ret, err1 := m.compare(tc, a, b)
 			if err1 != nil {
 				err = err1
 			}
@@ -423,7 +424,8 @@ func (m *memTableReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 
 	if m.keepOrder && m.table.GetPartitionInfo() != nil {
 		slices.SortFunc(m.addedRows, func(a, b []types.Datum) int {
-			ret, err1 := m.compare(m.ctx.GetSessionVars().StmtCtx, a, b)
+			tc := m.ctx.GetSessionVars().StmtCtx.TypeCtx()
+			ret, err1 := m.compare(tc, a, b)
 			if err1 != nil {
 				err = err1
 			}
@@ -937,7 +939,8 @@ func (m *memIndexMergeReader) getMemRows(ctx context.Context) ([][]types.Datum, 
 	// In indexMerge, non-partitioned tables are also need reordered.
 	if m.keepOrder {
 		slices.SortFunc(rows, func(a, b []types.Datum) int {
-			ret, err1 := m.compare(m.ctx.GetSessionVars().StmtCtx, a, b)
+			tc := m.ctx.GetSessionVars().StmtCtx.TypeCtx()
+			ret, err1 := m.compare(tc, a, b)
 			if err1 != nil {
 				err = err1
 			}

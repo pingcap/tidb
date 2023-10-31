@@ -307,6 +307,7 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 		selected, uniqueBest, refinedBest *util.AccessPath
 		isRefinedPath                     bool
 	)
+	tc := ds.SCtx().GetSessionVars().StmtCtx.TypeCtx()
 	for _, path := range ds.possibleAccessPaths {
 		if path.IsTablePath() {
 			err := ds.deriveTablePathStats(path, ds.pushedDownConds, false)
@@ -323,7 +324,7 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 			selected = path
 			break
 		}
-		if path.OnlyPointRange(ds.SCtx()) {
+		if path.OnlyPointRange(tc) {
 			if path.IsTablePath() || path.Index.Unique {
 				if path.IsSingleScan {
 					selected = path

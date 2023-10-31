@@ -217,10 +217,10 @@ func isColEqExpr(expr expression.Expression, col *expression.Column, checkFn fun
 }
 
 // OnlyPointRange checks whether each range is a point(no interval range exists).
-func (path *AccessPath) OnlyPointRange(sctx sessionctx.Context) bool {
+func (path *AccessPath) OnlyPointRange(tc types.Context) bool {
 	if path.IsIntHandlePath {
 		for _, ran := range path.Ranges {
-			if !ran.IsPointNullable(sctx) {
+			if !ran.IsPointNullable(tc) {
 				return false
 			}
 		}
@@ -228,7 +228,7 @@ func (path *AccessPath) OnlyPointRange(sctx sessionctx.Context) bool {
 	}
 	for _, ran := range path.Ranges {
 		// Not point or the not full matched.
-		if !ran.IsPointNonNullable(sctx) || len(ran.HighVal) != len(path.Index.Columns) {
+		if !ran.IsPointNonNullable(tc) || len(ran.HighVal) != len(path.Index.Columns) {
 			return false
 		}
 	}

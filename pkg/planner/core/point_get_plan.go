@@ -633,7 +633,7 @@ func newBatchPointGetPlan(
 	handleCol *model.ColumnInfo, tbl *model.TableInfo, schema *expression.Schema,
 	names []*types.FieldName, whereColNames []string, indexHints []*ast.IndexHint,
 ) *BatchPointGetPlan {
-	stmtCtx := ctx.GetSessionVars().StmtCtx
+	tc := ctx.GetSessionVars().StmtCtx.TypeCtx()
 	statsInfo := &property.StatsInfo{RowCount: float64(len(patternInExpr.List))}
 	var partitionExpr *tables.PartitionExpr
 	if tbl.GetPartitionInfo() != nil {
@@ -682,7 +682,7 @@ func newBatchPointGetPlan(
 			if d.IsNull() {
 				return nil
 			}
-			intDatum := getPointGetValue(stmtCtx, handleCol, &d)
+			intDatum := getPointGetValue(tc, handleCol, &d)
 			if intDatum == nil {
 				return nil
 			}
@@ -807,7 +807,7 @@ func newBatchPointGetPlan(
 				permIndex := permutations[index]
 				switch innerX := inner.(type) {
 				case *driver.ValueExpr:
-					dval := getPointGetValue(stmtCtx, colInfos[index], &innerX.Datum)
+					dval := getPointGetValue(tc, colInfos[index], &innerX.Datum)
 					if dval == nil {
 						return nil
 					}
@@ -822,7 +822,7 @@ func newBatchPointGetPlan(
 					if err != nil {
 						return nil
 					}
-					dval := getPointGetValue(stmtCtx, colInfos[index], &d)
+					dval := getPointGetValue(tc, colInfos[index], &d)
 					if dval == nil {
 						return nil
 					}
@@ -842,7 +842,7 @@ func newBatchPointGetPlan(
 			if len(whereColNames) != 1 {
 				return nil
 			}
-			dval := getPointGetValue(stmtCtx, colInfos[0], &x.Datum)
+			dval := getPointGetValue(tc, colInfos[0], &x.Datum)
 			if dval == nil {
 				return nil
 			}
@@ -861,7 +861,7 @@ func newBatchPointGetPlan(
 			if err != nil {
 				return nil
 			}
-			dval := getPointGetValue(stmtCtx, colInfos[0], &d)
+			dval := getPointGetValue(tc, colInfos[0], &d)
 			if dval == nil {
 				return nil
 			}
@@ -1371,7 +1371,7 @@ func getSingleTableNameAndAlias(tableRefs *ast.TableRefsClause) (tblName *ast.Ta
 // getNameValuePairs extracts `column = constant/paramMarker` conditions from expr as name value pairs.
 func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName model.CIStr, nvPairs []nameValuePair, expr ast.ExprNode) (
 	pairs []nameValuePair, isTableDual bool) {
-	stmtCtx := ctx.GetSessionVars().StmtCtx
+	tc := ctx.GetSessionVars().StmtCtx.TypeCtx()
 	binOp, ok := expr.(*ast.BinaryOperationExpr)
 	if !ok {
 		return nil, false
@@ -1444,7 +1444,7 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 		if !checkCanConvertInPointGet(col, d) {
 			return nil, false
 		}
-		dVal, err := d.ConvertTo(stmtCtx, &col.FieldType)
+		dVal, err := d.ConvertTo(tc, &col.FieldType)
 		if err != nil {
 			if terror.ErrorEqual(types.ErrOverflow, err) {
 				return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: &col.FieldType, value: d, con: con}), true
@@ -1455,7 +1455,7 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 			}
 		}
 		// The converted result must be same as original datum.
-		cmp, err := dVal.Compare(stmtCtx, &d, collate.GetCollator(col.GetCollate()))
+		cmp, err := dVal.Compare(tc, &d, collate.GetCollator(col.GetCollate()))
 		if err != nil || cmp != 0 {
 			return nil, false
 		}
@@ -1464,16 +1464,16 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 	return nil, false
 }
 
-func getPointGetValue(stmtCtx *stmtctx.StatementContext, col *model.ColumnInfo, d *types.Datum) *types.Datum {
+func getPointGetValue(tc types.Context, col *model.ColumnInfo, d *types.Datum) *types.Datum {
 	if !checkCanConvertInPointGet(col, *d) {
 		return nil
 	}
-	dVal, err := d.ConvertTo(stmtCtx, &col.FieldType)
+	dVal, err := d.ConvertTo(tc, &col.FieldType)
 	if err != nil {
 		return nil
 	}
 	// The converted result must be same as original datum.
-	cmp, err := dVal.Compare(stmtCtx, d, collate.GetCollator(col.GetCollate()))
+	cmp, err := dVal.Compare(tc, d, collate.GetCollator(col.GetCollate()))
 	if err != nil || cmp != 0 {
 		return nil
 	}

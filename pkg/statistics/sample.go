@@ -62,13 +62,13 @@ func CopySampleItems(items []*SampleItem) []*SampleItem {
 }
 
 // SortSampleItems shallow copies and sorts a slice of SampleItem.
-func SortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) ([]*SampleItem, error) {
+func SortSampleItems(tc types.Context, items []*SampleItem) ([]*SampleItem, error) {
 	sortedItems := make([]*SampleItem, len(items))
 	copy(sortedItems, items)
 	var err error
 	slices.SortStableFunc(sortedItems, func(i, j *SampleItem) int {
 		var cmp int
-		cmp, err = i.Value.Compare(sc, &j.Value, collate.GetBinaryCollator())
+		cmp, err = i.Value.Compare(tc, &j.Value, collate.GetBinaryCollator())
 		if err != nil {
 			return -1
 		}

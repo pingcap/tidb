@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -614,7 +613,7 @@ func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, chkIdx, row
 		return nil, nil, nil
 	}
 	outerRow := task.outerResult.GetChunk(chkIdx).GetRow(rowIdx)
-	sc := iw.ctx.GetSessionVars().StmtCtx
+	tc := iw.ctx.GetSessionVars().StmtCtx.TypeCtx()
 	keyLen := len(iw.keyCols)
 	dLookupKey := make([]types.Datum, 0, keyLen)
 	dHashKey := make([]types.Datum, 0, len(iw.hashCols))
@@ -627,7 +626,7 @@ func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, chkIdx, row
 			return nil, nil, nil
 		}
 		innerColType := iw.rowTypes[iw.hashCols[i]]
-		innerValue, err := outerValue.ConvertTo(sc, innerColType)
+		innerValue, err := outerValue.ConvertTo(tc, innerColType)
 		if err != nil && !(terror.ErrorEqual(err, types.ErrTruncated) && (innerColType.GetType() == mysql.TypeSet || innerColType.GetType() == mysql.TypeEnum)) {
 			// If the converted outerValue overflows or invalid to innerValue, we don't need to lookup it.
 			if terror.ErrorEqual(err, types.ErrOverflow) || terror.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
@@ -635,7 +634,7 @@ func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, chkIdx, row
 			}
 			return nil, nil, err
 		}
-		cmp, err := outerValue.Compare(sc, &innerValue, iw.hashCollators[i])
+		cmp, err := outerValue.Compare(tc, &innerValue, iw.hashCollators[i])
 		if err != nil {
 			return nil, nil, err
 		}
@@ -655,9 +654,9 @@ func (iw *innerWorker) sortAndDedupLookUpContents(lookUpContents []*indexJoinLoo
 	if len(lookUpContents) < 2 {
 		return lookUpContents
 	}
-	sc := iw.ctx.GetSessionVars().StmtCtx
+	tc := iw.ctx.GetSessionVars().StmtCtx.TypeCtx()
 	slices.SortFunc(lookUpContents, func(i, j *indexJoinLookUpContent) int {
-		cmp := compareRow(sc, i.keys, j.keys, iw.keyCollators)
+		cmp := compareRow(tc, i.keys, j.keys, iw.keyCollators)
 		if cmp != 0 || iw.nextColCompareFilters == nil {
 			return cmp
 		}
@@ -665,7 +664,7 @@ func (iw *innerWorker) sortAndDedupLookUpContents(lookUpContents []*indexJoinLoo
 	})
 	deDupedLookupKeys := lookUpContents[:1]
 	for i := 1; i < len(lookUpContents); i++ {
-		cmp := compareRow(sc, lookUpContents[i].keys, lookUpContents[i-1].keys, iw.keyCollators)
+		cmp := compareRow(tc, lookUpContents[i].keys, lookUpContents[i-1].keys, iw.keyCollators)
 		if cmp != 0 || (iw.nextColCompareFilters != nil && iw.nextColCompareFilters.CompareRow(lookUpContents[i].row, lookUpContents[i-1].row) != 0) {
 			deDupedLookupKeys = append(deDupedLookupKeys, lookUpContents[i])
 		}
@@ -673,9 +672,9 @@ func (iw *innerWorker) sortAndDedupLookUpContents(lookUpContents []*indexJoinLoo
 	return deDupedLookupKeys
 }
 
-func compareRow(sc *stmtctx.StatementContext, left, right []types.Datum, ctors []collate.Collator) int {
+func compareRow(tc types.Context, left, right []types.Datum, ctors []collate.Collator) int {
 	for idx := 0; idx < len(left); idx++ {
-		cmp, err := left[idx].Compare(sc, &right[idx], ctors[idx])
+		cmp, err := left[idx].Compare(tc, &right[idx], ctors[idx])
 		// We only compare rows with the same type, no error to return.
 		terror.Log(err)
 		if cmp > 0 {

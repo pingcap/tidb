@@ -293,7 +293,7 @@ func (b *PBPlanBuilder) predicatePushDown(physicalPlan PhysicalPlan, predicates 
 		for i := range cols {
 			cols[i].UniqueID = schemaCols[cols[i].Index].UniqueID
 		}
-		predicates = memTable.Extractor.Extract(b.sctx, memTable.schema, names, predicates)
+		predicates = memTable.Extractor.Extract(b.sctx.GetSessionVars().StmtCtx.TypeCtx(), memTable.schema, names, predicates)
 		return predicates, memTable
 	case *PhysicalSelection:
 		selection := plan

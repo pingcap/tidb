@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -268,9 +267,9 @@ func checkIndexKeys(
 
 		// When it is in add index new backfill state.
 		if len(value) == 0 || isTmpIdxValAndDeleted {
-			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToRemove, indexInfo, t.Meta())
+			err = compareIndexData(sessVars.StmtCtx.TypeCtx(), t.Columns, indexData, rowToRemove, indexInfo, t.Meta())
 		} else {
-			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToInsert, indexInfo, t.Meta())
+			err = compareIndexData(sessVars.StmtCtx.TypeCtx(), t.Columns, indexData, rowToInsert, indexInfo, t.Meta())
 		}
 		if err != nil {
 			return errors.Trace(err)
@@ -300,7 +299,7 @@ func checkRowInsertionConsistency(
 
 	for columnID, decodedDatum := range decodedData {
 		inputDatum := rowToInsert[columnIDToInfo[columnID].Offset]
-		cmp, err := decodedDatum.Compare(sessVars.StmtCtx, &inputDatum, collate.GetCollator(decodedDatum.Collation()))
+		cmp, err := decodedDatum.Compare(sessVars.StmtCtx.TypeCtx(), &inputDatum, collate.GetCollator(decodedDatum.Collation()))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -353,7 +352,7 @@ func collectTableMutationsFromBufferStage(t *TableCommon, memBuffer kv.MemBuffer
 // compareIndexData compares the decoded index data with the input data.
 // Returns error if the index data is not a subset of the input data.
 func compareIndexData(
-	sc *stmtctx.StatementContext, cols []*table.Column, indexData, input []types.Datum, indexInfo *model.IndexInfo,
+	tc types.Context, cols []*table.Column, indexData, input []types.Datum, indexInfo *model.IndexInfo,
 	tableInfo *model.TableInfo,
 ) error {
 	for i := range indexData {
@@ -369,7 +368,7 @@ func compareIndexData(
 			cols[indexInfo.Columns[i].Offset].ColumnInfo,
 		)
 
-		comparison, err := CompareIndexAndVal(sc, expectedDatum, decodedMutationDatum,
+		comparison, err := CompareIndexAndVal(tc, expectedDatum, decodedMutationDatum,
 			collate.GetCollator(decodedMutationDatum.Collation()),
 			cols[indexInfo.Columns[i].Offset].ColumnInfo.FieldType.IsArray() && expectedDatum.Kind() == types.KindMysqlJSON)
 		if err != nil {
@@ -389,7 +388,7 @@ func compareIndexData(
 }
 
 // CompareIndexAndVal compare index valued and row value.
-func CompareIndexAndVal(sctx *stmtctx.StatementContext, rowVal types.Datum, idxVal types.Datum, collator collate.Collator, cmpMVIndex bool) (int, error) {
+func CompareIndexAndVal(tc types.Context, rowVal types.Datum, idxVal types.Datum, collator collate.Collator, cmpMVIndex bool) (int, error) {
 	var cmpRes int
 	var err error
 	if cmpMVIndex {
@@ -398,7 +397,7 @@ func CompareIndexAndVal(sctx *stmtctx.StatementContext, rowVal types.Datum, idxV
 		count := bj.GetElemCount()
 		for elemIdx := 0; elemIdx < count; elemIdx++ {
 			jsonDatum := types.NewJSONDatum(bj.ArrayGetElem(elemIdx))
-			cmpRes, err = jsonDatum.Compare(sctx, &idxVal, collate.GetBinaryCollator())
+			cmpRes, err = jsonDatum.Compare(tc, &idxVal, collate.GetBinaryCollator())
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -407,7 +406,7 @@ func CompareIndexAndVal(sctx *stmtctx.StatementContext, rowVal types.Datum, idxV
 			}
 		}
 	} else {
-		cmpRes, err = idxVal.Compare(sctx, &rowVal, collator)
+		cmpRes, err = idxVal.Compare(tc, &rowVal, collator)
 	}
 	return cmpRes, err
 }

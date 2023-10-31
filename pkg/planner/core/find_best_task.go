@@ -1184,8 +1184,9 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		}
 		if canConvertPointGet {
 			allRangeIsPoint := true
+			tc := ds.SCtx().GetSessionVars().StmtCtx.TypeCtx()
 			for _, ran := range path.Ranges {
-				if !ran.IsPointNonNullable(ds.SCtx()) {
+				if !ran.IsPointNonNullable(tc) {
 					// unique indexes can have duplicated NULL rows so we cannot use PointGet if there is NULL
 					allRangeIsPoint = false
 					break
@@ -2064,8 +2065,9 @@ func (ds *DataSource) isPointGetPath(path *util.AccessPath) bool {
 			}
 		}
 	}
+	tc := ds.SCtx().GetSessionVars().StmtCtx.TypeCtx()
 	for _, ran := range path.Ranges {
-		if !ran.IsPointNonNullable(ds.SCtx()) {
+		if !ran.IsPointNonNullable(tc) {
 			return false
 		}
 	}

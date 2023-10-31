@@ -2123,11 +2123,11 @@ func (p *PhysicalIndexScan) IsPartition() (bool, int64) {
 }
 
 // IsPointGetByUniqueKey checks whether is a point get by unique key.
-func (p *PhysicalIndexScan) IsPointGetByUniqueKey(sctx sessionctx.Context) bool {
+func (p *PhysicalIndexScan) IsPointGetByUniqueKey(tc types.Context) bool {
 	return len(p.Ranges) == 1 &&
 		p.Index.Unique &&
 		len(p.Ranges[0].LowVal) == len(p.Index.Columns) &&
-		p.Ranges[0].IsPointNonNullable(sctx)
+		p.Ranges[0].IsPointNonNullable(tc)
 }
 
 // PhysicalSelection represents a filter.

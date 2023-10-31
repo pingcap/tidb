@@ -16,7 +16,6 @@ package types_test
 
 import (
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -24,7 +23,7 @@ import (
 )
 
 func TestTimeFormatMethod(t *testing.T) {
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, func(err error) {})
+	typeCtx := types.NewCtxForText(t, types.FlagIgnoreZeroInDateErr)
 	tblDate := []struct {
 		Input  string
 		Format string
@@ -78,7 +77,7 @@ func TestTimeFormatMethod(t *testing.T) {
 }
 
 func TestStrToDate(t *testing.T) {
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, func(err error) {})
+	typeCtx := types.NewCtxForText(t, types.FlagIgnoreZeroInDateErr)
 	tests := []struct {
 		input  string
 		format string

@@ -98,9 +98,9 @@ func BuildWindowFunctions(ctx sessionctx.Context, windowFuncDesc *aggregation.Ag
 	case ast.WindowFuncPercentRank:
 		return buildPercentRank(ordinal, orderByCols)
 	case ast.WindowFuncLead:
-		return buildLead(ctx, windowFuncDesc, ordinal)
+		return buildLead(ctx.GetSessionVars().StmtCtx.TypeCtx(), windowFuncDesc, ordinal)
 	case ast.WindowFuncLag:
-		return buildLag(ctx, windowFuncDesc, ordinal)
+		return buildLag(ctx.GetSessionVars().StmtCtx.TypeCtx(), windowFuncDesc, ordinal)
 	case ast.AggFuncMax:
 		// The max/min aggFunc using in the window function will using the sliding window algo.
 		return buildMaxMinInWindowFunction(windowFuncDesc, ordinal, true)
@@ -694,7 +694,7 @@ func buildPercentRank(ordinal int, orderByCols []*expression.Column) AggFunc {
 	return &percentRank{baseAggFunc: base, rowComparer: buildRowComparer(orderByCols)}
 }
 
-func buildLeadLag(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) baseLeadLag {
+func buildLeadLag(tc types.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) baseLeadLag {
 	offset := uint64(1)
 	if len(aggFuncDesc.Args) >= 2 {
 		offset, _, _ = expression.GetUint64FromConstant(aggFuncDesc.Args[1])
@@ -704,7 +704,7 @@ func buildLeadLag(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, 
 	if len(aggFuncDesc.Args) == 3 {
 		defaultExpr = aggFuncDesc.Args[2]
 		if et, ok := defaultExpr.(*expression.Constant); ok {
-			res, err1 := et.Value.ConvertTo(ctx.GetSessionVars().StmtCtx, aggFuncDesc.RetTp)
+			res, err1 := et.Value.ConvertTo(tc, aggFuncDesc.RetTp)
 			if err1 == nil {
 				defaultExpr = &expression.Constant{Value: res, RetType: aggFuncDesc.RetTp}
 			}
@@ -718,10 +718,10 @@ func buildLeadLag(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, 
 	return baseLeadLag{baseAggFunc: base, offset: offset, defaultExpr: defaultExpr, valueEvaluator: ve}
 }
 
-func buildLead(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	return &lead{buildLeadLag(ctx, aggFuncDesc, ordinal)}
+func buildLead(tc types.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	return &lead{buildLeadLag(tc, aggFuncDesc, ordinal)}
 }
 
-func buildLag(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	return &lag{buildLeadLag(ctx, aggFuncDesc, ordinal)}
+func buildLag(tc types.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	return &lag{buildLeadLag(tc, aggFuncDesc, ordinal)}
 }
