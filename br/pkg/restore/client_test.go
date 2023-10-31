@@ -647,7 +647,7 @@ func TestDeleteRangeQuery(t *testing.T) {
 		StartKey: "a",
 		EndKey:   "b",
 	})
-	require.Equal(t, querys[0].ParamsList[0], stream.DelRangeParams{
+	require.Equal(t, querys[0].ParamsList[1], stream.DelRangeParams{
 		JobID:    1,
 		ElemID:   2,
 		StartKey: "b",
