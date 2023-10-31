@@ -362,6 +362,7 @@ func TestClusteredIndexAdminRecoverIndex(t *testing.T) {
 	sc := ctx.GetSessionVars().StmtCtx
 
 	// Some index entries are missed.
+	// Recover an index don't covered by clustered index.
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	cHandle := testutil.MustNewCommonHandle(t, "1", "3")
@@ -377,6 +378,7 @@ func TestClusteredIndexAdminRecoverIndex(t *testing.T) {
 	tk.MustQuery("SELECT COUNT(*) FROM t USE INDEX(idx)").Check(testkit.Rows("3"))
 	tk.MustExec("admin check table t;")
 
+	// Recover an index covered by clustered index.
 	idx1Info := tblInfo.FindIndexByName("idx1")
 	indexOpr1 := tables.NewIndex(tblInfo.ID, tblInfo, idx1Info)
 	txn, err = store.Begin()
