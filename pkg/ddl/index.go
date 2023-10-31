@@ -1088,9 +1088,7 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 			// TODO(tangenta): get duplicate column and match index.
 			err = convertToKeyExistsErr(err, allIndexInfos[0], tbl.Meta())
 		}
-		if !errorIsRetryable(err, job) ||
-			// TODO: Remove this check make it can be retry. Related test is TestModifyColumnReorgInfo.
-			job.ReorgMeta.IsDistReorg {
+		if !errorIsRetryable(err, job) {
 			logutil.BgLogger().Warn("run add index job failed, convert job to rollback", zap.String("category", "ddl"), zap.String("job", job.String()), zap.Error(err))
 			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
 			if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
