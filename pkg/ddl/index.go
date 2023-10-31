@@ -1822,7 +1822,7 @@ func writeChunkToLocal(
 			idxDataBuf = extractDatumByOffsets(
 				row, copCtx.IndexColumnOutputOffsets(idxID), c.ExprColumnInfos, idxDataBuf)
 			rsData := getRestoreData(c.TableInfo, copCtx.IndexInfo(idxID), c.PrimaryKeyInfo, handleDataBuf)
-			err = writeOneKVToLocal(ctx, writers[i], index, sCtx, writeBufs, idxDataBuf[:len(c.ExprColumnInfos)], rsData, handle, &buf)
+			err = writeOneKVToLocal(ctx, writers[i], index, sCtx, writeBufs, idxDataBuf[:len(copCtx.IndexColumnOutputOffsets(idxID))], rsData, handle, &buf)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
