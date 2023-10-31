@@ -523,7 +523,7 @@ func (sdr *sessionDelRangeExecWrapper) PrepareParamsList(sz int) {
 	sdr.paramsList = make([]interface{}, 0, sz)
 }
 
-func (_ *sessionDelRangeExecWrapper) RewriteTableID(tableID int64) (int64, bool) {
+func (*sessionDelRangeExecWrapper) RewriteTableID(tableID int64) (int64, bool) {
 	return tableID, true
 }
 
