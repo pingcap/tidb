@@ -1820,6 +1820,8 @@ func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh *utils.PipelineCh
 	tikvStats, err := infosync.GetTiFlashStoresStat(context.Background())
 	if err != nil {
 		outCh.SendError(err)
+		outCh.Close()
+		return outCh
 	}
 	tiFlashStores := make(map[int64]helper.StoreStat)
 	for _, store := range tikvStats.Stores {

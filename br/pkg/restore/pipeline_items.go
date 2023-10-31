@@ -258,6 +258,7 @@ func (b *tikvSender) splitWorker(ctx context.Context,
 		b.wg.Done()
 		if err := eg.Wait(); err != nil {
 			b.outCh.SendError(err)
+			b.outCh.Close()
 		}
 		splittedRanges.Close()
 		log.Info("TiKV Sender: split worker exits.")
