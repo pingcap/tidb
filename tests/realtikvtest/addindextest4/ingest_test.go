@@ -43,6 +43,7 @@ func init() {
 		conf.Path = "127.0.0.1:2379"
 	})
 }
+
 func TestAddIndexIngestMemoryUsage(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
