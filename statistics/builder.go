@@ -24,7 +24,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"go.uber.org/zap"
 )
 
 // SortedBuilder is used to build histograms for PK and index.
@@ -372,12 +374,46 @@ func BuildHistAndTopN(
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+		// For debugging invalid sample data.
+		var (
+			foundTwice      bool
+			firstTimeSample types.Datum
+		)
 		for j := 0; j < len(topNList); j++ {
 			if bytes.Equal(sampleBytes, topNList[j].Encoded) {
-				// find the same value in topn: need to skip over this value in samples
+				// This should never happen, but we met this panic before, so we add this check here.
+				// See: https://github.com/pingcap/tidb/issues/35948
+				if foundTwice {
+					datumString, err := firstTimeSample.ToString()
+					if err != nil {
+						logutil.BgLogger().With(
+							zap.String("category", "stats"),
+						).Error("try to convert datum to string failed", zap.Error(err))
+					}
+
+					logutil.BgLogger().With(
+						zap.String("category", "stats"),
+					).Warn(
+						"invalid sample data",
+						zap.Bool("isColumn", isColumn),
+						zap.Int64("columnID", id),
+						zap.String("datum", datumString),
+						zap.Binary("sampleBytes", sampleBytes),
+						zap.Binary("topNBytes", topNList[j].Encoded),
+					)
+					// NOTE: if we don't return here, we may meet panic in the following code.
+					// The i may decrease to a negative value.
+					// We haven't fix the issue here, because we don't know how to
+					// remove the invalid sample data from the samples.
+					break
+				}
+				// First time to find the same value in topN: need to record the sample data for debugging.
+				firstTimeSample = samples[i].Value
+				// Found the same value in topn: need to skip over this value in samples.
 				copy(samples[i:], samples[uint64(i)+topNList[j].Count:])
 				samples = samples[:uint64(len(samples))-topNList[j].Count]
 				i--
+				foundTwice = true
 				continue
 			}
 		}
