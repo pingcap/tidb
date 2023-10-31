@@ -18,7 +18,7 @@ go_test(
         "//pkg/privilege/privileges",
         "//pkg/sessionctx/variable",
         "//pkg/testkit",
-        "//pkg/util/sqlexec",
+        "//pkg/util/sqlescape",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],

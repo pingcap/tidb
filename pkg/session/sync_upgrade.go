@@ -61,11 +61,11 @@ func SyncUpgradeState(s sessionctx.Context, timeout time.Duration) error {
 		childCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		op, err = owner.GetOwnerOpValue(childCtx, dom.EtcdClient(), ddl.DDLOwnerKey, "upgrade bootstrap")
 		cancel()
-		if err == nil && op.String() == owner.OpGetUpgradingState.String() {
+		if err == nil && op.IsSyncedUpgradingState() {
 			break
 		}
 		if i%10 == 0 {
-			logger.Warn("get owner op failed", zap.Stringer("state", op), zap.Error(err))
+			logger.Warn("get owner op failed", zap.Stringer("op", op), zap.Error(err))
 		}
 		time.Sleep(interval)
 	}

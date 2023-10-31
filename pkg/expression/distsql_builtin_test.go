@@ -963,7 +963,7 @@ func newDuration(dur time.Duration) types.Duration {
 }
 
 func newDateTime(t *testing.T, s string) types.Time {
-	tt, err := types.ParseDate(nil, s)
+	tt, err := types.ParseDate(types.DefaultStmtNoWarningContext, s)
 	require.NoError(t, err)
 	return tt
 }

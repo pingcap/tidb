@@ -1788,9 +1788,11 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 		false,
 		nil,
 		common.DupDetectOpt{},
+		10,
 		123,
 		456,
 		789,
+		true,
 	)
 
 	jobCh := make(chan *regionJob, 10)
@@ -2257,8 +2259,8 @@ func TestExternalEngine(t *testing.T) {
 		StorageURI:    storageURI,
 		DataFiles:     dataFiles,
 		StatFiles:     statFiles,
-		MinKey:        keys[0],
-		MaxKey:        keys[99],
+		StartKey:      keys[0],
+		EndKey:        endKey,
 		SplitKeys:     [][]byte{keys[30], keys[60], keys[90]},
 		TotalFileSize: int64(config.SplitRegionSize) + 1,
 		TotalKVCount:  int64(config.SplitRegionKeys) + 1,
