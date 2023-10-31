@@ -271,8 +271,9 @@ func TestStoreInfo(t *testing.T) {
 	mock := func(
 		_ context.Context, addr string, prefix string, _ *http.Client, _ string, _ io.Reader,
 	) ([]byte, error) {
-		query := fmt.Sprintf("%s/%s", addr, prefix)
-		require.Equal(t, fmt.Sprintf("http://mock%s", pdapi.StoreWithID(1)), query)
+		require.Equal(t,
+			fmt.Sprintf("http://mock%s", pdapi.StoreWithID(1)),
+			fmt.Sprintf("%s%s", addr, prefix))
 		ret, err := json.Marshal(storeInfo)
 		require.NoError(t, err)
 		return ret, nil
