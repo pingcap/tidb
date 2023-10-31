@@ -128,11 +128,6 @@ go_library(
         "//pkg/util/codec",
         "//pkg/util/collate",
         "//pkg/util/dbterror",
-<<<<<<< HEAD
-        "//pkg/util/disttask",
-=======
-        "//pkg/util/dbterror/exeerrors",
->>>>>>> fd3b2cc571a (ddl: eliminate ingest step for add index with local engine (#47982))
         "//pkg/util/domainutil",
         "//pkg/util/filter",
         "//pkg/util/gcutil",
