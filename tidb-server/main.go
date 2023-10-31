@@ -182,7 +182,15 @@ func main() {
 		checkTempStorageQuota()
 	}
 	setupLog()
+<<<<<<< HEAD:tidb-server/main.go
 	err := cpuprofile.StartCPUProfiler()
+=======
+	memory.InitMemoryHook()
+	setupExtensions()
+	setupStmtSummary()
+
+	err = cpuprofile.StartCPUProfiler()
+>>>>>>> 4667ed9e168 (*: support cgroup with systemd (#48096)):cmd/tidb-server/main.go
 	terror.MustNil(err)
 
 	// Enable failpoints in tikv/client-go if the test API is enabled.
