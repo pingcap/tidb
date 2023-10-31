@@ -49,14 +49,19 @@ func (p *PipelineChannel[T]) SendError(e error) {
 	p.errCh <- e
 }
 
-func (p *PipelineChannel[T]) Recv(ctx context.Context) (item T, ok bool) {
+func (p *PipelineChannel[T]) Recv(ctx context.Context) (item T, ok bool, err error) {
 	metrics.RestoreInFlightCounters.WithLabelValues(p.name).Desc()
 	select {
 	case <-ctx.Done():
 		p.errCh <- ctx.Err()
 	case item, ok = <-p.ch:
+	case err = <-p.errCh:
 	}
-	return item, ok
+	if err != nil {
+		// make sure error returned, and handle error first to next pipeline channel
+		return item, false, err
+	}
+	return item, ok, nil
 }
 
 func (p *PipelineChannel[T]) WaitFinish(ctx context.Context) (err error) {
@@ -78,6 +83,7 @@ func (p *PipelineChannel[T]) WaitFinish(ctx context.Context) (err error) {
 
 func (p *PipelineChannel[T]) Close() {
 	close(p.ch)
+	close(p.errCh)
 	log.Info("channel closed", zap.String("name", p.name))
 }
 

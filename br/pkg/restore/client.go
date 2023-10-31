@@ -815,9 +815,13 @@ func (rc *Client) CreateTables(
 	for i, t := range tables {
 		tbMapping[t.Info.Name.String()] = i
 	}
-	dataCh := rc.GoCreateTables(context.TODO(), dom, tables, newTS, errCh)
+	dataCh := rc.GoCreateTables(context.TODO(), dom, tables, newTS)
 	for {
-		et, ok := dataCh.Recv(context.TODO())
+		et, ok, err := dataCh.Recv(context.TODO())
+		if err != nil {
+			errCh <- err
+			break
+		}
 		if !ok {
 			break
 		}
@@ -923,7 +927,6 @@ func (rc *Client) GoCreateTables(
 	dom *domain.Domain,
 	tables []*metautil.Table,
 	newTS uint64,
-	errCh chan<- error,
 ) *utils.PipelineChannel[CreatedTable] {
 	// Could we have a smaller size of tables?
 	log.Info("start create tables")
@@ -937,7 +940,7 @@ func (rc *Client) GoCreateTables(
 	outCh := utils.NewPipelineChannel[CreatedTable]("created_table", len(tables))
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
 	if err := rc.allocTableIDs(ctx, tables); err != nil {
-		errCh <- err
+		outCh.SendError(err)
 		outCh.Close()
 		return outCh
 	}
@@ -951,7 +954,7 @@ func (rc *Client) GoCreateTables(
 			outCh.Close()
 			return outCh
 		} else if !utils.FallBack2CreateTable(err) {
-			errCh <- err
+			outCh.SendError(err)
 			outCh.Close()
 			return outCh
 		}
@@ -994,7 +997,7 @@ func (rc *Client) GoCreateTables(
 			err = rc.createTablesWithSoleDB(ctx, createOneTable, tables)
 		}
 		if err != nil {
-			errCh <- err
+			outCh.SendError(err)
 		}
 	}()
 
@@ -1632,7 +1635,11 @@ func concurrentHandleTablesCh(
 		case <-ctx.Done():
 			outCh.SendError(ctx.Err())
 		default:
-			tbl, ok := inCh.Recv(ctx)
+			tbl, ok, err := inCh.Recv(ctx)
+			if err != nil {
+				outCh.SendError(err)
+				return
+			}
 			if !ok {
 				return
 			}
@@ -1805,14 +1812,14 @@ func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh *utils.Pipe
 	return outCh
 }
 
-func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh *utils.PipelineChannel[*CreatedTable], updateCh glue.Progress, errCh chan<- error) *utils.PipelineChannel[*CreatedTable] {
+func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh *utils.PipelineChannel[*CreatedTable], updateCh glue.Progress) *utils.PipelineChannel[*CreatedTable] {
 	log.Info("Start to wait tiflash replica sync")
 	outCh := DefaultOutputTableChan("wait_tiflash")
 	workers := utils.NewWorkerPool(4, "WaitForTiflashReady")
 	// TODO support tiflash store changes
 	tikvStats, err := infosync.GetTiFlashStoresStat(context.Background())
 	if err != nil {
-		errCh <- err
+		outCh.SendError(err)
 	}
 	tiFlashStores := make(map[int64]helper.StoreStat)
 	for _, store := range tikvStats.Stores {
@@ -1822,7 +1829,7 @@ func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh *utils.PipelineCh
 			}
 		}
 	}
-	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
+	go concurrentHandleTablesCh(ctx, inCh, outCh, workers, func(c context.Context, tbl *CreatedTable) error {
 		if tbl.Table != nil && tbl.Table.TiFlashReplica == nil {
 			log.Info("table has no tiflash replica",
 				zap.Stringer("table", tbl.OldTable.Info.Name),

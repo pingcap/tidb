@@ -85,12 +85,15 @@ func (b *Batcher) contextCleaner(ctx context.Context, tables *utils.PipelineChan
 		case <-ctx.Done():
 			return
 		default:
-			tbls, ok := tables.Recv(ctx)
+			tbls, ok, err := tables.Recv(ctx)
+			if err != nil {
+				b.outCh.SendError(err)
+				return
+			}
 			if !ok {
 				return
 			}
 			if err := b.manager.Leave(ctx, tbls); err != nil {
-				b.outCh.SendError(err)
 				return
 			}
 			for _, tbl := range tbls {
@@ -110,7 +113,6 @@ func NewBatcher(
 	ctx context.Context,
 	sender BatchSender,
 	manager ContextManager,
-	errCh chan<- error,
 	updateCh glue.Progress,
 ) (*Batcher, *utils.PipelineChannel[*CreatedTable]) {
 	outCh := DefaultOutputTableChan("restored_table")
@@ -130,8 +132,7 @@ func NewBatcher(
 	b.everythingIsDone.Add(2)
 	go b.sendWorker(ctx, signalCh)
 	go b.contextCleaner(ctx, restoredTablesCh)
-	sink := chanTableSink{restoredTablesCh, errCh}
-	sender.PutSink(sink)
+	sender.PutSink(restoredTablesCh)
 	return b, outCh
 }
 
@@ -181,7 +182,12 @@ func (b *Batcher) sendWorker(ctx context.Context, send *utils.PipelineChannel[Se
 	}
 
 	for {
-		sendType, ok := send.Recv(ctx)
+		sendType, ok, err := send.Recv(ctx)
+		if err != nil {
+			b.outCh.SendError(err)
+			return
+		}
+
 		if !ok {
 			return
 		}
@@ -414,6 +420,11 @@ func (b *Batcher) sendIfFull() {
 		log.Debug("sending batch because batcher is full", zap.Int("size", b.Len()))
 		b.asyncSend(SendUntilLessThanBatch)
 	}
+}
+
+// AddError reports error to next pipeline channel
+func (b *Batcher) AddError(err error) {
+	b.outCh.SendError(err)
 }
 
 // Add adds a task to the Batcher.

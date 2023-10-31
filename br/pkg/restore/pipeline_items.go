@@ -25,30 +25,6 @@ const (
 	defaultChannelSize = 1024
 )
 
-// TableSink is the 'sink' of restored data by a sender.
-type TableSink interface {
-	EmitTables(tables ...CreatedTable)
-	EmitError(error)
-	Close()
-}
-
-type chanTableSink struct {
-	outCh *utils.PipelineChannel[[]CreatedTable]
-}
-
-func (sink chanTableSink) EmitTables(tables ...CreatedTable) {
-	sink.outCh.Send(tables)
-}
-
-func (sink chanTableSink) EmitError(err error) {
-	sink.outCh.SendError(err)
-}
-
-func (sink chanTableSink) Close() {
-	// ErrCh may has multi sender part, don't close it.
-	sink.outCh.Close()
-}
-
 // ContextManager is the struct to manage a TiKV 'context' for restore.
 // Batcher will call Enter when any table should be restore on batch,
 // so you can do some prepare work here(e.g. set placement rules for online restore).
@@ -217,18 +193,18 @@ type tikvSender struct {
 
 	updateCh glue.Progress
 
-	sink TableSink
-	inCh *utils.PipelineChannel[DrainResult]
+	outCh *utils.PipelineChannel[[]CreatedTable]
+	inCh  *utils.PipelineChannel[DrainResult]
 
 	wg *sync.WaitGroup
 
 	tableWaiters *sync.Map
 }
 
-func (b *tikvSender) PutSink(sink TableSink) {
+func (b *tikvSender) PutSink(outCh *utils.PipelineChannel[[]CreatedTable]) {
 	// don't worry about visibility, since we will call this before first call to
 	// RestoreBatch, which is a sync point.
-	b.sink = sink
+	b.outCh = outCh
 }
 
 func (b *tikvSender) RestoreBatch(ranges DrainResult) {
@@ -281,7 +257,7 @@ func (b *tikvSender) splitWorker(ctx context.Context,
 	defer func() {
 		b.wg.Done()
 		if err := eg.Wait(); err != nil {
-			b.sink.EmitError(err)
+			b.outCh.SendError(err)
 		}
 		splittedRanges.Close()
 		log.Info("TiKV Sender: split worker exits.")
@@ -299,7 +275,11 @@ func (b *tikvSender) splitWorker(ctx context.Context,
 		case <-ectx.Done():
 			return
 		default:
-			result, ok := ranges.Recv(ectx)
+			result, ok, err := ranges.Recv(ectx)
+			if err != nil {
+				splittedRanges.SendError(err)
+				return
+			}
 			if !ok {
 				return
 			}
@@ -371,9 +351,9 @@ func (b *tikvSender) restoreWorker(ctx context.Context, splittedRanges *utils.Pi
 	defer func() {
 		log.Info("TiKV Sender: restore worker prepare to close.")
 		if err := eg.Wait(); err != nil {
-			b.sink.EmitError(err)
+			b.outCh.SendError(err)
 		}
-		b.sink.Close()
+		b.outCh.Close()
 		b.wg.Done()
 		log.Info("TiKV Sender: restore worker exits.")
 	}()
@@ -382,7 +362,11 @@ func (b *tikvSender) restoreWorker(ctx context.Context, splittedRanges *utils.Pi
 		case <-ectx.Done():
 			return
 		default:
-			r, ok := splittedRanges.Recv(ectx)
+			r, ok, err := splittedRanges.Recv(ectx)
+			if err != nil {
+				b.outCh.SendError(err)
+				return
+			}
 			if !ok {
 				return
 			}
@@ -399,7 +383,7 @@ func (b *tikvSender) restoreWorker(ctx context.Context, splittedRanges *utils.Pi
 				log.Info("restore batch done", rtree.ZapRanges(r.result.Ranges))
 				r.done()
 				b.waitTablesDone(r.result.BlankTablesAfterSend)
-				b.sink.EmitTables(r.result.BlankTablesAfterSend...)
+				b.outCh.Send(r.result.BlankTablesAfterSend)
 				return nil
 			})
 		}
