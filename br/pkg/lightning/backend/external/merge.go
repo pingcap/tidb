@@ -15,7 +15,7 @@ import (
 // and writes to new sorted, nonoverlapping files.
 func MergeOverlappingFiles(ctx context.Context, paths []string, store storage.ExternalStorage, readBufferSize int,
 	newFilePrefix string, blockSize int, writeBatchCount uint64, propSizeDist uint64, propKeysDist uint64,
-	onClose OnCloseFunc, concurrency int) error {
+	onClose OnCloseFunc, concurrency int, checkHotspot bool) error {
 	var dataFilesSlice [][]string
 	batchCount := len(paths) / concurrency
 	for i := 0; i < len(paths); i += batchCount {
@@ -49,6 +49,7 @@ func MergeOverlappingFiles(ctx context.Context, paths []string, store storage.Ex
 				propSizeDist,
 				propKeysDist,
 				onClose,
+				checkHotspot,
 			)
 		})
 	}
@@ -66,9 +67,11 @@ func mergeOverlappingFilesImpl(ctx context.Context,
 	writeBatchCount uint64,
 	propSizeDist uint64,
 	propKeysDist uint64,
-	onClose OnCloseFunc) error {
+	onClose OnCloseFunc,
+	checkHotspot bool,
+) error {
 	zeroOffsets := make([]uint64, len(paths))
-	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, readBufferSize)
+	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, readBufferSize, checkHotspot)
 	if err != nil {
 		return err
 	}

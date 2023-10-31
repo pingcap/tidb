@@ -307,8 +307,8 @@ func (b *builtinCastTimeAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result 
 		}
 		*dec = types.MyDecimal{}
 		times[i].FillNumber(dec)
-		dec, err = types.ProduceDecWithSpecifiedTp(dec, b.tp, sc)
-		if err != nil {
+		dec, err = types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), dec, b.tp)
+		if err = sc.HandleOverflow(err, err); err != nil {
 			return err
 		}
 		decs[i] = *dec
@@ -623,8 +623,8 @@ func (b *builtinCastDecimalAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, resu
 		if !(conditionUnionAndUnsigned && decs[i].IsNegative()) {
 			*dec = decs[i]
 		}
-		dec, err := types.ProduceDecWithSpecifiedTp(dec, b.tp, sc)
-		if err != nil {
+		dec, err := types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), dec, b.tp)
+		if err = sc.HandleOverflow(err, err); err != nil {
 			return err
 		}
 		decs[i] = *dec
@@ -899,6 +899,7 @@ func (b *builtinCastRealAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result 
 	result.MergeNulls(buf)
 	bufreal := buf.Float64s()
 	resdecimal := result.Decimals()
+	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -917,8 +918,8 @@ func (b *builtinCastRealAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result 
 				}
 			}
 		}
-		dec, err := types.ProduceDecWithSpecifiedTp(&resdecimal[i], b.tp, b.ctx.GetSessionVars().StmtCtx)
-		if err != nil {
+		dec, err := types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), &resdecimal[i], b.tp)
+		if err = sc.HandleOverflow(err, err); err != nil {
 			return err
 		}
 		resdecimal[i] = *dec
@@ -1058,8 +1059,8 @@ func (b *builtinCastDurationAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, res
 		}
 		duration.Duration = ds[i]
 		duration.Fsp = fsp
-		res, err := types.ProduceDecWithSpecifiedTp(duration.ToNumber(), b.tp, sc)
-		if err != nil {
+		res, err := types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), duration.ToNumber(), b.tp)
+		if err = sc.HandleOverflow(err, err); err != nil {
 			return err
 		}
 		d64s[i] = *res
@@ -1104,8 +1105,8 @@ func (b *builtinCastIntAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *
 			dec.FromUint(uint64(nums[i]))
 		}
 
-		dec, err = types.ProduceDecWithSpecifiedTp(dec, b.tp, sc)
-		if err != nil {
+		dec, err = types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), dec, b.tp)
+		if err = sc.HandleOverflow(err, err); err != nil {
 			return err
 		}
 		decs[i] = *dec
@@ -1254,12 +1255,13 @@ func (b *builtinCastJSONAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
 	sc := b.ctx.GetSessionVars().StmtCtx
+	tc := sc.TypeCtx()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		i64s[i], err = types.ConvertJSONToInt64(sc, buf.GetJSON(i), mysql.HasUnsignedFlag(b.tp.GetFlag()))
-		if err != nil {
+		i64s[i], err = types.ConvertJSONToInt64(tc, buf.GetJSON(i), mysql.HasUnsignedFlag(b.tp.GetFlag()))
+		if err = sc.HandleOverflow(err, err); err != nil {
 			return err
 		}
 	}
@@ -1643,8 +1645,8 @@ func (b *builtinCastJSONAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result 
 		if err != nil {
 			return err
 		}
-		tempres, err = types.ProduceDecWithSpecifiedTp(tempres, b.tp, sc)
-		if err != nil {
+		tempres, err = types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), tempres, b.tp)
+		if err = sc.HandleOverflow(err, err); err != nil {
 			return err
 		}
 		res[i] = *tempres
@@ -1733,8 +1735,8 @@ func (b *builtinCastStringAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, resul
 			if err := stmtCtx.HandleTruncate(dec.FromString([]byte(val))); err != nil {
 				return err
 			}
-			dec, err := types.ProduceDecWithSpecifiedTp(dec, b.tp, stmtCtx)
-			if err != nil {
+			dec, err := types.ProduceDecWithSpecifiedTp(stmtCtx.TypeCtx(), dec, b.tp)
+			if err = stmtCtx.HandleOverflow(err, err); err != nil {
 				return err
 			}
 			res[i] = *dec
