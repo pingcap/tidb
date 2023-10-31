@@ -105,7 +105,6 @@ type WriterBuilder struct {
 	propKeysDist    uint64
 	onClose         OnCloseFunc
 	keyDupeEncoding bool
-	oneFile         bool
 	// This mutex is used to make sure the writer is flushed mutually exclusively in a TiDB server.
 	mu *sync.Mutex
 
@@ -226,8 +225,8 @@ func (b *WriterBuilder) Build(
 	return ret
 }
 
-// Build builds a new Writer. The files writer will create are under the prefix
-// of "{prefix}/{writerID}". // todo refine
+// BuildOneFile builds a new one file Writer. The writer will create only one file under the prefix
+// of "{prefix}/{writerID}".
 func (b *WriterBuilder) BuildOneFile(
 	store storage.ExternalStorage,
 	prefix string,

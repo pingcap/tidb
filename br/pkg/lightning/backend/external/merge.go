@@ -53,3 +53,55 @@ func MergeOverlappingFiles(
 	}
 	return writer.Close(ctx)
 }
+
+// MergeOverlappingFilesV2 reads from given files whose key range may overlap
+// and writes to one new sorted, nonoverlapping files.
+func MergeOverlappingFilesV2(
+	ctx context.Context,
+	paths []string,
+	store storage.ExternalStorage,
+	readBufferSize int,
+	newFilePrefix string,
+	writerID string,
+	memSizeLimit uint64,
+	blockSize int,
+	writeBatchCount uint64,
+	propSizeDist uint64,
+	propKeysDist uint64,
+	onClose OnCloseFunc,
+) error {
+	zeroOffsets := make([]uint64, len(paths))
+	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, readBufferSize)
+	if err != nil {
+		return err
+	}
+	defer iter.Close()
+
+	writer := NewWriterBuilder().
+		SetMemorySizeLimit(memSizeLimit).
+		SetBlockSize(blockSize).
+		SetWriterBatchCount(writeBatchCount).
+		SetPropKeysDistance(propKeysDist).
+		SetPropSizeDistance(propSizeDist).
+		SetOnCloseFunc(onClose).
+		BuildOneFile(store, newFilePrefix, writerID)
+
+	err = writer.Init(ctx)
+	if err != nil {
+		return nil
+	}
+
+	// currently use same goroutine to do read and write. The main advantage is
+	// there's no KV copy and iter can reuse the buffer.
+	for iter.Next() {
+		err = writer.WriteRow(ctx, iter.Key(), iter.Value(), nil)
+		if err != nil {
+			return err
+		}
+	}
+	err = iter.Error()
+	if err != nil {
+		return err
+	}
+	return writer.Close(ctx)
+}

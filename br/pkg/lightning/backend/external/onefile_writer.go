@@ -73,7 +73,6 @@ func (w *OneFileWriter) Init(ctx context.Context) (err error) {
 		return nil
 	}
 	w.logger = logutil.Logger(ctx)
-	w.logger.Info("ywq test", zap.Any("datafile", w.dataFile), zap.Any("statfile", w.statFile))
 	w.kvStore, err = NewKeyValueStore(ctx, w.dataWriter, w.rc)
 	return err
 }
@@ -209,7 +208,6 @@ func (w *OneFileWriter) flushKVs(ctx context.Context, fromClose bool) (err error
 		if err != nil {
 			return err
 		}
-		// 应该是 flush
 		err1 := w.dataWriter.Close(ctx)
 		if err1 != nil {
 			w.logger.Error("Close data writer failed", zap.Error(err))
@@ -242,7 +240,6 @@ func (w *OneFileWriter) getKeyByLoc(pos kvLocation) []byte {
 	return block[pos.offset+lengthBytes : uint64(pos.offset)+lengthBytes+keyLen]
 }
 
-// only called once.
 func (w *OneFileWriter) createStorageWriter(ctx context.Context) (
 	dataFile, statFile string,
 	data, stats storage.ExternalFileWriter,

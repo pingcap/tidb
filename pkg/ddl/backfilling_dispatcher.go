@@ -177,7 +177,7 @@ func skipMergeSort(stats []external.MultipleFilesStat) bool {
 	failpoint.Inject("forceMergeSort", func() {
 		failpoint.Return(false)
 	})
-	return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
+	return false
 }
 
 // OnErrStage generate error handling stage's plan.
