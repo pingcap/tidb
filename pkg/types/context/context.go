@@ -34,32 +34,27 @@ const (
 	FlagTruncateAsWarning
 	// FlagAllowNegativeToUnsigned indicates to allow the casting from negative to unsigned int.
 	// When this flag is not set by default, casting a negative value to unsigned results an overflow error.
-	// The overflow will also be controlled by `FlagIgnoreOverflowError` and `FlagOverflowAsWarning`. When any of them is set,
-	// a zero value is returned instead.
-	// Whe this flag is set, casting a negative value to unsigned will be allowed. And the negative value will be cast to
-	// a positive value by adding the max value of the unsigned type.
+	// Otherwise, a negative value will be cast to the corresponding unsigned value without any error.
+	// For example, when casting -1 to an unsigned bigint with `FlagAllowNegativeToUnsigned` set,
+	// we will get `18446744073709551615` which is the biggest unsigned value.
 	FlagAllowNegativeToUnsigned
-	// FlagIgnoreOverflowError indicates to ignore the overflow error.
-	// If this flag is set, `FlagOverflowAsWarning` will be ignored.
-	FlagIgnoreOverflowError
-	// FlagOverflowAsWarning indicates to append the overflow error to warnings instead of returning it to user.
-	FlagOverflowAsWarning
 	// FlagIgnoreZeroDateErr indicates to ignore the zero-date error.
 	// See: https://dev.mysql.com/doc/refman/8.0/en/sql-mode.html#sqlmode_no_zero_date for details about the "zero-date" error.
 	// If this flag is set, `FlagZeroDateAsWarning` will be ignored.
+	//
+	// TODO: `FlagIgnoreZeroDateErr` and `FlagZeroDateAsWarning` don't represent the comments right now, because the
+	// errors related with `time` and `duration` are handled directly according to SQL mode in many places (expression,
+	// ddl ...). These error handling will be refined in the future. Currently, the `FlagZeroDateAsWarning` is not used,
+	// and the `FlagIgnoreZeroDateErr` is used to allow or disallow casting zero to date in `alter` statement. See #25728
+	// This flag is the reverse of `NoZeroDate` in #30507. It's set to `true` for most context, and is only set to
+	// `false` for `alter` (and `create`) statements.
 	FlagIgnoreZeroDateErr
-	// FlagZeroDateAsWarning indicates to append the zero-date error to warnings instead of returning it to user.
-	FlagZeroDateAsWarning
 	// FlagIgnoreZeroInDateErr indicates to ignore the zero-in-date error.
 	// See: https://dev.mysql.com/doc/refman/8.0/en/sql-mode.html#sqlmode_no_zero_in_date for details about the "zero-in-date" error.
 	FlagIgnoreZeroInDateErr
-	// FlagZeroInDateAsWarning indicates to append the zero-in-date error to warnings instead of returning it to user.
-	FlagZeroInDateAsWarning
 	// FlagIgnoreInvalidDateErr indicates to ignore the invalid-date error.
 	// See: https://dev.mysql.com/doc/refman/8.0/en/sql-mode.html#sqlmode_allow_invalid_dates for details about the "invalid-date" error.
 	FlagIgnoreInvalidDateErr
-	// FlagInvalidDateAsWarning indicates to append the invalid-date error to warnings instead of returning it to user.
-	FlagInvalidDateAsWarning
 	// FlagSkipASCIICheck indicates to skip the ASCII check when converting the value to an ASCII string.
 	FlagSkipASCIICheck
 	// FlagSkipUTF8Check indicates to skip the UTF8 check when converting the value to an UTF8MB3 string.
@@ -146,6 +141,45 @@ func (f Flags) WithTruncateAsWarning(warn bool) Flags {
 	return f &^ FlagTruncateAsWarning
 }
 
+// IgnoreZeroInDate indicates whether the flag `FlagIgnoreZeroInData` is set
+func (f Flags) IgnoreZeroInDate() bool {
+	return f&FlagIgnoreZeroInDateErr != 0
+}
+
+// WithIgnoreZeroInDate returns a new flags with `FlagIgnoreZeroInDateErr` set/unset according to the ignore parameter
+func (f Flags) WithIgnoreZeroInDate(ignore bool) Flags {
+	if ignore {
+		return f | FlagIgnoreZeroInDateErr
+	}
+	return f &^ FlagIgnoreZeroInDateErr
+}
+
+// IgnoreInvalidDateErr indicates whether the flag `FlagIgnoreInvalidDateErr` is set
+func (f Flags) IgnoreInvalidDateErr() bool {
+	return f&FlagIgnoreInvalidDateErr != 0
+}
+
+// WithIgnoreInvalidDateErr returns a new flags with `FlagIgnoreInvalidDateErr` set/unset according to the ignore parameter
+func (f Flags) WithIgnoreInvalidDateErr(ignore bool) Flags {
+	if ignore {
+		return f | FlagIgnoreInvalidDateErr
+	}
+	return f &^ FlagIgnoreInvalidDateErr
+}
+
+// IgnoreZeroDateErr indicates whether the flag `FlagIgnoreZeroDateErr` is set
+func (f Flags) IgnoreZeroDateErr() bool {
+	return f&FlagIgnoreZeroDateErr != 0
+}
+
+// WithIgnoreZeroDateErr returns a new flags with `FlagIgnoreZeroDateErr` set/unset according to the ignore parameter
+func (f Flags) WithIgnoreZeroDateErr(ignore bool) Flags {
+	if ignore {
+		return f | FlagIgnoreZeroDateErr
+	}
+	return f &^ FlagIgnoreZeroDateErr
+}
+
 // Context provides the information when converting between different types.
 type Context struct {
 	flags           Flags
@@ -210,7 +244,7 @@ func (c *Context) AppendWarningFunc() func(err error) {
 // DefaultStmtFlags is the default flags for statement context with the flag `FlagAllowNegativeToUnsigned` set.
 // TODO: make DefaultStmtFlags to be equal with StrictFlags, and setting flag `FlagAllowNegativeToUnsigned`
 // is only for make the code to be equivalent with the old implement during refactoring.
-const DefaultStmtFlags = StrictFlags | FlagAllowNegativeToUnsigned
+const DefaultStmtFlags = StrictFlags | FlagAllowNegativeToUnsigned | FlagIgnoreZeroDateErr
 
 // DefaultStmtNoWarningContext is the context with default statement flags without any other special configuration
 var DefaultStmtNoWarningContext = NewContext(DefaultStmtFlags, time.UTC, func(_ error) {

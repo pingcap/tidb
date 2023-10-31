@@ -176,8 +176,6 @@ type StatementContext struct {
 	InCreateOrAlterStmt           bool
 	InSetSessionStatesStmt        bool
 	InPreparedPlanBuilding        bool
-	IgnoreZeroInDate              bool
-	NoZeroDate                    bool
 	DupKeyAsWarning               bool
 	BadNullAsWarning              bool
 	DividedByZeroAsWarning        bool
@@ -188,7 +186,6 @@ type StatementContext struct {
 	CacheType                     PlanCacheType
 	BatchCheck                    bool
 	InNullRejectCheck             bool
-	AllowInvalidDate              bool
 	IgnoreNoPartition             bool
 	IgnoreExplainIDSuffix         bool
 	MultiSchemaInfo               *model.MultiSchemaInfo
@@ -1145,7 +1142,7 @@ func (sc *StatementContext) PushDownFlags() uint64 {
 	if sc.OverflowAsWarning {
 		flags |= model.FlagOverflowAsWarning
 	}
-	if sc.IgnoreZeroInDate {
+	if sc.TypeFlags().IgnoreZeroInDate() {
 		flags |= model.FlagIgnoreZeroInDate
 	}
 	if sc.DividedByZeroAsWarning {
@@ -1210,14 +1207,13 @@ func (sc *StatementContext) InitFromPBFlagAndTz(flags uint64, tz *time.Location)
 	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
 	sc.InDeleteStmt = (flags & model.FlagInUpdateOrDeleteStmt) > 0
 	sc.OverflowAsWarning = (flags & model.FlagOverflowAsWarning) > 0
-	sc.IgnoreZeroInDate = (flags & model.FlagIgnoreZeroInDate) > 0
 	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
 	sc.SetTimeZone(tz)
 	sc.SetTypeFlags(typectx.DefaultStmtFlags.
 		WithIgnoreTruncateErr((flags & model.FlagIgnoreTruncate) > 0).
 		WithTruncateAsWarning((flags & model.FlagTruncateAsWarning) > 0).
-		WithAllowNegativeToUnsigned(!sc.InInsertStmt),
-	)
+		WithIgnoreZeroInDate((flags & model.FlagIgnoreZeroInDate) > 0).
+		WithAllowNegativeToUnsigned(!sc.InInsertStmt))
 }
 
 // GetLockWaitStartTime returns the statement pessimistic lock wait start time

@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -164,7 +163,7 @@ func BenchmarkListGetRow(b *testing.B) {
 	}
 	rand.Seed(0)
 	ptrs := make([]RowPtr, 0, b.N)
-	for i := 0; i < mathutil.Min(b.N, 10000); i++ {
+	for i := 0; i < min(b.N, 10000); i++ {
 		ptrs = append(ptrs, RowPtr{
 			ChkIdx: rand.Uint32() % uint32(numChk),
 			RowIdx: rand.Uint32() % uint32(numRow),

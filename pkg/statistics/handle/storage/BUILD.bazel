@@ -33,6 +33,7 @@ go_library(
         "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/memory",
+        "//pkg/util/sqlescape",
         "//pkg/util/sqlexec",
         "@com_github_klauspost_compress//gzip",
         "@com_github_pingcap_errors//:errors",

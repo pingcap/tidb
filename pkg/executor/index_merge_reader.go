@@ -882,7 +882,7 @@ func handleWorkerPanic(ctx context.Context, finished, limitDone <-chan struct{},
 			extraNotifyCh <- true
 		}
 
-		err4Panic := errors.Errorf("%s: %v", worker, r)
+		err4Panic := util.GetRecoverError(r)
 		logutil.Logger(ctx).Error(err4Panic.Error())
 		doneCh := make(chan error, 1)
 		doneCh <- err4Panic

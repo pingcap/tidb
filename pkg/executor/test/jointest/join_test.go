@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1292,14 +1292,16 @@ func TestIssue18070(t *testing.T) {
 	tk.MustExec("insert into t1 values(1),(2)")
 	tk.MustExec("insert into t2 values(1),(1),(2),(2)")
 	tk.MustExec("set @@tidb_mem_quota_query=1000")
-	tk.MustContainErrMsg("select /*+ inl_hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a;", memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery)
+	err := tk.ExecToErr("select /*+ inl_hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a;")
+	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 
 	fpName := "github.com/pingcap/tidb/pkg/executor/mockIndexMergeJoinOOMPanic"
 	require.NoError(t, failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")`))
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName))
 	}()
-	tk.MustContainErrMsg("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t1.a = t2.a;", memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery)
+	err = tk.ExecToErr("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t1.a = t2.a;")
+	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 }
 
 func TestIssue20779(t *testing.T) {
@@ -1348,10 +1350,10 @@ func TestIssue30211(t *testing.T) {
 	tk.MustExec("set tidb_index_join_batch_size = 1;")
 	tk.MustExec("SET GLOBAL tidb_mem_oom_action = 'CANCEL'")
 	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action='LOG'")
-	err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.a;").Error()
-	require.True(t, strings.Contains(err, memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery))
-	err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a;").Error()
-	require.True(t, strings.Contains(err, memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery))
+	err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.a;")
+	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
+	err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a;")
+	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 }
 
 func TestIssue37932(t *testing.T) {
@@ -1449,5 +1451,5 @@ func TestCartesianJoinPanic(t *testing.T) {
 		tk.MustExec("insert into t select * from t")
 	}
 	err := tk.QueryToErr("desc analyze select * from t t1, t t2, t t3, t t4, t t5, t t6;")
-	require.ErrorContains(t, err, memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery)
+	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 }
