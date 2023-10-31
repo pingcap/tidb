@@ -1235,5 +1235,20 @@
       "select b from t3 where a = 1 and b is not null",
       "select b from t3 where a = 1 and b is null"
     ]
+  },
+  {
+    "name": "TestDowncastPointGetOrRangeScan",
+    "cases": [
+      "select * from v1 where a = 1; -- the condition should be downcast through both side and go get point",
+      "select * from v1 where a = '1test'; -- the condition should be downcast through both side and go get point too",
+      "select * from v1 where a > 1; -- the condition should be downcast through both side and go range scan",
+      "select * from v2 where a = 'test';",
+      "select * from v2 where a = 1;",
+      "select * from v2 where a > 'test';",
+      "select * from v3 where a = 'test' -- the condition shouldn't be downcast through both side and go get point",
+      "select * from v3 where a > 'test' -- the condition shouldn't be downcast through both side and go get point too",
+      "select * from v4 where a = 'test' -- diff column union may have precision loss couldn't downcast the condition to get the range",
+      "select * from v4 where a > 'test' -- diff column union may have precision loss couldn't downcast the condition to get the range"
+    ]
   }
 ]
