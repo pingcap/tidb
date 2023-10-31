@@ -5,7 +5,8 @@ package storage
 import (
 	"context"
 
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 func init() {
@@ -24,6 +25,7 @@ func ValidateCloudStorageURI(ctx context.Context, uri string) error {
 			GetObject,
 			AccessBuckets,
 		},
+		NoCredentials: intest.InTest,
 	})
 	return err
 }

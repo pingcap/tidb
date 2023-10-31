@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -40,7 +40,7 @@ func newKVReader(
 	if err != nil {
 		return nil, err
 	}
-	br, err := newByteReader(ctx, sr, bufSize, store, name, false)
+	br, err := newByteReader(ctx, sr, bufSize)
 	if err != nil {
 		return nil, err
 	}
@@ -82,5 +82,8 @@ func noEOF(err error) error {
 }
 
 func (r *kvReader) Close() error {
+	if p := r.byteReader.concurrentReader.largeBufferPool; p != nil {
+		p.Destroy()
+	}
 	return r.byteReader.Close()
 }

@@ -1,0 +1,33 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "rule_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "rule_derive_topn_from_window_test.go",
+        "rule_inject_extra_projection_test.go",
+        "rule_join_reorder_test.go",
+    ],
+    data = glob(["testdata/**"]),
+    flaky = True,
+    shard_count = 5,
+    deps = [
+        "//pkg/domain",
+        "//pkg/expression",
+        "//pkg/expression/aggregation",
+        "//pkg/parser/ast",
+        "//pkg/parser/model",
+        "//pkg/parser/mysql",
+        "//pkg/planner/core/internal",
+        "//pkg/testkit",
+        "//pkg/testkit/testdata",
+        "//pkg/testkit/testmain",
+        "//pkg/testkit/testsetup",
+        "//pkg/types",
+        "//pkg/util/mock",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

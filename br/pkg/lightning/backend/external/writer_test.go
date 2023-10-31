@@ -31,8 +31,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	dbkv "github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/size"
+	dbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
 )
@@ -83,6 +83,7 @@ func TestWriter(t *testing.T) {
 	}
 	_, _, err = kvReader.nextKV()
 	require.Equal(t, io.EOF, err)
+	require.NoError(t, kvReader.Close())
 
 	statReader, err := newStatsReader(ctx, memStore, "/test/0_stat/0", bufSize)
 	require.NoError(t, err)
@@ -97,6 +98,7 @@ func TestWriter(t *testing.T) {
 		keyCnt += p.keys
 	}
 	require.Equal(t, uint64(kvCnt), keyCnt)
+	require.NoError(t, statReader.Close())
 }
 
 func TestWriterFlushMultiFileNames(t *testing.T) {
@@ -108,9 +110,11 @@ func TestWriterFlushMultiFileNames(t *testing.T) {
 
 	writer := NewWriterBuilder().
 		SetPropKeysDistance(2).
-		SetMemorySizeLimit(60).
+		SetMemorySizeLimit(3*(lengthBytes*2+20)).
+		SetBlockSize(3*(lengthBytes*2+20)).
 		Build(memStore, "/test", "0")
 
+	require.Equal(t, 3*(lengthBytes*2+20), writer.kvBuffer.blockSize)
 	// 200 bytes key values.
 	kvCnt := 10
 	kvs := make([]common.KvPair, kvCnt)
@@ -179,10 +183,12 @@ func TestWriterDuplicateDetect(t *testing.T) {
 		"/test2",
 		"mergeID",
 		1000,
+		1000,
 		8*1024,
 		1*size.MB,
 		2,
 		nil,
+		false,
 	)
 	require.NoError(t, err)
 
@@ -203,6 +209,7 @@ func TestWriterDuplicateDetect(t *testing.T) {
 	}
 	_, _, err = kvReader.nextKV()
 	require.Equal(t, io.EOF, err)
+	require.NoError(t, kvReader.Close())
 
 	dir := t.TempDir()
 	db, err := pebble.Open(path.Join(dir, "duplicate"), nil)
@@ -266,7 +273,8 @@ func TestWriterMultiFileStat(t *testing.T) {
 
 	writer := NewWriterBuilder().
 		SetPropKeysDistance(2).
-		SetMemorySizeLimit(20). // 2 KV pair will trigger flush
+		SetMemorySizeLimit(52).
+		SetBlockSize(52). // 2 KV pair will trigger flush
 		SetOnCloseFunc(closeFn).
 		Build(memStore, "/test", "0")
 
@@ -372,11 +380,13 @@ func TestWriterMultiFileStat(t *testing.T) {
 		100,
 		"/test2",
 		"mergeID",
-		20,
+		52,
+		52,
 		8*1024,
 		1*size.MB,
 		2,
 		closeFn,
+		true,
 	)
 	require.NoError(t, err)
 	require.Equal(t, 3, len(summary.MultipleFilesStats))
@@ -418,6 +428,7 @@ func TestWriterMultiFileStat(t *testing.T) {
 }
 
 func TestWriterSort(t *testing.T) {
+	t.Skip("it only tests the performance of sorty")
 	commonPrefix := "abcabcabcabcabcabcabcabc"
 
 	kvs := make([]common.KvPair, 1000000)

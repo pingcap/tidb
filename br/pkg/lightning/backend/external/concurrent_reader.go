@@ -24,79 +24,76 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// singeFileReader is a concurrent reader for a single file.
-type singeFileReader struct {
-	ctx               context.Context
-	concurrency       int
-	readBufferSize    int
-	currentFileOffset int64
-	bufferReadOffset  int64
-	bufferMaxOffset   int64
-
-	fileSize int64
-	name     string
+// concurrentFileReader reads a file with multiple chunks concurrently.
+type concurrentFileReader struct {
+	ctx            context.Context
+	concurrency    int
+	readBufferSize int
 
 	storage storage.ExternalStorage
-	buffer  []byte
+	name    string
+
+	offset   int64
+	fileSize int64
 }
 
-// newSingeFileReader creates a new singeFileReader.
-func newSingeFileReader(
+// newConcurrentFileReader creates a new concurrentFileReader.
+func newConcurrentFileReader(
 	ctx context.Context,
 	st storage.ExternalStorage,
 	name string,
+	offset int64,
 	fileSize int64,
 	concurrency int,
 	readBufferSize int,
-) (*singeFileReader, error) {
-	if st == nil {
-		return nil, nil
-	}
-	return &singeFileReader{
-		ctx:               ctx,
-		concurrency:       concurrency,
-		readBufferSize:    readBufferSize,
-		currentFileOffset: 0,
-		bufferReadOffset:  0,
-		fileSize:          fileSize,
-		name:              name,
-		storage:           st,
-		buffer:            nil,
+) (*concurrentFileReader, error) {
+	return &concurrentFileReader{
+		ctx:            ctx,
+		concurrency:    concurrency,
+		readBufferSize: readBufferSize,
+		offset:         offset,
+		fileSize:       fileSize,
+		name:           name,
+		storage:        st,
 	}, nil
 }
 
-// reload reloads the buffer.
-func (r *singeFileReader) reload() error {
-	if r.currentFileOffset >= r.fileSize {
-		return io.EOF
+// read loads the file content concurrently into the buffer.
+func (r *concurrentFileReader) read(buf []byte) (int64, error) {
+	if r.offset >= r.fileSize {
+		return 0, io.EOF
 	}
 
+	bufSize := len(buf)
+	fileSizeRemain := r.fileSize - r.offset
+	readBatchTotal := r.readBufferSize * r.concurrency
+	bytesRead := min(bufSize, int(fileSizeRemain), readBatchTotal)
 	eg := errgroup.Group{}
 	for i := 0; i < r.concurrency; i++ {
 		i := i
 		eg.Go(func() error {
 			bufStart := i * r.readBufferSize
-			fileStart := r.currentFileOffset + int64(bufStart)
-			fileEnd := fileStart + int64(r.readBufferSize)
-			if fileEnd > r.fileSize {
-				fileEnd = r.fileSize
+			bufEnd := bufStart + r.readBufferSize
+			if bufEnd > bytesRead {
+				bufEnd = bytesRead
 			}
-			if fileStart > fileEnd {
+			if bufStart >= bufEnd {
 				return nil
 			}
 
+			fileStart := r.offset + int64(bufStart)
 			_, err := storage.ReadDataInRange(
 				r.ctx,
 				r.storage,
 				r.name,
 				fileStart,
-				r.buffer[bufStart:bufStart+int(fileEnd-fileStart)],
+				buf[bufStart:bufEnd],
 			)
 			if err != nil {
-				log.FromContext(r.ctx).Warn(
-					"read meet error",
+				log.FromContext(r.ctx).Error(
+					"concurrent read meet error",
 					zap.Int64("fileStart", fileStart),
-					zap.Int64("fileEnd", fileEnd),
+					zap.Int("readSize", bufEnd-bufStart),
 					zap.Error(err),
 				)
 				return err
@@ -106,26 +103,9 @@ func (r *singeFileReader) reload() error {
 	}
 	err := eg.Wait()
 	if err != nil {
-		return err
+		return 0, err
 	}
 
-	if r.currentFileOffset+int64(r.readBufferSize*r.concurrency) > r.fileSize {
-		r.bufferMaxOffset = r.fileSize - r.currentFileOffset
-		r.currentFileOffset = r.fileSize
-	} else {
-		r.bufferMaxOffset = int64(r.readBufferSize * r.concurrency)
-		r.currentFileOffset += int64(r.readBufferSize * r.concurrency)
-	}
-	r.bufferReadOffset = 0
-
-	return nil
-}
-
-// next returns the next n bytes.
-func (r *singeFileReader) next(n int) []byte {
-	end := min(r.bufferReadOffset+int64(n), r.bufferMaxOffset)
-	ret := r.buffer[r.bufferReadOffset:end]
-	r.bufferReadOffset += int64(len(ret))
-
-	return ret
+	r.offset += int64(bytesRead)
+	return int64(bytesRead), nil
 }

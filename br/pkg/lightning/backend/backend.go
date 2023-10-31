@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"go.uber.org/zap"
 )
 
@@ -103,16 +103,18 @@ type LocalEngineConfig struct {
 
 // ExternalEngineConfig is the configuration used for local backend external engine.
 type ExternalEngineConfig struct {
-	StorageURI string
-	DataFiles  []string
-	StatFiles  []string
-	MinKey     []byte
-	MaxKey     []byte
-	SplitKeys  [][]byte
+	StorageURI      string
+	DataFiles       []string
+	StatFiles       []string
+	StartKey        []byte
+	EndKey          []byte
+	SplitKeys       [][]byte
+	RegionSplitSize int64
 	// TotalFileSize can be an estimated value.
 	TotalFileSize int64
 	// TotalKVCount can be an estimated value.
 	TotalKVCount int64
+	CheckHotspot bool
 }
 
 // CheckCtx contains all parameters used in CheckRequirements

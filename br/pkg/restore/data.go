@@ -16,8 +16,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/storewatch"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/pkg/ddl"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/rangetask"
@@ -226,7 +225,7 @@ func getStoreAddress(allStores []*metapb.Store, storeId uint64) string {
 func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 	eg, ectx := errgroup.WithContext(ctx)
 	totalStores := len(recovery.allStores)
-	workers := utils.NewWorkerPool(uint(mathutil.Min(totalStores, common.MaxStoreConcurrency)), "Collect Region Meta") // TODO: int overflow?
+	workers := utils.NewWorkerPool(uint(min(totalStores, common.MaxStoreConcurrency)), "Collect Region Meta") // TODO: int overflow?
 
 	// TODO: optimize the ErroGroup when TiKV is panic
 	metaChan := make(chan StoreMeta, 1024)
@@ -339,7 +338,7 @@ func (recovery *Recovery) RecoverRegionOfStore(ctx context.Context, storeID uint
 func (recovery *Recovery) RecoverRegions(ctx context.Context) (err error) {
 	eg, ectx := errgroup.WithContext(ctx)
 	totalRecoveredStores := len(recovery.RecoveryPlan)
-	workers := utils.NewWorkerPool(uint(mathutil.Min(totalRecoveredStores, common.MaxStoreConcurrency)), "Recover Regions")
+	workers := utils.NewWorkerPool(uint(min(totalRecoveredStores, common.MaxStoreConcurrency)), "Recover Regions")
 
 	for storeId, plan := range recovery.RecoveryPlan {
 		if err := ectx.Err(); err != nil {
@@ -403,7 +402,7 @@ func (recovery *Recovery) SpawnTiKVShutDownWatchers(ctx context.Context) {
 func (recovery *Recovery) WaitApply(ctx context.Context) (err error) {
 	eg, ectx := errgroup.WithContext(ctx)
 	totalStores := len(recovery.allStores)
-	workers := utils.NewWorkerPool(uint(mathutil.Min(totalStores, common.MaxStoreConcurrency)), "wait apply")
+	workers := utils.NewWorkerPool(uint(min(totalStores, common.MaxStoreConcurrency)), "wait apply")
 
 	for _, store := range recovery.allStores {
 		if err := ectx.Err(); err != nil {
@@ -513,9 +512,9 @@ func (recovery *Recovery) MakeRecoveryPlan() error {
 				regions[m.RegionId] = make([]*RecoverRegion, 0, len(recovery.allStores))
 			}
 			regions[m.RegionId] = append(regions[m.RegionId], &RecoverRegion{m, storeId})
-			maxId = mathutil.Max(maxId, mathutil.Max(m.RegionId, m.PeerId))
+			maxId = max(maxId, max(m.RegionId, m.PeerId))
 		}
-		recovery.MaxAllocID = mathutil.Max(recovery.MaxAllocID, maxId)
+		recovery.MaxAllocID = max(recovery.MaxAllocID, maxId)
 	}
 
 	regionInfos := SortRecoverRegions(regions)

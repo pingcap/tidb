@@ -32,13 +32,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/statistics/handle"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/oracle"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -136,7 +135,7 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 	// This flag is used for test. we should backup stats all the time.
 	_ = flags.MarkHidden(flagIgnoreStats)
 
-	flags.Bool(flagUseBackupMetaV2, false,
+	flags.Bool(flagUseBackupMetaV2, true,
 		"use backup meta v2 to store meta info")
 
 	flags.String(flagKeyspaceName, "", "keyspace name for backup")
@@ -147,7 +146,9 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 	// if we put this feature in v4.0.14, then v4.0.14 br can parse v2 meta
 	// but will generate v1 meta due to this flag is false. the behaviour is as same as v4.0.15, v4.0.16.
 	// finally v4.0.17 will set this flag to true, and generate v2 meta.
-	_ = flags.MarkHidden(flagUseBackupMetaV2)
+	//
+	// the version currently is v7.4.0, the flag can be set to true as default value.
+	// _ = flags.MarkHidden(flagUseBackupMetaV2)
 
 	flags.Bool(flagUseCheckpoint, true, "use checkpoint mode")
 	_ = flags.MarkHidden(flagUseCheckpoint)
@@ -720,7 +721,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		}
 	}
 	updateCh = g.StartProgress(ctx, "Checksum", checksumProgress, !cfg.LogProgress)
-	schemasConcurrency := uint(mathutil.Min(backup.DefaultSchemaConcurrency, schemas.Len()))
+	schemasConcurrency := uint(min(backup.DefaultSchemaConcurrency, schemas.Len()))
 
 	err = schemas.BackupSchemas(
 		ctx, metawriter, client.GetCheckpointRunner(), mgr.GetStorage(), statsHandle, backupTS, schemasConcurrency, cfg.ChecksumConcurrency, skipChecksum, updateCh)
@@ -765,16 +766,14 @@ func ParseTSString(ts string, tzCheck bool) (uint64, error) {
 	}
 
 	loc := time.Local
-	sc := &stmtctx.StatementContext{
-		TimeZone: loc,
-	}
+	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
 	if tzCheck {
 		tzIdx, _, _, _, _ := types.GetTimezone(ts)
 		if tzIdx < 0 {
 			return 0, errors.Errorf("must set timezone when using datetime format ts, e.g. '2018-05-11 01:42:23+0800'")
 		}
 	}
-	t, err := types.ParseTime(sc, ts, mysql.TypeTimestamp, types.MaxFsp, nil)
+	t, err := types.ParseTime(sc.TypeCtx(), ts, mysql.TypeTimestamp, types.MaxFsp, nil)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

@@ -19,6 +19,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"runtime"
 	"testing"
 	"time"
 
@@ -57,6 +58,15 @@ func (r *trackOpenFileReader) Close() error {
 	return nil
 }
 
+func getEncodedData(key, value []byte) []byte {
+	buf := make([]byte, 8*2+len(key)+len(value))
+	binary.BigEndian.PutUint64(buf, uint64(len(key)))
+	copy(buf[8:], key)
+	binary.BigEndian.PutUint64(buf[8+len(key):], uint64(len(value)))
+	copy(buf[8*2+len(key):], value)
+	return buf
+}
+
 func TestMergeKVIter(t *testing.T) {
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
@@ -74,10 +84,10 @@ func TestMergeKVIter(t *testing.T) {
 			propKeysDist: 2,
 		}
 		rc.reset()
-		kvStore, err := NewKeyValueStore(ctx, writer, rc, 1)
+		kvStore, err := NewKeyValueStore(ctx, writer, rc)
 		require.NoError(t, err)
 		for _, kv := range data[i] {
-			err = kvStore.AddKeyValue([]byte(kv[0]), []byte(kv[1]))
+			err = kvStore.addEncodedData(getEncodedData([]byte(kv[0]), []byte(kv[1])))
 			require.NoError(t, err)
 		}
 		err = writer.Close(ctx)
@@ -85,7 +95,7 @@ func TestMergeKVIter(t *testing.T) {
 	}
 
 	trackStore := &trackOpenMemStorage{MemStorage: memStore}
-	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5)
+	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5, true)
 	require.NoError(t, err)
 	// close one empty file immediately in NewMergeKVIter
 	require.EqualValues(t, 2, trackStore.opened.Load())
@@ -126,10 +136,10 @@ func TestOneUpstream(t *testing.T) {
 			propKeysDist: 2,
 		}
 		rc.reset()
-		kvStore, err := NewKeyValueStore(ctx, writer, rc, 1)
+		kvStore, err := NewKeyValueStore(ctx, writer, rc)
 		require.NoError(t, err)
 		for _, kv := range data[i] {
-			err = kvStore.AddKeyValue([]byte(kv[0]), []byte(kv[1]))
+			err = kvStore.addEncodedData(getEncodedData([]byte(kv[0]), []byte(kv[1])))
 			require.NoError(t, err)
 		}
 		err = writer.Close(ctx)
@@ -137,7 +147,7 @@ func TestOneUpstream(t *testing.T) {
 	}
 
 	trackStore := &trackOpenMemStorage{MemStorage: memStore}
-	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5)
+	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5, true)
 	require.NoError(t, err)
 	require.EqualValues(t, 1, trackStore.opened.Load())
 
@@ -174,14 +184,14 @@ func TestAllEmpty(t *testing.T) {
 	}
 
 	trackStore := &trackOpenMemStorage{MemStorage: memStore}
-	iter, err := NewMergeKVIter(ctx, []string{filenames[0]}, []uint64{0}, trackStore, 5)
+	iter, err := NewMergeKVIter(ctx, []string{filenames[0]}, []uint64{0}, trackStore, 5, false)
 	require.NoError(t, err)
 	require.EqualValues(t, 0, trackStore.opened.Load())
 	require.False(t, iter.Next())
 	require.NoError(t, iter.Error())
 	require.NoError(t, iter.Close())
 
-	iter, err = NewMergeKVIter(ctx, filenames, []uint64{0, 0}, trackStore, 5)
+	iter, err = NewMergeKVIter(ctx, filenames, []uint64{0, 0}, trackStore, 5, false)
 	require.NoError(t, err)
 	require.EqualValues(t, 0, trackStore.opened.Load())
 	require.False(t, iter.Next())
@@ -204,10 +214,10 @@ func TestCorruptContent(t *testing.T) {
 			propKeysDist: 2,
 		}
 		rc.reset()
-		kvStore, err := NewKeyValueStore(ctx, writer, rc, 1)
+		kvStore, err := NewKeyValueStore(ctx, writer, rc)
 		require.NoError(t, err)
 		for _, kv := range data[i] {
-			err = kvStore.AddKeyValue([]byte(kv[0]), []byte(kv[1]))
+			err = kvStore.addEncodedData(getEncodedData([]byte(kv[0]), []byte(kv[1])))
 			require.NoError(t, err)
 		}
 		if i == 0 {
@@ -219,7 +229,7 @@ func TestCorruptContent(t *testing.T) {
 	}
 
 	trackStore := &trackOpenMemStorage{MemStorage: memStore}
-	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5)
+	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5, true)
 	require.NoError(t, err)
 	require.EqualValues(t, 2, trackStore.opened.Load())
 
@@ -244,108 +254,6 @@ func TestCorruptContent(t *testing.T) {
 	require.EqualValues(t, 0, trackStore.opened.Load())
 }
 
-func generateMockFileReader() *kvReader {
-	ctx := context.Background()
-	memStore := storage.NewMemStorage()
-	filename := "/test1"
-	size := 100_000
-	writer, err := memStore.Create(ctx, filename, nil)
-	if err != nil {
-		panic(err)
-	}
-	rc := &rangePropertiesCollector{
-		propSizeDist: 100,
-		propKeysDist: 2,
-	}
-	rc.reset()
-	kvStore, err := NewKeyValueStore(ctx, writer, rc, 1)
-	if err != nil {
-		panic(err)
-	}
-	for i := 0; i < size; i++ {
-		key := fmt.Sprintf("key%09d", i)
-		val := fmt.Sprintf("value%09d", i)
-		err = kvStore.AddKeyValue([]byte(key), []byte(val))
-		if err != nil {
-			panic(err)
-		}
-	}
-	err = writer.Close(ctx)
-	if err != nil {
-		panic(err)
-	}
-	rd, err := newKVReader(ctx, filename, memStore, 0, 1_000)
-	if err != nil {
-		panic(err)
-	}
-	return rd
-}
-
-func BenchmarkValueT(b *testing.B) {
-	ctx := context.Background()
-	for i := 0; i < b.N; i++ {
-		b.StopTimer()
-		rd := generateMockFileReader()
-		opener := func() (*kvReaderProxy, error) {
-			return &kvReaderProxy{r: rd}, nil
-		}
-		it, err := newMergeIter[kvPair, kvReaderProxy](ctx, []readerOpenerFn[kvPair, kvReaderProxy]{opener})
-		if err != nil {
-			panic(err)
-		}
-		b.StartTimer()
-		for it.next() {
-			e := it.currElem()
-			_ = e
-		}
-	}
-}
-
-type kvReaderPointerProxy struct {
-	p string
-	r *kvReader
-}
-
-func (p kvReaderPointerProxy) path() string {
-	return p.p
-}
-
-func (p kvReaderPointerProxy) next() (*kvPair, error) {
-	k, v, err := p.r.nextKV()
-	if err != nil {
-		return nil, err
-	}
-	return &kvPair{key: k, value: v}, nil
-}
-
-func (p kvReaderPointerProxy) setReadMode(useConcurrency bool) {
-	p.r.byteReader.switchReaderMode(useConcurrency)
-}
-
-func (p kvReaderPointerProxy) close() error {
-	return p.r.Close()
-}
-
-func BenchmarkPointerT(b *testing.B) {
-	ctx := context.Background()
-	for i := 0; i < b.N; i++ {
-		b.StopTimer()
-		rd := generateMockFileReader()
-		opener := func() (*kvReaderPointerProxy, error) {
-			return &kvReaderPointerProxy{r: rd}, nil
-		}
-		it, err := newMergeIter[*kvPair, kvReaderPointerProxy](ctx, []readerOpenerFn[*kvPair, kvReaderPointerProxy]{opener})
-		if err != nil {
-			panic(err)
-		}
-		b.StartTimer()
-		for it.next() {
-			e := it.currElem()
-			_ = e
-		}
-	}
-}
-
 func TestMergeIterSwitchMode(t *testing.T) {
 	seed := time.Now().Unix()
 	rand.Seed(uint64(seed))
@@ -356,12 +264,14 @@ func TestMergeIterSwitchMode(t *testing.T) {
 		require.NoError(t, err)
 		return key
 	})
+	t.Log("success one case")
 	testMergeIterSwitchMode(t, func(key []byte, i int) []byte {
 		_, err := rand.Read(key)
 		require.NoError(t, err)
 		binary.BigEndian.PutUint64(key, uint64(i))
 		return key
 	})
+	t.Log("success two cases")
 	testMergeIterSwitchMode(t, func(key []byte, i int) []byte {
 		_, err := rand.Read(key)
 		require.NoError(t, err)
@@ -382,7 +292,7 @@ func testMergeIterSwitchMode(t *testing.T, f func([]byte, int) []byte) {
 		SetMemorySizeLimit(512*1024).
 		Build(st, "testprefix", "0")
 
-	ConcurrentReaderBufferSize = 4 * 1024
+	ConcurrentReaderBufferSizePerConc = 4 * 1024
 
 	kvCount := 500000
 	keySize := 100
@@ -407,11 +317,165 @@ func testMergeIterSwitchMode(t *testing.T, f func([]byte, int) []byte) {
 
 	offsets := make([]uint64, len(dataNames))
 
-	iter, err := NewMergeKVIter(context.Background(), dataNames, offsets, st, 2048)
+	iter, err := NewMergeKVIter(context.Background(), dataNames, offsets, st, 2048, true)
 	require.NoError(t, err)
 
 	for iter.Next() {
 	}
 	err = iter.Close()
 	require.NoError(t, err)
+}
+
+func TestHotspot(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemStorage()
+
+	// 2 files, check hotspot is 0 -> nil -> 1 -> 0 -> 1
+	keys := [][]string{
+		{"key00", "key01", "key02", "key06", "key07"},
+		{"key03", "key04", "key05", "key08", "key09"},
+	}
+	value := make([]byte, 5)
+	filenames := []string{"/test0", "/test1"}
+	for i, filename := range filenames {
+		writer, err := store.Create(ctx, filename, nil)
+		require.NoError(t, err)
+		rc := &rangePropertiesCollector{
+			propSizeDist: 100,
+			propKeysDist: 2,
+		}
+		rc.reset()
+		kvStore, err := NewKeyValueStore(ctx, writer, rc)
+		require.NoError(t, err)
+		for _, k := range keys[i] {
+			err = kvStore.addEncodedData(getEncodedData([]byte(k), value))
+			require.NoError(t, err)
+		}
+		err = writer.Close(ctx)
+		require.NoError(t, err)
+	}
+
+	// readerBufSize = 8+5+8+5, every KV will cause reload
+	iter, err := NewMergeKVIter(ctx, filenames, make([]uint64, len(filenames)), store, 26, true)
+	require.NoError(t, err)
+	iter.iter.checkHotspotPeriod = 2
+	// after read key00 and key01 from reader_0, it becomes hotspot
+	require.True(t, iter.Next())
+	require.Equal(t, "key00", string(iter.Key()))
+	require.True(t, iter.Next())
+	require.Equal(t, "key01", string(iter.Key()))
+	require.True(t, iter.Next())
+	r0 := &iter.iter.readers[0].r.byteReader.concurrentReader
+	require.True(t, r0.expected)
+	require.True(t, r0.now)
+	r1 := &iter.iter.readers[1].r.byteReader.concurrentReader
+	require.False(t, r1.expected)
+	require.False(t, r1.now)
+	// after read key02 and key03 from reader_0 and reader_1, no hotspot
+	require.Equal(t, "key02", string(iter.Key()))
+	require.True(t, iter.Next())
+	require.Equal(t, "key03", string(iter.Key()))
+	require.True(t, iter.Next())
+	require.False(t, r0.expected)
+	require.False(t, r0.now)
+	require.False(t, r1.expected)
+	require.False(t, r1.now)
+	// after read key04 and key05 from reader_1, it becomes hotspot
+	require.Equal(t, "key04", string(iter.Key()))
+	require.True(t, iter.Next())
+	require.Equal(t, "key05", string(iter.Key()))
+	require.True(t, iter.Next())
+	require.False(t, r0.expected)
+	require.False(t, r0.now)
+	require.True(t, r1.expected)
+	require.True(t, r1.now)
+	// after read key06 and key07 from reader_0, it becomes hotspot
+	require.Equal(t, "key06", string(iter.Key()))
+	require.True(t, iter.Next())
+	require.Equal(t, "key07", string(iter.Key()))
+	require.True(t, iter.Next())
+	require.Nil(t, iter.iter.readers[0])
+	require.False(t, r1.expected)
+	require.False(t, r1.now)
+	// after read key08 and key09 from reader_1, it becomes hotspot
+	require.Equal(t, "key08", string(iter.Key()))
+	require.True(t, iter.Next())
+	require.Equal(t, "key09", string(iter.Key()))
+	require.False(t, iter.Next())
+	require.Nil(t, iter.iter.readers[1])
+
+	require.NoError(t, iter.Error())
+}
+
+func TestMemoryUsageWhenHotspotChange(t *testing.T) {
+	backup := ConcurrentReaderBufferSizePerConc
+	ConcurrentReaderBufferSizePerConc = 100 * 1024 * 1024 // 100MB, make memory leak more obvious
+	t.Cleanup(func() {
+		ConcurrentReaderBufferSizePerConc = backup
+	})
+
+	getMemoryInUse := func() uint64 {
+		runtime.GC()
+		s := runtime.MemStats{}
+		runtime.ReadMemStats(&s)
+		return s.HeapInuse
+	}
+
+	ctx := context.Background()
+	dir := t.TempDir()
+	store, err := storage.NewLocalStorage(dir)
+	require.NoError(t, err)
+
+	// check if we will leak 100*100MB = 1GB memory
+	cur := 0
+	largeChunk := make([]byte, 10*1024*1024)
+	filenames := make([]string, 0, 10)
+	for i := 0; i < 10; i++ {
+		filename := fmt.Sprintf("/test%06d", i)
+		filenames = append(filenames, filename)
+		writer, err := store.Create(ctx, filename, nil)
+		require.NoError(t, err)
+		rc := &rangePropertiesCollector{
+			propSizeDist: 100,
+			propKeysDist: 2,
+		}
+		rc.reset()
+		kvStore, err := NewKeyValueStore(ctx, writer, rc)
+		require.NoError(t, err)
+		for j := 0; j < 1000; j++ {
+			key := fmt.Sprintf("key%06d", cur)
+			val := fmt.Sprintf("value%06d", cur)
+			err = kvStore.addEncodedData(getEncodedData([]byte(key), []byte(val)))
+			require.NoError(t, err)
+			cur++
+		}
+		for j := 0; j <= 12; j++ {
+			key := fmt.Sprintf("key999%06d", cur+j)
+			err = kvStore.addEncodedData(getEncodedData([]byte(key), largeChunk))
+			require.NoError(t, err)
+		}
+		err = writer.Close(ctx)
+		require.NoError(t, err)
+	}
+
+	beforeMem := getMemoryInUse()
+
+	iter, err := NewMergeKVIter(ctx, filenames, make([]uint64, len(filenames)), store, 1024, true)
+	require.NoError(t, err)
+	iter.iter.checkHotspotPeriod = 10
+	i := 0
+	for cur > 0 {
+		cur--
+		require.True(t, iter.Next())
+		require.Equal(t, fmt.Sprintf("key%06d", i), string(iter.Key()))
+		require.Equal(t, fmt.Sprintf("value%06d", i), string(iter.Value()))
+		i++
+	}
+
+	afterMem := getMemoryInUse()
+	t.Logf("memory usage: %d -> %d", beforeMem, afterMem)
+	delta := afterMem - beforeMem
+	// before the fix, delta is about 7.5GB
+	require.Less(t, delta, uint64(4*1024*1024*1024))
+	_ = iter.Close()
 }

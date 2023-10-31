@@ -88,7 +88,7 @@ function build_mysql_tester()
 {
     echo "building mysql-tester binary: $mysql_tester"
     rm -rf $mysql_tester
-    GOBIN=$PWD go install github.com/pingcap/mysql-tester/src@da61c204fac56696f171298126b40c9277119223
+    GOBIN=$PWD go install github.com/pingcap/mysql-tester/src@f3b554899a0cb24a3b387f7d45de2687098577c3
     mv src mysql_tester
 }
 
@@ -264,7 +264,6 @@ enabled_new_collation=""
 if [[ $collation_opt = 0 || $collation_opt = 2 ]]; then
     enabled_new_collation=0
     start_tidb_server
-    sleep 5
     run_mysql_tester
     kill -15 $SERVER_PID
     while ps -p $SERVER_PID > /dev/null; do
@@ -276,7 +275,6 @@ fi
 if [[ $collation_opt = 1 || $collation_opt = 2 ]]; then
     enabled_new_collation=1
     start_tidb_server
-    sleep 5
     run_mysql_tester
     kill -15 $SERVER_PID
     while ps -p $SERVER_PID > /dev/null; do
