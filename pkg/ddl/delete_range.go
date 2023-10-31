@@ -445,7 +445,7 @@ func DoBatchDeleteIndiceRange(ctx context.Context, wrapper DelRangeExecWrapper, 
 	return errors.Trace(wrapper.ConsumeDeleteRange(ctx, buf.String()))
 }
 
-// DoBatchDeleteIndiceRange generates the delete ranges for tables
+// DoBatchDeleteTablesRange generates the delete ranges for tables
 func DoBatchDeleteTablesRange(ctx context.Context, wrapper DelRangeExecWrapper, jobID int64, tableIDs []int64, ea *elementIDAlloc, comment string) error {
 	logutil.BgLogger().Info("insert into delete-range table", zap.String("category", "ddl"), zap.Int64("jobID", jobID), zap.Int64s("tableIDs", tableIDs), zap.String("comment", comment))
 	var buf strings.Builder
