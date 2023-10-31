@@ -242,17 +242,10 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 
 	// Some variables used for memTracker.
 	var (
-<<<<<<< HEAD:executor/hash_table.go
 		matchedDataSize                  = int64(cap(matched))*rowSize + int64(cap(matchedPtrs))*rowPtrSize
-		lastChunkBufPointer *chunk.Chunk = nil
+		lastChunkBufPointer *chunk.Chunk = c.chkBuf
 		memDelta            int64        = 0
 		needTrackMemUsage                = cap(innerPtrs) > signalCheckpointForJoinMask
-=======
-		matchedDataSize     = int64(cap(matched))*rowSize + int64(cap(matchedPtrs))*rowPtrSize
-		needTrackMemUsage   = cap(innerPtrs) > signalCheckpointForJoinMask
-		lastChunkBufPointer = c.chkBuf
-		memDelta            int64
->>>>>>> f8ca23c6bfd (executor: reuse chunk for GetMatchedRowsAndPtrs calls (#48090)):pkg/executor/hash_table.go
 	)
 	c.memTracker.Consume(-c.chkBufSizeForOneProbe)
 	if needTrackMemUsage {
