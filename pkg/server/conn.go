@@ -54,6 +54,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
@@ -113,9 +114,21 @@ const (
 	connStatusWaitShutdown = 3                           // Notified by server to close.
 )
 
+var (
+	statusCompression          = "Compression"
+	statusCompressionAlgorithm = "Compression_algorithm"
+	statusCompressionLevel     = "Compression_level"
+)
+
+var clientConnStatus = map[string]*variable.StatusVal{
+	statusCompression:          {Scope: variable.ScopeSession, Value: "OFF"},
+	statusCompressionAlgorithm: {Scope: variable.ScopeSession, Value: ""},
+	statusCompressionLevel:     {Scope: variable.ScopeSession, Value: 0},
+}
+
 // newClientConn creates a *clientConn object.
 func newClientConn(s *Server) *clientConn {
-	return &clientConn{
+	cc := &clientConn{
 		server:       s,
 		connectionID: s.dom.NextConnID(),
 		collation:    mysql.DefaultCollationID,
@@ -127,6 +140,8 @@ func newClientConn(s *Server) *clientConn {
 		quit:         make(chan struct{}),
 		ppEnabled:    s.cfg.ProxyProtocol.Networks != "",
 	}
+	variable.RegisterStatistics(cc)
+	return cc
 }
 
 // clientConn represents a connection between server and client, it maintains connection specific state,
@@ -323,8 +338,10 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 	// With mysql --compression-algorithms=zlib,zstd both flags are set, the result is Zlib
 	if cc.capability&mysql.ClientCompress > 0 {
 		cc.pkt.SetCompressionAlgorithm(mysql.CompressionZlib)
+		cc.ctx.SetCompressionAlgorithm(mysql.CompressionZlib)
 	} else if cc.capability&mysql.ClientZstdCompressionAlgorithm > 0 {
 		cc.pkt.SetCompressionAlgorithm(mysql.CompressionZstd)
+		cc.ctx.SetCompressionAlgorithm(mysql.CompressionZstd)
 	}
 
 	return err
@@ -546,7 +563,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	cc.dbname = resp.DBName
 	cc.collation = resp.Collation
 	cc.attrs = resp.Attrs
-	cc.pkt.SetZstdLevel(resp.ZstdLevel)
+	cc.pkt.SetZstdLevel(zstd.EncoderLevelFromZstd(resp.ZstdLevel))
 
 	err = cc.handleAuthPlugin(ctx, &resp)
 	if err != nil {
@@ -575,7 +592,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 		return errors.New("Unknown auth plugin")
 	}
 
-	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin)
+	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin, resp.ZstdLevel)
 	if err != nil {
 		logutil.Logger(ctx).Warn("open new session or authentication failure", zap.Error(err))
 	}
@@ -716,7 +733,7 @@ func (cc *clientConn) openSession() error {
 	return nil
 }
 
-func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) error {
+func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string, zstdLevel int) error {
 	// Open a context unless this was done before.
 	if ctx := cc.getCtx(); ctx == nil {
 		err := cc.openSession()
@@ -744,6 +761,7 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) e
 		return err
 	}
 	cc.ctx.SetPort(port)
+	cc.ctx.SetCompressionLevel(zstdLevel)
 	if cc.dbname != "" {
 		_, err = cc.useDB(context.Background(), cc.dbname)
 		if err != nil {
@@ -2435,7 +2453,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 			fakeResp.Auth = newpass
 		}
 	}
-	if err := cc.openSessionAndDoAuth(fakeResp.Auth, fakeResp.AuthPlugin); err != nil {
+	if err := cc.openSessionAndDoAuth(fakeResp.Auth, fakeResp.AuthPlugin, fakeResp.ZstdLevel); err != nil {
 		return err
 	}
 	return cc.handleCommonConnectionReset(ctx)
@@ -2581,4 +2599,42 @@ func (cc *clientConn) ReadPacket() ([]byte, error) {
 // Flush implements `conn.AuthConn` interface
 func (cc *clientConn) Flush(ctx context.Context) error {
 	return cc.flush(ctx)
+}
+
+// Stats returns the connection statistics.
+func (cc *clientConn) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
+	m := make(map[string]interface{}, len(clientConnStatus))
+	for name, v := range clientConnStatus {
+		m[name] = v.Value
+	}
+
+	switch vars.CompressionAlgorithm {
+	case mysql.CompressionNone:
+		m[statusCompression] = "OFF"
+		m[statusCompressionAlgorithm] = ""
+		m[statusCompressionLevel] = 0
+	case mysql.CompressionZlib:
+		m[statusCompression] = "ON"
+		m[statusCompressionAlgorithm] = "zlib"
+		m[statusCompressionLevel] = mysql.ZlibCompressDefaultLevel
+	case mysql.CompressionZstd:
+		m[statusCompression] = "ON"
+		m[statusCompressionAlgorithm] = "zstd"
+		m[statusCompressionLevel] = vars.CompressionLevel
+	default:
+		logutil.Logger(context.Background()).Debug(
+			"unexpected compression algorithm value",
+			zap.Int("algorithm", vars.CompressionAlgorithm),
+		)
+		m[statusCompression] = "OFF"
+		m[statusCompressionAlgorithm] = ""
+		m[statusCompressionLevel] = 0
+	}
+
+	return m, nil
+}
+
+// GetScope gets the status variables scope.
+func (cc *clientConn) GetScope(status string) variable.ScopeFlag {
+	return variable.ScopeSession
 }

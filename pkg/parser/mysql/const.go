@@ -642,6 +642,8 @@ const (
 	CursorTypeScrollable
 )
 
+const ZlibCompressDefaultLevel = 6
+
 const (
 	// CompressionNone is no compression in use
 	CompressionNone = iota

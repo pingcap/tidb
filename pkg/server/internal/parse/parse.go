@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -483,7 +482,7 @@ func HandshakeResponseBody(ctx context.Context, packet *handshake.Response41, da
 	}
 
 	if packet.Capability&mysql.ClientZstdCompressionAlgorithm > 0 {
-		packet.ZstdLevel = zstd.EncoderLevelFromZstd(int(data[offset]))
+		packet.ZstdLevel = int(data[offset])
 	}
 
 	return nil
