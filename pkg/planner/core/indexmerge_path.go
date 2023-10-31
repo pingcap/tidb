@@ -682,8 +682,8 @@ func (ds *DataSource) generateIndexMergePartialPath4Or(normalPathCnt int, indexM
 			bestCountAfterAccess float64
 			bestNeedSelection    bool
 		)
-		for idx := 0; idx < len(possibleMVIndexPaths); idx++ {
-			idxCols, ok := ds.prepareCols4MVIndex(possibleMVIndexPaths[idx].Index)
+		for _, onePossibleMVIndexPath := range possibleMVIndexPaths {
+			idxCols, ok := ds.prepareCols4MVIndex(onePossibleMVIndexPath.Index)
 			if !ok {
 				continue
 			}
@@ -693,7 +693,7 @@ func (ds *DataSource) generateIndexMergePartialPath4Or(normalPathCnt int, indexM
 			if len(accessFilters) == 0 {
 				continue
 			}
-			paths, isIntersection, ok, err := ds.buildPartialPaths4MVIndex(accessFilters, idxCols, possibleMVIndexPaths[idx].Index)
+			paths, isIntersection, ok, err := ds.buildPartialPaths4MVIndex(accessFilters, idxCols, onePossibleMVIndexPath.Index)
 			if err != nil {
 				logutil.BgLogger().Debug("build index merge partial mv index paths failed", zap.Error(err))
 				return nil, nil, false, err
@@ -1039,12 +1039,8 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 		// 2: some mv index partial path, some normal index path, it means hybrid index merge.
 		// 3: no mv index partial path, several normal index path, it means multi normal index merge.
 		var combinedPartialPaths []*util.AccessPath
-		if len(normalIndexPartialPaths) != 0 {
-			combinedPartialPaths = normalIndexPartialPaths
-		}
-		if len(mvIndexPartialPaths) != 0 {
-			combinedPartialPaths = append(combinedPartialPaths, mvIndexPartialPaths...)
-		}
+		combinedPartialPaths = normalIndexPartialPaths
+		combinedPartialPaths = append(combinedPartialPaths, mvIndexPartialPaths...)
 		if len(combinedPartialPaths) == 0 {
 			return nil
 		}
@@ -1091,12 +1087,8 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 
 	var combinedPartialPaths []*util.AccessPath
 	// todo: make this as the portal of all index merge case.
-	if len(normalIndexPartialPaths) != 0 {
-		combinedPartialPaths = normalIndexPartialPaths
-	}
-	if len(mvIndexPartialPaths) != 0 {
-		combinedPartialPaths = append(combinedPartialPaths, mvIndexPartialPaths...)
-	}
+	combinedPartialPaths = normalIndexPartialPaths
+	combinedPartialPaths = append(combinedPartialPaths, mvIndexPartialPaths...)
 	if len(combinedPartialPaths) == 0 {
 		return nil
 	}
