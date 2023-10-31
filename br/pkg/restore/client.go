@@ -816,7 +816,11 @@ func (rc *Client) CreateTables(
 		tbMapping[t.Info.Name.String()] = i
 	}
 	dataCh := rc.GoCreateTables(context.TODO(), dom, tables, newTS, errCh)
-	for et := range dataCh {
+	for {
+		et, ok := dataCh.Recv()
+		if !ok {
+			break
+		}
 		rules := et.RewriteRule
 		rewriteRules.Data = append(rewriteRules.Data, rules.Data...)
 		newTables = append(newTables, et.Table)
@@ -1608,8 +1612,8 @@ func (rc *Client) switchTiKVMode(ctx context.Context, mode import_sstpb.SwitchMo
 
 func concurrentHandleTablesCh(
 	ctx context.Context,
-	inCh <-chan *CreatedTable,
-	outCh chan<- *CreatedTable,
+	inCh *utils.RestoreChannel[*CreatedTable],
+	outCh *utils.RestoreChannel[*CreatedTable],
 	errCh chan<- error,
 	workers *utils.WorkerPool,
 	processFun func(context.Context, *CreatedTable) error,
@@ -1619,7 +1623,7 @@ func concurrentHandleTablesCh(
 		if err := eg.Wait(); err != nil {
 			errCh <- err
 		}
-		close(outCh)
+		outCh.Close()
 		deferFun()
 	}()
 
@@ -1628,7 +1632,8 @@ func concurrentHandleTablesCh(
 		// if we use ectx here, maybe canceled will mask real error.
 		case <-ctx.Done():
 			errCh <- ctx.Err()
-		case tbl, ok := <-inCh:
+		default:
+			tbl, ok := inCh.Recv()
 			if !ok {
 				return
 			}
@@ -1640,7 +1645,7 @@ func concurrentHandleTablesCh(
 				if err != nil {
 					return err
 				}
-				outCh <- cloneTable
+				outCh.Send(cloneTable)
 				return nil
 			})
 		}
@@ -1651,14 +1656,14 @@ func concurrentHandleTablesCh(
 // it returns a channel fires a struct{} when all things get done.
 func (rc *Client) GoValidateChecksum(
 	ctx context.Context,
-	inCh <-chan *CreatedTable,
+	inCh *utils.RestoreChannel[*CreatedTable],
 	kvClient kv.Client,
 	errCh chan<- error,
 	updateCh glue.Progress,
 	concurrency uint,
-) <-chan *CreatedTable {
+) *utils.RestoreChannel[*CreatedTable] {
 	log.Info("Start to validate checksum")
-	outCh := DefaultOutputTableChan()
+	outCh := DefaultOutputTableChan("checksum")
 	workers := utils.NewWorkerPool(defaultChecksumConcurrency, "RestoreChecksum")
 	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
 		start := time.Now()
@@ -1753,9 +1758,9 @@ func (rc *Client) execChecksum(
 	return nil
 }
 
-func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh <-chan *CreatedTable, errCh chan<- error) chan *CreatedTable {
+func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh *utils.RestoreChannel[*CreatedTable], errCh chan<- error) *utils.RestoreChannel[*CreatedTable] {
 	log.Info("Start to update meta then load stats")
-	outCh := DefaultOutputTableChan()
+	outCh := DefaultOutputTableChan("stats")
 	workers := utils.NewWorkerPool(16, "UpdateStats")
 	// The rc.db is not thread safe
 	var updateMetaLock sync.Mutex
@@ -1802,9 +1807,9 @@ func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh <-chan *Cre
 	return outCh
 }
 
-func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh <-chan *CreatedTable, updateCh glue.Progress, errCh chan<- error) chan *CreatedTable {
+func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh *utils.RestoreChannel[*CreatedTable], updateCh glue.Progress, errCh chan<- error) *utils.RestoreChannel[*CreatedTable] {
 	log.Info("Start to wait tiflash replica sync")
-	outCh := DefaultOutputTableChan()
+	outCh := DefaultOutputTableChan("wait_tiflash")
 	workers := utils.NewWorkerPool(4, "WaitForTiflashReady")
 	// TODO support tiflash store changes
 	tikvStats, err := infosync.GetTiFlashStoresStat(context.Background())

@@ -15,6 +15,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metrics"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"go.uber.org/zap"
 )
 
@@ -48,10 +49,10 @@ type Batcher struct {
 	everythingIsDone *sync.WaitGroup
 	// sendErr is for output error information.
 	sendErr chan<- error
-	// sendCh is for communiate with sendWorker.
-	sendCh chan<- SendType
+	// signalCh is for communiate with sendWorker.
+	signalCh *utils.RestoreChannel[SendType]
 	// outCh is for output the restored table, so it can be sent to do something like checksum.
-	outCh chan<- *CreatedTable
+	outCh *utils.RestoreChannel[*CreatedTable]
 
 	updateCh glue.Progress
 
@@ -70,7 +71,7 @@ func (b *Batcher) Len() int {
 
 // contextCleaner is the worker goroutine that cleaning the 'context'
 // (e.g. make regions leave restore mode).
-func (b *Batcher) contextCleaner(ctx context.Context, tables <-chan []CreatedTable) {
+func (b *Batcher) contextCleaner(ctx context.Context, tables *utils.RestoreChannel[[]CreatedTable]) {
 	defer func() {
 		if ctx.Err() != nil {
 			log.Info("restore canceled, cleaning in background context")
@@ -84,7 +85,8 @@ func (b *Batcher) contextCleaner(ctx context.Context, tables <-chan []CreatedTab
 		select {
 		case <-ctx.Done():
 			return
-		case tbls, ok := <-tables:
+		default:
+			tbls, ok := tables.Recv()
 			if !ok {
 				return
 			}
@@ -95,8 +97,7 @@ func (b *Batcher) contextCleaner(ctx context.Context, tables <-chan []CreatedTab
 			}
 			for _, tbl := range tbls {
 				cloneTable := tbl
-				b.outCh <- &cloneTable
-				metrics.RestoreInFlightCounters.WithLabelValues("finish_table").Inc()
+				b.outCh.Send(&cloneTable)
 			}
 		}
 	}
@@ -113,26 +114,26 @@ func NewBatcher(
 	manager ContextManager,
 	errCh chan<- error,
 	updateCh glue.Progress,
-) (*Batcher, chan *CreatedTable) {
-	outCh := DefaultOutputTableChan()
-	sendChan := make(chan SendType, 2)
+) (*Batcher, *utils.RestoreChannel[*CreatedTable]) {
+	outCh := DefaultOutputTableChan("restored_table")
+	signalCh := utils.NewRestoreChannel[SendType]("send_signal", 2)
+	restoredTablesCh := utils.NewRestoreChannel[[]CreatedTable]("restored_tables", defaultChannelSize)
 	b := &Batcher{
 		rewriteRules:       EmptyRewriteRule(),
 		sendErr:            errCh,
 		outCh:              outCh,
 		sender:             sender,
 		manager:            manager,
-		sendCh:             sendChan,
+		signalCh:           signalCh,
 		updateCh:           updateCh,
 		cachedTablesMu:     new(sync.Mutex),
 		everythingIsDone:   new(sync.WaitGroup),
 		batchSizeThreshold: 1,
 	}
 	b.everythingIsDone.Add(2)
-	go b.sendWorker(ctx, sendChan)
-	restoredTables := make(chan []CreatedTable, defaultChannelSize)
-	go b.contextCleaner(ctx, restoredTables)
-	sink := chanTableSink{restoredTables, errCh}
+	go b.sendWorker(ctx, signalCh)
+	go b.contextCleaner(ctx, restoredTablesCh)
+	sink := chanTableSink{restoredTablesCh, errCh}
 	sender.PutSink(sink)
 	return b, outCh
 }
@@ -158,7 +159,7 @@ func (b *Batcher) DisableAutoCommit() {
 }
 
 func (b *Batcher) waitUntilSendDone() {
-	b.sendCh <- SendAllThenClose
+	b.signalCh.Send(SendAllThenClose)
 	b.everythingIsDone.Wait()
 }
 
@@ -175,16 +176,18 @@ func (b *Batcher) joinAutoCommitWorker() {
 
 // sendWorker is the 'worker' that send all ranges to TiKV.
 // TODO since all operations are asynchronous now, it's possible to remove this worker.
-func (b *Batcher) sendWorker(ctx context.Context, send <-chan SendType) {
+func (b *Batcher) sendWorker(ctx context.Context, send *utils.RestoreChannel[SendType]) {
 	sendUntil := func(lessOrEqual int) {
-
 		for b.Len() > lessOrEqual {
 			b.Send(ctx)
 		}
 	}
 
-	for sendType := range send {
-		metrics.RestoreInFlightCounters.WithLabelValues("send_signal").Desc()
+	for {
+		sendType, ok := send.Recv()
+		if !ok {
+			return
+		}
 		switch sendType {
 		case SendUntilLessThanBatch:
 			sendUntil(b.batchSizeThreshold)
@@ -221,9 +224,9 @@ func (b *Batcher) autoCommitWorker(ctx context.Context, joiner <-chan struct{}, 
 
 func (b *Batcher) asyncSend(t SendType) {
 	// add a check here so we won't replica sending.
-	if len(b.sendCh) == 0 {
+	if b.signalCh.Len() == 0 {
 		metrics.RestoreInFlightCounters.WithLabelValues("send_signal").Inc()
-		b.sendCh <- t
+		b.signalCh.Send(t)
 	}
 }
 
@@ -441,8 +444,8 @@ func (b *Batcher) Close() {
 	log.Info("sending batch lastly on close", zap.Int("size", b.Len()))
 	b.DisableAutoCommit()
 	b.waitUntilSendDone()
-	close(b.outCh)
-	close(b.sendCh)
+	b.outCh.Close()
+	b.signalCh.Close()
 }
 
 // SetThreshold sets the threshold that how big the batch size reaching need to send batch.

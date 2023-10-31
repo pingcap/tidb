@@ -34,13 +34,12 @@ type TableSink interface {
 }
 
 type chanTableSink struct {
-	outCh chan<- []CreatedTable
+	outCh *utils.RestoreChannel[[]CreatedTable]
 	errCh chan<- error
 }
 
 func (sink chanTableSink) EmitTables(tables ...CreatedTable) {
-	metrics.RestoreInFlightCounters.WithLabelValues("emit_tables").Inc()
-	sink.outCh <- tables
+	sink.outCh.Send(tables)
 }
 
 func (sink chanTableSink) EmitError(err error) {
@@ -49,7 +48,7 @@ func (sink chanTableSink) EmitError(err error) {
 
 func (sink chanTableSink) Close() {
 	// ErrCh may has multi sender part, don't close it.
-	close(sink.outCh)
+	sink.outCh.Close()
 }
 
 // ContextManager is the struct to manage a TiKV 'context' for restore.
@@ -155,8 +154,8 @@ type CreatedTable struct {
 	OldTable    *metautil.Table
 }
 
-func DefaultOutputTableChan() chan *CreatedTable {
-	return make(chan *CreatedTable, defaultChannelSize)
+func DefaultOutputTableChan(name string) *utils.RestoreChannel[*CreatedTable] {
+	return utils.NewRestoreChannel[*CreatedTable](name, defaultChannelSize)
 }
 
 // TableWithRange is a CreatedTable that has been bind to some of key ranges.
