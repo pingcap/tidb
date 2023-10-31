@@ -4,13 +4,16 @@ go_test(
     name = "addindextest1_test",
     timeout = "short",
     srcs = [
-        "dummy_test.go",
+        "disttask_test.go",
         "main_test.go",
     ],
     flaky = True,
     deps = [
         "//pkg/config",
+        "//pkg/ddl",
+        "//pkg/testkit",
         "//tests/realtikvtest",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
     ],
 )
