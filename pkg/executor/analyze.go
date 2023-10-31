@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -288,7 +289,7 @@ func (e *AnalyzeExec) saveV2AnalyzeOpts() error {
 		}
 	}
 	sql := new(strings.Builder)
-	sqlexec.MustFormatSQL(sql, "REPLACE INTO mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) VALUES ")
+	sqlescape.MustFormatSQL(sql, "REPLACE INTO mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) VALUES ")
 	idx := 0
 	for _, opts := range toSaveMap {
 		sampleNum := opts.RawOpts[ast.AnalyzeOptNumSamples]
@@ -307,9 +308,9 @@ func (e *AnalyzeExec) saveV2AnalyzeOpts() error {
 			colIDs[i] = strconv.FormatInt(colInfo.ID, 10)
 		}
 		colIDStrs := strings.Join(colIDs, ",")
-		sqlexec.MustFormatSQL(sql, "(%?,%?,%?,%?,%?,%?,%?)", opts.PhyTableID, sampleNum, sampleRate, buckets, topn, colChoice, colIDStrs)
+		sqlescape.MustFormatSQL(sql, "(%?,%?,%?,%?,%?,%?,%?)", opts.PhyTableID, sampleNum, sampleRate, buckets, topn, colChoice, colIDStrs)
 		if idx < len(toSaveMap)-1 {
-			sqlexec.MustFormatSQL(sql, ",")
+			sqlescape.MustFormatSQL(sql, ",")
 		}
 		idx++
 	}

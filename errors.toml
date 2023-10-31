@@ -1251,6 +1251,11 @@ error = '''
 Check constraint '%s' refers to non-existing column '%s'.
 '''
 
+["ddl:3822"]
+error = '''
+Duplicate check constraint name '%s'.
+'''
+
 ["ddl:3823"]
 error = '''
 Column '%s' cannot be used in a check constraint '%s': needed in a foreign key constraint referential action.
