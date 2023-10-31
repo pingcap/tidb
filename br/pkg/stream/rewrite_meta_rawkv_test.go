@@ -9,6 +9,7 @@ import (
 
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/tablecodec"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/stretchr/testify/require"
 )
@@ -435,8 +436,10 @@ var (
 	dropTable0Job           = &model.Job{Type: model.ActionDropTable, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`["",[72,73,74],[""]]`)}
 	dropTable1Job           = &model.Job{Type: model.ActionDropTable, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`["",[],[""]]`)}
 	dropTable0Partition1Job = &model.Job{Type: model.ActionDropTablePartition, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`[[73]]`)}
-	rollBackTable0IndexJob  = &model.Job{Type: model.ActionAddIndex, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`[2,false,[72,73,74]]`)}
-	rollBackTable1IndexJob  = &model.Job{Type: model.ActionAddIndex, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`[2,false,[]]`)}
+	rollBackTable0IndexJob  = &model.Job{Type: model.ActionAddIndex, State: model.JobStateRollbackDone, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`[2,false,[72,73,74]]`)}
+	rollBackTable1IndexJob  = &model.Job{Type: model.ActionAddIndex, State: model.JobStateRollbackDone, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`[2,false,[]]`)}
+	addTable0IndexJob       = &model.Job{Type: model.ActionAddIndex, State: model.JobStateSynced, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`[2,false,[72,73,74]]`)}
+	addTable1IndexJob       = &model.Job{Type: model.ActionAddIndex, State: model.JobStateSynced, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`[2,false,[]]`)}
 	dropTable0IndexJob      = &model.Job{Type: model.ActionDropIndex, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`["",false,2,[72,73,74]]`)}
 	dropTable1IndexJob      = &model.Job{Type: model.ActionDropIndex, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`["",false,2,[]]`)}
 	dropTable0IndexesJob    = &model.Job{Type: model.ActionDropIndexes, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`[[],[],[2,3],[72,73,74]]`)}
@@ -581,23 +584,44 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	require.Equal(t, targs.tableIDs[0], mDDLJobPartition1NewID)
 
 	// roll back add index for table0
-	err = schemaReplace.deleteRange(rollBackTable0IndexJob)
+	err = schemaReplace.tryToGCJob(rollBackTable0IndexJob)
+	require.NoError(t, err)
+	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
+		iargs = <-midr.indexCh
+		_, exist := mDDLJobALLNewPartitionIDSet[iargs.tableID]
+		require.True(t, exist)
+		require.Equal(t, len(iargs.indexIDs), 2)
+		require.Equal(t, iargs.indexIDs[0], int64(2))
+		require.Equal(t, iargs.indexIDs[1], int64(tablecodec.TempIndexPrefix|2))
+	}
+
+	// roll back add index for table1
+	err = schemaReplace.tryToGCJob(rollBackTable1IndexJob)
+	require.NoError(t, err)
+	iargs = <-midr.indexCh
+	require.Equal(t, iargs.tableID, mDDLJobTable1NewID)
+	require.Equal(t, len(iargs.indexIDs), 2)
+	require.Equal(t, iargs.indexIDs[0], int64(2))
+	require.Equal(t, iargs.indexIDs[1], int64(tablecodec.TempIndexPrefix|2))
+
+	// add index for table 0
+	err = schemaReplace.tryToGCJob(addTable0IndexJob)
 	require.NoError(t, err)
 	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
 		iargs = <-midr.indexCh
 		_, exist := mDDLJobALLNewPartitionIDSet[iargs.tableID]
 		require.True(t, exist)
 		require.Equal(t, len(iargs.indexIDs), 1)
-		require.Equal(t, iargs.indexIDs[0], int64(2))
+		require.Equal(t, iargs.indexIDs[0], int64(tablecodec.TempIndexPrefix|2))
 	}
 
-	// roll back add index for table1
-	err = schemaReplace.deleteRange(rollBackTable1IndexJob)
+	// add index for table 1
+	err = schemaReplace.tryToGCJob(addTable1IndexJob)
 	require.NoError(t, err)
 	iargs = <-midr.indexCh
 	require.Equal(t, iargs.tableID, mDDLJobTable1NewID)
 	require.Equal(t, len(iargs.indexIDs), 1)
-	require.Equal(t, iargs.indexIDs[0], int64(2))
+	require.Equal(t, iargs.indexIDs[0], int64(tablecodec.TempIndexPrefix|2))
 
 	// drop index for table0
 	err = schemaReplace.deleteRange(dropTable0IndexJob)
