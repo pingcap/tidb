@@ -73,6 +73,7 @@ func (w *OneFileWriter) Init(ctx context.Context) (err error) {
 		return nil
 	}
 	w.logger = logutil.Logger(ctx)
+	w.logger.Info("ywq test", zap.Any("datafile", w.dataFile), zap.Any("statfile", w.statFile))
 	w.kvStore, err = NewKeyValueStore(ctx, w.dataWriter, w.rc)
 	return err
 }
@@ -165,33 +166,11 @@ func (w *OneFileWriter) flushKVs(ctx context.Context, fromClose bool) (err error
 		return nil
 	}
 	var (
-		savedBytes                  uint64
-		statSize                    int
-		sortDuration, writeDuration time.Duration
-		writeStartTime              time.Time
+		savedBytes   uint64
+		sortDuration time.Duration
 	)
 
 	savedBytes = w.batchSize
-	startTs := time.Now()
-	kvCnt := len(w.kvLocations)
-	defer func() {
-		writeDuration = time.Since(writeStartTime)
-		w.logger.Info("flush kv",
-			zap.Uint64("bytes", savedBytes),
-			zap.Int("kv-cnt", kvCnt),
-			zap.Int("stat-size", statSize),
-			zap.Duration("sort-time", sortDuration),
-			zap.Duration("write-time", writeDuration),
-			zap.String("sort-speed(kv/s)", getSpeed(uint64(kvCnt), sortDuration.Seconds(), false)),
-			zap.String("write-speed(bytes/s)", getSpeed(savedBytes, writeDuration.Seconds(), true)),
-			zap.String("writer-id", w.writerID),
-		)
-		metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("write").Observe(writeDuration.Seconds())
-		metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("write").Observe(float64(savedBytes) / 1024.0 / 1024.0 / writeDuration.Seconds())
-		metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("sort_and_write").Observe(time.Since(startTs).Seconds())
-		metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort_and_write").Observe(float64(savedBytes) / 1024.0 / 1024.0 / time.Since(startTs).Seconds())
-	}()
-
 	sortStart := time.Now()
 	sorty.MaxGor = min(8, uint64(variable.GetDDLReorgWorkerCounter()))
 	sorty.Sort(len(w.kvLocations), func(i, j, r, s int) bool {
@@ -206,7 +185,6 @@ func (w *OneFileWriter) flushKVs(ctx context.Context, fromClose bool) (err error
 	})
 
 	sortDuration = time.Since(sortStart)
-	writeStartTime = time.Now()
 	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("sort").Observe(sortDuration.Seconds())
 	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort").Observe(float64(savedBytes) / 1024.0 / 1024.0 / sortDuration.Seconds())
 
@@ -225,11 +203,25 @@ func (w *OneFileWriter) flushKVs(ctx context.Context, fromClose bool) (err error
 			[2]string{w.dataFile, w.statFile},
 		)
 		w.multiFileStat.build([]tidbkv.Key{w.minKey}, []tidbkv.Key{w.maxKey})
+		w.kvStore.Close()
 		encodedStat := w.rc.encode()
-		statSize = len(encodedStat)
 		_, err = w.statWriter.Write(ctx, encodedStat)
 		if err != nil {
 			return err
+		}
+		// 应该是 flush
+		err1 := w.dataWriter.Close(ctx)
+		if err1 != nil {
+			w.logger.Error("Close data writer failed", zap.Error(err))
+			err = err1
+			return
+		}
+
+		err2 := w.statWriter.Close(ctx)
+		if err2 != nil {
+			w.logger.Error("Close stat writer failed", zap.Error(err))
+			err = err2
+			return
 		}
 	}
 	w.kvLocations = w.kvLocations[:0]

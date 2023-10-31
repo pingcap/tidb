@@ -36,7 +36,6 @@ func MergeOverlappingFiles(
 		SetPropKeysDistance(propKeysDist).
 		SetPropSizeDistance(propSizeDist).
 		SetOnCloseFunc(onClose).
-		SetOneFile().
 		Build(store, newFilePrefix, writerID)
 
 	// currently use same goroutine to do read and write. The main advantage is

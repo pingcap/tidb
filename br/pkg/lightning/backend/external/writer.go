@@ -183,12 +183,6 @@ func (b *WriterBuilder) SetBlockSize(blockSize int) *WriterBuilder {
 	return b
 }
 
-// SetOneFile sets the output file count as 1.
-func (b *WriterBuilder) SetOneFile() *WriterBuilder {
-	b.oneFile = true
-	return b
-}
-
 // Build builds a new Writer. The files writer will create are under the prefix
 // of "{prefix}/{writerID}".
 func (b *WriterBuilder) Build(
@@ -228,6 +222,39 @@ func (b *WriterBuilder) Build(
 		shareMu:        b.mu,
 	}
 	ret.multiFileStats[0].Filenames = make([][2]string, 0, multiFileStatNum)
+
+	return ret
+}
+
+// Build builds a new Writer. The files writer will create are under the prefix
+// of "{prefix}/{writerID}". // todo refine
+func (b *WriterBuilder) BuildOneFile(
+	store storage.ExternalStorage,
+	prefix string,
+	writerID string,
+) *OneFileWriter {
+	filenamePrefix := filepath.Join(prefix, writerID)
+	keyAdapter := common.KeyAdapter(common.NoopKeyAdapter{})
+	if b.keyDupeEncoding {
+		keyAdapter = common.DupDetectKeyAdapter{}
+	}
+	ret := &OneFileWriter{
+		rc: &rangePropertiesCollector{
+			props:        make([]*rangeProperty, 0, 1024),
+			currProp:     &rangeProperty{},
+			propSizeDist: b.propSizeDist,
+			propKeysDist: b.propKeysDist,
+		},
+		store:          store,
+		kvBuffer:       newPreAllocKVBuf(b.memSizeLimit, b.blockSize),
+		filenamePrefix: filenamePrefix,
+		keyAdapter:     keyAdapter,
+		writerID:       writerID,
+		kvStore:        nil,
+		onClose:        b.onClose,
+		closed:         false,
+	}
+	ret.multiFileStat.Filenames = make([][2]string, 0, 1)
 	return ret
 }
 
@@ -320,7 +347,6 @@ type Writer struct {
 	totalSize uint64
 	// This mutex is used to make sure the writer is flushed mutually exclusively in a TiDB server.
 	shareMu *sync.Mutex
-	oneFile bool
 }
 
 // WriteRow implements ingest.Writer.
