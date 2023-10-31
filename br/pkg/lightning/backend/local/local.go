@@ -1567,7 +1567,47 @@ loopWrite:
 		return errors.Trace(err)
 	}
 
+<<<<<<< HEAD
 	return errors.Trace(err)
+=======
+	for {
+		err := local.writeToTiKV(ctx, job)
+		if err != nil {
+			if !local.isRetryableImportTiKVError(err) {
+				return err
+			}
+			// if it's retryable error, we retry from scanning region
+			log.FromContext(ctx).Warn("meet retryable error when writing to TiKV",
+				log.ShortError(err), zap.Stringer("job stage", job.stage))
+			job.lastRetryableErr = err
+			return nil
+		}
+
+		err = local.ingest(ctx, job)
+		if err != nil {
+			if !local.isRetryableImportTiKVError(err) {
+				return err
+			}
+			log.FromContext(ctx).Warn("meet retryable error when ingesting",
+				log.ShortError(err), zap.Stringer("job stage", job.stage))
+			job.lastRetryableErr = err
+			return nil
+		}
+		// if the job.stage successfully converted into "ingested", it means
+		// these data are ingested into TiKV so we handle remaining data.
+		// For other job.stage, the job should be sent back to caller to retry
+		// later.
+		if job.stage != ingested {
+			return nil
+		}
+
+		if job.writeResult == nil || job.writeResult.remainingStartKey == nil {
+			return nil
+		}
+		job.keyRange.Start = job.writeResult.remainingStartKey
+		job.convertStageTo(regionScanned)
+	}
+>>>>>>> 926a1e5acfc (lightning: adapt new behaviour that "write" may return epoch error (#47667))
 }
 
 func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, ranges []Range, regionSplitSize int64, regionSplitKeys int64) error {
