@@ -319,13 +319,13 @@ func MapTableToFiles(files []*backuppb.File) map[int64][]*backuppb.File {
 // tables with range.
 func GoValidateFileRanges(
 	ctx context.Context,
-	tableStream *utils.RestoreChannel[CreatedTable],
+	tableStream *utils.PipelineChannel[CreatedTable],
 	fileOfTable map[int64][]*backuppb.File,
 	splitSizeBytes, splitKeyCount uint64,
 	errCh chan<- error,
-) *utils.RestoreChannel[TableWithRange] {
+) *utils.PipelineChannel[TableWithRange] {
 	// Could we have a smaller outCh size?
-	outCh := utils.NewRestoreChannel[TableWithRange]("table_ranges", len(fileOfTable))
+	outCh := utils.NewPipelineChannel[TableWithRange]("table_ranges", len(fileOfTable))
 	go func() {
 		defer outCh.Close()
 		defer log.Info("all range generated")

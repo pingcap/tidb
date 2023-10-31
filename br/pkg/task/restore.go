@@ -1029,7 +1029,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 // i.e. don't execute checksum, just increase the process anyhow.
 func dropToBlackhole(
 	ctx context.Context,
-	inCh *utils.RestoreChannel[*restore.CreatedTable],
+	inCh *utils.PipelineChannel[*restore.CreatedTable],
 	errCh chan<- error,
 ) <-chan struct{} {
 	outCh := make(chan struct{}, 1)
@@ -1136,7 +1136,7 @@ func enableTiDBConfig() func() {
 // by send tables to batcher.
 func restoreTableStream(
 	ctx context.Context,
-	inputCh *utils.RestoreChannel[restore.TableWithRange],
+	inputCh *utils.PipelineChannel[restore.TableWithRange],
 	batcher *restore.Batcher,
 	errCh chan<- error,
 ) {

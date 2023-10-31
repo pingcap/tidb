@@ -21,47 +21,47 @@ const (
 	SendTable
 )
 
-// RestoreChannel is used to record the stats of a channel during restore.
-type RestoreChannel[T any] struct {
+// PipelineChannel is used to record the stats of a channel during restore.
+type PipelineChannel[T any] struct {
 	name string
 	size int
 	ch   chan T
 }
 
-func NewRestoreChannel[T any](name string, size int) *RestoreChannel[T] {
-	return &RestoreChannel[T]{
+func NewPipelineChannel[T any](name string, size int) *PipelineChannel[T] {
+	return &PipelineChannel[T]{
 		name: name,
 		size: size,
 		ch:   make(chan T, size),
 	}
 }
 
-func (r *RestoreChannel[T]) Send(item T) {
+func (r *PipelineChannel[T]) Send(item T) {
 	metrics.RestoreInFlightCounters.WithLabelValues(r.name).Inc()
 	r.ch <- item
 }
 
-func (r *RestoreChannel[T]) Recv() (T, bool) {
+func (r *PipelineChannel[T]) Recv() (T, bool) {
 	metrics.RestoreInFlightCounters.WithLabelValues(r.name).Desc()
 	item, ok := <-r.ch
 	return item, ok
 }
 
-func (r *RestoreChannel[T]) Close() {
+func (r *PipelineChannel[T]) Close() {
 	close(r.ch)
 	log.Info("channel closed", zap.String("name", r.name))
 }
 
-func (r *RestoreChannel[T]) Len() int {
+func (r *PipelineChannel[T]) Len() int {
 	return len(r.ch)
 }
 
 // golang does not support type parameter in method.
 // so we cannot transform T to Other types.
 // https://github.com/golang/go/issues/49085
-func (r *RestoreChannel[T]) Map(f func(T) T) *RestoreChannel[T] {
+func (r *PipelineChannel[T]) Map(f func(T) T) *PipelineChannel[T] {
 	name := fmt.Sprintf("%s_mapped", r.name)
-	outCh := NewRestoreChannel[T](name, r.size)
+	outCh := NewPipelineChannel[T](name, r.size)
 	go func() {
 		defer outCh.Close()
 		for item := range r.ch {

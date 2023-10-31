@@ -50,9 +50,9 @@ type Batcher struct {
 	// sendErr is for output error information.
 	sendErr chan<- error
 	// signalCh is for communiate with sendWorker.
-	signalCh *utils.RestoreChannel[SendType]
+	signalCh *utils.PipelineChannel[SendType]
 	// outCh is for output the restored table, so it can be sent to do something like checksum.
-	outCh *utils.RestoreChannel[*CreatedTable]
+	outCh *utils.PipelineChannel[*CreatedTable]
 
 	updateCh glue.Progress
 
@@ -71,7 +71,7 @@ func (b *Batcher) Len() int {
 
 // contextCleaner is the worker goroutine that cleaning the 'context'
 // (e.g. make regions leave restore mode).
-func (b *Batcher) contextCleaner(ctx context.Context, tables *utils.RestoreChannel[[]CreatedTable]) {
+func (b *Batcher) contextCleaner(ctx context.Context, tables *utils.PipelineChannel[[]CreatedTable]) {
 	defer func() {
 		if ctx.Err() != nil {
 			log.Info("restore canceled, cleaning in background context")
@@ -114,10 +114,10 @@ func NewBatcher(
 	manager ContextManager,
 	errCh chan<- error,
 	updateCh glue.Progress,
-) (*Batcher, *utils.RestoreChannel[*CreatedTable]) {
+) (*Batcher, *utils.PipelineChannel[*CreatedTable]) {
 	outCh := DefaultOutputTableChan("restored_table")
-	signalCh := utils.NewRestoreChannel[SendType]("send_signal", 2)
-	restoredTablesCh := utils.NewRestoreChannel[[]CreatedTable]("restored_tables", defaultChannelSize)
+	signalCh := utils.NewPipelineChannel[SendType]("send_signal", 2)
+	restoredTablesCh := utils.NewPipelineChannel[[]CreatedTable]("restored_tables", defaultChannelSize)
 	b := &Batcher{
 		rewriteRules:       EmptyRewriteRule(),
 		sendErr:            errCh,
@@ -176,7 +176,7 @@ func (b *Batcher) joinAutoCommitWorker() {
 
 // sendWorker is the 'worker' that send all ranges to TiKV.
 // TODO since all operations are asynchronous now, it's possible to remove this worker.
-func (b *Batcher) sendWorker(ctx context.Context, send *utils.RestoreChannel[SendType]) {
+func (b *Batcher) sendWorker(ctx context.Context, send *utils.PipelineChannel[SendType]) {
 	sendUntil := func(lessOrEqual int) {
 		for b.Len() > lessOrEqual {
 			b.Send(ctx)

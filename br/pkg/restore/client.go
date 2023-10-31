@@ -924,7 +924,7 @@ func (rc *Client) GoCreateTables(
 	tables []*metautil.Table,
 	newTS uint64,
 	errCh chan<- error,
-) *utils.RestoreChannel[CreatedTable] {
+) *utils.PipelineChannel[CreatedTable] {
 	// Could we have a smaller size of tables?
 	log.Info("start create tables")
 
@@ -934,7 +934,7 @@ func (rc *Client) GoCreateTables(
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	outCh := utils.NewRestoreChannel[CreatedTable]("created_table", len(tables))
+	outCh := utils.NewPipelineChannel[CreatedTable]("created_table", len(tables))
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
 	if err := rc.allocTableIDs(ctx, tables); err != nil {
 		errCh <- err
@@ -1027,7 +1027,7 @@ func (rc *Client) createTablesWithDBPool(ctx context.Context,
 	return eg.Wait()
 }
 
-func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Domain, tables []*metautil.Table, newTS uint64, outCh *utils.RestoreChannel[CreatedTable]) error {
+func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Domain, tables []*metautil.Table, newTS uint64, outCh *utils.PipelineChannel[CreatedTable]) error {
 	eg, ectx := errgroup.WithContext(ctx)
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
 	workers := utils.NewWorkerPool(uint(len(rc.dbPool)), "Create Tables Worker")
@@ -1612,8 +1612,8 @@ func (rc *Client) switchTiKVMode(ctx context.Context, mode import_sstpb.SwitchMo
 
 func concurrentHandleTablesCh(
 	ctx context.Context,
-	inCh *utils.RestoreChannel[*CreatedTable],
-	outCh *utils.RestoreChannel[*CreatedTable],
+	inCh *utils.PipelineChannel[*CreatedTable],
+	outCh *utils.PipelineChannel[*CreatedTable],
 	errCh chan<- error,
 	workers *utils.WorkerPool,
 	processFun func(context.Context, *CreatedTable) error,
@@ -1656,12 +1656,12 @@ func concurrentHandleTablesCh(
 // it returns a channel fires a struct{} when all things get done.
 func (rc *Client) GoValidateChecksum(
 	ctx context.Context,
-	inCh *utils.RestoreChannel[*CreatedTable],
+	inCh *utils.PipelineChannel[*CreatedTable],
 	kvClient kv.Client,
 	errCh chan<- error,
 	updateCh glue.Progress,
 	concurrency uint,
-) *utils.RestoreChannel[*CreatedTable] {
+) *utils.PipelineChannel[*CreatedTable] {
 	log.Info("Start to validate checksum")
 	outCh := DefaultOutputTableChan("checksum")
 	workers := utils.NewWorkerPool(defaultChecksumConcurrency, "RestoreChecksum")
@@ -1758,7 +1758,7 @@ func (rc *Client) execChecksum(
 	return nil
 }
 
-func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh *utils.RestoreChannel[*CreatedTable], errCh chan<- error) *utils.RestoreChannel[*CreatedTable] {
+func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh *utils.PipelineChannel[*CreatedTable], errCh chan<- error) *utils.PipelineChannel[*CreatedTable] {
 	log.Info("Start to update meta then load stats")
 	outCh := DefaultOutputTableChan("stats")
 	workers := utils.NewWorkerPool(16, "UpdateStats")
@@ -1807,7 +1807,7 @@ func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh *utils.Rest
 	return outCh
 }
 
-func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh *utils.RestoreChannel[*CreatedTable], updateCh glue.Progress, errCh chan<- error) *utils.RestoreChannel[*CreatedTable] {
+func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh *utils.PipelineChannel[*CreatedTable], updateCh glue.Progress, errCh chan<- error) *utils.PipelineChannel[*CreatedTable] {
 	log.Info("Start to wait tiflash replica sync")
 	outCh := DefaultOutputTableChan("wait_tiflash")
 	workers := utils.NewWorkerPool(4, "WaitForTiflashReady")

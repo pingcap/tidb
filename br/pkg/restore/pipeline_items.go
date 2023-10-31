@@ -34,7 +34,7 @@ type TableSink interface {
 }
 
 type chanTableSink struct {
-	outCh *utils.RestoreChannel[[]CreatedTable]
+	outCh *utils.PipelineChannel[[]CreatedTable]
 	errCh chan<- error
 }
 
@@ -154,8 +154,8 @@ type CreatedTable struct {
 	OldTable    *metautil.Table
 }
 
-func DefaultOutputTableChan(name string) *utils.RestoreChannel[*CreatedTable] {
-	return utils.NewRestoreChannel[*CreatedTable](name, defaultChannelSize)
+func DefaultOutputTableChan(name string) *utils.PipelineChannel[*CreatedTable] {
+	return utils.NewPipelineChannel[*CreatedTable](name, defaultChannelSize)
 }
 
 // TableWithRange is a CreatedTable that has been bind to some of key ranges.
