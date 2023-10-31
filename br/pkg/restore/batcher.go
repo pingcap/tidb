@@ -90,7 +90,7 @@ func (b *Batcher) contextCleaner(ctx context.Context, tables *utils.PipelineChan
 				return
 			}
 			if err := b.manager.Leave(ctx, tbls); err != nil {
-				b.sendErr <- err
+				b.outCh.SendError(err)
 				return
 			}
 			for _, tbl := range tbls {
@@ -118,7 +118,6 @@ func NewBatcher(
 	restoredTablesCh := utils.NewPipelineChannel[[]CreatedTable]("restored_tables", defaultChannelSize)
 	b := &Batcher{
 		rewriteRules:       EmptyRewriteRule(),
-		sendErr:            errCh,
 		outCh:              outCh,
 		sender:             sender,
 		manager:            manager,

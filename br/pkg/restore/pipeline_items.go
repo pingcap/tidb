@@ -34,7 +34,6 @@ type TableSink interface {
 
 type chanTableSink struct {
 	outCh *utils.PipelineChannel[[]CreatedTable]
-	errCh chan<- error
 }
 
 func (sink chanTableSink) EmitTables(tables ...CreatedTable) {
@@ -42,7 +41,7 @@ func (sink chanTableSink) EmitTables(tables ...CreatedTable) {
 }
 
 func (sink chanTableSink) EmitError(err error) {
-	sink.errCh <- err
+	sink.outCh.SendError(err)
 }
 
 func (sink chanTableSink) Close() {
@@ -189,7 +188,7 @@ func Exhaust(ec <-chan error) []error {
 type BatchSender interface {
 	// PutSink sets the sink of this sender, user to this interface promise
 	// call this function at least once before first call to `RestoreBatch`.
-	PutSink(sink TableSink)
+	PutSink(outCh *utils.PipelineChannel[[]CreatedTable])
 	// RestoreBatch will send the restore request.
 	RestoreBatch(ranges DrainResult)
 	Close()

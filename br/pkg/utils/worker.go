@@ -24,51 +24,76 @@ const (
 
 // PipelineChannel is used to record the stats of a channel during restore.
 type PipelineChannel[T any] struct {
-	name string
-	size int
-	ch   chan T
+	name  string
+	size  int
+	ch    chan T
+	errCh chan error
 }
 
 func NewPipelineChannel[T any](name string, size int) *PipelineChannel[T] {
 	return &PipelineChannel[T]{
-		name: name,
-		size: size,
-		ch:   make(chan T, size),
+		name:  name,
+		size:  size,
+		ch:    make(chan T, size),
+		errCh: make(chan error, 32),
 	}
 }
 
-func (r *PipelineChannel[T]) Send(item T) {
-	metrics.RestoreInFlightCounters.WithLabelValues(r.name).Inc()
-	r.ch <- item
+func (p *PipelineChannel[T]) Send(item T) {
+	metrics.RestoreInFlightCounters.WithLabelValues(p.name).Inc()
+	p.ch <- item
 }
 
-func (r *PipelineChannel[T]) Recv(ctx context.Context) (item T, ok bool) {
-	metrics.RestoreInFlightCounters.WithLabelValues(r.name).Desc()
+// we can always send error to next pipeline channel
+func (p *PipelineChannel[T]) SendError(e error) {
+	p.errCh <- e
+}
+
+func (p *PipelineChannel[T]) Recv(ctx context.Context) (item T, ok bool) {
+	metrics.RestoreInFlightCounters.WithLabelValues(p.name).Desc()
 	select {
 	case <-ctx.Done():
-	case item, ok = <-r.ch:
+		p.errCh <- ctx.Err()
+	case item, ok = <-p.ch:
 	}
 	return item, ok
 }
 
-func (r *PipelineChannel[T]) Close() {
-	close(r.ch)
-	log.Info("channel closed", zap.String("name", r.name))
+func (p *PipelineChannel[T]) WaitFinish(ctx context.Context) (err error) {
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-p.errCh:
+			return err
+		case _, ok := <-p.ch:
+			if !ok {
+				// finished
+				log.Info("pipeline channel has consume all pending tasks", zap.String("name", p.name))
+				return nil
+			}
+		}
+	}
 }
 
-func (r *PipelineChannel[T]) Len() int {
-	return len(r.ch)
+func (p *PipelineChannel[T]) Close() {
+	close(p.ch)
+	log.Info("channel closed", zap.String("name", p.name))
+}
+
+func (p *PipelineChannel[T]) Len() int {
+	return len(p.ch)
 }
 
 // golang does not support additional type parameter in method.
 // so we cannot transform T to Other types.
 // https://github.com/golang/go/issues/49085
-func (r *PipelineChannel[T]) Map(f func(T) T) *PipelineChannel[T] {
-	name := fmt.Sprintf("%s_mapped", r.name)
-	outCh := NewPipelineChannel[T](name, r.size)
+func (p *PipelineChannel[T]) Map(f func(T) T) *PipelineChannel[T] {
+	name := fmt.Sprintf("%s_mapped", p.name)
+	outCh := NewPipelineChannel[T](name, p.size)
 	go func() {
 		defer outCh.Close()
-		for item := range r.ch {
+		for item := range p.ch {
 			outCh.Send(f(item))
 		}
 	}()

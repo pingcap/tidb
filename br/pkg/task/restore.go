@@ -972,8 +972,8 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	// pipeline checksum and load stats
 	if cfg.Checksum {
 		afterTableCheckesumedCh := client.GoValidateChecksum(
-			ctx, afterTableRestoredCh, mgr.GetStorage().GetClient(), errCh, updateCh, cfg.ChecksumConcurrency)
-		afterTableLoadStatsCh := client.GoUpdateMetaAndLoadStats(ctx, afterTableCheckesumedCh, errCh)
+			ctx, afterTableRestoredCh, mgr.GetStorage().GetClient(), updateCh, cfg.ChecksumConcurrency)
+		afterTableLoadStatsCh := client.GoUpdateMetaAndLoadStats(ctx, afterTableCheckesumedCh)
 		postHandleCh = afterTableLoadStatsCh
 	}
 
