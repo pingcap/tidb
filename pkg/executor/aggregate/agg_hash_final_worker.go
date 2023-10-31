@@ -90,13 +90,12 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 		for key, value := range *input {
 			dstVal, ok := w.partialResultMap[key]
 			if !ok {
-				w.partialResultMap[key] = value
-
 				// Map will expand when count > bucketNum * loadFactor. The memory usage will double.
 				if len(w.partialResultMap)+1 > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 					w.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMap))
 					w.BInMap++
 				}
+				w.partialResultMap[key] = value
 				continue
 			}
 

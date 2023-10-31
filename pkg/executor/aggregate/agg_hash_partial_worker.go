@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/twmb/murmur3"
@@ -149,7 +148,7 @@ func (w *HashAggPartialWorker) getPartialResultsOfEachRow(groupKey [][]byte, fin
 	return w.partialResultsBuffer
 }
 
-func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *stmtctx.StatementContext, chk *chunk.Chunk, finalConcurrency int) (err error) {
+func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, chk *chunk.Chunk, finalConcurrency int) (err error) {
 	memSize := getGroupKeyMemUsage(w.groupKey)
 	w.groupKey, err = GetGroupKey(w.ctx, chk, w.groupKey, w.groupByItems)
 	failpoint.Inject("ConsumeRandomPanic", nil)
