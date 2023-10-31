@@ -64,6 +64,16 @@ func (w *HashAggFinalWorker) getPartialInput() (input *AggPartialResultMapper, o
 	return
 }
 
+func (w *HashAggFinalWorker) initBInMap() {
+	w.BInMap = 0
+	mapLen := len(w.partialResultMap)
+	for i := 0; i < mapLen; i++ {
+		if i > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+			w.BInMap++
+		}
+	}
+}
+
 func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err error) {
 	for {
 		waitStart := time.Now()
@@ -80,7 +90,7 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 		if w.isFirstInput {
 			w.isFirstInput = false
 			w.partialResultMap = *input
-			// TODO calculate BInMap and not consume memory usage
+			w.initBInMap()
 			continue
 		}
 
