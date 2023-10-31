@@ -639,7 +639,7 @@ func restoreSchedulers(ctx context.Context, pd *PdController, clusterCfg Cluster
 	prefix := make([]string, 0, 1)
 	if pd.isPauseConfigEnabled() {
 		// set config's ttl to zero, make temporary config invalid immediately.
-		prefix = append(prefix, fmt.Sprintf("%s?ttlSecond=%d", pdapi.Config, 0))
+		prefix = append(prefix, pdapi.ConfigWithTTLSeconds(0))
 	}
 	// reset config with previous value.
 	if err := pd.doUpdatePDScheduleConfig(ctx, mergeCfg, pdRequest, prefix...); err != nil {
