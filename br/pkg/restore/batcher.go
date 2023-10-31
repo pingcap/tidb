@@ -12,7 +12,6 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/metrics"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -90,7 +89,6 @@ func (b *Batcher) contextCleaner(ctx context.Context, tables *utils.PipelineChan
 			if !ok {
 				return
 			}
-			metrics.RestoreInFlightCounters.WithLabelValues("emit_tables").Desc()
 			if err := b.manager.Leave(ctx, tbls); err != nil {
 				b.sendErr <- err
 				return
@@ -225,7 +223,6 @@ func (b *Batcher) autoCommitWorker(ctx context.Context, joiner <-chan struct{}, 
 func (b *Batcher) asyncSend(t SendType) {
 	// add a check here so we won't replica sending.
 	if b.signalCh.Len() == 0 {
-		metrics.RestoreInFlightCounters.WithLabelValues("send_signal").Inc()
 		b.signalCh.Send(t)
 	}
 }

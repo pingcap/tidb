@@ -13,7 +13,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/metrics"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -220,7 +219,7 @@ type tikvSender struct {
 	updateCh glue.Progress
 
 	sink TableSink
-	inCh chan<- DrainResult
+	inCh *utils.PipelineChannel[DrainResult]
 
 	wg *sync.WaitGroup
 
@@ -234,9 +233,8 @@ func (b *tikvSender) PutSink(sink TableSink) {
 }
 
 func (b *tikvSender) RestoreBatch(ranges DrainResult) {
-	log.Info("restore batch: waiting ranges", zap.Int("range", len(b.inCh)))
-	b.inCh <- ranges
-	metrics.RestoreInFlightCounters.WithLabelValues("ranges_to_be_split").Inc()
+	log.Info("restore batch: waiting ranges", zap.Int("range", b.inCh.Len()))
+	b.inCh.Send(ranges)
 }
 
 // NewTiKVSender make a sender that send restore requests to TiKV.
@@ -246,8 +244,8 @@ func NewTiKVSender(
 	updateCh glue.Progress,
 	splitConcurrency uint,
 ) (BatchSender, error) {
-	inCh := make(chan DrainResult, defaultChannelSize)
-	midCh := make(chan drainResultAndDone, defaultChannelSize)
+	inCh := utils.NewPipelineChannel[DrainResult]("drain_ranges", defaultChannelSize)
+	midCh := utils.NewPipelineChannel[drainResultAndDone]("splitted_ranges", defaultChannelSize)
 
 	sender := &tikvSender{
 		client:       cli,
@@ -264,7 +262,7 @@ func NewTiKVSender(
 }
 
 func (b *tikvSender) Close() {
-	close(b.inCh)
+	b.inCh.Close()
 	b.wg.Wait()
 	log.Debug("tikv sender closed")
 }
@@ -275,8 +273,8 @@ type drainResultAndDone struct {
 }
 
 func (b *tikvSender) splitWorker(ctx context.Context,
-	ranges <-chan DrainResult,
-	next chan<- drainResultAndDone,
+	ranges *utils.PipelineChannel[DrainResult],
+	splittedRanges *utils.PipelineChannel[drainResultAndDone],
 	concurrency uint,
 ) {
 	defer log.Debug("split worker closed")
@@ -286,7 +284,7 @@ func (b *tikvSender) splitWorker(ctx context.Context,
 		if err := eg.Wait(); err != nil {
 			b.sink.EmitError(err)
 		}
-		close(next)
+		splittedRanges.Close()
 		log.Info("TiKV Sender: split worker exits.")
 	}()
 
@@ -301,11 +299,11 @@ func (b *tikvSender) splitWorker(ctx context.Context,
 		select {
 		case <-ectx.Done():
 			return
-		case result, ok := <-ranges:
+		default:
+			result, ok := ranges.Recv()
 			if !ok {
 				return
 			}
-			metrics.RestoreInFlightCounters.WithLabelValues("ranges_to_be_split").Desc()
 			// When the batcher has sent all ranges from a table, it would
 			// mark this table 'all done'(BlankTablesAfterSend), and then we can send it to checksum.
 			//
@@ -328,11 +326,10 @@ func (b *tikvSender) splitWorker(ctx context.Context,
 					log.Error("failed on split range", rtree.ZapRanges(result.Ranges), zap.Error(err))
 					return err
 				}
-				next <- drainResultAndDone{
+				splittedRanges.Send(drainResultAndDone{
 					result: result,
 					done:   done,
-				}
-				metrics.RestoreInFlightCounters.WithLabelValues("ranges_to_be_restore").Inc()
+				})
 				return nil
 			})
 		}
@@ -370,7 +367,7 @@ func (b *tikvSender) waitTablesDone(ts []CreatedTable) {
 	}
 }
 
-func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan drainResultAndDone) {
+func (b *tikvSender) restoreWorker(ctx context.Context, splittedRanges *utils.PipelineChannel[drainResultAndDone]) {
 	eg, ectx := errgroup.WithContext(ctx)
 	defer func() {
 		log.Info("TiKV Sender: restore worker prepare to close.")
@@ -385,11 +382,11 @@ func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan drainResul
 		select {
 		case <-ectx.Done():
 			return
-		case r, ok := <-ranges:
+		default:
+			r, ok := splittedRanges.Recv()
 			if !ok {
 				return
 			}
-			metrics.RestoreInFlightCounters.WithLabelValues("ranges_to_be_restore").Desc()
 			files := r.result.Files()
 			// There has been a worker in the `RestoreSSTFiles` procedure.
 			// Spawning a raw goroutine won't make too many requests to TiKV.
