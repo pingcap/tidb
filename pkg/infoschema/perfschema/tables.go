@@ -244,7 +244,7 @@ func (vt *perfSchemaTable) getRows(ctx context.Context, sctx sessionctx.Context,
 	case tableNamePDProfileCPU:
 		fullRows, err = dataForRemoteProfile(sctx, "pd", pdapi.PProfProfileAPIWithInterval(profile.CPUProfileInterval), false)
 	case tableNamePDProfileMemory:
-		fullRows, err = dataForRemoteProfile(sctx, "pd", pdapi.PProfMutex, false)
+		fullRows, err = dataForRemoteProfile(sctx, "pd", pdapi.PProfHeap, false)
 	case tableNamePDProfileMutex:
 		fullRows, err = dataForRemoteProfile(sctx, "pd", pdapi.PProfMutex, false)
 	case tableNamePDProfileAllocs:
