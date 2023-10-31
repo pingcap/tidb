@@ -26,6 +26,7 @@ for i in $(seq $DB_COUNT); do
     go-ycsb load mysql -P $CUR/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB${i}
 done
 
+unset BR_LOG_TO_TERM
 run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB" --log-file $LOG --ignore-stats=false --filter "${DB}1.*" || cat $LOG
 dump_cnt=$(cat $LOG | grep "dump stats to json" | grep "${DB}1" | wc -l)
 echo "dump stats count: ${dump_cnt}"
