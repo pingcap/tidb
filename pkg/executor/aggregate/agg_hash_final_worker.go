@@ -80,6 +80,7 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 		if w.isFirstInput {
 			w.isFirstInput = false
 			w.partialResultMap = *input
+			// TODO calculate BInMap and not consume memory usage
 			continue
 		}
 
