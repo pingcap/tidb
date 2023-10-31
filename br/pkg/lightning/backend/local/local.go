@@ -1003,6 +1003,16 @@ func (local *local) WriteToTiKV(
 			End:   lastKey,
 		},
 	}
+	failpoint.Inject("changeEpochVersion", func(val failpoint.Value) {
+		cloned := *meta.RegionEpoch
+		meta.RegionEpoch = &cloned
+		i := val.(int)
+		if i >= 0 {
+			meta.RegionEpoch.Version += uint64(i)
+		} else {
+			meta.RegionEpoch.ConfVer -= uint64(-i)
+		}
+	})
 
 	annotateErr := func(in error, peer *metapb.Peer) error {
 		// annotate the error with peer/store/region info to help debug.
@@ -1465,6 +1475,15 @@ loopWrite:
 		metas, finishedRange, rangeStats, err = local.WriteToTiKV(ctx, engine, region, start, end, regionSplitSize, regionSplitKeys)
 		if err != nil {
 			if !local.isRetryableImportTiKVError(err) {
+				return err
+			}
+
+			// check the new error message
+			errStr := err.Error()
+			if strings.Contains(errStr, "RequestTooNew") {
+				// we will retry from write, which is simply continue the loop
+			} else if strings.Contains(errStr, "RequestTooOld") {
+				// we will retry from scan region, so return and let caller scan it again
 				return err
 			}
 
