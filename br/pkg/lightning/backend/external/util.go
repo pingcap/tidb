@@ -22,6 +22,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -284,4 +285,14 @@ func BytesMax(a, b []byte) []byte {
 		return a
 	}
 	return b
+}
+
+func getSpeed(n uint64, dur float64, isBytes bool) string {
+	if dur == 0 {
+		return "-"
+	}
+	if isBytes {
+		return units.BytesSize(float64(n) / dur)
+	}
+	return units.HumanSize(float64(n) / dur)
 }

@@ -25,7 +25,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/docker/go-units"
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
@@ -106,6 +105,7 @@ type WriterBuilder struct {
 	propKeysDist    uint64
 	onClose         OnCloseFunc
 	keyDupeEncoding bool
+	oneFile         bool
 	// This mutex is used to make sure the writer is flushed mutually exclusively in a TiDB server.
 	mu *sync.Mutex
 
@@ -180,6 +180,12 @@ func (b *WriterBuilder) SetMutex(mu *sync.Mutex) *WriterBuilder {
 // SetBlockSize sets the block size of pre-allocated buf in the writer.
 func (b *WriterBuilder) SetBlockSize(blockSize int) *WriterBuilder {
 	b.blockSize = blockSize
+	return b
+}
+
+// SetOneFile sets the output file count as 1.
+func (b *WriterBuilder) SetOneFile() *WriterBuilder {
+	b.oneFile = true
 	return b
 }
 
@@ -314,6 +320,7 @@ type Writer struct {
 	totalSize uint64
 	// This mutex is used to make sure the writer is flushed mutually exclusively in a TiDB server.
 	shareMu *sync.Mutex
+	oneFile bool
 }
 
 // WriteRow implements ingest.Writer.
@@ -426,15 +433,6 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	savedBytes = w.batchSize
 	startTs := time.Now()
 
-	getSpeed := func(n uint64, dur float64, isBytes bool) string {
-		if dur == 0 {
-			return "-"
-		}
-		if isBytes {
-			return units.BytesSize(float64(n) / dur)
-		}
-		return units.HumanSize(float64(n) / dur)
-	}
 	kvCnt := len(w.kvLocations)
 	defer func() {
 		w.currentSeq++
