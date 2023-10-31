@@ -29,6 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TODO add some new fail points, as some fail point may be aborted after the refine
 func TestSortInDisk(t *testing.T) {
 	testSortInDisk(t, false)
 	testSortInDisk(t, true)
