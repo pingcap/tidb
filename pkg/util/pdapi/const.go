@@ -63,23 +63,23 @@ func ConfigWithTTLSeconds(ttlSeconds float64) string {
 	return fmt.Sprintf("%s?ttlSecond=%.0f", Config, ttlSeconds)
 }
 
-// StoreWithID returns the store API with store ID parameter.
-func StoreWithID(id uint64) string {
+// StoreByID returns the store API with store ID parameter.
+func StoreByID(id uint64) string {
 	return fmt.Sprintf("%s/%d", store, id)
 }
 
-// StoreLabelWithID returns the store label API with store ID parameter.
-func StoreLabelWithID(id uint64) string {
+// StoreLabelByID returns the store label API with store ID parameter.
+func StoreLabelByID(id uint64) string {
 	return fmt.Sprintf("%s/%d/label", store, id)
 }
 
-// RegionStatsWithStartEndKey returns the region stats API with start key and end key parameters.
-func RegionStatsWithStartEndKey(startKey, endKey string) string {
+// RegionStatsByStartEndKey returns the region stats API with start key and end key parameters.
+func RegionStatsByStartEndKey(startKey, endKey string) string {
 	return fmt.Sprintf("%s?start_key=%s&end_key=%s", RegionStats, startKey, endKey)
 }
 
-// SchedulerWithName returns the scheduler API with the given scheduler name.
-func SchedulerWithName(name string) string {
+// SchedulerByName returns the scheduler API with the given scheduler name.
+func SchedulerByName(name string) string {
 	return fmt.Sprintf("%s/%s", Schedulers, name)
 }
 

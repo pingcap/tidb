@@ -385,7 +385,7 @@ func (p *PdController) getRegionCountWith(
 	}
 	var err error
 	for _, addr := range p.getAllPDAddrs() {
-		v, e := get(ctx, addr, pdapi.RegionStatsWithStartEndKey(start, end), p.cli, http.MethodGet, nil)
+		v, e := get(ctx, addr, pdapi.RegionStatsByStartEndKey(start, end), p.cli, http.MethodGet, nil)
 		if e != nil {
 			err = e
 			continue
@@ -409,7 +409,7 @@ func (p *PdController) getStoreInfoWith(
 	ctx context.Context, get pdHTTPRequest, storeID uint64) (*pdtypes.StoreInfo, error) {
 	var err error
 	for _, addr := range p.getAllPDAddrs() {
-		v, e := get(ctx, addr, pdapi.StoreWithID(storeID), p.cli, http.MethodGet, nil)
+		v, e := get(ctx, addr, pdapi.StoreByID(storeID), p.cli, http.MethodGet, nil)
 		if e != nil {
 			err = e
 			continue
@@ -435,7 +435,7 @@ func (p *PdController) doPauseSchedulers(ctx context.Context,
 	removedSchedulers := make([]string, 0, len(schedulers))
 	for _, scheduler := range schedulers {
 		for _, addr := range p.getAllPDAddrs() {
-			_, err = post(ctx, addr, pdapi.SchedulerWithName(scheduler), p.cli, http.MethodPost, bytes.NewBuffer(body))
+			_, err = post(ctx, addr, pdapi.SchedulerByName(scheduler), p.cli, http.MethodPost, bytes.NewBuffer(body))
 			if err == nil {
 				removedSchedulers = append(removedSchedulers, scheduler)
 				break
@@ -517,7 +517,7 @@ func (p *PdController) resumeSchedulerWith(ctx context.Context, schedulers []str
 	}
 	for _, scheduler := range schedulers {
 		for _, addr := range p.getAllPDAddrs() {
-			_, err = post(ctx, addr, pdapi.SchedulerWithName(scheduler), p.cli, http.MethodPost, bytes.NewBuffer(body))
+			_, err = post(ctx, addr, pdapi.SchedulerByName(scheduler), p.cli, http.MethodPost, bytes.NewBuffer(body))
 			if err == nil {
 				break
 			}

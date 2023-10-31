@@ -610,7 +610,7 @@ func (c *pdClient) SetStoresLabel(
 	for _, id := range stores {
 		req, err := http.NewRequestWithContext(
 			ctx, "POST",
-			addr+pdapi.StoreLabelWithID(id),
+			addr+pdapi.StoreLabelByID(id),
 			bytes.NewReader(b),
 		)
 		if err != nil {

@@ -995,7 +995,7 @@ func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats, noIndexSt
 	statURL := fmt.Sprintf("%s://%s%s",
 		util.InternalHTTPSchema(),
 		pdAddrs[0],
-		pdapi.RegionStatsWithStartEndKey(
+		pdapi.RegionStatsByStartEndKey(
 			url.QueryEscape(string(startKey)),
 			url.QueryEscape(string(endKey)),
 		))

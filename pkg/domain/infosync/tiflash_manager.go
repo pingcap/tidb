@@ -499,7 +499,7 @@ func (m *TiFlashReplicaManagerCtx) GetRegionCountFromPD(ctx context.Context, tab
 	startKey, endKey = m.codec.EncodeRegionRange(startKey, endKey)
 
 	p := fmt.Sprintf("%s&count",
-		pdapi.RegionStatsWithStartEndKey(
+		pdapi.RegionStatsByStartEndKey(
 			url.QueryEscape(string(startKey)),
 			url.QueryEscape(string(endKey)),
 		))
