@@ -2602,7 +2602,7 @@ func (cc *clientConn) Flush(ctx context.Context) error {
 }
 
 // Stats returns the connection statistics.
-func (cc *clientConn) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
+func (_ *clientConn) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
 	m := make(map[string]interface{}, len(clientConnStatus))
 	for name, v := range clientConnStatus {
 		m[name] = v.Value
@@ -2635,6 +2635,6 @@ func (cc *clientConn) Stats(vars *variable.SessionVars) (map[string]interface{},
 }
 
 // GetScope gets the status variables scope.
-func (cc *clientConn) GetScope(status string) variable.ScopeFlag {
+func (_ *clientConn) GetScope(_ string) variable.ScopeFlag {
 	return variable.ScopeSession
 }
