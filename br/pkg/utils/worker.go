@@ -3,6 +3,7 @@
 package utils
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/pingcap/errors"
@@ -41,9 +42,12 @@ func (r *PipelineChannel[T]) Send(item T) {
 	r.ch <- item
 }
 
-func (r *PipelineChannel[T]) Recv() (T, bool) {
+func (r *PipelineChannel[T]) Recv(ctx context.Context) (item T, ok bool) {
 	metrics.RestoreInFlightCounters.WithLabelValues(r.name).Desc()
-	item, ok := <-r.ch
+	select {
+	case <-ctx.Done():
+	case item, ok = <-r.ch:
+	}
 	return item, ok
 }
 
@@ -56,7 +60,7 @@ func (r *PipelineChannel[T]) Len() int {
 	return len(r.ch)
 }
 
-// golang does not support type parameter in method.
+// golang does not support additional type parameter in method.
 // so we cannot transform T to Other types.
 // https://github.com/golang/go/issues/49085
 func (r *PipelineChannel[T]) Map(f func(T) T) *PipelineChannel[T] {

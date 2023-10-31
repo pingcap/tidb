@@ -1043,7 +1043,7 @@ func dropToBlackhole(
 				errCh <- ctx.Err()
 				return
 			default:
-				_, ok := inCh.Recv()
+				_, ok := inCh.Recv(ctx)
 				if !ok {
 					return
 				}
@@ -1155,7 +1155,7 @@ func restoreTableStream(
 			errCh <- ctx.Err()
 			return
 		default:
-			t, ok := inputCh.Recv()
+			t, ok := inputCh.Recv(ctx)
 			if !ok {
 				return
 			}

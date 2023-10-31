@@ -817,7 +817,7 @@ func (rc *Client) CreateTables(
 	}
 	dataCh := rc.GoCreateTables(context.TODO(), dom, tables, newTS, errCh)
 	for {
-		et, ok := dataCh.Recv()
+		et, ok := dataCh.Recv(context.TODO())
 		if !ok {
 			break
 		}
@@ -1633,7 +1633,7 @@ func concurrentHandleTablesCh(
 		case <-ctx.Done():
 			errCh <- ctx.Err()
 		default:
-			tbl, ok := inCh.Recv()
+			tbl, ok := inCh.Recv(ctx)
 			if !ok {
 				return
 			}

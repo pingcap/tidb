@@ -300,7 +300,7 @@ func (b *tikvSender) splitWorker(ctx context.Context,
 		case <-ectx.Done():
 			return
 		default:
-			result, ok := ranges.Recv()
+			result, ok := ranges.Recv(ectx)
 			if !ok {
 				return
 			}
@@ -383,7 +383,7 @@ func (b *tikvSender) restoreWorker(ctx context.Context, splittedRanges *utils.Pi
 		case <-ectx.Done():
 			return
 		default:
-			r, ok := splittedRanges.Recv()
+			r, ok := splittedRanges.Recv(ectx)
 			if !ok {
 				return
 			}

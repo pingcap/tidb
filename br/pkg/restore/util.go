@@ -335,7 +335,7 @@ func GoValidateFileRanges(
 				errCh <- ctx.Err()
 				return
 			default:
-				t, ok := tableStream.Recv()
+				t, ok := tableStream.Recv(ctx)
 				if !ok {
 					return
 				}

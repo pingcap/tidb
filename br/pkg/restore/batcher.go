@@ -85,7 +85,7 @@ func (b *Batcher) contextCleaner(ctx context.Context, tables *utils.PipelineChan
 		case <-ctx.Done():
 			return
 		default:
-			tbls, ok := tables.Recv()
+			tbls, ok := tables.Recv(ctx)
 			if !ok {
 				return
 			}
@@ -182,7 +182,7 @@ func (b *Batcher) sendWorker(ctx context.Context, send *utils.PipelineChannel[Se
 	}
 
 	for {
-		sendType, ok := send.Recv()
+		sendType, ok := send.Recv(ctx)
 		if !ok {
 			return
 		}
