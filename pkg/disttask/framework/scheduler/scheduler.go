@@ -604,7 +604,7 @@ func (s *BaseScheduler) markSubTaskCanceledOrFailed(ctx context.Context, subtask
 			logutil.Logger(s.logCtx).Warn("subtask failed", zap.Error(err))
 			s.updateSubtaskStateAndError(subtask, proto.TaskStateFailed, err)
 		} else {
-			logutil.Logger(s.logCtx).Info("met context canceled for gracefully shutdown", zap.Error(err))
+			logutil.Logger(s.logCtx).Info("met context canceled for gracefully shutdown or panic", zap.Error(err))
 		}
 		s.markErrorHandled()
 		return true
