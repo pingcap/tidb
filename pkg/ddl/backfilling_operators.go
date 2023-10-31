@@ -405,7 +405,7 @@ type tableScanWorker struct {
 
 func (w *tableScanWorker) HandleTask(task TableScanTask, sender func(IndexRecordChunk)) {
 	defer tidbutil.Recover(metrics.LblAddIndex, "handleTableScanTaskWithRecover", func() {
-		w.ctx.cancel()
+		w.ctx.onError(errors.New("met panic in tableScanWorker"))
 	}, false)
 
 	failpoint.Inject("injectPanicForTableScan", func() {
@@ -614,7 +614,7 @@ func (w *indexIngestWorker) HandleTask(rs IndexRecordChunk, send func(IndexWrite
 		}
 	}()
 	defer tidbutil.Recover(metrics.LblAddIndex, "handleIndexIngtestTaskWithRecover", func() {
-		w.ctx.cancel()
+		w.ctx.onError(errors.New("met panic in indexIngestWorker"))
 	}, false)
 
 	failpoint.Inject("injectPanicForIndexIngest", func() {
