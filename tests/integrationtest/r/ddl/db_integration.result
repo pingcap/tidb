@@ -139,7 +139,7 @@ Error 1166 (42000): Incorrect column name '_tidb_rowid'
 create table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(a int);
 Error 1059 (42000): Identifier name 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' is too long
 create table test_error_code1 (c1 int, c2 int, key aa (c1, c2), key aa (c1));
-Error 1061 (42000): duplicate key name aa
+Error 1061 (42000): Duplicate key name 'aa'
 create table test_error_code1 (c1 int, c2 int, c3 int, key(c_not_exist));
 Error 1072 (42000): column does not exist: c_not_exist
 create table test_error_code1 (c1 int, c2 int, c3 int, primary key(c_not_exist));
@@ -240,7 +240,7 @@ alter table test_error_code_succ add index idx (c_not_exist);
 Error 1072 (42000): column does not exist: c_not_exist
 alter table test_error_code_succ add index idx (c1);
 alter table test_error_code_succ add index idx (c1);
-Error 1061 (42000): index already exist idx
+Error 1061 (42000): Duplicate key name 'idx'
 alter table test_error_code_succ drop index idx_not_exist;
 Error 1091 (42000): index idx_not_exist doesn't exist
 alter table test_error_code_succ drop column c3;
