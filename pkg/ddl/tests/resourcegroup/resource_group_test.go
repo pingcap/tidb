@@ -160,6 +160,17 @@ func TestResourceGroupBasic(t *testing.T) {
 	}
 	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
 	checkFunc(g)
+	tk.MustExec("alter resource group y RU_PER_SEC=6000 BURSTABLE=false")
+	checkFunc = func(groupInfo *model.ResourceGroupInfo) {
+		re.Equal(true, groupInfo.ID != 0)
+		re.Equal("y", groupInfo.Name.L)
+		re.Equal(groupID.Load(), groupInfo.ID)
+		re.Equal(uint64(6000), groupInfo.RURate)
+		re.Equal(int64(6000), groupInfo.BurstLimit)
+	}
+	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
+	checkFunc(g)
+	tk.MustExec("alter resource group y RU_PER_SEC=5000 BURSTABLE")
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 5000 MEDIUM YES EXEC_ELAPSED='15s', ACTION=KILL <nil>"))
 	tk.MustExec("drop resource group y")
 	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
