@@ -197,6 +197,7 @@ func main() {
 		checkTempStorageQuota()
 	}
 	setupLog()
+	memory.InitMemoryHook()
 	setupExtensions()
 
 	err := cpuprofile.StartCPUProfiler()
