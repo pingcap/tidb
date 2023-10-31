@@ -327,12 +327,6 @@ func testMergeIterSwitchMode(t *testing.T, f func([]byte, int) []byte) {
 }
 
 func TestHotspot(t *testing.T) {
-	backup := checkHotspotPeriod
-	checkHotspotPeriod = 2
-	t.Cleanup(func() {
-		checkHotspotPeriod = backup
-	})
-
 	ctx := context.Background()
 	store := storage.NewMemStorage()
 
@@ -364,6 +358,7 @@ func TestHotspot(t *testing.T) {
 	// readerBufSize = 8+5+8+5, every KV will cause reload
 	iter, err := NewMergeKVIter(ctx, filenames, make([]uint64, len(filenames)), store, 26)
 	require.NoError(t, err)
+	iter.iter.checkHotspotPeriod = 2
 	// after read key00 and key01 from reader_0, it becomes hotspot
 	require.True(t, iter.Next())
 	require.Equal(t, "key00", string(iter.Key()))
@@ -413,15 +408,10 @@ func TestHotspot(t *testing.T) {
 }
 
 func TestMemoryUsageWhenHotspotChange(t *testing.T) {
-	backup := checkHotspotPeriod
-	checkHotspotPeriod = 10
-	t.Cleanup(func() {
-		checkHotspotPeriod = backup
-	})
-	backup2 := ConcurrentReaderBufferSizePerConc
+	backup := ConcurrentReaderBufferSizePerConc
 	ConcurrentReaderBufferSizePerConc = 100 * 1024 * 1024 // 100MB, make memory leak more obvious
 	t.Cleanup(func() {
-		ConcurrentReaderBufferSizePerConc = backup2
+		ConcurrentReaderBufferSizePerConc = backup
 	})
 
 	getMemoryInUse := func() uint64 {
@@ -452,7 +442,7 @@ func TestMemoryUsageWhenHotspotChange(t *testing.T) {
 		rc.reset()
 		kvStore, err := NewKeyValueStore(ctx, writer, rc)
 		require.NoError(t, err)
-		for j := 0; j < checkHotspotPeriod; j++ {
+		for j := 0; j < 1000; j++ {
 			key := fmt.Sprintf("key%06d", cur)
 			val := fmt.Sprintf("value%06d", cur)
 			err = kvStore.addEncodedData(getEncodedData([]byte(key), []byte(val)))
@@ -472,6 +462,7 @@ func TestMemoryUsageWhenHotspotChange(t *testing.T) {
 
 	iter, err := NewMergeKVIter(ctx, filenames, make([]uint64, len(filenames)), store, 1024)
 	require.NoError(t, err)
+	iter.iter.checkHotspotPeriod = 10
 	i := 0
 	for cur > 0 {
 		cur--
