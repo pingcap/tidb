@@ -184,6 +184,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		loadSchemaDurationTotal.Observe(time.Since(beginTime).Seconds())
 	}()
 	snapshot := do.store.GetSnapshot(kv.NewVersion(startTS))
+	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
 	m := meta.NewSnapshotMeta(snapshot)
 	neededSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
@@ -794,7 +795,7 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 	defer util.Recover(metrics.LabelDomain, "loadSchemaInLoop", nil, true)
 	// Lease renewal can run at any frequency.
 	// Use lease/2 here as recommend by paper.
-	ticker := time.NewTicker(lease / 2)
+	ticker := time.NewTicker(lease / 10)
 	defer func() {
 		ticker.Stop()
 		do.wg.Done()
