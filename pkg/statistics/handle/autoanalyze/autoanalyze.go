@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"go.uber.org/zap"
@@ -247,7 +248,7 @@ func autoAnalyzeTable(sctx sessionctx.Context,
 		return false
 	}
 	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*statsHandle.Lease(), ratio); needAnalyze {
-		escaped, err := sqlexec.EscapeSQL(sql, params...)
+		escaped, err := sqlescape.EscapeSQL(sql, params...)
 		if err != nil {
 			return false
 		}
@@ -261,7 +262,7 @@ func autoAnalyzeTable(sctx sessionctx.Context,
 		if _, ok := statsTbl.Indices[idx.ID]; !ok && idx.State == model.StatePublic {
 			sqlWithIdx := sql + " index %n"
 			paramsWithIdx := append(params, idx.Name.O)
-			escaped, err := sqlexec.EscapeSQL(sqlWithIdx, paramsWithIdx...)
+			escaped, err := sqlescape.EscapeSQL(sqlWithIdx, paramsWithIdx...)
 			if err != nil {
 				return false
 			}
@@ -428,7 +429,7 @@ func execAutoAnalyze(sctx sessionctx.Context,
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
-		escaped, err1 := sqlexec.EscapeSQL(sql, params...)
+		escaped, err1 := sqlescape.EscapeSQL(sql, params...)
 		if err1 != nil {
 			escaped = ""
 		}

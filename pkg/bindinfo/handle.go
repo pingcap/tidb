@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	tablefilter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -600,7 +601,7 @@ func (h *BindHandle) lockBindInfoTable() error {
 
 // LockBindInfoSQL simulates LOCK TABLE by updating a same row in each pessimistic transaction.
 func (*BindHandle) LockBindInfoSQL() string {
-	sql, err := sqlexec.EscapeSQL("UPDATE mysql.bind_info SET source= %? WHERE original_sql= %?", Builtin, BuiltinPseudoSQL4BindLock)
+	sql, err := sqlescape.EscapeSQL("UPDATE mysql.bind_info SET source= %? WHERE original_sql= %?", Builtin, BuiltinPseudoSQL4BindLock)
 	if err != nil {
 		return ""
 	}

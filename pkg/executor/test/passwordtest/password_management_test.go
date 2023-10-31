@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1118,7 +1118,7 @@ func TestFailedLoginTrackingAlterUser(t *testing.T) {
 	rootTK.MustExec(`CREATE USER test1 IDENTIFIED BY '1234' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 3 COMMENT 'test'`)
 	err = tk.Session().Auth(&auth.UserIdentity{Username: "test1", Hostname: "%"}, sha1Password("1234"), nil, nil)
 	require.NoError(t, err)
-	sqlexec.MustFormatSQL(sql, checkUserAttributes, "test1", "%")
+	sqlescape.MustFormatSQL(sql, checkUserAttributes, "test1", "%")
 	rootTK.MustQuery(sql.String()).Check(testkit.Rows(`3 <nil> <nil> 3 {"comment": "test"}`))
 	tk = testkit.NewTestKit(t, store)
 	err = tk.Session().Auth(&auth.UserIdentity{Username: "test1", Hostname: "%"}, sha1Password("<wrong-password>"), nil, nil)
@@ -1284,7 +1284,7 @@ func checkUserUserAttributes(tk *testkit.TestKit, user, host, row string) {
 		"JSON_EXTRACT(user_attributes, '$.Password_locking.password_lock_time_days')," +
 		"JSON_EXTRACT(user_attributes, '$.metadata')from mysql.user where user= %? and host = %?"
 	userAttributesSQL := new(strings.Builder)
-	sqlexec.MustFormatSQL(userAttributesSQL, sqlTemplate, user, host)
+	sqlescape.MustFormatSQL(userAttributesSQL, sqlTemplate, user, host)
 	tk.MustQuery(userAttributesSQL.String()).Check(testkit.Rows(row))
 }
 
@@ -1341,7 +1341,7 @@ func checkAuthUser(t *testing.T, tk *testkit.TestKit, user string, failedLoginCo
 
 func selectSQL(user string) string {
 	userAttributesSQL := new(strings.Builder)
-	sqlexec.MustFormatSQL(userAttributesSQL, "SELECT user_attributes from mysql.user WHERE USER = %? AND HOST = 'localhost' for update", user)
+	sqlescape.MustFormatSQL(userAttributesSQL, "SELECT user_attributes from mysql.user WHERE USER = %? AND HOST = 'localhost' for update", user)
 	return userAttributesSQL.String()
 }
 

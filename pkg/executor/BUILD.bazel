@@ -220,6 +220,7 @@ go_library(
         "//pkg/util/servermemorylimit",
         "//pkg/util/set",
         "//pkg/util/size",
+        "//pkg/util/sqlescape",
         "//pkg/util/sqlexec",
         "//pkg/util/sqlkiller",
         "//pkg/util/stmtsummary",

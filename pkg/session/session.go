@@ -97,6 +97,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/sli"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
@@ -1717,7 +1718,7 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 func (s *session) ParseWithParams(ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error) {
 	var err error
 	if len(args) > 0 {
-		sql, err = sqlexec.EscapeSQL(sql, args...)
+		sql, err = sqlescape.EscapeSQL(sql, args...)
 		if err != nil {
 			return nil, err
 		}
@@ -2871,9 +2872,9 @@ func autolockAction(s *session, passwordLocking *privileges.PasswordLocking, use
 
 func (s *session) passwordLocking(user string, host string, newAttributesStr string) error {
 	sql := new(strings.Builder)
-	sqlexec.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.UserTable)
-	sqlexec.MustFormatSQL(sql, "user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr)
-	sqlexec.MustFormatSQL(sql, " WHERE Host=%? and User=%?;", host, user)
+	sqlescape.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.UserTable)
+	sqlescape.MustFormatSQL(sql, "user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr)
+	sqlescape.MustFormatSQL(sql, " WHERE Host=%? and User=%?;", host, user)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	_, err := s.ExecuteInternal(ctx, sql.String())
 	return err
