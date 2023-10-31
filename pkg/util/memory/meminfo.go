@@ -175,30 +175,30 @@ func init() {
 // so if we are not in the container, we compare the cgroup memory limit and the physical memory,
 // the cgroup memory limit is smaller, we use the cgroup memory hook.
 func InitMemoryHook() {
-	if !cgroup.InContainer() {
-		cgroupValue, err := cgroup.GetMemoryLimit()
-		if err != nil {
-			return
-		}
-		physicalValue, err := memTotalNormal()
-		if err != nil {
-			return
-		}
-		if physicalValue > cgroupValue && cgroupValue != 0 {
-			MemTotal = MemTotalCGroup
-			MemUsed = MemUsedCGroup
-			sysutil.RegisterGetMemoryCapacity(MemTotalCGroup)
-			logutil.BgLogger().Info("use cgroup memory hook", zap.Int64("cgroupMemorySize", int64(cgroupValue)), zap.Int64("physicalMemorySize", int64(physicalValue)))
-		} else {
-			logutil.BgLogger().Info("use physical memory hook", zap.Int64("cgroupMemorySize", int64(cgroupValue)), zap.Int64("physicalMemorySize", int64(physicalValue)))
-		}
-		_, err = MemTotal()
-		terror.MustNil(err)
-		_, err = MemUsed()
-		terror.MustNil(err)
-	} else {
+	if cgroup.InContainer() {
 		logutil.BgLogger().Info("use cgroup memory hook because TiDB is in the docker.")
+		return
 	}
+	cgroupValue, err := cgroup.GetMemoryLimit()
+	if err != nil {
+		return
+	}
+	physicalValue, err := memTotalNormal()
+	if err != nil {
+		return
+	}
+	if physicalValue > cgroupValue && cgroupValue != 0 {
+		MemTotal = MemTotalCGroup
+		MemUsed = MemUsedCGroup
+		sysutil.RegisterGetMemoryCapacity(MemTotalCGroup)
+		logutil.BgLogger().Info("use cgroup memory hook", zap.Int64("cgroupMemorySize", int64(cgroupValue)), zap.Int64("physicalMemorySize", int64(physicalValue)))
+	} else {
+		logutil.BgLogger().Info("use physical memory hook", zap.Int64("cgroupMemorySize", int64(cgroupValue)), zap.Int64("physicalMemorySize", int64(physicalValue)))
+	}
+	_, err = MemTotal()
+	terror.MustNil(err)
+	_, err = MemUsed()
+	terror.MustNil(err)
 }
 
 // InstanceMemUsed returns the memory usage of this TiDB server
