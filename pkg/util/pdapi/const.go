@@ -30,7 +30,7 @@ const (
 	EmptyRegions           = "/pd/api/v1/regions/check/empty-region"
 	AccelerateSchedule     = "/pd/api/v1/regions/accelerate-schedule"
 	RegionByID             = "/pd/api/v1/region/id"
-	RegionKey              = "/pd/api/v1/region/key"
+	RegionByKey            = "/pd/api/v1/region/key"
 	store                  = "/pd/api/v1/store"
 	Stores                 = "/pd/api/v1/stores"
 	Status                 = "/pd/api/v1/status"

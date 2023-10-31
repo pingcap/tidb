@@ -815,7 +815,7 @@ func (h *Helper) GetRegionsInfoByRange(sk, ek []byte) (*RegionsInfo, error) {
 // GetRegionByKey gets regioninfo by key
 func (h *Helper) GetRegionByKey(k []byte) (*RegionInfo, error) {
 	var regionInfo RegionInfo
-	err := h.requestPD("GetRegionByKey", "GET", fmt.Sprintf("%v/%v", pdapi.RegionKey, url.QueryEscape(string(k))), nil, &regionInfo)
+	err := h.requestPD("GetRegionByKey", "GET", fmt.Sprintf("%v/%v", pdapi.RegionByKey, url.QueryEscape(string(k))), nil, &regionInfo)
 	return &regionInfo, err
 }
 
