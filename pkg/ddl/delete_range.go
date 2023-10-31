@@ -292,7 +292,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 			if batchEnd > i+batchInsertDeleteRangeSize {
 				batchEnd = i + batchInsertDeleteRangeSize
 			}
-			if err := DoBatchDeleteTablesRange(ctx, wrapper, job.ID, tableIDs[i:batchEnd], ea, "drop schema: table IDs"); err != nil {
+			if err := doBatchDeleteTablesRange(ctx, wrapper, job.ID, tableIDs[i:batchEnd], ea, "drop schema: table IDs"); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -306,13 +306,13 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 			return errors.Trace(err)
 		}
 		if len(physicalTableIDs) > 0 {
-			if err := DoBatchDeleteTablesRange(ctx, wrapper, job.ID, physicalTableIDs, ea, "drop table: partition table IDs"); err != nil {
+			if err := doBatchDeleteTablesRange(ctx, wrapper, job.ID, physicalTableIDs, ea, "drop table: partition table IDs"); err != nil {
 				return errors.Trace(err)
 			}
 			// logical table may contain global index regions, so delete the logical table range.
-			return errors.Trace(DoBatchDeleteTablesRange(ctx, wrapper, job.ID, []int64{tableID}, ea, "drop table: table ID"))
+			return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, []int64{tableID}, ea, "drop table: table ID"))
 		}
-		return errors.Trace(DoBatchDeleteTablesRange(ctx, wrapper, job.ID, []int64{tableID}, ea, "drop table: table ID"))
+		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, []int64{tableID}, ea, "drop table: table ID"))
 	case model.ActionDropTablePartition, model.ActionTruncateTablePartition,
 		model.ActionReorganizePartition, model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:
@@ -324,7 +324,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 		if err := job.DecodeArgs(&physicalTableIDs, &partInfo); err != nil {
 			return errors.Trace(err)
 		}
-		return errors.Trace(DoBatchDeleteTablesRange(ctx, wrapper, job.ID, physicalTableIDs, ea, "drop partition: physical table ID(s)"))
+		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, physicalTableIDs, ea, "drop partition: physical table ID(s)"))
 	// ActionAddIndex, ActionAddPrimaryKey needs do it, because it needs to be rolled back when it's canceled.
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		allIndexIDs := make([]int64, 1)
@@ -350,7 +350,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 				indexIDs = []int64{tempIdxID}
 			}
 			for _, pid := range physicalIDs {
-				if err := DoBatchDeleteIndiceRange(ctx, wrapper, job.ID, pid, indexIDs, ea, "add index: physical table ID(s)"); err != nil {
+				if err := doBatchDeleteIndiceRange(ctx, wrapper, job.ID, pid, indexIDs, ea, "add index: physical table ID(s)"); err != nil {
 					return errors.Trace(err)
 				}
 			}
@@ -368,7 +368,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 		}
 		// partitionIDs len is 0 if the dropped index is a global index, even if it is a partitioned table.
 		if len(partitionIDs) == 0 {
-			return errors.Trace(DoBatchDeleteIndiceRange(ctx, wrapper, job.ID, tableID, allIndexIDs, ea, "drop index: table ID"))
+			return errors.Trace(doBatchDeleteIndiceRange(ctx, wrapper, job.ID, tableID, allIndexIDs, ea, "drop index: table ID"))
 		}
 		failpoint.Inject("checkDropGlobalIndex", func(val failpoint.Value) {
 			if val.(bool) {
@@ -376,7 +376,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 			}
 		})
 		for _, pid := range partitionIDs {
-			if err := DoBatchDeleteIndiceRange(ctx, wrapper, job.ID, pid, allIndexIDs, ea, "drop index: partition table ID"); err != nil {
+			if err := doBatchDeleteIndiceRange(ctx, wrapper, job.ID, pid, allIndexIDs, ea, "drop index: partition table ID"); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -390,10 +390,10 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 		}
 		if len(indexIDs) > 0 {
 			if len(partitionIDs) == 0 {
-				return errors.Trace(DoBatchDeleteIndiceRange(ctx, wrapper, job.ID, job.TableID, indexIDs, ea, "drop column: table ID"))
+				return errors.Trace(doBatchDeleteIndiceRange(ctx, wrapper, job.ID, job.TableID, indexIDs, ea, "drop column: table ID"))
 			}
 			for _, pid := range partitionIDs {
-				if err := DoBatchDeleteIndiceRange(ctx, wrapper, job.ID, pid, indexIDs, ea, "drop column: partition table ID"); err != nil {
+				if err := doBatchDeleteIndiceRange(ctx, wrapper, job.ID, pid, indexIDs, ea, "drop column: partition table ID"); err != nil {
 					return errors.Trace(err)
 				}
 			}
@@ -408,10 +408,10 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 			return nil
 		}
 		if len(partitionIDs) == 0 {
-			return DoBatchDeleteIndiceRange(ctx, wrapper, job.ID, job.TableID, indexIDs, ea, "modify column: table ID")
+			return doBatchDeleteIndiceRange(ctx, wrapper, job.ID, job.TableID, indexIDs, ea, "modify column: table ID")
 		}
 		for _, pid := range partitionIDs {
-			if err := DoBatchDeleteIndiceRange(ctx, wrapper, job.ID, pid, indexIDs, ea, "modify column: partition table ID"); err != nil {
+			if err := doBatchDeleteIndiceRange(ctx, wrapper, job.ID, pid, indexIDs, ea, "modify column: partition table ID"); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -419,8 +419,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 	return nil
 }
 
-// DoBatchDeleteIndiceRange generates the delete ranges for indices
-func DoBatchDeleteIndiceRange(ctx context.Context, wrapper DelRangeExecWrapper, jobID, tableID int64, indexIDs []int64, ea *elementIDAlloc, comment string) error {
+func doBatchDeleteIndiceRange(ctx context.Context, wrapper DelRangeExecWrapper, jobID, tableID int64, indexIDs []int64, ea *elementIDAlloc, comment string) error {
 	logutil.BgLogger().Info("insert into delete-range indices", zap.String("category", "ddl"), zap.Int64("jobID", jobID), zap.Int64("tableID", tableID), zap.Int64s("indexIDs", indexIDs), zap.String("comment", comment))
 	var buf strings.Builder
 	buf.WriteString(insertDeleteRangeSQLPrefix)
@@ -445,8 +444,7 @@ func DoBatchDeleteIndiceRange(ctx context.Context, wrapper DelRangeExecWrapper, 
 	return errors.Trace(wrapper.ConsumeDeleteRange(ctx, buf.String()))
 }
 
-// DoBatchDeleteTablesRange generates the delete ranges for tables
-func DoBatchDeleteTablesRange(ctx context.Context, wrapper DelRangeExecWrapper, jobID int64, tableIDs []int64, ea *elementIDAlloc, comment string) error {
+func doBatchDeleteTablesRange(ctx context.Context, wrapper DelRangeExecWrapper, jobID int64, tableIDs []int64, ea *elementIDAlloc, comment string) error {
 	logutil.BgLogger().Info("insert into delete-range table", zap.String("category", "ddl"), zap.Int64("jobID", jobID), zap.Int64s("tableIDs", tableIDs), zap.String("comment", comment))
 	var buf strings.Builder
 	buf.WriteString(insertDeleteRangeSQLPrefix)
