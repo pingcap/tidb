@@ -419,6 +419,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 	return nil
 }
 
+// DoBatchDeleteIndiceRange generates the delete ranges for indices
 func DoBatchDeleteIndiceRange(ctx context.Context, wrapper DelRangeExecWrapper, jobID, tableID int64, indexIDs []int64, ea *elementIDAlloc, comment string) error {
 	logutil.BgLogger().Info("insert into delete-range indices", zap.String("category", "ddl"), zap.Int64("jobID", jobID), zap.Int64("tableID", tableID), zap.Int64s("indexIDs", indexIDs), zap.String("comment", comment))
 	var buf strings.Builder
@@ -444,6 +445,7 @@ func DoBatchDeleteIndiceRange(ctx context.Context, wrapper DelRangeExecWrapper, 
 	return errors.Trace(wrapper.ConsumeDeleteRange(ctx, buf.String()))
 }
 
+// DoBatchDeleteIndiceRange generates the delete ranges for tables
 func DoBatchDeleteTablesRange(ctx context.Context, wrapper DelRangeExecWrapper, jobID int64, tableIDs []int64, ea *elementIDAlloc, comment string) error {
 	logutil.BgLogger().Info("insert into delete-range table", zap.String("category", "ddl"), zap.Int64("jobID", jobID), zap.Int64s("tableIDs", tableIDs), zap.String("comment", comment))
 	var buf strings.Builder
@@ -521,7 +523,7 @@ func (sdr *sessionDelRangeExecWrapper) PrepareParamsList(sz int) {
 	sdr.paramsList = make([]interface{}, 0, sz)
 }
 
-func (sdr *sessionDelRangeExecWrapper) RewriteTableID(tableID int64) (int64, bool) {
+func (_ *sessionDelRangeExecWrapper) RewriteTableID(tableID int64) (int64, bool) {
 	return tableID, true
 }
 
