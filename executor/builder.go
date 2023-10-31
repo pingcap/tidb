@@ -492,7 +492,9 @@ func buildIdxColsConcatHandleCols(tblInfo *model.TableInfo, indexInfo *model.Ind
 	}
 	if tblInfo.IsCommonHandle {
 		for _, c := range pkCols {
-			columns = append(columns, tblInfo.Columns[c.Offset])
+			if model.FindColumnInfo(columns, c.Name.L) == nil {
+				columns = append(columns, tblInfo.Columns[c.Offset])
+			}
 		}
 		return columns
 	}
@@ -527,13 +529,18 @@ func (b *executorBuilder) buildRecoverIndex(v *plannercore.RecoverIndex) Executo
 		table:        t,
 		physicalID:   t.Meta().ID,
 	}
+<<<<<<< HEAD:executor/builder.go
 	sessCtx := e.ctx.GetSessionVars().StmtCtx
 	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, index.Meta(), e.columns)
+=======
+	sessCtx := e.Ctx().GetSessionVars().StmtCtx
+	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, e.columns)
+>>>>>>> 3894bc52321 (admin: fix `admin recover index` with CommonHandle table in TiKV env (#48048)):pkg/executor/builder.go
 	return e
 }
 
 func buildHandleColsForExec(sctx *stmtctx.StatementContext, tblInfo *model.TableInfo,
-	idxInfo *model.IndexInfo, allColInfo []*model.ColumnInfo) plannercore.HandleCols {
+	allColInfo []*model.ColumnInfo) plannercore.HandleCols {
 	if !tblInfo.IsCommonHandle {
 		extraColPos := len(allColInfo) - 1
 		intCol := &expression.Column{
@@ -551,8 +558,12 @@ func buildHandleColsForExec(sctx *stmtctx.StatementContext, tblInfo *model.Table
 		}
 	}
 	pkIdx := tables.FindPrimaryIndex(tblInfo)
-	for i, c := range pkIdx.Columns {
-		tblCols[c.Offset].Index = len(idxInfo.Columns) + i
+	for _, c := range pkIdx.Columns {
+		for j, colInfo := range allColInfo {
+			if colInfo.Name.L == c.Name.L {
+				tblCols[c.Offset].Index = j
+			}
+		}
 	}
 	return plannercore.NewCommonHandleCols(sctx, tblInfo, pkIdx, tblCols)
 }
@@ -588,8 +599,13 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) Executo
 		physicalID:   t.Meta().ID,
 		batchSize:    20000,
 	}
+<<<<<<< HEAD:executor/builder.go
 	sessCtx := e.ctx.GetSessionVars().StmtCtx
 	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, index.Meta(), e.columns)
+=======
+	sessCtx := e.Ctx().GetSessionVars().StmtCtx
+	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, e.columns)
+>>>>>>> 3894bc52321 (admin: fix `admin recover index` with CommonHandle table in TiKV env (#48048)):pkg/executor/builder.go
 	return e
 }
 
