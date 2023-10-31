@@ -22,11 +22,13 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 // seekPropsOffsets seeks the statistic files to find the largest offset of
@@ -37,12 +39,15 @@ func seekPropsOffsets(
 	start kv.Key,
 	paths []string,
 	exStorage storage.ExternalStorage,
-) ([]uint64, error) {
-	iter, err := NewMergePropIter(ctx, paths, exStorage)
+	checkHotSpot bool,
+) (_ []uint64, err error) {
+	logger := logutil.Logger(ctx)
+	task := log.BeginTask(logger, "seek props offsets")
+	defer task.End(zapcore.ErrorLevel, err)
+	iter, err := NewMergePropIter(ctx, paths, exStorage, checkHotSpot)
 	if err != nil {
 		return nil, err
 	}
-	logger := logutil.Logger(ctx)
 	defer func() {
 		if err := iter.Close(); err != nil {
 			logger.Warn("failed to close merge prop iterator", zap.Error(err))

@@ -509,5 +509,6 @@ func getRangeSplitter(ctx context.Context, store storage.ExternalStorage, kvMeta
 		int64(math.MaxInt64),
 		regionSplitSize,
 		regionSplitKeys,
+		false,
 	)
 }

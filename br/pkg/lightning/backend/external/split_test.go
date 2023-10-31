@@ -55,7 +55,7 @@ func TestGeneralProperties(t *testing.T) {
 	dataFiles, statFiles, err := MockExternalEngine(memStore, keys, values)
 	require.NoError(t, err)
 	splitter, err := NewRangeSplitter(
-		ctx, dataFiles, statFiles, memStore, 1000, 30, 1000, 1,
+		ctx, dataFiles, statFiles, memStore, 1000, 30, 1000, 1, true,
 	)
 	var lastEndKey []byte
 notExhausted:
@@ -111,7 +111,7 @@ func TestOnlyOneGroup(t *testing.T) {
 	require.NoError(t, err)
 
 	splitter, err := NewRangeSplitter(
-		ctx, dataFiles, statFiles, memStore, 1000, 30, 1000, 10,
+		ctx, dataFiles, statFiles, memStore, 1000, 30, 1000, 10, true,
 	)
 	require.NoError(t, err)
 	endKey, dataFiles, statFiles, splitKeys, err := splitter.SplitOneRangesGroup()
@@ -123,7 +123,7 @@ func TestOnlyOneGroup(t *testing.T) {
 	require.NoError(t, splitter.Close())
 
 	splitter, err = NewRangeSplitter(
-		ctx, dataFiles, statFiles, memStore, 1000, 30, 1000, 1,
+		ctx, dataFiles, statFiles, memStore, 1000, 30, 1000, 1, true,
 	)
 	require.NoError(t, err)
 	endKey, dataFiles, statFiles, splitKeys, err = splitter.SplitOneRangesGroup()
@@ -156,7 +156,7 @@ func TestSortedData(t *testing.T) {
 	groupFileNumUpperBound := int(math.Ceil(float64(rangesGroupKV-1)/avgKVPerFile)) + 1
 
 	splitter, err := NewRangeSplitter(
-		ctx, dataFiles, statFiles, memStore, 1000, int64(rangesGroupKV), 1000, 10,
+		ctx, dataFiles, statFiles, memStore, 1000, int64(rangesGroupKV), 1000, 10, true,
 	)
 	require.NoError(t, err)
 
@@ -237,7 +237,7 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 
 	// group keys = 2, region keys = 1
 	splitter, err := NewRangeSplitter(
-		ctx, dataFiles123, statFiles123, memStore, 1000, 2, 1000, 1,
+		ctx, dataFiles123, statFiles123, memStore, 1000, 2, 1000, 1, true,
 	)
 	require.NoError(t, err)
 
@@ -319,7 +319,7 @@ func TestExactlyKeyNum(t *testing.T) {
 
 	// maxRangeKeys = 3
 	splitter, err := NewRangeSplitter(
-		ctx, dataFiles, statFiles, memStore, 1000, 100, 1000, 3,
+		ctx, dataFiles, statFiles, memStore, 1000, 100, 1000, 3, true,
 	)
 	require.NoError(t, err)
 	endKey, splitDataFiles, splitStatFiles, splitKeys, err := splitter.SplitOneRangesGroup()
@@ -331,7 +331,7 @@ func TestExactlyKeyNum(t *testing.T) {
 
 	// rangesGroupKeys = 3
 	splitter, err = NewRangeSplitter(
-		ctx, dataFiles, statFiles, memStore, 1000, 3, 1000, 1,
+		ctx, dataFiles, statFiles, memStore, 1000, 3, 1000, 1, true,
 	)
 	require.NoError(t, err)
 	endKey, splitDataFiles, splitStatFiles, splitKeys, err = splitter.SplitOneRangesGroup()

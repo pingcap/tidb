@@ -81,11 +81,15 @@ func (h *mergeHeap[T]) Pop() interface{} {
 }
 
 type mergeIter[T heapElem, R sortedReader[T]] struct {
-	h                  mergeHeap[T]
-	readers            []*R
-	curr               T
-	lastReaderIdx      int
-	err                error
+	h             mergeHeap[T]
+	readers       []*R
+	curr          T
+	lastReaderIdx int
+	err           error
+  
+  // determines whether to check reader hotspot, if hotspot is detected, we will
+	// try read this file concurrently.
+	checkHotspot       bool
 	hotspotMap         map[int]int
 	checkHotspotCnt    int
 	checkHotspotPeriod int
@@ -103,7 +107,7 @@ type readerOpenerFn[T heapElem, R sortedReader[T]] func() (*R, error)
 func newMergeIter[
 	T heapElem,
 	R sortedReader[T],
-](ctx context.Context, readerOpeners []readerOpenerFn[T, R]) (*mergeIter[T, R], error) {
+](ctx context.Context, readerOpeners []readerOpenerFn[T, R], checkHotspot bool) (*mergeIter[T, R], error) {
 	logger := logutil.Logger(ctx)
 	readers := make([]*R, len(readerOpeners))
 	closeReaders := func() {
@@ -149,6 +153,7 @@ func newMergeIter[
 		h:             make(mergeHeap[T], 0, len(readers)),
 		readers:       readers,
 		lastReaderIdx: -1,
+		checkHotspot:  checkHotspot,
 		hotspotMap:    make(map[int]int),
 		logger:        logger,
 	}
@@ -228,42 +233,44 @@ func (i *mergeIter[T, R]) next() bool {
 	var zeroT T
 	i.curr = zeroT
 	if i.lastReaderIdx >= 0 {
-		i.hotspotMap[i.lastReaderIdx] = i.hotspotMap[i.lastReaderIdx] + 1
-		i.checkHotspotCnt++
+		if i.checkHotspot {
+			i.hotspotMap[i.lastReaderIdx] = i.hotspotMap[i.lastReaderIdx] + 1
+			i.checkHotspotCnt++
 
-		// check hotspot every checkPeriod times
-		if i.checkHotspotCnt == i.checkHotspotPeriod {
-			oldHotspotIdx := i.lastHotspotIdx
-			i.lastHotspotIdx = -1
-			for idx, cnt := range i.hotspotMap {
-				// currently only one reader will become hotspot
-				if cnt > (i.checkHotspotPeriod / 2) {
-					i.lastHotspotIdx = idx
-					break
+			// check hotspot every checkPeriod times
+			if i.checkHotspotCnt == i.checkHotspotPeriod {
+				oldHotspotIdx := i.lastHotspotIdx
+				i.lastHotspotIdx = -1
+				for idx, cnt := range i.hotspotMap {
+					// currently only one reader will become hotspot
+					if cnt > (i.checkHotspotPeriod / 2) {
+						i.lastHotspotIdx = idx
+						break
+					}
 				}
-			}
-			// we are going to switch concurrent reader and free its memory. Clone
-			// the fields to avoid use-after-free.
-			if oldHotspotIdx != i.lastHotspotIdx {
-				if i.elemFromHotspot != nil {
-					(*i.elemFromHotspot).cloneInnerFields()
-					i.elemFromHotspot = nil
+				// we are going to switch concurrent reader and free its memory. Clone
+				// the fields to avoid use-after-free.
+				if oldHotspotIdx != i.lastHotspotIdx {
+					if i.elemFromHotspot != nil {
+						(*i.elemFromHotspot).cloneInnerFields()
+						i.elemFromHotspot = nil
+					}
 				}
-			}
 
-			for idx, rp := range i.readers {
-				if rp == nil {
-					continue
+				for idx, rp := range i.readers {
+					if rp == nil {
+						continue
+					}
+					isHotspot := i.lastHotspotIdx == idx
+					err := (*rp).switchConcurrentMode(isHotspot)
+					if err != nil {
+						i.err = err
+						return false
+					}
 				}
-				isHotspot := i.lastHotspotIdx == idx
-				err := (*rp).switchConcurrentMode(isHotspot)
-				if err != nil {
-					i.err = err
-					return false
-				}
+				i.checkHotspotCnt = 0
+				i.hotspotMap = make(map[int]int)
 			}
-			i.checkHotspotCnt = 0
-			i.hotspotMap = make(map[int]int)
 		}
 
 		rd := *i.readers[i.lastReaderIdx]
@@ -271,7 +278,7 @@ func (i *mergeIter[T, R]) next() bool {
 
 		switch err {
 		case nil:
-			if i.lastReaderIdx == i.lastHotspotIdx {
+			if i.checkHotspot && i.lastReaderIdx == i.lastHotspotIdx {
 				i.elemFromHotspot = &e
 			}
 			heap.Push(&i.h, mergeHeapElem[T]{elem: e, readerIdx: i.lastReaderIdx})
@@ -356,6 +363,7 @@ func NewMergeKVIter(
 	pathsStartOffset []uint64,
 	exStorage storage.ExternalStorage,
 	readBufferSize int,
+	checkHotspot bool,
 ) (*MergeKVIter, error) {
 	readerOpeners := make([]readerOpenerFn[*kvPair, kvReaderProxy], 0, len(paths))
 	largeBufSize := ConcurrentReaderBufferSizePerConc * ConcurrentReaderConcurrency
@@ -383,7 +391,7 @@ func NewMergeKVIter(
 		})
 	}
 
-	it, err := newMergeIter[*kvPair, kvReaderProxy](ctx, readerOpeners)
+	it, err := newMergeIter[*kvPair, kvReaderProxy](ctx, readerOpeners, checkHotspot)
 	return &MergeKVIter{iter: it, memPool: memPool}, err
 }
 
@@ -455,6 +463,7 @@ func NewMergePropIter(
 	ctx context.Context,
 	paths []string,
 	exStorage storage.ExternalStorage,
+	checkHotSpot bool,
 ) (*MergePropIter, error) {
 	readerOpeners := make([]readerOpenerFn[*rangeProperty, statReaderProxy], 0, len(paths))
 	for i := range paths {
@@ -468,7 +477,7 @@ func NewMergePropIter(
 		})
 	}
 
-	it, err := newMergeIter[*rangeProperty, statReaderProxy](ctx, readerOpeners)
+	it, err := newMergeIter[*rangeProperty, statReaderProxy](ctx, readerOpeners, checkHotSpot)
 	return &MergePropIter{iter: it}, err
 }
 

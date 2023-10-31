@@ -21,9 +21,10 @@ func MergeOverlappingFiles(
 	propSizeDist uint64,
 	propKeysDist uint64,
 	onClose OnCloseFunc,
+	checkHotspot bool,
 ) error {
 	zeroOffsets := make([]uint64, len(paths))
-	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, readBufferSize)
+	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, readBufferSize, checkHotspot)
 	if err != nil {
 		return err
 	}

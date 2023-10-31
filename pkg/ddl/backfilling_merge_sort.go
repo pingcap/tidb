@@ -114,7 +114,9 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		8*1024,
 		1*size.MB,
 		8*1024,
-		onClose)
+		onClose,
+		true,
+	)
 }
 
 func (*mergeSortExecutor) Cleanup(ctx context.Context) error {

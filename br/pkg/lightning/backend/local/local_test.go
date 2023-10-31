@@ -1788,9 +1788,11 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 		false,
 		nil,
 		common.DupDetectOpt{},
+		10,
 		123,
 		456,
 		789,
+		true,
 	)
 
 	jobCh := make(chan *regionJob, 10)

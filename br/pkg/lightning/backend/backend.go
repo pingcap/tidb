@@ -114,6 +114,7 @@ type ExternalEngineConfig struct {
 	TotalFileSize int64
 	// TotalKVCount can be an estimated value.
 	TotalKVCount int64
+	CheckHotspot bool
 }
 
 // CheckCtx contains all parameters used in CheckRequirements
