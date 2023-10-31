@@ -1038,9 +1038,7 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 		// 1: some mv index partial path, no normal index path, it means multi mv index merge.
 		// 2: some mv index partial path, some normal index path, it means hybrid index merge.
 		// 3: no mv index partial path, several normal index path, it means multi normal index merge.
-		var combinedPartialPaths []*util.AccessPath
-		combinedPartialPaths = normalIndexPartialPaths
-		combinedPartialPaths = append(combinedPartialPaths, mvIndexPartialPaths...)
+		combinedPartialPaths := append(normalIndexPartialPaths, mvIndexPartialPaths...)
 		if len(combinedPartialPaths) == 0 {
 			return nil
 		}
