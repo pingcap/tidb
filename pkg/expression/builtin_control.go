@@ -117,37 +117,87 @@ func setDecimalFromArgs(evalType types.EvalType, resultFieldType *types.FieldTyp
 	}
 }
 
+// NonBinaryStr means the arg is a string but not binary string
+func getNonBinaryStrIdx(args []*types.FieldType) []int {
+	result := make([]int, 0)
+	for i, arg := range args {
+		if types.IsNonBinaryStr(arg) {
+			result = append(result, i)
+		}
+	}
+	return result
+}
+
+// NotBinaryStr means the args is not a binary string maybe even not a string
+func getNotBinaryStrIdx(args []*types.FieldType, excludeIdx map[int]struct{}) []int {
+	result := make([]int, 0)
+	for i, arg := range args {
+		_, ok := excludeIdx[i]
+		if ok {
+			continue
+		}
+
+		if !types.IsBinaryStr(arg) {
+			result = append(result, i)
+		}
+	}
+	return result
+}
+
+func hasBinaryStr(args []*types.FieldType) bool {
+	for _, arg := range args {
+		if types.IsBinaryStr(arg) {
+			return true
+		}
+	}
+	return false
+}
+
 func addCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string, evalType types.EvalType, resultFieldType *types.FieldType, args ...Expression) error {
 	switch funcName {
-	case ast.If, ast.Ifnull, ast.WindowFuncLead, ast.WindowFuncLag:
-		if len(args) != 2 {
-			panic("unexpected length of args for if/ifnull/lead/lag")
+	case ast.If, ast.Ifnull, ast.WindowFuncLead, ast.WindowFuncLag, ast.Coalesce:
+		argTypes := make([]*types.FieldType, 0)
+		for _, arg := range args {
+			argTypes = append(argTypes, arg.GetType())
 		}
-		lexp, rexp := args[0], args[1]
-		lhs, rhs := lexp.GetType(), rexp.GetType()
-		if types.IsNonBinaryStr(lhs) && !types.IsBinaryStr(rhs) {
-			ec, err := CheckAndDeriveCollationFromExprs(ctx, funcName, evalType, lexp, rexp)
+
+		nonBinaryStrIdx := getNonBinaryStrIdx(argTypes)
+		excludeIdx := make(map[int]struct{})
+		for _, item := range nonBinaryStrIdx {
+			excludeIdx[item] = struct{}{}
+		}
+
+		notBinaryStrIdx := getNotBinaryStrIdx(argTypes, excludeIdx)
+		binaryStrExist := hasBinaryStr(argTypes)
+		if len(nonBinaryStrIdx) > 0 && len(notBinaryStrIdx) > 0 && len(nonBinaryStrIdx)+len(notBinaryStrIdx) == len(argTypes) {
+			ec, err := CheckAndDeriveCollationFromExprs(ctx, funcName, evalType, args...)
 			if err != nil {
 				return err
 			}
 			resultFieldType.SetCollate(ec.Collation)
 			resultFieldType.SetCharset(ec.Charset)
 			resultFieldType.SetFlag(0)
-			if mysql.HasBinaryFlag(lhs.GetFlag()) || !types.IsNonBinaryStr(rhs) {
+
+			ifNonBinaryStrsHaveBinaryFlag := false
+			for _, idx := range nonBinaryStrIdx {
+				if mysql.HasBinaryFlag(argTypes[idx].GetFlag()) {
+					ifNonBinaryStrsHaveBinaryFlag = true
+					break
+				}
+			}
+
+			ifNotBinaryStrsHaveNotString := false
+			for _, idx := range notBinaryStrIdx {
+				if !types.IsNonBinaryStr(argTypes[idx]) {
+					ifNotBinaryStrsHaveNotString = true
+					break
+				}
+			}
+
+			if ifNonBinaryStrsHaveBinaryFlag || ifNotBinaryStrsHaveNotString {
 				resultFieldType.AddFlag(mysql.BinaryFlag)
 			}
-		} else if types.IsNonBinaryStr(rhs) && !types.IsBinaryStr(lhs) {
-			ec, err := CheckAndDeriveCollationFromExprs(ctx, funcName, evalType, lexp, rexp)
-			if err != nil {
-				return err
-			}
-			resultFieldType.SetCollate(ec.Collation)
-			resultFieldType.SetCharset(ec.Charset)
-			resultFieldType.SetFlag(0)
-			if mysql.HasBinaryFlag(rhs.GetFlag()) || !types.IsNonBinaryStr(lhs) {
-				resultFieldType.AddFlag(mysql.BinaryFlag)
-			}
-		} else if types.IsBinaryStr(lhs) || types.IsBinaryStr(rhs) || !evalType.IsStringKind() {
+		} else if binaryStrExist || !evalType.IsStringKind() {
 			types.SetBinChsClnFlag(resultFieldType)
 		} else {
 			resultFieldType.SetCharset(mysql.DefaultCharset)
