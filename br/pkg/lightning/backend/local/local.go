@@ -1674,26 +1674,30 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 
 	failpoint.Label("afterStartWorker")
 
-	err := local.prepareAndSendJob(
-		workerCtx,
-		engine,
-		regionRanges,
-		regionSplitSize,
-		regionSplitKeys,
-		jobToWorkerCh,
-		&jobWg,
-	)
-	if err != nil {
-		firstErr.Set(err)
-		workerCancel()
-		_ = workGroup.Wait()
-		return firstErr.Get()
-	}
+	workGroup.Go(func() error {
+		err := local.prepareAndSendJob(
+			workerCtx,
+			engine,
+			regionRanges,
+			regionSplitSize,
+			regionSplitKeys,
+			jobToWorkerCh,
+			&jobWg,
+		)
+		if err != nil {
+			return err
+		}
 
-	jobWg.Wait()
-	workerCancel()
-	firstErr.Set(workGroup.Wait())
-	firstErr.Set(ctx.Err())
+		jobWg.Wait()
+		workerCancel()
+		return nil
+	})
+	if err := workGroup.Wait(); err != nil {
+		if !common.IsContextCanceledError(err) {
+			log.FromContext(ctx).Error("do import meets error", zap.Error(err))
+		}
+		firstErr.Set(err)
+	}
 	return firstErr.Get()
 }
 
