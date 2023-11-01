@@ -111,13 +111,6 @@ func InsertExtendedStats(sctx sessionctx.Context,
 	}
 	strColIDs := string(bytes)
 
-	_, err = statsutil.Exec(sctx, "begin pessimistic")
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	defer func() {
-		err = statsutil.FinishTransaction(sctx, err)
-	}()
 	// No need to use `exec.ExecuteInternal` since we have acquired the lock.
 	rows, _, err := statsutil.ExecRows(sctx, "SELECT name, type, column_ids FROM mysql.stats_extended WHERE table_id = %? and status in (%?, %?)", tableID, statistics.ExtendedStatsInited, statistics.ExtendedStatsAnalyzed)
 	if err != nil {
@@ -170,13 +163,6 @@ func SaveExtendedStatsToStorage(sctx sessionctx.Context,
 		return 0, nil
 	}
 
-	_, err = statsutil.Exec(sctx, "begin pessimistic")
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	defer func() {
-		err = statsutil.FinishTransaction(sctx, err)
-	}()
 	version, err := statsutil.GetStartTS(sctx)
 	if err != nil {
 		return 0, errors.Trace(err)

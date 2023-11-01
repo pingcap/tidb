@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/poolmanager"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sasha-s/go-deadlock"
 	"go.uber.org/zap"
@@ -197,7 +196,7 @@ func (p *Pool) checkAndAddRunningInternal(concurrency int32) (conc int32, run bo
 	}
 	// if concurrency is 1 , we must return a goroutine
 	// if concurrency is more than 1, we must return at least one goroutine.
-	result := mathutil.Min(n, concurrency)
+	result := min(n, concurrency)
 	p.running.Add(result)
 	return result, true
 }

@@ -1,0 +1,172 @@
+set tidb_enable_parallel_apply=0;
+select @@tidb_enable_parallel_apply;
+@@tidb_enable_parallel_apply
+0
+set tidb_enable_parallel_apply=1;
+select @@tidb_enable_parallel_apply;
+@@tidb_enable_parallel_apply
+1
+set tidb_enable_parallel_apply=on;
+select @@tidb_enable_parallel_apply;
+@@tidb_enable_parallel_apply
+1
+set tidb_enable_parallel_apply=off;
+select @@tidb_enable_parallel_apply;
+@@tidb_enable_parallel_apply
+0
+set tidb_enable_parallel_apply=-1;
+Error 1231 (42000): Variable 'tidb_enable_parallel_apply' can't be set to the value of '-1'
+set tidb_enable_parallel_apply=2;
+Error 1231 (42000): Variable 'tidb_enable_parallel_apply' can't be set to the value of '2'
+set tidb_enable_parallel_apply=1000;
+Error 1231 (42000): Variable 'tidb_enable_parallel_apply' can't be set to the value of '1000'
+set tidb_enable_parallel_apply='onnn';
+Error 1231 (42000): Variable 'tidb_enable_parallel_apply' can't be set to the value of 'onnn'
+set tidb_enable_parallel_apply=default;
+set tidb_enable_parallel_apply=true;
+drop table if exists t, t1;
+create table t(a varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci, b int);
+create table t1(a varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci, b int);
+insert into t values ('a', 1), ('A', 2), ('a', 3), ('A', 4);
+insert into t1 values ('a', 1), ('A', 2), ('a', 3), ('A', 4);
+select (select min(t1.b) from t1 where t1.a >= t.a), (select sum(t1.b) from t1 where t1.a >= t.a) from t;
+(select min(t1.b) from t1 where t1.a >= t.a)	(select sum(t1.b) from t1 where t1.a >= t.a)
+1	10
+1	10
+1	10
+1	10
+select (select min(t1.b) from t1 where t1.a >= t.a and t1.b >= t.b), (select sum(t1.b) from t1 where t1.a >= t.a and t1.b >= t.b) from t;
+(select min(t1.b) from t1 where t1.a >= t.a and t1.b >= t.b)	(select sum(t1.b) from t1 where t1.a >= t.a and t1.b >= t.b)
+1	10
+2	9
+3	7
+4	4
+set tidb_enable_prepared_plan_cache=1;
+drop table if exists t1, t2;
+create table t1(a int, b int);
+create table t2(a int, b int);
+insert into t1 values (1, 1), (1, 5), (2, 3), (2, 4), (3, 3);
+insert into t2 values (0, 1), (2, -1), (3, 2);
+prepare stmt from "select * from t1 where t1.b >= (select sum(t2.b) from t2 where t2.a > t1.a and t2.a > ?)";
+set @a=1;
+execute stmt using @a;
+a	b
+1	1
+1	5
+2	3
+2	4
+set @a=2;
+execute stmt using @a;
+a	b
+1	5
+2	3
+2	4
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+set tidb_enable_clustered_index=ON;
+drop table if exists t, t2;
+create table t(a int, b int, c int, primary key(a, b));
+create table t2(a int, b int, c int, primary key(a, c));
+insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4);
+insert into t2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4);
+select * from t where (select min(t2.b) from t2 where t2.a > t.a) > 0;
+a	b	c
+1	1	1
+2	2	2
+3	3	3
+set tidb_enable_clustered_index=INT_ONLY;
+drop table if exists t1, t2;
+create table t1(a int, b int) partition by range(a) (partition p0 values less than(10), partition p1 values less than(20), partition p2 values less than(30), partition p3 values less than(40));
+create table t2(a int, b int) partition by hash(a) partitions 4;
+insert into t1 values (5, 5), (15, 15), (25, 25), (35, 35);
+insert into t2 values (5, 5), (15, 15), (25, 25), (35, 35);
+select (select count(*) from t2 where t2.a > t1.b and t2.a=20), (select max(t2.b) from t2 where t2.a between t1.a and 20) from t1 where t1.a > 10;
+(select count(*) from t2 where t2.a > t1.b and t2.a=20)	(select max(t2.b) from t2 where t2.a between t1.a and 20)
+0	NULL
+0	NULL
+0	15
+set tidb_enable_parallel_apply=default;
+set tidb_enable_prepared_plan_cache=default;
+set tidb_enable_clustered_index=default;
+set tidb_enable_parallel_apply=true;
+drop table if exists t, t2;
+create table t(a bigint, b int);
+create table t2(a int, b int);
+insert into t values (1, 1), (2, 2), (3, 3), (4, 4), (1, 1), (2, 2), (3, 3), (4, 4);
+insert into t2 values (1, 1), (2, 2), (3, 3), (4, 4), (1, 1), (2, 2), (3, 3), (4, 4);
+delete from t where (select min(t2.a) * 2 from t2 where t2.a < t.a) > 1;
+select * from t;
+a	b
+1	1
+1	1
+drop table if exists t;
+create table t(a int, b int, c int);
+insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (1, 1, 1), (2, 2, 2), (3, 3, 3);
+insert into t (select * from t where (select count(*) from t t1 where t1.b > t.a) > 2);
+select * from t;
+a	b	c
+1	1	1
+1	1	1
+1	1	1
+1	1	1
+2	2	2
+2	2	2
+3	3	3
+3	3	3
+drop table if exists t, t2;
+create table t(a smallint, b int);
+create table t2(a int, b int);
+insert into t values (1, 1), (2, 2), (3, 3), (1, 1), (2, 2), (3, 3);
+insert into t2 values (1, 1), (2, 2), (3, 3), (1, 1), (2, 2), (3, 3);
+update t set a = a + 1 where (select count(*) from t2 where t2.a <= t.a) in (1, 2);
+select * from t;
+a	b
+2	1
+2	1
+2	2
+2	2
+3	3
+3	3
+drop table if exists t, t2;
+create table t(a tinyint, b int, unique index idx(a));
+create table t2(a tinyint, b int);
+insert into t values (1, 1), (2, 2), (3, 3), (4, 4);
+insert into t2 values (1, 1), (2, 2), (3, 3), (1, 1), (2, 2), (3, 3);
+replace into t (select pow(t2.a, 2), t2.b from t2 where (select min(t.a) from t where t.a > t2.a) between 1 and 5);
+select * from t;
+a	b
+1	1
+2	2
+3	3
+4	2
+9	3
+drop table if exists t1, t2;
+create table t1(a int, b int);
+create table t2(a int, b int);
+insert into t1 values (1, 2), (1, 3);
+begin;
+insert into t1 values (1, 4), (2, 3), (2, 5);
+insert into t2 values (2, 3), (3, 4);
+select * from t1 where t1.b > any (select t2.b from t2 where t2.b < t1.b);
+a	b
+1	4
+2	5
+delete from t1 where a = 1;
+select * from t1 where t1.b > any (select t2.b from t2 where t2.b < t1.b);
+a	b
+2	5
+commit;
+select * from t1 where t1.b > any (select t2.b from t2 where t2.b < t1.b);
+a	b
+2	5
+set tidb_enable_parallel_apply=default;
+set tidb_enable_parallel_apply=true;
+drop table if exists t1, t2;
+create table t1(a int);
+create table t2(a int);
+select case when t1.a is null
+then (select t2.a from t2 where t2.a = t1.a limit 1) else t1.a end a
+from t1 where t1.a=1 order by a limit 1;
+a
+set tidb_enable_parallel_apply=default;

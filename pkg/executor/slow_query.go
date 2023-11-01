@@ -538,7 +538,7 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 	defer e.memConsume(-logSize)
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("%s", r)
+			err = util.GetRecoverError(r)
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]

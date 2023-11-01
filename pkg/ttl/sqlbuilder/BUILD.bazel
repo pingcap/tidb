@@ -12,8 +12,8 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/ttl/cache",
         "//pkg/types",
-        "//pkg/util/sqlexec",
-        "@com_github_pkg_errors//:errors",
+        "//pkg/util/sqlescape",
+        "@com_github_pingcap_errors//:errors",
     ],
 )
 

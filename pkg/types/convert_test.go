@@ -148,15 +148,15 @@ func TestConvertType(t *testing.T) {
 	vv, err := Convert(v, ft)
 	require.NoError(t, err)
 	require.Equal(t, "10:11:12.1", vv.(Duration).String())
-	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-	vd, err := ParseTime(sc, "2010-10-10 10:11:11.12345", mysql.TypeDatetime, 2, nil)
+	typeCtx := DefaultStmtNoWarningContext
+	vd, err := ParseTime(typeCtx, "2010-10-10 10:11:11.12345", mysql.TypeDatetime, 2, nil)
 	require.Equal(t, "2010-10-10 10:11:11.12", vd.String())
 	require.NoError(t, err)
 	v, err = Convert(vd, ft)
 	require.NoError(t, err)
 	require.Equal(t, "10:11:11.1", v.(Duration).String())
 
-	vt, err := ParseTime(sc, "2010-10-10 10:11:11.12345", mysql.TypeTimestamp, 2, nil)
+	vt, err := ParseTime(typeCtx, "2010-10-10 10:11:11.12345", mysql.TypeTimestamp, 2, nil)
 	require.Equal(t, "2010-10-10 10:11:11.12", vt.String())
 	require.NoError(t, err)
 	v, err = Convert(vt, ft)
@@ -248,11 +248,11 @@ func TestConvertType(t *testing.T) {
 
 	// Test Datum.ToDecimal with bad number.
 	d := NewDatum("hello")
-	_, err = d.ToDecimal(sc.TypeCtxOrDefault())
+	_, err = d.ToDecimal(typeCtx)
 	require.Truef(t, terror.ErrorEqual(err, ErrTruncatedWrongVal), "err %v", err)
 
-	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
-	v, err = d.ToDecimal(sc.TypeCtxOrDefault())
+	typeCtx = typeCtx.WithFlags(typeCtx.Flags().WithIgnoreTruncateErr(true))
+	v, err = d.ToDecimal(typeCtx)
 	require.NoError(t, err)
 	require.Equal(t, "0", v.(*MyDecimal).String())
 
@@ -266,7 +266,7 @@ func TestConvertType(t *testing.T) {
 	require.Equal(t, int64(2015), v)
 	_, err = Convert(1800, ft)
 	require.Error(t, err)
-	dt, err := ParseDate(nil, "2015-11-11")
+	dt, err := ParseDate(DefaultStmtNoWarningContext, "2015-11-11")
 	require.NoError(t, err)
 	v, err = Convert(dt, ft)
 	require.NoError(t, err)
@@ -345,11 +345,11 @@ func TestConvertToString(t *testing.T) {
 	testToString(t, Enum{Name: "a", Value: 1}, "a")
 	testToString(t, Set{Name: "a", Value: 1}, "a")
 
-	t1, err := ParseTime(stmtctx.NewStmtCtxWithTimeZone(time.UTC), "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6, nil)
+	t1, err := ParseTime(DefaultStmtNoWarningContext, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6, nil)
 	require.NoError(t, err)
 	testToString(t, t1, "2011-11-10 11:11:11.999999")
 
-	td, _, err := ParseDuration(nil, "11:11:11.999999", 6)
+	td, _, err := ParseDuration(DefaultStmtNoWarningContext, "11:11:11.999999", 6)
 	require.NoError(t, err)
 	testToString(t, td, "11:11:11.999999")
 
@@ -472,7 +472,7 @@ func TestConvertToBinaryString(t *testing.T) {
 }
 
 func testStrToInt(t *testing.T, str string, expect int64, truncateAsErr bool, expectErr error) {
-	ctx := DefaultNoWarningContext.WithFlags(StrictFlags.WithIgnoreTruncateErr(!truncateAsErr))
+	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(!truncateAsErr))
 	val, err := StrToInt(ctx, str, false)
 	if expectErr != nil {
 		require.Truef(t, terror.ErrorEqual(err, expectErr), "err %v", err)
@@ -483,7 +483,7 @@ func testStrToInt(t *testing.T, str string, expect int64, truncateAsErr bool, ex
 }
 
 func testStrToUint(t *testing.T, str string, expect uint64, truncateAsErr bool, expectErr error) {
-	ctx := DefaultNoWarningContext.WithFlags(StrictFlags.WithIgnoreTruncateErr(!truncateAsErr))
+	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(!truncateAsErr))
 	val, err := StrToUint(ctx, str, false)
 	if expectErr != nil {
 		require.Truef(t, terror.ErrorEqual(err, expectErr), "err %v", err)
@@ -494,7 +494,7 @@ func testStrToUint(t *testing.T, str string, expect uint64, truncateAsErr bool, 
 }
 
 func testStrToFloat(t *testing.T, str string, expect float64, truncateAsErr bool, expectErr error) {
-	ctx := DefaultNoWarningContext.WithFlags(StrictFlags.WithIgnoreTruncateErr(!truncateAsErr))
+	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(!truncateAsErr))
 	val, err := StrToFloat(ctx, str, false)
 	if expectErr != nil {
 		require.Truef(t, terror.ErrorEqual(err, expectErr), "err %v", err)
@@ -927,7 +927,7 @@ func TestGetValidInt(t *testing.T) {
 		{"123e+", "123", true},
 		{"123de", "123", true},
 	}
-	sc.SetTypeFlags(StrictFlags)
+	sc.SetTypeFlags(DefaultStmtFlags)
 	sc.InSelectStmt = false
 	for _, tt := range tests2 {
 		prefix, err := getValidIntPrefix(sc.TypeCtxOrDefault(), tt.origin, false)
@@ -963,7 +963,7 @@ func TestGetValidFloat(t *testing.T) {
 		{"9-3", "9"},
 		{"1001001\\u0000\\u0000\\u0000", "1001001"},
 	}
-	ctx := DefaultNoWarningContext
+	ctx := DefaultStmtNoWarningContext
 	for _, tt := range tests {
 		prefix, _ := getValidFloatPrefix(ctx, tt.origin, false)
 		require.Equal(t, tt.valid, prefix)
@@ -1084,7 +1084,7 @@ func TestConvertJSONToInt(t *testing.T) {
 		j, err := ParseBinaryJSONFromString(tt.in)
 		require.NoError(t, err)
 
-		casted, err := ConvertJSONToInt64(stmtctx.NewStmtCtx(), j, false)
+		casted, err := ConvertJSONToInt64(stmtctx.NewStmtCtx().TypeCtx(), j, false)
 		if tt.err {
 			require.Error(t, err, tt)
 		} else {
@@ -1114,7 +1114,7 @@ func TestConvertJSONToFloat(t *testing.T) {
 		{in: "123.456hello", out: 123.456, ty: JSONTypeCodeString, err: true},
 		{in: "1234", out: 1234, ty: JSONTypeCodeString},
 	}
-	ctx := DefaultNoWarningContext
+	ctx := DefaultStmtNoWarningContext
 	for _, tt := range tests {
 		j := CreateBinaryJSON(tt.in)
 		require.Equal(t, tt.ty, j.TypeCode)
@@ -1143,7 +1143,7 @@ func TestConvertJSONToDecimal(t *testing.T) {
 		{in: `false`, out: NewDecFromStringForTest("0")},
 		{in: `null`, out: NewDecFromStringForTest("0"), err: true},
 	}
-	ctx := DefaultNoWarningContext
+	ctx := DefaultStmtNoWarningContext
 	for _, tt := range tests {
 		j, err := ParseBinaryJSONFromString(tt.in)
 		require.NoError(t, err)
@@ -1210,7 +1210,6 @@ func TestNumberToDuration(t *testing.T) {
 }
 
 func TestStrToDuration(t *testing.T) {
-	sc := stmtctx.NewStmtCtx()
 	var tests = []struct {
 		str        string
 		fsp        int
@@ -1224,7 +1223,7 @@ func TestStrToDuration(t *testing.T) {
 		{"00:00:00", 0, true},
 	}
 	for _, tt := range tests {
-		_, _, isDuration, err := StrToDuration(sc, tt.str, tt.fsp)
+		_, _, isDuration, err := StrToDuration(DefaultStmtNoWarningContext, tt.str, tt.fsp)
 		require.NoError(t, err)
 		require.Equal(t, tt.isDuration, isDuration)
 	}

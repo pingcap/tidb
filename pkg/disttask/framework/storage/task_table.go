@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -549,8 +550,7 @@ func (stm *TaskManager) StartSubtask(subtaskID int64) error {
 
 // StartManager insert the manager information into dist_framework_meta.
 func (stm *TaskManager) StartManager(tidbID string, role string) error {
-	_, err := stm.executeSQLWithNewSession(stm.ctx, `insert into mysql.dist_framework_meta values(%?, %?, DEFAULT)
-        on duplicate key update role = %?`, tidbID, role, role)
+	_, err := stm.executeSQLWithNewSession(stm.ctx, `replace into mysql.dist_framework_meta values(%?, %?, DEFAULT)`, tidbID, role)
 	return err
 }
 
@@ -638,30 +638,30 @@ func (stm *TaskManager) UpdateFailedSchedulerIDs(taskID int64, replaceNodes map[
 	}
 
 	sql := new(strings.Builder)
-	if err := sqlexec.FormatSQL(sql, "update mysql.tidb_background_subtask set state = %? ,exec_id = (case ", proto.TaskStatePending); err != nil {
+	if err := sqlescape.FormatSQL(sql, "update mysql.tidb_background_subtask set state = %? ,exec_id = (case ", proto.TaskStatePending); err != nil {
 		return err
 	}
 	for k, v := range replaceNodes {
-		if err := sqlexec.FormatSQL(sql, "when exec_id = %? then %? ", k, v); err != nil {
+		if err := sqlescape.FormatSQL(sql, "when exec_id = %? then %? ", k, v); err != nil {
 			return err
 		}
 	}
-	if err := sqlexec.FormatSQL(sql, " end) where task_key = %? and state != \"succeed\" and exec_id in (", taskID); err != nil {
+	if err := sqlescape.FormatSQL(sql, " end) where task_key = %? and state != \"succeed\" and exec_id in (", taskID); err != nil {
 		return err
 	}
 	i := 0
 	for k := range replaceNodes {
 		if i != 0 {
-			if err := sqlexec.FormatSQL(sql, ","); err != nil {
+			if err := sqlescape.FormatSQL(sql, ","); err != nil {
 				return err
 			}
 		}
-		if err := sqlexec.FormatSQL(sql, "%?", k); err != nil {
+		if err := sqlescape.FormatSQL(sql, "%?", k); err != nil {
 			return err
 		}
 		i++
 	}
-	if err := sqlexec.FormatSQL(sql, ")"); err != nil {
+	if err := sqlescape.FormatSQL(sql, ")"); err != nil {
 		return err
 	}
 
@@ -676,7 +676,7 @@ func (stm *TaskManager) CleanUpMeta(nodes []string) error {
 	}
 	return stm.WithNewTxn(stm.ctx, func(se sessionctx.Context) error {
 		deleteSQL := new(strings.Builder)
-		if err := sqlexec.FormatSQL(deleteSQL, "delete from mysql.dist_framework_meta where host in("); err != nil {
+		if err := sqlescape.FormatSQL(deleteSQL, "delete from mysql.dist_framework_meta where host in("); err != nil {
 			return err
 		}
 		deleteElems := make([]string, 0, len(nodes))
@@ -755,17 +755,17 @@ func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtas
 			}
 
 			sql := new(strings.Builder)
-			if err := sqlexec.FormatSQL(sql, "insert into mysql.tidb_background_subtask \n"+
+			if err := sqlescape.FormatSQL(sql, "insert into mysql.tidb_background_subtask \n"+
 				"(step, task_key, exec_id, meta, state, type, checkpoint, summary) values "); err != nil {
 				return err
 			}
 			for i, subtask := range subtasks {
 				if i != 0 {
-					if err := sqlexec.FormatSQL(sql, ","); err != nil {
+					if err := sqlescape.FormatSQL(sql, ","); err != nil {
 						return err
 					}
 				}
-				if err := sqlexec.FormatSQL(sql, "(%?, %?, %?, %?, %?, %?, %?, %?)",
+				if err := sqlescape.FormatSQL(sql, "(%?, %?, %?, %?, %?, %?, %?, %?)",
 					subtask.Step, gTask.ID, subtask.SchedulerID, subtask.Meta, subtaskState, proto.Type2Int(subtask.Type), []byte{}, "{}"); err != nil {
 					return err
 				}
@@ -953,7 +953,7 @@ func (stm *TaskManager) TransferTasks2History(tasks []*proto.Task) error {
 	}
 	return stm.WithNewTxn(stm.ctx, func(se sessionctx.Context) error {
 		insertSQL := new(strings.Builder)
-		if err := sqlexec.FormatSQL(insertSQL, "replace into mysql.tidb_global_task_history"+
+		if err := sqlescape.FormatSQL(insertSQL, "replace into mysql.tidb_global_task_history"+
 			"(id, task_key, type, dispatcher_id, state, start_time, state_update_time,"+
 			"meta, concurrency, step, error) values"); err != nil {
 			return err
@@ -961,11 +961,11 @@ func (stm *TaskManager) TransferTasks2History(tasks []*proto.Task) error {
 
 		for i, task := range tasks {
 			if i != 0 {
-				if err := sqlexec.FormatSQL(insertSQL, ","); err != nil {
+				if err := sqlescape.FormatSQL(insertSQL, ","); err != nil {
 					return err
 				}
 			}
-			if err := sqlexec.FormatSQL(insertSQL, "(%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)",
+			if err := sqlescape.FormatSQL(insertSQL, "(%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)",
 				task.ID, task.Key, task.Type, task.DispatcherID,
 				task.State, task.StartTime, task.StateUpdateTime,
 				task.Meta, task.Concurrency, task.Step, serializeErr(task.Error)); err != nil {
@@ -979,7 +979,7 @@ func (stm *TaskManager) TransferTasks2History(tasks []*proto.Task) error {
 
 		// delete taskIDs tasks
 		deleteSQL := new(strings.Builder)
-		if err := sqlexec.FormatSQL(deleteSQL, "delete from mysql.tidb_global_task where id in("); err != nil {
+		if err := sqlescape.FormatSQL(deleteSQL, "delete from mysql.tidb_global_task where id in("); err != nil {
 			return err
 		}
 		deleteElems := make([]string, 0, len(tasks))
