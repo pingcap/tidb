@@ -17,7 +17,10 @@ func MergeOverlappingFiles(ctx context.Context, paths []string, store storage.Ex
 	newFilePrefix string, blockSize int, writeBatchCount uint64, propSizeDist uint64, propKeysDist uint64,
 	onClose OnCloseFunc, concurrency int, checkHotspot bool) error {
 	var dataFilesSlice [][]string
-	batchCount := len(paths) / concurrency
+	batchCount := 1
+	if len(paths) > concurrency {
+		batchCount = len(paths) / concurrency
+	}
 	for i := 0; i < len(paths); i += batchCount {
 		end := i + batchCount
 		if end > len(paths) {
