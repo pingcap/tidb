@@ -67,8 +67,26 @@ type OneFileWriter struct {
 	logger     *zap.Logger
 }
 
+func (w *OneFileWriter) initWriter(ctx context.Context) (
+	err error,
+) {
+	w.dataFile = filepath.Join(w.filenamePrefix, strconv.Itoa(0))
+	w.dataWriter, err = w.store.Create(ctx, w.dataFile, &storage.WriterOption{Concurrency: 20})
+	if err != nil {
+		return err
+	}
+	w.statFile = filepath.Join(w.filenamePrefix+statSuffix, strconv.Itoa(0))
+	w.statWriter, err = w.store.Create(ctx, w.statFile, &storage.WriterOption{Concurrency: 20})
+	if err != nil {
+		_ = w.dataWriter.Close(ctx)
+		return err
+	}
+	w.logger.Info("one file writer", zap.String("data-file", w.dataFile), zap.String("stat-file", w.statFile))
+	return nil
+}
+
 func (w *OneFileWriter) Init(ctx context.Context) (err error) {
-	err = w.InitWriter(ctx)
+	err = w.initWriter(ctx)
 	if err != nil {
 		return err
 	}
@@ -238,21 +256,4 @@ func (w *OneFileWriter) getKeyByLoc(pos kvLocation) []byte {
 	block := w.kvBuffer.blocks[pos.blockIdx]
 	keyLen := binary.BigEndian.Uint64(block[pos.offset : pos.offset+lengthBytes])
 	return block[pos.offset+lengthBytes : uint64(pos.offset)+lengthBytes+keyLen]
-}
-
-func (w *OneFileWriter) InitWriter(ctx context.Context) (
-	err error,
-) {
-	w.dataFile = filepath.Join(w.filenamePrefix, strconv.Itoa(0))
-	w.dataWriter, err = w.store.Create(ctx, w.dataFile, &storage.WriterOption{Concurrency: 20})
-	if err != nil {
-		return err
-	}
-	w.statFile = filepath.Join(w.filenamePrefix+statSuffix, strconv.Itoa(0))
-	w.statWriter, err = w.store.Create(ctx, w.statFile, &storage.WriterOption{Concurrency: 20})
-	if err != nil {
-		_ = w.dataWriter.Close(ctx)
-		return err
-	}
-	return nil
 }

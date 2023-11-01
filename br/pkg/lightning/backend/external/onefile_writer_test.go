@@ -108,8 +108,8 @@ func TestMergeOverlappingFilesV2(t *testing.T) {
 		SetPropKeysDistance(2).
 		SetMemorySizeLimit(1000).
 		SetKeyDuplicationEncoding(true).
-		Build(memStore, "/test", "0")
-	kvCount := 200000
+		BuildOneFile(memStore, "/test", "0")
+	kvCount := 20000000
 	for i := 0; i < kvCount; i++ {
 		v := i
 		if v == kvCount/2 {
@@ -178,3 +178,22 @@ func TestMergeOverlappingFilesV2(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "found duplicate key")
 }
+
+// func TestSize(t *testing.T) {
+// 	s3, clean := NewS3WithBucketAndPrefix(t, "qe", "testprefix")
+// 	defer clean()
+// 	statReader, err := newStatsReader(ctx, memStore, "/test/0_stat/0", bufSize)
+// 	require.NoError(t, err)
+
+// 	var keyCnt uint64 = 0
+// 	for {
+// 		p, err := statReader.nextProp()
+// 		if err == io.EOF {
+// 			break
+// 		}
+// 		require.NoError(t, err)
+// 		keyCnt += p.keys
+// 	}
+// 	require.Equal(t, uint64(kvCnt), keyCnt)
+// 	require.NoError(t, statReader.Close())
+// }

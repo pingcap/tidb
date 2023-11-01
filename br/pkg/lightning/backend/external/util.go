@@ -56,9 +56,10 @@ func seekPropsOffsets(
 		propKey := kv.Key(p.firstKey)
 		if propKey.Cmp(start) > 0 {
 			if !moved {
-				return nil, fmt.Errorf("start key %s is too small for stat files %v",
+				return nil, fmt.Errorf("start key %s is too small for stat files %v, propKey %s",
 					start.String(),
 					paths,
+					propKey.String(),
 				)
 			}
 			return offsets, nil
