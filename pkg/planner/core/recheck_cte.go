@@ -14,40 +14,40 @@
 
 package core
 
+import "github.com/pingcap/tidb/pkg/util/intset"
+
 // RecheckCTE fills the IsOuterMostCTE field for CTEs.
 // It's a temp solution to before we fully use the Sequence to optimize the CTEs.
-// This func will find the dependent relation of each CTEs.
+// This func checks whether the CTE is referenced only by the main query or not.
 func RecheckCTE(p LogicalPlan) {
-	ctes := make(map[int]*CTEClass)
-	inDegreeMap := make(map[int]int)
-	findCTEs(p, ctes, true, inDegreeMap)
-	for id, cte := range ctes {
-		cte.isOuterMostCTE = inDegreeMap[id] == 0
-	}
+	visited := intset.NewFastIntSet()
+	findCTEs(p, &visited, true)
 }
 
 func findCTEs(
 	p LogicalPlan,
-	ctes map[int]*CTEClass,
+	visited *intset.FastIntSet,
 	isRootTree bool,
-	inDegree map[int]int,
 ) {
 	if cteReader, ok := p.(*LogicalCTE); ok {
 		cte := cteReader.cte
 		if !isRootTree {
-			inDegree[cte.IDForStorage]++
+			// Set it to false since it's referenced by other CTEs.
+			cte.isOuterMostCTE = false
 		}
-		if _, ok := ctes[cte.IDForStorage]; ok {
+		if visited.Has(cte.IDForStorage) {
 			return
 		}
-		ctes[cte.IDForStorage] = cte
-		findCTEs(cte.seedPartLogicalPlan, ctes, false, inDegree)
+		visited.Insert(cte.IDForStorage)
+		// Set it when we meet it first time.
+		cte.isOuterMostCTE = isRootTree
+		findCTEs(cte.seedPartLogicalPlan, visited, false)
 		if cte.recursivePartLogicalPlan != nil {
-			findCTEs(cte.recursivePartLogicalPlan, ctes, false, inDegree)
+			findCTEs(cte.recursivePartLogicalPlan, visited, false)
 		}
 		return
 	}
 	for _, child := range p.Children() {
-		findCTEs(child, ctes, isRootTree, inDegree)
+		findCTEs(child, visited, isRootTree)
 	}
 }
