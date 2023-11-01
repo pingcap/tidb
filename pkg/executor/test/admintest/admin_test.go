@@ -345,7 +345,7 @@ func TestClusteredIndexAdminRecoverIndex(t *testing.T) {
 	tblName := model.NewCIStr("t")
 
 	// Test no corruption case.
-	tk.MustExec("create table t (a varchar(255), b int, c char(10), primary key(a, c), index idx(b));")
+	tk.MustExec("create table t (a varchar(255), b int, c char(10), primary key(a, c), index idx(b), index idx1(c));")
 	tk.MustExec("insert into t values ('1', 2, '3'), ('1', 2, '4'), ('1', 2, '5');")
 	tk.MustQuery("admin recover index t `primary`;").Check(testkit.Rows("0 0"))
 	tk.MustQuery("admin recover index t `idx`;").Check(testkit.Rows("0 3"))
@@ -362,6 +362,7 @@ func TestClusteredIndexAdminRecoverIndex(t *testing.T) {
 	sc := ctx.GetSessionVars().StmtCtx
 
 	// Some index entries are missed.
+	// Recover an index don't covered by clustered index.
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	cHandle := testutil.MustNewCommonHandle(t, "1", "3")
@@ -375,6 +376,23 @@ func TestClusteredIndexAdminRecoverIndex(t *testing.T) {
 	tk.MustQuery("SELECT COUNT(*) FROM t USE INDEX(idx)").Check(testkit.Rows("2"))
 	tk.MustQuery("admin recover index t idx").Check(testkit.Rows("1 3"))
 	tk.MustQuery("SELECT COUNT(*) FROM t USE INDEX(idx)").Check(testkit.Rows("3"))
+	tk.MustExec("admin check table t;")
+
+	// Recover an index covered by clustered index.
+	idx1Info := tblInfo.FindIndexByName("idx1")
+	indexOpr1 := tables.NewIndex(tblInfo.ID, tblInfo, idx1Info)
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	err = indexOpr1.Delete(sc, txn, types.MakeDatums("3"), cHandle)
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	tk.MustGetErrCode("admin check table t", mysql.ErrDataInconsistent)
+	tk.MustGetErrCode("admin check index t idx1", mysql.ErrDataInconsistent)
+
+	tk.MustQuery("SELECT COUNT(*) FROM t USE INDEX(idx1)").Check(testkit.Rows("2"))
+	tk.MustQuery("admin recover index t idx1").Check(testkit.Rows("1 3"))
+	tk.MustQuery("SELECT COUNT(*) FROM t USE INDEX(idx1)").Check(testkit.Rows("3"))
 	tk.MustExec("admin check table t;")
 }
 

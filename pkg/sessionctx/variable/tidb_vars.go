@@ -590,6 +590,9 @@ const (
 	// TiDBStmtSummaryMaxSQLLength indicates the max length of displayed normalized sql and sample sql.
 	TiDBStmtSummaryMaxSQLLength = "tidb_stmt_summary_max_sql_length"
 
+	// TiDBIgnoreInlistPlanDigest enables TiDB to generate the same plan digest with SQL using different in-list arguments.
+	TiDBIgnoreInlistPlanDigest = "tidb_ignore_inlist_plan_digest"
+
 	// TiDBCapturePlanBaseline indicates whether the capture of plan baselines is enabled.
 	TiDBCapturePlanBaseline = "tidb_capture_plan_baselines"
 
@@ -840,7 +843,8 @@ const (
 	TiDBAnalyzePartitionConcurrency = "tidb_analyze_partition_concurrency"
 	// TiDBMergePartitionStatsConcurrency indicates the concurrency when merge partition stats into global stats
 	TiDBMergePartitionStatsConcurrency = "tidb_merge_partition_stats_concurrency"
-
+	// TiDBEnableAsyncMergeGlobalStats indicates whether to enable async merge global stats
+	TiDBEnableAsyncMergeGlobalStats = "tidb_enable_async_merge_global_stats"
 	// TiDBOptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
 	TiDBOptPrefixIndexSingleScan = "tidb_opt_prefix_index_single_scan"
@@ -1281,6 +1285,7 @@ const (
 	DefTiDBStmtSummaryMaxStmtCount                 = 3000
 	DefTiDBStmtSummaryMaxSQLLength                 = 4096
 	DefTiDBCapturePlanBaseline                     = Off
+	DefTiDBIgnoreInlistPlanDigest                  = false
 	DefTiDBEnableIndexMerge                        = true
 	DefEnableLegacyInstanceScope                   = true
 	DefTiDBTableCacheLease                         = 3 // 3s
@@ -1364,6 +1369,7 @@ const (
 	DefTiDBGOGCMaxValue                               = 500
 	DefTiDBGOGCMinValue                               = 100
 	DefTiDBOptPrefixIndexSingleScan                   = true
+	DefTiDBEnableAsyncMergeGlobalStats                = true
 	DefTiDBExternalTS                                 = 0
 	DefTiDBEnableExternalTSRead                       = false
 	DefTiDBEnableReusechunk                           = true
@@ -1521,6 +1527,7 @@ var (
 	ServiceScope              = atomic.NewString("")
 	SchemaVersionCacheLimit   = atomic.NewInt64(DefTiDBSchemaVersionCacheLimit)
 	CloudStorageURI           = atomic.NewString("")
+	IgnoreInlistPlanDigest    = atomic.NewBool(DefTiDBIgnoreInlistPlanDigest)
 )
 
 var (
