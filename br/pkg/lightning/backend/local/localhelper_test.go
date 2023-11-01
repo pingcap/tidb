@@ -253,10 +253,8 @@ func (c *testSplitClient) ScanRegions(ctx context.Context, key, endKey []byte, l
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
 	if c.hook != nil {
