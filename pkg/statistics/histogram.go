@@ -919,7 +919,7 @@ func (hg *Histogram) OutOfRange(val types.Datum) bool {
          │   │
     lDatum  rDatum
 */
-// The shaded area calculation formula is:
+// The percentage of shaded area on the left side calculation formula is:
 // leftPercent = (math.Pow(actualR-boundL, 2) - math.Pow(actualL-boundL, 2)) / math.Pow(histWidth, 2)
 // You can find more details at https://github.com/pingcap/tidb/pull/47966#issuecomment-1778866876
 func (hg *Histogram) OutOfRangeRowCount(
