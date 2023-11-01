@@ -132,7 +132,7 @@ func TestHandleBadNull(t *testing.T) {
 	d := types.Datum{}
 	err := col.HandleBadNull(&d, sc, 0)
 	require.NoError(t, err)
-	cmp, err := d.Compare(sc, &types.Datum{}, collate.GetBinaryCollator())
+	cmp, err := d.Compare(sc.TypeCtx(), &types.Datum{}, collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 
@@ -262,7 +262,7 @@ func TestGetZeroValue(t *testing.T) {
 			colInfo := &model.ColumnInfo{FieldType: *tt.ft}
 			zv := GetZeroValue(colInfo)
 			require.Equal(t, tt.value.Kind(), zv.Kind())
-			cmp, err := zv.Compare(sc, &tt.value, collate.GetCollator(tt.ft.GetCollate()))
+			cmp, err := zv.Compare(sc.TypeCtx(), &tt.value, collate.GetCollator(tt.ft.GetCollate()))
 			require.NoError(t, err)
 			require.Equal(t, 0, cmp)
 		})

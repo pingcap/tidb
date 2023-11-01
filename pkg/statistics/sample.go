@@ -68,7 +68,7 @@ func SortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) ([]*Samp
 	var err error
 	slices.SortStableFunc(sortedItems, func(i, j *SampleItem) int {
 		var cmp int
-		cmp, err = i.Value.Compare(sc, &j.Value, collate.GetBinaryCollator())
+		cmp, err = i.Value.Compare(sc.TypeCtx(), &j.Value, collate.GetBinaryCollator())
 		if err != nil {
 			return -1
 		}

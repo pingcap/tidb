@@ -4676,7 +4676,7 @@ func (b *PlanBuilder) convertValue(valueItem ast.ExprNode, mockTablePlan Logical
 	if err != nil {
 		return d, err
 	}
-	d, err = value.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &col.FieldType)
+	d, err = value.ConvertTo(b.ctx.GetSessionVars().StmtCtx.TypeCtx(), &col.FieldType)
 	if err != nil {
 		if !types.ErrTruncated.Equal(err) && !types.ErrTruncatedWrongVal.Equal(err) && !types.ErrBadNumber.Equal(err) {
 			return d, err
@@ -5571,10 +5571,8 @@ func calcTSForPlanReplayer(sctx sessionctx.Context, tsExpr ast.ExprNode) uint64 
 	tpLonglong.SetFlag(mysql.UnsignedFlag)
 	// We need a strict check, which means no truncate or any other warnings/errors, or it will wrongly try to parse
 	// a date/time string into a TSO.
-	// To achieve this, we need to set fields like StatementContext.IgnoreTruncate to false, and maybe it's better
-	// not to modify and reuse the original StatementContext, so we use a temporary one here.
-	tmpStmtCtx := stmtctx.NewStmtCtxWithTimeZone(sctx.GetSessionVars().Location())
-	tso, err := tsVal.ConvertTo(tmpStmtCtx, tpLonglong)
+	// To achieve this, we create a new type context without re-using the one in statement context.
+	tso, err := tsVal.ConvertTo(types.DefaultStmtNoWarningContext.WithLocation(sctx.GetSessionVars().Location()), tpLonglong)
 	if err == nil {
 		return tso.GetUint64()
 	}
@@ -5583,7 +5581,7 @@ func calcTSForPlanReplayer(sctx sessionctx.Context, tsExpr ast.ExprNode) uint64 
 	// this part is similar to CalculateAsOfTsExpr
 	tpDateTime := types.NewFieldType(mysql.TypeDatetime)
 	tpDateTime.SetDecimal(6)
-	timestamp, err := tsVal.ConvertTo(sctx.GetSessionVars().StmtCtx, tpDateTime)
+	timestamp, err := tsVal.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), tpDateTime)
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		return 0

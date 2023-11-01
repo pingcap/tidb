@@ -85,12 +85,12 @@ func HistogramFromStorage(sctx sessionctx.Context, tableID int64, colID int64, t
 			if tp.EvalType() == types.ETString && tp.GetType() != mysql.TypeEnum && tp.GetType() != mysql.TypeSet {
 				tp = types.NewFieldType(mysql.TypeBlob)
 			}
-			lowerBound, err = d.ConvertTo(sc, tp)
+			lowerBound, err = d.ConvertTo(sc.TypeCtx(), tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			d = rows[i].GetDatum(3, &fields[3].Column.FieldType)
-			upperBound, err = d.ConvertTo(sc, tp)
+			upperBound, err = d.ConvertTo(sc.TypeCtx(), tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

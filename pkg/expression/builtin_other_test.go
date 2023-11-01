@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -67,9 +66,8 @@ func TestBitCount(t *testing.T) {
 			require.Nil(t, test.count)
 			continue
 		}
-		sc := stmtctx.NewStmtCtxWithTimeZone(stmtCtx.TimeZone())
-		sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
-		res, err := count.ToInt64(sc)
+		ctx := types.DefaultStmtNoWarningContext.WithFlags(types.DefaultStmtFlags.WithIgnoreTruncateErr(true))
+		res, err := count.ToInt64(ctx)
 		require.NoError(t, err)
 		require.Equal(t, test.count, res)
 	}
@@ -195,7 +193,7 @@ func TestValues(t *testing.T) {
 	ret, err = evalBuiltinFunc(sig, chunk.Row{})
 	require.NoError(t, err)
 
-	cmp, err := ret.Compare(nil, &currInsertValues[1], collate.GetBinaryCollator())
+	cmp, err := ret.Compare(types.DefaultStmtNoWarningContext, &currInsertValues[1], collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 }

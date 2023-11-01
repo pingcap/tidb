@@ -1192,7 +1192,7 @@ func convertToTimeWithFsp(sc *stmtctx.StatementContext, arg types.Datum, tp byte
 	f := types.NewFieldType(tp)
 	f.SetDecimal(fsp)
 
-	d, err = arg.ConvertTo(sc, f)
+	d, err = arg.ConvertTo(sc.TypeCtx(), f)
 	if err != nil {
 		d.SetNull()
 		return d, err

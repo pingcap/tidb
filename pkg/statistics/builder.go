@@ -71,7 +71,7 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 		b.hist.NDV = 1
 		return nil
 	}
-	cmp, err := b.hist.GetUpper(int(b.bucketIdx)).Compare(b.sc, &data, collate.GetBinaryCollator())
+	cmp, err := b.hist.GetUpper(int(b.bucketIdx)).Compare(b.sc.TypeCtx(), &data, collate.GetBinaryCollator())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -178,7 +178,7 @@ func buildHist(sc *stmtctx.StatementContext, hg *Histogram, samples []*SampleIte
 			memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
 			memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
 		}
-		cmp, err := upper.Compare(sc, &samples[i].Value, collate.GetBinaryCollator())
+		cmp, err := upper.Compare(sc.TypeCtx(), &samples[i].Value, collate.GetBinaryCollator())
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
