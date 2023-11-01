@@ -67,10 +67,8 @@ func (w *HashAggFinalWorker) getPartialInput() (input *AggPartialResultMapper, o
 func (w *HashAggFinalWorker) initBInMap() {
 	w.BInMap = 0
 	mapLen := len(w.partialResultMap)
-	for i := 0; i < mapLen; i++ {
-		if i > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
-			w.BInMap++
-		}
+	for mapLen > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+		w.BInMap++
 	}
 }
 
