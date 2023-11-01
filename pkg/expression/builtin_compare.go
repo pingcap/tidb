@@ -120,12 +120,8 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 
 	flag := uint(0)
-	isAllTypeNull := true
 	for _, arg := range args {
 		flag |= arg.GetType().GetFlag() & mysql.NotNullFlag
-		if arg.GetType().GetType() != mysql.TypeNull {
-			isAllTypeNull = false
-		}
 	}
 
 	resultFieldType, err := InferType4ControlFuncs(ctx, c.funcName, args...)
@@ -134,12 +130,6 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 
 	resultFieldType.AddFlag(flag)
-	if isAllTypeNull {
-		resultFieldType.SetType(mysql.TypeNull)
-		resultFieldType.SetFlen(0)
-		resultFieldType.SetDecimal(0)
-		types.SetBinChsClnFlag(resultFieldType)
-	}
 
 	retEvalTp := resultFieldType.EvalType()
 	fieldEvalTps := make([]types.EvalType, 0, len(args))
