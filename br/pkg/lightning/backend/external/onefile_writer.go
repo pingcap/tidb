@@ -70,6 +70,7 @@ type OneFileWriter struct {
 func (w *OneFileWriter) initWriter(ctx context.Context) (
 	err error,
 ) {
+	w.logger = logutil.Logger(ctx)
 	w.dataFile = filepath.Join(w.filenamePrefix, strconv.Itoa(0))
 	w.dataWriter, err = w.store.Create(ctx, w.dataFile, &storage.WriterOption{Concurrency: 20})
 	if err != nil {
@@ -90,7 +91,6 @@ func (w *OneFileWriter) Init(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
-	w.logger = logutil.Logger(ctx)
 	w.kvStore, err = NewKeyValueStore(ctx, w.dataWriter, w.rc)
 	return err
 }
