@@ -484,8 +484,6 @@ func TestWriteNoError(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestWriteNoError ensures the WriteFile API issues a PutObject request and wait
-// until the object is available in the S3 bucket.
 func TestMultiUploadErrorNotOverwritten(t *testing.T) {
 	s := createS3Suite(t)
 	ctx := aws.BackgroundContext()
@@ -496,7 +494,7 @@ func TestMultiUploadErrorNotOverwritten(t *testing.T) {
 
 	w, err := s.storage.Create(ctx, "file", &WriterOption{Concurrency: 2})
 	require.NoError(t, err)
-	// data should be larger than 5MB
+	// data should be larger than 5MB to trigger CreateMultipartUploadWithContext path
 	data := make([]byte, 5*1024*1024+6716)
 	n, err := w.Write(ctx, data)
 	require.NoError(t, err)
