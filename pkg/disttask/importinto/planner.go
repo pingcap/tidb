@@ -262,6 +262,7 @@ func generateImportSpecs(ctx context.Context, p *LogicalPlan) ([]planner.Pipelin
 			return nil, err2
 		}
 
+		controller.SetExecuteNodeCnt(len(p.EligibleInstances))
 		engineCheckpoints, err2 := controller.PopulateChunks(ctx)
 		if err2 != nil {
 			return nil, err2
