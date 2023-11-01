@@ -48,7 +48,7 @@ func (p *PipelineChannel[T]) Recv(ctx context.Context) (item T, ok bool, err err
 	metrics.RestoreInFlightCounters.WithLabelValues(p.name).Desc()
 	select {
 	case <-ctx.Done():
-		p.errCh <- ctx.Err()
+		err = ctx.Err()
 	case item, ok = <-p.ch:
 	case err = <-p.errCh:
 	}
