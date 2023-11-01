@@ -75,3 +75,10 @@ aliases:
     - D3Hunter
     - Benjamin2037
     - gmhdbjd
+  sig-approvers-meta: # approvers for meta pkg
+    - Benjamin2037
+    - gmhdbjd
+    - tangenta
+    - wjhuang2016
+    - ywqzzy
+    - zimulala
