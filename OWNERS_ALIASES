@@ -105,3 +105,9 @@ aliases:
     - wjhuang2016
     - ywqzzy
     - zimulala
+  sig-approvers-lock: # approvers for lock pkg
+    - Benjamin2037
+    - lance6716
+    - tangenta
+    - wjhuang2016
+    - zimulala
