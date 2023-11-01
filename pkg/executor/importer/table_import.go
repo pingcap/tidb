@@ -338,6 +338,7 @@ func (e *LoadDataController) getAdjustedMaxEngineSize() int64 {
 	return int64(math.Ceil(float64(e.TotalFileSize) / float64(subtaskCount)))
 }
 
+// SetExecuteNodeCnt sets the execute node count.
 func (e *LoadDataController) SetExecuteNodeCnt(cnt int) {
 	e.ExecuteNodesCnt = cnt
 }
