@@ -1579,7 +1579,11 @@ func genIndexValueVersion0(sc *stmtctx.StatementContext, tblInfo *model.TableInf
 		idxVal[0] = byte(tailLen)
 	} else {
 		// Old index value encoding.
-		idxVal = make([]byte, 0)
+		if buf == nil {
+			idxVal = make([]byte, 0)
+		} else {
+			idxVal = buf[:0]
+		}
 		if distinct {
 			idxVal = EncodeHandleInUniqueIndexValue(h, untouched)
 		}
