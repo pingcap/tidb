@@ -325,7 +325,7 @@ func (e *LoadDataController) calculateSubtaskCnt() int {
 	}
 
 	// for global sort task, since there is no overlap,
-	// we make sure subtask count is a multiple of executeCnt
+	// we make sure subtask count is a multiple of execute nodes count
 	if e.IsGlobalSort() && e.ExecuteNodesCnt > 0 {
 		subtaskCount = math.Ceil(subtaskCount/float64(e.ExecuteNodesCnt)) * float64(e.ExecuteNodesCnt)
 	}
