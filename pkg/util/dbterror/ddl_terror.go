@@ -484,6 +484,8 @@ var (
 			" Use the LPAD function to zero-pad numbers, or store the formatted numbers in a CHAR column.",
 		), nil),
 	)
+	// ErrCheckConstraintDupName is for duplicate check constraint names
+	ErrCheckConstraintDupName = ClassDDL.NewStd(mysql.ErrCheckConstraintDupName)
 )
 
 // ReorgRetryableErrCodes is the error codes that are retryable for reorganization.

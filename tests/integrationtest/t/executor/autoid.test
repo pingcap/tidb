@@ -390,3 +390,98 @@ show table t_473 next_row_id;
 -- error 1105
 alter table t_473 auto_id_cache = 1;
 
+# TestAutoIDIncrementAndOffset There is a potential issue in MySQL: when the value of auto_increment_offset is greater
+# than that of auto_increment_increment, the value of auto_increment_offset is ignored
+# (https://dev.mysql.com/doc/refman/8.0/en/replication-options-master.html#sysvar_auto_increment_increment),
+# This issue is a flaw of the implementation of MySQL and it doesn't exist in TiDB.
+drop table if exists io;
+set auto_increment_offset = 10;
+set auto_increment_increment = 5;
+
+create table io (a int key auto_increment);
+insert into io values (null),(null),(null);
+select * from io;
+drop table io;
+create table io (a int key auto_increment) AUTO_ID_CACHE 1;
+insert into io values (null),(null),(null);
+select * from io;
+drop table io;
+
+## Test handle is PK.
+create table io (a int key auto_increment);
+set auto_increment_offset = 10;
+set auto_increment_increment = 2;
+insert into io values (),(),();
+select * from io;
+delete from io;
+set auto_increment_increment = 5;
+insert into io values (),(),();
+select * from io;
+delete from io;
+set auto_increment_increment = 10;
+insert into io values (),(),();
+select * from io;
+delete from io;
+set auto_increment_increment = 5;
+insert into io values (),(),();
+select * from io;
+drop table io;
+create table io (a int key auto_increment) AUTO_ID_CACHE 1;
+set auto_increment_offset = 10;
+set auto_increment_increment = 2;
+insert into io values (),(),();
+select * from io;
+delete from io;
+set auto_increment_increment = 5;
+insert into io values (),(),();
+select * from io;
+delete from io;
+set auto_increment_increment = 10;
+insert into io values (),(),();
+select * from io;
+delete from io;
+set auto_increment_increment = 5;
+insert into io values (),(),();
+select * from io;
+drop table io;
+
+## Test handle is not PK.
+set auto_increment_offset = 10;
+set auto_increment_increment = 2;
+create table io (a int, b int auto_increment, key(b));
+insert into io(b) values (null),(null),(null);
+select b from io;
+select _tidb_rowid from io;
+delete from io;
+set auto_increment_increment = 10;
+insert into io(b) values (null),(null),(null);
+select b from io;
+select _tidb_rowid from io;
+drop table io;
+set auto_increment_offset = 10;
+set auto_increment_increment = 2;
+create table io (a int, b int auto_increment, key(b)) AUTO_ID_CACHE 1;
+insert into io(b) values (null),(null),(null);
+select b from io;
+select _tidb_rowid from io;
+delete from io;
+set auto_increment_increment = 10;
+insert into io(b) values (null),(null),(null);
+select b from io;
+select _tidb_rowid from io;
+drop table io;
+
+set auto_increment_offset = -1;
+show warnings;
+set auto_increment_increment = -2;
+show warnings;
+show variables like 'auto_increment%';
+
+set auto_increment_offset = 65536;
+show warnings;
+set auto_increment_increment = 65536;
+show warnings;
+show variables like 'auto_increment%';
+
+set auto_increment_offset = default;
+set auto_increment_increment = default;

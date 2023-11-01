@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
-	"github.com/pkg/errors"
 )
 
 func writeHex(in io.Writer, d types.Datum) error {

@@ -217,7 +217,7 @@ Error 1176 (42000): Key 't' doesn't exist in table 't'
 drop table if exists t;
 create table t (a int, b int, c int, index t(a));
 alter table t drop index t, add index t(b);
-Error 1061 (42000): index already exist t
+Error 1061 (42000): Duplicate key name 't'
 drop table if exists t;
 create table t (a int, b int, c int, index t(a));
 alter table t add index t1(b), drop index t1;

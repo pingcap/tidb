@@ -499,7 +499,7 @@ func getRangeSplitter(
 	maxKeysPerRange = max(maxKeysPerRange, int64(config.SplitRegionKeys))
 
 	return external.NewRangeSplitter(ctx, dataFiles, statFiles, extStore,
-		rangeGroupSize, rangeGroupKeys, maxSizePerRange, maxKeysPerRange)
+		rangeGroupSize, rangeGroupKeys, maxSizePerRange, maxKeysPerRange, true)
 }
 
 func getSummaryFromLastStep(

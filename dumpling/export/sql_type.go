@@ -5,6 +5,7 @@ package export
 import (
 	"bytes"
 	"database/sql"
+	"encoding/base64"
 	"fmt"
 )
 
@@ -307,7 +308,14 @@ func (s *SQLTypeBytes) WriteToBuffer(bf *bytes.Buffer, _ bool) {
 func (s *SQLTypeBytes) WriteToBufferInCsv(bf *bytes.Buffer, escapeBackslash bool, opt *csvOption) {
 	if s.RawBytes != nil {
 		bf.Write(opt.delimiter)
-		escapeCSV(s.RawBytes, bf, escapeBackslash, opt)
+		switch opt.binaryFormat {
+		case BinaryFormatHEX:
+			fmt.Fprintf(bf, "%x", s.RawBytes)
+		case BinaryFormatBase64:
+			bf.WriteString(base64.StdEncoding.EncodeToString(s.RawBytes))
+		default:
+			escapeCSV(s.RawBytes, bf, escapeBackslash, opt)
+		}
 		bf.Write(opt.delimiter)
 	} else {
 		bf.WriteString(opt.nullValue)

@@ -969,9 +969,11 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 			local.DupeDetectEnabled,
 			local.duplicateDB,
 			local.DuplicateDetectOpt,
+			local.WorkerConcurrency,
 			ts,
 			externalCfg.TotalFileSize,
 			externalCfg.TotalKVCount,
+			externalCfg.CheckHotspot,
 		)
 		local.externalEngine[engineUUID] = externalEngine
 		return nil
@@ -1432,7 +1434,6 @@ func (local *Backend) executeJob(
 			// if it's retryable error, we retry from scanning region
 			log.FromContext(ctx).Warn("meet retryable error when writing to TiKV",
 				log.ShortError(err), zap.Stringer("job stage", job.stage))
-			job.convertStageTo(needRescan)
 			job.lastRetryableErr = err
 			return nil
 		}
