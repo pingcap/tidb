@@ -268,6 +268,11 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 			return annotateErr(err, peer)
 		}
 
+		failpoint.Inject("mockWritePeerErr", func() {
+			err = errors.Errorf("mock write peer error")
+			failpoint.Return(annotateErr(err, peer))
+		})
+
 		// Bind uuid for this write request
 		if err = wstream.Send(req); err != nil {
 			return annotateErr(err, peer)
