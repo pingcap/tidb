@@ -128,22 +128,6 @@ func getNonBinaryStrIdx(args []*types.FieldType) []int {
 	return result
 }
 
-// NotBinaryStr means the args is not a binary string maybe even not a string
-func getNotBinaryStrIdx(args []*types.FieldType, excludeIdx map[int]struct{}) []int {
-	result := make([]int, 0)
-	for i, arg := range args {
-		_, ok := excludeIdx[i]
-		if ok {
-			continue
-		}
-
-		if !types.IsBinaryStr(arg) {
-			result = append(result, i)
-		}
-	}
-	return result
-}
-
 func hasBinaryStr(args []*types.FieldType) bool {
 	for _, arg := range args {
 		if types.IsBinaryStr(arg) {
@@ -162,14 +146,8 @@ func addCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string
 		}
 
 		nonBinaryStrIdx := getNonBinaryStrIdx(argTypes)
-		excludeIdx := make(map[int]struct{})
-		for _, item := range nonBinaryStrIdx {
-			excludeIdx[item] = struct{}{}
-		}
-
-		notBinaryStrIdx := getNotBinaryStrIdx(argTypes, excludeIdx)
 		binaryStrExist := hasBinaryStr(argTypes)
-		if len(nonBinaryStrIdx) > 0 && len(notBinaryStrIdx) > 0 && len(nonBinaryStrIdx)+len(notBinaryStrIdx) == len(argTypes) {
+		if !binaryStrExist && len(nonBinaryStrIdx) > 0 {
 			ec, err := CheckAndDeriveCollationFromExprs(ctx, funcName, evalType, args...)
 			if err != nil {
 				return err
@@ -178,23 +156,18 @@ func addCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string
 			resultFieldType.SetCharset(ec.Charset)
 			resultFieldType.SetFlag(0)
 
-			ifNonBinaryStrsHaveBinaryFlag := false
-			for _, idx := range nonBinaryStrIdx {
-				if mysql.HasBinaryFlag(argTypes[idx].GetFlag()) {
-					ifNonBinaryStrsHaveBinaryFlag = true
+			ifFirstNonBinaryStrsHaveBinaryFlag := mysql.HasBinaryFlag(argTypes[nonBinaryStrIdx[0]].GetFlag())
+
+			// hasNonStringType means that there is a type that is not string
+			hasNonStringType := false
+			for _, argType := range argTypes {
+				if types.IsString(argType.GetType()) {
+					hasNonStringType = true
 					break
 				}
 			}
 
-			ifNotBinaryStrsHaveNotString := false
-			for _, idx := range notBinaryStrIdx {
-				if !types.IsNonBinaryStr(argTypes[idx]) {
-					ifNotBinaryStrsHaveNotString = true
-					break
-				}
-			}
-
-			if ifNonBinaryStrsHaveBinaryFlag || ifNotBinaryStrsHaveNotString {
+			if ifFirstNonBinaryStrsHaveBinaryFlag || hasNonStringType {
 				resultFieldType.AddFlag(mysql.BinaryFlag)
 			}
 		} else if binaryStrExist || !evalType.IsStringKind() {
@@ -226,7 +199,7 @@ func addCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string
 	return nil
 }
 
-// InferType4ControlFuncs infer result type for builtin IF, IFNULL, NULLIF, CASEWHEN, LEAD and LAG.
+// InferType4ControlFuncs infer result type for builtin IF, IFNULL, NULLIF, CASEWHEN, COALESCE, LEAD and LAG.
 func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, args ...Expression) (*types.FieldType, error) {
 	argsNum := len(args)
 	if argsNum == 0 {
@@ -248,8 +221,8 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, args ...Exp
 		tempFlag := resultFieldType.GetFlag()
 		types.SetTypeFlag(&tempFlag, mysql.NotNullFlag, false)
 		resultFieldType.SetFlag(tempFlag)
-		// If both arguments are NULL, make resulting type BINARY(0).
-		resultFieldType.SetType(mysql.TypeString)
+
+		resultFieldType.SetType(mysql.TypeNull)
 		resultFieldType.SetFlen(0)
 		resultFieldType.SetDecimal(0)
 		types.SetBinChsClnFlag(resultFieldType)
