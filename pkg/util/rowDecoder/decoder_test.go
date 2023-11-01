@@ -77,11 +77,11 @@ func TestRowDecoder(t *testing.T) {
 		Duration: time.Hour + time.Second,
 	})
 
-	time2, err := time1.Add(sc, d1.GetMysqlDuration())
+	time2, err := time1.Add(sc.TypeCtx(), d1.GetMysqlDuration())
 	require.Nil(t, err)
 	t2 := types.NewTimeDatum(time2)
 
-	time3, err := time1.Add(sc, types.Duration{Duration: time.Hour*2 + time.Second*2})
+	time3, err := time1.Add(sc.TypeCtx(), types.Duration{Duration: time.Hour*2 + time.Second*2})
 	require.Nil(t, err)
 	t3 := types.NewTimeDatum(time3)
 

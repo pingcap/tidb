@@ -41,6 +41,7 @@ go_library(
         "@org_golang_x_sync//errgroup",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
     ],
 )
 
@@ -61,7 +62,7 @@ go_test(
     ],
     embed = [":external"],
     flaky = True,
-    shard_count = 41,
+    shard_count = 42,
     deps = [
         "//br/pkg/lightning/backend/kv",
         "//br/pkg/lightning/common",
