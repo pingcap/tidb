@@ -67,3 +67,11 @@ aliases:
     - gmhdbjd
     - lichunzhu
     - okJiang
+  sig-approvers-infoschema: # approvers for infoschema pkg
+    - zimulala
+    - wjhuang2016
+    - tangenta
+    - ywqzzy
+    - D3Hunter
+    - Benjamin2037
+    - gmhdbjd
