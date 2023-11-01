@@ -1,0 +1,91 @@
+# TestStatementContext
+drop table if exists sc, sc2, sc3;
+create table sc (a int);
+insert sc values (1), (2);
+set sql_mode = 'STRICT_TRANS_TABLES';
+select * from sc where a > cast(1.1 as decimal);
+update sc set a = 4 where a > cast(1.1 as decimal);
+set sql_mode = '';
+update sc set a = 3 where a > cast(1.1 as decimal);
+select * from sc;
+set sql_mode = 'STRICT_TRANS_TABLES';
+delete from sc;
+insert sc values ('1.8'+1);
+select * from sc;
+
+## Handle coprocessor flags, '1x' is an invalid int.
+## UPDATE and DELETE do select request first which is handled by coprocessor.
+## In strict mode we expect error.
+# TODO: https://github.com/pingcap/tidb/issues/48120
+# -- error 1292
+# update sc set a = 4 where a > '1x';
+# -- error 1292
+# delete from sc where a < '1x';
+select * from sc where a > '1x';
+
+## Non-strict mode never returns error.
+set sql_mode = '';
+update sc set a = 4 where a > '1x';
+delete from sc where a < '1x';
+select * from sc where a > '1x';
+
+## Test invalid UTF8
+create table sc2 (a varchar(255));
+## Insert an invalid UTF8
+insert sc2 values (unhex('4040ffff'));
+select @@warning_count > 0;
+select * from sc2;
+set sql_mode = 'STRICT_TRANS_TABLES';
+-- error 1366
+insert sc2 values (unhex('4040ffff'));
+set @@tidb_skip_utf8_check = '1';
+insert sc2 values (unhex('4040ffff'));
+select length(a) from sc2;
+set @@tidb_skip_utf8_check = '0';
+insert sc2 values ('�');
+
+## Test invalid ASCII
+create table sc3 (a varchar(255)) charset ascii;
+set sql_mode = '';
+insert sc3 values (unhex('4040ffff'));
+select @@warning_count > 0;
+select * from sc3;
+set sql_mode = 'STRICT_TRANS_TABLES';
+-- error 1366
+insert sc3 values (unhex('4040ffff'));
+set @@tidb_skip_ascii_check = '1';
+insert sc3 values (unhex('4040ffff'));
+select length(a) from sc3;
+
+## no placeholder in ASCII, so just insert '@@'...
+set @@tidb_skip_ascii_check = '0';
+insert sc3 values (unhex('4040'));
+
+## Test non-BMP characters.
+set sql_mode = '';
+drop table if exists t1;
+create table t1(a varchar(100) charset utf8);
+insert t1 values (unhex('f09f8c80'));
+select @@warning_count > 0;
+select * from t1;
+insert t1 values (unhex('4040f09f8c80'));
+select @@warning_count > 0;
+select * from t1;
+select length(a) from t1;
+set sql_mode = 'STRICT_TRANS_TABLES';
+-- error 1366
+insert t1 values (unhex('f09f8c80'));
+-- error 1366
+insert t1 values (unhex('F0A48BAE'));
+set global tidb_check_mb4_value_in_utf8 = false;
+insert t1 values (unhex('f09f8c80'));
+set global tidb_check_mb4_value_in_utf8 = true;
+-- error 1366
+insert t1 values (unhex('F0A48BAE'));
+drop table if exists t1;
+
+set global tidb_check_mb4_value_in_utf8 = default;
+set sql_mode = default;
+set @@tidb_skip_ascii_check = default;
+set @@tidb_skip_utf8_check = default;
+
