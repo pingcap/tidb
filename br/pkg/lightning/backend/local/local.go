@@ -1201,6 +1201,12 @@ func (local *Backend) generateAndSendJob(
 					}
 
 					failpoint.Inject("beforeGenerateJob", nil)
+					failpoint.Inject("sendDummyJob", func(_ failpoint.Value) {
+						// this is used to trigger worker failure, used together
+						// with WriteToTiKVNotEnoughDiskSpace
+						jobToWorkerCh <- &regionJob{}
+						time.Sleep(5 * time.Second)
+					})
 					jobs, err := local.generateJobForRange(egCtx, p.Data, p.Range, regionSplitSize, regionSplitKeys)
 					if err != nil {
 						if common.IsContextCanceledError(err) {
@@ -1679,29 +1685,30 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 
 	failpoint.Label("afterStartWorker")
 
-	err := local.prepareAndSendJob(
-		workerCtx,
-		engine,
-		regionRanges,
-		regionSplitSize,
-		regionSplitKeys,
-		jobToWorkerCh,
-		&jobWg,
-	)
-	if err != nil {
-		firstErr.Set(err)
-		workerCancel()
-		err2 := workGroup.Wait()
-		if !common.IsContextCanceledError(err2) {
-			log.FromContext(ctx).Error("worker meets error", zap.Error(err2))
+	workGroup.Go(func() error {
+		err := local.prepareAndSendJob(
+			workerCtx,
+			engine,
+			regionRanges,
+			regionSplitSize,
+			regionSplitKeys,
+			jobToWorkerCh,
+			&jobWg,
+		)
+		if err != nil {
+			return err
 		}
-		return firstErr.Get()
-	}
 
-	jobWg.Wait()
-	workerCancel()
-	firstErr.Set(workGroup.Wait())
-	firstErr.Set(ctx.Err())
+		jobWg.Wait()
+		workerCancel()
+		return nil
+	})
+	if err := workGroup.Wait(); err != nil {
+		if !common.IsContextCanceledError(err) {
+			log.FromContext(ctx).Error("do import meets error", zap.Error(err))
+		}
+		firstErr.Set(err)
+	}
 	return firstErr.Get()
 }
 
