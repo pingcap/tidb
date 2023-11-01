@@ -168,10 +168,12 @@ func (e *calibrateResourceExec) parseCalibrateDuration(ctx context.Context) (sta
 	}
 	// check the duration
 	dur = endTime.Sub(startTime)
-	if dur > maxDuration {
+	// add the buffer duration
+	if dur > maxDuration+time.Minute {
 		err = errors.Errorf("the duration of calibration is too long, which could lead to inaccurate output. Please make the duration between %s and %s", minDuration.String(), maxDuration.String())
 		return
 	}
+	// We only need to consider the case where the duration is slightly enlarged.
 	if dur < minDuration {
 		err = errors.Errorf("the duration of calibration is too short, which could lead to inaccurate output. Please make the duration between %s and %s", minDuration.String(), maxDuration.String())
 	}
