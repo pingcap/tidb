@@ -19,6 +19,7 @@ import (
 	"encoding/hex"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -381,8 +382,10 @@ func buildHandle(pkDts []types.Datum, tblInfo *model.TableInfo, pkInfo *model.In
 		}
 		return kv.NewCommonHandle(handleBytes)
 	}
-	return kv.IntHandle(pkDts[0].GetInt64()), nil
-	ih := bufHandle.(kv.IntHandle)
-	ih.SetInt(int(pkDts[0].GetInt64()))
+	//return kv.IntHandle(pkDts[0].GetInt64()), nil
+	addr := unsafe.Pointer(uintptr(unsafe.Pointer(&bufHandle)) + 8)
+	**(**int64)(unsafe.Pointer(&addr)) = pkDts[0].GetInt64()
+	//ih := bufHandle.(kv.IntHandle)
+	//ih.SetInt(int(pkDts[0].GetInt64()))
 	return bufHandle, nil
 }
