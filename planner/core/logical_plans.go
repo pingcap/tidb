@@ -2006,6 +2006,7 @@ type CTEClass struct {
 	// pushDownPredicates may be push-downed by different references.
 	pushDownPredicates []expression.Expression
 	ColumnMap          map[string]*expression.Column
+	isOuterMostCTE     bool
 }
 
 const emptyCTEClassSize = int64(unsafe.Sizeof(CTEClass{}))
@@ -2037,11 +2038,20 @@ func (cc *CTEClass) MemoryUsage() (sum int64) {
 type LogicalCTE struct {
 	logicalSchemaProducer
 
+<<<<<<< HEAD:planner/core/logical_plans.go
 	cte            *CTEClass
 	cteAsName      model.CIStr
 	cteName        model.CIStr
 	seedStat       *property.StatsInfo
 	isOuterMostCTE bool
+=======
+	cte       *CTEClass
+	cteAsName model.CIStr
+	cteName   model.CIStr
+	seedStat  *property.StatsInfo
+
+	onlyUsedAsStorage bool
+>>>>>>> cbdf4364fbf (planner: fixing wrong result after applying predicate push down for CTEs (#47891)):pkg/planner/core/logical_plans.go
 }
 
 // LogicalCTETable is for CTE table
