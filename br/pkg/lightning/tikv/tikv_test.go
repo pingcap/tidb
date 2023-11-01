@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	kv "github.com/pingcap/tidb/br/pkg/lightning/tikv"
+	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -175,7 +176,7 @@ func TestCheckPDVersion(t *testing.T) {
 	ctx := context.Background()
 
 	mockServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		require.Equal(t, "/pd/api/v1/version", req.URL.Path)
+		require.Equal(t, pdapi.Version, req.URL.Path)
 		w.WriteHeader(http.StatusOK)
 		_, err := w.Write([]byte(version))
 		require.NoError(t, err)
@@ -229,7 +230,7 @@ func TestCheckTiKVVersion(t *testing.T) {
 	ctx := context.Background()
 
 	mockServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		require.Equal(t, "/pd/api/v1/stores", req.URL.Path)
+		require.Equal(t, pdapi.Stores, req.URL.Path)
 		w.WriteHeader(http.StatusOK)
 
 		stores := make([]map[string]interface{}, 0, len(versions))
