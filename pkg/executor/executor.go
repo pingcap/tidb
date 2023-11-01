@@ -859,7 +859,7 @@ func (e *CheckTableExec) Open(ctx context.Context) error {
 		return err
 	}
 	for _, src := range e.srcs {
-		if err := src.Open(ctx); err != nil {
+		if err := exec.Open(ctx, src); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -1464,8 +1464,8 @@ func init() {
 		if e.err != nil {
 			return nil, e.err
 		}
+		err := exec.Open(ctx, executor)
 		defer terror.Call(executor.Close)
-		err := executor.Open(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -1855,7 +1855,7 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 			e.mu.maxOpenedChildID = childID
 		}
 		e.mu.Unlock()
-		if err := e.Children(childID).Open(ctx); err != nil {
+		if err := exec.Open(ctx, e.Children(childID)); err != nil {
 			result.err = err
 			e.stopFetchData.Store(true)
 			e.resultPool <- result

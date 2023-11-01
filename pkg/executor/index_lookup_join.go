@@ -162,7 +162,7 @@ type innerWorker struct {
 
 // Open implements the Executor interface.
 func (e *IndexLookUpJoin) Open(ctx context.Context) error {
-	err := e.Children(0).Open(ctx)
+	err := exec.Open(ctx, e.Children(0))
 	if err != nil {
 		return err
 	}

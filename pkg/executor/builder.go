@@ -4435,7 +4435,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 		if e.ranges, err = buildRangesForIndexJoin(e.Ctx(), lookUpContents, indexRanges, keyOff2IdxOff, cwc); err != nil {
 			return nil, err
 		}
-		if err := e.Open(ctx); err != nil {
+		if err := exec.Open(ctx, e); err != nil {
 			return nil, err
 		}
 		return e, nil
@@ -4461,13 +4461,13 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 				return nil, err
 			}
 		}
-		if err := e.Open(ctx); err != nil {
+		if err := exec.Open(ctx, e); err != nil {
 			return nil, err
 		}
 		return e, nil
 	}
 	ret := &TableDualExec{BaseExecutor: *e.Base()}
-	err = ret.Open(ctx)
+	err = exec.Open(ctx, ret)
 	return ret, err
 }
 
@@ -4510,7 +4510,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 		if err != nil {
 			return nil, err
 		}
-		if err := e.Open(ctx); err != nil {
+		if err := exec.Open(ctx, e); err != nil {
 			return nil, err
 		}
 		return e, err
@@ -4538,13 +4538,13 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 			}
 		}
 		e.partitionTableMode = true
-		if err := e.Open(ctx); err != nil {
+		if err := exec.Open(ctx, e); err != nil {
 			return nil, err
 		}
 		return e, err
 	}
 	ret := &TableDualExec{BaseExecutor: *e.Base()}
-	err = ret.Open(ctx)
+	err = exec.Open(ctx, ret)
 	return ret, err
 }
 
