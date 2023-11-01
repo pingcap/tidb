@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 )
 
 // NewSessionIndexUsageCollector creates a new IndexUsageCollector on the list.
@@ -182,16 +182,16 @@ func dumpIndexUsageToKV(sctx sessionctx.Context, listHead *SessionIndexUsageColl
 			end = len(mapper)
 		}
 		sql := new(strings.Builder)
-		sqlexec.MustFormatSQL(sql, "insert into mysql.SCHEMA_INDEX_USAGE (table_id,index_id,query_count,rows_selected,last_used_at) values")
+		sqlescape.MustFormatSQL(sql, "insert into mysql.SCHEMA_INDEX_USAGE (table_id,index_id,query_count,rows_selected,last_used_at) values")
 		for j := i; j < end; j++ {
 			index := indexInformationSlice[j]
-			sqlexec.MustFormatSQL(sql, "(%?, %?, %?, %?, %?)", index.id.TableID, index.id.IndexID,
+			sqlescape.MustFormatSQL(sql, "(%?, %?, %?, %?, %?)", index.id.TableID, index.id.IndexID,
 				index.information.QueryCount, index.information.RowsSelected, index.information.LastUsedAt)
 			if j < end-1 {
-				sqlexec.MustFormatSQL(sql, ",")
+				sqlescape.MustFormatSQL(sql, ",")
 			}
 		}
-		sqlexec.MustFormatSQL(sql, "on duplicate key update query_count=query_count+values(query_count),rows_selected=rows_selected+values(rows_selected),last_used_at=greatest(last_used_at, values(last_used_at))")
+		sqlescape.MustFormatSQL(sql, "on duplicate key update query_count=query_count+values(query_count),rows_selected=rows_selected+values(rows_selected),last_used_at=greatest(last_used_at, values(last_used_at))")
 		if _, _, err := util.ExecRows(sctx, sql.String()); err != nil {
 			return errors.Trace(err)
 		}
