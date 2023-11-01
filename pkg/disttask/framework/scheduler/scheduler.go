@@ -474,13 +474,13 @@ func (s *BaseScheduler) onError(err error) {
 		return
 	}
 	err = errors.Trace(err)
-	logutil.Logger(s.logCtx).Error("onError", zap.Error(err))
+	logutil.Logger(s.logCtx).Error("onError", zap.Error(err), zap.Stack("stack"))
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if s.mu.err == nil {
 		s.mu.err = err
-		logutil.Logger(s.logCtx).Error("scheduler error", zap.Error(err))
+		logutil.Logger(s.logCtx).Error("scheduler met first error", zap.Error(err))
 	}
 
 	if s.mu.runtimeCancel != nil {
@@ -620,5 +620,8 @@ func (s *BaseScheduler) updateErrorToSubtask(ctx context.Context, taskID int64, 
 			return true, s.taskTable.UpdateErrorToSubtask(s.id, taskID, err)
 		},
 	)
+	if err1 == nil {
+		logger.Warn("update error to subtask success", zap.Error(err))
+	}
 	return err1
 }
