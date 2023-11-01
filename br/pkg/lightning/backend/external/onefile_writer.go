@@ -212,6 +212,13 @@ func (w *OneFileWriter) flushKVs(ctx context.Context, fromClose bool) (err error
 		}
 	}
 
+	w.kvStore.Close()
+	encodedStat := w.rc.encode()
+	_, err = w.statWriter.Write(ctx, encodedStat)
+	if err != nil {
+		return err
+	}
+
 	minKey, maxKey := w.getKeyByLoc(w.kvLocations[0]), w.getKeyByLoc(w.kvLocations[len(w.kvLocations)-1])
 	w.recordMinMax(minKey, maxKey, uint64(w.kvSize))
 
@@ -220,12 +227,7 @@ func (w *OneFileWriter) flushKVs(ctx context.Context, fromClose bool) (err error
 			[2]string{w.dataFile, w.statFile},
 		)
 		w.multiFileStat.build([]tidbkv.Key{w.minKey}, []tidbkv.Key{w.maxKey})
-		w.kvStore.Close()
-		encodedStat := w.rc.encode()
-		_, err = w.statWriter.Write(ctx, encodedStat)
-		if err != nil {
-			return err
-		}
+
 		err1 := w.dataWriter.Close(ctx)
 		if err1 != nil {
 			w.logger.Error("Close data writer failed", zap.Error(err))
@@ -239,6 +241,7 @@ func (w *OneFileWriter) flushKVs(ctx context.Context, fromClose bool) (err error
 			err = err2
 			return
 		}
+		w.rc.reset()
 	}
 	w.kvLocations = w.kvLocations[:0]
 	w.kvSize = 0

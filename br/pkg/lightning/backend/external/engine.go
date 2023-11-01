@@ -169,6 +169,7 @@ func (e *Engine) LoadIngestData(
 		zap.Int("ranges", len(regionRanges)),
 		zap.Int("range-groups", len(rangeGroups)),
 		zap.Int("data-files", len(e.dataFiles)),
+		zap.Int("stat-files", len(e.statsFiles)),
 		zap.Bool("check-hotspot", e.checkHotspot),
 	)
 	eg, egCtx := errgroup.WithContext(ctx)

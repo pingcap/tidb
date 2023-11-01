@@ -108,8 +108,9 @@ func TestMergeOverlappingFilesV2(t *testing.T) {
 		SetPropKeysDistance(2).
 		SetMemorySizeLimit(1000).
 		SetKeyDuplicationEncoding(true).
-		BuildOneFile(memStore, "/test", "0")
-	kvCount := 20000000
+		Build(memStore, "/test", "0")
+
+	kvCount := 2000000
 	for i := 0; i < kvCount; i++ {
 		v := i
 		if v == kvCount/2 {
@@ -124,7 +125,7 @@ func TestMergeOverlappingFilesV2(t *testing.T) {
 
 	err = MergeOverlappingFilesV2(
 		ctx,
-		[]string{"/test/0/0"},
+		[]string{"/test/0/0", "/test/0/1", "/test/0/2", "/test/0/3", "/test/0/4"},
 		memStore,
 		100,
 		"/test2",
@@ -135,6 +136,7 @@ func TestMergeOverlappingFilesV2(t *testing.T) {
 		1*size.MB,
 		2,
 		nil,
+		true,
 	)
 	require.NoError(t, err)
 
@@ -179,21 +181,68 @@ func TestMergeOverlappingFilesV2(t *testing.T) {
 	require.Contains(t, err.Error(), "found duplicate key")
 }
 
-// func TestSize(t *testing.T) {
-// 	s3, clean := NewS3WithBucketAndPrefix(t, "qe", "testprefix")
-// 	defer clean()
-// 	statReader, err := newStatsReader(ctx, memStore, "/test/0_stat/0", bufSize)
-// 	require.NoError(t, err)
+func TestOnefileWriterManyRows(t *testing.T) {
+	ctx := context.Background()
+	memStore := storage.NewMemStorage()
+	writer := NewWriterBuilder().
+		SetPropKeysDistance(2).
+		SetMemorySizeLimit(1000).
+		BuildOneFile(memStore, "/test", "0")
 
-// 	var keyCnt uint64 = 0
-// 	for {
-// 		p, err := statReader.nextProp()
-// 		if err == io.EOF {
-// 			break
-// 		}
-// 		require.NoError(t, err)
-// 		keyCnt += p.keys
-// 	}
-// 	require.Equal(t, uint64(kvCnt), keyCnt)
-// 	require.NoError(t, statReader.Close())
-// }
+	err := writer.Init(ctx)
+	require.NoError(t, err)
+
+	kvCnt := 10000000
+	kvs := make([]common.KvPair, kvCnt)
+	for i := 0; i < kvCnt; i++ {
+		randLen := rand.Intn(10) + 1
+		kvs[i].Key = make([]byte, randLen)
+		_, err := rand.Read(kvs[i].Key)
+		require.NoError(t, err)
+		randLen = rand.Intn(10) + 1
+		kvs[i].Val = make([]byte, randLen)
+		_, err = rand.Read(kvs[i].Val)
+		require.NoError(t, err)
+	}
+
+	slices.SortFunc(kvs, func(i, j common.KvPair) int {
+		return bytes.Compare(i.Key, j.Key)
+	})
+
+	for _, item := range kvs {
+		err := writer.WriteRow(ctx, item.Key, item.Val, nil)
+		require.NoError(t, err)
+	}
+	err = writer.Close(ctx)
+	require.NoError(t, err)
+
+	err = MergeOverlappingFilesV2(
+		ctx,
+		[]string{"/test/0/0"},
+		memStore,
+		100,
+		"/test2",
+		"mergeID",
+		1000,
+		1000,
+		8*1024,
+		1*size.MB,
+		2,
+		nil,
+		true,
+	)
+	require.NoError(t, err)
+
+	bufSize := rand.Intn(100) + 1
+	kvReader, err := newKVReader(ctx, "/test2/mergeID/0", memStore, 0, bufSize)
+	require.NoError(t, err)
+	for i := 0; i < kvCnt; i++ {
+		key, value, err := kvReader.nextKV()
+		require.NoError(t, err)
+		require.Equal(t, kvs[i].Key, key)
+		require.Equal(t, kvs[i].Val, value)
+	}
+	_, _, err = kvReader.nextKV()
+	require.Equal(t, io.EOF, err)
+	require.NoError(t, kvReader.Close())
+}
