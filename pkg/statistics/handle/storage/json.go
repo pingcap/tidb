@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
-	"sync/atomic"
 	"time"
 
 	"github.com/klauspost/compress/gzip"
@@ -111,8 +110,8 @@ func GenJSONTableFromStats(sctx sessionctx.Context, dbName string, tableInfo *mo
 		}
 		proto := dumpJSONCol(hist, col.CMSketch, col.TopN, col.FMSketch, &col.StatsVer)
 		tracker.Consume(proto.TotalMemoryUsage())
-		if atomic.LoadUint32(&sctx.GetSessionVars().Killed) == 1 {
-			return nil, errors.Trace(statistics.ErrQueryInterrupted)
+		if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+			return nil, err
 		}
 		jsonTbl.Columns[col.Info.Name.L] = proto
 		col.FMSketch.DestroyAndPutToPool()
@@ -120,8 +119,8 @@ func GenJSONTableFromStats(sctx sessionctx.Context, dbName string, tableInfo *mo
 	for _, idx := range tbl.Indices {
 		proto := dumpJSONCol(&idx.Histogram, idx.CMSketch, idx.TopN, nil, &idx.StatsVer)
 		tracker.Consume(proto.TotalMemoryUsage())
-		if atomic.LoadUint32(&sctx.GetSessionVars().Killed) == 1 {
-			return nil, errors.Trace(statistics.ErrQueryInterrupted)
+		if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+			return nil, err
 		}
 		jsonTbl.Indices[idx.Info.Name.L] = proto
 	}
@@ -285,13 +284,6 @@ func BlocksToJSONTable(blocks [][]byte) (*util.JSONTable, error) {
 
 // TableHistoricalStatsToJSON converts the historical stats of a table to JSONTable.
 func TableHistoricalStatsToJSON(sctx sessionctx.Context, physicalID int64, snapshot uint64) (jt *util.JSONTable, exist bool, err error) {
-	if _, err := util.Exec(sctx, "begin"); err != nil {
-		return nil, false, err
-	}
-	defer func() {
-		err = util.FinishTransaction(sctx, err)
-	}()
-
 	// get meta version
 	rows, _, err := util.ExecRows(sctx, "select distinct version from mysql.stats_meta_history where table_id = %? and version <= %? order by version desc limit 1", physicalID, snapshot)
 	if err != nil {

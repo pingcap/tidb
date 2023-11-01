@@ -16,13 +16,15 @@ func MergeOverlappingFiles(
 	newFilePrefix string,
 	writerID string,
 	memSizeLimit uint64,
+	blockSize int,
 	writeBatchCount uint64,
 	propSizeDist uint64,
 	propKeysDist uint64,
 	onClose OnCloseFunc,
+	checkHotspot bool,
 ) error {
 	zeroOffsets := make([]uint64, len(paths))
-	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, readBufferSize)
+	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, readBufferSize, checkHotspot)
 	if err != nil {
 		return err
 	}
@@ -30,6 +32,7 @@ func MergeOverlappingFiles(
 
 	writer := NewWriterBuilder().
 		SetMemorySizeLimit(memSizeLimit).
+		SetBlockSize(blockSize).
 		SetWriterBatchCount(writeBatchCount).
 		SetPropKeysDistance(propKeysDist).
 		SetPropSizeDistance(propSizeDist).
