@@ -4,5 +4,5 @@ create table a (
     c int not null,
     d text,
     key key_b(b),
-    key key_c(b)
+    key key_c(c)
 );
