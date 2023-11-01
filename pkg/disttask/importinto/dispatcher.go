@@ -381,7 +381,7 @@ func (*ImportDispatcherExt) IsRetryableErr(error) bool {
 }
 
 // GetNextStep implements dispatcher.Extension interface.
-func (dsp *ImportDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *proto.Task) proto.Step {
+func (dsp *ImportDispatcherExt) GetNextStep(task *proto.Task) proto.Step {
 	switch task.Step {
 	case proto.StepInit:
 		if dsp.GlobalSort {
