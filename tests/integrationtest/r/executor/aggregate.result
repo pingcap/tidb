@@ -1867,7 +1867,7 @@ group_concat(distinct name order by name desc)
 select @@warning_count;
 @@warning_count
 1
-set session group_concat_max_len=1024;
+set session group_concat_max_len=default;
 drop table if exists test2;
 create table test2(id varchar(20), name varchar(20));
 insert into test2 select * from test;
@@ -1946,6 +1946,8 @@ group_concat(name ORDER BY name desc SEPARATOR '++')	group_concat(id ORDER BY na
 select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;
 group_concat(distinct name order by name desc)
 500,200,30,20,10
+set session tidb_opt_distinct_agg_push_down = default;
+set session tidb_opt_agg_push_down = default;
 select group_concat(123, null);
 group_concat(123, null)
 NULL
@@ -1967,8 +1969,6 @@ select group_concat(c1 order by c1) from t1 group by c1;
 group_concat(c1 order by c1)
 01234567
 12345
-set session tidb_opt_distinct_agg_push_down = default;
-set session tidb_opt_agg_push_down = default;
 set @@group_concat_max_len=default;
 drop table if exists select_distinct_test;
 create table select_distinct_test(id int not null default 1, name varchar(255), PRIMARY KEY(id));

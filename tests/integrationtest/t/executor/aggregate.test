@@ -966,7 +966,7 @@ select @@warning_count;
 set session group_concat_max_len=15;
 select group_concat(distinct name order by name desc) from test;
 select @@warning_count;
-set session group_concat_max_len=1024;
+set session group_concat_max_len=default;
 
 ## test varchar table
 drop table if exists test2;
@@ -1017,6 +1017,8 @@ set session tidb_opt_distinct_agg_push_down = 1;
 set session tidb_opt_agg_push_down = 1;
 select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;
 select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;
+set session tidb_opt_distinct_agg_push_down = default;
+set session tidb_opt_agg_push_down = default;
 
 ## issue #9920
 select group_concat(123, null);
@@ -1034,9 +1036,6 @@ insert into t1 values('0123456789');
 insert into t1 values('12345');
 set @@group_concat_max_len=8;
 select group_concat(c1 order by c1) from t1 group by c1;
-
-set session tidb_opt_distinct_agg_push_down = default;
-set session tidb_opt_agg_push_down = default;
 set @@group_concat_max_len=default;
 
 # TestSelectDistinct
