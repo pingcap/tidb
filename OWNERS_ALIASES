@@ -89,3 +89,11 @@ aliases:
     - wjhuang2016
     - ywqzzy
     - zimulala
+  sig-approvers-resourcemanager: # approvers for resourcemanager pkg
+    - Benjamin2037
+    - D3Hunter
+    - gmhdbjd
+    - lance6716
+    - tangenta
+    - wjhuang2016
+    - ywqzzy
