@@ -131,7 +131,7 @@ func (e *Engine) LoadIngestData(
 	// estimate we will open at most 1000 files, so if e.dataFiles is small we can
 	// try to concurrently process ranges.
 	concurrency := int(MergeSortOverlapThreshold) / len(e.dataFiles)
-	concurrency = min(concurrency, 8)
+	concurrency = min(concurrency, 16)
 	rangeGroups := split(regionRanges, concurrency)
 
 	eg, egCtx := errgroup.WithContext(ctx)
