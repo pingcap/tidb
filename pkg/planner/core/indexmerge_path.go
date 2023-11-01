@@ -16,6 +16,7 @@ package core
 
 import (
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -141,12 +142,12 @@ func (ds *DataSource) generateNormalIndexPartialPaths4DNF(dnfItems []expression.
 			return nil, false, usedMap, nil
 		}
 		// prune out global indexes.
-		for i := len(itemPaths) - 1; i >= 0; i-- {
-			path := itemPaths[i]
+		itemPaths = slices.DeleteFunc(itemPaths, func(path *util.AccessPath) bool {
 			if path.Index != nil && path.Index.Global {
-				itemPaths = append(itemPaths[:i], itemPaths[i+1:]...)
+				return true
 			}
-		}
+			return false
+		})
 		partialPath, err := ds.buildIndexMergePartialPath(itemPaths)
 		if err != nil {
 			return nil, false, nil, err
@@ -552,11 +553,9 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int, usedAccessMa
 	if len(partialPaths) < 1 {
 		return nil
 	}
-	if len(partialPaths) == 1 {
+	if len(partialPaths) == 1 && !composedWithMvIndex {
 		// even single normal index path here, it can be composed with other mv index partial paths.
-		if !composedWithMvIndex {
-			return nil
-		}
+		return nil
 	}
 
 	// 2. Collect filters that can't be covered by the partial paths and deduplicate them.
@@ -1028,10 +1027,8 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 			return nil
 		}
 		// if any cnf item is not used as index partial path, index merge is not valid anymore.
-		for _, one := range usedAccessMap {
-			if !one {
-				return nil
-			}
+		if slices.Contains(usedAccessMap, false) {
+			return nil
 		}
 		// todo: make this code as a portal of all index merge path.
 		// if we derive:
@@ -1082,11 +1079,8 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 	if !composed {
 		return nil
 	}
-
-	var combinedPartialPaths []*util.AccessPath
 	// todo: make this as the portal of all index merge case.
-	combinedPartialPaths = normalIndexPartialPaths
-	combinedPartialPaths = append(combinedPartialPaths, mvIndexPartialPaths...)
+	combinedPartialPaths := append(normalIndexPartialPaths, mvIndexPartialPaths...)
 	if len(combinedPartialPaths) == 0 {
 		return nil
 	}
