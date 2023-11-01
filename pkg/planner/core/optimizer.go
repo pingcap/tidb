@@ -180,6 +180,9 @@ func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node 
 	if err != nil {
 		return nil, err
 	}
+	if logic, ok := p.(LogicalPlan); ok {
+		RecheckCTE(logic)
+	}
 	return p, err
 }
 
