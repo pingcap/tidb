@@ -68,9 +68,9 @@ type OneFileWriter struct {
 }
 
 func (w *OneFileWriter) Init(ctx context.Context) (err error) {
-	w.dataFile, w.statFile, w.dataWriter, w.statWriter, err = w.createStorageWriter(ctx)
+	err = w.InitWriter(ctx)
 	if err != nil {
-		return nil
+		return err
 	}
 	w.logger = logutil.Logger(ctx)
 	w.kvStore, err = NewKeyValueStore(ctx, w.dataWriter, w.rc)
@@ -240,21 +240,19 @@ func (w *OneFileWriter) getKeyByLoc(pos kvLocation) []byte {
 	return block[pos.offset+lengthBytes : uint64(pos.offset)+lengthBytes+keyLen]
 }
 
-func (w *OneFileWriter) createStorageWriter(ctx context.Context) (
-	dataFile, statFile string,
-	data, stats storage.ExternalFileWriter,
+func (w *OneFileWriter) InitWriter(ctx context.Context) (
 	err error,
 ) {
-	dataPath := filepath.Join(w.filenamePrefix, strconv.Itoa(0))
-	dataWriter, err := w.store.Create(ctx, dataPath, &storage.WriterOption{Concurrency: 20})
+	w.dataFile = filepath.Join(w.filenamePrefix, strconv.Itoa(0))
+	w.dataWriter, err = w.store.Create(ctx, w.dataFile, &storage.WriterOption{Concurrency: 20})
 	if err != nil {
-		return "", "", nil, nil, err
+		return err
 	}
-	statPath := filepath.Join(w.filenamePrefix+statSuffix, strconv.Itoa(0))
-	statsWriter, err := w.store.Create(ctx, statPath, &storage.WriterOption{Concurrency: 20})
+	w.statFile = filepath.Join(w.filenamePrefix+statSuffix, strconv.Itoa(0))
+	w.statWriter, err = w.store.Create(ctx, w.statFile, &storage.WriterOption{Concurrency: 20})
 	if err != nil {
-		_ = dataWriter.Close(ctx)
-		return "", "", nil, nil, err
+		_ = w.dataWriter.Close(ctx)
+		return err
 	}
-	return dataPath, statPath, dataWriter, statsWriter, nil
+	return nil
 }
