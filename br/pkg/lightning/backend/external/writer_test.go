@@ -188,6 +188,7 @@ func TestWriterDuplicateDetect(t *testing.T) {
 		1*size.MB,
 		2,
 		nil,
+		false,
 	)
 	require.NoError(t, err)
 
@@ -385,6 +386,7 @@ func TestWriterMultiFileStat(t *testing.T) {
 		1*size.MB,
 		2,
 		closeFn,
+		true,
 	)
 	require.NoError(t, err)
 	require.Equal(t, 3, len(summary.MultipleFilesStats))

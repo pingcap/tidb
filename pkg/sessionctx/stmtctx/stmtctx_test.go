@@ -97,7 +97,7 @@ func TestStatementContextPushDownFLags(t *testing.T) {
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true)) }), 1},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true)) }), 2},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.OverflowAsWarning = true }), 64},
-		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.IgnoreZeroInDate = true }), 128},
+		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.SetTypeFlags(sc.TypeFlags().WithIgnoreZeroInDate(true)) }), 128},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.DividedByZeroAsWarning = true }), 256},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.InLoadDataStmt = true }), 1024},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) {
@@ -110,7 +110,7 @@ func TestStatementContextPushDownFLags(t *testing.T) {
 		}), 257},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) {
 			sc.InUpdateStmt = true
-			sc.IgnoreZeroInDate = true
+			sc.SetTypeFlags(sc.TypeFlags().WithIgnoreZeroInDate(true))
 			sc.InLoadDataStmt = true
 		}), 1168},
 	}
@@ -353,8 +353,8 @@ func TestSetStmtCtxTypeFlags(t *testing.T) {
 	require.Equal(t, typectx.FlagAllowNegativeToUnsigned|typectx.FlagSkipASCIICheck, sc.TypeFlags())
 	require.Equal(t, sc.TypeFlags(), sc.TypeFlags())
 
-	sc.SetTypeFlags(typectx.FlagSkipASCIICheck | typectx.FlagSkipUTF8Check | typectx.FlagInvalidDateAsWarning)
-	require.Equal(t, typectx.FlagSkipASCIICheck|typectx.FlagSkipUTF8Check|typectx.FlagInvalidDateAsWarning, sc.TypeFlags())
+	sc.SetTypeFlags(typectx.FlagSkipASCIICheck | typectx.FlagSkipUTF8Check | typectx.FlagTruncateAsWarning)
+	require.Equal(t, typectx.FlagSkipASCIICheck|typectx.FlagSkipUTF8Check|typectx.FlagTruncateAsWarning, sc.TypeFlags())
 	require.Equal(t, sc.TypeFlags(), sc.TypeFlags())
 }
 
