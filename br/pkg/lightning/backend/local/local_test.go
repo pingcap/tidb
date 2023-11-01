@@ -2085,3 +2085,160 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 	err := l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	require.ErrorContains(t, err, "the remaining storage capacity of TiKV")
 }
+<<<<<<< HEAD
+=======
+
+func TestWorkerFailedWhenGeneratingJobs(t *testing.T) {
+	backup := maxRetryBackoffSecond
+	maxRetryBackoffSecond = 1
+	t.Cleanup(func() {
+		maxRetryBackoffSecond = backup
+	})
+
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/sendDummyJob", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/mockGetFirstAndLastKey", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return()")
+	t.Cleanup(func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/sendDummyJob")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/mockGetFirstAndLastKey")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace")
+	})
+
+	initRanges := []common.Range{
+		{Start: []byte{'c'}, End: []byte{'d'}},
+	}
+
+	ctx := context.Background()
+	l := &Backend{
+		BackendConfig: BackendConfig{
+			WorkerConcurrency: 1,
+		},
+		splitCli: initTestSplitClient(
+			[][]byte{{1}, {11}},
+			panicSplitRegionClient{},
+		),
+	}
+	e := &Engine{}
+	err := l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	require.ErrorContains(t, err, "the remaining storage capacity of TiKV")
+}
+
+func TestExternalEngine(t *testing.T) {
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipStartWorker", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/injectVariables", "return()")
+	t.Cleanup(func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipStartWorker")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/injectVariables")
+	})
+	ctx := context.Background()
+	dir := t.TempDir()
+	storageURI := "file://" + filepath.ToSlash(dir)
+	storeBackend, err := storage.ParseBackend(storageURI, nil)
+	require.NoError(t, err)
+	extStorage, err := storage.New(ctx, storeBackend, nil)
+	require.NoError(t, err)
+	keys := make([][]byte, 100)
+	values := make([][]byte, 100)
+	for i := range keys {
+		keys[i] = []byte(fmt.Sprintf("key%06d", i))
+		values[i] = []byte(fmt.Sprintf("value%06d", i))
+	}
+	// simple append 0x00
+	endKey := make([]byte, len(keys[99])+1)
+	copy(endKey, keys[99])
+
+	dataFiles, statFiles, err := external.MockExternalEngine(extStorage, keys, values)
+	require.NoError(t, err)
+
+	externalCfg := &backend.ExternalEngineConfig{
+		StorageURI:    storageURI,
+		DataFiles:     dataFiles,
+		StatFiles:     statFiles,
+		StartKey:      keys[0],
+		EndKey:        endKey,
+		SplitKeys:     [][]byte{keys[30], keys[60], keys[90]},
+		TotalFileSize: int64(config.SplitRegionSize) + 1,
+		TotalKVCount:  int64(config.SplitRegionKeys) + 1,
+	}
+	engineUUID := uuid.New()
+	pdCtl := &pdutil.PdController{}
+	pdCtl.SetPDClient(&mockPdClient{})
+	local := &Backend{
+		BackendConfig: BackendConfig{
+			WorkerConcurrency: 2,
+		},
+		splitCli: initTestSplitClient([][]byte{
+			keys[0], keys[50], endKey,
+		}, nil),
+		pdCtl:          pdCtl,
+		externalEngine: map[uuid.UUID]common.Engine{},
+		keyAdapter:     common.NoopKeyAdapter{},
+	}
+	jobs := make([]*regionJob, 0, 5)
+
+	jobToWorkerCh := make(chan *regionJob, 10)
+	testJobToWorkerCh = jobToWorkerCh
+
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < 5; i++ {
+			jobs = append(jobs, <-jobToWorkerCh)
+			testJobWg.Done()
+		}
+	}()
+	go func() {
+		err2 := local.CloseEngine(
+			ctx,
+			&backend.EngineConfig{External: externalCfg},
+			engineUUID,
+		)
+		require.NoError(t, err2)
+		err2 = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+		require.NoError(t, err2)
+		close(done)
+	}()
+
+	<-done
+
+	// no jobs left in the channel
+	require.Len(t, jobToWorkerCh, 0)
+
+	sort.Slice(jobs, func(i, j int) bool {
+		return bytes.Compare(jobs[i].keyRange.Start, jobs[j].keyRange.Start) < 0
+	})
+	expectedKeyRanges := []common.Range{
+		{Start: keys[0], End: keys[30]},
+		{Start: keys[30], End: keys[50]},
+		{Start: keys[50], End: keys[60]},
+		{Start: keys[60], End: keys[90]},
+		{Start: keys[90], End: endKey},
+	}
+	kvIdx := 0
+	for i, job := range jobs {
+		require.Equal(t, expectedKeyRanges[i], job.keyRange)
+		iter := job.ingestData.NewIter(ctx, job.keyRange.Start, job.keyRange.End)
+		for iter.First(); iter.Valid(); iter.Next() {
+			require.Equal(t, keys[kvIdx], iter.Key())
+			require.Equal(t, values[kvIdx], iter.Value())
+			kvIdx++
+		}
+		require.NoError(t, iter.Error())
+		require.NoError(t, iter.Close())
+	}
+	require.Equal(t, 100, kvIdx)
+}
+
+func TestGetExternalEngineKVStatistics(t *testing.T) {
+	b := Backend{
+		externalEngine: map[uuid.UUID]common.Engine{},
+	}
+	// non existent uuid
+	size, count := b.GetExternalEngineKVStatistics(uuid.New())
+	require.Zero(t, size)
+	require.Zero(t, count)
+}
+>>>>>>> c652a92df89 (local backend: fix worker err overriden by job generation err (#48185))
