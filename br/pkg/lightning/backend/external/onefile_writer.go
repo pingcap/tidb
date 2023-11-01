@@ -70,7 +70,6 @@ type OneFileWriter struct {
 func (w *OneFileWriter) initWriter(ctx context.Context) (
 	err error,
 ) {
-	w.logger = logutil.Logger(ctx)
 	w.dataFile = filepath.Join(w.filenamePrefix, strconv.Itoa(0))
 	w.dataWriter, err = w.store.Create(ctx, w.dataFile, &storage.WriterOption{Concurrency: 20})
 	if err != nil {
@@ -82,12 +81,13 @@ func (w *OneFileWriter) initWriter(ctx context.Context) (
 		_ = w.dataWriter.Close(ctx)
 		return err
 	}
-	w.logger.Info("one file writer", zap.String("data-file", w.dataFile), zap.String("stat-file", w.statFile))
+	logutil.BgLogger().Info("one file writer", zap.String("data-file", w.dataFile), zap.String("stat-file", w.statFile))
 	return nil
 }
 
 func (w *OneFileWriter) Init(ctx context.Context) (err error) {
 	err = w.initWriter(ctx)
+	w.logger = logutil.Logger(ctx)
 	if err != nil {
 		return err
 	}
