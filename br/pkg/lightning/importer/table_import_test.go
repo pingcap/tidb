@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	tmock "github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
@@ -1323,9 +1324,9 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 	for i, ca := range testCases {
 		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			var err error
-			if req.URL.Path == pdStores {
+			if req.URL.Path == pdapi.Stores {
 				_, err = w.Write(mustMarshal(ca.stores))
-			} else if req.URL.Path == pdEmptyRegions {
+			} else if req.URL.Path == pdapi.EmptyRegions {
 				_, err = w.Write(mustMarshal(ca.emptyRegions))
 			} else {
 				w.WriteHeader(http.StatusNotFound)
