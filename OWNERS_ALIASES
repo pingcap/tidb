@@ -97,3 +97,11 @@ aliases:
     - tangenta
     - wjhuang2016
     - ywqzzy
+  sig-approvers-table: # approvers for table packages.
+    - Benjamin2037
+    - cfzjywxk
+    - gmhdbjd
+    - tangenta
+    - wjhuang2016
+    - ywqzzy
+    - zimulala
