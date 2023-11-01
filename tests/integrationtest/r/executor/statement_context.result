@@ -101,5 +101,5 @@ Error 1366 (HY000): Incorrect string value '\xF0\xA4\x8B\xAE' for column 'a'
 drop table if exists t1;
 set global tidb_check_mb4_value_in_utf8 = default;
 set sql_mode = default;
-set @@tidb_skip_ascii_check = '0';
+set @@tidb_skip_ascii_check = default;
 set @@tidb_skip_utf8_check = default;

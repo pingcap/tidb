@@ -10,6 +10,10 @@ set @@tidb_index_join_batch_size=32;
 desc format = 'brief' select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;
 select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;
 
+set @@tidb_max_chunk_size=default;
+set @@tidb_index_lookup_join_concurrency=default;
+set @@tidb_index_join_batch_size=default;
+
 # TestHashJoinExecEncodeDecodeRow
 drop table if exists t1, t2;
 create table t1 (id int);
@@ -105,7 +109,10 @@ drop table if exists t,s;
 create table t(a int primary key auto_increment, b time);
 create table s(a int, b time);
 alter table s add index idx(a,b);
-set @@tidb_index_join_batch_size=4;set @@tidb_init_chunk_size=1;set @@tidb_max_chunk_size=32; set @@tidb_index_lookup_join_concurrency=15;
+set @@tidb_index_join_batch_size=4;
+set @@tidb_init_chunk_size=1;
+set @@tidb_max_chunk_size=32;
+set @@tidb_index_lookup_join_concurrency=15;
 set @@session.tidb_executor_concurrency = 4;
 set @@session.tidb_hash_join_concurrency = 5;
 insert into t values(0, '01:01:01');
@@ -148,3 +155,11 @@ select /*+ inl_hash_join(t1)*/ * from t1 join t2 on t2.b=t1.id and t2.a=t1.id;
 --sorted_result
 select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t2.b=t1.id and t2.a=t1.id;
 
+set tidb_cost_model_version=default;
+set @@tidb_init_chunk_size=default;
+set @@tidb_index_join_batch_size=default;
+set @@tidb_init_chunk_size=default;
+set @@tidb_max_chunk_size=default;
+set @@tidb_index_lookup_join_concurrency=default;
+set @@session.tidb_executor_concurrency = default;
+set @@session.tidb_hash_join_concurrency = default;

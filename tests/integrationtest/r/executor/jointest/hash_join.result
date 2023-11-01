@@ -18,6 +18,9 @@ select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;
 a	a
 1	1
 128	128
+set @@tidb_max_chunk_size=default;
+set @@tidb_index_lookup_join_concurrency=default;
+set @@tidb_index_join_batch_size=default;
 drop table if exists t1, t2;
 create table t1 (id int);
 create table t2 (id int, name varchar(255), ts timestamp);
@@ -217,7 +220,7 @@ alter table s add index idx(a,b);
 set @@tidb_index_join_batch_size=4;
 set @@tidb_init_chunk_size=1;
 set @@tidb_max_chunk_size=32;
- set @@tidb_index_lookup_join_concurrency=15;
+set @@tidb_index_lookup_join_concurrency=15;
 set @@session.tidb_executor_concurrency = 4;
 set @@session.tidb_hash_join_concurrency = 5;
 insert into t values(0, '01:01:01');
@@ -295,3 +298,11 @@ id	a	b
 select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t2.b=t1.id and t2.a=t1.id;
 id	a	b
 1	1	1
+set tidb_cost_model_version=default;
+set @@tidb_init_chunk_size=default;
+set @@tidb_index_join_batch_size=default;
+set @@tidb_init_chunk_size=default;
+set @@tidb_max_chunk_size=default;
+set @@tidb_index_lookup_join_concurrency=default;
+set @@session.tidb_executor_concurrency = default;
+set @@session.tidb_hash_join_concurrency = default;

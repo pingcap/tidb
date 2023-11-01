@@ -86,6 +86,6 @@ drop table if exists t1;
 
 set global tidb_check_mb4_value_in_utf8 = default;
 set sql_mode = default;
-set @@tidb_skip_ascii_check = '0';
+set @@tidb_skip_ascii_check = default;
 set @@tidb_skip_utf8_check = default;
 
