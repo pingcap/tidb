@@ -18,6 +18,9 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
+	"path"
+	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
@@ -34,9 +37,11 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 func TestInitDefaultOptions(t *testing.T) {
@@ -300,4 +305,89 @@ func TestGetBackendWorkerConcurrency(t *testing.T) {
 	require.Equal(t, 6, c.getBackendWorkerConcurrency())
 	c.Plan.ThreadCnt = 123
 	require.Equal(t, 246, c.getBackendWorkerConcurrency())
+}
+
+func TestSupportedSuffixForServerDisk(t *testing.T) {
+	tempDir := t.TempDir()
+	ctx := context.Background()
+
+	fileName := filepath.Join(tempDir, "test.csv")
+	require.NoError(t, os.WriteFile(fileName, []byte{}, 0o644))
+	fileName2 := filepath.Join(tempDir, "test.csv.gz")
+	require.NoError(t, os.WriteFile(fileName2, []byte{}, 0o644))
+	c := LoadDataController{
+		Plan: &Plan{
+			Format:       DataFormatCSV,
+			InImportInto: true,
+		},
+		logger: zap.NewExample(),
+	}
+	// no suffix
+	c.Path = filepath.Join(tempDir, "test")
+	require.ErrorIs(t, c.InitDataFiles(ctx), exeerrors.ErrLoadDataInvalidURI)
+	// unknown suffix
+	c.Path = filepath.Join(tempDir, "test.abc")
+	require.ErrorIs(t, c.InitDataFiles(ctx), exeerrors.ErrLoadDataInvalidURI)
+	c.Path = fileName
+	require.NoError(t, c.InitDataFiles(ctx))
+	c.Path = fileName2
+	require.NoError(t, c.InitDataFiles(ctx))
+
+	var allData []string
+	for i := 0; i < 3; i++ {
+		fileName := fmt.Sprintf("server-%d.csv", i)
+		var content []byte
+		rowCnt := 2
+		for j := 0; j < rowCnt; j++ {
+			content = append(content, []byte(fmt.Sprintf("%d,test-%d\n", i*rowCnt+j, i*rowCnt+j))...)
+			allData = append(allData, fmt.Sprintf("%d test-%d", i*rowCnt+j, i*rowCnt+j))
+		}
+		require.NoError(t, os.WriteFile(path.Join(tempDir, fileName), content, 0o644))
+	}
+	// directory without permission
+	require.NoError(t, os.MkdirAll(path.Join(tempDir, "no-perm"), 0o700))
+	require.NoError(t, os.WriteFile(path.Join(tempDir, "no-perm", "no-perm.csv"), []byte("1,1"), 0o644))
+	require.NoError(t, os.Chmod(path.Join(tempDir, "no-perm"), 0o000))
+	t.Cleanup(func() {
+		// make sure TempDir RemoveAll cleanup works
+		_ = os.Chmod(path.Join(tempDir, "no-perm"), 0o700)
+	})
+	// file without permission
+	require.NoError(t, os.WriteFile(path.Join(tempDir, "no-perm.csv"), []byte("1,1"), 0o644))
+	require.NoError(t, os.Chmod(path.Join(tempDir, "no-perm.csv"), 0o000))
+
+	// relative path
+	c.Path = "~/file.csv"
+	err2 := c.InitDataFiles(ctx)
+	require.ErrorIs(t, err2, exeerrors.ErrLoadDataInvalidURI)
+	require.ErrorContains(t, err2, "URI of data source is invalid")
+	// non-exist parent directory
+	c.Path = "/path/to/non/exists/file.csv"
+	err := c.InitDataFiles(ctx)
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataInvalidURI)
+	require.ErrorContains(t, err, "no such file or directory")
+	// without permission to parent dir
+	c.Path = path.Join(tempDir, "no-perm", "no-perm.csv")
+	err = c.InitDataFiles(ctx)
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataCantRead)
+	require.ErrorContains(t, err, "permission denied")
+	// file not exists
+	c.Path = path.Join(tempDir, "not-exists.csv")
+	err = c.InitDataFiles(ctx)
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataCantRead)
+	require.ErrorContains(t, err, "no such file or directory")
+	// file without permission
+	c.Path = path.Join(tempDir, "no-perm.csv")
+	err = c.InitDataFiles(ctx)
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataCantRead)
+	require.ErrorContains(t, err, "permission denied")
+	// we don't have read access to 'no-perm' directory, so walk-dir fails
+	c.Path = path.Join(tempDir, "server-*.csv")
+	err = c.InitDataFiles(ctx)
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataCantRead)
+	require.ErrorContains(t, err, "permission denied")
+	// grant read access to 'no-perm' directory, should ok now.
+	require.NoError(t, os.Chmod(path.Join(tempDir, "no-perm"), 0o400))
+	c.Path = path.Join(tempDir, "server-*.csv")
+	require.NoError(t, c.InitDataFiles(ctx))
 }

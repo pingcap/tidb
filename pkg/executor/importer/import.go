@@ -136,6 +136,13 @@ var (
 
 	// LoadDataReadBlockSize is exposed for test.
 	LoadDataReadBlockSize = int64(config.ReadBlockSize)
+
+	supportedSuffixForServerDisk = []string{
+		".csv", ".sql", ".parquet",
+		".gz", ".gzip",
+		".zstd", ".zst",
+		".snappy",
+	}
 )
 
 // GetKVStore returns a kv.Storage.
@@ -656,7 +663,6 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		p.MaxRecordedErrors = vInt
-		// todo: set a max value for this param?
 	}
 	if _, ok := specifiedOptions[detachedOption]; ok {
 		p.Detached = true
@@ -969,7 +975,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 		// we add this check for security, we don't want user import any sensitive system files,
 		// most of which is readable text file and don't have a suffix, such as /etc/passwd
-		if !slices.Contains([]string{".csv", ".sql", ".parquet"}, strings.ToLower(filepath.Ext(e.Path))) {
+		if !slices.Contains(supportedSuffixForServerDisk, strings.ToLower(filepath.Ext(e.Path))) {
 			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
 				"the file suffix is not supported when import from server disk")
 		}
