@@ -176,8 +176,6 @@ type StatementContext struct {
 	InCreateOrAlterStmt           bool
 	InSetSessionStatesStmt        bool
 	InPreparedPlanBuilding        bool
-	IgnoreZeroInDate              bool
-	NoZeroDate                    bool
 	DupKeyAsWarning               bool
 	BadNullAsWarning              bool
 	DividedByZeroAsWarning        bool
@@ -188,7 +186,6 @@ type StatementContext struct {
 	CacheType                     PlanCacheType
 	BatchCheck                    bool
 	InNullRejectCheck             bool
-	AllowInvalidDate              bool
 	IgnoreNoPartition             bool
 	IgnoreExplainIDSuffix         bool
 	MultiSchemaInfo               *model.MultiSchemaInfo
@@ -428,7 +425,7 @@ type StatementContext struct {
 // NewStmtCtx creates a new statement context
 func NewStmtCtx() *StatementContext {
 	sc := &StatementContext{}
-	sc.typeCtx = typectx.NewContext(typectx.StrictFlags, time.UTC, sc.AppendWarning)
+	sc.typeCtx = typectx.NewContext(typectx.DefaultStmtFlags, time.UTC, sc.AppendWarning)
 	return sc
 }
 
@@ -436,14 +433,14 @@ func NewStmtCtx() *StatementContext {
 func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 	intest.Assert(tz)
 	sc := &StatementContext{}
-	sc.typeCtx = typectx.NewContext(typectx.StrictFlags, tz, sc.AppendWarning)
+	sc.typeCtx = typectx.NewContext(typectx.DefaultStmtFlags, tz, sc.AppendWarning)
 	return sc
 }
 
 // Reset resets a statement context
 func (sc *StatementContext) Reset() {
 	*sc = StatementContext{
-		typeCtx: typectx.NewContext(typectx.StrictFlags, time.UTC, sc.AppendWarning),
+		typeCtx: typectx.NewContext(typectx.DefaultStmtFlags, time.UTC, sc.AppendWarning),
 	}
 }
 
@@ -1145,7 +1142,7 @@ func (sc *StatementContext) PushDownFlags() uint64 {
 	if sc.OverflowAsWarning {
 		flags |= model.FlagOverflowAsWarning
 	}
-	if sc.IgnoreZeroInDate {
+	if sc.TypeFlags().IgnoreZeroInDate() {
 		flags |= model.FlagIgnoreZeroInDate
 	}
 	if sc.DividedByZeroAsWarning {
@@ -1210,14 +1207,13 @@ func (sc *StatementContext) InitFromPBFlagAndTz(flags uint64, tz *time.Location)
 	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
 	sc.InDeleteStmt = (flags & model.FlagInUpdateOrDeleteStmt) > 0
 	sc.OverflowAsWarning = (flags & model.FlagOverflowAsWarning) > 0
-	sc.IgnoreZeroInDate = (flags & model.FlagIgnoreZeroInDate) > 0
 	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
 	sc.SetTimeZone(tz)
-	sc.SetTypeFlags(typectx.StrictFlags.
+	sc.SetTypeFlags(typectx.DefaultStmtFlags.
 		WithIgnoreTruncateErr((flags & model.FlagIgnoreTruncate) > 0).
 		WithTruncateAsWarning((flags & model.FlagTruncateAsWarning) > 0).
-		WithClipNegativeToZero(sc.InInsertStmt),
-	)
+		WithIgnoreZeroInDate((flags & model.FlagIgnoreZeroInDate) > 0).
+		WithAllowNegativeToUnsigned(!sc.InInsertStmt))
 }
 
 // GetLockWaitStartTime returns the statement pessimistic lock wait start time
@@ -1365,7 +1361,7 @@ func (sc *StatementContext) TypeCtxOrDefault() typectx.Context {
 		return sc.typeCtx
 	}
 
-	return typectx.DefaultNoWarningContext
+	return typectx.DefaultStmtNoWarningContext
 }
 
 // UsedStatsInfoForTable records stats that are used during query and their information.

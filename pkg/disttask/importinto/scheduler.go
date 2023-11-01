@@ -315,10 +315,13 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		prefix,
 		writerID,
 		256*size.MB,
+		getKVGroupBlockSize(sm.KVGroup),
 		8*1024,
 		1*size.MB,
 		8*1024,
-		onClose)
+		onClose,
+		false,
+	)
 }
 
 func (m *mergeSortStepExecutor) OnFinished(_ context.Context, subtask *proto.Subtask) error {
@@ -375,12 +378,13 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 			StorageURI:      e.taskMeta.Plan.CloudStorageURI,
 			DataFiles:       sm.DataFiles,
 			StatFiles:       sm.StatFiles,
-			MinKey:          sm.MinKey,
-			MaxKey:          sm.MaxKey,
+			StartKey:        sm.StartKey,
+			EndKey:          sm.EndKey,
 			SplitKeys:       sm.RangeSplitKeys,
 			RegionSplitSize: sm.RangeSplitSize,
 			TotalFileSize:   int64(sm.TotalKVSize),
 			TotalKVCount:    0,
+			CheckHotspot:    false,
 		},
 	}, engineUUID)
 	if err != nil {

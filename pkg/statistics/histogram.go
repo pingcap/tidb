@@ -296,16 +296,18 @@ func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
 			return
 		}
 	}
+	var midIdx = 0
+	var found bool
 	for lowIdx <= highIdx {
-		midIdx := (lowIdx + highIdx) / 2
+		midIdx = (lowIdx + highIdx) / 2
 		cmpResult := bytes.Compare(hg.Bounds.Column(0).GetRaw(midIdx*2), valCntPairs.Encoded)
 		if cmpResult > 0 {
-			lowIdx = midIdx + 1
+			highIdx = midIdx - 1
 			continue
 		}
 		cmpResult = bytes.Compare(hg.Bounds.Column(0).GetRaw(midIdx*2+1), valCntPairs.Encoded)
 		if cmpResult < 0 {
-			highIdx = midIdx - 1
+			lowIdx = midIdx + 1
 			continue
 		}
 		if hg.Buckets[midIdx].NDV > 0 {
@@ -318,7 +320,16 @@ func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
 		if hg.Buckets[midIdx].Count < 0 {
 			hg.Buckets[midIdx].Count = 0
 		}
+		found = true
 		break
+	}
+	if found {
+		for midIdx++; midIdx <= hg.Len()-1; midIdx++ {
+			hg.Buckets[midIdx].Count -= int64(valCntPairs.Count)
+			if hg.Buckets[midIdx].Count < 0 {
+				hg.Buckets[midIdx].Count = 0
+			}
+		}
 	}
 }
 
@@ -908,7 +919,14 @@ func (hg *Histogram) OutOfRange(val types.Datum) bool {
          │   │
     lDatum  rDatum
 */
-func (hg *Histogram) OutOfRangeRowCount(sctx sessionctx.Context, lDatum, rDatum *types.Datum, modifyCount, histNDV int64) (result float64) {
+// The percentage of shaded area on the left side calculation formula is:
+// leftPercent = (math.Pow(actualR-boundL, 2) - math.Pow(actualL-boundL, 2)) / math.Pow(histWidth, 2)
+// You can find more details at https://github.com/pingcap/tidb/pull/47966#issuecomment-1778866876
+func (hg *Histogram) OutOfRangeRowCount(
+	sctx sessionctx.Context,
+	lDatum, rDatum *types.Datum,
+	modifyCount, histNDV int64,
+) (result float64) {
 	debugTrace := sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace
 	if debugTrace {
 		debugtrace.EnterContextCommon(sctx)
