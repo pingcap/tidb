@@ -81,4 +81,11 @@ aliases:
     - tangenta
     - wjhuang2016
     - ywqzzy
+    - zimulala    
+  sig-approvers-owner: # approvers for `owner` pkg
+    - Benjamin2037
+    - lichunzhu
+    - tangenta
+    - wjhuang2016
+    - ywqzzy
     - zimulala
