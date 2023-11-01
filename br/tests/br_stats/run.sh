@@ -27,13 +27,32 @@ for i in $(seq $DB_COUNT); do
 done
 
 unset BR_LOG_TO_TERM
-run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB" --log-file $LOG --ignore-stats=false --filter "${DB}1.*" || cat $LOG
-dump_cnt=$(cat $LOG | grep "dump stats to json" | grep "${DB}1" | wc -l)
-echo "dump stats count: ${dump_cnt}"
+run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB" --log-file $LOG --ignore-stats=false --filter "${DB}1.*" --filter "${DB}2.*" || cat $LOG
+dump_cnt=$(cat $LOG | grep "dump stats to json" | wc -l)
+dump_db1_cnt=$(cat $LOG | grep "dump stats to json" | grep "${DB}1" | wc -l)
+dump_db2_cnt=$(cat $LOG | grep "dump stats to json" | grep "${DB}2" | wc -l)
+dump_mark=$((${dump_cnt}+10*${dump_db1_cnt}+100*${dump_db2_cnt}))
+echo "dump stats count: ${dump_cnt}; db1 count: ${dump_db1_cnt}; db2 count: ${dump_db2_cnt}; dump mark: ${dump_mark}"
 
-if [ "${dump_cnt}" -ne "1" ];then
+if [ "${dump_mark}" -ne "112" ]; then
     echo "TEST: [$TEST_NAME] fail on dump stats"
     echo $(cat $LOG | grep "dump stats to json")
     exit 1
 fi
 
+for i in $(seq $DB_COUNT); do
+    run_sql "DROP DATABASE $DB${i};"
+done
+
+rm -f $LOG
+run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB" --log-file $LOG --ignore-stats=false --filter "${DB}1.*" || cat $LOG
+load_cnt=$(cat $LOG | grep "restore stat done")
+load_db1_cnt=$(cat $LOG | grep "restore stat done" | grep "${DB}1")
+load_mark=$((${load_cnt}+10*${load_db1_cnt}))
+echo "load stats count: ${load_cnt}; db1 count: ${load_db1_cnt}; load mark: ${load_mark}"
+
+if [ "${load_mark}" -ne "11" ]; then
+    echo "TEST: [$TEST_NAME] fail on load stats"
+    echo $(cat $LOG | grep "restore stat done")
+    exit 1
+fi
