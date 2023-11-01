@@ -537,7 +537,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 
 					// init partialTableReader and partialTableWorker again for the next table
 					partialTableReader.table = tbl
-					if err = partialTableReader.Open(ctx); err != nil {
+					if err = exec.Open(ctx, partialTableReader); err != nil {
 						logutil.Logger(ctx).Error("open Select result failed:", zap.Error(err))
 						syncErr(ctx, e.finished, fetchCh, err)
 						break
