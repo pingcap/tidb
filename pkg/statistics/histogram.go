@@ -919,7 +919,14 @@ func (hg *Histogram) OutOfRange(val types.Datum) bool {
          │   │
     lDatum  rDatum
 */
-func (hg *Histogram) OutOfRangeRowCount(sctx sessionctx.Context, lDatum, rDatum *types.Datum, modifyCount, histNDV int64) (result float64) {
+// The percentage of shaded area on the left side calculation formula is:
+// leftPercent = (math.Pow(actualR-boundL, 2) - math.Pow(actualL-boundL, 2)) / math.Pow(histWidth, 2)
+// You can find more details at https://github.com/pingcap/tidb/pull/47966#issuecomment-1778866876
+func (hg *Histogram) OutOfRangeRowCount(
+	sctx sessionctx.Context,
+	lDatum, rDatum *types.Datum,
+	modifyCount, histNDV int64,
+) (result float64) {
 	debugTrace := sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace
 	if debugTrace {
 		debugtrace.EnterContextCommon(sctx)
