@@ -18,9 +18,9 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
 
