@@ -18,10 +18,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	mockexecute "github.com/pingcap/tidb/pkg/disttask/framework/mock/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )

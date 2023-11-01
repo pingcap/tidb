@@ -80,6 +80,7 @@ const (
 	flagDryRun            = "dry-run"
 	// TODO used for local test, should be removed later
 	flagSkipAWS                       = "skip-aws"
+	flagUseFSR                        = "use-fsr"
 	flagCloudAPIConcurrency           = "cloud-api-concurrency"
 	flagWithSysTable                  = "with-sys-table"
 	flagOperatorPausedGCAndSchedulers = "operator-paused-gc-and-scheduler"
