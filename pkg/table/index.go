@@ -128,6 +128,8 @@ func NewIndexKVGenerator(
 	}
 }
 
+// Next returns the next index key and value.
+// For non multi-value indexes, there is only one index kv.
 func (iter *IndexKVGenerator) Next(keyBuf, valBuf []byte) ([]byte, []byte, bool, error) {
 	var val []types.Datum
 	if len(iter.allIdxVals) == 0 {
@@ -147,6 +149,7 @@ func (iter *IndexKVGenerator) Next(keyBuf, valBuf []byte) ([]byte, []byte, bool,
 	return key, idxVal, distinct, err
 }
 
+// Valid returns true if the generator is exhausted.
 func (iter *IndexKVGenerator) Valid() bool {
 	if len(iter.allIdxVals) == 0 {
 		return iter.i == 0
