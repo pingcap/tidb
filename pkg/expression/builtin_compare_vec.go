@@ -841,7 +841,7 @@ func (b *builtinGreatestTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.C
 	resTimeTp := getAccurateTimeTypeForGLRet(b.cmpAsDate)
 	for rowIdx := 0; rowIdx < n; rowIdx++ {
 		resTimes := result.Times()
-		resTimes[rowIdx], err = resTimes[rowIdx].Convert(sc, resTimeTp)
+		resTimes[rowIdx], err = resTimes[rowIdx].Convert(sc.TypeCtx(), resTimeTp)
 		if err != nil {
 			return err
 		}
@@ -882,7 +882,7 @@ func (b *builtinLeastTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Colu
 	resTimeTp := getAccurateTimeTypeForGLRet(b.cmpAsDate)
 	for rowIdx := 0; rowIdx < n; rowIdx++ {
 		resTimes := result.Times()
-		resTimes[rowIdx], err = resTimes[rowIdx].Convert(sc, resTimeTp)
+		resTimes[rowIdx], err = resTimes[rowIdx].Convert(sc.TypeCtx(), resTimeTp)
 		if err != nil {
 			return err
 		}

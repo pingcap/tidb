@@ -51,7 +51,7 @@ func (mr *MockTaskTableMockRecorder) FinishSubtask(arg0, arg1 interface{}) *gomo
 }
 
 // GetFirstSubtaskInStates mocks base method.
-func (m *MockTaskTable) GetFirstSubtaskInStates(arg0 string, arg1, arg2 int64, arg3 ...interface{}) (*proto.Subtask, error) {
+func (m *MockTaskTable) GetFirstSubtaskInStates(arg0 string, arg1 int64, arg2 proto.Step, arg3 ...interface{}) (*proto.Subtask, error) {
 	m.ctrl.T.Helper()
 	varargs := []interface{}{arg0, arg1, arg2}
 	for _, a := range arg3 {
@@ -105,7 +105,7 @@ func (mr *MockTaskTableMockRecorder) GetGlobalTasksInStates(arg0 ...interface{})
 }
 
 // GetSubtasksInStates mocks base method.
-func (m *MockTaskTable) GetSubtasksInStates(arg0 string, arg1, arg2 int64, arg3 ...interface{}) ([]*proto.Subtask, error) {
+func (m *MockTaskTable) GetSubtasksInStates(arg0 string, arg1 int64, arg2 proto.Step, arg3 ...interface{}) ([]*proto.Subtask, error) {
 	m.ctrl.T.Helper()
 	varargs := []interface{}{arg0, arg1, arg2}
 	for _, a := range arg3 {
@@ -125,7 +125,7 @@ func (mr *MockTaskTableMockRecorder) GetSubtasksInStates(arg0, arg1, arg2 interf
 }
 
 // HasSubtasksInStates mocks base method.
-func (m *MockTaskTable) HasSubtasksInStates(arg0 string, arg1, arg2 int64, arg3 ...interface{}) (bool, error) {
+func (m *MockTaskTable) HasSubtasksInStates(arg0 string, arg1 int64, arg2 proto.Step, arg3 ...interface{}) (bool, error) {
 	m.ctrl.T.Helper()
 	varargs := []interface{}{arg0, arg1, arg2}
 	for _, a := range arg3 {
@@ -216,7 +216,7 @@ func (mr *MockTaskTableMockRecorder) UpdateErrorToSubtask(arg0, arg1, arg2 inter
 }
 
 // UpdateSubtaskStateAndError mocks base method.
-func (m *MockTaskTable) UpdateSubtaskStateAndError(arg0 int64, arg1 string, arg2 error) error {
+func (m *MockTaskTable) UpdateSubtaskStateAndError(arg0 int64, arg1 proto.TaskState, arg2 error) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "UpdateSubtaskStateAndError", arg0, arg1, arg2)
 	ret0, _ := ret[0].(error)

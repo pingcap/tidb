@@ -33,8 +33,10 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/internal/session"
+	util2 "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
@@ -44,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -401,6 +404,13 @@ type tableScanWorker struct {
 }
 
 func (w *tableScanWorker) HandleTask(task TableScanTask, sender func(IndexRecordChunk)) {
+	defer tidbutil.Recover(metrics.LblAddIndex, "handleTableScanTaskWithRecover", func() {
+		w.ctx.onError(errors.New("met panic in tableScanWorker"))
+	}, false)
+
+	failpoint.Inject("injectPanicForTableScan", func() {
+		panic("mock panic")
+	})
 	if w.se == nil {
 		sessCtx, err := w.sessPool.Get()
 		if err != nil {
@@ -442,7 +452,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		for !done {
 			srcChk := w.getChunk()
 			done, err = fetchTableScanResult(w.ctx, w.copCtx.GetBase(), rs, srcChk)
-			if err != nil {
+			if err != nil || util2.IsContextDone(w.ctx) {
 				w.recycleChunk(srcChk)
 				terror.Call(rs.Close)
 				return err
@@ -603,6 +613,14 @@ func (w *indexIngestWorker) HandleTask(rs IndexRecordChunk, send func(IndexWrite
 			w.srcChunkPool <- rs.Chunk
 		}
 	}()
+	defer tidbutil.Recover(metrics.LblAddIndex, "handleIndexIngtestTaskWithRecover", func() {
+		w.ctx.onError(errors.New("met panic in indexIngestWorker"))
+	}, false)
+
+	failpoint.Inject("injectPanicForIndexIngest", func() {
+		panic("mock panic")
+	})
+
 	result := IndexWriteResult{
 		ID: rs.ID,
 	}
@@ -733,13 +751,9 @@ func (s *indexWriteResultSink) flush() error {
 	failpoint.Inject("mockFlushError", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("mock flush error"))
 	})
-	flushMode := ingest.FlushModeForceLocalAndCheckDiskQuota
-	if s.tbl.GetPartitionedTable() != nil {
-		flushMode = ingest.FlushModeForceGlobal
-	}
 	for _, index := range s.indexes {
 		idxInfo := index.Meta()
-		_, _, err := s.backendCtx.Flush(idxInfo.ID, flushMode)
+		_, _, err := s.backendCtx.Flush(idxInfo.ID, ingest.FlushModeForceGlobal)
 		if err != nil {
 			if common.ErrFoundDuplicateKeys.Equal(err) {
 				err = convertToKeyExistsErr(err, idxInfo, s.tbl.Meta())

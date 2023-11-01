@@ -670,3 +670,186 @@ NULL
 SELECT /*+ MERGE_JOIN(v0) */ * FROM v0 NATURAL LEFT JOIN t0;
 c0
 NULL
+drop table if exists t;
+set @@session.tidb_enable_null_aware_anti_join=0;
+create table t(a decimal(40,0), b bigint(20) not null);
+insert into t values(7,8),(7,8),(3,4),(3,4),(9,2),(9,2),(2,0),(2,0),(0,4),(0,4),(8,8),(8,8),(6,1),(6,1),(NULL, 0),(NULL,0);
+select ( table1 . a , table1 . b ) NOT IN ( SELECT 3 , 2 UNION  SELECT 9, 2 ) AS field2 from t as table1 order by field2;
+field2
+0
+0
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+set @@session.tidb_enable_null_aware_anti_join=1;
+select ( table1 . a , table1 . b ) NOT IN ( SELECT 3 , 2 UNION  SELECT 9, 2 ) AS field2 from t as table1 order by field2;
+field2
+0
+0
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+set @@session.tidb_enable_null_aware_anti_join=default;
+drop table if exists t1, t2;
+create table t1 (a int, b int);
+create table t2 (a int, c int);
+insert t1 values (1,2), (10,20), (0,0);
+insert t2 values (1,3), (100,200), (0,0);
+explain format = 'brief' select * from t1 natural join t2;
+id	estRows	task	access object	operator info
+HashJoin	12487.50	root		inner join, equal:[eq(executor__join.t1.a, executor__join.t2.a)]
+├─TableReader(Build)	9990.00	root		data:Selection
+│ └─Selection	9990.00	cop[tikv]		not(isnull(executor__join.t2.a))
+│   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	9990.00	root		data:Selection
+  └─Selection	9990.00	cop[tikv]		not(isnull(executor__join.t1.a))
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select * from t1 natural join t2;
+a	b	c
+0	0	0
+1	2	3
+explain format = 'brief' select * from t1 natural left join t2 order by a;
+id	estRows	task	access object	operator info
+Sort	12487.50	root		executor__join.t1.a
+└─HashJoin	12487.50	root		left outer join, equal:[eq(executor__join.t1.a, executor__join.t2.a)]
+  ├─TableReader(Build)	9990.00	root		data:Selection
+  │ └─Selection	9990.00	cop[tikv]		not(isnull(executor__join.t2.a))
+  │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─TableReader(Probe)	10000.00	root		data:TableFullScan
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select * from t1 natural left join t2 order by a;
+a	b	c
+0	0	0
+1	2	3
+10	20	NULL
+explain format = 'brief' select * from t1 natural right join t2 order by a;
+id	estRows	task	access object	operator info
+Sort	12487.50	root		executor__join.t2.a
+└─Projection	12487.50	root		executor__join.t2.a, executor__join.t2.c, executor__join.t1.b
+  └─HashJoin	12487.50	root		right outer join, equal:[eq(executor__join.t1.a, executor__join.t2.a)]
+    ├─TableReader(Build)	9990.00	root		data:Selection
+    │ └─Selection	9990.00	cop[tikv]		not(isnull(executor__join.t1.a))
+    │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─TableReader(Probe)	10000.00	root		data:TableFullScan
+      └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+select * from t1 natural right join t2 order by a;
+a	c	b
+0	0	0
+1	3	2
+100	200	NULL
+explain format = 'brief' SELECT * FROM t1 NATURAL LEFT JOIN t2 WHERE not(t1.a <=> t2.a);
+id	estRows	task	access object	operator info
+Projection	9990.00	root		executor__join.t1.a, executor__join.t1.b, executor__join.t2.c
+└─Selection	9990.00	root		not(nulleq(executor__join.t1.a, executor__join.t2.a))
+  └─HashJoin	12487.50	root		left outer join, equal:[eq(executor__join.t1.a, executor__join.t2.a)]
+    ├─TableReader(Build)	9990.00	root		data:Selection
+    │ └─Selection	9990.00	cop[tikv]		not(isnull(executor__join.t2.a))
+    │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─TableReader(Probe)	10000.00	root		data:TableFullScan
+      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+SELECT * FROM t1 NATURAL LEFT JOIN t2 WHERE not(t1.a <=> t2.a);
+a	b	c
+10	20	NULL
+drop table if exists t1, t2, t3, t4;
+create table t1 (c int, b int);
+create table t2 (a int, b int);
+create table t3 (b int, c int);
+create table t4 (y int, c int);
+insert into t1 values (10,1);
+insert into t1 values (3 ,1);
+insert into t1 values (3 ,2);
+insert into t2 values (2, 1);
+insert into t3 values (1, 3);
+insert into t3 values (1,10);
+insert into t4 values (11,3);
+insert into t4 values (2, 3);
+select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) natural join (t3 natural join t4);
+c	b	a	b	b	c	y	c
+3	1	2	1	1	3	11	3
+3	1	2	1	1	3	2	3
+select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) join (t3 natural join t4) using (b);
+c	b	a	b	b	c	y	c
+10	1	2	1	1	3	11	3
+10	1	2	1	1	3	2	3
+3	1	2	1	1	3	11	3
+3	1	2	1	1	3	2	3
+select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) join (t3 natural join t4) using (c);
+c	b	a	b	b	c	y	c
+3	1	2	1	1	3	11	3
+3	1	2	1	1	3	2	3
+select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) join (t3 natural join t4) using (c,b);
+c	b	a	b	b	c	y	c
+3	1	2	1	1	3	11	3
+3	1	2	1	1	3	2	3
+select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) left outer join (t3 natural join t4) using (b);
+c	b	a	b	b	c	y	c
+10	1	2	1	1	3	11	3
+10	1	2	1	1	3	2	3
+3	1	2	1	1	3	11	3
+3	1	2	1	1	3	2	3
+select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) left outer join (t3 natural join t4) using (c);
+c	b	a	b	b	c	y	c
+10	1	2	1	NULL	NULL	NULL	NULL
+3	1	2	1	1	3	11	3
+3	1	2	1	1	3	2	3
+select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) left outer join (t3 natural join t4) using (c,b);
+c	b	a	b	b	c	y	c
+10	1	2	1	NULL	NULL	NULL	NULL
+3	1	2	1	1	3	11	3
+3	1	2	1	1	3	2	3
+select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) right outer join (t3 natural join t4) using (b);
+c	b	a	b	b	c	y	c
+10	1	2	1	1	3	11	3
+10	1	2	1	1	3	2	3
+3	1	2	1	1	3	11	3
+3	1	2	1	1	3	2	3
+select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) right outer join (t3 natural join t4) using (c);
+c	b	a	b	b	c	y	c
+3	1	2	1	1	3	11	3
+3	1	2	1	1	3	2	3
+select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) right outer join (t3 natural join t4) using (c,b);
+c	b	a	b	b	c	y	c
+3	1	2	1	1	3	11	3
+3	1	2	1	1	3	2	3
+select * from (t1  natural join t2) natural join (t3 natural  join t4);
+b	c	a	y
+1	3	2	11
+1	3	2	2
+select * from (t1 natural join t2) join (t3 natural join t4) using (b);
+b	c	a	c	y
+1	10	2	3	11
+1	10	2	3	2
+1	3	2	3	11
+1	3	2	3	2
+select * from (t1 natural join t2) left outer join (t3 natural join t4) using (b);
+b	c	a	c	y
+1	10	2	3	11
+1	10	2	3	2
+1	3	2	3	11
+1	3	2	3	2
+select * from (t1 natural join t2) right outer join (t3 natural join t4) using (c,b);
+c	b	y	a
+3	1	11	2
+3	1	2	2

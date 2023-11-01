@@ -14,7 +14,9 @@
 
 package types
 
-import "github.com/pingcap/tidb/pkg/types/context"
+import (
+	"github.com/pingcap/tidb/pkg/types/context"
+)
 
 // TODO: move a contents in `types/context/context.go` to this file after refactor finished.
 // Because package `types` has a dependency on `sessionctx/stmtctx`, we need a separate package `type/context` to define
@@ -31,3 +33,11 @@ const StrictFlags = context.StrictFlags
 
 // NewContext creates a new `Context`
 var NewContext = context.NewContext
+
+// DefaultStmtFlags is the default flags for statement context with the flag `FlagAllowNegativeToUnsigned` set.
+// TODO: make DefaultStmtFlags to be equal with StrictFlags, and setting flag `FlagAllowNegativeToUnsigned`
+// is only for make the code to be equivalent with the old implement during refactoring.
+const DefaultStmtFlags = context.DefaultStmtFlags
+
+// DefaultStmtNoWarningContext is an alias of `DefaultStmtNoWarningContext`
+var DefaultStmtNoWarningContext = context.DefaultStmtNoWarningContext

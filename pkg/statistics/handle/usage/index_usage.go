@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 )
 
 // NewSessionIndexUsageCollector creates a new IndexUsageCollector on the list.
@@ -35,14 +35,14 @@ func (u *statsUsageImpl) NewSessionIndexUsageCollector() interface{} {
 
 // DumpIndexUsageToKV dumps all collected index usage info to storage.
 func (u *statsUsageImpl) DumpIndexUsageToKV() error {
-	return util.CallWithSCtx(u.pool, func(sctx sessionctx.Context) error {
+	return util.CallWithSCtx(u.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		return dumpIndexUsageToKV(sctx, u.idxUsageListHead)
 	})
 }
 
 // GCIndexUsage removes unnecessary index usage data.
 func (u *statsUsageImpl) GCIndexUsage() error {
-	return util.CallWithSCtx(u.pool, gcIndexUsageOnKV)
+	return util.CallWithSCtx(u.statsHandle.SPool(), gcIndexUsageOnKV)
 }
 
 // IndexUsageInformation is the data struct to store index usage information.
@@ -182,16 +182,16 @@ func dumpIndexUsageToKV(sctx sessionctx.Context, listHead *SessionIndexUsageColl
 			end = len(mapper)
 		}
 		sql := new(strings.Builder)
-		sqlexec.MustFormatSQL(sql, "insert into mysql.SCHEMA_INDEX_USAGE (table_id,index_id,query_count,rows_selected,last_used_at) values")
+		sqlescape.MustFormatSQL(sql, "insert into mysql.SCHEMA_INDEX_USAGE (table_id,index_id,query_count,rows_selected,last_used_at) values")
 		for j := i; j < end; j++ {
 			index := indexInformationSlice[j]
-			sqlexec.MustFormatSQL(sql, "(%?, %?, %?, %?, %?)", index.id.TableID, index.id.IndexID,
+			sqlescape.MustFormatSQL(sql, "(%?, %?, %?, %?, %?)", index.id.TableID, index.id.IndexID,
 				index.information.QueryCount, index.information.RowsSelected, index.information.LastUsedAt)
 			if j < end-1 {
-				sqlexec.MustFormatSQL(sql, ",")
+				sqlescape.MustFormatSQL(sql, ",")
 			}
 		}
-		sqlexec.MustFormatSQL(sql, "on duplicate key update query_count=query_count+values(query_count),rows_selected=rows_selected+values(rows_selected),last_used_at=greatest(last_used_at, values(last_used_at))")
+		sqlescape.MustFormatSQL(sql, "on duplicate key update query_count=query_count+values(query_count),rows_selected=rows_selected+values(rows_selected),last_used_at=greatest(last_used_at, values(last_used_at))")
 		if _, _, err := util.ExecRows(sctx, sql.String()); err != nil {
 			return errors.Trace(err)
 		}

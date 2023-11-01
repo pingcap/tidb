@@ -83,6 +83,10 @@ const (
 	TopologyTimeToRefresh = 30 * time.Second
 	// TopologyPrometheus means address of prometheus.
 	TopologyPrometheus = "/topology/prometheus"
+	// TopologyTiProxy means address of TiProxy.
+	TopologyTiProxy = "/topology/tiproxy"
+	// infoSuffix is the suffix of TiDB/TiProxy topology info.
+	infoSuffix = "/info"
 	// TablePrometheusCacheExpiry is the expiry time for prometheus address cache.
 	TablePrometheusCacheExpiry = 10 * time.Second
 	// RequestRetryInterval is the sleep time before next retry for http request
@@ -1311,4 +1315,69 @@ func SetPDScheduleConfig(ctx context.Context, config map[string]interface{}) err
 		return errors.Trace(err)
 	}
 	return is.scheduleManager.SetPDScheduleConfig(ctx, config)
+}
+
+// TiProxyServerInfo is the server info for TiProxy.
+type TiProxyServerInfo struct {
+	Version        string `json:"version"`
+	GitHash        string `json:"git_hash"`
+	IP             string `json:"ip"`
+	Port           string `json:"port"`
+	StatusPort     string `json:"status_port"`
+	StartTimestamp int64  `json:"start_timestamp"`
+}
+
+// GetTiProxyServerInfo gets all TiProxy servers information from etcd.
+func GetTiProxyServerInfo(ctx context.Context) (map[string]*TiProxyServerInfo, error) {
+	failpoint.Inject("mockGetTiProxyServerInfo", func(val failpoint.Value) {
+		res := make(map[string]*TiProxyServerInfo)
+		err := json.Unmarshal([]byte(val.(string)), &res)
+		failpoint.Return(res, err)
+	})
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+	return is.getTiProxyServerInfo(ctx)
+}
+
+func (is *InfoSyncer) getTiProxyServerInfo(ctx context.Context) (map[string]*TiProxyServerInfo, error) {
+	// In test.
+	if is.etcdCli == nil {
+		return nil, nil
+	}
+
+	var err error
+	var resp *clientv3.GetResponse
+	allInfo := make(map[string]*TiProxyServerInfo)
+	for i := 0; i < keyOpDefaultRetryCnt; i++ {
+		if ctx.Err() != nil {
+			return nil, errors.Trace(ctx.Err())
+		}
+		childCtx, cancel := context.WithTimeout(ctx, keyOpDefaultTimeout)
+		resp, err = is.etcdCli.Get(childCtx, TopologyTiProxy, clientv3.WithPrefix())
+		cancel()
+		if err != nil {
+			logutil.BgLogger().Info("get key failed", zap.String("key", TopologyTiProxy), zap.Error(err))
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		for _, kv := range resp.Kvs {
+			key := string(kv.Key)
+			if !strings.HasSuffix(key, infoSuffix) {
+				continue
+			}
+			addr := key[len(TopologyTiProxy)+1 : len(key)-len(infoSuffix)]
+			var info TiProxyServerInfo
+			err = json.Unmarshal(kv.Value, &info)
+			if err != nil {
+				logutil.BgLogger().Info("unmarshal key failed", zap.String("key", key), zap.ByteString("value", kv.Value),
+					zap.Error(err))
+				return nil, errors.Trace(err)
+			}
+			allInfo[addr] = &info
+		}
+		return allInfo, nil
+	}
+	return nil, errors.Trace(err)
 }

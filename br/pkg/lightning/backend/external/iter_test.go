@@ -58,6 +58,15 @@ func (r *trackOpenFileReader) Close() error {
 	return nil
 }
 
+func getEncodedData(key, value []byte) []byte {
+	buf := make([]byte, 8*2+len(key)+len(value))
+	binary.BigEndian.PutUint64(buf, uint64(len(key)))
+	copy(buf[8:], key)
+	binary.BigEndian.PutUint64(buf[8+len(key):], uint64(len(value)))
+	copy(buf[8*2+len(key):], value)
+	return buf
+}
+
 func TestMergeKVIter(t *testing.T) {
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
@@ -78,7 +87,7 @@ func TestMergeKVIter(t *testing.T) {
 		kvStore, err := NewKeyValueStore(ctx, writer, rc)
 		require.NoError(t, err)
 		for _, kv := range data[i] {
-			err = kvStore.AddKeyValue([]byte(kv[0]), []byte(kv[1]))
+			err = kvStore.addEncodedData(getEncodedData([]byte(kv[0]), []byte(kv[1])))
 			require.NoError(t, err)
 		}
 		err = writer.Close(ctx)
@@ -86,7 +95,7 @@ func TestMergeKVIter(t *testing.T) {
 	}
 
 	trackStore := &trackOpenMemStorage{MemStorage: memStore}
-	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5)
+	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5, true)
 	require.NoError(t, err)
 	// close one empty file immediately in NewMergeKVIter
 	require.EqualValues(t, 2, trackStore.opened.Load())
@@ -130,7 +139,7 @@ func TestOneUpstream(t *testing.T) {
 		kvStore, err := NewKeyValueStore(ctx, writer, rc)
 		require.NoError(t, err)
 		for _, kv := range data[i] {
-			err = kvStore.AddKeyValue([]byte(kv[0]), []byte(kv[1]))
+			err = kvStore.addEncodedData(getEncodedData([]byte(kv[0]), []byte(kv[1])))
 			require.NoError(t, err)
 		}
 		err = writer.Close(ctx)
@@ -138,7 +147,7 @@ func TestOneUpstream(t *testing.T) {
 	}
 
 	trackStore := &trackOpenMemStorage{MemStorage: memStore}
-	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5)
+	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5, true)
 	require.NoError(t, err)
 	require.EqualValues(t, 1, trackStore.opened.Load())
 
@@ -175,14 +184,14 @@ func TestAllEmpty(t *testing.T) {
 	}
 
 	trackStore := &trackOpenMemStorage{MemStorage: memStore}
-	iter, err := NewMergeKVIter(ctx, []string{filenames[0]}, []uint64{0}, trackStore, 5)
+	iter, err := NewMergeKVIter(ctx, []string{filenames[0]}, []uint64{0}, trackStore, 5, false)
 	require.NoError(t, err)
 	require.EqualValues(t, 0, trackStore.opened.Load())
 	require.False(t, iter.Next())
 	require.NoError(t, iter.Error())
 	require.NoError(t, iter.Close())
 
-	iter, err = NewMergeKVIter(ctx, filenames, []uint64{0, 0}, trackStore, 5)
+	iter, err = NewMergeKVIter(ctx, filenames, []uint64{0, 0}, trackStore, 5, false)
 	require.NoError(t, err)
 	require.EqualValues(t, 0, trackStore.opened.Load())
 	require.False(t, iter.Next())
@@ -208,7 +217,7 @@ func TestCorruptContent(t *testing.T) {
 		kvStore, err := NewKeyValueStore(ctx, writer, rc)
 		require.NoError(t, err)
 		for _, kv := range data[i] {
-			err = kvStore.AddKeyValue([]byte(kv[0]), []byte(kv[1]))
+			err = kvStore.addEncodedData(getEncodedData([]byte(kv[0]), []byte(kv[1])))
 			require.NoError(t, err)
 		}
 		if i == 0 {
@@ -220,7 +229,7 @@ func TestCorruptContent(t *testing.T) {
 	}
 
 	trackStore := &trackOpenMemStorage{MemStorage: memStore}
-	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5)
+	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5, true)
 	require.NoError(t, err)
 	require.EqualValues(t, 2, trackStore.opened.Load())
 
@@ -308,7 +317,7 @@ func testMergeIterSwitchMode(t *testing.T, f func([]byte, int) []byte) {
 
 	offsets := make([]uint64, len(dataNames))
 
-	iter, err := NewMergeKVIter(context.Background(), dataNames, offsets, st, 2048)
+	iter, err := NewMergeKVIter(context.Background(), dataNames, offsets, st, 2048, true)
 	require.NoError(t, err)
 
 	for iter.Next() {
@@ -318,12 +327,6 @@ func testMergeIterSwitchMode(t *testing.T, f func([]byte, int) []byte) {
 }
 
 func TestHotspot(t *testing.T) {
-	backup := checkHotspotPeriod
-	checkHotspotPeriod = 2
-	t.Cleanup(func() {
-		checkHotspotPeriod = backup
-	})
-
 	ctx := context.Background()
 	store := storage.NewMemStorage()
 
@@ -345,7 +348,7 @@ func TestHotspot(t *testing.T) {
 		kvStore, err := NewKeyValueStore(ctx, writer, rc)
 		require.NoError(t, err)
 		for _, k := range keys[i] {
-			err = kvStore.AddKeyValue([]byte(k), value)
+			err = kvStore.addEncodedData(getEncodedData([]byte(k), value))
 			require.NoError(t, err)
 		}
 		err = writer.Close(ctx)
@@ -353,8 +356,9 @@ func TestHotspot(t *testing.T) {
 	}
 
 	// readerBufSize = 8+5+8+5, every KV will cause reload
-	iter, err := NewMergeKVIter(ctx, filenames, make([]uint64, len(filenames)), store, 26)
+	iter, err := NewMergeKVIter(ctx, filenames, make([]uint64, len(filenames)), store, 26, true)
 	require.NoError(t, err)
+	iter.iter.checkHotspotPeriod = 2
 	// after read key00 and key01 from reader_0, it becomes hotspot
 	require.True(t, iter.Next())
 	require.Equal(t, "key00", string(iter.Key()))
@@ -404,15 +408,10 @@ func TestHotspot(t *testing.T) {
 }
 
 func TestMemoryUsageWhenHotspotChange(t *testing.T) {
-	backup := checkHotspotPeriod
-	checkHotspotPeriod = 10
-	t.Cleanup(func() {
-		checkHotspotPeriod = backup
-	})
-	backup2 := ConcurrentReaderBufferSizePerConc
+	backup := ConcurrentReaderBufferSizePerConc
 	ConcurrentReaderBufferSizePerConc = 100 * 1024 * 1024 // 100MB, make memory leak more obvious
 	t.Cleanup(func() {
-		ConcurrentReaderBufferSizePerConc = backup2
+		ConcurrentReaderBufferSizePerConc = backup
 	})
 
 	getMemoryInUse := func() uint64 {
@@ -443,16 +442,16 @@ func TestMemoryUsageWhenHotspotChange(t *testing.T) {
 		rc.reset()
 		kvStore, err := NewKeyValueStore(ctx, writer, rc)
 		require.NoError(t, err)
-		for j := 0; j < checkHotspotPeriod; j++ {
+		for j := 0; j < 1000; j++ {
 			key := fmt.Sprintf("key%06d", cur)
 			val := fmt.Sprintf("value%06d", cur)
-			err = kvStore.AddKeyValue([]byte(key), []byte(val))
+			err = kvStore.addEncodedData(getEncodedData([]byte(key), []byte(val)))
 			require.NoError(t, err)
 			cur++
 		}
 		for j := 0; j <= 12; j++ {
 			key := fmt.Sprintf("key999%06d", cur+j)
-			err = kvStore.AddKeyValue([]byte(key), largeChunk)
+			err = kvStore.addEncodedData(getEncodedData([]byte(key), largeChunk))
 			require.NoError(t, err)
 		}
 		err = writer.Close(ctx)
@@ -461,8 +460,9 @@ func TestMemoryUsageWhenHotspotChange(t *testing.T) {
 
 	beforeMem := getMemoryInUse()
 
-	iter, err := NewMergeKVIter(ctx, filenames, make([]uint64, len(filenames)), store, 1024)
+	iter, err := NewMergeKVIter(ctx, filenames, make([]uint64, len(filenames)), store, 1024, true)
 	require.NoError(t, err)
+	iter.iter.checkHotspotPeriod = 10
 	i := 0
 	for cur > 0 {
 		cur--

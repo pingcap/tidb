@@ -172,7 +172,7 @@ func TestNewRuleAndNewRules(t *testing.T) {
 
 	for _, tt := range tests {
 		comment := fmt.Sprintf("[%s]", tt.name)
-		output, err := NewRules(Voter, tt.replicas, tt.input)
+		output, err := newRules(Voter, tt.replicas, tt.input)
 		if tt.err == nil {
 			require.NoError(t, err, comment)
 			matchRules(tt.output, output, comment, t)

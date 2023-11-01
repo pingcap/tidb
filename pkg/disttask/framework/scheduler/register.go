@@ -32,14 +32,14 @@ type TaskTypeOption func(opts *taskTypeOptions)
 
 var (
 	// key is task type
-	taskTypes              = make(map[string]taskTypeOptions)
-	taskSchedulerFactories = make(map[string]schedulerFactoryFn)
+	taskTypes              = make(map[proto.TaskType]taskTypeOptions)
+	taskSchedulerFactories = make(map[proto.TaskType]schedulerFactoryFn)
 )
 
 type schedulerFactoryFn func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) Scheduler
 
 // RegisterTaskType registers the task type.
-func RegisterTaskType(taskType string, factory schedulerFactoryFn, opts ...TaskTypeOption) {
+func RegisterTaskType(taskType proto.TaskType, factory schedulerFactoryFn, opts ...TaskTypeOption) {
 	var option taskTypeOptions
 	for _, opt := range opts {
 		opt(&option)
@@ -48,14 +48,14 @@ func RegisterTaskType(taskType string, factory schedulerFactoryFn, opts ...TaskT
 	taskSchedulerFactories[taskType] = factory
 }
 
-func getSchedulerFactory(taskType string) schedulerFactoryFn {
+func getSchedulerFactory(taskType proto.TaskType) schedulerFactoryFn {
 	return taskSchedulerFactories[taskType]
 }
 
 // ClearSchedulers is only used in test
 func ClearSchedulers() {
-	taskTypes = make(map[string]taskTypeOptions)
-	taskSchedulerFactories = make(map[string]schedulerFactoryFn)
+	taskTypes = make(map[proto.TaskType]taskTypeOptions)
+	taskSchedulerFactories = make(map[proto.TaskType]schedulerFactoryFn)
 }
 
 // WithSummary is the option of Scheduler to set the summary.

@@ -10,6 +10,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
+        "//pkg/infoschema",
         "//pkg/parser/model",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
@@ -18,11 +19,13 @@ go_library(
         "//pkg/statistics/handle/cache/internal/lfu",
         "//pkg/statistics/handle/cache/internal/mapcache",
         "//pkg/statistics/handle/cache/internal/metrics",
+        "//pkg/statistics/handle/metrics",
         "//pkg/statistics/handle/util",
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/logutil",
         "//pkg/util/syncutil",
+        "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
     ],
 )

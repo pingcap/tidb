@@ -28,8 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 )
 
 // SortExec represents sorting executor.
@@ -233,7 +233,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
 		if val.(bool) {
 			if e.Ctx().GetSessionVars().ConnectionID == 123456 {
-				e.Ctx().GetSessionVars().MemTracker.NeedKill.Store(true)
+				e.Ctx().GetSessionVars().MemTracker.Killer.SendKillSignal(sqlkiller.QueryMemoryExceeded)
 			}
 		}
 	})
@@ -446,7 +446,7 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	if !req.IsFull() {
-		numToAppend := mathutil.Min(len(e.rowPtrs)-e.Idx, req.RequiredRows()-req.NumRows())
+		numToAppend := min(len(e.rowPtrs)-e.Idx, req.RequiredRows()-req.NumRows())
 		rows := make([]chunk.Row, numToAppend)
 		for index := 0; index < numToAppend; index++ {
 			rows[index] = e.rowChunks.GetRow(e.rowPtrs[e.Idx])

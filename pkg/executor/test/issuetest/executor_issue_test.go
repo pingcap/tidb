@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/require"
 )
@@ -161,9 +162,9 @@ func TestIssue28650(t *testing.T) {
 		tk.MustExec("set @@tidb_mem_quota_query = 1073741824") // 1GB
 		require.Nil(t, tk.QueryToErr(sql))
 		tk.MustExec("set @@tidb_mem_quota_query = 33554432") // 32MB, out of memory during executing
-		require.True(t, strings.Contains(tk.QueryToErr(sql).Error(), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery))
+		require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(tk.QueryToErr(sql)))
 		tk.MustExec("set @@tidb_mem_quota_query = 65536") // 64KB, out of memory during building the plan
-		require.True(t, strings.Contains(tk.ExecToErr(sql).Error(), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery))
+		require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(tk.ExecToErr(sql)))
 	}
 }
 
@@ -316,10 +317,10 @@ func TestIndexJoin31494(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 right join t2 on t1.b=t2.b;")
 		require.Error(t, err)
-		require.Regexp(t, memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery, err.Error())
+		require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 		err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 right join t2 on t1.b=t2.b;")
 		require.Error(t, err)
-		require.Regexp(t, memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery, err.Error())
+		require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 	}
 }
 
