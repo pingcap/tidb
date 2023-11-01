@@ -673,6 +673,7 @@ func (rs *KS3Storage) Create(ctx context.Context, name string, option *WriterOpt
 		s3Writer.wg.Add(1)
 		go func() {
 			_, err := up.Upload(upParams)
+			// like a channel we only let sender close the pipe in happy path
 			if err != nil {
 				log.Warn("upload to ks3 failed", zap.String("filename", name), zap.Error(err))
 				_ = rd.CloseWithError(err)
