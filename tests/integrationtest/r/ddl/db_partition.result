@@ -1260,6 +1260,9 @@ PARTITION pfuture VALUES LESS THAN (MAXVALUE));
 alter table t1p exchange partition p202307 with table t1;
 Error 1736 (HY000): Tables have different definitions
 insert into t1 values ("2023-08-06","0000");
+drop table t1, t1p;
+drop placement policy rule1;
+drop placement policy rule2;
 drop table if exists pt;
 create table pt (a int primary key auto_increment) partition by range(a) (
 partition p0 values less than (3),
