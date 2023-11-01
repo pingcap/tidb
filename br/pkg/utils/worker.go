@@ -46,17 +46,21 @@ func (p *PipelineChannel[T]) SendError(e error) {
 // The **caller** has responsibility to handle the error, and make sure the error send to next pipeline channel.
 func (p *PipelineChannel[T]) Recv(ctx context.Context) (item T, ok bool, err error) {
 	metrics.RestoreInFlightCounters.WithLabelValues(p.name).Desc()
-	select {
-	case <-ctx.Done():
-		err = ctx.Err()
-	case item, ok = <-p.ch:
-	case err = <-p.errCh:
+	for {
+		select {
+		case <-ctx.Done():
+			err = ctx.Err()
+			return item, false, err
+		case item, ok = <-p.ch:
+			return item, ok, nil
+		case err, ok = <-p.errCh:
+			if ok && err != nil {
+				// receive error
+				// make sure error returned, and handle error first to next pipeline channel
+				return item, false, err
+			}
+		}
 	}
-	if err != nil {
-		// make sure error returned, and handle error first to next pipeline channel
-		return item, false, err
-	}
-	return item, ok, nil
 }
 
 // WaitFinish make sure the ch closed or err detected.

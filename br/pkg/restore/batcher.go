@@ -46,8 +46,6 @@ type Batcher struct {
 	// Then, it should notify us by this wait group.
 	// Use wait group instead of a trivial channel for further extension.
 	everythingIsDone *sync.WaitGroup
-	// sendErr is for output error information.
-	sendErr chan<- error
 	// signalCh is for communiate with sendWorker.
 	signalCh *utils.PipelineChannel[SendType]
 	// outCh is for output the restored table, so it can be sent to do something like checksum.
@@ -214,7 +212,7 @@ func (b *Batcher) autoCommitWorker(ctx context.Context, joiner <-chan struct{}, 
 			log.Debug("graceful stop signal received")
 			return
 		case <-ctx.Done():
-			b.sendErr <- ctx.Err()
+			b.outCh.SendError(ctx.Err())
 			return
 		case <-tick.C:
 			if b.Len() > 0 {
@@ -409,7 +407,7 @@ func (b *Batcher) Send(ctx context.Context) {
 	log.Info("restore batch start", rtree.ZapRanges(ranges), ZapTables(tbs))
 	// Leave is called at b.contextCleaner
 	if err := b.manager.Enter(ctx, drainResult.TablesToSend); err != nil {
-		b.sendErr <- err
+		b.outCh.SendError(err)
 		return
 	}
 	b.sender.RestoreBatch(drainResult)
