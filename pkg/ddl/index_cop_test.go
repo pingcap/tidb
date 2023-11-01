@@ -54,13 +54,15 @@ func TestAddIndexFetchRowsFromCoprocessor(t *testing.T) {
 		handles := make([]kv.Handle, 0, copChunk.NumRows())
 		values := make([][]types.Datum, 0, copChunk.NumRows())
 		handleDataBuf := make([]types.Datum, len(copCtx.GetBase().HandleOutputOffsets))
-		idxDataBuf := make([]types.Datum, len(copCtx.GetBase().ColumnInfos))
+		idxDataBuf := make([]types.Datum, len(idxInfo.Columns))
 
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			handle, idxDatum, err := ddl.ConvertRowToHandleAndIndexDatum(handleDataBuf, idxDataBuf, row, copCtx, idxInfo.ID)
 			require.NoError(t, err)
 			handles = append(handles, handle)
-			values = append(values, idxDatum)
+			copiedIdxDatum := make([]types.Datum, len(idxDatum))
+			copy(copiedIdxDatum, idxDatum)
+			values = append(values, copiedIdxDatum)
 		}
 		return handles, values
 	}
