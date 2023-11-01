@@ -515,7 +515,6 @@ func NewWriteExternalStoreOperator(
 				builder := external.NewWriterBuilder().
 					SetOnCloseFunc(onClose).
 					SetKeyDuplicationEncoding(index.Meta().Unique).
-					SetMutex(shareMu).
 					SetMemorySizeLimit(memoryQuota)
 				writerID := uuid.New().String()
 				prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
