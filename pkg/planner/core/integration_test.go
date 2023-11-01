@@ -2538,6 +2538,26 @@ func TestIssue45044(t *testing.T) {
 	tk.MustQuery(`select * from t1 group by t1.c1 having count(1) > 1 order by count(1) limit 10`).Check(testkit.Rows()) // no error
 }
 
+func TestIssue46177(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(` CREATE TABLE sbtest (
+  id int(10) unsigned NOT NULL AUTO_INCREMENT,
+  k int(10) unsigned NOT NULL DEFAULT '0',
+  c char(120) NOT NULL DEFAULT '',
+  pad char(60) NOT NULL DEFAULT '',
+  PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,
+  KEY k (k)
+)`)
+	tk.MustQuery(`explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a`).Check(testkit.Rows(
+		`Projection 10.00 root  Column#6->Column#7`,
+		`└─Window 10.00 root  row_number()->Column#6 over(order by test.sbtest.k rows between current row and current row)`,
+		`  └─Sort 10.00 root  test.sbtest.k`,
+		`    └─TableReader 10.00 root  data:TableRangeScan`,
+		`      └─TableRangeScan 10.00 cop[tikv] table:sbtest range:[0,10), keep order:false, stats:pseudo`))
+}
+
 // https://github.com/pingcap/tidb/issues/41458
 func TestIssue41458(t *testing.T) {
 	store := testkit.CreateMockStore(t)
