@@ -26,6 +26,10 @@ aliases:
     - windtalker
     - XuHuaiyu
     - zanmato1984
+  sig-approvers-executor-import: # approvers for importer part of executor pkg.
+    - D3Hunter
+    - gmhdbjd
+    - lance6716    
   sig-approvers-expression: # approvers for expression pkg
     - windtalker
     - XuHuaiyu
