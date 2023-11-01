@@ -21,12 +21,12 @@ set tx_isolation = 'READ-COMMITTED';
 drop table if exists t1;
 create table t1 (id int primary key, v int);
 insert into t1 values(1, 10);
-select sleep(0.01);
-sleep(0.01)
+select sleep(0.1);
+sleep(0.1)
 0
 set @a=now(6);
-select sleep(0.01);
-sleep(0.01)
+select sleep(0.1);
+sleep(0.1)
 0
 update t1 set v=100 where id=1;
 set autocommit=0;
