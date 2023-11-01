@@ -1804,7 +1804,6 @@ func writeChunkToLocal(
 		}
 	}()
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		handleDataBuf = handleDataBuf[:0]
 		handleDataBuf := extractDatumByOffsets(row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
 		h, err := buildHandle(handleDataBuf, c.TableInfo, c.PrimaryKeyInfo, sCtx)
 		if err != nil {
