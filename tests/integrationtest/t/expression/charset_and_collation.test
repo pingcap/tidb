@@ -356,8 +356,7 @@ select * from t use index(ud);
 select * from t use index(e);
 select * from t use index(ue);
 admin check table t;
-# TODO: fix https://github.com/pingcap/tidb/issues/47687
-# admin recover index t a;
+admin recover index t a;
 alter table t add column n char(10) COLLATE utf8mb4_unicode_ci;
 alter table t add index n(n);
 update t set n = '吧';
