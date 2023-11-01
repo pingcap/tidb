@@ -664,11 +664,11 @@ func (ds *DataSource) generateIndexMergePartialPath4Or(normalPathCnt int, indexM
 
 	for offset, dnfCond := range indexMergeDNFConds {
 		var cnfConds []expression.Expression
-		if sf, ok := dnfCond.(*expression.ScalarFunction); !ok {
+		sf, ok := dnfCond.(*expression.ScalarFunction)
+		if !ok {
 			continue
-		} else {
-			cnfConds = expression.SplitCNFItems(sf)
 		}
+		cnfConds = expression.SplitCNFItems(sf)
 		// for every dnf condition, find the most suitable mv index path.
 		// otherwise, for table(a json, b json, c int, idx(c,a), idx2(b,c))
 		// condition: (1 member of (a) and c=1 and d=2) or (2 member of (b) and c=3 and d=2);
