@@ -299,12 +299,18 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 		return nil, errors.Errorf("unknown step %d", gTask.Step)
 	}
 
+	eligibleInstances, err := dsp.GetEligibleInstances(ctx, gTask)
+	if err != nil {
+		logger.Warn("failed to get eligible instances", zap.Error(err))
+	}
+
 	planCtx := planner.PlanCtx{
 		Ctx:                  ctx,
 		TaskID:               gTask.ID,
 		PreviousSubtaskMetas: previousSubtaskMetas,
 		GlobalSort:           dsp.GlobalSort,
 		NextTaskStep:         nextStep,
+		ExecuteNodesCnt:      len(eligibleInstances),
 	}
 	logicalPlan := &LogicalPlan{}
 	if err := logicalPlan.FromTaskMeta(gTask.Meta); err != nil {
