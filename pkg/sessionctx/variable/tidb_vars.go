@@ -590,6 +590,9 @@ const (
 	// TiDBStmtSummaryMaxSQLLength indicates the max length of displayed normalized sql and sample sql.
 	TiDBStmtSummaryMaxSQLLength = "tidb_stmt_summary_max_sql_length"
 
+	// TiDBIgnoreInlistPlanDigest enables TiDB to generate the same plan digest with SQL using different in-list arguments.
+	TiDBIgnoreInlistPlanDigest = "tidb_ignore_inlist_plan_digest"
+
 	// TiDBCapturePlanBaseline indicates whether the capture of plan baselines is enabled.
 	TiDBCapturePlanBaseline = "tidb_capture_plan_baselines"
 
@@ -1282,6 +1285,7 @@ const (
 	DefTiDBStmtSummaryMaxStmtCount                 = 3000
 	DefTiDBStmtSummaryMaxSQLLength                 = 4096
 	DefTiDBCapturePlanBaseline                     = Off
+	DefTiDBIgnoreInlistPlanDigest                  = false
 	DefTiDBEnableIndexMerge                        = true
 	DefEnableLegacyInstanceScope                   = true
 	DefTiDBTableCacheLease                         = 3 // 3s
@@ -1523,6 +1527,7 @@ var (
 	ServiceScope              = atomic.NewString("")
 	SchemaVersionCacheLimit   = atomic.NewInt64(DefTiDBSchemaVersionCacheLimit)
 	CloudStorageURI           = atomic.NewString("")
+	IgnoreInlistPlanDigest    = atomic.NewBool(DefTiDBIgnoreInlistPlanDigest)
 )
 
 var (

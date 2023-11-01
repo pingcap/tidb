@@ -65,6 +65,31 @@ func (expr *ScalarFunction) ExplainNormalizedInfo() string {
 	return expr.explainInfo(true)
 }
 
+// ExplainNormalizedInfo4InList implements the Expression interface.
+func (expr *ScalarFunction) ExplainNormalizedInfo4InList() string {
+	var buffer bytes.Buffer
+	fmt.Fprintf(&buffer, "%s(", expr.FuncName.L)
+	switch expr.FuncName.L {
+	case ast.Cast:
+		for _, arg := range expr.GetArgs() {
+			buffer.WriteString(arg.ExplainNormalizedInfo4InList())
+			buffer.WriteString(", ")
+			buffer.WriteString(expr.RetType.String())
+		}
+	case ast.In:
+		buffer.WriteString("...")
+	default:
+		for i, arg := range expr.GetArgs() {
+			buffer.WriteString(arg.ExplainNormalizedInfo4InList())
+			if i+1 < len(expr.GetArgs()) {
+				buffer.WriteString(", ")
+			}
+		}
+	}
+	buffer.WriteString(")")
+	return buffer.String()
+}
+
 // ExplainInfo implements the Expression interface.
 func (col *Column) ExplainInfo() string {
 	return col.String()
@@ -72,6 +97,14 @@ func (col *Column) ExplainInfo() string {
 
 // ExplainNormalizedInfo implements the Expression interface.
 func (col *Column) ExplainNormalizedInfo() string {
+	if col.OrigName != "" {
+		return col.OrigName
+	}
+	return "?"
+}
+
+// ExplainNormalizedInfo4InList implements the Expression interface.
+func (col *Column) ExplainNormalizedInfo4InList() string {
 	if col.OrigName != "" {
 		return col.OrigName
 	}
@@ -89,6 +122,11 @@ func (expr *Constant) ExplainInfo() string {
 
 // ExplainNormalizedInfo implements the Expression interface.
 func (expr *Constant) ExplainNormalizedInfo() string {
+	return "?"
+}
+
+// ExplainNormalizedInfo4InList implements the Expression interface.
+func (expr *Constant) ExplainNormalizedInfo4InList() string {
 	return "?"
 }
 
@@ -142,14 +180,21 @@ func ExplainExpressionList(exprs []Expression, schema *Schema) string {
 // In some scenarios, the expr's order may not be stable when executing multiple times.
 // So we add a sort to make its explain result stable.
 func SortedExplainExpressionList(exprs []Expression) []byte {
-	return sortedExplainExpressionList(exprs, false)
+	return sortedExplainExpressionList(exprs, false, false)
 }
 
-func sortedExplainExpressionList(exprs []Expression, normalized bool) []byte {
+// SortedExplainExpressionListIgnoreInlist generates explain information for a list of expressions in order.
+func SortedExplainExpressionListIgnoreInlist(exprs []Expression) []byte {
+	return sortedExplainExpressionList(exprs, false, true)
+}
+
+func sortedExplainExpressionList(exprs []Expression, normalized bool, ignoreInlist bool) []byte {
 	buffer := bytes.NewBufferString("")
 	exprInfos := make([]string, 0, len(exprs))
 	for _, expr := range exprs {
-		if normalized {
+		if ignoreInlist {
+			exprInfos = append(exprInfos, expr.ExplainNormalizedInfo4InList())
+		} else if normalized {
 			exprInfos = append(exprInfos, expr.ExplainNormalizedInfo())
 		} else {
 			exprInfos = append(exprInfos, expr.ExplainInfo())
@@ -167,7 +212,7 @@ func sortedExplainExpressionList(exprs []Expression, normalized bool) []byte {
 
 // SortedExplainNormalizedExpressionList is same like SortedExplainExpressionList, but use for generating normalized information.
 func SortedExplainNormalizedExpressionList(exprs []Expression) []byte {
-	return sortedExplainExpressionList(exprs, true)
+	return sortedExplainExpressionList(exprs, true, false)
 }
 
 // SortedExplainNormalizedScalarFuncList is same like SortedExplainExpressionList, but use for generating normalized information.
@@ -176,7 +221,7 @@ func SortedExplainNormalizedScalarFuncList(exprs []*ScalarFunction) []byte {
 	for i := range exprs {
 		expressions[i] = exprs[i]
 	}
-	return sortedExplainExpressionList(expressions, true)
+	return sortedExplainExpressionList(expressions, true, false)
 }
 
 // ExplainColumnList generates explain information for a list of columns.
