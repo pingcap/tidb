@@ -16,9 +16,7 @@ package executor
 
 import (
 	"context"
-	"strings"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -29,8 +27,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
@@ -50,10 +48,14 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		if r == nil {
 			return
 		}
-		if str, ok := r.(string); !ok || !strings.Contains(str, memory.PanicMemoryExceedWarnMsg) {
+		if recoveredErr, ok := r.(error); !ok || !(exeerrors.ErrMemoryExceedForQuery.Equal(recoveredErr) ||
+			exeerrors.ErrMemoryExceedForInstance.Equal(recoveredErr) ||
+			exeerrors.ErrQueryInterrupted.Equal(recoveredErr) ||
+			exeerrors.ErrMaxExecTimeExceeded.Equal(recoveredErr)) {
 			panic(r)
+		} else {
+			err = recoveredErr
 		}
-		err = errors.Errorf("%v", r)
 		logutil.Logger(ctx).Error("compile SQL panic", zap.String("SQL", stmtNode.Text()), zap.Stack("stack"), zap.Any("recover", r))
 	}()
 

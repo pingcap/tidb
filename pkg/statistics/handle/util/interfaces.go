@@ -222,6 +222,9 @@ type StatsReadWriter interface {
 	// TableStatsFromStorage loads table stats info from storage.
 	TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error)
 
+	// LoadTablePartitionStats loads partition stats info from storage.
+	LoadTablePartitionStats(tableInfo *model.TableInfo, partitionDef *model.PartitionDefinition) (*statistics.Table, error)
+
 	// StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
 	StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount int64, err error)
 
@@ -249,7 +252,8 @@ type StatsReadWriter interface {
 	// then tidb-server will reload automatic.
 	UpdateStatsVersion() error
 
-	// ResetTableStats2KVForDrop resets the count to 0.
+	// ResetTableStats2KVForDrop update the version of mysql.stats_meta.
+	// Then GC worker will delete the old version of stats.
 	ResetTableStats2KVForDrop(physicalID int64) (err error)
 
 	// ChangeGlobalStatsID changes the global stats ID.
