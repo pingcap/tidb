@@ -666,10 +666,8 @@ func (ds *DataSource) generateIndexMergePartialPath4Or(normalPathCnt int, indexM
 		var cnfConds []expression.Expression
 		if sf, ok := dnfCond.(*expression.ScalarFunction); !ok {
 			continue
-		} else if sf.FuncName.L == ast.LogicAnd {
-			cnfConds = expression.FlattenCNFConditions(sf)
 		} else {
-			cnfConds = []expression.Expression{sf}
+			cnfConds = expression.SplitCNFItems(sf)
 		}
 		// for every dnf condition, find the most suitable mv index path.
 		// otherwise, for table(a json, b json, c int, idx(c,a), idx2(b,c))
