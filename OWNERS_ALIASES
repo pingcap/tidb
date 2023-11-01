@@ -56,6 +56,11 @@ aliases:
     - tangenta
     - wjhuang2016
     - ywqzzy
+  sig-approvers-dumpling: # approvers for dumpling module
+    - Benjamin2037
+    - gmhdbjd
+    - lichunzhu
+    - okJiang
   sig-approvers-tidb-binlog: # approvers for tidb-binlog module
     - Benjamin2037
     - gmhdbjd
