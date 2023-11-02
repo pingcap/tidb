@@ -300,6 +300,7 @@ bench-daily:
 	go test -tags intest github.com/pingcap/tidb/pkg/expression -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test -tags intest github.com/pingcap/tidb/pkg/util/rowcodec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test -tags intest github.com/pingcap/tidb/pkg/util/codec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test -tags intest github.com/pingcap/tidb/pkg/statistics/handle/cache -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test -tags intest github.com/pingcap/tidb/pkg/distsql -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test -tags intest github.com/pingcap/tidb/pkg/util/benchdaily -run TestBenchDaily -bench Ignore \
 		-date `git log -n1 --date=unix --pretty=format:%cd` \
