@@ -139,7 +139,58 @@ func hasBinaryStr(args []*types.FieldType) bool {
 
 func addCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string, evalType types.EvalType, resultFieldType *types.FieldType, args ...Expression) error {
 	switch funcName {
-	case ast.If, ast.Ifnull, ast.WindowFuncLead, ast.WindowFuncLag, ast.Coalesce:
+	case ast.If, ast.Ifnull, ast.WindowFuncLead, ast.WindowFuncLag:
+		if len(args) != 2 {
+			panic("unexpected length of args for if/ifnull/lead/lag")
+		}
+		lexp, rexp := args[0], args[1]
+		lhs, rhs := lexp.GetType(), rexp.GetType()
+		if types.IsNonBinaryStr(lhs) && !types.IsBinaryStr(rhs) {
+			ec, err := CheckAndDeriveCollationFromExprs(ctx, funcName, evalType, lexp, rexp)
+			if err != nil {
+				return err
+			}
+			resultFieldType.SetCollate(ec.Collation)
+			resultFieldType.SetCharset(ec.Charset)
+			resultFieldType.SetFlag(0)
+			if mysql.HasBinaryFlag(lhs.GetFlag()) || !types.IsNonBinaryStr(rhs) {
+				resultFieldType.AddFlag(mysql.BinaryFlag)
+			}
+		} else if types.IsNonBinaryStr(rhs) && !types.IsBinaryStr(lhs) {
+			ec, err := CheckAndDeriveCollationFromExprs(ctx, funcName, evalType, lexp, rexp)
+			if err != nil {
+				return err
+			}
+			resultFieldType.SetCollate(ec.Collation)
+			resultFieldType.SetCharset(ec.Charset)
+			resultFieldType.SetFlag(0)
+			if mysql.HasBinaryFlag(rhs.GetFlag()) || !types.IsNonBinaryStr(lhs) {
+				resultFieldType.AddFlag(mysql.BinaryFlag)
+			}
+		} else if types.IsBinaryStr(lhs) || types.IsBinaryStr(rhs) || !evalType.IsStringKind() {
+			types.SetBinChsClnFlag(resultFieldType)
+		} else {
+			resultFieldType.SetCharset(mysql.DefaultCharset)
+			resultFieldType.SetCollate(mysql.DefaultCollationName)
+			resultFieldType.SetFlag(0)
+		}
+	case ast.Case:
+		if len(args) == 0 {
+			panic("unexpected length 0 of args for casewhen")
+		}
+		ec, err := CheckAndDeriveCollationFromExprs(ctx, funcName, evalType, args...)
+		if err != nil {
+			return err
+		}
+		resultFieldType.SetCollate(ec.Collation)
+		resultFieldType.SetCharset(ec.Charset)
+		for i := range args {
+			if mysql.HasBinaryFlag(args[i].GetType().GetFlag()) || !types.IsNonBinaryStr(args[i].GetType()) {
+				resultFieldType.AddFlag(mysql.BinaryFlag)
+				break
+			}
+		}
+	case ast.Coalesce: // TODO ast.Case and ast.Coalesce should be merged into the same branch
 		argTypes := make([]*types.FieldType, 0)
 		for _, arg := range args {
 			argTypes = append(argTypes, arg.GetType())
@@ -176,22 +227,6 @@ func addCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string
 			resultFieldType.SetCharset(mysql.DefaultCharset)
 			resultFieldType.SetCollate(mysql.DefaultCollationName)
 			resultFieldType.SetFlag(0)
-		}
-	case ast.Case:
-		if len(args) == 0 {
-			panic("unexpected length 0 of args for casewhen")
-		}
-		ec, err := CheckAndDeriveCollationFromExprs(ctx, funcName, evalType, args...)
-		if err != nil {
-			return err
-		}
-		resultFieldType.SetCollate(ec.Collation)
-		resultFieldType.SetCharset(ec.Charset)
-		for i := range args {
-			if mysql.HasBinaryFlag(args[i].GetType().GetFlag()) || !types.IsNonBinaryStr(args[i].GetType()) {
-				resultFieldType.AddFlag(mysql.BinaryFlag)
-				break
-			}
 		}
 	default:
 		panic("unexpected function: " + funcName)
