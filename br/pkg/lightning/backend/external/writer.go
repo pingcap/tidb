@@ -20,11 +20,11 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"time"
 
 	"github.com/docker/go-units"
-	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
@@ -439,16 +439,8 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	}()
 
 	sortStart := time.Now()
-	sorty.MaxGor = 1
-	sorty.Sort(len(w.kvLocations), func(i, j, r, s int) bool {
-		posi, posj := w.kvLocations[i], w.kvLocations[j]
-		if bytes.Compare(w.getKeyByLoc(posi), w.getKeyByLoc(posj)) < 0 {
-			if r != s {
-				w.kvLocations[r], w.kvLocations[s] = w.kvLocations[s], w.kvLocations[r]
-			}
-			return true
-		}
-		return false
+	slices.SortFunc(w.kvLocations, func(i, j kvLocation) int {
+		return bytes.Compare(w.getKeyByLoc(i), w.getKeyByLoc(j))
 	})
 	sortDuration = time.Since(sortStart)
 
