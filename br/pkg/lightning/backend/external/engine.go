@@ -362,9 +362,14 @@ func (e *Engine) GetKeyRange() (startKey []byte, endKey []byte, err error) {
 func (e *Engine) SplitRanges(
 	startKey, endKey []byte,
 	_, _ int64,
-	_ log.Logger,
+	logger log.Logger,
 ) ([]common.Range, error) {
 	splitKeys := e.splitKeys
+	for i, key := range splitKeys {
+		logger.Info("engine split key",
+			zap.Int("idx", i),
+			zap.String("key", hex.EncodeToString(key)))
+	}
 	ranges := make([]common.Range, 0, len(splitKeys)+1)
 	ranges = append(ranges, common.Range{Start: startKey})
 	for i := 0; i < len(splitKeys); i++ {

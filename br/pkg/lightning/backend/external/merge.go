@@ -86,7 +86,7 @@ func MergeOverlappingFilesV2(
 		SetPropKeysDistance(propKeysDist).
 		SetPropSizeDistance(propSizeDist).
 		SetOnCloseFunc(onClose).
-		BuildOneFile(store, newFilePrefix, writerID)
+		BuildOneFile(store, newFilePrefix, writerID, false)
 
 	err = writer.Init(ctx)
 	if err != nil {

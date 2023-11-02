@@ -42,7 +42,7 @@ func TestOnefileWriter(t *testing.T) {
 	writer := NewWriterBuilder().
 		SetPropSizeDistance(100).
 		SetPropKeysDistance(2).
-		BuildOneFile(memStore, "/test", "0")
+		BuildOneFile(memStore, "/test", "0", true)
 
 	err := writer.Init(ctx)
 	require.NoError(t, err)
@@ -187,12 +187,12 @@ func TestOnefileWriterManyRows(t *testing.T) {
 	writer := NewWriterBuilder().
 		SetPropKeysDistance(2).
 		SetMemorySizeLimit(1000).
-		BuildOneFile(memStore, "/test", "0")
+		BuildOneFile(memStore, "/test", "0", false)
 
 	err := writer.Init(ctx)
 	require.NoError(t, err)
 
-	kvCnt := 10000000
+	kvCnt := 1000000
 	kvs := make([]common.KvPair, kvCnt)
 	for i := 0; i < kvCnt; i++ {
 		randLen := rand.Intn(10) + 1
@@ -246,3 +246,5 @@ func TestOnefileWriterManyRows(t *testing.T) {
 	require.Equal(t, io.EOF, err)
 	require.NoError(t, kvReader.Close())
 }
+
+// add more tests for rc

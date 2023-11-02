@@ -65,6 +65,7 @@ type OneFileWriter struct {
 	dataWriter storage.ExternalFileWriter
 	statWriter storage.ExternalFileWriter
 	logger     *zap.Logger
+	useSort    bool
 }
 
 func (w *OneFileWriter) initWriter(ctx context.Context) (
@@ -188,23 +189,25 @@ func (w *OneFileWriter) flushKVs(ctx context.Context, fromClose bool) (err error
 	)
 
 	savedBytes = w.batchSize
-	sortStart := time.Now()
-	sorty.MaxGor = min(8, uint64(variable.GetDDLReorgWorkerCounter()))
-	sorty.Sort(len(w.kvLocations), func(i, j, r, s int) bool {
-		posi, posj := w.kvLocations[i], w.kvLocations[j]
-		if bytes.Compare(w.getKeyByLoc(posi), w.getKeyByLoc(posj)) < 0 {
-			if r != s {
-				w.kvLocations[r], w.kvLocations[s] = w.kvLocations[s], w.kvLocations[r]
+
+	if w.useSort {
+		sortStart := time.Now()
+		sorty.MaxGor = min(8, uint64(variable.GetDDLReorgWorkerCounter()))
+		sorty.Sort(len(w.kvLocations), func(i, j, r, s int) bool {
+			posi, posj := w.kvLocations[i], w.kvLocations[j]
+			if bytes.Compare(w.getKeyByLoc(posi), w.getKeyByLoc(posj)) < 0 {
+				if r != s {
+					w.kvLocations[r], w.kvLocations[s] = w.kvLocations[s], w.kvLocations[r]
+				}
+				return true
 			}
-			return true
-		}
-		return false
-	})
+			return false
+		})
 
-	sortDuration = time.Since(sortStart)
-	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("sort").Observe(sortDuration.Seconds())
-	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort").Observe(float64(savedBytes) / 1024.0 / 1024.0 / sortDuration.Seconds())
-
+		sortDuration = time.Since(sortStart)
+		metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("sort").Observe(sortDuration.Seconds())
+		metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort").Observe(float64(savedBytes) / 1024.0 / 1024.0 / sortDuration.Seconds())
+	}
 	for _, pair := range w.kvLocations {
 		err = w.kvStore.addEncodedData(w.getEncodedKVData(pair))
 		if err != nil {
