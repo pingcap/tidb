@@ -369,7 +369,8 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 	// without permission to parent dir
 	c.Path = path.Join(tempDir, "no-perm", "no-perm.csv")
 	err = c.InitDataFiles(ctx)
-	require.ErrorIs(t, err, exeerrors.ErrLoadDataCantRead, err)
+	c.logger.Info("the error", zap.Error(err))
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataCantRead)
 	require.ErrorContains(t, err, "permission denied")
 	// file not exists
 	c.Path = path.Join(tempDir, "not-exists.csv")
