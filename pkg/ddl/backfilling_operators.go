@@ -201,11 +201,6 @@ func NewWriteIndexToExternalStoragePipeline(
 		return nil, err
 	}
 
-	var shareMu *sync.Mutex
-	if bcctx != nil {
-		shareMu = bcctx.GetLocalBackend().GetMutex()
-	}
-
 	memTotal, err := memory.MemTotal()
 	if err != nil {
 		return nil, err
@@ -215,7 +210,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
 	writeOp := NewWriteExternalStoreOperator(
-		ctx, copCtx, sessPool, jobID, subtaskID, tbl, indexes, extStore, srcChkPool, writerCnt, onClose, shareMu, memSize)
+		ctx, copCtx, sessPool, jobID, subtaskID, tbl, indexes, extStore, srcChkPool, writerCnt, onClose, memSize)
 	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, totalRowCount, metricCounter)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
@@ -499,7 +494,6 @@ func NewWriteExternalStoreOperator(
 	srcChunkPool chan *chunk.Chunk,
 	concurrency int,
 	onClose external.OnCloseFunc,
-	shareMu *sync.Mutex,
 	memoryQuota uint64,
 ) *WriteExternalStoreOperator {
 	pool := workerpool.NewWorkerPool(
@@ -512,7 +506,6 @@ func NewWriteExternalStoreOperator(
 				builder := external.NewWriterBuilder().
 					SetOnCloseFunc(onClose).
 					SetKeyDuplicationEncoding(index.Meta().Unique).
-					SetMutex(shareMu).
 					SetMemorySizeLimit(memoryQuota)
 				writerID := uuid.New().String()
 				prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
