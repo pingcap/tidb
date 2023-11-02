@@ -522,7 +522,16 @@ func showAddIdxReorgTp(job *model.Job) string {
 		if job.ReorgMeta != nil {
 			tp := job.ReorgMeta.ReorgTp.String()
 			if len(tp) > 0 {
+<<<<<<< HEAD
 				return " /* " + tp + " */"
+=======
+				sb.WriteString(" /* ")
+				sb.WriteString(tp)
+				if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge && job.ReorgMeta.UseCloudStorage {
+					sb.WriteString(" cloud")
+				}
+				sb.WriteString(" */")
+>>>>>>> c1e28f31b71 (ddl, table: improve the efficiency of adding index (#48184))
 			}
 		}
 	}
@@ -533,7 +542,16 @@ func showAddIdxReorgTpInSubJob(subJob *model.SubJob) string {
 	if subJob.Type == model.ActionAddIndex || subJob.Type == model.ActionAddPrimaryKey {
 		tp := subJob.ReorgTp.String()
 		if len(tp) > 0 {
+<<<<<<< HEAD
 			return " /* " + tp + " */"
+=======
+			sb.WriteString(" /* ")
+			sb.WriteString(tp)
+			if subJob.ReorgTp == model.ReorgTypeLitMerge && subJob.UseCloud {
+				sb.WriteString(" cloud")
+			}
+			sb.WriteString(" */")
+>>>>>>> c1e28f31b71 (ddl, table: improve the efficiency of adding index (#48184))
 		}
 	}
 	return ""
