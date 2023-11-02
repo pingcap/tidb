@@ -20,16 +20,15 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"time"
 
-	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -192,18 +191,9 @@ func (w *OneFileWriter) flushKVs(ctx context.Context, fromClose bool) (err error
 
 	if w.useSort {
 		sortStart := time.Now()
-		sorty.MaxGor = min(8, uint64(variable.GetDDLReorgWorkerCounter()))
-		sorty.Sort(len(w.kvLocations), func(i, j, r, s int) bool {
-			posi, posj := w.kvLocations[i], w.kvLocations[j]
-			if bytes.Compare(w.getKeyByLoc(posi), w.getKeyByLoc(posj)) < 0 {
-				if r != s {
-					w.kvLocations[r], w.kvLocations[s] = w.kvLocations[s], w.kvLocations[r]
-				}
-				return true
-			}
-			return false
+		slices.SortFunc(w.kvLocations, func(i, j kvLocation) int {
+			return bytes.Compare(w.getKeyByLoc(i), w.getKeyByLoc(j))
 		})
-
 		sortDuration = time.Since(sortStart)
 		metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("sort").Observe(sortDuration.Seconds())
 		metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort").Observe(float64(savedBytes) / 1024.0 / 1024.0 / sortDuration.Seconds())
@@ -229,7 +219,9 @@ func (w *OneFileWriter) flushKVs(ctx context.Context, fromClose bool) (err error
 		w.multiFileStat.Filenames = append(w.multiFileStat.Filenames,
 			[2]string{w.dataFile, w.statFile},
 		)
-		w.multiFileStat.build([]tidbkv.Key{w.minKey}, []tidbkv.Key{w.maxKey})
+		w.multiFileStat.build(
+			[]tidbkv.Key{w.minKey},
+			[]tidbkv.Key{w.maxKey})
 
 		err1 := w.dataWriter.Close(ctx)
 		if err1 != nil {
@@ -244,11 +236,11 @@ func (w *OneFileWriter) flushKVs(ctx context.Context, fromClose bool) (err error
 			err = err2
 			return
 		}
-		w.rc.reset()
 	}
 	w.kvLocations = w.kvLocations[:0]
 	w.kvSize = 0
 	w.kvBuffer.reset()
+	w.rc.reset()
 	w.batchSize = 0
 	return nil
 }
