@@ -149,7 +149,7 @@ func (iter *IndexKVGenerator) Next(keyBuf, valBuf []byte) ([]byte, []byte, bool,
 	return key, idxVal, distinct, err
 }
 
-// Valid returns true if the generator is exhausted.
+// Valid returns true if the generator is not exhausted.
 func (iter *IndexKVGenerator) Valid() bool {
 	if len(iter.allIdxVals) == 0 {
 		return iter.i == 0
