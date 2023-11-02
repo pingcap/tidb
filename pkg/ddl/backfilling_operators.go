@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"path"
 	"strconv"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -42,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -189,8 +187,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	for i := 0; i < poolSize; i++ {
 		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, copReadBatchSize())
 	}
-	readerCnt := int(variable.GetDDLReorgWorkerCounter())
-	writerCnt := 1
+	readerCnt, writerCnt := expectedIngestWorkerCnt()
 
 	backend, err := storage.ParseBackend(extStoreURI, nil)
 	if err != nil {

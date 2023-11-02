@@ -172,11 +172,13 @@ func (dsp *BackfillingDispatcherExt) GetNextStep(task *proto.Task) proto.Step {
 	}
 }
 
+var AddIndexMergeSortOverlapThreshold int64 = 8000
+
 func skipMergeSort(stats []external.MultipleFilesStat) bool {
 	failpoint.Inject("forceMergeSort", func() {
 		failpoint.Return(false)
 	})
-	return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
+	return external.GetMaxOverlappingTotal(stats) <= AddIndexMergeSortOverlapThreshold
 }
 
 // OnErrStage generate error handling stage's plan.
