@@ -47,7 +47,7 @@ func (bf *bitAndFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 		if value.Kind() == types.KindUint64 {
 			evalCtx.Value.SetUint64(evalCtx.Value.GetUint64() & value.GetUint64())
 		} else {
-			int64Value, err := value.ToInt64(sc)
+			int64Value, err := value.ToInt64(sc.TypeCtx())
 			if err != nil {
 				return err
 			}
