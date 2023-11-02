@@ -1070,14 +1070,14 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			prop.CanAddEnforcer = true
 		}
 
-		if bestTaskWithoutEnforce != nil && !bestTaskWithoutEnforce.invalid() {
-			curIsBest, cerr := compareTaskCost(ds.SCtx(), bestTaskWithoutEnforce, t, opt)
+		if bestUnenforcedPlan != nil && !bestUnenforcedPlan.invalid() {
+			curIsBest, cerr := compareTaskCost(ds.SCtx(), bestUnenforcedPlan, t, opt)
 			if cerr != nil {
 				err = cerr
 				return
 			}
 			if curIsBest {
-				t = bestTaskWithoutEnforce
+				t = bestUnenforcedPlan
 			}
 		}
 
