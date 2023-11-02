@@ -1,0 +1,13 @@
+# TestMaxDeltaSchemaCount
+set @@global.tidb_max_delta_schema_count= -1;
+show warnings;
+select @@global.tidb_max_delta_schema_count;
+set @@global.tidb_max_delta_schema_count= 9223372036854775807;
+show warnings;
+select @@global.tidb_max_delta_schema_count;
+-- error 1232
+set @@global.tidb_max_delta_schema_count= invalid_val;
+set @@global.tidb_max_delta_schema_count= 2048;
+select @@global.tidb_max_delta_schema_count;
+set @@global.tidb_max_delta_schema_count= default;
+

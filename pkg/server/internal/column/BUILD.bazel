@@ -40,7 +40,6 @@ go_test(
         "//pkg/server/internal/util",
         "//pkg/types",
         "//pkg/util/chunk",
-        "//pkg/util/mock",
         "@com_github_stretchr_testify//require",
     ],
 )

@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
-	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/replayer"
@@ -443,7 +443,7 @@ func createSchemaAndItems(ctx sessionctx.Context, f *zip.File) error {
 }
 
 func loadStats(ctx sessionctx.Context, f *zip.File) error {
-	jsonTbl := &storage.JSONTable{}
+	jsonTbl := &util.JSONTable{}
 	r, err := f.Open()
 	if err != nil {
 		return errors.AddStack(err)

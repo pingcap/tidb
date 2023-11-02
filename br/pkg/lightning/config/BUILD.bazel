@@ -18,7 +18,6 @@ go_library(
         "//pkg/config",
         "//pkg/parser/mysql",
         "//pkg/util",
-        "//pkg/util/mathutil",
         "//pkg/util/table-filter",
         "//pkg/util/table-router",
         "@com_github_burntsushi_toml//:toml",

@@ -176,7 +176,7 @@ func (s *infosSchemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server
 	// TiDB/TiKV config.
 	router.Handle("/config", fn.Wrap(mockConfig))
 	// PD region.
-	router.Handle("/pd/api/v1/stats/region", fn.Wrap(func() (*helper.PDRegionStats, error) {
+	router.Handle(pdapi.RegionStats, fn.Wrap(func() (*helper.PDRegionStats, error) {
 		return &helper.PDRegionStats{
 			Count:            1,
 			EmptyCount:       1,
@@ -233,6 +233,7 @@ func TestTiDBClusterInfo(t *testing.T) {
 		"pd,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash,0",
 		"tidb,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash,1001",
 		"tikv,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash,0",
+		"tiproxy,127.0.0.1:6000," + mockAddr + ",mock-version,mock-githash,0",
 	}
 	fpExpr := `return("` + strings.Join(instances, ";") + `")`
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockClusterInfo", fpExpr))
@@ -243,6 +244,7 @@ func TestTiDBClusterInfo(t *testing.T) {
 		row("pd", "127.0.0.1:11080", mockAddr, "mock-version", "mock-githash", "0"),
 		row("tidb", "127.0.0.1:11080", mockAddr, "mock-version", "mock-githash", "1001"),
 		row("tikv", "127.0.0.1:11080", mockAddr, "mock-version", "mock-githash", "0"),
+		row("tiproxy", "127.0.0.1:6000", mockAddr, "mock-version", "mock-githash", "0"),
 	))
 	tk.MustQuery("select * from information_schema.cluster_config").Check(testkit.Rows(
 		"pd 127.0.0.1:11080 key1 value1",

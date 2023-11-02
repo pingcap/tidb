@@ -75,7 +75,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/format"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/hint"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -148,7 +147,7 @@ func (e *ShowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.cursor >= e.result.NumRows() {
 		return nil
 	}
-	numCurBatch := mathutil.Min(req.Capacity(), e.result.NumRows()-e.cursor)
+	numCurBatch := min(req.Capacity(), e.result.NumRows()-e.cursor)
 	req.Append(e.result, e.cursor, e.cursor+numCurBatch)
 	e.cursor += numCurBatch
 	return nil
@@ -2263,7 +2262,7 @@ func fillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedR
 	result.AppendInt64(3, info.TableID)
 	result.AppendString(4, info.Step)
 	result.AppendString(5, info.Status)
-	result.AppendString(6, units.HumanSize(float64(info.SourceFileSize)))
+	result.AppendString(6, units.BytesSize(float64(info.SourceFileSize)))
 	if info.Summary != nil {
 		result.AppendUint64(7, info.Summary.ImportedRows)
 	} else if importedRowCount >= 0 {

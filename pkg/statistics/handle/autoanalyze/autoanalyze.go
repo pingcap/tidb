@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"go.uber.org/zap"
@@ -247,7 +248,7 @@ func autoAnalyzeTable(sctx sessionctx.Context,
 		return false
 	}
 	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*statsHandle.Lease(), ratio); needAnalyze {
-		escaped, err := sqlexec.EscapeSQL(sql, params...)
+		escaped, err := sqlescape.EscapeSQL(sql, params...)
 		if err != nil {
 			return false
 		}
@@ -261,7 +262,7 @@ func autoAnalyzeTable(sctx sessionctx.Context,
 		if _, ok := statsTbl.Indices[idx.ID]; !ok && idx.State == model.StatePublic {
 			sqlWithIdx := sql + " index %n"
 			paramsWithIdx := append(params, idx.Name.O)
-			escaped, err := sqlexec.EscapeSQL(sqlWithIdx, paramsWithIdx...)
+			escaped, err := sqlescape.EscapeSQL(sqlWithIdx, paramsWithIdx...)
 			if err != nil {
 				return false
 			}
@@ -331,8 +332,13 @@ func autoAnalyzePartitionTableInDynamicMode(sctx sessionctx.Context,
 		if partitionStatsTbl.Pseudo || partitionStatsTbl.RealtimeCount < AutoAnalyzeMinCnt {
 			continue
 		}
-		if needAnalyze, _ := NeedAnalyzeTable(partitionStatsTbl, 20*statsHandle.Lease(), ratio); needAnalyze {
+		if needAnalyze, reason := NeedAnalyzeTable(partitionStatsTbl, 20*statsHandle.Lease(), ratio); needAnalyze {
 			partitionNames = append(partitionNames, def.Name.O)
+			logutil.BgLogger().Info("need to auto analyze", zap.String("category", "stats"),
+				zap.String("database", db),
+				zap.String("table", tblInfo.Name.String()),
+				zap.String("partition", def.Name.O),
+				zap.String("reason", reason))
 			statistics.CheckAnalyzeVerOnTable(partitionStatsTbl, &tableStatsVer)
 		}
 	}
@@ -350,6 +356,7 @@ func autoAnalyzePartitionTableInDynamicMode(sctx sessionctx.Context,
 	}
 	if len(partitionNames) > 0 {
 		logutil.BgLogger().Info("start to auto analyze", zap.String("category", "stats"),
+			zap.String("database", db),
 			zap.String("table", tblInfo.Name.String()),
 			zap.Any("partitions", partitionNames),
 			zap.Int("analyze partition batch size", analyzePartitionBatchSize))
@@ -364,6 +371,7 @@ func autoAnalyzePartitionTableInDynamicMode(sctx sessionctx.Context,
 			sql := getSQL("analyze table %n.%n partition", "", end-start)
 			params := append([]interface{}{db, tblInfo.Name.O}, partitionNames[start:end]...)
 			logutil.BgLogger().Info("auto analyze triggered", zap.String("category", "stats"),
+				zap.String("database", db),
 				zap.String("table", tblInfo.Name.String()),
 				zap.Any("partitions", partitionNames[start:end]))
 			execAutoAnalyze(sctx, statsHandle, tableStatsVer, sql, params...)
@@ -394,6 +402,7 @@ func autoAnalyzePartitionTableInDynamicMode(sctx sessionctx.Context,
 				params := append([]interface{}{db, tblInfo.Name.O}, partitionNames[start:end]...)
 				params = append(params, idx.Name.O)
 				logutil.BgLogger().Info("auto analyze for unanalyzed", zap.String("category", "stats"),
+					zap.String("database", db),
 					zap.String("table", tblInfo.Name.String()),
 					zap.String("index", idx.Name.String()),
 					zap.Any("partitions", partitionNames[start:end]))
@@ -420,7 +429,7 @@ func execAutoAnalyze(sctx sessionctx.Context,
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
-		escaped, err1 := sqlexec.EscapeSQL(sql, params...)
+		escaped, err1 := sqlescape.EscapeSQL(sql, params...)
 		if err1 != nil {
 			escaped = ""
 		}

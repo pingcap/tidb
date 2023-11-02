@@ -644,6 +644,7 @@ SwitchIndexState:
 			}
 			return ver, err
 		}
+		loadCloudStorageURI(w, job)
 		if reorgTp.NeedMergeProcess() {
 			// Increase telemetryAddIndexIngestUsage
 			telemetryAddIndexIngestUsage.Inc()
@@ -789,6 +790,12 @@ func pickBackfillType(ctx context.Context, job *model.Job, unique bool, d *ddlCt
 		zap.Bool("lightning env initialized", ingest.LitInitialized))
 	job.ReorgMeta.ReorgTp = model.ReorgTypeTxnMerge
 	return model.ReorgTypeTxnMerge, nil
+}
+
+func loadCloudStorageURI(w *worker, job *model.Job) {
+	jc := w.jobContext(job.ID, job.ReorgMeta)
+	jc.cloudStorageURI = variable.CloudStorageURI.Load()
+	job.ReorgMeta.UseCloudStorage = len(jc.cloudStorageURI) > 0
 }
 
 // cleanupSortPath is used to clean up the temp data of the previous jobs.
@@ -1081,9 +1088,7 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 			// TODO(tangenta): get duplicate column and match index.
 			err = convertToKeyExistsErr(err, allIndexInfos[0], tbl.Meta())
 		}
-		if !errorIsRetryable(err, job) ||
-			// TODO: Remove this check make it can be retry. Related test is TestModifyColumnReorgInfo.
-			job.ReorgMeta.IsDistReorg {
+		if !errorIsRetryable(err, job) {
 			logutil.BgLogger().Warn("run add index job failed, convert job to rollback", zap.String("category", "ddl"), zap.String("job", job.String()), zap.Error(err))
 			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
 			if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
@@ -2044,6 +2049,9 @@ var MockDMLExecutionOnTaskFinished func()
 // MockDMLExecutionOnDDLPaused is used to mock DML execution when ddl job paused.
 var MockDMLExecutionOnDDLPaused func()
 
+// TestSyncChan is used to sync the test.
+var TestSyncChan = make(chan struct{})
+
 func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {
 		return errors.New("do not support merge index")
@@ -2059,12 +2067,16 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 		taskKey = fmt.Sprintf("%s/%d", taskKey, mInfo.Seq)
 	}
 
-	// for resuming add index task.
+	// For resuming add index task.
+	// Need to fetch global task by taskKey in tidb_global_task and tidb_global_task_history tables.
+	// When pausing the related ddl job, it is possible that the global task with taskKey is succeed and in tidb_global_task_history.
+	// As a result, when resuming the related ddl job,
+	// it is necessary to check task exits in tidb_global_task and tidb_global_task_history tables.
 	taskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return err
 	}
-	task, err := taskManager.GetGlobalTaskByKey(taskKey)
+	task, err := taskManager.GetGlobalTaskByKeyWithHistory(taskKey)
 	if err != nil {
 		return err
 	}
@@ -2072,6 +2084,10 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 		// It's possible that the task state is succeed but the ddl job is paused.
 		// When task in succeed state, we can skip the dist task execution/scheduing process.
 		if task.State == proto.TaskStateSucceed {
+			logutil.BgLogger().Info(
+				"global task succeed, start to resume the ddl job",
+				zap.String("category", "ddl"),
+				zap.String("task-key", taskKey))
 			return nil
 		}
 		g.Go(func() error {
@@ -2086,9 +2102,11 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 				return err
 			}
 			err = handle.WaitGlobalTask(ctx, task)
-			if w.isReorgPaused(reorgInfo.Job.ID) {
-				logutil.BgLogger().Warn("job paused by user", zap.String("category", "ddl"), zap.Error(err))
-				return dbterror.ErrPausedDDLJob.GenWithStackByArgs(reorgInfo.Job.ID)
+			if err := w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
+				if dbterror.ErrPausedDDLJob.Equal(err) {
+					logutil.BgLogger().Warn("job paused by user", zap.String("category", "ddl"), zap.Error(err))
+					return dbterror.ErrPausedDDLJob.GenWithStackByArgs(reorgInfo.Job.ID)
+				}
 			}
 			return err
 		})
@@ -2098,11 +2116,12 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 			elemIDs = append(elemIDs, elem.ID)
 		}
 
+		job := reorgInfo.Job
 		taskMeta := &BackfillGlobalMeta{
 			Job:             *reorgInfo.Job.Clone(),
 			EleIDs:          elemIDs,
 			EleTypeKey:      reorgInfo.currElement.TypeKey,
-			CloudStorageURI: variable.CloudStorageURI.Load(),
+			CloudStorageURI: w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI,
 		}
 
 		metaData, err := json.Marshal(taskMeta)
@@ -2113,12 +2132,14 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 		g.Go(func() error {
 			defer close(done)
 			err := handle.SubmitAndRunGlobalTask(ctx, taskKey, taskType, distPhysicalTableConcurrency, metaData)
-			failpoint.Inject("pauseAfterDistTaskSuccess", func() {
+			failpoint.Inject("pauseAfterDistTaskFinished", func() {
 				MockDMLExecutionOnTaskFinished()
 			})
-			if w.isReorgPaused(reorgInfo.Job.ID) {
-				logutil.BgLogger().Warn("job paused by user", zap.String("category", "ddl"), zap.Error(err))
-				return dbterror.ErrPausedDDLJob.GenWithStackByArgs(reorgInfo.Job.ID)
+			if err := w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
+				if dbterror.ErrPausedDDLJob.Equal(err) {
+					logutil.BgLogger().Warn("job paused by user", zap.String("category", "ddl"), zap.Error(err))
+					return dbterror.ErrPausedDDLJob.GenWithStackByArgs(reorgInfo.Job.ID)
+				}
 			}
 			return err
 		})
@@ -2141,13 +2162,17 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 							logutil.BgLogger().Error("pause global task error", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
 							continue
 						}
+						failpoint.Inject("syncDDLTaskPause", func() {
+							// make sure the task is paused.
+							TestSyncChan <- struct{}{}
+						})
 					}
 					if !dbterror.ErrCancelledDDLJob.Equal(err) {
 						return errors.Trace(err)
 					}
 					if err = handle.CancelGlobalTask(taskKey); err != nil {
 						logutil.BgLogger().Error("cancel global task error", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
-						// continue to cancel global task
+						// continue to cancel global task.
 						continue
 					}
 				}
