@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server/internal/handshake"
 	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -44,7 +43,7 @@ const (
 )
 
 // ExecArgs parse execute arguments to datum slice.
-func ExecArgs(sc *stmtctx.StatementContext, params []expression.Expression, boundParams [][]byte,
+func ExecArgs(typectx types.Context, params []expression.Expression, boundParams [][]byte,
 	nullBitmap, paramTypes, paramValues []byte, enc *util2.InputDecoder) (err error) {
 	pos := 0
 	var (
@@ -193,7 +192,26 @@ func ExecArgs(sc *stmtctx.StatementContext, params []expression.Expression, boun
 				err = mysql.ErrMalformPacket
 				return
 			}
-			args[i] = types.NewDatum(tmp) // FIXME: After check works!!!!!!
+			// TODO: generate the time datum directly
+			var parseTime func(types.Context, string) (types.Time, error)
+			switch tp {
+			case mysql.TypeDate:
+				parseTime = types.ParseDate
+			case mysql.TypeDatetime:
+				parseTime = types.ParseDatetime
+			case mysql.TypeTimestamp:
+				// To be compatible with MySQL, even the type of parameter is
+				// TypeTimestamp, the return type should also be `Datetime`.
+				parseTime = types.ParseDatetime
+			}
+			var time types.Time
+			time, err = parseTime(typectx, tmp.(string))
+			err = typectx.HandleTruncate(err)
+			if err != nil {
+				// TODO: handle the warning and errors
+				return
+			}
+			args[i] = types.NewDatum(time)
 			continue
 
 		case mysql.TypeDuration:
@@ -228,7 +246,13 @@ func ExecArgs(sc *stmtctx.StatementContext, params []expression.Expression, boun
 				err = mysql.ErrMalformPacket
 				return
 			}
-			args[i] = types.NewDatum(tmp)
+			var dur types.Duration
+			dur, _, err = types.ParseDuration(typectx, tmp.(string), types.MaxFsp)
+			err = typectx.HandleTruncate(err)
+			if err != nil {
+				return
+			}
+			args[i] = types.NewDatum(dur)
 			continue
 		case mysql.TypeNewDecimal:
 			if len(paramValues) < (pos + 1) {
@@ -246,7 +270,7 @@ func ExecArgs(sc *stmtctx.StatementContext, params []expression.Expression, boun
 				args[i] = types.NewDecimalDatum(nil)
 			} else {
 				var dec types.MyDecimal
-				err = sc.HandleTruncate(dec.FromString(v))
+				err = typectx.HandleTruncate(dec.FromString(v))
 				if err != nil {
 					return err
 				}
