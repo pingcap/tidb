@@ -161,7 +161,7 @@ func addCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string
 			// hasNonStringType means that there is a type that is not string
 			hasNonStringType := false
 			for _, argType := range argTypes {
-				if types.IsString(argType.GetType()) {
+				if !types.IsString(argType.GetType()) {
 					hasNonStringType = true
 					break
 				}
