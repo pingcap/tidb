@@ -1596,7 +1596,7 @@ func genIndexValueVersion0(sc *stmtctx.StatementContext, tblInfo *model.TableInf
 			idxVal = append(idxVal, kv.UnCommitIndexKVFlag)
 		}
 		if len(idxVal) == 0 {
-			idxVal = []byte{'0'}
+			idxVal = append(idxVal, byte('0'))
 		}
 	}
 	return idxVal, nil
