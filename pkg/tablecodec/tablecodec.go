@@ -340,6 +340,7 @@ func EncodeRow(sc *stmtctx.StatementContext, row []types.Datum, colIDs []int64, 
 		return nil, errors.Errorf("EncodeRow error: data and columnID count not match %d vs %d", len(row), len(colIDs))
 	}
 	if e.Enable {
+		valBuf = valBuf[:0]
 		return e.Encode(sc, colIDs, row, valBuf, checksums...)
 	}
 	return EncodeOldRow(sc, row, colIDs, valBuf, values)
@@ -1507,11 +1508,11 @@ func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInf
 		}
 
 		rd := rowcodec.Encoder{Enable: true}
-		rowRestoredValue, err := rd.Encode(sc, colIds, allRestoredData, nil)
+		var err error
+		idxVal, err = rd.Encode(sc, colIds, allRestoredData, idxVal)
 		if err != nil {
 			return nil, err
 		}
-		idxVal = append(idxVal, rowRestoredValue...)
 	}
 
 	if untouched {
@@ -1550,11 +1551,12 @@ func genIndexValueVersion0(sc *stmtctx.StatementContext, tblInfo *model.TableInf
 			colIds[i] = tblInfo.Columns[col.Offset].ID
 		}
 		rd := rowcodec.Encoder{Enable: true}
-		rowRestoredValue, err := rd.Encode(sc, colIds, indexedValues, nil)
+		// Encode row restored value.
+		var err error
+		idxVal, err = rd.Encode(sc, colIds, indexedValues, idxVal)
 		if err != nil {
 			return nil, err
 		}
-		idxVal = append(idxVal, rowRestoredValue...)
 		newEncode = true
 	}
 
