@@ -372,6 +372,10 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 	info, err := os.Stat(c.Path)
 	require.NoError(t, err)
 	c.logger.Info("mode", zap.Any("mode", info.Mode()))
+	dir := filepath.Dir(c.Path)
+	_, err = os.Stat(dir)
+	require.NoError(t, err)
+	c.logger.Info("mode", zap.Any("mode", info.Mode()))
 	err = c.InitDataFiles(ctx)
 
 	c.logger.Info("test", zap.Error(err))
