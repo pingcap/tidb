@@ -356,6 +356,7 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 	// file without permission
 	require.NoError(t, os.WriteFile(path.Join(tempDir, "no-perm.csv"), []byte("1,1"), 0644))
 	require.NoError(t, os.Chmod(path.Join(tempDir, "no-perm.csv"), 0000))
+	require.NoError(t, os.Chmod(path.Join(tempDir), 0000))
 
 	// relative path
 	c.Path = "~/file.csv"
