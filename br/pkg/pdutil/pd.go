@@ -52,8 +52,12 @@ const (
 	pauseTimeout         = 5 * time.Minute
 
 	// pd request retry time when connection fail
+<<<<<<< HEAD
 	pdRequestRetryTime = 10
 
+=======
+	pdRequestRetryTime = 120
+>>>>>>> 9c92e065734 (pdutil/backend: enlarge max retry time and fix nested retriable error (#48210))
 	// set max-pending-peer-count to a large value to avoid scatter region failed.
 	maxPendingPeerUnlimited uint64 = math.MaxInt32
 )
@@ -169,6 +173,7 @@ func pdRequestWithCode(
 		resp *http.Response
 	)
 	count := 0
+	// the total retry duration: 120*1 = 2min
 	for {
 		req, err = http.NewRequestWithContext(ctx, method, reqURL, body)
 		if err != nil {
