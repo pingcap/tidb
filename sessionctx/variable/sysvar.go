@@ -137,9 +137,19 @@ var defaultSysVars = []*SysVar{
 	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return normalizedValue, nil
 	}},
-	{Scope: ScopeSession, Name: TiDBReadStaleness, IsHintUpdatable: true, Value: strconv.Itoa(DefTiDBReadStaleness), Type: TypeInt, MinValue: math.MinInt32, MaxValue: 0, AllowEmpty: true, Hidden: false, SetSession: func(s *SessionVars, val string) error {
-		return setReadStaleness(s, val)
-	}},
+	{Scope: ScopeSession, Name: TiDBReadStaleness, IsHintUpdatable: true, Value: strconv.Itoa(DefTiDBReadStaleness), Type: TypeInt, MinValue: math.MinInt32, MaxValue: 0, AllowEmpty: true, Hidden: false,
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			if vars.SnapshotTS != 0 {
+				return "", fmt.Errorf("tidb_snapshot should be clear before setting tidb_read_staleness")
+			}
+			_, err := strconv.ParseInt(normalizedValue, 10, 32)
+			if err != nil {
+				return "", err
+			}
+			return normalizedValue, nil
+		}, SetSession: func(s *SessionVars, val string) error {
+			return setReadStaleness(s, val)
+		}},
 	{Scope: ScopeSession, Name: TiDBEnforceMPPExecution, Type: TypeBool, Value: BoolToOnOff(config.GetGlobalConfig().Performance.EnforceMPP), Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		if TiDBOptOn(normalizedValue) && !vars.allowMPPExecution {
 			return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs("tidb_enforce_mpp", "1' but tidb_allow_mpp is 0, please activate tidb_allow_mpp at first.")

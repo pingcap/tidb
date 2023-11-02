@@ -1837,11 +1837,12 @@ func (s *SessionVars) GetReplicaRead() kv.ReplicaReadType {
 	if s.StmtCtx.HasReplicaReadHint {
 		return kv.ReplicaReadType(s.StmtCtx.ReplicaRead)
 	}
+	replicaRead := s.getReplicaRead()
 	// if closest-adaptive is unavailable, fallback to leader read
-	if s.replicaRead == kv.ReplicaReadClosestAdaptive && !IsAdaptiveReplicaReadEnabled() {
+	if replicaRead == kv.ReplicaReadClosestAdaptive && !IsAdaptiveReplicaReadEnabled() {
 		return kv.ReplicaReadLeader
 	}
-	return s.replicaRead
+	return replicaRead
 }
 
 // SetReplicaRead set SessionVars.replicaRead.
@@ -1849,9 +1850,16 @@ func (s *SessionVars) SetReplicaRead(val kv.ReplicaReadType) {
 	s.replicaRead = val
 }
 
+func (s *SessionVars) getReplicaRead() kv.ReplicaReadType {
+	if replicaRead, ok := s.getReplicaReadFromStmtVar(); ok {
+		return replicaRead
+	}
+	return s.replicaRead
+}
+
 // IsReplicaReadClosestAdaptive returns whether adaptive closest replica can be enabled.
 func (s *SessionVars) IsReplicaReadClosestAdaptive() bool {
-	return s.replicaRead == kv.ReplicaReadClosestAdaptive && IsAdaptiveReplicaReadEnabled()
+	return s.getReplicaRead() == kv.ReplicaReadClosestAdaptive && IsAdaptiveReplicaReadEnabled()
 }
 
 // GetWriteStmtBufs get pointer of SessionVars.writeStmtBufs.
@@ -2132,6 +2140,11 @@ func (s *SessionVars) WithdrawAllPreparedStmt() {
 func (s *SessionVars) setStmtVar(name string, val string) error {
 	s.stmtVars[name] = val
 	return nil
+}
+
+func (s *SessionVars) GetStmtVar(name string) (string, bool) {
+	val, ok := s.stmtVars[name]
+	return val, ok
 }
 
 // ClearStmtVars clear temporarily system variables.
@@ -3194,4 +3207,35 @@ func (s *SessionVars) GetTiKVClientReadTimeout() uint64 {
 		// So just ignore the error here.
 	}
 	return s.TiKVClientReadTimeout
+}
+
+func (s *SessionVars) GetReadStaleness() time.Duration {
+	val, ok := s.stmtVars[TiDBReadStaleness]
+	if ok {
+		v, err := strconv.ParseUint(val, 10, 64)
+		if err == nil {
+			return time.Duration(v) * time.Second
+		}
+		// Normally, we should not go into this branch, because we have checked the type of the variable in `SetStmtVar`.
+		// So just ignore the error here.
+	}
+	return s.ReadStaleness
+}
+
+func (s *SessionVars) getReplicaReadFromStmtVar() (kv.ReplicaReadType, bool) {
+	val, ok := s.stmtVars[TiDBReplicaRead]
+	if ok {
+		if strings.EqualFold(val, "follower") {
+			return kv.ReplicaReadFollower, true
+		} else if strings.EqualFold(val, "leader-and-follower") {
+			return kv.ReplicaReadMixed, true
+		} else if strings.EqualFold(val, "leader") || len(val) == 0 {
+			return kv.ReplicaReadLeader, true
+		} else if strings.EqualFold(val, "closest-replicas") {
+			return kv.ReplicaReadClosest, true
+		} else if strings.EqualFold(val, "closest-adaptive") {
+			return kv.ReplicaReadClosestAdaptive, true
+		}
+	}
+	return kv.ReplicaReadLeader, false
 }

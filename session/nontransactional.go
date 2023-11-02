@@ -84,12 +84,17 @@ func (j job) String(redacted bool) string {
 // HandleNonTransactionalDML is the entry point for a non-transactional DML statement
 func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se Session) (sqlexec.RecordSet, error) {
 	sessVars := se.GetSessionVars()
-	originalReadStaleness := se.GetSessionVars().ReadStaleness
-	// NT-DML is a write operation, and should not be affected by read_staleness that is supposed to affect only SELECT.
-	sessVars.ReadStaleness = 0
-	defer func() {
-		sessVars.ReadStaleness = originalReadStaleness
-	}()
+	if originalReadStaleness := sessVars.GetReadStaleness(); originalReadStaleness > 0 {
+		// NT-DML is a write operation, and should not be affected by read_staleness that is supposed to affect only SELECT.
+		sessVars.ReadStaleness = 0
+		readStalenessStmt, ok := sessVars.GetStmtVar(variable.TiDBReadStaleness)
+		defer func() {
+			sessVars.ReadStaleness = originalReadStaleness
+			if ok {
+				sessVars.SetStmtVar(variable.TiDBReadStaleness, readStalenessStmt)
+			}
+		}()
+	}
 	err := core.Preprocess(ctx, se, stmt)
 	if err != nil {
 		return nil, err

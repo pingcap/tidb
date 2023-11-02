@@ -293,7 +293,7 @@ func parseAndValidateAsOf(ctx context.Context, sctx sessionctx.Context, asOf *as
 }
 
 func getTsEvaluatorFromReadStaleness(sctx sessionctx.Context) StalenessTSEvaluator {
-	readStaleness := sctx.GetSessionVars().ReadStaleness
+	readStaleness := sctx.GetSessionVars().GetReadStaleness()
 	if readStaleness == 0 {
 		return nil
 	}
