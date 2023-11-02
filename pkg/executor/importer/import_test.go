@@ -348,6 +348,7 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 	require.NoError(t, os.MkdirAll(path.Join(tempDir, "no-perm"), 0700))
 	require.NoError(t, os.WriteFile(path.Join(tempDir, "no-perm", "no-perm.csv"), []byte("1,1"), 0644))
 	require.NoError(t, os.Chmod(path.Join(tempDir, "no-perm"), 0000))
+	require.NoError(t, os.Chmod(path.Join(tempDir, "no-perm", "no-perm.csv"), 0000))
 	t.Cleanup(func() {
 		// make sure TempDir RemoveAll cleanup works
 		_ = os.Chmod(path.Join(tempDir, "no-perm"), 0700)
