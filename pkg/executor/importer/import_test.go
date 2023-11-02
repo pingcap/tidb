@@ -25,7 +25,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bazelbuild/rules_go/go/tools/bazel"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
@@ -309,8 +308,7 @@ func TestGetBackendWorkerConcurrency(t *testing.T) {
 }
 
 func TestSupportedSuffixForServerDisk(t *testing.T) {
-	tempDir, err := bazel.NewTmpDir("TestSupportedSuffixForServerDisk")
-	require.NoError(t, err)
+	tempDir := t.TempDir()
 	ctx := context.Background()
 
 	fileName := filepath.Join(tempDir, "test.csv")
@@ -365,12 +363,16 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 	require.ErrorContains(t, err2, "URI of data source is invalid")
 	// non-exist parent directory
 	c.Path = "/path/to/non/exists/file.csv"
-	err = c.InitDataFiles(ctx)
+	err := c.InitDataFiles(ctx)
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataInvalidURI)
 	require.ErrorContains(t, err, "no such file or directory")
 	// without permission to parent dir
 	c.Path = path.Join(tempDir, "no-perm", "no-perm.csv")
+	info, err := os.Stat(c.Path)
+	require.NoError(t, err)
+	c.logger.Info("mode", zap.Any("mode", info.Mode()))
 	err = c.InitDataFiles(ctx)
+
 	c.logger.Info("test", zap.Error(err))
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataCantRead)
 	require.ErrorContains(t, err, "permission denied")
