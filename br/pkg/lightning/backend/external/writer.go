@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/docker/go-units"
+	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
@@ -439,8 +441,16 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	}()
 
 	sortStart := time.Now()
-	slices.SortFunc(w.kvLocations, func(i, j kvLocation) int {
-		return bytes.Compare(w.getKeyByLoc(i), w.getKeyByLoc(j))
+	sorty.MaxGor = 1
+	sorty.Sort(len(w.kvLocations), func(i, j, r, s int) bool {
+		posi, posj := w.kvLocations[i], w.kvLocations[j]
+		if bytes.Compare(w.getKeyByLoc(posi), w.getKeyByLoc(posj)) < 0 {
+			if r != s {
+				w.kvLocations[r], w.kvLocations[s] = w.kvLocations[s], w.kvLocations[r]
+			}
+			return true
+		}
+		return false
 	})
 	sortDuration = time.Since(sortStart)
 
