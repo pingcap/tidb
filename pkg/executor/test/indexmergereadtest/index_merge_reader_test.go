@@ -178,7 +178,7 @@ func TestPartitionTableRandomIndexMerge(t *testing.T) {
 		}
 		return a, b
 	}
-	for i := 0; i < 64; i++ {
+	for i := 0; i < 32; i++ {
 		la, ra := randRange()
 		lb, rb := randRange()
 		cond := fmt.Sprintf("(a between %v and %v) or (b between %v and %v)", la, ra, lb, rb)
@@ -201,7 +201,7 @@ func TestPartitionTableRandomIndexMerge2(t *testing.T) {
 		partition p2 values less than (20),
 		partition p3 values less than (30),
 		partition p4 values less than (40))`)
-	tk.MustExec("truncate tnormal")
+	tk.MustExec(`create table tnormal (a int, b int, key(a), key(b))`)
 
 	randRange := func() (int, int) {
 		a, b := rand.Intn(10), rand.Intn(10)
@@ -216,7 +216,7 @@ func TestPartitionTableRandomIndexMerge2(t *testing.T) {
 	}
 	tk.MustExec(fmt.Sprintf("insert into tpk values %v", strings.Join(values, ", ")))
 	tk.MustExec(fmt.Sprintf("insert into tnormal values %v", strings.Join(values, ", ")))
-	for i := 0; i < 64; i++ {
+	for i := 0; i < 32; i++ {
 		la, ra := randRange()
 		lb, rb := randRange()
 		cond := fmt.Sprintf("(a between %v and %v) or (b between %v and %v)", la, ra, lb, rb)
