@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/rtree"
@@ -194,6 +195,10 @@ func (rs *RegionSplitter) hasHealthyRegion(ctx context.Context, regionID uint64)
 func (rs *RegionSplitter) isScatterRegionFinished(ctx context.Context, regionID uint64) (bool, bool, error) {
 	resp, err := rs.client.GetOperator(ctx, regionID)
 	if err != nil {
+		if common.IsRetryableError(err) {
+			// retry in the next cycle
+			return false, false, nil
+		}
 		return false, false, errors.Trace(err)
 	}
 	// Heartbeat may not be sent to PD
@@ -270,7 +275,7 @@ func (rs *RegionSplitter) WaitForScatterRegions(ctx context.Context, regionInfos
 			ok, rescatter, err := rs.isScatterRegionFinished(ctx1, regionID)
 			if err != nil {
 				log.Warn("scatter region failed: do not have the region",
-					logutil.Region(regionInfo.Region))
+					logutil.Region(regionInfo.Region), zap.Error(err))
 				delete(leftRegions, regionID)
 				continue
 			}
