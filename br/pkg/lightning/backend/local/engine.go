@@ -42,8 +42,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/membuf"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -275,19 +275,28 @@ func (e *Engine) TotalMemorySize() int64 {
 	return memSize
 }
 
-// KVStatistics returns the total kv size and total kv length.
-func (e *Engine) KVStatistics() (totalKVSize int64, totalKVLength int64) {
+// KVStatistics returns the total kv size and total kv count.
+func (e *Engine) KVStatistics() (totalSize int64, totalKVCount int64) {
 	return e.TotalSize.Load(), e.Length.Load()
 }
 
-// ImportedStatistics returns the imported kv size and imported kv length.
-func (e *Engine) ImportedStatistics() (importedKVSize int64, importedKVLength int64) {
+// ImportedStatistics returns the imported kv size and imported kv count.
+func (e *Engine) ImportedStatistics() (importedSize int64, importedKVCount int64) {
 	return e.importedKVSize.Load(), e.importedKVCount.Load()
 }
 
 // ID is the identifier of an engine.
 func (e *Engine) ID() string {
 	return e.UUID.String()
+}
+
+// GetKeyRange implements common.Engine.
+func (e *Engine) GetKeyRange() (startKey []byte, endKey []byte, err error) {
+	firstLey, lastKey, err := e.GetFirstAndLastKey(nil, nil)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	return firstLey, nextKey(lastKey), nil
 }
 
 // SplitRanges gets size properties from pebble and split ranges according to size/keys limit.
@@ -996,6 +1005,9 @@ func (e *Engine) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []by
 		LowerBound: lowerBound,
 		UpperBound: upperBound,
 	}
+	failpoint.Inject("mockGetFirstAndLastKey", func() {
+		failpoint.Return(lowerBound, upperBound, nil)
+	})
 
 	iter := e.newKVIter(context.Background(), opt)
 	//nolint: errcheck
@@ -1027,6 +1039,12 @@ func (e *Engine) GetTS() uint64 {
 	return e.TS
 }
 
+// IncRef implements IngestData interface.
+func (*Engine) IncRef() {}
+
+// DecRef implements IngestData interface.
+func (*Engine) DecRef() {}
+
 // Finish implements IngestData interface.
 func (e *Engine) Finish(totalBytes, totalCount int64) {
 	e.importedKVSize.Add(totalBytes)
@@ -1035,8 +1053,19 @@ func (e *Engine) Finish(totalBytes, totalCount int64) {
 
 // LoadIngestData return (local) Engine itself because Engine has implemented
 // IngestData interface.
-func (e *Engine) LoadIngestData(_ context.Context, _, _ []byte) (common.IngestData, error) {
-	return e, nil
+func (e *Engine) LoadIngestData(
+	ctx context.Context,
+	regionRanges []common.Range,
+	outCh chan<- common.DataAndRange,
+) error {
+	for _, r := range regionRanges {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case outCh <- common.DataAndRange{Data: e, Range: r}:
+		}
+	}
+	return nil
 }
 
 type sstMeta struct {

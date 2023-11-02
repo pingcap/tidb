@@ -1,0 +1,84 @@
+# TestOuterJoinPropConst
+set tidb_cost_model_version=2;
+drop table if exists t1, t2;
+create table t1(id bigint primary key, a int, b int);
+create table t2(id bigint primary key, a int, b int);
+explain format = 'brief' select * from t1 left join t2 on t1.a > t2.a and t1.a = 1;
+explain format = 'brief' select * from t1 left join t2 on t1.a > t2.a where t1.a = 1;
+explain format = 'brief' select * from t1 left join t2 on t1.a = t2.a and t1.a > 1;
+explain format = 'brief' select * from t1 left join t2 on t1.a = t2.a where t1.a > 1;
+explain format = 'brief' select * from t1 right join t2 on t1.a > t2.a where t2.a = 1;
+explain format = 'brief' select * from t1 right join t2 on t1.a = t2.a where t2.a > 1;
+explain format = 'brief' select * from t1 right join t2 on t1.a = t2.a and t2.a > 1;
+explain format = 'brief' select * from t1 right join t2 on t1.a > t2.a and t2.a = 1;
+explain format = 'brief' select * from t1 left join t2 on t1.a = t2.a and t2.a > 1;
+explain format = 'brief' select * from t1 left join t2 on t1.a > t2.a and t2.a = 1;
+explain format = 'brief' select * from t1 right join t2 on t1.a > t2.a and t1.a = 1;
+explain format = 'brief' select * from t1 right join t2 on t1.a = t2.a and t1.a > 1;
+explain format = 'brief' select * from t1 left join t2 on t1.a = t1.b and t1.a > 1;
+explain format = 'brief' select * from t1 left join t2 on t2.a = t2.b and t2.a > 1;
+explain format = 'brief' select * from t1 left join t2 on true where t1.a = 1 and false;
+explain format = 'brief' select * from t1 left join t2 on true where t1.a = 1 and null;
+explain format = 'brief' select * from t1 left join t2 on true where t1.a = null;
+explain format = 'brief' select * from t1 left join t2 on true where t1.a = 1 and t1.a = 2;
+explain format = 'brief' select * from t1 left join t2 on true where t1.a = 1 and t1.a = 1;
+explain format = 'brief' select * from t1 left join t2 on false;
+explain format = 'brief' select * from t1 right join t2 on false;
+explain format = 'brief' select * from t1 left join t2 on t1.a = 1 and t1.a = 2;
+explain format = 'brief' select * from t1 left join t2 on t1.a =1 where t1.a = 2;
+explain format = 'brief' select * from t1 left join t2 on t2.a = 1 and t2.a = 2;
+explain format = 'brief' select * from t1 left join t2 on t1.a = 1 or (t1.a = 2 and t1.a = 3);
+explain format = 'brief' select * from t1 left join t2 on true where t1.a = 1 or (t1.a = 2 and t1.a = 3);
+explain format = 'brief' select * from t1 where t1.b > 1 or t1.b in (select b from t2);
+explain format = 'brief' select * from t1 left join t2 on t1.a = t2.a where ifnull(t2.b, t1.a) = 1;
+
+# TestSimplifyExpressionByFlag
+drop table if exists t;
+create table t(id int primary key, a bigint unsigned not null, b bigint unsigned);
+explain format = 'brief' select * from t where a is null;
+explain format = 'brief' select * from t where a is not null;
+explain format = 'brief' select * from t where a > -1;
+explain format = 'brief' select * from t where a <= -1;
+explain format = 'brief' select * from t where a < 0;
+explain format = 'brief' select * from t where a >= 0;
+explain format = 'brief' select * from t where a = -1;
+explain format = 'brief' select * from t where a <=> -1;
+explain format = 'brief' select * from t where a != -1;
+explain format = 'brief' select * from t where 0 > a;
+explain format = 'brief' select * from t where 0 <= a;
+explain format = 'brief' select * from t where -1 < a;
+explain format = 'brief' select * from t where -1 >= a;
+explain format = 'brief' select * from t where -1 = a;
+explain format = 'brief' select * from t where -1 <=> a;
+explain format = 'brief' select * from t where -1 != a;
+explain format = 'brief' select * from t where b >= 0;
+explain format = 'brief' select * from t where b != -1;
+explain format = 'brief' select * from t where a = 0xFFFFFFFFFFFFFFFF;
+
+# TestExprPushdown
+drop table if exists t;
+create table t(id int, col1 varchar(10), col2 varchar(10), col3 int, col4 int, col5 int, index key1 (col1, col2, col3, col4), index key2 (col4, col3, col2, col1));
+insert into t values(1,'211111','311',4,5,6),(2,'311111','411',5,6,7),(3,'411111','511',6,7,8),(4,'511111','611',7,8,9),(5,'611111','711',8,9,10);
+explain format = 'brief' select col2, col1 from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4';
+select col2, col1 from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4';
+select count(col2) from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4';
+explain format = 'brief' select col1, col2 from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4';
+select col1, col2 from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4';
+select count(col1) from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4';
+explain format = 'brief' select id from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4';
+select id from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4';
+select count(id) from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4';
+explain format = 'brief' select id from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4';
+select id from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4';
+select count(id) from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4';
+
+# TestRegexpPushdown
+drop table if exists reg;
+create table reg(a varchar(20) null,b varchar(20) null,rep varchar(20) null) charset=utf8mb4 collate=utf8mb4_general_ci;
+explain format = 'brief' select a from reg where regexp_like(a, b);
+explain format = 'brief' select a from reg where regexp_instr(a, b);
+explain format = 'brief' select a from reg where regexp_substr(a, b);
+explain format = 'brief' select a from reg where regexp_replace(a, b, rep);
+drop table if exists regbin;
+create table regbin(a varchar(20) null,b varchar(20) null,rep varchar(20) null) charset=binary collate=binary;
+explain format = 'brief' select a from regbin where regexp_like(a, b);

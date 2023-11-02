@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/xitongsys/parquet-go-source/local"
@@ -43,7 +43,7 @@ func TestParquetParser(t *testing.T) {
 
 	store, err := storage.NewLocalStorage(dir)
 	require.NoError(t, err)
-	r, err := store.Open(context.TODO(), name)
+	r, err := store.Open(context.TODO(), name, nil)
 	require.NoError(t, err)
 	reader, err := NewParquetParser(context.TODO(), store, r, name)
 	require.NoError(t, err)
@@ -120,7 +120,7 @@ func TestParquetVariousTypes(t *testing.T) {
 
 	store, err := storage.NewLocalStorage(dir)
 	require.NoError(t, err)
-	r, err := store.Open(context.TODO(), name)
+	r, err := store.Open(context.TODO(), name, nil)
 	require.NoError(t, err)
 	reader, err := NewParquetParser(context.TODO(), store, r, name)
 	require.NoError(t, err)
@@ -176,7 +176,7 @@ func TestParquetVariousTypes(t *testing.T) {
 	require.NoError(t, writer.WriteStop())
 	require.NoError(t, pf.Close())
 
-	r, err = store.Open(context.TODO(), fileName)
+	r, err = store.Open(context.TODO(), fileName, nil)
 	require.NoError(t, err)
 	reader, err = NewParquetParser(context.TODO(), store, r, fileName)
 	require.NoError(t, err)
@@ -216,7 +216,7 @@ func TestParquetVariousTypes(t *testing.T) {
 	require.NoError(t, writer.WriteStop())
 	require.NoError(t, pf.Close())
 
-	r, err = store.Open(context.TODO(), fileName)
+	r, err = store.Open(context.TODO(), fileName, nil)
 	require.NoError(t, err)
 	reader, err = NewParquetParser(context.TODO(), store, r, fileName)
 	require.NoError(t, err)
@@ -237,7 +237,7 @@ func TestParquetAurora(t *testing.T) {
 	require.NoError(t, err)
 
 	fileName := "test.parquet"
-	r, err := store.Open(context.TODO(), fileName)
+	r, err := store.Open(context.TODO(), fileName, nil)
 	require.NoError(t, err)
 	parser, err := NewParquetParser(context.TODO(), store, r, fileName)
 	require.NoError(t, err)
@@ -294,7 +294,7 @@ func TestHiveParquetParser(t *testing.T) {
 	dir := "./parquet/"
 	store, err := storage.NewLocalStorage(dir)
 	require.NoError(t, err)
-	r, err := store.Open(context.TODO(), name)
+	r, err := store.Open(context.TODO(), name, nil)
 	require.NoError(t, err)
 	reader, err := NewParquetParser(context.TODO(), store, r, name)
 	require.NoError(t, err)

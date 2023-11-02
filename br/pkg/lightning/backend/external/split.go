@@ -95,8 +95,9 @@ func NewRangeSplitter(
 	externalStorage storage.ExternalStorage,
 	rangesGroupSize, rangesGroupKeys int64,
 	maxRangeSize, maxRangeKeys int64,
+	checkHotSpot bool,
 ) (*RangeSplitter, error) {
-	propIter, err := NewMergePropIter(ctx, statFiles, externalStorage)
+	propIter, err := NewMergePropIter(ctx, statFiles, externalStorage, checkHotSpot)
 	if err != nil {
 		return nil, err
 	}
@@ -119,6 +120,11 @@ func NewRangeSplitter(
 // Close release the resources of RangeSplitter.
 func (r *RangeSplitter) Close() error {
 	return r.propIter.Close()
+}
+
+// GetRangeSplitSize returns the expected size of one range.
+func (r *RangeSplitter) GetRangeSplitSize() int64 {
+	return r.rangeSize
 }
 
 // SplitOneRangesGroup splits one group of ranges. `endKeyOfGroup` represents the

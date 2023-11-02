@@ -1,0 +1,487 @@
+set @@tidb_enable_clustered_index = 'on';
+# TestClusteredPrefixColumn
+set tidb_cost_model_version=2;
+drop table if exists t, t1;
+create table t1(cb varchar(12), ci int, v int, primary key(cb(1)), key idx_1(cb));
+insert into t1 values('PvtYW2', 1, 1);
+select cb from t1;
+select * from t1;
+drop table if exists t1, t2;
+create table t1(c1 varchar(100), c2 varchar(100), c3 varchar(100), primary key (c1,c2), key idx1 (c2(1)));
+insert into t1 select 'a', 'cd', 'ef';
+create table t2(c1 varchar(100), c2 varchar(100), c3 varchar(100), primary key (c1,c2(1)), key idx1 (c1,c2));
+insert into t2 select 'a', 'cd', 'ef';
+explain format = 'brief' select c2 from t1 use index(idx1);
+select c2 from t1 use index(idx1);
+explain format = 'brief' select count(1) from t1 use index(idx1) where c2 = 'cd';
+select count(1) from t1 use index(idx1) where c2 = 'cd';
+explain format = 'brief' select c2 from t2 use index(idx1);
+select c2 from t2 use index(idx1);
+explain format = 'brief' select count(1) from t2 use index(idx1) where c2 = 'cd';
+select count(1) from t2 use index(idx1) where c2 = 'cd';
+drop table if exists test1;
+create table test1(c1 varchar(100) not null default 'xyza', c2 int, primary key(c1(3)) clustered);
+replace into test1(c2) values(1);
+replace into test1(c2) values(2);
+select * from test1;
+drop table if exists test3;
+create table test3(c1 varchar(100), c2 int, primary key(c1(1)) clustered);
+insert into test3 values('ab', 1) on duplicate key update c2 = 100;
+insert into test3 values('ab', 1) on duplicate key update c2 = 100;
+select * from test3;
+insert into test3 values('ab', 1) on duplicate key update c1 = 'cc', c2 = '200';
+select * from test3;
+drop table if exists tbl_3;
+create table tbl_3 ( col_15 text(138) , col_16 varchar(37) default 'yGdboyZqIGDQhwRRc' not null , col_17 text(39) not null , col_18 char(58) default 'vBahOai' , col_19 varchar(470) , primary key idx_12 ( col_16(3),col_17(6),col_15(4)) clustered, key idx_13 ( col_19(2) ) , key idx_14 ( col_18(3),col_15(2) ) , unique key idx_15 ( col_16(4),col_18(6) ) , unique key idx_16 ( col_17(1) ) );
+insert into tbl_3 values ( 'XJUDeSZplXx','TfZhIWnJPygn','HlZjQffSh','VDsepqNPkx','xqtMHHOqnLvcxDpL');
+insert into tbl_3 (col_15,col_17,col_19) values ( 'aeMrIjbfCxErg','HTZmtykzIkFMF','' ) on duplicate key update col_18 = values( col_18 );
+select col_17 from tbl_3;
+drop table if exists tbl_1;
+CREATE TABLE `tbl_1`(`col_5` char(84) NOT NULL DEFAULT 'BnHWZQY',   `col_6` char(138) DEFAULT NULL,   `col_7` tinytext NOT NULL,   `col_8` char(231) DEFAULT NULL,   `col_9` varchar(393) NOT NULL DEFAULT 'lizgVQd',   PRIMARY KEY (`col_5`(4),`col_7`(3)) clustered ,   KEY `idx_2` (`col_5`(6),`col_8`(5)),   UNIQUE KEY `idx_3` (`col_7`(2)),   UNIQUE KEY `idx_4` (`col_9`(6),`col_7`(4),`col_6`(3)),   UNIQUE KEY `idx_5` (`col_9`(3)) );
+insert into tbl_1 values('BsXhVuVvPRcSOlkzuM','QXIEA','IHeTDzJJyfOhIOY','ddxnmRcIjVfosRVC','lizgVQd');
+replace into tbl_1 (col_6,col_7,col_8) values ( 'WzdD','S','UrQhNEUZy' );
+admin check table tbl_1;
+drop table if exists tbl_3;
+create table tbl_3 ( col_15 char(167) not null , col_16 varchar(56) not null , col_17 text(25) not null , col_18 char , col_19 char(12) not null , primary key idx_21 ( col_16(5) ) clustered, key idx_22 ( col_19(2),col_16(4) ) , unique key idx_23 ( col_19(6),col_16(4) ) , unique key idx_24 ( col_19(1),col_18(1) ) , key idx_25 ( col_17(3),col_16(2),col_19(4) ) , key idx_26 ( col_18(1),col_17(3) ) , key idx_27 ( col_18(1) ) , unique key idx_28 ( col_16(4),col_15(3) ) , unique key idx_29 ( col_16(2) ) , key idx_30 ( col_18(1),col_16(2),col_19(4),col_17(6) ) , key idx_31 ( col_19(2) ) , key idx_32 ( col_16(6) ) , unique key idx_33 ( col_18(1) ) , unique key idx_34 ( col_15(4) ) , key idx_35 ( col_19(6) ) , key idx_36 ( col_19(4),col_17(4),col_18(1) ) );
+insert into tbl_3 values('auZELjkOUG','yhFUdsZphsWDFG','mNbCXHOWlIMQvXhY','        ','NpQwmX');
+insert into tbl_3 (col_15,col_16,col_17,col_18,col_19) values ( 'PboEJsnVPBknRhpEC','PwqzUThyDHhxhXAdJ','szolY','','pzZfZeOa' ) on duplicate key update col_16 = values( col_16 ) , col_19 = 'zgLlCUA';
+admin check table tbl_3;
+create table t (c_int int, c_str varchar(40), primary key(c_str(8)) clustered, unique key(c_int), key(c_str));
+insert into t values (1, 'determined varahamihira');
+insert into t values (1, 'pensive mendeleev') on duplicate key update c_int=values(c_int), c_str=values(c_str);
+admin check table t;
+set tidb_cost_model_version=default;
+
+# TestClusteredIndexLookUp
+drop table if exists t;
+create table t (a int, b int, c int, d int, primary key (a, b));
+create index idx on t(c);
+insert t values (1, 1, 1, 1);
+select d from t use index (idx);
+
+# TestClusteredUnionScanIndexLookup
+drop table if exists t;
+create table t (a int, pk char(10), c int, primary key(pk), key(a));
+insert into t values (1, '111', 3);
+begin;
+update t set a = a + 1, pk = '222' where a = 1;
+explain format='brief' select pk, c from t where a = 2;
+select pk, c from t where a = 2;
+commit;
+select pk, c from t where a = 2;
+
+# TestClusteredIndexLookUp2
+drop table if exists c3;
+CREATE TABLE c3 (
+  c_id int(11) NOT NULL,
+  c_d_id int(11) NOT NULL,
+  c_w_id int(11) NOT NULL,
+  c_first varchar(16) DEFAULT NULL,
+  c_middle char(2) DEFAULT NULL,
+  c_last varchar(16) DEFAULT NULL,
+  c_balance decimal(12,2) DEFAULT NULL,
+  PRIMARY KEY (c_w_id,c_d_id,c_id),
+  KEY idx (c_w_id,c_d_id,c_last,c_first)
+);
+insert c3 values (772,1,1,'aaa','OE','CALL',0),(1905,1,1,'bbb','OE','CALL',0);
+SELECT c_balance, c_first, c_middle, c_id FROM c3 use index (idx) WHERE c_w_id = 1 AND c_d_id = 1 and c_last = 'CALL' ORDER BY c_first;
+
+# TestClusteredTopN
+drop table if exists o3;
+CREATE TABLE o3 (
+	o_id int NOT NULL,
+	o_d_id int,
+	o_w_id int,
+	o_c_id int,
+	PRIMARY KEY (o_w_id,o_d_id,o_id),
+	KEY idx_order (o_w_id,o_d_id,o_c_id,o_id)
+);
+insert o3 values (1, 6, 9, 3), (2, 6, 9, 5), (3, 6, 9, 7);
+SELECT max(o_id) max_order FROM o3 use index (idx_order);
+
+# TestClusteredHint
+drop table if exists ht;
+create table ht (a varchar(64) primary key, b int);
+select * from ht use index (`PRIMARY`);
+
+# TestClusteredBatchPointGet
+drop table if exists t;
+CREATE TABLE t (a int,b int,c int, PRIMARY KEY (a,b)) PARTITION BY HASH(a) PARTITIONS 3;
+insert t values (1, 1, 1), (3, 3, 3), (5, 5, 5);
+--sorted_result
+select * from t where (a, b) in ((1, 1), (3, 3), (5, 5));
+
+# TestClusteredPrefixingPrimaryKey
+drop table if exists t;
+create table t(name varchar(255), b int, c int, primary key(name(2)), index idx(b));
+insert into t(name, b) values('aaaaa', 1), ('bbbbb', 2);
+admin check table t;
+-- error 1062
+insert into t(name, b) values('aaa', 3);
+explain select * from t use index(primary) where name = 'aaaaa';
+explain select * from t use index(primary) where name = 'aaaaa';
+select * from t use index(primary) where name = 'aaaaa';
+admin check table t;
+drop table if exists t;
+create table t(name varchar(255), b int, c char(10), primary key(c(2), name(2)), index idx(b));
+insert into t values ('aaa', 1, 'aaa'), ('bbb', 1, 'bbb');
+insert into t values ('aa', 1, 'bbb'), ('bbb', 1, 'ccc');
+-- error 1062
+insert into t values ('aa', 1, 'aa');
+-- error 1062
+insert into t values ('aac', 1, 'aac');
+-- error 1062
+insert into t values ('bb', 1, 'bb');
+-- error 1062
+insert into t values ('bbc', 1, 'bbc');
+-- error 1062
+update t set name = 'aa', c = 'aa' where c = 'ccc';
+update t set name = 'ccc' where name = 'aa';
+select group_concat(name order by name separator '.') from t use index(idx);
+admin check table t;
+drop table if exists t;
+create table t(name varchar(255), b int, primary key(name(2)), index idx(b));
+insert into t values ('aaa', 1), ('bbb', 1);
+select group_concat(name order by name separator '.') from t use index(idx);
+-- error 1062
+update t set name = 'aaaaa' where name = 'bbb';
+--enable_warnings;
+update ignore t set name = 'aaaaa' where name = 'bbb';
+--disable_warnings;
+admin check table t;
+drop table if exists t1, t2;
+create table t1  (c_str varchar(40), c_decimal decimal(12, 6) , primary key(c_str(8)));
+create table t2  like t1;
+insert into t1 values ('serene ramanujan', 6.383), ('frosty hodgkin', 3.504), ('stupefied spence', 5.869);
+insert into t2 select * from t1;
+select /*+ INL_JOIN(t1,t2) */ * from t1 right join t2 on t1.c_str = t2.c_str;
+select /*+ INL_HASH_JOIN(t1,t2) */ * from t1 right join t2 on t1.c_str = t2.c_str;
+select /*+ INL_MERGE_JOIN(t1,t2) */ * from t1 right join t2 on t1.c_str = t2.c_str;
+drop table if exists t1, t2;
+create table t1  (c_int int, c_str varchar(40), primary key(c_int, c_str) clustered, key(c_int), key(c_str));
+create table t2  like t1;
+insert into t1 values (1, 'nifty elion');
+insert into t2 values (1, 'funny shaw');
+select /*+ INL_JOIN(t1,t2) */  * from t1, t2 where t1.c_int = t2.c_int and t1.c_str >= t2.c_str;
+select /*+ INL_HASH_JOIN(t1,t2) */  * from t1, t2 where t1.c_int = t2.c_int and t1.c_str >= t2.c_str;
+select /*+ INL_MERGE_JOIN(t1,t2) */  * from t1, t2 where t1.c_int = t2.c_int and t1.c_str >= t2.c_str;
+drop table if exists t1, t2;
+create table t1  (c_int int, c_str varchar(40), primary key(c_int, c_str(4)) clustered, key(c_int), key(c_str));
+create table t2  like t1;
+insert into t1 values (1, 'nifty elion');
+insert into t2 values (1, 'funny shaw');
+select /*+ INL_JOIN(t1,t2) */  * from t1, t2 where t1.c_int = t2.c_int and t1.c_str >= t2.c_str;
+select /*+ INL_HASH_JOIN(t1,t2) */  * from t1, t2 where t1.c_int = t2.c_int and t1.c_str >= t2.c_str;
+select /*+ INL_MERGE_JOIN(t1,t2) */  * from t1, t2 where t1.c_int = t2.c_int and t1.c_str >= t2.c_str;
+
+# TestIssue20002
+drop table if exists t;
+create table t ( c_int int, c_str varchar(40), c_datetime datetime, primary key(c_str), unique key(c_datetime));
+insert into t values (1, 'laughing hertz', '2020-04-27 20:29:30'), (2, 'sharp yalow', '2020-04-01 05:53:36'), (3, 'pedantic hoover', '2020-03-10 11:49:00');
+begin;
+update t set c_str = 'amazing herschel' where c_int = 3;
+select c_int, c_str, c_datetime from t where c_datetime between '2020-01-09 22:00:28' and '2020-04-08 15:12:37';
+commit;
+admin check index t `c_datetime`;
+
+# TestClusteredIndexSplitAndAddIndex
+# https://github.com/pingcap/tidb/issues/20727
+drop table if exists t;
+create table t (a varchar(255), b int, primary key(a));
+insert into t values ('a', 1), ('b', 2), ('c', 3), ('u', 1);
+split table t between ('a') and ('z') regions 5;
+create index idx on t (b);
+select a from t order by a;
+select a from t use index (idx) order by a;
+
+# TestClusteredIndexSelectWhereInNull
+drop table if exists t;
+create table t (a datetime, b bigint, primary key (a));
+select * from t where a in (null);
+
+# TestCreateClusteredTable
+set @@tidb_enable_clustered_index = 'int_only';
+drop table if exists t1, t2, t3, t4, t5, t6, t7, t8;
+create table t1(id int primary key, v int);
+create table t2(id varchar(10) primary key, v int);
+create table t3(id int primary key clustered, v int);
+create table t4(id varchar(10) primary key clustered, v int);
+create table t5(id int primary key nonclustered, v int);
+create table t6(id varchar(10) primary key nonclustered, v int);
+create table t7(id varchar(10), v int, primary key (id) /*T![clustered_index] CLUSTERED */);
+create table t8(id varchar(10), v int, primary key (id) /*T![clustered_index] NONCLUSTERED */);
+show index from t1;
+show index from t2;
+show index from t3;
+show index from t4;
+show index from t5;
+show index from t6;
+show index from t7;
+show index from t8;
+set @@tidb_enable_clustered_index = 'off';
+drop table if exists t1, t2, t3, t4, t5, t6, t7, t8;
+create table t1(id int primary key, v int);
+create table t2(id varchar(10) primary key, v int);
+create table t3(id int primary key clustered, v int);
+create table t4(id varchar(10) primary key clustered, v int);
+create table t5(id int primary key nonclustered, v int);
+create table t6(id varchar(10) primary key nonclustered, v int);
+create table t7(id varchar(10), v int, primary key (id) /*T![clustered_index] CLUSTERED */);
+create table t8(id varchar(10), v int, primary key (id) /*T![clustered_index] NONCLUSTERED */);
+show index from t1;
+show index from t2;
+show index from t3;
+show index from t4;
+show index from t5;
+show index from t6;
+show index from t7;
+show index from t8;
+set @@tidb_enable_clustered_index = 'on';
+drop table if exists t1, t2, t3, t4, t5, t6, t7, t8;
+create table t1(id int primary key, v int);
+create table t2(id varchar(10) primary key, v int);
+create table t3(id int primary key clustered, v int);
+create table t4(id varchar(10) primary key clustered, v int);
+create table t5(id int primary key nonclustered, v int);
+create table t6(id varchar(10) primary key nonclustered, v int);
+create table t7(id varchar(10), v int, primary key (id) /*T![clustered_index] CLUSTERED */);
+create table t8(id varchar(10), v int, primary key (id) /*T![clustered_index] NONCLUSTERED */);
+show index from t1;
+show index from t2;
+show index from t3;
+show index from t4;
+show index from t5;
+show index from t6;
+show index from t7;
+show index from t8;
+set @@tidb_enable_clustered_index = 'int_only';
+drop table if exists t1, t2, t3, t4, t5, t6, t7, t8;
+create table t1(id int primary key, v int);
+create table t2(id varchar(10) primary key, v int);
+create table t3(id int primary key clustered, v int);
+create table t4(id varchar(10) primary key clustered, v int);
+create table t5(id int primary key nonclustered, v int);
+create table t6(id varchar(10) primary key nonclustered, v int);
+create table t7(id varchar(10), v int, primary key (id) /*T![clustered_index] CLUSTERED */);
+create table t8(id varchar(10), v int, primary key (id) /*T![clustered_index] NONCLUSTERED */);
+show index from t1;
+show index from t2;
+show index from t3;
+show index from t4;
+show index from t5;
+show index from t6;
+show index from t7;
+show index from t8;
+set @@tidb_enable_clustered_index = 'on';
+
+# TestClusteredUnionScanOnPrefixingPrimaryKey
+# https://github.com/pingcap/tidb/issues/22069
+drop table if exists t;
+create table t (col_1 varchar(255), col_2 tinyint, primary key idx_1 (col_1(1)));
+insert into t values ('aaaaa', -38);
+insert into t values ('bbbbb', -48);
+begin PESSIMISTIC;
+update t set col_2 = 47 where col_1 in ('aaaaa') order by col_1,col_2;
+select * from t;
+-- error 1062
+insert into t values ('bb', 0);
+-- error 1062
+insert into t values ('aa', 0);
+commit;
+select * from t;
+admin check table t;
+
+# TestClusteredIndexSplitAndAddIndex2
+drop table if exists t;
+create table t (a int, b enum('Alice'), c int, primary key (c, b));
+insert into t values (-1,'Alice',100);
+insert into t values (-1,'Alice',7000);
+split table t between (0,'Alice') and (10000,'Alice') regions 2;
+alter table t add index idx (c);
+admin check table t;
+
+# TestClusteredIndexSyntax
+drop table if exists t;
+create table t (a int primary key, b int);
+select tidb_pk_type from information_schema.tables where table_schema = 'session__clustered_index' and table_name = 't';
+drop table if exists t;
+create table t (a int, b int, primary key(a) clustered);
+select tidb_pk_type from information_schema.tables where table_schema = 'session__clustered_index' and table_name = 't';
+drop table if exists t;
+create table t (a int, b int, primary key(a) /*T![clustered_index] clustered */);
+select tidb_pk_type from information_schema.tables where table_schema = 'session__clustered_index' and table_name = 't';
+drop table if exists t;
+create table t (a int, b int, primary key(a) nonclustered);
+select tidb_pk_type from information_schema.tables where table_schema = 'session__clustered_index' and table_name = 't';
+drop table if exists t;
+create table t (a int, b int, primary key(a) /*T![clustered_index] nonclustered */);
+select tidb_pk_type from information_schema.tables where table_schema = 'session__clustered_index' and table_name = 't';
+drop table if exists t;
+create table t (a int, b varchar(255), primary key(b, a));
+select tidb_pk_type from information_schema.tables where table_schema = 'session__clustered_index' and table_name = 't';
+drop table if exists t;
+create table t (a int, b varchar(255), primary key(b, a) nonclustered);
+select tidb_pk_type from information_schema.tables where table_schema = 'session__clustered_index' and table_name = 't';
+drop table if exists t;
+create table t (a int, b varchar(255), primary key(b, a) clustered);
+select tidb_pk_type from information_schema.tables where table_schema = 'session__clustered_index' and table_name = 't';
+drop table if exists t;
+create table t (a int, b varchar(255), primary key(b, a));
+select tidb_pk_type from information_schema.tables where table_schema = 'session__clustered_index' and table_name = 't';
+drop table if exists t;
+create table t (a int, b varchar(255), primary key(b, a) nonclustered);
+select tidb_pk_type from information_schema.tables where table_schema = 'session__clustered_index' and table_name = 't';
+drop table if exists t;
+create table t (a int, b varchar(255), primary key(b, a) /*T![clustered_index] nonclustered */);
+select tidb_pk_type from information_schema.tables where table_schema = 'session__clustered_index' and table_name = 't';
+drop table if exists t;
+create table t (a int, b varchar(255), primary key(b, a) clustered);
+select tidb_pk_type from information_schema.tables where table_schema = 'session__clustered_index' and table_name = 't';
+drop table if exists t;
+create table t (a int, b varchar(255), primary key(b, a) /*T![clustered_index] clustered */);
+select tidb_pk_type from information_schema.tables where table_schema = 'session__clustered_index' and table_name = 't';
+-- error 1064
+create table t (a varchar(255) unique key clustered);
+-- error 1064
+create table t (a varchar(255), foreign key (a) reference t1(a) clustered);
+-- error 1064
+create table t (a varchar(255), foreign key (a) clustered reference t1(a));
+-- error 1064
+create table t (a varchar(255) clustered);
+-- error 8200
+create table t (a varchar(255), unique key(a) clustered);
+-- error 8200
+create table t (a varchar(255), unique key(a) nonclustered);
+-- error 8200
+create table t (a varchar(255), unique index(a) clustered);
+-- error 8200
+create table t (a varchar(255), unique index(a) nonclustered);
+-- error 8200
+create table t (a varchar(255), key(a) clustered);
+-- error 8200
+create table t (a varchar(255), key(a) nonclustered);
+-- error 8200
+create table t (a varchar(255), index(a) clustered);
+-- error 8200
+create table t (a varchar(255), index(a) nonclustered);
+-- error 8200
+create table t (a varchar(255), b decimal(5, 4), primary key (a, b) clustered, key (b) clustered);
+-- error 8200
+create table t (a varchar(255), b decimal(5, 4), primary key (a, b) clustered, key (b) nonclustered);
+
+# TestClusteredIndexSyntax
+drop table if exists t;
+create table t (a int primary key, b int);
+select tidb_pk_type from information_schema.tables where table_schema = 'session__clustered_index' and table_name = 't';
+drop table if exists t;
+create table t (a int, b int, primary key(a) clustered);
+select tidb_pk_type from information_schema.tables where table_schema = 'session__clustered_index' and table_name = 't';
+drop table if exists t;
+create table t (a int, b int, primary key(a) /*T![clustered_index] clustered */);
+select tidb_pk_type from information_schema.tables where table_schema = 'session__clustered_index' and table_name = 't';
+drop table if exists t;
+create table t (a int, b int, primary key(a) nonclustered);
+select tidb_pk_type from information_schema.tables where table_schema = 'session__clustered_index' and table_name = 't';
+drop table if exists t;
+create table t (a int, b int, primary key(a) /*T![clustered_index] nonclustered */);
+select tidb_pk_type from information_schema.tables where table_schema = 'session__clustered_index' and table_name = 't';
+set @@tidb_enable_clustered_index = 'int_only';
+drop table if exists t;
+create table t (a int, b varchar(255), primary key(b, a));
+select tidb_pk_type from information_schema.tables where table_schema = 'session__clustered_index' and table_name = 't';
+drop table if exists t;
+create table t (a int, b varchar(255), primary key(b, a) nonclustered);
+select tidb_pk_type from information_schema.tables where table_schema = 'session__clustered_index' and table_name = 't';
+drop table if exists t;
+create table t (a int, b varchar(255), primary key(b, a) clustered);
+select tidb_pk_type from information_schema.tables where table_schema = 'session__clustered_index' and table_name = 't';
+set @@tidb_enable_clustered_index = 'on';
+drop table if exists t;
+create table t (a int, b varchar(255), primary key(b, a));
+select tidb_pk_type from information_schema.tables where table_schema = 'session__clustered_index' and table_name = 't';
+drop table if exists t;
+create table t (a int, b varchar(255), primary key(b, a) nonclustered);
+select tidb_pk_type from information_schema.tables where table_schema = 'session__clustered_index' and table_name = 't';
+drop table if exists t;
+create table t (a int, b varchar(255), primary key(b, a) /*T![clustered_index] nonclustered */);
+select tidb_pk_type from information_schema.tables where table_schema = 'session__clustered_index' and table_name = 't';
+drop table if exists t;
+create table t (a int, b varchar(255), primary key(b, a) clustered);
+select tidb_pk_type from information_schema.tables where table_schema = 'session__clustered_index' and table_name = 't';
+drop table if exists t;
+create table t (a int, b varchar(255), primary key(b, a) /*T![clustered_index] clustered */);
+select tidb_pk_type from information_schema.tables where table_schema = 'session__clustered_index' and table_name = 't';
+-- error 1064
+create table t (a varchar(255) unique key clustered);
+-- error 1064
+create table t (a varchar(255), foreign key (a) reference t1(a) clustered);
+-- error 1064
+create table t (a varchar(255), foreign key (a) clustered reference t1(a));
+-- error 1064
+create table t (a varchar(255) clustered);
+-- error 8200
+create table t (a varchar(255), unique key(a) clustered);
+-- error 8200
+create table t (a varchar(255), unique key(a) nonclustered);
+-- error 8200
+create table t (a varchar(255), unique index(a) clustered);
+-- error 8200
+create table t (a varchar(255), unique index(a) nonclustered);
+-- error 8200
+create table t (a varchar(255), key(a) clustered);
+-- error 8200
+create table t (a varchar(255), key(a) nonclustered);
+-- error 8200
+create table t (a varchar(255), index(a) clustered);
+-- error 8200
+create table t (a varchar(255), index(a) nonclustered);
+-- error 8200
+create table t (a varchar(255), b decimal(5, 4), primary key (a, b) clustered, key (b) clustered);
+-- error 8200
+create table t (a varchar(255), b decimal(5, 4), primary key (a, b) clustered, key (b) nonclustered);
+set @@tidb_enable_clustered_index = default;
+
+# TestPrefixClusteredIndexAddIndexAndRecover
+drop table if exists t;
+create table t(a char(3), b char(3), primary key(a(1)) clustered);
+insert into t values ('aaa', 'bbb');
+alter table t add index idx(b);
+select * from t use index(idx);
+admin check table t;
+admin recover index t idx;
+select * from t use index(idx);
+admin check table t;
+
+# TestClusteredIndexDecodeRestoredDataV5
+# https://github.com/pingcap/tidb/issues/23106
+drop table if exists t;
+create table t (id1 int, id2 varchar(10), a1 int, primary key(id1, id2) clustered) collate utf8mb4_general_ci;
+insert into t values (1, 'asd', 1), (1, 'dsa', 1);
+-- error 1062
+alter table t add unique index t_idx(id1, a1);
+drop table if exists t;
+create table t (id1 int, id2 varchar(10), a1 int, primary key(id1, id2) clustered, unique key t_idx(id1, a1)) collate utf8mb4_general_ci;
+begin;
+insert into t values (1, 'asd', 1);
+select * from t use index (t_idx);
+commit;
+admin check table t;
+
+# TestPrefixedClusteredIndexUniqueKeyWithNewCollation
+# https://github.com/pingcap/tidb/issues/23178
+drop table if exists t;
+create table t (a text collate utf8mb4_general_ci not null, b int(11) not null, primary key (a(10), b) clustered, key idx(a(2)) ) default charset=utf8mb4 collate=utf8mb4_bin;
+insert into t values ('aaa', 2);
+admin check table t;
+drop table t;
+
+# TestClusteredUnionScan
+drop table if exists t;
+CREATE TABLE t (a int,b int,c int, PRIMARY KEY (a,b));
+insert t (a, b) values (1, 1);
+begin;
+update t set c = 1;
+select * from t;
+rollback;
+
+set @@tidb_enable_clustered_index = default;

@@ -18,31 +18,18 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
-	kv2 "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
+	"go.uber.org/zap/zapcore"
 )
-
-// prettyFileNames removes the directory prefix except the last level from the
-// file names.
-func prettyFileNames(files []string) []string {
-	names := make([]string, 0, len(files))
-	for _, f := range files {
-		dir, file := filepath.Split(f)
-		names = append(names, fmt.Sprintf("%s/%s", filepath.Base(dir), file))
-	}
-	return names
-}
 
 // seekPropsOffsets seeks the statistic files to find the largest offset of
 // sorted data file offsets such that the key at offset is less than or equal to
@@ -52,12 +39,15 @@ func seekPropsOffsets(
 	start kv.Key,
 	paths []string,
 	exStorage storage.ExternalStorage,
-) ([]uint64, error) {
-	iter, err := NewMergePropIter(ctx, paths, exStorage)
+	checkHotSpot bool,
+) (_ []uint64, err error) {
+	logger := logutil.Logger(ctx)
+	task := log.BeginTask(logger, "seek props offsets")
+	defer task.End(zapcore.ErrorLevel, err)
+	iter, err := NewMergePropIter(ctx, paths, exStorage, checkHotSpot)
 	if err != nil {
 		return nil, err
 	}
-	logger := logutil.Logger(ctx)
 	defer func() {
 		if err := iter.Close(); err != nil {
 			logger.Warn("failed to close merge prop iterator", zap.Error(err))
@@ -124,38 +114,15 @@ func GetAllFileNames(
 }
 
 // CleanUpFiles delete all data and stat files under one subDir.
-func CleanUpFiles(ctx context.Context,
-	store storage.ExternalStorage,
-	subDir string,
-	concurrency uint) error {
+func CleanUpFiles(ctx context.Context, store storage.ExternalStorage, subDir string) error {
 	dataNames, statNames, err := GetAllFileNames(ctx, store, subDir)
 	if err != nil {
 		return err
 	}
-
-	eg := &errgroup.Group{}
-	workerPool := utils.NewWorkerPool(concurrency, "delete global sort files")
-	for i := range dataNames {
-		data := dataNames[i]
-		workerPool.ApplyOnErrorGroup(eg, func() error {
-			err := store.DeleteFile(ctx, data)
-			if err != nil {
-				return err
-			}
-			return nil
-		})
-	}
-	for i := range statNames {
-		stat := statNames[i]
-		workerPool.ApplyOnErrorGroup(eg, func() error {
-			err := store.DeleteFile(ctx, stat)
-			if err != nil {
-				return err
-			}
-			return nil
-		})
-	}
-	return eg.Wait()
+	allFiles := make([]string, 0, len(dataNames)+len(statNames))
+	allFiles = append(allFiles, dataNames...)
+	allFiles = append(allFiles, statNames...)
+	return store.DeleteFiles(ctx, allFiles)
 }
 
 // MockExternalEngine generates an external engine with the given keys and values.
@@ -166,10 +133,11 @@ func MockExternalEngine(
 ) (dataFiles []string, statsFiles []string, err error) {
 	subDir := "/mock-test"
 	writer := NewWriterBuilder().
-		SetMemorySizeLimit(128).
+		SetMemorySizeLimit(10*(lengthBytes*2+10)).
+		SetBlockSize(10*(lengthBytes*2+10)).
 		SetPropSizeDistance(32).
 		SetPropKeysDistance(4).
-		Build(storage, "/mock-test", 0)
+		Build(storage, "/mock-test", "0")
 	return MockExternalEngineWithWriter(storage, writer, subDir, keys, values)
 }
 
@@ -183,19 +151,142 @@ func MockExternalEngineWithWriter(
 	values [][]byte,
 ) (dataFiles []string, statsFiles []string, err error) {
 	ctx := context.Background()
-	kvs := make([]common.KvPair, len(keys))
 	for i := range keys {
-		kvs[i].Key = keys[i]
-		kvs[i].Val = values[i]
+		err := writer.WriteRow(ctx, keys[i], values[i], nil)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
-	rows := kv2.MakeRowsFromKvPairs(kvs)
-	err = writer.AppendRows(ctx, nil, rows)
-	if err != nil {
-		return nil, nil, err
-	}
-	_, err = writer.Close(ctx)
+	err = writer.Close(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
 	return GetAllFileNames(ctx, storage, subDir)
+}
+
+// EndpointTp is the type of Endpoint.Key.
+type EndpointTp int
+
+const (
+	// ExclusiveEnd represents "..., Endpoint.Key)".
+	ExclusiveEnd EndpointTp = iota
+	// InclusiveStart represents "[Endpoint.Key, ...".
+	InclusiveStart
+	// InclusiveEnd represents "..., Endpoint.Key]".
+	InclusiveEnd
+)
+
+// Endpoint represents an endpoint of an interval which can be used by GetMaxOverlapping.
+type Endpoint struct {
+	Key    []byte
+	Tp     EndpointTp
+	Weight int64 // all EndpointTp use positive weight
+}
+
+// GetMaxOverlapping returns the maximum overlapping weight treating given
+// `points` as endpoints of intervals. `points` are not required to be sorted,
+// and will be sorted in-place in this function.
+func GetMaxOverlapping(points []Endpoint) int64 {
+	slices.SortFunc(points, func(i, j Endpoint) int {
+		if cmp := bytes.Compare(i.Key, j.Key); cmp != 0 {
+			return cmp
+		}
+		return int(i.Tp) - int(j.Tp)
+	})
+	var maxWeight int64
+	var curWeight int64
+	for _, p := range points {
+		switch p.Tp {
+		case InclusiveStart:
+			curWeight += p.Weight
+		case ExclusiveEnd, InclusiveEnd:
+			curWeight -= p.Weight
+		}
+		if curWeight > maxWeight {
+			maxWeight = curWeight
+		}
+	}
+	return maxWeight
+}
+
+// SortedKVMeta is the meta of sorted kv.
+type SortedKVMeta struct {
+	StartKey           []byte              `json:"start-key"`
+	EndKey             []byte              `json:"end-key"` // exclusive
+	TotalKVSize        uint64              `json:"total-kv-size"`
+	MultipleFilesStats []MultipleFilesStat `json:"multiple-files-stats"`
+}
+
+// NewSortedKVMeta creates a SortedKVMeta from a WriterSummary. If the summary
+// is empty, it will return a pointer to zero SortedKVMeta.
+func NewSortedKVMeta(summary *WriterSummary) *SortedKVMeta {
+	if summary == nil || (len(summary.Min) == 0 && len(summary.Max) == 0) {
+		return &SortedKVMeta{}
+	}
+	return &SortedKVMeta{
+		StartKey:           summary.Min.Clone(),
+		EndKey:             summary.Max.Clone().Next(),
+		TotalKVSize:        summary.TotalSize,
+		MultipleFilesStats: summary.MultipleFilesStats,
+	}
+}
+
+// Merge merges the other SortedKVMeta into this one.
+func (m *SortedKVMeta) Merge(other *SortedKVMeta) {
+	if len(other.StartKey) == 0 && len(other.EndKey) == 0 {
+		return
+	}
+	if len(m.StartKey) == 0 && len(m.EndKey) == 0 {
+		*m = *other
+		return
+	}
+
+	m.StartKey = BytesMin(m.StartKey, other.StartKey)
+	m.EndKey = BytesMax(m.EndKey, other.EndKey)
+	m.TotalKVSize += other.TotalKVSize
+
+	m.MultipleFilesStats = append(m.MultipleFilesStats, other.MultipleFilesStats...)
+}
+
+// MergeSummary merges the WriterSummary into this SortedKVMeta.
+func (m *SortedKVMeta) MergeSummary(summary *WriterSummary) {
+	m.Merge(NewSortedKVMeta(summary))
+}
+
+// GetDataFiles returns all data files in the meta.
+func (m *SortedKVMeta) GetDataFiles() []string {
+	var ret []string
+	for _, stat := range m.MultipleFilesStats {
+		for _, files := range stat.Filenames {
+			ret = append(ret, files[0])
+		}
+	}
+	return ret
+}
+
+// GetStatFiles returns all stat files in the meta.
+func (m *SortedKVMeta) GetStatFiles() []string {
+	var ret []string
+	for _, stat := range m.MultipleFilesStats {
+		for _, files := range stat.Filenames {
+			ret = append(ret, files[1])
+		}
+	}
+	return ret
+}
+
+// BytesMin returns the smallest of byte slice a and b.
+func BytesMin(a, b []byte) []byte {
+	if bytes.Compare(a, b) < 0 {
+		return a
+	}
+	return b
+}
+
+// BytesMax returns the largest of byte slice a and b.
+func BytesMax(a, b []byte) []byte {
+	if bytes.Compare(a, b) > 0 {
+		return a
+	}
+	return b
 }

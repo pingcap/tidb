@@ -20,8 +20,8 @@ import (
 	"testing"
 
 	zaplog "github.com/pingcap/log"
-	"github.com/pingcap/tidb/testkit/testsetup"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/pkg/testkit/testsetup"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/goleak"
 )
 

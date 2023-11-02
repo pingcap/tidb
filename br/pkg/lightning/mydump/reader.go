@@ -93,7 +93,7 @@ func ExportStatement(ctx context.Context, store storage.ExternalStorage,
 		}
 		store = storage.WithCompression(store, compressType, storage.DecompressConfig{})
 	}
-	fd, err := store.Open(ctx, sqlFile.FileMeta.Path)
+	fd, err := store.Open(ctx, sqlFile.FileMeta.Path, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

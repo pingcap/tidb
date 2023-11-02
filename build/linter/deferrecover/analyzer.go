@@ -32,7 +32,7 @@ var Analyzer = &analysis.Analyzer{
 }
 
 const (
-	packagePath = "github.com/pingcap/tidb/util"
+	packagePath = "github.com/pingcap/tidb/pkg/util"
 	packageName = "util"
 	funcName    = "Recover"
 )

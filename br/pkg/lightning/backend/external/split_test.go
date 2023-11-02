@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
 )
@@ -42,16 +42,20 @@ func TestGeneralProperties(t *testing.T) {
 	for i := range keys {
 		keyLen := rand.Intn(100) + 1
 		valueLen := rand.Intn(100) + 1
-		keys[i] = make([]byte, keyLen)
-		values[i] = make([]byte, valueLen)
-		rand.Read(keys[i])
-		rand.Read(values[i])
+		keys[i] = make([]byte, keyLen+2)
+		values[i] = make([]byte, valueLen+2)
+		rand.Read(keys[i][:keyLen])
+		rand.Read(values[i][:valueLen])
+		keys[i][keyLen] = byte(i / 255)
+		keys[i][keyLen+1] = byte(i % 255)
+		values[i][valueLen] = byte(i / 255)
+		values[i][valueLen+1] = byte(i % 255)
 	}
 
 	dataFiles, statFiles, err := MockExternalEngine(memStore, keys, values)
 	require.NoError(t, err)
 	splitter, err := NewRangeSplitter(
-		ctx, dataFiles, statFiles, memStore, 1000, 30, 1000, 1,
+		ctx, dataFiles, statFiles, memStore, 1000, 30, 1000, 1, true,
 	)
 	var lastEndKey []byte
 notExhausted:
@@ -69,20 +73,20 @@ notExhausted:
 	lenStatFiles := len(statFiles)
 	require.Equal(t, lenDataFiles, lenStatFiles)
 	require.Greater(t, lenDataFiles, 0)
-	require.Greater(t, len(splitKeys), 0)
-
-	// splitKeys should be strictly increasing
-	for i := 1; i < len(splitKeys); i++ {
-		cmp := bytes.Compare(splitKeys[i], splitKeys[i-1])
-		require.Equal(t, 1, cmp, "splitKeys: %v", splitKeys)
-	}
-	// first splitKeys should be strictly greater than lastEndKey
-	cmp := bytes.Compare(splitKeys[0], lastEndKey)
-	require.Equal(t, 1, cmp, "splitKeys: %v, lastEndKey: %v", splitKeys, lastEndKey)
-	// last splitKeys should be strictly less than endKey
-	if endKey != nil {
-		cmp = bytes.Compare(splitKeys[len(splitKeys)-1], endKey)
-		require.Equal(t, -1, cmp, "splitKeys: %v, endKey: %v", splitKeys, endKey)
+	if len(splitKeys) > 0 {
+		// splitKeys should be strictly increasing
+		for i := 1; i < len(splitKeys); i++ {
+			cmp := bytes.Compare(splitKeys[i], splitKeys[i-1])
+			require.Equal(t, 1, cmp, "splitKeys: %v", splitKeys)
+		}
+		// first splitKeys should be strictly greater than lastEndKey
+		cmp := bytes.Compare(splitKeys[0], lastEndKey)
+		require.Equal(t, 1, cmp, "splitKeys: %v, lastEndKey: %v", splitKeys, lastEndKey)
+		// last splitKeys should be strictly less than endKey
+		if endKey != nil {
+			cmp = bytes.Compare(splitKeys[len(splitKeys)-1], endKey)
+			require.Equal(t, -1, cmp, "splitKeys: %v, endKey: %v", splitKeys, endKey)
+		}
 	}
 
 	lastEndKey = endKey
@@ -101,13 +105,13 @@ func TestOnlyOneGroup(t *testing.T) {
 		SetMemorySizeLimit(15).
 		SetPropSizeDistance(1).
 		SetPropKeysDistance(1).
-		Build(memStore, subDir, 5)
+		Build(memStore, subDir, "5")
 
 	dataFiles, statFiles, err := MockExternalEngineWithWriter(memStore, writer, subDir, [][]byte{{1}, {2}}, [][]byte{{1}, {2}})
 	require.NoError(t, err)
 
 	splitter, err := NewRangeSplitter(
-		ctx, dataFiles, statFiles, memStore, 1000, 30, 1000, 10,
+		ctx, dataFiles, statFiles, memStore, 1000, 30, 1000, 10, true,
 	)
 	require.NoError(t, err)
 	endKey, dataFiles, statFiles, splitKeys, err := splitter.SplitOneRangesGroup()
@@ -119,7 +123,7 @@ func TestOnlyOneGroup(t *testing.T) {
 	require.NoError(t, splitter.Close())
 
 	splitter, err = NewRangeSplitter(
-		ctx, dataFiles, statFiles, memStore, 1000, 30, 1000, 1,
+		ctx, dataFiles, statFiles, memStore, 1000, 30, 1000, 1, true,
 	)
 	require.NoError(t, err)
 	endKey, dataFiles, statFiles, splitKeys, err = splitter.SplitOneRangesGroup()
@@ -140,7 +144,7 @@ func TestSortedData(t *testing.T) {
 	values := make([][]byte, kvNum)
 	for i := range keys {
 		keys[i] = []byte(fmt.Sprintf("key%03d", i))
-		values[i] = []byte(fmt.Sprintf("value%03d", i))
+		values[i] = []byte(fmt.Sprintf("val%03d", i))
 	}
 
 	dataFiles, statFiles, err := MockExternalEngine(memStore, keys, values)
@@ -152,7 +156,7 @@ func TestSortedData(t *testing.T) {
 	groupFileNumUpperBound := int(math.Ceil(float64(rangesGroupKV-1)/avgKVPerFile)) + 1
 
 	splitter, err := NewRangeSplitter(
-		ctx, dataFiles, statFiles, memStore, 1000, int64(rangesGroupKV), 1000, 10,
+		ctx, dataFiles, statFiles, memStore, 1000, int64(rangesGroupKV), 1000, 10, true,
 	)
 	require.NoError(t, err)
 
@@ -173,15 +177,16 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	subDir := "/mock-test"
 
 	writer1 := NewWriterBuilder().
-		SetMemorySizeLimit(15). // slightly larger than len("key01") + len("value01")
+		SetMemorySizeLimit(2*(lengthBytes*2+10)).
+		SetBlockSize(2*(lengthBytes*2+10)).
 		SetPropSizeDistance(1).
 		SetPropKeysDistance(1).
-		Build(memStore, subDir, 1)
+		Build(memStore, subDir, "1")
 	keys1 := [][]byte{
 		[]byte("key01"), []byte("key11"), []byte("key21"),
 	}
 	values1 := [][]byte{
-		[]byte("value01"), []byte("value11"), []byte("value21"),
+		[]byte("val01"), []byte("val11"), []byte("val21"),
 	}
 	dataFiles1, statFiles1, err := MockExternalEngineWithWriter(memStore, writer1, subDir, keys1, values1)
 	require.NoError(t, err)
@@ -189,15 +194,16 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	require.Len(t, statFiles1, 2)
 
 	writer2 := NewWriterBuilder().
-		SetMemorySizeLimit(15).
+		SetMemorySizeLimit(2*(lengthBytes*2+10)).
+		SetBlockSize(2*(lengthBytes*2+10)).
 		SetPropSizeDistance(1).
 		SetPropKeysDistance(1).
-		Build(memStore, subDir, 2)
+		Build(memStore, subDir, "2")
 	keys2 := [][]byte{
 		[]byte("key02"), []byte("key12"), []byte("key22"),
 	}
 	values2 := [][]byte{
-		[]byte("value02"), []byte("value12"), []byte("value22"),
+		[]byte("val02"), []byte("val12"), []byte("val22"),
 	}
 	dataFiles12, statFiles12, err := MockExternalEngineWithWriter(memStore, writer2, subDir, keys2, values2)
 	require.NoError(t, err)
@@ -205,15 +211,16 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	require.Len(t, statFiles12, 4)
 
 	writer3 := NewWriterBuilder().
-		SetMemorySizeLimit(15).
+		SetMemorySizeLimit(2*(lengthBytes*2+10)).
+		SetBlockSize(2*(lengthBytes*2+10)).
 		SetPropSizeDistance(1).
 		SetPropKeysDistance(1).
-		Build(memStore, subDir, 3)
+		Build(memStore, subDir, "3")
 	keys3 := [][]byte{
 		[]byte("key03"), []byte("key13"), []byte("key23"),
 	}
 	values3 := [][]byte{
-		[]byte("value03"), []byte("value13"), []byte("value23"),
+		[]byte("val03"), []byte("val13"), []byte("val23"),
 	}
 	dataFiles123, statFiles123, err := MockExternalEngineWithWriter(memStore, writer3, subDir, keys3, values3)
 	require.NoError(t, err)
@@ -230,7 +237,7 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 
 	// group keys = 2, region keys = 1
 	splitter, err := NewRangeSplitter(
-		ctx, dataFiles123, statFiles123, memStore, 1000, 2, 1000, 1,
+		ctx, dataFiles123, statFiles123, memStore, 1000, 2, 1000, 1, true,
 	)
 	require.NoError(t, err)
 
@@ -305,14 +312,14 @@ func TestExactlyKeyNum(t *testing.T) {
 		SetMemorySizeLimit(15).
 		SetPropSizeDistance(1).
 		SetPropKeysDistance(1).
-		Build(memStore, subDir, 5)
+		Build(memStore, subDir, "5")
 
 	dataFiles, statFiles, err := MockExternalEngineWithWriter(memStore, writer, subDir, keys, values)
 	require.NoError(t, err)
 
 	// maxRangeKeys = 3
 	splitter, err := NewRangeSplitter(
-		ctx, dataFiles, statFiles, memStore, 1000, 100, 1000, 3,
+		ctx, dataFiles, statFiles, memStore, 1000, 100, 1000, 3, true,
 	)
 	require.NoError(t, err)
 	endKey, splitDataFiles, splitStatFiles, splitKeys, err := splitter.SplitOneRangesGroup()
@@ -324,7 +331,7 @@ func TestExactlyKeyNum(t *testing.T) {
 
 	// rangesGroupKeys = 3
 	splitter, err = NewRangeSplitter(
-		ctx, dataFiles, statFiles, memStore, 1000, 3, 1000, 1,
+		ctx, dataFiles, statFiles, memStore, 1000, 3, 1000, 1, true,
 	)
 	require.NoError(t, err)
 	endKey, splitDataFiles, splitStatFiles, splitKeys, err = splitter.SplitOneRangesGroup()

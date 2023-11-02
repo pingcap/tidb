@@ -16,9 +16,9 @@ package local
 
 import (
 	"io"
-	"sync"
 
 	"github.com/klauspost/compress/gzip" // faster than stdlib
+	"github.com/pingcap/tidb/pkg/util/compress"
 	"google.golang.org/grpc"
 )
 
@@ -29,15 +29,9 @@ var (
 
 type gzipCompressor struct{}
 
-var gzipWriterPool = sync.Pool{
-	New: func() any {
-		return gzip.NewWriter(io.Discard)
-	},
-}
-
 func (*gzipCompressor) Do(w io.Writer, p []byte) error {
-	z := gzipWriterPool.Get().(*gzip.Writer)
-	defer gzipWriterPool.Put(z)
+	z := compress.GzipWriterPool.Get().(*gzip.Writer)
+	defer compress.GzipWriterPool.Put(z)
 	z.Reset(w)
 	if _, err := z.Write(p); err != nil {
 		return err
@@ -51,22 +45,16 @@ func (*gzipCompressor) Type() string {
 
 type gzipDecompressor struct{}
 
-var gzipReaderPool = sync.Pool{
-	New: func() any {
-		return &gzip.Reader{}
-	},
-}
-
 func (*gzipDecompressor) Do(r io.Reader) ([]byte, error) {
-	z := gzipReaderPool.Get().(*gzip.Reader)
+	z := compress.GzipReaderPool.Get().(*gzip.Reader)
 	if err := z.Reset(r); err != nil {
-		gzipReaderPool.Put(z)
+		compress.GzipReaderPool.Put(z)
 		return nil, err
 	}
 
 	defer func() {
 		_ = z.Close()
-		gzipReaderPool.Put(z)
+		compress.GzipReaderPool.Put(z)
 	}()
 	return io.ReadAll(z)
 }

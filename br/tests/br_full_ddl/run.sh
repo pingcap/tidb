@@ -41,32 +41,65 @@ done
 
 # run analyze to generate stats
 run_sql "analyze table $DB.$TABLE;"
-# record field0's stats and remove last_update_version
+# record the stats and remove last_update_version
 # it's enough to compare with restore stats
 # the stats looks like
-# {
-#   "histogram": {
-#     "ndv": 10000,
-#     "buckets": [
-#       {
-#         "count": 40,
-#         "lower_bound": "QUFqVW1HZkt3UWhXakdCSlF0a2NHRFp0UWpFZ1lEUFFNWXVtVFFTRUh0U3N4RXhub2VMeUF1emhyT0FjWUZvWUhRZVZBcGJLRlVoWVlWR      0djSmRYbnhxc1NzcG1VTHFoZnJZbg==",
-#         "upper_bound": "QUp5bmVNc29FVUFIZ3ZKS3dCaUdGQ0xoV1BSQ0FWZ2VzZGpGU05na2xsYUhkY1VMVWdEeHZORUJLbW9tWGxSTWZQTmZYZVVWR3h5amVyW      EJXQ01GcU5mRWlHeEd1dndZa1BSRg==",
-#         "repeats": 1
-#       },
-#       ...(nearly 1000 rows)
-#     ],
-#   "cm_sketch": {
-#     "rows": [
+#
+#{
+# "columns":
+#  "ol_amount": {
+#    "histogram": {
+#      "ndv": 829568,
+#      "buckets": [
 #        {
-#          "counters": [
-#             5,
-#             ...(nearly 10000 rows)
-#           ],
-#        }
-#     ]
+#          "count": 7066,
+#          "lower_bound": "MS40Mw==",
+#          "upper_bound": "NDkuMjI=",
+#          "repeats": 2,
+#          "ndv": 0
+#        },
+#       ...(nearly 1000 rows)
+#      ],
+#      "cm_sketch": {
+#          "top_n": [
+#            {
+#              "data": "BgYCgAAA",
+#              "count": 4204452
+#            }
+#          ],
+#          "default_value": 0
+#        },
+#        "null_count": 0,
+#        "tot_col_size": 29988125,
+#        "stats_ver": 2
+#      },
+#  }
+#  "ol_d_id": { similar value },
+#  "ol_delivery_d": { similar value },
+#  "ol_dist_info": { similar value },
+#  "ol_i_id": { similar value },
+#  "ol_number": { similar value },
+#  "ol_o_id": { similar value },
+#  "ol_quantity": { similar value },
+#  "ol_supply_w_id": { similar value },
+#  "ol_w_id": { similar value },
+#  },
+# "indices": {
+#   similar value
+#  }
 # }
-run_curl https://$TIDB_STATUS_ADDR/stats/dump/$DB/$TABLE | jq '.columns.field0 | del(.last_update_version, .fm_sketch, .correlation)' > $BACKUP_STAT
+
+run_curl https://$TIDB_STATUS_ADDR/stats/dump/$DB/$TABLE | jq '{columns,indices} | map_values(with_entries(del(.value.last_update_version, .value.correlation)))' > $BACKUP_STAT
+
+# ensure buckets in stats
+cat $BACKUP_STAT | grep buckets 
+if [ $? -ne 0 ] ;then
+    echo "TEST: [$TEST_NAME] fail due to grep not find buckets in stats file"
+    echo $(cat $BACKUP_STAT)
+    exit 1
+else
+    echo "grep find buckets in stats file"
+fi
 
 # backup full
 echo "backup start with stats..."
@@ -109,7 +142,7 @@ fi
 
 echo "restore full without stats..."
 run_br restore full -s "local://$TEST_DIR/${DB}_disable_stats" --pd $PD_ADDR
-curl $TIDB_IP:10080/stats/dump/$DB/$TABLE | jq '.columns.field0 | del(.last_update_version, .fm_sketch, .correlation)' > $RESOTRE_STAT
+curl $TIDB_IP:10080/stats/dump/$DB/$TABLE | jq '{columns,indices} | map_values(with_entries(del(.value.last_update_version, .value.correlation)))' > $RESOTRE_STAT
 
 # stats should not be equal because we disable stats by default.
 if diff -q $BACKUP_STAT $RESOTRE_STAT > /dev/null
@@ -163,7 +196,7 @@ if [ "${skip_count}" -gt "2" ];then
     exit 1
 fi
 
-run_curl https://$TIDB_STATUS_ADDR/stats/dump/$DB/$TABLE | jq '.columns.field0 | del(.last_update_version, .fm_sketch, .correlation)' > $RESOTRE_STAT
+run_curl https://$TIDB_STATUS_ADDR/stats/dump/$DB/$TABLE | jq '{columns,indices} | map_values(with_entries(del(.value.last_update_version, .value.correlation)))' > $RESOTRE_STAT
 
 if diff -q $BACKUP_STAT $RESOTRE_STAT > /dev/null
 then
