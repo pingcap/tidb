@@ -49,9 +49,9 @@ func (r mockRequirement) GetEtcdClient() *clientv3.Client {
 }
 
 func TestSignedAutoid(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange"))
 	}()
 
 	store, err := mockstore.NewMockStore()
@@ -254,9 +254,9 @@ func TestSignedAutoid(t *testing.T) {
 }
 
 func TestUnsignedAutoid(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange"))
 	}()
 
 	store, err := mockstore.NewMockStore()
@@ -554,9 +554,9 @@ func TestNextStep(t *testing.T) {
 
 // Fix a computation logic bug in allocator computation.
 func TestAllocComputationIssue(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDCustomize", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDCustomize", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDCustomize"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDCustomize"))
 	}()
 
 	store, err := mockstore.NewMockStore()
