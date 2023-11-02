@@ -16,12 +16,11 @@ package globalstats
 
 import (
 	"sync"
-	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 )
 
 // StatsWrapper wrapper stats
@@ -39,7 +38,7 @@ func NewStatsWrapper(hg []*statistics.Histogram, topN []*statistics.TopN) *Stats
 }
 
 type topnStatsMergeWorker struct {
-	killed *uint32
+	killer *sqlkiller.SQLKiller
 	taskCh <-chan *TopnStatsMergeTask
 	respCh chan<- *TopnStatsMergeResponse
 	// the stats in the wrapper should only be read during the worker
@@ -53,14 +52,14 @@ func NewTopnStatsMergeWorker(
 	taskCh <-chan *TopnStatsMergeTask,
 	respCh chan<- *TopnStatsMergeResponse,
 	wrapper *StatsWrapper,
-	killed *uint32) *topnStatsMergeWorker {
+	killer *sqlkiller.SQLKiller) *topnStatsMergeWorker {
 	worker := &topnStatsMergeWorker{
 		taskCh: taskCh,
 		respCh: respCh,
 	}
 	worker.statsWrapper = wrapper
 	worker.shardMutex = make([]sync.Mutex, len(wrapper.AllHg))
-	worker.killed = killed
+	worker.killer = killer
 	return worker
 }
 
@@ -108,8 +107,8 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 		datumMap := statistics.NewDatumMapCache()
 
 		for i, topN := range checkTopNs {
-			if atomic.LoadUint32(worker.killed) == 1 {
-				resp.Err = errors.Trace(statistics.ErrQueryInterrupted)
+			if err := worker.killer.HandleSignal(); err != nil {
+				resp.Err = err
 				worker.respCh <- resp
 				return
 			}
@@ -128,8 +127,8 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 				// 1. Check the topN first.
 				// 2. If the topN doesn't contain the value corresponding to encodedVal. We should check the histogram.
 				for j := 0; j < partNum; j++ {
-					if atomic.LoadUint32(worker.killed) == 1 {
-						resp.Err = errors.Trace(statistics.ErrQueryInterrupted)
+					if err := worker.killer.HandleSignal(); err != nil {
+						resp.Err = err
 						worker.respCh <- resp
 						return
 					}

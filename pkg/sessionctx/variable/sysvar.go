@@ -2370,7 +2370,13 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-
+	{
+		Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAsyncMergeGlobalStats, Value: BoolToOnOff(DefTiDBEnableAsyncMergeGlobalStats), Type: TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.EnableAsyncMergeGlobalStats = TiDBOptOn(val)
+			return nil
+		},
+	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptPrefixIndexSingleScan, Value: BoolToOnOff(DefTiDBOptPrefixIndexSingleScan), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.OptPrefixIndexSingleScan = TiDBOptOn(val)
 		return nil
@@ -2397,6 +2403,12 @@ var defaultSysVars = []*SysVar{
 			s.EnableReuseCheck = TiDBOptOn(val)
 			return nil
 		}},
+	{Scope: ScopeGlobal, Name: TiDBIgnoreInlistPlanDigest, Value: BoolToOnOff(DefTiDBIgnoreInlistPlanDigest), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		IgnoreInlistPlanDigest.Store(TiDBOptOn(s))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return BoolToOnOff(IgnoreInlistPlanDigest.Load()), nil
+	}},
 	{Scope: ScopeGlobal, Name: TiDBTTLJobEnable, Value: BoolToOnOff(DefTiDBTTLJobEnable), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 		EnableTTLJob.Store(TiDBOptOn(s))
 		return nil

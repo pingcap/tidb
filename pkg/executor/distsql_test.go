@@ -103,7 +103,7 @@ func TestCopClientSend(t *testing.T) {
 
 	// Split one region.
 	key := tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(500))
-	region, _, _ := cluster.GetRegionByKey(key)
+	region, _, _, _ := cluster.GetRegionByKey(key)
 	peerID := cluster.AllocID()
 	cluster.Split(region.GetId(), cluster.AllocID(), key, []uint64{peerID}, peerID)
 

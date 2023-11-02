@@ -153,6 +153,70 @@ func (r *TiFlashRule) UnmarshalJSON(bytes []byte) error {
 	return err
 }
 
+// RuleBuilder is used to build the Rules from a constraint string.
+type RuleBuilder struct {
+	role                        PeerRoleType
+	replicasNum                 uint64
+	skipCheckReplicasConsistent bool
+	constraintStr               string
+}
+
+// NewRuleBuilder creates a new RuleBuilder.
+func NewRuleBuilder() *RuleBuilder {
+	return &RuleBuilder{}
+}
+
+// SetRole sets the role of the rule.
+func (b *RuleBuilder) SetRole(role PeerRoleType) *RuleBuilder {
+	b.role = role
+	return b
+}
+
+// SetReplicasNum sets the replicas number in the rule.
+func (b *RuleBuilder) SetReplicasNum(num uint64) *RuleBuilder {
+	b.replicasNum = num
+	return b
+}
+
+// SetSkipCheckReplicasConsistent sets the skipCheckReplicasConsistent flag.
+func (b *RuleBuilder) SetSkipCheckReplicasConsistent(skip bool) *RuleBuilder {
+	b.skipCheckReplicasConsistent = skip
+	return b
+}
+
+// SetConstraintStr sets the constraint string.
+func (b *RuleBuilder) SetConstraintStr(constraintStr string) *RuleBuilder {
+	b.constraintStr = constraintStr
+	return b
+}
+
+// BuildRulesWithDictConstraintsOnly constructs []*Rule from a yaml-compatible representation of
+// 'dict' constraints.
+func (b *RuleBuilder) BuildRulesWithDictConstraintsOnly() ([]*Rule, error) {
+	return newRulesWithDictConstraints(b.role, b.constraintStr)
+}
+
+// BuildRules constructs []*Rule from a yaml-compatible representation of
+// 'array' or 'dict' constraints.
+// Refer to https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-24-placement-rules-in-sql.md.
+func (b *RuleBuilder) BuildRules() ([]*Rule, error) {
+	rules, err := newRules(b.role, b.replicasNum, b.constraintStr)
+	// check if replicas is consistent
+	if err == nil {
+		if b.skipCheckReplicasConsistent {
+			return rules, err
+		}
+		totalCnt := 0
+		for _, rule := range rules {
+			totalCnt += rule.Count
+		}
+		if b.replicasNum != 0 && b.replicasNum != uint64(totalCnt) {
+			err = fmt.Errorf("%w: count of replicas in dict constrains is %d, but got %d", ErrInvalidConstraintsReplicas, totalCnt, b.replicasNum)
+		}
+	}
+	return rules, err
+}
+
 // NewRule constructs *Rule from role, count, and constraints. It is here to
 // consistent the behavior of creating new rules.
 func NewRule(role PeerRoleType, replicas uint64, cnst Constraints) *Rule {
@@ -175,10 +239,10 @@ func getYamlMapFormatError(str string) error {
 	return nil
 }
 
-// NewRules constructs []*Rule from a yaml-compatible representation of
+// newRules constructs []*Rule from a yaml-compatible representation of
 // 'array' or 'dict' constraints.
 // Refer to https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-24-placement-rules-in-sql.md.
-func NewRules(role PeerRoleType, replicas uint64, cnstr string) (rules []*Rule, err error) {
+func newRules(role PeerRoleType, replicas uint64, cnstr string) (rules []*Rule, err error) {
 	cnstbytes := []byte(cnstr)
 	constraints1, err1 := NewConstraintsFromYaml(cnstbytes)
 	if err1 == nil {
@@ -199,23 +263,12 @@ func NewRules(role PeerRoleType, replicas uint64, cnstr string) (rules []*Rule, 
 		return
 	}
 
-	rules, err = NewRulesWithDictConstraints(role, cnstr)
-	// check if replicas is consistent
-	if err == nil {
-		totalCnt := 0
-		for _, rule := range rules {
-			totalCnt += rule.Count
-		}
-		if replicas != 0 && replicas != uint64(totalCnt) {
-			err = fmt.Errorf("%w: count of replicas in dict constrains is %d, but got %d", ErrInvalidConstraintsReplicas, totalCnt, replicas)
-		}
-	}
-	return
+	return newRulesWithDictConstraints(role, cnstr)
 }
 
-// NewRulesWithDictConstraints constructs []*Rule from a yaml-compatible representation of
+// newRulesWithDictConstraints constructs []*Rule from a yaml-compatible representation of
 // 'dict' constraints.
-func NewRulesWithDictConstraints(role PeerRoleType, cnstr string) ([]*Rule, error) {
+func newRulesWithDictConstraints(role PeerRoleType, cnstr string) ([]*Rule, error) {
 	rules := []*Rule{}
 	cnstbytes := []byte(cnstr)
 	constraints2 := map[string]int{}

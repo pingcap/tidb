@@ -86,7 +86,7 @@ func (s *statsReadWriter) InsertColStats2KV(physicalID int64, colInfos []*model.
 			count := req.GetRow(0).GetInt64(0)
 			for _, colInfo := range colInfos {
 				value := types.NewDatum(colInfo.GetOriginDefaultValue())
-				value, err = value.ConvertTo(sctx.GetSessionVars().StmtCtx, &colInfo.FieldType)
+				value, err = value.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), &colInfo.FieldType)
 				if err != nil {
 					return err
 				}
@@ -100,7 +100,7 @@ func (s *statsReadWriter) InsertColStats2KV(physicalID int64, colInfos []*model.
 					if _, err := util.Exec(sctx, "insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, tot_col_size) values (%?, %?, 0, %?, 1, %?)", startTS, physicalID, colInfo.ID, int64(len(value.GetBytes()))*count); err != nil {
 						return err
 					}
-					value, err = value.ConvertTo(sctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
+					value, err = value.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
 					if err != nil {
 						return err
 					}
@@ -161,7 +161,8 @@ func (s *statsReadWriter) ChangeGlobalStatsID(from, to int64) (err error) {
 	}, util.FlagWrapTxn)
 }
 
-// ResetTableStats2KVForDrop resets the count to 0.
+// ResetTableStats2KVForDrop update the version of mysql.stats_meta.
+// Then GC worker will delete the old version of stats.
 func (s *statsReadWriter) ResetTableStats2KVForDrop(physicalID int64) (err error) {
 	statsVer := uint64(0)
 	defer func() {
@@ -196,7 +197,7 @@ func (s *statsReadWriter) SaveTableStatsToStorage(results *statistics.AnalyzeRes
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		statsVer, err = SaveTableStatsToStorage(sctx, results, analyzeSnapshot)
 		return err
-	})
+	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
 		tableID := results.TableID.GetStatisticsID()
 		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, source, true)
@@ -238,7 +239,7 @@ func (s *statsReadWriter) SaveStatsToStorage(tableID int64, count, modifyCount i
 		statsVer, err = SaveStatsToStorage(sctx, tableID,
 			count, modifyCount, isIndex, hg, cms, topN, statsVersion, isAnalyzed, updateAnalyzeTime)
 		return err
-	})
+	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
 		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, source, false)
 	}
@@ -251,7 +252,7 @@ func (s *statsReadWriter) saveMetaToStorage(tableID, count, modifyCount int64, s
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		statsVer, err = SaveMetaToStorage(sctx, tableID, count, modifyCount)
 		return err
-	})
+	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
 		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, source, false)
 	}
@@ -264,7 +265,7 @@ func (s *statsReadWriter) InsertExtendedStats(statsName string, colIDs []int64, 
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		statsVer, err = InsertExtendedStats(sctx, s.statsHandler, statsName, colIDs, tp, tableID, ifNotExists)
 		return err
-	})
+	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
 		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, "extended stats", false)
 	}
@@ -277,7 +278,7 @@ func (s *statsReadWriter) MarkExtendedStatsDeleted(statsName string, tableID int
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		statsVer, err = MarkExtendedStatsDeleted(sctx, s.statsHandler, statsName, tableID, ifExists)
 		return err
-	})
+	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
 		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, "extended stats", false)
 	}
@@ -290,11 +291,26 @@ func (s *statsReadWriter) SaveExtendedStatsToStorage(tableID int64, extStats *st
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		statsVer, err = SaveExtendedStatsToStorage(sctx, tableID, extStats, isLoad)
 		return err
-	})
+	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
 		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, "extended stats", false)
 	}
 	return
+}
+
+func (s *statsReadWriter) LoadTablePartitionStats(tableInfo *model.TableInfo, partitionDef *model.PartitionDefinition) (*statistics.Table, error) {
+	var partitionStats *statistics.Table
+	partitionStats, err := s.TableStatsFromStorage(tableInfo, partitionDef.ID, true, 0)
+	if err != nil {
+		return nil, err
+	}
+	// if the err == nil && partitionStats == nil, it means we lack the partition-level stats which the physicalID is equal to partitionID.
+	if partitionStats == nil {
+		errMsg := fmt.Sprintf("table `%s` partition `%s`", tableInfo.Name.L, partitionDef.Name.L)
+		err = types.ErrPartitionStatsMissing.GenWithStackByArgs(errMsg)
+		return nil, err
+	}
+	return partitionStats, nil
 }
 
 // LoadNeededHistograms will load histograms for those needed columns/indices.
