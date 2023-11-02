@@ -22,21 +22,17 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/docker/go-units"
-	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
@@ -106,10 +102,6 @@ type WriterBuilder struct {
 	propKeysDist    uint64
 	onClose         OnCloseFunc
 	keyDupeEncoding bool
-	// This mutex is used to make sure the writer is flushed mutually exclusively in a TiDB server.
-	mu *sync.Mutex
-
-	bufferPool *membuf.Pool
 }
 
 // NewWriterBuilder creates a WriterBuilder.
@@ -159,21 +151,9 @@ func (b *WriterBuilder) SetOnCloseFunc(onClose OnCloseFunc) *WriterBuilder {
 	return b
 }
 
-// SetBufferPool sets the buffer pool of the writer.
-func (b *WriterBuilder) SetBufferPool(bufferPool *membuf.Pool) *WriterBuilder {
-	b.bufferPool = bufferPool
-	return b
-}
-
 // SetKeyDuplicationEncoding sets if the writer can distinguish duplicate key.
 func (b *WriterBuilder) SetKeyDuplicationEncoding(val bool) *WriterBuilder {
 	b.keyDupeEncoding = val
-	return b
-}
-
-// SetMutex sets the mutex of the writer.
-func (b *WriterBuilder) SetMutex(mu *sync.Mutex) *WriterBuilder {
-	b.mu = mu
 	return b
 }
 
@@ -190,10 +170,6 @@ func (b *WriterBuilder) Build(
 	prefix string,
 	writerID string,
 ) *Writer {
-	bp := b.bufferPool
-	if bp == nil {
-		bp = membuf.NewPool()
-	}
 	filenamePrefix := filepath.Join(prefix, writerID)
 	keyAdapter := common.KeyAdapter(common.NoopKeyAdapter{})
 	if b.keyDupeEncoding {
@@ -219,7 +195,6 @@ func (b *WriterBuilder) Build(
 		multiFileStats: make([]MultipleFilesStat, 1),
 		fileMinKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
 		fileMaxKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
-		shareMu:        b.mu,
 	}
 	ret.multiFileStats[0].Filenames = make([][2]string, 0, multiFileStatNum)
 	return ret
@@ -312,8 +287,6 @@ type Writer struct {
 	minKey    tidbkv.Key
 	maxKey    tidbkv.Key
 	totalSize uint64
-	// This mutex is used to make sure the writer is flushed mutually exclusively in a TiDB server.
-	shareMu *sync.Mutex
 }
 
 // WriteRow implements ingest.Writer.
@@ -406,10 +379,6 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	if len(w.kvLocations) == 0 {
 		return nil
 	}
-	if w.shareMu != nil {
-		w.shareMu.Lock()
-		defer w.shareMu.Unlock()
-	}
 
 	logger := logutil.Logger(ctx)
 	dataFile, statFile, dataWriter, statWriter, err := w.createStorageWriter(ctx)
@@ -470,23 +439,9 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	}()
 
 	sortStart := time.Now()
-	if w.shareMu != nil {
-		sorty.MaxGor = min(8, uint64(variable.GetDDLReorgWorkerCounter()))
-		sorty.Sort(len(w.kvLocations), func(i, j, r, s int) bool {
-			posi, posj := w.kvLocations[i], w.kvLocations[j]
-			if bytes.Compare(w.getKeyByLoc(posi), w.getKeyByLoc(posj)) < 0 {
-				if r != s {
-					w.kvLocations[r], w.kvLocations[s] = w.kvLocations[s], w.kvLocations[r]
-				}
-				return true
-			}
-			return false
-		})
-	} else {
-		slices.SortFunc(w.kvLocations, func(i, j kvLocation) int {
-			return bytes.Compare(w.getKeyByLoc(i), w.getKeyByLoc(j))
-		})
-	}
+	slices.SortFunc(w.kvLocations, func(i, j kvLocation) int {
+		return bytes.Compare(w.getKeyByLoc(i), w.getKeyByLoc(j))
+	})
 	sortDuration = time.Since(sortStart)
 
 	writeStartTime = time.Now()

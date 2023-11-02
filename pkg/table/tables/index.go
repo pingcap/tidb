@@ -97,11 +97,12 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 }
 
 // GenIndexValue generates the index value.
-func (c *index) GenIndexValue(sc *stmtctx.StatementContext, distinct bool, indexedValues []types.Datum, h kv.Handle, restoredData []types.Datum) ([]byte, error) {
+func (c *index) GenIndexValue(sc *stmtctx.StatementContext, distinct bool, indexedValues []types.Datum,
+	h kv.Handle, restoredData []types.Datum, buf []byte) ([]byte, error) {
 	c.initNeedRestoreData.Do(func() {
 		c.needRestoredData = NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
 	})
-	return tablecodec.GenIndexValuePortal(sc, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, false, indexedValues, h, c.phyTblID, restoredData)
+	return tablecodec.GenIndexValuePortal(sc, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, false, indexedValues, h, c.phyTblID, restoredData, buf)
 }
 
 // getIndexedValue will produce the result like:
@@ -232,7 +233,8 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 		c.initNeedRestoreData.Do(func() {
 			c.needRestoredData = NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
 		})
-		idxVal, err := tablecodec.GenIndexValuePortal(sctx.GetSessionVars().StmtCtx, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, opt.Untouched, value, h, c.phyTblID, handleRestoreData)
+		idxVal, err := tablecodec.GenIndexValuePortal(sctx.GetSessionVars().StmtCtx, c.tblInfo, c.idxInfo,
+			c.needRestoredData, distinct, opt.Untouched, value, h, c.phyTblID, handleRestoreData, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -470,44 +472,13 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 	return nil
 }
 
-func (c *index) GenIndexKVIter(sc *stmtctx.StatementContext, indexedValue []types.Datum, h kv.Handle, handleRestoreData []types.Datum) table.IndexIter {
-	indexedValues := c.getIndexedValue(indexedValue)
-	return &indexGenerator{
-		c:                 c,
-		sctx:              sc,
-		indexedVals:       indexedValues,
-		h:                 h,
-		handleRestoreData: handleRestoreData,
-		i:                 0,
+func (c *index) GenIndexKVIter(sc *stmtctx.StatementContext, indexedValue []types.Datum,
+	h kv.Handle, handleRestoreData []types.Datum) table.IndexKVGenerator {
+	var mvIndexValues [][]types.Datum
+	if c.Meta().MVIndex {
+		mvIndexValues = c.getIndexedValue(indexedValue)
 	}
-}
-
-type indexGenerator struct {
-	c                 *index
-	sctx              *stmtctx.StatementContext
-	indexedVals       [][]types.Datum
-	h                 kv.Handle
-	handleRestoreData []types.Datum
-
-	i int
-}
-
-func (s *indexGenerator) Next(kb []byte) ([]byte, []byte, bool, error) {
-	val := s.indexedVals[s.i]
-	key, distinct, err := s.c.GenIndexKey(s.sctx, val, s.h, kb)
-	if err != nil {
-		return nil, nil, false, err
-	}
-	idxVal, err := s.c.GenIndexValue(s.sctx, distinct, val, s.h, s.handleRestoreData)
-	if err != nil {
-		return nil, nil, false, err
-	}
-	s.i++
-	return key, idxVal, distinct, err
-}
-
-func (s *indexGenerator) Valid() bool {
-	return s.i < len(s.indexedVals)
+	return table.NewIndexKVGenerator(c, sc, h, handleRestoreData, mvIndexValues, indexedValue)
 }
 
 const (

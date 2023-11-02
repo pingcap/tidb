@@ -274,5 +274,5 @@ func (r *readIndexExecutor) buildExternalStorePipeline(
 		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
 	return NewWriteIndexToExternalStoragePipeline(
 		opCtx, d.store, r.cloudStorageURI, r.d.sessPool, sessCtx, r.job.ID, subtaskID,
-		tbl, r.indexes, start, end, totalRowCount, counter, onClose, r.bc)
+		tbl, r.indexes, start, end, totalRowCount, counter, onClose)
 }

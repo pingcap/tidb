@@ -1578,11 +1578,6 @@ func (local *Backend) GetRegionSplitSizeKeys(ctx context.Context) (finalSize int
 	return GetRegionSplitSizeKeys(ctx, local.pdCtl.GetPDClient(), local.tls)
 }
 
-// GetMutex returns the mutex of the backend.
-func (local *Backend) GetMutex() *sync.Mutex {
-	return &local.mu
-}
-
 // expose these variables to unit test.
 var (
 	testJobToWorkerCh = make(chan *regionJob)

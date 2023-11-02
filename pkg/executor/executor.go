@@ -524,7 +524,7 @@ func showAddIdxReorgTp(job *model.Job) string {
 			if len(tp) > 0 {
 				sb.WriteString(" /* ")
 				sb.WriteString(tp)
-				if job.ReorgMeta.UseCloudStorage {
+				if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge && job.ReorgMeta.UseCloudStorage {
 					sb.WriteString(" cloud")
 				}
 				sb.WriteString(" */")
@@ -542,7 +542,7 @@ func showAddIdxReorgTpInSubJob(subJob *model.SubJob) string {
 		if len(tp) > 0 {
 			sb.WriteString(" /* ")
 			sb.WriteString(tp)
-			if subJob.UseCloud {
+			if subJob.ReorgTp == model.ReorgTypeLitMerge && subJob.UseCloud {
 				sb.WriteString(" cloud")
 			}
 			sb.WriteString(" */")
