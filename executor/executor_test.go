@@ -6329,4 +6329,9 @@ func TestSetVarHint(t *testing.T) {
 
 	tk.MustQuery("select /*+ SET_VAR(tidb_replica_read = 'follower')*/ @@tidb_replica_read;").Check(testkit.Rows("follower"))
 	tk.MustQuery("select @@tidb_replica_read;").Check(testkit.Rows("leader"))
+
+	tk.MustExec("use test;")
+	tk.MustExec("create table t (a int key, b int);")
+	tk.MustExec("insert into t values (1,1);")
+	tk.MustQuery("select /*+ SET_VAR(tidb_read_staleness = '-5'), SET_VAR(tidb_replica_read = 'closest-replicas') */  * from t where a=1;").Check(testkit.Rows("1 1"))
 }
