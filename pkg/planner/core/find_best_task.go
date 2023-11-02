@@ -1038,20 +1038,20 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		return
 	}
 	var cnt int64
-	var bestTaskWithoutEnforce task
+	var bestUnenforcedPlan task
 	// If prop.CanAddEnforcer is true, the prop.SortItems need to be set nil for ds.findBestTask.
 	// Before function return, reset it for enforcing task prop and storing map<prop,task>.
 	oldProp := prop.CloneEssentialFields()
 	if prop.CanAddEnforcer {
 		// First, get the bestTask without enforced prop
 		prop.CanAddEnforcer = false
-		bestTaskWithoutEnforce, cnt, err = ds.findBestTask(prop, planCounter, opt)
+		bestUnenforcedPlan, cnt, err = ds.findBestTask(prop, planCounter, opt)
 		if err != nil {
 			return nil, 0, err
 		}
-		if bestTaskWithoutEnforce != invalidTask && !ds.exploreEnforcedPlan() {
-			ds.storeTask(prop, bestTaskWithoutEnforce)
-			return bestTaskWithoutEnforce, cnt, nil
+		if bestUnenforcedPlan != invalidTask && !ds.exploreEnforcedPlan() {
+			ds.storeTask(prop, bestUnenforcedPlan)
+			return bestUnenforcedPlan, cnt, nil
 		}
 		cntPlan += cnt
 		prop.CanAddEnforcer = true
