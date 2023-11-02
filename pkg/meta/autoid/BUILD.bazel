@@ -22,7 +22,6 @@ go_library(
         "//pkg/util/dbterror",
         "//pkg/util/execdetails",
         "//pkg/util/logutil",
-        "//pkg/util/mathutil",
         "//pkg/util/tracing",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

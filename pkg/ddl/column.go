@@ -1973,14 +1973,6 @@ func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context) (
 	return odValue, nil
 }
 
-// isVirtualGeneratedColumn checks the column if it is virtual.
-func isVirtualGeneratedColumn(col *model.ColumnInfo) bool {
-	if col.IsGenerated() && !col.GeneratedStored {
-		return true
-	}
-	return false
-}
-
 func indexInfoContains(idxID int64, idxInfos []*model.IndexInfo) bool {
 	for _, idxInfo := range idxInfos {
 		if idxID == idxInfo.ID {
