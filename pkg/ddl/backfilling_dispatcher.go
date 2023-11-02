@@ -172,6 +172,7 @@ func (dsp *BackfillingDispatcherExt) GetNextStep(task *proto.Task) proto.Step {
 	}
 }
 
+// AddIndexMergeSortOverlapThreshold is the threshold(file count) to trigger merge sort of multiple files.
 var AddIndexMergeSortOverlapThreshold int64 = 8000
 
 func skipMergeSort(stats []external.MultipleFilesStat) bool {
