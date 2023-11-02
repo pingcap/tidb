@@ -20,15 +20,9 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/sysutil"
-<<<<<<< HEAD:util/memory/meminfo.go
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/cgroup"
-	"github.com/pingcap/tidb/util/mathutil"
-=======
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/util/cgroup"
-	"github.com/pingcap/tidb/pkg/util/logutil"
->>>>>>> 4667ed9e168 (*: support cgroup with systemd (#48096)):pkg/util/memory/meminfo.go
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/shirou/gopsutil/v3/mem"
 	"go.uber.org/zap"
 )
