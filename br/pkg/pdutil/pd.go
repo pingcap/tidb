@@ -41,7 +41,7 @@ const (
 	maxMsgSize   = int(128 * units.MiB) // pd.ScanRegion may return a large response
 	pauseTimeout = 5 * time.Minute
 	// pd request retry time when connection fail
-	pdRequestRetryTime = 10
+	pdRequestRetryTime = 120
 	// set max-pending-peer-count to a large value to avoid scatter region failed.
 	maxPendingPeerUnlimited uint64 = math.MaxInt32
 )
@@ -157,6 +157,7 @@ func pdRequestWithCode(
 		resp *http.Response
 	)
 	count := 0
+	// the total retry duration: 120*1 = 2min
 	for {
 		req, err = http.NewRequestWithContext(ctx, method, reqURL, body)
 		if err != nil {

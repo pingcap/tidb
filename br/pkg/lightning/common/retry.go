@@ -105,7 +105,9 @@ func isSingleRetryableError(err error) bool {
 		if nerr.Timeout() {
 			return true
 		}
-		if syscallErr, ok := goerrors.Unwrap(err).(*os.SyscallError); ok {
+		// the error might be nested, such as *url.Error -> *net.OpError -> *os.SyscallError
+		var syscallErr *os.SyscallError
+		if goerrors.As(nerr, &syscallErr) {
 			return syscallErr.Err == syscall.ECONNREFUSED || syscallErr.Err == syscall.ECONNRESET
 		}
 		return false
