@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/cgroup"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/shirou/gopsutil/v3/mem"
 	"go.uber.org/zap"
 )
