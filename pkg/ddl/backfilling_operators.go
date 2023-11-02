@@ -170,7 +170,6 @@ func NewWriteIndexToExternalStoragePipeline(
 	totalRowCount *atomic.Int64,
 	metricCounter prometheus.Counter,
 	onClose external.OnCloseFunc,
-	bcctx ingest.BackendCtx,
 ) (*operator.AsyncPipeline, error) {
 	indexes := make([]table.Index, 0, len(idxInfos))
 	for _, idxInfo := range idxInfos {
