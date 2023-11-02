@@ -1103,7 +1103,7 @@ func (lp *ForListColumnPruning) genConstExprKey(ctx sessionctx.Context, sc *stmt
 }
 
 func (lp *ForListColumnPruning) genKey(sc *stmtctx.StatementContext, v types.Datum) ([]byte, error) {
-	v, err := v.ConvertTo(sc, lp.valueTp)
+	v, err := v.ConvertTo(sc.TypeCtx(), lp.valueTp)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1456,7 +1456,7 @@ func (t *partitionedTable) locateHashPartition(ctx sessionctx.Context, partExpr 
 			data = r[col.Index]
 		default:
 			var err error
-			data, err = r[col.Index].ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeLong))
+			data, err = r[col.Index].ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), types.NewFieldType(mysql.TypeLong))
 			if err != nil {
 				return 0, err
 			}
