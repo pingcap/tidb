@@ -111,3 +111,7 @@ aliases:
     - tangenta
     - wjhuang2016
     - zimulala
+  sig-approvers-tidb-binlog: # approvers for tidb-binlog module
+    - Benjamin2037
+    - gmhdbjd
+    - lichunzhu
