@@ -991,6 +991,13 @@ func (ds *DataSource) isPointGetConvertableSchema() bool {
 	return true
 }
 
+// exploreEnforcedPlan determines whether to explore enforced plans for this DataSource if it has already found an unenforced plan.
+// See #46177 for more information.
+func (ds *DataSource) exploreEnforcedPlan() bool {
+	// default value is false to keep it compatible with previous versions.
+	return fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix46177, false)
+}
+
 // findBestTask implements the PhysicalPlan interface.
 // It will enumerate all the available indices and choose a plan with least cost.
 func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (t task, cntPlan int64, err error) {
@@ -1042,6 +1049,10 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		if err != nil {
 			return nil, 0, err
 		}
+		if bestTaskWithoutEnforce != invalidTask && !ds.exploreEnforcedPlan() {
+			ds.storeTask(prop, bestTaskWithoutEnforce)
+			return bestTaskWithoutEnforce, cnt, nil
+		}
 		cntPlan += cnt
 		prop.CanAddEnforcer = true
 		prop.SortItems = []property.SortItem{}
@@ -1059,7 +1070,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			prop.CanAddEnforcer = true
 		}
 
-		if bestTaskWithoutEnforce != nil {
+		if bestTaskWithoutEnforce != nil && !bestTaskWithoutEnforce.invalid() {
 			curIsBest, cerr := compareTaskCost(ds.SCtx(), bestTaskWithoutEnforce, t, opt)
 			if cerr != nil {
 				err = cerr

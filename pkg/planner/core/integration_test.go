@@ -2550,6 +2550,16 @@ func TestIssue46177(t *testing.T) {
   PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,
   KEY k (k)
 )`)
+
+	tk.MustQuery(`explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a`).Check(testkit.Rows(
+		`Projection 10.00 root  Column#6->Column#7`,
+		`└─Window 10.00 root  row_number()->Column#6 over(order by test.sbtest.k rows between current row and current row)`,
+		`  └─IndexReader 10.00 root  index:Selection`,
+		`    └─Selection 10.00 cop[tikv]  lt(test.sbtest.id, 10)`,
+		`      └─IndexFullScan 10000.00 cop[tikv] table:sbtest, index:k(k) keep order:true, stats:pseudo`))
+
+	tk.MustExec(`set @@tidb_opt_fix_control = '46177:on'`)
+
 	tk.MustQuery(`explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a`).Check(testkit.Rows(
 		`Projection 10.00 root  Column#6->Column#7`,
 		`└─Window 10.00 root  row_number()->Column#6 over(order by test.sbtest.k rows between current row and current row)`,
