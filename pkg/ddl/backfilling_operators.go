@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"path"
 	"strconv"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -42,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -172,7 +170,6 @@ func NewWriteIndexToExternalStoragePipeline(
 	totalRowCount *atomic.Int64,
 	metricCounter prometheus.Counter,
 	onClose external.OnCloseFunc,
-	bcctx ingest.BackendCtx,
 ) (*operator.AsyncPipeline, error) {
 	indexes := make([]table.Index, 0, len(idxInfos))
 	for _, idxInfo := range idxInfos {
@@ -189,8 +186,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	for i := 0; i < poolSize; i++ {
 		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, copReadBatchSize())
 	}
-	readerCnt := int(variable.GetDDLReorgWorkerCounter())
-	writerCnt := 1
+	readerCnt, writerCnt := expectedIngestWorkerCnt()
 
 	backend, err := storage.ParseBackend(extStoreURI, nil)
 	if err != nil {
@@ -201,21 +197,16 @@ func NewWriteIndexToExternalStoragePipeline(
 		return nil, err
 	}
 
-	var shareMu *sync.Mutex
-	if bcctx != nil {
-		shareMu = bcctx.GetLocalBackend().GetMutex()
-	}
-
 	memTotal, err := memory.MemTotal()
 	if err != nil {
 		return nil, err
 	}
-	memSize := (memTotal / 2) / uint64(len(indexes))
+	memSize := (memTotal / 2) / uint64(writerCnt) / uint64(len(indexes))
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
 	writeOp := NewWriteExternalStoreOperator(
-		ctx, copCtx, sessPool, jobID, subtaskID, tbl, indexes, extStore, srcChkPool, writerCnt, onClose, shareMu, memSize)
+		ctx, copCtx, sessPool, jobID, subtaskID, tbl, indexes, extStore, srcChkPool, writerCnt, onClose, memSize)
 	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, totalRowCount, metricCounter)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
@@ -499,7 +490,6 @@ func NewWriteExternalStoreOperator(
 	srcChunkPool chan *chunk.Chunk,
 	concurrency int,
 	onClose external.OnCloseFunc,
-	shareMu *sync.Mutex,
 	memoryQuota uint64,
 ) *WriteExternalStoreOperator {
 	pool := workerpool.NewWorkerPool(
@@ -512,7 +502,6 @@ func NewWriteExternalStoreOperator(
 				builder := external.NewWriterBuilder().
 					SetOnCloseFunc(onClose).
 					SetKeyDuplicationEncoding(index.Meta().Unique).
-					SetMutex(shareMu).
 					SetMemorySizeLimit(memoryQuota)
 				writerID := uuid.New().String()
 				prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
