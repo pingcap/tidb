@@ -515,7 +515,7 @@ func betweenRowCountOnIndex(sctx sessionctx.Context, idx *statistics.Index, l, r
 func getOrdinalOfRangeCond(sc *stmtctx.StatementContext, ran *ranger.Range) int {
 	for i := range ran.LowVal {
 		a, b := ran.LowVal[i], ran.HighVal[i]
-		cmp, err := a.Compare(sc, &b, ran.Collators[0])
+		cmp, err := a.Compare(sc.TypeCtx(), &b, ran.Collators[0])
 		if err != nil {
 			return 0
 		}

@@ -16,6 +16,8 @@ package simpletest
 
 import (
 	"context"
+	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -24,11 +26,13 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/globalconn"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
 )
@@ -656,4 +660,58 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 	statsTbl2 = h.GetTableStats(tableInfo2)
 	require.True(t, statsTbl2.Pseudo)
 	h.SetLease(0)
+}
+
+func TestKillStmt(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	sv := server.CreateMockServer(t, store)
+	sv.SetDomain(dom)
+	defer sv.Close()
+
+	conn1 := server.CreateMockConn(t, sv)
+	tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
+
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.EnableGlobalKill = false
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+	}()
+
+	connID := conn1.ID()
+
+	tk.MustExec("use test")
+	tk.MustExec(fmt.Sprintf("kill %d", connID))
+	result := tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Warning 1105 Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead"))
+
+	newCfg2 := *originCfg
+	newCfg2.EnableGlobalKill = true
+	config.StoreGlobalConfig(&newCfg2)
+
+	// ZERO serverID, treated as truncated.
+	tk.MustExec("kill 1")
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Warning 1105 Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID."))
+
+	// truncated
+	tk.MustExec("kill 101")
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Warning 1105 Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID."))
+
+	// excceed int64
+	tk.MustExec("kill 9223372036854775808") // 9223372036854775808 == 2^63
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Warning 1105 Parse ConnectionID failed: unexpected connectionID exceeds int64"))
+
+	// local kill
+	connIDAllocator := globalconn.NewGlobalAllocator(dom.ServerID, false)
+	killConnID := connIDAllocator.NextID()
+	tk.MustExec("kill " + strconv.FormatUint(killConnID, 10))
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows())
+
+	tk.MustExecToErr("kill rand()", "Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
+	// remote kill is tested in `tests/globalkilltest`
 }
