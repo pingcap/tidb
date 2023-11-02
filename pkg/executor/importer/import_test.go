@@ -369,7 +369,7 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 	require.ErrorContains(t, err2, "URI of data source is invalid")
 	// non-exist parent directory
 	c.Path = "/path/to/non/exists/file.csv"
-	err := c.InitDataFiles(ctx)
+	err = c.InitDataFiles(ctx)
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataInvalidURI)
 	require.ErrorContains(t, err, "no such file or directory")
 	// without permission to parent dir
