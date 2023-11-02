@@ -78,9 +78,9 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		return err
 	}
 
-	m.mu.Lock()
 	m.subtaskSortedKVMeta = &external.SortedKVMeta{}
 	onClose := func(summary *external.WriterSummary) {
+		m.mu.Lock()
 		m.subtaskSortedKVMeta.MergeSummary(summary)
 		m.mu.Unlock()
 	}
