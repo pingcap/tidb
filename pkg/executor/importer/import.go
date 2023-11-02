@@ -992,6 +992,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	} else {
 		fileNameKey = strings.Trim(u.Path, "/")
 	}
+	log.Info("start to load data files", zap.String("fileNameKey", fileNameKey))
 	// try to find pattern error in advance
 	_, err2 = filepath.Match(stringutil.EscapeGlobExceptAsterisk(fileNameKey), "")
 	if err2 != nil {
