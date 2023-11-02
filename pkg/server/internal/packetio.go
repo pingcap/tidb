@@ -303,6 +303,10 @@ func (p *PacketIO) Flush() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	if p.compressionAlgorithm != mysql.CompressionNone {
+		p.sequence = p.compressedSequence
+	}
 	return err
 }
 
