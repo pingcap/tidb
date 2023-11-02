@@ -1,0 +1,21 @@
+set @@global.tidb_max_delta_schema_count= -1;
+show warnings;
+Level	Code	Message
+Warning	1292	Truncated incorrect tidb_max_delta_schema_count value: '-1'
+select @@global.tidb_max_delta_schema_count;
+@@global.tidb_max_delta_schema_count
+100
+set @@global.tidb_max_delta_schema_count= 9223372036854775807;
+show warnings;
+Level	Code	Message
+Warning	1292	Truncated incorrect tidb_max_delta_schema_count value: '9223372036854775807'
+select @@global.tidb_max_delta_schema_count;
+@@global.tidb_max_delta_schema_count
+16384
+set @@global.tidb_max_delta_schema_count= invalid_val;
+Error 1232 (42000): Incorrect argument type to variable 'tidb_max_delta_schema_count'
+set @@global.tidb_max_delta_schema_count= 2048;
+select @@global.tidb_max_delta_schema_count;
+@@global.tidb_max_delta_schema_count
+2048
+set @@global.tidb_max_delta_schema_count= default;

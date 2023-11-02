@@ -853,3 +853,28 @@ select * from (t1 natural join t2) right outer join (t3 natural join t4) using (
 c	b	y	a
 3	1	11	2
 3	1	2	2
+drop table if exists t, t1, t2, t3;
+create table t(a int, b enum('A', 'B'));
+create table t1(a1 int, b1 enum('B', 'A') NOT NULL, UNIQUE KEY (b1));
+insert into t values (1, 'A');
+insert into t1 values (1, 'A');
+select /*+ INL_HASH_JOIN(t1) */ * from t join t1 on t.b = t1.b1;
+a	b	a1	b1
+1	A	1	A
+select /*+ INL_JOIN(t1) */ * from t join t1 on t.b = t1.b1;
+a	b	a1	b1
+1	A	1	A
+create table t2(a1 int, b1 enum('C', 'D') NOT NULL, UNIQUE KEY (b1));
+insert into t2 values (1, 'C');
+select /*+ INL_HASH_JOIN(t2) */ * from t join t2 on t.b = t2.b1;
+a	b	a1	b1
+select /*+ INL_JOIN(t2) */ * from t join t2 on t.b = t2.b1;
+a	b	a1	b1
+create table t3(a1 int, b1 enum('A', 'B') NOT NULL, UNIQUE KEY (b1));
+insert into t3 values (1, 'A');
+select /*+ INL_HASH_JOIN(t3) */ * from t join t3 on t.b = t3.b1;
+a	b	a1	b1
+1	A	1	A
+select /*+ INL_JOIN(t3) */ * from t join t3 on t.b = t3.b1;
+a	b	a1	b1
+1	A	1	A
