@@ -956,7 +956,6 @@ func (*LoadDataController) initExternalStore(ctx context.Context, u *url.URL, ta
 // InitDataFiles initializes the data store and files.
 // it will call InitDataStore internally.
 func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
-	log.Info("start to load data files", zap.String("path", e.Path))
 	u, err2 := storage.ParseRawURL(e.Path)
 	if err2 != nil {
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
@@ -992,7 +991,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	} else {
 		fileNameKey = strings.Trim(u.Path, "/")
 	}
-	log.Info("start to load data files", zap.String("fileNameKey", fileNameKey))
 	// try to find pattern error in advance
 	_, err2 = filepath.Match(stringutil.EscapeGlobExceptAsterisk(fileNameKey), "")
 	if err2 != nil {

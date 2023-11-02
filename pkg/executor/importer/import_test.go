@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"os/user"
 	"path"
 	"path/filepath"
 	"runtime"
@@ -308,13 +309,18 @@ func TestGetBackendWorkerConcurrency(t *testing.T) {
 }
 
 func TestSupportedSuffixForServerDisk(t *testing.T) {
+	username, err := user.Current()
+	require.NoError(t, err)
+	if username.Name == "root" {
+		t.Skip("it cannot run as root")
+	}
 	tempDir := t.TempDir()
 	ctx := context.Background()
 
 	fileName := filepath.Join(tempDir, "test.csv")
-	require.NoError(t, os.WriteFile(fileName, []byte{}, 0644))
+	require.NoError(t, os.WriteFile(fileName, []byte{}, 0o644))
 	fileName2 := filepath.Join(tempDir, "test.csv.gz")
-	require.NoError(t, os.WriteFile(fileName2, []byte{}, 0644))
+	require.NoError(t, os.WriteFile(fileName2, []byte{}, 0o644))
 	c := LoadDataController{
 		Plan: &Plan{
 			Format:       DataFormatCSV,
@@ -342,21 +348,19 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 			content = append(content, []byte(fmt.Sprintf("%d,test-%d\n", i*rowCnt+j, i*rowCnt+j))...)
 			allData = append(allData, fmt.Sprintf("%d test-%d", i*rowCnt+j, i*rowCnt+j))
 		}
-		require.NoError(t, os.WriteFile(path.Join(tempDir, fileName), content, 0644))
+		require.NoError(t, os.WriteFile(path.Join(tempDir, fileName), content, 0o644))
 	}
 	// directory without permission
-	require.NoError(t, os.MkdirAll(path.Join(tempDir, "no-perm"), 0700))
-	require.NoError(t, os.WriteFile(path.Join(tempDir, "no-perm", "no-perm.csv"), []byte("1,1"), 0644))
-	require.NoError(t, os.Chmod(path.Join(tempDir, "no-perm"), 0000))
-	require.NoError(t, os.Chmod(path.Join(tempDir, "no-perm", "no-perm.csv"), 0000))
+	require.NoError(t, os.MkdirAll(path.Join(tempDir, "no-perm"), 0o700))
+	require.NoError(t, os.WriteFile(path.Join(tempDir, "no-perm", "no-perm.csv"), []byte("1,1"), 0o644))
+	require.NoError(t, os.Chmod(path.Join(tempDir, "no-perm"), 0o000))
 	t.Cleanup(func() {
 		// make sure TempDir RemoveAll cleanup works
-		_ = os.Chmod(path.Join(tempDir, "no-perm"), 0700)
+		_ = os.Chmod(path.Join(tempDir, "no-perm"), 0o700)
 	})
 	// file without permission
-	require.NoError(t, os.WriteFile(path.Join(tempDir, "no-perm.csv"), []byte("1,1"), 0644))
-	require.NoError(t, os.Chmod(path.Join(tempDir, "no-perm.csv"), 0000))
-	require.NoError(t, os.Chmod(path.Join(tempDir), 0000))
+	require.NoError(t, os.WriteFile(path.Join(tempDir, "no-perm.csv"), []byte("1,1"), 0o644))
+	require.NoError(t, os.Chmod(path.Join(tempDir, "no-perm.csv"), 0o000))
 
 	// relative path
 	c.Path = "~/file.csv"
@@ -370,16 +374,7 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 	require.ErrorContains(t, err, "no such file or directory")
 	// without permission to parent dir
 	c.Path = path.Join(tempDir, "no-perm", "no-perm.csv")
-	info, err := os.Stat(c.Path)
-	require.NoError(t, err)
-	c.logger.Info("mode", zap.Any("mode", info.Mode()))
-	dir := filepath.Dir(c.Path)
-	_, err = os.Stat(dir)
-	require.NoError(t, err)
-	c.logger.Info("mode", zap.Any("mode", info.Mode()))
 	err = c.InitDataFiles(ctx)
-
-	c.logger.Info("test", zap.Error(err))
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataCantRead)
 	require.ErrorContains(t, err, "permission denied")
 	// file not exists
@@ -398,7 +393,7 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataCantRead)
 	require.ErrorContains(t, err, "permission denied")
 	// grant read access to 'no-perm' directory, should ok now.
-	require.NoError(t, os.Chmod(path.Join(tempDir, "no-perm"), 0400))
+	require.NoError(t, os.Chmod(path.Join(tempDir, "no-perm"), 0o400))
 	c.Path = path.Join(tempDir, "server-*.csv")
 	require.NoError(t, c.InitDataFiles(ctx))
 }

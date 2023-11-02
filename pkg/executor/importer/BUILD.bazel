@@ -125,7 +125,6 @@ go_test(
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//util",
-        "@io_bazel_rules_go//go/tools/bazel:go_default_library",
         "@io_etcd_go_etcd_client_v3//:client",
         "@io_etcd_go_etcd_server_v3//embed",
         "@org_uber_go_mock//gomock",
