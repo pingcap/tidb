@@ -1053,8 +1053,10 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			ds.storeTask(prop, unenforcedTask)
 			return unenforcedTask, cnt, nil
 		}
-		cntPlan += cnt
+
+		// Then, explore the bestTask with enforced prop
 		prop.CanAddEnforcer = true
+		cntPlan += cnt
 		prop.SortItems = []property.SortItem{}
 		prop.MPPPartitionTp = property.AnyType
 	} else if prop.MPPPartitionTp != property.AnyType {
