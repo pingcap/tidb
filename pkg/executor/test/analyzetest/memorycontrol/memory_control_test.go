@@ -199,5 +199,5 @@ func TestMemQuotaAnalyze(t *testing.T) {
 	tk.MustExec("insert ignore into tbl_2 values ( 0,-104,-488745187,-1941015,-2646,39,'jyKxfs',-5307175470406648836,46,'KZpfjFounVgFeRPa' );")
 	tk.MustExec("insert ignore into tbl_2 values ( 4,97,2105289255,1034363,28385,192,'',4429378142102752351,8,'jOk' );")
 	tk.MustExec("set global tidb_mem_quota_analyze=128;")
-	tk.MustExec("analyze table tbl_2;")
+	tk.MustExecToErr("analyze table tbl_2;")
 }
