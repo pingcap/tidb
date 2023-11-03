@@ -1130,6 +1130,16 @@ func BenchmarkHashJoinExec(b *testing.B) {
 	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 		benchmarkHashJoinExecWithCase(b, cas)
 	})
+
+	cols = []*types.FieldType{
+		types.NewFieldType(mysql.TypeLonglong),
+	}
+	cas = defaultHashJoinTestCase(cols, 0, false)
+	cas.keyIdx = []int{0}
+	cas.disk = true
+	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+		benchmarkHashJoinExecWithCase(b, cas)
+	})
 }
 
 func BenchmarkOuterHashJoinExec(b *testing.B) {
