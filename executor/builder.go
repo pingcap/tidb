@@ -2998,6 +2998,12 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 		tasks:        make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),
 		opts:         v.Opts,
 		OptionsMap:   v.OptionsMap,
+<<<<<<< HEAD:executor/builder.go
+=======
+		wg:           util.NewWaitGroupPool(gp),
+		gp:           gp,
+		errExitCh:    make(chan struct{}),
+>>>>>>> 4f00ece106b (executor: fix hang for analyze table when exceed tidb_mem_quota_analyze (#48264)):pkg/executor/builder.go
 	}
 	enableFastAnalyze := b.ctx.GetSessionVars().EnableFastAnalyze
 	autoAnalyze := ""

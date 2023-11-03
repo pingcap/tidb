@@ -8,7 +8,11 @@ go_test(
         "mdl_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD:ddl/metadatalocktest/BUILD.bazel
     shard_count = 32,
+=======
+    shard_count = 4,
+>>>>>>> 4f00ece106b (executor: fix hang for analyze table when exceed tidb_mem_quota_analyze (#48264)):pkg/executor/test/analyzetest/memorycontrol/BUILD.bazel
     deps = [
         "//config",
         "//ddl",
