@@ -663,7 +663,7 @@ func (e *exchSenderExec) next() (*chunk.Chunk, error) {
 				hashVals.Reset()
 				// use hash values to get unique uint64 to mod.
 				// collect all the hash key datum.
-				err := codec.HashChunkRow(e.sc, hashVals, row, e.hashKeyTypes, e.hashKeyOffsets, payload)
+				err := codec.HashChunkRow(e.sc.TypeCtx(), hashVals, row, e.hashKeyTypes, e.hashKeyOffsets, payload)
 				if err != nil {
 					for _, tunnel := range e.tunnels {
 						tunnel.ErrCh <- err

@@ -115,7 +115,8 @@ func GetGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 			tp = &newTp
 		}
 
-		groupKey, err = codec.HashGroupKey(ctx.GetSessionVars().StmtCtx, input.NumRows(), buf, groupKey, tp)
+		groupKey, err = codec.HashGroupKey(ctx.GetSessionVars().StmtCtx.TypeCtx(), input.NumRows(), buf, groupKey, tp)
+		err = ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err)
 		if err != nil {
 			expression.PutColumn(buf)
 			return nil, err
