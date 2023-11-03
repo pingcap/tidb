@@ -601,12 +601,12 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	}
 	colSize := make(map[int64]int64, len(t.Cols()))
 	for id, col := range t.Cols() {
-		size, err := codec.EstimateValueSize(sc.TypeCtx(), newData[id])
+		size, err := codec.EstimateValueSize(newData[id])
 		if err != nil {
 			continue
 		}
 		newLen := size - 1
-		size, err = codec.EstimateValueSize(sc.TypeCtx(), oldData[id])
+		size, err = codec.EstimateValueSize(oldData[id])
 		if err != nil {
 			continue
 		}
@@ -1098,7 +1098,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 
 	colSize := make(map[int64]int64, len(r))
 	for id, col := range t.Cols() {
-		size, err := codec.EstimateValueSize(sc.TypeCtx(), r[id])
+		size, err := codec.EstimateValueSize(r[id])
 		if err != nil {
 			continue
 		}
@@ -1336,7 +1336,6 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	}
 
 	sessVars := ctx.GetSessionVars()
-	sc := sessVars.StmtCtx
 	if err = injectMutationError(t, txn, sh); err != nil {
 		return err
 	}
@@ -1373,7 +1372,7 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	}
 	colSize := make(map[int64]int64, len(t.Cols()))
 	for id, col := range t.Cols() {
-		size, err := codec.EstimateValueSize(sc.TypeCtx(), r[id])
+		size, err := codec.EstimateValueSize(r[id])
 		if err != nil {
 			continue
 		}

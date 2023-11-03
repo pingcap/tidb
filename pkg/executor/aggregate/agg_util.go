@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"cmp"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/types"
 	"slices"
 	"sync/atomic"
 	"time"
@@ -115,8 +116,13 @@ func GetGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 			tp = &newTp
 		}
 
-		groupKey, err = codec.HashGroupKey(ctx.GetSessionVars().StmtCtx.TypeCtx(), input.NumRows(), buf, groupKey, tp)
-		err = ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err)
+		sc := ctx.GetSessionVars().StmtCtx
+		groupKey, err = codec.HashGroupKey(input.NumRows(), buf, groupKey, tp, sc.TimeZone())
+		if terror.ErrorEqual(err, types.ErrTruncated) {
+			err = ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
+		} else if terror.ErrorEqual(err, types.ErrOverflow) {
+			err = ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err)
+		}
 		if err != nil {
 			expression.PutColumn(buf)
 			return nil, err

@@ -103,7 +103,7 @@ func TestCodecKey(t *testing.T) {
 func estimateValuesSize(sc *stmtctx.StatementContext, vals []types.Datum) (int, error) {
 	size := 0
 	for _, val := range vals {
-		length, err := EstimateValueSize(sc, val)
+		length, err := EstimateValueSize(val)
 		if err != nil {
 			return 0, err
 		}
@@ -744,7 +744,7 @@ func TestDecimal(t *testing.T) {
 
 		b1, err = EncodeValue(sc, b1[:0], d1)
 		require.NoError(t, err)
-		size, err := EstimateValueSize(sc, d1)
+		size, err := EstimateValueSize(d1)
 		require.NoError(t, err)
 		require.Len(t, b1, size)
 	}
@@ -761,7 +761,7 @@ func TestDecimal(t *testing.T) {
 		b, err := EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac())
 		require.NoError(t, err)
 		decs = append(decs, b)
-		size, err := EstimateValueSize(sc, d)
+		size, err := EstimateValueSize(d)
 		require.NoError(t, err)
 		// size - 1 because the flag occupy 1 bit.
 		require.Len(t, b, size-1)
@@ -1122,10 +1122,10 @@ func testHashChunkRowEqual(t *testing.T, a, b interface{}, equal bool) {
 	chk2.AppendDatum(0, &d)
 
 	h := crc32.NewIEEE()
-	err1 := HashChunkRow(sc, h, chk1.GetRow(0), []*types.FieldType{tp1}, []int{0}, buf1)
+	err1 := HashChunkRow(h, chk1.GetRow(0), []*types.FieldType{tp1}, []int{0}, buf1)
 	sum1 := h.Sum32()
 	h.Reset()
-	err2 := HashChunkRow(sc, h, chk2.GetRow(0), []*types.FieldType{tp2}, []int{0}, buf2)
+	err2 := HashChunkRow(h, chk2.GetRow(0), []*types.FieldType{tp2}, []int{0}, buf2)
 	sum2 := h.Sum32()
 	require.NoError(t, err1)
 	require.NoError(t, err2)
@@ -1134,9 +1134,7 @@ func testHashChunkRowEqual(t *testing.T, a, b interface{}, equal bool) {
 	} else {
 		require.NotEqual(t, sum2, sum1)
 	}
-	e, err := EqualChunkRow(sc,
-		chk1.GetRow(0), []*types.FieldType{tp1}, []int{0},
-		chk2.GetRow(0), []*types.FieldType{tp2}, []int{0})
+	e, err := EqualChunkRow(chk1.GetRow(0), []*types.FieldType{tp1}, []int{0}, chk2.GetRow(0), []*types.FieldType{tp2}, []int{0})
 	require.NoError(t, err)
 	if equal {
 		require.True(t, e)
@@ -1156,18 +1154,16 @@ func TestHashChunkRow(t *testing.T) {
 		colIdx[i] = i
 	}
 	h := crc32.NewIEEE()
-	err1 := HashChunkRow(sc, h, chk.GetRow(0), tps, colIdx, buf)
+	err1 := HashChunkRow(h, chk.GetRow(0), tps, colIdx, buf)
 	sum1 := h.Sum32()
 	h.Reset()
-	err2 := HashChunkRow(sc, h, chk.GetRow(0), tps, colIdx, buf)
+	err2 := HashChunkRow(h, chk.GetRow(0), tps, colIdx, buf)
 	sum2 := h.Sum32()
 
 	require.NoError(t, err1)
 	require.NoError(t, err2)
 	require.Equal(t, sum2, sum1)
-	e, err := EqualChunkRow(sc,
-		chk.GetRow(0), tps, colIdx,
-		chk.GetRow(0), tps, colIdx)
+	e, err := EqualChunkRow(chk.GetRow(0), tps, colIdx, chk.GetRow(0), tps, colIdx)
 	require.NoError(t, err)
 	require.True(t, e)
 
@@ -1255,10 +1251,10 @@ func TestHashChunkColumns(t *testing.T) {
 	// Test hash value of the first 12 `Null` columns
 	for i := 0; i < 12; i++ {
 		require.True(t, chk.GetRow(0).IsNull(i))
-		err1 := HashChunkSelected(sc, vecHash, chk, tps[i], i, buf, hasNull, sel, false)
-		err2 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps[i:i+1], colIdx[i:i+1], buf)
-		err3 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps[i:i+1], colIdx[i:i+1], buf)
-		err4 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps[i:i+1], colIdx[i:i+1], buf)
+		err1 := HashChunkSelected(vecHash, chk, tps[i], i, buf, hasNull, sel, false)
+		err2 := HashChunkRow(rowHash[0], chk.GetRow(0), tps[i:i+1], colIdx[i:i+1], buf)
+		err3 := HashChunkRow(rowHash[1], chk.GetRow(1), tps[i:i+1], colIdx[i:i+1], buf)
+		err4 := HashChunkRow(rowHash[2], chk.GetRow(2), tps[i:i+1], colIdx[i:i+1], buf)
 		require.NoError(t, err1)
 		require.NoError(t, err2)
 		require.NoError(t, err3)
@@ -1280,10 +1276,10 @@ func TestHashChunkColumns(t *testing.T) {
 
 		require.False(t, chk.GetRow(0).IsNull(i))
 
-		err1 := HashChunkSelected(sc, vecHash, chk, tps[i], i, buf, hasNull, sel, false)
-		err2 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps[i:i+1], colIdx[i:i+1], buf)
-		err3 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps[i:i+1], colIdx[i:i+1], buf)
-		err4 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps[i:i+1], colIdx[i:i+1], buf)
+		err1 := HashChunkSelected(vecHash, chk, tps[i], i, buf, hasNull, sel, false)
+		err2 := HashChunkRow(rowHash[0], chk.GetRow(0), tps[i:i+1], colIdx[i:i+1], buf)
+		err3 := HashChunkRow(rowHash[1], chk.GetRow(1), tps[i:i+1], colIdx[i:i+1], buf)
+		err4 := HashChunkRow(rowHash[2], chk.GetRow(2), tps[i:i+1], colIdx[i:i+1], buf)
 
 		require.NoError(t, err1)
 		require.NoError(t, err2)
