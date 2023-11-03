@@ -519,7 +519,7 @@ func TestAddIndexImportFailed(t *testing.T) {
 	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/mockWritePeerErr", "1*return()")
 	require.NoError(t, err)
 	tk.MustExec("alter table t add index idx(a);")
-	err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/fakeRegionJobs")
+	err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/mockWritePeerErr")
 	require.NoError(t, err)
 	tk.MustExec("admin check table t;")
 }

@@ -83,6 +83,11 @@ func newEngineInfo(ctx context.Context, jobID, indexID int64, cfg *backend.Engin
 
 // Flush imports all the key-values in engine to the storage.
 func (ei *engineInfo) Flush() error {
+	if ei.openedEngine == nil {
+		logutil.Logger(ei.ctx).Warn("engine is not opened, skipping flush",
+			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+		return nil
+	}
 	err := ei.openedEngine.Flush(ei.ctx)
 	if err != nil {
 		logutil.Logger(ei.ctx).Error(LitErrFlushEngineErr, zap.Error(err),
