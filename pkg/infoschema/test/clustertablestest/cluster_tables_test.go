@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server"
-	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/mockstorage"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
@@ -57,6 +56,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
+	pd "github.com/tikv/pd/client/http"
 	"google.golang.org/grpc"
 )
 
@@ -768,12 +768,12 @@ func (s *clusterTablesSuite) setUpMockPDHTTPServer() (*httptest.Server, string) 
 	srv := httptest.NewServer(router)
 	// mock store stats stat
 	mockAddr := strings.TrimPrefix(srv.URL, "http://")
-	router.Handle(pdapi.Stores, fn.Wrap(func() (*helper.StoresStat, error) {
-		return &helper.StoresStat{
+	router.Handle(pdapi.Stores, fn.Wrap(func() (*pd.StoresInfo, error) {
+		return &pd.StoresInfo{
 			Count: 1,
-			Stores: []helper.StoreStat{
+			Stores: []pd.StoreInfo{
 				{
-					Store: helper.StoreBaseStat{
+					Store: pd.MetaStore{
 						ID:             1,
 						Address:        "127.0.0.1:20160",
 						State:          0,

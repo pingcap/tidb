@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client/http"
 	"google.golang.org/grpc"
 )
 
@@ -101,12 +102,12 @@ func (s *infosSchemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server
 	srv := httptest.NewServer(router)
 	// mock store stats stat
 	mockAddr := strings.TrimPrefix(srv.URL, "http://")
-	router.Handle(pdapi.Stores, fn.Wrap(func() (*helper.StoresStat, error) {
-		return &helper.StoresStat{
+	router.Handle(pdapi.Stores, fn.Wrap(func() (*pd.StoresInfo, error) {
+		return &pd.StoresInfo{
 			Count: 1,
-			Stores: []helper.StoreStat{
+			Stores: []pd.StoreInfo{
 				{
-					Store: helper.StoreBaseStat{
+					Store: pd.MetaStore{
 						ID:             1,
 						Address:        "127.0.0.1:20160",
 						State:          0,
@@ -121,15 +122,15 @@ func (s *infosSchemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server
 		}, nil
 	}))
 	// mock regions
-	router.Handle(pdapi.Regions, fn.Wrap(func() (*helper.RegionsInfo, error) {
-		return &helper.RegionsInfo{
+	router.Handle(pdapi.Regions, fn.Wrap(func() (*pd.RegionsInfo, error) {
+		return &pd.RegionsInfo{
 			Count: 1,
-			Regions: []helper.RegionInfo{
+			Regions: []pd.RegionInfo{
 				{
 					ID:       1,
 					StartKey: "",
 					EndKey:   "",
-					Epoch: helper.RegionEpoch{
+					Epoch: pd.RegionEpoch{
 						ConfVer: 1,
 						Version: 2,
 					},
