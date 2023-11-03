@@ -145,22 +145,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 			}
 		}
 	}()
-	checkwg, _ := errgroup.WithContext(ctx)
-	checkwg.Go(func() error {
-		err = g.Wait()
-		if err != nil {
-			close(e.errExitCh)
-			return err
-		}
-		return nil
-	})
-	checkwg.Go(func() error {
-		// Wait all workers done and close the results channel.
-		e.wg.Wait()
-		close(resultsCh)
-		return nil
-	})
-	err = checkwg.Wait()
+
+	err = e.waitFinish(ctx, g, resultsCh)
 	if err != nil {
 		return err
 	}
@@ -183,6 +169,25 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		sessionVars.StmtCtx.AppendWarning(err)
 	}
 	return statsHandle.Update(infoSchema)
+}
+
+func (e *AnalyzeExec) waitFinish(ctx context.Context, g *errgroup.Group, resultsCh chan *statistics.AnalyzeResults) error {
+	checkwg, _ := errgroup.WithContext(ctx)
+	checkwg.Go(func() error {
+		err := g.Wait()
+		if err != nil {
+			close(e.errExitCh)
+			return err
+		}
+		return nil
+	})
+	checkwg.Go(func() error {
+		// Wait all workers done and close the results channel.
+		e.wg.Wait()
+		close(resultsCh)
+		return nil
+	})
+	return checkwg.Wait()
 }
 
 // filterAndCollectTasks filters the tasks that are not locked and collects the table IDs.
