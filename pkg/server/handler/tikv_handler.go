@@ -160,7 +160,7 @@ func (*TikvHandlerTool) formValue2DatumRow(sc *stmtctx.StatementContext, values 
 			data[i].SetNull()
 		case 1:
 			bDatum := types.NewStringDatum(vals[0])
-			cDatum, err := bDatum.ConvertTo(sc, &col.FieldType)
+			cDatum, err := bDatum.ConvertTo(sc.TypeCtx(), &col.FieldType)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

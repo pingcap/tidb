@@ -562,7 +562,9 @@ func buildIdxColsConcatHandleCols(tblInfo *model.TableInfo, indexInfo *model.Ind
 
 	if tblInfo.IsCommonHandle {
 		for _, c := range pkCols {
-			columns = append(columns, tblInfo.Columns[c.Offset])
+			if model.FindColumnInfo(columns, c.Name.L) == nil {
+				columns = append(columns, tblInfo.Columns[c.Offset])
+			}
 		}
 		return columns
 	}
@@ -610,12 +612,12 @@ func (b *executorBuilder) buildRecoverIndex(v *plannercore.RecoverIndex) exec.Ex
 		physicalID:       t.Meta().ID,
 	}
 	sessCtx := e.Ctx().GetSessionVars().StmtCtx
-	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, index.Meta(), e.columns)
+	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, e.columns)
 	return e
 }
 
 func buildHandleColsForExec(sctx *stmtctx.StatementContext, tblInfo *model.TableInfo,
-	idxInfo *model.IndexInfo, allColInfo []*model.ColumnInfo) plannercore.HandleCols {
+	allColInfo []*model.ColumnInfo) plannercore.HandleCols {
 	if !tblInfo.IsCommonHandle {
 		extraColPos := len(allColInfo) - 1
 		intCol := &expression.Column{
@@ -633,8 +635,12 @@ func buildHandleColsForExec(sctx *stmtctx.StatementContext, tblInfo *model.Table
 		}
 	}
 	pkIdx := tables.FindPrimaryIndex(tblInfo)
-	for i, c := range pkIdx.Columns {
-		tblCols[c.Offset].Index = len(idxInfo.Columns) + i
+	for _, c := range pkIdx.Columns {
+		for j, colInfo := range allColInfo {
+			if colInfo.Name.L == c.Name.L {
+				tblCols[c.Offset].Index = j
+			}
+		}
 	}
 	return plannercore.NewCommonHandleCols(sctx, tblInfo, pkIdx, tblCols)
 }
@@ -671,7 +677,7 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) exec.Ex
 		batchSize:    20000,
 	}
 	sessCtx := e.Ctx().GetSessionVars().StmtCtx
-	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, index.Meta(), e.columns)
+	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, e.columns)
 	return e
 }
 
