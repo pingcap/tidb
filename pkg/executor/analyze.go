@@ -61,6 +61,8 @@ type AnalyzeExec struct {
 	opts       map[ast.AnalyzeOptionType]uint64
 	OptionsMap map[int64]core.V2AnalyzeOptions
 	gp         *gp.Pool
+	// errExitCh is used to notice the worker that the whole analyze task is finished when to meet error.
+	errExitCh chan struct{}
 }
 
 var (
@@ -123,7 +125,6 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	g.Go(func() error {
 		return e.handleResultsError(ctx, concurrency, needGlobalStats, globalStatsMap, resultsCh, len(tasks))
 	})
-
 	for _, task := range tasks {
 		prepareV2AnalyzeJobInfo(task.colExec, false)
 		AddNewAnalyzeJob(e.Ctx(), task.job)
@@ -137,19 +138,19 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		taskCh <- task
 	}
 	close(taskCh)
-
-	// Wait all workers done and close the results channel.
-	e.wg.Wait()
-	close(resultsCh)
-	err = g.Wait()
-	for _, task := range tasks {
-		if task.colExec != nil && task.colExec.memTracker != nil {
-			task.colExec.memTracker.Detach()
+	defer func() {
+		for _, task := range tasks {
+			if task.colExec != nil && task.colExec.memTracker != nil {
+				task.colExec.memTracker.Detach()
+			}
 		}
-	}
+	}()
+
+	err = e.waitFinish(ctx, g, resultsCh)
 	if err != nil {
 		return err
 	}
+
 	failpoint.Inject("mockKillFinishedAnalyzeJob", func() {
 		dom := domain.GetDomain(e.Ctx())
 		dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
@@ -168,6 +169,27 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		sessionVars.StmtCtx.AppendWarning(err)
 	}
 	return statsHandle.Update(infoSchema)
+}
+
+func (e *AnalyzeExec) waitFinish(ctx context.Context, g *errgroup.Group, resultsCh chan *statistics.AnalyzeResults) error {
+	checkwg, _ := errgroup.WithContext(ctx)
+	checkwg.Go(func() error {
+		// It is to wait for the completion of the result handler. if the result handler meets error, we should cancel
+		// the analyze process by closing the errExitCh.
+		err := g.Wait()
+		if err != nil {
+			close(e.errExitCh)
+			return err
+		}
+		return nil
+	})
+	checkwg.Go(func() error {
+		// Wait all workers done and close the results channel.
+		e.wg.Wait()
+		close(resultsCh)
+		return nil
+	})
+	return checkwg.Wait()
 }
 
 // filterAndCollectTasks filters the tasks that are not locked and collects the table IDs.
@@ -496,9 +518,17 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 		StartAnalyzeJob(e.Ctx(), task.job)
 		switch task.taskType {
 		case colTask:
-			resultsCh <- analyzeColumnsPushDownEntry(e.gp, task.colExec)
+			select {
+			case <-e.errExitCh:
+				return
+			case resultsCh <- analyzeColumnsPushDownEntry(e.gp, task.colExec):
+			}
 		case idxTask:
-			resultsCh <- analyzeIndexPushdown(task.idxExec)
+			select {
+			case <-e.errExitCh:
+				return
+			case resultsCh <- analyzeIndexPushdown(task.idxExec):
+			}
 		}
 	}
 }
@@ -685,16 +715,24 @@ func finishJobWithLog(sctx sessionctx.Context, job *statistics.AnalyzeJob, analy
 		var state string
 		if analyzeErr != nil {
 			state = statistics.AnalyzeFailed
+			logutil.BgLogger().Warn(fmt.Sprintf("analyze table `%s`.`%s` has %s", job.DBName, job.TableName, state),
+				zap.String("partition", job.PartitionName),
+				zap.String("job info", job.JobInfo),
+				zap.Time("start time", job.StartTime),
+				zap.Time("end time", job.EndTime),
+				zap.String("cost", job.EndTime.Sub(job.StartTime).String()),
+				zap.String("sample rate reason", job.SampleRateReason),
+				zap.Error(analyzeErr))
 		} else {
 			state = statistics.AnalyzeFinished
+			logutil.BgLogger().Info(fmt.Sprintf("analyze table `%s`.`%s` has %s", job.DBName, job.TableName, state),
+				zap.String("partition", job.PartitionName),
+				zap.String("job info", job.JobInfo),
+				zap.Time("start time", job.StartTime),
+				zap.Time("end time", job.EndTime),
+				zap.String("cost", job.EndTime.Sub(job.StartTime).String()),
+				zap.String("sample rate reason", job.SampleRateReason))
 		}
-		logutil.BgLogger().Info(fmt.Sprintf("analyze table `%s`.`%s` has %s", job.DBName, job.TableName, state),
-			zap.String("partition", job.PartitionName),
-			zap.String("job info", job.JobInfo),
-			zap.Time("start time", job.StartTime),
-			zap.Time("end time", job.EndTime),
-			zap.String("cost", job.EndTime.Sub(job.StartTime).String()),
-			zap.String("sample rate reason", job.SampleRateReason))
 	}
 }
 

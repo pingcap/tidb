@@ -2903,6 +2903,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 		OptionsMap:   v.OptionsMap,
 		wg:           util.NewWaitGroupPool(gp),
 		gp:           gp,
+		errExitCh:    make(chan struct{}),
 	}
 	autoAnalyze := ""
 	if b.ctx.GetSessionVars().InRestrictedSQL {
