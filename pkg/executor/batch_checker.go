@@ -192,7 +192,7 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		// due to we only care about distinct key.
 		iter := v.GenIndexKVIter(ctx.GetSessionVars().StmtCtx, colVals, kv.IntHandle(0), nil)
 		for iter.Valid() {
-			key, _, distinct, err1 := iter.Next(nil)
+			key, _, distinct, err1 := iter.Next(nil, nil)
 			if err1 != nil {
 				return nil, err1
 			}

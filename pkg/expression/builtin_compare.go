@@ -1443,7 +1443,7 @@ func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.Fiel
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 
-	dt, err = dt.ConvertTo(sc, targetFieldType)
+	dt, err = dt.ConvertTo(sc.TypeCtx(), targetFieldType)
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrOverflow) {
 			return &Constant{
@@ -1482,7 +1482,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 		targetFieldType = *types.NewFieldType(mysql.TypeLonglong)
 	}
 	var intDatum types.Datum
-	intDatum, err = dt.ConvertTo(sc, &targetFieldType)
+	intDatum, err = dt.ConvertTo(sc.TypeCtx(), &targetFieldType)
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrOverflow) {
 			return &Constant{
@@ -1494,7 +1494,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 		}
 		return con, false
 	}
-	c, err := intDatum.Compare(sc, &con.Value, collate.GetBinaryCollator())
+	c, err := intDatum.Compare(sc.TypeCtx(), &con.Value, collate.GetBinaryCollator())
 	if err != nil {
 		return con, false
 	}
@@ -1539,7 +1539,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 			// 3. Suppose the value of `con` is 2, when `targetFieldType.GetType()` is `TypeYear`, the value of `doubleDatum`
 			//    will be 2.0 and the value of `intDatum` will be 2002 in this case.
 			var doubleDatum types.Datum
-			doubleDatum, err = dt.ConvertTo(sc, types.NewFieldType(mysql.TypeDouble))
+			doubleDatum, err = dt.ConvertTo(sc.TypeCtx(), types.NewFieldType(mysql.TypeDouble))
 			if err != nil {
 				return con, false
 			}
@@ -1737,7 +1737,7 @@ func (c *compareFunctionClass) refineNumericConstantCmpDatetime(ctx sessionctx.C
 	sc := ctx.GetSessionVars().StmtCtx
 	var datetimeDatum types.Datum
 	targetFieldType := types.NewFieldType(mysql.TypeDatetime)
-	datetimeDatum, err = dt.ConvertTo(sc, targetFieldType)
+	datetimeDatum, err = dt.ConvertTo(sc.TypeCtx(), targetFieldType)
 	if err != nil || datetimeDatum.IsNull() {
 		return args
 	}

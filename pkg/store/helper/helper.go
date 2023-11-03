@@ -815,7 +815,7 @@ func (h *Helper) GetRegionsInfoByRange(sk, ek []byte) (*RegionsInfo, error) {
 // GetRegionByKey gets regioninfo by key
 func (h *Helper) GetRegionByKey(k []byte) (*RegionInfo, error) {
 	var regionInfo RegionInfo
-	err := h.requestPD("GetRegionByKey", "GET", fmt.Sprintf("%v/%v", pdapi.RegionKey, url.QueryEscape(string(k))), nil, &regionInfo)
+	err := h.requestPD("GetRegionByKey", "GET", fmt.Sprintf("%v/%v", pdapi.RegionByKey, url.QueryEscape(string(k))), nil, &regionInfo)
 	return &regionInfo, err
 }
 
@@ -992,11 +992,13 @@ func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats, noIndexSt
 	startKey = codec.EncodeBytes([]byte{}, startKey)
 	endKey = codec.EncodeBytes([]byte{}, endKey)
 
-	statURL := fmt.Sprintf("%s://%s/pd/api/v1/stats/region?start_key=%s&end_key=%s",
+	statURL := fmt.Sprintf("%s://%s%s",
 		util.InternalHTTPSchema(),
 		pdAddrs[0],
-		url.QueryEscape(string(startKey)),
-		url.QueryEscape(string(endKey)))
+		pdapi.RegionStatsByStartEndKey(
+			url.QueryEscape(string(startKey)),
+			url.QueryEscape(string(endKey)),
+		))
 
 	resp, err := util.InternalHTTPClient().Get(statURL)
 	if err != nil {
@@ -1026,9 +1028,10 @@ func (h *Helper) DeletePlacementRule(group string, ruleID string) error {
 		return errors.Trace(err)
 	}
 
-	deleteURL := fmt.Sprintf("%s://%s/pd/api/v1/config/rule/%v/%v",
+	deleteURL := fmt.Sprintf("%s://%s%s/%v/%v",
 		util.InternalHTTPSchema(),
 		pdAddrs[0],
+		pdapi.PlacementRule,
 		group,
 		ruleID,
 	)
@@ -1061,9 +1064,10 @@ func (h *Helper) SetPlacementRule(rule placement.Rule) error {
 	}
 	m, _ := json.Marshal(rule)
 
-	postURL := fmt.Sprintf("%s://%s/pd/api/v1/config/rule",
+	postURL := fmt.Sprintf("%s://%s%s",
 		util.InternalHTTPSchema(),
 		pdAddrs[0],
+		pdapi.PlacementRule,
 	)
 	buf := bytes.NewBuffer(m)
 	resp, err := util.InternalHTTPClient().Post(postURL, "application/json", buf)
@@ -1088,9 +1092,10 @@ func (h *Helper) GetGroupRules(group string) ([]placement.Rule, error) {
 		return nil, errors.Trace(err)
 	}
 
-	getURL := fmt.Sprintf("%s://%s/pd/api/v1/config/rules/group/%s",
+	getURL := fmt.Sprintf("%s://%s%s/%s",
 		util.InternalHTTPSchema(),
 		pdAddrs[0],
+		pdapi.PlacementRulesGroup,
 		group,
 	)
 
@@ -1134,9 +1139,10 @@ func (h *Helper) PostAccelerateSchedule(tableID int64) error {
 	startKey = codec.EncodeBytes([]byte{}, startKey)
 	endKey = codec.EncodeBytes([]byte{}, endKey)
 
-	postURL := fmt.Sprintf("%s://%s/pd/api/v1/regions/accelerate-schedule",
+	postURL := fmt.Sprintf("%s://%s%s",
 		util.InternalHTTPSchema(),
-		pdAddrs[0])
+		pdAddrs[0],
+		pdapi.AccelerateSchedule)
 
 	input := map[string]string{
 		"start_key": url.QueryEscape(string(startKey)),

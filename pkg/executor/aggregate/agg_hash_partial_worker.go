@@ -19,30 +19,30 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/twmb/murmur3"
 )
-
-// HashAggIntermData indicates the intermediate data of aggregation execution.
-type HashAggIntermData struct {
-	groupKeys        []string
-	cursor           int
-	partialResultMap AggPartialResultMapper
-}
 
 // HashAggPartialWorker indicates the partial workers of parallel hash agg execution,
 // the number of the worker can be set by `tidb_hashagg_partial_concurrency`.
 type HashAggPartialWorker struct {
 	baseHashAggWorker
 
-	inputCh           chan *chunk.Chunk
-	outputChs         []chan *HashAggIntermData
-	globalOutputCh    chan *AfFinalResult
-	giveBackCh        chan<- *HashAggInput
-	partialResultsMap AggPartialResultMapper
+	inputCh        chan *chunk.Chunk
+	outputChs      []chan *AggPartialResultMapper
+	globalOutputCh chan *AfFinalResult
+	giveBackCh     chan<- *HashAggInput
+	BInMaps        []int
+
+	partialResultsBuffer  [][]aggfuncs.PartialResult
+	partialResultNumInRow int
+
+	// Length of this map is equal to the number of final workers
+	partialResultsMap []AggPartialResultMapper
 	groupByItems      []expression.Expression
 	groupKey          [][]byte
 	// chk stores the input data from child,
@@ -69,13 +69,13 @@ func (w *HashAggPartialWorker) getChildInput() bool {
 
 func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup, finalConcurrency int) {
 	start := time.Now()
-	needShuffle, sc := false, ctx.GetSessionVars().StmtCtx
+	needShuffle := false
 	defer func() {
 		if r := recover(); r != nil {
 			recoveryHashAgg(w.globalOutputCh, r)
 		}
 		if needShuffle {
-			w.shuffleIntermData(sc, finalConcurrency)
+			w.shuffleIntermData(finalConcurrency)
 		}
 		w.memTracker.Consume(-w.chk.MemoryUsage())
 		if w.stats != nil {
@@ -93,7 +93,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 			return
 		}
 		execStart := time.Now()
-		if err := w.updatePartialResult(ctx, sc, w.chk, len(w.partialResultsMap)); err != nil {
+		if err := w.updatePartialResult(ctx, w.chk, len(w.partialResultsMap)); err != nil {
 			w.globalOutputCh <- &AfFinalResult{err: err}
 			return
 		}
@@ -107,7 +107,48 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 	}
 }
 
-func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *stmtctx.StatementContext, chk *chunk.Chunk, _ int) (err error) {
+// If the group key has appeared before, reuse the partial result.
+// If the group key has not appeared before, create empty partial results.
+func (w *HashAggPartialWorker) getPartialResultsOfEachRow(groupKey [][]byte, finalConcurrency int) [][]aggfuncs.PartialResult {
+	mapper := w.partialResultsMap
+	numRows := len(groupKey)
+	allMemDelta := int64(0)
+	w.partialResultsBuffer = w.partialResultsBuffer[0:0]
+
+	for i := 0; i < numRows; i++ {
+		finalWorkerIdx := int(murmur3.Sum32(groupKey[i])) % finalConcurrency
+		tmp, ok := mapper[finalWorkerIdx][string(hack.String(groupKey[i]))]
+
+		// This group by key has appeared before, reuse the partial result.
+		if ok {
+			w.partialResultsBuffer = append(w.partialResultsBuffer, tmp)
+			continue
+		}
+
+		// It's the first time that this group by key appeared, create it
+		w.partialResultsBuffer = append(w.partialResultsBuffer, make([]aggfuncs.PartialResult, w.partialResultNumInRow))
+		lastIdx := len(w.partialResultsBuffer) - 1
+		for j, af := range w.aggFuncs {
+			partialResult, memDelta := af.AllocPartialResult()
+			w.partialResultsBuffer[lastIdx][j] = partialResult
+			allMemDelta += memDelta // the memory usage of PartialResult
+		}
+		allMemDelta += int64(w.partialResultNumInRow * 8)
+
+		// Map will expand when count > bucketNum * loadFactor. The memory usage will double.
+		if len(mapper[finalWorkerIdx])+1 > (1<<w.BInMaps[finalWorkerIdx])*hack.LoadFactorNum/hack.LoadFactorDen {
+			w.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMaps[finalWorkerIdx]))
+			w.BInMaps[finalWorkerIdx]++
+		}
+
+		mapper[finalWorkerIdx][string(groupKey[i])] = w.partialResultsBuffer[lastIdx]
+		allMemDelta += int64(len(groupKey[i]))
+	}
+	w.memTracker.Consume(allMemDelta)
+	return w.partialResultsBuffer
+}
+
+func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, chk *chunk.Chunk, finalConcurrency int) (err error) {
 	memSize := getGroupKeyMemUsage(w.groupKey)
 	w.groupKey, err = GetGroupKey(w.ctx, chk, w.groupKey, w.groupByItems)
 	failpoint.Inject("ConsumeRandomPanic", nil)
@@ -116,14 +157,16 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 		return err
 	}
 
-	partialResults := w.getPartialResult(sc, w.groupKey, w.partialResultsMap)
+	partialResultOfEachRow := w.getPartialResultsOfEachRow(w.groupKey, finalConcurrency)
+
 	numRows := chk.NumRows()
 	rows := make([]chunk.Row, 1)
 	allMemDelta := int64(0)
 	for i := 0; i < numRows; i++ {
+		partialResult := partialResultOfEachRow[i]
+		rows[0] = chk.GetRow(i)
 		for j, af := range w.aggFuncs {
-			rows[0] = chk.GetRow(i)
-			memDelta, err := af.UpdatePartialResult(ctx, rows, partialResults[i][j])
+			memDelta, err := af.UpdatePartialResult(ctx, rows, partialResult[j])
 			if err != nil {
 				return err
 			}
@@ -134,25 +177,8 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 	return nil
 }
 
-// shuffleIntermData shuffles the intermediate data of partial workers to corresponded final workers.
-// We only support parallel execution for single-machine, so process of encode and decode can be skipped.
-func (w *HashAggPartialWorker) shuffleIntermData(_ *stmtctx.StatementContext, finalConcurrency int) {
-	groupKeysSlice := make([][]string, finalConcurrency)
-	for groupKey := range w.partialResultsMap {
-		finalWorkerIdx := int(murmur3.Sum32([]byte(groupKey))) % finalConcurrency
-		if groupKeysSlice[finalWorkerIdx] == nil {
-			groupKeysSlice[finalWorkerIdx] = make([]string, 0, len(w.partialResultsMap)/finalConcurrency)
-		}
-		groupKeysSlice[finalWorkerIdx] = append(groupKeysSlice[finalWorkerIdx], groupKey)
-	}
-
-	for i := range groupKeysSlice {
-		if groupKeysSlice[i] == nil {
-			continue
-		}
-		w.outputChs[i] <- &HashAggIntermData{
-			groupKeys:        groupKeysSlice[i],
-			partialResultMap: w.partialResultsMap,
-		}
+func (w *HashAggPartialWorker) shuffleIntermData(finalConcurrency int) {
+	for i := 0; i < finalConcurrency; i++ {
+		w.outputChs[i] <- &w.partialResultsMap[i]
 	}
 }

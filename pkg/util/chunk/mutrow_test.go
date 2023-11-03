@@ -34,7 +34,7 @@ func TestMutRow(t *testing.T) {
 		val := zeroValForType(allTypes[i])
 		d := row.GetDatum(i, allTypes[i])
 		d2 := types.NewDatum(val)
-		cmp, err := d.Compare(sc, &d2, collate.GetCollator(allTypes[i].GetCollate()))
+		cmp, err := d.Compare(sc.TypeCtx(), &d2, collate.GetCollator(allTypes[i].GetCollate()))
 		require.NoError(t, err)
 		require.Equal(t, 0, cmp)
 	}
