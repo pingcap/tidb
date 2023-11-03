@@ -46,9 +46,8 @@ func (e *mockErrorOperator) Open(_ context.Context) error {
 func (e *mockErrorOperator) Next(_ context.Context, _ *chunk.Chunk) error {
 	if e.toPanic {
 		panic("next panic")
-	} else {
-		return errors.New("next error")
 	}
+	return errors.New("next error")
 }
 
 func (e *mockErrorOperator) Close() error {
