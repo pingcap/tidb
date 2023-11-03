@@ -223,6 +223,9 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		infoschema_metrics.LoadSchemaDurationTotal.Observe(time.Since(beginTime).Seconds())
 	}()
 	snapshot := do.store.GetSnapshot(kv.NewVersion(startTS))
+	// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
+	// the meta region leader is slow.
+	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
 	m := meta.NewSnapshotMeta(snapshot)
 	neededSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
@@ -1481,7 +1484,7 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, schedulerManager *scheduler.Manager, serverID string) {
 	err := schedulerManager.Start()
 	if err != nil {
-		logutil.BgLogger().Error("dist task scheduler manager failed", zap.Error(err))
+		logutil.BgLogger().Error("dist task scheduler manager start failed", zap.Error(err))
 		return
 	}
 	logutil.BgLogger().Info("dist task scheduler manager started")

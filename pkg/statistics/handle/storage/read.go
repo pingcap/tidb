@@ -73,8 +73,7 @@ func HistogramFromStorage(sctx sessionctx.Context, tableID int64, colID int64, t
 			// Invalid date values may be inserted into table under some relaxed sql mode. Those values may exist in statistics.
 			// Hence, when reading statistics, we should skip invalid date check. See #39336.
 			sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-			sc.AllowInvalidDate = true
-			sc.IgnoreZeroInDate = true
+			sc.SetTypeFlags(sc.TypeFlags().WithIgnoreInvalidDateErr(true).WithIgnoreZeroInDate(true))
 			d := rows[i].GetDatum(2, &fields[2].Column.FieldType)
 			// For new collation data, when storing the bounds of the histogram, we store the collate key instead of the
 			// original value.
@@ -86,12 +85,12 @@ func HistogramFromStorage(sctx sessionctx.Context, tableID int64, colID int64, t
 			if tp.EvalType() == types.ETString && tp.GetType() != mysql.TypeEnum && tp.GetType() != mysql.TypeSet {
 				tp = types.NewFieldType(mysql.TypeBlob)
 			}
-			lowerBound, err = d.ConvertTo(sc, tp)
+			lowerBound, err = d.ConvertTo(sc.TypeCtx(), tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			d = rows[i].GetDatum(3, &fields[3].Column.FieldType)
-			upperBound, err = d.ConvertTo(sc, tp)
+			upperBound, err = d.ConvertTo(sc.TypeCtx(), tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

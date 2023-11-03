@@ -252,7 +252,8 @@ type StatsReadWriter interface {
 	// then tidb-server will reload automatic.
 	UpdateStatsVersion() error
 
-	// ResetTableStats2KVForDrop resets the count to 0.
+	// ResetTableStats2KVForDrop update the version of mysql.stats_meta.
+	// Then GC worker will delete the old version of stats.
 	ResetTableStats2KVForDrop(physicalID int64) (err error)
 
 	// ChangeGlobalStatsID changes the global stats ID.

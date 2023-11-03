@@ -653,6 +653,9 @@ func (c *TopN) FindTopN(d []byte) int {
 	if bytes.Compare(c.TopN[len(c.TopN)-1].Encoded, d) < 0 {
 		return -1
 	}
+	if bytes.Compare(c.TopN[0].Encoded, d) > 0 {
+		return -1
+	}
 	idx, match := slices.BinarySearchFunc(c.TopN, d, func(a TopNMeta, b []byte) int {
 		return bytes.Compare(a.Encoded, b)
 	})
@@ -825,14 +828,12 @@ func MergeTopN(topNs []*TopN, n uint32) (*TopN, []TopNMeta) {
 
 // CheckEmptyTopNs checks whether all TopNs are empty.
 func CheckEmptyTopNs(topNs []*TopN) bool {
-	count := uint64(0)
 	for _, topN := range topNs {
-		count += topN.TotalCount()
-		if count != 0 {
+		if topN.TotalCount() != 0 {
 			return false
 		}
 	}
-	return count == 0
+	return true
 }
 
 // SortTopnMeta sort topnMeta

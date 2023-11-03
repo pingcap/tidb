@@ -158,7 +158,7 @@ func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldType) (*
 	case types.KindMaxValue, types.KindMinNotNull:
 		return point, nil
 	}
-	casted, err := point.value.ConvertTo(sc, tp)
+	casted, err := point.value.ConvertTo(sc.TypeCtx(), tp)
 	if err != nil {
 		if sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding {
 			// skip plan cache in this case for safety.
@@ -196,7 +196,7 @@ func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldType) (*
 		}
 		//revive:enable:empty-block
 	}
-	valCmpCasted, err := point.value.Compare(sc, &casted, collate.GetCollator(tp.GetCollate()))
+	valCmpCasted, err := point.value.Compare(sc.TypeCtx(), &casted, collate.GetCollator(tp.GetCollate()))
 	if err != nil {
 		return point, errors.Trace(err)
 	}
@@ -772,7 +772,7 @@ func RangesToString(sc *stmtctx.StatementContext, rans Ranges, colNames []string
 
 			// sanity check: only last column of the `Range` can be an interval
 			if j < len(ran.LowVal)-1 {
-				cmp, err := ran.LowVal[j].Compare(sc, &ran.HighVal[j], ran.Collators[j])
+				cmp, err := ran.LowVal[j].Compare(sc.TypeCtx(), &ran.HighVal[j], ran.Collators[j])
 				if err != nil {
 					return "", errors.New("comparing values error: " + err.Error())
 				}
@@ -829,7 +829,7 @@ func RangeSingleColToString(sc *stmtctx.StatementContext, lowVal, highVal types.
 	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
 
 	// case 2: low value and high value are the same, and low value and high value are both inclusive.
-	cmp, err := lowVal.Compare(sc, &highVal, collator)
+	cmp, err := lowVal.Compare(sc.TypeCtx(), &highVal, collator)
 	if err != nil {
 		return "false", errors.Trace(err)
 	}

@@ -352,10 +352,10 @@ func TestPointGet(t *testing.T) {
 
 	// verify the returned rows value as input
 	expectedRow := data.rows[handle]
-	eq, err := returnedRow[0].Compare(nil, &expectedRow[0], collate.GetBinaryCollator())
+	eq, err := returnedRow[0].Compare(types.DefaultStmtNoWarningContext, &expectedRow[0], collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, eq)
-	eq, err = returnedRow[1].Compare(nil, &expectedRow[1], collate.GetBinaryCollator())
+	eq, err = returnedRow[1].Compare(types.DefaultStmtNoWarningContext, &expectedRow[1], collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, eq)
 }

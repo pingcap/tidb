@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
-	typectx "github.com/pingcap/tidb/pkg/types/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -97,7 +96,7 @@ func TestStatementContextPushDownFLags(t *testing.T) {
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true)) }), 1},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true)) }), 2},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.OverflowAsWarning = true }), 64},
-		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.IgnoreZeroInDate = true }), 128},
+		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.SetTypeFlags(sc.TypeFlags().WithIgnoreZeroInDate(true)) }), 128},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.DividedByZeroAsWarning = true }), 256},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.InLoadDataStmt = true }), 1024},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) {
@@ -110,7 +109,7 @@ func TestStatementContextPushDownFLags(t *testing.T) {
 		}), 257},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) {
 			sc.InUpdateStmt = true
-			sc.IgnoreZeroInDate = true
+			sc.SetTypeFlags(sc.TypeFlags().WithIgnoreZeroInDate(true))
 			sc.InLoadDataStmt = true
 		}), 1168},
 	}
@@ -349,12 +348,12 @@ func TestSetStmtCtxTypeFlags(t *testing.T) {
 	sc := stmtctx.NewStmtCtx()
 	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
 
-	sc.SetTypeFlags(typectx.FlagAllowNegativeToUnsigned | typectx.FlagSkipASCIICheck)
-	require.Equal(t, typectx.FlagAllowNegativeToUnsigned|typectx.FlagSkipASCIICheck, sc.TypeFlags())
+	sc.SetTypeFlags(types.FlagAllowNegativeToUnsigned | types.FlagSkipASCIICheck)
+	require.Equal(t, types.FlagAllowNegativeToUnsigned|types.FlagSkipASCIICheck, sc.TypeFlags())
 	require.Equal(t, sc.TypeFlags(), sc.TypeFlags())
 
-	sc.SetTypeFlags(typectx.FlagSkipASCIICheck | typectx.FlagSkipUTF8Check | typectx.FlagInvalidDateAsWarning)
-	require.Equal(t, typectx.FlagSkipASCIICheck|typectx.FlagSkipUTF8Check|typectx.FlagInvalidDateAsWarning, sc.TypeFlags())
+	sc.SetTypeFlags(types.FlagSkipASCIICheck | types.FlagSkipUTF8Check | types.FlagTruncateAsWarning)
+	require.Equal(t, types.FlagSkipASCIICheck|types.FlagSkipUTF8Check|types.FlagTruncateAsWarning, sc.TypeFlags())
 	require.Equal(t, sc.TypeFlags(), sc.TypeFlags())
 }
 
@@ -364,13 +363,13 @@ func TestResetStmtCtx(t *testing.T) {
 
 	tz := time.FixedZone("UTC+1", 2*60*60)
 	sc.SetTimeZone(tz)
-	sc.SetTypeFlags(typectx.FlagAllowNegativeToUnsigned | typectx.FlagSkipASCIICheck)
+	sc.SetTypeFlags(types.FlagAllowNegativeToUnsigned | types.FlagSkipASCIICheck)
 	sc.AppendWarning(errors.New("err1"))
 	sc.InRestrictedSQL = true
 	sc.StmtType = "Insert"
 
 	require.Same(t, tz, sc.TimeZone())
-	require.Equal(t, typectx.FlagAllowNegativeToUnsigned|typectx.FlagSkipASCIICheck, sc.TypeFlags())
+	require.Equal(t, types.FlagAllowNegativeToUnsigned|types.FlagSkipASCIICheck, sc.TypeFlags())
 	require.Equal(t, 1, len(sc.GetWarnings()))
 
 	sc.Reset()

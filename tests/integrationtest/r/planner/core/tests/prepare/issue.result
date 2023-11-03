@@ -287,6 +287,8 @@ count(*)
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
+set tidb_enable_prepared_plan_cache=DEFAULT;
+set @@tidb_enable_collect_execution_info=DEFAULT;
 set tidb_enable_prepared_plan_cache=1;
 set tidb_enable_clustered_index=on;
 drop table if exists PK_TCOLLATION10197;
