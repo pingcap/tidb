@@ -361,7 +361,10 @@
       "select count(a) from (select a,(select t2.b from t t2,t t3 where t2.a=t3.a and t1.a=t2.a limit 1) t from t t1) t",
       "select count(t) from (select a,(select t2.b from t t2,t t3 where t2.a=t3.a and t1.a=t2.a limit 1) t from t t1) t",
       "select count(a) from t t1 where t1.a in(select t2.a from t t2,t t3 where t2.b=t3.b)",
-      "select a from (select a,(select t2.b from t t2,t t3 where t2.a=t3.a and t1.a=t2.a limit 1) t from t t1) t"
+      "select a from (select a,(select t2.b from t t2,t t3 where t2.a=t3.a and t1.a=t2.a limit 1) t from t t1) t",
+      "SELECT a FROM t WHERE b in (SELECT t2.b FROM t t2, t t3 WHERE t2.a = t3.a)",
+      "SELECT a FROM t WHERE b IN (SELECT b FROM t WHERE b=1 AND a IN (SELECT a FROM t WHERE a>0))",
+      "SELECT a FROM t WHERE b IN (SELECT b FROM t WHERE b=1 AND a IN (select t2.a from (select t1.a,(select t2.b from t t2,t t3 where t2.a=t3.a and t1.a=t2.a limit 1) t from t t1) t2))"
     ]
   },
   {

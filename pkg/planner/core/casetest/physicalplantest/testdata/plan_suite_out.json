@@ -2342,6 +2342,18 @@
       {
         "SQL": "select a from (select a,(select t2.b from t t2,t t3 where t2.a=t3.a and t1.a=t2.a limit 1) t from t t1) t",
         "Best": "IndexReader(Index(t.f)[[NULL,+inf]])"
+      },
+      {
+        "SQL": "SELECT a FROM t WHERE b in (SELECT t2.b FROM t t2, t t3 WHERE t2.a = t3.a)",
+        "Best": "LeftHashJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->HashAgg}(test.t.b,test.t.b)"
+      },
+      {
+        "SQL": "SELECT a FROM t WHERE b IN (SELECT b FROM t WHERE b=1 AND a IN (SELECT a FROM t WHERE a>0))",
+        "Best": "RightHashJoin{IndexJoin{TableReader(Table(t)->Sel([eq(test.t.b, 1)]))->TableReader(Table(t)->Sel([gt(test.t.a, 0)]))}(test.t.a,test.t.a)->HashAgg->TableReader(Table(t))}(test.t.b,test.t.b)"
+      },
+      {
+        "SQL": "SELECT a FROM t WHERE b IN (SELECT b FROM t WHERE b=1 AND a IN (select t2.a from (select t1.a,(select t2.b from t t2,t t3 where t2.a=t3.a and t1.a=t2.a limit 1) t from t t1) t2))",
+        "Best": "LeftHashJoin{TableReader(Table(t))->IndexJoin{TableReader(Table(t)->Sel([eq(test.t.b, 1)]))->TableReader(Table(t))}(test.t.a,test.t.a)->HashAgg}(test.t.b,test.t.b)"
       }
     ]
   },
