@@ -87,6 +87,9 @@ const (
 // Next implements the Executor Next interface.
 // It will collect all the sample task and run them concurrently.
 func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+	defer func() {
+		logutil.BgLogger().Info("finish")
+	}()
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	infoSchema := sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema()
 	sessionVars := e.Ctx().GetSessionVars()
@@ -123,7 +126,6 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	g.Go(func() error {
 		return e.handleResultsError(ctx, concurrency, needGlobalStats, globalStatsMap, resultsCh, len(tasks))
 	})
-
 	for _, task := range tasks {
 		prepareV2AnalyzeJobInfo(task.colExec, false)
 		AddNewAnalyzeJob(e.Ctx(), task.job)
@@ -137,19 +139,21 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		taskCh <- task
 	}
 	close(taskCh)
-
-	// Wait all workers done and close the results channel.
-	e.wg.Wait()
-	close(resultsCh)
-	err = g.Wait()
-	for _, task := range tasks {
-		if task.colExec != nil && task.colExec.memTracker != nil {
-			task.colExec.memTracker.Detach()
+	defer func() {
+		for _, task := range tasks {
+			if task.colExec != nil && task.colExec.memTracker != nil {
+				task.colExec.memTracker.Detach()
+			}
 		}
-	}
+	}()
+	err = g.Wait()
 	if err != nil {
 		return err
 	}
+	// Wait all workers done and close the results channel.
+	e.wg.Wait()
+	close(resultsCh)
+
 	failpoint.Inject("mockKillFinishedAnalyzeJob", func() {
 		dom := domain.GetDomain(e.Ctx())
 		dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
@@ -685,16 +689,25 @@ func finishJobWithLog(sctx sessionctx.Context, job *statistics.AnalyzeJob, analy
 		var state string
 		if analyzeErr != nil {
 			state = statistics.AnalyzeFailed
+			logutil.BgLogger().Info(fmt.Sprintf("analyze table `%s`.`%s` has %s", job.DBName, job.TableName, state),
+				zap.String("partition", job.PartitionName),
+				zap.String("job info", job.JobInfo),
+				zap.Time("start time", job.StartTime),
+				zap.Time("end time", job.EndTime),
+				zap.String("cost", job.EndTime.Sub(job.StartTime).String()),
+				zap.String("sample rate reason", job.SampleRateReason),
+				zap.Error(analyzeErr))
 		} else {
 			state = statistics.AnalyzeFinished
+			logutil.BgLogger().Info(fmt.Sprintf("analyze table `%s`.`%s` has %s", job.DBName, job.TableName, state),
+				zap.String("partition", job.PartitionName),
+				zap.String("job info", job.JobInfo),
+				zap.Time("start time", job.StartTime),
+				zap.Time("end time", job.EndTime),
+				zap.String("cost", job.EndTime.Sub(job.StartTime).String()),
+				zap.String("sample rate reason", job.SampleRateReason))
 		}
-		logutil.BgLogger().Info(fmt.Sprintf("analyze table `%s`.`%s` has %s", job.DBName, job.TableName, state),
-			zap.String("partition", job.PartitionName),
-			zap.String("job info", job.JobInfo),
-			zap.Time("start time", job.StartTime),
-			zap.Time("end time", job.EndTime),
-			zap.String("cost", job.EndTime.Sub(job.StartTime).String()),
-			zap.String("sample rate reason", job.SampleRateReason))
+
 	}
 }
 
