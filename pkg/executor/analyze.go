@@ -61,6 +61,8 @@ type AnalyzeExec struct {
 	opts       map[ast.AnalyzeOptionType]uint64
 	OptionsMap map[int64]core.V2AnalyzeOptions
 	gp         *gp.Pool
+	// errExitCh is used to notice the worker that the whole analyze task is finished when to meet error.
+	errExitCh chan struct{}
 }
 
 var (
@@ -143,8 +145,10 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 			}
 		}
 	}()
+	// first wait for task handle finished. if task handle finished with error. we should cancel all other task.
 	err = g.Wait()
 	if err != nil {
+		close(e.errExitCh)
 		return err
 	}
 	// Wait all workers done and close the results channel.
@@ -497,9 +501,23 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 		StartAnalyzeJob(e.Ctx(), task.job)
 		switch task.taskType {
 		case colTask:
+<<<<<<< HEAD
 			resultsCh <- analyzeColumnsPushDownEntry(e.gp, task.colExec)
+=======
+			select {
+			case <-e.errExitCh:
+				return
+			default:
+				resultsCh <- analyzeColumnsPushDownEntry(task.colExec)
+			}
+>>>>>>> b25c4265f0 (update)
 		case idxTask:
-			resultsCh <- analyzeIndexPushdown(task.idxExec)
+			select {
+			case <-e.errExitCh:
+				return
+			default:
+				resultsCh <- analyzeIndexPushdown(task.idxExec)
+			}
 		}
 	}
 }
