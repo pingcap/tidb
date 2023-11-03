@@ -358,7 +358,6 @@ func (b *ingestBackfillScheduler) close(force bool) {
 		jobID := b.reorgInfo.ID
 		b.backendCtx.ResetWorkers(jobID)
 	}
-	logutil.BgLogger().Info("set b.closed to true")
 }
 
 func (b *ingestBackfillScheduler) sendTask(task *reorgBackfillTask) {
