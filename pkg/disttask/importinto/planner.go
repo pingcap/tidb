@@ -109,7 +109,7 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 	// we only generate needed plans for the next step.
 	switch planCtx.NextTaskStep {
 	case StepImport, StepEncodeAndSort:
-		specs, err := generateImportSpecs(planCtx.Ctx, p)
+		specs, err := generateImportSpecs(planCtx, p)
 		if err != nil {
 			return nil, err
 		}
@@ -249,7 +249,7 @@ func buildController(plan *importer.Plan, stmt string) (*importer.LoadDataContro
 	return controller, nil
 }
 
-func generateImportSpecs(ctx context.Context, p *LogicalPlan) ([]planner.PipelineSpec, error) {
+func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.PipelineSpec, error) {
 	var chunkMap map[int32][]Chunk
 	if len(p.ChunkMap) > 0 {
 		chunkMap = p.ChunkMap
@@ -258,11 +258,12 @@ func generateImportSpecs(ctx context.Context, p *LogicalPlan) ([]planner.Pipelin
 		if err2 != nil {
 			return nil, err2
 		}
-		if err2 = controller.InitDataFiles(ctx); err2 != nil {
+		if err2 = controller.InitDataFiles(pCtx.Ctx); err2 != nil {
 			return nil, err2
 		}
 
-		engineCheckpoints, err2 := controller.PopulateChunks(ctx)
+		controller.SetExecuteNodeCnt(pCtx.ExecuteNodesCnt)
+		engineCheckpoints, err2 := controller.PopulateChunks(pCtx.Ctx)
 		if err2 != nil {
 			return nil, err2
 		}
