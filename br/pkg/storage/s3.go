@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
 )
@@ -1032,7 +1031,7 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 		}
 	} else {
 		up := s3manager.NewUploaderWithClient(rs.svc, func(u *s3manager.Uploader) {
-			u.PartSize = (int64)(200 * size.MB)
+			u.PartSize = option.PartSize
 			u.Concurrency = option.Concurrency
 			u.BufferProvider = s3manager.NewBufferedReadSeekerWriteToPool(option.Concurrency * hardcodedS3ChunkSize)
 		})

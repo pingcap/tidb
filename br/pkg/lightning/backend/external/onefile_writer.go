@@ -30,6 +30,7 @@ import (
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 )
 
@@ -71,12 +72,12 @@ func (w *OneFileWriter) initWriter(ctx context.Context) (
 	err error,
 ) {
 	w.dataFile = filepath.Join(w.filenamePrefix, strconv.Itoa(0))
-	w.dataWriter, err = w.store.Create(ctx, w.dataFile, &storage.WriterOption{Concurrency: 20})
+	w.dataWriter, err = w.store.Create(ctx, w.dataFile, &storage.WriterOption{Concurrency: 20, PartSize: (int64)(200 * size.MB)})
 	if err != nil {
 		return err
 	}
 	w.statFile = filepath.Join(w.filenamePrefix+statSuffix, strconv.Itoa(0))
-	w.statWriter, err = w.store.Create(ctx, w.statFile, &storage.WriterOption{Concurrency: 20})
+	w.statWriter, err = w.store.Create(ctx, w.statFile, &storage.WriterOption{Concurrency: 20, PartSize: (int64)(5 * size.MB)})
 	if err != nil {
 		_ = w.dataWriter.Close(ctx)
 		return err

@@ -90,6 +90,7 @@ type Writer interface {
 
 type WriterOption struct {
 	Concurrency int
+	PartSize    int64
 }
 
 type ReaderOption struct {
