@@ -504,16 +504,12 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 		StartAnalyzeJob(e.Ctx(), task.job)
 		switch task.taskType {
 		case colTask:
-<<<<<<< HEAD
-			resultsCh <- analyzeColumnsPushDownEntry(e.gp, task.colExec)
-=======
 			select {
 			case <-e.errExitCh:
 				return
 			default:
-				resultsCh <- analyzeColumnsPushDownEntry(task.colExec)
+				resultsCh <- analyzeColumnsPushDownEntry(e.gp, task.colExec)
 			}
->>>>>>> b25c4265f0 (update)
 		case idxTask:
 			select {
 			case <-e.errExitCh:
