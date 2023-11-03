@@ -370,7 +370,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 			RegionSplitSize: sm.RangeSplitSize,
 			TotalFileSize:   int64(sm.TotalKVSize),
 			TotalKVCount:    0,
-			CheckHotspot:    false,
+			CheckHotspot:    true,
 		},
 	}, engineUUID)
 	if err != nil {
