@@ -2336,7 +2336,7 @@
         "Best": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Limit}->HashAgg"
       },
       {
-        "SQL": "select count(a) from t t1 where t1.a in(select t2.a from t t2,t t3 where t2.b=t3.b);",
+        "SQL": "select count(a) from t t1 where t1.a IN (select t2.a from t t2,t t3 where t2.b=t3.b);",
         "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.b,test.t.b)->HashAgg}(test.t.a,test.t.a)->HashAgg"
       },
       {
@@ -2344,7 +2344,7 @@
         "Best": "IndexReader(Index(t.f)[[NULL,+inf]])"
       },
       {
-        "SQL": "SELECT a FROM t WHERE b in (SELECT t2.b FROM t t2, t t3 WHERE t2.a = t3.a)",
+        "SQL": "SELECT a FROM t WHERE b IN (SELECT t2.b FROM t t2, t t3 WHERE t2.a = t3.a)",
         "Best": "LeftHashJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->HashAgg}(test.t.b,test.t.b)"
       },
       {
