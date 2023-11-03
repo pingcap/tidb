@@ -503,7 +503,7 @@ func (w *Writer) getEncodedKVData(pos kvLocation) []byte {
 func (w *Writer) getKeyByLoc(pos kvLocation) []byte {
 	block := w.kvBuffer.blocks[pos.blockIdx]
 	keyLen := binary.BigEndian.Uint64(block[pos.offset : pos.offset+lengthBytes])
-	return block[pos.offset+lengthBytes : uint64(pos.offset)+lengthBytes+keyLen]
+	return block[pos.offset+lengthBytes*2 : uint64(pos.offset)+lengthBytes*2+keyLen]
 }
 
 func (w *Writer) createStorageWriter(ctx context.Context) (
