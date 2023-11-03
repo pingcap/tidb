@@ -123,7 +123,7 @@ require (
 	go.uber.org/mock v0.3.0
 	go.uber.org/multierr v1.11.0
 	go.uber.org/zap v1.26.0
-	golang.org/x/exp v0.0.0-20230711005742-c3f37128e5a4
+	golang.org/x/exp v0.0.0-20231006140011-7918f672742d
 	golang.org/x/net v0.17.0
 	golang.org/x/oauth2 v0.11.0
 	golang.org/x/sync v0.4.0
