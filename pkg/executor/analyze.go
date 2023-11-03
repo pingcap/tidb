@@ -149,6 +149,9 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	err = g.Wait()
 	if err != nil {
 		close(e.errExitCh)
+		// Wait all workers done and close the results channel.
+		e.wg.Wait()
+		close(resultsCh)
 		return err
 	}
 	// Wait all workers done and close the results channel.
