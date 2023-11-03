@@ -320,19 +320,17 @@ func (tr *TableImporter) populateChunks(ctx context.Context, rc *Controller, cp 
 	return err
 }
 
-type asAutoIDRequirement TableImporter
+// AutoIDRequirement implements autoid.Requirement.
+var _ autoid.Requirement = &TableImporter{}
 
-func (r *asAutoIDRequirement) Store() tidbkv.Storage {
+// Store implements the autoid.Requirement interface.
+func (r *TableImporter) Store() tidbkv.Storage {
 	return r.kvStore
 }
 
-func (r *asAutoIDRequirement) GetEtcdClient() *clientv3.Client {
+// GetEtcdClient implements the autoid.Requirement interface.
+func (r *TableImporter) GetEtcdClient() *clientv3.Client {
 	return r.etcdCli
-}
-
-// AutoIDRequirement returns an autoid.Requirement.
-func (tr *TableImporter) AutoIDRequirement() autoid.Requirement {
-	return (*asAutoIDRequirement)(tr)
 }
 
 // RebaseChunkRowIDs rebase the row id of the chunks.
@@ -963,7 +961,7 @@ func (tr *TableImporter) postProcess(
 				// And in this case, ALTER TABLE xxx AUTO_INCREMENT = xxx only works on the allocator of auto_increment column,
 				// not for allocator of _tidb_rowid.
 				// So we need to rebase IDs for those 2 allocators explicitly.
-				err = common.RebaseGlobalAutoID(ctx, adjustIDBase(newBase), tr.AutoIDRequirement(), tr.dbInfo.ID, tr.tableInfo.Core)
+				err = common.RebaseGlobalAutoID(ctx, adjustIDBase(newBase), tr, tr.dbInfo.ID, tr.tableInfo.Core)
 			}
 		}
 		rc.alterTableLock.Unlock()
