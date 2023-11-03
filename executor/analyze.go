@@ -54,6 +54,12 @@ type AnalyzeExec struct {
 	wg         util.WaitGroupWrapper
 	opts       map[ast.AnalyzeOptionType]uint64
 	OptionsMap map[int64]core.V2AnalyzeOptions
+<<<<<<< HEAD:executor/analyze.go
+=======
+	gp         *gp.Pool
+	// errExitCh is used to notice the worker that the whole analyze task is finished when to meet error.
+	errExitCh chan struct{}
+>>>>>>> 4f00ece106b (executor: fix hang for analyze table when exceed tidb_mem_quota_analyze (#48264)):pkg/executor/analyze.go
 }
 
 var (
@@ -164,6 +170,17 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	for i := 0; i < concurrency; i++ {
 		e.wg.Run(func() { e.analyzeWorker(taskCh, resultsCh) })
 	}
+<<<<<<< HEAD:executor/analyze.go
+=======
+	pruneMode := variable.PartitionPruneMode(sessionVars.PartitionPruneMode.Load())
+	// needGlobalStats used to indicate whether we should merge the partition-level stats to global-level stats.
+	needGlobalStats := pruneMode == variable.Dynamic
+	globalStatsMap := make(map[globalStatsKey]globalStatsInfo)
+	g, _ := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		return e.handleResultsError(ctx, concurrency, needGlobalStats, globalStatsMap, resultsCh, len(tasks))
+	})
+>>>>>>> 4f00ece106b (executor: fix hang for analyze table when exceed tidb_mem_quota_analyze (#48264)):pkg/executor/analyze.go
 	for _, task := range tasks {
 		prepareV2AnalyzeJobInfo(task.colExec, false)
 		AddNewAnalyzeJob(e.ctx, task.job)
@@ -176,6 +193,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		taskCh <- task
 	}
 	close(taskCh)
+<<<<<<< HEAD:executor/analyze.go
 	e.wg.Wait()
 	close(resultsCh)
 	pruneMode := variable.PartitionPruneMode(e.ctx.GetSessionVars().PartitionPruneMode.Load())
@@ -186,11 +204,21 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	for _, task := range tasks {
 		if task.colExec != nil && task.colExec.memTracker != nil {
 			task.colExec.memTracker.Detach()
+=======
+	defer func() {
+		for _, task := range tasks {
+			if task.colExec != nil && task.colExec.memTracker != nil {
+				task.colExec.memTracker.Detach()
+			}
+>>>>>>> 4f00ece106b (executor: fix hang for analyze table when exceed tidb_mem_quota_analyze (#48264)):pkg/executor/analyze.go
 		}
-	}
+	}()
+
+	err = e.waitFinish(ctx, g, resultsCh)
 	if err != nil {
 		return err
 	}
+
 	failpoint.Inject("mockKillFinishedAnalyzeJob", func() {
 		dom := domain.GetDomain(e.ctx)
 		dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
@@ -205,8 +233,49 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	if err != nil {
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 	}
+<<<<<<< HEAD:executor/analyze.go
 	if e.ctx.GetSessionVars().InRestrictedSQL {
 		return statsHandle.Update(e.ctx.GetInfoSchema().(infoschema.InfoSchema))
+=======
+	return statsHandle.Update(infoSchema)
+}
+
+func (e *AnalyzeExec) waitFinish(ctx context.Context, g *errgroup.Group, resultsCh chan *statistics.AnalyzeResults) error {
+	checkwg, _ := errgroup.WithContext(ctx)
+	checkwg.Go(func() error {
+		// It is to wait for the completion of the result handler. if the result handler meets error, we should cancel
+		// the analyze process by closing the errExitCh.
+		err := g.Wait()
+		if err != nil {
+			close(e.errExitCh)
+			return err
+		}
+		return nil
+	})
+	checkwg.Go(func() error {
+		// Wait all workers done and close the results channel.
+		e.wg.Wait()
+		close(resultsCh)
+		return nil
+	})
+	return checkwg.Wait()
+}
+
+// filterAndCollectTasks filters the tasks that are not locked and collects the table IDs.
+func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, infoSchema infoschema.InfoSchema) ([]*analyzeTask, uint, []string, error) {
+	var (
+		filteredTasks       []*analyzeTask
+		skippedTables       []string
+		needAnalyzeTableCnt uint
+		// tidMap is used to deduplicate table IDs.
+		// In stats v1, analyze for each index is a single task, and they have the same table id.
+		tidAndPidsMap = make(map[int64]struct{}, len(tasks))
+	)
+
+	lockedTableAndPartitionIDs, err := getLockedTableAndPartitionIDs(statsHandle, tasks)
+	if err != nil {
+		return nil, 0, nil, err
+>>>>>>> 4f00ece106b (executor: fix hang for analyze table when exceed tidb_mem_quota_analyze (#48264)):pkg/executor/analyze.go
 	}
 	return statsHandle.Update(e.ctx.GetInfoSchema().(infoschema.InfoSchema), handle.WithTableStatsByQuery())
 }
@@ -406,6 +475,7 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 		StartAnalyzeJob(e.ctx, task.job)
 		switch task.taskType {
 		case colTask:
+<<<<<<< HEAD:executor/analyze.go
 			resultsCh <- analyzeColumnsPushDownEntry(task.colExec)
 		case idxTask:
 			resultsCh <- analyzeIndexPushdown(task.idxExec)
@@ -415,6 +485,19 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 			resultsCh <- analyzePKIncremental(task.colIncrementalExec)
 		case idxIncrementalTask:
 			resultsCh <- analyzeIndexIncremental(task.idxIncrementalExec)
+=======
+			select {
+			case <-e.errExitCh:
+				return
+			case resultsCh <- analyzeColumnsPushDownEntry(e.gp, task.colExec):
+			}
+		case idxTask:
+			select {
+			case <-e.errExitCh:
+				return
+			case resultsCh <- analyzeIndexPushdown(task.idxExec):
+			}
+>>>>>>> 4f00ece106b (executor: fix hang for analyze table when exceed tidb_mem_quota_analyze (#48264)):pkg/executor/analyze.go
 		}
 	}
 }
@@ -569,15 +652,33 @@ func finishJobWithLog(sctx sessionctx.Context, job *statistics.AnalyzeJob, analy
 		var state string
 		if analyzeErr != nil {
 			state = statistics.AnalyzeFailed
+			logutil.BgLogger().Warn(fmt.Sprintf("analyze table `%s`.`%s` has %s", job.DBName, job.TableName, state),
+				zap.String("partition", job.PartitionName),
+				zap.String("job info", job.JobInfo),
+				zap.Time("start time", job.StartTime),
+				zap.Time("end time", job.EndTime),
+				zap.String("cost", job.EndTime.Sub(job.StartTime).String()),
+				zap.String("sample rate reason", job.SampleRateReason),
+				zap.Error(analyzeErr))
 		} else {
 			state = statistics.AnalyzeFinished
+			logutil.BgLogger().Info(fmt.Sprintf("analyze table `%s`.`%s` has %s", job.DBName, job.TableName, state),
+				zap.String("partition", job.PartitionName),
+				zap.String("job info", job.JobInfo),
+				zap.Time("start time", job.StartTime),
+				zap.Time("end time", job.EndTime),
+				zap.String("cost", job.EndTime.Sub(job.StartTime).String()),
+				zap.String("sample rate reason", job.SampleRateReason))
 		}
+<<<<<<< HEAD:executor/analyze.go
 		logutil.BgLogger().Info(fmt.Sprintf("analyze table `%s`.`%s` has %s", job.DBName, job.TableName, state),
 			zap.String("partition", job.PartitionName),
 			zap.String("job info", job.JobInfo),
 			zap.Time("start time", job.StartTime),
 			zap.Time("end time", job.EndTime),
 			zap.String("cost", job.EndTime.Sub(job.StartTime).String()))
+=======
+>>>>>>> 4f00ece106b (executor: fix hang for analyze table when exceed tidb_mem_quota_analyze (#48264)):pkg/executor/analyze.go
 	}
 }
 
