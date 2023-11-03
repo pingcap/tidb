@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Copyright 2023 PingCAP, Inc.
+# Copyright 2021 PingCAP, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,19 +16,26 @@
 
 set -eux
 
-CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-
 check_cluster_version 5 2 0 'duplicate detection' || exit 0
 
-run_lightning -d "$CUR/data1"
-run_sql 'admin check table test.t'
-run_sql 'select count(*) from test.t'
-check_contains 'count(*): 3'
-run_sql 'select count(*) from lightning_task_info.conflict_error_v2'
-check_contains 'count(*): 2'
+run_lightning
 
-run_sql 'truncate table test.t'
-run_lightning -d "$CUR/data2"
-run_sql 'admin check table test.t'
-run_sql 'select count(*) from test.t'
-check_contains 'count(*): 5'
+# Ensure all tables are consistent.
+run_sql 'admin check table dup_resolve.a'
+
+run_sql 'select count(*) from dup_resolve.a'
+check_contains 'count(*): 4'
+
+run_sql 'select * from dup_resolve.a'
+check_contains 'a: 1'
+check_contains 'b: 6'
+check_contains 'c: 1.csv'
+check_contains 'a: 2'
+check_contains 'b: 6'
+check_contains 'c: 2.csv'
+check_contains 'a: 3'
+check_contains 'b: 3'
+check_contains 'c: 3.csv'
+check_contains 'a: 5'
+check_contains 'b: 4'
+check_contains 'c: 5.csv'

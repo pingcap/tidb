@@ -18,6 +18,7 @@ go_library(
         "//pkg/table",
         "//pkg/table/tables",
         "//pkg/tablecodec",
+        "//pkg/types",
         "@com_github_jedib0t_go_pretty_v6//table",
         "@com_github_jedib0t_go_pretty_v6//text",
         "@com_github_pingcap_errors//:errors",
