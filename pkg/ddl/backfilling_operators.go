@@ -203,7 +203,11 @@ func NewWriteIndexToExternalStoragePipeline(
 	if err != nil {
 		return nil, err
 	}
-	memSize := (memTotal / 2) / uint64(writerCnt) / uint64(len(indexes))
+	memUsed, err := memory.MemUsed()
+	if err != nil {
+		return nil, err
+	}
+	memSize := ((memTotal - memUsed) / 2) / uint64(writerCnt) / uint64(len(indexes))
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
