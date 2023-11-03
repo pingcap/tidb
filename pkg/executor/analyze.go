@@ -145,18 +145,25 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 			}
 		}
 	}()
-	// first wait for task handle finished. if task handle finished with error. we should cancel all other task.
-	err = g.Wait()
-	if err != nil {
-		close(e.errExitCh)
+	checkwg, _ := errgroup.WithContext(ctx)
+	checkwg.Go(func() error {
+		err = g.Wait()
+		if err != nil {
+			close(e.errExitCh)
+			return err
+		}
+		return nil
+	})
+	checkwg.Go(func() error {
 		// Wait all workers done and close the results channel.
 		e.wg.Wait()
 		close(resultsCh)
+		return nil
+	})
+	err = checkwg.Wait()
+	if err != nil {
 		return err
 	}
-	// Wait all workers done and close the results channel.
-	e.wg.Wait()
-	close(resultsCh)
 
 	failpoint.Inject("mockKillFinishedAnalyzeJob", func() {
 		dom := domain.GetDomain(e.Ctx())
@@ -507,15 +514,13 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 			select {
 			case <-e.errExitCh:
 				return
-			default:
-				resultsCh <- analyzeColumnsPushDownEntry(e.gp, task.colExec)
+			case resultsCh <- analyzeColumnsPushDownEntry(e.gp, task.colExec):
 			}
 		case idxTask:
 			select {
 			case <-e.errExitCh:
 				return
-			default:
-				resultsCh <- analyzeIndexPushdown(task.idxExec)
+			case resultsCh <- analyzeIndexPushdown(task.idxExec):
 			}
 		}
 	}
