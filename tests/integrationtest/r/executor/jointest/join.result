@@ -853,6 +853,31 @@ select * from (t1 natural join t2) right outer join (t3 natural join t4) using (
 c	b	y	a
 3	1	11	2
 3	1	2	2
+drop table if exists t, t1, t2, t3;
+create table t(a int, b enum('A', 'B'));
+create table t1(a1 int, b1 enum('B', 'A') NOT NULL, UNIQUE KEY (b1));
+insert into t values (1, 'A');
+insert into t1 values (1, 'A');
+select /*+ INL_HASH_JOIN(t1) */ * from t join t1 on t.b = t1.b1;
+a	b	a1	b1
+1	A	1	A
+select /*+ INL_JOIN(t1) */ * from t join t1 on t.b = t1.b1;
+a	b	a1	b1
+1	A	1	A
+create table t2(a1 int, b1 enum('C', 'D') NOT NULL, UNIQUE KEY (b1));
+insert into t2 values (1, 'C');
+select /*+ INL_HASH_JOIN(t2) */ * from t join t2 on t.b = t2.b1;
+a	b	a1	b1
+select /*+ INL_JOIN(t2) */ * from t join t2 on t.b = t2.b1;
+a	b	a1	b1
+create table t3(a1 int, b1 enum('A', 'B') NOT NULL, UNIQUE KEY (b1));
+insert into t3 values (1, 'A');
+select /*+ INL_HASH_JOIN(t3) */ * from t join t3 on t.b = t3.b1;
+a	b	a1	b1
+1	A	1	A
+select /*+ INL_JOIN(t3) */ * from t join t3 on t.b = t3.b1;
+a	b	a1	b1
+1	A	1	A
 drop table if exists t;
 drop table if exists t1;
 create table t(c1 int);
@@ -1536,19 +1561,3 @@ set sql_mode=default;
 set @@tidb_hash_join_concurrency=default;
 set @@tidb_hashagg_partial_concurrency=default;
 set @@tidb_hashagg_final_concurrency=default;
-drop table if exists t;
-create table t(a int);
-insert into t values(1);
-set tidb_mem_quota_query = 1 << 16;
-set global tidb_mem_oom_action = 'CANCEL';
-set global tidb_enable_tmp_storage_on_oom = off;
-insert into t select * from t;
-insert into t select * from t;
-insert into t select * from t;
-insert into t select * from t;
-insert into t select * from t;
-insert into t select * from t;
-insert into t select * from t;
-insert into t select * from t;
-desc analyze select * from t t1, t t2, t t3, t t4, t t5, t t6;
-Error 8175 (HY000): Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=2097156]

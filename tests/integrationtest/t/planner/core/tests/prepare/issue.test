@@ -199,6 +199,8 @@ execute stmt using @a, @b, @c, @d, @e;
 select @@last_plan_from_cache;
 execute stmt using @f, @b, @c, @d, @e;
 select @@last_plan_from_cache;
+set tidb_enable_prepared_plan_cache=DEFAULT;
+set @@tidb_enable_collect_execution_info=DEFAULT;
 
 # TestIssue29805
 set tidb_enable_prepared_plan_cache=1;
