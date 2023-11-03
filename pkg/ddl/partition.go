@@ -3593,10 +3593,9 @@ func buildCheckSQLConditionForRangeColumnsPartition(pi *model.PartitionInfo, ind
 	} else if index == len(pi.Definitions)-1 && strings.EqualFold(pi.Definitions[index].LessThan[0], partitionMaxValue) {
 		paramList = append(paramList, colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index-1].LessThan[0]))
 		return "%n < %?", paramList
-	} else {
-		paramList = append(paramList, colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index-1].LessThan[0]), colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index].LessThan[0]))
-		return "%n < %? or %n >= %?", paramList
 	}
+	paramList = append(paramList, colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index-1].LessThan[0]), colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index].LessThan[0]))
+	return "%n < %? or %n >= %?", paramList
 }
 
 func buildCheckSQLConditionForListPartition(pi *model.PartitionInfo, index int) string {
