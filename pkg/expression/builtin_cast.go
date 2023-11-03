@@ -757,7 +757,7 @@ func (b *builtinCastIntAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNul
 	}
 
 	if b.args[0].GetType().GetType() == mysql.TypeYear {
-		res, err = types.ParseTimeFromYear(b.ctx.GetSessionVars().StmtCtx, val)
+		res, err = types.ParseTimeFromYear(val)
 	} else {
 		res, err = types.ParseTimeFromNum(b.ctx.GetSessionVars().StmtCtx.TypeCtx(), val, b.tp.GetType(), b.tp.GetDecimal())
 	}

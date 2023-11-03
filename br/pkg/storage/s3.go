@@ -1046,6 +1046,7 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 		s3Writer.wg.Add(1)
 		go func() {
 			_, err := up.UploadWithContext(ctx, upParams)
+			// like a channel we only let sender close the pipe in happy path
 			if err != nil {
 				log.Warn("upload to s3 failed", zap.String("filename", name), zap.Error(err))
 				_ = rd.CloseWithError(err)
