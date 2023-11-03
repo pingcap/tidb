@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/tiancaiamao/gp"
 	"go.uber.org/zap"
 )
 
@@ -171,4 +172,28 @@ func (w *WaitGroupWrapper) RunWithRecover(exec func(), recoverFn func(r interfac
 		}()
 		exec()
 	}()
+}
+
+// WaitGroupPool is a wrapper for sync.WaitGroup and support goroutine pool
+type WaitGroupPool struct {
+	sync.WaitGroup
+	gp *gp.Pool
+}
+
+// NewWaitGroupPool returns WaitGroupPool
+func NewWaitGroupPool(gp *gp.Pool) *WaitGroupPool {
+	var wg WaitGroupPool
+	wg.gp = gp
+	return &wg
+}
+
+// Run runs a function in a goroutine, adds 1 to WaitGroup
+// and calls done when function returns. Please DO NOT use panic
+// in the cb function.
+func (w *WaitGroupPool) Run(exec func()) {
+	w.Add(1)
+	w.gp.Go(func() {
+		defer w.Done()
+		exec()
+	})
 }

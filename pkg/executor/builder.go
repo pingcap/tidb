@@ -2895,11 +2895,14 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(
 }
 
 func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
+	gp := domain.GetDomain(b.ctx).StatsHandle().GPool()
 	e := &AnalyzeExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		tasks:        make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),
 		opts:         v.Opts,
 		OptionsMap:   v.OptionsMap,
+		wg:           util.NewWaitGroupPool(gp),
+		gp:           gp,
 	}
 	autoAnalyze := ""
 	if b.ctx.GetSessionVars().InRestrictedSQL {
