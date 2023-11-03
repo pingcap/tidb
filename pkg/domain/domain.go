@@ -1248,7 +1248,7 @@ func (do *Domain) Init(
 		// The reload(in step 2) operation takes more than ddlLease and a new reload operation was not performed,
 		// the next query will respond by ErrInfoSchemaExpired error. So we do a new reload to update schemaValidator.latestSchemaExpire.
 		if sub > (ddlLease / 2) {
-			logutil.BgLogger().Warn("loading schema takes a long time, we do a new reload", zap.Duration("take time", sub))
+			logutil.BgLogger().Warn("loading schema and starting ddl take a long time, we do a new reload", zap.Duration("take time", sub))
 			err = do.Reload()
 			if err != nil {
 				return err
