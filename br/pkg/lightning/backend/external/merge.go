@@ -152,7 +152,7 @@ func MergeOverlappingFilesV2(
 	defer iter.Close()
 
 	writer := NewWriterBuilder().
-		SetMemorySizeLimit(memSizeLimit).
+		SetMemorySizeLimit(memSizeLimit/2).
 		SetBlockSize(blockSize).
 		SetWriterBatchCount(writeBatchCount).
 		SetPropKeysDistance(propKeysDist).
