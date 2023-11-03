@@ -94,11 +94,12 @@ func NewHelper(store Storage) *Helper {
 	}
 }
 
+// MaxBackoffTimeoutForMvccGet is a derived value from previous implementation possible experiencing value 5000ms.
+const MaxBackoffTimeoutForMvccGet = 5000
+
 // GetMvccByEncodedKeyWithTS get the MVCC value by the specific encoded key, if lock is encountered it would be resolved.
 func (h *Helper) GetMvccByEncodedKeyWithTS(encodedKey kv.Key, startTS uint64) (*kvrpcpb.MvccGetByKeyResponse, error) {
-	// A derived value from previous implementation possible experiencing value 5000ms.
-	MaxBackoffTimeout := 5000
-	bo := tikv.NewBackofferWithVars(context.Background(), MaxBackoffTimeout, nil)
+	bo := tikv.NewBackofferWithVars(context.Background(), MaxBackoffTimeoutForMvccGet, nil)
 	tikvReq := tikvrpc.NewRequest(tikvrpc.CmdMvccGetByKey, &kvrpcpb.MvccGetByKeyRequest{Key: encodedKey})
 	for {
 		keyLocation, err := h.RegionCache.LocateKey(bo, encodedKey)
