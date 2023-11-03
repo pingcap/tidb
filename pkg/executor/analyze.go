@@ -174,6 +174,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 func (e *AnalyzeExec) waitFinish(ctx context.Context, g *errgroup.Group, resultsCh chan *statistics.AnalyzeResults) error {
 	checkwg, _ := errgroup.WithContext(ctx)
 	checkwg.Go(func() error {
+		// It is to wait for the completion of the result handler. if the result handler meets error, we should cancel
+		// the analyze process by closing the errExitCh.
 		err := g.Wait()
 		if err != nil {
 			close(e.errExitCh)
@@ -713,7 +715,7 @@ func finishJobWithLog(sctx sessionctx.Context, job *statistics.AnalyzeJob, analy
 		var state string
 		if analyzeErr != nil {
 			state = statistics.AnalyzeFailed
-			logutil.BgLogger().Info(fmt.Sprintf("analyze table `%s`.`%s` has %s", job.DBName, job.TableName, state),
+			logutil.BgLogger().Warn(fmt.Sprintf("analyze table `%s`.`%s` has %s", job.DBName, job.TableName, state),
 				zap.String("partition", job.PartitionName),
 				zap.String("job info", job.JobInfo),
 				zap.Time("start time", job.StartTime),
