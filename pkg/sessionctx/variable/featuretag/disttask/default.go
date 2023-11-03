@@ -19,3 +19,4 @@ package disttask
 // TiDBEnableDistTask is a feature tag
 const TiDBEnableDistTask bool = false
 const TiDBDDLForceMergeSort = false
+const TiDBDDLMergeSortV2 = false

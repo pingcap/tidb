@@ -5,6 +5,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
@@ -39,6 +40,23 @@ func MergeOverlappingFiles(ctx context.Context, paths []string, store storage.Ex
 	for _, files := range dataFilesSlice {
 		files := files
 		eg.Go(func() error {
+			if variable.DDLMergeSortV2.Load() {
+				return MergeOverlappingFilesV2(
+					ctx,
+					files,
+					store,
+					readBufferSize,
+					newFilePrefix,
+					uuid.New().String(),
+					memSize,
+					blockSize,
+					writeBatchCount,
+					propSizeDist,
+					propKeysDist,
+					onClose,
+					checkHotspot,
+				)
+			}
 			return mergeOverlappingFilesImpl(
 				ctx,
 				files,

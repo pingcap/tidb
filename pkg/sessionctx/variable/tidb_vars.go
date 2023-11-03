@@ -979,6 +979,8 @@ const (
 	TiDBEnableDistTask = "tidb_enable_dist_task"
 
 	TiDBDDLForceMergeSort = "tidb_ddl_force_merge_sort"
+
+	TiDBDDLMergeSortV2 = "tidb_ddl_merge_sort_v2"
 	// TiDBGenerateBinaryPlan indicates whether binary plan should be generated in slow log and statements summary.
 	TiDBGenerateBinaryPlan = "tidb_generate_binary_plan"
 	// TiDBEnableGCAwareMemoryTrack indicates whether to turn-on GC-aware memory track.
@@ -1328,6 +1330,7 @@ const (
 	DefTiDBPrepPlanCacheMemoryGuardRatio           = 0.1
 	DefTiDBEnableDistTask                          = disttask.TiDBEnableDistTask
 	DefTiDBDDLForceMergeSort                       = true
+	DefTiDBDDLMergeSortV2                          = true
 	DefTiDBSimplifiedMetrics                       = false
 	DefTiDBEnablePaging                            = true
 	DefTiFlashFineGrainedShuffleStreamCount        = 0
@@ -1475,6 +1478,7 @@ var (
 	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
 	EnableDistTask                    = atomic.NewBool(DefTiDBEnableDistTask)
 	DDLForceMergeSort                 = atomic.NewBool(DefTiDBDDLForceMergeSort)
+	DDLMergeSortV2                    = atomic.NewBool(DefTiDBDDLMergeSortV2)
 	DDLForce2Queue                    = atomic.NewBool(false)
 	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
 	EnableMDL                         = atomic.NewBool(false)
