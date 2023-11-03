@@ -233,6 +233,8 @@ prepare s from 'select * from privilege__privileges.t';
 execute s;
 a
 1
+drop user if exists tcd1, tcd2, tcd3, usr1;
+drop resource group if exists rg1;
 CREATE USER tcd1, tcd2;
 GRANT ALL ON *.* to tcd2 WITH GRANT OPTION;
 CREATE USER acdc;
@@ -585,3 +587,4 @@ GRANT SELECT ON `test`.* TO 'joe'@'%'
 GRANT UPDATE ON `role`.* TO 'joe'@'%'
 GRANT SELECT,DELETE ON `mysql`.`user` TO 'joe'@'%'
 GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'
+set global tidb_enable_resource_control = default;

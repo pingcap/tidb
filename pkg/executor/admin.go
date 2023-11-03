@@ -447,7 +447,7 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 			if cnt < len(e.idxKeyBufs) {
 				buf = e.idxKeyBufs[cnt]
 			}
-			key, _, distinct, err := iter.Next(buf)
+			key, _, distinct, err := iter.Next(buf, nil)
 			if err != nil {
 				return err
 			}

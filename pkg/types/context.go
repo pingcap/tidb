@@ -17,8 +17,6 @@ package types
 import (
 	"time"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
@@ -260,37 +258,4 @@ func (c *Context) AppendWarning(err error) {
 // AppendWarningFunc returns the inner `appendWarningFn`
 func (c *Context) AppendWarningFunc() func(err error) {
 	return c.appendWarningFn
-}
-
-// HandleTruncate ignores or returns the error based on the Context state.
-func (c *Context) HandleTruncate(err error) error {
-	// TODO: At present we have not checked whether the error can be ignored or treated as warning.
-	// We will do that later, and then append WarnDataTruncated instead of the error itself.
-	if err == nil {
-		return nil
-	}
-
-	err = errors.Cause(err)
-	if e, ok := err.(*errors.Error); !ok ||
-		(e.Code() != errno.ErrTruncatedWrongValue &&
-			e.Code() != errno.ErrDataTooLong &&
-			e.Code() != errno.ErrTruncatedWrongValueForField &&
-			e.Code() != errno.ErrWarnDataOutOfRange &&
-			e.Code() != errno.ErrDataOutOfRange &&
-			e.Code() != errno.ErrBadNumber &&
-			e.Code() != errno.ErrWrongValueForType &&
-			e.Code() != errno.ErrDatetimeFunctionOverflow &&
-			e.Code() != errno.WarnDataTruncated &&
-			e.Code() != errno.ErrIncorrectDatetimeValue) {
-		return err
-	}
-
-	if c.Flags().IgnoreTruncateErr() {
-		return nil
-	}
-	if c.Flags().TruncateAsWarning() {
-		c.AppendWarning(err)
-		return nil
-	}
-	return err
 }

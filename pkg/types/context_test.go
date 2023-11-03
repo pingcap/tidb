@@ -16,6 +16,7 @@ package types
 
 import (
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -104,4 +105,27 @@ func TestSimpleOnOffFlags(t *testing.T) {
 		require.Equal(t, ^c.flag, f, msg)
 		require.False(t, c.readFn(f), msg)
 	}
+}
+
+type warnStore struct {
+	sync.Mutex
+	warnings []error
+}
+
+func (w *warnStore) AppendWarning(warn error) {
+	w.Lock()
+	defer w.Unlock()
+
+	w.warnings = append(w.warnings, warn)
+}
+
+func (w *warnStore) Reset() {
+	w.Lock()
+	defer w.Unlock()
+
+	w.warnings = nil
+}
+
+func (w *warnStore) GetWarnings() []error {
+	return w.warnings
 }

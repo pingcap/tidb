@@ -1760,16 +1760,20 @@ func checkColumnAttributes(colName string, tp *types.FieldType) error {
 	return nil
 }
 
-func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign bool) error {
+func checkDuplicateConstraint(namesMap map[string]bool, name string, constraintType ast.ConstraintType) error {
 	if name == "" {
 		return nil
 	}
 	nameLower := strings.ToLower(name)
 	if namesMap[nameLower] {
-		if foreign {
+		switch constraintType {
+		case ast.ConstraintForeignKey:
 			return dbterror.ErrFkDupName.GenWithStackByArgs(name)
+		case ast.ConstraintCheck:
+			return dbterror.ErrCheckConstraintDupName.GenWithStackByArgs(name)
+		default:
+			return dbterror.ErrDupKeyName.GenWithStackByArgs(name)
 		}
-		return dbterror.ErrDupKeyName.GenWithStack("duplicate key name %s", name)
 	}
 	namesMap[nameLower] = true
 	return nil
@@ -1829,12 +1833,12 @@ func checkConstraintNames(tableName model.CIStr, constraints []*ast.Constraint) 
 	// Check not empty constraint name whether is duplicated.
 	for _, constr := range constraints {
 		if constr.Tp == ast.ConstraintForeignKey {
-			err := checkDuplicateConstraint(fkNames, constr.Name, true)
+			err := checkDuplicateConstraint(fkNames, constr.Name, constr.Tp)
 			if err != nil {
 				return errors.Trace(err)
 			}
 		} else {
-			err := checkDuplicateConstraint(constrNames, constr.Name, false)
+			err := checkDuplicateConstraint(constrNames, constr.Name, constr.Tp)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -7248,11 +7252,11 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil {
 		if indexInfo.State != model.StatePublic {
 			// NOTE: explicit error message. See issue #18363.
-			err = dbterror.ErrDupKeyName.GenWithStack("index already exist %s; "+
+			err = dbterror.ErrDupKeyName.GenWithStack("Duplicate key name '%s'; "+
 				"a background job is trying to add the same index, "+
 				"please check by `ADMIN SHOW DDL JOBS`", indexName)
 		} else {
-			err = dbterror.ErrDupKeyName.GenWithStack("index already exist %s", indexName)
+			err = dbterror.ErrDupKeyName.GenWithStackByArgs(indexName)
 		}
 		if ifNotExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)

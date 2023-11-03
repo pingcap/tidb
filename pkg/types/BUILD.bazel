@@ -36,6 +36,7 @@ go_library(
         "overflow.go",
         "set.go",
         "time.go",
+        "truncate.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/types",
     visibility = [

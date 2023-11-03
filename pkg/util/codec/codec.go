@@ -51,6 +51,9 @@ const (
 	maxFlag          byte = 250
 )
 
+// IntHandleFlag is only used to encode int handle key.
+const IntHandleFlag = intFlag
+
 const (
 	sizeUint64  = unsafe.Sizeof(uint64(0))
 	sizeFloat64 = unsafe.Sizeof(float64(0))
