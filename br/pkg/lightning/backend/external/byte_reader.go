@@ -196,20 +196,18 @@ func (r *byteReader) switchToConcurrentReader() error {
 // The returned slice (pointer) can not be used after r.reset. In the same interval of r.reset,
 // byteReader guarantees that the returned slice (pointer) will point to the same content
 // though the slice may be changed.
-func (r *byteReader) readNBytes(n int) (*[]byte, error) {
+func (r *byteReader) readNBytes(n int) ([]byte, error) {
 	b := r.next(n)
 	readLen := len(b)
 	if readLen == n {
-		ret := &b
-		r.retPointers = append(r.retPointers, ret)
-		return ret, nil
+		return b, nil
 	}
 	// If the reader has fewer than n bytes remaining in current buffer,
 	// `auxBuf` is used as a container instead.
 	auxBuf := make([]byte, n)
 	copy(auxBuf, b)
 	for readLen < n {
-		r.cloneSlices()
+		//r.cloneSlices()
 		err := r.reload()
 		switch err {
 		case nil:
@@ -225,7 +223,7 @@ func (r *byteReader) readNBytes(n int) (*[]byte, error) {
 		copy(auxBuf[readLen:], b)
 		readLen += len(b)
 	}
-	return &auxBuf, nil
+	return auxBuf, nil
 }
 
 func (r *byteReader) reset() {

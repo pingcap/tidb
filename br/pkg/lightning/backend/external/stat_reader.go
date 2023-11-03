@@ -45,12 +45,12 @@ func (r *statsReader) nextProp() (*rangeProperty, error) {
 	if err != nil {
 		return nil, err
 	}
-	propLen := int(binary.BigEndian.Uint32(*lenBytes))
+	propLen := int(binary.BigEndian.Uint32(lenBytes))
 	propBytes, err := r.byteReader.readNBytes(propLen)
 	if err != nil {
 		return nil, noEOF(err)
 	}
-	return decodeProp(*propBytes), nil
+	return decodeProp(propBytes), nil
 }
 
 func (r *statsReader) Close() error {

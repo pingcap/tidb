@@ -98,7 +98,7 @@ func testByteReaderNormal(t *testing.T, useConcurrency bool) {
 	require.NoError(t, err)
 	y, err := br.readNBytes(2)
 	require.NoError(t, err)
-	x = *y
+	x = y
 	require.Equal(t, 2, len(x))
 	require.Equal(t, byte('a'), x[0])
 	require.Equal(t, byte('b'), x[1])
@@ -108,7 +108,7 @@ func testByteReaderNormal(t *testing.T, useConcurrency bool) {
 	require.NoError(t, err)
 	y, err = br.readNBytes(5) // Read all the data.
 	require.NoError(t, err)
-	x = *y
+	x = y
 	require.Equal(t, 5, len(x))
 	require.Equal(t, byte('e'), x[4])
 	require.NoError(t, br.Close())
@@ -128,7 +128,7 @@ func testByteReaderNormal(t *testing.T, useConcurrency bool) {
 	require.NoError(t, err)
 	// Pollute mockExtStore to verify if the slice is not affected.
 	copy(ms.src, []byte("xyz"))
-	x = *y
+	x = y
 	require.Equal(t, 3, len(x))
 	require.Equal(t, byte('c'), x[2])
 	require.NoError(t, br.Close())
@@ -140,7 +140,7 @@ func testByteReaderNormal(t *testing.T, useConcurrency bool) {
 	require.NoError(t, err)
 	// Pollute mockExtStore to verify if the slice is not affected.
 	copy(ms.src, []byte("xyz"))
-	x = *y
+	x = y
 	require.Equal(t, 2, len(x))
 	require.Equal(t, byte('b'), x[1])
 	br.reset()
@@ -155,13 +155,13 @@ func TestByteReaderClone(t *testing.T) {
 	require.NoError(t, err)
 	y2, err := br.readNBytes(1)
 	require.NoError(t, err)
-	x1, x2 := *y1, *y2
+	x1, x2 := y1, y2
 	require.Len(t, x1, 2)
 	require.Len(t, x2, 1)
 	require.Equal(t, byte('0'), x1[0])
 	require.Equal(t, byte('2'), x2[0])
 	require.NoError(t, br.reload()) // Perform a read to overwrite buffer.
-	x1, x2 = *y1, *y2
+	x1, x2 = y1, y2
 	require.Len(t, x1, 2)
 	require.Len(t, x2, 1)
 	require.Equal(t, byte('4'), x1[0]) // Verify if the buffer is overwritten.
@@ -175,14 +175,14 @@ func TestByteReaderClone(t *testing.T) {
 	require.NoError(t, err)
 	y2, err = br.readNBytes(1)
 	require.NoError(t, err)
-	x1, x2 = *y1, *y2
+	x1, x2 = y1, y2
 	require.Len(t, x1, 2)
 	require.Len(t, x2, 1)
 	require.Equal(t, byte('0'), x1[0])
 	require.Equal(t, byte('2'), x2[0])
 	br.cloneSlices()
 	require.NoError(t, br.reload()) // Perform a read to overwrite buffer.
-	x1, x2 = *y1, *y2
+	x1, x2 = y1, y2
 	require.Len(t, x1, 2)
 	require.Len(t, x2, 1)
 	require.Equal(t, byte('0'), x1[0]) // Verify if the buffer is NOT overwritten.
@@ -198,17 +198,17 @@ func TestByteReaderAuxBuf(t *testing.T) {
 	require.NoError(t, err)
 	y2, err := br.readNBytes(2)
 	require.NoError(t, err)
-	require.Equal(t, []byte("0"), *y1)
-	require.Equal(t, []byte("12"), *y2)
+	require.Equal(t, []byte("0"), y1)
+	require.Equal(t, []byte("12"), y2)
 
 	y3, err := br.readNBytes(1)
 	require.NoError(t, err)
 	y4, err := br.readNBytes(2)
 	require.NoError(t, err)
-	require.Equal(t, []byte("3"), *y3)
-	require.Equal(t, []byte("45"), *y4)
-	require.Equal(t, []byte("0"), *y1)
-	require.Equal(t, []byte("12"), *y2)
+	require.Equal(t, []byte("3"), y3)
+	require.Equal(t, []byte("45"), y4)
+	require.Equal(t, []byte("0"), y1)
+	require.Equal(t, []byte("12"), y2)
 }
 
 func TestReset(t *testing.T) {
@@ -242,7 +242,7 @@ func testReset(t *testing.T, useConcurrency bool) {
 	br, err := newByteReader(context.Background(), newRsc(), bufSize)
 	require.NoError(t, err)
 	end := 0
-	toCheck := make([]*[]byte, 0, 10)
+	toCheck := make([][]byte, 0, 10)
 	for end < len(src) {
 		n := rand.Intn(len(src) - end)
 		if n == 0 {
@@ -256,8 +256,8 @@ func testReset(t *testing.T, useConcurrency bool) {
 		l := end
 		r := end
 		for i := len(toCheck) - 1; i >= 0; i-- {
-			l -= len(*toCheck[i])
-			require.Equal(t, src[l:r], *toCheck[i])
+			l -= len(toCheck[i])
+			require.Equal(t, src[l:r], toCheck[i])
 			r = l
 		}
 
@@ -366,7 +366,7 @@ func TestSwitchMode(t *testing.T) {
 			break
 		}
 		require.NoError(t, err)
-		totalCnt += len(*y)
+		totalCnt += len(y)
 	}
 	require.Equal(t, fileSize, totalCnt)
 

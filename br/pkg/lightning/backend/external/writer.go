@@ -311,8 +311,8 @@ func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tid
 		}
 	}
 	binary.BigEndian.AppendUint64(dataBuf[:0], uint64(encodedKeyLen))
-	keyAdapter.Encode(dataBuf[lengthBytes:lengthBytes:lengthBytes+encodedKeyLen], idxKey, rowID)
-	binary.BigEndian.AppendUint64(dataBuf[lengthBytes+encodedKeyLen:lengthBytes+encodedKeyLen], uint64(len(idxVal)))
+	binary.BigEndian.AppendUint64(dataBuf[lengthBytes:lengthBytes], uint64(len(idxVal)))
+	keyAdapter.Encode(dataBuf[lengthBytes*2:lengthBytes*2:lengthBytes*2+encodedKeyLen], idxKey, rowID)
 	copy(dataBuf[lengthBytes*2+encodedKeyLen:], idxVal)
 
 	w.kvLocations = append(w.kvLocations, kvLocation{
