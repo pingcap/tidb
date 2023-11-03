@@ -25,7 +25,12 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/util/memory"
+=======
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/tiancaiamao/gp"
+>>>>>>> 5a22d566a88 (executor: reuse goroutine in the analyze (#47637))
 	"go.uber.org/atomic"
 )
 
@@ -107,16 +112,17 @@ func (w *analyzeResultsNotifyWaitGroupWrapper) Run(exec func()) {
 // notifyErrorWaitGroupWrapper is a wrapper for sync.WaitGroup
 // Please add all goroutine count when to `Add` to avoid exiting in advance.
 type notifyErrorWaitGroupWrapper struct {
-	sync.WaitGroup
+	*util.WaitGroupPool
 	notify chan error
 	cnt    atomic.Uint64
 }
 
 // newNotifyErrorWaitGroupWrapper is to create notifyErrorWaitGroupWrapper
-func newNotifyErrorWaitGroupWrapper(notify chan error) *notifyErrorWaitGroupWrapper {
+func newNotifyErrorWaitGroupWrapper(gp *gp.Pool, notify chan error) *notifyErrorWaitGroupWrapper {
 	return &notifyErrorWaitGroupWrapper{
-		notify: notify,
-		cnt:    *atomic.NewUint64(0),
+		WaitGroupPool: util.NewWaitGroupPool(gp),
+		notify:        notify,
+		cnt:           *atomic.NewUint64(0),
 	}
 }
 

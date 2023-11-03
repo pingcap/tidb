@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tiancaiamao/gp"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -57,9 +58,10 @@ var _ exec.Executor = &AnalyzeExec{}
 type AnalyzeExec struct {
 	exec.BaseExecutor
 	tasks      []*analyzeTask
-	wg         util.WaitGroupWrapper
+	wg         *util.WaitGroupPool
 	opts       map[ast.AnalyzeOptionType]uint64
 	OptionsMap map[int64]core.V2AnalyzeOptions
+	gp         *gp.Pool
 }
 
 var (
@@ -419,7 +421,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 	globalStatsMap globalStatsMap, resultsCh <-chan *statistics.AnalyzeResults) error {
 	partitionStatsConcurrency := len(subSctxs)
 
-	var wg util.WaitGroupWrapper
+	wg := util.NewWaitGroupPool(e.gp)
 	saveResultsCh := make(chan *statistics.AnalyzeResults, partitionStatsConcurrency)
 	errCh := make(chan error, partitionStatsConcurrency)
 	for i := 0; i < partitionStatsConcurrency; i++ {
@@ -495,7 +497,7 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 		StartAnalyzeJob(e.Ctx(), task.job)
 		switch task.taskType {
 		case colTask:
-			resultsCh <- analyzeColumnsPushDownEntry(task.colExec)
+			resultsCh <- analyzeColumnsPushDownEntry(e.gp, task.colExec)
 		case idxTask:
 			resultsCh <- analyzeIndexPushdown(task.idxExec)
 		}
