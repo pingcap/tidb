@@ -488,7 +488,7 @@ func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column, opt *log
 func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp, parentLp LogicalPlan) error {
 	leftCols, rightCols := la.extractUsedCols(parentUsedCols)
 	allowEliminateApply := fixcontrol.GetBoolWithDefault(la.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix45822, false)
-	if allowEliminateApply && rightCols == nil {
+	if allowEliminateApply && rightCols == nil && la.JoinType == LeftOuterJoin {
 		applyEliminateTraceStep(la.Children()[1], opt)
 		parentLp.SetChildren(la.Children()[0])
 	}
