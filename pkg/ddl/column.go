@@ -627,7 +627,7 @@ func SetIdxColNameOffset(idxCol *model.IndexColumn, changingCol *model.ColumnInf
 	idxCol.Name = changingCol.Name
 	idxCol.Offset = changingCol.Offset
 	canPrefix := types.IsTypePrefixable(changingCol.GetType())
-	if !canPrefix || (changingCol.GetFlen() < idxCol.Length) {
+	if !canPrefix || (changingCol.GetFlen() <= idxCol.Length) {
 		idxCol.Length = types.UnspecifiedLength
 	}
 }
