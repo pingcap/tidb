@@ -788,13 +788,13 @@ def go_deps():
         name = "com_github_butuzov_ireturn",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/butuzov/ireturn",
-        sha256 = "221d5cba7dfaa5163a3362ad98ac0caa88a1d7d315b37e3b880e7bb6176830ad",
-        strip_prefix = "github.com/butuzov/ireturn@v0.2.1",
+        sha256 = "6f3b47a8245986f1c1bcb4ebf737c53e603974b653a2e42eb0677211b6468193",
+        strip_prefix = "github.com/butuzov/ireturn@v0.2.2",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/butuzov/ireturn/com_github_butuzov_ireturn-v0.2.1.zip",
-            "http://ats.apps.svc/gomod/github.com/butuzov/ireturn/com_github_butuzov_ireturn-v0.2.1.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/butuzov/ireturn/com_github_butuzov_ireturn-v0.2.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/butuzov/ireturn/com_github_butuzov_ireturn-v0.2.1.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/butuzov/ireturn/com_github_butuzov_ireturn-v0.2.2.zip",
+            "http://ats.apps.svc/gomod/github.com/butuzov/ireturn/com_github_butuzov_ireturn-v0.2.2.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/butuzov/ireturn/com_github_butuzov_ireturn-v0.2.2.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/butuzov/ireturn/com_github_butuzov_ireturn-v0.2.2.zip",
         ],
     )
     go_repository(
@@ -2846,13 +2846,13 @@ def go_deps():
         name = "com_github_golangci_golangci_lint",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/golangci/golangci-lint",
-        sha256 = "b152e98cd365164b1d8d1bf51a1cccfbed45fc17022cc1d58292daf5ac98e055",
-        strip_prefix = "github.com/golangci/golangci-lint@v1.55.1",
+        sha256 = "1a42d185d1de4cc7aa7732c4047f001e699104b20ebd799e80c0c8ee87b84874",
+        strip_prefix = "github.com/golangci/golangci-lint@v1.55.2",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/golangci/golangci-lint/com_github_golangci_golangci_lint-v1.55.1.zip",
-            "http://ats.apps.svc/gomod/github.com/golangci/golangci-lint/com_github_golangci_golangci_lint-v1.55.1.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/golangci/golangci-lint/com_github_golangci_golangci_lint-v1.55.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/golangci/golangci-lint/com_github_golangci_golangci_lint-v1.55.1.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/golangci/golangci-lint/com_github_golangci_golangci_lint-v1.55.2.zip",
+            "http://ats.apps.svc/gomod/github.com/golangci/golangci-lint/com_github_golangci_golangci_lint-v1.55.2.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/golangci/golangci-lint/com_github_golangci_golangci_lint-v1.55.2.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/golangci/golangci-lint/com_github_golangci_golangci_lint-v1.55.2.zip",
         ],
     )
     go_repository(
@@ -5494,13 +5494,13 @@ def go_deps():
         name = "com_github_nunnatsa_ginkgolinter",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/nunnatsa/ginkgolinter",
-        sha256 = "cf039bef472b0628dbb80330d60cf9546700c6c8934fa52ea7dd619e34eeef68",
-        strip_prefix = "github.com/nunnatsa/ginkgolinter@v0.14.0",
+        sha256 = "afb93d507b8abc9fa16888bc6fc289fab5724b822ccd9041d084f20f5ad5147a",
+        strip_prefix = "github.com/nunnatsa/ginkgolinter@v0.14.1",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/nunnatsa/ginkgolinter/com_github_nunnatsa_ginkgolinter-v0.14.0.zip",
-            "http://ats.apps.svc/gomod/github.com/nunnatsa/ginkgolinter/com_github_nunnatsa_ginkgolinter-v0.14.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/nunnatsa/ginkgolinter/com_github_nunnatsa_ginkgolinter-v0.14.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/nunnatsa/ginkgolinter/com_github_nunnatsa_ginkgolinter-v0.14.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/nunnatsa/ginkgolinter/com_github_nunnatsa_ginkgolinter-v0.14.1.zip",
+            "http://ats.apps.svc/gomod/github.com/nunnatsa/ginkgolinter/com_github_nunnatsa_ginkgolinter-v0.14.1.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/nunnatsa/ginkgolinter/com_github_nunnatsa_ginkgolinter-v0.14.1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/nunnatsa/ginkgolinter/com_github_nunnatsa_ginkgolinter-v0.14.1.zip",
         ],
     )
     go_repository(
@@ -6560,13 +6560,13 @@ def go_deps():
         name = "com_github_shirou_gopsutil_v3",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/shirou/gopsutil/v3",
-        sha256 = "c84e6dbee080227763e33e4e7f28276c5fe6df2b3a4f31c64375d0ce2848b29f",
-        strip_prefix = "github.com/shirou/gopsutil/v3@v3.23.9",
+        sha256 = "8e006d81f0b0ca5eefd72ddd07a68c74062ae0e11c287620d53a3e669179e84a",
+        strip_prefix = "github.com/shirou/gopsutil/v3@v3.23.10",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/shirou/gopsutil/v3/com_github_shirou_gopsutil_v3-v3.23.9.zip",
-            "http://ats.apps.svc/gomod/github.com/shirou/gopsutil/v3/com_github_shirou_gopsutil_v3-v3.23.9.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/shirou/gopsutil/v3/com_github_shirou_gopsutil_v3-v3.23.9.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/shirou/gopsutil/v3/com_github_shirou_gopsutil_v3-v3.23.9.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/shirou/gopsutil/v3/com_github_shirou_gopsutil_v3-v3.23.10.zip",
+            "http://ats.apps.svc/gomod/github.com/shirou/gopsutil/v3/com_github_shirou_gopsutil_v3-v3.23.10.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/shirou/gopsutil/v3/com_github_shirou_gopsutil_v3-v3.23.10.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/shirou/gopsutil/v3/com_github_shirou_gopsutil_v3-v3.23.10.zip",
         ],
     )
     go_repository(
