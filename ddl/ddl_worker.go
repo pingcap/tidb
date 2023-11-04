@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/txnkv/transaction"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -890,7 +891,9 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	writeBinlog(d.binlogCli, txn, job)
 	// reset the SQL digest to make topsql work right.
 	w.sess.GetSessionVars().StmtCtx.ResetSQLDigest(job.Query)
+	transaction.MockRandomSleepBeforeCommitSecondaryKeys = true
 	err = w.sess.commit()
+	transaction.MockRandomSleepBeforeCommitSecondaryKeys = false
 	d.unlockSchemaVersion(job.ID)
 	if err != nil {
 		return 0, err

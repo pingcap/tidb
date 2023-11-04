@@ -152,6 +152,11 @@ func (h *Helper) GetMvccByEncodedKeyWithTS(encodedKey kv.Key, startTS uint64) (*
 		// Try to resolve the lock and retry mvcc get again if the input startTS is a valid value.
 		if startTS > 0 && mvccResp.Info.GetLock() != nil {
 			lockInfo := mvccResp.Info.GetLock()
+			logutil.BgLogger().Info("get MVCC by encoded key encounter lock",
+				zap.Stringer("encodeKey", encodedKey),
+				zap.Reflect("region", keyLocation.Region),
+				zap.Stringer("keyLocation", keyLocation),
+				zap.Any("lock", lockInfo))
 			lock := &txnlock.Lock{
 				Key:             []byte(encodedKey),
 				Primary:         lockInfo.GetPrimary(),
