@@ -112,15 +112,13 @@ func (h *InfoCache) getSchemaByTimestampNoLock(ts uint64) (InfoSchema, bool) {
 		if is.timestamp == 0 || ts < uint64(is.timestamp) {
 			continue
 		}
-
-		if i > 0 {
-			if h.cache[i-1].infoschema.SchemaMetaVersion() == is.infoschema.SchemaMetaVersion()+1 && uint64(h.cache[i-1].timestamp) > ts {
-				return is.infoschema, true
-			}
-			break
-		} else {
+		if i == 0 {
 			return is.infoschema, true
 		}
+		if h.cache[i-1].infoschema.SchemaMetaVersion() == is.infoschema.SchemaMetaVersion()+1 && uint64(h.cache[i-1].timestamp) > ts {
+			return is.infoschema, true
+		}
+		break
 	}
 
 	logutil.BgLogger().Debug("SCHEMA CACHE no schema found")
