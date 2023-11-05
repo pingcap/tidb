@@ -60,12 +60,8 @@ type AnalyzeExec struct {
 	wg         util.WaitGroupWrapper
 	opts       map[ast.AnalyzeOptionType]uint64
 	OptionsMap map[int64]core.V2AnalyzeOptions
-<<<<<<< HEAD
-=======
-	gp         *gp.Pool
 	// errExitCh is used to notice the worker that the whole analyze task is finished when to meet error.
 	errExitCh chan struct{}
->>>>>>> 4f00ece106b (executor: fix hang for analyze table when exceed tidb_mem_quota_analyze (#48264))
 }
 
 var (
@@ -521,15 +517,11 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 		StartAnalyzeJob(e.Ctx(), task.job)
 		switch task.taskType {
 		case colTask:
-<<<<<<< HEAD
-			resultsCh <- analyzeColumnsPushDownEntry(task.colExec)
-=======
 			select {
 			case <-e.errExitCh:
 				return
-			case resultsCh <- analyzeColumnsPushDownEntry(e.gp, task.colExec):
+			case resultsCh <- analyzeColumnsPushDownEntry(task.colExec):
 			}
->>>>>>> 4f00ece106b (executor: fix hang for analyze table when exceed tidb_mem_quota_analyze (#48264))
 		case idxTask:
 			select {
 			case <-e.errExitCh:
