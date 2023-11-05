@@ -3007,6 +3007,11 @@ func CompareReal(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhs
 	if isNull0 || isNull1 {
 		return compareNull(isNull0, isNull1), true, nil
 	}
+
+	if lhsArg.GetType().GetType() == mysql.TypeFloat || rhsArg.GetType().GetType() == mysql.TypeFloat {
+		return int64(cmp.Compare(float32(arg0), float32(arg1))), false, nil
+	}
+
 	return int64(cmp.Compare(arg0, arg1)), false, nil
 }
 
