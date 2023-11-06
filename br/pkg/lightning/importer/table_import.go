@@ -324,13 +324,13 @@ func (tr *TableImporter) populateChunks(ctx context.Context, rc *Controller, cp 
 var _ autoid.Requirement = &TableImporter{}
 
 // Store implements the autoid.Requirement interface.
-func (r *TableImporter) Store() tidbkv.Storage {
-	return r.kvStore
+func (tr *TableImporter) Store() tidbkv.Storage {
+	return tr.kvStore
 }
 
 // GetEtcdClient implements the autoid.Requirement interface.
-func (r *TableImporter) GetEtcdClient() *clientv3.Client {
-	return r.etcdCli
+func (tr *TableImporter) GetEtcdClient() *clientv3.Client {
+	return tr.etcdCli
 }
 
 // RebaseChunkRowIDs rebase the row id of the chunks.
