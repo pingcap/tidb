@@ -43,7 +43,7 @@ type parallelHashAggSpillHelper struct {
 	lock             sync.Mutex
 	diskTracker      *disk.Tracker
 	isTrackerEnabled bool
-	spilledChunksIO  [][]*chunk.ListInDisk
+	spilledChunksIO  [][]*chunk.DataInDiskByRows
 	spillTriggered   int32
 	isSpilling       int32
 	isPartialStage   int32
@@ -96,7 +96,7 @@ func (p *parallelHashAggSpillHelper) getRestoredPartitionNum() int {
 	return tmp
 }
 
-func (p *parallelHashAggSpillHelper) addListInDisks(listInDisk []*chunk.ListInDisk) {
+func (p *parallelHashAggSpillHelper) addListInDisks(listInDisk []*chunk.DataInDiskByRows) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 	for i := 0; i < spilledPartitionNum; i++ {
@@ -104,11 +104,11 @@ func (p *parallelHashAggSpillHelper) addListInDisks(listInDisk []*chunk.ListInDi
 	}
 }
 
-func (p *parallelHashAggSpillHelper) getListInDisks(partitionNum int) []*chunk.ListInDisk {
+func (p *parallelHashAggSpillHelper) getListInDisks(partitionNum int) []*chunk.DataInDiskByRows {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 	if len(p.spilledChunksIO[partitionNum]) == 0 {
-		return make([]*chunk.ListInDisk, 0)
+		return make([]*chunk.DataInDiskByRows, 0)
 	}
 
 	return p.spilledChunksIO[partitionNum]

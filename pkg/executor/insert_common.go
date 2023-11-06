@@ -791,7 +791,7 @@ func setDatumAutoIDAndCast(ctx sessionctx.Context, d *types.Datum, id int64, col
 		// Auto ID is out of range.
 		sc := ctx.GetSessionVars().StmtCtx
 		insertPlan, ok := sc.GetPlan().(*core.Insert)
-		if ok && sc.TruncateAsWarning && len(insertPlan.OnDuplicate) > 0 {
+		if ok && sc.TypeFlags().TruncateAsWarning() && len(insertPlan.OnDuplicate) > 0 {
 			// Fix issue #38950: AUTO_INCREMENT is incompatible with mysql
 			// An auto id out of range error occurs in `insert ignore into ... on duplicate ...`.
 			// We should allow the SQL to be executed successfully.
@@ -1368,7 +1368,7 @@ func (e *InsertValues) equalDatumsAsBinary(a []types.Datum, b []types.Datum) (bo
 		return false, nil
 	}
 	for i, ai := range a {
-		v, err := ai.Compare(e.Ctx().GetSessionVars().StmtCtx, &b[i], collate.GetBinaryCollator())
+		v, err := ai.Compare(e.Ctx().GetSessionVars().StmtCtx.TypeCtx(), &b[i], collate.GetBinaryCollator())
 		if err != nil {
 			return false, errors.Trace(err)
 		}

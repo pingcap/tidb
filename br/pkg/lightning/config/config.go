@@ -39,7 +39,6 @@ import (
 	tidbcfg "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	router "github.com/pingcap/tidb/pkg/util/table-router"
 	"go.uber.org/atomic"
@@ -588,16 +587,16 @@ const (
 	// DupeResAlgNone doesn't detect duplicate.
 	DupeResAlgNone DuplicateResolutionAlgorithm = iota
 
-	// DupeResAlgRecord only records duplicate records to `lightning_task_info.conflict_error_v1` table on the target TiDB.
+	// DupeResAlgRecord only records duplicate records to `lightning_task_info.conflict_error_v2` table on the target TiDB.
 	DupeResAlgRecord
 
 	// DupeResAlgRemove records all duplicate records like the 'record' algorithm and remove all information related to the
-	// duplicated rows. Users need to analyze the lightning_task_info.conflict_error_v1 table to add back the correct rows.
+	// duplicated rows. Users need to analyze the lightning_task_info.conflict_error_v2 table to add back the correct rows.
 	DupeResAlgRemove
 
 	// DupeResAlgReplace records all duplicate records like the 'record' algorithm, and remove some rows with conflict
 	// and reserve other rows that can be kept and not cause conflict anymore. Users need to analyze the
-	// lightning_task_info.conflict_error_v1 table to check whether the reserved data cater to their need and check whether
+	// lightning_task_info.conflict_error_v2 table to check whether the reserved data cater to their need and check whether
 	// they need to add back the correct rows.
 	DupeResAlgReplace
 
@@ -1370,7 +1369,7 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 	if c.MaxRecordRows < 0 {
 		maxErr := l.MaxError
 		// Compatible with the old behavior that records all syntax,charset,type errors.
-		maxAccepted := mathutil.Max(maxErr.Syntax.Load(), maxErr.Charset.Load(), maxErr.Type.Load())
+		maxAccepted := max(maxErr.Syntax.Load(), maxErr.Charset.Load(), maxErr.Type.Load())
 		if maxAccepted < defaultMaxRecordRows {
 			maxAccepted = defaultMaxRecordRows
 		}

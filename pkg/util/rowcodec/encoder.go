@@ -37,6 +37,7 @@ type Encoder struct {
 }
 
 // Encode encodes a row from a datums slice.
+// `buf` is not truncated before encoding.
 func (encoder *Encoder) Encode(sc *stmtctx.StatementContext, colIDs []int64, values []types.Datum, buf []byte, checksums ...uint32) ([]byte, error) {
 	encoder.reset()
 	encoder.appendColVals(colIDs, values)
@@ -46,7 +47,7 @@ func (encoder *Encoder) Encode(sc *stmtctx.StatementContext, colIDs []int64, val
 		return nil, err
 	}
 	encoder.setChecksums(checksums...)
-	return encoder.row.toBytes(buf[:0]), nil
+	return encoder.row.toBytes(buf), nil
 }
 
 func (encoder *Encoder) reset() {
@@ -194,7 +195,7 @@ func encodeValueDatum(sc *stmtctx.StatementContext, d *types.Datum, buffer []byt
 	case types.KindBinaryLiteral, types.KindMysqlBit:
 		// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
 		var val uint64
-		val, err = d.GetBinaryLiteral().ToInt(sc)
+		val, err = d.GetBinaryLiteral().ToInt(sc.TypeCtxOrDefault())
 		if err != nil {
 			return
 		}

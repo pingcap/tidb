@@ -59,7 +59,6 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
@@ -1031,7 +1030,7 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 	numOfTables := len(tables)
 
 	for lastSent := 0; lastSent < numOfTables; lastSent += int(rc.batchDdlSize) {
-		end := mathutil.Min(lastSent+int(rc.batchDdlSize), len(tables))
+		end := min(lastSent+int(rc.batchDdlSize), len(tables))
 		log.Info("create tables", zap.Int("table start", lastSent), zap.Int("table end", end))
 
 		tableSlice := tables[lastSent:end]
@@ -1758,6 +1757,9 @@ func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh <-chan *Cre
 	log.Info("Start to update meta then load stats")
 	outCh := DefaultOutputTableChan()
 	workers := utils.NewWorkerPool(16, "UpdateStats")
+	// The rc.db is not thread safe
+	var updateMetaLock sync.Mutex
+
 	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
 		oldTable := tbl.OldTable
 		// Not need to return err when failed because of update analysis-meta
@@ -1765,6 +1767,8 @@ func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh <-chan *Cre
 		if err != nil {
 			log.Error("getTS failed", zap.Error(err))
 		} else {
+			updateMetaLock.Lock()
+
 			log.Info("start update metas",
 				zap.Stringer("table", oldTable.Info.Name),
 				zap.Stringer("db", oldTable.DB.Name))
@@ -1772,6 +1776,8 @@ func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh <-chan *Cre
 			if err != nil {
 				log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(err))
 			}
+
+			updateMetaLock.Unlock()
 		}
 
 		if oldTable.Stats != nil {
@@ -2996,8 +3002,8 @@ func (rc *Client) RestoreMetaKVFilesWithBatchMethod(
 			batchSize = f.Length
 		} else {
 			if f.MinTs <= rangeMax && batchSize+f.Length <= MetaKVBatchSize {
-				rangeMin = mathutil.Min(rangeMin, f.MinTs)
-				rangeMax = mathutil.Max(rangeMax, f.MaxTs)
+				rangeMin = min(rangeMin, f.MinTs)
+				rangeMax = max(rangeMax, f.MaxTs)
 				batchSize += f.Length
 			} else {
 				// Either f.MinTS > rangeMax or f.MinTs is the filterTs we need.
@@ -3599,7 +3605,7 @@ func (rc *Client) ResetTiFlashReplicas(ctx context.Context, g glue.Glue, storage
 	for _, s := range allSchema {
 		for _, t := range s.Tables {
 			if t.TiFlashReplica != nil {
-				expectTiFlashStoreCount = mathutil.Max(expectTiFlashStoreCount, t.TiFlashReplica.Count)
+				expectTiFlashStoreCount = max(expectTiFlashStoreCount, t.TiFlashReplica.Count)
 				recorder.AddTable(t.ID, *t.TiFlashReplica)
 				needTiFlash = true
 			}

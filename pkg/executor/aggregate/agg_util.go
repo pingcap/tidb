@@ -22,18 +22,20 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/util"
+>>>>>>> improve-agg-for-spill
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 )
 
@@ -47,8 +49,8 @@ func closeBaseExecutor(b *exec.BaseExecutor) {
 }
 
 func recoveryHashAgg(output chan *AfFinalResult, r interface{}) {
-	err := errors.Errorf("%v", r)
-	output <- &AfFinalResult{err: errors.Errorf("%v", r)}
+	err := util.GetRecoverError(r)
+	output <- &AfFinalResult{err: err}
 	logutil.BgLogger().Error("parallel hash aggregation panicked", zap.Error(err), zap.Stack("stack"))
 }
 
@@ -64,7 +66,7 @@ func getGroupKeyMemUsage(groupKey [][]byte) int64 {
 // GetGroupKey evaluates the group items and args of aggregate functions.
 func GetGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, groupByItems []expression.Expression) ([][]byte, error) {
 	numRows := input.NumRows()
-	avlGroupKeyLen := mathutil.Min(len(groupKey), numRows)
+	avlGroupKeyLen := min(len(groupKey), numRows)
 	for i := 0; i < avlGroupKeyLen; i++ {
 		groupKey[i] = groupKey[i][:0]
 	}
@@ -110,7 +112,7 @@ func GetGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 		}
 		expression.PutColumn(buf)
 	}
-	return groupKey, nil
+	return groupKey[:numRows], nil
 }
 
 // HashAggRuntimeStats record the HashAggExec runtime stat

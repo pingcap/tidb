@@ -129,6 +129,7 @@ go_test(
         "//pkg/testkit/testsetup",
         "//pkg/util/dbutil",
         "//pkg/util/mock",
+        "//pkg/util/pdapi",
         "@com_github_data_dog_go_sqlmock//:go-sqlmock",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_pingcap_errors//:errors",

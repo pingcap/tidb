@@ -24,31 +24,12 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/twmb/murmur3"
 )
-
-// HashAggIntermData indicates the intermediate data of aggregation execution.
-type HashAggIntermData struct {
-	groupKeys        []string
-	cursor           int
-	partialResultMap aggfuncs.AggPartialResultMapper
-}
-
-// getPartialResultBatch fetches a batch of partial results from HashAggIntermData.
-func (d *HashAggIntermData) getPartialResultBatch(_ *stmtctx.StatementContext, partialResult [][]aggfuncs.PartialResult, _ []aggfuncs.AggFunc, maxChunkSize int) (_ [][]aggfuncs.PartialResult, groupKeys []string, reachEnd bool) {
-	keyStart := d.cursor
-	for ; d.cursor < len(d.groupKeys) && len(partialResult) < maxChunkSize; d.cursor++ {
-		partialResult = append(partialResult, d.partialResultMap[d.groupKeys[d.cursor]])
-	}
-	if d.cursor == len(d.groupKeys) {
-		reachEnd = true
-	}
-	return partialResult, d.groupKeys[keyStart:d.cursor], reachEnd
-}
 
 // HashAggPartialWorker indicates the partial workers of parallel hash agg execution,
 // the number of the worker can be set by `tidb_hashagg_partial_concurrency`.
@@ -57,14 +38,19 @@ type HashAggPartialWorker struct {
 	ctx sessionctx.Context
 
 	inputCh        chan *chunk.Chunk
-	outputChs      []chan *HashAggIntermData
+	outputChs      []chan *aggfuncs.AggPartialResultMapper
 	globalOutputCh chan *AfFinalResult
 
 	// Partial worker transmit the HashAggInput by this channel,
 	// so that the data fetcher could get the partial worker's HashAggInput
 	giveBackCh chan<- *HashAggInput
 
-	partialResultsMap aggfuncs.AggPartialResultMapper
+	BInMaps               []int
+	partialResultsBuffer  [][]aggfuncs.PartialResult
+	partialResultNumInRow int
+
+	// Length of this map is equal to the number of final workers
+	partialResultsMap []aggfuncs.AggPartialResultMapper
 	groupByItems      []expression.Expression
 	groupKey          [][]byte
 	// chk stores the input data from child,
@@ -78,7 +64,7 @@ type HashAggPartialWorker struct {
 	spillSerializeHelpers []aggfuncs.SpillSerializeHelper
 	getNewTmpChunkFunc    func() *chunk.Chunk
 	spillChunkFieldTypes  []*types.FieldType
-	spilledChunksIO       []*chunk.ListInDisk
+	spilledChunksIO       []*chunk.DataInDiskByRows // TODO replace it with DataInDiskByChunks
 }
 
 func (w *HashAggPartialWorker) getChildInput() bool {
@@ -130,8 +116,8 @@ func (w *HashAggPartialWorker) waitForSpillDoneBeforeWorkerExit() {
 
 func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup, finalConcurrency int) {
 	start := time.Now()
-	needShuffle, sc := false, ctx.GetSessionVars().StmtCtx
 	hasError := false
+	needShuffle := false
 	defer func() {
 		if r := recover(); r != nil {
 			recoveryHashAgg(w.globalOutputCh, r)
@@ -156,7 +142,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 					w.spillHelper.addListInDisks(w.spilledChunksIO)
 				}
 			} else if needShuffle {
-				w.shuffleIntermData(sc, finalConcurrency)
+				w.shuffleIntermData(finalConcurrency)
 			}
 		}
 
@@ -203,7 +189,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		}
 
 		execStart := time.Now()
-		if err := w.updatePartialResult(ctx, sc, w.chk, len(w.partialResultsMap)); err != nil {
+		if err := w.updatePartialResult(ctx, w.chk, len(w.partialResultsMap)); err != nil {
 			hasError = true
 			w.globalOutputCh <- &AfFinalResult{err: err}
 			w.spillHelper.setError()
@@ -244,7 +230,48 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 	}
 }
 
-func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *stmtctx.StatementContext, chk *chunk.Chunk, _ int) (err error) {
+// If the group key has appeared before, reuse the partial result.
+// If the group key has not appeared before, create empty partial results.
+func (w *HashAggPartialWorker) getPartialResultsOfEachRow(groupKey [][]byte, finalConcurrency int) [][]aggfuncs.PartialResult {
+	mapper := w.partialResultsMap
+	numRows := len(groupKey)
+	allMemDelta := int64(0)
+	w.partialResultsBuffer = w.partialResultsBuffer[0:0]
+
+	for i := 0; i < numRows; i++ {
+		finalWorkerIdx := int(murmur3.Sum32(groupKey[i])) % finalConcurrency
+		tmp, ok := mapper[finalWorkerIdx][string(hack.String(groupKey[i]))]
+
+		// This group by key has appeared before, reuse the partial result.
+		if ok {
+			w.partialResultsBuffer = append(w.partialResultsBuffer, tmp)
+			continue
+		}
+
+		// It's the first time that this group by key appeared, create it
+		w.partialResultsBuffer = append(w.partialResultsBuffer, make([]aggfuncs.PartialResult, w.partialResultNumInRow))
+		lastIdx := len(w.partialResultsBuffer) - 1
+		for j, af := range w.aggFuncs {
+			partialResult, memDelta := af.AllocPartialResult()
+			w.partialResultsBuffer[lastIdx][j] = partialResult
+			allMemDelta += memDelta // the memory usage of PartialResult
+		}
+		allMemDelta += int64(w.partialResultNumInRow * 8)
+
+		// Map will expand when count > bucketNum * loadFactor. The memory usage will double.
+		if len(mapper[finalWorkerIdx])+1 > (1<<w.BInMaps[finalWorkerIdx])*hack.LoadFactorNum/hack.LoadFactorDen {
+			w.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMaps[finalWorkerIdx]))
+			w.BInMaps[finalWorkerIdx]++
+		}
+
+		mapper[finalWorkerIdx][string(groupKey[i])] = w.partialResultsBuffer[lastIdx]
+		allMemDelta += int64(len(groupKey[i]))
+	}
+	w.memTracker.Consume(allMemDelta)
+	return w.partialResultsBuffer
+}
+
+func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, chk *chunk.Chunk, finalConcurrency int) (err error) {
 	memSize := getGroupKeyMemUsage(w.groupKey)
 	w.groupKey, err = GetGroupKey(w.ctx, chk, w.groupKey, w.groupByItems)
 	failpoint.Inject("ConsumeRandomPanic", nil)
@@ -253,14 +280,16 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 		return err
 	}
 
-	partialResults := w.getPartialResult(sc, w.groupKey, w.partialResultsMap)
+	partialResultOfEachRow := w.getPartialResultsOfEachRow(w.groupKey, finalConcurrency)
+
 	numRows := chk.NumRows()
 	rows := make([]chunk.Row, 1)
 	allMemDelta := int64(0)
 	for i := 0; i < numRows; i++ {
+		partialResult := partialResultOfEachRow[i]
+		rows[0] = chk.GetRow(i)
 		for j, af := range w.aggFuncs {
-			rows[0] = chk.GetRow(i)
-			memDelta, err := af.UpdatePartialResult(ctx, rows, partialResults[i][j])
+			memDelta, err := af.UpdatePartialResult(ctx, rows, partialResult[j])
 			if err != nil {
 				return err
 			}
@@ -271,26 +300,9 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 	return nil
 }
 
-// shuffleIntermData shuffles the intermediate data of partial workers to corresponded final workers.
-// We only support parallel execution for single-machine, so process of encode and decode can be skipped.
-func (w *HashAggPartialWorker) shuffleIntermData(_ *stmtctx.StatementContext, finalConcurrency int) {
-	groupKeysSlice := make([][]string, finalConcurrency)
-	for groupKey := range w.partialResultsMap {
-		finalWorkerIdx := int(murmur3.Sum32([]byte(groupKey))) % finalConcurrency
-		if groupKeysSlice[finalWorkerIdx] == nil {
-			groupKeysSlice[finalWorkerIdx] = make([]string, 0, len(w.partialResultsMap)/finalConcurrency)
-		}
-		groupKeysSlice[finalWorkerIdx] = append(groupKeysSlice[finalWorkerIdx], groupKey)
-	}
-
-	for i := range groupKeysSlice {
-		if groupKeysSlice[i] == nil {
-			continue
-		}
-		w.outputChs[i] <- &HashAggIntermData{
-			groupKeys:        groupKeysSlice[i],
-			partialResultMap: w.partialResultsMap,
-		}
+func (w *HashAggPartialWorker) shuffleIntermData(finalConcurrency int) {
+	for i := 0; i < finalConcurrency; i++ {
+		w.outputChs[i] <- &w.partialResultsMap[i]
 	}
 }
 
@@ -298,10 +310,10 @@ func (w *HashAggPartialWorker) prepareForSpillWhenNeeded() {
 	if !w.isSpillPrepared {
 		w.isSpillPrepared = true
 		w.tmpChksForSpill = make([]*chunk.Chunk, spilledPartitionNum)
-		w.spilledChunksIO = make([]*chunk.ListInDisk, spilledPartitionNum)
+		w.spilledChunksIO = make([]*chunk.DataInDiskByRows, spilledPartitionNum)
 		for i := 0; i < spilledPartitionNum; i++ {
 			w.tmpChksForSpill[i] = w.getNewTmpChunkFunc()
-			w.spilledChunksIO[i] = chunk.NewListInDisk(w.spillChunkFieldTypes)
+			w.spilledChunksIO[i] = chunk.NewDataInDiskByRows(w.spillChunkFieldTypes)
 			if w.spillHelper.isTrackerEnabled {
 				w.spilledChunksIO[i].GetDiskTracker().AttachTo(w.spillHelper.diskTracker)
 			}
@@ -320,32 +332,40 @@ func (w *HashAggPartialWorker) spillDataToDisk() error {
 	}
 
 	w.prepareForSpillWhenNeeded()
-	for key, partialResults := range w.partialResultsMap {
-		partitionNum := int(murmur3.Sum32([]byte(key))) % spilledPartitionNum
+	for _, partialResultsMap := range w.partialResultsMap {
+		for key, partialResults := range partialResultsMap {
+			partitionNum := int(murmur3.Sum32([]byte(key))) % spilledPartitionNum
 
-		// Spill data when tmp chunk is full
-		if w.tmpChksForSpill[partitionNum].IsFull() {
-			err := w.spilledChunksIO[partitionNum].Add(w.tmpChksForSpill[partitionNum])
-			if err != nil {
-				return err
+			// Spill data when tmp chunk is full
+			if w.tmpChksForSpill[partitionNum].IsFull() {
+				err := w.spilledChunksIO[partitionNum].Add(w.tmpChksForSpill[partitionNum])
+				if err != nil {
+					return err
+				}
+				w.tmpChksForSpill[partitionNum].Reset()
 			}
-			w.tmpChksForSpill[partitionNum].Reset()
-		}
 
-		// Serialize agg meta data to the tmp chunk
-		for i, aggFunc := range w.aggFuncs {
-			aggFunc.SerializePartialResult(w.ctx, partialResults[i], w.tmpChksForSpill[partitionNum], &(w.spillSerializeHelpers[i]))
-		}
+			// Serialize agg meta data to the tmp chunk
+			for i, aggFunc := range w.aggFuncs {
+				aggFunc.SerializePartialResult(w.ctx, partialResults[i], w.tmpChksForSpill[partitionNum], &(w.spillSerializeHelpers[i]))
+			}
 
-		// Append key
-		w.tmpChksForSpill[partitionNum].AppendString(len(w.aggFuncs), key)
+			// Append key
+			w.tmpChksForSpill[partitionNum].AppendString(len(w.aggFuncs), key)
+		}
 	}
 
-	// Clear the groupby keys and partialResultsMap
-	w.partialResultsMap = make(aggfuncs.AggPartialResultMapper)
+	// Clear the partialResultsMap
+	w.partialResultsMap = make([]aggfuncs.AggPartialResultMapper, len(w.partialResultsMap))
+	for i := range w.partialResultsMap {
+		w.partialResultsMap[i] = make(aggfuncs.AggPartialResultMapper)
+	}
+
 	w.memTracker.Consume(-w.partialResultsMem)
-	w.BInMap = 0
 	w.partialResultsMem = 0
+	for i := range w.BInMaps {
+		w.BInMaps[i] = 0
+	}
 
 	// Trigger the spill of remaining data
 	err := w.spillRemainingDataToDisk(w.ctx)

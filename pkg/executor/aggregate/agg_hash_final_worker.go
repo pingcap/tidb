@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -46,8 +47,10 @@ type HashAggFinalWorker struct {
 	rowBuffer           []types.Datum
 	mutableRow          chunk.MutRow
 	partialResultMap    aggfuncs.AggPartialResultMapper
+	BInMap              int
+	isFirstInput        bool
 	groupSet            set.StringSetWithMemoryUsage
-	inputCh             chan *HashAggIntermData
+	inputCh             chan *aggfuncs.AggPartialResultMapper
 	outputCh            chan *AfFinalResult
 	finalResultHolderCh chan *chunk.Chunk
 	groupKeys           [][]byte
@@ -57,7 +60,7 @@ type HashAggFinalWorker struct {
 
 	spillHelper        *parallelHashAggSpillHelper
 	isSpilledTriggered bool
-	spilledDataChan    chan *HashAggIntermData
+	spilledDataChan    chan *aggfuncs.AggPartialResultMapper
 
 	// These agg functions are partial agg functions that are same with partial workers'.
 	// They only be used for restoring data that are spilled to disk in partial stage.
@@ -66,7 +69,7 @@ type HashAggFinalWorker struct {
 	restoredMemDelta int64
 }
 
-func (w *HashAggFinalWorker) getInputFromDisk() (input *HashAggIntermData, ok bool, spillContinue bool) {
+func (w *HashAggFinalWorker) getInputFromDisk() (input *aggfuncs.AggPartialResultMapper, ok bool, spillContinue bool) {
 	select {
 	case <-w.finishCh:
 		return nil, false, false
@@ -78,7 +81,7 @@ func (w *HashAggFinalWorker) getInputFromDisk() (input *HashAggIntermData, ok bo
 	}
 }
 
-func (w *HashAggFinalWorker) getPartialInput() (input *HashAggIntermData, ok bool) {
+func (w *HashAggFinalWorker) getPartialInput() (input *aggfuncs.AggPartialResultMapper, ok bool) {
 	select {
 	case <-w.finishCh:
 		return nil, false
@@ -90,26 +93,24 @@ func (w *HashAggFinalWorker) getPartialInput() (input *HashAggIntermData, ok boo
 	return
 }
 
-func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err error, spillContinue bool) {
-	var (
-		input            *HashAggIntermData
-		ok               bool
-		intermDataBuffer [][]aggfuncs.PartialResult
-		groupKeys        []string
-		sc               = sctx.GetSessionVars().StmtCtx
-	)
-
-	if w.isSpilledTriggered {
-		w.groupSet.Reset(w.memTracker)
+func (w *HashAggFinalWorker) initBInMap() {
+	w.BInMap = 0
+	mapLen := len(w.partialResultMap)
+	for mapLen > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+		w.BInMap++
 	}
+}
 
+func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err error, spillContinue bool) {
+	defer func() { w.isFirstInput = true }()
+	var input *aggfuncs.AggPartialResultMapper
+	var ok bool
 	loopJudge := true
 	for loopJudge {
 		waitStart := time.Now()
 
 		if w.isSpilledTriggered {
-			// As we restore only one partition each time when spill is triggered,
-			// so we should execute in this loop only once.
+			// Only one partition is restored each time, so we should execute in this loop only once.
 			loopJudge = false
 			var spillContinue bool
 			input, ok, spillContinue = w.getInputFromDisk()
@@ -126,39 +127,42 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 		if !ok {
 			return nil, false
 		}
-		execStart := time.Now()
-		if intermDataBuffer == nil {
-			intermDataBuffer = make([][]aggfuncs.PartialResult, 0, w.maxChunkSize)
-		}
-		// Consume input in batches, size of every batch is less than w.maxChunkSize.
-		for reachEnd := false; !reachEnd; {
-			intermDataBuffer, groupKeys, reachEnd = input.getPartialResultBatch(sc, intermDataBuffer[:0], w.aggFuncs, w.maxChunkSize)
-			groupKeysLen := len(groupKeys)
-			memSize := getGroupKeyMemUsage(w.groupKeys)
-			w.groupKeys = w.groupKeys[:0]
-			for i := 0; i < groupKeysLen; i++ {
-				w.groupKeys = append(w.groupKeys, []byte(groupKeys[i]))
-			}
-			failpoint.Inject("ConsumeRandomPanic", nil)
-			w.memTracker.Consume(getGroupKeyMemUsage(w.groupKeys) - memSize)
-			finalPartialResults := w.getPartialResult(sc, w.groupKeys, w.partialResultMap)
 
-			allMemDelta := int64(0)
-			for i, groupKey := range groupKeys {
-				if !w.groupSet.Exist(groupKey) {
-					allMemDelta += w.groupSet.Insert(groupKey)
-				}
-				partialResult := intermDataBuffer[i]
-				for j, af := range w.aggFuncs {
-					memDelta, err := af.MergePartialResult(sctx, partialResult[j], finalPartialResults[i][j])
-					if err != nil {
-						return err, false
-					}
-					allMemDelta += memDelta
-				}
-			}
-			w.memTracker.Consume(allMemDelta)
+		// As the w.partialResultMap is empty when we get the first input.
+		// So it's better to directly assign the input to w.partialResultMap
+		if w.isFirstInput {
+			w.isFirstInput = false
+			w.partialResultMap = *input
+			w.initBInMap()
+			continue
 		}
+
+		failpoint.Inject("ConsumeRandomPanic", nil)
+
+		execStart := time.Now()
+		allMemDelta := int64(0)
+		for key, value := range *input {
+			dstVal, ok := w.partialResultMap[key]
+			if !ok {
+				// Map will expand when count > bucketNum * loadFactor. The memory usage will double.
+				if len(w.partialResultMap)+1 > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+					w.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMap))
+					w.BInMap++
+				}
+				w.partialResultMap[key] = value
+				continue
+			}
+
+			for j, af := range w.aggFuncs {
+				memDelta, err := af.MergePartialResult(sctx, value[j], dstVal[j])
+				if err != nil {
+					return err, false
+				}
+				allMemDelta += memDelta
+			}
+		}
+		w.memTracker.Consume(allMemDelta)
+
 		if w.stats != nil {
 			w.stats.ExecTime += int64(time.Since(execStart))
 			w.stats.TaskNum++
@@ -176,24 +180,21 @@ func (w *HashAggFinalWorker) loadFinalResult(sctx sessionctx.Context) {
 	if finished {
 		return
 	}
-	execStart := time.Now()
-	memSize := getGroupKeyMemUsage(w.groupKeys)
-	w.groupKeys = w.groupKeys[:0]
-	for groupKey := range w.groupSet.StringSet {
-		w.groupKeys = append(w.groupKeys, []byte(groupKey))
-	}
+
 	failpoint.Inject("ConsumeRandomPanic", nil)
-	w.memTracker.Consume(getGroupKeyMemUsage(w.groupKeys) - memSize)
-	partialResults := w.getPartialResult(sctx.GetSessionVars().StmtCtx, w.groupKeys, w.partialResultMap)
-	for i := 0; i < len(w.groupSet.StringSet); i++ {
+
+	execStart := time.Now()
+	for _, results := range w.partialResultMap {
 		for j, af := range w.aggFuncs {
-			if err := af.AppendFinalResult2Chunk(sctx, partialResults[i][j], result); err != nil {
+			if err := af.AppendFinalResult2Chunk(sctx, results[j], result); err != nil {
 				logutil.BgLogger().Error("HashAggFinalWorker failed to append final result to Chunk", zap.Error(err))
 			}
 		}
+
 		if len(w.aggFuncs) == 0 {
 			result.SetNumVirtualRows(result.NumRows() + 1)
 		}
+
 		if result.IsFull() {
 			w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
 			result, finished = w.receiveFinalResultHolder()
@@ -218,7 +219,7 @@ func (w *HashAggFinalWorker) receiveFinalResultHolder() (*chunk.Chunk, bool) {
 	}
 }
 
-func (w *HashAggFinalWorker) restoreFromOneSpillFile(ctx sessionctx.Context, restoreadData *HashAggIntermData, diskIO *chunk.ListInDisk) (int64, error) {
+func (w *HashAggFinalWorker) restoreFromOneSpillFile(ctx sessionctx.Context, restoreadData *aggfuncs.AggPartialResultMapper, diskIO *chunk.DataInDiskByRows) (int64, error) {
 	totalMemDelta := int64(0)
 	chunkNum := diskIO.NumChunks()
 	keyColPos := len(w.aggFuncsForRestoring)
@@ -241,7 +242,7 @@ func (w *HashAggFinalWorker) restoreFromOneSpillFile(ctx sessionctx.Context, res
 		rowNum := chunk.NumRows()
 		for rowPos := 0; rowPos < rowNum; rowPos++ {
 			key := chunk.GetRow(rowPos).GetString(keyColPos)
-			prs, ok := restoreadData.partialResultMap[key]
+			prs, ok := (*restoreadData)[key]
 			if ok {
 				// The key has appeared before, merge results.
 				for aggPos := 0; aggPos < aggFuncNum; aggPos++ {
@@ -252,14 +253,11 @@ func (w *HashAggFinalWorker) restoreFromOneSpillFile(ctx sessionctx.Context, res
 					totalMemDelta += memDelta
 				}
 			} else {
-				// This is the first time the key has appeared.
-				restoreadData.groupKeys = append(restoreadData.groupKeys, key)
-
-				// Both restoreadData.groupKeys and restoreadData.partialResultMap will contain this key
-				totalMemDelta += int64(len(key) * 2)
+				totalMemDelta += int64(len(key))
 
 				results := make([]aggfuncs.PartialResult, aggFuncNum)
-				restoreadData.partialResultMap[key] = results
+				(*restoreadData)[key] = results
+				// TODO add memory usage for the map
 				for aggPos := 0; aggPos < aggFuncNum; aggPos++ {
 					results[aggPos] = partialResultsRestored[aggPos][rowPos]
 				}
@@ -270,11 +268,7 @@ func (w *HashAggFinalWorker) restoreFromOneSpillFile(ctx sessionctx.Context, res
 }
 
 func (w *HashAggFinalWorker) restoreOnePartition(ctx sessionctx.Context) (bool, error) {
-	restoredData := HashAggIntermData{
-		groupKeys:        make([]string, 0),
-		cursor:           0,
-		partialResultMap: make(aggfuncs.AggPartialResultMapper, 0),
-	}
+	restoredData := make(aggfuncs.AggPartialResultMapper)
 
 	restoredPartitionNum := w.spillHelper.getRestoredPartitionNum()
 	if restoredPartitionNum == spillTasksDoneFlag {
@@ -306,7 +300,7 @@ func (w *HashAggFinalWorker) mergeResultsAndSend(ctx sessionctx.Context) (error,
 }
 
 func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup) {
-	w.spilledDataChan = make(chan *HashAggIntermData, 1)
+	w.spilledDataChan = make(chan *aggfuncs.AggPartialResultMapper, 1)
 	start := time.Now()
 	defer func() {
 		if r := recover(); r != nil {

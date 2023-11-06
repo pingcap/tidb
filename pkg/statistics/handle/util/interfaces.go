@@ -15,12 +15,20 @@
 package util
 
 import (
+	"context"
+	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/tiancaiamao/gp"
 )
 
 // StatsGC is used to GC unnecessary stats.
@@ -90,12 +98,13 @@ type StatsUsage interface {
 // StatsHistory is used to manage historical stats.
 type StatsHistory interface {
 	// RecordHistoricalStatsMeta records stats meta of the specified version to stats_meta_history.
-	RecordHistoricalStatsMeta(tableID int64, version uint64, source string)
+	RecordHistoricalStatsMeta(tableID int64, version uint64, source string, enforce bool)
 
 	// CheckHistoricalStatsEnable check whether historical stats is enabled.
 	CheckHistoricalStatsEnable() (enable bool, err error)
 
-	// TODO: RecordHistoricalStatsToStorage(dbName string, tableInfo *model.TableInfo, physicalID int64, isPartition bool) (uint64, error)
+	// RecordHistoricalStatsToStorage records the given table's stats data to mysql.stats_history
+	RecordHistoricalStatsToStorage(dbName string, tableInfo *model.TableInfo, physicalID int64, isPartition bool) (uint64, error)
 }
 
 // StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
@@ -106,7 +115,11 @@ type StatsAnalyze interface {
 	// DeleteAnalyzeJobs deletes the analyze jobs whose update time is earlier than updateTime.
 	DeleteAnalyzeJobs(updateTime time.Time) error
 
-	// TODO: HandleAutoAnalyze
+	// HandleAutoAnalyze analyzes the newly created table or index.
+	HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool)
+
+	// CheckAnalyzeVersion checks whether all the statistics versions of this table's columns and indexes are the same.
+	CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int64, version *int) bool
 }
 
 // StatsCache is used to manage all table statistics in memory.
@@ -116,6 +129,9 @@ type StatsCache interface {
 
 	// Clear clears this cache.
 	Clear()
+
+	// Update reads stats meta from store and updates the stats map.
+	Update(is infoschema.InfoSchema) error
 
 	// MemConsumed returns its memory usage.
 	MemConsumed() (size int64)
@@ -144,6 +160,9 @@ type StatsCache interface {
 
 	// Replace replaces this cache.
 	Replace(cache StatsCache)
+
+	// UpdateStatsHealthyMetrics updates stats healthy distribution metrics according to stats cache.
+	UpdateStatsHealthyMetrics()
 }
 
 // StatsLockTable is the table info of which will be locked.
@@ -195,4 +214,196 @@ type StatsLock interface {
 
 	// GetTableLockedAndClearForTest for unit test only.
 	GetTableLockedAndClearForTest() (map[int64]struct{}, error)
+}
+
+// StatsReadWriter is used to read and write stats to the storage.
+// TODO: merge and remove some methods.
+type StatsReadWriter interface {
+	// TableStatsFromStorage loads table stats info from storage.
+	TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error)
+
+	// LoadTablePartitionStats loads partition stats info from storage.
+	LoadTablePartitionStats(tableInfo *model.TableInfo, partitionDef *model.PartitionDefinition) (*statistics.Table, error)
+
+	// StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
+	StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount int64, err error)
+
+	// LoadNeededHistograms will load histograms for those needed columns/indices and put them into the cache.
+	LoadNeededHistograms() (err error)
+
+	// ReloadExtendedStatistics drops the cache for extended statistics and reload data from mysql.stats_extended.
+	ReloadExtendedStatistics() error
+
+	// SaveStatsToStorage save the stats data to the storage.
+	SaveStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
+		cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool, source string) (err error)
+
+	// SaveTableStatsToStorage saves the stats of a table to storage.
+	SaveTableStatsToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error)
+
+	// InsertColStats2KV inserts columns stats to kv.
+	InsertColStats2KV(physicalID int64, colInfos []*model.ColumnInfo) (err error)
+
+	// InsertTableStats2KV inserts a record standing for a new table to stats_meta and inserts some records standing for the
+	// new columns and indices which belong to this table.
+	InsertTableStats2KV(info *model.TableInfo, physicalID int64) (err error)
+
+	// UpdateStatsVersion will set statistics version to the newest TS,
+	// then tidb-server will reload automatic.
+	UpdateStatsVersion() error
+
+	// ResetTableStats2KVForDrop update the version of mysql.stats_meta.
+	// Then GC worker will delete the old version of stats.
+	ResetTableStats2KVForDrop(physicalID int64) (err error)
+
+	// ChangeGlobalStatsID changes the global stats ID.
+	ChangeGlobalStatsID(from, to int64) (err error)
+
+	// TableStatsToJSON dumps table stats to JSON.
+	TableStatsToJSON(dbName string, tableInfo *model.TableInfo, physicalID int64, snapshot uint64) (*JSONTable, error)
+
+	// DumpStatsToJSON dumps statistic to json.
+	DumpStatsToJSON(dbName string, tableInfo *model.TableInfo,
+		historyStatsExec sqlexec.RestrictedSQLExecutor, dumpPartitionStats bool) (*JSONTable, error)
+
+	// DumpHistoricalStatsBySnapshot dumped json tables from mysql.stats_meta_history and mysql.stats_history.
+	// As implemented in getTableHistoricalStatsToJSONWithFallback, if historical stats are nonexistent, it will fall back
+	// to the latest stats, and these table names (and partition names) will be returned in fallbackTbls.
+	DumpHistoricalStatsBySnapshot(
+		dbName string,
+		tableInfo *model.TableInfo,
+		snapshot uint64,
+	) (
+		jt *JSONTable,
+		fallbackTbls []string,
+		err error,
+	)
+
+	// DumpStatsToJSONBySnapshot dumps statistic to json.
+	DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64, dumpPartitionStats bool) (*JSONTable, error)
+
+	// LoadStatsFromJSON will load statistic from JSONTable, and save it to the storage.
+	// In final, it will also udpate the stats cache.
+	LoadStatsFromJSON(ctx context.Context, is infoschema.InfoSchema, jsonTbl *JSONTable, concurrencyForPartition uint8) error
+
+	// LoadStatsFromJSONNoUpdate will load statistic from JSONTable, and save it to the storage.
+	LoadStatsFromJSONNoUpdate(ctx context.Context, is infoschema.InfoSchema, jsonTbl *JSONTable, concurrencyForPartition uint8) error
+
+	// Methods for extended stast.
+
+	// InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
+	InsertExtendedStats(statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (err error)
+
+	// MarkExtendedStatsDeleted update the status of mysql.stats_extended to be `deleted` and the version of mysql.stats_meta.
+	MarkExtendedStatsDeleted(statsName string, tableID int64, ifExists bool) (err error)
+
+	// SaveExtendedStatsToStorage writes extended stats of a table into mysql.stats_extended.
+	SaveExtendedStatsToStorage(tableID int64, extStats *statistics.ExtendedStatsColl, isLoad bool) (err error)
+}
+
+// NeededItemTask represents one needed column/indices with expire time.
+type NeededItemTask struct {
+	ToTimeout   time.Time
+	ResultCh    chan stmtctx.StatsLoadResult
+	TableItemID model.TableItemID
+}
+
+// StatsLoad is used to load stats concurrently
+type StatsLoad struct {
+	NeededItemsCh  chan *NeededItemTask
+	TimeoutItemsCh chan *NeededItemTask
+	WorkingColMap  map[model.TableItemID][]chan stmtctx.StatsLoadResult
+	SubCtxs        []sessionctx.Context
+	sync.Mutex
+}
+
+// StatsSyncLoad implement the sync-load feature.
+type StatsSyncLoad interface {
+	// SendLoadRequests sends load requests to the channel.
+	SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems []model.TableItemID, timeout time.Duration) error
+
+	// SyncWaitStatsLoad will wait for the load requests to finish.
+	SyncWaitStatsLoad(sc *stmtctx.StatementContext) error
+
+	// AppendNeededItem appends a needed item to the channel.
+	AppendNeededItem(task *NeededItemTask, timeout time.Duration) error
+
+	// SubLoadWorker will start a goroutine to handle the load requests.
+	SubLoadWorker(sctx sessionctx.Context, exit chan struct{}, exitWg *util.WaitGroupEnhancedWrapper)
+
+	// HandleOneTask will handle one task.
+	HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask, exit chan struct{}) (task *NeededItemTask, err error)
+
+	// SetSubCtxs sets the sessionctx which is used to run queries background.
+	// TODO: use SessionPool instead.
+	SetSubCtxs(idx int, sctx sessionctx.Context)
+}
+
+// StatsGlobal is used to manage partition table global stats.
+type StatsGlobal interface {
+	// MergePartitionStats2GlobalStatsByTableID merges partition stats to global stats by table ID.
+	MergePartitionStats2GlobalStatsByTableID(sctx sessionctx.Context,
+		opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema,
+		physicalID int64,
+		isIndex bool,
+		histIDs []int64,
+		_ map[int64]*statistics.Table,
+	) (globalStats interface{}, err error)
+
+	// UpdateGlobalStats will trigger the merge of global-stats when we drop table partition
+	UpdateGlobalStats(tblInfo *model.TableInfo) error
+}
+
+// StatsHandle is used to manage TiDB Statistics.
+type StatsHandle interface {
+	// GPool returns the goroutine pool.
+	GPool() *gp.Pool
+
+	// SPool returns the session pool.
+	SPool() SessionPool
+
+	// Lease returns the stats lease.
+	Lease() time.Duration
+
+	// SysProcTracker is used to track sys process like analyze
+	SysProcTracker() sessionctx.SysProcTracker
+
+	// AutoAnalyzeProcID generates an analyze ID.
+	AutoAnalyzeProcID() uint64
+
+	// GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
+	GetTableStats(tblInfo *model.TableInfo) *statistics.Table
+
+	// GetPartitionStats retrieves the partition stats from cache.
+	GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table
+
+	// GetCurrentPruneMode returns the current latest partitioning table prune mode.
+	GetCurrentPruneMode() (mode string, err error)
+
+	// TableInfoGetter is used to get table meta info.
+	TableInfoGetter
+
+	// StatsGC is used to do the GC job.
+	StatsGC
+
+	// StatsUsage is used to handle table delta and stats usage.
+	StatsUsage
+
+	// StatsHistory is used to manage historical stats.
+	StatsHistory
+
+	// StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
+	StatsAnalyze
+
+	// StatsCache is used to manage all table statistics in memory.
+	StatsCache
+
+	// StatsLock is used to manage locked stats.
+	StatsLock
+
+	// StatsReadWriter is used to read and write stats to the storage.
+	StatsReadWriter
+
+	// StatsGlobal is used to manage partition table global stats.
+	StatsGlobal
 }

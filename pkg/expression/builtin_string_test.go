@@ -393,11 +393,11 @@ func TestConcatWSSig(t *testing.T) {
 func TestLeft(t *testing.T) {
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	origin := stmtCtx.IgnoreTruncate.Load()
-	stmtCtx.IgnoreTruncate.Store(true)
+	oldTypeFlags := stmtCtx.TypeFlags()
 	defer func() {
-		stmtCtx.IgnoreTruncate.Store(origin)
+		stmtCtx.SetTypeFlags(oldTypeFlags)
 	}()
+	stmtCtx.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
 
 	cases := []struct {
 		args   []interface{}
@@ -443,11 +443,11 @@ func TestLeft(t *testing.T) {
 func TestRight(t *testing.T) {
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	origin := stmtCtx.IgnoreTruncate.Load()
-	stmtCtx.IgnoreTruncate.Store(true)
+	oldTypeFlags := stmtCtx.TypeFlags()
 	defer func() {
-		stmtCtx.IgnoreTruncate.Store(origin)
+		stmtCtx.SetTypeFlags(oldTypeFlags)
 	}()
+	stmtCtx.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
 
 	cases := []struct {
 		args   []interface{}
@@ -956,11 +956,11 @@ func TestSubstringIndex(t *testing.T) {
 func TestSpace(t *testing.T) {
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	origin := stmtCtx.IgnoreTruncate.Load()
-	stmtCtx.IgnoreTruncate.Store(true)
+	oldTypeFlags := stmtCtx.TypeFlags()
 	defer func() {
-		stmtCtx.IgnoreTruncate.Store(origin)
+		stmtCtx.SetTypeFlags(oldTypeFlags)
 	}()
+	stmtCtx.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
 
 	cases := []struct {
 		arg    interface{}
@@ -1388,7 +1388,8 @@ func TestBitLength(t *testing.T) {
 
 func TestChar(t *testing.T) {
 	ctx := createContext(t)
-	ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Store(true)
+	typeFlags := ctx.GetSessionVars().StmtCtx.TypeFlags()
+	ctx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags.WithIgnoreTruncateErr(true))
 	tbl := []struct {
 		str      string
 		iNum     int64
@@ -1509,11 +1510,11 @@ func TestFindInSet(t *testing.T) {
 func TestField(t *testing.T) {
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	origin := stmtCtx.IgnoreTruncate.Load()
-	stmtCtx.IgnoreTruncate.Store(true)
+	oldTypeFlags := stmtCtx.TypeFlags()
 	defer func() {
-		stmtCtx.IgnoreTruncate.Store(origin)
+		stmtCtx.SetTypeFlags(oldTypeFlags)
 	}()
+	stmtCtx.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
 
 	tbl := []struct {
 		argLst []interface{}
@@ -1991,8 +1992,8 @@ func TestFormat(t *testing.T) {
 		testutil.DatumEqual(t, types.NewDatum(tt.ret), r)
 	}
 
-	origConfig := ctx.GetSessionVars().StmtCtx.TruncateAsWarning
-	ctx.GetSessionVars().StmtCtx.TruncateAsWarning = true
+	origTypeFlags := ctx.GetSessionVars().StmtCtx.TypeFlags()
+	ctx.GetSessionVars().StmtCtx.SetTypeFlags(origTypeFlags.WithTruncateAsWarning(true))
 	for _, tt := range formatTests1 {
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.number, tt.precision)))
 		require.NoError(t, err)
@@ -2009,7 +2010,7 @@ func TestFormat(t *testing.T) {
 			ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
 		}
 	}
-	ctx.GetSessionVars().StmtCtx.TruncateAsWarning = origConfig
+	ctx.GetSessionVars().StmtCtx.SetTypeFlags(origTypeFlags)
 
 	f2, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(formatTests2.number, formatTests2.precision, formatTests2.locale)))
 	require.NoError(t, err)
@@ -2306,7 +2307,8 @@ func TestBin(t *testing.T) {
 	fc := funcs[ast.Bin]
 	dtbl := tblToDtbl(tbl)
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Store(true)
+	typeFlags := ctx.GetSessionVars().StmtCtx.TypeFlags()
+	ctx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags.WithIgnoreTruncateErr(true))
 	for _, c := range dtbl {
 		f, err := fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)

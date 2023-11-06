@@ -238,7 +238,7 @@ func TestCheckIndexKeysAndCheckHandleConsistency(t *testing.T) {
 		types.NewStringDatum("some string"),
 		types.NewTimeDatum(now),
 	}
-	anotherTime, err := now.Add(sessVars.StmtCtx, types.NewDuration(24, 0, 0, 0, 0))
+	anotherTime, err := now.Add(sessVars.StmtCtx.TypeCtx(), types.NewDuration(24, 0, 0, 0, 0))
 	require.Nil(t, err)
 	rowToRemove := []types.Datum{
 		types.NewStringDatum("old string"),
@@ -335,7 +335,7 @@ func buildIndexKeyValue(index table.Index, rowToInsert []types.Datum, sessVars *
 	rsData := TryGetHandleRestoredDataWrapper(table.meta, rowToInsert, nil, indexInfo)
 	value, err := tablecodec.GenIndexValuePortal(
 		sessVars.StmtCtx, &tableInfo, indexInfo, NeedRestoredData(indexInfo.Columns, tableInfo.Columns),
-		distinct, false, indexedValues, handle, 0, rsData,
+		distinct, false, indexedValues, handle, 0, rsData, nil,
 	)
 	if err != nil {
 		return nil, nil, err

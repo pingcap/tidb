@@ -78,9 +78,9 @@ function build_tidb_server()
     echo "building tidb-server binary: $tidb_server"
     rm -rf $tidb_server
     if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
-        GO111MODULE=on go build -o $tidb_server github.com/pingcap/tidb/tidb-server
+        GO111MODULE=on go build -o $tidb_server github.com/pingcap/tidb/cmd/tidb-server
     else
-        GO111MODULE=on go build -race -o $tidb_server github.com/pingcap/tidb/tidb-server
+        GO111MODULE=on go build -race -o $tidb_server github.com/pingcap/tidb/cmd/tidb-server
     fi
 }
 
@@ -264,7 +264,6 @@ enabled_new_collation=""
 if [[ $collation_opt = 0 || $collation_opt = 2 ]]; then
     enabled_new_collation=0
     start_tidb_server
-    sleep 5
     run_mysql_tester
     kill -15 $SERVER_PID
     while ps -p $SERVER_PID > /dev/null; do
@@ -276,7 +275,6 @@ fi
 if [[ $collation_opt = 1 || $collation_opt = 2 ]]; then
     enabled_new_collation=1
     start_tidb_server
-    sleep 5
     run_mysql_tester
     kill -15 $SERVER_PID
     while ps -p $SERVER_PID > /dev/null; do

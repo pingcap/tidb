@@ -129,7 +129,7 @@ func TestInferType(t *testing.T) {
 		ret := &plannercore.PreprocessorReturn{}
 		err = plannercore.Preprocess(context.Background(), sctx, stmt, plannercore.WithPreprocessorReturn(ret))
 		require.NoError(t, err, comment)
-		p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmt, ret.InfoSchema)
+		p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmt, ret.InfoSchema)
 		require.NoError(t, err, comment)
 		tp := p.Schema().Columns[0].RetType
 		require.Equal(t, tt.tp, tp.GetType(), comment)

@@ -27,7 +27,7 @@ import (
 )
 
 func dateTimeFromString(s string) types.Time {
-	t, err := types.ParseDate(nil, s)
+	t, err := types.ParseDate(types.DefaultStmtNoWarningContext, s)
 	if err != nil {
 		panic(err)
 	}

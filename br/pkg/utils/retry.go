@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	tmysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -29,6 +28,7 @@ var retryableServerError = []string{
 	"internalerror",
 	"not read from or written to within the timeout period",
 	"<code>requesttimeout</code>",
+	"<code>invalidpart</code>",
 }
 
 // RetryableFunc presents a retryable operation.
@@ -170,7 +170,7 @@ func (r *RetryWithBackoffer) BackOff() error {
 // That intent will be fulfilled when calling `BackOff`.
 func (r *RetryWithBackoffer) RequestBackOff(ms int) {
 	r.mu.Lock()
-	r.nextBackoff = mathutil.Max(r.nextBackoff, ms)
+	r.nextBackoff = max(r.nextBackoff, ms)
 	r.mu.Unlock()
 }
 

@@ -207,7 +207,7 @@ func (s *mockGCWorkerSuite) mustGetNone(t *testing.T, key string, ts uint64) {
 	if err != nil {
 		// unistore gc is based on compaction filter.
 		// So skip the error check if err == nil.
-		require.True(t, kv.ErrNotExist.Equal(err))
+		require.True(t, kv.ErrNotExist.Equal(err), "unexpected error: %+q", err)
 	}
 }
 
@@ -1163,7 +1163,7 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 		tikvStore:          s.tikvStore,
 		scanLocks: func(_ []*txnlock.Lock, key []byte) ([]*txnlock.Lock, *tikv.KeyLocation) {
 			// first time scan locks
-			region, _, _ := s.cluster.GetRegionByKey(key)
+			region, _, _, _ := s.cluster.GetRegionByKey(key)
 			if region.GetId() == s.initRegion.regionID {
 				return []*txnlock.Lock{{Key: []byte("a")}, {Key: []byte("b")}},
 					&tikv.KeyLocation{

@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/docker/go-units"
-	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
@@ -107,7 +106,7 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 		}()
 	}
 	s.indexMemorySizeLimit = getWriterMemorySizeLimit(s.tableImporter.Plan)
-	s.logger.Info("memory size limit per index writer per concurrency",
+	s.logger.Info("index writer memory size limit",
 		zap.String("limit", units.BytesSize(float64(s.indexMemorySizeLimit))))
 	return nil
 }
@@ -304,21 +303,11 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		m.subtaskSortedKVMeta.MergeSummary(summary)
 	}
 
-	writerID := uuid.New().String()
 	prefix := subtaskPrefix(m.taskID, subtask.ID)
 
-	return external.MergeOverlappingFiles(
-		ctx,
-		sm.DataFiles,
-		m.controller.GlobalSortStore,
-		64*1024,
-		prefix,
-		writerID,
-		256*size.MB,
-		8*1024,
-		1*size.MB,
-		8*1024,
-		onClose)
+	return external.MergeOverlappingFiles(ctx, sm.DataFiles, m.controller.GlobalSortStore, 64*1024,
+		prefix, getKVGroupBlockSize(sm.KVGroup), 8*1024, 1*size.MB, 8*1024,
+		onClose, int(m.taskMeta.Plan.ThreadCnt), false)
 }
 
 func (m *mergeSortStepExecutor) OnFinished(_ context.Context, subtask *proto.Subtask) error {
@@ -375,12 +364,13 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 			StorageURI:      e.taskMeta.Plan.CloudStorageURI,
 			DataFiles:       sm.DataFiles,
 			StatFiles:       sm.StatFiles,
-			MinKey:          sm.MinKey,
-			MaxKey:          sm.MaxKey,
+			StartKey:        sm.StartKey,
+			EndKey:          sm.EndKey,
 			SplitKeys:       sm.RangeSplitKeys,
 			RegionSplitSize: sm.RangeSplitSize,
 			TotalFileSize:   int64(sm.TotalKVSize),
 			TotalKVCount:    0,
+			CheckHotspot:    false,
 		},
 	}, engineUUID)
 	if err != nil {
@@ -478,7 +468,7 @@ func (*importScheduler) GetSubtaskExecutor(_ context.Context, task *proto.Task, 
 		return nil, errors.Trace(err)
 	}
 	logger := logutil.BgLogger().With(
-		zap.String("type", proto.ImportInto),
+		zap.Stringer("type", proto.ImportInto),
 		zap.Int64("task-id", task.ID),
 		zap.String("step", stepStr(task.Step)),
 	)

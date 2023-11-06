@@ -98,23 +98,45 @@ func NewHelper(store Storage) *Helper {
 
 // GetMvccByEncodedKey get the MVCC value by the specific encoded key.
 func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyResponse, error) {
-	keyLocation, err := h.RegionCache.LocateKey(tikv.NewBackofferWithVars(context.Background(), 500, nil), encodedKey)
-	if err != nil {
-		return nil, derr.ToTiDBErr(err)
-	}
-
+	bo := tikv.NewBackofferWithVars(context.Background(), 5000, nil)
 	tikvReq := tikvrpc.NewRequest(tikvrpc.CmdMvccGetByKey, &kvrpcpb.MvccGetByKeyRequest{Key: encodedKey})
-	kvResp, err := h.Store.SendReq(tikv.NewBackofferWithVars(context.Background(), 500, nil), tikvReq, keyLocation.Region, time.Minute)
-	if err != nil {
-		logutil.BgLogger().Info("get MVCC by encoded key failed",
-			zap.Stringer("encodeKey", encodedKey),
-			zap.Reflect("region", keyLocation.Region),
-			zap.Stringer("keyLocation", keyLocation),
-			zap.Reflect("kvResp", kvResp),
-			zap.Error(err))
-		return nil, errors.Trace(err)
+	for {
+		keyLocation, err := h.RegionCache.LocateKey(bo, encodedKey)
+		if err != nil {
+			return nil, derr.ToTiDBErr(err)
+		}
+		kvResp, err := h.Store.SendReq(bo, tikvReq, keyLocation.Region, time.Minute)
+		if err != nil {
+			logutil.BgLogger().Info("get MVCC by encoded key failed",
+				zap.Stringer("encodeKey", encodedKey),
+				zap.Reflect("region", keyLocation.Region),
+				zap.Stringer("keyLocation", keyLocation),
+				zap.Reflect("kvResp", kvResp),
+				zap.Error(err))
+			return nil, errors.Trace(err)
+		}
+		regionErr, err := kvResp.GetRegionError()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if regionErr != nil {
+			if err = bo.Backoff(tikv.BoRegionMiss(), errors.New(regionErr.String())); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		mvccResp := kvResp.Resp.(*kvrpcpb.MvccGetByKeyResponse)
+		if errMsg := mvccResp.GetError(); errMsg != "" {
+			logutil.BgLogger().Info("get MVCC by encoded key failed",
+				zap.Stringer("encodeKey", encodedKey),
+				zap.Reflect("region", keyLocation.Region),
+				zap.Stringer("keyLocation", keyLocation),
+				zap.Reflect("kvResp", kvResp),
+				zap.String("error", errMsg))
+			return nil, errors.New(errMsg)
+		}
+		return mvccResp, nil
 	}
-	return kvResp.Resp.(*kvrpcpb.MvccGetByKeyResponse), nil
 }
 
 // MvccKV wraps the key's mvcc info in tikv.
@@ -793,7 +815,7 @@ func (h *Helper) GetRegionsInfoByRange(sk, ek []byte) (*RegionsInfo, error) {
 // GetRegionByKey gets regioninfo by key
 func (h *Helper) GetRegionByKey(k []byte) (*RegionInfo, error) {
 	var regionInfo RegionInfo
-	err := h.requestPD("GetRegionByKey", "GET", fmt.Sprintf("%v/%v", pdapi.RegionKey, url.QueryEscape(string(k))), nil, &regionInfo)
+	err := h.requestPD("GetRegionByKey", "GET", fmt.Sprintf("%v/%v", pdapi.RegionByKey, url.QueryEscape(string(k))), nil, &regionInfo)
 	return &regionInfo, err
 }
 
@@ -970,11 +992,13 @@ func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats, noIndexSt
 	startKey = codec.EncodeBytes([]byte{}, startKey)
 	endKey = codec.EncodeBytes([]byte{}, endKey)
 
-	statURL := fmt.Sprintf("%s://%s/pd/api/v1/stats/region?start_key=%s&end_key=%s",
+	statURL := fmt.Sprintf("%s://%s%s",
 		util.InternalHTTPSchema(),
 		pdAddrs[0],
-		url.QueryEscape(string(startKey)),
-		url.QueryEscape(string(endKey)))
+		pdapi.RegionStatsByStartEndKey(
+			url.QueryEscape(string(startKey)),
+			url.QueryEscape(string(endKey)),
+		))
 
 	resp, err := util.InternalHTTPClient().Get(statURL)
 	if err != nil {
@@ -1004,9 +1028,10 @@ func (h *Helper) DeletePlacementRule(group string, ruleID string) error {
 		return errors.Trace(err)
 	}
 
-	deleteURL := fmt.Sprintf("%s://%s/pd/api/v1/config/rule/%v/%v",
+	deleteURL := fmt.Sprintf("%s://%s%s/%v/%v",
 		util.InternalHTTPSchema(),
 		pdAddrs[0],
+		pdapi.PlacementRule,
 		group,
 		ruleID,
 	)
@@ -1039,9 +1064,10 @@ func (h *Helper) SetPlacementRule(rule placement.Rule) error {
 	}
 	m, _ := json.Marshal(rule)
 
-	postURL := fmt.Sprintf("%s://%s/pd/api/v1/config/rule",
+	postURL := fmt.Sprintf("%s://%s%s",
 		util.InternalHTTPSchema(),
 		pdAddrs[0],
+		pdapi.PlacementRule,
 	)
 	buf := bytes.NewBuffer(m)
 	resp, err := util.InternalHTTPClient().Post(postURL, "application/json", buf)
@@ -1066,9 +1092,10 @@ func (h *Helper) GetGroupRules(group string) ([]placement.Rule, error) {
 		return nil, errors.Trace(err)
 	}
 
-	getURL := fmt.Sprintf("%s://%s/pd/api/v1/config/rules/group/%s",
+	getURL := fmt.Sprintf("%s://%s%s/%s",
 		util.InternalHTTPSchema(),
 		pdAddrs[0],
+		pdapi.PlacementRulesGroup,
 		group,
 	)
 
@@ -1112,9 +1139,10 @@ func (h *Helper) PostAccelerateSchedule(tableID int64) error {
 	startKey = codec.EncodeBytes([]byte{}, startKey)
 	endKey = codec.EncodeBytes([]byte{}, endKey)
 
-	postURL := fmt.Sprintf("%s://%s/pd/api/v1/regions/accelerate-schedule",
+	postURL := fmt.Sprintf("%s://%s%s",
 		util.InternalHTTPSchema(),
-		pdAddrs[0])
+		pdAddrs[0],
+		pdapi.AccelerateSchedule)
 
 	input := map[string]string{
 		"start_key": url.QueryEscape(string(startKey)),

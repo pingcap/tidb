@@ -21,7 +21,6 @@ import (
 	"net"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -39,13 +38,15 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
+	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tiancaiamao/gp"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -56,9 +57,12 @@ var _ exec.Executor = &AnalyzeExec{}
 type AnalyzeExec struct {
 	exec.BaseExecutor
 	tasks      []*analyzeTask
-	wg         util.WaitGroupWrapper
+	wg         *util.WaitGroupPool
 	opts       map[ast.AnalyzeOptionType]uint64
 	OptionsMap map[int64]core.V2AnalyzeOptions
+	gp         *gp.Pool
+	// errExitCh is used to notice the worker that the whole analyze task is finished when to meet error.
+	errExitCh chan struct{}
 }
 
 var (
@@ -109,8 +113,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 
 	// Start workers with channel to collect results.
 	taskCh := make(chan *analyzeTask, concurrency)
-	resultChLen := min(concurrency*2, len(tasks))
-	resultsCh := make(chan *statistics.AnalyzeResults, resultChLen)
+	resultsCh := make(chan *statistics.AnalyzeResults, 1)
 	for i := 0; i < concurrency; i++ {
 		e.wg.Run(func() { e.analyzeWorker(taskCh, resultsCh) })
 	}
@@ -122,7 +125,6 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	g.Go(func() error {
 		return e.handleResultsError(ctx, concurrency, needGlobalStats, globalStatsMap, resultsCh, len(tasks))
 	})
-
 	for _, task := range tasks {
 		prepareV2AnalyzeJobInfo(task.colExec, false)
 		AddNewAnalyzeJob(e.Ctx(), task.job)
@@ -136,19 +138,19 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		taskCh <- task
 	}
 	close(taskCh)
-
-	// Wait all workers done and close the results channel.
-	e.wg.Wait()
-	close(resultsCh)
-	err = g.Wait()
-	for _, task := range tasks {
-		if task.colExec != nil && task.colExec.memTracker != nil {
-			task.colExec.memTracker.Detach()
+	defer func() {
+		for _, task := range tasks {
+			if task.colExec != nil && task.colExec.memTracker != nil {
+				task.colExec.memTracker.Detach()
+			}
 		}
-	}
+	}()
+
+	err = e.waitFinish(ctx, g, resultsCh)
 	if err != nil {
 		return err
 	}
+
 	failpoint.Inject("mockKillFinishedAnalyzeJob", func() {
 		dom := domain.GetDomain(e.Ctx())
 		dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
@@ -167,6 +169,27 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		sessionVars.StmtCtx.AppendWarning(err)
 	}
 	return statsHandle.Update(infoSchema)
+}
+
+func (e *AnalyzeExec) waitFinish(ctx context.Context, g *errgroup.Group, resultsCh chan *statistics.AnalyzeResults) error {
+	checkwg, _ := errgroup.WithContext(ctx)
+	checkwg.Go(func() error {
+		// It is to wait for the completion of the result handler. if the result handler meets error, we should cancel
+		// the analyze process by closing the errExitCh.
+		err := g.Wait()
+		if err != nil {
+			close(e.errExitCh)
+			return err
+		}
+		return nil
+	})
+	checkwg.Go(func() error {
+		// Wait all workers done and close the results channel.
+		e.wg.Wait()
+		close(resultsCh)
+		return nil
+	})
+	return checkwg.Wait()
 }
 
 // filterAndCollectTasks filters the tasks that are not locked and collects the table IDs.
@@ -290,7 +313,7 @@ func (e *AnalyzeExec) saveV2AnalyzeOpts() error {
 		}
 	}
 	sql := new(strings.Builder)
-	sqlexec.MustFormatSQL(sql, "REPLACE INTO mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) VALUES ")
+	sqlescape.MustFormatSQL(sql, "REPLACE INTO mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) VALUES ")
 	idx := 0
 	for _, opts := range toSaveMap {
 		sampleNum := opts.RawOpts[ast.AnalyzeOptNumSamples]
@@ -309,9 +332,9 @@ func (e *AnalyzeExec) saveV2AnalyzeOpts() error {
 			colIDs[i] = strconv.FormatInt(colInfo.ID, 10)
 		}
 		colIDStrs := strings.Join(colIDs, ",")
-		sqlexec.MustFormatSQL(sql, "(%?,%?,%?,%?,%?,%?,%?)", opts.PhyTableID, sampleNum, sampleRate, buckets, topn, colChoice, colIDStrs)
+		sqlescape.MustFormatSQL(sql, "(%?,%?,%?,%?,%?,%?,%?)", opts.PhyTableID, sampleNum, sampleRate, buckets, topn, colChoice, colIDStrs)
 		if idx < len(toSaveMap)-1 {
-			sqlexec.MustFormatSQL(sql, ",")
+			sqlescape.MustFormatSQL(sql, ",")
 		}
 		idx++
 	}
@@ -389,7 +412,7 @@ func (e *AnalyzeExec) handleResultsError(
 		handleGlobalStats(needGlobalStats, globalStatsMap, results)
 		tableIDs[results.TableID.GetStatisticsID()] = struct{}{}
 
-		if err1 := statsHandle.SaveTableStatsToStorage(results, e.Ctx().GetSessionVars().EnableAnalyzeSnapshot, handle.StatsMetaHistorySourceAnalyze); err1 != nil {
+		if err1 := statsHandle.SaveTableStatsToStorage(results, e.Ctx().GetSessionVars().EnableAnalyzeSnapshot, handleutil.StatsMetaHistorySourceAnalyze); err1 != nil {
 			tableID := results.TableID.TableID
 			err = err1
 			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err), zap.Int64("tableID", tableID))
@@ -397,10 +420,10 @@ func (e *AnalyzeExec) handleResultsError(
 		} else {
 			finishJobWithLog(e.Ctx(), results.Job, nil)
 		}
-		if atomic.LoadUint32(&e.Ctx().GetSessionVars().Killed) == 1 {
-			finishJobWithLog(e.Ctx(), results.Job, exeerrors.ErrQueryInterrupted)
+		if err := e.Ctx().GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+			finishJobWithLog(e.Ctx(), results.Job, err)
 			results.DestroyAndPutToPool()
-			return errors.Trace(exeerrors.ErrQueryInterrupted)
+			return err
 		}
 		results.DestroyAndPutToPool()
 	}
@@ -419,11 +442,11 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 	globalStatsMap globalStatsMap, resultsCh <-chan *statistics.AnalyzeResults) error {
 	partitionStatsConcurrency := len(subSctxs)
 
-	var wg util.WaitGroupWrapper
+	wg := util.NewWaitGroupPool(e.gp)
 	saveResultsCh := make(chan *statistics.AnalyzeResults, partitionStatsConcurrency)
 	errCh := make(chan error, partitionStatsConcurrency)
 	for i := 0; i < partitionStatsConcurrency; i++ {
-		worker := newAnalyzeSaveStatsWorker(saveResultsCh, subSctxs[i], errCh, &e.Ctx().GetSessionVars().Killed)
+		worker := newAnalyzeSaveStatsWorker(saveResultsCh, subSctxs[i], errCh, &e.Ctx().GetSessionVars().SQLKiller)
 		ctx1 := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 		wg.Run(func() {
 			worker.run(ctx1, e.Ctx().GetSessionVars().EnableAnalyzeSnapshot)
@@ -433,9 +456,9 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 	panicCnt := 0
 	var err error
 	for panicCnt < statsConcurrency {
-		if atomic.LoadUint32(&e.Ctx().GetSessionVars().Killed) == 1 {
+		if err := e.Ctx().GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			close(saveResultsCh)
-			return errors.Trace(exeerrors.ErrQueryInterrupted)
+			return err
 		}
 		results, ok := <-resultsCh
 		if !ok {
@@ -495,9 +518,17 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 		StartAnalyzeJob(e.Ctx(), task.job)
 		switch task.taskType {
 		case colTask:
-			resultsCh <- analyzeColumnsPushDownEntry(task.colExec)
+			select {
+			case <-e.errExitCh:
+				return
+			case resultsCh <- analyzeColumnsPushDownEntry(e.gp, task.colExec):
+			}
 		case idxTask:
-			resultsCh <- analyzeIndexPushdown(task.idxExec)
+			select {
+			case <-e.errExitCh:
+				return
+			case resultsCh <- analyzeIndexPushdown(task.idxExec):
+			}
 		}
 	}
 }
@@ -684,16 +715,24 @@ func finishJobWithLog(sctx sessionctx.Context, job *statistics.AnalyzeJob, analy
 		var state string
 		if analyzeErr != nil {
 			state = statistics.AnalyzeFailed
+			logutil.BgLogger().Warn(fmt.Sprintf("analyze table `%s`.`%s` has %s", job.DBName, job.TableName, state),
+				zap.String("partition", job.PartitionName),
+				zap.String("job info", job.JobInfo),
+				zap.Time("start time", job.StartTime),
+				zap.Time("end time", job.EndTime),
+				zap.String("cost", job.EndTime.Sub(job.StartTime).String()),
+				zap.String("sample rate reason", job.SampleRateReason),
+				zap.Error(analyzeErr))
 		} else {
 			state = statistics.AnalyzeFinished
+			logutil.BgLogger().Info(fmt.Sprintf("analyze table `%s`.`%s` has %s", job.DBName, job.TableName, state),
+				zap.String("partition", job.PartitionName),
+				zap.String("job info", job.JobInfo),
+				zap.Time("start time", job.StartTime),
+				zap.Time("end time", job.EndTime),
+				zap.String("cost", job.EndTime.Sub(job.StartTime).String()),
+				zap.String("sample rate reason", job.SampleRateReason))
 		}
-		logutil.BgLogger().Info(fmt.Sprintf("analyze table `%s`.`%s` has %s", job.DBName, job.TableName, state),
-			zap.String("partition", job.PartitionName),
-			zap.String("job info", job.JobInfo),
-			zap.Time("start time", job.StartTime),
-			zap.Time("end time", job.EndTime),
-			zap.String("cost", job.EndTime.Sub(job.StartTime).String()),
-			zap.String("sample rate reason", job.SampleRateReason))
 	}
 }
 

@@ -866,7 +866,7 @@ func getLowerBoundInt(partCols ...*model.ColumnInfo) int64 {
 		if mysql.HasUnsignedFlag(col.FieldType.GetFlag()) {
 			return 0
 		}
-		ret = mathutil.Min(ret, types.IntergerSignedLowerBound(col.GetType()))
+		ret = min(ret, types.IntergerSignedLowerBound(col.GetType()))
 	}
 	return ret
 }
@@ -1097,7 +1097,7 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 		if err != nil {
 			return err
 		}
-		cmp, err := currVal.Compare(ctx.GetSessionVars().StmtCtx, &lastVal, collate.GetBinaryCollator())
+		cmp, err := currVal.Compare(ctx.GetSessionVars().StmtCtx.TypeCtx(), &lastVal, collate.GetBinaryCollator())
 		if err != nil {
 			return err
 		}
@@ -1427,7 +1427,7 @@ func checkPartitionValuesIsInt(ctx sessionctx.Context, defName interface{}, expr
 			return dbterror.ErrValuesIsNotIntType.GenWithStackByArgs(defName)
 		}
 
-		_, err = val.ConvertTo(ctx.GetSessionVars().StmtCtx, tp)
+		_, err = val.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), tp)
 		if err != nil && !types.ErrOverflow.Equal(err) {
 			return dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
 		}
