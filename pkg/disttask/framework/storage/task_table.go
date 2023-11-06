@@ -464,7 +464,7 @@ func (stm *TaskManager) GetSubtasksByStepExceptStates(taskID int64, step proto.S
 	args := []interface{}{taskID, step}
 	args = append(args, exceptStates...)
 	rs, err := stm.executeSQLWithNewSession(stm.ctx, `select * from mysql.tidb_background_subtask
-		where task_key = %? and step = %? state not in (`+strings.Repeat("%?,", len(exceptStates)-1)+"%?)", args)
+		where task_key = %? and step = %? and state not in (`+strings.Repeat("%?,", len(exceptStates)-1)+"%?)", args...)
 	if err != nil {
 		return nil, err
 	}
@@ -650,6 +650,7 @@ func (stm *TaskManager) IsSchedulerCanceled(execID string, taskID int64) (bool, 
 }
 
 // UpdateSubtasksSchedulerIDs update subtasks' schedulerID.
+// ywq todo bug....
 func (stm *TaskManager) UpdateSubtasksSchedulerIDs(taskID int64, subtasks []*proto.Subtask) error {
 	// skip the update process.
 	if len(subtasks) == 0 {
@@ -661,11 +662,11 @@ func (stm *TaskManager) UpdateSubtasksSchedulerIDs(taskID int64, subtasks []*pro
 		return err
 	}
 	for _, subtask := range subtasks {
-		if err := sqlescape.FormatSQL(sql, "when id = %? then %? ", subtask.ID, subtask.SchedulerID); err != nil {
+		if err := sqlescape.FormatSQL(sql, "when id = %? then %?", subtask.ID, subtask.SchedulerID); err != nil {
 			return err
 		}
 	}
-	if err := sqlescape.FormatSQL(sql, " end) where task_key = %? and state = \"pending\"", taskID); err != nil {
+	if err := sqlescape.FormatSQL(sql, "else exec_id end) where task_key = %?", taskID); err != nil {
 		return err
 	}
 

@@ -414,80 +414,23 @@ func (d *BaseDispatcher) RebalanceSubtasks() error {
 		zap.Any("Tasknodes", d.TaskNodes))
 
 	if len(d.LiveNodes) > 0 {
-		if len(d.LiveNodes) > len(d.TaskNodes) {
-			return d.ScaleOutSubtasks()
-		}
-		return d.ScaleInSubtasks()
+		return d.RebalanceSubtasksImpl()
 	}
 	return nil
 }
 
-// ScaleInSubtasks rebalance subtasks from taskNodes to liveNodes.
-func (d *BaseDispatcher) ScaleInSubtasks() error {
-	// 1. find nodes needs to be cleaned.
-	cleanNodes := make([]string, 0)
-	cleanNodeMap := make(map[string]bool, 0)
-	for _, nodeID := range d.TaskNodes {
-		if ok := disttaskutil.MatchServerInfo(d.LiveNodes, nodeID); !ok {
-			cleanNodes = append(cleanNodes, nodeID)
-			cleanNodeMap[nodeID] = true
-		}
+func (d *BaseDispatcher) replaceTaskNodes() {
+	d.TaskNodes = d.TaskNodes[:0]
+	for _, serverInfo := range d.LiveNodes {
+		d.TaskNodes = append(d.TaskNodes, disttaskutil.GenerateExecID(serverInfo.IP, serverInfo.Port))
 	}
-	if len(cleanNodes) > 0 {
-		logutil.Logger(d.logCtx).Info("reschedule subtasks to other nodes", zap.Int("clean-node-cnt", len(cleanNodes)))
-		// 2. get all subtask except succeed/running/reverting subtasks.
-		subtasks, err := d.taskMgr.GetSubtasksByStepExceptStates(
-			d.Task.ID,
-			d.Task.Step,
-			proto.TaskStateSucceed,
-			proto.TaskStateRunning,
-			proto.TaskStateReverting)
-
-		if err != nil {
-			return err
-		}
-
-		subtasksForEachScheduler := make(map[string][]*proto.Subtask, len(d.LiveNodes))
-		for _, subtask := range subtasks {
-			subtasksForEachScheduler[subtask.SchedulerID] = append(
-				subtasksForEachScheduler[subtask.SchedulerID],
-				subtask)
-		}
-
-		// 3. move subtasks from cleanNodes to LiveNodes
-		liveNodeIdx := 0
-		for id, subtasks := range subtasksForEachScheduler {
-			if ok := cleanNodeMap[id]; ok {
-				for _, subtask := range subtasks {
-					node := d.LiveNodes[liveNodeIdx%len(d.LiveNodes)]
-					subtask.SchedulerID = disttaskutil.GenerateExecID(node.IP, node.Port)
-					liveNodeIdx++
-				}
-			}
-		}
-		if err := d.taskMgr.UpdateSubtasksSchedulerIDs(d.Task.ID, subtasks); err != nil {
-			return err
-		}
-
-		if err := d.taskMgr.CleanUpMeta(cleanNodes); err != nil {
-			return err
-		}
-		// replace local cache.
-		d.TaskNodes = d.TaskNodes[:0]
-		for _, serverInfo := range d.LiveNodes {
-			d.TaskNodes = append(d.TaskNodes, disttaskutil.GenerateExecID(serverInfo.IP, serverInfo.Port))
-		}
-		return nil
-	}
-	return nil
 }
 
 // ScaleOutSubtasks rebalance subtasks from taskNodes to liveNodes.
-func (d *BaseDispatcher) ScaleOutSubtasks() error {
+func (d *BaseDispatcher) RebalanceSubtasksImpl() error {
 	logutil.BgLogger().Info("ywq test reach scaleout")
 	// 1. find out nodes that scaled out.
-	scaleOutNodes := make([]string, 0, len(d.LiveNodes)-len(d.TaskNodes))
-
+	scaleOutNodes := make([]string, 0)
 	for _, node := range d.LiveNodes {
 		execID := disttaskutil.GenerateExecID(node.IP, node.Port)
 		if !disttaskutil.MatchSchedulerID(d.TaskNodes, disttaskutil.GenerateExecID(node.IP, node.Port)) {
@@ -495,19 +438,29 @@ func (d *BaseDispatcher) ScaleOutSubtasks() error {
 		}
 	}
 
-	// 2. find out filtered node.
-	filteredNodes := make(map[string]bool, 0)
+	// 2. find out nodes need to clean subtasks.
+	cleanNodes := make([]string, 0)
+	cleanNodeMap := make(map[string]bool, 0)
 	for _, node := range d.TaskNodes {
 		if !disttaskutil.MatchServerInfo(d.LiveNodes, node) {
-			filteredNodes[node] = true
+			cleanNodeMap[node] = true
+			cleanNodes = append(cleanNodes, node)
 		}
+	}
+	logutil.BgLogger().Info("ywq test show nodes", zap.Any("scaleOutNodes", scaleOutNodes), zap.Any("cleanNodes", cleanNodes))
+
+	if len(scaleOutNodes) == 0 && len(cleanNodes) == 0 {
+		logutil.BgLogger().Info("ywq test no need to rebalance")
+		return nil
 	}
 
 	// 3. get subtasks for each node before scaling out.
-	subtasks, err := d.taskMgr.GetSubtasksByStepAndState(d.Task.ID, d.Task.Step, proto.TaskStatePending)
+	subtasks, err := d.taskMgr.GetSubtasksByStepExceptStates(d.Task.ID, d.Task.Step, proto.TaskStateSucceed)
 	if err != nil {
-		return nil
+		logutil.BgLogger().Error("ywq test wtf err", zap.Error(err))
+		return err
 	}
+	logutil.BgLogger().Info("ywq test show subtasks", zap.Any("subtasks", subtasks))
 
 	subtasksForEachScheduler := make(map[string][]*proto.Subtask, len(d.LiveNodes))
 	for _, subtask := range subtasks {
@@ -515,12 +468,22 @@ func (d *BaseDispatcher) ScaleOutSubtasks() error {
 			subtasksForEachScheduler[subtask.SchedulerID],
 			subtask)
 	}
+	logutil.BgLogger().Info("ywq test cp 1")
 
 	// 4. scale out subtasks to scaleOutNodes.
-	averageSubtaskCnt := len(subtasks) / len(d.LiveNodes)
 	lastScaleOutIdx := 0
+	liveNodeSubtaskCnt := 0
 	for id, v := range subtasksForEachScheduler {
-		if ok := filteredNodes[id]; ok {
+		if ok := cleanNodeMap[id]; ok {
+			continue
+		}
+		liveNodeSubtaskCnt += len(v)
+	}
+	logutil.BgLogger().Info("ywq test cp 2")
+
+	averageSubtaskCnt := liveNodeSubtaskCnt / len(d.LiveNodes)
+	for id, v := range subtasksForEachScheduler {
+		if ok := cleanNodeMap[id]; ok {
 			continue
 		}
 		if len(v) > averageSubtaskCnt {
@@ -530,25 +493,35 @@ func (d *BaseDispatcher) ScaleOutSubtasks() error {
 			}
 		}
 	}
-	// 5. scale out filtered nodes subtasks
-	for node := range filteredNodes {
+	logutil.BgLogger().Info("ywq test cp 3")
+
+	// 5. scale out clean nodes subtasks to LiveNodes.
+	liveNodeIdx := 0
+	for node := range cleanNodeMap {
 		subtasks := subtasksForEachScheduler[node]
 		for _, subtask := range subtasks {
-			subtask.SchedulerID = scaleOutNodes[lastScaleOutIdx%len(scaleOutNodes)]
-			lastScaleOutIdx++
+			node := d.LiveNodes[liveNodeIdx%len(d.LiveNodes)]
+			subtask.SchedulerID = disttaskutil.GenerateExecID(node.IP, node.Port)
+			liveNodeIdx++
 		}
+	}
+	logutil.BgLogger().Info("ywq test cp 4")
+
+	logutil.Logger(d.logCtx).Info("scale out subtasks",
+		zap.Any("subtasks", subtasks),
+		zap.Any("scaleoutNodes", scaleOutNodes),
+		zap.Any("cleanNodes", cleanNodes))
+
+	if err = d.taskMgr.UpdateSubtasksSchedulerIDs(d.Task.ID, subtasks); err != nil {
+		return err
 	}
 
-	logutil.Logger(d.logCtx).Info("scale out subtasks")
-	err = d.taskMgr.UpdateSubtasksSchedulerIDs(d.Task.ID, subtasks)
-	if err == nil {
-		// replace local cache.
-		d.TaskNodes = d.TaskNodes[:0]
-		for _, serverInfo := range d.LiveNodes {
-			d.TaskNodes = append(d.TaskNodes, disttaskutil.GenerateExecID(serverInfo.IP, serverInfo.Port))
-		}
+	if err := d.taskMgr.CleanUpMeta(cleanNodes); err != nil {
+		return err
 	}
-	return err
+	// 6. replace local cache.
+	d.replaceTaskNodes()
+	return nil
 }
 
 // updateTask update the task in tidb_global_task table.
