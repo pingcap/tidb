@@ -444,6 +444,12 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 			return err
 		}
 	}
+	if len(w.kvStore.memBuffer) > 0 {
+		_, err = w.kvStore.dataWriter.Write(ctx, w.kvStore.memBuffer)
+		if err != nil {
+			return err
+		}
+	}
 
 	w.kvStore.Close()
 	encodedStat := w.rc.encode()
@@ -474,7 +480,6 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		w.fileMaxKeys = w.fileMaxKeys[:0]
 	}
 
-	w.batchSize = 0
 	w.writeBatch = w.writeBatch[:0]
 	w.kvBuffer2.Reset()
 	w.rc.reset()
