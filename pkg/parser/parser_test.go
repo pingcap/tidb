@@ -463,6 +463,16 @@ func RunErrMsgTest(t *testing.T, table []testErrMsgCase) {
 	}
 }
 
+func TestBDR(t *testing.T) {
+	table := []testCase{
+		// {"ADMIN SET BDR ROLE NONE", true, "ADMIN SET BDR ROLE none"},
+		// {"ADMIN SET BDR ROLE `primary`", true, "ADMIN SET BDR ROLE `primary`"},
+		{"ADMIN SET BDR ROLE secondary", true, "ADMIN SET BDR ROLE secondary"},
+		{"ADMIN SET BDR ROLE local_only", true, "ADMIN SET BDR ROLE local_only"},
+	}
+	RunTest(t, table, false)
+}
+
 func TestDMLStmt(t *testing.T) {
 	table := []testCase{
 		{"", true, ""},

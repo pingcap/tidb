@@ -2318,6 +2318,7 @@ const (
 	AdminResetTelemetryID
 	AdminReloadStatistics
 	AdminFlushPlanCache
+	AdminSetBDRRole
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.
@@ -2325,6 +2326,15 @@ type HandleRange struct {
 	Begin int64
 	End   int64
 }
+
+type BDRRole int
+
+const (
+	BDRRoleNone BDRRole = iota
+	BDRRolePrimary
+	BDRRoleSecondary
+	BDRRoleLocalOnly
+)
 
 type StatementScope int
 
@@ -2413,6 +2423,7 @@ type AdminStmt struct {
 	Where          ExprNode
 	StatementScope StatementScope
 	LimitSimple    LimitSimple
+	BDRRole        BDRRole
 }
 
 // Restore implements Node interface.
@@ -2566,6 +2577,19 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("FLUSH INSTANCE PLAN_CACHE")
 		} else if n.StatementScope == StatementScopeGlobal {
 			ctx.WriteKeyWord("FLUSH GLOBAL PLAN_CACHE")
+		}
+	case AdminSetBDRRole:
+		switch n.BDRRole {
+		case BDRRoleNone:
+			ctx.WriteKeyWord("SET BDR ROLE NONE")
+		case BDRRolePrimary:
+			ctx.WriteKeyWord("SET BDR ROLE PRIMARY")
+		case BDRRoleSecondary:
+			ctx.WriteKeyWord("SET BDR ROLE SECONDARY")
+		case BDRRoleLocalOnly:
+			ctx.WriteKeyWord("SET BDR ROLE LOCAL_ONLY")
+		default:
+			return errors.New("Unsupported BDR role")
 		}
 	default:
 		return errors.New("Unsupported AdminStmt type")
