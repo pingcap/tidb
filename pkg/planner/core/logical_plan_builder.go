@@ -2575,7 +2575,7 @@ func resolveFromSelectFields(v *ast.ColumnNameExpr, fields []*ast.SelectField, i
 }
 
 // havingWindowAndOrderbyExprResolver visits Expr tree.
-// It converts ColunmNameExpr to AggregateFuncExpr and collects AggregateFuncExpr.
+// It converts ColumnNameExpr to AggregateFuncExpr and collects AggregateFuncExpr.
 type havingWindowAndOrderbyExprResolver struct {
 	inAggFunc    bool
 	inWindowFunc bool
