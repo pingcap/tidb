@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -184,7 +185,8 @@ func (b *WriterBuilder) Build(
 		},
 		memSizeLimit:   b.memSizeLimit,
 		store:          store,
-		kvBuffer:       newPreAllocKVBuf(b.memSizeLimit, b.blockSize),
+		kvBuffer2:      membuf.NewPool(membuf.WithBlockSize(b.blockSize)).NewBuffer(),
+		writeBatch:     make([]common.KvPair, 0, 1024*1024),
 		currentSeq:     0,
 		filenamePrefix: filenamePrefix,
 		keyAdapter:     keyAdapter,
@@ -272,6 +274,9 @@ type Writer struct {
 	kvLocations []kvLocation
 	kvSize      int64
 
+	kvBuffer2  *membuf.Buffer
+	writeBatch []common.KvPair
+
 	onClose OnCloseFunc
 	closed  bool
 
@@ -292,36 +297,17 @@ type Writer struct {
 // WriteRow implements ingest.Writer.
 func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tidbkv.Handle) error {
 	keyAdapter := w.keyAdapter
+	w.batchSize += uint64(len(idxKey) + len(idxVal))
 
 	var rowID []byte
 	if handle != nil {
 		rowID = handle.Encoded()
 	}
-	encodedKeyLen := keyAdapter.EncodedLen(idxKey, rowID)
-	length := encodedKeyLen + len(idxVal) + lengthBytes*2
-	blockIdx, dataBuf, off, allocated := w.kvBuffer.Alloc(length)
-	if !allocated {
-		if err := w.flushKVs(ctx, false); err != nil {
-			return err
-		}
-		blockIdx, dataBuf, off, allocated = w.kvBuffer.Alloc(length)
-		// we now don't support KV larger than blockSize
-		if !allocated {
-			return errors.Errorf("failed to allocate kv buffer: %d", length)
-		}
-	}
-	binary.BigEndian.AppendUint64(dataBuf[:0], uint64(encodedKeyLen))
-	binary.BigEndian.AppendUint64(dataBuf[lengthBytes:lengthBytes], uint64(len(idxVal)))
-	keyAdapter.Encode(dataBuf[lengthBytes*2:lengthBytes*2:lengthBytes*2+encodedKeyLen], idxKey, rowID)
-	copy(dataBuf[lengthBytes*2+encodedKeyLen:], idxVal)
+	buf := w.kvBuffer2.AllocBytes(keyAdapter.EncodedLen(idxKey, rowID))
+	key := keyAdapter.Encode(buf[:0], idxKey, rowID)
+	val := w.kvBuffer2.AddBytes(idxVal)
 
-	w.kvLocations = append(w.kvLocations, kvLocation{
-		blockIdx: blockIdx,
-		offset:   off,
-		length:   int32(length)},
-	)
-	w.kvSize += int64(encodedKeyLen + len(idxVal))
-	w.batchSize += uint64(length)
+	w.writeBatch = append(w.writeBatch, common.KvPair{Key: key, Val: val})
 	return nil
 }
 
@@ -338,7 +324,7 @@ func (w *Writer) Close(ctx context.Context) error {
 		return errors.Errorf("writer %s has been closed", w.writerID)
 	}
 	w.closed = true
-	defer w.kvBuffer.destroy()
+	defer w.kvBuffer2.Destroy()
 	err := w.flushKVs(ctx, true)
 	if err != nil {
 		return err
@@ -348,11 +334,11 @@ func (w *Writer) Close(ctx context.Context) error {
 
 	logutil.Logger(ctx).Info("close writer",
 		zap.String("writerID", w.writerID),
-		zap.Int("kv-cnt-cap", cap(w.kvLocations)),
+		zap.Int("kv-cnt-cap", cap(w.writeBatch)),
 		zap.String("minKey", hex.EncodeToString(w.minKey)),
 		zap.String("maxKey", hex.EncodeToString(w.maxKey)))
 
-	w.kvLocations = nil
+	w.writeBatch = nil
 
 	w.onClose(&WriterSummary{
 		WriterID:           w.writerID,
@@ -376,7 +362,7 @@ func (w *Writer) recordMinMax(newMin, newMax tidbkv.Key, size uint64) {
 }
 
 func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
-	if len(w.kvLocations) == 0 {
+	if len(w.writeBatch) == 0 {
 		return nil
 	}
 
@@ -404,7 +390,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		}
 		return units.HumanSize(float64(n) / dur)
 	}
-	kvCnt := len(w.kvLocations)
+	kvCnt := len(w.writeBatch)
 	defer func() {
 		w.currentSeq++
 		err1, err2 := dataWriter.Close(ctx), statWriter.Close(ctx)
@@ -439,8 +425,8 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	}()
 
 	sortStart := time.Now()
-	slices.SortFunc(w.kvLocations, func(i, j kvLocation) int {
-		return bytes.Compare(w.getKeyByLoc(i), w.getKeyByLoc(j))
+	slices.SortFunc(w.writeBatch, func(i, j common.KvPair) int {
+		return bytes.Compare(i.Key, j.Key)
 	})
 	sortDuration = time.Since(sortStart)
 
@@ -452,8 +438,8 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		return err
 	}
 
-	for _, pair := range w.kvLocations {
-		err = w.kvStore.addEncodedData(w.getEncodedKVData(pair))
+	for _, pair := range w.writeBatch {
+		err = w.kvStore.addEncodedData(pair.Key, pair.Val)
 		if err != nil {
 			return err
 		}
@@ -467,8 +453,9 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		return err
 	}
 
-	minKey, maxKey := w.getKeyByLoc(w.kvLocations[0]), w.getKeyByLoc(w.kvLocations[len(w.kvLocations)-1])
-	w.recordMinMax(minKey, maxKey, uint64(w.kvSize))
+	minKey := tidbkv.Key(w.writeBatch[0].Key).Clone()
+	maxKey := tidbkv.Key(w.writeBatch[len(w.writeBatch)-1].Key).Clone()
+	w.recordMinMax(minKey, maxKey, w.batchSize)
 
 	// maintain 500-batch statistics
 
@@ -487,9 +474,9 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		w.fileMaxKeys = w.fileMaxKeys[:0]
 	}
 
-	w.kvLocations = w.kvLocations[:0]
-	w.kvSize = 0
-	w.kvBuffer.reset()
+	w.batchSize = 0
+	w.writeBatch = w.writeBatch[:0]
+	w.kvBuffer2.Reset()
 	w.rc.reset()
 	w.batchSize = 0
 	return nil

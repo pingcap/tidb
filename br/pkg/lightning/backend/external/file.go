@@ -28,9 +28,10 @@ const lengthBytes = 8
 type KeyValueStore struct {
 	dataWriter storage.ExternalFileWriter
 
-	rc     *rangePropertiesCollector
-	ctx    context.Context
-	offset uint64
+	rc        *rangePropertiesCollector
+	ctx       context.Context
+	offset    uint64
+	memBuffer []byte
 }
 
 // NewKeyValueStore creates a new KeyValueStore. The data will be written to the
@@ -45,6 +46,7 @@ func NewKeyValueStore(
 		dataWriter: dataWriter,
 		ctx:        ctx,
 		rc:         rangePropertiesCollector,
+		memBuffer:  make([]byte, 0, 1024*8),
 	}
 	return kvStore, nil
 }
@@ -54,21 +56,27 @@ func NewKeyValueStore(
 // size or key count exceeds the given distance, a new range property will be
 // appended to the rangePropertiesCollector with current status.
 // `key` must be in strictly ascending order for invocations of a KeyValueStore.
-func (s *KeyValueStore) addEncodedData(val []byte) error {
-	_, err := s.dataWriter.Write(s.ctx, val)
-	if err != nil {
-		return err
+func (s *KeyValueStore) addEncodedData(key []byte, val []byte) error {
+	if len(s.memBuffer) > 5*1024*1024 {
+		_, err := s.dataWriter.Write(s.ctx, s.memBuffer)
+		if err != nil {
+			return err
+		}
+		s.memBuffer = s.memBuffer[:0]
 	}
 
-	keyLen := binary.BigEndian.Uint64(val)
-	key := val[lengthBytes : lengthBytes+keyLen]
+	binary.BigEndian.AppendUint64(s.memBuffer, uint64(len(key)))
+	binary.BigEndian.AppendUint64(s.memBuffer, uint64(len(val)))
+	s.memBuffer = append(s.memBuffer, key...)
+	s.memBuffer = append(s.memBuffer, val...)
+
 	if len(s.rc.currProp.firstKey) == 0 {
 		s.rc.currProp.firstKey = key
 	}
 	s.rc.currProp.lastKey = key
 
-	s.offset += uint64(len(val))
-	s.rc.currProp.size += uint64(len(val) - lengthBytes*2)
+	s.offset += uint64(lengthBytes*2 + len(key) + len(val))
+	s.rc.currProp.size += uint64(len(key) + len(val))
 	s.rc.currProp.keys++
 
 	if s.rc.currProp.size >= s.rc.propSizeDist ||
