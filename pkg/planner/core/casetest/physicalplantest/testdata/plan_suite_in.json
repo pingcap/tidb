@@ -355,7 +355,7 @@
     ]
   },
   {
-    "name": "TestIssue45822",
+    "name": "TestRuleColumnPruningLogicalApply",
     "cases": [
       "SELECT COUNT(*) FROM (SELECT a, (SELECT t2.b FROM t t2, t t3 WHERE t2.a = t3.a AND t1.a = t2.a LIMIT 1) t FROM t t1) t",
       "SELECT COUNT(a) FROM (SELECT a, (SELECT t2.b FROM t t2, t t3 WHERE t2.a = t3.a AND t1.a = t2.a LIMIT 1) t FROM t t1) t",

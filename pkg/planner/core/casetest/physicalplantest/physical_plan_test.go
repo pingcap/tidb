@@ -167,7 +167,7 @@ func TestAggEliminator(t *testing.T) {
 	}
 }
 
-func TestIssue45822(t *testing.T) {
+func TestRuleColumnPruningLogicalApply(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	var input []string
