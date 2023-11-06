@@ -645,7 +645,7 @@ Two limitations now:
 try to map it into a simple normal index path or mv index path, other than an internal index merge path.
 2). Every dnf item should exactly be used as full length index range or prefix index range, other than being not used.
 */
-func (ds *DataSource) generateIndexMergePartialPath4Or(normalPathCnt int, indexMergeDNFConds []expression.Expression) ([]*util.AccessPath, []bool, bool, error) {
+func (ds *DataSource) generateMVIndexPartialPath4Or(normalPathCnt int, indexMergeDNFConds []expression.Expression) ([]*util.AccessPath, []bool, bool, error) {
 	// step1: collect all mv index paths
 	possibleMVIndexPaths := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
 	for idx := 0; idx < normalPathCnt; idx++ {
@@ -732,27 +732,6 @@ func (ds *DataSource) generateIndexMergePartialPath4Or(normalPathCnt int, indexM
 }
 
 // generateMVIndexMergePartialPaths4And try to find mv index merge partial path from a collection of cnf conditions.
-// step1: find all possible access mv index path, map these cnf conditions into it.
-//
-//	if we have two json predicate use a same mv index(c, j) path like: (1 member-of j) and (2 member-of j) and c=1
-//	even for this single mv index path, we should generate two partial index paths: and each from access mutations
-//		mutation 1: [c=1] and [1 member-of j]    ---> index partial path 1
-//		mutation 2: [c=1] and [2 member-of j]    ---> index partial path 2
-//	and finally merge this index partial path together, if there still some other json_col's predicate,
-//	build it partial index path out and merge it too.
-//
-// step2: after all mv index paths is traversed, try to find the normal index partial path. Let's say there is
-//
-//			index built on column ---> idx_c(c), since condition c is already used in previous mv index partial path,
-//			index idx_c is ignored. If there is a additional cnf item as d=1 and there is a idx_d(d) on it. Since
-//	     d=1 is not used in previous mv index partial path, we can build normal index partial path idx_d out from
-//			d=1.
-//
-// step3: after all mv index partial paths and normal index partial paths is all built. Build them up as a whole
-//
-//	index merge path together.
-//
-// this function mainly focus on step1.
 func (ds *DataSource) generateMVIndexMergePartialPaths4And(normalPathCnt int, indexMergeConds []expression.Expression) ([]*util.AccessPath, map[string]expression.Expression, error) {
 	// step1: collect all mv index paths
 	possibleMVIndexPaths := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
@@ -1007,7 +986,7 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 			return nil
 		}
 		dnfFilters := expression.FlattenDNFConditions(sf)
-		mvIndexPartialPaths, usedAccessMap, needSelection4MVIndex, err := ds.generateIndexMergePartialPath4Or(normalPathCnt, dnfFilters)
+		mvIndexPartialPaths, usedAccessMap, needSelection4MVIndex, err := ds.generateMVIndexPartialPath4Or(normalPathCnt, dnfFilters)
 		if err != nil {
 			return err
 		}
