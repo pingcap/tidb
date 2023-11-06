@@ -459,11 +459,7 @@ func (p *PdController) doPauseSchedulers(ctx context.Context,
 	for _, scheduler := range schedulers {
 		prefix := fmt.Sprintf("%s/%s", schedulerPrefix, scheduler)
 		for _, addr := range p.getAllPDAddrs() {
-<<<<<<< HEAD
-			_, err = post(ctx, addr, prefix, p.cli, http.MethodPost, bytes.NewBuffer(body))
-=======
-			_, err = post(ctx, addr, pdapi.SchedulerByName(scheduler), p.cli, http.MethodPost, body)
->>>>>>> e2d3047ca9c (pdutil: fix retry reusing body reader (#48312))
+			_, err = post(ctx, addr, prefix, p.cli, http.MethodPost, body)
 			if err == nil {
 				removedSchedulers = append(removedSchedulers, scheduler)
 				break
@@ -546,11 +542,7 @@ func (p *PdController) resumeSchedulerWith(ctx context.Context, schedulers []str
 	for _, scheduler := range schedulers {
 		prefix := fmt.Sprintf("%s/%s", schedulerPrefix, scheduler)
 		for _, addr := range p.getAllPDAddrs() {
-<<<<<<< HEAD
-			_, err = post(ctx, addr, prefix, p.cli, http.MethodPost, bytes.NewBuffer(body))
-=======
-			_, err = post(ctx, addr, pdapi.SchedulerByName(scheduler), p.cli, http.MethodPost, body)
->>>>>>> e2d3047ca9c (pdutil: fix retry reusing body reader (#48312))
+			_, err = post(ctx, addr, prefix, p.cli, http.MethodPost, body)
 			if err == nil {
 				break
 			}
@@ -896,11 +888,7 @@ func (p *PdController) RecoverBaseAllocID(ctx context.Context, id uint64) error 
 	})
 	var err error
 	for _, addr := range p.getAllPDAddrs() {
-<<<<<<< HEAD
-		_, e := pdRequest(ctx, addr, baseAllocIDPrefix, p.cli, http.MethodPost, bytes.NewBuffer(reqData))
-=======
-		_, e := pdRequest(ctx, addr, pdapi.BaseAllocID, p.cli, http.MethodPost, reqData)
->>>>>>> e2d3047ca9c (pdutil: fix retry reusing body reader (#48312))
+		_, e := pdRequest(ctx, addr, baseAllocIDPrefix, p.cli, http.MethodPost, reqData)
 		if e != nil {
 			log.Warn("failed to recover base alloc id", zap.String("addr", addr), zap.Error(e))
 			err = e
@@ -924,11 +912,7 @@ func (p *PdController) ResetTS(ctx context.Context, ts uint64) error {
 	})
 	var err error
 	for _, addr := range p.getAllPDAddrs() {
-<<<<<<< HEAD
-		code, _, e := pdRequestWithCode(ctx, addr, resetTSPrefix, p.cli, http.MethodPost, bytes.NewBuffer(reqData))
-=======
-		code, _, e := pdRequestWithCode(ctx, addr, pdapi.ResetTS, p.cli, http.MethodPost, reqData)
->>>>>>> e2d3047ca9c (pdutil: fix retry reusing body reader (#48312))
+		code, _, e := pdRequestWithCode(ctx, addr, resetTSPrefix, p.cli, http.MethodPost, reqData)
 		if e != nil {
 			// for pd version <= 6.2, if the given ts < current ts of pd, pd returns StatusForbidden.
 			// it's not an error for br
@@ -1004,13 +988,8 @@ func (p *PdController) CreateOrUpdateRegionLabelRule(ctx context.Context, rule L
 	var lastErr error
 	addrs := p.getAllPDAddrs()
 	for i, addr := range addrs {
-<<<<<<< HEAD
 		_, lastErr = pdRequest(ctx, addr, regionLabelPrefix,
-			p.cli, http.MethodPost, bytes.NewBuffer(reqData))
-=======
-		_, lastErr = pdRequest(ctx, addr, pdapi.RegionLabelRule,
 			p.cli, http.MethodPost, reqData)
->>>>>>> e2d3047ca9c (pdutil: fix retry reusing body reader (#48312))
 		if lastErr == nil {
 			return nil
 		}
