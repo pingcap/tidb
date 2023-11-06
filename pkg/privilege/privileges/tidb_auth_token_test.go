@@ -160,42 +160,47 @@ type pair struct {
 
 func init() {
 	for i := range publicKeyStrings {
-		if v, rest, err := jwkRepo.DecodePEM(([]byte)(privateKeyStrings[i])); err != nil {
+		v, rest, err := jwkRepo.DecodePEM(([]byte)(privateKeyStrings[i]))
+		if err != nil {
 			log.Println(err.Error())
 			log.Fatal("Error in decode private key")
-		} else if len(rest) > 0 {
-			log.Fatal("Rest in decode private key")
-		} else if priKey, ok := v.(*rsa.PrivateKey); !ok {
-			log.Fatal("Wrong type of private key")
-		} else {
-			priKeys = append(priKeys, priKey)
 		}
-		if v, rest, err := jwkRepo.DecodePEM(([]byte)(publicKeyStrings[i])); err != nil {
+		if len(rest) > 0 {
+			log.Fatal("Rest in decode private key")
+		}
+		priKey, ok := v.(*rsa.PrivateKey)
+		if !ok {
+			log.Fatal("Wrong type of private key")
+		}
+		priKeys = append(priKeys, priKey)
+		v, rest, err = jwkRepo.DecodePEM(([]byte)(publicKeyStrings[i]))
+		if err != nil {
 			log.Println(err.Error())
 			log.Fatal("Error in decode public key")
 		} else if len(rest) > 0 {
 			log.Fatal("Rest in decode public key")
-		} else if pubKey, ok := v.(*rsa.PublicKey); !ok {
-			log.Fatal("Wrong type of public key")
-		} else {
-			pubKeys = append(pubKeys, pubKey)
-			jwk, err := jwkRepo.FromRaw(pubKey)
-			if err != nil {
-				log.Fatal("Error when generate jwk")
-			}
-			keyAttributes := []pair{
-				{jwkRepo.AlgorithmKey, jwaRepo.RS256},
-				{jwkRepo.KeyIDKey, fmt.Sprintf("the-key-id-%d", i)},
-				{jwkRepo.KeyUsageKey, "sig"},
-			}
-			for _, keyAttribute := range keyAttributes {
-				if err = jwk.Set(keyAttribute.name, keyAttribute.value); err != nil {
-					log.Println(err.Error())
-					log.Fatalf("Error when set %s for key %d", keyAttribute.name, i)
-				}
-			}
-			jwkArray = append(jwkArray, jwk)
 		}
+		pubKey, ok := v.(*rsa.PublicKey)
+		if !ok {
+			log.Fatal("Wrong type of public key")
+		}
+		pubKeys = append(pubKeys, pubKey)
+		jwk, err := jwkRepo.FromRaw(pubKey)
+		if err != nil {
+			log.Fatal("Error when generate jwk")
+		}
+		keyAttributes := []pair{
+			{jwkRepo.AlgorithmKey, jwaRepo.RS256},
+			{jwkRepo.KeyIDKey, fmt.Sprintf("the-key-id-%d", i)},
+			{jwkRepo.KeyUsageKey, "sig"},
+		}
+		for _, keyAttribute := range keyAttributes {
+			if err = jwk.Set(keyAttribute.name, keyAttribute.value); err != nil {
+				log.Println(err.Error())
+				log.Fatalf("Error when set %s for key %d", keyAttribute.name, i)
+			}
+		}
+		jwkArray = append(jwkArray, jwk)
 	}
 
 	for i := range path {

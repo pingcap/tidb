@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -727,9 +728,9 @@ func TestRandomBinary(t *testing.T) {
 	var val string
 	for i, bytes := range allBytes {
 		if i == 0 {
-			val += sqlexec.MustEscapeSQL("(874, 0, 1, %?, 3)", bytes)
+			val += sqlescape.MustEscapeSQL("(874, 0, 1, %?, 3)", bytes)
 		} else {
-			val += sqlexec.MustEscapeSQL(",(874, 0, 1, %?, 3)", bytes)
+			val += sqlescape.MustEscapeSQL(",(874, 0, 1, %?, 3)", bytes)
 		}
 	}
 	sql += val

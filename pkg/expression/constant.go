@@ -250,7 +250,7 @@ func (c *Constant) Eval(row chunk.Row) (types.Datum, error) {
 			sf, sfOk := c.DeferredExpr.(*ScalarFunction)
 			if sfOk {
 				if dt.Kind() != types.KindMysqlDecimal {
-					val, err := dt.ConvertTo(sf.GetCtx().GetSessionVars().StmtCtx, c.RetType)
+					val, err := dt.ConvertTo(sf.GetCtx().GetSessionVars().StmtCtx.TypeCtx(), c.RetType)
 					if err != nil {
 						return dt, err
 					}
@@ -278,13 +278,13 @@ func (c *Constant) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, 
 	if c.GetType().GetType() == mysql.TypeNull || dt.IsNull() {
 		return 0, true, nil
 	} else if dt.Kind() == types.KindBinaryLiteral {
-		val, err := dt.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx)
+		val, err := dt.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx.TypeCtx())
 		return int64(val), err != nil, err
 	} else if c.GetType().Hybrid() || dt.Kind() == types.KindString {
-		res, err := dt.ToInt64(ctx.GetSessionVars().StmtCtx)
+		res, err := dt.ToInt64(ctx.GetSessionVars().StmtCtx.TypeCtx())
 		return res, false, err
 	} else if dt.Kind() == types.KindMysqlBit {
-		uintVal, err := dt.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx)
+		uintVal, err := dt.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx.TypeCtx())
 		return int64(uintVal), false, err
 	}
 	return dt.GetInt64(), false, nil
@@ -303,7 +303,7 @@ func (c *Constant) EvalReal(ctx sessionctx.Context, row chunk.Row) (float64, boo
 		return 0, true, nil
 	}
 	if c.GetType().Hybrid() || dt.Kind() == types.KindBinaryLiteral || dt.Kind() == types.KindString {
-		res, err := dt.ToFloat64(ctx.GetSessionVars().StmtCtx)
+		res, err := dt.ToFloat64(ctx.GetSessionVars().StmtCtx.TypeCtx())
 		return res, false, err
 	}
 	return dt.GetFloat64(), false, nil
@@ -337,7 +337,7 @@ func (c *Constant) EvalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.My
 	if c.GetType().GetType() == mysql.TypeNull || dt.IsNull() {
 		return nil, true, nil
 	}
-	res, err := dt.ToDecimal(ctx.GetSessionVars().StmtCtx)
+	res, err := dt.ToDecimal(ctx.GetSessionVars().StmtCtx.TypeCtx())
 	if err != nil {
 		return nil, false, err
 	}
@@ -412,7 +412,7 @@ func (c *Constant) Equal(ctx sessionctx.Context, b Expression) bool {
 	if err1 != nil || err2 != nil {
 		return false
 	}
-	con, err := c.Value.Compare(ctx.GetSessionVars().StmtCtx, &y.Value, collate.GetBinaryCollator())
+	con, err := c.Value.Compare(ctx.GetSessionVars().StmtCtx.TypeCtx(), &y.Value, collate.GetBinaryCollator())
 	if err != nil || con != 0 {
 		return false
 	}

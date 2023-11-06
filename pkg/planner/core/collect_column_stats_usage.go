@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/planner/funcdep"
+	"github.com/pingcap/tidb/pkg/util/intset"
 )
 
 const (
@@ -173,7 +173,7 @@ func (c *columnStatsUsageCollector) addHistNeededColumns(ds *DataSource) {
 	}
 	columns := expression.ExtractColumnsFromExpressions(c.cols[:0], ds.pushedDownConds, nil)
 
-	colIDSet := funcdep.NewFastIntSet()
+	colIDSet := intset.NewFastIntSet()
 
 	for _, col := range columns {
 		tblColID := model.TableItemID{TableID: ds.physicalTableID, ID: col.ID, IsIndex: false}

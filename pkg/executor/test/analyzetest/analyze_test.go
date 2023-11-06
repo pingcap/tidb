@@ -122,38 +122,6 @@ func TestAnalyzeReplicaReadFollower(t *testing.T) {
 	ctx.GetSessionVars().SetReplicaRead(kv.ReplicaReadFollower)
 	tk.MustExec("analyze table t")
 }
-
-func TestClusterIndexAnalyze(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("drop database if exists test_cluster_index_analyze;")
-	tk.MustExec("create database test_cluster_index_analyze;")
-	tk.MustExec("use test_cluster_index_analyze;")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
-
-	tk.MustExec("create table t (a int, b int, c int, primary key(a, b));")
-	for i := 0; i < 100; i++ {
-		tk.MustExec("insert into t values (?, ?, ?)", i, i, i)
-	}
-	tk.MustExec("analyze table t;")
-	tk.MustExec("drop table t;")
-
-	tk.MustExec("create table t (a varchar(255), b int, c float, primary key(c, a));")
-	for i := 0; i < 100; i++ {
-		tk.MustExec("insert into t values (?, ?, ?)", strconv.Itoa(i), i, i)
-	}
-	tk.MustExec("analyze table t;")
-	tk.MustExec("drop table t;")
-
-	tk.MustExec("create table t (a char(10), b decimal(5, 3), c int, primary key(a, c, b));")
-	for i := 0; i < 100; i++ {
-		tk.MustExec("insert into t values (?, ?, ?)", strconv.Itoa(i), i, i)
-	}
-	tk.MustExec("analyze table t;")
-	tk.MustExec("drop table t;")
-}
-
 func TestAnalyzeRestrict(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -244,28 +212,6 @@ func TestAnalyzeTooLongColumns(t *testing.T) {
 	require.Equal(t, 0, tbl.Columns[1].Len())
 	require.Equal(t, 0, tbl.Columns[1].TopN.Num())
 	require.Equal(t, int64(65559), tbl.Columns[1].TotColSize)
-}
-
-func TestAnlyzeIssue(t *testing.T) {
-	// Issue15993
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_analyze_version = 1")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t0")
-	tk.MustExec("CREATE TABLE t0(c0 INT PRIMARY KEY);")
-	tk.MustExec("ANALYZE TABLE t0 INDEX PRIMARY;")
-	// Issue15751
-	tk.MustExec("drop table if exists t0")
-	tk.MustExec("CREATE TABLE t0(c0 INT, c1 INT, PRIMARY KEY(c0, c1))")
-	tk.MustExec("INSERT INTO t0 VALUES (0, 0)")
-	tk.MustExec("ANALYZE TABLE t0")
-	// Issue15752
-	tk.MustExec("drop table if exists t0")
-	tk.MustExec("CREATE TABLE t0(c0 INT)")
-	tk.MustExec("INSERT INTO t0 VALUES (0)")
-	tk.MustExec("CREATE INDEX i0 ON t0(c0)")
-	tk.MustExec("ANALYZE TABLE t0 INDEX i0")
 }
 
 func TestFailedAnalyzeRequest(t *testing.T) {
@@ -1521,34 +1467,6 @@ func TestAnalyzeColumnsWithDynamicPartitionTable(t *testing.T) {
 	}
 }
 
-func TestIssue34228(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`USE test`)
-	tk.MustExec(`DROP TABLE IF EXISTS Issue34228`)
-	tk.MustExec(`CREATE TABLE Issue34228 (id bigint NOT NULL, dt datetime NOT NULL) PARTITION BY RANGE COLUMNS(dt) (PARTITION p202201 VALUES LESS THAN ("2022-02-01"), PARTITION p202202 VALUES LESS THAN ("2022-03-01"))`)
-	tk.MustExec(`INSERT INTO Issue34228 VALUES (1, '2022-02-01 00:00:02'), (2, '2022-02-01 00:00:02')`)
-	tk.MustExec(`SET @@global.tidb_analyze_version = 1`)
-	tk.MustExec(`SET @@session.tidb_partition_prune_mode = 'static'`)
-	tk.MustExec(`ANALYZE TABLE Issue34228`)
-	tk.MustExec(`SET @@session.tidb_partition_prune_mode = 'dynamic'`)
-	tk.MustExec(`ANALYZE TABLE Issue34228`)
-	tk.MustQuery(`SELECT * FROM Issue34228`).Sort().Check(testkit.Rows("1 2022-02-01 00:00:02", "2 2022-02-01 00:00:02"))
-	// Needs a second run to hit the issue
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec(`USE test`)
-	tk2.MustExec(`DROP TABLE IF EXISTS Issue34228`)
-	tk2.MustExec(`CREATE TABLE Issue34228 (id bigint NOT NULL, dt datetime NOT NULL) PARTITION BY RANGE COLUMNS(dt) (PARTITION p202201 VALUES LESS THAN ("2022-02-01"), PARTITION p202202 VALUES LESS THAN ("2022-03-01"))`)
-	tk2.MustExec(`INSERT INTO Issue34228 VALUES (1, '2022-02-01 00:00:02'), (2, '2022-02-01 00:00:02')`)
-	tk2.MustExec(`SET @@global.tidb_analyze_version = 1`)
-	tk2.MustExec(`SET @@session.tidb_partition_prune_mode = 'static'`)
-	tk2.MustExec(`ANALYZE TABLE Issue34228`)
-	tk2.MustExec(`SET @@session.tidb_partition_prune_mode = 'dynamic'`)
-	tk2.MustExec(`ANALYZE TABLE Issue34228`)
-	tk2.MustQuery(`SELECT * FROM Issue34228`).Sort().Check(testkit.Rows("1 2022-02-01 00:00:02", "2 2022-02-01 00:00:02"))
-}
-
 func TestAnalyzeColumnsWithStaticPartitionTable(t *testing.T) {
 	for _, val := range []model.ColumnChoice{model.ColumnList, model.PredicateColumns} {
 		func(choice model.ColumnChoice) {
@@ -2041,11 +1959,10 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 	}
 }
 
-func TestKillAutoAnalyzeV1(t *testing.T) {
+func TestKillAutoAnalyze(t *testing.T) {
+	// version 1
 	testKillAutoAnalyze(t, 1)
-}
-
-func TestKillAutoAnalyzeV2(t *testing.T) {
+	// version 2
 	testKillAutoAnalyze(t, 2)
 }
 
@@ -2881,19 +2798,6 @@ func TestAnalyzeColumnsSkipMVIndexJsonCol(t *testing.T) {
 	require.False(t, stats.Indices[tblInfo.Indices[1].ID].IsStatsInitialized())
 }
 
-func TestManualAnalyzeSkipColumnTypes(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int, c json, d text, e mediumtext, f blob, g mediumblob, index idx(d(10)))")
-	tk.MustExec("set @@session.tidb_analyze_skip_column_types = 'json,blob,mediumblob,text,mediumtext'")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("select job_info from mysql.analyze_jobs where job_info like '%analyze table%'").Check(testkit.Rows("analyze table columns a, b, d with 256 buckets, 500 topn, 1 samplerate"))
-	tk.MustExec("delete from mysql.analyze_jobs")
-	tk.MustExec("analyze table t columns a, e")
-	tk.MustQuery("select job_info from mysql.analyze_jobs where job_info like '%analyze table%'").Check(testkit.Rows("analyze table columns a, d with 256 buckets, 500 topn, 1 samplerate"))
-}
-
 // TestAnalyzeMVIndex tests analyzing the mv index use some real data in the table.
 // It checks the analyze jobs, async loading and the stats content in the memory.
 func TestAnalyzeMVIndex(t *testing.T) {
@@ -3220,4 +3124,19 @@ func TestAnalyzePartitionVerify(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestPanicInHandleResultErrorWithSingleGoroutine(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table tbl_2 ( col_20 decimal default 84232 , col_21 tinyint not null , col_22 int default 80814394 , col_23 mediumint default -8036687 not null , col_24 smallint default 9185 not null , col_25 tinyint unsigned default 65 , col_26 char(115) default 'ZyfroRODMbNDRZnPNRW' not null , col_27 bigint not null , col_28 tinyint not null , col_29 char(130) default 'UMApsVgzHblmY' , primary key idx_14 ( col_28,col_22 ) , unique key idx_15 ( col_24,col_22 ) , key idx_16 ( col_21,col_20,col_24,col_25,col_27,col_28,col_26,col_29 ) , key idx_17 ( col_24,col_25 ) , unique key idx_18 ( col_25,col_23,col_29,col_27,col_26,col_22 ) , key idx_19 ( col_25,col_22,col_26,col_23 ) , unique key idx_20 ( col_22,col_24,col_28,col_29,col_26,col_20 ) , key idx_21 ( col_25,col_24,col_26,col_29,col_27,col_22,col_28 ) );")
+	tk.MustExec("insert ignore into tbl_2 values ( 942,33,-1915007317,3408149,-3699,193,'Trywdis',1876334369465184864,115,null );")
+	fp := "github.com/pingcap/tidb/pkg/executor/handleResultsErrorSingleThreadPanic"
+	require.NoError(t, failpoint.Enable(fp, `panic("TestPanicInHandleResultErrorWithSingleGoroutine")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fp))
+	}()
+	tk.MustExecToErr("analyze table tbl_2;")
 }

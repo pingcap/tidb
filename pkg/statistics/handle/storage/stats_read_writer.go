@@ -25,11 +25,14 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	handle_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
@@ -42,6 +45,164 @@ type statsReadWriter struct {
 // NewStatsReadWriter creates a new StatsReadWriter.
 func NewStatsReadWriter(statsHandler util.StatsHandle) util.StatsReadWriter {
 	return &statsReadWriter{statsHandler: statsHandler}
+}
+
+// InsertColStats2KV insert a record to stats_histograms with distinct_count 1 and insert a bucket to stats_buckets with default value.
+// This operation also updates version.
+func (s *statsReadWriter) InsertColStats2KV(physicalID int64, colInfos []*model.ColumnInfo) (err error) {
+	statsVer := uint64(0)
+	defer func() {
+		if err == nil && statsVer != 0 {
+			s.statsHandler.RecordHistoricalStatsMeta(physicalID, statsVer, util.StatsMetaHistorySourceSchemaChange, false)
+		}
+	}()
+
+	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+		startTS, err := util.GetStartTS(sctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		// First of all, we update the version.
+		_, err = util.Exec(sctx, "update mysql.stats_meta set version = %? where table_id = %?", startTS, physicalID)
+		if err != nil {
+			return err
+		}
+		statsVer = startTS
+		// If we didn't update anything by last SQL, it means the stats of this table does not exist.
+		if sctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
+			// By this step we can get the count of this table, then we can sure the count and repeats of bucket.
+			var rs sqlexec.RecordSet
+			rs, err = util.Exec(sctx, "select count from mysql.stats_meta where table_id = %?", physicalID)
+			if err != nil {
+				return err
+			}
+			defer terror.Call(rs.Close)
+			req := rs.NewChunk(nil)
+			err = rs.Next(context.Background(), req)
+			if err != nil {
+				return err
+			}
+			count := req.GetRow(0).GetInt64(0)
+			for _, colInfo := range colInfos {
+				value := types.NewDatum(colInfo.GetOriginDefaultValue())
+				value, err = value.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), &colInfo.FieldType)
+				if err != nil {
+					return err
+				}
+				if value.IsNull() {
+					// If the adding column has default value null, all the existing rows have null value on the newly added column.
+					if _, err := util.Exec(sctx, "insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, null_count) values (%?, %?, 0, %?, 0, %?)", startTS, physicalID, colInfo.ID, count); err != nil {
+						return err
+					}
+				} else {
+					// If this stats exists, we insert histogram meta first, the distinct_count will always be one.
+					if _, err := util.Exec(sctx, "insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, tot_col_size) values (%?, %?, 0, %?, 1, %?)", startTS, physicalID, colInfo.ID, int64(len(value.GetBytes()))*count); err != nil {
+						return err
+					}
+					value, err = value.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
+					if err != nil {
+						return err
+					}
+					// There must be only one bucket for this new column and the value is the default value.
+					if _, err := util.Exec(sctx, "insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, repeats, count, lower_bound, upper_bound) values (%?, 0, %?, 0, %?, %?, %?, %?)", physicalID, colInfo.ID, count, count, value.GetBytes(), value.GetBytes()); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		return nil
+	}, util.FlagWrapTxn)
+}
+
+// InsertTableStats2KV inserts a record standing for a new table to stats_meta and inserts some records standing for the
+// new columns and indices which belong to this table.
+func (s *statsReadWriter) InsertTableStats2KV(info *model.TableInfo, physicalID int64) (err error) {
+	statsVer := uint64(0)
+	defer func() {
+		if err == nil && statsVer != 0 {
+			s.statsHandler.RecordHistoricalStatsMeta(physicalID, statsVer, util.StatsMetaHistorySourceSchemaChange, false)
+		}
+	}()
+
+	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+		startTS, err := util.GetStartTS(sctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if _, err := util.Exec(sctx, "insert into mysql.stats_meta (version, table_id) values(%?, %?)", startTS, physicalID); err != nil {
+			return err
+		}
+		statsVer = startTS
+		for _, col := range info.Columns {
+			if _, err := util.Exec(sctx, "insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%?, 0, %?, 0, %?)", physicalID, col.ID, startTS); err != nil {
+				return err
+			}
+		}
+		for _, idx := range info.Indices {
+			if _, err := util.Exec(sctx, "insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%?, 1, %?, 0, %?)", physicalID, idx.ID, startTS); err != nil {
+				return err
+			}
+		}
+		return nil
+	}, util.FlagWrapTxn)
+}
+
+// ChangeGlobalStatsID changes the table ID in global-stats to the new table ID.
+func (s *statsReadWriter) ChangeGlobalStatsID(from, to int64) (err error) {
+	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+		for _, table := range []string{"stats_meta", "stats_top_n", "stats_fm_sketch", "stats_buckets", "stats_histograms", "column_stats_usage"} {
+			_, err = util.Exec(sctx, "update mysql."+table+" set table_id = %? where table_id = %?", to, from)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}, util.FlagWrapTxn)
+}
+
+// ResetTableStats2KVForDrop update the version of mysql.stats_meta.
+// Then GC worker will delete the old version of stats.
+func (s *statsReadWriter) ResetTableStats2KVForDrop(physicalID int64) (err error) {
+	statsVer := uint64(0)
+	defer func() {
+		if err == nil && statsVer != 0 {
+			s.statsHandler.RecordHistoricalStatsMeta(physicalID, statsVer, util.StatsMetaHistorySourceSchemaChange, false)
+		}
+	}()
+
+	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+		startTS, err := util.GetStartTS(sctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if _, err := util.Exec(sctx, "update mysql.stats_meta set version=%? where table_id =%?", startTS, physicalID); err != nil {
+			return err
+		}
+		return nil
+	}, util.FlagWrapTxn)
+}
+
+// UpdateStatsVersion will set statistics version to the newest TS,
+// then tidb-server will reload automatic.
+func (s *statsReadWriter) UpdateStatsVersion() error {
+	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+		return UpdateStatsVersion(sctx)
+	}, util.FlagWrapTxn)
+}
+
+// SaveTableStatsToStorage saves the stats of a table to storage.
+func (s *statsReadWriter) SaveTableStatsToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error) {
+	var statsVer uint64
+	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+		statsVer, err = SaveTableStatsToStorage(sctx, results, analyzeSnapshot)
+		return err
+	}, util.FlagWrapTxn)
+	if err == nil && statsVer != 0 {
+		tableID := results.TableID.GetStatisticsID()
+		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, source, true)
+	}
+	return err
 }
 
 // StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
@@ -78,22 +239,22 @@ func (s *statsReadWriter) SaveStatsToStorage(tableID int64, count, modifyCount i
 		statsVer, err = SaveStatsToStorage(sctx, tableID,
 			count, modifyCount, isIndex, hg, cms, topN, statsVersion, isAnalyzed, updateAnalyzeTime)
 		return err
-	})
+	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
-		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, source)
+		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, source, false)
 	}
 	return
 }
 
-// SaveMetaToStorage saves stats meta to the storage.
-func (s *statsReadWriter) SaveMetaToStorage(tableID, count, modifyCount int64, source string) (err error) {
+// saveMetaToStorage saves stats meta to the storage.
+func (s *statsReadWriter) saveMetaToStorage(tableID, count, modifyCount int64, source string) (err error) {
 	var statsVer uint64
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		statsVer, err = SaveMetaToStorage(sctx, tableID, count, modifyCount)
 		return err
-	})
+	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
-		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, source)
+		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, source, false)
 	}
 	return
 }
@@ -104,9 +265,9 @@ func (s *statsReadWriter) InsertExtendedStats(statsName string, colIDs []int64, 
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		statsVer, err = InsertExtendedStats(sctx, s.statsHandler, statsName, colIDs, tp, tableID, ifNotExists)
 		return err
-	})
+	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
-		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, "extended stats")
+		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, "extended stats", false)
 	}
 	return
 }
@@ -117,9 +278,9 @@ func (s *statsReadWriter) MarkExtendedStatsDeleted(statsName string, tableID int
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		statsVer, err = MarkExtendedStatsDeleted(sctx, s.statsHandler, statsName, tableID, ifExists)
 		return err
-	})
+	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
-		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, "extended stats")
+		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, "extended stats", false)
 	}
 	return
 }
@@ -130,44 +291,26 @@ func (s *statsReadWriter) SaveExtendedStatsToStorage(tableID int64, extStats *st
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		statsVer, err = SaveExtendedStatsToStorage(sctx, tableID, extStats, isLoad)
 		return err
-	})
+	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
-		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, "extended stats")
+		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, "extended stats", false)
 	}
 	return
 }
 
-// SaveStatsFromJSON saves stats from JSON to the storage.
-func (s *statsReadWriter) SaveStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTblI interface{}) error {
-	jsonTbl := jsonTblI.(*util.JSONTable)
-	tbl, err := TableStatsFromJSON(tableInfo, physicalID, jsonTbl)
+func (s *statsReadWriter) LoadTablePartitionStats(tableInfo *model.TableInfo, partitionDef *model.PartitionDefinition) (*statistics.Table, error) {
+	var partitionStats *statistics.Table
+	partitionStats, err := s.TableStatsFromStorage(tableInfo, partitionDef.ID, true, 0)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, err
 	}
-
-	for _, col := range tbl.Columns {
-		// loadStatsFromJSON doesn't support partition table now.
-		// The table level count and modify_count would be overridden by the SaveMetaToStorage below, so we don't need
-		// to care about them here.
-		err = s.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 0, &col.Histogram, col.CMSketch, col.TopN, int(col.GetStatsVer()), 1, false, "load stats")
-		if err != nil {
-			return errors.Trace(err)
-		}
+	// if the err == nil && partitionStats == nil, it means we lack the partition-level stats which the physicalID is equal to partitionID.
+	if partitionStats == nil {
+		errMsg := fmt.Sprintf("table `%s` partition `%s`", tableInfo.Name.L, partitionDef.Name.L)
+		err = types.ErrPartitionStatsMissing.GenWithStackByArgs(errMsg)
+		return nil, err
 	}
-	for _, idx := range tbl.Indices {
-		// loadStatsFromJSON doesn't support partition table now.
-		// The table level count and modify_count would be overridden by the SaveMetaToStorage below, so we don't need
-		// to care about them here.
-		err = s.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 1, &idx.Histogram, idx.CMSketch, idx.TopN, int(idx.GetStatsVer()), 1, false, "load stats")
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	err = s.SaveExtendedStatsToStorage(tbl.PhysicalID, tbl.ExtendedStats, true)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return s.SaveMetaToStorage(tbl.PhysicalID, tbl.RealtimeCount, tbl.ModifyCount, "load stats")
+	return partitionStats, nil
 }
 
 // LoadNeededHistograms will load histograms for those needed columns/indices.
@@ -351,14 +494,15 @@ func (s *statsReadWriter) TableStatsToJSON(dbName string, tableInfo *model.Table
 	if err != nil || tbl == nil {
 		return nil, err
 	}
+	var jsonTbl *util.JSONTable
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		tbl.Version, tbl.ModifyCount, tbl.RealtimeCount, err = StatsMetaByTableIDFromStorage(sctx, physicalID, snapshot)
+		if err != nil {
+			return err
+		}
+		jsonTbl, err = GenJSONTableFromStats(sctx, dbName, tableInfo, tbl)
 		return err
 	})
-	if err != nil {
-		return nil, err
-	}
-	jsonTbl, err := GenJSONTableFromStats(dbName, tableInfo, tbl)
 	if err != nil {
 		return nil, err
 	}
@@ -485,5 +629,5 @@ func (s *statsReadWriter) loadStatsFromJSON(tableInfo *model.TableInfo, physical
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return s.SaveMetaToStorage(tbl.PhysicalID, tbl.RealtimeCount, tbl.ModifyCount, util.StatsMetaHistorySourceLoadStats)
+	return s.saveMetaToStorage(tbl.PhysicalID, tbl.RealtimeCount, tbl.ModifyCount, util.StatsMetaHistorySourceLoadStats)
 }

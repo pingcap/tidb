@@ -1251,6 +1251,11 @@ error = '''
 Check constraint '%s' refers to non-existing column '%s'.
 '''
 
+["ddl:3822"]
+error = '''
+Duplicate check constraint name '%s'.
+'''
+
 ["ddl:3823"]
 error = '''
 Column '%s' cannot be used in a check constraint '%s': needed in a foreign key constraint referential action.
@@ -1869,6 +1874,16 @@ PreCheck failed: %s
 ["executor:8174"]
 error = '''
 BRIE Job %d not found
+'''
+
+["executor:8175"]
+error = '''
+Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=%d]
+'''
+
+["executor:8176"]
+error = '''
+Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again.[conn=%d]
 '''
 
 ["executor:8212"]
@@ -3218,7 +3233,7 @@ Bad Number
 
 ["types:8030"]
 error = '''
-Cast to signed converted positive out-of-range integer to it's negative complement
+Cast to signed converted positive out-of-range integer to its negative complement
 '''
 
 ["types:8031"]

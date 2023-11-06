@@ -38,6 +38,7 @@ go_test(
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util",
+        "//pkg/util/dbterror/exeerrors",
         "//pkg/util/gctuner",
         "//pkg/util/memory",
         "//pkg/util/pdapi",

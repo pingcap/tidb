@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/lockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/dbreader"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/mvcc"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 )
 
@@ -332,7 +331,7 @@ func (writer *dbWriter) collectRangeKeys(it *badger.Iterator, startKey, endKey [
 
 func (writer *dbWriter) deleteKeysInBatch(latchHandle mvcc.LatchHandle, keys []y.Key, batchSize int) error {
 	for len(keys) > 0 {
-		batchSize := mathutil.Min(len(keys), batchSize)
+		batchSize := min(len(keys), batchSize)
 		batchKeys := keys[:batchSize]
 		keys = keys[batchSize:]
 		hashVals := userKeysToHashVals(batchKeys...)
