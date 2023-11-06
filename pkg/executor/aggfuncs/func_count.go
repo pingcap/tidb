@@ -47,13 +47,13 @@ func (e *baseCount) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResu
 	return nil
 }
 
-func (c *baseCount) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (c *baseCount) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 	pr := (*partialResult4Count)(partialResult)
 	resBuf := spillHelper.serializePartialResult4Count(*pr)
 	chk.AppendBytes(c.ordinal, resBuf)
 }
 
-func (c *baseCount) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+func (c *baseCount) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
 	dataCol := src.Column(c.ordinal)
 	totalMemDelta := int64(0)
 	spillHelper := newDeserializeHelper(dataCol, src.NumRows())

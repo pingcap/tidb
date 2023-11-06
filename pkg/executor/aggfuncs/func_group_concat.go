@@ -173,13 +173,13 @@ func (e *groupConcat) MergePartialResult(sctx sessionctx.Context, src, dst Parti
 	return memDelta, e.truncatePartialResultIfNeed(sctx, p2.buffer)
 }
 
-func (c *groupConcat) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (c *groupConcat) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 	pr := (*partialResult4GroupConcat)(partialResult)
 	resBuf := spillHelper.serializePartialResult4GroupConcat(*pr)
 	chk.AppendBytes(c.ordinal, resBuf)
 }
 
-func (c *groupConcat) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+func (c *groupConcat) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
 	dataCol := src.Column(c.ordinal)
 	totalMemDelta := int64(0)
 	spillHelper := newDeserializeHelper(dataCol, src.NumRows())

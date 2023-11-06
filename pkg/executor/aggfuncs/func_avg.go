@@ -47,13 +47,13 @@ type baseAvgDecimal struct {
 	baseAggFunc
 }
 
-func (c *baseAvgDecimal) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (c *baseAvgDecimal) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 	pr := (*partialResult4AvgDecimal)(partialResult)
 	resBuf := spillHelper.serializePartialResult4AvgDecimal(*pr)
 	chk.AppendBytes(c.ordinal, resBuf)
 }
 
-func (c *baseAvgDecimal) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+func (c *baseAvgDecimal) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
 	dataCol := src.Column(c.ordinal)
 	totalMemDelta := int64(0)
 	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
@@ -354,13 +354,13 @@ func (e *baseAvgFloat64) AppendFinalResult2Chunk(_ sessionctx.Context, pr Partia
 	return nil
 }
 
-func (c *baseAvgFloat64) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (c *baseAvgFloat64) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 	pr := (*partialResult4AvgFloat64)(partialResult)
 	resBuf := spillHelper.serializePartialResult4AvgFloat64(*pr)
 	chk.AppendBytes(c.ordinal, resBuf)
 }
 
-func (c *baseAvgFloat64) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+func (c *baseAvgFloat64) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
 	dataCol := src.Column(c.ordinal)
 	totalMemDelta := int64(0)
 	spillHelper := newDeserializeHelper(dataCol, src.NumRows())

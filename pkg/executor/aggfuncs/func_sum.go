@@ -114,13 +114,13 @@ func (*baseSum4Float64) MergePartialResult(_ sessionctx.Context, src, dst Partia
 	return 0, nil
 }
 
-func (c *baseSum4Float64) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (c *baseSum4Float64) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 	pr := (*partialResult4SumFloat64)(partialResult)
 	resBuf := spillHelper.serializePartialResult4SumFloat64(*pr)
 	chk.AppendBytes(c.ordinal, resBuf)
 }
 
-func (c *baseSum4Float64) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+func (c *baseSum4Float64) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
 	dataCol := src.Column(c.ordinal)
 	totalMemDelta := int64(0)
 	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
@@ -189,13 +189,13 @@ type sum4Decimal struct {
 	baseSumAggFunc
 }
 
-func (c *sum4Decimal) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (c *sum4Decimal) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 	pr := (*partialResult4SumDecimal)(partialResult)
 	resBuf := spillHelper.serializePartialResult4SumDecimal(*pr)
 	chk.AppendBytes(c.ordinal, resBuf)
 }
 
-func (c *sum4Decimal) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+func (c *sum4Decimal) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
 	dataCol := src.Column(c.ordinal)
 	totalMemDelta := int64(0)
 	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
