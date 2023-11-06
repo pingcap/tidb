@@ -61,8 +61,11 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 
 	c.Ctx.GetSessionVars().StmtCtx.IsReadOnly = plannercore.IsReadOnly(stmtNode, c.Ctx.GetSessionVars())
 
+	// Do preprocess and validate.
 	ret := &plannercore.PreprocessorReturn{}
-	err = plannercore.Preprocess(ctx, c.Ctx,
+	err = plannercore.Preprocess(
+		ctx,
+		c.Ctx,
 		stmtNode,
 		plannercore.WithPreprocessorReturn(ret),
 		plannercore.InitTxnContextProvider,
@@ -97,6 +100,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 			return nil, err
 		}
 	}
+	// Build the final physical plan.
 	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, is)
 	if err != nil {
 		return nil, err
@@ -127,6 +131,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		OutputNames:   names,
 		Ti:            &TelemetryInfo{},
 	}
+	// Use cached plan if possible.
 	if pointPlanShortPathOK {
 		if ep, ok := stmt.Plan.(*plannercore.Execute); ok {
 			if pointPlan, ok := ep.Plan.(*plannercore.PointGetPlan); ok {
@@ -140,9 +145,12 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 			}
 		}
 	}
+
+	// Perform optimization and initialization related to the transaction level.
 	if err = sessiontxn.OptimizeWithPlanAndThenWarmUp(c.Ctx, stmt.Plan); err != nil {
 		return nil, err
 	}
+
 	return stmt, nil
 }
 
