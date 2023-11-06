@@ -84,7 +84,7 @@ func TestIlike(t *testing.T) {
 			require.NoError(t, err, comment)
 			f.SetCharsetAndCollation(charsetAndCollation[0], charsetAndCollation[1])
 			f.setCollator(collate.GetCollator(charsetAndCollation[1]))
-			r, err := evalBuiltinFunc(f, chunk.Row{})
+			r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 			require.NoError(t, err, comment)
 			testutil.DatumEqual(t, types.NewDatum(tt.generalMatch), r, comment)
 		}
@@ -105,7 +105,7 @@ func TestIlike(t *testing.T) {
 			require.NoError(t, err, comment)
 			f.SetCharsetAndCollation(charsetAndCollation[0], charsetAndCollation[1])
 			f.setCollator(collate.GetCollator(charsetAndCollation[1]))
-			r, err := evalBuiltinFunc(f, chunk.Row{})
+			r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 			require.NoError(t, err, comment)
 			testutil.DatumEqual(t, types.NewDatum(tt.unicodeMatch), r, comment)
 		}
