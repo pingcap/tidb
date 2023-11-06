@@ -6324,14 +6324,12 @@ func TestProcessInfoOfSubQuery(t *testing.T) {
 func TestSetVarHint(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustQuery("select /*+ SET_VAR(tidb_read_staleness = '-5')*/ @@tidb_read_staleness;").Check(testkit.Rows("-5"))
-	tk.MustQuery("select @@tidb_read_staleness;").Check(testkit.Rows("0"))
-
 	tk.MustQuery("select /*+ SET_VAR(tidb_replica_read = 'follower')*/ @@tidb_replica_read;").Check(testkit.Rows("follower"))
 	tk.MustQuery("select @@tidb_replica_read;").Check(testkit.Rows("leader"))
 
 	tk.MustExec("use test;")
 	tk.MustExec("create table t (a int key, b int);")
 	tk.MustExec("insert into t values (1,1);")
-	tk.MustQuery("select /*+ SET_VAR(tidb_read_staleness = '-5'), SET_VAR(tidb_replica_read = 'closest-replicas') */  * from t where a=1;").Check(testkit.Rows("1 1"))
+	time.Sleep(time.Second * 2)
+	tk.MustQuery("select /*+ SET_VAR(tidb_replica_read = 'closest-replicas') */  * from t AS OF timestamp NOW() - INTERVAL 1 SECOND where a=1;").Check(testkit.Rows("1 1"))
 }

@@ -3209,19 +3209,6 @@ func (s *SessionVars) GetTiKVClientReadTimeout() uint64 {
 	return s.TiKVClientReadTimeout
 }
 
-func (s *SessionVars) GetReadStaleness() time.Duration {
-	val, ok := s.stmtVars[TiDBReadStaleness]
-	if ok {
-		v, err := strconv.ParseUint(val, 10, 64)
-		if err == nil {
-			return time.Duration(v) * time.Second
-		}
-		// Normally, we should not go into this branch, because we have checked the type of the variable in `SetStmtVar`.
-		// So just ignore the error here.
-	}
-	return s.ReadStaleness
-}
-
 func (s *SessionVars) getReplicaReadFromStmtVar() (kv.ReplicaReadType, bool) {
 	val, ok := s.stmtVars[TiDBReplicaRead]
 	if ok {

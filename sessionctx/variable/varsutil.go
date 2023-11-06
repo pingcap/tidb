@@ -451,7 +451,7 @@ func setSnapshotTS(s *SessionVars, sVal string) error {
 		s.SnapshotInfoschema = nil
 		return nil
 	}
-	if s.GetReadStaleness() != 0 {
+	if s.ReadStaleness != 0 {
 		return fmt.Errorf("tidb_read_staleness should be clear before setting tidb_snapshot")
 	}
 
