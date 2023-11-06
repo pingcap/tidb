@@ -929,7 +929,7 @@ func TestCheckIndex(t *testing.T) {
 	require.NoError(t, err)
 	tbInfo := tbl.Meta()
 
-	alloc := autoid.NewAllocator(store, dbInfo.ID, tbInfo.ID, false, autoid.RowIDAllocType)
+	alloc := autoid.NewAllocator(dom, dbInfo.ID, tbInfo.ID, false, autoid.RowIDAllocType)
 	tb, err := tables.TableFromMeta(autoid.NewAllocators(false, alloc), tbInfo)
 	require.NoError(t, err)
 
