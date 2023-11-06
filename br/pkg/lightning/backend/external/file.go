@@ -65,8 +65,8 @@ func (s *KeyValueStore) addEncodedData(key []byte, val []byte) error {
 		s.memBuffer = s.memBuffer[:0]
 	}
 
-	binary.BigEndian.AppendUint64(s.memBuffer, uint64(len(key)))
-	binary.BigEndian.AppendUint64(s.memBuffer, uint64(len(val)))
+	s.memBuffer = binary.BigEndian.AppendUint64(s.memBuffer, uint64(len(key)))
+	s.memBuffer = binary.BigEndian.AppendUint64(s.memBuffer, uint64(len(val)))
 	s.memBuffer = append(s.memBuffer, key...)
 	s.memBuffer = append(s.memBuffer, val...)
 
