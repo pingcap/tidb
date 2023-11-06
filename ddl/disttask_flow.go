@@ -84,7 +84,7 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatche
 			return nil, nil
 		default:
 		}
-		tbl, err := getTable(d.store, job.SchemaID, tblInfo)
+		tbl, err := getTable((*asAutoIDRequirement)(d.ddlCtx), job.SchemaID, tblInfo)
 		if err != nil {
 			return nil, err
 		}
