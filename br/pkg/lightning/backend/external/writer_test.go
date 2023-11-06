@@ -175,7 +175,7 @@ func TestWriterDuplicateDetect(t *testing.T) {
 	require.NoError(t, err)
 
 	// test MergeOverlappingFiles will not change duplicate detection functionality.
-	err = MergeOverlappingFiles(
+	err = mergeOverlappingFilesImpl(
 		ctx,
 		[]string{"/test/0/0"},
 		memStore,
@@ -373,7 +373,7 @@ func TestWriterMultiFileStat(t *testing.T) {
 		allDataFiles[i] = fmt.Sprintf("/test/0/%d", i)
 	}
 
-	err = MergeOverlappingFiles(
+	err = mergeOverlappingFilesImpl(
 		ctx,
 		allDataFiles,
 		memStore,

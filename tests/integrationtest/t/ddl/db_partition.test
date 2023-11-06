@@ -851,6 +851,9 @@ PARTITION BY RANGE COLUMNS(d)
 -- error 1736
 alter table t1p exchange partition p202307 with table t1;
 insert into t1 values ("2023-08-06","0000");
+drop table t1, t1p;
+drop placement policy rule1;
+drop placement policy rule2;
 
 # TestTiDBEnableExchangePartition
 drop table if exists pt;

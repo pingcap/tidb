@@ -108,7 +108,7 @@ func rangePointLess(sc *stmtctx.StatementContext, a, b *point, collator collate.
 	if a.value.Kind() == types.KindMysqlEnum && b.value.Kind() == types.KindMysqlEnum {
 		return rangePointEnumLess(sc, a, b)
 	}
-	cmp, err := a.value.Compare(sc, &b.value, collator)
+	cmp, err := a.value.Compare(sc.TypeCtx(), &b.value, collator)
 	if cmp != 0 {
 		return cmp < 0, nil
 	}
@@ -254,11 +254,11 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 			// If the original value is adjusted, we need to change the condition.
 			// For example, col < 2156. Since the max year is 2155, 2156 is changed to 2155.
 			// col < 2155 is wrong. It should be col <= 2155.
-			preValue, err1 := value.ToInt64(r.sc)
+			preValue, err1 := value.ToInt64(r.sc.TypeCtx())
 			if err1 != nil {
 				return err1
 			}
-			*value, err = value.ConvertToMysqlYear(r.sc, col.RetType)
+			*value, err = value.ConvertToMysqlYear(r.sc.TypeCtx(), col.RetType)
 			if errors.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
 				// Keep err for EQ and NE.
 				switch *op {
@@ -473,7 +473,7 @@ func handleEnumFromBinOp(sc *stmtctx.StatementContext, ft *types.FieldType, val 
 		}
 
 		d := types.NewCollateMysqlEnumDatum(tmpEnum, ft.GetCollate())
-		if v, err := d.Compare(sc, &val, collate.GetCollator(ft.GetCollate())); err == nil {
+		if v, err := d.Compare(sc.TypeCtx(), &val, collate.GetCollator(ft.GetCollate())); err == nil {
 			switch op {
 			case ast.LT:
 				if v < 0 {
@@ -585,7 +585,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 					err = parseErr
 				}
 			default:
-				dt, err = dt.ConvertTo(r.sc, expr.GetArgs()[0].GetType())
+				dt, err = dt.ConvertTo(r.sc.TypeCtx(), expr.GetArgs()[0].GetType())
 			}
 
 			if err != nil {
@@ -594,7 +594,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 			}
 		}
 		if expr.GetArgs()[0].GetType().GetType() == mysql.TypeYear {
-			dt, err = dt.ConvertToMysqlYear(r.sc, expr.GetArgs()[0].GetType())
+			dt, err = dt.ConvertToMysqlYear(r.sc.TypeCtx(), expr.GetArgs()[0].GetType())
 			if err != nil {
 				// in (..., an impossible value (not valid year), ...), the range is empty, so skip it.
 				continue
