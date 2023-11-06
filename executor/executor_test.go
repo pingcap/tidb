@@ -6331,5 +6331,5 @@ func TestSetVarHint(t *testing.T) {
 	tk.MustExec("create table t (a int key, b int);")
 	tk.MustExec("insert into t values (1,1);")
 	time.Sleep(time.Second * 2)
-	tk.MustQuery("select /*+ SET_VAR(tidb_replica_read = 'closest-replicas') */  * from t AS OF timestamp NOW() - INTERVAL 1 SECOND where a=1;").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select /*+ SET_VAR(tidb_replica_read = 'closest-replicas') */  * from t as of timestamp NOW() - INTERVAL 1 SECOND where a=1;").Check(testkit.Rows("1 1"))
 }
