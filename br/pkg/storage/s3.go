@@ -294,13 +294,26 @@ func createOssRAMCred() (*credentials.Credentials, error) {
 	return credentials.NewStaticCredentials(ncred.AccessKeyId, ncred.AccessKeySecret, ncred.AccessKeyStsToken), nil
 }
 
+type S3Logger struct {
+	logger *zap.Logger
+}
+
+func (l *S3Logger) Log(items ...interface{}) {
+	fields := make([]zap.Field, 0, len(items))
+	for i := range items {
+		fields = append(fields, zap.Any(fmt.Sprintf("item%d", i), items[i]))
+	}
+	l.logger.Info("s3 log", fields...)
+}
+
 // NewS3Storage initialize a new s3 storage for metadata.
 func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3Storage, errRet error) {
 	qs := *backend
 	awsConfig := aws.NewConfig().
 		WithS3ForcePathStyle(qs.ForcePathStyle).
 		WithCredentialsChainVerboseErrors(true).
-		WithLogLevel(aws.LogDebugWithRequestRetries)
+		WithLogLevel(aws.LogDebugWithRequestRetries).
+		WithLogger(&S3Logger{logger: log.L()})
 	if qs.Region == "" {
 		awsConfig.WithRegion(defaultRegion)
 	} else {
