@@ -126,6 +126,11 @@ func TestHalfwayCancelOperations(t *testing.T) {
 	tk.MustExec("use cancel_job_db")
 	tk.MustExec("select * from tx")
 	// test for exchanging partition
+	limit := variable.GetDDLErrorCountLimit()
+	variable.SetDDLErrorCountLimit(3)
+	defer func() {
+		variable.SetDDLErrorCountLimit(limit)
+	}()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/exchangePartitionErr", `return(true)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/exchangePartitionErr"))

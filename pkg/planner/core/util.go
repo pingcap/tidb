@@ -66,7 +66,7 @@ func (a *AggregateFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
 }
 
 // WindowFuncExtractor visits Expr tree.
-// It converts ColunmNameExpr to WindowFuncExpr and collects WindowFuncExpr.
+// It converts ColumnNameExpr to WindowFuncExpr and collects WindowFuncExpr.
 type WindowFuncExtractor struct {
 	// WindowFuncs is the collected WindowFuncExprs.
 	windowFuncs []*ast.WindowFuncExpr
