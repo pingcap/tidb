@@ -389,15 +389,6 @@ func (e *sum4DistinctFloat64) AppendFinalResult2Chunk(_ sessionctx.Context, pr P
 	return nil
 }
 
-// TODO implement it
-func (c *sum4DistinctFloat64) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
-}
-
-// TODO implement it
-func (c *sum4DistinctFloat64) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
-	return nil, 0
-}
-
 type sum4DistinctDecimal struct {
 	baseSumAggFunc
 }
@@ -458,13 +449,4 @@ func (e *sum4DistinctDecimal) AppendFinalResult2Chunk(_ sessionctx.Context, pr P
 	}
 	chk.AppendMyDecimal(e.ordinal, &p.val)
 	return nil
-}
-
-// TODO implement it
-func (c *sum4DistinctDecimal) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
-}
-
-// TODO implement it
-func (c *sum4DistinctDecimal) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
-	return nil, 0
 }

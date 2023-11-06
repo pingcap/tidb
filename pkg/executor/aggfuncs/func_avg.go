@@ -319,15 +319,6 @@ func (e *avgOriginal4DistinctDecimal) AppendFinalResult2Chunk(_ sessionctx.Conte
 	return nil
 }
 
-// TODO implement it
-func (c *avgOriginal4DistinctDecimal) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
-}
-
-// TODO implement it
-func (c *avgOriginal4DistinctDecimal) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
-	return nil, 0
-}
-
 // All the following avg function implementations return the float64 result,
 // which store the partial results in "partialResult4AvgFloat64".
 //
@@ -536,13 +527,4 @@ func (e *avgOriginal4DistinctFloat64) AppendFinalResult2Chunk(_ sessionctx.Conte
 	}
 	chk.AppendFloat64(e.ordinal, p.sum/float64(p.count))
 	return nil
-}
-
-// TODO implement it
-func (c *avgOriginal4DistinctFloat64) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
-}
-
-// TODO implement it
-func (c *avgOriginal4DistinctFloat64) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
-	return nil, 0
 }

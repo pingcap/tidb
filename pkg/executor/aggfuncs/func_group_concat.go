@@ -299,15 +299,6 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 	return memDelta, nil
 }
 
-// TODO implement it
-func (c *groupConcatDistinct) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
-}
-
-// TODO implement it
-func (c *groupConcatDistinct) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
-	return nil, 0
-}
-
 // SetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
 func (e *groupConcatDistinct) SetTruncated(t *int32) {
 	e.truncated = t
@@ -652,15 +643,6 @@ func (*groupConcatDistinctOrder) MergePartialResult(sessionctx.Context, PartialR
 	// If order by exists, the parallel hash aggregation is forbidden in executorBuilder.buildHashAgg.
 	// So MergePartialResult will not be called.
 	return 0, plannercore.ErrInternal.GenWithStack("groupConcatDistinctOrder.MergePartialResult should not be called")
-}
-
-// TODO implement it
-func (c *groupConcatDistinctOrder) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
-}
-
-// TODO implement it
-func (c *groupConcatDistinctOrder) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
-	return nil, 0
 }
 
 // GetDatumMemSize calculates the memory size of each types.Datum in sortRow.byItems.
