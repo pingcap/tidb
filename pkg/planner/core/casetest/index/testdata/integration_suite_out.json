@@ -1075,5 +1075,160 @@
         "Result": null
       }
     ]
+  },
+  {
+    "Name": "TestIndexMergeFromComposedCNFCondition",
+    "Cases": [
+      {
+        "SQL": "explain select /*+ use_index_merge(t1, idx2, idx) */ * from t1 where 1 member of (a) and 2 member of (b); -- 1: AND index merge from multi member mv index predicate, since member of is single partial path, it can be merged with outer index merge.",
+        "Plan": [
+          "IndexMerge_8 10.00 root  type: intersection",
+          "├─IndexRangeScan_5(Build) 10.00 cop[tikv] table:t1, index:idx(cast(`a` as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "├─IndexRangeScan_6(Build) 10.00 cop[tikv] table:t1, index:idx2(cast(`b` as signed array)) range:[2,2], keep order:false, stats:pseudo",
+          "└─TableRowIDScan_7(Probe) 10.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where 1 member of (a) and c=1 and 2 member of (b); -- 2: AND index merge from multi complicated mv index",
+        "Plan": [
+          "IndexMerge_8 0.10 root  type: intersection",
+          "├─IndexRangeScan_5(Build) 0.10 cop[tikv] table:t2, index:idx(c, cast(`a` as signed array)) range:[1 1,1 1], keep order:false, stats:pseudo",
+          "├─IndexRangeScan_6(Build) 0.10 cop[tikv] table:t2, index:idx2(cast(`b` as signed array), c) range:[2 1,2 1], keep order:false, stats:pseudo",
+          "└─TableRowIDScan_7(Probe) 0.10 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ use_index_merge(t2, idx2, idx, idx4) */ * from t2 where 1 member of (a) and c=1 and 2 member of (b) and d=3; -- 3: AND index merge from multi complicated mv indexes and normal indexes",
+        "Plan": [
+          "IndexMerge_9 0.10 root  type: intersection",
+          "├─IndexRangeScan_5(Build) 10.00 cop[tikv] table:t2, index:idx4(d) range:[3,3], keep order:false, stats:pseudo",
+          "├─IndexRangeScan_6(Build) 0.10 cop[tikv] table:t2, index:idx(c, cast(`a` as signed array)) range:[1 1,1 1], keep order:false, stats:pseudo",
+          "├─IndexRangeScan_7(Build) 0.10 cop[tikv] table:t2, index:idx2(cast(`b` as signed array), c) range:[2 1,2 1], keep order:false, stats:pseudo",
+          "└─TableRowIDScan_8(Probe) 0.10 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ use_index_merge(t2, idx2, idx, idx3) */ * from t2 where json_contains(a, '[1, 2, 3]') and c=1 and 2 member of (b) and d=3; -- 4: AND index merge from multi complicated mv indexes (json_contains (intersection))and normal indexes",
+        "Plan": [
+          "IndexMerge_11 0.10 root  type: intersection",
+          "├─IndexRangeScan_5(Build) 0.10 cop[tikv] table:t2, index:idx3(c, d) range:[1 3,1 3], keep order:false, stats:pseudo",
+          "├─IndexRangeScan_6(Build) 0.10 cop[tikv] table:t2, index:idx(c, cast(`a` as signed array)) range:[1 1,1 1], keep order:false, stats:pseudo",
+          "├─IndexRangeScan_7(Build) 0.10 cop[tikv] table:t2, index:idx(c, cast(`a` as signed array)) range:[1 2,1 2], keep order:false, stats:pseudo",
+          "├─IndexRangeScan_8(Build) 0.10 cop[tikv] table:t2, index:idx(c, cast(`a` as signed array)) range:[1 3,1 3], keep order:false, stats:pseudo",
+          "├─IndexRangeScan_9(Build) 0.10 cop[tikv] table:t2, index:idx2(cast(`b` as signed array), c) range:[2 1,2 1], keep order:false, stats:pseudo",
+          "└─TableRowIDScan_10(Probe) 0.10 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ use_index_merge(t2, idx2, idx, idx3) */ * from t2 where json_overlaps(a, '[1, 2, 3]') and c=1 and 2 member of (b) and d=3; -- 5: AND index merge from multi complicated mv indexes (json_overlap (intersection))and normal indexes",
+        "Plan": [
+          "Selection_5 0.06 root  json_overlaps(test.t2.a, cast(\"[1, 2, 3]\", json BINARY))",
+          "└─IndexMerge_9 0.10 root  type: intersection",
+          "  ├─IndexRangeScan_6(Build) 0.10 cop[tikv] table:t2, index:idx3(c, d) range:[1 3,1 3], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan_7(Build) 0.10 cop[tikv] table:t2, index:idx2(cast(`b` as signed array), c) range:[2 1,2 1], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan_8(Probe) 0.10 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where 1 member of (a) and c=1 and c=2; -- 6: AND index merge from multi complicated mv indexes (empty range)",
+        "Plan": [
+          "TableDual_5 0.00 root  rows:0"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIndexMergeFromComposedDNFCondition",
+    "Cases": [
+      {
+        "SQL": "explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (1 member of (a) and c=1) or (2 member of (b) and c=1); -- 1: OR index merge from multi complicated mv index (memberof)",
+        "Plan": [
+          "IndexMerge_8 0.10 root  type: union",
+          "├─IndexRangeScan_5(Build) 0.10 cop[tikv] table:t2, index:idx(c, cast(`a` as signed array)) range:[1 1,1 1], keep order:false, stats:pseudo",
+          "├─IndexRangeScan_6(Build) 0.10 cop[tikv] table:t2, index:idx2(cast(`b` as signed array), c) range:[2 1,2 1], keep order:false, stats:pseudo",
+          "└─TableRowIDScan_7(Probe) 0.10 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (1 member of (a) and c=1) or (2 member of (b) and c=1); -- 2: OR index merge from multi complicated mv index (memberof)",
+        "Plan": [
+          "IndexMerge_8 0.10 root  type: union",
+          "├─IndexRangeScan_5(Build) 0.10 cop[tikv] table:t2, index:idx(c, cast(`a` as signed array)) range:[1 1,1 1], keep order:false, stats:pseudo",
+          "├─IndexRangeScan_6(Build) 0.10 cop[tikv] table:t2, index:idx2(cast(`b` as signed array), c) range:[2 1,2 1], keep order:false, stats:pseudo",
+          "└─TableRowIDScan_7(Probe) 0.10 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (1 member of (a) and c=1 and d=2) or (2 member of (b) and c=3 and d=2); -- 3: OR index merge from multi complicated mv index (memberof)，while each DNF item contains redundant condition, which should be remained as table filters",
+        "Plan": [
+          "IndexMerge_9 0.10 root  type: union",
+          "├─IndexRangeScan_5(Build) 0.10 cop[tikv] table:t2, index:idx(c, cast(`a` as signed array)) range:[1 1,1 1], keep order:false, stats:pseudo",
+          "├─IndexRangeScan_6(Build) 0.10 cop[tikv] table:t2, index:idx2(cast(`b` as signed array), c) range:[2 3,2 3], keep order:false, stats:pseudo",
+          "└─Selection_8(Probe) 0.10 cop[tikv]  or(and(json_memberof(cast(1, json BINARY), test.t2.a), and(eq(test.t2.c, 1), eq(test.t2.d, 2))), and(json_memberof(cast(2, json BINARY), test.t2.b), and(eq(test.t2.c, 3), eq(test.t2.d, 2))))",
+          "  └─TableRowIDScan_7 0.10 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where ( json_contains(a, '[1, 2, 3]') and c=1 and d=2) or (2 member of (b) and c=3 and d=2); -- 4: OR index merge from multi complicated mv index (memberof)，make full use of DNF item's condition even if the predicate is intersection case (json_contains)",
+        "Plan": [
+          "IndexMerge_9 0.01 root  type: union",
+          "├─IndexRangeScan_5(Build) 10.00 cop[tikv] table:t2, index:idx(c, cast(`a` as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "├─IndexRangeScan_6(Build) 0.10 cop[tikv] table:t2, index:idx2(cast(`b` as signed array), c) range:[2 3,2 3], keep order:false, stats:pseudo",
+          "└─Selection_8(Probe) 0.01 cop[tikv]  or(and(json_contains(test.t2.a, cast(\"[1, 2, 3]\", json BINARY)), and(eq(test.t2.c, 1), eq(test.t2.d, 2))), and(json_memberof(cast(2, json BINARY), test.t2.b), and(eq(test.t2.c, 3), eq(test.t2.d, 2))))",
+          "  └─TableRowIDScan_7 10.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where ( json_overlaps(a, '[1, 2, 3]') and c=1 and d=2) or (2 member of (b) and c=3 and d=2); -- 5: OR index merge from multi complicated mv index (memberof)，make full use of DNF item's condition even if the predicate is intersection case (json_contains)",
+        "Plan": [
+          "Selection_5 0.08 root  or(and(json_overlaps(test.t2.a, cast(\"[1, 2, 3]\", json BINARY)), and(eq(test.t2.c, 1), eq(test.t2.d, 2))), and(json_memberof(cast(2, json BINARY), test.t2.b), and(eq(test.t2.c, 3), eq(test.t2.d, 2))))",
+          "└─IndexMerge_11 0.10 root  type: union",
+          "  ├─IndexRangeScan_6(Build) 0.10 cop[tikv] table:t2, index:idx(c, cast(`a` as signed array)) range:[1 1,1 1], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan_7(Build) 0.10 cop[tikv] table:t2, index:idx(c, cast(`a` as signed array)) range:[1 2,1 2], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan_8(Build) 0.10 cop[tikv] table:t2, index:idx(c, cast(`a` as signed array)) range:[1 3,1 3], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan_9(Build) 0.10 cop[tikv] table:t2, index:idx2(cast(`b` as signed array), c) range:[2 3,2 3], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan_10(Probe) 0.10 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ use_index_merge(t2, idx2, idx, idx4) */ * from t2 where ( json_contains(a, '[1, 2, 3]') and d=2) or (2 member of (b) and c=3 and d=2); -- 6: OR index merge from multi complicated mv index (memberof)，make full use of other DNF items even if one of the DNF items fails",
+        "Plan": [
+          "IndexMerge_9 0.01 root  type: union",
+          "├─IndexRangeScan_5(Build) 10.00 cop[tikv] table:t2, index:idx4(d) range:[2,2], keep order:false, stats:pseudo",
+          "├─IndexRangeScan_6(Build) 0.10 cop[tikv] table:t2, index:idx2(cast(`b` as signed array), c) range:[2 3,2 3], keep order:false, stats:pseudo",
+          "└─Selection_8(Probe) 0.01 cop[tikv]  or(and(json_contains(test.t2.a, cast(\"[1, 2, 3]\", json BINARY)), eq(test.t2.d, 2)), and(json_memberof(cast(2, json BINARY), test.t2.b), and(eq(test.t2.c, 3), eq(test.t2.d, 2))))",
+          "  └─TableRowIDScan_7 10.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (1 member of (a) and 1 member of (b) and c=3) or (3 member of (b) and c=4); -- 7: OR index merge from multi complicated mv index (memberof)，each DNF item can be more complicated like a another embedded CNF member-of composition.",
+        "Plan": [
+          "IndexMerge_9 0.10 root  type: union",
+          "├─IndexRangeScan_5(Build) 0.10 cop[tikv] table:t2, index:idx(c, cast(`a` as signed array)) range:[3 1,3 1], keep order:false, stats:pseudo",
+          "├─IndexRangeScan_6(Build) 0.10 cop[tikv] table:t2, index:idx2(cast(`b` as signed array), c) range:[3 4,3 4], keep order:false, stats:pseudo",
+          "└─Selection_8(Probe) 0.10 cop[tikv]  or(and(json_memberof(cast(1, json BINARY), test.t2.a), and(json_memberof(cast(1, json BINARY), test.t2.b), eq(test.t2.c, 3))), and(json_memberof(cast(3, json BINARY), test.t2.b), eq(test.t2.c, 4)))",
+          "  └─TableRowIDScan_7 0.10 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (1 member of (a) and 1 member of (b) and c=3) or (3 member of (b) and c=4) or e=1; -- 8: OR index merge from multi complicated mv index (memberof), each DNF item should be strict or lax used as index partial path.",
+        "Plan": [
+          "TableReader_7 25.98 root  data:Selection_6",
+          "└─Selection_6 25.98 cop[tikv]  or(and(json_memberof(cast(1, json BINARY), test.t2.a), and(json_memberof(cast(1, json BINARY), test.t2.b), eq(test.t2.c, 3))), or(and(json_memberof(cast(3, json BINARY), test.t2.b), eq(test.t2.c, 4)), eq(test.t2.e, 1)))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ use_index_merge(t2, idx2, idx, idx4) */ * from t2 where (1 member of (a) and 1 member of (b) and c=3) or (3 member of (b) and c=4) or d=1; -- 9: OR index merge from multi complicated mv index (memberof), each DNF item should be strict or lax used as index partial path, specify the index in index merge hint",
+        "Plan": [
+          "IndexMerge_10 0.03 root  type: union",
+          "├─IndexRangeScan_5(Build) 10.00 cop[tikv] table:t2, index:idx4(d) range:[1,1], keep order:false, stats:pseudo",
+          "├─IndexRangeScan_6(Build) 0.10 cop[tikv] table:t2, index:idx(c, cast(`a` as signed array)) range:[3 1,3 1], keep order:false, stats:pseudo",
+          "├─IndexRangeScan_7(Build) 0.10 cop[tikv] table:t2, index:idx2(cast(`b` as signed array), c) range:[3 4,3 4], keep order:false, stats:pseudo",
+          "└─Selection_9(Probe) 0.03 cop[tikv]  or(and(json_memberof(cast(1, json BINARY), test.t2.a), and(json_memberof(cast(1, json BINARY), test.t2.b), eq(test.t2.c, 3))), or(and(json_memberof(cast(3, json BINARY), test.t2.b), eq(test.t2.c, 4)), eq(test.t2.d, 1)))",
+          "  └─TableRowIDScan_8 10.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
   }
 ]
