@@ -1118,10 +1118,9 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, ctx Context, padZero boo
 						} else if r == utf8.RuneError && size == 1 {
 							// Invalid string
 							continue
-						} else {
-							// Get the truncate position
-							break
 						}
+						// Get the truncate position
+						break
 					}
 					overflowed = s[truncateLen:]
 					s = truncateStr(s, truncateLen)
