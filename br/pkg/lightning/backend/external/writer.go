@@ -312,7 +312,6 @@ func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tid
 	if w.writeCnt < len(w.writeBatch) {
 		w.writeBatch[w.writeCnt].Key = key
 		w.writeBatch[w.writeCnt].Val = val
-		w.writeBatch[w.writeCnt].RowID = rowID
 	} else {
 		w.writeBatch = append(w.writeBatch, common.KvPair{Key: key, Val: val, RowID: rowID})
 	}
@@ -447,7 +446,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		return err
 	}
 
-	for _, pair := range w.writeBatch {
+	for _, pair := range w.writeBatch[:w.writeCnt] {
 		err = w.kvStore.addEncodedData(pair.Key, pair.Val)
 		if err != nil {
 			return err
