@@ -2915,7 +2915,7 @@
               "expr": "increase(tidb_server_event_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[10m])",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "{{instance}}-server {{type}}",
+              "legendFormat": "{{instance}}-{{type}}",
               "refId": "A"
             }
           ],
