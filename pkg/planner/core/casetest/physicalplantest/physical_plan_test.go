@@ -166,7 +166,7 @@ func TestAggEliminator(t *testing.T) {
 		require.Equal(t, output[i].Best, core.ToString(p), fmt.Sprintf("input: %s", tt))
 	}
 }
-
+// Fix Issue #45822 
 func TestRuleColumnPruningLogicalApply(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
