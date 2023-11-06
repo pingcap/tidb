@@ -88,15 +88,15 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 	stmtCtx := sessVars.StmtCtx
 	// handle the execute statement
 	var (
-		pointPlanShortPathOK bool
-		preparedObj          *plannercore.PlanCacheStmt
+		pointGetPlanShortPathOK bool
+		preparedObj             *plannercore.PlanCacheStmt
 	)
 
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
 		if preparedObj, err = plannercore.GetPreparedStmt(execStmt, sessVars); err != nil {
 			return nil, err
 		}
-		if pointPlanShortPathOK, err = plannercore.IsPointGetPlanShortPathOK(c.Ctx, is, preparedObj); err != nil {
+		if pointGetPlanShortPathOK, err = plannercore.IsPointGetPlanShortPathOK(c.Ctx, is, preparedObj); err != nil {
 			return nil, err
 		}
 	}
@@ -132,7 +132,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		Ti:            &TelemetryInfo{},
 	}
 	// Use cached plan if possible.
-	if pointPlanShortPathOK {
+	if pointGetPlanShortPathOK {
 		if ep, ok := stmt.Plan.(*plannercore.Execute); ok {
 			if pointPlan, ok := ep.Plan.(*plannercore.PointGetPlan); ok {
 				stmtCtx.SetPlan(stmt.Plan)
