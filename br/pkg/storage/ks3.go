@@ -326,7 +326,10 @@ func (rs *KS3Storage) DeleteFiles(_ context.Context, files []string) error {
 				Quiet:   boolP(false),
 			},
 		}
-		_ = rs.svc.DeleteObjects(input)
+		_, err := rs.svc.DeleteObjects(input)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		files = files[len(batch):]
 	}
 	return nil
