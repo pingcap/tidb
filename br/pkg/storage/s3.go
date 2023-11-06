@@ -299,7 +299,8 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	qs := *backend
 	awsConfig := aws.NewConfig().
 		WithS3ForcePathStyle(qs.ForcePathStyle).
-		WithCredentialsChainVerboseErrors(true)
+		WithCredentialsChainVerboseErrors(true).
+		WithLogLevel(aws.LogDebugWithRequestRetries)
 	if qs.Region == "" {
 		awsConfig.WithRegion(defaultRegion)
 	} else {
