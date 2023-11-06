@@ -1544,9 +1544,8 @@ func (d Duration) Compare(o Duration) int {
 		return 1
 	} else if d.Duration == o.Duration {
 		return 0
-	} else {
-		return -1
 	}
+	return -1
 }
 
 // CompareString is like Compare,

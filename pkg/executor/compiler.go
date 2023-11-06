@@ -48,14 +48,14 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		if r == nil {
 			return
 		}
-		if recoveredErr, ok := r.(error); !ok || !(exeerrors.ErrMemoryExceedForQuery.Equal(recoveredErr) ||
+		recoveredErr, ok := r.(error)
+		if !ok || !(exeerrors.ErrMemoryExceedForQuery.Equal(recoveredErr) ||
 			exeerrors.ErrMemoryExceedForInstance.Equal(recoveredErr) ||
 			exeerrors.ErrQueryInterrupted.Equal(recoveredErr) ||
 			exeerrors.ErrMaxExecTimeExceeded.Equal(recoveredErr)) {
 			panic(r)
-		} else {
-			err = recoveredErr
 		}
+		err = recoveredErr
 		logutil.Logger(ctx).Error("compile SQL panic", zap.String("SQL", stmtNode.Text()), zap.Stack("stack"), zap.Any("recover", r))
 	}()
 

@@ -414,3 +414,16 @@ show variables like 'authentication_ldap_simple_bind_root_pwd';
 SELECT current_value FROM information_schema.variables_info WHERE VARIABLE_NAME LIKE 'authentication_ldap_simple_bind_root_pwd';
 SET GLOBAL authentication_ldap_simple_bind_root_pwd = default;
 SET GLOBAL authentication_ldap_sasl_bind_root_pwd = default;
+
+# TestShowForNewCollations
+show collation;
+select * from information_schema.COLLATIONS;
+show character set like '%utf8mb4%';
+select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER_SET_NAME='utf8mb4';
+set @@session.default_collation_for_utf8mb4='utf8mb4_0900_ai_ci';
+show variables like 'default_collation_for_utf8mb4';
+show collation;
+select * from information_schema.COLLATIONS;
+show character set like '%utf8mb4%';
+select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER_SET_NAME='utf8mb4';
+set @@session.default_collation_for_utf8mb4=default;
