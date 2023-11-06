@@ -9,7 +9,11 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 50,
+=======
+    shard_count = 49,
+>>>>>>> 11695f26ef4 (executor: add recover handler for handleResultsError (#48326))
     deps = [
         "//pkg/config",
         "//pkg/domain",
