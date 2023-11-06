@@ -378,7 +378,7 @@ HashJoin	10000.00	root		CARTESIAN left outer semi join, other cond:eq(2, planner
 │ └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 └─Projection(Probe)	10000.00	root		1->Column#23
   └─TableReader	10000.00	root		data:TableFullScan
-    └─TableFullScan	10000.00	cop[tikv]	table:t keep order:false, stats:pseudo
+    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select (2) in (select b from t) from (select t.a < (select t.a from t t1 limit 1) from t) t;
 (2) in (select b from t)
 1
