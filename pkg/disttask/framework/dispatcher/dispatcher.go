@@ -88,13 +88,13 @@ type BaseDispatcher struct {
 	Extension
 
 	// for HA
-	// liveNodes will fetch and store all live nodes every liveNodeInterval ticks.
-	liveNodes             []*infosync.ServerInfo
+	// LiveNodes will fetch and store all live nodes every liveNodeInterval ticks.
+	LiveNodes             []*infosync.ServerInfo
 	liveNodeFetchInterval int
 	// liveNodeFetchTick is the tick variable.
 	liveNodeFetchTick int
-	// taskNodes stores the id of current scheduler nodes.
-	taskNodes []string
+	// TaskNodes stores the id of current scheduler nodes.
+	TaskNodes []string
 	// rand is for generating random selection of nodes.
 	rand *rand.Rand
 }
@@ -112,10 +112,10 @@ func NewBaseDispatcher(ctx context.Context, taskMgr TaskManager, serverID string
 		Task:                  task,
 		logCtx:                logCtx,
 		serverID:              serverID,
-		liveNodes:             nil,
+		LiveNodes:             nil,
 		liveNodeFetchInterval: DefaultLiveNodesCheckInterval,
 		liveNodeFetchTick:     0,
-		taskNodes:             nil,
+		TaskNodes:             nil,
 		rand:                  rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 }
@@ -342,8 +342,8 @@ func (d *BaseDispatcher) onRunning() error {
 	if cnt == 0 {
 		return d.onNextStage()
 	}
-	// Check if any node are down.
-	if err := d.replaceDeadNodesIfAny(); err != nil {
+
+	if err := d.rebalanceSubtasks(); err != nil {
 		return err
 	}
 	// Wait all subtasks in this stage finished.
@@ -358,10 +358,10 @@ func (d *BaseDispatcher) onFinished() error {
 	return d.taskMgr.TransferSubTasks2History(d.Task.ID)
 }
 
-func (d *BaseDispatcher) replaceDeadNodesIfAny() error {
-	if len(d.taskNodes) == 0 {
+func (d *BaseDispatcher) rebalanceSubtasks() error {
+	if len(d.TaskNodes) == 0 {
 		var err error
-		d.taskNodes, err = d.taskMgr.GetSchedulerIDsByTaskIDAndStep(d.Task.ID, d.Task.Step)
+		d.TaskNodes, err = d.taskMgr.GetSchedulerIDsByTaskIDAndStep(d.Task.ID, d.Task.Step)
 		if err != nil {
 			return err
 		}
@@ -390,38 +390,101 @@ func (d *BaseDispatcher) replaceDeadNodesIfAny() error {
 				newInfos = append(newInfos, m)
 			}
 		}
-		d.liveNodes = newInfos
+		d.LiveNodes = newInfos
 	}
-	if len(d.liveNodes) > 0 {
-		replaceNodes := make(map[string]string)
-		cleanNodes := make([]string, 0)
-		for _, nodeID := range d.taskNodes {
-			if ok := disttaskutil.MatchServerInfo(d.liveNodes, nodeID); !ok {
-				n := d.liveNodes[d.rand.Int()%len(d.liveNodes)] //nolint:gosec
-				replaceNodes[nodeID] = disttaskutil.GenerateExecID(n.IP, n.Port)
-				cleanNodes = append(cleanNodes, nodeID)
-			}
+	var err error
+	d.LiveNodes, err = d.filterByRole(d.LiveNodes)
+	if err != nil {
+		return err
+	}
+	if len(d.LiveNodes) > 0 {
+		if len(d.LiveNodes) > len(d.TaskNodes) {
+			return d.ScaleOutSubtasks()
 		}
-		if len(replaceNodes) > 0 {
-			logutil.Logger(d.logCtx).Info("reschedule subtasks to other nodes", zap.Int("node-cnt", len(replaceNodes)))
-			if err := d.taskMgr.UpdateFailedSchedulerIDs(d.Task.ID, replaceNodes); err != nil {
-				return err
-			}
-			if err := d.taskMgr.CleanUpMeta(cleanNodes); err != nil {
-				return err
-			}
-			// replace local cache.
-			for k, v := range replaceNodes {
-				for m, n := range d.taskNodes {
-					if n == k {
-						d.taskNodes[m] = v
-						break
-					}
-				}
-			}
+		if len(d.LiveNodes) < len(d.TaskNodes) {
+			return d.ScaleInSubtasks()
 		}
 	}
 	return nil
+}
+
+// ScaleInSubtasks rebalance subtasks from taskNodes to liveNodes.
+func (d *BaseDispatcher) ScaleInSubtasks() error {
+	replaceNodes := make(map[string]string)
+	cleanNodes := make([]string, 0)
+	for _, nodeID := range d.TaskNodes {
+		if ok := disttaskutil.MatchServerInfo(d.LiveNodes, nodeID); !ok {
+			n := d.LiveNodes[d.rand.Int()%len(d.LiveNodes)] //nolint:gosec
+			replaceNodes[nodeID] = disttaskutil.GenerateExecID(n.IP, n.Port)
+			cleanNodes = append(cleanNodes, nodeID)
+		}
+	}
+	if len(replaceNodes) > 0 {
+		logutil.Logger(d.logCtx).Info("reschedule subtasks to other nodes", zap.Int("node-cnt", len(replaceNodes)))
+		if err := d.taskMgr.UpdateFailedSchedulerIDs(d.Task.ID, replaceNodes); err != nil {
+			return err
+		}
+		if err := d.taskMgr.CleanUpMeta(cleanNodes); err != nil {
+			return err
+		}
+		// replace local cache.
+		for k, v := range replaceNodes {
+			for m, n := range d.TaskNodes {
+				if n == k {
+					d.TaskNodes[m] = v
+					break
+				}
+			}
+		}
+		return nil
+	}
+	return nil
+}
+
+// ScaleOutSubtasks rebalance subtasks from taskNodes to liveNodes.
+func (d *BaseDispatcher) ScaleOutSubtasks() error {
+	// pre check for safety.
+	if len(d.LiveNodes)-len(d.TaskNodes) == 0 {
+		return nil
+	}
+	// 1. find out nodes that scaled out.
+	scaleOutNodes := make([]string, 0, len(d.LiveNodes)-len(d.TaskNodes))
+
+	for _, node := range d.LiveNodes {
+		execID := disttaskutil.GenerateExecID(node.IP, node.Port)
+		if !disttaskutil.MatchSchedulerID(d.TaskNodes, disttaskutil.GenerateExecID(node.IP, node.Port)) {
+			scaleOutNodes = append(scaleOutNodes, execID)
+		}
+	}
+	// 2. get subtasks for each node before scaling out.
+	subtasks, _ := d.taskMgr.GetSubtasksByStep(d.Task.ID, d.Task.Step, proto.TaskStatePending)
+
+	subtasksForEachScheduler := make(map[string][]*proto.Subtask, len(d.LiveNodes))
+	for _, subtask := range subtasks {
+		subtasksForEachScheduler[subtask.SchedulerID] = append(
+			subtasksForEachScheduler[subtask.SchedulerID],
+			subtask)
+	}
+
+	// 3. scale out subtasks to scaleOutNodes.
+	averageSubtaskCnt := len(subtasks) / len(d.LiveNodes)
+	lastScaleOutIdx := 0
+	for _, v := range subtasksForEachScheduler {
+		if len(v) > averageSubtaskCnt {
+			for i := 0; i < len(v)-averageSubtaskCnt; i++ {
+				v[i].SchedulerID = scaleOutNodes[lastScaleOutIdx%len(scaleOutNodes)]
+				// update TaskNodes cache
+				if lastScaleOutIdx < len(scaleOutNodes) {
+					d.TaskNodes = append(d.TaskNodes, scaleOutNodes[lastScaleOutIdx])
+				}
+				lastScaleOutIdx++
+			}
+		}
+	}
+
+	logutil.Logger(d.logCtx).Info("scale out subtasks")
+	err := d.taskMgr.UpdateSubtasksSchedulerIDs(d.Task.ID, subtasks)
+	return err
 }
 
 // updateTask update the task in tidb_global_task table.
@@ -593,9 +656,10 @@ func (d *BaseDispatcher) dispatchSubTask(subtaskStep proto.Step, metas [][]byte)
 	if len(serverNodes) == 0 {
 		return errors.New("no available TiDB node to dispatch subtasks")
 	}
-	d.taskNodes = make([]string, len(serverNodes))
+	d.TaskNodes = make([]string, len(serverNodes))
 	for i := range serverNodes {
-		d.taskNodes[i] = disttaskutil.GenerateExecID(serverNodes[i].IP, serverNodes[i].Port)
+		execID := disttaskutil.GenerateExecID(serverNodes[i].IP, serverNodes[i].Port)
+		d.TaskNodes[i] = execID
 	}
 	subTasks := make([]*proto.Subtask, 0, len(metas))
 	for i, meta := range metas {
@@ -691,7 +755,7 @@ func (d *BaseDispatcher) GetAllSchedulerIDs(ctx context.Context, task *proto.Tas
 
 // GetPreviousSubtaskMetas get subtask metas from specific step.
 func (d *BaseDispatcher) GetPreviousSubtaskMetas(taskID int64, step proto.Step) ([][]byte, error) {
-	previousSubtasks, err := d.taskMgr.GetSucceedSubtasksByStep(taskID, step)
+	previousSubtasks, err := d.taskMgr.GetSubtasksByStep(taskID, step, proto.TaskStateSucceed)
 	if err != nil {
 		logutil.Logger(d.logCtx).Warn("get previous succeed subtask failed", zap.Int64("step", int64(step)))
 		return nil, err

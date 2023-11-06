@@ -219,14 +219,14 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), cnt)
 
-	subtasks, err := sm.GetSucceedSubtasksByStep(2, proto.StepInit)
+	subtasks, err := sm.GetSubtasksByStep(2, proto.StepInit, proto.TaskStateSucceed)
 	require.NoError(t, err)
 	require.Len(t, subtasks, 0)
 
 	err = sm.FinishSubtask(2, []byte{})
 	require.NoError(t, err)
 
-	subtasks, err = sm.GetSucceedSubtasksByStep(2, proto.StepInit)
+	subtasks, err = sm.GetSubtasksByStep(2, proto.StepInit, proto.TaskStateSucceed)
 	require.NoError(t, err)
 	require.Len(t, subtasks, 1)
 
@@ -292,6 +292,25 @@ func TestSubTaskTable(t *testing.T) {
 	canceled, err = sm.IsSchedulerCanceled("for_test999", 4)
 	require.NoError(t, err)
 	require.False(t, canceled)
+
+	// test UpdateSubtasksSchedulerIDs
+	// 1. update one subtask
+	require.NoError(t, sm.AddNewSubTask(5, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, false))
+	subtasks, err = sm.GetSubtasksByStep(5, proto.StepInit, proto.TaskStatePending)
+	require.NoError(t, err)
+	subtasks[0].SchedulerID = "tidb2"
+	require.NoError(t, sm.UpdateSubtasksSchedulerIDs(5, subtasks))
+	subtasks, err = sm.GetSubtasksByStep(5, proto.StepInit, proto.TaskStatePending)
+	require.Equal(t, "tidb2", subtasks[0].SchedulerID)
+	// 2. update 2 subtasks
+	require.NoError(t, sm.AddNewSubTask(5, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, false))
+	subtasks, err = sm.GetSubtasksByStep(5, proto.StepInit, proto.TaskStatePending)
+	subtasks[0].SchedulerID = "tidb3"
+	subtasks[1].SchedulerID = "tidb3"
+	require.NoError(t, sm.UpdateSubtasksSchedulerIDs(5, subtasks))
+	subtasks, err = sm.GetSubtasksByStep(5, proto.StepInit, proto.TaskStatePending)
+	require.Equal(t, "tidb3", subtasks[0].SchedulerID)
+	require.Equal(t, "tidb3", subtasks[1].SchedulerID)
 }
 
 func TestBothGlobalAndSubTaskTable(t *testing.T) {

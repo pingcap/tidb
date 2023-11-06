@@ -46,6 +46,16 @@ func FindServerInfo(serverInfos []*infosync.ServerInfo, schedulerID string) int 
 	return -1
 }
 
+// MatchSchedulerID will find schedulerID in taskNodes.
+func MatchSchedulerID(taskNodes []string, schedulerID string) bool {
+	for _, nodeID := range taskNodes {
+		if schedulerID == nodeID {
+			return true
+		}
+	}
+	return false
+}
+
 // GenerateSubtaskExecID generates the subTask execID.
 func GenerateSubtaskExecID(ctx context.Context, id string) string {
 	serverInfos, err := infosync.GetAllServerInfo(ctx)

@@ -258,6 +258,150 @@ func TestTaskFailInManager(t *testing.T) {
 	}, time.Second*10, time.Millisecond*300)
 }
 
+func TestScaleIntAndScaleOutNodes(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	gtk := testkit.NewTestKit(t, store)
+	ctx := context.Background()
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return gtk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockTaskMgr := mock.NewMockTaskManager(ctrl)
+
+	// 1. scale out from 1 node to 2 nodes.
+	/// 1.1 4 subtasks.
+	subtasks := []*proto.Subtask{
+		{SchedulerID: "1.1.1.1:4000"},
+		{SchedulerID: "1.1.1.1:4000"},
+		{SchedulerID: "1.1.1.1:4000"},
+		{SchedulerID: "1.1.1.1:4000"}}
+	mockTaskMgr.EXPECT().GetSubtasksByStep(int64(0), proto.StepInit, proto.TaskStatePending).Return(
+		subtasks,
+		nil)
+
+	mockTaskMgr.EXPECT().UpdateSubtasksSchedulerIDs(int64(0),
+		subtasks).Return(nil)
+
+	dsp := dispatcher.NewBaseDispatcher(ctx, mockTaskMgr, "server", &proto.Task{Step: proto.StepInit})
+	dsp.LiveNodes = []*infosync.ServerInfo{{IP: "1.1.1.1", Port: 4000}, {IP: "1.1.1.2", Port: 4000}}
+	dsp.TaskNodes = []string{"1.1.1.1:4000"}
+	require.NoError(t, dsp.ScaleOutSubtasks())
+	require.Equal(t, []string{"1.1.1.1:4000", "1.1.1.2:4000"}, dsp.TaskNodes)
+	require.Equal(t, []*proto.Subtask{
+		{SchedulerID: "1.1.1.2:4000"},
+		{SchedulerID: "1.1.1.2:4000"},
+		{SchedulerID: "1.1.1.1:4000"},
+		{SchedulerID: "1.1.1.1:4000"}},
+		subtasks)
+
+	/// 1.2 3 subtasks.
+	dsp.TaskNodes = []string{"1.1.1.1:4000"}
+	subtasks = []*proto.Subtask{
+		{SchedulerID: "1.1.1.1:4000"},
+		{SchedulerID: "1.1.1.1:4000"},
+		{SchedulerID: "1.1.1.1:4000"}}
+
+	mockTaskMgr.EXPECT().GetSubtasksByStep(int64(0), proto.StepInit, proto.TaskStatePending).Return(
+		subtasks,
+		nil)
+
+	mockTaskMgr.EXPECT().UpdateSubtasksSchedulerIDs(int64(0),
+		subtasks).Return(nil)
+	require.NoError(t, dsp.ScaleOutSubtasks())
+	require.Equal(t, []string{"1.1.1.1:4000", "1.1.1.2:4000"}, dsp.TaskNodes)
+	require.Equal(t, []*proto.Subtask{
+		{SchedulerID: "1.1.1.2:4000"},
+		{SchedulerID: "1.1.1.2:4000"},
+		{SchedulerID: "1.1.1.1:4000"}},
+		subtasks)
+
+	// 2. scale out from 2 nodes to 4 nodes.
+	/// 2.1 4 subtasks
+	subtasks = []*proto.Subtask{
+		{SchedulerID: "1.1.1.2:4000"},
+		{SchedulerID: "1.1.1.2:4000"},
+		{SchedulerID: "1.1.1.1:4000"},
+		{SchedulerID: "1.1.1.1:4000"}}
+	mockTaskMgr.EXPECT().GetSubtasksByStep(int64(0), proto.StepInit, proto.TaskStatePending).Return(
+		subtasks,
+		nil)
+
+	mockTaskMgr.EXPECT().UpdateSubtasksSchedulerIDs(int64(0),
+		subtasks).Return(nil)
+
+	dsp.LiveNodes = []*infosync.ServerInfo{{IP: "1.1.1.1", Port: 4000}, {IP: "1.1.1.2", Port: 4000}, {IP: "1.1.1.3", Port: 4000}, {IP: "1.1.1.4", Port: 4000}}
+	dsp.TaskNodes = []string{"1.1.1.1:4000", "1.1.1.2:4000"}
+	require.NoError(t, dsp.ScaleOutSubtasks())
+	require.Equal(t, []string{"1.1.1.1:4000", "1.1.1.2:4000", "1.1.1.3:4000", "1.1.1.4:4000"}, dsp.TaskNodes)
+	require.Equal(t, []*proto.Subtask{
+		{SchedulerID: "1.1.1.3:4000"},
+		{SchedulerID: "1.1.1.2:4000"},
+		{SchedulerID: "1.1.1.4:4000"},
+		{SchedulerID: "1.1.1.1:4000"}},
+		subtasks)
+
+	/// 2.2 9 subtasks
+	subtasks = []*proto.Subtask{
+		{SchedulerID: "1.1.1.2:4000"},
+		{SchedulerID: "1.1.1.2:4000"},
+		{SchedulerID: "1.1.1.2:4000"},
+		{SchedulerID: "1.1.1.2:4000"},
+		{SchedulerID: "1.1.1.2:4000"},
+		{SchedulerID: "1.1.1.1:4000"},
+		{SchedulerID: "1.1.1.1:4000"},
+		{SchedulerID: "1.1.1.1:4000"},
+		{SchedulerID: "1.1.1.1:4000"}}
+
+	mockTaskMgr.EXPECT().GetSubtasksByStep(int64(0), proto.StepInit, proto.TaskStatePending).Return(
+		subtasks,
+		nil)
+
+	mockTaskMgr.EXPECT().UpdateSubtasksSchedulerIDs(int64(0),
+		subtasks).Return(nil)
+
+	dsp.LiveNodes = []*infosync.ServerInfo{{IP: "1.1.1.1", Port: 4000}, {IP: "1.1.1.2", Port: 4000}, {IP: "1.1.1.3", Port: 4000}, {IP: "1.1.1.4", Port: 4000}}
+	dsp.TaskNodes = []string{"1.1.1.1:4000", "1.1.1.2:4000"}
+	require.NoError(t, dsp.ScaleOutSubtasks())
+	require.Equal(t, []string{"1.1.1.1:4000", "1.1.1.2:4000", "1.1.1.3:4000", "1.1.1.4:4000"}, dsp.TaskNodes)
+	require.Equal(t, []*proto.Subtask{
+		{SchedulerID: "1.1.1.3:4000"},
+		{SchedulerID: "1.1.1.4:4000"},
+		{SchedulerID: "1.1.1.3:4000"},
+		{SchedulerID: "1.1.1.2:4000"},
+		{SchedulerID: "1.1.1.2:4000"},
+		{SchedulerID: "1.1.1.4:4000"},
+		{SchedulerID: "1.1.1.3:4000"},
+		{SchedulerID: "1.1.1.1:4000"},
+		{SchedulerID: "1.1.1.1:4000"}},
+		subtasks)
+
+	// 3. scale out from 2 nodes to 3 nodes.
+	subtasks = []*proto.Subtask{
+		{SchedulerID: "1.1.1.2:4000"},
+		{SchedulerID: "1.1.1.2:4000"},
+		{SchedulerID: "1.1.1.1:4000"},
+		{SchedulerID: "1.1.1.1:4000"}}
+	mockTaskMgr.EXPECT().GetSubtasksByStep(int64(0), proto.StepInit, proto.TaskStatePending).Return(
+		subtasks,
+		nil)
+
+	mockTaskMgr.EXPECT().UpdateSubtasksSchedulerIDs(int64(0),
+		subtasks).Return(nil)
+
+	dsp.LiveNodes = []*infosync.ServerInfo{{IP: "1.1.1.1", Port: 4000}, {IP: "1.1.1.2", Port: 4000}, {IP: "1.1.1.3", Port: 4000}}
+	dsp.TaskNodes = []string{"1.1.1.1:4000", "1.1.1.2:4000"}
+	require.NoError(t, dsp.ScaleOutSubtasks())
+	require.Equal(t, []string{"1.1.1.1:4000", "1.1.1.2:4000", "1.1.1.3:4000"}, dsp.TaskNodes)
+	require.Equal(t, []*proto.Subtask{
+		{SchedulerID: "1.1.1.3:4000"},
+		{SchedulerID: "1.1.1.2:4000"},
+		{SchedulerID: "1.1.1.3:4000"},
+		{SchedulerID: "1.1.1.1:4000"}},
+		subtasks)
+}
+
 func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel, isPauseAndResume bool) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)"))
 	defer func() {

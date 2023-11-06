@@ -440,11 +440,11 @@ func (stm *TaskManager) PrintSubtaskInfo(taskID int64) {
 	}
 }
 
-// GetSucceedSubtasksByStep gets the subtask in the success state.
-func (stm *TaskManager) GetSucceedSubtasksByStep(taskID int64, step proto.Step) ([]*proto.Subtask, error) {
+// GetSubtasksByStep gets the subtask in the success state.
+func (stm *TaskManager) GetSubtasksByStep(taskID int64, step proto.Step, state proto.TaskState) ([]*proto.Subtask, error) {
 	rs, err := stm.executeSQLWithNewSession(stm.ctx, `select * from mysql.tidb_background_subtask
 		where task_key = %? and state = %? and step = %?`,
-		taskID, proto.TaskStateSucceed, step)
+		taskID, state, step)
 	if err != nil {
 		return nil, err
 	}
@@ -627,6 +627,30 @@ func (stm *TaskManager) IsSchedulerCanceled(execID string, taskID int64) (bool, 
 		return false, err
 	}
 	return len(rs) == 0, nil
+}
+
+// UpdateSubtasksSchedulerIDs update subtasks' schedulerID.
+func (stm *TaskManager) UpdateSubtasksSchedulerIDs(taskID int64, subtasks []*proto.Subtask) error {
+	// skip the update process.
+	if len(subtasks) == 0 {
+		return nil
+	}
+
+	sql := new(strings.Builder)
+	if err := sqlexec.FormatSQL(sql, "update mysql.tidb_background_subtask set exec_id = (case "); err != nil {
+		return err
+	}
+	for _, subtask := range subtasks {
+		if err := sqlexec.FormatSQL(sql, "when id = %? then %? ", subtask.ID, subtask.SchedulerID); err != nil {
+			return err
+		}
+	}
+	if err := sqlexec.FormatSQL(sql, " end) where task_key = %? and state = \"pending\"", taskID); err != nil {
+		return err
+	}
+
+	_, err := stm.executeSQLWithNewSession(stm.ctx, sql.String())
+	return err
 }
 
 // UpdateFailedSchedulerIDs replace failed scheduler nodes with alive nodes.
