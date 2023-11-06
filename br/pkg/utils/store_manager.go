@@ -147,6 +147,7 @@ func (mgr *StoreManager) getGrpcConnLocked(ctx context.Context, storeID uint64) 
 	if addr == "" {
 		addr = store.GetAddress()
 	}
+	log.Info("StoreManager: dialing to store.", zap.String("address", addr), zap.Uint64("store-id", storeID))
 	conn, err := grpc.DialContext(
 		ctx,
 		addr,
