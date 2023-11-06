@@ -209,7 +209,7 @@ const (
 	TableRunawayWatches = "RUNAWAY_WATCHES"
 	// TableCheckConstraints is the list of CHECK constraints.
 	TableCheckConstraints = "CHECK_CONSTRAINTS"
-	// TableCheckConstraints is the list of CHECK constraints, with non-standard TiDB extensions.
+	// TableTiDBCheckConstraints is the list of CHECK constraints, with non-standard TiDB extensions.
 	TableTiDBCheckConstraints = "TIDB_CHECK_CONSTRAINTS"
 )
 
