@@ -850,7 +850,7 @@ type joinExec struct {
 }
 
 func (e *joinExec) getHashKey(keyCol types.Datum) (str string, err error) {
-	keyCol, err = keyCol.ConvertTo(e.sc, e.comKeyTp)
+	keyCol, err = keyCol.ConvertTo(e.sc.TypeCtx(), e.comKeyTp)
 	if err != nil {
 		return str, errors.Trace(err)
 	}
@@ -1076,7 +1076,7 @@ func (e *aggExec) processAllRows() (*chunk.Chunk, error) {
 			result := agg.GetResult(aggCtxs[i])
 			if e.fieldTypes[i].GetType() == mysql.TypeLonglong && result.Kind() == types.KindMysqlDecimal {
 				var err error
-				result, err = result.ConvertTo(e.sc, e.fieldTypes[i])
+				result, err = result.ConvertTo(e.sc.TypeCtx(), e.fieldTypes[i])
 				if err != nil {
 					return nil, errors.Trace(err)
 				}

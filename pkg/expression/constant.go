@@ -250,7 +250,7 @@ func (c *Constant) Eval(row chunk.Row) (types.Datum, error) {
 			sf, sfOk := c.DeferredExpr.(*ScalarFunction)
 			if sfOk {
 				if dt.Kind() != types.KindMysqlDecimal {
-					val, err := dt.ConvertTo(sf.GetCtx().GetSessionVars().StmtCtx, c.RetType)
+					val, err := dt.ConvertTo(sf.GetCtx().GetSessionVars().StmtCtx.TypeCtx(), c.RetType)
 					if err != nil {
 						return dt, err
 					}
@@ -281,7 +281,7 @@ func (c *Constant) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, 
 		val, err := dt.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx.TypeCtx())
 		return int64(val), err != nil, err
 	} else if c.GetType().Hybrid() || dt.Kind() == types.KindString {
-		res, err := dt.ToInt64(ctx.GetSessionVars().StmtCtx)
+		res, err := dt.ToInt64(ctx.GetSessionVars().StmtCtx.TypeCtx())
 		return res, false, err
 	} else if dt.Kind() == types.KindMysqlBit {
 		uintVal, err := dt.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx.TypeCtx())
@@ -412,7 +412,7 @@ func (c *Constant) Equal(ctx sessionctx.Context, b Expression) bool {
 	if err1 != nil || err2 != nil {
 		return false
 	}
-	con, err := c.Value.Compare(ctx.GetSessionVars().StmtCtx, &y.Value, collate.GetBinaryCollator())
+	con, err := c.Value.Compare(ctx.GetSessionVars().StmtCtx.TypeCtx(), &y.Value, collate.GetBinaryCollator())
 	if err != nil || con != 0 {
 		return false
 	}

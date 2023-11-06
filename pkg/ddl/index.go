@@ -1088,9 +1088,7 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 			// TODO(tangenta): get duplicate column and match index.
 			err = convertToKeyExistsErr(err, allIndexInfos[0], tbl.Meta())
 		}
-		if !errorIsRetryable(err, job) ||
-			// TODO: Remove this check make it can be retry. Related test is TestModifyColumnReorgInfo.
-			job.ReorgMeta.IsDistReorg {
+		if !errorIsRetryable(err, job) {
 			logutil.BgLogger().Warn("run add index job failed, convert job to rollback", zap.String("category", "ddl"), zap.String("job", job.String()), zap.Error(err))
 			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
 			if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
@@ -1645,7 +1643,7 @@ func (w *addIndexTxnWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords [
 			if cnt < len(w.idxKeyBufs) {
 				buf = w.idxKeyBufs[cnt]
 			}
-			key, val, distinct, err := iter.Next(buf)
+			key, val, distinct, err := iter.Next(buf, nil)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1806,25 +1804,24 @@ func writeChunkToLocal(
 		}
 	}()
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		handleDataBuf = handleDataBuf[:0]
 		handleDataBuf := extractDatumByOffsets(row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
-		handle, err := buildHandle(handleDataBuf, c.TableInfo, c.PrimaryKeyInfo, sCtx)
+		h, err := buildHandle(handleDataBuf, c.TableInfo, c.PrimaryKeyInfo, sCtx)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
 		for i, index := range indexes {
 			idxID := index.Meta().ID
-			idxDataBuf = idxDataBuf[:0]
 			idxDataBuf = extractDatumByOffsets(
 				row, copCtx.IndexColumnOutputOffsets(idxID), c.ExprColumnInfos, idxDataBuf)
+			idxData := idxDataBuf[:len(index.Meta().Columns)]
 			rsData := getRestoreData(c.TableInfo, copCtx.IndexInfo(idxID), c.PrimaryKeyInfo, handleDataBuf)
-			err = writeOneKVToLocal(ctx, writers[i], index, sCtx, writeBufs, idxDataBuf, rsData, handle)
+			err = writeOneKVToLocal(ctx, writers[i], index, sCtx, writeBufs, idxData, rsData, h)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
 		}
 		count++
-		lastHandle = handle
+		lastHandle = h
 	}
 	return count, lastHandle, nil
 }
@@ -1851,7 +1848,7 @@ func writeOneKVToLocal(
 ) error {
 	iter := index.GenIndexKVIter(sCtx, idxDt, handle, rsData)
 	for iter.Valid() {
-		key, idxVal, _, err := iter.Next(writeBufs.IndexKeyBuf)
+		key, idxVal, _, err := iter.Next(writeBufs.IndexKeyBuf, writeBufs.RowValBuf)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1869,6 +1866,7 @@ func writeOneKVToLocal(
 			failpoint.Return(errors.New("mock engine error"))
 		})
 		writeBufs.IndexKeyBuf = key
+		writeBufs.RowValBuf = idxVal
 	}
 	return nil
 }

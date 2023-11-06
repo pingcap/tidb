@@ -299,12 +299,11 @@ func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (KVEnc
 	return NewTableKVEncoder(cfg, ti)
 }
 
-func (e *LoadDataController) getAdjustedMaxEngineSize() int64 {
+func (e *LoadDataController) calculateSubtaskCnt() int {
 	// we want to split data files into subtask of size close to MaxEngineSize to reduce range overlap,
 	// and evenly distribute them to subtasks.
-	// so we adjust MaxEngineSize to make sure each subtask has a similar amount of data to import.
-	// we calculate subtask count first by round(TotalFileSize / maxEngineSize), then adjust maxEngineSize
-	//
+	// we calculate subtask count first by round(TotalFileSize / maxEngineSize)
+
 	// AllocateEngineIDs is using ceil() to calculate subtask count, engine size might be too small in some case,
 	// such as 501G data, maxEngineSize will be about 250G, so we don't relay on it.
 	// see https://github.com/pingcap/tidb/blob/b4183e1dc9bb01fb81d3aa79ca4b5b74387c6c2a/br/pkg/lightning/mydump/region.go#L109
@@ -315,13 +314,33 @@ func (e *LoadDataController) getAdjustedMaxEngineSize() int64 {
 	// [750, 1250)            2    [375, 625)
 	// [1250, 1750)           3    [416, 583)
 	// [1750, 2250)           4    [437, 562)
-	maxEngineSize := int64(e.MaxEngineSize)
+	var (
+		subtaskCount  float64
+		maxEngineSize = int64(e.MaxEngineSize)
+	)
 	if e.TotalFileSize <= maxEngineSize {
-		return e.TotalFileSize
+		subtaskCount = 1
+	} else {
+		subtaskCount = math.Round(float64(e.TotalFileSize) / float64(e.MaxEngineSize))
 	}
-	subtaskCount := math.Round(float64(e.TotalFileSize) / float64(maxEngineSize))
-	adjusted := math.Ceil(float64(e.TotalFileSize) / subtaskCount)
-	return int64(adjusted)
+
+	// for global sort task, since there is no overlap,
+	// we make sure subtask count is a multiple of execute nodes count
+	if e.IsGlobalSort() && e.ExecuteNodesCnt > 0 {
+		subtaskCount = math.Ceil(subtaskCount/float64(e.ExecuteNodesCnt)) * float64(e.ExecuteNodesCnt)
+	}
+	return int(subtaskCount)
+}
+
+func (e *LoadDataController) getAdjustedMaxEngineSize() int64 {
+	subtaskCount := e.calculateSubtaskCnt()
+	// we adjust MaxEngineSize to make sure each subtask has a similar amount of data to import.
+	return int64(math.Ceil(float64(e.TotalFileSize) / float64(subtaskCount)))
+}
+
+// SetExecuteNodeCnt sets the execute node count.
+func (e *LoadDataController) SetExecuteNodeCnt(cnt int) {
+	e.ExecuteNodesCnt = cnt
 }
 
 // PopulateChunks populates chunks from table regions.

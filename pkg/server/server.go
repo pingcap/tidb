@@ -419,7 +419,7 @@ func (s *Server) reportConfig() {
 
 // Run runs the server.
 func (s *Server) Run() error {
-	metrics.ServerEventCounter.WithLabelValues(metrics.EventStart).Inc()
+	metrics.ServerEventCounter.WithLabelValues(metrics.ServerStart).Inc()
 	s.reportConfig()
 
 	// Start HTTP API to report tidb info such as TPS.
@@ -579,7 +579,7 @@ func (s *Server) closeListener() {
 		s.authTokenCancelFunc()
 	}
 	s.wg.Wait()
-	metrics.ServerEventCounter.WithLabelValues(metrics.EventClose).Inc()
+	metrics.ServerEventCounter.WithLabelValues(metrics.ServerStop).Inc()
 }
 
 // Close closes the server.
