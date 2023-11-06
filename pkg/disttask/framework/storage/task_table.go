@@ -441,11 +441,30 @@ func (stm *TaskManager) PrintSubtaskInfo(taskID int64) {
 	}
 }
 
-// GetSubtasksByStep gets the subtask in the success state.
-func (stm *TaskManager) GetSubtasksByStep(taskID int64, step proto.Step, state proto.TaskState) ([]*proto.Subtask, error) {
+// GetSubtasksByStepAndState gets the subtask by step and state.
+func (stm *TaskManager) GetSubtasksByStepAndState(taskID int64, step proto.Step, state proto.TaskState) ([]*proto.Subtask, error) {
 	rs, err := stm.executeSQLWithNewSession(stm.ctx, `select * from mysql.tidb_background_subtask
 		where task_key = %? and state = %? and step = %?`,
 		taskID, state, step)
+	if err != nil {
+		return nil, err
+	}
+	if len(rs) == 0 {
+		return nil, nil
+	}
+	subtasks := make([]*proto.Subtask, 0, len(rs))
+	for _, r := range rs {
+		subtasks = append(subtasks, row2SubTask(r))
+	}
+	return subtasks, nil
+}
+
+// GetSubtasksByStepExceptState gets the subtask by step except for the exceptState.
+func (stm *TaskManager) GetSubtasksByStepExceptStates(taskID int64, step proto.Step, exceptStates ...interface{}) ([]*proto.Subtask, error) {
+	args := []interface{}{taskID, step}
+	args = append(args, exceptStates...)
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, `select * from mysql.tidb_background_subtask
+		where task_key = %? and step = %? state not in (`+strings.Repeat("%?,", len(exceptStates)-1)+"%?)", args)
 	if err != nil {
 		return nil, err
 	}
@@ -638,15 +657,15 @@ func (stm *TaskManager) UpdateSubtasksSchedulerIDs(taskID int64, subtasks []*pro
 	}
 
 	sql := new(strings.Builder)
-	if err := sqlexec.FormatSQL(sql, "update mysql.tidb_background_subtask set exec_id = (case "); err != nil {
+	if err := sqlescape.FormatSQL(sql, "update mysql.tidb_background_subtask set exec_id = (case "); err != nil {
 		return err
 	}
 	for _, subtask := range subtasks {
-		if err := sqlexec.FormatSQL(sql, "when id = %? then %? ", subtask.ID, subtask.SchedulerID); err != nil {
+		if err := sqlescape.FormatSQL(sql, "when id = %? then %? ", subtask.ID, subtask.SchedulerID); err != nil {
 			return err
 		}
 	}
-	if err := sqlexec.FormatSQL(sql, " end) where task_key = %? and state = \"pending\"", taskID); err != nil {
+	if err := sqlescape.FormatSQL(sql, " end) where task_key = %? and state = \"pending\"", taskID); err != nil {
 		return err
 	}
 

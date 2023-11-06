@@ -344,7 +344,7 @@ func (d *BaseDispatcher) onRunning() error {
 		return d.onNextStage()
 	}
 
-	if err := d.rebalanceSubtasks(); err != nil {
+	if err := d.RebalanceSubtasks(); err != nil {
 		return err
 	}
 	// Wait all subtasks in this stage finished.
@@ -359,12 +359,12 @@ func (d *BaseDispatcher) onFinished() error {
 	return d.taskMgr.TransferSubTasks2History(d.Task.ID)
 }
 
-// rebalanceSubtasks checks count of nodes which run subtasks(taskNodes) and count of live nodes(liveNodes).
+// RebalanceSubtasks checks count of nodes which run subtasks(taskNodes) and count of live nodes(liveNodes).
 //  1. If len(taskNodes) > len(liveNodes):
 //     dispatcher needs to scale-in subtasks to liveNodes to make sure all subtasks will be scheduled.
-//  2. If len(taskNodes) < len(liveNodes):
+//  2. If len(taskNodes) <= len(liveNodes):
 //     dispatcher needs to scale-out subtasks to liveNodes to make sure all nodes have balanced workload.
-func (d *BaseDispatcher) rebalanceSubtasks() error {
+func (d *BaseDispatcher) RebalanceSubtasks() error {
 	// 1. init TaskNodes if need.
 	if len(d.TaskNodes) == 0 {
 		var err error
@@ -399,6 +399,7 @@ func (d *BaseDispatcher) rebalanceSubtasks() error {
 			}
 		}
 		d.LiveNodes = newInfos
+		logutil.BgLogger().Info("ywq test liveNodes", zap.Any("nodes", d.LiveNodes))
 	}
 	// 3. rebalance subtasks depends on length of LiveNodes and TaskNodes.
 	var err error
@@ -406,44 +407,75 @@ func (d *BaseDispatcher) rebalanceSubtasks() error {
 	if err != nil {
 		return err
 	}
+	logutil.BgLogger().Info("ywq test cnt",
+		zap.Any("liveNodes len", len(d.LiveNodes)),
+		zap.Any("liveNodes", d.LiveNodes),
+		zap.Any("task nodes len", len(d.TaskNodes)),
+		zap.Any("Tasknodes", d.TaskNodes))
+
 	if len(d.LiveNodes) > 0 {
 		if len(d.LiveNodes) > len(d.TaskNodes) {
 			return d.ScaleOutSubtasks()
 		}
-		if len(d.LiveNodes) < len(d.TaskNodes) {
-			return d.ScaleInSubtasks()
-		}
+		return d.ScaleInSubtasks()
 	}
 	return nil
 }
 
 // ScaleInSubtasks rebalance subtasks from taskNodes to liveNodes.
 func (d *BaseDispatcher) ScaleInSubtasks() error {
-	replaceNodes := make(map[string]string)
+	// 1. find nodes needs to be cleaned.
 	cleanNodes := make([]string, 0)
+	cleanNodeMap := make(map[string]bool, 0)
 	for _, nodeID := range d.TaskNodes {
 		if ok := disttaskutil.MatchServerInfo(d.LiveNodes, nodeID); !ok {
-			n := d.LiveNodes[d.rand.Int()%len(d.LiveNodes)] //nolint:gosec
-			replaceNodes[nodeID] = disttaskutil.GenerateExecID(n.IP, n.Port)
 			cleanNodes = append(cleanNodes, nodeID)
+			cleanNodeMap[nodeID] = true
 		}
 	}
-	if len(replaceNodes) > 0 {
-		logutil.Logger(d.logCtx).Info("reschedule subtasks to other nodes", zap.Int("node-cnt", len(replaceNodes)))
-		if err := d.taskMgr.UpdateFailedSchedulerIDs(d.Task.ID, replaceNodes); err != nil {
+	if len(cleanNodes) > 0 {
+		logutil.Logger(d.logCtx).Info("reschedule subtasks to other nodes", zap.Int("clean-node-cnt", len(cleanNodes)))
+		// 2. get all subtask except succeed/running/reverting subtasks.
+		subtasks, err := d.taskMgr.GetSubtasksByStepExceptStates(
+			d.Task.ID,
+			d.Task.Step,
+			proto.TaskStateSucceed,
+			proto.TaskStateRunning,
+			proto.TaskStateReverting)
+
+		if err != nil {
 			return err
 		}
+
+		subtasksForEachScheduler := make(map[string][]*proto.Subtask, len(d.LiveNodes))
+		for _, subtask := range subtasks {
+			subtasksForEachScheduler[subtask.SchedulerID] = append(
+				subtasksForEachScheduler[subtask.SchedulerID],
+				subtask)
+		}
+
+		// 3. move subtasks from cleanNodes to LiveNodes
+		liveNodeIdx := 0
+		for id, subtasks := range subtasksForEachScheduler {
+			if ok := cleanNodeMap[id]; ok {
+				for _, subtask := range subtasks {
+					node := d.LiveNodes[liveNodeIdx%len(d.LiveNodes)]
+					subtask.SchedulerID = disttaskutil.GenerateExecID(node.IP, node.Port)
+					liveNodeIdx++
+				}
+			}
+		}
+		if err := d.taskMgr.UpdateSubtasksSchedulerIDs(d.Task.ID, subtasks); err != nil {
+			return err
+		}
+
 		if err := d.taskMgr.CleanUpMeta(cleanNodes); err != nil {
 			return err
 		}
 		// replace local cache.
-		for k, v := range replaceNodes {
-			for m, n := range d.TaskNodes {
-				if n == k {
-					d.TaskNodes[m] = v
-					break
-				}
-			}
+		d.TaskNodes = d.TaskNodes[:0]
+		for _, serverInfo := range d.LiveNodes {
+			d.TaskNodes = append(d.TaskNodes, disttaskutil.GenerateExecID(serverInfo.IP, serverInfo.Port))
 		}
 		return nil
 	}
@@ -452,10 +484,7 @@ func (d *BaseDispatcher) ScaleInSubtasks() error {
 
 // ScaleOutSubtasks rebalance subtasks from taskNodes to liveNodes.
 func (d *BaseDispatcher) ScaleOutSubtasks() error {
-	// pre check for safety.
-	if len(d.LiveNodes)-len(d.TaskNodes) == 0 {
-		return nil
-	}
+	logutil.BgLogger().Info("ywq test reach scaleout")
 	// 1. find out nodes that scaled out.
 	scaleOutNodes := make([]string, 0, len(d.LiveNodes)-len(d.TaskNodes))
 
@@ -465,8 +494,20 @@ func (d *BaseDispatcher) ScaleOutSubtasks() error {
 			scaleOutNodes = append(scaleOutNodes, execID)
 		}
 	}
-	// 2. get subtasks for each node before scaling out.
-	subtasks, _ := d.taskMgr.GetSubtasksByStep(d.Task.ID, d.Task.Step, proto.TaskStatePending)
+
+	// 2. find out filtered node.
+	filteredNodes := make(map[string]bool, 0)
+	for _, node := range d.TaskNodes {
+		if !disttaskutil.MatchServerInfo(d.LiveNodes, node) {
+			filteredNodes[node] = true
+		}
+	}
+
+	// 3. get subtasks for each node before scaling out.
+	subtasks, err := d.taskMgr.GetSubtasksByStepAndState(d.Task.ID, d.Task.Step, proto.TaskStatePending)
+	if err != nil {
+		return nil
+	}
 
 	subtasksForEachScheduler := make(map[string][]*proto.Subtask, len(d.LiveNodes))
 	for _, subtask := range subtasks {
@@ -475,24 +516,38 @@ func (d *BaseDispatcher) ScaleOutSubtasks() error {
 			subtask)
 	}
 
-	// 3. scale out subtasks to scaleOutNodes.
+	// 4. scale out subtasks to scaleOutNodes.
 	averageSubtaskCnt := len(subtasks) / len(d.LiveNodes)
 	lastScaleOutIdx := 0
-	for _, v := range subtasksForEachScheduler {
+	for id, v := range subtasksForEachScheduler {
+		if ok := filteredNodes[id]; ok {
+			continue
+		}
 		if len(v) > averageSubtaskCnt {
 			for i := 0; i < len(v)-averageSubtaskCnt; i++ {
 				v[i].SchedulerID = scaleOutNodes[lastScaleOutIdx%len(scaleOutNodes)]
-				// update TaskNodes cache
-				if lastScaleOutIdx < len(scaleOutNodes) {
-					d.TaskNodes = append(d.TaskNodes, scaleOutNodes[lastScaleOutIdx])
-				}
 				lastScaleOutIdx++
 			}
 		}
 	}
+	// 5. scale out filtered nodes subtasks
+	for node := range filteredNodes {
+		subtasks := subtasksForEachScheduler[node]
+		for _, subtask := range subtasks {
+			subtask.SchedulerID = scaleOutNodes[lastScaleOutIdx%len(scaleOutNodes)]
+			lastScaleOutIdx++
+		}
+	}
 
 	logutil.Logger(d.logCtx).Info("scale out subtasks")
-	err := d.taskMgr.UpdateSubtasksSchedulerIDs(d.Task.ID, subtasks)
+	err = d.taskMgr.UpdateSubtasksSchedulerIDs(d.Task.ID, subtasks)
+	if err == nil {
+		// replace local cache.
+		d.TaskNodes = d.TaskNodes[:0]
+		for _, serverInfo := range d.LiveNodes {
+			d.TaskNodes = append(d.TaskNodes, disttaskutil.GenerateExecID(serverInfo.IP, serverInfo.Port))
+		}
+	}
 	return err
 }
 
@@ -671,6 +726,7 @@ func (d *BaseDispatcher) dispatchSubTask(subtaskStep proto.Step, metas [][]byte)
 		d.TaskNodes[i] = execID
 	}
 	subTasks := make([]*proto.Subtask, 0, len(metas))
+	logutil.BgLogger().Info("ywq test len subtask", zap.Any("len", len(metas)))
 	for i, meta := range metas {
 		// we assign the subtask to the instance in a round-robin way.
 		// TODO: assign the subtask to the instance according to the system load of each nodes
@@ -764,7 +820,7 @@ func (d *BaseDispatcher) GetAllSchedulerIDs(ctx context.Context, task *proto.Tas
 
 // GetPreviousSubtaskMetas get subtask metas from specific step.
 func (d *BaseDispatcher) GetPreviousSubtaskMetas(taskID int64, step proto.Step) ([][]byte, error) {
-	previousSubtasks, err := d.taskMgr.GetSubtasksByStep(taskID, step, proto.TaskStateSucceed)
+	previousSubtasks, err := d.taskMgr.GetSubtasksByStepAndState(taskID, step, proto.TaskStateSucceed)
 	if err != nil {
 		logutil.Logger(d.logCtx).Warn("get previous succeed subtask failed", zap.Int64("step", int64(step)))
 		return nil, err

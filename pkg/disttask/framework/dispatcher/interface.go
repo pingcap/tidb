@@ -38,11 +38,11 @@ type TaskManager interface {
 	ResumeSubtasks(taskID int64) error
 	CollectSubTaskError(taskID int64) ([]error, error)
 	TransferSubTasks2History(taskID int64) error
-	UpdateFailedSchedulerIDs(taskID int64, replaceNodes map[string]string) error
 	UpdateSubtasksSchedulerIDs(taskID int64, subtasks []*proto.Subtask) error
 	GetNodesByRole(role string) (map[string]bool, error)
 	GetSchedulerIDsByTaskID(taskID int64) ([]string, error)
-	GetSubtasksByStep(taskID int64, step proto.Step, state proto.TaskState) ([]*proto.Subtask, error)
+	GetSubtasksByStepAndState(taskID int64, step proto.Step, state proto.TaskState) ([]*proto.Subtask, error)
+	GetSubtasksByStepExceptStates(taskID int64, step proto.Step, exceptState ...interface{}) ([]*proto.Subtask, error)
 	GetSchedulerIDsByTaskIDAndStep(taskID int64, step proto.Step) ([]string, error)
 
 	WithNewSession(fn func(se sessionctx.Context) error) error
