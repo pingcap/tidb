@@ -1,0 +1,525 @@
+# command-line-arguments
+br/pkg/lightning/backend/external/byte_reader.go:67:2: leaking param: ctx
+br/pkg/lightning/backend/external/byte_reader.go:68:2: leaking param: store
+br/pkg/lightning/backend/external/byte_reader.go:69:2: leaking param: name
+br/pkg/lightning/backend/external/byte_reader.go:304:11: (*byteReader).closeConcurrentReader ignoring self-assignment in r.curBuf = r.smallBuf
+br/pkg/lightning/backend/external/byte_reader.go:294:7: leaking param content: r
+br/pkg/lightning/backend/external/byte_reader.go:295:15: ... argument escapes to heap
+br/pkg/lightning/backend/external/byte_reader.go:310:7: leaking param content: r
+br/pkg/lightning/backend/external/concurrent_reader.go:42:2: leaking param: ctx
+br/pkg/lightning/backend/external/concurrent_reader.go:43:2: leaking param: st
+br/pkg/lightning/backend/external/concurrent_reader.go:44:2: leaking param: name
+br/pkg/lightning/backend/external/concurrent_reader.go:50:9: &concurrentFileReader{...} escapes to heap
+br/pkg/lightning/backend/external/byte_reader.go:161:7: leaking param content: r
+br/pkg/lightning/backend/external/concurrent_reader.go:62:7: leaking param: r
+br/pkg/lightning/backend/external/concurrent_reader.go:62:37: leaking param: buf
+br/pkg/lightning/backend/external/concurrent_reader.go:71:2: moved to heap: eg
+br/pkg/lightning/backend/external/concurrent_reader.go:74:9: func literal escapes to heap
+br/pkg/lightning/backend/external/concurrent_reader.go:93:33: ... argument escapes to heap
+br/pkg/lightning/backend/external/byte_reader.go:271:12: (*byteReader).reload ignoring self-assignment in r.curBuf = r.curBuf[:n]
+br/pkg/lightning/backend/external/byte_reader.go:284:13: (*byteReader).reload ignoring self-assignment in r.curBuf = r.curBuf[:n]
+br/pkg/lightning/backend/external/byte_reader.go:253:7: leaking param content: r
+br/pkg/lightning/backend/external/byte_reader.go:258:16: ... argument escapes to heap
+br/pkg/lightning/backend/external/byte_reader.go:286:17: ... argument escapes to heap
+br/pkg/lightning/backend/external/byte_reader.go:102:11: newByteReader ignoring self-assignment in r.curBuf = r.smallBuf
+br/pkg/lightning/backend/external/byte_reader.go:87:2: leaking param: ctx
+br/pkg/lightning/backend/external/byte_reader.go:88:2: leaking param: storageReader
+br/pkg/lightning/backend/external/byte_reader.go:91:8: func literal does not escape
+br/pkg/lightning/backend/external/byte_reader.go:96:6: &byteReader{...} escapes to heap
+br/pkg/lightning/backend/external/byte_reader.go:99:22: make([]byte, bufSize) escapes to heap
+br/pkg/lightning/backend/external/byte_reader.go:107:7: r does not escape
+br/pkg/lightning/backend/external/byte_reader.go:108:2: leaking param: store
+br/pkg/lightning/backend/external/byte_reader.go:109:2: leaking param: filename
+br/pkg/lightning/backend/external/byte_reader.go:112:2: leaking param: bufferPool
+br/pkg/lightning/backend/external/byte_reader.go:123:7: leaking param content: r
+br/pkg/lightning/backend/external/byte_reader.go:246:7: leaking param: r to result ~r0 level=1
+br/pkg/lightning/backend/external/byte_reader.go:199:7: leaking param content: r
+br/pkg/lightning/backend/external/byte_reader.go:207:16: make([]byte, n) escapes to heap
+br/pkg/lightning/backend/external/byte_reader.go:233:16: (*byteReader).reset ignoring self-assignment in r.retPointers = r.retPointers[:0]
+br/pkg/lightning/backend/external/byte_reader.go:229:7: r does not escape
+br/pkg/lightning/backend/external/byte_reader.go:243:16: (*byteReader).cloneSlices ignoring self-assignment in r.retPointers = r.retPointers[:0]
+br/pkg/lightning/backend/external/byte_reader.go:236:7: r does not escape
+br/pkg/lightning/backend/external/byte_reader.go:238:17: make([]byte, len(*r.retPointers[i])) escapes to heap
+br/pkg/lightning/backend/external/codec.go:47:17: leaking param: data
+br/pkg/lightning/backend/external/codec.go:48:8: &rangeProperty{} escapes to heap
+br/pkg/lightning/backend/external/codec.go:35:23: leaking param: data
+br/pkg/lightning/backend/external/codec.go:80:17: leaking param: buf to result ~r0 level=0
+br/pkg/lightning/backend/external/codec.go:80:29: r does not escape
+br/pkg/lightning/backend/external/codec.go:69:23: leaking param: buf to result ~r0 level=0
+br/pkg/lightning/backend/external/codec.go:69:35: props does not escape
+br/pkg/lightning/backend/external/engine.go:84:2: leaking param: storage
+br/pkg/lightning/backend/external/engine.go:85:2: leaking param: dataFiles
+br/pkg/lightning/backend/external/engine.go:86:2: leaking param: statsFiles
+br/pkg/lightning/backend/external/engine.go:87:2: leaking param: startKey
+br/pkg/lightning/backend/external/engine.go:88:2: leaking param: endKey
+br/pkg/lightning/backend/external/engine.go:89:2: leaking param: splitKeys
+br/pkg/lightning/backend/external/engine.go:91:2: leaking param: keyAdapter
+br/pkg/lightning/backend/external/engine.go:93:2: leaking param: duplicateDB
+br/pkg/lightning/backend/external/engine.go:101:9: &Engine{...} escapes to heap
+br/pkg/lightning/backend/external/engine.go:144:7: e does not escape
+br/pkg/lightning/backend/external/engine.go:132:13: make([][]go.shape.struct { Start []uint8; End []uint8 }, 0, groupNum) escapes to heap
+br/pkg/lightning/backend/external/stat_reader.go:28:21: leaking param: ctx
+br/pkg/lightning/backend/external/stat_reader.go:28:42: leaking param: store
+br/pkg/lightning/backend/external/stat_reader.go:28:73: leaking param: name
+br/pkg/lightning/backend/external/stat_reader.go:37:9: &statsReader{...} escapes to heap
+br/pkg/lightning/backend/external/iter.go:214:17: ... argument escapes to heap
+br/pkg/lightning/backend/external/iter.go:129:2: moved to heap: wg
+br/pkg/lightning/backend/external/iter.go:112:17: make([]*go.shape.struct { command-line-arguments.p string; command-line-arguments.r *command-line-arguments.statsReader }, len(readerOpeners)) escapes to heap
+br/pkg/lightning/backend/external/iter.go:113:18: func literal does not escape
+br/pkg/lightning/backend/external/iter.go:121:16: ... argument escapes to heap
+br/pkg/lightning/backend/external/iter.go:133:9: func literal escapes to heap
+br/pkg/lightning/backend/external/iter.go:152:7: &mergeIter[go.shape.*uint8,go.shape.struct { command-line-arguments.p string; command-line-arguments.r *command-line-arguments.statsReader }]{...} escapes to heap
+br/pkg/lightning/backend/external/iter.go:153:22: make(mergeHeap[go.shape.*uint8], 0, len(readers)) escapes to heap
+br/pkg/lightning/backend/external/iter.go:157:22: make(map[int]int) escapes to heap
+br/pkg/lightning/backend/external/iter.go:171:18: ... argument escapes to heap
+br/pkg/lightning/backend/external/iter.go:181:18: ... argument escapes to heap
+br/pkg/lightning/backend/external/iter.go:463:2: leaking param: ctx
+br/pkg/lightning/backend/external/iter.go:464:2: leaking param: paths
+br/pkg/lightning/backend/external/iter.go:465:2: leaking param: exStorage
+br/pkg/lightning/backend/external/iter.go:468:23: make([]readerOpenerFn[*command-line-arguments.rangeProperty,command-line-arguments.statReaderProxy], 0, len(paths)) escapes to heap
+br/pkg/lightning/backend/external/iter.go:471:41: func literal escapes to heap
+br/pkg/lightning/backend/external/iter.go:476:11: &statReaderProxy{...} escapes to heap
+br/pkg/lightning/backend/external/iter.go:481:9: &MergePropIter{...} escapes to heap
+br/pkg/lightning/backend/external/iter.go:503:7: leaking param content: i
+br/pkg/lightning/backend/external/iter.go:277:3: moved to heap: e
+br/pkg/lightning/backend/external/iter.go:272:24: make(map[int]int) escapes to heap
+br/pkg/lightning/backend/external/iter.go:284:36: mergeHeapElem[go.shape.*uint8]{...} escapes to heap
+br/pkg/lightning/backend/external/iter.go:288:18: ... argument escapes to heap
+br/pkg/lightning/backend/external/iter.go:490:7: leaking param content: i
+br/pkg/lightning/backend/external/iter.go:494:7: leaking param: i to result ~r0 level=2
+br/pkg/lightning/backend/external/iter.go:498:7: i does not escape
+br/pkg/lightning/backend/external/iter.go:485:7: leaking param: i to result ~r0 level=2
+br/pkg/lightning/backend/external/util.go:38:2: leaking param: ctx
+br/pkg/lightning/backend/external/util.go:39:2: start does not escape
+br/pkg/lightning/backend/external/util.go:40:2: leaking param: paths
+br/pkg/lightning/backend/external/util.go:41:2: leaking param: exStorage
+br/pkg/lightning/backend/external/util.go:51:8: func literal does not escape
+br/pkg/lightning/backend/external/util.go:53:15: ... argument escapes to heap
+br/pkg/lightning/backend/external/util.go:56:17: make([]uint64, len(paths)) escapes to heap
+br/pkg/lightning/backend/external/util.go:63:27: ... argument does not escape
+br/pkg/lightning/backend/external/util.go:64:18: kv.Key.String(start) escapes to heap
+br/pkg/lightning/backend/external/util.go:65:6: paths escapes to heap
+br/pkg/lightning/backend/external/kv_reader.go:33:2: leaking param: ctx
+br/pkg/lightning/backend/external/kv_reader.go:34:2: leaking param: name
+br/pkg/lightning/backend/external/kv_reader.go:35:2: leaking param: store
+br/pkg/lightning/backend/external/kv_reader.go:47:9: &kvReader{...} escapes to heap
+br/pkg/lightning/backend/external/iter.go:214:17: ... argument escapes to heap
+br/pkg/lightning/backend/external/iter.go:129:2: moved to heap: wg
+br/pkg/lightning/backend/external/iter.go:112:17: make([]*go.shape.struct { command-line-arguments.p string; command-line-arguments.r *command-line-arguments.kvReader }, len(readerOpeners)) escapes to heap
+br/pkg/lightning/backend/external/iter.go:113:18: func literal does not escape
+br/pkg/lightning/backend/external/iter.go:121:16: ... argument escapes to heap
+br/pkg/lightning/backend/external/iter.go:133:9: func literal escapes to heap
+br/pkg/lightning/backend/external/iter.go:152:7: &mergeIter[go.shape.*uint8,go.shape.struct { command-line-arguments.p string; command-line-arguments.r *command-line-arguments.kvReader }]{...} escapes to heap
+br/pkg/lightning/backend/external/iter.go:153:22: make(mergeHeap[go.shape.*uint8], 0, len(readers)) escapes to heap
+br/pkg/lightning/backend/external/iter.go:157:22: make(map[int]int) escapes to heap
+br/pkg/lightning/backend/external/iter.go:171:18: ... argument escapes to heap
+br/pkg/lightning/backend/external/iter.go:181:18: ... argument escapes to heap
+br/pkg/lightning/backend/external/iter.go:361:2: leaking param: ctx
+br/pkg/lightning/backend/external/iter.go:362:2: leaking param: paths
+br/pkg/lightning/backend/external/iter.go:363:2: leaking param: pathsStartOffset
+br/pkg/lightning/backend/external/iter.go:364:2: leaking param: exStorage
+br/pkg/lightning/backend/external/iter.go:368:23: make([]readerOpenerFn[*command-line-arguments.kvPair,command-line-arguments.kvReaderProxy], 0, len(paths)) escapes to heap
+br/pkg/lightning/backend/external/iter.go:370:27: ... argument does not escape
+br/pkg/lightning/backend/external/iter.go:378:41: func literal escapes to heap
+br/pkg/lightning/backend/external/iter.go:390:11: &kvReaderProxy{...} escapes to heap
+br/pkg/lightning/backend/external/iter.go:395:9: &MergeKVIter{...} escapes to heap
+br/pkg/lightning/backend/external/engine.go:313:7: leaking param content: e
+br/pkg/lightning/backend/external/engine.go:313:34: leaking param: ctx
+br/pkg/lightning/backend/external/engine.go:313:55: start does not escape
+br/pkg/lightning/backend/external/engine.go:318:17: make([]uint64, len(e.dataFiles)) escapes to heap
+br/pkg/lightning/backend/external/engine.go:319:14: ... argument escapes to heap
+br/pkg/lightning/backend/external/engine.go:327:15: ... argument escapes to heap
+br/pkg/lightning/backend/external/iter.go:419:7: leaking param content: i
+br/pkg/lightning/backend/external/iter.go:277:3: moved to heap: e
+br/pkg/lightning/backend/external/iter.go:272:24: make(map[int]int) escapes to heap
+br/pkg/lightning/backend/external/iter.go:284:36: mergeHeapElem[go.shape.*uint8]{...} escapes to heap
+br/pkg/lightning/backend/external/iter.go:288:18: ... argument escapes to heap
+br/pkg/lightning/backend/external/iter.go:404:7: leaking param content: i
+br/pkg/lightning/backend/external/iter.go:399:7: leaking param: i to result ~r0 level=2
+br/pkg/lightning/backend/external/iter.go:409:7: leaking param: i to result ~r0 level=3
+br/pkg/lightning/backend/external/iter.go:414:7: leaking param: i to result ~r0 level=3
+../../.gvm/gos/go1.21.0/src/slices/slices.go:343:21: []go.shape.uint8{} escapes to heap
+br/pkg/lightning/backend/external/engine.go:199:7: leaking param content: e
+br/pkg/lightning/backend/external/engine.go:199:34: leaking param: keys
+br/pkg/lightning/backend/external/engine.go:199:40: leaking param: values
+br/pkg/lightning/backend/external/engine.go:199:57: leaking param: buf
+br/pkg/lightning/backend/external/engine.go:200:9: &MemoryIngestData{...} escapes to heap
+br/pkg/lightning/backend/external/engine.go:221:7: leaking param content: e
+br/pkg/lightning/backend/external/engine.go:222:2: leaking param: ctx
+br/pkg/lightning/backend/external/engine.go:223:2: leaking param content: iter
+br/pkg/lightning/backend/external/engine.go:224:2: leaking param: start
+br/pkg/lightning/backend/external/engine.go:224:9: leaking param: end
+br/pkg/lightning/backend/external/engine.go:225:2: outCh does not escape
+br/pkg/lightning/backend/external/engine.go:233:17: leaking param: dr
+br/pkg/lightning/backend/external/engine.go:227:23: ... argument does not escape
+br/pkg/lightning/backend/external/engine.go:228:22: hex.EncodeToString(start) escapes to heap
+br/pkg/lightning/backend/external/engine.go:231:76: ... argument escapes to heap
+br/pkg/lightning/backend/external/engine.go:232:79: ... argument escapes to heap
+br/pkg/lightning/backend/external/engine.go:233:12: func literal does not escape
+br/pkg/lightning/backend/external/engine.go:243:14: make([][]byte, 0, 1024) escapes to heap
+br/pkg/lightning/backend/external/engine.go:244:16: make([][]byte, 0, 1024) escapes to heap
+br/pkg/lightning/backend/external/engine.go:281:15: make([][]byte, 0, 1024) escapes to heap
+br/pkg/lightning/backend/external/engine.go:282:17: make([][]byte, 0, 1024) escapes to heap
+br/pkg/lightning/backend/external/engine.go:307:26: ... argument escapes to heap
+br/pkg/lightning/backend/external/engine.go:159:7: leaking param: e
+br/pkg/lightning/backend/external/engine.go:160:2: leaking param: ctx
+br/pkg/lightning/backend/external/engine.go:161:2: leaking param: regionRanges
+br/pkg/lightning/backend/external/engine.go:162:2: leaking param: outCh
+br/pkg/lightning/backend/external/engine.go:167:26: ... argument escapes to heap
+br/pkg/lightning/backend/external/engine.go:177:9: func literal escapes to heap
+br/pkg/lightning/backend/external/engine.go:341:7: e does not escape
+br/pkg/lightning/backend/external/engine.go:346:7: leaking param content: e
+br/pkg/lightning/backend/external/engine.go:351:7: e does not escape
+br/pkg/lightning/backend/external/engine.go:356:7: leaking param: e to result startKey level=1
+br/pkg/lightning/backend/external/engine.go:356:7: leaking param: e to result endKey level=1
+br/pkg/lightning/backend/external/engine.go:361:7: leaking param content: e
+br/pkg/lightning/backend/external/engine.go:362:2: leaking param: startKey
+br/pkg/lightning/backend/external/engine.go:362:12: leaking param: endKey
+br/pkg/lightning/backend/external/engine.go:367:16: make([]common.Range, 0, len(splitKeys) + 1) escapes to heap
+br/pkg/lightning/backend/external/engine.go:382:7: e does not escape
+br/pkg/lightning/backend/external/engine.go:403:7: leaking param content: m
+br/pkg/lightning/backend/external/engine.go:403:49: leaking param: lowerBound
+br/pkg/lightning/backend/external/engine.go:403:61: leaking param: upperBound
+br/pkg/lightning/backend/external/engine.go:407:42: func literal does not escape
+br/pkg/lightning/backend/external/engine.go:418:33: func literal does not escape
+br/pkg/lightning/backend/external/engine.go:432:7: leaking param content: m
+br/pkg/lightning/backend/external/engine.go:432:47: leaking param: lowerBound
+br/pkg/lightning/backend/external/engine.go:432:59: leaking param: upperBound
+br/pkg/lightning/backend/external/engine.go:462:11: (*memoryDataIter).First ignoring self-assignment in m.curIdx = m.firstKeyIdx
+br/pkg/lightning/backend/external/engine.go:458:7: m does not escape
+br/pkg/lightning/backend/external/engine.go:467:7: m does not escape
+br/pkg/lightning/backend/external/engine.go:472:7: m does not escape
+br/pkg/lightning/backend/external/engine.go:478:7: leaking param: m to result ~r0 level=2
+br/pkg/lightning/backend/external/engine.go:483:7: leaking param: m to result ~r0 level=2
+br/pkg/lightning/backend/external/engine.go:488:7: m does not escape
+br/pkg/lightning/backend/external/engine.go:493:7: m does not escape
+br/pkg/lightning/backend/external/engine.go:514:7: m does not escape
+br/pkg/lightning/backend/external/engine.go:505:7: leaking param content: m
+br/pkg/lightning/backend/external/engine.go:519:7: leaking param content: m
+br/pkg/lightning/backend/external/engine.go:536:7: leaking param: m to result ~r0 level=1
+br/pkg/lightning/backend/external/engine.go:541:7: leaking param: m to result ~r0 level=1
+br/pkg/lightning/backend/external/engine.go:546:7: leaking param content: m
+br/pkg/lightning/backend/external/engine.go:551:7: leaking param: m to result ~r0 level=1
+br/pkg/lightning/backend/external/engine.go:556:7: leaking param content: m
+br/pkg/lightning/backend/external/engine.go:556:36: leaking param: ctx
+br/pkg/lightning/backend/external/engine.go:556:57: leaking param: lowerBound
+br/pkg/lightning/backend/external/engine.go:556:69: leaking param: upperBound
+br/pkg/lightning/backend/external/engine.go:558:10: &memoryDataIter{...} escapes to heap
+br/pkg/lightning/backend/external/engine.go:569:9: &memoryDataDupDetectIter{...} escapes to heap
+br/pkg/lightning/backend/external/engine.go:576:7: m does not escape
+br/pkg/lightning/backend/external/engine.go:581:7: leaking param content: m
+br/pkg/lightning/backend/external/engine.go:586:7: leaking param content: m
+br/pkg/lightning/backend/external/engine.go:593:7: leaking param content: m
+br/pkg/lightning/backend/external/file.go:41:2: leaking param: ctx
+br/pkg/lightning/backend/external/file.go:42:2: leaking param: dataWriter
+br/pkg/lightning/backend/external/file.go:43:2: leaking param: rangePropertiesCollector
+br/pkg/lightning/backend/external/file.go:45:13: &KeyValueStore{...} escapes to heap
+br/pkg/lightning/backend/external/file.go:49:19: make([]byte, 0, 1024 * 8) escapes to heap
+br/pkg/lightning/backend/external/file.go:65:15: (*KeyValueStore).addEncodedData ignoring self-assignment in s.memBuffer = s.memBuffer[:0]
+br/pkg/lightning/backend/external/file.go:59:7: leaking param content: s
+br/pkg/lightning/backend/external/file.go:59:40: leaking param: key
+br/pkg/lightning/backend/external/file.go:59:52: val does not escape
+br/pkg/lightning/backend/external/file.go:84:3: moved to heap: newProp
+br/pkg/lightning/backend/external/file.go:97:7: leaking param content: s
+br/pkg/lightning/backend/external/file.go:99:3: moved to heap: newProp
+br/pkg/lightning/backend/external/iter.go:317:7: leaking param: p to result ~r0 level=1
+br/pkg/lightning/backend/external/iter.go:321:7: p does not escape
+br/pkg/lightning/backend/external/iter.go:322:23: []byte{} escapes to heap
+br/pkg/lightning/backend/external/iter.go:323:25: []byte{} escapes to heap
+br/pkg/lightning/backend/external/iter.go:331:7: leaking param: p to result ~r0 level=0
+br/pkg/lightning/backend/external/kv_reader.go:72:12: leaking param: err
+br/pkg/lightning/backend/external/kv_reader.go:74:26: ... argument escapes to heap
+br/pkg/lightning/backend/external/kv_reader.go:52:7: leaking param content: r
+br/pkg/lightning/backend/external/iter.go:335:7: leaking param content: p
+br/pkg/lightning/backend/external/iter.go:340:9: &kvPair{...} escapes to heap
+br/pkg/lightning/backend/external/iter.go:343:7: leaking param content: p
+br/pkg/lightning/backend/external/kv_reader.go:80:7: leaking param content: r
+br/pkg/lightning/backend/external/iter.go:347:7: leaking param content: p
+br/pkg/lightning/backend/external/iter.go:428:7: leaking param: p to result ~r0 level=1
+br/pkg/lightning/backend/external/iter.go:432:7: p does not escape
+br/pkg/lightning/backend/external/iter.go:433:28: []byte{} escapes to heap
+br/pkg/lightning/backend/external/iter.go:434:27: []byte{} escapes to heap
+br/pkg/lightning/backend/external/iter.go:442:7: leaking param: p to result ~r0 level=0
+br/pkg/lightning/backend/external/stat_reader.go:42:7: leaking param content: r
+br/pkg/lightning/backend/external/iter.go:446:7: leaking param content: p
+br/pkg/lightning/backend/external/iter.go:450:7: p does not escape
+br/pkg/lightning/backend/external/stat_reader.go:56:7: leaking param content: r
+br/pkg/lightning/backend/external/iter.go:452:7: leaking param content: p
+br/pkg/lightning/backend/external/kv_buf.go:66:7: leaking param content: b
+br/pkg/lightning/backend/external/kv_buf.go:34:7: &preAllocKVBuf{...} escapes to heap
+br/pkg/lightning/backend/external/kv_buf.go:35:18: make([][]byte, 0, blockCount) escapes to heap
+br/pkg/lightning/backend/external/kv_buf.go:39:35: make([]byte, blockSize) escapes to heap
+br/pkg/lightning/backend/external/kv_buf.go:45:7: leaking param content: b
+br/pkg/lightning/backend/external/kv_buf.go:45:7: leaking param: b to result res level=1
+br/pkg/lightning/backend/external/kv_buf.go:72:7: b does not escape
+br/pkg/lightning/backend/external/writer.go:169:7: leaking param content: b
+br/pkg/lightning/backend/external/writer.go:170:2: leaking param: store
+br/pkg/lightning/backend/external/writer.go:171:2: leaking param: prefix
+br/pkg/lightning/backend/external/writer.go:172:2: leaking param: writerID
+br/pkg/lightning/backend/external/writer.go:174:33: ... argument does not escape
+br/pkg/lightning/backend/external/writer.go:175:55: common.KeyAdapter(common.NoopKeyAdapter{}) escapes to heap
+br/pkg/lightning/backend/external/writer.go:177:42: common.DupDetectKeyAdapter{} escapes to heap
+br/pkg/lightning/backend/external/writer.go:179:9: &Writer{...} escapes to heap
+br/pkg/lightning/backend/external/writer.go:180:7: &rangePropertiesCollector{...} escapes to heap
+br/pkg/lightning/backend/external/writer.go:181:22: make([]*rangeProperty, 0, 1024) escapes to heap
+br/pkg/lightning/backend/external/writer.go:182:18: &rangeProperty{} escapes to heap
+br/pkg/lightning/backend/external/writer.go:188:33: ... argument does not escape
+br/pkg/lightning/backend/external/writer.go:189:23: make([]common.KvPair, 10 * 1024 * 1024) escapes to heap
+br/pkg/lightning/backend/external/writer.go:198:23: make([]MultipleFilesStat, 1) escapes to heap
+br/pkg/lightning/backend/external/writer.go:199:23: make([]kv.Key, 0, multiFileStatNum) escapes to heap
+br/pkg/lightning/backend/external/writer.go:200:23: make([]kv.Key, 0, multiFileStatNum) escapes to heap
+br/pkg/lightning/backend/external/writer.go:202:40: make([][2]string, 0, multiFileStatNum) escapes to heap
+br/pkg/lightning/backend/external/writer.go:141:7: leaking param: b to result ~r0 level=0
+br/pkg/lightning/backend/external/writer.go:135:7: leaking param: b to result ~r0 level=0
+br/pkg/lightning/backend/external/writer.go:129:7: leaking param: b to result ~r0 level=0
+br/pkg/lightning/backend/external/writer.go:147:7: leaking param: b to result ~r0 level=0
+br/pkg/lightning/backend/external/writer.go:147:40: leaking param: onClose
+br/pkg/lightning/backend/external/writer.go:162:7: leaking param: b to result ~r0 level=0
+br/pkg/lightning/backend/external/writer.go:123:7: leaking param: b to result ~r0 level=0
+br/pkg/lightning/backend/external/writer.go:110:9: &WriterBuilder{...} escapes to heap
+br/pkg/lightning/backend/external/writer.go:300:7: leaking param content: w
+br/pkg/lightning/backend/external/writer.go:300:27: ctx does not escape
+br/pkg/lightning/backend/external/writer.go:300:48: leaking param: idxKey
+br/pkg/lightning/backend/external/writer.go:300:56: idxVal does not escape
+br/pkg/lightning/backend/external/writer.go:300:71: leaking param: handle
+br/pkg/lightning/backend/external/writer.go:510:7: leaking param content: w
+br/pkg/lightning/backend/external/writer.go:510:38: leaking param: ctx
+br/pkg/lightning/backend/external/writer.go:515:27: ... argument does not escape
+br/pkg/lightning/backend/external/writer.go:516:51: &storage.WriterOption{...} escapes to heap
+br/pkg/lightning/backend/external/writer.go:520:27: ... argument does not escape
+br/pkg/lightning/backend/external/writer.go:520:44: w.filenamePrefix + statSuffix escapes to heap
+br/pkg/lightning/backend/external/writer.go:521:52: &storage.WriterOption{...} escapes to heap
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:13:23: slices.insertionSortCmpFunc[go.shape.struct { Key []uint8; Val []uint8; RowID []uint8 }] ignoring self-assignment in slices.data[slices.j], slices.data[slices.j - 1] = slices.data[slices.j - 1], slices.data[slices.j]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:13:23: slices.insertionSortCmpFunc[go.shape.struct { Key []uint8; Val []uint8; RowID []uint8 }] ignoring self-assignment in slices.data[slices.j], slices.data[slices.j - 1] = slices.data[slices.j - 1], slices.data[slices.j]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:33:39: slices.siftDownCmpFunc[go.shape.struct { Key []uint8; Val []uint8; RowID []uint8 }] ignoring self-assignment in slices.data[slices.first + slices.root], slices.data[slices.first + slices.child] = slices.data[slices.first + slices.child], slices.data[slices.first + slices.root]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:33:39: slices.siftDownCmpFunc[go.shape.struct { Key []uint8; Val []uint8; RowID []uint8 }] ignoring self-assignment in slices.data[slices.first + slices.root], slices.data[slices.first + slices.child] = slices.data[slices.first + slices.child], slices.data[slices.first + slices.root]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:50:30: slices.heapSortCmpFunc[go.shape.struct { Key []uint8; Val []uint8; RowID []uint8 }] ignoring self-assignment in slices.data[slices.first], slices.data[slices.first + slices.i] = slices.data[slices.first + slices.i], slices.data[slices.first]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:50:30: slices.heapSortCmpFunc[go.shape.struct { Key []uint8; Val []uint8; RowID []uint8 }] ignoring self-assignment in slices.data[slices.first], slices.data[slices.first + slices.i] = slices.data[slices.first + slices.i], slices.data[slices.first]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:251:29: slices.breakPatternsCmpFunc[go.shape.struct { Key []uint8; Val []uint8; RowID []uint8 }] ignoring self-assignment in slices.data[slices.idx], slices.data[slices.a + slices.other] = slices.data[slices.a + slices.other], slices.data[slices.idx]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:251:29: slices.breakPatternsCmpFunc[go.shape.struct { Key []uint8; Val []uint8; RowID []uint8 }] ignoring self-assignment in slices.data[slices.idx], slices.data[slices.a + slices.other] = slices.data[slices.a + slices.other], slices.data[slices.idx]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:323:20: slices.reverseRangeCmpFunc[go.shape.struct { Key []uint8; Val []uint8; RowID []uint8 }] ignoring self-assignment in slices.data[slices.i], slices.data[slices.j] = slices.data[slices.j], slices.data[slices.i]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:323:20: slices.reverseRangeCmpFunc[go.shape.struct { Key []uint8; Val []uint8; RowID []uint8 }] ignoring self-assignment in slices.data[slices.i], slices.data[slices.j] = slices.data[slices.j], slices.data[slices.i]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:214:22: slices.partialInsertionSortCmpFunc[go.shape.struct { Key []uint8; Val []uint8; RowID []uint8 }] ignoring self-assignment in slices.data[slices.i], slices.data[slices.i - 1] = slices.data[slices.i - 1], slices.data[slices.i]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:214:22: slices.partialInsertionSortCmpFunc[go.shape.struct { Key []uint8; Val []uint8; RowID []uint8 }] ignoring self-assignment in slices.data[slices.i], slices.data[slices.i - 1] = slices.data[slices.i - 1], slices.data[slices.i]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:222:24: slices.partialInsertionSortCmpFunc[go.shape.struct { Key []uint8; Val []uint8; RowID []uint8 }] ignoring self-assignment in slices.data[slices.j], slices.data[slices.j - 1] = slices.data[slices.j - 1], slices.data[slices.j]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:222:24: slices.partialInsertionSortCmpFunc[go.shape.struct { Key []uint8; Val []uint8; RowID []uint8 }] ignoring self-assignment in slices.data[slices.j], slices.data[slices.j - 1] = slices.data[slices.j - 1], slices.data[slices.j]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:231:24: slices.partialInsertionSortCmpFunc[go.shape.struct { Key []uint8; Val []uint8; RowID []uint8 }] ignoring self-assignment in slices.data[slices.j], slices.data[slices.j - 1] = slices.data[slices.j - 1], slices.data[slices.j]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:231:24: slices.partialInsertionSortCmpFunc[go.shape.struct { Key []uint8; Val []uint8; RowID []uint8 }] ignoring self-assignment in slices.data[slices.j], slices.data[slices.j - 1] = slices.data[slices.j - 1], slices.data[slices.j]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:174:23: slices.partitionEqualCmpFunc[go.shape.struct { Key []uint8; Val []uint8; RowID []uint8 }] ignoring self-assignment in slices.data[slices.a], slices.data[slices.pivot] = slices.data[slices.pivot], slices.data[slices.a]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:174:23: slices.partitionEqualCmpFunc[go.shape.struct { Key []uint8; Val []uint8; RowID []uint8 }] ignoring self-assignment in slices.data[slices.a], slices.data[slices.pivot] = slices.data[slices.pivot], slices.data[slices.a]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:187:20: slices.partitionEqualCmpFunc[go.shape.struct { Key []uint8; Val []uint8; RowID []uint8 }] ignoring self-assignment in slices.data[slices.i], slices.data[slices.j] = slices.data[slices.j], slices.data[slices.i]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:187:20: slices.partitionEqualCmpFunc[go.shape.struct { Key []uint8; Val []uint8; RowID []uint8 }] ignoring self-assignment in slices.data[slices.i], slices.data[slices.j] = slices.data[slices.j], slices.data[slices.i]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:136:23: slices.partitionCmpFunc[go.shape.struct { Key []uint8; Val []uint8; RowID []uint8 }] ignoring self-assignment in slices.data[slices.a], slices.data[slices.pivot] = slices.data[slices.pivot], slices.data[slices.a]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:136:23: slices.partitionCmpFunc[go.shape.struct { Key []uint8; Val []uint8; RowID []uint8 }] ignoring self-assignment in slices.data[slices.a], slices.data[slices.pivot] = slices.data[slices.pivot], slices.data[slices.a]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:146:20: slices.partitionCmpFunc[go.shape.struct { Key []uint8; Val []uint8; RowID []uint8 }] ignoring self-assignment in slices.data[slices.j], slices.data[slices.a] = slices.data[slices.a], slices.data[slices.j]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:146:20: slices.partitionCmpFunc[go.shape.struct { Key []uint8; Val []uint8; RowID []uint8 }] ignoring self-assignment in slices.data[slices.j], slices.data[slices.a] = slices.data[slices.a], slices.data[slices.j]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:149:19: slices.partitionCmpFunc[go.shape.struct { Key []uint8; Val []uint8; RowID []uint8 }] ignoring self-assignment in slices.data[slices.i], slices.data[slices.j] = slices.data[slices.j], slices.data[slices.i]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:149:19: slices.partitionCmpFunc[go.shape.struct { Key []uint8; Val []uint8; RowID []uint8 }] ignoring self-assignment in slices.data[slices.i], slices.data[slices.j] = slices.data[slices.j], slices.data[slices.i]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:163:20: slices.partitionCmpFunc[go.shape.struct { Key []uint8; Val []uint8; RowID []uint8 }] ignoring self-assignment in slices.data[slices.i], slices.data[slices.j] = slices.data[slices.j], slices.data[slices.i]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:163:20: slices.partitionCmpFunc[go.shape.struct { Key []uint8; Val []uint8; RowID []uint8 }] ignoring self-assignment in slices.data[slices.i], slices.data[slices.j] = slices.data[slices.j], slices.data[slices.i]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:167:19: slices.partitionCmpFunc[go.shape.struct { Key []uint8; Val []uint8; RowID []uint8 }] ignoring self-assignment in slices.data[slices.j], slices.data[slices.a] = slices.data[slices.a], slices.data[slices.j]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:167:19: slices.partitionCmpFunc[go.shape.struct { Key []uint8; Val []uint8; RowID []uint8 }] ignoring self-assignment in slices.data[slices.j], slices.data[slices.a] = slices.data[slices.a], slices.data[slices.j]
+br/pkg/lightning/backend/external/writer.go:73:7: rc does not escape
+br/pkg/lightning/backend/external/writer.go:74:11: make([]byte, 0, 1024) escapes to heap
+br/pkg/lightning/backend/external/writer.go:363:7: w does not escape
+br/pkg/lightning/backend/external/writer.go:363:31: newMin does not escape
+br/pkg/lightning/backend/external/writer.go:363:39: newMax does not escape
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:13:23: slices.insertionSortCmpFunc[go.shape.struct { Key []uint8; Tp command-line-arguments.EndpointTp; Weight int64 }] ignoring self-assignment in slices.data[slices.j], slices.data[slices.j - 1] = slices.data[slices.j - 1], slices.data[slices.j]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:13:23: slices.insertionSortCmpFunc[go.shape.struct { Key []uint8; Tp command-line-arguments.EndpointTp; Weight int64 }] ignoring self-assignment in slices.data[slices.j], slices.data[slices.j - 1] = slices.data[slices.j - 1], slices.data[slices.j]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:33:39: slices.siftDownCmpFunc[go.shape.struct { Key []uint8; Tp command-line-arguments.EndpointTp; Weight int64 }] ignoring self-assignment in slices.data[slices.first + slices.root], slices.data[slices.first + slices.child] = slices.data[slices.first + slices.child], slices.data[slices.first + slices.root]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:33:39: slices.siftDownCmpFunc[go.shape.struct { Key []uint8; Tp command-line-arguments.EndpointTp; Weight int64 }] ignoring self-assignment in slices.data[slices.first + slices.root], slices.data[slices.first + slices.child] = slices.data[slices.first + slices.child], slices.data[slices.first + slices.root]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:50:30: slices.heapSortCmpFunc[go.shape.struct { Key []uint8; Tp command-line-arguments.EndpointTp; Weight int64 }] ignoring self-assignment in slices.data[slices.first], slices.data[slices.first + slices.i] = slices.data[slices.first + slices.i], slices.data[slices.first]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:50:30: slices.heapSortCmpFunc[go.shape.struct { Key []uint8; Tp command-line-arguments.EndpointTp; Weight int64 }] ignoring self-assignment in slices.data[slices.first], slices.data[slices.first + slices.i] = slices.data[slices.first + slices.i], slices.data[slices.first]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:251:29: slices.breakPatternsCmpFunc[go.shape.struct { Key []uint8; Tp command-line-arguments.EndpointTp; Weight int64 }] ignoring self-assignment in slices.data[slices.idx], slices.data[slices.a + slices.other] = slices.data[slices.a + slices.other], slices.data[slices.idx]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:251:29: slices.breakPatternsCmpFunc[go.shape.struct { Key []uint8; Tp command-line-arguments.EndpointTp; Weight int64 }] ignoring self-assignment in slices.data[slices.idx], slices.data[slices.a + slices.other] = slices.data[slices.a + slices.other], slices.data[slices.idx]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:323:20: slices.reverseRangeCmpFunc[go.shape.struct { Key []uint8; Tp command-line-arguments.EndpointTp; Weight int64 }] ignoring self-assignment in slices.data[slices.i], slices.data[slices.j] = slices.data[slices.j], slices.data[slices.i]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:323:20: slices.reverseRangeCmpFunc[go.shape.struct { Key []uint8; Tp command-line-arguments.EndpointTp; Weight int64 }] ignoring self-assignment in slices.data[slices.i], slices.data[slices.j] = slices.data[slices.j], slices.data[slices.i]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:214:22: slices.partialInsertionSortCmpFunc[go.shape.struct { Key []uint8; Tp command-line-arguments.EndpointTp; Weight int64 }] ignoring self-assignment in slices.data[slices.i], slices.data[slices.i - 1] = slices.data[slices.i - 1], slices.data[slices.i]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:214:22: slices.partialInsertionSortCmpFunc[go.shape.struct { Key []uint8; Tp command-line-arguments.EndpointTp; Weight int64 }] ignoring self-assignment in slices.data[slices.i], slices.data[slices.i - 1] = slices.data[slices.i - 1], slices.data[slices.i]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:222:24: slices.partialInsertionSortCmpFunc[go.shape.struct { Key []uint8; Tp command-line-arguments.EndpointTp; Weight int64 }] ignoring self-assignment in slices.data[slices.j], slices.data[slices.j - 1] = slices.data[slices.j - 1], slices.data[slices.j]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:222:24: slices.partialInsertionSortCmpFunc[go.shape.struct { Key []uint8; Tp command-line-arguments.EndpointTp; Weight int64 }] ignoring self-assignment in slices.data[slices.j], slices.data[slices.j - 1] = slices.data[slices.j - 1], slices.data[slices.j]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:231:24: slices.partialInsertionSortCmpFunc[go.shape.struct { Key []uint8; Tp command-line-arguments.EndpointTp; Weight int64 }] ignoring self-assignment in slices.data[slices.j], slices.data[slices.j - 1] = slices.data[slices.j - 1], slices.data[slices.j]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:231:24: slices.partialInsertionSortCmpFunc[go.shape.struct { Key []uint8; Tp command-line-arguments.EndpointTp; Weight int64 }] ignoring self-assignment in slices.data[slices.j], slices.data[slices.j - 1] = slices.data[slices.j - 1], slices.data[slices.j]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:174:23: slices.partitionEqualCmpFunc[go.shape.struct { Key []uint8; Tp command-line-arguments.EndpointTp; Weight int64 }] ignoring self-assignment in slices.data[slices.a], slices.data[slices.pivot] = slices.data[slices.pivot], slices.data[slices.a]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:174:23: slices.partitionEqualCmpFunc[go.shape.struct { Key []uint8; Tp command-line-arguments.EndpointTp; Weight int64 }] ignoring self-assignment in slices.data[slices.a], slices.data[slices.pivot] = slices.data[slices.pivot], slices.data[slices.a]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:187:20: slices.partitionEqualCmpFunc[go.shape.struct { Key []uint8; Tp command-line-arguments.EndpointTp; Weight int64 }] ignoring self-assignment in slices.data[slices.i], slices.data[slices.j] = slices.data[slices.j], slices.data[slices.i]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:187:20: slices.partitionEqualCmpFunc[go.shape.struct { Key []uint8; Tp command-line-arguments.EndpointTp; Weight int64 }] ignoring self-assignment in slices.data[slices.i], slices.data[slices.j] = slices.data[slices.j], slices.data[slices.i]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:136:23: slices.partitionCmpFunc[go.shape.struct { Key []uint8; Tp command-line-arguments.EndpointTp; Weight int64 }] ignoring self-assignment in slices.data[slices.a], slices.data[slices.pivot] = slices.data[slices.pivot], slices.data[slices.a]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:136:23: slices.partitionCmpFunc[go.shape.struct { Key []uint8; Tp command-line-arguments.EndpointTp; Weight int64 }] ignoring self-assignment in slices.data[slices.a], slices.data[slices.pivot] = slices.data[slices.pivot], slices.data[slices.a]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:146:20: slices.partitionCmpFunc[go.shape.struct { Key []uint8; Tp command-line-arguments.EndpointTp; Weight int64 }] ignoring self-assignment in slices.data[slices.j], slices.data[slices.a] = slices.data[slices.a], slices.data[slices.j]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:146:20: slices.partitionCmpFunc[go.shape.struct { Key []uint8; Tp command-line-arguments.EndpointTp; Weight int64 }] ignoring self-assignment in slices.data[slices.j], slices.data[slices.a] = slices.data[slices.a], slices.data[slices.j]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:149:19: slices.partitionCmpFunc[go.shape.struct { Key []uint8; Tp command-line-arguments.EndpointTp; Weight int64 }] ignoring self-assignment in slices.data[slices.i], slices.data[slices.j] = slices.data[slices.j], slices.data[slices.i]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:149:19: slices.partitionCmpFunc[go.shape.struct { Key []uint8; Tp command-line-arguments.EndpointTp; Weight int64 }] ignoring self-assignment in slices.data[slices.i], slices.data[slices.j] = slices.data[slices.j], slices.data[slices.i]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:163:20: slices.partitionCmpFunc[go.shape.struct { Key []uint8; Tp command-line-arguments.EndpointTp; Weight int64 }] ignoring self-assignment in slices.data[slices.i], slices.data[slices.j] = slices.data[slices.j], slices.data[slices.i]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:163:20: slices.partitionCmpFunc[go.shape.struct { Key []uint8; Tp command-line-arguments.EndpointTp; Weight int64 }] ignoring self-assignment in slices.data[slices.i], slices.data[slices.j] = slices.data[slices.j], slices.data[slices.i]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:167:19: slices.partitionCmpFunc[go.shape.struct { Key []uint8; Tp command-line-arguments.EndpointTp; Weight int64 }] ignoring self-assignment in slices.data[slices.j], slices.data[slices.a] = slices.data[slices.a], slices.data[slices.j]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:167:19: slices.partitionCmpFunc[go.shape.struct { Key []uint8; Tp command-line-arguments.EndpointTp; Weight int64 }] ignoring self-assignment in slices.data[slices.j], slices.data[slices.a] = slices.data[slices.a], slices.data[slices.j]
+br/pkg/lightning/backend/external/util.go:189:24: leaking param content: points
+br/pkg/lightning/backend/external/util.go:190:31: i does not escape
+br/pkg/lightning/backend/external/util.go:190:34: j does not escape
+br/pkg/lightning/backend/external/util.go:190:26: func literal does not escape
+br/pkg/lightning/backend/external/writer.go:216:7: m does not escape
+br/pkg/lightning/backend/external/writer.go:216:35: leaking param content: startKeys
+br/pkg/lightning/backend/external/writer.go:216:46: leaking param content: endKeys
+br/pkg/lightning/backend/external/writer.go:231:16: make([]Endpoint, 0, len(startKeys) * 2) escapes to heap
+br/pkg/lightning/backend/external/writer.go:68:11: (*rangePropertiesCollector).reset ignoring self-assignment in rc.props = rc.props[:0]
+br/pkg/lightning/backend/external/writer.go:67:7: rc does not escape
+br/pkg/lightning/backend/external/writer.go:69:16: &rangeProperty{} escapes to heap
+br/pkg/lightning/backend/external/writer.go:488:17: (*Writer).flushKVs ignoring self-assignment in w.fileMinKeys = w.fileMinKeys[:0]
+br/pkg/lightning/backend/external/writer.go:489:17: (*Writer).flushKVs ignoring self-assignment in w.fileMaxKeys = w.fileMaxKeys[:0]
+br/pkg/lightning/backend/external/writer.go:373:7: leaking param content: w
+br/pkg/lightning/backend/external/writer.go:373:27: leaking param: ctx
+br/pkg/lightning/backend/external/writer.go:437:50: i does not escape
+br/pkg/lightning/backend/external/writer.go:437:53: j does not escape
+br/pkg/lightning/backend/external/writer.go:393:14: func literal does not escape
+br/pkg/lightning/backend/external/writer.go:403:8: func literal does not escape
+br/pkg/lightning/backend/external/writer.go:410:16: ... argument escapes to heap
+br/pkg/lightning/backend/external/writer.go:415:16: ... argument escapes to heap
+br/pkg/lightning/backend/external/writer.go:420:14: ... argument escapes to heap
+br/pkg/lightning/backend/external/writer.go:430:64: ... argument escapes to heap
+br/pkg/lightning/backend/external/writer.go:431:60: ... argument escapes to heap
+br/pkg/lightning/backend/external/writer.go:432:64: ... argument escapes to heap
+br/pkg/lightning/backend/external/writer.go:433:60: ... argument escapes to heap
+br/pkg/lightning/backend/external/writer.go:437:45: func literal does not escape
+br/pkg/lightning/backend/external/writer.go:443:63: ... argument escapes to heap
+br/pkg/lightning/backend/external/writer.go:444:59: ... argument escapes to heap
+br/pkg/lightning/backend/external/writer.go:486:19: make([][2]string, 0, multiFileStatNum) escapes to heap
+br/pkg/lightning/backend/external/writer.go:342:19: (*Writer).Close ignoring self-assignment in w.multiFileStats = w.multiFileStats[:len(w.multiFileStats) - 1]
+br/pkg/lightning/backend/external/writer.go:331:7: leaking param content: w
+br/pkg/lightning/backend/external/writer.go:331:24: leaking param: ctx
+br/pkg/lightning/backend/external/writer.go:333:23: ... argument does not escape
+br/pkg/lightning/backend/external/writer.go:333:54: w.writerID escapes to heap
+br/pkg/lightning/backend/external/writer.go:344:26: ... argument escapes to heap
+br/pkg/lightning/backend/external/writer.go:352:12: &WriterSummary{...} escapes to heap
+br/pkg/lightning/backend/external/merge.go:62:32: leaking param: ctx
+br/pkg/lightning/backend/external/merge.go:63:2: leaking param: paths
+br/pkg/lightning/backend/external/merge.go:64:2: leaking param: store
+br/pkg/lightning/backend/external/merge.go:66:2: leaking param: newFilePrefix
+br/pkg/lightning/backend/external/merge.go:67:2: leaking param: writerID
+br/pkg/lightning/backend/external/merge.go:73:2: leaking param: onClose
+br/pkg/lightning/backend/external/merge.go:76:21: make([]uint64, len(paths)) escapes to heap
+br/pkg/lightning/backend/external/merge.go:81:8: func literal does not escape
+br/pkg/lightning/backend/external/merge.go:84:28: ... argument escapes to heap
+br/pkg/lightning/backend/external/merge.go:16:28: leaking param: ctx
+br/pkg/lightning/backend/external/merge.go:16:49: leaking param: paths
+br/pkg/lightning/backend/external/merge.go:16:65: leaking param: store
+br/pkg/lightning/backend/external/merge.go:17:2: leaking param: newFilePrefix
+br/pkg/lightning/backend/external/merge.go:18:2: leaking param: onClose
+br/pkg/lightning/backend/external/merge.go:38:6: moved to heap: eg
+br/pkg/lightning/backend/external/merge.go:41:9: func literal escapes to heap
+br/pkg/lightning/backend/external/split.go:34:7: h does not escape
+br/pkg/lightning/backend/external/split.go:38:7: h does not escape
+br/pkg/lightning/backend/external/split.go:43:13: exhaustedHeap.Swap ignoring self-assignment in h[i], h[j] = h[j], h[i]
+br/pkg/lightning/backend/external/split.go:43:13: exhaustedHeap.Swap ignoring self-assignment in h[i], h[j] = h[j], h[i]
+br/pkg/lightning/backend/external/split.go:42:7: h does not escape
+br/pkg/lightning/backend/external/split.go:46:7: leaking param content: h
+br/pkg/lightning/backend/external/split.go:46:30: leaking param content: x
+br/pkg/lightning/backend/external/split.go:50:7: leaking param content: h
+br/pkg/lightning/backend/external/split.go:55:9: x escapes to heap
+br/pkg/lightning/backend/external/split.go:93:2: leaking param: ctx
+br/pkg/lightning/backend/external/split.go:94:2: leaking param: dataFiles
+br/pkg/lightning/backend/external/split.go:94:13: leaking param: statFiles
+br/pkg/lightning/backend/external/split.go:95:2: leaking param: externalStorage
+br/pkg/lightning/backend/external/split.go:105:9: &RangeSplitter{...} escapes to heap
+br/pkg/lightning/backend/external/split.go:111:24: make(map[string]int) escapes to heap
+br/pkg/lightning/backend/external/split.go:112:24: make(map[string]int) escapes to heap
+br/pkg/lightning/backend/external/split.go:116:26: make([][]byte, 0, 16) escapes to heap
+br/pkg/lightning/backend/external/split.go:121:7: leaking param content: r
+br/pkg/lightning/backend/external/split.go:126:7: r does not escape
+br/pkg/lightning/backend/external/split.go:243:22: (*RangeSplitter).takeSplitKeys ignoring self-assignment in r.rangeSplitKeysBuf = r.rangeSplitKeysBuf[:0]
+br/pkg/lightning/backend/external/split.go:240:7: leaking param content: r
+br/pkg/lightning/backend/external/split.go:241:13: make([][]byte, len(r.rangeSplitKeysBuf)) escapes to heap
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:13:23: slices.insertionSortCmpFunc[go.shape.string] ignoring self-assignment in slices.data[slices.j], slices.data[slices.j - 1] = slices.data[slices.j - 1], slices.data[slices.j]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:13:23: slices.insertionSortCmpFunc[go.shape.string] ignoring self-assignment in slices.data[slices.j], slices.data[slices.j - 1] = slices.data[slices.j - 1], slices.data[slices.j]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:33:39: slices.siftDownCmpFunc[go.shape.string] ignoring self-assignment in slices.data[slices.first + slices.root], slices.data[slices.first + slices.child] = slices.data[slices.first + slices.child], slices.data[slices.first + slices.root]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:33:39: slices.siftDownCmpFunc[go.shape.string] ignoring self-assignment in slices.data[slices.first + slices.root], slices.data[slices.first + slices.child] = slices.data[slices.first + slices.child], slices.data[slices.first + slices.root]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:50:30: slices.heapSortCmpFunc[go.shape.string] ignoring self-assignment in slices.data[slices.first], slices.data[slices.first + slices.i] = slices.data[slices.first + slices.i], slices.data[slices.first]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:50:30: slices.heapSortCmpFunc[go.shape.string] ignoring self-assignment in slices.data[slices.first], slices.data[slices.first + slices.i] = slices.data[slices.first + slices.i], slices.data[slices.first]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:251:29: slices.breakPatternsCmpFunc[go.shape.string] ignoring self-assignment in slices.data[slices.idx], slices.data[slices.a + slices.other] = slices.data[slices.a + slices.other], slices.data[slices.idx]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:251:29: slices.breakPatternsCmpFunc[go.shape.string] ignoring self-assignment in slices.data[slices.idx], slices.data[slices.a + slices.other] = slices.data[slices.a + slices.other], slices.data[slices.idx]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:323:20: slices.reverseRangeCmpFunc[go.shape.string] ignoring self-assignment in slices.data[slices.i], slices.data[slices.j] = slices.data[slices.j], slices.data[slices.i]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:323:20: slices.reverseRangeCmpFunc[go.shape.string] ignoring self-assignment in slices.data[slices.i], slices.data[slices.j] = slices.data[slices.j], slices.data[slices.i]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:214:22: slices.partialInsertionSortCmpFunc[go.shape.string] ignoring self-assignment in slices.data[slices.i], slices.data[slices.i - 1] = slices.data[slices.i - 1], slices.data[slices.i]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:214:22: slices.partialInsertionSortCmpFunc[go.shape.string] ignoring self-assignment in slices.data[slices.i], slices.data[slices.i - 1] = slices.data[slices.i - 1], slices.data[slices.i]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:222:24: slices.partialInsertionSortCmpFunc[go.shape.string] ignoring self-assignment in slices.data[slices.j], slices.data[slices.j - 1] = slices.data[slices.j - 1], slices.data[slices.j]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:222:24: slices.partialInsertionSortCmpFunc[go.shape.string] ignoring self-assignment in slices.data[slices.j], slices.data[slices.j - 1] = slices.data[slices.j - 1], slices.data[slices.j]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:231:24: slices.partialInsertionSortCmpFunc[go.shape.string] ignoring self-assignment in slices.data[slices.j], slices.data[slices.j - 1] = slices.data[slices.j - 1], slices.data[slices.j]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:231:24: slices.partialInsertionSortCmpFunc[go.shape.string] ignoring self-assignment in slices.data[slices.j], slices.data[slices.j - 1] = slices.data[slices.j - 1], slices.data[slices.j]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:174:23: slices.partitionEqualCmpFunc[go.shape.string] ignoring self-assignment in slices.data[slices.a], slices.data[slices.pivot] = slices.data[slices.pivot], slices.data[slices.a]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:174:23: slices.partitionEqualCmpFunc[go.shape.string] ignoring self-assignment in slices.data[slices.a], slices.data[slices.pivot] = slices.data[slices.pivot], slices.data[slices.a]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:187:20: slices.partitionEqualCmpFunc[go.shape.string] ignoring self-assignment in slices.data[slices.i], slices.data[slices.j] = slices.data[slices.j], slices.data[slices.i]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:187:20: slices.partitionEqualCmpFunc[go.shape.string] ignoring self-assignment in slices.data[slices.i], slices.data[slices.j] = slices.data[slices.j], slices.data[slices.i]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:136:23: slices.partitionCmpFunc[go.shape.string] ignoring self-assignment in slices.data[slices.a], slices.data[slices.pivot] = slices.data[slices.pivot], slices.data[slices.a]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:136:23: slices.partitionCmpFunc[go.shape.string] ignoring self-assignment in slices.data[slices.a], slices.data[slices.pivot] = slices.data[slices.pivot], slices.data[slices.a]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:146:20: slices.partitionCmpFunc[go.shape.string] ignoring self-assignment in slices.data[slices.j], slices.data[slices.a] = slices.data[slices.a], slices.data[slices.j]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:146:20: slices.partitionCmpFunc[go.shape.string] ignoring self-assignment in slices.data[slices.j], slices.data[slices.a] = slices.data[slices.a], slices.data[slices.j]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:149:19: slices.partitionCmpFunc[go.shape.string] ignoring self-assignment in slices.data[slices.i], slices.data[slices.j] = slices.data[slices.j], slices.data[slices.i]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:149:19: slices.partitionCmpFunc[go.shape.string] ignoring self-assignment in slices.data[slices.i], slices.data[slices.j] = slices.data[slices.j], slices.data[slices.i]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:163:20: slices.partitionCmpFunc[go.shape.string] ignoring self-assignment in slices.data[slices.i], slices.data[slices.j] = slices.data[slices.j], slices.data[slices.i]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:163:20: slices.partitionCmpFunc[go.shape.string] ignoring self-assignment in slices.data[slices.i], slices.data[slices.j] = slices.data[slices.j], slices.data[slices.i]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:167:19: slices.partitionCmpFunc[go.shape.string] ignoring self-assignment in slices.data[slices.j], slices.data[slices.a] = slices.data[slices.a], slices.data[slices.j]
+../../.gvm/gos/go1.21.0/src/slices/zsortanyfunc.go:167:19: slices.partitionCmpFunc[go.shape.string] ignoring self-assignment in slices.data[slices.j], slices.data[slices.a] = slices.data[slices.a], slices.data[slices.j]
+br/pkg/lightning/backend/external/split.go:222:7: r does not escape
+br/pkg/lightning/backend/external/split.go:227:34: i does not escape
+br/pkg/lightning/backend/external/split.go:227:37: j does not escape
+br/pkg/lightning/backend/external/split.go:234:34: i does not escape
+br/pkg/lightning/backend/external/split.go:234:37: j does not escape
+br/pkg/lightning/backend/external/split.go:223:19: make([]string, 0, len(r.activeDataFiles)) escapes to heap
+br/pkg/lightning/backend/external/split.go:227:29: func literal does not escape
+br/pkg/lightning/backend/external/split.go:230:19: make([]string, 0, len(r.activeStatFiles)) escapes to heap
+br/pkg/lightning/backend/external/split.go:234:29: func literal does not escape
+br/pkg/lightning/backend/external/split.go:135:7: leaking param: r
+br/pkg/lightning/backend/external/split.go:161:51: exhaustedHeapElem{...} escapes to heap
+br/pkg/lightning/backend/external/split.go:217:26: make(map[string]int) escapes to heap
+br/pkg/lightning/backend/external/split.go:218:26: make(map[string]int) escapes to heap
+br/pkg/lightning/backend/external/util.go:82:2: leaking param: ctx
+br/pkg/lightning/backend/external/util.go:83:2: leaking param: store
+br/pkg/lightning/backend/external/util.go:84:2: leaking param: subDir
+br/pkg/lightning/backend/external/util.go:91:8: leaking param: path
+br/pkg/lightning/backend/external/util.go:86:6: moved to heap: data
+br/pkg/lightning/backend/external/util.go:87:6: moved to heap: stats
+br/pkg/lightning/backend/external/util.go:90:3: &storage.WalkOption{...} escapes to heap
+br/pkg/lightning/backend/external/util.go:91:3: func literal escapes to heap
+br/pkg/lightning/backend/external/util.go:117:19: leaking param: ctx
+br/pkg/lightning/backend/external/util.go:117:40: leaking param: store
+br/pkg/lightning/backend/external/util.go:117:71: leaking param: subDir
+br/pkg/lightning/backend/external/util.go:122:18: make([]string, 0, len(dataNames) + len(statNames)) escapes to heap
+br/pkg/lightning/backend/external/util.go:147:2: leaking param: storage
+br/pkg/lightning/backend/external/util.go:148:2: leaking param content: writer
+br/pkg/lightning/backend/external/util.go:149:2: leaking param: subDir
+br/pkg/lightning/backend/external/util.go:150:2: leaking param content: keys
+br/pkg/lightning/backend/external/util.go:151:2: values does not escape
+br/pkg/lightning/backend/external/util.go:130:2: leaking param: storage
+br/pkg/lightning/backend/external/util.go:131:2: leaking param content: keys
+br/pkg/lightning/backend/external/util.go:132:2: values does not escape
+br/pkg/lightning/backend/external/util.go:222:22: leaking param content: summary
+br/pkg/lightning/backend/external/util.go:224:10: &SortedKVMeta{} escapes to heap
+br/pkg/lightning/backend/external/util.go:226:9: &SortedKVMeta{...} escapes to heap
+br/pkg/lightning/backend/external/util.go:279:15: leaking param: a to result ~r0 level=0
+br/pkg/lightning/backend/external/util.go:279:18: leaking param: b to result ~r0 level=0
+br/pkg/lightning/backend/external/util.go:287:15: leaking param: a to result ~r0 level=0
+br/pkg/lightning/backend/external/util.go:287:18: leaking param: b to result ~r0 level=0
+br/pkg/lightning/backend/external/util.go:235:7: leaking param content: m
+br/pkg/lightning/backend/external/util.go:235:30: leaking param content: other
+br/pkg/lightning/backend/external/util.go:252:7: leaking param content: m
+br/pkg/lightning/backend/external/util.go:252:37: leaking param content: summary
+br/pkg/lightning/backend/external/util.go:257:7: leaking param content: m
+br/pkg/lightning/backend/external/util.go:268:7: leaking param content: m
+br/pkg/lightning/backend/external/writer.go:156:7: leaking param: b to result ~r0 level=0
+br/pkg/lightning/backend/external/writer.go:243:29: leaking param content: stats
+br/pkg/lightning/backend/external/writer.go:244:16: make([]Endpoint, 0, len(stats) * 2) escapes to heap
+br/pkg/lightning/backend/external/writer.go:326:7: w does not escape
+br/pkg/lightning/backend/external/writer.go:327:9: func literal escapes to heap
+br/pkg/lightning/backend/external/writer.go:499:7: leaking param: w to result ~r0 level=3
+br/pkg/lightning/backend/external/writer.go:504:7: leaking param: w to result ~r0 level=3
+br/pkg/lightning/backend/external/writer.go:535:22: leaking param: w
+br/pkg/lightning/backend/external/writer.go:536:9: &EngineWriter{...} escapes to heap
+br/pkg/lightning/backend/external/writer.go:540:7: leaking param content: e
+br/pkg/lightning/backend/external/writer.go:540:35: ctx does not escape
+br/pkg/lightning/backend/external/writer.go:540:68: leaking param content: rows
+br/pkg/lightning/backend/external/writer.go:555:7: e does not escape
+br/pkg/lightning/backend/external/writer.go:561:7: leaking param content: e
+br/pkg/lightning/backend/external/writer.go:561:30: leaking param: ctx
+br/pkg/lightning/backend/external/iter.go:80:9: x escapes to heap
+br/pkg/lightning/backend/external/iter.go:68:13: mergeHeap[go.shape.*uint8].Swap ignoring self-assignment in h[i], h[j] = h[j], h[i]
+br/pkg/lightning/backend/external/iter.go:68:13: mergeHeap[go.shape.*uint8].Swap ignoring self-assignment in h[i], h[j] = h[j], h[i]

@@ -186,7 +186,8 @@ func (b *WriterBuilder) Build(
 		memSizeLimit:   b.memSizeLimit,
 		store:          store,
 		kvBuffer2:      membuf.NewPool(membuf.WithBlockSize(b.blockSize)).NewBuffer(),
-		writeBatch:     make([]common.KvPair, 0, 1024*1024),
+		writeBatch:     make([]common.KvPair, 10*1024*1024),
+		writeCnt:       0,
 		currentSeq:     0,
 		filenamePrefix: filenamePrefix,
 		keyAdapter:     keyAdapter,
@@ -276,6 +277,7 @@ type Writer struct {
 
 	kvBuffer2  *membuf.Buffer
 	writeBatch []common.KvPair
+	writeCnt   int
 
 	onClose OnCloseFunc
 	closed  bool
@@ -307,7 +309,14 @@ func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tid
 	key := keyAdapter.Encode(buf[:0], idxKey, rowID)
 	val := w.kvBuffer2.AddBytes(idxVal)
 
-	w.writeBatch = append(w.writeBatch, common.KvPair{Key: key, Val: val})
+	if w.writeCnt < len(w.writeBatch) {
+		w.writeBatch[w.writeCnt].Key = key
+		w.writeBatch[w.writeCnt].Val = val
+		w.writeBatch[w.writeCnt].RowID = rowID
+	} else {
+		w.writeBatch = append(w.writeBatch, common.KvPair{Key: key, Val: val, RowID: rowID})
+	}
+	w.writeCnt++
 	return nil
 }
 
@@ -362,7 +371,7 @@ func (w *Writer) recordMinMax(newMin, newMax tidbkv.Key, size uint64) {
 }
 
 func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
-	if len(w.writeBatch) == 0 {
+	if w.writeCnt == 0 {
 		return nil
 	}
 
@@ -390,7 +399,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		}
 		return units.HumanSize(float64(n) / dur)
 	}
-	kvCnt := len(w.writeBatch)
+	kvCnt := w.writeCnt
 	defer func() {
 		w.currentSeq++
 		err1, err2 := dataWriter.Close(ctx), statWriter.Close(ctx)
@@ -425,7 +434,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	}()
 
 	sortStart := time.Now()
-	slices.SortFunc(w.writeBatch, func(i, j common.KvPair) int {
+	slices.SortFunc(w.writeBatch[:w.writeCnt], func(i, j common.KvPair) int {
 		return bytes.Compare(i.Key, j.Key)
 	})
 	sortDuration = time.Since(sortStart)
@@ -460,7 +469,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	}
 
 	minKey := tidbkv.Key(w.writeBatch[0].Key).Clone()
-	maxKey := tidbkv.Key(w.writeBatch[len(w.writeBatch)-1].Key).Clone()
+	maxKey := tidbkv.Key(w.writeBatch[w.writeCnt-1].Key).Clone()
 	w.recordMinMax(minKey, maxKey, w.batchSize)
 
 	// maintain 500-batch statistics
@@ -480,9 +489,9 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		w.fileMaxKeys = w.fileMaxKeys[:0]
 	}
 
-	w.writeBatch = w.writeBatch[:0]
 	w.kvBuffer2.Reset()
 	w.rc.reset()
+	w.writeCnt = 0
 	w.batchSize = 0
 	return nil
 }
