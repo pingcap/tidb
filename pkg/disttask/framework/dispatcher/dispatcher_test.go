@@ -258,7 +258,7 @@ func TestTaskFailInManager(t *testing.T) {
 	}, time.Second*10, time.Millisecond*300)
 }
 
-func TestScaleIntAndScaleOutNodes(t *testing.T) {
+func TestScaleOutNodes(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	gtk := testkit.NewTestKit(t, store)
 	ctx := context.Background()

@@ -87,7 +87,7 @@ type BaseDispatcher struct {
 	// when RegisterDispatcherFactory, the factory MUST initialize this field.
 	Extension
 
-	// for HA
+	// For subtasks rebalance.
 	// LiveNodes will fetch and store all live nodes every liveNodeInterval ticks.
 	LiveNodes             []*infosync.ServerInfo
 	liveNodeFetchInterval int
@@ -95,6 +95,7 @@ type BaseDispatcher struct {
 	liveNodeFetchTick int
 	// TaskNodes stores the id of current scheduler nodes.
 	TaskNodes []string
+
 	// rand is for generating random selection of nodes.
 	rand *rand.Rand
 }
@@ -259,7 +260,7 @@ func (d *BaseDispatcher) onPausing() error {
 // MockDMLExecutionOnPausedState is used to mock DML execution when tasks paused.
 var MockDMLExecutionOnPausedState func(task *proto.Task)
 
-// handle task in paused state
+// handle task in paused state.
 func (d *BaseDispatcher) onPaused() error {
 	logutil.Logger(d.logCtx).Info("on paused state", zap.Stringer("state", d.Task.State), zap.Int64("stage", int64(d.Task.Step)))
 	failpoint.Inject("mockDMLExecutionOnPausedState", func(val failpoint.Value) {
@@ -273,7 +274,7 @@ func (d *BaseDispatcher) onPaused() error {
 // TestSyncChan is used to sync the test.
 var TestSyncChan = make(chan struct{})
 
-// handle task in resuming state
+// handle task in resuming state.
 func (d *BaseDispatcher) onResuming() error {
 	logutil.Logger(d.logCtx).Info("on resuming state", zap.Stringer("state", d.Task.State), zap.Int64("stage", int64(d.Task.Step)))
 	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(d.Task.ID, proto.TaskStatePaused)
@@ -358,7 +359,13 @@ func (d *BaseDispatcher) onFinished() error {
 	return d.taskMgr.TransferSubTasks2History(d.Task.ID)
 }
 
+// rebalanceSubtasks checks count of nodes which run subtasks(taskNodes) and count of live nodes(liveNodes).
+//  1. If len(taskNodes) > len(liveNodes):
+//     dispatcher needs to scale-in subtasks to liveNodes to make sure all subtasks will be scheduled.
+//  2. If len(taskNodes) < len(liveNodes):
+//     dispatcher needs to scale-out subtasks to liveNodes to make sure all nodes have balanced workload.
 func (d *BaseDispatcher) rebalanceSubtasks() error {
+	// 1. init TaskNodes if need.
 	if len(d.TaskNodes) == 0 {
 		var err error
 		d.TaskNodes, err = d.taskMgr.GetSchedulerIDsByTaskIDAndStep(d.Task.ID, d.Task.Step)
@@ -368,6 +375,7 @@ func (d *BaseDispatcher) rebalanceSubtasks() error {
 	}
 	d.liveNodeFetchTick++
 	if d.liveNodeFetchTick == d.liveNodeFetchInterval {
+		// 2. update LiveNodes.
 		d.liveNodeFetchTick = 0
 		serverInfos, err := GenerateSchedulerNodes(d.ctx)
 		if err != nil {
@@ -392,6 +400,7 @@ func (d *BaseDispatcher) rebalanceSubtasks() error {
 		}
 		d.LiveNodes = newInfos
 	}
+	// 3. rebalance subtasks depends on length of LiveNodes and TaskNodes.
 	var err error
 	d.LiveNodes, err = d.filterByRole(d.LiveNodes)
 	if err != nil {
