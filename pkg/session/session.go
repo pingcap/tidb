@@ -4378,12 +4378,11 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 	if intest.InTest {
 		panic("unexpected no source type context, if you see this error, " +
 			"the `RequestSourceTypeKey` is missing in your context")
-	} else {
-		logutil.Logger(ctx).Warn("unexpected no source type context, if you see this warning, "+
-			"the `RequestSourceTypeKey` is missing in the context",
-			zap.Bool("internal", s.isInternal()),
-			zap.String("sql", stmtNode.Text()))
 	}
+	logutil.Logger(ctx).Warn("unexpected no source type context, if you see this warning, "+
+		"the `RequestSourceTypeKey` is missing in the context",
+		zap.Bool("internal", s.isInternal()),
+		zap.String("sql", stmtNode.Text()))
 }
 
 // RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from job2ver.

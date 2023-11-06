@@ -1364,9 +1364,8 @@ func (b *builtinSignSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 1, false, nil
 	} else if val == 0 {
 		return 0, false, nil
-	} else {
-		return -1, false, nil
 	}
+	return -1, false, nil
 }
 
 type sqrtFunctionClass struct {

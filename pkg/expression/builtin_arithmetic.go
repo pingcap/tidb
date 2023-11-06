@@ -190,18 +190,17 @@ func (c *arithmeticPlusFunctionClass) getFunction(ctx sessionctx.Context, args [
 		sig := &builtinArithmeticPlusDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_PlusDecimal)
 		return sig, nil
-	} else {
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
-		if err != nil {
-			return nil, err
-		}
-		if mysql.HasUnsignedFlag(args[0].GetType().GetFlag()) || mysql.HasUnsignedFlag(args[1].GetType().GetFlag()) {
-			bf.tp.AddFlag(mysql.UnsignedFlag)
-		}
-		sig := &builtinArithmeticPlusIntSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_PlusInt)
-		return sig, nil
 	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
+	if mysql.HasUnsignedFlag(args[0].GetType().GetFlag()) || mysql.HasUnsignedFlag(args[1].GetType().GetFlag()) {
+		bf.tp.AddFlag(mysql.UnsignedFlag)
+	}
+	sig := &builtinArithmeticPlusIntSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_PlusInt)
+	return sig, nil
 }
 
 type builtinArithmeticPlusIntSig struct {
@@ -341,18 +340,17 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx sessionctx.Context, args 
 		sig := &builtinArithmeticMinusDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_MinusDecimal)
 		return sig, nil
-	} else {
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
-		if err != nil {
-			return nil, err
-		}
-		if (mysql.HasUnsignedFlag(args[0].GetType().GetFlag()) || mysql.HasUnsignedFlag(args[1].GetType().GetFlag())) && !ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode() {
-			bf.tp.AddFlag(mysql.UnsignedFlag)
-		}
-		sig := &builtinArithmeticMinusIntSig{baseBuiltinFunc: bf}
-		sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
-		return sig, nil
 	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
+	if (mysql.HasUnsignedFlag(args[0].GetType().GetFlag()) || mysql.HasUnsignedFlag(args[1].GetType().GetFlag())) && !ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode() {
+		bf.tp.AddFlag(mysql.UnsignedFlag)
+	}
+	sig := &builtinArithmeticMinusIntSig{baseBuiltinFunc: bf}
+	sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
+	return sig, nil
 }
 
 type builtinArithmeticMinusRealSig struct {
@@ -526,21 +524,20 @@ func (c *arithmeticMultiplyFunctionClass) getFunction(ctx sessionctx.Context, ar
 		sig := &builtinArithmeticMultiplyDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_MultiplyDecimal)
 		return sig, nil
-	} else {
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
-		if err != nil {
-			return nil, err
-		}
-		if mysql.HasUnsignedFlag(lhsTp.GetFlag()) || mysql.HasUnsignedFlag(rhsTp.GetFlag()) {
-			bf.tp.AddFlag(mysql.UnsignedFlag)
-			sig := &builtinArithmeticMultiplyIntUnsignedSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_MultiplyIntUnsigned)
-			return sig, nil
-		}
-		sig := &builtinArithmeticMultiplyIntSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_MultiplyInt)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
+	if mysql.HasUnsignedFlag(lhsTp.GetFlag()) || mysql.HasUnsignedFlag(rhsTp.GetFlag()) {
+		bf.tp.AddFlag(mysql.UnsignedFlag)
+		sig := &builtinArithmeticMultiplyIntUnsignedSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_MultiplyIntUnsigned)
 		return sig, nil
 	}
+	sig := &builtinArithmeticMultiplyIntSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_MultiplyInt)
+	return sig, nil
 }
 
 type builtinArithmeticMultiplyRealSig struct{ baseBuiltinFunc }
@@ -936,35 +933,33 @@ func (c *arithmeticModFunctionClass) getFunction(ctx sessionctx.Context, args []
 		sig := &builtinArithmeticModDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_ModDecimal)
 		return sig, nil
-	} else {
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
-		if err != nil {
-			return nil, err
-		}
-		if mysql.HasUnsignedFlag(lhsTp.GetFlag()) {
-			bf.tp.AddFlag(mysql.UnsignedFlag)
-		}
-		isLHSUnsigned := mysql.HasUnsignedFlag(args[0].GetType().GetFlag())
-		isRHSUnsigned := mysql.HasUnsignedFlag(args[1].GetType().GetFlag())
-
-		switch {
-		case isLHSUnsigned && isRHSUnsigned:
-			sig := &builtinArithmeticModIntUnsignedUnsignedSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_ModIntUnsignedUnsigned)
-			return sig, nil
-		case isLHSUnsigned && !isRHSUnsigned:
-			sig := &builtinArithmeticModIntUnsignedSignedSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_ModIntUnsignedSigned)
-			return sig, nil
-		case !isLHSUnsigned && isRHSUnsigned:
-			sig := &builtinArithmeticModIntSignedUnsignedSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_ModIntSignedUnsigned)
-			return sig, nil
-		default:
-			sig := &builtinArithmeticModIntSignedSignedSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_ModIntSignedSigned)
-			return sig, nil
-		}
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
+	if mysql.HasUnsignedFlag(lhsTp.GetFlag()) {
+		bf.tp.AddFlag(mysql.UnsignedFlag)
+	}
+	isLHSUnsigned := mysql.HasUnsignedFlag(args[0].GetType().GetFlag())
+	isRHSUnsigned := mysql.HasUnsignedFlag(args[1].GetType().GetFlag())
+	switch {
+	case isLHSUnsigned && isRHSUnsigned:
+		sig := &builtinArithmeticModIntUnsignedUnsignedSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_ModIntUnsignedUnsigned)
+		return sig, nil
+	case isLHSUnsigned && !isRHSUnsigned:
+		sig := &builtinArithmeticModIntUnsignedSignedSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_ModIntUnsignedSigned)
+		return sig, nil
+	case !isLHSUnsigned && isRHSUnsigned:
+		sig := &builtinArithmeticModIntSignedUnsignedSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_ModIntSignedUnsigned)
+		return sig, nil
+	default:
+		sig := &builtinArithmeticModIntSignedSignedSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_ModIntSignedSigned)
+		return sig, nil
 	}
 }
 

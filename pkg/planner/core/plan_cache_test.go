@@ -755,9 +755,8 @@ func planCachePointGetQueries(isNonPrep bool) []string {
 			return fmt.Sprintf("%v %v (%v, %v, %v)", col, op, v(), v(), v())
 		} else if op == "is null" {
 			return fmt.Sprintf("%v %v", col, op)
-		} else {
-			return fmt.Sprintf("%v %v %v", col, op, v())
 		}
+		return fmt.Sprintf("%v %v %v", col, op, v())
 	}
 	var queries []string
 	for i := 0; i < 50; i++ {

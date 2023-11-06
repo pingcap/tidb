@@ -102,53 +102,49 @@ func (h *benchHelper) init() {
 	}
 
 	h.exprs = make([]Expression, 0, 10)
-	if expr, err := NewFunction(h.ctx, ast.Substr, h.inputTypes[3], []Expression{cols[3], cols[2]}...); err != nil {
+	expr, err := NewFunction(h.ctx, ast.Substr, h.inputTypes[3], []Expression{cols[3], cols[2]}...)
+	if err != nil {
 		panic("create SUBSTR function failed.")
-	} else {
-		h.exprs = append(h.exprs, expr)
 	}
-
-	if expr, err := NewFunction(h.ctx, ast.Plus, h.inputTypes[0], []Expression{cols[1], cols[2]}...); err != nil {
+	h.exprs = append(h.exprs, expr)
+	expr1, err := NewFunction(h.ctx, ast.Plus, h.inputTypes[0], []Expression{cols[1], cols[2]}...)
+	if err != nil {
 		panic("create PLUS function failed.")
-	} else {
-		h.exprs = append(h.exprs, expr)
 	}
-
-	if expr, err := NewFunction(h.ctx, ast.GT, h.inputTypes[2], []Expression{cols[11], cols[8]}...); err != nil {
+	h.exprs = append(h.exprs, expr1)
+	expr2, err := NewFunction(h.ctx, ast.GT, h.inputTypes[2], []Expression{cols[11], cols[8]}...)
+	if err != nil {
 		panic("create GT function failed.")
-	} else {
-		h.exprs = append(h.exprs, expr)
 	}
-
-	if expr, err := NewFunction(h.ctx, ast.GT, h.inputTypes[2], []Expression{cols[19], cols[10]}...); err != nil {
+	h.exprs = append(h.exprs, expr2)
+	expr3, err := NewFunction(h.ctx, ast.GT, h.inputTypes[2], []Expression{cols[19], cols[10]}...)
+	if err != nil {
 		panic("create GT function failed.")
-	} else {
-		h.exprs = append(h.exprs, expr)
 	}
-
-	if expr, err := NewFunction(h.ctx, ast.GT, h.inputTypes[2], []Expression{cols[17], cols[4]}...); err != nil {
+	h.exprs = append(h.exprs, expr3)
+	expr4, err := NewFunction(h.ctx, ast.GT, h.inputTypes[2], []Expression{cols[17], cols[4]}...)
+	if err != nil {
 		panic("create GT function failed.")
-	} else {
-		h.exprs = append(h.exprs, expr)
 	}
-
-	if expr, err := NewFunction(h.ctx, ast.GT, h.inputTypes[2], []Expression{cols[18], cols[5]}...); err != nil {
+	h.exprs = append(h.exprs, expr4)
+	expr5, err := NewFunction(h.ctx, ast.GT, h.inputTypes[2], []Expression{cols[18], cols[5]}...)
+	if err != nil {
 		panic("create GT function failed.")
-	} else {
-		h.exprs = append(h.exprs, expr)
 	}
+	h.exprs = append(h.exprs, expr5)
 
-	if expr, err := NewFunction(h.ctx, ast.LE, h.inputTypes[2], []Expression{cols[19], cols[4]}...); err != nil {
+	expr6, err := NewFunction(h.ctx, ast.LE, h.inputTypes[2], []Expression{cols[19], cols[4]}...)
+	if err != nil {
 		panic("create LE function failed.")
-	} else {
-		h.exprs = append(h.exprs, expr)
 	}
+	h.exprs = append(h.exprs, expr6)
 
-	if expr, err := NewFunction(h.ctx, ast.EQ, h.inputTypes[2], []Expression{cols[20], cols[3]}...); err != nil {
+	expr7, err := NewFunction(h.ctx, ast.EQ, h.inputTypes[2], []Expression{cols[20], cols[3]}...)
+	if err != nil {
 		panic("create EQ function failed.")
-	} else {
-		h.exprs = append(h.exprs, expr)
 	}
+	h.exprs = append(h.exprs, expr7)
+
 	h.exprs = append(h.exprs, cols[2])
 	h.exprs = append(h.exprs, cols[2])
 
