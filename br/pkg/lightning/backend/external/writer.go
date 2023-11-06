@@ -259,7 +259,7 @@ type kvLocation struct {
 }
 
 type simpleKV struct {
-	key *[]byte
+	key []byte
 	val *[]byte
 }
 
@@ -315,10 +315,10 @@ func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tid
 	val := w.kvBuffer2.AddBytes(idxVal)
 
 	if w.writeCnt < len(w.writeBatch) {
-		w.writeBatch[w.writeCnt].key = &key
+		w.writeBatch[w.writeCnt].key = key
 		w.writeBatch[w.writeCnt].val = &val
 	} else {
-		w.writeBatch = append(w.writeBatch, simpleKV{key: &key, val: &val})
+		w.writeBatch = append(w.writeBatch, simpleKV{key: key, val: &val})
 	}
 	w.writeCnt++
 	return nil
@@ -439,7 +439,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 
 	sortStart := time.Now()
 	slices.SortFunc(w.writeBatch[:w.writeCnt], func(i, j simpleKV) int {
-		return bytes.Compare(*i.key, *j.key)
+		return bytes.Compare(i.key, j.key)
 	})
 	sortDuration = time.Since(sortStart)
 
@@ -452,7 +452,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	}
 
 	for _, pair := range w.writeBatch[:w.writeCnt] {
-		err = w.kvStore.addEncodedData(*pair.key, *pair.val)
+		err = w.kvStore.addEncodedData(pair.key, *pair.val)
 		if err != nil {
 			return err
 		}
@@ -473,8 +473,8 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		return err
 	}
 
-	minKey := tidbkv.Key(*w.writeBatch[0].key).Clone()
-	maxKey := tidbkv.Key(*w.writeBatch[w.writeCnt-1].key).Clone()
+	minKey := tidbkv.Key(w.writeBatch[0].key).Clone()
+	maxKey := tidbkv.Key(w.writeBatch[w.writeCnt-1].key).Clone()
 	w.recordMinMax(minKey, maxKey, w.batchSize)
 
 	// maintain 500-batch statistics
