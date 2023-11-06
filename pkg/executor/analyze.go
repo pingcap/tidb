@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"math"
 	"net"
@@ -369,7 +370,17 @@ func (e *AnalyzeExec) handleResultsError(
 	globalStatsMap globalStatsMap,
 	resultsCh <-chan *statistics.AnalyzeResults,
 	taskNum int,
-) error {
+) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Error("analyze save stats panic", zap.Any("recover", r), zap.Stack("stack"))
+			if err != nil {
+				err = stderrors.Join(err, getAnalyzePanicErr(r))
+			} else {
+				err = getAnalyzePanicErr(r)
+			}
+		}
+	}()
 	partitionStatsConcurrency := e.Ctx().GetSessionVars().AnalyzePartitionConcurrency
 	// the concurrency of handleResultsError cannot be more than partitionStatsConcurrency
 	partitionStatsConcurrency = min(taskNum, partitionStatsConcurrency)
@@ -387,13 +398,12 @@ func (e *AnalyzeExec) handleResultsError(
 			return err
 		}
 	}
-
+	failpoint.Inject("handleResultsErrorSingleThreadPanic", nil)
 	tableIDs := map[int64]struct{}{}
 
 	// save analyze results in single-thread.
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	panicCnt := 0
-	var err error
 	for panicCnt < concurrency {
 		results, ok := <-resultsCh
 		if !ok {
