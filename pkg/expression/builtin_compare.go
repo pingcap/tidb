@@ -1105,9 +1105,11 @@ func (b *builtinIntervalIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	isUint1 := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
 	var idx int
-
-	idx, err = b.linearSearch(arg0, isUint1, b.args[1:], row)
-
+	if b.hasNullable {
+		idx, err = b.linearSearch(arg0, isUint1, b.args[1:], row)
+	} else {
+		idx, err = b.binSearch(arg0, isUint1, b.args[1:], row)
+	}
 	return int64(idx), err != nil, err
 }
 
@@ -1140,6 +1142,42 @@ func (b *builtinIntervalIntSig) linearSearch(target int64, isUint1 bool, args []
 	return i, nil
 }
 
+// binSearch is a binary search method.
+// All arguments are treated as integers.
+// It is required that arg[0] < args[1] < args[2] < ... < args[n] for this function to work correctly.
+// This is because a binary search is used (very fast).
+func (b *builtinIntervalIntSig) binSearch(target int64, isUint1 bool, args []Expression, row chunk.Row) (_ int, err error) {
+	i, j, cmp := 0, len(args), false
+	for i < j {
+		mid := i + (j-i)/2
+		v, isNull, err1 := args[mid].EvalInt(b.ctx, row)
+		if err1 != nil {
+			err = err1
+			break
+		}
+		if isNull {
+			v = target
+		}
+		isUint2 := mysql.HasUnsignedFlag(args[mid].GetType().GetFlag())
+		switch {
+		case !isUint1 && !isUint2:
+			cmp = target < v
+		case isUint1 && isUint2:
+			cmp = uint64(target) < uint64(v)
+		case !isUint1 && isUint2:
+			cmp = target < 0 || uint64(target) < uint64(v)
+		case isUint1 && !isUint2:
+			cmp = v > 0 && uint64(target) < uint64(v)
+		}
+		if !cmp {
+			i = mid + 1
+		} else {
+			j = mid
+		}
+	}
+	return i, err
+}
+
 type builtinIntervalRealSig struct {
 	baseBuiltinFunc
 	hasNullable bool
@@ -1164,7 +1202,11 @@ func (b *builtinIntervalRealSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 
 	var idx int
-	idx, err = b.linearSearch(arg0, b.args[1:], row)
+	if b.hasNullable {
+		idx, err = b.linearSearch(arg0, b.args[1:], row)
+	} else {
+		idx, err = b.binSearch(arg0, b.args[1:], row)
+	}
 	return int64(idx), err != nil, err
 }
 
@@ -1180,6 +1222,26 @@ func (b *builtinIntervalRealSig) linearSearch(target float64, args []Expression,
 		}
 	}
 	return i, nil
+}
+
+func (b *builtinIntervalRealSig) binSearch(target float64, args []Expression, row chunk.Row) (_ int, err error) {
+	i, j := 0, len(args)
+	for i < j {
+		mid := i + (j-i)/2
+		v, isNull, err1 := args[mid].EvalReal(b.ctx, row)
+		if err1 != nil {
+			err = err1
+			break
+		}
+		if isNull {
+			i = mid + 1
+		} else if cmp := target < v; !cmp {
+			i = mid + 1
+		} else {
+			j = mid
+		}
+	}
+	return i, err
 }
 
 type compareFunctionClass struct {
