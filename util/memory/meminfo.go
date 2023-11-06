@@ -19,16 +19,10 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-<<<<<<< HEAD:util/memory/meminfo.go
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/cgroup"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
-=======
-	"github.com/pingcap/sysutil"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/util/cgroup"
-	"github.com/pingcap/tidb/pkg/util/logutil"
->>>>>>> 4667ed9e168 (*: support cgroup with systemd (#48096)):pkg/util/memory/meminfo.go
 	"github.com/shirou/gopsutil/v3/mem"
 	"go.uber.org/zap"
 )
@@ -195,7 +189,6 @@ func InitMemoryHook() {
 	if physicalValue > cgroupValue && cgroupValue != 0 {
 		MemTotal = MemTotalCGroup
 		MemUsed = MemUsedCGroup
-		sysutil.RegisterGetMemoryCapacity(MemTotalCGroup)
 		logutil.BgLogger().Info("use cgroup memory hook", zap.Int64("cgroupMemorySize", int64(cgroupValue)), zap.Int64("physicalMemorySize", int64(physicalValue)))
 	} else {
 		logutil.BgLogger().Info("use physical memory hook", zap.Int64("cgroupMemorySize", int64(cgroupValue)), zap.Int64("physicalMemorySize", int64(physicalValue)))
