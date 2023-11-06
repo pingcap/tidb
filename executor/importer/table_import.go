@@ -388,7 +388,11 @@ func (ti *TableImporter) PopulateChunks(ctx context.Context) (map[int32]*checkpo
 			return nil, errors.Trace(err)
 		}
 		etcd.SetEtcdCliByNamespace(etcdCli, keyspace.MakeKeyspaceEtcdNamespace(ti.kvStore.GetCodec()))
-		defer etcdCli.Close()
+		defer func() {
+			if err := etcdCli.Close(); err != nil {
+				ti.logger.Error("close etcd client error", zap.Error(err))
+			}
+		}()
 
 		r := &asAutoIDRequirement{ti.kvStore, etcdCli}
 		// todo: the new base should be the max row id of the last Node if we support distributed import.
