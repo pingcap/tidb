@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -299,13 +298,15 @@ func generateNonPartitionPlan(
 		return nil, err
 	}
 
-	regionBatch := 100
-	if !useCloud {
-		// Make subtask large enough to reduce the overhead of local/global flush.
-		quota := variable.DDLDiskQuota.Load()
-		regionBatch = int(int64(quota) / int64(config.SplitRegionSize))
-	}
-	regionBatch = min(regionBatch, len(recordRegionMetas)/instanceCnt)
+	regionBatch := 1
+	logutil.BgLogger().Info("ywq test region Batch", zap.Any("len recordRegionMetas",
+		len(recordRegionMetas)), zap.Any("regionBatch", regionBatch))
+	// if !useCloud {
+	// 	// Make subtask large enough to reduce the overhead of local/global flush.
+	// 	quota := variable.DDLDiskQuota.Load()
+	// 	regionBatch = int(int64(quota) / int64(config.SplitRegionSize))
+	// }
+	// regionBatch = min(regionBatch, len(recordRegionMetas)/instanceCnt)
 
 	subTaskMetas := make([][]byte, 0, 4)
 	sort.Slice(recordRegionMetas, func(i, j int) bool {
