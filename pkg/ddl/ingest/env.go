@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 )
@@ -44,7 +45,7 @@ var (
 	LitInitialized bool
 )
 
-const maxMemoryQuota = 2 * size.GB
+const defaultMemoryQuota = 2 * size.GB
 
 // InitGlobalLightningEnv initialize Lightning backfill environment.
 func InitGlobalLightningEnv(ctx context.Context, sctx sessionctx.Context) {
@@ -66,12 +67,19 @@ func InitGlobalLightningEnv(ctx context.Context, sctx sessionctx.Context) {
 		return
 	}
 	LitSortPath = sPath
-	LitBackCtxMgr = newLitBackendCtxMgr(ctx, sctx, LitSortPath, maxMemoryQuota)
+	memTotal, err := memory.MemTotal()
+	if err != nil {
+		logutil.BgLogger().Warn("get total memory fail", zap.Error(err))
+		memTotal = defaultMemoryQuota
+	} else {
+		memTotal = memTotal / 2
+	}
+	LitBackCtxMgr = newLitBackendCtxMgr(ctx, sctx, LitSortPath, memTotal)
 	LitRLimit = util.GenRLimit("ddl-ingest")
 	LitInitialized = true
 	logutil.BgLogger().Info(LitInfoEnvInitSucc,
 		zap.String("category", "ddl-ingest"),
-		zap.Uint64("memory limitation", maxMemoryQuota),
+		zap.Uint64("memory limitation", memTotal),
 		zap.String("disk usage info", LitDiskRoot.UsageInfo()),
 		zap.Uint64("max open file number", LitRLimit),
 		zap.Bool("lightning is initialized", LitInitialized))
