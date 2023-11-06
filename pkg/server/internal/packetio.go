@@ -275,21 +275,18 @@ func (p *PacketIO) WritePacket(data []byte) error {
 			return errors.Trace(mysql.ErrBadConn)
 		} else if n != len(data) {
 			return errors.Trace(mysql.ErrBadConn)
-		} else {
-			p.sequence++
-			return nil
 		}
-	} else {
-		if n, err := p.bufWriter.Write(data); err != nil {
-			terror.Log(errors.Trace(err))
-			return errors.Trace(mysql.ErrBadConn)
-		} else if n != len(data) {
-			return errors.Trace(mysql.ErrBadConn)
-		} else {
-			p.sequence++
-			return nil
-		}
+		p.sequence++
+		return nil
 	}
+	if n, err := p.bufWriter.Write(data); err != nil {
+		terror.Log(errors.Trace(err))
+		return errors.Trace(mysql.ErrBadConn)
+	} else if n != len(data) {
+		return errors.Trace(mysql.ErrBadConn)
+	}
+	p.sequence++
+	return nil
 }
 
 // Flush flushes buffered data to network.

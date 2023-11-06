@@ -1229,9 +1229,8 @@ func waitSchemaSyncedForMDL(d *ddlCtx, job *model.Job, latestSchemaVersion int64
 		if val.(bool) {
 			if mockDDLErrOnce > 0 && mockDDLErrOnce != latestSchemaVersion {
 				panic("check down before update global version failed")
-			} else {
-				mockDDLErrOnce = -1
 			}
+			mockDDLErrOnce = -1
 		}
 	})
 
@@ -1273,9 +1272,8 @@ func waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Duration) error {
 		if val.(bool) {
 			if mockDDLErrOnce > 0 && mockDDLErrOnce != latestSchemaVersion {
 				panic("check down before update global version failed")
-			} else {
-				mockDDLErrOnce = -1
 			}
+			mockDDLErrOnce = -1
 		}
 	})
 
