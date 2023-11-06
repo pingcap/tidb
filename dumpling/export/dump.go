@@ -1016,7 +1016,7 @@ func buildTiDBTableSampleQuery(pkFields []string, dbName, tblName string) string
 	template := "SELECT %s FROM `%s`.`%s` TABLESAMPLE REGIONS() ORDER BY %s"
 	quotaPk := make([]string, len(pkFields))
 	for i, s := range pkFields {
-		quotaPk[i] = fmt.Sprintf("`%s`", escapeString(s))
+		quotaPk[i] = fmt.Sprintf("COALESCE(`%s`)", escapeString(s))
 	}
 	pks := strings.Join(quotaPk, ",")
 	return fmt.Sprintf(template, pks, escapeString(dbName), escapeString(tblName), pks)
