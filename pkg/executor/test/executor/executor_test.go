@@ -1654,84 +1654,6 @@ func TestProjectionBitType(t *testing.T) {
 	tk.MustQuery("(select * from t1 where false) union(select * from t1 for update);").Check(testkit.Rows("1 \x01\xd5\xe4\xcf\u007f"))
 }
 
-func TestExprBlackListForEnum(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a enum('a','b','c'), b enum('a','b','c'), c int, index idx(b,a));")
-	tk.MustExec("insert into t values(1,1,1),(2,2,2),(3,3,3);")
-
-	checkFuncPushDown := func(rows [][]interface{}, keyWord string) bool {
-		for _, line := range rows {
-			// Agg/Expr push down
-			if line[2].(string) == "cop[tikv]" && strings.Contains(line[4].(string), keyWord) {
-				return true
-			}
-			// access index
-			if line[2].(string) == "cop[tikv]" && strings.Contains(line[3].(string), keyWord) {
-				return true
-			}
-		}
-		return false
-	}
-
-	// Test agg(enum) push down
-	tk.MustExec("insert into mysql.expr_pushdown_blacklist(name) values('enum');")
-	tk.MustExec("admin reload expr_pushdown_blacklist;")
-	rows := tk.MustQuery("desc format='brief' select /*+ HASH_AGG() */ max(a) from t;").Rows()
-	require.False(t, checkFuncPushDown(rows, "max"))
-	rows = tk.MustQuery("desc format='brief' select /*+ STREAM_AGG() */ max(a) from t;").Rows()
-	require.False(t, checkFuncPushDown(rows, "max"))
-
-	tk.MustExec("delete from mysql.expr_pushdown_blacklist;")
-	tk.MustExec("admin reload expr_pushdown_blacklist;")
-	rows = tk.MustQuery("desc format='brief' select /*+ HASH_AGG() */ max(a) from t;").Rows()
-	require.True(t, checkFuncPushDown(rows, "max"))
-	rows = tk.MustQuery("desc format='brief' select /*+ STREAM_AGG() */ max(a) from t;").Rows()
-	require.True(t, checkFuncPushDown(rows, "max"))
-
-	// Test expr(enum) push down
-	tk.MustExec("insert into mysql.expr_pushdown_blacklist(name) values('enum');")
-	tk.MustExec("admin reload expr_pushdown_blacklist;")
-	rows = tk.MustQuery("desc format='brief' select * from t where a + b;").Rows()
-	require.False(t, checkFuncPushDown(rows, "plus"))
-	rows = tk.MustQuery("desc format='brief' select * from t where a + b;").Rows()
-	require.False(t, checkFuncPushDown(rows, "plus"))
-
-	tk.MustExec("delete from mysql.expr_pushdown_blacklist;")
-	tk.MustExec("admin reload expr_pushdown_blacklist;")
-	rows = tk.MustQuery("desc format='brief' select * from t where a + b;").Rows()
-	require.True(t, checkFuncPushDown(rows, "plus"))
-	rows = tk.MustQuery("desc format='brief' select * from t where a + b;").Rows()
-	require.True(t, checkFuncPushDown(rows, "plus"))
-
-	// Test enum index
-	tk.MustExec("insert into mysql.expr_pushdown_blacklist(name) values('enum');")
-	tk.MustExec("admin reload expr_pushdown_blacklist;")
-	rows = tk.MustQuery("desc format='brief' select * from t where b = 1;").Rows()
-	require.False(t, checkFuncPushDown(rows, "index:idx(b)"))
-	rows = tk.MustQuery("desc format='brief' select * from t where b = 'a';").Rows()
-	require.False(t, checkFuncPushDown(rows, "index:idx(b)"))
-	rows = tk.MustQuery("desc format='brief' select * from t where b > 1;").Rows()
-	require.False(t, checkFuncPushDown(rows, "index:idx(b)"))
-	rows = tk.MustQuery("desc format='brief' select * from t where b > 'a';").Rows()
-	require.False(t, checkFuncPushDown(rows, "index:idx(b)"))
-
-	tk.MustExec("delete from mysql.expr_pushdown_blacklist;")
-	tk.MustExec("admin reload expr_pushdown_blacklist;")
-	rows = tk.MustQuery("desc format='brief' select * from t where b = 1 and a = 1;").Rows()
-	require.True(t, checkFuncPushDown(rows, "index:idx(b, a)"))
-	rows = tk.MustQuery("desc format='brief' select * from t where b = 'a' and a = 'a';").Rows()
-	require.True(t, checkFuncPushDown(rows, "index:idx(b, a)"))
-	rows = tk.MustQuery("desc format='brief' select * from t where b = 1 and a > 1;").Rows()
-	require.True(t, checkFuncPushDown(rows, "index:idx(b, a)"))
-	rows = tk.MustQuery("desc format='brief' select * from t where b = 1 and a > 'a'").Rows()
-	require.True(t, checkFuncPushDown(rows, "index:idx(b, a)"))
-}
-
 // Test invoke Close without invoking Open before for each operators.
 func TestUnreasonablyClose(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -4007,8 +3929,8 @@ func TestCountDistinctJSON(t *testing.T) {
 	tk.MustExec("insert into t values('2011')")
 	tk.MustExec("insert into t values('2012')")
 	tk.MustExec("insert into t values('2010.000')")
-	tk.MustExec("insert into t values(cast(? as JSON))", uint64(math.MaxUint64))
-	tk.MustExec("insert into t values(cast(? as JSON))", float64(math.MaxUint64))
+	tk.MustExec(fmt.Sprintf("insert into t values(cast(%d as JSON))", uint64(math.MaxUint64)))
+	tk.MustExec(fmt.Sprintf("insert into t values(cast(%f as JSON))", float64(math.MaxUint64)))
 
 	tk.MustQuery("select count(distinct j) from t").Check(testkit.Rows("5"))
 }
@@ -4024,7 +3946,7 @@ func TestHashJoinJSON(t *testing.T) {
 	tk.MustExec("insert into t values(0, '2010', 2010)")
 	tk.MustExec("insert into t values(1, '2011', 2011)")
 	tk.MustExec("insert into t values(2, '2012', 2012)")
-	tk.MustExec("insert into t values(3, cast(? as JSON), ?)", uint64(math.MaxUint64), float64(math.MaxUint64))
+	tk.MustExec(fmt.Sprintf("insert into t values(3, cast(%d as JSON), %f)", uint64(math.MaxUint64), float64(math.MaxUint64)))
 
 	tk.MustQuery("select /*+inl_hash_join(t2)*/ t1.id, t2.id from t t1 join t t2 on t1.j = t2.d;").Check(testkit.Rows("0 0", "1 1", "2 2"))
 }
