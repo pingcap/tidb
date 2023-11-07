@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -70,7 +71,13 @@ func mergeOverlappingFilesImpl(ctx context.Context,
 	propKeysDist uint64,
 	onClose OnCloseFunc,
 	checkHotspot bool,
-) error {
+) (err error) {
+	task := log.BeginTask(logutil.Logger(ctx).With(
+		zap.String("writer-id", writerID),
+		zap.Int("file-count", len(paths)),
+	), "merge overlapping files")
+	defer task.End(zap.ErrorLevel, err)
+
 	zeroOffsets := make([]uint64, len(paths))
 	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, readBufferSize, checkHotspot)
 	if err != nil {
