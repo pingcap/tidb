@@ -309,28 +309,32 @@ func (do *Domain) AddRunawayWatch(record *resourcegroup.QuarantineRecord) (uint6
 	if err != nil {
 		return 0, err
 	}
-	for retry := 1; retry <= maxIDRetries; retry++ {
-		var rs sqlexec.RecordSet
-		rs, err = exec.ExecuteInternal(ctx, `SELECT LAST_INSERT_ID();`)
-		if err == nil {
-			var rows []chunk.Row
-			rows, err = sqlexec.DrainRecordSet(ctx, rs, 1)
-			//nolint: errcheck
-			rs.Close()
-			if err == nil {
-				if len(rows) == 1 {
-					return rows[0].GetUint64(0), nil
-				}
-				err = errors.Errorf("unexpected result length: %d", len(rows))
-			}
-		}
-		logutil.BgLogger().Warn("failed to get last insert id when adding runaway watch", zap.Error(err))
+	for retry := 0; retry < maxIDRetries; retry++ {
 		select {
 		case <-do.exit:
 			return 0, err
-		default:
-			time.Sleep(time.Millisecond * time.Duration(retry*100))
+		case <-time.After(time.Millisecond * time.Duration(retry*100)):
+			if retry > 0 {
+				logutil.BgLogger().Warn("failed to get last insert id when adding runaway watch", zap.Error(err))
+			}
 		}
+		var rs sqlexec.RecordSet
+		rs, err = exec.ExecuteInternal(ctx, `SELECT LAST_INSERT_ID();`)
+		if err != nil {
+			continue
+		}
+		var rows []chunk.Row
+		rows, err = sqlexec.DrainRecordSet(ctx, rs, 1)
+		//nolint: errcheck
+		rs.Close()
+		if err != nil {
+			continue
+		}
+		if len(rows) != 1 {
+			err = errors.Errorf("unexpected result length: %d", len(rows))
+			continue
+		}
+		return rows[0].GetUint64(0), nil
 	}
 	return 0, errors.Errorf("An error: %v occurred while getting the ID of the newly added watch record. Try querying information_schema.runaway_watches later", err)
 }
