@@ -70,7 +70,7 @@
   "gnetId": null,
   "graphTooltip": 1,
   "id": null,
-  "iteration": 1699052335086,
+  "iteration": 1699393280088,
   "links": [],
   "panels": [
     {
@@ -2230,7 +2230,7 @@
           },
           "yaxes": [
             {
-              "$$hashKey": "object:219",
+              "$$hashKey": "object:190",
               "format": "none",
               "label": null,
               "logBase": 1,
@@ -2239,7 +2239,7 @@
               "show": true
             },
             {
-              "$$hashKey": "object:220",
+              "$$hashKey": "object:191",
               "format": "short",
               "label": null,
               "logBase": 1,
@@ -2920,7 +2920,7 @@
               "expr": "increase(tidb_server_event_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[10m])",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "{{instance}}-server {{type}}",
+              "legendFormat": "{{instance}}-{{type}}",
               "refId": "A"
             }
           ],
@@ -22896,5 +22896,5 @@
   "timezone": "browser",
   "title": "Test-Cluster-TiDB",
   "uid": "000000011",
-  "version": 5
+  "version": 1
 }
