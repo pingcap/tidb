@@ -2142,6 +2142,7 @@ func (s *SessionVars) setStmtVar(name string, val string) error {
 	return nil
 }
 
+// GetStmtVar gets the value of the statement's system variable.
 func (s *SessionVars) GetStmtVar(name string) (string, bool) {
 	val, ok := s.stmtVars[name]
 	return val, ok
