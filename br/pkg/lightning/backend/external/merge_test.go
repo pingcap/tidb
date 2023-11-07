@@ -24,6 +24,9 @@ import (
 
 func TestMergeOverlappingFiles(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/external/mergeOverlappingFilesImpl", `return("a")`))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/external/mergeOverlappingFilesImpl"))
+	})
 	require.ErrorContains(t, MergeOverlappingFiles(
 		context.Background(),
 		[]string{"a", "b", "c", "d", "e"},
