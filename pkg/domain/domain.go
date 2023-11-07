@@ -2241,7 +2241,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	}
 	do.statsHandle.Store(statsHandle)
 	do.ddl.RegisterStatsHandle(statsHandle)
-	// Negative stats lease indicates that it is in test, it does not need update.
+	// Negative stats lease indicates that it is in test or in br binary mode, it does not need update.
 	if do.statsLease >= 0 {
 		do.wg.Run(do.loadStatsWorker, "loadStatsWorker")
 	}
