@@ -118,14 +118,13 @@ func setDecimalFromArgs(evalType types.EvalType, resultFieldType *types.FieldTyp
 }
 
 // NonBinaryStr means the arg is a string but not binary string
-func getNonBinaryStrIdx(args []*types.FieldType) []int {
-	result := make([]int, 0)
-	for i, arg := range args {
+func hasNonBinaryStr(args []*types.FieldType) bool {
+	for _, arg := range args {
 		if types.IsNonBinaryStr(arg) {
-			result = append(result, i)
+			return true
 		}
 	}
-	return result
+	return false
 }
 
 func hasBinaryStr(args []*types.FieldType) bool {
@@ -196,9 +195,9 @@ func addCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string
 			argTypes = append(argTypes, arg.GetType())
 		}
 
-		nonBinaryStrIdx := getNonBinaryStrIdx(argTypes)
+		nonBinaryStrExist := hasNonBinaryStr(argTypes)
 		binaryStrExist := hasBinaryStr(argTypes)
-		if !binaryStrExist && len(nonBinaryStrIdx) > 0 {
+		if !binaryStrExist && nonBinaryStrExist {
 			ec, err := CheckAndDeriveCollationFromExprs(ctx, funcName, evalType, args...)
 			if err != nil {
 				return err
@@ -206,8 +205,6 @@ func addCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string
 			resultFieldType.SetCollate(ec.Collation)
 			resultFieldType.SetCharset(ec.Charset)
 			resultFieldType.SetFlag(0)
-
-			ifFirstNonBinaryStrsHaveBinaryFlag := mysql.HasBinaryFlag(argTypes[nonBinaryStrIdx[0]].GetFlag())
 
 			// hasNonStringType means that there is a type that is not string
 			hasNonStringType := false
@@ -218,7 +215,7 @@ func addCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string
 				}
 			}
 
-			if ifFirstNonBinaryStrsHaveBinaryFlag || hasNonStringType {
+			if hasNonStringType {
 				resultFieldType.AddFlag(mysql.BinaryFlag)
 			}
 		} else if binaryStrExist || !evalType.IsStringKind() {
