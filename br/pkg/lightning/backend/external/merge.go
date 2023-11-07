@@ -3,11 +3,9 @@ package external
 import (
 	"context"
 
-	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -30,18 +28,12 @@ func MergeOverlappingFiles(ctx context.Context, paths []string, store storage.Ex
 		dataFilesSlice = append(dataFilesSlice, paths[i:end])
 	}
 
-	memTotal, err := memory.MemTotal()
-	if err != nil {
-		return err
-	}
-	memSize := (memTotal / 2) / uint64(len(dataFilesSlice))
-
 	logutil.Logger(ctx).Info("start to merge overlapping files",
 		zap.Int("file-count", len(paths)),
 		zap.Int("file-groups", len(dataFilesSlice)),
-		zap.Int("concurrency", concurrency),
-		zap.String("memory-limit", units.BytesSize(float64(memSize))))
+		zap.Int("concurrency", concurrency))
 	eg, egCtx := errgroup.WithContext(ctx)
+	eg.SetLimit(concurrency)
 	for _, files := range dataFilesSlice {
 		files := files
 		eg.Go(func() error {
@@ -52,7 +44,7 @@ func MergeOverlappingFiles(ctx context.Context, paths []string, store storage.Ex
 				readBufferSize,
 				newFilePrefix,
 				uuid.New().String(),
-				memSize,
+				DefaultMemSizeLimit,
 				blockSize,
 				writeBatchCount,
 				propSizeDist,
