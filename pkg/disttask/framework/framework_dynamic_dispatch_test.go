@@ -37,7 +37,7 @@ var _ dispatcher.Extension = (*testDynamicDispatcherExt)(nil)
 
 func (*testDynamicDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {}
 
-func (dsp *testDynamicDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ proto.Step) (metas [][]byte, err error) {
+func (dsp *testDynamicDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
 	// step1
 	if gTask.Step == proto.StepInit {
 		dsp.cnt++

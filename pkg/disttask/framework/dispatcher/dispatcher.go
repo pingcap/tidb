@@ -373,7 +373,12 @@ func (d *BaseDispatcher) replaceDeadNodesIfAny() error {
 		if err != nil {
 			return err
 		}
+
 		eligibleServerInfos, err := d.GetEligibleInstances(d.ctx, d.Task)
+		if err != nil {
+			return err
+		}
+		eligibleServerInfos, err = d.filterByRole(eligibleServerInfos)
 		if err != nil {
 			return err
 		}
@@ -545,7 +550,24 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 
 	for {
 		// 3. generate a batch of subtasks.
-		metas, err := d.OnNextSubtasksBatch(d.ctx, d, d.Task, nextStep)
+		/// select all available TiDB nodes for task.
+		serverNodes, err := d.GetEligibleInstances(d.ctx, d.Task)
+		logutil.Logger(d.logCtx).Debug("eligible instances", zap.Int("num", len(serverNodes)))
+
+		if err != nil {
+			return err
+		}
+		/// filter by role.
+		serverNodes, err = d.filterByRole(serverNodes)
+		if err != nil {
+			return err
+		}
+		logutil.Logger(d.logCtx).Info("eligible instances", zap.Int("num", len(serverNodes)))
+		if len(serverNodes) == 0 {
+			return errors.New("no available TiDB node to dispatch subtasks")
+		}
+
+		metas, err := d.OnNextSubtasksBatch(d.ctx, d, d.Task, serverNodes, nextStep)
 		if err != nil {
 			logutil.Logger(d.logCtx).Warn("generate part of subtasks failed", zap.Error(err))
 			return d.handlePlanErr(err)
@@ -556,7 +578,7 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 		})
 
 		// 4. dispatch batch of subtasks to EligibleInstances.
-		err = d.dispatchSubTask(nextStep, metas)
+		err = d.dispatchSubTask(nextStep, metas, serverNodes)
 		if err != nil {
 			return err
 		}
@@ -572,27 +594,11 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 	return nil
 }
 
-func (d *BaseDispatcher) dispatchSubTask(subtaskStep proto.Step, metas [][]byte) error {
+func (d *BaseDispatcher) dispatchSubTask(
+	subtaskStep proto.Step,
+	metas [][]byte,
+	serverNodes []*infosync.ServerInfo) error {
 	logutil.Logger(d.logCtx).Info("dispatch subtasks", zap.Stringer("state", d.Task.State), zap.Int64("step", int64(d.Task.Step)), zap.Uint64("concurrency", d.Task.Concurrency), zap.Int("subtasks", len(metas)))
-
-	// select all available TiDB nodes for task.
-	serverNodes, err := d.GetEligibleInstances(d.ctx, d.Task)
-	logutil.Logger(d.logCtx).Debug("eligible instances", zap.Int("num", len(serverNodes)))
-
-	if err != nil {
-		return err
-	}
-	// 4. filter by role.
-	serverNodes, err = d.filterByRole(serverNodes)
-	if err != nil {
-		return err
-	}
-
-	logutil.Logger(d.logCtx).Info("eligible instances", zap.Int("num", len(serverNodes)))
-
-	if len(serverNodes) == 0 {
-		return errors.New("no available TiDB node to dispatch subtasks")
-	}
 	d.taskNodes = make([]string, len(serverNodes))
 	for i := range serverNodes {
 		d.taskNodes[i] = disttaskutil.GenerateExecID(serverNodes[i].IP, serverNodes[i].Port)

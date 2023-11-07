@@ -51,7 +51,7 @@ type testDispatcherExt struct{}
 func (*testDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (*testDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ proto.Step) (metas [][]byte, err error) {
+func (*testDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
 	return nil, nil
 }
 
@@ -78,7 +78,7 @@ type numberExampleDispatcherExt struct{}
 func (*numberExampleDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (n *numberExampleDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, _ proto.Step) (metas [][]byte, err error) {
+func (n *numberExampleDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
 	switch task.Step {
 	case proto.StepInit:
 		for i := 0; i < subtaskCnt; i++ {

@@ -70,6 +70,7 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 	ctx context.Context,
 	taskHandle dispatcher.TaskHandle,
 	gTask *proto.Task,
+	serverInfo []*infosync.ServerInfo,
 	nextStep proto.Step,
 ) (taskMeta [][]byte, err error) {
 	logger := logutil.BgLogger().With(
@@ -95,12 +96,7 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 		if tblInfo.Partition != nil {
 			return generatePartitionPlan(tblInfo)
 		}
-		is, err := dsp.GetEligibleInstances(ctx, gTask)
-		if err != nil {
-			return nil, err
-		}
-		instanceCnt := len(is)
-		return generateNonPartitionPlan(dsp.d, tblInfo, job, dsp.GlobalSort, instanceCnt)
+		return generateNonPartitionPlan(dsp.d, tblInfo, job, dsp.GlobalSort, len(serverInfo))
 	case StepMergeSort:
 		res, err := generateMergePlan(taskHandle, gTask, logger)
 		if err != nil {

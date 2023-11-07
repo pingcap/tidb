@@ -201,6 +201,7 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 	ctx context.Context,
 	taskHandle dispatcher.TaskHandle,
 	gTask *proto.Task,
+	serverInfos []*infosync.ServerInfo,
 	nextStep proto.Step,
 ) (
 	resSubtaskMeta [][]byte, err error) {
@@ -299,9 +300,12 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 		return nil, errors.Errorf("unknown step %d", gTask.Step)
 	}
 
-	eligibleInstances, err := dsp.GetEligibleInstances(ctx, gTask)
-	if err != nil {
-		logger.Warn("failed to get eligible instances", zap.Error(err))
+	executeNodesCnt := 0
+	// For non-dist mode.
+	if len(taskMeta.EligibleInstances) > 0 {
+		executeNodesCnt = len(taskMeta.EligibleInstances)
+	} else {
+		executeNodesCnt = len(serverInfos)
 	}
 
 	planCtx := planner.PlanCtx{
@@ -310,7 +314,7 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 		PreviousSubtaskMetas: previousSubtaskMetas,
 		GlobalSort:           dsp.GlobalSort,
 		NextTaskStep:         nextStep,
-		ExecuteNodesCnt:      len(eligibleInstances),
+		ExecuteNodesCnt:      executeNodesCnt,
 	}
 	logicalPlan := &LogicalPlan{}
 	if err := logicalPlan.FromTaskMeta(gTask.Meta); err != nil {
