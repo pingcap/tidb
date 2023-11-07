@@ -143,7 +143,7 @@ func TestCompare(t *testing.T) {
 		args := bf.getArgs()
 		require.Equal(t, test.tp, args[0].GetType().GetType())
 		require.Equal(t, test.tp, args[1].GetType().GetType())
-		res, isNil, err := bf.evalInt(chunk.Row{})
+		res, isNil, err := bf.evalInt(ctx, chunk.Row{})
 		require.NoError(t, err)
 		require.False(t, isNil)
 		require.Equal(t, test.expected, res)
@@ -274,12 +274,12 @@ func TestIntervalFunc(t *testing.T) {
 		f, err := fc.getFunction(ctx, datumsToConstants(test.args))
 		require.NoError(t, err)
 		if test.getErr {
-			v, err := evalBuiltinFunc(f, chunk.Row{})
+			v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 			require.Error(t, err)
 			require.Equal(t, test.ret, v.GetInt64())
 			continue
 		}
-		v, err := evalBuiltinFunc(f, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		require.Equal(t, test.ret, v.GetInt64())
 	}
