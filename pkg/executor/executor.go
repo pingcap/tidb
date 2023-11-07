@@ -199,6 +199,7 @@ func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
 	default:
 		msg = "Out of Unknown Resource Quota!"
 	}
+	// TODO(hawkingrei): should return error instead.
 	panic(msg)
 }
 
