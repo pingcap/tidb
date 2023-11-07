@@ -109,14 +109,22 @@ func (l *List) Add(chk *Chunk) {
 		// TODO: return error here.
 		panic("chunk appended to List should have at least 1 row")
 	}
+
+	memoryDelta := int64(0)
 	if chkIdx := len(l.chunks) - 1; l.consumedIdx != chkIdx {
-		l.memTracker.Consume(l.chunks[chkIdx].MemoryUsage())
+		memoryDelta += l.chunks[chkIdx].MemoryUsage()
 		l.consumedIdx = chkIdx
 	}
-	l.memTracker.Consume(chk.MemoryUsage())
+	memoryDelta += chk.MemoryUsage()
 	l.consumedIdx++
 	l.chunks = append(l.chunks, chk)
 	l.length += chk.NumRows()
+
+	// Memory consumption must be at the end this function as it may trigger spill.
+	// Suppose we put memory consumption before the updating of l.chunks and l.length.
+	// When the spill is triggered, the List's update has not been completed and these
+	// updates can not be seen by the spill action, this will cause unexpected behaviour.
+	l.memTracker.Consume(memoryDelta)
 }
 
 func (l *List) allocChunk() (chk *Chunk) {

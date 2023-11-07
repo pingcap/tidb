@@ -33,6 +33,9 @@ var ErrCannotAddBecauseSorted = errors.New("can not add because sorted")
 
 const RowPtrSize = int(unsafe.Sizeof(chunk.RowPtr{}))
 
+// SignalCheckpointForSort indicates the times of row comparation that a signal detection will be triggered.
+const SignalCheckpointForSort uint = 10240
+
 type SortPartition struct {
 	inMemory *chunk.List
 
@@ -44,9 +47,10 @@ type SortPartition struct {
 
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
-	actionSpill *chunk.SpillDiskAction
+	spillAction *SortPartitionSpillDiskAction
 
 	ptrM struct {
+		// TODO do we need mutex?
 		sync.RWMutex
 		// rowPtrs store the chunk index and row index for each row.
 		// rowPtrs != nil indicates the pointer is initialized and sorted.
@@ -68,35 +72,39 @@ type SortPartition struct {
 // NewSortPartition creates a new SortPartition in memory.
 func NewSortPartition(fieldType []*types.FieldType, chunkSize int, byItemsDesc []bool,
 	keyColumns []int, keyCmpFuncs []chunk.CompareFunc) *SortPartition {
-	return &SortPartition{
+	retVal := &SortPartition{
 		inMemory:    chunk.NewList(fieldType, chunkSize, chunkSize),
 		inDisk:      nil, // It's initialized only when spill is triggered
 		spillError:  nil,
 		memTracker:  memory.NewTracker(memory.LabelForSortPartition, -1),
 		diskTracker: disk.NewTracker(memory.LabelForSortPartition, -1),
-		actionSpill: nil, // It's set in ActionSpill function
+		spillAction: nil, // It's set in ActionSpill function
 		ByItemsDesc: byItemsDesc,
 		keyColumns:  keyColumns,
 		keyCmpFuncs: keyCmpFuncs,
 	}
+
+	retVal.inMemory.GetMemTracker().AttachTo(retVal.memTracker)
+	return retVal
 }
 
 // Close close the SortPartition
-func (c *SortPartition) Close() error {
-	c.ptrM.Lock()
-	defer c.ptrM.Unlock()
+func (s *SortPartition) Close() error {
+	s.ptrM.Lock()
+	defer s.ptrM.Unlock()
 	// TODO do we need to release the memory consumption of chunks
-	c.GetMemTracker().Consume(int64(-RowPtrSize * len(c.ptrM.rowPtrs)))
-	c.ptrM.rowPtrs = nil
+	s.GetMemTracker().Consume(int64(-RowPtrSize * len(s.ptrM.rowPtrs)))
+	s.ptrM.rowPtrs = nil
+	s.inMemory.Clear()
 	return nil
 }
 
-func (c *SortPartition) lessRow(rowI, rowJ chunk.Row) bool {
-	for i, colIdx := range c.keyColumns {
-		cmpFunc := c.keyCmpFuncs[i]
+func (s *SortPartition) lessRow(rowI, rowJ chunk.Row) bool {
+	for i, colIdx := range s.keyColumns {
+		cmpFunc := s.keyCmpFuncs[i]
 		if cmpFunc != nil {
 			cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
-			if c.ByItemsDesc[i] {
+			if s.ByItemsDesc[i] {
 				cmp = -cmp
 			}
 			if cmp < 0 {
@@ -109,35 +117,32 @@ func (c *SortPartition) lessRow(rowI, rowJ chunk.Row) bool {
 	return false
 }
 
-// SignalCheckpointForSort indicates the times of row comparation that a signal detection will be triggered.
-const SignalCheckpointForSort uint = 10240
-
 // keyColumnsLess is the less function for key columns.
-func (c *SortPartition) keyColumnsLess(i, j int) bool {
-	if c.timesOfRowCompare >= SignalCheckpointForSort {
+func (s *SortPartition) keyColumnsLess(i, j int) bool {
+	if s.timesOfRowCompare >= SignalCheckpointForSort {
 		// Trigger Consume for checking the NeedKill signal
-		c.memTracker.Consume(1)
-		c.timesOfRowCompare = 0
+		s.memTracker.Consume(1)
+		s.timesOfRowCompare = 0
 	}
 
 	failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
 		if val.(bool) {
-			c.timesOfRowCompare += 1024
+			s.timesOfRowCompare += 1024
 		}
 	})
 
-	c.timesOfRowCompare++
-	rowI := c.inMemory.GetRow(c.ptrM.rowPtrs[i])
-	rowJ := c.inMemory.GetRow(c.ptrM.rowPtrs[j])
-	return c.lessRow(rowI, rowJ)
+	s.timesOfRowCompare++
+	rowI := s.inMemory.GetRow(s.ptrM.rowPtrs[i])
+	rowJ := s.inMemory.GetRow(s.ptrM.rowPtrs[j])
+	return s.lessRow(rowI, rowJ)
 }
 
 // Sort inits pointers and sorts the records.
 // We shouldn't call this function after spill.
-func (c *SortPartition) Sort() (ret error) {
+func (s *SortPartition) Sort() (ret error) {
 	// TODO do we need these locks?
-	c.ptrM.Lock()
-	defer c.ptrM.Unlock()
+	s.ptrM.Lock()
+	defer s.ptrM.Unlock()
 	ret = nil
 	defer func() {
 		if r := recover(); r != nil {
@@ -150,16 +155,16 @@ func (c *SortPartition) Sort() (ret error) {
 	}()
 
 	// TODO do we need to judge this?
-	if c.ptrM.rowPtrs != nil {
+	if s.ptrM.rowPtrs != nil {
 		return
 	}
 
-	c.ptrM.rowPtrs = make([]chunk.RowPtr, 0, c.inMemory.Len()) // The memory usage has been tracked in SortPartition.Add() function
-	chunkNum := c.inMemory.NumChunks()
+	s.ptrM.rowPtrs = make([]chunk.RowPtr, 0, s.inMemory.Len()) // The memory usage has been tracked in SortPartition.Add() function
+	chunkNum := s.inMemory.NumChunks()
 	for chkIdx := 0; chkIdx < chunkNum; chkIdx++ {
-		chk := c.inMemory.GetChunk(chkIdx)
+		chk := s.inMemory.GetChunk(chkIdx)
 		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
-			c.ptrM.rowPtrs = append(c.ptrM.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
+			s.ptrM.rowPtrs = append(s.ptrM.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
 		}
 	}
 
@@ -170,77 +175,57 @@ func (c *SortPartition) Sort() (ret error) {
 	})
 
 	// sort here
-	sort.Slice(c.ptrM.rowPtrs, c.keyColumnsLess)
+	sort.Slice(s.ptrM.rowPtrs, s.keyColumnsLess)
 	return
 }
 
-// SpillToDisk spills data to disk. This function may be called in parallel.
-func (c *SortPartition) SpillToDisk() {
+// SpillToDisk spills data to disk.
+func (s *SortPartition) SpillToDisk() {
 	// TODO
-	// err := c.Sort()
-	// c.spillToDisk(err)
+	// err := s.Sort()
+	// s.spillToDisk(err)
 }
 
-func (c *SortPartition) hasEnoughDataToSpill(t *memory.Tracker) bool {
+func (s *SortPartition) hasEnoughDataToSpill(t *memory.Tracker) bool {
 	// Guarantee that each partition size is at least 10% of the threshold, to avoid opening too many files.
-	return c.GetMemTracker().BytesConsumed() > t.GetBytesLimit()/10
+	return s.GetMemTracker().BytesConsumed() > t.GetBytesLimit()/10
 }
 
 // Add appends a chunk into the SortPartition.
-func (c *SortPartition) Add(chk *chunk.Chunk) (err error) {
-	c.ptrM.RLock()
-	defer c.ptrM.RUnlock()
-	if c.ptrM.rowPtrs != nil {
-		return ErrCannotAddBecauseSorted
+func (s *SortPartition) Add(chk *chunk.Chunk) bool {
+	s.ptrM.RLock()
+	defer s.ptrM.RUnlock()
+	if s.ptrM.rowPtrs != nil {
+		return false // TODO do we need this?
 	}
+
+	if s.spillAction.isSpillTriggered() {
+		return false
+	}
+
 	// Consume the memory usage of rowPtrs in advance
-	c.GetMemTracker().Consume(int64(RowPtrSize * chk.NumRows()))
-	// return c.RowContainer.Add(chk)
-	return nil
+	// Memory usage of chunks will be added in `s.inMemory.Add(chk)`
+	s.GetMemTracker().Consume(int64(RowPtrSize * chk.NumRows()))
+	if s.spillAction.isSpillTriggered() {
+		return false
+	}
+
+	s.inMemory.Add(chk)
+	return true
 }
 
 // ActionSpill returns a SortAndSpillDiskAction for sorting and spilling over to disk.
-func (c *SortPartition) ActionSpill() *chunk.SortAndSpillDiskAction {
-	// if c.actionSpill == nil {
-	// 	c.actionSpill = &chunk.SortAndSpillDiskAction{
-	// 		c:                   c,
-	// 		baseSpillDiskAction: c.RowContainer.ActionSpill().baseSpillDiskAction,
-	// 	}
-	// }
-	// return c.actionSpill
-	return nil
-}
-
-// ActionSpillForTest returns a SortAndSpillDiskAction for sorting and spilling over to disk for test.
-func (c *SortPartition) ActionSpillForTest() *SortPartitionSpillDiskAction {
-	// c.actionSpill = &SortAndSpillDiskAction{
-	// 	c:                   c,
-	// 	baseSpillDiskAction: c.RowContainer.ActionSpillForTest().baseSpillDiskAction,
-	// }
-	// return c.actionSpill
-	return nil
+func (s *SortPartition) ActionSpill() *SortPartitionSpillDiskAction {
+	if s.spillAction == nil {
+		s.spillAction = &SortPartitionSpillDiskAction{
+			partition:      s,
+			spillTriggered: false,
+		}
+	}
+	return s.spillAction
 }
 
 // GetMemTracker return the memory tracker for the SortPartition
-func (c *SortPartition) GetMemTracker() *memory.Tracker {
-	return c.memTracker
-}
-
-// SortAndSpillDiskAction implements memory.ActionOnExceed for chunk.List. If
-// the memory quota of a query is exceeded, SortAndSpillDiskAction.Action is
-// triggered.
-type SortPartitionSpillDiskAction struct {
-	c *SortPartition
-	// *baseSpillDiskAction
-}
-
-// Action sends a signal to trigger sortAndSpillToDisk method of RowContainer
-// and if it is already triggered before, call its fallbackAction.
-func (a *SortPartitionSpillDiskAction) Action(t *memory.Tracker) {
-	// a.action(t, a.c)
-}
-
-// WaitForTest waits all goroutine have gone.
-func (a *SortPartitionSpillDiskAction) WaitForTest() {
-	// a.testWg.Wait()
+func (s *SortPartition) GetMemTracker() *memory.Tracker {
+	return s.memTracker
 }
