@@ -110,6 +110,13 @@ func (p *Pool) release(b []byte) {
 	}
 }
 
+func (p *Pool) PreAllocWithPoolSize(size int) *Pool {
+	for i := 0; i < size; i++ {
+		p.blockCache <- p.allocator.Alloc(p.blockSize)
+	}
+	return p
+}
+
 // NewBuffer creates a new buffer in current pool.
 func (p *Pool) NewBuffer() *Buffer {
 	return &Buffer{pool: p, bufs: make([][]byte, 0, 128), curBufIdx: -1}
