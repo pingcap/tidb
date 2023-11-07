@@ -86,7 +86,7 @@ func (s *statsReadWriter) InsertColStats2KV(physicalID int64, colInfos []*model.
 			count := req.GetRow(0).GetInt64(0)
 			for _, colInfo := range colInfos {
 				value := types.NewDatum(colInfo.GetOriginDefaultValue())
-				value, err = value.ConvertTo(sctx.GetSessionVars().StmtCtx, &colInfo.FieldType)
+				value, err = value.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), &colInfo.FieldType)
 				if err != nil {
 					return err
 				}
@@ -100,7 +100,7 @@ func (s *statsReadWriter) InsertColStats2KV(physicalID int64, colInfos []*model.
 					if _, err := util.Exec(sctx, "insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, tot_col_size) values (%?, %?, 0, %?, 1, %?)", startTS, physicalID, colInfo.ID, int64(len(value.GetBytes()))*count); err != nil {
 						return err
 					}
-					value, err = value.ConvertTo(sctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
+					value, err = value.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
 					if err != nil {
 						return err
 					}
@@ -161,7 +161,8 @@ func (s *statsReadWriter) ChangeGlobalStatsID(from, to int64) (err error) {
 	}, util.FlagWrapTxn)
 }
 
-// ResetTableStats2KVForDrop resets the count to 0.
+// ResetTableStats2KVForDrop update the version of mysql.stats_meta.
+// Then GC worker will delete the old version of stats.
 func (s *statsReadWriter) ResetTableStats2KVForDrop(physicalID int64) (err error) {
 	statsVer := uint64(0)
 	defer func() {

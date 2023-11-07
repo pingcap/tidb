@@ -143,7 +143,6 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 }
 
 // Optimize does optimization and creates a Plan.
-// The node must be prepared first.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plan core.Plan, slice types.NameSlice, retErr error) {
 	sessVars := sctx.GetSessionVars()
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
@@ -398,7 +397,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 }
 
 // OptimizeForForeignKeyCascade does optimization and creates a Plan for foreign key cascade.
-// The node must be prepared first.
 // Compare to Optimize, OptimizeForForeignKeyCascade only build plan by StmtNode,
 // doesn't consider plan cache and plan binding, also doesn't do privilege check.
 func OptimizeForForeignKeyCascade(ctx context.Context, sctx sessionctx.Context, node ast.StmtNode, is infoschema.InfoSchema) (core.Plan, error) {
@@ -519,6 +517,8 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	if !isLogicalPlan {
 		return p, names, 0, nil
 	}
+
+	core.RecheckCTE(logic)
 
 	// Handle the logical plan statement, use cascades planner if enabled.
 	if sessVars.GetEnableCascadesPlanner() {

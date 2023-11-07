@@ -266,6 +266,7 @@ func main() {
 		checkTempStorageQuota()
 	}
 	setupLog()
+	memory.InitMemoryHook()
 	setupExtensions()
 	setupStmtSummary()
 

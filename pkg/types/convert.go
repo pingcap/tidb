@@ -26,7 +26,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/hack"
 )
 
@@ -220,17 +219,17 @@ func convertScientificNotation(str string) (string, error) {
 		}
 		// 123.456 >> 5 = 12345600
 		return f[:point] + f[point+1:] + strings.Repeat("0", point+int(exp)-len(f)+1), nil
-	} else { // move point left
-		exp = -exp
-		if int(exp) < point { // 123.456 << 2 = 1.23456
-			return f[:point-int(exp)] + "." + f[point-int(exp):point] + f[point+1:], nil
-		}
-		// 123.456 << 5 = 0.00123456
-		return "0." + strings.Repeat("0", int(exp)-point) + f[:point] + f[point+1:], nil
 	}
+	// move point left
+	exp = -exp
+	if int(exp) < point { // 123.456 << 2 = 1.23456
+		return f[:point-int(exp)] + "." + f[point-int(exp):point] + f[point+1:], nil
+	}
+	// 123.456 << 5 = 0.00123456
+	return "0." + strings.Repeat("0", int(exp)-point) + f[:point] + f[point+1:], nil
 }
 
-func convertDecimalStrToUint(sc *stmtctx.StatementContext, str string, upperBound uint64, tp byte) (uint64, error) {
+func convertDecimalStrToUint(str string, upperBound uint64, tp byte) (uint64, error) {
 	str, err := convertScientificNotation(str)
 	if err != nil {
 		return 0, err
@@ -271,8 +270,8 @@ func convertDecimalStrToUint(sc *stmtctx.StatementContext, str string, upperBoun
 }
 
 // ConvertDecimalToUint converts a decimal to a uint by converting it to a string first to avoid float overflow (#10181).
-func ConvertDecimalToUint(sc *stmtctx.StatementContext, d *MyDecimal, upperBound uint64, tp byte) (uint64, error) {
-	return convertDecimalStrToUint(sc, string(d.ToString()), upperBound, tp)
+func ConvertDecimalToUint(d *MyDecimal, upperBound uint64, tp byte) (uint64, error) {
+	return convertDecimalStrToUint(string(d.ToString()), upperBound, tp)
 }
 
 // StrToInt converts a string to an integer at the best-effort.

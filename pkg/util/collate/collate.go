@@ -106,9 +106,8 @@ func CompatibleCollate(collate1, collate2 string) bool {
 		return true
 	} else if (collate1 == "utf8mb4_unicode_ci" || collate1 == "utf8_unicode_ci") && (collate2 == "utf8mb4_unicode_ci" || collate2 == "utf8_unicode_ci") {
 		return true
-	} else {
-		return collate1 == collate2
 	}
+	return collate1 == collate2
 }
 
 // RewriteNewCollationIDIfNeeded rewrites a collation id if the new collations are enabled.

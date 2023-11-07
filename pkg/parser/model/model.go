@@ -15,7 +15,6 @@ package model
 
 import (
 	"bytes"
-	"cmp"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -1710,7 +1709,7 @@ func (db *DBInfo) Copy() *DBInfo {
 
 // LessDBInfo is used for sorting DBInfo by DBInfo.Name.
 func LessDBInfo(a *DBInfo, b *DBInfo) int {
-	return cmp.Compare(a.Name.L, b.Name.L)
+	return strings.Compare(a.Name.L, b.Name.L)
 }
 
 // CIStr is case insensitive string.

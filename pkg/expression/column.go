@@ -100,7 +100,7 @@ func (col *CorrelatedColumn) EvalInt(ctx sessionctx.Context, row chunk.Row) (int
 		return 0, true, nil
 	}
 	if col.GetType().Hybrid() {
-		res, err := col.Data.ToInt64(ctx.GetSessionVars().StmtCtx)
+		res, err := col.Data.ToInt64(ctx.GetSessionVars().StmtCtx.TypeCtx())
 		return res, err != nil, err
 	}
 	return col.Data.GetInt64(), false, nil
@@ -425,7 +425,7 @@ func (col *Column) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, 
 			val, err := val.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx.TypeCtx())
 			return int64(val), err != nil, err
 		}
-		res, err := val.ToInt64(ctx.GetSessionVars().StmtCtx)
+		res, err := val.ToInt64(ctx.GetSessionVars().StmtCtx.TypeCtx())
 		return res, err != nil, err
 	}
 	if row.IsNull(col.Index) {
@@ -703,7 +703,7 @@ func (col *Column) SupportReverseEval() bool {
 
 // ReverseEval evaluates the only one column value with given function result.
 func (col *Column) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
-	return types.ChangeReverseResultByUpperLowerBound(sc, col.RetType, res, rType)
+	return types.ChangeReverseResultByUpperLowerBound(sc.TypeCtx(), col.RetType, res, rType)
 }
 
 // Coercibility returns the coercibility value which is used to check collations.
