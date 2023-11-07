@@ -4,12 +4,6 @@ import "github.com/pingcap/tidb/pkg/parser/model"
 
 // Event contains the information of a ddl event that is used to update stats.
 type Event struct {
-	// We expose the action type field to the outside, because some ddl events
-	// do not need other fields.
-	// If your ddl event needs other fields, please add them with the
-	// corresponding NewXXXEvent function and give them clear names.
-	Tp model.ActionType
-
 	// For different ddl types, the following fields are used.
 	// They have different meanings for different ddl types.
 	// Please do **not** use these fields directly, use the corresponding
@@ -18,6 +12,12 @@ type Event struct {
 	partInfo     *model.PartitionInfo
 	oldTableInfo *model.TableInfo
 	oldPartInfo  *model.PartitionInfo
+
+	// We expose the action type field to the outside, because some ddl events
+	// do not need other fields.
+	// If your ddl event needs other fields, please add them with the
+	// corresponding NewXXXEvent function and give them clear names.
+	Tp model.ActionType
 }
 
 // NewCreateTableEvent creates a new ddl event that creates a table.
