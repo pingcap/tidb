@@ -41,12 +41,12 @@ func MergeOverlappingFiles(ctx context.Context, paths []string, store storage.Ex
 		zap.Int("file-groups", len(dataFilesSlice)),
 		zap.Int("concurrency", concurrency),
 		zap.String("memory-limit", units.BytesSize(float64(memSize))))
-	var eg errgroup.Group
+	eg, egCtx := errgroup.WithContext(ctx)
 	for _, files := range dataFilesSlice {
 		files := files
 		eg.Go(func() error {
 			return mergeOverlappingFilesImpl(
-				ctx,
+				egCtx,
 				files,
 				store,
 				readBufferSize,
