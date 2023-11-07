@@ -650,66 +650,24 @@ func (stm *TaskManager) IsSchedulerCanceled(execID string, taskID int64) (bool, 
 }
 
 // UpdateSubtasksSchedulerIDs update subtasks' schedulerID.
-// ywq todo bug....
 func (stm *TaskManager) UpdateSubtasksSchedulerIDs(taskID int64, subtasks []*proto.Subtask) error {
 	// skip the update process.
 	if len(subtasks) == 0 {
 		return nil
 	}
-
-	sql := new(strings.Builder)
-	if err := sqlescape.FormatSQL(sql, "update mysql.tidb_background_subtask set exec_id = (case "); err != nil {
-		return err
-	}
-	for _, subtask := range subtasks {
-		if err := sqlescape.FormatSQL(sql, "when id = %? then %?", subtask.ID, subtask.SchedulerID); err != nil {
-			return err
-		}
-	}
-	if err := sqlescape.FormatSQL(sql, "else exec_id end) where task_key = %?", taskID); err != nil {
-		return err
-	}
-
-	_, err := stm.executeSQLWithNewSession(stm.ctx, sql.String())
-	return err
-}
-
-// UpdateFailedSchedulerIDs replace failed scheduler nodes with alive nodes.
-func (stm *TaskManager) UpdateFailedSchedulerIDs(taskID int64, replaceNodes map[string]string) error {
-	// skip
-	if len(replaceNodes) == 0 {
-		return nil
-	}
-
-	sql := new(strings.Builder)
-	if err := sqlescape.FormatSQL(sql, "update mysql.tidb_background_subtask set state = %? ,exec_id = (case ", proto.TaskStatePending); err != nil {
-		return err
-	}
-	for k, v := range replaceNodes {
-		if err := sqlescape.FormatSQL(sql, "when exec_id = %? then %? ", k, v); err != nil {
-			return err
-		}
-	}
-	if err := sqlescape.FormatSQL(sql, " end) where task_key = %? and state != \"succeed\" and exec_id in (", taskID); err != nil {
-		return err
-	}
-	i := 0
-	for k := range replaceNodes {
-		if i != 0 {
-			if err := sqlescape.FormatSQL(sql, ","); err != nil {
+	err := stm.WithNewTxn(stm.ctx, func(se sessionctx.Context) error {
+		for _, subtask := range subtasks {
+			_, err := ExecSQL(stm.ctx, se,
+				"update mysql.tidb_background_subtask set exec_id = %? where id = %? and state = %?",
+				subtask.SchedulerID,
+				subtask.ID,
+				subtask.State)
+			if err != nil {
 				return err
 			}
 		}
-		if err := sqlescape.FormatSQL(sql, "%?", k); err != nil {
-			return err
-		}
-		i++
-	}
-	if err := sqlescape.FormatSQL(sql, ")"); err != nil {
-		return err
-	}
-
-	_, err := stm.executeSQLWithNewSession(stm.ctx, sql.String())
+		return nil
+	})
 	return err
 }
 
