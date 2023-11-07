@@ -310,11 +310,11 @@ func (do *Domain) AddRunawayWatch(record *resourcegroup.QuarantineRecord) (uint6
 		return 0, err
 	}
 	for retry := 0; retry < maxIDRetries; retry++ {
-		select {
-		case <-do.exit:
-			return 0, err
-		case <-time.After(time.Millisecond * time.Duration(retry*100)):
-			if retry > 0 {
+		if retry > 0 {
+			select {
+			case <-do.exit:
+				return 0, err
+			case <-time.After(time.Millisecond * time.Duration(retry*100)):
 				logutil.BgLogger().Warn("failed to get last insert id when adding runaway watch", zap.Error(err))
 			}
 		}
