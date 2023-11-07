@@ -2352,7 +2352,7 @@ func TestApplyCache(t *testing.T) {
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values (1),(1),(1),(1),(1),(1),(1),(1),(1);")
 	tk.MustExec("analyze table t;")
-	result := tk.MustQuery("explain analyze SELECT count(1) FROM (SELECT (SELECT min(a) FROM t as t2 WHERE t2.a > t1.a) AS a from t as t1) t;")
+	result := tk.MustQuery("explain analyze SELECT count(a) FROM (SELECT (SELECT min(a) FROM t as t2 WHERE t2.a > t1.a) AS a from t as t1) t;")
 	require.Contains(t, result.Rows()[1][0], "Apply")
 	var (
 		ind  int
@@ -2372,7 +2372,7 @@ func TestApplyCache(t *testing.T) {
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values (1),(2),(3),(4),(5),(6),(7),(8),(9);")
 	tk.MustExec("analyze table t;")
-	result = tk.MustQuery("explain analyze SELECT count(1) FROM (SELECT (SELECT min(a) FROM t as t2 WHERE t2.a > t1.a) AS a from t as t1) t;")
+	result = tk.MustQuery("explain analyze SELECT count(a) FROM (SELECT (SELECT min(a) FROM t as t2 WHERE t2.a > t1.a) AS a from t as t1) t;")
 	require.Contains(t, result.Rows()[1][0], "Apply")
 	flag = false
 	value = (result.Rows()[1][5]).(string)
