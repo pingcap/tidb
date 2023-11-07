@@ -839,6 +839,8 @@ const (
 	LabelForMemDB int = -28
 	// LabelForCursorFetch represents the label of the execution of cursor fetch
 	LabelForCursorFetch int = -29
+	// LabelForSortPartition represents the label of the sort partition
+	LabelForSortPartition = -30
 )
 
 // MetricsTypes is used to get label for metrics
