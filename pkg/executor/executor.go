@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/aggregate"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/pdhelper"
+	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -102,12 +103,12 @@ var (
 	_ exec.Executor = &ShowDDLExec{}
 	_ exec.Executor = &ShowDDLJobsExec{}
 	_ exec.Executor = &ShowDDLJobQueriesExec{}
-	_ exec.Executor = &SortExec{}
+	_ exec.Executor = &sortexec.SortExec{}
 	_ exec.Executor = &aggregate.StreamAggExec{}
 	_ exec.Executor = &TableDualExec{}
 	_ exec.Executor = &TableReaderExecutor{}
 	_ exec.Executor = &TableScanExec{}
-	_ exec.Executor = &TopNExec{}
+	_ exec.Executor = &sortexec.TopNExec{}
 	_ exec.Executor = &UnionExec{}
 	_ exec.Executor = &FastCheckTableExec{}
 

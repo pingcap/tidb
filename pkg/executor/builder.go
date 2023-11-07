@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/vecgroupchecker"
 	"github.com/pingcap/tidb/pkg/executor/lockstats"
 	executor_metrics "github.com/pingcap/tidb/pkg/executor/metrics"
+	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -1297,7 +1298,7 @@ func (b *executorBuilder) buildTrace(v *plannercore.Trace) exec.Executor {
 		optimizerTraceTarget: v.OptimizerTraceTarget,
 	}
 	if t.format == plannercore.TraceFormatLog && !t.optimizerTrace {
-		return &SortExec{
+		return &sortexec.SortExec{
 			BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), t),
 			ByItems: []*plannerutil.ByItems{
 				{Expr: &expression.Column{
@@ -1305,7 +1306,7 @@ func (b *executorBuilder) buildTrace(v *plannercore.Trace) exec.Executor {
 					RetType: types.NewFieldType(mysql.TypeTimestamp),
 				}},
 			},
-			schema: v.Schema(),
+			ExecSchema: v.Schema(),
 		}
 	}
 	return t
@@ -2245,10 +2246,10 @@ func (b *executorBuilder) buildSort(v *plannercore.PhysicalSort) exec.Executor {
 	if b.err != nil {
 		return nil
 	}
-	sortExec := SortExec{
+	sortExec := sortexec.SortExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
 		ByItems:      v.ByItems,
-		schema:       v.Schema(),
+		ExecSchema:   v.Schema(),
 	}
 	executor_metrics.ExecutorCounterSortExec.Inc()
 	return &sortExec
@@ -2259,15 +2260,15 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) exec.Executor {
 	if b.err != nil {
 		return nil
 	}
-	sortExec := SortExec{
+	sortExec := sortexec.SortExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
 		ByItems:      v.ByItems,
-		schema:       v.Schema(),
+		ExecSchema:   v.Schema(),
 	}
 	executor_metrics.ExecutorCounterTopNExec.Inc()
-	return &TopNExec{
+	return &sortexec.TopNExec{
 		SortExec: sortExec,
-		limit:    &plannercore.PhysicalLimit{Count: v.Count, Offset: v.Offset},
+		Limit:    &plannercore.PhysicalLimit{Count: v.Count, Offset: v.Offset},
 	}
 }
 
