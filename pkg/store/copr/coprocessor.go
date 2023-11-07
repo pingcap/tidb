@@ -1685,7 +1685,13 @@ func (worker *copIteratorWorker) handleCopCache(task *copTask, resp *copResponse
 				resp.pbResp.Range = nil
 			}
 		}
-		resp.detail.CoprCacheHit = true
+		// If the coprocessor cache key of the task is same whether `worker.enableCollectExecutionInfo` is true or false,
+		// the cache may be hit when `worker.enableCollectExecutionInfo` is false, but the `detail` is nil.
+		// Check `resp.detail` to avoid panic.
+		// Details: https://github.com/pingcap/tidb/issues/48212
+		if resp.detail != nil {
+			resp.detail.CoprCacheHit = true
+		}
 		return nil
 	}
 	copr_metrics.CoprCacheCounterMiss.Add(1)
