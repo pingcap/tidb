@@ -122,7 +122,6 @@ func TestAddIndexDistCancel(t *testing.T) {
 	tk.MustExec(`set global tidb_enable_dist_task=0;`)
 }
 
-// TODO: flaky test which can't find the root cause, will run it later.
 func TestAddIndexDistPauseAndResume(t *testing.T) {
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	if store.Name() != "TiKV" {
