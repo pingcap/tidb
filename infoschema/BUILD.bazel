@@ -123,6 +123,7 @@ go_test(
         "@com_github_prometheus_prometheus//promql",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//testutils",
+        "@io_etcd_go_etcd_client_v3//:client",
         "@org_golang_google_grpc//:grpc",
         "@org_uber_go_goleak//:goleak",
     ],
