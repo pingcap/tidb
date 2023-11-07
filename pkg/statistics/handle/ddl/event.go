@@ -5,7 +5,7 @@ import "github.com/pingcap/tidb/pkg/parser/model"
 type Event struct {
 	// We expose the action type field to the outside, because some DDL events
 	// do not need other fields.
-	// If your DDL event needs other fields, please add them to the
+	// If your DDL event needs other fields, please add them with the
 	// corresponding NewXXXEvent function and give them clear names.
 	Tp model.ActionType
 
@@ -63,9 +63,9 @@ func (e *Event) getDropTableInfo() (newTableInfo *model.TableInfo) {
 	return e.oldTableInfo
 }
 
-// NewAddOrModifyColumnEvent creates a new DDL event that
-// adds or modifies a column.
-func NewAddOrModifyColumnEvent(
+// NewAddColumnEvent creates a new DDL event that
+// adds a column.
+func NewAddColumnEvent(
 	newTableInfoWithNewColumnInfo *model.TableInfo,
 ) *Event {
 	return &Event{
@@ -74,7 +74,22 @@ func NewAddOrModifyColumnEvent(
 	}
 }
 
-func (e *Event) getAddOrModifyColumnInfo() (newTableInfoWithNewColumnInfo *model.TableInfo) {
+func (e *Event) getAddColumnInfo() (newTableInfoWithNewColumnInfo *model.TableInfo) {
+	return e.tableInfo
+}
+
+// NewModifyColumnEvent creates a new DDL event that
+// modifies a column.
+func NewModifyColumnEvent(
+	newTableInfoWithNewColumnInfo *model.TableInfo,
+) *Event {
+	return &Event{
+		Tp:        model.ActionModifyColumn,
+		tableInfo: newTableInfoWithNewColumnInfo,
+	}
+}
+
+func (e *Event) getModifyColumnInfo() (newTableInfoWithNewColumnInfo *model.TableInfo) {
 	return e.tableInfo
 }
 
