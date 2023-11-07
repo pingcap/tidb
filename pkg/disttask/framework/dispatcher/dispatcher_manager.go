@@ -132,7 +132,7 @@ func (dm *Manager) Start() {
 	})
 	dm.wg.Run(dm.dispatchTaskLoop)
 	dm.wg.Run(dm.gcSubtaskHistoryTableLoop)
-	dm.wg.Run(dm.cleanUpLoop)
+	//dm.wg.Run(dm.cleanUpLoop)
 	dm.inited = true
 }
 
