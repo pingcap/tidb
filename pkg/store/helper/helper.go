@@ -152,6 +152,17 @@ func (h *Helper) GetMvccByEncodedKeyWithTS(encodedKey kv.Key, startTS uint64) (*
 
 		// Try to resolve the lock and retry mvcc get again if the input startTS is a valid value.
 		if startTS > 0 && mvccResp.Info.GetLock() != nil {
+			latestTS, err := h.Store.GetOracle().GetLowResolutionTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+			if err != nil {
+				logutil.BgLogger().Warn("Failed to get latest ts", zap.Error(err))
+				return nil, err
+			}
+			if startTS > latestTS {
+				errMsg := fmt.Sprintf("Snapshot ts=%v is larger than latest allocated ts=%v, lock could not be resolved",
+					startTS, latestTS)
+				logutil.BgLogger().Warn(errMsg)
+				return nil, errors.New(errMsg)
+			}
 			lockInfo := mvccResp.Info.GetLock()
 			lock := &txnlock.Lock{
 				Key:             []byte(encodedKey),
