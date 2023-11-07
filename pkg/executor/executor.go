@@ -490,11 +490,12 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 	}
 	req.AppendString(11, job.State.String())
 	if job.Type == model.ActionMultiSchemaChange {
+		isDistTask := job.ReorgMeta != nil && job.ReorgMeta.IsDistReorg
 		for _, subJob := range job.MultiSchemaInfo.SubJobs {
 			req.AppendInt64(0, job.ID)
 			req.AppendString(1, schemaName)
 			req.AppendString(2, tableName)
-			req.AppendString(3, subJob.Type.String()+" /* subjob */"+showAddIdxReorgTpInSubJob(subJob))
+			req.AppendString(3, subJob.Type.String()+" /* subjob */"+showAddIdxReorgTpInSubJob(subJob, isDistTask))
 			req.AppendString(4, subJob.SchemaState.String())
 			req.AppendInt64(5, job.SchemaID)
 			req.AppendInt64(6, job.TableID)
@@ -524,7 +525,9 @@ func showAddIdxReorgTp(job *model.Job) string {
 			if len(tp) > 0 {
 				sb.WriteString(" /* ")
 				sb.WriteString(tp)
-				if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge && job.ReorgMeta.UseCloudStorage {
+				if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge &&
+					job.ReorgMeta.IsDistReorg &&
+					job.ReorgMeta.UseCloudStorage {
 					sb.WriteString(" cloud")
 				}
 				sb.WriteString(" */")
@@ -535,14 +538,14 @@ func showAddIdxReorgTp(job *model.Job) string {
 	return ""
 }
 
-func showAddIdxReorgTpInSubJob(subJob *model.SubJob) string {
+func showAddIdxReorgTpInSubJob(subJob *model.SubJob, useDistTask bool) string {
 	if subJob.Type == model.ActionAddIndex || subJob.Type == model.ActionAddPrimaryKey {
 		sb := strings.Builder{}
 		tp := subJob.ReorgTp.String()
 		if len(tp) > 0 {
 			sb.WriteString(" /* ")
 			sb.WriteString(tp)
-			if subJob.ReorgTp == model.ReorgTypeLitMerge && subJob.UseCloud {
+			if subJob.ReorgTp == model.ReorgTypeLitMerge && useDistTask && subJob.UseCloud {
 				sb.WriteString(" cloud")
 			}
 			sb.WriteString(" */")

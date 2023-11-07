@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
@@ -121,6 +123,26 @@ func TestBackfillingDispatcherLocalMode(t *testing.T) {
 	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, gTask.Step)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(metas))
+}
+
+func TestCalculateRegionBatch(t *testing.T) {
+	// Test calculate in cloud storage.
+	batchCnt := ddl.CalculateRegionBatchForTest(100, 8, false)
+	require.Equal(t, 12, batchCnt)
+	batchCnt = ddl.CalculateRegionBatchForTest(2, 8, false)
+	require.Equal(t, 1, batchCnt)
+	batchCnt = ddl.CalculateRegionBatchForTest(8, 8, false)
+	require.Equal(t, 1, batchCnt)
+
+	// Test calculate in local storage.
+	variable.DDLDiskQuota.Store(96 * units.MiB * 1000)
+	batchCnt = ddl.CalculateRegionBatchForTest(100, 8, true)
+	require.Equal(t, 12, batchCnt)
+	batchCnt = ddl.CalculateRegionBatchForTest(2, 8, true)
+	require.Equal(t, 1, batchCnt)
+	variable.DDLDiskQuota.Store(96 * units.MiB * 2)
+	batchCnt = ddl.CalculateRegionBatchForTest(24, 8, true)
+	require.Equal(t, 2, batchCnt)
 }
 
 func TestBackfillingDispatcherGlobalSortMode(t *testing.T) {
