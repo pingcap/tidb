@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/executor/aggregate"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/executor/sort_exec"
+	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -1647,7 +1647,7 @@ func prepare4MergeJoin(tc *mergeJoinTestCase, innerDS, outerDS *mockDataSource, 
 
 	var leftExec, rightExec exec.Executor
 	if sorted {
-		leftSortExec := &sort_exec.SortExec{
+		leftSortExec := &sortexec.SortExec{
 			BaseExecutor: exec.NewBaseExecutor(tc.ctx, innerDS.Schema(), 3, innerDS),
 			ByItems:      make([]*util.ByItems, 0, len(tc.innerJoinKeyIdx)),
 			ExecSchema:   innerDS.Schema(),
@@ -1657,7 +1657,7 @@ func prepare4MergeJoin(tc *mergeJoinTestCase, innerDS, outerDS *mockDataSource, 
 		}
 		leftExec = leftSortExec
 
-		rightSortExec := &sort_exec.SortExec{
+		rightSortExec := &sortexec.SortExec{
 			BaseExecutor: exec.NewBaseExecutor(tc.ctx, outerDS.Schema(), 4, outerDS),
 			ByItems:      make([]*util.ByItems, 0, len(tc.outerJoinKeyIdx)),
 			ExecSchema:   outerDS.Schema(),
@@ -1918,7 +1918,7 @@ func benchmarkSortExec(b *testing.B, cas *sortCase) {
 		ndvs:   cas.ndvs,
 	}
 	dataSource := buildMockDataSource(opt)
-	executor := &sort_exec.SortExec{
+	executor := &sortexec.SortExec{
 		BaseExecutor: exec.NewBaseExecutor(cas.ctx, dataSource.Schema(), 4, dataSource),
 		ByItems:      make([]*util.ByItems, 0, len(cas.orderByIdx)),
 		ExecSchema:   dataSource.Schema(),

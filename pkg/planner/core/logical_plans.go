@@ -1753,6 +1753,9 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 	if len(conds) == 0 {
 		return nil
 	}
+	// for cnf condition combination, c=1 and c=2 and (1 member of (a)),
+	// c=1 and c=2 will derive invalid range represented by an access condition as constant of 0 (false).
+	// later this constant of 0 will be built as empty range.
 	path.AccessConds, path.TableFilters = ranger.DetachCondsForColumn(ds.SCtx(), conds, pkCol)
 	// If there's no access cond, we try to find that whether there's expression containing correlated column that
 	// can be used to access data.

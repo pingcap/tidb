@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/executor/aggregate"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/executor/sort_exec"
+	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
@@ -291,7 +291,7 @@ func TestSortSpillDisk(t *testing.T) {
 		ndvs:   cas.ndvs,
 	}
 	dataSource := buildMockDataSource(opt)
-	exe := &sort_exec.SortExec{
+	exe := &sortexec.SortExec{
 		BaseExecutor: exec.NewBaseExecutor(cas.ctx, dataSource.Schema(), 0, dataSource),
 		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
 		ExecSchema:   dataSource.Schema(),
@@ -386,7 +386,7 @@ func TestSortSpillDisk(t *testing.T) {
 		ndvs:   cas.ndvs,
 	}
 	dataSource = buildMockDataSource(opt)
-	exe = &sort_exec.SortExec{
+	exe = &sortexec.SortExec{
 		BaseExecutor: exec.NewBaseExecutor(cas.ctx, dataSource.Schema(), 0, dataSource),
 		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
 		ExecSchema:   dataSource.Schema(),
