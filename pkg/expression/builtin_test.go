@@ -30,14 +30,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func evalBuiltinFuncConcurrent(f builtinFunc, row chunk.Row) (d types.Datum, err error) {
+func evalBuiltinFuncConcurrent(f builtinFunc, ctx sessionctx.Context, row chunk.Row) (d types.Datum, err error) {
 	var wg util.WaitGroupWrapper
 	concurrency := 10
 	var lock sync.Mutex
 	err = nil
 	for i := 0; i < concurrency; i++ {
 		wg.Run(func() {
-			di, erri := evalBuiltinFunc(f, chunk.Row{})
+			di, erri := evalBuiltinFunc(f, ctx, chunk.Row{})
 			lock.Lock()
 			if err == nil {
 				d, err = di, erri
@@ -49,7 +49,7 @@ func evalBuiltinFuncConcurrent(f builtinFunc, row chunk.Row) (d types.Datum, err
 	return
 }
 
-func evalBuiltinFunc(f builtinFunc, row chunk.Row) (d types.Datum, err error) {
+func evalBuiltinFunc(f builtinFunc, ctx sessionctx.Context, row chunk.Row) (d types.Datum, err error) {
 	var (
 		res    interface{}
 		isNull bool
@@ -57,24 +57,24 @@ func evalBuiltinFunc(f builtinFunc, row chunk.Row) (d types.Datum, err error) {
 	switch f.getRetTp().EvalType() {
 	case types.ETInt:
 		var intRes int64
-		intRes, isNull, err = f.evalInt(row)
+		intRes, isNull, err = f.evalInt(ctx, row)
 		if mysql.HasUnsignedFlag(f.getRetTp().GetFlag()) {
 			res = uint64(intRes)
 		} else {
 			res = intRes
 		}
 	case types.ETReal:
-		res, isNull, err = f.evalReal(row)
+		res, isNull, err = f.evalReal(ctx, row)
 	case types.ETDecimal:
-		res, isNull, err = f.evalDecimal(row)
+		res, isNull, err = f.evalDecimal(ctx, row)
 	case types.ETDatetime, types.ETTimestamp:
-		res, isNull, err = f.evalTime(row)
+		res, isNull, err = f.evalTime(ctx, row)
 	case types.ETDuration:
-		res, isNull, err = f.evalDuration(row)
+		res, isNull, err = f.evalDuration(ctx, row)
 	case types.ETJson:
-		res, isNull, err = f.evalJSON(row)
+		res, isNull, err = f.evalJSON(ctx, row)
 	case types.ETString:
-		res, isNull, err = f.evalString(row)
+		res, isNull, err = f.evalString(ctx, row)
 	}
 
 	if isNull || err != nil {
@@ -125,13 +125,13 @@ func TestIsNullFunc(t *testing.T) {
 	fc := funcs[ast.IsNull]
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(1)))
 	require.NoError(t, err)
-	v, err := evalBuiltinFunc(f, chunk.Row{})
+	v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, int64(0), v.GetInt64())
 
 	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
 	require.NoError(t, err)
-	v, err = evalBuiltinFunc(f, chunk.Row{})
+	v, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), v.GetInt64())
 }
@@ -141,14 +141,14 @@ func TestLock(t *testing.T) {
 	lock := funcs[ast.GetLock]
 	f, err := lock.getFunction(ctx, datumsToConstants(types.MakeDatums("mylock", 1)))
 	require.NoError(t, err)
-	v, err := evalBuiltinFunc(f, chunk.Row{})
+	v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), v.GetInt64())
 
 	releaseLock := funcs[ast.ReleaseLock]
 	f, err = releaseLock.getFunction(ctx, datumsToConstants(types.MakeDatums("mylock")))
 	require.NoError(t, err)
-	v, err = evalBuiltinFunc(f, chunk.Row{})
+	v, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), v.GetInt64())
 }
