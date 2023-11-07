@@ -138,14 +138,10 @@ TASKLOOP:
 	for _, task := range tasks {
 		select {
 		case taskCh <- task:
-		default:
-			select {
-			case <-e.errExitCh:
-				break TASKLOOP
-			case <-gctx.Done():
-				break TASKLOOP
-			default:
-			}
+		case <-e.errExitCh:
+			break TASKLOOP
+		case <-gctx.Done():
+			break TASKLOOP
 		}
 	}
 	close(taskCh)
