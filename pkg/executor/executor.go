@@ -17,6 +17,7 @@ package executor
 import (
 	"cmp"
 	"context"
+	stderrors "errors"
 	"fmt"
 	"math"
 	"runtime/pprof"
@@ -199,6 +200,7 @@ func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
 	default:
 		msg = "Out of Unknown Resource Quota!"
 	}
+	// TODO(hawkingrei): should return error instead.
 	panic(msg)
 }
 
@@ -1950,6 +1952,16 @@ func (e *UnionExec) Close() error {
 // ResetContextOfStmt resets the StmtContext and session variables.
 // Before every execution, we must clear statement context.
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Warn("ResetContextOfStmt panicked", zap.Stack("stack"), zap.Any("recover", r), zap.Error(err))
+			if err != nil {
+				err = stderrors.Join(err, util.GetRecoverError(r))
+			} else {
+				err = util.GetRecoverError(r)
+			}
+		}
+	}()
 	vars := ctx.GetSessionVars()
 	for name, val := range vars.StmtCtx.SetVarHintRestore {
 		err := vars.SetSystemVar(name, val)
