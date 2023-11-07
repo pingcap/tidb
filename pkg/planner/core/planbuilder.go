@@ -2823,7 +2823,10 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
 				continue
 			}
-			p.IdxTasks = append(p.IdxTasks, generateIndexTasks(idx, as, tbl.TableInfo, partitionNames, physicalIDs, version)...)
+			idxTasks := generateIndexTasks(idx, as, tbl, partitionNames, physicalIDs, version)
+			if idxTasks != nil {
+				p.IdxTasks = append(p.IdxTasks, idxTasks...)
+			}
 		}
 		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, true, nil)
 		if len(colInfo) > 0 || handleCols != nil {
@@ -2899,7 +2902,10 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
 			continue
 		}
-		p.IdxTasks = append(p.IdxTasks, generateIndexTasks(idx, as, tblInfo, names, physicalIDs, version)...)
+		idxTasks := generateIndexTasks(idx, as, as.TableNames[0], names, physicalIDs, version)
+		if idxTasks != nil {
+			p.IdxTasks = append(p.IdxTasks, idxTasks...)
+		}
 	}
 	return p, nil
 }
@@ -2930,7 +2936,10 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 				continue
 			}
 
-			p.IdxTasks = append(p.IdxTasks, generateIndexTasks(idx, as, tblInfo, names, physicalIDs, version)...)
+			idxTasks := generateIndexTasks(idx, as, as.TableNames[0], names, physicalIDs, version)
+			if idxTasks != nil {
+				p.IdxTasks = append(p.IdxTasks, idxTasks...)
+			}
 		}
 	}
 	handleCols := BuildHandleColsForAnalyze(b.ctx, tblInfo, true, nil)
@@ -2952,16 +2961,23 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 	return p, nil
 }
 
-func generateIndexTasks(idx *model.IndexInfo, as *ast.AnalyzeTableStmt, tblInfo *model.TableInfo, names []string, physicalIDs []int64, version int) []AnalyzeIndexTask {
+func generateIndexTasks(idx *model.IndexInfo, as *ast.AnalyzeTableStmt, tbl *ast.TableName, names []string, physicalIDs []int64, version int) []AnalyzeIndexTask {
+	tblInfo := tbl.TableInfo
+
+	isAnalyzeTable := len(as.PartitionNames) == 0
 	if idx.Global {
-		info := AnalyzeInfo{
-			DBName:        as.TableNames[0].Schema.O,
-			TableName:     as.TableNames[0].Name.O,
-			PartitionName: "",
-			TableID:       statistics.AnalyzeTableID{TableID: tblInfo.ID, PartitionID: -1},
-			StatsVersion:  version,
+		if isAnalyzeTable {
+			info := AnalyzeInfo{
+				DBName:        as.TableNames[0].Schema.O,
+				TableName:     as.TableNames[0].Name.O,
+				PartitionName: "",
+				TableID:       statistics.AnalyzeTableID{TableID: tblInfo.ID, PartitionID: -1},
+				StatsVersion:  version,
+			}
+			return []AnalyzeIndexTask{{IndexInfo: idx, AnalyzeInfo: info, TblInfo: tblInfo}}
 		}
-		return []AnalyzeIndexTask{{IndexInfo: idx, AnalyzeInfo: info, TblInfo: tblInfo}}
+		// e.g, `analyze table t partition p`, global index is not analyzed
+		return nil
 	}
 
 	indexTasks := make([]AnalyzeIndexTask, 0, len(physicalIDs))

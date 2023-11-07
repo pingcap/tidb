@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
@@ -83,6 +84,95 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is = do.InfoSchema()
 	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tt"))
+	require.NoError(t, err)
+	require.NoError(t, h.Update(is))
+	h.HandleAutoAnalyze(is)
+	require.NoError(t, h.Update(is))
+	statsTbl2 := h.GetTableStats(tbl2.Meta())
+	// Since it's a newly created table. Auto analyze should analyze it's statistics to version2.
+	for _, idx := range statsTbl2.Indices {
+		require.Equal(t, int64(2), idx.GetStatsVer())
+	}
+	for _, col := range statsTbl2.Columns {
+		require.Equal(t, int64(2), col.GetStatsVer())
+	}
+	tk.MustExec("set @@global.tidb_analyze_version = 1")
+}
+
+func TestAutoAnalyzeForGlobalIndex(t *testing.T) {
+	restoreConfig := config.RestoreFunc()
+	defer restoreConfig()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t ( a int, b int, c int default 0)
+						PARTITION BY RANGE (a) (
+							PARTITION p0 VALUES LESS THAN (10),
+							PARTITION p1 VALUES LESS THAN (20),
+							PARTITION p2 VALUES LESS THAN (30),
+							PARTITION p3 VALUES LESS THAN (40))`)
+	tk.MustExec("INSERT INTO t(a, b) values(1, 1), (2, 2), (3, 3), (15, 15), (25, 25), (35, 35)")
+	tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b)")
+	tk.MustExec("set @@global.tidb_analyze_version = 1")
+	do := dom
+	autoanalyze.AutoAnalyzeMinCnt = 0
+	defer func() {
+		autoanalyze.AutoAnalyzeMinCnt = 1000
+	}()
+	h := do.StatsHandle()
+	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	require.NoError(t, err)
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	is := do.InfoSchema()
+	require.NoError(t, h.Update(is))
+	// Auto analyze when global ver is 1.
+	h.HandleAutoAnalyze(is)
+	require.NoError(t, h.Update(is))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	statsTbl1 := h.GetTableStats(tbl.Meta())
+	// Check that all the version of t's stats are 1.
+	for _, col := range statsTbl1.Columns {
+		require.Equal(t, int64(1), col.GetStatsVer())
+	}
+	for _, idx := range statsTbl1.Indices {
+		require.Equal(t, int64(1), idx.GetStatsVer())
+	}
+	tk.MustExec("set @@global.tidb_analyze_version = 2")
+	tk.MustExec("insert into t(a,b) values(4,4), (5,5), (16,16), (26,26)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(is))
+	// Auto analyze t whose version is 1 after setting global ver to 2.
+	h.HandleAutoAnalyze(is)
+	require.NoError(t, h.Update(is))
+	statsTbl1 = h.GetTableStats(tbl.Meta())
+	require.Equal(t, int64(10), statsTbl1.RealtimeCount)
+	// All of its statistics should still be version 1.
+	for _, col := range statsTbl1.Columns {
+		require.Equal(t, int64(1), col.GetStatsVer())
+	}
+	for _, idx := range statsTbl1.Indices {
+		require.Equal(t, int64(1), idx.GetStatsVer())
+	}
+	// Add a new table after the analyze version set to 2.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`CREATE TABLE t ( a int, b int, c int default 0)
+						PARTITION BY RANGE (a) (
+							PARTITION p0 VALUES LESS THAN (10),
+							PARTITION p1 VALUES LESS THAN (20),
+							PARTITION p2 VALUES LESS THAN (30),
+							PARTITION p3 VALUES LESS THAN (40))`)
+	tk.MustExec("insert into t(a,b) values(1,1), (2,2), (3,3), (15,15), (25,25)")
+	tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b)")
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	require.NoError(t, err)
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	is = do.InfoSchema()
+	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	require.NoError(t, h.Update(is))
 	h.HandleAutoAnalyze(is)

@@ -376,12 +376,31 @@ func autoAnalyzePartitionTableInDynamicMode(sctx sessionctx.Context,
 				zap.Any("partitions", partitionNames[start:end]))
 			execAutoAnalyze(sctx, statsHandle, tableStatsVer, sql, params...)
 		}
+		for _, idx := range tblInfo.Indices {
+			if idx.Global && idx.State == model.StatePublic {
+				sql := "analyze table %n.%n index %n"
+				params := []interface{}{db, tblInfo.Name.O, idx.Name.O}
+				execAutoAnalyze(sctx, statsHandle, tableStatsVer, sql, params...)
+			}
+		}
+
 		return true
 	}
 	for _, idx := range tblInfo.Indices {
 		if idx.State != model.StatePublic {
 			continue
 		}
+		if idx.Global {
+			statsTbl := statsHandle.GetTableStats(tblInfo)
+			if _, ok := statsTbl.Indices[idx.ID]; !ok {
+				statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
+				sql := "analyze table %n.%n index %n"
+				params := []interface{}{db, tblInfo.Name.O, idx.Name.O}
+				execAutoAnalyze(sctx, statsHandle, tableStatsVer, sql, params...)
+			}
+			continue
+		}
+
 		for _, def := range partitionDefs {
 			partitionStatsTbl := statsHandle.GetPartitionStats(tblInfo, def.ID)
 			if _, ok := partitionStatsTbl.Indices[idx.ID]; !ok {
