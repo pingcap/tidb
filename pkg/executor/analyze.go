@@ -122,7 +122,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	// needGlobalStats used to indicate whether we should merge the partition-level stats to global-level stats.
 	needGlobalStats := pruneMode == variable.Dynamic
 	globalStatsMap := make(map[globalStatsKey]globalStatsInfo)
-	g, _ := errgroup.WithContext(ctx)
+	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
 		return e.handleResultsError(ctx, concurrency, needGlobalStats, globalStatsMap, resultsCh, len(tasks))
 	})
@@ -137,9 +137,15 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 TASKLOOP:
 	for _, task := range tasks {
 		select {
-		case <-e.errExitCh:
-			break TASKLOOP
 		case taskCh <- task:
+		default:
+			select {
+			case <-e.errExitCh:
+				break TASKLOOP
+			case <-gctx.Done():
+				break TASKLOOP
+			default:
+			}
 		}
 	}
 	close(taskCh)
