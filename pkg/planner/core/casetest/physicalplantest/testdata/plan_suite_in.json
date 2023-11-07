@@ -550,6 +550,10 @@
   {
     "name": "TestSingleConsumerCTE",
     "cases": [
+      "with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 1) select * from cte1; -- non-recursive limit, inline cte1",
+      "with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 100 offset 100) select * from cte1; -- non-recursive limit, inline cte1",
+      "with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 0 offset 0) select * from cte1; -- non-recursive limit, inline cte1",
+      "with cte1 as (select 1), cte2 as (select 2) select * from cte1 union (with cte2 as (select 3) select * from cte2 union all select * from cte2) -- inline cte1, not inline cte2",
       "with base1 as (WITH RECURSIVE cte(a) AS (with tmp as (select 1 as a) SELECT a from tmp UNION SELECT a+1 FROM cte) SELECT * FROM cte) select * from base1; -- issue #43318",
       "with cte as (select 1) select * from cte; -- inline cte",
       "with cte1 as (select 1), cte2 as (select 2) select * from cte1 union select * from cte2; -- inline cte1, cte2",

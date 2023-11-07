@@ -3135,6 +3135,55 @@
     "Name": "TestSingleConsumerCTE",
     "Cases": [
       {
+        "SQL": "with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 1) select * from cte1; -- non-recursive limit, inline cte1",
+        "Plan": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─HashAgg 1.00 root  group by:Column#18, funcs:firstrow(Column#18)->Column#18",
+          "  └─Union 20000.00 root  ",
+          "    ├─TableReader 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─IndexReader 10000.00 root  index:IndexFullScan",
+          "      └─IndexFullScan 10000.00 cop[tikv] table:t2, index:c1(c1) keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 100 offset 100) select * from cte1; -- non-recursive limit, inline cte1",
+        "Plan": [
+          "Limit 100.00 root  offset:100, count:100",
+          "└─HashAgg 200.00 root  group by:Column#18, funcs:firstrow(Column#18)->Column#18",
+          "  └─Union 20000.00 root  ",
+          "    ├─TableReader 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─IndexReader 10000.00 root  index:IndexFullScan",
+          "      └─IndexFullScan 10000.00 cop[tikv] table:t2, index:c1(c1) keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 0 offset 0) select * from cte1; -- non-recursive limit, inline cte1",
+        "Plan": [
+          "TableDual 0.00 root  rows:0"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with cte1 as (select 1), cte2 as (select 2) select * from cte1 union (with cte2 as (select 3) select * from cte2 union all select * from cte2) -- inline cte1, not inline cte2",
+        "Plan": [
+          "HashAgg 3.00 root  group by:Column#9, funcs:firstrow(Column#9)->Column#9",
+          "└─Union 3.00 root  ",
+          "  ├─Projection 1.00 root  1->Column#9",
+          "  │ └─TableDual 1.00 root  rows:1",
+          "  └─Union 2.00 root  ",
+          "    ├─CTEFullScan 1.00 root CTE:cte2 data:CTE_2",
+          "    └─CTEFullScan 1.00 root CTE:cte2 data:CTE_2",
+          "CTE_2 1.00 root  Non-Recursive CTE",
+          "└─Projection(Seed Part) 1.00 root  3->Column#5",
+          "  └─TableDual 1.00 root  rows:1"
+        ],
+        "Warning": null
+      },
+      {
         "SQL": "with base1 as (WITH RECURSIVE cte(a) AS (with tmp as (select 1 as a) SELECT a from tmp UNION SELECT a+1 FROM cte) SELECT * FROM cte) select * from base1; -- issue #43318",
         "Plan": [
           "CTEFullScan 2.00 root CTE:cte data:CTE_3",
