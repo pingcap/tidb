@@ -86,6 +86,7 @@ func TestSchedulerRun(t *testing.T) {
 		ID: 1, Type: tp, Step: proto.StepOne, State: proto.TaskStatePending}, nil)
 	mockSubtaskTable.EXPECT().StartSubtask(taskID).Return(nil)
 	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).Return(runSubtaskErr)
+	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(taskID, proto.TaskStateFailed, gomock.Any()).Return(nil)
 	mockSubtaskExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
 
 	err = scheduler.Run(runCtx, task)
@@ -345,7 +346,7 @@ func TestScheduler(t *testing.T) {
 	mockSubtaskExecutor := mockexecute.NewMockSubtaskExecutor(ctrl)
 	mockExtension := mock.NewMockExtension(ctrl)
 	mockSubtaskTable.EXPECT().IsSchedulerCanceled(gomock.Any(), gomock.Any()).Return(false, nil).AnyTimes()
-
+	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(taskID, proto.TaskStateFailed, gomock.Any()).Return(nil)
 	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()
 
 	scheduler := NewBaseScheduler(ctx, "id", 1, mockSubtaskTable)
