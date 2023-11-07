@@ -583,7 +583,7 @@ func TestIsTrueOrFalse(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, isTrueSig)
 
-		isTrue, err := evalBuiltinFunc(isTrueSig, chunk.Row{})
+		isTrue, err := evalBuiltinFunc(isTrueSig, ctx, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(tc.isTrue), isTrue)
 	}
@@ -593,7 +593,7 @@ func TestIsTrueOrFalse(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, isFalseSig)
 
-		isFalse, err := evalBuiltinFunc(isFalseSig, chunk.Row{})
+		isFalse, err := evalBuiltinFunc(isFalseSig, ctx, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(tc.isFalse), isFalse)
 	}

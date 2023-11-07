@@ -52,6 +52,8 @@ const (
 
 	runawayRecordGCBatchSize       = 100
 	runawayRecordGCSelectBatchSize = runawayRecordGCBatchSize * 5
+
+	maxIDRetries = 3
 )
 
 var systemSchemaCIStr = model.NewCIStr("mysql")
@@ -175,11 +177,6 @@ func (do *Domain) runawayWatchSyncLoop() {
 	}
 }
 
-// AddRunawayWatch is used to add runaway watch item manually.
-func (do *Domain) AddRunawayWatch(record *resourcegroup.QuarantineRecord) error {
-	return do.handleRunawayWatch(record)
-}
-
 // GetRunawayWatchList is used to get all items from runaway watch list.
 func (do *Domain) GetRunawayWatchList() []*resourcegroup.QuarantineRecord {
 	return do.runawayManager.GetWatchList()
@@ -261,7 +258,7 @@ func (do *Domain) runawayRecordFlushLoop() {
 			go do.deleteExpiredRows("tidb_runaway_queries", "time", runawayRecordExpiredDuration)
 		case r := <-quarantineRecordCh:
 			go func() {
-				err := do.handleRunawayWatch(r)
+				_, err := do.AddRunawayWatch(r)
 				if err != nil {
 					logutil.BgLogger().Error("add runaway watch", zap.Error(err))
 				}
@@ -281,19 +278,20 @@ func (do *Domain) runawayRecordFlushLoop() {
 	}
 }
 
-func (do *Domain) handleRunawayWatch(record *resourcegroup.QuarantineRecord) error {
+// AddRunawayWatch is used to add runaway watch item manually.
+func (do *Domain) AddRunawayWatch(record *resourcegroup.QuarantineRecord) (uint64, error) {
 	se, err := do.sysSessionPool.Get()
 	defer func() {
 		do.sysSessionPool.Put(se)
 	}()
 	if err != nil {
-		return errors.Annotate(err, "get session failed")
+		return 0, errors.Annotate(err, "get session failed")
 	}
 	exec, _ := se.(sqlexec.SQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	_, err = exec.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	defer func() {
 		if err != nil {
@@ -308,7 +306,37 @@ func (do *Domain) handleRunawayWatch(record *resourcegroup.QuarantineRecord) err
 	}()
 	sql, params := record.GenInsertionStmt()
 	_, err = exec.ExecuteInternal(ctx, sql, params...)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	for retry := 0; retry < maxIDRetries; retry++ {
+		if retry > 0 {
+			select {
+			case <-do.exit:
+				return 0, err
+			case <-time.After(time.Millisecond * time.Duration(retry*100)):
+				logutil.BgLogger().Warn("failed to get last insert id when adding runaway watch", zap.Error(err))
+			}
+		}
+		var rs sqlexec.RecordSet
+		rs, err = exec.ExecuteInternal(ctx, `SELECT LAST_INSERT_ID();`)
+		if err != nil {
+			continue
+		}
+		var rows []chunk.Row
+		rows, err = sqlexec.DrainRecordSet(ctx, rs, 1)
+		//nolint: errcheck
+		rs.Close()
+		if err != nil {
+			continue
+		}
+		if len(rows) != 1 {
+			err = errors.Errorf("unexpected result length: %d", len(rows))
+			continue
+		}
+		return rows[0].GetUint64(0), nil
+	}
+	return 0, errors.Errorf("An error: %v occurred while getting the ID of the newly added watch record. Try querying information_schema.runaway_watches later", err)
 }
 
 func (do *Domain) handleRunawayWatchDone(record *resourcegroup.QuarantineRecord) error {
