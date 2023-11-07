@@ -50,7 +50,7 @@ func (t *topNSorter) Less(i, j int) bool {
 		v1 := t.rows[i].key[index]
 		v2 := t.rows[j].key[index]
 
-		ret, err := v1.Compare(t.sc, &v2, collate.GetCollator(collate.ProtoToCollation(by.Expr.FieldType.Collate)))
+		ret, err := v1.Compare(t.sc.TypeCtx(), &v2, collate.GetCollator(collate.ProtoToCollation(by.Expr.FieldType.Collate)))
 		if err != nil {
 			t.err = errors.Trace(err)
 			return true
@@ -99,7 +99,7 @@ func (t *topNHeap) Less(i, j int) bool {
 		v1 := t.rows[i].key[index]
 		v2 := t.rows[j].key[index]
 
-		ret, err := v1.Compare(t.sc, &v2, collate.GetCollator(collate.ProtoToCollation(by.Expr.FieldType.Collate)))
+		ret, err := v1.Compare(t.sc.TypeCtx(), &v2, collate.GetCollator(collate.ProtoToCollation(by.Expr.FieldType.Collate)))
 		if err != nil {
 			t.err = errors.Trace(err)
 			return true

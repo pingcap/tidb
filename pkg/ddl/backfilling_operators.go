@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"path"
 	"strconv"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -36,15 +35,16 @@ import (
 	util2 "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -170,7 +170,6 @@ func NewWriteIndexToExternalStoragePipeline(
 	totalRowCount *atomic.Int64,
 	metricCounter prometheus.Counter,
 	onClose external.OnCloseFunc,
-	bcctx ingest.BackendCtx,
 ) (*operator.AsyncPipeline, error) {
 	indexes := make([]table.Index, 0, len(idxInfos))
 	for _, idxInfo := range idxInfos {
@@ -187,8 +186,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	for i := 0; i < poolSize; i++ {
 		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, copReadBatchSize())
 	}
-	readerCnt := int(variable.GetDDLReorgWorkerCounter())
-	writerCnt := 1
+	readerCnt, writerCnt := expectedIngestWorkerCnt()
 
 	backend, err := storage.ParseBackend(extStoreURI, nil)
 	if err != nil {
@@ -199,21 +197,16 @@ func NewWriteIndexToExternalStoragePipeline(
 		return nil, err
 	}
 
-	var shareMu *sync.Mutex
-	if bcctx != nil {
-		shareMu = bcctx.GetLocalBackend().GetMutex()
-	}
-
 	memTotal, err := memory.MemTotal()
 	if err != nil {
 		return nil, err
 	}
-	memSize := (memTotal / 2) / uint64(len(indexes))
+	memSize := (memTotal / 2) / uint64(writerCnt) / uint64(len(indexes))
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
 	writeOp := NewWriteExternalStoreOperator(
-		ctx, copCtx, sessPool, jobID, subtaskID, tbl, indexes, extStore, srcChkPool, writerCnt, onClose, shareMu, memSize)
+		ctx, copCtx, sessPool, jobID, subtaskID, tbl, indexes, extStore, srcChkPool, writerCnt, onClose, memSize)
 	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, totalRowCount, metricCounter)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
@@ -402,6 +395,13 @@ type tableScanWorker struct {
 }
 
 func (w *tableScanWorker) HandleTask(task TableScanTask, sender func(IndexRecordChunk)) {
+	defer tidbutil.Recover(metrics.LblAddIndex, "handleTableScanTaskWithRecover", func() {
+		w.ctx.onError(errors.New("met panic in tableScanWorker"))
+	}, false)
+
+	failpoint.Inject("injectPanicForTableScan", func() {
+		panic("mock panic")
+	})
 	if w.se == nil {
 		sessCtx, err := w.sessPool.Get()
 		if err != nil {
@@ -490,7 +490,6 @@ func NewWriteExternalStoreOperator(
 	srcChunkPool chan *chunk.Chunk,
 	concurrency int,
 	onClose external.OnCloseFunc,
-	shareMu *sync.Mutex,
 	memoryQuota uint64,
 ) *WriteExternalStoreOperator {
 	pool := workerpool.NewWorkerPool(
@@ -503,7 +502,6 @@ func NewWriteExternalStoreOperator(
 				builder := external.NewWriterBuilder().
 					SetOnCloseFunc(onClose).
 					SetKeyDuplicationEncoding(index.Meta().Unique).
-					SetMutex(shareMu).
 					SetMemorySizeLimit(memoryQuota)
 				writerID := uuid.New().String()
 				prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
@@ -604,6 +602,14 @@ func (w *indexIngestWorker) HandleTask(rs IndexRecordChunk, send func(IndexWrite
 			w.srcChunkPool <- rs.Chunk
 		}
 	}()
+	defer tidbutil.Recover(metrics.LblAddIndex, "handleIndexIngtestTaskWithRecover", func() {
+		w.ctx.onError(errors.New("met panic in indexIngestWorker"))
+	}, false)
+
+	failpoint.Inject("injectPanicForIndexIngest", func() {
+		panic("mock panic")
+	})
+
 	result := IndexWriteResult{
 		ID: rs.ID,
 	}
@@ -734,13 +740,9 @@ func (s *indexWriteResultSink) flush() error {
 	failpoint.Inject("mockFlushError", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("mock flush error"))
 	})
-	flushMode := ingest.FlushModeForceLocalAndCheckDiskQuota
-	if s.tbl.GetPartitionedTable() != nil {
-		flushMode = ingest.FlushModeForceGlobal
-	}
 	for _, index := range s.indexes {
 		idxInfo := index.Meta()
-		_, _, err := s.backendCtx.Flush(idxInfo.ID, flushMode)
+		_, _, err := s.backendCtx.Flush(idxInfo.ID, ingest.FlushModeForceGlobal)
 		if err != nil {
 			if common.ErrFoundDuplicateKeys.Equal(err) {
 				err = convertToKeyExistsErr(err, idxInfo, s.tbl.Meta())

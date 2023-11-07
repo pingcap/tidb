@@ -24,7 +24,9 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 	"golang.org/x/exp/rand"
@@ -95,7 +97,7 @@ func TestMergeKVIter(t *testing.T) {
 	}
 
 	trackStore := &trackOpenMemStorage{MemStorage: memStore}
-	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5)
+	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5, true)
 	require.NoError(t, err)
 	// close one empty file immediately in NewMergeKVIter
 	require.EqualValues(t, 2, trackStore.opened.Load())
@@ -147,7 +149,7 @@ func TestOneUpstream(t *testing.T) {
 	}
 
 	trackStore := &trackOpenMemStorage{MemStorage: memStore}
-	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5)
+	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5, true)
 	require.NoError(t, err)
 	require.EqualValues(t, 1, trackStore.opened.Load())
 
@@ -184,14 +186,14 @@ func TestAllEmpty(t *testing.T) {
 	}
 
 	trackStore := &trackOpenMemStorage{MemStorage: memStore}
-	iter, err := NewMergeKVIter(ctx, []string{filenames[0]}, []uint64{0}, trackStore, 5)
+	iter, err := NewMergeKVIter(ctx, []string{filenames[0]}, []uint64{0}, trackStore, 5, false)
 	require.NoError(t, err)
 	require.EqualValues(t, 0, trackStore.opened.Load())
 	require.False(t, iter.Next())
 	require.NoError(t, iter.Error())
 	require.NoError(t, iter.Close())
 
-	iter, err = NewMergeKVIter(ctx, filenames, []uint64{0, 0}, trackStore, 5)
+	iter, err = NewMergeKVIter(ctx, filenames, []uint64{0, 0}, trackStore, 5, false)
 	require.NoError(t, err)
 	require.EqualValues(t, 0, trackStore.opened.Load())
 	require.False(t, iter.Next())
@@ -229,7 +231,7 @@ func TestCorruptContent(t *testing.T) {
 	}
 
 	trackStore := &trackOpenMemStorage{MemStorage: memStore}
-	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5)
+	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5, true)
 	require.NoError(t, err)
 	require.EqualValues(t, 2, trackStore.opened.Load())
 
@@ -317,7 +319,7 @@ func testMergeIterSwitchMode(t *testing.T, f func([]byte, int) []byte) {
 
 	offsets := make([]uint64, len(dataNames))
 
-	iter, err := NewMergeKVIter(context.Background(), dataNames, offsets, st, 2048)
+	iter, err := NewMergeKVIter(context.Background(), dataNames, offsets, st, 2048, true)
 	require.NoError(t, err)
 
 	for iter.Next() {
@@ -326,13 +328,44 @@ func testMergeIterSwitchMode(t *testing.T, f func([]byte, int) []byte) {
 	require.NoError(t, err)
 }
 
-func TestHotspot(t *testing.T) {
-	backup := checkHotspotPeriod
-	checkHotspotPeriod = 2
-	t.Cleanup(func() {
-		checkHotspotPeriod = backup
-	})
+type eofReader struct {
+	storage.ExternalFileReader
+}
 
+func (r eofReader) Seek(_ int64, _ int) (int64, error) {
+	return 0, nil
+}
+
+func (r eofReader) Read(_ []byte) (int, error) {
+	return 0, io.EOF
+}
+
+func TestReadAfterCloseConnReader(t *testing.T) {
+	ctx := context.Background()
+
+	reader := &byteReader{
+		ctx:           ctx,
+		storageReader: eofReader{},
+		smallBuf:      []byte{0, 255, 255, 255, 255, 255, 255, 255},
+		curBufOffset:  8,
+		logger:        logutil.Logger(ctx),
+	}
+	reader.curBuf = reader.smallBuf
+	pool := membuf.NewPool()
+	reader.concurrentReader.largeBufferPool = pool.NewBuffer()
+	reader.concurrentReader.store = storage.NewMemStorage()
+
+	// set current reader to concurrent reader, and then close it
+	reader.concurrentReader.now = true
+	err := reader.switchConcurrentMode(false)
+	require.NoError(t, err)
+
+	wrapKVReader := &kvReader{reader}
+	_, _, err = wrapKVReader.nextKV()
+	require.ErrorIs(t, err, io.EOF)
+}
+
+func TestHotspot(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewMemStorage()
 
@@ -362,8 +395,9 @@ func TestHotspot(t *testing.T) {
 	}
 
 	// readerBufSize = 8+5+8+5, every KV will cause reload
-	iter, err := NewMergeKVIter(ctx, filenames, make([]uint64, len(filenames)), store, 26)
+	iter, err := NewMergeKVIter(ctx, filenames, make([]uint64, len(filenames)), store, 26, true)
 	require.NoError(t, err)
+	iter.iter.checkHotspotPeriod = 2
 	// after read key00 and key01 from reader_0, it becomes hotspot
 	require.True(t, iter.Next())
 	require.Equal(t, "key00", string(iter.Key()))
@@ -413,15 +447,10 @@ func TestHotspot(t *testing.T) {
 }
 
 func TestMemoryUsageWhenHotspotChange(t *testing.T) {
-	backup := checkHotspotPeriod
-	checkHotspotPeriod = 10
-	t.Cleanup(func() {
-		checkHotspotPeriod = backup
-	})
-	backup2 := ConcurrentReaderBufferSizePerConc
+	backup := ConcurrentReaderBufferSizePerConc
 	ConcurrentReaderBufferSizePerConc = 100 * 1024 * 1024 // 100MB, make memory leak more obvious
 	t.Cleanup(func() {
-		ConcurrentReaderBufferSizePerConc = backup2
+		ConcurrentReaderBufferSizePerConc = backup
 	})
 
 	getMemoryInUse := func() uint64 {
@@ -452,7 +481,7 @@ func TestMemoryUsageWhenHotspotChange(t *testing.T) {
 		rc.reset()
 		kvStore, err := NewKeyValueStore(ctx, writer, rc)
 		require.NoError(t, err)
-		for j := 0; j < checkHotspotPeriod; j++ {
+		for j := 0; j < 1000; j++ {
 			key := fmt.Sprintf("key%06d", cur)
 			val := fmt.Sprintf("value%06d", cur)
 			err = kvStore.addEncodedData(getEncodedData([]byte(key), []byte(val)))
@@ -470,8 +499,9 @@ func TestMemoryUsageWhenHotspotChange(t *testing.T) {
 
 	beforeMem := getMemoryInUse()
 
-	iter, err := NewMergeKVIter(ctx, filenames, make([]uint64, len(filenames)), store, 1024)
+	iter, err := NewMergeKVIter(ctx, filenames, make([]uint64, len(filenames)), store, 1024, true)
 	require.NoError(t, err)
+	iter.iter.checkHotspotPeriod = 10
 	i := 0
 	for cur > 0 {
 		cur--

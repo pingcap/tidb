@@ -20,10 +20,13 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/parser/model"
+=======
+>>>>>>> 6020ede2173c4c989db06cee1f3c5e635e5f0a0d
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"

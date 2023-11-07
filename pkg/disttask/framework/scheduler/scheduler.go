@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -32,7 +33,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -141,7 +144,7 @@ func (s *BaseScheduler) Run(ctx context.Context, task *proto.Task) (err error) {
 	return s.updateErrorToSubtask(task.ID, err)
 }
 
-func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
+func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) (resErr error) {
 	if ctx.Err() != nil {
 		s.onError(ctx.Err())
 		return s.getError()
@@ -150,7 +153,14 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 	defer runCancel(ErrFinishSubtask)
 	s.registerCancelFunc(runCancel)
 	s.resetError()
-	logutil.Logger(s.logCtx).Info("scheduler run a step", zap.Any("step", task.Step), zap.Any("concurrency", task.Concurrency))
+	stepLogger := log.BeginTask(logutil.Logger(s.logCtx).With(
+		zap.Any("step", task.Step),
+		zap.Uint64("concurrency", task.Concurrency),
+		zap.Float64("mem-limit-percent", gctuner.GlobalMemoryLimitTuner.GetPercentage()),
+		zap.String("server-mem-limit", memory.ServerMemoryLimitOriginText.Load()),
+	), "schedule step")
+	// log as info level, subtask might be cancelled, let caller check it.
+	defer stepLogger.End(zap.InfoLevel, resErr)
 
 	summary, cleanup, err := runSummaryCollectLoop(ctx, task, s.taskTable)
 	if err != nil {
@@ -476,13 +486,13 @@ func (s *BaseScheduler) onError(err error) {
 		return
 	}
 	err = errors.Trace(err)
-	logutil.Logger(s.logCtx).Error("onError", zap.Error(err))
+	logutil.Logger(s.logCtx).Error("onError", zap.Error(err), zap.Stack("stack"))
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if s.mu.err == nil {
 		s.mu.err = err
-		logutil.Logger(s.logCtx).Error("scheduler error", zap.Error(err))
+		logutil.Logger(s.logCtx).Error("scheduler met first error", zap.Error(err))
 	}
 
 	if s.mu.runtimeCancel != nil {
@@ -622,5 +632,8 @@ func (s *BaseScheduler) updateErrorToSubtask(taskID int64, err error) error {
 			return true, s.taskTable.UpdateErrorToSubtask(s.id, taskID, err)
 		},
 	)
+	if err1 == nil {
+		logger.Warn("update error to subtask success", zap.Error(err))
+	}
 	return err1
 }

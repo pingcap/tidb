@@ -182,9 +182,9 @@ type Builder struct {
 	// This map will indicate which DB has been copied, so that they
 	// don't need to be copied again.
 	dirtyDB map[string]bool
-	// TODO: store is only used by autoid allocators
-	// detach allocators from storage, use passed transaction in the feature
-	store kv.Storage
+
+	// Used by autoid allocators
+	autoid.Requirement
 
 	factory func() (pools.Resource, error)
 	bundleInfoBuilder
@@ -384,7 +384,7 @@ func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDi
 	}
 	// ntID is the new id for the partition!
 	b.markPartitionBundleShouldUpdate(ntID)
-	err = updateAutoIDForExchangePartition(b.store, ptSchemaID, ptID, ntSchemaID, ntID)
+	err = updateAutoIDForExchangePartition(b.Requirement.Store(), ptSchemaID, ptID, ntSchemaID, ntID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -821,7 +821,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	ConvertOldVersionUTF8ToUTF8MB4IfNeed(tblInfo)
 
 	if len(allocs.Allocs) == 0 {
-		allocs = autoid.NewAllocatorsFromTblInfo(b.store, dbInfo.ID, tblInfo)
+		allocs = autoid.NewAllocatorsFromTblInfo(b.Requirement, dbInfo.ID, tblInfo)
 	} else {
 		tblVer := autoid.AllocOptionTableInfoVersion(tblInfo.Version)
 		switch tp {
@@ -831,11 +831,11 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 			// and RowIDAllocType allocator for it. Because auto id and row id could share the same allocator.
 			// Allocate auto id may route to allocate row id, if row id allocator is nil, the program panic!
 			for _, tp := range [2]autoid.AllocatorType{autoid.AutoIncrementType, autoid.RowIDAllocType} {
-				newAlloc := autoid.NewAllocator(b.store, dbInfo.ID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), tp, tblVer, idCacheOpt)
+				newAlloc := autoid.NewAllocator(b.Requirement, dbInfo.ID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), tp, tblVer, idCacheOpt)
 				allocs = allocs.Append(newAlloc)
 			}
 		case model.ActionRebaseAutoRandomBase:
-			newAlloc := autoid.NewAllocator(b.store, dbInfo.ID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType, tblVer)
+			newAlloc := autoid.NewAllocator(b.Requirement, dbInfo.ID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType, tblVer)
 			allocs = allocs.Append(newAlloc)
 		case model.ActionModifyColumn:
 			// Change column attribute from auto_increment to auto_random.
@@ -844,7 +844,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 				allocs = allocs.Filter(func(a autoid.Allocator) bool {
 					return a.GetType() != autoid.AutoIncrementType && a.GetType() != autoid.RowIDAllocType
 				})
-				newAlloc := autoid.NewAllocator(b.store, dbInfo.ID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType, tblVer)
+				newAlloc := autoid.NewAllocator(b.Requirement, dbInfo.ID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType, tblVer)
 				allocs = allocs.Append(newAlloc)
 			}
 		}
@@ -1104,7 +1104,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 	b.is.schemaMap[di.Name.L] = schTbls
 
 	for _, t := range di.Tables {
-		allocs := autoid.NewAllocatorsFromTblInfo(b.store, di.ID, t)
+		allocs := autoid.NewAllocatorsFromTblInfo(b.Requirement, di.ID, t)
 		var tbl table.Table
 		tbl, err := tableFromMeta(allocs, t)
 		if err != nil {
@@ -1140,9 +1140,9 @@ func RegisterVirtualTable(dbInfo *model.DBInfo, tableFromMeta tableFromMetaFunc)
 }
 
 // NewBuilder creates a new Builder with a Handle.
-func NewBuilder(store kv.Storage, factory func() (pools.Resource, error)) *Builder {
+func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error)) *Builder {
 	return &Builder{
-		store: store,
+		Requirement: r,
 		is: &infoSchema{
 			schemaMap:             map[string]*schemaTables{},
 			policyMap:             map[string]*model.PolicyInfo{},

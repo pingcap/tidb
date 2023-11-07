@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -1930,54 +1929,6 @@ func TestWriteListColumnsPartitionTable1(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows())
 }
 
-func TestListPartitionWithAutoRandom(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec(`create table t (a bigint key auto_random (3), b int) partition by list (a%5) (partition p0 values in (0,1,2), partition p1 values in (3,4));`)
-	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
-	tk.MustExec("replace into t values  (1,1)")
-	result := []string{"1"}
-	for i := 2; i < 100; i++ {
-		sql := fmt.Sprintf("insert into t (b) values (%v)", i)
-		tk.MustExec(sql)
-		result = append(result, strconv.Itoa(i))
-	}
-	tk.MustQuery("select b from t order by b").Check(testkit.Rows(result...))
-	tk.MustExec("update t set b=b+1 where a=1")
-	tk.MustQuery("select b from t where a=1").Check(testkit.Rows("2"))
-	tk.MustExec("update t set b=b+1 where a<2")
-	tk.MustQuery("select b from t where a<2").Check(testkit.Rows("3"))
-	tk.MustExec("insert into t values (1, 1) on duplicate key update b=b+1")
-	tk.MustQuery("select b from t where a=1").Check(testkit.Rows("4"))
-}
-
-func TestListPartitionWithAutoIncrement(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec(`create table t (a bigint key auto_increment, b int) partition by list (a%5) (partition p0 values in (0,1,2), partition p1 values in (3,4));`)
-	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
-	tk.MustExec("replace into t values  (1,1)")
-	result := []string{"1"}
-	for i := 2; i < 100; i++ {
-		sql := fmt.Sprintf("insert into t (b) values (%v)", i)
-		tk.MustExec(sql)
-		result = append(result, strconv.Itoa(i))
-	}
-	tk.MustQuery("select b from t order by b").Check(testkit.Rows(result...))
-	tk.MustExec("update t set b=b+1 where a=1")
-	tk.MustQuery("select b from t where a=1").Check(testkit.Rows("2"))
-	tk.MustExec("update t set b=b+1 where a<2")
-	tk.MustQuery("select b from t where a<2").Check(testkit.Rows("3"))
-	tk.MustExec("insert into t values (1, 1) on duplicate key update b=b+1")
-	tk.MustQuery("select b from t where a=1").Check(testkit.Rows("4"))
-}
-
 func TestUpdate(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
@@ -2292,24 +2243,4 @@ func TestListColumnsPartitionWithGlobalIndex(t *testing.T) {
 		tk.MustQuery("select a from t partition (p0) order by a").Check(testkit.Rows("acd"))
 		tk.MustQuery("select a from t partition (p1) order by a").Check(testkit.Rows("bbb", "bbc"))
 	}
-}
-
-func TestMutipleReplaceAndInsertInOneSession(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t_securities(id bigint not null auto_increment primary key, security_id varchar(8), market_id smallint, security_type int, unique key uu(security_id, market_id))")
-	tk.MustExec(`insert into t_securities (security_id, market_id, security_type) values ("1", 2, 7), ("7", 1, 7) ON DUPLICATE KEY UPDATE security_type = VALUES(security_type)`)
-	tk.MustExec(`replace into t_securities (security_id, market_id, security_type) select security_id+1, 1, security_type from t_securities  where security_id="7";`)
-	tk.MustExec(`INSERT INTO t_securities (security_id, market_id, security_type) values ("1", 2, 7), ("7", 1, 7) ON DUPLICATE KEY UPDATE security_type = VALUES(security_type)`)
-
-	tk.MustQuery("select * from t_securities").Sort().Check(testkit.Rows("1 1 2 7", "2 7 1 7", "3 8 1 7"))
-
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use test")
-	tk2.MustExec(`insert into t_securities (security_id, market_id, security_type) values ("1", 2, 7), ("7", 1, 7) ON DUPLICATE KEY UPDATE security_type = VALUES(security_type)`)
-	tk2.MustExec(`insert into t_securities (security_id, market_id, security_type) select security_id+2, 1, security_type from t_securities  where security_id="7";`)
-	tk2.MustExec(`INSERT INTO t_securities (security_id, market_id, security_type) values ("1", 2, 7), ("7", 1, 7) ON DUPLICATE KEY UPDATE security_type = VALUES(security_type)`)
-
-	tk2.MustQuery("select * from t_securities").Sort().Check(testkit.Rows("1 1 2 7", "2 7 1 7", "3 8 1 7", "8 9 1 7"))
 }

@@ -102,3 +102,21 @@ a	中文
 b	一二三
 一二三	一二三
 中文	中文
+select 'a' collate utf8_roman_ci;
+Error 1273 (HY000): Unsupported collation when new collation is enabled: 'utf8_roman_ci'
+select cast('a' as char) collate utf8_roman_ci;
+Error 1273 (HY000): Unsupported collation when new collation is enabled: 'utf8_roman_ci'
+set names utf8 collate utf8_roman_ci;
+Error 1273 (HY000): Unsupported collation when new collation is enabled: 'utf8_roman_ci'
+set session collation_server = 'utf8_roman_ci';
+Error 1273 (HY000): Unsupported collation when new collation is enabled: 'utf8_roman_ci'
+set session collation_database = 'utf8_roman_ci';
+Error 1273 (HY000): Unsupported collation when new collation is enabled: 'utf8_roman_ci'
+set session collation_connection = 'utf8_roman_ci';
+Error 1273 (HY000): Unsupported collation when new collation is enabled: 'utf8_roman_ci'
+set global collation_server = 'utf8_roman_ci';
+Error 1273 (HY000): Unsupported collation when new collation is enabled: 'utf8_roman_ci'
+set global collation_database = 'utf8_roman_ci';
+Error 1273 (HY000): Unsupported collation when new collation is enabled: 'utf8_roman_ci'
+set global collation_connection = 'utf8_roman_ci';
+Error 1273 (HY000): Unsupported collation when new collation is enabled: 'utf8_roman_ci'

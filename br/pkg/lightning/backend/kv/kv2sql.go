@@ -104,7 +104,7 @@ func (t *TableKVDecoder) IterRawIndexKeys(h kv.Handle, rawRow []byte, fn func([]
 		}
 		iter := index.GenIndexKVIter(t.se.Vars.StmtCtx, indexValues, h, nil)
 		for iter.Valid() {
-			indexKey, _, _, err := iter.Next(indexBuffer)
+			indexKey, _, _, err := iter.Next(indexBuffer, nil)
 			if err != nil {
 				return err
 			}
