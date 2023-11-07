@@ -2289,7 +2289,10 @@ with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b 
 DROP TABLE IF EXISTS admin_checksum_partition_test;
 CREATE TABLE admin_checksum_partition_test (a INT) PARTITION BY HASH(a) PARTITIONS 4;
 INSERT INTO admin_checksum_partition_test VALUES (1), (2);
+## The result is different with TiKV and unistore
+--disable_result_log
 ADMIN CHECKSUM TABLE admin_checksum_partition_test;
+--enable_result_log
 
 # TestSQLMode
 drop table if exists t;

@@ -4036,8 +4036,6 @@ DROP TABLE IF EXISTS admin_checksum_partition_test;
 CREATE TABLE admin_checksum_partition_test (a INT) PARTITION BY HASH(a) PARTITIONS 4;
 INSERT INTO admin_checksum_partition_test VALUES (1), (2);
 ADMIN CHECKSUM TABLE admin_checksum_partition_test;
-Db_name	Table_name	Checksum_crc64_xor	Total_kvs	Total_bytes
-executor__executor	admin_checksum_partition_test	1	5	5
 drop table if exists t;
 create table t (a tinyint not null);
 set sql_mode = 'STRICT_TRANS_TABLES';
