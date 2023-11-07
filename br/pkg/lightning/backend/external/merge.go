@@ -3,6 +3,7 @@ package external
 import (
 	"context"
 
+	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -35,6 +36,11 @@ func MergeOverlappingFiles(ctx context.Context, paths []string, store storage.Ex
 	}
 	memSize := (memTotal / 2) / uint64(len(dataFilesSlice))
 
+	logutil.Logger(ctx).Info("start to merge overlapping files",
+		zap.Int("file-count", len(paths)),
+		zap.Int("file-groups", len(dataFilesSlice)),
+		zap.Int("concurrency", concurrency),
+		zap.String("memory-limit", units.BytesSize(float64(memSize))))
 	var eg errgroup.Group
 	for _, files := range dataFilesSlice {
 		files := files
