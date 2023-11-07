@@ -63,6 +63,7 @@ func NewKS3Storage(
 		return nil, errors.New("ks3 region is empty")
 	}
 	awsConfig.Region = qs.Region
+	awsConfig.DisableSSL = opts.DisableSSL
 
 	if qs.Endpoint != "" {
 		awsConfig.Endpoint = qs.Endpoint
@@ -325,7 +326,10 @@ func (rs *KS3Storage) DeleteFiles(_ context.Context, files []string) error {
 				Quiet:   boolP(false),
 			},
 		}
-		_ = rs.svc.DeleteObjects(input)
+		_, err := rs.svc.DeleteObjects(input)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		files = files[len(batch):]
 	}
 	return nil
@@ -662,12 +666,14 @@ func (rs *KS3Storage) Create(ctx context.Context, name string, option *WriterOpt
 	} else {
 		up := s3manager.NewUploader(&s3manager.UploadOptions{
 			Parallel: option.Concurrency,
+			S3:       rs.svc,
 		})
 		rd, wd := io.Pipe()
 		upParams := &s3manager.UploadInput{
 			Bucket: aws.String(rs.options.Bucket),
 			Key:    aws.String(rs.options.Prefix + name),
 			Body:   rd,
+			Size:   1024 * 1024 * 5, // ks3 SDK need to set this value to non-zero.
 		}
 		s3Writer := &s3ObjectWriter{wd: wd, wg: &sync.WaitGroup{}}
 		s3Writer.wg.Add(1)
