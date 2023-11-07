@@ -157,7 +157,7 @@ func TestGetInstance(t *testing.T) {
 		return gtk.Session(), nil
 	}, 1, 1, time.Second)
 	defer pool.Close()
-
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockSchedulerNodes", "return()"))
 	dspManager, mgr := MockDispatcherManager(t, pool)
 	// test no server
 	task := &proto.Task{ID: 1, Type: proto.TaskTypeExample}
@@ -173,7 +173,7 @@ func TestGetInstance(t *testing.T) {
 	uuids := []string{"ddl_id_1", "ddl_id_2"}
 	serverIDs := []string{"10.123.124.10:32457", "[ABCD:EF01:2345:6789:ABCD:EF01:2345:6789]:65535"}
 
-	mockedAllServerInfos = []*infosync.ServerInfo{
+	dispatcher.MockServerInfo = []*infosync.ServerInfo{
 		{
 			ID:   uuids[0],
 			IP:   "10.123.124.10",
@@ -214,6 +214,7 @@ func TestGetInstance(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, instanceIDs, len(serverIDs))
 	require.ElementsMatch(t, instanceIDs, serverIDs)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockSchedulerNodes"))
 }
 
 func TestTaskFailInManager(t *testing.T) {

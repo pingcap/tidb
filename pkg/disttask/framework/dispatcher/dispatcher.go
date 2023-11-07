@@ -625,8 +625,14 @@ func (d *BaseDispatcher) handlePlanErr(err error) error {
 	return d.updateTask(proto.TaskStateFailed, nil, RetrySQLTimes)
 }
 
+// MockServerInfo exported for dispatcher_test.go
+var MockServerInfo []*infosync.ServerInfo
+
 // GenerateSchedulerNodes generate a eligible TiDB nodes.
 func GenerateSchedulerNodes(ctx context.Context) (serverNodes []*infosync.ServerInfo, err error) {
+	failpoint.Inject("mockSchedulerNodes", func() {
+		failpoint.Return(MockServerInfo, nil)
+	})
 	var serverInfos map[string]*infosync.ServerInfo
 	_, etcd := ctx.Value("etcd").(bool)
 	if intest.InTest && !etcd {
