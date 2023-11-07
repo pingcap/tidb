@@ -311,6 +311,11 @@ func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tid
 		w.writeBatch = append(w.writeBatch, simpleKV{key: key, val: &val})
 	}
 	w.writeCnt++
+	if w.batchSize >= w.memSizeLimit {
+		if err := w.flushKVs(ctx, false); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
