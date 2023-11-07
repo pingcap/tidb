@@ -67,7 +67,7 @@ func TestGetJSON(t *testing.T) {
 	client := &http.Client{Timeout: time.Second}
 
 	response := TestPayload{}
-	err := common.GetJSON(ctx, client, "http://not-exists", &response)
+	err := common.GetJSON(ctx, client, "http://localhost:1", &response)
 	require.Error(t, err)
 	err = common.GetJSON(ctx, client, testServer.URL, &response)
 	require.NoError(t, err)

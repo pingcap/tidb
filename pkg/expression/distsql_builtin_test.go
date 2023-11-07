@@ -785,7 +785,7 @@ func TestEval(t *testing.T) {
 		result, err := expr.Eval(row)
 		require.NoError(t, err)
 		require.Equal(t, tt.result.Kind(), result.Kind())
-		cmp, err := result.Compare(sc, &tt.result, collate.GetCollator(fieldTps[0].GetCollate()))
+		cmp, err := result.Compare(sc.TypeCtx(), &tt.result, collate.GetCollator(fieldTps[0].GetCollate()))
 		require.NoError(t, err)
 		require.Equal(t, 0, cmp)
 	}
@@ -963,7 +963,7 @@ func newDuration(dur time.Duration) types.Duration {
 }
 
 func newDateTime(t *testing.T, s string) types.Time {
-	tt, err := types.ParseDate(nil, s)
+	tt, err := types.ParseDate(types.DefaultStmtNoWarningContext, s)
 	require.NoError(t, err)
 	return tt
 }

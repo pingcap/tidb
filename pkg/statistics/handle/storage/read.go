@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -34,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
@@ -75,8 +73,7 @@ func HistogramFromStorage(sctx sessionctx.Context, tableID int64, colID int64, t
 			// Invalid date values may be inserted into table under some relaxed sql mode. Those values may exist in statistics.
 			// Hence, when reading statistics, we should skip invalid date check. See #39336.
 			sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-			sc.AllowInvalidDate = true
-			sc.IgnoreZeroInDate = true
+			sc.SetTypeFlags(sc.TypeFlags().WithIgnoreInvalidDateErr(true).WithIgnoreZeroInDate(true))
 			d := rows[i].GetDatum(2, &fields[2].Column.FieldType)
 			// For new collation data, when storing the bounds of the histogram, we store the collate key instead of the
 			// original value.
@@ -88,12 +85,12 @@ func HistogramFromStorage(sctx sessionctx.Context, tableID int64, colID int64, t
 			if tp.EvalType() == types.ETString && tp.GetType() != mysql.TypeEnum && tp.GetType() != mysql.TypeSet {
 				tp = types.NewFieldType(mysql.TypeBlob)
 			}
-			lowerBound, err = d.ConvertTo(sc, tp)
+			lowerBound, err = d.ConvertTo(sc.TypeCtx(), tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			d = rows[i].GetDatum(3, &fields[3].Column.FieldType)
-			upperBound, err = d.ConvertTo(sc, tp)
+			upperBound, err = d.ConvertTo(sc.TypeCtx(), tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -189,7 +186,7 @@ func ExtendedStatsFromStorage(sctx sessionctx.Context, table *statistics.Table, 
 		return table, nil
 	}
 	for _, row := range rows {
-		lastVersion = mathutil.Max(lastVersion, row.GetUint64(5))
+		lastVersion = max(lastVersion, row.GetUint64(5))
 		name := row.GetString(0)
 		status := uint8(row.GetInt64(1))
 		if status == statistics.ExtendedStatsDeleted || status == statistics.ExtendedStatsInited {
@@ -451,8 +448,8 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 		return nil, nil
 	}
 	for _, row := range rows {
-		if atomic.LoadUint32(&sctx.GetSessionVars().Killed) == 1 {
-			return nil, errors.Trace(statistics.ErrQueryInterrupted)
+		if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+			return nil, err
 		}
 		if row.GetInt64(1) > 0 {
 			err = indexStatsFromStorage(sctx, row, table, tableInfo, loadAll, lease, tracker)

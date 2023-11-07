@@ -1315,23 +1315,6 @@ func TestPlanCacheWithStaleReadByBinaryProto(t *testing.T) {
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
 }
 
-func TestIssue30872(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_txn_mode='pessimistic'")
-	tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
-	tk.MustExec("create table t1 (id int primary key, v int)")
-	tk.MustExec("insert into t1 values(1, 10)")
-	time.Sleep(time.Millisecond * 100)
-	tk.MustExec("set @a=now(6)")
-	time.Sleep(time.Millisecond * 100)
-	tk.MustExec("update t1 set v=100 where id=1")
-	tk.MustExec("set autocommit=0")
-	tk.MustQuery("select * from t1 as of timestamp @a").Check(testkit.Rows("1 10"))
-}
-
 func TestIssue33728(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -1345,33 +1328,6 @@ func TestIssue33728(t *testing.T) {
 	err = tk.ExecToErr("start transaction read only as of timestamp NULL")
 	require.Error(t, err)
 	require.Equal(t, "[planner:8135]invalid as of timestamp: as of timestamp cannot be NULL", err.Error())
-}
-
-func TestIssue31954(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (id int primary key, v int)")
-	tk.MustExec("insert into t1 values(1, 10)")
-	time.Sleep(time.Millisecond * 100)
-	tk.MustExec("set @a=now(6)")
-	time.Sleep(time.Millisecond * 100)
-	tk.MustExec("update t1 set v=100 where id=1")
-
-	tk.MustQuery("select * from t1 as of timestamp @a where v=(select v from t1 as of timestamp @a where id=1)").
-		Check(testkit.Rows("1 10"))
-
-	tk.MustQuery("select (select v from t1 as of timestamp @a where id=1) as v").
-		Check(testkit.Rows("10"))
-}
-
-func TestIssue35686(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	// This query should not panic
-	tk.MustQuery("select * from information_schema.ddl_jobs as of timestamp now()")
 }
 
 func TestStalePrepare(t *testing.T) {

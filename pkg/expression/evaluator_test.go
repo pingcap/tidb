@@ -15,7 +15,6 @@
 package expression
 
 import (
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
 
@@ -152,7 +152,7 @@ func TestSleep(t *testing.T) {
 	start = time.Now()
 	go func() {
 		time.Sleep(1 * time.Second)
-		atomic.CompareAndSwapUint32(&ctx.GetSessionVars().Killed, 0, 1)
+		ctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 	}()
 	ret, isNull, err = f.evalInt(chunk.Row{})
 	sub = time.Since(start)
@@ -206,7 +206,7 @@ func TestBinopComparison(t *testing.T) {
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		val, err := v.ToBool(ctx.GetSessionVars().StmtCtx)
+		val, err := v.ToBool(ctx.GetSessionVars().StmtCtx.TypeCtx())
 		require.NoError(t, err)
 		require.Equal(t, tt.result, val)
 	}
@@ -407,10 +407,10 @@ func TestBinopNumeric(t *testing.T) {
 		default:
 			// we use float64 as the result type check for all.
 			sc := ctx.GetSessionVars().StmtCtx
-			f, err := v.ToFloat64(sc)
+			f, err := v.ToFloat64(sc.TypeCtx())
 			require.NoError(t, err)
 			d := types.NewDatum(tt.ret)
-			r, err := d.ToFloat64(sc)
+			r, err := d.ToFloat64(sc.TypeCtx())
 			require.NoError(t, err)
 			require.Equal(t, r, f)
 		}
@@ -568,7 +568,7 @@ func TestUnaryOp(t *testing.T) {
 		require.NoError(t, err)
 
 		expect := types.NewDatum(tt.result)
-		ret, err := result.Compare(ctx.GetSessionVars().StmtCtx, &expect, collate.GetBinaryCollator())
+		ret, err := result.Compare(ctx.GetSessionVars().StmtCtx.TypeCtx(), &expect, collate.GetBinaryCollator())
 		require.NoError(t, err)
 		require.Equalf(t, 0, ret, "%v %s", tt.arg, tt.op)
 	}

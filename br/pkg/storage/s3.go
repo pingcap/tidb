@@ -1044,9 +1044,10 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 		s3Writer.wg.Add(1)
 		go func() {
 			_, err := up.UploadWithContext(ctx, upParams)
-			err1 := rd.Close()
+			// like a channel we only let sender close the pipe in happy path
 			if err != nil {
-				log.Warn("upload to s3 failed", zap.String("filename", name), zap.Error(err), zap.Error(err1))
+				log.Warn("upload to s3 failed", zap.String("filename", name), zap.Error(err))
+				_ = rd.CloseWithError(err)
 			}
 			s3Writer.err = err
 			s3Writer.wg.Done()
@@ -1108,15 +1109,15 @@ func (rl retryerWithLog) ShouldRetry(r *request.Request) bool {
 			r.Error = errors.New("read tcp *.*.*.*:*->*.*.*.*:*: read: connection reset by peer")
 		}
 	})
+	if r.HTTPRequest.URL.Host == ec2MetaAddress && (isDeadlineExceedError(r.Error) || isConnectionResetError(r.Error)) {
+		// fast fail for unreachable linklocal address in EC2 containers.
+		log.Warn("failed to get EC2 metadata. skipping.", logutil.ShortError(r.Error))
+		return false
+	}
 	if isConnectionResetError(r.Error) {
 		return true
 	}
 	if isConnectionRefusedError(r.Error) {
-		return false
-	}
-	if isDeadlineExceedError(r.Error) && r.HTTPRequest.URL.Host == ec2MetaAddress {
-		// fast fail for unreachable linklocal address in EC2 containers.
-		log.Warn("failed to get EC2 metadata. skipping.", logutil.ShortError(r.Error))
 		return false
 	}
 	return rl.DefaultRetryer.ShouldRetry(r)

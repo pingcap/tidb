@@ -61,7 +61,7 @@ func (*testDynamicDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.Task
 	return nil, nil
 }
 
-func (dsp *testDynamicDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *proto.Task) proto.Step {
+func (dsp *testDynamicDispatcherExt) GetNextStep(task *proto.Task) proto.Step {
 	switch task.Step {
 	case proto.StepInit:
 		return proto.StepOne

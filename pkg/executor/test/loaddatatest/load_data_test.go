@@ -141,11 +141,11 @@ func TestLoadData(t *testing.T) {
 	selectSQL := "select * from load_data_test;"
 
 	sc := ctx.GetSessionVars().StmtCtx
-	originIgnoreTruncate := sc.IgnoreTruncate.Load()
+	oldFlags := sc.TypeFlags()
 	defer func() {
-		sc.IgnoreTruncate.Store(originIgnoreTruncate)
+		sc.SetTypeFlags(oldFlags)
 	}()
-	sc.IgnoreTruncate.Store(false)
+	sc.SetTypeFlags(oldFlags.WithIgnoreTruncateErr(false))
 	// fields and lines are default, ReadOneBatchRows returns data is nil
 	tests := []testCase{
 		// In MySQL we have 4 warnings: 1*"Incorrect integer value: '' for column 'id' at row", 3*"Row 1 doesn't contain data for all columns"

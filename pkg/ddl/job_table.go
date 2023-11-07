@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -329,7 +330,7 @@ func (d *ddl) checkAndUpdateClusterState(needUpdate bool) error {
 
 	ownerOp := owner.OpNone
 	if stateInfo.State == syncer.StateUpgrading {
-		ownerOp = owner.OpGetUpgradingState
+		ownerOp = owner.OpSyncUpgradingState
 	}
 	err = d.ownerManager.SetOwnerOpValue(d.ctx, ownerOp)
 	if err != nil {
@@ -459,10 +460,10 @@ func (*ddl) markJobProcessing(se *sess.Session, job *model.Job) error {
 	return errors.Trace(err)
 }
 
-func (d *ddl) getTableByTxn(store kv.Storage, schemaID, tableID int64) (*model.DBInfo, table.Table, error) {
+func (d *ddl) getTableByTxn(r autoid.Requirement, schemaID, tableID int64) (*model.DBInfo, table.Table, error) {
 	var tbl table.Table
 	var dbInfo *model.DBInfo
-	err := kv.RunInNewTxn(d.ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(d.ctx, r.Store(), false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
 		dbInfo, err1 = t.GetDatabase(schemaID)
@@ -473,7 +474,7 @@ func (d *ddl) getTableByTxn(store kv.Storage, schemaID, tableID int64) (*model.D
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
-		tbl, err1 = getTable(store, schemaID, tblInfo)
+		tbl, err1 = getTable(r, schemaID, tblInfo)
 		return errors.Trace(err1)
 	})
 	return dbInfo, tbl, err

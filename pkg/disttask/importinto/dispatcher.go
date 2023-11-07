@@ -299,12 +299,18 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 		return nil, errors.Errorf("unknown step %d", gTask.Step)
 	}
 
+	eligibleInstances, err := dsp.GetEligibleInstances(ctx, gTask)
+	if err != nil {
+		logger.Warn("failed to get eligible instances", zap.Error(err))
+	}
+
 	planCtx := planner.PlanCtx{
 		Ctx:                  ctx,
 		TaskID:               gTask.ID,
 		PreviousSubtaskMetas: previousSubtaskMetas,
 		GlobalSort:           dsp.GlobalSort,
 		NextTaskStep:         nextStep,
+		ExecuteNodesCnt:      len(eligibleInstances),
 	}
 	logicalPlan := &LogicalPlan{}
 	if err := logicalPlan.FromTaskMeta(gTask.Meta); err != nil {
@@ -381,7 +387,7 @@ func (*ImportDispatcherExt) IsRetryableErr(error) bool {
 }
 
 // GetNextStep implements dispatcher.Extension interface.
-func (dsp *ImportDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *proto.Task) proto.Step {
+func (dsp *ImportDispatcherExt) GetNextStep(task *proto.Task) proto.Step {
 	switch task.Step {
 	case proto.StepInit:
 		if dsp.GlobalSort {

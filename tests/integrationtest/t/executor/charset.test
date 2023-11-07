@@ -1,0 +1,81 @@
+# TestCharsetFeature
+set names gbk;
+select @@character_set_connection;
+select @@collation_connection;
+set @@character_set_client=gbk;
+select @@character_set_client;
+set names utf8mb4;
+set @@character_set_connection=gbk;
+select @@character_set_connection;
+select @@collation_connection;
+-- error 1115
+select _gbk 'a';
+create table t1(a char(10) charset gbk);
+create table t2(a char(10) charset gbk collate gbk_bin);
+create table t3(a char(10)) charset gbk;
+alter table t3 add column b char(10) charset gbk;
+show create table t3;
+create table t4(a char(10));
+alter table t4 add column b char(10) charset gbk;
+show create table t4;
+create table t5(a char(20), b char(20) charset utf8, c binary) charset gbk collate gbk_bin;
+create database test_gbk charset gbk;
+use test_gbk;
+create table t1(a char(10));
+show create table t1;
+drop database test_gbk;
+use executor__charset;
+set names DEFAULT;
+
+# TestCharsetFeatureCollation
+drop table if exists t;
+create table t(ascii_char char(10) character set ascii,gbk_char char(10) character set gbk collate gbk_bin,latin_char char(10) character set latin1,utf8mb4_char char(10) character set utf8mb4);
+insert into t values ('a', 'a', 'a', 'a'), ('a', '啊', '€', 'ㅂ');
+select collation(concat(ascii_char, gbk_char)) from t;
+select collation(concat(gbk_char, ascii_char)) from t;
+select collation(concat(utf8mb4_char, gbk_char)) from t;
+select collation(concat(gbk_char, utf8mb4_char)) from t;
+select collation(concat('啊', convert('啊' using gbk) collate gbk_bin));
+select collation(concat(_latin1 'a', convert('啊' using gbk) collate gbk_bin));
+-- error 1267
+select collation(concat(latin_char, gbk_char)) from t;
+-- error 1267
+select collation(concat(convert('€' using latin1), convert('啊' using gbk) collate gbk_bin));
+-- error 1267
+select collation(concat(utf8mb4_char, gbk_char collate gbk_bin)) from t;
+-- error 1267
+select collation(concat('ㅂ', convert('啊' using gbk) collate gbk_bin));
+-- error 1267
+select collation(concat(ascii_char collate ascii_bin, gbk_char)) from t;
+
+# TestCharsetWithPrefixIndex
+drop table if exists t;
+create table t(a char(20) charset gbk, b char(20) charset gbk, primary key (a(2)));
+insert into t values ('a', '中文'), ('中文', '中文'), ('一二三', '一二三'), ('b', '一二三');
+--sorted_result
+select * from t;
+drop table t;
+create table t(a char(20) charset gbk, b char(20) charset gbk, unique index idx_a(a(2)));
+insert into t values ('a', '中文'), ('中文', '中文'), ('一二三', '一二三'), ('b', '一二三');
+--sorted_result
+select * from t;
+
+# TestForbidUnsupportedCollations
+-- error 1273
+select 'a' collate utf8_roman_ci;
+-- error 1273
+select cast('a' as char) collate utf8_roman_ci;
+-- error 1273
+set names utf8 collate utf8_roman_ci;
+-- error 1273
+set session collation_server = 'utf8_roman_ci';
+-- error 1273
+set session collation_database = 'utf8_roman_ci';
+-- error 1273
+set session collation_connection = 'utf8_roman_ci';
+-- error 1273
+set global collation_server = 'utf8_roman_ci';
+-- error 1273
+set global collation_database = 'utf8_roman_ci';
+-- error 1273
+set global collation_connection = 'utf8_roman_ci';

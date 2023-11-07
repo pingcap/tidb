@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
 
 // WindowExec is the executor for window functions.
@@ -129,7 +128,7 @@ func (e *WindowExec) consumeGroupRows(groupRows []chunk.Row) (err error) {
 		return nil
 	}
 	for i := 0; i < len(e.resultChunks); i++ {
-		remained := mathutil.Min(e.remainingRowsInChunk[i], remainingRowsInGroup)
+		remained := min(e.remainingRowsInChunk[i], remainingRowsInGroup)
 		e.remainingRowsInChunk[i] -= remained
 		remainingRowsInGroup -= remained
 

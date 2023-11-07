@@ -13,7 +13,6 @@ go_library(
     deps = [
         "//pkg/config",
         "//pkg/errno",
-        "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/metrics",
@@ -21,10 +20,8 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/types",
         "//pkg/util/dbterror",
-        "//pkg/util/etcd",
         "//pkg/util/execdetails",
         "//pkg/util/logutil",
-        "//pkg/util/mathutil",
         "//pkg/util/tracing",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
@@ -65,6 +62,7 @@ go_test(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
+        "@io_etcd_go_etcd_client_v3//:client",
         "@org_uber_go_goleak//:goleak",
     ],
 )

@@ -23,6 +23,7 @@ go_library(
         "//pkg/planner/core",
         "//pkg/statistics",
         "//pkg/statistics/handle/storage",
+        "//pkg/statistics/handle/util",
         "//pkg/types",
         "//pkg/util/mathutil",
         "//pkg/util/mock",

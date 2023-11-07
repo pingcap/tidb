@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	utilhint "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
@@ -173,15 +172,18 @@ type logicalOptRule interface {
 }
 
 // BuildLogicalPlanForTest builds a logical plan for testing purpose from ast.Node.
-func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node ast.Node, infoSchema infoschema.InfoSchema) (Plan, types.NameSlice, error) {
+func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node ast.Node, infoSchema infoschema.InfoSchema) (Plan, error) {
 	sctx.GetSessionVars().PlanID.Store(0)
 	sctx.GetSessionVars().PlanColumnID.Store(0)
 	builder, _ := NewPlanBuilder().Init(sctx, infoSchema, &utilhint.BlockHintProcessor{})
 	p, err := builder.Build(ctx, node)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return p, p.OutputNames(), err
+	if logic, ok := p.(LogicalPlan); ok {
+		RecheckCTE(logic)
+	}
+	return p, err
 }
 
 // CheckPrivilege checks the privilege for a user.
@@ -825,7 +827,7 @@ func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx s
 		if row[4].GetString() == "cpu-logical-cores" {
 			logicalCpus, err := strconv.Atoi(row[5].GetString())
 			if err == nil && logicalCpus > 0 {
-				minLogicalCores = mathutil.Min(minLogicalCores, uint64(logicalCpus))
+				minLogicalCores = min(minLogicalCores, uint64(logicalCpus))
 			}
 		}
 	}

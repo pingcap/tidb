@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -447,7 +446,7 @@ func (helper extractHelper) extractTimeRange(
 		if colName == extractColName {
 			timeType := types.NewFieldType(mysql.TypeDatetime)
 			timeType.SetDecimal(6)
-			timeDatum, err := datums[0].ConvertTo(ctx.GetSessionVars().StmtCtx, timeType)
+			timeDatum, err := datums[0].ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), timeType)
 			if err != nil || timeDatum.Kind() == types.KindNull {
 				remained = append(remained, expr)
 				continue
@@ -466,28 +465,28 @@ func (helper extractHelper) extractTimeRange(
 
 			switch fnName {
 			case ast.EQ:
-				startTime = mathutil.Max(startTime, timestamp)
+				startTime = max(startTime, timestamp)
 				if endTime == 0 {
 					endTime = timestamp
 				} else {
-					endTime = mathutil.Min(endTime, timestamp)
+					endTime = min(endTime, timestamp)
 				}
 			case ast.GT:
 				// FixMe: add 1ms is not absolutely correct here, just because the log search precision is millisecond.
-				startTime = mathutil.Max(startTime, timestamp+int64(time.Millisecond))
+				startTime = max(startTime, timestamp+int64(time.Millisecond))
 			case ast.GE:
-				startTime = mathutil.Max(startTime, timestamp)
+				startTime = max(startTime, timestamp)
 			case ast.LT:
 				if endTime == 0 {
 					endTime = timestamp - int64(time.Millisecond)
 				} else {
-					endTime = mathutil.Min(endTime, timestamp-int64(time.Millisecond))
+					endTime = min(endTime, timestamp-int64(time.Millisecond))
 				}
 			case ast.LE:
 				if endTime == 0 {
 					endTime = timestamp
 				} else {
-					endTime = mathutil.Min(endTime, timestamp)
+					endTime = min(endTime, timestamp)
 				}
 			default:
 				remained = append(remained, expr)

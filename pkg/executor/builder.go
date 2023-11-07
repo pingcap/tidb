@@ -72,7 +72,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/cteutil"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
@@ -563,7 +562,9 @@ func buildIdxColsConcatHandleCols(tblInfo *model.TableInfo, indexInfo *model.Ind
 
 	if tblInfo.IsCommonHandle {
 		for _, c := range pkCols {
-			columns = append(columns, tblInfo.Columns[c.Offset])
+			if model.FindColumnInfo(columns, c.Name.L) == nil {
+				columns = append(columns, tblInfo.Columns[c.Offset])
+			}
 		}
 		return columns
 	}
@@ -611,12 +612,12 @@ func (b *executorBuilder) buildRecoverIndex(v *plannercore.RecoverIndex) exec.Ex
 		physicalID:       t.Meta().ID,
 	}
 	sessCtx := e.Ctx().GetSessionVars().StmtCtx
-	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, index.Meta(), e.columns)
+	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, e.columns)
 	return e
 }
 
 func buildHandleColsForExec(sctx *stmtctx.StatementContext, tblInfo *model.TableInfo,
-	idxInfo *model.IndexInfo, allColInfo []*model.ColumnInfo) plannercore.HandleCols {
+	allColInfo []*model.ColumnInfo) plannercore.HandleCols {
 	if !tblInfo.IsCommonHandle {
 		extraColPos := len(allColInfo) - 1
 		intCol := &expression.Column{
@@ -634,8 +635,12 @@ func buildHandleColsForExec(sctx *stmtctx.StatementContext, tblInfo *model.Table
 		}
 	}
 	pkIdx := tables.FindPrimaryIndex(tblInfo)
-	for i, c := range pkIdx.Columns {
-		tblCols[c.Offset].Index = len(idxInfo.Columns) + i
+	for _, c := range pkIdx.Columns {
+		for j, colInfo := range allColInfo {
+			if colInfo.Name.L == c.Name.L {
+				tblCols[c.Offset].Index = j
+			}
+		}
 	}
 	return plannercore.NewCommonHandleCols(sctx, tblInfo, pkIdx, tblCols)
 }
@@ -672,7 +677,7 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) exec.Ex
 		batchSize:    20000,
 	}
 	sessCtx := e.Ctx().GetSessionVars().StmtCtx
-	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, index.Meta(), e.columns)
+	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, e.columns)
 	return e
 }
 
@@ -790,7 +795,7 @@ func (b *executorBuilder) buildLimit(v *plannercore.PhysicalLimit) exec.Executor
 	if b.err != nil {
 		return nil
 	}
-	n := int(mathutil.Min(v.Count, uint64(b.ctx.GetSessionVars().MaxChunkSize)))
+	n := int(min(v.Count, uint64(b.ctx.GetSessionVars().MaxChunkSize)))
 	base := exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec)
 	base.SetInitCap(n)
 	e := &LimitExec{
@@ -1224,7 +1229,7 @@ func (b *executorBuilder) setTelemetryInfo(v *plannercore.DDL) {
 		if b.Ti.PartitionTelemetry == nil {
 			b.Ti.PartitionTelemetry = &PartitionTelemetryInfo{}
 		}
-		b.Ti.PartitionTelemetry.TablePartitionMaxPartitionsNum = mathutil.Max(p.Num, uint64(len(p.Definitions)))
+		b.Ti.PartitionTelemetry.TablePartitionMaxPartitionsNum = max(p.Num, uint64(len(p.Definitions)))
 		b.Ti.PartitionTelemetry.UseTablePartition = true
 
 		switch p.Tp {
@@ -2890,11 +2895,15 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(
 }
 
 func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
+	gp := domain.GetDomain(b.ctx).StatsHandle().GPool()
 	e := &AnalyzeExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		tasks:        make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),
 		opts:         v.Opts,
 		OptionsMap:   v.OptionsMap,
+		wg:           util.NewWaitGroupPool(gp),
+		gp:           gp,
+		errExitCh:    make(chan struct{}),
 	}
 	autoAnalyze := ""
 	if b.ctx.GetSessionVars().InRestrictedSQL {
@@ -4678,7 +4687,7 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 		memTracker.Consume(int64(2 * cap(kvRanges[0].StartKey) * len(kvRanges)))
 	}
 	if len(tmpDatumRanges) != 0 && memTracker != nil {
-		memTracker.Consume(2 * int64(len(tmpDatumRanges)) * types.EstimatedMemUsage(tmpDatumRanges[0].LowVal, len(tmpDatumRanges)))
+		memTracker.Consume(2 * types.EstimatedMemUsage(tmpDatumRanges[0].LowVal, len(tmpDatumRanges)))
 	}
 	if cwc == nil {
 		slices.SortFunc(kvRanges, func(i, j kv.KeyRange) int {
@@ -5425,10 +5434,9 @@ func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64
 		return cacheData
 	} else if loading {
 		return nil
-	} else {
-		if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.inDeleteStmt && !b.inUpdateStmt {
-			tbl.(table.CachedTable).UpdateLockForRead(context.Background(), b.ctx.GetStore(), startTS, leaseDuration)
-		}
+	}
+	if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.inDeleteStmt && !b.inUpdateStmt {
+		tbl.(table.CachedTable).UpdateLockForRead(context.Background(), b.ctx.GetStore(), startTS, leaseDuration)
 	}
 	return nil
 }
