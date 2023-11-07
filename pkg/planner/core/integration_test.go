@@ -2535,7 +2535,7 @@ func TestIssue45044(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`set tidb_enable_ordered_result_mode = on`)
 	tk.MustExec(`create table t1(c1 int)`)
-	tk.MustQuery(`select * from t1 group by t1.c1 having count(1) > 1 order by count(1) limit 10`).Check(testkit.Rows()) // no error 
+	tk.MustQuery(`select * from t1 group by t1.c1 having count(1) > 1 order by count(1) limit 10`).Check(testkit.Rows()) // no error
 }
 
 func TestIssue46177(t *testing.T) {
