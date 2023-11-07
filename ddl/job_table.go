@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	// "github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -307,6 +308,30 @@ func (d *ddl) markJobProcessing(sess *session, job *model.Job) error {
 	_, err := sess.execute(context.Background(), fmt.Sprintf("update mysql.tidb_ddl_job set processing = 1 where job_id = %d", job.ID), "mark_job_processing")
 	return errors.Trace(err)
 }
+
+// <<<<<<< HEAD
+// =======
+// func (d *ddl) getTableByTxn(r autoid.Requirement, schemaID, tableID int64) (*model.DBInfo, table.Table, error) {
+// 	var tbl table.Table
+// 	var dbInfo *model.DBInfo
+// 	err := kv.RunInNewTxn(d.ctx, r.Store(), false, func(ctx context.Context, txn kv.Transaction) error {
+// 		t := meta.NewMeta(txn)
+// 		var err1 error
+// 		dbInfo, err1 = t.GetDatabase(schemaID)
+// 		if err1 != nil {
+// 			return errors.Trace(err1)
+// 		}
+// 		tblInfo, err1 := getTableInfo(t, tableID, schemaID)
+// 		if err1 != nil {
+// 			return errors.Trace(err1)
+// 		}
+// 		tbl, err1 = getTable(r, schemaID, tblInfo)
+// 		return errors.Trace(err1)
+// 	})
+// 	return dbInfo, tbl, err
+// }
+
+// >>>>>>> a062330246... *: share etcd client from domain for autoid allocator #46647 (#48335)
 
 const (
 	addDDLJobSQL    = "insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing) values"

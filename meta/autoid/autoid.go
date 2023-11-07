@@ -26,7 +26,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	autoid "github.com/pingcap/tidb/autoid_service"
+	"github.com/pingcap/kvproto/pkg/autoid"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -558,37 +558,23 @@ func NextStep(curStep int64, consumeDur time.Duration) int64 {
 	return res
 }
 
-func newSinglePointAlloc(store kv.Storage, dbID, tblID int64, isUnsigned bool) *singlePointAlloc {
-	ebd, ok := store.(kv.EtcdBackend)
-	if !ok {
-		// newSinglePointAlloc fail because not etcd background
-		// This could happen in the server package unit test
-		return nil
-	}
+// MockForTest is exported for testing.
+// The actual implementation is in github.com/pingcap/tidb/autoid_service because of the
+// package circle depending issue.
+var MockForTest func(kv.Storage) autoid.AutoIDAllocClient
 
-	addrs, err := ebd.EtcdAddrs()
-	if err != nil {
-		panic(err)
-	}
+func newSinglePointAlloc(r Requirement, dbID, tblID int64, isUnsigned bool) *singlePointAlloc {
 	spa := &singlePointAlloc{
 		dbID:       dbID,
 		tblID:      tblID,
 		isUnsigned: isUnsigned,
 	}
-	if len(addrs) > 0 {
-		etcdCli, err := clientv3.New(clientv3.Config{
-			Endpoints:        addrs,
-			AutoSyncInterval: 30 * time.Second,
-			TLS:              ebd.TLSConfig(),
-		})
-		if err != nil {
-			logutil.BgLogger().Error("[autoid client] fail to connect etcd, fallback to default", zap.Error(err))
-			return nil
-		}
-		spa.clientDiscover = clientDiscover{etcdCli: etcdCli}
-	} else {
+	if r.GetEtcdClient() == nil {
+		// Only for test in mockstore
 		spa.clientDiscover = clientDiscover{}
-		spa.mu.AutoIDAllocClient = autoid.MockForTest(store)
+		spa.mu.AutoIDAllocClient = MockForTest(r.Store())
+	} else {
+		spa.clientDiscover = clientDiscover{etcdCli: r.GetEtcdClient()}
 	}
 
 	// mockAutoIDChange failpoint is not implemented in this allocator, so fallback to use the default one.
@@ -600,9 +586,19 @@ func newSinglePointAlloc(store kv.Storage, dbID, tblID int64, isUnsigned bool) *
 	return spa
 }
 
+// Requirement is the parameter required by NewAllocator
+type Requirement interface {
+	Store() kv.Storage
+	GetEtcdClient() *clientv3.Client
+}
+
 // NewAllocator returns a new auto increment id generator on the store.
-func NewAllocator(store kv.Storage, dbID, tbID int64, isUnsigned bool,
+func NewAllocator(r Requirement, dbID, tbID int64, isUnsigned bool,
 	allocType AllocatorType, opts ...AllocOption) Allocator {
+	var store kv.Storage
+	if r != nil {
+		store = r.Store()
+	}
 	alloc := &allocator{
 		store:         store,
 		dbID:          dbID,
@@ -619,7 +615,7 @@ func NewAllocator(store kv.Storage, dbID, tbID int64, isUnsigned bool,
 	// Use the MySQL compatible AUTO_INCREMENT mode.
 	if alloc.customStep && alloc.step == 1 && alloc.tbVersion >= model.TableInfoVersion5 {
 		if allocType == AutoIncrementType {
-			alloc1 := newSinglePointAlloc(store, dbID, tbID, isUnsigned)
+			alloc1 := newSinglePointAlloc(r, dbID, tbID, isUnsigned)
 			if alloc1 != nil {
 				return alloc1
 			}
@@ -649,7 +645,7 @@ func NewSequenceAllocator(store kv.Storage, dbID, tbID int64, info *model.Sequen
 }
 
 // NewAllocatorsFromTblInfo creates an array of allocators of different types with the information of model.TableInfo.
-func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) Allocators {
+func NewAllocatorsFromTblInfo(r Requirement, schemaID int64, tblInfo *model.TableInfo) Allocators {
 	var allocs []Allocator
 	dbID := tblInfo.GetDBID(schemaID)
 	idCacheOpt := CustomAutoIncCacheOption(tblInfo.AutoIdCache)
@@ -658,20 +654,20 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 	hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
 	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
 	if hasRowID || hasAutoIncID {
-		alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, idCacheOpt, tblVer)
+		alloc := NewAllocator(r, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, idCacheOpt, tblVer)
 		allocs = append(allocs, alloc)
 	}
 	if hasAutoIncID {
-		alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), AutoIncrementType, idCacheOpt, tblVer)
+		alloc := NewAllocator(r, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), AutoIncrementType, idCacheOpt, tblVer)
 		allocs = append(allocs, alloc)
 	}
 	hasAutoRandID := tblInfo.ContainsAutoRandomBits()
 	if hasAutoRandID {
-		alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), AutoRandomType, idCacheOpt, tblVer)
+		alloc := NewAllocator(r, dbID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), AutoRandomType, idCacheOpt, tblVer)
 		allocs = append(allocs, alloc)
 	}
 	if tblInfo.IsSequence() {
-		allocs = append(allocs, NewSequenceAllocator(store, dbID, tblInfo.ID, tblInfo.Sequence))
+		allocs = append(allocs, NewSequenceAllocator(r.Store(), dbID, tblInfo.ID, tblInfo.Sequence))
 	}
 	return NewAllocators(tblInfo.SepAutoInc(), allocs...)
 }

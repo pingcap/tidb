@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 func TestBasic(t *testing.T) {
@@ -110,7 +111,7 @@ func TestBasic(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	builder, err := infoschema.NewBuilder(dom.Store(), nil).InitWithDBInfos(dbInfos, nil, 1)
+	builder, err := infoschema.NewBuilder(dom, nil).InitWithDBInfos(dbInfos, nil, 1)
 	require.NoError(t, err)
 
 	txn, err := store.Begin()
@@ -256,7 +257,7 @@ func TestInfoTables(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	builder, err := infoschema.NewBuilder(store, nil).InitWithDBInfos(nil, nil, 0)
+	builder, err := infoschema.NewBuilder(mockRequirement{store}, nil).InitWithDBInfos(nil, nil, 0)
 	require.NoError(t, err)
 	is := builder.Build()
 
@@ -332,7 +333,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 		err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			for _, change := range changes {
-				builder := infoschema.NewBuilder(store, nil).InitWithOldInfoSchema(curIs)
+				builder := infoschema.NewBuilder(dom, nil).InitWithOldInfoSchema(curIs)
 				change(m, builder)
 				curIs = builder.Build()
 			}
@@ -410,7 +411,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	// full load
 	newDB, ok := newIS.SchemaByName(model.NewCIStr("test"))
 	require.True(t, ok)
-	builder, err := infoschema.NewBuilder(store, nil).InitWithDBInfos([]*model.DBInfo{newDB}, newIS.AllPlacementPolicies(), newIS.SchemaMetaVersion())
+	builder, err := infoschema.NewBuilder(dom, nil).InitWithDBInfos([]*model.DBInfo{newDB}, newIS.AllPlacementPolicies(), newIS.SchemaMetaVersion())
 	require.NoError(t, err)
 	require.True(t, builder.Build().HasTemporaryTable())
 
@@ -535,12 +536,24 @@ func TestBuildBundle(t *testing.T) {
 	assertBundle(is, tbl2.Meta().ID, nil)
 	assertBundle(is, p1.ID, p1Bundle)
 
-	builder, err := infoschema.NewBuilder(store, nil).InitWithDBInfos([]*model.DBInfo{db}, is.AllPlacementPolicies(), is.SchemaMetaVersion())
+	builder, err := infoschema.NewBuilder(dom, nil).InitWithDBInfos([]*model.DBInfo{db}, is.AllPlacementPolicies(), is.SchemaMetaVersion())
 	require.NoError(t, err)
 	is2 := builder.Build()
 	assertBundle(is2, tbl1.Meta().ID, tb1Bundle)
 	assertBundle(is2, tbl2.Meta().ID, nil)
 	assertBundle(is2, p1.ID, p1Bundle)
+}
+
+type mockRequirement struct {
+	kv.Storage
+}
+
+func (r mockRequirement) Store() kv.Storage {
+	return r.Storage
+}
+
+func (r mockRequirement) GetEtcdClient() *clientv3.Client {
+	return nil
 }
 
 func TestLocalTemporaryTables(t *testing.T) {
@@ -584,7 +597,7 @@ func TestLocalTemporaryTables(t *testing.T) {
 			State:   model.StatePublic,
 		}
 
-		allocs := autoid.NewAllocatorsFromTblInfo(store, schemaID, tblInfo)
+		allocs := autoid.NewAllocatorsFromTblInfo(mockRequirement{store}, schemaID, tblInfo)
 		tbl, err := table.TableFromMeta(allocs, tblInfo)
 		require.NoError(t, err)
 

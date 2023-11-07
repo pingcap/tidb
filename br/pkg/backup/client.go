@@ -50,6 +50,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/codes"
@@ -492,6 +493,18 @@ func appendRanges(tbl *model.TableInfo, tblID int64) ([]kv.KeyRange, error) {
 	return retRanges, nil
 }
 
+type mockRequirement struct {
+	kv.Storage
+}
+
+func (r mockRequirement) Store() kv.Storage {
+	return r.Storage
+}
+
+func (r mockRequirement) GetEtcdClient() *clientv3.Client {
+	return nil
+}
+
 // BuildBackupRangeAndSchema gets KV range and schema of tables.
 // KV ranges are separated by Table IDs.
 // Also, KV ranges are separated by Index IDs in the same table.
@@ -575,9 +588,9 @@ func BuildBackupRangeAndSchema(
 
 			autoIDAccess := m.GetAutoIDAccessors(dbInfo.ID, tableInfo.ID)
 			tblVer := autoid.AllocOptionTableInfoVersion(tableInfo.Version)
-			idAlloc := autoid.NewAllocator(storage, dbInfo.ID, tableInfo.ID, false, autoid.RowIDAllocType, tblVer)
-			seqAlloc := autoid.NewAllocator(storage, dbInfo.ID, tableInfo.ID, false, autoid.SequenceType, tblVer)
-			randAlloc := autoid.NewAllocator(storage, dbInfo.ID, tableInfo.ID, false, autoid.AutoRandomType, tblVer)
+			idAlloc := autoid.NewAllocator(mockRequirement{storage}, dbInfo.ID, tableInfo.ID, false, autoid.RowIDAllocType, tblVer)
+			seqAlloc := autoid.NewAllocator(mockRequirement{storage}, dbInfo.ID, tableInfo.ID, false, autoid.SequenceType, tblVer)
+			randAlloc := autoid.NewAllocator(mockRequirement{storage}, dbInfo.ID, tableInfo.ID, false, autoid.AutoRandomType, tblVer)
 
 			var globalAutoID int64
 			switch {
