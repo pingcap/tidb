@@ -1,16 +1,17 @@
-package DDL
+package ddl
 
 import "github.com/pingcap/tidb/pkg/parser/model"
 
+// Event contains the information of a ddl event that is used to update stats.
 type Event struct {
-	// We expose the action type field to the outside, because some DDL events
+	// We expose the action type field to the outside, because some ddl events
 	// do not need other fields.
-	// If your DDL event needs other fields, please add them with the
+	// If your ddl event needs other fields, please add them with the
 	// corresponding NewXXXEvent function and give them clear names.
 	Tp model.ActionType
 
-	// For different DDL types, the following fields are used.
-	// They have different meanings for different DDL types.
+	// For different ddl types, the following fields are used.
+	// They have different meanings for different ddl types.
 	// Please do **not** use these fields directly, use the corresponding
 	// NewXXXEvent functions instead.
 	tableInfo    *model.TableInfo
@@ -19,7 +20,7 @@ type Event struct {
 	oldPartInfo  *model.PartitionInfo
 }
 
-// NewCreateTableEvent creates a new DDL event that creates a table.
+// NewCreateTableEvent creates a new ddl event that creates a table.
 func NewCreateTableEvent(
 	newTableInfo *model.TableInfo,
 ) *Event {
@@ -33,7 +34,7 @@ func (e *Event) getCreateTableInfo() (newTableInfo *model.TableInfo) {
 	return e.tableInfo
 }
 
-// NewDropTableEvent creates a new DDL event that drops a table.
+// NewTruncateTableEvent creates a new ddl event that truncates a table.
 func NewTruncateTableEvent(
 	newTableInfo *model.TableInfo,
 	droppedTableInfo *model.TableInfo,
@@ -49,7 +50,7 @@ func (e *Event) getTruncateTableInfo() (newTableInfo *model.TableInfo, droppedTa
 	return e.tableInfo, e.oldTableInfo
 }
 
-// NewDropTableEvent creates a new DDL event that drops a table.
+// NewDropTableEvent creates a new ddl event that drops a table.
 func NewDropTableEvent(
 	droppedTableInfo *model.TableInfo,
 ) *Event {
@@ -63,7 +64,7 @@ func (e *Event) getDropTableInfo() (newTableInfo *model.TableInfo) {
 	return e.oldTableInfo
 }
 
-// NewAddColumnEvent creates a new DDL event that
+// NewAddColumnEvent creates a new ddl event that
 // adds a column.
 func NewAddColumnEvent(
 	newTableInfoWithNewColumnInfo *model.TableInfo,
@@ -78,7 +79,7 @@ func (e *Event) getAddColumnInfo() (newTableInfoWithNewColumnInfo *model.TableIn
 	return e.tableInfo
 }
 
-// NewModifyColumnEvent creates a new DDL event that
+// NewModifyColumnEvent creates a new ddl event that
 // modifies a column.
 func NewModifyColumnEvent(
 	newTableInfoWithNewColumnInfo *model.TableInfo,
@@ -93,7 +94,7 @@ func (e *Event) getModifyColumnInfo() (newTableInfoWithNewColumnInfo *model.Tabl
 	return e.tableInfo
 }
 
-// NewAddTablePartitionEvent creates a new DDL event that adds a partition.
+// NewAddTablePartitionEvent creates a new ddl event that adds a partition.
 func NewAddTablePartitionEvent(
 	globalTableInfo *model.TableInfo,
 	addedPartInfo *model.PartitionInfo,
@@ -109,7 +110,7 @@ func (e *Event) getAddTablePartitionInfo() (globalTableInfo *model.TableInfo, ad
 	return e.tableInfo, e.partInfo
 }
 
-// NewDropPartitionEvent creates a new DDL event that drops a partition.
+// NewDropPartitionEvent creates a new ddl event that drops a partition.
 func NewDropPartitionEvent(
 	globalTableInfo *model.TableInfo,
 	droppedPartInfo *model.PartitionInfo,
@@ -125,7 +126,7 @@ func (e *Event) getDropPartitionInfo() (globalTableInfo *model.TableInfo, droppe
 	return e.tableInfo, e.oldPartInfo
 }
 
-// NewExchangePartitionEvent creates a new DDL event that exchanges a partition.
+// NewExchangePartitionEvent creates a new ddl event that exchanges a partition.
 func NewExchangePartitionEvent(
 	globalTableInfo *model.TableInfo,
 	exchangedPartInfo *model.PartitionInfo,
@@ -147,7 +148,7 @@ func (e *Event) getExchangePartitionInfo() (
 	return e.tableInfo, e.partInfo, e.oldTableInfo
 }
 
-// NewReorganizePartitionEvent creates a new DDL event that reorganizes a partition.
+// NewReorganizePartitionEvent creates a new ddl event that reorganizes a partition.
 // We also use it for increasing or decreasing the number of hash partitions.
 func NewReorganizePartitionEvent(
 	globalTableInfo *model.TableInfo,
@@ -170,7 +171,7 @@ func (e *Event) getReorganizePartitionInfo() (
 	return e.tableInfo, e.partInfo, e.oldPartInfo
 }
 
-// NewTruncatePartitionEvent creates a new DDL event that truncates a partition.
+// NewTruncatePartitionEvent creates a new ddl event that truncates a partition.
 func NewTruncatePartitionEvent(
 	globalTableInfo *model.TableInfo,
 	addedPartInfo *model.PartitionInfo,
@@ -192,7 +193,7 @@ func (e *Event) getTruncatePartitionInfo() (
 	return e.tableInfo, e.partInfo, e.oldPartInfo
 }
 
-// NewAddPartitioningEvent creates a new DDL event that adds partitioning.
+// NewAddPartitioningEvent creates a new ddl event that adds partitioning.
 // For example, `alter table t partition by range (c1) (partition p1 values less than (10))`.
 func NewAddPartitioningEvent(
 	newGlobalTableInfo *model.TableInfo,
@@ -209,7 +210,7 @@ func (e *Event) getAddPartitioningInfo() (newGlobalTableInfo *model.TableInfo, a
 	return e.tableInfo, e.partInfo
 }
 
-// NewRemovePartitioningEvent creates a new DDL event that removes partitioning.
+// NewRemovePartitioningEvent creates a new ddl event that removes partitioning.
 // For example, `alter table t remove partitioning`.
 func NewRemovePartitioningEvent(
 	newSingleTableInfo *model.TableInfo,
