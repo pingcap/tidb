@@ -970,9 +970,11 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 			local.DupeDetectEnabled,
 			local.duplicateDB,
 			local.DuplicateDetectOpt,
+			local.WorkerConcurrency,
 			ts,
 			externalCfg.TotalFileSize,
 			externalCfg.TotalKVCount,
+			externalCfg.CheckHotspot,
 		)
 		local.externalEngine[engineUUID] = externalEngine
 		return nil
@@ -1200,6 +1202,12 @@ func (local *Backend) generateAndSendJob(
 					}
 
 					failpoint.Inject("beforeGenerateJob", nil)
+					failpoint.Inject("sendDummyJob", func(_ failpoint.Value) {
+						// this is used to trigger worker failure, used together
+						// with WriteToTiKVNotEnoughDiskSpace
+						jobToWorkerCh <- &regionJob{}
+						time.Sleep(5 * time.Second)
+					})
 					jobs, err := local.generateJobForRange(egCtx, p.Data, p.Range, regionSplitSize, regionSplitKeys)
 					if err != nil {
 						if common.IsContextCanceledError(err) {
@@ -1433,7 +1441,6 @@ func (local *Backend) executeJob(
 			// if it's retryable error, we retry from scanning region
 			log.FromContext(ctx).Warn("meet retryable error when writing to TiKV",
 				log.ShortError(err), zap.Stringer("job stage", job.stage))
-			job.convertStageTo(needRescan)
 			job.lastRetryableErr = err
 			return nil
 		}
@@ -1572,11 +1579,6 @@ func (local *Backend) GetRegionSplitSizeKeys(ctx context.Context) (finalSize int
 	return GetRegionSplitSizeKeys(ctx, local.pdCtl.GetPDClient(), local.tls)
 }
 
-// GetMutex returns the mutex of the backend.
-func (local *Backend) GetMutex() *sync.Mutex {
-	return &local.mu
-}
-
 // expose these variables to unit test.
 var (
 	testJobToWorkerCh = make(chan *regionJob)
@@ -1679,29 +1681,30 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 
 	failpoint.Label("afterStartWorker")
 
-	err := local.prepareAndSendJob(
-		workerCtx,
-		engine,
-		regionRanges,
-		regionSplitSize,
-		regionSplitKeys,
-		jobToWorkerCh,
-		&jobWg,
-	)
-	if err != nil {
-		firstErr.Set(err)
-		workerCancel()
-		err2 := workGroup.Wait()
-		if !common.IsContextCanceledError(err2) {
-			log.FromContext(ctx).Error("worker meets error", zap.Error(err2))
+	workGroup.Go(func() error {
+		err := local.prepareAndSendJob(
+			workerCtx,
+			engine,
+			regionRanges,
+			regionSplitSize,
+			regionSplitKeys,
+			jobToWorkerCh,
+			&jobWg,
+		)
+		if err != nil {
+			return err
 		}
-		return firstErr.Get()
-	}
 
-	jobWg.Wait()
-	workerCancel()
-	firstErr.Set(workGroup.Wait())
-	firstErr.Set(ctx.Err())
+		jobWg.Wait()
+		workerCancel()
+		return nil
+	})
+	if err := workGroup.Wait(); err != nil {
+		if !common.IsContextCanceledError(err) {
+			log.FromContext(ctx).Error("do import meets error", zap.Error(err))
+		}
+		firstErr.Set(err)
+	}
 	return firstErr.Get()
 }
 
