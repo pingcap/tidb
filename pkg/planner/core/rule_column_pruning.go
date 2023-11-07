@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 )
 
 type columnPruner struct {
@@ -34,11 +35,16 @@ type columnPruner struct {
 
 func (*columnPruner) optimize(_ context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, bool, error) {
 	planChanged := false
+<<<<<<< HEAD
 	lp, err := lp.PruneColumns(slices.Clone(lp.Schema().Columns), opt)
 	if err != nil {
 		return nil, planChanged, err
 	}
 	return lp, planChanged, nil
+=======
+	err := lp.PruneColumns(lp.Schema().Columns, opt, lp)
+	return lp, planChanged, err
+>>>>>>> 286e8521acf (planner: eliminate useless scalar subqueries in some scenarios of aggregate queries (#47550))
 }
 
 // ExprsHasSideEffects checks if any of the expressions has side effects.
@@ -74,7 +80,12 @@ func exprHasSetVarOrSleep(expr expression.Expression) bool {
 // the level projection expressions construction is left to the last logical optimize rule)
 //
 // so when do the rule_column_pruning here, we just prune the schema is enough.
+<<<<<<< HEAD
 func (p *LogicalExpand) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
+=======
+func (p *LogicalExpand) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp, _ LogicalPlan) error {
+	child := p.children[0]
+>>>>>>> 286e8521acf (planner: eliminate useless scalar subqueries in some scenarios of aggregate queries (#47550))
 	// Expand need those extra redundant distinct group by columns projected from underlying projection.
 	// distinct GroupByCol must be used by aggregate above, to make sure this, append distinctGroupByCol again.
 	parentUsedCols = append(parentUsedCols, p.distinctGroupByCol...)
@@ -89,17 +100,26 @@ func (p *LogicalExpand) PruneColumns(parentUsedCols []*expression.Column, opt *l
 	}
 	appendColumnPruneTraceStep(p, prunedColumns, opt)
 	// Underlying still need to keep the distinct group by columns and parent used columns.
+<<<<<<< HEAD
 	var err error
 	p.children[0], err = p.children[0].PruneColumns(parentUsedCols, opt)
 	if err != nil {
 		return nil, err
 	}
 	return p, nil
+=======
+	return child.PruneColumns(parentUsedCols, opt, p)
+>>>>>>> 286e8521acf (planner: eliminate useless scalar subqueries in some scenarios of aggregate queries (#47550))
 }
 
 // PruneColumns implements LogicalPlan interface.
 // If any expression has SetVar function or Sleep function, we do not prune it.
+<<<<<<< HEAD
 func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
+=======
+func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp, _ LogicalPlan) error {
+	child := p.children[0]
+>>>>>>> 286e8521acf (planner: eliminate useless scalar subqueries in some scenarios of aggregate queries (#47550))
 	used := expression.GetUsedList(parentUsedCols, p.schema)
 	prunedColumns := make([]*expression.Column, 0)
 
@@ -114,6 +134,7 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, op
 	appendColumnPruneTraceStep(p, prunedColumns, opt)
 	selfUsedCols := make([]*expression.Column, 0, len(p.Exprs))
 	selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, p.Exprs, nil)
+<<<<<<< HEAD
 	var err error
 	p.children[0], err = p.children[0].PruneColumns(selfUsedCols, opt)
 	if err != nil {
@@ -136,6 +157,20 @@ func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column, opt
 
 // PruneColumns implements LogicalPlan interface.
 func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
+=======
+	return child.PruneColumns(selfUsedCols, opt, p)
+}
+
+// PruneColumns implements LogicalPlan interface.
+func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp, _ LogicalPlan) error {
+	child := p.children[0]
+	parentUsedCols = expression.ExtractColumnsFromExpressions(parentUsedCols, p.Conditions, nil)
+	return child.PruneColumns(parentUsedCols, opt, p)
+}
+
+// PruneColumns implements LogicalPlan interface.
+func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp, _ LogicalPlan) error {
+>>>>>>> 286e8521acf (planner: eliminate useless scalar subqueries in some scenarios of aggregate queries (#47550))
 	child := la.children[0]
 	used := expression.GetUsedList(parentUsedCols, la.Schema())
 	prunedColumns := make([]*expression.Column, 0)
@@ -208,8 +243,12 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 		}
 	}
 	appendGroupByItemsPruneTraceStep(la, prunedGroupByItems, opt)
+<<<<<<< HEAD
 	var err error
 	la.children[0], err = child.PruneColumns(selfUsedCols, opt)
+=======
+	err := child.PruneColumns(selfUsedCols, opt, la)
+>>>>>>> 286e8521acf (planner: eliminate useless scalar subqueries in some scenarios of aggregate queries (#47550))
 	if err != nil {
 		return nil, err
 	}
@@ -262,6 +301,7 @@ func pruneByItems(p LogicalPlan, old []*util.ByItems, opt *logicalOptimizeOp) (b
 // PruneColumns implements LogicalPlan interface.
 // If any expression can view as a constant in execution stage, such as correlated column, constant,
 // we do prune them. Note that we can't prune the expressions contain non-deterministic functions, such as rand().
+<<<<<<< HEAD
 func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	var cols []*expression.Column
 	ls.ByItems, cols = pruneByItems(ls, ls.ByItems, opt)
@@ -272,16 +312,29 @@ func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column, opt *lo
 		return nil, err
 	}
 	return ls, nil
+=======
+func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp, _ LogicalPlan) error {
+	child := ls.children[0]
+	var cols []*expression.Column
+	ls.ByItems, cols = pruneByItems(ls, ls.ByItems, opt)
+	parentUsedCols = append(parentUsedCols, cols...)
+	return child.PruneColumns(parentUsedCols, opt, ls)
+>>>>>>> 286e8521acf (planner: eliminate useless scalar subqueries in some scenarios of aggregate queries (#47550))
 }
 
 // PruneColumns implements LogicalPlan interface.
 // If any expression can view as a constant in execution stage, such as correlated column, constant,
 // we do prune them. Note that we can't prune the expressions contain non-deterministic functions, such as rand().
+<<<<<<< HEAD
 func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
+=======
+func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp, _ LogicalPlan) error {
+>>>>>>> 286e8521acf (planner: eliminate useless scalar subqueries in some scenarios of aggregate queries (#47550))
 	child := lt.children[0]
 	var cols []*expression.Column
 	lt.ByItems, cols = pruneByItems(lt, lt.ByItems, opt)
 	parentUsedCols = append(parentUsedCols, cols...)
+<<<<<<< HEAD
 	var err error
 	lt.children[0], err = child.PruneColumns(parentUsedCols, opt)
 	if err != nil {
@@ -292,6 +345,13 @@ func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column, opt *lo
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
+=======
+	return child.PruneColumns(parentUsedCols, opt, lt)
+}
+
+// PruneColumns implements LogicalPlan interface.
+func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp, _ LogicalPlan) error {
+>>>>>>> 286e8521acf (planner: eliminate useless scalar subqueries in some scenarios of aggregate queries (#47550))
 	used := expression.GetUsedList(parentUsedCols, p.schema)
 	hasBeenUsed := false
 	for i := range used {
@@ -307,10 +367,15 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt 
 			used[i] = true
 		}
 	}
+<<<<<<< HEAD
 
 	var err error
 	for i, child := range p.Children() {
 		p.Children()[i], err = child.PruneColumns(parentUsedCols, opt)
+=======
+	for _, child := range p.Children() {
+		err := child.PruneColumns(parentUsedCols, opt, p)
+>>>>>>> 286e8521acf (planner: eliminate useless scalar subqueries in some scenarios of aggregate queries (#47550))
 		if err != nil {
 			return nil, err
 		}
@@ -347,7 +412,11 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt 
 }
 
 // PruneColumns implements LogicalPlan interface.
+<<<<<<< HEAD
 func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
+=======
+func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp, _ LogicalPlan) error {
+>>>>>>> 286e8521acf (planner: eliminate useless scalar subqueries in some scenarios of aggregate queries (#47550))
 	for i := 0; i < p.handleCols.NumCols(); i++ {
 		parentUsedCols = append(parentUsedCols, p.handleCols.GetCol(i))
 	}
@@ -358,6 +427,7 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt
 	}
 	condCols := expression.ExtractColumnsFromExpressions(nil, p.conditions, nil)
 	parentUsedCols = append(parentUsedCols, condCols...)
+<<<<<<< HEAD
 	var err error
 	p.children[0], err = p.children[0].PruneColumns(parentUsedCols, opt)
 	if err != nil {
@@ -368,6 +438,13 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt
 
 // PruneColumns implements LogicalPlan interface.
 func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
+=======
+	return p.children[0].PruneColumns(parentUsedCols, opt, p)
+}
+
+// PruneColumns implements LogicalPlan interface.
+func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp, _ LogicalPlan) error {
+>>>>>>> 286e8521acf (planner: eliminate useless scalar subqueries in some scenarios of aggregate queries (#47550))
 	used := expression.GetUsedList(parentUsedCols, ds.schema)
 	exprCols := expression.ExtractColumnsFromExpressions(nil, ds.allConds, nil)
 	exprUsed := expression.GetUsedList(exprCols, ds.schema)
@@ -418,7 +495,11 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *log
 }
 
 // PruneColumns implements LogicalPlan interface.
+<<<<<<< HEAD
 func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
+=======
+func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp, _ LogicalPlan) error {
+>>>>>>> 286e8521acf (planner: eliminate useless scalar subqueries in some scenarios of aggregate queries (#47550))
 	switch p.TableInfo.Name.O {
 	case infoschema.TableStatementsSummary,
 		infoschema.TableStatementsSummaryHistory,
@@ -449,7 +530,11 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column, opt 
 }
 
 // PruneColumns implements LogicalPlan interface.
+<<<<<<< HEAD
 func (p *LogicalTableDual) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
+=======
+func (p *LogicalTableDual) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp, _ LogicalPlan) error {
+>>>>>>> 286e8521acf (planner: eliminate useless scalar subqueries in some scenarios of aggregate queries (#47550))
 	used := expression.GetUsedList(parentUsedCols, p.Schema())
 	prunedColumns := make([]*expression.Column, 0)
 	for i := len(used) - 1; i >= 0; i-- {
@@ -495,17 +580,28 @@ func (p *LogicalJoin) mergeSchema() {
 }
 
 // PruneColumns implements LogicalPlan interface.
+<<<<<<< HEAD
 func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	leftCols, rightCols := p.extractUsedCols(parentUsedCols)
 
 	var err error
 	p.children[0], err = p.children[0].PruneColumns(leftCols, opt)
+=======
+func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp, _ LogicalPlan) error {
+	leftCols, rightCols := p.extractUsedCols(parentUsedCols)
+
+	err := p.children[0].PruneColumns(leftCols, opt, p)
+>>>>>>> 286e8521acf (planner: eliminate useless scalar subqueries in some scenarios of aggregate queries (#47550))
 	if err != nil {
 		return nil, err
 	}
 	addConstOneForEmptyProjection(p.children[0])
 
+<<<<<<< HEAD
 	p.children[1], err = p.children[1].PruneColumns(rightCols, opt)
+=======
+	err = p.children[1].PruneColumns(rightCols, opt, p)
+>>>>>>> 286e8521acf (planner: eliminate useless scalar subqueries in some scenarios of aggregate queries (#47550))
 	if err != nil {
 		return nil, err
 	}
@@ -521,12 +617,23 @@ func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column, opt *log
 }
 
 // PruneColumns implements LogicalPlan interface.
+<<<<<<< HEAD
 func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	leftCols, rightCols := la.extractUsedCols(parentUsedCols)
 
 	var err error
 	// column pruning for child-1.
 	la.children[1], err = la.children[1].PruneColumns(rightCols, opt)
+=======
+func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp, parentLp LogicalPlan) error {
+	leftCols, rightCols := la.extractUsedCols(parentUsedCols)
+	allowEliminateApply := fixcontrol.GetBoolWithDefault(la.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix45822, true)
+	if allowEliminateApply && rightCols == nil && la.JoinType == LeftOuterJoin {
+		applyEliminateTraceStep(la.Children()[1], opt)
+		parentLp.SetChildren(la.Children()[0])
+	}
+	err := la.children[1].PruneColumns(rightCols, opt, la)
+>>>>>>> 286e8521acf (planner: eliminate useless scalar subqueries in some scenarios of aggregate queries (#47550))
 	if err != nil {
 		return nil, err
 	}
@@ -537,8 +644,12 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *l
 		leftCols = append(leftCols, &col.Column)
 	}
 
+<<<<<<< HEAD
 	// column pruning for child-0.
 	la.children[0], err = la.children[0].PruneColumns(leftCols, opt)
+=======
+	err = la.children[0].PruneColumns(leftCols, opt, la)
+>>>>>>> 286e8521acf (planner: eliminate useless scalar subqueries in some scenarios of aggregate queries (#47550))
 	if err != nil {
 		return nil, err
 	}
@@ -548,6 +659,7 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *l
 }
 
 // PruneColumns implements LogicalPlan interface.
+<<<<<<< HEAD
 func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	var err error
 	if !IsSelectForUpdateLockType(p.Lock.LockType) {
@@ -560,6 +672,11 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column, opt *log
 			return nil, err
 		}
 		return p, nil
+=======
+func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp, _ LogicalPlan) error {
+	if !IsSelectForUpdateLockType(p.Lock.LockType) {
+		return p.baseLogicalPlan.PruneColumns(parentUsedCols, opt, p)
+>>>>>>> 286e8521acf (planner: eliminate useless scalar subqueries in some scenarios of aggregate queries (#47550))
 	}
 
 	for tblID, cols := range p.tblID2Handle {
@@ -573,6 +690,7 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column, opt *log
 			parentUsedCols = append(parentUsedCols, physTblIDCol)
 		}
 	}
+<<<<<<< HEAD
 	p.children[0], err = p.children[0].PruneColumns(parentUsedCols, opt)
 	if err != nil {
 		return nil, err
@@ -582,6 +700,13 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column, opt *log
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
+=======
+	return p.children[0].PruneColumns(parentUsedCols, opt, p)
+}
+
+// PruneColumns implements LogicalPlan interface.
+func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp, _ LogicalPlan) error {
+>>>>>>> 286e8521acf (planner: eliminate useless scalar subqueries in some scenarios of aggregate queries (#47550))
 	windowColumns := p.GetWindowResultColumns()
 	cnt := 0
 	for _, col := range parentUsedCols {
@@ -599,8 +724,12 @@ func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column, opt *l
 	}
 	parentUsedCols = parentUsedCols[:cnt]
 	parentUsedCols = p.extractUsedCols(parentUsedCols)
+<<<<<<< HEAD
 	var err error
 	p.children[0], err = p.children[0].PruneColumns(parentUsedCols, opt)
+=======
+	err := p.children[0].PruneColumns(parentUsedCols, opt, p)
+>>>>>>> 286e8521acf (planner: eliminate useless scalar subqueries in some scenarios of aggregate queries (#47550))
 	if err != nil {
 		return nil, err
 	}
@@ -626,17 +755,26 @@ func (p *LogicalWindow) extractUsedCols(parentUsedCols []*expression.Column) []*
 }
 
 // PruneColumns implements LogicalPlan interface.
+<<<<<<< HEAD
 func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
+=======
+func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp, _ LogicalPlan) error {
+>>>>>>> 286e8521acf (planner: eliminate useless scalar subqueries in some scenarios of aggregate queries (#47550))
 	if len(parentUsedCols) == 0 { // happens when LIMIT appears in UPDATE.
 		return p, nil
 	}
 
 	savedUsedCols := make([]*expression.Column, len(parentUsedCols))
 	copy(savedUsedCols, parentUsedCols)
+<<<<<<< HEAD
 
 	var err error
 	if p.children[0], err = p.children[0].PruneColumns(parentUsedCols, opt); err != nil {
 		return nil, err
+=======
+	if err := p.children[0].PruneColumns(parentUsedCols, opt, p); err != nil {
+		return err
+>>>>>>> 286e8521acf (planner: eliminate useless scalar subqueries in some scenarios of aggregate queries (#47550))
 	}
 	p.schema = nil
 	p.inlineProjection(savedUsedCols, opt)
@@ -761,6 +899,7 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 
 // PruneColumns implements the interface of LogicalPlan.
 // LogicalCTE just do a empty function call. It's logical optimize is indivisual phase.
+<<<<<<< HEAD
 func (p *LogicalCTE) PruneColumns(_ []*expression.Column, _ *logicalOptimizeOp) (LogicalPlan, error) {
 	return p, nil
 }
@@ -773,4 +912,25 @@ func (p *LogicalSequence) PruneColumns(parentUsedCols []*expression.Column, opt 
 		return nil, err
 	}
 	return p, nil
+=======
+func (*LogicalCTE) PruneColumns(_ []*expression.Column, _ *logicalOptimizeOp, _ LogicalPlan) error {
+	return nil
+}
+
+// PruneColumns implements the interface of LogicalPlan.
+func (p *LogicalSequence) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp, _ LogicalPlan) error {
+	return p.children[len(p.children)-1].PruneColumns(parentUsedCols, opt, p)
+}
+
+func applyEliminateTraceStep(lp LogicalPlan, opt *logicalOptimizeOp) {
+	action := func() string {
+		buffer := bytes.NewBufferString(
+			fmt.Sprintf("%v_%v is eliminated.", lp.TP(), lp.ID()))
+		return buffer.String()
+	}
+	reason := func() string {
+		return fmt.Sprintf("%v_%v can be eliminated because it hasn't been used by it's parent.", lp.TP(), lp.ID())
+	}
+	opt.appendStepToCurrent(lp.ID(), lp.TP(), reason, action)
+>>>>>>> 286e8521acf (planner: eliminate useless scalar subqueries in some scenarios of aggregate queries (#47550))
 }

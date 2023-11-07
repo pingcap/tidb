@@ -356,22 +356,15 @@
       {
         "SQL": "explain format = 'verbose' select (2) in (select /*+ read_from_storage(tiflash[t1]) */ count(*) from t1) from (select t.b < (select /*+ read_from_storage(tiflash[t2]) */ t.b from t2 limit 1 )  from t3 t) t; -- we do generate the agg pushed-down plan of mpp, but cost-cmp failed",
         "Plan": [
-          "HashJoin_19 3.00 162366.01 root  CARTESIAN left outer semi join",
-          "├─Selection_36(Build) 0.80 31149.25 root  eq(2, Column#18)",
-          "│ └─StreamAgg_43 1.00 31099.35 root  funcs:count(1)->Column#18",
-          "│   └─TableReader_55 3.00 30949.65 root  MppVersion: 2, data:ExchangeSender_54",
-          "│     └─ExchangeSender_54 3.00 464139.20 mpp[tiflash]  ExchangeType: PassThrough",
-          "│       └─TableFullScan_53 3.00 464139.20 mpp[tiflash] table:t1 keep order:false",
-          "└─Projection_20(Probe) 3.00 129648.62 root  1->Column#28",
-          "  └─Apply_22 3.00 129648.32 root  CARTESIAN left outer join",
-          "    ├─IndexReader_26(Build) 3.00 53.37 root  index:IndexFullScan_25",
-          "    │ └─IndexFullScan_25 3.00 610.50 cop[tikv] table:t, index:c(b) keep order:false",
-          "    └─Projection_27(Probe) 3.00 43198.32 root  1->Column#26",
-          "      └─Limit_30 3.00 43198.22 root  offset:0, count:1",
-          "        └─TableReader_35 3.00 43198.22 root  MppVersion: 2, data:ExchangeSender_34",
-          "          └─ExchangeSender_34 3.00 647920.44 mpp[tiflash]  ExchangeType: PassThrough",
-          "            └─Limit_33 3.00 647920.44 mpp[tiflash]  offset:0, count:1",
-          "              └─TableFullScan_32 3.00 647920.44 mpp[tiflash] table:t2 keep order:false"
+          "HashJoin_17 3.00 32771.06 root  CARTESIAN left outer semi join",
+          "├─Selection_23(Build) 0.80 31149.25 root  eq(2, Column#18)",
+          "│ └─StreamAgg_30 1.00 31099.35 root  funcs:count(1)->Column#18",
+          "│   └─TableReader_42 3.00 30949.65 root  MppVersion: 2, data:ExchangeSender_41",
+          "│     └─ExchangeSender_41 3.00 464139.20 mpp[tiflash]  ExchangeType: PassThrough",
+          "│       └─TableFullScan_40 3.00 464139.20 mpp[tiflash] table:t1 keep order:false",
+          "└─Projection_18(Probe) 3.00 53.67 root  1->Column#24",
+          "  └─IndexReader_22 3.00 53.37 root  index:IndexFullScan_21",
+          "    └─IndexFullScan_21 3.00 610.50 cop[tikv] table:t, index:c(b) keep order:false"
         ]
       },
       {

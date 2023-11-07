@@ -34,6 +34,13 @@ const (
 	Fix44855 uint64 = 44855
 	// Fix45132 controls whether to use access range row count to determine access path on the Skyline pruning.
 	Fix45132 uint64 = 45132
+<<<<<<< HEAD
+=======
+	// Fix45822 controls whether to eliminate apply operator.
+	Fix45822 uint64 = 45822
+	// Fix45798 controls whether to cache plans that access generated columns.
+	Fix45798 uint64 = 45798
+>>>>>>> 286e8521acf (planner: eliminate useless scalar subqueries in some scenarios of aggregate queries (#47550))
 	// Fix46177 controls whether to explore enforced plans for DataSource if it has already found an unenforced plan.
 	Fix46177 uint64 = 46177
 )

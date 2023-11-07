@@ -256,8 +256,13 @@ type LogicalPlan interface {
 	// Because it might change the root if the having clause exists, we need to return a plan that represents a new root.
 	PredicatePushDown([]expression.Expression, *logicalOptimizeOp) ([]expression.Expression, LogicalPlan)
 
+<<<<<<< HEAD
 	// PruneColumns prunes the unused columns, and return the new logical plan if changed, otherwise it's same.
 	PruneColumns([]*expression.Column, *logicalOptimizeOp) (LogicalPlan, error)
+=======
+	// PruneColumns prunes the unused columns.
+	PruneColumns([]*expression.Column, *logicalOptimizeOp, LogicalPlan) error
+>>>>>>> 286e8521acf (planner: eliminate useless scalar subqueries in some scenarios of aggregate queries (#47550))
 
 	// findBestTask converts the logical plan to the physical plan. It's a new interface.
 	// It is called recursively from the parent to the children to create the result physical plan.
@@ -759,16 +764,24 @@ func (*baseLogicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 }
 
 // PruneColumns implements LogicalPlan interface.
+<<<<<<< HEAD
 func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
+=======
+func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp, _ LogicalPlan) error {
+>>>>>>> 286e8521acf (planner: eliminate useless scalar subqueries in some scenarios of aggregate queries (#47550))
 	if len(p.children) == 0 {
 		return p.self, nil
 	}
+<<<<<<< HEAD
 	var err error
 	p.children[0], err = p.children[0].PruneColumns(parentUsedCols, opt)
 	if err != nil {
 		return nil, err
 	}
 	return p.self, nil
+=======
+	return p.children[0].PruneColumns(parentUsedCols, opt, p)
+>>>>>>> 286e8521acf (planner: eliminate useless scalar subqueries in some scenarios of aggregate queries (#47550))
 }
 
 // Schema implements Plan Schema interface.
