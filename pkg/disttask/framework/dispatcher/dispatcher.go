@@ -674,7 +674,9 @@ func (d *BaseDispatcher) filterByRole(infos []*infosync.ServerInfo) ([]*infosync
 
 // GetAllSchedulerIDs gets all the scheduler IDs.
 func (d *BaseDispatcher) GetAllSchedulerIDs(ctx context.Context, task *proto.Task) ([]string, error) {
-	serverInfos, err := d.GetEligibleInstances(ctx, task)
+	// We get all servers instead of eligible servers here
+	// because eligible servers may change during the task execution.
+	serverInfos, err := GenerateSchedulerNodes(ctx)
 	if err != nil {
 		return nil, err
 	}

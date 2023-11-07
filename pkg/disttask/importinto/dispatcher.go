@@ -300,21 +300,13 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 		return nil, errors.Errorf("unknown step %d", gTask.Step)
 	}
 
-	executeNodesCnt := 0
-	// For non-dist mode.
-	if len(taskMeta.EligibleInstances) > 0 {
-		executeNodesCnt = len(taskMeta.EligibleInstances)
-	} else {
-		executeNodesCnt = len(serverInfos)
-	}
-
 	planCtx := planner.PlanCtx{
 		Ctx:                  ctx,
 		TaskID:               gTask.ID,
 		PreviousSubtaskMetas: previousSubtaskMetas,
 		GlobalSort:           dsp.GlobalSort,
 		NextTaskStep:         nextStep,
-		ExecuteNodesCnt:      executeNodesCnt,
+		ExecuteNodesCnt:      len(serverInfos),
 	}
 	logicalPlan := &LogicalPlan{}
 	if err := logicalPlan.FromTaskMeta(gTask.Meta); err != nil {
