@@ -134,9 +134,13 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		dom := domain.GetDomain(e.Ctx())
 		dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
 	})
-
+TASKLOOP:
 	for _, task := range tasks {
-		taskCh <- task
+		select {
+		case <-e.errExitCh:
+			break TASKLOOP
+		case taskCh <- task:
+		}
 	}
 	close(taskCh)
 	defer func() {
@@ -513,12 +517,17 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
+			var job *statistics.AnalyzeJob
+			if task != nil {
+				job = task.job
+			}
 			resultsCh <- &statistics.AnalyzeResults{
 				Err: getAnalyzePanicErr(r),
-				Job: task.job,
+				Job: job,
 			}
 		}
 	}()
+	failpoint.Inject("handleAnalyzeWorkerPanic", nil)
 	for {
 		var ok bool
 		task, ok = <-taskCh
