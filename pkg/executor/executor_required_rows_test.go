@@ -24,7 +24,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/executor/sort_exec"
+	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -279,7 +279,7 @@ func TestSortRequiredRows(t *testing.T) {
 }
 
 func buildSortExec(sctx sessionctx.Context, byItems []*util.ByItems, src exec.Executor) exec.Executor {
-	sortExec := sort_exec.SortExec{
+	sortExec := sortexec.SortExec{
 		BaseExecutor: exec.NewBaseExecutor(sctx, src.Schema(), 0, src),
 		ByItems:      byItems,
 		ExecSchema:   src.Schema(),
@@ -386,12 +386,12 @@ func TestTopNRequiredRows(t *testing.T) {
 }
 
 func buildTopNExec(ctx sessionctx.Context, offset, count int, byItems []*util.ByItems, src exec.Executor) exec.Executor {
-	sortExec := sort_exec.SortExec{
+	sortExec := sortexec.SortExec{
 		BaseExecutor: exec.NewBaseExecutor(ctx, src.Schema(), 0, src),
 		ByItems:      byItems,
 		ExecSchema:   src.Schema(),
 	}
-	return &sort_exec.TopNExec{
+	return &sortexec.TopNExec{
 		SortExec: sortExec,
 		Limit:    &plannercore.PhysicalLimit{Count: uint64(count), Offset: uint64(offset)},
 	}

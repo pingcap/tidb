@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package sort_exec_test
+package sortexec_test
 
 import (
 	"bytes"
