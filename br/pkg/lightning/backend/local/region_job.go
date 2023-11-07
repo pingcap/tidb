@@ -175,6 +175,14 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		failpoint.Return(err)
 	})
 
+	var cancel context.CancelFunc
+	// there are some strange blocking issues of gRPC like
+	// https://github.com/pingcap/tidb/issues/48352
+	// https://github.com/pingcap/tidb/issues/46321 and I don't know why 😭, so we
+	// set a timeout here to avoid blocking forever.
+	ctx, cancel = context.WithTimeout(ctx, 15*time.Minute)
+	defer cancel()
+
 	apiVersion := local.tikvCodec.GetAPIVersion()
 	clientFactory := local.importClientFactory
 	kvBatchSize := local.KVWriteBatchSize
