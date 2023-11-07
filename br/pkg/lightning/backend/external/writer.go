@@ -17,7 +17,6 @@ package external
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"encoding/hex"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"path/filepath"
@@ -52,6 +51,7 @@ var (
 const (
 	// DefaultMemSizeLimit is the default memory size limit for writer.
 	DefaultMemSizeLimit = 256 * size.MB
+	DefaultBlockSize    = 16 * units.MiB
 )
 
 // rangePropertiesCollector collects range properties for each range. The zero
@@ -185,7 +185,7 @@ func (b *WriterBuilder) Build(
 		},
 		memSizeLimit:   b.memSizeLimit,
 		store:          store,
-		kvBuffer2:      membuf.NewPool(membuf.WithBlockSize(b.blockSize)).NewBuffer(),
+		kvBuffer:       membuf.NewPool(membuf.WithBlockSize(b.blockSize)).NewBuffer(),
 		writeBatch:     make([]simpleKV, 1024*1024),
 		writeCnt:       0,
 		currentSeq:     0,
@@ -252,12 +252,6 @@ func GetMaxOverlappingTotal(stats []MultipleFilesStat) int64 {
 	return GetMaxOverlapping(points)
 }
 
-type kvLocation struct {
-	blockIdx int32
-	offset   int32
-	length   int32
-}
-
 type simpleKV struct {
 	key []byte
 	val *[]byte
@@ -276,11 +270,7 @@ type Writer struct {
 
 	memSizeLimit uint64
 
-	kvBuffer    *preAllocKVBuf
-	kvLocations []kvLocation
-	kvSize      int64
-
-	kvBuffer2  *membuf.Buffer
+	kvBuffer   *membuf.Buffer
 	writeBatch []simpleKV
 	writeCnt   int
 
@@ -310,9 +300,9 @@ func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tid
 	if handle != nil {
 		rowID = handle.Encoded()
 	}
-	buf := w.kvBuffer2.AllocBytes(keyAdapter.EncodedLen(idxKey, rowID))
+	buf := w.kvBuffer.AllocBytes(keyAdapter.EncodedLen(idxKey, rowID))
 	key := keyAdapter.Encode(buf[:0], idxKey, rowID)
-	val := w.kvBuffer2.AddBytes(idxVal)
+	val := w.kvBuffer.AddBytes(idxVal)
 
 	if w.writeCnt < len(w.writeBatch) {
 		w.writeBatch[w.writeCnt].key = key
@@ -337,7 +327,7 @@ func (w *Writer) Close(ctx context.Context) error {
 		return errors.Errorf("writer %s has been closed", w.writerID)
 	}
 	w.closed = true
-	defer w.kvBuffer2.Destroy()
+	defer w.kvBuffer.Destroy()
 	err := w.flushKVs(ctx, true)
 	if err != nil {
 		return err
@@ -494,22 +484,11 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		w.fileMaxKeys = w.fileMaxKeys[:0]
 	}
 
-	w.kvBuffer2.Reset()
+	w.kvBuffer.Reset()
 	w.rc.reset()
 	w.writeCnt = 0
 	w.batchSize = 0
 	return nil
-}
-
-func (w *Writer) getEncodedKVData(pos kvLocation) []byte {
-	block := w.kvBuffer.blocks[pos.blockIdx]
-	return block[pos.offset : pos.offset+pos.length]
-}
-
-func (w *Writer) getKeyByLoc(pos kvLocation) []byte {
-	block := w.kvBuffer.blocks[pos.blockIdx]
-	keyLen := binary.BigEndian.Uint64(block[pos.offset : pos.offset+lengthBytes])
-	return block[pos.offset+lengthBytes*2 : uint64(pos.offset)+lengthBytes*2+keyLen]
 }
 
 func (w *Writer) createStorageWriter(ctx context.Context) (
