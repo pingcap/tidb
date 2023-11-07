@@ -124,9 +124,9 @@ func (*BaseScheduler) Init(_ context.Context) error {
 func (s *BaseScheduler) Run(ctx context.Context, task *proto.Task) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.Logger(ctx).Error("BaseScheduler panicked", zap.Any("recover", r), zap.Stack("stack"))
+			logutil.Logger(s.logCtx).Error("BaseScheduler panicked", zap.Any("recover", r), zap.Stack("stack"))
 			err4Panic := errors.Errorf("%v", r)
-			err1 := s.updateErrorToSubtask(ctx, task.ID, err4Panic)
+			err1 := s.updateErrorToSubtask(task.ID, err4Panic)
 			if err == nil {
 				err = err1
 			}
@@ -139,7 +139,7 @@ func (s *BaseScheduler) Run(ctx context.Context, task *proto.Task) (err error) {
 	if err == nil {
 		return nil
 	}
-	return s.updateErrorToSubtask(ctx, task.ID, err)
+	return s.updateErrorToSubtask(task.ID, err)
 }
 
 func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) (resErr error) {
@@ -622,11 +622,11 @@ func (s *BaseScheduler) markSubTaskCanceledOrFailed(ctx context.Context, subtask
 	return false
 }
 
-func (s *BaseScheduler) updateErrorToSubtask(ctx context.Context, taskID int64, err error) error {
+func (s *BaseScheduler) updateErrorToSubtask(taskID int64, err error) error {
 	logger := logutil.Logger(s.logCtx)
 	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
-	err1 := handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
-		func(ctx context.Context) (bool, error) {
+	err1 := handle.RunWithRetry(s.logCtx, dispatcher.RetrySQLTimes, backoffer, logger,
+		func(_ context.Context) (bool, error) {
 			return true, s.taskTable.UpdateErrorToSubtask(s.id, taskID, err)
 		},
 	)

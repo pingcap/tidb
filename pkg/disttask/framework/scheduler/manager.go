@@ -333,7 +333,12 @@ func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
 		return
 	}
 	scheduler := factory(ctx, m.id, task, m.taskTable)
-	err := scheduler.Init(ctx)
+
+	taskCtx, taskCancel := context.WithCancelCause(ctx)
+	m.registerCancelFunc(task.ID, taskCancel)
+	defer taskCancel(nil)
+
+	err := scheduler.Init(taskCtx)
 	if err != nil {
 		m.logErrAndPersist(err, task.ID)
 		return
@@ -380,14 +385,11 @@ func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
 		}
 		switch task.State {
 		case proto.TaskStateRunning:
-			runCtx, runCancel := context.WithCancelCause(ctx)
-			m.registerCancelFunc(task.ID, runCancel)
-			err = scheduler.Run(runCtx, task)
-			runCancel(nil)
+			err = scheduler.Run(taskCtx, task)
 		case proto.TaskStatePausing:
-			err = scheduler.Pause(ctx, task)
+			err = scheduler.Pause(taskCtx, task)
 		case proto.TaskStateReverting:
-			err = scheduler.Rollback(ctx, task)
+			err = scheduler.Rollback(taskCtx, task)
 		}
 		if err != nil {
 			logutil.Logger(m.logCtx).Error("failed to handle task", zap.Error(err))
