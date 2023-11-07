@@ -91,7 +91,7 @@ func TestDispatcherExtLocalSort(t *testing.T) {
 	// to import stage, job should be running
 	d := dsp.MockDispatcher(task)
 	ext := importinto.ImportDispatcherExt{}
-	serverInfos, err := ext.GetEligibleInstances(context.Background(), task)
+	serverInfos, _, err := ext.GetEligibleInstances(context.Background(), task)
 	require.NoError(t, err)
 	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, serverInfos, ext.GetNextStep(task))
 	require.NoError(t, err)
@@ -221,7 +221,7 @@ func TestDispatcherExtGlobalSort(t *testing.T) {
 	ext := importinto.ImportDispatcherExt{
 		GlobalSort: true,
 	}
-	serverInfos, err := ext.GetEligibleInstances(context.Background(), task)
+	serverInfos, _, err := ext.GetEligibleInstances(context.Background(), task)
 	require.NoError(t, err)
 	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, serverInfos, ext.GetNextStep(task))
 	require.NoError(t, err)

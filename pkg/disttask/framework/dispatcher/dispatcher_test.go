@@ -61,8 +61,8 @@ func (*testDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle,
 
 var mockedAllServerInfos = []*infosync.ServerInfo{}
 
-func (*testDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
-	return mockedAllServerInfos, nil
+func (*testDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
+	return mockedAllServerInfos, true, nil
 }
 
 func (*testDispatcherExt) IsRetryableErr(error) bool {
@@ -99,8 +99,9 @@ func (n *numberExampleDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.
 	return nil, nil
 }
 
-func (*numberExampleDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
-	return dispatcher.GenerateSchedulerNodes(ctx)
+func (*numberExampleDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
+	serverInfo, err := dispatcher.GenerateSchedulerNodes(ctx)
+	return serverInfo, true, err
 }
 
 func (*numberExampleDispatcherExt) IsRetryableErr(error) bool {

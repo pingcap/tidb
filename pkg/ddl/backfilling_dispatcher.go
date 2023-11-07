@@ -191,12 +191,12 @@ func (*BackfillingDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.Task
 }
 
 // GetEligibleInstances implements dispatcher.Extension interface.
-func (*BackfillingDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+func (*BackfillingDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
 	serverInfos, err := dispatcher.GenerateSchedulerNodes(ctx)
 	if err != nil {
-		return nil, err
+		return nil, true, err
 	}
-	return serverInfos, nil
+	return serverInfos, true, nil
 }
 
 // IsRetryableErr implements dispatcher.Extension.IsRetryableErr interface.

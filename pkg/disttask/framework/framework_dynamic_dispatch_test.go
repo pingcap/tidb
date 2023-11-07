@@ -72,7 +72,7 @@ func (dsp *testDynamicDispatcherExt) GetNextStep(task *proto.Task) proto.Step {
 	}
 }
 
-func (*testDynamicDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+func (*testDynamicDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
 	return generateSchedulerNodes4Test()
 }
 

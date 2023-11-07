@@ -70,7 +70,7 @@ func (*haTestDispatcherExt) OnErrStage(ctx context.Context, h dispatcher.TaskHan
 	return nil, nil
 }
 
-func (*haTestDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+func (*haTestDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
 	return generateSchedulerNodes4Test()
 }
 

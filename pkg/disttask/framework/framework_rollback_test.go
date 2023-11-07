@@ -57,7 +57,7 @@ func (*rollbackDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHan
 	return []byte("rollbacktask1"), nil
 }
 
-func (*rollbackDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+func (*rollbackDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
 	return generateSchedulerNodes4Test()
 }
 

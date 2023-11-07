@@ -68,7 +68,7 @@ func TestBackfillingDispatcherLocalMode(t *testing.T) {
 	// 1.1 OnNextSubtasksBatch
 	gTask.Step = dsp.GetNextStep(gTask)
 	require.Equal(t, ddl.StepReadIndex, gTask.Step)
-	serverInfos, err := dsp.GetEligibleInstances(context.Background(), gTask)
+	serverInfos, _, err := dsp.GetEligibleInstances(context.Background(), gTask)
 	require.NoError(t, err)
 	metas, err := dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, serverInfos, gTask.Step)
 	require.NoError(t, err)
@@ -156,7 +156,7 @@ func TestBackfillingDispatcherGlobalSortMode(t *testing.T) {
 	taskID, err := mgr.AddNewGlobalTask(task.Key, proto.Backfill, 1, task.Meta)
 	require.NoError(t, err)
 	task.ID = taskID
-	serverInfos, err := dsp.GetEligibleInstances(context.Background(), task)
+	serverInfos, _, err := dsp.GetEligibleInstances(context.Background(), task)
 	require.NoError(t, err)
 
 	// 1. to read-index stage

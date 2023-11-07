@@ -374,13 +374,15 @@ func (d *BaseDispatcher) replaceDeadNodesIfAny() error {
 			return err
 		}
 
-		eligibleServerInfos, err := d.GetEligibleInstances(d.ctx, d.Task)
+		eligibleServerInfos, filter, err := d.GetEligibleInstances(d.ctx, d.Task)
 		if err != nil {
 			return err
 		}
-		eligibleServerInfos, err = d.filterByRole(eligibleServerInfos)
-		if err != nil {
-			return err
+		if filter {
+			eligibleServerInfos, err = d.filterByRole(eligibleServerInfos)
+			if err != nil {
+				return err
+			}
 		}
 		newInfos := serverInfos[:0]
 		for _, m := range serverInfos {
@@ -551,16 +553,18 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 	for {
 		// 3. generate a batch of subtasks.
 		/// select all available TiDB nodes for task.
-		serverNodes, err := d.GetEligibleInstances(d.ctx, d.Task)
+		serverNodes, filter, err := d.GetEligibleInstances(d.ctx, d.Task)
 		logutil.Logger(d.logCtx).Debug("eligible instances", zap.Int("num", len(serverNodes)))
 
 		if err != nil {
 			return err
 		}
-		/// filter by role.
-		serverNodes, err = d.filterByRole(serverNodes)
-		if err != nil {
-			return err
+		if filter {
+			/// filter by role.
+			serverNodes, err = d.filterByRole(serverNodes)
+			if err != nil {
+				return err
+			}
 		}
 		logutil.Logger(d.logCtx).Info("eligible instances", zap.Int("num", len(serverNodes)))
 		if len(serverNodes) == 0 {

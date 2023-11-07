@@ -70,7 +70,7 @@ func (p *planErrDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHa
 	return []byte("planErrTask"), nil
 }
 
-func (*planErrDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+func (*planErrDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
 	return generateSchedulerNodes4Test()
 }
 
@@ -104,7 +104,7 @@ func (*planNotRetryableErrDispatcherExt) OnErrStage(_ context.Context, _ dispatc
 	return nil, errors.New("not retryable err")
 }
 
-func (*planNotRetryableErrDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+func (*planNotRetryableErrDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
 	return generateSchedulerNodes4Test()
 }
 
