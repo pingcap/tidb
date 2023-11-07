@@ -186,7 +186,7 @@ func (b *WriterBuilder) Build(
 		memSizeLimit:   b.memSizeLimit,
 		store:          store,
 		kvBuffer2:      membuf.NewPool(membuf.WithBlockSize(b.blockSize)).NewBuffer(),
-		writeBatch:     make([]simpleKV, 10*1024*1024),
+		writeBatch:     make([]simpleKV, 1024*1024),
 		writeCnt:       0,
 		currentSeq:     0,
 		filenamePrefix: filenamePrefix,
