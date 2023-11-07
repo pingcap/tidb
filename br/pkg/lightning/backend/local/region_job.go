@@ -220,11 +220,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	})
 
 	var cancel context.CancelFunc
-	// there are some strange blocking issues of gRPC like
-	// https://github.com/pingcap/tidb/issues/48352
-	// https://github.com/pingcap/tidb/issues/46321 and I don't know why 😭, so we
-	// set a timeout here to avoid blocking forever.
-	ctx, cancel = context.WithTimeout(ctx, 15*time.Minute)
+	ctx, cancel = context.WithTimeoutCause(ctx, 15*time.Minute, common.ErrWriteTooSlow)
 	defer cancel()
 
 	apiVersion := local.tikvCodec.GetAPIVersion()
