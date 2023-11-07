@@ -67,7 +67,7 @@ var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEval{{ .Input.TypeName }}(b.ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEval{{ .Input.TypeName }}(ctx, input, buf0); err != nil {
 		return err
 	}
 	buf1, err := b.bufAllocator.get()
@@ -216,7 +216,7 @@ func (b *{{.SigName}}) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, re
 	{{- end }}
 
 	for j := 0; j < len(args); j++ {
-		if err := args[j].VecEval{{ .Input.TypeName }}(b.ctx, input, buf1); err != nil {
+		if err := args[j].VecEval{{ .Input.TypeName }}(ctx, input, buf1); err != nil {
 			return err
 		}
 		{{- if $InputInt }}

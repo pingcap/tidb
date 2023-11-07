@@ -1035,6 +1035,7 @@ func NewValuesFunc(ctx sessionctx.Context, offset int, retTp *types.FieldType) *
 		FuncName: model.NewCIStr(ast.Values),
 		RetType:  retTp,
 		Function: bt,
+		ctx:      ctx,
 	}
 }
 
@@ -1510,6 +1511,7 @@ func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression, wrapF
 		FuncName: model.NewCIStr(ast.IsTruthWithoutNull),
 		Function: f,
 		RetType:  f.getRetTp(),
+		ctx:      ctx,
 	}
 	if keepNull {
 		sf.FuncName = model.NewCIStr(ast.IsTruthWithNull)

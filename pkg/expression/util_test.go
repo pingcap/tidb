@@ -192,18 +192,20 @@ func TestSetExprColumnInOperand(t *testing.T) {
 	col := &Column{RetType: newIntFieldType()}
 	require.True(t, SetExprColumnInOperand(col).(*Column).InOperand)
 
-	f, err := funcs[ast.Abs].getFunction(mock.NewContext(), []Expression{col})
+	ctx := mock.NewContext()
+	f, err := funcs[ast.Abs].getFunction(ctx, []Expression{col})
 	require.NoError(t, err)
-	fun := &ScalarFunction{Function: f}
+	fun := &ScalarFunction{Function: f, ctx: ctx}
 	SetExprColumnInOperand(fun)
 	require.True(t, f.getArgs()[0].(*Column).InOperand)
 }
 
 func TestPopRowFirstArg(t *testing.T) {
+	ctx := mock.NewContext()
 	c1, c2, c3 := &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}
-	f, err := funcs[ast.RowFunc].getFunction(mock.NewContext(), []Expression{c1, c2, c3})
+	f, err := funcs[ast.RowFunc].getFunction(ctx, []Expression{c1, c2, c3})
 	require.NoError(t, err)
-	fun := &ScalarFunction{Function: f, FuncName: model.NewCIStr(ast.RowFunc), RetType: newIntFieldType()}
+	fun := &ScalarFunction{Function: f, FuncName: model.NewCIStr(ast.RowFunc), RetType: newIntFieldType(), ctx: ctx}
 	fun2, err := PopRowFirstArg(mock.NewContext(), fun)
 	require.NoError(t, err)
 	require.Len(t, fun2.(*ScalarFunction).GetArgs(), 2)

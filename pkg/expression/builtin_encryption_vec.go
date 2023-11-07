@@ -55,7 +55,7 @@ func (b *builtinAesDecryptSig) vecEvalString(ctx sessionctx.Context, input *chun
 		return err
 	}
 	defer b.bufAllocator.put(strBuf)
-	if err := b.args[0].VecEvalString(b.ctx, input, strBuf); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, strBuf); err != nil {
 		return err
 	}
 
@@ -64,7 +64,7 @@ func (b *builtinAesDecryptSig) vecEvalString(ctx sessionctx.Context, input *chun
 		return err
 	}
 	defer b.bufAllocator.put(keyBuf)
-	if err := b.args[1].VecEvalString(b.ctx, input, keyBuf); err != nil {
+	if err := b.args[1].VecEvalString(ctx, input, keyBuf); err != nil {
 		return err
 	}
 
@@ -73,7 +73,7 @@ func (b *builtinAesDecryptSig) vecEvalString(ctx sessionctx.Context, input *chun
 	}
 
 	isWarning := !b.ivRequired && len(b.args) == 3
-	isConstKey := b.args[1].ConstItem(b.ctx.GetSessionVars().StmtCtx)
+	isConstKey := b.args[1].ConstItem(ctx.GetSessionVars().StmtCtx)
 
 	var key []byte
 	if isConstKey {
@@ -81,7 +81,7 @@ func (b *builtinAesDecryptSig) vecEvalString(ctx sessionctx.Context, input *chun
 	}
 
 	result.ReserveString(n)
-	stmtCtx := b.ctx.GetSessionVars().StmtCtx
+	stmtCtx := ctx.GetSessionVars().StmtCtx
 	for i := 0; i < n; i++ {
 		// According to doc: If either function argument is NULL, the function returns NULL.
 		if strBuf.IsNull(i) || keyBuf.IsNull(i) {
@@ -123,7 +123,7 @@ func (b *builtinAesEncryptIVSig) vecEvalString(ctx sessionctx.Context, input *ch
 		return err
 	}
 	defer b.bufAllocator.put(strBuf)
-	if err := b.args[0].VecEvalString(b.ctx, input, strBuf); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, strBuf); err != nil {
 		return err
 	}
 
@@ -132,7 +132,7 @@ func (b *builtinAesEncryptIVSig) vecEvalString(ctx sessionctx.Context, input *ch
 		return err
 	}
 	defer b.bufAllocator.put(keyBuf)
-	if err := b.args[1].VecEvalString(b.ctx, input, keyBuf); err != nil {
+	if err := b.args[1].VecEvalString(ctx, input, keyBuf); err != nil {
 		return err
 	}
 
@@ -141,7 +141,7 @@ func (b *builtinAesEncryptIVSig) vecEvalString(ctx sessionctx.Context, input *ch
 		return err
 	}
 	defer b.bufAllocator.put(ivBuf)
-	if err := b.args[2].VecEvalString(b.ctx, input, ivBuf); err != nil {
+	if err := b.args[2].VecEvalString(ctx, input, ivBuf); err != nil {
 		return err
 	}
 
@@ -159,7 +159,7 @@ func (b *builtinAesEncryptIVSig) vecEvalString(ctx sessionctx.Context, input *ch
 		return errors.Errorf("unsupported block encryption mode - %v", b.modeName)
 	}
 
-	isConst := b.args[1].ConstItem(b.ctx.GetSessionVars().StmtCtx)
+	isConst := b.args[1].ConstItem(ctx.GetSessionVars().StmtCtx)
 	var key []byte
 	if isConst {
 		key = encrypt.DeriveKeyMySQL(keyBuf.GetBytes(0), b.keySize)
@@ -216,7 +216,7 @@ func (b *builtinDecodeSig) vecEvalString(ctx sessionctx.Context, input *chunk.Ch
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
 	buf1, err1 := b.bufAllocator.get()
@@ -224,7 +224,7 @@ func (b *builtinDecodeSig) vecEvalString(ctx sessionctx.Context, input *chunk.Ch
 		return err1
 	}
 	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+	if err := b.args[1].VecEvalString(ctx, input, buf1); err != nil {
 		return err
 	}
 	result.ReserveString(n)
@@ -255,7 +255,7 @@ func (b *builtinEncodeSig) vecEvalString(ctx sessionctx.Context, input *chunk.Ch
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
 	buf1, err1 := b.bufAllocator.get()
@@ -263,7 +263,7 @@ func (b *builtinEncodeSig) vecEvalString(ctx sessionctx.Context, input *chunk.Ch
 		return err1
 	}
 	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+	if err := b.args[1].VecEvalString(ctx, input, buf1); err != nil {
 		return err
 	}
 	result.ReserveString(n)
@@ -296,7 +296,7 @@ func (b *builtinAesDecryptIVSig) vecEvalString(ctx sessionctx.Context, input *ch
 		return err
 	}
 	defer b.bufAllocator.put(strBuf)
-	if err := b.args[0].VecEvalString(b.ctx, input, strBuf); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, strBuf); err != nil {
 		return err
 	}
 
@@ -305,7 +305,7 @@ func (b *builtinAesDecryptIVSig) vecEvalString(ctx sessionctx.Context, input *ch
 		return err
 	}
 	defer b.bufAllocator.put(keyBuf)
-	if err := b.args[1].VecEvalString(b.ctx, input, keyBuf); err != nil {
+	if err := b.args[1].VecEvalString(ctx, input, keyBuf); err != nil {
 		return err
 	}
 
@@ -314,7 +314,7 @@ func (b *builtinAesDecryptIVSig) vecEvalString(ctx sessionctx.Context, input *ch
 		return err
 	}
 	defer b.bufAllocator.put(ivBuf)
-	if err := b.args[2].VecEvalString(b.ctx, input, ivBuf); err != nil {
+	if err := b.args[2].VecEvalString(ctx, input, ivBuf); err != nil {
 		return err
 	}
 
@@ -332,7 +332,7 @@ func (b *builtinAesDecryptIVSig) vecEvalString(ctx sessionctx.Context, input *ch
 		return errors.Errorf("unsupported block encryption mode - %v", b.modeName)
 	}
 
-	isConst := b.args[1].ConstItem(b.ctx.GetSessionVars().StmtCtx)
+	isConst := b.args[1].ConstItem(ctx.GetSessionVars().StmtCtx)
 	var key []byte
 	if isConst {
 		key = encrypt.DeriveKeyMySQL(keyBuf.GetBytes(0), b.keySize)
@@ -389,7 +389,7 @@ func (b *builtinRandomBytesSig) vecEvalString(ctx sessionctx.Context, input *chu
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalInt(ctx, input, buf); err != nil {
 		return err
 	}
 	result.ReserveString(n)
@@ -426,7 +426,7 @@ func (b *builtinMD5Sig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
 	result.ReserveString(n)
@@ -461,7 +461,7 @@ func (b *builtinSHA2Sig) vecEvalString(ctx sessionctx.Context, input *chunk.Chun
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
 	buf1, err := b.bufAllocator.get()
@@ -469,7 +469,7 @@ func (b *builtinSHA2Sig) vecEvalString(ctx sessionctx.Context, input *chunk.Chun
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+	if err := b.args[1].VecEvalInt(ctx, input, buf1); err != nil {
 		return err
 	}
 	result.ReserveString(n)
@@ -537,7 +537,7 @@ func (b *builtinSM3Sig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return errors.Trace(err)
 	}
 	result.ReserveString(n)
@@ -591,7 +591,7 @@ func (b *builtinCompressSig) vecEvalString(ctx sessionctx.Context, input *chunk.
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
 
@@ -654,7 +654,7 @@ func (b *builtinAesEncryptSig) vecEvalString(ctx sessionctx.Context, input *chun
 		return err
 	}
 	defer b.bufAllocator.put(strBuf)
-	if err := b.args[0].VecEvalString(b.ctx, input, strBuf); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, strBuf); err != nil {
 		return err
 	}
 
@@ -663,7 +663,7 @@ func (b *builtinAesEncryptSig) vecEvalString(ctx sessionctx.Context, input *chun
 		return err
 	}
 	defer b.bufAllocator.put(keyBuf)
-	if err := b.args[1].VecEvalString(b.ctx, input, keyBuf); err != nil {
+	if err := b.args[1].VecEvalString(ctx, input, keyBuf); err != nil {
 		return err
 	}
 
@@ -673,13 +673,13 @@ func (b *builtinAesEncryptSig) vecEvalString(ctx sessionctx.Context, input *chun
 	}
 
 	isWarning := !b.ivRequired && len(b.args) == 3
-	isConst := b.args[1].ConstItem(b.ctx.GetSessionVars().StmtCtx)
+	isConst := b.args[1].ConstItem(ctx.GetSessionVars().StmtCtx)
 	var key []byte
 	if isConst {
 		key = encrypt.DeriveKeyMySQL(keyBuf.GetBytes(0), b.keySize)
 	}
 
-	sc := b.ctx.GetSessionVars().StmtCtx
+	sc := ctx.GetSessionVars().StmtCtx
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		// According to doc: If either function argument is NULL, the function returns NULL.
@@ -719,7 +719,7 @@ func (b *builtinPasswordSig) vecEvalString(ctx sessionctx.Context, input *chunk.
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
 	result.ReserveString(n)
@@ -737,7 +737,7 @@ func (b *builtinPasswordSig) vecEvalString(ctx sessionctx.Context, input *chunk.
 
 		// We should append a warning here because function "PASSWORD" is deprecated since MySQL 5.7.6.
 		// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.GenWithStackByArgs("PASSWORD"))
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.GenWithStackByArgs("PASSWORD"))
 
 		result.AppendString(auth.EncodePasswordBytes(passBytes))
 	}
@@ -755,7 +755,7 @@ func (b *builtinSHA1Sig) vecEvalString(ctx sessionctx.Context, input *chunk.Chun
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
 	result.ReserveString(n)
@@ -789,12 +789,12 @@ func (b *builtinUncompressSig) vecEvalString(ctx sessionctx.Context, input *chun
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
 
 	result.ReserveString(n)
-	sc := b.ctx.GetSessionVars().StmtCtx
+	sc := ctx.GetSessionVars().StmtCtx
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
@@ -837,14 +837,14 @@ func (b *builtinUncompressedLengthSig) vectorized() bool {
 }
 
 func (b *builtinUncompressedLengthSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
-	sc := b.ctx.GetSessionVars().StmtCtx
+	sc := ctx.GetSessionVars().StmtCtx
 	nr := input.NumRows()
 	payloadBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(payloadBuf)
-	if err := b.args[0].VecEvalString(b.ctx, input, payloadBuf); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, payloadBuf); err != nil {
 		return err
 	}
 
@@ -881,14 +881,14 @@ func (b *builtinValidatePasswordStrengthSig) vecEvalInt(ctx sessionctx.Context, 
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
 
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	globalVars := b.ctx.GetSessionVars().GlobalVarsAccessor
+	globalVars := ctx.GetSessionVars().GlobalVarsAccessor
 	enableValidation := false
 	validation, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordEnable)
 	if err != nil {
@@ -901,7 +901,7 @@ func (b *builtinValidatePasswordStrengthSig) vecEvalInt(ctx sessionctx.Context, 
 		}
 		if !enableValidation {
 			i64s[i] = 0
-		} else if score, isNull, err := b.validateStr(buf.GetString(i), &globalVars); err != nil {
+		} else if score, isNull, err := b.validateStr(ctx, buf.GetString(i), &globalVars); err != nil {
 			return err
 		} else if !isNull {
 			i64s[i] = score

@@ -30,7 +30,7 @@ func (b *builtinLikeSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, 
 		return err
 	}
 	defer b.bufAllocator.put(bufVal)
-	if err = b.args[0].VecEvalString(b.ctx, input, bufVal); err != nil {
+	if err = b.args[0].VecEvalString(ctx, input, bufVal); err != nil {
 		return err
 	}
 	bufPattern, err := b.bufAllocator.get()
@@ -38,7 +38,7 @@ func (b *builtinLikeSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, 
 		return err
 	}
 	defer b.bufAllocator.put(bufPattern)
-	if err = b.args[1].VecEvalString(b.ctx, input, bufPattern); err != nil {
+	if err = b.args[1].VecEvalString(ctx, input, bufPattern); err != nil {
 		return err
 	}
 
@@ -47,7 +47,7 @@ func (b *builtinLikeSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, 
 		return err
 	}
 	defer b.bufAllocator.put(bufEscape)
-	if err = b.args[2].VecEvalInt(b.ctx, input, bufEscape); err != nil {
+	if err = b.args[2].VecEvalInt(ctx, input, bufEscape); err != nil {
 		return err
 	}
 	escapes := bufEscape.Int64s()

@@ -96,7 +96,7 @@ func (b *builtinBitCountSig) vectorized() bool {
 }
 func (b *builtinBitCountSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+	if err := b.args[0].VecEvalInt(ctx, input, result); err != nil {
 		if types.ErrOverflow.Equal(err) {
 			result.ResizeInt64(n, false)
 			i64s := result.Int64s()
@@ -127,14 +127,14 @@ func (b *builtinGetParamStringSig) vectorized() bool {
 }
 
 func (b *builtinGetParamStringSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
-	sessionVars := b.ctx.GetSessionVars()
+	sessionVars := ctx.GetSessionVars()
 	n := input.NumRows()
 	idx, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(idx)
-	if err := b.args[0].VecEvalInt(b.ctx, input, idx); err != nil {
+	if err := b.args[0].VecEvalInt(ctx, input, idx); err != nil {
 		return err
 	}
 	idxIs := idx.Int64s()
@@ -167,7 +167,7 @@ func (b *builtinSetStringVarSig) vecEvalString(ctx sessionctx.Context, input *ch
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf0); err != nil {
 		return err
 	}
 	buf1, err := b.bufAllocator.get()
@@ -175,11 +175,11 @@ func (b *builtinSetStringVarSig) vecEvalString(ctx sessionctx.Context, input *ch
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+	if err := b.args[1].VecEvalString(ctx, input, buf1); err != nil {
 		return err
 	}
 	result.ReserveString(n)
-	sessionVars := b.ctx.GetSessionVars()
+	sessionVars := ctx.GetSessionVars()
 	_, collation := sessionVars.GetCharsetInfo()
 	for i := 0; i < n; i++ {
 		if buf0.IsNull(i) || buf1.IsNull(i) {
@@ -205,7 +205,7 @@ func (b *builtinSetIntVarSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Ch
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf0); err != nil {
 		return err
 	}
 	buf1, err := b.bufAllocator.get()
@@ -213,12 +213,12 @@ func (b *builtinSetIntVarSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Ch
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+	if err := b.args[1].VecEvalInt(ctx, input, buf1); err != nil {
 		return err
 	}
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
-	sessionVars := b.ctx.GetSessionVars()
+	sessionVars := ctx.GetSessionVars()
 	for i := 0; i < n; i++ {
 		if buf0.IsNull(i) || buf1.IsNull(i) {
 			result.SetNull(i, true)
@@ -243,7 +243,7 @@ func (b *builtinSetRealVarSig) vecEvalReal(ctx sessionctx.Context, input *chunk.
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf0); err != nil {
 		return err
 	}
 	buf1, err := b.bufAllocator.get()
@@ -251,12 +251,12 @@ func (b *builtinSetRealVarSig) vecEvalReal(ctx sessionctx.Context, input *chunk.
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalReal(b.ctx, input, buf1); err != nil {
+	if err := b.args[1].VecEvalReal(ctx, input, buf1); err != nil {
 		return err
 	}
 	result.ResizeFloat64(n, false)
 	f64s := result.Float64s()
-	sessionVars := b.ctx.GetSessionVars()
+	sessionVars := ctx.GetSessionVars()
 	for i := 0; i < n; i++ {
 		if buf0.IsNull(i) || buf1.IsNull(i) {
 			result.SetNull(i, true)
@@ -281,7 +281,7 @@ func (b *builtinSetDecimalVarSig) vecEvalDecimal(ctx sessionctx.Context, input *
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf0); err != nil {
 		return err
 	}
 	buf1, err := b.bufAllocator.get()
@@ -289,12 +289,12 @@ func (b *builtinSetDecimalVarSig) vecEvalDecimal(ctx sessionctx.Context, input *
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalDecimal(b.ctx, input, buf1); err != nil {
+	if err := b.args[1].VecEvalDecimal(ctx, input, buf1); err != nil {
 		return err
 	}
 	result.ResizeDecimal(n, false)
 	decs := result.Decimals()
-	sessionVars := b.ctx.GetSessionVars()
+	sessionVars := ctx.GetSessionVars()
 	for i := 0; i < n; i++ {
 		if buf0.IsNull(i) || buf1.IsNull(i) {
 			result.SetNull(i, true)
@@ -327,11 +327,11 @@ func (b *builtinGetStringVarSig) vecEvalString(ctx sessionctx.Context, input *ch
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf0); err != nil {
 		return err
 	}
 	result.ReserveString(n)
-	sessionVars := b.ctx.GetSessionVars()
+	sessionVars := ctx.GetSessionVars()
 	for i := 0; i < n; i++ {
 		if buf0.IsNull(i) {
 			result.AppendNull()
@@ -362,13 +362,13 @@ func (b *builtinGetIntVarSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Ch
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf0); err != nil {
 		return err
 	}
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0)
 	i64s := result.Int64s()
-	sessionVars := b.ctx.GetSessionVars()
+	sessionVars := ctx.GetSessionVars()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -394,13 +394,13 @@ func (b *builtinGetRealVarSig) vecEvalReal(ctx sessionctx.Context, input *chunk.
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf0); err != nil {
 		return err
 	}
 	result.ResizeFloat64(n, false)
 	result.MergeNulls(buf0)
 	f64s := result.Float64s()
-	sessionVars := b.ctx.GetSessionVars()
+	sessionVars := ctx.GetSessionVars()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -426,13 +426,13 @@ func (b *builtinGetDecimalVarSig) vecEvalDecimal(ctx sessionctx.Context, input *
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf0); err != nil {
 		return err
 	}
 	result.ResizeDecimal(n, false)
 	result.MergeNulls(buf0)
 	decs := result.Decimals()
-	sessionVars := b.ctx.GetSessionVars()
+	sessionVars := ctx.GetSessionVars()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue

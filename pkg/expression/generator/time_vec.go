@@ -63,7 +63,7 @@ import (
 			{{ template "SetNull" . }}
 			continue
 		}{{ end }}
-		sc := b.ctx.GetSessionVars().StmtCtx
+		sc := ctx.GetSessionVars().StmtCtx
 		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, {{if eq .Output.TypeName "String"}}getFsp4TimeAddSub{{else}}types.GetFsp{{end}}(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -92,7 +92,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx sessionctx.Context, inp
 	n := input.NumRows()
 {{ $reuse := (and (eq .TypeA.TypeName .Output.TypeName) .TypeA.Fixed) }}
 {{ if $reuse }}
-	if err := b.args[0].VecEval{{ .TypeA.TypeName }}(b.ctx, input, result); err != nil {
+	if err := b.args[0].VecEval{{ .TypeA.TypeName }}(ctx, input, result); err != nil {
 		return err
 	}
 	buf0 := result
@@ -102,7 +102,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx sessionctx.Context, inp
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEval{{ .TypeA.TypeName }}(b.ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEval{{ .TypeA.TypeName }}(ctx, input, buf0); err != nil {
 		return err
 	}
 {{ end }}
@@ -123,7 +123,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx sessionctx.Context, inp
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEval{{ .TypeB.TypeName }}(b.ctx, input, buf1); err != nil {
+	if err := b.args[1].VecEval{{ .TypeB.TypeName }}(ctx, input, buf1); err != nil {
 		return err
 	}
 
@@ -172,9 +172,9 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx sessionctx.Context, inp
 		// calculate
 	{{ if or (eq .SigName "builtinAddDatetimeAndDurationSig") (eq .SigName "builtinSubDatetimeAndDurationSig") }}
 		{{ if eq $.FuncName "AddTime" }}
-		output, err := arg0.Add(b.ctx.GetSessionVars().StmtCtx.TypeCtx(), types.Duration{Duration: arg1, Fsp: -1})
+		output, err := arg0.Add(ctx.GetSessionVars().StmtCtx.TypeCtx(), types.Duration{Duration: arg1, Fsp: -1})
 		{{ else }}
-		sc := b.ctx.GetSessionVars().StmtCtx
+		sc := ctx.GetSessionVars().StmtCtx
 		arg1Duration := types.Duration{Duration: arg1, Fsp: -1}
 		output, err := arg0.Add(sc.TypeCtx(), arg1Duration.Neg())
 		{{ end }}
@@ -191,7 +191,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx sessionctx.Context, inp
 			result.SetNull(i, true) // fixed: true
 			continue
 		}
-		sc := b.ctx.GetSessionVars().StmtCtx
+		sc := ctx.GetSessionVars().StmtCtx
 		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, types.GetFsp(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -232,7 +232,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx sessionctx.Context, inp
 		}
 		{{ end }}
 	{{ else if or (eq .SigName "builtinAddStringAndDurationSig") (eq .SigName "builtinSubStringAndDurationSig") }}
-		sc := b.ctx.GetSessionVars().StmtCtx
+		sc := ctx.GetSessionVars().StmtCtx
 		fsp1 := b.args[1].GetType().GetDecimal()
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 		var output string
@@ -359,10 +359,10 @@ var timeDiff = template.Must(template.New("").Parse(`
 	defer b.bufAllocator.put(buf1)
 {{ end }}
 {{ define "ArgsVecEval" }}
-	if err := b.args[0].VecEval{{ .TypeA.TypeName }}(b.ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEval{{ .TypeA.TypeName }}(ctx, input, buf0); err != nil {
 		return err
 	}
-	if err := b.args[1].VecEval{{ .TypeB.TypeName }}(b.ctx, input, buf1); err != nil {
+	if err := b.args[1].VecEval{{ .TypeB.TypeName }}(ctx, input, buf1); err != nil {
 		return err
 	}
 {{ end }}
@@ -416,7 +416,7 @@ func (b *{{.SigName}}) vecEvalDuration(ctx sessionctx.Context, input *chunk.Chun
 			)
 		{{- end }}
 		{{- if or (or $AIsString $BIsString) (and $AIsTime $BIsTime) }}
-			stmtCtx := b.ctx.GetSessionVars().StmtCtx
+			stmtCtx := ctx.GetSessionVars().StmtCtx
 		{{- end }}
 	for i:=0; i<n ; i++{
 		if result.IsNull(i) {
@@ -485,12 +485,12 @@ func (b *{{.SigName}}) vecEvalDuration(ctx sessionctx.Context, input *chunk.Chun
 				isNull bool
 			)
 			if lhsIsDuration {
-				d, isNull, err = calculateDurationTimeDiff(b.ctx, lhsDur, rhsDur)
+				d, isNull, err = calculateDurationTimeDiff(ctx, lhsDur, rhsDur)
 			} else {
 				d, isNull, err = calculateTimeDiff(stmtCtx, lhsTime, rhsTime)
 			}
 		{{- else if or $AIsDuration $BIsDuration }}
-			d, isNull, err := calculateDurationTimeDiff(b.ctx, lhs, rhs)
+			d, isNull, err := calculateDurationTimeDiff(ctx, lhs, rhs)
 		{{- else if or $AIsTime $BIsTime }}
 			d, isNull, err := calculateTimeDiff(stmtCtx, lhsTime, rhsTime)
 		{{- end }}

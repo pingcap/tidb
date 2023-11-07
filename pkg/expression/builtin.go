@@ -49,7 +49,6 @@ import (
 type baseBuiltinFunc struct {
 	bufAllocator columnBufferAllocator
 	args         []Expression
-	ctx          sessionctx.Context
 	tp           *types.FieldType
 	pbCode       tipb.ScalarFuncSig
 	ctor         collate.Collator
@@ -125,7 +124,6 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 		childrenReversedOnce:   new(sync.Once),
 
 		args: args,
-		ctx:  ctx,
 		tp:   tp,
 	}
 	bf.SetCharsetAndCollation(ec.Charset, ec.Collation)
@@ -213,7 +211,6 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 		childrenReversedOnce:   new(sync.Once),
 
 		args: args,
-		ctx:  ctx,
 		tp:   fieldType,
 	}
 	bf.SetCharsetAndCollation(ec.Charset, ec.Collation)
@@ -276,7 +273,6 @@ func newBaseBuiltinFuncWithFieldTypes(ctx sessionctx.Context, funcName string, a
 		childrenReversedOnce:   new(sync.Once),
 
 		args: args,
-		ctx:  ctx,
 		tp:   fieldType,
 	}
 	bf.SetCharsetAndCollation(ec.Charset, ec.Collation)
@@ -300,7 +296,6 @@ func newBaseBuiltinFuncWithFieldType(ctx sessionctx.Context, tp *types.FieldType
 		childrenReversedOnce:   new(sync.Once),
 
 		args: args,
-		ctx:  ctx,
 		tp:   tp,
 	}
 	bf.SetCharsetAndCollation(tp.GetCharset(), tp.GetCollate())
@@ -422,21 +417,17 @@ func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
 	return b.tp
 }
 
-func (b *baseBuiltinFunc) equal(_ sessionctx.Context, fun builtinFunc) bool {
+func (b *baseBuiltinFunc) equal(ctx sessionctx.Context, fun builtinFunc) bool {
 	funArgs := fun.getArgs()
 	if len(funArgs) != len(b.args) {
 		return false
 	}
 	for i := range b.args {
-		if !b.args[i].Equal(b.ctx, funArgs[i]) {
+		if !b.args[i].Equal(ctx, funArgs[i]) {
 			return false
 		}
 	}
 	return true
-}
-
-func (b *baseBuiltinFunc) getCtx() sessionctx.Context {
-	return b.ctx
 }
 
 func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
@@ -444,7 +435,6 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	for _, arg := range from.args {
 		b.args = append(b.args, arg.Clone())
 	}
-	b.ctx = from.ctx
 	b.tp = from.tp
 	b.pbCode = from.pbCode
 	b.bufAllocator = newLocalColumnPool()
@@ -550,8 +540,6 @@ type builtinFunc interface {
 	getArgs() []Expression
 	// equal check if this function equals to another function.
 	equal(sessionctx.Context, builtinFunc) bool
-	// getCtx returns this function's context.
-	getCtx() sessionctx.Context
 	// getRetTp returns the return type of the built-in function.
 	getRetTp() *types.FieldType
 	// setPbCode sets pbCode for signature.
@@ -572,10 +560,6 @@ type builtinFunc interface {
 	MemoryUsage() int64
 
 	CollationInfo
-}
-
-type builtinFuncNew interface {
-	evalIntWithCtx(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error)
 }
 
 // baseFunctionClass will be contained in every struct that implement functionClass interface.
