@@ -51,7 +51,8 @@ var (
 const (
 	// DefaultMemSizeLimit is the default memory size limit for writer.
 	DefaultMemSizeLimit = 256 * size.MB
-	DefaultBlockSize    = 16 * units.MiB
+	// DefaultBlockSize is the default block size for writer.
+	DefaultBlockSize = 16 * units.MiB
 )
 
 // rangePropertiesCollector collects range properties for each range. The zero
@@ -254,7 +255,7 @@ func GetMaxOverlappingTotal(stats []MultipleFilesStat) int64 {
 
 type simpleKV struct {
 	key []byte
-	val *[]byte
+	val []byte
 }
 
 // Writer is used to write data into external storage.
@@ -306,9 +307,9 @@ func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tid
 
 	if w.writeCnt < len(w.writeBatch) {
 		w.writeBatch[w.writeCnt].key = key
-		w.writeBatch[w.writeCnt].val = &val
+		w.writeBatch[w.writeCnt].val = val
 	} else {
-		w.writeBatch = append(w.writeBatch, simpleKV{key: key, val: &val})
+		w.writeBatch = append(w.writeBatch, simpleKV{key: key, val: val})
 	}
 	w.writeCnt++
 	if w.batchSize >= w.memSizeLimit {
@@ -447,7 +448,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	}
 
 	for _, pair := range w.writeBatch[:w.writeCnt] {
-		err = w.kvStore.addEncodedData(pair.key, *pair.val)
+		err = w.kvStore.addEncodedData(pair.key, pair.val)
 		if err != nil {
 			return err
 		}
