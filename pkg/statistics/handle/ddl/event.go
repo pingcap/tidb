@@ -1,0 +1,212 @@
+package DDL
+
+import "github.com/pingcap/tidb/pkg/parser/model"
+
+type Event struct {
+	// We expose the action type field to the outside, because some DDL events
+	// do not need other fields.
+	// If your DDL event needs other fields, please add them to the
+	// corresponding NewXXXEvent function and give them clear names.
+	Tp model.ActionType
+
+	// For different DDL types, the following fields are used.
+	// They have different meanings for different DDL types.
+	// Please do **not** use these fields directly, use the corresponding
+	// NewXXXEvent functions instead.
+	tableInfo    *model.TableInfo
+	partInfo     *model.PartitionInfo
+	oldTableInfo *model.TableInfo
+	oldPartInfo  *model.PartitionInfo
+}
+
+// NewCreateTableEvent creates a new DDL event that creates a table.
+func NewCreateTableEvent(
+	newTableInfo *model.TableInfo,
+) *Event {
+	return &Event{
+		Tp:        model.ActionCreateTable,
+		tableInfo: newTableInfo,
+	}
+}
+
+func (e *Event) getCreateTableInfo() (newTableInfo *model.TableInfo) {
+	return e.tableInfo
+}
+
+// NewDropTableEvent creates a new DDL event that drops a table.
+func NewTruncateTableEvent(
+	newTableInfo *model.TableInfo,
+	droppedTableInfo *model.TableInfo,
+) *Event {
+	return &Event{
+		Tp:           model.ActionTruncateTable,
+		tableInfo:    newTableInfo,
+		oldTableInfo: droppedTableInfo,
+	}
+}
+
+func (e *Event) getTruncateTableInfo() (newTableInfo *model.TableInfo, droppedTableInfo *model.TableInfo) {
+	return e.tableInfo, e.oldTableInfo
+}
+
+// NewDropTableEvent creates a new DDL event that drops a table.
+func NewDropTableEvent(
+	droppedTableInfo *model.TableInfo,
+) *Event {
+	return &Event{
+		Tp:           model.ActionDropTable,
+		oldTableInfo: droppedTableInfo,
+	}
+}
+
+func (e *Event) getDropTableInfo() (newTableInfo *model.TableInfo) {
+	return e.oldTableInfo
+}
+
+// NewAddOrModifyColumnEvent creates a new DDL event that
+// adds or modifies a column.
+func NewAddOrModifyColumnEvent(
+	newTableInfoWithNewColumnInfo *model.TableInfo,
+) *Event {
+	return &Event{
+		Tp:        model.ActionAddColumn,
+		tableInfo: newTableInfoWithNewColumnInfo,
+	}
+}
+
+func (e *Event) getAddOrModifyColumnInfo() (newTableInfoWithNewColumnInfo *model.TableInfo) {
+	return e.tableInfo
+}
+
+// NewAddTablePartitionEvent creates a new DDL event that adds a partition.
+func NewAddTablePartitionEvent(
+	globalTableInfo *model.TableInfo,
+	addedPartInfo *model.PartitionInfo,
+) *Event {
+	return &Event{
+		Tp:        model.ActionAddTablePartition,
+		tableInfo: globalTableInfo,
+		partInfo:  addedPartInfo,
+	}
+}
+
+func (e *Event) getAddTablePartitionInfo() (globalTableInfo *model.TableInfo, addedPartInfo *model.PartitionInfo) {
+	return e.tableInfo, e.partInfo
+}
+
+// NewDropPartitionEvent creates a new DDL event that drops a partition.
+func NewDropPartitionEvent(
+	globalTableInfo *model.TableInfo,
+	droppedPartInfo *model.PartitionInfo,
+) *Event {
+	return &Event{
+		Tp:          model.ActionDropTablePartition,
+		tableInfo:   globalTableInfo,
+		oldPartInfo: droppedPartInfo,
+	}
+}
+
+func (e *Event) getDropPartitionInfo() (globalTableInfo *model.TableInfo, droppedPartInfo *model.PartitionInfo) {
+	return e.tableInfo, e.oldPartInfo
+}
+
+// NewExchangePartitionEvent creates a new DDL event that exchanges a partition.
+func NewExchangePartitionEvent(
+	globalTableInfo *model.TableInfo,
+	exchangedPartInfo *model.PartitionInfo,
+	exchangedTableInfo *model.TableInfo,
+) *Event {
+	return &Event{
+		Tp:           model.ActionExchangeTablePartition,
+		tableInfo:    globalTableInfo,
+		partInfo:     exchangedPartInfo,
+		oldTableInfo: exchangedTableInfo,
+	}
+}
+
+func (e *Event) getExchangePartitionInfo() (
+	globalTableInfo *model.TableInfo,
+	exchangedPartInfo *model.PartitionInfo,
+	exchangedTableInfo *model.TableInfo,
+) {
+	return e.tableInfo, e.partInfo, e.oldTableInfo
+}
+
+// NewReorganizePartitionEvent creates a new DDL event that reorganizes a partition.
+// We also use it for increasing or decreasing the number of hash partitions.
+func NewReorganizePartitionEvent(
+	globalTableInfo *model.TableInfo,
+	addedPartInfo *model.PartitionInfo,
+	droppedPartInfo *model.PartitionInfo,
+) *Event {
+	return &Event{
+		Tp:          model.ActionReorganizePartition,
+		tableInfo:   globalTableInfo,
+		partInfo:    addedPartInfo,
+		oldPartInfo: droppedPartInfo,
+	}
+}
+
+func (e *Event) getReorganizePartitionInfo() (
+	globalTableInfo *model.TableInfo,
+	addedPartInfo *model.PartitionInfo,
+	droppedPartInfo *model.PartitionInfo,
+) {
+	return e.tableInfo, e.partInfo, e.oldPartInfo
+}
+
+// NewTruncatePartitionEvent creates a new DDL event that truncates a partition.
+func NewTruncatePartitionEvent(
+	globalTableInfo *model.TableInfo,
+	addedPartInfo *model.PartitionInfo,
+	droppedPartInfo *model.PartitionInfo,
+) *Event {
+	return &Event{
+		Tp:          model.ActionTruncateTablePartition,
+		tableInfo:   globalTableInfo,
+		partInfo:    addedPartInfo,
+		oldPartInfo: droppedPartInfo,
+	}
+}
+
+func (e *Event) getTruncatePartitionInfo() (
+	globalTableInfo *model.TableInfo,
+	addedPartInfo *model.PartitionInfo,
+	droppedPartInfo *model.PartitionInfo,
+) {
+	return e.tableInfo, e.partInfo, e.oldPartInfo
+}
+
+// NewAddPartitioningEvent creates a new DDL event that adds partitioning.
+// For example, `alter table t partition by range (c1) (partition p1 values less than (10))`.
+func NewAddPartitioningEvent(
+	newGlobalTableInfo *model.TableInfo,
+	addedPartInfo *model.PartitionInfo,
+) *Event {
+	return &Event{
+		Tp:        model.ActionAlterTablePartitioning,
+		tableInfo: newGlobalTableInfo,
+		partInfo:  addedPartInfo,
+	}
+}
+
+func (e *Event) getAddPartitioningInfo() (newGlobalTableInfo *model.TableInfo, addedPartInfo *model.PartitionInfo) {
+	return e.tableInfo, e.partInfo
+}
+
+// NewRemovePartitioningEvent creates a new DDL event that removes partitioning.
+// For example, `alter table t remove partitioning`.
+func NewRemovePartitioningEvent(
+	newSingleTableInfo *model.TableInfo,
+	droppedPartInfo *model.PartitionInfo,
+) *Event {
+	return &Event{
+		Tp:          model.ActionRemovePartitioning,
+		tableInfo:   newSingleTableInfo,
+		oldPartInfo: droppedPartInfo,
+	}
+}
+
+func (e *Event) getRemovePartitioningInfo() (newSingleTableInfo *model.TableInfo, droppedPartInfo *model.PartitionInfo) {
+	return e.tableInfo, e.oldPartInfo
+}
