@@ -325,7 +325,12 @@ func (do *Domain) AddRunawayWatch(record *resourcegroup.QuarantineRecord) (uint6
 			}
 		}
 		logutil.BgLogger().Warn("failed to get last insert id when adding runaway watch", zap.Error(err))
-		time.Sleep(time.Millisecond * time.Duration(retry*100))
+		select {
+		case <-do.exit:
+			return 0, err
+		default:
+			time.Sleep(time.Millisecond * time.Duration(retry*100))
+		}
 	}
 	return 0, errors.Errorf("An error: %v occurred while getting the ID of the newly added watch record. Try querying information_schema.runaway_watches later", err)
 }
