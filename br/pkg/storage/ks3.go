@@ -63,7 +63,6 @@ func NewKS3Storage(
 		return nil, errors.New("ks3 region is empty")
 	}
 	awsConfig.Region = qs.Region
-	awsConfig.DisableSSL = opts.DisableSSL
 
 	if qs.Endpoint != "" {
 		awsConfig.Endpoint = qs.Endpoint

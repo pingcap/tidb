@@ -89,9 +89,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	if err != nil {
 		return err
 	}
-	opt := &storage.ExternalStorageOptions{
-		DisableSSL: true,
-	}
+	opt := &storage.ExternalStorageOptions{}
 	if intest.InTest {
 		opt.NoCredentials = true
 	}

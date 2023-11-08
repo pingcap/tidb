@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/prometheus/client_golang/prometheus"
@@ -193,13 +192,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	if err != nil {
 		return nil, err
 	}
-	opts := &storage.ExternalStorageOptions{
-		DisableSSL: true,
-	}
-	if intest.InTest {
-		opts.NoCredentials = true
-	}
-	extStore, err := storage.New(ctx, backend, opts)
+	extStore, err := storage.NewWithDefaultOpt(ctx, backend)
 	if err != nil {
 		return nil, err
 	}

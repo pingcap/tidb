@@ -931,7 +931,7 @@ func (e *LoadDataController) InitDataStore(ctx context.Context) error {
 			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target,
 				err3.Error())
 		}
-		s, err = e.initSelfManagedExternalStore(ctx, cloudStorageURL, target)
+		s, err = e.initExternalStore(ctx, cloudStorageURL, target)
 		if err != nil {
 			return err
 		}
@@ -939,26 +939,6 @@ func (e *LoadDataController) InitDataStore(ctx context.Context) error {
 	}
 	return nil
 }
-
-func (*LoadDataController) initSelfManagedExternalStore(ctx context.Context, u *url.URL, target string) (storage.ExternalStorage, error) {
-	b, err2 := storage.ParseBackendFromURL(u, nil)
-	if err2 != nil {
-		return nil, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, GetMsgFromBRError(err2))
-	}
-
-	opt := &storage.ExternalStorageOptions{
-		DisableSSL: true,
-	}
-	if intest.InTest {
-		opt.NoCredentials = true
-	}
-	s, err := storage.New(ctx, b, opt)
-	if err != nil {
-		return nil, exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(target, GetMsgFromBRError(err))
-	}
-	return s, nil
-}
-
 func (*LoadDataController) initExternalStore(ctx context.Context, u *url.URL, target string) (storage.ExternalStorage, error) {
 	b, err2 := storage.ParseBackendFromURL(u, nil)
 	if err2 != nil {

@@ -305,7 +305,6 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	} else {
 		awsConfig.WithRegion(qs.Region)
 	}
-	awsConfig.DisableSSL = aws.Bool(opts.DisableSSL)
 
 	if opts.S3Retryer != nil {
 		request.WithRetryer(awsConfig, opts.S3Retryer)
