@@ -430,8 +430,8 @@ func TestPartialResult4MaxMinEnum(t *testing.T) {
 	// Initialize test data
 	expectData := []partialResult4MaxMinEnum{
 		{val: types.Enum{Name: string(""), Value: 123}, isNull: true},
-		{val: types.Enum{Name: string(testLongStr1), Value: 0}, isNull: false},
-		{val: types.Enum{Name: string(testLongStr2), Value: 0}, isNull: true},
+		{val: types.Enum{Name: testLongStr1, Value: 0}, isNull: false},
+		{val: types.Enum{Name: testLongStr2, Value: 0}, isNull: true},
 	}
 	serializedPartialResults := make([]PartialResult, 3)
 	testDataNum := len(serializedPartialResults)
@@ -474,7 +474,7 @@ func TestPartialResult4MaxMinSet(t *testing.T) {
 	expectData := []partialResult4MaxMinSet{
 		{val: types.Set{Name: string(""), Value: 123}, isNull: true},
 		{val: types.Set{Name: testLongStr1, Value: 0}, isNull: false},
-		{val: types.Set{Name: string(testLongStr2), Value: 0}, isNull: true},
+		{val: types.Set{Name: testLongStr2, Value: 0}, isNull: true},
 	}
 	serializedPartialResults := make([]PartialResult, 3)
 	testDataNum := len(serializedPartialResults)
@@ -1245,7 +1245,7 @@ func TestPartialResult4FirstRowSet(t *testing.T) {
 	expectData := []partialResult4FirstRowSet{
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: types.Set{Name: string(""), Value: 123}},
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: types.Set{Name: string("123"), Value: 0}},
-		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: types.Set{Name: string(testLongStr1), Value: 999}},
+		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: types.Set{Name: testLongStr1, Value: 999}},
 	}
 	serializedPartialResults := make([]PartialResult, 3)
 	testDataNum := len(serializedPartialResults)
