@@ -305,12 +305,12 @@ func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tid
 	key := keyAdapter.Encode(buf[:0], idxKey, rowID)
 	val := w.kvBuffer.AddBytes(idxVal)
 
-	if w.writeCnt < len(w.writeBatch) {
-		w.writeBatch[w.writeCnt].key = key
-		w.writeBatch[w.writeCnt].val = val
-	} else {
-		w.writeBatch = append(w.writeBatch, simpleKV{key: key, val: val})
+	if w.writeCnt == len(w.writeBatch) {
+		w.writeBatch = append(w.writeBatch, make([]simpleKV, len(w.writeBatch))...)
 	}
+
+	w.writeBatch[w.writeCnt].key = key
+	w.writeBatch[w.writeCnt].val = val
 	w.writeCnt++
 	if w.batchSize >= w.memSizeLimit {
 		if err := w.flushKVs(ctx, false); err != nil {
