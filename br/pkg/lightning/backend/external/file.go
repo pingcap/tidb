@@ -94,11 +94,20 @@ func (s *KeyValueStore) addEncodedData(key []byte, val []byte) error {
 }
 
 // Close closes the KeyValueStore and append the last range property.
-func (s *KeyValueStore) Close() {
+func (s *KeyValueStore) Close() error {
+	if len(s.memBuffer) > 0 {
+		_, err := s.dataWriter.Write(s.ctx, s.memBuffer)
+		if err != nil {
+			return err
+		}
+		s.memBuffer = s.memBuffer[:0]
+		return nil
+	}
 	if s.rc.currProp.keys > 0 {
 		newProp := *s.rc.currProp
 		s.rc.props = append(s.rc.props, &newProp)
 	}
+	return nil
 }
 
 const statSuffix = "_stat"

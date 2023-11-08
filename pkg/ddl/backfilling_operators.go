@@ -192,7 +192,10 @@ func NewWriteIndexToExternalStoragePipeline(
 	if err != nil {
 		return nil, err
 	}
-	extStore, err := storage.NewWithDefaultOpt(ctx, backend)
+	opts := &storage.ExternalStorageOptions{
+		DisableSSL: true,
+	}
+	extStore, err := storage.New(ctx, backend, opts)
 	if err != nil {
 		return nil, err
 	}

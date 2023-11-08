@@ -461,7 +461,10 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		w.kvStore.memBuffer = w.kvStore.memBuffer[:0]
 	}
 
-	w.kvStore.Close()
+	err = w.kvStore.Close()
+	if err != nil {
+		return err
+	}
 	encodedStat := w.rc.encode()
 	statSize = len(encodedStat)
 	_, err = statWriter.Write(ctx, encodedStat)
