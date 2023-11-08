@@ -1842,13 +1842,11 @@ update t set a=2 where a<12;
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 1
-update t set a=1 where a<10;
- update t set a=2 where a<12;
-update t set a=1 where a<10;
- update t set a=2 where a<12;
+update t set a=1 where a<10; update t set a=2 where a<12;
+update t set a=1 where a<10; update t set a=2 where a<12;
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-1
+0
 update t set a=2 where a<12;
 select @@last_plan_from_cache;
 @@last_plan_from_cache

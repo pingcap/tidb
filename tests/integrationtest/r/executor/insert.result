@@ -556,10 +556,7 @@ year(d)	month(d)	day(d)
 2019	1	0
 2019	0	1
 2019	2	31
-truncate t1;
-truncate t2;
-truncate t3;
-truncate t4;
+truncate t1;truncate t2;truncate t3;truncate t4;
 set sql_mode='ALLOW_INVALID_DATES';
 insert into t1 values ('0000-00-00');
 insert into t2 values ('0000-00-00');

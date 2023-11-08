@@ -85,7 +85,7 @@ b+0	BIN(b)	OCT(b)	HEX(b)
 drop table if exists t;
 create table t(a char(20));
 select convert(a using a) from t;
-[parser:1115]Unknown character set: 'a'
+Error 1115 (42000): Unknown character set: 'a'
 drop table if exists t1;
 create table t1(c1 varbinary(100));
 insert into t1 values('abc');
@@ -1381,7 +1381,7 @@ select .78$123;
 $123
 0.78
 select .78$421+1;
-[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 15 near "+1;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 15 near "+1;" 
 select t. `r10` > 3 from t;
 t. `r10` > 3
 1
@@ -1417,12 +1417,7 @@ drop table if exists ta, tb;
 CREATE TABLE `ta` (  `k` varchar(32) NOT NULL DEFAULT ' ',  `c0` varchar(32) NOT NULL DEFAULT ' ',  `c` varchar(18) NOT NULL DEFAULT ' ',  `e0` varchar(1) NOT NULL DEFAULT ' ',  PRIMARY KEY (`k`,`c0`,`c`),  KEY `idx` (`c`,`e0`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 CREATE TABLE `tb` (  `k` varchar(32) NOT NULL DEFAULT ' ',  `e` int(11) NOT NULL DEFAULT '0',  `i` int(11) NOT NULL DEFAULT '0',  `s` varchar(1) NOT NULL DEFAULT ' ',  `c` varchar(50) NOT NULL DEFAULT ' ',  PRIMARY KEY (`k`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 prepare stmt from "select a.* from ta a left join tb b on a.k = b.k where (a.k <> '000000' and ((b.s = ? and i = ? ) or (b.s = ? and e = ?) or (b.s not in(?, ?))) and b.c like '%1%') or (a.c <> '000000' and a.k = '000000')";
-set @a=3;
-set @b=20200414;
-set @c='a';
-set @d=20200414;
-set @e=3;
-set @f='a';
+set @a=3;set @b=20200414;set @c='a';set @d=20200414;set @e=3;set @f='a';
 execute stmt using @a,@b,@c,@d,@e,@f;
 k	c0	c	e0
 drop table if exists t;
