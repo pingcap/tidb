@@ -4876,34 +4876,8 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			if b.buildingCTE {
 				b.outerCTEs[len(b.outerCTEs)-1].containAggOrWindow = cte.containAggOrWindow || b.outerCTEs[len(b.outerCTEs)-1].containAggOrWindow
 			}
-
-			// Combine the declaration of CTE and the use of CTE to jointly determine **whether a CTE can be inlined**
-			/*
-			   There are some cases that CTE must be not inlined.
-			   1. CTE is recursive CTE.
-			   2. CTE contains agg or window and it is referenced by recursive part of CTE.
-			   3. Consumer count of CTE is more than one.
-			   If 1 or 2 conditions are met, CTE cannot be inlined.
-			   But if query is hint by 'merge()' or session variable "tidb_opt_force_inline_cte",
-			     CTE will still not be inlined but a warning will be recorded "Hint or session variables are invalid"
-			   If 3 condition is met, CTE can be inlined by hint and session variables.
-			*/
-			if cte.recurLP != nil {
-				if cte.forceInlineByHintOrVar {
-					b.ctx.GetSessionVars().StmtCtx.AppendWarning(
-						ErrInternal.GenWithStack("Recursive CTE %s can not be inlined by merge() or tidb_opt_force_inline_cte.", tn.Name))
-				}
-			} else if cte.containAggOrWindow && b.buildingRecursivePartForCTE {
-				if cte.forceInlineByHintOrVar {
-					b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrCTERecursiveForbidsAggregation.FastGenByArgs(tn.Name))
-				}
-			} else if cte.consumerCount > 1 {
-				if cte.forceInlineByHintOrVar {
-					cte.isInline = true
-				}
-			} else {
-				cte.isInline = true
-			}
+			// Compute cte inline
+			b.computeCTEInlineFlag(cte)
 
 			if cte.recurLP == nil && cte.isInline {
 				saveCte := make([]*cteInfo, len(b.outerCTEs[i:]))
@@ -4939,6 +4913,36 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 	}
 
 	return nil, nil
+}
+
+// computeCTEInlineFlag, Combine the declaration of CTE and the use of CTE to jointly determine **whether a CTE can be inlined**
+/*
+   There are some cases that CTE must be not inlined.
+   1. CTE is recursive CTE.
+   2. CTE contains agg or window and it is referenced by recursive part of CTE.
+   3. Consumer count of CTE is more than one.
+   If 1 or 2 conditions are met, CTE cannot be inlined.
+   But if query is hint by 'merge()' or session variable "tidb_opt_force_inline_cte",
+     CTE will still not be inlined but a warning will be recorded "Hint or session variables are invalid"
+   If 3 condition is met, CTE can be inlined by hint and session variables.
+*/
+func (b *PlanBuilder) computeCTEInlineFlag(cte *cteInfo) {
+	if cte.recurLP != nil {
+		if cte.forceInlineByHintOrVar {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(
+				ErrInternal.GenWithStack("Recursive CTE %s can not be inlined by merge() or tidb_opt_force_inline_cte.", cte.def.Name))
+		}
+	} else if cte.containAggOrWindow && b.buildingRecursivePartForCTE {
+		if cte.forceInlineByHintOrVar {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrCTERecursiveForbidsAggregation.FastGenByArgs(cte.def.Name))
+		}
+	} else if cte.consumerCount > 1 {
+		if cte.forceInlineByHintOrVar {
+			cte.isInline = true
+		}
+	} else {
+		cte.isInline = true
+	}
 }
 
 func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.CommonTableExpression) (LogicalPlan, error) {
