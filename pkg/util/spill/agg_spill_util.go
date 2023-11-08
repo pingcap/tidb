@@ -25,6 +25,7 @@ import (
 )
 
 var (
+	// ErrInternal is an error for spill
 	ErrInternal = dbterror.ClassOptimizer.NewStd(mysql.ErrInternal)
 )
 
@@ -150,7 +151,7 @@ func DeserializeInterface(buf []byte, readPos int64) (interface{}, int64) {
 		coreTime := DeserializeUint64(buf, readPos)
 		readPos += 8
 		t := DeserializeUint8(buf, readPos)
-		readPos += 1
+		readPos++
 		fsp := DeserializeInt(buf, readPos)
 		readPos += intLen
 		return types.NewTime(types.CoreTime(coreTime), t, fsp), readPos
@@ -241,7 +242,7 @@ func SerializeInterface(value interface{}, varBuf *[]byte, tmpBuf []byte) int64 
 		} else {
 			*varBuf = append(*varBuf, byte(0))
 		}
-		encodedBytesNum += 1
+		encodedBytesNum++
 	case int64:
 		*varBuf = append(*varBuf, Int64Type)
 		*varBuf = append(*varBuf, SerializeInt64(v, tmpBuf)...)
