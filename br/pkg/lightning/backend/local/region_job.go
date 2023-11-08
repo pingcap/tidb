@@ -218,6 +218,10 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		failpoint.Return(err)
 	})
 
+	var cancel context.CancelFunc
+	ctx, cancel = context.WithTimeoutCause(ctx, 15*time.Minute, common.ErrWriteTooSlow)
+	defer cancel()
+
 	apiVersion := local.tikvCodec.GetAPIVersion()
 	clientFactory := local.importClientFactory
 	kvBatchSize := local.KVWriteBatchSize
