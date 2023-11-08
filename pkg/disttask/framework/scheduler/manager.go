@@ -333,7 +333,6 @@ func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
 		return
 	}
 	scheduler := factory(ctx, m.id, task, m.taskTable)
-
 	taskCtx, taskCancel := context.WithCancelCause(ctx)
 	m.registerCancelFunc(task.ID, taskCancel)
 	defer taskCancel(nil)
