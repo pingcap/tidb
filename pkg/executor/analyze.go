@@ -519,23 +519,19 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
-			var job *statistics.AnalyzeJob
-			if task != nil {
-				job = task.job
-			}
 			resultsCh <- &statistics.AnalyzeResults{
 				Err: getAnalyzePanicErr(r),
-				Job: job,
+				Job: task.job,
 			}
 		}
 	}()
-	failpoint.Inject("handleAnalyzeWorkerPanic", nil)
 	for {
 		var ok bool
 		task, ok = <-taskCh
 		if !ok {
 			break
 		}
+		failpoint.Inject("handleAnalyzeWorkerPanic", nil)
 		StartAnalyzeJob(e.Ctx(), task.job)
 		switch task.taskType {
 		case colTask:
