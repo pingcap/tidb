@@ -281,6 +281,7 @@ func tryAutoAnalyzeTable(
 	sql string,
 	params ...interface{},
 ) bool {
+	// If the stats is not loaded or the count of the table is less than AutoAnalyzeMinCnt, we don't need to analyze it.
 	if statsTbl.Pseudo || statsTbl.RealtimeCount < AutoAnalyzeMinCnt {
 		return false
 	}
@@ -390,6 +391,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 
 	for _, def := range partitionDefs {
 		partitionStatsTbl := statsHandle.GetPartitionStats(tblInfo, def.ID)
+		// If the stats is not loaded or the count of the table is less than AutoAnalyzeMinCnt, we don't need to analyze it.
 		if partitionStatsTbl.Pseudo || partitionStatsTbl.RealtimeCount < AutoAnalyzeMinCnt {
 			continue
 		}
