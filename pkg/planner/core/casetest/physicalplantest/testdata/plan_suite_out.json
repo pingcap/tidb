@@ -3023,7 +3023,9 @@
           "  └─Selection 0.80 root  lt(Column#3, 100)",
           "    └─CTETable 1.00 root  Scan on CTE_0"
         ],
-        "Warning": null
+        "Warning": [
+          "[planner:1815]Recursive CTE cte1 can not be inlined by merge() or tidb_opt_force_inline_cte."
+        ]
       },
       {
         "SQL": "with cte1 as (with cte2 as (select * from t) select * from cte2) select * from cte1; -- non-recursive 'cte2' definition inside another non-recursive 'cte1'",
@@ -3044,7 +3046,9 @@
           "  └─Selection 8000.00 root  lt(test.t.a, 100)",
           "    └─CTETable 10000.00 root  Scan on CTE_0"
         ],
-        "Warning": null
+        "Warning": [
+          "[planner:1815]Recursive CTE cte2 can not be inlined by merge() or tidb_opt_force_inline_cte."
+        ]
       },
       {
         "SQL": "with cte1 as (with recursive cte2(c1) as (select 1 union select c1 + 1 c1 from cte2 where c1 < 100) select * from cte2) select * from cte1; -- recursive 'cte2' inside non-recursive 'cte1'",
@@ -3057,7 +3061,10 @@
           "  └─Selection 0.80 root  lt(Column#10, 100)",
           "    └─CTETable 1.00 root  Scan on CTE_2"
         ],
-        "Warning": null
+        "Warning": [
+          "[planner:1815]Recursive CTE cte2 can not be inlined by merge() or tidb_opt_force_inline_cte.",
+          "[planner:1815]Recursive CTE cte2 can not be inlined by merge() or tidb_opt_force_inline_cte."
+        ]
       },
       {
         "SQL": "set tidb_opt_force_inline_cte=0; -- disable force inline CTE",
@@ -3092,7 +3099,7 @@
           "    └─CTETable 1.00 root  Scan on CTE_0"
         ],
         "Warning": [
-          "[planner:1815]Recursive CTE can not be inlined."
+          "[planner:1815]Recursive CTE cte1 can not be inlined by merge() or tidb_opt_force_inline_cte."
         ]
       },
       {
