@@ -228,14 +228,7 @@ func (d *ddl) limitDDLJobs() {
 // addBatchDDLJobs gets global job IDs and puts the DDL jobs in the DDL queue.
 func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 	startTime := time.Now()
-	var err error
-	// DDLForce2Queue is a flag to tell DDL worker to always push the job to the DDL queue.
-	toTable := !variable.DDLForce2Queue.Load()
-	if toTable {
-		err = d.addBatchDDLJobs2Table(tasks)
-	} else {
-		err = d.addBatchDDLJobs2Queue(tasks)
-	}
+	err := d.addBatchDDLJobs2Table(tasks)
 	var jobs string
 	for _, task := range tasks {
 		if err == nil {
@@ -249,85 +242,8 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 	if err != nil {
 		logutil.BgLogger().Warn("add DDL jobs failed", zap.String("category", "ddl"), zap.String("jobs", jobs), zap.Error(err))
 	} else {
-		logutil.BgLogger().Info("add DDL jobs", zap.String("category", "ddl"), zap.Int("batch count", len(tasks)), zap.String("jobs", jobs), zap.Bool("table", toTable))
+		logutil.BgLogger().Info("add DDL jobs", zap.String("category", "ddl"), zap.Int("batch count", len(tasks)), zap.String("jobs", jobs), zap.Bool("table", true))
 	}
-}
-
-// buildJobDependence sets the curjob's dependency-ID.
-// The dependency-job's ID must less than the current job's ID, and we need the largest one in the list.
-func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
-	// Jobs in the same queue are ordered. If we want to find a job's dependency-job, we need to look for
-	// it from the other queue. So if the job is "ActionAddIndex" job, we need find its dependency-job from DefaultJobList.
-	jobListKey := meta.DefaultJobListKey
-	if !curJob.MayNeedReorg() {
-		jobListKey = meta.AddIndexJobListKey
-	}
-	jobs, err := t.GetAllDDLJobsInQueue(jobListKey)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	for _, job := range jobs {
-		if curJob.ID < job.ID {
-			continue
-		}
-		isDependent, err := curJob.IsDependentOn(job)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isDependent {
-			logutil.BgLogger().Info("current DDL job depends on other job", zap.String("category", "ddl"), zap.String("currentJob", curJob.String()), zap.String("dependentJob", job.String()))
-			curJob.DependencyID = job.ID
-			break
-		}
-	}
-	return nil
-}
-
-func (d *ddl) addBatchDDLJobs2Queue(tasks []*limitJobTask) error {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	return kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		ids, err := t.GenGlobalIDs(len(tasks))
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		jobs, err := t.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for _, job := range jobs {
-			if job.Type == model.ActionFlashbackCluster {
-				return errors.Errorf("Can't add ddl job, have flashback cluster job")
-			}
-		}
-
-		for i, task := range tasks {
-			job := task.job
-			job.Version = currentVersion
-			job.StartTS = txn.StartTS()
-			job.ID = ids[i]
-			setJobStateToQueueing(job)
-			if err = buildJobDependence(t, job); err != nil {
-				return errors.Trace(err)
-			}
-			jobListKey := meta.DefaultJobListKey
-			if job.MayNeedReorg() {
-				jobListKey = meta.AddIndexJobListKey
-			}
-			injectModifyJobArgFailPoint(job)
-			if err = t.EnQueueDDLJob(job, jobListKey); err != nil {
-				return errors.Trace(err)
-			}
-		}
-		failpoint.Inject("mockAddBatchDDLJobsErr", func(val failpoint.Value) {
-			if val.(bool) {
-				failpoint.Return(errors.Errorf("mockAddBatchDDLJobsErr"))
-			}
-		})
-		return nil
-	})
 }
 
 func injectModifyJobArgFailPoint(job *model.Job) {

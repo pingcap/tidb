@@ -695,40 +695,6 @@ func (job *Job) hasDependentTableForExchangePartition(other *Job) (bool, error) 
 	return false, nil
 }
 
-// IsDependentOn returns whether the job depends on "other".
-// How to check the job depends on "other"?
-// 1. The two jobs handle the same database when one of the two jobs is an ActionDropSchema or ActionCreateSchema type.
-// 2. Or the two jobs handle the same table.
-// 3. Or other job is flashback cluster.
-func (job *Job) IsDependentOn(other *Job) (bool, error) {
-	if other.Type == ActionFlashbackCluster {
-		return true, nil
-	}
-
-	isDependent, err := job.hasDependentSchema(other)
-	if err != nil || isDependent {
-		return isDependent, errors.Trace(err)
-	}
-	isDependent, err = other.hasDependentSchema(job)
-	if err != nil || isDependent {
-		return isDependent, errors.Trace(err)
-	}
-
-	// TODO: If a job is ActionRenameTable, we need to check table name.
-	if other.TableID == job.TableID {
-		return true, nil
-	}
-	isDependent, err = job.hasDependentTableForExchangePartition(other)
-	if err != nil || isDependent {
-		return isDependent, errors.Trace(err)
-	}
-	isDependent, err = other.hasDependentTableForExchangePartition(job)
-	if err != nil || isDependent {
-		return isDependent, errors.Trace(err)
-	}
-	return false, nil
-}
-
 // IsFinished returns whether job is finished or not.
 // If the job state is Done or Cancelled, it is finished.
 func (job *Job) IsFinished() bool {

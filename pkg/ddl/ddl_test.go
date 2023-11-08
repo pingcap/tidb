@@ -15,13 +15,11 @@
 package ddl
 
 import (
-	"context"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -198,79 +196,6 @@ func TestIgnorableSpec(t *testing.T) {
 	for _, spec := range ignorableSpecs {
 		require.True(t, isIgnorableSpec(spec))
 	}
-}
-
-func TestBuildJobDependence(t *testing.T) {
-	store := createMockStore(t)
-	defer func() {
-		require.NoError(t, store.Close())
-	}()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	// Add some non-add-index jobs.
-	job1 := &model.Job{ID: 1, TableID: 1, Type: model.ActionAddColumn}
-	job2 := &model.Job{ID: 2, TableID: 1, Type: model.ActionCreateTable}
-	job3 := &model.Job{ID: 3, TableID: 2, Type: model.ActionDropColumn}
-	job6 := &model.Job{ID: 6, TableID: 1, Type: model.ActionDropTable}
-	job7 := &model.Job{ID: 7, TableID: 2, Type: model.ActionModifyColumn}
-	job9 := &model.Job{ID: 9, SchemaID: 111, Type: model.ActionDropSchema}
-	job11 := &model.Job{ID: 11, TableID: 2, Type: model.ActionRenameTable, Args: []interface{}{int64(111), "old db name"}}
-	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		require.NoError(t, m.EnQueueDDLJob(job1))
-		require.NoError(t, m.EnQueueDDLJob(job2))
-		require.NoError(t, m.EnQueueDDLJob(job3))
-		require.NoError(t, m.EnQueueDDLJob(job6))
-		require.NoError(t, m.EnQueueDDLJob(job7))
-		require.NoError(t, m.EnQueueDDLJob(job9))
-		require.NoError(t, m.EnQueueDDLJob(job11))
-		return nil
-	})
-	require.NoError(t, err)
-	job4 := &model.Job{ID: 4, TableID: 1, Type: model.ActionAddIndex}
-	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		err := buildJobDependence(m, job4)
-		require.NoError(t, err)
-		require.Equal(t, job4.DependencyID, int64(2))
-		return nil
-	})
-	require.NoError(t, err)
-	job5 := &model.Job{ID: 5, TableID: 2, Type: model.ActionAddIndex}
-	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		err := buildJobDependence(m, job5)
-		require.NoError(t, err)
-		require.Equal(t, job5.DependencyID, int64(3))
-		return nil
-	})
-	require.NoError(t, err)
-	job8 := &model.Job{ID: 8, TableID: 3, Type: model.ActionAddIndex}
-	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		err := buildJobDependence(m, job8)
-		require.NoError(t, err)
-		require.Equal(t, job8.DependencyID, int64(0))
-		return nil
-	})
-	require.NoError(t, err)
-	job10 := &model.Job{ID: 10, SchemaID: 111, TableID: 3, Type: model.ActionAddIndex}
-	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		err := buildJobDependence(m, job10)
-		require.NoError(t, err)
-		require.Equal(t, job10.DependencyID, int64(9))
-		return nil
-	})
-	require.NoError(t, err)
-	job12 := &model.Job{ID: 12, SchemaID: 112, TableID: 2, Type: model.ActionAddIndex}
-	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		err := buildJobDependence(m, job12)
-		require.NoError(t, err)
-		require.Equal(t, job12.DependencyID, int64(11))
-		return nil
-	})
-	require.NoError(t, err)
 }
 
 func TestError(t *testing.T) {
