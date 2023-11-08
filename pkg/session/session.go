@@ -2418,7 +2418,8 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		return nil, err
 	}
 	if sessVars.TxnCtx.CouldRetry && !s.IsReadOnly(sessVars) {
-		// Only when the txn is could retry and the statement is not read only, need to do stmt-count-limit check.
+		// Only when the txn is could retry and the statement is not read only, need to do stmt-count-limit check,
+		// otherwise, the stmt won't be add into stmt history, and also don't need check.
 		if err := checkStmtLimit(ctx, se); err != nil {
 			return nil, err
 		}
