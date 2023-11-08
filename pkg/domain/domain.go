@@ -291,7 +291,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
-	newISBuilder, err := infoschema.NewBuilder(do.Store(), do.sysFacHack).InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
+	newISBuilder, err := infoschema.NewBuilder(do, do.sysFacHack).InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -440,7 +440,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		}
 		diffs = append(diffs, diff)
 	}
-	builder := infoschema.NewBuilder(do.Store(), do.sysFacHack).InitWithOldInfoSchema(do.infoCache.GetLatest())
+	builder := infoschema.NewBuilder(do, do.sysFacHack).InitWithOldInfoSchema(do.infoCache.GetLatest())
 	builder.SetDeltaUpdateBundles()
 	phyTblIDs := make([]int64, 0, len(diffs))
 	actions := make([]uint64, 0, len(diffs))
@@ -2241,7 +2241,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	}
 	do.statsHandle.Store(statsHandle)
 	do.ddl.RegisterStatsHandle(statsHandle)
-	// Negative stats lease indicates that it is in test, it does not need update.
+	// Negative stats lease indicates that it is in test or in br binary mode, it does not need update.
 	if do.statsLease >= 0 {
 		do.wg.Run(do.loadStatsWorker, "loadStatsWorker")
 	}

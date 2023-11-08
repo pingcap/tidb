@@ -462,14 +462,14 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			}
 			return
 		}
-		if recoverdErr, ok := r.(error); !ok || !(exeerrors.ErrMemoryExceedForQuery.Equal(recoverdErr) ||
+		recoverdErr, ok := r.(error)
+		if !ok || !(exeerrors.ErrMemoryExceedForQuery.Equal(recoverdErr) ||
 			exeerrors.ErrMemoryExceedForInstance.Equal(recoverdErr) ||
 			exeerrors.ErrQueryInterrupted.Equal(recoverdErr) ||
 			exeerrors.ErrMaxExecTimeExceeded.Equal(recoverdErr)) {
 			panic(r)
-		} else {
-			err = recoverdErr
 		}
+		err = recoverdErr
 		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.GetTextToLog(false)), zap.Stack("stack"))
 	}()
 

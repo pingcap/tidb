@@ -221,7 +221,6 @@
             "min": false,
             "rightSide": false,
             "show": true,
-            "sideWidth": 250,
             "sort": "max",
             "sortDesc": false,
             "total": false,
@@ -466,7 +465,6 @@
             "min": false,
             "rightSide": true,
             "show": true,
-            "sideWidth": 250,
             "sort": "max",
             "sortDesc": true,
             "total": false,
@@ -578,7 +576,6 @@
             "min": false,
             "rightSide": true,
             "show": true,
-            "sideWidth": 250,
             "total": false,
             "values": true
           },
@@ -682,7 +679,6 @@
             "min": false,
             "rightSide": true,
             "show": true,
-            "sideWidth": 250,
             "sort": "max",
             "sortDesc": true,
             "total": false,
@@ -2915,7 +2911,7 @@
               "expr": "increase(tidb_server_event_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[10m])",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "{{instance}}-server {{type}}",
+              "legendFormat": "{{instance}}-{{type}}",
               "refId": "A"
             }
           ],
