@@ -178,12 +178,14 @@ a
 2100
 4500
 select a from t use index (idx_0) tablesample regions() order by a;
-a
-1000
-1001
-2100
-4500
-show warnings;
-Level	Code	Message
-Warning	8128	Invalid TABLESAMPLE: plan not supported
+Error 8128 (HY000): Invalid TABLESAMPLE: plan not supported
+DROP TABLE IF EXISTS a;
+CREATE TABLE a (pk bigint unsigned primary key clustered, v text);
+INSERT INTO a WITH RECURSIVE b(pk) AS (SELECT 1 UNION ALL SELECT pk+1 FROM b WHERE pk < 1000) SELECT pk, 'a' FROM b;
+INSERT INTO a WITH RECURSIVE b(pk) AS (SELECT 1 UNION ALL SELECT pk+1 FROM b WHERE pk < 1000) SELECT pk + (1<<63), 'b' FROM b;
+SPLIT TABLE a BY (500);
+SELECT * FROM a TABLESAMPLE REGIONS() ORDER BY pk;
+pk	v
+500	a
+9223372036854775809	b
 set @@global.tidb_scatter_region=default;
