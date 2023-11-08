@@ -55,21 +55,7 @@ func (c *baseBitAggFunc) SerializePartialResult(partialResult PartialResult, chk
 }
 
 func (c *baseBitAggFunc) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
-	dataCol := src.Column(c.ordinal)
-	totalMemDelta := int64(0)
-	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
-	partialResults := make([]PartialResult, 0, src.NumRows())
-
-	for {
-		pr, memDelta := c.deserializeForSpill(&spillHelper)
-		if pr == nil {
-			break
-		}
-		partialResults = append(partialResults, pr)
-		totalMemDelta += memDelta
-	}
-
-	return partialResults, totalMemDelta
+	return deserializePartialResultCommon(src, c.ordinal, c.deserializeForSpill)
 }
 
 func (c *baseBitAggFunc) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {

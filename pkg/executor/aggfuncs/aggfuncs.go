@@ -232,3 +232,23 @@ type MaxMinSlidingWindowAggFunc interface {
 	// SetWindowStart sets the start position of window
 	SetWindowStart(start uint64)
 }
+
+type deserializeFunc func(*spillDeserializeHelper) (PartialResult, int64)
+
+func deserializePartialResultCommon(src *chunk.Chunk, ordinal int, deserializeFuncImpl deserializeFunc) ([]PartialResult, int64) {
+	dataCol := src.Column(ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta := deserializeFuncImpl(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta
+}
