@@ -27,14 +27,15 @@ type SpillSerializeHelper struct {
 	buf []byte
 }
 
+// NewSpillSerializeHelper creates a new SpillSerializeHelper
 func NewSpillSerializeHelper() *SpillSerializeHelper {
 	return &SpillSerializeHelper{
 		buf: make([]byte, 1024),
 	}
 }
 
-func (s *SpillSerializeHelper) serializePartialResult4Count(value partialResult4Count) []byte {
-	return spill.SerializeInt64(int64(value), s.buf[0:int64Len])
+func (s *SpillSerializeHelper) serializePartialResult4Count(value partialResult4CountMetaType) []byte {
+	return spill.SerializeInt64(value, s.buf[0:int64Len])
 }
 
 func (s *SpillSerializeHelper) serializePartialResult4MaxMinInt(value partialResult4MaxMinInt) []byte {
@@ -161,7 +162,7 @@ func (s *SpillSerializeHelper) serializePartialResult4GroupConcat(value partialR
 	})
 }
 
-func (s *SpillSerializeHelper) serializePartialResult4BitFunc(value partialResult4BitFunc) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4BitFunc(value partialResult4BitFuncMetaType) []byte {
 	spill.SerializeUint64(value, s.buf[:])
 	return s.buf[0:uint64Len]
 }

@@ -49,7 +49,7 @@ func newDeserializeHelper(column *chunk.Column, rowNum int) spillDeserializeHelp
 	}
 }
 
-func (s *spillDeserializeHelper) deserializePartialResult4Count(dst *partialResult4Count) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4Count(dst *partialResult4CountMetaType) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		*dst = spill.DeserializeInt64(bytes, 0)
@@ -249,10 +249,10 @@ func (s *spillDeserializeHelper) deserializePartialResult4GroupConcat(dst *parti
 	return success
 }
 
-func (s *spillDeserializeHelper) deserializePartialResult4BitFunc(dst *partialResult4BitFunc) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4BitFunc(dst *partialResult4BitFuncMetaType) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
-		*dst = uint64(spill.DeserializeUint64(bytes, 0))
+		*dst = partialResult4BitFuncMetaType(spill.DeserializeUint64(bytes, 0))
 		s.readRowIndex++
 		return true
 	}
@@ -305,7 +305,7 @@ func (s *spillDeserializeHelper) deserializePartialResult4JsonObjectAgg(dst *par
 	return false, memDelta
 }
 
-func (s *spillDeserializeHelper) deserializeBasePartialResult4FirstRow(dst *basePartialResult4FirstRow, bytes []byte, readPos int64) int64 {
+func (*spillDeserializeHelper) deserializeBasePartialResult4FirstRow(dst *basePartialResult4FirstRow, bytes []byte, readPos int64) int64 {
 	dst.isNull = spill.DeserializeBool(bytes, readPos)
 	readPos += boolLen
 	dst.gotFirstRow = spill.DeserializeBool(bytes, readPos)

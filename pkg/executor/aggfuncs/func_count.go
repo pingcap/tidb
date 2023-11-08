@@ -23,43 +23,43 @@ import (
 
 const (
 	// DefPartialResult4CountSize is the size of partialResult4Count
-	DefPartialResult4CountSize = int64(unsafe.Sizeof(partialResult4Count(0)))
+	DefPartialResult4CountSize = int64(unsafe.Sizeof(partialResult4CountMetaType(0)))
 )
 
 type baseCount struct {
 	baseAggFunc
 }
 
-type partialResult4Count = int64
+type partialResult4CountMetaType = int64
 
 func (*baseCount) AllocPartialResult() (pr PartialResult, memDelta int64) {
-	return PartialResult(new(partialResult4Count)), DefPartialResult4CountSize
+	return PartialResult(new(partialResult4CountMetaType)), DefPartialResult4CountSize
 }
 
 func (*baseCount) ResetPartialResult(pr PartialResult) {
-	p := (*partialResult4Count)(pr)
+	p := (*partialResult4CountMetaType)(pr)
 	*p = 0
 }
 
-func (e *baseCount) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
-	p := (*partialResult4Count)(pr)
-	chk.AppendInt64(e.ordinal, *p)
+func (b *baseCount) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+	p := (*partialResult4CountMetaType)(pr)
+	chk.AppendInt64(b.ordinal, *p)
 	return nil
 }
 
-func (c *baseCount) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
-	pr := (*partialResult4Count)(partialResult)
+func (b *baseCount) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4CountMetaType)(partialResult)
 	resBuf := spillHelper.serializePartialResult4Count(*pr)
-	chk.AppendBytes(c.ordinal, resBuf)
+	chk.AppendBytes(b.ordinal, resBuf)
 }
 
-func (c *baseCount) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
-	return deserializePartialResultCommon(src, c.ordinal, c.deserializeForSpill)
+func (b *baseCount) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, b.ordinal, b.deserializeForSpill)
 }
 
-func (c *baseCount) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
-	pr, memDelta := c.AllocPartialResult()
-	result := int64(*(*partialResult4Count)(pr))
+func (b *baseCount) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := b.AllocPartialResult()
+	result := *(*partialResult4CountMetaType)(pr)
 	success := helper.deserializePartialResult4Count(&result)
 	if !success {
 		return nil, 0
@@ -71,11 +71,11 @@ type countOriginal4Int struct {
 	baseCount
 }
 
-func (e *countOriginal4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
-	p := (*partialResult4Count)(pr)
+func (c *countOriginal4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+	p := (*partialResult4CountMetaType)(pr)
 
 	for _, row := range rowsInGroup {
-		_, isNull, err := e.args[0].EvalInt(sctx, row)
+		_, isNull, err := c.args[0].EvalInt(sctx, row)
 		if err != nil {
 			return 0, err
 		}
@@ -91,10 +91,10 @@ func (e *countOriginal4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 
 var _ SlidingWindowAggFunc = &countOriginal4Int{}
 
-func (e *countOriginal4Int) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
-	p := (*partialResult4Count)(pr)
+func (c *countOriginal4Int) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+	p := (*partialResult4CountMetaType)(pr)
 	for i := uint64(0); i < shiftStart; i++ {
-		_, isNull, err := e.args[0].EvalInt(sctx, getRow(lastStart+i))
+		_, isNull, err := c.args[0].EvalInt(sctx, getRow(lastStart+i))
 		if err != nil {
 			return err
 		}
@@ -104,7 +104,7 @@ func (e *countOriginal4Int) Slide(sctx sessionctx.Context, getRow func(uint64) c
 		*p--
 	}
 	for i := uint64(0); i < shiftEnd; i++ {
-		_, isNull, err := e.args[0].EvalInt(sctx, getRow(lastEnd+i))
+		_, isNull, err := c.args[0].EvalInt(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
 		}
@@ -120,11 +120,11 @@ type countOriginal4Real struct {
 	baseCount
 }
 
-func (e *countOriginal4Real) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
-	p := (*partialResult4Count)(pr)
+func (c *countOriginal4Real) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+	p := (*partialResult4CountMetaType)(pr)
 
 	for _, row := range rowsInGroup {
-		_, isNull, err := e.args[0].EvalReal(sctx, row)
+		_, isNull, err := c.args[0].EvalReal(sctx, row)
 		if err != nil {
 			return 0, err
 		}
@@ -140,10 +140,10 @@ func (e *countOriginal4Real) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 
 var _ SlidingWindowAggFunc = &countOriginal4Real{}
 
-func (e *countOriginal4Real) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
-	p := (*partialResult4Count)(pr)
+func (c *countOriginal4Real) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+	p := (*partialResult4CountMetaType)(pr)
 	for i := uint64(0); i < shiftStart; i++ {
-		_, isNull, err := e.args[0].EvalReal(sctx, getRow(lastStart+i))
+		_, isNull, err := c.args[0].EvalReal(sctx, getRow(lastStart+i))
 		if err != nil {
 			return err
 		}
@@ -153,7 +153,7 @@ func (e *countOriginal4Real) Slide(sctx sessionctx.Context, getRow func(uint64) 
 		*p--
 	}
 	for i := uint64(0); i < shiftEnd; i++ {
-		_, isNull, err := e.args[0].EvalReal(sctx, getRow(lastEnd+i))
+		_, isNull, err := c.args[0].EvalReal(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
 		}
@@ -169,11 +169,11 @@ type countOriginal4Decimal struct {
 	baseCount
 }
 
-func (e *countOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
-	p := (*partialResult4Count)(pr)
+func (c *countOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+	p := (*partialResult4CountMetaType)(pr)
 
 	for _, row := range rowsInGroup {
-		_, isNull, err := e.args[0].EvalDecimal(sctx, row)
+		_, isNull, err := c.args[0].EvalDecimal(sctx, row)
 		if err != nil {
 			return 0, err
 		}
@@ -189,10 +189,10 @@ func (e *countOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, row
 
 var _ SlidingWindowAggFunc = &countOriginal4Decimal{}
 
-func (e *countOriginal4Decimal) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
-	p := (*partialResult4Count)(pr)
+func (c *countOriginal4Decimal) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+	p := (*partialResult4CountMetaType)(pr)
 	for i := uint64(0); i < shiftStart; i++ {
-		_, isNull, err := e.args[0].EvalDecimal(sctx, getRow(lastStart+i))
+		_, isNull, err := c.args[0].EvalDecimal(sctx, getRow(lastStart+i))
 		if err != nil {
 			return err
 		}
@@ -202,7 +202,7 @@ func (e *countOriginal4Decimal) Slide(sctx sessionctx.Context, getRow func(uint6
 		*p--
 	}
 	for i := uint64(0); i < shiftEnd; i++ {
-		_, isNull, err := e.args[0].EvalDecimal(sctx, getRow(lastEnd+i))
+		_, isNull, err := c.args[0].EvalDecimal(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
 		}
@@ -218,11 +218,11 @@ type countOriginal4Time struct {
 	baseCount
 }
 
-func (e *countOriginal4Time) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
-	p := (*partialResult4Count)(pr)
+func (c *countOriginal4Time) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+	p := (*partialResult4CountMetaType)(pr)
 
 	for _, row := range rowsInGroup {
-		_, isNull, err := e.args[0].EvalTime(sctx, row)
+		_, isNull, err := c.args[0].EvalTime(sctx, row)
 		if err != nil {
 			return 0, err
 		}
@@ -238,10 +238,10 @@ func (e *countOriginal4Time) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 
 var _ SlidingWindowAggFunc = &countOriginal4Time{}
 
-func (e *countOriginal4Time) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
-	p := (*partialResult4Count)(pr)
+func (c *countOriginal4Time) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+	p := (*partialResult4CountMetaType)(pr)
 	for i := uint64(0); i < shiftStart; i++ {
-		_, isNull, err := e.args[0].EvalTime(sctx, getRow(lastStart+i))
+		_, isNull, err := c.args[0].EvalTime(sctx, getRow(lastStart+i))
 		if err != nil {
 			return err
 		}
@@ -251,7 +251,7 @@ func (e *countOriginal4Time) Slide(sctx sessionctx.Context, getRow func(uint64) 
 		*p--
 	}
 	for i := uint64(0); i < shiftEnd; i++ {
-		_, isNull, err := e.args[0].EvalTime(sctx, getRow(lastEnd+i))
+		_, isNull, err := c.args[0].EvalTime(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
 		}
@@ -267,11 +267,11 @@ type countOriginal4Duration struct {
 	baseCount
 }
 
-func (e *countOriginal4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
-	p := (*partialResult4Count)(pr)
+func (c *countOriginal4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+	p := (*partialResult4CountMetaType)(pr)
 
 	for _, row := range rowsInGroup {
-		_, isNull, err := e.args[0].EvalDuration(sctx, row)
+		_, isNull, err := c.args[0].EvalDuration(sctx, row)
 		if err != nil {
 			return 0, err
 		}
@@ -287,10 +287,10 @@ func (e *countOriginal4Duration) UpdatePartialResult(sctx sessionctx.Context, ro
 
 var _ SlidingWindowAggFunc = &countOriginal4Duration{}
 
-func (e *countOriginal4Duration) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
-	p := (*partialResult4Count)(pr)
+func (c *countOriginal4Duration) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+	p := (*partialResult4CountMetaType)(pr)
 	for i := uint64(0); i < shiftStart; i++ {
-		_, isNull, err := e.args[0].EvalDuration(sctx, getRow(lastStart+i))
+		_, isNull, err := c.args[0].EvalDuration(sctx, getRow(lastStart+i))
 		if err != nil {
 			return err
 		}
@@ -300,7 +300,7 @@ func (e *countOriginal4Duration) Slide(sctx sessionctx.Context, getRow func(uint
 		*p--
 	}
 	for i := uint64(0); i < shiftEnd; i++ {
-		_, isNull, err := e.args[0].EvalDuration(sctx, getRow(lastEnd+i))
+		_, isNull, err := c.args[0].EvalDuration(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
 		}
@@ -316,11 +316,11 @@ type countOriginal4JSON struct {
 	baseCount
 }
 
-func (e *countOriginal4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
-	p := (*partialResult4Count)(pr)
+func (c *countOriginal4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+	p := (*partialResult4CountMetaType)(pr)
 
 	for _, row := range rowsInGroup {
-		_, isNull, err := e.args[0].EvalJSON(sctx, row)
+		_, isNull, err := c.args[0].EvalJSON(sctx, row)
 		if err != nil {
 			return 0, err
 		}
@@ -336,10 +336,10 @@ func (e *countOriginal4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 
 var _ SlidingWindowAggFunc = &countOriginal4JSON{}
 
-func (e *countOriginal4JSON) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
-	p := (*partialResult4Count)(pr)
+func (c *countOriginal4JSON) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+	p := (*partialResult4CountMetaType)(pr)
 	for i := uint64(0); i < shiftStart; i++ {
-		_, isNull, err := e.args[0].EvalJSON(sctx, getRow(lastStart+i))
+		_, isNull, err := c.args[0].EvalJSON(sctx, getRow(lastStart+i))
 		if err != nil {
 			return err
 		}
@@ -349,7 +349,7 @@ func (e *countOriginal4JSON) Slide(sctx sessionctx.Context, getRow func(uint64) 
 		*p--
 	}
 	for i := uint64(0); i < shiftEnd; i++ {
-		_, isNull, err := e.args[0].EvalJSON(sctx, getRow(lastEnd+i))
+		_, isNull, err := c.args[0].EvalJSON(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
 		}
@@ -365,11 +365,11 @@ type countOriginal4String struct {
 	baseCount
 }
 
-func (e *countOriginal4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
-	p := (*partialResult4Count)(pr)
+func (c *countOriginal4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+	p := (*partialResult4CountMetaType)(pr)
 
 	for _, row := range rowsInGroup {
-		_, isNull, err := e.args[0].EvalString(sctx, row)
+		_, isNull, err := c.args[0].EvalString(sctx, row)
 		if err != nil {
 			return 0, err
 		}
@@ -385,10 +385,10 @@ func (e *countOriginal4String) UpdatePartialResult(sctx sessionctx.Context, rows
 
 var _ SlidingWindowAggFunc = &countOriginal4String{}
 
-func (e *countOriginal4String) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
-	p := (*partialResult4Count)(pr)
+func (c *countOriginal4String) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+	p := (*partialResult4CountMetaType)(pr)
 	for i := uint64(0); i < shiftStart; i++ {
-		_, isNull, err := e.args[0].EvalString(sctx, getRow(lastStart+i))
+		_, isNull, err := c.args[0].EvalString(sctx, getRow(lastStart+i))
 		if err != nil {
 			return err
 		}
@@ -398,7 +398,7 @@ func (e *countOriginal4String) Slide(sctx sessionctx.Context, getRow func(uint64
 		*p--
 	}
 	for i := uint64(0); i < shiftEnd; i++ {
-		_, isNull, err := e.args[0].EvalString(sctx, getRow(lastEnd+i))
+		_, isNull, err := c.args[0].EvalString(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
 		}
@@ -414,10 +414,10 @@ type countPartial struct {
 	baseCount
 }
 
-func (e *countPartial) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
-	p := (*partialResult4Count)(pr)
+func (c *countPartial) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+	p := (*partialResult4CountMetaType)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalInt(sctx, row)
+		input, isNull, err := c.args[0].EvalInt(sctx, row)
 		if err != nil {
 			return 0, err
 		}
@@ -431,7 +431,7 @@ func (e *countPartial) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 }
 
 func (*countPartial) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
-	p1, p2 := (*partialResult4Count)(src), (*partialResult4Count)(dst)
+	p1, p2 := (*partialResult4CountMetaType)(src), (*partialResult4CountMetaType)(dst)
 	*p2 += *p1
 	return 0, nil
 }

@@ -209,10 +209,10 @@ func (*baseAggFunc) MergePartialResult(sessionctx.Context, PartialResult, Partia
 	return 0, nil
 }
 
-func (*baseAggFunc) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (*baseAggFunc) SerializePartialResult(_ PartialResult, _ *chunk.Chunk, _ *SpillSerializeHelper) {
 }
 
-func (*baseAggFunc) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+func (*baseAggFunc) DeserializePartialResult(_ *chunk.Chunk) ([]PartialResult, int64) {
 	return nil, 0
 }
 
