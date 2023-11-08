@@ -354,6 +354,10 @@ func (sf *ScalarFunction) GetType() *types.FieldType {
 
 // Equal implements Expression interface.
 func (sf *ScalarFunction) Equal(ctx sessionctx.Context, e Expression) bool {
+	if ctx == nil {
+		ctx = sf.GetCtx()
+	}
+
 	fun, ok := e.(*ScalarFunction)
 	if !ok {
 		return false
