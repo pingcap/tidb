@@ -233,7 +233,8 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 	d := r.d
 	engines := make([]ingest.Engine, 0, len(r.indexes))
 	for _, index := range r.indexes {
-		ei, err := r.bc.Register(r.job.ID, index.ID, r.job.SchemaName, r.job.TableName)
+		// ywq todo check the flag
+		ei, err := r.bc.Register(r.job.ID, index.ID, r.job.SchemaName, r.job.TableName, false)
 		if err != nil {
 			logutil.Logger(opCtx).Warn("cannot register new engine", zap.Error(err),
 				zap.Int64("job ID", r.job.ID), zap.Int64("index ID", index.ID))

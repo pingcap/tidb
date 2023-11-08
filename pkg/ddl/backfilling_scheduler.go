@@ -402,7 +402,7 @@ func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[IndexRecordCh
 	indexIDs := make([]int64, 0, len(reorgInfo.elements))
 	engines := make([]ingest.Engine, 0, len(reorgInfo.elements))
 	for _, elem := range reorgInfo.elements {
-		ei, err := bcCtx.Register(job.ID, elem.ID, job.SchemaName, job.TableName)
+		ei, err := bcCtx.Register(job.ID, elem.ID, job.SchemaName, job.TableName, false)
 		if err != nil {
 			// Return an error only if it is the first worker.
 			if b.writerMaxID == 0 {

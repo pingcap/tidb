@@ -25,7 +25,7 @@ import (
 )
 
 // Register create a new engineInfo and register it to the backend context.
-func (bc *litBackendCtx) Register(jobID, indexID int64, schemaName, tableName string) (Engine, error) {
+func (bc *litBackendCtx) Register(jobID, indexID int64, schemaName, tableName string, isDistTask bool) (Engine, error) {
 	// Calculate lightning concurrency degree and set memory usage
 	// and pre-allocate memory usage for worker.
 	bc.MemRoot.RefreshConsumption()
@@ -36,6 +36,7 @@ func (bc *litBackendCtx) Register(jobID, indexID int64, schemaName, tableName st
 
 	var info string
 	en, exist := bc.Load(indexID)
+	logutil.BgLogger().Info("ywq test exist", zap.Any("exist", exist))
 	if !exist || en.openedEngine == nil {
 		if exist && en.closedEngine != nil {
 			// Import failed before, try to import again.
@@ -51,7 +52,7 @@ func (bc *litBackendCtx) Register(jobID, indexID int64, schemaName, tableName st
 		}
 
 		mgr := backend.MakeEngineManager(bc.backend)
-		cfg := generateLocalEngineConfig(jobID, schemaName, tableName)
+		cfg := generateLocalEngineConfig(jobID, schemaName, tableName, isDistTask)
 		openedEn, err := mgr.OpenEngine(bc.ctx, cfg, tableName, int32(indexID))
 		if err != nil {
 			logutil.Logger(bc.ctx).Warn(LitErrCreateEngineFail, zap.Int64("job ID", jobID),

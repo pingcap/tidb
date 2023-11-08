@@ -39,7 +39,7 @@ import (
 
 // BackendCtx is the backend context for add index reorg task.
 type BackendCtx interface {
-	Register(jobID, indexID int64, schemaName, tableName string) (Engine, error)
+	Register(jobID, indexID int64, schemaName, tableName string, isDistTask bool) (Engine, error)
 	Unregister(jobID, indexID int64)
 
 	CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error
@@ -217,12 +217,19 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 
 	logutil.Logger(bc.ctx).Info(LitInfoUnsafeImport, zap.Int64("index ID", indexID),
 		zap.String("usage info", bc.diskRoot.UsageInfo()))
+
 	err = bc.backend.UnsafeImportAndReset(bc.ctx, ei.uuid, int64(lightning.SplitRegionSize)*int64(lightning.MaxSplitRegionSizeRatio), int64(lightning.SplitRegionKeys))
 	if err != nil {
 		logutil.Logger(bc.ctx).Error(LitErrIngestDataErr, zap.Int64("index ID", indexID),
 			zap.String("usage info", bc.diskRoot.UsageInfo()))
 		return true, false, err
 	}
+	failpoint.Inject("mockCancelAfterImport", func() {
+		// Mock scheduler close.
+		// Mock the tidb node running the subtask restart, then run the subtask again.
+		LitBackCtxMgr.UnregisterAll()
+		failpoint.Return(true, false, context.Canceled)
+	})
 	return true, true, nil
 }
 

@@ -86,7 +86,7 @@ var (
 	compactConcurrency = 4
 )
 
-func generateLocalEngineConfig(id int64, dbName, tbName string) *backend.EngineConfig {
+func generateLocalEngineConfig(id int64, dbName, tbName string, isDistTask bool) *backend.EngineConfig {
 	return &backend.EngineConfig{
 		Local: backend.LocalEngineConfig{
 			Compact:            true,
@@ -98,7 +98,7 @@ func generateLocalEngineConfig(id int64, dbName, tbName string) *backend.EngineC
 			DB:   dbName,
 			Name: tbName,
 		},
-		KeepSortDir: true,
+		KeepSortDir: !isDistTask,
 	}
 }
 

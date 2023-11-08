@@ -48,7 +48,7 @@ func (m *MockBackendCtxMgr) CheckAvailable() (bool, error) {
 }
 
 // Register implements BackendCtxMgr.Register interface.
-func (m *MockBackendCtxMgr) Register(_ context.Context, _ bool, jobID int64, _ *clientv3.Client, _ string) (BackendCtx, error) {
+func (m *MockBackendCtxMgr) Register(_ context.Context, _ bool, jobID int64, _ *clientv3.Client, _ string, _ bool) (BackendCtx, error) {
 	logutil.BgLogger().Info("mock backend mgr register", zap.Int64("jobID", jobID))
 	if mockCtx, ok := m.runningJobs[jobID]; ok {
 		return mockCtx, nil
@@ -99,7 +99,7 @@ type MockBackendCtx struct {
 }
 
 // Register implements BackendCtx.Register interface.
-func (m *MockBackendCtx) Register(jobID, indexID int64, _, _ string) (Engine, error) {
+func (m *MockBackendCtx) Register(jobID, indexID int64, _, _ string, _ bool) (Engine, error) {
 	logutil.BgLogger().Info("mock backend ctx register", zap.Int64("jobID", jobID), zap.Int64("indexID", indexID))
 	return &MockEngineInfo{sessCtx: m.sessCtx, mu: &m.mu}, nil
 }

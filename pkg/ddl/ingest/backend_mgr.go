@@ -37,6 +37,7 @@ type BackendCtxMgr interface {
 	CheckAvailable() (bool, error)
 	Register(ctx context.Context, unique bool, jobID int64, etcdClient *clientv3.Client, resourceGroupName string) (BackendCtx, error)
 	Unregister(jobID int64)
+	UnregisterAll()
 	Load(jobID int64) (BackendCtx, bool)
 }
 
@@ -156,6 +157,13 @@ func newBackendContext(ctx context.Context, jobID int64, be *local.Backend, cfg 
 	}
 	bCtx.timeOfLastFlush.Store(time.Now())
 	return bCtx
+}
+
+// UnregisterAll removes all backend contexts from the backend context manager.
+func (m *litBackendCtxMgr) UnregisterAll() {
+	for _, key := range m.SyncMap.Keys() {
+		m.Unregister(key)
+	}
 }
 
 // Unregister removes a backend context from the backend context manager.
