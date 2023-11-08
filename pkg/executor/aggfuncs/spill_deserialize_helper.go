@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/spill"
 )
 
+const byteLen = int64(1)
 const intLen = int64(unsafe.Sizeof(int(0)))
 const boolLen = int64(unsafe.Sizeof(true))
 const uint64Len = int64(unsafe.Sizeof(uint64(0)))

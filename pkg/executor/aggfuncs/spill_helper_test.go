@@ -24,8 +24,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var serializeHelper = SpillSerializeHelper{}
-
 func getChunk() *chunk.Chunk {
 	fieldTypes := make([]*types.FieldType, 1)
 	fieldTypes[0] = types.NewFieldType(mysql.TypeBit)
@@ -33,6 +31,8 @@ func getChunk() *chunk.Chunk {
 }
 
 func TestPartialResult4Count(t *testing.T) {
+	var serializeHelper = NewSpillSerializeHelper()
+
 	// Initialize test data
 	expectData := []partialResult4Count{-123, 0, 123}
 	serializedPartialResults := make([]PartialResult, 3)
@@ -70,6 +70,8 @@ func TestPartialResult4Count(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinInt(t *testing.T) {
+	var serializeHelper = NewSpillSerializeHelper()
+
 	// Initialize test data
 	expectData := []partialResult4MaxMinInt{
 		{val: -123, isNull: true},
@@ -111,6 +113,8 @@ func TestPartialResult4MaxMinInt(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinUint(t *testing.T) {
+	var serializeHelper = NewSpillSerializeHelper()
+
 	// Initialize test data
 	expectData := []partialResult4MaxMinUint{
 		{val: 0, isNull: true},
@@ -152,6 +156,8 @@ func TestPartialResult4MaxMinUint(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinDecimal(t *testing.T) {
+	var serializeHelper = NewSpillSerializeHelper()
+
 	// Initialize test data
 	expectData := []partialResult4MaxMinDecimal{
 		{val: *types.NewDecFromInt(0), isNull: true},
@@ -193,6 +199,8 @@ func TestPartialResult4MaxMinDecimal(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinFloat32(t *testing.T) {
+	var serializeHelper = NewSpillSerializeHelper()
+
 	// Initialize test data
 	expectData := []partialResult4MaxMinFloat32{
 		{val: -123.123, isNull: true},
@@ -234,6 +242,8 @@ func TestPartialResult4MaxMinFloat32(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinFloat64(t *testing.T) {
+	var serializeHelper = NewSpillSerializeHelper()
+
 	// Initialize test data
 	expectData := []partialResult4MaxMinFloat64{
 		{val: -123.123, isNull: true},
@@ -275,6 +285,8 @@ func TestPartialResult4MaxMinFloat64(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinTime(t *testing.T) {
+	var serializeHelper = NewSpillSerializeHelper()
+
 	// Initialize test data
 	expectData := []partialResult4MaxMinTime{
 		{val: types.NewTime(123, 10, 9), isNull: true},
@@ -316,6 +328,8 @@ func TestPartialResult4MaxMinTime(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinString(t *testing.T) {
+	var serializeHelper = NewSpillSerializeHelper()
+
 	testStr := "平p凯k星x辰c"
 	for i := 0; i < 10; i++ {
 		testStr += testStr
@@ -362,6 +376,8 @@ func TestPartialResult4MaxMinString(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinJSON(t *testing.T) {
+	var serializeHelper = NewSpillSerializeHelper()
+
 	// Initialize test data
 	expectData := []partialResult4MaxMinJSON{
 		{val: types.BinaryJSON{TypeCode: 1, Value: []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0}}, isNull: true},
@@ -403,6 +419,8 @@ func TestPartialResult4MaxMinJSON(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinEnum(t *testing.T) {
+	var serializeHelper = NewSpillSerializeHelper()
+
 	// Initialize test data
 	expectData := []partialResult4MaxMinEnum{
 		{val: types.Enum{Name: string(""), Value: 123}, isNull: true},
@@ -444,6 +462,8 @@ func TestPartialResult4MaxMinEnum(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinSet(t *testing.T) {
+	var serializeHelper = NewSpillSerializeHelper()
+
 	testStr := "123aa啊啊aa"
 	for i := 0; i < 10; i++ {
 		testStr += testStr
@@ -490,6 +510,8 @@ func TestPartialResult4MaxMinSet(t *testing.T) {
 }
 
 func TestPartialResult4AvgDecimal(t *testing.T) {
+	var serializeHelper = NewSpillSerializeHelper()
+
 	// Initialize test data
 	expectData := []partialResult4AvgDecimal{
 		{sum: *types.NewDecFromInt(0), count: 0},
@@ -531,6 +553,8 @@ func TestPartialResult4AvgDecimal(t *testing.T) {
 }
 
 func TestPartialResult4AvgFloat64(t *testing.T) {
+	var serializeHelper = NewSpillSerializeHelper()
+
 	// Initialize test data
 	expectData := []partialResult4AvgFloat64{
 		{sum: 0.0, count: 0},
@@ -572,6 +596,8 @@ func TestPartialResult4AvgFloat64(t *testing.T) {
 }
 
 func TestPartialResult4SumDecimal(t *testing.T) {
+	var serializeHelper = NewSpillSerializeHelper()
+
 	// Initialize test data
 	expectData := []partialResult4SumDecimal{
 		{val: *types.NewDecFromInt(0), notNullRowCount: 0},
@@ -613,6 +639,8 @@ func TestPartialResult4SumDecimal(t *testing.T) {
 }
 
 func TestPartialResult4SumFloat64(t *testing.T) {
+	var serializeHelper = NewSpillSerializeHelper()
+
 	// Initialize test data
 	expectData := []partialResult4SumFloat64{
 		{val: 0.0, notNullRowCount: 0},
@@ -654,6 +682,8 @@ func TestPartialResult4SumFloat64(t *testing.T) {
 }
 
 func TestBasePartialResult4GroupConcat(t *testing.T) {
+	var serializeHelper = NewSpillSerializeHelper()
+
 	testStr1 := "x啊za啊xx"
 	testStr2 := "da啊a啊啊a啊"
 	for i := 0; i < 10; i++ {
@@ -703,6 +733,8 @@ func TestBasePartialResult4GroupConcat(t *testing.T) {
 }
 
 func TestPartialResult4BitFunc(t *testing.T) {
+	var serializeHelper = NewSpillSerializeHelper()
+
 	// Initialize test data
 	expectData := []partialResult4BitFunc{0, 1, 2}
 	serializedPartialResults := make([]PartialResult, 3)
@@ -740,6 +772,8 @@ func TestPartialResult4BitFunc(t *testing.T) {
 }
 
 func TestPartialResult4JsonArrayagg(t *testing.T) {
+	var serializeHelper = NewSpillSerializeHelper()
+
 	// Initialize test data
 	expectData := []partialResult4JsonArrayagg{
 		{entries: []interface{}{int64(1), float64(1.1), "123"}},
@@ -781,6 +815,8 @@ func TestPartialResult4JsonArrayagg(t *testing.T) {
 }
 
 func TestPartialResult4JsonObjectAgg(t *testing.T) {
+	var serializeHelper = NewSpillSerializeHelper()
+
 	// Initialize test data
 	expectData := []partialResult4JsonObjectAgg{
 		{entries: map[string]interface{}{"123": int64(1), "234": float64(1.1), "235": "123"}, bInMap: 0},
@@ -822,6 +858,8 @@ func TestPartialResult4JsonObjectAgg(t *testing.T) {
 }
 
 func TestPartialResult4FirstRowDecimal(t *testing.T) {
+	var serializeHelper = NewSpillSerializeHelper()
+
 	// Initialize test data
 	expectData := []partialResult4FirstRowDecimal{
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: *types.NewDecFromInt(0)},
@@ -863,6 +901,8 @@ func TestPartialResult4FirstRowDecimal(t *testing.T) {
 }
 
 func TestPartialResult4FirstRowInt(t *testing.T) {
+	var serializeHelper = NewSpillSerializeHelper()
+
 	// Initialize test data
 	expectData := []partialResult4FirstRowInt{
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: -123},
@@ -904,6 +944,8 @@ func TestPartialResult4FirstRowInt(t *testing.T) {
 }
 
 func TestPartialResult4FirstRowTime(t *testing.T) {
+	var serializeHelper = NewSpillSerializeHelper()
+
 	// Initialize test data
 	expectData := []partialResult4FirstRowTime{
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: types.NewTime(0, 0, 1)},
@@ -945,6 +987,8 @@ func TestPartialResult4FirstRowTime(t *testing.T) {
 }
 
 func TestPartialResult4FirstRowString(t *testing.T) {
+	var serializeHelper = NewSpillSerializeHelper()
+
 	// Initialize test data
 	expectData := []partialResult4FirstRowString{
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: ""},
@@ -986,6 +1030,8 @@ func TestPartialResult4FirstRowString(t *testing.T) {
 }
 
 func TestPartialResult4FirstRowFloat32(t *testing.T) {
+	var serializeHelper = NewSpillSerializeHelper()
+
 	// Initialize test data
 	expectData := []partialResult4FirstRowFloat32{
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: -1.1},
@@ -1027,6 +1073,8 @@ func TestPartialResult4FirstRowFloat32(t *testing.T) {
 }
 
 func TestPartialResult4FirstRowFloat64(t *testing.T) {
+	var serializeHelper = NewSpillSerializeHelper()
+
 	// Initialize test data
 	expectData := []partialResult4FirstRowFloat64{
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: -1.1},
@@ -1068,6 +1116,8 @@ func TestPartialResult4FirstRowFloat64(t *testing.T) {
 }
 
 func TestPartialResult4FirstRowDuration(t *testing.T) {
+	var serializeHelper = NewSpillSerializeHelper()
+
 	// Initialize test data
 	expectData := []partialResult4FirstRowDuration{
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: types.NewDuration(1, 2, 3, 4, 5)},
@@ -1109,6 +1159,8 @@ func TestPartialResult4FirstRowDuration(t *testing.T) {
 }
 
 func TestPartialResult4FirstRowJSON(t *testing.T) {
+	var serializeHelper = NewSpillSerializeHelper()
+
 	// Initialize test data
 	expectData := []partialResult4FirstRowJSON{
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: types.BinaryJSON{TypeCode: 1, Value: []byte{0, 1, 2, 3, 1, 9, 5, 7, 8, 5, 0}}},
@@ -1150,6 +1202,8 @@ func TestPartialResult4FirstRowJSON(t *testing.T) {
 }
 
 func TestPartialResult4FirstRowEnum(t *testing.T) {
+	var serializeHelper = NewSpillSerializeHelper()
+
 	// Initialize test data
 	expectData := []partialResult4FirstRowEnum{
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: types.Enum{Name: string(""), Value: 123}},
@@ -1191,6 +1245,8 @@ func TestPartialResult4FirstRowEnum(t *testing.T) {
 }
 
 func TestPartialResult4FirstRowSet(t *testing.T) {
+	var serializeHelper = NewSpillSerializeHelper()
+
 	// Initialize test data
 	expectData := []partialResult4FirstRowSet{
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: types.Set{Name: string(""), Value: 123}},
