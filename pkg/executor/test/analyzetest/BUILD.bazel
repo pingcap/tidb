@@ -9,11 +9,7 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD
     shard_count = 50,
-=======
-    shard_count = 48,
->>>>>>> 92f071afeb7 (executor: fix hang when the analyze worker unexpectedly exits (#48365))
     deps = [
         "//pkg/config",
         "//pkg/domain",
