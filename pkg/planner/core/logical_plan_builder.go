@@ -7843,7 +7843,11 @@ func (b *PlanBuilder) buildWith(ctx context.Context, w *ast.WithClause) ([]*cteI
 		// Case2: If the session variable "tidb_opt_force_inline_cte" is true, all of CTEs will be inlined.
 		// Otherwise, whether CTEs are inlined depends on whether the merge() hint is declared.
 		if !cte.IsRecursive && (cte.ConsumerCount == 1 || b.ctx.GetSessionVars().EnableForceInlineCTE()) {
-			b.outerCTEs[len(b.outerCTEs)-1].isInline = true
+			if sel, ok := cte.Query.Query.(*ast.SelectStmt); ok && b.detectSelectAgg(sel) && cte.ConsumedByRecursiveCTE {
+				// If current query contains an aggregation, inlining it into a recursive-cte will cause `ErrCTERecursiveForbidsAggregation`
+			} else {
+				b.outerCTEs[len(b.outerCTEs)-1].isInline = true
+			}
 		}
 		_, err := b.buildCte(ctx, cte, w.IsRecursive)
 		if err != nil {

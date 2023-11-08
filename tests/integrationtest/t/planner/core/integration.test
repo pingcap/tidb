@@ -2071,4 +2071,9 @@ set @@tidb_enable_pipelined_window_function=0;
 select *, first_value(v) over (partition by p order by o range between 3.1 preceding and 2.9 following) as a from planner__core__integration.first_range;
 set @@tidb_enable_pipelined_window_function=DEFAULT;
 
-
+# TestIssue47603
+drop table if exists a,b,temp;
+create table a (id int);
+create table b (id int);
+create table temp (lvl int);
+with a as (select 8 as id from dual), maxa as (select max(id) as max_id from a), b as ( with recursive temp as ( select 1 as lvl from dual union all select lvl+1 from temp, maxa where lvl < max_id ) select * from temp ) select * from b;

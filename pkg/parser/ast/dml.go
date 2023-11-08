@@ -1067,6 +1067,8 @@ type CommonTableExpression struct {
 
 	// Record how many consumers the current cte has
 	ConsumerCount int
+	// ConsumedByRecursiveCTE records whether this CTE is used by a recursive CTE
+	ConsumedByRecursiveCTE bool
 }
 
 // Restore implements Node interface

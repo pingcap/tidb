@@ -179,6 +179,8 @@ type PreprocessorReturn struct {
 type preprocessWith struct {
 	cteCanUsed      []string
 	cteBeforeOffset []int
+	// cteRecursive records whether the CTE is recursive for each layer of CTEs during visiting the queries
+	cteRecursive []bool
 	// A stack is implemented using a two-dimensional array.
 	// Each layer stores the cteList of the current query block.
 	// For example:
@@ -202,6 +204,10 @@ func (pw *preprocessWith) UpdateCTEConsumerCount(tableName string) {
 		for _, cte := range pw.cteStack[i] {
 			if cte.Name.L == tableName {
 				cte.ConsumerCount++
+
+				if len(pw.cteRecursive) > 0 && pw.cteRecursive[len(pw.cteRecursive)-1] {
+					cte.ConsumedByRecursiveCTE = true
+				}
 				return
 			}
 		}
@@ -380,8 +386,13 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		with := p.preprocessWith
 		beforeOffset := len(with.cteCanUsed)
 		with.cteBeforeOffset = append(with.cteBeforeOffset, beforeOffset)
-		if cteNode, exist := node.(*ast.CommonTableExpression); exist && cteNode.IsRecursive {
-			with.cteCanUsed = append(with.cteCanUsed, cteNode.Name.L)
+		if cteNode, exist := node.(*ast.CommonTableExpression); exist {
+			if cteNode.IsRecursive {
+				with.cteCanUsed = append(with.cteCanUsed, cteNode.Name.L)
+				with.cteRecursive = append(with.cteRecursive, true)
+			} else {
+				with.cteRecursive = append(with.cteRecursive, false)
+			}
 		}
 	case *ast.BeginStmt:
 		// If the begin statement was like following:
@@ -640,6 +651,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		with.cteCanUsed = with.cteCanUsed[:beforeOffset]
 		if cteNode, exist := x.(*ast.CommonTableExpression); exist {
 			with.cteCanUsed = append(with.cteCanUsed, cteNode.Name.L)
+			with.cteRecursive = with.cteRecursive[:len(with.cteRecursive)-1]
 		}
 	case *ast.SelectStmt:
 		if x.With != nil {
