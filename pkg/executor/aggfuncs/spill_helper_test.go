@@ -24,10 +24,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var testLongStr1 string = getLongString("平p凯k星x辰c")
+var testLongStr2 string = getLongString("123aa啊啊aa")
+
 func getChunk() *chunk.Chunk {
 	fieldTypes := make([]*types.FieldType, 1)
 	fieldTypes[0] = types.NewFieldType(mysql.TypeBit)
 	return chunk.NewChunkWithCapacity(fieldTypes, 100)
+}
+
+func getLongString(originStr string) string {
+	returnStr := originStr
+	for i := 0; i < 10; i++ {
+		returnStr += returnStr
+	}
+	return returnStr
 }
 
 func TestPartialResult4Count(t *testing.T) {
@@ -330,16 +341,11 @@ func TestPartialResult4MaxMinTime(t *testing.T) {
 func TestPartialResult4MaxMinString(t *testing.T) {
 	var serializeHelper = NewSpillSerializeHelper()
 
-	testStr := "平p凯k星x辰c"
-	for i := 0; i < 10; i++ {
-		testStr += testStr
-	}
-
 	// Initialize test data
 	expectData := []partialResult4MaxMinString{
 		{val: string("12312412312"), isNull: true},
 		{val: string(""), isNull: false},
-		{val: testStr, isNull: true},
+		{val: testLongStr1, isNull: true},
 	}
 	serializedPartialResults := make([]PartialResult, 3)
 	testDataNum := len(serializedPartialResults)
@@ -424,8 +430,8 @@ func TestPartialResult4MaxMinEnum(t *testing.T) {
 	// Initialize test data
 	expectData := []partialResult4MaxMinEnum{
 		{val: types.Enum{Name: string(""), Value: 123}, isNull: true},
-		{val: types.Enum{Name: string("123aa啊啊aa"), Value: 0}, isNull: false},
-		{val: types.Enum{Name: string("123aaa"), Value: 0}, isNull: true},
+		{val: types.Enum{Name: string(testLongStr1), Value: 0}, isNull: false},
+		{val: types.Enum{Name: string(testLongStr2), Value: 0}, isNull: true},
 	}
 	serializedPartialResults := make([]PartialResult, 3)
 	testDataNum := len(serializedPartialResults)
@@ -464,16 +470,11 @@ func TestPartialResult4MaxMinEnum(t *testing.T) {
 func TestPartialResult4MaxMinSet(t *testing.T) {
 	var serializeHelper = NewSpillSerializeHelper()
 
-	testStr := "123aa啊啊aa"
-	for i := 0; i < 10; i++ {
-		testStr += testStr
-	}
-
 	// Initialize test data
 	expectData := []partialResult4MaxMinSet{
 		{val: types.Set{Name: string(""), Value: 123}, isNull: true},
-		{val: types.Set{Name: testStr, Value: 0}, isNull: false},
-		{val: types.Set{Name: string("123aaa"), Value: 0}, isNull: true},
+		{val: types.Set{Name: testLongStr1, Value: 0}, isNull: false},
+		{val: types.Set{Name: string(testLongStr2), Value: 0}, isNull: true},
 	}
 	serializedPartialResults := make([]PartialResult, 3)
 	testDataNum := len(serializedPartialResults)
@@ -684,18 +685,11 @@ func TestPartialResult4SumFloat64(t *testing.T) {
 func TestBasePartialResult4GroupConcat(t *testing.T) {
 	var serializeHelper = NewSpillSerializeHelper()
 
-	testStr1 := "x啊za啊xx"
-	testStr2 := "da啊a啊啊a啊"
-	for i := 0; i < 10; i++ {
-		testStr1 += testStr1
-		testStr2 += testStr2
-	}
-
 	// Initialize test data
 	expectData := []basePartialResult4GroupConcat{
 		{valsBuf: bytes.NewBufferString("xzxx"), buffer: bytes.NewBufferString("dwaa啊啊a啊")},
 		{valsBuf: bytes.NewBufferString(""), buffer: bytes.NewBufferString("")},
-		{valsBuf: bytes.NewBufferString(testStr1), buffer: bytes.NewBufferString(testStr2)},
+		{valsBuf: bytes.NewBufferString(testLongStr1), buffer: bytes.NewBufferString(testLongStr2)},
 	}
 	serializedPartialResults := make([]PartialResult, 3)
 	testDataNum := len(serializedPartialResults)
@@ -820,7 +814,7 @@ func TestPartialResult4JsonObjectAgg(t *testing.T) {
 	// Initialize test data
 	expectData := []partialResult4JsonObjectAgg{
 		{entries: map[string]interface{}{"123": int64(1), "234": float64(1.1), "235": "123"}, bInMap: 0},
-		{entries: map[string]interface{}{"啊": "aaa啊ss", "我": float64(1.1), "反": "aa啊"}, bInMap: 0},
+		{entries: map[string]interface{}{"啊": testLongStr1, "我": float64(1.1), "反": testLongStr2}, bInMap: 0},
 		{entries: map[string]interface{}{"fe": int64(12), " ": float64(1.1), "": "123"}, bInMap: 0},
 	}
 	serializedPartialResults := make([]PartialResult, 3)
@@ -1251,7 +1245,7 @@ func TestPartialResult4FirstRowSet(t *testing.T) {
 	expectData := []partialResult4FirstRowSet{
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: types.Set{Name: string(""), Value: 123}},
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: types.Set{Name: string("123"), Value: 0}},
-		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: types.Set{Name: string("1达瓦fe"), Value: 999}},
+		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: types.Set{Name: string(testLongStr1), Value: 999}},
 	}
 	serializedPartialResults := make([]PartialResult, 3)
 	testDataNum := len(serializedPartialResults)
