@@ -1007,3 +1007,29 @@ set @@tidb_enable_vectorized_expression = true;
 select length(@p);
 length(@p)
 19
+SELECT xxx(1);
+Error 1046 (3D000): No database selected
+SELECT yyy();
+Error 1046 (3D000): No database selected
+SELECT T.upper(1);
+Error 1305 (42000): FUNCTION t.upper does not exist
+use test;
+SELECT xxx(1);
+Error 1305 (42000): FUNCTION test.xxx does not exist
+SELECT yyy();
+Error 1305 (42000): FUNCTION test.yyy does not exist
+SELECT t.upper(1);
+Error 1305 (42000): FUNCTION t.upper does not exist
+SELECT timestampliteral(rand());
+Error 1305 (42000): FUNCTION test.timestampliteral does not exist
+drop table if exists tab0;
+CREATE TABLE tab0(col0 INTEGER, col1 INTEGER, col2 INTEGER);
+SELECT + - (- CASE + col0 WHEN + CAST( col0 AS SIGNED ) THEN col1 WHEN 79 THEN NULL WHEN + - col1 THEN col0 / + col0 END ) * - 16 FROM tab0;
++ - (- CASE + col0 WHEN + CAST( col0 AS SIGNED ) THEN col1 WHEN 79 THEN NULL WHEN + - col1 THEN col0 / + col0 END ) * - 16
+show create table tab0;
+Table	Create Table
+tab0	CREATE TABLE `tab0` (
+  `col0` int(11) DEFAULT NULL,
+  `col1` int(11) DEFAULT NULL,
+  `col2` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
