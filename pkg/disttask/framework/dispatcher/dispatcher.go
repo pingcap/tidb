@@ -560,7 +560,6 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 			return err
 		}
 		if filter {
-			/// filter by role.
 			serverNodes, err = d.filterByRole(serverNodes)
 			if err != nil {
 				return err
