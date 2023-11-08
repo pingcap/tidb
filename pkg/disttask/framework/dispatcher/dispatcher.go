@@ -602,26 +602,6 @@ func (d *BaseDispatcher) dispatchSubTask(
 	metas [][]byte,
 	serverNodes []*infosync.ServerInfo) error {
 	logutil.Logger(d.logCtx).Info("dispatch subtasks", zap.Stringer("state", d.Task.State), zap.Int64("step", int64(d.Task.Step)), zap.Uint64("concurrency", d.Task.Concurrency), zap.Int("subtasks", len(metas)))
-<<<<<<< HEAD
-
-	// select all available TiDB nodes for task.
-	serverNodes, err := d.GetEligibleInstances(d.ctx, d.Task)
-	if err != nil {
-		return err
-	}
-	// filter by role.
-	serverNodes, err = d.filterByRole(serverNodes)
-	if err != nil {
-		return err
-	}
-
-	logutil.Logger(d.logCtx).Info("eligible instances", zap.Int("num", len(serverNodes)))
-
-	if len(serverNodes) == 0 {
-		return errors.New("no available TiDB node to dispatch subtasks")
-	}
-=======
->>>>>>> d4618d4a5f9 (disttask: fix wrong plan when filterByRole (#48366))
 	d.taskNodes = make([]string, len(serverNodes))
 	for i := range serverNodes {
 		d.taskNodes[i] = disttaskutil.GenerateExecID(serverNodes[i].IP, serverNodes[i].Port)
