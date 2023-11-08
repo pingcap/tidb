@@ -223,6 +223,26 @@ func TestSchedulerRun(t *testing.T) {
 	err = scheduler.Run(runCtx, task)
 	require.EqualError(t, err, grpcErr.Error())
 
+	// 9. annotate grpc cancel
+	mockSubtaskTable.EXPECT().GetSubtasksInStates("id", taskID, proto.StepOne,
+		unfinishedNormalSubtaskStates...).Return([]*proto.Subtask{{
+		ID: 2, Type: tp, Step: proto.StepOne, State: proto.TaskStatePending}}, nil)
+	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
+	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates("id", taskID, proto.StepOne,
+		unfinishedNormalSubtaskStates...).Return(&proto.Subtask{
+		ID: 1, Type: tp, Step: proto.StepOne, State: proto.TaskStatePending}, nil)
+	mockSubtaskTable.EXPECT().StartSubtask(taskID).Return(nil)
+	grpcErr = status.Error(codes.Canceled, "test cancel")
+	annotatedError := errors.Annotatef(
+		grpcErr,
+		" %s",
+		"test annotate",
+	)
+	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).Return(annotatedError)
+	mockSubtaskExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
+	err = scheduler.Run(runCtx, task)
+	require.EqualError(t, err, annotatedError.Error())
+
 	runCancel()
 }
 
