@@ -288,7 +288,6 @@ func tryAutoAnalyzeTable(
 	// Check if the table needs to analyze.
 	if needAnalyze, reason := NeedAnalyzeTable(
 		statsTbl,
-		20*statsHandle.Lease(),
 		ratio,
 	); needAnalyze {
 		escaped, err := sqlescape.EscapeSQL(sql, params...)
@@ -341,7 +340,7 @@ func tryAutoAnalyzeTable(
 //     between `start` and `end`.
 //
 // Exposed for test.
-func NeedAnalyzeTable(tbl *statistics.Table, _ time.Duration, autoAnalyzeRatio float64) (bool, string) {
+func NeedAnalyzeTable(tbl *statistics.Table, autoAnalyzeRatio float64) (bool, string) {
 	analyzed := TableAnalyzed(tbl)
 	if !analyzed {
 		return true, "table unanalyzed"
@@ -396,7 +395,6 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 		}
 		if needAnalyze, reason := NeedAnalyzeTable(
 			partitionStatsTbl,
-			20*statsHandle.Lease(),
 			ratio,
 		); needAnalyze {
 			needAnalyzePartitionNames = append(needAnalyzePartitionNames, def.Name.O)
