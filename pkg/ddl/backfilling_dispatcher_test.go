@@ -68,7 +68,9 @@ func TestBackfillingDispatcherLocalMode(t *testing.T) {
 	// 1.1 OnNextSubtasksBatch
 	gTask.Step = dsp.GetNextStep(gTask)
 	require.Equal(t, ddl.StepReadIndex, gTask.Step)
-	metas, err := dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, gTask.Step)
+	serverInfos, _, err := dsp.GetEligibleInstances(context.Background(), gTask)
+	require.NoError(t, err)
+	metas, err := dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, serverInfos, gTask.Step)
 	require.NoError(t, err)
 	require.Equal(t, len(tblInfo.Partition.Definitions), len(metas))
 	for i, par := range tblInfo.Partition.Definitions {
@@ -81,7 +83,7 @@ func TestBackfillingDispatcherLocalMode(t *testing.T) {
 	gTask.State = proto.TaskStateRunning
 	gTask.Step = dsp.GetNextStep(gTask)
 	require.Equal(t, proto.StepDone, gTask.Step)
-	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, gTask.Step)
+	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, serverInfos, gTask.Step)
 	require.NoError(t, err)
 	require.Len(t, metas, 0)
 
@@ -98,7 +100,7 @@ func TestBackfillingDispatcherLocalMode(t *testing.T) {
 	// 2.1 empty table
 	tk.MustExec("create table t1(id int primary key, v int)")
 	gTask = createAddIndexGlobalTask(t, dom, "test", "t1", proto.Backfill, false)
-	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, gTask.Step)
+	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, serverInfos, gTask.Step)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(metas))
 	// 2.2 non empty table.
@@ -110,7 +112,7 @@ func TestBackfillingDispatcherLocalMode(t *testing.T) {
 	gTask = createAddIndexGlobalTask(t, dom, "test", "t2", proto.Backfill, false)
 	// 2.2.1 stepInit
 	gTask.Step = dsp.GetNextStep(gTask)
-	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, gTask.Step)
+	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, serverInfos, gTask.Step)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(metas))
 	require.Equal(t, ddl.StepReadIndex, gTask.Step)
@@ -118,7 +120,7 @@ func TestBackfillingDispatcherLocalMode(t *testing.T) {
 	gTask.State = proto.TaskStateRunning
 	gTask.Step = dsp.GetNextStep(gTask)
 	require.Equal(t, proto.StepDone, gTask.Step)
-	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, gTask.Step)
+	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, serverInfos, gTask.Step)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(metas))
 }
@@ -174,9 +176,11 @@ func TestBackfillingDispatcherGlobalSortMode(t *testing.T) {
 	taskID, err := mgr.AddNewGlobalTask(task.Key, proto.Backfill, 1, task.Meta)
 	require.NoError(t, err)
 	task.ID = taskID
+	serverInfos, _, err := dsp.GetEligibleInstances(context.Background(), task)
+	require.NoError(t, err)
 
 	// 1. to read-index stage
-	subtaskMetas, err := dsp.OnNextSubtasksBatch(ctx, dsp, task, dsp.GetNextStep(task))
+	subtaskMetas, err := dsp.OnNextSubtasksBatch(ctx, dsp, task, serverInfos, dsp.GetNextStep(task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
 	task.Step = ext.GetNextStep(task)
@@ -216,7 +220,7 @@ func TestBackfillingDispatcherGlobalSortMode(t *testing.T) {
 	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort"))
 	})
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, dsp, task, ext.GetNextStep(task))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, dsp, task, serverInfos, ext.GetNextStep(task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
 	task.Step = ext.GetNextStep(task)
@@ -255,13 +259,13 @@ func TestBackfillingDispatcherGlobalSortMode(t *testing.T) {
 	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockWriteIngest"))
 	})
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, dsp, task, ext.GetNextStep(task))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, dsp, task, serverInfos, ext.GetNextStep(task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
 	task.Step = ext.GetNextStep(task)
 	require.Equal(t, ddl.StepWriteAndIngest, task.Step)
 	// 4. to done stage.
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, dsp, task, ext.GetNextStep(task))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, dsp, task, serverInfos, ext.GetNextStep(task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 0)
 	task.Step = ext.GetNextStep(task)
