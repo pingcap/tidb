@@ -13,11 +13,15 @@ alter table partition_to_be_dropped_or_truncated.t1_truncated reorganize partiti
 alter table partition_to_be_removed_or_altered.t_removed remove partitioning;
 alter table partition_to_be_removed_or_altered.t_altered partition by range(id) ( PARTITION p0 VALUES LESS THAN (0), PARTITION p1 VALUES LESS THAN (100), PARTITION p2 VALUES LESS THAN MAXVALUE );
 alter table partition_to_be_removed_or_altered.t_altered partition by key(id) partitions 3;
--- 4. Drop Table Index/PrimaryKey
+-- 4. Drop Table Index/PrimaryKey or Add Table Index/Primary
 alter table index_or_primarykey_to_be_dropped.t0 drop index k1;
 alter table index_or_primarykey_to_be_dropped.t1 drop index k1;
 alter table index_or_primarykey_to_be_dropped.t0 drop primary key;
 alter table index_or_primarykey_to_be_dropped.t1 drop primary key;
+create index k1 on index_or_primarykey_to_be_dropped.t0 (name);
+create index k1 on index_or_primarykey_to_be_dropped.t1 (name);
+alter table index_or_primarykey_to_be_dropped.t0 add primary key (id);
+alter table index_or_primarykey_to_be_dropped.t1 add primary key (id);
 -- 5. Drop Table Indexes
 alter table indexes_to_be_dropped.t0 drop index k1, drop index k2;
 alter table indexes_to_be_dropped.t1 drop index k1, drop index k2;
