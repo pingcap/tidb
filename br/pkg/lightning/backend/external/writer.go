@@ -453,13 +453,6 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 			return err
 		}
 	}
-	if len(w.kvStore.memBuffer) > 0 {
-		_, err = w.kvStore.dataWriter.Write(ctx, w.kvStore.memBuffer)
-		if err != nil {
-			return err
-		}
-		w.kvStore.memBuffer = w.kvStore.memBuffer[:0]
-	}
 
 	err = w.kvStore.Close()
 	if err != nil {
