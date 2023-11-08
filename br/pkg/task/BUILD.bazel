@@ -98,7 +98,7 @@ go_test(
     ],
     embed = [":task"],
     flaky = True,
-    shard_count = 18,
+    shard_count = 21,
     deps = [
         "//br/pkg/conn",
         "//br/pkg/errors",
@@ -107,10 +107,18 @@ go_test(
         "//br/pkg/storage",
         "//br/pkg/stream",
         "//br/pkg/utils",
+<<<<<<< HEAD
         "//config",
         "//parser/model",
         "//statistics/handle",
         "//tablecodec",
+=======
+        "//pkg/config",
+        "//pkg/parser/model",
+        "//pkg/statistics/handle/util",
+        "//pkg/tablecodec",
+        "//pkg/util/table-filter",
+>>>>>>> 632cd843b0e (executor/brie: use the default value from flags (#48025))
         "@com_github_golang_protobuf//proto",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
