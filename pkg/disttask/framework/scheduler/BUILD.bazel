@@ -12,6 +12,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/lightning/common",
+        "//br/pkg/lightning/log",
         "//pkg/config",
         "//pkg/disttask/framework/dispatcher",
         "//pkg/disttask/framework/handle",
@@ -26,9 +27,13 @@ go_library(
         "//pkg/util",
         "//pkg/util/backoff",
         "//pkg/util/dbterror",
+        "//pkg/util/gctuner",
         "//pkg/util/logutil",
+        "//pkg/util/memory",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -53,6 +58,8 @@ go_test(
         "//pkg/resourcemanager/util",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
         "@org_uber_go_mock//gomock",
     ],
 )

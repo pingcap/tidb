@@ -183,6 +183,9 @@ type Expression interface {
 	// ExplainNormalizedInfo returns operator normalized information for generating digest.
 	ExplainNormalizedInfo() string
 
+	// ExplainNormalizedInfo4InList returns operator normalized information for plan digest.
+	ExplainNormalizedInfo4InList() string
+
 	// HashCode creates the hashcode for expression which can be used to identify itself from other expression.
 	// It generated as the following:
 	// Constant: ConstantFlag+encoded value
@@ -1159,7 +1162,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 
 		ast.Sqrt, ast.Log, ast.Log2, ast.Log10, ast.Ln, ast.Exp, ast.Pow, ast.Sign,
 		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
-		ast.JSONLength, ast.JSONExtract, ast.JSONUnquote, ast.Repeat,
+		ast.JSONLength, ast.JSONExtract, ast.JSONUnquote, ast.JSONArray, ast.Repeat,
 		ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton,
 		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position, ast.Format, ast.Elt,
 		ast.LTrim, ast.RTrim, ast.Lpad, ast.Rpad,

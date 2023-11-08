@@ -104,7 +104,7 @@ type HashAggExec struct {
 
 	finishCh         chan struct{}
 	finalOutputCh    chan *AfFinalResult
-	partialOutputChs []chan *HashAggIntermData
+	partialOutputChs []chan *AggPartialResultMapper
 	inputCh          chan *HashAggInput
 	partialInputChs  []chan *chunk.Chunk
 	partialWorkers   []HashAggPartialWorker
@@ -264,9 +264,9 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 	for i := range e.partialInputChs {
 		e.partialInputChs[i] = make(chan *chunk.Chunk, 1)
 	}
-	e.partialOutputChs = make([]chan *HashAggIntermData, finalConcurrency)
+	e.partialOutputChs = make([]chan *AggPartialResultMapper, finalConcurrency)
 	for i := range e.partialOutputChs {
-		e.partialOutputChs[i] = make(chan *HashAggIntermData, partialConcurrency)
+		e.partialOutputChs[i] = make(chan *AggPartialResultMapper, partialConcurrency)
 	}
 
 	e.partialWorkers = make([]HashAggPartialWorker, partialConcurrency)
@@ -275,17 +275,30 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 
 	// Init partial workers.
 	for i := 0; i < partialConcurrency; i++ {
-		w := HashAggPartialWorker{
-			baseHashAggWorker: newBaseHashAggWorker(e.Ctx(), e.finishCh, e.PartialAggFuncs, e.MaxChunkSize(), e.memTracker),
-			inputCh:           e.partialInputChs[i],
-			outputChs:         e.partialOutputChs,
-			giveBackCh:        e.inputCh,
-			globalOutputCh:    e.finalOutputCh,
-			partialResultsMap: make(AggPartialResultMapper),
-			groupByItems:      e.GroupByItems,
-			chk:               exec.TryNewCacheChunk(e.Children(0)),
-			groupKey:          make([][]byte, 0, 8),
+		partialResultsMap := make([]AggPartialResultMapper, finalConcurrency)
+		for i := 0; i < finalConcurrency; i++ {
+			partialResultsMap[i] = make(AggPartialResultMapper)
 		}
+
+		w := HashAggPartialWorker{
+			baseHashAggWorker:    newBaseHashAggWorker(e.Ctx(), e.finishCh, e.PartialAggFuncs, e.MaxChunkSize(), e.memTracker),
+			inputCh:              e.partialInputChs[i],
+			outputChs:            e.partialOutputChs,
+			giveBackCh:           e.inputCh,
+			BInMaps:              make([]int, finalConcurrency),
+			partialResultsBuffer: make([][]aggfuncs.PartialResult, 0, 2048),
+			globalOutputCh:       e.finalOutputCh,
+			partialResultsMap:    partialResultsMap,
+			groupByItems:         e.GroupByItems,
+			chk:                  exec.TryNewCacheChunk(e.Children(0)),
+			groupKey:             make([][]byte, 0, 8),
+		}
+
+		w.partialResultNumInRow = w.getPartialResultSliceLenConsiderByteAlign()
+		for i := 0; i < finalConcurrency; i++ {
+			w.BInMaps[i] = 0
+		}
+
 		// There is a bucket in the empty partialResultsMap.
 		failpoint.Inject("ConsumeRandomPanic", nil)
 		e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMap))
@@ -309,6 +322,8 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 		w := HashAggFinalWorker{
 			baseHashAggWorker:   newBaseHashAggWorker(e.Ctx(), e.finishCh, e.FinalAggFuncs, e.MaxChunkSize(), e.memTracker),
 			partialResultMap:    make(AggPartialResultMapper),
+			BInMap:              0,
+			isFirstInput:        true,
 			groupSet:            groupSet,
 			inputCh:             e.partialOutputChs[i],
 			outputCh:            e.finalOutputCh,

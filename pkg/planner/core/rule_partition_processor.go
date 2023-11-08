@@ -1081,7 +1081,7 @@ func minCmp(ctx sessionctx.Context, lowVal []types.Datum, columnsPruner *rangeCo
 				return true
 			}
 			// Add Null as point here?
-			cmp, err := con.Value.Compare(ctx.GetSessionVars().StmtCtx, &lowVal[j], comparer[j])
+			cmp, err := con.Value.Compare(ctx.GetSessionVars().StmtCtx.TypeCtx(), &lowVal[j], comparer[j])
 			if err != nil {
 				*gotError = true
 			}
@@ -1160,7 +1160,7 @@ func maxCmp(ctx sessionctx.Context, hiVal []types.Datum, columnsPruner *rangeCol
 				return false
 			}
 			// Add Null as point here?
-			cmp, err := con.Value.Compare(ctx.GetSessionVars().StmtCtx, &hiVal[j], comparer[j])
+			cmp, err := con.Value.Compare(ctx.GetSessionVars().StmtCtx.TypeCtx(), &hiVal[j], comparer[j])
 			if err != nil {
 				*gotError = true
 				// error pushed, we will still use the cmp value
@@ -1388,7 +1388,7 @@ func partitionRangeForInExpr(sctx sessionctx.Context, args []expression.Expressi
 			partFnConst := replaceColumnWithConst(pruner.partFn, constExpr)
 			val, _, err = partFnConst.EvalInt(sctx, chunk.Row{})
 		} else {
-			val, err = constExpr.Value.ToInt64(sctx.GetSessionVars().StmtCtx)
+			val, err = constExpr.Value.ToInt64(sctx.GetSessionVars().StmtCtx.TypeCtx())
 		}
 		if err != nil {
 			return pruner.fullRange()

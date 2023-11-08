@@ -5,6 +5,7 @@ go_test(
     timeout = "moderate",
     srcs = [
         "file_compression_test.go",
+        "from_server_test.go",
         "main_test.go",
     ],
     flaky = True,

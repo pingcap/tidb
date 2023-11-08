@@ -40,6 +40,7 @@ go_library(
         "//pkg/util/dbterror",
         "//pkg/util/generic",
         "//pkg/util/logutil",
+        "//pkg/util/memory",
         "//pkg/util/size",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",

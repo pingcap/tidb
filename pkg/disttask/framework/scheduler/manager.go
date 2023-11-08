@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -233,8 +234,8 @@ func (m *Manager) onCanceledTasks(_ context.Context, tasks []*proto.Task) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, task := range tasks {
-		logutil.Logger(m.logCtx).Info("onCanceledTasks", zap.Int64("task-id", task.ID))
 		if cancel, ok := m.mu.handlingTasks[task.ID]; ok && cancel != nil {
+			logutil.Logger(m.logCtx).Info("onCanceledTasks", zap.Int64("task-id", task.ID))
 			// subtask needs to change its state to canceled.
 			cancel(ErrCancelSubtask)
 		}
@@ -332,7 +333,11 @@ func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
 		return
 	}
 	scheduler := factory(ctx, m.id, task, m.taskTable)
-	err := scheduler.Init(ctx)
+	taskCtx, taskCancel := context.WithCancelCause(ctx)
+	m.registerCancelFunc(task.ID, taskCancel)
+	defer taskCancel(nil)
+
+	err := scheduler.Init(taskCtx)
 	if err != nil {
 		m.logErrAndPersist(err, task.ID)
 		return
@@ -379,14 +384,11 @@ func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
 		}
 		switch task.State {
 		case proto.TaskStateRunning:
-			runCtx, runCancel := context.WithCancelCause(ctx)
-			m.registerCancelFunc(task.ID, runCancel)
-			err = scheduler.Run(runCtx, task)
-			runCancel(nil)
+			err = scheduler.Run(taskCtx, task)
 		case proto.TaskStatePausing:
-			err = scheduler.Pause(ctx, task)
+			err = scheduler.Pause(taskCtx, task)
 		case proto.TaskStateReverting:
-			err = scheduler.Rollback(ctx, task)
+			err = scheduler.Rollback(taskCtx, task)
 		}
 		if err != nil {
 			logutil.Logger(m.logCtx).Error("failed to handle task", zap.Error(err))
@@ -416,13 +418,18 @@ func (m *Manager) removeHandlingTask(id int64) {
 }
 
 func (m *Manager) logErr(err error) {
-	logutil.Logger(m.logCtx).Error("task manager error", zap.Error(err), zap.Stack("stack"))
+	logutil.Logger(m.logCtx).Error("task manager met error", zap.Error(err), zap.Stack("stack"))
 }
 
 func (m *Manager) logErrAndPersist(err error, taskID int64) {
 	m.logErr(err)
+	// TODO: use interface if each business to retry
+	if common.IsRetryableError(err) || isRetryableError(err) {
+		return
+	}
 	err1 := m.taskTable.UpdateErrorToSubtask(m.id, taskID, err)
 	if err1 != nil {
 		logutil.Logger(m.logCtx).Error("update to subtask failed", zap.Error(err1), zap.Stack("stack"))
 	}
+	logutil.Logger(m.logCtx).Error("update error to subtask", zap.Int64("task-id", taskID), zap.Error(err1), zap.Stack("stack"))
 }

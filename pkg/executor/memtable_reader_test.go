@@ -152,10 +152,12 @@ func TestTiDBClusterConfig(t *testing.T) {
 	router.Handle(pdapi.Config, fn.Wrap(mockConfig))
 	// TiDB/TiKV config
 	router.Handle("/config", fn.Wrap(mockConfig))
+	// Tiproxy config
+	router.Handle("/api/admin/config", fn.Wrap(mockConfig))
 
 	// mock servers
 	var servers []string
-	for _, typ := range []string{"tidb", "tikv", "tiflash", "pd"} {
+	for _, typ := range []string{"tidb", "tikv", "tiflash", "tiproxy", "pd"} {
 		for _, server := range testServers {
 			servers = append(servers, strings.Join([]string{typ, server.address, server.address}, ","))
 		}
@@ -195,6 +197,15 @@ func TestTiDBClusterConfig(t *testing.T) {
 		"tiflash key1 value1",
 		"tiflash key2.nest1 n-value1",
 		"tiflash key2.nest2 n-value2",
+		"tiproxy key1 value1",
+		"tiproxy key2.nest1 n-value1",
+		"tiproxy key2.nest2 n-value2",
+		"tiproxy key1 value1",
+		"tiproxy key2.nest1 n-value1",
+		"tiproxy key2.nest2 n-value2",
+		"tiproxy key1 value1",
+		"tiproxy key2.nest1 n-value1",
+		"tiproxy key2.nest2 n-value2",
 		"pd key1 value1",
 		"pd key2.nest1 n-value1",
 		"pd key2.nest2 n-value2",
@@ -207,7 +218,7 @@ func TestTiDBClusterConfig(t *testing.T) {
 	))
 	warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
 	require.Len(t, warnings, 0, fmt.Sprintf("unexpected warnings: %+v", warnings))
-	require.Equal(t, int32(12), requestCounter)
+	require.Equal(t, int32(15), requestCounter)
 
 	// TODO: we need remove it when index usage is GA.
 	rs := tk.MustQuery("show config").Rows()
@@ -224,7 +235,7 @@ func TestTiDBClusterConfig(t *testing.T) {
 
 	// type => server index => row
 	rows := map[string][][]string{}
-	for _, typ := range []string{"tidb", "tikv", "tiflash", "pd"} {
+	for _, typ := range []string{"tidb", "tikv", "tiflash", "tiproxy", "pd"} {
 		for _, server := range testServers {
 			rows[typ] = append(rows[typ], []string{
 				fmt.Sprintf("%s %s key1 value1", typ, server.address),
@@ -247,7 +258,7 @@ func TestTiDBClusterConfig(t *testing.T) {
 	}{
 		{
 			sql:      "select * from information_schema.cluster_config",
-			reqCount: 12,
+			reqCount: 15,
 			rows: flatten(
 				rows["tidb"][0],
 				rows["tidb"][1],
@@ -258,6 +269,9 @@ func TestTiDBClusterConfig(t *testing.T) {
 				rows["tiflash"][0],
 				rows["tiflash"][1],
 				rows["tiflash"][2],
+				rows["tiproxy"][0],
+				rows["tiproxy"][1],
+				rows["tiproxy"][2],
 				rows["pd"][0],
 				rows["pd"][1],
 				rows["pd"][2],
@@ -277,11 +291,12 @@ func TestTiDBClusterConfig(t *testing.T) {
 		},
 		{
 			sql:      "select * from information_schema.cluster_config where type='pd' or instance='" + testServers[0].address + "'",
-			reqCount: 12,
+			reqCount: 15,
 			rows: flatten(
 				rows["tidb"][0],
 				rows["tikv"][0],
 				rows["tiflash"][0],
+				rows["tiproxy"][0],
 				rows["pd"][0],
 				rows["pd"][1],
 				rows["pd"][2],
@@ -357,11 +372,12 @@ func TestTiDBClusterConfig(t *testing.T) {
 		{
 			sql: fmt.Sprintf(`select * from information_schema.cluster_config where instance='%s'`,
 				testServers[0].address),
-			reqCount: 4,
+			reqCount: 5,
 			rows: flatten(
 				rows["tidb"][0],
 				rows["tikv"][0],
 				rows["tiflash"][0],
+				rows["tiproxy"][0],
 				rows["pd"][0],
 			),
 		},

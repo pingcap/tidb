@@ -179,9 +179,8 @@ func (seElement *stmtSummaryByDigestEvictedElement) matchAndAdd(digestKey *stmtS
 		return isMatch
 	} else if eEndTime <= sBeginTime {
 		return isTooOld
-	} else {
-		return isTooYoung
 	}
+	return isTooYoung
 }
 
 // ToEvictedCountDatum converts history evicted record to `evicted count` record's datum
