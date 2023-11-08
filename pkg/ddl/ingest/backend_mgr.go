@@ -40,9 +40,8 @@ type BackendCtxMgr interface {
 
 type litBackendCtxMgr struct {
 	generic.SyncMap[int64, *litBackendCtx]
-	memRoot   MemRoot
-	diskRoot  DiskRoot
-	isRaftKV2 bool
+	memRoot  MemRoot
+	diskRoot DiskRoot
 }
 
 func newLitBackendCtxMgr(path string, memQuota uint64) BackendCtxMgr {
