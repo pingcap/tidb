@@ -37,6 +37,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -607,12 +609,13 @@ func isRetryableError(err error) bool {
 // 3. When meet other errors, don't change subtasks' state.
 func (s *BaseScheduler) markSubTaskCanceledOrFailed(ctx context.Context, subtask *proto.Subtask) bool {
 	if err := s.getError(); err != nil {
+		err := errors.Cause(err)
 		if ctx.Err() != nil && context.Cause(ctx) == ErrCancelSubtask {
 			logutil.Logger(s.logCtx).Warn("subtask canceled", zap.Error(err))
 			s.updateSubtaskStateAndError(subtask, proto.TaskStateCanceled, nil)
 		} else if common.IsRetryableError(err) || isRetryableError(err) {
 			logutil.Logger(s.logCtx).Warn("met retryable error", zap.Error(err))
-		} else if errors.Cause(err) != context.Canceled {
+		} else if errors.Cause(err) != context.Canceled && status.Code(err) != codes.Canceled {
 			logutil.Logger(s.logCtx).Warn("subtask failed", zap.Error(err))
 			s.updateSubtaskStateAndError(subtask, proto.TaskStateFailed, err)
 		} else {
