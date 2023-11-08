@@ -32,11 +32,7 @@ go_library(
         "//pkg/metrics",
         "//pkg/util/hack",
         "//pkg/util/logutil",
-<<<<<<< HEAD
         "//pkg/util/mathutil",
-        "//pkg/util/memory",
-=======
->>>>>>> 8071fc76d93 (merge-sort: add context to errgroup, alloc mem by concurrency and refine logs (#48341))
         "//pkg/util/size",
         "@com_github_cockroachdb_pebble//:pebble",
         "@com_github_docker_go_units//:go-units",
