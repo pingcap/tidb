@@ -287,12 +287,12 @@ func TestGetLocalBackendCfg(t *testing.T) {
 	require.Equal(t, "http://1.1.1.1:1234", cfg.PDAddr)
 	require.Equal(t, "/tmp", cfg.LocalStoreDir)
 	require.True(t, cfg.DisableAutomaticCompactions)
-	require.Zero(t, cfg.SwitchModeDuration)
+	require.Zero(t, cfg.RaftKV2SwitchModeDuration)
 
 	c.Plan.IsRaftKV2 = true
 	cfg = c.getLocalBackendCfg("http://1.1.1.1:1234", "/tmp")
-	require.Greater(t, cfg.SwitchModeDuration, time.Duration(0))
-	require.Equal(t, config.DefaultSwitchTiKVModeInterval, cfg.SwitchModeDuration)
+	require.Greater(t, cfg.RaftKV2SwitchModeDuration, time.Duration(0))
+	require.Equal(t, config.DefaultSwitchTiKVModeInterval, cfg.RaftKV2SwitchModeDuration)
 }
 
 func TestGetBackendWorkerConcurrency(t *testing.T) {

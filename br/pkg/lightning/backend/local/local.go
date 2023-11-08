@@ -416,10 +416,10 @@ type BackendConfig struct {
 	MaxOpenFiles int
 	KeyspaceName string
 	// the scope when pause PD schedulers.
-	PausePDSchedulerScope config.PausePDSchedulerScope
-	ResourceGroupName     string
-	TaskType              string
-	SwitchModeDuration    time.Duration
+	PausePDSchedulerScope     config.PausePDSchedulerScope
+	ResourceGroupName         string
+	TaskType                  string
+	RaftKV2SwitchModeDuration time.Duration
 	// whether disable automatic compactions of pebble db of engine.
 	// deduplicate pebble db is not affected by this option.
 	// see DisableAutomaticCompactions of pebble.Options for more details.
@@ -428,7 +428,7 @@ type BackendConfig struct {
 }
 
 // NewBackendConfig creates a new BackendConfig.
-func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resourceGroupName, taskType string, switchModeDuration time.Duration) BackendConfig {
+func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resourceGroupName, taskType string, raftKV2SwitchModeDuration time.Duration) BackendConfig {
 	return BackendConfig{
 		PDAddr:                      cfg.TiDB.PdAddr,
 		LocalStoreDir:               cfg.TikvImporter.SortedKVDir,
@@ -451,7 +451,7 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resour
 		PausePDSchedulerScope:       cfg.TikvImporter.PausePDSchedulerScope,
 		ResourceGroupName:           resourceGroupName,
 		TaskType:                    taskType,
-		SwitchModeDuration:          switchModeDuration,
+		RaftKV2SwitchModeDuration:   raftKV2SwitchModeDuration,
 		DisableAutomaticCompactions: true,
 	}
 }
@@ -1535,7 +1535,7 @@ func (local *Backend) ImportEngine(
 		}()
 	}
 
-	if len(regionRanges) > 0 && local.BackendConfig.SwitchModeDuration > 0 {
+	if len(regionRanges) > 0 && local.BackendConfig.RaftKV2SwitchModeDuration > 0 {
 		log.FromContext(ctx).Info("switch import mode of ranges",
 			zap.String("startKey", hex.EncodeToString(regionRanges[0].Start)),
 			zap.String("endKey", hex.EncodeToString(regionRanges[len(regionRanges)-1].End)))
@@ -1863,7 +1863,7 @@ func (local *Backend) SwitchModeByKeyRanges(ctx context.Context, ranges []common
 
 	go func() {
 		defer close(done)
-		ticker := time.NewTicker(local.BackendConfig.SwitchModeDuration)
+		ticker := time.NewTicker(local.BackendConfig.RaftKV2SwitchModeDuration)
 		defer ticker.Stop()
 		switcher.ToImportMode(ctx, keyRanges...)
 	loop:

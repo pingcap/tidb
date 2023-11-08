@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -46,7 +45,7 @@ type litBackendCtxMgr struct {
 	isRaftKV2 bool
 }
 
-func newLitBackendCtxMgr(ctx context.Context, sctx sessionctx.Context, path string, memQuota uint64) BackendCtxMgr {
+func newLitBackendCtxMgr(path string, memQuota uint64) BackendCtxMgr {
 	mgr := &litBackendCtxMgr{
 		SyncMap:  generic.NewSyncMap[int64, *litBackendCtx](10),
 		memRoot:  nil,
@@ -126,8 +125,8 @@ func createLocalBackend(ctx context.Context, cfg *Config, resourceGroupName stri
 	}
 	// We disable the switch TiKV mode feature for now,
 	// because the impact is not fully tested.
-	var switchTiKVModeDuration time.Duration
-	backendConfig := local.NewBackendConfig(cfg.Lightning, int(LitRLimit), cfg.KeyspaceName, resourceGroupName, kvutil.ExplicitTypeDDL, switchTiKVModeDuration)
+	var raftKV2SwitchModeDuration time.Duration
+	backendConfig := local.NewBackendConfig(cfg.Lightning, int(LitRLimit), cfg.KeyspaceName, resourceGroupName, kvutil.ExplicitTypeDDL, raftKV2SwitchModeDuration)
 	return local.NewBackend(ctx, tls, backendConfig, regionSizeGetter)
 }
 
