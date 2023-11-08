@@ -2774,7 +2774,7 @@
           "    └─CTETable 1.00 root  Scan on CTE_0"
         ],
         "Warning": [
-          "[planner:1815]Recursive CTE can not be inlined."
+          "[planner:1815]Recursive CTE cte1 can not be inlined by merge() or tidb_opt_force_inline_cte."
         ]
       },
       {
