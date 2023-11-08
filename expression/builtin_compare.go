@@ -118,18 +118,19 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		return nil, err
 	}
 
-	fieldTps := make([]*types.FieldType, 0, len(args))
+	flag := uint(0)
 	for _, arg := range args {
-		fieldTps = append(fieldTps, arg.GetType())
+		flag |= arg.GetType().GetFlag() & mysql.NotNullFlag
 	}
 
-	// Use the aggregated field type as retType.
-	resultFieldType := types.AggFieldType(fieldTps)
-	var tempType uint
-	resultEvalType := types.AggregateEvalType(fieldTps, &tempType)
-	resultFieldType.SetFlag(tempType)
-	retEvalTp := resultFieldType.EvalType()
+	resultFieldType, err := InferType4ControlFuncs(ctx, c.funcName, args...)
+	if err != nil {
+		return nil, err
+	}
 
+	resultFieldType.AddFlag(flag)
+
+	retEvalTp := resultFieldType.EvalType()
 	fieldEvalTps := make([]types.EvalType, 0, len(args))
 	for range args {
 		fieldEvalTps = append(fieldEvalTps, retEvalTp)
@@ -145,6 +146,7 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		return nil, err
 	}
 
+<<<<<<< HEAD:expression/builtin_compare.go
 	bf.tp.AddFlag(resultFieldType.GetFlag())
 	resultFieldType.SetFlen(0)
 	resultFieldType.SetDecimal(types.UnspecifiedLength)
@@ -197,6 +199,9 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 			bf.tp.SetFlen(mysql.MaxDecimalWidth)
 		}
 	}
+=======
+	bf.tp = resultFieldType
+>>>>>>> 7cb7af71792 (expression: fix the return type of `coalesce` when arg type is `DATE` (#48032)):pkg/expression/builtin_compare.go
 
 	switch retEvalTp {
 	case types.ETInt:
@@ -1250,6 +1255,7 @@ func (b *builtinIntervalRealSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull {
 		return -1, false, nil
 	}
+
 	var idx int
 	if b.hasNullable {
 		idx, err = b.linearSearch(arg0, b.args[1:], row)
