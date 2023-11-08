@@ -306,9 +306,9 @@ func (s *spillDeserializeHelper) deserializePartialResult4JsonObjectAgg(dst *par
 
 func (s *spillDeserializeHelper) deserializeBasePartialResult4FirstRow(dst *basePartialResult4FirstRow, bytes []byte, readPos int64) int64 {
 	dst.isNull = spill.DeserializeBool(bytes, readPos)
-	readPos++
+	readPos += boolLen
 	dst.gotFirstRow = spill.DeserializeBool(bytes, readPos)
-	readPos++
+	readPos += boolLen
 	return readPos
 }
 

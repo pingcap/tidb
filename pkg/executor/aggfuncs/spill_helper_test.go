@@ -316,11 +316,16 @@ func TestPartialResult4MaxMinTime(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinString(t *testing.T) {
+	testStr := "平p凯k星x辰c"
+	for i := 0; i < 10; i++ {
+		testStr += testStr
+	}
+
 	// Initialize test data
 	expectData := []partialResult4MaxMinString{
 		{val: string("12312412312"), isNull: true},
 		{val: string(""), isNull: false},
-		{val: string("平p凯k星x辰c"), isNull: true},
+		{val: testStr, isNull: true},
 	}
 	serializedPartialResults := make([]PartialResult, 3)
 	testDataNum := len(serializedPartialResults)
@@ -439,10 +444,15 @@ func TestPartialResult4MaxMinEnum(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinSet(t *testing.T) {
+	testStr := "123aa啊啊aa"
+	for i := 0; i < 10; i++ {
+		testStr += testStr
+	}
+
 	// Initialize test data
 	expectData := []partialResult4MaxMinSet{
 		{val: types.Set{Name: string(""), Value: 123}, isNull: true},
-		{val: types.Set{Name: string("123aa啊啊aa"), Value: 0}, isNull: false},
+		{val: types.Set{Name: testStr, Value: 0}, isNull: false},
 		{val: types.Set{Name: string("123aaa"), Value: 0}, isNull: true},
 	}
 	serializedPartialResults := make([]PartialResult, 3)
@@ -644,11 +654,18 @@ func TestPartialResult4SumFloat64(t *testing.T) {
 }
 
 func TestBasePartialResult4GroupConcat(t *testing.T) {
+	testStr1 := "x啊za啊xx"
+	testStr2 := "da啊a啊啊a啊"
+	for i := 0; i < 10; i++ {
+		testStr1 += testStr1
+		testStr2 += testStr2
+	}
+
 	// Initialize test data
 	expectData := []basePartialResult4GroupConcat{
 		{valsBuf: bytes.NewBufferString("xzxx"), buffer: bytes.NewBufferString("dwaa啊啊a啊")},
 		{valsBuf: bytes.NewBufferString(""), buffer: bytes.NewBufferString("")},
-		{valsBuf: bytes.NewBufferString("x啊za啊xx"), buffer: bytes.NewBufferString("da啊a啊啊a啊")},
+		{valsBuf: bytes.NewBufferString(testStr1), buffer: bytes.NewBufferString(testStr2)},
 	}
 	serializedPartialResults := make([]PartialResult, 3)
 	testDataNum := len(serializedPartialResults)
