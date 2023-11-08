@@ -331,6 +331,16 @@ func HiddenFlagsForStream(flags *pflag.FlagSet) {
 	storage.HiddenFlagsForStream(flags)
 }
 
+func DefaultConfig() Config {
+	fs := pflag.NewFlagSet("dummy", pflag.ContinueOnError)
+	DefineCommonFlags(fs)
+	cfg := Config{}
+	if err := cfg.ParseFromFlags(fs); err != nil {
+		log.Panic("infallible operation failed.", zap.Error(err))
+	}
+	return cfg
+}
+
 // DefineDatabaseFlags defines the required --db flag for `db` subcommand.
 func DefineDatabaseFlags(command *cobra.Command) {
 	command.Flags().String(flagDatabase, "", "database name")
