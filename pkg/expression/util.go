@@ -1496,16 +1496,25 @@ func containMutableConst(ctx sessionctx.Context, exprs []Expression) bool {
 }
 
 // RemoveMutableConst used to remove the `ParamMarker` and `DeferredExpr` in the `Constant` expr.
-func RemoveMutableConst(ctx sessionctx.Context, exprs []Expression) {
+func RemoveMutableConst(ctx sessionctx.Context, exprs []Expression) (err error) {
 	for _, expr := range exprs {
 		switch v := expr.(type) {
 		case *Constant:
 			v.ParamMarker = nil
-			v.DeferredExpr = nil
+			if v.DeferredExpr != nil { // evaluate and update v.Value to convert v to a complete immutable constant.
+				// TODO: remove or hide DefferedExpr since it's too dangerous (hard to be consistent with v.Value all the time).
+				v.Value, err = v.DeferredExpr.Eval(chunk.Row{})
+				if err != nil {
+					return err
+				}
+				v.DeferredExpr = nil
+			}
+			v.DeferredExpr = nil // do nothing since v.Value has already been evaluated in this case.
 		case *ScalarFunction:
-			RemoveMutableConst(ctx, v.GetArgs())
+			return RemoveMutableConst(ctx, v.GetArgs())
 		}
 	}
+	return nil
 }
 
 const (
