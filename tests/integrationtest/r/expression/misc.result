@@ -268,7 +268,6 @@ create table t (c1 varchar(100), c2 varchar(128));
 prepare pr1 from "insert into t values(ifnull(?,' '),ifnull(?,' '))";
 set @a='1',@b=repeat('x', 80);
 execute pr1 using @a,@b;
-
 drop table if exists t;
 create table t(a int, b int, index(a));
 insert into t values (null, 0), (null, 1), (10, 11), (10, 12);
@@ -431,7 +430,6 @@ a
 36
 36
 with cte1(a) as (select 36) update t1 set a = 1 where a in (select a from cte1);
-
 select * from t1;
 a
 2
@@ -439,7 +437,6 @@ a
 1
 1
 with recursive cte(a) as (select 1 union select a + 1 from cte where a < 10) update cte, t1 set t1.a=1;
-
 select * from t1;
 a
 1
@@ -470,35 +467,26 @@ create table t(a int, b tinyint as(a+100) unique key);
 insert ignore into t values(200, default);
 update t set a=1 where a=200;
 admin check table t;
-
 delete from t;
 insert ignore into t values(200, default);
 admin check table t;
-
 insert ignore into t values(200, default) on duplicate key update a=100;
 admin check table t;
-
 delete from t;
 admin check table t;
-
 begin;
 insert ignore into t values(200, default);
 update t set a=1 where a=200;
 admin check table t;
-
 delete from t;
 insert ignore into t values(200, default);
 admin check table t;
-
 insert ignore into t values(200, default) on duplicate key update a=100;
 admin check table t;
-
 delete from t;
 admin check table t;
-
 commit;
 admin check table t;
-
 drop table if exists t;
 create table t (c_enum enum('c', 'b', 'a'));
 insert into t values ('a'), ('b'), ('c'), ('a'), ('b'), ('a');

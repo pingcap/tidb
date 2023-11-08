@@ -25,189 +25,162 @@ insert into t1 set c1 = '2004';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 year);
 insert into t1 set c1 = 2004;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 bit);
 insert into t1 set c1 = 1;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 smallint unsigned);
 insert into t1 set c1 = 1;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 int unsigned);
 insert into t1 set c1 = 1;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 smallint);
 insert into t1 set c1 = -1;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 int);
 insert into t1 set c1 = -1;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 decimal(6,4));
 insert into t1 set c1 = '1.1';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 decimal);
 insert into t1 set c1 = 1.1;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 numeric);
 insert into t1 set c1 = -1;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 float);
 insert into t1 set c1 = 1.2;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 double);
 insert into t1 set c1 = 1.2;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 double);
 insert into t1 set c1 = 1.3;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 real);
 insert into t1 set c1 = 1.4;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 date);
 insert into t1 set c1 = '2020-01-01';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 time);
 insert into t1 set c1 = '20:00:00';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 datetime);
 insert into t1 set c1 = '2020-01-01 22:22:22';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 timestamp);
 insert into t1 set c1 = '2020-01-01 22:22:22';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 year);
 insert into t1 set c1 = '2020';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 char(15));
 insert into t1 set c1 = 'test';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 varchar(15));
 insert into t1 set c1 = 'test';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 binary(3));
 insert into t1 set c1 = 'a';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 varbinary(3));
 insert into t1 set c1 = 'b';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 blob);
 insert into t1 set c1 = 'test';
 alter table t1 add index idx(c1(3));
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 text);
 insert into t1 set c1 = 'test';
 alter table t1 add index idx(c1(3));
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 enum('a', 'b'));
 insert into t1 set c1 = 'a';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 set('a', 'b'));
 insert into t1 set c1 = 'a,b';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists c;
 create table c(i int,j int,k int,primary key(i,j,k));
 insert into c values(1,2,3);
@@ -219,7 +192,6 @@ create table t1 (a int(11) ,b varchar(100) ,primary key (a));
 create table t2 (c int(11) ,d varchar(100) ,primary key (c));
 prepare in1 from 'insert into t1 (a,b) select c,null from t2 t on duplicate key update b=t.d';
 execute in1;
-
 drop table if exists t1;
 create table t1(a bigint);
 insert into t1 values("asfasdfsajhlkhlksdaf");

@@ -458,7 +458,6 @@ create table t(a int CHECK (a != 0));
 prepare stmt from 'insert into t values(?)';
 set @a = 1;
 execute stmt using @a;
-
 set @a = 0;
 execute stmt using @a;
 Error 3819 (HY000): Check constraint 't_chk_1' is violated.

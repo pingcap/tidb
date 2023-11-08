@@ -19,7 +19,6 @@ create table t(a varchar(20) charset latin1);
 insert into t values ("t_value");
 alter table t modify column a varchar(20) charset utf8mb4;
 admin check table t;
-
 select * from t;
 a
 t_value
@@ -28,7 +27,6 @@ create table t(a varchar(20) charset latin1);
 insert into t values ("t_value");
 alter table t modify column a varchar(20) charset utf8mb4 collate utf8mb4_general_ci;
 admin check table t;
-
 select * from t;
 a
 t_value
@@ -48,7 +46,6 @@ create table t(a varchar(20) charset latin1);
 insert into t values ("t_value");
 alter table t modify column a varchar(19) charset utf8mb4;
 admin check table t;
-
 select * from t;
 a
 t_value

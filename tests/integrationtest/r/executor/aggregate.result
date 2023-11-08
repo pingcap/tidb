@@ -2060,4 +2060,3 @@ Projection	1.00	root		Column#9, Column#12, Column#15, Column#18
             └─TableFullScan	1000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
 delete from mysql.opt_rule_blacklist where name = "decorrelate";
 admin reload opt_rule_blacklist;
-

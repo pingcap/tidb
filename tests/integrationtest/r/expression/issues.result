@@ -859,7 +859,6 @@ null
 "0"
 insert into mysql.expr_pushdown_blacklist values('json_extract','tikv','');
 admin reload expr_pushdown_blacklist;
-
 SELECT * FROM testjson WHERE JSON_EXTRACT(j,'$.test');
 j
 {"test": 3}
@@ -903,7 +902,6 @@ null
 "0"
 delete from mysql.expr_pushdown_blacklist;
 admin reload expr_pushdown_blacklist;
-
 drop table if exists t0;
 CREATE TABLE t0(c0 int);
 INSERT INTO t0 VALUES (1);
@@ -2433,7 +2431,6 @@ select c from t;
 c
 128
 admin check table t;
-
 set @@sql_mode=default;
 DROP TABLE IF EXISTS t1;
 CREATE TABLE t1 ( `pk` int not null primary key auto_increment, `col_smallint_key_signed` smallint  , key (`col_smallint_key_signed`));
