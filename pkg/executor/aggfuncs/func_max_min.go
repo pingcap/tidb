@@ -1194,10 +1194,10 @@ func (m *maxMin4StringSliding) UpdatePartialResult(sctx sessionctx.Context, rows
 
 var _ SlidingWindowAggFunc = &maxMin4StringSliding{}
 
-func (e *maxMin4StringSliding) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+func (m *maxMin4StringSliding) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4MaxMinString)(pr)
 	for i := uint64(0); i < shiftEnd; i++ {
-		input, isNull, err := e.args[0].EvalString(sctx, getRow(lastEnd+i))
+		input, isNull, err := m.args[0].EvalString(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
 		}

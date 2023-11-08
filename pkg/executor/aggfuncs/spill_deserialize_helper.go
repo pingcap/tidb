@@ -252,7 +252,7 @@ func (s *spillDeserializeHelper) deserializePartialResult4GroupConcat(dst *parti
 func (s *spillDeserializeHelper) deserializePartialResult4BitFunc(dst *partialResult4BitFuncMetaType) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
-		*dst = partialResult4BitFuncMetaType(spill.DeserializeUint64(bytes, 0))
+		*dst = spill.DeserializeUint64(bytes, 0)
 		s.readRowIndex++
 		return true
 	}
