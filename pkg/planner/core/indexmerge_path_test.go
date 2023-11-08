@@ -86,7 +86,6 @@ func TestMVIndexRandom(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-
 	for _, testCase := range []struct {
 		indexType     string
 		insertValOpts randMVIndexValOpts
@@ -101,7 +100,6 @@ func TestMVIndexRandom(t *testing.T) {
 	} {
 		tk.MustExec("drop table if exists t")
 		tk.MustExec(fmt.Sprintf(`create table t(a int, j json, index kj((cast(j as %v array))))`, testCase.indexType))
-
 		nRows := 20
 		rows := make([]string, 0, nRows)
 		for i := 0; i < nRows; i++ {
@@ -113,14 +111,12 @@ func TestMVIndexRandom(t *testing.T) {
 			}
 		}
 		tk.MustExec(fmt.Sprintf("insert into t values %v", strings.Join(rows, ", ")))
-
 		randJColName := func() string {
 			return "j"
 		}
 		randNColName := func() string {
 			return "a"
 		}
-
 		nQueries := 20
 		for i := 0; i < nQueries; i++ {
 			conds := randMVIndexConds(rand.Intn(3)+1, testCase.queryValsOpts, randJColName, randNColName)
