@@ -158,7 +158,9 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) (resErr error
 		zap.String("server-mem-limit", memory.ServerMemoryLimitOriginText.Load()),
 	), "schedule step")
 	// log as info level, subtask might be cancelled, let caller check it.
-	defer stepLogger.End(zap.InfoLevel, resErr)
+	defer func() {
+		stepLogger.End(zap.InfoLevel, resErr)
+	}()
 
 	summary, cleanup, err := runSummaryCollectLoop(ctx, task, s.taskTable)
 	if err != nil {
