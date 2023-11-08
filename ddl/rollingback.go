@@ -451,11 +451,19 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
 		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable,
 		model.ActionModifyTableAutoIdCache, model.ActionAlterIndexVisibility,
-		model.ActionModifySchemaDefaultPlacement,
-		model.ActionRecoverSchema, model.ActionAlterCheckConstraint:
+		model.ActionModifySchemaDefaultPlacement, model.ActionRecoverSchema:
 		ver, err = cancelOnlyNotHandledJob(job, model.StateNone)
 	case model.ActionMultiSchemaChange:
 		err = rollingBackMultiSchemaChange(job)
+<<<<<<< HEAD:ddl/rollingback.go
+=======
+	case model.ActionAddCheckConstraint:
+		ver, err = rollingBackAddConstraint(d, t, job)
+	case model.ActionDropCheckConstraint:
+		ver, err = rollingBackDropConstraint(t, job)
+	case model.ActionAlterCheckConstraint:
+		ver, err = rollingBackAlterConstraint(d, t, job)
+>>>>>>> 14ff60dca07 (ddl: fix create and alter check constraints problems (#47633)):pkg/ddl/rollingback.go
 	default:
 		job.State = model.JobStateCancelled
 		err = dbterror.ErrCancelledDDLJob
@@ -501,3 +509,68 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 
 	return
 }
+<<<<<<< HEAD:ddl/rollingback.go
+=======
+
+func rollingBackAddConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	_, tblInfo, constrInfoInMeta, _, err := checkAddCheckConstraint(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if constrInfoInMeta == nil {
+		// Add constraint hasn't stored constraint info into meta, so we can cancel the job
+		// directly without further rollback action.
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrCancelledDDLJob
+	}
+	for i, constr := range tblInfo.Constraints {
+		if constr.Name.L == constrInfoInMeta.Name.L {
+			tblInfo.Constraints = append(tblInfo.Constraints[0:i], tblInfo.Constraints[i+1:]...)
+			break
+		}
+	}
+	if job.IsRollingback() {
+		job.State = model.JobStateRollbackDone
+	}
+	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
+	return ver, errors.Trace(err)
+}
+
+func rollingBackDropConstraint(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	_, constrInfoInMeta, err := checkDropCheckConstraint(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// StatePublic means when the job is not running yet.
+	if constrInfoInMeta.State == model.StatePublic {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrCancelledDDLJob
+	}
+	// Can not rollback like drop other element, so just continue to drop constraint.
+	job.State = model.JobStateRunning
+	return ver, nil
+}
+
+func rollingBackAlterConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	_, tblInfo, constraintInfo, enforced, err := checkAlterCheckConstraint(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// StatePublic means when the job is not running yet.
+	if constraintInfo.State == model.StatePublic {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrCancelledDDLJob
+	}
+
+	// Only alter check constraints ENFORCED can get here.
+	constraintInfo.Enforced = !enforced
+	constraintInfo.State = model.StatePublic
+	if job.IsRollingback() {
+		job.State = model.JobStateRollbackDone
+	}
+	ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true)
+	return ver, errors.Trace(err)
+}
+>>>>>>> 14ff60dca07 (ddl: fix create and alter check constraints problems (#47633)):pkg/ddl/rollingback.go
