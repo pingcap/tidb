@@ -867,7 +867,7 @@ create table t12205(
 );
 insert into t12205 values('-1038024704','-527892480');
 --enable_warnings
-select SEC_TO_TIME( ( `col_varchar_64` & `col_varchar_64_key` ) ),`col_varchar_64` & `col_varchar_64_key` from t12205; ;
+select SEC_TO_TIME( ( `col_varchar_64` & `col_varchar_64_key` ) ),`col_varchar_64` & `col_varchar_64_key` from t12205;
 --disable_warnings
 
 # TestIssue21677
