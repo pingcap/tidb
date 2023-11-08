@@ -281,7 +281,7 @@ func tryAutoAnalyzeTable(
 	sql string,
 	params ...interface{},
 ) bool {
-	// 1. If the stats is not loaded, we don't need to analyze it.
+	// 1. If the stats are not loaded, we don't need to analyze it.
 	// 2. If the table is too small, we don't want to waste time to analyze it.
 	//    Leave the opportunity to other bigger tables.
 	if statsTbl.Pseudo || statsTbl.RealtimeCount < AutoAnalyzeMinCnt {
@@ -311,7 +311,7 @@ func tryAutoAnalyzeTable(
 		return true
 	}
 
-	// Whatever the table needs to analyze or not, we need to check the indices of the table.
+	// Whether the table needs to analyze or not, we need to check the indices of the table.
 	for _, idx := range tblInfo.Indices {
 		if _, ok := statsTbl.Indices[idx.ID]; !ok && idx.State == model.StatePublic {
 			sqlWithIdx := sql + " index %n"
@@ -336,8 +336,7 @@ func tryAutoAnalyzeTable(
 }
 
 // NeedAnalyzeTable checks if we need to analyze the table:
-//  1. If the table has never been analyzed, we need to analyze it when it has
-//     not been modified for a while.
+//  1. If the table has never been analyzed, we need to analyze it.
 //  2. If the table had been analyzed before, we need to analyze it when
 //     "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio" and the current time is
 //     between `start` and `end`.
@@ -393,7 +392,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 
 	for _, def := range partitionDefs {
 		partitionStatsTbl := statsHandle.GetPartitionStats(tblInfo, def.ID)
-		// 1. If the stats is not loaded, we don't need to analyze it.
+		// 1. If the stats are not loaded, we don't need to analyze it.
 		// 2. If the table is too small, we don't want to waste time to analyze it.
 		//    Leave the opportunity to other bigger tables.
 		if partitionStatsTbl.Pseudo || partitionStatsTbl.RealtimeCount < AutoAnalyzeMinCnt {
