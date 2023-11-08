@@ -2430,6 +2430,11 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 				}
 			}
 		}
+		if err == nil && sessVars.TxnCtx.CouldRetry && !s.IsReadOnly(sessVars) {
+			if err := checkStmtLimit(ctx, se, true); err != nil {
+				return nil, err
+			}
+		}
 		return &execStmtResult{
 			RecordSet: rs,
 			sql:       s,
