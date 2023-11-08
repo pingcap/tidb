@@ -313,7 +313,7 @@ func checkStmtLimit(ctx context.Context, se *session, beforeExec bool) error {
 	history := GetHistory(se)
 	stmtCount := history.Count()
 	if beforeExec {
-		stmtCount += 1
+		stmtCount++
 	}
 	if stmtCount > int(config.GetGlobalConfig().Performance.StmtCountLimit) {
 		if !sessVars.BatchCommit {
