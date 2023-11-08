@@ -1286,6 +1286,8 @@ func TestSingleConsumerCTE(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE `t` (`a` int(11));")
+	tk.MustExec("create table t1 (c1 int primary key, c2 int, index c2 (c2));")
+	tk.MustExec("create table t2 (c1 int unique, c2 int);")
 	tk.MustExec("insert into t values (1), (5), (10), (15), (20), (30), (50);")
 
 	var (

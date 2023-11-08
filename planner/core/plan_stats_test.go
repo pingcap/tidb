@@ -163,13 +163,13 @@ func TestPlanStatsLoad(t *testing.T) {
 		{ // CTE
 			sql: "with cte(x, y) as (select d + 1, b from t where c > 1) select * from cte where x < 3",
 			check: func(p plannercore.Plan, tableInfo *model.TableInfo) {
-				ps, ok := p.(*plannercore.PhysicalSelection)
+				ps, ok := p.(*plannercore.PhysicalProjection)
 				require.True(t, ok)
-				pc, ok := ps.Children()[0].(*plannercore.PhysicalCTE)
+				pc, ok := ps.Children()[0].(*plannercore.PhysicalTableReader)
 				require.True(t, ok)
-				pp, ok := pc.SeedPlan.(*plannercore.PhysicalProjection)
+				pp, ok := pc.GetTablePlan().(*plannercore.PhysicalSelection)
 				require.True(t, ok)
-				reader, ok := pp.Children()[0].(*plannercore.PhysicalTableReader)
+				reader, ok := pp.Children()[0].(*plannercore.PhysicalTableScan)
 				require.True(t, ok)
 				require.Greater(t, countFullStats(reader.Stats().HistColl, tableInfo.Columns[2].ID), 0)
 			},
