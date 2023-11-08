@@ -1576,8 +1576,7 @@ func allowCmpArgsRefining4PlanCache(ctx sessionctx.Context, args []Expression) (
 	// 2. int-expr <cmp> string/float/double/decimal-const
 	// 3. datetime/timestamp column <cmp> int/float/double/decimal-const
 	for conIdx := 0; conIdx < 2; conIdx++ {
-		con, isCon := args[conIdx].(*Constant)
-		if !isCon {
+		if _, isCon := args[conIdx].(*Constant); !isCon {
 			continue // not a constant
 		}
 
