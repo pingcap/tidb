@@ -2417,6 +2417,12 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	if err != nil {
 		return nil, err
 	}
+	if sessVars.TxnCtx.CouldRetry && !s.IsReadOnly(sessVars) {
+		// Only when the txn is could retry and the statement is not read only, need to do stmt-count-limit check.
+		if err := checkStmtLimit(ctx, se); err != nil {
+			return nil, err
+		}
+	}
 
 	rs, err = s.Exec(ctx)
 	se.updateTelemetryMetric(s.(*executor.ExecStmt))
@@ -2428,11 +2434,6 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 				if err := se.CommitTxn(ctx); err != nil {
 					return nil, err
 				}
-			}
-		}
-		if err == nil && sessVars.TxnCtx.CouldRetry && !s.IsReadOnly(sessVars) {
-			if err := checkStmtLimit(ctx, se, true); err != nil {
-				return nil, err
 			}
 		}
 		return &execStmtResult{

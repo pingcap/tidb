@@ -2480,6 +2480,43 @@ func (cli *TestServerClient) RunTestStmtCountLimit(t *testing.T) {
 		require.NoError(t, rows.Close())
 		require.Equal(t, 3, id)
 		require.Equal(t, 1, count)
+
+		dbt.MustExec("delete from t;")
+		dbt.MustExec("commit;")
+		dbt.MustExec("set @@tidb_disable_txn_auto_retry=0;")
+		dbt.MustExec("set autocommit=0;")
+		dbt.MustExec("begin optimistic;")
+		dbt.MustExec("insert into t values (1);")
+		dbt.MustExec("insert into t values (2);")
+		_, err = dbt.GetDB().Exec("insert into t values (3);")
+		require.Error(t, err)
+		require.Equal(t, "Error 1105 (HY000): statement count 4 exceeds the transaction limitation, transaction has been rollback, autocommit = false", err.Error())
+		dbt.MustExec("commit;")
+		rows = dbt.MustQuery("select count(*) from t;")
+		for rows.Next() {
+			rows.Scan(&count)
+		}
+		require.NoError(t, rows.Close())
+		require.Equal(t, 0, count)
+
+		dbt.MustExec("delete from t;")
+		dbt.MustExec("commit;")
+		dbt.MustExec("set @@tidb_batch_commit=1;")
+		dbt.MustExec("set @@tidb_disable_txn_auto_retry=0;")
+		dbt.MustExec("set autocommit=0;")
+		dbt.MustExec("begin optimistic;")
+		dbt.MustExec("insert into t values (1);")
+		dbt.MustExec("insert into t values (2);")
+		dbt.MustExec("insert into t values (3);")
+		dbt.MustExec("insert into t values (4);")
+		dbt.MustExec("insert into t values (5);")
+		dbt.MustExec("commit;")
+		rows = dbt.MustQuery("select count(*) from t;")
+		for rows.Next() {
+			rows.Scan(&count)
+		}
+		require.NoError(t, rows.Close())
+		require.Equal(t, 5, count)
 	})
 }
 
