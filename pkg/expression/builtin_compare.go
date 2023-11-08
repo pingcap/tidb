@@ -1580,9 +1580,6 @@ func allowCmpArgsRefining4PlanCache(ctx sessionctx.Context, args []Expression) (
 		if !isCon {
 			continue // not a constant
 		}
-		if con.DeferredExpr != nil {
-			continue
-		}
 
 		// case 1: year-expr <cmp> const
 		// refine `year < 12` to `year < 2012` to guarantee the correctness.
