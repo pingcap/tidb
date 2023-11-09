@@ -77,7 +77,6 @@ func TestMultiMVIndexRandom(t *testing.T) {
 			tk.MustQuery("select /*+ use_index_merge(t1, idx, idx2, idx3, idx4) */ * from t1 where " + conds).Sort().Check(r1.Rows())
 		}
 	}
-
 }
 func TestMVIndexRandom(t *testing.T) {
 	store := testkit.CreateMockStore(t)
