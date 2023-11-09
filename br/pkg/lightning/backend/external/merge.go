@@ -3,6 +3,7 @@ package external
 import (
 	"context"
 
+	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -29,6 +30,17 @@ func MergeOverlappingFiles(ctx context.Context, paths []string, store storage.Ex
 			end = len(paths)
 		}
 		dataFilesSlice = append(dataFilesSlice, paths[i:end])
+	}
+	if _, ok := store.(*storage.GCSStorage); ok {
+		// GCS sdk uses http2 which has internal flow control and doesn't a
+		// parameter to control max read buffer size, so it might accumulate
+		// a lot of data in memory if we don't consume data fast enough and
+		// cause OOM.
+		// here we assume the max accumulated data size is 8MiB, and adjust
+		// concurrency according to it.
+		// TODO: find a better way to resolve this problem.
+		concurrency = min(concurrency,
+			concurrency*units.GiB/(int(DefaultMemSizeLimit)+batchCount*8*units.MiB))
 	}
 
 	logutil.Logger(ctx).Info("start to merge overlapping files",
