@@ -127,10 +127,10 @@ func SelectivityFromExternalEstimator(sctx sessionctx.Context, tableID int64, ex
 	if err != nil {
 		return 0, false, err
 	}
-	count, err := strconv.ParseFloat(string(body), 64)
+	sel, err := strconv.ParseFloat(string(body), 64)
 	if err != nil {
 		return 0, false, err
 	}
 
-	return count, true, nil
+	return sel, true, nil
 }
