@@ -642,6 +642,7 @@ func (e *Engine) ingestSSTLoop() {
 					}
 					ingestMetas := metas.metas
 					if e.config.Compact {
+						e.logger.Info("ywq test before mergesst")
 						newMeta, err := e.sstIngester.mergeSSTs(metas.metas, e.sstDir)
 						if err != nil {
 							e.setError(err)
@@ -1497,6 +1498,8 @@ type dbSSTIngester struct {
 }
 
 func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error) {
+	i.e.logger.Info("ywq test in mergesst")
+
 	if len(metas) == 0 {
 		return nil, errors.New("sst metas is empty")
 	} else if len(metas) == 1 {
