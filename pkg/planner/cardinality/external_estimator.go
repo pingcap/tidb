@@ -4,25 +4,27 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/types"
 )
 
 type estRequest struct {
-	table string
-	exprs []*cmpPred
+	Table string     `json:"table_name"`
+	Exprs []*cmpPred `json:"exprs"`
 }
 
 type cmpPred struct {
-	col   string
-	op    string
-	value string
+	Col   string `json:"col"`
+	OP    string `json:"op"`
+	Value string `json:"value"`
 }
 
 var (
@@ -68,18 +70,28 @@ func newCmpPred(expr expression.Expression) *cmpPred {
 		value = fmt.Sprintf(`"%v"`, value)
 	}
 
+	tmp := strings.Split(strings.ToLower(col.OrigName), ".")
+	colName := tmp[len(tmp)-1]
+
 	return &cmpPred{
-		col:   strings.ToLower(col.OrigName),
-		op:    op,
-		value: value,
+		Col:   colName,
+		OP:    op,
+		Value: value,
 	}
 }
 
 // SelectivityFromExternalEstimator ...
-func SelectivityFromExternalEstimator(sctx sessionctx.Context, exprs []expression.Expression) (result float64, ok bool, err error) {
+func SelectivityFromExternalEstimator(sctx sessionctx.Context, tableID int64, exprs []expression.Expression) (result float64, ok bool, err error) {
 	if sctx.GetSessionVars().ExternalCardinalityEstimator == "" {
 		return 0, false, nil
 	}
+
+	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	tbl, _ := infoschema.FindTableByTblOrPartID(is, tableID)
+	if tbl == nil {
+		return 0, false, nil
+	}
+	tableName := tbl.Meta().Name.L
 
 	var cmpPreds []*cmpPred
 	for _, e := range exprs {
@@ -91,12 +103,16 @@ func SelectivityFromExternalEstimator(sctx sessionctx.Context, exprs []expressio
 	}
 
 	content, err := json.Marshal(&estRequest{
-		table: "", // TODO
-		exprs: cmpPreds,
+		Table: tableName,
+		Exprs: cmpPreds,
 	})
 	if err != nil {
 		return 0, false, err
 	}
+
+	//fmt.Println("===================")
+	//fmt.Println(string(content))
+	//fmt.Println("===================")
 
 	req, err := http.NewRequest(http.MethodPost, sctx.GetSessionVars().ExternalCardinalityEstimator, bytes.NewBuffer(content))
 	if err != nil {

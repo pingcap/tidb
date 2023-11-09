@@ -57,7 +57,7 @@ func Selectivity(
 	err error,
 ) {
 	// TODO: any log?
-	result, ok, err := SelectivityFromExternalEstimator(ctx, exprs)
+	result, ok, err := SelectivityFromExternalEstimator(ctx, coll.PhysicalID, exprs)
 	if ok && err == nil {
 		return result, nil, err
 	}
