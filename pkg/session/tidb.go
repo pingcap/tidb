@@ -323,7 +323,7 @@ func checkStmtLimit(ctx context.Context, se *session, isFinish bool) error {
 				stmtCount, sessVars.IsAutocommit())
 		}
 		if !isFinish {
-			// if the stmt is not finish execute, then just return.
+			// if the stmt is not finish execute, then just return, since some work need to be done such as StmtCommit.
 			return nil
 		}
 		// If the stmt is finish execute, and exceed the StmtCountLimit, and BatchCommit is true,
