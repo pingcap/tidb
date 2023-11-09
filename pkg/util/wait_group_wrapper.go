@@ -16,11 +16,9 @@ package util
 
 import (
 	"context"
-	"runtime"
 	"sync"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tiancaiamao/gp"
 	"go.uber.org/zap"
@@ -233,9 +231,7 @@ func (g *ErrorGroupWithRecover) Go(fn func() error) {
 			if r := recover(); r != nil {
 				// stack is automatically printed
 				logutil.BgLogger().Error("panic in error group", zap.Any("recover", r))
-				stackBuf := make([]byte, 4096)
-				length := runtime.Stack(stackBuf, false)
-				err = errors.Errorf("%v\n%s", r, stackBuf[:length])
+				err = GetRecoverError(r)
 			}
 		}()
 		return fn()
