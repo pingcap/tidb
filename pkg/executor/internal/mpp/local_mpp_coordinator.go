@@ -237,6 +237,8 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 			ReportExecutionSummary: c.reportExecutionInfo,
 			State:                  kv.MppTaskReady,
 			ResourceGroupName:      rgName,
+			ConnectionID:           c.sessionCtx.GetSessionVars().ConnectionID,
+			ConnectionAlias:        c.sessionCtx.ShowProcess().SessionAlias,
 		}
 		c.reqMap[req.ID] = &mppRequestReport{mppReq: req, receivedReport: false, errMsg: "", executionSummaries: nil}
 		c.mppReqs = append(c.mppReqs, req)
