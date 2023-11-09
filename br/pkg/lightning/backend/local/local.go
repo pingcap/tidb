@@ -887,11 +887,13 @@ func (local *Backend) OpenEngine(ctx context.Context, cfg *backend.EngineConfig,
 
 	sstDir := engineSSTDir(local.LocalStoreDir, engineUUID)
 	if !cfg.KeepSortDir {
+		log.FromContext(ctx).Warn("ywq test remove sst dir")
 		if err := os.RemoveAll(sstDir); err != nil {
 			return errors.Trace(err)
 		}
 	}
 	if !common.IsDirExists(sstDir) {
+		log.FromContext(ctx).Warn("ywq test mkdir sst dir")
 		if err := os.Mkdir(sstDir, 0o750); err != nil {
 			return errors.Trace(err)
 		}

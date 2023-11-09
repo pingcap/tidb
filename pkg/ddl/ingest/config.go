@@ -72,6 +72,8 @@ func genConfig(ctx context.Context, memRoot MemRoot, jobID int64, unique bool, i
 	// in DDL scenario, we don't switch import mode
 	cfg.Cron.SwitchMode = lightning.Duration{Duration: 0}
 
+	logutil.BgLogger().Info("ywq test set cache size small")
+	cfg.TikvImporter.LocalWriterMemCacheSize = 500
 	c := &Config{
 		Lightning:    cfg,
 		KeyspaceName: tidb.GetGlobalKeyspaceName(),

@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -152,11 +151,6 @@ func (s *backfillDistScheduler) NewBackfillSubtaskExecutor(ctx context.Context, 
 		indexInfos = append(indexInfos, indexInfo)
 	}
 
-	failpoint.Inject("mockInitBackCtx", func() {
-		idx := model.FindIndexInfoByID(tbl.Meta().Indices, bgm.EleIDs[0])
-		bc, _ := ingest.LitBackCtxMgr.Register(ctx, idx.Unique, bgm.Job.ID, s.d.etcdCli, bgm.Job.ReorgMeta.ResourceGroupName)
-		s.backendCtx = bc
-	})
 	switch stage {
 	case proto.StepOne:
 		jc := s.d.jobContext(jobMeta.ID, jobMeta.ReorgMeta)

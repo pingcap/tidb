@@ -41,7 +41,6 @@ import (
 type BackendCtx interface {
 	Register(jobID, indexID int64, schemaName, tableName string, isDistTask bool) (Engine, error)
 	Unregister(jobID, indexID int64)
-
 	CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error
 	FinishImport(indexID int64, unique bool, tbl table.Table) error
 	ResetWorkers(jobID int64)
@@ -227,8 +226,7 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 	// ywq todo
 	failpoint.Inject("mockCancelAfterImport", func() {
 		// Mock scheduler close.
-		// Mock the tidb node running the subtask restart, then run the subtask again.
-		LitBackCtxMgr.UnregisterAll()
+		// Mock the tidb node running the subtask but subtask not finished then run the subtask again.
 		failpoint.Return(true, false, context.Canceled)
 	})
 	return true, true, nil

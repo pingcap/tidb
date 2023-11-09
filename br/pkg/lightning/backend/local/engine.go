@@ -652,6 +652,11 @@ func (e *Engine) ingestSSTLoop() {
 					// batchIngestSSTs will change ingestMetas' order, so we record the max seq here
 					metasMaxSeq := ingestMetas[len(ingestMetas)-1].seq
 
+					failpoint.Inject("mockIngestSSTsError", func() {
+						log.FromContext(context.Background()).Info("ywq test trigger")
+						e.setError(context.Canceled)
+					})
+
 					if err := e.batchIngestSSTs(ingestMetas); err != nil {
 						e.setError(err)
 						return
