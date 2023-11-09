@@ -122,7 +122,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	// needGlobalStats used to indicate whether we should merge the partition-level stats to global-level stats.
 	needGlobalStats := pruneMode == variable.Dynamic
 	globalStatsMap := make(map[globalStatsKey]globalStatsInfo)
-	g, _ := errgroup.WithContext(ctx)
+	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
 		return e.handleResultsError(ctx, concurrency, needGlobalStats, globalStatsMap, resultsCh, len(tasks))
 	})
@@ -134,9 +134,15 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		dom := domain.GetDomain(e.Ctx())
 		dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
 	})
-
+TASKLOOP:
 	for _, task := range tasks {
-		taskCh <- task
+		select {
+		case taskCh <- task:
+		case <-e.errExitCh:
+			break TASKLOOP
+		case <-gctx.Done():
+			break TASKLOOP
+		}
 	}
 	close(taskCh)
 	defer func() {
@@ -525,6 +531,7 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 		if !ok {
 			break
 		}
+		failpoint.Inject("handleAnalyzeWorkerPanic", nil)
 		StartAnalyzeJob(e.Ctx(), task.job)
 		switch task.taskType {
 		case colTask:

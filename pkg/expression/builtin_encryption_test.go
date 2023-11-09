@@ -157,7 +157,7 @@ func TestAESEncrypt(t *testing.T) {
 		}
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
 		require.NoError(t, err)
-		crypt, err := evalBuiltinFunc(f, chunk.Row{})
+		crypt, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		require.Equal(t, types.NewDatum(tt.crypt), toHex(crypt))
 	}
@@ -204,7 +204,7 @@ func TestAESEncrypt(t *testing.T) {
 		f, err := fc.getFunction(ctx, args)
 
 		require.NoError(t, err, msg)
-		crypt, err := evalBuiltinFunc(f, chunk.Row{})
+		crypt, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err, msg)
 		require.Equal(t, types.NewDatum(tt.crypt), toHex(crypt), msg)
 	}
@@ -224,7 +224,7 @@ func TestAESDecrypt(t *testing.T) {
 		}
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
 		require.NoError(t, err, msg)
-		str, err := evalBuiltinFunc(f, chunk.Row{})
+		str, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err, msg)
 		if tt.origin == nil {
 			require.True(t, str.IsNull())
@@ -275,7 +275,7 @@ func TestAESDecrypt(t *testing.T) {
 		args = append(args, primitiveValsToConstants(ctx, tt.params)...)
 		f, err := fc.getFunction(ctx, args)
 		require.NoError(t, err, msg)
-		str, err := evalBuiltinFunc(f, chunk.Row{})
+		str, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err, msg)
 		require.Equal(t, types.NewCollationStringDatum(tt.origin.(string), charset.CollationBin), str, msg)
 	}
@@ -289,13 +289,13 @@ func testNullInput(t *testing.T, ctx sessionctx.Context, fnName string) {
 	var argNull types.Datum
 	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg, argNull}))
 	require.NoError(t, err)
-	crypt, err := evalBuiltinFunc(f, chunk.Row{})
+	crypt, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, crypt.IsNull())
 
 	f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull, arg}))
 	require.NoError(t, err)
-	crypt, err = evalBuiltinFunc(f, chunk.Row{})
+	crypt, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, crypt.IsNull())
 }
@@ -310,7 +310,7 @@ func testAmbiguousInput(t *testing.T, ctx sessionctx.Context, fnName string) {
 	require.Error(t, err)
 	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg, arg, types.NewStringDatum("iv < 16 bytes")}))
 	require.NoError(t, err)
-	_, err = evalBuiltinFunc(f, chunk.Row{})
+	_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.Error(t, err)
 
 	// test for modes that do not require init_vector
@@ -318,7 +318,7 @@ func testAmbiguousInput(t *testing.T, ctx sessionctx.Context, fnName string) {
 	require.NoError(t, err)
 	f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{arg, arg, arg}))
 	require.NoError(t, err)
-	_, err = evalBuiltinFunc(f, chunk.Row{})
+	_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
 	require.GreaterOrEqual(t, len(warnings), 1)
@@ -368,7 +368,7 @@ func TestSha1Hash(t *testing.T) {
 		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, tt.chs)
 		require.NoError(t, err)
 		f, _ := fc.getFunction(ctx, primitiveValsToConstants(ctx, []interface{}{tt.origin}))
-		crypt, err := evalBuiltinFunc(f, chunk.Row{})
+		crypt, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		res, err := crypt.ToString()
 		require.NoError(t, err)
@@ -377,7 +377,7 @@ func TestSha1Hash(t *testing.T) {
 	// test NULL input for sha
 	var argNull types.Datum
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
-	crypt, err := evalBuiltinFunc(f, chunk.Row{})
+	crypt, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, crypt.IsNull())
 }
@@ -440,7 +440,7 @@ func TestSha2Hash(t *testing.T) {
 		require.NoError(t, err)
 		f, err := fc.getFunction(ctx, primitiveValsToConstants(ctx, []interface{}{tt.origin, tt.hashLength}))
 		require.NoError(t, err)
-		crypt, err := evalBuiltinFunc(f, chunk.Row{})
+		crypt, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		if tt.validCase {
 			res, err := crypt.ToString()
@@ -504,26 +504,26 @@ func TestRandomBytes(t *testing.T) {
 	fc := funcs[ast.RandomBytes]
 	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewDatum(32)}))
 	require.NoError(t, err)
-	out, err := evalBuiltinFunc(f, chunk.Row{})
+	out, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, 32, len(out.GetBytes()))
 
 	f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewDatum(1025)}))
 	require.NoError(t, err)
-	_, err = evalBuiltinFunc(f, chunk.Row{})
+	_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.Error(t, err)
 	f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewDatum(-32)}))
 	require.NoError(t, err)
-	_, err = evalBuiltinFunc(f, chunk.Row{})
+	_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.Error(t, err)
 	f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewDatum(0)}))
 	require.NoError(t, err)
-	_, err = evalBuiltinFunc(f, chunk.Row{})
+	_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.Error(t, err)
 
 	f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewDatum(nil)}))
 	require.NoError(t, err)
-	out, err = evalBuiltinFunc(f, chunk.Row{})
+	out, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, 0, len(out.GetBytes()))
 }
@@ -558,7 +558,7 @@ func TestCompress(t *testing.T) {
 		arg := primitiveValsToConstants(ctx, []interface{}{test.in})
 		f, err := fc.getFunction(ctx, arg)
 		require.NoErrorf(t, err, "%v", test)
-		out, err := evalBuiltinFunc(f, chunk.Row{})
+		out, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoErrorf(t, err, "%v", test)
 		if test.expect == nil {
 			require.Truef(t, out.IsNull(), "%v", test)
@@ -593,7 +593,7 @@ func TestUncompress(t *testing.T) {
 		arg := types.NewDatum(test.in)
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
 		require.NoErrorf(t, err, "%v", test)
-		out, err := evalBuiltinFunc(f, chunk.Row{})
+		out, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoErrorf(t, err, "%v", test)
 		if test.expect == nil {
 			require.Truef(t, out.IsNull(), "%v", test)
@@ -627,7 +627,7 @@ func TestUncompressLength(t *testing.T) {
 		arg := types.NewDatum(test.in)
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
 		require.NoErrorf(t, err, "%v", test)
-		out, err := evalBuiltinFunc(f, chunk.Row{})
+		out, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoErrorf(t, err, "%v", test)
 		require.Equalf(t, types.NewDatum(test.expect), out, "%v", test)
 	}
@@ -661,7 +661,7 @@ func TestValidatePasswordStrength(t *testing.T) {
 		arg := types.NewDatum(test.in)
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
 		require.NoErrorf(t, err, "%v", test)
-		out, err := evalBuiltinFunc(f, chunk.Row{})
+		out, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoErrorf(t, err, "%v", test)
 		if test.expect == nil {
 			require.Equal(t, types.NewDatum(nil), out)
@@ -676,7 +676,7 @@ func TestValidatePasswordStrength(t *testing.T) {
 		arg := types.NewDatum(test.in)
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
 		require.NoErrorf(t, err, "%v", test)
-		out, err := evalBuiltinFunc(f, chunk.Row{})
+		out, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoErrorf(t, err, "%v", test)
 		require.Equalf(t, types.NewDatum(test.expect), out, "%v", test)
 	}

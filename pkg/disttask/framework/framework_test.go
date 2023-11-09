@@ -44,7 +44,7 @@ var _ dispatcher.Extension = (*testDispatcherExt)(nil)
 func (*testDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (dsp *testDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ proto.Step) (metas [][]byte, err error) {
+func (dsp *testDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
 	if gTask.Step == proto.StepInit {
 		dsp.cnt = 3
 		return [][]byte{
@@ -77,20 +77,20 @@ func (dsp *testDispatcherExt) GetNextStep(task *proto.Task) proto.Step {
 	}
 }
 
-func generateSchedulerNodes4Test() ([]*infosync.ServerInfo, error) {
+func generateSchedulerNodes4Test() ([]*infosync.ServerInfo, bool, error) {
 	serverInfos := infosync.MockGlobalServerInfoManagerEntry.GetAllServerInfo()
 	if len(serverInfos) == 0 {
-		return nil, errors.New("not found instance")
+		return nil, true, errors.New("not found instance")
 	}
 
 	serverNodes := make([]*infosync.ServerInfo, 0, len(serverInfos))
 	for _, serverInfo := range serverInfos {
 		serverNodes = append(serverNodes, serverInfo)
 	}
-	return serverNodes, nil
+	return serverNodes, true, nil
 }
 
-func (*testDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+func (*testDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
 	return generateSchedulerNodes4Test()
 }
 
