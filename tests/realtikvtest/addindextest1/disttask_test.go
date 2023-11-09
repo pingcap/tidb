@@ -80,12 +80,13 @@ func TestAddIndexDistBasic(t *testing.T) {
 	//require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectPanicForIndexIngest"))
 
 	// cancel one flushed subtask.
-
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockInitBackCtx", "return()"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ingest/mockCancelAfterImport", "1*return()"))
 	tk.MustExec("alter table t1 add index idx2(a)")
 	tk.MustExec("admin check index t1 idx2;")
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/mockCancelAfterImport"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockInitBackCtx"))
 
 	tk.MustExec(`set global tidb_enable_dist_task=0;`)
 }

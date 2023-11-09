@@ -36,7 +36,6 @@ func (bc *litBackendCtx) Register(jobID, indexID int64, schemaName, tableName st
 
 	var info string
 	en, exist := bc.Load(indexID)
-	logutil.BgLogger().Info("ywq test exist", zap.Any("exist", exist))
 	if !exist || en.openedEngine == nil {
 		if exist && en.closedEngine != nil {
 			// Import failed before, try to import again.

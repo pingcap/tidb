@@ -934,7 +934,6 @@ func (local *Backend) allocateTSIfNotExists(ctx context.Context, engine *Engine)
 	}
 	physical, logical, err := local.pdCtl.GetPDClient().GetTS(ctx)
 	if err != nil {
-		log.FromContext(context.Background()).Info("ywq test reach here.....")
 		return err
 	}
 	ts := oracle.ComposeTS(physical, logical)

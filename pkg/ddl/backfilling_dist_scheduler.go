@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -53,50 +54,6 @@ type BackfillSubTaskMeta struct {
 	DataFiles             []string `json:"data-files"`
 	StatFiles             []string `json:"stat-files"`
 	external.SortedKVMeta `json:",inline"`
-}
-
-// NewBackfillSubtaskExecutor creates a new backfill subtask executor.
-func NewBackfillSubtaskExecutor(_ context.Context, taskMeta []byte, d *ddl,
-	bc ingest.BackendCtx, stage proto.Step, summary *execute.Summary) (execute.SubtaskExecutor, error) {
-	bgm := &BackfillGlobalMeta{}
-	err := json.Unmarshal(taskMeta, bgm)
-	if err != nil {
-		return nil, err
-	}
-	jobMeta := &bgm.Job
-
-	_, tbl, err := d.getTableByTxn((*asAutoIDRequirement)(d.ddlCtx), jobMeta.SchemaID, jobMeta.TableID)
-	if err != nil {
-		return nil, err
-	}
-	indexInfos := make([]*model.IndexInfo, 0, len(bgm.EleIDs))
-	for _, eid := range bgm.EleIDs {
-		indexInfo := model.FindIndexInfoByID(tbl.Meta().Indices, eid)
-		if indexInfo == nil {
-			logutil.BgLogger().Warn("index info not found", zap.String("category", "ddl-ingest"),
-				zap.Int64("table ID", tbl.Meta().ID), zap.Int64("index ID", eid))
-			return nil, errors.Errorf("index info not found: %d", eid)
-		}
-		indexInfos = append(indexInfos, indexInfo)
-	}
-
-	switch stage {
-	case proto.StepOne:
-		jc := d.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
-		d.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
-		d.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-		return newReadIndexExecutor(
-			d, &bgm.Job, indexInfos, tbl.(table.PhysicalTable), jc, bc, summary, bgm.CloudStorageURI), nil
-	case proto.StepTwo:
-		return newMergeSortExecutor(jobMeta.ID, indexInfos[0], tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)
-	case proto.StepThree:
-		if len(bgm.CloudStorageURI) > 0 {
-			return newCloudImportExecutor(&bgm.Job, jobMeta.ID, indexInfos[0], tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)
-		}
-		return nil, errors.Errorf("local import does not have write & ingest step")
-	default:
-		return nil, errors.Errorf("unknown step %d for job %d", stage, jobMeta.ID)
-	}
 }
 
 type backfillDistScheduler struct {
@@ -154,7 +111,7 @@ func (s *backfillDistScheduler) Init(ctx context.Context) error {
 func (s *backfillDistScheduler) GetSubtaskExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary) (execute.SubtaskExecutor, error) {
 	switch task.Step {
 	case proto.StepOne, proto.StepTwo, proto.StepThree:
-		return NewBackfillSubtaskExecutor(ctx, task.Meta, s.d, s.backendCtx, task.Step, summary)
+		return s.NewBackfillSubtaskExecutor(ctx, task.Meta, task.Step, summary)
 	default:
 		return nil, errors.Errorf("unknown backfill step %d for task %d", task.Step, task.ID)
 	}
@@ -169,4 +126,70 @@ func (s *backfillDistScheduler) Close() {
 		ingest.LitBackCtxMgr.Unregister(s.jobID)
 	}
 	s.BaseScheduler.Close()
+}
+
+// NewBackfillSubtaskExecutor creates a new backfill subtask executor.
+func (s *backfillDistScheduler) NewBackfillSubtaskExecutor(ctx context.Context, taskMeta []byte, stage proto.Step, summary *execute.Summary) (execute.SubtaskExecutor, error) {
+	bgm := &BackfillGlobalMeta{}
+	err := json.Unmarshal(taskMeta, bgm)
+	if err != nil {
+		return nil, err
+	}
+	jobMeta := &bgm.Job
+
+	_, tbl, err := s.d.getTableByTxn((*asAutoIDRequirement)(s.d.ddlCtx), jobMeta.SchemaID, jobMeta.TableID)
+	if err != nil {
+		return nil, err
+	}
+	indexInfos := make([]*model.IndexInfo, 0, len(bgm.EleIDs))
+	for _, eid := range bgm.EleIDs {
+		indexInfo := model.FindIndexInfoByID(tbl.Meta().Indices, eid)
+		if indexInfo == nil {
+			logutil.BgLogger().Warn("index info not found", zap.String("category", "ddl-ingest"),
+				zap.Int64("table ID", tbl.Meta().ID), zap.Int64("index ID", eid))
+			return nil, errors.Errorf("index info not found: %d", eid)
+		}
+		indexInfos = append(indexInfos, indexInfo)
+	}
+
+	failpoint.Inject("mockInitBackCtx", func() {
+		idx := model.FindIndexInfoByID(tbl.Meta().Indices, bgm.EleIDs[0])
+		bc, _ := ingest.LitBackCtxMgr.Register(ctx, idx.Unique, bgm.Job.ID, s.d.etcdCli, bgm.Job.ReorgMeta.ResourceGroupName)
+		s.backendCtx = bc
+	})
+	switch stage {
+	case proto.StepOne:
+		jc := s.d.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
+		s.d.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
+		s.d.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
+		return newReadIndexExecutor(
+			s.d,
+			&bgm.Job,
+			indexInfos,
+			tbl.(table.PhysicalTable),
+			jc,
+			s.backendCtx,
+			summary,
+			bgm.CloudStorageURI), nil
+	case proto.StepTwo:
+		return newMergeSortExecutor(
+			jobMeta.ID,
+			indexInfos[0],
+			tbl.(table.PhysicalTable),
+			s.backendCtx,
+			bgm.CloudStorageURI)
+	case proto.StepThree:
+		if len(bgm.CloudStorageURI) > 0 {
+			return newCloudImportExecutor(
+				&bgm.Job,
+				jobMeta.ID,
+				indexInfos[0],
+				tbl.(table.PhysicalTable),
+				s.backendCtx,
+				bgm.CloudStorageURI)
+		}
+		return nil, errors.Errorf("local import does not have write & ingest step")
+	default:
+		return nil, errors.Errorf("unknown step %d for job %d", stage, jobMeta.ID)
+	}
 }

@@ -224,6 +224,7 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 			zap.String("usage info", bc.diskRoot.UsageInfo()))
 		return true, false, err
 	}
+	// ywq todo
 	failpoint.Inject("mockCancelAfterImport", func() {
 		// Mock scheduler close.
 		// Mock the tidb node running the subtask restart, then run the subtask again.
