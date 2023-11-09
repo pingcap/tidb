@@ -41,7 +41,6 @@ func TestMultiMVIndexRandom(t *testing.T) {
 	} {
 		tk.MustExec("drop table if exists t1")
 		tk.MustExec(fmt.Sprintf(`create table t1(pk int auto_increment primary key, a json, b json, c int, d int, index idx((cast(a as %v array))), index idx2((cast(b as %v array)), c), index idx3(c, d), index idx4(d))`, testCase.indexType, testCase.indexType))
-
 		nRows := 20
 		rows := make([]string, 0, nRows)
 		for i := 0; i < nRows; i++ {
@@ -53,7 +52,6 @@ func TestMultiMVIndexRandom(t *testing.T) {
 			}
 		}
 		tk.MustExec(fmt.Sprintf("insert into t1(a,b,c,d) values %v", strings.Join(rows, ", ")))
-
 		randJColName := func() string {
 			if rand.Intn(2) < 1 {
 				return "a"
@@ -66,7 +64,6 @@ func TestMultiMVIndexRandom(t *testing.T) {
 			}
 			return "d"
 		}
-
 		nQueries := 20
 		for i := 0; i < nQueries; i++ {
 			cnf := true
@@ -135,7 +132,6 @@ func randMVIndexCondsXNF4MemberOf(nConds int, valOpts randMVIndexValOpts, CNF bo
 			} else {
 				conds += " OR "
 			}
-
 		}
 		cond := randMVIndexCond(rand.Intn(4), valOpts, randJCol, randNCol)
 		conds += cond
