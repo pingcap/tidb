@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+<<<<<<< HEAD:session/session.go
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -106,6 +107,76 @@ import (
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/util/tracing"
+=======
+	"github.com/pingcap/tidb/pkg/bindinfo"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/placement"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/extension"
+	"github.com/pingcap/tidb/pkg/extension/extensionimpl"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/owner"
+	"github.com/pingcap/tidb/pkg/param"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/plugin"
+	"github.com/pingcap/tidb/pkg/privilege"
+	"github.com/pingcap/tidb/pkg/privilege/conn"
+	"github.com/pingcap/tidb/pkg/privilege/privileges"
+	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
+	"github.com/pingcap/tidb/pkg/session/txninfo"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
+	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
+	"github.com/pingcap/tidb/pkg/store/driver/txn"
+	"github.com/pingcap/tidb/pkg/store/helper"
+	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/temptable"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/telemetry"
+	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/kvcache"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
+	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/sem"
+	"github.com/pingcap/tidb/pkg/util/sli"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/syncutil"
+	"github.com/pingcap/tidb/pkg/util/tableutil"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
+	"github.com/pingcap/tidb/pkg/util/topsql"
+	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
+	"github.com/pingcap/tidb/pkg/util/tracing"
+>>>>>>> 8ce2ad16961 (parse: fix the type of date/time parameters (#48237)):pkg/session/session.go
 	"github.com/pingcap/tipb/go-binlog"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
@@ -2146,6 +2217,16 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 		return nil, err
 	}
+	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
+		if binParam, ok := execStmt.BinaryArgs.([]param.BinaryParam); ok {
+			args, err := param.ExecArgs(s.GetSessionVars().StmtCtx.TypeCtx(), binParam)
+			if err != nil {
+				return nil, err
+			}
+			execStmt.BinaryArgs = args
+		}
+	}
+
 	normalizedSQL, digest := s.sessionVars.StmtCtx.SQLDigest()
 	cmdByte := byte(atomic.LoadUint32(&s.GetSessionVars().CommandValue))
 	if topsqlstate.TopSQLEnabled() {
