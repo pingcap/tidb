@@ -174,10 +174,6 @@ type ExternalStorageOptions struct {
 	// CheckObjectLockOptions check the s3 bucket has enabled the ObjectLock.
 	// if enabled. it will send the options to tikv.
 	CheckS3ObjectLockOptions bool
-
-	// DisableSSL disable the SSL when connect to the remote storage. Currently
-	// only S3 is supported.
-	DisableSSL bool
 }
 
 // Create creates ExternalStorage.

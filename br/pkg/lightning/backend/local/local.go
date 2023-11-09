@@ -948,10 +948,7 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 		if err != nil {
 			return err
 		}
-		opts := &storage.ExternalStorageOptions{
-			DisableSSL: true,
-		}
-		store, err := storage.New(ctx, storeBackend, opts)
+		store, err := storage.NewWithDefaultOpt(ctx, storeBackend)
 		if err != nil {
 			return err
 		}
