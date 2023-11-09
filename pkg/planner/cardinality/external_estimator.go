@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	planutil "github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"io"
 	"net/http"
@@ -102,25 +104,31 @@ func newCmpPred(sctx sessionctx.Context, expr expression.Expression) *cmpPred {
 }
 
 // SelectivityFromExternalEstimator ...
-func SelectivityFromExternalEstimator(sctx sessionctx.Context, tableID int64, exprs []expression.Expression) (result float64, ok bool, err error) {
+func SelectivityFromExternalEstimator(sctx sessionctx.Context, coll *statistics.HistColl, exprs []expression.Expression, filledPaths []*planutil.AccessPath) (result float64, ok bool, err error) {
 	if sctx.GetSessionVars().ExternalCardinalityEstimator == "" {
 		return 0, false, nil
 	}
 
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	tbl, _ := infoschema.FindTableByTblOrPartID(is, tableID)
+	tbl, _ := infoschema.FindTableByTblOrPartID(is, coll.PhysicalID)
 	if tbl == nil {
 		return 0, false, nil
 	}
 	tableName := tbl.Meta().Name.L
 
 	var cmpPreds []*cmpPred
+	remaining := make([]expression.Expression, 2)
 	for _, e := range exprs {
 		cmpPred := newCmpPred(sctx, e)
 		if cmpPred == nil {
-			return 0, false, nil
+			remaining = append(remaining, e)
+			continue
 		}
 		cmpPreds = append(cmpPreds, cmpPred)
+	}
+
+	if len(cmpPreds) == 0 {
+		return 0, false, nil
 	}
 
 	content, err := json.Marshal(&estRequest{
@@ -151,6 +159,14 @@ func SelectivityFromExternalEstimator(sctx sessionctx.Context, tableID int64, ex
 	sel, err := strconv.ParseFloat(string(body), 64)
 	if err != nil {
 		return 0, false, err
+	}
+
+	if len(remaining) > 0 {
+		remainingSel, _, err := Selectivity(sctx, coll, remaining, filledPaths)
+		if err != nil {
+			return 0, false, err
+		}
+		sel *= remainingSel
 	}
 
 	return sel, true, nil
