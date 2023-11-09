@@ -81,7 +81,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20221009092201-b66cddb77c32
 	github.com/pingcap/failpoint v0.0.0-20220801062533-2eaa32854a6c
 	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20230925123611-87bebcc0d071
+	github.com/pingcap/kvproto v0.0.0-20231108101856-83cbb666bf12
 	github.com/pingcap/log v1.1.1-0.20230317032135-a0d097d16e22
 	github.com/pingcap/sysutil v1.0.1-0.20230407040306-fb007c5aff21
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
@@ -144,6 +144,7 @@ require (
 require (
 	github.com/cenkalti/backoff/v4 v4.1.1 // indirect
 	github.com/dolthub/maphash v0.1.0 // indirect
+	github.com/ghodss/yaml v1.0.0 // indirect
 	github.com/golang-jwt/jwt/v4 v4.4.2 // indirect
 	github.com/google/s2a-go v0.1.4 // indirect
 	github.com/jfcg/sixb v1.3.8 // indirect
