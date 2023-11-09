@@ -155,9 +155,9 @@ func HandleAutoAnalyze(
 ) (analyzed bool) {
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.BgLogger().Error(
+			statsutil.StatsLogger.Error(
 				"HandleAutoAnalyze panicked",
-				zap.Any("error", r),
+				zap.Any("recover", r),
 				zap.Stack("stack"),
 			)
 		}
@@ -173,9 +173,8 @@ func HandleAutoAnalyze(
 		parameters[variable.TiDBAutoAnalyzeEndTime],
 	)
 	if err != nil {
-		logutil.BgLogger().Error(
+		statsutil.StatsLogger.Error(
 			"parse auto analyze period failed",
-			zap.String("category", "stats"),
 			zap.Error(err),
 		)
 		return false
@@ -208,8 +207,10 @@ func HandleAutoAnalyze(
 		tidsAndPids := getAllTidsAndPids(tbls)
 		lockedTables, err := statsHandle.GetLockedTables(tidsAndPids...)
 		if err != nil {
-			logutil.BgLogger().Error("check table lock failed",
-				zap.String("category", "stats"), zap.Error(err))
+			statsutil.StatsLogger.Error(
+				"check table lock failed",
+				zap.Error(err),
+			)
 			continue
 		}
 
@@ -297,9 +298,8 @@ func tryAutoAnalyzeTable(
 		if err != nil {
 			return false
 		}
-		logutil.BgLogger().Info(
+		statsutil.StatsLogger.Info(
 			"auto analyze triggered",
-			zap.String("category", "stats"),
 			zap.String("sql", escaped),
 			zap.String("reason", reason),
 		)
@@ -321,9 +321,8 @@ func tryAutoAnalyzeTable(
 				return false
 			}
 
-			logutil.BgLogger().Info(
+			statsutil.StatsLogger.Info(
 				"auto analyze for unanalyzed indexes",
-				zap.String("category", "stats"),
 				zap.String("sql", escaped),
 			)
 			tableStatsVer := sctx.GetSessionVars().AnalyzeVersion
@@ -403,11 +402,13 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 			ratio,
 		); needAnalyze {
 			needAnalyzePartitionNames = append(needAnalyzePartitionNames, def.Name.O)
-			logutil.BgLogger().Info("need to auto analyze", zap.String("category", "stats"),
+			statsutil.StatsLogger.Info(
+				"need to auto analyze",
 				zap.String("database", db),
 				zap.String("table", tblInfo.Name.String()),
 				zap.String("partition", def.Name.O),
-				zap.String("reason", reason))
+				zap.String("reason", reason),
+			)
 			statistics.CheckAnalyzeVerOnTable(partitionStatsTbl, &tableStatsVer)
 		}
 	}
@@ -426,8 +427,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 	}
 
 	if len(needAnalyzePartitionNames) > 0 {
-		logutil.BgLogger().Info("start to auto analyze",
-			zap.String("category", "stats"),
+		statsutil.StatsLogger.Info("start to auto analyze",
 			zap.String("database", db),
 			zap.String("table", tblInfo.Name.String()),
 			zap.Any("partitions", needAnalyzePartitionNames),
@@ -447,8 +447,8 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 			sql := getSQL("analyze table %n.%n partition", "", end-start)
 			params := append([]interface{}{db, tblInfo.Name.O}, needAnalyzePartitionNames[start:end]...)
 
-			logutil.BgLogger().Info("auto analyze triggered",
-				zap.String("category", "stats"),
+			statsutil.StatsLogger.Info(
+				"auto analyze triggered",
 				zap.String("database", db),
 				zap.String("table", tblInfo.Name.String()),
 				zap.Any("partitions", needAnalyzePartitionNames[start:end]),
@@ -485,8 +485,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 				sql := getSQL("analyze table %n.%n partition", " index %n", end-start)
 				params := append([]interface{}{db, tblInfo.Name.O}, needAnalyzePartitionNames[start:end]...)
 				params = append(params, idx.Name.O)
-				logutil.BgLogger().Info("auto analyze for unanalyzed",
-					zap.String("category", "stats"),
+				statsutil.StatsLogger.Info("auto analyze for unanalyzed",
 					zap.String("database", db),
 					zap.String("table", tblInfo.Name.String()),
 					zap.String("index", idx.Name.String()),
@@ -524,7 +523,12 @@ func execAutoAnalyze(
 		if err1 != nil {
 			escaped = ""
 		}
-		logutil.BgLogger().Error("auto analyze failed", zap.String("category", "stats"), zap.String("sql", escaped), zap.Duration("cost_time", dur), zap.Error(err))
+		statsutil.StatsLogger.Error(
+			"auto analyze failed",
+			zap.String("sql", escaped),
+			zap.Duration("cost_time", dur),
+			zap.Error(err),
+		)
 		metrics.AutoAnalyzeCounter.WithLabelValues("failed").Inc()
 	} else {
 		metrics.AutoAnalyzeCounter.WithLabelValues("succ").Inc()
