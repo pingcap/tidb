@@ -1184,3 +1184,43 @@ select * from tf;
 a
 0
 set @@sql_mode=default;
+drop table if exists tt1;
+create table tt1 (c1 decimal(64));
+insert into tt1 values(89000000000000000000000000000000000000000000000000000000000000000000000000000000000000000);
+Error 1264 (22003): Out of range value for column 'c1' at row 1
+insert into tt1 values(89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000);
+Error 1264 (22003): Out of range value for column 'c1' at row 1
+insert ignore into tt1 values(89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000);
+show warnings;
+Level	Code	Message
+Warning	1264	Out of range value for column 'c1' at row 1
+Warning	1292	Truncated incorrect DECIMAL value: '789012345678901234567890123456789012345678901234567890123456789012345678900000000'
+select c1 from tt1;
+c1
+9999999999999999999999999999999999999999999999999999999999999999
+update tt1 set c1 = 89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000;
+Error 1264 (22003): Out of range value for column 'c1' at row 1
+drop table if exists tt1;
+insert into tt1 values(4556414e723532);
+Error 1367 (22007): Illegal double '4556414e723532' value found during parsing
+select 888888888888888888888888888888888888888888888888888888888888888888888888888888888888;
+888888888888888888888888888888888888888888888888888888888888888888888888888888888888
+99999999999999999999999999999999999999999999999999999999999999999
+show warnings;
+Level	Code	Message
+Warning	1292	Truncated incorrect DECIMAL value: '888888888888888888888888888888888888888888888888888888888888888888888888888888888'
+set global tidb_txn_mode='optimistic';
+set global tidb_disable_txn_auto_retry=false;
+drop table if exists t;
+create table t(a double auto_increment key, b int);
+insert into t values (146576794, 1);
+begin;
+insert into t(b) select 1;
+begin;
+insert into t values (146576795, 1);
+insert into t values (146576796, 1);
+commit;
+commit;
+Error 1062 (23000): Duplicate entry '146576795' for key 't.PRIMARY'
+set global tidb_txn_mode=default;
+set global tidb_disable_txn_auto_retry=default;
