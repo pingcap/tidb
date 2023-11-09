@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/bindinfo/internal"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -720,16 +721,22 @@ func TestStmtHints(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
-	tk.MustExec("create global binding for select * from t using select /*+ MAX_EXECUTION_TIME(100), SET_VAR(TIKV_CLIENT_READ_TIMEOUT=20), MEMORY_QUOTA(2 GB) */ * from t use index(idx)")
+	tk.MustExec("create global binding for select * from t using select /*+ MAX_EXECUTION_TIME(100), SET_VAR(TIKV_CLIENT_READ_TIMEOUT=20), SET_VAR(tidb_replica_read = 'follower') MEMORY_QUOTA(2 GB) */ * from t use index(idx)")
 	tk.MustQuery("select * from t")
 	require.Equal(t, int64(2147483648), tk.Session().GetSessionVars().MemTracker.GetBytesLimit())
 	require.Equal(t, uint64(100), tk.Session().GetSessionVars().StmtCtx.MaxExecutionTime)
 	require.Equal(t, uint64(20), tk.Session().GetSessionVars().GetTiKVClientReadTimeout())
+	require.Equal(t, kv.ReplicaReadFollower, tk.Session().GetSessionVars().GetReplicaRead())
 	tk.MustQuery("select a, b from t")
 	require.Equal(t, int64(1073741824), tk.Session().GetSessionVars().MemTracker.GetBytesLimit())
 	require.Equal(t, uint64(0), tk.Session().GetSessionVars().StmtCtx.MaxExecutionTime)
-	// TODO(crazycs520): Fix me.
-	//require.Equal(t, uint64(0), tk.Session().GetSessionVars().GetTiKVClientReadTimeout())
+	require.Equal(t, uint64(0), tk.Session().GetSessionVars().GetTiKVClientReadTimeout())
+	require.Equal(t, kv.ReplicaReadLeader, tk.Session().GetSessionVars().GetReplicaRead())
+
+	tk.MustQuery("select /*+ SET_VAR(TIKV_CLIENT_READ_TIMEOUT = 10)*/ @@TIKV_CLIENT_READ_TIMEOUT;").Check(testkit.Rows("10"))
+	tk.MustQuery("select @@TIKV_CLIENT_READ_TIMEOUT;").Check(testkit.Rows("0"))
+	tk.MustQuery("select /*+ SET_VAR(tidb_replica_read = 'follower')*/ @@tidb_replica_read;").Check(testkit.Rows("follower"))
+	tk.MustQuery("select @@tidb_replica_read;").Check(testkit.Rows("leader"))
 }
 
 func TestPrivileges(t *testing.T) {
