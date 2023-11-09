@@ -1209,7 +1209,7 @@ const (
 	DefTiFlashQuerySpillRatio                      = 0.7
 	DefTiDBEnableTiFlashPipelineMode               = true
 	DefTiDBMPPStoreFailTTL                         = "60s"
-	DefTiDBTxnMode                                 = ""
+	DefTiDBTxnMode                                 = PessimisticTxnMode
 	DefTiDBRowFormatV1                             = 1
 	DefTiDBRowFormatV2                             = 2
 	DefTiDBDDLReorgWorkerCount                     = 4
