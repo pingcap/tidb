@@ -226,6 +226,7 @@ func NewErrorGroupWithRecoverWithCtx(ctx context.Context) (*ErrorGroupWithRecove
 	}, ctx2
 }
 
+// Go is like errgroup.Group.Go, but convert panic and its stack into error.
 func (g *ErrorGroupWithRecover) Go(fn func() error) {
 	g.Group.Go(func() (err error) {
 		defer func() {
