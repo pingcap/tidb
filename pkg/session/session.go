@@ -1641,12 +1641,8 @@ func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...inter
 	if err != nil {
 		return nil, err
 	}
-	if sq, ok := stmtNode.(*ast.NonTransactionalDMLStmt); ok {
-		rs, err = HandleNonTransactionalDML(ctx, sq, s)
-	} else {
-		rs, err = s.ExecuteStmt(ctx, stmtNode)
-	}
 
+	rs, err = s.ExecuteStmt(ctx, stmtNode)
 	if err != nil {
 		s.sessionVars.StmtCtx.AppendError(err)
 	}
@@ -2420,6 +2416,14 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	err = se.checkTxnAborted(s)
 	if err != nil {
 		return nil, err
+	}
+	if sessVars.TxnCtx.CouldRetry && !s.IsReadOnly(sessVars) {
+		// Only when the txn is could retry and the statement is not read only, need to do stmt-count-limit check,
+		// otherwise, the stmt won't be add into stmt history, and also don't need check.
+		// About `stmt-count-limit`, see more in https://docs.pingcap.com/tidb/stable/tidb-configuration-file#stmt-count-limit
+		if err := checkStmtLimit(ctx, se, false); err != nil {
+			return nil, err
+		}
 	}
 
 	rs, err = s.Exec(ctx)
