@@ -29,9 +29,6 @@ const (
 	gcsCredentialsFile    = "gcs.credentials-file"
 )
 
-// gcsBlockSize is the block size for GCS.
-var gcsBlockSize = 5 * 1024 * 1024
-
 // GCSBackendOptions are options for configuration the GCS storage.
 type GCSBackendOptions struct {
 	Endpoint        string `json:"endpoint" toml:"endpoint"`
@@ -273,8 +270,11 @@ func (s *GCSStorage) URI() string {
 
 // Create implements ExternalStorage interface.
 func (s *GCSStorage) Create(ctx context.Context, name string, _ *WriterOption) (ExternalFileWriter, error) {
-	w := newGcsMultiWriter(name, s)
-	return newBufferedWriter(w, gcsBlockSize, NoCompression), nil
+	object := s.objectName(name)
+	wc := s.bucket.Object(object).NewWriter(ctx)
+	wc.StorageClass = s.gcs.StorageClass
+	wc.PredefinedACL = s.gcs.PredefinedAcl
+	return newFlushStorageWriter(wc, &emptyFlusher{}, wc), nil
 }
 
 // Rename file name from oldFileName to newFileName.
