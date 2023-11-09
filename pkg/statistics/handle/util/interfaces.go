@@ -27,8 +27,15 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tiancaiamao/gp"
+	"go.uber.org/zap"
+)
+
+var (
+	// StatsLogger with category "stats" is used to log statistic related messages.
+	StatsLogger = logutil.BgLogger().With(zap.String("category", "stats"))
 )
 
 // StatsGC is used to GC unnecessary stats.

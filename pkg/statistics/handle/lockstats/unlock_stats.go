@@ -52,7 +52,7 @@ func RemoveLockedTables(
 		}
 	}
 
-	statsLogger.Info("unlock table",
+	util.StatsLogger.Info("unlock table",
 		zap.Any("tables", tables),
 	)
 
@@ -105,7 +105,7 @@ func RemoveLockedPartitions(
 	for pid := range pidNames {
 		pids = append(pids, pid)
 	}
-	statsLogger.Info("unlock partitions",
+	util.StatsLogger.Info("unlock partitions",
 		zap.Int64("tableID", tid),
 		zap.String("tableName", tableName),
 		zap.Int64s("partitionIDs", pids),
