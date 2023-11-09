@@ -231,7 +231,7 @@ func (g *ErrorGroupWithRecover) Go(fn func() error) {
 	g.Group.Go(func() (err error) {
 		defer func() {
 			if r := recover(); r != nil {
-				logutil.BgLogger().Error("panic in error group", zap.Any("r", r))
+				logutil.BgLogger().Error("panic in error group", zap.Any("recover", r))
 				stackBuf := make([]byte, 4096)
 				length := runtime.Stack(stackBuf, false)
 				err = errors.Errorf("%v\n%s", r, stackBuf[:length])
