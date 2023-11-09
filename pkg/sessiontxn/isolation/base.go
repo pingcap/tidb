@@ -87,17 +87,15 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 			return err
 		}
 	case sessiontxn.EnterNewTxnWithBeginStmt:
-		if !canReuseTxnWhenExplicitBegin(p.sctx) {
-			// As we will enter a new txn, we need to commit the old txn if it's still valid.
-			// There are two main steps here to enter a new txn:
-			// 1. prepareTxnWithOracleTS
-			// 2. ActivateTxn
-			if err := internal.CommitBeforeEnterNewTxn(p.ctx, p.sctx); err != nil {
-				return err
-			}
-			if err := p.prepareTxnWithOracleTS(); err != nil {
-				return err
-			}
+		// As we will enter a new txn, we need to commit the old txn if it's still valid.
+		// There are two main steps here to enter a new txn:
+		// 1. prepareTxnWithOracleTS
+		// 2. ActivateTxn
+		if err := internal.CommitBeforeEnterNewTxn(p.ctx, p.sctx); err != nil {
+			return err
+		}
+		if err := p.prepareTxnWithOracleTS(); err != nil {
+			return err
 		}
 		sessVars.SetInTxn(true)
 	case sessiontxn.EnterNewTxnBeforeStmt:
@@ -466,19 +464,6 @@ func (p *baseTxnContextProvider) getSnapshotByTS(snapshotTS uint64) (kv.Snapshot
 	}
 
 	return snapshot, nil
-}
-
-// canReuseTxnWhenExplicitBegin returns whether we should reuse the txn when starting a transaction explicitly
-func canReuseTxnWhenExplicitBegin(sctx sessionctx.Context) bool {
-	sessVars := sctx.GetSessionVars()
-	txnCtx := sessVars.TxnCtx
-	// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
-	// need to call NewTxn, which commits the existing transaction and begins a new one.
-	// If the last un-committed/un-rollback transaction is a time-bounded read-only transaction, we should
-	// always create a new transaction.
-	// If the variable `tidb_snapshot` is set, we should always create a new transaction because the current txn may be
-	// initialized with snapshot ts.
-	return txnCtx.History == nil && !txnCtx.IsStaleness && sessVars.SnapshotTS == 0
 }
 
 // newOracleFuture creates new future according to the scope and the session context
