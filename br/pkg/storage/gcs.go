@@ -526,15 +526,18 @@ func (w *gcsMultiWriter) Close(ctx context.Context) error {
 	}
 
 	log.FromContext(ctx).Info("concat files", zap.Int("count", w.seq), zap.Duration("cost", time.Since(ts)))
-	ts = time.Now()
 
-	for _, oj := range allTempObjects {
-		err := oj.Delete(ctx)
-		if err != nil {
-			return errors.Trace(err)
+	go func() {
+		ts = time.Now()
+
+		for _, oj := range allTempObjects {
+			err := oj.Delete(ctx)
+			if err != nil {
+				log.FromContext(ctx).Error("error happens when deleting temporary files in background", zap.Error(err))
+			}
 		}
-	}
-	log.FromContext(ctx).Info("delete temporary files", zap.Int("count", w.seq), zap.Duration("cost", time.Since(ts)))
+		log.FromContext(ctx).Info("delete temporary files in background", zap.Int("count", w.seq), zap.Duration("cost", time.Since(ts)))
+	}()
 
 	return nil
 }
