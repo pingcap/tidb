@@ -313,7 +313,7 @@ func checkStmtLimit(ctx context.Context, se *session, isFinish bool) error {
 	history := GetHistory(se)
 	stmtCount := history.Count()
 	if !isFinish {
-		// history stmt count + current stmt.
+		// history stmt count + current stmt, since current stmt is not finish, it has not add to history.
 		stmtCount++
 	}
 	if stmtCount > int(config.GetGlobalConfig().Performance.StmtCountLimit) {
