@@ -41,7 +41,8 @@ const (
 	TimeType       = 7
 	DurationType   = 8
 
-	intLen = int64(unsafe.Sizeof(int(0)))
+	intLen    = int64(unsafe.Sizeof(int(0)))
+	uint64Len = int64(unsafe.Sizeof(uint64(0)))
 )
 
 // DeserializeBool deserializes bool type
@@ -169,6 +170,18 @@ func DeserializeInterface(buf []byte, readPos int64) (interface{}, int64) {
 	}
 }
 
+// DeserializeBool deserializes Set type
+//
+// Commonly, function should return the deserialized bytes for variable length type.
+// However, `Set` type is always deserialized with fix length types.
+// So, there is no need to return deserialized bytes so far.
+func DeserializeSet(buf []byte, pos int64) types.Set {
+	retValue := types.Set{}
+	retValue.Value = DeserializeUint64(buf, pos)
+	retValue.Name = string(hack.String(buf[pos+uint64Len:]))
+	return retValue
+}
+
 // SerializeBool serializes bool type
 func SerializeBool(value bool, tmpBuf []byte) []byte {
 	*(*bool)(unsafe.Pointer(&tmpBuf[0])) = value
@@ -291,4 +304,15 @@ func SerializeInterface(value interface{}, varBuf *[]byte, tmpBuf []byte) int64 
 	}
 
 	return encodedBytesNum
+}
+
+// SerializeSet serializes Set type
+//
+// Commonly, function should return the serialized bytes for variable length type.
+// However, `Set` type is always serialized with fix length types.
+// So, there is no need to return serialized bytes so far.
+func SerializeSet(value *types.Set, varBuf []byte, startPos int64) []byte {
+	SerializeUint64(value.Value, varBuf[startPos:])
+	varBuf = varBuf[:startPos+uint64Len]
+	return append(varBuf, value.Name...)
 }

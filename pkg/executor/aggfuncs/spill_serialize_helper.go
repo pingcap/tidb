@@ -112,10 +112,8 @@ func (s *SpillSerializeHelper) serializePartialResult4MaxMinEnum(value partialRe
 }
 
 func (s *SpillSerializeHelper) serializePartialResult4MaxMinSet(value partialResult4MaxMinSet) []byte {
-	spill.SerializeUint64(value.val.Value, s.buf[0:])
-	spill.SerializeBool(value.isNull, s.buf[uint64Len:])
-	s.buf = s.buf[:uint64Len+boolLen]
-	s.buf = append(s.buf, value.val.Name...)
+	spill.SerializeBool(value.isNull, s.buf)
+	s.buf = spill.SerializeSet(&value.val, s.buf, boolLen)
 	return s.buf
 }
 
@@ -254,8 +252,6 @@ func (s *SpillSerializeHelper) serializePartialResult4FirstRowEnum(value partial
 
 func (s *SpillSerializeHelper) serializePartialResult4FirstRowSet(value partialResult4FirstRowSet) []byte {
 	_, baseBytesNum := s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
-	spill.SerializeUint64(value.val.Value, s.buf[baseBytesNum:])
-	s.buf = s.buf[:uint64Len+baseBytesNum]
-	s.buf = append(s.buf, value.val.Name...)
+	s.buf = spill.SerializeSet(&value.val, s.buf, baseBytesNum)
 	return s.buf
 }

@@ -176,9 +176,8 @@ func (s *spillDeserializeHelper) deserializePartialResult4MaxMinEnum(dst *partia
 func (s *spillDeserializeHelper) deserializePartialResult4MaxMinSet(dst *partialResult4MaxMinSet) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
-		dst.val.Value = spill.DeserializeUint64(bytes, 0)
-		dst.isNull = spill.DeserializeBool(bytes, uint64Len)
-		dst.val.Name = string(hack.String(bytes[boolLen+uint64Len:]))
+		dst.isNull = spill.DeserializeBool(bytes, 0)
+		dst.val = spill.DeserializeSet(bytes, boolLen)
 		s.readRowIndex++
 		return true
 	}
@@ -433,9 +432,7 @@ func (s *spillDeserializeHelper) deserializePartialResult4FirstRowSet(dst *parti
 		bytes := s.column.GetBytes(s.readRowIndex)
 		readPos := int64(0)
 		readPos = s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, readPos)
-		dst.val.Value = spill.DeserializeUint64(bytes, readPos)
-		readPos += 8
-		dst.val.Name = string(hack.String(bytes[readPos:]))
+		dst.val = spill.DeserializeSet(bytes, readPos)
 		s.readRowIndex++
 		return true
 	}
