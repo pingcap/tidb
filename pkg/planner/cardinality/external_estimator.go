@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"io"
 	"net/http"
 	"strconv"
@@ -22,9 +23,9 @@ type estRequest struct {
 }
 
 type cmpPred struct {
-	Col   string `json:"col"`
-	OP    string `json:"op"`
-	Value string `json:"value"`
+	Col   string      `json:"col"`
+	OP    string      `json:"op"`
+	Value interface{} `json:"value"`
 }
 
 var (
@@ -37,7 +38,7 @@ var (
 	}
 )
 
-func newCmpPred(expr expression.Expression) *cmpPred {
+func newCmpPred(sctx sessionctx.Context, expr expression.Expression) *cmpPred {
 	cmp, isCmp := expr.(*expression.ScalarFunction)
 	if !isCmp {
 		return nil
@@ -65,6 +66,34 @@ func newCmpPred(expr expression.Expression) *cmpPred {
 		return nil
 	}
 
+	var v interface{}
+	switch con.GetType().EvalType() {
+	case types.ETInt:
+		n, ok, err := con.EvalInt(sctx, chunk.Row{})
+		if !ok || err != nil {
+			return nil
+		}
+		v = n
+	case types.ETReal:
+		d, ok, err := con.EvalReal(sctx, chunk.Row{})
+		if !ok || err != nil {
+			return nil
+		}
+		v = d
+	case types.ETDecimal:
+		d, ok, err := con.EvalDecimal(sctx, chunk.Row{})
+		if !ok || err != nil {
+			return nil
+		}
+		f, err := d.ToFloat64()
+		if err != nil {
+			return nil
+		}
+		v = f
+	case types.ETString, types.ETDatetime, types.ETTimestamp, types.ETDuration, types.ETJson:
+		v = fmt.Sprintf(`"%v"`, con.String())
+	}
+
 	value := con.String()
 	if con.GetType().EvalType() == types.ETString {
 		value = fmt.Sprintf(`"%v"`, value)
@@ -76,7 +105,7 @@ func newCmpPred(expr expression.Expression) *cmpPred {
 	return &cmpPred{
 		Col:   colName,
 		OP:    op,
-		Value: value,
+		Value: v,
 	}
 }
 
@@ -95,7 +124,7 @@ func SelectivityFromExternalEstimator(sctx sessionctx.Context, tableID int64, ex
 
 	var cmpPreds []*cmpPred
 	for _, e := range exprs {
-		cmpPred := newCmpPred(e)
+		cmpPred := newCmpPred(sctx, e)
 		if cmpPred == nil {
 			return 0, false, nil
 		}
