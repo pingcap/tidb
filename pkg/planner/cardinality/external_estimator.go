@@ -81,15 +81,7 @@ func newCmpPred(sctx sessionctx.Context, expr expression.Expression) *cmpPred {
 		}
 		v = d
 	case types.ETDecimal:
-		d, isNull, err := con.EvalDecimal(sctx, chunk.Row{})
-		if isNull || err != nil {
-			return nil
-		}
-		f, err := d.ToFloat64()
-		if err != nil {
-			return nil
-		}
-		v = f
+		return nil // not supported
 	case types.ETString, types.ETDatetime, types.ETTimestamp, types.ETDuration, types.ETJson:
 		v = fmt.Sprintf(`"%v"`, con.String())
 	}
