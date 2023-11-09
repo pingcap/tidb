@@ -519,6 +519,7 @@ func TestAdminStmt(t *testing.T) {
 		{"admin set bdr role primary", true, "ADMIN SET BDR ROLE PRIMARY"},
 		{"admin set bdr role secondary", true, "ADMIN SET BDR ROLE SECONDARY"},
 		{"admin set bdr role local_only", true, "ADMIN SET BDR ROLE LOCAL_ONLY"},
+		{"admin show bdr role", true, "ADMIN SHOW BDR ROLE"},
 	}
 	RunTest(t, table, false)
 }

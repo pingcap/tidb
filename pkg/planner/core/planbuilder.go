@@ -1772,6 +1772,10 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		return &Simple{Statement: as}, nil
 	case ast.AdminSetBDRRole:
 		return &Simple{Statement: as}, nil
+	case ast.AdminShowBDRRole:
+		p := &AdminShowBDRRole{}
+		p.setSchemaAndNames(buildAdminShowBDRRoleFields())
+		ret = p
 	default:
 		return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
@@ -3281,6 +3285,12 @@ func buildPauseDDLJobsFields() (*expression.Schema, types.NameSlice) {
 
 func buildResumeDDLJobsFields() (*expression.Schema, types.NameSlice) {
 	return buildCommandOnDDLJobsFields()
+}
+
+func buildAdminShowBDRRoleFields() (*expression.Schema, types.NameSlice) {
+	schema := newColumnsWithNames(1)
+	schema.Append(buildColumnWithName("", "BDR_ROLE", mysql.TypeString, 1))
+	return schema.col2Schema(), schema.names
 }
 
 func buildShowBackupMetaSchema() (*expression.Schema, types.NameSlice) {

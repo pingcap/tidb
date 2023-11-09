@@ -2830,12 +2830,9 @@ func (e *SimpleExec) executeAdminSetBDRRole(s *ast.AdminStmt) error {
 		return errors.New("This AdminStmt is not ADMIN SET BDR_ROLE")
 	}
 
-	txn, err := e.Ctx().Txn(false)
-	if err != nil {
-		return err
-	}
-
-	return errors.Trace(meta.NewMeta(txn).SetBDRRole(string(s.BDRRole)))
+	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnAdmin), e.Ctx().GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+		return errors.Trace(meta.NewMeta(txn).SetBDRRole(string(s.BDRRole)))
+	})
 }
 
 func (e *SimpleExec) executeSetResourceGroupName(s *ast.SetResourceGroupStmt) error {

@@ -2319,6 +2319,7 @@ const (
 	AdminReloadStatistics
 	AdminFlushPlanCache
 	AdminSetBDRRole
+	AdminShowBDRRole
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.
@@ -2591,6 +2592,8 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 		default:
 			return errors.New("Unsupported BDR role")
 		}
+	case AdminShowBDRRole:
+		ctx.WriteKeyWord("SHOW BDR ROLE")
 	default:
 		return errors.New("Unsupported AdminStmt type")
 	}

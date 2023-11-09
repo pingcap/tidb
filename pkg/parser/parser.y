@@ -11125,6 +11125,12 @@ AdminStmt:
 			BDRRole: $5.(ast.BDRRole),
 		}
 	}
+|	"ADMIN" "SHOW" "BDR" "ROLE"
+	{
+		$$ = &ast.AdminStmt{
+			Tp:      ast.AdminShowBDRRole,
+		}
+	}
 
 AdminShowSlow:
 	"RECENT" NUM

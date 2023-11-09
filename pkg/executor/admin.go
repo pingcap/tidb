@@ -46,7 +46,6 @@ var (
 	_ exec.Executor = &CheckIndexRangeExec{}
 	_ exec.Executor = &RecoverIndexExec{}
 	_ exec.Executor = &CleanupIndexExec{}
-	_ exec.Executor = &AdminSetBDRRoleExec{}
 )
 
 // CheckIndexRangeExec outputs the index values which has handle between begin and end.
@@ -887,21 +886,5 @@ func (e *CleanupIndexExec) constructLimitPB() *tipb.Executor {
 
 // Close implements the Executor Close interface.
 func (*CleanupIndexExec) Close() error {
-	return nil
-}
-
-// AdminSetBDRRoleExec represents a set bdr role executor.
-type AdminSetBDRRoleExec struct {
-	exec.BaseExecutor
-
-	role ast.BDRRole
-}
-
-func (e *AdminSetBDRRoleExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	req.Reset()
-	if e.role == ast.BDRRoleNone {
-		return nil
-	}
-
 	return nil
 }

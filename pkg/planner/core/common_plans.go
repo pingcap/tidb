@@ -1443,3 +1443,7 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 func IsAutoCommitTxn(ctx sessionctx.Context) bool {
 	return ctx.GetSessionVars().IsAutocommit() && !ctx.GetSessionVars().InTxn()
 }
+
+type AdminShowBDRRole struct {
+	baseSchemaProducer
+}
