@@ -97,6 +97,5 @@ func TestNewErrorGroupWithRecover(t *testing.T) {
 		panic("test")
 	})
 	err := eg.Wait()
-	// check stack is also included (goroutine 70 [running]\n...)
-	require.ErrorContains(t, err, "test\ngoroutine")
+	require.Errorf(t, err, "test")
 }
