@@ -16,6 +16,7 @@ package external
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"runtime/pprof"
@@ -27,11 +28,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var testingStorageURI = "local:///tmp/external-unit-test/"
+var testingStorageURI = flag.String("testing-storage-uri", "", "the URI of the storage used for testing")
 
 func openTestingStorage(t *testing.T) storage.ExternalStorage {
-	t.Skip("This is a manual test.")
-	b, err := storage.ParseBackend(testingStorageURI, nil)
+	if *testingStorageURI == "" {
+		t.Skip("testingStorageURI is not set")
+	}
+	b, err := storage.ParseBackend(*testingStorageURI, nil)
 	require.NoError(t, err)
 	s, err := storage.New(context.Background(), b, nil)
 	require.NoError(t, err)
@@ -161,7 +164,7 @@ func writeExternalFile(s *testSuite) {
 
 func TestCompare(t *testing.T) {
 	store := openTestingStorage(t)
-	source := newAscendingKeySource(20, 100, 1000000)
+	source := newAscendingKeySource(20, 100, 10000000)
 	memoryLimit := 64 * 1024 * 1024
 	fileIdx := 0
 	var (
@@ -204,7 +207,7 @@ func TestCompare(t *testing.T) {
 	baseSpeed := float64(source.outputSize()) / elapsed.Seconds() / 1024 / 1024
 	t.Logf("base speed for %d bytes: %.2f MB/s", source.outputSize(), baseSpeed)
 
-	suite.source = newAscendingKeySource(20, 100, 1000000)
+	suite.source = newAscendingKeySource(20, 100, 10000000)
 	writeExternalFile(suite)
 	writerSpeed := float64(source.outputSize()) / elapsed.Seconds() / 1024 / 1024
 	t.Logf("writer speed for %d bytes: %.2f MB/s", source.outputSize(), writerSpeed)
