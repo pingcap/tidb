@@ -1331,6 +1331,12 @@ type SessionVars struct {
 
 	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
 	OptimizerFixControl map[uint64]string
+
+	// ETLConcurrency increases the speed of ETL operations.
+	ETLConcurrency int
+
+	// ETLBatchSize is the non-transactional batch size of ETL operations.
+	ETLBatchSize int
 }
 
 var (

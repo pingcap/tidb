@@ -2295,6 +2295,20 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{
+		Scope: ScopeGlobal | ScopeSession, Name: TiDBETLConcurrency, Value: strconv.FormatInt(DefTiDBETLConcurrency, 10),
+		Type: TypeInt, MinValue: 0, MaxValue: 10240, SetSession: func(s *SessionVars, val string) error {
+			s.ETLConcurrency = TidbOptInt(val, DefTiDBETLConcurrency)
+			return nil
+		},
+	},
+	{
+		Scope: ScopeGlobal | ScopeSession, Name: TiDBETLBatchSize, Value: strconv.FormatInt(DefTiDBETLBatchSize, 10),
+		Type: TypeInt, MinValue: 1, MaxValue: 1000000, SetSession: func(s *SessionVars, val string) error {
+			s.ETLBatchSize = TidbOptInt(val, DefTiDBETLBatchSize)
+			return nil
+		},
+	},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

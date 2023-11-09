@@ -2441,10 +2441,11 @@ var _ ShardableDMLStmt = &InsertStmt{}
 type NonTransactionalDMLStmt struct {
 	dmlNode
 
-	DryRun      int         // 0: no dry run, 1: dry run the query, 2: dry run split DMLs
-	ShardColumn *ColumnName // if it's nil, the handle column is automatically chosen for it
-	Limit       uint64
-	DMLStmt     ShardableDMLStmt
+	DryRun             int         // 0: no dry run, 1: dry run the query, 2: dry run split DMLs
+	ShardColumn        *ColumnName // if it's nil, the handle column is automatically chosen for it
+	Limit              uint64
+	DMLStmt            ShardableDMLStmt
+	TransferFromInsert bool
 }
 
 // Restore implements Node interface.

@@ -907,6 +907,10 @@ const (
 	PasswordReuseHistory = "password_history"
 	// PasswordReuseTime limit how long passwords can be reused.
 	PasswordReuseTime = "password_reuse_interval"
+		// TiDBETLConcurrency increases the speed of ETL operations.
+		TiDBETLConcurrency = "tidb_etl_concurrency"
+		// TiDBETLBatchSize controls the non-transaction batch of ETL operations.
+		TiDBETLBatchSize = "tidb_etl_batch_size"
 )
 
 // TiDB intentional limits
@@ -1167,6 +1171,8 @@ const (
 	DefTiDBTTLJobScheduleWindowEndTime               = "23:59 +0000"
 	DefTiDBTTLScanWorkerCount                        = 4
 	DefTiDBTTLDeleteWorkerCount                      = 4
+	DefTiDBETLConcurrency                            = 64
+	DefTiDBETLBatchSize                              = 2000
 )
 
 // Process global variables.
