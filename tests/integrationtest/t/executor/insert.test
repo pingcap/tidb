@@ -943,18 +943,17 @@ select 8888888888888888888888888888888888888888888888888888888888888888888888888
 show warnings;
 
 # TestInsertIssue29892 test the double type with auto_increment problem, just leverage the serial test suite.
-set global tidb_txn_mode='optimistic';
 set global tidb_disable_txn_auto_retry=false;
 drop table if exists t;
 create table t(a double auto_increment key, b int);
 insert into t values (146576794, 1);
 
 connect (conn1, localhost, root,, executor__insert);
-begin;
+begin optimistic;
 insert into t(b) select 1;
 
 connect (conn2, localhost, root,, executor__insert);
-begin;
+begin optimistic;
 insert into t values (146576795, 1);
 insert into t values (146576796, 1);
 commit;
@@ -967,5 +966,4 @@ connection conn1;
 commit;
 disconnect conn1;
 
-set global tidb_txn_mode=default;
 set global tidb_disable_txn_auto_retry=default;
