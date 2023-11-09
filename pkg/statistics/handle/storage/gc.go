@@ -168,7 +168,7 @@ func DeleteTableStatsFromKV(sctx sessionctx.Context, statsIDs []int64) (err erro
 func forCount(total int64, batch int64) int64 {
 	result := total / batch
 	if total%batch > 0 {
-		result += 1
+		result++
 	}
 	return result
 }
