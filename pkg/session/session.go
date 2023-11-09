@@ -2417,13 +2417,9 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	if err != nil {
 		return nil, err
 	}
-	if sessVars.TxnCtx.CouldRetry && !s.IsReadOnly(sessVars) {
-		// Only when the txn auto retry is enabled and the statement is not read only, need to do the stmt-count-limit check,
-		// otherwise, the stmt won't be add into stmt history, and also don't need check.
-		// About `stmt-count-limit`, see more in https://docs.pingcap.com/tidb/stable/tidb-configuration-file#stmt-count-limit
-		if err := checkStmtLimit(ctx, se); err != nil {
-			return nil, err
-		}
+	// About `stmt-count-limit`, see more in https://docs.pingcap.com/tidb/stable/tidb-configuration-file#stmt-count-limit
+	if err := checkStmtLimit(ctx, se); err != nil {
+		return nil, err
 	}
 
 	rs, err = s.Exec(ctx)
