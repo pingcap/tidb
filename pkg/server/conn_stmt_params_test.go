@@ -15,15 +15,22 @@
 package server
 
 import (
+	"context"
+	"encoding/binary"
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/param"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/server/internal/column"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
 )
 
@@ -294,4 +301,80 @@ func TestParseExecArgsAndEncode(t *testing.T) {
 		util.NewInputDecoder("gbk"))
 	require.NoError(t, err)
 	require.Equal(t, "测试", dt[0].(*expression.Constant).Value.GetString())
+}
+
+func buildDatetimeParam(year uint16, month uint8, day uint8, hour uint8, min uint8, sec uint8, msec uint32) []byte {
+	endian := binary.LittleEndian
+
+	result := []byte{mysql.TypeDatetime, 0x0, 11}
+	result = endian.AppendUint16(result, year)
+	result = append(result, month)
+	result = append(result, day)
+	result = append(result, hour)
+	result = append(result, min)
+	result = append(result, sec)
+	result = endian.AppendUint32(result, msec)
+	return result
+}
+
+func expectedDatetimeExecuteResult(t *testing.T, c *mockConn, time types.Time, warnCount int) []byte {
+	return getExpectOutput(t, c, func(conn *clientConn) {
+		var err error
+
+		cols := []*column.Info{{
+			Name:         "t",
+			Table:        "",
+			Type:         mysql.TypeDatetime,
+			Charset:      uint16(mysql.CharsetNameToID(charset.CharsetBin)),
+			Flag:         uint16(mysql.NotNullFlag | mysql.BinaryFlag),
+			Decimal:      6,
+			ColumnLength: 26,
+		}}
+		require.NoError(t, conn.writeColumnInfo(cols))
+
+		chk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDatetime)}, 1)
+		chk.AppendTime(0, time)
+		data := make([]byte, 4)
+		data, err = column.DumpBinaryRow(data, cols, chk.GetRow(0), conn.rsEncoder)
+		require.NoError(t, err)
+		require.NoError(t, conn.writePacket(data))
+
+		for i := 0; i < warnCount; i++ {
+			conn.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("any error"))
+		}
+		require.NoError(t, conn.writeEOF(context.Background(), mysql.ServerStatusAutocommit))
+	})
+}
+
+func TestDateTimeTypes(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := CreateMockServer(t, store)
+	srv.SetDomain(dom)
+	defer srv.Close()
+
+	appendUint32 := binary.LittleEndian.AppendUint32
+	ctx := context.Background()
+	c := CreateMockConn(t, srv).(*mockConn)
+	c.capability = mysql.ClientProtocol41 | mysql.ClientDeprecateEOF
+
+	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
+	tk.MustExec("use test")
+	stmt, _, _, err := c.Context().Prepare("select ? as t")
+	require.NoError(t, err)
+
+	expectedTimeDatum, err := types.ParseDatetime(types.DefaultStmtNoWarningContext, "2023-11-09 14:23:45.000100")
+	require.NoError(t, err)
+	expected := expectedDatetimeExecuteResult(t, c, expectedTimeDatum, 1)
+
+	// execute the statement with datetime parameter
+	req := append(
+		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
+		0x0, 0x1, 0x0, 0x0, 0x0,
+		0x0, 0x1,
+	)
+	req = append(req, buildDatetimeParam(2023, 11, 9, 14, 23, 45, 100)...)
+	out := c.GetOutput()
+	require.NoError(t, c.Dispatch(ctx, req))
+
+	require.Equal(t, expected, out.Bytes())
 }
