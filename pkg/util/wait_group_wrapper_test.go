@@ -90,3 +90,13 @@ func TestWaitGroupWrapperCheck(t *testing.T) {
 	time.Sleep(1 * time.Second)
 	require.False(t, wg.check())
 }
+
+func TestNewErrorGroupWithRecover(t *testing.T) {
+	eg := NewErrorGroupWithRecover()
+	eg.Go(func() error {
+		panic("test")
+	})
+	err := eg.Wait()
+	// check stack is also included (goroutine 70 [running]\n...)
+	require.ErrorContains(t, err, "test\ngoroutine")
+}
