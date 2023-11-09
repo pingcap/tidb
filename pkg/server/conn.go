@@ -2049,11 +2049,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 			execStmt.(*executor.ExecStmt).FinishExecuteStmt(0, err, false)
 		}
 	}
-	if err != nil {
-		return false, err
-	}
-
-	return false, nil
+	return false, err
 }
 
 func (cc *clientConn) handleFileTransInConn(ctx context.Context, status uint16) (bool, error) {
@@ -2284,6 +2280,9 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 		if stmtDetail != nil {
 			stmtDetail.WriteSQLRespDuration += time.Since(start)
 		}
+	}
+	if err := rs.Close(); err != nil {
+		return false, err
 	}
 
 	if stmtDetail != nil {
