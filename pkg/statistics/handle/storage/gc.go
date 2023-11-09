@@ -182,12 +182,12 @@ func ClearOutdatedHistoryStats(sctx sessionctx.Context) error {
 	}
 	count := rows[0].GetInt64(0)
 	if count > 0 {
-		sql = "batch on create_time limit 10 delete from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
+		sql = "batch on create_time limit 50 delete from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
 		_, err = util.Exec(sctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
 		if err != nil {
 			return err
 		}
-		sql = "batch on create_time limit 10 delete from mysql.stats_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
+		sql = "batch on create_time limit 50 delete from mysql.stats_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
 		_, err = util.Exec(sctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
 		logutil.BgLogger().Info("clear outdated historical stats")
 		return err
