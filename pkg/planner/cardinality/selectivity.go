@@ -56,6 +56,15 @@ func Selectivity(
 	retStatsNodes []*StatsNode,
 	err error,
 ) {
+	// TODO: any log?
+	result, ok, err := SelectivityFromExternalEstimator(ctx, exprs)
+	if ok && err == nil {
+		return result, nil, err
+	}
+	if err != nil {
+		logutil.BgLogger().Error("error when requesting external estimator", zap.Error(err))
+	}
+
 	var exprStrs []string
 	if ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(ctx)
