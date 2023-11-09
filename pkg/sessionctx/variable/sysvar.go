@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net/url"
 	"runtime"
 	"strconv"
 	"strings"
@@ -1178,6 +1179,14 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBExternalCardinalityEstimator, Value: "", Type: TypeStr, SetSession: func(s *SessionVars, val string) error {
+		_, err := url.Parse(val)
+		if err != nil {
+			return fmt.Errorf("%s not a valid URL: %v", val, err)
+		}
+		s.ExternalCardinalityEstimator = val
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePrepPlanCache, Value: BoolToOnOff(DefTiDBEnablePrepPlanCache), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnablePreparedPlanCache = TiDBOptOn(val)
 		return nil

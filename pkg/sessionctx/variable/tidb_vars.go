@@ -801,6 +801,9 @@ const (
 	// functions instead of the selectionFactor (0.8).
 	TiDBDefaultStrMatchSelectivity = "tidb_default_string_match_selectivity"
 
+	// TiDBExternalCardinalityEstimator ...
+	TiDBExternalCardinalityEstimator = "tidb_external_cardinality_estimator"
+
 	// TiDBEnablePrepPlanCache indicates whether to enable prepared plan cache
 	TiDBEnablePrepPlanCache = "tidb_enable_prepared_plan_cache"
 	// TiDBPrepPlanCacheSize indicates the number of cached statements.
