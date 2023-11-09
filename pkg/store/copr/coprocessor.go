@@ -1685,8 +1685,9 @@ func (worker *copIteratorWorker) handleCopCache(task *copTask, resp *copResponse
 				resp.pbResp.Range = nil
 			}
 		}
-		// If the coprocessor cache key of the task is same whether `worker.enableCollectExecutionInfo` is true or false,
-		// the cache may be hit when `worker.enableCollectExecutionInfo` is false, but the `detail` is nil.
+		// `worker.enableCollectExecutionInfo` is loaded from the instance's config. Because it's not related to the request,
+		// the cache key can be same when `worker.enableCollectExecutionInfo` is true or false.
+		// When `worker.enableCollectExecutionInfo` is false, the `resp.detail` is nil, and hit cache is still possible.
 		// Check `resp.detail` to avoid panic.
 		// Details: https://github.com/pingcap/tidb/issues/48212
 		if resp.detail != nil {
