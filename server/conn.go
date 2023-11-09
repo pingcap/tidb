@@ -1993,7 +1993,11 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 			return false, err
 		}
 	}
+<<<<<<< HEAD:server/conn.go
 	return false, nil
+=======
+	return false, err
+>>>>>>> 24c7f8c39b3 (server,session: make sure ResultSet.Close() errors return to the client (#48447)):pkg/server/conn.go
 }
 
 func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) (bool, error) {
@@ -2190,7 +2194,23 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			stmtDetail.WriteSQLRespDuration += time.Since(start)
 		}
 	}
+<<<<<<< HEAD:server/conn.go
 	return false, cc.writeEOF(serverStatus)
+=======
+	if err := rs.Close(); err != nil {
+		return false, err
+	}
+
+	if stmtDetail != nil {
+		start = time.Now()
+	}
+
+	err := cc.writeEOF(ctx, serverStatus)
+	if stmtDetail != nil {
+		stmtDetail.WriteSQLRespDuration += time.Since(start)
+	}
+	return false, err
+>>>>>>> 24c7f8c39b3 (server,session: make sure ResultSet.Close() errors return to the client (#48447)):pkg/server/conn.go
 }
 
 // writeChunksWithFetchSize writes data from a Chunk, which filled data by a ResultSet, into a connection.
