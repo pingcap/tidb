@@ -25,7 +25,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 var testingStorageURI = flag.String("testing-storage-uri", "", "the URI of the storage used for testing")
@@ -35,9 +35,9 @@ func openTestingStorage(t *testing.T) storage.ExternalStorage {
 		t.Skip("testingStorageURI is not set")
 	}
 	b, err := storage.ParseBackend(*testingStorageURI, nil)
-	require.NoError(t, err)
+	intest.Assert(err)
 	s, err := storage.New(context.Background(), b, nil)
-	require.NoError(t, err)
+	intest.Assert(err)
 	return s
 }
 
@@ -109,8 +109,8 @@ func writePlainFile(s *testSuite) {
 	offset := 0
 	flush := func(w storage.ExternalFileWriter) {
 		n, err := w.Write(ctx, buf[:offset])
-		require.NoError(s.t, err)
-		require.Equal(s.t, offset, n)
+		intest.Assert(err)
+		intest.Assert(offset == n)
 		offset = 0
 	}
 
@@ -118,7 +118,7 @@ func writePlainFile(s *testSuite) {
 		s.beforeCreateWriter()
 	}
 	writer, err := s.store.Create(ctx, "test/plain_file", nil)
-	require.NoError(s.t, err)
+	intest.Assert(err)
 	key, val, _ := s.source.next()
 	for key != nil {
 		if offset+len(key)+len(val) > len(buf) {
@@ -132,7 +132,7 @@ func writePlainFile(s *testSuite) {
 	if s.beforeWriterClose != nil {
 		s.beforeWriterClose()
 	}
-	require.NoError(s.t, writer.Close(ctx))
+	intest.Assert(writer.Close(ctx))
 	if s.afterWriterClose != nil {
 		s.afterWriterClose()
 	}
@@ -150,13 +150,13 @@ func writeExternalFile(s *testSuite) {
 	key, val, h := s.source.next()
 	for key != nil {
 		err := writer.WriteRow(ctx, key, val, h)
-		require.NoError(s.t, err)
+		intest.Assert(err)
 		key, val, h = s.source.next()
 	}
 	if s.beforeWriterClose != nil {
 		s.beforeWriterClose()
 	}
-	require.NoError(s.t, writer.Close(ctx))
+	intest.Assert(writer.Close(ctx))
 	if s.afterWriterClose != nil {
 		s.afterWriterClose()
 	}
@@ -176,17 +176,17 @@ func TestCompare(t *testing.T) {
 	beforeTest := func() {
 		fileIdx++
 		file, err = os.Create(fmt.Sprintf("cpu-profile-%d.prof", fileIdx))
-		require.NoError(t, err)
+		intest.Assert(err)
 		err = pprof.StartCPUProfile(file)
-		require.NoError(t, err)
+		intest.Assert(err)
 		now = time.Now()
 	}
 	beforeClose := func() {
 		file, err = os.Create(fmt.Sprintf("heap-profile-%d.prof", fileIdx))
-		require.NoError(t, err)
+		intest.Assert(err)
 		// check heap profile to see the memory usage is expected
 		err = pprof.WriteHeapProfile(file)
-		require.NoError(t, err)
+		intest.Assert(err)
 	}
 	afterClose := func() {
 		elapsed = time.Since(now)
