@@ -3,7 +3,6 @@ package cardinality
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	planutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -95,12 +94,7 @@ func newCmpPred(sctx sessionctx.Context, expr expression.Expression) *cmpPred {
 	case types.ETDatetime, types.ETTimestamp, types.ETDuration:
 		return nil // not supported
 	case types.ETString, types.ETJson:
-		v = fmt.Sprintf(`"%v"`, con.String())
-	}
-
-	value := con.String()
-	if con.GetType().EvalType() == types.ETString {
-		value = fmt.Sprintf(`"%v"`, value)
+		v = con.String()
 	}
 
 	tmp := strings.Split(strings.ToLower(col.OrigName), ".")
