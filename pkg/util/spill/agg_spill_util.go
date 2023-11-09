@@ -170,7 +170,7 @@ func DeserializeInterface(buf []byte, readPos int64) (interface{}, int64) {
 	}
 }
 
-// DeserializeBool deserializes Set type
+// DeserializeSet deserializes Set type
 //
 // Commonly, function should return the deserialized bytes for variable length type.
 // However, `Set` type is always deserialized with fix length types.
