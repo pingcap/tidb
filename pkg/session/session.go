@@ -1641,8 +1641,12 @@ func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...inter
 	if err != nil {
 		return nil, err
 	}
+	if sq, ok := stmtNode.(*ast.NonTransactionalDMLStmt); ok {
+		rs, err = HandleNonTransactionalDML(ctx, sq, s)
+	} else {
+		rs, err = s.ExecuteStmt(ctx, stmtNode)
+	}
 
-	rs, err = s.ExecuteStmt(ctx, stmtNode)
 	if err != nil {
 		s.sessionVars.StmtCtx.AppendError(err)
 	}
