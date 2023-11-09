@@ -328,7 +328,7 @@ func WrapKey2String(key []byte) string {
 }
 
 const (
-	getRaftKvVersionSQL = "show config where type = 'tikv' and name = 'storage.engine'"
+	getRaftKvVersionSQL = "select `value` from information_schema.cluster_config where type = 'tikv' and `key` = 'storage.engine'"
 	raftKv2             = "raft-kv2"
 )
 
@@ -359,6 +359,6 @@ func IsRaftKv2(ctx context.Context, sctx sessionctx.Context) (bool, error) {
 	}
 
 	// All nodes should have the same type of engine
-	raftVersion := rows[0].GetString(3)
+	raftVersion := rows[0].GetString(0)
 	return raftVersion == raftKv2, nil
 }
