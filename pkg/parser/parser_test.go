@@ -3412,6 +3412,15 @@ func TestDDL(t *testing.T) {
 		{"flashback table to timestamp '2021-05-26 16:45:26'", false, ""},
 		{"flashback database to timestamp '2021-05-26 16:45:26'", false, ""},
 
+		// for flashback to tso
+		{"flashback cluster to tso 445494955052105728", true, "FLASHBACK CLUSTER TO TSO 445494955052105728"},
+		{"flashback table t to tso 445494955052105728", true, "FLASHBACK TABLE `t` TO TSO 445494955052105728"},
+		{"flashback table t,t1 to tso 445494955052105728", true, "FLASHBACK TABLE `t`, `t1` TO TSO 445494955052105728"},
+		{"flashback database test to tso 445494955052105728", true, "FLASHBACK DATABASE `test` TO TSO 445494955052105728"},
+		{"flashback schema test to tso 445494955052105728", true, "FLASHBACK DATABASE `test` TO TSO 445494955052105728"},
+		{"flashback table to tso 445494955052105728", false, ""},
+		{"flashback database to tso 445494955052105728", false, ""},
+
 		// for remove partitioning
 		{"alter table t remove partitioning", true, "ALTER TABLE `t` REMOVE PARTITIONING"},
 		{"alter table db.ident remove partitioning", true, "ALTER TABLE `db`.`ident` REMOVE PARTITIONING"},

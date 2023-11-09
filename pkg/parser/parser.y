@@ -55,6 +55,7 @@ import (
 	identifier           "identifier"
 	asof                 "AS OF"
 	toTimestamp          "TO TIMESTAMP"
+	toTSO                "TO TSO"
 	memberof             "MEMBER OF"
 	optionallyEnclosedBy "OPTIONALLY ENCLOSED BY"
 
@@ -656,6 +657,7 @@ import (
 	transaction           "TRANSACTION"
 	triggers              "TRIGGERS"
 	truncate              "TRUNCATE"
+	tsoType               "TSO"
 	ttl                   "TTL"
 	ttlEnable             "TTL_ENABLE"
 	ttlJobInterval        "TTL_JOB_INTERVAL"
@@ -2980,6 +2982,7 @@ FlashbackToTimestampStmt:
 	{
 		$$ = &ast.FlashBackToTimestampStmt{
 			FlashbackTS: ast.NewValueExpr($4, "", ""),
+			FlashbackTSO: 0,
 		}
 	}
 |	"FLASHBACK" "TABLE" TableNameList toTimestamp stringLit
@@ -2987,6 +2990,7 @@ FlashbackToTimestampStmt:
 		$$ = &ast.FlashBackToTimestampStmt{
 			Tables:      $3.([]*ast.TableName),
 			FlashbackTS: ast.NewValueExpr($5, "", ""),
+			FlashbackTSO: 0,
 		}
 	}
 |	"FLASHBACK" DatabaseSym DBName toTimestamp stringLit
@@ -2994,8 +2998,30 @@ FlashbackToTimestampStmt:
 		$$ = &ast.FlashBackToTimestampStmt{
 			DBName:      model.NewCIStr($3),
 			FlashbackTS: ast.NewValueExpr($5, "", ""),
+			FlashbackTSO: 0,
 		}
 	}
+|	"FLASHBACK" "CLUSTER" toTSO LengthNum
+	{
+		$$ = &ast.FlashBackToTimestampStmt{
+			FlashbackTSO: $4.(uint64),
+		}
+	}
+|	"FLASHBACK" "TABLE" TableNameList toTSO LengthNum
+	{
+		$$ = &ast.FlashBackToTimestampStmt{
+			Tables:      $3.([]*ast.TableName),
+			FlashbackTSO: $5.(uint64),
+		}
+	}
+|	"FLASHBACK" DatabaseSym DBName toTSO LengthNum
+	{
+		$$ = &ast.FlashBackToTimestampStmt{
+			DBName:      model.NewCIStr($3),
+			FlashbackTSO: $5.(uint64),
+		}
+	}
+
 
 /*******************************************************************
  *
