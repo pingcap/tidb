@@ -35,9 +35,9 @@ func openTestingStorage(t *testing.T) storage.ExternalStorage {
 		t.Skip("testingStorageURI is not set")
 	}
 	b, err := storage.ParseBackend(*testingStorageURI, nil)
-	intest.Assert(err)
+	intest.Assert(err == nil)
 	s, err := storage.New(context.Background(), b, nil)
-	intest.Assert(err)
+	intest.Assert(err == nil)
 	return s
 }
 
@@ -109,7 +109,7 @@ func writePlainFile(s *testSuite) {
 	offset := 0
 	flush := func(w storage.ExternalFileWriter) {
 		n, err := w.Write(ctx, buf[:offset])
-		intest.Assert(err)
+		intest.Assert(err == nil)
 		intest.Assert(offset == n)
 		offset = 0
 	}
@@ -118,7 +118,7 @@ func writePlainFile(s *testSuite) {
 		s.beforeCreateWriter()
 	}
 	writer, err := s.store.Create(ctx, "test/plain_file", nil)
-	intest.Assert(err)
+	intest.Assert(err == nil)
 	key, val, _ := s.source.next()
 	for key != nil {
 		if offset+len(key)+len(val) > len(buf) {
@@ -132,7 +132,8 @@ func writePlainFile(s *testSuite) {
 	if s.beforeWriterClose != nil {
 		s.beforeWriterClose()
 	}
-	intest.Assert(writer.Close(ctx))
+	err = writer.Close(ctx)
+	intest.Assert(err == nil)
 	if s.afterWriterClose != nil {
 		s.afterWriterClose()
 	}
@@ -150,13 +151,14 @@ func writeExternalFile(s *testSuite) {
 	key, val, h := s.source.next()
 	for key != nil {
 		err := writer.WriteRow(ctx, key, val, h)
-		intest.Assert(err)
+		intest.Assert(err == nil)
 		key, val, h = s.source.next()
 	}
 	if s.beforeWriterClose != nil {
 		s.beforeWriterClose()
 	}
-	intest.Assert(writer.Close(ctx))
+	err := writer.Close(ctx)
+	intest.Assert(err == nil)
 	if s.afterWriterClose != nil {
 		s.afterWriterClose()
 	}
@@ -176,17 +178,17 @@ func TestCompare(t *testing.T) {
 	beforeTest := func() {
 		fileIdx++
 		file, err = os.Create(fmt.Sprintf("cpu-profile-%d.prof", fileIdx))
-		intest.Assert(err)
+		intest.Assert(err == nil)
 		err = pprof.StartCPUProfile(file)
-		intest.Assert(err)
+		intest.Assert(err == nil)
 		now = time.Now()
 	}
 	beforeClose := func() {
 		file, err = os.Create(fmt.Sprintf("heap-profile-%d.prof", fileIdx))
-		intest.Assert(err)
+		intest.Assert(err == nil)
 		// check heap profile to see the memory usage is expected
 		err = pprof.WriteHeapProfile(file)
-		intest.Assert(err)
+		intest.Assert(err == nil)
 	}
 	afterClose := func() {
 		elapsed = time.Since(now)
