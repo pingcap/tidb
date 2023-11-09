@@ -250,5 +250,9 @@ func deserializePartialResultCommon(src *chunk.Chunk, ordinal int, deserializeFu
 		totalMemDelta += memDelta
 	}
 
+	if len(partialResults) != src.NumRows() {
+		panic("Fail to deserialize partial result")
+	}
+
 	return partialResults, totalMemDelta
 }
