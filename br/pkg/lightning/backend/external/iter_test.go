@@ -83,6 +83,8 @@ func TestMergeKVIter(t *testing.T) {
 			err = kvStore.addEncodedData([]byte(kv[0]), []byte(kv[1]))
 			require.NoError(t, err)
 		}
+		err = kvStore.Close()
+		require.NoError(t, err)
 		err = writer.Close(ctx)
 		require.NoError(t, err)
 	}
@@ -135,6 +137,8 @@ func TestOneUpstream(t *testing.T) {
 			err = kvStore.addEncodedData([]byte(kv[0]), []byte(kv[1]))
 			require.NoError(t, err)
 		}
+		err = kvStore.Close()
+		require.NoError(t, err)
 		err = writer.Close(ctx)
 		require.NoError(t, err)
 	}

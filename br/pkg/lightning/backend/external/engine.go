@@ -143,7 +143,7 @@ func split[T any](in []T, groupNum int) [][]T {
 
 func (e *Engine) getAdjustedConcurrency() int {
 	if e.checkHotspot {
-		// estimate we will open at most 1000 files, so if e.dataFiles is small we can
+		// estimate we will open at most 8000 files, so if e.dataFiles is small we can
 		// try to concurrently process ranges.
 		adjusted := maxCloudStorageConnections / len(e.dataFiles)
 		return min(adjusted, 16)

@@ -153,6 +153,8 @@ func TestKVReadWrite(t *testing.T) {
 		err = kvStore.addEncodedData(keys[i], values[i])
 		require.NoError(t, err)
 	}
+	err = kvStore.Close()
+	require.NoError(t, err)
 	err = writer.Close(ctx)
 	require.NoError(t, err)
 
