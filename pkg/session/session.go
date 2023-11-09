@@ -2417,10 +2417,6 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	if err != nil {
 		return nil, err
 	}
-	// About `stmt-count-limit`, see more in https://docs.pingcap.com/tidb/stable/tidb-configuration-file#stmt-count-limit
-	if err := checkStmtLimit(ctx, se); err != nil {
-		return nil, err
-	}
 
 	rs, err = s.Exec(ctx)
 	se.updateTelemetryMetric(s.(*executor.ExecStmt))
@@ -2433,6 +2429,10 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 					return nil, err
 				}
 			}
+		}
+		// About `stmt-count-limit`, see more in https://docs.pingcap.com/tidb/stable/tidb-configuration-file#stmt-count-limit
+		if err := checkStmtLimit(ctx, se, true); err != nil {
+			return nil, err
 		}
 		return &execStmtResult{
 			RecordSet: rs,
