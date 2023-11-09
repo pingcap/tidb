@@ -203,7 +203,7 @@ func (w *WaitGroupPool) Run(exec func()) {
 }
 
 // ErrorGroupWithRecover will recover panic from error group. Please note that
-// panic will break the control flow expectedly, even if we recover it some key
+// panic will break the control flow unexpectedly, even if we recover it some key
 // logic may be skipped due to panic, for example, Mutex.Unlock(), and continue
 // running may cause unexpected behaviour. Use it with caution.
 type ErrorGroupWithRecover struct {
