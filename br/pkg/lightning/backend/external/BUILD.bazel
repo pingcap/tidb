@@ -72,6 +72,7 @@ go_test(
         "//br/pkg/storage",
         "//pkg/kv",
         "//pkg/util/codec",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/size",
         "@com_github_aws_aws_sdk_go//aws",
