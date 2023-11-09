@@ -40,7 +40,6 @@ func newStatsReader(ctx context.Context, store storage.ExternalStorage, name str
 }
 
 func (r *statsReader) nextProp() (*rangeProperty, error) {
-	r.byteReader.reset()
 	lenBytes, err := r.byteReader.readNBytes(4)
 	if err != nil {
 		return nil, err

@@ -18,6 +18,7 @@ import (
 	"context"
 	"io"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -43,8 +44,6 @@ type byteReader struct {
 	curBuf       []byte
 	curBufOffset int
 	smallBuf     []byte
-
-	retPointers []*[]byte
 
 	concurrentReader struct {
 		largeBufferPool *membuf.Buffer
@@ -204,10 +203,12 @@ func (r *byteReader) readNBytes(n int) ([]byte, error) {
 	}
 	// If the reader has fewer than n bytes remaining in current buffer,
 	// `auxBuf` is used as a container instead.
+	if n > 1024*1024*1024 {
+		return nil, errors.Errorf("read %d bytes from external storage, exceed max limit %d", n, 1024*1024*1024)
+	}
 	auxBuf := make([]byte, n)
 	copy(auxBuf, b)
 	for readLen < n {
-		//r.cloneSlices()
 		err := r.reload()
 		switch err {
 		case nil:
@@ -224,23 +225,6 @@ func (r *byteReader) readNBytes(n int) ([]byte, error) {
 		readLen += len(b)
 	}
 	return auxBuf, nil
-}
-
-func (r *byteReader) reset() {
-	for i := range r.retPointers {
-		r.retPointers[i] = nil
-	}
-	r.retPointers = r.retPointers[:0]
-}
-
-func (r *byteReader) cloneSlices() {
-	for i := range r.retPointers {
-		copied := make([]byte, len(*r.retPointers[i]))
-		copy(copied, *r.retPointers[i])
-		*r.retPointers[i] = copied
-		r.retPointers[i] = nil
-	}
-	r.retPointers = r.retPointers[:0]
 }
 
 func (r *byteReader) next(n int) []byte {

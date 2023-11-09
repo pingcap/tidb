@@ -213,6 +213,8 @@ func TestCorruptContent(t *testing.T) {
 			err = kvStore.addEncodedData([]byte(kv[0]), []byte(kv[1]))
 			require.NoError(t, err)
 		}
+		err = kvStore.Close()
+		require.NoError(t, err)
 		if i == 0 {
 			_, err = writer.Write(ctx, []byte("corrupt"))
 			require.NoError(t, err)

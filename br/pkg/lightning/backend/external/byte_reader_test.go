@@ -143,50 +143,6 @@ func testByteReaderNormal(t *testing.T, useConcurrency bool) {
 	x = y
 	require.Equal(t, 2, len(x))
 	require.Equal(t, byte('b'), x[1])
-	br.reset()
-	require.NoError(t, br.Close())
-}
-
-func TestByteReaderClone(t *testing.T) {
-	ms := &mockExtStore{src: []byte("0123456789")}
-	br, err := newByteReader(context.Background(), ms, 4)
-	require.NoError(t, err)
-	y1, err := br.readNBytes(2)
-	require.NoError(t, err)
-	y2, err := br.readNBytes(1)
-	require.NoError(t, err)
-	x1, x2 := y1, y2
-	require.Len(t, x1, 2)
-	require.Len(t, x2, 1)
-	require.Equal(t, byte('0'), x1[0])
-	require.Equal(t, byte('2'), x2[0])
-	require.NoError(t, br.reload()) // Perform a read to overwrite buffer.
-	x1, x2 = y1, y2
-	require.Len(t, x1, 2)
-	require.Len(t, x2, 1)
-	require.Equal(t, byte('4'), x1[0]) // Verify if the buffer is overwritten.
-	require.Equal(t, byte('6'), x2[0])
-	require.NoError(t, br.Close())
-
-	ms = &mockExtStore{src: []byte("0123456789")}
-	br, err = newByteReader(context.Background(), ms, 4)
-	require.NoError(t, err)
-	y1, err = br.readNBytes(2)
-	require.NoError(t, err)
-	y2, err = br.readNBytes(1)
-	require.NoError(t, err)
-	x1, x2 = y1, y2
-	require.Len(t, x1, 2)
-	require.Len(t, x2, 1)
-	require.Equal(t, byte('0'), x1[0])
-	require.Equal(t, byte('2'), x2[0])
-	br.cloneSlices()
-	require.NoError(t, br.reload()) // Perform a read to overwrite buffer.
-	x1, x2 = y1, y2
-	require.Len(t, x1, 2)
-	require.Len(t, x2, 1)
-	require.Equal(t, byte('0'), x1[0]) // Verify if the buffer is NOT overwritten.
-	require.Equal(t, byte('2'), x2[0])
 	require.NoError(t, br.Close())
 }
 
@@ -196,19 +152,17 @@ func TestByteReaderAuxBuf(t *testing.T) {
 	require.NoError(t, err)
 	y1, err := br.readNBytes(1)
 	require.NoError(t, err)
+	require.Equal(t, []byte("0"), y1)
 	y2, err := br.readNBytes(2)
 	require.NoError(t, err)
-	require.Equal(t, []byte("0"), y1)
 	require.Equal(t, []byte("12"), y2)
 
 	y3, err := br.readNBytes(1)
 	require.NoError(t, err)
+	require.Equal(t, []byte("3"), y3)
 	y4, err := br.readNBytes(2)
 	require.NoError(t, err)
-	require.Equal(t, []byte("3"), y3)
 	require.Equal(t, []byte("45"), y4)
-	require.Equal(t, []byte("0"), y1)
-	require.Equal(t, []byte("12"), y2)
 }
 
 func TestReset(t *testing.T) {
@@ -262,7 +216,6 @@ func testReset(t *testing.T, useConcurrency bool) {
 		}
 
 		if rand.Intn(2) == 0 {
-			br.reset()
 			toCheck = toCheck[:0]
 		}
 	}

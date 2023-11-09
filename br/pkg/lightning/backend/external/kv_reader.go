@@ -50,7 +50,6 @@ func newKVReader(
 }
 
 func (r *kvReader) nextKV() (key, val []byte, err error) {
-	r.byteReader.reset()
 	lenBytes, err := r.byteReader.readNBytes(8)
 	if err != nil {
 		return nil, nil, err

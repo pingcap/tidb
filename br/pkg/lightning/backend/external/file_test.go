@@ -71,9 +71,10 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rc.props, 1)
 
+	err = kvStore.Close()
+	require.NoError(t, err)
 	err = writer.Close(ctx)
 	require.NoError(t, err)
-	kvStore.Close()
 	expected = &rangeProperty{
 		firstKey: k3,
 		lastKey:  k3,

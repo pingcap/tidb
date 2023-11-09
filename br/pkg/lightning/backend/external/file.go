@@ -101,7 +101,6 @@ func (s *KeyValueStore) Close() error {
 			return err
 		}
 		s.memBuffer = s.memBuffer[:0]
-		return nil
 	}
 	if s.rc.currProp.keys > 0 {
 		newProp := *s.rc.currProp
