@@ -187,7 +187,6 @@ func NewWriteIndexToExternalStoragePipeline(
 		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, copReadBatchSize())
 	}
 	readerCnt, writerCnt := expectedIngestWorkerCnt()
-	readerCnt *= 2
 
 	backend, err := storage.ParseBackend(extStoreURI, nil)
 	if err != nil {
