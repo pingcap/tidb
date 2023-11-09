@@ -683,6 +683,7 @@ func TestCoprocessorBatchByStore(t *testing.T) {
 	}
 }
 
+<<<<<<< HEAD
 func TestIndexLookUpWithSelectForUpdateOnPartitionTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -697,4 +698,26 @@ func TestIndexLookUpWithSelectForUpdateOnPartitionTable(t *testing.T) {
 	tk.MustExec("analyze table t")
 	tk.MustHavePlan("select b from t use index(k) where b > 2 order by b limit 1 for update", "IndexLookUp")
 	tk.MustQuery("select b from t use index(k) where b > 2 order by b limit 1 for update").Check(testkit.Rows("3"))
+=======
+func TestCoprCacheWithoutExecutionInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk1 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int)")
+	tk.MustExec("insert into t values(1), (2), (3)")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler/mockCopCacheInUnistore", `return(123)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler/mockCopCacheInUnistore"))
+	}()
+
+	defer tk.MustExec("set @@tidb_enable_collect_execution_info=1")
+	ctx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(_ *kv.Request) {
+		tk1.MustExec("set @@tidb_enable_collect_execution_info=0")
+	})
+	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows("1", "2", "3"))
+>>>>>>> 7396e54bfa8 (copr: fix copr cache panic when `tidb_enable_collect_execution_info` is off (#48340))
 }
