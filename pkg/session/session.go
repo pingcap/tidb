@@ -2431,7 +2431,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 			}
 		}
 		// About `stmt-count-limit`, see more in https://docs.pingcap.com/tidb/stable/tidb-configuration-file#stmt-count-limit
-		if err := checkStmtLimit(ctx, se, true); err != nil {
+		if err := checkStmtLimit(ctx, se, false); err != nil {
 			return nil, err
 		}
 		return &execStmtResult{
