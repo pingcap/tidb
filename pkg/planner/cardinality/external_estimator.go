@@ -69,20 +69,20 @@ func newCmpPred(sctx sessionctx.Context, expr expression.Expression) *cmpPred {
 	var v interface{}
 	switch con.GetType().EvalType() {
 	case types.ETInt:
-		n, ok, err := con.EvalInt(sctx, chunk.Row{})
-		if !ok || err != nil {
+		n, isNull, err := con.EvalInt(sctx, chunk.Row{})
+		if isNull || err != nil {
 			return nil
 		}
 		v = n
 	case types.ETReal:
-		d, ok, err := con.EvalReal(sctx, chunk.Row{})
-		if !ok || err != nil {
+		d, isNull, err := con.EvalReal(sctx, chunk.Row{})
+		if isNull || err != nil {
 			return nil
 		}
 		v = d
 	case types.ETDecimal:
-		d, ok, err := con.EvalDecimal(sctx, chunk.Row{})
-		if !ok || err != nil {
+		d, isNull, err := con.EvalDecimal(sctx, chunk.Row{})
+		if isNull || err != nil {
 			return nil
 		}
 		f, err := d.ToFloat64()
