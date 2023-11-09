@@ -242,11 +242,10 @@ func recordAbortTxnDuration(sessVars *variable.SessionVars, isInternal bool) {
 func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
 	sessVars := se.sessionVars
 	// Call GetHistory here to init stmtHistory if needed, since canReuseTxnWhenExplicitBegin will check whether stmtHistory is nil.
-	txnStmtHistory := GetHistory(se)
 	if !sql.IsReadOnly(sessVars) {
 		// All the history should be added here.
 		if meetsErr == nil && sessVars.TxnCtx.CouldRetry {
-			txnStmtHistory.Add(sql, sessVars.StmtCtx)
+			GetHistory(se).Add(sql, sessVars.StmtCtx)
 		}
 
 		// Handle the stmt commit/rollback.
