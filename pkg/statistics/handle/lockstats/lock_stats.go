@@ -129,8 +129,6 @@ func (sl *statsLockImpl) GetTableLockedAndClearForTest() (map[int64]struct{}, er
 }
 
 var (
-	// Stats logger.
-	statsLogger = logutil.BgLogger().With(zap.String("category", "stats"))
 	// useCurrentSession to make sure the sql is executed in current session.
 	useCurrentSession = []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}
 )
@@ -157,7 +155,7 @@ func AddLockedTables(
 			ids = append(ids, pid)
 		}
 	}
-	statsLogger.Info("lock table",
+	util.StatsLogger.Info("lock table",
 		zap.Any("tables", tables),
 	)
 
@@ -211,7 +209,7 @@ func AddLockedPartitions(
 		pNames = append(pNames, pName)
 	}
 
-	statsLogger.Info("lock partitions",
+	util.StatsLogger.Info("lock partitions",
 		zap.Int64("tableID", tid),
 		zap.String("tableName", tableName),
 		zap.Int64s("partitionIDs", pids),
