@@ -200,9 +200,9 @@ func ClearOutdatedHistoryStats(sctx sessionctx.Context) error {
 		for n := int64(0); n < forCount(count, int64(50)); n++ {
 			sql = "delete from mysql.stats_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND limit 50 "
 			_, err = util.Exec(sctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
-			logutil.BgLogger().Info("clear outdated historical stats")
 			return err
 		}
+		logutil.BgLogger().Info("clear outdated historical stats")
 	}
 	return nil
 }
