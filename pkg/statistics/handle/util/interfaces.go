@@ -34,7 +34,7 @@ import (
 )
 
 var (
-	// Stats logger.
+	// StatsLogger with category "stats" is used to log statistic related messages.
 	StatsLogger = logutil.BgLogger().With(zap.String("category", "stats"))
 )
 
