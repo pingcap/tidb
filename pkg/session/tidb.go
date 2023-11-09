@@ -268,7 +268,10 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 		// Reset txn state to invalid to dispose the pending start ts.
 		se.txn.changeToInvalid()
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	return checkStmtLimit(ctx, se, false)
 }
 
 func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
@@ -302,18 +305,24 @@ func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql s
 	return nil
 }
 
-func checkStmtLimit(ctx context.Context, se *session) error {
+func checkStmtLimit(ctx context.Context, se *session, beforeFinish bool) error {
 	// If the user insert, insert, insert ... but never commit, TiDB would OOM.
 	// So we limit the statement count in a transaction here.
 	var err error
 	sessVars := se.GetSessionVars()
 	history := GetHistory(se)
-	stmtCount := history.Count() + 1 // history stmt count + current stmt.
+	stmtCount := history.Count()
+	if beforeFinish {
+		stmtCount++ // history stmt count + current stmt.
+	}
 	if stmtCount > int(config.GetGlobalConfig().Performance.StmtCountLimit) {
 		if !sessVars.BatchCommit {
 			se.RollbackTxn(ctx)
 			return errors.Errorf("statement count %d exceeds the transaction limitation, transaction has been rollback, autocommit = %t",
 				stmtCount, sessVars.IsAutocommit())
+		}
+		if beforeFinish {
+			return nil
 		}
 		err = sessiontxn.NewTxn(ctx, se)
 		// The transaction does not committed yet, we need to keep it in transaction.
