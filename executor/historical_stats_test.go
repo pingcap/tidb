@@ -237,8 +237,15 @@ func TestAssertHistoricalStatsAfterAlterTable(t *testing.T) {
 }
 
 func TestGCOutdatedHistoryStats(t *testing.T) {
+<<<<<<< HEAD:executor/historical_stats_test.go
 	failpoint.Enable("github.com/pingcap/tidb/domain/sendHistoricalStats", "return(true)")
 	defer failpoint.Disable("github.com/pingcap/tidb/domain/sendHistoricalStats")
+=======
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/sendHistoricalStats", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/sendHistoricalStats"))
+	}()
+>>>>>>> ad6385ab30a (statistics: avoid oom when to gc large stats_history (#48430)):pkg/executor/historical_stats_test.go
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
