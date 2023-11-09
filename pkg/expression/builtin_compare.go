@@ -119,18 +119,19 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		return nil, err
 	}
 
-	fieldTps := make([]*types.FieldType, 0, len(args))
+	flag := uint(0)
 	for _, arg := range args {
-		fieldTps = append(fieldTps, arg.GetType())
+		flag |= arg.GetType().GetFlag() & mysql.NotNullFlag
 	}
 
-	// Use the aggregated field type as retType.
-	resultFieldType := types.AggFieldType(fieldTps)
-	var tempType uint
-	resultEvalType := types.AggregateEvalType(fieldTps, &tempType)
-	resultFieldType.SetFlag(tempType)
-	retEvalTp := resultFieldType.EvalType()
+	resultFieldType, err := InferType4ControlFuncs(ctx, c.funcName, args...)
+	if err != nil {
+		return nil, err
+	}
 
+	resultFieldType.AddFlag(flag)
+
+	retEvalTp := resultFieldType.EvalType()
 	fieldEvalTps := make([]types.EvalType, 0, len(args))
 	for range args {
 		fieldEvalTps = append(fieldEvalTps, retEvalTp)
@@ -141,60 +142,7 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		return nil, err
 	}
 
-	bf.tp.AddFlag(resultFieldType.GetFlag())
-	resultFieldType.SetFlen(0)
-	resultFieldType.SetDecimal(types.UnspecifiedLength)
-
-	// Set retType to BINARY(0) if all arguments are of type NULL.
-	if resultFieldType.GetType() == mysql.TypeNull {
-		types.SetBinChsClnFlag(bf.tp)
-		resultFieldType.SetFlen(0)
-		resultFieldType.SetDecimal(0)
-	} else {
-		maxIntLen := 0
-		maxFlen := 0
-
-		// Find the max length of field in `maxFlen`,
-		// and max integer-part length in `maxIntLen`.
-		for _, argTp := range fieldTps {
-			if argTp.GetDecimal() > resultFieldType.GetDecimal() {
-				resultFieldType.SetDecimalUnderLimit(argTp.GetDecimal())
-			}
-			argIntLen := argTp.GetFlen()
-			if argTp.GetDecimal() > 0 {
-				argIntLen -= argTp.GetDecimal() + 1
-			}
-
-			// Reduce the sign bit if it is a signed integer/decimal
-			if !mysql.HasUnsignedFlag(argTp.GetFlag()) {
-				argIntLen--
-			}
-			if argIntLen > maxIntLen {
-				maxIntLen = argIntLen
-			}
-			if argTp.GetFlen() > maxFlen || argTp.GetFlen() == types.UnspecifiedLength {
-				maxFlen = argTp.GetFlen()
-			}
-		}
-		// For integer, field length = maxIntLen + (1/0 for sign bit)
-		// For decimal, field length = maxIntLen + maxDecimal + (1/0 for sign bit)
-		if resultEvalType == types.ETInt || resultEvalType == types.ETDecimal {
-			resultFieldType.SetFlenUnderLimit(maxIntLen + resultFieldType.GetDecimal())
-			if resultFieldType.GetDecimal() > 0 {
-				resultFieldType.SetFlenUnderLimit(resultFieldType.GetFlen() + 1)
-			}
-			if !mysql.HasUnsignedFlag(resultFieldType.GetFlag()) {
-				resultFieldType.SetFlenUnderLimit(resultFieldType.GetFlen() + 1)
-			}
-			bf.tp = resultFieldType
-		} else {
-			bf.tp.SetFlen(maxFlen)
-		}
-		// Set the field length to maxFlen for other types.
-		if bf.tp.GetFlen() > mysql.MaxDecimalWidth {
-			bf.tp.SetFlen(mysql.MaxDecimalWidth)
-		}
-	}
+	bf.tp = resultFieldType
 
 	switch retEvalTp {
 	case types.ETInt:
@@ -1252,6 +1200,7 @@ func (b *builtinIntervalRealSig) evalInt(ctx sessionctx.Context, row chunk.Row) 
 	if isNull {
 		return -1, false, nil
 	}
+
 	var idx int
 	if b.hasNullable {
 		idx, err = b.linearSearch(arg0, b.args[1:], row)
@@ -1621,7 +1570,7 @@ func allowCmpArgsRefining4PlanCache(ctx sessionctx.Context, args []Expression) (
 // 3. It also handles comparing datetime/timestamp column with numeric constant, try to cast numeric constant as timestamp type, do nothing if failed.
 // This refining operation depends on the values of these args, but these values can change when using plan-cache.
 // So we have to skip this operation or mark the plan as over-optimized when using plan-cache.
-func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Expression) []Expression {
+func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Expression) ([]Expression, error) {
 	arg0Type, arg1Type := args[0].GetType(), args[1].GetType()
 	arg0EvalType, arg1EvalType := arg0Type.EvalType(), arg1Type.EvalType()
 	arg0IsInt := arg0EvalType == types.ETInt
@@ -1632,17 +1581,19 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	isPositiveInfinite, isNegativeInfinite := false, false
 
 	if !allowCmpArgsRefining4PlanCache(ctx, args) {
-		return args
+		return args, nil
 	}
 	// We should remove the mutable constant for correctness, because its value may be changed.
-	RemoveMutableConst(ctx, args)
+	if err := RemoveMutableConst(ctx, args); err != nil {
+		return nil, err
+	}
 
 	if arg0IsCon && !arg1IsCon && matchRefineRule3Pattern(arg0EvalType, arg1Type) {
-		return c.refineNumericConstantCmpDatetime(ctx, args, arg0, 0)
+		return c.refineNumericConstantCmpDatetime(ctx, args, arg0, 0), nil
 	}
 
 	if !arg0IsCon && arg1IsCon && matchRefineRule3Pattern(arg1EvalType, arg0Type) {
-		return c.refineNumericConstantCmpDatetime(ctx, args, arg1, 1)
+		return c.refineNumericConstantCmpDatetime(ctx, args, arg1, 1), nil
 	}
 
 	// int non-constant [cmp] non-int constant
@@ -1708,24 +1659,24 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	}
 	if isExceptional && (c.op == opcode.EQ || c.op == opcode.NullEQ) {
 		// This will always be false.
-		return []Expression{NewZero(), NewOne()}
+		return []Expression{NewZero(), NewOne()}, nil
 	}
 	if isPositiveInfinite {
 		// If the op is opcode.LT, opcode.LE
 		// This will always be true.
 		// If the op is opcode.GT, opcode.GE
 		// This will always be false.
-		return []Expression{NewZero(), NewOne()}
+		return []Expression{NewZero(), NewOne()}, nil
 	}
 	if isNegativeInfinite {
 		// If the op is opcode.GT, opcode.GE
 		// This will always be true.
 		// If the op is opcode.LT, opcode.LE
 		// This will always be false.
-		return []Expression{NewOne(), NewZero()}
+		return []Expression{NewOne(), NewZero()}, nil
 	}
 
-	return c.refineArgsByUnsignedFlag(ctx, []Expression{finalArg0, finalArg1})
+	return c.refineArgsByUnsignedFlag(ctx, []Expression{finalArg0, finalArg1}), nil
 }
 
 // see https://github.com/pingcap/tidb/issues/38361 for more details
@@ -1818,7 +1769,10 @@ func (c *compareFunctionClass) getFunction(ctx sessionctx.Context, rawArgs []Exp
 	if err = c.verifyArgs(rawArgs); err != nil {
 		return nil, err
 	}
-	args := c.refineArgs(ctx, rawArgs)
+	args, err := c.refineArgs(ctx, rawArgs)
+	if err != nil {
+		return nil, err
+	}
 	cmpType := GetAccurateCmpType(args[0], args[1])
 	sig, err = c.generateCmpSigs(ctx, args, cmpType)
 	return sig, err

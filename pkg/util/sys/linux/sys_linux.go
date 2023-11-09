@@ -19,8 +19,21 @@ import (
 	"net"
 	"syscall"
 
+	"golang.org/x/exp/constraints"
 	"golang.org/x/sys/unix"
 )
+
+func charsToString[T constraints.Integer](ca []T) string {
+	s := make([]byte, len(ca))
+	var lens int
+	for ; lens < len(ca); lens++ {
+		if ca[lens] == 0 {
+			break
+		}
+		s[lens] = uint8(ca[lens])
+	}
+	return string(s[0:lens])
+}
 
 // OSVersion returns version info of operation system.
 // e.g. Linux 4.15.0-45-generic.x86_64
@@ -29,17 +42,6 @@ func OSVersion() (osVersion string, err error) {
 	err = syscall.Uname(&un)
 	if err != nil {
 		return
-	}
-	charsToString := func(ca []int8) string {
-		s := make([]byte, len(ca))
-		var lens int
-		for ; lens < len(ca); lens++ {
-			if ca[lens] == 0 {
-				break
-			}
-			s[lens] = uint8(ca[lens])
-		}
-		return string(s[0:lens])
 	}
 	osVersion = charsToString(un.Sysname[:]) + " " + charsToString(un.Release[:]) + "." + charsToString(un.Machine[:])
 	return

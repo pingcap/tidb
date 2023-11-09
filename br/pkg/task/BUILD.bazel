@@ -99,7 +99,7 @@ go_test(
     ],
     embed = [":task"],
     flaky = True,
-    shard_count = 18,
+    shard_count = 21,
     deps = [
         "//br/pkg/conn",
         "//br/pkg/errors",
@@ -112,6 +112,7 @@ go_test(
         "//pkg/parser/model",
         "//pkg/statistics/handle/util",
         "//pkg/tablecodec",
+        "//pkg/util/table-filter",
         "@com_github_golang_protobuf//proto",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
