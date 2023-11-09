@@ -2327,13 +2327,13 @@ type HandleRange struct {
 	End   int64
 }
 
-type BDRRole int
+type BDRRole string
 
 const (
-	BDRRoleNone BDRRole = iota
-	BDRRolePrimary
-	BDRRoleSecondary
-	BDRRoleLocalOnly
+	BDRRoleNone      BDRRole = "none"
+	BDRRolePrimary   BDRRole = "primary"
+	BDRRoleSecondary BDRRole = "secondary"
+	BDRRoleLocalOnly BDRRole = "local_only"
 )
 
 type StatementScope int
