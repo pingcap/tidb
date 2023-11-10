@@ -223,17 +223,11 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	if b.ctx.GetSessionVars().EnableSkewDistinctAgg {
 		b.optFlag |= flagSkewDistinctAgg
 	}
-<<<<<<< HEAD:planner/core/logical_plan_builder.go
-=======
+
 	// flag it if cte contain aggregation
 	if b.buildingCTE {
 		b.outerCTEs[len(b.outerCTEs)-1].containAggOrWindow = true
 	}
-	var rollupExpand *LogicalExpand
-	if expand, ok := p.(*LogicalExpand); ok {
-		rollupExpand = expand
-	}
->>>>>>> c131521d69f (planner, CTE: Fix default inline CTE which contains agg or window function and refactor inline CTE strategy (#48188)):pkg/planner/core/logical_plan_builder.go
 
 	plan4Agg := LogicalAggregation{AggFuncs: make([]*aggregation.AggFuncDesc, 0, len(aggFuncList))}.Init(b.ctx, b.getSelectOffset())
 	if hint := b.TableHints(); hint != nil {
