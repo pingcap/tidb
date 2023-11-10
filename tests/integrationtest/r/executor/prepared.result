@@ -104,10 +104,8 @@ create table t(data mediumblob);
 prepare stmt from 'insert t (data) values (?)';
 set @a = 'a';
 execute stmt using @a;
-
 set @b = 'aaaaaaaaaaaaaaaaaa';
 execute stmt using @b;
-
 select * from t;
 data
 a
@@ -117,10 +115,8 @@ create table t(data decimal);
 prepare stmt from 'insert t (data) values (?)';
 set @a = '1';
 execute stmt using @a;
-
 set @b = '11111.11111';
 execute stmt using @b;
-
 select * from t;
 data
 1
@@ -130,10 +126,8 @@ create table t(data decimal(10,3));
 prepare stmt from 'insert t (data) values (?)';
 set @a = 1.1;
 execute stmt using @a;
-
 set @b = 11.11;
 execute stmt using @b;
-
 select * from t;
 data
 1.100
@@ -144,10 +138,8 @@ create table t(data mediumblob);
 prepare stmt from 'insert t (data) values (?)';
 set @a = 'a';
 execute stmt using @a;
-
 set @b = 'aaaaaaaaaaaaaaaaaa';
 execute stmt using @b;
-
 select * from t;
 data
 a
@@ -157,10 +149,8 @@ create table t(data decimal);
 prepare stmt from 'insert t (data) values (?)';
 set @a = '1';
 execute stmt using @a;
-
 set @b = '11111.11111';
 execute stmt using @b;
-
 select * from t;
 data
 1
@@ -170,10 +160,8 @@ create table t(data decimal(10,3));
 prepare stmt from 'insert t (data) values (?)';
 set @a = 1.1;
 execute stmt using @a;
-
 set @b = 11.11;
 execute stmt using @b;
-
 select * from t;
 data
 1.100
@@ -315,3 +303,57 @@ set @@tidb_txn_mode = 'optimistic';
 prepare stmt1 from 'do 1';
 set tidb_enable_prepared_plan_cache=default;
 set @@tidb_txn_mode=default;
+drop table if exists t;
+create table t(a int, key(a));
+prepare stmt from 'select * from t limit ?';
+set @a = 1.2;
+execute stmt using @a;
+Error 1210 (HY000): Incorrect arguments to LIMIT
+set @a = 1.;
+execute stmt using @a;
+Error 1210 (HY000): Incorrect arguments to LIMIT
+set @a = '0';
+execute stmt using @a;
+Error 1210 (HY000): Incorrect arguments to LIMIT
+set @a = '1';
+execute stmt using @a;
+Error 1210 (HY000): Incorrect arguments to LIMIT
+set @a = 1_2;
+execute stmt using @a;
+Error 1210 (HY000): Incorrect arguments to LIMIT
+drop table if exists t;
+create table t(id int, k int);
+prepare stmt from 'explain select * from t where id = ? and k = ? group by id, k';
+show warnings;
+Level	Code	Message
+Warning	1105	skip prepared plan-cache: not a SELECT/UPDATE/INSERT/DELETE/SET statement
+set @a = 1;
+execute stmt using @a, @a;
+id	estRows	task	access object	operator info
+HashAgg_8	1.00	root		group by:executor__prepared.t.id, executor__prepared.t.k, funcs:firstrow(executor__prepared.t.id)->executor__prepared.t.id, funcs:firstrow(executor__prepared.t.k)->executor__prepared.t.k
+└─TableReader_15	0.01	root		data:Selection_14
+  └─Selection_14	0.01	cop[tikv]		eq(executor__prepared.t.id, 1), eq(executor__prepared.t.k, 1)
+    └─TableFullScan_13	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain select * from t where id = 1 and k = 1 group by id, k;
+id	estRows	task	access object	operator info
+HashAgg_8	1.00	root		group by:executor__prepared.t.id, executor__prepared.t.k, funcs:firstrow(executor__prepared.t.id)->executor__prepared.t.id, funcs:firstrow(executor__prepared.t.k)->executor__prepared.t.k
+└─TableReader_15	0.01	root		data:Selection_14
+  └─Selection_14	0.01	cop[tikv]		eq(executor__prepared.t.id, 1), eq(executor__prepared.t.k, 1)
+    └─TableFullScan_13	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+prepare stmt from 'explain select * from t where ? = id and ? = k group by id, k';
+show warnings;
+Level	Code	Message
+Warning	1105	skip prepared plan-cache: not a SELECT/UPDATE/INSERT/DELETE/SET statement
+set @a = 1;
+execute stmt using @a, @a;
+id	estRows	task	access object	operator info
+HashAgg_8	1.00	root		group by:executor__prepared.t.id, executor__prepared.t.k, funcs:firstrow(executor__prepared.t.id)->executor__prepared.t.id, funcs:firstrow(executor__prepared.t.k)->executor__prepared.t.k
+└─TableReader_15	0.01	root		data:Selection_14
+  └─Selection_14	0.01	cop[tikv]		eq(1, executor__prepared.t.id), eq(1, executor__prepared.t.k)
+    └─TableFullScan_13	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain select * from t where 1 = id and 1 = k group by id, k;
+id	estRows	task	access object	operator info
+HashAgg_8	1.00	root		group by:executor__prepared.t.id, executor__prepared.t.k, funcs:firstrow(executor__prepared.t.id)->executor__prepared.t.id, funcs:firstrow(executor__prepared.t.k)->executor__prepared.t.k
+└─TableReader_15	0.01	root		data:Selection_14
+  └─Selection_14	0.01	cop[tikv]		eq(1, executor__prepared.t.id), eq(1, executor__prepared.t.k)
+    └─TableFullScan_13	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo

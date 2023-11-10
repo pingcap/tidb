@@ -23,8 +23,6 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -42,12 +40,11 @@ type BackendCtxMgr interface {
 
 type litBackendCtxMgr struct {
 	generic.SyncMap[int64, *litBackendCtx]
-	memRoot   MemRoot
-	diskRoot  DiskRoot
-	isRaftKV2 bool
+	memRoot  MemRoot
+	diskRoot DiskRoot
 }
 
-func newLitBackendCtxMgr(ctx context.Context, sctx sessionctx.Context, path string, memQuota uint64) BackendCtxMgr {
+func newLitBackendCtxMgr(path string, memQuota uint64) BackendCtxMgr {
 	mgr := &litBackendCtxMgr{
 		SyncMap:  generic.NewSyncMap[int64, *litBackendCtx](10),
 		memRoot:  nil,
@@ -62,11 +59,6 @@ func newLitBackendCtxMgr(ctx context.Context, sctx sessionctx.Context, path stri
 	if err != nil {
 		logutil.BgLogger().Warn("ingest backfill may not be available", zap.String("category", "ddl-ingest"), zap.Error(err))
 	}
-	isRaftKV2, err := util.IsRaftKv2(ctx, sctx)
-	if err != nil {
-		logutil.BgLogger().Warn("failed to get 'storage.engine'", zap.String("category", "ddl-ingest"), zap.Error(err))
-	}
-	mgr.isRaftKV2 = isRaftKV2
 	return mgr
 }
 
@@ -95,7 +87,7 @@ func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int6
 		if !ok {
 			return nil, genBackendAllocMemFailedErr(ctx, m.memRoot, jobID)
 		}
-		cfg, err := genConfig(ctx, m.memRoot, jobID, unique, m.isRaftKV2)
+		cfg, err := genConfig(ctx, m.memRoot, jobID, unique)
 		if err != nil {
 			logutil.Logger(ctx).Warn(LitWarnConfigError, zap.Int64("job ID", jobID), zap.Error(err))
 			return nil, err
@@ -130,10 +122,9 @@ func createLocalBackend(ctx context.Context, cfg *Config, resourceGroupName stri
 	regionSizeGetter := &local.TableRegionSizeGetterImpl{
 		DB: nil,
 	}
+	// We disable the switch TiKV mode feature for now,
+	// because the impact is not fully tested.
 	var raftKV2SwitchModeDuration time.Duration
-	if cfg.IsRaftKV2 {
-		raftKV2SwitchModeDuration = config.DefaultSwitchTiKVModeInterval
-	}
 	backendConfig := local.NewBackendConfig(cfg.Lightning, int(LitRLimit), cfg.KeyspaceName, resourceGroupName, kvutil.ExplicitTypeDDL, raftKV2SwitchModeDuration)
 	return local.NewBackend(ctx, tls, backendConfig, regionSizeGetter)
 }

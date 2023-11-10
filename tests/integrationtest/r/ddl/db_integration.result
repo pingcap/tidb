@@ -120,11 +120,11 @@ Error 1059 (42000): Identifier name 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 create database test;
 Error 1007 (HY000): Can't create database 'test'; database exists
 create database test1 character set uft8;
-[parser:1115]Unknown character set: 'uft8'
+Error 1115 (42000): Unknown character set: 'uft8'
 create database test2 character set gkb;
-[parser:1115]Unknown character set: 'gkb'
+Error 1115 (42000): Unknown character set: 'gkb'
 create database test3 character set laitn1;
-[parser:1115]Unknown character set: 'laitn1'
+Error 1115 (42000): Unknown character set: 'laitn1'
 drop database db_not_exist;
 Error 1008 (HY000): Can't drop database 'db_not_exist'; database doesn't exist
 create table test_error_code_succ (c1 int, c2 int, c3 int, primary key(c3));
@@ -151,11 +151,11 @@ Error 1067 (42000): Invalid default value for 'a'
 CREATE TABLE `t` (`a` double DEFAULT now());
 Error 1067 (42000): Invalid default value for 'a'
 create table t1(a int) character set uft8;
-[parser:1115]Unknown character set: 'uft8'
+Error 1115 (42000): Unknown character set: 'uft8'
 create table t1(a int) character set gkb;
-[parser:1115]Unknown character set: 'gkb'
+Error 1115 (42000): Unknown character set: 'gkb'
 create table t1(a int) character set laitn1;
-[parser:1115]Unknown character set: 'laitn1'
+Error 1115 (42000): Unknown character set: 'laitn1'
 create table test_error_code (a int not null ,b int not null,c int not null, d int not null, foreign key (b, c) references product(id));
 Error 1239 (42000): Incorrect foreign key definition for 'fk_1': Key reference and table reference don't match
 create table test_error_code_2;
@@ -805,7 +805,7 @@ alter table t1 alter index a invisible;
 Error 3522 (HY000): A primary key index cannot be invisible
 create table t2(a int, primary key(a));
 alter table t2 alter index PRIMARY invisible;
-[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 34 near "PRIMARY invisible;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 34 near "PRIMARY invisible;" 
 create table t3(a int NOT NULL, b int);
 alter table t3 add index idx((a+b));
 select distinct index_name, is_visible from information_schema.statistics where table_schema = 'ddl__db_integration' and table_name = 't3' order by index_name;

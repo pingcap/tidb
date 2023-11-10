@@ -29,9 +29,8 @@ func CharsetNameToID(charset string) uint8 {
 		return ASCIIDefaultCollationID
 	} else if charset == "latin1" {
 		return Latin1DefaultCollationID
-	} else {
-		return CharsetIDs[charset]
 	}
+	return CharsetIDs[charset]
 }
 
 // CharsetIDs maps charset name to its default collation ID.

@@ -78,9 +78,9 @@ function build_tidb_server()
     echo "building tidb-server binary: $tidb_server"
     rm -rf $tidb_server
     if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
-        GO111MODULE=on go build -o $tidb_server github.com/pingcap/tidb/tidb-server
+        GO111MODULE=on go build -o $tidb_server github.com/pingcap/tidb/cmd/tidb-server
     else
-        GO111MODULE=on go build -race -o $tidb_server github.com/pingcap/tidb/tidb-server
+        GO111MODULE=on go build -race -o $tidb_server github.com/pingcap/tidb/cmd/tidb-server
     fi
 }
 
@@ -88,7 +88,7 @@ function build_mysql_tester()
 {
     echo "building mysql-tester binary: $mysql_tester"
     rm -rf $mysql_tester
-    GOBIN=$PWD go install github.com/pingcap/mysql-tester/src@f3b554899a0cb24a3b387f7d45de2687098577c3
+    GOBIN=$PWD go install github.com/pingcap/mysql-tester/src@fe93e790fd4a92083b62ca8b43185df12591f0cd
     mv src mysql_tester
 }
 
