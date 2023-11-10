@@ -101,10 +101,9 @@ type Handle struct {
 // Clear the statsCache, only for test.
 func (h *Handle) Clear() {
 	h.StatsCache.Clear()
-	// TODO: clean the ddl event channel.
-	// for len(h.ddlEventCh) > 0 {
-	// 	<-h.ddlEventCh
-	// }
+	for len(h.DDLEventCh()) > 0 {
+		<-h.DDLEventCh()
+	}
 	h.ResetSessionStatsList()
 }
 
@@ -177,13 +176,12 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statist
 
 // FlushStats flushes the cached stats update into store.
 func (h *Handle) FlushStats() {
-	// TODO: flush the ddl events.
-	// for len(h.ddlEventCh) > 0 {
-	// 	e := <-h.ddlEventCh
-	// 	if err := h.HandleDDLEvent(e); err != nil {
-	// 		logutil.BgLogger().Error("handle ddl event fail", zap.String("category", "stats"), zap.Error(err))
-	// 	}
-	// }
+	for len(h.DDLEventCh()) > 0 {
+		e := <-h.DDLEventCh()
+		if err := h.HandleDDLEvent(e); err != nil {
+			logutil.BgLogger().Error("handle ddl event fail", zap.String("category", "stats"), zap.Error(err))
+		}
+	}
 	if err := h.DumpStatsDeltaToKV(true); err != nil {
 		logutil.BgLogger().Error("dump stats delta fail", zap.String("category", "stats"), zap.Error(err))
 	}
