@@ -139,7 +139,7 @@ func (e *Event) GetAddTablePartitionInfo() (globalTableInfo *model.TableInfo, ad
 	return e.tableInfo, e.partInfo
 }
 
-// NewDropPartitionEvent creates a new ddl event that drops a partition.
+// NewDropPartitionEvent creates a new ddl event that drops partitions.
 func NewDropPartitionEvent(
 	globalTableInfo *model.TableInfo,
 	droppedPartInfo *model.PartitionInfo,
@@ -151,7 +151,7 @@ func NewDropPartitionEvent(
 	}
 }
 
-// GetDropPartitionInfo gets the table info of the table that is dropped a partition.
+// GetDropPartitionInfo gets the table info of the table that is dropped partitions.
 func (e *Event) GetDropPartitionInfo() (globalTableInfo *model.TableInfo, droppedPartInfo *model.PartitionInfo) {
 	return e.tableInfo, e.oldPartInfo
 }
@@ -178,7 +178,7 @@ func (e *Event) getExchangePartitionInfo() (
 	return e.tableInfo, e.partInfo, e.oldTableInfo
 }
 
-// NewReorganizePartitionEvent creates a new ddl event that reorganizes a partition.
+// NewReorganizePartitionEvent creates a new ddl event that reorganizes partitions.
 // We also use it for increasing or decreasing the number of hash partitions.
 func NewReorganizePartitionEvent(
 	globalTableInfo *model.TableInfo,
@@ -193,7 +193,7 @@ func NewReorganizePartitionEvent(
 	}
 }
 
-// GetReorganizePartitionInfo gets the table info of the table that is reorganized a partition.
+// GetReorganizePartitionInfo gets the table info of the table that is reorganized partitions.
 func (e *Event) GetReorganizePartitionInfo() (
 	globalTableInfo *model.TableInfo,
 	addedPartInfo *model.PartitionInfo,
@@ -202,7 +202,7 @@ func (e *Event) GetReorganizePartitionInfo() (
 	return e.tableInfo, e.partInfo, e.oldPartInfo
 }
 
-// NewTruncatePartitionEvent creates a new ddl event that truncates a partition.
+// NewTruncatePartitionEvent creates a new ddl event that truncates partitions.
 func NewTruncatePartitionEvent(
 	globalTableInfo *model.TableInfo,
 	addedPartInfo *model.PartitionInfo,
@@ -216,7 +216,7 @@ func NewTruncatePartitionEvent(
 	}
 }
 
-// GetTruncatePartitionInfo gets the table info of the table that is truncated a partition.
+// GetTruncatePartitionInfo gets the table info of the table that is truncated partitions.
 func (e *Event) GetTruncatePartitionInfo() (
 	globalTableInfo *model.TableInfo,
 	addedPartInfo *model.PartitionInfo,
@@ -225,7 +225,7 @@ func (e *Event) GetTruncatePartitionInfo() (
 	return e.tableInfo, e.partInfo, e.oldPartInfo
 }
 
-// NewAddPartitioningEvent creates a new ddl event that adds partitioning.
+// NewAddPartitioningEvent creates a new ddl event that converts a single table to a partitioned table.
 // For example, `alter table t partition by range (c1) (partition p1 values less than (10))`.
 func NewAddPartitioningEvent(
 	newGlobalTableInfo *model.TableInfo,
@@ -238,12 +238,12 @@ func NewAddPartitioningEvent(
 	}
 }
 
-// GetAddPartitioningInfo gets the table info of the table that is added partitioning.
+// GetAddPartitioningInfo gets the table info of the table that is converted to a partitioned table.
 func (e *Event) GetAddPartitioningInfo() (newGlobalTableInfo *model.TableInfo, addedPartInfo *model.PartitionInfo) {
 	return e.tableInfo, e.partInfo
 }
 
-// NewRemovePartitioningEvent creates a new ddl event that removes partitioning.
+// NewRemovePartitioningEvent creates a new ddl event that converts a partitioned table to a single table.
 // For example, `alter table t remove partitioning`.
 func NewRemovePartitioningEvent(
 	newSingleTableInfo *model.TableInfo,
@@ -256,7 +256,7 @@ func NewRemovePartitioningEvent(
 	}
 }
 
-// GetRemovePartitioningInfo gets the table info of the table that is removed partitioning.
+// GetRemovePartitioningInfo gets the table info of the table that is converted to a single table.
 func (e *Event) GetRemovePartitioningInfo() (
 	newSingleTableInfo *model.TableInfo,
 	droppedPartInfo *model.PartitionInfo,
