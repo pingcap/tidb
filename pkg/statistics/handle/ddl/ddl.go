@@ -126,7 +126,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 			}
 		}
 		for _, def := range droppedPartitionInfo.Definitions {
-			if err := h.statsHandler.ResetTableStats2KVForDrop(def.ID); err != nil {
+			if err := h.statsWriter.ResetTableStats2KVForDrop(def.ID); err != nil {
 				return err
 			}
 		}
