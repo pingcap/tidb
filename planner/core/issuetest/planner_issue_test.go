@@ -90,3 +90,65 @@ func TestIssue46083(t *testing.T) {
 	tk.MustExec("CREATE TEMPORARY TABLE v0(v1 int)")
 	tk.MustExec("INSERT INTO v0 WITH ta2 AS (TABLE v0) TABLE ta2 FOR UPDATE OF ta2;")
 }
+
+func TestIssue47781(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2")
+	tk.MustExec("create table t (id int,name varchar(10))")
+	tk.MustExec("insert into t values(1,'tt')")
+	tk.MustExec("create table t1(id int,name varchar(10),name1 varchar(10),name2 varchar(10))")
+	tk.MustExec("insert into t1 values(1,'tt','ttt','tttt'),(2,'dd','ddd','dddd')")
+	tk.MustExec("create table t2(id int,name varchar(10),name1 varchar(10),name2 varchar(10),`date1` date)")
+	tk.MustExec("insert into t2 values(1,'tt','ttt','tttt','2099-12-31'),(2,'dd','ddd','dddd','2099-12-31')")
+	tk.MustQuery(`WITH bzzs AS (
+  SELECT 
+    count(1) AS bzn 
+  FROM 
+    t c
+), 
+tmp1 AS (
+  SELECT 
+    t1.* 
+  FROM 
+    t1 
+    LEFT JOIN bzzs ON 1 = 1 
+  WHERE 
+    name IN ('tt') 
+    AND bzn <> 1
+), 
+tmp2 AS (
+  SELECT 
+    tmp1.*, 
+    date('2099-12-31') AS endate 
+  FROM 
+    tmp1
+), 
+tmp3 AS (
+  SELECT 
+    * 
+  FROM 
+    tmp2 
+  WHERE 
+    endate > CURRENT_DATE 
+  UNION ALL 
+  SELECT 
+    '1' AS id, 
+    'ss' AS name, 
+    'sss' AS name1, 
+    'ssss' AS name2, 
+    date('2099-12-31') AS endate 
+  FROM 
+    bzzs t1 
+  WHERE 
+    bzn = 1
+) 
+SELECT 
+  c2.id, 
+  c3.id 
+FROM 
+  t2 db 
+  LEFT JOIN tmp3 c2 ON c2.id = '1' 
+  LEFT JOIN tmp3 c3 ON c3.id = '1';`).Check(testkit.Rows("1 1", "1 1"))
+}

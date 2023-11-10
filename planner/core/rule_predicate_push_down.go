@@ -990,7 +990,7 @@ func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, _ *lo
 		// Doesn't support recursive CTE yet.
 		return predicates, p.self
 	}
-	if !p.isOuterMostCTE {
+	if !p.cte.isOuterMostCTE {
 		return predicates, p.self
 	}
 	pushedPredicates := make([]expression.Expression, len(predicates))
