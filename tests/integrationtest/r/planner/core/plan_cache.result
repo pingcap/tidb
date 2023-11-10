@@ -1085,25 +1085,19 @@ drop table if exists t;
 create table t (a int);
 prepare st from 'insert into t values (1)';
 execute st;
-
 execute st;
-
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 1
 prepare st from 'insert into t select * from t';
 execute st;
-
 execute st;
-
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 1
 prepare st from 'insert /*+ ignore_plan_cache() */ into t select * from t';
 execute st;
-
 execute st;
-
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
@@ -1111,9 +1105,7 @@ drop table if exists t;
 create table t (a int);
 prepare inert200 from 'insert into t values (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1)';
 execute inert200;
-
 execute inert200;
-
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 1
@@ -1121,9 +1113,7 @@ prepare inert201 from 'insert into t values (1), (1), (1), (1), (1), (1), (1), (
 Level	Code	Message
 Warning	1105	skip prepared plan-cache: too many values in the insert statement
 execute inert201;
-
 execute inert201;
-
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
@@ -1842,13 +1832,11 @@ update t set a=2 where a<12;
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 1
-update t set a=1 where a<10;
- update t set a=2 where a<12;
-update t set a=1 where a<10;
- update t set a=2 where a<12;
+update t set a=1 where a<10; update t set a=2 where a<12;
+update t set a=1 where a<10; update t set a=2 where a<12;
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-1
+0
 update t set a=2 where a<12;
 select @@last_plan_from_cache;
 @@last_plan_from_cache

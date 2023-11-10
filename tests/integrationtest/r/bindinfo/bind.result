@@ -317,6 +317,7 @@ drop global binding for select * from t using select * from t use index(a);
 drop table if exists t;
 create table t(id int, value decimal(5,2));
 table t;
+id	value
 explain table t;
 id	estRows	task	access object	operator info
 TableReader_5	10000.00	root		data:TableFullScan_4

@@ -42,11 +42,12 @@ func genCastIntAsInt() (*builtinCastIntAsIntSig, *chunk.Chunk, *chunk.Column) {
 
 func BenchmarkCastIntAsIntRow(b *testing.B) {
 	cast, input, _ := genCastIntAsInt()
+	ctx := cast.ctx
 	it := chunk.NewIterator4Chunk(input)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for row := it.Begin(); row != it.End(); row = it.Next() {
-			if _, _, err := cast.evalInt(row); err != nil {
+			if _, _, err := cast.evalInt(ctx, row); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -55,9 +56,10 @@ func BenchmarkCastIntAsIntRow(b *testing.B) {
 
 func BenchmarkCastIntAsIntVec(b *testing.B) {
 	cast, input, result := genCastIntAsInt()
+	ctx := cast.ctx
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := cast.vecEvalInt(input, result); err != nil {
+		if err := cast.vecEvalInt(ctx, input, result); err != nil {
 			b.Fatal(err)
 		}
 	}
