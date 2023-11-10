@@ -25,9 +25,9 @@ import (
 )
 
 const (
-	pollingPendingSnapshotInterval  = 30 * time.Second
-	errCodeTooManyPendingSnapshots  = "PendingSnapshotLimitExceeded"
-	AWS_FSR_API_SNAPSHOTS_THRESHOLD = 10
+	pollingPendingSnapshotInterval = 30 * time.Second
+	errCodeTooManyPendingSnapshots = "PendingSnapshotLimitExceeded"
+	FsrApiSnapshotsThreshold       = 10
 )
 
 type EC2Session struct {
@@ -295,9 +295,9 @@ func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string)
 	for availableZone := range snapshotsIDsMap {
 		targetAZ := availableZone
 		// We have to control the batch size to avoid the error of "parameter SourceSnapshotIds must be less than or equal to 10"
-		for i := 0; i < len(snapshotsIDsMap[targetAZ]); i += AWS_FSR_API_SNAPSHOTS_THRESHOLD {
+		for i := 0; i < len(snapshotsIDsMap[targetAZ]); i += FsrApiSnapshotsThreshold {
 			start := i
-			end := i + AWS_FSR_API_SNAPSHOTS_THRESHOLD
+			end := i + FsrApiSnapshotsThreshold
 			if end > len(snapshotsIDsMap[targetAZ]) {
 				end = len(snapshotsIDsMap[targetAZ])
 			}
@@ -389,9 +389,9 @@ func (e *EC2Session) DisableDataFSR(snapshotsIDsMap map[string][]*string) error 
 	for availableZone := range snapshotsIDsMap {
 		targetAZ := availableZone
 		// We have to control the batch size to avoid the error of "parameter SourceSnapshotIds must be less than or equal to 10"
-		for i := 0; i < len(snapshotsIDsMap[targetAZ]); i += AWS_FSR_API_SNAPSHOTS_THRESHOLD {
+		for i := 0; i < len(snapshotsIDsMap[targetAZ]); i += FsrApiSnapshotsThreshold {
 			start := i
-			end := i + AWS_FSR_API_SNAPSHOTS_THRESHOLD
+			end := i + FsrApiSnapshotsThreshold
 			if end > len(snapshotsIDsMap[targetAZ]) {
 				end = len(snapshotsIDsMap[targetAZ])
 			}
