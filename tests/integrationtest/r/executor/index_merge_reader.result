@@ -453,6 +453,8 @@ INSERT INTO tab2 VALUES(5,319,769.65,'aeqln',855,197.9,'apipa');
 INSERT INTO tab2 VALUES(6,610,302.62,'bixap',184,840.31,'vggit');
 INSERT INTO tab2 VALUES(7,253,453.21,'gjccm',107,104.5,'lvunv');
 SPLIT TABLE tab2 BY (5);
+TOTAL_SPLIT_REGION	SCATTER_FINISH_RATIO
+1	1
 SELECT /*+ use_index_merge(tab2) */ pk FROM tab2 WHERE (col4 > 565.89 OR col0 > 68 ) and col0 > 10 order by 1;
 pk
 0

@@ -341,7 +341,7 @@ Warning	8200	LINEAR KEY is not supported, using non-linear KEY instead
 CREATE TABLE tkey_algorithm1 (col1 INT, col2 CHAR(5), col3 DATE) PARTITION BY KEY ALGORITHM=1 (col3) PARTITIONS 5;
 CREATE TABLE tkey_algorithm2 (col1 INT, col2 CHAR(5), col3 DATE) PARTITION BY KEY ALGORITHM=2 (col3) PARTITIONS 5;
 CREATE TABLE tkey_algorithm3 (col1 INT, col2 CHAR(5), col3 DATE) PARTITION BY KEY ALGORITHM=3 (col3) PARTITIONS 5;
-[parser:1149]You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use
+Error 1149 (42000): You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use
 CREATE TABLE tkey_subpartition1 (a INT not null,b VARCHAR(12) not null,c CHAR(14) not null,primary key (a, b, c)) PARTITION BY KEY (a) SUBPARTITION BY KEY(b) SUBPARTITIONS 2;
 Error 1500 (HY000): It is only possible to mix RANGE/LIST partitioning with HASH/KEY partitioning for subpartitioning
 CREATE TABLE tkey_subpartition1 (JYRQ INT not null,KHH VARCHAR(12) not null,ZJZH CHAR(14) not null,primary key (JYRQ, KHH, ZJZH))PARTITION BY RANGE(JYRQ)

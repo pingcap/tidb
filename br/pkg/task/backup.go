@@ -41,6 +41,7 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/oracle"
 	kvutil "github.com/tikv/client-go/v2/util"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
 
@@ -778,6 +779,21 @@ func ParseTSString(ts string, tzCheck bool) (uint64, error) {
 		return 0, errors.Trace(err)
 	}
 	return oracle.GoTimeToTS(t1), nil
+}
+
+func DefaultBackupConfig() BackupConfig {
+	fs := pflag.NewFlagSet("dummy", pflag.ContinueOnError)
+	DefineCommonFlags(fs)
+	DefineBackupFlags(fs)
+	cfg := BackupConfig{}
+	err := multierr.Combine(
+		cfg.ParseFromFlags(fs),
+		cfg.Config.ParseFromFlags(fs),
+	)
+	if err != nil {
+		log.Panic("infallible operation failed.", zap.Error(err))
+	}
+	return cfg
 }
 
 func parseCompressionType(s string) (backuppb.CompressionType, error) {
