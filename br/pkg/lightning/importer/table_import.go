@@ -52,11 +52,8 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/extsort"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/util/mathutil"
-=======
 	clientv3 "go.etcd.io/etcd/client/v3"
->>>>>>> 4979e9985cc (*: share etcd client from domain for autoid allocator (#46647))
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
