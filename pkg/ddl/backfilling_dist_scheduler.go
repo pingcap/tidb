@@ -19,7 +19,9 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
@@ -27,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/tikv/pd/client/errs"
 	"go.uber.org/zap"
 )
 
@@ -142,6 +145,9 @@ func (s *backfillDistScheduler) Init(ctx context.Context) error {
 	if idx == nil {
 		return errors.Trace(errors.Errorf("index info not found: %d", bgm.EleIDs[0]))
 	}
+	failpoint.Inject("mockErrCreatePDClientWhenRegisterBackCtx", func() {
+		failpoint.Return(common.NormalizeOrWrapErr(common.ErrCreatePDClient, errs.ErrClientGetMember))
+	})
 	bc, err := ingest.LitBackCtxMgr.Register(ctx, idx.Unique, job.ID, d.etcdCli, job.ReorgMeta.ResourceGroupName)
 	if err != nil {
 		return errors.Trace(err)

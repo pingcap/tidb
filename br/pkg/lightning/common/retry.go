@@ -28,6 +28,8 @@ import (
 	"github.com/pingcap/errors"
 	tmysql "github.com/pingcap/tidb/pkg/errno"
 	drivererr "github.com/pingcap/tidb/pkg/store/driver/error"
+	"github.com/tikv/pd/client/errs"
+
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -79,8 +81,6 @@ var retryableErrorIDs = map[errors.ErrorID]struct{}{
 	ErrKVReadIndexNotReady.ID():   {},
 	ErrKVIngestFailed.ID():        {},
 	ErrKVRaftProposalDropped.ID(): {},
-	// litBackendCtxMgr.Register may return the error.
-	ErrCreatePDClient.ID(): {},
 	// during checksum coprocessor will transform error into driver error in handleCopResponse using ToTiDBErr
 	// met ErrRegionUnavailable on free-tier import during checksum, others hasn't met yet
 	drivererr.ErrRegionUnavailable.ID(): {},
@@ -88,6 +88,9 @@ var retryableErrorIDs = map[errors.ErrorID]struct{}{
 	drivererr.ErrTiKVServerTimeout.ID(): {},
 	drivererr.ErrTiKVServerBusy.ID():    {},
 	drivererr.ErrUnknown.ID():           {},
+	// litBackendCtxMgr.Register may return the error.
+	// see https://github.com/tikv/pd/issues/7251.
+	errs.ErrClientGetMember.ID(): {},
 }
 
 // ErrWriteTooSlow is used to get rid of the gRPC blocking issue.

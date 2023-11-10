@@ -79,6 +79,10 @@ func TestAddIndexDistBasic(t *testing.T) {
 	tk.MustExecToErr("alter table t1 add index idx2(a);")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectPanicForIndexIngest"))
 
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockErrCreatePDClientWhenRegisterBackCtx", "1*return()"))
+	tk.MustExec("alter table t1 add index idx2(a);")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockErrCreatePDClientWhenRegisterBackCtx"))
+
 	tk.MustExec(`set global tidb_enable_dist_task=0;`)
 }
 

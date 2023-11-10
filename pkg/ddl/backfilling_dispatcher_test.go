@@ -35,10 +35,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
-	"go.uber.org/zap"
 )
 
 func TestBackfillingDispatcherLocalMode(t *testing.T) {
@@ -196,7 +194,6 @@ func TestBackfillingDispatcherGlobalSortMode(t *testing.T) {
 	require.NoError(t, err)
 	gotSubtasks, err := mgr.GetSubtasksForImportInto(taskID, ddl.StepReadIndex)
 	require.NoError(t, err)
-	logutil.BgLogger().Info("ywq test", zap.Any("len", len(gotSubtasks)))
 
 	// update meta, same as import into.
 	sortStepMeta := &ddl.BackfillSubTaskMeta{
