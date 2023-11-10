@@ -24,7 +24,7 @@ import (
 func TestEventString(t *testing.T) {
 	// Create an Event object
 	e := &DDLEvent{
-		Tp: model.ActionAddColumn,
+		tp: model.ActionAddColumn,
 		tableInfo: &model.TableInfo{
 			ID:   1,
 			Name: model.NewCIStr("Table1"),
