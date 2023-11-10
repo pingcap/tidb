@@ -148,11 +148,14 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 				return err
 			}
 		}
-		fallthrough
+		// Change id for global stats, since the data has not changed!
+		// Note that globalTableInfo is the new table info
+		// and addedPartInfo.NewTableID is actually the old table ID!
+		return h.statsWriter.ChangeGlobalStatsID(addedPartInfo.NewTableID, globalTableInfo.ID)
 	case model.ActionRemovePartitioning:
 		// Change id for global stats, since the data has not changed!
-		// Note that t.TableInfo is the current (new) table info
-		// and t.PartInfo.NewTableID is actually the old table ID!
+		// Note that newSingleTableInfo is the new table info
+		// and droppedPartInfo.NewTableID is actually the old table ID!
 		// (see onReorganizePartition)
 		newSingleTableInfo, droppedPartInfo := t.GetRemovePartitioningInfo()
 		return h.statsWriter.ChangeGlobalStatsID(droppedPartInfo.NewTableID, newSingleTableInfo.ID)
