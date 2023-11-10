@@ -163,14 +163,6 @@ else
 	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./cmd/tidb-server
 endif
 
-server_fips:
-ifeq ($(TARGET), "")
-	GOEXPERIMENT=boringcrypto CGO_ENABLED=1 $(GOBUILD) -tags boringcrypto $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server ./cmd/tidb-server
-else
-	GOEXPERIMENT=boringcrypto CGO_ENABLED=1 $(GOBUILD) -tags boringcrypto $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./cmd/tidb-server
-endif
-
-
 server_debug:
 ifeq ($(TARGET), "")
 	CGO_ENABLED=1 $(GOBUILD) -gcflags="all=-N -l" $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server-debug ./cmd/tidb-server
