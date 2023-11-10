@@ -387,6 +387,8 @@ func TestHotspot(t *testing.T) {
 			err = kvStore.addEncodedData([]byte(k), value)
 			require.NoError(t, err)
 		}
+		err = kvStore.Close()
+		require.NoError(t, err)
 		err = writer.Close(ctx)
 		require.NoError(t, err)
 	}
