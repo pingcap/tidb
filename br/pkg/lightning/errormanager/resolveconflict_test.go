@@ -261,26 +261,28 @@ func TestReplaceConflictOneUniqueKeyNonclusteredPk(t *testing.T) {
 	require.NoError(t, err)
 	kvPairs := encoder.SessionCtx.TakeKvPairs()
 
-	data4NonclusteredKey := kvPairs.Pairs[10].Key
-	data4NonclusteredValue := kvPairs.Pairs[10].Val
-	data4RowKey := kvPairs.Pairs[9].Key
-	data4RowValue := kvPairs.Pairs[9].Val
-	data5NonclusteredValue := kvPairs.Pairs[13].Val
-	data5RowKey := kvPairs.Pairs[12].Key
-	data5RowValue := kvPairs.Pairs[12].Val
-	data1NonclusteredKey := kvPairs.Pairs[1].Key
-	data1NonclusteredValue := kvPairs.Pairs[1].Val
 	data1RowKey := kvPairs.Pairs[0].Key
-	data2NonclusteredValue := kvPairs.Pairs[4].Val
 	data2RowKey := kvPairs.Pairs[3].Key
 	data2RowValue := kvPairs.Pairs[3].Val
+	data3RowKey := kvPairs.Pairs[6].Key
+	data4RowKey := kvPairs.Pairs[9].Key
+	data4RowValue := kvPairs.Pairs[9].Val
+	data5RowKey := kvPairs.Pairs[12].Key
+	data5RowValue := kvPairs.Pairs[12].Val
+
 	data2IndexKey := kvPairs.Pairs[5].Key
 	data2IndexValue := kvPairs.Pairs[5].Val
 	data3IndexKey := kvPairs.Pairs[8].Key
 	data3IndexValue := kvPairs.Pairs[8].Val
-	data3RowKey := kvPairs.Pairs[6].Key
 	data5IndexKey := kvPairs.Pairs[14].Key
 	data5IndexValue := kvPairs.Pairs[14].Val
+
+	data1NonclusteredKey := kvPairs.Pairs[1].Key
+	data1NonclusteredValue := kvPairs.Pairs[1].Val
+	data2NonclusteredValue := kvPairs.Pairs[4].Val
+	data4NonclusteredKey := kvPairs.Pairs[10].Key
+	data4NonclusteredValue := kvPairs.Pairs[10].Val
+	data5NonclusteredValue := kvPairs.Pairs[13].Val
 
 	db, mockDB, err := sqlmock.New()
 	require.NoError(t, err)
@@ -456,26 +458,28 @@ func TestReplaceConflictOneUniqueKeyNonclusteredVarcharPk(t *testing.T) {
 	require.NoError(t, err)
 	kvPairs := encoder.SessionCtx.TakeKvPairs()
 
-	data4NonclusteredKey := kvPairs.Pairs[10].Key
-	data4NonclusteredValue := kvPairs.Pairs[10].Val
-	data4RowKey := kvPairs.Pairs[9].Key
-	data4RowValue := kvPairs.Pairs[9].Val
-	data5NonclusteredValue := kvPairs.Pairs[13].Val
-	data5RowKey := kvPairs.Pairs[12].Key
-	data5RowValue := kvPairs.Pairs[12].Val
-	data1NonclusteredKey := kvPairs.Pairs[1].Key
-	data1NonclusteredValue := kvPairs.Pairs[1].Val
 	data1RowKey := kvPairs.Pairs[0].Key
-	data2NonclusteredValue := kvPairs.Pairs[4].Val
 	data2RowKey := kvPairs.Pairs[3].Key
 	data2RowValue := kvPairs.Pairs[3].Val
+	data3RowKey := kvPairs.Pairs[6].Key
+	data4RowKey := kvPairs.Pairs[9].Key
+	data4RowValue := kvPairs.Pairs[9].Val
+	data5RowKey := kvPairs.Pairs[12].Key
+	data5RowValue := kvPairs.Pairs[12].Val
+
 	data2IndexKey := kvPairs.Pairs[5].Key
 	data2IndexValue := kvPairs.Pairs[5].Val
 	data3IndexKey := kvPairs.Pairs[8].Key
 	data3IndexValue := kvPairs.Pairs[8].Val
-	data3RowKey := kvPairs.Pairs[6].Key
 	data5IndexKey := kvPairs.Pairs[14].Key
 	data5IndexValue := kvPairs.Pairs[14].Val
+
+	data1NonclusteredKey := kvPairs.Pairs[1].Key
+	data1NonclusteredValue := kvPairs.Pairs[1].Val
+	data2NonclusteredValue := kvPairs.Pairs[4].Val
+	data4NonclusteredKey := kvPairs.Pairs[10].Key
+	data4NonclusteredValue := kvPairs.Pairs[10].Val
+	data5NonclusteredValue := kvPairs.Pairs[13].Val
 
 	db, mockDB, err := sqlmock.New()
 	require.NoError(t, err)
