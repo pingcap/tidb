@@ -748,7 +748,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	case model.StateWriteReorganization:
 		// TODO: Support flashback in unistore.
 		if inFlashbackTest {
-			asyncNotifyEvent(d, &statsutil.DDLEvent{Tp: model.ActionFlashbackCluster})
+			asyncNotifyEvent(d, statsutil.NewFlashbackClusterEvent())
 			job.State = model.JobStateDone
 			job.SchemaState = model.StatePublic
 			return ver, nil
@@ -771,7 +771,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			}
 		}
 
-		asyncNotifyEvent(d, &statsutil.DDLEvent{Tp: model.ActionFlashbackCluster})
+		asyncNotifyEvent(d, statsutil.NewFlashbackClusterEvent())
 		job.State = model.JobStateDone
 		job.SchemaState = model.StatePublic
 		return updateSchemaVersion(d, t, job)

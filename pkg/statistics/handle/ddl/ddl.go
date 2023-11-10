@@ -43,7 +43,7 @@ func NewDDLHandler(
 
 // HandleDDLEvent begins to process a ddl task.
 func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
-	switch t.Tp {
+	switch t.GetType() {
 	case model.ActionCreateTable:
 		newTableInfo := t.GetCreateTableInfo()
 		ids, err := h.getInitStateTableIDs(newTableInfo)

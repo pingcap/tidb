@@ -31,12 +31,7 @@ type DDLEvent struct {
 	oldTableInfo *model.TableInfo
 	oldPartInfo  *model.PartitionInfo
 	columnInfos  []*model.ColumnInfo
-
-	// We expose the action type field to the outside, because some ddl events
-	// do not need other fields.
-	// If your ddl event needs other fields, please add them with the
-	// corresponding NewXXXEvent function and give them clear names.
-	Tp model.ActionType
+	tp           model.ActionType
 }
 
 // NewCreateTableEvent creates a new ddl event that creates a table.
@@ -44,7 +39,7 @@ func NewCreateTableEvent(
 	newTableInfo *model.TableInfo,
 ) *DDLEvent {
 	return &DDLEvent{
-		Tp:        model.ActionCreateTable,
+		tp:        model.ActionCreateTable,
 		tableInfo: newTableInfo,
 	}
 }
@@ -60,7 +55,7 @@ func NewTruncateTableEvent(
 	droppedTableInfo *model.TableInfo,
 ) *DDLEvent {
 	return &DDLEvent{
-		Tp:           model.ActionTruncateTable,
+		tp:           model.ActionTruncateTable,
 		tableInfo:    newTableInfo,
 		oldTableInfo: droppedTableInfo,
 	}
@@ -76,7 +71,7 @@ func NewDropTableEvent(
 	droppedTableInfo *model.TableInfo,
 ) *DDLEvent {
 	return &DDLEvent{
-		Tp:           model.ActionDropTable,
+		tp:           model.ActionDropTable,
 		oldTableInfo: droppedTableInfo,
 	}
 }
@@ -93,7 +88,7 @@ func NewAddColumnEvent(
 	newColumnInfo []*model.ColumnInfo,
 ) *DDLEvent {
 	return &DDLEvent{
-		Tp:          model.ActionAddColumn,
+		tp:          model.ActionAddColumn,
 		tableInfo:   newTableInfo,
 		columnInfos: newColumnInfo,
 	}
@@ -111,7 +106,7 @@ func NewModifyColumnEvent(
 	modifiedColumnInfo []*model.ColumnInfo,
 ) *DDLEvent {
 	return &DDLEvent{
-		Tp:          model.ActionModifyColumn,
+		tp:          model.ActionModifyColumn,
 		tableInfo:   newTableInfo,
 		columnInfos: modifiedColumnInfo,
 	}
@@ -128,7 +123,7 @@ func NewAddPartitionEvent(
 	addedPartInfo *model.PartitionInfo,
 ) *DDLEvent {
 	return &DDLEvent{
-		Tp:        model.ActionAddTablePartition,
+		tp:        model.ActionAddTablePartition,
 		tableInfo: globalTableInfo,
 		partInfo:  addedPartInfo,
 	}
@@ -145,7 +140,7 @@ func NewDropPartitionEvent(
 	droppedPartInfo *model.PartitionInfo,
 ) *DDLEvent {
 	return &DDLEvent{
-		Tp:          model.ActionDropTablePartition,
+		tp:          model.ActionDropTablePartition,
 		tableInfo:   globalTableInfo,
 		oldPartInfo: droppedPartInfo,
 	}
@@ -163,7 +158,7 @@ func NewExchangePartitionEvent(
 	exchangedTableInfo *model.TableInfo,
 ) *DDLEvent {
 	return &DDLEvent{
-		Tp:           model.ActionExchangeTablePartition,
+		tp:           model.ActionExchangeTablePartition,
 		tableInfo:    globalTableInfo,
 		partInfo:     exchangedPartInfo,
 		oldTableInfo: exchangedTableInfo,
@@ -186,7 +181,7 @@ func NewReorganizePartitionEvent(
 	droppedPartInfo *model.PartitionInfo,
 ) *DDLEvent {
 	return &DDLEvent{
-		Tp:          model.ActionReorganizePartition,
+		tp:          model.ActionReorganizePartition,
 		tableInfo:   globalTableInfo,
 		partInfo:    addedPartInfo,
 		oldPartInfo: droppedPartInfo,
@@ -209,7 +204,7 @@ func NewTruncatePartitionEvent(
 	droppedPartInfo *model.PartitionInfo,
 ) *DDLEvent {
 	return &DDLEvent{
-		Tp:          model.ActionTruncateTablePartition,
+		tp:          model.ActionTruncateTablePartition,
 		tableInfo:   globalTableInfo,
 		partInfo:    addedPartInfo,
 		oldPartInfo: droppedPartInfo,
@@ -232,7 +227,7 @@ func NewAddPartitioningEvent(
 	addedPartInfo *model.PartitionInfo,
 ) *DDLEvent {
 	return &DDLEvent{
-		Tp:        model.ActionAlterTablePartitioning,
+		tp:        model.ActionAlterTablePartitioning,
 		tableInfo: newGlobalTableInfo,
 		partInfo:  addedPartInfo,
 	}
@@ -250,7 +245,7 @@ func NewRemovePartitioningEvent(
 	droppedPartInfo *model.PartitionInfo,
 ) *DDLEvent {
 	return &DDLEvent{
-		Tp:          model.ActionRemovePartitioning,
+		tp:          model.ActionRemovePartitioning,
 		tableInfo:   newSingleTableInfo,
 		oldPartInfo: droppedPartInfo,
 	}
@@ -264,9 +259,21 @@ func (e *DDLEvent) GetRemovePartitioningInfo() (
 	return e.tableInfo, e.oldPartInfo
 }
 
+// NewFlashbackClusterEvent creates a new ddl event that flashes back the cluster.
+func NewFlashbackClusterEvent() *DDLEvent {
+	return &DDLEvent{
+		tp: model.ActionFlashbackCluster,
+	}
+}
+
+// GetType returns the type of the ddl event.
+func (e *DDLEvent) GetType() model.ActionType {
+	return e.tp
+}
+
 // String implements fmt.Stringer interface.
 func (e *DDLEvent) String() string {
-	ret := fmt.Sprintf("(Event Type: %s", e.Tp)
+	ret := fmt.Sprintf("(Event Type: %s", e.tp)
 	if e.tableInfo != nil {
 		ret += fmt.Sprintf(", Table ID: %d, Table Name: %s", e.tableInfo.ID, e.tableInfo.Name)
 	}
