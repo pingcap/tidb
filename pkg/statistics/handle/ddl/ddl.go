@@ -151,6 +151,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 		// Change id for global stats, since the data has not changed!
 		// Note that globalTableInfo is the new table info
 		// and addedPartInfo.NewTableID is actually the old table ID!
+		// (see onReorganizePartition)
 		return h.statsWriter.ChangeGlobalStatsID(addedPartInfo.NewTableID, globalTableInfo.ID)
 	case model.ActionRemovePartitioning:
 		// Change id for global stats, since the data has not changed!
