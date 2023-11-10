@@ -45,7 +45,7 @@ import (
 // but, ks3 supporter says there's no such limit on connections.
 // And our target for global sort is AWS s3, this default value might not fit well.
 // TODO: adjust it according to cloud storage.
-const maxCloudStorageConnections = 8000
+const maxCloudStorageConnections = 1000
 
 // Engine stored sorted key/value pairs in an external storage.
 type Engine struct {
