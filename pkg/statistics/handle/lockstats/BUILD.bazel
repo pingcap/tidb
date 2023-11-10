@@ -12,6 +12,7 @@ go_library(
     deps = [
         "//pkg/sessionctx",
         "//pkg/statistics/handle/cache",
+        "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/util",
         "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",

@@ -34,7 +34,7 @@ go_library(
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
-        "//pkg/statistics/handle/util",
+        "//pkg/statistics/handle/logutil",
         "//pkg/tablecodec",
         "//pkg/types",
         "//pkg/util/chunk",
