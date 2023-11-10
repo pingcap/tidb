@@ -124,17 +124,19 @@ func pauseAdminAndWaitApply(cx *AdaptEnvForSnapshotBackupContext) error {
 	}
 	begin := time.Now()
 	prep := preparesnap.New(env)
-	// We must use our own context here, or once we are cleaning up the client will be invalid.
-	myCtx := logutil.ContextWithField(context.Background(), zap.String("category", "pause_admin_and_wait_apply"))
 
 	defer cx.cleanUpWith(func(ctx context.Context) {
 		if err := prep.Finalize(ctx); err != nil {
 			logutil.CL(ctx).Warn("failed to finalize the prepare stream", logutil.ShortError(err))
 		}
 	})
+
+	// We must use our own context here, or once we are cleaning up the client will be invalid.
+	myCtx := logutil.ContextWithField(context.Background(), zap.String("category", "pause_admin_and_wait_apply"))
 	if err := prep.DriveLoopAndWaitPrepare(myCtx); err != nil {
 		return err
 	}
+
 	cx.ReadyL("pause_admin_and_wait_apply", zap.Stringer("take", time.Since(begin)))
 	<-cx.Done()
 	return nil

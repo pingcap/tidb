@@ -17,6 +17,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"math/rand"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -390,6 +391,17 @@ func (rm *MockRegionManager) SplitKeys(start, end kv.Key, count int) {
 	if _, err := rm.splitKeys(keys); err != nil {
 		panic(err)
 	}
+}
+
+// SplitArbitrary splits the cluster by the split point manually provided.
+// The keys provided are raw key.
+func (rm *MockRegionManager) SplitArbitrary(keys ...[]byte) {
+	splitKeys := make([][]byte, 0, len(keys))
+	for _, key := range keys {
+		encKey := codec.EncodeBytes(nil, key)
+		splitKeys = append(splitKeys, encKey)
+	}
+	rm.splitKeys(splitKeys)
 }
 
 // SplitRegion implements the RegionManager interface.
@@ -863,6 +875,29 @@ func (pd *MockPD) ScanRegions(ctx context.Context, startKey []byte, endKey []byt
 // and the distribution of these regions will be dispersed.
 // NOTICE: This method is the old version of ScatterRegions, you should use the later one as your first choice.
 func (pd *MockPD) ScatterRegion(ctx context.Context, regionID uint64) error {
+	r := pd.rm.GetRegion(regionID)
+	if r == nil {
+		return errors.Errorf("region %d not found.", regionID)
+	}
+	// Randomly choose 3 stores to hold this region.
+	nPeer := len(r.Peers)
+	nStores := len(pd.rm.stores)
+	if nPeer <= nStores {
+		return nil
+	}
+	var stores []uint64
+	for id := range pd.rm.stores {
+		stores = append(stores, id)
+	}
+	for i := 0; i < nPeer; i++ {
+		choose := rand.Intn(nStores-i) + i
+		stores[i], stores[choose] = stores[choose], stores[i]
+	}
+	peers := []*metapb.Peer{}
+	for _, id := range stores[:nStores] {
+		peers = append(peers, &metapb.Peer{Id: pd.rm.AllocID(), StoreId: id})
+	}
+	r.Peers = peers
 	return nil
 }
 

@@ -76,8 +76,17 @@ func (p *Preparer) Finalize(ctx context.Context) error {
 			return errors.Annotatef(err, "failed to finalize the prepare stream for %d", id)
 		}
 	}
-	logutil.CL(ctx).Info("all connections to store shut down.")
-	return nil
+	logutil.CL(ctx).Info("all connections to store have shuted down.")
+	for {
+		select {
+		case event := <-p.eventChan:
+			if err := p.onEvent(ctx, event); err != nil {
+				return err
+			}
+		default:
+			return nil
+		}
+	}
 }
 
 func (p *Preparer) step(ctx context.Context) error {
