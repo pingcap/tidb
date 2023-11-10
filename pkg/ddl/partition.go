@@ -3056,6 +3056,8 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 				// TODO(hi-rustin): figure out why we need to pass statisticsPartInfo here.
 				statisticsPartInfo,
 			)
+		default:
+			return ver, errors.Errorf("unknown job type: %s", job.Type.String())
 		}
 		asyncNotifyEvent(d, event)
 		// A background job will be created to delete old partition data.
