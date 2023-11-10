@@ -834,6 +834,7 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 	taskCh := make(chan *copTask, 1)
 	smallTaskCh := make(chan *copTask, 1)
 	it.wg.Add(it.concurrency + it.smallTaskConcurrency)
+	// sessionID := ctx.GetSessionVars().ConnectionID
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency+it.smallTaskConcurrency; i++ {
 		var ch chan *copTask
@@ -1158,13 +1159,15 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	}
 
 	copReq := coprocessor.Request{
-		Tp:         worker.req.Tp,
-		StartTs:    worker.req.StartTs,
-		Data:       worker.req.Data,
-		Ranges:     task.ranges.ToPBRanges(),
-		SchemaVer:  worker.req.SchemaVar,
-		PagingSize: task.pagingSize,
-		Tasks:      task.ToPBBatchTasks(),
+		Tp:              worker.req.Tp,
+		StartTs:         worker.req.StartTs,
+		Data:            worker.req.Data,
+		Ranges:          task.ranges.ToPBRanges(),
+		SchemaVer:       worker.req.SchemaVar,
+		PagingSize:      task.pagingSize,
+		Tasks:           task.ToPBBatchTasks(),
+		ConnectionId:    worker.req.ConnID,
+		ConnectionAlias: worker.req.ConnAlias,
 	}
 
 	cacheKey, cacheValue := worker.buildCacheKey(task, &copReq)

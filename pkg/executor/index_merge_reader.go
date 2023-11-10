@@ -388,7 +388,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					SetPaging(e.paging).
 					SetFromInfoSchema(e.Ctx().GetInfoSchema()).
 					SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx(), &builder.Request, e.partialNetDataSizes[workID])).
-					SetConnID(e.Ctx().GetSessionVars().ConnectionID)
+					SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias)
 
 				tps := worker.getRetTpsForIndexScan(e.handleCols)
 				results := make([]distsql.SelectResult, 0, len(keyRanges))
