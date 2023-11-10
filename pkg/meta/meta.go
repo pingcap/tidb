@@ -686,6 +686,7 @@ func (m *Meta) SetBDRRole(role string) error {
 	return errors.Trace(m.txn.Set(mBDRRole, []byte(role)))
 }
 
+// GetBDRRole get BDR role from storage.
 func (m *Meta) GetBDRRole() (string, error) {
 	v, err := m.txn.Get(mBDRRole)
 	if err != nil {

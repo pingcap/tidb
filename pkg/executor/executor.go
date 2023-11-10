@@ -2744,6 +2744,7 @@ type AdminShowBDRRoleExec struct {
 	done bool
 }
 
+// Next implements the Executor Next interface.
 func (e *AdminShowBDRRoleExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.done {

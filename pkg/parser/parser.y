@@ -10882,10 +10882,7 @@ AdminStmtLimitOpt:
 	}
 
 BDRRole:
-	{
-		$$ = ast.BDRRoleNone
-	}
-|   "PRIMARY"
+	"PRIMARY"
 	{
 		$$ = ast.BDRRolePrimary
 	}
