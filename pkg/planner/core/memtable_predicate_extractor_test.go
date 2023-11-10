@@ -1815,7 +1815,7 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 			prepared: "select * from information_schema.tidb_hot_regions_history where update_time>=?",
 			userVars: []interface{}{"cast('2019-10-10 10:10:10' as datetime)"},
 			params: []interface{}{func() types.Time {
-				tt, err := types.ParseTimestamp(tk.Session().GetSessionVars().StmtCtx, "2019-10-10 10:10:10")
+				tt, err := types.ParseTimestamp(tk.Session().GetSessionVars().StmtCtx.TypeCtx(), "2019-10-10 10:10:10")
 				require.NoError(t, err)
 				return tt
 			}()},

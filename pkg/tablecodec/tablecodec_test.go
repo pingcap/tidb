@@ -117,7 +117,7 @@ func TestRowCodec(t *testing.T) {
 	for i, col := range cols {
 		v, ok := r[col.id]
 		require.True(t, ok)
-		equal, err1 := v.Compare(sc, &row[i], collate.GetBinaryCollator())
+		equal, err1 := v.Compare(sc.TypeCtx(), &row[i], collate.GetBinaryCollator())
 		require.NoError(t, err1)
 		require.Equalf(t, 0, equal, "expect: %v, got %v", row[i], v)
 	}
@@ -131,7 +131,7 @@ func TestRowCodec(t *testing.T) {
 	for i, col := range cols {
 		v, ok := r[col.id]
 		require.True(t, ok)
-		equal, err1 := v.Compare(sc, &row[i], collate.GetBinaryCollator())
+		equal, err1 := v.Compare(sc.TypeCtx(), &row[i], collate.GetBinaryCollator())
 		require.NoError(t, err1)
 		require.Equal(t, 0, equal)
 	}
@@ -149,7 +149,7 @@ func TestRowCodec(t *testing.T) {
 		}
 		v, ok := r[col.id]
 		require.True(t, ok)
-		equal, err1 := v.Compare(sc, &row[i], collate.GetBinaryCollator())
+		equal, err1 := v.Compare(sc.TypeCtx(), &row[i], collate.GetBinaryCollator())
 		require.NoError(t, err1)
 		require.Equal(t, 0, equal)
 	}
@@ -177,7 +177,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	tp := types.NewFieldType(mysql.TypeTimestamp)
 	d1, err := DecodeColumnValue(bs, tp, sc.TimeZone())
 	require.NoError(t, err)
-	cmp, err := d1.Compare(sc, &d, collate.GetBinaryCollator())
+	cmp, err := d1.Compare(sc.TypeCtx(), &d, collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 
@@ -194,7 +194,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	tp.SetElems(elems)
 	d1, err = DecodeColumnValue(bs, tp, sc.TimeZone())
 	require.NoError(t, err)
-	cmp, err = d1.Compare(sc, &d, collate.GetCollator(tp.GetCollate()))
+	cmp, err = d1.Compare(sc.TypeCtx(), &d, collate.GetCollator(tp.GetCollate()))
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 
@@ -209,7 +209,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	tp.SetFlen(24)
 	d1, err = DecodeColumnValue(bs, tp, sc.TimeZone())
 	require.NoError(t, err)
-	cmp, err = d1.Compare(sc, &d, collate.GetBinaryCollator())
+	cmp, err = d1.Compare(sc.TypeCtx(), &d, collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 
@@ -223,7 +223,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	tp = types.NewFieldType(mysql.TypeEnum)
 	d1, err = DecodeColumnValue(bs, tp, sc.TimeZone())
 	require.NoError(t, err)
-	cmp, err = d1.Compare(sc, &d, collate.GetCollator(tp.GetCollate()))
+	cmp, err = d1.Compare(sc.TypeCtx(), &d, collate.GetCollator(tp.GetCollate()))
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 }
@@ -234,7 +234,7 @@ func TestUnflattenDatums(t *testing.T) {
 	tps := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	output, err := UnflattenDatums(input, tps, sc.TimeZone())
 	require.NoError(t, err)
-	cmp, err := input[0].Compare(sc, &output[0], collate.GetBinaryCollator())
+	cmp, err := input[0].Compare(sc.TypeCtx(), &output[0], collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 
@@ -243,7 +243,7 @@ func TestUnflattenDatums(t *testing.T) {
 	tps[0].SetCollate("utf8mb4_unicode_ci")
 	output, err = UnflattenDatums(input, tps, sc.TimeZone())
 	require.NoError(t, err)
-	cmp, err = input[0].Compare(sc, &output[0], collate.GetBinaryCollator())
+	cmp, err = input[0].Compare(sc.TypeCtx(), &output[0], collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 	require.Equal(t, "utf8mb4_unicode_ci", output[0].Collation())
@@ -260,11 +260,11 @@ func TestTimeCodec(t *testing.T) {
 	row := make([]types.Datum, colLen)
 	row[0] = types.NewIntDatum(100)
 	row[1] = types.NewBytesDatum([]byte("abc"))
-	ts, err := types.ParseTimestamp(stmtctx.NewStmtCtxWithTimeZone(time.UTC),
+	ts, err := types.ParseTimestamp(types.DefaultStmtNoWarningContext,
 		"2016-06-23 11:30:45")
 	require.NoError(t, err)
 	row[2] = types.NewDatum(ts)
-	du, _, err := types.ParseDuration(nil, "12:59:59.999999", 6)
+	du, _, err := types.ParseDuration(types.DefaultStmtNoWarningContext, "12:59:59.999999", 6)
 	require.NoError(t, err)
 	row[3] = types.NewDatum(du)
 
@@ -292,7 +292,7 @@ func TestTimeCodec(t *testing.T) {
 	for i, col := range cols {
 		v, ok := r[col.id]
 		require.True(t, ok)
-		equal, err1 := v.Compare(sc, &row[i], collate.GetBinaryCollator())
+		equal, err1 := v.Compare(sc.TypeCtx(), &row[i], collate.GetBinaryCollator())
 		require.Nil(t, err1)
 		require.Equal(t, 0, equal)
 	}

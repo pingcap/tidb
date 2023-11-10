@@ -405,17 +405,16 @@ func (*Handle) initStatsBuckets4Chunk(cache util.StatsCache, iter *chunk.Iterato
 			// Setting TimeZone to time.UTC aligns with HistogramFromStorage and can fix #41938. However, #41985 still exist.
 			// TODO: do the correct time zone conversion for timestamp-type columns' upper/lower bounds.
 			sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-			sc.AllowInvalidDate = true
-			sc.IgnoreZeroInDate = true
+			sc.SetTypeFlags(sc.TypeFlags().WithIgnoreInvalidDateErr(true).WithIgnoreZeroInDate(true))
 			var err error
-			lower, err = d.ConvertTo(sc, &column.Info.FieldType)
+			lower, err = d.ConvertTo(sc.TypeCtx(), &column.Info.FieldType)
 			if err != nil {
 				logutil.BgLogger().Debug("decode bucket lower bound failed", zap.Error(err))
 				delete(table.Columns, histID)
 				continue
 			}
 			d = types.NewBytesDatum(row.GetBytes(6))
-			upper, err = d.ConvertTo(sc, &column.Info.FieldType)
+			upper, err = d.ConvertTo(sc.TypeCtx(), &column.Info.FieldType)
 			if err != nil {
 				logutil.BgLogger().Debug("decode bucket upper bound failed", zap.Error(err))
 				delete(table.Columns, histID)

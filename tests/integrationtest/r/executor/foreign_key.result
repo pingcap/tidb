@@ -341,9 +341,7 @@ a	b
 1	11
 2	NULL
 admin check table t1;
-
 admin check table t2;
-
 set @@foreign_key_checks=default;
 set @@foreign_key_checks=1;
 drop table if exists t1, t2, t3;
@@ -370,9 +368,7 @@ id	b
 1	10
 2	NULL
 admin check table t1;
-
 admin check table t2;
-
 set @@foreign_key_checks=default;
 set @@foreign_key_checks=1;
 drop table if exists t1, t2, t3;

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
@@ -107,9 +108,9 @@ func getApproximateTableCountFromStorage(sctx sessionctx.Context, tid int64, dbN
 	}
 	// Otherwise, we use count(*) to calc it's size, since it's very small, the table data can be filled in no more than 2 regions.
 	sql := new(strings.Builder)
-	sqlexec.MustFormatSQL(sql, "select count(*) from %n.%n", dbName, tableName)
+	sqlescape.MustFormatSQL(sql, "select count(*) from %n.%n", dbName, tableName)
 	if partitionName != "" {
-		sqlexec.MustFormatSQL(sql, " partition(%n)", partitionName)
+		sqlescape.MustFormatSQL(sql, " partition(%n)", partitionName)
 	}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, nil, sql.String())

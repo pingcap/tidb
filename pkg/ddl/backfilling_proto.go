@@ -20,7 +20,7 @@ import "github.com/pingcap/tidb/pkg/disttask/framework/proto"
 // the initial step is StepInit(-1)
 // steps are processed in the following order:
 // - local sort:
-// StepInit -> StepReadIndex -> StepWriteAndIngest -> StepDone
+// StepInit -> StepReadIndex -> StepDone
 // - global sort:
 // StepInit -> StepReadIndex -> StepMergeSort -> StepWriteAndIngest -> StepDone
 const (

@@ -27,11 +27,11 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/globalstats"
 	"github.com/pingcap/tidb/pkg/statistics/handle/history"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/syncload"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tiancaiamao/gp"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -180,11 +180,11 @@ func (h *Handle) FlushStats() {
 	for len(h.ddlEventCh) > 0 {
 		e := <-h.ddlEventCh
 		if err := h.HandleDDLEvent(e); err != nil {
-			logutil.BgLogger().Error("handle ddl event fail", zap.String("category", "stats"), zap.Error(err))
+			statslogutil.StatsLogger.Error("handle ddl event fail", zap.Error(err))
 		}
 	}
 	if err := h.DumpStatsDeltaToKV(true); err != nil {
-		logutil.BgLogger().Error("dump stats delta fail", zap.String("category", "stats"), zap.Error(err))
+		statslogutil.StatsLogger.Error("dump stats delta fail", zap.Error(err))
 	}
 }
 

@@ -17,6 +17,7 @@ package ddl_test
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
@@ -243,6 +244,8 @@ func TestAlterAddConstraintStateChange3(t *testing.T) {
 	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc3)
 	d.SetHook(callback)
 	tk.MustExec("alter table t add constraint c3 check ( a > 10)")
+	// Issue TiDB#48123.
+	time.Sleep(50 * time.Millisecond)
 	tk.MustQuery("select * from t").Check(testkit.Rows("12"))
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL,\nCONSTRAINT `c3` CHECK ((`a` > 10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }

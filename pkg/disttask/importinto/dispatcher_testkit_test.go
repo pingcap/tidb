@@ -91,7 +91,9 @@ func TestDispatcherExtLocalSort(t *testing.T) {
 	// to import stage, job should be running
 	d := dsp.MockDispatcher(task)
 	ext := importinto.ImportDispatcherExt{}
-	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, ext.GetNextStep(task))
+	serverInfos, _, err := ext.GetEligibleInstances(context.Background(), task)
+	require.NoError(t, err)
+	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, serverInfos, ext.GetNextStep(task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
 	task.Step = ext.GetNextStep(task)
@@ -112,7 +114,7 @@ func TestDispatcherExtLocalSort(t *testing.T) {
 		require.NoError(t, manager.FinishSubtask(s.ID, []byte("{}")))
 	}
 	// to post-process stage, job should be running and in validating step
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, ext.GetNextStep(task))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, serverInfos, ext.GetNextStep(task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
 	task.Step = ext.GetNextStep(task)
@@ -122,7 +124,7 @@ func TestDispatcherExtLocalSort(t *testing.T) {
 	require.Equal(t, "running", gotJobInfo.Status)
 	require.Equal(t, "validating", gotJobInfo.Step)
 	// on next stage, job should be finished
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, ext.GetNextStep(task))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, serverInfos, ext.GetNextStep(task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 0)
 	task.Step = ext.GetNextStep(task)
@@ -150,6 +152,12 @@ func TestDispatcherExtLocalSort(t *testing.T) {
 }
 
 func TestDispatcherExtGlobalSort(t *testing.T) {
+	// Domain start dispatcher manager automatically, we need to disable it as
+	// we test import task management in this case.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/disableDispatcherManager", "return(true)"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/disableDispatcherManager"))
+	})
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
@@ -213,7 +221,9 @@ func TestDispatcherExtGlobalSort(t *testing.T) {
 	ext := importinto.ImportDispatcherExt{
 		GlobalSort: true,
 	}
-	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, ext.GetNextStep(task))
+	serverInfos, _, err := ext.GetEligibleInstances(context.Background(), task)
+	require.NoError(t, err)
+	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, serverInfos, ext.GetNextStep(task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 2)
 	task.Step = ext.GetNextStep(task)
@@ -233,11 +243,9 @@ func TestDispatcherExtGlobalSort(t *testing.T) {
 	require.NoError(t, err)
 	sortStepMeta := &importinto.ImportStepMeta{
 		SortedDataMeta: &external.SortedKVMeta{
-			MinKey:      []byte("ta"),
-			MaxKey:      []byte("tc"),
+			StartKey:    []byte("ta"),
+			EndKey:      []byte("tc"),
 			TotalKVSize: 12,
-			DataFiles:   []string{"gs://sort-bucket/data/1"},
-			StatFiles:   []string{"gs://sort-bucket/data/1.stat"},
 			MultipleFilesStats: []external.MultipleFilesStat{
 				{
 					Filenames: [][2]string{
@@ -248,11 +256,9 @@ func TestDispatcherExtGlobalSort(t *testing.T) {
 		},
 		SortedIndexMetas: map[int64]*external.SortedKVMeta{
 			1: {
-				MinKey:      []byte("ia"),
-				MaxKey:      []byte("ic"),
+				StartKey:    []byte("ia"),
+				EndKey:      []byte("ic"),
 				TotalKVSize: 12,
-				DataFiles:   []string{"gs://sort-bucket/index/1"},
-				StatFiles:   []string{"gs://sort-bucket/index/1.stat"},
 				MultipleFilesStats: []external.MultipleFilesStat{
 					{
 						Filenames: [][2]string{
@@ -274,7 +280,7 @@ func TestDispatcherExtGlobalSort(t *testing.T) {
 	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort"))
 	})
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, ext.GetNextStep(task))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, serverInfos, ext.GetNextStep(task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
 	task.Step = ext.GetNextStep(task)
@@ -295,19 +301,11 @@ func TestDispatcherExtGlobalSort(t *testing.T) {
 	mergeSortStepMeta := &importinto.MergeSortStepMeta{
 		KVGroup: "data",
 		SortedKVMeta: external.SortedKVMeta{
-			MinKey:      []byte("ta"),
-			MaxKey:      []byte("tc"),
+			StartKey:    []byte("ta"),
+			EndKey:      []byte("tc"),
 			TotalKVSize: 12,
-			DataFiles:   []string{"gs://sort-bucket/data/1"},
-			StatFiles:   []string{"gs://sort-bucket/data/1.stat"},
-			MultipleFilesStats: []external.MultipleFilesStat{
-				{
-					Filenames: [][2]string{
-						{"gs://sort-bucket/data/1", "gs://sort-bucket/data/1.stat"},
-					},
-				},
-			},
 		},
+		DataFiles: []string{"gs://sort-bucket/data/1"},
 	}
 	mergeSortStepMetaBytes, err := json.Marshal(mergeSortStepMeta)
 	require.NoError(t, err)
@@ -320,7 +318,7 @@ func TestDispatcherExtGlobalSort(t *testing.T) {
 	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/mockWriteIngestSpecs"))
 	})
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, ext.GetNextStep(task))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, serverInfos, ext.GetNextStep(task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 2)
 	task.Step = ext.GetNextStep(task)
@@ -330,7 +328,7 @@ func TestDispatcherExtGlobalSort(t *testing.T) {
 	require.Equal(t, "running", gotJobInfo.Status)
 	require.Equal(t, "importing", gotJobInfo.Step)
 	// on next stage, to post-process stage
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, ext.GetNextStep(task))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, serverInfos, ext.GetNextStep(task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
 	task.Step = ext.GetNextStep(task)
@@ -340,7 +338,7 @@ func TestDispatcherExtGlobalSort(t *testing.T) {
 	require.Equal(t, "running", gotJobInfo.Status)
 	require.Equal(t, "validating", gotJobInfo.Step)
 	// next stage, done
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, ext.GetNextStep(task))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, serverInfos, ext.GetNextStep(task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 0)
 	task.Step = ext.GetNextStep(task)

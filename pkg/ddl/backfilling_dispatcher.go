@@ -34,10 +34,9 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
-	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -45,9 +44,8 @@ import (
 
 // BackfillingDispatcherExt is an extension of litBackfillDispatcher, exported for test.
 type BackfillingDispatcherExt struct {
-	d                    *ddl
-	previousSchedulerIDs []string
-	GlobalSort           bool
+	d          *ddl
+	GlobalSort bool
 }
 
 // NewBackfillingDispatcherExt creates a new backfillingDispatcherExt, only used for test now.
@@ -72,6 +70,7 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 	ctx context.Context,
 	taskHandle dispatcher.TaskHandle,
 	gTask *proto.Task,
+	serverInfo []*infosync.ServerInfo,
 	nextStep proto.Step,
 ) (taskMeta [][]byte, err error) {
 	logger := logutil.BgLogger().With(
@@ -97,7 +96,7 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 		if tblInfo.Partition != nil {
 			return generatePartitionPlan(tblInfo)
 		}
-		return generateNonPartitionPlan(dsp.d, tblInfo, job)
+		return generateNonPartitionPlan(dsp.d, tblInfo, job, dsp.GlobalSort, len(serverInfo))
 	case StepMergeSort:
 		res, err := generateMergePlan(taskHandle, gTask, logger)
 		if err != nil {
@@ -135,11 +134,7 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 				prevStep,
 				logger)
 		}
-		// for partition table, no subtasks for write and ingest step.
-		if tblInfo.Partition != nil {
-			return nil, nil
-		}
-		return generateIngestTaskPlan(ctx, dsp, taskHandle, gTask)
+		return nil, nil
 	default:
 		return nil, nil
 	}
@@ -163,7 +158,7 @@ func (dsp *BackfillingDispatcherExt) GetNextStep(task *proto.Task) proto.Step {
 		if dsp.GlobalSort {
 			return StepMergeSort
 		}
-		return StepWriteAndIngest
+		return proto.StepDone
 	case StepMergeSort:
 		return StepWriteAndIngest
 	case StepWriteAndIngest:
@@ -196,22 +191,12 @@ func (*BackfillingDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.Task
 }
 
 // GetEligibleInstances implements dispatcher.Extension interface.
-func (dsp *BackfillingDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+func (*BackfillingDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
 	serverInfos, err := dispatcher.GenerateSchedulerNodes(ctx)
 	if err != nil {
-		return nil, err
+		return nil, true, err
 	}
-	if len(dsp.previousSchedulerIDs) > 0 {
-		// Only the nodes that executed step one can have step two.
-		involvedServerInfos := make([]*infosync.ServerInfo, 0, len(serverInfos))
-		for _, id := range dsp.previousSchedulerIDs {
-			if idx := disttaskutil.FindServerInfo(serverInfos, id); idx >= 0 {
-				involvedServerInfos = append(involvedServerInfos, serverInfos[idx])
-			}
-		}
-		return involvedServerInfos, nil
-	}
-	return serverInfos, nil
+	return serverInfos, true, nil
 }
 
 // IsRetryableErr implements dispatcher.Extension.IsRetryableErr interface.
@@ -286,8 +271,9 @@ func generatePartitionPlan(tblInfo *model.TableInfo) (metas [][]byte, err error)
 	return subTaskMetas, nil
 }
 
-func generateNonPartitionPlan(d *ddl, tblInfo *model.TableInfo, job *model.Job) (metas [][]byte, err error) {
-	tbl, err := getTable(d.store, job.SchemaID, tblInfo)
+func generateNonPartitionPlan(
+	d *ddl, tblInfo *model.TableInfo, job *model.Job, useCloud bool, instanceCnt int) (metas [][]byte, err error) {
+	tbl, err := getTable((*asAutoIDRequirement)(d.ddlCtx), job.SchemaID, tblInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -309,8 +295,9 @@ func generateNonPartitionPlan(d *ddl, tblInfo *model.TableInfo, job *model.Job) 
 		return nil, err
 	}
 
-	subTaskMetas := make([][]byte, 0, 100)
-	regionBatch := 20
+	regionBatch := calculateRegionBatch(len(recordRegionMetas), instanceCnt, !useCloud)
+
+	subTaskMetas := make([][]byte, 0, 4)
 	sort.Slice(recordRegionMetas, func(i, j int) bool {
 		return bytes.Compare(recordRegionMetas[i].StartKey(), recordRegionMetas[j].StartKey()) < 0
 	})
@@ -320,7 +307,12 @@ func generateNonPartitionPlan(d *ddl, tblInfo *model.TableInfo, job *model.Job) 
 			end = len(recordRegionMetas)
 		}
 		batch := recordRegionMetas[i:end]
-		subTaskMeta := &BackfillSubTaskMeta{StartKey: batch[0].StartKey(), EndKey: batch[len(batch)-1].EndKey()}
+		subTaskMeta := &BackfillSubTaskMeta{
+			SortedKVMeta: external.SortedKVMeta{
+				StartKey: batch[0].StartKey(),
+				EndKey:   batch[len(batch)-1].EndKey(),
+			},
+		}
 		if i == 0 {
 			subTaskMeta.StartKey = startKey
 		}
@@ -336,40 +328,18 @@ func generateNonPartitionPlan(d *ddl, tblInfo *model.TableInfo, job *model.Job) 
 	return subTaskMetas, nil
 }
 
-func generateIngestTaskPlan(
-	ctx context.Context,
-	h *BackfillingDispatcherExt,
-	taskHandle dispatcher.TaskHandle,
-	gTask *proto.Task,
-) ([][]byte, error) {
-	// We dispatch dummy subtasks because the rest data in local engine will be imported
-	// in the initialization of subtask executor.
-	var ingestSubtaskCnt int
-	if intest.InTest && taskHandle == nil {
-		serverNodes, err := dispatcher.GenerateSchedulerNodes(ctx)
-		if err != nil {
-			return nil, err
-		}
-		ingestSubtaskCnt = len(serverNodes)
+func calculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool) int {
+	var regionBatch int
+	avgTasksPerInstance := totalRegionCnt / instanceCnt
+	if useLocalDisk {
+		// Make subtask large enough to reduce the overhead of local/global flush.
+		avgTasksPerDisk := int(int64(variable.DDLDiskQuota.Load()) / int64(config.SplitRegionSize))
+		regionBatch = min(avgTasksPerDisk, avgTasksPerInstance)
 	} else {
-		schedulerIDs, err := taskHandle.GetPreviousSchedulerIDs(ctx, gTask.ID, gTask.Step)
-		if err != nil {
-			return nil, err
-		}
-		h.previousSchedulerIDs = schedulerIDs
-		ingestSubtaskCnt = len(schedulerIDs)
+		regionBatch = min(100, avgTasksPerInstance)
 	}
-
-	subTaskMetas := make([][]byte, 0, ingestSubtaskCnt)
-	dummyMeta := &BackfillSubTaskMeta{}
-	metaBytes, err := json.Marshal(dummyMeta)
-	if err != nil {
-		return nil, err
-	}
-	for i := 0; i < ingestSubtaskCnt; i++ {
-		subTaskMetas = append(subTaskMetas, metaBytes)
-	}
-	return subTaskMetas, nil
+	regionBatch = max(regionBatch, 1)
+	return regionBatch
 }
 
 func generateGlobalSortIngestPlan(
@@ -381,7 +351,7 @@ func generateGlobalSortIngestPlan(
 	step proto.Step,
 	logger *zap.Logger,
 ) ([][]byte, error) {
-	firstKey, lastKey, totalSize, dataFiles, statFiles, err := getSummaryFromLastStep(taskHandle, task.ID, step)
+	startKeyFromSumm, endKeyFromSumm, totalSize, dataFiles, statFiles, err := getSummaryFromLastStep(taskHandle, task.ID, step)
 	if err != nil {
 		return nil, err
 	}
@@ -402,7 +372,7 @@ func generateGlobalSortIngestPlan(
 	}()
 
 	metaArr := make([][]byte, 0, 16)
-	startKey := firstKey
+	startKey := startKeyFromSumm
 	var endKey kv.Key
 	for {
 		endKeyOfGroup, dataFiles, statFiles, rangeSplitKeys, err := splitter.SplitOneRangesGroup()
@@ -410,7 +380,7 @@ func generateGlobalSortIngestPlan(
 			return nil, err
 		}
 		if len(endKeyOfGroup) == 0 {
-			endKey = lastKey.Next()
+			endKey = endKeyFromSumm
 		} else {
 			endKey = kv.Key(endKeyOfGroup).Clone()
 		}
@@ -423,12 +393,12 @@ func generateGlobalSortIngestPlan(
 		}
 		m := &BackfillSubTaskMeta{
 			SortedKVMeta: external.SortedKVMeta{
-				MinKey:      startKey,
-				MaxKey:      endKey,
-				DataFiles:   dataFiles,
-				StatFiles:   statFiles,
+				StartKey:    startKey,
+				EndKey:      endKey,
 				TotalKVSize: totalSize / uint64(len(instanceIDs)),
 			},
+			DataFiles:      dataFiles,
+			StatFiles:      statFiles,
 			RangeSplitKeys: rangeSplitKeys,
 		}
 		metaBytes, err := json.Marshal(m)
@@ -483,9 +453,7 @@ func generateMergePlan(
 			end = len(dataFiles)
 		}
 		m := &BackfillSubTaskMeta{
-			SortedKVMeta: external.SortedKVMeta{
-				DataFiles: dataFiles[start:end],
-			},
+			DataFiles: dataFiles[start:end],
 		}
 		metaBytes, err := json.Marshal(m)
 		if err != nil {
@@ -535,19 +503,18 @@ func getRangeSplitter(
 	maxKeysPerRange = max(maxKeysPerRange, int64(config.SplitRegionKeys))
 
 	return external.NewRangeSplitter(ctx, dataFiles, statFiles, extStore,
-		rangeGroupSize, rangeGroupKeys, maxSizePerRange, maxKeysPerRange)
+		rangeGroupSize, rangeGroupKeys, maxSizePerRange, maxKeysPerRange, true)
 }
 
 func getSummaryFromLastStep(
 	taskHandle dispatcher.TaskHandle,
 	gTaskID int64,
 	step proto.Step,
-) (min, max kv.Key, totalKVSize uint64, dataFiles, statFiles []string, err error) {
+) (startKey, endKey kv.Key, totalKVSize uint64, dataFiles, statFiles []string, err error) {
 	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(gTaskID, step)
 	if err != nil {
 		return nil, nil, 0, nil, nil, errors.Trace(err)
 	}
-	var minKey, maxKey kv.Key
 	allDataFiles := make([]string, 0, 16)
 	allStatFiles := make([]string, 0, 16)
 	for _, subTaskMeta := range subTaskMetas {
@@ -556,10 +523,22 @@ func getSummaryFromLastStep(
 		if err != nil {
 			return nil, nil, 0, nil, nil, errors.Trace(err)
 		}
-		// Skip empty subtask.MinKey/MaxKey because it means
+		// Skip empty subtask.StartKey/EndKey because it means
 		// no records need to be written in this subtask.
-		minKey = external.NotNilMin(minKey, subtask.MinKey)
-		maxKey = external.NotNilMax(maxKey, subtask.MaxKey)
+		if subtask.StartKey == nil || subtask.EndKey == nil {
+			continue
+		}
+
+		if len(startKey) == 0 {
+			startKey = subtask.StartKey
+		} else {
+			startKey = external.BytesMin(startKey, subtask.StartKey)
+		}
+		if len(endKey) == 0 {
+			endKey = subtask.EndKey
+		} else {
+			endKey = external.BytesMax(endKey, subtask.EndKey)
+		}
 		totalKVSize += subtask.TotalKVSize
 
 		for _, stat := range subtask.MultipleFilesStats {
@@ -569,7 +548,7 @@ func getSummaryFromLastStep(
 			}
 		}
 	}
-	return minKey, maxKey, totalKVSize, allDataFiles, allStatFiles, nil
+	return startKey, endKey, totalKVSize, allDataFiles, allStatFiles, nil
 }
 
 // StepStr convert proto.Step to string.

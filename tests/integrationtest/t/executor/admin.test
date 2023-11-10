@@ -183,3 +183,46 @@ insert into t1 set a='1.9';
 alter table t1 modify column a decimal(3,2);
 delete from t1;
 admin check table t1;
+
+# TestAdminCheckIndexRange
+drop table if exists check_index_test;
+create table check_index_test (a int, b varchar(10), index a_b (a, b), index b (b));
+insert check_index_test values (3, "ab"),(2, "cd"),(1, "ef"),(-1, "hi");
+admin check index check_index_test a_b (2, 4);
+admin check index check_index_test a_b (3, 5);
+use mysql;
+admin check index executor__admin.check_index_test a_b (2, 3), (4, 5);
+use executor__admin;
+
+# TestAdminCheckIndex
+drop table if exists admin_test;
+create table admin_test (c1 int, c2 int, c3 int default 1, index (c1), unique key(c2));
+insert admin_test (c1, c2) values (1, 1), (2, 2), (5, 5), (10, 10), (11, 11), (NULL, NULL);
+admin check index admin_test c1;
+admin check index admin_test c2;
+drop table if exists admin_test;
+## for hash partition
+create table admin_test (c1 int, c2 int, c3 int default 1, index (c1), unique key(c2)) partition by hash(c2) partitions 5;
+insert admin_test (c1, c2) values (1, 1), (2, 2), (5, 5), (10, 10), (11, 11), (NULL, NULL);
+admin check index admin_test c1;
+admin check index admin_test c2;
+drop table if exists admin_test;
+## for range partition
+create table admin_test (c1 int, c2 int, c3 int default 1, index (c1), unique key(c2)) PARTITION BY RANGE ( c2 ) (
+		PARTITION p0 VALUES LESS THAN (5),
+		PARTITION p1 VALUES LESS THAN (10),
+		PARTITION p2 VALUES LESS THAN (MAXVALUE));
+insert admin_test (c1, c2) values (1, 1), (2, 2), (5, 5), (10, 10), (11, 11), (NULL, NULL);
+admin check index admin_test c1;
+admin check index admin_test c2;
+
+# TestAdminCheckTableErrorLocateBigTable
+drop table if exists admin_test;
+create table admin_test (c1 int, c2 int, primary key(c1), key(c2));
+set cte_max_recursion_depth=100000;
+insert into admin_test with recursive cte(a, b) as (select 1, 1 union select a+1, b+1 from cte where cte.a< 100000) select * from cte;
+--disable_result_log
+select /*+ read_from_storage(tikv[`executor__admin`.`admin_test`]) */ bit_xor(crc32(md5(concat_ws(0x2, `c1`, `c2`)))), ((cast(crc32(md5(concat_ws(0x2, `c1`))) as signed) - 9223372036854775807) div 1 % 1024), count(*) from `executor__admin`.`admin_test` use index() where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `c1`))) as signed) - 9223372036854775807) div 1 % 1024);
+select bit_xor(crc32(md5(concat_ws(0x2, `c1`, `c2`)))), ((cast(crc32(md5(concat_ws(0x2, `c1`))) as signed) - 9223372036854775807) div 1 % 1024), count(*) from `executor__admin`.`admin_test` use index(`c2`) where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `c1`))) as signed) - 9223372036854775807) div 1 % 1024);
+set cte_max_recursion_depth=default;
+--enable_result_log

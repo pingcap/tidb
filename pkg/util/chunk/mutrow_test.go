@@ -34,7 +34,7 @@ func TestMutRow(t *testing.T) {
 		val := zeroValForType(allTypes[i])
 		d := row.GetDatum(i, allTypes[i])
 		d2 := types.NewDatum(val)
-		cmp, err := d.Compare(sc, &d2, collate.GetCollator(allTypes[i].GetCollate()))
+		cmp, err := d.Compare(sc.TypeCtx(), &d2, collate.GetCollator(allTypes[i].GetCollate()))
 		require.NoError(t, err)
 		require.Equal(t, 0, cmp)
 	}
@@ -79,7 +79,7 @@ func TestMutRow(t *testing.T) {
 
 	retTypes := []*types.FieldType{types.NewFieldType(mysql.TypeDuration)}
 	chk := New(retTypes, 1, 1)
-	dur, _, err := types.ParseDuration(sc, "01:23:45", 0)
+	dur, _, err := types.ParseDuration(sc.TypeCtx(), "01:23:45", 0)
 	require.NoError(t, err)
 	chk.AppendDuration(0, dur)
 	mutRow = MutRowFromTypes(retTypes)

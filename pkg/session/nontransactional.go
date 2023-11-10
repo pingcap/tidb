@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
@@ -510,7 +509,7 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se S
 			}
 			newEnd := row.GetDatum(0, &rs.Fields()[0].Column.FieldType)
 			if currentSize >= batchSize {
-				cmp, err := newEnd.Compare(se.GetSessionVars().StmtCtx, &currentEnd, collate.GetCollator(shardColumnCollate))
+				cmp, err := newEnd.Compare(se.GetSessionVars().StmtCtx.TypeCtx(), &currentEnd, collate.GetCollator(shardColumnCollate))
 				if err != nil {
 					return nil, err
 				}
@@ -850,5 +849,5 @@ func buildExecuteResults(ctx context.Context, jobs []job, maxChunkSize int, reda
 		zap.Int("num_failed_jobs", len(failedJobs)), zap.String("failed_jobs", errStr))
 
 	return nil, fmt.Errorf("%d/%d jobs failed in the non-transactional DML: %s, ...(more in logs)",
-		len(failedJobs), len(jobs), errStr[:mathutil.Min(500, len(errStr)-1)])
+		len(failedJobs), len(jobs), errStr[:min(500, len(errStr)-1)])
 }

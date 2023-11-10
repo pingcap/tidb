@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"go.uber.org/zap"
 )
@@ -159,13 +158,13 @@ func initSessCtx(
 	sessCtx.GetSessionVars().StmtCtx.SetTimeZone(sessCtx.GetSessionVars().Location())
 	sessCtx.GetSessionVars().StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
-	sessCtx.GetSessionVars().StmtCtx.AllowInvalidDate = sqlMode.HasAllowInvalidDatesMode()
 	sessCtx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = !sqlMode.HasStrictMode()
-	sessCtx.GetSessionVars().StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
-	sessCtx.GetSessionVars().StmtCtx.NoZeroDate = sqlMode.HasStrictMode()
-	sessCtx.GetSessionVars().StmtCtx.SetTypeFlags(types.StrictFlags.
-		WithTruncateAsWarning(!sqlMode.HasStrictMode()),
-	)
+
+	typeFlags := types.StrictFlags.
+		WithTruncateAsWarning(!sqlMode.HasStrictMode()).
+		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
+		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode())
+	sessCtx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags)
 
 	// Prevent initializing the mock context in the workers concurrently.
 	// For details, see https://github.com/pingcap/tidb/issues/40879.
@@ -175,7 +174,7 @@ func initSessCtx(
 
 func (*txnBackfillScheduler) expectedWorkerSize() (size int) {
 	workerCnt := int(variable.GetDDLReorgWorkerCounter())
-	return mathutil.Min(workerCnt, maxBackfillWorkerSize)
+	return min(workerCnt, maxBackfillWorkerSize)
 }
 
 func (b *txnBackfillScheduler) currentWorkerSize() int {
@@ -218,6 +217,9 @@ func (b *txnBackfillScheduler) adjustWorkerSize() error {
 		case typeUpdateColumnWorker:
 			// Setting InCreateOrAlterStmt tells the difference between SELECT casting and ALTER COLUMN casting.
 			sessCtx.GetSessionVars().StmtCtx.InCreateOrAlterStmt = true
+			sessCtx.GetSessionVars().StmtCtx.SetTypeFlags(
+				sessCtx.GetSessionVars().StmtCtx.TypeFlags().
+					WithIgnoreZeroDateErr(!reorgInfo.ReorgMeta.SQLMode.HasStrictMode()))
 			updateWorker := newUpdateColumnWorker(sessCtx, i, b.tbl, b.decodeColMap, reorgInfo, jc)
 			runner = newBackfillWorker(jc.ddlJobCtx, updateWorker)
 			worker = updateWorker
@@ -255,13 +257,13 @@ func (b *txnBackfillScheduler) close(force bool) {
 	if b.closed {
 		return
 	}
+	b.closed = true
 	close(b.taskCh)
 	if force {
 		closeBackfillWorkers(b.workers)
 	}
 	b.wg.Wait()
 	close(b.resultCh)
-	b.closed = true
 }
 
 type ingestBackfillScheduler struct {
@@ -331,6 +333,7 @@ func (b *ingestBackfillScheduler) close(force bool) {
 	if b.closed {
 		return
 	}
+	b.closed = true
 	close(b.taskCh)
 	if b.copReqSenderPool != nil {
 		b.copReqSenderPool.close(force)
@@ -355,7 +358,6 @@ func (b *ingestBackfillScheduler) close(force bool) {
 		jobID := b.reorgInfo.ID
 		b.backendCtx.ResetWorkers(jobID)
 	}
-	b.closed = true
 }
 
 func (b *ingestBackfillScheduler) sendTask(task *reorgBackfillTask) {
@@ -465,9 +467,9 @@ func (*ingestBackfillScheduler) expectedWorkerSize() (readerSize int, writerSize
 
 func expectedIngestWorkerCnt() (readerCnt, writerCnt int) {
 	workerCnt := int(variable.GetDDLReorgWorkerCounter())
-	readerCnt = mathutil.Min(workerCnt/2, maxBackfillWorkerSize)
-	readerCnt = mathutil.Max(readerCnt, 1)
-	writerCnt = mathutil.Min(workerCnt/2+2, maxBackfillWorkerSize)
+	readerCnt = min(workerCnt/2, maxBackfillWorkerSize)
+	readerCnt = max(readerCnt, 1)
+	writerCnt = min(workerCnt/2+2, maxBackfillWorkerSize)
 	return readerCnt, writerCnt
 }
 

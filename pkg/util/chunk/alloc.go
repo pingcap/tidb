@@ -18,7 +18,6 @@ import (
 	"math"
 
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
 
 // Allocator is an interface defined to reduce object allocation.
@@ -101,7 +100,7 @@ func (a *allocator) Alloc(fields []*types.FieldType, capacity, maxChunkSize int)
 	}
 
 	// Init the chunk fields.
-	chk.capacity = mathutil.Min(capacity, maxChunkSize)
+	chk.capacity = min(capacity, maxChunkSize)
 	chk.requiredRows = maxChunkSize
 	// Allocate the chunk columns from the pool column allocator.
 	for _, f := range fields {
