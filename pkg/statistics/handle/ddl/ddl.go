@@ -21,7 +21,7 @@ import (
 )
 
 type ddlHandlerImpl struct {
-	ddlEventCh         chan *util.Event
+	ddlEventCh         chan *util.DDLEvent
 	statsWriter        util.StatsReadWriter
 	statsHandler       util.StatsHandle
 	globalStatsHandler util.StatsGlobal
@@ -34,7 +34,7 @@ func NewDDLHandler(
 	globalStatsHandler util.StatsGlobal,
 ) util.DDL {
 	return &ddlHandlerImpl{
-		ddlEventCh:         make(chan *util.Event, 1000),
+		ddlEventCh:         make(chan *util.DDLEvent, 1000),
 		statsWriter:        statsWriter,
 		statsHandler:       statsHandler,
 		globalStatsHandler: globalStatsHandler,
@@ -42,7 +42,7 @@ func NewDDLHandler(
 }
 
 // HandleDDLEvent begins to process a ddl task.
-func (h *ddlHandlerImpl) HandleDDLEvent(t *util.Event) error {
+func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 	switch t.Tp {
 	case model.ActionCreateTable:
 		newTableInfo := t.GetCreateTableInfo()
@@ -182,6 +182,6 @@ func (h *ddlHandlerImpl) getInitStateTableIDs(tblInfo *model.TableInfo) (ids []i
 }
 
 // DDLEventCh returns ddl events channel in handle.
-func (h *ddlHandlerImpl) DDLEventCh() chan *util.Event {
+func (h *ddlHandlerImpl) DDLEventCh() chan *util.DDLEvent {
 	return h.ddlEventCh
 }

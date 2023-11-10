@@ -23,7 +23,7 @@ import (
 
 func TestEventString(t *testing.T) {
 	// Create an Event object
-	e := &Event{
+	e := &DDLEvent{
 		Tp: model.ActionAddColumn,
 		tableInfo: &model.TableInfo{
 			ID:   1,

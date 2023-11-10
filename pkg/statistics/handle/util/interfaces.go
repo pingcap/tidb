@@ -364,9 +364,9 @@ type StatsGlobal interface {
 // DDL is used to handle ddl events.
 type DDL interface {
 	// HandleDDLEvent handles ddl events.
-	HandleDDLEvent(event *Event) error
+	HandleDDLEvent(event *DDLEvent) error
 	// DDLEventCh returns ddl events channel in handle.
-	DDLEventCh() chan *Event
+	DDLEventCh() chan *DDLEvent
 }
 
 // StatsHandle is used to manage TiDB Statistics.

@@ -20,8 +20,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 )
 
-// Event contains the information of a ddl event that is used to update stats.
-type Event struct {
+// DDLEvent contains the information of a ddl event that is used to update stats.
+type DDLEvent struct {
 	// For different ddl types, the following fields are used.
 	// They have different meanings for different ddl types.
 	// Please do **not** use these fields directly, use the corresponding
@@ -42,15 +42,15 @@ type Event struct {
 // NewCreateTableEvent creates a new ddl event that creates a table.
 func NewCreateTableEvent(
 	newTableInfo *model.TableInfo,
-) *Event {
-	return &Event{
+) *DDLEvent {
+	return &DDLEvent{
 		Tp:        model.ActionCreateTable,
 		tableInfo: newTableInfo,
 	}
 }
 
 // GetCreateTableInfo gets the table info of the table that is created.
-func (e *Event) GetCreateTableInfo() (newTableInfo *model.TableInfo) {
+func (e *DDLEvent) GetCreateTableInfo() (newTableInfo *model.TableInfo) {
 	return e.tableInfo
 }
 
@@ -58,8 +58,8 @@ func (e *Event) GetCreateTableInfo() (newTableInfo *model.TableInfo) {
 func NewTruncateTableEvent(
 	newTableInfo *model.TableInfo,
 	droppedTableInfo *model.TableInfo,
-) *Event {
-	return &Event{
+) *DDLEvent {
+	return &DDLEvent{
 		Tp:           model.ActionTruncateTable,
 		tableInfo:    newTableInfo,
 		oldTableInfo: droppedTableInfo,
@@ -67,22 +67,22 @@ func NewTruncateTableEvent(
 }
 
 // GetTruncateTableInfo gets the table info of the table that is truncated.
-func (e *Event) GetTruncateTableInfo() (newTableInfo *model.TableInfo, droppedTableInfo *model.TableInfo) {
+func (e *DDLEvent) GetTruncateTableInfo() (newTableInfo *model.TableInfo, droppedTableInfo *model.TableInfo) {
 	return e.tableInfo, e.oldTableInfo
 }
 
 // NewDropTableEvent creates a new ddl event that drops a table.
 func NewDropTableEvent(
 	droppedTableInfo *model.TableInfo,
-) *Event {
-	return &Event{
+) *DDLEvent {
+	return &DDLEvent{
 		Tp:           model.ActionDropTable,
 		oldTableInfo: droppedTableInfo,
 	}
 }
 
 // GetDropTableInfo gets the table info of the table that is dropped.
-func (e *Event) GetDropTableInfo() (newTableInfo *model.TableInfo) {
+func (e *DDLEvent) GetDropTableInfo() (newTableInfo *model.TableInfo) {
 	return e.oldTableInfo
 }
 
@@ -91,8 +91,8 @@ func (e *Event) GetDropTableInfo() (newTableInfo *model.TableInfo) {
 func NewAddColumnEvent(
 	newTableInfo *model.TableInfo,
 	newColumnInfo []*model.ColumnInfo,
-) *Event {
-	return &Event{
+) *DDLEvent {
+	return &DDLEvent{
 		Tp:          model.ActionAddColumn,
 		tableInfo:   newTableInfo,
 		columnInfos: newColumnInfo,
@@ -100,7 +100,7 @@ func NewAddColumnEvent(
 }
 
 // GetAddColumnInfo gets the table info of the table that is added a column.
-func (e *Event) GetAddColumnInfo() (newTableInfo *model.TableInfo, newColumnInfo []*model.ColumnInfo) {
+func (e *DDLEvent) GetAddColumnInfo() (newTableInfo *model.TableInfo, newColumnInfo []*model.ColumnInfo) {
 	return e.tableInfo, e.columnInfos
 }
 
@@ -109,8 +109,8 @@ func (e *Event) GetAddColumnInfo() (newTableInfo *model.TableInfo, newColumnInfo
 func NewModifyColumnEvent(
 	newTableInfo *model.TableInfo,
 	modifiedColumnInfo []*model.ColumnInfo,
-) *Event {
-	return &Event{
+) *DDLEvent {
+	return &DDLEvent{
 		Tp:          model.ActionModifyColumn,
 		tableInfo:   newTableInfo,
 		columnInfos: modifiedColumnInfo,
@@ -118,7 +118,7 @@ func NewModifyColumnEvent(
 }
 
 // GetModifyColumnInfo gets the table info of the table that is modified a column.
-func (e *Event) GetModifyColumnInfo() (newTableInfo *model.TableInfo, modifiedColumnInfo []*model.ColumnInfo) {
+func (e *DDLEvent) GetModifyColumnInfo() (newTableInfo *model.TableInfo, modifiedColumnInfo []*model.ColumnInfo) {
 	return e.tableInfo, e.columnInfos
 }
 
@@ -126,8 +126,8 @@ func (e *Event) GetModifyColumnInfo() (newTableInfo *model.TableInfo, modifiedCo
 func NewAddPartitionEvent(
 	globalTableInfo *model.TableInfo,
 	addedPartInfo *model.PartitionInfo,
-) *Event {
-	return &Event{
+) *DDLEvent {
+	return &DDLEvent{
 		Tp:        model.ActionAddTablePartition,
 		tableInfo: globalTableInfo,
 		partInfo:  addedPartInfo,
@@ -135,7 +135,7 @@ func NewAddPartitionEvent(
 }
 
 // GetAddPartitionInfo gets the table info of the table that is added partitions.
-func (e *Event) GetAddPartitionInfo() (globalTableInfo *model.TableInfo, addedPartInfo *model.PartitionInfo) {
+func (e *DDLEvent) GetAddPartitionInfo() (globalTableInfo *model.TableInfo, addedPartInfo *model.PartitionInfo) {
 	return e.tableInfo, e.partInfo
 }
 
@@ -143,8 +143,8 @@ func (e *Event) GetAddPartitionInfo() (globalTableInfo *model.TableInfo, addedPa
 func NewDropPartitionEvent(
 	globalTableInfo *model.TableInfo,
 	droppedPartInfo *model.PartitionInfo,
-) *Event {
-	return &Event{
+) *DDLEvent {
+	return &DDLEvent{
 		Tp:          model.ActionDropTablePartition,
 		tableInfo:   globalTableInfo,
 		oldPartInfo: droppedPartInfo,
@@ -152,7 +152,7 @@ func NewDropPartitionEvent(
 }
 
 // GetDropPartitionInfo gets the table info of the table that is dropped partitions.
-func (e *Event) GetDropPartitionInfo() (globalTableInfo *model.TableInfo, droppedPartInfo *model.PartitionInfo) {
+func (e *DDLEvent) GetDropPartitionInfo() (globalTableInfo *model.TableInfo, droppedPartInfo *model.PartitionInfo) {
 	return e.tableInfo, e.oldPartInfo
 }
 
@@ -161,8 +161,8 @@ func NewExchangePartitionEvent(
 	globalTableInfo *model.TableInfo,
 	exchangedPartInfo *model.PartitionInfo,
 	exchangedTableInfo *model.TableInfo,
-) *Event {
-	return &Event{
+) *DDLEvent {
+	return &DDLEvent{
 		Tp:           model.ActionExchangeTablePartition,
 		tableInfo:    globalTableInfo,
 		partInfo:     exchangedPartInfo,
@@ -170,7 +170,7 @@ func NewExchangePartitionEvent(
 	}
 }
 
-func (e *Event) getExchangePartitionInfo() (
+func (e *DDLEvent) getExchangePartitionInfo() (
 	globalTableInfo *model.TableInfo,
 	exchangedPartInfo *model.PartitionInfo,
 	exchangedTableInfo *model.TableInfo,
@@ -184,8 +184,8 @@ func NewReorganizePartitionEvent(
 	globalTableInfo *model.TableInfo,
 	addedPartInfo *model.PartitionInfo,
 	droppedPartInfo *model.PartitionInfo,
-) *Event {
-	return &Event{
+) *DDLEvent {
+	return &DDLEvent{
 		Tp:          model.ActionReorganizePartition,
 		tableInfo:   globalTableInfo,
 		partInfo:    addedPartInfo,
@@ -194,7 +194,7 @@ func NewReorganizePartitionEvent(
 }
 
 // GetReorganizePartitionInfo gets the table info of the table that is reorganized partitions.
-func (e *Event) GetReorganizePartitionInfo() (
+func (e *DDLEvent) GetReorganizePartitionInfo() (
 	globalTableInfo *model.TableInfo,
 	addedPartInfo *model.PartitionInfo,
 	droppedPartInfo *model.PartitionInfo,
@@ -207,8 +207,8 @@ func NewTruncatePartitionEvent(
 	globalTableInfo *model.TableInfo,
 	addedPartInfo *model.PartitionInfo,
 	droppedPartInfo *model.PartitionInfo,
-) *Event {
-	return &Event{
+) *DDLEvent {
+	return &DDLEvent{
 		Tp:          model.ActionTruncateTablePartition,
 		tableInfo:   globalTableInfo,
 		partInfo:    addedPartInfo,
@@ -217,7 +217,7 @@ func NewTruncatePartitionEvent(
 }
 
 // GetTruncatePartitionInfo gets the table info of the table that is truncated partitions.
-func (e *Event) GetTruncatePartitionInfo() (
+func (e *DDLEvent) GetTruncatePartitionInfo() (
 	globalTableInfo *model.TableInfo,
 	addedPartInfo *model.PartitionInfo,
 	droppedPartInfo *model.PartitionInfo,
@@ -230,8 +230,8 @@ func (e *Event) GetTruncatePartitionInfo() (
 func NewAddPartitioningEvent(
 	newGlobalTableInfo *model.TableInfo,
 	addedPartInfo *model.PartitionInfo,
-) *Event {
-	return &Event{
+) *DDLEvent {
+	return &DDLEvent{
 		Tp:        model.ActionAlterTablePartitioning,
 		tableInfo: newGlobalTableInfo,
 		partInfo:  addedPartInfo,
@@ -239,7 +239,7 @@ func NewAddPartitioningEvent(
 }
 
 // GetAddPartitioningInfo gets the table info of the table that is converted to a partitioned table.
-func (e *Event) GetAddPartitioningInfo() (newGlobalTableInfo *model.TableInfo, addedPartInfo *model.PartitionInfo) {
+func (e *DDLEvent) GetAddPartitioningInfo() (newGlobalTableInfo *model.TableInfo, addedPartInfo *model.PartitionInfo) {
 	return e.tableInfo, e.partInfo
 }
 
@@ -248,8 +248,8 @@ func (e *Event) GetAddPartitioningInfo() (newGlobalTableInfo *model.TableInfo, a
 func NewRemovePartitioningEvent(
 	newSingleTableInfo *model.TableInfo,
 	droppedPartInfo *model.PartitionInfo,
-) *Event {
-	return &Event{
+) *DDLEvent {
+	return &DDLEvent{
 		Tp:          model.ActionRemovePartitioning,
 		tableInfo:   newSingleTableInfo,
 		oldPartInfo: droppedPartInfo,
@@ -257,7 +257,7 @@ func NewRemovePartitioningEvent(
 }
 
 // GetRemovePartitioningInfo gets the table info of the table that is converted to a single table.
-func (e *Event) GetRemovePartitioningInfo() (
+func (e *DDLEvent) GetRemovePartitioningInfo() (
 	newSingleTableInfo *model.TableInfo,
 	droppedPartInfo *model.PartitionInfo,
 ) {
@@ -265,7 +265,7 @@ func (e *Event) GetRemovePartitioningInfo() (
 }
 
 // String implements fmt.Stringer interface.
-func (e *Event) String() string {
+func (e *DDLEvent) String() string {
 	ret := fmt.Sprintf("(Event Type: %s", e.Tp)
 	if e.tableInfo != nil {
 		ret += fmt.Sprintf(", Table ID: %d, Table Name: %s", e.tableInfo.ID, e.tableInfo.Name)

@@ -3036,7 +3036,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// Include the old table ID, if changed, which may contain global statistics,
 		// so it can be reused for the new (non)partitioned table.
 
-		var event *statsutil.Event
+		var event *statsutil.DDLEvent
 		switch job.Type {
 		case model.ActionReorganizePartition:
 			event = statsutil.NewReorganizePartitionEvent(
