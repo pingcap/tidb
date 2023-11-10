@@ -23,11 +23,65 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 )
 
+func TestMultiMVIndexRandom(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	for _, testCase := range []struct {
+		indexType     string
+		insertValOpts randMVIndexValOpts
+		queryValsOpts randMVIndexValOpts
+	}{
+		{"signed", randMVIndexValOpts{"signed", 0, 3}, randMVIndexValOpts{"signed", 0, 3}},
+		{"unsigned", randMVIndexValOpts{"unsigned", 0, 3}, randMVIndexValOpts{"unsigned", 0, 3}}, // unsigned-index + unsigned-values
+		{"char(3)", randMVIndexValOpts{"string", 3, 3}, randMVIndexValOpts{"string", 3, 3}},
+		{"char(3)", randMVIndexValOpts{"string", 3, 3}, randMVIndexValOpts{"string", 1, 3}},
+		{"char(3)", randMVIndexValOpts{"string", 3, 3}, randMVIndexValOpts{"string", 5, 3}},
+		{"date", randMVIndexValOpts{"date", 0, 3}, randMVIndexValOpts{"date", 0, 3}},
+	} {
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec(fmt.Sprintf(`create table t1(pk int auto_increment primary key, a json, b json, c int, d int, index idx((cast(a as %v array))), index idx2((cast(b as %v array)), c), index idx3(c, d), index idx4(d))`, testCase.indexType, testCase.indexType))
+		nRows := 20
+		rows := make([]string, 0, nRows)
+		for i := 0; i < nRows; i++ {
+			va1, va2, vb1, vb2, vc, vd := randMVIndexValue(testCase.insertValOpts), randMVIndexValue(testCase.insertValOpts), randMVIndexValue(testCase.insertValOpts), randMVIndexValue(testCase.insertValOpts), rand.Intn(testCase.insertValOpts.distinct), rand.Intn(testCase.insertValOpts.distinct)
+			if testCase.indexType == "date" {
+				rows = append(rows, fmt.Sprintf(`(json_array(cast(%v as date), cast(%v as date)),  json_array(cast(%v as date), cast(%v as date)), %v, %v)`, va1, va2, vb1, vb2, vc, vd))
+			} else {
+				rows = append(rows, fmt.Sprintf(`('[%v, %v]', '[%v, %v]', %v, %v)`, va1, va2, vb1, vb2, vc, vd))
+			}
+		}
+		tk.MustExec(fmt.Sprintf("insert into t1(a,b,c,d) values %v", strings.Join(rows, ", ")))
+		randJColName := func() string {
+			if rand.Intn(2) < 1 {
+				return "a"
+			}
+			return "b"
+		}
+		randNColName := func() string {
+			if rand.Intn(2) < 1 {
+				return "c"
+			}
+			return "d"
+		}
+		nQueries := 20
+		for i := 0; i < nQueries; i++ {
+			cnf := true
+			if i >= 10 {
+				// cnf
+				cnf = false
+			}
+			// composed condition at least two to make sense.
+			conds := randMVIndexCondsXNF4MemberOf(rand.Intn(3)+2, testCase.queryValsOpts, cnf, randJColName, randNColName)
+			r1 := tk.MustQuery("select /*+ ignore_index(t1, idx, idx2, idx3, idx4) */ * from t1 where " + conds).Sort()
+			tk.MustQuery("select /*+ use_index_merge(t1, idx, idx2, idx3, idx4) */ * from t1 where " + conds).Sort().Check(r1.Rows())
+		}
+	}
+}
 func TestMVIndexRandom(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-
 	for _, testCase := range []struct {
 		indexType     string
 		insertValOpts randMVIndexValOpts
@@ -42,7 +96,6 @@ func TestMVIndexRandom(t *testing.T) {
 	} {
 		tk.MustExec("drop table if exists t")
 		tk.MustExec(fmt.Sprintf(`create table t(a int, j json, index kj((cast(j as %v array))))`, testCase.indexType))
-
 		nRows := 20
 		rows := make([]string, 0, nRows)
 		for i := 0; i < nRows; i++ {
@@ -54,17 +107,38 @@ func TestMVIndexRandom(t *testing.T) {
 			}
 		}
 		tk.MustExec(fmt.Sprintf("insert into t values %v", strings.Join(rows, ", ")))
-
+		randJColName := func() string {
+			return "j"
+		}
+		randNColName := func() string {
+			return "a"
+		}
 		nQueries := 20
 		for i := 0; i < nQueries; i++ {
-			conds := randMVIndexConds(rand.Intn(3)+1, testCase.queryValsOpts)
+			conds := randMVIndexConds(rand.Intn(3)+1, testCase.queryValsOpts, randJColName, randNColName)
 			r1 := tk.MustQuery("select /*+ ignore_index(t, kj) */ * from t where " + conds).Sort()
 			tk.MustQuery("select /*+ use_index_merge(t, kj) */ * from t where " + conds).Sort().Check(r1.Rows())
 		}
 	}
 }
 
-func randMVIndexConds(nConds int, valOpts randMVIndexValOpts) string {
+func randMVIndexCondsXNF4MemberOf(nConds int, valOpts randMVIndexValOpts, CNF bool, randJCol, randNCol func() string) string {
+	var conds string
+	for i := 0; i < nConds; i++ {
+		if i > 0 {
+			if CNF {
+				conds += " AND "
+			} else {
+				conds += " OR "
+			}
+		}
+		cond := randMVIndexCond(rand.Intn(4), valOpts, randJCol, randNCol)
+		conds += cond
+	}
+	return conds
+}
+
+func randMVIndexConds(nConds int, valOpts randMVIndexValOpts, randJCol, randNCol func() string) string {
 	var conds string
 	for i := 0; i < nConds; i++ {
 		if i > 0 {
@@ -74,22 +148,22 @@ func randMVIndexConds(nConds int, valOpts randMVIndexValOpts) string {
 				conds += " AND "
 			}
 		}
-		cond := randMVIndexCond(rand.Intn(4), valOpts)
+		cond := randMVIndexCond(rand.Intn(4), valOpts, randJCol, randNCol)
 		conds += cond
 	}
 	return conds
 }
 
-func randMVIndexCond(condType int, valOpts randMVIndexValOpts) string {
+func randMVIndexCond(condType int, valOpts randMVIndexValOpts, randJCol, randNCol func() string) string {
 	switch condType {
 	case 0: // member_of
-		return fmt.Sprintf(`(%v member of (j))`, randMVIndexValue(valOpts))
+		return fmt.Sprintf(`(%v member of (%v))`, randMVIndexValue(valOpts), randJCol())
 	case 1: // json_contains
-		return fmt.Sprintf(`json_contains(j, '%v')`, randArray(valOpts))
+		return fmt.Sprintf(`json_contains(%v, '%v')`, randJCol(), randArray(valOpts))
 	case 2: // json_overlaps
-		return fmt.Sprintf(`json_overlaps(j, '%v')`, randArray(valOpts))
+		return fmt.Sprintf(`json_overlaps(%v, '%v')`, randJCol(), randArray(valOpts))
 	default: // others
-		return fmt.Sprintf(`a < %v`, rand.Intn(valOpts.distinct))
+		return fmt.Sprintf(`%v < %v`, randNCol(), rand.Intn(valOpts.distinct))
 	}
 }
 

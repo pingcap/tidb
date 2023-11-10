@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/executor/aggregate"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -1132,6 +1133,16 @@ func BenchmarkHashJoinExec(b *testing.B) {
 	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 		benchmarkHashJoinExecWithCase(b, cas)
 	})
+
+	cols = []*types.FieldType{
+		types.NewFieldType(mysql.TypeLonglong),
+	}
+	cas = defaultHashJoinTestCase(cols, 0, false)
+	cas.keyIdx = []int{0}
+	cas.disk = true
+	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+		benchmarkHashJoinExecWithCase(b, cas)
+	})
 }
 
 func BenchmarkOuterHashJoinExec(b *testing.B) {
@@ -1636,20 +1647,20 @@ func prepare4MergeJoin(tc *mergeJoinTestCase, innerDS, outerDS *mockDataSource, 
 
 	var leftExec, rightExec exec.Executor
 	if sorted {
-		leftSortExec := &SortExec{
+		leftSortExec := &sortexec.SortExec{
 			BaseExecutor: exec.NewBaseExecutor(tc.ctx, innerDS.Schema(), 3, innerDS),
 			ByItems:      make([]*util.ByItems, 0, len(tc.innerJoinKeyIdx)),
-			schema:       innerDS.Schema(),
+			ExecSchema:   innerDS.Schema(),
 		}
 		for _, key := range innerJoinKeys {
 			leftSortExec.ByItems = append(leftSortExec.ByItems, &util.ByItems{Expr: key})
 		}
 		leftExec = leftSortExec
 
-		rightSortExec := &SortExec{
+		rightSortExec := &sortexec.SortExec{
 			BaseExecutor: exec.NewBaseExecutor(tc.ctx, outerDS.Schema(), 4, outerDS),
 			ByItems:      make([]*util.ByItems, 0, len(tc.outerJoinKeyIdx)),
-			schema:       outerDS.Schema(),
+			ExecSchema:   outerDS.Schema(),
 		}
 		for _, key := range outerJoinKeys {
 			rightSortExec.ByItems = append(rightSortExec.ByItems, &util.ByItems{Expr: key})
@@ -1907,10 +1918,10 @@ func benchmarkSortExec(b *testing.B, cas *sortCase) {
 		ndvs:   cas.ndvs,
 	}
 	dataSource := buildMockDataSource(opt)
-	executor := &SortExec{
+	executor := &sortexec.SortExec{
 		BaseExecutor: exec.NewBaseExecutor(cas.ctx, dataSource.Schema(), 4, dataSource),
 		ByItems:      make([]*util.ByItems, 0, len(cas.orderByIdx)),
-		schema:       dataSource.Schema(),
+		ExecSchema:   dataSource.Schema(),
 	}
 	for _, idx := range cas.orderByIdx {
 		executor.ByItems = append(executor.ByItems, &util.ByItems{Expr: cas.columns()[idx]})

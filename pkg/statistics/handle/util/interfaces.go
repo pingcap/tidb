@@ -27,8 +27,15 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tiancaiamao/gp"
+	"go.uber.org/zap"
+)
+
+var (
+	// StatsLogger with category "stats" is used to log statistic related messages.
+	StatsLogger = logutil.BgLogger().With(zap.String("category", "stats"))
 )
 
 // StatsGC is used to GC unnecessary stats.
@@ -222,6 +229,9 @@ type StatsReadWriter interface {
 	// TableStatsFromStorage loads table stats info from storage.
 	TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error)
 
+	// LoadTablePartitionStats loads partition stats info from storage.
+	LoadTablePartitionStats(tableInfo *model.TableInfo, partitionDef *model.PartitionDefinition) (*statistics.Table, error)
+
 	// StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
 	StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount int64, err error)
 
@@ -249,7 +259,8 @@ type StatsReadWriter interface {
 	// then tidb-server will reload automatic.
 	UpdateStatsVersion() error
 
-	// ResetTableStats2KVForDrop resets the count to 0.
+	// ResetTableStats2KVForDrop update the version of mysql.stats_meta.
+	// Then GC worker will delete the old version of stats.
 	ResetTableStats2KVForDrop(physicalID int64) (err error)
 
 	// ChangeGlobalStatsID changes the global stats ID.

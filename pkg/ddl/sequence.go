@@ -132,7 +132,7 @@ func handleSequenceOptions(seqOptions []*ast.SequenceOption, sequenceInfo *model
 				sequenceInfo.MaxValue = model.DefaultNegativeSequenceMaxValue
 			}
 			if !startSetFlag {
-				sequenceInfo.Start = mathutil.Min(sequenceInfo.MaxValue, model.DefaultNegativeSequenceStartValue)
+				sequenceInfo.Start = min(sequenceInfo.MaxValue, model.DefaultNegativeSequenceStartValue)
 			}
 			if !minSetFlag {
 				sequenceInfo.MinValue = model.DefaultNegativeSequenceMinValue

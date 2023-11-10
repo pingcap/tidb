@@ -30,6 +30,7 @@ Error 1142 (42000): DELETE command denied to user 'testnotexist'@'localhost' for
 DELETE FROM dbnotexists.t1;
 Error 1142 (42000): DELETE command denied to user 'testnotexist'@'localhost' for table 't1'
 drop table t1;
+drop user if exists u1;
 CREATE USER u1;
 CREATE TABLE routine_table (a int);
 GRANT CREATE ROUTINE on privilege__privileges.* to u1;
@@ -156,6 +157,7 @@ DROP USER lock_tables_user;
 CREATE USER 'nofile'@'localhost';
 select 1 into outfile '/tmp/doesntmatter-no-permissions';
 Error 1227 (42000): Access denied; you need (at least one of) the FILE privilege(s) for this operation
+drop user if exists u4, 'hasgrant', 'withoutgrant';
 CREATE USER 'hasgrant';
 CREATE USER 'withoutgrant';
 GRANT ALL ON *.* TO 'hasgrant';
@@ -231,6 +233,8 @@ prepare s from 'select * from privilege__privileges.t';
 execute s;
 a
 1
+drop user if exists tcd1, tcd2, tcd3, usr1;
+drop resource group if exists rg1;
 CREATE USER tcd1, tcd2;
 GRANT ALL ON *.* to tcd2 WITH GRANT OPTION;
 CREATE USER acdc;
@@ -583,3 +587,4 @@ GRANT SELECT ON `test`.* TO 'joe'@'%'
 GRANT UPDATE ON `role`.* TO 'joe'@'%'
 GRANT SELECT,DELETE ON `mysql`.`user` TO 'joe'@'%'
 GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'
+set global tidb_enable_resource_control = default;

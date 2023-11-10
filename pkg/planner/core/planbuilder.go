@@ -489,7 +489,14 @@ type cteInfo struct {
 	// The LogicalCTEs that reference the same table should share the same CteClass.
 	cteClass *CTEClass
 
+	// isInline will determine whether it can be inlined when **CTE is used**
 	isInline bool
+	// forceInlineByHintOrVar will be true when CTE is hint by merge() or session variable "tidb_opt_force_inline_cte=true"
+	forceInlineByHintOrVar bool
+	// If CTE contain aggregation or window function in query (Indirect references to other cte containing agg or window in the query are also counted.)
+	containAggOrWindow bool
+	// Compute in preprocess phase. Record how many consumers the current CTE has
+	consumerCount int
 }
 
 type subQueryCtx = uint64
@@ -3028,7 +3035,7 @@ func handleAnalyzeOptionsV2(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]ui
 			optMap[opt.Type] = v
 		case ast.AnalyzeOptSampleRate:
 			// Only Int/Float/decimal is accepted, so pass nil here is safe.
-			fVal, err := datumValue.ToFloat64(types.DefaultNoWarningContext)
+			fVal, err := datumValue.ToFloat64(types.DefaultStmtNoWarningContext)
 			if err != nil {
 				return nil, err
 			}
@@ -3091,7 +3098,7 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeO
 			optMap[opt.Type] = v
 		case ast.AnalyzeOptSampleRate:
 			// Only Int/Float/decimal is accepted, so pass nil here is safe.
-			fVal, err := datumValue.ToFloat64(types.DefaultNoWarningContext)
+			fVal, err := datumValue.ToFloat64(types.DefaultStmtNoWarningContext)
 			if err != nil {
 				return nil, err
 			}
@@ -3339,6 +3346,14 @@ func buildCalibrateResourceSchema() (*expression.Schema, types.NameSlice) {
 	schema.Append(buildColumnWithName("", "QUOTA", mysql.TypeLonglong, longlongSize))
 
 	return schema.col2Schema(), schema.names
+}
+
+func buildAddQueryWatchSchema() (*expression.Schema, types.NameSlice) {
+	longlongSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
+	cols := newColumnsWithNames(1)
+	cols.Append(buildColumnWithName("", "WATCH_ID", mysql.TypeLonglong, longlongSize))
+
+	return cols.col2Schema(), cols.names
 }
 
 func buildShowTelemetrySchema() (*expression.Schema, types.NameSlice) {
@@ -3611,6 +3626,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 	case *ast.AddQueryWatchStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "RESOURCE_GROUP_ADMIN", false, err)
+		p.setSchemaAndNames(buildAddQueryWatchSchema())
 	case *ast.DropQueryWatchStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "RESOURCE_GROUP_ADMIN", false, err)
@@ -4677,7 +4693,7 @@ func (b *PlanBuilder) convertValue(valueItem ast.ExprNode, mockTablePlan Logical
 	if err != nil {
 		return d, err
 	}
-	d, err = value.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &col.FieldType)
+	d, err = value.ConvertTo(b.ctx.GetSessionVars().StmtCtx.TypeCtx(), &col.FieldType)
 	if err != nil {
 		if !types.ErrTruncated.Equal(err) && !types.ErrTruncatedWrongVal.Equal(err) && !types.ErrBadNumber.Equal(err) {
 			return d, err
@@ -5572,10 +5588,8 @@ func calcTSForPlanReplayer(sctx sessionctx.Context, tsExpr ast.ExprNode) uint64 
 	tpLonglong.SetFlag(mysql.UnsignedFlag)
 	// We need a strict check, which means no truncate or any other warnings/errors, or it will wrongly try to parse
 	// a date/time string into a TSO.
-	// To achieve this, we need to set fields like StatementContext.IgnoreTruncate to false, and maybe it's better
-	// not to modify and reuse the original StatementContext, so we use a temporary one here.
-	tmpStmtCtx := stmtctx.NewStmtCtxWithTimeZone(sctx.GetSessionVars().Location())
-	tso, err := tsVal.ConvertTo(tmpStmtCtx, tpLonglong)
+	// To achieve this, we create a new type context without re-using the one in statement context.
+	tso, err := tsVal.ConvertTo(types.DefaultStmtNoWarningContext.WithLocation(sctx.GetSessionVars().Location()), tpLonglong)
 	if err == nil {
 		return tso.GetUint64()
 	}
@@ -5584,7 +5598,7 @@ func calcTSForPlanReplayer(sctx sessionctx.Context, tsExpr ast.ExprNode) uint64 
 	// this part is similar to CalculateAsOfTsExpr
 	tpDateTime := types.NewFieldType(mysql.TypeDatetime)
 	tpDateTime.SetDecimal(6)
-	timestamp, err := tsVal.ConvertTo(sctx.GetSessionVars().StmtCtx, tpDateTime)
+	timestamp, err := tsVal.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), tpDateTime)
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		return 0

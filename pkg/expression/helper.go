@@ -99,10 +99,10 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int, expli
 				return d, err
 			}
 		} else if lowerX == types.ZeroDatetimeStr {
-			value, err = types.ParseTimeFromNum(sc, 0, tp, fsp)
+			value, err = types.ParseTimeFromNum(sc.TypeCtx(), 0, tp, fsp)
 			terror.Log(err)
 		} else {
-			value, err = types.ParseTime(sc, x, tp, fsp, explicitTz)
+			value, err = types.ParseTime(sc.TypeCtx(), x, tp, fsp, explicitTz)
 			if err != nil {
 				return d, err
 			}
@@ -110,12 +110,12 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int, expli
 	case *driver.ValueExpr:
 		switch x.Kind() {
 		case types.KindString:
-			value, err = types.ParseTime(sc, x.GetString(), tp, fsp, nil)
+			value, err = types.ParseTime(sc.TypeCtx(), x.GetString(), tp, fsp, nil)
 			if err != nil {
 				return d, err
 			}
 		case types.KindInt64:
-			value, err = types.ParseTimeFromNum(sc, x.GetInt64(), tp, fsp)
+			value, err = types.ParseTimeFromNum(sc.TypeCtx(), x.GetInt64(), tp, fsp)
 			if err != nil {
 				return d, err
 			}
@@ -137,12 +137,12 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int, expli
 			return d, err
 		}
 		ft := types.NewFieldType(mysql.TypeLonglong)
-		xval, err := v.ConvertTo(ctx.GetSessionVars().StmtCtx, ft)
+		xval, err := v.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), ft)
 		if err != nil {
 			return d, err
 		}
 
-		value, err = types.ParseTimeFromNum(sc, xval.GetInt64(), tp, fsp)
+		value, err = types.ParseTimeFromNum(sc.TypeCtx(), xval.GetInt64(), tp, fsp)
 		if err != nil {
 			return d, err
 		}

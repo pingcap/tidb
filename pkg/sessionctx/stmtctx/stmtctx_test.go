@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
-	typectx "github.com/pingcap/tidb/pkg/types/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -97,7 +96,7 @@ func TestStatementContextPushDownFLags(t *testing.T) {
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true)) }), 1},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true)) }), 2},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.OverflowAsWarning = true }), 64},
-		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.IgnoreZeroInDate = true }), 128},
+		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.SetTypeFlags(sc.TypeFlags().WithIgnoreZeroInDate(true)) }), 128},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.DividedByZeroAsWarning = true }), 256},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.InLoadDataStmt = true }), 1024},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) {
@@ -110,7 +109,7 @@ func TestStatementContextPushDownFLags(t *testing.T) {
 		}), 257},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) {
 			sc.InUpdateStmt = true
-			sc.IgnoreZeroInDate = true
+			sc.SetTypeFlags(sc.TypeFlags().WithIgnoreZeroInDate(true))
 			sc.InLoadDataStmt = true
 		}), 1168},
 	}
@@ -316,7 +315,7 @@ func TestStmtHintsClone(t *testing.T) {
 
 func TestNewStmtCtx(t *testing.T) {
 	sc := stmtctx.NewStmtCtx()
-	require.Equal(t, types.StrictFlags, sc.TypeFlags())
+	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
 	require.Same(t, time.UTC, sc.TimeZone())
 	require.Same(t, time.UTC, sc.TimeZone())
 	sc.AppendWarning(errors.New("err1"))
@@ -327,7 +326,7 @@ func TestNewStmtCtx(t *testing.T) {
 
 	tz := time.FixedZone("UTC+1", 2*60*60)
 	sc = stmtctx.NewStmtCtxWithTimeZone(tz)
-	require.Equal(t, types.StrictFlags, sc.TypeFlags())
+	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
 	require.Same(t, tz, sc.TimeZone())
 	require.Same(t, tz, sc.TimeZone())
 	sc.AppendWarning(errors.New("err2"))
@@ -347,37 +346,37 @@ func TestSetStmtCtxTimeZone(t *testing.T) {
 
 func TestSetStmtCtxTypeFlags(t *testing.T) {
 	sc := stmtctx.NewStmtCtx()
-	require.Equal(t, types.StrictFlags, sc.TypeFlags())
+	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
 
-	sc.SetTypeFlags(typectx.FlagClipNegativeToZero | typectx.FlagSkipASCIICheck)
-	require.Equal(t, typectx.FlagClipNegativeToZero|typectx.FlagSkipASCIICheck, sc.TypeFlags())
+	sc.SetTypeFlags(types.FlagAllowNegativeToUnsigned | types.FlagSkipASCIICheck)
+	require.Equal(t, types.FlagAllowNegativeToUnsigned|types.FlagSkipASCIICheck, sc.TypeFlags())
 	require.Equal(t, sc.TypeFlags(), sc.TypeFlags())
 
-	sc.SetTypeFlags(typectx.FlagSkipASCIICheck | typectx.FlagSkipUTF8Check | typectx.FlagInvalidDateAsWarning)
-	require.Equal(t, typectx.FlagSkipASCIICheck|typectx.FlagSkipUTF8Check|typectx.FlagInvalidDateAsWarning, sc.TypeFlags())
+	sc.SetTypeFlags(types.FlagSkipASCIICheck | types.FlagSkipUTF8Check | types.FlagTruncateAsWarning)
+	require.Equal(t, types.FlagSkipASCIICheck|types.FlagSkipUTF8Check|types.FlagTruncateAsWarning, sc.TypeFlags())
 	require.Equal(t, sc.TypeFlags(), sc.TypeFlags())
 }
 
 func TestResetStmtCtx(t *testing.T) {
 	sc := stmtctx.NewStmtCtx()
-	require.Equal(t, types.StrictFlags, sc.TypeFlags())
+	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
 
 	tz := time.FixedZone("UTC+1", 2*60*60)
 	sc.SetTimeZone(tz)
-	sc.SetTypeFlags(typectx.FlagClipNegativeToZero | typectx.FlagSkipASCIICheck)
+	sc.SetTypeFlags(types.FlagAllowNegativeToUnsigned | types.FlagSkipASCIICheck)
 	sc.AppendWarning(errors.New("err1"))
 	sc.InRestrictedSQL = true
 	sc.StmtType = "Insert"
 
 	require.Same(t, tz, sc.TimeZone())
-	require.Equal(t, typectx.FlagClipNegativeToZero|typectx.FlagSkipASCIICheck, sc.TypeFlags())
+	require.Equal(t, types.FlagAllowNegativeToUnsigned|types.FlagSkipASCIICheck, sc.TypeFlags())
 	require.Equal(t, 1, len(sc.GetWarnings()))
 
 	sc.Reset()
 	require.Same(t, time.UTC, sc.TimeZone())
 	require.Same(t, time.UTC, sc.TimeZone())
-	require.Equal(t, types.StrictFlags, sc.TypeFlags())
-	require.Equal(t, types.StrictFlags, sc.TypeFlags())
+	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
+	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
 	require.False(t, sc.InRestrictedSQL)
 	require.Empty(t, sc.StmtType)
 	require.Equal(t, 0, len(sc.GetWarnings()))

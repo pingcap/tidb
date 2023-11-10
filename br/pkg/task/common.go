@@ -80,6 +80,7 @@ const (
 	flagDryRun            = "dry-run"
 	// TODO used for local test, should be removed later
 	flagSkipAWS                       = "skip-aws"
+	flagUseFSR                        = "use-fsr"
 	flagCloudAPIConcurrency           = "cloud-api-concurrency"
 	flagWithSysTable                  = "with-sys-table"
 	flagOperatorPausedGCAndSchedulers = "operator-paused-gc-and-scheduler"
@@ -328,6 +329,16 @@ func HiddenFlagsForStream(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagSwitchModeInterval)
 
 	storage.HiddenFlagsForStream(flags)
+}
+
+func DefaultConfig() Config {
+	fs := pflag.NewFlagSet("dummy", pflag.ContinueOnError)
+	DefineCommonFlags(fs)
+	cfg := Config{}
+	if err := cfg.ParseFromFlags(fs); err != nil {
+		log.Panic("infallible operation failed.", zap.Error(err))
+	}
+	return cfg
 }
 
 // DefineDatabaseFlags defines the required --db flag for `db` subcommand.

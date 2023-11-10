@@ -66,10 +66,10 @@ type SessionPool interface {
 	Put(pools.Resource)
 }
 
-// FinishTransaction will execute `commit` when error is nil, otherwise `rollback`.
-func FinishTransaction(sctx sessionctx.Context, err error) error {
+// finishTransaction will execute `commit` when error is nil, otherwise `rollback`.
+func finishTransaction(sctx sessionctx.Context, err error) error {
 	if err == nil {
-		_, _, err = ExecRows(sctx, "commit")
+		_, _, err = ExecRows(sctx, "COMMIT")
 	} else {
 		_, _, err1 := ExecRows(sctx, "rollback")
 		terror.Log(errors.Trace(err1))
@@ -174,11 +174,11 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 // WrapTxn uses a transaction here can let different SQLs in this operation have the same data visibility.
 func WrapTxn(sctx sessionctx.Context, f func(sctx sessionctx.Context) error) (err error) {
 	// TODO: check whether this sctx is already in a txn
-	if _, _, err := ExecRows(sctx, "begin"); err != nil {
+	if _, _, err := ExecRows(sctx, "BEGIN PESSIMISTIC"); err != nil {
 		return err
 	}
 	defer func() {
-		err = FinishTransaction(sctx, err)
+		err = finishTransaction(sctx, err)
 	}()
 	err = f(sctx)
 	return
@@ -279,4 +279,18 @@ type JSONColumn struct {
 	TotColSize        int64   `json:"tot_col_size"`
 	LastUpdateVersion uint64  `json:"last_update_version"`
 	Correlation       float64 `json:"correlation"`
+}
+
+// TotalMemoryUsage returns the total memory usage of this column.
+func (col *JSONColumn) TotalMemoryUsage() (size int64) {
+	if col.Histogram != nil {
+		size += int64(col.Histogram.Size())
+	}
+	if col.CMSketch != nil {
+		size += int64(col.CMSketch.Size())
+	}
+	if col.FMSketch != nil {
+		size += int64(col.FMSketch.Size())
+	}
+	return size
 }

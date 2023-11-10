@@ -138,14 +138,12 @@ func TestNeedAnalyzeTable(t *testing.T) {
 	tests := []struct {
 		tbl    *statistics.Table
 		ratio  float64
-		limit  time.Duration
 		result bool
 		reason string
 	}{
 		// table was never analyzed and has reach the limit
 		{
 			tbl:    &statistics.Table{Version: oracle.GoTimeToTS(time.Now())},
-			limit:  0,
 			ratio:  0,
 			result: true,
 			reason: "table unanalyzed",
@@ -153,7 +151,6 @@ func TestNeedAnalyzeTable(t *testing.T) {
 		// table was never analyzed but has not reached the limit
 		{
 			tbl:    &statistics.Table{Version: oracle.GoTimeToTS(time.Now())},
-			limit:  time.Hour,
 			ratio:  0,
 			result: true,
 			reason: "table unanalyzed",
@@ -161,7 +158,6 @@ func TestNeedAnalyzeTable(t *testing.T) {
 		// table was already analyzed but auto analyze is disabled
 		{
 			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, RealtimeCount: 1}},
-			limit:  0,
 			ratio:  0,
 			result: false,
 			reason: "",
@@ -169,7 +165,6 @@ func TestNeedAnalyzeTable(t *testing.T) {
 		// table was already analyzed but modify count is small
 		{
 			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 0, RealtimeCount: 1}},
-			limit:  0,
 			ratio:  0.3,
 			result: false,
 			reason: "",
@@ -177,7 +172,6 @@ func TestNeedAnalyzeTable(t *testing.T) {
 		// table was already analyzed
 		{
 			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, RealtimeCount: 1}},
-			limit:  0,
 			ratio:  0.3,
 			result: true,
 			reason: "too many modifications",
@@ -185,7 +179,6 @@ func TestNeedAnalyzeTable(t *testing.T) {
 		// table was already analyzed
 		{
 			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, RealtimeCount: 1}},
-			limit:  0,
 			ratio:  0.3,
 			result: true,
 			reason: "too many modifications",
@@ -193,7 +186,6 @@ func TestNeedAnalyzeTable(t *testing.T) {
 		// table was already analyzed
 		{
 			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, RealtimeCount: 1}},
-			limit:  0,
 			ratio:  0.3,
 			result: true,
 			reason: "too many modifications",
@@ -201,14 +193,13 @@ func TestNeedAnalyzeTable(t *testing.T) {
 		// table was already analyzed
 		{
 			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, RealtimeCount: 1}},
-			limit:  0,
 			ratio:  0.3,
 			result: true,
 			reason: "too many modifications",
 		},
 	}
 	for _, test := range tests {
-		needAnalyze, reason := autoanalyze.NeedAnalyzeTable(test.tbl, test.limit, test.ratio)
+		needAnalyze, reason := autoanalyze.NeedAnalyzeTable(test.tbl, test.ratio)
 		require.Equal(t, test.result, needAnalyze)
 		require.True(t, strings.HasPrefix(reason, test.reason))
 	}

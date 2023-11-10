@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/executor/aggregate"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
@@ -73,6 +74,63 @@ func TestBuildKvRangesForIndexJoinWithoutCwc(t *testing.T) {
 			require.True(t, kvRange.StartKey.Cmp(kvRanges[i-1].EndKey) >= 0)
 		}
 	}
+}
+
+func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
+	indexRanges := make([]*ranger.Range, 0, 6)
+	indexRanges = append(indexRanges, generateIndexRange(1, 1, 1, 1, 1))
+	indexRanges = append(indexRanges, generateIndexRange(1, 1, 2, 1, 1))
+	indexRanges = append(indexRanges, generateIndexRange(1, 1, 2, 1, 2))
+	indexRanges = append(indexRanges, generateIndexRange(1, 1, 3, 1, 1))
+	indexRanges = append(indexRanges, generateIndexRange(2, 1, 1, 1, 1))
+	indexRanges = append(indexRanges, generateIndexRange(2, 1, 2, 1, 1))
+
+	bytesConsumed1 := int64(0)
+	{
+		joinKeyRows := make([]*indexJoinLookUpContent, 0, 10)
+		for i := int64(0); i < 10; i++ {
+			joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(1, i)})
+		}
+
+		keyOff2IdxOff := []int{1, 3}
+		ctx := mock.NewContext()
+		memTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
+		kvRanges, err := buildKvRangesForIndexJoin(ctx, 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil)
+		require.NoError(t, err)
+		// Check the kvRanges is in order.
+		for i, kvRange := range kvRanges {
+			require.True(t, kvRange.StartKey.Cmp(kvRange.EndKey) < 0)
+			if i > 0 {
+				require.True(t, kvRange.StartKey.Cmp(kvRanges[i-1].EndKey) >= 0)
+			}
+		}
+		bytesConsumed1 = memTracker.BytesConsumed()
+	}
+
+	bytesConsumed2 := int64(0)
+	{
+		joinKeyRows := make([]*indexJoinLookUpContent, 0, 20)
+		for i := int64(0); i < 20; i++ {
+			joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(1, i)})
+		}
+
+		keyOff2IdxOff := []int{1, 3}
+		ctx := mock.NewContext()
+		memTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
+		kvRanges, err := buildKvRangesForIndexJoin(ctx, 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil)
+		require.NoError(t, err)
+		// Check the kvRanges is in order.
+		for i, kvRange := range kvRanges {
+			require.True(t, kvRange.StartKey.Cmp(kvRange.EndKey) < 0)
+			if i > 0 {
+				require.True(t, kvRange.StartKey.Cmp(kvRanges[i-1].EndKey) >= 0)
+			}
+		}
+		bytesConsumed2 = memTracker.BytesConsumed()
+	}
+
+	require.Equal(t, 2*bytesConsumed1, bytesConsumed2)
+	require.Equal(t, int64(20760), bytesConsumed1)
 }
 
 func generateIndexRange(vals ...int64) *ranger.Range {
@@ -214,9 +272,9 @@ func TestFilterTemporaryTableKeys(t *testing.T) {
 }
 
 func TestSortSpillDisk(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testSortedRowContainerSpill", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/testSortedRowContainerSpill", "return(true)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/testSortedRowContainerSpill"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/testSortedRowContainerSpill"))
 	}()
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().MemQuota.MemQuotaQuery = 1
@@ -233,10 +291,10 @@ func TestSortSpillDisk(t *testing.T) {
 		ndvs:   cas.ndvs,
 	}
 	dataSource := buildMockDataSource(opt)
-	exe := &SortExec{
+	exe := &sortexec.SortExec{
 		BaseExecutor: exec.NewBaseExecutor(cas.ctx, dataSource.Schema(), 0, dataSource),
 		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
-		schema:       dataSource.Schema(),
+		ExecSchema:   dataSource.Schema(),
 	}
 	for _, idx := range cas.orderByIdx {
 		exe.ByItems = append(exe.ByItems, &plannerutil.ByItems{Expr: cas.columns()[idx]})
@@ -254,9 +312,9 @@ func TestSortSpillDisk(t *testing.T) {
 		}
 	}
 	// Test only 1 partition and all data in memory.
-	require.Len(t, exe.partitionList, 1)
-	require.Equal(t, false, exe.partitionList[0].AlreadySpilledSafeForTest())
-	require.Equal(t, 2048, exe.partitionList[0].NumRow())
+	require.Len(t, exe.PartitionList, 1)
+	require.Equal(t, false, exe.PartitionList[0].AlreadySpilledSafeForTest())
+	require.Equal(t, 2048, exe.PartitionList[0].NumRow())
 	err = exe.Close()
 	require.NoError(t, err)
 
@@ -277,16 +335,16 @@ func TestSortSpillDisk(t *testing.T) {
 	// Now spilling is in parallel.
 	// Maybe the second add() will called before spilling, depends on
 	// Golang goroutine scheduling. So the result has two possibilities.
-	if len(exe.partitionList) == 2 {
-		require.Len(t, exe.partitionList, 2)
-		require.Equal(t, true, exe.partitionList[0].AlreadySpilledSafeForTest())
-		require.Equal(t, true, exe.partitionList[1].AlreadySpilledSafeForTest())
-		require.Equal(t, 1024, exe.partitionList[0].NumRow())
-		require.Equal(t, 1024, exe.partitionList[1].NumRow())
+	if len(exe.PartitionList) == 2 {
+		require.Len(t, exe.PartitionList, 2)
+		require.Equal(t, true, exe.PartitionList[0].AlreadySpilledSafeForTest())
+		require.Equal(t, true, exe.PartitionList[1].AlreadySpilledSafeForTest())
+		require.Equal(t, 1024, exe.PartitionList[0].NumRow())
+		require.Equal(t, 1024, exe.PartitionList[1].NumRow())
 	} else {
-		require.Len(t, exe.partitionList, 1)
-		require.Equal(t, true, exe.partitionList[0].AlreadySpilledSafeForTest())
-		require.Equal(t, 2048, exe.partitionList[0].NumRow())
+		require.Len(t, exe.PartitionList, 1)
+		require.Equal(t, true, exe.PartitionList[0].AlreadySpilledSafeForTest())
+		require.Equal(t, 2048, exe.PartitionList[0].NumRow())
 	}
 
 	err = exe.Close()
@@ -306,9 +364,9 @@ func TestSortSpillDisk(t *testing.T) {
 		}
 	}
 	// Test only 1 partition but spill disk.
-	require.Len(t, exe.partitionList, 1)
-	require.Equal(t, true, exe.partitionList[0].AlreadySpilledSafeForTest())
-	require.Equal(t, 2048, exe.partitionList[0].NumRow())
+	require.Len(t, exe.PartitionList, 1)
+	require.Equal(t, true, exe.PartitionList[0].AlreadySpilledSafeForTest())
+	require.Equal(t, 2048, exe.PartitionList[0].NumRow())
 	err = exe.Close()
 	require.NoError(t, err)
 
@@ -328,10 +386,10 @@ func TestSortSpillDisk(t *testing.T) {
 		ndvs:   cas.ndvs,
 	}
 	dataSource = buildMockDataSource(opt)
-	exe = &SortExec{
+	exe = &sortexec.SortExec{
 		BaseExecutor: exec.NewBaseExecutor(cas.ctx, dataSource.Schema(), 0, dataSource),
 		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
-		schema:       dataSource.Schema(),
+		ExecSchema:   dataSource.Schema(),
 	}
 	for _, idx := range cas.orderByIdx {
 		exe.ByItems = append(exe.ByItems, &plannerutil.ByItems{Expr: cas.columns()[idx]})
@@ -349,7 +407,7 @@ func TestSortSpillDisk(t *testing.T) {
 		}
 	}
 	// Don't spill too many partitions.
-	require.True(t, len(exe.partitionList) <= 4)
+	require.True(t, len(exe.PartitionList) <= 4)
 	err = exe.Close()
 	require.NoError(t, err)
 }

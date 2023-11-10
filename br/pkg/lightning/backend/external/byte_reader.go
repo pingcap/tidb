@@ -278,6 +278,8 @@ func (r *byteReader) reload() error {
 	if err != nil {
 		switch err {
 		case io.EOF:
+			// move curBufOffset so following read will also find EOF
+			r.curBufOffset = len(r.curBuf)
 			return err
 		case io.ErrUnexpectedEOF:
 			// The last batch.

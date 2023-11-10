@@ -35,19 +35,19 @@ func TestBaseBuiltin(t *testing.T) {
 	ctx := mock.NewContext()
 	bf, err := newBaseBuiltinFuncWithTp(ctx, "", nil, types.ETTimestamp)
 	require.NoError(t, err)
-	_, _, err = bf.evalInt(chunk.Row{})
+	_, _, err = bf.evalInt(ctx, chunk.Row{})
 	require.Error(t, err)
-	_, _, err = bf.evalReal(chunk.Row{})
+	_, _, err = bf.evalReal(ctx, chunk.Row{})
 	require.Error(t, err)
-	_, _, err = bf.evalString(chunk.Row{})
+	_, _, err = bf.evalString(ctx, chunk.Row{})
 	require.Error(t, err)
-	_, _, err = bf.evalDecimal(chunk.Row{})
+	_, _, err = bf.evalDecimal(ctx, chunk.Row{})
 	require.Error(t, err)
-	_, _, err = bf.evalTime(chunk.Row{})
+	_, _, err = bf.evalTime(ctx, chunk.Row{})
 	require.Error(t, err)
-	_, _, err = bf.evalDuration(chunk.Row{})
+	_, _, err = bf.evalDuration(ctx, chunk.Row{})
 	require.Error(t, err)
-	_, _, err = bf.evalJSON(chunk.Row{})
+	_, _, err = bf.evalJSON(ctx, chunk.Row{})
 	require.Error(t, err)
 }
 
@@ -580,6 +580,7 @@ func (m *MockExpr) resolveIndicesByVirtualExpr(schema *Schema) bool             
 func (m *MockExpr) RemapColumn(_ map[int64]*Column) (Expression, error)           { return m, nil }
 func (m *MockExpr) ExplainInfo() string                                           { return "" }
 func (m *MockExpr) ExplainNormalizedInfo() string                                 { return "" }
+func (m *MockExpr) ExplainNormalizedInfo4InList() string                          { return "" }
 func (m *MockExpr) HashCode(sc *stmtctx.StatementContext) []byte                  { return nil }
 func (m *MockExpr) Vectorized() bool                                              { return false }
 func (m *MockExpr) SupportReverseEval() bool                                      { return false }

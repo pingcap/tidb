@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/fastrand"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/sys/linux"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	uatomic "go.uber.org/atomic"
@@ -418,7 +419,7 @@ func (s *Server) reportConfig() {
 
 // Run runs the server.
 func (s *Server) Run() error {
-	metrics.ServerEventCounter.WithLabelValues(metrics.EventStart).Inc()
+	metrics.ServerEventCounter.WithLabelValues(metrics.ServerStart).Inc()
 	s.reportConfig()
 
 	// Start HTTP API to report tidb info such as TPS.
@@ -578,7 +579,7 @@ func (s *Server) closeListener() {
 		s.authTokenCancelFunc()
 	}
 	s.wg.Wait()
-	metrics.ServerEventCounter.WithLabelValues(metrics.EventClose).Inc()
+	metrics.ServerEventCounter.WithLabelValues(metrics.ServerStop).Inc()
 }
 
 // Close closes the server.
@@ -889,9 +890,9 @@ func (s *Server) GetTLSConfig() *tls.Config {
 func killQuery(conn *clientConn, maxExecutionTime bool) {
 	sessVars := conn.ctx.GetSessionVars()
 	if maxExecutionTime {
-		atomic.StoreUint32(&sessVars.Killed, 2)
+		sessVars.SQLKiller.SendKillSignal(sqlkiller.MaxExecTimeExceeded)
 	} else {
-		atomic.StoreUint32(&sessVars.Killed, 1)
+		sessVars.SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 	}
 	conn.mu.RLock()
 	cancelFunc := conn.mu.cancelFunc
