@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -155,7 +156,7 @@ func HandleAutoAnalyze(
 ) (analyzed bool) {
 	defer func() {
 		if r := recover(); r != nil {
-			statsutil.StatsLogger.Error(
+			statslogutil.StatsLogger.Error(
 				"HandleAutoAnalyze panicked",
 				zap.Any("recover", r),
 				zap.Stack("stack"),
@@ -173,7 +174,7 @@ func HandleAutoAnalyze(
 		parameters[variable.TiDBAutoAnalyzeEndTime],
 	)
 	if err != nil {
-		statsutil.StatsLogger.Error(
+		statslogutil.StatsLogger.Error(
 			"parse auto analyze period failed",
 			zap.Error(err),
 		)
@@ -207,7 +208,7 @@ func HandleAutoAnalyze(
 		tidsAndPids := getAllTidsAndPids(tbls)
 		lockedTables, err := statsHandle.GetLockedTables(tidsAndPids...)
 		if err != nil {
-			statsutil.StatsLogger.Error(
+			statslogutil.StatsLogger.Error(
 				"check table lock failed",
 				zap.Error(err),
 			)
@@ -298,7 +299,7 @@ func tryAutoAnalyzeTable(
 		if err != nil {
 			return false
 		}
-		statsutil.StatsLogger.Info(
+		statslogutil.StatsLogger.Info(
 			"auto analyze triggered",
 			zap.String("sql", escaped),
 			zap.String("reason", reason),
@@ -321,7 +322,7 @@ func tryAutoAnalyzeTable(
 				return false
 			}
 
-			statsutil.StatsLogger.Info(
+			statslogutil.StatsLogger.Info(
 				"auto analyze for unanalyzed indexes",
 				zap.String("sql", escaped),
 			)
@@ -402,7 +403,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 			ratio,
 		); needAnalyze {
 			needAnalyzePartitionNames = append(needAnalyzePartitionNames, def.Name.O)
-			statsutil.StatsLogger.Info(
+			statslogutil.StatsLogger.Info(
 				"need to auto analyze",
 				zap.String("database", db),
 				zap.String("table", tblInfo.Name.String()),
@@ -427,7 +428,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 	}
 
 	if len(needAnalyzePartitionNames) > 0 {
-		statsutil.StatsLogger.Info("start to auto analyze",
+		statslogutil.StatsLogger.Info("start to auto analyze",
 			zap.String("database", db),
 			zap.String("table", tblInfo.Name.String()),
 			zap.Any("partitions", needAnalyzePartitionNames),
@@ -447,7 +448,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 			sql := getSQL("analyze table %n.%n partition", "", end-start)
 			params := append([]interface{}{db, tblInfo.Name.O}, needAnalyzePartitionNames[start:end]...)
 
-			statsutil.StatsLogger.Info(
+			statslogutil.StatsLogger.Info(
 				"auto analyze triggered",
 				zap.String("database", db),
 				zap.String("table", tblInfo.Name.String()),
@@ -485,7 +486,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 				sql := getSQL("analyze table %n.%n partition", " index %n", end-start)
 				params := append([]interface{}{db, tblInfo.Name.O}, needAnalyzePartitionNames[start:end]...)
 				params = append(params, idx.Name.O)
-				statsutil.StatsLogger.Info("auto analyze for unanalyzed",
+				statslogutil.StatsLogger.Info("auto analyze for unanalyzed",
 					zap.String("database", db),
 					zap.String("table", tblInfo.Name.String()),
 					zap.String("index", idx.Name.String()),
@@ -523,7 +524,7 @@ func execAutoAnalyze(
 		if err1 != nil {
 			escaped = ""
 		}
-		statsutil.StatsLogger.Error(
+		statslogutil.StatsLogger.Error(
 			"auto analyze failed",
 			zap.String("sql", escaped),
 			zap.Duration("cost_time", dur),
