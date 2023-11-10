@@ -296,17 +296,16 @@ func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string)
 		targetAZ := availableZone
 		// We have to control the batch size to avoid the error of "parameter SourceSnapshotIds must be less than or equal to 10"
 		for i := 0; i < len(snapshotsIDsMap[targetAZ]); i += AWS_FSR_API_SNAPSHOTS_THRESHOLD {
+			start := i
 			end := i + AWS_FSR_API_SNAPSHOTS_THRESHOLD
 			if end > len(snapshotsIDsMap[targetAZ]) {
 				end = len(snapshotsIDsMap[targetAZ])
 			}
 			eg.Go(func() error {
-				localI := i
-				localEnd := end
-				log.Info("enable fsr for snapshots", zap.String("available zone", targetAZ), zap.Any("snapshots", snapshotsIDsMap[targetAZ][localI:localEnd]))
+				log.Info("enable fsr for snapshots", zap.String("available zone", targetAZ), zap.Any("snapshots", snapshotsIDsMap[targetAZ][start:end]))
 				resp, err := e.ec2.EnableFastSnapshotRestores(&ec2.EnableFastSnapshotRestoresInput{
 					AvailabilityZones: []*string{&targetAZ},
-					SourceSnapshotIds: snapshotsIDsMap[targetAZ][localI:localEnd],
+					SourceSnapshotIds: snapshotsIDsMap[targetAZ][start:end],
 				})
 
 				if err != nil {
@@ -318,7 +317,7 @@ func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string)
 					return errors.Errorf("Some snapshot fails to enable FSR for available zone %s, such as %s, error code is %v", targetAZ, *resp.Unsuccessful[0].SnapshotId, resp.Unsuccessful[0].FastSnapshotRestoreStateErrors)
 				}
 
-				return e.waitDataFSREnabled(snapshotsIDsMap[targetAZ][localI:localEnd], targetAZ)
+				return e.waitDataFSREnabled(snapshotsIDsMap[targetAZ][start:end], targetAZ)
 			})
 		}
 	}
@@ -391,16 +390,15 @@ func (e *EC2Session) DisableDataFSR(snapshotsIDsMap map[string][]*string) error 
 		targetAZ := availableZone
 		// We have to control the batch size to avoid the error of "parameter SourceSnapshotIds must be less than or equal to 10"
 		for i := 0; i < len(snapshotsIDsMap[targetAZ]); i += AWS_FSR_API_SNAPSHOTS_THRESHOLD {
+			start := i
 			end := i + AWS_FSR_API_SNAPSHOTS_THRESHOLD
 			if end > len(snapshotsIDsMap[targetAZ]) {
 				end = len(snapshotsIDsMap[targetAZ])
 			}
 			eg.Go(func() error {
-				localI := i
-				localEnd := end
 				resp, err := e.ec2.DisableFastSnapshotRestores(&ec2.DisableFastSnapshotRestoresInput{
 					AvailabilityZones: []*string{&targetAZ},
-					SourceSnapshotIds: snapshotsIDsMap[targetAZ][localI:localEnd],
+					SourceSnapshotIds: snapshotsIDsMap[targetAZ][start:end],
 				})
 
 				if err != nil {
@@ -412,7 +410,7 @@ func (e *EC2Session) DisableDataFSR(snapshotsIDsMap map[string][]*string) error 
 					return errors.Errorf("Some snapshot fails to disable FSR for available zone %s, such as %s, error code is %v", targetAZ, *resp.Unsuccessful[0].SnapshotId, resp.Unsuccessful[0].FastSnapshotRestoreStateErrors)
 				}
 
-				log.Info("Disable FSR issued", zap.String("available zone", targetAZ), zap.Any("snapshots", snapshotsIDsMap[targetAZ][localI:localEnd]))
+				log.Info("Disable FSR issued", zap.String("available zone", targetAZ), zap.Any("snapshots", snapshotsIDsMap[targetAZ][start:end]))
 
 				return nil
 			})
