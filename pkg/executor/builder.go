@@ -2895,6 +2895,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 		tasks:        make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),
 		opts:         v.Opts,
 		OptionsMap:   v.OptionsMap,
+		errExitCh:    make(chan struct{}),
 	}
 	autoAnalyze := ""
 	if b.ctx.GetSessionVars().InRestrictedSQL {
@@ -4678,7 +4679,7 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 		memTracker.Consume(int64(2 * cap(kvRanges[0].StartKey) * len(kvRanges)))
 	}
 	if len(tmpDatumRanges) != 0 && memTracker != nil {
-		memTracker.Consume(2 * int64(len(tmpDatumRanges)) * types.EstimatedMemUsage(tmpDatumRanges[0].LowVal, len(tmpDatumRanges)))
+		memTracker.Consume(2 * types.EstimatedMemUsage(tmpDatumRanges[0].LowVal, len(tmpDatumRanges)))
 	}
 	if cwc == nil {
 		slices.SortFunc(kvRanges, func(i, j kv.KeyRange) int {

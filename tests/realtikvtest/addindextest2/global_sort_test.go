@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package addindextest_test
+package addindextest
 
 import (
 	"context"
@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -34,6 +35,12 @@ import (
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
+
+func init() {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Path = "127.0.0.1:2379"
+	})
+}
 
 func genStorageURI(t *testing.T) (host string, port uint16, uri string) {
 	gcsHost := "127.0.0.1"
@@ -184,4 +191,37 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 
 	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 	tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
+}
+
+func TestAddIndexIngestShowReorgTp(t *testing.T) {
+	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
+	opt := fakestorage.Options{
+		Scheme:     "http",
+		Host:       gcsHost,
+		Port:       gcsPort,
+		PublicHost: gcsHost,
+	}
+	server, err := fakestorage.NewServerWithOptions(opt)
+	require.NoError(t, err)
+	t.Cleanup(server.Stop)
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + cloudStorageURI + "';")
+	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
+
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1), (2), (3);")
+	tk.MustExec("alter table t add index idx(a);")
+
+	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
+	require.Len(t, rows, 1)
+	jobType, rowCnt := rows[0][3].(string), rows[0][7].(string)
+	require.True(t, strings.Contains(jobType, "ingest"))
+	require.False(t, strings.Contains(jobType, "cloud"))
+	require.Equal(t, rowCnt, "3")
 }

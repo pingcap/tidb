@@ -106,14 +106,15 @@ type ExternalEngineConfig struct {
 	StorageURI      string
 	DataFiles       []string
 	StatFiles       []string
-	MinKey          []byte
-	MaxKey          []byte
+	StartKey        []byte
+	EndKey          []byte
 	SplitKeys       [][]byte
 	RegionSplitSize int64
 	// TotalFileSize can be an estimated value.
 	TotalFileSize int64
 	// TotalKVCount can be an estimated value.
 	TotalKVCount int64
+	CheckHotspot bool
 }
 
 // CheckCtx contains all parameters used in CheckRequirements
