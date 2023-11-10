@@ -337,7 +337,7 @@ func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) 
 	log.Info("starts check fsr pending snapshots", zap.Any("snapshots", pendingSnapshots), zap.String("available zone", targetAZ))
 	for {
 		if len(pendingSnapshots) == 0 {
-			log.Info("all snapshots fsr enablement is finished", zap.String("available zone", targetAZ))
+			log.Info("all snapshots in current batch fsr enablement is finished", zap.String("available zone", targetAZ), zap.Any("snapshots", snapShotIDs))
 			return nil
 		}
 
