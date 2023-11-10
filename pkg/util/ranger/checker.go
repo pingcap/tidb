@@ -139,7 +139,7 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 
 func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) (isAccessCond, shouldReserve bool) {
 	_, collation := scalar.CharsetAndCollation()
-	if collate.NewCollationEnabled() && !collate.IsBinCollation(collation) {
+	if collate.NewCollationEnabled() && !collate.IsBinCollation(collation) && !c.isFullLengthColumn() {
 		// The algorithm constructs the range in byte-level: for example, ab% is mapped to [ab, ac] by adding 1 to the last byte.
 		// However, this is incorrect for non-binary collation strings because the sort key order is not the same as byte order.
 		// For example, "`%" is mapped to the range [`, a](where ` is 0x60 and a is 0x61).

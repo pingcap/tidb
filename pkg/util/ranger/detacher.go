@@ -15,6 +15,7 @@
 package ranger
 
 import (
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -607,7 +608,7 @@ func extractValueInfo(expr expression.Expression) *valueInfo {
 func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
 	lengths []int) ([]expression.Expression, []expression.Expression, []expression.Expression, []*valueInfo, bool) {
 	var filters []expression.Expression
-	rb := builder{sc: sctx.GetSessionVars().StmtCtx}
+	rb := builder{sctx: sctx}
 	accesses := make([]expression.Expression, len(cols))
 	points := make([][]*point, len(cols))
 	mergedAccesses := make([]expression.Expression, len(cols))
@@ -713,7 +714,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 		length:                   d.lengths[0],
 		optPrefixIndexSingleScan: d.sctx.GetSessionVars().OptPrefixIndexSingleScan,
 	}
-	rb := builder{sc: d.sctx.GetSessionVars().StmtCtx}
+	rb := builder{sctx: d.sctx}
 	dnfItems := expression.FlattenDNFConditions(condition)
 	newAccessItems := make([]expression.Expression, 0, len(dnfItems))
 	var totalRanges Ranges
@@ -772,8 +773,16 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 				hasResidual = true
 			}
 			points := rb.build(item, collate.GetCollator(newTpSlice[0].GetCollate()))
+			colFT := newTpSlice[0]
+			if colFT.EvalType() == types.ETString &&
+				colFT.GetType() != mysql.TypeEnum &&
+				colFT.GetType() != mysql.TypeSet {
+				colFT = colFT.Clone()
+				colFT.SetCharset(charset.CharsetBin)
+				colFT.SetCollate(charset.CollationBin)
+			}
 			// TODO: restrict the mem usage of ranges
-			ranges, rangeFallback, err := points2Ranges(d.sctx, points, newTpSlice[0], d.rangeMaxSize)
+			ranges, rangeFallback, err := points2Ranges(d.sctx, points, colFT, d.rangeMaxSize)
 			if err != nil {
 				return nil, nil, nil, false, errors.Trace(err)
 			}

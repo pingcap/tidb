@@ -25,11 +25,13 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/hack"
 )
 
 // Error instances.
@@ -134,6 +136,33 @@ func rangePointEqualValueLess(a, b *point) bool {
 	return a.excl && !b.excl
 }
 
+func switchPointsToSortKey(sctx sessionctx.Context, inputPs []*point, tp *types.FieldType) ([]*point, error) {
+	ps := make([]*point, 0, len(inputPs))
+	for _, p := range inputPs {
+		np, err := switchPointToSortKey(sctx, p, tp)
+		if err != nil {
+			return nil, err
+		}
+		ps = append(ps, np)
+	}
+	return ps, nil
+}
+
+func switchPointToSortKey(sctx sessionctx.Context, inputP *point, tp *types.FieldType) (*point, error) {
+	p, err := convertPoint(sctx, inputP, tp)
+	if err != nil {
+		return nil, err
+	}
+	if p.value.Kind() != types.KindString {
+		return p, nil
+	}
+	sortKey := p.value.GetBytes()
+	if collate.NewCollationEnabled() {
+		sortKey = collate.GetCollator(tp.GetCollate()).Key(string(hack.String(sortKey)))
+	}
+	return &point{value: types.NewBytesDatum(sortKey), excl: p.excl, start: p.start}, nil
+}
+
 func (r *pointSorter) Swap(i, j int) {
 	r.points[i], r.points[j] = r.points[j], r.points[i]
 }
@@ -182,8 +211,8 @@ func NullRange() Ranges {
 
 // builder is the range builder struct.
 type builder struct {
-	err error
-	sc  *stmtctx.StatementContext
+	err  error
+	sctx sessionctx.Context
 }
 
 func (r *builder) build(expr expression.Expression, collator collate.Collator) []*point {
@@ -209,7 +238,7 @@ func (r *builder) buildFromConstant(expr *expression.Constant) []*point {
 		return nil
 	}
 
-	val, err := dt.ToBool(r.sc.TypeCtx())
+	val, err := dt.ToBool(r.sctx.GetSessionVars().StmtCtx.TypeCtx())
 	if err != nil {
 		r.err = err
 		return nil
@@ -254,11 +283,11 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 			// If the original value is adjusted, we need to change the condition.
 			// For example, col < 2156. Since the max year is 2155, 2156 is changed to 2155.
 			// col < 2155 is wrong. It should be col <= 2155.
-			preValue, err1 := value.ToInt64(r.sc.TypeCtx())
+			preValue, err1 := value.ToInt64(r.sctx.GetSessionVars().StmtCtx.TypeCtx())
 			if err1 != nil {
 				return err1
 			}
-			*value, err = value.ConvertToMysqlYear(r.sc.TypeCtx(), col.RetType)
+			*value, err = value.ConvertToMysqlYear(r.sctx.GetSessionVars().StmtCtx.TypeCtx(), col.RetType)
 			if errors.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
 				// Keep err for EQ and NE.
 				switch *op {
@@ -335,43 +364,56 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 	}
 
 	if ft.GetType() == mysql.TypeEnum && ft.EvalType() == types.ETString {
-		return handleEnumFromBinOp(r.sc, ft, value, op)
+		return handleEnumFromBinOp(r.sctx.GetSessionVars().StmtCtx, ft, value, op)
 	}
 
+	var res []*point
 	switch op {
 	case ast.NullEQ:
 		if value.IsNull() {
-			return []*point{{start: true}, {}} // [null, null]
+			res = []*point{{start: true}, {}} // [null, null]
+			break
 		}
 		fallthrough
 	case ast.EQ:
 		startPoint := &point{value: value, start: true}
 		endPoint := &point{value: value}
-		return []*point{startPoint, endPoint}
+		res = []*point{startPoint, endPoint}
 	case ast.NE:
 		startPoint1 := &point{value: types.MinNotNullDatum(), start: true}
 		endPoint1 := &point{value: value, excl: true}
 		startPoint2 := &point{value: value, start: true, excl: true}
 		endPoint2 := &point{value: types.MaxValueDatum()}
-		return []*point{startPoint1, endPoint1, startPoint2, endPoint2}
+		res = []*point{startPoint1, endPoint1, startPoint2, endPoint2}
 	case ast.LT:
 		startPoint := &point{value: types.MinNotNullDatum(), start: true}
 		endPoint := &point{value: value, excl: true}
-		return []*point{startPoint, endPoint}
+		res = []*point{startPoint, endPoint}
 	case ast.LE:
 		startPoint := &point{value: types.MinNotNullDatum(), start: true}
 		endPoint := &point{value: value}
-		return []*point{startPoint, endPoint}
+		res = []*point{startPoint, endPoint}
 	case ast.GT:
 		startPoint := &point{value: value, start: true, excl: true}
 		endPoint := &point{value: types.MaxValueDatum()}
-		return []*point{startPoint, endPoint}
+		res = []*point{startPoint, endPoint}
 	case ast.GE:
 		startPoint := &point{value: value, start: true}
 		endPoint := &point{value: types.MaxValueDatum()}
-		return []*point{startPoint, endPoint}
+		res = []*point{startPoint, endPoint}
 	}
-	return nil
+
+	if ft.EvalType() == types.ETString &&
+		ft.GetType() != mysql.TypeEnum &&
+		ft.GetType() != mysql.TypeSet {
+		res, err = switchPointsToSortKey(r.sctx, res, ft)
+		if err != nil {
+			r.err = err
+			return getFullRange()
+		}
+	}
+
+	return res
 }
 
 // handleUnsignedCol handles the case when unsigned column meets negative value.
@@ -557,7 +599,8 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 	list := expr.GetArgs()[1:]
 	rangePoints := make([]*point, 0, len(list)*2)
 	hasNull := false
-	colCollate := expr.GetArgs()[0].GetType().GetCollate()
+	ft := expr.GetArgs()[0].GetType()
+	colCollate := ft.GetCollate()
 	for _, e := range list {
 		v, ok := e.(*expression.Constant)
 		if !ok {
@@ -585,7 +628,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 					err = parseErr
 				}
 			default:
-				dt, err = dt.ConvertTo(r.sc.TypeCtx(), expr.GetArgs()[0].GetType())
+				dt, err = dt.ConvertTo(r.sctx.GetSessionVars().StmtCtx.TypeCtx(), expr.GetArgs()[0].GetType())
 			}
 
 			if err != nil {
@@ -594,7 +637,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 			}
 		}
 		if expr.GetArgs()[0].GetType().GetType() == mysql.TypeYear {
-			dt, err = dt.ConvertToMysqlYear(r.sc.TypeCtx(), expr.GetArgs()[0].GetType())
+			dt, err = dt.ConvertToMysqlYear(r.sctx.GetSessionVars().StmtCtx.TypeCtx(), expr.GetArgs()[0].GetType())
 			if err != nil {
 				// in (..., an impossible value (not valid year), ...), the range is empty, so skip it.
 				continue
@@ -610,7 +653,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 		endPoint := &point{value: endValue}
 		rangePoints = append(rangePoints, startPoint, endPoint)
 	}
-	sorter := pointSorter{points: rangePoints, sc: r.sc, collator: collate.GetCollator(colCollate)}
+	sorter := pointSorter{points: rangePoints, sc: r.sctx.GetSessionVars().StmtCtx, collator: collate.GetCollator(colCollate)}
 	sort.Sort(&sorter)
 	if sorter.err != nil {
 		r.err = sorter.err
@@ -629,7 +672,18 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 	if curPos > 0 {
 		curPos++
 	}
-	return rangePoints[:curPos], hasNull
+	rangePoints = rangePoints[:curPos]
+	var err error
+	if ft.EvalType() == types.ETString &&
+		ft.GetType() != mysql.TypeEnum &&
+		ft.GetType() != mysql.TypeSet {
+		rangePoints, err = switchPointsToSortKey(r.sctx, rangePoints, ft)
+		if err != nil {
+			r.err = err
+			return getFullRange(), false
+		}
+	}
+	return rangePoints, hasNull
 }
 
 func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []*point {
@@ -695,19 +749,25 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []*po
 	}
 	startPoint := &point{start: true, excl: exclude}
 	startPoint.value.SetBytesAsString(lowValue, tpOfPattern.GetCollate(), uint32(tpOfPattern.GetFlen()))
-	highValue := make([]byte, len(lowValue))
-	copy(highValue, lowValue)
+	startPoint, err = switchPointToSortKey(r.sctx, startPoint, tpOfPattern)
+	if err != nil {
+		r.err = errors.Trace(err)
+		return getFullRange()
+	}
+	highValueSortKey := make([]byte, len(startPoint.value.GetBytes()))
+	copy(highValueSortKey, startPoint.value.GetBytes())
+
 	endPoint := &point{excl: true}
-	for i := len(highValue) - 1; i >= 0; i-- {
+	for i := len(highValueSortKey) - 1; i >= 0; i-- {
 		// Make the end point value more than the start point value,
 		// and the length of the end point value is the same as the length of the start point value.
 		// e.g., the start point value is "abc", so the end point value is "abd".
-		highValue[i]++
-		if highValue[i] != 0 {
-			endPoint.value.SetBytesAsString(highValue, tpOfPattern.GetCollate(), uint32(tpOfPattern.GetFlen()))
+		highValueSortKey[i]++
+		if highValueSortKey[i] != 0 {
+			endPoint.value.SetBytes(highValueSortKey)
 			break
 		}
-		// If highValue[i] is 255 and highValue[i]++ is 0, then the end point value is max value.
+		// If highValueSortKey[i] is 255 and highValueSortKey[i]++ is 0, then the end point value is max value.
 		if i == 0 {
 			endPoint.value = types.MaxValueDatum()
 		}
@@ -812,7 +872,7 @@ func (r *builder) mergeSorted(a, b []*point, collator collate.Collator) []*point
 	ret := make([]*point, 0, len(a)+len(b))
 	i, j := 0, 0
 	for i < len(a) && j < len(b) {
-		less, err := rangePointLess(r.sc, a[i], b[j], collator)
+		less, err := rangePointLess(r.sctx.GetSessionVars().StmtCtx, a[i], b[j], collator)
 		if err != nil {
 			r.err = err
 			return nil

@@ -410,7 +410,7 @@ func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types
 // The second return value is the conditions used to build ranges and the third return value is the remained conditions.
 func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.Context, tp *types.FieldType, tableRange bool,
 	colLen int, rangeMaxSize int64) (Ranges, []expression.Expression, []expression.Expression, error) {
-	rb := builder{sc: sctx.GetSessionVars().StmtCtx}
+	rb := builder{sctx: sctx}
 	rangePoints := getFullRange()
 	for _, cond := range accessConditions {
 		collator := collate.GetCollator(tp.GetCollate())
@@ -425,6 +425,13 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 		err           error
 	)
 	newTp := newFieldType(tp)
+	if newTp.EvalType() == types.ETString &&
+		newTp.GetType() != mysql.TypeEnum &&
+		newTp.GetType() != mysql.TypeSet {
+		newTp = newTp.Clone()
+		newTp.SetCharset(charset.CharsetBin)
+		newTp.SetCollate(charset.CollationBin)
+	}
 	if tableRange {
 		ranges, rangeFallback, err = points2TableRanges(sctx, rangePoints, newTp, rangeMaxSize)
 	} else {
@@ -484,7 +491,7 @@ func BuildColumnRange(conds []expression.Expression, sctx sessionctx.Context, tp
 
 func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAndInCount int,
 	accessConds []expression.Expression) (Ranges, []expression.Expression, []expression.Expression, error) {
-	rb := builder{sc: d.sctx.GetSessionVars().StmtCtx}
+	rb := builder{sctx: d.sctx}
 	var (
 		ranges        Ranges
 		rangeFallback bool
@@ -518,10 +525,21 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 			return nil, nil, nil, errors.Trace(rb.err)
 		}
 	}
+	var colFT *types.FieldType
+	if eqAndInCount == 0 || eqAndInCount < len(accessConds) {
+		colFT = newTp[eqAndInCount]
+		if colFT.EvalType() == types.ETString &&
+			colFT.GetType() != mysql.TypeEnum &&
+			colFT.GetType() != mysql.TypeSet {
+			colFT = colFT.Clone()
+			colFT.SetCharset(charset.CharsetBin)
+			colFT.SetCollate(charset.CollationBin)
+		}
+	}
 	if eqAndInCount == 0 {
-		ranges, rangeFallback, err = points2Ranges(d.sctx, rangePoints, newTp[0], d.rangeMaxSize)
+		ranges, rangeFallback, err = points2Ranges(d.sctx, rangePoints, colFT, d.rangeMaxSize)
 	} else if eqAndInCount < len(accessConds) {
-		ranges, rangeFallback, err = appendPoints2Ranges(d.sctx, ranges, rangePoints, newTp[eqAndInCount], d.rangeMaxSize)
+		ranges, rangeFallback, err = appendPoints2Ranges(d.sctx, ranges, rangePoints, colFT, d.rangeMaxSize)
 	}
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
