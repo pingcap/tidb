@@ -14,7 +14,7 @@
 
 include Makefile.common
 
-.PHONY: help all clean test server server_fips dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test check-file-perm check-bazel-prepare bazel_lint tazel precheck
+.PHONY: help all clean test server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test check-file-perm check-bazel-prepare bazel_lint tazel precheck
 
 .DEFAULT_GOAL := default
 
