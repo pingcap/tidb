@@ -27,9 +27,11 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/copr"
+	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
@@ -621,4 +623,32 @@ func TestTiKVClientReadTimeout(t *testing.T) {
 	require.Len(t, rows, 3)
 	explain = fmt.Sprintf("%v", rows[0])
 	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .* rpc_num: 2.*", explain)
+}
+
+func TestGetMvccByEncodedKeyRegionError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	h := helper.NewHelper(store.(helper.Storage))
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	schemaVersion := tk.Session().GetDomainInfoSchema().SchemaMetaVersion()
+	key := m.EncodeSchemaDiffKey(schemaVersion)
+
+	resp, err := h.GetMvccByEncodedKey(key)
+	require.NoError(t, err)
+	require.NotNil(t, resp.Info)
+	require.Equal(t, 1, len(resp.Info.Writes))
+	require.Less(t, uint64(0), resp.Info.Writes[0].CommitTs)
+	commitTs := resp.Info.Writes[0].CommitTs
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/epochNotMatch", "2*return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/epochNotMatch"))
+	}()
+	resp, err = h.GetMvccByEncodedKey(key)
+	require.NoError(t, err)
+	require.NotNil(t, resp.Info)
+	require.Equal(t, 1, len(resp.Info.Writes))
+	require.Equal(t, commitTs, resp.Info.Writes[0].CommitTs)
 }
