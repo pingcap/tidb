@@ -361,6 +361,14 @@ type StatsGlobal interface {
 	UpdateGlobalStats(tblInfo *model.TableInfo) error
 }
 
+// DDL is used to handle ddl events.
+type DDL interface {
+	// HandleDDLEvent handles ddl events.
+	HandleDDLEvent(event *Event) error
+	// DDLEventCh returns ddl events channel in handle.
+	DDLEventCh() chan *Event
+}
+
 // StatsHandle is used to manage TiDB Statistics.
 type StatsHandle interface {
 	// GPool returns the goroutine pool.
@@ -413,4 +421,7 @@ type StatsHandle interface {
 
 	// StatsGlobal is used to manage partition table global stats.
 	StatsGlobal
+
+	// DDL is used to handle ddl events.
+	DDL
 }

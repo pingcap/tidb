@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
-	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -43,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -186,7 +186,11 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		asyncNotifyEvent(d, &ddlutil.Event{Tp: model.ActionAddColumn, TableInfo: tblInfo, ColumnInfos: []*model.ColumnInfo{columnInfo}})
+		addColumnEvent := statsutil.NewAddColumnEvent(
+			tblInfo,
+			[]*model.ColumnInfo{columnInfo},
+		)
+		asyncNotifyEvent(d, addColumnEvent)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", columnInfo.State)
 	}
@@ -791,7 +795,11 @@ func (w *worker) doModifyColumnTypeWithData(
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		// Refactor the job args to add the old index ids into delete range table.
 		job.Args = []interface{}{rmIdxIDs, getPartitionIDs(tblInfo)}
-		asyncNotifyEvent(d, &ddlutil.Event{Tp: model.ActionModifyColumn, TableInfo: tblInfo, ColumnInfos: []*model.ColumnInfo{changingCol}})
+		modifyColumnEvent := statsutil.NewModifyColumnEvent(
+			tblInfo,
+			[]*model.ColumnInfo{changingCol},
+		)
+		asyncNotifyEvent(d, modifyColumnEvent)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", changingCol.State)
 	}

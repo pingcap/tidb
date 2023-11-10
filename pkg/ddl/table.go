@@ -27,7 +27,6 @@ import (
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
-	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -38,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -171,7 +171,10 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
-	asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})
+	createTableEvent := statsutil.NewCreateTableEvent(
+		tbInfo,
+	)
+	asyncNotifyEvent(d, createTableEvent)
 	return ver, errors.Trace(err)
 }
 
@@ -242,7 +245,10 @@ func onCreateTables(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
 	job.BinlogInfo.SetTableInfos(ver, args)
 
 	for i := range args {
-		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateTable, TableInfo: args[i]})
+		createTableEvent := statsutil.NewCreateTableEvent(
+			args[i],
+		)
+		asyncNotifyEvent(d, createTableEvent)
 	}
 
 	return ver, errors.Trace(err)
@@ -318,7 +324,6 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
-		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateView, TableInfo: tbInfo})
 		return ver, nil
 	default:
 		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
@@ -388,10 +393,11 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		startKey := tablecodec.EncodeTablePrefix(job.TableID)
 		job.Args = append(job.Args, startKey, oldIDs, ruleIDs)
-		if tblInfo.IsSequence() {
-			asyncNotifyEvent(d, &util.Event{Tp: model.ActionDropSequence, TableInfo: tblInfo})
-		} else if !tblInfo.IsView() {
-			asyncNotifyEvent(d, &util.Event{Tp: model.ActionDropTable, TableInfo: tblInfo})
+		if !tblInfo.IsSequence() && !tblInfo.IsView() {
+			dropTableEvent := statsutil.NewDropTableEvent(
+				tblInfo,
+			)
+			asyncNotifyEvent(d, dropTableEvent)
 		}
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State))
@@ -706,6 +712,8 @@ func (w *worker) onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrTableNotExists.GenWithStackByArgs(job.SchemaName, tblInfo.Name.O)
 	}
+	// Copy the old tableInfo for later usage.
+	oldTblInfo := tblInfo.Clone()
 	err = checkTruncateTableHasForeignKeyReferredInOwner(d, t, job, tblInfo, fkCheck)
 	if err != nil {
 		return ver, err
@@ -830,7 +838,11 @@ func (w *worker) onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 		return ver, errors.Trace(err)
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-	asyncNotifyEvent(d, &util.Event{Tp: model.ActionTruncateTable, TableInfo: tblInfo})
+	truncateTableEvent := statsutil.NewTruncateTableEvent(
+		tblInfo,
+		oldTblInfo,
+	)
+	asyncNotifyEvent(d, truncateTableEvent)
 	startKey := tablecodec.EncodeTablePrefix(tableID)
 	job.Args = []interface{}{startKey, oldPartitionIDs}
 	return ver, nil
@@ -1623,7 +1635,6 @@ func onRepairTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		asyncNotifyEvent(d, &util.Event{Tp: model.ActionRepairTable, TableInfo: tblInfo})
 		return ver, nil
 	default:
 		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State)
