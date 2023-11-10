@@ -25,8 +25,9 @@ import (
 )
 
 const (
-	pollingPendingSnapshotInterval = 30 * time.Second
-	errCodeTooManyPendingSnapshots = "PendingSnapshotLimitExceeded"
+	pollingPendingSnapshotInterval  = 30 * time.Second
+	errCodeTooManyPendingSnapshots  = "PendingSnapshotLimitExceeded"
+	AWS_FSR_API_SNAPSHOTS_THRESHOLD = 10
 )
 
 type EC2Session struct {
@@ -293,24 +294,33 @@ func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string)
 
 	for availableZone := range snapshotsIDsMap {
 		targetAZ := availableZone
-		eg.Go(func() error {
-			log.Info("enable fsr for snapshots", zap.String("available zone", targetAZ))
-			resp, err := e.ec2.EnableFastSnapshotRestores(&ec2.EnableFastSnapshotRestoresInput{
-				AvailabilityZones: []*string{&targetAZ},
-				SourceSnapshotIds: snapshotsIDsMap[targetAZ],
+		// We have to control the batch size to avoid the error of "parameter SourceSnapshotIds must be less than or equal to 10"
+		for i := 0; i < len(snapshotsIDsMap[targetAZ]); i += AWS_FSR_API_SNAPSHOTS_THRESHOLD {
+			end := i + AWS_FSR_API_SNAPSHOTS_THRESHOLD
+			if end > len(snapshotsIDsMap[targetAZ]) {
+				end = len(snapshotsIDsMap[targetAZ])
+			}
+			eg.Go(func() error {
+				localI := i
+				localEnd := end
+				log.Info("enable fsr for snapshots", zap.String("available zone", targetAZ), zap.Any("snapshots", snapshotsIDsMap[targetAZ][localI:localEnd]))
+				resp, err := e.ec2.EnableFastSnapshotRestores(&ec2.EnableFastSnapshotRestoresInput{
+					AvailabilityZones: []*string{&targetAZ},
+					SourceSnapshotIds: snapshotsIDsMap[targetAZ][localI:localEnd],
+				})
+
+				if err != nil {
+					return errors.Trace(err)
+				}
+
+				if len(resp.Unsuccessful) > 0 {
+					log.Warn("not all snapshots enabled FSR")
+					return errors.Errorf("Some snapshot fails to enable FSR for available zone %s, such as %s, error code is %v", targetAZ, *resp.Unsuccessful[0].SnapshotId, resp.Unsuccessful[0].FastSnapshotRestoreStateErrors)
+				}
+
+				return e.waitDataFSREnabled(snapshotsIDsMap[targetAZ][localI:localEnd], targetAZ)
 			})
-
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			if len(resp.Unsuccessful) > 0 {
-				log.Warn("not all snapshots enabled FSR")
-				return errors.Errorf("Some snapshot fails to enable FSR for available zone %s, such as %s, error code is %v", targetAZ, *resp.Unsuccessful[0].SnapshotId, resp.Unsuccessful[0].FastSnapshotRestoreStateErrors)
-			}
-
-			return e.waitDataFSREnabled(snapshotsIDsMap[targetAZ], targetAZ)
-		})
+		}
 	}
 	return snapshotsIDsMap, eg.Wait()
 }
@@ -379,25 +389,34 @@ func (e *EC2Session) DisableDataFSR(snapshotsIDsMap map[string][]*string) error 
 
 	for availableZone := range snapshotsIDsMap {
 		targetAZ := availableZone
-		eg.Go(func() error {
-			resp, err := e.ec2.DisableFastSnapshotRestores(&ec2.DisableFastSnapshotRestoresInput{
-				AvailabilityZones: []*string{&targetAZ},
-				SourceSnapshotIds: snapshotsIDsMap[targetAZ],
+		// We have to control the batch size to avoid the error of "parameter SourceSnapshotIds must be less than or equal to 10"
+		for i := 0; i < len(snapshotsIDsMap[targetAZ]); i += AWS_FSR_API_SNAPSHOTS_THRESHOLD {
+			end := i + AWS_FSR_API_SNAPSHOTS_THRESHOLD
+			if end > len(snapshotsIDsMap[targetAZ]) {
+				end = len(snapshotsIDsMap[targetAZ])
+			}
+			eg.Go(func() error {
+				localI := i
+				localEnd := end
+				resp, err := e.ec2.DisableFastSnapshotRestores(&ec2.DisableFastSnapshotRestoresInput{
+					AvailabilityZones: []*string{&targetAZ},
+					SourceSnapshotIds: snapshotsIDsMap[targetAZ][localI:localEnd],
+				})
+
+				if err != nil {
+					return errors.Trace(err)
+				}
+
+				if len(resp.Unsuccessful) > 0 {
+					log.Warn("not all snapshots disabled FSR", zap.String("available zone", targetAZ))
+					return errors.Errorf("Some snapshot fails to disable FSR for available zone %s, such as %s, error code is %v", targetAZ, *resp.Unsuccessful[0].SnapshotId, resp.Unsuccessful[0].FastSnapshotRestoreStateErrors)
+				}
+
+				log.Info("Disable FSR issued", zap.String("available zone", targetAZ), zap.Any("snapshots", snapshotsIDsMap[targetAZ][localI:localEnd]))
+
+				return nil
 			})
-
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			if len(resp.Unsuccessful) > 0 {
-				log.Warn("not all snapshots disabled FSR", zap.String("available zone", targetAZ))
-				return errors.Errorf("Some snapshot fails to disable FSR for available zone %s, such as %s, error code is %v", targetAZ, *resp.Unsuccessful[0].SnapshotId, resp.Unsuccessful[0].FastSnapshotRestoreStateErrors)
-			}
-
-			log.Info("Disable FSR issued", zap.String("available zone", targetAZ))
-
-			return nil
-		})
+		}
 	}
 	return eg.Wait()
 }
