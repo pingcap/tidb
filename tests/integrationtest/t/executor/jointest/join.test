@@ -426,7 +426,7 @@ select /*+ inl_join(s)*/ t.a from t left join s on t.a = s.a;
 --disable_warnings
 
 # TestIssue25902
-drop table if exists tt1,tt2,tt3; ;
+drop table if exists tt1,tt2,tt3;
 create table tt1 (ts timestamp);
 create table tt2 (ts varchar(32));
 create table tt3 (ts datetime);

@@ -384,7 +384,6 @@ drop table if exists admin_test;
 create table admin_test (c1 int, c2 int, c3 int default 1, index (c1), unique key(c2));
 insert admin_test (c1, c2) values (1, 1), (2, 2), (NULL, NULL);
 admin check table admin_test;
-
 drop table if exists t;
 create table t(a bigint, b bigint);
 insert into t values(1, 1), (2, 2), (3, 30), (4, 40), (5, 5), (6, 6);
@@ -1284,7 +1283,7 @@ select * from select_limit limit 18446744073709551615 offset 3;
 id	name
 4	hello
 select * from select_limit limit 18446744073709551616 offset 3;
-[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 53 near "18446744073709551616 offset 3;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 53 near "18446744073709551616 offset 3;" 
 drop table if exists select_order_test;
 create table select_order_test(id int not null default 1, name varchar(255), PRIMARY KEY(id));
 insert INTO select_order_test VALUES (1, "hello");
@@ -2273,7 +2272,6 @@ drop table if exists admin_test;
 create table admin_test (c1 int, c2 int, c3 int default 1, primary key (c1, c2), index (c1), unique key(c2));
 insert admin_test (c1, c2) values (1, 1), (2, 2), (3, 3);
 admin check table admin_test;
-
 set @@tidb_enable_clustered_index = default;
 drop table if exists t;
 create table t(a bigint);
@@ -2612,13 +2610,11 @@ select `set` from `enum-set` use index(PRIMARY);
 set
 x00,x59
 admin check table `enum-set`;
-
 drop table if exists t;
 create table t(a YEAR, PRIMARY KEY(a));
 insert into t set a = '2151';
 delete from t;
 admin check table t;
-
 drop table if exists t;
 set @@tidb_enable_clustered_index = 'int_only';
 create table t(a varchar(10), b varchar(10), c varchar(1), index idx(a, b, c));
@@ -3350,9 +3346,9 @@ select c > a from t;
 c > a
 0
 load stats;
-[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 11 near ";" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 11 near ";" 
 load stats ./xxx.json;
-[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 12 near "./xxx.json;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 12 near "./xxx.json;" 
 drop database if exists test_show;
 create database test_show;
 use test_show;
@@ -3539,9 +3535,7 @@ k1	k2	v
 2	3	20
 3	4	20
 admin check table a;
-
 admin check table b;
-
 drop table if exists a, b;
 create table a (k1 int, k2 int, v int);
 create table b (a int not null, k1 int, k2 int, v int, primary key(k1, k2) );
@@ -3556,9 +3550,7 @@ k1	k2	v
 2	3	20
 3	4	20
 admin check table a;
-
 admin check table b;
-
 drop table if exists a, b;
 create table a (k1 varchar(100), k2 varchar(100), v varchar(100));
 create table b (a varchar(100) not null, k1 varchar(100), k2 varchar(100), v varchar(100), primary key(k1(1), k2(1)) , key kk1(k1(1), v(1)));
@@ -3573,9 +3565,7 @@ k1	k2	v
 12	13	20
 23	24	20
 admin check table a;
-
 admin check table b;
-
 drop table if exists a, b;
 create table a (k1 varchar(100), k2 varchar(100), v varchar(100));
 create table b (a varchar(100) not null, k1 varchar(100), k2 varchar(100), v varchar(100), primary key(k1(1), k2(1)) , key kk1(k1(1), v(1)));
@@ -3590,9 +3580,7 @@ k1	k2	v
 12	13	20
 23	24	20
 admin check table a;
-
 admin check table b;
-
 drop table if exists a, b;
 create table a (k1 varchar(100), k2 varchar(100), v varchar(100));
 create table b (a varchar(100) not null, k1 varchar(100), k2 varchar(100), v varchar(100), primary key(k1(1), k2(1)) , key kk1(k1(1), v(1)));
@@ -3607,9 +3595,7 @@ k1	k2	v
 11	11	11
 23	24	20
 admin check table a;
-
 admin check table b;
-
 drop table if exists a, b;
 create table a (k1 varchar(100), k2 varchar(100), v varchar(100));
 create table b (a varchar(100) not null, k1 varchar(100), k2 varchar(100), v varchar(100), primary key(k1(1), k2(1)) , key kk1(k1(1), v(1)));
@@ -3624,9 +3610,7 @@ k1	k2	v
 11	11	11
 23	24	20
 admin check table a;
-
 admin check table b;
-
 drop table if exists a, b;
 create table a (k1 int, k2 int, v int);
 create table b (a int not null, k1 int, k2 int, v int, primary key(k1, k2) clustered);
@@ -3641,9 +3625,7 @@ k1	k2	v
 2	3	20
 3	4	20
 admin check table a;
-
 admin check table b;
-
 drop table if exists a, b;
 create table a (k1 int, k2 int, v int);
 create table b (a int not null, k1 int, k2 int, v int, primary key(k1, k2) clustered);
@@ -3658,9 +3640,7 @@ k1	k2	v
 2	3	20
 3	4	20
 admin check table a;
-
 admin check table b;
-
 drop table if exists a, b;
 create table a (k1 varchar(100), k2 varchar(100), v varchar(100));
 create table b (a varchar(100) not null, k1 varchar(100), k2 varchar(100), v varchar(100), primary key(k1(1), k2(1)) clustered, key kk1(k1(1), v(1)));
@@ -3675,9 +3655,7 @@ k1	k2	v
 12	13	20
 23	24	20
 admin check table a;
-
 admin check table b;
-
 drop table if exists a, b;
 create table a (k1 varchar(100), k2 varchar(100), v varchar(100));
 create table b (a varchar(100) not null, k1 varchar(100), k2 varchar(100), v varchar(100), primary key(k1(1), k2(1)) clustered, key kk1(k1(1), v(1)));
@@ -3692,9 +3670,7 @@ k1	k2	v
 12	13	20
 23	24	20
 admin check table a;
-
 admin check table b;
-
 drop table if exists a, b;
 create table a (k1 varchar(100), k2 varchar(100), v varchar(100));
 create table b (a varchar(100) not null, k1 varchar(100), k2 varchar(100), v varchar(100), primary key(k1(1), k2(1)) clustered, key kk1(k1(1), v(1)));
@@ -3709,9 +3685,7 @@ k1	k2	v
 11	11	11
 23	24	20
 admin check table a;
-
 admin check table b;
-
 drop table if exists a, b;
 create table a (k1 varchar(100), k2 varchar(100), v varchar(100));
 create table b (a varchar(100) not null, k1 varchar(100), k2 varchar(100), v varchar(100), primary key(k1(1), k2(1)) clustered, key kk1(k1(1), v(1)));
@@ -3726,9 +3700,7 @@ k1	k2	v
 11	11	11
 23	24	20
 admin check table a;
-
 admin check table b;
-
 set @@tidb_enable_clustered_index=On;
 drop table if exists t;
 create table t (a int, b int, c int, primary key(a,b));
@@ -3757,7 +3729,7 @@ Error 1406 (22001): Data too long for column 'c1' at row 1
 insert into t values ('123');
 insert into t values ('1234');
 insert into t values ('12345);
-[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 30 near "'12345);" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 30 near "'12345);" 
 drop table if exists t;
 create table t (c1 bit(62));
 insert into t values ('12345678');
@@ -3847,7 +3819,7 @@ create table t2(a int, b int, c int);
 insert into t2 values (11, 8, (select not b));
 Error 1054 (42S22): Unknown column 'b' in 'field list'
 insert into t2 set a = 11, b = 8, c = (select b));
-[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 49 near ");" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 49 near ");" 
 insert into t2 values(1, 1, (select b from t2));
 select * from t2;
 a	b	c
