@@ -268,7 +268,7 @@ func (e *Event) GetRemovePartitioningInfo() (
 func (e *Event) String() string {
 	ret := fmt.Sprintf("(Event Type: %s", e.Tp)
 	if e.tableInfo != nil {
-		ret += fmt.Sprintf(", Table ID: %d, Table Name %s", e.tableInfo.ID, e.tableInfo.Name)
+		ret += fmt.Sprintf(", Table ID: %d, Table Name: %s", e.tableInfo.ID, e.tableInfo.Name)
 	}
 	if e.partInfo != nil {
 		ids := make([]int64, 0, len(e.partInfo.Definitions))
@@ -278,7 +278,7 @@ func (e *Event) String() string {
 		ret += fmt.Sprintf(", Partition IDs: %v", ids)
 	}
 	if e.oldTableInfo != nil {
-		ret += fmt.Sprintf(", Old Table ID: %d, Old Table Name %s", e.oldTableInfo.ID, e.oldTableInfo.Name)
+		ret += fmt.Sprintf(", Old Table ID: %d, Old Table Name: %s", e.oldTableInfo.ID, e.oldTableInfo.Name)
 	}
 	if e.oldPartInfo != nil {
 		ids := make([]int64, 0, len(e.oldPartInfo.Definitions))
@@ -288,7 +288,7 @@ func (e *Event) String() string {
 		ret += fmt.Sprintf(", Old Partition IDs: %v", ids)
 	}
 	for _, columnInfo := range e.columnInfos {
-		ret += fmt.Sprintf(", Column ID: %d, Column Name %s", columnInfo.ID, columnInfo.Name)
+		ret += fmt.Sprintf(", Column ID: %d, Column Name: %s", columnInfo.ID, columnInfo.Name)
 	}
 
 	return ret
