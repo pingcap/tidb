@@ -101,7 +101,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.Event) error {
 			}
 		}
 	case model.ActionAddTablePartition:
-		globalTableInfo, addedPartitionInfo := t.GetAddTablePartitionInfo()
+		globalTableInfo, addedPartitionInfo := t.GetAddPartitionInfo()
 		for _, def := range addedPartitionInfo.Definitions {
 			if err := h.statsWriter.InsertTableStats2KV(globalTableInfo, def.ID); err != nil {
 				return err

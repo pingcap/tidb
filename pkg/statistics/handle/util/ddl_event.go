@@ -122,8 +122,8 @@ func (e *Event) GetModifyColumnInfo() (newTableInfo *model.TableInfo, modifiedCo
 	return e.tableInfo, e.columnInfos
 }
 
-// NewAddTablePartitionEvent creates a new ddl event that adds partitions.
-func NewAddTablePartitionEvent(
+// NewAddPartitionEvent creates a new ddl event that adds partitions.
+func NewAddPartitionEvent(
 	globalTableInfo *model.TableInfo,
 	addedPartInfo *model.PartitionInfo,
 ) *Event {
@@ -134,8 +134,8 @@ func NewAddTablePartitionEvent(
 	}
 }
 
-// GetAddTablePartitionInfo gets the table info of the table that is added partitions.
-func (e *Event) GetAddTablePartitionInfo() (globalTableInfo *model.TableInfo, addedPartInfo *model.PartitionInfo) {
+// GetAddPartitionInfo gets the table info of the table that is added partitions.
+func (e *Event) GetAddPartitionInfo() (globalTableInfo *model.TableInfo, addedPartInfo *model.PartitionInfo) {
 	return e.tableInfo, e.partInfo
 }
 

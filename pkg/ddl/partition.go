@@ -227,7 +227,7 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		addPartitionEvent := statsutil.NewAddPartitioningEvent(
+		addPartitionEvent := statsutil.NewAddPartitionEvent(
 			tblInfo,
 			partInfo,
 		)
