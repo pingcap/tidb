@@ -104,10 +104,8 @@ create table t(data mediumblob);
 prepare stmt from 'insert t (data) values (?)';
 set @a = 'a';
 execute stmt using @a;
-
 set @b = 'aaaaaaaaaaaaaaaaaa';
 execute stmt using @b;
-
 select * from t;
 data
 a
@@ -117,10 +115,8 @@ create table t(data decimal);
 prepare stmt from 'insert t (data) values (?)';
 set @a = '1';
 execute stmt using @a;
-
 set @b = '11111.11111';
 execute stmt using @b;
-
 select * from t;
 data
 1
@@ -130,10 +126,8 @@ create table t(data decimal(10,3));
 prepare stmt from 'insert t (data) values (?)';
 set @a = 1.1;
 execute stmt using @a;
-
 set @b = 11.11;
 execute stmt using @b;
-
 select * from t;
 data
 1.100
@@ -144,10 +138,8 @@ create table t(data mediumblob);
 prepare stmt from 'insert t (data) values (?)';
 set @a = 'a';
 execute stmt using @a;
-
 set @b = 'aaaaaaaaaaaaaaaaaa';
 execute stmt using @b;
-
 select * from t;
 data
 a
@@ -157,10 +149,8 @@ create table t(data decimal);
 prepare stmt from 'insert t (data) values (?)';
 set @a = '1';
 execute stmt using @a;
-
 set @b = '11111.11111';
 execute stmt using @b;
-
 select * from t;
 data
 1
@@ -170,10 +160,8 @@ create table t(data decimal(10,3));
 prepare stmt from 'insert t (data) values (?)';
 set @a = 1.1;
 execute stmt using @a;
-
 set @b = 11.11;
 execute stmt using @b;
-
 select * from t;
 data
 1.100

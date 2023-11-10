@@ -223,10 +223,10 @@ drop table if exists t;
 create table t(
 a int, j0 json, j1 json,
 index j0_0((cast(j0->'$.path0' as signed array))));
-insert into t values(1, '{"path0" : [1,2,3]}', null ); ;
-select /*+ no_index_merge() */ a from t where (1 member of (j0->'$.path0')); ;
-select /*+ no_index_merge() */ a from t where ('1' member of (j0->'$.path0')); ;
-select /*+ use_index_merge(t, j0_0) */ a from t where (1 member of (j0->'$.path0')); ;
-select /*+ use_index_merge(t, j0_0) */ a from t where ('1' member of (j0->'$.path0')); ;
+insert into t values(1, '{"path0" : [1,2,3]}', null );
+select /*+ no_index_merge() */ a from t where (1 member of (j0->'$.path0'));
+select /*+ no_index_merge() */ a from t where ('1' member of (j0->'$.path0'));
+select /*+ use_index_merge(t, j0_0) */ a from t where (1 member of (j0->'$.path0'));
+select /*+ use_index_merge(t, j0_0) */ a from t where ('1' member of (j0->'$.path0'));
 
 

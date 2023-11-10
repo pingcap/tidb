@@ -137,7 +137,6 @@ insert into t values (1);
 set tidb_enable_vectorized_expression=false;
 insert into mysql.expr_pushdown_blacklist values('cast', 'tikv,tiflash,tidb', 'for test');
 admin reload expr_pushdown_blacklist;
-
 prepare stmt from 'SELECT * FROM (SELECT col_double AS c0 FROM t) t WHERE (ABS((REPEAT(?, ?) OR 5617780767323292672)) < LN(EXP(c0)) + (? ^ ?))';
 set @a1 = 'JuvkBX7ykVux20zQlkwDK2DFelgn7';
 set @a2 = 1;
@@ -149,5 +148,4 @@ c0
 set tidb_enable_vectorized_expression=default;
 delete from mysql.expr_pushdown_blacklist where name = 'cast' and store_type = 'tikv,tiflash,tidb' and reason = 'for test';
 admin reload expr_pushdown_blacklist;
-
 set tidb_enable_prepared_plan_cache=default;

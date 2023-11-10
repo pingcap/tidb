@@ -860,7 +860,6 @@ drop table if exists t;
 create table t(a tinyint, b smallint, c mediumint, d int, e bigint);
 insert into mysql.opt_rule_blacklist VALUES("aggregation_push_down");
 admin reload opt_rule_blacklist;
-
 explain format = 'brief' select sum(t1.a) from t t1 join t t2 on t1.a=t2.a;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:sum(Column#14)->Column#13
@@ -974,5 +973,4 @@ StreamAgg	1.00	root		funcs:avg(Column#14)->Column#13
 drop table if exists t;
 delete from mysql.opt_rule_blacklist where name="aggregation_push_down";
 admin reload opt_rule_blacklist;
-
 set @@sql_mode = default;
