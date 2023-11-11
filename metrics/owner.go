@@ -20,7 +20,22 @@ import (
 
 // Metrics
 var (
-	NewSessionHistogram = prometheus.NewHistogramVec(
+	NewSessionHistogram *prometheus.HistogramVec
+
+	WatcherClosed     = "watcher_closed"
+	Cancelled         = "cancelled"
+	Deleted           = "deleted"
+	SessionDone       = "session_done"
+	CtxDone           = "context_done"
+	WatchOwnerCounter *prometheus.CounterVec
+
+	NoLongerOwner        = "no_longer_owner"
+	CampaignOwnerCounter *prometheus.CounterVec
+)
+
+// InitOwnerMetrics initializes owner metrics.
+func InitOwnerMetrics() {
+	NewSessionHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "owner",
@@ -29,12 +44,7 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 22), // 0.5ms ~ 1048s
 		}, []string{LblType, LblResult})
 
-	WatcherClosed     = "watcher_closed"
-	Cancelled         = "cancelled"
-	Deleted           = "deleted"
-	SessionDone       = "session_done"
-	CtxDone           = "context_done"
-	WatchOwnerCounter = prometheus.NewCounterVec(
+	WatchOwnerCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "owner",
@@ -42,12 +52,11 @@ var (
 			Help:      "Counter of watch owner.",
 		}, []string{LblType, LblResult})
 
-	NoLongerOwner        = "no_longer_owner"
-	CampaignOwnerCounter = prometheus.NewCounterVec(
+	CampaignOwnerCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "owner",
 			Name:      "campaign_owner_total",
 			Help:      "Counter of campaign owner.",
 		}, []string{LblType, LblResult})
-)
+}

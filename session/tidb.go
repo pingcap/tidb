@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	session_metrics "github.com/pingcap/tidb/session/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -224,15 +225,15 @@ func recordAbortTxnDuration(sessVars *variable.SessionVars, isInternal bool) {
 	duration := time.Since(sessVars.TxnCtx.CreateTime).Seconds()
 	if sessVars.TxnCtx.IsPessimistic {
 		if isInternal {
-			transactionDurationPessimisticAbortInternal.Observe(duration)
+			session_metrics.TransactionDurationPessimisticAbortInternal.Observe(duration)
 		} else {
-			transactionDurationPessimisticAbortGeneral.Observe(duration)
+			session_metrics.TransactionDurationPessimisticAbortGeneral.Observe(duration)
 		}
 	} else {
 		if isInternal {
-			transactionDurationOptimisticAbortInternal.Observe(duration)
+			session_metrics.TransactionDurationOptimisticAbortInternal.Observe(duration)
 		} else {
-			transactionDurationOptimisticAbortGeneral.Observe(duration)
+			session_metrics.TransactionDurationOptimisticAbortGeneral.Observe(duration)
 		}
 	}
 }

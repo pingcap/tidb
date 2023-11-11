@@ -15,6 +15,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/util/metricsutil"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"sourcegraph.com/sourcegraph/appdash"
@@ -24,6 +25,10 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 	cfg := task.RestoreConfig{Config: task.Config{LogProgress: HasLogFile()}}
 	if err := cfg.ParseFromFlags(command.Flags()); err != nil {
 		command.SilenceUsage = false
+		return errors.Trace(err)
+	}
+
+	if err := metricsutil.RegisterMetricsForBR(cfg.PD, cfg.KeyspaceName); err != nil {
 		return errors.Trace(err)
 	}
 

@@ -26,22 +26,10 @@ import (
 
 var (
 	// PanicCounter measures the count of panics.
-	PanicCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "panic_total",
-			Help:      "Counter of panic.",
-		}, []string{LblType})
+	PanicCounter *prometheus.CounterVec
 
 	// MemoryUsage measures the usage gauge of memory.
-	MemoryUsage = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "memory_usage",
-			Help:      "Memory Usage",
-		}, []string{LblModule, LblType})
+	MemoryUsage *prometheus.GaugeVec
 )
 
 // metrics labels.
@@ -77,6 +65,47 @@ func RetLabel(err error) string {
 		return opSucc
 	}
 	return opFailed
+}
+
+func init() {
+	InitMetrics()
+}
+
+// InitMetrics is used to initialize metrics.
+func InitMetrics() {
+	InitBindInfoMetrics()
+	InitDDLMetrics()
+	InitDistSQLMetrics()
+	InitDomainMetrics()
+	InitExecutorMetrics()
+	InitGCWorkerMetrics()
+	InitLogBackupMetrics()
+	InitMetaMetrics()
+	InitOwnerMetrics()
+	InitResourceManagerMetrics()
+	InitServerMetrics()
+	InitSessionMetrics()
+	InitSliMetrics()
+	InitStatsMetrics()
+	InitTelemetryMetrics()
+	InitTopSQLMetrics()
+	InitTTLMetrics()
+
+	PanicCounter = NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "panic_total",
+			Help:      "Counter of panic.",
+		}, []string{LblType})
+
+	MemoryUsage = NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "memory_usage",
+			Help:      "Memory Usage",
+		}, []string{LblModule, LblType})
 }
 
 // RegisterMetrics registers the metrics which are ONLY used in TiDB server.

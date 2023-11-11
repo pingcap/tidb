@@ -30,6 +30,7 @@ go_library(
         "//ddl/util",
         "//domain/globalconfigsync",
         "//domain/infosync",
+        "//domain/metrics",
         "//errno",
         "//infoschema",
         "//infoschema/perfschema",

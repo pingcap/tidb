@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -43,9 +42,6 @@ import (
 	"github.com/pingcap/tidb/util/texttree"
 	"github.com/pingcap/tipb/go-tipb"
 )
-
-var planCacheCounter = metrics.PlanCacheCounter.WithLabelValues("prepare")
-var planCacheMissCounter = metrics.PlanCacheMissCounter.WithLabelValues("cache_miss")
 
 // ShowDDL is for showing DDL information.
 type ShowDDL struct {

@@ -27,8 +27,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
+	executor_metrics "github.com/pingcap/tidb/executor/metrics"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -44,12 +44,6 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikv"
-)
-
-var (
-	fastAnalyzeHistogramSample        = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "sample")
-	fastAnalyzeHistogramAccessRegions = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "access_regions")
-	fastAnalyzeHistogramScanKeys      = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "scan_keys")
 )
 
 func analyzeFastExec(exec *AnalyzeFastExec) *statistics.AnalyzeResults {
@@ -238,7 +232,7 @@ func (e *AnalyzeFastExec) buildSampTask() (err error) {
 			break
 		}
 	}
-	fastAnalyzeHistogramAccessRegions.Observe(float64(accessRegionsCounter))
+	executor_metrics.FastAnalyzeHistogramAccessRegions.Observe(float64(accessRegionsCounter))
 
 	return nil
 }
@@ -460,7 +454,7 @@ func (e *AnalyzeFastExec) handleSampTasks(workID int, step uint32, err *error) {
 				return
 			}
 		}
-		fastAnalyzeHistogramSample.Observe(float64(len(kvMap)))
+		executor_metrics.FastAnalyzeHistogramSample.Observe(float64(len(kvMap)))
 
 		*err = e.handleBatchSeekResponse(kvMap)
 		if *err != nil {
@@ -561,7 +555,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	}
 
 	scanKeysSize, err := e.handleScanTasks(bo)
-	fastAnalyzeHistogramScanKeys.Observe(float64(scanKeysSize))
+	executor_metrics.FastAnalyzeHistogramScanKeys.Observe(float64(scanKeysSize))
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}

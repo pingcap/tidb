@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/format"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/planner/core"
+	session_metrics "github.com/pingcap/tidb/session/metrics"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -43,18 +43,11 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
 // ErrNonTransactionalJobFailure is the error when a non-transactional job fails. The error is returned and following jobs are canceled.
 var ErrNonTransactionalJobFailure = dbterror.ClassSession.NewStd(errno.ErrNonTransactionalJobFailure)
-
-var (
-	nonTransactionalDeleteCount = metrics.NonTransactionalDMLCount.With(prometheus.Labels{metrics.LblType: "delete"})
-	nonTransactionalInsertCount = metrics.NonTransactionalDMLCount.With(prometheus.Labels{metrics.LblType: "insert"})
-	nonTransactionalUpdateCount = metrics.NonTransactionalDMLCount.With(prometheus.Labels{metrics.LblType: "update"})
-)
 
 // job: handle keys in [start, end]
 type job struct {
@@ -211,7 +204,7 @@ func checkConstraint(stmt *ast.NonTransactionalDMLStmt, se Session) error {
 		if err := checkReadClauses(s.Limit, s.Order); err != nil {
 			return err
 		}
-		nonTransactionalDeleteCount.Inc()
+		session_metrics.NonTransactionalDeleteCount.Inc()
 	case *ast.UpdateStmt:
 		if err := checkTableRef(s.TableRefs, true); err != nil {
 			return err
@@ -219,7 +212,7 @@ func checkConstraint(stmt *ast.NonTransactionalDMLStmt, se Session) error {
 		if err := checkReadClauses(s.Limit, s.Order); err != nil {
 			return err
 		}
-		nonTransactionalUpdateCount.Inc()
+		session_metrics.NonTransactionalUpdateCount.Inc()
 	case *ast.InsertStmt:
 		if s.Select == nil {
 			return errors.New("Non-transactional insert supports insert select stmt only")
@@ -234,7 +227,7 @@ func checkConstraint(stmt *ast.NonTransactionalDMLStmt, se Session) error {
 		if err := checkReadClauses(selectStmt.Limit, selectStmt.OrderBy); err != nil {
 			return err
 		}
-		nonTransactionalInsertCount.Inc()
+		session_metrics.NonTransactionalInsertCount.Inc()
 	default:
 		return errors.New("Unsupported DML type for non-transactional DML")
 	}

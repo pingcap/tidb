@@ -51,6 +51,7 @@ go_library(
         "//plugin",
         "//privilege",
         "//privilege/privileges",
+        "//server/metrics",
         "//session",
         "//session/txninfo",
         "//sessionctx",

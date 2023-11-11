@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
+	core_metrics "github.com/pingcap/tidb/planner/core/metrics"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -206,7 +207,7 @@ func getCachedPointPlan(stmt *ast.Prepared, sessVars *variable.SessionVars, stmt
 	if metrics.ResettablePlanCacheCounterFortTest {
 		metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
 	} else {
-		planCacheCounter.Inc()
+		core_metrics.PlanCacheCounter.Inc()
 	}
 	sessVars.FoundInPlanCache = true
 	stmtCtx.PointExec = true
@@ -247,7 +248,7 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 	if metrics.ResettablePlanCacheCounterFortTest {
 		metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
 	} else {
-		planCacheCounter.Inc()
+		core_metrics.PlanCacheCounter.Inc()
 	}
 	stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
 	return cachedVal.Plan, cachedVal.OutPutNames, true, nil
@@ -262,7 +263,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 
-	planCacheMissCounter.Inc()
+	core_metrics.PlanCacheMissCounter.Inc()
 	sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding = true
 	p, names, err := OptimizeAstNode(ctx, sctx, stmtAst.Stmt, is)
 	sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding = false
