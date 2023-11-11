@@ -14,7 +14,7 @@
       "type": "grafana",
       "id": "grafana",
       "name": "Grafana",
-      "version": "7.5.11"
+      "version": "7.5.10"
     },
     {
       "type": "panel",
@@ -46,6 +46,7 @@
   "gnetId": null,
   "graphTooltip": 1,
   "id": null,
+  "iteration": 1686975465551,
   "links": [],
   "panels": [
     {
@@ -155,7 +156,6 @@
       },
       "yaxes": [
         {
-          "$$hashKey": "object:869",
           "format": "short",
           "label": null,
           "logBase": 10,
@@ -164,7 +164,6 @@
           "show": true
         },
         {
-          "$$hashKey": "object:870",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -273,7 +272,6 @@
       },
       "yaxes": [
         {
-          "$$hashKey": "object:869",
           "format": "short",
           "label": null,
           "logBase": 10,
@@ -282,7 +280,6 @@
           "show": true
         },
         {
-          "$$hashKey": "object:870",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -390,7 +387,6 @@
       },
       "yaxes": [
         {
-          "$$hashKey": "object:869",
           "format": "short",
           "label": null,
           "logBase": 10,
@@ -399,7 +395,6 @@
           "show": true
         },
         {
-          "$$hashKey": "object:870",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -508,7 +503,6 @@
       },
       "yaxes": [
         {
-          "$$hashKey": "object:869",
           "format": "short",
           "label": null,
           "logBase": 10,
@@ -517,7 +511,6 @@
           "show": true
         },
         {
-          "$$hashKey": "object:870",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -626,7 +619,6 @@
       },
       "yaxes": [
         {
-          "$$hashKey": "object:869",
           "format": "short",
           "label": null,
           "logBase": 10,
@@ -635,7 +627,6 @@
           "show": true
         },
         {
-          "$$hashKey": "object:870",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -744,7 +735,6 @@
       },
       "yaxes": [
         {
-          "$$hashKey": "object:869",
           "format": "short",
           "label": null,
           "logBase": 10,
@@ -753,7 +743,6 @@
           "show": true
         },
         {
-          "$$hashKey": "object:870",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -851,7 +840,6 @@
       },
       "yaxes": [
         {
-          "$$hashKey": "object:869",
           "format": "short",
           "label": null,
           "logBase": 10,
@@ -860,7 +848,106 @@
           "show": true
         },
         {
-          "$$hashKey": "object:870",
+          "format": "short",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": null,
+          "show": true
+        }
+      ],
+      "yaxis": {
+        "align": false,
+        "alignLevel": null
+      }
+    },
+    {
+      "aliasColors": {},
+      "bars": false,
+      "dashLength": 10,
+      "dashes": false,
+      "datasource": "${DS_TEST-CLUSTER}",
+      "description": "TiDB max durations for different resource group",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "fill": 1,
+      "fillGradient": 0,
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 23
+      },
+      "hiddenSeries": false,
+      "id": 37,
+      "legend": {
+        "alignAsTable": true,
+        "avg": true,
+        "current": true,
+        "max": true,
+        "min": false,
+        "rightSide": true,
+        "show": true,
+        "total": false,
+        "values": true
+      },
+      "lines": true,
+      "linewidth": 1,
+      "links": [],
+      "nullPointMode": "null",
+      "options": {
+        "alertThreshold": true
+      },
+      "percentage": false,
+      "pluginVersion": "7.5.10",
+      "pointradius": 5,
+      "points": false,
+      "renderer": "flot",
+      "seriesOverrides": [],
+      "spaceLength": 10,
+      "stack": false,
+      "steppedLine": false,
+      "targets": [
+        {
+          "exemplar": true,
+          "expr": "histogram_quantile(1.0, sum(rate(tidb_server_handle_query_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (le,resource_group))",
+          "format": "time_series",
+          "interval": "",
+          "intervalFactor": 2,
+          "legendFormat": "{{resource_group}}",
+          "refId": "A"
+        }
+      ],
+      "thresholds": [],
+      "timeFrom": null,
+      "timeRegions": [],
+      "timeShift": null,
+      "title": "Query Max Duration",
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "type": "graph",
+      "xaxis": {
+        "buckets": null,
+        "mode": "time",
+        "name": null,
+        "show": true,
+        "values": []
+      },
+      "yaxes": [
+        {
+          "format": "s",
+          "label": null,
+          "logBase": 2,
+          "max": null,
+          "min": null,
+          "show": true
+        },
+        {
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -881,7 +968,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 23
+        "y": 30
       },
       "id": 19,
       "panels": [
@@ -905,7 +992,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 24
+            "y": 31
           },
           "hiddenSeries": false,
           "id": 20,
@@ -980,7 +1067,6 @@
           },
           "yaxes": [
             {
-              "$$hashKey": "object:869",
               "format": "short",
               "label": null,
               "logBase": 2,
@@ -989,7 +1075,6 @@
               "show": true
             },
             {
-              "$$hashKey": "object:870",
               "format": "short",
               "label": null,
               "logBase": 1,
@@ -1023,7 +1108,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 24
+            "y": 31
           },
           "hiddenSeries": false,
           "id": 21,
@@ -1119,7 +1204,6 @@
           },
           "yaxes": [
             {
-              "$$hashKey": "object:869",
               "format": "short",
               "label": null,
               "logBase": 2,
@@ -1128,7 +1212,6 @@
               "show": true
             },
             {
-              "$$hashKey": "object:870",
               "format": "short",
               "label": null,
               "logBase": 1,
@@ -1162,7 +1245,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 31
+            "y": 38
           },
           "hiddenSeries": false,
           "id": 22,
@@ -1237,7 +1320,6 @@
           },
           "yaxes": [
             {
-              "$$hashKey": "object:869",
               "decimals": null,
               "format": "bits",
               "label": null,
@@ -1247,7 +1329,6 @@
               "show": true
             },
             {
-              "$$hashKey": "object:870",
               "format": "short",
               "label": null,
               "logBase": 1,
@@ -1281,7 +1362,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 31
+            "y": 38
           },
           "hiddenSeries": false,
           "id": 23,
@@ -1356,7 +1437,6 @@
           },
           "yaxes": [
             {
-              "$$hashKey": "object:869",
               "decimals": null,
               "format": "bits",
               "label": null,
@@ -1366,7 +1446,6 @@
               "show": true
             },
             {
-              "$$hashKey": "object:870",
               "format": "short",
               "label": null,
               "logBase": 1,
@@ -1400,7 +1479,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 39
+            "y": 46
           },
           "hiddenSeries": false,
           "id": 24,
@@ -1475,7 +1554,6 @@
           },
           "yaxes": [
             {
-              "$$hashKey": "object:869",
               "format": "bits",
               "label": null,
               "logBase": 2,
@@ -1484,7 +1562,6 @@
               "show": true
             },
             {
-              "$$hashKey": "object:870",
               "format": "short",
               "label": null,
               "logBase": 1,
@@ -1518,7 +1595,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 39
+            "y": 46
           },
           "hiddenSeries": false,
           "id": 25,
@@ -1593,7 +1670,6 @@
           },
           "yaxes": [
             {
-              "$$hashKey": "object:869",
               "format": "bits",
               "label": null,
               "logBase": 2,
@@ -1602,7 +1678,6 @@
               "show": true
             },
             {
-              "$$hashKey": "object:870",
               "format": "short",
               "label": null,
               "logBase": 1,
@@ -1636,7 +1711,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 47
+            "y": 54
           },
           "hiddenSeries": false,
           "id": 26,
@@ -1711,7 +1786,6 @@
           },
           "yaxes": [
             {
-              "$$hashKey": "object:869",
               "decimals": null,
               "format": "ms",
               "label": null,
@@ -1721,7 +1795,6 @@
               "show": true
             },
             {
-              "$$hashKey": "object:870",
               "format": "short",
               "label": null,
               "logBase": 1,
@@ -1755,7 +1828,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 47
+            "y": 54
           },
           "hiddenSeries": false,
           "id": 27,
@@ -1830,7 +1903,6 @@
           },
           "yaxes": [
             {
-              "$$hashKey": "object:869",
               "format": "ms",
               "label": null,
               "logBase": 1,
@@ -1839,7 +1911,6 @@
               "show": true
             },
             {
-              "$$hashKey": "object:870",
               "format": "short",
               "label": null,
               "logBase": 1,
@@ -1864,7 +1935,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 55
+        "y": 31
       },
       "id": 28,
       "panels": [
@@ -1875,13 +1946,17 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "The current active resource group",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "fill": 0,
           "fillGradient": 0,
           "gridPos": {
             "h": 8,
             "w": 24,
             "x": 0,
-            "y": 56
+            "y": 3
           },
           "hiddenSeries": false,
           "id": 29,
@@ -1902,8 +1977,12 @@
           "linewidth": 1,
           "links": [],
           "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
           "paceLength": 10,
           "percentage": false,
+          "pluginVersion": "7.5.10",
           "pointradius": 1,
           "points": false,
           "renderer": "flot",
@@ -1983,7 +2062,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 64
+            "y": 11
           },
           "hiddenSeries": false,
           "id": 30,
@@ -2014,7 +2093,8 @@
           "spaceLength": 10,
           "stack": false,
           "steppedLine": false,
-          "targets": [{
+          "targets": [
+            {
               "exemplar": true,
               "expr": "sum(rate(resource_manager_client_request_success_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance) + sum(rate(resource_manager_client_request_fail{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance)",
               "format": "time_series",
@@ -2055,8 +2135,8 @@
             "show": true,
             "values": []
           },
-          "yaxes": [{
-              "$$hashKey": "object:869",
+          "yaxes": [
+            {
               "format": "short",
               "label": null,
               "logBase": 2,
@@ -2065,7 +2145,6 @@
               "show": true
             },
             {
-              "$$hashKey": "object:870",
               "format": "short",
               "label": null,
               "logBase": 1,
@@ -2099,7 +2178,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 64
+            "y": 11
           },
           "hiddenSeries": false,
           "id": 31,
@@ -2130,7 +2209,8 @@
           "spaceLength": 10,
           "stack": false,
           "steppedLine": false,
-          "targets": [{
+          "targets": [
+            {
               "exemplar": true,
               "expr": "sum(rate(resource_manager_client_request_fail{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance)",
               "format": "time_series",
@@ -2171,8 +2251,8 @@
             "show": true,
             "values": []
           },
-          "yaxes": [{
-              "$$hashKey": "object:869",
+          "yaxes": [
+            {
               "format": "short",
               "label": null,
               "logBase": 2,
@@ -2181,7 +2261,6 @@
               "show": true
             },
             {
-              "$$hashKey": "object:870",
               "format": "short",
               "label": null,
               "logBase": 1,
@@ -2215,7 +2294,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 71
+            "y": 18
           },
           "hiddenSeries": false,
           "id": 32,
@@ -2246,7 +2325,8 @@
           "spaceLength": 10,
           "stack": false,
           "steppedLine": false,
-          "targets": [{
+          "targets": [
+            {
               "exemplar": true,
               "expr": "histogram_quantile(0.99, sum(rate(resource_manager_client_request_success_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance, name, le))",
               "format": "time_series",
@@ -2286,8 +2366,8 @@
             "show": true,
             "values": []
           },
-          "yaxes": [{
-              "$$hashKey": "object:869",
+          "yaxes": [
+            {
               "format": "short",
               "label": null,
               "logBase": 2,
@@ -2296,7 +2376,6 @@
               "show": true
             },
             {
-              "$$hashKey": "object:870",
               "format": "short",
               "label": null,
               "logBase": 1,
@@ -2330,7 +2409,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 71
+            "y": 18
           },
           "hiddenSeries": false,
           "id": 33,
@@ -2361,7 +2440,8 @@
           "spaceLength": 10,
           "stack": false,
           "steppedLine": false,
-          "targets": [{
+          "targets": [
+            {
               "exemplar": true,
               "expr": "sum(rate(resource_manager_client_request_success_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance)",
               "format": "time_series",
@@ -2402,8 +2482,8 @@
             "show": true,
             "values": []
           },
-          "yaxes": [{
-              "$$hashKey": "object:869",
+          "yaxes": [
+            {
               "format": "short",
               "label": null,
               "logBase": 2,
@@ -2412,7 +2492,6 @@
               "show": true
             },
             {
-              "$$hashKey": "object:870",
               "format": "short",
               "label": null,
               "logBase": 1,
@@ -2446,7 +2525,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 78
+            "y": 25
           },
           "hiddenSeries": false,
           "id": 34,
@@ -2477,7 +2556,8 @@
           "spaceLength": 10,
           "stack": false,
           "steppedLine": false,
-          "targets": [{
+          "targets": [
+            {
               "exemplar": true,
               "expr": "histogram_quantile(0.99, sum(rate(resource_manager_client_token_request_duration_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance, le))",
               "format": "time_series",
@@ -2517,8 +2597,8 @@
             "show": true,
             "values": []
           },
-          "yaxes": [{
-              "$$hashKey": "object:869",
+          "yaxes": [
+            {
               "format": "short",
               "label": null,
               "logBase": 2,
@@ -2527,7 +2607,6 @@
               "show": true
             },
             {
-              "$$hashKey": "object:870",
               "format": "short",
               "label": null,
               "logBase": 1,
@@ -2561,7 +2640,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 78
+            "y": 25
           },
           "hiddenSeries": false,
           "id": 35,
@@ -2592,7 +2671,8 @@
           "spaceLength": 10,
           "stack": false,
           "steppedLine": false,
-          "targets": [{
+          "targets": [
+            {
               "exemplar": true,
               "expr": "sum(delta(resource_manager_client_token_request_duration_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance)",
               "format": "time_series",
@@ -2655,8 +2735,8 @@
             "show": true,
             "values": []
           },
-          "yaxes": [{
-              "$$hashKey": "object:869",
+          "yaxes": [
+            {
               "format": "short",
               "label": null,
               "logBase": 2,
@@ -2665,7 +2745,6 @@
               "show": true
             },
             {
-              "$$hashKey": "object:870",
               "format": "short",
               "label": null,
               "logBase": 1,
@@ -2685,7 +2764,7 @@
     }
   ],
   "refresh": "30s",
-  "schemaVersion": 18,
+  "schemaVersion": 27,
   "style": "dark",
   "tags": [],
   "templating": {
@@ -2694,15 +2773,22 @@
         "allValue": null,
         "current": {},
         "datasource": "${DS_TEST-CLUSTER}",
+        "definition": "",
+        "description": null,
+        "error": null,
         "hide": 2,
         "includeAll": false,
         "label": "K8s-cluster",
         "multi": false,
         "name": "k8s_cluster",
         "options": [],
-        "query": "label_values(pd_cluster_status, k8s_cluster)",
+        "query": {
+          "query": "label_values(pd_cluster_status, k8s_cluster)",
+          "refId": "Test-Cluster-k8s_cluster-Variable-Query"
+        },
         "refresh": 2,
         "regex": "",
+        "skipUrlSync": false,
         "sort": 1,
         "tagValuesQuery": "",
         "tags": [],
@@ -2714,15 +2800,22 @@
         "allValue": null,
         "current": {},
         "datasource": "${DS_TEST-CLUSTER}",
+        "definition": "",
+        "description": null,
+        "error": null,
         "hide": 2,
         "includeAll": false,
         "label": "tidb_cluster",
         "multi": false,
         "name": "tidb_cluster",
         "options": [],
-        "query": "label_values(pd_cluster_status{k8s_cluster=\"$k8s_cluster\"}, tidb_cluster)",
+        "query": {
+          "query": "label_values(pd_cluster_status{k8s_cluster=\"$k8s_cluster\"}, tidb_cluster)",
+          "refId": "Test-Cluster-tidb_cluster-Variable-Query"
+        },
         "refresh": 2,
         "regex": "",
+        "skipUrlSync": false,
         "sort": 1,
         "tagValuesQuery": "",
         "tags": [],
@@ -2732,11 +2825,7 @@
       },
       {
         "allValue": ".*",
-        "current": {
-          "selected": false,
-          "text": "All",
-          "value": "$__all"
-        },
+        "current": {},
         "datasource": "${DS_TEST-CLUSTER}",
         "definition": "",
         "description": null,
