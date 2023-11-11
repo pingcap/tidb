@@ -236,6 +236,16 @@ func (h *restoreEBSMetaHelper) restoreVolumes(progress glue.Progress) (map[strin
 			log.Error("failed to create all volumes, cleaning up created volume")
 			ec2Session.DeleteVolumes(volumeIDMap)
 		}
+<<<<<<< HEAD
+=======
+
+		if h.cfg.UseFSR {
+			err = ec2Session.DisableDataFSR(snapshotsIDsMap)
+			if err != nil {
+				log.Error("disable fsr failed", zap.Error(err))
+			}
+		}
+>>>>>>> 2d45b7afe73 (ebs br: control the snapshots batch size for fsr enable/disable (#48506))
 	}()
 	volumeIDMap, err = ec2Session.CreateVolumes(h.metaInfo,
 		string(h.cfg.VolumeType), h.cfg.VolumeIOPS, h.cfg.VolumeThroughput, h.cfg.TargetAZ)
