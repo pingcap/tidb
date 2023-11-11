@@ -6653,6 +6653,7 @@ UnReservedKeyword:
 |	"TRACE"
 |	"TRANSACTION"
 |	"TRUNCATE"
+|	"TSO"
 |	"UNBOUNDED"
 |	"UNKNOWN"
 |	"VALUE" %prec lowerThanValueKeyword
