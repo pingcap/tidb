@@ -651,13 +651,12 @@ func (s *Security) ClusterSecurity() tikvcfg.Security {
 
 // Status is the status section of the config.
 type Status struct {
-	StatusHost                    string `toml:"status-host" json:"status-host"`
-	MetricsAddr                   string `toml:"metrics-addr" json:"metrics-addr"`
-	StatusPort                    uint   `toml:"status-port" json:"status-port"`
-	MetricsInterval               uint   `toml:"metrics-interval" json:"metrics-interval"`
-	ReportStatus                  bool   `toml:"report-status" json:"report-status"`
-	RecordQPSbyDB                 bool   `toml:"record-db-qps" json:"record-db-qps"`
-	RecordQueryDurationByDbAndTbl bool   `toml:"record-db-query-duration" json:"record-db-query-duration"`
+	StatusHost      string `toml:"status-host" json:"status-host"`
+	MetricsAddr     string `toml:"metrics-addr" json:"metrics-addr"`
+	StatusPort      uint   `toml:"status-port" json:"status-port"`
+	MetricsInterval uint   `toml:"metrics-interval" json:"metrics-interval"`
+	ReportStatus    bool   `toml:"report-status" json:"report-status"`
+	RecordQPSbyDB   bool   `toml:"record-db-qps" json:"record-db-qps"`
 	// After a duration of this time in seconds if the server doesn't see any activity it pings
 	// the client to see if the transport is still alive.
 	GRPCKeepAliveTime uint `toml:"grpc-keepalive-time" json:"grpc-keepalive-time"`
@@ -938,17 +937,16 @@ var defaultConf = Config{
 		TiDBRCReadCheckTS:           false,
 	},
 	Status: Status{
-		ReportStatus:                  true,
-		StatusHost:                    DefStatusHost,
-		StatusPort:                    DefStatusPort,
-		MetricsInterval:               15,
-		RecordQPSbyDB:                 false,
-		RecordQueryDurationByDbAndTbl: false,
-		GRPCKeepAliveTime:             10,
-		GRPCKeepAliveTimeout:          3,
-		GRPCConcurrentStreams:         1024,
-		GRPCInitialWindowSize:         2 * 1024 * 1024,
-		GRPCMaxSendMsgSize:            math.MaxInt32,
+		ReportStatus:          true,
+		StatusHost:            DefStatusHost,
+		StatusPort:            DefStatusPort,
+		MetricsInterval:       15,
+		RecordQPSbyDB:         false,
+		GRPCKeepAliveTime:     10,
+		GRPCKeepAliveTimeout:  3,
+		GRPCConcurrentStreams: 1024,
+		GRPCInitialWindowSize: 2 * 1024 * 1024,
+		GRPCMaxSendMsgSize:    math.MaxInt32,
 	},
 	Performance: Performance{
 		MaxMemory:             0,

@@ -80,6 +80,18 @@ func TestStmtCount(t *testing.T) {
 	ts.runTestStmtCount(t)
 }
 
+func TestDBStmtCount(t *testing.T) {
+	cfg := newTestConfig()
+	cfg.Port = 0
+	cfg.Status.ReportStatus = true
+	cfg.Status.StatusPort = 0
+	cfg.Status.RecordDBLabel = true
+	cfg.Performance.TCPKeepAlive = true
+	ts := createTidbTestSuiteWithCfg(t, cfg)
+
+	ts.runTestDBStmtCount(t)
+}
+
 func TestLoadDataListPartition(t *testing.T) {
 	ts := createTidbTestSuite(t)
 

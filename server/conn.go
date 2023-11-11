@@ -1158,11 +1158,17 @@ func (cc *clientConn) Run(ctx context.Context) {
 				metrics.CriticalErrorCounter.Add(1)
 				logutil.Logger(ctx).Fatal("critical error, stop the server", zap.Error(err))
 			}
-			var txnMode string
+			var (
+				txnMode string
+				dbName  string
+			)
 			if ctx := cc.getCtx(); ctx != nil {
 				txnMode = ctx.GetSessionVars().GetReadableTxnMode()
+				if config.GetGlobalConfig().Status.RecordDBLabel {
+					dbName = ctx.GetSessionVars().CurrentDB
+				}
 			}
-			metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
+			metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err), dbName).Inc()
 			if storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err) {
 				logutil.Logger(ctx).Debug("Expected error for FOR UPDATE NOWAIT", zap.Error(err))
 			} else {
@@ -1254,6 +1260,11 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	affectedRows := cc.ctx.AffectedRows()
 	cc.ctx.GetTxnWriteThroughputSLI().FinishExecuteStmt(cost, affectedRows, sessionVar.InTxn())
 
+	var dbName string
+	if config.GetGlobalConfig().Status.RecordDBLabel {
+		dbName = sessionVar.CurrentDB
+	}
+
 	switch sqlType {
 	case "Insert":
 		affectedRowsCounterInsert.Add(float64(affectedRows))
@@ -1263,19 +1274,17 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 		affectedRowsCounterDelete.Add(float64(affectedRows))
 	case "Update":
 		affectedRowsCounterUpdate.Add(float64(affectedRows))
+	case "Select":
+		queryDurationHistogramSelect.Observe(cost.Seconds())
+	case "Execute":
+		queryDurationHistogramExecute.Observe(cost.Seconds())
+	case "Set":
+		queryDurationHistogramSet.Observe(cost.Seconds())
+	case metrics.LblGeneral:
+		queryDurationHistogramGeneral.Observe(cost.Seconds())
+	default:
+		metrics.QueryDurationHistogram.WithLabelValues(sqlType).Observe(cost.Seconds())
 	}
-
-	if !config.GetGlobalConfig().Status.RecordQueryDurationByDbAndTbl {
-		return
-	}
-
-	var dbName = "Unknown"
-	if sessionVar.CurrentDB != "" {
-		dbName = sessionVar.CurrentDB
-	}
-
-	tablesName := session.ConcatTablesName(sessionVar.StmtCtx)
-	metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName, tablesName).Observe(cost.Seconds())
 }
 
 // dispatch handles client request based on command which is the first byte of the data.
