@@ -528,3 +528,31 @@ NULL
 NULL
 NULL
 set sql_mode=default;
+drop table if exists t;
+create table t(a int, b year);
+insert into t values (1, 2021);
+explain select * from t where date(b);
+id	estRows	task	access object	operator info
+TableReader_7	8000.00	root		data:Selection_6
+└─Selection_6	8000.00	cop[tikv]		date(cast(expression__time.t.b, datetime BINARY))
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t where date(b);
+a	b
+select date(b) from t;
+date(b)
+NULL
+insert into mysql.expr_pushdown_blacklist(name, store_type) values ('date', 'tikv');
+admin reload expr_pushdown_blacklist;
+explain select * from t where date(b);
+id	estRows	task	access object	operator info
+Selection_7	8000.00	root		date(cast(expression__time.t.b, datetime BINARY))
+└─TableReader_6	10000.00	root		data:TableFullScan_5
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t where date(b);
+a	b
+select date(b) from t;
+date(b)
+NULL
+delete from mysql.expr_pushdown_blacklist;
+admin reload expr_pushdown_blacklist;
+drop table t;

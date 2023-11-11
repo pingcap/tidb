@@ -229,3 +229,19 @@ insert into t1 (d) select date_add('9999-12-31',interval 1 year);
 insert into t1 (d) select date_add('9999-12-31',interval 1 day);
 select * from t1;
 set sql_mode=default;
+
+# Test Issue TiDB#48501
+drop table if exists t;
+create table t(a int, b year);
+insert into t values (1, 2021);
+explain select * from t where date(b);
+select * from t where date(b);
+select date(b) from t;
+insert into mysql.expr_pushdown_blacklist(name, store_type) values ('date', 'tikv');
+admin reload expr_pushdown_blacklist;
+explain select * from t where date(b);
+select * from t where date(b);
+select date(b) from t;
+delete from mysql.expr_pushdown_blacklist;
+admin reload expr_pushdown_blacklist;
+drop table t;
