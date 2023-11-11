@@ -64,7 +64,10 @@ func (w *worker) onCreateForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		job.SchemaState = model.StateWriteOnly
 		return ver, nil
 	case model.StateWriteOnly:
-		err = checkForeignKeyConstrain(w, job.SchemaName, tblInfo.Name.L, &fkInfo, fkCheck)
+		if d.lease > 0 {
+			delayForAsyncCommit()
+		}
+		err = checkForeignKeyConstraint(w, job.SchemaName, tblInfo.Name.L, &fkInfo, fkCheck)
 		if err != nil {
 			job.State = model.JobStateRollingback
 			return ver, err
@@ -669,7 +672,7 @@ func checkAddForeignKeyValidInOwner(d *ddlCtx, t *meta.Meta, schema string, tbIn
 	return nil
 }
 
-func checkForeignKeyConstrain(w *worker, schema, table string, fkInfo *model.FKInfo, fkCheck bool) error {
+func checkForeignKeyConstraint(w *worker, schema, table string, fkInfo *model.FKInfo, fkCheck bool) error {
 	if !fkCheck {
 		return nil
 	}
