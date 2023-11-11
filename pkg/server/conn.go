@@ -1171,7 +1171,7 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	case "Delete":
 		server_metrics.AffectedRowsCounterDelete.Add(float64(affectedRows))
 	case "Update":
-		affectedRowsCounterUpdate.Add(float64(affectedRows))
+		server_metrics.AffectedRowsCounterUpdate.Add(float64(affectedRows))
 	}
 
 	vars := cc.getCtx().GetSessionVars()
