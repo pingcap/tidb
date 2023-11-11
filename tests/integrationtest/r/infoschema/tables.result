@@ -230,7 +230,7 @@ innodb_compression_level	GLOBAL	6	8	NULL	NULL	NULL	YES
 SET GLOBAL innodb_compression_level = DEFAULT;
 SELECT * FROM variables_info WHERE variable_name = 'tidb_txn_mode';
 VARIABLE_NAME	VARIABLE_SCOPE	DEFAULT_VALUE	CURRENT_VALUE	MIN_VALUE	MAX_VALUE	POSSIBLE_VALUES	IS_NOOP
-tidb_txn_mode	SESSION,GLOBAL		pessimistic	NULL	NULL	pessimistic,optimistic	NO
+tidb_txn_mode	SESSION,GLOBAL	pessimistic	pessimistic	NULL	NULL	pessimistic,optimistic	NO
 SELECT * FROM variables_info WHERE variable_name = 'max_connections' AND is_noop='NO';
 VARIABLE_NAME	VARIABLE_SCOPE	DEFAULT_VALUE	CURRENT_VALUE	MIN_VALUE	MAX_VALUE	POSSIBLE_VALUES	IS_NOOP
 max_connections	INSTANCE	0	0	0	100000	NULL	NO

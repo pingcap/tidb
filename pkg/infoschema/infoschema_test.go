@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -850,13 +849,4 @@ func TestInfoSchemaCreateTableLike(t *testing.T) {
 	tblInfo = tbl.Meta()
 	require.Equal(t, tblInfo.Indices[0].Name.O, "idx")
 	require.Equal(t, tblInfo.Indices[0].ID, int64(1))
-}
-
-func TestCheckDefaultValueForTidbTxnMode(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	rs, err := tk.Exec("SELECT DEFAULT_VALUE FROM information_schema.variables_info WHERE variable_name = 'tidb_txn_mode';")
-	require.NoError(t, err)
-	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][0], variable.PessimisticTxnMode)
 }
