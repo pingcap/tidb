@@ -32,10 +32,10 @@ a	b	c	d
 explain format = 'brief' select * from t t1 join t t2 on t1.a = t2.a where t1.a = '4' and (t2.b, t2.c) in ((1,1),(2,2));
 id	estRows	task	access object	operator info
 Projection	0.00	root		planner__core__casetest__point_get_plan.t.a, planner__core__casetest__point_get_plan.t.b, planner__core__casetest__point_get_plan.t.c, planner__core__casetest__point_get_plan.t.d, planner__core__casetest__point_get_plan.t.a, planner__core__casetest__point_get_plan.t.b, planner__core__casetest__point_get_plan.t.c, planner__core__casetest__point_get_plan.t.d
-└─MergeJoin	0.00	root		inner join, left key:planner__core__casetest__point_get_plan.t.a, right key:planner__core__casetest__point_get_plan.t.a
-  ├─Point_Get(Build)	1.00	root	table:t, index:PRIMARY(a)	
-  └─Selection(Probe)	0.00	root		or(and(eq(planner__core__casetest__point_get_plan.t.b, 1), eq(planner__core__casetest__point_get_plan.t.c, 1)), and(eq(planner__core__casetest__point_get_plan.t.b, 2), eq(planner__core__casetest__point_get_plan.t.c, 2)))
-    └─Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+└─HashJoin	0.00	root		CARTESIAN inner join
+  ├─Selection(Build)	0.00	root		or(and(eq(planner__core__casetest__point_get_plan.t.b, 1), eq(planner__core__casetest__point_get_plan.t.c, 1)), and(eq(planner__core__casetest__point_get_plan.t.b, 2), eq(planner__core__casetest__point_get_plan.t.c, 2)))
+  │ └─Point_Get 1.00	root	table:t, index:PRIMARY(a)	
+  └─Point_Get(Probe)	1.00	root	table:t, index:PRIMARY(a)	
 select * from t t1 join t t2 on t1.a = t2.a where t1.a = '4' and (t2.b, t2.c) in ((1,1),(2,2));
 a	b	c	d	a	b	c	d
 4	1	1	4	4	1	1	4

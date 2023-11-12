@@ -4206,6 +4206,49 @@
       }
     ]
   },
+  {      
+    "Name": "TestIssue47629",
+    "Cases": [
+      {
+        "SQL": "select * from t1, t2 where t1.a=t2.a and t2.a = 'a'",
+        "Plan": [
+          "HashJoin 100.00 root  CARTESIAN inner join",
+          "├─TableReader(Build) 10.00 root  data:Selection",
+          "│ └─Selection 10.00 cop[tikv]  eq(test.t2.a, \"a\")",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10.00 root  data:Selection",
+          "  └─Selection 10.00 cop[tikv]  eq(test.t1.a, \"a\")",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1, t3 where t1.a=t3.a and t3.a = 'a'",
+        "Plan": [
+          "Projection 12.50 root  test.t1.a, test.t3.a",
+          "└─HashJoin 12.50 root  inner join, equal:[eq(test.t3.a, test.t1.a)]",
+          "  ├─TableReader(Build) 10.00 root  data:Selection",
+          "  │ └─Selection 10.00 cop[tikv]  eq(test.t3.a, \"a\"), not(isnull(test.t3.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where t1.a in (select a from t2 where a = 'a');",
+        "Plan": [
+          "HashJoin 10.00 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "├─HashAgg(Build) 8.00 root  group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
+          "│ └─TableReader 10.00 root  data:Selection",
+          "│   └─Selection 10.00 cop[tikv]  eq(test.t2.a, \"a\"), not(isnull(test.t2.a))",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
   {
     "Name": "TestIssue28316",
     "Cases": [

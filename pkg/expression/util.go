@@ -494,7 +494,10 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 					logutil.BgLogger().Error("Unexpected error happened during ColumnSubstitution", zap.Stack("stack"))
 					return false, failed, v
 				}
-				if oldCollEt.Collation == newCollEt.Collation {
+				// When column collations are consistent, constant propagation can proceed without checking the collation of the constants.
+				if len(v.GetArgs()) == 2 && v.GetArgs()[0].GetType().GetCollate() == v.GetArgs()[1].GetType().GetCollate() {
+					changed = true
+				} else if oldCollEt.Collation == newCollEt.Collation {
 					if newFuncExpr.GetType().GetCollate() == arg.GetType().GetCollate() && newFuncExpr.Coercibility() == arg.Coercibility() {
 						// It's safe to use the new expression, otherwise some cases in projection push-down will be wrong.
 						changed = true

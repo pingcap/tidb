@@ -1740,6 +1740,33 @@ func TestSelectionPartialPushDown(t *testing.T) {
 	}
 }
 
+// Fix Issue #47629
+func TestIssue47629(t *testing.T) {
+	var (
+		input  []string
+		output []struct {
+			SQL  string
+			Plan []string
+		}
+	)
+	planSuiteData := GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec("create table t1 (a char(10))")
+	tk.MustExec("create table t2 (a char(10))")
+	tk.MustExec("create table t3 (a char(10) COLLATE utf8mb4_general_ci)")
+	tk.MustExec("set session collation_connection=utf8_general_ci;")
+	for i, ts := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief'" + ts).Rows())
+		})
+		tk.MustQuery("explain format='brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+	}
+}
 func TestIssue28316(t *testing.T) {
 	var (
 		input  []string

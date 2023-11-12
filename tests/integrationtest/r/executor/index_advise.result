@@ -29,13 +29,12 @@ and b.pnbrn_cnaps = a.pnbrn_cnaps
 and b.txn_accno = a.new_accno;
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A
-└─IndexJoin	12.50	root		inner join, inner:IndexReader, outer key:executor__index_advise.t2.pnbrn_cnaps, executor__index_advise.t2.txn_accno, inner key:executor__index_advise.t1.pnbrn_cnaps, executor__index_advise.t1.new_accno, equal cond:eq(executor__index_advise.t2.pnbrn_cnaps, executor__index_advise.t1.pnbrn_cnaps), eq(executor__index_advise.t2.txn_accno, executor__index_advise.t1.new_accno)
-  ├─TableReader(Build)	10.00	root		data:Selection
-  │ └─Selection	10.00	cop[tikv]		eq(executor__index_advise.t2.txn_dt, 2022-12-01)
+└─IndexJoin	0.01	root		inner join, inner:IndexReader, outer key:executor__index_advise.t2.pnbrn_cnaps, executor__index_advise.t2.txn_accno, inner key:executor__index_advise.t1.pnbrn_cnaps, executor__index_advise.t1.new_accno, equal cond:eq(executor__index_advise.t2.pnbrn_cnaps, executor__index_advise.t1.pnbrn_cnaps), eq(executor__index_advise.t2.txn_accno, executor__index_advise.t1.new_accno)
+  ├─TableReader(Build)	0.01	root		data:Selection
+  │ └─Selection	0.01	cop[tikv]		eq(executor__index_advise.t2.pnbrn_cnaps, "40001"), eq(executor__index_advise.t2.txn_dt, 2022-12-01)
   │   └─TableFullScan	10000.00	cop[tikv]	table:b	keep order:false, stats:pseudo
-  └─IndexReader(Probe)	10.00	root		index:Selection
-    └─Selection	10.00	cop[tikv]		eq(executor__index_advise.t1.pnbrn_cnaps, "40001")
-      └─IndexRangeScan	10.00	cop[tikv]	table:t1, index:PRIMARY(pnbrn_cnaps, new_accno)	range: decided by [eq(executor__index_advise.t1.pnbrn_cnaps, executor__index_advise.t2.pnbrn_cnaps) eq(executor__index_advise.t1.new_accno, executor__index_advise.t2.txn_accno)], keep order:false, stats:pseudo
+  └─IndexReader(Probe)	0.01	root		index:Selection
+    └─IndexRangeScan	0.01	cop[tikv]	table:t1, index:PRIMARY(pnbrn_cnaps, new_accno)	range: decided by [eq(executor__index_advise.t1.pnbrn_cnaps, executor__index_advise.t2.pnbrn_cnaps) eq(executor__index_advise.t1.new_accno, executor__index_advise.t2.txn_accno) eq(executor__index_advise.t1.pnbrn_cnaps, 40001)], keep order:false, stats:pseudo
 set @@session.tidb_enable_inl_join_inner_multi_pattern='OFF';
 explain format='brief' update
 /*+ inl_join(a) */

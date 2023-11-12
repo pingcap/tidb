@@ -712,6 +712,15 @@
     ]
   },
   {
+    "name": "TestIssue47629",
+    "cases": [
+      "select * from t1, t2 where t1.a=t2.a and t2.a = 'a'",
+      "select * from t1, t3 where t1.a=t3.a and t3.a = 'a'",
+      "select * from t1 where t1.a in (select a from t2 where a = 'a');"
+    ]
+  },
+
+  {
     "name": "TestIssue28316",
     "cases": [
       "select * from t where t.a < 3 and t.a < 3"

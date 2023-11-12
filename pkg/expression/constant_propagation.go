@@ -91,9 +91,6 @@ func ValidCompareConstantPredicateHelper(eq *ScalarFunction, colIsLeft bool) (*C
 	if !conOk {
 		return nil, nil
 	}
-	if col.GetType().GetCollate() != con.GetType().GetCollate() {
-		return nil, nil
-	}
 	return col, con
 }
 
