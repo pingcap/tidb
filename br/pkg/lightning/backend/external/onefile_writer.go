@@ -150,7 +150,7 @@ func (w *OneFileWriter) Close(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	w.logger.Info("close writer",
+	w.logger.Info("close one file writer",
 		zap.String("writerID", w.writerID),
 		zap.Int("kv-cnt-cap", cap(w.kvLocations)),
 		zap.String("minKey", hex.EncodeToString(w.minKey)),

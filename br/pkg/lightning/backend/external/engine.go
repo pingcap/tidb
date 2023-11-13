@@ -45,7 +45,7 @@ import (
 // but, ks3 supporter says there's no such limit on connections.
 // And our target for global sort is AWS s3, this default value might not fit well.
 // TODO: adjust it according to cloud storage.
-const maxCloudStorageConnections = 8000
+const maxCloudStorageConnections = 2000
 
 // Engine stored sorted key/value pairs in an external storage.
 type Engine struct {
@@ -146,9 +146,13 @@ func (e *Engine) getAdjustedConcurrency() int {
 		// estimate we will open at most 1000 files, so if e.dataFiles is small we can
 		// try to concurrently process ranges.
 		adjusted := maxCloudStorageConnections / len(e.dataFiles)
+		res := min(adjusted, 8)
+		logutil.BgLogger().Info("ywq test engine concurrency", zap.Any("res", res), zap.Any("adjuested", adjusted))
 		return min(adjusted, 8)
 	}
 	adjusted := min(e.workerConcurrency, maxCloudStorageConnections/len(e.dataFiles))
+	res := max(adjusted, 1)
+	logutil.BgLogger().Info("ywq test engine concurrency", zap.Any("res", res), zap.Any("adjuested", adjusted))
 	return max(adjusted, 1)
 }
 
@@ -385,7 +389,22 @@ func (e *Engine) SplitRanges(
 }
 
 // Close implements common.Engine.
-func (e *Engine) Close() error { return nil }
+func (e *Engine) Close() error {
+	if e.bufPool != nil {
+		e.bufPool.Destroy()
+		e.bufPool = nil
+	}
+	return nil
+}
+
+// Reset resets the memory buffer pool.
+func (e *Engine) Reset() error {
+	if e.bufPool != nil {
+		e.bufPool.Destroy()
+		e.bufPool = membuf.NewPool()
+	}
+	return nil
+}
 
 // MemoryIngestData is the in-memory implementation of IngestData.
 type MemoryIngestData struct {

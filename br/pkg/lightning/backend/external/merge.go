@@ -49,7 +49,7 @@ func MergeOverlappingFiles(ctx context.Context, paths []string, store storage.Ex
 					readBufferSize,
 					newFilePrefix,
 					uuid.New().String(),
-					memSize,
+					DefaultMemSizeLimit,
 					blockSize,
 					writeBatchCount,
 					propSizeDist,
