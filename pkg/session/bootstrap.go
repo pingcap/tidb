@@ -1713,6 +1713,10 @@ func upgradeToVer32(s sessiontypes.Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY table_priv SET('Select','Insert','Update','Delete','Create','Drop','Grant', 'Index', 'Alter', 'Create View', 'Show View', 'Trigger', 'References')")
+
+	// Set optimistic to tidb_tx_mode.
+	// Related issue: https://github.com/pingcap/tidb/issues/48492
+	variable.SetSysVar(variable.TiDBTxnMode, variable.OptimisticTxnMode)
 }
 
 func upgradeToVer33(s sessiontypes.Session, ver int64) {
@@ -1763,6 +1767,12 @@ func upgradeToVer38(s sessiontypes.Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateGlobalPrivTable)
+
+	// Set optimistic to tidb_tx_mode.
+	// Related issue: https://github.com/pingcap/tidb/issues/48492
+	if variable.GetSysVar(variable.TiDBTxnMode).Value == "" {
+		variable.SetSysVar(variable.TiDBTxnMode, variable.OptimisticTxnMode)
+	}
 }
 
 func writeNewCollationParameter(s sessiontypes.Session, flag bool) {
