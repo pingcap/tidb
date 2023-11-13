@@ -2983,21 +2983,6 @@ func TestGlobalMemoryControl2(t *testing.T) {
 	runtime.GC()
 }
 
-func TestCompileOutOfMemoryQuota(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	// Test for issue: https://github.com/pingcap/tidb/issues/38322
-	defer tk.MustExec("set global tidb_mem_oom_action = DEFAULT")
-	tk.MustExec("set global tidb_mem_oom_action='CANCEL'")
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int, index idx(a))")
-	tk.MustExec("create table t1(a int, c int, index idx(a))")
-	tk.MustExec("set tidb_mem_quota_query=10")
-	err := tk.ExecToErr("select t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
-	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
-}
-
 func TestSignalCheckpointForSort(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`))
 	defer func() {

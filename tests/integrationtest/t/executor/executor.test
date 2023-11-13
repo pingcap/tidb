@@ -2537,3 +2537,16 @@ from ssci right join csci on (ssci.customer_sk=csci.customer_sk
 limit 100;
 --enable_result_log
 
+# TestCompileOutOfMemoryQuota
+# Test for issue: https://github.com/pingcap/tidb/issues/38322
+set global tidb_mem_oom_action='CANCEL';
+drop table if exists t, t1;
+create table t(a int, b int, index idx(a));
+create table t1(a int, c int, index idx(a));
+set tidb_mem_quota_query=10;
+-- replace_regex /conn=[0-9]+/conn=<num>/
+-- error 8175
+select t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a;
+set global tidb_mem_oom_action=default;
+set tidb_mem_quota_query=default;
+

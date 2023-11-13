@@ -4276,3 +4276,12 @@ select  sum(case when ssci.customer_sk is not null and csci.customer_sk is null 
 from ssci right join csci on (ssci.customer_sk=csci.customer_sk
 and ssci.item_sk = csci.item_sk)
 limit 100;
+set global tidb_mem_oom_action='CANCEL';
+drop table if exists t, t1;
+create table t(a int, b int, index idx(a));
+create table t1(a int, c int, index idx(a));
+set tidb_mem_quota_query=10;
+select t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a;
+Error 8175 (HY000): Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=<num>]
+set global tidb_mem_oom_action=default;
+set tidb_mem_quota_query=default;
