@@ -53,7 +53,7 @@ type ExplainExec struct {
 // Open implements the Executor Open interface.
 func (e *ExplainExec) Open(ctx context.Context) error {
 	if e.analyzeExec != nil {
-		return e.analyzeExec.Open(ctx)
+		return exec.Open(ctx, e.analyzeExec)
 	}
 	return nil
 }

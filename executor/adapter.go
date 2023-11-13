@@ -329,7 +329,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 		}
 	}
 
-	if err = pointExecutor.Open(ctx); err != nil {
+	if err = exec.Open(ctx, pointExecutor); err != nil {
 		terror.Call(pointExecutor.Close)
 		return nil, err
 	}
@@ -669,7 +669,7 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 		if err != nil || e == nil {
 			return err
 		}
-		if err := e.Open(ctx); err != nil {
+		if err := exec.Open(ctx, e); err != nil {
 			terror.Call(e.Close)
 			return err
 		}
@@ -1192,7 +1192,7 @@ func (a *ExecStmt) openExecutor(ctx context.Context, e Executor) (err error) {
 		}
 	}()
 	start := time.Now()
-	err = e.Open(ctx)
+	err = exec.Open(ctx, e)
 	a.phaseOpenDurations[0] += time.Since(start)
 	return err
 }

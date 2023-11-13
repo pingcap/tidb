@@ -96,8 +96,13 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.diskTracker = memory.NewTracker(e.id, -1)
 		e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
 	}
+<<<<<<< HEAD:executor/sort.go
 	e.partitionList = e.partitionList[:0]
 	return e.children[0].Open(ctx)
+=======
+	e.PartitionList = e.PartitionList[:0]
+	return exec.Open(ctx, e.Children(0))
+>>>>>>> 6e8df186f51 (executor: fix goroutine leak for EvalSubqueryFirstRow (#48133)):pkg/executor/sortexec/sort.go
 }
 
 // Next implements the Executor Next interface.
@@ -397,7 +402,11 @@ func (e *TopNExec) Open(ctx context.Context) error {
 	e.fetched = false
 	e.Idx = 0
 
+<<<<<<< HEAD:executor/sort.go
 	return e.children[0].Open(ctx)
+=======
+	return exec.Open(ctx, e.Children(0))
+>>>>>>> 6e8df186f51 (executor: fix goroutine leak for EvalSubqueryFirstRow (#48133)):pkg/executor/sortexec/sort.go
 }
 
 // Next implements the Executor Next interface.

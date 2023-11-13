@@ -217,7 +217,11 @@ func (e *RecoverIndexExec) columnsTypes() []*types.FieldType {
 
 // Open implements the Executor Open interface.
 func (e *RecoverIndexExec) Open(ctx context.Context) error {
+<<<<<<< HEAD:executor/admin.go
 	if err := e.baseExecutor.Open(ctx); err != nil {
+=======
+	if err := exec.Open(ctx, e.BaseExecutor.Base()); err != nil {
+>>>>>>> 6e8df186f51 (executor: fix goroutine leak for EvalSubqueryFirstRow (#48133)):pkg/executor/admin.go
 		return err
 	}
 

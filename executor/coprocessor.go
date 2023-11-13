@@ -54,7 +54,7 @@ func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coproces
 		return h.buildErrorResponse(err)
 	}
 
-	err = e.Open(ctx)
+	err = exec.Open(ctx, e)
 	if err != nil {
 		return h.buildErrorResponse(err)
 	}
@@ -94,7 +94,7 @@ func (h *CoprocessorDAGHandler) HandleStreamRequest(ctx context.Context, req *co
 		return stream.Send(h.buildErrorResponse(err))
 	}
 
-	err = e.Open(ctx)
+	err = exec.Open(ctx, e)
 	if err != nil {
 		return stream.Send(h.buildErrorResponse(err))
 	}
