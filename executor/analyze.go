@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -166,18 +167,6 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	for i := 0; i < concurrency; i++ {
 		e.wg.Run(func() { e.analyzeWorker(taskCh, resultsCh) })
 	}
-<<<<<<< HEAD
-=======
-	pruneMode := variable.PartitionPruneMode(sessionVars.PartitionPruneMode.Load())
-	// needGlobalStats used to indicate whether we should merge the partition-level stats to global-level stats.
-	needGlobalStats := pruneMode == variable.Dynamic
-	globalStatsMap := make(map[globalStatsKey]globalStatsInfo)
-	g, _ := errgroup.WithContext(ctx)
-	g.Go(func() error {
-		return e.handleResultsError(ctx, concurrency, needGlobalStats, globalStatsMap, resultsCh, len(tasks))
-	})
-
->>>>>>> 36c0298a51c (executor: AnalyzePartitionConcurrency is not more than number of task (#47463))
 	for _, task := range tasks {
 		prepareV2AnalyzeJobInfo(task.colExec, false)
 		AddNewAnalyzeJob(e.ctx, task.job)
@@ -196,7 +185,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	// needGlobalStats used to indicate whether we should merge the partition-level stats to global-level stats.
 	needGlobalStats := pruneMode == variable.Dynamic
 	globalStatsMap := make(map[globalStatsKey]globalStatsInfo)
-	err = e.handleResultsError(ctx, concurrency, needGlobalStats, globalStatsMap, resultsCh)
+	err = e.handleResultsError(ctx, concurrency, needGlobalStats, globalStatsMap, resultsCh, len(tasks))
 	for _, task := range tasks {
 		if task.colExec != nil && task.colExec.memTracker != nil {
 			task.colExec.memTracker.Detach()
@@ -287,12 +276,6 @@ func recordHistoricalStats(sctx sessionctx.Context, tableID int64) error {
 }
 
 // handleResultsError will handle the error fetch from resultsCh and record it in log
-<<<<<<< HEAD
-func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, needGlobalStats bool,
-	globalStatsMap globalStatsMap, resultsCh <-chan *statistics.AnalyzeResults) error {
-	partitionStatsConcurrency := e.ctx.GetSessionVars().AnalyzePartitionConcurrency
-	// If 'partitionStatsConcurrency' > 1, we will try to demand extra session from Domain to save Analyze results in concurrency.
-=======
 func (e *AnalyzeExec) handleResultsError(
 	ctx context.Context,
 	concurrency int,
@@ -301,11 +284,10 @@ func (e *AnalyzeExec) handleResultsError(
 	resultsCh <-chan *statistics.AnalyzeResults,
 	taskNum int,
 ) error {
-	partitionStatsConcurrency := e.Ctx().GetSessionVars().AnalyzePartitionConcurrency
+	partitionStatsConcurrency := e.ctx.GetSessionVars().AnalyzePartitionConcurrency
 	// the concurrency of handleResultsError cannot be more than partitionStatsConcurrency
-	partitionStatsConcurrency = min(taskNum, partitionStatsConcurrency)
+	partitionStatsConcurrency = mathutil.Min(taskNum, partitionStatsConcurrency)
 	// If partitionStatsConcurrency > 1, we will try to demand extra session from Domain to save Analyze results in concurrency.
->>>>>>> 36c0298a51c (executor: AnalyzePartitionConcurrency is not more than number of task (#47463))
 	// If there is no extra session we can use, we will save analyze results in single-thread.
 	if partitionStatsConcurrency > 1 {
 		dom := domain.GetDomain(e.ctx)
