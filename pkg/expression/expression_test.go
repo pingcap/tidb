@@ -53,7 +53,7 @@ func TestEvaluateExprWithNull(t *testing.T) {
 	schema.Columns = append(schema.Columns, col1)
 	// ifnull(null, ifnull(null, 1))
 	res = EvaluateExprWithNull(ctx, schema, outerIfNull)
-	require.True(t, res.Equal(ctx, NewOne()))
+	require.True(t, res.Equal(NewOne()))
 }
 
 func TestEvaluateExprWithNullAndParameters(t *testing.T) {
@@ -68,7 +68,7 @@ func TestEvaluateExprWithNullAndParameters(t *testing.T) {
 	ltWithoutParam, err := newFunctionForTest(ctx, ast.LT, col0, NewOne())
 	require.NoError(t, err)
 	res := EvaluateExprWithNull(ctx, schema, ltWithoutParam)
-	require.True(t, res.Equal(ctx, NewNull())) // the expression is evaluated to null
+	require.True(t, res.Equal(NewNull())) // the expression is evaluated to null
 	param := NewOne()
 	param.ParamMarker = &ParamMarker{ctx: ctx, order: 0}
 	ctx.GetSessionVars().PlanCacheParams.Append(types.NewIntDatum(10))
@@ -109,9 +109,9 @@ func TestConstant(t *testing.T) {
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	require.False(t, NewZero().IsCorrelated())
 	require.True(t, NewZero().ConstItem(sc))
-	require.True(t, NewZero().Decorrelate(nil).Equal(ctx, NewZero()))
+	require.True(t, NewZero().Decorrelate(nil).Equal(NewZero()))
 	require.Equal(t, []byte{0x0, 0x8, 0x0}, NewZero().HashCode(sc))
-	require.False(t, NewZero().Equal(ctx, NewOne()))
+	require.False(t, NewZero().Equal(NewOne()))
 	res, err := NewZero().MarshalJSON()
 	require.NoError(t, err)
 	require.Equal(t, []byte{0x22, 0x30, 0x22}, res)

@@ -344,7 +344,7 @@ func extractConstantEqColumnsOrScalar(ctx sessionctx.Context, result []Expressio
 				if i == 0 {
 					continue
 				}
-				if !guard.Equal(ctx, v) {
+				if !guard.Equal(v) {
 					allArgsIsConst = false
 					break
 				}

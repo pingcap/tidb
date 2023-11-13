@@ -339,7 +339,7 @@ func (sf *ScalarFunction) GetType() *types.FieldType {
 }
 
 // Equal implements Expression interface.
-func (sf *ScalarFunction) Equal(ctx sessionctx.Context, e Expression) bool {
+func (sf *ScalarFunction) Equal(e Expression) bool {
 	fun, ok := e.(*ScalarFunction)
 	if !ok {
 		return false
@@ -347,7 +347,7 @@ func (sf *ScalarFunction) Equal(ctx sessionctx.Context, e Expression) bool {
 	if sf.FuncName.L != fun.FuncName.L {
 		return false
 	}
-	return sf.Function.equal(ctx, fun.Function)
+	return sf.Function.equal(fun.Function)
 }
 
 // IsCorrelated implements Expression interface.

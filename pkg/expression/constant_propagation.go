@@ -155,7 +155,7 @@ func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Exp
 		return false, true, cond
 	}
 	for idx, expr := range sf.GetArgs() {
-		if src.Equal(nil, expr) {
+		if src.Equal(expr) {
 			_, coll := cond.CharsetAndCollation()
 			if tgt.GetType().GetCollate() != coll {
 				continue

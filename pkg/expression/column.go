@@ -156,9 +156,9 @@ func (col *CorrelatedColumn) EvalJSON(ctx sessionctx.Context, row chunk.Row) (ty
 }
 
 // Equal implements Expression interface.
-func (col *CorrelatedColumn) Equal(ctx sessionctx.Context, expr Expression) bool {
-	if cc, ok := expr.(*CorrelatedColumn); ok {
-		return col.Column.Equal(ctx, &cc.Column)
+func (col *CorrelatedColumn) Equal(e Expression) bool {
+	if cc, ok := e.(*CorrelatedColumn); ok {
+		return col.Column.Equal(&cc.Column)
 	}
 	return false
 }
@@ -261,7 +261,7 @@ type Column struct {
 }
 
 // Equal implements Expression interface.
-func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
+func (col *Column) Equal(expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
 		return newCol.UniqueID == col.UniqueID
 	}
@@ -272,7 +272,7 @@ func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
 func (col *Column) EqualByExprAndID(_ sessionctx.Context, expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
 		expr, isOk := col.VirtualExpr.(*ScalarFunction)
-		isVirExprMatched := isOk && expr.Equal(nil, newCol.VirtualExpr) && col.RetType.Equal(newCol.RetType)
+		isVirExprMatched := isOk && expr.Equal(newCol.VirtualExpr) && col.RetType.Equal(newCol.RetType)
 		return (newCol.UniqueID == col.UniqueID) || isVirExprMatched
 	}
 	return false
@@ -745,7 +745,7 @@ func SortColumns(cols []*Column) []*Column {
 // InColumnArray check whether the col is in the cols array
 func (col *Column) InColumnArray(cols []*Column) bool {
 	for _, c := range cols {
-		if col.Equal(nil, c) {
+		if col.Equal(c) {
 			return true
 		}
 	}

@@ -16,6 +16,7 @@ package expression
 
 import (
 	"fmt"
+	"time"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -402,7 +403,7 @@ func (c *Constant) EvalJSON(ctx sessionctx.Context, row chunk.Row) (types.Binary
 }
 
 // Equal implements Expression interface.
-func (c *Constant) Equal(ctx sessionctx.Context, b Expression) bool {
+func (c *Constant) Equal(b Expression) bool {
 	y, ok := b.(*Constant)
 	if !ok {
 		return false
@@ -412,7 +413,9 @@ func (c *Constant) Equal(ctx sessionctx.Context, b Expression) bool {
 	if err1 != nil || err2 != nil {
 		return false
 	}
-	con, err := c.Value.Compare(ctx.GetSessionVars().StmtCtx.TypeCtx(), &y.Value, collate.GetBinaryCollator())
+
+	tc := types.NewContext(types.StrictFlags, time.UTC, func(err error) {})
+	con, err := c.Value.Compare(tc, &y.Value, collate.GetBinaryCollator())
 	if err != nil || con != 0 {
 		return false
 	}

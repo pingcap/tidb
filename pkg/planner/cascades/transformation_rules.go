@@ -268,7 +268,7 @@ func (*PushSelDownIndexScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.G
 		// or the pushed down conditions are the same with before.
 		sameConds := true
 		for i := range res.AccessConds {
-			if !res.AccessConds[i].Equal(is.SCtx(), is.AccessConds[i]) {
+			if !res.AccessConds[i].Equal(is.AccessConds[i]) {
 				sameConds = false
 				break
 			}
@@ -1121,7 +1121,7 @@ func (*EliminateProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 
 	oldCols := old.GetExpr().Group.Prop.Schema.Columns
 	for i, col := range child.Group.Prop.Schema.Columns {
-		if !col.Equal(nil, oldCols[i]) {
+		if !col.Equal(oldCols[i]) {
 			return nil, false, false, nil
 		}
 	}
@@ -2085,9 +2085,9 @@ func (r *TransformAggregateCaseToSelection) transform(agg *plannercore.LogicalAg
 	caseArgsNum := len(caseArgs)
 
 	// `case when a>0 then null else a end` should be converted to `case when !(a>0) then a else null end`.
-	var nullFlip = caseArgsNum == 3 && caseArgs[1].Equal(ctx, expression.NewNull()) && !caseArgs[2].Equal(ctx, expression.NewNull())
+	var nullFlip = caseArgsNum == 3 && caseArgs[1].Equal(expression.NewNull()) && !caseArgs[2].Equal(expression.NewNull())
 	// `case when a>0 then 0 else a end` should be converted to `case when !(a>0) then a else 0 end`.
-	var zeroFlip = !nullFlip && caseArgsNum == 3 && caseArgs[1].Equal(ctx, expression.NewZero())
+	var zeroFlip = !nullFlip && caseArgsNum == 3 && caseArgs[1].Equal(expression.NewZero())
 
 	var outputIdx int
 	if nullFlip || zeroFlip {
@@ -2120,8 +2120,8 @@ func (r *TransformAggregateCaseToSelection) transform(agg *plannercore.LogicalAg
 	//   => newAggFuncDesc: SUM(cnt), newCondition: x = 'foo'
 
 	switch {
-	case r.allowsSelection(aggFuncName) && (caseArgsNum == 2 || caseArgs[3-outputIdx].Equal(ctx, expression.NewNull())), // Case A1
-		aggFuncName == ast.AggFuncSum && caseArgsNum == 3 && caseArgs[3-outputIdx].Equal(ctx, expression.NewZero()): // Case A2
+	case r.allowsSelection(aggFuncName) && (caseArgsNum == 2 || caseArgs[3-outputIdx].Equal(expression.NewNull())), // Case A1
+		aggFuncName == ast.AggFuncSum && caseArgsNum == 3 && caseArgs[3-outputIdx].Equal(expression.NewZero()): // Case A2
 		newAggFuncDesc := aggFuncDesc.Clone()
 		newAggFuncDesc.Args = []expression.Expression{caseArgs[outputIdx]}
 		return true, newConditions, []*aggregation.AggFuncDesc{newAggFuncDesc}
@@ -2135,7 +2135,7 @@ func (*TransformAggregateCaseToSelection) allowsSelection(aggFuncName string) bo
 }
 
 func (*TransformAggregateCaseToSelection) isOnlyOneNotNull(ctx sessionctx.Context, args []expression.Expression, argsNum int, outputIdx int) bool {
-	return !args[outputIdx].Equal(ctx, expression.NewNull()) && (argsNum == 2 || args[3-outputIdx].Equal(ctx, expression.NewNull()))
+	return !args[outputIdx].Equal(expression.NewNull()) && (argsNum == 2 || args[3-outputIdx].Equal(expression.NewNull()))
 }
 
 // TransformAggregateCaseToSelection only support `case when cond then var end` and `case when cond then var1 else var2 end`.

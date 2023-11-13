@@ -97,7 +97,7 @@ func updateInPredicate(inPredicate expression.Expression, notEQPredicate express
 	var lastValue *expression.Constant
 	for _, element := range v.GetArgs() {
 		value, valueOK := element.(*expression.Constant)
-		redundantValue := valueOK && value.Equal(v.GetCtx(), notEQValue)
+		redundantValue := valueOK && value.Equal(notEQValue)
 		if !redundantValue {
 			newValues = append(newValues, element)
 		}

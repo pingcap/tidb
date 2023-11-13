@@ -158,7 +158,7 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 					return -1
 				}
 				for i, col := range cols {
-					if col.Equal(nil, c) {
+					if col.Equal(c) {
 						return i
 					}
 				}
@@ -178,7 +178,7 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 			}
 		}
 		for i, col := range cols {
-			if col.Equal(nil, c) {
+			if col.Equal(c) {
 				return i
 			}
 		}
@@ -1370,7 +1370,7 @@ func NeedAddColumn4InCond(cols []*expression.Column, accessCond []expression.Exp
 	}
 
 	if len(fields) != 1 ||
-		!fields[0].Equal(nil, c) {
+		!fields[0].Equal(c) {
 		return false
 	}
 
@@ -1425,7 +1425,7 @@ func IsValidShardIndex(cols []*expression.Column) bool {
 
 	// parameter of tidb_shard must be the second column of the input index columns
 	col, ok := shardFunc.GetArgs()[0].(*expression.Column)
-	if !ok || !col.Equal(nil, cols[1]) {
+	if !ok || !col.Equal(cols[1]) {
 		return false
 	}
 

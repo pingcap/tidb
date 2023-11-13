@@ -540,7 +540,7 @@ func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column, opt *l
 	for _, col := range parentUsedCols {
 		used := false
 		for _, windowColumn := range windowColumns {
-			if windowColumn.Equal(nil, col) {
+			if windowColumn.Equal(col) {
 				used = true
 				break
 			}

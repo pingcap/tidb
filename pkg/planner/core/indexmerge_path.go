@@ -1199,9 +1199,9 @@ func (ds *DataSource) buildPartialPaths4MVIndex(accessFilters []expression.Expre
 		}
 	case ast.JSONOverlaps: // (json_overlaps(a->'$.zip', '[1, 2, 3]')
 		var jsonPathIdx int
-		if sf.GetArgs()[0].Equal(ds.SCtx(), targetJSONPath) {
+		if sf.GetArgs()[0].Equal(targetJSONPath) {
 			jsonPathIdx = 0 // (json_overlaps(a->'$.zip', '[1, 2, 3]')
-		} else if sf.GetArgs()[1].Equal(ds.SCtx(), targetJSONPath) {
+		} else if sf.GetArgs()[1].Equal(targetJSONPath) {
 			jsonPathIdx = 1 // (json_overlaps('[1, 2, 3]', a->'$.zip')
 		} else {
 			return nil, false, false, nil
@@ -1416,12 +1416,12 @@ func (ds *DataSource) checkFilter4MVIndexColumn(filter expression.Expression, id
 		}
 		switch sf.FuncName.L {
 		case ast.JSONMemberOf: // (1 member of a)
-			return targetJSONPath.Equal(ds.SCtx(), sf.GetArgs()[1])
+			return targetJSONPath.Equal(sf.GetArgs()[1])
 		case ast.JSONContains: // json_contains(a, '1')
-			return targetJSONPath.Equal(ds.SCtx(), sf.GetArgs()[0])
+			return targetJSONPath.Equal(sf.GetArgs()[0])
 		case ast.JSONOverlaps: // json_overlaps(a, '1') or json_overlaps('1', a)
-			return targetJSONPath.Equal(ds.SCtx(), sf.GetArgs()[0]) ||
-				targetJSONPath.Equal(ds.SCtx(), sf.GetArgs()[1])
+			return targetJSONPath.Equal(sf.GetArgs()[0]) ||
+				targetJSONPath.Equal(sf.GetArgs()[1])
 		default:
 			return false
 		}
@@ -1444,7 +1444,7 @@ func (ds *DataSource) checkFilter4MVIndexColumn(filter expression.Expression, id
 		if argCol == nil || argConst == nil {
 			return false
 		}
-		if argCol.Equal(ds.SCtx(), idxCol) {
+		if argCol.Equal(idxCol) {
 			return true
 		}
 	}

@@ -198,7 +198,7 @@ func isColEqExpr(expr expression.Expression, col *expression.Column, checkFn fun
 			return false
 		}
 		if checkFn(f.GetArgs()[1]) {
-			if col.Equal(nil, c) {
+			if col.Equal(c) {
 				return true
 			}
 		}
@@ -208,7 +208,7 @@ func isColEqExpr(expr expression.Expression, col *expression.Column, checkFn fun
 			return false
 		}
 		if checkFn(f.GetArgs()[0]) {
-			if col.Equal(nil, c) {
+			if col.Equal(c) {
 				return true
 			}
 		}

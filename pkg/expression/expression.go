@@ -144,7 +144,7 @@ type Expression interface {
 	Clone() Expression
 
 	// Equal checks whether two expressions are equal.
-	Equal(ctx sessionctx.Context, e Expression) bool
+	Equal(e Expression) bool
 
 	// IsCorrelated checks if this expression has correlated key.
 	IsCorrelated() bool

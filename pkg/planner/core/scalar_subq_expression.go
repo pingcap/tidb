@@ -164,7 +164,7 @@ func (s *ScalarSubQueryExpr) Clone() expression.Expression {
 }
 
 // Equal implements the Expression interface.
-func (s *ScalarSubQueryExpr) Equal(_ sessionctx.Context, e expression.Expression) bool {
+func (s *ScalarSubQueryExpr) Equal(e expression.Expression) bool {
 	anotherS, ok := e.(*ScalarSubQueryExpr)
 	if !ok {
 		return false

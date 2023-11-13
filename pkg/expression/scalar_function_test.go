@@ -106,7 +106,7 @@ func TestScalarFunction(t *testing.T) {
 	require.EqualValues(t, []byte{0x22, 0x6c, 0x74, 0x28, 0x43, 0x6f, 0x6c, 0x75, 0x6d, 0x6e, 0x23, 0x31, 0x2c, 0x20, 0x31, 0x29, 0x22}, res)
 	require.False(t, sf.IsCorrelated())
 	require.False(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx))
-	require.True(t, sf.Decorrelate(nil).Equal(ctx, sf))
+	require.True(t, sf.Decorrelate(nil).Equal(sf))
 	require.EqualValues(t, []byte{0x3, 0x4, 0x6c, 0x74, 0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x5, 0xbf, 0xf0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, sf.HashCode(sc))
 
 	sf = NewValuesFunc(ctx, 0, types.NewFieldType(mysql.TypeLonglong))
@@ -148,6 +148,6 @@ func TestScalarFuncs2Exprs(t *testing.T) {
 	funcs := []*ScalarFunction{sf0, sf1}
 	exprs := ScalarFuncs2Exprs(funcs)
 	for i := range exprs {
-		require.True(t, exprs[i].Equal(ctx, funcs[i]))
+		require.True(t, exprs[i].Equal(funcs[i]))
 	}
 }

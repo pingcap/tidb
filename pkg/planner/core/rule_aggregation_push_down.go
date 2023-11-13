@@ -197,7 +197,7 @@ func (*aggregationPushDownSolver) addGbyCol(ctx sessionctx.Context, gbyCols []*e
 	for _, c := range cols {
 		duplicate := false
 		for _, gbyCol := range gbyCols {
-			if c.Equal(ctx, gbyCol) {
+			if c.Equal(gbyCol) {
 				duplicate = true
 				break
 			}

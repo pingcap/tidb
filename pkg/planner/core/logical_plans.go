@@ -1586,7 +1586,7 @@ func (p *LogicalIndexScan) MatchIndexProp(prop *property.PhysicalProperty) (matc
 		return false
 	}
 	for i, col := range p.IdxCols {
-		if col.Equal(nil, prop.SortItems[0].Col) {
+		if col.Equal(prop.SortItems[0].Col) {
 			return matchIndicesProp(p.IdxCols[i:], p.IdxColLens[i:], prop.SortItems)
 		} else if i >= p.EqCondCount {
 			break
@@ -1767,7 +1767,7 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 				continue
 			}
 			lCol, lOk := eqFunc.GetArgs()[0].(*expression.Column)
-			if lOk && lCol.Equal(ds.SCtx(), pkCol) {
+			if lOk && lCol.Equal(pkCol) {
 				_, rOk := eqFunc.GetArgs()[1].(*expression.CorrelatedColumn)
 				if rOk {
 					path.AccessConds = append(path.AccessConds, filter)
@@ -1777,7 +1777,7 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 				}
 			}
 			rCol, rOk := eqFunc.GetArgs()[1].(*expression.Column)
-			if rOk && rCol.Equal(ds.SCtx(), pkCol) {
+			if rOk && rCol.Equal(pkCol) {
 				_, lOk := eqFunc.GetArgs()[0].(*expression.CorrelatedColumn)
 				if lOk {
 					path.AccessConds = append(path.AccessConds, filter)
@@ -1821,7 +1821,7 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.GetFlag()) {
 			alreadyHandle := false
 			for _, col := range path.IdxCols {
-				if col.ID == model.ExtraHandleID || col.Equal(nil, handleCol) {
+				if col.ID == model.ExtraHandleID || col.Equal(handleCol) {
 					alreadyHandle = true
 				}
 			}
@@ -2149,7 +2149,7 @@ func (p *LogicalWindow) EqualOrderBy(ctx sessionctx.Context, newWindow *LogicalW
 		return false
 	}
 	for i, item := range p.OrderBy {
-		if !item.Col.Equal(ctx, newWindow.OrderBy[i].Col) ||
+		if !item.Col.Equal(newWindow.OrderBy[i].Col) ||
 			item.Desc != newWindow.OrderBy[i].Desc {
 			return false
 		}
@@ -2176,12 +2176,12 @@ func (p *LogicalWindow) EqualFrame(ctx sessionctx.Context, newWindow *LogicalWin
 		return false
 	}
 	for i, expr := range p.Frame.Start.CalcFuncs {
-		if !expr.Equal(ctx, newWindow.Frame.Start.CalcFuncs[i]) {
+		if !expr.Equal(newWindow.Frame.Start.CalcFuncs[i]) {
 			return false
 		}
 	}
 	for i, expr := range p.Frame.End.CalcFuncs {
-		if !expr.Equal(ctx, newWindow.Frame.End.CalcFuncs[i]) {
+		if !expr.Equal(newWindow.Frame.End.CalcFuncs[i]) {
 			return false
 		}
 	}

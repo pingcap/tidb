@@ -2375,7 +2375,7 @@ func (b *PlanBuilder) checkOrderByInDistinct(byItem *ast.ByItem, idx int, expr e
 	// select distinct a+1 from t order by a+2;                       ✗
 	for j := 0; j < length; j++ {
 		// both check original expression & as name
-		if expr.Equal(b.ctx, originalExprs[j]) || expr.Equal(b.ctx, p.Schema().Columns[j]) {
+		if expr.Equal(originalExprs[j]) || expr.Equal(p.Schema().Columns[j]) {
 			return nil
 		}
 	}
@@ -2390,7 +2390,7 @@ func (b *PlanBuilder) checkOrderByInDistinct(byItem *ast.ByItem, idx int, expr e
 CheckReferenced:
 	for _, col := range cols {
 		for j := 0; j < length; j++ {
-			if col.Equal(b.ctx, originalExprs[j]) || col.Equal(b.ctx, p.Schema().Columns[j]) {
+			if col.Equal(originalExprs[j]) || col.Equal(p.Schema().Columns[j]) {
 				continue CheckReferenced
 			}
 		}

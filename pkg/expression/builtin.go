@@ -422,13 +422,13 @@ func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
 	return b.tp
 }
 
-func (b *baseBuiltinFunc) equal(_ sessionctx.Context, fun builtinFunc) bool {
+func (b *baseBuiltinFunc) equal(fun builtinFunc) bool {
 	funArgs := fun.getArgs()
 	if len(funArgs) != len(b.args) {
 		return false
 	}
 	for i := range b.args {
-		if !b.args[i].Equal(b.ctx, funArgs[i]) {
+		if !b.args[i].Equal(funArgs[i]) {
 			return false
 		}
 	}
@@ -549,7 +549,7 @@ type builtinFunc interface {
 	// getArgs returns the arguments expressions.
 	getArgs() []Expression
 	// equal check if this function equals to another function.
-	equal(sessionctx.Context, builtinFunc) bool
+	equal(builtinFunc) bool
 	// getCtx returns this function's context.
 	getCtx() sessionctx.Context
 	// getRetTp returns the return type of the built-in function.

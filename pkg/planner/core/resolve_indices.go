@@ -147,7 +147,7 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 	//   e.g. The schema of child_0 is [col0, col0, col1]
 	//        ResolveIndices will only resolve all col0 reference of the current plan to the first col0.
 	for i, j := 0, 0; i < colsNeedResolving && j < len(mergedSchema.Columns); {
-		if !p.schema.Columns[i].Equal(nil, mergedSchema.Columns[j]) {
+		if !p.schema.Columns[i].Equal(mergedSchema.Columns[j]) {
 			j++
 			continue
 		}
@@ -233,7 +233,7 @@ func (p *PhysicalMergeJoin) ResolveIndices() (err error) {
 	//   e.g. The schema of child_0 is [col0, col0, col1]
 	//        ResolveIndices will only resolve all col0 reference of the current plan to the first col0.
 	for i, j := 0, 0; i < colsNeedResolving && j < len(mergedSchema.Columns); {
-		if !p.schema.Columns[i].Equal(nil, mergedSchema.Columns[j]) {
+		if !p.schema.Columns[i].Equal(mergedSchema.Columns[j]) {
 			j++
 			continue
 		}
@@ -329,7 +329,7 @@ func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
 	//   e.g. The schema of child_0 is [col0, col0, col1]
 	//        ResolveIndices will only resolve all col0 reference of the current plan to the first col0.
 	for i, j := 0, 0; i < colsNeedResolving && j < len(mergedSchema.Columns); {
-		if !p.schema.Columns[i].Equal(nil, mergedSchema.Columns[j]) {
+		if !p.schema.Columns[i].Equal(mergedSchema.Columns[j]) {
 			j++
 			continue
 		}
@@ -733,7 +733,7 @@ func (p *PhysicalLimit) ResolveIndices() (err error) {
 	//   e.g. The schema of child_0 is [col0, col0, col1]
 	//        ResolveIndices will only resolve all col0 reference of the current plan to the first col0.
 	for i, j := 0, 0; i < p.schema.Len() && j < p.children[0].Schema().Len(); {
-		if !p.schema.Columns[i].Equal(nil, p.children[0].Schema().Columns[j]) {
+		if !p.schema.Columns[i].Equal(p.children[0].Schema().Columns[j]) {
 			j++
 			continue
 		}

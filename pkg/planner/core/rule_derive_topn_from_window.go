@@ -57,7 +57,7 @@ func checkPartitionBy(p *LogicalWindow, d *DataSource) bool {
 	}
 
 	for i, col := range p.PartitionBy {
-		if !(col.Col.Equal(nil, d.handleCols.GetCol(i))) {
+		if !(col.Col.Equal(d.handleCols.GetCol(i))) {
 			return false
 		}
 	}
@@ -91,7 +91,7 @@ func windowIsTopN(p *LogicalSelection) (bool, uint64) {
 
 	// Check if filter on window function
 	windowColumns := child.GetWindowResultColumns()
-	if len(windowColumns) != 1 || !(column.Equal(p.SCtx(), windowColumns[0])) {
+	if len(windowColumns) != 1 || !(column.Equal(windowColumns[0])) {
 		return false, 0
 	}
 

@@ -771,7 +771,7 @@ func (ds *DataSource) isMatchProp(path *util.AccessPath, prop *property.Physical
 	if path.IsIntHandlePath {
 		pkCol := ds.getPKIsHandleCol()
 		if len(prop.SortItems) == 1 && pkCol != nil {
-			isMatchProp = prop.SortItems[0].Col.Equal(nil, pkCol)
+			isMatchProp = prop.SortItems[0].Col.Equal(pkCol)
 			if path.StoreType == kv.TiFlash {
 				isMatchProp = isMatchProp && !prop.SortItems[0].Desc
 			}
@@ -799,7 +799,7 @@ func (ds *DataSource) isMatchProp(path *util.AccessPath, prop *property.Physical
 		for _, sortItem := range prop.SortItems {
 			found := false
 			for ; i < len(path.IdxCols); i++ {
-				if path.IdxColLens[i] == types.UnspecifiedLength && sortItem.Col.Equal(nil, path.IdxCols[i]) {
+				if path.IdxColLens[i] == types.UnspecifiedLength && sortItem.Col.Equal(path.IdxCols[i]) {
 					found = true
 					i++
 					break

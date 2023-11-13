@@ -113,7 +113,7 @@ func (partitionCol *MPPPartitionColumn) Equal(other *MPPPartitionColumn) bool {
 			return false
 		}
 	}
-	return partitionCol.Col.Equal(nil, other.Col)
+	return partitionCol.Col.Equal(other.Col)
 }
 
 // MemoryUsage return the memory usage of MPPPartitionColumn
@@ -289,8 +289,7 @@ func (p *PhysicalProperty) IsPrefix(prop *PhysicalProperty) bool {
 		return false
 	}
 	for i := range p.SortItems {
-		if !p.SortItems[i].Col.Equal(nil,
-			prop.SortItems[i].Col) || p.SortItems[i].Desc != prop.SortItems[i].Desc {
+		if !p.SortItems[i].Col.Equal(prop.SortItems[i].Col) || p.SortItems[i].Desc != prop.SortItems[i].Desc {
 			return false
 		}
 	}
@@ -303,8 +302,7 @@ func (p *PhysicalProperty) IsSortItemAllForPartition() bool {
 		return false
 	}
 	for i := range p.SortItemsForPartition {
-		if !p.SortItemsForPartition[i].Col.Equal(nil,
-			p.SortItems[i].Col) || p.SortItemsForPartition[i].Desc != p.SortItems[i].Desc {
+		if !p.SortItemsForPartition[i].Col.Equal(p.SortItems[i].Col) || p.SortItemsForPartition[i].Desc != p.SortItems[i].Desc {
 			return false
 		}
 	}
