@@ -32,8 +32,6 @@ If you have any questions, feel free to discuss in sig-ddl. Here are the steps t
 1. Join [TiDB Slack community](https://pingcap.com/tidbslack/), and then
 2. Join [sig-ddl Slack channel](https://slack.tidb.io/invite?team=tidb-community&channel=sig-ddl&ref=github_sig).
 
-If you want to join as a special interest group member, see [DDL Special Interest Group](https://github.com/pingcap/community/tree/master/special-interest-groups/sig-ddl).
-
 ## Users
 
 These projects use this parser. Please feel free to extend this list if you
