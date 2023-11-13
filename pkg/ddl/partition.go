@@ -3035,29 +3035,11 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// Should it actually be synchronous?
 		// Include the old table ID, if changed, which may contain global statistics,
 		// so it can be reused for the new (non)partitioned table.
-
-		var event *statsutil.DDLEvent
-		switch job.Type {
-		case model.ActionReorganizePartition:
-			event = statsutil.NewReorganizePartitionEvent(
-				tblInfo,
-				statisticsPartInfo,
-				droppedPartInfo,
-			)
-		case model.ActionAlterTablePartitioning:
-			event = statsutil.NewAddPartitioningEvent(
-				tblInfo,
-				statisticsPartInfo,
-			)
-
-		case model.ActionRemovePartitioning:
-			event = statsutil.NewRemovePartitioningEvent(
-				tblInfo,
-				// TODO(hi-rustin): figure out why we need to pass statisticsPartInfo here.
-				statisticsPartInfo,
-			)
-		default:
-			return ver, errors.Errorf("unknown job type: %s", job.Type.String())
+		event, err := newStatsDDLEventForJob(
+			job.Type, tblInfo, statisticsPartInfo, droppedPartInfo,
+		)
+		if err != nil {
+			return ver, errors.Trace(err)
 		}
 		asyncNotifyEvent(d, event)
 		// A background job will be created to delete old partition data.
@@ -3068,6 +3050,38 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 	}
 
 	return ver, errors.Trace(err)
+}
+
+// newStatsDDLEventForJob creates a statsutil.DDLEvent for a job.
+// It is used for reorganize partition, add partitioning and remove partitioning.
+func newStatsDDLEventForJob(
+	jobType model.ActionType,
+	tblInfo *model.TableInfo,
+	addedPartInfo *model.PartitionInfo,
+	droppedPartInfo *model.PartitionInfo,
+) (*statsutil.DDLEvent, error) {
+	var event *statsutil.DDLEvent
+	switch jobType {
+	case model.ActionReorganizePartition:
+		event = statsutil.NewReorganizePartitionEvent(
+			tblInfo,
+			addedPartInfo,
+			droppedPartInfo,
+		)
+	case model.ActionAlterTablePartitioning:
+		event = statsutil.NewAddPartitioningEvent(
+			tblInfo,
+			addedPartInfo,
+		)
+	case model.ActionRemovePartitioning:
+		event = statsutil.NewRemovePartitioningEvent(
+			tblInfo,
+			addedPartInfo,
+		)
+	default:
+		return nil, errors.Errorf("unknown job type: %s", jobType.String())
+	}
+	return event, nil
 }
 
 func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, physTblIDs []int64) (done bool, ver int64, err error) {
