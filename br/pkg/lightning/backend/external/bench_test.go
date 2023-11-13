@@ -228,7 +228,7 @@ type readTestSuite struct {
 
 func readFileSequential(s *readTestSuite) {
 	ctx := context.Background()
-	files, _, err := GetAllFileNames(ctx, s.store, "")
+	files, _, err := GetAllFileNames(ctx, s.store, "evenly_distributed")
 	intest.Assert(err == nil)
 
 	buf := make([]byte, s.memoryLimit)
@@ -258,7 +258,7 @@ func readFileSequential(s *readTestSuite) {
 
 func readFileConcurrently(s *readTestSuite) {
 	ctx := context.Background()
-	files, _, err := GetAllFileNames(ctx, s.store, "")
+	files, _, err := GetAllFileNames(ctx, s.store, "evenly_distributed")
 	intest.Assert(err == nil)
 
 	conc := min(s.concurrency, len(files))
@@ -332,7 +332,7 @@ func createEvenlyDistributedFiles(
 
 func readMergeIter(s *readTestSuite) {
 	ctx := context.Background()
-	files, _, err := GetAllFileNames(ctx, s.store, "")
+	files, _, err := GetAllFileNames(ctx, s.store, "evenly_distributed")
 	intest.Assert(err == nil)
 
 	if s.beforeCreateReader != nil {
