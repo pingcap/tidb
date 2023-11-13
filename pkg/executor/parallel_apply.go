@@ -90,7 +90,7 @@ type ParallelNestedLoopApplyExec struct {
 
 // Open implements the Executor interface.
 func (e *ParallelNestedLoopApplyExec) Open(ctx context.Context) error {
-	err := e.outerExec.Open(ctx)
+	err := exec.Open(ctx, e.outerExec)
 	if err != nil {
 		return err
 	}
@@ -301,7 +301,7 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 		}
 	}
 
-	err = e.innerExecs[id].Open(ctx)
+	err = exec.Open(ctx, e.innerExecs[id])
 	defer terror.Call(e.innerExecs[id].Close)
 	if err != nil {
 		return err

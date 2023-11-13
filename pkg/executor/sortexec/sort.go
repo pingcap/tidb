@@ -526,7 +526,7 @@ func (e *TopNExec) Open(ctx context.Context) error {
 	e.fetched = false
 	e.Idx = 0
 
-	return e.Children(0).Open(ctx)
+	return exec.Open(ctx, e.Children(0))
 }
 
 // Next implements the Executor Next interface.
