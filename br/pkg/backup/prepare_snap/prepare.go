@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/btree"
 	"github.com/pingcap/errors"
@@ -14,6 +15,23 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	/* The combination of defaultMaxRetry and defaultRetryBackoff limits
+	   the whole procedure to about 5 min if there is a region always fail.
+	   Also note that we are batching during retrying. Retrying many region
+	   costs only one chance of retrying if they are batched. */
+
+	defaultMaxRetry     = 60
+	defaultRetryBackoff = 5 * time.Second
+
+	/* Give pd enough time to find the region. If we aren't able to fetch
+	   the region, the whole procedure might be aborted. */
+
+	regionCacheMaxBackoffMs = 60000
+)
+
+type pendingRequests map[uint64]*brpb.PrepareSnapshotBackupRequest
+
 type region struct {
 	maybeID  uint64
 	startKey []byte
@@ -21,8 +39,11 @@ type region struct {
 }
 
 func (r region) String() string {
-	return fmt.Sprintf("region(%d, %s)", r.maybeID,
-		logutil.StringifyRangeOf(r.startKey, r.endKey))
+	rng := logutil.StringifyRangeOf(r.startKey, r.endKey)
+	if r.maybeID == 0 {
+		return fmt.Sprintf("range%s", rng)
+	}
+	return fmt.Sprintf("region(id=%d, range=%s)", r.maybeID, rng)
 }
 
 func (r region) Less(than btree.Item) bool {
@@ -37,6 +58,8 @@ type Preparer struct {
 	inflightReqs         map[uint64]metapb.Region
 	failedRegions        []region
 	waitApplyDoneRegions btree.BTree
+	retryTime            int
+	nextRetry            *time.Timer
 
 	/* Internal I/O. */
 	eventChan chan event
@@ -44,6 +67,11 @@ type Preparer struct {
 
 	/* Interface for caller. */
 	waitApplyFinished bool
+
+	/* Some configurations. They aren't thread safe.
+	   You may need to configure them before starting the Preparer. */
+	RetryBackoff time.Duration
+	RetryLimit   int
 }
 
 func New(env Env) *Preparer {
@@ -54,22 +82,35 @@ func New(env Env) *Preparer {
 		waitApplyDoneRegions: *btree.New(16),
 		eventChan:            make(chan event, 128),
 		clients:              make(map[uint64]*prepareStream),
+
+		RetryBackoff: defaultRetryBackoff,
+		RetryLimit:   defaultMaxRetry,
 	}
 	return prep
 }
 
+// DriveLoopAndWaitPrepare drives the state machine and block the
+// current goroutine until we are safe to start taking snapshot.
+//
+// After this invoked, you shouldn't share this `Preparer“ with any other goroutine.
+//
+// After this involed, the cluster will enter the land between normal and taking snapshot.
+// Spliting, ingesting and conf changing may all be blocked until `Finalize` invoked.
 func (p *Preparer) DriveLoopAndWaitPrepare(ctx context.Context) error {
-	if err := p.cont(ctx); err != nil {
+	p.retryTime = 0
+	if err := p.maybeFinish(ctx); err != nil {
 		return errors.Annotate(err, "failed to begin step")
 	}
 	for !p.waitApplyFinished {
-		if err := p.step(ctx); err != nil {
+		if err := p.waitNextEvent(ctx); err != nil {
 			return errors.Annotate(err, "failed to step")
 		}
 	}
 	return nil
 }
 
+// Finalize notify the cluster to go back to the normal mode.
+// This will return an error if the cluster has already entered the normal mode when this is called.
 func (p *Preparer) Finalize(ctx context.Context) error {
 	for id, cli := range p.clients {
 		if err := cli.Finalize(ctx); err != nil {
@@ -89,7 +130,7 @@ func (p *Preparer) Finalize(ctx context.Context) error {
 	}
 }
 
-func (p *Preparer) step(ctx context.Context) error {
+func (p *Preparer) waitNextEvent(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		logutil.CL(ctx).Warn("User canceled, try to stop the whole procedure gracefully.")
@@ -101,7 +142,9 @@ func (p *Preparer) step(ctx context.Context) error {
 		if err != nil {
 			return errors.Annotatef(err, "failed to handle event %v", evt)
 		}
-		return p.cont(ctx)
+		return p.maybeFinish(ctx)
+	case <-p.retryC():
+		return p.retryFailed(ctx)
 	}
 }
 
@@ -138,6 +181,10 @@ func (p *Preparer) onEvent(ctx context.Context, e event) error {
 		if e.err != nil {
 			logutil.CL(ctx).Warn("requesting a region failed.", zap.Uint64("store", e.storeID), logutil.ShortError(e.err))
 			p.failedRegions = append(p.failedRegions, r)
+			if p.nextRetry != nil {
+				p.nextRetry.Stop()
+			}
+			p.nextRetry = time.NewTimer(p.RetryBackoff)
 			return nil
 		}
 		if item := p.waitApplyDoneRegions.ReplaceOrInsert(r); item != nil {
@@ -153,7 +200,14 @@ func (p *Preparer) onEvent(ctx context.Context, e event) error {
 	return nil
 }
 
-func (p *Preparer) cont(ctx context.Context) error {
+func (p *Preparer) retryC() <-chan time.Time {
+	if p.nextRetry == nil {
+		return nil
+	}
+	return p.nextRetry.C
+}
+
+func (p *Preparer) maybeFinish(ctx context.Context) error {
 	logutil.CL(ctx).Info("Start state transforming.",
 		zap.Int("inflight_reqs", len(p.inflightReqs)), zap.Int("failed_ranges", len(p.failedRegions)))
 	if len(p.inflightReqs) == 0 && len(p.failedRegions) == 0 {
@@ -162,13 +216,10 @@ func (p *Preparer) cont(ctx context.Context) error {
 			p.waitApplyFinished = true
 			return nil
 		} else {
-			logutil.CL(ctx).Warn("holes exist while everything is done, it is strange but we can retry it", zap.Stringers("regions", holes))
+			logutil.CL(ctx).Warn("It seems there are still some works to be done.", zap.Stringers("regions", holes))
 			p.failedRegions = holes
+			return p.retryFailed(ctx)
 		}
-	}
-
-	if len(p.failedRegions) != 0 {
-		return p.retryFailed(ctx)
 	}
 
 	return nil
@@ -199,7 +250,17 @@ func (p *Preparer) checkHole() []region {
 }
 
 func (p *Preparer) retryFailed(ctx context.Context) error {
-	bo := tikv.NewBackoffer(ctx, 60000)
+	p.nextRetry = nil
+	if len(p.failedRegions) == 0 {
+		return nil
+	}
+	p.retryTime += 1
+	if p.retryTime > p.RetryLimit {
+		return retryLimitExceeded()
+	}
+
+	logutil.CL(ctx).Info("retrying some ranges incomplete.", zap.Int("ranges", len(p.failedRegions)))
+	bo := tikv.NewBackoffer(ctx, regionCacheMaxBackoffMs)
 	preqs := pendingRequests{}
 	for _, r := range p.failedRegions {
 		rs, err := p.env.LoadRegionsInKeyRange(bo, r.startKey, r.endKey)
@@ -258,5 +319,3 @@ func (p *Preparer) pushWaitApply(reqs pendingRequests, region Region) {
 	reqs[leader].Regions = append(reqs[leader].Regions, region.GetMeta())
 	p.inflightReqs[region.GetMeta().Id] = *region.GetMeta()
 }
-
-type pendingRequests map[uint64]*brpb.PrepareSnapshotBackupRequest

@@ -223,6 +223,28 @@ func TestBasic(t *testing.T) {
 	ms.AssertIsNormalMode(t)
 }
 
+func TestFailDueToErr(t *testing.T) {
+	req := require.New(t)
+	pdc := fakeCluster(t, 3, dummyRegions(100)...)
+	ms := newTestEnv(pdc)
+
+	ms.onCreateStore = func(ms *mockStore) {
+		ms.onWaitApply = func(r *metapb.Region) error {
+			return errors.New("failed meow!")
+		}
+	}
+
+	ctx := context.Background()
+	prep := New(ms)
+	prep.RetryBackoff = 100 * time.Millisecond
+	prep.RetryLimit = 3
+	now := time.Now()
+	req.Error(prep.DriveLoopAndWaitPrepare(ctx))
+	req.Greater(time.Since(now), 300*time.Millisecond)
+	req.NoError(prep.Finalize(ctx))
+	ms.AssertIsNormalMode(t)
+}
+
 func TestError(t *testing.T) {
 	req := require.New(t)
 	pdc := fakeCluster(t, 3, dummyRegions(100)...)
@@ -241,6 +263,7 @@ func TestError(t *testing.T) {
 
 	ctx := context.Background()
 	prep := New(ms)
+	prep.RetryBackoff = 0
 	req.NoError(prep.DriveLoopAndWaitPrepare(ctx))
 	ms.AssertSafeForBackup(t)
 	req.NoError(prep.Finalize(ctx))
