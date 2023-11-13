@@ -35,6 +35,7 @@ import (
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -291,6 +292,9 @@ func skipMergeSort(kvGroup string, stats []external.MultipleFilesStat) bool {
 			failpoint.Return(false)
 		}
 	})
+	if variable.DDLForceMergeSort.Load() {
+		return false
+	}
 	return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
 }
 
