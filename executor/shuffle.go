@@ -99,7 +99,7 @@ type shuffleOutput struct {
 // Open implements the Executor Open interface.
 func (e *ShuffleExec) Open(ctx context.Context) error {
 	for _, s := range e.dataSources {
-		if err := s.Open(ctx); err != nil {
+		if err := exec.Open(ctx, s); err != nil {
 			return err
 		}
 
@@ -123,7 +123,7 @@ func (e *ShuffleExec) Open(ctx context.Context) error {
 		w.outputCh = e.outputCh
 		w.outputHolderCh = make(chan *chunk.Chunk, 1)
 
-		if err := w.childExec.Open(ctx); err != nil {
+		if err := exec.Open(ctx, w.childExec); err != nil {
 			return err
 		}
 

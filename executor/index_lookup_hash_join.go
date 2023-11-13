@@ -121,6 +121,7 @@ type indexHashJoinTask struct {
 
 // Open implements the IndexNestedLoopHashJoin Executor interface.
 func (e *IndexNestedLoopHashJoin) Open(ctx context.Context) error {
+<<<<<<< HEAD:executor/index_lookup_hash_join.go
 	// Be careful, very dirty hack in this line!!!
 	// IndexLookUpJoin need to rebuild executor (the dataReaderBuilder) during
 	// executing. However `executor.Next()` is lazy evaluation when the RecordSet
@@ -139,6 +140,9 @@ func (e *IndexNestedLoopHashJoin) Open(ctx context.Context) error {
 	// so even txn is destroyed later, the dataReaderBuilder could still use the
 	// cached snapshot ts to construct DAG.
 	_, err := e.innerCtx.readerBuilder.getSnapshotTS()
+=======
+	err := exec.Open(ctx, e.Children(0))
+>>>>>>> 6e8df186f51 (executor: fix goroutine leak for EvalSubqueryFirstRow (#48133)):pkg/executor/index_lookup_hash_join.go
 	if err != nil {
 		return err
 	}

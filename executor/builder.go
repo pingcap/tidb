@@ -4022,6 +4022,33 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 		return e, err
 	}
 
+<<<<<<< HEAD:executor/builder.go
+=======
+	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	if is.Index.Global {
+		tmp, ok := builder.is.TableByID(tbInfo.ID)
+		if !ok {
+			return nil, infoschema.ErrTableNotExists
+		}
+		tbl, ok := tmp.(table.PartitionedTable)
+		if !ok {
+			return nil, exeerrors.ErrBuildExecutor
+		}
+		e.partitionIDMap, err = getPartitionIdsAfterPruning(builder.ctx, tbl, &v.PartitionInfo)
+		if err != nil {
+			return nil, err
+		}
+
+		if e.ranges, err = buildRangesForIndexJoin(e.Ctx(), lookUpContents, indexRanges, keyOff2IdxOff, cwc); err != nil {
+			return nil, err
+		}
+		if err := exec.Open(ctx, e); err != nil {
+			return nil, err
+		}
+		return e, nil
+	}
+
+>>>>>>> 6e8df186f51 (executor: fix goroutine leak for EvalSubqueryFirstRow (#48133)):pkg/executor/builder.go
 	tbl, _ := builder.executorBuilder.is.TableByID(tbInfo.ID)
 	usedPartition, canPrune, contentPos, err := prunePartitionForInnerExecutor(builder.executorBuilder.ctx, tbl, e.Schema(), &v.PartitionInfo, lookUpContents)
 	if err != nil {
@@ -4042,13 +4069,18 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 				return nil, err
 			}
 		}
-		if err := e.Open(ctx); err != nil {
+		if err := exec.Open(ctx, e); err != nil {
 			return nil, err
 		}
 		return e, nil
 	}
+<<<<<<< HEAD:executor/builder.go
 	ret := &TableDualExec{baseExecutor: *e.base()}
 	err = ret.Open(ctx)
+=======
+	ret := &TableDualExec{BaseExecutor: *e.Base()}
+	err = exec.Open(ctx, ret)
+>>>>>>> 6e8df186f51 (executor: fix goroutine leak for EvalSubqueryFirstRow (#48133)):pkg/executor/builder.go
 	return ret, err
 }
 
@@ -4068,6 +4100,35 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 		err = e.open(ctx)
 		return e, err
 	}
+<<<<<<< HEAD:executor/builder.go
+=======
+
+	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
+	if is.Index.Global {
+		tmp, ok := builder.is.TableByID(ts.Table.ID)
+		if !ok {
+			return nil, infoschema.ErrTableNotExists
+		}
+		tbl, ok := tmp.(table.PartitionedTable)
+		if !ok {
+			return nil, exeerrors.ErrBuildExecutor
+		}
+		e.partitionIDMap, err = getPartitionIdsAfterPruning(builder.ctx, tbl, &v.PartitionInfo)
+		if err != nil {
+			return nil, err
+		}
+		e.ranges, err = buildRangesForIndexJoin(e.Ctx(), lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+		if err != nil {
+			return nil, err
+		}
+		if err := exec.Open(ctx, e); err != nil {
+			return nil, err
+		}
+		return e, err
+	}
+
+>>>>>>> 6e8df186f51 (executor: fix goroutine leak for EvalSubqueryFirstRow (#48133)):pkg/executor/builder.go
 	tbl, _ := builder.executorBuilder.is.TableByID(tbInfo.ID)
 	usedPartition, canPrune, contentPos, err := prunePartitionForInnerExecutor(builder.executorBuilder.ctx, tbl, e.Schema(), &v.PartitionInfo, lookUpContents)
 	if err != nil {
@@ -4090,13 +4151,18 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 			}
 		}
 		e.partitionTableMode = true
-		if err := e.Open(ctx); err != nil {
+		if err := exec.Open(ctx, e); err != nil {
 			return nil, err
 		}
 		return e, err
 	}
+<<<<<<< HEAD:executor/builder.go
 	ret := &TableDualExec{baseExecutor: *e.base()}
 	err = ret.Open(ctx)
+=======
+	ret := &TableDualExec{BaseExecutor: *e.Base()}
+	err = exec.Open(ctx, ret)
+>>>>>>> 6e8df186f51 (executor: fix goroutine leak for EvalSubqueryFirstRow (#48133)):pkg/executor/builder.go
 	return ret, err
 }
 

@@ -247,7 +247,34 @@ func (e *DeleteExec) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
+<<<<<<< HEAD:executor/delete.go
 	return e.children[0].Open(ctx)
+=======
+	return exec.Open(ctx, e.Children(0))
+}
+
+// GetFKChecks implements WithForeignKeyTrigger interface.
+func (e *DeleteExec) GetFKChecks() []*FKCheckExec {
+	fkChecks := []*FKCheckExec{}
+	for _, fkcs := range e.fkChecks {
+		fkChecks = append(fkChecks, fkcs...)
+	}
+	return fkChecks
+}
+
+// GetFKCascades implements WithForeignKeyTrigger interface.
+func (e *DeleteExec) GetFKCascades() []*FKCascadeExec {
+	fkCascades := []*FKCascadeExec{}
+	for _, fkcs := range e.fkCascades {
+		fkCascades = append(fkCascades, fkcs...)
+	}
+	return fkCascades
+}
+
+// HasFKCascades implements WithForeignKeyTrigger interface.
+func (e *DeleteExec) HasFKCascades() bool {
+	return len(e.fkCascades) > 0
+>>>>>>> 6e8df186f51 (executor: fix goroutine leak for EvalSubqueryFirstRow (#48133)):pkg/executor/delete.go
 }
 
 // tableRowMapType is a map for unique (Table, Row) pair. key is the tableID.
