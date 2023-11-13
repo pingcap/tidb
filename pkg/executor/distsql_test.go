@@ -683,7 +683,6 @@ func TestCoprocessorBatchByStore(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
 func TestIndexLookUpWithSelectForUpdateOnPartitionTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -698,7 +697,8 @@ func TestIndexLookUpWithSelectForUpdateOnPartitionTable(t *testing.T) {
 	tk.MustExec("analyze table t")
 	tk.MustHavePlan("select b from t use index(k) where b > 2 order by b limit 1 for update", "IndexLookUp")
 	tk.MustQuery("select b from t use index(k) where b > 2 order by b limit 1 for update").Check(testkit.Rows("3"))
-=======
+}
+
 func TestCoprCacheWithoutExecutionInfo(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -719,5 +719,4 @@ func TestCoprCacheWithoutExecutionInfo(t *testing.T) {
 	})
 	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2", "3"))
 	tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows("1", "2", "3"))
->>>>>>> 7396e54bfa8 (copr: fix copr cache panic when `tidb_enable_collect_execution_info` is off (#48340))
 }
