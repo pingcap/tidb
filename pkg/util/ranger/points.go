@@ -705,7 +705,17 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []*po
 	if pattern == "" {
 		startPoint := &point{value: types.NewStringDatum(""), start: true}
 		endPoint := &point{value: types.NewStringDatum("")}
-		return []*point{startPoint, endPoint}
+		res := []*point{startPoint, endPoint}
+		if tpOfPattern.EvalType() == types.ETString &&
+			tpOfPattern.GetType() != mysql.TypeEnum &&
+			tpOfPattern.GetType() != mysql.TypeSet {
+			res, err = switchPointsToSortKey(r.sctx, res, tpOfPattern)
+			if err != nil {
+				r.err = err
+				return getFullRange()
+			}
+		}
+		return res
 	}
 	lowValue := make([]byte, 0, len(pattern))
 	edt, err := expr.GetArgs()[2].(*expression.Constant).Eval(chunk.Row{})
@@ -745,7 +755,17 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []*po
 	}
 	if isExactMatch {
 		val := types.NewCollationStringDatum(string(lowValue), tpOfPattern.GetCollate())
-		return []*point{{value: val, start: true}, {value: val}}
+		res := []*point{{value: val, start: true}, {value: val}}
+		if tpOfPattern.EvalType() == types.ETString &&
+			tpOfPattern.GetType() != mysql.TypeEnum &&
+			tpOfPattern.GetType() != mysql.TypeSet {
+			res, err = switchPointsToSortKey(r.sctx, res, tpOfPattern)
+			if err != nil {
+				r.err = err
+				return getFullRange()
+			}
+		}
+		return res
 	}
 	startPoint := &point{start: true, excl: exclude}
 	startPoint.value.SetBytesAsString(lowValue, tpOfPattern.GetCollate(), uint32(tpOfPattern.GetFlen()))
