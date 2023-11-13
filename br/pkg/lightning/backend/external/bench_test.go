@@ -260,7 +260,6 @@ func readFileConcurrently(s *readTestSuite) {
 	ctx := context.Background()
 	files, _, err := GetAllFileNames(ctx, s.store, "")
 	intest.Assert(err == nil)
-	fmt.Println(files)
 
 	conc := min(s.concurrency, len(files))
 	var eg errgroup.Group
