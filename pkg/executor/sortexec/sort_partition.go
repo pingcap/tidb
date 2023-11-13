@@ -99,42 +99,27 @@ func (s *SortPartition) Close() error {
 	return nil
 }
 
-func (s *SortPartition) lessRow(rowI, rowJ chunk.Row) bool {
-	for i, colIdx := range s.keyColumns {
-		cmpFunc := s.keyCmpFuncs[i]
-		if cmpFunc != nil {
-			cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
-			if s.ByItemsDesc[i] {
-				cmp = -cmp
-			}
-			if cmp < 0 {
-				return true
-			} else if cmp > 0 {
-				return false
-			}
-		}
-	}
-	return false
-}
-
-// keyColumnsLess is the less function for key columns.
-func (s *SortPartition) keyColumnsLess(i, j int) bool {
-	if s.timesOfRowCompare >= SignalCheckpointForSort {
-		// Trigger Consume for checking the NeedKill signal
-		s.memTracker.Consume(1)
-		s.timesOfRowCompare = 0
+// Add appends a chunk into the SortPartition.
+func (s *SortPartition) Add(chk *chunk.Chunk) bool {
+	s.ptrM.RLock()
+	defer s.ptrM.RUnlock()
+	if s.ptrM.rowPtrs != nil {
+		return false // TODO do we need this?
 	}
 
-	failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
-		if val.(bool) {
-			s.timesOfRowCompare += 1024
-		}
-	})
+	if s.spillAction.isSpillTriggered() {
+		return false
+	}
 
-	s.timesOfRowCompare++
-	rowI := s.inMemory.GetRow(s.ptrM.rowPtrs[i])
-	rowJ := s.inMemory.GetRow(s.ptrM.rowPtrs[j])
-	return s.lessRow(rowI, rowJ)
+	// Consume the memory usage of rowPtrs in advance
+	// Memory usage of chunks will be added in `s.inMemory.Add(chk)`
+	s.GetMemTracker().Consume(int64(RowPtrSize * chk.NumRows()))
+	if s.spillAction.isSpillTriggered() {
+		return false
+	}
+
+	s.inMemory.Add(chk)
+	return true
 }
 
 // Sort inits pointers and sorts the records.
@@ -186,34 +171,6 @@ func (s *SortPartition) SpillToDisk() {
 	// s.spillToDisk(err)
 }
 
-func (s *SortPartition) hasEnoughDataToSpill(t *memory.Tracker) bool {
-	// Guarantee that each partition size is at least 10% of the threshold, to avoid opening too many files.
-	return s.GetMemTracker().BytesConsumed() > t.GetBytesLimit()/10
-}
-
-// Add appends a chunk into the SortPartition.
-func (s *SortPartition) Add(chk *chunk.Chunk) bool {
-	s.ptrM.RLock()
-	defer s.ptrM.RUnlock()
-	if s.ptrM.rowPtrs != nil {
-		return false // TODO do we need this?
-	}
-
-	if s.spillAction.isSpillTriggered() {
-		return false
-	}
-
-	// Consume the memory usage of rowPtrs in advance
-	// Memory usage of chunks will be added in `s.inMemory.Add(chk)`
-	s.GetMemTracker().Consume(int64(RowPtrSize * chk.NumRows()))
-	if s.spillAction.isSpillTriggered() {
-		return false
-	}
-
-	s.inMemory.Add(chk)
-	return true
-}
-
 // ActionSpill returns a SortAndSpillDiskAction for sorting and spilling over to disk.
 func (s *SortPartition) ActionSpill() *SortPartitionSpillDiskAction {
 	if s.spillAction == nil {
@@ -228,4 +185,47 @@ func (s *SortPartition) ActionSpill() *SortPartitionSpillDiskAction {
 // GetMemTracker return the memory tracker for the SortPartition
 func (s *SortPartition) GetMemTracker() *memory.Tracker {
 	return s.memTracker
+}
+
+func (s *SortPartition) hasEnoughDataToSpill(t *memory.Tracker) bool {
+	// Guarantee that each partition size is at least 10% of the threshold, to avoid opening too many files.
+	return s.GetMemTracker().BytesConsumed() > t.GetBytesLimit()/10
+}
+
+func (s *SortPartition) lessRow(rowI, rowJ chunk.Row) bool {
+	for i, colIdx := range s.keyColumns {
+		cmpFunc := s.keyCmpFuncs[i]
+		if cmpFunc != nil {
+			cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
+			if s.ByItemsDesc[i] {
+				cmp = -cmp
+			}
+			if cmp < 0 {
+				return true
+			} else if cmp > 0 {
+				return false
+			}
+		}
+	}
+	return false
+}
+
+// keyColumnsLess is the less function for key columns.
+func (s *SortPartition) keyColumnsLess(i, j int) bool {
+	if s.timesOfRowCompare >= SignalCheckpointForSort {
+		// Trigger Consume for checking the NeedKill signal
+		s.memTracker.Consume(1)
+		s.timesOfRowCompare = 0
+	}
+
+	failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
+		if val.(bool) {
+			s.timesOfRowCompare += 1024
+		}
+	})
+
+	s.timesOfRowCompare++
+	rowI := s.inMemory.GetRow(s.ptrM.rowPtrs[i])
+	rowJ := s.inMemory.GetRow(s.ptrM.rowPtrs[j])
+	return s.lessRow(rowI, rowJ)
 }
