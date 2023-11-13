@@ -18,13 +18,12 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
-	"io"
-
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
+	"io"
 )
 
 type heapElem interface {
@@ -196,7 +195,8 @@ func newMergeIter[
 	if sampleKeySize == 0 || sampleKeySize/sampleKeyCnt == 0 {
 		i.checkHotspotPeriod = 10000
 	} else {
-		i.checkHotspotPeriod = max(1000, ConcurrentReaderBufferSizePerConc*ConcurrentReaderConcurrency/(sampleKeySize/sampleKeyCnt))
+		sizeThreshold := 32 * 1024 * 1024
+		i.checkHotspotPeriod = max(1000, sizeThreshold/(sampleKeySize/sampleKeyCnt))
 	}
 	heap.Init(&i.h)
 	return i, nil
@@ -362,16 +362,13 @@ type MergeKVIter struct {
 // NewMergeKVIter creates a new MergeKVIter. The KV can be accessed by calling
 // Next() then Key() or Values(). readBufferSize is the buffer size for each file
 // reader, which means the total memory usage is readBufferSize * len(paths).
-func NewMergeKVIter(
-	ctx context.Context,
-	paths []string,
-	pathsStartOffset []uint64,
-	exStorage storage.ExternalStorage,
-	readBufferSize int,
-	checkHotspot bool,
-) (*MergeKVIter, error) {
+func NewMergeKVIter(ctx context.Context, paths []string, pathsStartOffset []uint64, exStorage storage.ExternalStorage, readBufferSize int, checkHotspot bool, outerConcurrency int) (*MergeKVIter, error) {
 	readerOpeners := make([]readerOpenerFn[*kvPair, kvReaderProxy], 0, len(paths))
-	largeBufSize := ConcurrentReaderBufferSizePerConc * ConcurrentReaderConcurrency
+	if outerConcurrency <= 0 {
+		outerConcurrency = 1
+	}
+	concurrentReaderConcurrency := max(256/outerConcurrency, 8)
+	largeBufSize := ConcurrentReaderBufferSizePerConc * concurrentReaderConcurrency
 	memPool := membuf.NewPool(
 		membuf.WithPoolSize(1), // currently only one reader will become hotspot
 		membuf.WithBlockSize(largeBufSize),
@@ -388,7 +385,7 @@ func NewMergeKVIter(
 			rd.byteReader.enableConcurrentRead(
 				exStorage,
 				paths[i],
-				ConcurrentReaderConcurrency,
+				concurrentReaderConcurrency,
 				ConcurrentReaderBufferSizePerConc,
 				memPool.NewBuffer(),
 			)

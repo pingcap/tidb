@@ -45,7 +45,7 @@ import (
 // but, ks3 supporter says there's no such limit on connections.
 // And our target for global sort is AWS s3, this default value might not fit well.
 // TODO: adjust it according to cloud storage.
-const maxCloudStorageConnections = 2000
+const maxCloudStorageConnections = 1000
 
 // Engine stored sorted key/value pairs in an external storage.
 type Engine struct {
@@ -63,7 +63,8 @@ type Engine struct {
 	// this flag also affects the strategy of loading data, either:
 	// 	less load routine + check and read hotspot file concurrently (add-index uses this one)
 	// 	more load routine + read each file using 1 reader (import-into uses this one)
-	checkHotspot bool
+	checkHotspot          bool
+	mergerIterConcurrency int
 
 	keyAdapter         common.KeyAdapter
 	duplicateDetection bool
@@ -171,6 +172,7 @@ func (e *Engine) LoadIngestData(
 		zap.Int("data-files", len(e.dataFiles)),
 		zap.Bool("check-hotspot", e.checkHotspot),
 	)
+	e.mergerIterConcurrency = concurrency
 	eg, egCtx := errgroup.WithContext(ctx)
 	for _, ranges := range rangeGroups {
 		ranges := ranges
@@ -330,7 +332,7 @@ func (e *Engine) createMergeIter(ctx context.Context, start kv.Key) (*MergeKVIte
 			zap.Strings("dataFiles", e.dataFiles),
 			zap.Strings("statsFiles", e.statsFiles))
 	}
-	iter, err := NewMergeKVIter(ctx, e.dataFiles, offsets, e.storage, 64*1024, e.checkHotspot)
+	iter, err := NewMergeKVIter(ctx, e.dataFiles, offsets, e.storage, 64*1024, e.checkHotspot, e.mergerIterConcurrency)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

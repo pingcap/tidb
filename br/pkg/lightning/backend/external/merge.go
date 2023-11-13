@@ -40,40 +40,13 @@ func MergeOverlappingFiles(ctx context.Context, paths []string, store storage.Ex
 	for _, files := range dataFilesSlice {
 		files := files
 		eg.Go(func() error {
-			return mergeOverlappingFilesImpl(
-				egCtx,
-				files,
-				store,
-				readBufferSize,
-				newFilePrefix,
-				uuid.New().String(),
-				DefaultMemSizeLimit,
-				blockSize,
-				writeBatchCount,
-				propSizeDist,
-				propKeysDist,
-				onClose,
-				checkHotspot,
-			)
+			return mergeOverlappingFilesImpl(egCtx, files, store, readBufferSize, newFilePrefix, uuid.New().String(), DefaultMemSizeLimit, blockSize, writeBatchCount, propSizeDist, propKeysDist, onClose, checkHotspot, concurrency)
 		})
 	}
 	return eg.Wait()
 }
 
-func mergeOverlappingFilesImpl(ctx context.Context,
-	paths []string,
-	store storage.ExternalStorage,
-	readBufferSize int,
-	newFilePrefix string,
-	writerID string,
-	memSizeLimit uint64,
-	blockSize int,
-	writeBatchCount uint64,
-	propSizeDist uint64,
-	propKeysDist uint64,
-	onClose OnCloseFunc,
-	checkHotspot bool,
-) (err error) {
+func mergeOverlappingFilesImpl(ctx context.Context, paths []string, store storage.ExternalStorage, readBufferSize int, newFilePrefix string, writerID string, memSizeLimit uint64, blockSize int, writeBatchCount uint64, propSizeDist uint64, propKeysDist uint64, onClose OnCloseFunc, checkHotspot bool, concurrency int) (err error) {
 	task := log.BeginTask(logutil.Logger(ctx).With(
 		zap.String("writer-id", writerID),
 		zap.Int("file-count", len(paths)),
@@ -93,7 +66,7 @@ func mergeOverlappingFilesImpl(ctx context.Context,
 	})
 
 	zeroOffsets := make([]uint64, len(paths))
-	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, readBufferSize, checkHotspot)
+	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, readBufferSize, checkHotspot, concurrency)
 	if err != nil {
 		return err
 	}

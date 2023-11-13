@@ -175,21 +175,7 @@ func TestWriterDuplicateDetect(t *testing.T) {
 	require.NoError(t, err)
 
 	// test MergeOverlappingFiles will not change duplicate detection functionality.
-	err = mergeOverlappingFilesImpl(
-		ctx,
-		[]string{"/test/0/0"},
-		memStore,
-		100,
-		"/test2",
-		"mergeID",
-		1000,
-		1000,
-		8*1024,
-		1*size.MB,
-		2,
-		nil,
-		false,
-	)
+	err = mergeOverlappingFilesImpl(ctx, []string{"/test/0/0"}, memStore, 100, "/test2", "mergeID", 1000, 1000, 8*1024, 1*size.MB, 2, nil, false, 0)
 	require.NoError(t, err)
 
 	keys := make([][]byte, 0, kvCount)
@@ -373,21 +359,7 @@ func TestWriterMultiFileStat(t *testing.T) {
 		allDataFiles[i] = fmt.Sprintf("/test/0/%d", i)
 	}
 
-	err = mergeOverlappingFilesImpl(
-		ctx,
-		allDataFiles,
-		memStore,
-		100,
-		"/test2",
-		"mergeID",
-		52,
-		52,
-		8*1024,
-		1*size.MB,
-		2,
-		closeFn,
-		true,
-	)
+	err = mergeOverlappingFilesImpl(ctx, allDataFiles, memStore, 100, "/test2", "mergeID", 52, 52, 8*1024, 1*size.MB, 2, closeFn, true, 0)
 	require.NoError(t, err)
 	require.Equal(t, 3, len(summary.MultipleFilesStats))
 	expected = MultipleFilesStat{
