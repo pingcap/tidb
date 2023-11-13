@@ -283,7 +283,11 @@ func (e *DeleteExec) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
+<<<<<<< HEAD:executor/delete.go
 	return e.children[0].Open(ctx)
+=======
+	return exec.Open(ctx, e.Children(0))
+>>>>>>> 6e8df186f51 (executor: fix goroutine leak for EvalSubqueryFirstRow (#48133)):pkg/executor/delete.go
 }
 
 // GetFKChecks implements WithForeignKeyTrigger interface.

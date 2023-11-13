@@ -892,7 +892,7 @@ func (e *CheckTableExec) Open(ctx context.Context) error {
 		return err
 	}
 	for _, src := range e.srcs {
-		if err := src.Open(ctx); err != nil {
+		if err := exec.Open(ctx, src); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -1462,8 +1462,13 @@ func init() {
 		if e.err != nil {
 			return nil, e.err
 		}
+<<<<<<< HEAD:executor/executor.go
 		err := exec.Open(ctx)
 		defer terror.Call(exec.Close)
+=======
+		err := exec.Open(ctx, executor)
+		defer terror.Call(executor.Close)
+>>>>>>> 6e8df186f51 (executor: fix goroutine leak for EvalSubqueryFirstRow (#48133)):pkg/executor/executor.go
 		if err != nil {
 			return nil, err
 		}
@@ -1853,7 +1858,11 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 			e.mu.maxOpenedChildID = childID
 		}
 		e.mu.Unlock()
+<<<<<<< HEAD:executor/executor.go
 		if err := e.children[childID].Open(ctx); err != nil {
+=======
+		if err := exec.Open(ctx, e.Children(childID)); err != nil {
+>>>>>>> 6e8df186f51 (executor: fix goroutine leak for EvalSubqueryFirstRow (#48133)):pkg/executor/executor.go
 			result.err = err
 			e.stopFetchData.Store(true)
 			e.resultPool <- result

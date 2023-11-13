@@ -7,7 +7,11 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD:executor/issuetest/BUILD.bazel
     shard_count = 50,
+=======
+    shard_count = 16,
+>>>>>>> 6e8df186f51 (executor: fix goroutine leak for EvalSubqueryFirstRow (#48133)):pkg/executor/test/issuetest/BUILD.bazel
     deps = [
         "//config",
         "//kv",
