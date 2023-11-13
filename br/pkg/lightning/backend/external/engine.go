@@ -387,6 +387,7 @@ func (e *Engine) Close() error {
 	return nil
 }
 
+// Reset resets the memory buffer pool.
 func (e *Engine) Reset() error {
 	if e.bufPool != nil {
 		e.bufPool.Destroy()
