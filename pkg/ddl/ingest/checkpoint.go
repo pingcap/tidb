@@ -84,7 +84,7 @@ type TaskCheckpoint struct {
 
 // FlushController is an interface to control the flush of the checkpoint.
 type FlushController interface {
-	Flush(indexID int64, mode FlushMode) (flushed, imported bool, err error)
+	Flush(indexID int64, mode FlushMode, globalSort bool) (flushed, imported bool, err error)
 }
 
 // NewCheckpointManager creates a new checkpoint manager.
@@ -174,7 +174,7 @@ func (s *CheckpointManager) UpdateCurrent(taskID int, added int) error {
 	cp.currentKeys += added
 	s.mu.Unlock()
 
-	flushed, imported, err := s.flushCtrl.Flush(s.indexID, FlushModeAuto)
+	flushed, imported, err := s.flushCtrl.Flush(s.indexID, FlushModeAuto, false)
 	if !flushed || err != nil {
 		return err
 	}
@@ -218,7 +218,7 @@ func (s *CheckpointManager) Close() {
 
 // Sync syncs the checkpoint.
 func (s *CheckpointManager) Sync() {
-	_, _, err := s.flushCtrl.Flush(s.indexID, FlushModeForceLocal)
+	_, _, err := s.flushCtrl.Flush(s.indexID, FlushModeForceLocal, false)
 	if err != nil {
 		logutil.BgLogger().Warn("flush local engine failed", zap.String("category", "ddl-ingest"), zap.Error(err))
 	}

@@ -83,6 +83,10 @@ func TestAddIndexDistBasic(t *testing.T) {
 	tk.MustExec("alter table t1 add index idx2(a);")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockErrCreatePDClientWhenRegisterBackCtx"))
 
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ingest/mockSessionExpired", "1*return()"))
+	tk.MustExec("alter table t1 add index idx3(a);")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/mockSessionExpired"))
+
 	tk.MustExec(`set global tidb_enable_dist_task=0;`)
 }
 

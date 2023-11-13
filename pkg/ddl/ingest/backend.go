@@ -25,9 +25,12 @@ import (
 	lightning "github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	tikv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -45,7 +48,7 @@ type BackendCtx interface {
 	CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error
 	FinishImport(indexID int64, unique bool, tbl table.Table) error
 	ResetWorkers(jobID int64)
-	Flush(indexID int64, mode FlushMode) (flushed, imported bool, err error)
+	Flush(indexID int64, mode FlushMode, globalSort bool) (flushed, imported bool, err error)
 	Done() bool
 	SetDone()
 
@@ -164,7 +167,7 @@ func acquireLock(ctx context.Context, se *concurrency.Session, key string) (*con
 }
 
 // Flush checks the disk quota and imports the current key-values in engine to the storage.
-func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported bool, err error) {
+func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode, globalSort bool) (flushed, imported bool, err error) {
 	ei, exist := bc.Load(indexID)
 	if !exist {
 		logutil.Logger(bc.ctx).Error(LitErrGetEngineFail, zap.Int64("index ID", indexID))
@@ -192,12 +195,27 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 		return true, false, nil
 	}
 
-	// Use distributed lock if run in distributed mode).
-	if bc.etcdClient != nil {
+	// Use distributed lock if run in distributed mode with local sort
+	// to avoid too many sst files for tikv to compact.
+	if bc.etcdClient != nil && !globalSort {
 		distLockKey := fmt.Sprintf("/tidb/distributeLock/%d/%d", bc.jobID, indexID)
 		se, _ := concurrency.NewSession(bc.etcdClient)
-		mu, err := acquireLock(bc.ctx, se, distLockKey)
-		if err != nil {
+
+		// use backoffer to acquire distributed flush lock.
+		logger := logutil.Logger(bc.ctx)
+		var mu *concurrency.Mutex
+		backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
+		err1 := handle.RunWithRetry(bc.ctx, dispatcher.RetrySQLTimes, backoffer, logger,
+			func(_ context.Context) (bool, error) {
+				mu, err = acquireLock(bc.ctx, se, distLockKey)
+				return true, err
+			},
+		)
+		failpoint.Inject("mockSessionExpired", func() {
+			failpoint.Return(true, false, concurrency.ErrSessionExpired)
+		})
+		if err1 == nil {
+			logger.Warn("acquire distribued flush lock fail", zap.Error(err))
 			return true, false, err
 		}
 		logutil.Logger(bc.ctx).Info("acquire distributed flush lock success", zap.Int64("jobID", bc.jobID))
