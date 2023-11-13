@@ -303,6 +303,13 @@ func createEvenlyDistributedFiles(
 	store := openTestingStorage(t)
 	ctx := context.Background()
 
+	files, statFiles, err := GetAllFileNames(ctx, store, "evenly_distributed")
+	intest.Assert(err == nil)
+	err = store.DeleteFiles(ctx, files)
+	intest.Assert(err == nil)
+	err = store.DeleteFiles(ctx, statFiles)
+	intest.Assert(err == nil)
+
 	value := make([]byte, 100)
 	kvCnt := 0
 	for i := 0; i < fileCount; i++ {
@@ -362,7 +369,7 @@ func readMergeIter(s *readTestSuite) {
 }
 
 func TestCompareReader(t *testing.T) {
-	fileSize := 30 * 1024 * 1024
+	fileSize := 50 * 1024 * 1024
 	fileCnt := 24
 	store, kvCnt := createEvenlyDistributedFiles(t, fileSize, fileCnt)
 	memoryLimit := 64 * 1024 * 1024
