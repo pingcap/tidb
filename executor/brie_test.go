@@ -105,7 +105,11 @@ func (s *testBRIESuite) TestFetchShowBRIE(c *C) {
 		baseExecutor: newBaseExecutor(sctx, schema, 0),
 		Tp:           ast.ShowBackups,
 	}
+<<<<<<< HEAD:executor/brie_test.go
 	c.Assert(e.Open(ctx), IsNil)
+=======
+	require.NoError(t, exec.Open(ctx, e))
+>>>>>>> 6e8df186f51 (executor: fix goroutine leak for EvalSubqueryFirstRow (#48133)):pkg/executor/brie_test.go
 
 	tp := mysql.TypeDatetime
 	lateTime := types.NewTime(types.FromGoTime(gotime.Now().Add(-outdatedDuration.Duration+1)), tp, 0)
