@@ -15,6 +15,7 @@
 package sortexec
 
 import (
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
@@ -25,7 +26,7 @@ import (
 // triggered.
 type SortPartitionSpillDiskAction struct {
 	memory.BaseOOMAction
-	partition      *SortPartition
+	partition      *sortPartition
 	spillTriggered bool
 }
 
@@ -41,10 +42,50 @@ func (s *SortPartitionSpillDiskAction) isSpillTriggered() bool {
 // TODO If it is already triggered before, call its fallbackAction.
 func (s *SortPartitionSpillDiskAction) Action(t *memory.Tracker) {
 	// Currently, `Action` is always triggered by only one goroutine, so no lock is needed here so far.
-	if !s.spillTriggered && s.partition.hasEnoughDataToSpill(s.partition.GetMemTracker()) {
+	if !s.spillTriggered && s.partition.hasEnoughDataToSpill(s.partition.getMemTracker()) {
 		logutil.BgLogger().Info("memory exceeds quota, spill sort partition data to disk now.",
 			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
 		s.spillTriggered = true
 		go s.partition.SpillToDisk()
 	}
+}
+
+// It's used only when spill is triggered
+type dataCursor struct {
+	chkID     int
+	rowID     int
+	chkRowNum int
+	chk       *chunk.Chunk
+}
+
+func NewDataCursor() *dataCursor {
+	return &dataCursor{
+		chkID:     0,
+		rowID:     0,
+		chkRowNum: 0,
+		chk:       nil,
+	}
+}
+
+func (d *dataCursor) getChkID() int {
+	return d.chkID
+}
+
+func (d *dataCursor) advanceRow() {
+	d.rowID++
+}
+
+func (d *dataCursor) getSpilledRow() *chunk.Row {
+	if d.rowID >= d.chkRowNum {
+		return nil
+	}
+	row := d.chk.GetRow(d.rowID)
+	return &row
+}
+
+func (d *dataCursor) setChunk(chk *chunk.Chunk, chkID int) {
+	d.chkID = chkID
+	d.rowID = 0
+	d.chkRowNum = chk.NumRows()
+	d.chk = chk
 }

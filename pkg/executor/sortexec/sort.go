@@ -45,36 +45,34 @@ type SortExec struct {
 	keyColumns []int
 	// keyCmpFuncs is used to compare each ByItem.
 	keyCmpFuncs []chunk.CompareFunc
-	// rowChunks is the chunks to store row values.
-	rowChunks *chunk.SortedRowContainer
+
+	partition *sortPartition
 
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
 
-	// PartitionList is the chunks to store row values for partitions. Every partition is a sorted list.
-	PartitionList []*chunk.SortedRowContainer
+	// SortPartitionList is the chunks to store row values for partitions. Every partition is a sorted list.
+	// TODO why it's public?
+	SortPartitionList []*sortPartition
+	cursors           []*dataCursor
 
 	// multiWayMerge uses multi-way merge for spill disk.
 	// The multi-way merge algorithm can refer to https://en.wikipedia.org/wiki/K-way_merge_algorithm
 	multiWayMerge *multiWayMerge
 	// spillAction save the Action for spill disk.
-	spillAction *chunk.SortAndSpillDiskAction
+	spillAction *SortPartitionSpillDiskAction
 }
 
 // Close implements the Executor Close interface.
 func (e *SortExec) Close() error {
-	for _, container := range e.PartitionList {
+	for _, container := range e.SortPartitionList {
 		err := container.Close()
 		if err != nil {
 			return err
 		}
 	}
-	e.PartitionList = e.PartitionList[:0]
+	e.SortPartitionList = e.SortPartitionList[:0]
 
-	if e.rowChunks != nil {
-		e.memTracker.Consume(-e.rowChunks.GetMemTracker().BytesConsumed())
-		e.rowChunks = nil
-	}
 	e.memTracker = nil
 	e.diskTracker = nil
 	e.multiWayMerge = nil
@@ -97,7 +95,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.diskTracker = memory.NewTracker(e.ID(), -1)
 		e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
 	}
-	e.PartitionList = e.PartitionList[:0]
+	e.SortPartitionList = e.SortPartitionList[:0]
 	return e.Children(0).Open(ctx)
 }
 
@@ -121,19 +119,62 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.fetched = true
 	}
 
-	if len(e.PartitionList) == 0 {
+	sortPartitionListLen := len(e.SortPartitionList)
+	if sortPartitionListLen == 0 {
 		return nil
 	}
-	if len(e.PartitionList) > 1 {
-		if err := e.externalSorting(req); err != nil {
+
+	if sortPartitionListLen == 1 {
+		if err := e.nonExternalSorting(req); err != nil {
 			return err
 		}
 	} else {
-		for !req.IsFull() && e.Idx < e.PartitionList[0].NumRow() {
-			_, _, err := e.PartitionList[0].GetSortedRowAndAlwaysAppendToChunk(e.Idx, req)
-			if err != nil {
-				return err
+		if err := e.externalSorting(req); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e *SortExec) initExternalSorting() {
+	e.multiWayMerge = &multiWayMerge{e.lessRow, e.compressRow, make([]rowWithPartition, 0, len(e.cursors))}
+	for i := 0; i < len(e.cursors); i++ {
+		// We should always get row here
+		row := e.cursors[i].getSpilledRow()
+		e.cursors[i].advanceRow()
+		e.multiWayMerge.elements = append(e.multiWayMerge.elements, rowWithPartition{row: *row, partitionID: i})
+	}
+	heap.Init(e.multiWayMerge)
+}
+
+func (e *SortExec) nonExternalSorting(req *chunk.Chunk) (err error) {
+	// Maybe the spill is triggered by the last chunk
+	if e.SortPartitionList[0].spillAction.spillTriggered {
+		cursor := e.cursors[0]
+		for !req.IsFull() {
+			row := cursor.getSpilledRow()
+			if row == nil {
+				success, err := e.reloadCursor(0)
+				if err != nil {
+					return err
+				}
+
+				if !success {
+					// All data have been completely consumed
+					return nil
+				}
+
+				// row shouldn't be nil here
+				row = cursor.getSpilledRow()
 			}
+
+			cursor.advanceRow()
+			req.AppendRow(*row)
+		}
+	} else {
+		rowNum := e.SortPartitionList[0].NumRowInMemory()
+		for !req.IsFull() && e.Idx < rowNum {
+			e.SortPartitionList[0].getSortedRowAndAlwaysAppendToChunk(e.Idx, req)
 			e.Idx++
 		}
 	}
@@ -142,35 +183,33 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 	if e.multiWayMerge == nil {
-		e.multiWayMerge = &multiWayMerge{e.lessRow, e.compressRow, make([]partitionPointer, 0, len(e.PartitionList))}
-		for i := 0; i < len(e.PartitionList); i++ {
-			chk := chunk.New(exec.RetTypes(e), 1, 1)
-
-			row, _, err := e.PartitionList[i].GetSortedRowAndAlwaysAppendToChunk(0, chk)
-			if err != nil {
-				return err
-			}
-			e.multiWayMerge.elements = append(e.multiWayMerge.elements, partitionPointer{chk: chk, row: row, partitionID: i, consumed: 0})
-		}
-		heap.Init(e.multiWayMerge)
+		e.initExternalSorting()
 	}
 
 	for !req.IsFull() && e.multiWayMerge.Len() > 0 {
-		partitionPtr := e.multiWayMerge.elements[0]
-		req.AppendRow(partitionPtr.row)
-		partitionPtr.consumed++
-		partitionPtr.chk.Reset()
-		if partitionPtr.consumed >= e.PartitionList[partitionPtr.partitionID].NumRow() {
-			heap.Remove(e.multiWayMerge, 0)
-			continue
+		// Get and insert data
+		element := e.multiWayMerge.elements[0]
+		req.AppendRow(element.row)
+
+		// Get a new row from that partition
+		partitionID := element.partitionID
+		newRow := e.cursors[partitionID].getSpilledRow()
+		if newRow == nil {
+			success, err := e.reloadCursor(partitionID)
+			if err != nil {
+				return err
+			}
+			if !success {
+				// All data in this partition have been consumed
+				heap.Remove(e.multiWayMerge, 0)
+				continue
+			}
+			newRow = e.cursors[partitionID].getSpilledRow()
 		}
 
-		partitionPtr.row, _, err = e.PartitionList[partitionPtr.partitionID].
-			GetSortedRowAndAlwaysAppendToChunk(partitionPtr.consumed, partitionPtr.chk)
-		if err != nil {
-			return err
-		}
-		e.multiWayMerge.elements[0] = partitionPtr
+		e.cursors[partitionID].advanceRow()
+
+		e.multiWayMerge.elements[0].row = *newRow
 		heap.Fix(e.multiWayMerge, 0)
 	}
 	return nil
@@ -182,21 +221,25 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	for i, byItem := range e.ByItems {
 		byItemsDesc[i] = byItem.Desc
 	}
-	e.rowChunks = chunk.NewSortedRowContainer(fields, e.MaxChunkSize(), byItemsDesc, e.keyColumns, e.keyCmpFuncs)
-	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
-	e.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
+
+	e.partition = NewSortPartition(fields, e.MaxChunkSize(), byItemsDesc, e.keyColumns, e.keyCmpFuncs)
+	e.partition.getMemTracker().AttachTo(e.memTracker)
+	e.partition.getMemTracker().SetLabel(memory.LabelForRowChunks)
+	e.spillAction = e.partition.ActionSpill()
+
 	if variable.EnableTmpStorageOnOOM.Load() {
-		e.spillAction = e.rowChunks.ActionSpill()
 		failpoint.Inject("testSortedRowContainerSpill", func(val failpoint.Value) {
-			if val.(bool) {
-				e.spillAction = e.rowChunks.ActionSpillForTest()
-				defer e.spillAction.WaitForTest()
-			}
+			// TODO maybe we need to add tests here
+			// if val.(bool) {
+			// 	e.spillAction = e.rowChunks.ActionSpillForTest()
+			// 	defer e.spillAction.WaitForTest()
+			// }
 		})
 		e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
-		e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
-		e.rowChunks.GetDiskTracker().SetLabel(memory.LabelForRowChunks)
+		e.partition.getDiskTracker().AttachTo(e.diskTracker)
+		e.partition.getDiskTracker().SetLabel(memory.LabelForRowChunks)
 	}
+
 	for {
 		chk := exec.TryNewCacheChunk(e.Children(0))
 		err := exec.Next(ctx, e.Children(0), chk)
@@ -207,29 +250,31 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		if rowCount == 0 {
 			break
 		}
-		if err := e.rowChunks.Add(chk); err != nil {
-			if errors.Is(err, chunk.ErrCannotAddBecauseSorted) {
-				e.PartitionList = append(e.PartitionList, e.rowChunks)
-				e.rowChunks = chunk.NewSortedRowContainer(fields, e.MaxChunkSize(), byItemsDesc, e.keyColumns, e.keyCmpFuncs)
-				e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
-				e.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
-				e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
-				e.rowChunks.GetDiskTracker().SetLabel(memory.LabelForRowChunks)
-				e.spillAction = e.rowChunks.ActionSpill()
+		if err := e.partition.Add(chk); err != nil {
+			if errors.Is(err, errSpillIsTriggered) {
+				e.SortPartitionList = append(e.SortPartitionList, e.partition)
+				e.partition = NewSortPartition(fields, e.MaxChunkSize(), byItemsDesc, e.keyColumns, e.keyCmpFuncs)
+				e.partition.getMemTracker().AttachTo(e.memTracker)
+				e.partition.getMemTracker().SetLabel(memory.LabelForRowChunks)
+				e.partition.getDiskTracker().AttachTo(e.diskTracker)
+				e.partition.getDiskTracker().SetLabel(memory.LabelForRowChunks)
+				e.spillAction = e.partition.ActionSpill()
 				failpoint.Inject("testSortedRowContainerSpill", func(val failpoint.Value) {
-					if val.(bool) {
-						e.spillAction = e.rowChunks.ActionSpillForTest()
-						defer e.spillAction.WaitForTest()
-					}
+					// TODO maybe we need to add test here
+					// if val.(bool) {
+					// 	e.spillAction = e.rowChunks.ActionSpillForTest()
+					// 	defer e.spillAction.WaitForTest()
+					// }
 				})
 				e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
-				err = e.rowChunks.Add(chk)
+				err = e.partition.Add(chk)
 			}
 			if err != nil {
 				return err
 			}
 		}
 	}
+
 	failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
 		if val.(bool) {
 			if e.Ctx().GetSessionVars().ConnectionID == 123456 {
@@ -237,14 +282,51 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			}
 		}
 	})
-	if e.rowChunks.NumRow() > 0 {
-		err := e.rowChunks.Sort()
-		if err != nil {
-			return err
+
+	if e.isSpillTriggered() {
+		// If e.partition haven't trigger the spill. We need to manually trigger it.
+		// As all data should be in disk when spill is triggered.
+		if !e.partition.spillAction.spillTriggered {
+			e.partition.spillAction.spillTriggered = true
+			e.partition.SpillToDisk()
 		}
-		e.PartitionList = append(e.PartitionList, e.rowChunks)
+
+		if !errors.Is(e.partition.spillError, errSpillIsTriggered) {
+			return e.partition.spillError
+		}
+	} else {
+		if e.partition.NumRowInMemory() > 0 {
+			err := e.partition.Sort()
+			if err != nil {
+				return err
+			}
+		}
 	}
+
+	e.SortPartitionList = append(e.SortPartitionList, e.partition)
+
+	e.initCursors(len(e.SortPartitionList))
 	return nil
+}
+
+func (e *SortExec) reloadCursor(partitionID int) (bool, error) {
+	partition := e.SortPartitionList[partitionID]
+	cursor := e.cursors[partitionID]
+
+	spilledChkNum := partition.inDisk.NumChunks()
+	restoredChkID := cursor.getChkID() + 1
+	if restoredChkID >= spilledChkNum {
+		// All data has been consumed
+		return false, nil
+	}
+
+	restoredChk, err := partition.inDisk.GetChunk(restoredChkID)
+	if err != nil {
+		return false, err
+	}
+
+	cursor.setChunk(restoredChk, restoredChkID)
+	return true, nil
 }
 
 func (e *SortExec) initCompareFuncs() {
@@ -253,6 +335,21 @@ func (e *SortExec) initCompareFuncs() {
 		keyType := e.ByItems[i].Expr.GetType()
 		e.keyCmpFuncs[i] = chunk.GetCompareFunc(keyType)
 	}
+}
+
+func (e *SortExec) initCursors(partitionNum int) error {
+	e.cursors = make([]*dataCursor, partitionNum)
+	for i := 0; i < partitionNum; i++ {
+		e.cursors[i] = NewDataCursor()
+		if e.isSpillTriggered() {
+			chk, err := e.SortPartitionList[i].inDisk.GetChunk(0)
+			if err != nil {
+				return err
+			}
+			e.cursors[i].setChunk(chk, 0)
+		}
+	}
+	return nil
 }
 
 func (e *SortExec) buildKeyColumns() {
@@ -293,23 +390,29 @@ func (e *SortExec) compressRow(rowI, rowJ chunk.Row) int {
 	return 0
 }
 
-type partitionPointer struct {
-	chk         *chunk.Chunk
+func (e *SortExec) isSpillTriggered() bool {
+	if len(e.SortPartitionList) > 0 {
+		return e.SortPartitionList[0].spillAction.spillTriggered
+	} else {
+		return e.partition.spillAction.spillTriggered
+	}
+}
+
+type rowWithPartition struct {
 	row         chunk.Row
 	partitionID int
-	consumed    int
 }
 
 type multiWayMerge struct {
 	lessRowFunction     func(rowI chunk.Row, rowJ chunk.Row) bool
 	compressRowFunction func(rowI chunk.Row, rowJ chunk.Row) int
-	elements            []partitionPointer
+	elements            []rowWithPartition
 }
 
 func (h *multiWayMerge) Less(i, j int) bool {
-	rowI := h.elements[i].row
-	rowJ := h.elements[j].row
-	return h.lessRowFunction(rowI, rowJ)
+	rowI := h.elements[i]
+	rowJ := h.elements[j]
+	return h.lessRowFunction(rowI.row, rowJ.row)
 }
 
 func (h *multiWayMerge) Len() int {

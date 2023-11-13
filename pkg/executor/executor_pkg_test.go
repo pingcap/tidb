@@ -312,9 +312,9 @@ func TestSortSpillDisk(t *testing.T) {
 		}
 	}
 	// Test only 1 partition and all data in memory.
-	require.Len(t, exe.PartitionList, 1)
-	require.Equal(t, false, exe.PartitionList[0].AlreadySpilledSafeForTest())
-	require.Equal(t, 2048, exe.PartitionList[0].NumRow())
+	require.Len(t, exe.SortPartitionList, 1)
+	require.Equal(t, false, exe.SortPartitionList[0].AlreadySpilledSafeForTest())
+	require.Equal(t, 2048, exe.SortPartitionList[0].NumRow())
 	err = exe.Close()
 	require.NoError(t, err)
 
@@ -335,16 +335,16 @@ func TestSortSpillDisk(t *testing.T) {
 	// Now spilling is in parallel.
 	// Maybe the second add() will called before spilling, depends on
 	// Golang goroutine scheduling. So the result has two possibilities.
-	if len(exe.PartitionList) == 2 {
-		require.Len(t, exe.PartitionList, 2)
-		require.Equal(t, true, exe.PartitionList[0].AlreadySpilledSafeForTest())
-		require.Equal(t, true, exe.PartitionList[1].AlreadySpilledSafeForTest())
-		require.Equal(t, 1024, exe.PartitionList[0].NumRow())
-		require.Equal(t, 1024, exe.PartitionList[1].NumRow())
+	if len(exe.SortPartitionList) == 2 {
+		require.Len(t, exe.SortPartitionList, 2)
+		require.Equal(t, true, exe.SortPartitionList[0].AlreadySpilledSafeForTest())
+		require.Equal(t, true, exe.SortPartitionList[1].AlreadySpilledSafeForTest())
+		require.Equal(t, 1024, exe.SortPartitionList[0].NumRow())
+		require.Equal(t, 1024, exe.SortPartitionList[1].NumRow())
 	} else {
-		require.Len(t, exe.PartitionList, 1)
-		require.Equal(t, true, exe.PartitionList[0].AlreadySpilledSafeForTest())
-		require.Equal(t, 2048, exe.PartitionList[0].NumRow())
+		require.Len(t, exe.SortPartitionList, 1)
+		require.Equal(t, true, exe.SortPartitionList[0].AlreadySpilledSafeForTest())
+		require.Equal(t, 2048, exe.SortPartitionList[0].NumRow())
 	}
 
 	err = exe.Close()
@@ -364,9 +364,9 @@ func TestSortSpillDisk(t *testing.T) {
 		}
 	}
 	// Test only 1 partition but spill disk.
-	require.Len(t, exe.PartitionList, 1)
-	require.Equal(t, true, exe.PartitionList[0].AlreadySpilledSafeForTest())
-	require.Equal(t, 2048, exe.PartitionList[0].NumRow())
+	require.Len(t, exe.SortPartitionList, 1)
+	require.Equal(t, true, exe.SortPartitionList[0].AlreadySpilledSafeForTest())
+	require.Equal(t, 2048, exe.SortPartitionList[0].NumRow())
 	err = exe.Close()
 	require.NoError(t, err)
 
@@ -407,7 +407,7 @@ func TestSortSpillDisk(t *testing.T) {
 		}
 	}
 	// Don't spill too many partitions.
-	require.True(t, len(exe.PartitionList) <= 4)
+	require.True(t, len(exe.SortPartitionList) <= 4)
 	err = exe.Close()
 	require.NoError(t, err)
 }
