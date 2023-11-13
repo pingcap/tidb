@@ -211,9 +211,6 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode, globalSort bool) (
 				return true, err
 			},
 		)
-		failpoint.Inject("mockSessionExpired", func() {
-			failpoint.Return(true, false, concurrency.ErrSessionExpired)
-		})
 		if err1 == nil {
 			logger.Warn("acquire distribued flush lock fail", zap.Error(err))
 			return true, false, err
@@ -231,6 +228,9 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode, globalSort bool) (
 				logutil.Logger(bc.ctx).Warn("close session error", zap.Error(err))
 			}
 		}()
+		failpoint.Inject("mockSessionExpired", func() {
+			failpoint.Return(true, false, concurrency.ErrSessionExpired)
+		})
 	}
 
 	logutil.Logger(bc.ctx).Info(LitInfoUnsafeImport, zap.Int64("index ID", indexID),
