@@ -218,6 +218,7 @@ func TestCompareWriter(t *testing.T) {
 
 type readTestSuite struct {
 	store              storage.ExternalStorage
+	totalKVCnt         int
 	concurrency        int
 	memoryLimit        int
 	beforeCreateReader func()
@@ -306,31 +307,75 @@ func readFileConcurrently(s *readTestSuite) {
 func createEvenlyDistributedFiles(
 	t *testing.T,
 	fileSize, fileCount int,
-) storage.ExternalStorage {
+) (storage.ExternalStorage, int) {
 	store := openTestingStorage(t)
 	ctx := context.Background()
+
+	value := make([]byte, 100)
+	kvCnt := 0
 	for i := 0; i < fileCount; i++ {
-		file := fmt.Sprintf("test/evenly_distributed/%d", i)
-		writer, err := store.Create(ctx, file, &storage.WriterOption{Concurrency: 20})
-		intest.Assert(err == nil)
-		bufSize := min(fileSize, 8*1024*1024)
-		buf := make([]byte, fileSize)
+		builder := NewWriterBuilder().
+			SetMemorySizeLimit(uint64(float64(fileSize) * 1.1))
+		writer := builder.Build(
+			store,
+			"test/evenly_distributed",
+			fmt.Sprintf("%d", i),
+		)
+
+		keyIdx := i
 		totalSize := 0
 		for totalSize < fileSize {
-			n, err := writer.Write(ctx, buf[:bufSize])
+			key := fmt.Sprintf("key_%09d", keyIdx)
+			err := writer.WriteRow(ctx, []byte(key), value, nil)
 			intest.Assert(err == nil)
-			totalSize += n
+			keyIdx += fileCount
+			totalSize += len(key) + len(value)
+			kvCnt++
 		}
-		err = writer.Close(ctx)
+		err := writer.Close(ctx)
 		intest.Assert(err == nil)
 	}
-	return store
+	return store, kvCnt
+}
+
+func readMergeIter(s *readTestSuite) {
+	ctx := context.Background()
+	files := make([]string, 0, 8)
+	err := s.store.WalkDir(ctx, nil, func(path string, _ int64) error {
+		files = append(files, path)
+		return nil
+	})
+	intest.Assert(err == nil)
+
+	if s.beforeCreateReader != nil {
+		s.beforeCreateReader()
+	}
+
+	readBufSize := s.memoryLimit / len(files)
+	iter, err := NewMergeKVIter(ctx, files, nil, s.store, readBufSize, false)
+	intest.Assert(err == nil)
+
+	kvCnt := 0
+	for iter.Next() {
+		kvCnt++
+		if kvCnt == s.totalKVCnt/2 {
+			if s.beforeReaderClose != nil {
+				s.beforeReaderClose()
+			}
+		}
+	}
+	intest.Assert(kvCnt == s.totalKVCnt)
+	err = iter.Close()
+	intest.Assert(err == nil)
+	if s.afterReaderClose != nil {
+		s.afterReaderClose()
+	}
 }
 
 func TestCompareReader(t *testing.T) {
-	fileSize := 50 * 1024 * 1024
+	fileSize := 30 * 1024 * 1024
 	fileCnt := 24
-	store := createEvenlyDistributedFiles(t, fileSize, fileCnt)
+	store, kvCnt := createEvenlyDistributedFiles(t, fileSize, fileCnt)
 	memoryLimit := 64 * 1024 * 1024
 	fileIdx := 0
 	var (
@@ -361,6 +406,7 @@ func TestCompareReader(t *testing.T) {
 
 	suite := &readTestSuite{
 		store:              store,
+		totalKVCnt:         kvCnt,
 		concurrency:        8,
 		memoryLimit:        memoryLimit,
 		beforeCreateReader: beforeTest,
@@ -377,6 +423,13 @@ func TestCompareReader(t *testing.T) {
 	readFileConcurrently(suite)
 	t.Logf(
 		"concurrent read speed for %d bytes: %.2f MB/s",
+		fileSize*fileCnt,
+		float64(fileSize*fileCnt)/elapsed.Seconds()/1024/1024,
+	)
+
+	readMergeIter(suite)
+	t.Logf(
+		"merge iter read speed for %d bytes: %.2f MB/s",
 		fileSize*fileCnt,
 		float64(fileSize*fileCnt)/elapsed.Seconds()/1024/1024,
 	)
