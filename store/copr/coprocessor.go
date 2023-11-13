@@ -1254,7 +1254,14 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 				resp.pbResp.Range = nil
 			}
 		}
-		resp.detail.CoprCacheHit = true
+		// `worker.enableCollectExecutionInfo` is loaded from the instance's config. Because it's not related to the request,
+		// the cache key can be same when `worker.enableCollectExecutionInfo` is true or false.
+		// When `worker.enableCollectExecutionInfo` is false, the `resp.detail` is nil, and hit cache is still possible.
+		// Check `resp.detail` to avoid panic.
+		// Details: https://github.com/pingcap/tidb/issues/48212
+		if resp.detail != nil {
+			resp.detail.CoprCacheHit = true
+		}
 	} else {
 		coprCacheCounterMiss.Add(1)
 		// Cache not hit or cache hit but not valid: update the cache if the response can be cached.
@@ -1408,100 +1415,6 @@ func (worker *copIteratorWorker) handleLockErr(bo *Backoffer, lockErr *kvrpcpb.L
 	return nil
 }
 
-<<<<<<< HEAD:store/copr/coprocessor.go
-=======
-func (worker *copIteratorWorker) buildCacheKey(task *copTask, copReq *coprocessor.Request) (cacheKey []byte, cacheValue *coprCacheValue) {
-	// If there are many ranges, it is very likely to be a TableLookupRequest. They are not worth to cache since
-	// computing is not the main cost. Ignore requests with many ranges directly to avoid slowly building the cache key.
-	if task.cmdType == tikvrpc.CmdCop && worker.store.coprCache != nil && worker.req.Cacheable && worker.store.coprCache.CheckRequestAdmission(len(copReq.Ranges)) {
-		cKey, err := coprCacheBuildKey(copReq)
-		if err == nil {
-			cacheKey = cKey
-			cValue := worker.store.coprCache.Get(cKey)
-			copReq.IsCacheEnabled = true
-
-			if cValue != nil && cValue.RegionID == task.region.GetID() && cValue.TimeStamp <= worker.req.StartTs {
-				// Append cache version to the request to skip Coprocessor computation if possible
-				// when request result is cached
-				copReq.CacheIfMatchVersion = cValue.RegionDataVersion
-				cacheValue = cValue
-			} else {
-				copReq.CacheIfMatchVersion = 0
-			}
-		} else {
-			logutil.BgLogger().Warn("Failed to build copr cache key", zap.Error(err))
-		}
-	}
-	return
-}
-
-func (worker *copIteratorWorker) handleCopCache(task *copTask, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue) error {
-	if resp.pbResp.IsCacheHit {
-		if cacheValue == nil {
-			return errors.New("Internal error: received illegal TiKV response")
-		}
-		copr_metrics.CoprCacheCounterHit.Add(1)
-		// Cache hit and is valid: use cached data as response data and we don't update the cache.
-		data := make([]byte, len(cacheValue.Data))
-		copy(data, cacheValue.Data)
-		resp.pbResp.Data = data
-		if worker.req.Paging.Enable {
-			var start, end []byte
-			if cacheValue.PageStart != nil {
-				start = make([]byte, len(cacheValue.PageStart))
-				copy(start, cacheValue.PageStart)
-			}
-			if cacheValue.PageEnd != nil {
-				end = make([]byte, len(cacheValue.PageEnd))
-				copy(end, cacheValue.PageEnd)
-			}
-			// When paging protocol is used, the response key range is part of the cache data.
-			if start != nil || end != nil {
-				resp.pbResp.Range = &coprocessor.KeyRange{
-					Start: start,
-					End:   end,
-				}
-			} else {
-				resp.pbResp.Range = nil
-			}
-		}
-		// `worker.enableCollectExecutionInfo` is loaded from the instance's config. Because it's not related to the request,
-		// the cache key can be same when `worker.enableCollectExecutionInfo` is true or false.
-		// When `worker.enableCollectExecutionInfo` is false, the `resp.detail` is nil, and hit cache is still possible.
-		// Check `resp.detail` to avoid panic.
-		// Details: https://github.com/pingcap/tidb/issues/48212
-		if resp.detail != nil {
-			resp.detail.CoprCacheHit = true
-		}
-		return nil
-	}
-	copr_metrics.CoprCacheCounterMiss.Add(1)
-	// Cache not hit or cache hit but not valid: update the cache if the response can be cached.
-	if cacheKey != nil && resp.pbResp.CanBeCached && resp.pbResp.CacheLastVersion > 0 {
-		if resp.detail != nil {
-			if worker.store.coprCache.CheckResponseAdmission(resp.pbResp.Data.Size(), resp.detail.TimeDetail.ProcessTime, task.pagingTaskIdx) {
-				data := make([]byte, len(resp.pbResp.Data))
-				copy(data, resp.pbResp.Data)
-
-				newCacheValue := coprCacheValue{
-					Data:              data,
-					TimeStamp:         worker.req.StartTs,
-					RegionID:          task.region.GetID(),
-					RegionDataVersion: resp.pbResp.CacheLastVersion,
-				}
-				// When paging protocol is used, the response key range is part of the cache data.
-				if r := resp.pbResp.GetRange(); r != nil {
-					newCacheValue.PageStart = append([]byte{}, r.GetStart()...)
-					newCacheValue.PageEnd = append([]byte{}, r.GetEnd()...)
-				}
-				worker.store.coprCache.Set(cacheKey, &newCacheValue)
-			}
-		}
-	}
-	return nil
-}
-
->>>>>>> 7396e54bfa8 (copr: fix copr cache panic when `tidb_enable_collect_execution_info` is off (#48340)):pkg/store/copr/coprocessor.go
 func (worker *copIteratorWorker) getLockResolverDetails() *util.ResolveLockDetail {
 	if !worker.enableCollectExecutionInfo {
 		return nil
