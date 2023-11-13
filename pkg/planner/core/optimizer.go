@@ -303,7 +303,7 @@ func checkStableResultMode(sctx sessionctx.Context) bool {
 }
 
 // doOptimize optimizes a logical plan into a physical plan,
-// while also returning the logical plan, the final physical plan, and the cost of the final plan.
+// while also returning the optimized logical plan, the final physical plan, and the cost of the final plan.
 // The returned logical plan is necessary for generating plans for Common Table Expressions (CTEs).
 func doOptimize(
 	ctx context.Context,
