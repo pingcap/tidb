@@ -709,9 +709,9 @@ func TestCoprCacheWithoutExecutionInfo(t *testing.T) {
 	tk.MustExec("create table t(id int)")
 	tk.MustExec("insert into t values(1), (2), (3)")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler/mockCopCacheInUnistore", `return(123)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/cophandler/mockCopCacheInUnistore", `return(123)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler/mockCopCacheInUnistore"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/cophandler/mockCopCacheInUnistore"))
 	}()
 
 	defer tk.MustExec("set @@tidb_enable_collect_execution_info=1")
