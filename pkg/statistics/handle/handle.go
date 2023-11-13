@@ -18,12 +18,12 @@ import (
 	"math"
 	"time"
 
-	ddlUtil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
+	"github.com/pingcap/tidb/pkg/statistics/handle/ddl"
 	"github.com/pingcap/tidb/pkg/statistics/handle/globalstats"
 	"github.com/pingcap/tidb/pkg/statistics/handle/history"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
@@ -81,6 +81,9 @@ type Handle struct {
 	// StatsGlobal is used to manage global stats.
 	util.StatsGlobal
 
+	// DDL is used to handle ddl events.
+	util.DDL
+
 	// This gpool is used to reuse goroutine in the mergeGlobalStatsTopN.
 	gpool *gp.Pool
 
@@ -88,10 +91,6 @@ type Handle struct {
 	autoAnalyzeProcIDGetter func() uint64
 
 	InitStatsDone chan struct{}
-
-	// ddlEventCh is a channel to notify a ddl operation has happened.
-	// It is sent only by owner or the drop stats executor, and read by stats handle.
-	ddlEventCh chan *ddlUtil.Event
 
 	// StatsCache ...
 	util.StatsCache
@@ -102,8 +101,8 @@ type Handle struct {
 // Clear the statsCache, only for test.
 func (h *Handle) Clear() {
 	h.StatsCache.Clear()
-	for len(h.ddlEventCh) > 0 {
-		<-h.ddlEventCh
+	for len(h.DDLEventCh()) > 0 {
+		<-h.DDLEventCh()
 	}
 	h.ResetSessionStatsList()
 }
@@ -112,7 +111,6 @@ func (h *Handle) Clear() {
 func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool util.SessionPool, tracker sessionctx.SysProcTracker, autoAnalyzeProcIDGetter func() uint64) (*Handle, error) {
 	handle := &Handle{
 		gpool:                   gp.New(math.MaxInt16, time.Minute),
-		ddlEventCh:              make(chan *ddlUtil.Event, 1000),
 		pool:                    pool,
 		sysProcTracker:          tracker,
 		autoAnalyzeProcIDGetter: autoAnalyzeProcIDGetter,
@@ -135,6 +133,7 @@ func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool uti
 	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(handle)
 	handle.StatsSyncLoad = syncload.NewStatsSyncLoad(handle)
 	handle.StatsGlobal = globalstats.NewStatsGlobal(handle)
+	handle.DDL = ddl.NewDDLHandler(handle.StatsReadWriter, handle, handle.StatsGlobal)
 	return handle, nil
 }
 
@@ -177,8 +176,8 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statist
 
 // FlushStats flushes the cached stats update into store.
 func (h *Handle) FlushStats() {
-	for len(h.ddlEventCh) > 0 {
-		e := <-h.ddlEventCh
+	for len(h.DDLEventCh()) > 0 {
+		e := <-h.DDLEventCh()
 		if err := h.HandleDDLEvent(e); err != nil {
 			statslogutil.StatsLogger.Error("handle ddl event fail", zap.Error(err))
 		}
