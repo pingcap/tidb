@@ -388,7 +388,7 @@ select * from t1;
 --sorted_result
 select c1 + 0 from t1;
 SELECT c1 + 0, COUNT(c1) FROM t1 GROUP BY c1 order by c1;
-alter table t1 add index idx(c1); ;
+alter table t1 add index idx(c1);
 --sorted_result
 select c1 + 0 from t1;
 SELECT c1 + 0, COUNT(c1) FROM t1 GROUP BY c1 order by c1;

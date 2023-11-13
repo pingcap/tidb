@@ -48,7 +48,6 @@ select * from t use index (i1, i2);
 a	b	c
 1	2	3
 admin check table t;
-
 drop table if exists t;
 create table t (a int default 1);
 insert into t values ();
@@ -168,7 +167,6 @@ select * from t use index (t, t1, t2, t3);
 a	b	c
 1	2	3
 admin check table t;
-
 drop table if exists t;
 create table t (a int, b int, c int);
 alter table t add index t(a), add index t(b);
@@ -236,7 +234,6 @@ Error 1176 (42000): Key 'b' doesn't exist in table 't'
 select * from t use index(c);
 Error 1176 (42000): Key 'c' doesn't exist in table 't'
 admin check table t;
-
 drop table if exists t;
 create table t (a int default 1, b int default 2);
 insert into t values ();
@@ -294,7 +291,6 @@ select * from t use index(i1, i2, i3, i4, i5);
 a	b	c
 1	2	3
 admin check table t;
-
 drop table if exists t;
 create table t (a int, b int, c int, index i1(a), index i2(b), index i3(c), index i4(a, b), index i5(a, b, c));
 insert into t values (1, 2, 3);
@@ -306,7 +302,6 @@ select * from t use index(i1, i2, i3, i4, i5);
 c	b	a
 3	2	1
 admin check table t;
-
 drop table if exists t;
 create table t (a int, b int, c int, index i1(a), index i2(c, b));
 insert into t values (1, 2, 3), (11, 22, 33);
@@ -320,7 +315,6 @@ a	c	b
 1	3	2
 11	33	22
 admin check table t;
-
 drop table if exists t;
 create table t(a bigint null default '1761233443433596323', index t(a));
 insert into t set a = '-7184819032643664798';
@@ -429,7 +423,6 @@ select * from t;
 e	b
 5586359	02:45:06
 admin check table t;
-
 drop table if exists t;
 create table t (a int);
 insert into t values (123);

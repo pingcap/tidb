@@ -1195,6 +1195,8 @@ create table t (a int);
 update t set a=1 where a<10;
 update t set a=2 where a<12;
 select @@last_plan_from_cache;
+
+## multi-stmt SQL cannot hit the cache
 update t set a=1 where a<10; update t set a=2 where a<12;
 update t set a=1 where a<10; update t set a=2 where a<12;
 select @@last_plan_from_cache;

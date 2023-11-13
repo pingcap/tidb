@@ -477,26 +477,6 @@ set @@tidb_enable_null_aware_anti_join=default;
 select @@tidb_enable_null_aware_anti_join;
 @@tidb_enable_null_aware_anti_join
 1
-select /*+ set_var(tidb_read_staleness=0) */ @@tidb_read_staleness;
-@@tidb_read_staleness
-0
-select @@tidb_read_staleness;
-@@tidb_read_staleness
-0
-set @@tidb_read_staleness=default;
-select @@tidb_read_staleness;
-@@tidb_read_staleness
-0
-select /*+ set_var(tidb_read_staleness=-1) */ @@tidb_read_staleness;
-@@tidb_read_staleness
--1
-select @@tidb_read_staleness;
-@@tidb_read_staleness
-0
-set @@tidb_read_staleness=default;
-select @@tidb_read_staleness;
-@@tidb_read_staleness
-0
 select /*+ set_var(tidb_enable_paging=0) */ @@tidb_enable_paging;
 @@tidb_enable_paging
 0
