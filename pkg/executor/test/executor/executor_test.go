@@ -2999,9 +2999,9 @@ func TestCompileOutOfMemoryQuota(t *testing.T) {
 }
 
 func TestSignalCheckpointForSort(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/SignalCheckpointForSort", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/SignalCheckpointForSort"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort"))
 	}()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/SignalCheckpointForSort", `return(true)`))
 	defer func() {

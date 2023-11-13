@@ -98,7 +98,7 @@ func TestGrouping(t *testing.T) {
 		err = groupingFunc.SetMetadata(testCase.mode, []map[uint64]struct{}{testCase.groupingIDs})
 		require.NoError(t, err, comment)
 
-		actualResult, err := evalBuiltinFunc(groupingFunc, chunk.Row{})
+		actualResult, err := evalBuiltinFunc(groupingFunc, ctx, chunk.Row{})
 		require.NoError(t, err, comment)
 		testutil.DatumEqual(t, types.NewDatum(testCase.expectResult), actualResult, comment)
 	}

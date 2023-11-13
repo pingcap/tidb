@@ -53,13 +53,14 @@ const newLine = "\n"
 const builtinCompareImports = `import (
 	"cmp"
 
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 `
 
 var builtinCompareVecTpl = template.Must(template.New("").Parse(`
-func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
@@ -113,7 +114,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vectorized() 
 `))
 
 var builtinNullEQCompareVecTpl = template.Must(template.New("").Parse(`
-func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
@@ -173,12 +174,12 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vectorized() 
 var builtinCoalesceCompareVecTpl = template.Must(template.New("").Parse(`
 // NOTE: Coalesce just return the first non-null item, but vectorization do each item, which would incur additional errors. If this case happen,
 // the vectorization falls back to the scalar execution.
-func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) fallbackEval{{ .type.TypeName }}(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) fallbackEval{{ .type.TypeName }}(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	{{ if .type.Fixed }}
 	x := result.{{ .type.TypeNameInColumn }}s()
 	for i := 0; i < n; i++ {
-		res, isNull, err := b.eval{{ .type.TypeName }}(input.GetRow(i))
+		res, isNull, err := b.eval{{ .type.TypeName }}(ctx, input.GetRow(i))
 		if err != nil {
 			return err
 		}
@@ -197,7 +198,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) fallbackEval{
 	{{ else }}
 	result.Reserve{{ .type.TypeNameInColumn }}(n)
 	for i := 0; i < n; i++ {
-		res, isNull, err := b.eval{{ .type.TypeName }}(input.GetRow(i))
+		res, isNull, err := b.eval{{ .type.TypeName }}(ctx, input.GetRow(i))
 		if err != nil {
 			return err
 		}
@@ -212,7 +213,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) fallbackEval{
 }
 
 {{ if .type.Fixed }}
-func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .type.TypeName }}(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .type.TypeName }}(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.Resize{{ .type.TypeNameInColumn }}(n, true)
 	i64s := result.{{ .type.TypeNameInColumn }}s()
@@ -233,7 +234,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .ty
 			if afterWarns > beforeWarns {
 				sc.TruncateWarnings(int(beforeWarns))
 			}
-			return b.fallbackEval{{ .type.TypeName }}(input, result)
+			return b.fallbackEval{{ .type.TypeName }}(ctx, input, result)
 		}
 		args := buf1.{{ .type.TypeNameInColumn }}s()
 		for i := 0; i < n; i++ {
@@ -249,7 +250,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .ty
 	return nil
 }
 {{ else }}
-func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .type.TypeName }}(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .type.TypeName }}(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	argLen := len(b.args)
 
@@ -268,7 +269,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .ty
 			if afterWarns > beforeWarns {
 				sc.TruncateWarnings(int(beforeWarns))
 			}
-			return b.fallbackEval{{ .type.TypeName }}(input, result)
+			return b.fallbackEval{{ .type.TypeName }}(ctx, input, result)
 		}
 		bufs[i]=buf
 	}

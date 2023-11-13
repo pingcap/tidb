@@ -2008,7 +2008,7 @@ create table t1 (a int, c int);
 insert into t1 values (1, 1), (1, 2), (2, 3), (2, 4);
 create table t2 (a int, c int);
 insert into t2 values (1, 1), (1, 2), (2, 3), (2, 4);
-select group_concat(c order by (select group_concat(c order by a) from t2 where a=t1.a)) from t1; ;
+select group_concat(c order by (select group_concat(c order by a) from t2 where a=t1.a)) from t1;
 select group_concat(c order by (select group_concat(c order by c) from t2 where a=t1.a), c desc) from t1;
 
 
