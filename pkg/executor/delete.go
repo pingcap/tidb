@@ -284,7 +284,7 @@ func (e *DeleteExec) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.ID(), -1)
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 
-	return e.Children(0).Open(ctx)
+	return exec.Open(ctx, e.Children(0))
 }
 
 // GetFKChecks implements WithForeignKeyTrigger interface.

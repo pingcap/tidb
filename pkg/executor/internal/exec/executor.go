@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -163,7 +164,7 @@ func (e *BaseExecutor) Base() *BaseExecutor {
 // Open initializes children recursively and "childrenResults" according to children's schemas.
 func (e *BaseExecutor) Open(ctx context.Context) error {
 	for _, child := range e.children {
-		err := child.Open(ctx)
+		err := Open(ctx, child)
 		if err != nil {
 			return err
 		}
@@ -255,6 +256,16 @@ func RetTypes(e Executor) []*types.FieldType {
 func NewFirstChunk(e Executor) *chunk.Chunk {
 	base := e.Base()
 	return chunk.New(base.RetFieldTypes(), base.InitCap(), base.MaxChunkSize())
+}
+
+// Open is a wrapper function on e.Open(), it handles some common codes.
+func Open(ctx context.Context, e Executor) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = util.GetRecoverError(r)
+		}
+	}()
+	return e.Open(ctx)
 }
 
 // Next is a wrapper function on e.Next(), it handles some common codes.
