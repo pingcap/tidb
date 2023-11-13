@@ -987,7 +987,7 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 			p.cte.seedPartLogicalPlan = newSel
 			p.cte.optFlag |= flagPredicatePushDown
 		}
-		p.cte.seedPartLogicalPlan, p.cte.seedPartPhysicalPlan, _, err = DoOptimizeAndLogicAsRet(context.TODO(), p.SCtx(), p.cte.optFlag, p.cte.seedPartLogicalPlan)
+		p.cte.seedPartLogicalPlan, p.cte.seedPartPhysicalPlan, _, err = doOptimize(context.TODO(), p.SCtx(), p.cte.optFlag, p.cte.seedPartLogicalPlan)
 		if err != nil {
 			return nil, err
 		}

@@ -29,6 +29,7 @@ var retryableServerError = []string{
 	"not read from or written to within the timeout period",
 	"<code>requesttimeout</code>",
 	"<code>invalidpart</code>",
+	"end of file before message length reached",
 }
 
 // RetryableFunc presents a retryable operation.

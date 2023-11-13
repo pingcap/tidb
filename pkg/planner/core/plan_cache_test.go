@@ -1437,6 +1437,16 @@ func TestNonPreparedPlanCacheBuiltinFuncs(t *testing.T) {
 	}
 }
 
+func TestIssue48165(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(a int)`)
+	tk.MustExec(`insert into t values(1)`)
+	tk.MustExec(`prepare s from "select * from t where tidb_parse_tso(a) > unix_timestamp()"`)
+	tk.MustQuery(`execute s`).Check(testkit.Rows("1"))
+}
+
 func BenchmarkPlanCacheInsert(b *testing.B) {
 	store := testkit.CreateMockStore(b)
 	tk := testkit.NewTestKit(b, store)

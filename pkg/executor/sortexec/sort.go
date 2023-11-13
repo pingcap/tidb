@@ -98,7 +98,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
 	}
 	e.PartitionList = e.PartitionList[:0]
-	return e.Children(0).Open(ctx)
+	return exec.Open(ctx, e.Children(0))
 }
 
 // Next implements the Executor Next interface.
@@ -423,7 +423,7 @@ func (e *TopNExec) Open(ctx context.Context) error {
 	e.fetched = false
 	e.Idx = 0
 
-	return e.Children(0).Open(ctx)
+	return exec.Open(ctx, e.Children(0))
 }
 
 // Next implements the Executor Next interface.
