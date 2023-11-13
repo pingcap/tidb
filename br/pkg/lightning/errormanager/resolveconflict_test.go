@@ -42,6 +42,155 @@ import (
 	"go.uber.org/atomic"
 )
 
+func TestReplaceConflictMultipleKeysNonclusteredPk(t *testing.T) {
+	p := parser.New()
+	node, _, err := p.ParseSQL("create table a (a int primary key nonclustered, b int not null, c text, key key_b(b));")
+	require.NoError(t, err)
+	mockSctx := mock.NewContext()
+	mockSctx.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOff
+	info, err := ddl.MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 1)
+	require.NoError(t, err)
+	info.State = model.StatePublic
+	info.ID = 108
+	require.False(t, info.PKIsHandle)
+	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(0), info)
+	require.NoError(t, err)
+	require.False(t, tbl.Meta().HasClusteredIndex())
+
+	sessionOpts := encode.SessionOptions{
+		SQLMode:   mysql.ModeStrictAllTables,
+		Timestamp: 1234567890,
+	}
+
+	encoder, err := tidbkv.NewBaseKVEncoder(&encode.EncodingConfig{
+		Table:          tbl,
+		SessionOptions: sessionOpts,
+		Logger:         log.L(),
+	})
+	require.NoError(t, err)
+	encoder.SessionCtx.GetSessionVars().RowEncoder.Enable = true
+
+	data1 := []types.Datum{
+		types.NewIntDatum(1),
+		types.NewIntDatum(6),
+		types.NewStringDatum("1.csv"),
+		types.NewIntDatum(1),
+	}
+	data2 := []types.Datum{
+		types.NewIntDatum(2),
+		types.NewIntDatum(6),
+		types.NewStringDatum("2.csv"),
+		types.NewIntDatum(2),
+	}
+	data3 := []types.Datum{
+		types.NewIntDatum(3),
+		types.NewIntDatum(3),
+		types.NewStringDatum("3.csv"),
+		types.NewIntDatum(3),
+	}
+	data4 := []types.Datum{
+		types.NewIntDatum(3),
+		types.NewIntDatum(4),
+		types.NewStringDatum("4.csv"),
+		types.NewIntDatum(4),
+	}
+	data5 := []types.Datum{
+		types.NewIntDatum(5),
+		types.NewIntDatum(4),
+		types.NewStringDatum("5.csv"),
+		types.NewIntDatum(5),
+	}
+	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data1)
+	require.NoError(t, err)
+	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data2)
+	require.NoError(t, err)
+	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data3)
+	require.NoError(t, err)
+	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data4)
+	require.NoError(t, err)
+	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data5)
+	require.NoError(t, err)
+	kvPairs := encoder.SessionCtx.TakeKvPairs()
+
+	data3IndexKey := kvPairs.Pairs[8].Key
+	data3IndexValue := kvPairs.Pairs[8].Val
+	data4IndexValue := kvPairs.Pairs[11].Val
+	data3RowKey := kvPairs.Pairs[6].Key
+	data4RowKey := kvPairs.Pairs[9].Key
+	data4RowValue := kvPairs.Pairs[9].Val
+	data4NonclusteredKey := kvPairs.Pairs[10].Key
+	data4NonclusteredValue := kvPairs.Pairs[10].Val
+
+	db, mockDB, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		_ = db.Close()
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mockDB.ExpectExec("CREATE SCHEMA IF NOT EXISTS `lightning_task_info`").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mockDB.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_task_info`\\.conflict_error_v2.*").
+		WillReturnResult(sqlmock.NewResult(2, 1))
+	mockDB.ExpectQuery("\\QSELECT raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? AND is_data_kv = 0 ORDER BY raw_key\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"raw_key", "index_name", "raw_value", "raw_handle"}).
+			AddRow(data3IndexKey, "PRIMARY", data3IndexValue, data3RowKey).
+			AddRow(data3IndexKey, "PRIMARY", data4IndexValue, data4RowKey))
+	mockDB.ExpectBegin()
+	mockDB.ExpectExec("INSERT INTO `lightning_task_info`\\.conflict_error_v2.*").
+		WithArgs(0, "a", nil, nil, data4RowKey, data4RowValue, 1).
+		WillReturnResult(driver.ResultNoRows)
+	mockDB.ExpectCommit()
+	mockDB.ExpectQuery("\\QSELECT raw_key, raw_value FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? AND is_data_kv = 1 ORDER BY raw_key\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"raw_key", "raw_value"}).
+			AddRow(data4RowKey, data4RowValue))
+
+	cfg := config.NewConfig()
+	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgReplace
+	cfg.App.TaskInfoSchemaName = "lightning_task_info"
+	em := errormanager.New(db, cfg, log.L())
+	err = em.Init(ctx)
+	require.NoError(t, err)
+
+	fnGetLatestCount := atomic.NewInt32(0)
+	fnDeleteKeyCount := atomic.NewInt32(0)
+	pool := utils.NewWorkerPool(16, "resolve duplicate rows by replace")
+	err = em.ReplaceConflictKeys(
+		ctx, tbl, "a", pool,
+		func(ctx context.Context, key []byte) ([]byte, error) {
+			fnGetLatestCount.Add(1)
+			switch {
+			case bytes.Equal(key, data3IndexKey):
+				return data3IndexValue, nil
+			case bytes.Equal(key, data4RowKey):
+				if fnGetLatestCount.String() == "3" {
+					return data4RowValue, nil
+				} else {
+					return nil, tikverr.ErrNotExist
+				}
+			case bytes.Equal(key, data4NonclusteredKey):
+				return data4NonclusteredValue, nil
+			default:
+				return nil, fmt.Errorf("key %v is not expected", key)
+			}
+		},
+		func(ctx context.Context, key []byte) error {
+			fnDeleteKeyCount.Add(1)
+			if !bytes.Equal(key, data4RowKey) && !bytes.Equal(key, data4NonclusteredKey) {
+				return fmt.Errorf("key %v is not expected", key)
+			}
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, int32(7), fnGetLatestCount.Load())
+	require.Equal(t, int32(2), fnDeleteKeyCount.Load())
+	err = mockDB.ExpectationsWereMet()
+	require.NoError(t, err)
+}
+
 func TestReplaceConflictOneKeyNonclusteredPk(t *testing.T) {
 	p := parser.New()
 	node, _, err := p.ParseSQL("create table a (a int primary key nonclustered, b int not null, c text, key key_b(b));")
@@ -390,7 +539,7 @@ func TestReplaceConflictOneUniqueKeyNonclusteredPk(t *testing.T) {
 
 func TestReplaceConflictOneUniqueKeyNonclusteredVarcharPk(t *testing.T) {
 	p := parser.New()
-	node, _, err := p.ParseSQL("create table a (a int primary key nonclustered, b int not null, c text, unique key uni_b(b));")
+	node, _, err := p.ParseSQL("create table a (a varchar(20) primary key nonclustered, b int not null, c text, unique key uni_b(b));")
 	require.NoError(t, err)
 	mockSctx := mock.NewContext()
 	mockSctx.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOff
@@ -417,31 +566,31 @@ func TestReplaceConflictOneUniqueKeyNonclusteredVarcharPk(t *testing.T) {
 	encoder.SessionCtx.GetSessionVars().RowEncoder.Enable = true
 
 	data1 := []types.Datum{
-		types.NewIntDatum(1),
+		types.NewStringDatum("x"),
 		types.NewIntDatum(6),
 		types.NewStringDatum("1.csv"),
 		types.NewIntDatum(1),
 	}
 	data2 := []types.Datum{
-		types.NewIntDatum(2),
+		types.NewStringDatum("y"),
 		types.NewIntDatum(6),
 		types.NewStringDatum("2.csv"),
 		types.NewIntDatum(2),
 	}
 	data3 := []types.Datum{
-		types.NewIntDatum(3),
+		types.NewStringDatum("z"),
 		types.NewIntDatum(3),
 		types.NewStringDatum("3.csv"),
 		types.NewIntDatum(3),
 	}
 	data4 := []types.Datum{
-		types.NewIntDatum(3),
+		types.NewStringDatum("z"),
 		types.NewIntDatum(4),
 		types.NewStringDatum("4.csv"),
 		types.NewIntDatum(4),
 	}
 	data5 := []types.Datum{
-		types.NewIntDatum(5),
+		types.NewStringDatum("t"),
 		types.NewIntDatum(4),
 		types.NewStringDatum("5.csv"),
 		types.NewIntDatum(5),
@@ -471,6 +620,7 @@ func TestReplaceConflictOneUniqueKeyNonclusteredVarcharPk(t *testing.T) {
 	data2IndexValue := kvPairs.Pairs[5].Val
 	data3IndexKey := kvPairs.Pairs[8].Key
 	data3IndexValue := kvPairs.Pairs[8].Val
+	data4IndexValue := kvPairs.Pairs[11].Val
 	data5IndexKey := kvPairs.Pairs[14].Key
 	data5IndexValue := kvPairs.Pairs[14].Val
 
@@ -501,7 +651,7 @@ func TestReplaceConflictOneUniqueKeyNonclusteredVarcharPk(t *testing.T) {
 			AddRow(data1NonclusteredKey, "uni_b", data1NonclusteredValue, data1RowKey).
 			AddRow(data1NonclusteredKey, "uni_b", data2NonclusteredValue, data2RowKey).
 			AddRow(data3IndexKey, "PRIMARY", data3IndexValue, data3RowKey).
-			AddRow(data3IndexKey, "PRIMARY", data4NonclusteredValue, data4RowKey))
+			AddRow(data3IndexKey, "PRIMARY", data4IndexValue, data4RowKey))
 	mockDB.ExpectBegin()
 	mockDB.ExpectExec("INSERT INTO `lightning_task_info`\\.conflict_error_v2.*").
 		WithArgs(0, "a", nil, nil, data5RowKey, data5RowValue, 1).
@@ -561,7 +711,11 @@ func TestReplaceConflictOneUniqueKeyNonclusteredVarcharPk(t *testing.T) {
 			case bytes.Equal(key, data3IndexKey):
 				return data3IndexValue, nil
 			case bytes.Equal(key, data4RowKey):
-				return data4RowValue, nil
+				if fnGetLatestCount.String() == "9" {
+					return data4RowValue, nil
+				} else {
+					return nil, tikverr.ErrNotExist
+				}
 			case bytes.Equal(key, data2IndexKey):
 				return data2IndexValue, nil
 			case bytes.Equal(key, data5IndexKey):
@@ -579,7 +733,7 @@ func TestReplaceConflictOneUniqueKeyNonclusteredVarcharPk(t *testing.T) {
 		},
 	)
 	require.NoError(t, err)
-	require.Equal(t, int32(18), fnGetLatestCount.Load())
+	require.Equal(t, int32(21), fnGetLatestCount.Load())
 	require.Equal(t, int32(5), fnDeleteKeyCount.Load())
 	err = mockDB.ExpectationsWereMet()
 	require.NoError(t, err)
