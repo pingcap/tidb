@@ -1734,8 +1734,9 @@ func (local *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) err
 	// the only way to reset the engine + reclaim the space is to delete and reopen it 🤷
 	localEngine := local.lockEngine(engineUUID, importMutexStateClose)
 	if localEngine == nil {
-		if extEngine, ok := local.externalEngine[engineUUID]; ok {
-			return extEngine.Close()
+		if engineI, ok := local.externalEngine[engineUUID]; ok {
+			extEngine := engineI.(*external.Engine)
+			return extEngine.Reset()
 		}
 
 		log.FromContext(ctx).Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))

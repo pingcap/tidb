@@ -387,6 +387,14 @@ func (e *Engine) Close() error {
 	return nil
 }
 
+func (e *Engine) Reset() error {
+	if e.bufPool != nil {
+		e.bufPool.Destroy()
+		e.bufPool = membuf.NewPool()
+	}
+	return nil
+}
+
 // MemoryIngestData is the in-memory implementation of IngestData.
 type MemoryIngestData struct {
 	keyAdapter         common.KeyAdapter
