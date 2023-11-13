@@ -16,6 +16,7 @@ package expression
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -171,7 +172,7 @@ func (b *builtinIlikeSig) ilikeWithoutMemorization(params []*funcParam, rowNum i
 	return b.vecVec(params, rowNum, escape, result)
 }
 
-func (b *builtinIlikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinIlikeSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	rowNum := input.NumRows()
 	params := make([]*funcParam, 0, 3)
 	defer releaseBuffers(&b.baseBuiltinFunc, params)

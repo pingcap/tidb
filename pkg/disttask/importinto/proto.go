@@ -109,6 +109,8 @@ type MergeSortStepMeta struct {
 type WriteIngestStepMeta struct {
 	KVGroup               string `json:"kv-group"`
 	external.SortedKVMeta `json:"sorted-kv-meta"`
+	DataFiles             []string `json:"data-files"`
+	StatFiles             []string `json:"stat-files"`
 	RangeSplitKeys        [][]byte `json:"range-split-keys"`
 	RangeSplitSize        int64    `json:"range-split-size"`
 

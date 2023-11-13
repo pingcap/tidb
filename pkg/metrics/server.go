@@ -37,11 +37,11 @@ var (
 	ExecuteErrorCounter    *prometheus.CounterVec
 	CriticalErrorCounter   prometheus.Counter
 
-	EventStart        = "start"
-	EventGracefulDown = "graceful_shutdown"
+	ServerStart = "server-start"
+	ServerStop  = "server-stop"
+
 	// Eventkill occurs when the server.Kill() function is called.
-	EventKill  = "kill"
-	EventClose = "close"
+	EventKill = "kill"
 
 	ServerEventCounter              *prometheus.CounterVec
 	TimeJumpBackCounter             prometheus.Counter

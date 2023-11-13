@@ -19,7 +19,6 @@ import (
 	stderrors "errors"
 	"math"
 	"sort"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -40,12 +39,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tiancaiamao/gp"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -55,8 +54,8 @@ type AnalyzeColumnsExecV2 struct {
 	*AnalyzeColumnsExec
 }
 
-func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownWithRetryV2() *statistics.AnalyzeResults {
-	analyzeResult := e.analyzeColumnsPushDownV2()
+func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownWithRetryV2(gp *gp.Pool) *statistics.AnalyzeResults {
+	analyzeResult := e.analyzeColumnsPushDownV2(gp)
 	if e.notRetryable(analyzeResult) {
 		return analyzeResult
 	}
@@ -86,7 +85,7 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownWithRetryV2() *statistics.A
 	prepareV2AnalyzeJobInfo(e.AnalyzeColumnsExec, true)
 	AddNewAnalyzeJob(e.ctx, e.job)
 	StartAnalyzeJob(e.ctx, e.job)
-	return e.analyzeColumnsPushDownV2()
+	return e.analyzeColumnsPushDownV2(gp)
 }
 
 // Do **not** retry if succeed / not oom error / not auto-analyze / samplerate not set.
@@ -96,7 +95,7 @@ func (e *AnalyzeColumnsExecV2) notRetryable(analyzeResult *statistics.AnalyzeRes
 		e.analyzePB.ColReq == nil || *e.analyzePB.ColReq.SampleRate <= 0
 }
 
-func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2() *statistics.AnalyzeResults {
+func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(gp *gp.Pool) *statistics.AnalyzeResults {
 	var ranges []*ranger.Range
 	if hc := e.handleCols; hc != nil {
 		if hc.IsInt() {
@@ -141,13 +140,13 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2() *statistics.AnalyzeRes
 	// subIndexWorkerWg is better to be initialized in handleNDVForSpecialIndexes, however if we do so, golang would
 	// report unexpected/unreasonable data race error on subIndexWorkerWg when running TestAnalyzeVirtualCol test
 	// case with `-race` flag now.
-	var wg util.WaitGroupWrapper
+	wg := util.NewWaitGroupPool(gp)
 	wg.Run(func() {
 		e.handleNDVForSpecialIndexes(specialIndexes, idxNDVPushDownCh, statsConcurrncy)
 	})
 	defer wg.Wait()
 
-	count, hists, topNs, fmSketches, extStats, err := e.buildSamplingStats(ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh, samplingStatsConcurrency)
+	count, hists, topNs, fmSketches, extStats, err := e.buildSamplingStats(gp, ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh, samplingStatsConcurrency)
 	if err != nil {
 		e.memTracker.Release(e.memTracker.BytesConsumed())
 		return &statistics.AnalyzeResults{Err: err, Job: e.job}
@@ -245,6 +244,7 @@ func printAnalyzeMergeCollectorLog(oldRootCount, newRootCount, subCount, tableID
 }
 
 func (e *AnalyzeColumnsExecV2) buildSamplingStats(
+	gp *gp.Pool,
 	ranges []*ranger.Range,
 	needExtStats bool,
 	indexesWithVirtualColOffsets []int,
@@ -277,8 +277,8 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	sc := e.ctx.GetSessionVars().StmtCtx
 
 	// Start workers to merge the result from collectors.
-	mergeResultCh := make(chan *samplingMergeResult, samplingStatsConcurrency)
-	mergeTaskCh := make(chan []byte, samplingStatsConcurrency)
+	mergeResultCh := make(chan *samplingMergeResult, 1)
+	mergeTaskCh := make(chan []byte, 1)
 	var taskEg errgroup.Group
 	// Start read data from resultHandler and send them to mergeTaskCh.
 	taskEg.Go(func() (err error) {
@@ -292,7 +292,10 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	e.samplingMergeWg = &util.WaitGroupWrapper{}
 	e.samplingMergeWg.Add(samplingStatsConcurrency)
 	for i := 0; i < samplingStatsConcurrency; i++ {
-		go e.subMergeWorker(mergeResultCh, mergeTaskCh, l, i)
+		id := i
+		gp.Go(func() {
+			e.subMergeWorker(mergeResultCh, mergeTaskCh, l, id)
+		})
 	}
 	// Merge the result from collectors.
 	mergeWorkerPanicCnt := 0
@@ -388,7 +391,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	if totalLen < samplingStatsConcurrency {
 		samplingStatsConcurrency = totalLen
 	}
-	e.samplingBuilderWg = newNotifyErrorWaitGroupWrapper(buildResultChan)
+	e.samplingBuilderWg = newNotifyErrorWaitGroupWrapper(gp, buildResultChan)
 	sampleCollectors := make([]*statistics.SampleCollector, len(e.colsInfo))
 	exitCh := make(chan struct{})
 	e.samplingBuilderWg.Add(samplingStatsConcurrency)
@@ -888,8 +891,8 @@ func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, me
 			dom := domain.GetDomain(ctx)
 			dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
 		})
-		if atomic.LoadUint32(&ctx.GetSessionVars().Killed) == 1 {
-			return errors.Trace(exeerrors.ErrQueryInterrupted)
+		if err := ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+			return err
 		}
 		failpoint.Inject("mockSlowAnalyzeV2", func() {
 			time.Sleep(1000 * time.Second)

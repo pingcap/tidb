@@ -298,7 +298,7 @@ func (ce compareExec) compare(sctx *stmtctx.StatementContext, a, b []types.Datum
 	for _, colOff := range ce.usedIndex {
 		aColumn := a[colOff]
 		bColumn := b[colOff]
-		cmp, err = aColumn.Compare(sctx, &bColumn, ce.collators[colOff])
+		cmp, err = aColumn.Compare(sctx.TypeCtx(), &bColumn, ce.collators[colOff])
 		if err != nil {
 			return 0, err
 		}

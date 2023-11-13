@@ -979,7 +979,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrInfoSchemaExpired:                mysql.Message("Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV", nil),
 	ErrInfoSchemaChanged:                mysql.Message("Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`", nil),
 	ErrBadNumber:                        mysql.Message("Bad Number", nil),
-	ErrCastAsSignedOverflow:             mysql.Message("Cast to signed converted positive out-of-range integer to it's negative complement", nil),
+	ErrCastAsSignedOverflow:             mysql.Message("Cast to signed converted positive out-of-range integer to its negative complement", nil),
 	ErrCastNegIntAsUnsigned:             mysql.Message("Cast to unsigned converted negative integer to it's positive complement", nil),
 	ErrInvalidYearFormat:                mysql.Message("invalid year format", nil),
 	ErrInvalidYear:                      mysql.Message("invalid year", nil),
@@ -1071,6 +1071,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrLoadDataInvalidOperation:         mysql.Message("The current job status cannot perform the operation. %s", nil),
 	ErrLoadDataLocalUnsupportedOption:   mysql.Message("Unsupported option for LOAD DATA LOCAL INFILE: %s", nil),
 	ErrLoadDataPreCheckFailed:           mysql.Message("PreCheck failed: %s", nil),
+	ErrMemoryExceedForQuery:             mysql.Message("Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=%d]", nil),
+	ErrMemoryExceedForInstance:          mysql.Message("Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again.[conn=%d]", nil),
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
 	ErrWarnOptimizerHintUnsupportedHint: mysql.Message("Optimizer hint %s is not supported by TiDB and is ignored", nil),

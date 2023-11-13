@@ -655,7 +655,9 @@ func (s *mockGCSSuite) TestMaxWriteSpeed() {
 	start := time.Now()
 	sql := fmt.Sprintf(`IMPORT INTO load_test_write_speed.t FROM 'gs://test-load/speed-test.csv?endpoint=%s'`,
 		gcsEndpoint)
-	s.tk.MustQuery(sql)
+	result := s.tk.MustQuery(sql)
+	fileSize := result.Rows()[0][6].(string)
+	s.Equal("7.598KiB", fileSize)
 	duration := time.Since(start).Seconds()
 	s.tk.MustQuery("SELECT count(1) FROM load_test_write_speed.t;").Check(testkit.Rows(
 		strconv.Itoa(lineCount),

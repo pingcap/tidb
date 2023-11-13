@@ -409,19 +409,19 @@ func (fetcher *probeSideTupleFetcher) handleProbeSideFetcherPanic(r interface{})
 		close(fetcher.probeResultChs[i])
 	}
 	if r != nil {
-		fetcher.joinResultCh <- &hashjoinWorkerResult{err: errors.Errorf("%v", r)}
+		fetcher.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
 	}
 }
 
 func (w *probeWorker) handleProbeWorkerPanic(r interface{}) {
 	if r != nil {
-		w.hashJoinCtx.joinResultCh <- &hashjoinWorkerResult{err: errors.Errorf("probeWorker[%d] meets error: %v", w.workerID, r)}
+		w.hashJoinCtx.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
 	}
 }
 
 func (e *HashJoinExec) handleJoinWorkerPanic(r interface{}) {
 	if r != nil {
-		e.joinResultCh <- &hashjoinWorkerResult{err: errors.Errorf("%v", r)}
+		e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
 	}
 }
 
@@ -925,8 +925,18 @@ func (w *probeWorker) joinNAAJMatchProbeSideRow2Chunk(probeKey uint64, probeKeyN
 func (w *probeWorker) joinMatchedProbeSideRow2Chunk(probeKey uint64, probeSideRow chunk.Row, hCtx *hashContext,
 	joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
 	var err error
-	w.buildSideRows, err = w.rowContainerForProbe.GetMatchedRows(probeKey, probeSideRow, hCtx, w.buildSideRows)
-	buildSideRows := w.buildSideRows
+	var buildSideRows []chunk.Row
+	if w.joiner.isSemiJoinWithoutCondition() {
+		var rowPtr *chunk.Row
+		rowPtr, err = w.rowContainerForProbe.GetOneMatchedRow(probeKey, probeSideRow, hCtx)
+		if rowPtr != nil {
+			buildSideRows = append(buildSideRows, *rowPtr)
+		}
+	} else {
+		w.buildSideRows, err = w.rowContainerForProbe.GetMatchedRows(probeKey, probeSideRow, hCtx, w.buildSideRows)
+		buildSideRows = w.buildSideRows
+	}
+
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
@@ -1017,14 +1027,14 @@ func (w *probeWorker) join2Chunk(probeSideChk *chunk.Chunk, hCtx *hashContext, j
 	}
 
 	for i := range selected {
-		killed := atomic.LoadUint32(&w.hashJoinCtx.sessCtx.GetSessionVars().Killed) == 1
+		err := w.hashJoinCtx.sessCtx.GetSessionVars().SQLKiller.HandleSignal()
 		failpoint.Inject("killedInJoin2Chunk", func(val failpoint.Value) {
 			if val.(bool) {
-				killed = true
+				err = exeerrors.ErrQueryInterrupted
 			}
 		})
-		if killed {
-			joinResult.err = exeerrors.ErrQueryInterrupted
+		if err != nil {
+			joinResult.err = err
 			return false, joinResult
 		}
 		if isNAAJ {
@@ -1083,14 +1093,14 @@ func (w *probeWorker) join2ChunkForOuterHashJoin(probeSideChk *chunk.Chunk, hCtx
 		}
 	}
 	for i := 0; i < probeSideChk.NumRows(); i++ {
-		killed := atomic.LoadUint32(&w.hashJoinCtx.sessCtx.GetSessionVars().Killed) == 1
+		err := w.hashJoinCtx.sessCtx.GetSessionVars().SQLKiller.HandleSignal()
 		failpoint.Inject("killedInJoin2ChunkForOuterHashJoin", func(val failpoint.Value) {
 			if val.(bool) {
-				killed = true
+				err = exeerrors.ErrQueryInterrupted
 			}
 		})
-		if killed {
-			joinResult.err = exeerrors.ErrQueryInterrupted
+		if err != nil {
+			joinResult.err = err
 			return false, joinResult
 		}
 		probeKey, probeRow := hCtx.hashVals[i].Sum64(), probeSideChk.GetRow(i)
@@ -1160,7 +1170,7 @@ func (e *HashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 
 func (e *HashJoinExec) handleFetchAndBuildHashTablePanic(r interface{}) {
 	if r != nil {
-		e.buildFinished <- errors.Errorf("%v", r)
+		e.buildFinished <- util.GetRecoverError(r)
 	}
 	close(e.buildFinished)
 }
@@ -1183,7 +1193,7 @@ func (e *HashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 		},
 		func(r interface{}) {
 			if r != nil {
-				fetchBuildSideRowsOk <- errors.Errorf("%v", r)
+				fetchBuildSideRowsOk <- util.GetRecoverError(r)
 			}
 			close(fetchBuildSideRowsOk)
 		},
@@ -1314,7 +1324,7 @@ func (e *NestedLoopApplyExec) Close() error {
 
 // Open implements the Executor interface.
 func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
-	err := e.outerExec.Open(ctx)
+	err := exec.Open(ctx, e.outerExec)
 	if err != nil {
 		return err
 	}
@@ -1415,7 +1425,7 @@ func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *ch
 
 // fetchAllInners reads all data from the inner table and stores them in a List.
 func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
-	err := e.innerExec.Open(ctx)
+	err := exec.Open(ctx, e.innerExec)
 	defer terror.Call(e.innerExec.Close)
 	if err != nil {
 		return err

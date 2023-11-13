@@ -121,3 +121,62 @@ select  /*+ use_index_merge( tbl_39) */ col_239  from tbl_39 where not( tbl_39.c
 col_239
 1994
 1997
+drop table if exists t, t1, t2;
+create table t (id int,name varchar(10));
+insert into t values(1,'tt');
+create table t1(id int,name varchar(10),name1 varchar(10),name2 varchar(10));
+insert into t1 values(1,'tt','ttt','tttt'),(2,'dd','ddd','dddd');
+create table t2(id int,name varchar(10),name1 varchar(10),name2 varchar(10),`date1` date);
+insert into t2 values(1,'tt','ttt','tttt','2099-12-31'),(2,'dd','ddd','dddd','2099-12-31');
+WITH bzzs AS (
+SELECT
+count(1) AS bzn
+FROM
+t c
+),
+tmp1 AS (
+SELECT
+t1.*
+FROM
+t1
+LEFT JOIN bzzs ON 1 = 1
+WHERE
+name IN ('tt')
+AND bzn <> 1
+),
+tmp2 AS (
+SELECT
+tmp1.*,
+date('2099-12-31') AS endate
+FROM
+tmp1
+),
+tmp3 AS (
+SELECT
+*
+FROM
+tmp2
+WHERE
+endate > CURRENT_DATE
+UNION ALL
+SELECT
+'1' AS id,
+'ss' AS name,
+'sss' AS name1,
+'ssss' AS name2,
+date('2099-12-31') AS endate
+FROM
+bzzs t1
+WHERE
+bzn = 1
+)
+SELECT
+c2.id,
+c3.id
+FROM
+t2 db
+LEFT JOIN tmp3 c2 ON c2.id = '1'
+LEFT JOIN tmp3 c3 ON c3.id = '1';
+id	id
+1	1
+1	1

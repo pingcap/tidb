@@ -21,10 +21,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"go.uber.org/zap"
 )
 
 // SortedBuilder is used to build histograms for PK and index.
@@ -69,7 +71,7 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 		b.hist.NDV = 1
 		return nil
 	}
-	cmp, err := b.hist.GetUpper(int(b.bucketIdx)).Compare(b.sc, &data, collate.GetBinaryCollator())
+	cmp, err := b.hist.GetUpper(int(b.bucketIdx)).Compare(b.sc.TypeCtx(), &data, collate.GetBinaryCollator())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -176,7 +178,7 @@ func buildHist(sc *stmtctx.StatementContext, hg *Histogram, samples []*SampleIte
 			memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
 			memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
 		}
-		cmp, err := upper.Compare(sc, &samples[i].Value, collate.GetBinaryCollator())
+		cmp, err := upper.Compare(sc.TypeCtx(), &samples[i].Value, collate.GetBinaryCollator())
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -373,12 +375,42 @@ func BuildHistAndTopN(
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+		// For debugging invalid sample data.
+		var (
+			foundTwice      bool
+			firstTimeSample types.Datum
+		)
 		for j := 0; j < len(topNList); j++ {
 			if bytes.Equal(sampleBytes, topNList[j].Encoded) {
-				// find the same value in topn: need to skip over this value in samples
+				// This should never happen, but we met this panic before, so we add this check here.
+				// See: https://github.com/pingcap/tidb/issues/35948
+				if foundTwice {
+					datumString, err := firstTimeSample.ToString()
+					if err != nil {
+						statslogutil.StatsLogger.Error("try to convert datum to string failed", zap.Error(err))
+					}
+
+					statslogutil.StatsLogger.Warn(
+						"invalid sample data",
+						zap.Bool("isColumn", isColumn),
+						zap.Int64("columnID", id),
+						zap.String("datum", datumString),
+						zap.Binary("sampleBytes", sampleBytes),
+						zap.Binary("topNBytes", topNList[j].Encoded),
+					)
+					// NOTE: if we don't return here, we may meet panic in the following code.
+					// The i may decrease to a negative value.
+					// We haven't fix the issue here, because we don't know how to
+					// remove the invalid sample data from the samples.
+					break
+				}
+				// First time to find the same value in topN: need to record the sample data for debugging.
+				firstTimeSample = samples[i].Value
+				// Found the same value in topn: need to skip over this value in samples.
 				copy(samples[i:], samples[uint64(i)+topNList[j].Count:])
 				samples = samples[:uint64(len(samples))-topNList[j].Count]
 				i--
+				foundTwice = true
 				continue
 			}
 		}

@@ -373,9 +373,16 @@ func (d *BaseDispatcher) replaceDeadNodesIfAny() error {
 		if err != nil {
 			return err
 		}
-		eligibleServerInfos, err := d.GetEligibleInstances(d.ctx, d.Task)
+
+		eligibleServerInfos, filter, err := d.GetEligibleInstances(d.ctx, d.Task)
 		if err != nil {
 			return err
+		}
+		if filter {
+			eligibleServerInfos, err = d.filterByRole(eligibleServerInfos)
+			if err != nil {
+				return err
+			}
 		}
 		newInfos := serverInfos[:0]
 		for _, m := range serverInfos {
@@ -459,9 +466,9 @@ func (d *BaseDispatcher) updateTask(taskState proto.TaskState, newSubTasks []*pr
 	return err
 }
 
-func (d *BaseDispatcher) onErrHandlingStage(receiveErr []error) error {
+func (d *BaseDispatcher) onErrHandlingStage(receiveErrs []error) error {
 	// 1. generate the needed task meta and subTask meta (dist-plan).
-	meta, err := d.OnErrStage(d.ctx, d, d.Task, receiveErr)
+	meta, err := d.OnErrStage(d.ctx, d, d.Task, receiveErrs)
 	if err != nil {
 		// OnErrStage must be retryable, if not, there will have resource leak for tasks.
 		logutil.Logger(d.logCtx).Warn("handle error failed", zap.Error(err))
@@ -499,7 +506,7 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 		failpoint.Return(errors.New("mockDynamicDispatchErr"))
 	})
 
-	nextStep := d.GetNextStep(d, d.Task)
+	nextStep := d.GetNextStep(d.Task)
 	logutil.Logger(d.logCtx).Info("onNextStage",
 		zap.Int64("current-step", int64(d.Task.Step)),
 		zap.Int64("next-step", int64(nextStep)))
@@ -545,7 +552,25 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 
 	for {
 		// 3. generate a batch of subtasks.
-		metas, err := d.OnNextSubtasksBatch(d.ctx, d, d.Task, nextStep)
+		/// select all available TiDB nodes for task.
+		serverNodes, filter, err := d.GetEligibleInstances(d.ctx, d.Task)
+		logutil.Logger(d.logCtx).Debug("eligible instances", zap.Int("num", len(serverNodes)))
+
+		if err != nil {
+			return err
+		}
+		if filter {
+			serverNodes, err = d.filterByRole(serverNodes)
+			if err != nil {
+				return err
+			}
+		}
+		logutil.Logger(d.logCtx).Info("eligible instances", zap.Int("num", len(serverNodes)))
+		if len(serverNodes) == 0 {
+			return errors.New("no available TiDB node to dispatch subtasks")
+		}
+
+		metas, err := d.OnNextSubtasksBatch(d.ctx, d, d.Task, serverNodes, nextStep)
 		if err != nil {
 			logutil.Logger(d.logCtx).Warn("generate part of subtasks failed", zap.Error(err))
 			return d.handlePlanErr(err)
@@ -556,7 +581,7 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 		})
 
 		// 4. dispatch batch of subtasks to EligibleInstances.
-		err = d.dispatchSubTask(nextStep, metas)
+		err = d.dispatchSubTask(nextStep, metas, serverNodes)
 		if err != nil {
 			return err
 		}
@@ -572,27 +597,11 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 	return nil
 }
 
-func (d *BaseDispatcher) dispatchSubTask(subtaskStep proto.Step, metas [][]byte) error {
+func (d *BaseDispatcher) dispatchSubTask(
+	subtaskStep proto.Step,
+	metas [][]byte,
+	serverNodes []*infosync.ServerInfo) error {
 	logutil.Logger(d.logCtx).Info("dispatch subtasks", zap.Stringer("state", d.Task.State), zap.Int64("step", int64(d.Task.Step)), zap.Uint64("concurrency", d.Task.Concurrency), zap.Int("subtasks", len(metas)))
-
-	// select all available TiDB nodes for task.
-	serverNodes, err := d.GetEligibleInstances(d.ctx, d.Task)
-	logutil.Logger(d.logCtx).Debug("eligible instances", zap.Int("num", len(serverNodes)))
-
-	if err != nil {
-		return err
-	}
-	// 4. filter by role.
-	serverNodes, err = d.filterByRole(serverNodes)
-	if err != nil {
-		return err
-	}
-
-	logutil.Logger(d.logCtx).Info("eligible instances", zap.Int("num", len(serverNodes)))
-
-	if len(serverNodes) == 0 {
-		return errors.New("no available TiDB node to dispatch subtasks")
-	}
 	d.taskNodes = make([]string, len(serverNodes))
 	for i := range serverNodes {
 		d.taskNodes[i] = disttaskutil.GenerateExecID(serverNodes[i].IP, serverNodes[i].Port)
@@ -619,8 +628,14 @@ func (d *BaseDispatcher) handlePlanErr(err error) error {
 	return d.updateTask(proto.TaskStateFailed, nil, RetrySQLTimes)
 }
 
+// MockServerInfo exported for dispatcher_test.go
+var MockServerInfo []*infosync.ServerInfo
+
 // GenerateSchedulerNodes generate a eligible TiDB nodes.
 func GenerateSchedulerNodes(ctx context.Context) (serverNodes []*infosync.ServerInfo, err error) {
+	failpoint.Inject("mockSchedulerNodes", func() {
+		failpoint.Return(MockServerInfo, nil)
+	})
 	var serverInfos map[string]*infosync.ServerInfo
 	_, etcd := ctx.Value("etcd").(bool)
 	if intest.InTest && !etcd {
@@ -668,7 +683,9 @@ func (d *BaseDispatcher) filterByRole(infos []*infosync.ServerInfo) ([]*infosync
 
 // GetAllSchedulerIDs gets all the scheduler IDs.
 func (d *BaseDispatcher) GetAllSchedulerIDs(ctx context.Context, task *proto.Task) ([]string, error) {
-	serverInfos, err := d.GetEligibleInstances(ctx, task)
+	// We get all servers instead of eligible servers here
+	// because eligible servers may change during the task execution.
+	serverInfos, err := GenerateSchedulerNodes(ctx)
 	if err != nil {
 		return nil, err
 	}

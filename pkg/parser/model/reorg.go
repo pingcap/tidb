@@ -31,7 +31,16 @@ type DDLReorgMeta struct {
 	IsDistReorg       bool                             `json:"is_dist_reorg"`
 	UseCloudStorage   bool                             `json:"use_cloud_storage"`
 	ResourceGroupName string                           `json:"resource_group_name"`
+	Version           int64                            `json:"version"`
 }
+
+const (
+	// ReorgMetaVersion0 is the minimum version of DDLReorgMeta.
+	ReorgMetaVersion0 = int64(0)
+	// CurrentReorgMetaVersion is the current version of DDLReorgMeta.
+	// For fix #46306(whether end key is included or not in the table range) to add the version to 1.
+	CurrentReorgMetaVersion = int64(1)
+)
 
 // ReorgType indicates which process is used for the data reorganization.
 type ReorgType int8

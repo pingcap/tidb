@@ -19,10 +19,10 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"go.uber.org/zap"
@@ -43,14 +43,16 @@ type HashAggFinalWorker struct {
 	rowBuffer           []types.Datum
 	mutableRow          chunk.MutRow
 	partialResultMap    AggPartialResultMapper
+	BInMap              int
+	isFirstInput        bool
 	groupSet            set.StringSetWithMemoryUsage
-	inputCh             chan *HashAggIntermData
+	inputCh             chan *AggPartialResultMapper
 	outputCh            chan *AfFinalResult
 	finalResultHolderCh chan *chunk.Chunk
 	groupKeys           [][]byte
 }
 
-func (w *HashAggFinalWorker) getPartialInput() (input *HashAggIntermData, ok bool) {
+func (w *HashAggFinalWorker) getPartialInput() (input *AggPartialResultMapper, ok bool) {
 	select {
 	case <-w.finishCh:
 		return nil, false
@@ -62,55 +64,60 @@ func (w *HashAggFinalWorker) getPartialInput() (input *HashAggIntermData, ok boo
 	return
 }
 
+func (w *HashAggFinalWorker) initBInMap() {
+	w.BInMap = 0
+	mapLen := len(w.partialResultMap)
+	for mapLen > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+		w.BInMap++
+	}
+}
+
 func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err error) {
-	var (
-		input            *HashAggIntermData
-		ok               bool
-		intermDataBuffer [][]aggfuncs.PartialResult
-		groupKeys        []string
-		sc               = sctx.GetSessionVars().StmtCtx
-	)
 	for {
 		waitStart := time.Now()
-		input, ok = w.getPartialInput()
+		input, ok := w.getPartialInput()
 		if w.stats != nil {
 			w.stats.WaitTime += int64(time.Since(waitStart))
 		}
 		if !ok {
 			return nil
 		}
+
+		// As the w.partialResultMap is empty when we get the first input.
+		// So it's better to directly assign the input to w.partialResultMap
+		if w.isFirstInput {
+			w.isFirstInput = false
+			w.partialResultMap = *input
+			w.initBInMap()
+			continue
+		}
+
+		failpoint.Inject("ConsumeRandomPanic", nil)
+
 		execStart := time.Now()
-		if intermDataBuffer == nil {
-			intermDataBuffer = make([][]aggfuncs.PartialResult, 0, w.maxChunkSize)
-		}
-		// Consume input in batches, size of every batch is less than w.maxChunkSize.
-		for reachEnd := false; !reachEnd; {
-			intermDataBuffer, groupKeys, reachEnd = input.getPartialResultBatch(sc, intermDataBuffer[:0], w.aggFuncs, w.maxChunkSize)
-			groupKeysLen := len(groupKeys)
-			memSize := getGroupKeyMemUsage(w.groupKeys)
-			w.groupKeys = w.groupKeys[:0]
-			for i := 0; i < groupKeysLen; i++ {
-				w.groupKeys = append(w.groupKeys, []byte(groupKeys[i]))
-			}
-			failpoint.Inject("ConsumeRandomPanic", nil)
-			w.memTracker.Consume(getGroupKeyMemUsage(w.groupKeys) - memSize)
-			finalPartialResults := w.getPartialResult(sc, w.groupKeys, w.partialResultMap)
-			allMemDelta := int64(0)
-			for i, groupKey := range groupKeys {
-				if !w.groupSet.Exist(groupKey) {
-					allMemDelta += w.groupSet.Insert(groupKey)
+		allMemDelta := int64(0)
+		for key, value := range *input {
+			dstVal, ok := w.partialResultMap[key]
+			if !ok {
+				// Map will expand when count > bucketNum * loadFactor. The memory usage will double.
+				if len(w.partialResultMap)+1 > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+					w.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMap))
+					w.BInMap++
 				}
-				prs := intermDataBuffer[i]
-				for j, af := range w.aggFuncs {
-					memDelta, err := af.MergePartialResult(sctx, prs[j], finalPartialResults[i][j])
-					if err != nil {
-						return err
-					}
-					allMemDelta += memDelta
-				}
+				w.partialResultMap[key] = value
+				continue
 			}
-			w.memTracker.Consume(allMemDelta)
+
+			for j, af := range w.aggFuncs {
+				memDelta, err := af.MergePartialResult(sctx, value[j], dstVal[j])
+				if err != nil {
+					return err
+				}
+				allMemDelta += memDelta
+			}
 		}
+		w.memTracker.Consume(allMemDelta)
+
 		if w.stats != nil {
 			w.stats.ExecTime += int64(time.Since(execStart))
 			w.stats.TaskNum++
@@ -127,24 +134,21 @@ func (w *HashAggFinalWorker) loadFinalResult(sctx sessionctx.Context) {
 	if finished {
 		return
 	}
-	execStart := time.Now()
-	memSize := getGroupKeyMemUsage(w.groupKeys)
-	w.groupKeys = w.groupKeys[:0]
-	for groupKey := range w.groupSet.StringSet {
-		w.groupKeys = append(w.groupKeys, []byte(groupKey))
-	}
+
 	failpoint.Inject("ConsumeRandomPanic", nil)
-	w.memTracker.Consume(getGroupKeyMemUsage(w.groupKeys) - memSize)
-	partialResults := w.getPartialResult(sctx.GetSessionVars().StmtCtx, w.groupKeys, w.partialResultMap)
-	for i := 0; i < len(w.groupSet.StringSet); i++ {
+
+	execStart := time.Now()
+	for _, results := range w.partialResultMap {
 		for j, af := range w.aggFuncs {
-			if err := af.AppendFinalResult2Chunk(sctx, partialResults[i][j], result); err != nil {
+			if err := af.AppendFinalResult2Chunk(sctx, results[j], result); err != nil {
 				logutil.BgLogger().Error("HashAggFinalWorker failed to append final result to Chunk", zap.Error(err))
 			}
 		}
+
 		if len(w.aggFuncs) == 0 {
 			result.SetNumVirtualRows(result.NumRows() + 1)
 		}
+
 		if result.IsFull() {
 			w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
 			result, finished = w.receiveFinalResultHolder()
@@ -153,6 +157,7 @@ func (w *HashAggFinalWorker) loadFinalResult(sctx sessionctx.Context) {
 			}
 		}
 	}
+
 	w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
 	if w.stats != nil {
 		w.stats.ExecTime += int64(time.Since(execStart))

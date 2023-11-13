@@ -236,7 +236,7 @@ func (s *rpcServer) createSession() (session.Session, error) {
 	vars.StmtCtx.InitMemTracker(memory.LabelForSQLText, -1)
 	vars.StmtCtx.MemTracker.AttachTo(vars.MemTracker)
 	if variable.OOMAction.Load() == variable.OOMActionCancel {
-		action := &memory.PanicOnExceed{}
+		action := &memory.PanicOnExceed{Killer: &vars.SQLKiller}
 		vars.MemTracker.SetActionOnExceed(action)
 	}
 	se.SetSessionManager(s.sm)

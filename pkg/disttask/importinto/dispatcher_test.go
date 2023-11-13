@@ -65,7 +65,7 @@ func (s *importIntoSuite) TestDispatcherGetEligibleInstances() {
 	gTask := &proto.Task{Meta: []byte("{}")}
 	ctx := context.WithValue(context.Background(), "etcd", true)
 	s.enableFailPoint("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", mockedAllServerInfos)
-	eligibleInstances, err := dsp.GetEligibleInstances(ctx, gTask)
+	eligibleInstances, _, err := dsp.GetEligibleInstances(ctx, gTask)
 	s.NoError(err)
 	// order of slice is not stable, change to map
 	resultMap := map[string]*infosync.ServerInfo{}
@@ -75,7 +75,7 @@ func (s *importIntoSuite) TestDispatcherGetEligibleInstances() {
 	s.Equal(serverInfoMap, resultMap)
 
 	gTask.Meta = []byte(`{"EligibleInstances":[{"ip": "1.1.1.1", "listening_port": 4000}]}`)
-	eligibleInstances, err = dsp.GetEligibleInstances(ctx, gTask)
+	eligibleInstances, _, err = dsp.GetEligibleInstances(ctx, gTask)
 	s.NoError(err)
 	s.Equal([]*infosync.ServerInfo{{IP: "1.1.1.1", Port: 4000}}, eligibleInstances)
 }
@@ -146,7 +146,7 @@ func (s *importIntoSuite) TestGetNextStep() {
 	}
 	ext := &ImportDispatcherExt{}
 	for _, nextStep := range []proto.Step{StepImport, StepPostProcess, proto.StepDone} {
-		s.Equal(nextStep, ext.GetNextStep(nil, task))
+		s.Equal(nextStep, ext.GetNextStep(task))
 		task.Step = nextStep
 	}
 
@@ -154,7 +154,7 @@ func (s *importIntoSuite) TestGetNextStep() {
 	ext = &ImportDispatcherExt{GlobalSort: true}
 	for _, nextStep := range []proto.Step{StepEncodeAndSort, StepMergeSort,
 		StepWriteAndIngest, StepPostProcess, proto.StepDone} {
-		s.Equal(nextStep, ext.GetNextStep(nil, task))
+		s.Equal(nextStep, ext.GetNextStep(task))
 		task.Step = nextStep
 	}
 }

@@ -19,12 +19,12 @@ import (
 	"fmt"
 	"runtime"
 	"runtime/debug"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/skip"
 	"github.com/stretchr/testify/require"
@@ -67,19 +67,19 @@ func TestGlobalMemoryControl(t *testing.T) {
 	time.Sleep(500 * time.Millisecond) // The check goroutine checks the memory usage every 100ms. The Sleep() make sure that Top1Tracker can be Canceled.
 
 	// Kill Top1
-	require.False(t, tracker1.NeedKill.Load())
-	require.False(t, tracker2.NeedKill.Load())
-	require.True(t, tracker3.NeedKill.Load())
+	require.NoError(t, tracker1.Killer.HandleSignal())
+	require.NoError(t, tracker2.Killer.HandleSignal())
+	require.True(t, exeerrors.ErrMemoryExceedForInstance.Equal(tracker3.Killer.HandleSignal()))
 	require.Equal(t, memory.MemUsageTop1Tracker.Load(), tracker3)
 	util.WithRecovery( // Next Consume() will panic and cancel the SQL
 		func() {
 			tracker3.Consume(1)
 		}, func(r interface{}) {
-			require.True(t, strings.Contains(r.(string), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForInstance))
+			require.True(t, exeerrors.ErrMemoryExceedForInstance.Equal(r.(error)))
 		})
 	tracker2.Consume(300 << 20) // Sum 500MB, Not Panic, Waiting t3 cancel finish.
 	time.Sleep(500 * time.Millisecond)
-	require.False(t, tracker2.NeedKill.Load())
+	require.NoError(t, tracker2.Killer.HandleSignal())
 	// Kill Finished
 	tracker3.Consume(-(300 << 20))
 	// Simulated SQL is Canceled and the time is updated
@@ -94,7 +94,7 @@ func TestGlobalMemoryControl(t *testing.T) {
 		func() {
 			tracker2.Consume(1)
 		}, func(r interface{}) {
-			require.True(t, strings.Contains(r.(string), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForInstance))
+			require.True(t, exeerrors.ErrMemoryExceedForInstance.Equal(r.(error)))
 		})
 	require.Equal(t, test[0], 0) // Keep 1GB HeapInUse
 }

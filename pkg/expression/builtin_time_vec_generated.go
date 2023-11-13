@@ -19,11 +19,12 @@ package expression
 import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
-func (b *builtinAddDatetimeAndDurationSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinAddDatetimeAndDurationSig) vecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
 	if err := b.args[0].VecEvalTime(b.ctx, input, result); err != nil {
@@ -62,7 +63,7 @@ func (b *builtinAddDatetimeAndDurationSig) vecEvalTime(input *chunk.Chunk, resul
 
 		// calculate
 
-		output, err := arg0.Add(b.ctx.GetSessionVars().StmtCtx, types.Duration{Duration: arg1, Fsp: -1})
+		output, err := arg0.Add(b.ctx.GetSessionVars().StmtCtx.TypeCtx(), types.Duration{Duration: arg1, Fsp: -1})
 
 		if err != nil {
 			return err
@@ -80,7 +81,7 @@ func (b *builtinAddDatetimeAndDurationSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinAddDatetimeAndStringSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinAddDatetimeAndStringSig) vecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
 	if err := b.args[0].VecEvalTime(b.ctx, input, result); err != nil {
@@ -122,7 +123,7 @@ func (b *builtinAddDatetimeAndStringSig) vecEvalTime(input *chunk.Chunk, result 
 			continue
 		}
 		sc := b.ctx.GetSessionVars().StmtCtx
-		arg1Duration, _, err := types.ParseDuration(sc, arg1, types.GetFsp(arg1))
+		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, types.GetFsp(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
 				sc.AppendWarning(err)
@@ -132,7 +133,7 @@ func (b *builtinAddDatetimeAndStringSig) vecEvalTime(input *chunk.Chunk, result 
 			return err
 		}
 
-		output, err := arg0.Add(sc, arg1Duration)
+		output, err := arg0.Add(sc.TypeCtx(), arg1Duration)
 
 		if err != nil {
 			return err
@@ -150,7 +151,7 @@ func (b *builtinAddDatetimeAndStringSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinAddDurationAndDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinAddDurationAndDurationSig) vecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
 	if err := b.args[0].VecEvalDuration(b.ctx, input, result); err != nil {
@@ -206,7 +207,7 @@ func (b *builtinAddDurationAndDurationSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinAddDurationAndStringSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinAddDurationAndStringSig) vecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
 	if err := b.args[0].VecEvalDuration(b.ctx, input, result); err != nil {
@@ -248,7 +249,7 @@ func (b *builtinAddDurationAndStringSig) vecEvalDuration(input *chunk.Chunk, res
 			continue
 		}
 		sc := b.ctx.GetSessionVars().StmtCtx
-		arg1Duration, _, err := types.ParseDuration(sc, arg1, types.GetFsp(arg1))
+		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, types.GetFsp(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
 				sc.AppendWarning(err)
@@ -275,7 +276,7 @@ func (b *builtinAddDurationAndStringSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinAddStringAndDurationSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinAddStringAndDurationSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
 	buf0, err := b.bufAllocator.get()
@@ -358,7 +359,7 @@ func (b *builtinAddStringAndDurationSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinAddStringAndStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinAddStringAndStringSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
 	buf0, err := b.bufAllocator.get()
@@ -406,7 +407,7 @@ func (b *builtinAddStringAndStringSig) vecEvalString(input *chunk.Chunk, result 
 		// calculate
 
 		sc := b.ctx.GetSessionVars().StmtCtx
-		arg1Duration, _, err := types.ParseDuration(sc, arg1, getFsp4TimeAddSub(arg1))
+		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, getFsp4TimeAddSub(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
 				sc.AppendWarning(err)
@@ -456,7 +457,7 @@ func (b *builtinAddStringAndStringSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinAddDateAndDurationSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinAddDateAndDurationSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
 	buf0, err := b.bufAllocator.get()
@@ -521,7 +522,7 @@ func (b *builtinAddDateAndDurationSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinAddDateAndStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinAddDateAndStringSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
 	buf0, err := b.bufAllocator.get()
@@ -566,7 +567,7 @@ func (b *builtinAddDateAndStringSig) vecEvalString(input *chunk.Chunk, result *c
 			continue
 		}
 		sc := b.ctx.GetSessionVars().StmtCtx
-		arg1Duration, _, err := types.ParseDuration(sc, arg1, getFsp4TimeAddSub(arg1))
+		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, getFsp4TimeAddSub(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
 				sc.AppendWarning(err)
@@ -597,7 +598,7 @@ func (b *builtinAddDateAndStringSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinAddTimeDateTimeNullSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinAddTimeDateTimeNullSig) vecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
 	result.ResizeTime(n, true)
@@ -609,7 +610,7 @@ func (b *builtinAddTimeDateTimeNullSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinAddTimeStringNullSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinAddTimeStringNullSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
 	result.ReserveString(n)
@@ -624,7 +625,7 @@ func (b *builtinAddTimeStringNullSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinAddTimeDurationNullSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinAddTimeDurationNullSig) vecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
 	result.ResizeGoDuration(n, true)
@@ -636,7 +637,7 @@ func (b *builtinAddTimeDurationNullSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinSubDatetimeAndDurationSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinSubDatetimeAndDurationSig) vecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
 	if err := b.args[0].VecEvalTime(b.ctx, input, result); err != nil {
@@ -677,7 +678,7 @@ func (b *builtinSubDatetimeAndDurationSig) vecEvalTime(input *chunk.Chunk, resul
 
 		sc := b.ctx.GetSessionVars().StmtCtx
 		arg1Duration := types.Duration{Duration: arg1, Fsp: -1}
-		output, err := arg0.Add(sc, arg1Duration.Neg())
+		output, err := arg0.Add(sc.TypeCtx(), arg1Duration.Neg())
 
 		if err != nil {
 			return err
@@ -695,7 +696,7 @@ func (b *builtinSubDatetimeAndDurationSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinSubDatetimeAndStringSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinSubDatetimeAndStringSig) vecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
 	if err := b.args[0].VecEvalTime(b.ctx, input, result); err != nil {
@@ -737,7 +738,7 @@ func (b *builtinSubDatetimeAndStringSig) vecEvalTime(input *chunk.Chunk, result 
 			continue
 		}
 		sc := b.ctx.GetSessionVars().StmtCtx
-		arg1Duration, _, err := types.ParseDuration(sc, arg1, types.GetFsp(arg1))
+		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, types.GetFsp(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
 				sc.AppendWarning(err)
@@ -746,7 +747,7 @@ func (b *builtinSubDatetimeAndStringSig) vecEvalTime(input *chunk.Chunk, result 
 			}
 			return err
 		}
-		output, err := arg0.Add(sc, arg1Duration.Neg())
+		output, err := arg0.Add(sc.TypeCtx(), arg1Duration.Neg())
 
 		if err != nil {
 			return err
@@ -764,7 +765,7 @@ func (b *builtinSubDatetimeAndStringSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinSubDurationAndDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinSubDurationAndDurationSig) vecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
 	if err := b.args[0].VecEvalDuration(b.ctx, input, result); err != nil {
@@ -820,7 +821,7 @@ func (b *builtinSubDurationAndDurationSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinSubDurationAndStringSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinSubDurationAndStringSig) vecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
 	if err := b.args[0].VecEvalDuration(b.ctx, input, result); err != nil {
@@ -862,7 +863,7 @@ func (b *builtinSubDurationAndStringSig) vecEvalDuration(input *chunk.Chunk, res
 			continue
 		}
 		sc := b.ctx.GetSessionVars().StmtCtx
-		arg1Duration, _, err := types.ParseDuration(sc, arg1, types.GetFsp(arg1))
+		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, types.GetFsp(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
 				sc.AppendWarning(err)
@@ -889,7 +890,7 @@ func (b *builtinSubDurationAndStringSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinSubStringAndDurationSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinSubStringAndDurationSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
 	buf0, err := b.bufAllocator.get()
@@ -972,7 +973,7 @@ func (b *builtinSubStringAndDurationSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinSubStringAndStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinSubStringAndStringSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
 	buf0, err := b.bufAllocator.get()
@@ -1020,7 +1021,7 @@ func (b *builtinSubStringAndStringSig) vecEvalString(input *chunk.Chunk, result 
 		// calculate
 
 		sc := b.ctx.GetSessionVars().StmtCtx
-		arg1Duration, _, err := types.ParseDuration(sc, arg1, getFsp4TimeAddSub(arg1))
+		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, getFsp4TimeAddSub(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
 				sc.AppendWarning(err)
@@ -1070,7 +1071,7 @@ func (b *builtinSubStringAndStringSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinSubDateAndDurationSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinSubDateAndDurationSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
 	buf0, err := b.bufAllocator.get()
@@ -1135,7 +1136,7 @@ func (b *builtinSubDateAndDurationSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinSubDateAndStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinSubDateAndStringSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
 	buf0, err := b.bufAllocator.get()
@@ -1180,7 +1181,7 @@ func (b *builtinSubDateAndStringSig) vecEvalString(input *chunk.Chunk, result *c
 			continue
 		}
 		sc := b.ctx.GetSessionVars().StmtCtx
-		arg1Duration, _, err := types.ParseDuration(sc, arg1, getFsp4TimeAddSub(arg1))
+		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, getFsp4TimeAddSub(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
 				sc.AppendWarning(err)
@@ -1211,7 +1212,7 @@ func (b *builtinSubDateAndStringSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinSubTimeDateTimeNullSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinSubTimeDateTimeNullSig) vecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
 	result.ResizeTime(n, true)
@@ -1223,7 +1224,7 @@ func (b *builtinSubTimeDateTimeNullSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinSubTimeStringNullSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinSubTimeStringNullSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
 	result.ReserveString(n)
@@ -1238,7 +1239,7 @@ func (b *builtinSubTimeStringNullSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinSubTimeDurationNullSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinSubTimeDurationNullSig) vecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
 	result.ResizeGoDuration(n, true)
@@ -1250,7 +1251,7 @@ func (b *builtinSubTimeDurationNullSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinNullTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinNullTimeDiffSig) vecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ResizeGoDuration(n, true)
 	return nil
@@ -1260,7 +1261,7 @@ func (b *builtinNullTimeDiffSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinTimeStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinTimeStringTimeDiffSig) vecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ResizeGoDuration(n, false)
 	r64s := result.GoDurations()
@@ -1316,7 +1317,7 @@ func (b *builtinTimeStringTimeDiffSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinDurationStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinDurationStringTimeDiffSig) vecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ResizeGoDuration(n, false)
 	r64s := result.GoDurations()
@@ -1372,7 +1373,7 @@ func (b *builtinDurationStringTimeDiffSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinDurationDurationTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinDurationDurationTimeDiffSig) vecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ResizeGoDuration(n, false)
 	r64s := result.GoDurations()
@@ -1420,7 +1421,7 @@ func (b *builtinDurationDurationTimeDiffSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinStringTimeTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinStringTimeTimeDiffSig) vecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ResizeGoDuration(n, false)
 	r64s := result.GoDurations()
@@ -1476,7 +1477,7 @@ func (b *builtinStringTimeTimeDiffSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinStringDurationTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinStringDurationTimeDiffSig) vecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ResizeGoDuration(n, false)
 	r64s := result.GoDurations()
@@ -1532,7 +1533,7 @@ func (b *builtinStringDurationTimeDiffSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinStringStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinStringStringTimeDiffSig) vecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ResizeGoDuration(n, false)
 	r64s := result.GoDurations()
@@ -1598,7 +1599,7 @@ func (b *builtinStringStringTimeDiffSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinTimeTimeTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinTimeTimeTimeDiffSig) vecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ResizeGoDuration(n, false)
 	r64s := result.GoDurations()

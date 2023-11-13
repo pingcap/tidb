@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/cteutil"
@@ -174,7 +175,7 @@ func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err e
 	if p.seedExec == nil {
 		return errors.New("seedExec for CTEExec is nil")
 	}
-	if err = p.seedExec.Open(ctx); err != nil {
+	if err = exec.Open(ctx, p.seedExec); err != nil {
 		return err
 	}
 
@@ -188,7 +189,7 @@ func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err e
 	p.diskTracker.AttachTo(p.ctx.GetSessionVars().StmtCtx.DiskTracker)
 
 	if p.recursiveExec != nil {
-		if err = p.recursiveExec.Open(ctx); err != nil {
+		if err = exec.Open(ctx, p.recursiveExec); err != nil {
 			return err
 		}
 		// For non-recursive CTE, the result will be put into resTbl directly.
@@ -335,7 +336,7 @@ func (p *cteProducer) produce(ctx context.Context, cteExec *CTEExec) (err error)
 func (p *cteProducer) computeSeedPart(ctx context.Context) (err error) {
 	defer func() {
 		if r := recover(); r != nil && err == nil {
-			err = errors.Errorf("%v", r)
+			err = util.GetRecoverError(r)
 		}
 	}()
 	failpoint.Inject("testCTESeedPanic", nil)
@@ -374,7 +375,7 @@ func (p *cteProducer) computeSeedPart(ctx context.Context) (err error) {
 func (p *cteProducer) computeRecursivePart(ctx context.Context) (err error) {
 	defer func() {
 		if r := recover(); r != nil && err == nil {
-			err = errors.Errorf("%v", r)
+			err = util.GetRecoverError(r)
 		}
 	}()
 	failpoint.Inject("testCTERecursivePanic", nil)
@@ -416,7 +417,7 @@ func (p *cteProducer) computeRecursivePart(ctx context.Context) (err error) {
 			if err = p.recursiveExec.Close(); err != nil {
 				return
 			}
-			if err = p.recursiveExec.Open(ctx); err != nil {
+			if err = exec.Open(ctx, p.recursiveExec); err != nil {
 				return
 			}
 		} else {
@@ -633,13 +634,10 @@ func (p *cteProducer) checkHasDup(probeKey uint64,
 	curChk *chunk.Chunk,
 	storage cteutil.Storage,
 	hashTbl baseHashTable) (hasDup bool, err error) {
-	ptrs := hashTbl.Get(probeKey)
+	entry := hashTbl.Get(probeKey)
 
-	if len(ptrs) == 0 {
-		return false, nil
-	}
-
-	for _, ptr := range ptrs {
+	for ; entry != nil; entry = entry.next {
+		ptr := entry.ptr
 		var matchedRow chunk.Row
 		if curChk != nil {
 			matchedRow = curChk.GetRow(int(ptr.RowIdx))

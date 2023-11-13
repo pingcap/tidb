@@ -78,7 +78,7 @@ func TestFetchShowBRIE(t *testing.T) {
 	p.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
 	stmt, err := p.ParseOneStmt("show backups", "", "")
 	require.NoError(t, err)
-	plan, _, err := core.BuildLogicalPlanForTest(ctx, sctx, stmt, infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable(), core.MockView()}))
+	plan, err := core.BuildLogicalPlanForTest(ctx, sctx, stmt, infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable(), core.MockView()}))
 	require.NoError(t, err)
 	schema := plan.Schema()
 
@@ -87,7 +87,7 @@ func TestFetchShowBRIE(t *testing.T) {
 		BaseExecutor: exec.NewBaseExecutor(sctx, schema, 0),
 		Tp:           ast.ShowBackups,
 	}
-	require.NoError(t, e.Open(ctx))
+	require.NoError(t, exec.Open(ctx, e))
 
 	tp := mysql.TypeDatetime
 	lateTime := types.NewTime(types.FromGoTime(time.Now().Add(-outdatedDuration.Duration+1)), tp, 0)

@@ -96,9 +96,12 @@ func NewHelper(store Storage) *Helper {
 	}
 }
 
-// GetMvccByEncodedKey get the MVCC value by the specific encoded key.
-func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyResponse, error) {
-	bo := tikv.NewBackofferWithVars(context.Background(), 5000, nil)
+// MaxBackoffTimeoutForMvccGet is a derived value from previous implementation possible experiencing value 5000ms.
+const MaxBackoffTimeoutForMvccGet = 5000
+
+// GetMvccByEncodedKeyWithTS get the MVCC value by the specific encoded key, if lock is encountered it would be resolved.
+func (h *Helper) GetMvccByEncodedKeyWithTS(encodedKey kv.Key, startTS uint64) (*kvrpcpb.MvccGetByKeyResponse, error) {
+	bo := tikv.NewBackofferWithVars(context.Background(), MaxBackoffTimeoutForMvccGet, nil)
 	tikvReq := tikvrpc.NewRequest(tikvrpc.CmdMvccGetByKey, &kvrpcpb.MvccGetByKeyRequest{Key: encodedKey})
 	for {
 		keyLocation, err := h.RegionCache.LocateKey(bo, encodedKey)
@@ -107,7 +110,7 @@ func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyRe
 		}
 		kvResp, err := h.Store.SendReq(bo, tikvReq, keyLocation.Region, time.Minute)
 		if err != nil {
-			logutil.BgLogger().Info("get MVCC by encoded key failed",
+			logutil.BgLogger().Warn("get MVCC by encoded key failed",
 				zap.Stringer("encodeKey", encodedKey),
 				zap.Reflect("region", keyLocation.Region),
 				zap.Stringer("keyLocation", keyLocation),
@@ -115,6 +118,7 @@ func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyRe
 				zap.Error(err))
 			return nil, errors.Trace(err)
 		}
+
 		regionErr, err := kvResp.GetRegionError()
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -125,9 +129,10 @@ func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyRe
 			}
 			continue
 		}
+
 		mvccResp := kvResp.Resp.(*kvrpcpb.MvccGetByKeyResponse)
 		if errMsg := mvccResp.GetError(); errMsg != "" {
-			logutil.BgLogger().Info("get MVCC by encoded key failed",
+			logutil.BgLogger().Warn("get MVCC by encoded key failed",
 				zap.Stringer("encodeKey", encodedKey),
 				zap.Reflect("region", keyLocation.Region),
 				zap.Stringer("keyLocation", keyLocation),
@@ -135,8 +140,68 @@ func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyRe
 				zap.String("error", errMsg))
 			return nil, errors.New(errMsg)
 		}
+		if mvccResp.Info == nil {
+			errMsg := "Invalid mvcc response result, the info field is nil"
+			logutil.BgLogger().Warn(errMsg,
+				zap.Stringer("encodeKey", encodedKey),
+				zap.Reflect("region", keyLocation.Region),
+				zap.Stringer("keyLocation", keyLocation),
+				zap.Reflect("kvResp", kvResp))
+			return nil, errors.New(errMsg)
+		}
+
+		// Try to resolve the lock and retry mvcc get again if the input startTS is a valid value.
+		if startTS > 0 && mvccResp.Info.GetLock() != nil {
+			latestTS, err := h.Store.GetOracle().GetLowResolutionTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+			if err != nil {
+				logutil.BgLogger().Warn("Failed to get latest ts", zap.Error(err))
+				return nil, err
+			}
+			if startTS > latestTS {
+				errMsg := fmt.Sprintf("Snapshot ts=%v is larger than latest allocated ts=%v, lock could not be resolved",
+					startTS, latestTS)
+				logutil.BgLogger().Warn(errMsg)
+				return nil, errors.New(errMsg)
+			}
+			lockInfo := mvccResp.Info.GetLock()
+			lock := &txnlock.Lock{
+				Key:             []byte(encodedKey),
+				Primary:         lockInfo.GetPrimary(),
+				TxnID:           lockInfo.GetStartTs(),
+				TTL:             lockInfo.GetTtl(),
+				TxnSize:         lockInfo.GetTxnSize(),
+				LockType:        lockInfo.GetType(),
+				UseAsyncCommit:  lockInfo.GetUseAsyncCommit(),
+				LockForUpdateTS: lockInfo.GetForUpdateTs(),
+			}
+			// Disable for read to avoid async resolve.
+			resolveLocksOpts := txnlock.ResolveLocksOptions{
+				CallerStartTS: startTS,
+				Locks:         []*txnlock.Lock{lock},
+				Lite:          true,
+				ForRead:       false,
+				Detail:        nil,
+			}
+			resolveLockRes, err := h.Store.GetLockResolver().ResolveLocksWithOpts(bo, resolveLocksOpts)
+			if err != nil {
+				return nil, err
+			}
+			msBeforeExpired := resolveLockRes.TTL
+			if msBeforeExpired > 0 {
+				if err = bo.BackoffWithCfgAndMaxSleep(tikv.BoTxnLock(), int(msBeforeExpired),
+					errors.Errorf("resolve lock fails lock: %v", lock)); err != nil {
+					return nil, err
+				}
+			}
+			continue
+		}
 		return mvccResp, nil
 	}
+}
+
+// GetMvccByEncodedKey get the MVCC value by the specific encoded key.
+func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyResponse, error) {
+	return h.GetMvccByEncodedKeyWithTS(encodedKey, 0)
 }
 
 // MvccKV wraps the key's mvcc info in tikv.
@@ -815,7 +880,7 @@ func (h *Helper) GetRegionsInfoByRange(sk, ek []byte) (*RegionsInfo, error) {
 // GetRegionByKey gets regioninfo by key
 func (h *Helper) GetRegionByKey(k []byte) (*RegionInfo, error) {
 	var regionInfo RegionInfo
-	err := h.requestPD("GetRegionByKey", "GET", fmt.Sprintf("%v/%v", pdapi.RegionKey, url.QueryEscape(string(k))), nil, &regionInfo)
+	err := h.requestPD("GetRegionByKey", "GET", fmt.Sprintf("%v/%v", pdapi.RegionByKey, url.QueryEscape(string(k))), nil, &regionInfo)
 	return &regionInfo, err
 }
 
@@ -992,11 +1057,13 @@ func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats, noIndexSt
 	startKey = codec.EncodeBytes([]byte{}, startKey)
 	endKey = codec.EncodeBytes([]byte{}, endKey)
 
-	statURL := fmt.Sprintf("%s://%s/pd/api/v1/stats/region?start_key=%s&end_key=%s",
+	statURL := fmt.Sprintf("%s://%s%s",
 		util.InternalHTTPSchema(),
 		pdAddrs[0],
-		url.QueryEscape(string(startKey)),
-		url.QueryEscape(string(endKey)))
+		pdapi.RegionStatsByStartEndKey(
+			url.QueryEscape(string(startKey)),
+			url.QueryEscape(string(endKey)),
+		))
 
 	resp, err := util.InternalHTTPClient().Get(statURL)
 	if err != nil {
@@ -1026,9 +1093,10 @@ func (h *Helper) DeletePlacementRule(group string, ruleID string) error {
 		return errors.Trace(err)
 	}
 
-	deleteURL := fmt.Sprintf("%s://%s/pd/api/v1/config/rule/%v/%v",
+	deleteURL := fmt.Sprintf("%s://%s%s/%v/%v",
 		util.InternalHTTPSchema(),
 		pdAddrs[0],
+		pdapi.PlacementRule,
 		group,
 		ruleID,
 	)
@@ -1061,9 +1129,10 @@ func (h *Helper) SetPlacementRule(rule placement.Rule) error {
 	}
 	m, _ := json.Marshal(rule)
 
-	postURL := fmt.Sprintf("%s://%s/pd/api/v1/config/rule",
+	postURL := fmt.Sprintf("%s://%s%s",
 		util.InternalHTTPSchema(),
 		pdAddrs[0],
+		pdapi.PlacementRule,
 	)
 	buf := bytes.NewBuffer(m)
 	resp, err := util.InternalHTTPClient().Post(postURL, "application/json", buf)
@@ -1088,9 +1157,10 @@ func (h *Helper) GetGroupRules(group string) ([]placement.Rule, error) {
 		return nil, errors.Trace(err)
 	}
 
-	getURL := fmt.Sprintf("%s://%s/pd/api/v1/config/rules/group/%s",
+	getURL := fmt.Sprintf("%s://%s%s/%s",
 		util.InternalHTTPSchema(),
 		pdAddrs[0],
+		pdapi.PlacementRulesGroup,
 		group,
 	)
 
@@ -1134,9 +1204,10 @@ func (h *Helper) PostAccelerateSchedule(tableID int64) error {
 	startKey = codec.EncodeBytes([]byte{}, startKey)
 	endKey = codec.EncodeBytes([]byte{}, endKey)
 
-	postURL := fmt.Sprintf("%s://%s/pd/api/v1/regions/accelerate-schedule",
+	postURL := fmt.Sprintf("%s://%s%s",
 		util.InternalHTTPSchema(),
-		pdAddrs[0])
+		pdAddrs[0],
+		pdapi.AccelerateSchedule)
 
 	input := map[string]string{
 		"start_key": url.QueryEscape(string(startKey)),

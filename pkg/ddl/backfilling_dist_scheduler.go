@@ -47,11 +47,11 @@ type BackfillGlobalMeta struct {
 
 // BackfillSubTaskMeta is the sub-task meta for backfilling index.
 type BackfillSubTaskMeta struct {
-	PhysicalTableID int64  `json:"physical_table_id"`
-	StartKey        []byte `json:"start_key"`
-	EndKey          []byte `json:"end_key"`
+	PhysicalTableID int64 `json:"physical_table_id"`
 
 	RangeSplitKeys        [][]byte `json:"range_split_keys"`
+	DataFiles             []string `json:"data-files"`
+	StatFiles             []string `json:"stat-files"`
 	external.SortedKVMeta `json:",inline"`
 }
 
@@ -65,7 +65,7 @@ func NewBackfillSubtaskExecutor(_ context.Context, taskMeta []byte, d *ddl,
 	}
 	jobMeta := &bgm.Job
 
-	_, tbl, err := d.getTableByTxn(d.store, jobMeta.SchemaID, jobMeta.TableID)
+	_, tbl, err := d.getTableByTxn((*asAutoIDRequirement)(d.ddlCtx), jobMeta.SchemaID, jobMeta.TableID)
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +93,7 @@ func NewBackfillSubtaskExecutor(_ context.Context, taskMeta []byte, d *ddl,
 		if len(bgm.CloudStorageURI) > 0 {
 			return newCloudImportExecutor(&bgm.Job, jobMeta.ID, indexInfos[0], tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)
 		}
-		return newImportFromLocalStepExecutor(jobMeta.ID, indexInfos, tbl.(table.PhysicalTable), bc), nil
+		return nil, errors.Errorf("local import does not have write & ingest step")
 	default:
 		return nil, errors.Errorf("unknown step %d for job %d", stage, jobMeta.ID)
 	}
@@ -132,7 +132,7 @@ func (s *backfillDistScheduler) Init(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	job := &bgm.Job
-	_, tbl, err := d.getTableByTxn(d.store, job.SchemaID, job.TableID)
+	_, tbl, err := d.getTableByTxn((*asAutoIDRequirement)(d.ddlCtx), job.SchemaID, job.TableID)
 	if err != nil {
 		return errors.Trace(err)
 	}

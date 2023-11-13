@@ -37,7 +37,7 @@ var _ dispatcher.Extension = (*testDynamicDispatcherExt)(nil)
 
 func (*testDynamicDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {}
 
-func (dsp *testDynamicDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ proto.Step) (metas [][]byte, err error) {
+func (dsp *testDynamicDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
 	// step1
 	if gTask.Step == proto.StepInit {
 		dsp.cnt++
@@ -61,7 +61,7 @@ func (*testDynamicDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.Task
 	return nil, nil
 }
 
-func (dsp *testDynamicDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *proto.Task) proto.Step {
+func (dsp *testDynamicDispatcherExt) GetNextStep(task *proto.Task) proto.Step {
 	switch task.Step {
 	case proto.StepInit:
 		return proto.StepOne
@@ -72,7 +72,7 @@ func (dsp *testDynamicDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *
 	}
 }
 
-func (*testDynamicDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+func (*testDynamicDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
 	return generateSchedulerNodes4Test()
 }
 

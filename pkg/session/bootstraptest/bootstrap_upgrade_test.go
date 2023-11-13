@@ -605,22 +605,28 @@ func TestUpgradeVersionForResumeJob(t *testing.T) {
 
 	wg.Wait()
 	// Make sure the second add index operation is successful.
-	sql := fmt.Sprintf("select job_meta from mysql.tidb_ddl_history where job_id=%d or job_id=%d order by job_id", jobID, jobID+1)
+	sql := fmt.Sprintf("select job_meta from mysql.tidb_ddl_history where job_id >=%d order by job_id", jobID)
 	rows, err := execute(context.Background(), seLatestV, sql)
 	require.NoError(t, err)
-	require.Len(t, rows, 2)
+	require.GreaterOrEqual(t, len(rows), 2)
 	var idxFinishTS uint64
 	for i, row := range rows {
 		jobBinary := row.GetBytes(0)
 		runJob := model.Job{}
 		err := runJob.Decode(jobBinary)
 		require.NoError(t, err)
-		require.True(t, strings.Contains(runJob.TableName, "upgrade_tbl"))
 		require.Equal(t, model.JobStateSynced.String(), runJob.State.String())
 		if i == 0 {
+			// The first add index op.
 			idxFinishTS = runJob.BinlogInfo.FinishedTS
 		} else {
-			require.Greater(t, runJob.BinlogInfo.FinishedTS, idxFinishTS)
+			// The second add index op.
+			if strings.Contains(runJob.TableName, "upgrade_tbl") {
+				require.Greater(t, runJob.BinlogInfo.FinishedTS, idxFinishTS)
+			} else {
+				// The upgrade DDL ops. These jobs' finishedTS must less than add index ops.
+				require.Less(t, runJob.BinlogInfo.FinishedTS, idxFinishTS)
+			}
 		}
 	}
 }

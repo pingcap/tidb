@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
 
@@ -236,7 +237,7 @@ func TestTSOFail(t *testing.T) {
 }
 
 func TestKillTableReader(t *testing.T) {
-	var retry = "github.com/tikv/client-go/v2/locate/mockRetrySendReqToRegion"
+	var retry = "tikvclient/mockRetrySendReqToRegion"
 	defer func() {
 		require.NoError(t, failpoint.Disable(retry))
 	}()
@@ -248,18 +249,18 @@ func TestKillTableReader(t *testing.T) {
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("insert into t values (1),(2),(3)")
 	tk.MustExec("set @@tidb_distsql_scan_concurrency=1")
-	atomic.StoreUint32(&tk.Session().GetSessionVars().Killed, 0)
+	tk.Session().GetSessionVars().SQLKiller.Reset()
 	require.NoError(t, failpoint.Enable(retry, `return(true)`))
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		time.Sleep(1 * time.Second)
-		err := tk.QueryToErr("select * from t")
-		require.Error(t, err)
-		require.Equal(t, int(exeerrors.ErrQueryInterrupted.Code()), int(terror.ToSQLError(errors.Cause(err).(*terror.Error)).Code))
+		time.Sleep(300 * time.Millisecond)
+		tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 	}()
-	atomic.StoreUint32(&tk.Session().GetSessionVars().Killed, 1)
+	err := tk.QueryToErr("select * from t")
+	require.Error(t, err)
+	require.Equal(t, int(exeerrors.ErrQueryInterrupted.Code()), int(terror.ToSQLError(errors.Cause(err).(*terror.Error)).Code))
 	wg.Wait()
 }
 

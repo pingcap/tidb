@@ -50,6 +50,7 @@ package expression
 
 import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -63,7 +64,7 @@ import (
 			continue
 		}{{ end }}
 		sc := b.ctx.GetSessionVars().StmtCtx
-		arg1Duration, _, err := types.ParseDuration(sc, arg1, {{if eq .Output.TypeName "String"}}getFsp4TimeAddSub{{else}}types.GetFsp{{end}}(arg1))
+		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, {{if eq .Output.TypeName "String"}}getFsp4TimeAddSub{{else}}types.GetFsp{{end}}(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
 				sc.AppendWarning(err)
@@ -76,7 +77,7 @@ import (
 
 {{ range .Sigs }}
 {{ if .AllNull}}
-func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result *chunk.Column) error {
+func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	{{ if .Output.Fixed }}
 	result.Resize{{ .Output.TypeNameInColumn }}(n, true)
@@ -87,7 +88,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 	return nil
 }
 {{ else }}
-func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result *chunk.Column) error {
+func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 {{ $reuse := (and (eq .TypeA.TypeName .Output.TypeName) .TypeA.Fixed) }}
 {{ if $reuse }}
@@ -171,11 +172,11 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 		// calculate
 	{{ if or (eq .SigName "builtinAddDatetimeAndDurationSig") (eq .SigName "builtinSubDatetimeAndDurationSig") }}
 		{{ if eq $.FuncName "AddTime" }}
-		output, err := arg0.Add(b.ctx.GetSessionVars().StmtCtx, types.Duration{Duration: arg1, Fsp: -1})
+		output, err := arg0.Add(b.ctx.GetSessionVars().StmtCtx.TypeCtx(), types.Duration{Duration: arg1, Fsp: -1})
 		{{ else }}
 		sc := b.ctx.GetSessionVars().StmtCtx
 		arg1Duration := types.Duration{Duration: arg1, Fsp: -1}
-		output, err := arg0.Add(sc, arg1Duration.Neg())
+		output, err := arg0.Add(sc.TypeCtx(), arg1Duration.Neg())
 		{{ end }}
 		if err != nil {
 			return err
@@ -184,14 +185,14 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 	{{ else if or (eq .SigName "builtinAddDatetimeAndStringSig") (eq .SigName "builtinSubDatetimeAndStringSig") }}
 		{{ if eq $.FuncName "AddTime" }}
 		{{ template "ConvertStringToDuration" . }}
-		output, err := arg0.Add(sc, arg1Duration)
+		output, err := arg0.Add(sc.TypeCtx(), arg1Duration)
 		{{ else }}
 		if !isDuration(arg1) {
 			result.SetNull(i, true) // fixed: true
 			continue
 		}
 		sc := b.ctx.GetSessionVars().StmtCtx
-		arg1Duration, _, err := types.ParseDuration(sc, arg1, types.GetFsp(arg1))
+		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, types.GetFsp(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
 				sc.AppendWarning(err)
@@ -200,7 +201,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 			}
 			return err
 		}
-		output, err := arg0.Add(sc, arg1Duration.Neg())
+		output, err := arg0.Add(sc.TypeCtx(), arg1Duration.Neg())
 		{{ end }}
 		if err != nil {
 			return err
@@ -378,7 +379,7 @@ var timeDiff = template.Must(template.New("").Parse(`
 {{ $reuseB := (eq .TypeB.TypeName "Duration") }}
 {{ $reuse  := (or $reuseA $reuseB ) }}
 {{ $noNull := (ne .SigName "builtinNullTimeDiffSig") }}
-func (b *{{.SigName}}) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+func (b *{{.SigName}}) vecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	{{- if not $noNull }}
 	result.ResizeGoDuration(n, true)

@@ -16,13 +16,11 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"runtime/trace"
 	"slices"
 	"sync"
 	"sync/atomic"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -31,6 +29,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/channel"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -158,7 +157,7 @@ type indexMergeJoinResult struct {
 
 // Open implements the Executor interface
 func (e *IndexLookUpMergeJoin) Open(ctx context.Context) error {
-	err := e.Children(0).Open(ctx)
+	err := exec.Open(ctx, e.Children(0))
 	if err != nil {
 		return err
 	}
@@ -296,7 +295,7 @@ func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 	defer func() {
 		if r := recover(); r != nil {
 			task := &lookUpMergeJoinTask{
-				doneErr: fmt.Errorf("%v", r),
+				doneErr: util.GetRecoverError(r),
 				results: make(chan *indexMergeJoinResult, numResChkHold),
 			}
 			close(task.results)
@@ -395,7 +394,7 @@ func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 		wg.Done()
 		if r := recover(); r != nil {
 			if task != nil {
-				task.doneErr = errors.Errorf("%v", r)
+				task.doneErr = util.GetRecoverError(r)
 				close(task.results)
 			}
 			logutil.Logger(ctx).Error("innerMergeWorker panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -672,7 +671,7 @@ func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, 
 			return nil, nil
 		}
 		innerColType := imw.rowTypes[imw.keyCols[i]]
-		innerValue, err := outerValue.ConvertTo(sc, innerColType)
+		innerValue, err := outerValue.ConvertTo(sc.TypeCtx(), innerColType)
 		if err != nil {
 			// If the converted outerValue overflows, we don't need to lookup it.
 			if terror.ErrorEqual(err, types.ErrOverflow) || terror.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
@@ -683,7 +682,7 @@ func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, 
 			}
 			return nil, err
 		}
-		cmp, err := outerValue.Compare(sc, &innerValue, imw.keyCollators[i])
+		cmp, err := outerValue.Compare(sc.TypeCtx(), &innerValue, imw.keyCollators[i])
 		if err != nil {
 			return nil, err
 		}

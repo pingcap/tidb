@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/vecgroupchecker"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/channel"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -106,7 +107,7 @@ type shuffleOutput struct {
 // Open implements the Executor Open interface.
 func (e *ShuffleExec) Open(ctx context.Context) error {
 	for _, s := range e.dataSources {
-		if err := s.Open(ctx); err != nil {
+		if err := exec.Open(ctx, s); err != nil {
 			return err
 		}
 	}
@@ -129,7 +130,7 @@ func (e *ShuffleExec) Open(ctx context.Context) error {
 		w.outputCh = e.outputCh
 		w.outputHolderCh = make(chan *chunk.Chunk, 1)
 
-		if err := w.childExec.Open(ctx); err != nil {
+		if err := exec.Open(ctx, w.childExec); err != nil {
 			return err
 		}
 
@@ -254,8 +255,8 @@ func (e *ShuffleExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func recoveryShuffleExec(output chan *shuffleOutput, r interface{}) {
-	err := errors.Errorf("%v", r)
-	output <- &shuffleOutput{err: errors.Errorf("%v", r)}
+	err := util.GetRecoverError(r)
+	output <- &shuffleOutput{err: util.GetRecoverError(r)}
 	logutil.BgLogger().Error("shuffle panicked", zap.Error(err), zap.Stack("stack"))
 }
 

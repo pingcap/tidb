@@ -991,6 +991,13 @@ func (ds *DataSource) isPointGetConvertableSchema() bool {
 	return true
 }
 
+// exploreEnforcedPlan determines whether to explore enforced plans for this DataSource if it has already found an unenforced plan.
+// See #46177 for more information.
+func (ds *DataSource) exploreEnforcedPlan() bool {
+	// default value is false to keep it compatible with previous versions.
+	return fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix46177, false)
+}
+
 // findBestTask implements the PhysicalPlan interface.
 // It will enumerate all the available indices and choose a plan with least cost.
 func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (t task, cntPlan int64, err error) {
@@ -1031,23 +1038,25 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		return
 	}
 	var cnt int64
+	var unenforcedTask task
 	// If prop.CanAddEnforcer is true, the prop.SortItems need to be set nil for ds.findBestTask.
 	// Before function return, reset it for enforcing task prop and storing map<prop,task>.
 	oldProp := prop.CloneEssentialFields()
 	if prop.CanAddEnforcer {
 		// First, get the bestTask without enforced prop
 		prop.CanAddEnforcer = false
-		t, cnt, err = ds.findBestTask(prop, planCounter, opt)
+		unenforcedTask, cnt, err = ds.findBestTask(prop, planCounter, opt)
 		if err != nil {
 			return nil, 0, err
 		}
-		prop.CanAddEnforcer = true
-		if t != invalidTask {
-			ds.storeTask(prop, t)
-			cntPlan = cnt
-			return
+		if !unenforcedTask.invalid() && !ds.exploreEnforcedPlan() {
+			ds.storeTask(prop, unenforcedTask)
+			return unenforcedTask, cnt, nil
 		}
-		// Next, get the bestTask with enforced prop
+
+		// Then, explore the bestTask with enforced prop
+		prop.CanAddEnforcer = true
+		cntPlan += cnt
 		prop.SortItems = []property.SortItem{}
 		prop.MPPPartitionTp = property.AnyType
 	} else if prop.MPPPartitionTp != property.AnyType {
@@ -1062,13 +1071,20 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			t = enforceProperty(prop, t, ds.Plan.SCtx())
 			prop.CanAddEnforcer = true
 		}
-		ds.storeTask(prop, t)
-		if ds.SampleInfo != nil && !t.invalid() {
-			if _, ok := t.plan().(*PhysicalTableSample); !ok {
-				warning := expression.ErrInvalidTableSample.GenWithStackByArgs("plan not supported")
-				ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
+
+		if unenforcedTask != nil && !unenforcedTask.invalid() {
+			curIsBest, cerr := compareTaskCost(ds.SCtx(), unenforcedTask, t, opt)
+			if cerr != nil {
+				err = cerr
+				return
+			}
+			if curIsBest {
+				t = unenforcedTask
 			}
 		}
+
+		ds.storeTask(prop, t)
+		err = validateTableSamplePlan(ds, t, err)
 	}()
 
 	t, err = ds.tryToGetDualTask()
@@ -2222,10 +2238,8 @@ func (ds *DataSource) convertToSampleTable(prop *property.PhysicalProperty,
 		return invalidTask, nil
 	}
 	if candidate.isMatchProp {
-		// TableSample on partition table can't keep order.
-		if ds.tableInfo.GetPartitionInfo() != nil {
-			return invalidTask, nil
-		}
+		// Disable keep order property for sample table path.
+		return invalidTask, nil
 	}
 	p := PhysicalTableSample{
 		TableSampleInfo: ds.SampleInfo,
@@ -2596,4 +2610,16 @@ func pushDownNot(ctx sessionctx.Context, conds []expression.Expression) []expres
 		conds[i] = expression.PushDownNot(ctx, cond)
 	}
 	return conds
+}
+
+func validateTableSamplePlan(ds *DataSource, t task, err error) error {
+	if err != nil {
+		return err
+	}
+	if ds.SampleInfo != nil && !t.invalid() {
+		if _, ok := t.plan().(*PhysicalTableSample); !ok {
+			return expression.ErrInvalidTableSample.GenWithStackByArgs("plan not supported")
+		}
+	}
+	return nil
 }

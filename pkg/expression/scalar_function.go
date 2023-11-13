@@ -47,37 +47,37 @@ type ScalarFunction struct {
 
 // VecEvalInt evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
-	return sf.Function.vecEvalInt(input, result)
+	return sf.Function.vecEvalInt(ctx, input, result)
 }
 
 // VecEvalReal evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
-	return sf.Function.vecEvalReal(input, result)
+	return sf.Function.vecEvalReal(ctx, input, result)
 }
 
 // VecEvalString evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
-	return sf.Function.vecEvalString(input, result)
+	return sf.Function.vecEvalString(ctx, input, result)
 }
 
 // VecEvalDecimal evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
-	return sf.Function.vecEvalDecimal(input, result)
+	return sf.Function.vecEvalDecimal(ctx, input, result)
 }
 
 // VecEvalTime evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
-	return sf.Function.vecEvalTime(input, result)
+	return sf.Function.vecEvalTime(ctx, input, result)
 }
 
 // VecEvalDuration evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
-	return sf.Function.vecEvalDuration(input, result)
+	return sf.Function.vecEvalDuration(ctx, input, result)
 }
 
 // VecEvalJSON evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
-	return sf.Function.vecEvalJSON(input, result)
+	return sf.Function.vecEvalJSON(ctx, input, result)
 }
 
 // GetArgs gets arguments of function.
@@ -347,7 +347,7 @@ func (sf *ScalarFunction) Equal(ctx sessionctx.Context, e Expression) bool {
 	if sf.FuncName.L != fun.FuncName.L {
 		return false
 	}
-	return sf.Function.equal(fun.Function)
+	return sf.Function.equal(ctx, fun.Function)
 }
 
 // IsCorrelated implements Expression interface.
@@ -440,37 +440,37 @@ func (sf *ScalarFunction) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64,
 	if f, ok := sf.Function.(builtinFuncNew); ok {
 		return f.evalIntWithCtx(ctx, row)
 	}
-	return sf.Function.evalInt(row)
+	return sf.Function.evalInt(ctx, row)
 }
 
 // EvalReal implements Expression interface.
 func (sf *ScalarFunction) EvalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
-	return sf.Function.evalReal(row)
+	return sf.Function.evalReal(ctx, row)
 }
 
 // EvalDecimal implements Expression interface.
 func (sf *ScalarFunction) EvalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.MyDecimal, bool, error) {
-	return sf.Function.evalDecimal(row)
+	return sf.Function.evalDecimal(ctx, row)
 }
 
 // EvalString implements Expression interface.
 func (sf *ScalarFunction) EvalString(ctx sessionctx.Context, row chunk.Row) (string, bool, error) {
-	return sf.Function.evalString(row)
+	return sf.Function.evalString(ctx, row)
 }
 
 // EvalTime implements Expression interface.
 func (sf *ScalarFunction) EvalTime(ctx sessionctx.Context, row chunk.Row) (types.Time, bool, error) {
-	return sf.Function.evalTime(row)
+	return sf.Function.evalTime(ctx, row)
 }
 
 // EvalDuration implements Expression interface.
 func (sf *ScalarFunction) EvalDuration(ctx sessionctx.Context, row chunk.Row) (types.Duration, bool, error) {
-	return sf.Function.evalDuration(row)
+	return sf.Function.evalDuration(ctx, row)
 }
 
 // EvalJSON implements Expression interface.
 func (sf *ScalarFunction) EvalJSON(ctx sessionctx.Context, row chunk.Row) (types.BinaryJSON, bool, error) {
-	return sf.Function.evalJSON(row)
+	return sf.Function.evalJSON(ctx, row)
 }
 
 // HashCode implements Expression interface.

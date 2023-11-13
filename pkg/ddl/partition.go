@@ -866,7 +866,7 @@ func getLowerBoundInt(partCols ...*model.ColumnInfo) int64 {
 		if mysql.HasUnsignedFlag(col.FieldType.GetFlag()) {
 			return 0
 		}
-		ret = mathutil.Min(ret, types.IntergerSignedLowerBound(col.GetType()))
+		ret = min(ret, types.IntergerSignedLowerBound(col.GetType()))
 	}
 	return ret
 }
@@ -1097,7 +1097,7 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 		if err != nil {
 			return err
 		}
-		cmp, err := currVal.Compare(ctx.GetSessionVars().StmtCtx, &lastVal, collate.GetBinaryCollator())
+		cmp, err := currVal.Compare(ctx.GetSessionVars().StmtCtx.TypeCtx(), &lastVal, collate.GetBinaryCollator())
 		if err != nil {
 			return err
 		}
@@ -1427,7 +1427,7 @@ func checkPartitionValuesIsInt(ctx sessionctx.Context, defName interface{}, expr
 			return dbterror.ErrValuesIsNotIntType.GenWithStackByArgs(defName)
 		}
 
-		_, err = val.ConvertTo(ctx.GetSessionVars().StmtCtx, tp)
+		_, err = val.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), tp)
 		if err != nil && !types.ErrOverflow.Equal(err) {
 			return dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
 		}
@@ -2011,7 +2011,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 	case model.StateDeleteReorganization:
 		oldTblInfo := getTableInfoWithDroppingPartitions(tblInfo)
 		physicalTableIDs = getPartitionIDsFromDefinitions(tblInfo.Partition.DroppingDefinitions)
-		tbl, err := getTable(d.store, job.SchemaID, oldTblInfo)
+		tbl, err := getTable((*asAutoIDRequirement)(d), job.SchemaID, oldTblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -2198,7 +2198,7 @@ func (w *worker) onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		physicalTableIDs := oldIDs
 		oldTblInfo := getTableInfoWithOriginalPartitions(tblInfo, oldIDs, newIDs)
 
-		tbl, err := getTable(d.store, job.SchemaID, oldTblInfo)
+		tbl, err := getTable((*asAutoIDRequirement)(d), job.SchemaID, oldTblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -2510,11 +2510,11 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 
 	if withValidation {
-		ntbl, err := getTable(d.store, job.SchemaID, nt)
+		ntbl, err := getTable((*asAutoIDRequirement)(d), job.SchemaID, nt)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		ptbl, err := getTable(d.store, ptSchemaID, pt)
+		ptbl, err := getTable((*asAutoIDRequirement)(d), ptSchemaID, pt)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -2885,7 +2885,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		job.SchemaState = model.StateWriteReorganization
 	case model.StateWriteReorganization:
 		physicalTableIDs := getPartitionIDsFromDefinitions(tblInfo.Partition.DroppingDefinitions)
-		tbl, err2 := getTable(d.store, job.SchemaID, tblInfo)
+		tbl, err2 := getTable((*asAutoIDRequirement)(d), job.SchemaID, tblInfo)
 		if err2 != nil {
 			return ver, errors.Trace(err2)
 		}
@@ -3593,10 +3593,9 @@ func buildCheckSQLConditionForRangeColumnsPartition(pi *model.PartitionInfo, ind
 	} else if index == len(pi.Definitions)-1 && strings.EqualFold(pi.Definitions[index].LessThan[0], partitionMaxValue) {
 		paramList = append(paramList, colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index-1].LessThan[0]))
 		return "%n < %?", paramList
-	} else {
-		paramList = append(paramList, colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index-1].LessThan[0]), colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index].LessThan[0]))
-		return "%n < %? or %n >= %?", paramList
 	}
+	paramList = append(paramList, colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index-1].LessThan[0]), colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index].LessThan[0]))
+	return "%n < %? or %n >= %?", paramList
 }
 
 func buildCheckSQLConditionForListPartition(pi *model.PartitionInfo, index int) string {

@@ -129,7 +129,7 @@ func TestInferType(t *testing.T) {
 		ret := &plannercore.PreprocessorReturn{}
 		err = plannercore.Preprocess(context.Background(), sctx, stmt, plannercore.WithPreprocessorReturn(ret))
 		require.NoError(t, err, comment)
-		p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmt, ret.InfoSchema)
+		p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmt, ret.InfoSchema)
 		require.NoError(t, err, comment)
 		tp := p.Schema().Columns[0].RetType
 		require.Equal(t, tt.tp, tp.GetType(), comment)
@@ -1042,10 +1042,16 @@ func (s *InferTypeSuite) createTestCase4EncryptionFuncs() []typeInferTestCase {
 
 func (s *InferTypeSuite) createTestCase4CompareFuncs() []typeInferTestCase {
 	return []typeInferTestCase{
-		{"coalesce(c_int_d, 1)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
-		{"coalesce(NULL, c_int_d)", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
-		{"coalesce(c_int_d, c_decimal)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 15, 3},
-		{"coalesce(c_int_d, c_datetime)", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 22, types.UnspecifiedLength},
+		{"coalesce(c_int_d, c_int_d)", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
+		{"coalesce(c_int_d, c_decimal)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"coalesce(c_int_d, c_char)", mysql.TypeString, charset.CharsetUTF8MB4, mysql.BinaryFlag, 20, types.UnspecifiedLength},
+		{"coalesce(c_int_d, c_binary)", mysql.TypeString, charset.CharsetBin, mysql.BinaryFlag, 20, types.UnspecifiedLength},
+		{"coalesce(c_char, c_binary)", mysql.TypeString, charset.CharsetBin, mysql.BinaryFlag, 20, types.UnspecifiedLength},
+		{"coalesce(null, null)", mysql.TypeNull, charset.CharsetBin, mysql.BinaryFlag, 0, 0},
+		{"coalesce(c_double_d, c_timestamp_d)", mysql.TypeVarchar, charset.CharsetUTF8MB4, 0, 22, types.UnspecifiedLength},
+		{"coalesce(c_json, c_decimal)", mysql.TypeLongBlob, charset.CharsetUTF8MB4, 0, math.MaxUint32, types.UnspecifiedLength},
+		{"coalesce(c_time, c_date)", mysql.TypeDatetime, charset.CharsetUTF8MB4, 0, mysql.MaxDatetimeWidthNoFsp + 3 + 1, 3},
+		{"coalesce(c_time_d, c_date)", mysql.TypeDatetime, charset.CharsetUTF8MB4, 0, mysql.MaxDatetimeWidthNoFsp, 0},
 
 		{"isnull(c_int_d      )", mysql.TypeLonglong, charset.CharsetBin, mysql.NotNullFlag | mysql.BinaryFlag | mysql.IsBooleanFlag, 1, 0},
 		{"isnull(c_bigint_d   )", mysql.TypeLonglong, charset.CharsetBin, mysql.NotNullFlag | mysql.BinaryFlag | mysql.IsBooleanFlag, 1, 0},

@@ -137,6 +137,28 @@ func TestResourceGroupBasic(t *testing.T) {
 	}
 	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
 	checkFunc(g)
+	tk.MustGetErrCode("alter resource group y PRIORITY=hight", mysql.ErrParse)
+	tk.MustExec("alter resource group y PRIORITY=high")
+	checkFunc = func(groupInfo *model.ResourceGroupInfo) {
+		re.Equal(true, groupInfo.ID != 0)
+		re.Equal("y", groupInfo.Name.L)
+		re.Equal(groupID.Load(), groupInfo.ID)
+		re.Equal(uint64(4000), groupInfo.RURate)
+		re.Equal(int64(4000), groupInfo.BurstLimit)
+		re.Equal(uint64(16), groupInfo.Priority)
+	}
+	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
+	checkFunc(g)
+	tk.MustExec("alter resource group y RU_PER_SEC=6000")
+	checkFunc = func(groupInfo *model.ResourceGroupInfo) {
+		re.Equal(true, groupInfo.ID != 0)
+		re.Equal("y", groupInfo.Name.L)
+		re.Equal(groupID.Load(), groupInfo.ID)
+		re.Equal(uint64(6000), groupInfo.RURate)
+		re.Equal(int64(6000), groupInfo.BurstLimit)
+	}
+	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
+	checkFunc(g)
 	tk.MustExec("alter resource group y BURSTABLE RU_PER_SEC=5000 QUERY_LIMIT=(EXEC_ELAPSED='15s' ACTION KILL)")
 	checkFunc = func(groupInfo *model.ResourceGroupInfo) {
 		re.Equal(true, groupInfo.ID != 0)
@@ -150,7 +172,18 @@ func TestResourceGroupBasic(t *testing.T) {
 	}
 	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
 	checkFunc(g)
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 5000 MEDIUM YES EXEC_ELAPSED='15s', ACTION=KILL <nil>"))
+	tk.MustExec("alter resource group y RU_PER_SEC=6000 BURSTABLE=false")
+	checkFunc = func(groupInfo *model.ResourceGroupInfo) {
+		re.Equal(true, groupInfo.ID != 0)
+		re.Equal("y", groupInfo.Name.L)
+		re.Equal(groupID.Load(), groupInfo.ID)
+		re.Equal(uint64(6000), groupInfo.RURate)
+		re.Equal(int64(6000), groupInfo.BurstLimit)
+	}
+	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
+	checkFunc(g)
+	tk.MustExec("alter resource group y RU_PER_SEC=5000 BURSTABLE")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 5000 HIGH YES EXEC_ELAPSED='15s', ACTION=KILL <nil>"))
 	tk.MustExec("drop resource group y")
 	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
 	re.Nil(g)

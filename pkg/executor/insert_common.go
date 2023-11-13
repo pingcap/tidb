@@ -1368,7 +1368,7 @@ func (e *InsertValues) equalDatumsAsBinary(a []types.Datum, b []types.Datum) (bo
 		return false, nil
 	}
 	for i, ai := range a {
-		v, err := ai.Compare(e.Ctx().GetSessionVars().StmtCtx, &b[i], collate.GetBinaryCollator())
+		v, err := ai.Compare(e.Ctx().GetSessionVars().StmtCtx.TypeCtx(), &b[i], collate.GetBinaryCollator())
 		if err != nil {
 			return false, errors.Trace(err)
 		}

@@ -2529,6 +2529,62 @@ func TestIssue46298(t *testing.T) {
 	tk.MustQuery("select *, first_value(v) over (partition by p order by o range between 3.1 preceding and 2.9 following) as a from test.first_range;")
 }
 
+func TestIssue45044(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set tidb_enable_ordered_result_mode = on`)
+	tk.MustExec(`create table t1(c1 int)`)
+	tk.MustQuery(`select * from t1 group by t1.c1 having count(1) > 1 order by count(1) limit 10`).Check(testkit.Rows()) // no error
+}
+
+func TestIssue46177(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(` CREATE TABLE sbtest (
+  id int(10) unsigned NOT NULL AUTO_INCREMENT,
+  k int(10) unsigned NOT NULL DEFAULT '0',
+  c char(120) NOT NULL DEFAULT '',
+  pad char(60) NOT NULL DEFAULT '',
+  PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,
+  KEY k (k)
+)`)
+
+	// cannot choose the best plan with RangeScan.
+	tk.MustExec(`set @@tidb_opt_fix_control = '46177:off'`)
+	tk.MustQuery(`explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a`).Check(testkit.Rows(
+		`Projection 10.00 root  Column#6->Column#7`,
+		`└─Window 10.00 root  row_number()->Column#6 over(order by test.sbtest.k rows between current row and current row)`,
+		`  └─IndexReader 10.00 root  index:Selection`,
+		`    └─Selection 10.00 cop[tikv]  lt(test.sbtest.id, 10)`,
+		`      └─IndexFullScan 10000.00 cop[tikv] table:sbtest, index:k(k) keep order:true, stats:pseudo`))
+
+	tk.MustExec(`set @@tidb_opt_fix_control = '46177:on'`)
+	tk.MustQuery(`explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a`).Check(testkit.Rows(
+		`Projection 10.00 root  Column#6->Column#7`,
+		`└─Window 10.00 root  row_number()->Column#6 over(order by test.sbtest.k rows between current row and current row)`,
+		`  └─Sort 10.00 root  test.sbtest.k`,
+		`    └─TableReader 10.00 root  data:TableRangeScan`,
+		`      └─TableRangeScan 10.00 cop[tikv] table:sbtest range:[0,10), keep order:false, stats:pseudo`))
+
+	// cannot choose the range scan plan.
+	tk.MustExec(`set @@tidb_opt_fix_control = '46177:off'`)
+	tk.MustQuery(`explain format='brief' select /*+ stream_agg() */ count(1) from sbtest where id<1 group by k`).Check(testkit.Rows(
+		`StreamAgg 1.00 root  group by:test.sbtest.k, funcs:count(Column#6)->Column#5`,
+		`└─IndexReader 1.00 root  index:StreamAgg`,
+		`  └─StreamAgg 1.00 cop[tikv]  group by:test.sbtest.k, funcs:count(1)->Column#6`,
+		`    └─Selection 1.00 cop[tikv]  lt(test.sbtest.id, 1)`,
+		`      └─IndexFullScan 10000.00 cop[tikv] table:sbtest, index:k(k) keep order:true, stats:pseudo`))
+
+	tk.MustExec(`set @@tidb_opt_fix_control = '46177:on'`)
+	tk.MustQuery(`explain format='brief' select /*+ stream_agg() */ count(1) from sbtest where id<1 group by k`).Check(testkit.Rows(
+		`StreamAgg 1.00 root  group by:test.sbtest.k, funcs:count(1)->Column#5`,
+		`└─Sort 1.00 root  test.sbtest.k`,
+		`  └─TableReader 1.00 root  data:TableRangeScan`,
+		`    └─TableRangeScan 1.00 cop[tikv] table:sbtest range:[0,1), keep order:false, stats:pseudo`))
+}
+
 // https://github.com/pingcap/tidb/issues/41458
 func TestIssue41458(t *testing.T) {
 	store := testkit.CreateMockStore(t)

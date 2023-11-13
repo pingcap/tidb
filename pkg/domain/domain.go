@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/telemetry"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
@@ -84,6 +85,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/servermemorylimit"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
@@ -222,13 +224,16 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		infoschema_metrics.LoadSchemaDurationTotal.Observe(time.Since(beginTime).Seconds())
 	}()
 	snapshot := do.store.GetSnapshot(kv.NewVersion(startTS))
+	// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
+	// the meta region leader is slow.
+	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
 	m := meta.NewSnapshotMeta(snapshot)
 	neededSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
 		return nil, false, 0, nil, err
 	}
 	// fetch the commit timestamp of the schema diff
-	schemaTs, err := do.getTimestampForSchemaVersionWithNonEmptyDiff(m, neededSchemaVersion)
+	schemaTs, err := do.getTimestampForSchemaVersionWithNonEmptyDiff(m, neededSchemaVersion, startTS)
 	if err != nil {
 		logutil.BgLogger().Warn("failed to get schema version", zap.Error(err), zap.Int64("version", neededSchemaVersion))
 		schemaTs = 0
@@ -255,7 +260,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	// 4. No regenrated schema diff.
 	startTime := time.Now()
 	if currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < LoadSchemaDiffVersionGapThreshold {
-		is, relatedChanges, err := do.tryLoadSchemaDiffs(m, currentSchemaVersion, neededSchemaVersion)
+		is, relatedChanges, diffTypes, err := do.tryLoadSchemaDiffs(m, currentSchemaVersion, neededSchemaVersion)
 		if err == nil {
 			infoschema_metrics.LoadSchemaDurationLoadDiff.Observe(time.Since(startTime).Seconds())
 			do.infoCache.Insert(is, uint64(schemaTs))
@@ -265,7 +270,8 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 				zap.Duration("start time", time.Since(startTime)),
 				zap.Int64("gotSchemaVersion", is.SchemaMetaVersion()),
 				zap.Int64s("phyTblIDs", relatedChanges.PhyTblIDS),
-				zap.Uint64s("actionTypes", relatedChanges.ActionTypes))
+				zap.Uint64s("actionTypes", relatedChanges.ActionTypes),
+				zap.Strings("diffTypes", diffTypes))
 			return is, false, currentSchemaVersion, relatedChanges, nil
 		}
 		// We can fall back to full load, don't need to return the error.
@@ -287,7 +293,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
-	newISBuilder, err := infoschema.NewBuilder(do.Store(), do.sysFacHack).InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
+	newISBuilder, err := infoschema.NewBuilder(do, do.sysFacHack).InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -303,18 +309,18 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 }
 
 // Returns the timestamp of a schema version, which is the commit timestamp of the schema diff
-func (do *Domain) getTimestampForSchemaVersionWithNonEmptyDiff(m *meta.Meta, version int64) (int64, error) {
+func (do *Domain) getTimestampForSchemaVersionWithNonEmptyDiff(m *meta.Meta, version int64, startTS uint64) (int64, error) {
 	tikvStore, ok := do.Store().(helper.Storage)
 	if ok {
-		helper := helper.NewHelper(tikvStore)
-		data, err := helper.GetMvccByEncodedKey(m.EncodeSchemaDiffKey(version))
+		newHelper := helper.NewHelper(tikvStore)
+		mvccResp, err := newHelper.GetMvccByEncodedKeyWithTS(m.EncodeSchemaDiffKey(version), startTS)
 		if err != nil {
 			return 0, err
 		}
-		if data == nil || data.Info == nil || len(data.Info.Writes) == 0 {
+		if mvccResp == nil || mvccResp.Info == nil || len(mvccResp.Info.Writes) == 0 {
 			return 0, errors.Errorf("There is no Write MVCC info for the schema version")
 		}
-		return int64(data.Info.Writes[0].CommitTs), nil
+		return int64(mvccResp.Info.Writes[0].CommitTs), nil
 	}
 	return 0, errors.Errorf("cannot get store from domain")
 }
@@ -421,13 +427,13 @@ func (do *Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, 
 // Return true if the schema is loaded successfully.
 // Return false if the schema can not be loaded by schema diff, then we need to do full load.
 // The second returned value is the delta updated table and partition IDs.
-func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64) (infoschema.InfoSchema, *transaction.RelatedSchemaChange, error) {
+func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64) (infoschema.InfoSchema, *transaction.RelatedSchemaChange, []string, error) {
 	var diffs []*model.SchemaDiff
 	for usedVersion < newVersion {
 		usedVersion++
 		diff, err := m.GetSchemaDiff(usedVersion)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		if diff == nil {
 			// Empty diff means the txn of generating schema version is committed, but the txn of `runDDLJob` is not or fail.
@@ -436,21 +442,23 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		}
 		diffs = append(diffs, diff)
 	}
-	builder := infoschema.NewBuilder(do.Store(), do.sysFacHack).InitWithOldInfoSchema(do.infoCache.GetLatest())
+	builder := infoschema.NewBuilder(do, do.sysFacHack).InitWithOldInfoSchema(do.infoCache.GetLatest())
 	builder.SetDeltaUpdateBundles()
 	phyTblIDs := make([]int64, 0, len(diffs))
 	actions := make([]uint64, 0, len(diffs))
+	diffTypes := make([]string, 0, len(diffs))
 	for _, diff := range diffs {
 		if diff.RegenerateSchemaMap {
-			return nil, nil, errors.Errorf("Meets a schema diff with RegenerateSchemaMap flag")
+			return nil, nil, nil, errors.Errorf("Meets a schema diff with RegenerateSchemaMap flag")
 		}
 		IDs, err := builder.ApplyDiff(m, diff)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		if canSkipSchemaCheckerDDL(diff.Type) {
 			continue
 		}
+		diffTypes = append(diffTypes, diff.Type.String())
 		phyTblIDs = append(phyTblIDs, IDs...)
 		for i := 0; i < len(IDs); i++ {
 			actions = append(actions, uint64(diff.Type))
@@ -461,7 +469,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 	relatedChange := transaction.RelatedSchemaChange{}
 	relatedChange.PhyTblIDS = phyTblIDs
 	relatedChange.ActionTypes = actions
-	return is, &relatedChange, nil
+	return is, &relatedChange, diffTypes, nil
 }
 
 func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
@@ -1244,7 +1252,7 @@ func (do *Domain) Init(
 		// The reload(in step 2) operation takes more than ddlLease and a new reload operation was not performed,
 		// the next query will respond by ErrInfoSchemaExpired error. So we do a new reload to update schemaValidator.latestSchemaExpire.
 		if sub > (ddlLease / 2) {
-			logutil.BgLogger().Warn("loading schema takes a long time, we do a new reload", zap.Duration("take time", sub))
+			logutil.BgLogger().Warn("loading schema and starting ddl take a long time, we do a new reload", zap.Duration("take time", sub))
 			err = do.Reload()
 			if err != nil {
 				return err
@@ -1480,7 +1488,7 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, schedulerManager *scheduler.Manager, serverID string) {
 	err := schedulerManager.Start()
 	if err != nil {
-		logutil.BgLogger().Error("dist task scheduler manager failed", zap.Error(err))
+		logutil.BgLogger().Error("dist task scheduler manager start failed", zap.Error(err))
 		return
 	}
 	logutil.BgLogger().Info("dist task scheduler manager started")
@@ -2237,7 +2245,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	}
 	do.statsHandle.Store(statsHandle)
 	do.ddl.RegisterStatsHandle(statsHandle)
-	// Negative stats lease indicates that it is in test, it does not need update.
+	// Negative stats lease indicates that it is in test or in br binary mode, it does not need update.
 	if do.statsLease >= 0 {
 		do.wg.Run(do.loadStatsWorker, "loadStatsWorker")
 	}
@@ -2368,7 +2376,7 @@ func (do *Domain) syncIndexUsageWorker(owner owner.Manager) {
 				continue
 			}
 			if err := handle.GCIndexUsage(); err != nil {
-				logutil.BgLogger().Error("gc index usage failed", zap.String("category", "stats"), zap.Error(err))
+				statslogutil.StatsLogger.Error("gc index usage failed", zap.Error(err))
 			}
 		}
 	}
@@ -2959,7 +2967,7 @@ func (s *SysProcesses) Track(id uint64, proc sessionctx.Context) error {
 	}
 	s.procMap[id] = proc
 	proc.GetSessionVars().ConnectionID = id
-	atomic.StoreUint32(&proc.GetSessionVars().Killed, 0)
+	proc.GetSessionVars().SQLKiller.Reset()
 	return nil
 }
 
@@ -2970,7 +2978,7 @@ func (s *SysProcesses) UnTrack(id uint64) {
 	if proc, ok := s.procMap[id]; ok {
 		delete(s.procMap, id)
 		proc.GetSessionVars().ConnectionID = 0
-		atomic.StoreUint32(&proc.GetSessionVars().Killed, 0)
+		proc.GetSessionVars().SQLKiller.Reset()
 	}
 }
 
@@ -2993,6 +3001,6 @@ func (s *SysProcesses) KillSysProcess(id uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if proc, ok := s.procMap[id]; ok {
-		atomic.StoreUint32(&proc.GetSessionVars().Killed, 1)
+		proc.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 	}
 }

@@ -166,9 +166,7 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 			dom := domain.GetDomain(e.Ctx())
 			serverID := disttaskutil.GenerateSubtaskExecID(ctx, dom.DDL().GetID())
 			_, err = e.Ctx().(sqlexec.SQLExecutor).ExecuteInternal(ctx,
-				`update mysql.dist_framework_meta
-					set role = %?
-					where host = %?`, valStr, serverID)
+				`replace into mysql.dist_framework_meta values(%?, %?, DEFAULT)`, serverID, valStr)
 		}
 		return err
 	}

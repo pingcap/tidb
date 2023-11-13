@@ -290,9 +290,8 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 			unixTime, err := strconv.ParseInt(unixTimeStr, 10, 64)
 			if err != nil {
 				panic(err.Error())
-			} else {
-				now = unixTime
 			}
+			now = unixTime
 		}
 	})
 

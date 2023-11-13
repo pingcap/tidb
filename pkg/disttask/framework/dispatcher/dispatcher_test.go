@@ -51,7 +51,7 @@ type testDispatcherExt struct{}
 func (*testDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (*testDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ proto.Step) (metas [][]byte, err error) {
+func (*testDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
 	return nil, nil
 }
 
@@ -61,15 +61,15 @@ func (*testDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle,
 
 var mockedAllServerInfos = []*infosync.ServerInfo{}
 
-func (*testDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
-	return mockedAllServerInfos, nil
+func (*testDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
+	return mockedAllServerInfos, true, nil
 }
 
 func (*testDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
-func (*testDispatcherExt) GetNextStep(dispatcher.TaskHandle, *proto.Task) proto.Step {
+func (*testDispatcherExt) GetNextStep(*proto.Task) proto.Step {
 	return proto.StepDone
 }
 
@@ -78,7 +78,7 @@ type numberExampleDispatcherExt struct{}
 func (*numberExampleDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (n *numberExampleDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, _ proto.Step) (metas [][]byte, err error) {
+func (n *numberExampleDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
 	switch task.Step {
 	case proto.StepInit:
 		for i := 0; i < subtaskCnt; i++ {
@@ -99,15 +99,16 @@ func (n *numberExampleDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.
 	return nil, nil
 }
 
-func (*numberExampleDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
-	return dispatcher.GenerateSchedulerNodes(ctx)
+func (*numberExampleDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
+	serverInfo, err := dispatcher.GenerateSchedulerNodes(ctx)
+	return serverInfo, true, err
 }
 
 func (*numberExampleDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
-func (*numberExampleDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *proto.Task) proto.Step {
+func (*numberExampleDispatcherExt) GetNextStep(task *proto.Task) proto.Step {
 	switch task.Step {
 	case proto.StepInit:
 		return proto.StepOne
@@ -157,7 +158,7 @@ func TestGetInstance(t *testing.T) {
 		return gtk.Session(), nil
 	}, 1, 1, time.Second)
 	defer pool.Close()
-
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockSchedulerNodes", "return()"))
 	dspManager, mgr := MockDispatcherManager(t, pool)
 	// test no server
 	task := &proto.Task{ID: 1, Type: proto.TaskTypeExample}
@@ -173,7 +174,7 @@ func TestGetInstance(t *testing.T) {
 	uuids := []string{"ddl_id_1", "ddl_id_2"}
 	serverIDs := []string{"10.123.124.10:32457", "[ABCD:EF01:2345:6789:ABCD:EF01:2345:6789]:65535"}
 
-	mockedAllServerInfos = []*infosync.ServerInfo{
+	dispatcher.MockServerInfo = []*infosync.ServerInfo{
 		{
 			ID:   uuids[0],
 			IP:   "10.123.124.10",
@@ -214,6 +215,7 @@ func TestGetInstance(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, instanceIDs, len(serverIDs))
 	require.ElementsMatch(t, instanceIDs, serverIDs)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockSchedulerNodes"))
 }
 
 func TestTaskFailInManager(t *testing.T) {

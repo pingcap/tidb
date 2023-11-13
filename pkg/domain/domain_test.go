@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/types"
@@ -196,7 +195,7 @@ func TestStatWorkRecoverFromPanic(t *testing.T) {
 	require.Equal(t, expiredTimeStamp, ts)
 
 	// set expiredTimeStamp4PC to "2023-08-02 12:15:00"
-	ts, _ = types.ParseTimestamp(stmtctx.NewStmtCtxWithTimeZone(time.UTC), "2023-08-02 12:15:00")
+	ts, _ = types.ParseTimestamp(types.DefaultStmtNoWarningContext, "2023-08-02 12:15:00")
 	dom.SetExpiredTimeStamp4PC(ts)
 	expiredTimeStamp = dom.ExpiredTimeStamp4PC()
 	require.Equal(t, expiredTimeStamp, ts)

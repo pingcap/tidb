@@ -62,14 +62,15 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
-	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/oracle"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -313,14 +314,14 @@ func (d *ddl) getPendingTiFlashTableCount(sctx sessionctx.Context, originVersion
 
 func isSessionDone(sctx sessionctx.Context) (bool, uint32) {
 	done := false
-	killed := atomic.LoadUint32(&sctx.GetSessionVars().Killed)
-	if killed == 1 {
-		done = true
+	killed := sctx.GetSessionVars().SQLKiller.HandleSignal() == exeerrors.ErrQueryInterrupted
+	if killed {
+		return true, 1
 	}
 	failpoint.Inject("BatchAddTiFlashSendDone", func(val failpoint.Value) {
 		done = val.(bool)
 	})
-	return done, killed
+	return done, 0
 }
 
 func (d *ddl) waitPendingTableThreshold(sctx sessionctx.Context, schemaID int64, tableID int64, originVersion int64, pendingCount uint32, threshold uint32) (bool, int64, uint32, bool) {
@@ -1042,7 +1043,7 @@ func convertTimestampDefaultValToUTC(ctx sessionctx.Context, defaultVal interfac
 	}
 	if vv, ok := defaultVal.(string); ok {
 		if vv != types.ZeroDatetimeStr && !strings.EqualFold(vv, ast.CurrentTimestamp) {
-			t, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, vv, col.GetType(), col.GetDecimal(), nil)
+			t, err := types.ParseTime(ctx.GetSessionVars().StmtCtx.TypeCtx(), vv, col.GetType(), col.GetDecimal(), nil)
 			if err != nil {
 				return defaultVal, errors.Trace(err)
 			}
@@ -1367,7 +1368,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 		val, err := getEnumDefaultValue(v, col)
 		return val, false, err
 	case mysql.TypeDuration, mysql.TypeDate:
-		if v, err = v.ConvertTo(ctx.GetSessionVars().StmtCtx, &col.FieldType); err != nil {
+		if v, err = v.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), &col.FieldType); err != nil {
 			return "", false, errors.Trace(err)
 		}
 	case mysql.TypeBit:
@@ -1379,7 +1380,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 		// For these types, convert it to standard format firstly.
 		// like integer fields, convert it into integer string literals. like convert "1.25" into "1" and "2.8" into "3".
 		// if raise a error, we will use original expression. We will handle it in check phase
-		if temp, err := v.ConvertTo(ctx.GetSessionVars().StmtCtx, &col.FieldType); err == nil {
+		if temp, err := v.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), &col.FieldType); err == nil {
 			v = temp
 		}
 	}
@@ -1759,16 +1760,20 @@ func checkColumnAttributes(colName string, tp *types.FieldType) error {
 	return nil
 }
 
-func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign bool) error {
+func checkDuplicateConstraint(namesMap map[string]bool, name string, constraintType ast.ConstraintType) error {
 	if name == "" {
 		return nil
 	}
 	nameLower := strings.ToLower(name)
 	if namesMap[nameLower] {
-		if foreign {
+		switch constraintType {
+		case ast.ConstraintForeignKey:
 			return dbterror.ErrFkDupName.GenWithStackByArgs(name)
+		case ast.ConstraintCheck:
+			return dbterror.ErrCheckConstraintDupName.GenWithStackByArgs(name)
+		default:
+			return dbterror.ErrDupKeyName.GenWithStackByArgs(name)
 		}
-		return dbterror.ErrDupKeyName.GenWithStack("duplicate key name %s", name)
 	}
 	namesMap[nameLower] = true
 	return nil
@@ -1828,12 +1833,12 @@ func checkConstraintNames(tableName model.CIStr, constraints []*ast.Constraint) 
 	// Check not empty constraint name whether is duplicated.
 	for _, constr := range constraints {
 		if constr.Tp == ast.ConstraintForeignKey {
-			err := checkDuplicateConstraint(fkNames, constr.Name, true)
+			err := checkDuplicateConstraint(fkNames, constr.Name, constr.Tp)
 			if err != nil {
 				return errors.Trace(err)
 			}
 		} else {
-			err := checkDuplicateConstraint(constrNames, constr.Name, false)
+			err := checkDuplicateConstraint(constrNames, constr.Name, constr.Tp)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -3046,7 +3051,8 @@ func checkPartitionByHash(ctx sessionctx.Context, tbInfo *model.TableInfo) error
 // checkPartitionByRange checks validity of a "BY RANGE" partition.
 func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
 	failpoint.Inject("CheckPartitionByRangeErr", func() {
-		panic(memory.PanicMemoryExceedWarnMsg)
+		ctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryMemoryExceeded)
+		panic(ctx.GetSessionVars().SQLKiller.HandleSignal())
 	})
 	pi := tbInfo.Partition
 
@@ -3200,7 +3206,7 @@ func checkCharsetAndCollation(cs string, co string) error {
 // handleAutoIncID handles auto_increment option in DDL. It creates a ID counter for the table and initiates the counter to a proper value.
 // For example if the option sets auto_increment to 10. The counter will be set to 9. So the next allocated ID will be 10.
 func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64, newEnd int64, tp autoid.AllocatorType) error {
-	allocs := autoid.NewAllocatorsFromTblInfo(d.store, schemaID, tbInfo)
+	allocs := autoid.NewAllocatorsFromTblInfo((*asAutoIDRequirement)(d.ddlCtx), schemaID, tbInfo)
 	if alloc := allocs.Get(tp); alloc != nil {
 		err := alloc.Rebase(context.Background(), newEnd, false)
 		if err != nil {
@@ -7246,11 +7252,11 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil {
 		if indexInfo.State != model.StatePublic {
 			// NOTE: explicit error message. See issue #18363.
-			err = dbterror.ErrDupKeyName.GenWithStack("index already exist %s; "+
+			err = dbterror.ErrDupKeyName.GenWithStack("Duplicate key name '%s'; "+
 				"a background job is trying to add the same index, "+
 				"please check by `ADMIN SHOW DDL JOBS`", indexName)
 		} else {
-			err = dbterror.ErrDupKeyName.GenWithStack("index already exist %s", indexName)
+			err = dbterror.ErrDupKeyName.GenWithStackByArgs(indexName)
 		}
 		if ifNotExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -7832,7 +7838,7 @@ func checkAndGetColumnsTypeAndValuesMatch(ctx sessionctx.Context, colTypes []typ
 				return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}
 		}
-		newVal, err := val.ConvertTo(ctx.GetSessionVars().StmtCtx, &colType)
+		newVal, err := val.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), &colType)
 		if err != nil {
 			return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
 		}
@@ -8992,5 +8998,6 @@ func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 		WarningsCount:     make(map[errors.ErrorID]int64),
 		Location:          &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		ResourceGroupName: ctx.GetSessionVars().ResourceGroupName,
+		Version:           model.CurrentReorgMetaVersion,
 	}
 }

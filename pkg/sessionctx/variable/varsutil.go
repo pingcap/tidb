@@ -441,7 +441,7 @@ func parseTSFromNumberOrTime(s *SessionVars, sVal string) (uint64, error) {
 		return tso, nil
 	}
 
-	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp, nil)
+	t, err := types.ParseTime(s.StmtCtx.TypeCtx(), sVal, mysql.TypeTimestamp, types.MaxFsp, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -456,7 +456,7 @@ func setTxnReadTS(s *SessionVars, sVal string) error {
 		return nil
 	}
 
-	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp, nil)
+	t, err := types.ParseTime(s.StmtCtx.TypeCtx(), sVal, mysql.TypeTimestamp, types.MaxFsp, nil)
 	if err != nil {
 		return err
 	}

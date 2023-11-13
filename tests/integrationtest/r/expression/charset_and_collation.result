@@ -585,7 +585,6 @@ drop table if exists t;
 create table t(name char(255) primary key, b int, c int, index idx(name), unique index uidx(name));
 insert into t values("aaaa", 1, 1), ("bbb", 2, 2), ("ccc", 3, 3);
 admin check table t;
-
 drop table if exists t;
 set tidb_enable_clustered_index=ON;
 create table t(d double primary key, a int, name varchar(255), index idx(name(2)), index midx(a, name));
@@ -653,7 +652,6 @@ a	a
 A	A
 update t set a = 'B';
 admin check table t;
-
 drop table if exists t;
 set tidb_enable_clustered_index=ON;
 create table t(a int, b char(10) collate utf8mb4_bin, c char(10) collate utf8mb4_general_ci,d varchar(10) collate utf8mb4_bin, e varchar(10) collate utf8mb4_general_ci, f char(10) collate utf8mb4_unicode_ci, g varchar(10) collate utf8mb4_unicode_ci, primary key(a, b, c, d, e, f, g), key a(a), unique key ua(a), key b(b), unique key ub(b), key c(c), unique key uc(c),key d(d), unique key ud(d),key e(e), unique key ue(e), key f(f), key g(g), unique key uf(f), unique key ug(g));
@@ -744,7 +742,9 @@ select * from t use index(ue);
 a	b	c	d	e	f	g	h	i
 1	啊	啊	啊  	啊  	啊	啊  	🐸	🐸
 admin check table t;
-
+admin recover index t a;
+ADDED_COUNT	SCAN_COUNT
+0	1
 alter table t add column n char(10) COLLATE utf8mb4_unicode_ci;
 alter table t add index n(n);
 update t set n = '吧';
@@ -755,7 +755,6 @@ select * from t use index(n);
 a	b	c	d	e	f	g	h	i	n
 1	啊	啊	啊  	啊  	啊	啊  	🐸	🐸	吧
 admin check table t;
-
 drop table if exists t;
 create table t (a varchar(255) COLLATE utf8_general_ci primary key clustered, b int) partition by range columns(a) (partition p0 values less than ('0'), partition p1 values less than MAXVALUE);
 alter table t add index b(b);
@@ -767,7 +766,6 @@ select * from t use index();
 a	b
 0	1
 admin check table t;
-
 set tidb_enable_clustered_index=default;
 drop table if exists t;
 set tidb_enable_clustered_index=ON;
@@ -880,7 +878,6 @@ select * from t use index(idx);
 k	v
 01233	1
 admin check table t;
-
 drop table if exists t;
 CREATE TABLE t (`COL1` tinyblob NOT NULL,  `COL2` binary(1) NOT NULL,  `COL3` bigint(11) NOT NULL,  PRIMARY KEY (`COL1`(5),`COL2`,`COL3`) /*T![clustered_index] CLUSTERED */);
 insert into t values(0x1E,0xEC,6966939640596047133);

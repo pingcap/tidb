@@ -57,7 +57,7 @@ func (s *mockGCSSuite) compareJobInfoWithoutTime(jobInfo *importer.JobInfo, row 
 	s.Equal(strconv.Itoa(int(jobInfo.TableID)), row[3])
 	s.Equal(jobInfo.Step, row[4])
 	s.Equal(jobInfo.Status, row[5])
-	s.Equal(units.HumanSize(float64(jobInfo.SourceFileSize)), row[6])
+	s.Equal(units.BytesSize(float64(jobInfo.SourceFileSize)), row[6])
 	if jobInfo.Summary == nil {
 		s.Equal("<nil>", row[7].(string))
 	} else {

@@ -292,7 +292,7 @@ func TestTypesNewRowCodec(t *testing.T) {
 		return d
 	}
 	getTime := func(value string) types.Time {
-		d, err := types.ParseTime(stmtctx.NewStmtCtxWithTimeZone(time.UTC), value, mysql.TypeTimestamp, 6, nil)
+		d, err := types.ParseTime(types.DefaultStmtNoWarningContext, value, mysql.TypeTimestamp, 6, nil)
 		require.NoError(t, err)
 		return d
 	}
@@ -1306,7 +1306,7 @@ var (
 		}
 	}
 	getDuration = func(value string) types.Duration {
-		dur, _, _ := types.ParseDuration(nil, value, 0)
+		dur, _, _ := types.ParseDuration(types.DefaultStmtNoWarningContext, value, 0)
 		return dur
 	}
 	getOldDatumByte = func(d types.Datum) []byte {

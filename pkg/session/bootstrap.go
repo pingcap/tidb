@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -183,7 +184,7 @@ const (
 	// Maybe we will put it back to INFORMATION_SCHEMA.
 	CreateGlobalVariablesTable = `CREATE TABLE IF NOT EXISTS mysql.GLOBAL_VARIABLES(
 		VARIABLE_NAME  VARCHAR(64) NOT NULL PRIMARY KEY,
-		VARIABLE_VALUE VARCHAR(1024) DEFAULT NULL);`
+		VARIABLE_VALUE VARCHAR(16383) DEFAULT NULL);`
 	// CreateTiDBTable is the SQL statement creates a table in system db.
 	// This table is a key-value struct contains some information used by TiDB.
 	// Currently we only put bootstrapped in it which indicates if the system is already bootstrapped.
@@ -751,6 +752,8 @@ const (
 	// The variable name in mysql.tidb table and it records the default value of
 	// oom-action when upgrade from v3.0.x to v4.0.11+.
 	tidbDefOOMAction = "default_oom_action"
+	// The variable name in mysql.tidb table and it records the current DDLTableVersion
+	tidbDDLTableVersion = "ddl_table_version"
 	// Const for TiDB server version 2.
 	version2  = 2
 	version3  = 3
@@ -1014,11 +1017,19 @@ const (
 	// version 177
 	//   add `mysql.dist_framework_meta`
 	version177 = 177
+
+	// version 178
+	//   write mDDLTableVersion into `mysql.tidb` table
+	version178 = 178
+
+	// vresion 179
+	//   enlarge `VARIABLE_VALUE` of `mysql.global_variables` from `varchar(1024)` to `varchar(16383)`.
+	version179 = 179
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version177
+var currentBootstrapVersion int64 = version179
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1171,6 +1182,8 @@ var (
 		upgradeToVer175,
 		upgradeToVer176,
 		upgradeToVer177,
+		upgradeToVer178,
+		upgradeToVer179,
 	}
 )
 
@@ -2846,6 +2859,39 @@ func upgradeToVer177(s Session, ver int64) {
 	}
 }
 
+// writeDDLTableVersion writes mDDLTableVersion into mysql.tidb
+func writeDDLTableVersion(s Session) {
+	var err error
+	var ddlTableVersion meta.DDLTableVersion
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap), s.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		ddlTableVersion, err = t.CheckDDLTableVersion()
+		return err
+	})
+	terror.MustNil(err)
+	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, "DDL Table Version. Do not delete.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
+		mysql.SystemDB,
+		mysql.TiDBTable,
+		tidbDDLTableVersion,
+		ddlTableVersion,
+		ddlTableVersion,
+	)
+}
+
+func upgradeToVer178(s Session, ver int64) {
+	if ver >= version178 {
+		return
+	}
+	writeDDLTableVersion(s)
+}
+
+func upgradeToVer179(s Session, ver int64) {
+	if ver >= version179 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.global_variables MODIFY COLUMN `VARIABLE_VALUE` varchar(16383)")
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -3082,7 +3128,7 @@ func doDMLWorks(s Session) {
 		}
 
 		// sanitize k and vVal
-		value := fmt.Sprintf(`("%s", "%s")`, sqlexec.EscapeString(k), sqlexec.EscapeString(vVal))
+		value := fmt.Sprintf(`("%s", "%s")`, sqlescape.EscapeString(k), sqlescape.EscapeString(vVal))
 		values = append(values, value)
 	}
 	sql := fmt.Sprintf("INSERT HIGH_PRIORITY INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalVariablesTable,
@@ -3101,6 +3147,8 @@ func doDMLWorks(s Session) {
 	writeNewCollationParameter(s, config.GetGlobalConfig().NewCollationsEnabledOnFirstBootstrap)
 
 	writeStmtSummaryVars(s)
+
+	writeDDLTableVersion(s)
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	_, err := s.ExecuteInternal(ctx, "COMMIT")

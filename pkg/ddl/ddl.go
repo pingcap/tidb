@@ -62,6 +62,7 @@ import (
 	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
@@ -73,9 +74,7 @@ import (
 
 const (
 	// currentVersion is for all new DDL jobs.
-	// 1 for the DDL job created <= v7.4.0.
-	// For fix #46306(whether end key is included or not in the table range) to add version 2.
-	currentVersion = 2
+	currentVersion = 1
 	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
 	DDLOwnerKey = "/tidb/ddl/fg/owner"
 	// addingDDLJobPrefix is the path prefix used to record the newly added DDL job, and it's saved to etcd.
@@ -699,17 +698,11 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		}, scheduler.WithSummary,
 	)
 
-	backFillDsp, err := NewBackfillingDispatcherExt(d)
-	if err != nil {
-		logutil.BgLogger().Warn("NewBackfillingDispatcherExt failed", zap.String("category", "ddl"), zap.Error(err))
-	} else {
-		dispatcher.RegisterDispatcherFactory(proto.Backfill,
-			func(ctx context.Context, taskMgr dispatcher.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
-				return newLitBackfillDispatcher(ctx, taskMgr, serverID, task, backFillDsp)
-			})
-		dispatcher.RegisterDispatcherCleanUpFactory(proto.Backfill, newBackfillCleanUpS3)
-	}
-
+	dispatcher.RegisterDispatcherFactory(proto.Backfill,
+		func(ctx context.Context, taskMgr dispatcher.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
+			return newLitBackfillDispatcher(ctx, d, taskMgr, serverID, task)
+		})
+	dispatcher.RegisterDispatcherCleanUpFactory(proto.Backfill, newBackfillCleanUpS3)
 	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.
 	variable.EnableDDL = d.EnableDDL
 	variable.DisableDDL = d.DisableDDL
@@ -818,7 +811,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	}
 	defer d.sessPool.Put(ctx)
 
-	ingest.InitGlobalLightningEnv(d.ctx, ctx)
+	ingest.InitGlobalLightningEnv()
 
 	return nil
 }
@@ -1126,7 +1119,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		}
 
 		// If the connection being killed, we need to CANCEL the DDL job.
-		if atomic.LoadUint32(&sessVars.Killed) == 1 {
+		if sessVars.SQLKiller.HandleSignal() == exeerrors.ErrQueryInterrupted {
 			if atomic.LoadInt32(&sessVars.ConnectionStatus) == variable.ConnStatusShutdown {
 				logutil.BgLogger().Info("DoDDLJob will quit because context done", zap.String("category", "ddl"))
 				return context.Canceled
@@ -1409,7 +1402,7 @@ func GetDDLInfoWithNewTxn(s sessionctx.Context) (*Info, error) {
 	return info, err
 }
 
-// GetDDLInfo returns DDL information.
+// GetDDLInfo returns DDL information and only uses for testing.
 func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 	var err error
 	info := &Info{}

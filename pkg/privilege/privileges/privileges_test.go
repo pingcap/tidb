@@ -47,7 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/sem"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1435,13 +1435,13 @@ func TestDynamicPrivsRegistration(t *testing.T) {
 	// Check that all privileges registered are assignable to users,
 	// including the recently registered ACDC_ADMIN
 	for _, priv := range privileges.GetDynamicPrivileges() {
-		sqlGrant, err := sqlexec.EscapeSQL("GRANT %n ON *.* TO privassigntest", priv)
+		sqlGrant, err := sqlescape.EscapeSQL("GRANT %n ON *.* TO privassigntest", priv)
 		require.NoError(t, err)
 		tk.MustExec(sqlGrant)
 	}
 	// Check that all privileges registered are revokable
 	for _, priv := range privileges.GetDynamicPrivileges() {
-		sqlGrant, err := sqlexec.EscapeSQL("REVOKE %n ON *.* FROM privassigntest", priv)
+		sqlGrant, err := sqlescape.EscapeSQL("REVOKE %n ON *.* FROM privassigntest", priv)
 		require.NoError(t, err)
 		tk.MustExec(sqlGrant)
 	}

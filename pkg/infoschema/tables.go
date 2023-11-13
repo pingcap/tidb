@@ -2395,7 +2395,7 @@ func FetchClusterServerInfoWithoutPrivilegeCheck(ctx context.Context, sctx sessi
 	for i, srv := range serversInfo {
 		address := srv.Address
 		remote := address
-		if srv.ServerType == "tidb" {
+		if srv.ServerType == "tidb" || srv.ServerType == "tiproxy" {
 			remote = srv.StatusAddr
 		}
 		wg.Add(1)

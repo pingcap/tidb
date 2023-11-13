@@ -154,6 +154,81 @@ func TestNormalizedPlan(t *testing.T) {
 	}
 }
 
+func TestPlanDigest4InList(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("set global tidb_ignore_inlist_plan_digest=true;")
+	tk.Session().GetSessionVars().PlanID.Store(0)
+	queriesGroup1 := []string{
+		"select * from t where a in (1, 2);",
+		"select a in (1, 2) from t;",
+	}
+	queriesGroup2 := []string{
+		"select * from t where a in (1, 2, 3);",
+		"select a in (1, 2, 3) from t;",
+	}
+	for i := 0; i < len(queriesGroup1); i++ {
+		query1 := queriesGroup1[i]
+		query2 := queriesGroup2[i]
+		t.Run(query1+" vs "+query2, func(t *testing.T) {
+			tk.MustExec(query1)
+			info1 := tk.Session().ShowProcess()
+			require.NotNil(t, info1)
+			p1, ok := info1.Plan.(core.Plan)
+			require.True(t, ok)
+			_, digest1 := core.NormalizePlan(p1)
+			tk.MustExec(query2)
+			info2 := tk.Session().ShowProcess()
+			require.NotNil(t, info2)
+			p2, ok := info2.Plan.(core.Plan)
+			require.True(t, ok)
+			_, digest2 := core.NormalizePlan(p2)
+			require.Equal(t, digest1, digest2)
+		})
+	}
+}
+
+func TestIssue47634(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t3,t4")
+	tk.MustExec("create table t3(a int, b int, c int);")
+	tk.MustExec("create table t4(a int, b int, c int, primary key (a, b) clustered);")
+	tk.MustExec("create table t5(a int, b int, c int, key idx_a_b (a, b));")
+	tk.Session().GetSessionVars().PlanID.Store(0)
+	queriesGroup1 := []string{
+		"explain select /*+ inl_join(t4) */ * from t3 join t4 on t3.b = t4.b where t4.a = 1;",
+		"explain select /*+ inl_join(t5) */ * from t3 join t5 on t3.b = t5.b where t5.a = 1;",
+	}
+	queriesGroup2 := []string{
+		"explain select /*+ inl_join(t4) */ * from t3 join t4 on t3.b = t4.b where t4.a = 2;",
+		"explain select /*+ inl_join(t5) */ * from t3 join t5 on t3.b = t5.b where t5.a = 2;",
+	}
+	for i := 0; i < len(queriesGroup1); i++ {
+		query1 := queriesGroup1[i]
+		query2 := queriesGroup2[i]
+		t.Run(query1+" vs "+query2, func(t *testing.T) {
+			tk.MustExec(query1)
+			info1 := tk.Session().ShowProcess()
+			require.NotNil(t, info1)
+			p1, ok := info1.Plan.(core.Plan)
+			require.True(t, ok)
+			_, digest1 := core.NormalizePlan(p1)
+			tk.MustExec(query2)
+			info2 := tk.Session().ShowProcess()
+			require.NotNil(t, info2)
+			p2, ok := info2.Plan.(core.Plan)
+			require.True(t, ok)
+			_, digest2 := core.NormalizePlan(p2)
+			require.Equal(t, digest1, digest2)
+		})
+	}
+}
+
 func TestNormalizedPlanForDiffStore(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

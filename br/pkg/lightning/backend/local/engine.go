@@ -291,8 +291,12 @@ func (e *Engine) ID() string {
 }
 
 // GetKeyRange implements common.Engine.
-func (e *Engine) GetKeyRange() (firstKey []byte, lastKey []byte, err error) {
-	return e.GetFirstAndLastKey(nil, nil)
+func (e *Engine) GetKeyRange() (startKey []byte, endKey []byte, err error) {
+	firstLey, lastKey, err := e.GetFirstAndLastKey(nil, nil)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	return firstLey, nextKey(lastKey), nil
 }
 
 // SplitRanges gets size properties from pebble and split ranges according to size/keys limit.
@@ -1001,6 +1005,9 @@ func (e *Engine) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []by
 		LowerBound: lowerBound,
 		UpperBound: upperBound,
 	}
+	failpoint.Inject("mockGetFirstAndLastKey", func() {
+		failpoint.Return(lowerBound, upperBound, nil)
+	})
 
 	iter := e.newKVIter(context.Background(), opt)
 	//nolint: errcheck

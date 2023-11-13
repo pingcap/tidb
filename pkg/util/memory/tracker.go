@@ -25,9 +25,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	atomicutil "go.uber.org/atomic"
-	"go.uber.org/zap"
 )
 
 // TrackMemWhenExceeds is the threshold when memory usage needs to be tracked.
@@ -76,6 +75,7 @@ type Tracker struct {
 	bytesLimit           atomic.Value
 	actionMuForHardLimit actionMu
 	actionMuForSoftLimit actionMu
+	Killer               *sqlkiller.SQLKiller
 	mu                   struct {
 		// The children memory trackers. If the Tracker is the Global Tracker, like executor.GlobalDiskUsageTracker,
 		// we wouldn't maintain its children in order to avoiding mutex contention.
@@ -92,10 +92,8 @@ type Tracker struct {
 	bytesReleased       int64             // Released bytes.
 	maxConsumed         atomicutil.Int64  // max number of bytes consumed during execution.
 	SessionID           atomicutil.Uint64 // SessionID indicates the sessionID the tracker is bound.
-	NeedKill            atomic.Bool       // NeedKill indicates whether this session need kill because OOM
-	NeedKillReceived    sync.Once
-	IsRootTrackerOfSess bool // IsRootTrackerOfSess indicates whether this tracker is bound for session
-	isGlobal            bool // isGlobal indicates whether this tracker is global tracker
+	IsRootTrackerOfSess bool              // IsRootTrackerOfSess indicates whether this tracker is bound for session
+	isGlobal            bool              // isGlobal indicates whether this tracker is global tracker
 }
 
 type actionMu struct {
@@ -321,8 +319,7 @@ func (t *Tracker) Detach() {
 		parent.actionMuForSoftLimit.Lock()
 		parent.actionMuForSoftLimit.actionOnExceed = nil
 		parent.actionMuForSoftLimit.Unlock()
-		parent.NeedKill.Store(false)
-		parent.NeedKillReceived = sync.Once{}
+		parent.Killer.Reset()
 	}
 	parent.remove(t)
 	t.mu.Lock()
@@ -441,31 +438,7 @@ func (t *Tracker) Consume(bs int64) {
 		}
 	}
 
-	tryActionLastOne := func(mu *actionMu, tracker *Tracker) {
-		mu.Lock()
-		defer mu.Unlock()
-		if currentAction := mu.actionOnExceed; currentAction != nil {
-			for nextAction := currentAction.GetFallback(); nextAction != nil; {
-				currentAction = nextAction
-				nextAction = currentAction.GetFallback()
-			}
-			if action, ok := currentAction.(ActionCareInvoker); ok {
-				action.SetInvoker(Instance)
-			}
-			currentAction.Action(tracker)
-		}
-	}
-
 	if bs > 0 && sessionRootTracker != nil {
-		// Kill the Top1 session
-		if sessionRootTracker.NeedKill.Load() {
-			sessionRootTracker.NeedKillReceived.Do(
-				func() {
-					logutil.BgLogger().Warn("global memory controller, NeedKill signal is received successfully",
-						zap.Uint64("conn", sessionRootTracker.SessionID.Load()))
-				})
-			tryActionLastOne(&sessionRootTracker.actionMuForHardLimit, sessionRootTracker)
-		}
 		// Update the Top1 session
 		memUsage := sessionRootTracker.BytesConsumed()
 		limitSessMinSize := ServerMemoryLimitSessMinSize.Load()
@@ -477,6 +450,13 @@ func (t *Tracker) Consume(bs int64) {
 				}
 				oldTracker = MemUsageTop1Tracker.Load()
 			}
+		}
+	}
+
+	if bs > 0 && sessionRootTracker != nil {
+		err := sessionRootTracker.Killer.HandleSignal()
+		if err != nil {
+			panic(err)
 		}
 	}
 

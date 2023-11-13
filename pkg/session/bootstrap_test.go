@@ -2118,3 +2118,110 @@ func TestTiDBUpgradeToVer177(t *testing.T) {
 	MustExec(t, seV176, "SELECT * from mysql.dist_framework_meta")
 	dom.Close()
 }
+
+func TestWriteDDLTableVersionToMySQLTiDB(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	ddlTableVer, err := m.CheckDDLTableVersion()
+	require.NoError(t, err)
+
+	// Verify that 'ddl_table_version' has been set to the correct value
+	se := CreateSessionAndSetID(t, store)
+	r := MustExecToRecodeSet(t, se, fmt.Sprintf(`SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME='%s'`, tidbDDLTableVersion))
+	req := r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	require.Equal(t, []byte(fmt.Sprintf("%d", ddlTableVer)), req.GetRow(0).GetBytes(0))
+	require.NoError(t, r.Close())
+	dom.Close()
+}
+
+func TestWriteDDLTableVersionToMySQLTiDBWhenUpgradingTo178(t *testing.T) {
+	ctx := context.Background()
+	store, _ := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	ddlTableVer, err := m.CheckDDLTableVersion()
+	require.NoError(t, err)
+
+	// bootstrap as version177
+	ver177 := version177
+	seV177 := CreateSessionAndSetID(t, store)
+	err = m.FinishBootstrap(int64(ver177))
+	require.NoError(t, err)
+	MustExec(t, seV177, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver177))
+	// remove the ddl_table_version entry from mysql.tidb table
+	MustExec(t, seV177, fmt.Sprintf("delete from mysql.tidb where VARIABLE_NAME='%s'", tidbDDLTableVersion))
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV177)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver177), ver)
+
+	// upgrade to current version
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err = getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// check if the DDLTableVersion has been set in the `mysql.tidb` table during upgrade
+	r := MustExecToRecodeSet(t, seCurVer, fmt.Sprintf(`SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME='%s'`, tidbDDLTableVersion))
+	req := r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	require.Equal(t, []byte(fmt.Sprintf("%d", ddlTableVer)), req.GetRow(0).GetBytes(0))
+	require.NoError(t, r.Close())
+}
+
+func TestTiDBUpgradeToVer179(t *testing.T) {
+	ctx := context.Background()
+	store, _ := CreateStoreAndBootstrap(t)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+	ver178 := version178
+	seV178 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(ver178))
+	require.NoError(t, err)
+	MustExec(t, seV178, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver178))
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV178)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver178), ver)
+
+	dom, err := BootstrapSession(store)
+	require.NoError(t, err)
+	ver, err = getBootstrapVersion(seV178)
+	require.NoError(t, err)
+	require.Less(t, int64(ver178), ver)
+
+	r := MustExecToRecodeSet(t, seV178, "desc mysql.global_variables")
+	req := r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 2, req.NumRows())
+	require.Equal(t, []byte("varchar(16383)"), req.GetRow(1).GetBytes(1))
+	require.NoError(t, r.Close())
+
+	dom.Close()
+}

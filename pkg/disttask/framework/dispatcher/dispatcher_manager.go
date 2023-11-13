@@ -127,6 +127,9 @@ func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) (*Man
 
 // Start the dispatcherManager, start the dispatchTaskLoop to start multiple dispatchers.
 func (dm *Manager) Start() {
+	failpoint.Inject("disableDispatcherManager", func() {
+		failpoint.Return()
+	})
 	dm.wg.Run(dm.dispatchTaskLoop)
 	dm.wg.Run(dm.gcSubtaskHistoryTableLoop)
 	dm.wg.Run(dm.cleanUpLoop)
