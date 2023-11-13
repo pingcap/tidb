@@ -118,8 +118,6 @@ var (
 	GlobalMemoryUsageTracker *memory.Tracker
 	// GlobalDiskUsageTracker is the ancestor of all the Executors' disk tracker
 	GlobalDiskUsageTracker *disk.Tracker
-	// GlobalAnalyzeMemoryTracker is the ancestor of all the Analyze jobs' memory tracker and child of global Tracker
-	GlobalAnalyzeMemoryTracker *memory.Tracker
 )
 
 var (
@@ -161,11 +159,6 @@ func init() {
 	GlobalMemoryUsageTracker.SetActionOnExceed(action)
 	GlobalDiskUsageTracker = disk.NewGlobalTrcaker(memory.LabelForGlobalStorage, -1)
 	GlobalDiskUsageTracker.SetActionOnExceed(action)
-	GlobalAnalyzeMemoryTracker = memory.NewTracker(memory.LabelForGlobalAnalyzeMemory, -1)
-	GlobalAnalyzeMemoryTracker.SetActionOnExceed(action)
-	// register quota funcs
-	variable.SetMemQuotaAnalyze = GlobalAnalyzeMemoryTracker.SetBytesLimit
-	variable.GetMemQuotaAnalyze = GlobalAnalyzeMemoryTracker.GetBytesLimit
 	// TODO: do not attach now to avoid impact to global, will attach later when analyze memory track is stable
 	//GlobalAnalyzeMemoryTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
 
@@ -2029,7 +2022,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	if isAnalyze {
 		sc.InitMemTracker(memory.LabelForAnalyzeMemory, -1)
 		vars.MemTracker.SetBytesLimit(-1)
-		vars.MemTracker.AttachTo(GlobalAnalyzeMemoryTracker)
+		vars.MemTracker.AttachTo(GlobalMemoryUsageTracker)
 	} else {
 		sc.InitMemTracker(memory.LabelForSQLText, -1)
 	}

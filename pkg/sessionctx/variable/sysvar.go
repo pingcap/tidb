@@ -1171,11 +1171,14 @@ var defaultSysVars = []*SysVar{
 		return fmt.Sprint(tikvutil.CommitterConcurrency.Load()), nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBMemQuotaAnalyze, Value: strconv.Itoa(DefTiDBMemQuotaAnalyze), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64,
+		Validation: func(vars *SessionVars, normalizedValue string, _ string, _ ScopeFlag) (string, error) {
+			vars.StmtCtx.AppendWarning(errors.New("tidb_mem_quota_analyze has already been removed in TiDB v7.6.0, so this will have no effect"))
+			return normalizedValue, nil
+		},
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-			return strconv.FormatInt(GetMemQuotaAnalyze(), 10), nil
+			return "0", nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			SetMemQuotaAnalyze(TidbOptInt64(val, DefTiDBMemQuotaAnalyze))
 			return nil
 		},
 	},
