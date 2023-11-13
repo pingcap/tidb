@@ -3003,23 +3003,38 @@ FlashbackToTimestampStmt:
 	}
 |	"FLASHBACK" "CLUSTER" toTSO LengthNum
 	{
-		$$ = &ast.FlashBackToTimestampStmt{
-			FlashbackTSO: $4.(uint64),
-		}
+		if tsoValue, ok := $4.(uint64); ok && tsoValue > 0 {
+			$$ = &ast.FlashBackToTimestampStmt{
+        		FlashbackTSO: tsoValue,
+        	}
+		} else {
+    		yylex.AppendError(yylex.Errorf("Invalid TSO value provided: %d", $4))
+    		return 1
+    	}
 	}
 |	"FLASHBACK" "TABLE" TableNameList toTSO LengthNum
 	{
-		$$ = &ast.FlashBackToTimestampStmt{
-			Tables:      $3.([]*ast.TableName),
-			FlashbackTSO: $5.(uint64),
-		}
+		if tsoValue, ok := $5.(uint64); ok && tsoValue > 0 {
+			$$ = &ast.FlashBackToTimestampStmt{
+            		Tables:      $3.([]*ast.TableName),
+            		FlashbackTSO: tsoValue,
+            	}
+		} else {
+    		yylex.AppendError(yylex.Errorf("Invalid TSO value provided: %d", $5))
+    		return 1
+    	}
 	}
 |	"FLASHBACK" DatabaseSym DBName toTSO LengthNum
 	{
-		$$ = &ast.FlashBackToTimestampStmt{
-			DBName:      model.NewCIStr($3),
-			FlashbackTSO: $5.(uint64),
-		}
+		if tsoValue, ok := $5.(uint64); ok && tsoValue > 0 {
+			$$ = &ast.FlashBackToTimestampStmt{
+            	DBName:      model.NewCIStr($3),
+            	FlashbackTSO: tsoValue,
+            }
+		} else {
+    		yylex.AppendError(yylex.Errorf("Invalid TSO value provided: %d", $5))
+    		return 1
+    	}
 	}
 
 
