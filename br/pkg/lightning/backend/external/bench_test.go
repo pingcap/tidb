@@ -228,11 +228,7 @@ type readTestSuite struct {
 
 func readFileSequential(s *readTestSuite) {
 	ctx := context.Background()
-	files := make([]string, 0, 8)
-	err := s.store.WalkDir(ctx, nil, func(path string, _ int64) error {
-		files = append(files, path)
-		return nil
-	})
+	files, _, err := GetAllFileNames(ctx, s.store, "")
 	intest.Assert(err == nil)
 
 	buf := make([]byte, s.memoryLimit)
@@ -262,12 +258,9 @@ func readFileSequential(s *readTestSuite) {
 
 func readFileConcurrently(s *readTestSuite) {
 	ctx := context.Background()
-	files := make([]string, 0, 8)
-	err := s.store.WalkDir(ctx, nil, func(path string, _ int64) error {
-		files = append(files, path)
-		return nil
-	})
+	files, _, err := GetAllFileNames(ctx, s.store, "")
 	intest.Assert(err == nil)
+	fmt.Println(files)
 
 	conc := min(s.concurrency, len(files))
 	var eg errgroup.Group
@@ -340,11 +333,7 @@ func createEvenlyDistributedFiles(
 
 func readMergeIter(s *readTestSuite) {
 	ctx := context.Background()
-	files := make([]string, 0, 8)
-	err := s.store.WalkDir(ctx, nil, func(path string, _ int64) error {
-		files = append(files, path)
-		return nil
-	})
+	files, _, err := GetAllFileNames(ctx, s.store, "")
 	intest.Assert(err == nil)
 
 	if s.beforeCreateReader != nil {
@@ -352,7 +341,8 @@ func readMergeIter(s *readTestSuite) {
 	}
 
 	readBufSize := s.memoryLimit / len(files)
-	iter, err := NewMergeKVIter(ctx, files, nil, s.store, readBufSize, false)
+	zeroOffsets := make([]uint64, len(files))
+	iter, err := NewMergeKVIter(ctx, files, zeroOffsets, s.store, readBufSize, false)
 	intest.Assert(err == nil)
 
 	kvCnt := 0
