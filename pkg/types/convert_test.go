@@ -271,7 +271,7 @@ func TestConvertType(t *testing.T) {
 	require.Equal(t, int64(2015), v)
 	v, err = Convert(ZeroDuration, ft)
 	require.NoError(t, err)
-	require.Equal(t, int64(0), v)
+	require.Equal(t, int64(time.Now().Year()), v)
 	bj1, err := ParseBinaryJSONFromString("99")
 	require.NoError(t, err)
 	v, err = Convert(bj1, ft)

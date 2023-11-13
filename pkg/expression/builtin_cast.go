@@ -1691,11 +1691,17 @@ func (b *builtinCastDurationAsIntSig) evalInt(ctx sessionctx.Context, row chunk.
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	dur, err := val.RoundFrac(types.DefaultFsp, ctx.GetSessionVars().Location())
-	if err != nil {
-		return res, false, err
+
+	if b.tp.GetType() == mysql.TypeYear {
+		res, err = val.ConvertToYear(ctx.GetSessionVars().StmtCtx.TypeCtx())
+	} else {
+		var dur types.Duration
+		dur, err = val.RoundFrac(types.DefaultFsp, ctx.GetSessionVars().Location())
+		if err != nil {
+			return res, false, err
+		}
+		res, err = dur.ToNumber().ToInt()
 	}
-	res, err = dur.ToNumber().ToInt()
 	return res, false, err
 }
 

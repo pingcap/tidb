@@ -1550,6 +1550,8 @@ func (d *Datum) ConvertToMysqlYear(ctx Context, target *FieldType) (Datum, error
 		}
 	case KindMysqlTime:
 		y = int64(d.GetMysqlTime().Year())
+	case KindMysqlDuration:
+		y, err = d.GetMysqlDuration().ConvertToYear(ctx)
 	case KindMysqlJSON:
 		y, err = ConvertJSONToInt64(ctx, d.GetMysqlJSON(), false)
 		if err != nil {
@@ -1565,7 +1567,11 @@ func (d *Datum) ConvertToMysqlYear(ctx Context, target *FieldType) (Datum, error
 		}
 		y = ret.GetInt64()
 	}
-	y, err = AdjustYear(y, adjust)
+
+	// Duration has been adjusted in `Duration.ConvertToYear()`
+	if d.k != KindMysqlDuration {
+		y, err = AdjustYear(y, adjust)
+	}
 	ret.SetInt64(y)
 	return ret, errors.Trace(err)
 }

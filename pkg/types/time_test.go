@@ -2188,6 +2188,43 @@ func TestMarshalTime(t *testing.T) {
 	require.Equal(t, 0, v1.Compare(v2))
 }
 
+func TestDurationConvertToYearFromNow(t *testing.T) {
+	cases := []struct {
+		dur        types.Duration
+		nowLit     string
+		sysTZ      *time.Location
+		expected   int64
+		throughStr bool
+		err        error
+	}{
+		{types.NewDuration(1, 0, 0, 0, 0), "2023-11-13T03:09:00Z", time.UTC, 2023, false, nil},
+		{types.NewDuration(40, 0, 0, 0, 0), "2023-12-31T11:00:00Z", time.UTC, 2024, false, nil},
+		{types.NewDuration(40, 0, 0, 0, 0), "2023-12-31T11:00:00+12:00", time.UTC, 2023, false, nil},
+		{types.NewDuration(-20, 0, 0, 0, 0), "2024-01-01T13:00:00Z", time.UTC, 2023, false, nil},
+		{types.NewDuration(-20, 0, 0, 0, 0), "2024-01-01T13:00:00-12:00", time.UTC, 2024, false, nil},
+		{types.NewDuration(0, 20, 12, 0, 0), "2023-11-13T03:09:00Z", time.UTC, 2012, true, nil},
+		{types.NewDuration(0, 0, 12, 0, 0), "2023-11-13T03:09:00Z", time.UTC, 2012, true, nil},
+		{types.NewDuration(0, 0, 0, 0, 0), "2023-11-13T03:09:00Z", time.UTC, 0, true, nil},
+		{types.NewDuration(200, 0, 0, 0, 0), "2023-11-13T03:09:00Z", time.UTC, 2155, true, types.ErrWarnDataOutOfRange},
+	}
+
+	for _, c := range cases {
+		ctx := types.NewContext(types.StrictFlags.WithCastTimeToYearThroughConcat(c.throughStr), c.sysTZ, func(_ error) {
+			require.Fail(t, "shouldn't append warninng")
+		})
+		now, err := time.Parse(time.RFC3339, c.nowLit)
+		require.NoError(t, err)
+
+		year, err := c.dur.ConvertToYearFromNow(ctx, now)
+		if c.err != nil {
+			require.ErrorIs(t, err, c.err)
+		} else {
+			require.NoError(t, err)
+		}
+		require.Equal(t, c.expected, year, "convert %s + now(%s) as year", c.dur.String(), c.nowLit)
+	}
+}
+
 func BenchmarkFormat(b *testing.B) {
 	t1 := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
 	for i := 0; i < b.N; i++ {
