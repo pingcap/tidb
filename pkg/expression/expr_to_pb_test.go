@@ -1294,6 +1294,44 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	// CastIntAsJson
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastRealAsJson
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), realColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastDecimalAsJson
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), decimalColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastStringAsJson
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), binaryStringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastTimeAsJson
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), datetimeColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastDurationAsJson
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), durationColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastDurationAsJson
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiFlash)
 	require.Len(t, pushed, len(exprs))
 	require.Len(t, remained, 0)

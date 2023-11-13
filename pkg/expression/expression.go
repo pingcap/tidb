@@ -1226,6 +1226,9 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			return function.GetArgs()[0].GetType().GetType() != mysql.TypeYear
 		case tipb.ScalarFuncSig_CastTimeAsDuration:
 			return retType.GetType() == mysql.TypeDuration
+		case tipb.ScalarFuncSig_CastIntAsJson, tipb.ScalarFuncSig_CastRealAsJson, tipb.ScalarFuncSig_CastDecimalAsJson, tipb.ScalarFuncSig_CastStringAsJson,
+			tipb.ScalarFuncSig_CastTimeAsJson, tipb.ScalarFuncSig_CastDurationAsJson, tipb.ScalarFuncSig_CastJsonAsJson:
+			return true
 		}
 	case ast.DateAdd, ast.AddDate:
 		switch function.Function.PbCode() {
