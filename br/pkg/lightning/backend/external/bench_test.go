@@ -18,14 +18,17 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"runtime/pprof"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"golang.org/x/sync/errgroup"
 )
 
 var testingStorageURI = flag.String("testing-storage-uri", "", "the URI of the storage used for testing")
@@ -93,8 +96,7 @@ func (s *ascendingKeySource) outputSize() int {
 	return s.totalSize
 }
 
-type testSuite struct {
-	t                  *testing.T
+type writeTestSuite struct {
 	store              storage.ExternalStorage
 	source             kvSource
 	memoryLimit        int
@@ -103,7 +105,7 @@ type testSuite struct {
 	afterWriterClose   func()
 }
 
-func writePlainFile(s *testSuite) {
+func writePlainFile(s *writeTestSuite) {
 	ctx := context.Background()
 	buf := make([]byte, s.memoryLimit)
 	offset := 0
@@ -139,7 +141,7 @@ func writePlainFile(s *testSuite) {
 	}
 }
 
-func writeExternalFile(s *testSuite) {
+func writeExternalFile(s *writeTestSuite) {
 	ctx := context.Background()
 	builder := NewWriterBuilder().
 		SetMemorySizeLimit(uint64(s.memoryLimit))
@@ -164,7 +166,7 @@ func writeExternalFile(s *testSuite) {
 	}
 }
 
-func TestCompare(t *testing.T) {
+func TestCompareWriter(t *testing.T) {
 	store := openTestingStorage(t)
 	source := newAscendingKeySource(20, 100, 10000000)
 	memoryLimit := 64 * 1024 * 1024
@@ -195,8 +197,7 @@ func TestCompare(t *testing.T) {
 		pprof.StopCPUProfile()
 	}
 
-	suite := &testSuite{
-		t:                  t,
+	suite := &writeTestSuite{
 		store:              store,
 		source:             source,
 		memoryLimit:        memoryLimit,
@@ -213,4 +214,170 @@ func TestCompare(t *testing.T) {
 	writeExternalFile(suite)
 	writerSpeed := float64(source.outputSize()) / elapsed.Seconds() / 1024 / 1024
 	t.Logf("writer speed for %d bytes: %.2f MB/s", source.outputSize(), writerSpeed)
+}
+
+type readTestSuite struct {
+	store              storage.ExternalStorage
+	concurrency        int
+	memoryLimit        int
+	beforeCreateReader func()
+	beforeReaderClose  func()
+	afterReaderClose   func()
+}
+
+func readFileSequential(s *readTestSuite) {
+	ctx := context.Background()
+	files := make([]string, 0, 8)
+	err := s.store.WalkDir(ctx, nil, func(path string, _ int64) error {
+		files = append(files, path)
+		return nil
+	})
+	intest.Assert(err == nil)
+
+	buf := make([]byte, s.memoryLimit)
+	if s.beforeCreateReader != nil {
+		s.beforeCreateReader()
+	}
+	for i, file := range files {
+		reader, err := s.store.Open(ctx, file, nil)
+		intest.Assert(err == nil)
+		_, err = reader.Read(buf)
+		for err == nil {
+			_, err = reader.Read(buf)
+		}
+		intest.Assert(err == io.EOF)
+		if i == len(files)-1 {
+			if s.beforeReaderClose != nil {
+				s.beforeReaderClose()
+			}
+		}
+		err = reader.Close()
+		intest.Assert(err == nil)
+	}
+	if s.afterReaderClose != nil {
+		s.afterReaderClose()
+	}
+}
+
+func readFileConcurrently(s *readTestSuite) {
+	ctx := context.Background()
+	files := make([]string, 0, 8)
+	err := s.store.WalkDir(ctx, nil, func(path string, _ int64) error {
+		files = append(files, path)
+		return nil
+	})
+	intest.Assert(err == nil)
+
+	conc := min(s.concurrency, len(files))
+	var eg errgroup.Group
+	eg.SetLimit(conc)
+	var once sync.Once
+
+	if s.beforeCreateReader != nil {
+		s.beforeCreateReader()
+	}
+	for _, file := range files {
+		eg.Go(func() error {
+			buf := make([]byte, s.memoryLimit/conc)
+			reader, err := s.store.Open(ctx, file, nil)
+			intest.Assert(err == nil)
+			_, err = reader.Read(buf)
+			for err == nil {
+				_, err = reader.Read(buf)
+			}
+			intest.Assert(err == io.EOF)
+			once.Do(func() {
+				if s.beforeReaderClose != nil {
+					s.beforeReaderClose()
+				}
+			})
+			err = reader.Close()
+			intest.Assert(err == nil)
+			return nil
+		})
+	}
+	err = eg.Wait()
+	intest.Assert(err == nil)
+	if s.afterReaderClose != nil {
+		s.afterReaderClose()
+	}
+}
+
+func createEvenlyDistributedFiles(
+	t *testing.T,
+	fileSize, fileCount int,
+) storage.ExternalStorage {
+	store := openTestingStorage(t)
+	ctx := context.Background()
+	for i := 0; i < fileCount; i++ {
+		file := fmt.Sprintf("test/evenly_distributed/%d", i)
+		writer, err := store.Create(ctx, file, &storage.WriterOption{Concurrency: 20})
+		intest.Assert(err == nil)
+		bufSize := min(fileSize, 8*1024*1024)
+		buf := make([]byte, fileSize)
+		totalSize := 0
+		for totalSize < fileSize {
+			n, err := writer.Write(ctx, buf[:bufSize])
+			intest.Assert(err == nil)
+			totalSize += n
+		}
+		err = writer.Close(ctx)
+		intest.Assert(err == nil)
+	}
+	return store
+}
+
+func TestCompareReader(t *testing.T) {
+	fileSize := 50 * 1024 * 1024
+	fileCnt := 24
+	store := createEvenlyDistributedFiles(t, fileSize, fileCnt)
+	memoryLimit := 64 * 1024 * 1024
+	fileIdx := 0
+	var (
+		now     time.Time
+		elapsed time.Duration
+		file    *os.File
+		err     error
+	)
+	beforeTest := func() {
+		fileIdx++
+		file, err = os.Create(fmt.Sprintf("cpu-profile-%d.prof", fileIdx))
+		intest.Assert(err == nil)
+		err = pprof.StartCPUProfile(file)
+		intest.Assert(err == nil)
+		now = time.Now()
+	}
+	beforeClose := func() {
+		file, err = os.Create(fmt.Sprintf("heap-profile-%d.prof", fileIdx))
+		intest.Assert(err == nil)
+		// check heap profile to see the memory usage is expected
+		err = pprof.WriteHeapProfile(file)
+		intest.Assert(err == nil)
+	}
+	afterClose := func() {
+		elapsed = time.Since(now)
+		pprof.StopCPUProfile()
+	}
+
+	suite := &readTestSuite{
+		store:              store,
+		concurrency:        8,
+		memoryLimit:        memoryLimit,
+		beforeCreateReader: beforeTest,
+		beforeReaderClose:  beforeClose,
+		afterReaderClose:   afterClose,
+	}
+	readFileSequential(suite)
+	t.Logf(
+		"sequential read speed for %d bytes: %.2f MB/s",
+		fileSize*fileCnt,
+		float64(fileSize*fileCnt)/elapsed.Seconds()/1024/1024,
+	)
+
+	readFileConcurrently(suite)
+	t.Logf(
+		"concurrent read speed for %d bytes: %.2f MB/s",
+		fileSize*fileCnt,
+		float64(fileSize*fileCnt)/elapsed.Seconds()/1024/1024,
+	)
 }
