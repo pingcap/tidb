@@ -310,7 +310,7 @@ func createEvenlyDistributedFiles(
 			SetMemorySizeLimit(uint64(float64(fileSize) * 1.1))
 		writer := builder.Build(
 			store,
-			"test/evenly_distributed",
+			"evenly_distributed",
 			fmt.Sprintf("%d", i),
 		)
 
