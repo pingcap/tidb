@@ -201,6 +201,7 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 	ctx context.Context,
 	taskHandle dispatcher.TaskHandle,
 	gTask *proto.Task,
+	serverInfos []*infosync.ServerInfo,
 	nextStep proto.Step,
 ) (
 	resSubtaskMeta [][]byte, err error) {
@@ -299,18 +300,13 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 		return nil, errors.Errorf("unknown step %d", gTask.Step)
 	}
 
-	eligibleInstances, err := dsp.GetEligibleInstances(ctx, gTask)
-	if err != nil {
-		logger.Warn("failed to get eligible instances", zap.Error(err))
-	}
-
 	planCtx := planner.PlanCtx{
 		Ctx:                  ctx,
 		TaskID:               gTask.ID,
 		PreviousSubtaskMetas: previousSubtaskMetas,
 		GlobalSort:           dsp.GlobalSort,
 		NextTaskStep:         nextStep,
-		ExecuteNodesCnt:      len(eligibleInstances),
+		ExecuteNodesCnt:      len(serverInfos),
 	}
 	logicalPlan := &LogicalPlan{}
 	if err := logicalPlan.FromTaskMeta(gTask.Meta); err != nil {
@@ -368,16 +364,17 @@ func (dsp *ImportDispatcherExt) OnErrStage(ctx context.Context, handle dispatche
 }
 
 // GetEligibleInstances implements dispatcher.Extension interface.
-func (*ImportDispatcherExt) GetEligibleInstances(ctx context.Context, gTask *proto.Task) ([]*infosync.ServerInfo, error) {
+func (*ImportDispatcherExt) GetEligibleInstances(ctx context.Context, gTask *proto.Task) ([]*infosync.ServerInfo, bool, error) {
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(gTask.Meta, taskMeta)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, true, errors.Trace(err)
 	}
 	if len(taskMeta.EligibleInstances) > 0 {
-		return taskMeta.EligibleInstances, nil
+		return taskMeta.EligibleInstances, false, nil
 	}
-	return dispatcher.GenerateSchedulerNodes(ctx)
+	serverInfo, err := dispatcher.GenerateSchedulerNodes(ctx)
+	return serverInfo, true, err
 }
 
 // IsRetryableErr implements dispatcher.Extension interface.

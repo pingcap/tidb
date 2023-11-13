@@ -57,7 +57,7 @@ func isAnalyzeWorkerPanic(err error) bool {
 func getAnalyzePanicErr(r interface{}) error {
 	if msg, ok := r.(string); ok {
 		if msg == globalPanicAnalyzeMemoryExceed {
-			return errAnalyzeOOM
+			return errors.Trace(errAnalyzeOOM)
 		}
 	}
 	if err, ok := r.(error); ok {
@@ -66,7 +66,7 @@ func getAnalyzePanicErr(r interface{}) error {
 		}
 		return err
 	}
-	return errAnalyzeWorkerPanic
+	return errors.Trace(errAnalyzeWorkerPanic)
 }
 
 // analyzeResultsNotifyWaitGroupWrapper is a wrapper for sync.WaitGroup

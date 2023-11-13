@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/vecgroupchecker"
 	"github.com/pingcap/tidb/pkg/executor/lockstats"
 	executor_metrics "github.com/pingcap/tidb/pkg/executor/metrics"
+	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -1297,7 +1298,7 @@ func (b *executorBuilder) buildTrace(v *plannercore.Trace) exec.Executor {
 		optimizerTraceTarget: v.OptimizerTraceTarget,
 	}
 	if t.format == plannercore.TraceFormatLog && !t.optimizerTrace {
-		return &SortExec{
+		return &sortexec.SortExec{
 			BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), t),
 			ByItems: []*plannerutil.ByItems{
 				{Expr: &expression.Column{
@@ -1305,7 +1306,7 @@ func (b *executorBuilder) buildTrace(v *plannercore.Trace) exec.Executor {
 					RetType: types.NewFieldType(mysql.TypeTimestamp),
 				}},
 			},
-			schema: v.Schema(),
+			ExecSchema: v.Schema(),
 		}
 	}
 	return t
@@ -2245,10 +2246,10 @@ func (b *executorBuilder) buildSort(v *plannercore.PhysicalSort) exec.Executor {
 	if b.err != nil {
 		return nil
 	}
-	sortExec := SortExec{
+	sortExec := sortexec.SortExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
 		ByItems:      v.ByItems,
-		schema:       v.Schema(),
+		ExecSchema:   v.Schema(),
 	}
 	executor_metrics.ExecutorCounterSortExec.Inc()
 	return &sortExec
@@ -2259,15 +2260,15 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) exec.Executor {
 	if b.err != nil {
 		return nil
 	}
-	sortExec := SortExec{
+	sortExec := sortexec.SortExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
 		ByItems:      v.ByItems,
-		schema:       v.Schema(),
+		ExecSchema:   v.Schema(),
 	}
 	executor_metrics.ExecutorCounterTopNExec.Inc()
-	return &TopNExec{
+	return &sortexec.TopNExec{
 		SortExec: sortExec,
-		limit:    &plannercore.PhysicalLimit{Count: v.Count, Offset: v.Offset},
+		Limit:    &plannercore.PhysicalLimit{Count: v.Count, Offset: v.Offset},
 	}
 }
 
@@ -2903,6 +2904,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 		OptionsMap:   v.OptionsMap,
 		wg:           util.NewWaitGroupPool(gp),
 		gp:           gp,
+		errExitCh:    make(chan struct{}),
 	}
 	autoAnalyze := ""
 	if b.ctx.GetSessionVars().InRestrictedSQL {
@@ -4442,7 +4444,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 		if e.ranges, err = buildRangesForIndexJoin(e.Ctx(), lookUpContents, indexRanges, keyOff2IdxOff, cwc); err != nil {
 			return nil, err
 		}
-		if err := e.Open(ctx); err != nil {
+		if err := exec.Open(ctx, e); err != nil {
 			return nil, err
 		}
 		return e, nil
@@ -4468,13 +4470,13 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 				return nil, err
 			}
 		}
-		if err := e.Open(ctx); err != nil {
+		if err := exec.Open(ctx, e); err != nil {
 			return nil, err
 		}
 		return e, nil
 	}
 	ret := &TableDualExec{BaseExecutor: *e.Base()}
-	err = ret.Open(ctx)
+	err = exec.Open(ctx, ret)
 	return ret, err
 }
 
@@ -4517,7 +4519,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 		if err != nil {
 			return nil, err
 		}
-		if err := e.Open(ctx); err != nil {
+		if err := exec.Open(ctx, e); err != nil {
 			return nil, err
 		}
 		return e, err
@@ -4545,13 +4547,13 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 			}
 		}
 		e.partitionTableMode = true
-		if err := e.Open(ctx); err != nil {
+		if err := exec.Open(ctx, e); err != nil {
 			return nil, err
 		}
 		return e, err
 	}
 	ret := &TableDualExec{BaseExecutor: *e.Base()}
-	err = ret.Open(ctx)
+	err = exec.Open(ctx, ret)
 	return ret, err
 }
 
@@ -5433,10 +5435,9 @@ func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64
 		return cacheData
 	} else if loading {
 		return nil
-	} else {
-		if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.inDeleteStmt && !b.inUpdateStmt {
-			tbl.(table.CachedTable).UpdateLockForRead(context.Background(), b.ctx.GetStore(), startTS, leaseDuration)
-		}
+	}
+	if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.inDeleteStmt && !b.inUpdateStmt {
+		tbl.(table.CachedTable).UpdateLockForRead(context.Background(), b.ctx.GetStore(), startTS, leaseDuration)
 	}
 	return nil
 }

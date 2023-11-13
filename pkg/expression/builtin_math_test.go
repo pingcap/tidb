@@ -52,7 +52,7 @@ func TestAbs(t *testing.T) {
 		fc := funcs[ast.Abs]
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
 		require.NoError(t, err)
-		v, err := evalBuiltinFunc(f, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
@@ -368,7 +368,7 @@ func TestRand(t *testing.T) {
 	fc := funcs[ast.Rand]
 	f, err := fc.getFunction(ctx, nil)
 	require.NoError(t, err)
-	v, err := evalBuiltinFunc(f, chunk.Row{})
+	v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Less(t, v.GetFloat64(), float64(1))
 	require.GreaterOrEqual(t, v.GetFloat64(), float64(0))
@@ -378,7 +378,7 @@ func TestRand(t *testing.T) {
 	require.NoError(t, err)
 	randGen := mathutil.NewWithSeed(20160101)
 	for i := 0; i < 3; i++ {
-		v, err = evalBuiltinFunc(f2, chunk.Row{})
+		v, err = evalBuiltinFunc(f2, ctx, chunk.Row{})
 		require.NoError(t, err)
 		require.Equal(t, randGen.Gen(), v.GetFloat64())
 	}
@@ -402,7 +402,7 @@ func TestPow(t *testing.T) {
 		fc := funcs[ast.Pow]
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
 		require.NoError(t, err)
-		v, err := evalBuiltinFunc(f, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
@@ -420,7 +420,7 @@ func TestPow(t *testing.T) {
 		fc := funcs[ast.Pow]
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
 		require.NoError(t, err)
-		_, err = evalBuiltinFunc(f, chunk.Row{})
+		_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 		if i == 2 {
 			require.Error(t, err)
 			require.Equal(t, "[types:1690]DOUBLE value is out of range in 'pow(10, 700)'", err.Error())
@@ -479,7 +479,7 @@ func TestRound(t *testing.T) {
 		case *builtinRoundRealSig:
 			require.Equal(t, tipb.ScalarFuncSig_RoundReal, f.PbCode())
 		}
-		v, err := evalBuiltinFunc(f, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
@@ -523,7 +523,7 @@ func TestTruncate(t *testing.T) {
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
 		require.NoError(t, err)
 		require.NotNil(t, f)
-		v, err := evalBuiltinFunc(f, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
@@ -657,7 +657,7 @@ func TestSign(t *testing.T) {
 		fc := funcs[ast.Sign]
 		f, err := fc.getFunction(ctx, primitiveValsToConstants(ctx, tt.num))
 		require.NoError(t, err)
-		v, err := evalBuiltinFunc(f, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(tt.ret), v)
 	}
@@ -729,7 +729,7 @@ func TestSqrt(t *testing.T) {
 		fc := funcs[ast.Sqrt]
 		f, err := fc.getFunction(ctx, primitiveValsToConstants(ctx, tt.Arg))
 		require.NoError(t, err)
-		v, err := evalBuiltinFunc(f, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(tt.Ret), v)
 	}
@@ -740,7 +740,7 @@ func TestPi(t *testing.T) {
 	f, err := funcs[ast.PI].getFunction(ctx, nil)
 	require.NoError(t, err)
 
-	pi, err := evalBuiltinFunc(f, chunk.Row{})
+	pi, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	testutil.DatumEqual(t, types.NewDatum(math.Pi), pi)
 }
@@ -764,7 +764,7 @@ func TestRadians(t *testing.T) {
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
 		require.NoError(t, err)
 		require.NotNil(t, f)
-		v, err := evalBuiltinFunc(f, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
@@ -773,7 +773,7 @@ func TestRadians(t *testing.T) {
 	fc := funcs[ast.Radians]
 	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewDatum(invalidArg)}))
 	require.NoError(t, err)
-	_, err = evalBuiltinFunc(f, chunk.Row{})
+	_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, 1, int(ctx.GetSessionVars().StmtCtx.WarningCount()))
 }
