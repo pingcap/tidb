@@ -156,7 +156,11 @@ type indexMergeJoinResult struct {
 
 // Open implements the Executor interface
 func (e *IndexLookUpMergeJoin) Open(ctx context.Context) error {
+<<<<<<< HEAD:executor/index_lookup_merge_join.go
 	err := e.children[0].Open(ctx)
+=======
+	err := exec.Open(ctx, e.Children(0))
+>>>>>>> 6e8df186f51 (executor: fix goroutine leak for EvalSubqueryFirstRow (#48133)):pkg/executor/index_lookup_merge_join.go
 	if err != nil {
 		return err
 	}

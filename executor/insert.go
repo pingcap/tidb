@@ -21,6 +21,7 @@ import (
 	"runtime/trace"
 	"time"
 
+<<<<<<< HEAD:executor/insert.go
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -34,6 +35,26 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
+=======
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/pingcap/tidb/pkg/util/tracing"
+>>>>>>> 6e8df186f51 (executor: fix goroutine leak for EvalSubqueryFirstRow (#48133)):pkg/executor/insert.go
 	"go.uber.org/zap"
 )
 
@@ -331,7 +352,7 @@ func (e *InsertExec) Open(ctx context.Context) error {
 		e.initEvalBuffer4Dup()
 	}
 	if e.SelectExec != nil {
-		return e.SelectExec.Open(ctx)
+		return exec.Open(ctx, e.SelectExec)
 	}
 	if !e.allAssignmentsAreConstant {
 		e.initEvalBuffer()
