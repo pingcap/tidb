@@ -98,22 +98,6 @@ func checkFileName(s string) bool {
 	return false
 }
 
-func TestBind(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists testbind")
-
-	tk.MustExec("create table testbind(i int, s varchar(20))")
-	tk.MustExec("create index index_t on testbind(i,s)")
-	tk.MustExec("create global binding for select * from testbind using select * from testbind use index for join(index_t)")
-	require.Len(t, tk.MustQuery("show global bindings").Rows(), 1)
-
-	tk.MustExec("create session binding for select * from testbind using select * from testbind use index for join(index_t)")
-	require.Len(t, tk.MustQuery("show session bindings").Rows(), 1)
-	tk.MustExec("drop session binding for select * from testbind")
-}
-
 func TestPlanReplayer(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`))
 	defer func() {
@@ -889,25 +873,6 @@ func TestOOMActionPriority(t *testing.T) {
 	require.Equal(t, action.GetPriority(), int64(memory.DefLogPriority))
 }
 
-func TestTrackAggMemoryUsage(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("insert into t values(1)")
-	tk.MustExec("set tidb_track_aggregate_memory_usage = off;")
-	rows := tk.MustQuery("explain analyze select /*+ HASH_AGG() */ sum(a) from t").Rows()
-	require.Equal(t, "N/A", rows[0][7])
-	rows = tk.MustQuery("explain analyze select /*+ STREAM_AGG() */ sum(a) from t").Rows()
-	require.Equal(t, "N/A", rows[0][7])
-	tk.MustExec("set tidb_track_aggregate_memory_usage = on;")
-	rows = tk.MustQuery("explain analyze select /*+ HASH_AGG() */ sum(a) from t").Rows()
-	require.NotEqual(t, "N/A", rows[0][7])
-	rows = tk.MustQuery("explain analyze select /*+ STREAM_AGG() */ sum(a) from t").Rows()
-	require.NotEqual(t, "N/A", rows[0][7])
-}
-
 // Test invoke Close without invoking Open before for each operators.
 func TestUnreasonablyClose(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -1044,61 +1009,6 @@ func TestUnreasonablyClose(t *testing.T) {
 		}
 	}
 	require.Equal(t, opsNeedsCoveredMask, opsAlreadyCoveredMask, fmt.Sprintf("these operators are not covered %s", commentBuf.String()))
-}
-
-func TestOOMPanicAction(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int primary key, b double);")
-	tk.MustExec("insert into t values (1,1)")
-	sm := &testkit.MockSessionManager{
-		PS: make([]*util.ProcessInfo, 0),
-	}
-	tk.Session().SetSessionManager(sm)
-	dom.ExpensiveQueryHandle().SetSessionManager(sm)
-	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
-	tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
-	tk.MustExec("set @@tidb_mem_quota_query=1;")
-	err := tk.QueryToErr("select sum(b) from t group by a;")
-	require.Error(t, err)
-	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
-
-	// Test insert from select oom panic.
-	tk.MustExec("drop table if exists t,t1")
-	tk.MustExec("create table t (a bigint);")
-	tk.MustExec("create table t1 (a bigint);")
-	tk.MustExec("set @@tidb_mem_quota_query=200;")
-	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(tk.ExecToErr("insert into t1 values (1),(2),(3),(4),(5);")))
-	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(tk.ExecToErr("replace into t1 values (1),(2),(3),(4),(5);")))
-	tk.MustExec("set @@tidb_mem_quota_query=10000")
-	tk.MustExec("insert into t1 values (1),(2),(3),(4),(5);")
-	tk.MustExec("set @@tidb_mem_quota_query=10;")
-	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(tk.ExecToErr("insert into t select a from t1 order by a desc;")))
-	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(tk.ExecToErr("replace into t select a from t1 order by a desc;")))
-
-	tk.MustExec("set @@tidb_mem_quota_query=10000")
-	tk.MustExec("insert into t values (1),(2),(3),(4),(5);")
-	// Set the memory quota to 244 to make this SQL panic during the DeleteExec
-	// instead of the TableReaderExec.
-	tk.MustExec("set @@tidb_mem_quota_query=244;")
-	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(tk.ExecToErr("delete from t")))
-
-	tk.MustExec("set @@tidb_mem_quota_query=10000;")
-	tk.MustExec("delete from t1")
-	tk.MustExec("insert into t1 values(1)")
-	tk.MustExec("insert into t values (1),(2),(3),(4),(5);")
-	tk.MustExec("set @@tidb_mem_quota_query=244;")
-	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(tk.ExecToErr("delete t, t1 from t join t1 on t.a = t1.a")))
-
-	tk.MustExec("set @@tidb_mem_quota_query=100000;")
-	tk.MustExec("truncate table t")
-	tk.MustExec("insert into t values(1),(2),(3)")
-	// set the memory to quota to make the SQL panic during UpdateExec instead
-	// of TableReader.
-	tk.MustExec("set @@tidb_mem_quota_query=244;")
-	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(tk.ExecToErr("update t set a = 4")))
 }
 
 func TestPointGetPreparedPlan(t *testing.T) {
