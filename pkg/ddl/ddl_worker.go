@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -372,7 +373,11 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		return errors.Errorf("Can't add ddl job, have flashback cluster job")
 	}
 
-	startTS := uint64(0)
+	var (
+		startTS = uint64(0)
+		bdrRole = string(ast.BDRRoleNone)
+	)
+
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err = kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
@@ -380,6 +385,12 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+
+		bdrRole, err = t.GetBDRRole()
+		if err != nil {
+			return errors.Trace(err)
+		}
+
 		startTS = txn.StartTS()
 		return nil
 	})
@@ -393,6 +404,7 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		job.Version = currentVersion
 		job.StartTS = startTS
 		job.ID = ids[i]
+		job.BDRRole = bdrRole
 		setJobStateToQueueing(job)
 
 		if d.stateSyncer.IsUpgradingState() && !hasSysDB(job) {

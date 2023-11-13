@@ -1025,6 +1025,10 @@ const (
 	// vresion 179
 	//   enlarge `VARIABLE_VALUE` of `mysql.global_variables` from `varchar(1024)` to `varchar(16383)`.
 	version179 = 179
+
+	// vresion 180
+	//   add column `bdr_role` to `mysql.tidb_ddl_job` and `mysql.tidb_ddl_history`.
+	version180 = 180
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
@@ -1184,6 +1188,7 @@ var (
 		upgradeToVer177,
 		upgradeToVer178,
 		upgradeToVer179,
+		upgradeToVer180,
 	}
 )
 
@@ -2890,6 +2895,14 @@ func upgradeToVer179(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.global_variables MODIFY COLUMN `VARIABLE_VALUE` varchar(16383)")
+}
+
+func upgradeToVer180(s Session, ver int64) {
+	if ver >= version180 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ddl_job ADD COLUMN `bdr_role` varchar(64)", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ddl_history ADD COLUMN `bdr_role` varchar(64)", infoschema.ErrColumnExists)
 }
 
 func writeOOMAction(s Session) {
