@@ -1,0 +1,63 @@
+[
+  {
+    "Name": "TestPushDerivedTopnFlash",
+    "Cases": [
+      {
+        "SQL": "select * from (select row_number() over (order by b) as rownumber from t) DT where rownumber <= 1 -- applicable with no partition by",
+        "Plan": [
+          "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  Column#4",
+          "    └─Selection 8000.00 mpp[tiflash]  le(Column#4, 1)",
+          "      └─Window 10000.00 mpp[tiflash]  row_number()->Column#4 over(order by test.t.b rows between current row and current row)",
+          "        └─Sort 10000.00 mpp[tiflash]  test.t.b",
+          "          └─ExchangeReceiver 10000.00 mpp[tiflash]  ",
+          "            └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from (select row_number() over (partition by b) as rownumber from t) DT where rownumber <= 1 -- applicable with partition by but no push down to tiflash",
+        "Plan": [
+          "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  Column#4, stream_count: 8",
+          "    └─Selection 8000.00 mpp[tiflash]  le(Column#4, 1), stream_count: 8",
+          "      └─Window 10000.00 mpp[tiflash]  row_number()->Column#4 over(partition by test.t.b rows between current row and current row), stream_count: 8",
+          "        └─Sort 10000.00 mpp[tiflash]  test.t.b, stream_count: 8",
+          "          └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 8",
+          "            └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary], stream_count: 8",
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from (select row_number() over (partition by b order by a) as rownumber from t) DT where rownumber <= 1 -- applicable with partition by and order by but no push down to tiflash",
+        "Plan": [
+          "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  Column#4, stream_count: 8",
+          "    └─Selection 8000.00 mpp[tiflash]  le(Column#4, 1), stream_count: 8",
+          "      └─Window 10000.00 mpp[tiflash]  row_number()->Column#4 over(partition by test.t.b order by test.t.a rows between current row and current row), stream_count: 8",
+          "        └─Sort 10000.00 mpp[tiflash]  test.t.b, test.t.a, stream_count: 8",
+          "          └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 8",
+          "            └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary], stream_count: 8",
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from (select row_number() over (partition by a) as rownumber from t) DT where rownumber <= 3 -- pattern is not applicable with partition by not prefix of PK",
+        "Plan": [
+          "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  Column#4, stream_count: 8",
+          "    └─Selection 8000.00 mpp[tiflash]  le(Column#4, 3), stream_count: 8",
+          "      └─Window 10000.00 mpp[tiflash]  row_number()->Column#4 over(partition by test.t.a rows between current row and current row), stream_count: 8",
+          "        └─Sort 10000.00 mpp[tiflash]  test.t.a, stream_count: 8",
+          "          └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 8",
+          "            └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], stream_count: 8",
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  }
+]

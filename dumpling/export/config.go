@@ -20,9 +20,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/promutil"
-	filter "github.com/pingcap/tidb/util/table-filter"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/promutil"
+	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/pflag"
 	"go.uber.org/atomic"
@@ -68,16 +68,53 @@ const (
 	flagKey                      = "key"
 	flagCsvSeparator             = "csv-separator"
 	flagCsvDelimiter             = "csv-delimiter"
+	flagCsvLineTerminator        = "csv-line-terminator"
 	flagOutputFilenameTemplate   = "output-filename-template"
 	flagCompleteInsert           = "complete-insert"
 	flagParams                   = "params"
 	flagReadTimeout              = "read-timeout"
 	flagTransactionalConsistency = "transactional-consistency"
 	flagCompress                 = "compress"
+	flagCsvOutputDialect         = "csv-output-dialect"
 
 	// FlagHelp represents the help flag
 	FlagHelp = "help"
 )
+
+// CSVDialect is the dialect of the CSV output for compatible with different import target
+type CSVDialect int
+
+const (
+	// CSVDialectDefault is the default dialect, which is MySQL/MariaDB/TiDB etc.
+	CSVDialectDefault CSVDialect = iota
+	// CSVDialectSnowflake is the dialect of Snowflake
+	CSVDialectSnowflake
+	// CSVDialectRedshift is the dialect of Redshift
+	CSVDialectRedshift
+	// CSVDialectBase64 is a dialect require base64 binary format, only used for test now.
+	CSVDialectBase64
+)
+
+// BinaryFormat is the format of binary data
+// Three standard formats are supported: UTF8, HEX and Base64 now.
+type BinaryFormat int
+
+const (
+	// BinaryFormatUTF8 is the default format, format binary data as UTF8 string
+	BinaryFormatUTF8 BinaryFormat = iota
+	// BinaryFormatHEX format binary data as HEX string, e.g. 12ABCD
+	BinaryFormatHEX
+	// BinaryFormatBase64 format binary data as Base64 string, e.g. 123qwer==
+	BinaryFormatBase64
+)
+
+// DialectBinaryFormatMap is the map of dialect and binary format
+var DialectBinaryFormatMap = map[CSVDialect]BinaryFormat{
+	CSVDialectDefault:   BinaryFormatUTF8,
+	CSVDialectSnowflake: BinaryFormatHEX,
+	CSVDialectRedshift:  BinaryFormatHEX,
+	CSVDialectBase64:    BinaryFormatBase64,
+}
 
 // Config is the dump config for dumpling
 type Config struct {
@@ -113,18 +150,19 @@ type Config struct {
 		SSLKeyBytes  []byte `json:"-"`
 	}
 
-	LogLevel      string
-	LogFile       string
-	LogFormat     string
-	OutputDirPath string
-	StatusAddr    string
-	Snapshot      string
-	Consistency   string
-	CsvNullValue  string
-	SQL           string
-	CsvSeparator  string
-	CsvDelimiter  string
-	Databases     []string
+	LogLevel          string
+	LogFile           string
+	LogFormat         string
+	OutputDirPath     string
+	StatusAddr        string
+	Snapshot          string
+	Consistency       string
+	CsvNullValue      string
+	SQL               string
+	CsvSeparator      string
+	CsvDelimiter      string
+	CsvLineTerminator string
+	Databases         []string
 
 	TableFilter         filter.Filter `json:"-"`
 	Where               string
@@ -140,6 +178,7 @@ type Config struct {
 	SessionParams       map[string]interface{}
 	Tables              DatabaseTables
 	CollationCompatible string
+	CsvOutputDialect    CSVDialect
 
 	Labels       prometheus.Labels       `json:"-"`
 	PromFactory  promutil.Factory        `json:"-"`
@@ -191,10 +230,12 @@ func DefaultConfig() *Config {
 		DumpEmptyDatabase:        true,
 		CsvDelimiter:             "\"",
 		CsvSeparator:             ",",
+		CsvLineTerminator:        "\r\n",
 		SessionParams:            make(map[string]interface{}),
 		OutputFileTemplate:       DefaultOutputFileTemplate,
 		PosAfterConnect:          false,
 		CollationCompatible:      LooseCollationCompatible,
+		CsvOutputDialect:         CSVDialectDefault,
 		SpecifiedTables:          false,
 		PromFactory:              promutil.NewDefaultFactory(),
 		PromRegistry:             promutil.NewDefaultRegistry(),
@@ -300,6 +341,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagKey, "", "The path name to the client private key file for TLS connection")
 	flags.String(flagCsvSeparator, ",", "The separator for csv files, default ','")
 	flags.String(flagCsvDelimiter, "\"", "The delimiter for values in csv files, default '\"'")
+	flags.String(flagCsvLineTerminator, "\r\n", "The line terminator for csv files, default '\\r\\n'")
 	flags.String(flagOutputFilenameTemplate, "", "The output filename template (without file extension)")
 	flags.Bool(flagCompleteInsert, false, "Use complete INSERT statements that include column names")
 	flags.StringToString(flagParams, nil, `Extra session variables used while dumping, accepted format: --params "character_set_client=latin1,character_set_connection=latin1"`)
@@ -309,6 +351,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.Bool(flagTransactionalConsistency, true, "Only support transactional consistency")
 	_ = flags.MarkHidden(flagTransactionalConsistency)
 	flags.StringP(flagCompress, "c", "", "Compress output file type, support 'gzip', 'snappy', 'zstd', 'no-compression' now")
+	flags.String(flagCsvOutputDialect, "", "The dialect of output CSV file, support 'snowflake', 'redshift' now")
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags
@@ -447,6 +490,10 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	conf.CsvLineTerminator, err = flags.GetString(flagCsvLineTerminator)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	conf.CompleteInsert, err = flags.GetBool(flagCompleteInsert)
 	if err != nil {
 		return errors.Trace(err)
@@ -538,6 +585,18 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
+	dialect, err := flags.GetString(flagCsvOutputDialect)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if dialect != "" && conf.FileType != "csv" {
+		return errors.Errorf("%s is only supported when dumping whole table to csv, not compatible with %s", flagCsvOutputDialect, conf.FileType)
+	}
+	conf.CsvOutputDialect, err = ParseOutputDialect(dialect)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	for k, v := range params {
 		conf.SessionParams[k] = v
 	}
@@ -619,6 +678,20 @@ func ParseCompressType(compressType string) (storage.CompressType, error) {
 		return storage.Zstd, nil
 	default:
 		return storage.NoCompression, errors.Errorf("unknown compress type %s", compressType)
+	}
+}
+
+// ParseOutputDialect parses output dialect string to Dialect
+func ParseOutputDialect(outputDialect string) (CSVDialect, error) {
+	switch outputDialect {
+	case "", "default":
+		return CSVDialectDefault, nil
+	case "snowflake":
+		return CSVDialectSnowflake, nil
+	case "redshift":
+		return CSVDialectRedshift, nil
+	default:
+		return CSVDialectDefault, errors.Errorf("unknown output dialect %s", outputDialect)
 	}
 }
 

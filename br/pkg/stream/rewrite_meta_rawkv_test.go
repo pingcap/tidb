@@ -7,12 +7,12 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/types"
-	filter "github.com/pingcap/tidb/util/table-filter"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/types"
+	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
 )
 
@@ -208,49 +208,76 @@ func TestRewriteKeyForTable(t *testing.T) {
 		tableID int64  = 57
 		ts      uint64 = 400036290571534337
 	)
-	encodedKey := encodeTxnMetaKey(meta.DBkey(dbID), meta.TableKey(tableID), ts)
+	cases := []struct {
+		encodeTableFn func(int64) []byte
+		decodeTableFn func([]byte) (int64, error)
+	}{
+		{
+			meta.TableKey,
+			meta.ParseTableKey,
+		},
+		{
+			meta.AutoIncrementIDKey,
+			meta.ParseAutoIncrementIDKey,
+		},
+		{
+			meta.AutoTableIDKey,
+			meta.ParseAutoTableIDKey,
+		},
+		{
+			meta.AutoRandomTableIDKey,
+			meta.ParseAutoRandomTableIDKey,
+		},
+		{
+			meta.SequenceKey,
+			meta.ParseSequenceKey,
+		},
+	}
 
-	// create schemasReplace.
-	sr := MockEmptySchemasReplace(nil)
+	for _, ca := range cases {
+		encodedKey := encodeTxnMetaKey(meta.DBkey(dbID), ca.encodeTableFn(tableID), ts)
+		// create schemasReplace.
+		sr := MockEmptySchemasReplace(nil)
 
-	// set preConstruct status and construct map information.
-	sr.SetPreConstructMapStatus()
-	newKey, err := sr.rewriteKeyForTable(encodedKey, WriteCF, meta.ParseTableKey, meta.TableKey)
-	require.Nil(t, err)
-	require.Nil(t, newKey)
-	require.Equal(t, len(sr.DbMap), 1)
-	require.Equal(t, len(sr.DbMap[dbID].TableMap), 1)
-	downStreamDbID := sr.DbMap[dbID].DbID
-	downStreamTblID := sr.DbMap[dbID].TableMap[tableID].TableID
+		// set preConstruct status and construct map information.
+		sr.SetPreConstructMapStatus()
+		newKey, err := sr.rewriteKeyForTable(encodedKey, WriteCF, ca.decodeTableFn, ca.encodeTableFn)
+		require.Nil(t, err)
+		require.Nil(t, newKey)
+		require.Equal(t, len(sr.DbMap), 1)
+		require.Equal(t, len(sr.DbMap[dbID].TableMap), 1)
+		downStreamDbID := sr.DbMap[dbID].DbID
+		downStreamTblID := sr.DbMap[dbID].TableMap[tableID].TableID
 
-	// set restoreKV status and rewrite it.
-	sr.SetRestoreKVStatus()
-	newKey, err = sr.rewriteKeyForTable(encodedKey, DefaultCF, meta.ParseTableKey, meta.TableKey)
-	require.Nil(t, err)
-	decodedKey, err := ParseTxnMetaKeyFrom(newKey)
-	require.Nil(t, err)
-	require.Equal(t, decodedKey.Ts, ts)
+		// set restoreKV status and rewrite it.
+		sr.SetRestoreKVStatus()
+		newKey, err = sr.rewriteKeyForTable(encodedKey, DefaultCF, ca.decodeTableFn, ca.encodeTableFn)
+		require.Nil(t, err)
+		decodedKey, err := ParseTxnMetaKeyFrom(newKey)
+		require.Nil(t, err)
+		require.Equal(t, decodedKey.Ts, ts)
 
-	newDbID, err := meta.ParseDBKey(decodedKey.Key)
-	require.Nil(t, err)
-	require.Equal(t, newDbID, downStreamDbID)
-	newTblID, err := meta.ParseTableKey(decodedKey.Field)
-	require.Nil(t, err)
-	require.Equal(t, newTblID, downStreamTblID)
+		newDbID, err := meta.ParseDBKey(decodedKey.Key)
+		require.Nil(t, err)
+		require.Equal(t, newDbID, downStreamDbID)
+		newTblID, err := ca.decodeTableFn(decodedKey.Field)
+		require.Nil(t, err)
+		require.Equal(t, newTblID, downStreamTblID)
 
-	// rewrite it again, and get the same result.
-	newKey, err = sr.rewriteKeyForTable(encodedKey, WriteCF, meta.ParseTableKey, meta.TableKey)
-	require.Nil(t, err)
-	decodedKey, err = ParseTxnMetaKeyFrom(newKey)
-	require.Nil(t, err)
-	require.Equal(t, decodedKey.Ts, sr.RewriteTS)
+		// rewrite it again, and get the same result.
+		newKey, err = sr.rewriteKeyForTable(encodedKey, WriteCF, ca.decodeTableFn, ca.encodeTableFn)
+		require.Nil(t, err)
+		decodedKey, err = ParseTxnMetaKeyFrom(newKey)
+		require.Nil(t, err)
+		require.Equal(t, decodedKey.Ts, sr.RewriteTS)
 
-	newDbID, err = meta.ParseDBKey(decodedKey.Key)
-	require.Nil(t, err)
-	require.Equal(t, newDbID, downStreamDbID)
-	newTblID, err = meta.ParseTableKey(decodedKey.Field)
-	require.Nil(t, err)
-	require.Equal(t, newTblID, downStreamTblID)
+		newDbID, err = meta.ParseDBKey(decodedKey.Key)
+		require.Nil(t, err)
+		require.Equal(t, newDbID, downStreamDbID)
+		newTblID, err = ca.decodeTableFn(decodedKey.Field)
+		require.Nil(t, err)
+		require.Equal(t, newTblID, downStreamTblID)
+	}
 }
 
 func TestRewriteTableInfo(t *testing.T) {
@@ -899,7 +926,7 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	}
 
 	// drop indexes(multi-schema-change) for table0
-	err = schemaReplace.restoreFromHistory(multiSchemaChangeJob0)
+	err = schemaReplace.restoreFromHistory(multiSchemaChangeJob0, false)
 	require.NoError(t, err)
 	for l := 0; l < 2; l++ {
 		for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
@@ -912,7 +939,7 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	}
 
 	// drop indexes(multi-schema-change) for table1
-	err = schemaReplace.restoreFromHistory(multiSchemaChangeJob1)
+	err = schemaReplace.restoreFromHistory(multiSchemaChangeJob1, false)
 	require.NoError(t, err)
 	for l := 0; l < 2; l++ {
 		iargs = <-midr.indexCh

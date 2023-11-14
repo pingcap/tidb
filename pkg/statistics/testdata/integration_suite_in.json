@@ -1,0 +1,20 @@
+[
+  {
+    "name": "TestExpBackoffEstimation",
+    "cases": [
+      "explain select * from exp_backoff where a = 1",
+      "explain select * from exp_backoff where b = 1",
+      "explain select * from exp_backoff where c = 1",
+      "explain select * from exp_backoff where d >= 3 and d <= 5",
+      "explain select * from exp_backoff where a = 1 and b = 1 and c = 1 and d >= 3 and d<= 5",
+      "explain select * from exp_backoff where a = 1 and b = 1 and c = 1 and d >= 3 and d<= 5"
+    ]
+  },
+  {
+    "name": "TestNULLOnFullSampling",
+    "cases": [
+      "show stats_topn",
+      "show stats_buckets"
+    ]
+  }
+]

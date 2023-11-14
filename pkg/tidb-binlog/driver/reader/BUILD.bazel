@@ -1,0 +1,31 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "reader",
+    srcs = [
+        "offset.go",
+        "reader.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/tidb-binlog/driver/reader",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/tidb-binlog/proto/go-binlog",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@com_github_shopify_sarama//:sarama",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "reader_test",
+    timeout = "short",
+    srcs = ["offset_test.go"],
+    embed = [":reader"],
+    flaky = True,
+    deps = [
+        "//pkg/tidb-binlog/proto/go-binlog",
+        "@com_github_shopify_sarama//:sarama",
+        "@com_github_stretchr_testify//require",
+    ],
+)

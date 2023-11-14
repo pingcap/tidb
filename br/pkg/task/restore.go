@@ -28,9 +28,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/tikv"
@@ -139,6 +139,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 		"batch size for ddl to create a batch of tables once.")
 	flags.Bool(flagWithSysTable, false, "whether restore system privilege tables on default setting")
 	flags.StringArrayP(FlagResetSysUsers, "", []string{"cloud_admin", "root"}, "whether reset these users after restoration")
+	flags.Bool(flagUseFSR, false, "whether enable FSR for AWS snapshots")
 	_ = flags.MarkHidden(FlagResetSysUsers)
 	_ = flags.MarkHidden(FlagMergeRegionSizeBytes)
 	_ = flags.MarkHidden(FlagMergeRegionKeyCount)
@@ -218,6 +219,7 @@ type RestoreConfig struct {
 	VolumeThroughput    int64                 `json:"volume-throughput" toml:"volume-throughput"`
 	ProgressFile        string                `json:"progress-file" toml:"progress-file"`
 	TargetAZ            string                `json:"target-az" toml:"target-az"`
+	UseFSR              bool                  `json:"use-fsr" toml:"use-fsr"`
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
@@ -391,6 +393,11 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 			return errors.Trace(err)
 		}
 
+		cfg.UseFSR, err = flags.GetBool(flagUseFSR)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
 		// iops: gp3 [3,000-16,000]; io1/io2 [100-32,000]
 		// throughput: gp3 [125, 1000]; io1/io2 cannot set throughput
 		// io1 and io2 volumes support up to 64,000 IOPS only on Instances built on the Nitro System.
@@ -560,6 +567,23 @@ func removeCheckpointDataForLogRestore(ctx context.Context, storageName string, 
 		return errors.Trace(err)
 	}
 	return errors.Trace(checkpoint.RemoveCheckpointDataForLogRestore(ctx, s, taskName, clusterID))
+}
+
+func DefaultRestoreConfig() RestoreConfig {
+	fs := pflag.NewFlagSet("dummy", pflag.ContinueOnError)
+	DefineCommonFlags(fs)
+	DefineRestoreFlags(fs)
+	cfg := RestoreConfig{}
+	err := multierr.Combine(
+		cfg.ParseFromFlags(fs),
+		cfg.RestoreCommonConfig.ParseFromFlags(fs),
+		cfg.Config.ParseFromFlags(fs),
+	)
+	if err != nil {
+		log.Panic("infallible failed.", zap.Error(err))
+	}
+
+	return cfg
 }
 
 // RunRestore starts a restore task inside the current goroutine.
@@ -1117,6 +1141,10 @@ func enableTiDBConfig() func() {
 		// when upstream and downstream both set this value greater than default(3072)
 		conf.MaxIndexLength = config.DefMaxOfMaxIndexLength
 		log.Warn("set max-index-length to max(3072*4) to skip check index length in DDL")
+		conf.IndexLimit = config.DefMaxOfIndexLimit
+		log.Warn("set index-limit to max(64*8) to skip check index count in DDL")
+		conf.TableColumnCountLimit = config.DefMaxOfTableColumnCountLimit
+		log.Warn("set table-column-count to max(4096) to skip check column count in DDL")
 	})
 	return restoreConfig
 }

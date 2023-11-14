@@ -10,8 +10,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/tools/tazel",
     visibility = ["//visibility:private"],
     deps = [
-        "//util/mathutil",
-        "//util/set",
+        "//pkg/util/mathutil",
+        "//pkg/util/set",
         "@com_github_bazelbuild_buildtools//build:go_default_library",
         "@com_github_pingcap_log//:log",
         "@org_uber_go_zap//:zap",

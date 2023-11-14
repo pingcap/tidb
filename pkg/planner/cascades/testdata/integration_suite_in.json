@@ -1,0 +1,8 @@
+[
+  {
+    "name": "TestCascadePlannerHashedPartTable",
+    "cases": [
+      "select * from pt1 order by a"
+    ]
+  }
+]

@@ -31,13 +31,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/precheck"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
-	tmock "github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	tmock "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -412,6 +412,7 @@ func TestCheckCSVHeader(t *testing.T) {
 			dbMetas,
 			preInfoGetter,
 			nil,
+			nil,
 		)
 		preInfoGetter.dbInfosCache = rc.dbInfos
 		err = rc.checkCSVHeader(ctx)
@@ -464,6 +465,7 @@ func TestCheckTableEmpty(t *testing.T) {
 		cfg,
 		dbMetas,
 		preInfoGetter,
+		nil,
 		nil,
 	)
 
@@ -621,6 +623,7 @@ func TestLocalResource(t *testing.T) {
 		cfg,
 		nil,
 		preInfoGetter,
+		nil,
 		nil,
 	)
 	rc := &Controller{

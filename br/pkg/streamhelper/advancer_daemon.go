@@ -7,8 +7,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/owner"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
@@ -34,10 +34,10 @@ func (c *CheckpointAdvancer) OnStart(ctx context.Context) {
 // OnBecomeOwner implements daemon.Interface. If the tidb-server become owner, this function will be called.
 func (c *CheckpointAdvancer) OnBecomeOwner(ctx context.Context) {
 	metrics.AdvancerOwner.Set(1.0)
-	c.spawnSubscriptionHandler(ctx)
+	c.SpawnSubscriptionHandler(ctx)
 	go func() {
 		<-ctx.Done()
-		c.onStop()
+		c.OnStop()
 	}()
 }
 
@@ -46,7 +46,7 @@ func (c *CheckpointAdvancer) Name() string {
 	return "LogBackup::Advancer"
 }
 
-func (c *CheckpointAdvancer) onStop() {
+func (c *CheckpointAdvancer) OnStop() {
 	metrics.AdvancerOwner.Set(0.0)
 	c.stopSubscriber()
 }

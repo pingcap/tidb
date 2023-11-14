@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/kv"
 	"go.uber.org/zap"
 )
 
@@ -53,12 +53,7 @@ func NewChecksumManager(ctx context.Context, rc *Controller, store kv.Storage) (
 			backoffWeight = local.DefaultBackoffWeight
 		}
 
-		explicitRequestSourceType, err := common.GetExplicitRequestSourceTypeFromDB(ctx, rc.db)
-		if err != nil {
-			log.FromContext(ctx).Warn("get tidb_request_source_type failed", zap.Error(err), zap.String("tidb_request_source_type", explicitRequestSourceType))
-			return nil, errors.Trace(err)
-		}
-		manager = local.NewTiKVChecksumManager(store.GetClient(), rc.pdCli, uint(rc.cfg.TiDB.DistSQLScanConcurrency), backoffWeight, rc.resourceGroupName, explicitRequestSourceType)
+		manager = local.NewTiKVChecksumManager(store.GetClient(), rc.pdCli, uint(rc.cfg.TiDB.DistSQLScanConcurrency), backoffWeight, rc.resourceGroupName, rc.taskType)
 	} else {
 		manager = local.NewTiDBChecksumExecutor(rc.db)
 	}

@@ -24,15 +24,15 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -130,9 +130,6 @@ type BaseKVEncoder struct {
 
 	logger      *zap.Logger
 	recordCache []types.Datum
-	// the first auto-generated ID in the current encoder.
-	// if there's no auto-generated id column or the column value is not auto-generated, it will be 0.
-	LastInsertID uint64
 }
 
 // NewBaseKVEncoder creates a new BaseKVEncoder.
@@ -227,6 +224,7 @@ func (e *BaseKVEncoder) ProcessColDatum(col *table.Column, rowID int64, inputDat
 		}
 	}
 	if IsAutoIncCol(col.ToInfo()) {
+		// same as RowIDAllocType, since SepAutoInc is always false when initializing allocators of Table.
 		alloc := e.Table.Allocators(e.SessionCtx).Get(autoid.AutoIncrementType)
 		if err := alloc.Rebase(context.Background(), GetAutoRecordID(value, &col.FieldType), false); err != nil {
 			return value, errors.Trace(err)
@@ -258,9 +256,6 @@ func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatu
 		// we still need a conversion, e.g. to catch overflow with a TINYINT column.
 		value, err = table.CastValue(e.SessionCtx,
 			types.NewIntDatum(rowID), col.ToInfo(), false, false)
-		if err == nil && e.LastInsertID == 0 {
-			e.LastInsertID = value.GetUint64()
-		}
 	case e.IsAutoRandomCol(col.ToInfo()):
 		var val types.Datum
 		realRowID := e.AutoIDFn(rowID)
@@ -270,9 +265,6 @@ func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatu
 			val = types.NewIntDatum(realRowID)
 		}
 		value, err = table.CastValue(e.SessionCtx, val, col.ToInfo(), false, false)
-		if err == nil && e.LastInsertID == 0 {
-			e.LastInsertID = value.GetUint64()
-		}
 	case col.IsGenerated():
 		// inject some dummy value for gen col so that MutRowFromDatums below sees a real value instead of nil.
 		// if MutRowFromDatums sees a nil it won't initialize the underlying storage and cause SetDatum to panic.

@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/util/promutil"
+	"github.com/pingcap/tidb/pkg/util/promutil"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )

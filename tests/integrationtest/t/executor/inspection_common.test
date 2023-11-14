@@ -1,0 +1,6 @@
+# TestInspectionRules
+select count(*) from information_schema.inspection_rules;
+select count(*) from information_schema.inspection_rules where type='inspection';
+select count(*) from information_schema.inspection_rules where type='summary';
+select count(*) from information_schema.inspection_rules where type='inspection' and type='summary';
+

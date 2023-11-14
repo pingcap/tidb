@@ -28,8 +28,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	filter "github.com/pingcap/tidb/util/table-filter"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	pd "github.com/tikv/pd/client"
@@ -79,6 +80,7 @@ const (
 	flagDryRun            = "dry-run"
 	// TODO used for local test, should be removed later
 	flagSkipAWS                       = "skip-aws"
+	flagUseFSR                        = "use-fsr"
 	flagCloudAPIConcurrency           = "cloud-api-concurrency"
 	flagWithSysTable                  = "with-sys-table"
 	flagOperatorPausedGCAndSchedulers = "operator-paused-gc-and-scheduler"
@@ -101,6 +103,12 @@ const (
 	crypterAES256KeyLen = 32
 
 	flagFullBackupType = "type"
+)
+
+const (
+	// Once TableInfoVersion updated. BR need to check compatibility with
+	// new TableInfoVersion. both snapshot restore and pitr need to be checked.
+	CURRENT_BACKUP_SUPPORT_TABLE_INFO_VERSION = model.TableInfoVersion5
 )
 
 // FullBackupType type when doing full backup or restore
@@ -321,6 +329,16 @@ func HiddenFlagsForStream(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagSwitchModeInterval)
 
 	storage.HiddenFlagsForStream(flags)
+}
+
+func DefaultConfig() Config {
+	fs := pflag.NewFlagSet("dummy", pflag.ContinueOnError)
+	DefineCommonFlags(fs)
+	cfg := Config{}
+	if err := cfg.ParseFromFlags(fs); err != nil {
+		log.Panic("infallible operation failed.", zap.Error(err))
+	}
+	return cfg
 }
 
 // DefineDatabaseFlags defines the required --db flag for `db` subcommand.
