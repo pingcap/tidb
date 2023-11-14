@@ -43,7 +43,9 @@ func seekPropsOffsets(
 ) (_ []uint64, err error) {
 	logger := logutil.Logger(ctx)
 	task := log.BeginTask(logger, "seek props offsets")
-	defer task.End(zapcore.ErrorLevel, err)
+	defer func() {
+		task.End(zapcore.ErrorLevel, err)
+	}()
 	iter, err := NewMergePropIter(ctx, paths, exStorage, checkHotSpot)
 	if err != nil {
 		return nil, err

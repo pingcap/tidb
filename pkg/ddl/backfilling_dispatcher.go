@@ -70,6 +70,7 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 	ctx context.Context,
 	taskHandle dispatcher.TaskHandle,
 	gTask *proto.Task,
+	serverInfo []*infosync.ServerInfo,
 	nextStep proto.Step,
 ) (taskMeta [][]byte, err error) {
 	logger := logutil.BgLogger().With(
@@ -95,12 +96,7 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 		if tblInfo.Partition != nil {
 			return generatePartitionPlan(tblInfo)
 		}
-		is, err := dsp.GetEligibleInstances(ctx, gTask)
-		if err != nil {
-			return nil, err
-		}
-		instanceCnt := len(is)
-		return generateNonPartitionPlan(dsp.d, tblInfo, job, dsp.GlobalSort, instanceCnt)
+		return generateNonPartitionPlan(dsp.d, tblInfo, job, dsp.GlobalSort, len(serverInfo))
 	case StepMergeSort:
 		res, err := generateMergePlan(taskHandle, gTask, logger)
 		if err != nil {
@@ -195,12 +191,12 @@ func (*BackfillingDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.Task
 }
 
 // GetEligibleInstances implements dispatcher.Extension interface.
-func (*BackfillingDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+func (*BackfillingDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
 	serverInfos, err := dispatcher.GenerateSchedulerNodes(ctx)
 	if err != nil {
-		return nil, err
+		return nil, true, err
 	}
-	return serverInfos, nil
+	return serverInfos, true, nil
 }
 
 // IsRetryableErr implements dispatcher.Extension.IsRetryableErr interface.
@@ -277,7 +273,7 @@ func generatePartitionPlan(tblInfo *model.TableInfo) (metas [][]byte, err error)
 
 func generateNonPartitionPlan(
 	d *ddl, tblInfo *model.TableInfo, job *model.Job, useCloud bool, instanceCnt int) (metas [][]byte, err error) {
-	tbl, err := getTable(d.store, job.SchemaID, tblInfo)
+	tbl, err := getTable((*asAutoIDRequirement)(d.ddlCtx), job.SchemaID, tblInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -299,13 +295,7 @@ func generateNonPartitionPlan(
 		return nil, err
 	}
 
-	regionBatch := 100
-	if !useCloud {
-		// Make subtask large enough to reduce the overhead of local/global flush.
-		quota := variable.DDLDiskQuota.Load()
-		regionBatch = int(int64(quota) / int64(config.SplitRegionSize))
-	}
-	regionBatch = min(regionBatch, len(recordRegionMetas)/instanceCnt)
+	regionBatch := calculateRegionBatch(len(recordRegionMetas), instanceCnt, !useCloud)
 
 	subTaskMetas := make([][]byte, 0, 4)
 	sort.Slice(recordRegionMetas, func(i, j int) bool {
@@ -336,6 +326,20 @@ func generateNonPartitionPlan(
 		subTaskMetas = append(subTaskMetas, metaBytes)
 	}
 	return subTaskMetas, nil
+}
+
+func calculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool) int {
+	var regionBatch int
+	avgTasksPerInstance := totalRegionCnt / instanceCnt
+	if useLocalDisk {
+		// Make subtask large enough to reduce the overhead of local/global flush.
+		avgTasksPerDisk := int(int64(variable.DDLDiskQuota.Load()) / int64(config.SplitRegionSize))
+		regionBatch = min(avgTasksPerDisk, avgTasksPerInstance)
+	} else {
+		regionBatch = min(100, avgTasksPerInstance)
+	}
+	regionBatch = max(regionBatch, 1)
+	return regionBatch
 }
 
 func generateGlobalSortIngestPlan(

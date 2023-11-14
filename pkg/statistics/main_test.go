@@ -128,7 +128,7 @@ func createTestStatisticsSamples(t *testing.T) *testStatisticsSamples {
 	for i := start; i < rc.count; i += 5 {
 		rc.data[i].SetInt64(rc.data[i].GetInt64() + 2)
 	}
-	require.NoError(t, types.SortDatums(sc, rc.data))
+	require.NoError(t, types.SortDatums(sc.TypeCtx(), rc.data))
 
 	s.rc = rc
 

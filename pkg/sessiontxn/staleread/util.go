@@ -16,6 +16,7 @@ package staleread
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/failpoint"
@@ -30,6 +31,7 @@ import (
 )
 
 // CalculateAsOfTsExpr calculates the TsExpr of AsOfClause to get a StartTS.
+// tsExpr could be an expression of TSO or a timestamp
 func CalculateAsOfTsExpr(ctx context.Context, sctx sessionctx.Context, tsExpr ast.ExprNode) (uint64, error) {
 	sctx.GetSessionVars().StmtCtx.SetStaleTSOProvider(func() (uint64, error) {
 		failpoint.Inject("mockStaleReadTSO", func(val failpoint.Value) (uint64, error) {
@@ -49,10 +51,15 @@ func CalculateAsOfTsExpr(ctx context.Context, sctx sessionctx.Context, tsExpr as
 		return 0, errAsOf.FastGenWithCause("as of timestamp cannot be NULL")
 	}
 
+	// if tsVal is TSO already, return it directly.
+	if tso, err := strconv.ParseUint(tsVal.GetString(), 10, 64); err == nil {
+		return tso, nil
+	}
+
 	toTypeTimestamp := types.NewFieldType(mysql.TypeTimestamp)
 	// We need at least the millionsecond here, so set fsp to 3.
 	toTypeTimestamp.SetDecimal(3)
-	tsTimestamp, err := tsVal.ConvertTo(sctx.GetSessionVars().StmtCtx, toTypeTimestamp)
+	tsTimestamp, err := tsVal.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), toTypeTimestamp)
 	if err != nil {
 		return 0, err
 	}

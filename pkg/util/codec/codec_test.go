@@ -963,7 +963,7 @@ func TestDecodeOneToChunk(t *testing.T) {
 				require.True(t, expect.IsNull())
 			} else {
 				if got.Kind() != types.KindMysqlDecimal {
-					cmp, err := got.Compare(sc, &expect, collate.GetCollator(tp.GetCollate()))
+					cmp, err := got.Compare(sc.TypeCtx(), &expect, collate.GetCollator(tp.GetCollate()))
 					require.NoError(t, err)
 					require.Equalf(t, 0, cmp, "expect: %v, got %v", expect, got)
 				} else {
@@ -1090,7 +1090,7 @@ func TestDecodeRange(t *testing.T) {
 	datums1, _, err := DecodeRange(rowData, len(datums), nil, nil)
 	require.NoError(t, err)
 	for i, datum := range datums1 {
-		cmp, err := datum.Compare(nil, &datums[i], collate.GetBinaryCollator())
+		cmp, err := datum.Compare(types.DefaultStmtNoWarningContext, &datums[i], collate.GetBinaryCollator())
 		require.NoError(t, err)
 		require.Equal(t, 0, cmp)
 	}

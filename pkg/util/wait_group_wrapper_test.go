@@ -90,3 +90,12 @@ func TestWaitGroupWrapperCheck(t *testing.T) {
 	time.Sleep(1 * time.Second)
 	require.False(t, wg.check())
 }
+
+func TestNewErrorGroupWithRecover(t *testing.T) {
+	eg := NewErrorGroupWithRecover()
+	eg.Go(func() error {
+		panic("test")
+	})
+	err := eg.Wait()
+	require.Errorf(t, err, "test")
+}

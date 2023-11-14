@@ -230,3 +230,37 @@ prepare stmt1 from 'do 1';
 set tidb_enable_prepared_plan_cache=default;
 set @@tidb_txn_mode=default;
 
+# TestLimitUnsupportedCase
+drop table if exists t;
+create table t(a int, key(a));
+prepare stmt from 'select * from t limit ?';
+set @a = 1.2;
+-- error 1210
+execute stmt using @a;
+set @a = 1.;
+-- error 1210
+execute stmt using @a;
+set @a = '0';
+-- error 1210
+execute stmt using @a;
+set @a = '1';
+-- error 1210
+execute stmt using @a;
+set @a = 1_2;
+-- error 1210
+execute stmt using @a;
+
+# TestIssue38323
+drop table if exists t;
+create table t(id int, k int);
+prepare stmt from 'explain select * from t where id = ? and k = ? group by id, k';
+show warnings;
+set @a = 1;
+execute stmt using @a, @a;
+explain select * from t where id = 1 and k = 1 group by id, k;
+prepare stmt from 'explain select * from t where ? = id and ? = k group by id, k';
+show warnings;
+set @a = 1;
+execute stmt using @a, @a;
+explain select * from t where 1 = id and 1 = k group by id, k;
+

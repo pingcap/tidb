@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -1545,9 +1544,8 @@ func (d Duration) Compare(o Duration) int {
 		return 1
 	} else if d.Duration == o.Duration {
 		return 0
-	} else {
-		return -1
 	}
+	return -1
 }
 
 // CompareString is like Compare,
@@ -2023,7 +2021,7 @@ func ParseDate(ctx Context, str string) (Time, error) {
 
 // ParseTimeFromYear parse a `YYYY` formed year to corresponded Datetime type.
 // Note: the invoker must promise the `year` is in the range [MinYear, MaxYear].
-func ParseTimeFromYear(_ *stmtctx.StatementContext, year int64) (Time, error) {
+func ParseTimeFromYear(year int64) (Time, error) {
 	if year == 0 {
 		return NewTime(ZeroCoreTime, mysql.TypeDate, DefaultFsp), nil
 	}

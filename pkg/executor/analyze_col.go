@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tiancaiamao/gp"
 )
 
 // AnalyzeColumnsExec represents Analyze columns push down executor.
@@ -61,9 +62,9 @@ type AnalyzeColumnsExec struct {
 	memTracker *memory.Tracker
 }
 
-func analyzeColumnsPushDownEntry(e *AnalyzeColumnsExec) *statistics.AnalyzeResults {
+func analyzeColumnsPushDownEntry(gp *gp.Pool, e *AnalyzeColumnsExec) *statistics.AnalyzeResults {
 	if e.AnalyzeInfo.StatsVersion >= statistics.Version2 {
-		return e.toV2().analyzeColumnsPushDownWithRetryV2()
+		return e.toV2().analyzeColumnsPushDownWithRetryV2(gp)
 	}
 	return e.toV1().analyzeColumnsPushDownV1()
 }

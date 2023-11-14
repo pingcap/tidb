@@ -176,7 +176,7 @@ func (s *infosSchemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server
 	// TiDB/TiKV config.
 	router.Handle("/config", fn.Wrap(mockConfig))
 	// PD region.
-	router.Handle("/pd/api/v1/stats/region", fn.Wrap(func() (*helper.PDRegionStats, error) {
+	router.Handle(pdapi.RegionStats, fn.Wrap(func() (*helper.PDRegionStats, error) {
 		return &helper.PDRegionStats{
 			Count:            1,
 			EmptyCount:       1,

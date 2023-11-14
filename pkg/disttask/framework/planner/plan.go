@@ -37,6 +37,7 @@ type PlanCtx struct {
 	PreviousSubtaskMetas map[proto.Step][][]byte
 	GlobalSort           bool
 	NextTaskStep         proto.Step
+	ExecuteNodesCnt      int
 }
 
 // LogicalPlan represents a logical plan in distribute framework.

@@ -25,7 +25,7 @@ CREATE USER 'testnotexist'@'localhost';
 CREATE DATABASE IF NOT EXISTS privilege__privileges;
 CREATE TABLE privilege__privileges.t1 (a int);
 connect (testnotexist,localhost,testnotexist,,);
-connection testnotexist; 
+connection testnotexist;
 --error 1142
 SELECT * FROM privilege__privileges.t1;
 --error 1142
@@ -369,6 +369,8 @@ connection default;
 
 
 # TestCreateDropUser
+drop user if exists tcd1, tcd2, tcd3, usr1;
+drop resource group if exists rg1;
 CREATE USER tcd1, tcd2;
 GRANT ALL ON *.* to tcd2 WITH GRANT OPTION;
 
@@ -808,3 +810,5 @@ SHOW GRANTS FOR current_user() USING otherrole;
 SHOW GRANTS FOR joe USING otherrole;
 disconnect joe;
 connection default;
+
+set global tidb_enable_resource_control = default;

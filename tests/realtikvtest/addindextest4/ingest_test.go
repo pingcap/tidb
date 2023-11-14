@@ -499,3 +499,27 @@ func TestAddIndexPreCheckFailed(t *testing.T) {
 	tk.MustGetErrMsg("alter table t add index idx(b);", "[ddl:8256]Check ingest environment failed: mock error")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/mockIngestCheckEnvFailed"))
 }
+
+func TestAddIndexImportFailed(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec(`set global tidb_enable_dist_task=off;`)
+
+	tk.MustExec("create table t (a int, b int);")
+	for i := 0; i < 10; i++ {
+		insertSQL := fmt.Sprintf("insert into t values (%d, %d)", i, i)
+		tk.MustExec(insertSQL)
+	}
+
+	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/mockWritePeerErr", "1*return")
+	require.NoError(t, err)
+	tk.MustExec("alter table t add index idx(a);")
+	err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/mockWritePeerErr")
+	require.NoError(t, err)
+	tk.MustExec("admin check table t;")
+}

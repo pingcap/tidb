@@ -32,10 +32,10 @@ func (b *builtinDatabaseSig) vectorized() bool {
 
 // evalString evals a builtinDatabaseSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html
-func (b *builtinDatabaseSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinDatabaseSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
-	currentDB := b.ctx.GetSessionVars().CurrentDB
+	currentDB := ctx.GetSessionVars().CurrentDB
 	result.ReserveString(n)
 	if currentDB == "" {
 		for i := 0; i < n; i++ {
@@ -53,9 +53,9 @@ func (b *builtinConnectionIDSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinConnectionIDSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinConnectionIDSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	data := b.ctx.GetSessionVars()
+	data := ctx.GetSessionVars()
 	if data == nil {
 		return errors.Errorf("Missing session variable in `builtinConnectionIDSig.vecEvalInt`")
 	}
@@ -72,7 +72,7 @@ func (b *builtinTiDBVersionSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinTiDBVersionSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinTiDBVersionSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ReserveString(n)
 	info := printer.GetTiDBInfo()
@@ -88,11 +88,11 @@ func (b *builtinRowCountSig) vectorized() bool {
 
 // evalInt evals ROW_COUNT().
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_row-count
-func (b *builtinRowCountSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinRowCountSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
-	res := b.ctx.GetSessionVars().StmtCtx.PrevAffectedRows
+	res := ctx.GetSessionVars().StmtCtx.PrevAffectedRows
 	for i := 0; i < n; i++ {
 		i64s[i] = res
 	}
@@ -105,10 +105,10 @@ func (b *builtinCurrentUserSig) vectorized() bool {
 
 // evalString evals a builtinCurrentUserSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
-func (b *builtinCurrentUserSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinCurrentUserSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
-	data := b.ctx.GetSessionVars()
+	data := ctx.GetSessionVars()
 	result.ReserveString(n)
 	if data == nil || data.User == nil {
 		return errors.Errorf("Missing session variable when eval builtin")
@@ -123,8 +123,8 @@ func (b *builtinCurrentResourceGroupSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinCurrentResourceGroupSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	data := b.ctx.GetSessionVars()
+func (b *builtinCurrentResourceGroupSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	data := ctx.GetSessionVars()
 	if data == nil {
 		return errors.Errorf("Missing session variable when eval builtin")
 	}
@@ -142,10 +142,10 @@ func (b *builtinCurrentRoleSig) vectorized() bool {
 
 // evalString evals a builtinCurrentUserSig.
 // See https://dev.mysql.com/doc/refman/8.0/en/information-functions.html#function_current-role
-func (b *builtinCurrentRoleSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinCurrentRoleSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
-	data := b.ctx.GetSessionVars()
+	data := ctx.GetSessionVars()
 	if data == nil || data.ActiveRoles == nil {
 		return errors.Errorf("Missing session variable when eval builtin")
 	}
@@ -176,9 +176,9 @@ func (b *builtinUserSig) vectorized() bool {
 
 // evalString evals a builtinUserSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_user
-func (b *builtinUserSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinUserSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	data := b.ctx.GetSessionVars()
+	data := ctx.GetSessionVars()
 	if data == nil || data.User == nil {
 		return errors.Errorf("Missing session variable when eval builtin")
 	}
@@ -194,10 +194,10 @@ func (b *builtinTiDBIsDDLOwnerSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinTiDBIsDDLOwnerSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinTiDBIsDDLOwnerSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	var res int64
-	if b.ctx.IsDDLOwner() {
+	if ctx.IsDDLOwner() {
 		res = 1
 	}
 	result.ResizeInt64(n, false)
@@ -212,8 +212,8 @@ func (b *builtinFoundRowsSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinFoundRowsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	data := b.ctx.GetSessionVars()
+func (b *builtinFoundRowsSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	data := ctx.GetSessionVars()
 	if data == nil {
 		return errors.Errorf("Missing session variable when eval builtin")
 	}
@@ -231,10 +231,10 @@ func (b *builtinBenchmarkSig) vectorized() bool {
 	return b.constLoopCount > 0
 }
 
-func (b *builtinBenchmarkSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinBenchmarkSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	loopCount := b.constLoopCount
-	arg, ctx := b.args[1], b.ctx
+	arg := b.args[1]
 	evalType := arg.GetType().EvalType()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -301,11 +301,11 @@ func (b *builtinLastInsertIDSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinLastInsertIDSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLastInsertIDSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
-	res := int64(b.ctx.GetSessionVars().StmtCtx.PrevLastInsertID)
+	res := int64(ctx.GetSessionVars().StmtCtx.PrevLastInsertID)
 	for i := 0; i < n; i++ {
 		i64s[i] = res
 	}
@@ -316,14 +316,14 @@ func (b *builtinLastInsertIDWithIDSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinLastInsertIDWithIDSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+func (b *builtinLastInsertIDWithIDSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalInt(ctx, input, result); err != nil {
 		return err
 	}
 	i64s := result.Int64s()
 	for i := len(i64s) - 1; i >= 0; i-- {
 		if !result.IsNull(i) {
-			b.ctx.GetSessionVars().SetLastInsertID(uint64(i64s[i]))
+			ctx.GetSessionVars().SetLastInsertID(uint64(i64s[i]))
 			break
 		}
 	}
@@ -334,7 +334,7 @@ func (b *builtinVersionSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinVersionSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinVersionSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
@@ -347,19 +347,19 @@ func (b *builtinTiDBDecodeKeySig) vectorized() bool {
 	return true
 }
 
-func (b *builtinTiDBDecodeKeySig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinTiDBDecodeKeySig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
 	result.ReserveString(n)
 	decode := func(ctx sessionctx.Context, s string) string { return s }
-	if fn := b.ctx.Value(TiDBDecodeKeyFunctionKey); fn != nil {
+	if fn := ctx.Value(TiDBDecodeKeyFunctionKey); fn != nil {
 		decode = fn.(func(ctx sessionctx.Context, s string) string)
 	}
 	for i := 0; i < n; i++ {
@@ -367,7 +367,7 @@ func (b *builtinTiDBDecodeKeySig) vecEvalString(input *chunk.Chunk, result *chun
 			result.AppendNull()
 			continue
 		}
-		result.AppendString(decode(b.ctx, buf.GetString(i)))
+		result.AppendString(decode(ctx, buf.GetString(i)))
 	}
 	return nil
 }

@@ -21,7 +21,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/stretchr/testify/require"
@@ -29,8 +28,7 @@ import (
 
 // DatumEqual verifies that the actual value is equal to the expected value. For string datum, they are compared by the binary collation.
 func DatumEqual(t testing.TB, expected, actual types.Datum, msgAndArgs ...interface{}) {
-	sc := stmtctx.NewStmtCtx()
-	res, err := actual.Compare(sc, &expected, collate.GetBinaryCollator())
+	res, err := actual.Compare(types.DefaultStmtNoWarningContext, &expected, collate.GetBinaryCollator())
 	require.NoError(t, err, msgAndArgs)
 	require.Zero(t, res, msgAndArgs)
 }

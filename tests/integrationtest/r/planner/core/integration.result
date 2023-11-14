@@ -309,7 +309,6 @@ drop table if exists t;
 create table t(a int, b int, unique index i_a (a) invisible, unique index i_b(b));
 insert into t values (1,2);
 admin check table t;
-
 select a from t order by a;
 a
 1
@@ -353,9 +352,7 @@ a	b
 Level	Code	Message
 Warning	1815	force_index(planner__core__integration.aaa) is inapplicable, check whether the table(planner__core__integration.aaa) exists
 admin check table t;
-
 admin check index t i_a;
-
 select max(t.col) from (select 'a' as col union all select '' as col) as t;
 max(t.col)
 a
@@ -2272,7 +2269,6 @@ a	b	c	d
 4	a	a   	a
 6	 E	é        	 E
 admin check table t;
-
 set @@tidb_enable_clustered_index = DEFAULT;
 drop table if exists t;
 CREATE TABLE `t` (

@@ -157,7 +157,7 @@ type indexMergeJoinResult struct {
 
 // Open implements the Executor interface
 func (e *IndexLookUpMergeJoin) Open(ctx context.Context) error {
-	err := e.Children(0).Open(ctx)
+	err := exec.Open(ctx, e.Children(0))
 	if err != nil {
 		return err
 	}
@@ -671,7 +671,7 @@ func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, 
 			return nil, nil
 		}
 		innerColType := imw.rowTypes[imw.keyCols[i]]
-		innerValue, err := outerValue.ConvertTo(sc, innerColType)
+		innerValue, err := outerValue.ConvertTo(sc.TypeCtx(), innerColType)
 		if err != nil {
 			// If the converted outerValue overflows, we don't need to lookup it.
 			if terror.ErrorEqual(err, types.ErrOverflow) || terror.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
@@ -682,7 +682,7 @@ func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, 
 			}
 			return nil, err
 		}
-		cmp, err := outerValue.Compare(sc, &innerValue, imw.keyCollators[i])
+		cmp, err := outerValue.Compare(sc.TypeCtx(), &innerValue, imw.keyCollators[i])
 		if err != nil {
 			return nil, err
 		}

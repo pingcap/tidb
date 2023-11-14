@@ -15,6 +15,7 @@
 package calibrateresource_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"testing"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -625,7 +627,7 @@ func TestCalibrateResource(t *testing.T) {
 		types.MakeDatums(datetime("2020-02-12 10:45:00"), "tikv-2", "tikv", 0.281),
 	}
 
-	rs, err = tk.Exec("CALIBRATE RESOURCE START_TIME '2020-02-12 10:35:00' END_TIME '2020-02-12 10:45:00'")
+	rs, err = tk.Exec("CALIBRATE RESOURCE START_TIME '2020-02-12 10:35:00' END_TIME '2020-02-13 10:35:01'")
 	require.NoError(t, err)
 	require.NotNil(t, rs)
 	err = rs.Next(ctx, rs.NewChunk(nil))
@@ -783,13 +785,18 @@ type mockResourceGroupProvider struct {
 	cfg rmclient.Config
 }
 
-func (p *mockResourceGroupProvider) LoadGlobalConfig(ctx context.Context, names []string, configPath string) ([]pd.GlobalConfigItem, int64, error) {
-	if configPath != "resource_group/controller" {
-		return nil, 0, errors.New("unsupported configPath")
+func (p *mockResourceGroupProvider) Get(ctx context.Context, key []byte, opts ...pd.OpOption) (*meta_storagepb.GetResponse, error) {
+	if !bytes.Equal(pd.ControllerConfigPathPrefixBytes, key) {
+		return nil, errors.New("unsupported configPath")
 	}
 	payload, _ := json.Marshal(&p.cfg)
-	item := pd.GlobalConfigItem{
-		PayLoad: payload,
-	}
-	return []pd.GlobalConfigItem{item}, 0, nil
+	return &meta_storagepb.GetResponse{
+		Count: 1,
+		Kvs: []*meta_storagepb.KeyValue{
+			{
+				Key:   key,
+				Value: payload,
+			},
+		},
+	}, nil
 }

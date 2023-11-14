@@ -21,10 +21,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
 )
@@ -71,7 +71,7 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 		b.hist.NDV = 1
 		return nil
 	}
-	cmp, err := b.hist.GetUpper(int(b.bucketIdx)).Compare(b.sc, &data, collate.GetBinaryCollator())
+	cmp, err := b.hist.GetUpper(int(b.bucketIdx)).Compare(b.sc.TypeCtx(), &data, collate.GetBinaryCollator())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -178,7 +178,7 @@ func buildHist(sc *stmtctx.StatementContext, hg *Histogram, samples []*SampleIte
 			memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
 			memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
 		}
-		cmp, err := upper.Compare(sc, &samples[i].Value, collate.GetBinaryCollator())
+		cmp, err := upper.Compare(sc.TypeCtx(), &samples[i].Value, collate.GetBinaryCollator())
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -387,14 +387,10 @@ func BuildHistAndTopN(
 				if foundTwice {
 					datumString, err := firstTimeSample.ToString()
 					if err != nil {
-						logutil.BgLogger().With(
-							zap.String("category", "stats"),
-						).Error("try to convert datum to string failed", zap.Error(err))
+						statslogutil.StatsLogger.Error("try to convert datum to string failed", zap.Error(err))
 					}
 
-					logutil.BgLogger().With(
-						zap.String("category", "stats"),
-					).Warn(
+					statslogutil.StatsLogger.Warn(
 						"invalid sample data",
 						zap.Bool("isColumn", isColumn),
 						zap.Int64("columnID", id),

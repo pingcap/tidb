@@ -340,6 +340,7 @@ func EncodeRow(sc *stmtctx.StatementContext, row []types.Datum, colIDs []int64, 
 		return nil, errors.Errorf("EncodeRow error: data and columnID count not match %d vs %d", len(row), len(colIDs))
 	}
 	if e.Enable {
+		valBuf = valBuf[:0]
 		return e.Encode(sc, colIDs, row, valBuf, checksums...)
 	}
 	return EncodeOldRow(sc, row, colIDs, valBuf, values)
@@ -1137,7 +1138,11 @@ func GenIndexKey(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo
 	}
 	if !distinct && h != nil {
 		if h.IsInt() {
-			key, err = codec.EncodeKey(sc, key, types.NewDatum(h.IntValue()))
+			// We choose the efficient path here instead of calling `codec.EncodeKey`
+			// because the int handle must be an int64, and it must be comparable.
+			// This remains correct until codec.encodeSignedInt is changed.
+			key = append(key, codec.IntHandleFlag)
+			key = codec.EncodeInt(key, h.IntValue())
 		} else {
 			key = append(key, h.Encoded()...)
 		}
@@ -1423,11 +1428,13 @@ func TempIndexValueIsUntouched(b []byte) bool {
 //	|     In v5.0, restored data contains only non-binary data(except for char and _bin). In the above example, the restored data contains only the value of b.
 //	|     Besides, if the collation of b is _bin, then restored data is an integer indicate the spaces are truncated. Then we use sortKey
 //	|     and the restored data together to restore original data.
-func GenIndexValuePortal(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, needRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64, restoredData []types.Datum) ([]byte, error) {
+func GenIndexValuePortal(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
+	needRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle,
+	partitionID int64, restoredData []types.Datum, buf []byte) ([]byte, error) {
 	if tblInfo.IsCommonHandle && tblInfo.CommonHandleVersion == 1 {
-		return GenIndexValueForClusteredIndexVersion1(sc, tblInfo, idxInfo, needRestoredData, distinct, untouched, indexedValues, h, partitionID, restoredData)
+		return GenIndexValueForClusteredIndexVersion1(sc, tblInfo, idxInfo, needRestoredData, distinct, untouched, indexedValues, h, partitionID, restoredData, buf)
 	}
-	return genIndexValueVersion0(sc, tblInfo, idxInfo, needRestoredData, distinct, untouched, indexedValues, h, partitionID)
+	return genIndexValueVersion0(sc, tblInfo, idxInfo, needRestoredData, distinct, untouched, indexedValues, h, partitionID, buf)
 }
 
 // TryGetCommonPkColumnRestoredIds get the IDs of primary key columns which need restored data if the table has common handle.
@@ -1453,8 +1460,15 @@ func TryGetCommonPkColumnRestoredIds(tbl *model.TableInfo) []int64 {
 }
 
 // GenIndexValueForClusteredIndexVersion1 generates the index value for the clustered index with version 1(New in v5.0.0).
-func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64, handleRestoredData []types.Datum) ([]byte, error) {
-	idxVal := make([]byte, 0)
+func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
+	idxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle,
+	partitionID int64, handleRestoredData []types.Datum, buf []byte) ([]byte, error) {
+	var idxVal []byte
+	if buf == nil {
+		idxVal = make([]byte, 0)
+	} else {
+		idxVal = buf[:0]
+	}
 	idxVal = append(idxVal, 0)
 	tailLen := 0
 	// Version info.
@@ -1494,11 +1508,11 @@ func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInf
 		}
 
 		rd := rowcodec.Encoder{Enable: true}
-		rowRestoredValue, err := rd.Encode(sc, colIds, allRestoredData, nil)
+		var err error
+		idxVal, err = rd.Encode(sc, colIds, allRestoredData, idxVal)
 		if err != nil {
 			return nil, err
 		}
-		idxVal = append(idxVal, rowRestoredValue...)
 	}
 
 	if untouched {
@@ -1511,8 +1525,15 @@ func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInf
 }
 
 // genIndexValueVersion0 create index value for both local and global index.
-func genIndexValueVersion0(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64) ([]byte, error) {
-	idxVal := make([]byte, 0)
+func genIndexValueVersion0(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
+	idxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle,
+	partitionID int64, buf []byte) ([]byte, error) {
+	var idxVal []byte
+	if buf == nil {
+		idxVal = make([]byte, 0)
+	} else {
+		idxVal = buf[:0]
+	}
 	idxVal = append(idxVal, 0)
 	newEncode := false
 	tailLen := 0
@@ -1530,11 +1551,12 @@ func genIndexValueVersion0(sc *stmtctx.StatementContext, tblInfo *model.TableInf
 			colIds[i] = tblInfo.Columns[col.Offset].ID
 		}
 		rd := rowcodec.Encoder{Enable: true}
-		rowRestoredValue, err := rd.Encode(sc, colIds, indexedValues, nil)
+		// Encode row restored value.
+		var err error
+		idxVal, err = rd.Encode(sc, colIds, indexedValues, idxVal)
 		if err != nil {
 			return nil, err
 		}
-		idxVal = append(idxVal, rowRestoredValue...)
 		newEncode = true
 	}
 
@@ -1559,7 +1581,11 @@ func genIndexValueVersion0(sc *stmtctx.StatementContext, tblInfo *model.TableInf
 		idxVal[0] = byte(tailLen)
 	} else {
 		// Old index value encoding.
-		idxVal = make([]byte, 0)
+		if buf == nil {
+			idxVal = make([]byte, 0)
+		} else {
+			idxVal = buf[:0]
+		}
 		if distinct {
 			idxVal = EncodeHandleInUniqueIndexValue(h, untouched)
 		}
@@ -1570,7 +1596,7 @@ func genIndexValueVersion0(sc *stmtctx.StatementContext, tblInfo *model.TableInf
 			idxVal = append(idxVal, kv.UnCommitIndexKVFlag)
 		}
 		if len(idxVal) == 0 {
-			idxVal = []byte{'0'}
+			idxVal = append(idxVal, byte('0'))
 		}
 	}
 	return idxVal, nil
