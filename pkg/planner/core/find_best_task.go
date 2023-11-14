@@ -1084,12 +1084,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		}
 
 		ds.storeTask(prop, t)
-		if ds.SampleInfo != nil && !t.invalid() {
-			if _, ok := t.plan().(*PhysicalTableSample); !ok {
-				warning := expression.ErrInvalidTableSample.GenWithStackByArgs("plan not supported")
-				ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
-			}
-		}
+		err = validateTableSamplePlan(ds, t, err)
 	}()
 
 	t, err = ds.tryToGetDualTask()
@@ -2243,10 +2238,8 @@ func (ds *DataSource) convertToSampleTable(prop *property.PhysicalProperty,
 		return invalidTask, nil
 	}
 	if candidate.isMatchProp {
-		// TableSample on partition table can't keep order.
-		if ds.tableInfo.GetPartitionInfo() != nil {
-			return invalidTask, nil
-		}
+		// Disable keep order property for sample table path.
+		return invalidTask, nil
 	}
 	p := PhysicalTableSample{
 		TableSampleInfo: ds.SampleInfo,
@@ -2617,4 +2610,16 @@ func pushDownNot(ctx sessionctx.Context, conds []expression.Expression) []expres
 		conds[i] = expression.PushDownNot(ctx, cond)
 	}
 	return conds
+}
+
+func validateTableSamplePlan(ds *DataSource, t task, err error) error {
+	if err != nil {
+		return err
+	}
+	if ds.SampleInfo != nil && !t.invalid() {
+		if _, ok := t.plan().(*PhysicalTableSample); !ok {
+			return expression.ErrInvalidTableSample.GenWithStackByArgs("plan not supported")
+		}
+	}
+	return nil
 }

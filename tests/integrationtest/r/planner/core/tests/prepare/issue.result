@@ -423,7 +423,6 @@ create table t4 (a date);
 prepare st1 from "insert into t4(a) select dt from (select ? as dt from dual union all select sysdate() ) a";
 set @t='2022-01-01 00:00:00.000000';
 execute st1 using @t;
-
 select count(*) from t4;
 count(*)
 2

@@ -11,7 +11,6 @@ insert into t1 values(2);
 prepare stmt from 'delete a from t a where exists (select 1 from t1 where a.a=t1.a and t1.a=?)';
 set @a=1;
 execute stmt using @a;
-
 select * from t;
 a
 2

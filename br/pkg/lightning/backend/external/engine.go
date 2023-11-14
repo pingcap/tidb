@@ -31,10 +31,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 )
 
 // during test on ks3, we found that we can open about 8000 connections to ks3,
@@ -171,7 +171,7 @@ func (e *Engine) LoadIngestData(
 		zap.Int("data-files", len(e.dataFiles)),
 		zap.Bool("check-hotspot", e.checkHotspot),
 	)
-	eg, egCtx := errgroup.WithContext(ctx)
+	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 	for _, ranges := range rangeGroups {
 		ranges := ranges
 		eg.Go(func() error {

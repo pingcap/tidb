@@ -516,7 +516,6 @@ a	a1	1	11
 b	b1	2	22
 c	c1	3	33
 admin check table pgt;
-
 drop table if exists snp;
 create table snp(id1 int, id2 int, v int, primary key(id1, id2));
 insert snp values (1, 1, 1), (2, 2, 2), (2, 3, 3);

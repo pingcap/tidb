@@ -1078,9 +1078,8 @@ func (s *Scanner) isTokenIdentifier(lit string, offset int) int {
 			continue
 		} else if s.r.s[idx] == '.' {
 			return 0
-		} else {
-			break
 		}
+		break
 	}
 
 	buf := &s.buf

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package sortexec
 
 import (
 	"container/heap"
@@ -36,10 +36,10 @@ import (
 type SortExec struct {
 	exec.BaseExecutor
 
-	ByItems []*util.ByItems
-	Idx     int
-	fetched bool
-	schema  *expression.Schema
+	ByItems    []*util.ByItems
+	Idx        int
+	fetched    bool
+	ExecSchema *expression.Schema
 
 	// keyColumns is the column index of the by items.
 	keyColumns []int
@@ -51,8 +51,8 @@ type SortExec struct {
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
 
-	// partitionList is the chunks to store row values for partitions. Every partition is a sorted list.
-	partitionList []*chunk.SortedRowContainer
+	// PartitionList is the chunks to store row values for partitions. Every partition is a sorted list.
+	PartitionList []*chunk.SortedRowContainer
 
 	// multiWayMerge uses multi-way merge for spill disk.
 	// The multi-way merge algorithm can refer to https://en.wikipedia.org/wiki/K-way_merge_algorithm
@@ -63,13 +63,13 @@ type SortExec struct {
 
 // Close implements the Executor Close interface.
 func (e *SortExec) Close() error {
-	for _, container := range e.partitionList {
+	for _, container := range e.PartitionList {
 		err := container.Close()
 		if err != nil {
 			return err
 		}
 	}
-	e.partitionList = e.partitionList[:0]
+	e.PartitionList = e.PartitionList[:0]
 
 	if e.rowChunks != nil {
 		e.memTracker.Consume(-e.rowChunks.GetMemTracker().BytesConsumed())
@@ -97,8 +97,8 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.diskTracker = memory.NewTracker(e.ID(), -1)
 		e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
 	}
-	e.partitionList = e.partitionList[:0]
-	return e.Children(0).Open(ctx)
+	e.PartitionList = e.PartitionList[:0]
+	return exec.Open(ctx, e.Children(0))
 }
 
 // Next implements the Executor Next interface.
@@ -121,16 +121,16 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.fetched = true
 	}
 
-	if len(e.partitionList) == 0 {
+	if len(e.PartitionList) == 0 {
 		return nil
 	}
-	if len(e.partitionList) > 1 {
+	if len(e.PartitionList) > 1 {
 		if err := e.externalSorting(req); err != nil {
 			return err
 		}
 	} else {
-		for !req.IsFull() && e.Idx < e.partitionList[0].NumRow() {
-			_, _, err := e.partitionList[0].GetSortedRowAndAlwaysAppendToChunk(e.Idx, req)
+		for !req.IsFull() && e.Idx < e.PartitionList[0].NumRow() {
+			_, _, err := e.PartitionList[0].GetSortedRowAndAlwaysAppendToChunk(e.Idx, req)
 			if err != nil {
 				return err
 			}
@@ -142,11 +142,11 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 	if e.multiWayMerge == nil {
-		e.multiWayMerge = &multiWayMerge{e.lessRow, e.compressRow, make([]partitionPointer, 0, len(e.partitionList))}
-		for i := 0; i < len(e.partitionList); i++ {
+		e.multiWayMerge = &multiWayMerge{e.lessRow, e.compressRow, make([]partitionPointer, 0, len(e.PartitionList))}
+		for i := 0; i < len(e.PartitionList); i++ {
 			chk := chunk.New(exec.RetTypes(e), 1, 1)
 
-			row, _, err := e.partitionList[i].GetSortedRowAndAlwaysAppendToChunk(0, chk)
+			row, _, err := e.PartitionList[i].GetSortedRowAndAlwaysAppendToChunk(0, chk)
 			if err != nil {
 				return err
 			}
@@ -160,12 +160,12 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 		req.AppendRow(partitionPtr.row)
 		partitionPtr.consumed++
 		partitionPtr.chk.Reset()
-		if partitionPtr.consumed >= e.partitionList[partitionPtr.partitionID].NumRow() {
+		if partitionPtr.consumed >= e.PartitionList[partitionPtr.partitionID].NumRow() {
 			heap.Remove(e.multiWayMerge, 0)
 			continue
 		}
 
-		partitionPtr.row, _, err = e.partitionList[partitionPtr.partitionID].
+		partitionPtr.row, _, err = e.PartitionList[partitionPtr.partitionID].
 			GetSortedRowAndAlwaysAppendToChunk(partitionPtr.consumed, partitionPtr.chk)
 		if err != nil {
 			return err
@@ -209,7 +209,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		}
 		if err := e.rowChunks.Add(chk); err != nil {
 			if errors.Is(err, chunk.ErrCannotAddBecauseSorted) {
-				e.partitionList = append(e.partitionList, e.rowChunks)
+				e.PartitionList = append(e.PartitionList, e.rowChunks)
 				e.rowChunks = chunk.NewSortedRowContainer(fields, e.MaxChunkSize(), byItemsDesc, e.keyColumns, e.keyCmpFuncs)
 				e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 				e.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
@@ -242,7 +242,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		e.partitionList = append(e.partitionList, e.rowChunks)
+		e.PartitionList = append(e.PartitionList, e.rowChunks)
 	}
 	return nil
 }
@@ -333,7 +333,7 @@ func (h *multiWayMerge) Swap(i, j int) {
 // Instead of sorting all the rows fetched from the table, it keeps the Top-N elements only in a heap to reduce memory usage.
 type TopNExec struct {
 	SortExec
-	limit      *plannercore.PhysicalLimit
+	Limit      *plannercore.PhysicalLimit
 	totalLimit uint64
 
 	// rowChunks is the chunks to store row values.
@@ -423,15 +423,15 @@ func (e *TopNExec) Open(ctx context.Context) error {
 	e.fetched = false
 	e.Idx = 0
 
-	return e.Children(0).Open(ctx)
+	return exec.Open(ctx, e.Children(0))
 }
 
 // Next implements the Executor Next interface.
 func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if !e.fetched {
-		e.totalLimit = e.limit.Offset + e.limit.Count
-		e.Idx = int(e.limit.Offset)
+		e.totalLimit = e.Limit.Offset + e.Limit.Count
+		e.Idx = int(e.Limit.Offset)
 		err := e.loadChunksUntilTotalLimit(ctx)
 		if err != nil {
 			return err

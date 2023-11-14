@@ -149,5 +149,30 @@
       "select b from t3 where a = 1 and b is not null",
       "select b from t3 where a = 1 and b is null"
     ]
+  },
+  {
+    "name": "TestIndexMergeFromComposedCNFCondition",
+    "cases": [
+      "explain select /*+ use_index_merge(t1, idx2, idx) */ * from t1 where 1 member of (a) and 2 member of (b); -- 1: AND index merge from multi member mv index predicate, since member of is single partial path, it can be merged with outer index merge.",
+      "explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where 1 member of (a) and c=1 and 2 member of (b); -- 2: AND index merge from multi complicated mv index",
+      "explain select /*+ use_index_merge(t2, idx2, idx, idx4) */ * from t2 where 1 member of (a) and c=1 and 2 member of (b) and d=3; -- 3: AND index merge from multi complicated mv indexes and normal indexes",
+      "explain select /*+ use_index_merge(t2, idx2, idx, idx3) */ * from t2 where json_contains(a, '[1, 2, 3]') and c=1 and 2 member of (b) and d=3; -- 4: AND index merge from multi complicated mv indexes (json_contains (intersection))and normal indexes",
+      "explain select /*+ use_index_merge(t2, idx2, idx, idx3) */ * from t2 where json_overlaps(a, '[1, 2, 3]') and c=1 and 2 member of (b) and d=3; -- 5: AND index merge from multi complicated mv indexes (json_overlap (intersection))and normal indexes",
+      "explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where 1 member of (a) and c=1 and c=2; -- 6: AND index merge from multi complicated mv indexes (empty range)"
+    ]
+  },
+  {
+    "name": "TestIndexMergeFromComposedDNFCondition",
+    "cases": [
+      "explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (1 member of (a) and c=1) or (2 member of (b) and c=1); -- 1: OR index merge from multi complicated mv index (memberof)",
+      "explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (1 member of (a) and c=1) or (2 member of (b) and c=1); -- 2: OR index merge from multi complicated mv index (memberof)",
+      "explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (1 member of (a) and c=1 and d=2) or (2 member of (b) and c=3 and d=2); -- 3: OR index merge from multi complicated mv index (memberof)，while each DNF item contains redundant condition, which should be remained as table filters",
+      "explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where ( json_contains(a, '[1, 2, 3]') and c=1 and d=2) or (2 member of (b) and c=3 and d=2); -- 4: OR index merge from multi complicated mv index (memberof)，make full use of DNF item's condition even if the predicate is intersection case (json_contains)",
+      "explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where ( json_overlaps(a, '[1, 2, 3]') and c=1 and d=2) or (2 member of (b) and c=3 and d=2); -- 5: OR index merge from multi complicated mv index (memberof)，make full use of DNF item's condition even if the predicate is intersection case (json_contains)",
+      "explain select /*+ use_index_merge(t2, idx2, idx, idx4) */ * from t2 where ( json_contains(a, '[1, 2, 3]') and d=2) or (2 member of (b) and c=3 and d=2); -- 6: OR index merge from multi complicated mv index (memberof)，make full use of other DNF items even if one of the DNF items fails",
+      "explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (1 member of (a) and 1 member of (b) and c=3) or (3 member of (b) and c=4); -- 7: OR index merge from multi complicated mv index (memberof)，each DNF item can be more complicated like a another embedded CNF member-of composition.",
+      "explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (1 member of (a) and 1 member of (b) and c=3) or (3 member of (b) and c=4) or e=1; -- 8: OR index merge from multi complicated mv index (memberof), each DNF item should be strict or lax used as index partial path.",
+      "explain select /*+ use_index_merge(t2, idx2, idx, idx4) */ * from t2 where (1 member of (a) and 1 member of (b) and c=3) or (3 member of (b) and c=4) or d=1; -- 9: OR index merge from multi complicated mv index (memberof), each DNF item should be strict or lax used as index partial path, specify the index in index merge hint"
+    ]
   }
 ]

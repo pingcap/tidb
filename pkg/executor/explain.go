@@ -55,7 +55,7 @@ type ExplainExec struct {
 // Open implements the Executor Open interface.
 func (e *ExplainExec) Open(ctx context.Context) error {
 	if e.analyzeExec != nil {
-		return e.analyzeExec.Open(ctx)
+		return exec.Open(ctx, e.analyzeExec)
 	}
 	return nil
 }
@@ -219,9 +219,8 @@ func updateTriggerIntervalByHeapInUse(heapInUse uint64) (time.Duration, int) {
 		return 5 * time.Second, 6
 	} else if heapInUse < 40*size.GB {
 		return 15 * time.Second, 2
-	} else {
-		return 30 * time.Second, 1
 	}
+	return 30 * time.Second, 1
 }
 
 func (h *memoryDebugModeHandler) run() {
