@@ -15,6 +15,7 @@
 package calibrateresource_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"testing"
@@ -785,7 +786,7 @@ type mockResourceGroupProvider struct {
 }
 
 func (p *mockResourceGroupProvider) Get(ctx context.Context, key []byte, opts ...pd.OpOption) (*meta_storagepb.GetResponse, error) {
-	if string(key) != "resource_group/controller" {
+	if !bytes.Equal(pd.ControllerConfigPathPrefixBytes, key) {
 		return nil, errors.New("unsupported configPath")
 	}
 	payload, _ := json.Marshal(&p.cfg)
