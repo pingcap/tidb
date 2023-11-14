@@ -180,6 +180,92 @@ var actionMap = map[ActionType]string{
 	__DEPRECATED_ActionAlterTableAlterPartition: "alter partition",
 }
 
+type DDLBDRType string
+
+const (
+	UnsafeDDL       DDLBDRType = "unsafe DDL"
+	SafeDDL         DDLBDRType = "safe DDL"
+	UnmanagementDDL DDLBDRType = "unmanagement DDL"
+	UnknownDDL      DDLBDRType = "unknown DDL"
+)
+
+var ActionBDRMap = map[ActionType]DDLBDRType{
+	ActionNone:                          UnknownDDL,
+	ActionCreateSchema:                  SafeDDL,
+	ActionDropSchema:                    UnsafeDDL,
+	ActionCreateTable:                   SafeDDL,
+	ActionDropTable:                     UnsafeDDL,
+	ActionAddColumn:                     SafeDDL, // add a new column to table if it’s nullable or with default value.
+	ActionDropColumn:                    UnsafeDDL,
+	ActionAddIndex:                      SafeDDL, //add non-unique index
+	ActionDropIndex:                     SafeDDL,
+	ActionAddForeignKey:                 UnknownDDL,
+	ActionDropForeignKey:                UnknownDDL,
+	ActionTruncateTable:                 UnsafeDDL,
+	ActionModifyColumn:                  SafeDDL, // add or update comments for column, change default values of one particular column
+	ActionRebaseAutoID:                  UnknownDDL,
+	ActionRenameTable:                   UnsafeDDL,
+	ActionSetDefaultValue:               UnknownDDL,
+	ActionShardRowID:                    UnknownDDL,
+	ActionModifyTableComment:            SafeDDL,
+	ActionRenameIndex:                   SafeDDL, // rename any index
+	ActionAddTablePartition:             SafeDDL, // append a new partition in a range partitioned table. (no data movement)
+	ActionDropTablePartition:            UnsafeDDL,
+	ActionCreateView:                    UnmanagementDDL,
+	ActionModifyTableCharsetAndCollate:  UnknownDDL,
+	ActionTruncateTablePartition:        UnsafeDDL,
+	ActionDropView:                      UnmanagementDDL,
+	ActionRecoverTable:                  UnknownDDL,
+	ActionModifySchemaCharsetAndCollate: UnknownDDL,
+	ActionLockTable:                     UnknownDDL,
+	ActionUnlockTable:                   UnknownDDL,
+	ActionRepairTable:                   UnknownDDL,
+	ActionSetTiFlashReplica:             UnknownDDL,
+	ActionUpdateTiFlashReplicaStatus:    UnknownDDL,
+	ActionAddPrimaryKey:                 UnsafeDDL,
+	ActionDropPrimaryKey:                SafeDDL,
+	ActionCreateSequence:                UnknownDDL,
+	ActionAlterSequence:                 UnknownDDL,
+	ActionDropSequence:                  UnknownDDL,
+	ActionAddColumns:                    UnknownDDL, // Deprecated, we use ActionMultiSchemaChange instead.
+	ActionDropColumns:                   UnknownDDL, // Deprecated, we use ActionMultiSchemaChange instead.
+	ActionModifyTableAutoIdCache:        UnknownDDL, //nolint:revive
+	ActionRebaseAutoRandomBase:          UnknownDDL,
+	ActionAlterIndexVisibility:          SafeDDL,
+	ActionExchangeTablePartition:        UnknownDDL,
+	ActionAddCheckConstraint:            UnknownDDL,
+	ActionDropCheckConstraint:           UnknownDDL,
+	ActionAlterCheckConstraint:          UnknownDDL,
+
+	__DEPRECATED_ActionAlterTableAlterPartition: UnknownDDL, // Deprecated
+
+	ActionRenameTables:                  UnsafeDDL,
+	ActionDropIndexes:                   UnknownDDL, // Deprecated, we use ActionMultiSchemaChange instead.
+	ActionAlterTableAttributes:          UnknownDDL,
+	ActionAlterTablePartitionAttributes: UnknownDDL,
+	ActionCreatePlacementPolicy:         UnmanagementDDL,
+	ActionAlterPlacementPolicy:          UnmanagementDDL,
+	ActionDropPlacementPolicy:           UnmanagementDDL,
+	ActionAlterTablePartitionPlacement:  UnknownDDL,
+	ActionModifySchemaDefaultPlacement:  UnknownDDL,
+	ActionAlterTablePlacement:           UnknownDDL,
+	ActionAlterCacheTable:               UnknownDDL,
+	ActionAlterTableStatsOptions:        UnknownDDL,
+	ActionAlterNoCacheTable:             UnknownDDL,
+	ActionCreateTables:                  SafeDDL,
+	ActionMultiSchemaChange:             UnknownDDL,
+	ActionFlashbackCluster:              UnknownDDL,
+	ActionRecoverSchema:                 UnknownDDL,
+	ActionReorganizePartition:           UnknownDDL,
+	ActionAlterTTLInfo:                  UnknownDDL,
+	ActionAlterTTLRemove:                UnknownDDL,
+	ActionCreateResourceGroup:           UnmanagementDDL,
+	ActionAlterResourceGroup:            UnmanagementDDL,
+	ActionDropResourceGroup:             UnmanagementDDL,
+	ActionAlterTablePartitioning:        UnknownDDL,
+	ActionRemovePartitioning:            UnknownDDL,
+}
+
 // String return current ddl action in string
 func (action ActionType) String() string {
 	if v, ok := actionMap[action]; ok {

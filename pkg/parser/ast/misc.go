@@ -2337,6 +2337,23 @@ const (
 	BDRRoleLocalOnly BDRRole = "local_only"
 )
 
+// DeniedByBDR checks whether the DDL is denied by BDR.
+func DeniedByBDR(role BDRRole, action model.ActionType) bool {
+	switch role {
+	case BDRRoleNone, BDRRoleLocalOnly:
+		return false
+	case BDRRolePrimary:
+		if model.ActionBDRMap[action] == model.SafeDDL && model.ActionBDRMap[action] == model.UnmanagementDDL {
+			return false
+		}
+	case BDRRoleSecondary:
+		if model.ActionBDRMap[action] == model.UnmanagementDDL {
+			return false
+		}
+	}
+	return true
+}
+
 type StatementScope int
 
 const (

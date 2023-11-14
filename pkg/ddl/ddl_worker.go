@@ -405,6 +405,11 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		job.StartTS = startTS
 		job.ID = ids[i]
 		job.BDRRole = bdrRole
+
+		if ast.DeniedByBDR(ast.BDRRole(bdrRole), job.Type) {
+			return errors.Errorf("Can't add ddl job, denied by bdr role")
+		}
+
 		setJobStateToQueueing(job)
 
 		if d.stateSyncer.IsUpgradingState() && !hasSysDB(job) {
