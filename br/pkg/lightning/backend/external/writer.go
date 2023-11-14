@@ -18,11 +18,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"time"
+
+	"github.com/pingcap/tidb/br/pkg/membuf"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -184,9 +185,12 @@ func (b *WriterBuilder) Build(
 			propSizeDist: b.propSizeDist,
 			propKeysDist: b.propKeysDist,
 		},
-		memSizeLimit:   b.memSizeLimit,
-		store:          store,
-		kvBuffer:       membuf.NewPool(membuf.WithBlockSize(b.blockSize), membuf.WithPoolSize(int(b.memSizeLimit)/b.blockSize)).PreAllocWithPoolSize(int(b.memSizeLimit) / b.blockSize).NewBuffer(),
+		memSizeLimit: b.memSizeLimit,
+		store:        store,
+		kvBuffer: membuf.NewPool(
+			membuf.WithBlockSize(b.blockSize),
+			membuf.WithBlockNum(int(b.memSizeLimit)/b.blockSize),
+		).PreAllocPoolSize(int(b.memSizeLimit)).NewBuffer(),
 		writeBatch:     make([]simpleKV, 256*1024),
 		writeCnt:       0,
 		currentSeq:     0,

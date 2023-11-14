@@ -49,17 +49,17 @@ type Pool struct {
 // Option configures a pool.
 type Option func(p *Pool)
 
-// WithPoolSize configures how many blocks cached by this pool.
-func WithPoolSize(size int) Option {
+// WithBlockNum configures how many blocks cached by this pool.
+func WithBlockNum(num int) Option {
 	return func(p *Pool) {
-		p.blockCache = make(chan []byte, size)
+		p.blockCache = make(chan []byte, num)
 	}
 }
 
 // WithBlockSize configures the size of each block.
-func WithBlockSize(size int) Option {
+func WithBlockSize(bytes int) Option {
 	return func(p *Pool) {
-		p.blockSize = size
+		p.blockSize = bytes
 	}
 }
 
@@ -110,8 +110,9 @@ func (p *Pool) release(b []byte) {
 	}
 }
 
-func (p *Pool) PreAllocWithPoolSize(size int) *Pool {
-	for i := 0; i < size; i++ {
+// PreAllocPoolSize pre-allocates given memory for the pool.
+func (p *Pool) PreAllocPoolSize(bytes int) *Pool {
+	for i := 0; i < bytes/p.blockSize; i++ {
 		p.blockCache <- p.allocator.Alloc(p.blockSize)
 	}
 	return p
