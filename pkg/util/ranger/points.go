@@ -138,6 +138,9 @@ func rangePointEqualValueLess(a, b *point) bool {
 
 func switchPointsToSortKey(sctx sessionctx.Context, inputPs []*point, newTp *types.FieldType) ([]*point, error) {
 	ps := make([]*point, 0, len(inputPs))
+	if collate.IsBinCollation(newTp.GetCollate()) {
+		return inputPs, nil
+	}
 	for _, p := range inputPs {
 		np, err := switchPointToSortKey(sctx, p, newTp)
 		if err != nil {
@@ -729,7 +732,8 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction, newTp
 		startPoint := &point{value: types.NewStringDatum(""), start: true}
 		endPoint := &point{value: types.NewStringDatum("")}
 		res := []*point{startPoint, endPoint}
-		if !noConvertToSortKey && newTp.EvalType() == types.ETString &&
+		if !noConvertToSortKey &&
+			newTp.EvalType() == types.ETString &&
 			newTp.GetType() != mysql.TypeEnum &&
 			newTp.GetType() != mysql.TypeSet {
 			res, err = switchPointsToSortKey(r.sctx, res, newTp)
