@@ -407,6 +407,15 @@ func TestCompareReader(t *testing.T) {
 		beforeReaderClose:  beforeClose,
 		afterReaderClose:   afterClose,
 	}
+
+	readMergeIter(suite)
+	t.Logf(
+		"merge iter read speed for %d bytes: %.2f MB/s",
+		fileSize*fileCnt,
+		float64(fileSize*fileCnt)/elapsed.Seconds()/1024/1024,
+	)
+
+	return
 	readFileSequential(suite)
 	t.Logf(
 		"sequential read speed for %d bytes: %.2f MB/s",
@@ -417,13 +426,6 @@ func TestCompareReader(t *testing.T) {
 	readFileConcurrently(suite)
 	t.Logf(
 		"concurrent read speed for %d bytes: %.2f MB/s",
-		fileSize*fileCnt,
-		float64(fileSize*fileCnt)/elapsed.Seconds()/1024/1024,
-	)
-
-	readMergeIter(suite)
-	t.Logf(
-		"merge iter read speed for %d bytes: %.2f MB/s",
 		fileSize*fileCnt,
 		float64(fileSize*fileCnt)/elapsed.Seconds()/1024/1024,
 	)
