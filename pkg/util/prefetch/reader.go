@@ -22,8 +22,8 @@ func NewPrefetchReader(r io.ReadCloser, prefetchSize int) io.ReadCloser {
 		bufCh: make(chan []byte, 0),
 		err:   nil,
 	}
-	ret.buf[0] = make([]byte, prefetchSize)
-	ret.buf[1] = make([]byte, prefetchSize)
+	ret.buf[0] = make([]byte, prefetchSize/2)
+	ret.buf[1] = make([]byte, prefetchSize/2)
 	go ret.run()
 	return ret
 }
