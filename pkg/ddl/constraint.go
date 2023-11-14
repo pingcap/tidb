@@ -149,18 +149,10 @@ func checkAddCheckConstraint(t *meta.Meta, job *model.Job) (*model.DBInfo, *mode
 		// if not, that means constraint was in intermediate state.
 	}
 
-	tblInfos, err := t.ListTables(schemaID)
+	err = checkConstraintNamesNotExists(t, schemaID, []*model.ConstraintInfo{constraintInfo1})
 	if err != nil {
+		job.State = model.JobStateCancelled
 		return nil, nil, nil, nil, err
-	}
-
-	for _, tbl := range tblInfos {
-		if tbl.ID != tblInfo.ID {
-			if constraintInfo := tbl.FindConstraintInfoByName(constraintInfo1.Name.L); constraintInfo != nil {
-				job.State = model.JobStateCancelled
-				return nil, nil, nil, nil, infoschema.ErrCheckConstraintDupName.GenWithStackByArgs(constraintInfo1.Name.L)
-			}
-		}
 	}
 
 	return dbInfo, tblInfo, constraintInfo2, constraintInfo1, nil
