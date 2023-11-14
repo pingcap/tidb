@@ -876,6 +876,9 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 	if maxCnt > int64(len(p)) {
 		maxCnt = int64(len(p))
 	}
+	if maxCnt == 0 {
+		return 0, io.EOF
+	}
 	n, err = r.reader.Read(p[:maxCnt])
 	// TODO: maybe we should use !errors.Is(err, io.EOF) here to avoid error lint, but currently, pingcap/errors
 	// doesn't implement this method yet.

@@ -42,4 +42,13 @@ func TestBasic(t *testing.T) {
 	require.EqualValues(t, "0", buf[:n])
 	_, err = r.Read(buf)
 	require.ErrorIs(t, err, io.EOF)
+
+	source = bytes.NewReader([]byte("01234567890"))
+	r = NewPrefetchReader(io.NopCloser(source), 3)
+	buf = make([]byte, 11)
+	n, err = r.Read(buf)
+	require.NoError(t, err)
+	require.EqualValues(t, 11, n)
+	_, err = r.Read(buf)
+	require.ErrorIs(t, err, io.EOF)
 }
