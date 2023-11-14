@@ -18,8 +18,10 @@ import (
 	"container/heap"
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -274,6 +276,8 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		err = e.partition.add(chk)
 		if err != nil {
 			if errors.Is(err, errSpillIsTriggered) {
+				info := fmt.Sprintf("Create new partition %d, old partition has %d rows", len(e.SortPartitionList)+1, e.partition.inDisk.NumChunks())
+				log.Info(info)
 				e.switchToNewSortPartition(fields, byItemsDesc)
 				err = e.partition.add(chk)
 			}
@@ -291,29 +295,25 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		}
 	})
 
-	if e.partition.numRowInMemory() > 0 || e.partition.spillAction.spillTriggered {
-		// The last partition is not empty
-		if e.isSpillTriggered() {
-			// If e.partition haven't trigger the spill. We need to manually trigger it.
-			// As all data should be in disk when spill is triggered.
-			if !e.partition.spillAction.spillTriggered {
-				e.partition.spillAction.spillTriggered = true
-				e.partition.spillError = errSpillIsTriggered
-				e.partition.spillToDisk()
-			}
-
-			if !errors.Is(e.partition.spillError, errSpillIsTriggered) {
-				return e.partition.spillError
-			}
-		} else {
-			err := e.partition.sort()
-			if err != nil {
-				return err
-			}
+	if e.isSpillTriggered() {
+		// If e.partition haven't trigger the spill. We need to manually trigger it.
+		// As all data should be in disk when spill is triggered.
+		if !e.partition.spillAction.spillTriggered {
+			e.partition.spillAction.spillTriggered = true
+			e.partition.spillToDisk()
 		}
 
-		e.SortPartitionList = append(e.SortPartitionList, e.partition)
+		if e.partition.partitionErr != nil {
+			return e.partition.partitionErr
+		}
+	} else {
+		err := e.partition.sort()
+		if err != nil {
+			return err
+		}
 	}
+
+	e.SortPartitionList = append(e.SortPartitionList, e.partition)
 	return e.initCursors(len(e.SortPartitionList))
 }
 
@@ -353,6 +353,8 @@ func (e *SortExec) initCursors(partitionNum int) error {
 	e.cursors = make([]*dataCursor, partitionNum)
 	for i := 0; i < partitionNum; i++ {
 		e.cursors[i] = NewDataCursor()
+		info := fmt.Sprintf("xzxdebug: partitionNum: %d, i: %d, diskChunkNum: %d", partitionNum, i, e.SortPartitionList[i].inDisk.NumChunks())
+		log.Info(info)
 		chk, err := e.SortPartitionList[i].inDisk.GetChunk(0)
 		if err != nil {
 			return err

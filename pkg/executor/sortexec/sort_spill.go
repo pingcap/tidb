@@ -46,7 +46,7 @@ func (s *sortPartitionSpillDiskAction) Action(t *memory.Tracker) {
 		logutil.BgLogger().Info("memory exceeds quota, spill sort partition data to disk now.",
 			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
 		s.spillTriggered = true
-		go s.partition.spillToDisk()
+		// Only set spill flag, the spill action will be executed in other place.
 	}
 }
 
