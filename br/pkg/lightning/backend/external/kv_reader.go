@@ -36,11 +36,12 @@ func newKVReader(
 	initFileOffset uint64,
 	bufSize int,
 ) (*kvReader, error) {
-	sr, err := openStoreReaderAndSeek(ctx, store, name, initFileOffset, bufSize/2)
+	oneThird := bufSize / 3
+	sr, err := openStoreReaderAndSeek(ctx, store, name, initFileOffset, oneThird*2)
 	if err != nil {
 		return nil, err
 	}
-	br, err := newByteReader(ctx, sr, bufSize/2)
+	br, err := newByteReader(ctx, sr, oneThird)
 	if err != nil {
 		return nil, err
 	}
