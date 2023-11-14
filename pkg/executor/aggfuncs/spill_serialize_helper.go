@@ -34,7 +34,7 @@ func NewSpillSerializeHelper() *SpillSerializeHelper {
 	}
 }
 
-func (s *SpillSerializeHelper) serializePartialResult4Count(value partialResult4CountMetaType) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4Count(value partialResult4Count) []byte {
 	return spill.SerializeInt64(value, s.buf[0:int64Len])
 }
 
@@ -160,7 +160,7 @@ func (s *SpillSerializeHelper) serializePartialResult4GroupConcat(value partialR
 	})
 }
 
-func (s *SpillSerializeHelper) serializePartialResult4BitFunc(value partialResult4BitFuncMetaType) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4BitFunc(value partialResult4BitFunc) []byte {
 	spill.SerializeUint64(value, s.buf[:])
 	return s.buf[0:uint64Len]
 }

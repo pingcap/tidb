@@ -49,7 +49,7 @@ func newDeserializeHelper(column *chunk.Column, rowNum int) spillDeserializeHelp
 	}
 }
 
-func (s *spillDeserializeHelper) deserializePartialResult4Count(dst *partialResult4CountMetaType) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4Count(dst *partialResult4Count) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		*dst = spill.DeserializeInt64(bytes, 0)
@@ -248,7 +248,7 @@ func (s *spillDeserializeHelper) deserializePartialResult4GroupConcat(dst *parti
 	return success
 }
 
-func (s *spillDeserializeHelper) deserializePartialResult4BitFunc(dst *partialResult4BitFuncMetaType) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4BitFunc(dst *partialResult4BitFunc) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		*dst = spill.DeserializeUint64(bytes, 0)

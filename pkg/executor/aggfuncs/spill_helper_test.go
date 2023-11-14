@@ -45,11 +45,11 @@ func TestPartialResult4Count(t *testing.T) {
 	var serializeHelper = NewSpillSerializeHelper()
 
 	// Initialize test data
-	expectData := []partialResult4CountMetaType{-123, 0, 123}
+	expectData := []partialResult4Count{-123, 0, 123}
 	serializedPartialResults := make([]PartialResult, 3)
 	testDataNum := len(serializedPartialResults)
 	for i := range serializedPartialResults {
-		pr := new(partialResult4CountMetaType)
+		pr := new(partialResult4Count)
 		*pr = expectData[i]
 		serializedPartialResults[i] = PartialResult(pr)
 	}
@@ -57,13 +57,13 @@ func TestPartialResult4Count(t *testing.T) {
 	// Serialize test data
 	chunk := getChunk()
 	for _, pr := range serializedPartialResults {
-		serializedData := serializeHelper.serializePartialResult4Count(*(*partialResult4CountMetaType)(pr))
+		serializedData := serializeHelper.serializePartialResult4Count(*(*partialResult4Count)(pr))
 		chunk.AppendBytes(0, serializedData)
 	}
 
 	// Deserialize test data
 	deserializeHelper := newDeserializeHelper(chunk.Column(0), testDataNum)
-	deserializedPartialResults := make([]partialResult4CountMetaType, testDataNum+1)
+	deserializedPartialResults := make([]partialResult4Count, testDataNum+1)
 	index := 0
 	for {
 		success := deserializeHelper.deserializePartialResult4Count(&deserializedPartialResults[index])
@@ -76,7 +76,7 @@ func TestPartialResult4Count(t *testing.T) {
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
-		require.Equal(t, *(*partialResult4CountMetaType)(serializedPartialResults[i]), deserializedPartialResults[i])
+		require.Equal(t, *(*partialResult4Count)(serializedPartialResults[i]), deserializedPartialResults[i])
 	}
 }
 
@@ -730,11 +730,11 @@ func TestPartialResult4BitFunc(t *testing.T) {
 	var serializeHelper = NewSpillSerializeHelper()
 
 	// Initialize test data
-	expectData := []partialResult4BitFuncMetaType{0, 1, 2}
+	expectData := []partialResult4BitFunc{0, 1, 2}
 	serializedPartialResults := make([]PartialResult, 3)
 	testDataNum := len(serializedPartialResults)
 	for i := range serializedPartialResults {
-		pr := new(partialResult4BitFuncMetaType)
+		pr := new(partialResult4BitFunc)
 		*pr = expectData[i]
 		serializedPartialResults[i] = PartialResult(pr)
 	}
@@ -742,13 +742,13 @@ func TestPartialResult4BitFunc(t *testing.T) {
 	// Serialize test data
 	chunk := getChunk()
 	for _, pr := range serializedPartialResults {
-		serializedData := serializeHelper.serializePartialResult4BitFunc(*(*partialResult4BitFuncMetaType)(pr))
+		serializedData := serializeHelper.serializePartialResult4BitFunc(*(*partialResult4BitFunc)(pr))
 		chunk.AppendBytes(0, serializedData)
 	}
 
 	// Deserialize test data
 	deserializeHelper := newDeserializeHelper(chunk.Column(0), testDataNum)
-	deserializedPartialResults := make([]partialResult4BitFuncMetaType, testDataNum+1)
+	deserializedPartialResults := make([]partialResult4BitFunc, testDataNum+1)
 	index := 0
 	for {
 		success := deserializeHelper.deserializePartialResult4BitFunc(&deserializedPartialResults[index])
@@ -761,7 +761,7 @@ func TestPartialResult4BitFunc(t *testing.T) {
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
-		require.Equal(t, *(*partialResult4BitFuncMetaType)(serializedPartialResults[i]), deserializedPartialResults[i])
+		require.Equal(t, *(*partialResult4BitFunc)(serializedPartialResults[i]), deserializedPartialResults[i])
 	}
 }
 

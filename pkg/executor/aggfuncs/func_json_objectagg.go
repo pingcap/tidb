@@ -54,10 +54,10 @@ func (*jsonObjectAgg) ResetPartialResult(pr PartialResult) {
 	p.bInMap = 0
 }
 
-func (j *jsonObjectAgg) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *jsonObjectAgg) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4JsonObjectAgg)(pr)
 	if len(p.entries) == 0 {
-		chk.AppendNull(j.ordinal)
+		chk.AppendNull(e.ordinal)
 		return nil
 	}
 
@@ -65,14 +65,14 @@ func (j *jsonObjectAgg) AppendFinalResult2Chunk(_ sessionctx.Context, pr Partial
 	if err != nil {
 		return errors.Trace(err)
 	}
-	chk.AppendJSON(j.ordinal, bj)
+	chk.AppendJSON(e.ordinal, bj)
 	return nil
 }
 
-func (j *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4JsonObjectAgg)(pr)
 	for _, row := range rowsInGroup {
-		key, keyIsNull, err := j.args[0].EvalString(sctx, row)
+		key, keyIsNull, err := e.args[0].EvalString(sctx, row)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -81,17 +81,17 @@ func (j *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 			return 0, types.ErrJSONDocumentNULLKey
 		}
 
-		if j.args[0].GetType().GetCharset() == charset.CharsetBin {
-			return 0, types.ErrInvalidJSONCharset.GenWithStackByArgs(j.args[0].GetType().GetCharset())
+		if e.args[0].GetType().GetCharset() == charset.CharsetBin {
+			return 0, types.ErrInvalidJSONCharset.GenWithStackByArgs(e.args[0].GetType().GetCharset())
 		}
 
 		key = strings.Clone(key)
-		value, err := j.args[1].Eval(row)
+		value, err := e.args[1].Eval(row)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
 
-		realVal, err := getRealJSONValue(value, j.args[1].GetType())
+		realVal, err := getRealJSONValue(value, e.args[1].GetType())
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -114,18 +114,18 @@ func (j *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 	return memDelta, nil
 }
 
-func (j *jsonObjectAgg) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (e *jsonObjectAgg) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 	pr := (*partialResult4JsonObjectAgg)(partialResult)
 	resBuf := spillHelper.serializePartialResult4JsonObjectAgg(*pr)
-	chk.AppendBytes(j.ordinal, resBuf)
+	chk.AppendBytes(e.ordinal, resBuf)
 }
 
-func (j *jsonObjectAgg) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
-	return deserializePartialResultCommon(src, j.ordinal, j.deserializeForSpill)
+func (e *jsonObjectAgg) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
 }
 
-func (j *jsonObjectAgg) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
-	pr, memDelta := j.AllocPartialResult()
+func (e *jsonObjectAgg) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
 	result := (*partialResult4JsonObjectAgg)(pr)
 	success, deserializeMemDelta := helper.deserializePartialResult4JsonObjectAgg(result)
 	if !success {

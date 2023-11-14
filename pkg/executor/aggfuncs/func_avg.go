@@ -2,7 +2,7 @@
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// You may obtain e copy of the License at
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 //
@@ -47,18 +47,18 @@ type baseAvgDecimal struct {
 	baseAggFunc
 }
 
-func (b *baseAvgDecimal) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (e *baseAvgDecimal) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 	pr := (*partialResult4AvgDecimal)(partialResult)
 	resBuf := spillHelper.serializePartialResult4AvgDecimal(*pr)
-	chk.AppendBytes(b.ordinal, resBuf)
+	chk.AppendBytes(e.ordinal, resBuf)
 }
 
-func (b *baseAvgDecimal) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
-	return deserializePartialResultCommon(src, b.ordinal, b.deserializeForSpill)
+func (e *baseAvgDecimal) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
 }
 
-func (b *baseAvgDecimal) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
-	pr, memDelta := b.AllocPartialResult()
+func (e *baseAvgDecimal) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
 	result := (*partialResult4AvgDecimal)(pr)
 	success := helper.deserializePartialResult4AvgDecimal(result)
 	if !success {
@@ -82,10 +82,10 @@ func (*baseAvgDecimal) ResetPartialResult(pr PartialResult) {
 	p.count = int64(0)
 }
 
-func (b *baseAvgDecimal) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *baseAvgDecimal) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4AvgDecimal)(pr)
 	if p.count == 0 {
-		chk.AppendNull(b.ordinal)
+		chk.AppendNull(e.ordinal)
 		return nil
 	}
 	decimalCount := types.NewDecFromInt(p.count)
@@ -94,10 +94,10 @@ func (b *baseAvgDecimal) AppendFinalResult2Chunk(_ sessionctx.Context, pr Partia
 	if err != nil {
 		return err
 	}
-	if b.retTp == nil {
+	if e.retTp == nil {
 		return errors.New("e.retTp of avg should not be nil")
 	}
-	frac := b.retTp.GetDecimal()
+	frac := e.retTp.GetDecimal()
 	if frac == -1 {
 		frac = mysql.MaxDecimalScale
 	}
@@ -105,7 +105,7 @@ func (b *baseAvgDecimal) AppendFinalResult2Chunk(_ sessionctx.Context, pr Partia
 	if err != nil {
 		return err
 	}
-	chk.AppendMyDecimal(b.ordinal, finalResult)
+	chk.AppendMyDecimal(e.ordinal, finalResult)
 	return nil
 }
 
@@ -113,10 +113,10 @@ type avgOriginal4Decimal struct {
 	baseAvgDecimal
 }
 
-func (a *avgOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *avgOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4AvgDecimal)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := a.args[0].EvalDecimal(sctx, row)
+		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
 		if err != nil {
 			return 0, err
 		}
@@ -137,10 +137,10 @@ func (a *avgOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 
 var _ SlidingWindowAggFunc = &avgOriginal4Decimal{}
 
-func (a *avgOriginal4Decimal) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+func (e *avgOriginal4Decimal) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4AvgDecimal)(pr)
 	for i := uint64(0); i < shiftEnd; i++ {
-		input, isNull, err := a.args[0].EvalDecimal(sctx, getRow(lastEnd+i))
+		input, isNull, err := e.args[0].EvalDecimal(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
 		}
@@ -156,7 +156,7 @@ func (a *avgOriginal4Decimal) Slide(sctx sessionctx.Context, getRow func(uint64)
 		p.count++
 	}
 	for i := uint64(0); i < shiftStart; i++ {
-		input, isNull, err := a.args[0].EvalDecimal(sctx, getRow(lastStart+i))
+		input, isNull, err := e.args[0].EvalDecimal(sctx, getRow(lastStart+i))
 		if err != nil {
 			return err
 		}
@@ -178,10 +178,10 @@ type avgPartial4Decimal struct {
 	baseAvgDecimal
 }
 
-func (a *avgPartial4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *avgPartial4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4AvgDecimal)(pr)
 	for _, row := range rowsInGroup {
-		inputSum, isNull, err := a.args[1].EvalDecimal(sctx, row)
+		inputSum, isNull, err := e.args[1].EvalDecimal(sctx, row)
 		if err != nil {
 			return 0, err
 		}
@@ -189,7 +189,7 @@ func (a *avgPartial4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 			continue
 		}
 
-		inputCount, isNull, err := a.args[0].EvalInt(sctx, row)
+		inputCount, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
 			return 0, err
 		}
@@ -247,10 +247,10 @@ func (*avgOriginal4DistinctDecimal) ResetPartialResult(pr PartialResult) {
 	p.valSet, _ = set.NewStringSetWithMemoryUsage()
 }
 
-func (a *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4AvgDistinctDecimal)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := a.args[0].EvalDecimal(sctx, row)
+		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
 		if err != nil {
 			return memDelta, err
 		}
@@ -278,10 +278,10 @@ func (a *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Contex
 	return memDelta, nil
 }
 
-func (a *avgOriginal4DistinctDecimal) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *avgOriginal4DistinctDecimal) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4AvgDistinctDecimal)(pr)
 	if p.count == 0 {
-		chk.AppendNull(a.ordinal)
+		chk.AppendNull(e.ordinal)
 		return nil
 	}
 	decimalCount := types.NewDecFromInt(p.count)
@@ -290,10 +290,10 @@ func (a *avgOriginal4DistinctDecimal) AppendFinalResult2Chunk(_ sessionctx.Conte
 	if err != nil {
 		return err
 	}
-	if a.retTp == nil {
+	if e.retTp == nil {
 		return errors.New("e.retTp of avg should not be nil")
 	}
-	frac := a.retTp.GetDecimal()
+	frac := e.retTp.GetDecimal()
 	if frac == -1 {
 		frac = mysql.MaxDecimalScale
 	}
@@ -301,7 +301,7 @@ func (a *avgOriginal4DistinctDecimal) AppendFinalResult2Chunk(_ sessionctx.Conte
 	if err != nil {
 		return err
 	}
-	chk.AppendMyDecimal(a.ordinal, finalResult)
+	chk.AppendMyDecimal(e.ordinal, finalResult)
 	return nil
 }
 
@@ -330,28 +330,28 @@ func (*baseAvgFloat64) ResetPartialResult(pr PartialResult) {
 	p.count = 0
 }
 
-func (b *baseAvgFloat64) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *baseAvgFloat64) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4AvgFloat64)(pr)
 	if p.count == 0 {
-		chk.AppendNull(b.ordinal)
+		chk.AppendNull(e.ordinal)
 	} else {
-		chk.AppendFloat64(b.ordinal, p.sum/float64(p.count))
+		chk.AppendFloat64(e.ordinal, p.sum/float64(p.count))
 	}
 	return nil
 }
 
-func (b *baseAvgFloat64) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (e *baseAvgFloat64) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 	pr := (*partialResult4AvgFloat64)(partialResult)
 	resBuf := spillHelper.serializePartialResult4AvgFloat64(*pr)
-	chk.AppendBytes(b.ordinal, resBuf)
+	chk.AppendBytes(e.ordinal, resBuf)
 }
 
-func (b *baseAvgFloat64) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
-	return deserializePartialResultCommon(src, b.ordinal, b.deserializeForSpill)
+func (e *baseAvgFloat64) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
 }
 
-func (b *baseAvgFloat64) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
-	pr, memDelta := b.AllocPartialResult()
+func (e *baseAvgFloat64) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
 	result := (*partialResult4AvgFloat64)(pr)
 	success := helper.deserializePartialResult4AvgFloat64(result)
 	if !success {
@@ -364,10 +364,10 @@ type avgOriginal4Float64HighPrecision struct {
 	baseAvgFloat64
 }
 
-func (a *avgOriginal4Float64HighPrecision) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *avgOriginal4Float64HighPrecision) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4AvgFloat64)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := a.args[0].EvalReal(sctx, row)
+		input, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
 			return 0, err
 		}
@@ -387,10 +387,10 @@ type avgOriginal4Float64 struct {
 
 var _ SlidingWindowAggFunc = &avgOriginal4Float64{}
 
-func (a *avgOriginal4Float64) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+func (e *avgOriginal4Float64) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4AvgFloat64)(pr)
 	for i := uint64(0); i < shiftEnd; i++ {
-		input, isNull, err := a.args[0].EvalReal(sctx, getRow(lastEnd+i))
+		input, isNull, err := e.args[0].EvalReal(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
 		}
@@ -401,7 +401,7 @@ func (a *avgOriginal4Float64) Slide(sctx sessionctx.Context, getRow func(uint64)
 		p.count++
 	}
 	for i := uint64(0); i < shiftStart; i++ {
-		input, isNull, err := a.args[0].EvalReal(sctx, getRow(lastStart+i))
+		input, isNull, err := e.args[0].EvalReal(sctx, getRow(lastStart+i))
 		if err != nil {
 			return err
 		}
@@ -418,10 +418,10 @@ type avgPartial4Float64 struct {
 	baseAvgFloat64
 }
 
-func (a *avgPartial4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *avgPartial4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4AvgFloat64)(pr)
 	for _, row := range rowsInGroup {
-		inputSum, isNull, err := a.args[1].EvalReal(sctx, row)
+		inputSum, isNull, err := e.args[1].EvalReal(sctx, row)
 		if err != nil {
 			return 0, err
 		}
@@ -429,7 +429,7 @@ func (a *avgPartial4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 			continue
 		}
 
-		inputCount, isNull, err := a.args[0].EvalInt(sctx, row)
+		inputCount, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
 			return 0, err
 		}
@@ -473,10 +473,10 @@ func (*avgOriginal4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 	p.valSet, _ = set.NewFloat64SetWithMemoryUsage()
 }
 
-func (a *avgOriginal4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *avgOriginal4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4AvgDistinctFloat64)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := a.args[0].EvalReal(sctx, row)
+		input, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
 			return memDelta, err
 		}
@@ -491,12 +491,12 @@ func (a *avgOriginal4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Contex
 	return memDelta, nil
 }
 
-func (a *avgOriginal4DistinctFloat64) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *avgOriginal4DistinctFloat64) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4AvgDistinctFloat64)(pr)
 	if p.count == 0 {
-		chk.AppendNull(a.ordinal)
+		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	chk.AppendFloat64(a.ordinal, p.sum/float64(p.count))
+	chk.AppendFloat64(e.ordinal, p.sum/float64(p.count))
 	return nil
 }

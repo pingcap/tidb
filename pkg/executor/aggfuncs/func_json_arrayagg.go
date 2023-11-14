@@ -47,10 +47,10 @@ func (*jsonArrayagg) ResetPartialResult(pr PartialResult) {
 	p.entries = p.entries[:0]
 }
 
-func (j *jsonArrayagg) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *jsonArrayagg) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4JsonArrayagg)(pr)
 	if len(p.entries) == 0 {
-		chk.AppendNull(j.ordinal)
+		chk.AppendNull(e.ordinal)
 		return nil
 	}
 
@@ -58,19 +58,19 @@ func (j *jsonArrayagg) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialR
 	if err != nil {
 		return errors.Trace(err)
 	}
-	chk.AppendJSON(j.ordinal, json)
+	chk.AppendJSON(e.ordinal, json)
 	return nil
 }
 
-func (j *jsonArrayagg) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *jsonArrayagg) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4JsonArrayagg)(pr)
 	for _, row := range rowsInGroup {
-		item, err := j.args[0].Eval(row)
+		item, err := e.args[0].Eval(row)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
 
-		realItem, err := getRealJSONValue(item, j.args[0].GetType())
+		realItem, err := getRealJSONValue(item, e.args[0].GetType())
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -92,18 +92,18 @@ func (*jsonArrayagg) MergePartialResult(_ sessionctx.Context, src, dst PartialRe
 	return 0, nil
 }
 
-func (j *jsonArrayagg) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (e *jsonArrayagg) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 	pr := (*partialResult4JsonArrayagg)(partialResult)
 	resBuf := spillHelper.serializePartialResult4JsonArrayagg(*pr)
-	chk.AppendBytes(j.ordinal, resBuf)
+	chk.AppendBytes(e.ordinal, resBuf)
 }
 
-func (j *jsonArrayagg) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
-	return deserializePartialResultCommon(src, j.ordinal, j.deserializeForSpill)
+func (e *jsonArrayagg) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
 }
 
-func (j *jsonArrayagg) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
-	pr, memDelta := j.AllocPartialResult()
+func (e *jsonArrayagg) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
 	result := (*partialResult4JsonArrayagg)(pr)
 	success := helper.deserializePartialResult4JsonArrayagg(result)
 	if !success {
