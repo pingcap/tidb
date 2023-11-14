@@ -17,7 +17,10 @@ package ddl
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -36,32 +39,32 @@ func newBackfillCleanUpS3() dispatcher.CleanUpRoutine {
 }
 
 // CleanUp implements the CleanUpRoutine.CleanUp interface.
-func (*BackfillCleanUpS3) CleanUp(_ context.Context, _ *proto.Task) error {
-	// var gTaskMeta BackfillGlobalMeta
-	// if err := json.Unmarshal(task.Meta, &gTaskMeta); err != nil {
-	// 	return err
-	// }
-	// // Not use cloud storage, no need to cleanUp.
-	// if len(gTaskMeta.CloudStorageURI) == 0 {
-	// 	return nil
-	// }
-	// backend, err := storage.ParseBackend(gTaskMeta.CloudStorageURI, nil)
-	// if err != nil {
-	// 	logutil.Logger(ctx).Warn("failed to parse cloud storage uri", zap.Error(err))
-	// 	return err
-	// }
-	// extStore, err := storage.NewWithDefaultOpt(ctx, backend)
-	// if err != nil {
-	// 	logutil.Logger(ctx).Warn("failed to create cloud storage", zap.Error(err))
-	// 	return err
-	// }
-	// prefix := strconv.Itoa(int(gTaskMeta.Job.ID))
-	// // err = external.CleanUpFiles(ctx, extStore, prefix)
-	// if err != nil {
-	// 	logutil.Logger(ctx).Warn("cannot cleanup cloud storage files", zap.Error(err))
-	// 	return err
-	// }
-	// redactCloudStorageURI(ctx, task, &gTaskMeta)
+func (*BackfillCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
+	var gTaskMeta BackfillGlobalMeta
+	if err := json.Unmarshal(task.Meta, &gTaskMeta); err != nil {
+		return err
+	}
+	// Not use cloud storage, no need to cleanUp.
+	if len(gTaskMeta.CloudStorageURI) == 0 {
+		return nil
+	}
+	backend, err := storage.ParseBackend(gTaskMeta.CloudStorageURI, nil)
+	if err != nil {
+		logutil.Logger(ctx).Warn("failed to parse cloud storage uri", zap.Error(err))
+		return err
+	}
+	extStore, err := storage.NewWithDefaultOpt(ctx, backend)
+	if err != nil {
+		logutil.Logger(ctx).Warn("failed to create cloud storage", zap.Error(err))
+		return err
+	}
+	prefix := strconv.Itoa(int(gTaskMeta.Job.ID))
+	err = external.CleanUpFiles(ctx, extStore, prefix)
+	if err != nil {
+		logutil.Logger(ctx).Warn("cannot cleanup cloud storage files", zap.Error(err))
+		return err
+	}
+	redactCloudStorageURI(ctx, task, &gTaskMeta)
 	return nil
 }
 

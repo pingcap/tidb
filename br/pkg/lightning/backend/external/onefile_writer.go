@@ -19,7 +19,10 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
+	"os"
 	"path/filepath"
+	"runtime/pprof"
 	"slices"
 	"strconv"
 	"time"
@@ -66,13 +69,15 @@ type OneFileWriter struct {
 	statWriter storage.ExternalFileWriter
 	logger     *zap.Logger
 	useSort    bool
+
+	fileIdx int
 }
 
-func (w *OneFileWriter) initWriter(ctx context.Context) (
+func (w *OneFileWriter) initWriter(ctx context.Context, partSize int) (
 	err error,
 ) {
 	w.dataFile = filepath.Join(w.filenamePrefix, strconv.Itoa(0))
-	w.dataWriter, err = w.store.Create(ctx, w.dataFile, &storage.WriterOption{Concurrency: 20, PartSize: (int64)(10 * size.MB)})
+	w.dataWriter, err = w.store.Create(ctx, w.dataFile, &storage.WriterOption{Concurrency: 20, PartSize: (int64)(partSize)})
 	if err != nil {
 		return err
 	}
@@ -83,11 +88,12 @@ func (w *OneFileWriter) initWriter(ctx context.Context) (
 		return err
 	}
 	logutil.BgLogger().Info("one file writer", zap.String("data-file", w.dataFile), zap.String("stat-file", w.statFile))
+	w.fileIdx = 0
 	return nil
 }
 
-func (w *OneFileWriter) Init(ctx context.Context) (err error) {
-	err = w.initWriter(ctx)
+func (w *OneFileWriter) Init(ctx context.Context, partSize int) (err error) {
+	err = w.initWriter(ctx, partSize)
 	w.logger = logutil.Logger(ctx)
 	if err != nil {
 		return err
@@ -204,6 +210,13 @@ func (w *OneFileWriter) flushKVs(ctx context.Context, fromClose bool) (err error
 		if err != nil {
 			return err
 		}
+	}
+	{
+		// profile...
+		file, _ := os.Create(fmt.Sprintf("heap-profile-%d.prof", w.fileIdx))
+		w.fileIdx++
+		// check heap profile to see the memory usage is expected
+		err = pprof.WriteHeapProfile(file)
 	}
 
 	w.kvStore.Close()

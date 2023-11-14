@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
+	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -106,10 +107,10 @@ func TestGlobalSortBasic(t *testing.T) {
 	sb.WriteString(";")
 	tk.MustExec(sb.String())
 
-	//var jobID int64
+	var jobID int64
 	origin := dom.DDL().GetHook()
 	onJobUpdated := func(job *model.Job) {
-		//jobID = job.ID
+		jobID = job.ID
 	}
 	hook := &callback.TestDDLCallback{}
 	hook.OnJobUpdatedExported.Store(&onJobUpdated)
@@ -118,16 +119,16 @@ func TestGlobalSortBasic(t *testing.T) {
 	tk.MustExec("alter table t add index idx(a);")
 	dom.DDL().SetHook(origin)
 	tk.MustExec("admin check table t;")
-	// <-dispatcher.WaitCleanUpFinished
-	//checkFileCleaned(t, jobID, cloudStorageURI)
+	<-dispatcher.WaitCleanUpFinished
+	checkFileCleaned(t, jobID, cloudStorageURI)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()"))
 	tk.MustExec("alter table t add index idx1(a);")
 	dom.DDL().SetHook(origin)
 	tk.MustExec("admin check table t;")
-	// <-dispatcher.WaitCleanUpFinished
+	<-dispatcher.WaitCleanUpFinished
 
-	//checkFileCleaned(t, jobID, cloudStorageURI)
+	checkFileCleaned(t, jobID, cloudStorageURI)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/WaitCleanUpFinished"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort"))
 }
