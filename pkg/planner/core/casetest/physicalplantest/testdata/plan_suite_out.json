@@ -7994,6 +7994,18 @@
         "Warning": [
           "Warning 1105 Scalar function 'json_overlaps'(signature: Unspecified, return type: bigint(20)) is not supported to push down to storage layer now."
         ]
+      },
+      {
+        "SQL": "explain select /*+ USE_INDEX_MERGE(t3, aid_c1, aid_c2) */ * from t3 where (aid = 1 and c1='aaa') or (aid = 1 and c2='bbb') limit 1; -- index merge union and intersection case from issue 48588",
+        "Plan": [
+          "IndexMerge_20 1.00 root  type: union, limit embedded(offset:0, count:1)",
+          "├─Limit_18(Build) 0.01 cop[tikv]  offset:0, count:1",
+          "│ └─IndexRangeScan_11 0.01 cop[tikv] table:t3, index:aid_c1(aid, c1) range:[1 \"aaa\",1 \"aaa\"], keep order:false, stats:pseudo",
+          "├─Limit_19(Build) 0.01 cop[tikv]  offset:0, count:1",
+          "│ └─IndexRangeScan_12 0.01 cop[tikv] table:t3, index:aid_c2(aid, c2) range:[1 \"bbb\",1 \"bbb\"], keep order:false, stats:pseudo",
+          "└─TableRowIDScan_13(Probe) 1.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
       }
     ]
   }
