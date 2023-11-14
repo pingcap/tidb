@@ -186,6 +186,7 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 		e.initExternalSorting()
 	}
 
+	// TODO memory consumed by resoted chunks should be tracked and the query needs to be killed if out of quota
 	for !req.IsFull() && e.multiWayMerge.Len() > 0 {
 		// Get and insert data
 		element := e.multiWayMerge.elements[0]
