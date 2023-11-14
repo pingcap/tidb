@@ -304,7 +304,7 @@ func unionColumnValues(lhs, rhs []*valueInfo) []*valueInfo {
 // detachCNFCondAndBuildRangeForIndex will detach the index filters from table filters. These conditions are connected with `and`
 // It will first find the point query column and then extract the range query column.
 // considerDNF is true means it will try to extract access conditions from the DNF expressions.
-func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expression.Expression, tpSlice []*types.FieldType, considerDNF bool) (*DetachRangeResult, error) {
+func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expression.Expression, newTpSlice []*types.FieldType, considerDNF bool) (*DetachRangeResult, error) {
 	var (
 		eqCount int
 		ranges  Ranges
@@ -317,7 +317,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		return res, nil
 	}
 	var remainedConds []expression.Expression
-	ranges, accessConds, remainedConds, err = d.buildRangeOnColsByCNFCond(tpSlice, len(accessConds), accessConds)
+	ranges, accessConds, remainedConds, err = d.buildRangeOnColsByCNFCond(newTpSlice, len(accessConds), accessConds)
 	if err != nil {
 		return nil, err
 	}
@@ -452,7 +452,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		}
 		// `eqOrInCount` must be 0 when coming here.
 		res.AccessConds, res.RemainedConds = detachColumnCNFConditions(d.sctx, newConditions, checker)
-		ranges, res.AccessConds, remainedConds, err = d.buildCNFIndexRange(tpSlice, 0, res.AccessConds)
+		ranges, res.AccessConds, remainedConds, err = d.buildCNFIndexRange(newTpSlice, 0, res.AccessConds)
 		if err != nil {
 			return nil, err
 		}
@@ -473,7 +473,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		accessConds = append(accessConds, cond)
 		// TODO: if it's prefix column, we need to add cond to filterConds?
 	}
-	ranges, accessConds, remainedConds, err = d.buildCNFIndexRange(tpSlice, eqOrInCount, accessConds)
+	ranges, accessConds, remainedConds, err = d.buildCNFIndexRange(newTpSlice, eqOrInCount, accessConds)
 	if err != nil {
 		return nil, err
 	}
@@ -627,12 +627,13 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 		}
 		// Multiple Eq/In conditions for one column in CNF, apply intersection on them
 		// Lazily compute the points for the previously visited Eq/In
+		newTp := newFieldType(cols[offset].GetType())
 		collator := collate.GetCollator(cols[offset].GetType().GetCollate())
 		if mergedAccesses[offset] == nil {
 			mergedAccesses[offset] = accesses[offset]
-			points[offset] = rb.build(accesses[offset], collator, lengths[offset])
+			points[offset] = rb.build(accesses[offset], newTp, lengths[offset], true)
 		}
-		points[offset] = rb.intersection(points[offset], rb.build(cond, collator, lengths[offset]), collator)
+		points[offset] = rb.intersection(points[offset], rb.build(cond, newTp, lengths[offset], true), collator)
 		if len(points[offset]) == 0 { // Early termination if false expression found
 			if expression.MaybeOverOptimized4PlanCache(sctx, conditions) {
 				// `a>@x and a<@y` --> `invalid-range if @x>=@y`
@@ -772,17 +773,17 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 			if shouldReserve {
 				hasResidual = true
 			}
-			points := rb.build(item, collate.GetCollator(newTpSlice[0].GetCollate()), d.lengths[0])
-			colFT := newTpSlice[0]
-			if colFT.EvalType() == types.ETString &&
-				colFT.GetType() != mysql.TypeEnum &&
-				colFT.GetType() != mysql.TypeSet {
-				colFT = colFT.Clone()
-				colFT.SetCharset(charset.CharsetBin)
-				colFT.SetCollate(charset.CollationBin)
+			points := rb.build(item, newTpSlice[0], d.lengths[0], false)
+			tmpNewTp := newTpSlice[0]
+			if tmpNewTp.EvalType() == types.ETString &&
+				tmpNewTp.GetType() != mysql.TypeEnum &&
+				tmpNewTp.GetType() != mysql.TypeSet {
+				tmpNewTp = tmpNewTp.Clone()
+				tmpNewTp.SetCharset(charset.CharsetBin)
+				tmpNewTp.SetCollate(charset.CollationBin)
 			}
 			// TODO: restrict the mem usage of ranges
-			ranges, rangeFallback, err := points2Ranges(d.sctx, points, colFT, d.rangeMaxSize)
+			ranges, rangeFallback, err := points2Ranges(d.sctx, points, tmpNewTp, d.rangeMaxSize)
 			if err != nil {
 				return nil, nil, nil, false, errors.Trace(err)
 			}

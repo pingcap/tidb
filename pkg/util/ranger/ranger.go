@@ -122,15 +122,15 @@ func estimateMemUsageForPoints2Ranges(rangePoints []*point) int64 {
 // Only one column is built there. If there're multiple columns, use appendPoints2Ranges.
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
 // If the second return value is true, it means that the estimated memory usage of ranges exceeds rangeMaxSize and it falls back to full range.
-func points2Ranges(sctx sessionctx.Context, rangePoints []*point, tp *types.FieldType, rangeMaxSize int64) (Ranges, bool, error) {
-	convertedPoints, err := convertPoints(sctx, rangePoints, tp, mysql.HasNotNullFlag(tp.GetFlag()), false)
+func points2Ranges(sctx sessionctx.Context, rangePoints []*point, newTp *types.FieldType, rangeMaxSize int64) (Ranges, bool, error) {
+	convertedPoints, err := convertPoints(sctx, rangePoints, newTp, mysql.HasNotNullFlag(newTp.GetFlag()), false)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
 	// Estimate whether rangeMaxSize will be exceeded first before converting points to ranges.
 	if rangeMaxSize > 0 && estimateMemUsageForPoints2Ranges(convertedPoints) > rangeMaxSize {
 		var fullRange Ranges
-		if mysql.HasNotNullFlag(tp.GetFlag()) {
+		if mysql.HasNotNullFlag(newTp.GetFlag()) {
 			fullRange = FullNotNullRange()
 		} else {
 			fullRange = FullRange()
@@ -145,46 +145,46 @@ func points2Ranges(sctx sessionctx.Context, rangePoints []*point, tp *types.Fiel
 			LowExclude:  startPoint.excl,
 			HighVal:     []types.Datum{endPoint.value},
 			HighExclude: endPoint.excl,
-			Collators:   []collate.Collator{collate.GetCollator(tp.GetCollate())},
+			Collators:   []collate.Collator{collate.GetCollator(newTp.GetCollate())},
 		}
 		ranges = append(ranges, ran)
 	}
 	return ranges, false, nil
 }
 
-func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldType) (*point, error) {
+func convertPoint(sctx sessionctx.Context, point *point, newTp *types.FieldType) (*point, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	switch point.value.Kind() {
 	case types.KindMaxValue, types.KindMinNotNull:
 		return point, nil
 	}
-	casted, err := point.value.ConvertTo(sc.TypeCtx(), tp)
+	casted, err := point.value.ConvertTo(sc.TypeCtx(), newTp)
 	if err != nil {
 		if sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding {
 			// skip plan cache in this case for safety.
 			sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("%s when converting %v", err.Error(), point.value))
 		}
 		//revive:disable:empty-block
-		if tp.GetType() == mysql.TypeYear && terror.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
+		if newTp.GetType() == mysql.TypeYear && terror.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
 			// see issue #20101: overflow when converting integer to year
-		} else if tp.GetType() == mysql.TypeBit && terror.ErrorEqual(err, types.ErrDataTooLong) {
+		} else if newTp.GetType() == mysql.TypeBit && terror.ErrorEqual(err, types.ErrDataTooLong) {
 			// see issue #19067: we should ignore the types.ErrDataTooLong when we convert value to TypeBit value
-		} else if tp.GetType() == mysql.TypeNewDecimal && terror.ErrorEqual(err, types.ErrOverflow) {
+		} else if newTp.GetType() == mysql.TypeNewDecimal && terror.ErrorEqual(err, types.ErrOverflow) {
 			// Ignore the types.ErrOverflow when we convert TypeNewDecimal values.
 			// A trimmed valid boundary point value would be returned then. Accordingly, the `excl` of the point
 			// would be adjusted. Impossible ranges would be skipped by the `validInterval` call later.
-		} else if point.value.Kind() == types.KindMysqlTime && tp.GetType() == mysql.TypeTimestamp && terror.ErrorEqual(err, types.ErrWrongValue) {
+		} else if point.value.Kind() == types.KindMysqlTime && newTp.GetType() == mysql.TypeTimestamp && terror.ErrorEqual(err, types.ErrWrongValue) {
 			// See issue #28424: query failed after add index
 			// Ignore conversion from Date[Time] to Timestamp since it must be either out of range or impossible date, which will not match a point select
-		} else if tp.GetType() == mysql.TypeEnum && terror.ErrorEqual(err, types.ErrTruncated) {
+		} else if newTp.GetType() == mysql.TypeEnum && terror.ErrorEqual(err, types.ErrTruncated) {
 			// Ignore the types.ErrorTruncated when we convert TypeEnum values.
 			// We should cover Enum upper overflow, and convert to the biggest value.
 			if point.value.GetInt64() > 0 {
-				upperEnum, err := types.ParseEnumValue(tp.GetElems(), uint64(len(tp.GetElems())))
+				upperEnum, err := types.ParseEnumValue(newTp.GetElems(), uint64(len(newTp.GetElems())))
 				if err != nil {
 					return nil, err
 				}
-				casted.SetMysqlEnum(upperEnum, tp.GetCollate())
+				casted.SetMysqlEnum(upperEnum, newTp.GetCollate())
 			}
 		} else if terror.ErrorEqual(err, charset.ErrInvalidCharacterString) {
 			// The invalid string can be produced by changing datum's underlying bytes directly.
@@ -196,7 +196,7 @@ func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldType) (*
 		}
 		//revive:enable:empty-block
 	}
-	valCmpCasted, err := point.value.Compare(sc.TypeCtx(), &casted, collate.GetCollator(tp.GetCollate()))
+	valCmpCasted, err := point.value.Compare(sc.TypeCtx(), &casted, collate.GetCollator(newTp.GetCollate()))
 	if err != nil {
 		return point, errors.Trace(err)
 	}
@@ -270,8 +270,8 @@ func estimateMemUsageForAppendPoints2Ranges(origin Ranges, rangePoints []*point)
 // If the second return value is true, it means that the estimated memory usage of ranges after appending points exceeds
 // rangeMaxSize and the function rejects appending points to ranges.
 func appendPoints2Ranges(sctx sessionctx.Context, origin Ranges, rangePoints []*point,
-	ft *types.FieldType, rangeMaxSize int64) (Ranges, bool, error) {
-	convertedPoints, err := convertPoints(sctx, rangePoints, ft, false, false)
+	newTp *types.FieldType, rangeMaxSize int64) (Ranges, bool, error) {
+	convertedPoints, err := convertPoints(sctx, rangePoints, newTp, false, false)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
@@ -285,7 +285,7 @@ func appendPoints2Ranges(sctx sessionctx.Context, origin Ranges, rangePoints []*
 		if !oRange.IsPoint(sctx) {
 			newIndexRanges = append(newIndexRanges, oRange)
 		} else {
-			newRanges, err := appendPoints2IndexRange(oRange, convertedPoints, ft)
+			newRanges, err := appendPoints2IndexRange(oRange, convertedPoints, newTp)
 			if err != nil {
 				return nil, false, errors.Trace(err)
 			}
@@ -382,13 +382,13 @@ func AppendRanges2PointRanges(pointRanges Ranges, ranges Ranges, rangeMaxSize in
 // It will remove the nil and convert MinNotNull and MaxValue to MinInt64 or MinUint64 and MaxInt64 or MaxUint64.
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
 // If the second return value is true, it means that the estimated memory usage of ranges exceeds rangeMaxSize and it falls back to full range.
-func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types.FieldType, rangeMaxSize int64) (Ranges, bool, error) {
-	convertedPoints, err := convertPoints(sctx, rangePoints, tp, true, true)
+func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, newTp *types.FieldType, rangeMaxSize int64) (Ranges, bool, error) {
+	convertedPoints, err := convertPoints(sctx, rangePoints, newTp, true, true)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
 	if rangeMaxSize > 0 && estimateMemUsageForPoints2Ranges(convertedPoints) > rangeMaxSize {
-		return FullIntRange(mysql.HasUnsignedFlag(tp.GetFlag())), true, nil
+		return FullIntRange(mysql.HasUnsignedFlag(newTp.GetFlag())), true, nil
 	}
 	ranges := make(Ranges, 0, len(convertedPoints)/2)
 	for i := 0; i < len(convertedPoints); i += 2 {
@@ -398,7 +398,7 @@ func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types
 			LowExclude:  startPoint.excl,
 			HighVal:     []types.Datum{endPoint.value},
 			HighExclude: endPoint.excl,
-			Collators:   []collate.Collator{collate.GetCollator(tp.GetCollate())},
+			Collators:   []collate.Collator{collate.GetCollator(newTp.GetCollate())},
 		}
 		ranges = append(ranges, ran)
 	}
@@ -411,10 +411,11 @@ func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types
 func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.Context, tp *types.FieldType, tableRange bool,
 	colLen int, rangeMaxSize int64) (Ranges, []expression.Expression, []expression.Expression, error) {
 	rb := builder{sctx: sctx}
+	newTp := newFieldType(tp)
 	rangePoints := getFullRange()
 	for _, cond := range accessConditions {
 		collator := collate.GetCollator(tp.GetCollate())
-		rangePoints = rb.intersection(rangePoints, rb.build(cond, collator, colLen), collator)
+		rangePoints = rb.intersection(rangePoints, rb.build(cond, newTp, colLen, false), collator)
 		if rb.err != nil {
 			return nil, nil, nil, errors.Trace(rb.err)
 		}
@@ -424,7 +425,6 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 		rangeFallback bool
 		err           error
 	)
-	newTp := newFieldType(tp)
 	if newTp.EvalType() == types.ETString &&
 		newTp.GetType() != mysql.TypeEnum &&
 		newTp.GetType() != mysql.TypeSet {
@@ -488,14 +488,22 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 	)
 	for i := 0; i < eqAndInCount; i++ {
 		// Build ranges for equal or in access conditions.
-		point := rb.build(accessConds[i], collate.GetCollator(newTp[i].GetCollate()), d.lengths[i])
+		point := rb.build(accessConds[i], newTp[i], d.lengths[i], false)
 		if rb.err != nil {
 			return nil, nil, nil, errors.Trace(rb.err)
 		}
+		tmpNewTp := newTp[i]
+		if tmpNewTp.EvalType() == types.ETString &&
+			tmpNewTp.GetType() != mysql.TypeEnum &&
+			tmpNewTp.GetType() != mysql.TypeSet {
+			tmpNewTp = tmpNewTp.Clone()
+			tmpNewTp.SetCharset(charset.CharsetBin)
+			tmpNewTp.SetCollate(charset.CollationBin)
+		}
 		if i == 0 {
-			ranges, rangeFallback, err = points2Ranges(d.sctx, point, newTp[i], d.rangeMaxSize)
+			ranges, rangeFallback, err = points2Ranges(d.sctx, point, tmpNewTp, d.rangeMaxSize)
 		} else {
-			ranges, rangeFallback, err = appendPoints2Ranges(d.sctx, ranges, point, newTp[i], d.rangeMaxSize)
+			ranges, rangeFallback, err = appendPoints2Ranges(d.sctx, ranges, point, tmpNewTp, d.rangeMaxSize)
 		}
 		if err != nil {
 			return nil, nil, nil, errors.Trace(err)
@@ -509,26 +517,26 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 	// Build rangePoints for non-equal access conditions.
 	for i := eqAndInCount; i < len(accessConds); i++ {
 		collator := collate.GetCollator(newTp[eqAndInCount].GetCollate())
-		rangePoints = rb.intersection(rangePoints, rb.build(accessConds[i], collator, d.lengths[eqAndInCount]), collator)
+		rangePoints = rb.intersection(rangePoints, rb.build(accessConds[i], newTp[eqAndInCount], d.lengths[eqAndInCount], false), collator)
 		if rb.err != nil {
 			return nil, nil, nil, errors.Trace(rb.err)
 		}
 	}
-	var colFT *types.FieldType
+	var tmpNewTp *types.FieldType
 	if eqAndInCount == 0 || eqAndInCount < len(accessConds) {
-		colFT = newTp[eqAndInCount]
-		if colFT.EvalType() == types.ETString &&
-			colFT.GetType() != mysql.TypeEnum &&
-			colFT.GetType() != mysql.TypeSet {
-			colFT = colFT.Clone()
-			colFT.SetCharset(charset.CharsetBin)
-			colFT.SetCollate(charset.CollationBin)
+		tmpNewTp = newTp[eqAndInCount]
+		if tmpNewTp.EvalType() == types.ETString &&
+			tmpNewTp.GetType() != mysql.TypeEnum &&
+			tmpNewTp.GetType() != mysql.TypeSet {
+			tmpNewTp = tmpNewTp.Clone()
+			tmpNewTp.SetCharset(charset.CharsetBin)
+			tmpNewTp.SetCollate(charset.CollationBin)
 		}
 	}
 	if eqAndInCount == 0 {
-		ranges, rangeFallback, err = points2Ranges(d.sctx, rangePoints, colFT, d.rangeMaxSize)
+		ranges, rangeFallback, err = points2Ranges(d.sctx, rangePoints, tmpNewTp, d.rangeMaxSize)
 	} else if eqAndInCount < len(accessConds) {
-		ranges, rangeFallback, err = appendPoints2Ranges(d.sctx, ranges, rangePoints, colFT, d.rangeMaxSize)
+		ranges, rangeFallback, err = appendPoints2Ranges(d.sctx, ranges, rangePoints, tmpNewTp, d.rangeMaxSize)
 	}
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
