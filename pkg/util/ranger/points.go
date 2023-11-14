@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -138,9 +139,6 @@ func rangePointEqualValueLess(a, b *point) bool {
 
 func switchPointsToSortKey(sctx sessionctx.Context, inputPs []*point, newTp *types.FieldType) ([]*point, error) {
 	ps := make([]*point, 0, len(inputPs))
-	if collate.IsBinCollation(newTp.GetCollate()) {
-		return inputPs, nil
-	}
 	for _, p := range inputPs {
 		np, err := switchPointToSortKey(sctx, p, newTp)
 		if err != nil {
@@ -156,7 +154,7 @@ func switchPointToSortKey(sctx sessionctx.Context, inputP *point, newTp *types.F
 	if err != nil {
 		return nil, err
 	}
-	if p.value.Kind() != types.KindString {
+	if p.value.Kind() != types.KindString || newTp.GetCollate() == charset.CollationBin {
 		return p, nil
 	}
 	sortKey := p.value.GetBytes()
