@@ -3,7 +3,6 @@ package external
 import (
 	"context"
 
-	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -11,6 +10,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -39,7 +39,7 @@ func MergeOverlappingFiles(ctx context.Context, paths []string, store storage.Ex
 		zap.Int("concurrency", concurrency))
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(concurrency)
-	partSize = max(5*units.MB, partSize)
+	partSize = int(max(5*size.MB+100, uint64(partSize)))
 	for _, files := range dataFilesSlice {
 		files := files
 		eg.Go(func() error {
