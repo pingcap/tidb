@@ -72,7 +72,7 @@ func (w *OneFileWriter) initWriter(ctx context.Context) (
 	err error,
 ) {
 	w.dataFile = filepath.Join(w.filenamePrefix, strconv.Itoa(0))
-	w.dataWriter, err = w.store.Create(ctx, w.dataFile, &storage.WriterOption{Concurrency: 20, PartSize: (int64)(50 * size.MB)})
+	w.dataWriter, err = w.store.Create(ctx, w.dataFile, &storage.WriterOption{Concurrency: 20, PartSize: (int64)(10 * size.MB)})
 	if err != nil {
 		return err
 	}

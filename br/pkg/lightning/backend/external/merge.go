@@ -16,7 +16,7 @@ import (
 
 // MergeOverlappingFiles reads from given files whose key range may overlap
 // and writes to new sorted, nonoverlapping files.
-func MergeOverlappingFiles(ctx context.Context, paths []string, store storage.ExternalStorage, readBufferSize int,
+func MergeOverlappingFiles(ctx context.Context, paths []string, store storage.ExternalStorage, partSize int, readBufferSize int,
 	newFilePrefix string, blockSize int, writeBatchCount uint64, propSizeDist uint64, propKeysDist uint64,
 	onClose OnCloseFunc, concurrency int, checkHotspot bool) error {
 	var dataFilesSlice [][]string
@@ -46,6 +46,7 @@ func MergeOverlappingFiles(ctx context.Context, paths []string, store storage.Ex
 					ctx,
 					files,
 					store,
+					partSize,
 					readBufferSize,
 					newFilePrefix,
 					uuid.New().String(),
@@ -152,6 +153,7 @@ func MergeOverlappingFilesV2(
 	ctx context.Context,
 	paths []string,
 	store storage.ExternalStorage,
+	partSize int,
 	readBufferSize int,
 	newFilePrefix string,
 	writerID string,
@@ -190,7 +192,6 @@ func MergeOverlappingFilesV2(
 		SetPropSizeDistance(propSizeDist).
 		SetOnCloseFunc(onClose).
 		BuildOneFile(store, newFilePrefix, writerID, false)
-
 	err = writer.Init(ctx)
 	if err != nil {
 		return nil

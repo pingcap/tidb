@@ -47,7 +47,6 @@ import (
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -168,6 +167,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	idxInfos []*model.IndexInfo,
 	startKey, endKey kv.Key,
 	totalRowCount *atomic.Int64,
+	memSize uint64,
 	metricCounter prometheus.Counter,
 	onClose external.OnCloseFunc,
 ) (*operator.AsyncPipeline, error) {
@@ -196,12 +196,6 @@ func NewWriteIndexToExternalStoragePipeline(
 	if err != nil {
 		return nil, err
 	}
-
-	memTotal, err := memory.MemTotal()
-	if err != nil {
-		return nil, err
-	}
-	memSize := (memTotal / 2) / uint64(writerCnt) / uint64(len(indexes))
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)

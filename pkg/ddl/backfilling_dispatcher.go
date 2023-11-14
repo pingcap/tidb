@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -96,9 +97,9 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 		if tblInfo.Partition != nil {
 			return generatePartitionPlan(tblInfo)
 		}
-		return generateNonPartitionPlan(dsp.d, tblInfo, job, dsp.GlobalSort, len(serverInfo))
+		return dsp.generateNonPartitionPlan(dsp.d, &backfillMeta, tblInfo, job, dsp.GlobalSort, len(serverInfo), logger)
 	case StepMergeSort:
-		res, err := generateMergePlan(taskHandle, gTask, logger)
+		res, err := dsp.generateMergePlan(taskHandle, &backfillMeta, gTask, logger)
 		if err != nil {
 			return nil, err
 		}
@@ -274,8 +275,46 @@ func generatePartitionPlan(tblInfo *model.TableInfo) (metas [][]byte, err error)
 	return subTaskMetas, nil
 }
 
-func generateNonPartitionPlan(
-	d *ddl, tblInfo *model.TableInfo, job *model.Job, useCloud bool, instanceCnt int) (metas [][]byte, err error) {
+func (dsp *BackfillingDispatcherExt) getWriterMemSize(backfillMeta *BackfillGlobalMeta) (uint64, error) {
+	jobMeta := &backfillMeta.Job
+	_, tbl, err := dsp.d.getTableByTxn((*asAutoIDRequirement)(dsp.d.ddlCtx), jobMeta.SchemaID, jobMeta.TableID)
+	if err != nil {
+		return 0, err
+	}
+	_, writerCnt := expectedIngestWorkerCnt()
+	indexInfos := make([]*model.IndexInfo, 0, len(backfillMeta.EleIDs))
+	for _, eid := range backfillMeta.EleIDs {
+		indexInfo := model.FindIndexInfoByID(tbl.Meta().Indices, eid)
+		if indexInfo == nil {
+			logutil.BgLogger().Warn("index info not found", zap.String("category", "ddl-ingest"),
+				zap.Int64("table ID", tbl.Meta().ID), zap.Int64("index ID", eid))
+			return 0, errors.Errorf("index info not found: %d", eid)
+		}
+		indexInfos = append(indexInfos, indexInfo)
+	}
+	memTotal, err := memory.MemTotal()
+	if err != nil {
+		return 0, err
+	}
+	return (memTotal / 2) / uint64(writerCnt) / uint64(len(indexInfos)), nil
+}
+
+func (dsp *BackfillingDispatcherExt) getMergeSortPartSize(backfillMeta *BackfillGlobalMeta, concurrency int) (uint64, error) {
+	writerMemSize, err := dsp.getWriterMemSize(backfillMeta)
+	if err != nil {
+		return 0, nil
+	}
+	return writerMemSize / uint64(concurrency) / 10, nil
+}
+
+func (dsp *BackfillingDispatcherExt) generateNonPartitionPlan(
+	d *ddl,
+	backfillMeta *BackfillGlobalMeta,
+	tblInfo *model.TableInfo,
+	job *model.Job,
+	useCloud bool,
+	instanceCnt int,
+	logger *zap.Logger) (metas [][]byte, err error) {
 	tbl, err := getTable((*asAutoIDRequirement)(d.ddlCtx), job.SchemaID, tblInfo)
 	if err != nil {
 		return nil, err
@@ -284,6 +323,12 @@ func generateNonPartitionPlan(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	memSize, err := dsp.getWriterMemSize(backfillMeta)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	logger.Info("set writer memSize", zap.Uint64("memSize", memSize))
 	startKey, endKey, err := getTableRange(d.jobContext(job.ID, job.ReorgMeta), d.ddlCtx, tbl.(table.PhysicalTable), ver.Ver, job.Priority)
 	if startKey == nil && endKey == nil {
 		// Empty table.
@@ -315,6 +360,7 @@ func generateNonPartitionPlan(
 				StartKey: batch[0].StartKey(),
 				EndKey:   batch[len(batch)-1].EndKey(),
 			},
+			MemSize: memSize,
 		}
 		if i == 0 {
 			subTaskMeta.StartKey = startKey
@@ -428,11 +474,17 @@ func generateGlobalSortIngestPlan(
 	}
 }
 
-func generateMergePlan(
+func (dsp *BackfillingDispatcherExt) generateMergePlan(
 	taskHandle dispatcher.TaskHandle,
+	backfillMeta *BackfillGlobalMeta,
 	task *proto.Task,
 	logger *zap.Logger,
 ) ([][]byte, error) {
+	partSize, err := dsp.getMergeSortPartSize(backfillMeta, int(variable.GetDDLReorgWorkerCounter()))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	logger.Info("set merge sort writer partSize", zap.Uint64("partSize", partSize))
 	// check data files overlaps,
 	// if data files overlaps too much, we need a merge step.
 	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, StepReadIndex)
@@ -469,6 +521,7 @@ func generateMergePlan(
 		}
 		m := &BackfillSubTaskMeta{
 			DataFiles: dataFiles[start:end],
+			PartSize:  partSize,
 		}
 		metaBytes, err := json.Marshal(m)
 		if err != nil {

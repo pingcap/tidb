@@ -121,7 +121,7 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 
 	var pipe *operator.AsyncPipeline
 	if len(r.cloudStorageURI) > 0 {
-		pipe, err = r.buildExternalStorePipeline(opCtx, subtask.ID, sessCtx, tbl, startKey, endKey, totalRowCount)
+		pipe, err = r.buildExternalStorePipeline(opCtx, subtask.ID, sessCtx, tbl, startKey, endKey, totalRowCount, sm.MemSize)
 	} else {
 		pipe, err = r.buildLocalStorePipeline(opCtx, sessCtx, tbl, startKey, endKey, totalRowCount)
 	}
@@ -254,6 +254,7 @@ func (r *readIndexExecutor) buildExternalStorePipeline(
 	tbl table.PhysicalTable,
 	start, end kv.Key,
 	totalRowCount *atomic.Int64,
+	memSize uint64,
 ) (*operator.AsyncPipeline, error) {
 	d := r.d
 	onClose := func(summary *external.WriterSummary) {
@@ -273,6 +274,19 @@ func (r *readIndexExecutor) buildExternalStorePipeline(
 	counter := metrics.BackfillTotalCounter.WithLabelValues(
 		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
 	return NewWriteIndexToExternalStoragePipeline(
-		opCtx, d.store, r.cloudStorageURI, r.d.sessPool, sessCtx, r.job.ID, subtaskID,
-		tbl, r.indexes, start, end, totalRowCount, counter, onClose)
+		opCtx,
+		d.store,
+		r.cloudStorageURI,
+		r.d.sessPool,
+		sessCtx,
+		r.job.ID,
+		subtaskID,
+		tbl,
+		r.indexes,
+		start,
+		end,
+		totalRowCount,
+		memSize,
+		counter,
+		onClose)
 }

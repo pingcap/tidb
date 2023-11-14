@@ -53,6 +53,10 @@ type BackfillSubTaskMeta struct {
 	DataFiles             []string `json:"data-files"`
 	StatFiles             []string `json:"stat-files"`
 	external.SortedKVMeta `json:",inline"`
+	// MemSize for writer
+	MemSize uint64 `json:"mem-size"`
+	// PartSize for one file writer
+	PartSize uint64 `json:"part-size"`
 }
 
 // NewBackfillSubtaskExecutor creates a new backfill subtask executor.
