@@ -398,40 +398,6 @@ func (e *SortExec) isSpillTriggered() bool {
 	}
 }
 
-type rowWithPartition struct {
-	row         chunk.Row
-	partitionID int
-}
-
-type multiWayMerge struct {
-	lessRowFunction     func(rowI chunk.Row, rowJ chunk.Row) bool
-	compressRowFunction func(rowI chunk.Row, rowJ chunk.Row) int
-	elements            []rowWithPartition
-}
-
-func (h *multiWayMerge) Less(i, j int) bool {
-	rowI := h.elements[i]
-	rowJ := h.elements[j]
-	return h.lessRowFunction(rowI.row, rowJ.row)
-}
-
-func (h *multiWayMerge) Len() int {
-	return len(h.elements)
-}
-
-func (*multiWayMerge) Push(interface{}) {
-	// Should never be called.
-}
-
-func (h *multiWayMerge) Pop() interface{} {
-	h.elements = h.elements[:len(h.elements)-1]
-	return nil
-}
-
-func (h *multiWayMerge) Swap(i, j int) {
-	h.elements[i], h.elements[j] = h.elements[j], h.elements[i]
-}
-
 // TopNExec implements a Top-N algorithm and it is built from a SELECT statement with ORDER BY and LIMIT.
 // Instead of sorting all the rows fetched from the table, it keeps the Top-N elements only in a heap to reduce memory usage.
 type TopNExec struct {
