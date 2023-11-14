@@ -526,10 +526,6 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 				a.globalStats.Hg[item.idx].Buckets[j].NDV = 0
 			}
 			a.globalStats.Hg[item.idx].NDV = a.globalStatsNDV[item.idx]
-
-			for _, hg := range allhg {
-				hg.DestroyAndPutToPool()
-			}
 		case <-a.ioWorkerExitWhenErrChan:
 			return nil
 		}
