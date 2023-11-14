@@ -119,7 +119,7 @@ func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType,
 		NullCount:         nullCount,
 		LastUpdateVersion: version,
 		Tp:                tp,
-		Bounds:            chunk.NewChunkWithCapacity([]*types.FieldType{tp}, 2*bucketSize),
+		Bounds:            chunk.NewChunkFromPoolWithCapacity([]*types.FieldType{tp}, 2*bucketSize),
 		Buckets:           make([]Bucket, 0, bucketSize),
 		TotColSize:        totColSize,
 	}
@@ -218,6 +218,14 @@ func (hg *Histogram) ConvertTo(sc *stmtctx.StatementContext, tp *types.FieldType
 // Len is the number of buckets in the histogram.
 func (hg *Histogram) Len() int {
 	return len(hg.Buckets)
+}
+
+// DestroyAndPutToPool resets the FMSketch and puts it to the pool.
+func (hg *Histogram) DestroyAndPutToPool() {
+	if hg == nil {
+		return
+	}
+	hg.Bounds.Destory(len(hg.Buckets), []*types.FieldType{hg.Tp})
 }
 
 // HistogramEqual tests if two histograms are equal.

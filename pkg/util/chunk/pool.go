@@ -20,6 +20,40 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 )
 
+var (
+	globalChunkPoolMutex sync.RWMutex
+	// globalChunkPool is a chunk pool, the key is the init capacity.
+	globalChunkPool = make(map[int]*Pool)
+)
+
+func getChunkFromPool(initCap int, fields []*types.FieldType) *Chunk {
+	globalChunkPoolMutex.RLock()
+	pool, ok := globalChunkPool[initCap]
+	if ok {
+		globalChunkPoolMutex.RUnlock()
+		return pool.GetChunk(fields)
+	}
+	globalChunkPoolMutex.RUnlock()
+	globalChunkPoolMutex.Lock()
+	defer globalChunkPoolMutex.Unlock()
+	globalChunkPool[initCap] = NewPool(initCap)
+	return globalChunkPool[initCap].GetChunk(fields)
+}
+
+func putChunkFromPool(initCap int, fields []*types.FieldType, chk *Chunk) {
+	globalChunkPoolMutex.RLock()
+	pool, ok := globalChunkPool[initCap]
+	if ok {
+		globalChunkPoolMutex.RUnlock()
+		pool.PutChunk(fields, chk)
+		return
+	}
+	globalChunkPoolMutex.Lock()
+	defer globalChunkPoolMutex.Unlock()
+	globalChunkPool[initCap] = NewPool(initCap)
+	globalChunkPool[initCap].PutChunk(fields, chk)
+}
+
 // Pool is the Column pool.
 // NOTE: Pool is non-copyable.
 type Pool struct {
@@ -36,11 +70,11 @@ type Pool struct {
 func NewPool(initCap int) *Pool {
 	return &Pool{
 		initCap:         initCap,
-		varLenColPool:   &sync.Pool{New: func() interface{} { return newVarLenColumn(initCap) }},
-		fixLenColPool4:  &sync.Pool{New: func() interface{} { return newFixedLenColumn(4, initCap) }},
-		fixLenColPool8:  &sync.Pool{New: func() interface{} { return newFixedLenColumn(8, initCap) }},
-		fixLenColPool16: &sync.Pool{New: func() interface{} { return newFixedLenColumn(16, initCap) }},
-		fixLenColPool40: &sync.Pool{New: func() interface{} { return newFixedLenColumn(40, initCap) }},
+		varLenColPool:   &sync.Pool{New: func() any { return newVarLenColumn(initCap) }},
+		fixLenColPool4:  &sync.Pool{New: func() any { return newFixedLenColumn(4, initCap) }},
+		fixLenColPool8:  &sync.Pool{New: func() any { return newFixedLenColumn(8, initCap) }},
+		fixLenColPool16: &sync.Pool{New: func() any { return newFixedLenColumn(16, initCap) }},
+		fixLenColPool40: &sync.Pool{New: func() any { return newFixedLenColumn(40, initCap) }},
 	}
 }
 
