@@ -2291,7 +2291,7 @@ type AdminStmtType int
 
 // Admin statement types.
 const (
-	AdminShowDDL = iota + 1
+	AdminShowDDL AdminStmtType = iota + 1
 	AdminCheckTable
 	AdminShowDDLJobs
 	AdminCancelDDLJobs
@@ -2328,6 +2328,7 @@ type HandleRange struct {
 	End   int64
 }
 
+// BDRRole represents the role of the cluster in BDR mode.
 type BDRRole string
 
 const (
