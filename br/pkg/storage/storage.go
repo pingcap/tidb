@@ -195,6 +195,25 @@ func NewWithDefaultOpt(ctx context.Context, backend *backuppb.StorageBackend) (E
 	return New(ctx, backend, &opts)
 }
 
+// NewFromURL creates an ExternalStorage from URL.
+func NewFromURL(ctx context.Context, uri string, opts *ExternalStorageOptions) (ExternalStorage, error) {
+	if len(uri) == 0 {
+		return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "empty store is not allowed")
+	}
+	u, err := ParseRawURL(uri)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if u.Scheme == "memstore" {
+		return NewMemStorage(), nil
+	}
+	b, err := parseBackend(u, uri, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return New(ctx, b, opts)
+}
+
 // New creates an ExternalStorage with options.
 func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalStorageOptions) (ExternalStorage, error) {
 	if opts == nil {

@@ -37,9 +37,7 @@ func openTestingStorage(t *testing.T) storage.ExternalStorage {
 	if *testingStorageURI == "" {
 		t.Skip("testingStorageURI is not set")
 	}
-	b, err := storage.ParseBackend(*testingStorageURI, nil)
-	intest.Assert(err == nil)
-	s, err := storage.New(context.Background(), b, nil)
+	s, err := storage.NewFromURL(context.Background(), *testingStorageURI, nil)
 	intest.Assert(err == nil)
 	return s
 }
