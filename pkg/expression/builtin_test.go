@@ -178,6 +178,7 @@ func newFunctionForTest(ctx sessionctx.Context, funcName string, args ...Express
 		FuncName: model.NewCIStr(funcName),
 		RetType:  f.getRetTp(),
 		Function: f,
+		ctx:      ctx,
 	}, nil
 }
 
