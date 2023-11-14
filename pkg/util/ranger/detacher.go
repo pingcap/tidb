@@ -336,7 +336,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 	// Therefore, we need to calculate pointRanges separately so that it can be used to append tail ranges in considerDNF branch.
 	// See https://github.com/pingcap/tidb/issues/26029 for details.
 	var pointRanges Ranges
-	if hasPrefix(d.lengths) && fixPrefixColRange(ranges, d.lengths, tpSlice) {
+	if hasPrefix(d.lengths) {
 		if d.mergeConsecutive {
 			pointRanges = make(Ranges, 0, len(ranges))
 			for _, ran := range ranges {
@@ -803,10 +803,6 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 		}
 	}
 
-	// Take prefix index into consideration.
-	if hasPrefix(d.lengths) {
-		fixPrefixColRange(totalRanges, d.lengths, newTpSlice)
-	}
 	totalRanges, err := UnionRanges(d.sctx, totalRanges, d.mergeConsecutive)
 	if err != nil {
 		return nil, nil, nil, false, errors.Trace(err)

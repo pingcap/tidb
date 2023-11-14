@@ -438,17 +438,6 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 		return ranges, nil, accessConditions, nil
 	}
 	if colLen != types.UnspecifiedLength {
-		for _, ran := range ranges {
-			// If the length of the last column of LowVal is equal to the prefix length, LowExclude should be set false.
-			// For example, `col_varchar > 'xx'` should be converted to range [xx, +inf) when the prefix index length of
-			// `col_varchar` is 2. Otherwise we would miss values like 'xxx' if we execute (xx, +inf) index range scan.
-			if CutDatumByPrefixLen(&ran.LowVal[0], colLen, tp) || ReachPrefixLen(&ran.LowVal[0], colLen, tp) {
-				ran.LowExclude = false
-			}
-			if CutDatumByPrefixLen(&ran.HighVal[0], colLen, tp) {
-				ran.HighExclude = false
-			}
-		}
 		ranges, err = UnionRanges(sctx, ranges, true)
 		if err != nil {
 			return nil, nil, nil, err
@@ -543,11 +532,9 @@ func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType, eqAndInCoun
 
 	// Take prefix index into consideration.
 	if hasPrefix(d.lengths) {
-		if fixPrefixColRange(ranges, d.lengths, newTp) {
-			ranges, err = UnionRanges(d.sctx, ranges, d.mergeConsecutive)
-			if err != nil {
-				return nil, nil, nil, errors.Trace(err)
-			}
+		ranges, err = UnionRanges(d.sctx, ranges, d.mergeConsecutive)
+		if err != nil {
+			return nil, nil, nil, errors.Trace(err)
 		}
 	}
 
