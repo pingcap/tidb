@@ -415,7 +415,6 @@ func TestCompareReader(t *testing.T) {
 		float64(fileSize*fileCnt)/elapsed.Seconds()/1024/1024,
 	)
 
-	return
 	readFileSequential(suite)
 	t.Logf(
 		"sequential read speed for %d bytes: %.2f MB/s",
