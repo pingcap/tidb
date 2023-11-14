@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -305,7 +306,7 @@ func (dsp *BackfillingDispatcherExt) getMergeSortPartSize(backfillMeta *Backfill
 	if err != nil {
 		return 0, nil
 	}
-	return writerMemSize / uint64(concurrency) / 10, nil
+	return writerMemSize/uint64(concurrency)/10 + size.MB, nil
 }
 
 func (dsp *BackfillingDispatcherExt) generateNonPartitionPlan(
