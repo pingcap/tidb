@@ -337,7 +337,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 	// Therefore, we need to calculate pointRanges separately so that it can be used to append tail ranges in considerDNF branch.
 	// See https://github.com/pingcap/tidb/issues/26029 for details.
 	var pointRanges Ranges
-	if hasPrefix(d.lengths) && fixPrefixColRange(ranges, d.lengths, tpSlice) {
+	if hasPrefix(d.lengths) {
 		if d.mergeConsecutive {
 			pointRanges = make(Ranges, 0, len(ranges))
 			for _, ran := range ranges {
@@ -630,9 +630,9 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 		collator := collate.GetCollator(cols[offset].GetType().GetCollate())
 		if mergedAccesses[offset] == nil {
 			mergedAccesses[offset] = accesses[offset]
-			points[offset] = rb.build(accesses[offset], collator)
+			points[offset] = rb.build(accesses[offset], collator, lengths[offset])
 		}
-		points[offset] = rb.intersection(points[offset], rb.build(cond, collator), collator)
+		points[offset] = rb.intersection(points[offset], rb.build(cond, collator, lengths[offset]), collator)
 		if len(points[offset]) == 0 { // Early termination if false expression found
 			if expression.MaybeOverOptimized4PlanCache(sctx, conditions) {
 				// `a>@x and a<@y` --> `invalid-range if @x>=@y`
@@ -772,7 +772,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 			if shouldReserve {
 				hasResidual = true
 			}
-			points := rb.build(item, collate.GetCollator(newTpSlice[0].GetCollate()))
+			points := rb.build(item, collate.GetCollator(newTpSlice[0].GetCollate()), d.lengths[0])
 			colFT := newTpSlice[0]
 			if colFT.EvalType() == types.ETString &&
 				colFT.GetType() != mysql.TypeEnum &&
@@ -812,10 +812,6 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 		}
 	}
 
-	// Take prefix index into consideration.
-	if hasPrefix(d.lengths) {
-		fixPrefixColRange(totalRanges, d.lengths, newTpSlice)
-	}
 	totalRanges, err := UnionRanges(d.sctx, totalRanges, d.mergeConsecutive)
 	if err != nil {
 		return nil, nil, nil, false, errors.Trace(err)
