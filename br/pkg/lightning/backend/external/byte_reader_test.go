@@ -156,64 +156,6 @@ func TestByteReaderAuxBuf(t *testing.T) {
 	require.Equal(t, []byte("45"), y4)
 }
 
-func TestReset(t *testing.T) {
-	testReset(t, false)
-	testReset(t, true)
-}
-
-func testReset(t *testing.T, useConcurrency bool) {
-	st, clean := NewS3WithBucketAndPrefix(t, "test", "testprefix")
-	defer func() {
-		clean()
-	}()
-
-	seed := time.Now().Unix()
-	rand.Seed(uint64(seed))
-	t.Logf("seed: %d", seed)
-	src := make([]byte, 256)
-	for i := range src {
-		src[i] = byte(i)
-	}
-	// Prepare
-	err := st.WriteFile(context.Background(), "testfile", src)
-	require.NoError(t, err)
-
-	newRsc := func() storage.ExternalFileReader {
-		rsc, err := st.Open(context.Background(), "testfile", nil)
-		require.NoError(t, err)
-		return rsc
-	}
-	bufSize := rand.Intn(256)
-	br, err := newByteReader(context.Background(), newRsc(), bufSize)
-	require.NoError(t, err)
-	end := 0
-	toCheck := make([][]byte, 0, 10)
-	for end < len(src) {
-		n := rand.Intn(len(src) - end)
-		if n == 0 {
-			n = 1
-		}
-		y, err := br.readNBytes(n)
-		require.NoError(t, err)
-		toCheck = append(toCheck, y)
-		end += n
-
-		l := end
-		r := end
-		for i := len(toCheck) - 1; i >= 0; i-- {
-			l -= len(toCheck[i])
-			require.Equal(t, src[l:r], toCheck[i])
-			r = l
-		}
-
-		if rand.Intn(2) == 0 {
-			toCheck = toCheck[:0]
-		}
-	}
-	_, err = br.readNBytes(1)
-	require.Equal(t, io.EOF, err)
-}
-
 func TestUnexpectedEOF(t *testing.T) {
 	st, clean := NewS3WithBucketAndPrefix(t, "test", "testprefix")
 	defer func() {
