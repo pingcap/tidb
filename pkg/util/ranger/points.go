@@ -759,7 +759,7 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction, prefixLen int) [
 			isUnsignedIntCol bool
 			nonNegativePos   int
 		)
-		rangePoints, hasNull := r.buildFromIn(expr, prefixLen)
+		rangePoints, hasNull := r.buildFromIn(expr, types.UnspecifiedLength)
 		if hasNull {
 			return nil
 		}
@@ -785,6 +785,11 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction, prefixLen int) [
 		// Append the interval (last element, max value].
 		retRangePoints = append(retRangePoints, &point{value: previousValue, start: true, excl: true})
 		retRangePoints = append(retRangePoints, &point{value: types.MaxValueDatum()})
+		for i := 0; i < len(retRangePoints); i += 2 {
+			if prefixLen != types.UnspecifiedLength {
+				fixPrefixPointRange(retRangePoints[i], retRangePoints[i+1], prefixLen, expr.GetArgs()[0].GetType())
+			}
+		}
 		return retRangePoints
 	case ast.Like:
 		// Pattern not like is not supported.
