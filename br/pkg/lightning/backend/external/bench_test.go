@@ -403,7 +403,7 @@ func TestCompareReader(t *testing.T) {
 	suite := &readTestSuite{
 		store:              store,
 		totalKVCnt:         kvCnt,
-		concurrency:        8,
+		concurrency:        100,
 		memoryLimit:        memoryLimit,
 		beforeCreateReader: beforeTest,
 		beforeReaderClose:  beforeClose,
