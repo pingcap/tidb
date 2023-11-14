@@ -191,10 +191,9 @@ func (r *byteReader) switchToConcurrentReader() error {
 	return nil
 }
 
-// readNBytes reads the next n bytes from the reader and returns a buffer slice containing those bytes.
-// The returned slice (pointer) can not be used after r.reset. In the same interval of r.reset,
-// byteReader guarantees that the returned slice (pointer) will point to the same content
-// though the slice may be changed.
+// readNBytes reads the next n bytes from the reader and returns a buffer slice
+// containing those bytes. The content of returned slice may be changed after
+// next call.
 func (r *byteReader) readNBytes(n int) ([]byte, error) {
 	b := r.next(n)
 	readLen := len(b)

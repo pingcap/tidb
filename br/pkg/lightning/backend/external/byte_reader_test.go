@@ -63,11 +63,6 @@ func (s *mockExtStore) GetFileSize() (int64, error) {
 }
 
 func TestByteReader(t *testing.T) {
-	testByteReaderNormal(t, false)
-	testByteReaderNormal(t, true)
-}
-
-func testByteReaderNormal(t *testing.T, useConcurrency bool) {
 	st, clean := NewS3WithBucketAndPrefix(t, "test", "testprefix")
 	defer clean()
 
@@ -96,9 +91,8 @@ func testByteReaderNormal(t *testing.T, useConcurrency bool) {
 	// Test basic readNBytes() usage.
 	br, err = newByteReader(context.Background(), newRsc(), 3)
 	require.NoError(t, err)
-	y, err := br.readNBytes(2)
+	x, err = br.readNBytes(2)
 	require.NoError(t, err)
-	x = y
 	require.Equal(t, 2, len(x))
 	require.Equal(t, byte('a'), x[0])
 	require.Equal(t, byte('b'), x[1])
@@ -106,9 +100,8 @@ func testByteReaderNormal(t *testing.T, useConcurrency bool) {
 
 	br, err = newByteReader(context.Background(), newRsc(), 3)
 	require.NoError(t, err)
-	y, err = br.readNBytes(5) // Read all the data.
+	x, err = br.readNBytes(5) // Read all the data.
 	require.NoError(t, err)
-	x = y
 	require.Equal(t, 5, len(x))
 	require.Equal(t, byte('e'), x[4])
 	require.NoError(t, br.Close())
@@ -124,11 +117,10 @@ func testByteReaderNormal(t *testing.T, useConcurrency bool) {
 	ms := &mockExtStore{src: []byte("abcdef")}
 	br, err = newByteReader(context.Background(), ms, 2)
 	require.NoError(t, err)
-	y, err = br.readNBytes(3)
+	x, err = br.readNBytes(3)
 	require.NoError(t, err)
 	// Pollute mockExtStore to verify if the slice is not affected.
-	copy(ms.src, []byte("xyz"))
-	x = y
+	copy(ms.src, "xyz")
 	require.Equal(t, 3, len(x))
 	require.Equal(t, byte('c'), x[2])
 	require.NoError(t, br.Close())
@@ -136,11 +128,10 @@ func testByteReaderNormal(t *testing.T, useConcurrency bool) {
 	ms = &mockExtStore{src: []byte("abcdef")}
 	br, err = newByteReader(context.Background(), ms, 2)
 	require.NoError(t, err)
-	y, err = br.readNBytes(2)
+	x, err = br.readNBytes(2)
 	require.NoError(t, err)
 	// Pollute mockExtStore to verify if the slice is not affected.
-	copy(ms.src, []byte("xyz"))
-	x = y
+	copy(ms.src, "xyz")
 	require.Equal(t, 2, len(x))
 	require.Equal(t, byte('b'), x[1])
 	require.NoError(t, br.Close())
