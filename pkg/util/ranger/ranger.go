@@ -414,7 +414,7 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 	rangePoints := getFullRange()
 	for _, cond := range accessConditions {
 		collator := collate.GetCollator(tp.GetCollate())
-		rangePoints = rb.intersection(rangePoints, rb.build(cond, collator), collator)
+		rangePoints = rb.intersection(rangePoints, rb.build(cond, collator, colLen), collator)
 		if rb.err != nil {
 			return nil, nil, nil, errors.Trace(rb.err)
 		}
@@ -492,7 +492,7 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 	)
 	for i := 0; i < eqAndInCount; i++ {
 		// Build ranges for equal or in access conditions.
-		point := rb.build(accessConds[i], collate.GetCollator(newTp[i].GetCollate()))
+		point := rb.build(accessConds[i], collate.GetCollator(newTp[i].GetCollate()), d.lengths[i])
 		if rb.err != nil {
 			return nil, nil, nil, errors.Trace(rb.err)
 		}
@@ -513,7 +513,7 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 	// Build rangePoints for non-equal access conditions.
 	for i := eqAndInCount; i < len(accessConds); i++ {
 		collator := collate.GetCollator(newTp[eqAndInCount].GetCollate())
-		rangePoints = rb.intersection(rangePoints, rb.build(accessConds[i], collator), collator)
+		rangePoints = rb.intersection(rangePoints, rb.build(accessConds[i], collator, d.lengths[i]), collator)
 		if rb.err != nil {
 			return nil, nil, nil, errors.Trace(rb.err)
 		}
@@ -616,6 +616,27 @@ func hasPrefix(lengths []int) bool {
 		}
 	}
 	return false
+}
+
+func fixPrefixPointRange(startPoint *point, endPoint *point, length int, tp *types.FieldType) {
+	if length == types.UnspecifiedLength {
+		return
+	}
+
+	if startPoint != nil {
+		startCut := CutDatumByPrefixLen(&startPoint.value, length, tp)
+		if startCut || ReachPrefixLen(&startPoint.value, length, tp) {
+			startPoint.excl = false
+		}
+	}
+
+	if endPoint != nil {
+		endCut := CutDatumByPrefixLen(&endPoint.value, length, tp)
+		if endCut {
+			endPoint.excl = false
+		}
+	}
+
 }
 
 // fixPrefixColRange checks whether the range of one column exceeds the length and needs to be cut.

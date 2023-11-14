@@ -186,12 +186,12 @@ type builder struct {
 	sc  *stmtctx.StatementContext
 }
 
-func (r *builder) build(expr expression.Expression, collator collate.Collator) []*point {
+func (r *builder) build(expr expression.Expression, collator collate.Collator, prefixLen int) []*point {
 	switch x := expr.(type) {
 	case *expression.Column:
 		return r.buildFromColumn()
 	case *expression.ScalarFunction:
-		return r.buildFromScalarFunc(x, collator)
+		return r.buildFromScalarFunc(x, collator, prefixLen)
 	case *expression.Constant:
 		return r.buildFromConstant(x)
 	}
@@ -232,7 +232,7 @@ func (*builder) buildFromColumn() []*point {
 	return []*point{startPoint1, endPoint1, startPoint2, endPoint2}
 }
 
-func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
+func (r *builder) buildFromBinOp(expr *expression.ScalarFunction, prefixLen int) []*point {
 	// This has been checked that the binary operation is comparison operation, and one of
 	// the operand is column name expression.
 	var (
@@ -347,28 +347,47 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 	case ast.EQ:
 		startPoint := &point{value: value, start: true}
 		endPoint := &point{value: value}
+		if prefixLen != types.UnspecifiedLength {
+			fixPrefixPointRange(startPoint, endPoint, prefixLen, ft)
+		}
 		return []*point{startPoint, endPoint}
 	case ast.NE:
 		startPoint1 := &point{value: types.MinNotNullDatum(), start: true}
 		endPoint1 := &point{value: value, excl: true}
 		startPoint2 := &point{value: value, start: true, excl: true}
 		endPoint2 := &point{value: types.MaxValueDatum()}
+		if prefixLen != types.UnspecifiedLength {
+			fixPrefixPointRange(startPoint1, endPoint1, prefixLen, ft)
+			fixPrefixPointRange(startPoint2, endPoint2, prefixLen, ft)
+		}
 		return []*point{startPoint1, endPoint1, startPoint2, endPoint2}
 	case ast.LT:
 		startPoint := &point{value: types.MinNotNullDatum(), start: true}
 		endPoint := &point{value: value, excl: true}
+		if prefixLen != types.UnspecifiedLength {
+			fixPrefixPointRange(startPoint, endPoint, prefixLen, ft)
+		}
 		return []*point{startPoint, endPoint}
 	case ast.LE:
 		startPoint := &point{value: types.MinNotNullDatum(), start: true}
 		endPoint := &point{value: value}
+		if prefixLen != types.UnspecifiedLength {
+			fixPrefixPointRange(startPoint, endPoint, prefixLen, ft)
+		}
 		return []*point{startPoint, endPoint}
 	case ast.GT:
 		startPoint := &point{value: value, start: true, excl: true}
 		endPoint := &point{value: types.MaxValueDatum()}
+		if prefixLen != types.UnspecifiedLength {
+			fixPrefixPointRange(startPoint, endPoint, prefixLen, ft)
+		}
 		return []*point{startPoint, endPoint}
 	case ast.GE:
 		startPoint := &point{value: value, start: true}
 		endPoint := &point{value: types.MaxValueDatum()}
+		if prefixLen != types.UnspecifiedLength {
+			fixPrefixPointRange(startPoint, endPoint, prefixLen, ft)
+		}
 		return []*point{startPoint, endPoint}
 	}
 	return nil
@@ -553,11 +572,12 @@ func (*builder) buildFromIsFalse(_ *expression.ScalarFunction, isNot int) []*poi
 	return []*point{startPoint, endPoint}
 }
 
-func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) {
+func (r *builder) buildFromIn(expr *expression.ScalarFunction, prefixLen int) ([]*point, bool) {
 	list := expr.GetArgs()[1:]
 	rangePoints := make([]*point, 0, len(list)*2)
 	hasNull := false
-	colCollate := expr.GetArgs()[0].GetType().GetCollate()
+	ft := expr.GetArgs()[0].GetType()
+	colCollate := ft.GetCollate()
 	for _, e := range list {
 		v, ok := e.(*expression.Constant)
 		if !ok {
@@ -608,6 +628,9 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 		dt.Copy(&endValue)
 		startPoint := &point{value: startValue, start: true}
 		endPoint := &point{value: endValue}
+		if prefixLen != types.UnspecifiedLength {
+			fixPrefixPointRange(startPoint, endPoint, prefixLen, ft)
+		}
 		rangePoints = append(rangePoints, startPoint, endPoint)
 	}
 	sorter := pointSorter{points: rangePoints, sc: r.sc, collator: collate.GetCollator(colCollate)}
@@ -632,7 +655,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 	return rangePoints[:curPos], hasNull
 }
 
-func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []*point {
+func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction, prefixLen int) []*point {
 	_, collation := expr.CharsetAndCollation()
 	if !collate.CompatibleCollate(expr.GetArgs()[0].GetType().GetCollate(), collation) {
 		return getFullRange()
@@ -691,10 +714,18 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []*po
 	}
 	if isExactMatch {
 		val := types.NewCollationStringDatum(string(lowValue), tpOfPattern.GetCollate())
-		return []*point{{value: val, start: true}, {value: val}}
+		startPoint := &point{value: val, start: true}
+		endPoint := &point{value: val}
+		if prefixLen != types.UnspecifiedLength {
+			fixPrefixPointRange(startPoint, endPoint, prefixLen, tpOfPattern)
+		}
+		return []*point{startPoint, endPoint}
 	}
 	startPoint := &point{start: true, excl: exclude}
 	startPoint.value.SetBytesAsString(lowValue, tpOfPattern.GetCollate(), uint32(tpOfPattern.GetFlen()))
+	if prefixLen != types.UnspecifiedLength {
+		fixPrefixPointRange(startPoint, nil, prefixLen, tpOfPattern)
+	}
 	highValue := make([]byte, len(lowValue))
 	copy(highValue, lowValue)
 	endPoint := &point{excl: true}
@@ -715,7 +746,7 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []*po
 	return []*point{startPoint, endPoint}
 }
 
-func (r *builder) buildFromNot(expr *expression.ScalarFunction) []*point {
+func (r *builder) buildFromNot(expr *expression.ScalarFunction, prefixLen int) []*point {
 	switch n := expr.FuncName.L; n {
 	case ast.IsTruthWithoutNull:
 		return r.buildFromIsTrue(expr, 1, false)
@@ -728,7 +759,7 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []*point {
 			isUnsignedIntCol bool
 			nonNegativePos   int
 		)
-		rangePoints, hasNull := r.buildFromIn(expr)
+		rangePoints, hasNull := r.buildFromIn(expr, prefixLen)
 		if hasNull {
 			return nil
 		}
@@ -770,14 +801,14 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []*point {
 	return getFullRange()
 }
 
-func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction, collator collate.Collator) []*point {
+func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction, collator collate.Collator, prefixLen int) []*point {
 	switch op := expr.FuncName.L; op {
 	case ast.GE, ast.GT, ast.LT, ast.LE, ast.EQ, ast.NE, ast.NullEQ:
-		return r.buildFromBinOp(expr)
+		return r.buildFromBinOp(expr, prefixLen)
 	case ast.LogicAnd:
-		return r.intersection(r.build(expr.GetArgs()[0], collator), r.build(expr.GetArgs()[1], collator), collator)
+		return r.intersection(r.build(expr.GetArgs()[0], collator, prefixLen), r.build(expr.GetArgs()[1], collator, prefixLen), collator)
 	case ast.LogicOr:
-		return r.union(r.build(expr.GetArgs()[0], collator), r.build(expr.GetArgs()[1], collator), collator)
+		return r.union(r.build(expr.GetArgs()[0], collator, prefixLen), r.build(expr.GetArgs()[1], collator, prefixLen), collator)
 	case ast.IsTruthWithoutNull:
 		return r.buildFromIsTrue(expr, 0, false)
 	case ast.IsTruthWithNull:
@@ -785,16 +816,16 @@ func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction, collator 
 	case ast.IsFalsity:
 		return r.buildFromIsFalse(expr, 0)
 	case ast.In:
-		retPoints, _ := r.buildFromIn(expr)
+		retPoints, _ := r.buildFromIn(expr, prefixLen)
 		return retPoints
 	case ast.Like:
-		return r.newBuildFromPatternLike(expr)
+		return r.newBuildFromPatternLike(expr, prefixLen)
 	case ast.IsNull:
 		startPoint := &point{start: true}
 		endPoint := &point{}
 		return []*point{startPoint, endPoint}
 	case ast.UnaryNot:
-		return r.buildFromNot(expr.GetArgs()[0].(*expression.ScalarFunction))
+		return r.buildFromNot(expr.GetArgs()[0].(*expression.ScalarFunction), prefixLen)
 	}
 
 	return nil
