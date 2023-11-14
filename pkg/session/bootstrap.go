@@ -1716,7 +1716,9 @@ func upgradeToVer32(s sessiontypes.Session, ver int64) {
 
 	// Set optimistic to tidb_tx_mode.
 	// Related issue: https://github.com/pingcap/tidb/issues/48492
-	variable.SetSysVar(variable.TiDBTxnMode, variable.OptimisticTxnMode)
+	sql := fmt.Sprintf("INSERT HIGH_PRIORITY INTO %s.%s VALUES('%s', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE = '%s'",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBTxnMode, variable.OptimisticTxnMode, variable.OptimisticTxnMode)
+	mustExecute(s, sql)
 }
 
 func upgradeToVer33(s sessiontypes.Session, ver int64) {
@@ -1770,9 +1772,12 @@ func upgradeToVer38(s sessiontypes.Session, ver int64) {
 
 	// Set optimistic to tidb_tx_mode.
 	// Related issue: https://github.com/pingcap/tidb/issues/48492
-	if variable.GetSysVar(variable.TiDBTxnMode).Value == "" {
-		variable.SetSysVar(variable.TiDBTxnMode, variable.OptimisticTxnMode)
-	}
+	sql := fmt.Sprintf("INSERT HIGH_PRIORITY INTO %s.%s ("+
+		"SELECT '%s', '%s' WHERE NOT EXISTS (SELECT * FROM %s.%s WHERE VARIABLE_NAME = '%s' AND VARIABLE_VALUE = '%s')"+
+		")ON DUPLICATE KEY UPDATE VARIABLE_VALUE = VALUES(VARIABLE_VALUE)",
+		mysql.SystemDB, mysql.GlobalVariablesTable,
+		variable.TiDBTxnMode, variable.OptimisticTxnMode, mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBTxnMode, variable.PessimisticTxnMode)
+	mustExecute(s, sql)
 }
 
 func writeNewCollationParameter(s sessiontypes.Session, flag bool) {
