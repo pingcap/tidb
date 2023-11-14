@@ -23,6 +23,7 @@ const (
 
 	defaultMaxRetry     = 60
 	defaultRetryBackoff = 5 * time.Second
+	defaultLeaseDur     = 300 * time.Second
 
 	/* Give pd enough time to find the region. If we aren't able to fetch
 	   the region, the whole procedure might be aborted. */
@@ -70,8 +71,9 @@ type Preparer struct {
 
 	/* Some configurations. They aren't thread safe.
 	   You may need to configure them before starting the Preparer. */
-	RetryBackoff time.Duration
-	RetryLimit   int
+	RetryBackoff  time.Duration
+	RetryLimit    int
+	LeaseDuration time.Duration
 }
 
 func New(env Env) *Preparer {
@@ -83,8 +85,9 @@ func New(env Env) *Preparer {
 		eventChan:            make(chan event, 128),
 		clients:              make(map[uint64]*prepareStream),
 
-		RetryBackoff: defaultRetryBackoff,
-		RetryLimit:   defaultMaxRetry,
+		RetryBackoff:  defaultRetryBackoff,
+		RetryLimit:    defaultMaxRetry,
+		LeaseDuration: defaultLeaseDur,
 	}
 	return prep
 }
@@ -102,7 +105,7 @@ func (p *Preparer) DriveLoopAndWaitPrepare(ctx context.Context) error {
 		return errors.Annotate(err, "failed to begin step")
 	}
 	for !p.waitApplyFinished {
-		if err := p.waitNextEvent(ctx); err != nil {
+		if err := p.waitAndHandleNextEvent(ctx); err != nil {
 			return errors.Annotate(err, "failed to step")
 		}
 	}
@@ -130,7 +133,7 @@ func (p *Preparer) Finalize(ctx context.Context) error {
 	}
 }
 
-func (p *Preparer) waitNextEvent(ctx context.Context) error {
+func (p *Preparer) waitAndHandleNextEvent(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		logutil.CL(ctx).Warn("User canceled, try to stop the whole procedure gracefully.")
@@ -144,7 +147,7 @@ func (p *Preparer) waitNextEvent(ctx context.Context) error {
 		}
 		return p.maybeFinish(ctx)
 	case <-p.retryC():
-		return p.retryFailed(ctx)
+		return p.workOnPendingRanges(ctx)
 	}
 }
 
@@ -208,7 +211,7 @@ func (p *Preparer) retryC() <-chan time.Time {
 }
 
 func (p *Preparer) maybeFinish(ctx context.Context) error {
-	logutil.CL(ctx).Info("Start state transforming.",
+	logutil.CL(ctx).Info("Checking the progress of our work.",
 		zap.Int("inflight_reqs", len(p.inflightReqs)), zap.Int("failed_ranges", len(p.failedRegions)))
 	if len(p.inflightReqs) == 0 && len(p.failedRegions) == 0 {
 		holes := p.checkHole()
@@ -218,7 +221,7 @@ func (p *Preparer) maybeFinish(ctx context.Context) error {
 		} else {
 			logutil.CL(ctx).Warn("It seems there are still some works to be done.", zap.Stringers("regions", holes))
 			p.failedRegions = holes
-			return p.retryFailed(ctx)
+			return p.workOnPendingRanges(ctx)
 		}
 	}
 
@@ -249,7 +252,7 @@ func (p *Preparer) checkHole() []region {
 	return failed
 }
 
-func (p *Preparer) retryFailed(ctx context.Context) error {
+func (p *Preparer) workOnPendingRanges(ctx context.Context) error {
 	p.nextRetry = nil
 	if len(p.failedRegions) == 0 {
 		return nil
@@ -301,6 +304,7 @@ func (p *Preparer) streamOf(ctx context.Context, storeID uint64) (*prepareStream
 		s = new(prepareStream)
 		s.storeID = storeID
 		s.output = p.eventChan
+		s.leaseDuration = p.LeaseDuration
 		err = s.InitConn(ctx, cli)
 		if err != nil {
 			return nil, err

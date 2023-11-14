@@ -20,8 +20,6 @@ type eventType int
 const (
 	eventMiscErr eventType = iota
 	eventWaitApplyDone
-
-	defaultLeaseDur = 300 * time.Second
 )
 
 type event struct {
@@ -37,8 +35,9 @@ func (e event) String() string {
 }
 
 type prepareStream struct {
-	storeID uint64
-	cli     PrepareClient
+	storeID       uint64
+	cli           PrepareClient
+	leaseDuration time.Duration
 
 	output chan<- event
 
@@ -55,7 +54,7 @@ func (p *prepareStream) InitConn(ctx context.Context, cli PrepareClient) error {
 	p.cli = cli
 	p.bgTasks, ctx = errgroup.WithContext(ctx)
 	ctx, p.stopBgTasks = context.WithCancel(ctx)
-	p.GoLeaseLoop(ctx, defaultLeaseDur)
+	p.GoLeaseLoop(ctx, p.leaseDuration)
 	p.bgTasks.Go(func() error { return p.RecvLoop(ctx) })
 	return nil
 }

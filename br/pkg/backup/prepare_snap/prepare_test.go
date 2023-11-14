@@ -297,3 +297,40 @@ func TestLeaseTimeout(t *testing.T) {
 	tt.mu.Unlock()
 	req.Error(prep.Finalize(ctx))
 }
+
+func TestLeaseTimeoutWhileTakingSnapshot(t *testing.T) {
+	log.SetLevel(zapcore.DebugLevel)
+	req := require.New(t)
+	pdc := fakeCluster(t, 3, dummyRegions(100)...)
+	ms := newTestEnv(pdc)
+	tt := struct {
+		now time.Time
+		mu  sync.Mutex
+	}{now: time.Now()}
+
+	ms.onCreateStore = func(ms *mockStore) {
+		ms.now = func() time.Time {
+			tt.mu.Lock()
+			defer tt.mu.Unlock()
+			return tt.now
+		}
+	}
+
+	ctx := context.Background()
+	prep := New(ms)
+	prep.LeaseDuration = 4 * time.Second
+	req.NoError(prep.maybeFinish(ctx))
+	tt.mu.Lock()
+	tt.now = tt.now.Add(100 * time.Minute)
+	tt.mu.Unlock()
+	time.Sleep(2 * time.Second)
+	cx, cancel := context.WithTimeout(ctx, 1*time.Second)
+	defer cancel()
+	for {
+		err := prep.waitAndHandleNextEvent(cx)
+		if err != nil {
+			req.ErrorContains(err, "the lease has expired")
+			break
+		}
+	}
+}
