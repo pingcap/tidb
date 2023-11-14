@@ -477,8 +477,9 @@ func (c *index) GenIndexKVIter(sc *stmtctx.StatementContext, indexedValue []type
 	var mvIndexValues [][]types.Datum
 	if c.Meta().MVIndex {
 		mvIndexValues = c.getIndexedValue(indexedValue)
+		return table.NewMultiValueIndexKVGenerator(c, sc, h, handleRestoreData, mvIndexValues)
 	}
-	return table.NewIndexKVGenerator(c, sc, h, handleRestoreData, mvIndexValues, indexedValue)
+	return table.NewPlainIndexKVGenerator(c, sc, h, handleRestoreData, indexedValue)
 }
 
 const (
