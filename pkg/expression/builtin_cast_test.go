@@ -1450,8 +1450,8 @@ func TestWrapWithCastAsJSON(t *testing.T) {
 }
 
 func TestCastIntAsIntVec(t *testing.T) {
-	cast, input, result := genCastIntAsInt()
-	ctx := cast.ctx
+	ctx := mock.NewContext()
+	cast, input, result := genCastIntAsInt(ctx)
 	require.NoError(t, cast.vecEvalInt(ctx, input, result))
 	i64s := result.Int64s()
 	it := chunk.NewIterator4Chunk(input)
