@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -148,9 +149,10 @@ func NewAddIndexIngestPipeline(
 	ingestOp := NewIndexIngestOperator(ctx, copCtx, sessPool, tbl, indexes, engines, srcChkPool, writerCnt)
 	sinkOp := newIndexWriteResultSink(jobID, ctx, backendCtx, tbl, indexes, totalRowCount, metricCounter)
 
-	operator.Compose[TableScanTask](srcOp, scanOp)
-	operator.Compose[IndexRecordChunk](scanOp, ingestOp)
-	operator.Compose[IndexWriteResult](ingestOp, sinkOp)
+	capacity := int(variable.DDLReorgChanCap.Load())
+	operator.Compose[TableScanTask](srcOp, scanOp, capacity)
+	operator.Compose[IndexRecordChunk](scanOp, ingestOp, capacity)
+	operator.Compose[IndexWriteResult](ingestOp, sinkOp, capacity)
 
 	return operator.NewAsyncPipeline(
 		srcOp, scanOp, ingestOp, sinkOp,
@@ -210,9 +212,10 @@ func NewWriteIndexToExternalStoragePipeline(
 		ctx, copCtx, sessPool, jobID, subtaskID, tbl, indexes, extStore, srcChkPool, writerCnt, onClose, memSize)
 	sinkOp := newIndexWriteResultSink(jobID, ctx, nil, tbl, indexes, totalRowCount, metricCounter)
 
-	operator.Compose[TableScanTask](srcOp, scanOp)
-	operator.Compose[IndexRecordChunk](scanOp, writeOp)
-	operator.Compose[IndexWriteResult](writeOp, sinkOp)
+	capacity := int(variable.DDLReorgChanCap.Load())
+	operator.Compose[TableScanTask](srcOp, scanOp, capacity)
+	operator.Compose[IndexRecordChunk](scanOp, writeOp, capacity)
+	operator.Compose[IndexWriteResult](writeOp, sinkOp, capacity)
 
 	return operator.NewAsyncPipeline(
 		srcOp, scanOp, writeOp, sinkOp,

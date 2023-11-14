@@ -743,6 +743,10 @@ var defaultSysVars = []*SysVar{
 		DDLReorgWriterCounter.Store(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBDDLReorgChanCap, Value: strconv.Itoa(DefTiDBDDLReorgChanCap), Type: TypeUnsigned, MinValue: 1, MaxValue: MaxConfigurableConcurrency, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		DDLReorgChanCap.Store(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgChanCap)))
+		return nil
+	}},
 	{Scope: ScopeGlobal, Name: TiDBDDLReorgBatchSize, Value: strconv.Itoa(DefTiDBDDLReorgBatchSize), Type: TypeUnsigned, MinValue: int64(MinDDLReorgBatchSize), MaxValue: uint64(MaxDDLReorgBatchSize), SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		SetDDLReorgBatchSize(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgBatchSize)))
 		return nil

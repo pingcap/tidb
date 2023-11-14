@@ -62,7 +62,7 @@ func TestBackfillOperators(t *testing.T) {
 		src := ddl.NewTableScanTaskSource(0, opCtx, store, pTbl, startKey, endKey)
 		sink := newTestSink[ddl.TableScanTask]()
 
-		operator.Compose[ddl.TableScanTask](src, sink)
+		operator.Compose[ddl.TableScanTask](src, sink, 1)
 
 		pipeline := operator.NewAsyncPipeline(src, sink)
 		err := pipeline.Execute()
@@ -97,8 +97,8 @@ func TestBackfillOperators(t *testing.T) {
 		scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 3)
 		sink := newTestSink[ddl.IndexRecordChunk]()
 
-		operator.Compose[ddl.TableScanTask](src, scanOp)
-		operator.Compose[ddl.IndexRecordChunk](scanOp, sink)
+		operator.Compose[ddl.TableScanTask](src, scanOp, 1)
+		operator.Compose[ddl.IndexRecordChunk](scanOp, sink, 1)
 
 		pipeline := operator.NewAsyncPipeline(src, scanOp, sink)
 		err := pipeline.Execute()
@@ -143,8 +143,8 @@ func TestBackfillOperators(t *testing.T) {
 			opCtx, copCtx, sessPool, pTbl, []table.Index{index}, []ingest.Engine{mockEngine}, srcChkPool, 3)
 		sink := newTestSink[ddl.IndexWriteResult]()
 
-		operator.Compose[ddl.IndexRecordChunk](src, ingestOp)
-		operator.Compose[ddl.IndexWriteResult](ingestOp, sink)
+		operator.Compose[ddl.IndexRecordChunk](src, ingestOp, 1)
+		operator.Compose[ddl.IndexWriteResult](ingestOp, sink, 1)
 
 		pipeline := operator.NewAsyncPipeline(src, ingestOp, sink)
 		err := pipeline.Execute()
