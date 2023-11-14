@@ -211,7 +211,7 @@ func (c *Context) WithFlags(f Flags) Context {
 
 // WithLocation returns a new context with the given location
 func (c *Context) WithLocation(loc *time.Location) Context {
-	intest.Assert(loc)
+	intest.AssertNotNil(loc)
 	ctx := *c
 	ctx.loc = loc
 	return ctx
@@ -219,7 +219,7 @@ func (c *Context) WithLocation(loc *time.Location) Context {
 
 // Location returns the location of the context
 func (c *Context) Location() *time.Location {
-	intest.Assert(c.loc)
+	intest.AssertNotNil(c.loc)
 	if c.loc == nil {
 		// c.loc should always not be nil, just make the code safe here.
 		return time.UTC
