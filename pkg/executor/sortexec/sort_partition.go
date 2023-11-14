@@ -102,7 +102,7 @@ func (s *sortPartition) add(chk *chunk.Chunk) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	if s.spillAction != nil && s.spillAction.isSpillTriggered() {
+	if s.spillAction.isSpillTriggered() {
 		if s.spillError != nil {
 			return s.spillError
 		}
@@ -134,7 +134,7 @@ func (s *sortPartition) sort() (ret error) {
 		return
 	}
 
-	s.rowPtrs = make([]chunk.RowPtr, 0, s.inMemory.Len()) // The memory usage has been tracked in SortPartition.Add() function
+	s.rowPtrs = make([]chunk.RowPtr, 0, s.inMemory.Len()) // The memory usage has been tracked in SortPartition.add() function
 	chunkNum := s.inMemory.NumChunks()
 	for chkIdx := 0; chkIdx < chunkNum; chkIdx++ {
 		chk := s.inMemory.GetChunk(chkIdx)
@@ -175,10 +175,14 @@ func (s *sortPartition) spillToDiskImpl() {
 		}
 	}
 
-	// Spill the remaining data in tmpChk
-	err := s.inDisk.Add(tmpChk)
-	if err != nil {
-		s.spillError = err
+	// Spill the remaining data in tmpChk.
+	// Do not spill when tmpChk is empty as `Add` function requires a non-empty chunk
+	if tmpChk.NumRows() > 0 {
+		err := s.inDisk.Add(tmpChk)
+		if err != nil {
+			s.spillError = err
+			return
+		}
 	}
 
 	// Release memory as all data have been spilled to disk
