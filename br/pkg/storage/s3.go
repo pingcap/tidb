@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/pkg/util/prefetch"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
 )
@@ -735,10 +736,11 @@ func (rs *S3Storage) Open(ctx context.Context, path string, o *ReaderOption) (Ex
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	reader2 := prefetch.NewPrefetchReader(reader, 64*1024)
 	return &s3ObjectReader{
 		storage:   rs,
 		name:      path,
-		reader:    reader,
+		reader:    reader2,
 		ctx:       ctx,
 		rangeInfo: r,
 	}, nil
