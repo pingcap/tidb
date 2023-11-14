@@ -29,6 +29,7 @@ import (
 )
 
 var errSpillIsTriggered = errors.New("can not add because spill has been triggered")
+var errSpillEmptyChunk = errors.New("can not spill empty chunk to disk")
 
 const rowPtrSize = int(unsafe.Sizeof(chunk.RowPtr{}))
 const spillChunkSize = 4096
@@ -160,6 +161,11 @@ func (s *sortPartition) spillToDiskImpl() {
 	tmpChk := chunk.NewChunkWithCapacity(s.fieldTypes, spillChunkSize)
 
 	rowNum := len(s.rowPtrs)
+	if rowNum == 0 {
+		s.spillError = errSpillEmptyChunk
+		return
+	}
+
 	for i := 0; i < rowNum; i++ {
 		chkIdx := s.rowPtrs[i].ChkIdx
 		rowIdx := s.rowPtrs[i].RowIdx
