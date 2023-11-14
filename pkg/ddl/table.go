@@ -1497,14 +1497,17 @@ func checkTableNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, tableName stri
 	return checkTableNotExistsFromStore(t, schemaID, tableName)
 }
 
-func checkConstraintNamesNotExists(t *meta.Meta, schemaID int64, constrains []*model.ConstraintInfo) error {
+func checkConstraintNamesNotExists(t *meta.Meta, schemaID int64, constraints []*model.ConstraintInfo) error {
+	if len(constraints) == 0 {
+		return nil
+	}
 	tbInfos, err := t.ListTables(schemaID)
 	if err != nil {
 		return err
 	}
 
 	for _, tb := range tbInfos {
-		for _, constraint := range constrains {
+		for _, constraint := range constraints {
 			if constraintInfo := tb.FindConstraintInfoByName(constraint.Name.L); constraintInfo != nil {
 				return infoschema.ErrCheckConstraintDupName.GenWithStackByArgs(constraint.Name.L)
 			}
