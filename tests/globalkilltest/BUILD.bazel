@@ -9,14 +9,15 @@ go_test(
     ],
     flaky = True,
     deps = [
-        "//testkit/testsetup",
-        "//util/logutil",
+        "//pkg/testkit/testsetup",
+        "//pkg/util/logutil",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",
         "@io_etcd_go_etcd_client_v3//:client",
         "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//backoff",
         "@org_uber_go_zap//:zap",
     ],
 )

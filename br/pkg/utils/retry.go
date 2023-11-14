@@ -8,10 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	tmysql "github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/parser/terror"
+	tmysql "github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/multierr"
 )
@@ -29,10 +28,14 @@ var retryableServerError = []string{
 	"internalerror",
 	"not read from or written to within the timeout period",
 	"<code>requesttimeout</code>",
+	"<code>invalidpart</code>",
+	"end of file before message length reached",
 }
 
 // RetryableFunc presents a retryable operation.
 type RetryableFunc func() error
+
+type RetryableFuncV2[T any] func(context.Context) (T, error)
 
 // Backoffer implements a backoff policy for retrying operations.
 type Backoffer interface {
@@ -51,20 +54,37 @@ func WithRetry(
 	retryableFunc RetryableFunc,
 	backoffer Backoffer,
 ) error {
+	_, err := WithRetryV2[struct{}](ctx, backoffer, func(ctx context.Context) (struct{}, error) {
+		innerErr := retryableFunc()
+		return struct{}{}, innerErr
+	})
+	return err
+}
+
+// WithRetryV2 retries a given operation with a backoff policy.
+//
+// Returns the returned value if `retryableFunc` succeeded at least once. Otherwise, returns a
+// multierr that containing all errors encountered.
+// Comparing with `WithRetry`, this function reordered the argument order and supports catching the return value.
+func WithRetryV2[T any](
+	ctx context.Context,
+	backoffer Backoffer,
+	fn RetryableFuncV2[T],
+) (T, error) {
 	var allErrors error
 	for backoffer.Attempt() > 0 {
-		err := retryableFunc()
+		res, err := fn(ctx)
 		if err == nil {
-			return nil
+			return res, nil
 		}
 		allErrors = multierr.Append(allErrors, err)
 		select {
 		case <-ctx.Done():
-			return allErrors // nolint:wrapcheck
+			return *new(T), allErrors
 		case <-time.After(backoffer.NextBackoff(err)):
 		}
 	}
-	return allErrors // nolint:wrapcheck
+	return *new(T), allErrors // nolint:wrapcheck
 }
 
 // MessageIsRetryableStorageError checks whether the message returning from TiKV is retryable ExternalStorageError.
@@ -151,7 +171,7 @@ func (r *RetryWithBackoffer) BackOff() error {
 // That intent will be fulfilled when calling `BackOff`.
 func (r *RetryWithBackoffer) RequestBackOff(ms int) {
 	r.mu.Lock()
-	r.nextBackoff = mathutil.Max(r.nextBackoff, ms)
+	r.nextBackoff = max(r.nextBackoff, ms)
 	r.mu.Unlock()
 }
 

@@ -33,13 +33,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
-	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/parser/charset"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 )
@@ -372,7 +372,7 @@ func TestFetchRemoteTableModels_4_0(t *testing.T) {
 			AddRow("t", "id", "bigint(20) unsigned", "", "auto_increment"))
 	s.mockDB.ExpectQuery("SHOW TABLE `test`.`t` NEXT_ROW_ID").
 		WillReturnRows(sqlmock.NewRows([]string{"DB_NAME", "TABLE_NAME", "COLUMN_NAME", "NEXT_GLOBAL_ROW_ID"}).
-			AddRow("test", "t", "id", int64(1)))
+			AddRow("test", "t", "id", "10942694589135710585"))
 	s.mockDB.ExpectCommit()
 
 	targetInfoGetter := tidb.NewTargetInfoGetter(s.dbHandle)
@@ -690,7 +690,7 @@ func TestWriteRowsRecordOneError(t *testing.T) {
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(2)\\E").
 		WillReturnError(dupErr)
 	s.mockDB.
-		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.duplicate_records.*").
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.conflict_records.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "8.csv", int64(0), dupErr.Error(), 0, "(2)").
 		WillReturnResult(driver.ResultNoRows)
 

@@ -6,7 +6,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/redact"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/kv"
 	kvutil "github.com/tikv/client-go/v2/kv"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )

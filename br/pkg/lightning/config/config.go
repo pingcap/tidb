@@ -36,12 +36,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	tidbcfg "github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/mathutil"
-	filter "github.com/pingcap/tidb/util/table-filter"
-	router "github.com/pingcap/tidb/util/table-router"
+	tidbcfg "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util"
+	filter "github.com/pingcap/tidb/pkg/util/table-filter"
+	router "github.com/pingcap/tidb/pkg/util/table-router"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -148,7 +147,7 @@ type DBStore struct {
 	BuildStatsConcurrency      int               `toml:"build-stats-concurrency" json:"build-stats-concurrency"`
 	IndexSerialScanConcurrency int               `toml:"index-serial-scan-concurrency" json:"index-serial-scan-concurrency"`
 	ChecksumTableConcurrency   int               `toml:"checksum-table-concurrency" json:"checksum-table-concurrency"`
-	Vars                       map[string]string `toml:"-" json:"vars"`
+	Vars                       map[string]string `toml:"session-vars" json:"vars"`
 
 	IOTotalBytes *atomic.Uint64 `toml:"-" json:"-"`
 	UUID         string         `toml:"-" json:"-"`
@@ -588,12 +587,18 @@ const (
 	// DupeResAlgNone doesn't detect duplicate.
 	DupeResAlgNone DuplicateResolutionAlgorithm = iota
 
-	// DupeResAlgRecord only records duplicate records to `lightning_task_info.conflict_error_v1` table on the target TiDB.
+	// DupeResAlgRecord only records duplicate records to `lightning_task_info.conflict_error_v2` table on the target TiDB.
 	DupeResAlgRecord
 
 	// DupeResAlgRemove records all duplicate records like the 'record' algorithm and remove all information related to the
-	// duplicated rows. Users need to analyze the lightning_task_info.conflict_error_v1 table to add back the correct rows.
+	// duplicated rows. Users need to analyze the lightning_task_info.conflict_error_v2 table to add back the correct rows.
 	DupeResAlgRemove
+
+	// DupeResAlgReplace records all duplicate records like the 'record' algorithm, and remove some rows with conflict
+	// and reserve other rows that can be kept and not cause conflict anymore. Users need to analyze the
+	// lightning_task_info.conflict_error_v2 table to check whether the reserved data cater to their need and check whether
+	// they need to add back the correct rows.
+	DupeResAlgReplace
 
 	// DupeResAlgErr reports an error and stops the import process.
 	// Note: this value is only used for internal.
@@ -622,6 +627,8 @@ func (dra *DuplicateResolutionAlgorithm) FromStringValue(s string) error {
 		*dra = DupeResAlgNone
 	case "remove":
 		*dra = DupeResAlgRemove
+	case "replace":
+		*dra = DupeResAlgReplace
 	default:
 		return errors.Errorf("invalid duplicate-resolution '%s', please choose valid option between ['record', 'none', 'remove']", s)
 	}
@@ -647,6 +654,8 @@ func (dra DuplicateResolutionAlgorithm) String() string {
 		return "none"
 	case DupeResAlgRemove:
 		return "remove"
+	case DupeResAlgReplace:
+		return "replace"
 	default:
 		panic(fmt.Sprintf("invalid duplicate-resolution type '%d'", dra))
 	}
@@ -1050,9 +1059,11 @@ type TikvImporter struct {
 	DiskQuota               ByteSize                     `toml:"disk-quota" json:"disk-quota"`
 	RangeConcurrency        int                          `toml:"range-concurrency" json:"range-concurrency"`
 	DuplicateResolution     DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
-	IncrementalImport       bool                         `toml:"incremental-import" json:"incremental-import"`
-	KeyspaceName            string                       `toml:"keyspace-name" json:"keyspace-name"`
-	AddIndexBySQL           bool                         `toml:"add-index-by-sql" json:"add-index-by-sql"`
+	// deprecated, use ParallelImport instead.
+	IncrementalImport bool   `toml:"incremental-import" json:"incremental-import"`
+	ParallelImport    bool   `toml:"parallel-import" json:"parallel-import"`
+	KeyspaceName      string `toml:"keyspace-name" json:"keyspace-name"`
+	AddIndexBySQL     bool   `toml:"add-index-by-sql" json:"add-index-by-sql"`
 
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
@@ -1066,6 +1077,10 @@ func (t *TikvImporter) adjust() error {
 		return common.ErrInvalidConfig.GenWithStack("tikv-importer.backend must not be empty!")
 	}
 	t.Backend = strings.ToLower(t.Backend)
+	// only need to assign t.IncrementalImport to t.ParallelImport when t.ParallelImport is false and t.IncrementalImport is true
+	if !t.ParallelImport && t.IncrementalImport {
+		t.ParallelImport = t.IncrementalImport
+	}
 	switch t.Backend {
 	case BackendTiDB:
 		t.DuplicateResolution = DupeResAlgNone
@@ -1090,9 +1105,9 @@ func (t *TikvImporter) adjust() error {
 			t.LocalWriterMemCacheSize = DefaultLocalWriterMemCacheSize
 		}
 
-		if t.IncrementalImport && t.AddIndexBySQL {
+		if t.ParallelImport && t.AddIndexBySQL {
 			return common.ErrInvalidConfig.
-				GenWithStack("tikv-importer.add-index-using-ddl cannot be used with tikv-importer.incremental-import")
+				GenWithStack("tikv-importer.add-index-using-ddl cannot be used with tikv-importer.parallel-import")
 		}
 
 		if len(t.SortedKVDir) == 0 {
@@ -1321,9 +1336,9 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 			"unsupported `%s` (%s)", strategyConfigFrom, c.Strategy)
 	}
 	if c.Strategy != "" {
-		if i.IncrementalImport {
+		if i.ParallelImport {
 			return common.ErrInvalidConfig.GenWithStack(
-				"%s cannot be used with tikv-importer.incremental-import",
+				"%s cannot be used with tikv-importer.parallel-import",
 				strategyConfigFrom)
 		}
 		if i.DuplicateResolution != DupeResAlgNone {
@@ -1354,7 +1369,7 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 	if c.MaxRecordRows < 0 {
 		maxErr := l.MaxError
 		// Compatible with the old behavior that records all syntax,charset,type errors.
-		maxAccepted := mathutil.Max(maxErr.Syntax.Load(), maxErr.Charset.Load(), maxErr.Type.Load())
+		maxAccepted := max(maxErr.Syntax.Load(), maxErr.Charset.Load(), maxErr.Type.Load())
 		if maxAccepted < defaultMaxRecordRows {
 			maxAccepted = defaultMaxRecordRows
 		}

@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -68,6 +69,14 @@ func GetCDCChangefeedNameSet(ctx context.Context, cli *clientv3.Client) (*CDCNam
 		return nil, errors.Trace(err)
 	}
 
+	// cluster id should be valid in
+	// https://github.com/pingcap/tiflow/blob/ca69c33948bea082aff9f4c0a357ace735b494ed/pkg/config/server_config.go#L218
+	reg, err := regexp.Compile("^[a-zA-Z0-9]+(-[a-zA-Z0-9]+)*$")
+	if err != nil {
+		log.L().Warn("failed to parse cluster id, skip it", zap.Error(err))
+		reg = nil
+	}
+
 	for _, kv := range resp.Kvs {
 		// example: /tidb/cdc/<clusterID>/<namespace>/changefeed/info/<changefeedID>
 		k := kv.Key[len(CDCPrefix):]
@@ -75,8 +84,23 @@ func GetCDCChangefeedNameSet(ctx context.Context, cli *clientv3.Client) (*CDCNam
 		if !found {
 			continue
 		}
-		if !isActiveCDCChangefeed(kv.Value) {
+		// example: clusterAndNamespace normally is <clusterID>/<namespace>
+		// but in migration scenario it become __backup__. we need handle it
+		// see https://github.com/pingcap/tiflow/issues/9807
+		clusterID, _, found := bytes.Cut(clusterAndNamespace, []byte(`/`))
+		if !found {
+			// ignore __backup__ or other formats
 			continue
+		}
+
+		if reg != nil {
+			matched := reg.Match(clusterID)
+			if !matched {
+				continue
+			}
+			if !isActiveCDCChangefeed(kv.Value) {
+				continue
+			}
 		}
 
 		nameSet[string(clusterAndNamespace)] = append(nameSet[string(clusterAndNamespace)], string(changefeedID))
@@ -119,7 +143,8 @@ func isActiveCDCChangefeed(jsonBytes []byte) bool {
 		return false
 	}
 	switch s.State {
-	case "normal", "stopped", "error":
+	// https://docs.pingcap.com/zh/tidb/stable/ticdc-changefeed-overview
+	case "normal", "stopped", "error", "warning":
 		return true
 	default:
 		return false

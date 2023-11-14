@@ -13,7 +13,6 @@ go_library(
         "@com_google_cloud_go_storage//:storage",
         "@io_bazel_rules_go//go/tools/bazel:go_default_library",
         "@org_golang_google_api//googleapi",
-        "@org_golang_x_exp//slices",
         "@org_golang_x_sync//errgroup",
     ],
 )
@@ -25,8 +24,8 @@ go_binary(
         "//:go.mod",
         "//:go.sum",
         "//build/patches:all_patches",
-        "//parser:go.mod",
-        "//parser:go.sum",
+        "//pkg/parser:go.mod",
+        "//pkg/parser:go.sum",
         "@go_sdk//:files",
     ],
     embed = [":mirror_lib"],

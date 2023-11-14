@@ -743,10 +743,13 @@ func TestDuplicateResolutionAlgorithm(t *testing.T) {
 	require.Equal(t, DupeResAlgNone, dra)
 	require.NoError(t, dra.FromStringValue("remove"))
 	require.Equal(t, DupeResAlgRemove, dra)
+	require.NoError(t, dra.FromStringValue("replace"))
+	require.Equal(t, DupeResAlgReplace, dra)
 
 	require.Equal(t, "record", DupeResAlgRecord.String())
 	require.Equal(t, "none", DupeResAlgNone.String())
 	require.Equal(t, "remove", DupeResAlgRemove.String())
+	require.Equal(t, "replace", DupeResAlgReplace.String())
 }
 
 func TestLoadConfig(t *testing.T) {
@@ -982,19 +985,19 @@ func TestAdjustConflictStrategy(t *testing.T) {
 
 	cfg.TikvImporter.Backend = BackendLocal
 	cfg.Conflict.Strategy = ReplaceOnDup
-	cfg.TikvImporter.IncrementalImport = true
-	require.ErrorContains(t, cfg.Adjust(ctx), "conflict.strategy cannot be used with tikv-importer.incremental-import")
+	cfg.TikvImporter.ParallelImport = true
+	require.ErrorContains(t, cfg.Adjust(ctx), "conflict.strategy cannot be used with tikv-importer.parallel-import")
 
 	cfg.TikvImporter.Backend = BackendLocal
 	cfg.Conflict.Strategy = ReplaceOnDup
-	cfg.TikvImporter.IncrementalImport = false
+	cfg.TikvImporter.ParallelImport = false
 	cfg.TikvImporter.DuplicateResolution = DupeResAlgRemove
 	require.ErrorContains(t, cfg.Adjust(ctx), "conflict.strategy cannot be used with tikv-importer.duplicate-resolution")
 
 	cfg.TikvImporter.Backend = BackendLocal
 	cfg.Conflict.Strategy = ""
 	cfg.TikvImporter.OnDuplicate = ReplaceOnDup
-	cfg.TikvImporter.IncrementalImport = false
+	cfg.TikvImporter.ParallelImport = false
 	cfg.TikvImporter.DuplicateResolution = DupeResAlgRemove
 	require.ErrorContains(t, cfg.Adjust(ctx), "tikv-importer.on-duplicate cannot be used with tikv-importer.duplicate-resolution")
 }
@@ -1201,9 +1204,9 @@ func TestAdjustTikvImporter(t *testing.T) {
 	cfg.TikvImporter.SortedKVDir = base
 	require.NoError(t, cfg.TikvImporter.adjust())
 
-	cfg.TikvImporter.IncrementalImport = true
+	cfg.TikvImporter.ParallelImport = true
 	cfg.TikvImporter.AddIndexBySQL = true
-	require.ErrorContains(t, cfg.TikvImporter.adjust(), "tikv-importer.add-index-using-ddl cannot be used with tikv-importer.incremental-import")
+	require.ErrorContains(t, cfg.TikvImporter.adjust(), "tikv-importer.add-index-using-ddl cannot be used with tikv-importer.parallel-import")
 }
 
 func TestCreateSeveralConfigsWithDifferentFilters(t *testing.T) {

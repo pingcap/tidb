@@ -8,14 +8,22 @@ coverage:
   round: down
   range: "65...90"
 
+  # status:
+  #   project:
+  #     default:
+  #       threshold: 0.2 #Allow the coverage to drop by threshold%, and posting a success status.
+  #   patch:
+  #     default:
+  #       target: 0% # trial operation
+
+  # Ref: https://docs.codecov.com/docs/commit-status#disabling-a-status
   status:
-    project: 
-      default:
-        threshold: 0.2 #Allow the coverage to drop by threshold%, and posting a success status.
-    patch: 
-      default:
-        target: 0% # trial operation
+    project: off # disable it
+    patch: off # disable it
     changes: no
+
+# Ref: https://docs.codecov.com/docs/github-checks#disabling-github-checks-completely-via-yaml
+github_checks: false
 
 parsers:
   gcov:
@@ -43,7 +51,7 @@ component_management:
     - component_id: component_parser
       name: parser
       paths:
-        - parser/**      
+        - parser/**
     - component_id: component_br
       name: br
       paths:
@@ -55,17 +63,17 @@ flag_management:
     carryforward: true
     statuses:
       - type: project
-        target: 85%
+        target: auto
       - type: patch
         target: 85%
 
 ignore:
   - "LICENSES"
-  - "*_test.go"       
+  - "*_test.go"
   - ".git"
   - "*.yml"
   - "*.md"
-  - "cmd/.*"       
+  - "cmd/.*"
   - "docs/.*"
   - "vendor/.*"
   - "ddl/failtest/.*"
@@ -74,4 +82,9 @@ ignore:
   - "metrics/.*"
   - "expression/generator/.*"
   - "br/pkg/mock/.*"
+  - "testkit/.*"
+  - "server/internal/testutil/.*"
+  - "statistics/handle/cache/internal/testutil/.*"
+  - "session/testutil.go"
+  - "store/mockstore/unistore/testutil.go"
 

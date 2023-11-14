@@ -20,9 +20,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
@@ -263,7 +263,7 @@ func TestSelectLockForPartitionTable(t *testing.T) {
 	tk1.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
 	tk1.MustExec("analyze table t")
 	tk1.MustExec("begin")
-	tk1.HasPlan("select * from t use index(idx) where a = 1 and b = 1 order by a limit 1 for update", "IndexLookUp_9")
+	tk1.MustHavePlan("select * from t use index(idx) where a = 1 and b = 1 order by a limit 1 for update", "IndexLookUp")
 	tk1.MustExec("select * from t use index(idx) where a = 1 and b = 1 order by a limit 1 for update")
 	ch := make(chan bool, 1)
 	go func() {

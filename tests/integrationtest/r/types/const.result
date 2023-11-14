@@ -1,0 +1,234 @@
+drop table if exists t;
+create table t (a real);
+desc t;
+Field	Type	Null	Key	Default	Extra
+a	double	YES		NULL	
+drop table if exists t;
+set sql_mode='REAL_AS_FLOAT';
+create table t (a real);
+desc t;
+Field	Type	Null	Key	Default	Extra
+a	float	YES		NULL	
+set @@sql_mode=default;
+SET sql_mode='PIPES_AS_CONCAT';
+SELECT 'hello' || 'world';
+'hello' || 'world'
+helloworld
+set @@sql_mode=default;
+set sql_mode='';
+select 12 - cast(15 as unsigned);
+Error 1690 (22003): BIGINT UNSIGNED value is out of range in '(12 - 15)'
+set sql_mode='NO_UNSIGNED_SUBTRACTION';
+select 12 - cast(15 as unsigned);
+12 - cast(15 as unsigned)
+-3
+set @@sql_mode=default;
+set sql_mode='NO_UNSIGNED_SUBTRACTION';
+DROP TABLE IF EXISTS tb5;
+create table tb5(a bigint, b bigint);
+insert into tb5 values (10, -9223372036854775808);
+select a - b from tb5;
+Error 1690 (22003): BIGINT value is out of range in '(types__const.tb5.a - types__const.tb5.b)'
+set sql_mode='';
+select a - b from tb5;
+Error 1690 (22003): BIGINT value is out of range in '(types__const.tb5.a - types__const.tb5.b)'
+set @@sql_mode=default;
+set sql_mode='';
+DROP TABLE IF EXISTS tb5;
+create table tb5(a bigint, b bigint);
+insert into tb5 values (10, -9223372036854775808);
+select a - b from tb5;
+Error 1690 (22003): BIGINT value is out of range in '(types__const.tb5.a - types__const.tb5.b)'
+set sql_mode='NO_UNSIGNED_SUBTRACTION';
+select a - b from tb5;
+Error 1690 (22003): BIGINT value is out of range in '(types__const.tb5.a - types__const.tb5.b)'
+set @@sql_mode=default;
+set sql_mode='';
+select cast(-1 as unsigned) - cast(-1 as unsigned);
+cast(-1 as unsigned) - cast(-1 as unsigned)
+0
+set sql_mode='NO_UNSIGNED_SUBTRACTION';
+select cast(-1 as unsigned) - cast(-1 as unsigned);
+cast(-1 as unsigned) - cast(-1 as unsigned)
+0
+set @@sql_mode=default;
+set sql_mode='NO_UNSIGNED_SUBTRACTION';
+select cast(-1 as unsigned) - cast(-10000 as unsigned);
+cast(-1 as unsigned) - cast(-10000 as unsigned)
+9999
+set sql_mode='';
+select cast(-1 as unsigned) - cast(-10000 as unsigned);
+cast(-1 as unsigned) - cast(-10000 as unsigned)
+9999
+set @@sql_mode=default;
+set sql_mode='NO_UNSIGNED_SUBTRACTION';
+select cast(-12 as unsigned) - cast(-1 as unsigned);
+cast(-12 as unsigned) - cast(-1 as unsigned)
+-11
+set sql_mode='';
+select cast(-12 as unsigned) - cast(-1 as unsigned);
+Error 1690 (22003): BIGINT UNSIGNED value is out of range in '(18446744073709551604 - 18446744073709551615)'
+set @@sql_mode=default;
+set sql_mode='NO_UNSIGNED_SUBTRACTION';
+select cast(-1 as unsigned) - 9223372036854775808;
+cast(-1 as unsigned) - 9223372036854775808
+9223372036854775807
+set sql_mode='';
+select cast(-1 as unsigned) - 9223372036854775808;
+cast(-1 as unsigned) - 9223372036854775808
+9223372036854775807
+set @@sql_mode=default;
+set sql_mode='NO_UNSIGNED_SUBTRACTION';
+select 9223372036854775808 - cast(-1 as unsigned);
+9223372036854775808 - cast(-1 as unsigned)
+-9223372036854775807
+set sql_mode='';
+select 9223372036854775808 - cast(-1 as unsigned);
+Error 1690 (22003): BIGINT UNSIGNED value is out of range in '(9223372036854775808 - 18446744073709551615)'
+set @@sql_mode=default;
+set sql_mode='NO_UNSIGNED_SUBTRACTION';
+SELECT CAST(0 as UNSIGNED) - 1;
+CAST(0 as UNSIGNED) - 1
+-1
+SELECT CAST(-1 as UNSIGNED) - cast(9223372036854775807 as unsigned);
+Error 1690 (22003): BIGINT value is out of range in '(18446744073709551615 - 9223372036854775807)'
+SELECT CAST(0 as UNSIGNED) - cast(9223372036854775809 as unsigned);
+Error 1690 (22003): BIGINT value is out of range in '(0 - 9223372036854775809)'
+SELECT CAST(0 as UNSIGNED) - cast(9223372036854775808 as unsigned);
+CAST(0 as UNSIGNED) - cast(9223372036854775808 as unsigned)
+-9223372036854775808
+SELECT CAST(-1 as UNSIGNED) - cast(-9223372036854775808 as unsigned);
+CAST(-1 as UNSIGNED) - cast(-9223372036854775808 as unsigned)
+9223372036854775807
+SELECT cast(0 as unsigned) - cast(9223372036854775808 as unsigned);
+cast(0 as unsigned) - cast(9223372036854775808 as unsigned)
+-9223372036854775808
+SELECT -9223372036854775808 - (1);
+Error 1690 (22003): BIGINT value is out of range in '(-9223372036854775808 - 1)'
+SELECT 1 - (-9223372036854775808);
+Error 1690 (22003): BIGINT value is out of range in '(1 - -9223372036854775808)'
+SELECT 1 - (-9223372036854775807);
+Error 1690 (22003): BIGINT value is out of range in '(1 - -9223372036854775807)'
+SELECT CAST(-12 as UNSIGNED) - (-1);
+Error 1690 (22003): BIGINT value is out of range in '(18446744073709551604 - -1)'
+SELECT CAST(9223372036854775808 as UNSIGNED) - (0);
+Error 1690 (22003): BIGINT value is out of range in '(9223372036854775808 - 0)'
+SELECT CAST(-1 as UNSIGNED) - (9223372036854775807);
+Error 1690 (22003): BIGINT value is out of range in '(18446744073709551615 - 9223372036854775807)'
+SELECT CAST(9223372036854775808 as UNSIGNED) - 0;
+Error 1690 (22003): BIGINT value is out of range in '(9223372036854775808 - 0)'
+SELECT CAST(-1 as UNSIGNED) - (9223372036854775808);
+CAST(-1 as UNSIGNED) - (9223372036854775808)
+9223372036854775807
+SELECT CAST(1 as UNSIGNED) - (-9223372036854775808);
+Error 1690 (22003): BIGINT value is out of range in '(1 - -9223372036854775808)'
+SELECT CAST(1 as UNSIGNED) - (-9223372036854775807);
+Error 1690 (22003): BIGINT value is out of range in '(1 - -9223372036854775807)'
+SELECT CAST(1 as UNSIGNED) - (-9223372036854775806);
+CAST(1 as UNSIGNED) - (-9223372036854775806)
+9223372036854775807
+select cast(0 as unsigned) - 9223372036854775807;
+cast(0 as unsigned) - 9223372036854775807
+-9223372036854775807
+SELECT CAST(1 as SIGNED) - cast(9223372036854775810 as unsigned);
+Error 1690 (22003): BIGINT value is out of range in '(1 - 9223372036854775810)'
+SELECT CAST(-1 as SIGNED) - cast(9223372036854775808 as unsigned);
+Error 1690 (22003): BIGINT value is out of range in '(-1 - 9223372036854775808)'
+SELECT CAST(-9223372036854775807 as SIGNED) - cast(-1 as unsigned);
+Error 1690 (22003): BIGINT value is out of range in '(-9223372036854775807 - 18446744073709551615)'
+SELECT CAST(-1 as SIGNED) - cast(9223372036854775808 as unsigned);
+Error 1690 (22003): BIGINT value is out of range in '(-1 - 9223372036854775808)'
+select 0 - cast(9223372036854775807 as unsigned);
+0 - cast(9223372036854775807 as unsigned)
+-9223372036854775807
+SELECT CAST(1 as SIGNED) - cast(9223372036854775809 as unsigned);
+CAST(1 as SIGNED) - cast(9223372036854775809 as unsigned)
+-9223372036854775808
+SELECT CAST(-1 as SIGNED) - cast(9223372036854775807 as unsigned);
+CAST(-1 as SIGNED) - cast(9223372036854775807 as unsigned)
+-9223372036854775808
+SELECT 1 - CAST(18446744073709551615 as UNSIGNED);
+Error 1690 (22003): BIGINT value is out of range in '(1 - 18446744073709551615)'
+SELECT CAST(-1 as UNSIGNED) - 1;
+Error 1690 (22003): BIGINT value is out of range in '(18446744073709551615 - 1)'
+SELECT CAST(9223372036854775808 as UNSIGNED) - 1;
+CAST(9223372036854775808 as UNSIGNED) - 1
+9223372036854775807
+set @@sql_mode=default;
+drop table if exists t1;
+create table t1 (a int);
+insert into t1 values (0),(1),(NULL);
+SELECT * FROM t1 WHERE NOT a BETWEEN 2 AND 3;
+a
+0
+1
+SELECT NOT 1 BETWEEN -5 AND 5;
+NOT 1 BETWEEN -5 AND 5
+0
+set sql_mode='high_not_precedence';
+SELECT * FROM t1 WHERE NOT a BETWEEN 2 AND 3;
+a
+SELECT NOT 1 BETWEEN -5 AND 5;
+NOT 1 BETWEEN -5 AND 5
+1
+set @@sql_mode=default;
+set sql_mode='';
+CREATE TABLE COUNT (a bigint);
+DROP TABLE COUNT;
+CREATE TABLE `COUNT` (a bigint);
+DROP TABLE COUNT;
+CREATE TABLE COUNT(a bigint);
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 18 near "COUNT(a bigint);" 
+CREATE TABLE types__const.COUNT(a bigint);
+DROP TABLE COUNT;
+CREATE TABLE BIT_AND (a bigint);
+DROP TABLE BIT_AND;
+CREATE TABLE `BIT_AND` (a bigint);
+DROP TABLE BIT_AND;
+CREATE TABLE BIT_AND(a bigint);
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 20 near "BIT_AND(a bigint);" 
+CREATE TABLE types__const.BIT_AND(a bigint);
+DROP TABLE BIT_AND;
+CREATE TABLE NOW (a bigint);
+DROP TABLE NOW;
+CREATE TABLE `NOW` (a bigint);
+DROP TABLE NOW;
+CREATE TABLE NOW(a bigint);
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 16 near "NOW(a bigint);" 
+CREATE TABLE types__const.NOW(a bigint);
+DROP TABLE NOW;
+set sql_mode='IGNORE_SPACE';
+CREATE TABLE COUNT (a bigint);
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 19 near "COUNT (a bigint);" 
+CREATE TABLE `COUNT` (a bigint);
+DROP TABLE COUNT;
+CREATE TABLE COUNT(a bigint);
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 18 near "COUNT(a bigint);" 
+CREATE TABLE types__const.COUNT(a bigint);
+DROP TABLE COUNT;
+CREATE TABLE BIT_AND (a bigint);
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 21 near "BIT_AND (a bigint);" 
+CREATE TABLE `BIT_AND` (a bigint);
+DROP TABLE BIT_AND;
+CREATE TABLE BIT_AND(a bigint);
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 20 near "BIT_AND(a bigint);" 
+CREATE TABLE types__const.BIT_AND(a bigint);
+DROP TABLE BIT_AND;
+CREATE TABLE NOW (a bigint);
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 17 near "NOW (a bigint);" 
+CREATE TABLE `NOW` (a bigint);
+DROP TABLE NOW;
+CREATE TABLE NOW(a bigint);
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 16 near "NOW(a bigint);" 
+CREATE TABLE types__const.NOW(a bigint);
+DROP TABLE NOW;
+set @@sql_mode=default;
+set sql_mode='';
+SELECT '\\';
+\
+\
+set sql_mode='NO_BACKSLASH_ESCAPES';
+SELECT '\\';
+\\
+\\
+set @@sql_mode=default;

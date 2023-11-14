@@ -1,0 +1,23 @@
+drop table if exists t;
+create table t(a int, b int);
+explain update t t1, (select distinct b from t) t2 set t1.b = t2.b;
+id	estRows	task	access object	operator info
+Update_7	N/A	root		N/A
+└─Projection_9	80000000.00	root		planner__core__cbo.t.a, planner__core__cbo.t.b, planner__core__cbo.t._tidb_rowid, planner__core__cbo.t.b
+  └─HashJoin_10	80000000.00	root		CARTESIAN inner join
+    ├─HashAgg_18(Build)	8000.00	root		group by:planner__core__cbo.t.b, funcs:firstrow(planner__core__cbo.t.b)->planner__core__cbo.t.b
+    │ └─TableReader_19	8000.00	root		data:HashAgg_14
+    │   └─HashAgg_14	8000.00	cop[tikv]		group by:planner__core__cbo.t.b, 
+    │     └─TableFullScan_17	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+    └─TableReader_13(Probe)	10000.00	root		data:TableFullScan_12
+      └─TableFullScan_12	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+drop table if exists tb1, tb2;
+create table tb1(a int, b int, primary key(a));
+create table tb2 (a int, b int, c int, d datetime, primary key(c),key idx_u(a));
+update tb1 set tb1.b=(select tb2.b from tb2 where tb2.a=tb1.a order by c desc limit 1);
+create table t25219(a int primary key, col3 int, col1 int, index idx(col3));
+insert into t25219 values(1, 1, 1);
+analyze table t25219;
+select * from t25219 WHERE (col3 IS NULL OR col1 IS NOT NULL AND col3 <= 6659) AND col3 = 1;
+a	col3	col1
+1	1	1

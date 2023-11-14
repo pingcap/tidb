@@ -10,7 +10,7 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
-	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/stretchr/testify/require"
 )
 

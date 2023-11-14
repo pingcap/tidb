@@ -14,8 +14,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/trace"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/util/metricsutil"
+	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/util/metricsutil"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"sourcegraph.com/sourcegraph/appdash"
@@ -77,12 +77,12 @@ func printWorkaroundOnFullRestoreError(command *cobra.Command, err error) {
 	fmt.Println("#######################################################################")
 	switch {
 	case errors.ErrorEqual(err, berrors.ErrRestoreNotFreshCluster):
-		fmt.Println("# the target cluster is not fresh, br cannot restore system tables.")
+		fmt.Println("# the target cluster is not fresh, cannot restore.")
+		fmt.Println("# you can drop existing databases and tables and start restore again")
 	case errors.ErrorEqual(err, berrors.ErrRestoreIncompatibleSys):
 		fmt.Println("# the target cluster is not compatible with the backup data,")
-		fmt.Println("# br cannot restore system tables.")
+		fmt.Println("# you can remove 'with-sys-table' flag to skip restoring system tables")
 	}
-	fmt.Println("# you can remove 'with-sys-table' flag to skip restoring system tables")
 	fmt.Println("#######################################################################")
 }
 
