@@ -226,7 +226,7 @@ type readTestSuite struct {
 
 func readFileSequential(s *readTestSuite) {
 	ctx := context.Background()
-	files, _, err := GetAllFileNames(ctx, s.store, "evenly_distributed")
+	files, _, err := GetAllFileNames(ctx, s.store, "/evenly_distributed")
 	intest.AssertNoError(err)
 
 	buf := make([]byte, s.memoryLimit)
@@ -256,7 +256,7 @@ func readFileSequential(s *readTestSuite) {
 
 func readFileConcurrently(s *readTestSuite) {
 	ctx := context.Background()
-	files, _, err := GetAllFileNames(ctx, s.store, "evenly_distributed")
+	files, _, err := GetAllFileNames(ctx, s.store, "/evenly_distributed")
 	intest.AssertNoError(err)
 
 	conc := min(s.concurrency, len(files))
@@ -301,7 +301,7 @@ func createEvenlyDistributedFiles(
 	store := openTestingStorage(t)
 	ctx := context.Background()
 
-	files, statFiles, err := GetAllFileNames(ctx, store, "evenly_distributed")
+	files, statFiles, err := GetAllFileNames(ctx, store, "/evenly_distributed")
 	intest.AssertNoError(err)
 	err = store.DeleteFiles(ctx, files)
 	intest.AssertNoError(err)
@@ -315,7 +315,7 @@ func createEvenlyDistributedFiles(
 			SetMemorySizeLimit(uint64(float64(fileSize) * 1.1))
 		writer := builder.Build(
 			store,
-			"evenly_distributed",
+			"/evenly_distributed",
 			fmt.Sprintf("%d", i),
 		)
 
@@ -337,7 +337,7 @@ func createEvenlyDistributedFiles(
 
 func readMergeIter(s *readTestSuite) {
 	ctx := context.Background()
-	files, _, err := GetAllFileNames(ctx, s.store, "evenly_distributed")
+	files, _, err := GetAllFileNames(ctx, s.store, "/evenly_distributed")
 	intest.AssertNoError(err)
 
 	if s.beforeCreateReader != nil {
