@@ -21,26 +21,26 @@ import (
 	"go.uber.org/zap"
 )
 
-// SortPartitionSpillDiskAction implements memory.ActionOnExceed for chunk.List. If
-// the memory quota of a query is exceeded, SortPartitionSpillDiskAction.Action is
+// sortPartitionSpillDiskAction implements memory.ActionOnExceed for chunk.List. If
+// the memory quota of a query is exceeded, sortPartitionSpillDiskAction.Action is
 // triggered.
-type SortPartitionSpillDiskAction struct {
+type sortPartitionSpillDiskAction struct {
 	memory.BaseOOMAction
 	partition      *sortPartition
 	spillTriggered bool
 }
 
 // GetPriority get the priority of the Action.
-func (*SortPartitionSpillDiskAction) GetPriority() int64 {
+func (*sortPartitionSpillDiskAction) GetPriority() int64 {
 	return memory.DefSpillPriority
 }
 
-func (s *SortPartitionSpillDiskAction) isSpillTriggered() bool {
+func (s *sortPartitionSpillDiskAction) isSpillTriggered() bool {
 	return s.spillTriggered
 }
 
 // TODO If it is already triggered before, call its fallbackAction.
-func (s *SortPartitionSpillDiskAction) Action(t *memory.Tracker) {
+func (s *sortPartitionSpillDiskAction) Action(t *memory.Tracker) {
 	// Currently, `Action` is always triggered by only one goroutine, so no lock is needed here so far.
 	if !s.spillTriggered && s.partition.hasEnoughDataToSpill(s.partition.getMemTracker()) {
 		logutil.BgLogger().Info("memory exceeds quota, spill sort partition data to disk now.",

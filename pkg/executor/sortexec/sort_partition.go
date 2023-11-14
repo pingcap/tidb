@@ -50,7 +50,7 @@ type sortPartition struct {
 
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
-	spillAction *SortPartitionSpillDiskAction
+	spillAction *sortPartitionSpillDiskAction
 
 	// rowPtrs store the chunk index and row index for each row.
 	// rowPtrs != nil indicates the pointer is initialized and sorted.
@@ -78,7 +78,7 @@ func newSortPartition(fieldTypes []*types.FieldType, chunkSize int, byItemsDesc 
 		spillError:  nil,
 		memTracker:  memory.NewTracker(memory.LabelForSortPartition, -1),
 		diskTracker: disk.NewTracker(memory.LabelForSortPartition, -1),
-		spillAction: nil, // It's set in `ActionSpill` function
+		spillAction: nil, // It's set in `actionSpill` function
 		byItemsDesc: byItemsDesc,
 		keyColumns:  keyColumns,
 		keyCmpFuncs: keyCmpFuncs,
@@ -199,10 +199,9 @@ func (s *sortPartition) spillToDisk() {
 	s.spillToDiskImpl()
 }
 
-// ActionSpill returns a SortAndSpillDiskAction for sorting and spilling over to disk.
-func (s *sortPartition) ActionSpill() *SortPartitionSpillDiskAction {
+func (s *sortPartition) actionSpill() *sortPartitionSpillDiskAction {
 	if s.spillAction == nil {
-		s.spillAction = &SortPartitionSpillDiskAction{
+		s.spillAction = &sortPartitionSpillDiskAction{
 			partition:      s,
 			spillTriggered: false,
 		}

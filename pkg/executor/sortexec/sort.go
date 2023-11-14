@@ -61,7 +61,7 @@ type SortExec struct {
 	// The multi-way merge algorithm can refer to https://en.wikipedia.org/wiki/K-way_merge_algorithm
 	multiWayMerge *multiWayMerge
 	// spillAction save the Action for spill disk.
-	spillAction *SortPartitionSpillDiskAction
+	spillAction *sortPartitionSpillDiskAction
 }
 
 // Close implements the Executor Close interface.
@@ -222,7 +222,7 @@ func (e *SortExec) switchToNewSortPartition(fields []*types.FieldType, byItemsDe
 	e.SortPartitionList = append(e.SortPartitionList, e.partition)
 
 	e.partition = newSortPartition(fields, e.MaxChunkSize(), byItemsDesc, e.keyColumns, e.keyCmpFuncs)
-	e.spillAction = e.partition.ActionSpill()
+	e.spillAction = e.partition.actionSpill()
 	e.partition.getMemTracker().AttachTo(e.memTracker)
 	e.partition.getMemTracker().SetLabel(memory.LabelForRowChunks)
 	e.partition.getDiskTracker().AttachTo(e.diskTracker)
@@ -245,7 +245,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	}
 
 	e.partition = newSortPartition(fields, e.MaxChunkSize(), byItemsDesc, e.keyColumns, e.keyCmpFuncs)
-	e.spillAction = e.partition.ActionSpill()
+	e.spillAction = e.partition.actionSpill()
 	e.partition.getMemTracker().AttachTo(e.memTracker)
 	e.partition.getMemTracker().SetLabel(memory.LabelForRowChunks)
 
