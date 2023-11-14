@@ -513,7 +513,7 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 	// Build rangePoints for non-equal access conditions.
 	for i := eqAndInCount; i < len(accessConds); i++ {
 		collator := collate.GetCollator(newTp[eqAndInCount].GetCollate())
-		rangePoints = rb.intersection(rangePoints, rb.build(accessConds[i], collator, d.lengths[i]), collator)
+		rangePoints = rb.intersection(rangePoints, rb.build(accessConds[i], collator, d.lengths[eqAndInCount]), collator)
 		if rb.err != nil {
 			return nil, nil, nil, errors.Trace(rb.err)
 		}
@@ -636,7 +636,6 @@ func fixPrefixPointRange(startPoint *point, endPoint *point, length int, tp *typ
 			endPoint.excl = false
 		}
 	}
-
 }
 
 // fixPrefixColRange checks whether the range of one column exceeds the length and needs to be cut.
