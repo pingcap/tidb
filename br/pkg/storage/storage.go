@@ -97,6 +97,8 @@ type ReaderOption struct {
 	StartOffset *int64
 	// EndOffset is exclusive. And it's incompatible with Seek.
 	EndOffset *int64
+	// PrefetchSize will switch to NewPrefetchReader if value is positive.
+	PrefetchSize int
 }
 
 // ExternalStorage represents a kind of file system storage.
