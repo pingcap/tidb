@@ -317,19 +317,19 @@ type topNRows struct {
 	collators      []collate.Collator
 }
 
-func (t topNRows) Len() int {
-	return len(t.rows)
+func (h topNRows) Len() int {
+	return len(h.rows)
 }
 
-func (t topNRows) Less(i, j int) bool {
-	n := len(t.rows[i].byItems)
+func (h topNRows) Less(i, j int) bool {
+	n := len(h.rows[i].byItems)
 	for k := 0; k < n; k++ {
-		ret, err := t.rows[i].byItems[k].Compare(t.sctx.GetSessionVars().StmtCtx.TypeCtx(), t.rows[j].byItems[k], t.collators[k])
+		ret, err := h.rows[i].byItems[k].Compare(h.sctx.GetSessionVars().StmtCtx.TypeCtx(), h.rows[j].byItems[k], h.collators[k])
 		if err != nil {
-			t.err = err
+			h.err = err
 			return false
 		}
-		if t.desc[k] {
+		if h.desc[k] {
 			ret = -ret
 		}
 		if ret > 0 {
@@ -342,73 +342,73 @@ func (t topNRows) Less(i, j int) bool {
 	return false
 }
 
-func (t topNRows) Swap(i, j int) {
-	t.rows[i], t.rows[j] = t.rows[j], t.rows[i]
+func (h topNRows) Swap(i, j int) {
+	h.rows[i], h.rows[j] = h.rows[j], h.rows[i]
 }
 
-func (t *topNRows) Push(x interface{}) {
-	t.rows = append(t.rows, x.(sortRow))
+func (h *topNRows) Push(x interface{}) {
+	h.rows = append(h.rows, x.(sortRow))
 }
 
-func (t *topNRows) Pop() interface{} {
-	n := len(t.rows)
-	x := t.rows[n-1]
-	t.rows = t.rows[:n-1]
+func (h *topNRows) Pop() interface{} {
+	n := len(h.rows)
+	x := h.rows[n-1]
+	h.rows = h.rows[:n-1]
 	return x
 }
 
-func (t *topNRows) tryToAdd(row sortRow) (truncated bool, memDelta int64) {
-	t.currSize += uint64(row.buffer.Len())
-	if len(t.rows) > 0 {
-		t.currSize += t.sepSize
+func (h *topNRows) tryToAdd(row sortRow) (truncated bool, memDelta int64) {
+	h.currSize += uint64(row.buffer.Len())
+	if len(h.rows) > 0 {
+		h.currSize += h.sepSize
 	}
-	heap.Push(t, row)
+	heap.Push(h, row)
 	memDelta += int64(row.buffer.Cap())
 	for _, dt := range row.byItems {
 		memDelta += GetDatumMemSize(dt)
 	}
-	if t.currSize <= t.limitSize {
+	if h.currSize <= h.limitSize {
 		return false, memDelta
 	}
 
-	for t.currSize > t.limitSize {
-		debt := t.currSize - t.limitSize
-		heapPopRow := heap.Pop(t).(sortRow)
+	for h.currSize > h.limitSize {
+		debt := h.currSize - h.limitSize
+		heapPopRow := heap.Pop(h).(sortRow)
 		if uint64(heapPopRow.buffer.Len()) > debt {
-			t.currSize -= debt
+			h.currSize -= debt
 			heapPopRow.buffer.Truncate(heapPopRow.buffer.Len() - int(debt))
-			heap.Push(t, heapPopRow)
+			heap.Push(h, heapPopRow)
 		} else {
-			t.currSize -= uint64(heapPopRow.buffer.Len()) + t.sepSize
+			h.currSize -= uint64(heapPopRow.buffer.Len()) + h.sepSize
 			memDelta -= int64(heapPopRow.buffer.Cap())
 			for _, dt := range heapPopRow.byItems {
 				memDelta -= GetDatumMemSize(dt)
 			}
-			t.isSepTruncated = true
+			h.isSepTruncated = true
 		}
 	}
 	return true, memDelta
 }
 
-func (t *topNRows) reset() {
-	t.rows = t.rows[:0]
-	t.err = nil
-	t.currSize = 0
+func (h *topNRows) reset() {
+	h.rows = h.rows[:0]
+	h.err = nil
+	h.currSize = 0
 }
 
-func (t *topNRows) concat(sep string, _ bool) string {
+func (h *topNRows) concat(sep string, _ bool) string {
 	buffer := new(bytes.Buffer)
-	sort.Sort(sort.Reverse(t))
-	for i, row := range t.rows {
+	sort.Sort(sort.Reverse(h))
+	for i, row := range h.rows {
 		if i != 0 {
 			buffer.WriteString(sep)
 		}
 		buffer.Write(row.buffer.Bytes())
 	}
-	if t.isSepTruncated {
+	if h.isSepTruncated {
 		buffer.WriteString(sep)
-		if uint64(buffer.Len()) > t.limitSize {
-			buffer.Truncate(int(t.limitSize))
+		if uint64(buffer.Len()) > h.limitSize {
+			buffer.Truncate(int(h.limitSize))
 		}
 	}
 	return buffer.String()
