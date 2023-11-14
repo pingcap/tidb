@@ -57,7 +57,7 @@ type sortPartition struct {
 	// It will get an ErrCannotAddBecauseSorted when trying to insert data if rowPtrs != nil.
 	rowPtrs []chunk.RowPtr
 
-	ByItemsDesc []bool
+	byItemsDesc []bool
 	// keyColumns is the column index of the by items.
 	keyColumns []int
 	// keyCmpFuncs is used to compare each ByItem.
@@ -79,7 +79,7 @@ func newSortPartition(fieldTypes []*types.FieldType, chunkSize int, byItemsDesc 
 		memTracker:  memory.NewTracker(memory.LabelForSortPartition, -1),
 		diskTracker: disk.NewTracker(memory.LabelForSortPartition, -1),
 		spillAction: nil, // It's set in `ActionSpill` function
-		ByItemsDesc: byItemsDesc,
+		byItemsDesc: byItemsDesc,
 		keyColumns:  keyColumns,
 		keyCmpFuncs: keyCmpFuncs,
 	}
@@ -235,7 +235,7 @@ func (s *sortPartition) lessRow(rowI, rowJ chunk.Row) bool {
 		cmpFunc := s.keyCmpFuncs[i]
 		if cmpFunc != nil {
 			cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
-			if s.ByItemsDesc[i] {
+			if s.byItemsDesc[i] {
 				cmp = -cmp
 			}
 			if cmp < 0 {
