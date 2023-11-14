@@ -531,7 +531,7 @@ func (b *builtinCastJSONAsTimeSig) vecEvalTime(ctx sessionctx.Context, input *ch
 			if err != nil {
 				return err
 			}
-			tm, err := types.ParseTime(stmtCtx.TypeCtx(), s, b.tp.GetType(), fsp, nil)
+			tm, err := types.ParseTime(stmtCtx.TypeCtx(), s, b.tp.GetType(), fsp)
 			if err != nil {
 				if err = handleInvalidTimeError(b.ctx, err); err != nil {
 					return err
@@ -1770,7 +1770,7 @@ func (b *builtinCastStringAsTimeSig) vecEvalTime(ctx sessionctx.Context, input *
 		if result.IsNull(i) {
 			continue
 		}
-		tm, err := types.ParseTime(stmtCtx.TypeCtx(), buf.GetString(i), b.tp.GetType(), fsp, nil)
+		tm, err := types.ParseTime(stmtCtx.TypeCtx(), buf.GetString(i), b.tp.GetType(), fsp)
 		if err != nil {
 			if errors.Is(err, strconv.ErrSyntax) || errors.Is(err, strconv.ErrRange) {
 				err = types.ErrIncorrectDatetimeValue.GenWithStackByArgs(buf.GetString(i))
