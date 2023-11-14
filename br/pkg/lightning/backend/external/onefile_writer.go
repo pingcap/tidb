@@ -19,10 +19,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
-	"fmt"
-	"os"
 	"path/filepath"
-	"runtime/pprof"
 	"slices"
 	"strconv"
 	"time"
@@ -211,13 +208,13 @@ func (w *OneFileWriter) flushKVs(ctx context.Context, fromClose bool) (err error
 			return err
 		}
 	}
-	{
-		// profile...
-		file, _ := os.Create(fmt.Sprintf("heap-profile-%d.prof", w.fileIdx))
-		w.fileIdx++
-		// check heap profile to see the memory usage is expected
-		err = pprof.WriteHeapProfile(file)
-	}
+	// {
+	// 	// profile...
+	// 	file, _ := os.Create(fmt.Sprintf("heap-profile-%d.prof", w.fileIdx))
+	// 	w.fileIdx++
+	// 	// check heap profile to see the memory usage is expected
+	// 	err = pprof.WriteHeapProfile(file)
+	// }
 
 	w.kvStore.Close()
 	encodedStat := w.rc.encode()
