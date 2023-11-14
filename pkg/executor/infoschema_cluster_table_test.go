@@ -34,10 +34,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/store/helper"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client/http"
 	"google.golang.org/grpc"
 )
@@ -54,9 +56,12 @@ type infosSchemaClusterTableSuite struct {
 
 func createInfosSchemaClusterTableSuite(t *testing.T) *infosSchemaClusterTableSuite {
 	s := new(infosSchemaClusterTableSuite)
-	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
-	s.rpcServer, s.listenAddr = setUpRPCService(t, s.dom, "127.0.0.1:0")
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(
+		t,
+		mockstore.WithTiKVOptions(tikv.WithPDHTTPClient([]string{s.mockAddr})),
+	)
+	s.rpcServer, s.listenAddr = setUpRPCService(t, s.dom, "127.0.0.1:0")
 	s.startTime = time.Now()
 	t.Cleanup(func() {
 		if s.rpcServer != nil {

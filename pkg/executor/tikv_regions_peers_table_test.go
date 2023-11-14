@@ -26,9 +26,11 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/pingcap/fn"
 	"github.com/pingcap/tidb/pkg/store/helper"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client/http"
 )
 
@@ -110,7 +112,8 @@ func TestTikvRegionPeers(t *testing.T) {
 	router.HandleFunc(pdapi.RegionByID+"/"+"{id}", regionsInfoHandler)
 	defer server.Close()
 
-	store := testkit.CreateMockStore(t)
+	store := testkit.CreateMockStore(t,
+		mockstore.WithTiKVOptions(tikv.WithPDHTTPClient([]string{mockAddr})))
 
 	store = &mockStore{
 		store.(helper.Storage),

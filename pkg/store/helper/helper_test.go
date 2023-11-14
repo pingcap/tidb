@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client/http"
 	"go.opencensus.io/stats/view"
 	"go.uber.org/zap"
@@ -116,16 +117,7 @@ func TestTiKVStoresStat(t *testing.T) {
 
 type mockStore struct {
 	helper.Storage
-	pdAddrs      []string
-	pdHTTPClient pd.Client
-}
-
-func newMockStore(storage helper.Storage, pdAddrs []string) *mockStore {
-	return &mockStore{
-		Storage:      storage,
-		pdAddrs:      pdAddrs,
-		pdHTTPClient: pd.NewClient(pdAddrs),
-	}
+	pdAddrs []string
 }
 
 func (s *mockStore) EtcdAddrs() ([]string, error) {
@@ -148,24 +140,22 @@ func (s *mockStore) Describe() string {
 	return ""
 }
 
-func (s *mockStore) GetPDHTTPClient() pd.Client {
-	return s.pdHTTPClient
-}
-
 func createMockStore(t *testing.T) (store helper.Storage) {
+	server := mockPDHTTPServer()
+
+	pdAddrs := []string{"invalid_pd_address", server.URL[len("http://"):]}
 	s, err := mockstore.NewMockStore(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithMultiRegions(c, []byte("x"))
 		}),
+		mockstore.WithTiKVOptions(tikv.WithPDHTTPClient(pdAddrs)),
 	)
 	require.NoError(t, err)
 
-	server := mockPDHTTPServer()
-
-	store = newMockStore(
+	store = &mockStore{
 		s.(helper.Storage),
-		[]string{"invalid_pd_address", server.URL[len("http://"):]},
-	)
+		pdAddrs,
+	}
 
 	t.Cleanup(func() {
 		server.Close()
