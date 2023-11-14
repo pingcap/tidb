@@ -496,8 +496,10 @@ func TestMultiUploadErrorNotOverwritten(t *testing.T) {
 	require.NoError(t, err)
 	// data should be larger than 5MB to trigger CreateMultipartUploadWithContext path
 	data := make([]byte, 5*1024*1024+6716)
-	_, err = w.Write(ctx, data)
-	require.ErrorContains(t, err, "mock error")
+	n, err := w.Write(ctx, data)
+	require.NoError(t, err)
+	require.Equal(t, 5*1024*1024+6716, n)
+	require.ErrorContains(t, w.Close(ctx), "mock error")
 }
 
 // TestReadNoError ensures the ReadFile API issues a GetObject request and correctly
