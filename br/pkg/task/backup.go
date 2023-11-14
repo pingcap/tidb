@@ -57,6 +57,7 @@ const (
 	flagUseCheckpoint    = "use-checkpoint"
 	flagKeyspaceName     = "keyspace-name"
 	flagReplicaReadLabel = "replica-read-label"
+	flagTableConcurrency = "table-concurrency"
 
 	flagGCTTL = "gcttl"
 
@@ -92,6 +93,7 @@ type BackupConfig struct {
 	UseBackupMetaV2  bool              `json:"use-backupmeta-v2"`
 	UseCheckpoint    bool              `json:"use-checkpoint" toml:"use-checkpoint"`
 	ReplicaReadLabel map[string]string `json:"replica-read-label" toml:"replica-read-label"`
+	TableConcurrency uint              `json:"table-concurrency" toml:"table-concurrency"`
 	CompressionConfig
 
 	// for ebs-based backup
@@ -122,6 +124,9 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 	flags.Uint32(flagConcurrency, 4, "The size of a BR thread pool that executes tasks, "+
 		"One task represents one table range (or one index range) according to the backup schemas. If there is one table with one index."+
 		"there will be two tasks to back up this table. This value should increase if you need to back up lots of tables or indices.")
+
+	flags.Uint32(flagTableConcurrency, backup.DefaultSchemaConcurrency, "The size of a BR thread pool that backup table metas, "+
+		"including tableInfo/checksum and stats.")
 
 	flags.Bool(flagRemoveSchedulers, false,
 		"disable the balance, shuffle and region-merge schedulers in PD to speed up backup")
@@ -195,6 +200,9 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	cfg.GCTTL = gcTTL
 	cfg.Concurrency, err = flags.GetUint32(flagConcurrency)
 	if err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.TableConcurrency, err = flags.GetUint(flagTableConcurrency); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -718,7 +726,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		}
 	}
 	updateCh = g.StartProgress(ctx, "Checksum", checksumProgress, !cfg.LogProgress)
-	schemasConcurrency := uint(min(backup.DefaultSchemaConcurrency, schemas.Len()))
+	schemasConcurrency := uint(min(cfg.TableConcurrency, uint(schemas.Len())))
 
 	err = schemas.BackupSchemas(
 		ctx, metawriter, client.GetCheckpointRunner(), mgr.GetStorage(), statsHandle, backupTS, schemasConcurrency, cfg.ChecksumConcurrency, skipChecksum, updateCh)
