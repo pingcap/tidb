@@ -19,6 +19,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"runtime/pprof"
 	"sync"
@@ -37,7 +38,12 @@ func openTestingStorage(t *testing.T) storage.ExternalStorage {
 	if *testingStorageURI == "" {
 		t.Skip("testingStorageURI is not set")
 	}
-	s, err := storage.NewFromURL(context.Background(), *testingStorageURI, nil)
+	opt := &storage.ExternalStorageOptions{}
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.ReadBufferSize = 64 * 1024
+	cli := &http.Client{Transport: tr}
+	opt.HTTPClient = cli
+	s, err := storage.NewFromURL(context.Background(), *testingStorageURI, opt)
 	intest.AssertNoError(err)
 	return s
 }
