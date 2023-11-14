@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -783,13 +784,18 @@ type mockResourceGroupProvider struct {
 	cfg rmclient.Config
 }
 
-func (p *mockResourceGroupProvider) LoadGlobalConfig(ctx context.Context, names []string, configPath string) ([]pd.GlobalConfigItem, int64, error) {
-	if configPath != "resource_group/controller" {
-		return nil, 0, errors.New("unsupported configPath")
+func (p *mockResourceGroupProvider) Get(ctx context.Context, key []byte, opts ...pd.OpOption) (*meta_storagepb.GetResponse, error) {
+	if string(key) != "resource_group/controller" {
+		return nil, errors.New("unsupported configPath")
 	}
 	payload, _ := json.Marshal(&p.cfg)
-	item := pd.GlobalConfigItem{
-		PayLoad: payload,
-	}
-	return []pd.GlobalConfigItem{item}, 0, nil
+	return &meta_storagepb.GetResponse{
+		Count: 1,
+		Kvs: []*meta_storagepb.KeyValue{
+			{
+				Key:   key,
+				Value: payload,
+			},
+		},
+	}, nil
 }
