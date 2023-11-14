@@ -291,26 +291,29 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		}
 	})
 
-	if e.isSpillTriggered() {
-		// If e.partition haven't trigger the spill. We need to manually trigger it.
-		// As all data should be in disk when spill is triggered.
-		if !e.partition.spillAction.spillTriggered {
-			e.partition.spillAction.spillTriggered = true
-			e.partition.spillError = errSpillIsTriggered
-			e.partition.spillToDisk()
+	if e.partition.numRowInMemory() > 0 || e.partition.spillAction.spillTriggered {
+		// The last partition is not empty
+		if e.isSpillTriggered() {
+			// If e.partition haven't trigger the spill. We need to manually trigger it.
+			// As all data should be in disk when spill is triggered.
+			if !e.partition.spillAction.spillTriggered {
+				e.partition.spillAction.spillTriggered = true
+				e.partition.spillError = errSpillIsTriggered
+				e.partition.spillToDisk()
+			}
+
+			if !errors.Is(e.partition.spillError, errSpillIsTriggered) {
+				return e.partition.spillError
+			}
+		} else {
+			err := e.partition.sort()
+			if err != nil {
+				return err
+			}
 		}
 
-		if !errors.Is(e.partition.spillError, errSpillIsTriggered) {
-			return e.partition.spillError
-		}
-	} else {
-		err := e.partition.sort()
-		if err != nil {
-			return err
-		}
+		e.SortPartitionList = append(e.SortPartitionList, e.partition)
 	}
-
-	e.SortPartitionList = append(e.SortPartitionList, e.partition)
 	return e.initCursors(len(e.SortPartitionList))
 }
 
