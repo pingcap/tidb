@@ -22,6 +22,7 @@ import (
 	"math"
 	"sort"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
@@ -328,7 +329,7 @@ func (dsp *BackfillingDispatcherExt) generateNonPartitionPlan(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	logger.Info("set writer memSize", zap.Uint64("memSize", memSize))
+	logger.Info("set writer memSize", zap.String("size", units.BytesSize(float64(memSize))))
 	startKey, endKey, err := getTableRange(d.jobContext(job.ID, job.ReorgMeta), d.ddlCtx, tbl.(table.PhysicalTable), ver.Ver, job.Priority)
 	if startKey == nil && endKey == nil {
 		// Empty table.
@@ -484,7 +485,7 @@ func (dsp *BackfillingDispatcherExt) generateMergePlan(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	logger.Info("set merge sort writer partSize", zap.Uint64("partSize", partSize))
+	logger.Info("set merge sort writer partSize", zap.String("size", units.BytesSize(float64(partSize))))
 	// check data files overlaps,
 	// if data files overlaps too much, we need a merge step.
 	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, StepReadIndex)

@@ -3,6 +3,7 @@ package external
 import (
 	"context"
 
+	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -38,6 +39,7 @@ func MergeOverlappingFiles(ctx context.Context, paths []string, store storage.Ex
 		zap.Int("concurrency", concurrency))
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(concurrency)
+	partSize = min(5*units.MB, partSize)
 	for _, files := range dataFilesSlice {
 		files := files
 		eg.Go(func() error {
