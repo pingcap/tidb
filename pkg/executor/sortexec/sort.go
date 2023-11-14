@@ -296,6 +296,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		// As all data should be in disk when spill is triggered.
 		if !e.partition.spillAction.spillTriggered {
 			e.partition.spillAction.spillTriggered = true
+			e.partition.spillError = errSpillIsTriggered
 			e.partition.spillToDisk()
 		}
 
