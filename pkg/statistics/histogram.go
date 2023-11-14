@@ -225,7 +225,7 @@ func (hg *Histogram) DestroyAndPutToPool() {
 	if hg == nil {
 		return
 	}
-	hg.Bounds.Destory(len(hg.Buckets), []*types.FieldType{hg.Tp})
+	hg.Bounds.Destroy(len(hg.Buckets), []*types.FieldType{hg.Tp})
 }
 
 // HistogramEqual tests if two histograms are equal.

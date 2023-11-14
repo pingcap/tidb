@@ -675,6 +675,7 @@ func (c *Chunk) AppendPartialRows(colOff int, rows []Row) {
 	}
 }
 
-func (c *Chunk) Destory(initCap int, fields []*types.FieldType) {
+// Destroy is to destroy the Chunk and put Chunk into the pool
+func (c *Chunk) Destroy(initCap int, fields []*types.FieldType) {
 	putChunkFromPool(initCap, fields, c)
 }
