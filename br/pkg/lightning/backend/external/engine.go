@@ -18,8 +18,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"github.com/jfcg/sorty/v2"
+	"io"
 	"slices"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/cockroachdb/pebble"
@@ -47,6 +50,11 @@ import (
 // TODO: adjust it according to cloud storage.
 const maxCloudStorageConnections = 1000
 
+type simpleKV struct {
+	key   []byte
+	value []byte
+}
+
 // Engine stored sorted key/value pairs in an external storage.
 type Engine struct {
 	storage         storage.ExternalStorage
@@ -57,6 +65,8 @@ type Engine struct {
 	splitKeys       [][]byte
 	regionSplitSize int64
 	bufPool         *membuf.Pool
+	memKvs          []simpleKV
+	memKvsMutex     sync.Mutex
 	// checkHotspot is true means we will check hotspot file when using MergeKVIter.
 	// if hotspot file is detected, we will use multiple readers to read data.
 	// if it's false, MergeKVIter will read each file using 1 reader.
@@ -153,6 +163,130 @@ func (e *Engine) getAdjustedConcurrency() int {
 	return max(adjusted, 1)
 }
 
+const concurrentReadThreshold = 96 * 1024 * 1024
+
+func (e *Engine) checkConcurrentFiles(ctx context.Context, startKey, endKey []byte) ([]bool, []uint64, error) {
+	result := make([]bool, len(e.dataFiles))
+	startOffs, err := seekPropsOffsets(ctx, startKey, e.statsFiles, e.storage, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	endOffs, err := seekPropsOffsets(ctx, startKey, e.statsFiles, e.storage, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	for i := range e.dataFiles {
+		if endOffs[i]-startOffs[i] > concurrentReadThreshold {
+			result[i] = true
+		}
+	}
+	return result, startOffs, nil
+}
+
+func (e *Engine) readOneFile(ctx context.Context, fileIdx int, startKey, endKey []byte, startOffset uint64, concurrent bool) error {
+	rd, err := newKVReader(ctx, e.dataFiles[fileIdx], e.storage, startOffset, 64*1024)
+	if err != nil {
+		return err
+	}
+	defer rd.Close()
+	if concurrent {
+		// TODO: don't destroy e.bufPool.NewBuffer() when rd.close.
+		rd.byteReader.enableConcurrentRead(
+			e.storage,
+			e.dataFiles[fileIdx],
+			256,
+			ConcurrentReaderBufferSizePerConc,
+			e.bufPool.NewBuffer(),
+		)
+		err = rd.byteReader.switchConcurrentMode(true)
+		if err != nil {
+			return err
+		}
+	}
+
+	memBuf := e.bufPool.NewBuffer()
+	memkvsOfThisFile := make([]simpleKV, 0, 1024)
+
+	for {
+		k, v, err := rd.nextKV()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+		if bytes.Compare(k, startKey) < 0 {
+			continue
+		}
+		if bytes.Compare(k, endKey) >= 0 {
+			break
+		}
+		memkvsOfThisFile = append(memkvsOfThisFile, simpleKV{key: memBuf.AddBytes(k), value: memBuf.AddBytes(v)})
+	}
+	e.memKvsMutex.Lock()
+	e.memKvs = append(e.memKvs, memkvsOfThisFile...)
+	e.memKvsMutex.Unlock()
+	return nil
+}
+
+func (e *Engine) readAllData(ctx context.Context, startKey, endKey []byte) (*membuf.Buffer, error) {
+	e.memKvs = make([]simpleKV, 0, 1024*256)
+	useConcurrency, startOffsets, err := e.checkConcurrentFiles(ctx, startKey, endKey)
+	if err != nil {
+		return nil, err
+	}
+	var eg errgroup.Group
+	for i := range e.dataFiles {
+		i := i
+		eg.Go(func() error {
+			return e.readOneFile(ctx, i, startKey, endKey, startOffsets[i], useConcurrency[i])
+		})
+	}
+	return nil, eg.Wait()
+}
+
+func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byte, outCh chan<- common.DataAndRange) error {
+	buf, err := e.readAllData(ctx, startKey, endKey)
+	if err != nil {
+		return err
+	}
+	sorty.MaxGor = uint64(e.workerConcurrency)
+	sorty.Sort(len(e.memKvs), func(i, k, r, s int) bool {
+		if bytes.Compare(e.memKvs[i].key, e.memKvs[k].key) < 0 { // strict comparator like < or >
+			if r != s {
+				e.memKvs[r], e.memKvs[s] = e.memKvs[s], e.memKvs[r]
+			}
+			return true
+		}
+		return false
+	})
+	keys := make([][]byte, 0, 1024)
+	values := make([][]byte, 0, 1024)
+	var start, end []byte
+	for _, kv := range e.memKvs {
+		keys = append(keys, kv.key)
+		values = append(values, kv.value)
+	}
+	start = keys[0]
+	end = keys[len(keys)-1]
+	id := e.buildIngestData(keys, values, buf)
+	sendFn := func(dr common.DataAndRange) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case outCh <- dr:
+		}
+		return nil
+	}
+	return sendFn(common.DataAndRange{
+		Data: id,
+		Range: common.Range{
+			Start: start,
+			End:   end,
+		},
+	})
+}
+
 // LoadIngestData loads the data from the external storage to memory in [start,
 // end) range, so local backend can ingest it. The used byte slice of ingest data
 // are allocated from Engine.bufPool and must be released by
@@ -162,6 +296,15 @@ func (e *Engine) LoadIngestData(
 	regionRanges []common.Range,
 	outCh chan<- common.DataAndRange,
 ) error {
+	regionBatchSize := 40
+	for i := 0; i < len(regionRanges); i += regionBatchSize {
+		err := e.loadBatchRegionData(ctx, regionRanges[i].Start, regionRanges[min(i+regionBatchSize, len(regionRanges))-1].End, outCh)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+
 	concurrency := e.getAdjustedConcurrency()
 	rangeGroups := split(regionRanges, concurrency)
 
