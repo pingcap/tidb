@@ -66,7 +66,7 @@ func (r *PrefetchReader) Read(data []byte) (int, error) {
 		}
 
 		data = data[n:]
-		if err == io.EOF {
+		if err == io.EOF || r.curBufReader.Len() == 0 {
 			r.curBufReader = nil
 			continue
 		}
