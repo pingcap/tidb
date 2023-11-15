@@ -29,7 +29,6 @@ import (
 	tmysql "github.com/pingcap/tidb/pkg/errno"
 	drivererr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/tikv/pd/client/errs"
-
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
