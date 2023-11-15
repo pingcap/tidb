@@ -569,10 +569,17 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 
 func (p *Plan) adjustOptions() {
 	// max value is cpu-count
-	numCPU := int64(runtime.GOMAXPROCS(0))
-	if p.ThreadCnt > numCPU {
-		log.L().Info("IMPORT INTO thread count is larger than cpu-count, set to cpu-count")
-		p.ThreadCnt = numCPU
+	limit := int64(runtime.GOMAXPROCS(0))
+	if p.DataSourceType == DataSourceTypeQuery {
+		// for query, row is produced using 1 thread, the max cpu used is much
+		// lower than cpu-count when we set ThreadCnt=cpu-count, so we set
+		// limit to 2*cpu-count.
+		limit *= 2
+	}
+	if p.ThreadCnt > limit {
+		log.L().Info("adjust IMPORT INTO thread count",
+			zap.Int64("before", p.ThreadCnt), zap.Int64("after", limit))
+		p.ThreadCnt = limit
 	}
 }
 

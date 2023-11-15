@@ -132,10 +132,11 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	eg.Go(func() error {
 		defer close(selectedRowCh)
 		fields := retTypes(e.selectExec)
-		chk := tryNewCacheChunk(e.selectExec)
-		iter := chunk.NewIterator4Chunk(chk)
 		var idAllocator int64
 		for {
+			// rows will be consumed concurrently, we cannot use chunk pool in session ctx.
+			chk := newFirstChunk(e.selectExec)
+			iter := chunk.NewIterator4Chunk(chk)
 			err := Next(egCtx, e.selectExec, chk)
 			if err != nil {
 				return err
