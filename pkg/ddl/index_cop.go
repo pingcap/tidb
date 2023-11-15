@@ -17,7 +17,9 @@ package ddl
 import (
 	"context"
 	"encoding/hex"
+	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -25,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
+	util2 "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -83,10 +86,12 @@ type copReqSenderPool struct {
 	wg      sync.WaitGroup
 	closed  bool
 
-	srcChkPool chan *chunk.Chunk
+	srcChkPool  chan *chunk.Chunk
+	workerSeqID *atomic.Int64
 }
 
 type copReqSender struct {
+	seq        int
 	senderPool *copReqSenderPool
 
 	ctx    context.Context
@@ -121,7 +126,9 @@ func (c *copReqSender) run() {
 				zap.String("task end key", hex.EncodeToString(task.endKey)))
 			continue
 		}
-		err := scanRecords(p, task, se)
+		finish := util2.InjectSpan(p.copCtx.GetBase().JobID, fmt.Sprintf("scan-records-%d", c.seq))
+		err := scanRecords(c.seq, p, task, se)
+		finish()
 		if err != nil {
 			p.chunkSender.AddTask(IndexRecordChunk{ID: task.id, Err: err})
 			return
@@ -129,12 +136,11 @@ func (c *copReqSender) run() {
 	}
 }
 
-func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session) error {
+func scanRecords(seq int, p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session) error {
 	logutil.Logger(p.ctx).Info("start a cop-request task",
 		zap.Int("id", task.id), zap.String("task", task.String()))
-
 	return wrapInBeginRollback(se, func(startTS uint64) error {
-		rs, err := buildTableScan(p.ctx, p.copCtx.GetBase(), startTS, task.startKey, task.endKey)
+		rs, err := buildTableScan(seq, p.ctx, p.copCtx.GetBase(), startTS, task.startKey, task.endKey)
 		if err != nil {
 			return err
 		}
@@ -150,7 +156,7 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 		startTime := time.Now()
 		for !done {
 			srcChk := p.getChunk()
-			done, err = fetchTableScanResult(p.ctx, p.copCtx.GetBase(), rs, srcChk)
+			done, err = fetchTableScanResult(seq, p.ctx, p.copCtx.GetBase(), rs, srcChk)
 			if err != nil {
 				p.recycleChunk(srcChk)
 				terror.Call(rs.Close)
@@ -165,7 +171,9 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 			failpoint.Inject("mockCopSenderError", func() {
 				idxRs.Err = errors.New("mock cop error")
 			})
+			finish := util2.InjectSpan(p.copCtx.GetBase().JobID, fmt.Sprintf("send-chunk-%d", seq))
 			p.chunkSender.AddTask(idxRs)
+			finish()
 			startTime = time.Now()
 		}
 		terror.Call(rs.Close)
@@ -205,6 +213,7 @@ func newCopReqSenderPool(ctx context.Context, copCtx copr.CopContext, store kv.S
 		srcChkPool:    srcChkPool,
 		sessPool:      sessPool,
 		checkpointMgr: checkpointMgr,
+		workerSeqID:   &atomic.Int64{},
 	}
 }
 
@@ -213,6 +222,7 @@ func (c *copReqSenderPool) adjustSize(n int) {
 	for i := len(c.senders); i < n; i++ {
 		ctx, cancel := context.WithCancel(c.ctx)
 		c.senders = append(c.senders, &copReqSender{
+			seq:        int(c.workerSeqID.Add(1)),
 			senderPool: c,
 			ctx:        ctx,
 			cancel:     cancel,
@@ -262,7 +272,8 @@ func (c *copReqSenderPool) recycleChunk(chk *chunk.Chunk) {
 	c.srcChkPool <- chk
 }
 
-func buildTableScan(ctx context.Context, c *copr.CopContextBase, startTS uint64, start, end kv.Key) (distsql.SelectResult, error) {
+func buildTableScan(seq int, ctx context.Context, c *copr.CopContextBase, startTS uint64, start, end kv.Key) (distsql.SelectResult, error) {
+	defer util2.InjectSpan(c.JobID, fmt.Sprintf("op-scan-records-build-%d", seq))()
 	dagPB, err := buildDAGPB(c.SessionContext, c.TableInfo, c.ColumnInfos)
 	if err != nil {
 		return nil, err
@@ -288,11 +299,13 @@ func buildTableScan(ctx context.Context, c *copr.CopContextBase, startTS uint64,
 }
 
 func fetchTableScanResult(
+	seq int,
 	ctx context.Context,
 	copCtx *copr.CopContextBase,
 	result distsql.SelectResult,
 	chk *chunk.Chunk,
 ) (bool, error) {
+	defer util2.InjectSpan(copCtx.JobID, fmt.Sprintf("op-scan-records-next-%d", seq))()
 	err := result.Next(ctx, chk)
 	if err != nil {
 		return false, errors.Trace(err)

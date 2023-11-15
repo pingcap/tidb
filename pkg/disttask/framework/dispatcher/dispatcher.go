@@ -17,10 +17,13 @@ package dispatcher
 import (
 	"context"
 	"math/rand"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -150,6 +153,14 @@ func (d *BaseDispatcher) refreshTask() error {
 	return nil
 }
 
+func decodeJobIDFromTaskKey(taskKey string) int64 {
+	jobID, err := strconv.ParseInt(strings.Split(taskKey, "/")[2], 10, 64)
+	if err != nil {
+		logutil.BgLogger().Error("decode job id from task key failed", zap.String("taskKey", taskKey), zap.Error(err))
+	}
+	return jobID
+}
+
 // scheduleTask schedule the task execution step by step.
 func (d *BaseDispatcher) scheduleTask() {
 	ticker := time.NewTicker(checkTaskFinishedInterval)
@@ -160,8 +171,10 @@ func (d *BaseDispatcher) scheduleTask() {
 			logutil.Logger(d.logCtx).Info("schedule task exits", zap.Error(d.ctx.Err()))
 			return
 		case <-ticker.C:
+			finish := util.InjectSpan(decodeJobIDFromTaskKey(d.Task.Key), "dispatch-on-next")
 			err := d.refreshTask()
 			if err != nil {
+				finish()
 				continue
 			}
 			failpoint.Inject("cancelTaskAfterRefreshTask", func(val failpoint.Value) {
@@ -202,6 +215,7 @@ func (d *BaseDispatcher) scheduleTask() {
 				err = d.onPaused()
 				// close the dispatcher.
 				if err == nil {
+					finish()
 					return
 				}
 			case proto.TaskStateResuming:
@@ -216,11 +230,13 @@ func (d *BaseDispatcher) scheduleTask() {
 				if err := d.onFinished(); err != nil {
 					logutil.Logger(d.logCtx).Error("schedule task meet error", zap.Stringer("state", d.Task.State), zap.Error(err))
 				}
+				finish()
 				return
 			}
 			if err != nil {
 				logutil.Logger(d.logCtx).Info("schedule task meet err, reschedule it", zap.Error(err))
 			}
+			finish()
 
 			failpoint.Inject("mockOwnerChange", func(val failpoint.Value) {
 				if val.(bool) {

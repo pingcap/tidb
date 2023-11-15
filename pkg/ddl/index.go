@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -626,6 +627,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 				return ver, err
 			}
 			logutil.BgLogger().Info("run add index job", zap.String("category", "ddl"), zap.String("job", job.String()), zap.Reflect("indexInfo", indexInfo))
+			ddlutil.InitializeTrace(job.ID)
 		}
 		allIndexInfos = append(allIndexInfos, indexInfo)
 	}
@@ -733,6 +735,11 @@ SwitchIndexState:
 			ifExists = append(ifExists, false)
 		}
 		job.Args = []interface{}{allIndexIDs, ifExists, getPartitionIDs(tbl.Meta())}
+		details := ddlutil.CollectTrace(job.ID)
+		logutil.BgLogger().Info("[ddl] finish add index job",
+			zap.String("job", job.String()),
+			zap.String("time details", details))
+		job.TimeDetail = details
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		if !job.ReorgMeta.IsDistReorg && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
@@ -982,7 +989,9 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		return false, ver, nil
 	}
 	for _, indexInfo := range allIndexInfos {
+		finish := ddlutil.InjectSpan(job.ID, fmt.Sprintf("finish-import-%d", w.id))
 		err = bc.FinishImport(indexInfo.ID, indexInfo.Unique, tbl)
+		finish()
 		if err != nil {
 			if common.ErrFoundDuplicateKeys.Equal(err) {
 				err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
@@ -1698,6 +1707,7 @@ func (w *addIndexTxnWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords [
 }
 
 type addIndexIngestWorker struct {
+	seq           int
 	ctx           context.Context
 	d             *ddlCtx
 	metricCounter prometheus.Counter
@@ -1715,6 +1725,7 @@ type addIndexIngestWorker struct {
 }
 
 func newAddIndexIngestWorker(
+	seq int,
 	ctx context.Context,
 	t table.PhysicalTable,
 	d *ddlCtx,
@@ -1743,6 +1754,7 @@ func newAddIndexIngestWorker(
 	}
 
 	return &addIndexIngestWorker{
+		seq:     seq,
 		ctx:     ctx,
 		d:       d,
 		sessCtx: sessCtx,
@@ -2056,6 +2068,7 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {
 		return errors.New("do not support merge index")
 	}
+	defer ddlutil.InjectSpan(reorgInfo.ID, "task-exec-dist-global")()
 
 	taskType := proto.Backfill
 	taskKey := fmt.Sprintf("ddl/%s/%d", taskType, reorgInfo.Job.ID)

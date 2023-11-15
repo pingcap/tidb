@@ -492,6 +492,10 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 		req.AppendNull(10)
 	}
 	req.AppendString(11, job.State.String())
+	if checker == nil {
+		// nil checker means this function is called by `admin show ddl jobs`.
+		req.AppendString(12, job.TimeDetail)
+	}
 	if job.Type == model.ActionMultiSchemaChange {
 		isDistTask := job.ReorgMeta != nil && job.ReorgMeta.IsDistReorg
 		for _, subJob := range job.MultiSchemaInfo.SubJobs {
@@ -516,6 +520,7 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 				req.AppendNull(10)
 			}
 			req.AppendString(11, subJob.State.String())
+			req.AppendNull(12)
 		}
 	}
 }

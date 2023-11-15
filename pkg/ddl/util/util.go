@@ -183,7 +183,9 @@ func UpdateDeleteRange(sctx sessionctx.Context, dr DelRangeTask, newStartKey, ol
 func LoadDDLReorgVars(ctx context.Context, sctx sessionctx.Context) error {
 	// close issue #21391
 	// variable.TiDBRowFormatVersion is used to encode the new row for column type change.
-	return LoadGlobalVars(ctx, sctx, []string{variable.TiDBDDLReorgWorkerCount, variable.TiDBDDLReorgBatchSize, variable.TiDBRowFormatVersion})
+	return LoadGlobalVars(ctx, sctx, []string{
+		variable.TiDBDDLReorgWorkerCount, variable.TiDBDDLReorgReaderCount, variable.TiDBDDLReorgWriterCount,
+		variable.TiDBDDLReorgBatchSize, variable.TiDBRowFormatVersion})
 }
 
 // LoadDDLVars loads ddl variable from mysql.global_variables.

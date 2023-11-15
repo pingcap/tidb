@@ -27,8 +27,8 @@ type WithSink[T any] interface {
 }
 
 // Compose sets the sink of op1 and the source of op2.
-func Compose[T any](op1 WithSink[T], op2 WithSource[T]) {
-	ch := NewSimpleDataChannel(make(chan T))
+func Compose[T any](op1 WithSink[T], op2 WithSource[T], cap int) {
+	ch := NewSimpleDataChannel(make(chan T, cap))
 	op1.SetSink(ch)
 	op2.SetSource(ch)
 }

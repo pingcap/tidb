@@ -32,10 +32,10 @@ func TestPipelineAsyncMultiOperators(t *testing.T) {
 	counter := makeCounter()
 	collector := makeCollector(&mostCommonWord)
 
-	Compose[string](splitter, lower)
-	Compose[string](lower, trimmer)
-	Compose[string](trimmer, counter)
-	Compose[strCnt](counter, collector)
+	Compose[string](splitter, lower, 1)
+	Compose[string](lower, trimmer, 1)
+	Compose[string](trimmer, counter, 1)
+	Compose[strCnt](counter, collector, 1)
 
 	pipeline := NewAsyncPipeline(splitter, lower, trimmer, counter, collector)
 	require.Equal(t, pipeline.String(), "AsyncPipeline[simpleSource -> simpleOperator(AsyncOp[string, string]) -> simpleOperator(AsyncOp[string, string]) -> simpleOperator(AsyncOp[string, operator.strCnt]) -> simpleSink]")

@@ -33,6 +33,7 @@ type CopContext interface {
 
 // CopContextBase contains common fields for CopContextSingleIndex and CopContextMultiIndex.
 type CopContextBase struct {
+	JobID          int64
 	TableInfo      *model.TableInfo
 	PrimaryKeyInfo *model.IndexInfo
 	SessionContext sessionctx.Context
@@ -66,6 +67,7 @@ type CopContextMultiIndex struct {
 
 // NewCopContextBase creates a CopContextBase.
 func NewCopContextBase(
+	jobID int64,
 	tblInfo *model.TableInfo,
 	idxCols []*model.IndexColumn,
 	sessCtx sessionctx.Context,
@@ -124,6 +126,7 @@ func NewCopContextBase(
 	vColOffsets, vColFts := collectVirtualColumnOffsetsAndTypes(expColInfos)
 
 	return &CopContextBase{
+		JobID:                       jobID,
 		TableInfo:                   tblInfo,
 		PrimaryKeyInfo:              primaryIdx,
 		SessionContext:              sessCtx,
@@ -139,25 +142,27 @@ func NewCopContextBase(
 
 // NewCopContext creates a CopContext.
 func NewCopContext(
+	jobID int64,
 	tblInfo *model.TableInfo,
 	allIdxInfo []*model.IndexInfo,
 	sessCtx sessionctx.Context,
 	requestSource string,
 ) (CopContext, error) {
 	if len(allIdxInfo) == 1 {
-		return NewCopContextSingleIndex(tblInfo, allIdxInfo[0], sessCtx, requestSource)
+		return NewCopContextSingleIndex(jobID, tblInfo, allIdxInfo[0], sessCtx, requestSource)
 	}
-	return NewCopContextMultiIndex(tblInfo, allIdxInfo, sessCtx, requestSource)
+	return NewCopContextMultiIndex(jobID, tblInfo, allIdxInfo, sessCtx, requestSource)
 }
 
 // NewCopContextSingleIndex creates a CopContextSingleIndex.
 func NewCopContextSingleIndex(
+	jobID int64,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
 	sessCtx sessionctx.Context,
 	requestSource string,
 ) (*CopContextSingleIndex, error) {
-	base, err := NewCopContextBase(tblInfo, idxInfo.Columns, sessCtx, requestSource)
+	base, err := NewCopContextBase(jobID, tblInfo, idxInfo.Columns, sessCtx, requestSource)
 	if err != nil {
 		return nil, err
 	}
@@ -186,6 +191,7 @@ func (c *CopContextSingleIndex) IndexInfo(_ int64) *model.IndexInfo {
 
 // NewCopContextMultiIndex creates a CopContextMultiIndex.
 func NewCopContextMultiIndex(
+	jobID int64,
 	tblInfo *model.TableInfo,
 	allIdxInfo []*model.IndexInfo,
 	sessCtx sessionctx.Context,
@@ -206,7 +212,7 @@ func NewCopContextMultiIndex(
 		}
 	}
 
-	base, err := NewCopContextBase(tblInfo, allIdxCols, sessCtx, requestSource)
+	base, err := NewCopContextBase(jobID, tblInfo, allIdxCols, sessCtx, requestSource)
 	if err != nil {
 		return nil, err
 	}

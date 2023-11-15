@@ -72,6 +72,9 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 					return ver, err
 				}
 				sub.FromProxyJob(&proxyJob, ver)
+				if len(job.TimeDetail) == 0 {
+					job.TimeDetail = proxyJob.TimeDetail
+				}
 				return ver, nil
 			}
 			// The last rollback/cancelling sub-job is done.
@@ -91,6 +94,9 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			proxyJob := sub.ToProxyJob(job, i)
 			ver, err = w.runDDLJob(d, t, &proxyJob)
 			sub.FromProxyJob(&proxyJob, ver)
+			if len(job.TimeDetail) == 0 {
+				job.TimeDetail = proxyJob.TimeDetail
+			}
 			handleRevertibleException(job, sub, proxyJob.Error)
 			return ver, err
 		}
@@ -120,6 +126,9 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 				ver = proxyJobVer
 			}
 			sub.FromProxyJob(&proxyJob, proxyJobVer)
+			if len(job.TimeDetail) == 0 {
+				job.TimeDetail = proxyJob.TimeDetail
+			}
 			if err != nil || proxyJob.Error != nil {
 				for j := i - 1; j >= 0; j-- {
 					job.MultiSchemaInfo.SubJobs[j] = &subJobs[j]
@@ -142,6 +151,9 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		proxyJob := sub.ToProxyJob(job, i)
 		ver, err = w.runDDLJob(d, t, &proxyJob)
 		sub.FromProxyJob(&proxyJob, ver)
+		if len(job.TimeDetail) == 0 {
+			job.TimeDetail = proxyJob.TimeDetail
+		}
 		return ver, err
 	}
 	return finishMultiSchemaJob(job, t)

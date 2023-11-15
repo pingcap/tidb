@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
@@ -95,6 +96,7 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 
 	r.subtaskSummary.Store(subtask.ID, &readIndexSummary{})
 
+	defer util.InjectSpan(r.job.ID, "stage-read-index")()
 	sm := &BackfillSubTaskMeta{}
 	err := json.Unmarshal(subtask.Meta, sm)
 	if err != nil {
@@ -162,6 +164,9 @@ func (r *readIndexExecutor) OnFinished(ctx context.Context, subtask *proto.Subta
 			MockDMLExecutionAddIndexSubTaskFinish()
 		}
 	})
+	logutil.Logger(ctx).Info("backend memory consumption",
+		zap.Int64("usage", r.bc.GetLocalBackend().TotalMemoryConsume()))
+
 	if len(r.cloudStorageURI) == 0 {
 		return nil
 	}
@@ -244,7 +249,7 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 	counter := metrics.BackfillTotalCounter.WithLabelValues(
 		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
 	return NewAddIndexIngestPipeline(
-		opCtx, d.store, d.sessPool, r.bc, engines, sessCtx, tbl, r.indexes, start, end, totalRowCount, counter)
+		r.job.ID, opCtx, d.store, d.sessPool, r.bc, engines, sessCtx, tbl, r.indexes, start, end, totalRowCount, counter)
 }
 
 func (r *readIndexExecutor) buildExternalStorePipeline(

@@ -59,10 +59,10 @@ func TestBackfillOperators(t *testing.T) {
 		ctx := context.Background()
 		opCtx := ddl.NewOperatorCtx(ctx)
 		pTbl := tbl.(table.PhysicalTable)
-		src := ddl.NewTableScanTaskSource(opCtx, store, pTbl, startKey, endKey)
+		src := ddl.NewTableScanTaskSource(0, opCtx, store, pTbl, startKey, endKey)
 		sink := newTestSink[ddl.TableScanTask]()
 
-		operator.Compose[ddl.TableScanTask](src, sink)
+		operator.Compose[ddl.TableScanTask](src, sink, 1)
 
 		pipeline := operator.NewAsyncPipeline(src, sink)
 		err := pipeline.Execute()
@@ -97,8 +97,8 @@ func TestBackfillOperators(t *testing.T) {
 		scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 3)
 		sink := newTestSink[ddl.IndexRecordChunk]()
 
-		operator.Compose[ddl.TableScanTask](src, scanOp)
-		operator.Compose[ddl.IndexRecordChunk](scanOp, sink)
+		operator.Compose[ddl.TableScanTask](src, scanOp, 1)
+		operator.Compose[ddl.IndexRecordChunk](scanOp, sink, 1)
 
 		pipeline := operator.NewAsyncPipeline(src, scanOp, sink)
 		err := pipeline.Execute()
@@ -143,8 +143,8 @@ func TestBackfillOperators(t *testing.T) {
 			opCtx, copCtx, sessPool, pTbl, []table.Index{index}, []ingest.Engine{mockEngine}, srcChkPool, 3)
 		sink := newTestSink[ddl.IndexWriteResult]()
 
-		operator.Compose[ddl.IndexRecordChunk](src, ingestOp)
-		operator.Compose[ddl.IndexWriteResult](ingestOp, sink)
+		operator.Compose[ddl.IndexRecordChunk](src, ingestOp, 1)
+		operator.Compose[ddl.IndexWriteResult](ingestOp, sink, 1)
 
 		pipeline := operator.NewAsyncPipeline(src, ingestOp, sink)
 		err := pipeline.Execute()
@@ -182,6 +182,7 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 	totalRowCount := &atomic.Int64{}
 
 	pipeline, err := ddl.NewAddIndexIngestPipeline(
+		0,
 		opCtx, store,
 		sessPool,
 		mockBackendCtx,
@@ -255,6 +256,7 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 		}
 		opCtx := ddl.NewOperatorCtx(ctx)
 		pipeline, err := ddl.NewAddIndexIngestPipeline(
+			0,
 			opCtx, store,
 			sessPool,
 			mockBackendCtx,
@@ -310,7 +312,7 @@ func prepare(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, regionCnt in
 
 	tblInfo := tbl.Meta()
 	idxInfo = tblInfo.FindIndexByName("idx")
-	copCtx, err = copr.NewCopContextSingleIndex(tblInfo, idxInfo, tk.Session(), "")
+	copCtx, err = copr.NewCopContextSingleIndex(0, tblInfo, idxInfo, tk.Session(), "")
 	require.NoError(t, err)
 	return tbl, idxInfo, start, end, copCtx
 }

@@ -18,11 +18,13 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
+	util2 "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -285,19 +287,21 @@ type ingestBackfillScheduler struct {
 	poolErr       chan error
 	backendCtx    ingest.BackendCtx
 	checkpointMgr *ingest.CheckpointManager
+	workerSeqID   *atomic.Int64
 }
 
 func newIngestBackfillScheduler(ctx context.Context, info *reorgInfo,
 	sessPool *sess.Pool, tbl table.PhysicalTable, distribute bool) *ingestBackfillScheduler {
 	return &ingestBackfillScheduler{
-		ctx:        ctx,
-		reorgInfo:  info,
-		sessPool:   sessPool,
-		tbl:        tbl,
-		taskCh:     make(chan *reorgBackfillTask, backfillTaskChanSize),
-		resultCh:   make(chan *backfillResult, backfillTaskChanSize),
-		poolErr:    make(chan error),
-		distribute: distribute,
+		ctx:         ctx,
+		reorgInfo:   info,
+		sessPool:    sessPool,
+		tbl:         tbl,
+		taskCh:      make(chan *reorgBackfillTask, backfillTaskChanSize),
+		resultCh:    make(chan *backfillResult, backfillTaskChanSize),
+		poolErr:     make(chan error),
+		distribute:  distribute,
+		workerSeqID: &atomic.Int64{},
 	}
 }
 
@@ -322,6 +326,9 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 	readerCnt, writerCnt := b.expectedWorkerSize()
 	writerPool := workerpool.NewWorkerPool[IndexRecordChunk]("ingest_writer",
 		poolutil.DDL, writerCnt, b.createWorker)
+
+	capacity := variable.DDLReorgChanCap.Load()
+	writerPool.SetTaskReceiver(make(chan IndexRecordChunk, capacity))
 	writerPool.Start(b.ctx)
 	b.writerPool = writerPool
 	b.copReqSenderPool.chunkSender = writerPool
@@ -418,6 +425,7 @@ func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[IndexRecordCh
 	}
 
 	worker, err := newAddIndexIngestWorker(
+		int(b.workerSeqID.Add(1)),
 		b.ctx, b.tbl, reorgInfo.d, engines, b.resultCh, job.ID,
 		reorgInfo.SchemaName, indexIDs, b.writerMaxID,
 		b.copReqSenderPool, sessCtx, b.checkpointMgr, b.distribute)
@@ -453,7 +461,7 @@ func (b *ingestBackfillScheduler) createCopReqSenderPool() (*copReqSenderPool, e
 		return nil, err
 	}
 	reqSrc := getDDLRequestSource(model.ActionAddIndex)
-	copCtx, err := copr.NewCopContext(b.tbl.Meta(), allIndexInfos, sessCtx, reqSrc)
+	copCtx, err := copr.NewCopContext(ri.ID, b.tbl.Meta(), allIndexInfos, sessCtx, reqSrc)
 	if err != nil {
 		logutil.Logger(b.ctx).Warn("cannot init cop request sender", zap.Error(err))
 		return nil, err
@@ -466,11 +474,12 @@ func (*ingestBackfillScheduler) expectedWorkerSize() (readerSize int, writerSize
 }
 
 func expectedIngestWorkerCnt() (readerCnt, writerCnt int) {
-	workerCnt := int(variable.GetDDLReorgWorkerCounter())
-	readerCnt = min(workerCnt/2, maxBackfillWorkerSize)
-	readerCnt = max(readerCnt, 1)
-	writerCnt = min(workerCnt/2+2, maxBackfillWorkerSize)
-	return readerCnt, writerCnt
+	return int(variable.DDLReorgReaderCounter.Load()), int(variable.DDLReorgWriterCounter.Load())
+	// workerCnt := int(variable.GetDDLReorgWorkerCounter())
+	// readerCnt = min(workerCnt/2, maxBackfillWorkerSize)
+	// readerCnt = max(readerCnt, 1)
+	// writerCnt = min(workerCnt/2+2, maxBackfillWorkerSize)
+	// return readerCnt, writerCnt
 }
 
 func (w *addIndexIngestWorker) HandleTask(rs IndexRecordChunk, _ func(workerpool.None)) {
@@ -496,12 +505,15 @@ func (w *addIndexIngestWorker) HandleTask(rs IndexRecordChunk, _ func(workerpool
 			return
 		}
 	}
+	finish := util2.InjectSpan(w.jobID, fmt.Sprintf("write-local-%d", w.seq))
 	count, nextKey, err := w.WriteLocal(&rs)
 	if err != nil {
+		finish()
 		result.err = err
 		w.resultCh <- result
 		return
 	}
+	finish()
 	if count == 0 {
 		logutil.Logger(w.ctx).Info("finish a cop-request task", zap.Int("id", rs.ID))
 		return
