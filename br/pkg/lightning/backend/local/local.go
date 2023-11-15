@@ -1217,6 +1217,8 @@ func (local *Backend) generateAndSendJob(
 					}
 					for _, job := range jobs {
 						job.ref(jobWg)
+					}
+					for _, job := range jobs {
 						select {
 						case <-egCtx.Done():
 							// this job is not put into jobToWorkerCh
