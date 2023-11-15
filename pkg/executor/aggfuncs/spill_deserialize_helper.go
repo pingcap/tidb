@@ -151,10 +151,8 @@ func (s *spillDeserializeHelper) deserializePartialResult4MaxMinString(dst *part
 func (s *spillDeserializeHelper) deserializePartialResult4MaxMinJSON(dst *partialResult4MaxMinJSON) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
-		dst.val.TypeCode = bytes[0]
-		dst.isNull = spill.DeserializeBool(bytes, 1)
-		dst.val.Value = make([]byte, len(bytes[1+boolLen:]))
-		copy(dst.val.Value, bytes[1+boolLen:])
+		dst.isNull = spill.DeserializeBool(bytes, 0)
+		dst.val, _ = spill.DeserializeBinaryJSON(bytes, byteLen)
 		s.readRowIndex++
 		return true
 	}
@@ -164,9 +162,8 @@ func (s *spillDeserializeHelper) deserializePartialResult4MaxMinJSON(dst *partia
 func (s *spillDeserializeHelper) deserializePartialResult4MaxMinEnum(dst *partialResult4MaxMinEnum) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
-		dst.val.Value = spill.DeserializeUint64(bytes, 0)
-		dst.isNull = spill.DeserializeBool(bytes, uint64Len)
-		dst.val.Name = string(hack.String(bytes[boolLen+uint64Len:]))
+		dst.isNull = spill.DeserializeBool(bytes, 0)
+		dst.val = spill.DeserializeEnum(bytes, boolLen)
 		s.readRowIndex++
 		return true
 	}
@@ -401,12 +398,8 @@ func (s *spillDeserializeHelper) deserializePartialResult4FirstRowDuration(dst *
 func (s *spillDeserializeHelper) deserializePartialResult4FirstRowJSON(dst *partialResult4FirstRowJSON) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
-		readPos := int64(0)
-		readPos = s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, readPos)
-		dst.val.TypeCode = bytes[readPos]
-		readPos++
-		dst.val.Value = make([]byte, len(bytes[readPos:]))
-		copy(dst.val.Value, bytes[readPos:])
+		readPos := s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, 0)
+		dst.val, _ = spill.DeserializeBinaryJSON(bytes, readPos)
 		s.readRowIndex++
 		return true
 	}
@@ -416,11 +409,8 @@ func (s *spillDeserializeHelper) deserializePartialResult4FirstRowJSON(dst *part
 func (s *spillDeserializeHelper) deserializePartialResult4FirstRowEnum(dst *partialResult4FirstRowEnum) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
-		readPos := int64(0)
-		readPos = s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, readPos)
-		dst.val.Value = spill.DeserializeUint64(bytes, readPos)
-		readPos += 8
-		dst.val.Name = string(hack.String(bytes[readPos:]))
+		readPos := s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, 0)
+		dst.val = spill.DeserializeEnum(bytes, readPos)
 		s.readRowIndex++
 		return true
 	}

@@ -46,7 +46,7 @@ func TestPartialResult4Count(t *testing.T) {
 
 	// Initialize test data
 	expectData := []partialResult4Count{-123, 0, 123}
-	serializedPartialResults := make([]PartialResult, 3)
+	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
 	for i := range serializedPartialResults {
 		pr := new(partialResult4Count)
@@ -89,7 +89,7 @@ func TestPartialResult4MaxMinInt(t *testing.T) {
 		{val: 0, isNull: false},
 		{val: 123, isNull: true},
 	}
-	serializedPartialResults := make([]PartialResult, 3)
+	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
 	for i := range serializedPartialResults {
 		pr := new(partialResult4MaxMinInt)
@@ -132,7 +132,7 @@ func TestPartialResult4MaxMinUint(t *testing.T) {
 		{val: 1, isNull: false},
 		{val: 2, isNull: true},
 	}
-	serializedPartialResults := make([]PartialResult, 3)
+	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
 	for i := range serializedPartialResults {
 		pr := new(partialResult4MaxMinUint)
@@ -175,7 +175,7 @@ func TestPartialResult4MaxMinDecimal(t *testing.T) {
 		{val: *types.NewDecFromUint(123456), isNull: false},
 		{val: *types.NewDecFromInt(99999), isNull: true},
 	}
-	serializedPartialResults := make([]PartialResult, 3)
+	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
 	for i := range serializedPartialResults {
 		pr := new(partialResult4MaxMinDecimal)
@@ -218,7 +218,7 @@ func TestPartialResult4MaxMinFloat32(t *testing.T) {
 		{val: 0.0, isNull: false},
 		{val: 123.123, isNull: true},
 	}
-	serializedPartialResults := make([]PartialResult, 3)
+	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
 	for i := range serializedPartialResults {
 		pr := new(partialResult4MaxMinFloat32)
@@ -261,7 +261,7 @@ func TestPartialResult4MaxMinFloat64(t *testing.T) {
 		{val: 0.0, isNull: false},
 		{val: 123.123, isNull: true},
 	}
-	serializedPartialResults := make([]PartialResult, 3)
+	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
 	for i := range serializedPartialResults {
 		pr := new(partialResult4MaxMinFloat64)
@@ -304,7 +304,7 @@ func TestPartialResult4MaxMinTime(t *testing.T) {
 		{val: types.NewTime(0, 0, 0), isNull: false},
 		{val: types.NewTime(9876, 12, 10), isNull: true},
 	}
-	serializedPartialResults := make([]PartialResult, 3)
+	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
 	for i := range serializedPartialResults {
 		pr := new(partialResult4MaxMinTime)
@@ -347,7 +347,7 @@ func TestPartialResult4MaxMinString(t *testing.T) {
 		{val: string(""), isNull: false},
 		{val: testLongStr1, isNull: true},
 	}
-	serializedPartialResults := make([]PartialResult, 3)
+	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
 	for i := range serializedPartialResults {
 		pr := new(partialResult4MaxMinString)
@@ -390,7 +390,7 @@ func TestPartialResult4MaxMinJSON(t *testing.T) {
 		{val: types.BinaryJSON{TypeCode: 3, Value: []byte{}}, isNull: false},
 		{val: types.BinaryJSON{TypeCode: 6, Value: []byte{0, 4, 2, 3, 0}}, isNull: true},
 	}
-	serializedPartialResults := make([]PartialResult, 3)
+	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
 	for i := range serializedPartialResults {
 		pr := new(partialResult4MaxMinJSON)
@@ -433,7 +433,7 @@ func TestPartialResult4MaxMinEnum(t *testing.T) {
 		{val: types.Enum{Name: testLongStr1, Value: 0}, isNull: false},
 		{val: types.Enum{Name: testLongStr2, Value: 0}, isNull: true},
 	}
-	serializedPartialResults := make([]PartialResult, 3)
+	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
 	for i := range serializedPartialResults {
 		pr := new(partialResult4MaxMinEnum)
@@ -476,7 +476,7 @@ func TestPartialResult4MaxMinSet(t *testing.T) {
 		{val: types.Set{Name: testLongStr1, Value: 0}, isNull: false},
 		{val: types.Set{Name: testLongStr2, Value: 0}, isNull: true},
 	}
-	serializedPartialResults := make([]PartialResult, 3)
+	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
 	for i := range serializedPartialResults {
 		pr := new(partialResult4MaxMinSet)
@@ -519,7 +519,7 @@ func TestPartialResult4AvgDecimal(t *testing.T) {
 		{sum: *types.NewDecFromInt(12345), count: 123},
 		{sum: *types.NewDecFromInt(87654), count: -123},
 	}
-	serializedPartialResults := make([]PartialResult, 3)
+	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
 	for i := range serializedPartialResults {
 		pr := new(partialResult4AvgDecimal)
@@ -562,7 +562,7 @@ func TestPartialResult4AvgFloat64(t *testing.T) {
 		{sum: 123.123, count: 123},
 		{sum: -123.123, count: -123},
 	}
-	serializedPartialResults := make([]PartialResult, 3)
+	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
 	for i := range serializedPartialResults {
 		pr := new(partialResult4AvgFloat64)
@@ -605,7 +605,7 @@ func TestPartialResult4SumDecimal(t *testing.T) {
 		{val: *types.NewDecFromInt(12345), notNullRowCount: 123},
 		{val: *types.NewDecFromInt(87654), notNullRowCount: -123},
 	}
-	serializedPartialResults := make([]PartialResult, 3)
+	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
 	for i := range serializedPartialResults {
 		pr := new(partialResult4SumDecimal)
@@ -648,7 +648,7 @@ func TestPartialResult4SumFloat64(t *testing.T) {
 		{val: 123.123, notNullRowCount: 123},
 		{val: -123.123, notNullRowCount: -123},
 	}
-	serializedPartialResults := make([]PartialResult, 3)
+	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
 	for i := range serializedPartialResults {
 		pr := new(partialResult4SumFloat64)
@@ -691,7 +691,7 @@ func TestBasePartialResult4GroupConcat(t *testing.T) {
 		{valsBuf: bytes.NewBufferString(""), buffer: bytes.NewBufferString("")},
 		{valsBuf: bytes.NewBufferString(testLongStr1), buffer: bytes.NewBufferString(testLongStr2)},
 	}
-	serializedPartialResults := make([]PartialResult, 3)
+	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
 	for i := range serializedPartialResults {
 		pr := new(basePartialResult4GroupConcat)
@@ -731,7 +731,7 @@ func TestPartialResult4BitFunc(t *testing.T) {
 
 	// Initialize test data
 	expectData := []partialResult4BitFunc{0, 1, 2}
-	serializedPartialResults := make([]PartialResult, 3)
+	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
 	for i := range serializedPartialResults {
 		pr := new(partialResult4BitFunc)
@@ -770,11 +770,12 @@ func TestPartialResult4JsonArrayagg(t *testing.T) {
 
 	// Initialize test data
 	expectData := []partialResult4JsonArrayagg{
-		{entries: []interface{}{int64(1), float64(1.1), "123"}},
+		{entries: []interface{}{int64(1), float64(1.1), testLongStr1}},
 		{entries: []interface{}{int64(1), float64(1.1), ""}},
 		{entries: []interface{}{"dw啊q", float64(-1.1), int64(0)}},
+		{entries: []interface{}{"dw啊q", float64(-1.1), types.BinaryJSON{TypeCode: 1, Value: []byte(testLongStr2)}}},
 	}
-	serializedPartialResults := make([]PartialResult, 3)
+	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
 	for i := range serializedPartialResults {
 		pr := new(partialResult4JsonArrayagg)
@@ -817,7 +818,7 @@ func TestPartialResult4JsonObjectAgg(t *testing.T) {
 		{entries: map[string]interface{}{"啊": testLongStr1, "我": float64(1.1), "反": testLongStr2}, bInMap: 0},
 		{entries: map[string]interface{}{"fe": int64(12), " ": float64(1.1), "": "123"}, bInMap: 0},
 	}
-	serializedPartialResults := make([]PartialResult, 3)
+	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
 	for i := range serializedPartialResults {
 		pr := new(partialResult4JsonObjectAgg)
@@ -860,7 +861,7 @@ func TestPartialResult4FirstRowDecimal(t *testing.T) {
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: false, gotFirstRow: false}, val: *types.NewDecFromInt(123)},
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: true}, val: *types.NewDecFromInt(12345)},
 	}
-	serializedPartialResults := make([]PartialResult, 3)
+	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
 	for i := range serializedPartialResults {
 		pr := new(partialResult4FirstRowDecimal)
@@ -903,7 +904,7 @@ func TestPartialResult4FirstRowInt(t *testing.T) {
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: false, gotFirstRow: false}, val: 0},
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: true}, val: 123},
 	}
-	serializedPartialResults := make([]PartialResult, 3)
+	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
 	for i := range serializedPartialResults {
 		pr := new(partialResult4FirstRowInt)
@@ -946,7 +947,7 @@ func TestPartialResult4FirstRowTime(t *testing.T) {
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: false, gotFirstRow: false}, val: types.NewTime(123, 0, 1)},
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: true}, val: types.NewTime(456, 0, 1)},
 	}
-	serializedPartialResults := make([]PartialResult, 3)
+	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
 	for i := range serializedPartialResults {
 		pr := new(partialResult4FirstRowTime)
@@ -989,7 +990,7 @@ func TestPartialResult4FirstRowString(t *testing.T) {
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: false, gotFirstRow: false}, val: "123"},
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: true}, val: "a阿达瓦dwd"},
 	}
-	serializedPartialResults := make([]PartialResult, 3)
+	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
 	for i := range serializedPartialResults {
 		pr := new(partialResult4FirstRowString)
@@ -1032,7 +1033,7 @@ func TestPartialResult4FirstRowFloat32(t *testing.T) {
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: false, gotFirstRow: false}, val: 0},
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: true}, val: 1.1},
 	}
-	serializedPartialResults := make([]PartialResult, 3)
+	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
 	for i := range serializedPartialResults {
 		pr := new(partialResult4FirstRowFloat32)
@@ -1075,7 +1076,7 @@ func TestPartialResult4FirstRowFloat64(t *testing.T) {
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: false, gotFirstRow: false}, val: 0},
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: true}, val: 1.1},
 	}
-	serializedPartialResults := make([]PartialResult, 3)
+	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
 	for i := range serializedPartialResults {
 		pr := new(partialResult4FirstRowFloat64)
@@ -1118,7 +1119,7 @@ func TestPartialResult4FirstRowDuration(t *testing.T) {
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: false, gotFirstRow: false}, val: types.NewDuration(0, 0, 0, 0, 0)},
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: true}, val: types.NewDuration(10, 20, 30, 40, 50)},
 	}
-	serializedPartialResults := make([]PartialResult, 3)
+	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
 	for i := range serializedPartialResults {
 		pr := new(partialResult4FirstRowDuration)
@@ -1161,7 +1162,7 @@ func TestPartialResult4FirstRowJSON(t *testing.T) {
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: false, gotFirstRow: false}, val: types.BinaryJSON{TypeCode: 2, Value: []byte{}}},
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: true}, val: types.BinaryJSON{TypeCode: 3, Value: []byte{0, 1, 9, 5, 3, 2, 0}}},
 	}
-	serializedPartialResults := make([]PartialResult, 3)
+	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
 	for i := range serializedPartialResults {
 		pr := new(partialResult4FirstRowJSON)
@@ -1204,7 +1205,7 @@ func TestPartialResult4FirstRowEnum(t *testing.T) {
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: types.Enum{Name: string("123"), Value: 0}},
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: types.Enum{Name: string("1达瓦fe"), Value: 999}},
 	}
-	serializedPartialResults := make([]PartialResult, 3)
+	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
 	for i := range serializedPartialResults {
 		pr := new(partialResult4FirstRowEnum)
@@ -1247,7 +1248,7 @@ func TestPartialResult4FirstRowSet(t *testing.T) {
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: types.Set{Name: string("123"), Value: 0}},
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: types.Set{Name: testLongStr1, Value: 999}},
 	}
-	serializedPartialResults := make([]PartialResult, 3)
+	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
 	for i := range serializedPartialResults {
 		pr := new(partialResult4FirstRowSet)

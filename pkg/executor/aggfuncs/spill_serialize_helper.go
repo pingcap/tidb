@@ -35,7 +35,8 @@ func NewSpillSerializeHelper() *SpillSerializeHelper {
 }
 
 func (s *SpillSerializeHelper) serializePartialResult4Count(value partialResult4Count) []byte {
-	return spill.SerializeInt64(value, s.buf[0:int64Len])
+	spill.SerializeInt64(value, s.buf[0:])
+	return s.buf[:int64Len]
 }
 
 func (s *SpillSerializeHelper) serializePartialResult4MaxMinInt(value partialResult4MaxMinInt) []byte {
@@ -96,18 +97,18 @@ func (s *SpillSerializeHelper) serializePartialResult4MaxMinString(value partial
 }
 
 func (s *SpillSerializeHelper) serializePartialResult4MaxMinJSON(value partialResult4MaxMinJSON) []byte {
-	s.buf[0] = value.val.TypeCode
-	spill.SerializeBool(value.isNull, s.buf[byteLen:])
-	s.buf = s.buf[:byteLen+boolLen]
-	s.buf = append(s.buf, value.val.Value...)
+	spill.SerializeBool(value.isNull, s.buf[0:])
+
+	// Assign the return value to `s.buf` is necessary, so that the `s.buf` could expand it's capacity.
+	s.buf = spill.SerializeBinaryJSON(&value.val, s.buf, boolLen)
 	return s.buf
 }
 
 func (s *SpillSerializeHelper) serializePartialResult4MaxMinEnum(value partialResult4MaxMinEnum) []byte {
-	spill.SerializeUint64(value.val.Value, s.buf[0:])
-	spill.SerializeBool(value.isNull, s.buf[uint64Len:])
-	s.buf = s.buf[:uint64Len+boolLen]
-	s.buf = append(s.buf, value.val.Name...)
+	spill.SerializeBool(value.isNull, s.buf[0:])
+
+	// Assign the return value to `s.buf` is necessary, so that the `s.buf` could expand it's capacity.
+	s.buf = spill.SerializeEnum(&value.val, s.buf, boolLen)
 	return s.buf
 }
 
@@ -176,8 +177,8 @@ func (s *SpillSerializeHelper) serializePartialResult4JsonArrayagg(value partial
 func (s *SpillSerializeHelper) serializePartialResult4JsonObjectAgg(value partialResult4JsonObjectAgg) []byte {
 	resBuf := make([]byte, 0)
 	for key, value := range value.entries {
-		tmpBuf := spill.SerializeInt64(int64(len(key)), s.buf[:])
-		resBuf = append(resBuf, tmpBuf...)
+		spill.SerializeInt64(int64(len(key)), s.buf)
+		resBuf = append(resBuf, s.buf[:int64Len]...)
 		resBuf = append(resBuf, key...)
 		spill.SerializeInterface(value, &resBuf, s.buf[:])
 	}
@@ -235,18 +236,15 @@ func (s *SpillSerializeHelper) serializePartialResult4FirstRowDuration(value par
 
 func (s *SpillSerializeHelper) serializePartialResult4FirstRowJSON(value partialResult4FirstRowJSON) []byte {
 	_, baseBytesNum := s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
-	s.buf[baseBytesNum] = value.val.TypeCode
 
-	s.buf = s.buf[:baseBytesNum+byteLen]
-	s.buf = append(s.buf, value.val.Value...)
+	// Assign the return value to `s.buf` is necessary, so that the `s.buf` could expand it's capacity.
+	s.buf = spill.SerializeBinaryJSON(&value.val, s.buf, baseBytesNum)
 	return s.buf
 }
 
 func (s *SpillSerializeHelper) serializePartialResult4FirstRowEnum(value partialResult4FirstRowEnum) []byte {
 	_, baseBytesNum := s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
-	spill.SerializeUint64(value.val.Value, s.buf[baseBytesNum:])
-	s.buf = s.buf[:uint64Len+baseBytesNum]
-	s.buf = append(s.buf, value.val.Name...)
+	s.buf = spill.SerializeEnum(&value.val, s.buf, baseBytesNum)
 	return s.buf
 }
 
