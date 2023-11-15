@@ -360,7 +360,6 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 	keys := make([][]byte, 0, 1024)
 	values := make([][]byte, 0, 1024)
 	size := 0
-	var start, end []byte
 	for _, kv := range e.memKVsAndBuffers.memKVs {
 		keys = append(keys, kv.key)
 		values = append(values, kv.value)
@@ -370,8 +369,6 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 	readRateHist.Observe(float64(size) / 1024.0 / 1024.0 / readSecond)
 	sortRateHist.Observe(float64(size) / 1024.0 / 1024.0 / sortSecond)
 
-	start = keys[0]
-	end = keys[len(keys)-1]
 	data := e.buildIngestData(keys, values, e.memKVsAndBuffers.memKVBuffers)
 	sendFn := func(dr common.DataAndRange) error {
 		select {
@@ -384,8 +381,8 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 	return sendFn(common.DataAndRange{
 		Data: data,
 		Range: common.Range{
-			Start: start,
-			End:   end,
+			Start: startKey,
+			End:   endKey,
 		},
 	})
 }
