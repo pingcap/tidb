@@ -113,7 +113,7 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	}
 	importID := uuid.New().String()
 	logutil.Logger(ctx).Info("importing data from select statement",
-		zap.String("importID", importID))
+		zap.String("importID", importID), zap.Int64("concurrency", e.controller.ThreadCnt))
 	ti, err2 := importer.NewTableImporter(param, e.controller, importID)
 	if err2 != nil {
 		return err2
