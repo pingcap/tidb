@@ -141,7 +141,7 @@ func (s *spillDeserializeHelper) deserializePartialResult4MaxMinString(dst *part
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		dst.isNull = spill.DeserializeBool(bytes, 0)
-		dst.val = string(hack.String(bytes[boolLen:]))
+		dst.val = string(bytes[boolLen:])
 		s.readRowIndex++
 		return true
 	}
@@ -281,8 +281,8 @@ func (s *spillDeserializeHelper) deserializePartialResult4JsonObjectAgg(dst *par
 		readPos := int64(0)
 		for readPos < byteNum {
 			keyLen := spill.DeserializeInt64(bytes, readPos)
-			readPos += 8
-			key := string(hack.String(bytes[readPos : readPos+keyLen]))
+			readPos += int64Len
+			key := string(bytes[readPos : readPos+keyLen])
 			readPos += keyLen
 			realVal, readPosTmp := spill.DeserializeInterface(bytes, readPos)
 			readPos = readPosTmp
@@ -362,7 +362,7 @@ func (s *spillDeserializeHelper) deserializePartialResult4FirstRowString(dst *pa
 		bytes := s.column.GetBytes(s.readRowIndex)
 		readPos := int64(0)
 		readPos = s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, readPos)
-		dst.val = string(hack.String(bytes[readPos:]))
+		dst.val = string(bytes[readPos:])
 		s.readRowIndex++
 		return true
 	}

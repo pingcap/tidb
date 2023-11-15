@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/hack"
 )
 
 var (
@@ -133,7 +132,7 @@ func DeserializeInterface(buf []byte, readPos int64) (interface{}, int64) {
 	case StringType:
 		strLen := DeserializeInt64(buf, readPos)
 		readPos += int64Len
-		res := string(hack.String(buf[readPos : readPos+strLen]))
+		res := string(buf[readPos : readPos+strLen])
 		readPos += strLen
 		return res, readPos
 	case BinaryJSONType:
@@ -192,7 +191,7 @@ func DeserializeBinaryJSON(buf []byte, pos int64) (types.BinaryJSON, int64) {
 func DeserializeSet(buf []byte, pos int64) types.Set {
 	retValue := types.Set{}
 	retValue.Value = DeserializeUint64(buf, pos)
-	retValue.Name = string(hack.String(buf[pos+uint64Len:]))
+	retValue.Name = string(buf[pos+uint64Len:])
 	return retValue
 }
 
@@ -204,7 +203,7 @@ func DeserializeSet(buf []byte, pos int64) types.Set {
 func DeserializeEnum(buf []byte, pos int64) types.Enum {
 	retValue := types.Enum{}
 	retValue.Value = DeserializeUint64(buf, pos)
-	retValue.Name = string(hack.String(buf[pos+uint64Len:]))
+	retValue.Name = string(buf[pos+uint64Len:])
 	return retValue
 }
 
