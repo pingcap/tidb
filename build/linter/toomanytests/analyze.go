@@ -19,6 +19,7 @@ import (
 	"go/token"
 	"strings"
 
+	"github.com/pingcap/tidb/build/linter/util"
 	"golang.org/x/tools/go/analysis"
 )
 
@@ -29,6 +30,11 @@ var Analyzer = &analysis.Analyzer{
 	Run: func(pass *analysis.Pass) (any, error) {
 		cnt := 0
 		for _, f := range pass.Files {
+			fileName := pass.Fset.PositionFor(f.Pos(), false).Filename
+			if !util.ShouldRun("toomanytests", fileName) {
+				continue
+			}
+
 			astFile := pass.Fset.File(f.Pos())
 			if !isTestFile(astFile) {
 				continue

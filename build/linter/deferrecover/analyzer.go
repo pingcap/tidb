@@ -39,6 +39,11 @@ const (
 
 func run(pass *analysis.Pass) (interface{}, error) {
 	for _, file := range pass.Files {
+		fileName := pass.Fset.PositionFor(file.Pos(), false).Filename
+		if !util.ShouldRun("recover", fileName) {
+			continue
+		}
+
 		packageName := util.GetPackageName(file.Imports, packagePath, packageName)
 		if packageName == "" {
 			continue

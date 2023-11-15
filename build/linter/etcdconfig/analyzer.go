@@ -38,6 +38,11 @@ const (
 
 func run(pass *analysis.Pass) (interface{}, error) {
 	for _, file := range pass.Files {
+		fileName := pass.Fset.PositionFor(file.Pos(), false).Filename
+		if !util.ShouldRun("etcdconfig", fileName) {
+			continue
+		}
+
 		packageName := util.GetPackageName(file.Imports, configPackagePath, configPackageName)
 		if packageName == "" {
 			continue

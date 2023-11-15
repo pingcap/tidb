@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pingcap/tidb/build/linter/util"
 	"golang.org/x/tools/go/analysis"
 )
 
@@ -39,6 +40,9 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	for _, file := range pass.Files {
 		fileName := pass.Fset.File(file.Pos()).Name()
 		if !strings.HasSuffix(fileName, bootstrapCodeFile) {
+			continue
+		}
+		if !util.ShouldRun("bootstrap", fileName) {
 			continue
 		}
 

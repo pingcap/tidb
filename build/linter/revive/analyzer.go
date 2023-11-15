@@ -92,7 +92,12 @@ var allRules = append([]lint.Rule{
 func run(pass *analysis.Pass) (any, error) {
 	files := make([]string, 0, len(pass.Files))
 	for _, file := range pass.Files {
-		files = append(files, pass.Fset.PositionFor(file.Pos(), false).Filename)
+		fileName := pass.Fset.PositionFor(file.Pos(), false).Filename
+		if !util.ShouldRun("revive", fileName) {
+			continue
+		}
+
+		files = append(files, fileName)
 	}
 	packages := [][]string{files}
 

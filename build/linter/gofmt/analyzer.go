@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/golangci/gofmt/gofmt"
+	"github.com/pingcap/tidb/build/linter/util"
 	"golang.org/x/tools/go/analysis"
 )
 
@@ -46,6 +47,10 @@ func run(pass *analysis.Pass) (any, error) {
 	}
 
 	for _, f := range fileNames {
+		if !util.ShouldRun("gofmt", f) {
+			continue
+		}
+
 		diff, err := gofmt.Run(f, needSimplify)
 		if err != nil {
 			return nil, fmt.Errorf("could not run gofmt: %w (%s)", err, f)

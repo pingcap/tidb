@@ -20,6 +20,7 @@ import (
 
 	"github.com/daixiang0/gci/pkg/config"
 	"github.com/daixiang0/gci/pkg/gci"
+	"github.com/pingcap/tidb/build/linter/util"
 	"golang.org/x/tools/go/analysis"
 )
 
@@ -34,6 +35,10 @@ func run(pass *analysis.Pass) (any, error) {
 	fileNames := make([]string, 0, len(pass.Files))
 	for _, f := range pass.Files {
 		pos := pass.Fset.PositionFor(f.Pos(), false)
+		if !util.ShouldRun("gci", pos.Filename) {
+			continue
+		}
+
 		fileNames = append(fileNames, pos.Filename)
 	}
 	rawCfg := config.YamlConfig{

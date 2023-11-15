@@ -61,6 +61,10 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	files := make([]string, 0, len(pass.Files))
 	for _, file := range pass.Files {
 		pos := pass.Fset.PositionFor(file.Pos(), false)
+		if !util.ShouldRun(Name, pos.Filename) {
+			continue
+		}
+
 		files = append(files, pos.Filename)
 	}
 	for _, f := range files {
