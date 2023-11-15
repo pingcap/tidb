@@ -18,10 +18,11 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/syncutil"
 )
 
 var (
-	globalChunkPoolMutex sync.RWMutex
+	globalChunkPoolMutex syncutil.RWMutex
 	// globalChunkPool is a chunk pool, the key is the init capacity.
 	globalChunkPool = make(map[int]*Pool)
 )
@@ -48,6 +49,7 @@ func putChunkFromPool(initCap int, fields []*types.FieldType, chk *Chunk) {
 		pool.PutChunk(fields, chk)
 		return
 	}
+	globalChunkPoolMutex.RUnlock()
 	globalChunkPoolMutex.Lock()
 	defer globalChunkPoolMutex.Unlock()
 	globalChunkPool[initCap] = NewPool(initCap)
