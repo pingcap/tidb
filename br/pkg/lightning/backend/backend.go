@@ -258,8 +258,8 @@ type LocalEngineWriter struct {
 	tableName string
 }
 
-func (l *LocalEngineWriter) Inner() EngineWriter {
-	return l.writer
+func (w *LocalEngineWriter) Inner() EngineWriter {
+	return w.writer
 }
 
 func MakeBackend(ab AbstractBackend) Backend {
