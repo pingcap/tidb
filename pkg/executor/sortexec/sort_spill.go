@@ -26,8 +26,8 @@ import (
 // triggered.
 type sortPartitionSpillDiskAction struct {
 	memory.BaseOOMAction
-	partition      *sortPartition
-	spillTriggered bool
+	partition     *sortPartition
+	isSpillNeeded bool
 }
 
 // GetPriority get the priority of the Action.
@@ -36,16 +36,19 @@ func (*sortPartitionSpillDiskAction) GetPriority() int64 {
 }
 
 func (s *sortPartitionSpillDiskAction) isSpillTriggered() bool {
-	return s.spillTriggered
+	return s.partition.inDisk != nil
 }
 
-// TODO If it is already triggered before, call its fallbackAction.
+func (s *sortPartitionSpillDiskAction) needSpill() bool {
+	return s.isSpillNeeded
+}
+
 func (s *sortPartitionSpillDiskAction) Action(t *memory.Tracker) {
 	// Currently, `Action` is always triggered by only one goroutine, so no lock is needed here so far.
-	if !s.spillTriggered && s.partition.hasEnoughDataToSpill(s.partition.getMemTracker()) {
+	if !s.isSpillNeeded && s.partition.hasEnoughDataToSpill() {
 		logutil.BgLogger().Info("memory exceeds quota, spill sort partition data to disk now.",
 			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
-		s.spillTriggered = true
+		s.isSpillNeeded = true
 		// Only set spill flag, the spill action will be executed in other place.
 	}
 }

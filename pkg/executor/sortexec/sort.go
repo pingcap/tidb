@@ -18,10 +18,8 @@ import (
 	"container/heap"
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -48,6 +46,9 @@ type SortExec struct {
 	keyCmpFuncs []chunk.CompareFunc
 
 	partition *sortPartition
+
+	// We can't spill if size of data is lower than the limit
+	spillLimit int64
 
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
@@ -93,6 +94,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 	if e.memTracker == nil {
 		e.memTracker = memory.NewTracker(e.ID(), -1)
 		e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
+		e.spillLimit = e.Ctx().GetSessionVars().StmtCtx.MemTracker.GetBytesLimit() / 10
 		e.diskTracker = memory.NewTracker(e.ID(), -1)
 		e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
 	}
@@ -149,7 +151,7 @@ func (e *SortExec) initExternalSorting() {
 }
 
 func (e *SortExec) nonExternalSorting(req *chunk.Chunk) (err error) {
-	if e.SortPartitionList[0].spillAction.spillTriggered {
+	if e.SortPartitionList[0].spillAction.isSpillTriggered() {
 		// Maybe the spill is triggered by the last chunk, so there is only one partition.
 		cursor := e.cursors[0]
 		for !req.IsFull() {
@@ -222,7 +224,7 @@ func (e *SortExec) switchToNewSortPartition(fields []*types.FieldType, byItemsDe
 	// Put the full partition into list
 	e.SortPartitionList = append(e.SortPartitionList, e.partition)
 
-	e.partition = newSortPartition(fields, e.MaxChunkSize(), byItemsDesc, e.keyColumns, e.keyCmpFuncs)
+	e.partition = newSortPartition(fields, e.MaxChunkSize(), byItemsDesc, e.keyColumns, e.keyCmpFuncs, e.spillLimit)
 	e.spillAction = e.partition.actionSpill()
 	e.partition.getMemTracker().AttachTo(e.memTracker)
 	e.partition.getMemTracker().SetLabel(memory.LabelForRowChunks)
@@ -245,7 +247,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		byItemsDesc[i] = byItem.Desc
 	}
 
-	e.partition = newSortPartition(fields, e.MaxChunkSize(), byItemsDesc, e.keyColumns, e.keyCmpFuncs)
+	e.partition = newSortPartition(fields, e.MaxChunkSize(), byItemsDesc, e.keyColumns, e.keyCmpFuncs, e.spillLimit)
 	e.spillAction = e.partition.actionSpill()
 	e.partition.getMemTracker().AttachTo(e.memTracker)
 	e.partition.getMemTracker().SetLabel(memory.LabelForRowChunks)
@@ -276,8 +278,6 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		err = e.partition.add(chk)
 		if err != nil {
 			if errors.Is(err, errSpillIsTriggered) {
-				info := fmt.Sprintf("Create new partition %d, old partition has %d rows", len(e.SortPartitionList)+1, e.partition.inDisk.NumChunks())
-				log.Info(info)
 				e.switchToNewSortPartition(fields, byItemsDesc)
 				err = e.partition.add(chk)
 			}
@@ -298,13 +298,12 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	if e.isSpillTriggered() {
 		// If e.partition haven't trigger the spill. We need to manually trigger it.
 		// As all data should be in disk when spill is triggered.
-		if !e.partition.spillAction.spillTriggered {
-			e.partition.spillAction.spillTriggered = true
-			e.partition.spillToDisk()
-		}
-
-		if e.partition.partitionErr != nil {
-			return e.partition.partitionErr
+		if !e.partition.spillAction.isSpillTriggered() {
+			e.partition.spillAction.isSpillNeeded = true
+			err := e.partition.spillToDisk()
+			if err != nil {
+				return err
+			}
 		}
 	} else {
 		err := e.partition.sort()
@@ -314,6 +313,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	}
 
 	e.SortPartitionList = append(e.SortPartitionList, e.partition)
+	e.partition = nil
 	return e.initCursors(len(e.SortPartitionList))
 }
 
@@ -353,8 +353,6 @@ func (e *SortExec) initCursors(partitionNum int) error {
 	e.cursors = make([]*dataCursor, partitionNum)
 	for i := 0; i < partitionNum; i++ {
 		e.cursors[i] = NewDataCursor()
-		info := fmt.Sprintf("xzxdebug: partitionNum: %d, i: %d, diskChunkNum: %d", partitionNum, i, e.SortPartitionList[i].inDisk.NumChunks())
-		log.Info(info)
 		chk, err := e.SortPartitionList[i].inDisk.GetChunk(0)
 		if err != nil {
 			return err
@@ -404,8 +402,11 @@ func (e *SortExec) compressRow(rowI, rowJ chunk.Row) int {
 
 func (e *SortExec) isSpillTriggered() bool {
 	if len(e.SortPartitionList) > 0 {
-		return e.SortPartitionList[0].spillAction.spillTriggered
+		return e.SortPartitionList[0].spillAction.isSpillTriggered()
 	} else {
-		return e.partition.spillAction.spillTriggered
+		if e.partition != nil {
+			return e.partition.spillAction.isSpillTriggered()
+		}
+		return false
 	}
 }
