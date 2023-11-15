@@ -142,7 +142,7 @@ func (e *hashAggExec) getGroupKey() ([]byte, [][]byte, error) {
 	bufLen := 0
 	row := make([][]byte, 0, length)
 	for _, item := range e.groupByExprs {
-		v, err := item.Eval(chunk.MutRowFromDatums(e.row).ToRow())
+		v, err := item.EvalWithInnerCtx(chunk.MutRowFromDatums(e.row).ToRow())
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -281,7 +281,7 @@ func (e *streamAggExec) meetNewGroup(row [][]byte) (bool, error) {
 		matched, firstGroup = false, true
 	}
 	for i, item := range e.groupByExprs {
-		d, err := item.Eval(chunk.MutRowFromDatums(e.row).ToRow())
+		d, err := item.EvalWithInnerCtx(chunk.MutRowFromDatums(e.row).ToRow())
 		if err != nil {
 			return false, errors.Trace(err)
 		}

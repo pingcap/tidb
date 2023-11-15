@@ -1091,7 +1091,7 @@ func (lp *ForListColumnPruning) genConstExprKey(ctx sessionctx.Context, sc *stmt
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	v, err := expr.Eval(chunk.Row{})
+	v, err := expr.Eval(ctx, chunk.Row{})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

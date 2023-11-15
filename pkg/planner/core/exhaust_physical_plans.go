@@ -1459,7 +1459,7 @@ func (cwc *ColWithCmpFuncManager) CompareRow(lhs, rhs chunk.Row) int {
 func (cwc *ColWithCmpFuncManager) BuildRangesByRow(ctx sessionctx.Context, row chunk.Row) ([]*ranger.Range, error) {
 	exprs := make([]expression.Expression, len(cwc.OpType))
 	for i, opType := range cwc.OpType {
-		constantArg, err := cwc.opArg[i].Eval(row)
+		constantArg, err := cwc.opArg[i].Eval(ctx, row)
 		if err != nil {
 			return nil, err
 		}

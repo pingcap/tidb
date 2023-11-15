@@ -104,8 +104,15 @@ func (s *ScalarSubQueryExpr) selfEvaluate() error {
 	return nil
 }
 
+// EvalWithInnerCtx evaluates expression with inner ctx.
+// Deprecated: This function is only used during refactoring, please do not use it in new code.
+// TODO: remove this method after refactoring.
+func (s *ScalarSubQueryExpr) EvalWithInnerCtx(row chunk.Row) (types.Datum, error) {
+	return s.Eval(nil, row)
+}
+
 // Eval implements the Expression interface.
-func (s *ScalarSubQueryExpr) Eval(_ chunk.Row) (types.Datum, error) {
+func (s *ScalarSubQueryExpr) Eval(_ sessionctx.Context, _ chunk.Row) (types.Datum, error) {
 	if s.evaled {
 		return s.Value, nil
 	}

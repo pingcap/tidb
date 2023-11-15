@@ -405,13 +405,21 @@ func (sf *ScalarFunction) Traverse(action TraverseAction) Expression {
 	return action.Transform(sf)
 }
 
+// EvalWithInnerCtx evaluates expression with inner ctx.
+// Deprecated: This function is only used during refactoring, please do not use it in new code.
+// TODO: remove this method after refactoring.
+func (sf *ScalarFunction) EvalWithInnerCtx(row chunk.Row) (types.Datum, error) {
+	return sf.Eval(sf.ctx, row)
+}
+
 // Eval implements Expression interface.
-func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
+func (sf *ScalarFunction) Eval(ctx sessionctx.Context, row chunk.Row) (d types.Datum, err error) {
 	var (
 		res    interface{}
 		isNull bool
 	)
-	switch ctx, tp, evalType := sf.GetCtx(), sf.GetType(), sf.GetType().EvalType(); evalType {
+	intest.AssertNotNil(ctx)
+	switch tp, evalType := sf.GetType(), sf.GetType().EvalType(); evalType {
 	case types.ETInt:
 		var intRes int64
 		intRes, isNull, err = sf.EvalInt(ctx, row)
@@ -435,10 +443,8 @@ func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 		str, isNull, err = sf.EvalString(ctx, row)
 		if !isNull && err == nil && tp.GetType() == mysql.TypeEnum {
 			res, err = types.ParseEnum(tp.GetElems(), str, tp.GetCollate())
-			if ctx := sf.GetCtx(); ctx != nil {
-				if sc := ctx.GetSessionVars().StmtCtx; sc != nil {
-					err = sc.HandleTruncate(err)
-				}
+			if sc := ctx.GetSessionVars().StmtCtx; sc != nil {
+				err = sc.HandleTruncate(err)
 			}
 		} else {
 			res = str
