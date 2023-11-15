@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/jfcg/sorty/v2"
+	"github.com/pingcap/tidb/pkg/metrics"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/pingcap/errors"
@@ -312,7 +313,14 @@ func readAllData(
 }
 
 func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byte, outCh chan<- common.DataAndRange) error {
-	now := time.Now()
+	readAndSortRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("read_and_sort")
+	readAndSortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("read_and_sort")
+	readRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("read")
+	readDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("read")
+	sortRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("sort")
+	sortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("sort")
+
+	readStart := time.Now()
 	err := readAllData(
 		ctx,
 		e.storage,
@@ -326,9 +334,11 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 	if err != nil {
 		return err
 	}
+	readSecond := time.Since(readStart).Seconds()
+	readDurHist.Observe(readSecond)
 	logutil.Logger(ctx).Info("reading external storage in loadBatchRegionData",
-		zap.Duration("cost time", time.Since(now)))
-	now = time.Now()
+		zap.Duration("cost time", time.Since(readStart)))
+	sortStart := time.Now()
 	sorty.MaxGor = uint64(e.workerConcurrency)
 	sorty.Sort(len(e.memKVsAndBuffers.memKVs), func(i, k, r, s int) bool {
 		if bytes.Compare(e.memKVsAndBuffers.memKVs[i].key, e.memKVsAndBuffers.memKVs[k].key) < 0 { // strict comparator like < or >
@@ -339,15 +349,27 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 		}
 		return false
 	})
+	sortSecond := time.Since(sortStart).Seconds()
+	sortDurHist.Observe(sortSecond)
 	logutil.Logger(ctx).Info("sorting in loadBatchRegionData",
-		zap.Duration("cost time", time.Since(now)))
+		zap.Duration("cost time", time.Since(sortStart)))
+
+	readAndSortSecond := time.Since(readStart).Seconds()
+	readAndSortDurHist.Observe(readAndSortSecond)
+
 	keys := make([][]byte, 0, 1024)
 	values := make([][]byte, 0, 1024)
+	size := 0
 	var start, end []byte
 	for _, kv := range e.memKVsAndBuffers.memKVs {
 		keys = append(keys, kv.key)
 		values = append(values, kv.value)
+		size += len(kv.key) + len(kv.value)
 	}
+	readAndSortRateHist.Observe(float64(size) / 1024.0 / 1024.0 / readAndSortSecond)
+	readRateHist.Observe(float64(size) / 1024.0 / 1024.0 / readSecond)
+	sortRateHist.Observe(float64(size) / 1024.0 / 1024.0 / sortSecond)
+
 	start = keys[0]
 	end = keys[len(keys)-1]
 	data := e.buildIngestData(keys, values, e.memKVsAndBuffers.memKVBuffers)
