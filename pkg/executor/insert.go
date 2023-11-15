@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -340,7 +341,7 @@ func (e *InsertExec) Open(ctx context.Context) error {
 		e.initEvalBuffer4Dup()
 	}
 	if e.SelectExec != nil {
-		return e.SelectExec.Open(ctx)
+		return exec.Open(ctx, e.SelectExec)
 	}
 	if !e.allAssignmentsAreConstant {
 		e.initEvalBuffer()

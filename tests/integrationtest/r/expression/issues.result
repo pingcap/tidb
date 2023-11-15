@@ -85,7 +85,7 @@ b+0	BIN(b)	OCT(b)	HEX(b)
 drop table if exists t;
 create table t(a char(20));
 select convert(a using a) from t;
-[parser:1115]Unknown character set: 'a'
+Error 1115 (42000): Unknown character set: 'a'
 drop table if exists t1;
 create table t1(c1 varbinary(100));
 insert into t1 values('abc');
@@ -859,7 +859,6 @@ null
 "0"
 insert into mysql.expr_pushdown_blacklist values('json_extract','tikv','');
 admin reload expr_pushdown_blacklist;
-
 SELECT * FROM testjson WHERE JSON_EXTRACT(j,'$.test');
 j
 {"test": 3}
@@ -903,7 +902,6 @@ null
 "0"
 delete from mysql.expr_pushdown_blacklist;
 admin reload expr_pushdown_blacklist;
-
 drop table if exists t0;
 CREATE TABLE t0(c0 int);
 INSERT INTO t0 VALUES (1);
@@ -1381,7 +1379,7 @@ select .78$123;
 $123
 0.78
 select .78$421+1;
-[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 15 near "+1;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 15 near "+1;" 
 select t. `r10` > 3 from t;
 t. `r10` > 3
 1
@@ -1417,12 +1415,7 @@ drop table if exists ta, tb;
 CREATE TABLE `ta` (  `k` varchar(32) NOT NULL DEFAULT ' ',  `c0` varchar(32) NOT NULL DEFAULT ' ',  `c` varchar(18) NOT NULL DEFAULT ' ',  `e0` varchar(1) NOT NULL DEFAULT ' ',  PRIMARY KEY (`k`,`c0`,`c`),  KEY `idx` (`c`,`e0`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 CREATE TABLE `tb` (  `k` varchar(32) NOT NULL DEFAULT ' ',  `e` int(11) NOT NULL DEFAULT '0',  `i` int(11) NOT NULL DEFAULT '0',  `s` varchar(1) NOT NULL DEFAULT ' ',  `c` varchar(50) NOT NULL DEFAULT ' ',  PRIMARY KEY (`k`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 prepare stmt from "select a.* from ta a left join tb b on a.k = b.k where (a.k <> '000000' and ((b.s = ? and i = ? ) or (b.s = ? and e = ?) or (b.s not in(?, ?))) and b.c like '%1%') or (a.c <> '000000' and a.k = '000000')";
-set @a=3;
-set @b=20200414;
-set @c='a';
-set @d=20200414;
-set @e=3;
-set @f='a';
+set @a=3;set @b=20200414;set @c='a';set @d=20200414;set @e=3;set @f='a';
 execute stmt using @a,@b,@c,@d,@e,@f;
 k	c0	c	e0
 drop table if exists t;
@@ -2438,7 +2431,6 @@ select c from t;
 c
 128
 admin check table t;
-
 set @@sql_mode=default;
 DROP TABLE IF EXISTS t1;
 CREATE TABLE t1 ( `pk` int not null primary key auto_increment, `col_smallint_key_signed` smallint  , key (`col_smallint_key_signed`));
@@ -2815,3 +2807,361 @@ SELECT @@GLOBAL.information_schema_stats_expiry;
 0
 set @@SESSION.information_schema_stats_expiry=default;
 set @@GLOBAL.information_schema_stats_expiry=default;
+drop table if exists t;
+drop table if exists t1;
+create table t(col1 decimal);
+insert into t values(0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000);
+select * from t;
+col1
+0
+create table t1(col1 decimal(65,30));
+insert into t1 values(0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000);
+select * from t1;
+col1
+0.000000000000000000000000000000
+select 0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000;
+0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0.000000000000000000000000000000000000000000000000000000000000000000000000
+select 0.0000000000000000000000000000000000000000000000000000000000000000000000012;
+0.0000000000000000000000000000000000000000000000000000000000000000000000012
+0.000000000000000000000000000000000000000000000000000000000000000000000001
+select 0.000000000000000000000000000000000000000000000000000000000000000000000001;
+0.000000000000000000000000000000000000000000000000000000000000000000000001
+0.000000000000000000000000000000000000000000000000000000000000000000000001
+drop table if exists dd;
+CREATE TABLE dd(a date, b datetime, c timestamp);
+SET sql_mode='';
+TRUNCATE TABLE dd;
+INSERT INTO dd(a) values('0000-00-00');
+SHOW WARNINGS;
+Level	Code	Message
+SELECT a FROM dd;
+a
+0000-00-00
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) values('2000-10-01');
+UPDATE dd SET b = '0000-00-00';
+SHOW WARNINGS;
+Level	Code	Message
+SELECT b FROM dd;
+b
+0000-00-00 00:00:00
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('0000-00-00 20:00:00');
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '0000-00-00 20:00:00' for column 'c' at row 1
+SELECT c FROM dd;
+c
+0000-00-00 00:00:00
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('2000-10-01 20:00:00');
+UPDATE dd SET c = '0000-00-00 20:00:00';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '0000-00-00 20:00:00'
+SELECT c FROM dd;
+c
+0000-00-00 00:00:00
+SET sql_mode='NO_ZERO_DATE';
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) values('0000-0-00');
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect datetime value: '0000-0-00' for column 'b' at row 1
+SELECT b FROM dd;
+b
+0000-00-00 00:00:00
+TRUNCATE TABLE dd;
+INSERT INTO dd(a) values('2000-10-01');
+UPDATE dd SET a = '0000-00-00';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect date value: '0000-00-00'
+SELECT a FROM dd;
+a
+0000-00-00
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('2000-10-01 10:00:00');
+UPDATE dd SET c = '0000-00-00 10:00:00';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '0000-00-00 10:00:00'
+SELECT c FROM dd;
+c
+0000-00-00 00:00:00
+SET sql_mode='NO_ZERO_DATE,STRICT_TRANS_TABLES';
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) VALUES ('0000-00-00 20:00:00');
+Error 1292 (22007): Incorrect timestamp value: '0000-00-00 20:00:00' for column 'c' at row 1
+INSERT IGNORE INTO dd(c) VALUES ('0000-00-00 20:00:00');
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '0000-00-00 20:00:00' for column 'c' at row 1
+SELECT c FROM dd;
+c
+0000-00-00 00:00:00
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) values('2000-10-01');
+UPDATE dd SET b = '0000-00-00';
+Error 1292 (22007): Incorrect datetime value: '0000-00-00'
+UPDATE IGNORE dd SET b = '0000-00-00';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect datetime value: '0000-00-00'
+SELECT b FROM dd;
+b
+0000-00-00 00:00:00
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('2000-10-01 10:00:00');
+UPDATE dd SET c = '0000-00-00 00:00:00';
+Error 1292 (22007): Incorrect timestamp value: '0000-00-00 00:00:00'
+UPDATE IGNORE dd SET c = '0000-00-00 00:00:00';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '0000-00-00 00:00:00'
+SELECT c FROM dd;
+c
+0000-00-00 00:00:00
+SET sql_mode='';
+TRUNCATE TABLE dd;
+INSERT INTO dd(a) values('2000-01-00');
+SHOW WARNINGS;
+Level	Code	Message
+SELECT a FROM dd;
+a
+2000-01-00
+INSERT INTO dd(a) values('2000-00-01');
+SHOW WARNINGS;
+Level	Code	Message
+SELECT a FROM dd;
+a
+2000-01-00
+2000-00-01
+INSERT INTO dd(a) values('0-01-02');
+SHOW WARNINGS;
+Level	Code	Message
+SELECT a FROM dd;
+a
+2000-01-00
+2000-00-01
+2000-01-02
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) values('2000-01-02');
+UPDATE dd SET b = '2000-00-02';
+SHOW WARNINGS;
+Level	Code	Message
+SELECT b FROM dd;
+b
+2000-00-02 00:00:00
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('2000-01-02 20:00:00');
+UPDATE dd SET c = '0000-01-02 20:00:00';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '0000-01-02 20:00:00'
+SELECT c FROM dd;
+c
+0000-00-00 00:00:00
+SET sql_mode='NO_ZERO_IN_DATE';
+TRUNCATE TABLE dd;
+INSERT INTO dd(a) values('2000-01-00');
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect date value: '2000-01-00' for column 'a' at row 1
+SELECT a FROM dd;
+a
+0000-00-00
+TRUNCATE TABLE dd;
+INSERT INTO dd(a) values('2000-01-02');
+UPDATE dd SET a = '2000-00-02';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect date value: '2000-00-02'
+SELECT a FROM dd;
+a
+0000-00-00
+UPDATE dd SET b = '2000-01-0';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect datetime value: '2000-01-0'
+SELECT b FROM dd;
+b
+0000-00-00 00:00:00
+UPDATE dd SET b = '0-01-02';
+SHOW WARNINGS;
+Level	Code	Message
+SELECT b FROM dd;
+b
+2000-01-02 00:00:00
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('2000-01-02 20:00:00');
+UPDATE dd SET c = '2000-00-02 20:00:00';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2000-00-02 20:00:00'
+SELECT c FROM dd;
+c
+0000-00-00 00:00:00
+SET sql_mode='NO_ZERO_IN_DATE,STRICT_TRANS_TABLES';
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) VALUES ('2000-01-00');
+Error 1292 (22007): Incorrect datetime value: '2000-01-00' for column 'b' at row 1
+INSERT IGNORE INTO dd(b) VALUES ('2000-00-01');
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect datetime value: '2000-00-01' for column 'b' at row 1
+SELECT b FROM dd;
+b
+0000-00-00 00:00:00
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) VALUES ('2000-01-02');
+UPDATE dd SET b = '2000-01-00';
+Error 1292 (22007): Incorrect datetime value: '2000-01-00'
+UPDATE IGNORE dd SET b = '2000-01-0';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect datetime value: '2000-01-0'
+SELECT b FROM dd;
+b
+0000-00-00 00:00:00
+UPDATE dd SET b = '0000-1-2';
+SELECT b FROM dd;
+b
+0000-01-02 00:00:00
+UPDATE dd SET c = '0000-01-05';
+Error 1292 (22007): Incorrect timestamp value: '0000-01-05'
+UPDATE IGNORE dd SET c = '0000-01-5';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '0000-01-5'
+SELECT c FROM dd;
+c
+0000-00-00 00:00:00
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) VALUES ('2000-01-00 20:00:00');
+Error 1292 (22007): Incorrect timestamp value: '2000-01-00 20:00:00' for column 'c' at row 1
+INSERT INTO dd(c) VALUES ('2000-01-02');
+UPDATE dd SET c = '2000-01-00 20:00:00';
+Error 1292 (22007): Incorrect timestamp value: '2000-01-00 20:00:00'
+UPDATE IGNORE dd SET b = '2000-01-00';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect datetime value: '2000-01-00'
+SELECT b FROM dd;
+b
+0000-00-00 00:00:00
+SET sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
+TRUNCATE TABLE dd;
+INSERT INTO dd(a) values('0000-00-00');
+SHOW WARNINGS;
+Level	Code	Message
+SELECT a FROM dd;
+a
+0000-00-00
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) values('2000-10-01');
+UPDATE dd SET b = '0000-00-00';
+SHOW WARNINGS;
+Level	Code	Message
+SELECT b FROM dd;
+b
+0000-00-00 00:00:00
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('0000-00-00 00:00:00');
+SHOW WARNINGS;
+Level	Code	Message
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('2000-10-01 10:00:00');
+UPDATE dd SET c = '0000-00-00 00:00:00';
+SHOW WARNINGS;
+Level	Code	Message
+SELECT c FROM dd;
+c
+0000-00-00 00:00:00
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) VALUES ('2000-01-00');
+Error 1292 (22007): Incorrect datetime value: '2000-01-00' for column 'b' at row 1
+INSERT IGNORE INTO dd(b) VALUES ('2000-00-01');
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect datetime value: '2000-00-01' for column 'b' at row 1
+SELECT b FROM dd;
+b
+0000-00-00 00:00:00
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) VALUES ('2000-01-02');
+UPDATE dd SET b = '2000-01-00';
+Error 1292 (22007): Incorrect datetime value: '2000-01-00'
+UPDATE IGNORE dd SET b = '2000-01-0';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect datetime value: '2000-01-0'
+SELECT b FROM dd;
+b
+0000-00-00 00:00:00
+UPDATE dd SET b = '0000-1-2';
+SELECT b FROM dd;
+b
+0000-01-02 00:00:00
+UPDATE dd SET c = '0000-01-05';
+Error 1292 (22007): Incorrect timestamp value: '0000-01-05'
+UPDATE IGNORE dd SET c = '0000-01-5';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '0000-01-5'
+SELECT c FROM dd;
+c
+0000-00-00 00:00:00
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) VALUES ('2000-01-00 20:00:00');
+Error 1292 (22007): Incorrect timestamp value: '2000-01-00 20:00:00' for column 'c' at row 1
+INSERT INTO dd(c) VALUES ('2000-01-02');
+UPDATE dd SET c = '2000-01-00 20:00:00';
+Error 1292 (22007): Incorrect timestamp value: '2000-01-00 20:00:00'
+UPDATE IGNORE dd SET b = '2000-01-00';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect datetime value: '2000-01-00'
+SELECT b FROM dd;
+b
+0000-00-00 00:00:00
+SET sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
+TRUNCATE TABLE dd;
+INSERT INTO dd(a) values('2000-00-10');
+SHOW WARNINGS;
+Level	Code	Message
+SELECT a FROM dd;
+a
+2000-00-10
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) values('2000-10-01');
+UPDATE dd SET b = '2000-00-10';
+SHOW WARNINGS;
+Level	Code	Message
+SELECT b FROM dd;
+b
+2000-00-10 00:00:00
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('2000-10-01 10:00:00');
+UPDATE dd SET c = '2000-00-10 00:00:00';
+Error 1292 (22007): Incorrect timestamp value: '2000-00-10 00:00:00'
+UPDATE IGNORE dd SET c = '2000-01-00 00:00:00';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2000-01-00 00:00:00'
+SELECT c FROM dd;
+c
+0000-00-00 00:00:00
+drop table if exists table_20220419;
+CREATE TABLE table_20220419 (
+id bigint(20) NOT NULL AUTO_INCREMENT,
+lastLoginDate datetime NOT NULL,
+PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+set sql_mode='';
+insert into table_20220419 values(1,'0000-00-00 00:00:00');
+set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
+insert into table_20220419(lastLoginDate) select lastLoginDate from table_20220419;
+Error 1292 (22007): Incorrect datetime value: '0000-00-00 00:00:00'
+set sql_mode=default;

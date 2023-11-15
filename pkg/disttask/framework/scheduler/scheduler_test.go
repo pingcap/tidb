@@ -24,6 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 var (
@@ -206,6 +208,41 @@ func TestSchedulerRun(t *testing.T) {
 	err = scheduler.Run(runCtx, task)
 	require.EqualError(t, err, context.Canceled.Error())
 
+	// 8. grpc cancel
+	mockSubtaskTable.EXPECT().GetSubtasksInStates("id", taskID, proto.StepOne,
+		unfinishedNormalSubtaskStates...).Return([]*proto.Subtask{{
+		ID: 2, Type: tp, Step: proto.StepOne, State: proto.TaskStatePending}}, nil)
+	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
+	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates("id", taskID, proto.StepOne,
+		unfinishedNormalSubtaskStates...).Return(&proto.Subtask{
+		ID: 1, Type: tp, Step: proto.StepOne, State: proto.TaskStatePending}, nil)
+	mockSubtaskTable.EXPECT().StartSubtask(taskID).Return(nil)
+	grpcErr := status.Error(codes.Canceled, "test cancel")
+	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).Return(grpcErr)
+	mockSubtaskExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
+	err = scheduler.Run(runCtx, task)
+	require.EqualError(t, err, grpcErr.Error())
+
+	// 9. annotate grpc cancel
+	mockSubtaskTable.EXPECT().GetSubtasksInStates("id", taskID, proto.StepOne,
+		unfinishedNormalSubtaskStates...).Return([]*proto.Subtask{{
+		ID: 2, Type: tp, Step: proto.StepOne, State: proto.TaskStatePending}}, nil)
+	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
+	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates("id", taskID, proto.StepOne,
+		unfinishedNormalSubtaskStates...).Return(&proto.Subtask{
+		ID: 1, Type: tp, Step: proto.StepOne, State: proto.TaskStatePending}, nil)
+	mockSubtaskTable.EXPECT().StartSubtask(taskID).Return(nil)
+	grpcErr = status.Error(codes.Canceled, "test cancel")
+	annotatedError := errors.Annotatef(
+		grpcErr,
+		" %s",
+		"test annotate",
+	)
+	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).Return(annotatedError)
+	mockSubtaskExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
+	err = scheduler.Run(runCtx, task)
+	require.EqualError(t, err, annotatedError.Error())
+
 	runCancel()
 }
 
@@ -329,7 +366,7 @@ func TestScheduler(t *testing.T) {
 	mockSubtaskExecutor := mockexecute.NewMockSubtaskExecutor(ctrl)
 	mockExtension := mock.NewMockExtension(ctrl)
 	mockSubtaskTable.EXPECT().IsSchedulerCanceled(gomock.Any(), gomock.Any()).Return(false, nil).AnyTimes()
-
+	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(taskID, proto.TaskStateFailed, gomock.Any()).Return(nil)
 	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()
 
 	scheduler := NewBaseScheduler(ctx, "id", 1, mockSubtaskTable)
@@ -346,7 +383,6 @@ func TestScheduler(t *testing.T) {
 		ID: 1, Type: tp, Step: proto.StepOne, State: proto.TaskStatePending}, nil)
 	mockSubtaskTable.EXPECT().StartSubtask(taskID).Return(nil)
 	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).Return(runSubtaskErr)
-	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(taskID, proto.TaskStateFailed, gomock.Any()).Return(nil)
 	mockSubtaskExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
 	err := scheduler.run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency})
 	require.EqualError(t, err, runSubtaskErr.Error())

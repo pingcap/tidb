@@ -54,7 +54,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
-	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -64,6 +63,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"golang.org/x/sync/errgroup"
@@ -1811,7 +1811,7 @@ func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh <-chan *CreatedTa
 	if err != nil {
 		errCh <- err
 	}
-	tiFlashStores := make(map[int64]helper.StoreStat)
+	tiFlashStores := make(map[int64]pdhttp.StoreInfo)
 	for _, store := range tikvStats.Stores {
 		for _, l := range store.Store.Labels {
 			if l.Key == "engine" && l.Value == "tiflash" {
@@ -1827,49 +1827,48 @@ func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh <-chan *CreatedTa
 			updateCh.Inc()
 			return nil
 		}
-		if rc.dom != nil {
-			log.Info("table has tiflash replica, start sync..",
-				zap.Stringer("table", tbl.OldTable.Info.Name),
-				zap.Stringer("db", tbl.OldTable.DB.Name))
-			for {
-				var progress float64
-				if pi := tbl.Table.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
-					for _, p := range pi.Definitions {
-						progressOfPartition, err := infosync.MustGetTiFlashProgress(p.ID, tbl.Table.TiFlashReplica.Count, &tiFlashStores)
-						if err != nil {
-							log.Warn("failed to get progress for tiflash partition replica, retry it",
-								zap.Int64("tableID", tbl.Table.ID), zap.Int64("partitionID", p.ID), zap.Error(err))
-							time.Sleep(time.Second)
-							continue
-						}
-						progress += progressOfPartition
-					}
-					progress = progress / float64(len(pi.Definitions))
-				} else {
-					var err error
-					progress, err = infosync.MustGetTiFlashProgress(tbl.Table.ID, tbl.Table.TiFlashReplica.Count, &tiFlashStores)
+		if rc.dom == nil {
+			// unreachable, current we have initial domain in mgr.
+			log.Fatal("unreachable, domain is nil")
+		}
+		log.Info("table has tiflash replica, start sync..",
+			zap.Stringer("table", tbl.OldTable.Info.Name),
+			zap.Stringer("db", tbl.OldTable.DB.Name))
+		for {
+			var progress float64
+			if pi := tbl.Table.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
+				for _, p := range pi.Definitions {
+					progressOfPartition, err := infosync.MustGetTiFlashProgress(p.ID, tbl.Table.TiFlashReplica.Count, &tiFlashStores)
 					if err != nil {
-						log.Warn("failed to get progress for tiflash replica, retry it",
-							zap.Int64("tableID", tbl.Table.ID), zap.Error(err))
+						log.Warn("failed to get progress for tiflash partition replica, retry it",
+							zap.Int64("tableID", tbl.Table.ID), zap.Int64("partitionID", p.ID), zap.Error(err))
 						time.Sleep(time.Second)
 						continue
 					}
+					progress += progressOfPartition
 				}
-				// check until progress is 1
-				if progress == 1 {
-					log.Info("tiflash replica synced",
-						zap.Stringer("table", tbl.OldTable.Info.Name),
-						zap.Stringer("db", tbl.OldTable.DB.Name))
-					break
+				progress = progress / float64(len(pi.Definitions))
+			} else {
+				var err error
+				progress, err = infosync.MustGetTiFlashProgress(tbl.Table.ID, tbl.Table.TiFlashReplica.Count, &tiFlashStores)
+				if err != nil {
+					log.Warn("failed to get progress for tiflash replica, retry it",
+						zap.Int64("tableID", tbl.Table.ID), zap.Error(err))
+					time.Sleep(time.Second)
+					continue
 				}
-				// just wait for next check
-				// tiflash check the progress every 2s
-				// we can wait 2.5x times
-				time.Sleep(5 * time.Second)
 			}
-		} else {
-			// unreachable, current we have initial domain in mgr.
-			log.Fatal("unreachable, domain is nil")
+			// check until progress is 1
+			if progress == 1 {
+				log.Info("tiflash replica synced",
+					zap.Stringer("table", tbl.OldTable.Info.Name),
+					zap.Stringer("db", tbl.OldTable.DB.Name))
+				break
+			}
+			// just wait for next check
+			// tiflash check the progress every 2s
+			// we can wait 2.5x times
+			time.Sleep(5 * time.Second)
 		}
 		updateCh.Inc()
 		return nil

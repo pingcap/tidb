@@ -31,7 +31,6 @@ import (
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
-	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -47,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -227,7 +227,11 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		asyncNotifyEvent(d, &util.Event{Tp: model.ActionAddTablePartition, TableInfo: tblInfo, PartInfo: partInfo})
+		addPartitionEvent := statsutil.NewAddPartitionEvent(
+			tblInfo,
+			partInfo,
+		)
+		asyncNotifyEvent(d, addPartitionEvent)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
 	}
@@ -2073,7 +2077,11 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		}
 		job.SchemaState = model.StateNone
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-		asyncNotifyEvent(d, &util.Event{Tp: model.ActionDropTablePartition, TableInfo: tblInfo, PartInfo: &model.PartitionInfo{Definitions: droppedDefs}})
+		dropPartitionEvent := statsutil.NewDropPartitionEvent(
+			tblInfo,
+			&model.PartitionInfo{Definitions: droppedDefs},
+		)
+		asyncNotifyEvent(d, dropPartitionEvent)
 		// A background job will be created to delete old partition data.
 		job.Args = []interface{}{physicalTableIDs}
 	default:
@@ -2160,7 +2168,12 @@ func (w *worker) onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-		asyncNotifyEvent(d, &util.Event{Tp: model.ActionTruncateTablePartition, TableInfo: tblInfo, PartInfo: &model.PartitionInfo{Definitions: newPartitions}})
+		truncatePartitionEvent := statsutil.NewTruncatePartitionEvent(
+			tblInfo,
+			&model.PartitionInfo{Definitions: newPartitions},
+			&model.PartitionInfo{Definitions: oldPartitions},
+		)
+		asyncNotifyEvent(d, truncatePartitionEvent)
 		// A background job will be created to delete old partition data.
 		job.Args = []interface{}{oldIDs}
 
@@ -2293,7 +2306,12 @@ func (w *worker) onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-		asyncNotifyEvent(d, &util.Event{Tp: model.ActionTruncateTablePartition, TableInfo: tblInfo, PartInfo: &model.PartitionInfo{Definitions: newPartitions}})
+		truncatePartitionEvent := statsutil.NewTruncatePartitionEvent(
+			tblInfo,
+			&model.PartitionInfo{Definitions: newPartitions},
+			&model.PartitionInfo{Definitions: oldPartitions},
+		)
+		asyncNotifyEvent(d, truncatePartitionEvent)
 		// A background job will be created to delete old partition data.
 		job.Args = []interface{}{oldIDs}
 	default:
@@ -2945,6 +2963,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		physicalTableIDs := getPartitionIDsFromDefinitions(tblInfo.Partition.DroppingDefinitions)
 		newIDs := getPartitionIDsFromDefinitions(partInfo.Definitions)
 		statisticsPartInfo := &model.PartitionInfo{Definitions: tblInfo.Partition.AddingDefinitions}
+		droppedPartInfo := &model.PartitionInfo{Definitions: tblInfo.Partition.DroppingDefinitions}
 
 		tblInfo.Partition.DroppingDefinitions = nil
 		tblInfo.Partition.AddingDefinitions = nil
@@ -3016,7 +3035,13 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// Should it actually be synchronous?
 		// Include the old table ID, if changed, which may contain global statistics,
 		// so it can be reused for the new (non)partitioned table.
-		asyncNotifyEvent(d, &util.Event{Tp: job.Type, TableInfo: tblInfo, PartInfo: statisticsPartInfo})
+		event, err := newStatsDDLEventForJob(
+			job.Type, tblInfo, statisticsPartInfo, droppedPartInfo,
+		)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		asyncNotifyEvent(d, event)
 		// A background job will be created to delete old partition data.
 		job.Args = []interface{}{physicalTableIDs}
 
@@ -3025,6 +3050,38 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 	}
 
 	return ver, errors.Trace(err)
+}
+
+// newStatsDDLEventForJob creates a statsutil.DDLEvent for a job.
+// It is used for reorganize partition, add partitioning and remove partitioning.
+func newStatsDDLEventForJob(
+	jobType model.ActionType,
+	tblInfo *model.TableInfo,
+	addedPartInfo *model.PartitionInfo,
+	droppedPartInfo *model.PartitionInfo,
+) (*statsutil.DDLEvent, error) {
+	var event *statsutil.DDLEvent
+	switch jobType {
+	case model.ActionReorganizePartition:
+		event = statsutil.NewReorganizePartitionEvent(
+			tblInfo,
+			addedPartInfo,
+			droppedPartInfo,
+		)
+	case model.ActionAlterTablePartitioning:
+		event = statsutil.NewAddPartitioningEvent(
+			tblInfo,
+			addedPartInfo,
+		)
+	case model.ActionRemovePartitioning:
+		event = statsutil.NewRemovePartitioningEvent(
+			tblInfo,
+			addedPartInfo,
+		)
+	default:
+		return nil, errors.Errorf("unknown job type: %s", jobType.String())
+	}
+	return event, nil
 }
 
 func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, physTblIDs []int64) (done bool, ver int64, err error) {
@@ -3593,10 +3650,9 @@ func buildCheckSQLConditionForRangeColumnsPartition(pi *model.PartitionInfo, ind
 	} else if index == len(pi.Definitions)-1 && strings.EqualFold(pi.Definitions[index].LessThan[0], partitionMaxValue) {
 		paramList = append(paramList, colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index-1].LessThan[0]))
 		return "%n < %?", paramList
-	} else {
-		paramList = append(paramList, colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index-1].LessThan[0]), colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index].LessThan[0]))
-		return "%n < %? or %n >= %?", paramList
 	}
+	paramList = append(paramList, colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index-1].LessThan[0]), colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index].LessThan[0]))
+	return "%n < %? or %n >= %?", paramList
 }
 
 func buildCheckSQLConditionForListPartition(pi *model.PartitionInfo, index int) string {

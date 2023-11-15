@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
-	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -38,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
@@ -748,7 +748,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	case model.StateWriteReorganization:
 		// TODO: Support flashback in unistore.
 		if inFlashbackTest {
-			asyncNotifyEvent(d, &util.Event{Tp: model.ActionFlashbackCluster})
+			asyncNotifyEvent(d, statsutil.NewFlashbackClusterEvent())
 			job.State = model.JobStateDone
 			job.SchemaState = model.StatePublic
 			return ver, nil
@@ -771,7 +771,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			}
 		}
 
-		asyncNotifyEvent(d, &util.Event{Tp: model.ActionFlashbackCluster})
+		asyncNotifyEvent(d, statsutil.NewFlashbackClusterEvent())
 		job.State = model.JobStateDone
 		job.SchemaState = model.StatePublic
 		return updateSchemaVersion(d, t, job)

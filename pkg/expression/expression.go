@@ -1035,6 +1035,7 @@ func NewValuesFunc(ctx sessionctx.Context, offset int, retTp *types.FieldType) *
 		FuncName: model.NewCIStr(ast.Values),
 		RetType:  retTp,
 		Function: bt,
+		ctx:      ctx,
 	}
 }
 
@@ -1162,7 +1163,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 
 		ast.Sqrt, ast.Log, ast.Log2, ast.Log10, ast.Ln, ast.Exp, ast.Pow, ast.Sign,
 		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
-		ast.JSONLength, ast.JSONExtract, ast.JSONUnquote, ast.Repeat,
+		ast.JSONLength, ast.JSONExtract, ast.JSONUnquote, ast.JSONArray, ast.Repeat,
 		ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton,
 		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position, ast.Format, ast.Elt,
 		ast.LTrim, ast.RTrim, ast.Lpad, ast.Rpad,
@@ -1510,6 +1511,7 @@ func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression, wrapF
 		FuncName: model.NewCIStr(ast.IsTruthWithoutNull),
 		Function: f,
 		RetType:  f.getRetTp(),
+		ctx:      ctx,
 	}
 	if keepNull {
 		sf.FuncName = model.NewCIStr(ast.IsTruthWithNull)

@@ -215,10 +215,9 @@ func setRequestSourceForInnerTxn(ctx context.Context, txn Transaction) {
 	if intest.InTest {
 		panic("unexpected no source type context, if you see this error, " +
 			"the `RequestSourceTypeKey` is missing in your context")
-	} else {
-		logutil.Logger(ctx).Warn("unexpected no source type context, if you see this warning, " +
-			"the `RequestSourceTypeKey` is missing in the context")
 	}
+	logutil.Logger(ctx).Warn("unexpected no source type context, if you see this warning, " +
+		"the `RequestSourceTypeKey` is missing in the context")
 }
 
 // SetTxnResourceGroup update the resource group name of target txn.

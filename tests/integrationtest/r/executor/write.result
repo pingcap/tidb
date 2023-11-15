@@ -5,7 +5,6 @@ create table t (i int unique key);
 set @@tidb_dml_batch_size = 1;
 insert ignore into t select * from t0;
 admin check table t;
-
 drop table if exists t,t0;
 set @@tidb_dml_batch_size = default;
 drop table if exists t1, t2;
@@ -470,7 +469,6 @@ delete from t2 where j = 3;
 commit;
 Error 1062 (23000): Duplicate entry '1' for key 't2.idx'
 admin check table t2;
-
 create table t3(i int, j int, primary key(i));
 begin;
 insert into t3 values(1, 3);
@@ -483,7 +481,6 @@ delete from t4 where j = 3;
 insert into t4 values(2, 3);
 commit;
 admin check table t4;
-
 select * from t4;
 i	j
 2	3
@@ -494,7 +491,6 @@ delete from t5 where j = 3;
 insert into t5 values(1, 4);
 commit;
 admin check table t5;
-
 select * from t5;
 i	j
 1	4
@@ -667,7 +663,6 @@ Error 1062 (23000): Duplicate entry '1' for key 't.idx'
 insert into t values (100, 'd');
 Error 1526 (HY000): Table has no partition for value 100
 admin check table t;
-
 insert into t values  (2,'b'),(3,'c'),(4,'d'),(7,'f'), (null,null);
 select * from t partition (p0) order by id;
 id	name
@@ -747,7 +742,6 @@ Error 1062 (23000): Duplicate entry '1' for key 't.idx'
 insert into t values (100, 'd');
 Error 1526 (HY000): Table has no partition for value from column_list
 admin check table t;
-
 insert into t values  (2,'b'),(3,'c'),(4,'d'),(7,'f'), (null,null);
 select * from t partition (p0) order by id;
 id	name
@@ -1810,9 +1804,7 @@ create table t2 ( c_int int, c_str varchar(40) character set latin1 collate lati
 insert into t1 values (3, 'fervent brattain');
 insert into t2 values (3, 'fervent brattain');
 admin check table t1;
-
 admin check table t2;
-
 create table t3 (x varchar(40) CHARACTER SET ascii COLLATE ascii_bin, UNIQUE KEY uk(x(4)));
 insert into t3 select 'abc ';
 insert into t3 select 'abc d';
@@ -1886,7 +1878,6 @@ create table t (a timestamp on update current_timestamp(0), b int, primary key (
 insert into t values ('2023-06-11 10:00:00', 1);
 update t force index(primary) set b = 10 where a = '2023-06-11 10:00:00';
 admin check table t;
-
 drop table if exists t;
 drop table if exists t_securities;
 create table t_securities(id bigint not null auto_increment primary key, security_id varchar(8), market_id smallint, security_type int, unique key uu(security_id, market_id));

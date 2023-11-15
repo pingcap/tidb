@@ -544,9 +544,8 @@ func (txn *LazyTxn) IsInFairLockingMode() bool {
 		return txn.Transaction.IsInFairLockingMode()
 	} else if txn.pending() {
 		return txn.enterFairLockingOnValid
-	} else {
-		return false
 	}
+	return false
 }
 
 func (txn *LazyTxn) reset() {

@@ -70,24 +70,24 @@ func (b *builtinLikeSig) Clone() builtinFunc {
 
 // evalInt evals a builtinLikeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html#operator_like
-func (b *builtinLikeSig) evalInt(row chunk.Row) (int64, bool, error) {
-	valStr, isNull, err := b.args[0].EvalString(b.ctx, row)
+func (b *builtinLikeSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+	valStr, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
 
-	patternStr, isNull, err := b.args[1].EvalString(b.ctx, row)
+	patternStr, isNull, err := b.args[1].EvalString(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	escape, isNull, err := b.args[2].EvalInt(b.ctx, row)
+	escape, isNull, err := b.args[2].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
 	memorization := func() {
 		if b.pattern == nil {
 			b.pattern = b.collator().Pattern()
-			if b.args[1].ConstItem(b.ctx.GetSessionVars().StmtCtx) && b.args[2].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
+			if b.args[1].ConstItem(ctx.GetSessionVars().StmtCtx) && b.args[2].ConstItem(ctx.GetSessionVars().StmtCtx) {
 				b.pattern.Compile(patternStr, byte(escape))
 				b.isMemorizedPattern = true
 			}
