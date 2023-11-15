@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/channel"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
@@ -1020,7 +1021,7 @@ func (w *probeWorker) join2Chunk(probeSideChk *chunk.Chunk, hCtx *hashContext, j
 			}
 		})
 		if killed {
-			joinResult.err = ErrQueryInterrupted
+			joinResult.err = exeerrors.ErrQueryInterrupted
 			return false, joinResult
 		}
 		if isNAAJ {
@@ -1086,7 +1087,7 @@ func (w *probeWorker) join2ChunkForOuterHashJoin(probeSideChk *chunk.Chunk, hCtx
 			}
 		})
 		if killed {
-			joinResult.err = ErrQueryInterrupted
+			joinResult.err = exeerrors.ErrQueryInterrupted
 			return false, joinResult
 		}
 		probeKey, probeRow := hCtx.hashVals[i].Sum64(), probeSideChk.GetRow(i)

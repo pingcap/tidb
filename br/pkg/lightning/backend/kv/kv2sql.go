@@ -17,6 +17,7 @@ package kv
 import (
 	"fmt"
 
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -28,10 +29,10 @@ import (
 
 type TableKVDecoder struct {
 	tbl table.Table
-	se  *session
+	se  *Session
 	// tableName is the unique table name in the form "`db`.`tbl`".
 	tableName string
-	genCols   []genCol
+	genCols   []GenCol
 }
 
 func (t *TableKVDecoder) Name() string {
@@ -90,7 +91,7 @@ func (t *TableKVDecoder) IterRawIndexKeys(h kv.Handle, rawRow []byte, fn func([]
 		if err != nil {
 			return err
 		}
-		indexKey, _, err := index.GenIndexKey(t.se.vars.StmtCtx, indexValues, h, indexBuffer)
+		indexKey, _, err := index.GenIndexKey(t.se.Vars.StmtCtx, indexValues, h, indexBuffer)
 		if err != nil {
 			return err
 		}
@@ -108,7 +109,7 @@ func (t *TableKVDecoder) IterRawIndexKeys(h kv.Handle, rawRow []byte, fn func([]
 func NewTableKVDecoder(
 	tbl table.Table,
 	tableName string,
-	options *SessionOptions,
+	options *encode.SessionOptions,
 	logger log.Logger,
 ) (*TableKVDecoder, error) {
 	se := newSession(options, logger)
@@ -117,7 +118,7 @@ func NewTableKVDecoder(
 	recordCtx := tables.NewCommonAddRecordCtx(len(cols))
 	tables.SetAddRecordCtx(se, recordCtx)
 
-	genCols, err := collectGeneratedColumns(se, tbl.Meta(), cols)
+	genCols, err := CollectGeneratedColumns(se, tbl.Meta(), cols)
 	if err != nil {
 		return nil, err
 	}

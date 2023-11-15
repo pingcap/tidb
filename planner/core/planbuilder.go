@@ -809,6 +809,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		return b.buildTrace(x)
 	case *ast.InsertStmt:
 		return b.buildInsert(ctx, x)
+	case *ast.ImportIntoStmt:
+		return b.buildImportInto(ctx, x)
 	case *ast.LoadDataStmt:
 		return b.buildLoadData(ctx, x)
 	case *ast.LoadStatsStmt:
@@ -4169,6 +4171,97 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 	if err != nil {
 		return nil, err
 	}
+	return p, nil
+}
+
+func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStmt) (Plan, error) {
+	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	var (
+		err              error
+		options          = make([]*LoadDataOpt, 0, len(ld.Options))
+		importFromServer bool
+	)
+
+	for _, opt := range ld.Options {
+		loadDataOpt := LoadDataOpt{Name: opt.Name}
+		if opt.Value != nil {
+			loadDataOpt.Value, _, err = b.rewrite(ctx, opt.Value, mockTablePlan, nil, true)
+			if err != nil {
+				return nil, err
+			}
+		}
+		options = append(options, &loadDataOpt)
+	}
+	p := ImportInto{
+		Path:               ld.Path,
+		Format:             ld.Format,
+		Table:              ld.Table,
+		ColumnAssignments:  ld.ColumnAssignments,
+		ColumnsAndUserVars: ld.ColumnsAndUserVars,
+		Options:            options,
+		Stmt:               ld.Text(),
+	}.Init(b.ctx)
+	user := b.ctx.GetSessionVars().User
+	// IMPORT INTO need full DML privilege of the target table
+	// to support add-index by SQL, we need ALTER privilege
+	var selectErr, updateErr, insertErr, deleteErr, alterErr error
+	if user != nil {
+		selectErr = ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
+		updateErr = ErrTableaccessDenied.GenWithStackByArgs("UPDATE", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
+		insertErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
+		deleteErr = ErrTableaccessDenied.GenWithStackByArgs("DELETE", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
+		alterErr = ErrTableaccessDenied.GenWithStackByArgs("ALTER", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
+	}
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, p.Table.Schema.O, p.Table.Name.O, "", selectErr)
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, p.Table.Schema.O, p.Table.Name.O, "", updateErr)
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, p.Table.Schema.O, p.Table.Name.O, "", insertErr)
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, p.Table.Schema.O, p.Table.Name.O, "", deleteErr)
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, p.Table.Schema.O, p.Table.Name.O, "", alterErr)
+	if importFromServer {
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.FilePriv, "", "", "", ErrSpecificAccessDenied.GenWithStackByArgs("FILE"))
+	}
+	tableInfo := p.Table.TableInfo
+	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
+	if !ok {
+		db := b.ctx.GetSessionVars().CurrentDB
+		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(db, tableInfo.Name.O)
+	}
+	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx, model.NewCIStr(""), tableInfo)
+	if err != nil {
+		return nil, err
+	}
+	mockTablePlan.SetSchema(schema)
+	mockTablePlan.names = names
+
+	p.GenCols, err = b.resolveGeneratedColumns(ctx, tableInPlan.Cols(), nil, mockTablePlan)
+	if err != nil {
+		return nil, err
+	}
+
+	if ld.Select != nil {
+		// privilege of tables in select will be checked here
+		selectPlan, err2 := b.Build(ctx, ld.Select)
+		if err2 != nil {
+			return nil, err2
+		}
+		// it's allowed to use IMPORT INTO t FROM SELECT * FROM t
+		// as we pre-check that the target table must be empty.
+		if (len(ld.ColumnsAndUserVars) > 0 && len(selectPlan.Schema().Columns) != len(ld.ColumnsAndUserVars)) ||
+			(len(ld.ColumnsAndUserVars) == 0 && len(selectPlan.Schema().Columns) != len(tableInPlan.VisibleCols())) {
+			return nil, ErrWrongValueCountOnRow.GenWithStackByArgs(1)
+		}
+		for _, cu := range ld.ColumnsAndUserVars {
+			// all fields must be column
+			if cu.ColumnName == nil {
+				return nil, ErrUnknownColumn.GenWithStackByArgs(cu.UserVar.Name, "field list")
+			}
+		}
+		p.SelectPlan, _, err2 = DoOptimize(ctx, b.ctx, b.optFlag, selectPlan.(LogicalPlan))
+		if err2 != nil {
+			return nil, err2
+		}
+	}
+
 	return p, nil
 }
 

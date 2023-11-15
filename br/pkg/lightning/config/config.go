@@ -80,6 +80,8 @@ const (
 	defaultMetaSchemaName     = "lightning_metadata"
 	defaultTaskInfoSchemaName = "lightning_task_info"
 
+	DefaultRangeConcurrency = 16
+
 	// autoDiskQuotaLocalReservedSpeed is the estimated size increase per
 	// millisecond per write thread the local backend may gain on all engines.
 	// This is used to compute the maximum size overshoot between two disk quota
@@ -88,8 +90,8 @@ const (
 	// With cron.check-disk-quota = 1m, region-concurrency = 40, this should
 	// contribute 2.3 GiB to the reserved size.
 	// autoDiskQuotaLocalReservedSpeed uint64 = 1 * units.KiB
-	defaultEngineMemCacheSize      = 512 * units.MiB
-	defaultLocalWriterMemCacheSize = 128 * units.MiB
+	DefaultEngineMemCacheSize      = 512 * units.MiB
+	DefaultLocalWriterMemCacheSize = 128 * units.MiB
 
 	defaultCSVDataCharacterSet       = "binary"
 	defaultCSVDataInvalidCharReplace = utf8.RuneError
@@ -951,10 +953,10 @@ func (cfg *Config) AdjustCommon() (bool, error) {
 
 	// TODO calculate these from the machine's free memory.
 	if cfg.TikvImporter.EngineMemCacheSize == 0 {
-		cfg.TikvImporter.EngineMemCacheSize = defaultEngineMemCacheSize
+		cfg.TikvImporter.EngineMemCacheSize = DefaultEngineMemCacheSize
 	}
 	if cfg.TikvImporter.LocalWriterMemCacheSize == 0 {
-		cfg.TikvImporter.LocalWriterMemCacheSize = defaultLocalWriterMemCacheSize
+		cfg.TikvImporter.LocalWriterMemCacheSize = DefaultLocalWriterMemCacheSize
 	}
 
 	if cfg.TikvImporter.Backend == BackendLocal {
@@ -1031,7 +1033,7 @@ func (cfg *Config) DefaultVarsForImporterAndLocalBackend() {
 		cfg.App.MetaSchemaName = defaultMetaSchemaName
 	}
 	if cfg.TikvImporter.RangeConcurrency == 0 {
-		cfg.TikvImporter.RangeConcurrency = 16
+		cfg.TikvImporter.RangeConcurrency = DefaultRangeConcurrency
 	}
 	if cfg.TiDB.BuildStatsConcurrency == 0 {
 		cfg.TiDB.BuildStatsConcurrency = defaultBuildStatsConcurrency

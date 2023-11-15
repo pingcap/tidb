@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/noop"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
@@ -366,7 +367,7 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 	mockBackend.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	mockBackend.EXPECT().CloseEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(realBackend.NewEncoder(ctx, tbl, &kv.SessionOptions{})).
+		Return(realBackend.NewEncoder(ctx, tbl, &encode.SessionOptions{})).
 		AnyTimes()
 	mockBackend.EXPECT().MakeEmptyRows().Return(realBackend.MakeEmptyRows()).AnyTimes()
 	mockBackend.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), dataUUID).Return(noop.Writer{}, nil)
@@ -1415,7 +1416,7 @@ func (s *tableRestoreSuite) TestEstimate() {
 	require.NoError(s.T(), err)
 
 	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
-	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any(), gomock.Any()).Return(kv.NewTableKVEncoder(tbl, &kv.SessionOptions{
+	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any(), gomock.Any()).Return(kv.NewTableKVEncoder(tbl, &encode.SessionOptions{
 		SQLMode:        s.cfg.TiDB.SQLMode,
 		Timestamp:      0,
 		AutoRandomSeed: 0,

@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -143,7 +144,7 @@ func (e *LoadDataInfo) reorderColumns(columnNames []string) error {
 	cols := e.insertColumns
 
 	if len(cols) != len(columnNames) {
-		return ErrColumnsNotMatched
+		return exeerrors.ErrColumnsNotMatched
 	}
 
 	reorderedColumns := make([]*table.Column, len(cols))
@@ -409,7 +410,7 @@ func (e *LoadDataInfo) CommitWork(ctx context.Context) error {
 		}
 		if atomic.CompareAndSwapUint32(&e.Ctx.GetSessionVars().Killed, 1, 0) {
 			logutil.Logger(ctx).Info("load data query interrupted quit data processing")
-			err = ErrQueryInterrupted
+			err = exeerrors.ErrQueryInterrupted
 			break
 		}
 	}

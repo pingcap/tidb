@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/cteutil"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -315,7 +316,7 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 			return mp.GetExecutor()
 		}
 
-		b.err = ErrUnknownPlan.GenWithStack("Unknown Plan %T", p)
+		b.err = exeerrors.ErrUnknownPlan.GenWithStack("Unknown Plan %T", p)
 		return nil
 	}
 }
@@ -912,6 +913,39 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 	return insert
 }
 
+func (b *executorBuilder) buildImportInto(v *plannercore.ImportInto) Executor {
+	tbl, ok := b.is.TableByID(v.Table.TableInfo.ID)
+	if !ok {
+		b.err = errors.Errorf("Can not get table %d", v.Table.TableInfo.ID)
+		return nil
+	}
+	if !tbl.Meta().IsBaseTable() {
+		b.err = plannercore.ErrNonUpdatableTable.GenWithStackByArgs(tbl.Meta().Name.O, "LOAD")
+		return nil
+	}
+
+	var (
+		selectExec Executor
+		base       baseExecutor
+	)
+	if v.SelectPlan != nil {
+		selectExec = b.build(v.SelectPlan)
+		if b.err != nil {
+			return nil
+		}
+		base = newBaseExecutor(b.ctx, v.Schema(), v.ID(), selectExec)
+	} else {
+		base = newBaseExecutor(b.ctx, v.Schema(), v.ID())
+	}
+	executor, err := newImportIntoExec(base, selectExec, b.ctx, v, tbl)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+
+	return executor
+}
+
 func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 	tbl, ok := b.is.TableByID(v.Table.TableInfo.ID)
 	if !ok {
@@ -1403,7 +1437,7 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 	// optimizer should guarantee that filters on inner table are pushed down
 	// to tikv or extracted to a Selection.
 	if len(e.innerTable.filters) != 0 {
-		b.err = errors.Annotate(ErrBuildExecutor, "merge join's inner filter should be empty.")
+		b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "merge join's inner filter should be empty.")
 		return nil
 	}
 
@@ -1440,12 +1474,12 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	lhsTypes, rhsTypes := retTypes(leftExec), retTypes(rightExec)
 	if v.InnerChildIdx == 1 {
 		if len(v.RightConditions) > 0 {
-			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "join's inner condition should be empty")
 			return nil
 		}
 	} else {
 		if len(v.LeftConditions) > 0 {
-			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "join's inner condition should be empty")
 			return nil
 		}
 	}
@@ -3130,14 +3164,14 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		leftTypes, rightTypes = innerTypes, outerTypes
 		outerFilter = v.RightConditions
 		if len(v.LeftConditions) > 0 {
-			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "join's inner condition should be empty")
 			return nil
 		}
 	} else {
 		leftTypes, rightTypes = outerTypes, innerTypes
 		outerFilter = v.LeftConditions
 		if len(v.RightConditions) > 0 {
-			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "join's inner condition should be empty")
 			return nil
 		}
 	}
@@ -3246,14 +3280,14 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 		leftTypes, rightTypes = innerTypes, outerTypes
 		outerFilter = v.RightConditions
 		if len(v.LeftConditions) > 0 {
-			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "join's inner condition should be empty")
 			return nil
 		}
 	} else {
 		leftTypes, rightTypes = outerTypes, innerTypes
 		outerFilter = v.LeftConditions
 		if len(v.RightConditions) > 0 {
-			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "join's inner condition should be empty")
 			return nil
 		}
 	}

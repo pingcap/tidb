@@ -24,13 +24,13 @@ import (
 	"sync"
 
 	"github.com/docker/go-units"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/manual"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -133,11 +133,11 @@ func (mb *kvMemBuf) Set(k kv.Key, v []byte) error {
 	size := len(k) + len(v)
 	if mb.buf == nil || mb.buf.cap-mb.buf.idx < size {
 		if mb.buf != nil {
-			kvPairs.bytesBuf = mb.buf
+			kvPairs.BytesBuf = mb.buf
 		}
 		mb.AllocateBuf(size)
 	}
-	kvPairs.pairs = append(kvPairs.pairs, common.KvPair{
+	kvPairs.Pairs = append(kvPairs.Pairs, common.KvPair{
 		Key: mb.buf.add(k),
 		Val: mb.buf.add(v),
 	})
@@ -248,32 +248,21 @@ func (t *transaction) SetAssertion(key []byte, assertion ...kv.FlagsOp) error {
 // session is a trimmed down Session type which only wraps our own trimmed-down
 // transaction type and provides the session variables to the TiDB library
 // optimized for Lightning.
-type session struct {
+type Session struct {
 	sessionctx.Context
 	txn  transaction
-	vars *variable.SessionVars
+	Vars *variable.SessionVars
 	// currently, we only set `CommonAddRecordCtx`
 	values map[fmt.Stringer]interface{}
 }
 
-// SessionOptions is the initial configuration of the session.
-type SessionOptions struct {
-	SQLMode   mysql.SQLMode
-	Timestamp int64
-	SysVars   map[string]string
-	// a seed used for tableKvEncoder's auto random bits value
-	AutoRandomSeed int64
-	// IndexID is used by the DuplicateManager. Only the key range with the specified index ID is scanned.
-	IndexID int64
-}
-
 // NewSession creates a new trimmed down Session matching the options.
-func NewSession(options *SessionOptions, logger log.Logger) sessionctx.Context {
+func NewSession(options *encode.SessionOptions, logger log.Logger) sessionctx.Context {
 	return newSession(options, logger)
 }
 
-func newSession(options *SessionOptions, logger log.Logger) *session {
-	s := &session{
+func newSession(options *encode.SessionOptions, logger log.Logger) *Session {
+	s := &Session{
 		values: make(map[fmt.Stringer]interface{}, 1),
 	}
 	sqlMode := options.SQLMode
@@ -312,67 +301,67 @@ func newSession(options *SessionOptions, logger log.Logger) *session {
 			log.ShortError(err))
 	}
 	vars.TxnCtx = nil
-	s.vars = vars
+	s.Vars = vars
 	s.txn.kvPairs = &KvPairs{}
 
 	return s
 }
 
-func (se *session) takeKvPairs() *KvPairs {
+func (se *Session) TakeKvPairs() *KvPairs {
 	memBuf := &se.txn.kvMemBuf
 	pairs := memBuf.kvPairs
-	if pairs.bytesBuf != nil {
-		pairs.memBuf = memBuf
+	if pairs.BytesBuf != nil {
+		pairs.MemBuf = memBuf
 	}
-	memBuf.kvPairs = &KvPairs{pairs: make([]common.KvPair, 0, len(pairs.pairs))}
+	memBuf.kvPairs = &KvPairs{Pairs: make([]common.KvPair, 0, len(pairs.Pairs))}
 	memBuf.size = 0
 	return pairs
 }
 
 // Txn implements the sessionctx.Context interface
-func (se *session) Txn(active bool) (kv.Transaction, error) {
+func (se *Session) Txn(active bool) (kv.Transaction, error) {
 	return &se.txn, nil
 }
 
 // GetSessionVars implements the sessionctx.Context interface
-func (se *session) GetSessionVars() *variable.SessionVars {
-	return se.vars
+func (se *Session) GetSessionVars() *variable.SessionVars {
+	return se.Vars
 }
 
 // SetValue saves a value associated with this context for key.
-func (se *session) SetValue(key fmt.Stringer, value interface{}) {
+func (se *Session) SetValue(key fmt.Stringer, value interface{}) {
 	se.values[key] = value
 }
 
 // Value returns the value associated with this context for key.
-func (se *session) Value(key fmt.Stringer) interface{} {
+func (se *Session) Value(key fmt.Stringer) interface{} {
 	return se.values[key]
 }
 
 // StmtAddDirtyTableOP implements the sessionctx.Context interface
-func (se *session) StmtAddDirtyTableOP(op int, physicalID int64, handle kv.Handle) {}
+func (se *Session) StmtAddDirtyTableOP(op int, physicalID int64, handle kv.Handle) {}
 
 // GetInfoSchema implements the sessionctx.Context interface.
-func (se *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
+func (se *Session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 	return nil
 }
 
 // GetBuiltinFunctionUsage returns the BuiltinFunctionUsage of current Context, which is not thread safe.
 // Use primitive map type to prevent circular import. Should convert it to telemetry.BuiltinFunctionUsage before using.
-func (se *session) GetBuiltinFunctionUsage() map[string]uint32 {
+func (se *Session) GetBuiltinFunctionUsage() map[string]uint32 {
 	return make(map[string]uint32)
 }
 
 // BuiltinFunctionUsageInc implements the sessionctx.Context interface.
-func (se *session) BuiltinFunctionUsageInc(scalarFuncSigName string) {
+func (se *Session) BuiltinFunctionUsageInc(scalarFuncSigName string) {
 }
 
 // GetStmtStats implements the sessionctx.Context interface.
-func (se *session) GetStmtStats() *stmtstats.StatementStats {
+func (se *Session) GetStmtStats() *stmtstats.StatementStats {
 	return nil
 }
 
-func (se *session) Close() {
+func (se *Session) Close() {
 	memBuf := &se.txn.kvMemBuf
 	if memBuf.buf != nil {
 		memBuf.buf.destroy()

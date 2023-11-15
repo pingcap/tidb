@@ -12,6 +12,7 @@ import (
 	gomock "github.com/golang/mock/gomock"
 	uuid "github.com/google/uuid"
 	backend "github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	kv "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	config "github.com/pingcap/tidb/br/pkg/lightning/config"
 	model "github.com/pingcap/tidb/parser/model"
@@ -96,7 +97,7 @@ func (mr *MockBackendMockRecorder) CloseEngine(arg0, arg1, arg2 interface{}) *go
 }
 
 // CollectLocalDuplicateRows mocks base method.
-func (m *MockBackend) CollectLocalDuplicateRows(arg0 context.Context, arg1 table.Table, arg2 string, arg3 *kv.SessionOptions) (bool, error) {
+func (m *MockBackend) CollectLocalDuplicateRows(arg0 context.Context, arg1 table.Table, arg2 string, arg3 *encode.SessionOptions) (bool, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "CollectLocalDuplicateRows", arg0, arg1, arg2, arg3)
 	ret0, _ := ret[0].(bool)
@@ -111,7 +112,7 @@ func (mr *MockBackendMockRecorder) CollectLocalDuplicateRows(arg0, arg1, arg2, a
 }
 
 // CollectRemoteDuplicateRows mocks base method.
-func (m *MockBackend) CollectRemoteDuplicateRows(arg0 context.Context, arg1 table.Table, arg2 string, arg3 *kv.SessionOptions) (bool, error) {
+func (m *MockBackend) CollectRemoteDuplicateRows(arg0 context.Context, arg1 table.Table, arg2 string, arg3 *encode.SessionOptions) (bool, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "CollectRemoteDuplicateRows", arg0, arg1, arg2, arg3)
 	ret0, _ := ret[0].(bool)
@@ -226,7 +227,7 @@ func (mr *MockBackendMockRecorder) MakeEmptyRows() *gomock.Call {
 }
 
 // NewEncoder mocks base method.
-func (m *MockBackend) NewEncoder(arg0 context.Context, arg1 table.Table, arg2 *kv.SessionOptions) (kv.Encoder, error) {
+func (m *MockBackend) NewEncoder(arg0 context.Context, arg1 table.Table, arg2 *encode.SessionOptions) (kv.Encoder, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "NewEncoder", arg0, arg1, arg2)
 	ret0, _ := ret[0].(kv.Encoder)

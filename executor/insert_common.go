@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -312,7 +313,7 @@ func completeInsertErr(col *model.ColumnInfo, val *types.Datum, rowIdx int, err 
 		if err1 != nil {
 			logutil.BgLogger().Debug("time truncated error", zap.Error(err1))
 		}
-		err = errTruncateWrongInsertValue.GenWithStackByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
+		err = exeerrors.ErrTruncateWrongInsertValue.GenWithStackByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
 	} else if types.ErrTruncatedWrongVal.Equal(err) || types.ErrWrongValue.Equal(err) {
 		valStr, err1 := val.ToString()
 		if err1 != nil {
@@ -534,13 +535,13 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 	txn, err := e.ctx.Txn(false)
 	if err != nil {
-		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
+		return exeerrors.ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
 	}
 	e.memTracker.Consume(-int64(txn.Size()))
 	e.ctx.StmtCommit()
 	if err := sessiontxn.NewTxnInStmt(ctx, e.ctx); err != nil {
 		// We should return a special error for batch insert.
-		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
+		return exeerrors.ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
 	}
 	return nil
 }
@@ -1298,6 +1299,12 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 	}
 	return nil
 }
+
+// CreateSession will be assigned by session package.
+var CreateSession func(ctx sessionctx.Context) (sessionctx.Context, error)
+
+// CloseSession will be assigned by session package.
+var CloseSession func(ctx sessionctx.Context)
 
 // InsertRuntimeStat record the stat about insert and check
 type InsertRuntimeStat struct {

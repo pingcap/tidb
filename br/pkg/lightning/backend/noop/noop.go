@@ -20,6 +20,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -67,7 +68,7 @@ func (b noopBackend) ShouldPostProcess() bool {
 }
 
 // NewEncoder creates an encoder of a TiDB table.
-func (b noopBackend) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
+func (b noopBackend) NewEncoder(ctx context.Context, tbl table.Table, options *encode.SessionOptions) (kv.Encoder, error) {
 	return noopEncoder{}, nil
 }
 
@@ -143,11 +144,11 @@ func (b noopBackend) LocalWriter(context.Context, *backend.LocalWriterConfig, uu
 	return Writer{}, nil
 }
 
-func (b noopBackend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
+func (b noopBackend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (bool, error) {
 	panic("Unsupported Operation")
 }
 
-func (b noopBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
+func (b noopBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (bool, error) {
 	panic("Unsupported Operation")
 }
 

@@ -439,6 +439,8 @@ const (
 	TypeShow
 	// TypeExecute for ExecuteStmt
 	TypeExecute
+	// TypeImportInto for ImportIntoStmt
+	TypeImportInto
 )
 
 func bindableStmtType(node ast.StmtNode) byte {
@@ -1513,6 +1515,8 @@ func (p *preprocessor) stmtType() string {
 		return "SELECT, INSERT"
 	case TypeShow:
 		return "SHOW"
+	case TypeImportInto:
+		return "IMPORT INTO"
 	default:
 		return "SELECT" // matches Select and uncaught cases.
 	}

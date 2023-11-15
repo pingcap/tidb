@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -221,7 +222,7 @@ func NewEncodingBuilder(ctx context.Context) backend.EncodingBuilder {
 
 // NewEncoder creates a KV encoder.
 // It implements the `backend.EncodingBuilder` interface.
-func (b *encodingBuilder) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
+func (b *encodingBuilder) NewEncoder(ctx context.Context, tbl table.Table, options *encode.SessionOptions) (kv.Encoder, error) {
 	return kv.NewTableKVEncoder(tbl, options, b.metrics, log.FromContext(ctx))
 }
 
@@ -345,7 +346,7 @@ func checkTiFlashVersion(ctx context.Context, g glue.Glue, checkCtx *backend.Che
 	return nil
 }
 
-type local struct {
+type Local struct {
 	engines sync.Map // sync version of map[uuid.UUID]*Engine
 
 	pdCtl    *pdutil.PdController
@@ -482,7 +483,7 @@ func NewLocalBackend(
 		alloc.RefCnt = new(atomic.Int64)
 		LastAlloc = alloc
 	}
-	local := &local{
+	local := &Local{
 		engines:  sync.Map{},
 		pdCtl:    pdCtl,
 		splitCli: splitCli,
@@ -525,7 +526,7 @@ func NewLocalBackend(
 	return backend.MakeBackend(local), nil
 }
 
-func (local *local) TotalMemoryConsume() int64 {
+func (local *Local) TotalMemoryConsume() int64 {
 	var memConsume int64 = 0
 	local.engines.Range(func(k, v interface{}) bool {
 		e := v.(*Engine)
@@ -537,7 +538,7 @@ func (local *local) TotalMemoryConsume() int64 {
 	return memConsume + local.bufferPool.TotalSize()
 }
 
-func (local *local) checkMultiIngestSupport(ctx context.Context) error {
+func (local *Local) checkMultiIngestSupport(ctx context.Context) error {
 	stores, err := local.pdCtl.GetPDClient().GetAllStores(ctx, pd.WithExcludeTombstone())
 	if err != nil {
 		return errors.Trace(err)
@@ -603,7 +604,7 @@ func (local *local) checkMultiIngestSupport(ctx context.Context) error {
 }
 
 // rlock read locks a local file and returns the Engine instance if it exists.
-func (local *local) rLockEngine(engineId uuid.UUID) *Engine {
+func (local *Local) rLockEngine(engineId uuid.UUID) *Engine {
 	if e, ok := local.engines.Load(engineId); ok {
 		engine := e.(*Engine)
 		engine.rLock()
@@ -613,7 +614,7 @@ func (local *local) rLockEngine(engineId uuid.UUID) *Engine {
 }
 
 // lock locks a local file and returns the Engine instance if it exists.
-func (local *local) lockEngine(engineID uuid.UUID, state importMutexState) *Engine {
+func (local *Local) lockEngine(engineID uuid.UUID, state importMutexState) *Engine {
 	if e, ok := local.engines.Load(engineID); ok {
 		engine := e.(*Engine)
 		engine.lock(state)
@@ -623,7 +624,7 @@ func (local *local) lockEngine(engineID uuid.UUID, state importMutexState) *Engi
 }
 
 // tryRLockAllEngines tries to read lock all engines, return all `Engine`s that are successfully locked.
-func (local *local) tryRLockAllEngines() []*Engine {
+func (local *Local) tryRLockAllEngines() []*Engine {
 	var allEngines []*Engine
 	local.engines.Range(func(k, v interface{}) bool {
 		engine := v.(*Engine)
@@ -642,7 +643,7 @@ func (local *local) tryRLockAllEngines() []*Engine {
 
 // lockAllEnginesUnless tries to lock all engines, unless those which are already locked in the
 // state given by ignoreStateMask. Returns the list of locked engines.
-func (local *local) lockAllEnginesUnless(newState, ignoreStateMask importMutexState) []*Engine {
+func (local *Local) lockAllEnginesUnless(newState, ignoreStateMask importMutexState) []*Engine {
 	var allEngines []*Engine
 	local.engines.Range(func(k, v interface{}) bool {
 		engine := v.(*Engine)
@@ -655,7 +656,7 @@ func (local *local) lockAllEnginesUnless(newState, ignoreStateMask importMutexSt
 }
 
 // Close the local backend.
-func (local *local) Close() {
+func (local *Local) Close() {
 	allEngines := local.lockAllEnginesUnless(importMutexStateClose, 0)
 	local.engines = sync.Map{}
 
@@ -707,7 +708,7 @@ func (local *local) Close() {
 }
 
 // FlushEngine ensure the written data is saved successfully, to make sure no data lose after restart
-func (local *local) FlushEngine(ctx context.Context, engineID uuid.UUID) error {
+func (local *Local) FlushEngine(ctx context.Context, engineID uuid.UUID) error {
 	engine := local.rLockEngine(engineID)
 
 	// the engine cannot be deleted after while we've acquired the lock identified by UUID.
@@ -721,7 +722,7 @@ func (local *local) FlushEngine(ctx context.Context, engineID uuid.UUID) error {
 	return engine.flushEngineWithoutLock(ctx)
 }
 
-func (local *local) FlushAllEngines(parentCtx context.Context) (err error) {
+func (local *Local) FlushAllEngines(parentCtx context.Context) (err error) {
 	allEngines := local.tryRLockAllEngines()
 	defer func() {
 		for _, engine := range allEngines {
@@ -739,15 +740,15 @@ func (local *local) FlushAllEngines(parentCtx context.Context) (err error) {
 	return eg.Wait()
 }
 
-func (local *local) RetryImportDelay() time.Duration {
+func (local *Local) RetryImportDelay() time.Duration {
 	return defaultRetryBackoffTime
 }
 
-func (local *local) ShouldPostProcess() bool {
+func (local *Local) ShouldPostProcess() bool {
 	return true
 }
 
-func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.DB, error) {
+func (local *Local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.DB, error) {
 	opt := &pebble.Options{
 		MemTableSize: local.engineMemCacheSize,
 		// the default threshold value may cause write stall.
@@ -777,7 +778,7 @@ func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.D
 }
 
 // OpenEngine must be called with holding mutex of Engine.
-func (local *local) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) error {
+func (local *Local) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) error {
 	engineCfg := backend.LocalEngineConfig{}
 	if cfg.Local != nil {
 		engineCfg = *cfg.Local
@@ -827,7 +828,7 @@ func (local *local) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, e
 	return nil
 }
 
-func (local *local) allocateTSIfNotExists(ctx context.Context, engine *Engine) error {
+func (local *Local) allocateTSIfNotExists(ctx context.Context, engine *Engine) error {
 	if engine.TS > 0 {
 		return nil
 	}
@@ -841,7 +842,7 @@ func (local *local) allocateTSIfNotExists(ctx context.Context, engine *Engine) e
 }
 
 // CloseEngine closes backend engine by uuid.
-func (local *local) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) error {
+func (local *Local) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) error {
 	// flush mem table to storage, to free memory,
 	// ask others' advise, looks like unnecessary, but with this we can control memory precisely.
 	engineI, ok := local.engines.Load(engineUUID)
@@ -894,7 +895,7 @@ func (local *local) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, 
 	return engine.ingestErr.Get()
 }
 
-func (local *local) getImportClient(ctx context.Context, storeID uint64) (sst.ImportSSTClient, error) {
+func (local *Local) getImportClient(ctx context.Context, storeID uint64) (sst.ImportSSTClient, error) {
 	return local.importClientFactory.Create(ctx, storeID)
 }
 
@@ -906,7 +907,7 @@ type rangeStats struct {
 // WriteToTiKV writer engine key-value pairs to tikv and return the sst meta generated by tikv.
 // we don't need to do cleanup for the pairs written to tikv if encounters an error,
 // tikv will takes the responsibility to do so.
-func (local *local) WriteToTiKV(
+func (local *Local) WriteToTiKV(
 	ctx context.Context,
 	engine *Engine,
 	region *split.RegionInfo,
@@ -1135,7 +1136,7 @@ func (local *local) WriteToTiKV(
 	return leaderPeerMetas, finishedRange, stats, nil
 }
 
-func (local *local) Ingest(ctx context.Context, metas []*sst.SSTMeta, region *split.RegionInfo) (*sst.IngestResponse, error) {
+func (local *Local) Ingest(ctx context.Context, metas []*sst.SSTMeta, region *split.RegionInfo) (*sst.IngestResponse, error) {
 	leader := region.Leader
 	if leader == nil {
 		leader = region.Region.GetPeers()[0]
@@ -1190,7 +1191,7 @@ func (local *local) Ingest(ctx context.Context, metas []*sst.SSTMeta, region *sp
 	return resp, errors.Trace(err)
 }
 
-func (local *local) checkWriteStall(ctx context.Context, region *split.RegionInfo) (bool, error) {
+func (local *Local) checkWriteStall(ctx context.Context, region *split.RegionInfo) (bool, error) {
 	for _, peer := range region.Region.GetPeers() {
 		cli, err := local.getImportClient(ctx, peer.StoreId)
 		if err != nil {
@@ -1242,7 +1243,7 @@ func splitRangeBySizeProps(fullRange Range, sizeProps *sizeProperties, sizeLimit
 	return ranges
 }
 
-func (local *local) readAndSplitIntoRange(ctx context.Context, engine *Engine, regionSplitSize int64, regionSplitKeys int64) ([]Range, error) {
+func (local *Local) readAndSplitIntoRange(ctx context.Context, engine *Engine, regionSplitSize int64, regionSplitKeys int64) ([]Range, error) {
 	iter := engine.newKVIter(ctx, &pebble.IterOptions{})
 	//nolint: errcheck
 	defer iter.Close()
@@ -1294,7 +1295,7 @@ func (local *local) readAndSplitIntoRange(ctx context.Context, engine *Engine, r
 	return ranges, nil
 }
 
-func (local *local) writeAndIngestByRange(
+func (local *Local) writeAndIngestByRange(
 	ctxt context.Context,
 	engine *Engine,
 	start, end []byte,
@@ -1392,7 +1393,7 @@ const (
 	retryIngest
 )
 
-func (local *local) isRetryableImportTiKVError(err error) bool {
+func (local *Local) isRetryableImportTiKVError(err error) bool {
 	err = errors.Cause(err)
 	// io.EOF is not retryable in normal case
 	// but on TiKV restart, if we're writing to TiKV(through GRPC)
@@ -1405,7 +1406,7 @@ func (local *local) isRetryableImportTiKVError(err error) bool {
 	return common.IsRetryableError(err)
 }
 
-func (local *local) writeAndIngestPairs(
+func (local *Local) writeAndIngestPairs(
 	ctx context.Context,
 	engine *Engine,
 	region *split.RegionInfo,
@@ -1529,7 +1530,7 @@ loopWrite:
 	return errors.Trace(err)
 }
 
-func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, ranges []Range, regionSplitSize int64, regionSplitKeys int64) error {
+func (local *Local) writeAndIngestByRanges(ctx context.Context, engine *Engine, ranges []Range, regionSplitSize int64, regionSplitKeys int64) error {
 	if engine.Length.Load() == 0 {
 		// engine is empty, this is likes because it's a index engine but the table contains no index
 		log.FromContext(ctx).Info("engine contains no data", zap.Stringer("uuid", engine.UUID))
@@ -1599,7 +1600,7 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 	return allErr
 }
 
-func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error {
+func (local *Local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error {
 	lf := local.lockEngine(engineUUID, importMutexStateImport)
 	if lf == nil {
 		// skip if engine not exist. See the comment of `CloseEngine` for more detail.
@@ -1699,7 +1700,19 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 	return nil
 }
 
-func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error) {
+// GetImportedKVCount returns the number of imported KV pairs of some engine.
+func (local *Local) GetImportedKVCount(engineUUID uuid.UUID) int64 {
+	v, ok := local.engines.Load(engineUUID)
+	if !ok {
+		// we get it after import, but before clean up, so this should not happen
+		// todo: return error
+		return 0
+	}
+	e := v.(*Engine)
+	return e.importedKVCount.Load()
+}
+
+func (local *Local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (hasDupe bool, err error) {
 	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect local duplicate keys")
 	defer func() {
 		logger.End(zap.ErrorLevel, err)
@@ -1717,7 +1730,7 @@ func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Tab
 	return atomicHasDupe.Load(), nil
 }
 
-func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error) {
+func (local *Local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (hasDupe bool, err error) {
 	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect remote duplicate keys")
 	defer func() {
 		logger.End(zap.ErrorLevel, err)
@@ -1735,7 +1748,7 @@ func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Ta
 	return atomicHasDupe.Load(), nil
 }
 
-func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) (err error) {
+func (local *Local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) (err error) {
 	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[resolve-dupe] resolve duplicate rows")
 	defer func() {
 		logger.End(zap.ErrorLevel, err)
@@ -1751,7 +1764,7 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 	}
 
 	// TODO: reuse the *kv.SessionOptions from NewEncoder for picking the correct time zone.
-	decoder, err := kv.NewTableKVDecoder(tbl, tableName, &kv.SessionOptions{
+	decoder, err := kv.NewTableKVDecoder(tbl, tableName, &encode.SessionOptions{
 		SQLMode: mysql.ModeStrictAllTables,
 	}, log.FromContext(ctx))
 	if err != nil {
@@ -1792,7 +1805,7 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 	return errors.Trace(err)
 }
 
-func (local *local) deleteDuplicateRows(
+func (local *Local) deleteDuplicateRows(
 	ctx context.Context,
 	logger *log.Task,
 	handleRows [][2][]byte,
@@ -1852,7 +1865,7 @@ func (local *local) deleteDuplicateRows(
 	return nil
 }
 
-func (local *local) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error {
+func (local *Local) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	// the only way to reset the engine + reclaim the space is to delete and reopen it 🤷
 	localEngine := local.lockEngine(engineUUID, importMutexStateClose)
 	if localEngine == nil {
@@ -1885,7 +1898,7 @@ func (local *local) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error
 	return err
 }
 
-func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) error {
+func (local *Local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	localEngine := local.lockEngine(engineUUID, importMutexStateClose)
 	// release this engine after import success
 	if localEngine == nil {
@@ -1912,19 +1925,19 @@ func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) err
 	return nil
 }
 
-func (local *local) CheckRequirements(ctx context.Context, checkCtx *backend.CheckCtx) error {
+func (local *Local) CheckRequirements(ctx context.Context, checkCtx *backend.CheckCtx) error {
 	return local.targetInfoGetter.CheckRequirements(ctx, checkCtx)
 }
 
-func (local *local) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
+func (local *Local) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
 	return local.targetInfoGetter.FetchRemoteTableModels(ctx, schemaName)
 }
 
-func (local *local) MakeEmptyRows() kv.Rows {
+func (local *Local) MakeEmptyRows() kv.Rows {
 	return local.encBuilder.MakeEmptyRows()
 }
 
-func (local *local) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
+func (local *Local) NewEncoder(ctx context.Context, tbl table.Table, options *encode.SessionOptions) (kv.Encoder, error) {
 	return local.encBuilder.NewEncoder(ctx, tbl, options)
 }
 
@@ -1932,7 +1945,7 @@ func engineSSTDir(storeDir string, engineUUID uuid.UUID) string {
 	return filepath.Join(storeDir, engineUUID.String()+".sst")
 }
 
-func (local *local) LocalWriter(ctx context.Context, cfg *backend.LocalWriterConfig, engineUUID uuid.UUID) (backend.EngineWriter, error) {
+func (local *Local) LocalWriter(ctx context.Context, cfg *backend.LocalWriterConfig, engineUUID uuid.UUID) (backend.EngineWriter, error) {
 	e, ok := local.engines.Load(engineUUID)
 	if !ok {
 		return nil, errors.Errorf("could not find engine for %s", engineUUID.String())
@@ -1958,7 +1971,7 @@ func openLocalWriter(cfg *backend.LocalWriterConfig, engine *Engine, cacheSize i
 	return w, nil
 }
 
-func (local *local) isIngestRetryable(
+func (local *Local) isIngestRetryable(
 	ctx context.Context,
 	resp *sst.IngestResponse,
 	region *split.RegionInfo,
@@ -2080,7 +2093,7 @@ func nextKey(key []byte) []byte {
 	return res
 }
 
-func (local *local) EngineFileSizes() (res []backend.EngineFileSize) {
+func (local *Local) EngineFileSizes() (res []backend.EngineFileSize) {
 	local.engines.Range(func(k, v interface{}) bool {
 		engine := v.(*Engine)
 		res = append(res, engine.getEngineFileSize())
