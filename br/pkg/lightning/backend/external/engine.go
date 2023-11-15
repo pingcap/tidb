@@ -215,12 +215,16 @@ func readOneFile(
 	}
 	defer rd.Close()
 	if concurrency > 1 {
+		newBufPool := membuf.NewPool(membuf.WithPoolSize(1),
+			membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc*int(concurrency)),
+			membuf.WithLargeAllocThreshold(ConcurrentReaderBufferSizePerConc*int(concurrency)))
+
 		rd.byteReader.enableConcurrentRead(
 			storage,
 			dataFile,
-			concurrentReadThreshold,
+			int(concurrency)*2,
 			ConcurrentReaderBufferSizePerConc,
-			bufPool.NewBuffer(),
+			newBufPool.NewBuffer(),
 		)
 		err = rd.byteReader.switchConcurrentMode(true)
 		if err != nil {
