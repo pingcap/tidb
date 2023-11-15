@@ -326,6 +326,9 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 	readerCnt, writerCnt := b.expectedWorkerSize()
 	writerPool := workerpool.NewWorkerPool[IndexRecordChunk]("ingest_writer",
 		poolutil.DDL, writerCnt, b.createWorker)
+
+	capacity := variable.DDLReorgChanCap.Load()
+	writerPool.SetTaskReceiver(make(chan IndexRecordChunk, capacity))
 	writerPool.Start(b.ctx)
 	b.writerPool = writerPool
 	b.copReqSenderPool.chunkSender = writerPool
