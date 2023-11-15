@@ -47,7 +47,7 @@ type baseAvgDecimal struct {
 	baseAggFunc
 }
 
-func (e *baseAvgDecimal) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (e *baseAvgDecimal) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *spillSerializeHelper) {
 	pr := (*partialResult4AvgDecimal)(partialResult)
 	resBuf := spillHelper.serializePartialResult4AvgDecimal(*pr)
 	chk.AppendBytes(e.ordinal, resBuf)
@@ -340,7 +340,7 @@ func (e *baseAvgFloat64) AppendFinalResult2Chunk(_ sessionctx.Context, pr Partia
 	return nil
 }
 
-func (e *baseAvgFloat64) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (e *baseAvgFloat64) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *spillSerializeHelper) {
 	pr := (*partialResult4AvgFloat64)(partialResult)
 	resBuf := spillHelper.serializePartialResult4AvgFloat64(*pr)
 	chk.AppendBytes(e.ordinal, resBuf)

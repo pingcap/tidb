@@ -301,7 +301,7 @@ func (e *maxMin4Int) MergePartialResult(_ sessionctx.Context, src, dst PartialRe
 	return 0, nil
 }
 
-func (e *maxMin4Int) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (e *maxMin4Int) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *spillSerializeHelper) {
 	pr := (*partialResult4MaxMinInt)(partialResult)
 	resBuf := spillHelper.serializePartialResult4MaxMinInt(*pr)
 	chk.AppendBytes(e.ordinal, resBuf)
@@ -463,7 +463,7 @@ func (e *maxMin4Uint) MergePartialResult(_ sessionctx.Context, src, dst PartialR
 	return 0, nil
 }
 
-func (e *maxMin4Uint) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (e *maxMin4Uint) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *spillSerializeHelper) {
 	pr := (*partialResult4MaxMinUint)(partialResult)
 	resBuf := spillHelper.serializePartialResult4MaxMinUint(*pr)
 	chk.AppendBytes(e.ordinal, resBuf)
@@ -622,7 +622,7 @@ func (e *maxMin4Float32) MergePartialResult(_ sessionctx.Context, src, dst Parti
 	return 0, nil
 }
 
-func (e *maxMin4Float32) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (e *maxMin4Float32) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *spillSerializeHelper) {
 	pr := (*partialResult4MaxMinFloat32)(partialResult)
 	resBuf := spillHelper.serializePartialResult4MaxMinFloat32(*pr)
 	chk.AppendBytes(e.ordinal, resBuf)
@@ -779,7 +779,7 @@ func (e *maxMin4Float64) MergePartialResult(_ sessionctx.Context, src, dst Parti
 	return 0, nil
 }
 
-func (e *maxMin4Float64) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (e *maxMin4Float64) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *spillSerializeHelper) {
 	pr := (*partialResult4MaxMinFloat64)(partialResult)
 	resBuf := spillHelper.serializePartialResult4MaxMinFloat64(*pr)
 	chk.AppendBytes(e.ordinal, resBuf)
@@ -948,7 +948,7 @@ func (e *maxMin4Decimal) MergePartialResult(_ sessionctx.Context, src, dst Parti
 	return 0, nil
 }
 
-func (e *maxMin4Decimal) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (e *maxMin4Decimal) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *spillSerializeHelper) {
 	pr := (*partialResult4MaxMinDecimal)(partialResult)
 	resBuf := spillHelper.serializePartialResult4MaxMinDecimal(*pr)
 	chk.AppendBytes(e.ordinal, resBuf)
@@ -1129,7 +1129,7 @@ func (e *maxMin4String) MergePartialResult(_ sessionctx.Context, src, dst Partia
 	return 0, nil
 }
 
-func (e *maxMin4String) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (e *maxMin4String) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *spillSerializeHelper) {
 	pr := (*partialResult4MaxMinString)(partialResult)
 	resBuf := spillHelper.serializePartialResult4MaxMinString(*pr)
 	chk.AppendBytes(e.ordinal, resBuf)
@@ -1332,7 +1332,7 @@ func (e *maxMin4TimeSliding) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	return 0, nil
 }
 
-func (e *maxMin4TimeSliding) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (e *maxMin4TimeSliding) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *spillSerializeHelper) {
 	pr := (*partialResult4MaxMinTime)(partialResult)
 	resBuf := spillHelper.serializePartialResult4MaxMinTime(*pr)
 	chk.AppendBytes(e.ordinal, resBuf)
@@ -1448,7 +1448,7 @@ func (e *maxMin4Duration) MergePartialResult(_ sessionctx.Context, src, dst Part
 	return 0, nil
 }
 
-func (e *maxMin4Duration) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (e *maxMin4Duration) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *spillSerializeHelper) {
 	pr := (*partialResult4MaxMinDuration)(partialResult)
 	resBuf := spillHelper.serializePartialResult4MaxMinDuration(*pr)
 	chk.AppendBytes(e.ordinal, resBuf)
@@ -1613,7 +1613,7 @@ func (e *maxMin4JSON) MergePartialResult(_ sessionctx.Context, src, dst PartialR
 	return 0, nil
 }
 
-func (e *maxMin4JSON) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (e *maxMin4JSON) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *spillSerializeHelper) {
 	pr := (*partialResult4MaxMinJSON)(partialResult)
 	resBuf := spillHelper.serializePartialResult4MaxMinJSON(*pr)
 	chk.AppendBytes(e.ordinal, resBuf)
@@ -1700,7 +1700,7 @@ func (e *maxMin4Enum) MergePartialResult(_ sessionctx.Context, src, dst PartialR
 	return 0, nil
 }
 
-func (e *maxMin4Enum) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (e *maxMin4Enum) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *spillSerializeHelper) {
 	pr := (*partialResult4MaxMinEnum)(partialResult)
 	resBuf := spillHelper.serializePartialResult4MaxMinEnum(*pr)
 	chk.AppendBytes(e.ordinal, resBuf)
@@ -1787,7 +1787,7 @@ func (e *maxMin4Set) MergePartialResult(_ sessionctx.Context, src, dst PartialRe
 	return 0, nil
 }
 
-func (e *maxMin4Set) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (e *maxMin4Set) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *spillSerializeHelper) {
 	pr := (*partialResult4MaxMinSet)(partialResult)
 	resBuf := spillHelper.serializePartialResult4MaxMinSet(*pr)
 	chk.AppendBytes(e.ordinal, resBuf)

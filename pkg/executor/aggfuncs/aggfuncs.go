@@ -144,7 +144,7 @@ type AggPartialResultMapper map[string][]PartialResult
 
 type serializer interface {
 	// SerializePartialResult will serialize meta data of aggregate function into bytes and put them into chunk.
-	SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper)
+	SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *spillSerializeHelper)
 
 	// DeserializePartialResult deserializes from bytes to PartialResult.
 	DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64)
@@ -209,7 +209,7 @@ func (*baseAggFunc) MergePartialResult(sessionctx.Context, PartialResult, Partia
 	return 0, nil
 }
 
-func (*baseAggFunc) SerializePartialResult(_ PartialResult, _ *chunk.Chunk, _ *SpillSerializeHelper) {
+func (*baseAggFunc) SerializePartialResult(_ PartialResult, _ *chunk.Chunk, _ *spillSerializeHelper) {
 }
 
 func (*baseAggFunc) DeserializePartialResult(_ *chunk.Chunk) ([]PartialResult, int64) {

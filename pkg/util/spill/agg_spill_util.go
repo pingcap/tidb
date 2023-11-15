@@ -42,6 +42,7 @@ const (
 	DurationType
 
 	typeLen    = int64(1)
+	boolLen    = int64(unsafe.Sizeof(true))
 	byteLen    = int64(unsafe.Sizeof(byte(0)))
 	uint8Len   = int64(unsafe.Sizeof(uint8(0)))
 	intLen     = int64(unsafe.Sizeof(int(0)))
@@ -109,7 +110,7 @@ func DeserializeInterface(buf []byte, readPos int64) (interface{}, int64) {
 	switch dataType {
 	case BoolType:
 		res := int(buf[readPos])
-		readPos++
+		readPos += boolLen
 		if res == 0 {
 			return false, readPos
 		} else if res == 1 {
@@ -119,19 +120,19 @@ func DeserializeInterface(buf []byte, readPos int64) (interface{}, int64) {
 		}
 	case Int64Type:
 		res := DeserializeInt64(buf, readPos)
-		readPos += 8
+		readPos += int64Len
 		return res, readPos
 	case Uint64Type:
 		res := DeserializeUint64(buf, readPos)
-		readPos += 8
+		readPos += uint64Len
 		return res, readPos
 	case FloatType:
 		res := DeserializeFloat64(buf, readPos)
-		readPos += 8
+		readPos += float64Len
 		return res, readPos
 	case StringType:
 		strLen := DeserializeInt64(buf, readPos)
-		readPos += 8
+		readPos += int64Len
 		res := string(hack.String(buf[readPos : readPos+strLen]))
 		readPos += strLen
 		return res, readPos
@@ -143,22 +144,22 @@ func DeserializeInterface(buf []byte, readPos int64) (interface{}, int64) {
 		typeCode := buf[readPos]
 		readPos++
 		valueLen := DeserializeInt64(buf, readPos)
-		readPos += 8
+		readPos += int64Len
 		return types.Opaque{
 			TypeCode: typeCode,
 			Buf:      buf[readPos : readPos+valueLen],
 		}, readPos + valueLen
 	case TimeType:
 		coreTime := DeserializeUint64(buf, readPos)
-		readPos += 8
+		readPos += uint64Len
 		t := DeserializeUint8(buf, readPos)
-		readPos++
+		readPos += uint8Len
 		fsp := DeserializeInt(buf, readPos)
 		readPos += intLen
 		return types.NewTime(types.CoreTime(coreTime), t, fsp), readPos
 	case DurationType:
 		value := DeserializeInt64(buf, readPos)
-		readPos += 8
+		readPos += int64Len
 		fsp := DeserializeInt(buf, readPos)
 		readPos += intLen
 		return types.Duration{
@@ -274,24 +275,24 @@ func SerializeInterface(value interface{}, varBuf *[]byte, tmpBuf []byte) {
 		*varBuf = append(*varBuf, Int64Type)
 		SerializeInt64(v, tmpBuf)
 		*varBuf = append(*varBuf, tmpBuf[:int64Len]...)
-		encodedBytesNum += 8
+		encodedBytesNum += int64Len
 	case uint64:
 		*varBuf = append(*varBuf, Uint64Type)
 		SerializeUint64(v, tmpBuf)
 		*varBuf = append(*varBuf, tmpBuf[:uint64Len]...)
-		encodedBytesNum += 8
+		encodedBytesNum += uint64Len
 	case float64:
 		*varBuf = append(*varBuf, FloatType)
 		SerializeFloat64(v, tmpBuf)
 		*varBuf = append(*varBuf, tmpBuf[:float64Len]...)
-		encodedBytesNum += 8
+		encodedBytesNum += float64Len
 	case string:
 		*varBuf = append(*varBuf, StringType)
 		vLen := int64(len(v))
 		SerializeInt64(vLen, tmpBuf)
 		*varBuf = append(*varBuf, tmpBuf[:int64Len]...)
 		*varBuf = append(*varBuf, v...)
-		encodedBytesNum += vLen + 8
+		encodedBytesNum += vLen + int64Len
 	case types.BinaryJSON:
 		*varBuf = append(*varBuf, BinaryJSONType)
 		varBufLenBeforeSerializeJSON := int64(len(*varBuf))
@@ -308,7 +309,7 @@ func SerializeInterface(value interface{}, varBuf *[]byte, tmpBuf []byte) {
 		SerializeInt64(int64(len(v.Buf)), tmpBuf)
 		*varBuf = append(*varBuf, tmpBuf[:int64Len]...)
 		*varBuf = append(*varBuf, v.Buf...)
-		encodedBytesNum += bufLen + 1 + 8
+		encodedBytesNum += bufLen + typeLen + int64Len
 	case types.Time:
 		*varBuf = append(*varBuf, TimeType)
 		SerializeUint64(uint64(v.CoreTime()), tmpBuf)
@@ -317,14 +318,14 @@ func SerializeInterface(value interface{}, varBuf *[]byte, tmpBuf []byte) {
 		*varBuf = append(*varBuf, tmpBuf[:uint8Len]...)
 		SerializeInt(v.Fsp(), tmpBuf)
 		*varBuf = append(*varBuf, tmpBuf[:intLen]...)
-		encodedBytesNum += 8 + 1 + intLen
+		encodedBytesNum += uint64Len + uint8Len + intLen
 	case types.Duration:
 		*varBuf = append(*varBuf, DurationType)
 		SerializeInt64(int64(v.Duration), tmpBuf)
 		*varBuf = append(*varBuf, tmpBuf[:int64Len]...)
 		SerializeInt(v.Fsp, tmpBuf)
 		*varBuf = append(*varBuf, tmpBuf[:intLen]...)
-		encodedBytesNum += 8 + intLen
+		encodedBytesNum += int64Len + intLen
 	default:
 		panic("Agg spill encounters an unexpected interface type!")
 	}

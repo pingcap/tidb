@@ -633,11 +633,6 @@ func (c *Column) GetRaw(rowID int) []byte {
 	return data
 }
 
-// GetData returns the data of column, and do not modify it, it's only used for reading.
-func (c *Column) GetData() []byte {
-	return c.data
-}
-
 // SetRaw sets the raw bytes for the rowIdx-th element.
 // NOTE: Two conditions must be satisfied before calling this function:
 // 1. The column should be stored with variable-length elements.

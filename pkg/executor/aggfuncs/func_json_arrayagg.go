@@ -92,7 +92,7 @@ func (*jsonArrayagg) MergePartialResult(_ sessionctx.Context, src, dst PartialRe
 	return 0, nil
 }
 
-func (e *jsonArrayagg) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (e *jsonArrayagg) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *spillSerializeHelper) {
 	pr := (*partialResult4JsonArrayagg)(partialResult)
 	resBuf := spillHelper.serializePartialResult4JsonArrayagg(*pr)
 	chk.AppendBytes(e.ordinal, resBuf)

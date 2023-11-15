@@ -48,7 +48,7 @@ func (e *baseBitAggFunc) AppendFinalResult2Chunk(_ sessionctx.Context, pr Partia
 	return nil
 }
 
-func (e *baseBitAggFunc) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (e *baseBitAggFunc) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *spillSerializeHelper) {
 	pr := (*partialResult4BitFunc)(partialResult)
 	resBuf := spillHelper.serializePartialResult4BitFunc(*pr)
 	chk.AppendBytes(e.ordinal, resBuf)
