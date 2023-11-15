@@ -168,7 +168,6 @@ func DeserializeInterface(buf []byte, readPos int64) (interface{}, int64) {
 	default:
 		panic("Invalid data type happens in agg spill deserializing!")
 	}
-
 }
 
 // DeserializeBinaryJSON deserializes Set type
@@ -259,8 +258,6 @@ func SerializeFloat64(value float64, tmpBuf []byte) {
 
 // SerializeInterface serialize interface type and return the number of bytes serialized
 func SerializeInterface(value interface{}, varBuf *[]byte, tmpBuf []byte) {
-	encodedBytesNum := typeLen
-
 	switch v := value.(type) {
 	case bool:
 		*varBuf = append(*varBuf, BoolType)
@@ -269,29 +266,24 @@ func SerializeInterface(value interface{}, varBuf *[]byte, tmpBuf []byte) {
 		} else {
 			*varBuf = append(*varBuf, byte(0))
 		}
-		encodedBytesNum++
 	case int64:
 		*varBuf = append(*varBuf, Int64Type)
 		SerializeInt64(v, tmpBuf)
 		*varBuf = append(*varBuf, tmpBuf[:int64Len]...)
-		encodedBytesNum += int64Len
 	case uint64:
 		*varBuf = append(*varBuf, Uint64Type)
 		SerializeUint64(v, tmpBuf)
 		*varBuf = append(*varBuf, tmpBuf[:uint64Len]...)
-		encodedBytesNum += uint64Len
 	case float64:
 		*varBuf = append(*varBuf, FloatType)
 		SerializeFloat64(v, tmpBuf)
 		*varBuf = append(*varBuf, tmpBuf[:float64Len]...)
-		encodedBytesNum += float64Len
 	case string:
 		*varBuf = append(*varBuf, StringType)
 		vLen := int64(len(v))
 		SerializeInt64(vLen, tmpBuf)
 		*varBuf = append(*varBuf, tmpBuf[:int64Len]...)
 		*varBuf = append(*varBuf, v...)
-		encodedBytesNum += vLen + int64Len
 	case types.BinaryJSON:
 		*varBuf = append(*varBuf, BinaryJSONType)
 		varBufLenBeforeSerializeJSON := int64(len(*varBuf))
@@ -300,15 +292,12 @@ func SerializeInterface(value interface{}, varBuf *[]byte, tmpBuf []byte) {
 		*varBuf = append(*varBuf, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)
 		*varBuf = SerializeBinaryJSON(&v, *varBuf, varBufLenBeforeSerializeJSON)
 
-		encodedBytesNum += int64(len(*varBuf)) - varBufLenBeforeSerializeJSON
 	case types.Opaque:
 		*varBuf = append(*varBuf, OpaqueType)
-		bufLen := int64(len(v.Buf))
 		*varBuf = append(*varBuf, v.TypeCode)
 		SerializeInt64(int64(len(v.Buf)), tmpBuf)
 		*varBuf = append(*varBuf, tmpBuf[:int64Len]...)
 		*varBuf = append(*varBuf, v.Buf...)
-		encodedBytesNum += bufLen + typeLen + int64Len
 	case types.Time:
 		*varBuf = append(*varBuf, TimeType)
 		SerializeUint64(uint64(v.CoreTime()), tmpBuf)
@@ -317,14 +306,12 @@ func SerializeInterface(value interface{}, varBuf *[]byte, tmpBuf []byte) {
 		*varBuf = append(*varBuf, tmpBuf[:uint8Len]...)
 		SerializeInt(v.Fsp(), tmpBuf)
 		*varBuf = append(*varBuf, tmpBuf[:intLen]...)
-		encodedBytesNum += uint64Len + uint8Len + intLen
 	case types.Duration:
 		*varBuf = append(*varBuf, DurationType)
 		SerializeInt64(int64(v.Duration), tmpBuf)
 		*varBuf = append(*varBuf, tmpBuf[:int64Len]...)
 		SerializeInt(v.Fsp, tmpBuf)
 		*varBuf = append(*varBuf, tmpBuf[:intLen]...)
-		encodedBytesNum += int64Len + intLen
 	default:
 		panic("Agg spill encounters an unexpected interface type!")
 	}
