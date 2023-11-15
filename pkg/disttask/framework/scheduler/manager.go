@@ -425,6 +425,7 @@ func (m *Manager) logErrAndPersist(err error, taskID int64) {
 	m.logErr(err)
 	// TODO: use interface if each business to retry
 	if common.IsRetryableError(err) || isRetryableError(err) {
+		logutil.Logger(m.logCtx).Error("task manager met retryable error", zap.Error(err), zap.Stack("stack"))
 		return
 	}
 	err1 := m.taskTable.UpdateErrorToSubtask(m.id, taskID, err)

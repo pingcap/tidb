@@ -198,6 +198,10 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 	// Use distributed lock if run in distributed mode with local sort
 	// to avoid too many sst files for tikv to compact.
 	if bc.etcdClient != nil {
+		failpoint.Inject("mockSessionExpired", func() {
+			logutil.BgLogger().Info("ywq test trigger....")
+			failpoint.Return(true, false, concurrency.ErrSessionExpired)
+		})
 		distLockKey := fmt.Sprintf("/tidb/distributeLock/%d/%d", bc.jobID, indexID)
 		se, _ := concurrency.NewSession(bc.etcdClient)
 
@@ -228,9 +232,6 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 				logutil.Logger(bc.ctx).Warn("close session error", zap.Error(err))
 			}
 		}()
-		failpoint.Inject("mockSessionExpired", func() {
-			failpoint.Return(true, false, concurrency.ErrSessionExpired)
-		})
 	}
 
 	logutil.Logger(bc.ctx).Info(LitInfoUnsafeImport, zap.Int64("index ID", indexID),

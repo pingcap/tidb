@@ -32,6 +32,7 @@ go_library(
         "//pkg/util/memory",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@io_etcd_go_etcd_client_v3//concurrency",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
         "@org_uber_go_zap//:zap",

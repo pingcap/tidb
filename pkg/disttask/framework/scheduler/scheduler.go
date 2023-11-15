@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -598,6 +599,11 @@ func isRetryableError(err error) bool {
 		sqlErr := terror.ToSQLError(tErr)
 		_, ok := dbterror.ReorgRetryableErrCodes[sqlErr.Code]
 		return ok
+	}
+	// Meet sessionExpried error when acquiring dist lock on etcd.
+	// See: https://github.com/pingcap/tidb/issues/48546
+	if originErr == concurrency.ErrSessionExpired {
+		return true
 	}
 	// can't retry Unknown err
 	return false
