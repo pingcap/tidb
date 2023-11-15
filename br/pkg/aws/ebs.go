@@ -5,6 +5,7 @@ package aws
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -350,7 +351,7 @@ func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) 
 
 	// Calculate the time in minutes to fill 1.0 credit according to
 	// https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ebs-fast-snapshot-restore.html#volume-creation-credits
-	fillElapsedTime := 60.0 / (min(10, 1024.0/maxVolumeSize))
+	fillElapsedTime := 60.0 / (math.Min(10, float64(1024.0/maxVolumeSize)))
 
 	// We have to sleep for at least fillElapsedTime minutes in order to make credits are filled to 1.0
 	// Let's heartbeat every 5 minutes
@@ -578,7 +579,7 @@ func (e *EC2Session) WaitVolumesCreated(volumeIDMap map[string]string, progress 
 			return 0, errors.Trace(err)
 		}
 
-		err, createdVolumeSize, unfinishedVolumes := e.HandleDescribeVolumesResponse(resp, fsrEnabledRequired)
+		createdVolumeSize, unfinishedVolumes, err := e.HandleDescribeVolumesResponse(resp, fsrEnabledRequired)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -625,7 +626,7 @@ func ec2Tag(key, val string) *ec2.Tag {
 	return &ec2.Tag{Key: &key, Value: &val}
 }
 
-func (e *EC2Session) HandleDescribeVolumesResponse(resp *ec2.DescribeVolumesOutput, fsrEnabledRequired bool) (error, int64, []*string) {
+func (e *EC2Session) HandleDescribeVolumesResponse(resp *ec2.DescribeVolumesOutput, fsrEnabledRequired bool) (int64, []*string, error) {
 	totalVolumeSize := int64(0)
 
 	var unfinishedVolumes []*string
@@ -633,7 +634,7 @@ func (e *EC2Session) HandleDescribeVolumesResponse(resp *ec2.DescribeVolumesOutp
 		if *volume.State == ec2.VolumeStateAvailable {
 			if fsrEnabledRequired && !*volume.FastRestored {
 				log.Error("snapshot fsr is not enabled for the volume", zap.String("volume", *volume.SnapshotId))
-				return errors.Errorf("Snapshot [%s] of volume [%s] is not fsr enabled", *volume.SnapshotId, *volume.VolumeId), 0, nil
+				return 0, nil, errors.Errorf("Snapshot [%s] of volume [%s] is not fsr enabled", *volume.SnapshotId, *volume.VolumeId)
 			}
 			log.Info("volume is available", zap.String("id", *volume.VolumeId))
 			totalVolumeSize += *volume.Size
@@ -643,5 +644,5 @@ func (e *EC2Session) HandleDescribeVolumesResponse(resp *ec2.DescribeVolumesOutp
 		}
 	}
 
-	return nil, totalVolumeSize, unfinishedVolumes
+	return totalVolumeSize, unfinishedVolumes, nil
 }
