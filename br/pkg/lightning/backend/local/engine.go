@@ -173,6 +173,10 @@ func (e *Engine) Close() error {
 	return err
 }
 
+func (e *Engine) ID2() int64 {
+	return 0
+}
+
 // Cleanup remove meta, db and duplicate detection files
 func (e *Engine) Cleanup(dataDir string) error {
 	if err := os.RemoveAll(e.sstDir); err != nil {
