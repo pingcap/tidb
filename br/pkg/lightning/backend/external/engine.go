@@ -54,6 +54,12 @@ type simpleKV struct {
 	value []byte
 }
 
+type memKVsAndBuffers struct {
+	mu           sync.Mutex
+	memKVs       []simpleKV
+	memKVBuffers []*membuf.Buffer
+}
+
 // Engine stored sorted key/value pairs in an external storage.
 type Engine struct {
 	storage         storage.ExternalStorage
@@ -65,9 +71,7 @@ type Engine struct {
 	regionSplitSize int64
 	bufPool         *membuf.Pool
 
-	memKvs        []simpleKV
-	memKvsBuffers []*membuf.Buffer
-	memKvsMutex   sync.Mutex
+	memKVsAndBuffers memKVsAndBuffers
 
 	// checkHotspot is true means we will check hotspot file when using MergeKVIter.
 	// if hotspot file is detected, we will use multiple readers to read data.
@@ -167,17 +171,22 @@ func (e *Engine) getAdjustedConcurrency() int {
 
 const concurrentReadThreshold = 96 * 1024 * 1024
 
-func (e *Engine) checkConcurrentFiles(ctx context.Context, startKey, endKey []byte) ([]bool, []uint64, error) {
-	result := make([]bool, len(e.dataFiles))
-	startOffs, err := seekPropsOffsets(ctx, startKey, e.statsFiles, e.storage, false)
+func checkConcurrentFiles(
+	ctx context.Context,
+	storage storage.ExternalStorage,
+	statsFiles []string,
+	startKey, endKey []byte,
+) ([]bool, []uint64, error) {
+	result := make([]bool, len(statsFiles))
+	startOffs, err := seekPropsOffsets(ctx, startKey, statsFiles, storage, false)
 	if err != nil {
 		return nil, nil, err
 	}
-	endOffs, err := seekPropsOffsets(ctx, startKey, e.statsFiles, e.storage, false)
+	endOffs, err := seekPropsOffsets(ctx, endKey, statsFiles, storage, false)
 	if err != nil {
 		return nil, nil, err
 	}
-	for i := range e.dataFiles {
+	for i := range statsFiles {
 		if endOffs[i]-startOffs[i] > concurrentReadThreshold {
 			result[i] = true
 		}
@@ -185,19 +194,28 @@ func (e *Engine) checkConcurrentFiles(ctx context.Context, startKey, endKey []by
 	return result, startOffs, nil
 }
 
-func (e *Engine) readOneFile(ctx context.Context, fileIdx int, startKey, endKey []byte, startOffset uint64, concurrent bool) error {
-	rd, err := newKVReader(ctx, e.dataFiles[fileIdx], e.storage, startOffset, 64*1024)
+func readOneFile(
+	ctx context.Context,
+	storage storage.ExternalStorage,
+	dataFile string,
+	startKey, endKey []byte,
+	startOffset uint64,
+	concurrent bool,
+	bufPool *membuf.Pool,
+	output *memKVsAndBuffers,
+) error {
+	rd, err := newKVReader(ctx, dataFile, storage, startOffset, 64*1024)
 	if err != nil {
 		return err
 	}
 	defer rd.Close()
 	if concurrent {
 		rd.byteReader.enableConcurrentRead(
-			e.storage,
-			e.dataFiles[fileIdx],
+			storage,
+			dataFile,
 			256,
 			ConcurrentReaderBufferSizePerConc,
-			e.bufPool.NewBuffer(),
+			bufPool.NewBuffer(),
 		)
 		err = rd.byteReader.switchConcurrentMode(true)
 		if err != nil {
@@ -206,7 +224,7 @@ func (e *Engine) readOneFile(ctx context.Context, fileIdx int, startKey, endKey 
 	}
 
 	// this buffer is associated with data slices and will return to caller
-	memBuf := e.bufPool.NewBuffer()
+	memBuf := bufPool.NewBuffer()
 	memkvsOfThisFile := make([]simpleKV, 0, 1024)
 
 	for {
@@ -227,35 +245,57 @@ func (e *Engine) readOneFile(ctx context.Context, fileIdx int, startKey, endKey 
 		// directly read into memBuf?
 		memkvsOfThisFile = append(memkvsOfThisFile, simpleKV{key: memBuf.AddBytes(k), value: memBuf.AddBytes(v)})
 	}
-	e.memKvsMutex.Lock()
-	e.memKvs = append(e.memKvs, memkvsOfThisFile...)
-	e.memKvsBuffers = append(e.memKvsBuffers, memBuf)
-	e.memKvsMutex.Unlock()
+	output.mu.Lock()
+	output.memKVs = append(output.memKVs, memkvsOfThisFile...)
+	output.memKVBuffers = append(output.memKVBuffers, memBuf)
+	output.mu.Unlock()
 	return nil
 }
 
-// readAllData will save the output in e.memKvs and e.memKvsBuffers.
-func (e *Engine) readAllData(ctx context.Context, startKey, endKey []byte) error {
-	if e.memKvs == nil {
-		e.memKvs = make([]simpleKV, 0, 1024*256)
+func readAllData(
+	ctx context.Context,
+	storage storage.ExternalStorage,
+	dataFiles, statsFiles []string,
+	startKey, endKey []byte,
+	bufPool *membuf.Pool,
+	output *memKVsAndBuffers,
+) error {
+	if output.memKVs == nil {
+		output.memKVs = make([]simpleKV, 0, 1024*256)
 	} else {
-		e.memKvs = e.memKvs[:0]
+		output.memKVs = output.memKVs[:0]
 	}
-	if e.memKvsBuffers == nil {
-		e.memKvsBuffers = make([]*membuf.Buffer, 0, len(e.dataFiles))
+	if output.memKVBuffers == nil {
+		output.memKVBuffers = make([]*membuf.Buffer, 0, len(dataFiles))
 	} else {
-		e.memKvsBuffers = e.memKvsBuffers[:0]
+		output.memKVBuffers = output.memKVBuffers[:0]
 	}
 
-	useConcurrency, startOffsets, err := e.checkConcurrentFiles(ctx, startKey, endKey)
+	useConcurrency, startOffsets, err := checkConcurrentFiles(
+		ctx,
+		storage,
+		statsFiles,
+		startKey,
+		endKey,
+	)
 	if err != nil {
 		return err
 	}
 	var eg errgroup.Group
-	for i := range e.dataFiles {
+	for i := range dataFiles {
 		i := i
 		eg.Go(func() error {
-			return e.readOneFile(ctx, i, startKey, endKey, startOffsets[i], useConcurrency[i])
+			return readOneFile(
+				ctx,
+				storage,
+				dataFiles[i],
+				startKey,
+				endKey,
+				startOffsets[i],
+				useConcurrency[i],
+				bufPool,
+				output,
+			)
 		})
 	}
 	return eg.Wait()
@@ -263,7 +303,16 @@ func (e *Engine) readAllData(ctx context.Context, startKey, endKey []byte) error
 
 func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byte, outCh chan<- common.DataAndRange) error {
 	now := time.Now()
-	err := e.readAllData(ctx, startKey, endKey)
+	err := readAllData(
+		ctx,
+		e.storage,
+		e.dataFiles,
+		e.statsFiles,
+		startKey,
+		endKey,
+		e.bufPool,
+		&e.memKVsAndBuffers,
+	)
 	if err != nil {
 		return err
 	}
@@ -271,10 +320,10 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 		zap.Duration("cost time", time.Since(now)))
 	now = time.Now()
 	sorty.MaxGor = uint64(e.workerConcurrency)
-	sorty.Sort(len(e.memKvs), func(i, k, r, s int) bool {
-		if bytes.Compare(e.memKvs[i].key, e.memKvs[k].key) < 0 { // strict comparator like < or >
+	sorty.Sort(len(e.memKVsAndBuffers.memKVs), func(i, k, r, s int) bool {
+		if bytes.Compare(e.memKVsAndBuffers.memKVs[i].key, e.memKVsAndBuffers.memKVs[k].key) < 0 { // strict comparator like < or >
 			if r != s {
-				e.memKvs[r], e.memKvs[s] = e.memKvs[s], e.memKvs[r]
+				e.memKVsAndBuffers.memKVs[r], e.memKVsAndBuffers.memKVs[s] = e.memKVsAndBuffers.memKVs[s], e.memKVsAndBuffers.memKVs[r]
 			}
 			return true
 		}
@@ -285,13 +334,13 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 	keys := make([][]byte, 0, 1024)
 	values := make([][]byte, 0, 1024)
 	var start, end []byte
-	for _, kv := range e.memKvs {
+	for _, kv := range e.memKVsAndBuffers.memKVs {
 		keys = append(keys, kv.key)
 		values = append(values, kv.value)
 	}
 	start = keys[0]
 	end = keys[len(keys)-1]
-	data := e.buildIngestData(keys, values, e.memKvsBuffers)
+	data := e.buildIngestData(keys, values, e.memKVsAndBuffers.memKVBuffers)
 	sendFn := func(dr common.DataAndRange) error {
 		select {
 		case <-ctx.Done():
