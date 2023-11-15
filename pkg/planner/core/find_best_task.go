@@ -771,7 +771,7 @@ func (ds *DataSource) isMatchProp(path *util.AccessPath, prop *property.Physical
 	if path.IsIntHandlePath {
 		pkCol := ds.getPKIsHandleCol()
 		if len(prop.SortItems) == 1 && pkCol != nil {
-			isMatchProp = prop.SortItems[0].Col.Equal(nil, pkCol)
+			isMatchProp = prop.SortItems[0].Col.EqualColumn(pkCol)
 			if path.StoreType == kv.TiFlash {
 				isMatchProp = isMatchProp && !prop.SortItems[0].Desc
 			}
@@ -799,7 +799,7 @@ func (ds *DataSource) isMatchProp(path *util.AccessPath, prop *property.Physical
 		for _, sortItem := range prop.SortItems {
 			found := false
 			for ; i < len(path.IdxCols); i++ {
-				if path.IdxColLens[i] == types.UnspecifiedLength && sortItem.Col.Equal(nil, path.IdxCols[i]) {
+				if path.IdxColLens[i] == types.UnspecifiedLength && sortItem.Col.EqualColumn(path.IdxCols[i]) {
 					found = true
 					i++
 					break
@@ -837,15 +837,15 @@ func (ds *DataSource) isMatchPropForIndexMerge(path *util.AccessPath, prop *prop
 func (ds *DataSource) getTableCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
 	candidate.isMatchProp = ds.isMatchProp(path, prop)
-	candidate.accessCondsColMap = util.ExtractCol2Len(path.AccessConds, nil, nil)
+	candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx(), path.AccessConds, nil, nil)
 	return candidate
 }
 
 func (ds *DataSource) getIndexCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
 	candidate.isMatchProp = ds.isMatchProp(path, prop)
-	candidate.accessCondsColMap = util.ExtractCol2Len(path.AccessConds, path.IdxCols, path.IdxColLens)
-	candidate.indexCondsColMap = util.ExtractCol2Len(append(path.AccessConds, path.IndexFilters...), path.FullIdxCols, path.FullIdxColLens)
+	candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
+	candidate.indexCondsColMap = util.ExtractCol2Len(ds.SCtx(), append(path.AccessConds, path.IndexFilters...), path.FullIdxCols, path.FullIdxColLens)
 	return candidate
 }
 
@@ -1606,9 +1606,9 @@ func extractFiltersForIndexMerge(sc *stmtctx.StatementContext, client kv.Client,
 	return
 }
 
-func isIndexColsCoveringCol(col *expression.Column, indexCols []*expression.Column, idxColLens []int, ignoreLen bool) bool {
+func isIndexColsCoveringCol(sctx sessionctx.Context, col *expression.Column, indexCols []*expression.Column, idxColLens []int, ignoreLen bool) bool {
 	for i, indexCol := range indexCols {
-		if indexCol == nil || !col.EqualByExprAndID(nil, indexCol) {
+		if indexCol == nil || !col.EqualByExprAndID(sctx, indexCol) {
 			continue
 		}
 		if ignoreLen || idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.GetFlen() {
@@ -1625,8 +1625,8 @@ func (ds *DataSource) indexCoveringColumn(column *expression.Column, indexColumn
 	if column.ID == model.ExtraHandleID {
 		return true
 	}
-	coveredByPlainIndex := isIndexColsCoveringCol(column, indexColumns, idxColLens, ignoreLen)
-	coveredByClusteredIndex := isIndexColsCoveringCol(column, ds.commonHandleCols, ds.commonHandleLens, ignoreLen)
+	coveredByPlainIndex := isIndexColsCoveringCol(ds.SCtx(), column, indexColumns, idxColLens, ignoreLen)
+	coveredByClusteredIndex := isIndexColsCoveringCol(ds.SCtx(), column, ds.commonHandleCols, ds.commonHandleLens, ignoreLen)
 	if !coveredByPlainIndex && !coveredByClusteredIndex {
 		return false
 	}
@@ -1983,12 +1983,12 @@ func SplitSelCondsWithVirtualColumn(conds []expression.Expression) (withoutVirt 
 	return withoutVirt, withVirt
 }
 
-func matchIndicesProp(idxCols []*expression.Column, colLens []int, propItems []property.SortItem) bool {
+func matchIndicesProp(sctx sessionctx.Context, idxCols []*expression.Column, colLens []int, propItems []property.SortItem) bool {
 	if len(idxCols) < len(propItems) {
 		return false
 	}
 	for i, item := range propItems {
-		if colLens[i] != types.UnspecifiedLength || !item.Col.EqualByExprAndID(nil, idxCols[i]) {
+		if colLens[i] != types.UnspecifiedLength || !item.Col.EqualByExprAndID(sctx, idxCols[i]) {
 			return false
 		}
 	}

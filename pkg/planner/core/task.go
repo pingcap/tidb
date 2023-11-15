@@ -1027,7 +1027,7 @@ func (p *PhysicalLimit) sinkIntoIndexMerge(t task) bool {
 	needProj := p.schema.Len() != root.p.Schema().Len()
 	if !needProj {
 		for i := 0; i < p.schema.Len(); i++ {
-			if !p.schema.Columns[i].Equal(nil, root.p.Schema().Columns[i]) {
+			if !p.schema.Columns[i].EqualColumn(root.p.Schema().Columns[i]) {
 				needProj = true
 				break
 			}
