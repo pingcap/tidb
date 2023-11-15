@@ -458,7 +458,6 @@ create table t(a int CHECK (a != 0));
 prepare stmt from 'insert into t values(?)';
 set @a = 1;
 execute stmt using @a;
-
 set @a = 0;
 execute stmt using @a;
 Error 3819 (HY000): Check constraint 't_chk_1' is violated.
@@ -788,6 +787,9 @@ t	CREATE TABLE `t` (
 CONSTRAINT `haha` CHECK ((`a` < `b`)) /*!80016 NOT ENFORCED */,
 CONSTRAINT `t_chk_1` CHECK ((`a` > 0))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+insert into t values(1, 0);
+alter table t alter constraint haha enforced;
+Error 3819 (HY000): Check constraint 'haha' is violated.
 drop table if exists t;
 set @@global.tidb_enable_check_constraint = 1;
 CREATE TABLE `t` (`a` int(11) DEFAULT NULL);

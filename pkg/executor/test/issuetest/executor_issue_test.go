@@ -607,3 +607,23 @@ func TestIssue42662(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/issue42662_1"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/servermemorylimit/issue42662_2"))
 }
+
+func TestIssue48007(t *testing.T) {
+	// Test no leak
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	sm := &testkit.MockSessionManager{
+		PS: make([]*util.ProcessInfo, 0),
+	}
+	tk.Session().SetSessionManager(sm)
+	dom.ExpensiveQueryHandle().SetSessionManager(sm)
+	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `partsupp` (  `PS_PARTKEY` bigint(20) NOT NULL,`PS_SUPPKEY` bigint(20) NOT NULL,`PS_AVAILQTY` bigint(20) NOT NULL,`PS_SUPPLYCOST` decimal(15,2) NOT NULL,`PS_COMMENT` varchar(199) NOT NULL,PRIMARY KEY (`PS_PARTKEY`,`PS_SUPPKEY`) /*T![clustered_index] CLUSTERED */) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("CREATE TABLE `supplier` (`S_SUPPKEY` bigint(20) NOT NULL,`S_NAME` char(25) NOT NULL,`S_ADDRESS` varchar(40) NOT NULL,`S_NATIONKEY` bigint(20) NOT NULL,`S_PHONE` char(15) NOT NULL,`S_ACCTBAL` decimal(15,2) NOT NULL,`S_COMMENT` varchar(101) NOT NULL,PRIMARY KEY (`S_SUPPKEY`) /*T![clustered_index] CLUSTERED */) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("CREATE TABLE `nation` (`N_NATIONKEY` bigint(20) NOT NULL,`N_NAME` char(25) NOT NULL,`N_REGIONKEY` bigint(20) NOT NULL,`N_COMMENT` varchar(152) DEFAULT NULL,PRIMARY KEY (`N_NATIONKEY`) /*T![clustered_index] CLUSTERED */) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("set @@tidb_mem_quota_query=128;")
+	err := tk.ExecToErr("explain select ps_partkey, sum(ps_supplycost * ps_availqty) as value from partsupp, supplier, nation where ps_suppkey = s_suppkey and s_nationkey = n_nationkey and n_name = 'MOZAMBIQUE' group by ps_partkey having sum(ps_supplycost * ps_availqty) > ( select sum(ps_supplycost * ps_availqty) * 0.0001000000 from partsupp, supplier, nation where ps_suppkey = s_suppkey and s_nationkey = n_nationkey and n_name = 'MOZAMBIQUE' ) order by value desc;")
+	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
+}

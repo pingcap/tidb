@@ -13,6 +13,7 @@ go_library(
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
+        "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/util",
         "//pkg/table",
         "//pkg/types",
