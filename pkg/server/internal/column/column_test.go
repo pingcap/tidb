@@ -184,7 +184,7 @@ func TestDumpTextValue(t *testing.T) {
 	require.NoError(t, err)
 	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), losAngelesTz, func(err error) {})
 
-	time, err := types.ParseTime(typeCtx, "2017-01-05 23:59:59.575601", mysql.TypeDatetime, 0, nil)
+	time, err := types.ParseTime(typeCtx, "2017-01-05 23:59:59.575601", mysql.TypeDatetime, 0)
 	require.NoError(t, err)
 	d.SetMysqlTime(time)
 	columns[0].Type = mysql.TypeDatetime

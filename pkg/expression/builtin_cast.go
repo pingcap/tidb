@@ -1481,7 +1481,7 @@ func (b *builtinCastStringAsTimeSig) evalTime(ctx sessionctx.Context, row chunk.
 		return res, isNull, err
 	}
 	sc := ctx.GetSessionVars().StmtCtx
-	res, err = types.ParseTime(sc.TypeCtx(), val, b.tp.GetType(), b.tp.GetDecimal(), nil)
+	res, err = types.ParseTime(sc.TypeCtx(), val, b.tp.GetType(), b.tp.GetDecimal())
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 	}
@@ -1960,7 +1960,7 @@ func (b *builtinCastJSONAsTimeSig) evalTime(ctx sessionctx.Context, row chunk.Ro
 			return res, false, err
 		}
 		sc := ctx.GetSessionVars().StmtCtx
-		res, err = types.ParseTime(sc.TypeCtx(), s, b.tp.GetType(), b.tp.GetDecimal(), nil)
+		res, err = types.ParseTime(sc.TypeCtx(), s, b.tp.GetType(), b.tp.GetDecimal())
 		if err != nil {
 			return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 		}

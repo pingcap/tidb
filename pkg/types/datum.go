@@ -1270,7 +1270,7 @@ func (d *Datum) convertToMysqlTimestamp(ctx Context, target *FieldType) (Datum, 
 		}
 		t, err = t.RoundFrac(ctx, fsp)
 	case KindString, KindBytes:
-		t, err = ParseTime(ctx, d.GetString(), mysql.TypeTimestamp, fsp, nil)
+		t, err = ParseTime(ctx, d.GetString(), mysql.TypeTimestamp, fsp)
 	case KindInt64:
 		t, err = ParseTimeFromNum(ctx, d.GetInt64(), mysql.TypeTimestamp, fsp)
 	case KindMysqlDecimal:
@@ -1283,7 +1283,7 @@ func (d *Datum) convertToMysqlTimestamp(ctx Context, target *FieldType) (Datum, 
 			ret.SetMysqlTime(t)
 			return ret, err
 		}
-		t, err = ParseTime(ctx, s, mysql.TypeTimestamp, fsp, nil)
+		t, err = ParseTime(ctx, s, mysql.TypeTimestamp, fsp)
 	default:
 		return invalidConv(d, mysql.TypeTimestamp)
 	}
@@ -1324,7 +1324,7 @@ func (d *Datum) convertToMysqlTime(ctx Context, target *FieldType) (Datum, error
 	case KindMysqlDecimal:
 		t, err = ParseTimeFromFloatString(ctx, d.GetMysqlDecimal().String(), tp, fsp)
 	case KindString, KindBytes:
-		t, err = ParseTime(ctx, d.GetString(), tp, fsp, nil)
+		t, err = ParseTime(ctx, d.GetString(), tp, fsp)
 	case KindInt64:
 		t, err = ParseTimeFromNum(ctx, d.GetInt64(), tp, fsp)
 	case KindUint64:
@@ -1343,7 +1343,7 @@ func (d *Datum) convertToMysqlTime(ctx Context, target *FieldType) (Datum, error
 			ret.SetMysqlTime(t)
 			return ret, err
 		}
-		t, err = ParseTime(ctx, s, tp, fsp, nil)
+		t, err = ParseTime(ctx, s, tp, fsp)
 	default:
 		return invalidConv(d, tp)
 	}
