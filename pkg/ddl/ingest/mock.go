@@ -126,7 +126,7 @@ func (*MockBackendCtx) ResetWorkers(_ int64) {
 }
 
 // Flush implements BackendCtx.Flush interface.
-func (*MockBackendCtx) Flush(_ int64, _ FlushMode, _ bool) (flushed bool, imported bool, err error) {
+func (*MockBackendCtx) Flush(_ int64, _ FlushMode) (flushed bool, imported bool, err error) {
 	return false, false, nil
 }
 

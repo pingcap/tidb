@@ -48,7 +48,7 @@ type BackendCtx interface {
 	CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error
 	FinishImport(indexID int64, unique bool, tbl table.Table) error
 	ResetWorkers(jobID int64)
-	Flush(indexID int64, mode FlushMode, globalSort bool) (flushed, imported bool, err error)
+	Flush(indexID int64, mode FlushMode) (flushed, imported bool, err error)
 	Done() bool
 	SetDone()
 
@@ -167,7 +167,7 @@ func acquireLock(ctx context.Context, se *concurrency.Session, key string) (*con
 }
 
 // Flush checks the disk quota and imports the current key-values in engine to the storage.
-func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode, globalSort bool) (flushed, imported bool, err error) {
+func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported bool, err error) {
 	ei, exist := bc.Load(indexID)
 	if !exist {
 		logutil.Logger(bc.ctx).Error(LitErrGetEngineFail, zap.Int64("index ID", indexID))
@@ -197,7 +197,7 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode, globalSort bool) (
 
 	// Use distributed lock if run in distributed mode with local sort
 	// to avoid too many sst files for tikv to compact.
-	if bc.etcdClient != nil && !globalSort {
+	if bc.etcdClient != nil {
 		distLockKey := fmt.Sprintf("/tidb/distributeLock/%d/%d", bc.jobID, indexID)
 		se, _ := concurrency.NewSession(bc.etcdClient)
 

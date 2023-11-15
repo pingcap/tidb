@@ -145,7 +145,7 @@ func NewAddIndexIngestPipeline(
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
 	ingestOp := NewIndexIngestOperator(ctx, copCtx, sessPool, tbl, indexes, engines, srcChkPool, writerCnt)
-	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, totalRowCount, metricCounter, false)
+	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, totalRowCount, metricCounter)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
 	operator.Compose[IndexRecordChunk](scanOp, ingestOp)
@@ -207,7 +207,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
 	writeOp := NewWriteExternalStoreOperator(
 		ctx, copCtx, sessPool, jobID, subtaskID, tbl, indexes, extStore, srcChkPool, writerCnt, onClose, memSize)
-	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, totalRowCount, metricCounter, true)
+	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, totalRowCount, metricCounter)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
 	operator.Compose[IndexRecordChunk](scanOp, writeOp)
@@ -680,9 +680,8 @@ type indexWriteResultSink struct {
 	rowCount      *atomic.Int64
 	metricCounter prometheus.Counter
 
-	errGroup   errgroup.Group
-	source     operator.DataChannel[IndexWriteResult]
-	globalSort bool
+	errGroup errgroup.Group
+	source   operator.DataChannel[IndexWriteResult]
 }
 
 func newIndexWriteResultSink(
@@ -692,7 +691,6 @@ func newIndexWriteResultSink(
 	indexes []table.Index,
 	rowCount *atomic.Int64,
 	metricCounter prometheus.Counter,
-	globalSort bool,
 ) *indexWriteResultSink {
 	return &indexWriteResultSink{
 		ctx:           ctx,
@@ -702,7 +700,6 @@ func newIndexWriteResultSink(
 		rowCount:      rowCount,
 		metricCounter: metricCounter,
 		errGroup:      errgroup.Group{},
-		globalSort:    globalSort,
 	}
 }
 
@@ -745,7 +742,7 @@ func (s *indexWriteResultSink) flush() error {
 	})
 	for _, index := range s.indexes {
 		idxInfo := index.Meta()
-		_, _, err := s.backendCtx.Flush(idxInfo.ID, ingest.FlushModeForceGlobal, s.globalSort)
+		_, _, err := s.backendCtx.Flush(idxInfo.ID, ingest.FlushModeForceGlobal)
 		if err != nil {
 			if common.ErrFoundDuplicateKeys.Equal(err) {
 				err = convertToKeyExistsErr(err, idxInfo, s.tbl.Meta())

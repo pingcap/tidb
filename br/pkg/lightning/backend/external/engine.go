@@ -146,15 +146,10 @@ func (e *Engine) getAdjustedConcurrency() int {
 		// estimate we will open at most 1000 files, so if e.dataFiles is small we can
 		// try to concurrently process ranges.
 		adjusted := maxCloudStorageConnections / len(e.dataFiles)
-		res := min(adjusted, 8)
-		logutil.BgLogger().Info("ywq test adjusted concurrency", zap.Any("res", res))
-		return res
+		return min(adjusted, 8)
 	}
 	adjusted := min(e.workerConcurrency, maxCloudStorageConnections/len(e.dataFiles))
-	res := max(adjusted, 1)
-	logutil.BgLogger().Info("ywq test adjusted concurrency", zap.Any("res", res))
-
-	return res
+	return max(adjusted, 1)
 }
 
 // LoadIngestData loads the data from the external storage to memory in [start,
