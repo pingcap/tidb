@@ -211,9 +211,9 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 				return true, err
 			},
 		)
-		if err1 == nil {
-			logger.Warn("acquire distribued flush lock fail", zap.Error(err))
-			return true, false, err
+		if err1 != nil {
+			logger.Warn("acquire distribued flush lock fail", zap.Error(err1))
+			return true, false, err1
 		}
 		logutil.Logger(bc.ctx).Info("acquire distributed flush lock success", zap.Int64("jobID", bc.jobID))
 		defer func() {
