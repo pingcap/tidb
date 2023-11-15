@@ -2108,8 +2108,8 @@ func TestPlanCacheForIndexRangeFallback(t *testing.T) {
 	tk.MustExec("create table t (a varchar(10), b varchar(10), c varchar(10), index idx_a_b(a, b))")
 	tk.MustExec("set @@tidb_opt_range_max_size=1330") // 1330 is the memory usage of ["aa","aa"], ["bb","bb"], ["cc","cc"], ["dd","dd"], ["ee","ee"].
 	rows := tk.MustQuery("explain format='brief' select * from t where a in ('aa', 'bb', 'cc', 'dd', 'ee')").Rows()
-	require.Contains(t, rows[1][0].(string), "IndexRangeScan")
-	require.Contains(t, rows[1][4].(string), "range:[0x6161,0x6161], [0x6262,0x6262], [0x6363,0x6363], [0x6464,0x6464], [0x6565,0x6565]")
+	require.True(t, strings.Contains(rows[1][0].(string), "IndexRangeScan"))
+	require.True(t, strings.Contains(rows[1][4].(string), "range:[\"aa\",\"aa\"], [\"bb\",\"bb\"], [\"cc\",\"cc\"], [\"dd\",\"dd\"], [\"ee\",\"ee\"]"))
 	rows = tk.MustQuery("explain format='brief' select * from t where a in ('aaaaaaaaaa', 'bbbbbbbbbb', 'cccccccccc', 'dddddddddd', 'eeeeeeeeee')").Rows()
 	// 1330 is not enough for ["aaaaaaaaaa","aaaaaaaaaa"], ["bbbbbbbbbb","bbbbbbbbbb"], ["cccccccccc","cccccccccc"], ["dddddddddd","dddddddddd"], ["eeeeeeeeee","eeeeeeeeee"].
 	// So it falls back to table full scan.
@@ -2131,8 +2131,8 @@ func TestPlanCacheForIndexRangeFallback(t *testing.T) {
 	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
 	// We don't limit range mem usage when rebuilding ranges for the cached plan.
 	// So ["aaaaaaaaaa","aaaaaaaaaa"], ["bbbbbbbbbb","bbbbbbbbbb"], ["cccccccccc","cccccccccc"], ["dddddddddd","dddddddddd"], ["eeeeeeeeee","eeeeeeeeee"] can still be built even if its mem usage exceeds 1330.
-	require.Contains(t, rows[1][0].(string), "IndexRangeScan")
-	require.Contains(t, rows[1][4].(string), "range:[0x61616161616161616161,0x61616161616161616161], [0x62626262626262626262,0x62626262626262626262], [0x63636363636363636363,0x63636363636363636363], [0x64646464646464646464,0x64646464646464646464], [0x65656565656565656565,0x65656565656565656565]")
+	require.True(t, strings.Contains(rows[1][0].(string), "IndexRangeScan"))
+	require.True(t, strings.Contains(rows[1][4].(string), "range:[\"aaaaaaaaaa\",\"aaaaaaaaaa\"], [\"bbbbbbbbbb\",\"bbbbbbbbbb\"], [\"cccccccccc\",\"cccccccccc\"], [\"dddddddddd\",\"dddddddddd\"], [\"eeeeeeeeee\",\"eeeeeeeeee\"]"))
 
 	// Test the plan with range fallback would not be put into cache.
 	tk.MustExec("prepare stmt2 from 'select * from t where a in (?, ?, ?, ?, ?) and b in (?, ?, ?, ?, ?)'")
