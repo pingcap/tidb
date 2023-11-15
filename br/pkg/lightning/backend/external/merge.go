@@ -35,6 +35,15 @@ func MergeOverlappingFiles(
 	concurrency int,
 	checkHotspot bool,
 ) error {
+	logutil.Logger(ctx).Info("enter MergeOverlappingFiles",
+		zap.Int("data-file-count", len(dataFiles)),
+		zap.Int("stat-file-count", len(statFiles)),
+		zap.Binary("start-key", startKey),
+		zap.Binary("end-key", endKey),
+		zap.String("new-file-prefix", newFilePrefix),
+		zap.Int("concurrency", concurrency),
+	)
+
 	splitter, err := NewRangeSplitter(
 		ctx,
 		dataFiles,

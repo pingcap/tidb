@@ -189,6 +189,9 @@ func checkConcurrentFiles(
 	for i := range statsFiles {
 		if endOffs[i]-startOffs[i] > concurrentReadThreshold {
 			result[i] = true
+			logutil.Logger(ctx).Info("found hotspot file in checkConcurrentFiles",
+				zap.String("filename", statsFiles[i]),
+			)
 		}
 	}
 	return result, startOffs, nil
@@ -260,6 +263,13 @@ func readAllData(
 	bufPool *membuf.Pool,
 	output *memKVsAndBuffers,
 ) error {
+	logutil.Logger(ctx).Info("enter readAllData",
+		zap.Int("data-file-count", len(dataFiles)),
+		zap.Int("stat-file-count", len(statsFiles)),
+		zap.Binary("start-key", startKey),
+		zap.Binary("end-key", endKey),
+	)
+
 	if output.memKVs == nil {
 		output.memKVs = make([]simpleKV, 0, 1024*256)
 	} else {
