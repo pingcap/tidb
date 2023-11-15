@@ -382,10 +382,10 @@ func (p *PdController) getRegionCountWith(
 	ctx context.Context, get pdHTTPRequest, startKey, endKey []byte,
 ) (int, error) {
 	// TiKV reports region start/end keys to PD in memcomparable-format.
-	var start, end string
-	start = url.QueryEscape(string(codec.EncodeBytes(nil, startKey)))
+	var start, end []byte
+	start = codec.EncodeBytes(nil, startKey)
 	if len(endKey) != 0 { // Empty end key means the max.
-		end = url.QueryEscape(string(codec.EncodeBytes(nil, endKey)))
+		end = codec.EncodeBytes(nil, endKey)
 	}
 	var err error
 	for _, addr := range p.getAllPDAddrs() {

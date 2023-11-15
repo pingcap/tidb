@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"path"
 	"strconv"
 	"strings"
@@ -496,11 +495,7 @@ func (m *TiFlashReplicaManagerCtx) GetRegionCountFromPD(ctx context.Context, tab
 	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 	startKey, endKey = m.codec.EncodeRegionRange(startKey, endKey)
 
-	p := fmt.Sprintf("%s&count",
-		pd.RegionStatsByStartEndKey(
-			url.QueryEscape(string(startKey)),
-			url.QueryEscape(string(endKey)),
-		))
+	p := fmt.Sprintf("%s&count", pd.RegionStatsByStartEndKey(startKey, endKey))
 	res, err := doRequest(ctx, "GetPDRegionStats", m.etcdCli.Endpoints(), p, "GET", nil)
 	if err != nil {
 		return errors.Trace(err)
