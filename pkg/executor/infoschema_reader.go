@@ -1217,7 +1217,11 @@ func (e *memtableRetriever) dataForTiKVStoreStatus(ctx context.Context, sctx ses
 		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
 	}
-	storesStat, err := tikvHelper.PDHTTPClient().GetStores(ctx)
+	pdCli, err := tikvHelper.TryGetPDHTTPClient()
+	if err != nil {
+		return err
+	}
+	storesStat, err := pdCli.GetStores(ctx)
 	if err != nil {
 		return err
 	}
@@ -1648,7 +1652,11 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 		}
 	}
 	if !requestByTableRange {
-		allRegionsInfo, err = tikvHelper.PDHTTPClient().GetRegions(ctx)
+		pdCli, err := tikvHelper.TryGetPDHTTPClient()
+		if err != nil {
+			return err
+		}
+		allRegionsInfo, err = pdCli.GetRegions(ctx)
 		if err != nil {
 			return err
 		}
@@ -1701,12 +1709,16 @@ func (e *memtableRetriever) getRegionsInfoForTable(ctx context.Context, h *helpe
 }
 
 func (*memtableRetriever) getRegionsInfoForSingleTable(ctx context.Context, helper *helper.Helper, tableID int64) (*pd.RegionsInfo, error) {
-	sk, ek := tablecodec.GetTableHandleKeyRange(tableID)
-	sRegion, err := helper.PDHTTPClient().GetRegionByKey(ctx, codec.EncodeBytes(nil, sk))
+	pdCli, err := helper.TryGetPDHTTPClient()
 	if err != nil {
 		return nil, err
 	}
-	eRegion, err := helper.PDHTTPClient().GetRegionByKey(ctx, codec.EncodeBytes(nil, ek))
+	sk, ek := tablecodec.GetTableHandleKeyRange(tableID)
+	sRegion, err := pdCli.GetRegionByKey(ctx, codec.EncodeBytes(nil, sk))
+	if err != nil {
+		return nil, err
+	}
+	eRegion, err := pdCli.GetRegionByKey(ctx, codec.EncodeBytes(nil, ek))
 	if err != nil {
 		return nil, err
 	}
@@ -1718,7 +1730,7 @@ func (*memtableRetriever) getRegionsInfoForSingleTable(ctx context.Context, help
 	if err != nil {
 		return nil, err
 	}
-	return helper.PDHTTPClient().GetRegionsByKey(ctx, sk, ek, -1)
+	return pdCli.GetRegionsByKey(ctx, sk, ek, -1)
 }
 
 func (e *memtableRetriever) setNewTiKVRegionStatusCol(region *pd.RegionInfo, table *helper.TableInfo) {
@@ -2167,7 +2179,7 @@ func getRemainDurationForAnalyzeStatusHelper(
 			}
 		}
 		if tid > 0 && totalCnt == 0 {
-			totalCnt, _ = pdhelper.GlobalPDHelper.GetApproximateTableCountFromStorage(ctx,sctx, tid, dbName, tableName, partitionName)
+			totalCnt, _ = pdhelper.GlobalPDHelper.GetApproximateTableCountFromStorage(ctx, sctx, tid, dbName, tableName, partitionName)
 		}
 		remainingDuration, percentage = calRemainInfoForAnalyzeStatus(ctx, int64(totalCnt), processedRows, duration)
 	}

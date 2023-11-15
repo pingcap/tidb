@@ -885,13 +885,17 @@ func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx
 		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
 	}
+	pdCli, err := tikvHelper.TryGetPDHTTPClient()
+	if err != nil {
+		return nil, err
+	}
 
 	var regionsInfo, regionsInfoByStoreID []pd.RegionInfo
 	regionMap := make(map[int64]*pd.RegionInfo)
 	storeMap := make(map[int64]struct{})
 
 	if len(e.extractor.StoreIDs) == 0 && len(e.extractor.RegionIDs) == 0 {
-		regionsInfo, err := tikvHelper.PDHTTPClient().GetRegions(ctx)
+		regionsInfo, err := pdCli.GetRegions(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -902,7 +906,7 @@ func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx
 		// if a region_id located in 1, 4, 7 store we will get all of them when request any store_id,
 		// storeMap is used to filter peers on unexpected stores.
 		storeMap[int64(storeID)] = struct{}{}
-		storeRegionsInfo, err := tikvHelper.PDHTTPClient().GetRegionsByStoreID(ctx, storeID)
+		storeRegionsInfo, err := pdCli.GetRegionsByStoreID(ctx, storeID)
 		if err != nil {
 			return nil, err
 		}
@@ -925,7 +929,7 @@ func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx
 			// if there is storeIDs, target region_id is fetched by storeIDs,
 			// otherwise we need to fetch it from PD.
 			if len(e.extractor.StoreIDs) == 0 {
-				regionInfo, err := tikvHelper.PDHTTPClient().GetRegionByID(ctx, regionID)
+				regionInfo, err := pdCli.GetRegionByID(ctx, regionID)
 				if err != nil {
 					return nil, err
 				}

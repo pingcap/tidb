@@ -91,9 +91,13 @@ func NewHelper(store Storage) *Helper {
 	}
 }
 
-// PDHTTPClient returns the PD HTTP client.
-func (h *Helper) PDHTTPClient() pd.Client {
-	return h.Store.GetPDHTTPClient()
+// TryGetPDHTTPClient tries to get a PD HTTP client if it's available.
+func (h *Helper) TryGetPDHTTPClient() (pd.Client, error) {
+	cli := h.Store.GetPDHTTPClient()
+	if cli == nil {
+		return nil, errors.New("pd http client unavailable")
+	}
+	return cli, nil
 }
 
 // MaxBackoffTimeoutForMvccGet is a derived value from previous implementation possible experiencing value 5000ms.
@@ -300,15 +304,16 @@ func (h *Helper) ScrapeHotInfo(ctx context.Context, rw string, allSchemas []*mod
 
 // FetchHotRegion fetches the hot region information from PD's http api.
 func (h *Helper) FetchHotRegion(ctx context.Context, rw string) (map[uint64]RegionMetric, error) {
-	var (
-		regionResp *pd.StoreHotPeersInfos
-		err        error
-	)
+	pdCli, err := h.TryGetPDHTTPClient()
+	if err != nil {
+		return nil, err
+	}
+	var regionResp *pd.StoreHotPeersInfos
 	switch rw {
 	case HotRead:
-		regionResp, err = h.PDHTTPClient().GetHotReadRegions(ctx)
+		regionResp, err = pdCli.GetHotReadRegions(ctx)
 	case HotWrite:
-		regionResp, err = h.PDHTTPClient().GetHotWriteRegions(ctx)
+		regionResp, err = pdCli.GetHotWriteRegions(ctx)
 	}
 	if err != nil {
 		return nil, err
@@ -785,6 +790,11 @@ func (h *Helper) GetPDAddr() ([]string, error) {
 
 // GetPDRegionStats get the RegionStats by tableID from PD by HTTP API.
 func (h *Helper) GetPDRegionStats(ctx context.Context, tableID int64, noIndexStats bool) (*pd.RegionStats, error) {
+	pdCli, err := h.TryGetPDHTTPClient()
+	if err != nil {
+		return nil, err
+	}
+
 	var startKey, endKey []byte
 	if noIndexStats {
 		startKey = tablecodec.GenTableRecordPrefix(tableID)
@@ -796,7 +806,7 @@ func (h *Helper) GetPDRegionStats(ctx context.Context, tableID int64, noIndexSta
 	startKey = codec.EncodeBytes([]byte{}, startKey)
 	endKey = codec.EncodeBytes([]byte{}, endKey)
 
-	return h.PDHTTPClient().GetRegionStatusByKey(ctx, startKey, endKey)
+	return pdCli.GetRegionStatusByKey(ctx, startKey, endKey)
 }
 
 // GetTiFlashTableIDFromEndKey computes tableID from pd rule's endKey.

@@ -823,8 +823,12 @@ func getRegionInfo(store helper.Storage, regions []regionMeta) ([]regionMeta, er
 		Store:       store,
 		RegionCache: store.GetRegionCache(),
 	}
+	pdCli, err := tikvHelper.TryGetPDHTTPClient()
+	if err != nil {
+		return regions, err
+	}
 	for i := range regions {
-		regionInfo, err := tikvHelper.PDHTTPClient().GetRegionByID(context.TODO(), regions[i].region.Id)
+		regionInfo, err := pdCli.GetRegionByID(context.TODO(), regions[i].region.Id)
 		if err != nil {
 			return nil, err
 		}

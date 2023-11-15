@@ -91,7 +91,9 @@ func TestTiKVRegionsInfo(t *testing.T) {
 		Store:       store,
 		RegionCache: store.GetRegionCache(),
 	}
-	regionsInfo, err := h.PDHTTPClient().GetRegions(context.Background())
+	pdCli, err := h.TryGetPDHTTPClient()
+	require.NoError(t, err)
+	regionsInfo, err := pdCli.GetRegions(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, getMockTiKVRegionsInfo(), regionsInfo)
 }
@@ -104,7 +106,10 @@ func TestTiKVStoresStat(t *testing.T) {
 		RegionCache: store.GetRegionCache(),
 	}
 
-	stat, err := h.PDHTTPClient().GetStores(context.Background())
+	pdCli, err := h.TryGetPDHTTPClient()
+	require.NoError(t, err)
+
+	stat, err := pdCli.GetStores(context.Background())
 	require.NoError(t, err)
 
 	data, err := json.Marshal(stat)
