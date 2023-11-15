@@ -175,6 +175,7 @@ func (m *memIndexReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 			}
 			return ret
 		})
+		return m.addedRows, err
 	}
 	return m.addedRows, nil
 }
