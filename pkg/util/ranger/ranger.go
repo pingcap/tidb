@@ -517,7 +517,7 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 	// Build rangePoints for non-equal access conditions.
 	for i := eqAndInCount; i < len(accessConds); i++ {
 		collator := collate.GetCollator(newTp[eqAndInCount].GetCollate())
-		if d.noConvertToSortKey {
+		if !d.noConvertToSortKey {
 			collator = collate.GetCollator(charset.CollationBin)
 		}
 		rangePoints = rb.intersection(rangePoints, rb.build(accessConds[i], newTp[eqAndInCount], d.lengths[eqAndInCount], d.noConvertToSortKey), collator)
