@@ -278,6 +278,7 @@ type ingestBackfillScheduler struct {
 	closed bool
 
 	taskCh   chan *reorgBackfillTask
+	chunkCh  chan IndexRecordChunk
 	resultCh chan *backfillResult
 
 	copReqSenderPool *copReqSenderPool
@@ -328,8 +329,11 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 		poolutil.DDL, writerCnt, b.createWorker)
 
 	capacity := variable.DDLReorgChanCap.Load()
-	writerPool.SetTaskReceiver(make(chan IndexRecordChunk, capacity))
+	b.chunkCh = make(chan IndexRecordChunk, capacity)
+
+	writerPool.SetTaskReceiver(b.chunkCh)
 	writerPool.Start(b.ctx)
+
 	b.writerPool = writerPool
 	b.copReqSenderPool.chunkSender = writerPool
 	b.copReqSenderPool.adjustSize(readerCnt)
@@ -346,7 +350,9 @@ func (b *ingestBackfillScheduler) close(force bool) {
 		b.copReqSenderPool.close(force)
 	}
 	if b.writerPool != nil {
-		b.writerPool.ReleaseAndWait()
+		close(b.chunkCh)
+		b.writerPool.Wait()
+		b.writerPool.Release()
 	}
 	if b.checkpointMgr != nil {
 		b.checkpointMgr.Sync()
