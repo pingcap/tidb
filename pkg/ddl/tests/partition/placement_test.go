@@ -15,10 +15,10 @@
 package partition
 
 import (
-	"github.com/pingcap/tidb/pkg/testkit/external"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/stretchr/testify/require"
 )
 
