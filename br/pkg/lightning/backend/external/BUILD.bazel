@@ -37,6 +37,7 @@ go_library(
         "@com_github_cockroachdb_pebble//:pebble",
         "@com_github_docker_go_units//:go-units",
         "@com_github_google_uuid//:uuid",
+        "@com_github_jfcg_sorty_v2//:sorty",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@org_golang_x_sync//errgroup",
