@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/oracle"
+	kvutil "github.com/tikv/client-go/v2/util"
 )
 
 const (
@@ -94,6 +95,7 @@ func CallWithSCtx(pool SessionPool, f func(sctx sessionctx.Context) error, flags
 		}
 	}()
 	sctx := se.(sessionctx.Context)
+	sctx.GetSessionVars().ExplicitRequestSourceType = kvutil.ExplicitTypeStats
 	if err := UpdateSCtxVarsForStats(sctx); err != nil { // update stats variables automatically
 		return err
 	}
