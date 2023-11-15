@@ -389,6 +389,14 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 	readRateHist.Observe(float64(size) / 1024.0 / 1024.0 / readSecond)
 	sortRateHist.Observe(float64(size) / 1024.0 / 1024.0 / sortSecond)
 
+	prevKey = nil
+	for _, k := range keys {
+		if prevKey != nil && bytes.Compare(prevKey, k) >= 0 {
+			logutil.Logger(ctx).Error("kv is not in increasing order", zap.ByteString("prevKey", prevKey), zap.ByteString("key", k))
+		}
+		prevKey = k
+	}
+
 	data := e.buildIngestData(keys, values, e.memKVsAndBuffers.memKVBuffers)
 	sendFn := func(dr common.DataAndRange) error {
 		select {
@@ -859,11 +867,13 @@ func (m *MemoryIngestData) GetTS() uint64 {
 
 // IncRef implements IngestData.IncRef.
 func (m *MemoryIngestData) IncRef() {
+	logutil.BgLogger().Warn("inc")
 	m.refCnt.Inc()
 }
 
 // DecRef implements IngestData.DecRef.
 func (m *MemoryIngestData) DecRef() {
+	logutil.BgLogger().Warn("dec")
 	if m.refCnt.Dec() == 0 {
 		for _, b := range m.memBufs {
 			b.Destroy()
