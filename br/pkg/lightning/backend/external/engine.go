@@ -398,7 +398,9 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 		prevKey = k
 	}
 
-	data := e.buildIngestData(keys, values, e.memKVsAndBuffers.memKVBuffers)
+	newBuf := make([]*membuf.Buffer, 0, len(e.memKVsAndBuffers.memKVBuffers))
+	copy(newBuf, e.memKVsAndBuffers.memKVBuffers)
+	data := e.buildIngestData(keys, values, newBuf)
 	data.id = uint64(rand.Intn(10000000))
 	sendFn := func(dr common.DataAndRange) error {
 		select {
