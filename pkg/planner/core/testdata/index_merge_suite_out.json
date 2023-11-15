@@ -129,10 +129,10 @@
         "SQL": "select /*+ use_index_merge(t5, is1, is2, is3, is4) */ * from t5 where s1 = 'Abc' and s2 > 'zzz' and s3 < 'B啊a' and s4 = 'CcC'",
         "Plan": [
           "IndexMerge 0.00 root  type: intersection",
-          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t5, index:is1(s1) range:[\"Abc\",\"Abc\"], keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t5, index:is1(s1) range:[0x416263,0x416263], keep order:false, stats:pseudo",
           "├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t5, index:is2(s2) range:(0x7A7A7A,+inf], keep order:false, stats:pseudo",
           "├─IndexRangeScan(Build) 3323.33 cop[tikv] table:t5, index:is3(s3) range:[-inf,0x0E4AFB40D54A0E33), keep order:false, stats:pseudo",
-          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t5, index:is4(s4) range:[\"CCC\",\"CCC\"], keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t5, index:is4(s4) range:[0x434343,0x434343], keep order:false, stats:pseudo",
           "└─TableRowIDScan(Probe) 0.00 cop[tikv] table:t5 keep order:false, stats:pseudo"
         ],
         "Result": [
@@ -143,7 +143,7 @@
         "SQL": "select /*+ use_index_merge(t6, primary, is3, is4) */ * from t6 where s1 = 'Abc' and s2 > 'zzz' and s3 = 'A啊a' and s4 not like 'Cd_'",
         "Plan": [
           "IndexMerge 0.03 root  type: intersection",
-          "├─IndexRangeScan(Build) 33.33 cop[tikv] table:t6, index:PRIMARY(s1, s2) range:(\"Abc\" 0x7A7A7A,\"Abc\" +inf], keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 33.33 cop[tikv] table:t6, index:PRIMARY(s1, s2) range:(0x416263 0x7A7A7A,0x416263 +inf], keep order:false, stats:pseudo",
           "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t6, index:is3(s3) range:[0x0E33FB40D54A0E33,0x0E33FB40D54A0E33], keep order:false, stats:pseudo",
           "└─Selection(Probe) 0.03 cop[tikv]  gt(test.t6.s2, \"zzz\"), not(like(test.t6.s4, \"Cd_\", 92))",
           "  └─TableRowIDScan 0.03 cop[tikv] table:t6 keep order:false, stats:pseudo"
