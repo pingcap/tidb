@@ -329,9 +329,6 @@ func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) 
 	// Record current time
 	start := time.Now()
 
-	// Create a map to store the strings as keys
-	pendingSnapshots := make(map[string]struct{})
-
 	//  get the maximum size of volumes, in GiB
 	var maxVolumeSize int64 = 0
 	resp, err := e.ec2.DescribeSnapshots(&ec2.DescribeSnapshotsInput{SnapshotIds: snapShotIDs})
@@ -358,6 +355,9 @@ func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) 
 		log.Info("FSR enablement is ongoing, going to sleep for 5 minutes...")
 		time.Sleep(5 * time.Minute)
 	}
+
+	// Create a map to store the strings as keys
+	pendingSnapshots := make(map[string]struct{})
 
 	// Populate the map with the strings from the array
 	for _, str := range snapShotIDs {
