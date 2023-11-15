@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"github.com/tiancaiamao/gp"
 )
 
 // StatsGC is used to GC unnecessary stats.
@@ -363,12 +362,8 @@ type DDL interface {
 
 // StatsHandle is used to manage TiDB Statistics.
 type StatsHandle interface {
-	// GPool returns the goroutine pool.
-	GPool() *gp.Pool
-
-	// SPool returns the session pool.
-	SPool() SessionPool
-
+	// Poll is used to update stats info.
+	Pool
 	// Lease returns the stats lease.
 	Lease() time.Duration
 
