@@ -3,6 +3,7 @@ package external
 import (
 	"bytes"
 	"context"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -56,11 +57,15 @@ func MergeOverlappingFiles(
 
 	writeToStore := func() error {
 		now := time.Now()
+		dataFiles := maps.Keys(dataFilesInBatch)
+		slices.Sort(dataFiles)
+		statFiles := maps.Keys(statFilesInBatch)
+		slices.Sort(statFiles)
 		err := readAllData(
 			ctx,
 			store,
-			maps.Keys(dataFilesInBatch),
-			maps.Keys(statFilesInBatch),
+			dataFiles,
+			statFiles,
 			regions[0],
 			regions[len(regions)-1],
 			bufPool,
