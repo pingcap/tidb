@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/hex"
 	"io"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -236,6 +237,7 @@ func readOneFile(
 	memBuf := bufPool.NewBuffer()
 	memkvsOfThisFile := make([]simpleKV, 0, 1024)
 
+	var prevKey []byte
 	for {
 		k, v, err := rd.nextKV()
 		if err != nil {
@@ -250,6 +252,10 @@ func readOneFile(
 		if bytes.Compare(k, endKey) >= 0 {
 			break
 		}
+		if prevKey != nil && bytes.Compare(prevKey, k) >= 0 {
+			log.FromContext(ctx).Error("kv is not in increasing order", zap.ByteString("prevKey", prevKey), zap.ByteString("key", k))
+		}
+		prevKey = slices.Clone(k)
 		// TODO(lance6716): we are copying every KV from rd's buffer to memBuf, can we
 		// directly read into memBuf?
 		memkvsOfThisFile = append(memkvsOfThisFile, simpleKV{key: memBuf.AddBytes(k), value: memBuf.AddBytes(v)})
@@ -299,6 +305,7 @@ func readAllData(
 		return err
 	}
 	var eg errgroup.Group
+	log.FromContext(ctx).Info("readAllData", zap.Any("files", dataFiles), zap.Any("concurrency", concurrencys))
 	for i := range dataFiles {
 		i := i
 		eg.Go(func() error {
