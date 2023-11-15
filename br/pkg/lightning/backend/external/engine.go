@@ -208,6 +208,10 @@ func readOneFile(
 	bufPool *membuf.Pool,
 	output *memKVsAndBuffers,
 ) error {
+	readAndSortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("read_one_file")
+
+	ts := time.Now()
+
 	rd, err := newKVReader(ctx, dataFile, storage, startOffset, 64*1024)
 	if err != nil {
 		return err
@@ -249,6 +253,7 @@ func readOneFile(
 		// directly read into memBuf?
 		memkvsOfThisFile = append(memkvsOfThisFile, simpleKV{key: memBuf.AddBytes(k), value: memBuf.AddBytes(v)})
 	}
+	readAndSortDurHist.Observe(time.Since(ts).Seconds())
 	output.mu.Lock()
 	output.memKVs = append(output.memKVs, memkvsOfThisFile...)
 	output.memKVBuffers = append(output.memKVBuffers, memBuf)
