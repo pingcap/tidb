@@ -2947,13 +2947,13 @@ func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
 		Args: []interface{}{
 			flashbackTS,
 			map[string]interface{}{},
-			true,         /* tidb_gc_enable */
-			variable.On,  /* tidb_enable_auto_analyze */
-			variable.Off, /* tidb_super_read_only */
-			0,            /* totalRegions */
-			0,            /* startTS */
-			0,            /* commitTS */
-			variable.On,  /* tidb_ttl_job_enable */
+			true,           /* tidb_gc_enable */
+			variable.On,    /* tidb_enable_auto_analyze */
+			variable.Off,   /* tidb_super_read_only */
+			0,              /* totalRegions */
+			0,              /* startTS */
+			0,              /* commitTS */
+			variable.On,    /* tidb_ttl_job_enable */
 			[]kv.KeyRange{} /* flashback key_ranges */},
 	}
 	err = d.DoDDLJob(ctx, job)
@@ -4375,6 +4375,10 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 		return err
 	}
 	newPartInfo := newMeta.Partition
+
+	if err = handlePartitionPlacement(ctx, newPartInfo); err != nil {
+		return errors.Trace(err)
+	}
 
 	if err = d.assignPartitionIDs(newPartInfo.Definitions); err != nil {
 		return errors.Trace(err)
