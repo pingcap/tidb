@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "local",
     srcs = [
+        "checksum.go",
         "duplicate.go",
         "engine.go",
         "iterator.go",
@@ -18,6 +19,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/lightning/backend",
+        "//br/pkg/lightning/backend/encode",
         "//br/pkg/lightning/backend/kv",
         "//br/pkg/lightning/checkpoints",
         "//br/pkg/lightning/common",
@@ -28,6 +30,7 @@ go_library(
         "//br/pkg/lightning/manual",
         "//br/pkg/lightning/metric",
         "//br/pkg/lightning/tikv",
+        "//br/pkg/lightning/verification",
         "//br/pkg/lightning/worker",
         "//br/pkg/logutil",
         "//br/pkg/membuf",
@@ -98,6 +101,7 @@ go_test(
     deps = [
         "//br/pkg/errors",
         "//br/pkg/lightning/backend",
+        "//br/pkg/lightning/backend/encode",
         "//br/pkg/lightning/backend/kv",
         "//br/pkg/lightning/common",
         "//br/pkg/lightning/glue",
