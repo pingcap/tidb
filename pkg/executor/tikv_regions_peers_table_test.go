@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client/http"
@@ -95,7 +94,7 @@ func TestTikvRegionPeers(t *testing.T) {
 	// mock store stats stat
 	mockAddr := strings.TrimPrefix(server.URL, "http://")
 	// mock PD API
-	router.Handle(pdapi.Status, fn.Wrap(func() (interface{}, error) {
+	router.Handle(pd.Status, fn.Wrap(func() (interface{}, error) {
 		return struct {
 			Version        string `json:"version"`
 			GitHash        string `json:"git_hash"`
@@ -107,9 +106,9 @@ func TestTikvRegionPeers(t *testing.T) {
 		}, nil
 	}))
 	// mock get regionsInfo by store id
-	router.HandleFunc(pdapi.StoreRegions+"/"+"{id}", storesRegionsInfoHandler)
+	router.HandleFunc(pd.RegionsByStoreIDPrefix+"/"+"{id}", storesRegionsInfoHandler)
 	// mock get regionInfo by region id
-	router.HandleFunc(pdapi.RegionByID+"/"+"{id}", regionsInfoHandler)
+	router.HandleFunc(pd.RegionByIDPrefix+"/"+"{id}", regionsInfoHandler)
 	defer server.Close()
 
 	store := testkit.CreateMockStore(t,

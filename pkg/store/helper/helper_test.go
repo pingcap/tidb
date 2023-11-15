@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
@@ -168,9 +167,9 @@ func createMockStore(t *testing.T) (store helper.Storage) {
 
 func mockPDHTTPServer() *httptest.Server {
 	router := mux.NewRouter()
-	router.HandleFunc(pdapi.HotRead, mockHotRegionResponse)
-	router.HandleFunc(pdapi.Regions, mockTiKVRegionsInfoResponse)
-	router.HandleFunc(pdapi.Stores, mockStoreStatResponse)
+	router.HandleFunc(pd.HotRead, mockHotRegionResponse)
+	router.HandleFunc(pd.Regions, mockTiKVRegionsInfoResponse)
+	router.HandleFunc(pd.Stores, mockStoreStatResponse)
 	serverMux := http.NewServeMux()
 	serverMux.Handle("/", router)
 	return httptest.NewServer(serverMux)

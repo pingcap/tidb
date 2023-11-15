@@ -7132,13 +7132,13 @@ def go_deps():
         name = "com_github_tikv_pd_client",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
-        sha256 = "cb510944ce56555f005fff2d891af3fefa667f37955779b89c35fd40f51deace",
-        strip_prefix = "github.com/tikv/pd/client@v0.0.0-20231114041114-86831ce71865",
+        sha256 = "14158ebcdc62baf9f8cd195e9a3196757c411548087eff0497c6a61e5e4f8a8e",
+        strip_prefix = "github.com/JmPotato/pd/client@v0.0.0-20231115071009-272d5618deb3",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20231114041114-86831ce71865.zip",
-            "http://ats.apps.svc/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20231114041114-86831ce71865.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20231114041114-86831ce71865.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20231114041114-86831ce71865.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/JmPotato/pd/client/com_github_jmpotato_pd_client-v0.0.0-20231115071009-272d5618deb3.zip",
+            "http://ats.apps.svc/gomod/github.com/JmPotato/pd/client/com_github_jmpotato_pd_client-v0.0.0-20231115071009-272d5618deb3.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/JmPotato/pd/client/com_github_jmpotato_pd_client-v0.0.0-20231115071009-272d5618deb3.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/JmPotato/pd/client/com_github_jmpotato_pd_client-v0.0.0-20231115071009-272d5618deb3.zip",
         ],
     )
     go_repository(

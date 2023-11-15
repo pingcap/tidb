@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/pingcap/tidb/pkg/util/set"
 	pd "github.com/tikv/pd/client/http"
 	"google.golang.org/grpc"
@@ -199,7 +198,7 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 				var url string
 				switch typ {
 				case "pd":
-					url = fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), statusAddr, pdapi.Config)
+					url = fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), statusAddr, pd.Config)
 				case "tikv", "tidb", "tiflash":
 					url = fmt.Sprintf("%s://%s/config", util.InternalHTTPSchema(), statusAddr)
 				case "tiproxy":
@@ -715,7 +714,7 @@ func (e *hotRegionsHistoryRetriver) startRetrieving(
 			go func(ch chan hotRegionsResult, address string, body *bytes.Buffer) {
 				util.WithRecovery(func() {
 					defer close(ch)
-					url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), address, pdapi.HotHistory)
+					url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), address, pd.HotHistory)
 					req, err := http.NewRequest(http.MethodGet, url, body)
 					if err != nil {
 						ch <- hotRegionsResult{err: errors.Trace(err)}
