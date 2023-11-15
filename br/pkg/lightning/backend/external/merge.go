@@ -3,7 +3,7 @@ package external
 import (
 	"bytes"
 	"context"
-	"slices"
+	"math"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,7 +15,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
 )
 
 // MergeOverlappingFiles reads from given files whose key range may overlap
@@ -25,7 +24,8 @@ func MergeOverlappingFiles(
 	dataFiles []string,
 	statFiles []string,
 	store storage.ExternalStorage,
-	readBufferSize int,
+	startKey []byte,
+	endKey []byte,
 	newFilePrefix string,
 	blockSize int,
 	writeBatchCount uint64,
@@ -40,34 +40,38 @@ func MergeOverlappingFiles(
 		dataFiles,
 		statFiles,
 		store,
-		// TODO(lance6716): fill these arguments
-		_, _, _, _,
+		4*1024*1024*1024,
+		math.MaxInt64,
+		4*1024*1024*1024,
+		math.MaxInt64,
 		checkHotspot,
 	)
 	if err != nil {
 		return err
 	}
 
-	regionBatchSize := 40
-	regions := make([][]byte, regionBatchSize+10)
-	dataFilesInBatch := make(map[string]struct{}, regionBatchSize+10)
-	statFilesInBatch := make(map[string]struct{}, regionBatchSize+10)
 	bufPool := membuf.NewPool()
 	loaded := &memKVsAndBuffers{}
+	curStart := startKey
 
-	writeToStore := func() error {
+	for {
+		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, err := splitter.SplitOneRangesGroup()
+		if err != nil {
+			return err
+		}
+		curEnd := endKeyOfGroup
+		if len(endKeyOfGroup) == 0 {
+			curEnd = endKey
+		}
+
 		now := time.Now()
-		dataFiles := maps.Keys(dataFilesInBatch)
-		slices.Sort(dataFiles)
-		statFiles := maps.Keys(statFilesInBatch)
-		slices.Sort(statFiles)
-		err := readAllData(
+		err = readAllData(
 			ctx,
 			store,
-			dataFiles,
-			statFiles,
-			regions[0],
-			regions[len(regions)-1],
+			dataFilesOfGroup,
+			statFilesOfGroup,
+			curStart,
+			curEnd,
 			bufPool,
 			loaded,
 		)
@@ -111,47 +115,16 @@ func MergeOverlappingFiles(
 			return err
 		}
 
-		// reset batch
-
-		regions = regions[:0]
-		dataFilesInBatch = make(map[string]struct{}, regionBatchSize+10)
-		statFilesInBatch = make(map[string]struct{}, regionBatchSize+10)
 		// only need to release buffers, because readAllData will do other
 		// cleanup work.
 		for _, buf := range loaded.memKVBuffers {
 			buf.Destroy()
 		}
-		return nil
-	}
 
-	for {
-		// TODO(lance6716): it's OK that regions are larger than 40?
-		if len(regions) >= regionBatchSize {
-			if err = writeToStore(); err != nil {
-				return err
-			}
-		}
-
-		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, rangeSplitKeys, err := splitter.SplitOneRangesGroup()
-		if err != nil {
-			return err
-		}
-
-		regions = append(regions, rangeSplitKeys...)
-		for _, f := range dataFilesOfGroup {
-			dataFilesInBatch[f] = struct{}{}
-		}
-		for _, f := range statFilesOfGroup {
-			statFilesInBatch[f] = struct{}{}
-		}
-
+		curStart = curEnd
 		if len(endKeyOfGroup) == 0 {
 			break
 		}
-	}
-
-	if len(regions) > 0 {
-		return writeToStore()
 	}
 	return nil
 }
