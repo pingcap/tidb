@@ -326,8 +326,38 @@ func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string)
 
 // waitDataFSREnabled waits FSR for data volume snapshots are all enabled
 func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) error {
+	// Record current time
+	start := time.Now()
+
 	// Create a map to store the strings as keys
 	pendingSnapshots := make(map[string]struct{})
+
+	//  get the maximum size of volumes, in GiB
+	var maxVolumeSize int64 = 0
+	resp, err := e.ec2.DescribeSnapshots(&ec2.DescribeSnapshotsInput{SnapshotIds: snapShotIDs})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(resp.Snapshots) <= 0 {
+		return errors.Errorf("specified snapshot [%s] is not found", *snapShotIDs[0])
+	}
+
+	for _, s := range resp.Snapshots {
+		if *s.VolumeSize > maxVolumeSize {
+			maxVolumeSize = *s.VolumeSize
+		}
+	}
+
+	// Calculate the time in minutes to fill 1.0 credit according to
+	// https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ebs-fast-snapshot-restore.html#volume-creation-credits
+	fillElapsedTime := 60.0 / (min(10, 1024.0/maxVolumeSize))
+
+	// We have to sleep for at least fillElapsedTime minutes in order to make credits are filled to 1.0
+	// Let's heartbeat every 5 minutes
+	for time.Since(start) <= time.Duration(fillElapsedTime)*time.Minute {
+		log.Info("FSR enablement is ongoing, going to sleep for 5 minutes...")
+		time.Sleep(5 * time.Minute)
+	}
 
 	// Populate the map with the strings from the array
 	for _, str := range snapShotIDs {
@@ -528,7 +558,7 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 	return newVolumeIDMap, eg.Wait()
 }
 
-func (e *EC2Session) WaitVolumesCreated(volumeIDMap map[string]string, progress glue.Progress) (int64, error) {
+func (e *EC2Session) WaitVolumesCreated(volumeIDMap map[string]string, progress glue.Progress, fsrEnabledRequired bool) (int64, error) {
 	pendingVolumes := make([]*string, 0, len(volumeIDMap))
 	for oldVolID := range volumeIDMap {
 		newVolumeID := volumeIDMap[oldVolID]
@@ -548,7 +578,11 @@ func (e *EC2Session) WaitVolumesCreated(volumeIDMap map[string]string, progress 
 			return 0, errors.Trace(err)
 		}
 
-		createdVolumeSize, unfinishedVolumes := e.HandleDescribeVolumesResponse(resp)
+		err, createdVolumeSize, unfinishedVolumes := e.HandleDescribeVolumesResponse(resp, fsrEnabledRequired)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+
 		progress.IncBy(int64(len(pendingVolumes) - len(unfinishedVolumes)))
 		totalVolumeSize += createdVolumeSize
 		pendingVolumes = unfinishedVolumes
@@ -591,12 +625,16 @@ func ec2Tag(key, val string) *ec2.Tag {
 	return &ec2.Tag{Key: &key, Value: &val}
 }
 
-func (e *EC2Session) HandleDescribeVolumesResponse(resp *ec2.DescribeVolumesOutput) (int64, []*string) {
+func (e *EC2Session) HandleDescribeVolumesResponse(resp *ec2.DescribeVolumesOutput, fsrEnabledRequired bool) (error, int64, []*string) {
 	totalVolumeSize := int64(0)
 
 	var unfinishedVolumes []*string
 	for _, volume := range resp.Volumes {
 		if *volume.State == ec2.VolumeStateAvailable {
+			if fsrEnabledRequired && !*volume.FastRestored {
+				log.Error("snapshot fsr is not enabled for the volume", zap.String("volume", *volume.SnapshotId))
+				return errors.Errorf("Snapshot [%s] of volume [%s] is not fsr enabled", *volume.SnapshotId, *volume.VolumeId), 0, nil
+			}
 			log.Info("volume is available", zap.String("id", *volume.VolumeId))
 			totalVolumeSize += *volume.Size
 		} else {
@@ -605,5 +643,5 @@ func (e *EC2Session) HandleDescribeVolumesResponse(resp *ec2.DescribeVolumesOutp
 		}
 	}
 
-	return totalVolumeSize, unfinishedVolumes
+	return nil, totalVolumeSize, unfinishedVolumes
 }
