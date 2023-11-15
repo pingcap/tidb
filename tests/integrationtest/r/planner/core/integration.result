@@ -1977,7 +1977,7 @@ explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a=10 or
 id	estRows	task	access object	operator info
 IndexMerge	0.04	root		type: union
 ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:a(a)	range:[10,10], keep order:false, stats:pseudo
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:b(b)	range:["x","x"], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:b(b)	range:[0x78,0x78], keep order:false, stats:pseudo
 └─Selection(Probe)	0.04	cop[tikv]		or(eq(planner__core__integration.t.a, 10), eq(planner__core__integration.t.b, "x"))
   └─TableRowIDScan	19.99	cop[tikv]	table:t	keep order:false, stats:pseudo
 insert into t values (1, 'xx');
@@ -3442,7 +3442,7 @@ create table t(a varchar(100), b int, c int, index idx1(a(2), b), index idx2(a))
 explain format = 'verbose' select * from t where a = 'abcdefghijk' and b > 4;
 id	estRows	estCost	task	access object	operator info
 IndexLookUp_11	33.33	65346.12	root		
-├─IndexRangeScan_8(Build)	33.33	9127.55	cop[tikv]	table:t, index:idx1(a, b)	range:("ab" 4,"ab" +inf], keep order:false, stats:pseudo
+├─IndexRangeScan_8(Build)	33.33	9127.55	cop[tikv]	table:t, index:idx1(a, b)	range:(0x6162 4,0x6162 +inf], keep order:false, stats:pseudo
 └─Selection_10(Probe)	33.33	11066.03	cop[tikv]		eq(planner__core__integration.t.a, "abcdefghijk")
   └─TableRowIDScan_9	33.33	9402.70	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t30094;
@@ -3755,14 +3755,14 @@ set @@tidb_opt_range_max_size=0;
 explain format='brief' select * from t1 where a in ('aaa', 'bbb', 'ccc') and b in ('ddd', 'eee', 'fff');
 id	estRows	task	access object	operator info
 IndexLookUp	0.90	root		
-├─IndexRangeScan(Build)	0.90	cop[tikv]	table:t1, index:idx_a_b(a, b)	range:["aa" "dd","aa" "dd"], ["aa" "ee","aa" "ee"], ["aa" "ff","aa" "ff"], ["bb" "dd","bb" "dd"], ["bb" "ee","bb" "ee"], ["bb" "ff","bb" "ff"], ["cc" "dd","cc" "dd"], ["cc" "ee","cc" "ee"], ["cc" "ff","cc" "ff"], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	0.90	cop[tikv]	table:t1, index:idx_a_b(a, b)	range:[0x6161 0x6464,0x6161 0x6464], [0x6161 0x6565,0x6161 0x6565], [0x6161 0x6666,0x6161 0x6666], [0x6262 0x6464,0x6262 0x6464], [0x6262 0x6565,0x6262 0x6565], [0x6262 0x6666,0x6262 0x6666], [0x6363 0x6464,0x6363 0x6464], [0x6363 0x6565,0x6363 0x6565], [0x6363 0x6666,0x6363 0x6666], keep order:false, stats:pseudo
 └─Selection(Probe)	0.90	cop[tikv]		in(planner__core__integration.t1.a, "aaa", "bbb", "ccc"), in(planner__core__integration.t1.b, "ddd", "eee", "fff")
   └─TableRowIDScan	0.90	cop[tikv]	table:t1	keep order:false, stats:pseudo
 set @@tidb_opt_range_max_size=1000;
 explain format='brief' select * from t1 where a in ('aaa', 'bbb', 'ccc') and b in ('ddd', 'eee', 'fff');
 id	estRows	task	access object	operator info
 IndexLookUp	0.09	root		
-├─IndexRangeScan(Build)	30.00	cop[tikv]	table:t1, index:idx_a_b(a, b)	range:["aa","aa"], ["bb","bb"], ["cc","cc"], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	30.00	cop[tikv]	table:t1, index:idx_a_b(a, b)	range:[0x6161,0x6161], [0x6262,0x6262], [0x6363,0x6363], keep order:false, stats:pseudo
 └─Selection(Probe)	0.09	cop[tikv]		in(planner__core__integration.t1.a, "aaa", "bbb", "ccc"), in(planner__core__integration.t1.b, "ddd", "eee", "fff")
   └─TableRowIDScan	30.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
@@ -3772,7 +3772,7 @@ explain format='brief' select * from t1 join t2 on t1.c = t2.d where a in ('aaa'
 id	estRows	task	access object	operator info
 HashJoin	1.12	root		inner join, equal:[eq(planner__core__integration.t1.c, planner__core__integration.t2.d)]
 ├─IndexLookUp(Build)	0.90	root		
-│ ├─IndexRangeScan(Build)	0.90	cop[tikv]	table:t1, index:idx_a_b(a, b)	range:["aa" "dd","aa" "dd"], ["aa" "ee","aa" "ee"], ["aa" "ff","aa" "ff"], ["bb" "dd","bb" "dd"], ["bb" "ee","bb" "ee"], ["bb" "ff","bb" "ff"], ["cc" "dd","cc" "dd"], ["cc" "ee","cc" "ee"], ["cc" "ff","cc" "ff"], keep order:false, stats:pseudo
+│ ├─IndexRangeScan(Build)	0.90	cop[tikv]	table:t1, index:idx_a_b(a, b)	range:[0x6161 0x6464,0x6161 0x6464], [0x6161 0x6565,0x6161 0x6565], [0x6161 0x6666,0x6161 0x6666], [0x6262 0x6464,0x6262 0x6464], [0x6262 0x6565,0x6262 0x6565], [0x6262 0x6666,0x6262 0x6666], [0x6363 0x6464,0x6363 0x6464], [0x6363 0x6565,0x6363 0x6565], [0x6363 0x6666,0x6363 0x6666], keep order:false, stats:pseudo
 │ └─Selection(Probe)	0.90	cop[tikv]		in(planner__core__integration.t1.a, "aaa", "bbb", "ccc"), in(planner__core__integration.t1.b, "ddd", "eee", "fff"), not(isnull(planner__core__integration.t1.c))
 │   └─TableRowIDScan	0.90	cop[tikv]	table:t1	keep order:false, stats:pseudo
 └─TableReader(Probe)	9990.00	root		data:Selection
@@ -3783,7 +3783,7 @@ explain format='brief' select * from t1 join t2 on t1.c = t2.d where a in ('aaa'
 id	estRows	task	access object	operator info
 HashJoin	0.11	root		inner join, equal:[eq(planner__core__integration.t1.c, planner__core__integration.t2.d)]
 ├─IndexLookUp(Build)	0.09	root		
-│ ├─IndexRangeScan(Build)	30.00	cop[tikv]	table:t1, index:idx_a_b(a, b)	range:["aa","aa"], ["bb","bb"], ["cc","cc"], keep order:false, stats:pseudo
+│ ├─IndexRangeScan(Build)	30.00	cop[tikv]	table:t1, index:idx_a_b(a, b)	range:[0x6161,0x6161], [0x6262,0x6262], [0x6363,0x6363], keep order:false, stats:pseudo
 │ └─Selection(Probe)	0.09	cop[tikv]		in(planner__core__integration.t1.a, "aaa", "bbb", "ccc"), in(planner__core__integration.t1.b, "ddd", "eee", "fff"), not(isnull(planner__core__integration.t1.c))
 │   └─TableRowIDScan	30.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 └─TableReader(Probe)	9990.00	root		data:Selection

@@ -426,7 +426,7 @@ explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 'a' or c3 < 10) 
 id	estRows	task	access object	operator info
 UnionScan_6	1841.86	root		lt(executor__index_merge_reader.t1.c4, 10), or(lt(executor__index_merge_reader.t1.c1, "a"), lt(executor__index_merge_reader.t1.c3, 10))
 └─IndexMerge_11	1841.86	root		type: union
-  ├─TableRangeScan_7(Build)	3323.33	cop[tikv]	table:t1	range:[-inf,"a"), keep order:false, stats:pseudo
+  ├─TableRangeScan_7(Build)	3323.33	cop[tikv]	table:t1	range:[-inf,0x61), keep order:false, stats:pseudo
   ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t1, index:c3(c3)	range:[-inf,10), keep order:false, stats:pseudo
   └─Selection_10(Probe)	1841.86	cop[tikv]		lt(executor__index_merge_reader.t1.c4, 10)
     └─TableRowIDScan_9	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo

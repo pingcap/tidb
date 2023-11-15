@@ -414,7 +414,7 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 	newTp := newFieldType(tp)
 	rangePoints := getFullRange()
 	for _, cond := range accessConditions {
-		collator := collate.GetCollator(tp.GetCollate())
+		collator := collate.GetCollator(charset.CollationBin)
 		rangePoints = rb.intersection(rangePoints, rb.build(cond, newTp, colLen, false), collator)
 		if rb.err != nil {
 			return nil, nil, nil, errors.Trace(rb.err)
@@ -488,7 +488,7 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 	)
 	for i := 0; i < eqAndInCount; i++ {
 		// Build ranges for equal or in access conditions.
-		point := rb.build(accessConds[i], newTp[i], d.lengths[i], false)
+		point := rb.build(accessConds[i], newTp[i], d.lengths[i], d.noConvertToSortKey)
 		if rb.err != nil {
 			return nil, nil, nil, errors.Trace(rb.err)
 		}
@@ -517,7 +517,10 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 	// Build rangePoints for non-equal access conditions.
 	for i := eqAndInCount; i < len(accessConds); i++ {
 		collator := collate.GetCollator(newTp[eqAndInCount].GetCollate())
-		rangePoints = rb.intersection(rangePoints, rb.build(accessConds[i], newTp[eqAndInCount], d.lengths[eqAndInCount], false), collator)
+		if d.noConvertToSortKey {
+			collator = collate.GetCollator(charset.CollationBin)
+		}
+		rangePoints = rb.intersection(rangePoints, rb.build(accessConds[i], newTp[eqAndInCount], d.lengths[eqAndInCount], d.noConvertToSortKey), collator)
 		if rb.err != nil {
 			return nil, nil, nil, errors.Trace(rb.err)
 		}

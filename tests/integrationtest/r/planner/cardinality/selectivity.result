@@ -472,15 +472,15 @@ TableReader_7	1.00	root		data:Selection_6
 explain select * from ct1 where pk>='1' and pk <='4';
 id	estRows	task	access object	operator info
 TableReader_6	5.00	root		data:TableRangeScan_5
-└─TableRangeScan_5	5.00	cop[tikv]	table:ct1	range:["1","4"], keep order:false
+└─TableRangeScan_5	5.00	cop[tikv]	table:ct1	range:[0x31,0x34], keep order:false
 explain select * from ct1 where pk>='4' and pk <='6';
 id	estRows	task	access object	operator info
 TableReader_6	3.75	root		data:TableRangeScan_5
-└─TableRangeScan_5	3.75	cop[tikv]	table:ct1	range:["4","6"], keep order:false
+└─TableRangeScan_5	3.75	cop[tikv]	table:ct1	range:[0x34,0x36], keep order:false
 explain select * from ct1 where pk>='6' and pk <='8';
 id	estRows	task	access object	operator info
 TableReader_6	3.00	root		data:TableRangeScan_5
-└─TableRangeScan_5	3.00	cop[tikv]	table:ct1	range:["6","8"], keep order:false
+└─TableRangeScan_5	3.00	cop[tikv]	table:ct1	range:[0x36,0x38], keep order:false
 explain select * from ct2 where a=1 and b>=1 and b<=8;
 id	estRows	task	access object	operator info
 TableReader_6	1.00	root		data:TableRangeScan_5
@@ -1226,7 +1226,7 @@ analyze table t;
 explain select * from t where a = 'tw' and b < 0;
 id	estRows	task	access object	operator info
 IndexReader_6	0.00	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	0.00	cop[tikv]	table:t, index:idx(a, b)	range:["tw" -inf,"tw" 0), keep order:false
+└─IndexRangeScan_5	0.00	cop[tikv]	table:t, index:idx(a, b)	range:[0x7477 -inf,0x7477 0), keep order:false
 drop table if exists t;
 create table t(id int auto_increment, kid int, pid int, primary key(id), key(kid, pid));
 insert into t (kid, pid) values (1,2), (1,3), (1,4),(1, 11), (1, 12), (1, 13), (1, 14), (2, 2), (2, 3), (2, 4);

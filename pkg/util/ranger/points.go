@@ -909,9 +909,15 @@ func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction, newTp *ty
 		return r.buildFromBinOp(expr, newTp, prefixLen, noConvertToSortKey)
 	case ast.LogicAnd:
 		collator := collate.GetCollator(newTp.GetCollate())
+		if noConvertToSortKey {
+			collator = collate.GetCollator(charset.CollationBin)
+		}
 		return r.intersection(r.build(expr.GetArgs()[0], newTp, prefixLen, noConvertToSortKey), r.build(expr.GetArgs()[1], newTp, prefixLen, noConvertToSortKey), collator)
 	case ast.LogicOr:
 		collator := collate.GetCollator(newTp.GetCollate())
+		if noConvertToSortKey {
+			collator = collate.GetCollator(charset.CollationBin)
+		}
 		return r.union(r.build(expr.GetArgs()[0], newTp, prefixLen, noConvertToSortKey), r.build(expr.GetArgs()[1], newTp, prefixLen, noConvertToSortKey), collator)
 	case ast.IsTruthWithoutNull:
 		return r.buildFromIsTrue(expr, 0, false)

@@ -398,7 +398,7 @@ id	estRows	task	access object	operator info
 IndexHashJoin	13.81	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__integration.t1.col1, inner key:planner__core__casetest__integration.t2.pk, equal cond:eq(planner__core__casetest__integration.t1.col1, planner__core__casetest__integration.t2.pk)
 ├─IndexHashJoin(Build)	12.50	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__integration.t3.pk, inner key:planner__core__casetest__integration.t1.col3, equal cond:eq(planner__core__casetest__integration.t3.pk, planner__core__casetest__integration.t1.col3)
 │ ├─IndexLookUp(Build)	10.00	root		
-│ │ ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t3, index:keycol(keycol, pad1, pad2)	range:["c","c"], keep order:false, stats:pseudo
+│ │ ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t3, index:keycol(keycol, pad1, pad2)	range:[0x63,0x63], keep order:false, stats:pseudo
 │ │ └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 │ └─IndexLookUp(Probe)	12.50	root		
 │   ├─Selection(Build)	18.10	cop[tikv]		not(isnull(planner__core__casetest__integration.t1.col3))
@@ -415,7 +415,7 @@ id	estRows	task	access object	operator info
 IndexHashJoin	13.81	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__integration.t1.col1, inner key:planner__core__casetest__integration.t2.pk, equal cond:eq(planner__core__casetest__integration.t1.col1, planner__core__casetest__integration.t2.pk)
 ├─IndexHashJoin(Build)	12.50	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__integration.t3.pk, inner key:planner__core__casetest__integration.t1.col3, equal cond:eq(planner__core__casetest__integration.t3.pk, planner__core__casetest__integration.t1.col3)
 │ ├─IndexLookUp(Build)	10.00	root		
-│ │ ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t3, index:keycol(keycol, pad1, pad2)	range:["c","c"], keep order:false, stats:pseudo
+│ │ ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t3, index:keycol(keycol, pad1, pad2)	range:[0x63,0x63], keep order:false, stats:pseudo
 │ │ └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 │ └─IndexLookUp(Probe)	12.50	root		
 │   ├─Selection(Build)	18.10	cop[tikv]		not(isnull(planner__core__casetest__integration.t1.col3))
@@ -600,7 +600,7 @@ Limit	2.00	root		offset:0, count:2
 explain format = 'brief' select * from t3 where a >= 'a' and a <= 'a' and b = 'b' and c > 'c';
 id	estRows	task	access object	operator info
 IndexReader	0.33	root		index:IndexRangeScan
-└─IndexRangeScan	0.33	cop[tikv]	table:t3, index:a(a, b, c)	range:("a" "b" "c","a" "b" +inf], keep order:false, stats:pseudo
+└─IndexRangeScan	0.33	cop[tikv]	table:t3, index:a(a, b, c)	range:(0x61 0x62 0x63,0x61 0x62 +inf], keep order:false, stats:pseudo
 drop table if exists t1;
 CREATE TABLE t1 (
 key1 int(11) NOT NULL,
@@ -971,8 +971,8 @@ id	estRows	task	access object	operator info
 Projection	15.99	root		1->Column#5
 └─Selection	15.99	root		or(eq(planner__core__casetest__integration.t1.c1, "de"), and(eq(planner__core__casetest__integration.t1.c2, "10"), eq(from_base64(to_base64(planner__core__casetest__integration.t1.c1)), "ab")))
   └─IndexMerge	19.99	root		type: union
-    ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:c1(c1)	range:["de","de"], keep order:false, stats:pseudo
-    ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:c2(c2)	range:["10","10"], keep order:false, stats:pseudo
+    ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:c1(c1)	range:[0x6465,0x6465], keep order:false, stats:pseudo
+    ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:c2(c2)	range:[0x3130,0x3130], keep order:false, stats:pseudo
     └─TableRowIDScan(Probe)	19.99	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'de' or c2 = '10' and from_base64(to_base64(c1)) = 'ab';
 1
@@ -982,8 +982,8 @@ id	estRows	task	access object	operator info
 Projection	17.99	root		1->Column#5
 └─Selection	0.04	root		or(eq(planner__core__casetest__integration.t1.c1, "ab"), and(eq(planner__core__casetest__integration.t1.c2, "10"), eq(char_length(left(planner__core__casetest__integration.t1.c1, 10)), 10)))
   └─IndexMerge	19.99	root		type: union
-    ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:c1(c1)	range:["ab","ab"], keep order:false, stats:pseudo
-    ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:c2(c2)	range:["10","10"], keep order:false, stats:pseudo
+    ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:c1(c1)	range:[0x6162,0x6162], keep order:false, stats:pseudo
+    ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:c2(c2)	range:[0x3130,0x3130], keep order:false, stats:pseudo
     └─TableRowIDScan(Probe)	19.99	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'ab' or c2 = '10' and char_length(left(c1, 10)) = 10;
 1
@@ -993,8 +993,8 @@ id	estRows	task	access object	operator info
 Projection	15.99	root		1->Column#6
 └─Selection	15.99	root		or(eq(planner__core__casetest__integration.tt1.c1, "de"), and(eq(planner__core__casetest__integration.tt1.c2, "10"), eq(from_base64(to_base64(planner__core__casetest__integration.tt1.c3)), "10")))
   └─IndexMerge	19.99	root		type: union
-    ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tt1, index:idx_0(c1)	range:["de","de"], keep order:false, stats:pseudo
-    ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tt1, index:idx_1(c2, c3)	range:["10","10"], keep order:false, stats:pseudo
+    ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tt1, index:idx_0(c1)	range:[0x6465,0x6465], keep order:false, stats:pseudo
+    ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tt1, index:idx_1(c2, c3)	range:[0x3130,0x3130], keep order:false, stats:pseudo
     └─TableRowIDScan(Probe)	19.99	cop[tikv]	table:tt1	keep order:false, stats:pseudo
 select /*+ use_index_merge(tt1) */ 1 from tt1 where c1 = 'de' or c2 = '10' and from_base64(to_base64(c3)) = '10';
 1
@@ -1327,10 +1327,10 @@ id	estRows	task	access object	operator info
 HashAgg	5333.33	root		group by:Column#3, funcs:firstrow(Column#3)->Column#3
 └─Union	6666.67	root		
   ├─TableReader	3333.33	root		data:TableRangeScan
-  │ └─TableRangeScan	3333.33	cop[tikv]	table:t3	range:("test",+inf], keep order:false, stats:pseudo
+  │ └─TableRangeScan	3333.33	cop[tikv]	table:t3	range:(0x74657374,+inf], keep order:false, stats:pseudo
   └─Projection	3333.33	root		cast(planner__core__casetest__integration.t4.a, varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#3
     └─TableReader	3333.33	root		data:TableRangeScan
-      └─TableRangeScan	3333.33	cop[tikv]	table:t4	range:("test",+inf], keep order:false, stats:pseudo
+      └─TableRangeScan	3333.33	cop[tikv]	table:t4	range:(0x74657374,+inf], keep order:false, stats:pseudo
 select * from v2 where a > 'test';
 a
 explain format='brief' select * from v3 where a = 'test' -- the condition shouldn't be downcast through both side and go get point;
@@ -1349,7 +1349,7 @@ id	estRows	task	access object	operator info
 HashAgg	9066.67	root		group by:Column#3, funcs:firstrow(Column#3)->Column#3
 └─Union	11333.33	root		
   ├─TableReader	3333.33	root		data:TableRangeScan
-  │ └─TableRangeScan	3333.33	cop[tikv]	table:t5	range:("test",+inf], keep order:false, stats:pseudo
+  │ └─TableRangeScan	3333.33	cop[tikv]	table:t5	range:(0x74657374,+inf], keep order:false, stats:pseudo
   └─Projection	8000.00	root		cast(planner__core__casetest__integration.t6.a, char(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#3
     └─TableReader	8000.00	root		data:Selection
       └─Selection	8000.00	cop[tikv]		gt(cast(planner__core__casetest__integration.t6.a, char(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin), "test")
@@ -1372,7 +1372,7 @@ id	estRows	task	access object	operator info
 HashAgg	9066.67	root		group by:Column#3, funcs:firstrow(Column#3)->Column#3
 └─Union	11333.33	root		
   ├─TableReader	3333.33	root		data:TableRangeScan
-  │ └─TableRangeScan	3333.33	cop[tikv]	table:t7	range:("test",+inf], keep order:false, stats:pseudo
+  │ └─TableRangeScan	3333.33	cop[tikv]	table:t7	range:(0x74657374,+inf], keep order:false, stats:pseudo
   └─Selection	8000.00	root		gt(Column#3, "test")
     └─Projection	10000.00	root		cast(planner__core__casetest__integration.t8.a, varchar(100) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#3
       └─TableReader	10000.00	root		data:TableFullScan

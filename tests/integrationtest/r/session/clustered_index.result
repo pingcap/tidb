@@ -27,7 +27,7 @@ StreamAgg	1.00	root		funcs:count(Column#6)->Column#4
 └─IndexReader	1.00	root		index:StreamAgg
   └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#6
     └─Selection	10.00	cop[tikv]		eq(session__clustered_index.t1.c2, "cd")
-      └─IndexRangeScan	10.00	cop[tikv]	table:t1, index:idx1(c2)	range:["c","c"], keep order:false, stats:pseudo
+      └─IndexRangeScan	10.00	cop[tikv]	table:t1, index:idx1(c2)	range:[0x63,0x63], keep order:false, stats:pseudo
 select count(1) from t1 use index(idx1) where c2 = 'cd';
 count(1)
 1
@@ -166,12 +166,12 @@ explain select * from t use index(primary) where name = 'aaaaa';
 id	estRows	task	access object	operator info
 TableReader_7	10.00	root		data:Selection_6
 └─Selection_6	10.00	cop[tikv]		eq(session__clustered_index.t.name, "aaaaa")
-  └─TableRangeScan_5	12.50	cop[tikv]	table:t	range:["aa","aa"], keep order:false, stats:pseudo
+  └─TableRangeScan_5	12.50	cop[tikv]	table:t	range:[0x6161,0x6161], keep order:false, stats:pseudo
 explain select * from t use index(primary) where name = 'aaaaa';
 id	estRows	task	access object	operator info
 TableReader_7	10.00	root		data:Selection_6
 └─Selection_6	10.00	cop[tikv]		eq(session__clustered_index.t.name, "aaaaa")
-  └─TableRangeScan_5	12.50	cop[tikv]	table:t	range:["aa","aa"], keep order:false, stats:pseudo
+  └─TableRangeScan_5	12.50	cop[tikv]	table:t	range:[0x6161,0x6161], keep order:false, stats:pseudo
 select * from t use index(primary) where name = 'aaaaa';
 name	b	c
 aaaaa	1	NULL
