@@ -43,7 +43,7 @@ component_management:
     statuses:
       - type: project # in this case every component that doens't have a status defined will have a project type one
         target: auto
-        informational: false # resulting status will pass no matter what the coverage is or what other settings are specified. 
+        informational: # resulting status will pass no matter what the coverage is or what other settings are specified. 
   individual_components:
     - component_id: component_dumpling # this is an identifier that should not be changed
       name: dumpling # this is a display name, and can be changed freely
@@ -65,10 +65,10 @@ flag_management:
     statuses:
       - type: project
         target: auto
-        informational: false # resulting status will pass no matter what the coverage is or what other settings are specified. 
+        informational: # resulting status will pass no matter what the coverage is or what other settings are specified. 
       - type: patch
         target: auto
-        informational: false # resulting status will pass no matter what the coverage is or what other settings are specified. 
+        informational: # resulting status will pass no matter what the coverage is or what other settings are specified. 
 
 ignore:
   - "LICENSES"
