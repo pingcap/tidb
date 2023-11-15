@@ -2,26 +2,26 @@
 
 <!-- TOC -->
 * [Extension Framework Usage](#extension-framework-usage)
-  * [Introduction](#introduction)
-  * [How to use](#how-to-use)
-    * [A simple example](#a-simple-example)
-    * [Further explanation about session handler](#further-explanation-about-session-handler)
-    * [Register Extension with Options](#register-extension-with-options)
-    * [Some Important Extension Options](#some-important-extension-options)
+    * [Introduction](#introduction)
+    * [Usage Guidelines](#usage-guidelines)
+        * [A Simple Example](#a-simple-example)
+        * [Further Explanation about Session Handler](#further-explanation-about-session-handler)
+        * [Registering Extensions with Options](#registering-extensions-with-options)
+        * [Key Extension Options](#key-extension-options)
 <!-- TOC -->
 
 ## Introduction
 
-Extension framework is used to integrate some standalone codes to TiDB. You may need it for some reason:
+The Extension Framework facilitates the seamless integration of standalone code with TiDB. This framework is useful when:
 
-- You want to write some code to extend TiDB, but you want to put the new code in some standalone package without a deep integration with TiDB.
-- You want to write some code to extend TiDB, but you don't want to expose the code to the public. 
+- You aim to extend TiDB functionality but prefer to encapsulate new code within a standalone package, minimizing deep integration.
+- Considering confidentiality, you wish to extend TiDB without exposing the code publicly.
 
-## How to use
+## Usage Guidelines
 
-### A simple example
+### A Simple Example
 
-The below example shows how to log some information when a new connection is created:
+The subsequent example demonstrates how to log information when a new connection is established:
 
 ```go
 // pkg/extension/example/example.go
@@ -64,23 +64,23 @@ import (
 )
 ```
 
-You can add these two files to your local TiDB file tree, rebuild, and then run tidb server. You can see a new log when any new connection trys to connect the TiDB.
+Incorporate these files into your TiDB file structure, rebuild, and run the TiDB server. Observe the enhanced logging when a new connection attempts to connect to TiDB:
 
 ```
 [2023/11/14 16:22:26.854 +08:00] [INFO] [example.go:28] ["new connection connected"] ["client IP"=127.0.0.1]
 ```
 
-Let's explain how it works step-by-step.
+Let's delve into a step-by-step explanation of how this works:
 
-Firstly, in the main file, `example.go`, a new function `createSessionHandler` is added. `createSessionHandler` is a factory function which is expected to be called when a new connection comes. It returns an object with type `extension.SessionHandler` to tell the framework how to handle the connection. `SessionHandler` has many fields to custom, in the above example, we only use the field `OnConnectionEvent` to handle the `extension.ConnConnected` event of connections and log the client IP then.
+In the primary file, `example.go`, a new function named `createSessionHandler` is introduced. This function acts as a factory and is intended to be invoked when a new connection is established. It returns an object of type `extension.SessionHandler` to guide the framework on handling the connection. The `SessionHandler` type provides various customizable fields. In the provided example, we utilize the `OnConnectionEvent` field to manage the `extension.ConnConnected` event for connections, logging the client's IP address.
 
-Then we should register our custom code using `extension.Register`. You can see the `init` function of file `example.go`. The first parameter passed to `extension.Register` is the extension name; you can use any string you like, the only limitation is that it should be unique across all extensions. After extension name, we can pass arbitrary count of options to `extension.Register`. In the example, we use the option `extension.WithSessionHandlerFactory` to pass the `createSessionHandler` to the framework we write before.
+The custom code is registered using `extension.Register`. In the `init` function of the `example.go` file, the first parameter passed to `extension.Register` is the extension name. Any string can be used as the name, with the only constraint being its uniqueness across all extensions. Following the extension name, an arbitrary number of options can be passed to `extension.Register`. In our example, we employ the `extension.WithSessionHandlerFactory` option to convey the `createSessionHandler` function to the previously defined framework.
 
-Please notice that `example.go` is a file in a new created package, and if it is not imported by other packages, the `init` will not be called, so we created a new file `example_import.go` in an existing package `pkg/extension/_import` and it imports `pkg/extension/example` to make sure the extension will be registered when TiDB starts.
+It's essential to note that `example.go` resides in a newly created package. If this package is not imported by other packages, the `init` function will not be called. To address this, a new file, `example_import.go`, is created within an existing package, specifically `pkg/extension/_import`. This file imports `pkg/extension/example`, ensuring that the extension is registered when TiDB starts.
 
-### Further explanation about session handler
+### Further Explanation about Session Handler
 
-```SessionHandler``` is used to handle session events, and it is declared as below:
+The `SessionHandler` is designed to manage session events and is declared as follows:
 
 ```go
 // SessionHandler is used to listen session events
@@ -90,29 +90,29 @@ type SessionHandler struct {
 }
 ```
 
-You can see that `SessionHandler` provides several fields to custom. These fields are empty by default, which means if you don't set them, the framework will do nothing when the corresponding event happens.
+`SessionHandler` offers several customizable fields. These fields default to empty, implying that if left unset, the framework will not perform any actions when corresponding events occur.
 
 **OnConnectionEvent**
 
-You can use `OnConnectionEvent` to listen to all connection events. The "connection events" here do not contain some events related to statements. The types of all connection events is defined by `ConnEventTp`, some important types are listed below:
+The `OnConnectionEvent` function is used to observe all connection events. The types of connection events are defined by `ConnEventTp`, with key types including:
 
-- `ConnConnected`: A new connection is created, but not authenticated yet.
-- `ConnHandshakeAccepted`: A connection is authenticated successfully.
-- `ConnHandshakeRejected`: A connection is rejected because of authentication failure.
-- `ConnClose`: A connection is closed.
+- `ConnConnected`: the creation of a new connection that is not yet authenticated.
+- `ConnHandshakeAccepted`: successful authentication of a connection.
+- `ConnHandshakeRejected`: rejection due to authentication failure.
+- `ConnClose`: the close of a connection.
 
-Please notice that `OnConnectionEvent` does not return any error that means it is always expected to success, if any error occurs in your custom code, you should handle it by your self before the function returns. In the other words, `OnConnectionEvent` does not affect the connection flow; it is just a "listener."
+It is important to note that `OnConnectionEvent` does not return errors; it is designed as a listener, and any encountered errors in custom code must be managed before the function concludes. In essence, **`OnConnectionEvent`** does not disrupt the connection flow but merely observes.
 
 **OnStmtEvent**
 
-`OnStmtEvent` is used to listen to events related to statements. Like `OnConnectionEvent`, it is a listener and does not affect the statement flow. The types of all statement events is defined by `StmtEventTp`, some important types are listed below:
+`OnStmtEvent` serves to monitor events related to statements. Similar to `OnConnectionEvent`, it functions as a listener without influencing the statement flow. Statement event types, defined by `StmtEventTp`, include:
 
-- `StmtError`: A statement is finished with an error.
-- `StmtSuccess`: A statement is finished successfully.
+- `StmtError`: Denoting the completion of a statement with an error.
+- `StmtSuccess`: Indicating the successful completion of a statement.
 
-### Register Extension with Options
+### **Registering Extensions with Options**
 
-Except for `extension.WithSessionHandlerFactory`, we also have other options to custom the extension. All of them can be registered using `extension.Register` function, for example:
+In addition to `extension.WithSessionHandlerFactory`, various options are available for extension customization. All options can be registered using the `extension.Register` function. For instance:
 
 ```go
 	err := extension.Register(
@@ -124,7 +124,7 @@ Except for `extension.WithSessionHandlerFactory`, we also have other options to 
 	terror.MustNil(err)
 ```
 
-You can also use `extension.RegisterFactory` to return the extension options dynamically. This is useful when you want to use some global configurations to decide which options to use. For example:
+Alternatively, use `extension.RegisterFactory` for dynamic registration of extension options. This proves beneficial when global configurations influence the selection of options. For example:
 
 ```go
 	err := extension.RegisterFactory("example", func() ([]extension.Option, error) {
@@ -143,34 +143,34 @@ You can also use `extension.RegisterFactory` to return the extension options dyn
 	terror.MustNil(err)
 ```
 
-### Some Important Extension Options
+### **Key Extension Options**
 
-Some important extension options are listed below:
+Several important extension options are outlined below:
 
 **WithCustomSysVariables**
 
-`WithCustomSysVariables` is used to register custom system variables. It receives a slice of `variable.SysVar` which need to be added.
+The `WithCustomSysVariables` option registers custom system variables, accepting a slice of `variable.SysVar` for addition.
 
 **WithCustomDynPrivs**
 
-`WithCustomDynPrivs` is used to register custom dynamic privileges. 
+Use `WithCustomDynPrivs` to register custom dynamic privileges.
 
 **WithCustomFunctions**
 
-`WithCustomFunctions` is used to register custom functions. 
+The `WithCustomFunctions` option registers custom functions.
 
 **AccessCheckFunc**
 
-`AccessCheckFunc` is used to custom the access check logic. It can add some extra checks for table access.
+The `AccessCheckFunc` option customizes the access check logic, enabling additional checks for table access.
 
 **WithSessionHandlerFactory**
 
-`WithSessionHandlerFactory` is used to handle session events.
+This option is instrumental in handling session events.
 
 **WithBootstrap**
 
-`WithBootstrap` is used to custom the bootstrap logic. It receives a function which will be called when TiDB bootstraps. `WithBootstrapSQL` and `WithBootstrap` are exclusive, you can only use one of them.
+`WithBootstrap` customizes the bootstrap logic, receiving a function invoked during TiDB bootstrap. Note that `WithBootstrapSQL` and `WithBootstrap` are mutually exclusive, allowing the use of only one.
 
 **WithBootstrapSQL**
 
-`WithBootstrapSQL` is used to custom the bootstrap logic. It receives a string which contains the SQLs to bootstrap. `WithBootstrapSQL` and `WithBootstrap` are exclusive, you can only use one of them.
+`WithBootstrapSQL` customizes the bootstrap logic with a string containing SQL statements for bootstrapping. Note that `WithBootstrapSQL` and `WithBootstrap` are mutually exclusive, allowing the use of only one.
