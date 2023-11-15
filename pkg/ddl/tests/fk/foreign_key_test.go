@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -1504,6 +1505,22 @@ func getLatestSchemaDiff(t *testing.T, tk *testkit.TestKit) *model.SchemaDiff {
 	diff, err := m.GetSchemaDiff(ver)
 	require.NoError(t, err)
 	return diff
+}
+
+func TestAddForeignKeyInBigTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@foreign_key_checks=1;")
+	tk.MustExec("use test")
+	tk.MustExec("create table employee (id bigint auto_increment key, pid bigint)")
+	tk.MustExec("insert into employee (id) values (1),(2),(3),(4),(5),(6),(7),(8)")
+	for i := 0; i < 14; i++ {
+		tk.MustExec("insert into employee (pid) select pid from employee")
+	}
+	tk.MustExec("update employee set pid=id-1 where id>1")
+	start := time.Now()
+	tk.MustExec("alter table employee add foreign key fk_1(pid) references employee(id)")
+	require.Less(t, time.Since(start), time.Minute)
 }
 
 func TestForeignKeyAndConcurrentDDL(t *testing.T) {
