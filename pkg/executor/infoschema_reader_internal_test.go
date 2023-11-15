@@ -72,7 +72,6 @@ func TestSetDataFromCheckConstraints(t *testing.T) {
 	require.Equal(t, types.NewStringDatum("(id<10)"), mt.rows[0][3])
 }
 
-
 func TestSetDataFromTiDBCheckConstraints(t *testing.T) {
 	mt := memtableRetriever{}
 	sctx := defaultCtx()
