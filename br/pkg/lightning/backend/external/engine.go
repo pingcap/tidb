@@ -362,6 +362,13 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 		}
 		return false
 	})
+	var prevKey []byte
+	for _, kv := range e.memKVsAndBuffers.memKVs {
+		if prevKey != nil && bytes.Compare(prevKey, kv.key) >= 0 {
+			logutil.Logger(ctx).Error("kv is not in increasing order", zap.ByteString("prevKey", prevKey), zap.ByteString("key", kv.key))
+		}
+		prevKey = kv.key
+	}
 	sortSecond := time.Since(sortStart).Seconds()
 	sortDurHist.Observe(sortSecond)
 	logutil.Logger(ctx).Info("sorting in loadBatchRegionData",
