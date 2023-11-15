@@ -867,15 +867,16 @@ func (m *MemoryIngestData) GetTS() uint64 {
 
 // IncRef implements IngestData.IncRef.
 func (m *MemoryIngestData) IncRef() {
-	logutil.BgLogger().Warn("inc")
+	logutil.BgLogger().Warn("inc", zap.Any("ts", m.ts), zap.Stack("stack"))
 	m.refCnt.Inc()
 }
 
 // DecRef implements IngestData.DecRef.
 func (m *MemoryIngestData) DecRef() {
-	logutil.BgLogger().Warn("dec")
+	logutil.BgLogger().Warn("dec", zap.Any("ts", m.ts), zap.Stack("stack"))
 	if m.refCnt.Dec() == 0 {
 		for _, b := range m.memBufs {
+			logutil.BgLogger().Error("destroy")
 			b.Destroy()
 		}
 	}
