@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/copr"
 	derr "github.com/pingcap/tidb/store/driver/error"
@@ -53,6 +54,8 @@ var mc storeCache
 func init() {
 	mc.cache = make(map[string]*tikvStore)
 	rand.Seed(time.Now().UnixNano())
+
+	importer.GetKVStore = getKVStore
 }
 
 // Option is a function that changes some config of Driver
@@ -84,6 +87,10 @@ func WithPDClientConfig(client config.PDClient) Option {
 	return func(c *TiKVDriver) {
 		c.pdConfig = client
 	}
+}
+
+func getKVStore(path string, tls config.Security) (kv.Storage, error) {
+	return TiKVDriver{}.OpenWithOptions(path, WithSecurity(tls))
 }
 
 // TiKVDriver implements engine TiKV.
