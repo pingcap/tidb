@@ -164,6 +164,15 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 	return nil
 }
 
+// GetCurrentPruneMode returns the current latest partitioning table prune mode.
+func GetCurrentPruneMode(pool SessionPool) (mode string, err error) {
+	err = CallWithSCtx(pool, func(sctx sessionctx.Context) error {
+		mode = sctx.GetSessionVars().PartitionPruneMode.Load()
+		return nil
+	})
+	return
+}
+
 // WrapTxn uses a transaction here can let different SQLs in this operation have the same data visibility.
 func WrapTxn(sctx sessionctx.Context, f func(sctx sessionctx.Context) error) (err error) {
 	// TODO: check whether this sctx is already in a txn

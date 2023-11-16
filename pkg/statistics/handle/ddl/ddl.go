@@ -115,7 +115,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 			}
 		}
 	case model.ActionDropTablePartition:
-		pruneMode, err := h.statsHandler.GetCurrentPruneMode()
+		pruneMode, err := util.GetCurrentPruneMode(h.statsHandler.SPool())
 		if err != nil {
 			return err
 		}
@@ -175,7 +175,7 @@ func (h *ddlHandlerImpl) getInitStateTableIDs(tblInfo *model.TableInfo) (ids []i
 	for _, def := range pi.Definitions {
 		ids = append(ids, def.ID)
 	}
-	pruneMode, err := h.statsHandler.GetCurrentPruneMode()
+	pruneMode, err := util.GetCurrentPruneMode(h.statsHandler.SPool())
 	if err != nil {
 		return nil, err
 	}

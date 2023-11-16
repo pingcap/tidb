@@ -415,7 +415,7 @@ func (s *statsReadWriter) DumpHistoricalStatsBySnapshot(
 
 // DumpStatsToJSONBySnapshot dumps statistic to json.
 func (s *statsReadWriter) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64, dumpPartitionStats bool) (*util.JSONTable, error) {
-	pruneMode, err := s.statsHandler.GetCurrentPruneMode()
+	pruneMode, err := util.GetCurrentPruneMode(s.statsHandler.SPool())
 	if err != nil {
 		return nil, err
 	}

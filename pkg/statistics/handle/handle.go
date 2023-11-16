@@ -164,15 +164,6 @@ func (h *Handle) Close() {
 	h.StatsCache.Close()
 }
 
-// GetCurrentPruneMode returns the current latest partitioning table prune mode.
-func (h *Handle) GetCurrentPruneMode() (mode string, err error) {
-	err = util.CallWithSCtx(h.SPool(), func(sctx sessionctx.Context) error {
-		mode = sctx.GetSessionVars().PartitionPruneMode.Load()
-		return nil
-	})
-	return
-}
-
 // SysProcTracker is used to track sys process like analyze
 func (h *Handle) SysProcTracker() sessionctx.SysProcTracker {
 	return h.sysProcTracker

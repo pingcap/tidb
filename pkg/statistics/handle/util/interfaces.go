@@ -380,9 +380,6 @@ type StatsHandle interface {
 	// SysProcTracker is used to track sys process like analyze
 	SysProcTracker() sessionctx.SysProcTracker
 
-	// GetCurrentPruneMode returns the current latest partitioning table prune mode.
-	GetCurrentPruneMode() (mode string, err error)
-
 	// TableInfoGetter is used to get table meta info.
 	TableInfoGetter
 
