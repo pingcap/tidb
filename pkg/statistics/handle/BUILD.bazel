@@ -33,7 +33,6 @@ go_library(
         "//pkg/util/chunk",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
-        "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],
 )

@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/syncload"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
-	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -45,6 +44,8 @@ type Handle struct {
 	util.Pool
 
 	util.AutoAnalyzeProcIDGenerator
+
+	util.LeaseGetter
 
 	// initStatsCtx is the ctx only used for initStats
 	initStatsCtx sessionctx.Context
@@ -83,8 +84,6 @@ type Handle struct {
 
 	// StatsCache ...
 	util.StatsCache
-
-	lease atomic2.Duration
 }
 
 // Clear the statsCache, only for test.
@@ -114,13 +113,13 @@ func NewHandle(
 	handle.StatsReadWriter = storage.NewStatsReadWriter(handle)
 
 	handle.initStatsCtx = initStatsCtx
-	handle.lease.Store(lease)
 	statsCache, err := cache.NewStatsCacheImpl(handle)
 	if err != nil {
 		return nil, err
 	}
 	handle.Pool = util.NewPool(pool)
 	handle.AutoAnalyzeProcIDGenerator = util.NewGenerator(autoAnalyzeProcIDGetter)
+	handle.LeaseGetter = util.NewLeaseGetter(lease)
 	handle.StatsCache = statsCache
 	handle.StatsHistory = history.NewStatsHistory(handle)
 	handle.StatsUsage = usage.NewStatsUsageImpl(handle)
@@ -129,16 +128,6 @@ func NewHandle(
 	handle.StatsGlobal = globalstats.NewStatsGlobal(handle)
 	handle.DDL = ddl.NewDDLHandler(handle.StatsReadWriter, handle, handle.StatsGlobal)
 	return handle, nil
-}
-
-// Lease returns the stats lease.
-func (h *Handle) Lease() time.Duration {
-	return h.lease.Load()
-}
-
-// SetLease sets the stats lease.
-func (h *Handle) SetLease(lease time.Duration) {
-	h.lease.Store(lease)
 }
 
 // FlushStats flushes the cached stats update into store.
