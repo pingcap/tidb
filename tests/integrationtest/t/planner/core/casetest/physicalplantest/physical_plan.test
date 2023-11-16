@@ -370,7 +370,7 @@ create table t1(a int, b int as (a+1) virtual);
 create table t2(a int, b int as (a+1) virtual, c int, key idx_a(a));
 -- echo ## Make sure row_count(tikv_selection) == row_count(table_reader) and row_count(table_reader) > row_count(tidb_selection)
 explain format='brief' select * from t1 where a > 1 and b > 1;
--- echo Make sure row_count(tikv_selection) == row_count(index_lookup) and row_count(index_lookup) > row_count(tidb_selection)
+-- echo ## Make sure row_count(tikv_selection) == row_count(index_lookup) and row_count(index_lookup) > row_count(tidb_selection)
 explain format='brief' select * from t2 use index(idx_a) where a > 1 and b > 1 and c > 1;
 
 # TestIssue28316
@@ -937,35 +937,58 @@ show warnings;
 set tidb_cost_model_version=DEFAULT;
 
 # TestIndexMergeSinkLimit
-drop table if exists t, t2;
+drop table if exists t, t2, t3;
 set tidb_cost_model_version=1;
 CREATE TABLE `t2` (  `a` int(11) DEFAULT NULL,  `b` int(11) DEFAULT NULL,  `c` int(11) DEFAULT NULL,  KEY `a` (`a`),  KEY `b` (`b`)) ;
 insert into t2 values(1,2,1),(2,1,1),(3,3,1);
 create table t(a int, j json, index kj((cast(j as signed array))));
 insert into t values(1, '[1,2,3]');
-explain format = 'brief' select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 or b=1 and c=1 limit 2; -- test sink limit to table side of union index merge case, because of table side selection;
+CREATE TABLE `t3` (
+  `id` int(11) NOT NULL,
+  `aid` bigint(20) DEFAULT NULL,
+  `c1` varchar(255) DEFAULT NULL,
+  `c2` varchar(255) DEFAULT NULL,
+  `d` int(11) DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `aid_c1` (`aid`,`c1`),
+  KEY `aid_c2` (`aid`,`c2`)
+);
+## test sink limit to table side of union index merge case, because of table side selection
+explain format = 'brief' select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 or b=1 and c=1 limit 2;
 show warnings;
-explain format = 'brief' select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 and b=1 and c=1 limit 2; -- test sink limit to table side of intersection index merge case, because of table side selection;
+## test sink limit to table side of intersection index merge case, because of table side selection
+explain format = 'brief' select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 and b=1 and c=1 limit 2;
 show warnings;
 select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 and b=1 and c=1 limit 2;
 show warnings;
-explain format = 'brief' select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 or b=1 limit 2; -- test sink limit to index side of union index merge case, because of table side is pure table scan;
+## test sink limit to index side of union index merge case, because of table side is pure table scan
+explain format = 'brief' select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 or b=1 limit 2;
 show warnings;
-explain format = 'brief' select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 and b=1 limit 2; -- test sink limit to table side of intersection index merge case, because of intersection case special;
+## test sink limit to table side of intersection index merge case, because of intersection case special
+explain format = 'brief' select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 and b=1 limit 2;
 show warnings;
 select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 and b=1 limit 2;
 show warnings;
-explain format = 'brief' select /*+ use_index(t, kj) */ * from t where (1 member of (j)) limit 1; -- index merge union case, sink limit into index side and embed another one inside index merge reader;
+## index merge union case, sink limit into index side and embed another one inside index merge reader
+explain format = 'brief' select /*+ use_index(t, kj) */ * from t where (1 member of (j)) limit 1;
 show warnings;
-explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_contains(j, '[1, 2, 3]') limit 1; -- index merge intersection case, embedding limit into index merge reader;
+## index merge intersection case, embedding limit into index merge reader
+explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_contains(j, '[1, 2, 3]') limit 1;
 show warnings;
-explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_overlaps(j, '[1, 2, 3]') limit 1; -- index merge union case, sink limit above selection above index merge reader, because json_overlaps can't be pushed down;
+## index merge union case, sink limit above selection above index merge reader, because json_overlaps can't be pushed down
+explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_overlaps(j, '[1, 2, 3]') limit 1;
 show warnings;
-explain format = 'brief' select /*+ use_index(t, kj) */ * from t where (1 member of (j) and a=1 ) limit 1; -- index merge union case, sink limit to table side, because selection exists on table side;
+## index merge union case, sink limit to table side, because selection exists on table side
+explain format = 'brief' select /*+ use_index(t, kj) */ * from t where (1 member of (j) and a=1 ) limit 1;
 show warnings;
-explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_contains(j, '[1, 2, 3]') and a=1 limit 1; -- index merge intersection case, sink limit to table side because selection exists on table side;
+## index merge intersection case, sink limit to table side because selection exists on table side
+explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_contains(j, '[1, 2, 3]') and a=1 limit 1;
 show warnings;
-explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_overlaps(j, '[1, 2, 3]') and a=1 limit 1; -- index merge union case, sink limit above selection above index merge reader, because json_overlaps can't be pushed down;
+## index merge union case, sink limit above selection above index merge reader, because json_overlaps can't be pushed down
+explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_overlaps(j, '[1, 2, 3]') and a=1 limit 1;
 show warnings;
 set tidb_cost_model_version=DEFAULT;
+## index merge union and intersection case from issue 48588
+explain select /*+ USE_INDEX_MERGE(t3, aid_c1, aid_c2) */ * from t3 where (aid = 1 and c1='aaa') or (aid = 1 and c2='bbb') limit 1;
+show warnings;
 

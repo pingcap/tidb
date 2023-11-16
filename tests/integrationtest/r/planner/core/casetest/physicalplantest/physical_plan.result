@@ -1032,9 +1032,9 @@ IndexReader	40.00	root		index:IndexRangeScan
 select e from t where e != 'b';
 e
 
-c
-a
 
+a
+c
 explain format='brief' select e from t where e > 'b';
 id	estRows	task	access object	operator info
 IndexReader	10.00	root		index:IndexRangeScan
@@ -1048,8 +1048,8 @@ IndexReader	20.00	root		index:IndexRangeScan
 └─IndexRangeScan	20.00	cop[tikv]	table:t, index:idx(e)	range:["c","c"], ["b","b"], keep order:false, stats:pseudo
 select e from t where e >= 'b';
 e
-c
 b
+c
 explain format='brief' select e from t where e < 'b';
 id	estRows	task	access object	operator info
 IndexReader	30.00	root		index:IndexRangeScan
@@ -1057,8 +1057,8 @@ IndexReader	30.00	root		index:IndexRangeScan
 select e from t where e < 'b';
 e
 
-a
 
+a
 explain format='brief' select e from t where e <= 'b';
 id	estRows	task	access object	operator info
 IndexReader	40.00	root		index:IndexRangeScan
@@ -1066,9 +1066,9 @@ IndexReader	40.00	root		index:IndexRangeScan
 select e from t where e <= 'b';
 e
 
-b
-a
 
+a
+b
 explain format='brief' select e from t where e = 2;
 id	estRows	task	access object	operator info
 IndexReader	10.00	root		index:IndexRangeScan
@@ -1083,26 +1083,26 @@ IndexReader	6656.67	root		index:IndexRangeScan
 select e from t where e != 2;
 e
 
-c
-a
 
+a
+c
 explain format='brief' select e from t where e > 2;
 id	estRows	task	access object	operator info
 IndexReader	3333.33	root		index:IndexRangeScan
 └─IndexRangeScan	3333.33	cop[tikv]	table:t, index:idx(e)	range:("b",+inf], keep order:false, stats:pseudo
 select e from t where e > 2;
 e
-a
 
+a
 explain format='brief' select e from t where e >= 2;
 id	estRows	task	access object	operator info
 IndexReader	3333.33	root		index:IndexRangeScan
 └─IndexRangeScan	3333.33	cop[tikv]	table:t, index:idx(e)	range:["b",+inf], keep order:false, stats:pseudo
 select e from t where e >= 2;
 e
-b
-a
 
+a
+b
 explain format='brief' select e from t where e < 2;
 id	estRows	task	access object	operator info
 IndexReader	3323.33	root		index:IndexRangeScan
@@ -1118,17 +1118,17 @@ IndexReader	3323.33	root		index:IndexRangeScan
 select e from t where e <= 2;
 e
 
-c
 b
+c
 explain format='brief' select e from t where e > '';
 id	estRows	task	access object	operator info
 IndexReader	30.00	root		index:IndexRangeScan
 └─IndexRangeScan	30.00	cop[tikv]	table:t, index:idx(e)	range:["c","c"], ["b","b"], ["a","a"], keep order:false, stats:pseudo
 select e from t where e > '';
 e
-c
-b
 a
+b
+c
 explain format='brief' select e from t where e > 'd';
 id	estRows	task	access object	operator info
 TableDual	0.00	root		rows:0
@@ -1141,10 +1141,10 @@ IndexReader	3333.33	root		index:IndexRangeScan
 select e from t where e > -1;
 e
 
-c
-b
-a
 
+a
+b
+c
 explain format='brief' select e from t where e > 5;
 id	estRows	task	access object	operator info
 IndexReader	3333.33	root		index:IndexRangeScan
@@ -1165,9 +1165,9 @@ IndexReader	30.00	root		index:IndexRangeScan
 └─IndexRangeScan	30.00	cop[tikv]	table:t, index:idx(e)	range:["c","c"], ["b","b"], ["a","a"], keep order:false, stats:pseudo
 select e from t where e != '';
 e
-c
-b
 a
+b
+c
 drop table if exists PK_S_MULTI_31;
 CREATE TABLE `PK_S_MULTI_31` (
 `COL1` tinyint(45) NOT NULL,
@@ -1192,12 +1192,14 @@ col2
 drop table if exists t1, t2;
 create table t1(a int, b int as (a+1) virtual);
 create table t2(a int, b int as (a+1) virtual, c int, key idx_a(a));
+## Make sure row_count(tikv_selection) == row_count(table_reader) and row_count(table_reader) > row_count(tidb_selection)
 explain format='brief' select * from t1 where a > 1 and b > 1;
 id	estRows	task	access object	operator info
 Selection	1111.11	root		gt(planner__core__casetest__physicalplantest__physical_plan.t1.b, 1)
 └─TableReader	3333.33	root		data:Selection
   └─Selection	3333.33	cop[tikv]		gt(planner__core__casetest__physicalplantest__physical_plan.t1.a, 1)
     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+## Make sure row_count(tikv_selection) == row_count(index_lookup) and row_count(index_lookup) > row_count(tidb_selection)
 explain format='brief' select * from t2 use index(idx_a) where a > 1 and b > 1 and c > 1;
 id	estRows	task	access object	operator info
 Selection	370.37	root		gt(planner__core__casetest__physicalplantest__physical_plan.t2.b, 1)
@@ -3610,13 +3612,23 @@ show warnings;
 Level	Code	Message
 Warning	1105	disable dynamic pruning due to thash has no global stats
 set tidb_cost_model_version=DEFAULT;
-drop table if exists t, t2;
+drop table if exists t, t2, t3;
 set tidb_cost_model_version=1;
 CREATE TABLE `t2` (  `a` int(11) DEFAULT NULL,  `b` int(11) DEFAULT NULL,  `c` int(11) DEFAULT NULL,  KEY `a` (`a`),  KEY `b` (`b`)) ;
 insert into t2 values(1,2,1),(2,1,1),(3,3,1);
 create table t(a int, j json, index kj((cast(j as signed array))));
 insert into t values(1, '[1,2,3]');
-explain format = 'brief' select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 or b=1 and c=1 limit 2; -- test sink limit to table side of union index merge case, because of table side selection;
+CREATE TABLE `t3` (
+`id` int(11) NOT NULL,
+`aid` bigint(20) DEFAULT NULL,
+`c1` varchar(255) DEFAULT NULL,
+`c2` varchar(255) DEFAULT NULL,
+`d` int(11) DEFAULT NULL,
+PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+KEY `aid_c1` (`aid`,`c1`),
+KEY `aid_c2` (`aid`,`c2`)
+);
+explain format = 'brief' select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 or b=1 and c=1 limit 2;
 id	estRows	task	access object	operator info
 Limit	2.00	root		offset:0, count:2
 └─IndexMerge	0.00	root		type: union
@@ -3627,7 +3639,7 @@ Limit	2.00	root		offset:0, count:2
       └─TableRowIDScan	3.99	cop[tikv]	table:t2	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
-explain format = 'brief' select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 and b=1 and c=1 limit 2; -- test sink limit to table side of intersection index merge case, because of table side selection;
+explain format = 'brief' select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 and b=1 and c=1 limit 2;
 id	estRows	task	access object	operator info
 Limit	0.00	root		offset:0, count:2
 └─IndexMerge	0.01	root		type: intersection
@@ -3642,7 +3654,7 @@ select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 and b=1 and c=1 limi
 a	b	c
 show warnings;
 Level	Code	Message
-explain format = 'brief' select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 or b=1 limit 2; -- test sink limit to index side of union index merge case, because of table side is pure table scan;
+explain format = 'brief' select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 or b=1 limit 2;
 id	estRows	task	access object	operator info
 IndexMerge	2.00	root		type: union, limit embedded(offset:0, count:2)
 ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:2
@@ -3652,7 +3664,7 @@ IndexMerge	2.00	root		type: union, limit embedded(offset:0, count:2)
 └─TableRowIDScan(Probe)	2.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
-explain format = 'brief' select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 and b=1 limit 2; -- test sink limit to table side of intersection index merge case, because of intersection case special;
+explain format = 'brief' select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 and b=1 limit 2;
 id	estRows	task	access object	operator info
 IndexMerge	0.01	root		type: intersection, limit embedded(offset:0, count:2)
 ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t2, index:a(a)	range:[1,1], keep order:false, stats:pseudo
@@ -3664,7 +3676,7 @@ select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 and b=1 limit 2;
 a	b	c
 show warnings;
 Level	Code	Message
-explain format = 'brief' select /*+ use_index(t, kj) */ * from t where (1 member of (j)) limit 1; -- index merge union case, sink limit into index side and embed another one inside index merge reader;
+explain format = 'brief' select /*+ use_index(t, kj) */ * from t where (1 member of (j)) limit 1;
 id	estRows	task	access object	operator info
 IndexMerge	0.00	root		type: union, limit embedded(offset:0, count:1)
 ├─Limit(Build)	0.00	cop[tikv]		offset:0, count:1
@@ -3672,7 +3684,7 @@ IndexMerge	0.00	root		type: union, limit embedded(offset:0, count:1)
 └─TableRowIDScan(Probe)	0.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
-explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_contains(j, '[1, 2, 3]') limit 1; -- index merge intersection case, embedding limit into index merge reader;
+explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_contains(j, '[1, 2, 3]') limit 1;
 id	estRows	task	access object	operator info
 IndexMerge	0.00	root		type: intersection, limit embedded(offset:0, count:1)
 ├─IndexRangeScan(Build)	0.00	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[1,1], keep order:false, stats:pseudo
@@ -3681,7 +3693,7 @@ IndexMerge	0.00	root		type: intersection, limit embedded(offset:0, count:1)
 └─TableRowIDScan(Probe)	0.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
-explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_overlaps(j, '[1, 2, 3]') limit 1; -- index merge union case, sink limit above selection above index merge reader, because json_overlaps can't be pushed down;
+explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_overlaps(j, '[1, 2, 3]') limit 1;
 id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
 └─Selection	1.00	root		json_overlaps(planner__core__casetest__physicalplantest__physical_plan.t.j, cast("[1, 2, 3]", json BINARY))
@@ -3693,7 +3705,7 @@ Limit	1.00	root		offset:0, count:1
 show warnings;
 Level	Code	Message
 Warning	1105	Scalar function 'json_overlaps'(signature: Unspecified, return type: bigint(20)) is not supported to push down to storage layer now.
-explain format = 'brief' select /*+ use_index(t, kj) */ * from t where (1 member of (j) and a=1 ) limit 1; -- index merge union case, sink limit to table side, because selection exists on table side;
+explain format = 'brief' select /*+ use_index(t, kj) */ * from t where (1 member of (j) and a=1 ) limit 1;
 id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
 └─IndexMerge	0.00	root		type: union
@@ -3703,7 +3715,7 @@ Limit	1.00	root		offset:0, count:1
       └─TableRowIDScan	1.25	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
-explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_contains(j, '[1, 2, 3]') and a=1 limit 1; -- index merge intersection case, sink limit to table side because selection exists on table side;
+explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_contains(j, '[1, 2, 3]') and a=1 limit 1;
 id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
 └─IndexMerge	0.00	root		type: intersection
@@ -3715,7 +3727,7 @@ Limit	1.00	root		offset:0, count:1
       └─TableRowIDScan	1.25	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
-explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_overlaps(j, '[1, 2, 3]') and a=1 limit 1; -- index merge union case, sink limit above selection above index merge reader, because json_overlaps can't be pushed down;
+explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_overlaps(j, '[1, 2, 3]') and a=1 limit 1;
 id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
 └─Selection	1.00	root		json_overlaps(planner__core__casetest__physicalplantest__physical_plan.t.j, cast("[1, 2, 3]", json BINARY))
@@ -3729,3 +3741,13 @@ show warnings;
 Level	Code	Message
 Warning	1105	Scalar function 'json_overlaps'(signature: Unspecified, return type: bigint(20)) is not supported to push down to storage layer now.
 set tidb_cost_model_version=DEFAULT;
+explain select /*+ USE_INDEX_MERGE(t3, aid_c1, aid_c2) */ * from t3 where (aid = 1 and c1='aaa') or (aid = 1 and c2='bbb') limit 1;
+id	estRows	task	access object	operator info
+IndexMerge_20	1.00	root		type: union, limit embedded(offset:0, count:1)
+├─Limit_18(Build)	0.01	cop[tikv]		offset:0, count:1
+│ └─IndexRangeScan_11	0.01	cop[tikv]	table:t3, index:aid_c1(aid, c1)	range:[1 "aaa",1 "aaa"], keep order:false, stats:pseudo
+├─Limit_19(Build)	0.01	cop[tikv]		offset:0, count:1
+│ └─IndexRangeScan_12	0.01	cop[tikv]	table:t3, index:aid_c2(aid, c2)	range:[1 "bbb",1 "bbb"], keep order:false, stats:pseudo
+└─TableRowIDScan_13(Probe)	1.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+show warnings;
+Level	Code	Message
