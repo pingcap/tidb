@@ -105,17 +105,19 @@ func (p *Pool) GetChunk(fields []*types.FieldType) *Chunk {
 // PutChunk puts a Chunk back to the Pool.
 func (p *Pool) PutChunk(fields []*types.FieldType, chk *Chunk) {
 	for i, f := range fields {
+		c := chk.columns[i]
+		c.reset()
 		switch elemLen := getFixedLen(f); elemLen {
 		case varElemLen:
-			p.varLenColPool.Put(chk.columns[i])
+			p.varLenColPool.Put(c)
 		case 4:
-			p.fixLenColPool4.Put(chk.columns[i])
+			p.fixLenColPool4.Put(c)
 		case 8:
-			p.fixLenColPool8.Put(chk.columns[i])
+			p.fixLenColPool8.Put(c)
 		case 16:
-			p.fixLenColPool16.Put(chk.columns[i])
+			p.fixLenColPool16.Put(c)
 		case 40:
-			p.fixLenColPool40.Put(chk.columns[i])
+			p.fixLenColPool40.Put(c)
 		}
 	}
 	chk.columns = nil // release the Column references.
