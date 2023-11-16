@@ -132,7 +132,10 @@ func (*MockDataSource) RandDatum(typ *types.FieldType) interface{} {
 		return d.FromInt(val.Int64())
 	case mysql.TypeVarString:
 		buff := make([]byte, 10)
-		rand.Read(buff)
+		_, err := rand.Read(buff)
+		if err != nil {
+			panic("rand.Read returns error")
+		}
 		return base64.RawURLEncoding.EncodeToString(buff)
 	default:
 		panic("not implement")
