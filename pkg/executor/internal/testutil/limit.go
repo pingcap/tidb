@@ -32,8 +32,8 @@ type LimitCase struct {
 	Rows                  int
 	Offset                int
 	Count                 int
-	ChildUsedSchema       []bool
 	Ctx                   sessionctx.Context
+	ChildUsedSchema       []bool
 }
 
 // Columns creates columns

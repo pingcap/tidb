@@ -28,13 +28,13 @@ import (
 
 // AggTestCase has a fixed schema (aggCol Double, groupBy LongLong).
 type AggTestCase struct {
-	ExecType         string // "hash" or "stream"
-	AggFunc          string // sum, avg, count ....
-	GroupByNDV       int    // the number of distinct group-by keys
+	DataSourceSorted bool
 	HasDistinct      bool
+	GroupByNDV       int // the number of distinct group-by keys
 	Rows             int
 	Concurrency      int
-	DataSourceSorted bool
+	ExecType         string // "hash" or "stream"
+	AggFunc          string // sum, avg, count ....
 	Ctx              sessionctx.Context
 }
 
@@ -57,5 +57,15 @@ func DefaultAggTestCase(exec string) *AggTestCase {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	return &AggTestCase{exec, ast.AggFuncSum, 1000, false, 10000000, 4, true, ctx}
+	// return &AggTestCase{exec, ast.AggFuncSum, 1000, false, 10000000, 4, true, ctx}
+	return &AggTestCase{
+		ExecType:         exec,
+		AggFunc:          ast.AggFuncSum,
+		GroupByNDV:       1000,
+		HasDistinct:      false,
+		Rows:             10000000,
+		Concurrency:      4,
+		DataSourceSorted: true,
+		Ctx:              ctx,
+	}
 }

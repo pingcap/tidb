@@ -29,9 +29,9 @@ import (
 // SortCase is the sort case
 type SortCase struct {
 	Rows       int
-	Ctx        sessionctx.Context
 	OrderByIdx []int
 	Ndvs       []int
+	Ctx        sessionctx.Context
 }
 
 // Columns creates column
