@@ -30,17 +30,17 @@ import (
 
 // WindowTestCase has a fixed schema (col Double, partitionBy LongLong, rawData VarString(16), col LongLong).
 type WindowTestCase struct {
-	DataSourceSorted bool
+	WindowFunc       string
 	NumFunc          int // The number of windowFuncs. Default: 1.
+	Frame            *core.WindowFrame
 	Ndv              int // the number of distinct group-by keys
 	Rows             int
 	Concurrency      int
 	Pipelined        int
-	Frame            *core.WindowFrame
-	WindowFunc       string
+	DataSourceSorted bool
+	Ctx              sessionctx.Context
 	RawDataSmall     string
 	Columns          []*expression.Column // the columns of mock schema
-	Ctx              sessionctx.Context
 }
 
 // String gets case content
