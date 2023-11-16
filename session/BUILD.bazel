@@ -72,6 +72,7 @@ go_library(
         "//util/chunk",
         "//util/collate",
         "//util/dbterror",
+        "//util/dbterror/exeerrors",
         "//util/execdetails",
         "//util/kvcache",
         "//util/logutil",

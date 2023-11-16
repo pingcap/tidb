@@ -12,6 +12,7 @@ go_library(
     deps = [
         "//parser",
         "//parser/ast",
+        "//parser/terror",
         "//sessionctx",
         "//sessionctx/variable",
         "//types",

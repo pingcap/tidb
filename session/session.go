@@ -216,6 +216,17 @@ type Session interface {
 
 var _ Session = (*session)(nil)
 
+func init() {
+	executor.CreateSession = func(ctx sessionctx.Context) (sessionctx.Context, error) {
+		return CreateSession(ctx.GetStore())
+	}
+	executor.CloseSession = func(ctx sessionctx.Context) {
+		if se, ok := ctx.(Session); ok {
+			se.Close()
+		}
+	}
+}
+
 type stmtRecord struct {
 	st      sqlexec.Statement
 	stmtCtx *stmtctx.StatementContext

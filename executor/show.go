@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/etcd"
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/hack"
@@ -507,7 +508,7 @@ func (e *ShowExec) fetchShowTables() error {
 		}
 	}
 	if !e.is.SchemaExists(e.DBName) {
-		return ErrBadDB.GenWithStackByArgs(e.DBName)
+		return exeerrors.ErrBadDB.GenWithStackByArgs(e.DBName)
 	}
 	// sort for tables
 	schemaTables := e.is.SchemaTables(e.DBName)
@@ -563,7 +564,7 @@ func (e *ShowExec) fetchShowTableStatus(ctx context.Context) error {
 		}
 	}
 	if !e.is.SchemaExists(e.DBName) {
-		return ErrBadDB.GenWithStackByArgs(e.DBName)
+		return exeerrors.ErrBadDB.GenWithStackByArgs(e.DBName)
 	}
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
@@ -1297,7 +1298,7 @@ func (e *ShowExec) fetchShowCreateSequence() error {
 	}
 	tableInfo := tbl.Meta()
 	if !tableInfo.IsSequence() {
-		return ErrWrongObject.GenWithStackByArgs(e.DBName.O, tableInfo.Name.O, "SEQUENCE")
+		return exeerrors.ErrWrongObject.GenWithStackByArgs(e.DBName.O, tableInfo.Name.O, "SEQUENCE")
 	}
 	var buf bytes.Buffer
 	ConstructResultOfShowCreateSequence(e.ctx, tableInfo, &buf)
@@ -1366,7 +1367,7 @@ func (e *ShowExec) fetchShowCreateView() error {
 	}
 
 	if !tb.Meta().IsView() {
-		return ErrWrongObject.GenWithStackByArgs(db.Name.O, tb.Meta().Name.O, "VIEW")
+		return exeerrors.ErrWrongObject.GenWithStackByArgs(db.Name.O, tb.Meta().Name.O, "VIEW")
 	}
 
 	var buf bytes.Buffer
@@ -1540,7 +1541,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 
 	if len(rows) == 0 {
 		// FIXME: the error returned is not escaped safely
-		return ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER",
+		return exeerrors.ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER",
 			fmt.Sprintf("'%s'@'%s'", e.User.Username, e.User.Hostname))
 	}
 
@@ -1655,7 +1656,7 @@ func (e *ShowExec) fetchShowGrants() error {
 		// Ref https://dev.mysql.com/doc/refman/8.0/en/show-grants.html
 		if userName != e.User.Username || hostName != e.User.Hostname {
 			if !checker.RequestVerification(vars.ActiveRoles, mysql.SystemDB, "", "", mysql.SelectPriv) {
-				return ErrDBaccessDenied.GenWithStackByArgs(userName, hostName, mysql.SystemDB)
+				return exeerrors.ErrDBaccessDenied.GenWithStackByArgs(userName, hostName, mysql.SystemDB)
 			}
 		}
 	}
@@ -1665,7 +1666,7 @@ func (e *ShowExec) fetchShowGrants() error {
 			r.Hostname = "%"
 		}
 		if !checker.FindEdge(e.ctx, r, e.User) {
-			return ErrRoleNotGranted.GenWithStackByArgs(r.String(), e.User.String())
+			return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(r.String(), e.User.String())
 		}
 	}
 	gs, err := checker.ShowGrants(e.ctx, e.User, e.Roles)
@@ -1824,7 +1825,7 @@ func (e *ShowExec) dbAccessDenied() error {
 		u = user.AuthUsername
 		h = user.AuthHostname
 	}
-	return ErrDBaccessDenied.GenWithStackByArgs(u, h, e.DBName)
+	return exeerrors.ErrDBaccessDenied.GenWithStackByArgs(u, h, e.DBName)
 }
 
 func (e *ShowExec) tableAccessDenied(access string, table string) error {
@@ -1835,7 +1836,7 @@ func (e *ShowExec) tableAccessDenied(access string, table string) error {
 		u = user.AuthUsername
 		h = user.AuthHostname
 	}
-	return ErrTableaccessDenied.GenWithStackByArgs(access, u, h, table)
+	return exeerrors.ErrTableaccessDenied.GenWithStackByArgs(access, u, h, table)
 }
 
 func (e *ShowExec) appendRow(row []interface{}) {

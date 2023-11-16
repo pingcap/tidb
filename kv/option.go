@@ -174,6 +174,8 @@ const (
 	InternalTxnTrace = "Trace"
 	// InternalTxnTTL is the type of TTL usage
 	InternalTxnTTL = "TTL"
+	// InternalImportInto is the type of IMPORT INTO usage
+	InternalImportInto = "ImportInto"
 )
 
 // The bitmap:

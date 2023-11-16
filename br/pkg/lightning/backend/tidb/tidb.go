@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -99,7 +100,7 @@ func NewEncodingBuilder() backend.EncodingBuilder {
 
 // NewEncoder creates a KV encoder.
 // It implements the `backend.EncodingBuilder` interface.
-func (b *encodingBuilder) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
+func (b *encodingBuilder) NewEncoder(ctx context.Context, tbl table.Table, options *encode.SessionOptions) (kv.Encoder, error) {
 	se := kv.NewSession(options, log.FromContext(ctx))
 	if options.SQLMode.HasStrictMode() {
 		se.GetSessionVars().SkipUTF8Check = false
@@ -567,7 +568,7 @@ func (be *tidbBackend) CheckRequirements(ctx context.Context, _ *backend.CheckCt
 	return be.targetInfoGetter.CheckRequirements(ctx, nil)
 }
 
-func (be *tidbBackend) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
+func (be *tidbBackend) NewEncoder(ctx context.Context, tbl table.Table, options *encode.SessionOptions) (kv.Encoder, error) {
 	return be.encBuilder.NewEncoder(ctx, tbl, options)
 }
 
@@ -583,11 +584,11 @@ func (be *tidbBackend) CleanupEngine(context.Context, uuid.UUID) error {
 	return nil
 }
 
-func (be *tidbBackend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
+func (be *tidbBackend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (bool, error) {
 	panic("Unsupported Operation")
 }
 
-func (be *tidbBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
+func (be *tidbBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (bool, error) {
 	panic("Unsupported Operation")
 }
 

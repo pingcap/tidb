@@ -920,6 +920,8 @@ import (
 	InsertIntoStmt             "INSERT INTO statement"
 	CallStmt                   "CALL statement"
 	IndexAdviseStmt            "INDEX ADVISE statement"
+	ImportIntoStmt             "IMPORT INTO statement"
+	ImportFromSelectStmt       "SELECT statement of IMPORT INTO"
 	KillStmt                   "Kill statement"
 	LoadDataStmt               "Load data statement"
 	LoadStatsStmt              "Load statistic statement"
@@ -1099,6 +1101,9 @@ import (
 	LimitOption                            "Limit option could be integer or parameter marker."
 	Lines                                  "Lines clause"
 	LoadDataSetSpecOpt                     "Optional load data specification"
+	LoadDataOptionListOpt                  "Optional load data option list"
+	LoadDataOptionList                     "Load data option list"
+	LoadDataOption                         "Load data option"
 	LoadDataSetList                        "Load data specifications"
 	LoadDataSetItem                        "Single load data specification"
 	LocalOpt                               "Local opt"
@@ -11415,6 +11420,7 @@ Statement:
 |	GrantProxyStmt
 |	GrantRoleStmt
 |	CallStmt
+|	ImportIntoStmt
 |	InsertIntoStmt
 |	IndexAdviseStmt
 |	KillStmt
@@ -13880,6 +13886,73 @@ LoadDataSetItem:
 		}
 	}
 
+LoadDataOptionListOpt:
+	{
+		$$ = []*ast.LoadDataOpt{}
+	}
+|	"WITH" LoadDataOptionList
+	{
+		$$ = $2.([]*ast.LoadDataOpt)
+	}
+
+LoadDataOptionList:
+	LoadDataOption
+	{
+		$$ = []*ast.LoadDataOpt{$1.(*ast.LoadDataOpt)}
+	}
+|	LoadDataOptionList ',' LoadDataOption
+	{
+		$$ = append($1.([]*ast.LoadDataOpt), $3.(*ast.LoadDataOpt))
+	}
+
+LoadDataOption:
+	identifier
+	{
+		$$ = &ast.LoadDataOpt{Name: strings.ToLower($1)}
+	}
+|	identifier "=" SignedLiteral
+	{
+		$$ = &ast.LoadDataOpt{Name: strings.ToLower($1), Value: $3.(ast.ExprNode)}
+	}
+
+ImportIntoStmt:
+	"IMPORT" "INTO" TableName ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt "FROM" ImportFromSelectStmt LoadDataOptionListOpt
+	/* LoadDataSetSpecOpt is used to avoid shift/reduce conflict, we don't support it actually */
+	{
+		$$ = &ast.ImportIntoStmt{
+			Table:              $3.(*ast.TableName),
+			ColumnsAndUserVars: $4.([]*ast.ColumnNameOrUserVar),
+			Select:             $7.(ast.ResultSetNode),
+			Options:            $8.([]*ast.LoadDataOpt),
+		}
+	}
+
+ImportFromSelectStmt:
+	SelectStmt
+	{
+		$$ = $1
+	}
+|	SetOprStmt
+	{
+		$$ = $1
+	}
+|	SelectStmtWithClause
+	{
+		$$ = $1
+	}
+|	SubSelect
+	{
+		var sel ast.ResultSetNode
+		switch x := $1.(*ast.SubqueryExpr).Query.(type) {
+		case *ast.SelectStmt:
+			x.IsInBraces = true
+			sel = x
+		case *ast.SetOprStmt:
+			x.IsInBraces = true
+			sel = x
+		}
+		$$ = sel.(ast.StmtNode)
+	}
 /*********************************************************************
  * Lock/Unlock Tables
  * See http://dev.mysql.com/doc/refman/5.7/en/lock-tables.html

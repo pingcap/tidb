@@ -34,6 +34,7 @@ import (
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
@@ -429,7 +430,7 @@ func NewRestoreControllerWithPauser(
 		backend:       backend,
 		pdCli:         pdCli,
 		tidbGlue:      p.Glue,
-		sysVars:       defaultImportantVariables,
+		sysVars:       common.DefaultImportantVariables,
 		tls:           tls,
 		checkTemplate: NewSimpleTemplate(),
 
@@ -2778,7 +2779,7 @@ func (cr *chunkRestore) restore(
 	rc *Controller,
 ) error {
 	// Create the encoder.
-	kvEncoder, err := rc.backend.NewEncoder(ctx, t.encTable, &kv.SessionOptions{
+	kvEncoder, err := rc.backend.NewEncoder(ctx, t.encTable, &encode.SessionOptions{
 		SQLMode:   rc.cfg.TiDB.SQLMode,
 		Timestamp: cr.chunk.Timestamp,
 		SysVars:   rc.sysVars,

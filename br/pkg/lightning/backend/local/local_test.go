@@ -440,7 +440,7 @@ func (c *mockSplitClient) GetRegion(ctx context.Context, key []byte) (*split.Reg
 }
 
 func TestIsIngestRetryable(t *testing.T) {
-	local := &local{
+	local := &Local{
 		splitCli: &mockSplitClient{},
 		logger:   log.L(),
 	}
@@ -1186,7 +1186,7 @@ func TestMultiIngest(t *testing.T) {
 		pdCtl := &pdutil.PdController{}
 		pdCtl.SetPDClient(&mockPdClient{stores: stores})
 
-		local := &local{
+		local := &Local{
 			pdCtl: pdCtl,
 			importClientFactory: &mockImportClientFactory{
 				stores: allStores,
@@ -1207,7 +1207,7 @@ func TestMultiIngest(t *testing.T) {
 }
 
 func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
-	bak := local{}
+	bak := Local{}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace"))
@@ -1251,7 +1251,7 @@ func TestGetRegionSplitSizeKeys(t *testing.T) {
 }
 
 func TestLocalIsRetryableTiKVWriteError(t *testing.T) {
-	l := local{}
+	l := Local{}
 	require.True(t, l.isRetryableImportTiKVError(io.EOF))
 	require.True(t, l.isRetryableImportTiKVError(errors.Trace(io.EOF)))
 }
@@ -1271,7 +1271,7 @@ func TestCheckPeersBusy(t *testing.T) {
 		}}
 
 	createTimeStore12 := 0
-	local := &local{
+	local := &Local{
 		pdCtl:    pdCtl,
 		splitCli: splitCli,
 		importClientFactory: &mockImportClientFactory{
@@ -1369,7 +1369,7 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 	h := &regionChangedHook{}
 	splitCli := initTestSplitClient3Replica([][]byte{{}, {'b'}, {}}, h)
 
-	local := &local{
+	local := &Local{
 		pdCtl:    pdCtl,
 		splitCli: splitCli,
 		importClientFactory: &mockImportClientFactory{

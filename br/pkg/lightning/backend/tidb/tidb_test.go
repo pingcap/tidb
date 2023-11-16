@@ -23,6 +23,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -99,7 +100,7 @@ func TestWriteRowsReplaceOnDup(t *testing.T) {
 	// skip column a,c due to ignore-columns
 	perms[0] = -1
 	perms[2] = -1
-	encoder, err := s.backend.NewEncoder(context.Background(), s.tbl, &kv.SessionOptions{SQLMode: 0, Timestamp: 1234567890})
+	encoder, err := s.backend.NewEncoder(context.Background(), s.tbl, &encode.SessionOptions{SQLMode: 0, Timestamp: 1234567890})
 	require.NoError(t, err)
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewUintDatum(18446744073709551615),
@@ -149,7 +150,7 @@ func TestWriteRowsIgnoreOnDup(t *testing.T) {
 	indexRows := ignoreBackend.MakeEmptyRows()
 	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
 
-	encoder, err := ignoreBackend.NewEncoder(ctx, s.tbl, &kv.SessionOptions{})
+	encoder, err := ignoreBackend.NewEncoder(ctx, s.tbl, &encode.SessionOptions{})
 	require.NoError(t, err)
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(1),
@@ -165,7 +166,7 @@ func TestWriteRowsIgnoreOnDup(t *testing.T) {
 	require.NoError(t, err)
 
 	// test encode rows with _tidb_rowid
-	encoder, err = ignoreBackend.NewEncoder(ctx, s.tbl, &kv.SessionOptions{})
+	encoder, err = ignoreBackend.NewEncoder(ctx, s.tbl, &encode.SessionOptions{})
 	require.NoError(t, err)
 	rowWithID, err := encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(1),
@@ -195,7 +196,7 @@ func TestWriteRowsErrorOnDup(t *testing.T) {
 	indexRows := ignoreBackend.MakeEmptyRows()
 	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
 
-	encoder, err := ignoreBackend.NewEncoder(ctx, s.tbl, &kv.SessionOptions{})
+	encoder, err := ignoreBackend.NewEncoder(ctx, s.tbl, &encode.SessionOptions{})
 	require.NoError(t, err)
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(1),
@@ -232,7 +233,7 @@ func testStrictMode(t *testing.T) {
 	ctx := context.Background()
 
 	bk := tidb.NewTiDBBackend(ctx, s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig(), log.L()))
-	encoder, err := bk.NewEncoder(ctx, tbl, &kv.SessionOptions{SQLMode: mysql.ModeStrictAllTables})
+	encoder, err := bk.NewEncoder(ctx, tbl, &encode.SessionOptions{SQLMode: mysql.ModeStrictAllTables})
 	require.NoError(t, err)
 
 	logger := log.L()
@@ -248,7 +249,7 @@ func testStrictMode(t *testing.T) {
 	require.Regexp(t, `incorrect utf8 value .* for column s0$`, err.Error())
 
 	// oepn a new encode because column count changed.
-	encoder, err = bk.NewEncoder(ctx, tbl, &kv.SessionOptions{SQLMode: mysql.ModeStrictAllTables})
+	encoder, err = bk.NewEncoder(ctx, tbl, &encode.SessionOptions{SQLMode: mysql.ModeStrictAllTables})
 	require.NoError(t, err)
 	_, err = encoder.Encode(logger, []types.Datum{
 		types.NewStringDatum(""),
@@ -609,7 +610,7 @@ func encodeRowsTiDB(t *testing.T, b backend.Backend, tbl table.Table) kv.Rows {
 	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
 	logger := log.L()
 
-	encoder, err := b.NewEncoder(context.Background(), tbl, &kv.SessionOptions{})
+	encoder, err := b.NewEncoder(context.Background(), tbl, &encode.SessionOptions{})
 	require.NoError(t, err)
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(1),

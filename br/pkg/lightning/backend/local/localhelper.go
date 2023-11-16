@@ -64,7 +64,7 @@ var (
 
 // SplitAndScatterRegionInBatches splits&scatter regions in batches.
 // Too many split&scatter requests may put a lot of pressure on TiKV and PD.
-func (local *local) SplitAndScatterRegionInBatches(
+func (local *Local) SplitAndScatterRegionInBatches(
 	ctx context.Context,
 	ranges []Range,
 	tableInfo *checkpoints.TidbTableInfo,
@@ -88,7 +88,7 @@ func (local *local) SplitAndScatterRegionInBatches(
 // we can simply call br function, but we need to change some function signature of br
 // When the ranges total size is small, we can skip the split to avoid generate empty regions.
 // TODO: remove this file and use br internal functions
-func (local *local) SplitAndScatterRegionByRanges(
+func (local *Local) SplitAndScatterRegionByRanges(
 	ctx context.Context,
 	ranges []Range,
 	tableInfo *checkpoints.TidbTableInfo,
@@ -99,10 +99,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 		return nil
 	}
 
-	db, err := local.g.GetDB()
-	if err != nil {
-		return errors.Trace(err)
-	}
+	var err error
 
 	minKey := codec.EncodeBytes([]byte{}, ranges[0].start)
 	maxKey := codec.EncodeBytes([]byte{}, ranges[len(ranges)-1].end)
@@ -173,7 +170,12 @@ func (local *local) SplitAndScatterRegionByRanges(
 		}
 
 		var tableRegionStats map[uint64]int64
-		if tableInfo != nil {
+		if tableInfo != nil && local.g != nil {
+			var db *sql.DB
+			db, err = local.g.GetDB()
+			if err != nil {
+				return errors.Trace(err)
+			}
 			tableRegionStats, err = fetchTableRegionSizeStats(ctx, db, tableInfo.ID)
 			if err != nil {
 				log.FromContext(ctx).Warn("fetch table region size statistics failed",
@@ -380,7 +382,7 @@ func fetchTableRegionSizeStats(ctx context.Context, db *sql.DB, tableID int64) (
 	return stats, errors.Trace(err)
 }
 
-func (local *local) BatchSplitRegions(
+func (local *Local) BatchSplitRegions(
 	ctx context.Context,
 	region *split.RegionInfo,
 	keys [][]byte,
@@ -425,7 +427,7 @@ func (local *local) BatchSplitRegions(
 	return region, newRegions, nil
 }
 
-func (local *local) hasRegion(ctx context.Context, regionID uint64) (bool, error) {
+func (local *Local) hasRegion(ctx context.Context, regionID uint64) (bool, error) {
 	regionInfo, err := local.splitCli.GetRegionByID(ctx, regionID)
 	if err != nil {
 		return false, err
@@ -433,7 +435,7 @@ func (local *local) hasRegion(ctx context.Context, regionID uint64) (bool, error
 	return regionInfo != nil, nil
 }
 
-func (local *local) waitForSplit(ctx context.Context, regionID uint64) {
+func (local *Local) waitForSplit(ctx context.Context, regionID uint64) {
 	for i := 0; i < split.SplitCheckMaxRetryTimes; i++ {
 		ok, err := local.hasRegion(ctx, regionID)
 		if err != nil {
@@ -451,7 +453,7 @@ func (local *local) waitForSplit(ctx context.Context, regionID uint64) {
 	}
 }
 
-func (local *local) waitForScatterRegions(ctx context.Context, regions []*split.RegionInfo) (scatterCount int, _ error) {
+func (local *Local) waitForScatterRegions(ctx context.Context, regions []*split.RegionInfo) (scatterCount int, _ error) {
 	subCtx, cancel := context.WithTimeout(ctx, split.ScatterWaitUpperInterval)
 	defer cancel()
 
@@ -482,7 +484,7 @@ func (local *local) waitForScatterRegions(ctx context.Context, regions []*split.
 	return scatterCount, nil
 }
 
-func (local *local) checkRegionScatteredOrReScatter(ctx context.Context, regionInfo *split.RegionInfo) (bool, error) {
+func (local *Local) checkRegionScatteredOrReScatter(ctx context.Context, regionInfo *split.RegionInfo) (bool, error) {
 	resp, err := local.splitCli.GetOperator(ctx, regionInfo.Region.GetId())
 	if err != nil {
 		return false, err

@@ -23,6 +23,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	lkv "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -91,7 +92,7 @@ func TestEncode(t *testing.T) {
 	}
 
 	// Strict mode
-	strictMode, err := lkv.NewTableKVEncoder(tbl, &lkv.SessionOptions{
+	strictMode, err := lkv.NewTableKVEncoder(tbl, &encode.SessionOptions{
 		SQLMode:   mysql.ModeStrictAllTables,
 		Timestamp: 1234567890,
 	}, nil, logger)
@@ -123,7 +124,7 @@ func TestEncode(t *testing.T) {
 
 	// Mock add record error
 	mockTbl := &mockTable{Table: tbl}
-	mockMode, err := lkv.NewTableKVEncoder(mockTbl, &lkv.SessionOptions{
+	mockMode, err := lkv.NewTableKVEncoder(mockTbl, &encode.SessionOptions{
 		SQLMode:   mysql.ModeStrictAllTables,
 		Timestamp: 1234567891,
 	}, nil, logger)
@@ -132,7 +133,7 @@ func TestEncode(t *testing.T) {
 	require.EqualError(t, err, "mock error")
 
 	// Non-strict mode
-	noneMode, err := lkv.NewTableKVEncoder(tbl, &lkv.SessionOptions{
+	noneMode, err := lkv.NewTableKVEncoder(tbl, &encode.SessionOptions{
 		SQLMode:   mysql.ModeNone,
 		Timestamp: 1234567892,
 		SysVars:   map[string]string{"tidb_row_format_version": "1"},
@@ -155,7 +156,7 @@ func TestDecode(t *testing.T) {
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
 	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(0), tblInfo)
 	require.NoError(t, err)
-	decoder, err := lkv.NewTableKVDecoder(tbl, "`test`.`c1`", &lkv.SessionOptions{
+	decoder, err := lkv.NewTableKVDecoder(tbl, "`test`.`c1`", &encode.SessionOptions{
 		SQLMode:   mysql.ModeStrictAllTables,
 		Timestamp: 1234567890,
 	}, log.L())
@@ -219,7 +220,7 @@ func TestDecodeIndex(t *testing.T) {
 	}
 
 	// Strict mode
-	strictMode, err := lkv.NewTableKVEncoder(tbl, &lkv.SessionOptions{
+	strictMode, err := lkv.NewTableKVEncoder(tbl, &encode.SessionOptions{
 		SQLMode:   mysql.ModeStrictAllTables,
 		Timestamp: 1234567890,
 	}, nil, log.L())
@@ -228,7 +229,7 @@ func TestDecodeIndex(t *testing.T) {
 	data := fromRow(pairs)
 	require.Len(t, data.pairs, 2)
 
-	decoder, err := lkv.NewTableKVDecoder(tbl, "`test`.``", &lkv.SessionOptions{
+	decoder, err := lkv.NewTableKVDecoder(tbl, "`test`.``", &encode.SessionOptions{
 		SQLMode:   mysql.ModeStrictAllTables,
 		Timestamp: 1234567890,
 	}, log.L())
@@ -257,7 +258,7 @@ func TestEncodeRowFormatV2(t *testing.T) {
 		types.NewIntDatum(10000000),
 	}
 
-	noneMode, err := lkv.NewTableKVEncoder(tbl, &lkv.SessionOptions{
+	noneMode, err := lkv.NewTableKVEncoder(tbl, &encode.SessionOptions{
 		SQLMode:   mysql.ModeNone,
 		Timestamp: 1234567892,
 		SysVars:   map[string]string{"tidb_row_format_version": "2"},
@@ -302,7 +303,7 @@ func TestEncodeTimestamp(t *testing.T) {
 
 	logger := log.Logger{Logger: zap.NewNop()}
 
-	encoder, err := lkv.NewTableKVEncoder(tbl, &lkv.SessionOptions{
+	encoder, err := lkv.NewTableKVEncoder(tbl, &encode.SessionOptions{
 		SQLMode:   mysql.ModeStrictAllTables,
 		Timestamp: 1234567893,
 		SysVars: map[string]string{
@@ -329,7 +330,7 @@ func TestEncodeDoubleAutoIncrement(t *testing.T) {
 
 	logger := log.Logger{Logger: zap.NewNop()}
 
-	encoder, err := lkv.NewTableKVEncoder(tbl, &lkv.SessionOptions{
+	encoder, err := lkv.NewTableKVEncoder(tbl, &encode.SessionOptions{
 		SQLMode: mysql.ModeStrictAllTables,
 		SysVars: map[string]string{
 			"tidb_row_format_version": "2",
@@ -391,7 +392,7 @@ func TestEncodeMissingAutoValue(t *testing.T) {
 		tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(0), tblInfo)
 		require.NoError(t, err)
 
-		encoder, err := lkv.NewTableKVEncoder(tbl, &lkv.SessionOptions{
+		encoder, err := lkv.NewTableKVEncoder(tbl, &encode.SessionOptions{
 			SQLMode: mysql.ModeStrictAllTables,
 			SysVars: map[string]string{
 				"tidb_row_format_version": "2",
@@ -439,7 +440,7 @@ func TestEncodeExpressionColumn(t *testing.T) {
 	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(0), tblInfo)
 	require.NoError(t, err)
 
-	encoder, err := lkv.NewTableKVEncoder(tbl, &lkv.SessionOptions{
+	encoder, err := lkv.NewTableKVEncoder(tbl, &encode.SessionOptions{
 		SQLMode: mysql.ModeStrictAllTables,
 		SysVars: map[string]string{
 			"tidb_row_format_version": "2",
@@ -479,7 +480,7 @@ func TestDefaultAutoRandoms(t *testing.T) {
 	tblInfo := mockTableInfo(t, "create table t (id bigint unsigned NOT NULL auto_random primary key clustered, a varchar(100));")
 	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(0), tblInfo)
 	require.NoError(t, err)
-	encoder, err := lkv.NewTableKVEncoder(tbl, &lkv.SessionOptions{
+	encoder, err := lkv.NewTableKVEncoder(tbl, &encode.SessionOptions{
 		SQLMode:        mysql.ModeStrictAllTables,
 		Timestamp:      1234567893,
 		SysVars:        map[string]string{"tidb_row_format_version": "2"},
@@ -514,7 +515,7 @@ func TestShardRowId(t *testing.T) {
 	tblInfo := mockTableInfo(t, "create table t (s varchar(16)) shard_row_id_bits = 3;")
 	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(0), tblInfo)
 	require.NoError(t, err)
-	encoder, err := lkv.NewTableKVEncoder(tbl, &lkv.SessionOptions{
+	encoder, err := lkv.NewTableKVEncoder(tbl, &encode.SessionOptions{
 		SQLMode:        mysql.ModeStrictAllTables,
 		Timestamp:      1234567893,
 		SysVars:        map[string]string{"tidb_row_format_version": "2"},
@@ -673,7 +674,7 @@ func SetUpTest(b *testing.B) *benchSQL2KVSuite {
 	// Construct the corresponding KV encoder.
 	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(0), tableInfo)
 	require.NoError(b, err)
-	encoder, err := lkv.NewTableKVEncoder(tbl, &lkv.SessionOptions{SysVars: map[string]string{"tidb_row_format_version": "2"}}, nil, log.L())
+	encoder, err := lkv.NewTableKVEncoder(tbl, &encode.SessionOptions{SysVars: map[string]string{"tidb_row_format_version": "2"}}, nil, log.L())
 	require.NoError(b, err)
 	logger := log.Logger{Logger: zap.NewNop()}
 

@@ -84,6 +84,7 @@ import (
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
@@ -1759,7 +1760,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 			// check kill flag again, let the draining loop could quit if empty packet could not be received
 			if atomic.CompareAndSwapUint32(&loadDataInfo.Ctx.GetSessionVars().Killed, 1, 0) {
 				logutil.Logger(ctx).Warn("receiving kill, stop draining data, connection may be reset")
-				return executor.ErrQueryInterrupted
+				return exeerrors.ErrQueryInterrupted
 			}
 			curData, err1 := cc.readPacket()
 			if err1 != nil {
@@ -2147,7 +2148,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 
 	if rs != nil {
 		if connStatus := atomic.LoadInt32(&cc.status); connStatus == connStatusShutdown {
-			return false, executor.ErrQueryInterrupted
+			return false, exeerrors.ErrQueryInterrupted
 		}
 		if retryable, err := cc.writeResultset(ctx, rs, false, status, 0); err != nil {
 			return retryable, err

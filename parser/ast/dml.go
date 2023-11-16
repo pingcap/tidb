@@ -1908,6 +1908,25 @@ func (n *LoadDataStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+type LoadDataOpt struct {
+	// Name is the name of the option, will be converted to lower case during parse.
+	Name string
+	// only literal is allowed, we use ExprNode to support negative number
+	Value ExprNode
+}
+
+func (l *LoadDataOpt) Restore(ctx *format.RestoreCtx) error {
+	if l.Value == nil {
+		ctx.WritePlain(l.Name)
+	} else {
+		ctx.WritePlain(l.Name + "=")
+		if err := l.Value.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore LoadDataOpt")
+		}
+	}
+	return nil
+}
+
 const (
 	Terminated = iota
 	Enclosed
@@ -1975,6 +1994,122 @@ func (n *LinesClause) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 	return nil
+}
+
+// ImportIntoStmt represents a IMPORT INTO statement node.
+// this statement is used to import data into TiDB using lightning local mode.
+// see  https://github.com/pingcap/tidb/issues/42930
+type ImportIntoStmt struct {
+	dmlNode
+
+	Table              *TableName
+	ColumnsAndUserVars []*ColumnNameOrUserVar
+	ColumnAssignments  []*Assignment
+	Path               string
+	Format             *string
+	Options            []*LoadDataOpt
+
+	Select ResultSetNode
+}
+
+// Restore implements Node interface.
+func (n *ImportIntoStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("IMPORT INTO ")
+	if err := n.Table.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore ImportIntoStmt.Table")
+	}
+	if len(n.ColumnsAndUserVars) != 0 {
+		ctx.WritePlain(" (")
+		for i, c := range n.ColumnsAndUserVars {
+			if i != 0 {
+				ctx.WritePlain(",")
+			}
+			if err := c.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore ImportIntoStmt.ColumnsAndUserVars")
+			}
+		}
+		ctx.WritePlain(")")
+	}
+
+	if n.ColumnAssignments != nil {
+		ctx.WriteKeyWord(" SET")
+		for i, assign := range n.ColumnAssignments {
+			if i != 0 {
+				ctx.WritePlain(",")
+			}
+			ctx.WritePlain(" ")
+			if err := assign.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore ImportIntoStmt.ColumnAssignments")
+			}
+		}
+	}
+	ctx.WriteKeyWord(" FROM ")
+	if n.Select != nil {
+		if err := n.Select.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ImportIntoStmt.Select")
+		}
+	} else {
+		ctx.WriteString(n.Path)
+		if n.Format != nil {
+			ctx.WriteKeyWord(" FORMAT ")
+			ctx.WriteString(*n.Format)
+		}
+	}
+
+	if len(n.Options) > 0 {
+		ctx.WriteKeyWord(" WITH")
+		for i, option := range n.Options {
+			if i != 0 {
+				ctx.WritePlain(",")
+			}
+			ctx.WritePlain(" ")
+			if err := option.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore ImportIntoStmt.Options")
+			}
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *ImportIntoStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ImportIntoStmt)
+	if n.Table != nil {
+		node, ok := n.Table.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Table = node.(*TableName)
+	}
+
+	for i, cuVars := range n.ColumnsAndUserVars {
+		node, ok := cuVars.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ColumnsAndUserVars[i] = node.(*ColumnNameOrUserVar)
+	}
+	for i, assignment := range n.ColumnAssignments {
+		node, ok := assignment.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ColumnAssignments[i] = node.(*Assignment)
+	}
+
+	if n.Select != nil {
+		node, ok := n.Select.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Select = node.(ResultSetNode)
+	}
+
+	return v.Leave(n)
 }
 
 // CallStmt represents a call procedure query node.
