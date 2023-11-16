@@ -270,28 +270,3 @@ func BuildMockDataSourceWithIndex(opt MockDataSourceParameters, index []int) *Mo
 	}
 	return BuildMockDataSource(opt)
 }
-
-// markChildrenUsedColsForTest compares each child with the output schema, and mark
-// each column of the child is used by output or not.
-func markChildrenUsedColsForTest(outputSchema *expression.Schema, childSchemas ...*expression.Schema) (childrenUsed [][]bool) {
-	childrenUsed = make([][]bool, 0, len(childSchemas))
-	markedOffsets := make(map[int]struct{})
-	for _, col := range outputSchema.Columns {
-		markedOffsets[col.Index] = struct{}{}
-	}
-	prefixLen := 0
-	for _, childSchema := range childSchemas {
-		used := make([]bool, len(childSchema.Columns))
-		for i := range childSchema.Columns {
-			if _, ok := markedOffsets[prefixLen+i]; ok {
-				used[i] = true
-			}
-		}
-		childrenUsed = append(childrenUsed, used)
-	}
-	for _, child := range childSchemas {
-		used := expression.GetUsedList(outputSchema.Columns, child)
-		childrenUsed = append(childrenUsed, used)
-	}
-	return
-}
