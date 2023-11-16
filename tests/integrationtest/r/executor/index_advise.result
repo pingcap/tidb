@@ -54,7 +54,7 @@ id	estRows	task	access object	operator info
 Update	N/A	root		N/A
 └─HashJoin	12.50	root		inner join, equal:[eq(executor__index_advise.t2.pnbrn_cnaps, executor__index_advise.t1.pnbrn_cnaps) eq(executor__index_advise.t2.txn_accno, executor__index_advise.t1.new_accno)]
   ├─IndexReader(Build)	10.00	root		index:IndexRangeScan
-  │ └─IndexRangeScan	10.00	cop[tikv]	table:t1, index:PRIMARY(pnbrn_cnaps, new_accno)	range:[0x3430303031,0x3430303031], keep order:false, stats:pseudo
+  │ └─IndexRangeScan	10.00	cop[tikv]	table:t1, index:PRIMARY(pnbrn_cnaps, new_accno)	range:["40001","40001"], keep order:false, stats:pseudo
   └─TableReader(Probe)	10.00	root		data:Selection
     └─Selection	10.00	cop[tikv]		eq(executor__index_advise.t2.txn_dt, 2022-12-01)
       └─TableFullScan	10000.00	cop[tikv]	table:b	keep order:false, stats:pseudo

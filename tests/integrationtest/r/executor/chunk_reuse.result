@@ -9,9 +9,9 @@ explain format='brief' select t1.id1 from t1,t2 where t1.id2 > '1' and t2.id2 > 
 id	estRows	task	access object	operator info
 HashJoin	11111111.11	root		CARTESIAN inner join
 ├─IndexReader(Build)	3333.33	root		index:IndexRangeScan
-│ └─IndexRangeScan	3333.33	cop[tikv]	table:t2, index:id2(id2)	range:(0x31,+inf], keep order:false, stats:pseudo
+│ └─IndexRangeScan	3333.33	cop[tikv]	table:t2, index:id2(id2)	range:("1",+inf], keep order:false, stats:pseudo
 └─IndexReader(Probe)	3333.33	root		index:IndexRangeScan
-  └─IndexRangeScan	3333.33	cop[tikv]	table:t1, index:id2(id2)	range:(0x31,+inf], keep order:false, stats:pseudo
+  └─IndexRangeScan	3333.33	cop[tikv]	table:t1, index:id2(id2)	range:("1",+inf], keep order:false, stats:pseudo
 select t1.id1 from t1,t2 where t1.id2 > '1' and t2.id2 > '1';
 id1
 2
@@ -176,10 +176,10 @@ explain format='brief' select t1.id1,t1.id6 ,t2.id6  from t1 join t2 on t1.id2 =
 id	estRows	task	access object	operator info
 HashJoin	100.00	root		CARTESIAN inner join
 ├─IndexLookUp(Build)	10.00	root		
-│ ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t2, index:id2(id2)	range:[0x32,0x32], keep order:false, stats:pseudo
+│ ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t2, index:id2(id2)	range:["2","2"], keep order:false, stats:pseudo
 │ └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─IndexLookUp(Probe)	10.00	root		
-  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:id2(id2)	range:[0x31,0x31], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:id2(id2)	range:["1","1"], keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select t1.id1,t1.id6 ,t2.id6  from t1 join t2 on t1.id2 = '1' and t2.id2 = '2';
 id1	id6	id6
@@ -225,12 +225,12 @@ HashAgg	8878.22	root		group by:Column#17, funcs:firstrow(Column#17)->Column#17
 └─Union	11097.78	root		
   ├─Projection	5548.89	root		executor__chunk_reuse.t3.id1->Column#17
   │ └─IndexMerge	5548.89	root		type: union
-  │   ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:t3, index:id2(id2)	range:(0x33,+inf], keep order:false, stats:pseudo
+  │   ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:t3, index:id2(id2)	range:("3",+inf], keep order:false, stats:pseudo
   │   ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t3, index:id8(id8)	range:[-inf,10), keep order:false, stats:pseudo
   │   └─TableRowIDScan(Probe)	5548.89	cop[tikv]	table:t3	keep order:false, stats:pseudo
   └─Projection	5548.89	root		executor__chunk_reuse.t3.id1->Column#17
     └─IndexMerge	5548.89	root		type: union
-      ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:t3, index:id2(id2)	range:(0x34,+inf], keep order:false, stats:pseudo
+      ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:t3, index:id2(id2)	range:("4",+inf], keep order:false, stats:pseudo
       ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t3, index:id8(id8)	range:[-inf,7), keep order:false, stats:pseudo
       └─TableRowIDScan(Probe)	5548.89	cop[tikv]	table:t3	keep order:false, stats:pseudo
 select id1 from t3 where id2 > '3' or id8 < 10 union (select id1 from t3 where id2 > '4' or id8 < 7);
@@ -294,9 +294,9 @@ id	estRows	task	access object	operator info
 HashAgg	5333.33	root		group by:Column#19, funcs:firstrow(Column#19)->Column#19
 └─Union	6666.67	root		
   ├─IndexReader	3333.33	root		index:IndexRangeScan
-  │ └─IndexRangeScan	3333.33	cop[tikv]	table:t4, index:id2(id2)	range:(0x33,+inf], keep order:false, stats:pseudo
+  │ └─IndexRangeScan	3333.33	cop[tikv]	table:t4, index:id2(id2)	range:("3",+inf], keep order:false, stats:pseudo
   └─IndexReader	3333.33	root		index:IndexRangeScan
-    └─IndexRangeScan	3333.33	cop[tikv]	table:t4, index:id2(id2)	range:(0x34,+inf], keep order:false, stats:pseudo
+    └─IndexRangeScan	3333.33	cop[tikv]	table:t4, index:id2(id2)	range:("4",+inf], keep order:false, stats:pseudo
 select id2 from t4 where id2 > '3' union (select id2 from t4 where id2 > '4');
 id2
 select @@last_sql_use_alloc;

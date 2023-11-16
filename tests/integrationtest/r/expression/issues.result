@@ -2095,7 +2095,7 @@ insert into t values('`?');
 explain format='brief' select * from t where a like '`%';
 id	estRows	task	access object	operator info
 TableReader	250.00	root		data:TableRangeScan
-└─TableRangeScan	250.00	cop[tikv]	table:t	range:[0x0060,0x0061), keep order:false, stats:pseudo
+└─TableRangeScan	250.00	cop[tikv]	table:t	range:["\x00`","\x00a"), keep order:false, stats:pseudo
 select * from t where a like '`%';
 a
 `?
@@ -2105,7 +2105,7 @@ insert into t values('`?');
 explain format='brief' select * from t where a like '`%';
 id	estRows	task	access object	operator info
 TableReader	250.00	root		data:TableRangeScan
-└─TableRangeScan	250.00	cop[tikv]	table:t	range:[0x60,0x61), keep order:false, stats:pseudo
+└─TableRangeScan	250.00	cop[tikv]	table:t	range:["`","a"), keep order:false, stats:pseudo
 select * from t where a like '`%';
 a
 `?  

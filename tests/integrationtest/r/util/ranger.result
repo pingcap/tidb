@@ -5,7 +5,7 @@ set @@tidb_opt_fix_control = '44389:ON';
 explain format='brief' select * from t where c = 10 and (a = 'xx' or (a = 'kk' and b = 1));
 id	estRows	task	access object	operator info
 IndexLookUp	0.01	root		
-├─IndexRangeScan(Build)	10.10	cop[tikv]	table:t, index:idx_ab(a, b)	range:[0x6B6B 1,0x6B6B 1], [0x7878,0x7878], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.10	cop[tikv]	table:t, index:idx_ab(a, b)	range:["kk" 1,"kk" 1], ["xx","xx"], keep order:false, stats:pseudo
 └─Selection(Probe)	0.01	cop[tikv]		eq(util__ranger.t.c, 10)
   └─TableRowIDScan	10.10	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where c = 10 and (a = 'xx' or (a = 'kk' and b = 1));
@@ -15,7 +15,7 @@ xx	4	10
 explain format='brief' select * from t where c = 10 and ((a = 'xx' or a = 'yy') or ((a = 'kk' and b = 1) or (a = 'hh' and b = 2)));
 id	estRows	task	access object	operator info
 IndexLookUp	0.02	root		
-├─IndexRangeScan(Build)	20.20	cop[tikv]	table:t, index:idx_ab(a, b)	range:[0x6868 2,0x6868 2], [0x6B6B 1,0x6B6B 1], [0x7878,0x7878], [0x7979,0x7979], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	20.20	cop[tikv]	table:t, index:idx_ab(a, b)	range:["hh" 2,"hh" 2], ["kk" 1,"kk" 1], ["xx","xx"], ["yy","yy"], keep order:false, stats:pseudo
 └─Selection(Probe)	0.02	cop[tikv]		eq(util__ranger.t.c, 10)
   └─TableRowIDScan	20.20	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where c = 10 and ((a = 'xx' or a = 'yy') or ((a = 'kk' and b = 1) or (a = 'hh' and b = 2)));
@@ -37,7 +37,7 @@ INSERT INTO IDT_20755 VALUES("xxxxxxxxxxxxxxx", 73, "2010-06-03 07:29:05");
 explain format = 'brief' select * from IDT_20755 use index (u_m_col) where col1 in ("牾窓螎刳闌蜹瑦詬鍖湪槢壿玟瞏膍敗特森撇縆", "物碃貞枕騫摨聫嚣蜻禼担堋黕詖蝒毎槒阆畒郒", "剮毵樍穋摻瀽鬦擀钟鷫產冖悄乮曙枱诠鑡轰砠") and col2 in (72, 39, 73) and col3 != "2024-10-19 08:55:32";
 id	estRows	task	access object	operator info
 IndexLookUp	5.99	root		
-├─IndexRangeScan(Build)	5.99	cop[tikv]	table:IDT_20755, index:u_m_col(COL1, COL2, COL3)	range:[0xE589AEE6AFB5E6A88DE7A98BE691BBE780BDE9ACA6E69380E9929FE9B7AB 39 -inf,0xE589AEE6AFB5E6A88DE7A98BE691BBE780BDE9ACA6E69380E9929FE9B7AB 39 2024-10-19 08:55:32), (0xE589AEE6AFB5E6A88DE7A98BE691BBE780BDE9ACA6E69380E9929FE9B7AB 39 2024-10-19 08:55:32,0xE589AEE6AFB5E6A88DE7A98BE691BBE780BDE9ACA6E69380E9929FE9B7AB 39 +inf], [0xE589AEE6AFB5E6A88DE7A98BE691BBE780BDE9ACA6E69380E9929FE9B7AB 72 -inf,0xE589AEE6AFB5E6A88DE7A98BE691BBE780BDE9ACA6E69380E9929FE9B7AB 72 2024-10-19 08:55:32), (0xE589AEE6AFB5E6A88DE7A98BE691BBE780BDE9ACA6E69380E9929FE9B7AB 72 2024-10-19 08:55:32,0xE589AEE6AFB5E6A88DE7A98BE691BBE780BDE9ACA6E69380E9929FE9B7AB 72 +inf], [0xE589AEE6AFB5E6A88DE7A98BE691BBE780BDE9ACA6E69380E9929FE9B7AB 73 -inf,0xE589AEE6AFB5E6A88DE7A98BE691BBE780BDE9ACA6E69380E9929FE9B7AB 73 2024-10-19 08:55:32), (0xE589AEE6AFB5E6A88DE7A98BE691BBE780BDE9ACA6E69380E9929FE9B7AB 73 2024-10-19 08:55:32,0xE589AEE6AFB5E6A88DE7A98BE691BBE780BDE9ACA6E69380E9929FE9B7AB 73 +inf], [0xE789A9E7A283E8B29EE69E95E9A8ABE691A8E881ABE59AA3E89CBBE7A6BC 39 -inf,0xE789A9E7A283E8B29EE69E95E9A8ABE691A8E881ABE59AA3E89CBBE7A6BC 39 2024-10-19 08:55:32), (0xE789A9E7A283E8B29EE69E95E9A8ABE691A8E881ABE59AA3E89CBBE7A6BC 39 2024-10-19 08:55:32,0xE789A9E7A283E8B29EE69E95E9A8ABE691A8E881ABE59AA3E89CBBE7A6BC 39 +inf], [0xE789A9E7A283E8B29EE69E95E9A8ABE691A8E881ABE59AA3E89CBBE7A6BC 72 -inf,0xE789A9E7A283E8B29EE69E95E9A8ABE691A8E881ABE59AA3E89CBBE7A6BC 72 2024-10-19 08:55:32), (0xE789A9E7A283E8B29EE69E95E9A8ABE691A8E881ABE59AA3E89CBBE7A6BC 72 2024-10-19 08:55:32,0xE789A9E7A283E8B29EE69E95E9A8ABE691A8E881ABE59AA3E89CBBE7A6BC 72 +inf], [0xE789A9E7A283E8B29EE69E95E9A8ABE691A8E881ABE59AA3E89CBBE7A6BC 73 -inf,0xE789A9E7A283E8B29EE69E95E9A8ABE691A8E881ABE59AA3E89CBBE7A6BC 73 2024-10-19 08:55:32), (0xE789A9E7A283E8B29EE69E95E9A8ABE691A8E881ABE59AA3E89CBBE7A6BC 73 2024-10-19 08:55:32,0xE789A9E7A283E8B29EE69E95E9A8ABE691A8E881ABE59AA3E89CBBE7A6BC 73 +inf], [0xE789BEE7AA93E89E8EE588B3E9978CE89CB9E791A6E8A9ACE98D96E6B9AA 39 -inf,0xE789BEE7AA93E89E8EE588B3E9978CE89CB9E791A6E8A9ACE98D96E6B9AA 39 2024-10-19 08:55:32), (0xE789BEE7AA93E89E8EE588B3E9978CE89CB9E791A6E8A9ACE98D96E6B9AA 39 2024-10-19 08:55:32,0xE789BEE7AA93E89E8EE588B3E9978CE89CB9E791A6E8A9ACE98D96E6B9AA 39 +inf], [0xE789BEE7AA93E89E8EE588B3E9978CE89CB9E791A6E8A9ACE98D96E6B9AA 72 -inf,0xE789BEE7AA93E89E8EE588B3E9978CE89CB9E791A6E8A9ACE98D96E6B9AA 72 2024-10-19 08:55:32), (0xE789BEE7AA93E89E8EE588B3E9978CE89CB9E791A6E8A9ACE98D96E6B9AA 72 2024-10-19 08:55:32,0xE789BEE7AA93E89E8EE588B3E9978CE89CB9E791A6E8A9ACE98D96E6B9AA 72 +inf], [0xE789BEE7AA93E89E8EE588B3E9978CE89CB9E791A6E8A9ACE98D96E6B9AA 73 -inf,0xE789BEE7AA93E89E8EE588B3E9978CE89CB9E791A6E8A9ACE98D96E6B9AA 73 2024-10-19 08:55:32), (0xE789BEE7AA93E89E8EE588B3E9978CE89CB9E791A6E8A9ACE98D96E6B9AA 73 2024-10-19 08:55:32,0xE789BEE7AA93E89E8EE588B3E9978CE89CB9E791A6E8A9ACE98D96E6B9AA 73 +inf], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	5.99	cop[tikv]	table:IDT_20755, index:u_m_col(COL1, COL2, COL3)	range:["剮毵樍穋摻瀽鬦擀钟鷫" 39 -inf,"剮毵樍穋摻瀽鬦擀钟鷫" 39 2024-10-19 08:55:32), ("剮毵樍穋摻瀽鬦擀钟鷫" 39 2024-10-19 08:55:32,"剮毵樍穋摻瀽鬦擀钟鷫" 39 +inf], ["剮毵樍穋摻瀽鬦擀钟鷫" 72 -inf,"剮毵樍穋摻瀽鬦擀钟鷫" 72 2024-10-19 08:55:32), ("剮毵樍穋摻瀽鬦擀钟鷫" 72 2024-10-19 08:55:32,"剮毵樍穋摻瀽鬦擀钟鷫" 72 +inf], ["剮毵樍穋摻瀽鬦擀钟鷫" 73 -inf,"剮毵樍穋摻瀽鬦擀钟鷫" 73 2024-10-19 08:55:32), ("剮毵樍穋摻瀽鬦擀钟鷫" 73 2024-10-19 08:55:32,"剮毵樍穋摻瀽鬦擀钟鷫" 73 +inf], ["物碃貞枕騫摨聫嚣蜻禼" 39 -inf,"物碃貞枕騫摨聫嚣蜻禼" 39 2024-10-19 08:55:32), ("物碃貞枕騫摨聫嚣蜻禼" 39 2024-10-19 08:55:32,"物碃貞枕騫摨聫嚣蜻禼" 39 +inf], ["物碃貞枕騫摨聫嚣蜻禼" 72 -inf,"物碃貞枕騫摨聫嚣蜻禼" 72 2024-10-19 08:55:32), ("物碃貞枕騫摨聫嚣蜻禼" 72 2024-10-19 08:55:32,"物碃貞枕騫摨聫嚣蜻禼" 72 +inf], ["物碃貞枕騫摨聫嚣蜻禼" 73 -inf,"物碃貞枕騫摨聫嚣蜻禼" 73 2024-10-19 08:55:32), ("物碃貞枕騫摨聫嚣蜻禼" 73 2024-10-19 08:55:32,"物碃貞枕騫摨聫嚣蜻禼" 73 +inf], ["牾窓螎刳闌蜹瑦詬鍖湪" 39 -inf,"牾窓螎刳闌蜹瑦詬鍖湪" 39 2024-10-19 08:55:32), ("牾窓螎刳闌蜹瑦詬鍖湪" 39 2024-10-19 08:55:32,"牾窓螎刳闌蜹瑦詬鍖湪" 39 +inf], ["牾窓螎刳闌蜹瑦詬鍖湪" 72 -inf,"牾窓螎刳闌蜹瑦詬鍖湪" 72 2024-10-19 08:55:32), ("牾窓螎刳闌蜹瑦詬鍖湪" 72 2024-10-19 08:55:32,"牾窓螎刳闌蜹瑦詬鍖湪" 72 +inf], ["牾窓螎刳闌蜹瑦詬鍖湪" 73 -inf,"牾窓螎刳闌蜹瑦詬鍖湪" 73 2024-10-19 08:55:32), ("牾窓螎刳闌蜹瑦詬鍖湪" 73 2024-10-19 08:55:32,"牾窓螎刳闌蜹瑦詬鍖湪" 73 +inf], keep order:false, stats:pseudo
 └─Selection(Probe)	5.99	cop[tikv]		in(util__ranger.idt_20755.col1, "牾窓螎刳闌蜹瑦詬鍖湪槢壿玟瞏膍敗特森撇縆", "物碃貞枕騫摨聫嚣蜻禼担堋黕詖蝒毎槒阆畒郒", "剮毵樍穋摻瀽鬦擀钟鷫產冖悄乮曙枱诠鑡轰砠")
   └─TableRowIDScan	5.99	cop[tikv]	table:IDT_20755	keep order:false, stats:pseudo
 select * from IDT_20755 use index (u_m_col) where col1 in ("牾窓螎刳闌蜹瑦詬鍖湪槢壿玟瞏膍敗特森撇縆", "物碃貞枕騫摨聫嚣蜻禼担堋黕詖蝒毎槒阆畒郒", "剮毵樍穋摻瀽鬦擀钟鷫產冖悄乮曙枱诠鑡轰砠") and col2 in (72, 39, 73) and col3 != "2024-10-19 08:55:32";
@@ -46,7 +46,7 @@ COL1	COL2	COL3
 explain format = 'brief' select * from IDT_20755 use index (u_m_col) where col1 = "xxxxxxxxxxxxxxx" and col2 in (72, 73) and col3 != "2024-10-19 08:55:32";
 id	estRows	task	access object	operator info
 IndexLookUp	1.33	root		
-├─IndexRangeScan(Build)	1.33	cop[tikv]	table:IDT_20755, index:u_m_col(COL1, COL2, COL3)	range:[0x78787878787878787878 72 -inf,0x78787878787878787878 72 2024-10-19 08:55:32), (0x78787878787878787878 72 2024-10-19 08:55:32,0x78787878787878787878 72 +inf], [0x78787878787878787878 73 -inf,0x78787878787878787878 73 2024-10-19 08:55:32), (0x78787878787878787878 73 2024-10-19 08:55:32,0x78787878787878787878 73 +inf], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	1.33	cop[tikv]	table:IDT_20755, index:u_m_col(COL1, COL2, COL3)	range:["xxxxxxxxxx" 72 -inf,"xxxxxxxxxx" 72 2024-10-19 08:55:32), ("xxxxxxxxxx" 72 2024-10-19 08:55:32,"xxxxxxxxxx" 72 +inf], ["xxxxxxxxxx" 73 -inf,"xxxxxxxxxx" 73 2024-10-19 08:55:32), ("xxxxxxxxxx" 73 2024-10-19 08:55:32,"xxxxxxxxxx" 73 +inf], keep order:false, stats:pseudo
 └─Selection(Probe)	1.33	cop[tikv]		eq(util__ranger.idt_20755.col1, "xxxxxxxxxxxxxxx")
   └─TableRowIDScan	1.33	cop[tikv]	table:IDT_20755	keep order:false, stats:pseudo
 select * from IDT_20755 use index (u_m_col) where col1 = "xxxxxxxxxxxxxxx" and col2 in (72, 73) and col3 != "2024-10-19 08:55:32";
@@ -55,7 +55,7 @@ xxxxxxxxxxxxxxx	73	2010-06-03 07:29:05
 explain format = 'brief' select * from IDT_20755 use index (u_m_col) where col1 = "xxxxxxxxxxxxxxx" and col2 in (72, 73, 74) and col3 != "2024-10-19 08:55:32";
 id	estRows	task	access object	operator info
 IndexLookUp	2.00	root		
-├─IndexRangeScan(Build)	2.00	cop[tikv]	table:IDT_20755, index:u_m_col(COL1, COL2, COL3)	range:[0x78787878787878787878 72 -inf,0x78787878787878787878 72 2024-10-19 08:55:32), (0x78787878787878787878 72 2024-10-19 08:55:32,0x78787878787878787878 72 +inf], [0x78787878787878787878 73 -inf,0x78787878787878787878 73 2024-10-19 08:55:32), (0x78787878787878787878 73 2024-10-19 08:55:32,0x78787878787878787878 73 +inf], [0x78787878787878787878 74 -inf,0x78787878787878787878 74 2024-10-19 08:55:32), (0x78787878787878787878 74 2024-10-19 08:55:32,0x78787878787878787878 74 +inf], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	2.00	cop[tikv]	table:IDT_20755, index:u_m_col(COL1, COL2, COL3)	range:["xxxxxxxxxx" 72 -inf,"xxxxxxxxxx" 72 2024-10-19 08:55:32), ("xxxxxxxxxx" 72 2024-10-19 08:55:32,"xxxxxxxxxx" 72 +inf], ["xxxxxxxxxx" 73 -inf,"xxxxxxxxxx" 73 2024-10-19 08:55:32), ("xxxxxxxxxx" 73 2024-10-19 08:55:32,"xxxxxxxxxx" 73 +inf], ["xxxxxxxxxx" 74 -inf,"xxxxxxxxxx" 74 2024-10-19 08:55:32), ("xxxxxxxxxx" 74 2024-10-19 08:55:32,"xxxxxxxxxx" 74 +inf], keep order:false, stats:pseudo
 └─Selection(Probe)	2.00	cop[tikv]		eq(util__ranger.idt_20755.col1, "xxxxxxxxxxxxxxx")
   └─TableRowIDScan	2.00	cop[tikv]	table:IDT_20755	keep order:false, stats:pseudo
 select * from IDT_20755 use index (u_m_col) where col1 = "xxxxxxxxxxxxxxx" and col2 in (72, 73, 74) and col3 != "2024-10-19 08:55:32";
@@ -273,7 +273,7 @@ insert into t2 (t) values ('aaaa'),('a');
 explain format='brief' select * from t2 where t='aaaa';
 id	estRows	task	access object	operator info
 IndexLookUp	10.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t2, index:t(t)	range:[0x616161,0x616161], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t2, index:t(t)	range:["aaa","aaa"], keep order:false, stats:pseudo
 └─Selection(Probe)	10.00	cop[tikv]		eq(util__ranger.t2.t, "aaaa")
   └─TableRowIDScan	10.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select * from t2 where t='aaaa';
@@ -282,7 +282,7 @@ id	t
 explain format='brief' select * from t2 where t='aaaa' or t = 'a';
 id	estRows	task	access object	operator info
 IndexLookUp	16.00	root		
-├─IndexRangeScan(Build)	20.00	cop[tikv]	table:t2, index:t(t)	range:[0x61,0x61], [0x616161,0x616161], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	20.00	cop[tikv]	table:t2, index:t(t)	range:["a","a"], ["aaa","aaa"], keep order:false, stats:pseudo
 └─Selection(Probe)	16.00	cop[tikv]		or(eq(util__ranger.t2.t, "aaaa"), eq(util__ranger.t2.t, "a"))
   └─TableRowIDScan	20.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select * from t2 where t='aaaa' or t = 'a';
@@ -313,7 +313,7 @@ insert into t values ('t',1,1,1),('t',1,3,3),('t',2,1,3),('t',2,3,1),('w',0,3,3)
 explain format='brief' select * from t use index (idx) where ((a = 't' and b = 1) or (a = 't' and b = 2) or (a = 'w' and b = 0)) and c > 2;
 id	estRows	task	access object	operator info
 IndexLookUp	1.00	root		
-├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t, index:idx(a, b, c)	range:(0x74 1 2,0x74 1 +inf], (0x74 2 2,0x74 2 +inf], (0x77 0 2,0x77 0 +inf], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t, index:idx(a, b, c)	range:("t" 1 2,"t" 1 +inf], ("t" 2 2,"t" 2 +inf], ("w" 0 2,"w" 0 +inf], keep order:false, stats:pseudo
 └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t use index (idx) where ((a = 't' and b = 1) or (a = 't' and b = 2) or (a = 'w' and b = 0)) and c > 2;
 a	b	c	d
@@ -323,7 +323,7 @@ w	0	3	3
 explain format='brief' select * from t use index (idx) where ((a = 't' and b = 1) or (a = 't' and b = 2) or (a = 'w' and b = 0)) and d > 2;
 id	estRows	task	access object	operator info
 IndexLookUp	0.10	root		
-├─IndexRangeScan(Build)	0.30	cop[tikv]	table:t, index:idx(a, b, c)	range:[0x74 1,0x74 1], [0x74 2,0x74 2], [0x77 0,0x77 0], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	0.30	cop[tikv]	table:t, index:idx(a, b, c)	range:["t" 1,"t" 1], ["t" 2,"t" 2], ["w" 0,"w" 0], keep order:false, stats:pseudo
 └─Selection(Probe)	0.10	cop[tikv]		gt(util__ranger.t.d, 2)
   └─TableRowIDScan	0.30	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t use index (idx) where ((a = 't' and b = 1) or (a = 't' and b = 2) or (a = 'w' and b = 0)) and d > 2;
@@ -524,12 +524,12 @@ explain format = 'brief' select * from t0 where c0 and c0 > '123';
 id	estRows	task	access object	operator info
 IndexReader	1.00	root		index:Selection
 └─Selection	1.00	cop[tikv]		util__ranger.t0.c0
-  └─IndexRangeScan	1.00	cop[tikv]	table:t0, index:i0(c0)	range:(0x313233,+inf], keep order:false
+  └─IndexRangeScan	1.00	cop[tikv]	table:t0, index:i0(c0)	range:("123",+inf], keep order:false
 explain format = 'brief' select * from t0 where c0 and c0 <> '123';
 id	estRows	task	access object	operator info
 IndexReader	1.00	root		index:Selection
 └─Selection	1.00	cop[tikv]		util__ranger.t0.c0
-  └─IndexRangeScan	1.00	cop[tikv]	table:t0, index:i0(c0)	range:[-inf,0x313233), (0x313233,+inf], keep order:false
+  └─IndexRangeScan	1.00	cop[tikv]	table:t0, index:i0(c0)	range:[-inf,"123"), ("123",+inf], keep order:false
 explain format = 'brief' select * from t0 where c0 is true;
 id	estRows	task	access object	operator info
 IndexReader	1.00	root		index:Selection
@@ -544,12 +544,12 @@ explain format = 'brief' select * from t0 where c0 and c0 in ('123','456','789')
 id	estRows	task	access object	operator info
 IndexReader	1.00	root		index:Selection
 └─Selection	1.00	cop[tikv]		util__ranger.t0.c0
-  └─IndexRangeScan	1.00	cop[tikv]	table:t0, index:i0(c0)	range:[0x313233,0x313233], [0x343536,0x343536], [0x373839,0x373839], keep order:false
+  └─IndexRangeScan	1.00	cop[tikv]	table:t0, index:i0(c0)	range:["123","123"], ["456","456"], ["789","789"], keep order:false
 explain format = 'brief' select * FROM t0 WHERE ('a' != t0.c0) AND t0.c0;
 id	estRows	task	access object	operator info
 IndexReader	1.00	root		index:Selection
 └─Selection	1.00	cop[tikv]		util__ranger.t0.c0
-  └─IndexRangeScan	1.00	cop[tikv]	table:t0, index:i0(c0)	range:[-inf,0x61), (0x61,+inf], keep order:false
+  └─IndexRangeScan	1.00	cop[tikv]	table:t0, index:i0(c0)	range:[-inf,"a"), ("a",+inf], keep order:false
 set tidb_cost_model_version=default;
 set tidb_cost_model_version=2;
 drop table if exists t;

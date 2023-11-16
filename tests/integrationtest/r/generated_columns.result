@@ -11,7 +11,7 @@ EXPLAIN format = 'brief' SELECT name, id FROM person WHERE city = 'Beijing';
 id	estRows	task	access object	operator info
 Projection	10.00	root		generated_columns.person.name, generated_columns.person.id
 └─IndexLookUp	10.00	root		
-  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:person, index:city(city)	range:[0x4265696A696E67,0x4265696A696E67], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:person, index:city(city)	range:["Beijing","Beijing"], keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:person	keep order:false, stats:pseudo
 DROP TABLE IF EXISTS `sgc`;
 CREATE TABLE `sgc` (

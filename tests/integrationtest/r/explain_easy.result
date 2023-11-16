@@ -789,13 +789,13 @@ create table t(a binary(16) not null, b varchar(2) default null, c varchar(100) 
 explain format = 'brief' select * from t where a=x'FA34E1093CB428485734E3917F000000' and b='xb';
 id	estRows	task	access object	operator info
 IndexLookUp	0.10	root		
-├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:a(a, b)	range:[0xFA34E1093CB428485734E3917F000000 0x7862,0xFA34E1093CB428485734E3917F000000 0x7862], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:a(a, b)	range:["\xfa4\xe1\t<\xb4(HW4\xe3\x91\x7f\x00\x00\x00" "xb","\xfa4\xe1\t<\xb4(HW4\xe3\x91\x7f\x00\x00\x00" "xb"], keep order:false, stats:pseudo
 └─TableRowIDScan(Probe)	0.10	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' update t set c = 'ssss' where a=x'FA34E1093CB428485734E3917F000000' and b='xb';
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A
 └─IndexLookUp	0.10	root		
-  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:a(a, b)	range:[0xFA34E1093CB428485734E3917F000000 0x7862,0xFA34E1093CB428485734E3917F000000 0x7862], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:a(a, b)	range:["\xfa4\xe1\t<\xb4(HW4\xe3\x91\x7f\x00\x00\x00" "xb","\xfa4\xe1\t<\xb4(HW4\xe3\x91\x7f\x00\x00\x00" "xb"], keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	0.10	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int, b int);
