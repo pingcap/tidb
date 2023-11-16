@@ -49,10 +49,7 @@ func (e *LoadDataController) CheckRequirements(ctx context.Context, conn sqlexec
 			return err
 		}
 	}
-	if err := e.checkTableEmpty(ctx, conn); err != nil {
-		return err
-	}
-	return nil
+	return e.checkTableEmpty(ctx, conn)
 }
 
 func (e *LoadDataController) checkTotalFileSize() error {

@@ -253,10 +253,6 @@ func (ti *TableImporter) OpenIndexEngine(ctx context.Context, engineID int32) (*
 	idxEngineCfg := &backend.EngineConfig{
 		TableInfo: ti.tableInfo,
 	}
-	idxCnt := len(ti.tableInfo.Core.Indices)
-	if !common.TableHasAutoRowID(ti.tableInfo.Core) {
-		idxCnt--
-	}
 	// todo: getTotalRawFileSize returns size of all data files, but in distributed framework,
 	// we create one index engine for each engine, should reflect this in the future.
 	idxEngineCfg.Local = &backend.LocalEngineConfig{

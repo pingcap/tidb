@@ -93,8 +93,7 @@ func ProcessChunkWith(
 
 	// TODO: right now we use this chunk processor for global sort too, will
 	// impl another one for it later.
-	var cp ChunkProcessor
-	cp = newQueryChunkProcessor(
+	cp := newQueryChunkProcessor(
 		tableImporter.rowCh, encoder, chunk, logger,
 		tableImporter.diskQuotaLock, dataWriter, indexWriter,
 	)
