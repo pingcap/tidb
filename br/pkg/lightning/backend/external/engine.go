@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/hex"
 	"io"
-	"math/rand"
 	"slices"
 	"sort"
 	"sync"
@@ -306,7 +305,6 @@ func readAllData(
 		return err
 	}
 	var eg errgroup.Group
-	log.FromContext(ctx).Info("readAllData", zap.Any("files", dataFiles), zap.Any("concurrency", concurrencys))
 	for i := range dataFiles {
 		i := i
 		eg.Go(func() error {
@@ -390,18 +388,9 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 	readRateHist.Observe(float64(size) / 1024.0 / 1024.0 / readSecond)
 	sortRateHist.Observe(float64(size) / 1024.0 / 1024.0 / sortSecond)
 
-	prevKey = nil
-	for _, k := range keys {
-		if prevKey != nil && bytes.Compare(prevKey, k) >= 0 {
-			logutil.Logger(ctx).Error("kv is not in increasing order", zap.ByteString("prevKey", prevKey), zap.ByteString("key", k))
-		}
-		prevKey = k
-	}
-
 	newBuf := make([]*membuf.Buffer, 0, len(e.memKVsAndBuffers.memKVBuffers))
 	copy(newBuf, e.memKVsAndBuffers.memKVBuffers)
 	data := e.buildIngestData(keys, values, newBuf)
-	data.id = uint64(rand.Intn(10000000))
 	sendFn := func(dr common.DataAndRange) error {
 		select {
 		case <-ctx.Done():
@@ -683,7 +672,6 @@ type MemoryIngestData struct {
 	keys   [][]byte
 	values [][]byte
 	ts     uint64
-	id     uint64
 
 	memBufs         []*membuf.Buffer
 	refCnt          *atomic.Int64
@@ -692,10 +680,6 @@ type MemoryIngestData struct {
 }
 
 var _ common.IngestData = (*MemoryIngestData)(nil)
-
-func (m *MemoryIngestData) ID2() int64 {
-	return int64(m.id)
-}
 
 func (m *MemoryIngestData) firstAndLastKeyIndex(lowerBound, upperBound []byte) (int, int) {
 	firstKeyIdx := 0
@@ -876,15 +860,12 @@ func (m *MemoryIngestData) GetTS() uint64 {
 
 // IncRef implements IngestData.IncRef.
 func (m *MemoryIngestData) IncRef() {
-	logutil.BgLogger().Warn("inc", zap.Any("id", m.id), zap.Stack("stack"))
 	m.refCnt.Inc()
 }
 
 // DecRef implements IngestData.DecRef.
 func (m *MemoryIngestData) DecRef() {
-	logutil.BgLogger().Warn("dec", zap.Any("id", m.id), zap.Stack("stack"))
 	if m.refCnt.Dec() == 0 {
-		logutil.BgLogger().Error("destroy", zap.Any("id", m.id))
 		for _, b := range m.memBufs {
 			b.Destroy()
 		}

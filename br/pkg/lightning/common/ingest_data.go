@@ -37,7 +37,6 @@ type IngestData interface {
 	// one IngestData maybe partially ingested, so this function may be called
 	// multiple times.
 	Finish(totalBytes, totalCount int64)
-	ID2() int64
 }
 
 // ForwardIter describes a iterator that can only move forward.

@@ -1138,10 +1138,6 @@ func TestLocalIsRetryableTiKVWriteError(t *testing.T) {
 // mockIngestData must be ordered on the first element of each [2][]byte.
 type mockIngestData [][2][]byte
 
-func (m mockIngestData) ID2() int64 {
-	return 0
-}
-
 func (m mockIngestData) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []byte, error) {
 	i, j := m.getFirstAndLastKeyIdx(lowerBound, upperBound)
 	if i == -1 {
