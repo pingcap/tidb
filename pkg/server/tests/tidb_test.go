@@ -1126,6 +1126,11 @@ func TestSumAvg(t *testing.T) {
 	ts.RunTestSumAvg(t)
 }
 
+func TestStmtCountLimit(t *testing.T) {
+	ts := createTidbTestSuite(t)
+	ts.RunTestStmtCountLimit(t)
+}
+
 func TestNullFlag(t *testing.T) {
 	ts := createTidbTestSuite(t)
 

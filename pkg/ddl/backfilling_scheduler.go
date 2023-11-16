@@ -163,7 +163,8 @@ func initSessCtx(
 	typeFlags := types.StrictFlags.
 		WithTruncateAsWarning(!sqlMode.HasStrictMode()).
 		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
-		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode())
+		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()).
+		WithCastTimeToYearThroughConcat(true)
 	sessCtx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags)
 
 	// Prevent initializing the mock context in the workers concurrently.
@@ -257,13 +258,13 @@ func (b *txnBackfillScheduler) close(force bool) {
 	if b.closed {
 		return
 	}
+	b.closed = true
 	close(b.taskCh)
 	if force {
 		closeBackfillWorkers(b.workers)
 	}
 	b.wg.Wait()
 	close(b.resultCh)
-	b.closed = true
 }
 
 type ingestBackfillScheduler struct {
@@ -333,6 +334,7 @@ func (b *ingestBackfillScheduler) close(force bool) {
 	if b.closed {
 		return
 	}
+	b.closed = true
 	close(b.taskCh)
 	if b.copReqSenderPool != nil {
 		b.copReqSenderPool.close(force)
@@ -357,7 +359,6 @@ func (b *ingestBackfillScheduler) close(force bool) {
 		jobID := b.reorgInfo.ID
 		b.backendCtx.ResetWorkers(jobID)
 	}
-	b.closed = true
 }
 
 func (b *ingestBackfillScheduler) sendTask(task *reorgBackfillTask) {

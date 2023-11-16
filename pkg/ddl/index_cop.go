@@ -365,10 +365,9 @@ func constructTableScanPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, col
 }
 
 func extractDatumByOffsets(row chunk.Row, offsets []int, expCols []*expression.Column, buf []types.Datum) []types.Datum {
-	for _, offset := range offsets {
+	for i, offset := range offsets {
 		c := expCols[offset]
-		rowDt := row.GetDatum(offset, c.GetType())
-		buf = append(buf, rowDt)
+		row.DatumWithBuffer(offset, c.GetType(), &buf[i])
 	}
 	return buf
 }

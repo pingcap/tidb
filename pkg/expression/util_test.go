@@ -35,19 +35,19 @@ func TestBaseBuiltin(t *testing.T) {
 	ctx := mock.NewContext()
 	bf, err := newBaseBuiltinFuncWithTp(ctx, "", nil, types.ETTimestamp)
 	require.NoError(t, err)
-	_, _, err = bf.evalInt(chunk.Row{})
+	_, _, err = bf.evalInt(ctx, chunk.Row{})
 	require.Error(t, err)
-	_, _, err = bf.evalReal(chunk.Row{})
+	_, _, err = bf.evalReal(ctx, chunk.Row{})
 	require.Error(t, err)
-	_, _, err = bf.evalString(chunk.Row{})
+	_, _, err = bf.evalString(ctx, chunk.Row{})
 	require.Error(t, err)
-	_, _, err = bf.evalDecimal(chunk.Row{})
+	_, _, err = bf.evalDecimal(ctx, chunk.Row{})
 	require.Error(t, err)
-	_, _, err = bf.evalTime(chunk.Row{})
+	_, _, err = bf.evalTime(ctx, chunk.Row{})
 	require.Error(t, err)
-	_, _, err = bf.evalDuration(chunk.Row{})
+	_, _, err = bf.evalDuration(ctx, chunk.Row{})
 	require.Error(t, err)
-	_, _, err = bf.evalJSON(chunk.Row{})
+	_, _, err = bf.evalJSON(ctx, chunk.Row{})
 	require.Error(t, err)
 }
 
@@ -192,18 +192,20 @@ func TestSetExprColumnInOperand(t *testing.T) {
 	col := &Column{RetType: newIntFieldType()}
 	require.True(t, SetExprColumnInOperand(col).(*Column).InOperand)
 
-	f, err := funcs[ast.Abs].getFunction(mock.NewContext(), []Expression{col})
+	ctx := mock.NewContext()
+	f, err := funcs[ast.Abs].getFunction(ctx, []Expression{col})
 	require.NoError(t, err)
-	fun := &ScalarFunction{Function: f}
+	fun := &ScalarFunction{Function: f, ctx: ctx}
 	SetExprColumnInOperand(fun)
 	require.True(t, f.getArgs()[0].(*Column).InOperand)
 }
 
 func TestPopRowFirstArg(t *testing.T) {
+	ctx := mock.NewContext()
 	c1, c2, c3 := &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}
-	f, err := funcs[ast.RowFunc].getFunction(mock.NewContext(), []Expression{c1, c2, c3})
+	f, err := funcs[ast.RowFunc].getFunction(ctx, []Expression{c1, c2, c3})
 	require.NoError(t, err)
-	fun := &ScalarFunction{Function: f, FuncName: model.NewCIStr(ast.RowFunc), RetType: newIntFieldType()}
+	fun := &ScalarFunction{Function: f, FuncName: model.NewCIStr(ast.RowFunc), RetType: newIntFieldType(), ctx: ctx}
 	fun2, err := PopRowFirstArg(mock.NewContext(), fun)
 	require.NoError(t, err)
 	require.Len(t, fun2.(*ScalarFunction).GetArgs(), 2)
@@ -580,6 +582,7 @@ func (m *MockExpr) resolveIndicesByVirtualExpr(schema *Schema) bool             
 func (m *MockExpr) RemapColumn(_ map[int64]*Column) (Expression, error)           { return m, nil }
 func (m *MockExpr) ExplainInfo() string                                           { return "" }
 func (m *MockExpr) ExplainNormalizedInfo() string                                 { return "" }
+func (m *MockExpr) ExplainNormalizedInfo4InList() string                          { return "" }
 func (m *MockExpr) HashCode(sc *stmtctx.StatementContext) []byte                  { return nil }
 func (m *MockExpr) Vectorized() bool                                              { return false }
 func (m *MockExpr) SupportReverseEval() bool                                      { return false }

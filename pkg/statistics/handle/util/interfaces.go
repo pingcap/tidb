@@ -252,7 +252,8 @@ type StatsReadWriter interface {
 	// then tidb-server will reload automatic.
 	UpdateStatsVersion() error
 
-	// ResetTableStats2KVForDrop resets the count to 0.
+	// ResetTableStats2KVForDrop update the version of mysql.stats_meta.
+	// Then GC worker will delete the old version of stats.
 	ResetTableStats2KVForDrop(physicalID int64) (err error)
 
 	// ChangeGlobalStatsID changes the global stats ID.
@@ -353,6 +354,14 @@ type StatsGlobal interface {
 	UpdateGlobalStats(tblInfo *model.TableInfo) error
 }
 
+// DDL is used to handle ddl events.
+type DDL interface {
+	// HandleDDLEvent handles ddl events.
+	HandleDDLEvent(event *DDLEvent) error
+	// DDLEventCh returns ddl events channel in handle.
+	DDLEventCh() chan *DDLEvent
+}
+
 // StatsHandle is used to manage TiDB Statistics.
 type StatsHandle interface {
 	// GPool returns the goroutine pool.
@@ -405,4 +414,7 @@ type StatsHandle interface {
 
 	// StatsGlobal is used to manage partition table global stats.
 	StatsGlobal
+
+	// DDL is used to handle ddl events.
+	DDL
 }

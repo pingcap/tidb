@@ -180,6 +180,9 @@ func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node 
 	if err != nil {
 		return nil, err
 	}
+	if logic, ok := p.(LogicalPlan); ok {
+		RecheckCTE(logic)
+	}
 	return p, err
 }
 
@@ -299,8 +302,15 @@ func checkStableResultMode(sctx sessionctx.Context) bool {
 	return s.EnableStableResultMode && (!st.InInsertStmt && !st.InUpdateStmt && !st.InDeleteStmt && !st.InLoadDataStmt)
 }
 
-// DoOptimizeAndLogicAsRet optimizes a logical plan to a physical plan and return the optimized logical plan.
-func DoOptimizeAndLogicAsRet(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (LogicalPlan, PhysicalPlan, float64, error) {
+// doOptimize optimizes a logical plan into a physical plan,
+// while also returning the optimized logical plan, the final physical plan, and the cost of the final plan.
+// The returned logical plan is necessary for generating plans for Common Table Expressions (CTEs).
+func doOptimize(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	flag uint64,
+	logic LogicalPlan,
+) (LogicalPlan, PhysicalPlan, float64, error) {
 	sessVars := sctx.GetSessionVars()
 	// if there is something after flagPrunColumns, do flagPrunColumnsAgain
 	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
@@ -346,13 +356,18 @@ func DoOptimizeAndLogicAsRet(ctx context.Context, sctx sessionctx.Context, flag 
 }
 
 // DoOptimize optimizes a logical plan to a physical plan.
-func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (PhysicalPlan, float64, error) {
+func DoOptimize(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	flag uint64,
+	logic LogicalPlan,
+) (PhysicalPlan, float64, error) {
 	sessVars := sctx.GetSessionVars()
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer debugtrace.LeaveContextCommon(sctx)
 	}
-	_, finalPlan, cost, err := DoOptimizeAndLogicAsRet(ctx, sctx, flag, logic)
+	_, finalPlan, cost, err := doOptimize(ctx, sctx, flag, logic)
 	return finalPlan, cost, err
 }
 

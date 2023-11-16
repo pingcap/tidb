@@ -5,7 +5,6 @@ go_test(
     timeout = "long",
     srcs = [
         "detach_test.go",
-        "from_server_test.go",
         "import_into_test.go",
         "job_test.go",
         "main_test.go",

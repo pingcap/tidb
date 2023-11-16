@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
+	"github.com/pingcap/tidb/pkg/param"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -2150,6 +2151,16 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 		return nil, err
 	}
+	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
+		if binParam, ok := execStmt.BinaryArgs.([]param.BinaryParam); ok {
+			args, err := param.ExecArgs(s.GetSessionVars().StmtCtx.TypeCtx(), binParam)
+			if err != nil {
+				return nil, err
+			}
+			execStmt.BinaryArgs = args
+		}
+	}
+
 	normalizedSQL, digest := s.sessionVars.StmtCtx.SQLDigest()
 	cmdByte := byte(atomic.LoadUint32(&s.GetSessionVars().CommandValue))
 	if topsqlstate.TopSQLEnabled() {
@@ -2427,6 +2438,14 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	if err != nil {
 		return nil, err
 	}
+	if sessVars.TxnCtx.CouldRetry && !s.IsReadOnly(sessVars) {
+		// Only when the txn is could retry and the statement is not read only, need to do stmt-count-limit check,
+		// otherwise, the stmt won't be add into stmt history, and also don't need check.
+		// About `stmt-count-limit`, see more in https://docs.pingcap.com/tidb/stable/tidb-configuration-file#stmt-count-limit
+		if err := checkStmtLimit(ctx, se, false); err != nil {
+			return nil, err
+		}
+	}
 
 	rs, err = s.Exec(ctx)
 	se.updateTelemetryMetric(s.(*executor.ExecStmt))
@@ -2477,16 +2496,20 @@ const ExecStmtVarKey ExecStmtVarKeyType = 0
 // RecordSet, so this struct exists and RecordSet.Close() is overrided handle that.
 type execStmtResult struct {
 	sqlexec.RecordSet
-	se  *session
-	sql sqlexec.Statement
+	se     *session
+	sql    sqlexec.Statement
+	closed bool
 }
 
 func (rs *execStmtResult) Close() error {
-	se := rs.se
-	if err := rs.RecordSet.Close(); err != nil {
-		return finishStmt(context.Background(), se, err, rs.sql)
+	if rs.closed {
+		return nil
 	}
-	return finishStmt(context.Background(), se, nil, rs.sql)
+	se := rs.se
+	err := rs.RecordSet.Close()
+	err = finishStmt(context.Background(), se, err, rs.sql)
+	rs.closed = true
+	return err
 }
 
 // rollbackOnError makes sure the next statement starts a new transaction with the latest InfoSchema.
@@ -4386,12 +4409,11 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 	if intest.InTest {
 		panic("unexpected no source type context, if you see this error, " +
 			"the `RequestSourceTypeKey` is missing in your context")
-	} else {
-		logutil.Logger(ctx).Warn("unexpected no source type context, if you see this warning, "+
-			"the `RequestSourceTypeKey` is missing in the context",
-			zap.Bool("internal", s.isInternal()),
-			zap.String("sql", stmtNode.Text()))
 	}
+	logutil.Logger(ctx).Warn("unexpected no source type context, if you see this warning, "+
+		"the `RequestSourceTypeKey` is missing in the context",
+		zap.Bool("internal", s.isInternal()),
+		zap.String("sql", stmtNode.Text()))
 }
 
 // RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from job2ver.

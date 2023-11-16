@@ -20,6 +20,7 @@ go_library(
         "//br/pkg/utils",
         "//pkg/kv",
         "//pkg/store/pdtypes",
+        "//pkg/util/pdapi",
         "@com_github_google_btree//:btree",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

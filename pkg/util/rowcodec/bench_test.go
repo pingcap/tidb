@@ -57,6 +57,7 @@ func BenchmarkEncode(b *testing.B) {
 	colIDs := []int64{1, 2, 3}
 	var err error
 	for i := 0; i < b.N; i++ {
+		buf = buf[:0]
 		buf, err = xb.Encode(nil, colIDs, oldRow, buf)
 		if err != nil {
 			b.Fatal(err)

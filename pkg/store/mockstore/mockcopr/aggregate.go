@@ -286,7 +286,7 @@ func (e *streamAggExec) meetNewGroup(row [][]byte) (bool, error) {
 			return false, errors.Trace(err)
 		}
 		if matched {
-			c, err := d.Compare(e.evalCtx.sc, &e.nextGroupByRow[i], e.groupByCollators[i])
+			c, err := d.Compare(e.evalCtx.sc.TypeCtx(), &e.nextGroupByRow[i], e.groupByCollators[i])
 			if err != nil {
 				return false, errors.Trace(err)
 			}

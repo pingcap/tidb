@@ -1430,7 +1430,7 @@ select char(97, null, 100, 256, 89 using ascii);
 char(97, null, 100, 256, 89 using ascii)
 ad Y
 select char(97, null, 100, 256, 89 using tidb);
-[parser:1115]Unknown character set: 'tidb'
+Error 1115 (42000): Unknown character set: 'tidb'
 drop table if exists t;
 CREATE TABLE t (c1 date, c2 datetime, c3 timestamp, c4 time, c5 year);
 INSERT INTO t values ('2000-01-01', '2000-01-01 12:12:12', '2000-01-01 12:12:12', '12:12:12', '2000');
@@ -2037,7 +2037,7 @@ select convert("123" using "binary"), convert("中文" using "binary"), convert(
 convert("123" using "binary")	convert("中文" using "binary")	convert("中文" using "utf8")	convert("中文" using "utf8mb4")	convert(cast("中文" as binary) using "utf8")
 123	中文	中文	中文	中文
 select convert("123" using "866");
-[parser:1115]Unknown character set: '866'
+Error 1115 (42000): Unknown character set: '866'
 select hex(insert("中文", 1, 1, cast("aaa" as binary))), hex(insert("ba", -1, 1, "aaa")), hex(insert("ba", 1, 100, "aaa")), hex(insert("ba", 100, 1, "aaa"));
 hex(insert("中文", 1, 1, cast("aaa" as binary)))	hex(insert("ba", -1, 1, "aaa"))	hex(insert("ba", 1, 100, "aaa"))	hex(insert("ba", 100, 1, "aaa"))
 616161B8ADE69687	6261	616161	6261

@@ -133,7 +133,7 @@ AddLoop:
 		func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 			i++
 			// c4 must be -1 or > 0
-			v, err := data[3].ToInt64(tk.Session().GetSessionVars().StmtCtx)
+			v, err := data[3].ToInt64(tk.Session().GetSessionVars().StmtCtx.TypeCtx())
 			require.NoError(t, err)
 			if v == -1 {
 				j++
