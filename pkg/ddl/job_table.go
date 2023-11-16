@@ -246,7 +246,9 @@ func (*ddl) NoConflictJob(se *sess.Session, sql string) (bool, error) {
 func (d *ddl) getReorgJob(sess *sess.Session) (*model.Job, error) {
 	return d.getJob(sess, reorg, func(job *model.Job) (bool, error) {
 		if (job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey) &&
-			job.ReorgMeta != nil && job.ReorgMeta.IsFastReorg {
+			job.ReorgMeta != nil &&
+			job.ReorgMeta.IsFastReorg &&
+			ingest.LitBackCtxMgr != nil {
 			succeed := ingest.LitBackCtxMgr.MarkProcessing(job.ID)
 			if !succeed {
 				// We only allow one task to use ingest at the same time in order to limit the CPU/memory usage.
