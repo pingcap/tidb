@@ -375,7 +375,7 @@ type StatsHandle interface {
 	// AutoAnalyzeProcIDGenerator is used to generate auto analyze proc ID.
 	statsutil.AutoAnalyzeProcIDGenerator
 
-	// LeaseGetter is used to get lease.
+	// LeaseGetter is used to get stats lease.
 	statsutil.LeaseGetter
 
 	// TableInfoGetter is used to get table meta info.

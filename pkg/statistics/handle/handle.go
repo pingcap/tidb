@@ -48,6 +48,7 @@ type Handle struct {
 	// AutoAnalyzeProcIDGenerator is used to generate auto analyze proc ID.
 	util.AutoAnalyzeProcIDGenerator
 
+	// LeaseGetter is used to get stats lease.
 	util.LeaseGetter
 
 	// initStatsCtx is the ctx only used for initStats
