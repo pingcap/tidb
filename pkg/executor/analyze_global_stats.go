@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
 )
 
 type globalStatsKey struct {
@@ -55,10 +54,8 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, globalStatsMap glob
 
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	tableIDs := make(map[int64]struct{}, len(globalStatsTableIDs))
-	tableAllPartitionStats := make(map[int64]*statistics.Table)
 	for tableID := range globalStatsTableIDs {
 		tableIDs[tableID] = struct{}{}
-		maps.Clear(tableAllPartitionStats)
 		for globalStatsID, info := range globalStatsMap {
 			if globalStatsID.tableID != tableID {
 				continue
@@ -123,9 +120,6 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, globalStatsMap glob
 				return err
 			}()
 			FinishAnalyzeMergeJob(e.Ctx(), job, mergeStatsErr)
-		}
-		for _, value := range tableAllPartitionStats {
-			value.ReleaseAndPutToPool()
 		}
 	}
 
