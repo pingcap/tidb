@@ -7338,6 +7338,8 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		Charset:    chs,
 		Collate:    coll,
 	}
+	job.ReorgMeta.IsDistReorg = variable.EnableDistTask.Load()
+	job.ReorgMeta.IsFastReorg = variable.EnableFastReorg.Load()
 
 	err = d.DoDDLJob(ctx, job)
 	// key exists, but if_not_exists flags is true, so we ignore this error.

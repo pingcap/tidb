@@ -755,7 +755,7 @@ func pickBackfillType(ctx context.Context, job *model.Job, unique bool, d *ddlCt
 		// Don't change the backfill type.
 		return job.ReorgMeta.ReorgTp, nil
 	}
-	if !IsEnableFastReorg() {
+	if !job.ReorgMeta.IsFastReorg {
 		job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
 		return model.ReorgTypeTxn, nil
 	}
@@ -770,18 +770,7 @@ func pickBackfillType(ctx context.Context, job *model.Job, unique bool, d *ddlCt
 			if err != nil {
 				return model.ReorgTypeNone, err
 			}
-			if variable.EnableDistTask.Load() {
-				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, d.etcdCli, job.ReorgMeta.ResourceGroupName)
-			} else {
-				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, nil, job.ReorgMeta.ResourceGroupName)
-			}
-			if err != nil {
-				return model.ReorgTypeNone, err
-			}
 			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
-			if variable.EnableDistTask.Load() {
-				job.ReorgMeta.IsDistReorg = true
-			}
 			return model.ReorgTypeLitMerge, nil
 		}
 	}

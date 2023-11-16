@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
@@ -32,6 +33,7 @@ import (
 
 // BackendCtxMgr is used to manage the backend context.
 type BackendCtxMgr interface {
+	MarkProcessing(jobID int64) (ok bool)
 	CheckAvailable() (bool, error)
 	Register(ctx context.Context, unique bool, jobID int64, etcdClient *clientv3.Client, resourceGroupName string) (BackendCtx, error)
 	Unregister(jobID int64)
@@ -40,8 +42,11 @@ type BackendCtxMgr interface {
 
 type litBackendCtxMgr struct {
 	generic.SyncMap[int64, *litBackendCtx]
-	memRoot  MemRoot
-	diskRoot DiskRoot
+	memRoot         MemRoot
+	diskRoot        DiskRoot
+	processingJobID int64
+	lastLoggingTime time.Time
+	mu              sync.Mutex
 }
 
 func newLitBackendCtxMgr(path string, memQuota uint64) BackendCtxMgr {
@@ -62,15 +67,25 @@ func newLitBackendCtxMgr(path string, memQuota uint64) BackendCtxMgr {
 	return mgr
 }
 
+// MarkProcessing marks the ingest backfill is processing.
+func (m *litBackendCtxMgr) MarkProcessing(jobID int64) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.processingJobID == 0 || m.processingJobID == jobID {
+		m.processingJobID = jobID
+		return true
+	}
+	if time.Since(m.lastLoggingTime) > 1*time.Minute {
+		logutil.BgLogger().Info("ingest backfill worker is already in used by another DDL job",
+			zap.String("category", "ddl-ingest"),
+			zap.Int64("processing job ID", m.processingJobID))
+		m.lastLoggingTime = time.Now()
+	}
+	return false
+}
+
 // CheckAvailable checks if the ingest backfill is available.
 func (m *litBackendCtxMgr) CheckAvailable() (bool, error) {
-	// We only allow one task to use ingest at the same time, in order to limit the CPU usage.
-	activeJobIDs := m.Keys()
-	if len(activeJobIDs) > 0 {
-		logutil.BgLogger().Info("ingest backfill is already in use by another DDL job", zap.String("category", "ddl-ingest"),
-			zap.Int64("job ID", activeJobIDs[0]))
-		return false, nil
-	}
 	if err := m.diskRoot.PreCheckUsage(); err != nil {
 		logutil.BgLogger().Info("ingest backfill is not available", zap.String("category", "ddl-ingest"), zap.Error(err))
 		return false, err
@@ -151,6 +166,11 @@ func newBackendContext(ctx context.Context, jobID int64, be *local.Backend, cfg 
 
 // Unregister removes a backend context from the backend context manager.
 func (m *litBackendCtxMgr) Unregister(jobID int64) {
+	defer func() {
+		m.mu.Lock()
+		m.processingJobID = 0
+		m.mu.Unlock()
+	}()
 	bc, exist := m.SyncMap.Delete(jobID)
 	if !exist {
 		return
