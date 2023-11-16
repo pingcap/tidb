@@ -43,7 +43,7 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
 		BinlogInfo:      &model.HistoryInfo{},
 		Args:            nil,
 		MultiSchemaInfo: ctx.GetSessionVars().StmtCtx.MultiSchemaInfo,
-		ReorgMeta:       NewDDLReorgMeta(ctx),
+		ReorgMeta:       newReorgMetaFromVariables(ctx),
 	}
 	err = checkMultiSchemaInfo(ctx.GetSessionVars().StmtCtx.MultiSchemaInfo, t)
 	if err != nil {

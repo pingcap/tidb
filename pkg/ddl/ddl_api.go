@@ -7332,14 +7332,12 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		TableName:  t.Meta().Name.L,
 		Type:       model.ActionAddIndex,
 		BinlogInfo: &model.HistoryInfo{},
-		ReorgMeta:  NewDDLReorgMeta(ctx),
+		ReorgMeta:  newReorgMetaFromVariables(ctx),
 		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
 		Priority:   ctx.GetSessionVars().DDLReorgPriority,
 		Charset:    chs,
 		Collate:    coll,
 	}
-	job.ReorgMeta.IsDistReorg = variable.EnableDistTask.Load()
-	job.ReorgMeta.IsFastReorg = variable.EnableFastReorg.Load()
 
 	err = d.DoDDLJob(ctx, job)
 	// key exists, but if_not_exists flags is true, so we ignore this error.
@@ -7349,6 +7347,13 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	}
 	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
+}
+
+func newReorgMetaFromVariables(sctx sessionctx.Context) *model.DDLReorgMeta {
+	reorgMeta := NewDDLReorgMeta(sctx)
+	reorgMeta.IsDistReorg = variable.EnableDistTask.Load()
+	reorgMeta.IsFastReorg = variable.EnableFastReorg.Load()
+	return reorgMeta
 }
 
 func buildFKInfo(fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *ast.ReferenceDef, cols []*table.Column) (*model.FKInfo, error) {
