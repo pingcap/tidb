@@ -21,6 +21,6 @@ import (
 )
 
 func TestShouldRun(t *testing.T) {
-	require.True(t, ShouldRun("gofmt", "some.go"))
-	require.False(t, ShouldRun("gofmt", "uca_generated.go"))
+	require.True(t, shouldRun("gofmt", "some.go"))
+	require.False(t, shouldRun("gofmt", "uca_generated.go"))
 }

@@ -46,11 +46,6 @@ func run(pass *analysis.Pass) (interface{}, error) {
 		ForLoops:   false,
 	}
 	for _, f := range pass.Files {
-		fileName := pass.Fset.PositionFor(f.Pos(), false).Filename
-		if !util.ShouldRun(Name, fileName) {
-			continue
-		}
-
 		hints := prealloc.Check([]*ast.File{f}, s.Simple, s.RangeLoops, s.ForLoops)
 		for _, hint := range hints {
 			pass.Reportf(hint.Pos, "[%s] Consider preallocating %s", Name, util.FormatCode(hint.DeclaredSliceName))
@@ -61,5 +56,6 @@ func run(pass *analysis.Pass) (interface{}, error) {
 }
 
 func init() {
+	util.SkipAnalyzerByConfig(Analyzer)
 	util.SkipAnalyzer(Analyzer)
 }

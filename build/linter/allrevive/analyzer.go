@@ -37,6 +37,7 @@ var Analyzer = &analysis.Analyzer{
 }
 
 func init() {
+	util.SkipAnalyzerByConfig(Analyzer)
 	util.SkipAnalyzer(Analyzer)
 }
 
@@ -123,12 +124,7 @@ var allRules = append([]lint.Rule{
 func run(pass *analysis.Pass) (any, error) {
 	files := make([]string, 0, len(pass.Files))
 	for _, file := range pass.Files {
-		fileName := pass.Fset.PositionFor(file.Pos(), false).Filename
-		if !util.ShouldRun("all_revive", fileName) {
-			continue
-		}
-
-		files = append(files, fileName)
+		files = append(files, pass.Fset.PositionFor(file.Pos(), false).Filename)
 	}
 	packages := [][]string{files}
 

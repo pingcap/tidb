@@ -38,11 +38,7 @@ const (
 
 func run(pass *analysis.Pass) (interface{}, error) {
 	for _, file := range pass.Files {
-		fileName := pass.Fset.File(file.Pos()).Name()
-		if !strings.HasSuffix(fileName, bootstrapCodeFile) {
-			continue
-		}
-		if !util.ShouldRun("bootstrap", fileName) {
+		if !strings.HasSuffix(pass.Fset.File(file.Pos()).Name(), bootstrapCodeFile) {
 			continue
 		}
 
@@ -135,4 +131,8 @@ func run(pass *analysis.Pass) (interface{}, error) {
 		pass.Reportf(curVerVariablePos, "current version variable: %d", curVerVariable)
 	}
 	return nil, nil
+}
+
+func init() {
+	util.SkipAnalyzerByConfig(Analyzer)
 }

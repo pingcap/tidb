@@ -21,8 +21,8 @@ import (
 	"github.com/pingcap/tidb/build"
 )
 
-// ShouldRun checks whether a `file` should be analyzed in the specific pass
-func ShouldRun(passName string, fileName string) bool {
+// shouldRun checks whether a `file` should be analyzed in the specific pass
+func shouldRun(passName string, fileName string) bool {
 	config, ok := build.NogoConfig[passName]
 	if !ok {
 		return true

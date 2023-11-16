@@ -158,11 +158,6 @@ func handleValueSpec(pass *analysis.Pass, n *ast.ValueSpec, _ bool, stack []ast.
 
 func run(pass *analysis.Pass) (interface{}, error) {
 	for _, file := range pass.Files {
-		fileName := pass.Fset.PositionFor(file.Pos(), false).Filename
-		if !util.ShouldRun("constructor", fileName) {
-			continue
-		}
-
 		i := inspector.New([]*ast.File{file})
 
 		i.WithStack([]ast.Node{&ast.CompositeLit{}, &ast.CallExpr{}, &ast.ValueSpec{}}, func(n ast.Node, push bool, stack []ast.Node) bool {
@@ -179,4 +174,8 @@ func run(pass *analysis.Pass) (interface{}, error) {
 		})
 	}
 	return nil, nil
+}
+
+func init() {
+	util.SkipAnalyzerByConfig(Analyzer)
 }

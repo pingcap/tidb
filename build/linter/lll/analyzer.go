@@ -72,10 +72,6 @@ func runLll(pass *analysis.Pass, settings *settings) error {
 	spaces := strings.Repeat(" ", settings.TabWidth)
 
 	for _, f := range fileNames {
-		if !util.ShouldRun("lll", f) {
-			continue
-		}
-
 		lintIssues, err := getLLLIssuesForFile(f, settings.LineLength, spaces)
 		if err != nil {
 			return err
@@ -162,4 +158,9 @@ func getLLLIssuesForFile(filename string, maxLineLen int, tabSpaces string) ([]r
 	}
 
 	return res, nil
+}
+
+func init() {
+	util.SkipAnalyzerByConfig(Analyzer)
+	util.SkipAnalyzer(Analyzer)
 }

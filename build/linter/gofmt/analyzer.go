@@ -47,10 +47,6 @@ func run(pass *analysis.Pass) (any, error) {
 	}
 
 	for _, f := range fileNames {
-		if !util.ShouldRun("gofmt", f) {
-			continue
-		}
-
 		diff, err := gofmt.Run(f, needSimplify)
 		if err != nil {
 			return nil, fmt.Errorf("could not run gofmt: %w (%s)", err, f)
@@ -67,4 +63,8 @@ func run(pass *analysis.Pass) (any, error) {
 	}
 
 	return nil, nil
+}
+
+func init() {
+	util.SkipAnalyzerByConfig(Analyzer)
 }

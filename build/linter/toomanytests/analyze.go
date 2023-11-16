@@ -30,11 +30,6 @@ var Analyzer = &analysis.Analyzer{
 	Run: func(pass *analysis.Pass) (any, error) {
 		cnt := 0
 		for _, f := range pass.Files {
-			fileName := pass.Fset.PositionFor(f.Pos(), false).Filename
-			if !util.ShouldRun("toomanytests", fileName) {
-				continue
-			}
-
 			astFile := pass.Fset.File(f.Pos())
 			if !isTestFile(astFile) {
 				continue
@@ -59,4 +54,9 @@ var Analyzer = &analysis.Analyzer{
 
 func isTestFile(file *token.File) bool {
 	return strings.HasSuffix(file.Name(), "_test.go")
+}
+
+func init() {
+	util.SkipAnalyzerByConfig(Analyzer)
+	util.SkipAnalyzer(Analyzer)
 }
