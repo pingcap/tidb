@@ -16,9 +16,10 @@ package testutil
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"fmt"
-	"math/rand"
+	"math/big"
 	"sort"
 
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -88,7 +89,11 @@ func (mds *MockDataSource) GenColDatums(col int) (results []interface{}) {
 		}
 
 		for i := 0; i < rows; i++ {
-			results = append(results, datums[rand.Intn(ndv)])
+			val, err := rand.Int(rand.Reader, big.NewInt(int64(ndv)))
+			if err != nil {
+				panic("Fail to generate int number")
+			}
+			results = append(results, datums[val.Int64()])
 		}
 	}
 
@@ -111,17 +116,20 @@ func (mds *MockDataSource) GenColDatums(col int) (results []interface{}) {
 }
 
 // RandDatum rand datum
-func (mds *MockDataSource) RandDatum(typ *types.FieldType) interface{} {
+func (*MockDataSource) RandDatum(typ *types.FieldType) interface{} {
+	val, _ := rand.Int(rand.Reader, big.NewInt(1000000))
 	switch typ.GetType() {
 	case mysql.TypeLong, mysql.TypeLonglong:
-		return int64(rand.Int())
+		return val.Int64()
 	case mysql.TypeFloat:
-		return rand.Float32()
+		floatVal, _ := val.Float64()
+		return float32(floatVal / 1000)
 	case mysql.TypeDouble:
-		return rand.Float64()
+		floatVal, _ := val.Float64()
+		return floatVal / 1000
 	case mysql.TypeNewDecimal:
 		var d types.MyDecimal
-		return d.FromInt(int64(rand.Int()))
+		return d.FromInt(val.Int64())
 	case mysql.TypeVarString:
 		buff := make([]byte, 10)
 		rand.Read(buff)
@@ -177,7 +185,7 @@ func (mp *MockDataPhysicalPlan) Schema() *expression.Schema {
 }
 
 // ExplainID returns explain id
-func (mp *MockDataPhysicalPlan) ExplainID() fmt.Stringer {
+func (*MockDataPhysicalPlan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		return "mockData_0"
 	})
