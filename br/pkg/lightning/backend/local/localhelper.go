@@ -171,7 +171,8 @@ func (local *Local) SplitAndScatterRegionByRanges(
 
 		var tableRegionStats map[uint64]int64
 		if tableInfo != nil && local.g != nil {
-			db, err := local.g.GetDB()
+			var db *sql.DB
+			db, err = local.g.GetDB()
 			if err != nil {
 				return errors.Trace(err)
 			}
