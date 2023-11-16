@@ -142,12 +142,6 @@ type StatsCache interface {
 	// Put puts this table stats into the cache.
 	Put(tableID int64, t *statistics.Table)
 
-	// GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
-	GetTableStats(tblInfo *model.TableInfo) *statistics.Table
-
-	// GetPartitionStats retrieves the partition stats from cache.
-	GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table
-
 	// UpdateStatsCache updates the cache.
 	UpdateStatsCache(addedTables []*statistics.Table, deletedTableIDs []int64)
 
@@ -380,6 +374,12 @@ type StatsHandle interface {
 
 	// TableInfoGetter is used to get table meta info.
 	statsutil.TableInfoGetter
+
+	// GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
+	GetTableStats(tblInfo *model.TableInfo) *statistics.Table
+
+	// GetPartitionStats retrieves the partition stats from cache.
+	GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table
 
 	// StatsGC is used to do the GC job.
 	StatsGC

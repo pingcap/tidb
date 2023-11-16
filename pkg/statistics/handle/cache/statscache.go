@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/metrics"
@@ -218,29 +217,4 @@ func (s *StatsCacheImpl) UpdateStatsHealthyMetrics() {
 	for i, val := range distribution {
 		handle_metrics.StatsHealthyGauges[i].Set(float64(val))
 	}
-}
-
-// GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
-func (s *StatsCacheImpl) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
-	return s.GetPartitionStats(tblInfo, tblInfo.ID)
-}
-
-// GetPartitionStats retrieves the partition stats from cache.
-func (s *StatsCacheImpl) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table {
-	var tbl *statistics.Table
-	if s == nil {
-		tbl = statistics.PseudoTable(tblInfo, false)
-		tbl.PhysicalID = pid
-		return tbl
-	}
-	tbl, ok := s.Get(pid)
-	if !ok {
-		tbl = statistics.PseudoTable(tblInfo, false)
-		tbl.PhysicalID = pid
-		if tblInfo.GetPartitionInfo() == nil || s.Len() < 64 {
-			s.UpdateStatsCache([]*statistics.Table{tbl}, nil)
-		}
-		return tbl
-	}
-	return tbl
 }

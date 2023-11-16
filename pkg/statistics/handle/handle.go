@@ -17,7 +17,9 @@ package handle
 import (
 	"time"
 
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	"github.com/pingcap/tidb/pkg/statistics/handle/ddl"
@@ -132,6 +134,33 @@ func NewHandle(
 	handle.StatsGlobal = globalstats.NewStatsGlobal(handle)
 	handle.DDL = ddl.NewDDLHandler(handle.StatsReadWriter, handle, handle.StatsGlobal)
 	return handle, nil
+}
+
+// GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
+// TODO: remove GetTableStats later on.
+func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
+	return h.GetPartitionStats(tblInfo, tblInfo.ID)
+}
+
+// GetPartitionStats retrieves the partition stats from cache.
+// TODO: remove GetTableStats later on.
+func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table {
+	var tbl *statistics.Table
+	if h == nil {
+		tbl = statistics.PseudoTable(tblInfo, false)
+		tbl.PhysicalID = pid
+		return tbl
+	}
+	tbl, ok := h.Get(pid)
+	if !ok {
+		tbl = statistics.PseudoTable(tblInfo, false)
+		tbl.PhysicalID = pid
+		if tblInfo.GetPartitionInfo() == nil || h.Len() < 64 {
+			h.UpdateStatsCache([]*statistics.Table{tbl}, nil)
+		}
+		return tbl
+	}
+	return tbl
 }
 
 // FlushStats flushes the cached stats update into store.
