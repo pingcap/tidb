@@ -48,15 +48,15 @@ type globalStatsInfo struct {
 type globalStatsMap map[globalStatsKey]globalStatsInfo
 
 func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, globalStatsMap globalStatsMap) error {
-	globalStatsTableIDs := make(map[int64]int, len(globalStatsMap))
+	globalStatsTableIDs := make(map[int64]struct{}, len(globalStatsMap))
 	for globalStatsID := range globalStatsMap {
-		globalStatsTableIDs[globalStatsID.tableID]++
+		globalStatsTableIDs[globalStatsID.tableID] = struct{}{}
 	}
 
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	tableIDs := make(map[int64]struct{}, len(globalStatsTableIDs))
 	tableAllPartitionStats := make(map[int64]*statistics.Table)
-	for tableID, count := range globalStatsTableIDs {
+	for tableID, _ := range globalStatsTableIDs {
 		tableIDs[tableID] = struct{}{}
 		maps.Clear(tableAllPartitionStats)
 		for globalStatsID, info := range globalStatsMap {
@@ -78,20 +78,12 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, globalStatsMap glob
 						globalOpts = v2Options.FilledOpts
 					}
 				}
-				var cache map[int64]*statistics.Table
-				if count > 1 {
-					cache = tableAllPartitionStats
-				} else {
-					cache = nil
-				}
-
 				globalStatsI, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(
 					e.Ctx(),
 					globalOpts, e.Ctx().GetInfoSchema().(infoschema.InfoSchema),
 					globalStatsID.tableID,
 					info.isIndex == 1,
 					info.histIDs,
-					cache,
 				)
 				if err != nil {
 					logutil.BgLogger().Warn("merge global stats failed",
