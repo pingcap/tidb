@@ -91,10 +91,11 @@ func MergeOverlappingFiles(
 			zap.Duration("cost time", time.Since(now)))
 		now = time.Now()
 		sorty.MaxGor = uint64(concurrency)
-		sorty.Sort(len(loaded.memKVs), func(i, k, r, s int) bool {
-			if bytes.Compare(loaded.memKVs[i].key, loaded.memKVs[k].key) < 0 { // strict comparator like < or >
+		sorty.Sort(len(loaded.keys), func(i, k, r, s int) bool {
+			if bytes.Compare(loaded.keys[i], loaded.keys[k]) < 0 { // strict comparator like < or >
 				if r != s {
-					loaded.memKVs[r], loaded.memKVs[s] = loaded.memKVs[s], loaded.memKVs[r]
+					loaded.keys[r], loaded.keys[s] = loaded.keys[s], loaded.keys[r]
+					loaded.values[r], loaded.values[s] = loaded.values[s], loaded.values[r]
 				}
 				return true
 			}
@@ -112,8 +113,8 @@ func MergeOverlappingFiles(
 			SetPropKeysDistance(propKeysDist).
 			Build(store, newFilePrefix, uuid.New().String())
 
-		for _, kv := range loaded.memKVs {
-			err = writer.WriteRow(ctx, kv.key, kv.value, nil)
+		for i, key := range loaded.keys {
+			err = writer.WriteRow(ctx, key, loaded.values[i], nil)
 			if err != nil {
 				return err
 			}
