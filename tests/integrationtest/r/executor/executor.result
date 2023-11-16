@@ -4276,6 +4276,26 @@ select  sum(case when ssci.customer_sk is not null and csci.customer_sk is null 
 from ssci right join csci on (ssci.customer_sk=csci.customer_sk
 and ssci.item_sk = csci.item_sk)
 limit 100;
+admin show bdr role;
+BDR_ROLE
+none
+admin set bdr role primary;
+admin show bdr role;
+BDR_ROLE
+primary
+admin set bdr role secondary;
+admin show bdr role;
+BDR_ROLE
+secondary
+admin set bdr role local_only;
+admin show bdr role;
+BDR_ROLE
+local_only
+admin set bdr role test_err;
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 27 near "test_err;" 
+admin show bdr role;
+BDR_ROLE
+local_only
 set global tidb_mem_oom_action='CANCEL';
 drop table if exists t, t1;
 create table t(a int, b int, index idx(a));

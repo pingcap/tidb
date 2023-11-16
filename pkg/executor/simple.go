@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -2786,6 +2787,8 @@ func (e *SimpleExec) executeAdmin(s *ast.AdminStmt) error {
 		return e.executeAdminReloadStatistics(s)
 	case ast.AdminFlushPlanCache:
 		return e.executeAdminFlushPlanCache(s)
+	case ast.AdminSetBDRRole:
+		return e.executeAdminSetBDRRole(s)
 	}
 	return nil
 }
@@ -2820,6 +2823,16 @@ func (e *SimpleExec) executeAdminFlushPlanCache(s *ast.AdminStmt) error {
 		domain.GetDomain(e.Ctx()).SetExpiredTimeStamp4PC(now)
 	}
 	return nil
+}
+
+func (e *SimpleExec) executeAdminSetBDRRole(s *ast.AdminStmt) error {
+	if s.Tp != ast.AdminSetBDRRole {
+		return errors.New("This AdminStmt is not ADMIN SET BDR_ROLE")
+	}
+
+	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnAdmin), e.Ctx().GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+		return errors.Trace(meta.NewMeta(txn).SetBDRRole(string(s.BDRRole)))
+	})
 }
 
 func (e *SimpleExec) executeSetResourceGroupName(s *ast.SetResourceGroupStmt) error {

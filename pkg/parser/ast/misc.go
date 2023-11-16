@@ -2305,7 +2305,7 @@ type AdminStmtType int
 
 // Admin statement types.
 const (
-	AdminShowDDL = iota + 1
+	AdminShowDDL AdminStmtType = iota + 1
 	AdminCheckTable
 	AdminShowDDLJobs
 	AdminCancelDDLJobs
@@ -2332,6 +2332,8 @@ const (
 	AdminResetTelemetryID
 	AdminReloadStatistics
 	AdminFlushPlanCache
+	AdminSetBDRRole
+	AdminShowBDRRole
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.
@@ -2339,6 +2341,16 @@ type HandleRange struct {
 	Begin int64
 	End   int64
 }
+
+// BDRRole represents the role of the cluster in BDR mode.
+type BDRRole string
+
+const (
+	BDRRoleNone      BDRRole = "none"
+	BDRRolePrimary   BDRRole = "primary"
+	BDRRoleSecondary BDRRole = "secondary"
+	BDRRoleLocalOnly BDRRole = "local_only"
+)
 
 type StatementScope int
 
@@ -2427,6 +2439,7 @@ type AdminStmt struct {
 	Where          ExprNode
 	StatementScope StatementScope
 	LimitSimple    LimitSimple
+	BDRRole        BDRRole
 }
 
 // Restore implements Node interface.
@@ -2581,6 +2594,21 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 		} else if n.StatementScope == StatementScopeGlobal {
 			ctx.WriteKeyWord("FLUSH GLOBAL PLAN_CACHE")
 		}
+	case AdminSetBDRRole:
+		switch n.BDRRole {
+		case BDRRoleNone:
+			ctx.WriteKeyWord("SET BDR ROLE NONE")
+		case BDRRolePrimary:
+			ctx.WriteKeyWord("SET BDR ROLE PRIMARY")
+		case BDRRoleSecondary:
+			ctx.WriteKeyWord("SET BDR ROLE SECONDARY")
+		case BDRRoleLocalOnly:
+			ctx.WriteKeyWord("SET BDR ROLE LOCAL_ONLY")
+		default:
+			return errors.New("Unsupported BDR role")
+		}
+	case AdminShowBDRRole:
+		ctx.WriteKeyWord("SHOW BDR ROLE")
 	default:
 		return errors.New("Unsupported AdminStmt type")
 	}
