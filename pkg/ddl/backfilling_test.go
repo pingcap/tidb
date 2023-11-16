@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/stretchr/testify/require"
 )
 
@@ -52,11 +51,9 @@ func TestDoneTaskKeeper(t *testing.T) {
 func TestPickBackfillType(t *testing.T) {
 	originMgr := ingest.LitBackCtxMgr
 	originInit := ingest.LitInitialized
-	originFastReorg := variable.EnableFastReorg.Load()
 	defer func() {
 		ingest.LitBackCtxMgr = originMgr
 		ingest.LitInitialized = originInit
-		variable.EnableFastReorg.Store(originFastReorg)
 	}()
 	mockMgr := ingest.NewMockBackendCtxMgr(
 		func() sessionctx.Context {
@@ -64,14 +61,13 @@ func TestPickBackfillType(t *testing.T) {
 		})
 	ingest.LitBackCtxMgr = mockMgr
 	mockCtx := context.Background()
-	const uk = false
 	mockJob := &model.Job{
 		ID: 1,
 		ReorgMeta: &model.DDLReorgMeta{
 			ReorgTp: model.ReorgTypeTxn,
 		},
 	}
-	variable.EnableFastReorg.Store(true)
+	mockJob.ReorgMeta.IsFastReorg = true
 	tp, err := pickBackfillType(mockCtx, mockJob)
 	require.NoError(t, err)
 	require.Equal(t, tp, model.ReorgTypeTxn)
