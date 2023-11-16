@@ -117,7 +117,7 @@ func (s *spillDeserializeHelper) deserializePartialResult4MaxMinFloat64(dst *par
 func (s *spillDeserializeHelper) deserializePartialResult4MaxMinTime(dst *partialResult4MaxMinTime) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
-		dst.val = *(*types.Time)(unsafe.Pointer(&bytes[0]))
+		dst.val = spill.DeserializeTime(bytes, 0)
 		dst.isNull = spill.DeserializeBool(bytes, timeLen)
 		s.readRowIndex++
 		return true
@@ -372,7 +372,7 @@ func (s *spillDeserializeHelper) deserializePartialResult4FirstRowTime(dst *part
 		bytes := s.column.GetBytes(s.readRowIndex)
 		readPos := int64(0)
 		readPos = s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, readPos)
-		dst.val = *(*types.Time)(unsafe.Pointer(&bytes[readPos]))
+		dst.val = spill.DeserializeTime(bytes, readPos)
 		s.readRowIndex++
 		return true
 	}

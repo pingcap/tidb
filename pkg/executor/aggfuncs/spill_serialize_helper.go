@@ -15,8 +15,6 @@
 package aggfuncs
 
 import (
-	"unsafe"
-
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/spill"
 )
@@ -75,7 +73,7 @@ func (s *spillSerializeHelper) serializePartialResult4MaxMinFloat64(value partia
 }
 
 func (s *spillSerializeHelper) serializePartialResult4MaxMinTime(value partialResult4MaxMinTime) []byte {
-	*(*types.Time)(unsafe.Pointer(&s.buf[0])) = value.val
+	spill.SerializeTime(value.val, s.buf)
 	end := timeLen + boolLen
 	spill.SerializeBool(value.isNull, s.buf[timeLen:end])
 	return s.buf[0:end]
@@ -205,7 +203,7 @@ func (s *spillSerializeHelper) serializePartialResult4FirstRowInt(value partialR
 
 func (s *spillSerializeHelper) serializePartialResult4FirstRowTime(value partialResult4FirstRowTime) []byte {
 	_, baseBytesNum := s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
-	*(*types.Time)(unsafe.Pointer(&s.buf[baseBytesNum])) = value.val
+	spill.SerializeTime(value.val, s.buf[baseBytesNum:])
 	return s.buf[:timeLen+baseBytesNum]
 }
 
