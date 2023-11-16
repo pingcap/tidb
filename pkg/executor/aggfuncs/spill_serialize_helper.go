@@ -54,7 +54,7 @@ func (s *spillSerializeHelper) serializePartialResult4MaxMinUint(value partialRe
 }
 
 func (s *spillSerializeHelper) serializePartialResult4MaxMinDecimal(value partialResult4MaxMinDecimal) []byte {
-	*(*types.MyDecimal)(unsafe.Pointer(&s.buf[0])) = value.val
+	spill.SerializeMyDecimal(&value.val, s.buf)
 	end := types.MyDecimalStructSize + boolLen
 	spill.SerializeBool(value.isNull, s.buf[types.MyDecimalStructSize:end])
 	return s.buf[0:end]
@@ -119,7 +119,7 @@ func (s *spillSerializeHelper) serializePartialResult4MaxMinSet(value partialRes
 }
 
 func (s *spillSerializeHelper) serializePartialResult4AvgDecimal(value partialResult4AvgDecimal) []byte {
-	*(*types.MyDecimal)(unsafe.Pointer(&s.buf[0])) = value.sum
+	spill.SerializeMyDecimal(&value.sum, s.buf)
 	spill.SerializeInt64(value.count, s.buf[types.MyDecimalStructSize:])
 	return s.buf[0 : types.MyDecimalStructSize+int64Len]
 }
@@ -131,7 +131,7 @@ func (s *spillSerializeHelper) serializePartialResult4AvgFloat64(value partialRe
 }
 
 func (s *spillSerializeHelper) serializePartialResult4SumDecimal(value partialResult4SumDecimal) []byte {
-	*(*types.MyDecimal)(unsafe.Pointer(&s.buf[0])) = value.val
+	spill.SerializeMyDecimal(&value.val, s.buf)
 	spill.SerializeInt64(value.notNullRowCount, s.buf[types.MyDecimalStructSize:])
 	return s.buf[0 : types.MyDecimalStructSize+int64Len]
 }
@@ -193,7 +193,7 @@ func (s *spillSerializeHelper) serializeBasePartialResult4FirstRow(value basePar
 
 func (s *spillSerializeHelper) serializePartialResult4FirstRowDecimal(value partialResult4FirstRowDecimal) []byte {
 	_, baseBytesNum := s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
-	*(*types.MyDecimal)(unsafe.Pointer(&s.buf[baseBytesNum])) = value.val
+	spill.SerializeMyDecimal(&value.val, s.buf[baseBytesNum:])
 	return s.buf[:types.MyDecimalStructSize+baseBytesNum]
 }
 

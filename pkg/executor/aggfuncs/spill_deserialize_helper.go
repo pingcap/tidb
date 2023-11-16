@@ -84,7 +84,7 @@ func (s *spillDeserializeHelper) deserializePartialResult4MaxMinUint(dst *partia
 func (s *spillDeserializeHelper) deserializePartialResult4MaxMinDecimal(dst *partialResult4MaxMinDecimal) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
-		dst.val = *(*types.MyDecimal)(unsafe.Pointer(&bytes[0]))
+		dst.val = spill.DeserializeMyDecimal(bytes, 0)
 		dst.isNull = spill.DeserializeBool(bytes, types.MyDecimalStructSize)
 		s.readRowIndex++
 		return true
@@ -184,7 +184,7 @@ func (s *spillDeserializeHelper) deserializePartialResult4MaxMinSet(dst *partial
 func (s *spillDeserializeHelper) deserializePartialResult4AvgDecimal(dst *partialResult4AvgDecimal) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
-		dst.sum = *(*types.MyDecimal)(unsafe.Pointer(&bytes[0]))
+		dst.sum = spill.DeserializeMyDecimal(bytes, 0)
 		dst.count = spill.DeserializeInt64(bytes, types.MyDecimalStructSize)
 		s.readRowIndex++
 		return true
@@ -206,7 +206,7 @@ func (s *spillDeserializeHelper) deserializePartialResult4AvgFloat64(dst *partia
 func (s *spillDeserializeHelper) deserializePartialResult4SumDecimal(dst *partialResult4SumDecimal) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
-		dst.val = *(*types.MyDecimal)(unsafe.Pointer(&bytes[0]))
+		dst.val = spill.DeserializeMyDecimal(bytes, 0)
 		dst.notNullRowCount = spill.DeserializeInt64(bytes, types.MyDecimalStructSize)
 		s.readRowIndex++
 		return true
@@ -348,7 +348,7 @@ func (s *spillDeserializeHelper) deserializePartialResult4FirstRowDecimal(dst *p
 		bytes := s.column.GetBytes(s.readRowIndex)
 		readPos := int64(0)
 		readPos = s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, readPos)
-		dst.val = *(*types.MyDecimal)(unsafe.Pointer(&bytes[readPos]))
+		dst.val = spill.DeserializeMyDecimal(bytes, readPos)
 		s.readRowIndex++
 		return true
 	}

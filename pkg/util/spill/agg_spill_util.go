@@ -100,6 +100,11 @@ func DeserializeFloat64(buf []byte, pos int64) float64 {
 	return *(*float64)(unsafe.Pointer(&buf[pos]))
 }
 
+// DeserializeMyDecimal deserializes float64 type
+func DeserializeMyDecimal(buf []byte, pos int64) types.MyDecimal {
+	return *(*types.MyDecimal)(unsafe.Pointer(&buf[pos]))
+}
+
 // DeserializeInterface deserializes interface type
 func DeserializeInterface(buf []byte, readPos *int64) interface{} {
 	// Get type
@@ -246,6 +251,11 @@ func SerializeFloat32(value float32, tmpBuf []byte) {
 // SerializeFloat64 serializes float64 type
 func SerializeFloat64(value float64, tmpBuf []byte) {
 	*(*float64)(unsafe.Pointer(&tmpBuf[0])) = value
+}
+
+// SerializeMyDecimal serializes MyDecimal type
+func SerializeMyDecimal(value *types.MyDecimal, tmpBuf []byte) {
+	*(*types.MyDecimal)(unsafe.Pointer(&tmpBuf[0])) = *value
 }
 
 // SerializeInterface serialize interface type and return the number of bytes serialized
