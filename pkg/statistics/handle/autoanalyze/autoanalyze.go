@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -47,16 +48,16 @@ import (
 // statsAnalyze implements util.StatsAnalyze.
 // statsAnalyze is used to handle auto-analyze and manage analyze jobs.
 type statsAnalyze struct {
-	statsHandle statsutil.StatsHandle
+	statsHandle statstypes.StatsHandle
 	// sysProcTracker is used to track sys process like analyze
 	sysProcTracker sessionctx.SysProcTracker
 }
 
 // NewStatsAnalyze creates a new StatsAnalyze.
 func NewStatsAnalyze(
-	statsHandle statsutil.StatsHandle,
+	statsHandle statstypes.StatsHandle,
 	sysProcTracker sessionctx.SysProcTracker,
-) statsutil.StatsAnalyze {
+) statstypes.StatsAnalyze {
 	return &statsAnalyze{statsHandle: statsHandle, sysProcTracker: sysProcTracker}
 }
 
@@ -156,7 +157,7 @@ func getAllTidsAndPids(tbls []table.Table) []int64 {
 // HandleAutoAnalyze analyzes the newly created table or index.
 func HandleAutoAnalyze(
 	sctx sessionctx.Context,
-	statsHandle statsutil.StatsHandle,
+	statsHandle statstypes.StatsHandle,
 	sysProcTracker sessionctx.SysProcTracker,
 	is infoschema.InfoSchema,
 ) (analyzed bool) {
@@ -282,7 +283,7 @@ var AutoAnalyzeMinCnt int64 = 1000
 // Determine whether the table and index require analysis.
 func tryAutoAnalyzeTable(
 	sctx sessionctx.Context,
-	statsHandle statsutil.StatsHandle,
+	statsHandle statstypes.StatsHandle,
 	sysProcTracker sessionctx.SysProcTracker,
 	tblInfo *model.TableInfo,
 	statsTbl *statistics.Table,
@@ -387,7 +388,7 @@ func TableAnalyzed(tbl *statistics.Table) bool {
 // It is very similar to tryAutoAnalyzeTable, but it commits the analyze job in batch for partitions.
 func tryAutoAnalyzePartitionTableInDynamicMode(
 	sctx sessionctx.Context,
-	statsHandle statsutil.StatsHandle,
+	statsHandle statstypes.StatsHandle,
 	sysProcTracker sessionctx.SysProcTracker,
 	tblInfo *model.TableInfo,
 	partitionDefs []model.PartitionDefinition,
@@ -518,7 +519,7 @@ var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
 
 func execAutoAnalyze(
 	sctx sessionctx.Context,
-	statsHandle statsutil.StatsHandle,
+	statsHandle statstypes.StatsHandle,
 	sysProcTracker sessionctx.SysProcTracker,
 	statsVer int,
 	sql string,
@@ -547,7 +548,7 @@ func execAutoAnalyze(
 
 func execAnalyzeStmt(
 	sctx sessionctx.Context,
-	statsHandle statsutil.StatsHandle,
+	statsHandle statstypes.StatsHandle,
 	sysProcTracker sessionctx.SysProcTracker,
 	statsVer int,
 	sql string,

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package util
+package types
 
 import (
 	"context"
@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -265,11 +266,11 @@ type StatsReadWriter interface {
 	ChangeGlobalStatsID(from, to int64) (err error)
 
 	// TableStatsToJSON dumps table stats to JSON.
-	TableStatsToJSON(dbName string, tableInfo *model.TableInfo, physicalID int64, snapshot uint64) (*JSONTable, error)
+	TableStatsToJSON(dbName string, tableInfo *model.TableInfo, physicalID int64, snapshot uint64) (*statsutil.JSONTable, error)
 
 	// DumpStatsToJSON dumps statistic to json.
 	DumpStatsToJSON(dbName string, tableInfo *model.TableInfo,
-		historyStatsExec sqlexec.RestrictedSQLExecutor, dumpPartitionStats bool) (*JSONTable, error)
+		historyStatsExec sqlexec.RestrictedSQLExecutor, dumpPartitionStats bool) (*statsutil.JSONTable, error)
 
 	// DumpHistoricalStatsBySnapshot dumped json tables from mysql.stats_meta_history and mysql.stats_history.
 	// As implemented in getTableHistoricalStatsToJSONWithFallback, if historical stats are nonexistent, it will fall back
@@ -279,20 +280,20 @@ type StatsReadWriter interface {
 		tableInfo *model.TableInfo,
 		snapshot uint64,
 	) (
-		jt *JSONTable,
+		jt *statsutil.JSONTable,
 		fallbackTbls []string,
 		err error,
 	)
 
 	// DumpStatsToJSONBySnapshot dumps statistic to json.
-	DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64, dumpPartitionStats bool) (*JSONTable, error)
+	DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64, dumpPartitionStats bool) (*statsutil.JSONTable, error)
 
 	// LoadStatsFromJSON will load statistic from JSONTable, and save it to the storage.
 	// In final, it will also udpate the stats cache.
-	LoadStatsFromJSON(ctx context.Context, is infoschema.InfoSchema, jsonTbl *JSONTable, concurrencyForPartition uint8) error
+	LoadStatsFromJSON(ctx context.Context, is infoschema.InfoSchema, jsonTbl *statsutil.JSONTable, concurrencyForPartition uint8) error
 
 	// LoadStatsFromJSONNoUpdate will load statistic from JSONTable, and save it to the storage.
-	LoadStatsFromJSONNoUpdate(ctx context.Context, is infoschema.InfoSchema, jsonTbl *JSONTable, concurrencyForPartition uint8) error
+	LoadStatsFromJSONNoUpdate(ctx context.Context, is infoschema.InfoSchema, jsonTbl *statsutil.JSONTable, concurrencyForPartition uint8) error
 
 	// Methods for extended stast.
 
@@ -361,24 +362,24 @@ type StatsGlobal interface {
 // DDL is used to handle ddl events.
 type DDL interface {
 	// HandleDDLEvent handles ddl events.
-	HandleDDLEvent(event *DDLEvent) error
+	HandleDDLEvent(event *statsutil.DDLEvent) error
 	// DDLEventCh returns ddl events channel in handle.
-	DDLEventCh() chan *DDLEvent
+	DDLEventCh() chan *statsutil.DDLEvent
 }
 
 // StatsHandle is used to manage TiDB Statistics.
 type StatsHandle interface {
 	// Poll is used to update stats info.
-	Pool
+	statsutil.Pool
 
 	// AutoAnalyzeProcIDGenerator is used to generate auto analyze proc ID.
-	AutoAnalyzeProcIDGenerator
+	statsutil.AutoAnalyzeProcIDGenerator
 
 	// LeaseGetter is used to get lease.
-	LeaseGetter
+	statsutil.LeaseGetter
 
 	// TableInfoGetter is used to get table meta info.
-	TableInfoGetter
+	statsutil.TableInfoGetter
 
 	// StatsGC is used to do the GC job.
 	StatsGC

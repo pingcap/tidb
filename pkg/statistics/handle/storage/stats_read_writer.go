@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	handle_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -39,11 +40,11 @@ import (
 
 // statsReadWriter implements the util.StatsReadWriter interface.
 type statsReadWriter struct {
-	statsHandler util.StatsHandle
+	statsHandler statstypes.StatsHandle
 }
 
 // NewStatsReadWriter creates a new StatsReadWriter.
-func NewStatsReadWriter(statsHandler util.StatsHandle) util.StatsReadWriter {
+func NewStatsReadWriter(statsHandler statstypes.StatsHandle) statstypes.StatsReadWriter {
 	return &statsReadWriter{statsHandler: statsHandler}
 }
 

@@ -27,6 +27,7 @@ import (
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/syncload"
+	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"go.uber.org/zap"
@@ -54,36 +55,36 @@ type Handle struct {
 	util.TableInfoGetter
 
 	// StatsGC is used to GC stats.
-	util.StatsGC
+	types.StatsGC
 
 	// StatsUsage is used to track the usage of column / index statistics.
-	util.StatsUsage
+	types.StatsUsage
 
 	// StatsHistory is used to manage historical stats.
-	util.StatsHistory
+	types.StatsHistory
 
 	// StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
-	util.StatsAnalyze
+	types.StatsAnalyze
 
 	// StatsSyncLoad is used to load stats syncly.
-	util.StatsSyncLoad
+	types.StatsSyncLoad
 
 	// StatsReadWriter is used to read/write stats from/to storage.
-	util.StatsReadWriter
+	types.StatsReadWriter
 
 	// StatsLock is used to manage locked stats.
-	util.StatsLock
+	types.StatsLock
 
 	// StatsGlobal is used to manage global stats.
-	util.StatsGlobal
+	types.StatsGlobal
 
 	// DDL is used to handle ddl events.
-	util.DDL
+	types.DDL
 
 	InitStatsDone chan struct{}
 
 	// StatsCache ...
-	util.StatsCache
+	types.StatsCache
 }
 
 // Clear the statsCache, only for test.
