@@ -98,7 +98,7 @@ func (h *Handle) Clear() {
 
 // NewHandle creates a Handle for update stats.
 func NewHandle(
-	_,
+	_, /* ctx, keep it for feature usage */
 	initStatsCtx sessionctx.Context,
 	lease time.Duration,
 	pool util.SessionPool,
