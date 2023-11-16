@@ -222,7 +222,12 @@ func BuildMockDataPhysicalPlan(_ sessionctx.Context, srcExec exec.Executor) *Moc
 // BuildMockDataSource builds MockDataSource
 func BuildMockDataSource(opt MockDataSourceParameters) *MockDataSource {
 	baseExec := exec.NewBaseExecutor(opt.Ctx, opt.DataSchema, 0)
-	m := &MockDataSource{baseExec, opt, nil, nil, 0}
+	m := &MockDataSource{
+		BaseExecutor: baseExec,
+		ChunkPtr:     0,
+		P:            opt,
+		GenData:      nil,
+		Chunks:       nil}
 	rTypes := exec.RetTypes(m)
 	colData := make([][]interface{}, len(rTypes))
 	for i := 0; i < len(rTypes); i++ {
