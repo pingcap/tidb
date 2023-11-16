@@ -55,6 +55,7 @@ const (
 )
 
 type ErrorContext struct {
+	mu sync.Mutex
 	// encounter times for one context on a store
 	// we may use this value to determine the retry policy
 	encounterTimes map[uint64]int
@@ -73,26 +74,26 @@ func NewErrorContext(scenario string, limitation int) *ErrorContext {
 	}
 }
 
-func (ec *ErrorContext) HandleError(err *backuppb.Error, storeID uint64, canIgnore bool) ErrorResult {
+func (ec *ErrorContext) HandleError(err *backuppb.Error, uuid uint64, canIgnore bool) ErrorResult {
 	if len(err.Msg) != 0 {
-		return ec.HandleErrorMsg(err.Msg, storeID)
+		return ec.HandleErrorMsg(err.Msg, uuid)
 	}
-	return ec.handleErrorPb(err, storeID, canIgnore)
+	return ec.handleErrorPb(err, uuid, canIgnore)
 }
 
-func (ec *ErrorContext) HandleErrorMsg(msg string, storeID uint64) ErrorResult {
+func (ec *ErrorContext) HandleErrorMsg(msg string, uuid uint64) ErrorResult {
 	// UNSAFE! TODO: use meaningful error code instead of unstructured message to find failed to write error.
 	logger := log.L().With(zap.String("scenario", ec.scenario))
 	if messageIsNotFoundStorageError(msg) {
-		reason := fmt.Sprintf("File or directory not found on TiKV Node (store id: %v; Address: %s). "+
+		reason := fmt.Sprintf("File or directory not found on TiKV Node (store id: %v). "+
 			"work around:please ensure br and tikv nodes share a same storage and the user of br and tikv has same uid.",
-			storeID)
+			uuid)
 		return ErrorResult{GiveUp, reason}
 	}
 	if messageIsPermissionDeniedStorageError(msg) {
-		reason := fmt.Sprintf("I/O permission denied error occurs on TiKV Node(store id: %v; Address: %s). "+
+		reason := fmt.Sprintf("I/O permission denied error occurs on TiKV Node(store id: %v). "+
 			"work around:please ensure tikv has permission to read from & write to the storage.",
-			storeID)
+			uuid)
 		return ErrorResult{GiveUp, reason}
 	}
 
@@ -101,26 +102,31 @@ func (ec *ErrorContext) HandleErrorMsg(msg string, storeID uint64) ErrorResult {
 		return ErrorResult{Retry, "retrable error"}
 	}
 	// retry enough on same store
-	ec.encounterTimes[storeID]++
-	if ec.encounterTimes[storeID] < ec.encounterTimesLimitation {
+	mu.Lock()
+	defer mu.Unlock()
+	ec.encounterTimes[uuid]++
+	if ec.encounterTimes[uuid] < ec.encounterTimesLimitation {
 		return ErrorResult{Retry, "unknown error, retry it for few times"}
 	}
 	return ErrorResult{GiveUp, "unknown error and retry too many times, give up"}
 }
 
-func (ec *ErrorContext) handleErrorPb(e *backuppb.Error, storeID uint64, canIgnore bool) ErrorResult {
+func (ec *ErrorContext) handleErrorPb(e *backuppb.Error, uuid uint64, canIgnore bool) ErrorResult {
+	if e == nil {
+		return ErrorResult{Retry, "unreachable code"}
+	}
 	logger := log.L().With(zap.String("scenario", ec.scenario))
 	switch v := e.Detail.(type) {
 	case *backuppb.Error_KvError:
 		if canIgnore {
-			return ErrorResult{Retry, "retry it due to setting"}
+			return ErrorResult{Retry, "retry outside because the error can be ignored"}
 		}
 		// should not meet error other than KeyLocked.
 		return ErrorResult{GiveUp, "unknown kv error"}
 
 	case *backuppb.Error_RegionError:
 		if canIgnore {
-			return ErrorResult{Retry, "retry it due to setting"}
+			return ErrorResult{Retry, "retry outside because the error can be ignored"}
 		}
 		regionErr := v.RegionError
 		// Ignore following errors.
@@ -144,7 +150,7 @@ func (ec *ErrorContext) handleErrorPb(e *backuppb.Error, storeID uint64, canIgno
 		logger.Error("occur cluster ID error", zap.Reflect("error", v), zap.Uint64("storeID", storeID))
 		return ErrorResult{GiveUp, "cluster ID mismatch"}
 	}
-	return ErrorResult{GiveUp, "unreachable error"}
+	return ErrorResult{GiveUp, "unreachable code"}
 }
 
 // RetryableFunc presents a retryable operation.
