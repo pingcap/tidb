@@ -2621,7 +2621,7 @@ func (*clientConn) Stats(vars *variable.SessionVars) (map[string]interface{}, er
 		m[statusCompressionAlgorithm] = "zstd"
 		m[statusCompressionLevel] = vars.CompressionLevel
 	default:
-		logutil.Logger(context.Background()).Debug(
+		logutil.BgLogger().Debug(
 			"unexpected compression algorithm value",
 			zap.Int("algorithm", vars.CompressionAlgorithm),
 		)
