@@ -43,7 +43,7 @@ func NewMockBackendCtxMgr(sessCtxProvider func() sessionctx.Context) *MockBacken
 }
 
 // MarkProcessing marks the ingest backfill is processing.
-func (m *MockBackendCtxMgr) MarkProcessing(_ int64) bool {
+func (*MockBackendCtxMgr) MarkProcessing(_ int64) bool {
 	return true
 }
 
