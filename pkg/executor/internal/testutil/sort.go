@@ -26,24 +26,28 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 )
 
+// SortCase is the sort case
 type SortCase struct {
 	Rows       int
+	Ctx        sessionctx.Context
 	OrderByIdx []int
 	Ndvs       []int
-	Ctx        sessionctx.Context
 }
 
-func (tc SortCase) Columns() []*expression.Column {
+// Columns creates column
+func (SortCase) Columns() []*expression.Column {
 	return []*expression.Column{
 		{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
 		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
 	}
 }
 
+// String gets case content
 func (tc SortCase) String() string {
 	return fmt.Sprintf("(rows:%v, orderBy:%v, ndvs: %v)", tc.Rows, tc.OrderByIdx, tc.Ndvs)
 }
 
+// DefaultSortTestCase returns default sort test case
 func DefaultSortTestCase() *SortCase {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
@@ -53,6 +57,7 @@ func DefaultSortTestCase() *SortCase {
 	return tc
 }
 
+// SortTestCaseWithMemoryLimit returns sort test case
 func SortTestCaseWithMemoryLimit(bytesLimit int64) *SortCase {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize

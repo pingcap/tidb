@@ -30,24 +30,26 @@ import (
 
 // WindowTestCase has a fixed schema (col Double, partitionBy LongLong, rawData VarString(16), col LongLong).
 type WindowTestCase struct {
-	WindowFunc       string
+	DataSourceSorted bool
 	NumFunc          int // The number of windowFuncs. Default: 1.
-	Frame            *core.WindowFrame
 	Ndv              int // the number of distinct group-by keys
 	Rows             int
 	Concurrency      int
 	Pipelined        int
-	DataSourceSorted bool
-	Ctx              sessionctx.Context
+	Frame            *core.WindowFrame
+	WindowFunc       string
 	RawDataSmall     string
 	Columns          []*expression.Column // the columns of mock schema
+	Ctx              sessionctx.Context
 }
 
+// String gets case content
 func (a WindowTestCase) String() string {
 	return fmt.Sprintf("(func:%v, aggColType:%s, numFunc:%v, ndv:%v, rows:%v, sorted:%v, concurrency:%v, pipelined:%v)",
 		a.WindowFunc, a.Columns[0].RetType, a.NumFunc, a.Ndv, a.Rows, a.DataSourceSorted, a.Concurrency, a.Pipelined)
 }
 
+// DefaultWindowTestCase returns default window test case
 func DefaultWindowTestCase() *WindowTestCase {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize

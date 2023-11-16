@@ -26,27 +26,31 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 )
 
+// LimitCase is the limit case
 type LimitCase struct {
+	UsingInlineProjection bool
 	Rows                  int
 	Offset                int
 	Count                 int
 	ChildUsedSchema       []bool
-	UsingInlineProjection bool
 	Ctx                   sessionctx.Context
 }
 
-func (tc LimitCase) Columns() []*expression.Column {
+// Columns creates columns
+func (LimitCase) Columns() []*expression.Column {
 	return []*expression.Column{
 		{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
 		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
 	}
 }
 
+// String gets case content
 func (tc LimitCase) String() string {
 	return fmt.Sprintf("(rows:%v, offset:%v, count:%v, inline_projection:%v)",
 		tc.Rows, tc.Offset, tc.Count, tc.UsingInlineProjection)
 }
 
+// DefaultLimitTestCase returns default limit test case
 func DefaultLimitTestCase() *LimitCase {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize

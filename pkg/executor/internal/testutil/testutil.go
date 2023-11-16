@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
+// MockDataSourceParameters mpcks data source parameters
 type MockDataSourceParameters struct {
 	DataSchema  *expression.Schema
 	GenDataFunc func(row int, typ *types.FieldType) interface{}
@@ -41,6 +42,7 @@ type MockDataSourceParameters struct {
 	Ctx         sessionctx.Context
 }
 
+// MockDataSource mocks data source
 type MockDataSource struct {
 	exec.BaseExecutor
 	P        MockDataSourceParameters
@@ -49,6 +51,7 @@ type MockDataSource struct {
 	ChunkPtr int
 }
 
+// GenColDatums get column datums
 func (mds *MockDataSource) GenColDatums(col int) (results []interface{}) {
 	typ := mds.RetFieldTypes()[col]
 	order := false
@@ -56,12 +59,12 @@ func (mds *MockDataSource) GenColDatums(col int) (results []interface{}) {
 		order = mds.P.Orders[col]
 	}
 	rows := mds.P.Rows
-	NDV := 0
+	ndv := 0
 	if col < len(mds.P.Ndvs) {
-		NDV = mds.P.Ndvs[col]
+		ndv = mds.P.Ndvs[col]
 	}
 	results = make([]interface{}, 0, rows)
-	if NDV == 0 {
+	if ndv == 0 {
 		if mds.P.GenDataFunc == nil {
 			for i := 0; i < rows; i++ {
 				results = append(results, mds.RandDatum(typ))
@@ -72,9 +75,9 @@ func (mds *MockDataSource) GenColDatums(col int) (results []interface{}) {
 			}
 		}
 	} else {
-		datumSet := make(map[string]bool, NDV)
-		datums := make([]interface{}, 0, NDV)
-		for len(datums) < NDV {
+		datumSet := make(map[string]bool, ndv)
+		datums := make([]interface{}, 0, ndv)
+		for len(datums) < ndv {
 			d := mds.RandDatum(typ)
 			str := fmt.Sprintf("%v", d)
 			if datumSet[str] {
@@ -85,7 +88,7 @@ func (mds *MockDataSource) GenColDatums(col int) (results []interface{}) {
 		}
 
 		for i := 0; i < rows; i++ {
-			results = append(results, datums[rand.Intn(NDV)])
+			results = append(results, datums[rand.Intn(ndv)])
 		}
 	}
 
@@ -107,6 +110,7 @@ func (mds *MockDataSource) GenColDatums(col int) (results []interface{}) {
 	return
 }
 
+// RandDatum rand datum
 func (mds *MockDataSource) RandDatum(typ *types.FieldType) interface{} {
 	switch typ.GetType() {
 	case mysql.TypeLong, mysql.TypeLonglong:
@@ -127,6 +131,7 @@ func (mds *MockDataSource) RandDatum(typ *types.FieldType) interface{} {
 	}
 }
 
+// PrepareChunks prepares chunks
 func (mds *MockDataSource) PrepareChunks() {
 	mds.Chunks = make([]*chunk.Chunk, len(mds.GenData))
 	for i := range mds.Chunks {
@@ -135,7 +140,8 @@ func (mds *MockDataSource) PrepareChunks() {
 	mds.ChunkPtr = 0
 }
 
-func (mds *MockDataSource) Next(ctx context.Context, req *chunk.Chunk) error {
+// Next get next chunk
+func (mds *MockDataSource) Next(_ context.Context, req *chunk.Chunk) error {
 	if mds.ChunkPtr >= len(mds.Chunks) {
 		req.Reset()
 		return nil
@@ -153,50 +159,59 @@ type MockPhysicalPlan interface {
 	GetExecutor() exec.Executor
 }
 
+// MockDataPhysicalPlan mocks physical plan
 type MockDataPhysicalPlan struct {
 	MockPhysicalPlan
 	DataSchema *expression.Schema
 	Exec       exec.Executor
 }
 
+// GetExecutor gets executor
 func (mp *MockDataPhysicalPlan) GetExecutor() exec.Executor {
 	return mp.Exec
 }
 
+// Schema returns schema
 func (mp *MockDataPhysicalPlan) Schema() *expression.Schema {
 	return mp.DataSchema
 }
 
+// ExplainID returns explain id
 func (mp *MockDataPhysicalPlan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		return "mockData_0"
 	})
 }
 
-func (mp *MockDataPhysicalPlan) ID() int {
+// ID returns 0
+func (*MockDataPhysicalPlan) ID() int {
 	return 0
 }
 
-func (mp *MockDataPhysicalPlan) Stats() *property.StatsInfo {
+// Stats returns nil
+func (*MockDataPhysicalPlan) Stats() *property.StatsInfo {
 	return nil
 }
 
-func (mp *MockDataPhysicalPlan) SelectBlockOffset() int {
+// SelectBlockOffset returns 0
+func (*MockDataPhysicalPlan) SelectBlockOffset() int {
 	return 0
 }
 
 // MemoryUsage of mockDataPhysicalPlan is only for testing
-func (mp *MockDataPhysicalPlan) MemoryUsage() (sum int64) {
+func (*MockDataPhysicalPlan) MemoryUsage() (sum int64) {
 	return
 }
 
-func BuildMockDataPhysicalPlan(ctx sessionctx.Context, srcExec exec.Executor) *MockDataPhysicalPlan {
+// BuildMockDataPhysicalPlan builds MockDataPhysicalPlan
+func BuildMockDataPhysicalPlan(_ sessionctx.Context, srcExec exec.Executor) *MockDataPhysicalPlan {
 	return &MockDataPhysicalPlan{
 		DataSchema: srcExec.Schema(),
 		Exec:       srcExec,
 	}
 }
 
+// BuildMockDataSource builds MockDataSource
 func BuildMockDataSource(opt MockDataSourceParameters) *MockDataSource {
 	baseExec := exec.NewBaseExecutor(opt.Ctx, opt.DataSchema, 0)
 	m := &MockDataSource{baseExec, opt, nil, nil, 0}
@@ -234,6 +249,7 @@ func BuildMockDataSource(opt MockDataSourceParameters) *MockDataSource {
 	return m
 }
 
+// BuildMockDataSourceWithIndex builds MockDataSourceWithIndex
 func BuildMockDataSourceWithIndex(opt MockDataSourceParameters, index []int) *MockDataSource {
 	opt.Orders = make([]bool, len(opt.DataSchema.Columns))
 	for _, idx := range index {

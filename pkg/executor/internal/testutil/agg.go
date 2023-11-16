@@ -28,28 +28,31 @@ import (
 
 // AggTestCase has a fixed schema (aggCol Double, groupBy LongLong).
 type AggTestCase struct {
-	ExecType         string // "hash" or "stream"
-	AggFunc          string // sum, avg, count ....
-	GroupByNDV       int    // the number of distinct group-by keys
 	HasDistinct      bool
+	DataSourceSorted bool
+	GroupByNDV       int // the number of distinct group-by keys
 	Rows             int
 	Concurrency      int
-	DataSourceSorted bool
+	ExecType         string // "hash" or "stream"
+	AggFunc          string // sum, avg, count ....
 	Ctx              sessionctx.Context
 }
 
-func (a AggTestCase) Columns() []*expression.Column {
+// Columns creates columns
+func (AggTestCase) Columns() []*expression.Column {
 	return []*expression.Column{
 		{Index: 0, RetType: types.NewFieldType(mysql.TypeDouble)},
 		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
 	}
 }
 
+// String gets case content
 func (a AggTestCase) String() string {
 	return fmt.Sprintf("(execType:%v, aggFunc:%v, ndv:%v, hasDistinct:%v, rows:%v, concurrency:%v, sorted:%v)",
 		a.ExecType, a.AggFunc, a.GroupByNDV, a.HasDistinct, a.Rows, a.Concurrency, a.DataSourceSorted)
 }
 
+// DefaultAggTestCase returns default agg test case
 func DefaultAggTestCase(exec string) *AggTestCase {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
