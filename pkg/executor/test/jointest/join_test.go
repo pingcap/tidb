@@ -22,41 +22,11 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
-
-func TestJoinInDisk(t *testing.T) {
-	origin := config.RestoreFunc()
-	defer origin()
-
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
-	tk.MustExec("SET GLOBAL tidb_mem_oom_action='LOG'")
-	tk.MustExec("use test")
-
-	sm := &testkit.MockSessionManager{
-		PS: make([]*util.ProcessInfo, 0),
-	}
-	tk.Session().SetSessionManager(sm)
-	dom.ExpensiveQueryHandle().SetSessionManager(sm)
-
-	// TODO(fengliyuan): how to ensure that it is using disk really?
-	tk.MustExec("set @@tidb_mem_quota_query=1;")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t(c1 int, c2 int)")
-	tk.MustExec("create table t1(c1 int, c2 int)")
-	tk.MustExec("insert into t values(1,1),(2,2)")
-	tk.MustExec("insert into t1 values(2,3),(4,4)")
-	result := tk.MustQuery("select /*+ TIDB_HJ(t, t2) */ * from t, t1 where t.c1 = t1.c1")
-	result.Check(testkit.Rows("2 2 2 3"))
-}
 
 func TestJoin2(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -890,20 +860,4 @@ func TestIssue37932(t *testing.T) {
 		}
 	}
 	require.NoError(t, err)
-}
-
-func TestCartesianJoinPanic(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("insert into t values(1)")
-	tk.MustExec("set tidb_mem_quota_query = 1 << 20")
-	tk.MustExec("set global tidb_mem_oom_action = 'CANCEL'")
-	tk.MustExec("set global tidb_enable_tmp_storage_on_oom = off;")
-	for i := 0; i < 10; i++ {
-		tk.MustExec("insert into t select * from t")
-	}
-	err := tk.QueryToErr("desc analyze select * from t t1, t t2, t t3, t t4, t t5, t t6;")
-	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 }

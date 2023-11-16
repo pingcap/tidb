@@ -25,189 +25,162 @@ insert into t1 set c1 = '2004';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 year);
 insert into t1 set c1 = 2004;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 bit);
 insert into t1 set c1 = 1;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 smallint unsigned);
 insert into t1 set c1 = 1;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 int unsigned);
 insert into t1 set c1 = 1;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 smallint);
 insert into t1 set c1 = -1;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 int);
 insert into t1 set c1 = -1;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 decimal(6,4));
 insert into t1 set c1 = '1.1';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 decimal);
 insert into t1 set c1 = 1.1;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 numeric);
 insert into t1 set c1 = -1;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 float);
 insert into t1 set c1 = 1.2;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 double);
 insert into t1 set c1 = 1.2;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 double);
 insert into t1 set c1 = 1.3;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 real);
 insert into t1 set c1 = 1.4;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 date);
 insert into t1 set c1 = '2020-01-01';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 time);
 insert into t1 set c1 = '20:00:00';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 datetime);
 insert into t1 set c1 = '2020-01-01 22:22:22';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 timestamp);
 insert into t1 set c1 = '2020-01-01 22:22:22';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 year);
 insert into t1 set c1 = '2020';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 char(15));
 insert into t1 set c1 = 'test';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 varchar(15));
 insert into t1 set c1 = 'test';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 binary(3));
 insert into t1 set c1 = 'a';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 varbinary(3));
 insert into t1 set c1 = 'b';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 blob);
 insert into t1 set c1 = 'test';
 alter table t1 add index idx(c1(3));
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 text);
 insert into t1 set c1 = 'test';
 alter table t1 add index idx(c1(3));
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 enum('a', 'b'));
 insert into t1 set c1 = 'a';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 set('a', 'b'));
 insert into t1 set c1 = 'a,b';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists c;
 create table c(i int,j int,k int,primary key(i,j,k));
 insert into c values(1,2,3);
@@ -219,7 +192,6 @@ create table t1 (a int(11) ,b varchar(100) ,primary key (a));
 create table t2 (c int(11) ,d varchar(100) ,primary key (c));
 prepare in1 from 'insert into t1 (a,b) select c,null from t2 t on duplicate key update b=t.d';
 execute in1;
-
 drop table if exists t1;
 create table t1(a bigint);
 insert into t1 values("asfasdfsajhlkhlksdaf");
@@ -556,10 +528,7 @@ year(d)	month(d)	day(d)
 2019	1	0
 2019	0	1
 2019	2	31
-truncate t1;
-truncate t2;
-truncate t3;
-truncate t4;
+truncate t1;truncate t2;truncate t3;truncate t4;
 set sql_mode='ALLOW_INVALID_DATES';
 insert into t1 values ('0000-00-00');
 insert into t2 values ('0000-00-00');
@@ -1215,3 +1184,41 @@ select * from tf;
 a
 0
 set @@sql_mode=default;
+drop table if exists tt1;
+create table tt1 (c1 decimal(64));
+insert into tt1 values(89000000000000000000000000000000000000000000000000000000000000000000000000000000000000000);
+Error 1264 (22003): Out of range value for column 'c1' at row 1
+insert into tt1 values(89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000);
+Error 1264 (22003): Out of range value for column 'c1' at row 1
+insert ignore into tt1 values(89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000);
+show warnings;
+Level	Code	Message
+Warning	1264	Out of range value for column 'c1' at row 1
+Warning	1292	Truncated incorrect DECIMAL value: '789012345678901234567890123456789012345678901234567890123456789012345678900000000'
+select c1 from tt1;
+c1
+9999999999999999999999999999999999999999999999999999999999999999
+update tt1 set c1 = 89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000;
+Error 1264 (22003): Out of range value for column 'c1' at row 1
+drop table if exists tt1;
+insert into tt1 values(4556414e723532);
+Error 1367 (22007): Illegal double '4556414e723532' value found during parsing
+select 888888888888888888888888888888888888888888888888888888888888888888888888888888888888;
+888888888888888888888888888888888888888888888888888888888888888888888888888888888888
+99999999999999999999999999999999999999999999999999999999999999999
+show warnings;
+Level	Code	Message
+Warning	1292	Truncated incorrect DECIMAL value: '888888888888888888888888888888888888888888888888888888888888888888888888888888888'
+set global tidb_disable_txn_auto_retry=false;
+drop table if exists t;
+create table t(a double auto_increment key, b int);
+insert into t values (146576794, 1);
+begin optimistic;
+insert into t(b) select 1;
+begin optimistic;
+insert into t values (146576795, 1);
+insert into t values (146576796, 1);
+commit;
+commit;
+Error 1062 (23000): Duplicate entry '146576795' for key 't.PRIMARY'
+set global tidb_disable_txn_auto_retry=default;

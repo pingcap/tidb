@@ -14,7 +14,14 @@
 
 package asciicheck
 
-import "github.com/tdakkota/asciicheck"
+import (
+	"github.com/pingcap/tidb/build/linter/util"
+	"github.com/tdakkota/asciicheck"
+)
 
 // Analyzer is the analyzer struct of asciicheck.
 var Analyzer = asciicheck.NewAnalyzer()
+
+func init() {
+	util.SkipAnalyzerByConfig(Analyzer)
+}

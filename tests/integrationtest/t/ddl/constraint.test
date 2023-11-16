@@ -654,9 +654,9 @@ show create table t;
 # Alter table alter constraint will violate check.
 # Here a=1, b=0 doesn't satisfy "a < b" constraint.
 # Since "a<b" is not enforced, so the insert will success.
-# tk.MustExec("insert into t values(1, 0)")
-# _, err = tk.Exec("alter table t alter constraint haha enforced")
-# require.Errorf(t, err, "[table:3819]Check constraint 'haha' is violated.")
+insert into t values(1, 0);
+-- error 3819
+alter table t alter constraint haha enforced;
 
 # Related issue TiDB#47567, #47631 and #47632.
 # TestCheckConstraintIssue47567

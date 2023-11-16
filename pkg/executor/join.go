@@ -1324,7 +1324,7 @@ func (e *NestedLoopApplyExec) Close() error {
 
 // Open implements the Executor interface.
 func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
-	err := e.outerExec.Open(ctx)
+	err := exec.Open(ctx, e.outerExec)
 	if err != nil {
 		return err
 	}
@@ -1425,7 +1425,7 @@ func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *ch
 
 // fetchAllInners reads all data from the inner table and stores them in a List.
 func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
-	err := e.innerExec.Open(ctx)
+	err := exec.Open(ctx, e.innerExec)
 	defer terror.Call(e.innerExec.Close)
 	if err != nil {
 		return err

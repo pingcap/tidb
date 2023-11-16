@@ -1,8 +1,9 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "util",
     srcs = [
+        "ddl_event.go",
         "interfaces.go",
         "table_info.go",
         "util.go",
@@ -31,5 +32,17 @@ go_library(
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_tiancaiamao_gp//:gp",
         "@com_github_tikv_client_go_v2//oracle",
+    ],
+)
+
+go_test(
+    name = "util_test",
+    timeout = "short",
+    srcs = ["ddl_event_test.go"],
+    embed = [":util"],
+    flaky = True,
+    deps = [
+        "//pkg/parser/model",
+        "@com_github_stretchr_testify//require",
     ],
 )

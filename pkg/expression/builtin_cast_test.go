@@ -465,47 +465,61 @@ func TestCastFuncSig(t *testing.T) {
 		before *Column
 		after  int64
 		row    chunk.MutRow
+		tp     byte
 	}{
 		// cast string as int.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
 			1,
 			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("1")}),
+			mysql.TypeLonglong,
 		},
 		// cast decimal as int.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeNewDecimal), Index: 0},
 			1,
 			chunk.MutRowFromDatums([]types.Datum{types.NewDecimalDatum(types.NewDecFromInt(1))}),
+			mysql.TypeLonglong,
 		},
 		// cast real as int.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
 			2,
 			chunk.MutRowFromDatums([]types.Datum{types.NewFloat64Datum(2.5)}),
+			mysql.TypeLonglong,
 		},
 		// cast Time as int.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDatetime), Index: 0},
 			curTimeInt,
 			chunk.MutRowFromDatums([]types.Datum{timeDatum}),
+			mysql.TypeLonglong,
 		},
 		// cast Duration as int.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0},
 			125959,
 			chunk.MutRowFromDatums([]types.Datum{durationDatum}),
+			mysql.TypeLonglong,
+		},
+		// cast Duration as year.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0},
+			int64(time.Now().Year()),
+			chunk.MutRowFromDatums([]types.Datum{durationDatum}),
+			mysql.TypeYear,
 		},
 		// cast JSON as int.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeJSON), Index: 0},
 			3,
 			chunk.MutRowFromDatums([]types.Datum{jsonInt}),
+			mysql.TypeLonglong,
 		},
 	}
 	for i, c := range castToIntCases {
 		args := []Expression{c.before}
-		b, err := newBaseBuiltinFunc(ctx, "", args, types.NewFieldType(mysql.TypeLonglong))
+		b, err := newBaseBuiltinFunc(ctx, "", args, types.NewFieldType(c.tp))
 		require.NoError(t, err)
 		intFunc := newBaseBuiltinCastFunc(b, false)
 		switch i {
@@ -517,9 +531,9 @@ func TestCastFuncSig(t *testing.T) {
 			sig = &builtinCastRealAsIntSig{intFunc}
 		case 3:
 			sig = &builtinCastTimeAsIntSig{intFunc}
-		case 4:
+		case 4, 5:
 			sig = &builtinCastDurationAsIntSig{intFunc}
-		case 5:
+		case 6:
 			sig = &builtinCastJSONAsIntSig{intFunc}
 		}
 		res, isNull, err := sig.evalInt(ctx, c.row.ToRow())
@@ -1450,8 +1464,8 @@ func TestWrapWithCastAsJSON(t *testing.T) {
 }
 
 func TestCastIntAsIntVec(t *testing.T) {
-	cast, input, result := genCastIntAsInt()
-	ctx := cast.ctx
+	ctx := mock.NewContext()
+	cast, input, result := genCastIntAsInt(ctx)
 	require.NoError(t, cast.vecEvalInt(ctx, input, result))
 	i64s := result.Int64s()
 	it := chunk.NewIterator4Chunk(input)
