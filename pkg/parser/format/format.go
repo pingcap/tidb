@@ -239,6 +239,7 @@ const (
 	RestoreWithoutSchemaName
 	RestoreWithoutTableName
 	RestoreForNonPrepPlanCache
+	RestoreForTiDBCloudStorageURI
 )
 
 const (
@@ -347,6 +348,14 @@ func (rf RestoreFlags) HasRestoreWithTTLEnableOff() bool {
 // HasRestoreForNonPrepPlanCache returns a boolean indicating whether `rf` has `RestoreForNonPrepPlanCache` flag.
 func (rf RestoreFlags) HasRestoreForNonPrepPlanCache() bool {
 	return rf.has(RestoreForNonPrepPlanCache)
+}
+
+// HasRestoreForTiDBCloudStorageURI returns a boolean indicating
+// whether to force redactURI when restoring `set global tidb_cloud_storgae_uri`.
+// Only used the RestoreForTiDBCloudStorageURI flag
+// when restoring `set global tidb_cloud_storgae_uri` for SecureText().
+func (rf RestoreFlags) HasRestoreForTiDBCloudStorageURI() bool {
+	return rf.has(RestoreForTiDBCloudStorageURI)
 }
 
 // RestoreWriter is the interface for `Restore` to write.
