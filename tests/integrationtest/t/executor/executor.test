@@ -2537,3 +2537,114 @@ from ssci right join csci on (ssci.customer_sk=csci.customer_sk
 limit 100;
 --enable_result_log
 
+# TestCompileOutOfMemoryQuota
+# Test for issue: https://github.com/pingcap/tidb/issues/38322
+set global tidb_mem_oom_action='CANCEL';
+drop table if exists t, t1;
+create table t(a int, b int, index idx(a));
+create table t1(a int, c int, index idx(a));
+set tidb_mem_quota_query=10;
+-- replace_regex /conn=[0-9]+/conn=<num>/
+-- error 8175
+select t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a;
+set global tidb_mem_oom_action=default;
+set tidb_mem_quota_query=default;
+
+# TestOOMPanicAction
+drop table if exists t, t1;
+create table t (a int primary key, b double);
+insert into t values (1,1);
+SET GLOBAL tidb_mem_oom_action='CANCEL';
+set @@tidb_mem_quota_query=1;
+-- replace_regex /conn=[0-9]+/conn=<num>/
+-- error 8175
+select sum(b) from t group by a;
+
+## Test insert from select oom panic.
+drop table if exists t,t1;
+create table t (a bigint);
+create table t1 (a bigint);
+set @@tidb_mem_quota_query=200;
+-- replace_regex /conn=[0-9]+/conn=<num>/
+-- error 8175
+insert into t1 values (1),(2),(3),(4),(5);
+-- replace_regex /conn=[0-9]+/conn=<num>/
+-- error 8175
+replace into t1 values (1),(2),(3),(4),(5);
+set @@tidb_mem_quota_query=10000;
+insert into t1 values (1),(2),(3),(4),(5);
+set @@tidb_mem_quota_query=10;
+-- replace_regex /conn=[0-9]+/conn=<num>/
+-- error 8175
+insert into t select a from t1 order by a desc;
+-- replace_regex /conn=[0-9]+/conn=<num>/
+-- error 8175
+replace into t select a from t1 order by a desc;
+set @@tidb_mem_quota_query=10000;
+insert into t values (1),(2),(3),(4),(5);
+## Set the memory quota to 244 to make this SQL panic during the DeleteExec
+## instead of the TableReaderExec.
+set @@tidb_mem_quota_query=244;
+-- replace_regex /conn=[0-9]+/conn=<num>/
+-- error 8175
+delete from t;
+set @@tidb_mem_quota_query=10000;
+delete from t1;
+insert into t1 values(1);
+insert into t values (1),(2),(3),(4),(5);
+set @@tidb_mem_quota_query=244;
+-- replace_regex /conn=[0-9]+/conn=<num>/
+-- error 8175
+delete t, t1 from t join t1 on t.a = t1.a;
+set @@tidb_mem_quota_query=100000;
+truncate table t;
+insert into t values(1),(2),(3);
+## set the memory to quota to make the SQL panic during UpdateExec instead
+## of TableReader.
+set @@tidb_mem_quota_query=244;
+-- replace_regex /conn=[0-9]+/conn=<num>/
+-- error 8175
+update t set a = 4;
+
+SET GLOBAL tidb_mem_oom_action = DEFAULT;
+set @@tidb_mem_quota_query=DEFAULT;
+
+# TestTrackAggMemoryUsage
+drop table if exists t;
+create table t(a int);
+insert into t values(1);
+set tidb_track_aggregate_memory_usage = off;
+
+--replace_column 5 <execution_info> 6 <operator_info>
+--replace_regex /[0-9]+ Bytes/<num> Bytes/ /[.0-9]+ KB/<num> KB/
+explain analyze select /*+ HASH_AGG() */ sum(a) from t;
+
+--replace_column 5 <execution_info> 6 <operator_info>
+--replace_regex /[0-9]+ Bytes/<num> Bytes/ /[.0-9]+ KB/<num> KB/
+explain analyze select /*+ STREAM_AGG() */ sum(a) from t;
+
+set tidb_track_aggregate_memory_usage = on;
+
+--replace_column 5 <execution_info> 6 <operator_info>
+--replace_regex /[0-9]+ Bytes/<num> Bytes/ /[.0-9]+ KB/<num> KB/
+explain analyze select /*+ HASH_AGG() */ sum(a) from t;
+
+--replace_column 5 <execution_info> 6 <operator_info>
+--replace_regex /[0-9]+ Bytes/<num> Bytes/ /[.0-9]+ KB/<num> KB/
+explain analyze select /*+ STREAM_AGG() */ sum(a) from t;
+
+set tidb_track_aggregate_memory_usage = default;
+
+# TestBind
+drop table if exists testbind;
+create table testbind(i int, s varchar(20));
+create index index_t on testbind(i,s);
+create global binding for select * from testbind using select * from testbind use index for join(index_t);
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where default_db='executor__executor';
+create session binding for select * from testbind using select * from testbind use index for join(index_t);
+--replace_column 5 <create_time> 6 <update_time>
+show session bindings where default_db='executor__executor';
+
+drop session binding for select * from testbind using select * from testbind use index for join(index_t);
+drop global binding for select * from testbind using select * from testbind use index for join(index_t);

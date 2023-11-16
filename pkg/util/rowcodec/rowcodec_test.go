@@ -292,7 +292,7 @@ func TestTypesNewRowCodec(t *testing.T) {
 		return d
 	}
 	getTime := func(value string) types.Time {
-		d, err := types.ParseTime(types.DefaultStmtNoWarningContext, value, mysql.TypeTimestamp, 6, nil)
+		d, err := types.ParseTime(types.DefaultStmtNoWarningContext, value, mysql.TypeTimestamp, 6)
 		require.NoError(t, err)
 		return d
 	}
