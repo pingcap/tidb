@@ -261,8 +261,7 @@ func (s *spillDeserializeHelper) deserializePartialResult4JsonArrayagg(dst *part
 		byteNum := int64(len(bytes))
 		readPos := int64(0)
 		for readPos < byteNum {
-			value, readPosTmp := spill.DeserializeInterface(bytes, readPos)
-			readPos = readPosTmp
+			value := spill.DeserializeInterface(bytes, &readPos)
 			dst.entries = append(dst.entries, value)
 		}
 		s.readRowIndex++
@@ -284,8 +283,7 @@ func (s *spillDeserializeHelper) deserializePartialResult4JsonObjectAgg(dst *par
 			readPos += int64Len
 			key := string(bytes[readPos : readPos+keyLen])
 			readPos += keyLen
-			realVal, readPosTmp := spill.DeserializeInterface(bytes, readPos)
-			readPos = readPosTmp
+			realVal := spill.DeserializeInterface(bytes, &readPos)
 			if _, ok := dst.entries[key]; !ok {
 				memDelta += int64(len(key)) + getValMemDelta(realVal)
 				if len(dst.entries)+1 > (1<<dst.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {

@@ -100,77 +100,77 @@ func DeserializeFloat64(buf []byte, pos int64) float64 {
 	return *(*float64)(unsafe.Pointer(&buf[pos]))
 }
 
-// DeserializeInterface deserializes interface type and return the new readPos
-func DeserializeInterface(buf []byte, readPos int64) (interface{}, int64) {
+// DeserializeInterface deserializes interface type
+func DeserializeInterface(buf []byte, readPos *int64) interface{} {
 	// Get type
-	dataType := int(buf[readPos])
-	readPos += typeLen
+	dataType := int(buf[*readPos])
+	*readPos += typeLen
 
 	switch dataType {
 	case BoolType:
-		res := int(buf[readPos])
-		readPos += boolLen
+		res := int(buf[*readPos])
+		*readPos += boolLen
 		if res == 0 {
-			return false, readPos
+			return false
 		} else if res == 1 {
-			return true, readPos
+			return true
 		} else {
 			panic("Invalid value happens when deserializing agg spill data!")
 		}
 	case Int64Type:
-		res := DeserializeInt64(buf, readPos)
-		readPos += int64Len
-		return res, readPos
+		res := DeserializeInt64(buf, *readPos)
+		*readPos += int64Len
+		return res
 	case Uint64Type:
-		res := DeserializeUint64(buf, readPos)
-		readPos += uint64Len
-		return res, readPos
+		res := DeserializeUint64(buf, *readPos)
+		*readPos += uint64Len
+		return res
 	case FloatType:
-		res := DeserializeFloat64(buf, readPos)
-		readPos += float64Len
-		return res, readPos
+		res := DeserializeFloat64(buf, *readPos)
+		*readPos += float64Len
+		return res
 	case StringType:
-		strLen := DeserializeInt64(buf, readPos)
-		readPos += int64Len
-		res := string(buf[readPos : readPos+strLen])
-		readPos += strLen
-		return res, readPos
+		strLen := DeserializeInt64(buf, *readPos)
+		*readPos += int64Len
+		res := string(buf[*readPos : *readPos+strLen])
+		*readPos += strLen
+		return res
 	case BinaryJSONType:
-		retValue, deserializedByteNum := DeserializeBinaryJSON(buf, readPos)
-		readPos += deserializedByteNum
-		return retValue, readPos
+		retValue, deserializedByteNum := DeserializeBinaryJSON(buf, *readPos)
+		*readPos += deserializedByteNum
+		return retValue
 	case OpaqueType:
-		typeCode := buf[readPos]
-		readPos++
-		valueLen := DeserializeInt64(buf, readPos)
-		readPos += int64Len
+		typeCode := buf[*readPos]
+		*readPos++
+		valueLen := DeserializeInt64(buf, *readPos)
+		*readPos += int64Len
 		return types.Opaque{
 			TypeCode: typeCode,
-			Buf:      buf[readPos : readPos+valueLen],
-		}, readPos + valueLen
+			Buf:      buf[*readPos : *readPos+valueLen],
+		}
 	case TimeType:
-		coreTime := DeserializeUint64(buf, readPos)
-		readPos += uint64Len
-		t := DeserializeUint8(buf, readPos)
-		readPos += uint8Len
-		fsp := DeserializeInt(buf, readPos)
-		readPos += intLen
-		return types.NewTime(types.CoreTime(coreTime), t, fsp), readPos
+		coreTime := DeserializeUint64(buf, *readPos)
+		*readPos += uint64Len
+		t := DeserializeUint8(buf, *readPos)
+		*readPos += uint8Len
+		fsp := DeserializeInt(buf, *readPos)
+		*readPos += intLen
+		return types.NewTime(types.CoreTime(coreTime), t, fsp)
 	case DurationType:
-		value := DeserializeInt64(buf, readPos)
-		readPos += int64Len
-		fsp := DeserializeInt(buf, readPos)
-		readPos += intLen
+		value := DeserializeInt64(buf, *readPos)
+		*readPos += int64Len
+		fsp := DeserializeInt(buf, *readPos)
+		*readPos += intLen
 		return types.Duration{
 			Duration: gotime.Duration(value),
 			Fsp:      fsp,
-		}, readPos
+		}
 	default:
 		panic("Invalid data type happens in agg spill deserializing!")
 	}
 }
 
-// DeserializeBinaryJSON deserializes Set type
+// DeserializeBinaryJSON deserializes Set type and return the size of deserialized object
 func DeserializeBinaryJSON(buf []byte, pos int64) (types.BinaryJSON, int64) {
 	retValue := types.BinaryJSON{}
 	retValue.TypeCode = buf[pos]
@@ -183,10 +183,6 @@ func DeserializeBinaryJSON(buf []byte, pos int64) (types.BinaryJSON, int64) {
 }
 
 // DeserializeSet deserializes Set type
-//
-// Commonly, function should return the deserialized bytes for variable length type.
-// However, `Set` type is always deserialized with fix length types.
-// So, there is no need to return deserialized bytes so far.
 func DeserializeSet(buf []byte, pos int64) types.Set {
 	retValue := types.Set{}
 	retValue.Value = DeserializeUint64(buf, pos)
@@ -195,10 +191,6 @@ func DeserializeSet(buf []byte, pos int64) types.Set {
 }
 
 // DeserializeEnum deserializes Set type
-//
-// Commonly, function should return the deserialized bytes for variable length type.
-// However, `Enum` type is always deserialized with fix length types.
-// So, there is no need to return deserialized bytes so far.
 func DeserializeEnum(buf []byte, pos int64) types.Enum {
 	retValue := types.Enum{}
 	retValue.Value = DeserializeUint64(buf, pos)
@@ -327,10 +319,6 @@ func SerializeBinaryJSON(json *types.BinaryJSON, varBuf []byte, startPos int64) 
 }
 
 // SerializeSet serializes Set type
-//
-// Commonly, function should return the serialized bytes for variable length type.
-// However, `Set` type is always serialized with fix length types.
-// So, there is no need to return serialized bytes so far.
 func SerializeSet(value *types.Set, varBuf []byte, startPos int64) []byte {
 	SerializeUint64(value.Value, varBuf[startPos:])
 	varBuf = varBuf[:startPos+uint64Len]
@@ -338,10 +326,6 @@ func SerializeSet(value *types.Set, varBuf []byte, startPos int64) []byte {
 }
 
 // SerializeEnum serializes Set type
-//
-// Commonly, function should return the serialized bytes for variable length type.
-// However, `Enum` type is always serialized with fix length types.
-// So, there is no need to return serialized bytes so far.
 func SerializeEnum(value *types.Enum, varBuf []byte, startPos int64) []byte {
 	SerializeUint64(value.Value, varBuf[startPos:])
 	varBuf = varBuf[:startPos+uint64Len]
