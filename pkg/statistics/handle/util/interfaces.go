@@ -377,9 +377,6 @@ type StatsHandle interface {
 	// Lease returns the stats lease.
 	Lease() time.Duration
 
-	// SysProcTracker is used to track sys process like analyze
-	SysProcTracker() sessionctx.SysProcTracker
-
 	// TableInfoGetter is used to get table meta info.
 	TableInfoGetter
 

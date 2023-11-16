@@ -49,9 +49,6 @@ type Handle struct {
 	// initStatsCtx is the ctx only used for initStats
 	initStatsCtx sessionctx.Context
 
-	// sysProcTracker is used to track sys process like analyze
-	sysProcTracker sessionctx.SysProcTracker
-
 	// TableInfoGetter is used to fetch table meta info.
 	util.TableInfoGetter
 
@@ -109,7 +106,6 @@ func NewHandle(
 	autoAnalyzeProcIDGetter func() uint64,
 ) (*Handle, error) {
 	handle := &Handle{
-		sysProcTracker:  tracker,
 		InitStatsDone:   make(chan struct{}),
 		TableInfoGetter: util.NewTableInfoGetter(),
 		StatsLock:       lockstats.NewStatsLock(pool),
@@ -128,7 +124,7 @@ func NewHandle(
 	handle.StatsCache = statsCache
 	handle.StatsHistory = history.NewStatsHistory(handle)
 	handle.StatsUsage = usage.NewStatsUsageImpl(handle)
-	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(handle)
+	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(handle, tracker)
 	handle.StatsSyncLoad = syncload.NewStatsSyncLoad(handle)
 	handle.StatsGlobal = globalstats.NewStatsGlobal(handle)
 	handle.DDL = ddl.NewDDLHandler(handle.StatsReadWriter, handle, handle.StatsGlobal)
@@ -162,9 +158,4 @@ func (h *Handle) FlushStats() {
 func (h *Handle) Close() {
 	h.Pool.Close()
 	h.StatsCache.Close()
-}
-
-// SysProcTracker is used to track sys process like analyze
-func (h *Handle) SysProcTracker() sessionctx.SysProcTracker {
-	return h.sysProcTracker
 }
