@@ -37,8 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 const (
@@ -615,11 +613,11 @@ func (s *BaseScheduler) markSubTaskCanceledOrFailed(ctx context.Context, subtask
 			s.updateSubtaskStateAndError(subtask, proto.TaskStateCanceled, nil)
 		} else if common.IsRetryableError(err) || isRetryableError(err) {
 			logutil.Logger(s.logCtx).Warn("met retryable error", zap.Error(err))
-		} else if errors.Cause(err) != context.Canceled && status.Code(err) != codes.Canceled {
+		} else if common.IsContextCanceledError(err) {
+			logutil.Logger(s.logCtx).Info("met context canceled for gracefully shutdown", zap.Error(err))
+		} else {
 			logutil.Logger(s.logCtx).Warn("subtask failed", zap.Error(err))
 			s.updateSubtaskStateAndError(subtask, proto.TaskStateFailed, err)
-		} else {
-			logutil.Logger(s.logCtx).Info("met context canceled for gracefully shutdown", zap.Error(err))
 		}
 		s.markErrorHandled()
 		return true
