@@ -188,8 +188,7 @@ func IsContextCanceledError(err error) bool {
 	}
 
 	// see https://github.com/aws/aws-sdk-go/blob/9d1f49ba63bdac44a5b9f4d736e79d792e389e8a/aws/credentials/credentials.go#L246-L249
-	switch v := err.(type) {
-	case awserr.Error:
+	if v, ok := err.(awserr.Error); ok {
 		return v.Code() == request.CanceledErrorCode
 	}
 	return false
