@@ -840,7 +840,7 @@ func (n *VariableAssignment) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteName(n.Name)
 		ctx.WritePlain("=")
 	}
-	if n.Name == TiDBCloudStorageURI && ctx.Flags.HasRestoreForTiDBCloudStorageURI() {
+	if n.Name == TiDBCloudStorageURI && ctx.Flags.HasRestoreWithRedacted() {
 		// need to redact the url for safety when `show processlist;`
 		ctx.WritePlain(RedactURL(n.Value.(ValueExpr).GetString()))
 	} else if err := n.Value.Restore(ctx); err != nil {
@@ -1119,7 +1119,7 @@ func (n *SetStmt) Accept(v Visitor) (Node, bool) {
 func (n *SetStmt) SecureText() string {
 	redactedStmt := *n
 	var sb strings.Builder
-	_ = redactedStmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags|format.RestoreForTiDBCloudStorageURI, &sb))
+	_ = redactedStmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags|format.RestoreWithRedacted, &sb))
 	return sb.String()
 }
 
