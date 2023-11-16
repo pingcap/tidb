@@ -1303,7 +1303,7 @@ create table t(
 			exprStr:     `e = "你好啊"`,
 			accessConds: "[eq(test.t.e, 你好啊)]",
 			filterConds: "[eq(test.t.e, 你好啊)]",
-			resultStr:   "[[0xE4BD,0xE4BD]]",
+			resultStr:   "[[\"\\xe4\\xbd\",\"\\xe4\\xbd\"]]",
 		},
 		{
 			indexPos:    2,
@@ -1338,21 +1338,21 @@ create table t(
 			exprStr:     "f >= 'a' and f <= 'B'",
 			accessConds: "[ge(test.t.f, a) le(test.t.f, B)]",
 			filterConds: "[]",
-			resultStr:   "[[\"a\",\"B\"]]",
+			resultStr:   "[[\"\\x00A\",\"\\x00B\"]]",
 		},
 		{
 			indexPos:    4,
 			exprStr:     "f in ('a', 'B')",
 			accessConds: "[in(test.t.f, a, B)]",
 			filterConds: "[]",
-			resultStr:   "[[\"a\",\"a\"] [\"B\",\"B\"]]",
+			resultStr:   "[[\"\\x00A\",\"\\x00A\"] [\"\\x00B\",\"\\x00B\"]]",
 		},
 		{
 			indexPos:    4,
 			exprStr:     "f = 'a' and f = 'B' collate utf8mb4_bin",
 			accessConds: "[eq(test.t.f, a)]",
 			filterConds: "[eq(test.t.f, B)]",
-			resultStr:   "[[\"a\",\"a\"]]",
+			resultStr:   "[[\"\\x00A\",\"\\x00A\"]]",
 		},
 		{
 			indexPos:    4,
@@ -1366,7 +1366,7 @@ create table t(
 			exprStr:     "d in ('aab', 'aac') and e = 'a'",
 			accessConds: "[in(test.t.d, aab, aac) eq(test.t.e, a)]",
 			filterConds: "[in(test.t.d, aab, aac)]",
-			resultStr:   "[[\"aa\" 0x61,\"aa\" 0x61]]",
+			resultStr:   "[[\"aa\" \"a\",\"aa\" \"a\"]]",
 		},
 		{
 			indexPos:    6,
