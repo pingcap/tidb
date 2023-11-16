@@ -1,4 +1,4 @@
-// Copyright 2022 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,17 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package noloopclosure
+package util
 
 import (
-	nlc "github.com/fatanugraha/noloopclosure"
-	"github.com/pingcap/tidb/build/linter/util"
+	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
-// Analyzer is the analyzer struct of misspell.
-var Analyzer = nlc.Analyzer
-
-func init() {
-	util.SkipAnalyzerByConfig(Analyzer)
-	util.SkipAnalyzer(Analyzer)
+func TestShouldRun(t *testing.T) {
+	require.True(t, shouldRun("gofmt", "some.go"))
+	require.False(t, shouldRun("gofmt", "uca_generated.go"))
 }

@@ -1,4 +1,4 @@
-// Copyright 2022 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,28 +12,31 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package errcheck
+package build
 
 import (
-	"embed"
-	"log"
-
-	"github.com/kisielk/errcheck/errcheck"
-	"github.com/pingcap/tidb/build/linter/util"
+	_ "embed"
+	"encoding/json"
 )
 
-// Analyzer is the analyzer struct of errcheck.
-var Analyzer = errcheck.Analyzer
+//go:embed nogo_config.json
+var configFile []byte
 
-//go:embed errcheck_excludes.txt
-var excludesContent embed.FS
+// NogoConfig is the nogo config file
+var NogoConfig NogoConfigFormat
+
+// NogoConfigFormat is the format of the nogo config file
+type NogoConfigFormat map[string]AnalysisConfig
+
+// AnalysisConfig represents the config of an analysis pass
+type AnalysisConfig struct {
+	ExcludeFiles map[string]string `json:"exclude_files"`
+	OnlyFiles    map[string]string `json:"only_files"`
+}
 
 func init() {
-	data, _ := excludesContent.ReadFile("errcheck_excludes.txt")
-	err := Analyzer.Flags.Set("excludes", string(data))
+	err := json.Unmarshal(configFile, &NogoConfig)
 	if err != nil {
-		log.Fatal(err)
+		panic("fail to parse nogo_config.json")
 	}
-	util.SkipAnalyzerByConfig(Analyzer)
-	util.SkipAnalyzer(Analyzer)
 }

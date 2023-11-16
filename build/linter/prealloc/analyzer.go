@@ -56,5 +56,6 @@ func run(pass *analysis.Pass) (interface{}, error) {
 }
 
 func init() {
+	util.SkipAnalyzerByConfig(Analyzer)
 	util.SkipAnalyzer(Analyzer)
 }
