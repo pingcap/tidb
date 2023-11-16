@@ -27,6 +27,7 @@ go_test(
     timeout = "short",
     srcs = ["sort_test.go"],
     flaky = True,
+    shard_count = 3,
     deps = [
         "//pkg/config",
         "//pkg/sessionctx/variable",
@@ -39,12 +40,23 @@ go_test(
 
 go_test(
     name = "sortexec_test",
-    srcs = ["sort_test.go"],
+    srcs = [
+        "benchmark_test.go",
+        "sort_spill_test.go",
+        "sort_test.go",
+    ],
     deps = [
+        ":sortexec",
         "//pkg/config",
+        "//pkg/executor/internal/exec",
+        "//pkg/executor/internal/testutil",
+        "//pkg/expression",
+        "//pkg/planner/util",
         "//pkg/sessionctx/variable",
         "//pkg/testkit",
         "//pkg/util",
+        "//pkg/util/memory",
+        "//pkg/util/mock",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
     ],

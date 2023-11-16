@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/pdhelper"
 	"github.com/pingcap/tidb/pkg/executor/internal/querywatch"
+	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/internal/vecgroupchecker"
 	"github.com/pingcap/tidb/pkg/executor/lockstats"
 	executor_metrics "github.com/pingcap/tidb/pkg/executor/metrics"
@@ -133,13 +134,6 @@ func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *Te
 		txnScope:         txnManager.GetTxnScope(),
 		readReplicaScope: txnManager.GetReadReplicaScope(),
 	}
-}
-
-// MockPhysicalPlan is used to return a specified executor in when build.
-// It is mainly used for testing.
-type MockPhysicalPlan interface {
-	plannercore.PhysicalPlan
-	GetExecutor() exec.Executor
 }
 
 // MockExecutorBuilder is a wrapper for executorBuilder.
@@ -318,7 +312,7 @@ func (b *executorBuilder) build(p plannercore.Plan) exec.Executor {
 	case *plannercore.CompactTable:
 		return b.buildCompactTable(v)
 	default:
-		if mp, ok := p.(MockPhysicalPlan); ok {
+		if mp, ok := p.(testutil.MockPhysicalPlan); ok {
 			return mp.GetExecutor()
 		}
 
