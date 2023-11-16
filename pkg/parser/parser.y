@@ -3010,19 +3010,19 @@ FlashbackToTimestampStmt:
 		} else {
     		yylex.AppendError(yylex.Errorf("Invalid TSO value provided: %d", $4))
     		return 1
-    	}
+		}
 	}
 |	"FLASHBACK" "TABLE" TableNameList toTSO LengthNum
 	{
 		if tsoValue, ok := $5.(uint64); ok && tsoValue > 0 {
 			$$ = &ast.FlashBackToTimestampStmt{
-            		Tables:      $3.([]*ast.TableName),
-            		FlashbackTSO: tsoValue,
-            	}
+            	Tables:      $3.([]*ast.TableName),
+            	FlashbackTSO: tsoValue,
+            }
 		} else {
-    		yylex.AppendError(yylex.Errorf("Invalid TSO value provided: %d", $5))
-    		return 1
-    	}
+			yylex.AppendError(yylex.Errorf("Invalid TSO value provided: %d", $5))
+			return 1
+		}
 	}
 |	"FLASHBACK" DatabaseSym DBName toTSO LengthNum
 	{
@@ -3030,11 +3030,11 @@ FlashbackToTimestampStmt:
 			$$ = &ast.FlashBackToTimestampStmt{
             	DBName:      model.NewCIStr($3),
             	FlashbackTSO: tsoValue,
-            }
+			}
 		} else {
-    		yylex.AppendError(yylex.Errorf("Invalid TSO value provided: %d", $5))
-    		return 1
-    	}
+			yylex.AppendError(yylex.Errorf("Invalid TSO value provided: %d", $5))
+			return 1
+		}
 	}
 
 
