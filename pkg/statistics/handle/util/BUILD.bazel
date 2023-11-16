@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "util",
     srcs = [
+        "auto_analyze_proc_id_generator.go",
         "ddl_event.go",
         "interfaces.go",
         "pool.go",

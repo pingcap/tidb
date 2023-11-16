@@ -43,6 +43,9 @@ const (
 // Handle can update stats info periodically.
 type Handle struct {
 	util.Pool
+
+	util.AutoAnalyzeProcIDGenerator
+
 	// initStatsCtx is the ctx only used for initStats
 	initStatsCtx sessionctx.Context
 
@@ -79,9 +82,6 @@ type Handle struct {
 	// DDL is used to handle ddl events.
 	util.DDL
 
-	// autoAnalyzeProcIDGetter is used to generate auto analyze ID.
-	autoAnalyzeProcIDGetter func() uint64
-
 	InitStatsDone chan struct{}
 
 	// StatsCache ...
@@ -109,11 +109,10 @@ func NewHandle(
 	autoAnalyzeProcIDGetter func() uint64,
 ) (*Handle, error) {
 	handle := &Handle{
-		sysProcTracker:          tracker,
-		autoAnalyzeProcIDGetter: autoAnalyzeProcIDGetter,
-		InitStatsDone:           make(chan struct{}),
-		TableInfoGetter:         util.NewTableInfoGetter(),
-		StatsLock:               lockstats.NewStatsLock(pool),
+		sysProcTracker:  tracker,
+		InitStatsDone:   make(chan struct{}),
+		TableInfoGetter: util.NewTableInfoGetter(),
+		StatsLock:       lockstats.NewStatsLock(pool),
 	}
 	handle.StatsGC = storage.NewStatsGC(handle)
 	handle.StatsReadWriter = storage.NewStatsReadWriter(handle)
@@ -125,6 +124,7 @@ func NewHandle(
 		return nil, err
 	}
 	handle.Pool = util.NewPool(pool)
+	handle.AutoAnalyzeProcIDGenerator = util.NewGenerator(autoAnalyzeProcIDGetter)
 	handle.StatsCache = statsCache
 	handle.StatsHistory = history.NewStatsHistory(handle)
 	handle.StatsUsage = usage.NewStatsUsageImpl(handle)
@@ -176,9 +176,4 @@ func (h *Handle) GetCurrentPruneMode() (mode string, err error) {
 // SysProcTracker is used to track sys process like analyze
 func (h *Handle) SysProcTracker() sessionctx.SysProcTracker {
 	return h.sysProcTracker
-}
-
-// AutoAnalyzeProcID generates an analyze ID.
-func (h *Handle) AutoAnalyzeProcID() uint64 {
-	return h.autoAnalyzeProcIDGetter()
 }
