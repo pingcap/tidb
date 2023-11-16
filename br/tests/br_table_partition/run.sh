@@ -24,8 +24,8 @@ PATH="$CUR:bin:$PATH"
 echo "load data..."
 DB=$DB TABLE=$TABLE TABLE_COUNT=$TABLE_COUNT prepare.sh
 
-#declare -A row_count_ori
-#declare -A row_count_new
+declare -A row_count_ori
+declare -A row_count_new
 
 for i in $(seq $TABLE_COUNT) _Hash _List; do
     row_count_ori[$i]=$(run_sql "SELECT COUNT(*) FROM $DB.$TABLE${i};" | awk '/COUNT/{print $2}')
