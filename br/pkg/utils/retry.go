@@ -4,15 +4,21 @@ package utils
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/pingcap/br/pkg/utils"
 	"github.com/pingcap/errors"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/log"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	tmysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/multierr"
+	"go.uber.org/zap"
 )
 
 var retryableServerError = []string{
@@ -30,6 +36,140 @@ var retryableServerError = []string{
 	"<code>requesttimeout</code>",
 	"<code>invalidpart</code>",
 	"end of file before message length reached",
+}
+
+type ErrorStrategy int
+
+const (
+	// This type can be retry but consume the backoffer attempts.
+	Retry ErrorStrategy = iota
+	// This type can be retry immediately.
+	LosslessRetry
+	// This type means un-recover error and the whole progress should exits
+	// for example:
+	// 1. permission not valid.
+	// 2. data has not found.
+	// 3. retry too many times
+	GiveUp
+	// Do nothing
+	Ignore
+	// This type means we need do some resolve work before retry.
+	// current the work is only resolve locks.
+	Resolve
+)
+
+type ErrorContext struct {
+	// encounter times for one context on a store
+	// we may use this value to determine the retry policy
+	encounterTimesOnStore int
+	// whether need retry
+	needRetry bool
+	// whether canbe ignore this error
+	canbeIgnore bool
+	// whether in backup or restore
+	scenario string
+
+	errorMsg string
+
+	errorType errors.Error
+}
+
+func (ec *ErrorContext) HandleBackup(err backuppb.Error, storeID int) ErrorStrategy {
+	if len(err.Msg) != 0 {
+		return ec.handleErrorMsg(err.Msg, storeID)
+	}
+	return ec.handleErrorPb(err, storeID)
+}
+
+func (ec *ErrorContext) handleErrorMsg(msg string, storeID int) ErrorStrategy {
+	// UNSAFE! TODO: use meaningful error code instead of unstructured message to find failed to write error.
+	logger := log.L().With(zap.String("scenario", ec.scenario))
+	if utils.MessageIsNotFoundStorageError(msg) {
+		// giveup outside
+		ec.errorMsg = fmt.Sprintf("File or directory not found on TiKV Node (store id: %v; Address: %s). "+
+			"work around:please ensure br and tikv nodes share a same storage and the user of br and tikv has same uid.",
+			storeID)
+		return GiveUp
+	}
+	if utils.MessageIsPermissionDeniedStorageError(msg) {
+		// giveup outside
+		ec.errorMsg = fmt.Sprintf("I/O permission denied error occurs on TiKV Node(store id: %v; Address: %s). "+
+			"work around:please ensure tikv has permission to read from & write to the storage.",
+			storeID)
+		return GiveUp
+	}
+
+	if utils.MessageIsRetryableStorageError(msg) {
+		logger.Warn("occur storage error", zap.String("error", msg))
+		// infinite retry outside
+		// finite retry outside
+		ec.errorType = *berrors.ErrStorageUnknown
+		return Retry
+	} else {
+		// retry enough on same store
+		// if not enough
+		// return Retry
+		// if enough
+		// return GiveUp
+	}
+	return GiveUp
+}
+
+func (ec *ErrorContext) handleErrorPb(e backuppb.Error, storeID int) ErrorStrategy {
+	logger := log.L().With(zap.String("scenario", ec.scenario))
+	switch v := e.Detail.(type) {
+	case *backuppb.Error_KvError:
+		if ec.canbeIgnore {
+			return Ignore
+		}
+		if lockErr := v.KvError.Locked; lockErr != nil {
+			logger.Warn("occur kv error", zap.Reflect("error", v))
+			// resolve outside     X
+			// ignore outside
+			ec.errorType = *berrors.ErrBackupKeyIsLocked
+			return Resolve
+		}
+		// Backup should not meet error other than KeyLocked.
+		// giveup outside         X
+		// ignore outside
+		ec.errorType = *berrors.ErrKVUnknown
+		return GiveUp
+
+	case *backuppb.Error_RegionError:
+		if ec.canbeIgnore {
+			return Ignore
+		}
+		regionErr := v.RegionError
+		// Ignore following errors.
+		if !(regionErr.EpochNotMatch != nil ||
+			regionErr.NotLeader != nil ||
+			regionErr.RegionNotFound != nil ||
+			regionErr.ServerIsBusy != nil ||
+			regionErr.StaleCommand != nil ||
+			regionErr.StoreNotMatch != nil ||
+			regionErr.ReadIndexNotReady != nil ||
+			regionErr.ProposalInMergingMode != nil) {
+			logger.Error("unexpect region error", zap.Reflect("RegionError", regionErr))
+			// giveup outside
+			// ignore outside
+			ec.errorType = *berrors.ErrKVUnknown
+			return GiveUp
+		}
+		logger.Warn("occur region error",
+			zap.Reflect("RegionError", regionErr),
+			zap.Int("storeID", storeID))
+		// ignore outside
+		// finite retry outside
+		ec.errorType = *berrors.ErrBackupRegion
+		return Retry
+
+	case *backuppb.Error_ClusterIdError:
+		logger.Error("occur cluster ID error", zap.Reflect("error", v), zap.Int("storeID", storeID))
+		// giveup outside
+		ec.errorType = *berrors.ErrKVUnknown
+		return GiveUp
+	}
+	return GiveUp
 }
 
 // RetryableFunc presents a retryable operation.
