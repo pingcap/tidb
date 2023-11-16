@@ -1192,11 +1192,11 @@ func (local *Backend) generateAndSendJob(
 	dataAndRangeCh := make(chan common.DataAndRange)
 	// due to MemoryIngestData is larger, we need to control the memory usage so
 	// lower the concurrency if the value is 2, the sender to dataAndRangeCh can own
-	// 1 MemoryIngestData that is waiting to send to below goroutines, 2 goroutine
-	// can own totally 2 MemoryIngestData that is waiting to send to jobToWorkerCh,
+	// 1 MemoryIngestData that is waiting to send to below goroutines, 1 goroutine
+	// can own totally 1 MemoryIngestData that is waiting to send to jobToWorkerCh,
 	// and there are 32 worker all processing 32 region job so no one is reading from
-	// jobToWorkerCh. The total memory usage is about (1+2)*4GB + 32*96MB = 15GB
-	for i := 0; i < 2; i++ {
+	// jobToWorkerCh. The total memory usage is about (1+1)*4GB + 32*96MB = 11GB
+	for i := 0; i < 1; i++ {
 		eg.Go(func() error {
 			for {
 				select {
