@@ -338,6 +338,7 @@ func (b *builtinCastDurationAsIntSig) vecEvalInt(ctx sessionctx.Context, input *
 	var duration types.Duration
 	ds := buf.GoDurations()
 	fsp := b.args[0].GetType().GetDecimal()
+	isYear := b.tp.GetType() == mysql.TypeYear
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -345,11 +346,18 @@ func (b *builtinCastDurationAsIntSig) vecEvalInt(ctx sessionctx.Context, input *
 
 		duration.Duration = ds[i]
 		duration.Fsp = fsp
-		dur, err := duration.RoundFrac(types.DefaultFsp, ctx.GetSessionVars().Location())
-		if err != nil {
-			return err
+
+		if isYear {
+			i64s[i], err = duration.ConvertToYear(ctx.GetSessionVars().StmtCtx.TypeCtx())
+		} else {
+			var dur types.Duration
+			dur, err = duration.RoundFrac(types.DefaultFsp, ctx.GetSessionVars().Location())
+			if err != nil {
+				return err
+			}
+			i64s[i], err = dur.ToNumber().ToInt()
 		}
-		i64s[i], err = dur.ToNumber().ToInt()
+
 		if err != nil {
 			return err
 		}

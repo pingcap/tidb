@@ -1498,6 +1498,29 @@ func (d Duration) ConvertToTimeWithTimestamp(ctx Context, tp uint8, ts gotime.Ti
 	return t.Convert(ctx, tp)
 }
 
+// ConvertToYear converts duration to Year.
+func (d Duration) ConvertToYear(ctx Context) (int64, error) {
+	return d.ConvertToYearFromNow(ctx, gotime.Now())
+}
+
+// ConvertToYearFromNow converts duration to Year, with the `now` specified by the argument.
+func (d Duration) ConvertToYearFromNow(ctx Context, now gotime.Time) (int64, error) {
+	if ctx.Flags().CastTimeToYearThroughConcat() {
+		// this error will never happen, because we always give a valid FSP
+		dur, _ := d.RoundFrac(DefaultFsp, ctx.Location())
+		// the range of a duration will never exceed the range of `mysql.TypeLonglong`
+		ival, _ := dur.ToNumber().ToInt()
+
+		return AdjustYear(ival, false)
+	}
+
+	year, month, day := now.In(ctx.Location()).Date()
+	datePart := FromDate(year, int(month), day, 0, 0, 0, 0)
+	mixDateAndDuration(&datePart, d)
+
+	return AdjustYear(int64(datePart.Year()), false)
+}
+
 // RoundFrac rounds fractional seconds precision with new fsp and returns a new one.
 // We will use the “round half up” rule, e.g, >= 0.5 -> 1, < 0.5 -> 0,
 // so 10:10:10.999999 round 0 -> 10:10:11

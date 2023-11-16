@@ -55,3 +55,10 @@ update t1 set c1 = cast('61qw' as decimal);
 --enable_warnings
 select cast('61qw' as decimal);
 --disable_warnings
+
+# TestCastTimeAsYear
+drop table if exists t;
+create table t (y year);
+insert into t values (cast('14:15' as time));
+select 1 from t where y = YEAR(CURDATE());
+select cast(cast('14:15' as time) as year) = YEAR(CURDATE());

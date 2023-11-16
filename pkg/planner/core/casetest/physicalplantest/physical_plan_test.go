@@ -2261,6 +2261,7 @@ func TestIndexMergeSinkLimit(t *testing.T) {
 	tk.MustExec("insert into t2 values(1,2,1),(2,1,1),(3,3,1)")
 	tk.MustExec("create table t(a int, j json, index kj((cast(j as signed array))))")
 	tk.MustExec("insert into t values(1, '[1,2,3]')")
+	tk.MustExec("CREATE TABLE `t3` (\n  `id` int(11) NOT NULL,\n  `aid` bigint(20) DEFAULT NULL,\n  `c1` varchar(255) DEFAULT NULL,\n  `c2` varchar(255) DEFAULT NULL,\n  `d` int(11) DEFAULT NULL,\n  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n  KEY `aid_c1` (`aid`,`c1`),\n  KEY `aid_c2` (`aid`,`c2`)\n)")
 
 	for i, ts := range input {
 		testdata.OnRecord(func() {
