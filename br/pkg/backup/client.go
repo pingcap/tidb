@@ -1246,7 +1246,7 @@ func (bc *Client) handleFineGrained(
 	}
 	hasProgress := false
 	backoffMill := 0
-	errContext := utils.NewErrorContext("handleFineGrainedBackup")
+	errContext := utils.NewErrorContext("handleFineGrainedBackup", 10)
 	err = SendBackup(
 		ctx, storeID, client, req,
 		// Handle responses with the same backoffer.

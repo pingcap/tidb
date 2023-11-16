@@ -72,7 +72,7 @@ func (push *pushDown) pushBackup(
 	})
 
 	wg := new(sync.WaitGroup)
-	errContext := utils.NewErrorContext("pushBackup")
+	errContext := utils.NewErrorContext("pushBackup", 10)
 	for _, s := range stores {
 		store := s
 		storeID := s.GetId()
