@@ -1849,7 +1849,7 @@ func (er *expressionRewriter) patternLikeOrIlikeToExpression(v *ast.PatternLikeO
 	isPatternExactMatch := false
 	// Treat predicate 'like' or 'ilike' the same way as predicate '=' when it is an exact match and new collation is not enabled.
 	if patExpression, ok := er.ctxStack[l-1].(*expression.Constant); ok && !collate.NewCollationEnabled() {
-		patString, isNull, err := patExpression.EvalString(nil, chunk.Row{})
+		patString, isNull, err := patExpression.EvalString(er.sctx, chunk.Row{})
 		if err != nil {
 			er.err = err
 			return

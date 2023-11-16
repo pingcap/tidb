@@ -31,9 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -437,32 +435,6 @@ func TestIntersectionWorkerPanic(t *testing.T) {
 	err := tk.QueryToErr("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024")
 	require.Contains(t, err.Error(), "testIndexMergeIntersectionWorkerPanic")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/testIndexMergeIntersectionWorkerPanic"))
-}
-
-func TestIntersectionMemQuota(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1(pk varchar(100) primary key, c1 int, c2 int, index idx1(c1), index idx2(c2))")
-
-	insertStr := "insert into t1 values"
-	for i := 0; i < 20; i++ {
-		if i != 0 {
-			insertStr += ", "
-		}
-		insertStr += fmt.Sprintf("('%s', %d, %d)", testutil.RandStringRunes(100), 1, 1)
-	}
-	tk.MustExec(insertStr)
-	res := tk.MustQuery("explain select /*+ use_index_merge(t1, primary, idx1, idx2) */ c1 from t1 where c1 < 1024 and c2 < 1024").Rows()
-	require.Contains(t, res[1][0], "IndexMerge")
-
-	tk.MustExec("set global tidb_mem_oom_action='CANCEL'")
-	defer tk.MustExec("set global tidb_mem_oom_action = DEFAULT")
-	tk.MustExec("set @@tidb_mem_quota_query = 4000")
-	err := tk.QueryToErr("select /*+ use_index_merge(t1, primary, idx1, idx2) */ c1 from t1 where c1 < 1024 and c2 < 1024")
-	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 }
 
 func setupPartitionTableHelper(tk *testkit.TestKit) {

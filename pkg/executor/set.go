@@ -161,7 +161,11 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 			}
 			return nil
 		})
-		logutil.BgLogger().Info("set global var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
+		showValStr := valStr
+		if name == variable.TiDBCloudStorageURI {
+			showValStr = ast.RedactURL(showValStr)
+		}
+		logutil.BgLogger().Info("set global var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", showValStr))
 		if name == variable.TiDBServiceScope {
 			dom := domain.GetDomain(e.Ctx())
 			serverID := disttaskutil.GenerateSubtaskExecID(ctx, dom.DDL().GetID())

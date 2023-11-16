@@ -431,7 +431,7 @@ func NewStmtCtx() *StatementContext {
 
 // NewStmtCtxWithTimeZone creates a new StatementContext with the given timezone
 func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
-	intest.Assert(tz)
+	intest.AssertNotNil(tz)
 	sc := &StatementContext{}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc.AppendWarning)
 	return sc
@@ -451,7 +451,7 @@ func (sc *StatementContext) TimeZone() *time.Location {
 
 // SetTimeZone sets the timezone
 func (sc *StatementContext) SetTimeZone(tz *time.Location) {
-	intest.Assert(tz)
+	intest.AssertNotNil(tz)
 	sc.typeCtx = sc.typeCtx.WithLocation(tz)
 }
 

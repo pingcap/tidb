@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"go.uber.org/zap"
 )
@@ -52,7 +53,7 @@ func RemoveLockedTables(
 		}
 	}
 
-	util.StatsLogger.Info("unlock table",
+	statslogutil.StatsLogger.Info("unlock table",
 		zap.Any("tables", tables),
 	)
 
@@ -105,7 +106,7 @@ func RemoveLockedPartitions(
 	for pid := range pidNames {
 		pids = append(pids, pid)
 	}
-	util.StatsLogger.Info("unlock partitions",
+	statslogutil.StatsLogger.Info("unlock partitions",
 		zap.Int64("tableID", tid),
 		zap.String("tableName", tableName),
 		zap.Int64s("partitionIDs", pids),
