@@ -125,7 +125,7 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 		"One task represents one table range (or one index range) according to the backup schemas. If there is one table with one index."+
 		"there will be two tasks to back up this table. This value should increase if you need to back up lots of tables or indices.")
 
-	flags.Uint32(flagTableConcurrency, backup.DefaultSchemaConcurrency, "The size of a BR thread pool used for backup table metas, "+
+	flags.Uint(flagTableConcurrency, backup.DefaultSchemaConcurrency, "The size of a BR thread pool used for backup table metas, "+
 		"including tableInfo/checksum and stats.")
 
 	flags.Bool(flagRemoveSchedulers, false,
