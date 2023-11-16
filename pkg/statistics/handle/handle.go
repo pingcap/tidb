@@ -42,6 +42,7 @@ const (
 
 // Handle can update stats info periodically.
 type Handle struct {
+	// Pool is used to get a session or a goroutine to execute stats updating.
 	util.Pool
 
 	util.AutoAnalyzeProcIDGenerator

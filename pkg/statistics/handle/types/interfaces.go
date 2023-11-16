@@ -369,7 +369,7 @@ type DDL interface {
 
 // StatsHandle is used to manage TiDB Statistics.
 type StatsHandle interface {
-	// Poll is used to update stats info.
+	// Pool is used to get a session or a goroutine to execute stats updating.
 	statsutil.Pool
 
 	// AutoAnalyzeProcIDGenerator is used to generate auto analyze proc ID.

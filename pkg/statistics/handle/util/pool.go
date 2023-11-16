@@ -66,7 +66,7 @@ func (p *pool) SPool() SessionPool {
 	return p.pool
 }
 
-// Close implements Pool.
+// Close close the goroutine pool.
 func (p *pool) Close() {
 	p.gpool.Close()
 }
