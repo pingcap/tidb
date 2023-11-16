@@ -51,14 +51,10 @@ import (
 // TODO: adjust it according to cloud storage.
 const maxCloudStorageConnections = 1000
 
-type simpleKV struct {
-	key   []byte
-	value []byte
-}
-
 type memKVsAndBuffers struct {
 	mu           sync.Mutex
-	memKVs       []simpleKV
+	keys         [][]byte
+	values       [][]byte
 	memKVBuffers []*membuf.Buffer
 }
 
@@ -216,16 +212,12 @@ func readOneFile(
 	}
 	defer rd.Close()
 	if concurrency > 1 {
-		newBufPool := membuf.NewPool(membuf.WithPoolSize(1),
-			membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc*int(concurrency)),
-			membuf.WithLargeAllocThreshold(ConcurrentReaderBufferSizePerConc*int(concurrency)))
-
 		rd.byteReader.enableConcurrentRead(
 			storage,
 			dataFile,
 			int(concurrency)*2,
 			ConcurrentReaderBufferSizePerConc,
-			newBufPool.NewBuffer(),
+			bufPool.NewBuffer(),
 		)
 		err = rd.byteReader.switchConcurrentMode(true)
 		if err != nil {
@@ -235,7 +227,8 @@ func readOneFile(
 
 	// this buffer is associated with data slices and will return to caller
 	memBuf := bufPool.NewBuffer()
-	memkvsOfThisFile := make([]simpleKV, 0, 1024)
+	keys := make([][]byte, 0, 1024)
+	values := make([][]byte, 0, 1024)
 
 	var prevKey []byte
 	for {
@@ -258,11 +251,13 @@ func readOneFile(
 		prevKey = slices.Clone(k)
 		// TODO(lance6716): we are copying every KV from rd's buffer to memBuf, can we
 		// directly read into memBuf?
-		memkvsOfThisFile = append(memkvsOfThisFile, simpleKV{key: memBuf.AddBytes(k), value: memBuf.AddBytes(v)})
+		keys = append(keys, memBuf.AddBytes(k))
+		values = append(values, memBuf.AddBytes(v))
 	}
 	readAndSortDurHist.Observe(time.Since(ts).Seconds())
 	output.mu.Lock()
-	output.memKVs = append(output.memKVs, memkvsOfThisFile...)
+	output.keys = append(output.keys, keys...)
+	output.values = append(output.values, values...)
 	output.memKVBuffers = append(output.memKVBuffers, memBuf)
 	output.mu.Unlock()
 	return nil
@@ -282,17 +277,6 @@ func readAllData(
 		zap.Binary("start-key", startKey),
 		zap.Binary("end-key", endKey),
 	)
-
-	if output.memKVs == nil {
-		output.memKVs = make([]simpleKV, 0, 1024*256)
-	} else {
-		output.memKVs = output.memKVs[:0]
-	}
-	if output.memKVBuffers == nil {
-		output.memKVBuffers = make([]*membuf.Buffer, 0, len(dataFiles))
-	} else {
-		output.memKVBuffers = output.memKVBuffers[:0]
-	}
 
 	concurrencys, startOffsets, err := checkConcurrentFiles(
 		ctx,
@@ -351,23 +335,17 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 	logutil.Logger(ctx).Info("reading external storage in loadBatchRegionData",
 		zap.Duration("cost time", time.Since(readStart)))
 	sortStart := time.Now()
-	sorty.MaxGor = uint64(e.workerConcurrency)
-	sorty.Sort(len(e.memKVsAndBuffers.memKVs), func(i, k, r, s int) bool {
-		if bytes.Compare(e.memKVsAndBuffers.memKVs[i].key, e.memKVsAndBuffers.memKVs[k].key) < 0 { // strict comparator like < or >
+	sorty.MaxGor = uint64(e.workerConcurrency * 2)
+	sorty.Sort(len(e.memKVsAndBuffers.keys), func(i, k, r, s int) bool {
+		if bytes.Compare(e.memKVsAndBuffers.keys[i], e.memKVsAndBuffers.keys[k]) < 0 { // strict comparator like < or >
 			if r != s {
-				e.memKVsAndBuffers.memKVs[r], e.memKVsAndBuffers.memKVs[s] = e.memKVsAndBuffers.memKVs[s], e.memKVsAndBuffers.memKVs[r]
+				e.memKVsAndBuffers.keys[r], e.memKVsAndBuffers.keys[s] = e.memKVsAndBuffers.keys[s], e.memKVsAndBuffers.keys[r]
+				e.memKVsAndBuffers.values[r], e.memKVsAndBuffers.values[s] = e.memKVsAndBuffers.values[s], e.memKVsAndBuffers.values[r]
 			}
 			return true
 		}
 		return false
 	})
-	var prevKey []byte
-	for _, kv := range e.memKVsAndBuffers.memKVs {
-		if prevKey != nil && bytes.Compare(prevKey, kv.key) >= 0 {
-			logutil.Logger(ctx).Error("kv is not in increasing order", zap.ByteString("prevKey", prevKey), zap.ByteString("key", kv.key))
-		}
-		prevKey = kv.key
-	}
 	sortSecond := time.Since(sortStart).Seconds()
 	sortDurHist.Observe(sortSecond)
 	logutil.Logger(ctx).Info("sorting in loadBatchRegionData",
@@ -376,13 +354,9 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 	readAndSortSecond := time.Since(readStart).Seconds()
 	readAndSortDurHist.Observe(readAndSortSecond)
 
-	keys := make([][]byte, 0, 1024)
-	values := make([][]byte, 0, 1024)
 	size := 0
-	for _, kv := range e.memKVsAndBuffers.memKVs {
-		keys = append(keys, kv.key)
-		values = append(values, kv.value)
-		size += len(kv.key) + len(kv.value)
+	for i := range e.memKVsAndBuffers.keys {
+		size += len(e.memKVsAndBuffers.keys[i]) + len(e.memKVsAndBuffers.values[i])
 	}
 	readAndSortRateHist.Observe(float64(size) / 1024.0 / 1024.0 / readAndSortSecond)
 	readRateHist.Observe(float64(size) / 1024.0 / 1024.0 / readSecond)
@@ -390,7 +364,13 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 
 	newBuf := make([]*membuf.Buffer, 0, len(e.memKVsAndBuffers.memKVBuffers))
 	copy(newBuf, e.memKVsAndBuffers.memKVBuffers)
-	data := e.buildIngestData(keys, values, newBuf)
+	data := e.buildIngestData(e.memKVsAndBuffers.keys, e.memKVsAndBuffers.values, newBuf)
+
+	// release the reference of e.memKVsAndBuffers
+	e.memKVsAndBuffers.keys = nil
+	e.memKVsAndBuffers.values = nil
+	e.memKVsAndBuffers.memKVBuffers = nil
+
 	sendFn := func(dr common.DataAndRange) error {
 		select {
 		case <-ctx.Done():
