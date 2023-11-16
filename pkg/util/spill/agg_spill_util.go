@@ -118,15 +118,9 @@ func DeserializeInterface(buf []byte, readPos *int64) interface{} {
 
 	switch dataType {
 	case BoolType:
-		res := int(buf[*readPos])
+		res := DeserializeBool(buf, *readPos)
 		*readPos += boolLen
-		if res == 0 {
-			return false
-		} else if res == 1 {
-			return true
-		} else {
-			panic("Invalid value happens when deserializing agg spill data!")
-		}
+		return res
 	case Int64Type:
 		res := DeserializeInt64(buf, *readPos)
 		*readPos += int64Len
@@ -273,11 +267,8 @@ func SerializeInterface(value interface{}, varBuf *[]byte, tmpBuf []byte) {
 	switch v := value.(type) {
 	case bool:
 		*varBuf = append(*varBuf, BoolType)
-		if v {
-			*varBuf = append(*varBuf, byte(1))
-		} else {
-			*varBuf = append(*varBuf, byte(0))
-		}
+		*varBuf = append(*varBuf, byte(1)) // padding
+		SerializeBool(v, (*varBuf)[len(*varBuf)-1:])
 	case int64:
 		*varBuf = append(*varBuf, Int64Type)
 		SerializeInt64(v, tmpBuf)

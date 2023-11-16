@@ -770,8 +770,8 @@ func TestPartialResult4JsonArrayagg(t *testing.T) {
 
 	// Initialize test data
 	expectData := []partialResult4JsonArrayagg{
-		{entries: []interface{}{int64(1), float64(1.1), testLongStr1}},
-		{entries: []interface{}{int64(1), float64(1.1), ""}},
+		{entries: []interface{}{int64(1), float64(1.1), testLongStr1, false}},
+		{entries: []interface{}{int64(1), float64(1.1), "", true}},
 		{entries: []interface{}{"dw啊q", float64(-1.1), int64(0)}},
 		{entries: []interface{}{"dw啊q", float64(-1.1), types.BinaryJSON{TypeCode: 1, Value: []byte(testLongStr2)}}},
 	}
@@ -814,9 +814,9 @@ func TestPartialResult4JsonObjectAgg(t *testing.T) {
 
 	// Initialize test data
 	expectData := []partialResult4JsonObjectAgg{
-		{entries: map[string]interface{}{"123": int64(1), "234": float64(1.1), "235": "123"}, bInMap: 0},
+		{entries: map[string]interface{}{"123": int64(1), "234": float64(1.1), "999": true, "235": "123"}, bInMap: 0},
 		{entries: map[string]interface{}{"啊": testLongStr1, "我": float64(1.1), "反": testLongStr2}, bInMap: 0},
-		{entries: map[string]interface{}{"fe": int64(12), " ": float64(1.1), "": "123"}, bInMap: 0},
+		{entries: map[string]interface{}{"fe": int64(12), " ": float64(1.1), "888": false, "": "123"}, bInMap: 0},
 	}
 	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
