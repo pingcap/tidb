@@ -5,24 +5,18 @@ package aws
 import (
 	"context"
 	"fmt"
-	"math"
-	"strings"
-	"sync"
-	"time"
-
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/cloudwatch"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/aws/aws-sdk-go/service/ec2/ec2iface"
-	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
+	"math"
 )
 
 const (
@@ -32,7 +26,8 @@ const (
 )
 
 type EC2Session struct {
-	ec2 ec2iface.EC2API
+	ec2              ec2iface.EC2API
+	cloudwatchClient *cloudwatch.CloudWatch
 	// aws operation concurrency
 	concurrency uint
 }
@@ -52,7 +47,8 @@ func NewEC2Session(concurrency uint, region string) (*EC2Session, error) {
 		return nil, errors.Trace(err)
 	}
 	ec2Session := ec2.New(sess)
-	return &EC2Session{ec2: ec2Session, concurrency: concurrency}, nil
+	cloudwatchClient := cloudwatch.New(sess)
+	return &EC2Session{ec2: ec2Session, cloudwatchClient: cloudwatchClient, concurrency: concurrency}, nil
 }
 
 // CreateSnapshots is the mainly steps to control the data volume snapshots.
@@ -330,9 +326,6 @@ func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) 
 	// Record current time
 	start := time.Now()
 
-	// Create a map to store the strings as keys
-	pendingSnapshots := make(map[string]struct{})
-
 	//  get the maximum size of volumes, in GiB
 	var maxVolumeSize int64 = 0
 	resp, err := e.ec2.DescribeSnapshots(&ec2.DescribeSnapshotsInput{SnapshotIds: snapShotIDs})
@@ -351,7 +344,7 @@ func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) 
 
 	// Calculate the time in minutes to fill 1.0 credit according to
 	// https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ebs-fast-snapshot-restore.html#volume-creation-credits
-	fillElapsedTime := 60.0 / (math.Min(10, float64(1024.0/maxVolumeSize)))
+	fillElapsedTime := 60.0/(math.Min(10, float64(1024.0/maxVolumeSize))) + 5
 
 	// We have to sleep for at least fillElapsedTime minutes in order to make credits are filled to 1.0
 	// Let's heartbeat every 5 minutes
@@ -359,6 +352,36 @@ func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) 
 		log.Info("FSR enablement is ongoing, going to sleep for 5 minutes...")
 		time.Sleep(5 * time.Minute)
 	}
+
+	// Wait that all snapshot has enough fsr credit balance, it's very likely true since we have wait for long enough
+	log.Info("Start check and wait all snapshots have enough fsr credit balance")
+
+	startIdx := 0
+	retryCount := 0
+	for startIdx < len(snapShotIDs) {
+		creditBalance, err := e.getFSRCreditBalance(1*time.Minute, snapShotIDs[startIdx])
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if creditBalance >= 1.0 {
+			startIdx++
+			retryCount = 0
+		} else {
+			if creditBalance == 0 {
+				if retryCount >= 3 {
+					return errors.Errorf("cloudwatch metrics operation failed after retrying", zap.Stringp("snapshot", snapShotIDs[startIdx]))
+				} else {
+					retryCount++
+				}
+			}
+			time.Sleep(1 * time.Minute)
+		}
+
+	}
+
+	// Create a map to store the strings as keys
+	pendingSnapshots := make(map[string]struct{})
 
 	// Populate the map with the strings from the array
 	for _, str := range snapShotIDs {
@@ -406,6 +429,66 @@ func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) 
 			}
 		}
 		pendingSnapshots = uncompletedSnapshots
+	}
+}
+
+// getFSRCreditBalance is used to get maximum fsr credit balance of snapshot for last duration window
+func (e *EC2Session) getFSRCreditBalance(duration time.Duration, snapshotID *string) (float64, error) {
+	// Set the time range to query for metrics
+	startTime := time.Now().Add(-duration)
+	endTime := time.Now()
+
+	// Prepare the input for the GetMetricData API call
+	input := &cloudwatch.GetMetricDataInput{
+		StartTime:         aws.Time(startTime),
+		EndTime:           aws.Time(endTime),
+		ScanBy:            aws.String("TimestampDescending"),
+		MetricDataQueries: []*cloudwatch.MetricDataQuery{},
+		MaxDatapoints:     aws.Int64(1),
+	}
+
+	// Set up the query for the Fast Snapshot Restore Credits Balance metric
+	query := &cloudwatch.MetricDataQuery{
+		Id:         aws.String("fsrCreditQuery"),
+		MetricStat: &cloudwatch.MetricStat{},
+	}
+
+	query.MetricStat.Metric = &cloudwatch.Metric{
+		Namespace:  aws.String("AWS/EBS"),
+		MetricName: aws.String("FastSnapshotRestoreCreditsBalance"),
+		Dimensions: []*cloudwatch.Dimension{
+			{
+				Name:  aws.String("SnapshotId"),
+				Value: snapshotID,
+			},
+		},
+	}
+
+	query.MetricStat.Period = aws.Int64(int64(duration.Seconds()))
+	query.MetricStat.Stat = aws.String("MAX")
+	query.MetricStat.Unit = aws.String("Count")
+
+	input.MetricDataQueries = append(input.MetricDataQueries, query)
+
+	// Call GetMetricData API to retrieve the FastSnapshotRestoreCreditsBalance metric data
+	resp, err := e.cloudwatchClient.GetMetricDataWithContext(context.Background(), input)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	// parse the response
+	if len(resp.MetricDataResults) == 0 {
+		log.Warn("No result for metric FastSnapshotRestoreCreditsBalance returned", zap.Stringp("snapshot", snapshotID))
+		return 0, nil
+	} else {
+		result := resp.MetricDataResults[0]
+		if len(result.Values) == 0 {
+			log.Warn("No value for metric FastSnapshotRestoreCreditsBalance returned", zap.Stringp("snapshot", snapshotID))
+			return 0, nil
+		} else {
+			log.Info("credit balance", zap.Stringp("snapshot", snapshotID), zap.Float64p("credit", result.Values[0]))
+			return *result.Values[0], nil
+		}
 	}
 }
 
