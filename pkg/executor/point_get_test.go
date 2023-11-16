@@ -103,7 +103,7 @@ func TestReturnValues(t *testing.T) {
 	tk.MustExec("begin pessimistic")
 	tk.MustQuery("select * from t where a = 'b' for update").Check(testkit.Rows("b 2"))
 	tid := external.GetTableByName(t, tk, "test", "t").Meta().ID
-	idxVal, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, nil, types.NewStringDatum("b"))
+	idxVal, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(), nil, types.NewStringDatum("b"))
 	require.NoError(t, err)
 	pk := tablecodec.EncodeIndexSeekKey(tid, 1, idxVal)
 	txnCtx := tk.Session().GetSessionVars().TxnCtx

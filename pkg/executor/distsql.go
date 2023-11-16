@@ -1216,7 +1216,8 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 			datums = append(datums, row.GetDatum(idx, e.handleCols[i].RetType))
 		}
 		tablecodec.TruncateIndexValues(e.table.Meta(), e.primaryKeyIndex, datums)
-		handleEncoded, err = codec.EncodeKey(e.Ctx().GetSessionVars().StmtCtx, nil, datums...)
+		handleEncoded, err = codec.EncodeKey(e.Ctx().GetSessionVars().StmtCtx.TimeZone(), nil, datums...)
+		err = e.Ctx().GetSessionVars().StmtCtx.HandleError(err)
 		if err != nil {
 			return nil, err
 		}

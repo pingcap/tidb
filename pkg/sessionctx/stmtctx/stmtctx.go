@@ -450,6 +450,11 @@ func (sc *StatementContext) Reset() {
 
 // TimeZone returns the timezone of the type context
 func (sc *StatementContext) TimeZone() *time.Location {
+	intest.AssertNotNil(sc)
+	if sc == nil {
+		return time.UTC
+	}
+
 	return sc.typeCtx.Location()
 }
 
@@ -492,8 +497,15 @@ func (sc *StatementContext) SetTypeFlags(flags types.Flags) {
 }
 
 // HandleTruncate ignores or returns the error based on the TypeContext inside.
+// TODO: replace this function with `HandleError`, for `TruncatedError` they should have the same effect.
 func (sc *StatementContext) HandleTruncate(err error) error {
 	return sc.typeCtx.HandleTruncate(err)
+}
+
+// HandleError handles the error based on `ErrCtx()`
+func (sc *StatementContext) HandleError(err error) error {
+	errCtx := sc.ErrCtx()
+	return errCtx.HandleError(err)
 }
 
 // StmtHints are SessionVars related sql hints.

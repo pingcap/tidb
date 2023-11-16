@@ -250,3 +250,9 @@ const DefaultStmtFlags = StrictFlags | FlagAllowNegativeToUnsigned | FlagIgnoreZ
 var DefaultStmtNoWarningContext = NewContext(DefaultStmtFlags, time.UTC, func(_ error) {
 	// the error is ignored
 })
+
+// StrictContext is the most strict context which returns every error it meets
+var StrictContext = NewContext(StrictFlags, time.UTC, func(_ error) {
+	// this context should never append warnings
+	// However, the implementation of `types` may still append some warnings. TODO: remove them in the future.
+})

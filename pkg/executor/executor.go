@@ -2572,13 +2572,15 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 			return
 		}
 
+		errCtx := w.sctx.GetSessionVars().StmtCtx.ErrCtx()
 		getHandleFromRow := func(row chunk.Row) (kv.Handle, error) {
 			handleDatum := make([]types.Datum, 0)
 			for i, t := range pkTypes {
 				handleDatum = append(handleDatum, row.GetDatum(i, t))
 			}
 			if w.table.Meta().IsCommonHandle {
-				handleBytes, err := codec.EncodeKey(w.sctx.GetSessionVars().StmtCtx, nil, handleDatum...)
+				handleBytes, err := codec.EncodeKey(w.sctx.GetSessionVars().StmtCtx.TimeZone(), nil, handleDatum...)
+				err = errCtx.HandleError(err)
 				if err != nil {
 					return nil, err
 				}

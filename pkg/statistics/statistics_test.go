@@ -456,7 +456,7 @@ func SubTestIndexRanges() func(*testing.T) {
 
 func encodeKey(key types.Datum) types.Datum {
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
-	buf, _ := codec.EncodeKey(sc, nil, key)
+	buf, _ := codec.EncodeKey(sc.TimeZone(), nil, key)
 	return types.NewBytesDatum(buf)
 }
 
@@ -482,7 +482,7 @@ func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.R
 		}
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			datums := RowToDatums(row, records.Fields())
-			buf, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, datums...)
+			buf, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx.TimeZone(), nil, datums...)
 			if err != nil {
 				return 0, nil, nil, errors.Trace(err)
 			}

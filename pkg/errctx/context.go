@@ -137,8 +137,8 @@ const (
 	// ErrGroupOverflow is the group of overflow errors
 	ErrGroupOverflow
 
-	// errGroupCount is the count of all `ErrGroup`. Please leave it at the end of the list
-	errGroupCount = 2
+	// errGroupCount is the count of all `ErrGroup`. Please leave it at the end of the list.
+	errGroupCount
 )
 
 func init() {
