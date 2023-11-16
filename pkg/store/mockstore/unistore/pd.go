@@ -243,7 +243,8 @@ func (c *pdClient) GetLocalTSWithinKeyspaceAsync(ctx context.Context, dcLocation
 }
 
 func (c *pdClient) Get(ctx context.Context, key []byte, opts ...pd.OpOption) (*meta_storagepb.GetResponse, error) {
-	return nil, nil
+	empty := &meta_storagepb.GetResponse{}
+	return empty, nil
 }
 
 func (c *pdClient) Put(ctx context.Context, key []byte, value []byte, opts ...pd.OpOption) (*meta_storagepb.PutResponse, error) {
