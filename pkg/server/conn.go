@@ -120,12 +120,6 @@ var (
 	statusCompressionLevel     = "Compression_level"
 )
 
-var clientConnStatus = map[string]*variable.StatusVal{
-	statusCompression:          {Scope: variable.ScopeSession, Value: "OFF"},
-	statusCompressionAlgorithm: {Scope: variable.ScopeSession, Value: ""},
-	statusCompressionLevel:     {Scope: variable.ScopeSession, Value: 0},
-}
-
 // newClientConn creates a *clientConn object.
 func newClientConn(s *Server) *clientConn {
 	cc := &clientConn{
@@ -2602,10 +2596,7 @@ func (cc *clientConn) Flush(ctx context.Context) error {
 
 // Stats returns the connection statistics.
 func (*clientConn) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
-	m := make(map[string]interface{}, len(clientConnStatus))
-	for name, v := range clientConnStatus {
-		m[name] = v.Value
-	}
+	m := make(map[string]interface{}, 3)
 
 	switch vars.CompressionAlgorithm {
 	case mysql.CompressionNone:
