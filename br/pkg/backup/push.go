@@ -183,7 +183,7 @@ func (push *pushDown) pushBackup(
 				progressCallBack(RegionUnit)
 			} else {
 				errPb := resp.GetError()
-				res := errContext.HandleErrorOnStore(errPb, store.GetId(), true)
+				res := errContext.HandleError(errPb, store.GetId(), true)
 				switch res.Strategy {
 				case utils.GiveUp:
 					errMsg := res.Reason

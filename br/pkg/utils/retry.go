@@ -57,7 +57,7 @@ const (
 type ErrorContext struct {
 	// encounter times for one context on a store
 	// we may use this value to determine the retry policy
-	encounterTimesOnStore map[uint64]int
+	encounterTimes map[uint64]int
 	// unknown error retry limitation.
 	// encouter many times error makes Retry to GiveUp.
 	encounterTimesLimitation int
@@ -68,12 +68,12 @@ type ErrorContext struct {
 func NewErrorContext(scenario string, limitation int) *ErrorContext {
 	return &ErrorContext{
 		scenario:                 scenario,
-		encounterTimesOnStore:    make(map[uint64]int),
+		encounterTimes:           make(map[uint64]int),
 		encounterTimesLimitation: limitation,
 	}
 }
 
-func (ec *ErrorContext) HandleErrorOnStore(err *backuppb.Error, storeID uint64, canIgnore bool) ErrorResult {
+func (ec *ErrorContext) HandleError(err *backuppb.Error, storeID uint64, canIgnore bool) ErrorResult {
 	if len(err.Msg) != 0 {
 		return ec.HandleErrorMsg(err.Msg, storeID)
 	}
@@ -83,15 +83,13 @@ func (ec *ErrorContext) HandleErrorOnStore(err *backuppb.Error, storeID uint64, 
 func (ec *ErrorContext) HandleErrorMsg(msg string, storeID uint64) ErrorResult {
 	// UNSAFE! TODO: use meaningful error code instead of unstructured message to find failed to write error.
 	logger := log.L().With(zap.String("scenario", ec.scenario))
-	if MessageIsNotFoundStorageError(msg) {
-		// giveup outside
+	if messageIsNotFoundStorageError(msg) {
 		reason := fmt.Sprintf("File or directory not found on TiKV Node (store id: %v; Address: %s). "+
 			"work around:please ensure br and tikv nodes share a same storage and the user of br and tikv has same uid.",
 			storeID)
 		return ErrorResult{GiveUp, reason}
 	}
-	if MessageIsPermissionDeniedStorageError(msg) {
-		// giveup outside
+	if messageIsPermissionDeniedStorageError(msg) {
 		reason := fmt.Sprintf("I/O permission denied error occurs on TiKV Node(store id: %v; Address: %s). "+
 			"work around:please ensure tikv has permission to read from & write to the storage.",
 			storeID)
@@ -103,8 +101,8 @@ func (ec *ErrorContext) HandleErrorMsg(msg string, storeID uint64) ErrorResult {
 		return ErrorResult{Retry, "retrable error"}
 	}
 	// retry enough on same store
-	ec.encounterTimesOnStore[storeID]++
-	if ec.encounterTimesOnStore[storeID] < ec.encounterTimesLimitation {
+	ec.encounterTimes[storeID]++
+	if ec.encounterTimes[storeID] < ec.encounterTimesLimitation {
 		return ErrorResult{Retry, "unknown error, retry it for few times"}
 	}
 	return ErrorResult{GiveUp, "unknown error and retry too many times, give up"}
