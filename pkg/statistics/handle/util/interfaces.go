@@ -141,6 +141,12 @@ type StatsCache interface {
 	// Put puts this table stats into the cache.
 	Put(tableID int64, t *statistics.Table)
 
+	// GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
+	GetTableStats(tblInfo *model.TableInfo) *statistics.Table
+
+	// GetPartitionStats retrieves the partition stats from cache.
+	GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table
+
 	// UpdateStatsCache updates the cache.
 	UpdateStatsCache(addedTables []*statistics.Table, deletedTableIDs []int64)
 
@@ -372,12 +378,6 @@ type StatsHandle interface {
 
 	// AutoAnalyzeProcID generates an analyze ID.
 	AutoAnalyzeProcID() uint64
-
-	// GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
-	GetTableStats(tblInfo *model.TableInfo) *statistics.Table
-
-	// GetPartitionStats retrieves the partition stats from cache.
-	GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table
 
 	// GetCurrentPruneMode returns the current latest partitioning table prune mode.
 	GetCurrentPruneMode() (mode string, err error)
