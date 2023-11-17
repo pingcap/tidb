@@ -3244,7 +3244,9 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 	finalAggAdjust := func(aggFuncs []*aggregation.AggFuncDesc) {
 		for i, agg := range aggFuncs {
 			if agg.Mode == aggregation.FinalMode && agg.Name == ast.AggFuncCount {
+				oldFT := agg.RetTp
 				aggFuncs[i], _ = aggregation.NewAggFuncDesc(la.SCtx(), ast.AggFuncSum, agg.Args, false)
+				aggFuncs[i].RetTp = oldFT
 			}
 		}
 	}
