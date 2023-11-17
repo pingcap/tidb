@@ -1156,6 +1156,5 @@ func addEnvPath(newPath string) {
 }
 
 func init() {
-	rand.Seed(time.Now().UnixNano())
 	_ = store.Register("tikv", tidbdriver.TiKVDriver{})
 }
