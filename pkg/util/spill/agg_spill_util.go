@@ -304,7 +304,6 @@ func SerializeInterface(value interface{}, varBuf *[]byte, tmpBuf []byte) {
 		// Add padding for seialization
 		*varBuf = append(*varBuf, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)
 		SerializeBinaryJSON(&v, varBuf, varBufLenBeforeSerializeJSON)
-
 	case types.Opaque:
 		*varBuf = append(*varBuf, OpaqueType)
 		*varBuf = append(*varBuf, v.TypeCode)
