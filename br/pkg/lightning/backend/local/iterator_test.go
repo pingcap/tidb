@@ -131,8 +131,7 @@ func TestDupDetectIterator(t *testing.T) {
 	require.NoError(t, err)
 	pool := membuf.NewPool()
 	defer pool.Destroy()
-	var iter IngestLocalEngineIter
-	iter = newDupDetectIter(db, keyAdapter, &pebble.IterOptions{}, dupDB, log.L(), common.DupDetectOpt{}, pool.NewBuffer())
+	iter := newDupDetectIter(db, keyAdapter, &pebble.IterOptions{}, dupDB, log.L(), common.DupDetectOpt{}, pool.NewBuffer())
 	sort.Slice(pairs, func(i, j int) bool {
 		key1 := keyAdapter.Encode(nil, pairs[i].Key, pairs[i].RowID)
 		key2 := keyAdapter.Encode(nil, pairs[j].Key, pairs[j].RowID)
