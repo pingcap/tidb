@@ -365,7 +365,7 @@ func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) 
 	startIdx := 0
 	retryCount := 0
 	for startIdx < len(snapShotIDs) {
-		creditBalance, err := e.getFSRCreditBalance(snapShotIDs[startIdx])
+		creditBalance, err := e.getFSRCreditBalance(snapShotIDs[startIdx], targetAZ)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -439,7 +439,7 @@ func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) 
 }
 
 // getFSRCreditBalance is used to get maximum fsr credit balance of snapshot for last duration window
-func (e *EC2Session) getFSRCreditBalance(snapshotID *string) (float64, error) {
+func (e *EC2Session) getFSRCreditBalance(snapshotID *string, targetAZ string) (float64, error) {
 	// Set the time range to query for metrics
 	startTime := time.Now().Add(-5 * time.Minute)
 	endTime := time.Now()
@@ -455,10 +455,16 @@ func (e *EC2Session) getFSRCreditBalance(snapshotID *string) (float64, error) {
 				Name:  aws.String("SnapshotId"),
 				Value: snapshotID,
 			},
+			{
+				Name:  aws.String("AvailabilityZone"),
+				Value: aws.String(targetAZ),
+			},
 		},
 		Period:     aws.Int64(300),
 		Statistics: []*string{aws.String("Maximum")},
 	}
+
+	log.Info("metrics info", zap.Any("input", input))
 
 	// Call cloudwatchClient API to retrieve the FastSnapshotRestoreCreditsBalance metric data
 	resp, err := e.cloudwatchClient.GetMetricStatisticsWithContext(context.Background(), input)
@@ -472,8 +478,8 @@ func (e *EC2Session) getFSRCreditBalance(snapshotID *string) (float64, error) {
 		return 0, nil
 	} else {
 		result := resp.Datapoints[0]
-		log.Info("credit balance", zap.Stringp("snapshot", snapshotID), zap.Float64p("credit", result.SampleCount))
-		return *result.SampleCount, nil
+		log.Info("credit balance", zap.Stringp("snapshot", snapshotID), zap.Float64p("credit", result.Maximum))
+		return *result.Maximum, nil
 	}
 }
 
