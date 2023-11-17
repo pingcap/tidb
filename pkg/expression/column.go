@@ -527,7 +527,7 @@ func (col *Column) Decorrelate(_ *Schema) Expression {
 }
 
 // HashCode implements Expression interface.
-func (col *Column) HashCode(_ *stmtctx.StatementContext) []byte {
+func (col *Column) HashCode() []byte {
 	if len(col.hashcode) != 0 {
 		return col.hashcode
 	}
@@ -535,6 +535,11 @@ func (col *Column) HashCode(_ *stmtctx.StatementContext) []byte {
 	col.hashcode = append(col.hashcode, columnFlag)
 	col.hashcode = codec.EncodeInt(col.hashcode, col.UniqueID)
 	return col.hashcode
+}
+
+// CanonicalHashCode implements Expression interface.
+func (col *Column) CanonicalHashCode() []byte {
+	return col.HashCode()
 }
 
 // CleanHashCode will clean the hashcode you may be cached before. It's used especially in schema-cloned & reallocated-uniqueID's cases.

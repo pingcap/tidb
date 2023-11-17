@@ -226,7 +226,7 @@ func (s *ScalarSubQueryExpr) ExplainNormalizedInfo() string {
 }
 
 // HashCode implements the Expression interface.
-func (s *ScalarSubQueryExpr) HashCode(_ *stmtctx.StatementContext) []byte {
+func (s *ScalarSubQueryExpr) HashCode() []byte {
 	if len(s.hashcode) != 0 {
 		return s.hashcode
 	}
@@ -234,6 +234,11 @@ func (s *ScalarSubQueryExpr) HashCode(_ *stmtctx.StatementContext) []byte {
 	s.hashcode = append(s.hashcode, expression.ScalarSubQFlag)
 	s.hashcode = codec.EncodeInt(s.hashcode, s.scalarSubqueryColID)
 	return s.hashcode
+}
+
+// CanonicalHashCode implements the Expression interface.
+func (s *ScalarSubQueryExpr) CanonicalHashCode() []byte {
+	return s.HashCode()
 }
 
 // MemoryUsage implements the Expression interface.

@@ -587,7 +587,8 @@ func (m *MockExpr) RemapColumn(_ map[int64]*Column) (Expression, error) { return
 func (m *MockExpr) ExplainInfo() string                                 { return "" }
 func (m *MockExpr) ExplainNormalizedInfo() string                       { return "" }
 func (m *MockExpr) ExplainNormalizedInfo4InList() string                { return "" }
-func (m *MockExpr) HashCode(sc *stmtctx.StatementContext) []byte        { return nil }
+func (m *MockExpr) HashCode() []byte                                    { return nil }
+func (m *MockExpr) CanonicalHashCode() []byte                           { return nil }
 func (m *MockExpr) Vectorized() bool                                    { return false }
 func (m *MockExpr) SupportReverseEval() bool                            { return false }
 func (m *MockExpr) HasCoercibility() bool                               { return false }

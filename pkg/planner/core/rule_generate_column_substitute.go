@@ -117,7 +117,6 @@ func substituteExpression(cond expression.Expression, lp LogicalPlan, exprToColu
 	if !ok {
 		return false
 	}
-	sctx := lp.SCtx().GetSessionVars().StmtCtx
 	changed := false
 	collectChanged := func(partial bool) {
 		if partial && !changed {
@@ -127,7 +126,7 @@ func substituteExpression(cond expression.Expression, lp LogicalPlan, exprToColu
 	defer func() {
 		// If the argument is not changed, hash code doesn't need to recount again.
 		if changed {
-			expression.ReHashCode(sf, sctx)
+			expression.ReHashCode(sf)
 		}
 	}()
 	var expr *expression.Expression

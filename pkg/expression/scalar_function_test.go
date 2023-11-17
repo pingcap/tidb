@@ -16,11 +16,9 @@ package expression
 
 import (
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -28,7 +26,6 @@ import (
 )
 
 func TestExpressionSemanticEqual(t *testing.T) {
-	ctx := mock.NewContext()
 	a := &Column{
 		UniqueID: 1,
 		RetType:  types.NewFieldType(mysql.TypeDouble),
@@ -41,56 +38,56 @@ func TestExpressionSemanticEqual(t *testing.T) {
 	// a < b; b > a
 	sf1 := newFunction(ast.LT, a, b)
 	sf2 := newFunction(ast.GT, b, a)
-	require.True(t, ExpressionsSemanticEqual(ctx, sf1, sf2))
+	require.True(t, ExpressionsSemanticEqual(sf1, sf2))
 
 	// a > b; b < a
 	sf3 := newFunction(ast.GT, a, b)
 	sf4 := newFunction(ast.LT, b, a)
-	require.True(t, ExpressionsSemanticEqual(ctx, sf3, sf4))
+	require.True(t, ExpressionsSemanticEqual(sf3, sf4))
 
 	// a<=b; b>=a
 	sf5 := newFunction(ast.LE, a, b)
 	sf6 := newFunction(ast.GE, b, a)
-	require.True(t, ExpressionsSemanticEqual(ctx, sf5, sf6))
+	require.True(t, ExpressionsSemanticEqual(sf5, sf6))
 
 	// a>=b; b<=a
 	sf7 := newFunction(ast.GE, a, b)
 	sf8 := newFunction(ast.LE, b, a)
-	require.True(t, ExpressionsSemanticEqual(ctx, sf7, sf8))
+	require.True(t, ExpressionsSemanticEqual(sf7, sf8))
 
 	// not(a<b); a >= b
 	sf9 := newFunction(ast.UnaryNot, sf1)
-	require.True(t, ExpressionsSemanticEqual(ctx, sf9, sf7))
+	require.True(t, ExpressionsSemanticEqual(sf9, sf7))
 
 	// a < b; not(a>=b)
 	sf10 := newFunction(ast.UnaryNot, sf7)
-	require.True(t, ExpressionsSemanticEqual(ctx, sf1, sf10))
+	require.True(t, ExpressionsSemanticEqual(sf1, sf10))
 
 	// order insensitive cases
 	// a + b; b + a
 	p1 := newFunction(ast.Plus, a, b)
 	p2 := newFunction(ast.Plus, b, a)
-	require.True(t, ExpressionsSemanticEqual(ctx, p1, p2))
+	require.True(t, ExpressionsSemanticEqual(p1, p2))
 
 	// a * b; b * a
 	m1 := newFunction(ast.Mul, a, b)
 	m2 := newFunction(ast.Mul, b, a)
-	require.True(t, ExpressionsSemanticEqual(ctx, m1, m2))
+	require.True(t, ExpressionsSemanticEqual(m1, m2))
 
 	// a = b; b = a
 	e1 := newFunction(ast.EQ, a, b)
 	e2 := newFunction(ast.EQ, b, a)
-	require.True(t, ExpressionsSemanticEqual(ctx, e1, e2))
+	require.True(t, ExpressionsSemanticEqual(e1, e2))
 
 	// a = b AND b + a; a + b AND b = a
 	a1 := newFunction(ast.LogicAnd, e1, p2)
 	a2 := newFunction(ast.LogicAnd, p1, e2)
-	require.True(t, ExpressionsSemanticEqual(ctx, a1, a2))
+	require.True(t, ExpressionsSemanticEqual(a1, a2))
 
 	// a * b OR a + b;  b + a OR b * a
 	o1 := newFunction(ast.LogicOr, m1, p1)
 	o2 := newFunction(ast.LogicOr, p2, m2)
-	require.True(t, ExpressionsSemanticEqual(ctx, o1, o2))
+	require.True(t, ExpressionsSemanticEqual(o1, o2))
 }
 
 func TestScalarFunction(t *testing.T) {
@@ -99,7 +96,6 @@ func TestScalarFunction(t *testing.T) {
 		UniqueID: 1,
 		RetType:  types.NewFieldType(mysql.TypeDouble),
 	}
-	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	sf := newFunction(ast.LT, a, NewOne())
 	res, err := sf.MarshalJSON()
 	require.NoError(t, err)
@@ -107,7 +103,7 @@ func TestScalarFunction(t *testing.T) {
 	require.False(t, sf.IsCorrelated())
 	require.False(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx))
 	require.True(t, sf.Decorrelate(nil).Equal(ctx, sf))
-	require.EqualValues(t, []byte{0x3, 0x4, 0x6c, 0x74, 0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x5, 0xbf, 0xf0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, sf.HashCode(sc))
+	require.EqualValues(t, []byte{0x3, 0x4, 0x6c, 0x74, 0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x5, 0xbf, 0xf0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, sf.HashCode())
 
 	sf = NewValuesFunc(ctx, 0, types.NewFieldType(mysql.TypeLonglong))
 	newSf, ok := sf.Clone().(*ScalarFunction)

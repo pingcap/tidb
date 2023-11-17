@@ -191,7 +191,12 @@ type Expression interface {
 	// Constant: ConstantFlag+encoded value
 	// Column: ColumnFlag+encoded value
 	// ScalarFunction: SFFlag+encoded function name + encoded arg_1 + encoded arg_2 + ...
-	HashCode(sc *stmtctx.StatementContext) []byte
+	HashCode() []byte
+
+	// CanonicalHashCode creates the canonical hashcode for expression.
+	// Different with `HashCode`, this method will produce the same hashcode for expressions with the same semantic.
+	// For example, `a + b` and `b + a` have the same return value of this method.
+	CanonicalHashCode() []byte
 
 	// MemoryUsage return the memory usage of Expression
 	MemoryUsage() int64

@@ -399,7 +399,6 @@ func TestFilterExtractFromDNF(t *testing.T) {
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprStr
 		sctx := tk.Session()
-		sc := sctx.GetSessionVars().StmtCtx
 		stmts, err := session.Parse(sctx, sql)
 		require.NoError(t, err, "error %v, for expr %s", err, tt.exprStr)
 		require.Len(t, stmts, 1)
@@ -415,7 +414,7 @@ func TestFilterExtractFromDNF(t *testing.T) {
 		}
 		afterFunc := expression.ExtractFiltersFromDNFs(sctx, conds)
 		sort.Slice(afterFunc, func(i, j int) bool {
-			return bytes.Compare(afterFunc[i].HashCode(sc), afterFunc[j].HashCode(sc)) < 0
+			return bytes.Compare(afterFunc[i].HashCode(), afterFunc[j].HashCode()) < 0
 		})
 		require.Equal(t, fmt.Sprintf("%s", afterFunc), tt.result, "wrong result for expr: %s", tt.exprStr)
 	}

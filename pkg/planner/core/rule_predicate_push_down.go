@@ -234,8 +234,8 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		rightCond = append(p.RightConditions, rightPushCond...)
 		p.RightConditions = nil
 	}
-	leftCond = expression.RemoveDupExprs(p.SCtx(), leftCond)
-	rightCond = expression.RemoveDupExprs(p.SCtx(), rightCond)
+	leftCond = expression.RemoveDupExprs(leftCond)
+	rightCond = expression.RemoveDupExprs(rightCond)
 	leftRet, lCh := p.children[0].PredicatePushDown(leftCond, opt)
 	rightRet, rCh := p.children[1].PredicatePushDown(rightCond, opt)
 	addSelection(p, lCh, leftRet, 0, opt)
