@@ -5,7 +5,6 @@ package aws
 import (
 	"context"
 	"fmt"
-	"github.com/aws/aws-sdk-go/service/cloudwatch"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/cloudwatch"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/aws/aws-sdk-go/service/ec2/ec2iface"
 	"github.com/pingcap/errors"
@@ -366,7 +366,7 @@ func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) 
 	startIdx := 0
 	retryCount := 0
 	for startIdx < len(snapShotIDs) {
-		creditBalance, err := e.getFSRCreditBalance(snapShotIDs[startIdx])
+		creditBalance, err := e.getFSRCreditBalance(snapShotIDs[startIdx], targetAZ)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -377,14 +377,12 @@ func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) 
 		} else {
 			if creditBalance == 0 {
 				if retryCount >= 3 {
-					return errors.Errorf("cloudwatch metrics operation failed after retrying", zap.Stringp("snapshot", snapShotIDs[startIdx]))
-				} else {
-					retryCount++
+					return errors.Errorf("cloudwatch metrics for %s operation failed after retrying", *snapShotIDs[startIdx])
 				}
+				retryCount++
 			}
 			time.Sleep(1 * time.Minute)
 		}
-
 	}
 
 	// Create a map to store the strings as keys
@@ -440,7 +438,7 @@ func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) 
 }
 
 // getFSRCreditBalance is used to get maximum fsr credit balance of snapshot for last 5 minutes
-func (e *EC2Session) getFSRCreditBalance(snapshotID *string) (float64, error) {
+func (e *EC2Session) getFSRCreditBalance(snapshotID *string, targetAZ string) (float64, error) {
 	// Set the time range to query for metrics
 	startTime := time.Now().Add(-5 * time.Minute)
 	endTime := time.Now()
@@ -456,10 +454,16 @@ func (e *EC2Session) getFSRCreditBalance(snapshotID *string) (float64, error) {
 				Name:  aws.String("SnapshotId"),
 				Value: snapshotID,
 			},
+			{
+				Name:  aws.String("AvailabilityZone"),
+				Value: aws.String(targetAZ),
+			},
 		},
 		Period:     aws.Int64(300),
 		Statistics: []*string{aws.String("Maximum")},
 	}
+
+	log.Info("metrics info", zap.Any("input", input))
 
 	// Call cloudwatchClient API to retrieve the FastSnapshotRestoreCreditsBalance metric data
 	resp, err := e.cloudwatchClient.GetMetricStatisticsWithContext(context.Background(), input)
@@ -471,11 +475,10 @@ func (e *EC2Session) getFSRCreditBalance(snapshotID *string) (float64, error) {
 	if len(resp.Datapoints) == 0 {
 		log.Warn("No result for metric FastSnapshotRestoreCreditsBalance returned", zap.Stringp("snapshot", snapshotID))
 		return 0, nil
-	} else {
-		result := resp.Datapoints[0]
-		log.Info("credit balance", zap.Stringp("snapshot", snapshotID), zap.Float64p("credit", result.SampleCount))
-		return *result.SampleCount, nil
 	}
+	result := resp.Datapoints[0]
+	log.Info("credit balance", zap.Stringp("snapshot", snapshotID), zap.Float64p("credit", result.Maximum))
+	return *result.Maximum, nil
 }
 
 // DisableDataFSR disables FSR for data volume snapshots
