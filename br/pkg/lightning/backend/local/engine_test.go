@@ -168,3 +168,7 @@ func TestGetFirstAndLastKey(t *testing.T) {
 	require.Equal(t, []byte("e"), first)
 	require.Equal(t, []byte("e"), last)
 }
+
+func TestIterOutputHasUniqueMemorySpace(t *testing.T) {
+
+}
