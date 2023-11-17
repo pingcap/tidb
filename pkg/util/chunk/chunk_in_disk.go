@@ -39,6 +39,7 @@ type DataInDiskByChunks struct {
 	offsetOfEachChunk []int64
 
 	totalDataSize int64
+	totalRowNum   int64
 	diskTracker   *disk.Tracker // track disk usage.
 
 	dataFile diskFileReaderWriter
@@ -52,6 +53,7 @@ func NewDataInDiskByChunks(fieldTypes []*types.FieldType) *DataInDiskByChunks {
 	l := &DataInDiskByChunks{
 		fieldTypes:    fieldTypes,
 		totalDataSize: 0,
+		totalRowNum:   0,
 		// TODO: set the quota of disk usage.
 		diskTracker: disk.NewTracker(memory.LabelForChunkDataInDiskByChunks, -1),
 		buf:         make([]byte, 0, 4096),
@@ -103,6 +105,7 @@ func (d *DataInDiskByChunks) Add(chk *Chunk) (err error) {
 	}
 	d.offsetOfEachChunk = append(d.offsetOfEachChunk, d.totalDataSize)
 	d.totalDataSize += serializedBytesNum
+	d.totalRowNum += int64(chk.NumRows())
 	d.dataFile.offWrite += serializedBytesNum
 
 	d.diskTracker.Consume(serializedBytesNum)
@@ -226,6 +229,10 @@ func (d *DataInDiskByChunks) deserializeDataToChunk(data []byte, chk *Chunk) {
 			}
 		}
 	}
+}
+
+func (d *DataInDiskByChunks) NumRows() int64 {
+	return d.totalRowNum
 }
 
 func (d *DataInDiskByChunks) NumChunks() int {
