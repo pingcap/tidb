@@ -2060,6 +2060,8 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 	taskType := proto.Backfill
 	taskKey := fmt.Sprintf("ddl/%s/%d", taskType, reorgInfo.Job.ID)
 	g, ctx := errgroup.WithContext(context.Background())
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalDistTask)
+
 	done := make(chan struct{})
 
 	// generate taskKey for multi schema change.

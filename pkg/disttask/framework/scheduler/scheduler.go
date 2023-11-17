@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/backoff"
@@ -248,13 +249,13 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) (resErr error
 					zap.Int64("subtask-id", subtask.ID))
 				subtaskErr := errors.New("subtask in running state and is not idempotent")
 				s.onError(subtaskErr)
-				s.updateSubtaskStateAndError(ctx, subtask, proto.TaskStateFailed, subtaskErr)
+				s.updateSubtaskStateAndError(runCtx, subtask, proto.TaskStateFailed, subtaskErr)
 				s.markErrorHandled()
 				break
 			}
 		} else {
 			// subtask.State == proto.TaskStatePending
-			s.startSubtaskAndUpdateState(ctx, subtask)
+			s.startSubtaskAndUpdateState(runCtx, subtask)
 			if err := s.getError(); err != nil {
 				logutil.Logger(s.logCtx).Warn("startSubtaskAndUpdateState meets error", zap.Error(err))
 				continue
@@ -614,8 +615,7 @@ func (s *BaseScheduler) markSubTaskCanceledOrFailed(ctx context.Context, subtask
 		err := errors.Cause(err)
 		if ctx.Err() != nil && context.Cause(ctx) == ErrCancelSubtask {
 			logutil.Logger(s.logCtx).Warn("subtask canceled", zap.Error(err))
-			updateCtx := context.Background()
-			updateCtx = util.WithInternalSourceType(updateCtx, "scheduler")
+			updateCtx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
 			s.updateSubtaskStateAndError(updateCtx, subtask, proto.TaskStateCanceled, nil)
 		} else if common.IsRetryableError(err) || isRetryableError(err) {
 			logutil.Logger(s.logCtx).Warn("met retryable error", zap.Error(err))
@@ -623,8 +623,7 @@ func (s *BaseScheduler) markSubTaskCanceledOrFailed(ctx context.Context, subtask
 			logutil.Logger(s.logCtx).Info("met context canceled for gracefully shutdown", zap.Error(err))
 		} else {
 			logutil.Logger(s.logCtx).Warn("subtask failed", zap.Error(err))
-			updateCtx := context.Background()
-			updateCtx = util.WithInternalSourceType(updateCtx, "scheduler")
+			updateCtx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
 			s.updateSubtaskStateAndError(updateCtx, subtask, proto.TaskStateFailed, err)
 		}
 		s.markErrorHandled()

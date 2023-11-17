@@ -127,6 +127,8 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		parentCtx = context.Background()
 	}
 	group, groupCtx := errgroup.WithContext(parentCtx)
+	groupCtx = kv.WithInternalSourceType(groupCtx, kv.InternalDistTask)
+
 	param := &importer.JobImportParam{
 		Job:      &asyncloaddata.Job{},
 		Group:    group,
