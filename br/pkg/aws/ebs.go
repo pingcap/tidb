@@ -472,7 +472,7 @@ func (e *EC2Session) getFSRCreditBalance(duration time.Duration, snapshotID *str
 	}
 
 	query.MetricStat.Period = aws.Int64(int64(duration.Seconds()))
-	query.MetricStat.Stat = aws.String("MAX")
+	query.MetricStat.Stat = aws.String("Average")
 	query.MetricStat.Unit = aws.String("Count")
 
 	input.MetricDataQueries = append(input.MetricDataQueries, query)
