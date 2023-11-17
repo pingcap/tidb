@@ -26,6 +26,7 @@ go_library(
         "//br/pkg/httputil",
         "//br/pkg/lightning/log",
         "//br/pkg/logutil",
+        "//br/pkg/membuf",
         "//br/pkg/utils",
         "//pkg/errno",
         "//pkg/meta/autoid",
