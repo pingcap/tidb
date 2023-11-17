@@ -727,11 +727,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		}
 	}
 	updateCh = g.StartProgress(ctx, "Checksum", checksumProgress, !cfg.LogProgress)
-<<<<<<< HEAD
-	schemasConcurrency := uint(mathutil.Min(backup.DefaultSchemaConcurrency, schemas.Len()))
-=======
-	schemasConcurrency := min(cfg.TableConcurrency, uint(schemas.Len()))
->>>>>>> 07057bdb1f5 (backup: add table-concurrency to control backup tableInfo stats and checksum. (#48570))
+	schemasConcurrency := mathutil.Min(cfg.TableConcurrency, uint(schemas.Len()))
 
 	err = schemas.BackupSchemas(
 		ctx, metawriter, client.GetCheckpointRunner(), mgr.GetStorage(), statsHandle, backupTS, schemasConcurrency, cfg.ChecksumConcurrency, skipChecksum, updateCh)
