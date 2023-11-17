@@ -25,8 +25,8 @@ type SpillSerializeHelper struct {
 	buf []byte
 }
 
-// newSpillSerializeHelper creates a new SpillSerializeHelper
-func newSpillSerializeHelper() *SpillSerializeHelper {
+// NewSpillSerializeHelper creates a new SpillSerializeHelper
+func NewSpillSerializeHelper() *SpillSerializeHelper {
 	return &SpillSerializeHelper{
 		buf: make([]byte, 1024),
 	}

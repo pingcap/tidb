@@ -295,6 +295,8 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 			partialResultsMap[i] = make(aggfuncs.AggPartialResultMapper)
 		}
 
+		partialAggFuncsLen := len(e.PartialAggFuncs)
+
 		w := HashAggPartialWorker{
 			baseHashAggWorker:    newBaseHashAggWorker(e.Ctx(), e.finishCh, e.PartialAggFuncs, e.MaxChunkSize(), e.memTracker),
 			ctx:                  ctx,
@@ -314,9 +316,13 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 				return chunk.New(spillChunkFieldTypes, base.InitCap(), base.MaxChunkSize())
 			},
 			spillChunkFieldTypes:  spillChunkFieldTypes,
-			spillSerializeHelpers: make([]aggfuncs.SpillSerializeHelper, len(e.PartialAggFuncs)),
+			spillSerializeHelpers: make([]*aggfuncs.SpillSerializeHelper, len(e.PartialAggFuncs)),
 			spillHelper:           e.spillHelper,
 			workerSync:            workerSync,
+		}
+
+		for i := 0; i < partialAggFuncsLen; i++ {
+			w.spillSerializeHelpers[i] = aggfuncs.NewSpillSerializeHelper()
 		}
 
 		w.partialResultNumInRow = w.getPartialResultSliceLenConsiderByteAlign()
