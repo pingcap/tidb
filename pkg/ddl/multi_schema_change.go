@@ -26,7 +26,8 @@ import (
 )
 
 func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
-	if len(ctx.GetSessionVars().StmtCtx.MultiSchemaInfo.SubJobs) == 0 {
+	subJobs := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo.SubJobs
+	if len(subJobs) == 0 {
 		return nil
 	}
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
@@ -34,6 +35,15 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
 		return errors.Trace(err)
 	}
 
+	var reorgMeta *model.DDLReorgMeta
+	if containsDistTaskSubJob(subJobs) {
+		reorgMeta, err = newReorgMetaFromVariables(ctx)
+		if err != nil {
+			return err
+		}
+	} else {
+		reorgMeta = NewDDLReorgMeta(ctx)
+	}
 	job := &model.Job{
 		SchemaID:        schema.ID,
 		TableID:         t.Meta().ID,
@@ -43,7 +53,7 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
 		BinlogInfo:      &model.HistoryInfo{},
 		Args:            nil,
 		MultiSchemaInfo: ctx.GetSessionVars().StmtCtx.MultiSchemaInfo,
-		ReorgMeta:       newReorgMetaFromVariables(ctx),
+		ReorgMeta:       reorgMeta,
 	}
 	err = checkMultiSchemaInfo(ctx.GetSessionVars().StmtCtx.MultiSchemaInfo, t)
 	if err != nil {
@@ -53,6 +63,16 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
 	ctx.GetSessionVars().StmtCtx.MultiSchemaInfo = nil
 	err = d.DoDDLJob(ctx, job)
 	return d.callHookOnChanged(job, err)
+}
+
+func containsDistTaskSubJob(subJobs []*model.SubJob) bool {
+	for _, sub := range subJobs {
+		if sub.Type == model.ActionAddIndex ||
+			sub.Type == model.ActionAddPrimaryKey {
+			return true
+		}
+	}
+	return false
 }
 
 func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {

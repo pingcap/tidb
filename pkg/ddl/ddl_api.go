@@ -7075,6 +7075,10 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 
 	unique := true
 	sqlMode := ctx.GetSessionVars().SQLMode
+	reorgMeta, err := newReorgMetaFromVariables(ctx)
+	if err != nil {
+		return err
+	}
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
@@ -7082,7 +7086,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		TableName:  t.Meta().Name.L,
 		Type:       model.ActionAddPrimaryKey,
 		BinlogInfo: &model.HistoryInfo{},
-		ReorgMeta:  newReorgMetaFromVariables(ctx),
+		ReorgMeta:  reorgMeta,
 		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption, sqlMode, nil, global},
 		Priority:   ctx.GetSessionVars().DDLReorgPriority,
 	}
@@ -7324,6 +7328,10 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		return d.addHypoIndexIntoCtx(ctx, ti.Schema, ti.Name, indexInfo)
 	}
 
+	reorgMeta, err := newReorgMetaFromVariables(ctx)
+	if err != nil {
+		return err
+	}
 	chs, coll := ctx.GetSessionVars().GetCharsetInfo()
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -7332,7 +7340,7 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		TableName:  t.Meta().Name.L,
 		Type:       model.ActionAddIndex,
 		BinlogInfo: &model.HistoryInfo{},
-		ReorgMeta:  newReorgMetaFromVariables(ctx),
+		ReorgMeta:  reorgMeta,
 		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
 		Priority:   ctx.GetSessionVars().DDLReorgPriority,
 		Charset:    chs,
@@ -7349,11 +7357,14 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	return errors.Trace(err)
 }
 
-func newReorgMetaFromVariables(sctx sessionctx.Context) *model.DDLReorgMeta {
+func newReorgMetaFromVariables(sctx sessionctx.Context) (*model.DDLReorgMeta, error) {
 	reorgMeta := NewDDLReorgMeta(sctx)
 	reorgMeta.IsDistReorg = variable.EnableDistTask.Load()
 	reorgMeta.IsFastReorg = variable.EnableFastReorg.Load()
-	return reorgMeta
+	if reorgMeta.IsDistReorg && !reorgMeta.IsFastReorg {
+		return nil, dbterror.ErrUnsupportedDistTask
+	}
+	return reorgMeta, nil
 }
 
 func buildFKInfo(fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *ast.ReferenceDef, cols []*table.Column) (*model.FKInfo, error) {
