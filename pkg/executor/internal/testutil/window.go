@@ -54,11 +54,22 @@ func DefaultWindowTestCase() *WindowTestCase {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	return &WindowTestCase{ast.WindowFuncRowNumber, 1, nil, 1000, 10000000, 1, 0, true, ctx, strings.Repeat("x", 16),
-		[]*expression.Column{
+	return &WindowTestCase{
+		WindowFunc:       ast.WindowFuncRowNumber,
+		NumFunc:          1,
+		Frame:            nil,
+		Ndv:              1000,
+		Rows:             10000000,
+		Concurrency:      1,
+		Pipelined:        0,
+		DataSourceSorted: true,
+		Ctx:              ctx,
+		RawDataSmall:     strings.Repeat("x", 16),
+		Columns: []*expression.Column{
 			{Index: 0, RetType: types.NewFieldType(mysql.TypeDouble)},
 			{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
 			{Index: 2, RetType: types.NewFieldType(mysql.TypeVarString)},
 			{Index: 3, RetType: types.NewFieldType(mysql.TypeLonglong)},
-		}}
+		},
+	}
 }
