@@ -139,7 +139,7 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 				}
 				for i, col := range cols {
 					// When cols are a generated expression col, compare them in terms of virtual expr.
-					if col.EqualByExprAndID(nil, c) {
+					if col.EqualByExprAndID(sctx, c) {
 						return i
 					}
 				}
@@ -158,7 +158,7 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 					return -1
 				}
 				for i, col := range cols {
-					if col.Equal(nil, c) {
+					if col.EqualColumn(c) {
 						return i
 					}
 				}
@@ -178,7 +178,7 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 			}
 		}
 		for i, col := range cols {
-			if col.Equal(nil, c) {
+			if col.EqualColumn(c) {
 				return i
 			}
 		}
@@ -373,6 +373,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		checkerCol:               d.cols[eqOrInCount],
 		length:                   d.lengths[eqOrInCount],
 		optPrefixIndexSingleScan: d.sctx.GetSessionVars().OptPrefixIndexSingleScan,
+		ctx:                      d.sctx,
 	}
 	if considerDNF {
 		bestCNFItemRes, columnValues, err := extractBestCNFItemRanges(d.sctx, conditions, d.cols, d.lengths, d.rangeMaxSize)
@@ -712,6 +713,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 		checkerCol:               d.cols[0],
 		length:                   d.lengths[0],
 		optPrefixIndexSingleScan: d.sctx.GetSessionVars().OptPrefixIndexSingleScan,
+		ctx:                      d.sctx,
 	}
 	rb := builder{sc: d.sctx.GetSessionVars().StmtCtx}
 	dnfItems := expression.FlattenDNFConditions(condition)
@@ -984,6 +986,7 @@ func ExtractAccessConditionsForColumn(ctx sessionctx.Context, conds []expression
 		checkerCol:               col,
 		length:                   types.UnspecifiedLength,
 		optPrefixIndexSingleScan: ctx.GetSessionVars().OptPrefixIndexSingleScan,
+		ctx:                      ctx,
 	}
 	accessConds := make([]expression.Expression, 0, 8)
 	filter := func(expr expression.Expression) bool {
@@ -999,6 +1002,7 @@ func DetachCondsForColumn(sctx sessionctx.Context, conds []expression.Expression
 		checkerCol:               col,
 		length:                   types.UnspecifiedLength,
 		optPrefixIndexSingleScan: sctx.GetSessionVars().OptPrefixIndexSingleScan,
+		ctx:                      sctx,
 	}
 	return detachColumnCNFConditions(sctx, conds, checker)
 }
@@ -1022,6 +1026,7 @@ func MergeDNFItems4Col(ctx sessionctx.Context, dnfItems []expression.Expression)
 			checkerCol:               cols[0],
 			length:                   types.UnspecifiedLength,
 			optPrefixIndexSingleScan: ctx.GetSessionVars().OptPrefixIndexSingleScan,
+			ctx:                      ctx,
 		}
 		// If we can't use this condition to build range, we can't merge it.
 		// Currently, we assume if every condition in a DNF expression can pass this check, then `Selectivity` must be able to
@@ -1261,10 +1266,7 @@ func AddExpr4EqAndInCondition(sctx sessionctx.Context, conditions []expression.E
 //	is empty.
 //
 // @retval -  return true if it needs to addr tidb_shard() prefix, ohterwise return false
-func NeedAddGcColumn4ShardIndex(
-	cols []*expression.Column,
-	accessCond []expression.Expression,
-	columnValues []*valueInfo) bool {
+func NeedAddGcColumn4ShardIndex(cols []*expression.Column, accessCond []expression.Expression, columnValues []*valueInfo) bool {
 	// the columns of shard index shoude be more than 2, like (tidb_shard(a),a,...)
 	// check cols and columnValues in the sub call function
 	if len(accessCond) < 2 || len(cols) < 2 {
@@ -1370,7 +1372,7 @@ func NeedAddColumn4InCond(cols []*expression.Column, accessCond []expression.Exp
 	}
 
 	if len(fields) != 1 ||
-		!fields[0].Equal(nil, c) {
+		!fields[0].EqualColumn(c) {
 		return false
 	}
 
@@ -1425,7 +1427,7 @@ func IsValidShardIndex(cols []*expression.Column) bool {
 
 	// parameter of tidb_shard must be the second column of the input index columns
 	col, ok := shardFunc.GetArgs()[0].(*expression.Column)
-	if !ok || !col.Equal(nil, cols[1]) {
+	if !ok || !col.EqualColumn(cols[1]) {
 		return false
 	}
 

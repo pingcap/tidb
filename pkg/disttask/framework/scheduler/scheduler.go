@@ -36,9 +36,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 const (
@@ -616,14 +615,17 @@ func (s *BaseScheduler) markSubTaskCanceledOrFailed(ctx context.Context, subtask
 		if ctx.Err() != nil && context.Cause(ctx) == ErrCancelSubtask {
 			logutil.Logger(s.logCtx).Warn("subtask canceled", zap.Error(err))
 			updateCtx := context.Background()
+			updateCtx = util.WithInternalSourceType(updateCtx, "scheduler")
 			s.updateSubtaskStateAndError(updateCtx, subtask, proto.TaskStateCanceled, nil)
 		} else if common.IsRetryableError(err) || isRetryableError(err) {
 			logutil.Logger(s.logCtx).Warn("met retryable error", zap.Error(err))
-		} else if errors.Cause(err) != context.Canceled && status.Code(err) != codes.Canceled {
-			logutil.Logger(s.logCtx).Warn("subtask failed", zap.Error(err))
-			s.updateSubtaskStateAndError(ctx, subtask, proto.TaskStateFailed, err)
-		} else {
+		} else if common.IsContextCanceledError(err) {
 			logutil.Logger(s.logCtx).Info("met context canceled for gracefully shutdown", zap.Error(err))
+		} else {
+			logutil.Logger(s.logCtx).Warn("subtask failed", zap.Error(err))
+			updateCtx := context.Background()
+			updateCtx = util.WithInternalSourceType(updateCtx, "scheduler")
+			s.updateSubtaskStateAndError(updateCtx, subtask, proto.TaskStateFailed, err)
 		}
 		s.markErrorHandled()
 		return true

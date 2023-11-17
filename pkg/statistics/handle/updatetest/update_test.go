@@ -700,7 +700,6 @@ func TestMergeTopN(t *testing.T) {
 
 		topNs := make([]*statistics.TopN, 0, topnNum)
 		res := make(map[int]uint64)
-		rand.Seed(time.Now().Unix())
 		for i := 0; i < topnNum; i++ {
 			topN := statistics.NewTopN(n)
 			occur := make(map[int]bool)

@@ -214,7 +214,7 @@ func TestParseExecArgs(t *testing.T) {
 			},
 			nil,
 			types.ErrTruncatedWrongVal,
-			types.Duration{Duration: types.MinTime, Fsp: types.MaxFsp},
+			types.Duration{Duration: types.MinTime, Fsp: 0},
 		},
 		{
 			args{
@@ -226,7 +226,7 @@ func TestParseExecArgs(t *testing.T) {
 			},
 			nil,
 			nil,
-			types.Duration{Duration: time.Duration(0), Fsp: types.MaxFsp},
+			types.Duration{Duration: time.Duration(0), Fsp: 0},
 		},
 		// For error test
 		{
