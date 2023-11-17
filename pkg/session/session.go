@@ -2475,20 +2475,16 @@ const ExecStmtVarKey ExecStmtVarKeyType = 0
 // RecordSet, so this struct exists and RecordSet.Close() is overrided handle that.
 type execStmtResult struct {
 	sqlexec.RecordSet
-	se     *session
-	sql    sqlexec.Statement
-	closed bool
+	se  *session
+	sql sqlexec.Statement
 }
 
 func (rs *execStmtResult) Close() error {
-	if rs.closed {
-		return nil
-	}
 	se := rs.se
-	err := rs.RecordSet.Close()
-	err = finishStmt(context.Background(), se, err, rs.sql)
-	rs.closed = true
-	return err
+	if err := rs.RecordSet.Close(); err != nil {
+		return finishStmt(context.Background(), se, err, rs.sql)
+	}
+	return finishStmt(context.Background(), se, nil, rs.sql)
 }
 
 // rollbackOnError makes sure the next statement starts a new transaction with the latest InfoSchema.
