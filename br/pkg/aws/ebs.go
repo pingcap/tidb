@@ -351,7 +351,7 @@ func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) 
 
 	// Calculate the time in minutes to fill 1.0 credit according to
 	// https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ebs-fast-snapshot-restore.html#volume-creation-credits
-	fillElapsedTime := 60.0 / (math.Min(10, float64(1024.0/maxVolumeSize)))
+	fillElapsedTime := 60.0/(math.Min(10, float64(1024.0/maxVolumeSize))) + 5
 
 	// We have to sleep for at least fillElapsedTime minutes in order to make credits are filled to 1.0
 	// Let's heartbeat every 5 minutes
