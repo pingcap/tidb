@@ -286,6 +286,11 @@ type Config struct {
 	TiDBMaxReuseChunk uint32 `toml:"tidb-max-reuse-chunk" json:"tidb-max-reuse-chunk"`
 	// TiDBMaxReuseColumn indicates max cached column num
 	TiDBMaxReuseColumn uint32 `toml:"tidb-max-reuse-column" json:"tidb-max-reuse-column"`
+
+	// InMemSlowQueryTopNNum indicates the number of TopN slow queries stored in memory.
+	InMemSlowQueryTopNNum int `toml:"in-mem-slow-query-topn-num" json:"in-mem-slow-query-topn-num"`
+	// InMemSlowQueryRecentNum indicates the number of recent slow queries stored in memory.
+	InMemSlowQueryRecentNum int `toml:"in-mem-slow-query-recent-num" json:"in-mem-slow-query-recent-num"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -995,6 +1000,8 @@ var defaultConf = Config{
 	TrxSummary:                           DefaultTrxSummary(),
 	TiDBMaxReuseChunk:                    64,
 	TiDBMaxReuseColumn:                   256,
+	InMemSlowQueryTopNNum:                30,
+	InMemSlowQueryRecentNum:              500,
 }
 
 var (
