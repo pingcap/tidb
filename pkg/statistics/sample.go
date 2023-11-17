@@ -77,7 +77,7 @@ func SortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) ([]*Samp
 	return sortedItems, err
 }
 
-func SortSampleItems2(sc *stmtctx.StatementContext, items []*SampleItem) error {
+func sortSampleItems2(sc *stmtctx.StatementContext, items []*SampleItem) error {
 	var err error
 	slices.SortStableFunc(items, func(i, j *SampleItem) int {
 		var cmp int

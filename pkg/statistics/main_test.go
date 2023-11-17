@@ -105,7 +105,7 @@ func createTestStatisticsSamples(t *testing.T) *testStatisticsSamples {
 	}
 	sc := stmtctx.NewStmtCtx()
 
-	err := SortSampleItems2(sc, samples)
+	err := sortSampleItems2(sc, samples)
 	require.NoError(t, err)
 	s.samples = samples
 	rc := &recordSet{
