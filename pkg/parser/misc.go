@@ -833,6 +833,7 @@ var tokenMap = map[string]int{
 	"TRUE":                     trueKwd,
 	"TRUNCATE":                 truncate,
 	"TRUE_CARD_COST":           trueCardCost,
+	"TSO":                      tsoType,
 	"TTL":                      ttl,
 	"TTL_ENABLE":               ttlEnable,
 	"TTL_JOB_INTERVAL":         ttlJobInterval,
