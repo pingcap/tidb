@@ -153,7 +153,7 @@ func (m *Manager) fetchAndHandleRunnableTasksLoop() {
 				m.logErr(err)
 				continue
 			}
-			m.onRunnableTasks(m.ctx, tasks)
+			m.onRunnableTasks(tasks)
 		}
 	}
 }
@@ -192,7 +192,7 @@ func (m *Manager) fetchAndFastCancelTasksLoop() {
 }
 
 // onRunnableTasks handles runnable tasks.
-func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
+func (m *Manager) onRunnableTasks(tasks []*proto.Task) {
 	if len(tasks) == 0 {
 		return
 	}
@@ -214,7 +214,7 @@ func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 		m.addHandlingTask(task.ID)
 		t := task
 		err = m.schedulerPool.Run(func() {
-			m.onRunnableTask(ctx, t)
+			m.onRunnableTask(t)
 			m.removeHandlingTask(t.ID)
 		})
 		// pool closed.
@@ -323,7 +323,7 @@ type TestContext struct {
 var testContexts sync.Map
 
 // onRunnableTask handles a runnable task.
-func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
+func (m *Manager) onRunnableTask(task *proto.Task) {
 	logutil.Logger(m.logCtx).Info("onRunnableTask", zap.Int64("task-id", task.ID), zap.Stringer("type", task.Type))
 	// runCtx only used in scheduler.Run, cancel in m.fetchAndFastCancelTasks.
 	factory := getSchedulerFactory(task.Type)
@@ -332,11 +332,11 @@ func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
 		m.logErrAndPersist(err, task.ID)
 		return
 	}
-	scheduler := factory(ctx, m.id, task, m.taskTable)
-	taskCtx, taskCancel := context.WithCancelCause(ctx)
+	scheduler := factory(m.ctx, m.id, task, m.taskTable)
+	taskCtx, taskCancel := context.WithCancelCause(m.ctx)
 	m.registerCancelFunc(task.ID, taskCancel)
 	defer taskCancel(nil)
-
+	// scheduler should init before run()/pause()/rollback().
 	err := scheduler.Init(taskCtx)
 	if err != nil {
 		m.logErrAndPersist(err, task.ID)
@@ -345,7 +345,8 @@ func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
 	defer scheduler.Close()
 	for {
 		select {
-		case <-ctx.Done():
+		case <-m.ctx.Done():
+			logutil.Logger(m.logCtx).Info("onRunnableTask exit for cancel", zap.Int64("task-id", task.ID), zap.Stringer("type", task.Type))
 			return
 		case <-time.After(checkTime):
 		}
@@ -386,11 +387,14 @@ func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
 		}
 		switch task.State {
 		case proto.TaskStateRunning:
+			// use taskCtx for canceling.
 			err = scheduler.Run(taskCtx, task)
 		case proto.TaskStatePausing:
-			err = scheduler.Pause(taskCtx, task)
+			// use m.ctx since this process should not be canceled.
+			err = scheduler.Pause(m.ctx, task)
 		case proto.TaskStateReverting:
-			err = scheduler.Rollback(taskCtx, task)
+			// use m.ctx since this process should not be canceled.
+			err = scheduler.Rollback(m.ctx, task)
 		}
 		if err != nil {
 			logutil.Logger(m.logCtx).Error("failed to handle task", zap.Error(err))

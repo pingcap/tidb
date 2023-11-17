@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/backoff"
@@ -37,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -65,6 +63,8 @@ type BaseScheduler struct {
 	taskID    int64
 	taskTable TaskTable
 	logCtx    context.Context
+	// ctx from manager
+	ctx context.Context
 	Extension
 
 	mu struct {
@@ -78,11 +78,12 @@ type BaseScheduler struct {
 }
 
 // NewBaseScheduler creates a new BaseScheduler.
-func NewBaseScheduler(_ context.Context, id string, taskID int64, taskTable TaskTable) *BaseScheduler {
+func NewBaseScheduler(ctx context.Context, id string, taskID int64, taskTable TaskTable) *BaseScheduler {
 	schedulerImpl := &BaseScheduler{
 		id:        id,
 		taskID:    taskID,
 		taskTable: taskTable,
+		ctx:       ctx,
 		logCtx:    logutil.WithFields(context.Background(), zap.Int64("task-id", taskID)),
 	}
 	return schedulerImpl
@@ -218,7 +219,7 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) (resErr error
 		if err := s.getError(); err != nil {
 			break
 		}
-		if ctx.Err() != nil {
+		if runCtx.Err() != nil {
 			logutil.Logger(s.logCtx).Info("scheduler runSubtask loop exit")
 			break
 		}
@@ -269,6 +270,10 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) (resErr error
 					failpoint.Break()
 				}
 			}
+		})
+
+		failpoint.Inject("cancelBeforeRunSubtask", func() {
+			runCancel(nil)
 		})
 
 		s.runSubtask(runCtx, executor, subtask)
@@ -615,16 +620,14 @@ func (s *BaseScheduler) markSubTaskCanceledOrFailed(ctx context.Context, subtask
 		err := errors.Cause(err)
 		if ctx.Err() != nil && context.Cause(ctx) == ErrCancelSubtask {
 			logutil.Logger(s.logCtx).Warn("subtask canceled", zap.Error(err))
-			updateCtx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
-			s.updateSubtaskStateAndError(updateCtx, subtask, proto.TaskStateCanceled, nil)
+			s.updateSubtaskStateAndError(s.ctx, subtask, proto.TaskStateCanceled, nil)
 		} else if common.IsRetryableError(err) || isRetryableError(err) {
 			logutil.Logger(s.logCtx).Warn("met retryable error", zap.Error(err))
 		} else if common.IsContextCanceledError(err) {
 			logutil.Logger(s.logCtx).Info("met context canceled for gracefully shutdown", zap.Error(err))
 		} else {
 			logutil.Logger(s.logCtx).Warn("subtask failed", zap.Error(err))
-			updateCtx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
-			s.updateSubtaskStateAndError(updateCtx, subtask, proto.TaskStateFailed, err)
+			s.updateSubtaskStateAndError(s.ctx, subtask, proto.TaskStateFailed, err)
 		}
 		s.markErrorHandled()
 		return true

@@ -116,7 +116,7 @@ func TestOnRunnableTasks(t *testing.T) {
 	require.NoError(t, err)
 
 	// no task
-	m.onRunnableTasks(m.ctx, nil)
+	m.onRunnableTasks(nil)
 
 	RegisterTaskType("type",
 		func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) Scheduler {
@@ -129,18 +129,18 @@ func TestOnRunnableTasks(t *testing.T) {
 		unfinishedSubtaskStates...).
 		Return(false, errors.New("get subtask failed"))
 	mockInternalScheduler.EXPECT().Close()
-	m.onRunnableTasks(context.Background(), []*proto.Task{task})
+	m.onRunnableTasks([]*proto.Task{task})
 
 	// no subtask
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID, proto.StepOne,
 		unfinishedSubtaskStates...).Return(false, nil)
-	m.onRunnableTasks(context.Background(), []*proto.Task{task})
+	m.onRunnableTasks([]*proto.Task{task})
 
 	// pool error
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID, proto.StepOne,
 		unfinishedSubtaskStates...).Return(true, nil)
 	mockPool.EXPECT().Run(gomock.Any()).Return(errors.New("pool error"))
-	m.onRunnableTasks(context.Background(), []*proto.Task{task})
+	m.onRunnableTasks([]*proto.Task{task})
 
 	// StepOne succeed
 	wg, runFn := getPoolRunFn()
@@ -168,7 +168,7 @@ func TestOnRunnableTasks(t *testing.T) {
 	task3 := &proto.Task{ID: taskID, State: proto.TaskStateReverted, Step: proto.StepTwo}
 	mockTaskTable.EXPECT().GetGlobalTaskByID(m.ctx, taskID).Return(task3, nil)
 
-	m.onRunnableTasks(context.Background(), []*proto.Task{task})
+	m.onRunnableTasks([]*proto.Task{task})
 
 	wg.Wait()
 }
