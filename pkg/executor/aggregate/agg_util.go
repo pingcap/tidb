@@ -28,10 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/pkg/util"
->>>>>>> improve-agg-for-spill
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/execdetails"

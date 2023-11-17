@@ -233,7 +233,7 @@ func (w *HashAggFinalWorker) restoreFromOneSpillFile(ctx sessionctx.Context, res
 
 		// Deserialize bytes to agg function's meta data
 		for aggPos, aggFunc := range w.aggFuncsForRestoring {
-			partialResult, memDelta := aggFunc.DeserializePartialResult(ctx, chunk)
+			partialResult, memDelta := aggFunc.DeserializePartialResult(chunk)
 			partialResultsRestored[aggPos] = partialResult
 			totalMemDelta += memDelta
 		}

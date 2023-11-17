@@ -347,7 +347,7 @@ func (w *HashAggPartialWorker) spillDataToDisk() error {
 
 			// Serialize agg meta data to the tmp chunk
 			for i, aggFunc := range w.aggFuncs {
-				aggFunc.SerializePartialResult(w.ctx, partialResults[i], w.tmpChksForSpill[partitionNum], &(w.spillSerializeHelpers[i]))
+				aggFunc.SerializePartialResult(partialResults[i], w.tmpChksForSpill[partitionNum], &(w.spillSerializeHelpers[i]))
 			}
 
 			// Append key
