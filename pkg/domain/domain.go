@@ -1457,7 +1457,7 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 		}
 	})
 
-	taskManager := storage.NewTaskManager(ctx, do.sysSessionPool)
+	taskManager := storage.NewTaskManager(do.sysSessionPool)
 	var serverID string
 	if intest.InTest {
 		do.InitInfo4Test()

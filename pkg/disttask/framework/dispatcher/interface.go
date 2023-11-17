@@ -25,24 +25,24 @@ import (
 
 // TaskManager defines the interface to access task table.
 type TaskManager interface {
-	GetGlobalTasksInStates(states ...interface{}) (task []*proto.Task, err error)
-	GetGlobalTaskByID(taskID int64) (task *proto.Task, err error)
-	UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtasks []*proto.Subtask, prevState proto.TaskState) (bool, error)
-	GCSubtasks() error
-	GetAllNodes() ([]string, error)
-	CleanUpMeta(nodes []string) error
-	TransferTasks2History(tasks []*proto.Task) error
-	CancelGlobalTask(taskID int64) error
-	PauseTask(taskKey string) (bool, error)
-	GetSubtaskInStatesCnt(taskID int64, states ...interface{}) (int64, error)
-	ResumeSubtasks(taskID int64) error
-	CollectSubTaskError(taskID int64) ([]error, error)
-	TransferSubTasks2History(taskID int64) error
-	UpdateFailedSchedulerIDs(taskID int64, replaceNodes map[string]string) error
-	GetNodesByRole(role string) (map[string]bool, error)
-	GetSchedulerIDsByTaskID(taskID int64) ([]string, error)
-	GetSucceedSubtasksByStep(taskID int64, step proto.Step) ([]*proto.Subtask, error)
-	GetSchedulerIDsByTaskIDAndStep(taskID int64, step proto.Step) ([]string, error)
+	GetGlobalTasksInStates(ctx context.Context, states ...interface{}) (task []*proto.Task, err error)
+	GetGlobalTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
+	UpdateGlobalTaskAndAddSubTasks(ctx context.Context, gTask *proto.Task, subtasks []*proto.Subtask, prevState proto.TaskState) (bool, error)
+	GCSubtasks(ctx context.Context) error
+	GetAllNodes(ctx context.Context) ([]string, error)
+	CleanUpMeta(ctx context.Context, nodes []string) error
+	TransferTasks2History(ctx context.Context, tasks []*proto.Task) error
+	CancelGlobalTask(ctx context.Context, taskID int64) error
+	PauseTask(ctx context.Context, taskKey string) (bool, error)
+	GetSubtaskInStatesCnt(ctx context.Context, taskID int64, states ...interface{}) (int64, error)
+	ResumeSubtasks(ctx context.Context, taskID int64) error
+	CollectSubTaskError(ctx context.Context, taskID int64) ([]error, error)
+	TransferSubTasks2History(ctx context.Context, taskID int64) error
+	UpdateFailedSchedulerIDs(ctx context.Context, taskID int64, replaceNodes map[string]string) error
+	GetNodesByRole(ctx context.Context, role string) (map[string]bool, error)
+	GetSchedulerIDsByTaskID(ctx context.Context, taskID int64) ([]string, error)
+	GetSucceedSubtasksByStep(ctx context.Context, taskID int64, step proto.Step) ([]*proto.Subtask, error)
+	GetSchedulerIDsByTaskIDAndStep(ctx context.Context, taskID int64, step proto.Step) ([]string, error)
 
 	WithNewSession(fn func(se sessionctx.Context) error) error
 	WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error
