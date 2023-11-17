@@ -39,11 +39,18 @@ func (p *pebbleIter) ReleaseBuf() {
 }
 
 func (p *pebbleIter) Close() error {
-	p.buf.Destroy()
+	// only happens for GetFirstAndLastKey
+	if p.buf != nil {
+		p.buf.Destroy()
+	}
 	return p.Iterator.Close()
 }
 
 func (p *pebbleIter) Key() []byte {
+	// only happens for GetFirstAndLastKey
+	if p.buf == nil {
+		return p.Iterator.Key()
+	}
 	return p.buf.AddBytes(p.Iterator.Key())
 }
 
@@ -101,6 +108,10 @@ func (d *dupDetectIter) Next() bool {
 }
 
 func (d *dupDetectIter) Key() []byte {
+	// only happens for GetFirstAndLastKey
+	if d.buf == nil {
+		return d.curKey
+	}
 	return d.buf.AddBytes(d.curKey)
 }
 
@@ -117,7 +128,10 @@ func (d *dupDetectIter) Error() error {
 }
 
 func (d *dupDetectIter) Close() error {
-	d.buf.Destroy()
+	// only happens for GetFirstAndLastKey
+	if d.buf != nil {
+		d.buf.Destroy()
+	}
 	firstErr := d.dupDetector.Close()
 	err := d.iter.Close()
 	if firstErr != nil {
