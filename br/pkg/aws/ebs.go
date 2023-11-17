@@ -441,8 +441,8 @@ func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) 
 // getFSRCreditBalance is used to get maximum fsr credit balance of snapshot for last duration window
 func (e *EC2Session) getFSRCreditBalance(duration time.Duration, snapshotID *string) (float64, error) {
 	// Set the time range to query for metrics
-	startTime := time.Now().Add(-duration)
-	endTime := time.Now()
+	startTime := time.Now().Add(-duration).Add(-duration).Add(-duration)
+	endTime := time.Now().Add(-duration)
 
 	// Prepare the input for the GetMetricData API call
 	input := &cloudwatch.GetMetricDataInput{
@@ -475,6 +475,8 @@ func (e *EC2Session) getFSRCreditBalance(duration time.Duration, snapshotID *str
 	query.MetricStat.Unit = aws.String("Count")
 
 	input.MetricDataQueries = append(input.MetricDataQueries, query)
+
+	//log.Info("""input: %v", input)""
 
 	// Call GetMetricData API to retrieve the FastSnapshotRestoreCreditsBalance metric data
 	resp, err := e.cloudwatchClient.GetMetricDataWithContext(context.Background(), input)
