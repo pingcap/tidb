@@ -456,8 +456,8 @@ func (e *EC2Session) getFSRCreditBalance(snapshotID *string) (float64, error) {
 				Value: snapshotID,
 			},
 		},
-		Period:     aws.Int64(60),
-		Statistics: []*string{aws.String("SampleCounts")},
+		Period:     aws.Int64(300),
+		Statistics: []*string{aws.String("Maximum")},
 	}
 
 	// Call cloudwatchClient API to retrieve the FastSnapshotRestoreCreditsBalance metric data
