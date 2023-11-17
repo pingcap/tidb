@@ -1,4 +1,4 @@
-package preparesnap
+package preparesnap_test
 
 import (
 	"bytes"
@@ -20,6 +20,8 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap/zapcore"
+
+	. "github.com/pingcap/tidb/br/pkg/backup/prepare_snap"
 )
 
 type mockStore struct {
@@ -319,7 +321,7 @@ func TestLeaseTimeoutWhileTakingSnapshot(t *testing.T) {
 	ctx := context.Background()
 	prep := New(ms)
 	prep.LeaseDuration = 4 * time.Second
-	req.NoError(prep.maybeFinish(ctx))
+	req.NoError(prep.MaybeFinish(ctx))
 	tt.mu.Lock()
 	tt.now = tt.now.Add(100 * time.Minute)
 	tt.mu.Unlock()
@@ -327,7 +329,7 @@ func TestLeaseTimeoutWhileTakingSnapshot(t *testing.T) {
 	cx, cancel := context.WithTimeout(ctx, 1*time.Second)
 	defer cancel()
 	for {
-		err := prep.waitAndHandleNextEvent(cx)
+		err := prep.WaitAndHandleNextEvent(cx)
 		if err != nil {
 			req.ErrorContains(err, "the lease has expired")
 			break

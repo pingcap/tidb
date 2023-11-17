@@ -101,11 +101,11 @@ func New(env Env) *Preparer {
 // Spliting, ingesting and conf changing may all be blocked until `Finalize` invoked.
 func (p *Preparer) DriveLoopAndWaitPrepare(ctx context.Context) error {
 	p.retryTime = 0
-	if err := p.maybeFinish(ctx); err != nil {
+	if err := p.MaybeFinish(ctx); err != nil {
 		return errors.Annotate(err, "failed to begin step")
 	}
 	for !p.waitApplyFinished {
-		if err := p.waitAndHandleNextEvent(ctx); err != nil {
+		if err := p.WaitAndHandleNextEvent(ctx); err != nil {
 			return errors.Annotate(err, "failed to step")
 		}
 	}
@@ -133,7 +133,10 @@ func (p *Preparer) Finalize(ctx context.Context) error {
 	}
 }
 
-func (p *Preparer) waitAndHandleNextEvent(ctx context.Context) error {
+// WaitAndHandleNextEvent is exported for test usage.
+// This waits the next event (wait apply done, errors, etc..) of preparing.
+// Generally `DriveLoopAndWaitPrepare` is all you need.
+func (p *Preparer) WaitAndHandleNextEvent(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		logutil.CL(ctx).Warn("User canceled, try to stop the whole procedure gracefully.")
@@ -145,7 +148,7 @@ func (p *Preparer) waitAndHandleNextEvent(ctx context.Context) error {
 		if err != nil {
 			return errors.Annotatef(err, "failed to handle event %v", evt)
 		}
-		return p.maybeFinish(ctx)
+		return p.MaybeFinish(ctx)
 	case <-p.retryC():
 		return p.workOnPendingRanges(ctx)
 	}
@@ -210,7 +213,11 @@ func (p *Preparer) retryC() <-chan time.Time {
 	return p.nextRetry.C
 }
 
-func (p *Preparer) maybeFinish(ctx context.Context) error {
+// MaybeFinish is exported for test usage.
+// This call will check whether now we are safe to forward the whole procedure.
+// If we can, this will set `p.waitApplyFinished` to true.
+// Generally `DriveLoopAndWaitPrepare` is all you need, you may not want to call this.
+func (p *Preparer) MaybeFinish(ctx context.Context) error {
 	logutil.CL(ctx).Info("Checking the progress of our work.",
 		zap.Int("inflight_reqs", len(p.inflightReqs)), zap.Int("failed_ranges", len(p.failedRegions)))
 	if len(p.inflightReqs) == 0 && len(p.failedRegions) == 0 {
