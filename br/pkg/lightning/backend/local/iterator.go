@@ -22,8 +22,8 @@ import (
 	"go.uber.org/multierr"
 )
 
-// LocalEngineIngestIter abstract iterator method for iterator.
-type LocalEngineIngestIter interface {
+// IngestLocalEngineIter abstract iterator method for iterator.
+type IngestLocalEngineIter interface {
 	common.ForwardIter
 	// Last moves this iter to the last key.
 	Last() bool
@@ -58,7 +58,7 @@ func (p *pebbleIter) Value() []byte {
 	return p.buf.AddBytes(p.Iterator.Value())
 }
 
-var _ LocalEngineIngestIter = &pebbleIter{}
+var _ IngestLocalEngineIter = &pebbleIter{}
 
 type dupDetectIter struct {
 	keyAdapter  common.KeyAdapter
@@ -144,7 +144,7 @@ func (d *dupDetectIter) ReleaseBuf() {
 	d.buf.Reset()
 }
 
-var _ LocalEngineIngestIter = &dupDetectIter{}
+var _ IngestLocalEngineIter = &dupDetectIter{}
 
 func newDupDetectIter(
 	db *pebble.DB,
@@ -236,6 +236,7 @@ func (d *dupDBIter) Close() error {
 	return d.iter.Close()
 }
 
+// Iter describes an iterator.
 type Iter interface {
 	// Valid check this iter reach the end.
 	Valid() bool
