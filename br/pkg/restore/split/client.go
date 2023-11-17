@@ -462,7 +462,7 @@ func (c *pdClient) getStoreCount(ctx context.Context) (int, error) {
 }
 
 func (c *pdClient) getMaxReplica(ctx context.Context) (int, error) {
-	api := c.getpdhttpAddr()
+	api := c.getPDAPIAddr()
 	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s%s", api, pdhttp.ReplicateConfig), nil)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -535,7 +535,7 @@ func (c *pdClient) ScanRegions(ctx context.Context, key, endKey []byte, limit in
 
 func (c *pdClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (pdtypes.Rule, error) {
 	var rule pdtypes.Rule
-	addr := c.getpdhttpAddr()
+	addr := c.getPDAPIAddr()
 	if addr == "" {
 		return rule, errors.Annotate(berrors.ErrRestoreSplitFailed, "failed to add stores labels: no leader")
 	}
@@ -565,7 +565,7 @@ func (c *pdClient) GetPlacementRule(ctx context.Context, groupID, ruleID string)
 }
 
 func (c *pdClient) SetPlacementRule(ctx context.Context, rule pdtypes.Rule) error {
-	addr := c.getpdhttpAddr()
+	addr := c.getPDAPIAddr()
 	if addr == "" {
 		return errors.Annotate(berrors.ErrPDLeaderNotFound, "failed to add stores labels")
 	}
@@ -583,7 +583,7 @@ func (c *pdClient) SetPlacementRule(ctx context.Context, rule pdtypes.Rule) erro
 }
 
 func (c *pdClient) DeletePlacementRule(ctx context.Context, groupID, ruleID string) error {
-	addr := c.getpdhttpAddr()
+	addr := c.getPDAPIAddr()
 	if addr == "" {
 		return errors.Annotate(berrors.ErrPDLeaderNotFound, "failed to add stores labels")
 	}
@@ -602,7 +602,7 @@ func (c *pdClient) SetStoresLabel(
 	ctx context.Context, stores []uint64, labelKey, labelValue string,
 ) error {
 	b := []byte(fmt.Sprintf(`{"%s": "%s"}`, labelKey, labelValue))
-	addr := c.getpdhttpAddr()
+	addr := c.getPDAPIAddr()
 	if addr == "" {
 		return errors.Annotate(berrors.ErrPDLeaderNotFound, "failed to add stores labels")
 	}
@@ -628,7 +628,7 @@ func (c *pdClient) SetStoresLabel(
 	return nil
 }
 
-func (c *pdClient) getpdhttpAddr() string {
+func (c *pdClient) getPDAPIAddr() string {
 	addr := c.client.GetLeaderAddr()
 	if addr != "" && !strings.HasPrefix(addr, "http") {
 		addr = "http://" + addr
