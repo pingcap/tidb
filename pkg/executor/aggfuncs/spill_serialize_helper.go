@@ -89,23 +89,19 @@ func (s *spillSerializeHelper) serializePartialResult4MaxMinString(value partial
 
 func (s *spillSerializeHelper) serializePartialResult4MaxMinJSON(value partialResult4MaxMinJSON) []byte {
 	spill.SerializeBool(value.isNull, s.buf[0:])
-
-	// Assign the return value to `s.buf` is necessary, so that the `s.buf` could expand it's capacity.
-	s.buf = spill.SerializeBinaryJSON(&value.val, s.buf, boolLen)
+	spill.SerializeBinaryJSON(&value.val, &s.buf, boolLen)
 	return s.buf
 }
 
 func (s *spillSerializeHelper) serializePartialResult4MaxMinEnum(value partialResult4MaxMinEnum) []byte {
 	spill.SerializeBool(value.isNull, s.buf[0:])
-
-	// Assign the return value to `s.buf` is necessary, so that the `s.buf` could expand it's capacity.
-	s.buf = spill.SerializeEnum(&value.val, s.buf, boolLen)
+	spill.SerializeEnum(&value.val, &s.buf, boolLen)
 	return s.buf
 }
 
 func (s *spillSerializeHelper) serializePartialResult4MaxMinSet(value partialResult4MaxMinSet) []byte {
 	spill.SerializeBool(value.isNull, s.buf)
-	s.buf = spill.SerializeSet(&value.val, s.buf, boolLen)
+	spill.SerializeSet(&value.val, &s.buf, boolLen)
 	return s.buf
 }
 
@@ -227,20 +223,18 @@ func (s *spillSerializeHelper) serializePartialResult4FirstRowDuration(value par
 
 func (s *spillSerializeHelper) serializePartialResult4FirstRowJSON(value partialResult4FirstRowJSON) []byte {
 	_, baseBytesNum := s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
-
-	// Assign the return value to `s.buf` is necessary, so that the `s.buf` could expand it's capacity.
-	s.buf = spill.SerializeBinaryJSON(&value.val, s.buf, baseBytesNum)
+	spill.SerializeBinaryJSON(&value.val, &s.buf, baseBytesNum)
 	return s.buf
 }
 
 func (s *spillSerializeHelper) serializePartialResult4FirstRowEnum(value partialResult4FirstRowEnum) []byte {
 	_, baseBytesNum := s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
-	s.buf = spill.SerializeEnum(&value.val, s.buf, baseBytesNum)
+	spill.SerializeEnum(&value.val, &s.buf, baseBytesNum)
 	return s.buf
 }
 
 func (s *spillSerializeHelper) serializePartialResult4FirstRowSet(value partialResult4FirstRowSet) []byte {
 	_, baseBytesNum := s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
-	s.buf = spill.SerializeSet(&value.val, s.buf, baseBytesNum)
+	spill.SerializeSet(&value.val, &s.buf, baseBytesNum)
 	return s.buf
 }

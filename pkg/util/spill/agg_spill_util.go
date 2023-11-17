@@ -303,7 +303,7 @@ func SerializeInterface(value interface{}, varBuf *[]byte, tmpBuf []byte) {
 
 		// Add padding for seialization
 		*varBuf = append(*varBuf, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)
-		*varBuf = SerializeBinaryJSON(&v, *varBuf, varBufLenBeforeSerializeJSON)
+		SerializeBinaryJSON(&v, varBuf, varBufLenBeforeSerializeJSON)
 
 	case types.Opaque:
 		*varBuf = append(*varBuf, OpaqueType)
@@ -331,24 +331,24 @@ func SerializeInterface(value interface{}, varBuf *[]byte, tmpBuf []byte) {
 }
 
 // SerializeBinaryJSON serializes Set type
-func SerializeBinaryJSON(json *types.BinaryJSON, varBuf []byte, startPos int64) []byte {
-	varBuf[startPos] = json.TypeCode
+func SerializeBinaryJSON(json *types.BinaryJSON, varBuf *[]byte, startPos int64) {
+	(*varBuf)[startPos] = json.TypeCode
 	valueLen := len(json.Value)
-	SerializeInt(valueLen, varBuf[startPos+byteLen:])
-	varBuf = varBuf[:startPos+byteLen+intLen]
-	return append(varBuf, json.Value...)
+	SerializeInt(valueLen, (*varBuf)[startPos+byteLen:])
+	*varBuf = (*varBuf)[:startPos+byteLen+intLen]
+	*varBuf = append(*varBuf, json.Value...)
 }
 
 // SerializeSet serializes Set type
-func SerializeSet(value *types.Set, varBuf []byte, startPos int64) []byte {
-	SerializeUint64(value.Value, varBuf[startPos:])
-	varBuf = varBuf[:startPos+uint64Len]
-	return append(varBuf, value.Name...)
+func SerializeSet(value *types.Set, varBuf *[]byte, startPos int64) {
+	SerializeUint64(value.Value, (*varBuf)[startPos:])
+	*varBuf = (*varBuf)[:startPos+uint64Len]
+	*varBuf = append(*varBuf, value.Name...)
 }
 
 // SerializeEnum serializes Set type
-func SerializeEnum(value *types.Enum, varBuf []byte, startPos int64) []byte {
-	SerializeUint64(value.Value, varBuf[startPos:])
-	varBuf = varBuf[:startPos+uint64Len]
-	return append(varBuf, value.Name...)
+func SerializeEnum(value *types.Enum, varBuf *[]byte, startPos int64) {
+	SerializeUint64(value.Value, (*varBuf)[startPos:])
+	*varBuf = (*varBuf)[:startPos+uint64Len]
+	*varBuf = append(*varBuf, value.Name...)
 }
