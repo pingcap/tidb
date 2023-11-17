@@ -20,7 +20,6 @@ go_library(
         "//pkg/disttask/framework/scheduler/execute",
         "//pkg/disttask/framework/storage",
         "//pkg/domain/infosync",
-        "//pkg/kv",
         "//pkg/metrics",
         "//pkg/parser/terror",
         "//pkg/resourcemanager/pool/spool",
@@ -33,7 +32,6 @@ go_library(
         "//pkg/util/memory",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_zap//:zap",
     ],
 )
