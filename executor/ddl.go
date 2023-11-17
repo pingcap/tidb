@@ -531,7 +531,17 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 }
 
 func (e *DDLExec) executeFlashBackCluster(s *ast.FlashBackToTimestampStmt) error {
+<<<<<<< HEAD:executor/ddl.go
 	flashbackTS, err := staleread.CalculateAsOfTsExpr(context.Background(), e.ctx, s.FlashbackTS)
+=======
+	// Check `TO TSO` clause
+	if s.FlashbackTSO > 0 {
+		return domain.GetDomain(e.Ctx()).DDL().FlashbackCluster(e.Ctx(), s.FlashbackTSO)
+	}
+
+	// Check `TO TIMESTAMP` clause
+	flashbackTS, err := staleread.CalculateAsOfTsExpr(context.Background(), e.Ctx(), s.FlashbackTS)
+>>>>>>> 6b3df662ca5 (flashback: support to flashback to tso syntax (#48493)):pkg/executor/ddl.go
 	if err != nil {
 		return err
 	}
