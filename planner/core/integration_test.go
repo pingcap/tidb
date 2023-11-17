@@ -5331,6 +5331,26 @@ func TestIssue43116(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 111 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
 }
 
+func TestIssue48643(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, tp")
+	tk.MustExec("create table t\n(pk1 varchar(128),\n pk2 varchar(128),\n pk3 varchar(128),\n data varchar(128),\n primary key (pk1, pk2, pk3))")
+	tk.MustExec("insert into t values (UUID(), UUID(), uuid(), uuid()), (uuid(), uuid(), uuid(), uuid())")
+	tk.MustExec("insert into t select uuid(), uuid(), uuid(), uuid() from t, t t2, t t3, t t4")
+	tk.MustExec("insert into t select t.pk1, uuid(), uuid(), uuid() from t, t t2, t t3, t t4")
+	tk.MustQuery("select count(*) from t;").Check(testkit.Rows("104994"))
+	tk.MustQuery("select count(distinct pk1) from t;").Check(testkit.Rows("18"))
+	res1 := tk.MustQuery("select pk1, count(*) from t group by pk1 order by count(*), pk1 limit 10;").Sort()
+
+	tk.MustExec("create table tp\n(pk1 varchar(128),\n pk2 varchar(128),\n pk3 varchar(128),\n data varchar(128),\n primary key (pk1, pk2, pk3))\npartition by key(pk1) partitions 128;")
+	tk.MustExec("insert into tp select * from t;")
+	tk.MustQuery("select count(*) from tp;").Check(testkit.Rows("104994"))
+	tk.MustQuery("select count(distinct pk1) from tp;").Check(testkit.Rows("18"))
+	tk.MustQuery("select pk1, count(*) from tp group by pk1 order by count(*), pk1 limit 10;").Sort().Check(res1.Rows())
+}
+
 func TestIssue45033(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
