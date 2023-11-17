@@ -25,8 +25,10 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/util"
 )
 
 func TestGetTaskImportedRows(t *testing.T) {
@@ -37,6 +39,8 @@ func TestGetTaskImportedRows(t *testing.T) {
 	}, 1, 1, time.Second)
 	defer pool.Close()
 	ctx := context.WithValue(context.Background(), "etcd", true)
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
 	manager, err := storage.GetTaskManager()
