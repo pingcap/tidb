@@ -167,6 +167,35 @@ func TestAggEliminator(t *testing.T) {
 	}
 }
 
+// Fix Issue #45822
+func TestRuleColumnPruningLogicalApply(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	var input []string
+	var output []struct {
+		SQL  string
+		Best string
+	}
+	planSuiteData := GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+	p := parser.New()
+	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_opt_fix_control = '45822:ON';")
+	for i, tt := range input {
+		comment := fmt.Sprintf("input: %s", tt)
+		stmt, err := p.ParseOneStmt(tt, "", "")
+		require.NoError(t, err, comment)
+		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		require.NoError(t, err)
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Best = core.ToString(p)
+		})
+		require.Equal(t, output[i].Best, core.ToString(p), fmt.Sprintf("input: %s", tt))
+	}
+}
+
 func TestINMJHint(t *testing.T) {
 	var (
 		input  []string
@@ -1206,6 +1235,8 @@ func TestSingleConsumerCTE(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE `t` (`a` int(11));")
+	tk.MustExec("create table t1 (c1 int primary key, c2 int, index c2 (c2));")
+	tk.MustExec("create table t2 (c1 int unique, c2 int);")
 	tk.MustExec("insert into t values (1), (5), (10), (15), (20), (30), (50);")
 
 	var (
@@ -2230,6 +2261,7 @@ func TestIndexMergeSinkLimit(t *testing.T) {
 	tk.MustExec("insert into t2 values(1,2,1),(2,1,1),(3,3,1)")
 	tk.MustExec("create table t(a int, j json, index kj((cast(j as signed array))))")
 	tk.MustExec("insert into t values(1, '[1,2,3]')")
+	tk.MustExec("CREATE TABLE `t3` (\n  `id` int(11) NOT NULL,\n  `aid` bigint(20) DEFAULT NULL,\n  `c1` varchar(255) DEFAULT NULL,\n  `c2` varchar(255) DEFAULT NULL,\n  `d` int(11) DEFAULT NULL,\n  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n  KEY `aid_c1` (`aid`,`c1`),\n  KEY `aid_c2` (`aid`,`c2`)\n)")
 
 	for i, ts := range input {
 		testdata.OnRecord(func() {

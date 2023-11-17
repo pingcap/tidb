@@ -1188,14 +1188,14 @@
           },
           {
             "table_name": "t",
-            "type": "Index Stats-Point",
-            "expr": "((a = 1))",
+            "type": "Column Stats-Range",
+            "expr": "((a > 0 and a < 2))",
             "row_count": 4
           },
           {
             "table_name": "t",
-            "type": "Column Stats-Range",
-            "expr": "((a > 0 and a < 2))",
+            "type": "Index Stats-Point",
+            "expr": "((a = 1))",
             "row_count": 4
           },
           {
@@ -1211,13 +1211,13 @@
         "Trace": [
           {
             "table_name": "t",
-            "type": "Index Stats-Range",
+            "type": "Column Stats-Range",
             "expr": "((a >= 1 and a < 10))",
             "row_count": 6
           },
           {
             "table_name": "t",
-            "type": "Column Stats-Range",
+            "type": "Index Stats-Range",
             "expr": "((a >= 1 and a < 10))",
             "row_count": 6
           },
@@ -1235,25 +1235,13 @@
           {
             "table_name": "t",
             "type": "Column Stats-Range",
-            "expr": "((b < 4))",
-            "row_count": 6
-          },
-          {
-            "table_name": "t",
-            "type": "Table Stats-Expression-CNF",
-            "expr": "`lt`(test.t.b, 4)",
-            "row_count": 6
-          },
-          {
-            "table_name": "t",
-            "type": "Table Stats-Expression-DNF",
-            "expr": "`or`(`lt`(test.t.a, 3), `lt`(test.t.b, 4))",
+            "expr": "((a < 3))",
             "row_count": 6
           },
           {
             "table_name": "t",
             "type": "Column Stats-Range",
-            "expr": "((a < 3))",
+            "expr": "((b < 4))",
             "row_count": 6
           },
           {
@@ -1271,6 +1259,18 @@
           {
             "table_name": "t",
             "type": "Table Stats-Expression-CNF",
+            "expr": "`lt`(test.t.b, 4)",
+            "row_count": 6
+          },
+          {
+            "table_name": "t",
+            "type": "Table Stats-Expression-CNF",
+            "expr": "`or`(`lt`(test.t.a, 3), `lt`(test.t.b, 4))",
+            "row_count": 6
+          },
+          {
+            "table_name": "t",
+            "type": "Table Stats-Expression-DNF",
             "expr": "`or`(`lt`(test.t.a, 3), `lt`(test.t.b, 4))",
             "row_count": 6
           }
@@ -1279,12 +1279,6 @@
       {
         "Expr": "a = 1 and b = 2",
         "Trace": [
-          {
-            "table_name": "t",
-            "type": "Index Stats-Point",
-            "expr": "((a = 1) and (b = 2))",
-            "row_count": 2
-          },
           {
             "table_name": "t",
             "type": "Column Stats-Point",
@@ -1299,6 +1293,12 @@
           },
           {
             "table_name": "t",
+            "type": "Index Stats-Point",
+            "expr": "((a = 1) and (b = 2))",
+            "row_count": 2
+          },
+          {
+            "table_name": "t",
             "type": "Table Stats-Expression-CNF",
             "expr": "`and`(`eq`(test.t.a, 1), `eq`(test.t.b, 2))",
             "row_count": 2
@@ -1310,13 +1310,13 @@
         "Trace": [
           {
             "table_name": "t",
-            "type": "Index Stats-Range",
+            "type": "Column Stats-Range",
             "expr": "((a < 5)) or ((a > 10 and true))",
             "row_count": 6
           },
           {
             "table_name": "t",
-            "type": "Column Stats-Range",
+            "type": "Index Stats-Range",
             "expr": "((a < 5)) or ((a > 10 and true))",
             "row_count": 6
           },

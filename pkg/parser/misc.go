@@ -184,6 +184,7 @@ var tokenMap = map[string]int{
 	"BACKEND":                  backend,
 	"BACKUP":                   backup,
 	"BACKUPS":                  backups,
+	"BDR":                      bdr,
 	"BEGIN":                    begin,
 	"BETWEEN":                  between,
 	"BERNOULLI":                bernoulli,
@@ -491,6 +492,7 @@ var tokenMap = map[string]int{
 	"LOCAL":                    local,
 	"LOCALTIME":                localTime,
 	"LOCALTIMESTAMP":           localTs,
+	"LOCAL_ONLY":               local_only,
 	"LOCATION":                 location,
 	"LOCK":                     lock,
 	"LOCKED":                   locked,
@@ -684,6 +686,7 @@ var tokenMap = map[string]int{
 	"SCHEMAS":                  databases,
 	"SECOND_MICROSECOND":       secondMicrosecond,
 	"SECOND":                   second,
+	"SECONDARY":                secondary,
 	"SECONDARY_ENGINE":         secondaryEngine,
 	"SECONDARY_LOAD":           secondaryLoad,
 	"SECONDARY_UNLOAD":         secondaryUnload,
@@ -1078,9 +1081,8 @@ func (s *Scanner) isTokenIdentifier(lit string, offset int) int {
 			continue
 		} else if s.r.s[idx] == '.' {
 			return 0
-		} else {
-			break
 		}
+		break
 	}
 
 	buf := &s.buf

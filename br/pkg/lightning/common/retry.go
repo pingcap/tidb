@@ -90,13 +90,19 @@ var retryableErrorIDs = map[errors.ErrorID]struct{}{
 	drivererr.ErrUnknown.ID():           {},
 }
 
+// ErrWriteTooSlow is used to get rid of the gRPC blocking issue.
+// there are some strange blocking issues of gRPC like
+// https://github.com/pingcap/tidb/issues/48352
+// https://github.com/pingcap/tidb/issues/46321 and I don't know why 😭
+var ErrWriteTooSlow = errors.New("write too slow, maybe gRPC is blocked forever")
+
 func isSingleRetryableError(err error) bool {
 	err = errors.Cause(err)
 
 	switch err {
 	case nil, context.Canceled, context.DeadlineExceeded, io.EOF, sql.ErrNoRows:
 		return false
-	case mysql.ErrInvalidConn, driver.ErrBadConn:
+	case mysql.ErrInvalidConn, driver.ErrBadConn, ErrWriteTooSlow:
 		return true
 	}
 

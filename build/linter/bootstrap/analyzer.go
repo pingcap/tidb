@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pingcap/tidb/build/linter/util"
 	"golang.org/x/tools/go/analysis"
 )
 
@@ -37,8 +38,7 @@ const (
 
 func run(pass *analysis.Pass) (interface{}, error) {
 	for _, file := range pass.Files {
-		fileName := pass.Fset.File(file.Pos()).Name()
-		if !strings.HasSuffix(fileName, bootstrapCodeFile) {
+		if !strings.HasSuffix(pass.Fset.File(file.Pos()).Name(), bootstrapCodeFile) {
 			continue
 		}
 
@@ -131,4 +131,8 @@ func run(pass *analysis.Pass) (interface{}, error) {
 		pass.Reportf(curVerVariablePos, "current version variable: %d", curVerVariable)
 	}
 	return nil, nil
+}
+
+func init() {
+	util.SkipAnalyzerByConfig(Analyzer)
 }

@@ -144,10 +144,10 @@ type AggPartialResultMapper map[string][]PartialResult
 
 type serializer interface {
 	// SerializePartialResult will serialize meta data of aggregate function into bytes and put them into chunk.
-	SerializePartialResult(ctx sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper)
+	SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *spillSerializeHelper)
 
 	// DeserializePartialResult deserializes from bytes to PartialResult.
-	DeserializePartialResult(ctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64)
+	DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64)
 }
 
 // AggFunc is the interface to evaluate the aggregate functions.
@@ -209,10 +209,10 @@ func (*baseAggFunc) MergePartialResult(sessionctx.Context, PartialResult, Partia
 	return 0, nil
 }
 
-func (*baseAggFunc) SerializePartialResult(ctx sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (*baseAggFunc) SerializePartialResult(_ PartialResult, _ *chunk.Chunk, _ *spillSerializeHelper) {
 }
 
-func (*baseAggFunc) DeserializePartialResult(ctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+func (*baseAggFunc) DeserializePartialResult(_ *chunk.Chunk) ([]PartialResult, int64) {
 	return nil, 0
 }
 
@@ -231,4 +231,28 @@ type SlidingWindowAggFunc interface {
 type MaxMinSlidingWindowAggFunc interface {
 	// SetWindowStart sets the start position of window
 	SetWindowStart(start uint64)
+}
+
+type deserializeFunc func(*spillDeserializeHelper) (PartialResult, int64)
+
+func deserializePartialResultCommon(src *chunk.Chunk, ordinal int, deserializeFuncImpl deserializeFunc) ([]PartialResult, int64) {
+	dataCol := src.Column(ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta := deserializeFuncImpl(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	if len(partialResults) != src.NumRows() {
+		panic("Fail to deserialize partial result")
+	}
+
+	return partialResults, totalMemDelta
 }

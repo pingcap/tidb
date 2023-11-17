@@ -426,7 +426,7 @@ select /*+ inl_join(s)*/ t.a from t left join s on t.a = s.a;
 --disable_warnings
 
 # TestIssue25902
-drop table if exists tt1,tt2,tt3; ;
+drop table if exists tt1,tt2,tt3;
 create table tt1 (ts timestamp);
 create table tt2 (ts varchar(32));
 create table tt3 (ts datetime);
@@ -1056,3 +1056,36 @@ set @@tidb_hash_join_concurrency=default;
 set @@tidb_hashagg_partial_concurrency=default;
 set @@tidb_hashagg_final_concurrency=default;
 
+# TestCartesianJoinPanic
+drop table if exists t;
+create table t(a int);
+insert into t values(1);
+set tidb_mem_quota_query = 1 << 18;
+set global tidb_mem_oom_action = 'CANCEL';
+set global tidb_enable_tmp_storage_on_oom = off;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+-- replace_regex /conn=[0-9]+/conn=<num>/
+-- error 8175
+desc analyze select * from t t1, t t2, t t3, t t4, t t5, t t6;
+
+set tidb_mem_quota_query = default;
+set global tidb_mem_oom_action = default;
+set global tidb_enable_tmp_storage_on_oom = default;
+
+# TestJoinInDisk
+SET GLOBAL tidb_mem_oom_action='LOG';
+## TODO(fengliyuan): how to ensure that it is using disk really?
+set @@tidb_mem_quota_query=1;
+drop table if exists t, t1;
+create table t(c1 int, c2 int);
+create table t1(c1 int, c2 int);
+insert into t values(1,1),(2,2);
+insert into t1 values(2,3),(4,4);
+select /*+ TIDB_HJ(t, t2) */ * from t, t1 where t.c1 = t1.c1;

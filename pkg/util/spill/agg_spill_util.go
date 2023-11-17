@@ -21,26 +21,33 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/hack"
 )
 
 var (
+	// ErrInternal is an error for spill
 	ErrInternal = dbterror.ClassOptimizer.NewStd(mysql.ErrInternal)
 )
 
 // These types are used for serializing or deserializing interface type
 const (
-	BoolType       = 0
-	Int64Type      = 1
-	Uint64Type     = 2
-	FloatType      = 3
-	StringType     = 4
-	BinaryJSONType = 5
-	OpaqueType     = 6
-	TimeType       = 7
-	DurationType   = 8
+	BoolType = iota
+	Int64Type
+	Uint64Type
+	FloatType
+	StringType
+	BinaryJSONType
+	OpaqueType
+	TimeType
+	DurationType
 
-	intLen = int64(unsafe.Sizeof(int(0)))
+	typeLen    = int64(1)
+	boolLen    = int64(unsafe.Sizeof(true))
+	byteLen    = int64(unsafe.Sizeof(byte(0)))
+	uint8Len   = int64(unsafe.Sizeof(uint8(0)))
+	intLen     = int64(unsafe.Sizeof(int(0)))
+	int64Len   = int64(unsafe.Sizeof(int64(0)))
+	uint64Len  = int64(unsafe.Sizeof(uint64(0)))
+	float64Len = int64(unsafe.Sizeof(float64(0)))
 )
 
 // DeserializeBool deserializes bool type
@@ -93,201 +100,254 @@ func DeserializeFloat64(buf []byte, pos int64) float64 {
 	return *(*float64)(unsafe.Pointer(&buf[pos]))
 }
 
-// DeserializeInterface deserializes interface type and return the new readPos
-func DeserializeInterface(buf []byte, readPos int64) (interface{}, int64) {
+// DeserializeMyDecimal deserializes float64 type
+func DeserializeMyDecimal(buf []byte, pos int64) types.MyDecimal {
+	return *(*types.MyDecimal)(unsafe.Pointer(&buf[pos]))
+}
+
+// DeserializeTime deserializes Time type
+func DeserializeTime(buf []byte, pos int64) types.Time {
+	return *(*types.Time)(unsafe.Pointer(&buf[pos]))
+}
+
+// DeserializeDuration deserializes Duration type
+func DeserializeDuration(buf []byte, pos int64) gotime.Duration {
+	return *(*gotime.Duration)(unsafe.Pointer(&buf[pos]))
+}
+
+// DeserializeInterface deserializes interface type
+func DeserializeInterface(buf []byte, readPos *int64) interface{} {
 	// Get type
-	dataType := int(buf[readPos])
-	readPos++
+	dataType := int(buf[*readPos])
+	*readPos += typeLen
 
 	switch dataType {
 	case BoolType:
-		res := int(buf[readPos])
-		readPos++
-		if res == 0 {
-			return false, readPos
-		} else if res == 1 {
-			return true, readPos
-		} else {
-			panic("Invalid value happens when deserializing agg spill data!")
-		}
+		res := DeserializeBool(buf, *readPos)
+		*readPos += boolLen
+		return res
 	case Int64Type:
-		res := DeserializeInt64(buf, readPos)
-		readPos += 8
-		return res, readPos
+		res := DeserializeInt64(buf, *readPos)
+		*readPos += int64Len
+		return res
 	case Uint64Type:
-		res := DeserializeUint64(buf, readPos)
-		readPos += 8
-		return res, readPos
+		res := DeserializeUint64(buf, *readPos)
+		*readPos += uint64Len
+		return res
 	case FloatType:
-		res := DeserializeFloat64(buf, readPos)
-		readPos += 8
-		return res, readPos
+		res := DeserializeFloat64(buf, *readPos)
+		*readPos += float64Len
+		return res
 	case StringType:
-		strLen := DeserializeInt64(buf, readPos)
-		readPos += 8
-		res := string(hack.String(buf[readPos : readPos+strLen]))
-		readPos += strLen
-		return res, readPos
+		strLen := DeserializeInt64(buf, *readPos)
+		*readPos += int64Len
+		res := string(buf[*readPos : *readPos+strLen])
+		*readPos += strLen
+		return res
 	case BinaryJSONType:
-		typeCode := buf[readPos]
-		readPos++
-		valueLen := DeserializeInt64(buf, readPos)
-		readPos += 8
-		return types.BinaryJSON{
-			TypeCode: typeCode,
-			Value:    buf[readPos : readPos+valueLen],
-		}, readPos + valueLen
+		retValue, deserializedByteNum := DeserializeBinaryJSON(buf, *readPos)
+		*readPos += deserializedByteNum
+		return retValue
 	case OpaqueType:
-		typeCode := buf[readPos]
-		readPos++
-		valueLen := DeserializeInt64(buf, readPos)
-		readPos += 8
+		typeCode := buf[*readPos]
+		*readPos++
+		valueLen := DeserializeInt64(buf, *readPos)
+		*readPos += int64Len
 		return types.Opaque{
 			TypeCode: typeCode,
-			Buf:      buf[readPos : readPos+valueLen],
-		}, readPos + valueLen
+			Buf:      buf[*readPos : *readPos+valueLen],
+		}
 	case TimeType:
-		coreTime := DeserializeUint64(buf, readPos)
-		readPos += 8
-		t := DeserializeUint8(buf, readPos)
-		readPos += 1
-		fsp := DeserializeInt(buf, readPos)
-		readPos += intLen
-		return types.NewTime(types.CoreTime(coreTime), t, fsp), readPos
+		coreTime := DeserializeUint64(buf, *readPos)
+		*readPos += uint64Len
+		t := DeserializeUint8(buf, *readPos)
+		*readPos += uint8Len
+		fsp := DeserializeInt(buf, *readPos)
+		*readPos += intLen
+		return types.NewTime(types.CoreTime(coreTime), t, fsp)
 	case DurationType:
-		value := DeserializeInt64(buf, readPos)
-		readPos += 8
-		fsp := DeserializeInt(buf, readPos)
-		readPos += intLen
+		value := DeserializeInt64(buf, *readPos)
+		*readPos += int64Len
+		fsp := DeserializeInt(buf, *readPos)
+		*readPos += intLen
 		return types.Duration{
 			Duration: gotime.Duration(value),
 			Fsp:      fsp,
-		}, readPos
+		}
 	default:
 		panic("Invalid data type happens in agg spill deserializing!")
 	}
 }
 
+// DeserializeBinaryJSON deserializes Set type and return the size of deserialized object
+func DeserializeBinaryJSON(buf []byte, pos int64) (types.BinaryJSON, int64) {
+	retValue := types.BinaryJSON{}
+	retValue.TypeCode = buf[pos]
+	pos += byteLen
+	jsonValueLen := DeserializeInt(buf, pos)
+	pos += intLen
+	retValue.Value = make([]byte, jsonValueLen)
+	copy(retValue.Value, buf[pos:pos+int64(jsonValueLen)])
+	return retValue, byteLen + intLen + int64(jsonValueLen)
+}
+
+// DeserializeSet deserializes Set type
+func DeserializeSet(buf []byte, pos int64) types.Set {
+	retValue := types.Set{}
+	retValue.Value = DeserializeUint64(buf, pos)
+	retValue.Name = string(buf[pos+uint64Len:])
+	return retValue
+}
+
+// DeserializeEnum deserializes Set type
+func DeserializeEnum(buf []byte, pos int64) types.Enum {
+	retValue := types.Enum{}
+	retValue.Value = DeserializeUint64(buf, pos)
+	retValue.Name = string(buf[pos+uint64Len:])
+	return retValue
+}
+
 // SerializeBool serializes bool type
-func SerializeBool(value bool, tmpBuf []byte) []byte {
+func SerializeBool(value bool, tmpBuf []byte) {
 	*(*bool)(unsafe.Pointer(&tmpBuf[0])) = value
-	return tmpBuf[:1]
 }
 
 // SerializeInt serializes int type
-func SerializeInt(value int, tmpBuf []byte) []byte {
+func SerializeInt(value int, tmpBuf []byte) {
 	*(*int)(unsafe.Pointer(&tmpBuf[0])) = value
-	return tmpBuf[:intLen]
 }
 
 // SerializeInt8 serializes int8 type
-func SerializeInt8(value int8, tmpBuf []byte) []byte {
+func SerializeInt8(value int8, tmpBuf []byte) {
 	*(*int8)(unsafe.Pointer(&tmpBuf[0])) = value
-	return tmpBuf[:1]
 }
 
 // SerializeUint8 serializes uint8 type
-func SerializeUint8(value uint8, tmpBuf []byte) []byte {
+func SerializeUint8(value uint8, tmpBuf []byte) {
 	*(*uint8)(unsafe.Pointer(&tmpBuf[0])) = value
-	return tmpBuf[:1]
 }
 
 // SerializeInt32 serializes int32 type
-func SerializeInt32(value int32, tmpBuf []byte) []byte {
+func SerializeInt32(value int32, tmpBuf []byte) {
 	*(*int32)(unsafe.Pointer(&tmpBuf[0])) = value
-	return tmpBuf[:4]
 }
 
 // SerializeUint32 serializes uint32 type
-func SerializeUint32(value uint32, tmpBuf []byte) []byte {
+func SerializeUint32(value uint32, tmpBuf []byte) {
 	*(*uint32)(unsafe.Pointer(&tmpBuf[0])) = value
-	return tmpBuf[:4]
 }
 
 // SerializeUint64 serializes uint64 type
-func SerializeUint64(value uint64, tmpBuf []byte) []byte {
+func SerializeUint64(value uint64, tmpBuf []byte) {
 	*(*uint64)(unsafe.Pointer(&tmpBuf[0])) = value
-	return tmpBuf[:8]
 }
 
 // SerializeInt64 serializes int64 type
-func SerializeInt64(value int64, tmpBuf []byte) []byte {
+func SerializeInt64(value int64, tmpBuf []byte) {
 	*(*int64)(unsafe.Pointer(&tmpBuf[0])) = value
-	return tmpBuf[:8]
 }
 
 // SerializeFloat32 serializes float32 type
-func SerializeFloat32(value float32, tmpBuf []byte) []byte {
+func SerializeFloat32(value float32, tmpBuf []byte) {
 	*(*float32)(unsafe.Pointer(&tmpBuf[0])) = value
-	return tmpBuf[:4]
 }
 
 // SerializeFloat64 serializes float64 type
-func SerializeFloat64(value float64, tmpBuf []byte) []byte {
+func SerializeFloat64(value float64, tmpBuf []byte) {
 	*(*float64)(unsafe.Pointer(&tmpBuf[0])) = value
-	return tmpBuf[:8]
+}
+
+// SerializeMyDecimal serializes MyDecimal type
+func SerializeMyDecimal(value *types.MyDecimal, tmpBuf []byte) {
+	*(*types.MyDecimal)(unsafe.Pointer(&tmpBuf[0])) = *value
+}
+
+// SerializeTime serializes Time type
+func SerializeTime(value types.Time, tmpBuf []byte) {
+	*(*types.Time)(unsafe.Pointer(&tmpBuf[0])) = value
+}
+
+// SerializeDuration serializes Duration type
+func SerializeDuration(value gotime.Duration, tmpBuf []byte) {
+	*(*gotime.Duration)(unsafe.Pointer(&tmpBuf[0])) = value
 }
 
 // SerializeInterface serialize interface type and return the number of bytes serialized
-func SerializeInterface(value interface{}, varBuf *[]byte, tmpBuf []byte) int64 {
-	// Data type always occupies 1 byte
-	encodedBytesNum := int64(1)
-
+func SerializeInterface(value interface{}, varBuf *[]byte, tmpBuf []byte) {
 	switch v := value.(type) {
 	case bool:
 		*varBuf = append(*varBuf, BoolType)
-		if v {
-			*varBuf = append(*varBuf, byte(1))
-		} else {
-			*varBuf = append(*varBuf, byte(0))
-		}
-		encodedBytesNum += 1
+		*varBuf = append(*varBuf, byte(1)) // padding
+		SerializeBool(v, (*varBuf)[len(*varBuf)-1:])
 	case int64:
 		*varBuf = append(*varBuf, Int64Type)
-		*varBuf = append(*varBuf, SerializeInt64(v, tmpBuf)...)
-		encodedBytesNum += 8
+		SerializeInt64(v, tmpBuf)
+		*varBuf = append(*varBuf, tmpBuf[:int64Len]...)
 	case uint64:
 		*varBuf = append(*varBuf, Uint64Type)
-		*varBuf = append(*varBuf, SerializeUint64(v, tmpBuf)...)
-		encodedBytesNum += 8
+		SerializeUint64(v, tmpBuf)
+		*varBuf = append(*varBuf, tmpBuf[:uint64Len]...)
 	case float64:
 		*varBuf = append(*varBuf, FloatType)
-		*varBuf = append(*varBuf, SerializeFloat64(v, tmpBuf)...)
-		encodedBytesNum += 8
+		SerializeFloat64(v, tmpBuf)
+		*varBuf = append(*varBuf, tmpBuf[:float64Len]...)
 	case string:
 		*varBuf = append(*varBuf, StringType)
 		vLen := int64(len(v))
-		*varBuf = append(*varBuf, SerializeInt64(vLen, tmpBuf)...)
+		SerializeInt64(vLen, tmpBuf)
+		*varBuf = append(*varBuf, tmpBuf[:int64Len]...)
 		*varBuf = append(*varBuf, v...)
-		encodedBytesNum += vLen + 8
 	case types.BinaryJSON:
 		*varBuf = append(*varBuf, BinaryJSONType)
-		valueLen := int64(len(v.Value))
-		*varBuf = append(*varBuf, v.TypeCode)
-		*varBuf = append(*varBuf, SerializeInt64(int64(len(v.Value)), tmpBuf)...)
-		*varBuf = append(*varBuf, v.Value...)
-		encodedBytesNum += valueLen + 1 + 8
+		varBufLenBeforeSerializeJSON := int64(len(*varBuf))
+
+		// Add padding for seialization
+		*varBuf = append(*varBuf, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)
+		SerializeBinaryJSON(&v, varBuf, varBufLenBeforeSerializeJSON)
 	case types.Opaque:
 		*varBuf = append(*varBuf, OpaqueType)
-		bufLen := int64(len(v.Buf))
 		*varBuf = append(*varBuf, v.TypeCode)
-		*varBuf = append(*varBuf, SerializeInt64(int64(len(v.Buf)), tmpBuf)...)
+		SerializeInt64(int64(len(v.Buf)), tmpBuf)
+		*varBuf = append(*varBuf, tmpBuf[:int64Len]...)
 		*varBuf = append(*varBuf, v.Buf...)
-		encodedBytesNum += bufLen + 1 + 8
 	case types.Time:
 		*varBuf = append(*varBuf, TimeType)
-		*varBuf = append(*varBuf, SerializeUint64(uint64(v.CoreTime()), tmpBuf)...)
-		*varBuf = append(*varBuf, SerializeUint8(v.Type(), tmpBuf)...)
-		*varBuf = append(*varBuf, SerializeInt(v.Fsp(), tmpBuf)...)
-		encodedBytesNum += 8 + 1 + intLen
+		SerializeUint64(uint64(v.CoreTime()), tmpBuf)
+		*varBuf = append(*varBuf, tmpBuf[:uint64Len]...)
+		SerializeUint8(v.Type(), tmpBuf)
+		*varBuf = append(*varBuf, tmpBuf[:uint8Len]...)
+		SerializeInt(v.Fsp(), tmpBuf)
+		*varBuf = append(*varBuf, tmpBuf[:intLen]...)
 	case types.Duration:
 		*varBuf = append(*varBuf, DurationType)
-		*varBuf = append(*varBuf, SerializeInt64(int64(v.Duration), tmpBuf)...)
-		*varBuf = append(*varBuf, SerializeInt(v.Fsp, tmpBuf)...)
-		encodedBytesNum += 8 + intLen
+		SerializeInt64(int64(v.Duration), tmpBuf)
+		*varBuf = append(*varBuf, tmpBuf[:int64Len]...)
+		SerializeInt(v.Fsp, tmpBuf)
+		*varBuf = append(*varBuf, tmpBuf[:intLen]...)
 	default:
 		panic("Agg spill encounters an unexpected interface type!")
 	}
+}
 
-	return encodedBytesNum
+// SerializeBinaryJSON serializes Set type
+func SerializeBinaryJSON(json *types.BinaryJSON, varBuf *[]byte, startPos int64) {
+	(*varBuf)[startPos] = json.TypeCode
+	valueLen := len(json.Value)
+	SerializeInt(valueLen, (*varBuf)[startPos+byteLen:])
+	*varBuf = (*varBuf)[:startPos+byteLen+intLen]
+	*varBuf = append(*varBuf, json.Value...)
+}
+
+// SerializeSet serializes Set type
+func SerializeSet(value *types.Set, varBuf *[]byte, startPos int64) {
+	SerializeUint64(value.Value, (*varBuf)[startPos:])
+	*varBuf = (*varBuf)[:startPos+uint64Len]
+	*varBuf = append(*varBuf, value.Name...)
+}
+
+// SerializeEnum serializes Set type
+func SerializeEnum(value *types.Enum, varBuf *[]byte, startPos int64) {
+	SerializeUint64(value.Value, (*varBuf)[startPos:])
+	*varBuf = (*varBuf)[:startPos+uint64Len]
+	*varBuf = append(*varBuf, value.Name...)
 }

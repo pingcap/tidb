@@ -70,7 +70,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/keydecoder"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/servermemorylimit"
@@ -81,6 +80,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
+	pd "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
 
@@ -152,9 +152,9 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableUserPrivileges:
 			e.setDataFromUserPrivileges(sctx)
 		case infoschema.TableTiKVRegionStatus:
-			err = e.setDataForTiKVRegionStatus(sctx)
+			err = e.setDataForTiKVRegionStatus(ctx, sctx)
 		case infoschema.TableTiDBHotRegions:
-			err = e.setDataForTiDBHotRegions(sctx)
+			err = e.setDataForTiDBHotRegions(ctx, sctx)
 		case infoschema.TableConstraints:
 			e.setDataFromTableConstraints(sctx, dbs)
 		case infoschema.TableSessionVar:
@@ -164,7 +164,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableTiFlashReplica:
 			e.dataForTableTiFlashReplica(sctx, dbs)
 		case infoschema.TableTiKVStoreStatus:
-			err = e.dataForTiKVStoreStatus(sctx)
+			err = e.dataForTiKVStoreStatus(ctx, sctx)
 		case infoschema.TableClientErrorsSummaryGlobal,
 			infoschema.TableClientErrorsSummaryByUser,
 			infoschema.TableClientErrorsSummaryByHost:
@@ -195,6 +195,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromRunawayWatches(sctx)
 		case infoschema.TableCheckConstraints:
 			err = e.setDataFromCheckConstraints(sctx, dbs)
+		case infoschema.TableTiDBCheckConstraints:
+			err = e.setDataFromTiDBCheckConstraints(sctx, dbs)
 		}
 		if err != nil {
 			return nil, err
@@ -628,6 +630,8 @@ func (e *memtableRetriever) setDataFromTables(sctx sessionctx.Context, schemas [
 	return nil
 }
 
+// Data for inforation_schema.CHECK_CONSTRAINTS
+// This is standards (ISO/IEC 9075-11) compliant and is compatible with the implementation in MySQL as well.
 func (e *memtableRetriever) setDataFromCheckConstraints(sctx sessionctx.Context, schemas []*model.DBInfo) error {
 	var rows [][]types.Datum
 	checker := privilege.GetPrivilegeManager(sctx)
@@ -646,6 +650,38 @@ func (e *memtableRetriever) setDataFromCheckConstraints(sctx sessionctx.Context,
 						schema.Name.O,         // CONSTRAINT_SCHEMA
 						constraint.Name.O,     // CONSTRAINT_NAME
 						fmt.Sprintf("(%s)", constraint.ExprString), // CHECK_CLAUSE
+					)
+					rows = append(rows, record)
+				}
+			}
+		}
+	}
+	e.rows = rows
+	return nil
+}
+
+// Data for inforation_schema.TIDB_CHECK_CONSTRAINTS
+// This has non-standard TiDB specific extensions.
+func (e *memtableRetriever) setDataFromTiDBCheckConstraints(sctx sessionctx.Context, schemas []*model.DBInfo) error {
+	var rows [][]types.Datum
+	checker := privilege.GetPrivilegeManager(sctx)
+	for _, schema := range schemas {
+		for _, table := range schema.Tables {
+			if len(table.Constraints) > 0 {
+				if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.SelectPriv) {
+					continue
+				}
+				for _, constraint := range table.Constraints {
+					if constraint.State != model.StatePublic {
+						continue
+					}
+					record := types.MakeDatums(
+						infoschema.CatalogVal, // CONSTRAINT_CATALOG
+						schema.Name.O,         // CONSTRAINT_SCHEMA
+						constraint.Name.O,     // CONSTRAINT_NAME
+						fmt.Sprintf("(%s)", constraint.ExprString), // CHECK_CLAUSE
+						table.Name.O, // TABLE_NAME
+						table.ID,     // TABLE_ID
 					)
 					rows = append(rows, record)
 				}
@@ -1172,8 +1208,8 @@ func (e *memtableRetriever) setDataFromViews(ctx sessionctx.Context, schemas []*
 	e.rows = rows
 }
 
-func (e *memtableRetriever) dataForTiKVStoreStatus(ctx sessionctx.Context) (err error) {
-	tikvStore, ok := ctx.GetStore().(helper.Storage)
+func (e *memtableRetriever) dataForTiKVStoreStatus(ctx context.Context, sctx sessionctx.Context) (err error) {
+	tikvStore, ok := sctx.GetStore().(helper.Storage)
 	if !ok {
 		return errors.New("Information about TiKV store status can be gotten only when the storage is TiKV")
 	}
@@ -1181,7 +1217,7 @@ func (e *memtableRetriever) dataForTiKVStoreStatus(ctx sessionctx.Context) (err 
 		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
 	}
-	storesStat, err := tikvHelper.GetStoresStat()
+	storesStat, err := tikvHelper.PDHTTPClient().GetStores(ctx)
 	if err != nil {
 		return err
 	}
@@ -1211,15 +1247,15 @@ func (e *memtableRetriever) dataForTiKVStoreStatus(ctx sessionctx.Context) (err 
 		row[13].SetFloat64(storeStat.Status.RegionWeight)
 		row[14].SetFloat64(storeStat.Status.RegionScore)
 		row[15].SetInt64(storeStat.Status.RegionSize)
-		startTs := types.NewTime(types.FromGoTime(storeStat.Status.StartTs), mysql.TypeDatetime, types.DefaultFsp)
+		startTs := types.NewTime(types.FromGoTime(storeStat.Status.StartTS), mysql.TypeDatetime, types.DefaultFsp)
 		row[16].SetMysqlTime(startTs)
-		lastHeartbeatTs := types.NewTime(types.FromGoTime(storeStat.Status.LastHeartbeatTs), mysql.TypeDatetime, types.DefaultFsp)
+		lastHeartbeatTs := types.NewTime(types.FromGoTime(storeStat.Status.LastHeartbeatTS), mysql.TypeDatetime, types.DefaultFsp)
 		row[17].SetMysqlTime(lastHeartbeatTs)
 		row[18].SetString(storeStat.Status.Uptime, mysql.DefaultCollationName)
 		if sem.IsEnabled() {
 			// Patch out IP addresses etc if the user does not have the RESTRICTED_TABLES_ADMIN privilege
-			checker := privilege.GetPrivilegeManager(ctx)
-			if checker == nil || !checker.RequestDynamicVerification(ctx.GetSessionVars().ActiveRoles, "RESTRICTED_TABLES_ADMIN", false) {
+			checker := privilege.GetPrivilegeManager(sctx)
+			if checker == nil || !checker.RequestDynamicVerification(sctx.GetSessionVars().ActiveRoles, "RESTRICTED_TABLES_ADMIN", false) {
 				row[1].SetString(strconv.FormatInt(storeStat.Store.ID, 10), mysql.DefaultCollationName)
 				row[1].SetNull()
 				row[6].SetNull()
@@ -1580,7 +1616,7 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 	return rows
 }
 
-func (e *memtableRetriever) setDataForTiKVRegionStatus(sctx sessionctx.Context) (err error) {
+func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx sessionctx.Context) (err error) {
 	checker := privilege.GetPrivilegeManager(sctx)
 	var extractorTableIDs []int64
 	tikvStore, ok := sctx.GetStore().(helper.Storage)
@@ -1592,14 +1628,14 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(sctx sessionctx.Context) 
 		RegionCache: tikvStore.GetRegionCache(),
 	}
 	requestByTableRange := false
-	allRegionsInfo := helper.NewRegionsInfo()
+	var allRegionsInfo *pd.RegionsInfo
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	if e.extractor != nil {
 		extractor, ok := e.extractor.(*plannercore.TiKVRegionStatusExtractor)
 		if ok && len(extractor.GetTablesID()) > 0 {
 			extractorTableIDs = extractor.GetTablesID()
 			for _, tableID := range extractorTableIDs {
-				regionsInfo, err := e.getRegionsInfoForTable(tikvHelper, is, tableID)
+				regionsInfo, err := e.getRegionsInfoForTable(ctx, tikvHelper, is, tableID)
 				if err != nil {
 					if errors.ErrorEqual(err, infoschema.ErrTableExists) {
 						continue
@@ -1612,7 +1648,7 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(sctx sessionctx.Context) 
 		}
 	}
 	if !requestByTableRange {
-		allRegionsInfo, err = tikvHelper.GetRegionsInfo()
+		allRegionsInfo, err = tikvHelper.PDHTTPClient().GetRegions(ctx)
 		if err != nil {
 			return err
 		}
@@ -1638,7 +1674,7 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(sctx sessionctx.Context) 
 	return nil
 }
 
-func (e *memtableRetriever) getRegionsInfoForTable(h *helper.Helper, is infoschema.InfoSchema, tableID int64) (*helper.RegionsInfo, error) {
+func (e *memtableRetriever) getRegionsInfoForTable(ctx context.Context, h *helper.Helper, is infoschema.InfoSchema, tableID int64) (*pd.RegionsInfo, error) {
 	tbl, _ := is.TableByID(tableID)
 	if tbl == nil {
 		return nil, infoschema.ErrTableExists.GenWithStackByArgs(tableID)
@@ -1646,16 +1682,16 @@ func (e *memtableRetriever) getRegionsInfoForTable(h *helper.Helper, is infosche
 
 	pt := tbl.Meta().GetPartitionInfo()
 	if pt == nil {
-		regionsInfo, err := e.getRegionsInfoForSingleTable(h, tableID)
+		regionsInfo, err := e.getRegionsInfoForSingleTable(ctx, h, tableID)
 		if err != nil {
 			return nil, err
 		}
 		return regionsInfo, nil
 	}
 
-	allRegionsInfo := helper.NewRegionsInfo()
+	var allRegionsInfo *pd.RegionsInfo
 	for _, def := range pt.Definitions {
-		regionsInfo, err := e.getRegionsInfoForSingleTable(h, def.ID)
+		regionsInfo, err := e.getRegionsInfoForSingleTable(ctx, h, def.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -1664,13 +1700,13 @@ func (e *memtableRetriever) getRegionsInfoForTable(h *helper.Helper, is infosche
 	return allRegionsInfo, nil
 }
 
-func (*memtableRetriever) getRegionsInfoForSingleTable(helper *helper.Helper, tableID int64) (*helper.RegionsInfo, error) {
+func (*memtableRetriever) getRegionsInfoForSingleTable(ctx context.Context, helper *helper.Helper, tableID int64) (*pd.RegionsInfo, error) {
 	sk, ek := tablecodec.GetTableHandleKeyRange(tableID)
-	sRegion, err := helper.GetRegionByKey(codec.EncodeBytes(nil, sk))
+	sRegion, err := helper.PDHTTPClient().GetRegionByKey(ctx, codec.EncodeBytes(nil, sk))
 	if err != nil {
 		return nil, err
 	}
-	eRegion, err := helper.GetRegionByKey(codec.EncodeBytes(nil, ek))
+	eRegion, err := helper.PDHTTPClient().GetRegionByKey(ctx, codec.EncodeBytes(nil, ek))
 	if err != nil {
 		return nil, err
 	}
@@ -1682,10 +1718,10 @@ func (*memtableRetriever) getRegionsInfoForSingleTable(helper *helper.Helper, ta
 	if err != nil {
 		return nil, err
 	}
-	return helper.GetRegionsInfoByRange(sk, ek)
+	return helper.PDHTTPClient().GetRegionsByKey(ctx, sk, ek, -1)
 }
 
-func (e *memtableRetriever) setNewTiKVRegionStatusCol(region *helper.RegionInfo, table *helper.TableInfo) {
+func (e *memtableRetriever) setNewTiKVRegionStatusCol(region *pd.RegionInfo, table *helper.TableInfo) {
 	row := make([]types.Datum, len(infoschema.TableTiKVRegionStatusCols))
 	row[0].SetInt64(region.ID)
 	row[1].SetString(region.StartKey, mysql.DefaultCollationName)
@@ -1731,22 +1767,22 @@ const (
 	downPeer    = "DOWN"
 )
 
-func (e *memtableRetriever) setDataForTiDBHotRegions(ctx sessionctx.Context) error {
-	tikvStore, ok := ctx.GetStore().(helper.Storage)
+func (e *memtableRetriever) setDataForTiDBHotRegions(ctx context.Context, sctx sessionctx.Context) error {
+	tikvStore, ok := sctx.GetStore().(helper.Storage)
 	if !ok {
 		return errors.New("Information about hot region can be gotten only when the storage is TiKV")
 	}
-	allSchemas := ctx.GetInfoSchema().(infoschema.InfoSchema).AllSchemas()
+	allSchemas := sctx.GetInfoSchema().(infoschema.InfoSchema).AllSchemas()
 	tikvHelper := &helper.Helper{
 		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
 	}
-	metrics, err := tikvHelper.ScrapeHotInfo(pdapi.HotRead, allSchemas)
+	metrics, err := tikvHelper.ScrapeHotInfo(ctx, helper.HotRead, allSchemas)
 	if err != nil {
 		return err
 	}
 	e.setDataForHotRegionByMetrics(metrics, "read")
-	metrics, err = tikvHelper.ScrapeHotInfo(pdapi.HotWrite, allSchemas)
+	metrics, err = tikvHelper.ScrapeHotInfo(ctx, helper.HotWrite, allSchemas)
 	if err != nil {
 		return err
 	}
@@ -2051,7 +2087,7 @@ func dataForAnalyzeStatusHelper(ctx context.Context, sctx sessionctx.Context) (r
 		}
 
 		var remainDurationStr, progressDouble, estimatedRowCntStr interface{}
-		if state == statistics.AnalyzeRunning {
+		if state == statistics.AnalyzeRunning && !strings.HasPrefix(jobInfo, "merge global stats") {
 			startTime, ok := startTime.(types.Time)
 			if !ok {
 				return nil, errors.New("invalid start time")
@@ -2256,9 +2292,11 @@ func (e *memtableRetriever) setDataFromSequences(ctx sessionctx.Context, schemas
 
 // dataForTableTiFlashReplica constructs data for table tiflash replica info.
 func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, schemas []*model.DBInfo) {
-	checker := privilege.GetPrivilegeManager(ctx)
-	var rows [][]types.Datum
-	var tiFlashStores map[int64]helper.StoreStat
+	var (
+		checker       = privilege.GetPrivilegeManager(ctx)
+		rows          [][]types.Datum
+		tiFlashStores map[int64]pd.StoreInfo
+	)
 	for _, schema := range schemas {
 		for _, tbl := range schema.Tables {
 			if tbl.TiFlashReplica == nil {
