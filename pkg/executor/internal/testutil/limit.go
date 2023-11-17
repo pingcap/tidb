@@ -28,12 +28,12 @@ import (
 
 // LimitCase is the limit case
 type LimitCase struct {
-	UsingInlineProjection bool
+	Ctx                   sessionctx.Context
+	ChildUsedSchema       []bool
 	Rows                  int
 	Offset                int
 	Count                 int
-	Ctx                   sessionctx.Context
-	ChildUsedSchema       []bool
+	UsingInlineProjection bool
 }
 
 // Columns creates columns

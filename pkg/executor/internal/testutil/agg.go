@@ -28,14 +28,14 @@ import (
 
 // AggTestCase has a fixed schema (aggCol Double, groupBy LongLong).
 type AggTestCase struct {
-	DataSourceSorted bool
-	HasDistinct      bool
-	GroupByNDV       int // the number of distinct group-by keys
+	Ctx              sessionctx.Context
+	ExecType         string
+	AggFunc          string
+	GroupByNDV       int
 	Rows             int
 	Concurrency      int
-	ExecType         string // "hash" or "stream"
-	AggFunc          string // sum, avg, count ....
-	Ctx              sessionctx.Context
+	DataSourceSorted bool
+	HasDistinct      bool
 }
 
 // Columns creates columns

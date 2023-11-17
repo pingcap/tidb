@@ -35,21 +35,21 @@ import (
 
 // MockDataSourceParameters mpcks data source parameters
 type MockDataSourceParameters struct {
-	Rows        int // number of rows the DataSource should output
+	Ctx         sessionctx.Context
 	DataSchema  *expression.Schema
 	GenDataFunc func(row int, typ *types.FieldType) interface{}
-	Ndvs        []int  // number of distinct values on columns[i] and zero represents no limit
-	Orders      []bool // columns[i] should be ordered if orders[i] is true
-	Ctx         sessionctx.Context
+	Ndvs        []int
+	Orders      []bool
+	Rows        int
 }
 
 // MockDataSource mocks data source
 type MockDataSource struct {
+	P       MockDataSourceParameters
+	GenData []*chunk.Chunk
+	Chunks  []*chunk.Chunk
 	exec.BaseExecutor
 	ChunkPtr int
-	P        MockDataSourceParameters
-	GenData  []*chunk.Chunk
-	Chunks   []*chunk.Chunk
 }
 
 // GenColDatums get column datums
