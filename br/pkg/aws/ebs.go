@@ -327,7 +327,7 @@ func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string)
 	return snapshotsIDsMap, eg.Wait()
 }
 
-// waitDataFSREnabled waits FSR for data volume snapshots are all enabled
+// waitDataFSREnabled waits FSR for data volume snapshots are all enabled and also have enough credit balance
 func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) error {
 	// Record current time
 	start := time.Now()
