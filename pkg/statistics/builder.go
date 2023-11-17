@@ -241,6 +241,7 @@ func BuildHistAndTopN(
 	tp *types.FieldType,
 	isColumn bool,
 	memTracker *memory.Tracker,
+	needExtStats bool,
 ) (*Histogram, *TopN, error) {
 	bufferedMemSize := int64(0)
 	bufferedReleaseSize := int64(0)
@@ -278,9 +279,14 @@ func BuildHistAndTopN(
 		return NewHistogram(id, ndv, nullCount, 0, tp, 0, collector.TotalSize), nil, nil
 	}
 	sc := ctx.GetSessionVars().StmtCtx
-
-	samples := make([]*SampleItem, len(collector.Samples))
-	copy(samples, collector.Samples)
+	var samples []*SampleItem
+	// if we need to build extended stats, we need to copy the samples to avoid modifying the original samples.
+	if needExtStats {
+		samples = make([]*SampleItem, len(collector.Samples))
+		copy(samples, collector.Samples)
+	} else {
+		samples = collector.Samples
+	}
 	err := sortSampleItems(sc, samples)
 	if err != nil {
 		return nil, nil, err
