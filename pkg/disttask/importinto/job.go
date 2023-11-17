@@ -111,9 +111,9 @@ func (ti *DistImporter) ImportTask(task *proto.Task) {
 }
 
 // Result implements JobImporter.Result.
-func (ti *DistImporter) Result() importer.JobImportResult {
+func (ti *DistImporter) Result(ctx context.Context) importer.JobImportResult {
 	var result importer.JobImportResult
-	taskMeta, err := getTaskMeta(ti.jobID)
+	taskMeta, err := getTaskMeta(ctx, ti.jobID)
 	if err != nil {
 		return result
 	}
@@ -190,7 +190,7 @@ func (ti *DistImporter) SubmitTask(ctx context.Context) (int64, *proto.Task, err
 		return 0, nil, err
 	}
 
-	globalTask, err := globalTaskManager.GetGlobalTaskByID(taskID)
+	globalTask, err := globalTaskManager.GetGlobalTaskByID(ctx, taskID)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -218,13 +218,13 @@ func (ti *DistImporter) JobID() int64 {
 	return ti.jobID
 }
 
-func getTaskMeta(jobID int64) (*TaskMeta, error) {
+func getTaskMeta(ctx context.Context, jobID int64) (*TaskMeta, error) {
 	globalTaskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return nil, err
 	}
 	taskKey := TaskKey(jobID)
-	globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
+	globalTask, err := globalTaskManager.GetGlobalTaskByKey(ctx, taskKey)
 	if err != nil {
 		return nil, err
 	}
@@ -240,13 +240,13 @@ func getTaskMeta(jobID int64) (*TaskMeta, error) {
 
 // GetTaskImportedRows gets the number of imported rows of a job.
 // Note: for finished job, we can get the number of imported rows from task meta.
-func GetTaskImportedRows(jobID int64) (uint64, error) {
+func GetTaskImportedRows(ctx context.Context, jobID int64) (uint64, error) {
 	globalTaskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return 0, err
 	}
 	taskKey := TaskKey(jobID)
-	task, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
+	task, err := globalTaskManager.GetGlobalTaskByKey(ctx, taskKey)
 	if err != nil {
 		return 0, err
 	}
@@ -259,7 +259,7 @@ func GetTaskImportedRows(jobID int64) (uint64, error) {
 	}
 	var importedRows uint64
 	if taskMeta.Plan.CloudStorageURI == "" {
-		subtasks, err := globalTaskManager.GetSubtasksForImportInto(task.ID, StepImport)
+		subtasks, err := globalTaskManager.GetSubtasksForImportInto(ctx, task.ID, StepImport)
 		if err != nil {
 			return 0, err
 		}
@@ -271,7 +271,7 @@ func GetTaskImportedRows(jobID int64) (uint64, error) {
 			importedRows += subtaskMeta.Result.LoadedRowCnt
 		}
 	} else {
-		subtasks, err := globalTaskManager.GetSubtasksForImportInto(task.ID, StepWriteAndIngest)
+		subtasks, err := globalTaskManager.GetSubtasksForImportInto(ctx, task.ID, StepWriteAndIngest)
 		if err != nil {
 			return 0, err
 		}

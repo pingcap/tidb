@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/mock/gomock"
 )
 
@@ -40,7 +39,7 @@ func TestPlanner(t *testing.T) {
 		return gtk.Session(), nil
 	}, 1, 1, time.Second)
 	defer pool.Close()
-	mgr := storage.NewTaskManager(util.WithInternalSourceType(ctx, "taskManager"), pool)
+	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
 
 	p := &planner.Planner{}

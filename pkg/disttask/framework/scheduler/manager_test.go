@@ -91,7 +91,7 @@ func TestManageTask(t *testing.T) {
 	m.addHandlingTask(3)
 	ctx4, cancel4 := context.WithCancelCause(context.Background())
 	m.registerCancelFunc(1, cancel4)
-	mockTaskTable.EXPECT().PauseSubtasks("test", int64(1)).Return(nil)
+	mockTaskTable.EXPECT().PauseSubtasks(m.ctx, "test", int64(1)).Return(nil)
 	m.onPausingTasks([]*proto.Task{{ID: 1}})
 	require.Equal(t, context.Canceled, ctx4.Err())
 }
@@ -102,6 +102,7 @@ func TestOnRunnableTasks(t *testing.T) {
 	mockTaskTable := mock.NewMockTaskTable(ctrl)
 	mockInternalScheduler := mock.NewMockScheduler(ctrl)
 	mockPool := mock.NewMockPool(ctrl)
+	ctx := context.Background()
 
 	b := NewManagerBuilder()
 	b.setPoolFactory(func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error) {
@@ -111,11 +112,11 @@ func TestOnRunnableTasks(t *testing.T) {
 	taskID := int64(1)
 	task := &proto.Task{ID: taskID, State: proto.TaskStateRunning, Step: proto.StepOne, Type: "type"}
 
-	m, err := b.BuildManager(context.Background(), id, mockTaskTable)
+	m, err := b.BuildManager(ctx, id, mockTaskTable)
 	require.NoError(t, err)
 
 	// no task
-	m.onRunnableTasks(context.Background(), nil)
+	m.onRunnableTasks(m.ctx, nil)
 
 	RegisterTaskType("type",
 		func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) Scheduler {
@@ -124,48 +125,48 @@ func TestOnRunnableTasks(t *testing.T) {
 
 	// get subtask failed
 	mockInternalScheduler.EXPECT().Init(gomock.Any()).Return(nil)
-	mockTaskTable.EXPECT().HasSubtasksInStates(id, taskID, proto.StepOne,
+	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID, proto.StepOne,
 		unfinishedSubtaskStates...).
 		Return(false, errors.New("get subtask failed"))
 	mockInternalScheduler.EXPECT().Close()
 	m.onRunnableTasks(context.Background(), []*proto.Task{task})
 
 	// no subtask
-	mockTaskTable.EXPECT().HasSubtasksInStates(id, taskID, proto.StepOne,
+	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID, proto.StepOne,
 		unfinishedSubtaskStates...).Return(false, nil)
 	m.onRunnableTasks(context.Background(), []*proto.Task{task})
 
 	// pool error
-	mockTaskTable.EXPECT().HasSubtasksInStates(id, taskID, proto.StepOne,
+	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID, proto.StepOne,
 		unfinishedSubtaskStates...).Return(true, nil)
 	mockPool.EXPECT().Run(gomock.Any()).Return(errors.New("pool error"))
 	m.onRunnableTasks(context.Background(), []*proto.Task{task})
 
 	// StepOne succeed
 	wg, runFn := getPoolRunFn()
-	mockTaskTable.EXPECT().HasSubtasksInStates(id, taskID, proto.StepOne,
+	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID, proto.StepOne,
 		unfinishedSubtaskStates...).Return(true, nil)
 	mockPool.EXPECT().Run(gomock.Any()).DoAndReturn(runFn)
-	mockTaskTable.EXPECT().GetGlobalTaskByID(taskID).Return(task, nil)
-	mockTaskTable.EXPECT().HasSubtasksInStates(id, taskID, proto.StepOne,
+	mockTaskTable.EXPECT().GetGlobalTaskByID(m.ctx, taskID).Return(task, nil)
+	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID, proto.StepOne,
 		unfinishedSubtaskStates...).Return(true, nil)
 	mockInternalScheduler.EXPECT().Run(gomock.Any(), task).Return(nil)
 
 	// StepTwo failed
 	task1 := &proto.Task{ID: taskID, State: proto.TaskStateRunning, Step: proto.StepTwo}
-	mockTaskTable.EXPECT().GetGlobalTaskByID(taskID).Return(task1, nil)
-	mockTaskTable.EXPECT().HasSubtasksInStates(id, taskID, proto.StepTwo,
+	mockTaskTable.EXPECT().GetGlobalTaskByID(m.ctx, taskID).Return(task1, nil)
+	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID, proto.StepTwo,
 		unfinishedSubtaskStates...).Return(true, nil)
 	mockInternalScheduler.EXPECT().Run(gomock.Any(), task1).Return(errors.New("run err"))
 
 	task2 := &proto.Task{ID: taskID, State: proto.TaskStateReverting, Step: proto.StepTwo}
-	mockTaskTable.EXPECT().GetGlobalTaskByID(taskID).Return(task2, nil)
-	mockTaskTable.EXPECT().HasSubtasksInStates(id, taskID, proto.StepTwo,
+	mockTaskTable.EXPECT().GetGlobalTaskByID(m.ctx, taskID).Return(task2, nil)
+	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID, proto.StepTwo,
 		unfinishedSubtaskStates...).Return(true, nil)
 	mockInternalScheduler.EXPECT().Rollback(gomock.Any(), task2).Return(nil)
 
 	task3 := &proto.Task{ID: taskID, State: proto.TaskStateReverted, Step: proto.StepTwo}
-	mockTaskTable.EXPECT().GetGlobalTaskByID(taskID).Return(task3, nil)
+	mockTaskTable.EXPECT().GetGlobalTaskByID(m.ctx, taskID).Return(task3, nil)
 
 	m.onRunnableTasks(context.Background(), []*proto.Task{task})
 
@@ -187,6 +188,10 @@ func TestManager(t *testing.T) {
 			return mockInternalScheduler
 		})
 	id := "test"
+
+	m, err := b.BuildManager(context.Background(), id, mockTaskTable)
+	require.NoError(t, err)
+
 	taskID1 := int64(1)
 	taskID2 := int64(2)
 	taskID3 := int64(3)
@@ -194,54 +199,53 @@ func TestManager(t *testing.T) {
 	task2 := &proto.Task{ID: taskID2, State: proto.TaskStateReverting, Step: proto.StepOne, Type: "type"}
 	task3 := &proto.Task{ID: taskID3, State: proto.TaskStatePausing, Step: proto.StepOne, Type: "type"}
 
-	mockTaskTable.EXPECT().StartManager("test", "").Return(nil).Times(1)
-	mockTaskTable.EXPECT().GetGlobalTasksInStates(proto.TaskStateRunning, proto.TaskStateReverting).
+	mockTaskTable.EXPECT().StartManager(m.ctx, "test", "").Return(nil).Times(1)
+	mockTaskTable.EXPECT().GetGlobalTasksInStates(m.ctx, proto.TaskStateRunning, proto.TaskStateReverting).
 		Return([]*proto.Task{task1, task2}, nil).AnyTimes()
-	mockTaskTable.EXPECT().GetGlobalTasksInStates(proto.TaskStateReverting).
+	mockTaskTable.EXPECT().GetGlobalTasksInStates(m.ctx, proto.TaskStateReverting).
 		Return([]*proto.Task{task2}, nil).AnyTimes()
-	mockTaskTable.EXPECT().GetGlobalTasksInStates(proto.TaskStatePausing).
+	mockTaskTable.EXPECT().GetGlobalTasksInStates(m.ctx, proto.TaskStatePausing).
 		Return([]*proto.Task{task3}, nil).AnyTimes()
 	mockInternalScheduler.EXPECT().Init(gomock.Any()).Return(nil)
 	// task1
-	mockTaskTable.EXPECT().HasSubtasksInStates(id, taskID1, proto.StepOne,
+	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID1, proto.StepOne,
 		unfinishedSubtaskStates...).
 		Return(true, nil)
 	wg, runFn := getPoolRunFn()
 	mockPool.EXPECT().Run(gomock.Any()).DoAndReturn(runFn)
-	mockTaskTable.EXPECT().GetGlobalTaskByID(taskID1).Return(task1, nil).AnyTimes()
-	mockTaskTable.EXPECT().HasSubtasksInStates(id, taskID1, proto.StepOne,
+	mockTaskTable.EXPECT().GetGlobalTaskByID(m.ctx, taskID1).Return(task1, nil).AnyTimes()
+	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID1, proto.StepOne,
 		unfinishedSubtaskStates...).
 		Return(true, nil)
 	mockInternalScheduler.EXPECT().Run(gomock.Any(), task1).Return(nil)
 
-	mockTaskTable.EXPECT().HasSubtasksInStates(id, taskID1, proto.StepOne,
+	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID1, proto.StepOne,
 		unfinishedSubtaskStates...).
 		Return(false, nil).AnyTimes()
 	mockInternalScheduler.EXPECT().Close()
 	// task2
-	mockTaskTable.EXPECT().HasSubtasksInStates(id, taskID2, proto.StepOne,
+	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID2, proto.StepOne,
 		unfinishedSubtaskStates...).
 		Return(true, nil)
 	mockPool.EXPECT().Run(gomock.Any()).DoAndReturn(runFn)
-	mockTaskTable.EXPECT().GetGlobalTaskByID(taskID2).Return(task2, nil).AnyTimes()
-	mockTaskTable.EXPECT().HasSubtasksInStates(id, taskID2, proto.StepOne,
+	mockTaskTable.EXPECT().GetGlobalTaskByID(m.ctx, taskID2).Return(task2, nil).AnyTimes()
+	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID2, proto.StepOne,
 		unfinishedSubtaskStates...).
 		Return(true, nil)
 	mockInternalScheduler.EXPECT().Init(gomock.Any()).Return(nil)
 	mockInternalScheduler.EXPECT().Rollback(gomock.Any(), task2).Return(nil)
-	mockTaskTable.EXPECT().HasSubtasksInStates(id, taskID2, proto.StepOne,
+	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID2, proto.StepOne,
 		unfinishedSubtaskStates...).
 		Return(false, nil).AnyTimes()
 	mockInternalScheduler.EXPECT().Close()
 	// task3
-	mockTaskTable.EXPECT().PauseSubtasks(id, taskID3).Return(nil).AnyTimes()
+	mockTaskTable.EXPECT().PauseSubtasks(m.ctx, id, taskID3).Return(nil).AnyTimes()
 
 	// for scheduler pool
 	mockPool.EXPECT().ReleaseAndWait().Do(func() {
 		wg.Wait()
 	})
-	m, err := b.BuildManager(context.Background(), id, mockTaskTable)
-	require.NoError(t, err)
+
 	require.NoError(t, m.Start())
 	time.Sleep(5 * time.Second)
 	m.Stop()

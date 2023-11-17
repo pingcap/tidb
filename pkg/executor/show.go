@@ -2285,11 +2285,11 @@ func fillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedR
 	result.AppendString(12, info.CreatedBy)
 }
 
-func handleImportJobInfo(info *importer.JobInfo, result *chunk.Chunk) error {
+func handleImportJobInfo(ctx context.Context, info *importer.JobInfo, result *chunk.Chunk) error {
 	var importedRowCount int64 = -1
 	if info.Summary == nil && info.Status == importer.JobStatusRunning {
 		// for running jobs, need get from distributed framework.
-		rows, err := importinto.GetTaskImportedRows(info.ID)
+		rows, err := importinto.GetTaskImportedRows(ctx, info.ID)
 		if err != nil {
 			return err
 		}
@@ -2323,7 +2323,7 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 		}); err != nil {
 			return err
 		}
-		return handleImportJobInfo(info, e.result)
+		return handleImportJobInfo(ctx, info, e.result)
 	}
 	var infos []*importer.JobInfo
 	if err = globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
@@ -2335,7 +2335,7 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 		return err
 	}
 	for _, info := range infos {
-		if err2 := handleImportJobInfo(info, e.result); err2 != nil {
+		if err2 := handleImportJobInfo(ctx, info, e.result); err2 != nil {
 			return err2
 		}
 	}

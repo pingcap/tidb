@@ -103,7 +103,7 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 
 func (m *Manager) initMeta() (err error) {
 	for i := 0; i < retrySQLTimes; i++ {
-		err = m.taskTable.StartManager(m.id, config.GetGlobalConfig().Instance.TiDBServiceScope)
+		err = m.taskTable.StartManager(m.ctx, m.id, config.GetGlobalConfig().Instance.TiDBServiceScope)
 		if err == nil {
 			break
 		}
@@ -148,7 +148,7 @@ func (m *Manager) fetchAndHandleRunnableTasksLoop() {
 			logutil.Logger(m.logCtx).Info("fetchAndHandleRunnableTasksLoop done")
 			return
 		case <-ticker.C:
-			tasks, err := m.taskTable.GetGlobalTasksInStates(proto.TaskStateRunning, proto.TaskStateReverting)
+			tasks, err := m.taskTable.GetGlobalTasksInStates(m.ctx, proto.TaskStateRunning, proto.TaskStateReverting)
 			if err != nil {
 				m.logErr(err)
 				continue
@@ -170,7 +170,7 @@ func (m *Manager) fetchAndFastCancelTasksLoop() {
 			logutil.Logger(m.logCtx).Info("fetchAndFastCancelTasksLoop done")
 			return
 		case <-ticker.C:
-			tasks, err := m.taskTable.GetGlobalTasksInStates(proto.TaskStateReverting)
+			tasks, err := m.taskTable.GetGlobalTasksInStates(m.ctx, proto.TaskStateReverting)
 			if err != nil {
 				m.logErr(err)
 				continue
@@ -178,7 +178,7 @@ func (m *Manager) fetchAndFastCancelTasksLoop() {
 			m.onCanceledTasks(m.ctx, tasks)
 
 			// cancel pending/running subtasks, and mark them as paused.
-			pausingTasks, err := m.taskTable.GetGlobalTasksInStates(proto.TaskStatePausing)
+			pausingTasks, err := m.taskTable.GetGlobalTasksInStates(m.ctx, proto.TaskStatePausing)
 			if err != nil {
 				m.logErr(err)
 				continue
@@ -198,7 +198,7 @@ func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 	}
 	tasks = m.filterAlreadyHandlingTasks(tasks)
 	for _, task := range tasks {
-		exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, task.Step,
+		exist, err := m.taskTable.HasSubtasksInStates(m.ctx, m.id, task.ID, task.Step,
 			proto.TaskStatePending, proto.TaskStateRevertPending,
 			// for the case that the tidb is restarted when the subtask is running.
 			proto.TaskStateRunning, proto.TaskStateReverting)
@@ -256,7 +256,7 @@ func (m *Manager) onPausingTasks(tasks []*proto.Task) error {
 			// Should not change the subtask's state.
 			cancel(nil)
 		}
-		if err := m.taskTable.PauseSubtasks(m.id, task.ID); err != nil {
+		if err := m.taskTable.PauseSubtasks(m.ctx, m.id, task.ID); err != nil {
 			return err
 		}
 	}
@@ -360,7 +360,7 @@ func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
 				}
 			}()
 		})
-		task, err := m.taskTable.GetGlobalTaskByID(task.ID)
+		task, err := m.taskTable.GetGlobalTaskByID(m.ctx, task.ID)
 		if err != nil {
 			m.logErr(err)
 			return
@@ -373,7 +373,9 @@ func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
 				zap.Int64("task-id", task.ID), zap.Int64("step", int64(task.Step)), zap.Stringer("state", task.State))
 			return
 		}
-		if exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, task.Step,
+		if exist, err := m.taskTable.HasSubtasksInStates(
+			m.ctx,
+			m.id, task.ID, task.Step,
 			proto.TaskStatePending, proto.TaskStateRevertPending,
 			// for the case that the tidb is restarted when the subtask is running.
 			proto.TaskStateRunning, proto.TaskStateReverting); err != nil {
@@ -427,7 +429,7 @@ func (m *Manager) logErrAndPersist(err error, taskID int64) {
 	if common.IsRetryableError(err) || isRetryableError(err) {
 		return
 	}
-	err1 := m.taskTable.UpdateErrorToSubtask(m.id, taskID, err)
+	err1 := m.taskTable.UpdateErrorToSubtask(m.ctx, m.id, taskID, err)
 	if err1 != nil {
 		logutil.Logger(m.logCtx).Error("update to subtask failed", zap.Error(err1), zap.Stack("stack"))
 	}
