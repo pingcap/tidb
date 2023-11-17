@@ -1730,7 +1730,7 @@ func (*memtableRetriever) getRegionsInfoForSingleTable(ctx context.Context, help
 	if err != nil {
 		return nil, err
 	}
-	return pdCli.GetRegionsByKey(ctx, sk, ek, -1)
+	return pdCli.GetRegionsByKeyRange(ctx, sk, ek, -1)
 }
 
 func (e *memtableRetriever) setNewTiKVRegionStatusCol(region *pd.RegionInfo, table *helper.TableInfo) {
