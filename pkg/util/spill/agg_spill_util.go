@@ -110,6 +110,11 @@ func DeserializeTime(buf []byte, pos int64) types.Time {
 	return *(*types.Time)(unsafe.Pointer(&buf[pos]))
 }
 
+// DeserializeDuration deserializes Duration type
+func DeserializeDuration(buf []byte, pos int64) gotime.Duration {
+	return *(*gotime.Duration)(unsafe.Pointer(&buf[pos]))
+}
+
 // DeserializeInterface deserializes interface type
 func DeserializeInterface(buf []byte, readPos *int64) interface{} {
 	// Get type
@@ -260,6 +265,11 @@ func SerializeMyDecimal(value *types.MyDecimal, tmpBuf []byte) {
 // SerializeTime serializes Time type
 func SerializeTime(value types.Time, tmpBuf []byte) {
 	*(*types.Time)(unsafe.Pointer(&tmpBuf[0])) = value
+}
+
+// SerializeDuration serializes Duration type
+func SerializeDuration(value gotime.Duration, tmpBuf []byte) {
+	*(*gotime.Duration)(unsafe.Pointer(&tmpBuf[0])) = value
 }
 
 // SerializeInterface serialize interface type and return the number of bytes serialized

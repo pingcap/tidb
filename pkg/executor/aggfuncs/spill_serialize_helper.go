@@ -38,53 +38,46 @@ func (s *spillSerializeHelper) serializePartialResult4Count(value partialResult4
 }
 
 func (s *spillSerializeHelper) serializePartialResult4MaxMinInt(value partialResult4MaxMinInt) []byte {
-	spill.SerializeInt64(value.val, s.buf[0:int64Len])
-	end := int64Len + boolLen
-	spill.SerializeBool(value.isNull, s.buf[int64Len:end])
-	return s.buf[0:end]
+	spill.SerializeBool(value.isNull, s.buf)
+	spill.SerializeInt64(value.val, s.buf[boolLen:])
+	return s.buf[0 : int64Len+boolLen]
 }
 
 func (s *spillSerializeHelper) serializePartialResult4MaxMinUint(value partialResult4MaxMinUint) []byte {
-	spill.SerializeUint64(value.val, s.buf[0:uint64Len])
-	end := uint64Len + boolLen
-	spill.SerializeBool(value.isNull, s.buf[uint64Len:end])
-	return s.buf[0:end]
+	spill.SerializeBool(value.isNull, s.buf)
+	spill.SerializeUint64(value.val, s.buf[boolLen:])
+	return s.buf[0 : uint64Len+boolLen]
 }
 
 func (s *spillSerializeHelper) serializePartialResult4MaxMinDecimal(value partialResult4MaxMinDecimal) []byte {
-	spill.SerializeMyDecimal(&value.val, s.buf)
-	end := types.MyDecimalStructSize + boolLen
-	spill.SerializeBool(value.isNull, s.buf[types.MyDecimalStructSize:end])
-	return s.buf[0:end]
+	spill.SerializeBool(value.isNull, s.buf)
+	spill.SerializeMyDecimal(&value.val, s.buf[boolLen:])
+	return s.buf[0 : types.MyDecimalStructSize+boolLen]
 }
 
 func (s *spillSerializeHelper) serializePartialResult4MaxMinFloat32(value partialResult4MaxMinFloat32) []byte {
-	spill.SerializeFloat32(value.val, s.buf[0:float32Len])
-	end := float32Len + boolLen
-	spill.SerializeBool(value.isNull, s.buf[float32Len:end])
-	return s.buf[0:end]
+	spill.SerializeBool(value.isNull, s.buf)
+	spill.SerializeFloat32(value.val, s.buf[boolLen:])
+	return s.buf[0 : float32Len+boolLen]
 }
 
 func (s *spillSerializeHelper) serializePartialResult4MaxMinFloat64(value partialResult4MaxMinFloat64) []byte {
-	spill.SerializeFloat64(value.val, s.buf[0:float64Len])
-	end := float64Len + boolLen
-	spill.SerializeBool(value.isNull, s.buf[float64Len:end])
-	return s.buf[0:end]
+	spill.SerializeBool(value.isNull, s.buf)
+	spill.SerializeFloat64(value.val, s.buf[boolLen:])
+	return s.buf[0 : float64Len+boolLen]
 }
 
 func (s *spillSerializeHelper) serializePartialResult4MaxMinTime(value partialResult4MaxMinTime) []byte {
-	spill.SerializeTime(value.val, s.buf)
-	end := timeLen + boolLen
-	spill.SerializeBool(value.isNull, s.buf[timeLen:end])
-	return s.buf[0:end]
+	spill.SerializeBool(value.isNull, s.buf)
+	spill.SerializeTime(value.val, s.buf[boolLen:])
+	return s.buf[0 : timeLen+boolLen]
 }
 
 func (s *spillSerializeHelper) serializePartialResult4MaxMinDuration(value partialResult4MaxMinDuration) []byte {
-	spill.SerializeInt64(int64(value.val.Duration), s.buf[0:int64Len])
-	spill.SerializeInt(value.val.Fsp, s.buf[int64Len:int64Len+intLen])
-	end := int64Len + intLen + boolLen
-	spill.SerializeBool(value.isNull, s.buf[int64Len+intLen:end])
-	return s.buf[0:end]
+	spill.SerializeBool(value.isNull, s.buf)
+	spill.SerializeDuration(value.val.Duration, s.buf[boolLen:])
+	spill.SerializeInt(value.val.Fsp, s.buf[boolLen+int64Len:])
+	return s.buf[0 : int64Len+intLen+boolLen]
 }
 
 func (s *spillSerializeHelper) serializePartialResult4MaxMinString(value partialResult4MaxMinString) []byte {
