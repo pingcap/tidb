@@ -336,6 +336,7 @@ import (
 	backend               "BACKEND"
 	backup                "BACKUP"
 	backups               "BACKUPS"
+	bdr                   "BDR"
 	begin                 "BEGIN"
 	bernoulli             "BERNOULLI"
 	binding               "BINDING"
@@ -473,6 +474,7 @@ import (
 	level                 "LEVEL"
 	list                  "LIST"
 	local                 "LOCAL"
+	local_only            "LOCAL_ONLY"
 	locked                "LOCKED"
 	location              "LOCATION"
 	logs                  "LOGS"
@@ -585,6 +587,7 @@ import (
 	san                   "SAN"
 	savepoint             "SAVEPOINT"
 	second                "SECOND"
+	secondary             "SECONDARY"
 	secondaryEngine       "SECONDARY_ENGINE"
 	secondaryLoad         "SECONDARY_LOAD"
 	secondaryUnload       "SECONDARY_UNLOAD"
@@ -1092,6 +1095,7 @@ import (
 	AuthOption                             "User auth option"
 	AutoRandomOpt                          "Auto random option"
 	Boolean                                "Boolean (0, 1, false, true)"
+	BDRRole                                "BDR role (none, primary, secondary, local_only)"
 	OptionalBraces                         "optional braces"
 	CastType                               "Cast function target type"
 	CharsetOpt                             "CHARACTER SET option in LOAD DATA"
@@ -6525,6 +6529,7 @@ UnReservedKeyword:
 |	"AFTER"
 |	"ALWAYS"
 |	"AVG"
+|	"BDR"
 |	"BEGIN"
 |	"BIT"
 |	"BOOL"
@@ -6582,6 +6587,7 @@ UnReservedKeyword:
 |	"INSERT_METHOD"
 |	"LESS"
 |	"LOCAL"
+|	"LOCAL_ONLY"
 |	"LAST"
 |	"NAMES"
 |	"NVARCHAR"
@@ -6759,6 +6765,7 @@ UnReservedKeyword:
 |	"STORAGE"
 |	"DISK"
 |	"STATS_SAMPLE_PAGES"
+|   "SECONDARY"
 |	"SECONDARY_ENGINE"
 |	"SECONDARY_LOAD"
 |	"SECONDARY_UNLOAD"
@@ -10874,6 +10881,24 @@ AdminStmtLimitOpt:
 		$$ = &ast.LimitSimple{Offset: $4.(uint64), Count: $2.(uint64)}
 	}
 
+BDRRole:
+	"PRIMARY"
+	{
+		$$ = ast.BDRRolePrimary
+	}
+|   "SECONDARY"
+	{
+		$$ = ast.BDRRoleSecondary
+	}
+|   "LOCAL_ONLY"
+	{
+		$$ = ast.BDRRoleLocalOnly
+	}
+|   "NONE"
+	{
+		$$ = ast.BDRRoleNone
+	}
+
 AdminStmt:
 	"ADMIN" "SHOW" "DDL"
 	{
@@ -11088,6 +11113,19 @@ AdminStmt:
 		$$ = &ast.AdminStmt{
 			Tp:             ast.AdminFlushPlanCache,
 			StatementScope: $3.(ast.StatementScope),
+		}
+	}
+|	"ADMIN" "SET" "BDR" "ROLE" BDRRole
+	{
+		$$ = &ast.AdminStmt{
+			Tp:      ast.AdminSetBDRRole,
+			BDRRole: $5.(ast.BDRRole),
+		}
+	}
+|	"ADMIN" "SHOW" "BDR" "ROLE"
+	{
+		$$ = &ast.AdminStmt{
+			Tp:      ast.AdminShowBDRRole,
 		}
 	}
 

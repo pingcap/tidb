@@ -163,7 +163,8 @@ func initSessCtx(
 	typeFlags := types.StrictFlags.
 		WithTruncateAsWarning(!sqlMode.HasStrictMode()).
 		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
-		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode())
+		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()).
+		WithCastTimeToYearThroughConcat(true)
 	sessCtx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags)
 
 	// Prevent initializing the mock context in the workers concurrently.

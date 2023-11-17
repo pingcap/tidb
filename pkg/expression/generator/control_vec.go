@@ -112,7 +112,7 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx sessionct
 	thensSlice := make([][]{{.TypeNameGo}}, l/2)
 	var eLseSlice []{{.TypeNameGo}}
 	{{- end }}
-	sc := b.ctx.GetSessionVars().StmtCtx
+	sc := ctx.GetSessionVars().StmtCtx
 	beforeWarns := sc.WarningCount()
 
 	for j := 0; j < l-1; j+=2 {
@@ -121,7 +121,7 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx sessionct
 			return err
 		}
 		defer b.bufAllocator.put(bufWhen)
-		err = args[j].VecEvalInt(b.ctx, input, bufWhen)
+		err = args[j].VecEvalInt(ctx, input, bufWhen)
 		afterWarns := sc.WarningCount()
 		if err != nil || afterWarns > beforeWarns {
 			if afterWarns > beforeWarns {
@@ -137,7 +137,7 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx sessionct
 			return err
 		}
 		defer b.bufAllocator.put(bufThen)
-		err = args[j+1].VecEval{{ .TypeName }}(b.ctx, input, bufThen)
+		err = args[j+1].VecEval{{ .TypeName }}(ctx, input, bufThen)
 		afterWarns = sc.WarningCount()
 		if err != nil || afterWarns > beforeWarns {
 			if afterWarns > beforeWarns {
@@ -159,7 +159,7 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx sessionct
 			return err
 		}
 		defer b.bufAllocator.put(bufElse)
-		err = args[l-1].VecEval{{ .TypeName }}(b.ctx, input, bufElse)
+		err = args[l-1].VecEval{{ .TypeName }}(ctx, input, bufElse)
 		afterWarns := sc.WarningCount()
 		if err != nil || afterWarns > beforeWarns {
 			if afterWarns > beforeWarns {
@@ -270,7 +270,7 @@ func (b *builtinIfNull{{ .TypeName }}Sig) fallbackEval{{ .TypeName }}(ctx sessio
 func (b *builtinIfNull{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	{{- if .Fixed }}
-	if err := b.args[0].VecEval{{ .TypeName }}(b.ctx, input, result); err != nil {
+	if err := b.args[0].VecEval{{ .TypeName }}(ctx, input, result); err != nil {
 		return err
 	}
 	buf1, err := b.bufAllocator.get()
@@ -278,9 +278,9 @@ func (b *builtinIfNull{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx sessionctx.
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	sc := b.ctx.GetSessionVars().StmtCtx
+	sc := ctx.GetSessionVars().StmtCtx
 	beforeWarns := sc.WarningCount()
-	err = b.args[1].VecEval{{ .TypeName }}(b.ctx, input, buf1)
+	err = b.args[1].VecEval{{ .TypeName }}(ctx, input, buf1)
 	afterWarns := sc.WarningCount()
 	if err != nil || afterWarns > beforeWarns {
 		if afterWarns > beforeWarns {
@@ -302,7 +302,7 @@ func (b *builtinIfNull{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx sessionctx.
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEval{{ .TypeName }}(b.ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEval{{ .TypeName }}(ctx, input, buf0); err != nil {
 		return err
 	}
 	buf1, err := b.bufAllocator.get()
@@ -310,9 +310,9 @@ func (b *builtinIfNull{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx sessionctx.
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	sc := b.ctx.GetSessionVars().StmtCtx
+	sc := ctx.GetSessionVars().StmtCtx
 	beforeWarns := sc.WarningCount()
-	err = b.args[1].VecEval{{ .TypeName }}(b.ctx, input, buf1)
+	err = b.args[1].VecEval{{ .TypeName }}(ctx, input, buf1)
 	afterWarns := sc.WarningCount()
 	if err != nil || afterWarns > beforeWarns {
 		if afterWarns > beforeWarns {
@@ -390,20 +390,20 @@ func (b *builtinIf{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx sessionctx.Cont
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalInt(b.ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEvalInt(ctx, input, buf0); err != nil {
 		return err
 	}
-	sc := b.ctx.GetSessionVars().StmtCtx
+	sc := ctx.GetSessionVars().StmtCtx
 	beforeWarns := sc.WarningCount()
 {{- if .Fixed }}
-	err = b.args[1].VecEval{{ .TypeName }}(b.ctx, input, result)
+	err = b.args[1].VecEval{{ .TypeName }}(ctx, input, result)
 {{- else }}
 	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	err = b.args[1].VecEval{{ .TypeName }}(b.ctx, input, buf1)
+	err = b.args[1].VecEval{{ .TypeName }}(ctx, input, buf1)
 {{- end }}
 	afterWarns := sc.WarningCount()
 	if err != nil || afterWarns > beforeWarns {
@@ -418,7 +418,7 @@ func (b *builtinIf{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx sessionctx.Cont
 		return err
 	}
 	defer b.bufAllocator.put(buf2)
-	err = b.args[2].VecEval{{ .TypeName }}(b.ctx, input, buf2)
+	err = b.args[2].VecEval{{ .TypeName }}(ctx, input, buf2)
 	afterWarns = sc.WarningCount()
 	if err != nil || afterWarns > beforeWarns {
 		if afterWarns > beforeWarns {

@@ -15,21 +15,15 @@
 package executor
 
 import (
-	"context"
 	"runtime"
 	"strconv"
 	"testing"
 	"time"
 	"unsafe"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/executor/aggregate"
-	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/executor/sortexec"
-	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -269,145 +263,4 @@ func TestFilterTemporaryTableKeys(t *testing.T) {
 
 	res := filterTemporaryTableKeys(vars, []kv.Key{tablecodec.EncodeTablePrefix(tableID), tablecodec.EncodeTablePrefix(42)})
 	require.Len(t, res, 1)
-}
-
-func TestSortSpillDisk(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/testSortedRowContainerSpill", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/testSortedRowContainerSpill"))
-	}()
-	ctx := mock.NewContext()
-	ctx.GetSessionVars().MemQuota.MemQuotaQuery = 1
-	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, -1)
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
-	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	cas := &sortCase{rows: 2048, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
-	opt := mockDataSourceParameters{
-		schema: expression.NewSchema(cas.columns()...),
-		rows:   cas.rows,
-		ctx:    cas.ctx,
-		ndvs:   cas.ndvs,
-	}
-	dataSource := buildMockDataSource(opt)
-	exe := &sortexec.SortExec{
-		BaseExecutor: exec.NewBaseExecutor(cas.ctx, dataSource.Schema(), 0, dataSource),
-		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
-		ExecSchema:   dataSource.Schema(),
-	}
-	for _, idx := range cas.orderByIdx {
-		exe.ByItems = append(exe.ByItems, &plannerutil.ByItems{Expr: cas.columns()[idx]})
-	}
-	tmpCtx := context.Background()
-	chk := exec.NewFirstChunk(exe)
-	dataSource.prepareChunks()
-	err := exe.Open(tmpCtx)
-	require.NoError(t, err)
-	for {
-		err = exe.Next(tmpCtx, chk)
-		require.NoError(t, err)
-		if chk.NumRows() == 0 {
-			break
-		}
-	}
-	// Test only 1 partition and all data in memory.
-	require.Len(t, exe.SortPartitionList, 1)
-	require.Equal(t, false, exe.SortPartitionList[0].AlreadySpilledSafeForTest())
-	require.Equal(t, 2048, exe.SortPartitionList[0].NumRow())
-	err = exe.Close()
-	require.NoError(t, err)
-
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, 1)
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
-	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	dataSource.prepareChunks()
-	err = exe.Open(tmpCtx)
-	require.NoError(t, err)
-	for {
-		err = exe.Next(tmpCtx, chk)
-		require.NoError(t, err)
-		if chk.NumRows() == 0 {
-			break
-		}
-	}
-	// Test 2 partitions and all data in disk.
-	// Now spilling is in parallel.
-	// Maybe the second add() will called before spilling, depends on
-	// Golang goroutine scheduling. So the result has two possibilities.
-	if len(exe.SortPartitionList) == 2 {
-		require.Len(t, exe.SortPartitionList, 2)
-		require.Equal(t, true, exe.SortPartitionList[0].AlreadySpilledSafeForTest())
-		require.Equal(t, true, exe.SortPartitionList[1].AlreadySpilledSafeForTest())
-		require.Equal(t, 1024, exe.SortPartitionList[0].NumRow())
-		require.Equal(t, 1024, exe.SortPartitionList[1].NumRow())
-	} else {
-		require.Len(t, exe.SortPartitionList, 1)
-		require.Equal(t, true, exe.SortPartitionList[0].AlreadySpilledSafeForTest())
-		require.Equal(t, 2048, exe.SortPartitionList[0].NumRow())
-	}
-
-	err = exe.Close()
-	require.NoError(t, err)
-
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, 28000)
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
-	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	dataSource.prepareChunks()
-	err = exe.Open(tmpCtx)
-	require.NoError(t, err)
-	for {
-		err = exe.Next(tmpCtx, chk)
-		require.NoError(t, err)
-		if chk.NumRows() == 0 {
-			break
-		}
-	}
-	// Test only 1 partition but spill disk.
-	require.Len(t, exe.SortPartitionList, 1)
-	require.Equal(t, true, exe.SortPartitionList[0].AlreadySpilledSafeForTest())
-	require.Equal(t, 2048, exe.SortPartitionList[0].NumRow())
-	err = exe.Close()
-	require.NoError(t, err)
-
-	// Test partition nums.
-	ctx = mock.NewContext()
-	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, 16864*50)
-	ctx.GetSessionVars().MemTracker.Consume(16864 * 45)
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
-	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	cas = &sortCase{rows: 20480, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
-	opt = mockDataSourceParameters{
-		schema: expression.NewSchema(cas.columns()...),
-		rows:   cas.rows,
-		ctx:    cas.ctx,
-		ndvs:   cas.ndvs,
-	}
-	dataSource = buildMockDataSource(opt)
-	exe = &sortexec.SortExec{
-		BaseExecutor: exec.NewBaseExecutor(cas.ctx, dataSource.Schema(), 0, dataSource),
-		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
-		ExecSchema:   dataSource.Schema(),
-	}
-	for _, idx := range cas.orderByIdx {
-		exe.ByItems = append(exe.ByItems, &plannerutil.ByItems{Expr: cas.columns()[idx]})
-	}
-	tmpCtx = context.Background()
-	chk = exec.NewFirstChunk(exe)
-	dataSource.prepareChunks()
-	err = exe.Open(tmpCtx)
-	require.NoError(t, err)
-	for {
-		err = exe.Next(tmpCtx, chk)
-		require.NoError(t, err)
-		if chk.NumRows() == 0 {
-			break
-		}
-	}
-	// Don't spill too many partitions.
-	require.True(t, len(exe.SortPartitionList) <= 4)
-	err = exe.Close()
-	require.NoError(t, err)
 }

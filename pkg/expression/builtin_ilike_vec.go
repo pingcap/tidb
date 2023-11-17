@@ -70,15 +70,15 @@ func (b *builtinIlikeSig) tryToMemorize(param *funcParam, escape int64) {
 	b.once.Do(memorization)
 }
 
-func (b *builtinIlikeSig) getEscape(input *chunk.Chunk, result *chunk.Column) (int64, bool, error) {
+func (b *builtinIlikeSig) getEscape(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) (int64, bool, error) {
 	rowNum := input.NumRows()
 	escape := int64('\\')
 
-	if !b.args[2].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
+	if !b.args[2].ConstItem(ctx.GetSessionVars().StmtCtx) {
 		return escape, true, errors.Errorf("escape should be const")
 	}
 
-	escape, isConstNull, err := b.args[2].EvalInt(b.ctx, chunk.Row{})
+	escape, isConstNull, err := b.args[2].EvalInt(ctx, chunk.Row{})
 	if isConstNull {
 		fillNullStringIntoResult(result, rowNum)
 		return escape, true, nil
@@ -178,7 +178,7 @@ func (b *builtinIlikeSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk,
 	defer releaseBuffers(&b.baseBuiltinFunc, params)
 
 	for i := 0; i < 2; i++ {
-		param, isConstNull, err := buildStringParam(&b.baseBuiltinFunc, i, input, false)
+		param, isConstNull, err := buildStringParam(ctx, &b.baseBuiltinFunc, i, input, false)
 		if err != nil {
 			return ErrRegexp.GenWithStackByArgs(err)
 		}
@@ -189,7 +189,7 @@ func (b *builtinIlikeSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk,
 		params = append(params, param)
 	}
 
-	escape, ret, err := b.getEscape(input, result)
+	escape, ret, err := b.getEscape(ctx, input, result)
 	if err != nil || ret {
 		return err
 	}
