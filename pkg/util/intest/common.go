@@ -21,7 +21,15 @@ const InTest = false
 
 // Assert is a stub function in release build.
 // See the same function in `util/intest/assert.go` for the real implement in test.
-func Assert(_ any, _ ...any) {}
+func Assert(_ bool, _ ...any) {}
+
+// AssertNotNil is a stub function in release build.
+// See the same function in `util/intest/assert.go` for the real implement in test.
+func AssertNotNil(_ any, _ ...any) {}
+
+// AssertNoError is a stub function in release build.
+// See the same function in `util/intest/assert.go` for the real implement in test.
+func AssertNoError(_ error, _ ...any) {}
 
 // AssertFunc is a stub function in release build.
 // See the same function `util/intest/assert.go` for the real implement in test.

@@ -158,7 +158,9 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) (resErr error
 		zap.String("server-mem-limit", memory.ServerMemoryLimitOriginText.Load()),
 	), "schedule step")
 	// log as info level, subtask might be cancelled, let caller check it.
-	defer stepLogger.End(zap.InfoLevel, resErr)
+	defer func() {
+		stepLogger.End(zap.InfoLevel, resErr)
+	}()
 
 	summary, cleanup, err := runSummaryCollectLoop(ctx, task, s.taskTable)
 	if err != nil {
@@ -605,16 +607,17 @@ func isRetryableError(err error) bool {
 // 3. When meet other errors, don't change subtasks' state.
 func (s *BaseScheduler) markSubTaskCanceledOrFailed(ctx context.Context, subtask *proto.Subtask) bool {
 	if err := s.getError(); err != nil {
+		err := errors.Cause(err)
 		if ctx.Err() != nil && context.Cause(ctx) == ErrCancelSubtask {
 			logutil.Logger(s.logCtx).Warn("subtask canceled", zap.Error(err))
 			s.updateSubtaskStateAndError(subtask, proto.TaskStateCanceled, nil)
 		} else if common.IsRetryableError(err) || isRetryableError(err) {
 			logutil.Logger(s.logCtx).Warn("met retryable error", zap.Error(err))
-		} else if errors.Cause(err) != context.Canceled {
+		} else if common.IsContextCanceledError(err) {
+			logutil.Logger(s.logCtx).Info("met context canceled for gracefully shutdown", zap.Error(err))
+		} else {
 			logutil.Logger(s.logCtx).Warn("subtask failed", zap.Error(err))
 			s.updateSubtaskStateAndError(subtask, proto.TaskStateFailed, err)
-		} else {
-			logutil.Logger(s.logCtx).Info("met context canceled for gracefully shutdown", zap.Error(err))
 		}
 		s.markErrorHandled()
 		return true

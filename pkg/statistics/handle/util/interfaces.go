@@ -347,11 +347,18 @@ type StatsGlobal interface {
 		physicalID int64,
 		isIndex bool,
 		histIDs []int64,
-		_ map[int64]*statistics.Table,
 	) (globalStats interface{}, err error)
 
 	// UpdateGlobalStats will trigger the merge of global-stats when we drop table partition
 	UpdateGlobalStats(tblInfo *model.TableInfo) error
+}
+
+// DDL is used to handle ddl events.
+type DDL interface {
+	// HandleDDLEvent handles ddl events.
+	HandleDDLEvent(event *DDLEvent) error
+	// DDLEventCh returns ddl events channel in handle.
+	DDLEventCh() chan *DDLEvent
 }
 
 // StatsHandle is used to manage TiDB Statistics.
@@ -406,4 +413,7 @@ type StatsHandle interface {
 
 	// StatsGlobal is used to manage partition table global stats.
 	StatsGlobal
+
+	// DDL is used to handle ddl events.
+	DDL
 }

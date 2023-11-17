@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client/http"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -67,9 +68,9 @@ type TiFlashReplicaManager interface {
 	// GetRegionCountFromPD is a helper function calling `/stats/region`.
 	GetRegionCountFromPD(ctx context.Context, tableID int64, regionCount *int) error
 	// GetStoresStat gets the TiKV store information by accessing PD's api.
-	GetStoresStat(ctx context.Context) (*helper.StoresStat, error)
+	GetStoresStat(ctx context.Context) (*pd.StoresInfo, error)
 	// CalculateTiFlashProgress calculates TiFlash replica progress
-	CalculateTiFlashProgress(tableID int64, replicaCount uint64, TiFlashStores map[int64]helper.StoreStat) (float64, error)
+	CalculateTiFlashProgress(tableID int64, replicaCount uint64, TiFlashStores map[int64]pd.StoreInfo) (float64, error)
 	// UpdateTiFlashProgressCache updates tiflashProgressCache
 	UpdateTiFlashProgressCache(tableID int64, progress float64)
 	// GetTiFlashProgressFromCache gets tiflash replica progress from tiflashProgressCache
@@ -91,11 +92,9 @@ type TiFlashReplicaManagerCtx struct {
 }
 
 // Close is called to close TiFlashReplicaManagerCtx.
-func (m *TiFlashReplicaManagerCtx) Close(ctx context.Context) {
+func (m *TiFlashReplicaManagerCtx) Close(context.Context) {}
 
-}
-
-func getTiFlashPeerWithoutLagCount(tiFlashStores map[int64]helper.StoreStat, keyspaceID tikv.KeyspaceID, tableID int64) (int, error) {
+func getTiFlashPeerWithoutLagCount(tiFlashStores map[int64]pd.StoreInfo, keyspaceID tikv.KeyspaceID, tableID int64) (int, error) {
 	// storeIDs -> regionID, PD will not create two peer on the same store
 	var flashPeerCount int
 	for _, store := range tiFlashStores {
@@ -121,7 +120,7 @@ func getTiFlashPeerWithoutLagCount(tiFlashStores map[int64]helper.StoreStat, key
 }
 
 // calculateTiFlashProgress calculates progress based on the region status from PD and TiFlash.
-func calculateTiFlashProgress(keyspaceID tikv.KeyspaceID, tableID int64, replicaCount uint64, tiFlashStores map[int64]helper.StoreStat) (float64, error) {
+func calculateTiFlashProgress(keyspaceID tikv.KeyspaceID, tableID int64, replicaCount uint64, tiFlashStores map[int64]pd.StoreInfo) (float64, error) {
 	var regionCount int
 	if err := GetTiFlashRegionCountFromPD(context.Background(), tableID, &regionCount); err != nil {
 		logutil.BgLogger().Error("Fail to get regionCount from PD.",
@@ -172,7 +171,7 @@ func encodeRuleID(c tikv.Codec, ruleID string) string {
 }
 
 // CalculateTiFlashProgress calculates TiFlash replica progress.
-func (m *TiFlashReplicaManagerCtx) CalculateTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]helper.StoreStat) (float64, error) {
+func (m *TiFlashReplicaManagerCtx) CalculateTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]pd.StoreInfo) (float64, error) {
 	return calculateTiFlashProgress(m.codec.GetKeyspaceID(), tableID, replicaCount, tiFlashStores)
 }
 
@@ -520,8 +519,8 @@ func (m *TiFlashReplicaManagerCtx) GetRegionCountFromPD(ctx context.Context, tab
 }
 
 // GetStoresStat gets the TiKV store information by accessing PD's api.
-func (m *TiFlashReplicaManagerCtx) GetStoresStat(ctx context.Context) (*helper.StoresStat, error) {
-	var storesStat helper.StoresStat
+func (m *TiFlashReplicaManagerCtx) GetStoresStat(ctx context.Context) (*pd.StoresInfo, error) {
+	var storesStat pd.StoresInfo
 	res, err := doRequest(ctx, "GetStoresStat", m.etcdCli.Endpoints(), pdapi.Stores, "GET", nil)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -610,7 +609,7 @@ type MockTiFlash struct {
 	StatusAddr                  string
 	StatusServer                *httptest.Server
 	SyncStatus                  map[int]mockTiFlashTableInfo
-	StoreInfo                   map[uint64]helper.StoreBaseStat
+	StoreInfo                   map[uint64]pd.MetaStore
 	GlobalTiFlashPlacementRules map[string]placement.TiFlashRule
 	PdEnabled                   bool
 	TiflashDelay                time.Duration
@@ -672,7 +671,7 @@ func NewMockTiFlash() *MockTiFlash {
 		StatusAddr:                  "",
 		StatusServer:                nil,
 		SyncStatus:                  make(map[int]mockTiFlashTableInfo),
-		StoreInfo:                   make(map[uint64]helper.StoreBaseStat),
+		StoreInfo:                   make(map[uint64]pd.MetaStore),
 		GlobalTiFlashPlacementRules: make(map[string]placement.TiFlashRule),
 		PdEnabled:                   true,
 		TiflashDelay:                0,
@@ -804,7 +803,7 @@ func (tiflash *MockTiFlash) HandleGetPDRegionRecordStats(_ int64) helper.PDRegio
 
 // AddStore is mock function for adding store info into MockTiFlash.
 func (tiflash *MockTiFlash) AddStore(storeID uint64, address string) {
-	tiflash.StoreInfo[storeID] = helper.StoreBaseStat{
+	tiflash.StoreInfo[storeID] = pd.MetaStore{
 		ID:             int64(storeID),
 		Address:        address,
 		State:          0,
@@ -813,7 +812,7 @@ func (tiflash *MockTiFlash) AddStore(storeID uint64, address string) {
 		StatusAddress:  tiflash.StatusAddr,
 		GitHash:        "mock-tikv-githash",
 		StartTimestamp: tiflash.StartTime.Unix(),
-		Labels: []helper.StoreLabel{{
+		Labels: []pd.StoreLabel{{
 			Key:   "engine",
 			Value: "tiflash",
 		}},
@@ -822,16 +821,16 @@ func (tiflash *MockTiFlash) AddStore(storeID uint64, address string) {
 
 // HandleGetStoresStat is mock function for GetStoresStat.
 // It returns address of our mocked TiFlash server.
-func (tiflash *MockTiFlash) HandleGetStoresStat() *helper.StoresStat {
+func (tiflash *MockTiFlash) HandleGetStoresStat() *pd.StoresInfo {
 	tiflash.Lock()
 	defer tiflash.Unlock()
 	if len(tiflash.StoreInfo) == 0 {
 		// default Store
-		return &helper.StoresStat{
+		return &pd.StoresInfo{
 			Count: 1,
-			Stores: []helper.StoreStat{
+			Stores: []pd.StoreInfo{
 				{
-					Store: helper.StoreBaseStat{
+					Store: pd.MetaStore{
 						ID:             1,
 						Address:        "127.0.0.1:3930",
 						State:          0,
@@ -840,7 +839,7 @@ func (tiflash *MockTiFlash) HandleGetStoresStat() *helper.StoresStat {
 						StatusAddress:  tiflash.StatusAddr,
 						GitHash:        "mock-tikv-githash",
 						StartTimestamp: tiflash.StartTime.Unix(),
-						Labels: []helper.StoreLabel{{
+						Labels: []pd.StoreLabel{{
 							Key:   "engine",
 							Value: "tiflash",
 						}},
@@ -849,11 +848,11 @@ func (tiflash *MockTiFlash) HandleGetStoresStat() *helper.StoresStat {
 			},
 		}
 	}
-	stores := make([]helper.StoreStat, 0, len(tiflash.StoreInfo))
+	stores := make([]pd.StoreInfo, 0, len(tiflash.StoreInfo))
 	for _, storeInfo := range tiflash.StoreInfo {
-		stores = append(stores, helper.StoreStat{Store: storeInfo, Status: helper.StoreDetailStat{}})
+		stores = append(stores, pd.StoreInfo{Store: storeInfo, Status: pd.StoreStatus{}})
 	}
-	return &helper.StoresStat{
+	return &pd.StoresInfo{
 		Count:  len(tiflash.StoreInfo),
 		Stores: stores,
 	}
@@ -970,7 +969,7 @@ func (tiflash *MockTiFlash) SetNetworkError(e bool) {
 }
 
 // CalculateTiFlashProgress return truncated string to avoid float64 comparison.
-func (m *mockTiFlashReplicaManagerCtx) CalculateTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]helper.StoreStat) (float64, error) {
+func (m *mockTiFlashReplicaManagerCtx) CalculateTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]pd.StoreInfo) (float64, error) {
 	return calculateTiFlashProgress(tikv.NullspaceID, tableID, replicaCount, tiFlashStores)
 }
 
@@ -1093,7 +1092,7 @@ func (m *mockTiFlashReplicaManagerCtx) GetRegionCountFromPD(ctx context.Context,
 }
 
 // GetStoresStat gets the TiKV store information by accessing PD's api.
-func (m *mockTiFlashReplicaManagerCtx) GetStoresStat(ctx context.Context) (*helper.StoresStat, error) {
+func (m *mockTiFlashReplicaManagerCtx) GetStoresStat(ctx context.Context) (*pd.StoresInfo, error) {
 	m.Lock()
 	defer m.Unlock()
 	if m.tiflash == nil {

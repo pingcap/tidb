@@ -489,7 +489,14 @@ type cteInfo struct {
 	// The LogicalCTEs that reference the same table should share the same CteClass.
 	cteClass *CTEClass
 
+	// isInline will determine whether it can be inlined when **CTE is used**
 	isInline bool
+	// forceInlineByHintOrVar will be true when CTE is hint by merge() or session variable "tidb_opt_force_inline_cte=true"
+	forceInlineByHintOrVar bool
+	// If CTE contain aggregation or window function in query (Indirect references to other cte containing agg or window in the query are also counted.)
+	containAggOrWindow bool
+	// Compute in preprocess phase. Record how many consumers the current CTE has
+	consumerCount int
 }
 
 type subQueryCtx = uint64
@@ -1770,6 +1777,12 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		return &Simple{Statement: as}, nil
 	case ast.AdminFlushPlanCache:
 		return &Simple{Statement: as}, nil
+	case ast.AdminSetBDRRole:
+		return &Simple{Statement: as}, nil
+	case ast.AdminShowBDRRole:
+		p := &AdminShowBDRRole{}
+		p.setSchemaAndNames(buildAdminShowBDRRoleFields())
+		ret = p
 	default:
 		return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
@@ -3279,6 +3292,12 @@ func buildPauseDDLJobsFields() (*expression.Schema, types.NameSlice) {
 
 func buildResumeDDLJobsFields() (*expression.Schema, types.NameSlice) {
 	return buildCommandOnDDLJobsFields()
+}
+
+func buildAdminShowBDRRoleFields() (*expression.Schema, types.NameSlice) {
+	schema := newColumnsWithNames(1)
+	schema.Append(buildColumnWithName("", "BDR_ROLE", mysql.TypeString, 1))
+	return schema.col2Schema(), schema.names
 }
 
 func buildShowBackupMetaSchema() (*expression.Schema, types.NameSlice) {

@@ -1,6 +1,6 @@
 package(default_visibility = ["//visibility:public"])
 
-load("@io_bazel_rules_go//go:def.bzl", "nogo")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "nogo")
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("//build/linter/staticcheck:def.bzl", "staticcheck_analyzers")
 
@@ -180,4 +180,14 @@ nogo(
                ],
                "//conditions:default": [],
            }),
+)
+
+go_library(
+    name = "build",
+    srcs = ["config.go"],
+    embedsrcs = [
+        "nogo_config.json",
+    ],
+    importpath = "github.com/pingcap/tidb/build",
+    visibility = ["//visibility:public"],
 )

@@ -23,7 +23,6 @@ import (
 	"net/http"
 	"os"
 	"path"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -47,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/store/helper"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -57,6 +55,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+	pdhttp "github.com/tikv/pd/client/http"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
@@ -411,7 +410,7 @@ func DeleteTiFlashTableSyncProgress(tableInfo *model.TableInfo) error {
 }
 
 // MustGetTiFlashProgress gets tiflash replica progress from tiflashProgressCache, if cache not exist, it calculates progress from PD and TiFlash and inserts progress into cache.
-func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *map[int64]helper.StoreStat) (float64, error) {
+func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *map[int64]pdhttp.StoreInfo) (float64, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return 0, err
@@ -428,7 +427,7 @@ func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *m
 		if err != nil {
 			return 0, err
 		}
-		stores := make(map[int64]helper.StoreStat)
+		stores := make(map[int64]pdhttp.StoreInfo)
 		for _, store := range tikvStats.Stores {
 			for _, l := range store.Store.Labels {
 				if l.Key == "engine" && l.Value == "tiflash" {
@@ -448,6 +447,7 @@ func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *m
 	return progress, nil
 }
 
+// TODO: replace with the unified PD HTTP client.
 func doRequest(ctx context.Context, apiName string, addrs []string, route, method string, body io.Reader) ([]byte, error) {
 	var err error
 	var req *http.Request
@@ -499,16 +499,6 @@ func doRequest(ctx context.Context, apiName string, addrs []string, route, metho
 		)
 	}
 	return nil, err
-}
-
-func removeVAndHash(v string) string {
-	if v == "" {
-		return v
-	}
-	versionHash := regexp.MustCompile("-[0-9]+-g[0-9a-f]{7,}(-dev)?")
-	v = versionHash.ReplaceAllLiteralString(v, "")
-	v = strings.TrimSuffix(v, "-dirty")
-	return strings.TrimPrefix(v, "v")
 }
 
 func doRequestWithFailpoint(req *http.Request) (resp *http.Response, err error) {
@@ -1107,7 +1097,7 @@ func GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rul
 }
 
 // CalculateTiFlashProgress calculates TiFlash replica progress
-func CalculateTiFlashProgress(tableID int64, replicaCount uint64, TiFlashStores map[int64]helper.StoreStat) (float64, error) {
+func CalculateTiFlashProgress(tableID int64, replicaCount uint64, TiFlashStores map[int64]pdhttp.StoreInfo) (float64, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -1195,7 +1185,7 @@ func GetTiFlashRegionCountFromPD(ctx context.Context, tableID int64, regionCount
 }
 
 // GetTiFlashStoresStat gets the TiKV store information by accessing PD's api.
-func GetTiFlashStoresStat(ctx context.Context) (*helper.StoresStat, error) {
+func GetTiFlashStoresStat(ctx context.Context) (*pdhttp.StoresInfo, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return nil, errors.Trace(err)
