@@ -1264,7 +1264,7 @@ const (
 	DefTiDBEnable1PC                               = false
 	DefTiDBGuaranteeLinearizability                = true
 	DefTiDBAnalyzeVersion                          = 2
-	DefTiDBAutoAnalyzePartitionBatchSize           = 1
+	DefTiDBAutoAnalyzePartitionBatchSize           = mysql.PartitionCountLimit
 	DefTiDBEnableIndexMergeJoin                    = false
 	DefTiDBTrackAggregateMemoryUsage               = true
 	DefCTEMaxRecursionDepth                        = 1000
