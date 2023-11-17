@@ -17,8 +17,8 @@ package addindextest
 import (
 	"strconv"
 
-	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )

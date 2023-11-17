@@ -1,0 +1,16 @@
+drop table if exists t, t1;
+create table t(a int);
+create table t1(a int);
+insert into t values(1);
+insert into t1 values(1);
+delete a from t a where exists (select 1 from t1 where t1.a=a.a);
+select * from t;
+a
+insert into t values(1), (2);
+insert into t1 values(2);
+prepare stmt from 'delete a from t a where exists (select 1 from t1 where a.a=t1.a and t1.a=?)';
+set @a=1;
+execute stmt using @a;
+select * from t;
+a
+2

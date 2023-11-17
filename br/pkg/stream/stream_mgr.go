@@ -24,12 +24,12 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util"
-	filter "github.com/pingcap/tidb/util/table-filter"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util"
+	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -38,8 +38,6 @@ const (
 	streamBackupMetaPrefix = "v1/backupmeta"
 
 	streamBackupGlobalCheckpointPrefix = "v1/global_checkpoint"
-
-	metaDataWorkerPoolSize = 128
 )
 
 func GetStreamBackupMetaPrefix() string {
@@ -311,9 +309,10 @@ func (*MetadataHelper) Marshal(meta *backuppb.Metadata) ([]byte, error) {
 func FastUnmarshalMetaData(
 	ctx context.Context,
 	s storage.ExternalStorage,
+	metaDataWorkerPoolSize uint,
 	fn func(path string, rawMetaData []byte) error,
 ) error {
-	log.Info("use workers to speed up reading metadata files", zap.Int("workers", metaDataWorkerPoolSize))
+	log.Info("use workers to speed up reading metadata files", zap.Uint("workers", metaDataWorkerPoolSize))
 	pool := utils.NewWorkerPool(metaDataWorkerPoolSize, "metadata")
 	eg, ectx := errgroup.WithContext(ctx)
 	opt := &storage.WalkOption{SubDir: GetStreamBackupMetaPrefix()}

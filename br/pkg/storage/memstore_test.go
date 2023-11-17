@@ -50,7 +50,7 @@ func TestMemStoreBasic(t *testing.T) {
 	require.NotNil(t, err)
 
 	// create a writer to write
-	w, err := store.Create(ctx, "/hello.txt")
+	w, err := store.Create(ctx, "/hello.txt", nil)
 	require.Nil(t, err)
 	_, err = w.Write(ctx, []byte("hello world 3"))
 	require.Nil(t, err)
@@ -65,9 +65,9 @@ func TestMemStoreBasic(t *testing.T) {
 	require.True(t, bytes.Equal([]byte("hello world 3"), fileContent))
 
 	// simultaneously create two readers on the same file
-	r, err := store.Open(ctx, "/hello.txt")
+	r, err := store.Open(ctx, "/hello.txt", nil)
 	require.Nil(t, err)
-	r2, err := store.Open(ctx, "/hello.txt")
+	r2, err := store.Open(ctx, "/hello.txt", nil)
 	require.Nil(t, err)
 	fileContent, err = io.ReadAll(r)
 	require.Nil(t, err)

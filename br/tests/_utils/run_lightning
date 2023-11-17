@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 #
 # Copyright 2019 PingCAP, Inc.
 #
@@ -19,7 +19,7 @@ set -eux
 cur_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 echo "[$(date)] <<<<<< RUNNING TEST FOR: $cur_dir/../$TEST_NAME $@ >>>>>>" >> "$TEST_DIR/lightning.log"
-tidb-lightning.test -test.coverprofile="$TEST_DIR/cov.$TEST_NAME.$$.out" DEVEL \
+tidb-lightning.test -test.coverprofile="$COV_DIR/cov.$TEST_NAME.$$.out" DEVEL \
     --ca "$TEST_DIR/certs/ca.pem" \
     --cert "$TEST_DIR/certs/lightning.pem" \
     --key "$TEST_DIR/certs/lightning.key" \

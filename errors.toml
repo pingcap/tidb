@@ -146,6 +146,11 @@ error = '''
 storage is not tikv
 '''
 
+["BR:KV:ErrPossibleInconsistency"]
+error = '''
+the cluster state might be inconsistent
+'''
+
 ["BR:PD:ErrPDBatchScanRegion"]
 error = '''
 batch scan region
@@ -404,6 +409,11 @@ ingest tikv failed
 ["Lightning:KV:ErrKVRaftProposalDropped"]
 error = '''
 raft proposal dropped
+'''
+
+["Lightning:KV:ErrNoLeader"]
+error = '''
+write to tikv with no leader returned, region '%d', leader: %d
 '''
 
 ["Lightning:KV:NotLeader"]
@@ -991,6 +1001,11 @@ error = '''
 Partition column values of incorrect type
 '''
 
+["ddl:1656"]
+error = '''
+Cannot use MAXVALUE as value in VALUES IN
+'''
+
 ["ddl:1659"]
 error = '''
 Field '%-.192s' is of a not allowed type for this type of partitioning
@@ -999,6 +1014,11 @@ Field '%-.192s' is of a not allowed type for this type of partitioning
 ["ddl:1674"]
 error = '''
 Statement is unsafe because it uses a system function that may return a different value on the slave
+'''
+
+["ddl:1681"]
+error = '''
+The ZEROFILL attribute is deprecated and will be removed in a future release. Use the LPAD function to zero-pad numbers, or store the formatted numbers in a CHAR column.
 '''
 
 ["ddl:1688"]
@@ -1229,6 +1249,11 @@ Check constraint '%s' is violated.
 ["ddl:3820"]
 error = '''
 Check constraint '%s' refers to non-existing column '%s'.
+'''
+
+["ddl:3822"]
+error = '''
+Duplicate check constraint name '%s'.
 '''
 
 ["ddl:3823"]
@@ -1464,6 +1489,11 @@ Error happened when %s DDL: %s
 ["ddl:8247"]
 error = '''
 Ingest failed: %s
+'''
+
+["ddl:8256"]
+error = '''
+Check ingest environment failed: %s
 '''
 
 ["ddl:8260"]
@@ -1783,12 +1813,12 @@ The FORMAT '%s' is not supported
 
 ["executor:8158"]
 error = '''
-The URI of file location is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access_key_id={your_access_key_id ID}&secret_access_key={your_secret_access_key}&session_token={your_session_token}'
+The URI of %s is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access_key_id={your_access_key_id ID}&secret_access_key={your_secret_access_key}&session_token={your_session_token}'
 '''
 
 ["executor:8159"]
 error = '''
-Access to the source file has been denied. Reason: %s. Please check the URI, access key and secret access key are correct
+Access to the %s has been denied. Reason: %s. Please check the URI, access key and secret access key are correct
 '''
 
 ["executor:8160"]
@@ -1846,6 +1876,16 @@ error = '''
 BRIE Job %d not found
 '''
 
+["executor:8175"]
+error = '''
+Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=%d]
+'''
+
+["executor:8176"]
+error = '''
+Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again.[conn=%d]
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s
@@ -1859,6 +1899,11 @@ Query execution was interrupted, identified as runaway query
 ["executor:8254"]
 error = '''
 Quarantined and interrupted because of being in runaway watch list
+'''
+
+["executor:8255"]
+error = '''
+Unknown background task name '%-.192s'
 '''
 
 ["expression:1139"]
@@ -1894,6 +1939,11 @@ Illegal mix of collations (%s,%s), (%s,%s), (%s,%s) for operation '%s'
 ["expression:1271"]
 error = '''
 Illegal mix of collations for operation '%s'
+'''
+
+["expression:1305"]
+error = '''
+%s %s does not exist
 '''
 
 ["expression:1365"]
@@ -2458,7 +2508,7 @@ Argument %s of GROUPING function is not in GROUP BY
 
 ["planner:3637"]
 error = '''
-Variable '%s' cannot be set using SET_VAR hint.
+Variable '%s' might not be affected by SET_VAR hint.
 '''
 
 ["planner:8006"]
@@ -2764,6 +2814,66 @@ Unknown resource group '%-.192s'
 ["schema:8250"]
 error = '''
 Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_control='on'` to enable the feature
+'''
+
+["server:1040"]
+error = '''
+Too many connections
+'''
+
+["server:1045"]
+error = '''
+Access denied for user '%-.48s'@'%-.255s' (using password: %s)
+'''
+
+["server:1148"]
+error = '''
+The used command is not allowed with this MySQL version
+'''
+
+["server:1153"]
+error = '''
+Got a packet bigger than 'max_allowed_packet' bytes
+'''
+
+["server:1184"]
+error = '''
+Aborted connection %d to db: '%-.192s' user: '%-.48s' host: '%-.255s' (%-.64s)
+'''
+
+["server:1251"]
+error = '''
+Client does not support authentication protocol requested by server; consider upgrading MySQL client
+'''
+
+["server:1698"]
+error = '''
+Access denied for user '%-.48s'@'%-.255s'
+'''
+
+["server:1820"]
+error = '''
+You must reset your password using ALTER USER statement before executing this statement
+'''
+
+["server:3159"]
+error = '''
+Connections using insecure transport are prohibited while --require_secure_transport=ON.
+'''
+
+["server:8052"]
+error = '''
+invalid sequence
+'''
+
+["server:8057"]
+error = '''
+invalid type
+'''
+
+["server:8130"]
+error = '''
+client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk
 '''
 
 ["session:8002"]
@@ -3123,7 +3233,7 @@ Bad Number
 
 ["types:8030"]
 error = '''
-Cast to signed converted positive out-of-range integer to it's negative complement
+Cast to signed converted positive out-of-range integer to its negative complement
 '''
 
 ["types:8031"]
@@ -3209,6 +3319,16 @@ Can't create more than maxPreparedStmtCount statements (current value: %d)
 ["variable:1621"]
 error = '''
 %s variable '%s' is read-only. Use SET %s to assign the value
+'''
+
+["variable:1681"]
+error = '''
+Updating '%s' is deprecated. It will be made read-only in a future release.
+'''
+
+["variable:3721"]
+error = '''
+Invalid default collation %s: utf8mb4_0900_ai_ci or utf8mb4_general_ci or utf8mb4_bin expected
 '''
 
 ["variable:8047"]

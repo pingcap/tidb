@@ -6,22 +6,23 @@ import (
 	"bytes"
 	"context"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetikv"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -44,6 +45,7 @@ func New() Glue {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.SkipRegisterToDashboard = true
 		conf.Log.EnableSlowLog.Store(false)
+		conf.TiKVClient.CoprReqTimeout = 1800 * time.Second
 	})
 	return Glue{}
 }
@@ -186,7 +188,7 @@ func (gs *tidbSession) ExecuteInternal(ctx context.Context, sql string, args ...
 		vars.TxnCtxMu.Unlock()
 	}()
 	// Some of SQLs (like ADMIN RECOVER INDEX) may lazily take effect
-	// when we polling the result set.
+	// when we are polling the result set.
 	// At least call `next` once for triggering theirs side effect.
 	// (Maybe we'd better drain all returned rows?)
 	if rs != nil {
@@ -377,7 +379,7 @@ func (s *mockSession) ExecuteInternal(ctx context.Context, sql string, args ...i
 		return err
 	}
 	// Some of SQLs (like ADMIN RECOVER INDEX) may lazily take effect
-	// when we polling the result set.
+	// when we are polling the result set.
 	// At least call `next` once for triggering theirs side effect.
 	// (Maybe we'd better drain all returned rows?)
 	if rs != nil {

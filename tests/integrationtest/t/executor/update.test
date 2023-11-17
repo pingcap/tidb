@@ -1,0 +1,268 @@
+# TestUpdateGenColInTxn
+drop table if exists t;
+create table t(a bigint, b bigint as (a+1));
+begin;
+insert into t(a) values(1);
+-- error 3105
+update t set b=6 where b=2;
+commit;
+select * from t;
+
+# TestUpdateWithAutoidSchema
+drop table if exists t1, t2, t3;
+create table t1(id int primary key auto_increment, n int);
+create table t2(id int primary key, n float auto_increment, key I_n(n));
+create table t3(id int primary key, n double auto_increment, key I_n(n));
+insert into t1 set n = 1;
+select * from t1 where id = 1;
+update t1 set id = id+1;
+select * from t1 where id = 2;
+insert into t1 set n = 2;
+select * from t1 where id = 3;
+update t1 set id = id + '1.1' where id = 3;
+select * from t1 where id = 4;
+insert into t1 set n = 3;
+select * from t1 where id = 5;
+update t1 set id = id + '0.5' where id = 5;
+select * from t1 where id = 6;
+insert into t1 set n = 4;
+select * from t1 where id = 7;
+insert into t2 set id = 1;
+select * from t2 where id = 1;
+update t2 set n = n+1;
+select * from t2 where id = 1;
+insert into t2 set id = 2;
+select * from t2 where id = 2;
+update t2 set n = n + '2.2';
+select * from t2 where id = 2;
+insert into t2 set id = 3;
+select * from t2 where id = 3;
+update t2 set n = n + '0.5' where id = 3;
+select * from t2 where id = 3;
+insert into t2 set id = 4;
+select * from t2 where id = 4;
+insert into t3 set id = 1;
+select * from t3 where id = 1;
+update t3 set n = n+1;
+select * from t3 where id = 1;
+insert into t3 set id = 2;
+select * from t3 where id = 2;
+update t3 set n = n + '3.3';
+select * from t3 where id = 2;
+insert into t3 set id = 3;
+select * from t3 where id = 3;
+update t3 set n = n + '0.5' where id = 3;
+select * from t3 where id = 3;
+insert into t3 set id = 4;
+select * from t3 where id = 4;
+
+# TestUpdateMultiDatabaseTable
+drop table if exists t;
+drop database if exists test2;
+create database test2;
+create table t(a int, b int generated always  as (a+1) virtual);
+create table test2.t(a int, b int generated always  as (a+1) virtual);
+update t, test2.t set executor__update.t.a=1;
+drop database test2;
+
+# TestUpdateSwapColumnValues
+drop table if exists t1, t2;
+create table t1 (c_str varchar(40));
+create table t2 (c_str varchar(40));
+insert into t1 values ('Alice');
+insert into t2 values ('Bob');
+select t1.c_str, t2.c_str from t1, t2 where t1.c_str <= t2.c_str;
+update t1, t2 set t1.c_str = t2.c_str, t2.c_str = t1.c_str where t1.c_str <= t2.c_str;
+select t1.c_str, t2.c_str from t1, t2 where t1.c_str <= t2.c_str;
+drop table if exists t;
+create table t (a int, b int);
+insert into t values(1, 2);
+select * from t;
+update t set a=b, b=a;
+select * from t;
+drop table if exists t;
+create table t (a int, b int);
+insert into t values (1,3);
+select * from t;
+update t set a=b, b=a;
+select * from t;
+drop table if exists t;
+create table t (a int, b int, c int as (-a) virtual, d int as (-b) stored);
+insert into t(a, b) values (10, 11), (20, 22);
+select * from t;
+update t set a=b, b=a;
+select * from t;
+update t set b=30, a=b;
+select * from t;
+
+# TestMultiUpdateOnSameTable
+drop table if exists t;
+create table t(x int, y int);
+insert into t values();
+update t t1, t t2 set t2.y=1, t1.x=2;
+select * from t;
+update t t1, t t2 set t1.x=t2.y, t2.y=t1.x;
+select * from t;
+
+## Update generated columns
+drop table if exists t;
+create table t(x int, y int, z int as (x+10) stored, w int as (y-10) virtual);
+insert into t(x, y) values(1, 2), (3, 4);
+update t t1, t t2 set t2.y=1, t1.x=2 where t1.x=1;
+select * from t;
+update t t1, t t2 set t1.x=5, t2.y=t1.x where t1.x=3;
+select * from t;
+drop table if exists t;
+create table t(a int, b int, c int as (a+b) stored);
+insert into t(a, b) values (1, 2);
+update t t1, t t2 set t2.a=3;
+select * from t;
+update t t1, t t2 set t1.a=4, t2.b=5;
+select * from t;
+
+## Update primary keys
+drop table if exists t;
+create table t (a int primary key);
+insert into t values (1), (2);
+update t set a=a+2;
+select * from t;
+update t m, t n set m.a = n.a+10 where m.a=n.a;
+select * from t;
+drop table if exists t;
+create table t (a int primary key, b int);
+insert into t values (1,3), (2,4);
+-- error 1706
+update t m, t n set m.a = n.a+10, n.b = m.b+1 where m.a=n.a;
+drop table if exists t;
+create table t (a int, b int, c int, primary key(a, b));
+insert into t values (1,3,5), (2,4,6);
+update t m, t n set m.a = n.a+10, m.b = n.b+10 where m.a=n.a;
+select * from t;
+update t m, t n, t q set q.c=m.a+n.b, n.c = m.a+1, m.c = n.b+1 where m.b=n.b AND m.a=q.a;
+select * from t;
+-- error 1706
+update t m, t n, t q set m.a = m.a+1, n.c = n.c-1, q.c = q.a+q.b where m.b=n.b and n.b=q.b;
+
+# TestUpdateClusterIndex
+set tidb_enable_clustered_index = on;
+drop table if exists t;
+create table t(id varchar(200) primary key, v int);
+insert into t(id, v) values ('abc', 233);
+select id, v from t where id = 'abc';
+update t set id = 'dfg' where id = 'abc';
+select * from t;
+update t set id = 'aaa', v = 333 where id = 'dfg';
+select * from t where id = 'aaa';
+update t set v = 222 where id = 'aaa';
+select * from t where id = 'aaa';
+insert into t(id, v) values ('bbb', 111);
+-- error 1062
+update t set id = 'bbb' where id = 'aaa';
+drop table if exists ut3pk;
+create table ut3pk(id1 varchar(200), id2 varchar(200), v int, id3 int, primary key(id1, id2, id3));
+insert into ut3pk(id1, id2, v, id3) values ('aaa', 'bbb', 233, 111);
+select id1, id2, id3, v from ut3pk where id1 = 'aaa' and id2 = 'bbb' and id3 = 111;
+update ut3pk set id1 = 'abc', id2 = 'bbb2', id3 = 222, v = 555 where id1 = 'aaa' and id2 = 'bbb' and id3 = 111;
+select id1, id2, id3, v from ut3pk where id1 = 'abc' and id2 = 'bbb2' and id3 = 222;
+select id1, id2, id3, v from ut3pk;
+update ut3pk set v = 666 where id1 = 'abc' and id2 = 'bbb2' and id3 = 222;
+select id1, id2, id3, v from ut3pk;
+insert into ut3pk(id1, id2, id3, v) values ('abc', 'bbb3', 222, 777);
+-- error 1062
+update ut3pk set id2 = 'bbb3' where id1 = 'abc' and id2 = 'bbb2' and id3 = 222;
+drop table if exists ut1pku;
+create table ut1pku(id varchar(200) primary key, uk int, v int, unique key ukk(uk));
+insert into ut1pku(id, uk, v) values('a', 1, 2), ('b', 2, 3);
+select * from ut1pku;
+update ut1pku set uk = 3 where id = 'a';
+select * from ut1pku;
+-- error 1062
+update ut1pku set uk = 2 where id = 'a';
+select * from ut1pku;
+drop table if exists t;
+create table t(a char(10) primary key, b char(10));
+insert into t values('a', 'b');
+update t set a='c' where t.a='a' and b='b';
+select * from t;
+drop table if exists s;
+create table s (a int, b int, c int, primary key (a, b));
+insert s values (3, 3, 3), (5, 5, 5);
+update s set c = 10 where a = 3;
+select * from s;
+set tidb_enable_clustered_index = default;
+
+# TestDeleteClusterIndex
+set tidb_enable_clustered_index = on;
+drop table if exists t;
+create table t(id varchar(200) primary key, v int);
+insert into t(id, v) values ('abc', 233);
+delete from t where id = 'abc';
+select * from t;
+select * from t where id = 'abc';
+drop table if exists it3pk;
+create table it3pk(id1 varchar(200), id2 varchar(200), v int, id3 int, primary key(id1, id2, id3));
+insert into it3pk(id1, id2, v, id3) values ('aaa', 'bbb', 233, 111);
+delete from it3pk where id1 = 'aaa' and id2 = 'bbb' and id3 = 111;
+select * from it3pk;
+select * from it3pk where id1 = 'aaa' and id2 = 'bbb' and id3 = 111;
+insert into it3pk(id1, id2, v, id3) values ('aaa', 'bbb', 433, 111);
+select * from it3pk where id1 = 'aaa' and id2 = 'bbb' and id3 = 111;
+drop table if exists dt3pku;
+create table dt3pku(id varchar(200) primary key, uk int, v int, unique key uuk(uk));
+insert into dt3pku(id, uk, v) values('a', 1, 2);
+delete from dt3pku where id = 'a';
+select * from dt3pku;
+insert into dt3pku(id, uk, v) values('a', 1, 2);
+drop table if exists s1;
+create table s1 (a int, b int, c int, primary key (a, b));
+insert s1 values (3, 3, 3), (5, 5, 5);
+delete from s1 where a = 3;
+select * from s1;
+set tidb_enable_clustered_index = default;
+
+# TestReplaceClusterIndex
+set tidb_enable_clustered_index = on;
+drop table if exists rt1pk;
+create table rt1pk(id varchar(200) primary key, v int);
+replace into rt1pk(id, v) values('abc', 1);
+select * from rt1pk;
+replace into rt1pk(id, v) values('bbb', 233), ('abc', 2);
+select * from rt1pk;
+drop table if exists rt3pk;
+create table rt3pk(id1 timestamp, id2 time, v int, id3 year, primary key(id1, id2, id3));
+replace into rt3pk(id1, id2,id3, v) values('2018-01-01 11:11:11', '22:22:22', '2019', 1);
+select * from rt3pk;
+replace into rt3pk(id1, id2, id3, v) values('2018-01-01 11:11:11', '22:22:22', '2019', 2);
+select * from rt3pk;
+drop table if exists rt1pk1u;
+create table rt1pk1u(id varchar(200) primary key, uk int, v int, unique key uuk(uk));
+replace into rt1pk1u(id, uk, v) values("abc", 2, 1);
+select * from rt1pk1u;
+replace into rt1pk1u(id, uk, v) values("aaa", 2, 11);
+select * from rt1pk1u;
+set tidb_enable_clustered_index = default;
+
+# TestOutOfRangeWithUnsigned
+drop table if exists t;
+create table t(ts int(10) unsigned NULL DEFAULT NULL);
+insert into t values(1);
+-- error 1690
+update t set ts = IF(ts < (0 - ts), 1,1) where ts>0;
+
+# TestIssue23553
+drop table if exists tt;
+create table tt (m0 varchar(64), status tinyint not null);
+insert into tt values('1',0),('1',0),('1',0);
+update tt a inner join (select m0 from tt where status!=1 group by m0 having count(*)>1) b on a.m0=b.m0 set a.status=1;
+
+# TestUpdateUnsignedWithOverflow
+# see issue https://github.com/pingcap/tidb/issues/47816
+drop table if exists t1;
+create table t1(id int, a int unsigned);
+set sql_mode='';
+insert into t1 values(1, 10), (2, 20);
+update t1 set a='-1' where id=1;
+update t1 set a='1000000000000000000' where id=2;
+select id, a from t1 order by id asc;
+set sql_mode=default;
+

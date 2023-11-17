@@ -81,6 +81,18 @@ func (s *MemStorage) DeleteFile(ctx context.Context, name string) error {
 	return nil
 }
 
+// DeleteFiles delete the files in storage
+// It implements the `ExternalStorage` interface
+func (s *MemStorage) DeleteFiles(ctx context.Context, names []string) error {
+	for _, name := range names {
+		err := s.DeleteFile(ctx, name)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // WriteFile file to storage.
 // It implements the `ExternalStorage` interface
 func (s *MemStorage) WriteFile(ctx context.Context, name string, data []byte) error {
@@ -145,12 +157,9 @@ func (s *MemStorage) FileExists(ctx context.Context, name string) (bool, error) 
 
 // Open opens a Reader by file path.
 // It implements the `ExternalStorage` interface
-func (s *MemStorage) Open(ctx context.Context, filePath string) (ExternalFileReader, error) {
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
-		// continue on
+func (s *MemStorage) Open(ctx context.Context, filePath string, o *ReaderOption) (ExternalFileReader, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, errors.Trace(err)
 	}
 	if !path.IsAbs(filePath) {
 		return nil, errors.Errorf("file name is not an absolute path: %s", filePath)
@@ -159,9 +168,22 @@ func (s *MemStorage) Open(ctx context.Context, filePath string) (ExternalFileRea
 	if !ok {
 		return nil, errors.Errorf("cannot find the file: %s", filePath)
 	}
-	r := bytes.NewReader(theFile.GetData())
+	data := theFile.GetData()
+	// just for simplicity, different from other implementation, MemStorage can't
+	// seek beyond [o.StartOffset, o.EndOffset)
+	start, end := 0, len(data)
+	if o != nil {
+		if o.StartOffset != nil {
+			start = int(*o.StartOffset)
+		}
+		if o.EndOffset != nil {
+			end = int(*o.EndOffset)
+		}
+	}
+	r := bytes.NewReader(data[start:end])
 	return &memFileReader{
-		br: r,
+		br:   r,
+		size: int64(len(data)),
 	}, nil
 }
 
@@ -219,7 +241,7 @@ func (*MemStorage) URI() string {
 // Create creates a file and returning a writer to write data into.
 // When the writer is closed, the data is stored in the file.
 // It implements the `ExternalStorage` interface
-func (s *MemStorage) Create(ctx context.Context, name string) (ExternalFileWriter, error) {
+func (s *MemStorage) Create(ctx context.Context, name string, _ *WriterOption) (ExternalFileWriter, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -267,6 +289,7 @@ func (s *MemStorage) Rename(ctx context.Context, oldFileName, newFileName string
 // memFileReader is the struct to read data from an opend mem storage file
 type memFileReader struct {
 	br       *bytes.Reader
+	size     int64
 	isClosed atomic.Bool
 }
 
@@ -286,13 +309,17 @@ func (r *memFileReader) Close() error {
 	return nil
 }
 
-// Seeker seekds the offset inside the mem storage file
+// Seek seeks the offset inside the mem storage file
 // It implements the `io.Seeker` interface
 func (r *memFileReader) Seek(offset int64, whence int) (int64, error) {
 	if r.isClosed.Load() {
 		return 0, errors.New("reader closed")
 	}
 	return r.br.Seek(offset, whence)
+}
+
+func (r *memFileReader) GetFileSize() (int64, error) {
+	return r.size, nil
 }
 
 // memFileReader is the struct to write data into the opened mem storage file

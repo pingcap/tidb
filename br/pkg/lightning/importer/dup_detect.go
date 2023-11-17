@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
@@ -27,14 +28,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/duplicate"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/extsort"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/extsort"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -71,7 +71,7 @@ func (d *dupDetector) run(
 		return errors.Trace(err)
 	}
 
-	handlerConstructor := makeDupHandlerConstructor(ignoreRows, d.rc.cfg.TikvImporter.OnDuplicate)
+	handlerConstructor := makeDupHandlerConstructor(ignoreRows, d.rc.cfg.Conflict.Strategy)
 	numDups, err = detector.Detect(ctx, &duplicate.DetectOptions{
 		Concurrency:        d.rc.cfg.App.RegionConcurrency,
 		HandlerConstructor: handlerConstructor,

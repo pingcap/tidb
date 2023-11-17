@@ -14,7 +14,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/xitongsys/parquet-go/parquet"
 	preader "github.com/xitongsys/parquet-go/reader"
 	"github.com/xitongsys/parquet-go/source"
@@ -68,7 +68,7 @@ func (r *readerWrapper) Open(name string) (source.ParquetFile, error) {
 	if len(name) == 0 {
 		name = r.path
 	}
-	reader, err := r.store.Open(r.ctx, name)
+	reader, err := r.store.Open(r.ctx, name, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -134,7 +134,7 @@ func OpenParquetReader(
 		}, nil
 	}
 
-	r, err := store.Open(ctx, path)
+	r, err := store.Open(ctx, path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +180,7 @@ func ReadParquetFileRowCountByFile(
 	store storage.ExternalStorage,
 	fileMeta SourceFileMeta,
 ) (int64, error) {
-	r, err := store.Open(ctx, fileMeta.Path)
+	r, err := store.Open(ctx, fileMeta.Path, nil)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

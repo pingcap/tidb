@@ -27,7 +27,7 @@ uniq_row_count=$( sed '1d' "${data_file}" | awk -F, '{print $1}' | sort | uniq -
 duplicated_row_count=$(( ${total_row_count} - ${uniq_row_count} ))
 
 run_sql 'DROP TABLE IF EXISTS mytest.testtbl'
-run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v1'
+run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v2'
 
 stderr_file="/tmp/${TEST_NAME}.stderr"
 
@@ -39,13 +39,13 @@ fi
 set -e
 
 err_msg=$( cat << EOF
-tidb lightning encountered error: collect local duplicate rows failed: The number of conflict errors exceeds the threshold configured by \`max-error.conflict\`: '4'
+tidb lightning encountered error: collect local duplicate rows failed: The number of conflict errors exceeds the threshold configured by \`conflict.threshold\`: '4'
 EOF
 )
 cat "${stderr_file}"
 grep -q "${err_msg}" "${stderr_file}"
 
-run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_error_v1'
+run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_error_v2'
 # Although conflict error number exceeds the max-error limit, 
 # all the conflict errors are recorded, 
 # because recording of conflict errors are executed batch by batch (batch size 1024), 
@@ -55,11 +55,11 @@ check_contains "COUNT(*): ${duplicated_row_count}"
 # import a second time
 
 run_sql 'DROP TABLE IF EXISTS mytest.testtbl'
-run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v1'
+run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v2'
 
 run_lightning --backend local --config "${mydir}/normal_config.toml"
 
-run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_error_v1'
+run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_error_v2'
 check_contains "COUNT(*): ${duplicated_row_count}"
 
 # Check remaining records in the target table
@@ -69,28 +69,48 @@ check_contains "COUNT(*): ${uniq_row_count}"
 # import a third time
 
 run_sql 'DROP TABLE IF EXISTS mytest.testtbl'
-run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v1'
+run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v2'
 
 run_lightning --backend local --config "${mydir}/normal_config_old_style.toml"
 
-run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_error_v1'
+run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_error_v2'
 check_contains "COUNT(*): ${duplicated_row_count}"
 
 # Check remaining records in the target table
 run_sql 'SELECT COUNT(*) FROM mytest.testtbl'
 check_contains "COUNT(*): ${uniq_row_count}"
 
-# Check tidb backend record duplicate entry in duplicate_records table
-run_sql 'DROP TABLE IF EXISTS lightning_task_info.duplicate_records'
+# Check tidb backend record duplicate entry in conflict_records table
+run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_records'
 run_lightning --backend tidb --config "${mydir}/tidb.toml"
-run_sql 'SELECT COUNT(*) FROM lightning_task_info.duplicate_records'
+run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_records'
 check_contains "COUNT(*): 10"
-run_sql 'SELECT * FROM lightning_task_info.duplicate_records WHERE offset = 149'
+run_sql 'SELECT * FROM lightning_task_info.conflict_records WHERE offset = 149'
 check_contains "error: Error 1062 (23000): Duplicate entry '5' for key 'testtbl.PRIMARY'"
 check_contains "row_data: ('5','bbb05')"
 
-# Check max-error-record can limit the size of duplicate_records table
+# Check max-error-record can limit the size of conflict_records table
 run_sql 'DROP DATABASE IF EXISTS lightning_task_info'
-run_lightning --backend tidb --config "${mydir}/tidb-limit-record.toml" 2>&1 | grep "\`lightning_task_info\`.\`duplicate_records\`" | grep -q "15"
-run_sql 'SELECT COUNT(*) FROM lightning_task_info.duplicate_records'
+run_sql 'DROP DATABASE IF EXISTS mytest'
+run_lightning --backend tidb --config "${mydir}/tidb-limit-record.toml" 2>&1 | grep "\`lightning_task_info\`.\`conflict_records\`" | grep -q "5"
+run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_records'
 check_contains "COUNT(*): 1"
+
+# Check conflict.threshold
+run_sql 'DROP DATABASE IF EXISTS lightning_task_info'
+run_sql 'DROP DATABASE IF EXISTS mytest'
+cp "${mydir}/tidb-limit-record.toml" "${TEST_DIR}/tidb-limit-record.toml"
+sed -i.bak "s/threshold = 5/threshold = 4/g" "${TEST_DIR}/tidb-limit-record.toml"
+run_lightning --backend tidb --config "${TEST_DIR}/tidb-limit-record.toml" 2>&1 | grep -q "The number of conflict errors exceeds the threshold"
+
+# Check when strategy is "error", the stderr, log and duplicate record table all contains the error message
+run_sql 'DROP DATABASE IF EXISTS lightning_task_info'
+run_sql 'DROP DATABASE IF EXISTS mytest'
+rm "${TEST_DIR}/lightning.log"
+run_lightning --backend tidb --config "${mydir}/tidb-error.toml" 2>&1 | grep -q "Error 1062 (23000): Duplicate entry '1' for key 'testtbl.PRIMARY'"
+check_contains "Error 1062 (23000): Duplicate entry '1' for key 'testtbl.PRIMARY'" "${TEST_DIR}/lightning.log"
+run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_records'
+check_contains "COUNT(*): 1"
+run_sql 'SELECT * FROM lightning_task_info.conflict_records'
+check_contains "error: Error 1062 (23000): Duplicate entry '1' for key 'testtbl.PRIMARY'"
+check_contains "row_data: ('1','bbb01')"

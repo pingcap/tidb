@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "storewatch",
+    srcs = ["watching.go"],
+    importpath = "github.com/pingcap/tidb/br/pkg/utils/storewatch",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/conn",
+        "//br/pkg/conn/util",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+    ],
+)
+
+go_test(
+    name = "storewatch_test",
+    timeout = "short",
+    srcs = ["watching_test.go"],
+    flaky = True,
+    shard_count = 3,
+    deps = [
+        ":storewatch",
+        "//br/pkg/conn/util",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_pd_client//:client",
+    ],
+)

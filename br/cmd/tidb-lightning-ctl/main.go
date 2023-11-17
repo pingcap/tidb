@@ -128,7 +128,7 @@ func compactCluster(ctx context.Context, cfg *config.Config, tls *common.TLS) er
 		tls.WithHost(cfg.TiDB.PdAddr),
 		tikv.StoreStateDisconnected,
 		func(c context.Context, store *tikv.Store) error {
-			return tikv.Compact(c, tls, store.Address, importer.FullLevelCompact)
+			return tikv.Compact(c, tls, store.Address, importer.FullLevelCompact, "")
 		},
 	)
 }
@@ -200,7 +200,7 @@ func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tls *common
 		for _, table := range targetTables {
 			for engineID := table.MinEngineID; engineID <= table.MaxEngineID; engineID++ {
 				fmt.Fprintln(os.Stderr, "Closing and cleaning up engine:", table.TableName, engineID)
-				_, eID := backend.MakeUUID(table.TableName, engineID)
+				_, eID := backend.MakeUUID(table.TableName, int64(engineID))
 				engine := local.Engine{UUID: eID}
 				err := engine.Cleanup(cfg.TikvImporter.SortedKVDir)
 				if err != nil {

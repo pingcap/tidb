@@ -19,6 +19,7 @@ import (
 	"context"
 	"io"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -26,10 +27,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
-	tidbconfig "github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mathutil"
-	"golang.org/x/exp/slices"
+	tidbconfig "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/types"
 )
 
 var (
@@ -267,7 +266,7 @@ func (parser *CSVParser) peekBytes(cnt int) ([]byte, error) {
 	if len(parser.buf) == 0 {
 		return nil, io.EOF
 	}
-	cnt = mathutil.Min(cnt, len(parser.buf))
+	cnt = min(cnt, len(parser.buf))
 	return parser.buf[:cnt], nil
 }
 
