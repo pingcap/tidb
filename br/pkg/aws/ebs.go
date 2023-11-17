@@ -366,7 +366,7 @@ func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) 
 	startIdx := 0
 	retryCount := 0
 	for startIdx < len(snapShotIDs) {
-		creditBalance, err := e.getFSRCreditBalance(1*time.Minute, snapShotIDs[startIdx])
+		creditBalance, err := e.getFSRCreditBalance(snapShotIDs[startIdx])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -439,28 +439,16 @@ func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) 
 	}
 }
 
-// getFSRCreditBalance is used to get maximum fsr credit balance of snapshot for last duration window
-func (e *EC2Session) getFSRCreditBalance(duration time.Duration, snapshotID *string) (float64, error) {
+// getFSRCreditBalance is used to get maximum fsr credit balance of snapshot for last 5 minutes
+func (e *EC2Session) getFSRCreditBalance(snapshotID *string) (float64, error) {
 	// Set the time range to query for metrics
-	startTime := time.Now().Add(-duration)
+	startTime := time.Now().Add(-5 * time.Minute)
 	endTime := time.Now()
 
 	// Prepare the input for the GetMetricData API call
-	input := &cloudwatch.GetMetricDataInput{
-		StartTime:         aws.Time(startTime),
-		EndTime:           aws.Time(endTime),
-		ScanBy:            aws.String("TimestampDescending"),
-		MetricDataQueries: []*cloudwatch.MetricDataQuery{},
-		MaxDatapoints:     aws.Int64(1),
-	}
-
-	// Set up the query for the Fast Snapshot Restore Credits Balance metric
-	query := &cloudwatch.MetricDataQuery{
-		Id:         aws.String("fsrCreditQuery"),
-		MetricStat: &cloudwatch.MetricStat{},
-	}
-
-	query.MetricStat.Metric = &cloudwatch.Metric{
+	input := &cloudwatch.GetMetricStatisticsInput{
+		StartTime:  aws.Time(startTime),
+		EndTime:    aws.Time(endTime),
 		Namespace:  aws.String("AWS/EBS"),
 		MetricName: aws.String("FastSnapshotRestoreCreditsBalance"),
 		Dimensions: []*cloudwatch.Dimension{
@@ -469,33 +457,24 @@ func (e *EC2Session) getFSRCreditBalance(duration time.Duration, snapshotID *str
 				Value: snapshotID,
 			},
 		},
+		Period:     aws.Int64(300),
+		Statistics: []*string{aws.String("Maximum")},
 	}
 
-	query.MetricStat.Period = aws.Int64(int64(duration.Seconds()))
-	query.MetricStat.Stat = aws.String("Average")
-	query.MetricStat.Unit = aws.String("Count")
-
-	input.MetricDataQueries = append(input.MetricDataQueries, query)
-
-	// Call GetMetricData API to retrieve the FastSnapshotRestoreCreditsBalance metric data
-	resp, err := e.cloudwatchClient.GetMetricDataWithContext(context.Background(), input)
+	// Call cloudwatchClient API to retrieve the FastSnapshotRestoreCreditsBalance metric data
+	resp, err := e.cloudwatchClient.GetMetricStatisticsWithContext(context.Background(), input)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 
 	// parse the response
-	if len(resp.MetricDataResults) == 0 {
+	if len(resp.Datapoints) == 0 {
 		log.Warn("No result for metric FastSnapshotRestoreCreditsBalance returned", zap.Stringp("snapshot", snapshotID))
 		return 0, nil
 	} else {
-		result := resp.MetricDataResults[0]
-		if len(result.Values) == 0 {
-			log.Warn("No value for metric FastSnapshotRestoreCreditsBalance returned", zap.Stringp("snapshot", snapshotID))
-			return 0, nil
-		} else {
-			log.Info("credit balance", zap.Stringp("snapshot", snapshotID), zap.Float64p("credit", result.Values[0]))
-			return *result.Values[0], nil
-		}
+		result := resp.Datapoints[0]
+		log.Info("credit balance", zap.Stringp("snapshot", snapshotID), zap.Float64p("credit", result.SampleCount))
+		return *result.SampleCount, nil
 	}
 }
 
