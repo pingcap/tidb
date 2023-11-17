@@ -30,10 +30,10 @@ go_test(
     name = "prepare_snap_test",
     timeout = "short",
     srcs = ["prepare_test.go"],
-    embed = [":prepare_snap"],
     flaky = True,
-    shard_count = 3,
+    shard_count = 5,
     deps = [
+        ":prepare_snap",
         "//pkg/store/mockstore/unistore",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
