@@ -405,7 +405,10 @@ func getTaskPlanCost(t task, op *physicalOptimizeOp) (float64, bool, error) {
 	}
 
 	// use the new cost interface
-	var taskType property.TaskType
+	var (
+		taskType         property.TaskType
+		indexPartialCost float64
+	)
 	switch t.(type) {
 	case *rootTask:
 		taskType = property.RootTaskType
@@ -442,6 +445,20 @@ func getTaskPlanCost(t task, op *physicalOptimizeOp) (float64, bool, error) {
 				taskType = property.MppTaskType
 			}
 		}
+
+		// Detail reason ref about comment in function `convertToIndexMergeScan`
+		// for cop task with {indexPlan=nil, tablePlan=xxx, idxMergePartPlans=[x,x,x], indexPlanFinished=true} we should
+		// plus the partial index plan cost into the final cost. Because t.plan() the below code used only calculate the
+		// cost about table plan.
+		if cop.indexPlanFinished && len(cop.idxMergePartPlans) != 0 {
+			for _, partialScan := range cop.idxMergePartPlans {
+				partialCost, err := getPlanCost(partialScan, taskType, NewDefaultPlanCostOption().WithOptimizeTracer(op))
+				if err != nil {
+					return 0, false, err
+				}
+				indexPartialCost += partialCost
+			}
+		}
 	case *mppTask:
 		taskType = property.MppTaskType
 	default:
@@ -449,6 +466,7 @@ func getTaskPlanCost(t task, op *physicalOptimizeOp) (float64, bool, error) {
 	}
 	if t.plan() == nil {
 		// It's a very special case for index merge case.
+		// t.plan() == nil in index merge COP case, it means indexPlanFinished is false in other words.
 		cost := 0.0
 		copTsk := t.(*copTask)
 		for _, partialScan := range copTsk.idxMergePartPlans {
@@ -461,7 +479,7 @@ func getTaskPlanCost(t task, op *physicalOptimizeOp) (float64, bool, error) {
 		return cost, false, nil
 	}
 	cost, err := getPlanCost(t.plan(), taskType, NewDefaultPlanCostOption().WithOptimizeTracer(op))
-	return cost, false, err
+	return cost + indexPartialCost, false, err
 }
 
 type physicalOptimizeOp struct {
@@ -991,6 +1009,13 @@ func (ds *DataSource) isPointGetConvertableSchema() bool {
 	return true
 }
 
+// exploreEnforcedPlan determines whether to explore enforced plans for this DataSource if it has already found an unenforced plan.
+// See #46177 for more information.
+func (ds *DataSource) exploreEnforcedPlan() bool {
+	// default value is false to keep it compatible with previous versions.
+	return fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix46177, false)
+}
+
 // findBestTask implements the PhysicalPlan interface.
 // It will enumerate all the available indices and choose a plan with least cost.
 func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (t task, cntPlan int64, err error) {
@@ -1031,23 +1056,25 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		return
 	}
 	var cnt int64
+	var unenforcedTask task
 	// If prop.CanAddEnforcer is true, the prop.SortItems need to be set nil for ds.findBestTask.
 	// Before function return, reset it for enforcing task prop and storing map<prop,task>.
 	oldProp := prop.CloneEssentialFields()
 	if prop.CanAddEnforcer {
 		// First, get the bestTask without enforced prop
 		prop.CanAddEnforcer = false
-		t, cnt, err = ds.findBestTask(prop, planCounter, opt)
+		unenforcedTask, cnt, err = ds.findBestTask(prop, planCounter, opt)
 		if err != nil {
 			return nil, 0, err
 		}
-		prop.CanAddEnforcer = true
-		if t != invalidTask {
-			ds.storeTask(prop, t)
-			cntPlan = cnt
-			return
+		if !unenforcedTask.invalid() && !ds.exploreEnforcedPlan() {
+			ds.storeTask(prop, unenforcedTask)
+			return unenforcedTask, cnt, nil
 		}
-		// Next, get the bestTask with enforced prop
+
+		// Then, explore the bestTask with enforced prop
+		prop.CanAddEnforcer = true
+		cntPlan += cnt
 		prop.SortItems = []property.SortItem{}
 		prop.MPPPartitionTp = property.AnyType
 	} else if prop.MPPPartitionTp != property.AnyType {
@@ -1062,13 +1089,20 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			t = enforceProperty(prop, t, ds.Plan.SCtx())
 			prop.CanAddEnforcer = true
 		}
-		ds.storeTask(prop, t)
-		if ds.SampleInfo != nil && !t.invalid() {
-			if _, ok := t.plan().(*PhysicalTableSample); !ok {
-				warning := expression.ErrInvalidTableSample.GenWithStackByArgs("plan not supported")
-				ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
+
+		if unenforcedTask != nil && !unenforcedTask.invalid() {
+			curIsBest, cerr := compareTaskCost(ds.SCtx(), unenforcedTask, t, opt)
+			if cerr != nil {
+				err = cerr
+				return
+			}
+			if curIsBest {
+				t = unenforcedTask
 			}
 		}
+
+		ds.storeTask(prop, t)
+		err = validateTableSamplePlan(ds, t, err)
 	}()
 
 	t, err = ds.tryToGetDualTask()
@@ -1358,6 +1392,11 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	if remainingFilters != nil {
 		cop.rootTaskConds = remainingFilters
 	}
+	// after we lift the limitation of intersection and cop-type task in the code in this
+	// function above, we could set its index plan finished as true once we found its table
+	// plan is pure table scan below.
+	// And this will cause cost underestimation when we estimate the cost of the entire cop
+	// task plan in function `getTaskPlanCost`.
 	if prop.TaskTp == property.RootTaskType {
 		cop.indexPlanFinished = true
 		task = cop.convertToRootTask(ds.SCtx())
@@ -2222,10 +2261,8 @@ func (ds *DataSource) convertToSampleTable(prop *property.PhysicalProperty,
 		return invalidTask, nil
 	}
 	if candidate.isMatchProp {
-		// TableSample on partition table can't keep order.
-		if ds.tableInfo.GetPartitionInfo() != nil {
-			return invalidTask, nil
-		}
+		// Disable keep order property for sample table path.
+		return invalidTask, nil
 	}
 	p := PhysicalTableSample{
 		TableSampleInfo: ds.SampleInfo,
@@ -2596,4 +2633,16 @@ func pushDownNot(ctx sessionctx.Context, conds []expression.Expression) []expres
 		conds[i] = expression.PushDownNot(ctx, cond)
 	}
 	return conds
+}
+
+func validateTableSamplePlan(ds *DataSource, t task, err error) error {
+	if err != nil {
+		return err
+	}
+	if ds.SampleInfo != nil && !t.invalid() {
+		if _, ok := t.plan().(*PhysicalTableSample); !ok {
+			return expression.ErrInvalidTableSample.GenWithStackByArgs("plan not supported")
+		}
+	}
+	return nil
 }

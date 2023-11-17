@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
-	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -43,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	kvutil "github.com/tikv/client-go/v2/util"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -185,7 +186,11 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		asyncNotifyEvent(d, &ddlutil.Event{Tp: model.ActionAddColumn, TableInfo: tblInfo, ColumnInfos: []*model.ColumnInfo{columnInfo}})
+		addColumnEvent := statsutil.NewAddColumnEvent(
+			tblInfo,
+			[]*model.ColumnInfo{columnInfo},
+		)
+		asyncNotifyEvent(d, addColumnEvent)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", columnInfo.State)
 	}
@@ -757,7 +762,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		job.SnapshotVer = 0
 		job.SchemaState = model.StateWriteReorganization
 	case model.StateWriteReorganization:
-		tbl, err := getTable(d.store, dbInfo.ID, tblInfo)
+		tbl, err := getTable((*asAutoIDRequirement)(d), dbInfo.ID, tblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -790,7 +795,11 @@ func (w *worker) doModifyColumnTypeWithData(
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		// Refactor the job args to add the old index ids into delete range table.
 		job.Args = []interface{}{rmIdxIDs, getPartitionIDs(tblInfo)}
-		asyncNotifyEvent(d, &ddlutil.Event{Tp: model.ActionModifyColumn, TableInfo: tblInfo, ColumnInfos: []*model.ColumnInfo{changingCol}})
+		modifyColumnEvent := statsutil.NewModifyColumnEvent(
+			tblInfo,
+			[]*model.ColumnInfo{changingCol},
+		)
+		asyncNotifyEvent(d, modifyColumnEvent)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", changingCol.State)
 	}
@@ -1687,6 +1696,18 @@ func checkNewAutoRandomBits(idAccessors meta.AutoIDAccessors, oldCol *model.Colu
 	return nil
 }
 
+type asAutoIDRequirement ddlCtx
+
+var _ autoid.Requirement = &asAutoIDRequirement{}
+
+func (r *asAutoIDRequirement) Store() kv.Storage {
+	return r.store
+}
+
+func (r *asAutoIDRequirement) GetEtcdClient() *clientv3.Client {
+	return r.etcdCli
+}
+
 // applyNewAutoRandomBits set auto_random bits to TableInfo and
 // migrate auto_increment ID to auto_random ID if possible.
 func applyNewAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo,
@@ -1696,7 +1717,7 @@ func applyNewAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo,
 	if !needMigrateFromAutoIncToAutoRand {
 		return nil
 	}
-	autoRandAlloc := autoid.NewAllocatorsFromTblInfo(d.store, dbInfo.ID, tblInfo).Get(autoid.AutoRandomType)
+	autoRandAlloc := autoid.NewAllocatorsFromTblInfo((*asAutoIDRequirement)(d), dbInfo.ID, tblInfo).Get(autoid.AutoRandomType)
 	if autoRandAlloc == nil {
 		errMsg := fmt.Sprintf(autoid.AutoRandomAllocatorNotFound, dbInfo.Name.O, tblInfo.Name.O)
 		return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)

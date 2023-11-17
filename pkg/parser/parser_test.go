@@ -463,6 +463,67 @@ func RunErrMsgTest(t *testing.T, table []testErrMsgCase) {
 	}
 }
 
+func TestAdminStmt(t *testing.T) {
+	table := []testCase{
+		{"admin show ddl;", true, "ADMIN SHOW DDL"},
+		{"admin show ddl jobs;", true, "ADMIN SHOW DDL JOBS"},
+		{"admin show ddl jobs where id > 0;", true, "ADMIN SHOW DDL JOBS WHERE `id`>0"},
+		{"admin show ddl jobs 20 where id=0;", true, "ADMIN SHOW DDL JOBS 20 WHERE `id`=0"},
+		{"admin show ddl jobs -1;", false, ""},
+		{"admin show ddl job queries 1", true, "ADMIN SHOW DDL JOB QUERIES 1"},
+		{"admin show ddl job queries 1, 2, 3, 4", true, "ADMIN SHOW DDL JOB QUERIES 1, 2, 3, 4"},
+		{"admin show ddl job queries limit 5", true, "ADMIN SHOW DDL JOB QUERIES LIMIT 0, 5"},
+		{"admin show ddl job queries limit 5, 10", true, "ADMIN SHOW DDL JOB QUERIES LIMIT 5, 10"},
+		{"admin show ddl job queries limit 3 offset 2", true, "ADMIN SHOW DDL JOB QUERIES LIMIT 2, 3"},
+		{"admin show ddl job queries limit 22 offset 0", true, "ADMIN SHOW DDL JOB QUERIES LIMIT 0, 22"},
+		{"admin show t1 next_row_id", true, "ADMIN SHOW `t1` NEXT_ROW_ID"},
+		{"admin check table t1, t2;", true, "ADMIN CHECK TABLE `t1`, `t2`"},
+		{"admin check index tableName idxName;", true, "ADMIN CHECK INDEX `tableName` idxName"},
+		{"admin check index tableName idxName (1, 2), (4, 5);", true, "ADMIN CHECK INDEX `tableName` idxName (1,2), (4,5)"},
+		{"admin checksum table t1, t2;", true, "ADMIN CHECKSUM TABLE `t1`, `t2`"},
+		{"admin cancel ddl jobs 1", true, "ADMIN CANCEL DDL JOBS 1"},
+		{"admin cancel ddl jobs 1, 2", true, "ADMIN CANCEL DDL JOBS 1, 2"},
+		{"admin pause ddl jobs 1, 3", true, "ADMIN PAUSE DDL JOBS 1, 3"},
+		{"admin pause ddl jobs 5", true, "ADMIN PAUSE DDL JOBS 5"},
+		{"admin pause ddl jobs", false, "ADMIN PAUSE DDL JOBS"},
+		{"admin pause ddl jobs str_not_num", false, "ADMIN PAUSE DDL JOBS str_not_num"},
+		{"admin resume ddl jobs 1, 2", true, "ADMIN RESUME DDL JOBS 1, 2"},
+		{"admin resume ddl jobs 3", true, "ADMIN RESUME DDL JOBS 3"},
+		{"admin resume ddl jobs", false, "ADMIN RESUME DDL JOBS"},
+		{"admin resume ddl jobs str_not_num", false, "ADMIN RESUME DDL JOBS str_not_num"},
+		{"admin recover index t1 idx_a", true, "ADMIN RECOVER INDEX `t1` idx_a"},
+		{"admin cleanup index t1 idx_a", true, "ADMIN CLEANUP INDEX `t1` idx_a"},
+		{"admin show slow top 3", true, "ADMIN SHOW SLOW TOP 3"},
+		{"admin show slow top internal 7", true, "ADMIN SHOW SLOW TOP INTERNAL 7"},
+		{"admin show slow top all 9", true, "ADMIN SHOW SLOW TOP ALL 9"},
+		{"admin show slow recent 11", true, "ADMIN SHOW SLOW RECENT 11"},
+		{"admin reload expr_pushdown_blacklist", true, "ADMIN RELOAD EXPR_PUSHDOWN_BLACKLIST"},
+		{"admin plugins disable audit, whitelist", true, "ADMIN PLUGINS DISABLE audit, whitelist"},
+		{"admin plugins enable audit, whitelist", true, "ADMIN PLUGINS ENABLE audit, whitelist"},
+		{"admin flush bindings", true, "ADMIN FLUSH BINDINGS"},
+		{"admin capture bindings", true, "ADMIN CAPTURE BINDINGS"},
+		{"admin evolve bindings", true, "ADMIN EVOLVE BINDINGS"},
+		{"admin reload bindings", true, "ADMIN RELOAD BINDINGS"},
+		{"admin show telemetry", true, "ADMIN SHOW TELEMETRY"},
+		{"admin reset telemetry_id", true, "ADMIN RESET TELEMETRY_ID"},
+		// This case would be removed once TiDB PR to remove ADMIN RELOAD STATISTICS is merged.
+		{"admin reload statistics", true, "ADMIN RELOAD STATS_EXTENDED"},
+		{"admin reload stats_extended", true, "ADMIN RELOAD STATS_EXTENDED"},
+		// Test for 'admin flush plan_cache'
+		{"admin flush instance plan_cache", true, "ADMIN FLUSH INSTANCE PLAN_CACHE"},
+		{"admin flush session plan_cache", true, "ADMIN FLUSH SESSION PLAN_CACHE"},
+		// We do not support the global level. We will check it in the later.
+		{"admin flush global plan_cache", true, "ADMIN FLUSH GLOBAL PLAN_CACHE"},
+		// for BDR
+		{"admin set bdr role none", true, "ADMIN SET BDR ROLE NONE"},
+		{"admin set bdr role primary", true, "ADMIN SET BDR ROLE PRIMARY"},
+		{"admin set bdr role secondary", true, "ADMIN SET BDR ROLE SECONDARY"},
+		{"admin set bdr role local_only", true, "ADMIN SET BDR ROLE LOCAL_ONLY"},
+		{"admin show bdr role", true, "ADMIN SHOW BDR ROLE"},
+	}
+	RunTest(t, table, false)
+}
+
 func TestDMLStmt(t *testing.T) {
 	table := []testCase{
 		{"", true, ""},
@@ -816,57 +877,6 @@ func TestDMLStmt(t *testing.T) {
 		// for fail case
 		{"DELETE t1, t2 FROM t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id limit 10;", false, ""},
 		{"DELETE t1, t2 FROM t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id order by t1.id;", false, ""},
-
-		// for admin
-		{"admin show ddl;", true, "ADMIN SHOW DDL"},
-		{"admin show ddl jobs;", true, "ADMIN SHOW DDL JOBS"},
-		{"admin show ddl jobs where id > 0;", true, "ADMIN SHOW DDL JOBS WHERE `id`>0"},
-		{"admin show ddl jobs 20 where id=0;", true, "ADMIN SHOW DDL JOBS 20 WHERE `id`=0"},
-		{"admin show ddl jobs -1;", false, ""},
-		{"admin show ddl job queries 1", true, "ADMIN SHOW DDL JOB QUERIES 1"},
-		{"admin show ddl job queries 1, 2, 3, 4", true, "ADMIN SHOW DDL JOB QUERIES 1, 2, 3, 4"},
-		{"admin show ddl job queries limit 5", true, "ADMIN SHOW DDL JOB QUERIES LIMIT 0, 5"},
-		{"admin show ddl job queries limit 5, 10", true, "ADMIN SHOW DDL JOB QUERIES LIMIT 5, 10"},
-		{"admin show ddl job queries limit 3 offset 2", true, "ADMIN SHOW DDL JOB QUERIES LIMIT 2, 3"},
-		{"admin show ddl job queries limit 22 offset 0", true, "ADMIN SHOW DDL JOB QUERIES LIMIT 0, 22"},
-		{"admin show t1 next_row_id", true, "ADMIN SHOW `t1` NEXT_ROW_ID"},
-		{"admin check table t1, t2;", true, "ADMIN CHECK TABLE `t1`, `t2`"},
-		{"admin check index tableName idxName;", true, "ADMIN CHECK INDEX `tableName` idxName"},
-		{"admin check index tableName idxName (1, 2), (4, 5);", true, "ADMIN CHECK INDEX `tableName` idxName (1,2), (4,5)"},
-		{"admin checksum table t1, t2;", true, "ADMIN CHECKSUM TABLE `t1`, `t2`"},
-		{"admin cancel ddl jobs 1", true, "ADMIN CANCEL DDL JOBS 1"},
-		{"admin cancel ddl jobs 1, 2", true, "ADMIN CANCEL DDL JOBS 1, 2"},
-		{"admin pause ddl jobs 1, 3", true, "ADMIN PAUSE DDL JOBS 1, 3"},
-		{"admin pause ddl jobs 5", true, "ADMIN PAUSE DDL JOBS 5"},
-		{"admin pause ddl jobs", false, "ADMIN PAUSE DDL JOBS"},
-		{"admin pause ddl jobs str_not_num", false, "ADMIN PAUSE DDL JOBS str_not_num"},
-		{"admin resume ddl jobs 1, 2", true, "ADMIN RESUME DDL JOBS 1, 2"},
-		{"admin resume ddl jobs 3", true, "ADMIN RESUME DDL JOBS 3"},
-		{"admin resume ddl jobs", false, "ADMIN RESUME DDL JOBS"},
-		{"admin resume ddl jobs str_not_num", false, "ADMIN RESUME DDL JOBS str_not_num"},
-		{"admin recover index t1 idx_a", true, "ADMIN RECOVER INDEX `t1` idx_a"},
-		{"admin cleanup index t1 idx_a", true, "ADMIN CLEANUP INDEX `t1` idx_a"},
-		{"admin show slow top 3", true, "ADMIN SHOW SLOW TOP 3"},
-		{"admin show slow top internal 7", true, "ADMIN SHOW SLOW TOP INTERNAL 7"},
-		{"admin show slow top all 9", true, "ADMIN SHOW SLOW TOP ALL 9"},
-		{"admin show slow recent 11", true, "ADMIN SHOW SLOW RECENT 11"},
-		{"admin reload expr_pushdown_blacklist", true, "ADMIN RELOAD EXPR_PUSHDOWN_BLACKLIST"},
-		{"admin plugins disable audit, whitelist", true, "ADMIN PLUGINS DISABLE audit, whitelist"},
-		{"admin plugins enable audit, whitelist", true, "ADMIN PLUGINS ENABLE audit, whitelist"},
-		{"admin flush bindings", true, "ADMIN FLUSH BINDINGS"},
-		{"admin capture bindings", true, "ADMIN CAPTURE BINDINGS"},
-		{"admin evolve bindings", true, "ADMIN EVOLVE BINDINGS"},
-		{"admin reload bindings", true, "ADMIN RELOAD BINDINGS"},
-		{"admin show telemetry", true, "ADMIN SHOW TELEMETRY"},
-		{"admin reset telemetry_id", true, "ADMIN RESET TELEMETRY_ID"},
-		// This case would be removed once TiDB PR to remove ADMIN RELOAD STATISTICS is merged.
-		{"admin reload statistics", true, "ADMIN RELOAD STATS_EXTENDED"},
-		{"admin reload stats_extended", true, "ADMIN RELOAD STATS_EXTENDED"},
-		// Test for 'admin flush plan_cache'
-		{"admin flush instance plan_cache", true, "ADMIN FLUSH INSTANCE PLAN_CACHE"},
-		{"admin flush session plan_cache", true, "ADMIN FLUSH SESSION PLAN_CACHE"},
-		// We do not support the global level. We will check it in the later.
-		{"admin flush global plan_cache", true, "ADMIN FLUSH GLOBAL PLAN_CACHE"},
 
 		// for on duplicate key update
 		{"INSERT INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true, "INSERT INTO `t` (`a`,`b`,`c`) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE `c`=VALUES(`a`)+VALUES(`b`)"},

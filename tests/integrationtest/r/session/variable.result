@@ -240,3 +240,18 @@ set @@group_concat_max_len='hello';
 Error 1232 (42000): Incorrect argument type to variable 'group_concat_max_len'
 set global group_concat_max_len = default;
 set @@session.group_concat_max_len = default;
+drop table if EXISTS t1;
+create table t1(id int primary key, a int, b int, c int, d int, index t1a(a), index t1b(b));
+insert into t1 values(1,1,1,1,1),(2,2,2,2,2),(3,3,3,3,3),(4,4,4,4,4),(5,5,5,5,5);
+explain analyze select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+IndexMerge_8	3334.67	2	root	NULL	time:<num>, loops:<num>, RU:<num>, index_task:{fetch_handle:<num>, merge:<num>}, table_task:{num:<num>, concurrency:<num>, fetch_row:<num>, wait_time:<num>}	type: union	<num> KB	N/A
+├─TableRangeScan_5(Build)	3333.33	1	cop[tikv]	table:t1	time:<num>, loops:<num>, cop_task: {num:<num>, max:<num>, proc_keys:<num>, rpc_num:<num>, rpc_time:<num>, copr_cache_hit_ratio:<num>, build_task_duration:<num>, max_distsql_concurrency:<num>}, tikv_task:{time:<num>, loops:<num>}	range:[-inf,2), keep order:false, stats:pseudo	<num> Bytes	N/A
+├─IndexRangeScan_6(Build)	3333.33	1	cop[tikv]	table:t1, index:t1a(a)	time:<num>, loops:<num>, cop_task: {num:<num>, max:<num>, proc_keys:<num>, rpc_num:<num>, rpc_time:<num>, copr_cache_hit_ratio:<num>, build_task_duration:<num>, max_distsql_concurrency:<num>}, tikv_task:{time:<num>, loops:<num>}	range:(4,+inf], keep order:false, stats:pseudo	N/A	N/A
+└─TableRowIDScan_7(Probe)	3334.67	2	cop[tikv]	table:t1	time:<num>, loops:<num>, cop_task: {num:<num>, max:<num>, min:<num>, avg:<num>, p95:<num>, rpc_num:<num>, rpc_time:<num>, copr_cache_hit_ratio:<num>, build_task_duration:<num>, max_distsql_concurrency:<num>, max_extra_concurrency:<num>}, tikv_task:{proc max:<num>, min:<num>, avg:<num>, p80:<num>, p95:<num>, iters:<num>, tasks:<num>}	keep order:false, stats:pseudo	N/A	N/A
+set @@tidb_enable_collect_execution_info=0;
+select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by a;
+id	a	b	c	d
+1	1	1	1	1
+5	5	5	5	5
+set @@tidb_enable_collect_execution_info=default;

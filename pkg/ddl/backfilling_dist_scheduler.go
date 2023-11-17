@@ -65,7 +65,7 @@ func NewBackfillSubtaskExecutor(_ context.Context, taskMeta []byte, d *ddl,
 	}
 	jobMeta := &bgm.Job
 
-	_, tbl, err := d.getTableByTxn(d.store, jobMeta.SchemaID, jobMeta.TableID)
+	_, tbl, err := d.getTableByTxn((*asAutoIDRequirement)(d.ddlCtx), jobMeta.SchemaID, jobMeta.TableID)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +132,7 @@ func (s *backfillDistScheduler) Init(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	job := &bgm.Job
-	_, tbl, err := d.getTableByTxn(d.store, job.SchemaID, job.TableID)
+	_, tbl, err := d.getTableByTxn((*asAutoIDRequirement)(d.ddlCtx), job.SchemaID, job.TableID)
 	if err != nil {
 		return errors.Trace(err)
 	}

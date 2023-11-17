@@ -216,7 +216,7 @@ func (e *RecoverIndexExec) columnsTypes() []*types.FieldType {
 
 // Open implements the Executor Open interface.
 func (e *RecoverIndexExec) Open(ctx context.Context) error {
-	if err := e.BaseExecutor.Open(ctx); err != nil {
+	if err := exec.Open(ctx, e.BaseExecutor.Base()); err != nil {
 		return err
 	}
 
@@ -447,7 +447,7 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 			if cnt < len(e.idxKeyBufs) {
 				buf = e.idxKeyBufs[cnt]
 			}
-			key, _, distinct, err := iter.Next(buf)
+			key, _, distinct, err := iter.Next(buf, nil)
 			if err != nil {
 				return err
 			}

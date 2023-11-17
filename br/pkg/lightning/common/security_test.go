@@ -16,6 +16,7 @@ package common_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -25,6 +26,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -92,8 +94,8 @@ func TestWithHost(t *testing.T) {
 			false,
 		},
 		{
-			"http://127.0.0.1:2379/pd/api/v1/stores",
-			"127.0.0.1:2379/pd/api/v1/stores",
+			fmt.Sprintf("http://127.0.0.1:2379%s", pdapi.Stores),
+			fmt.Sprintf("127.0.0.1:2379%s", pdapi.Stores),
 			false,
 		},
 		{

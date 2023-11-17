@@ -184,9 +184,7 @@ prepare stmt1 from 'insert into t (c2) values (?)';
 set @v1=10;
 set @v2=20;
 execute stmt1 using @v1;
-
 execute stmt1 using @v2;
-
 deallocate prepare stmt1;
 select c1 from t where c2 = 20;
 c1

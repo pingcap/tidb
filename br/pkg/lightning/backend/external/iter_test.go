@@ -24,7 +24,9 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 	"golang.org/x/exp/rand"
@@ -324,6 +326,43 @@ func testMergeIterSwitchMode(t *testing.T, f func([]byte, int) []byte) {
 	}
 	err = iter.Close()
 	require.NoError(t, err)
+}
+
+type eofReader struct {
+	storage.ExternalFileReader
+}
+
+func (r eofReader) Seek(_ int64, _ int) (int64, error) {
+	return 0, nil
+}
+
+func (r eofReader) Read(_ []byte) (int, error) {
+	return 0, io.EOF
+}
+
+func TestReadAfterCloseConnReader(t *testing.T) {
+	ctx := context.Background()
+
+	reader := &byteReader{
+		ctx:           ctx,
+		storageReader: eofReader{},
+		smallBuf:      []byte{0, 255, 255, 255, 255, 255, 255, 255},
+		curBufOffset:  8,
+		logger:        logutil.Logger(ctx),
+	}
+	reader.curBuf = reader.smallBuf
+	pool := membuf.NewPool()
+	reader.concurrentReader.largeBufferPool = pool.NewBuffer()
+	reader.concurrentReader.store = storage.NewMemStorage()
+
+	// set current reader to concurrent reader, and then close it
+	reader.concurrentReader.now = true
+	err := reader.switchConcurrentMode(false)
+	require.NoError(t, err)
+
+	wrapKVReader := &kvReader{reader}
+	_, _, err = wrapKVReader.nextKV()
+	require.ErrorIs(t, err, io.EOF)
 }
 
 func TestHotspot(t *testing.T) {

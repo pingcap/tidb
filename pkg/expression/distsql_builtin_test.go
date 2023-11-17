@@ -785,7 +785,7 @@ func TestEval(t *testing.T) {
 		result, err := expr.Eval(row)
 		require.NoError(t, err)
 		require.Equal(t, tt.result.Kind(), result.Kind())
-		cmp, err := result.Compare(sc, &tt.result, collate.GetCollator(fieldTps[0].GetCollate()))
+		cmp, err := result.Compare(sc.TypeCtx(), &tt.result, collate.GetCollator(fieldTps[0].GetCollate()))
 		require.NoError(t, err)
 		require.Equal(t, 0, cmp)
 	}

@@ -109,7 +109,7 @@ func (ran *Range) isPoint(stmtCtx *stmtctx.StatementContext, regardNullAsPoint b
 		if a.Kind() == types.KindMinNotNull || b.Kind() == types.KindMaxValue {
 			return false
 		}
-		cmp, err := a.Compare(stmtCtx, &b, ran.Collators[i])
+		cmp, err := a.Compare(stmtCtx.TypeCtx(), &b, ran.Collators[i])
 		if err != nil {
 			return false
 		}
@@ -217,7 +217,7 @@ func (ran *Range) Encode(sc *stmtctx.StatementContext, lowBuffer, highBuffer []b
 func (ran *Range) PrefixEqualLen(sc *stmtctx.StatementContext) (int, error) {
 	// Here, len(ran.LowVal) always equal to len(ran.HighVal)
 	for i := 0; i < len(ran.LowVal); i++ {
-		cmp, err := ran.LowVal[i].Compare(sc, &ran.HighVal[i], ran.Collators[i])
+		cmp, err := ran.LowVal[i].Compare(sc.TypeCtx(), &ran.HighVal[i], ran.Collators[i])
 		if err != nil {
 			return 0, errors.Trace(err)
 		}

@@ -28,7 +28,6 @@ go_test(
         "//pkg/server/handler/optimizor",
         "//pkg/server/handler/tikvhandler",
         "//pkg/server/internal/testserverclient",
-        "//pkg/server/internal/testutil",
         "//pkg/server/internal/util",
         "//pkg/session",
         "//pkg/sessionctx",

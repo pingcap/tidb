@@ -62,11 +62,10 @@ func handleType(handle kv.Handle) HandleType {
 		return handleType(h.Handle)
 	} else if h, ok := handle.(*kv.PartitionHandle); ok {
 		return handleType(h.Handle)
-	} else {
-		logutil.BgLogger().Warn("Unexpected kv.Handle type",
-			zap.String("handle Type", fmt.Sprintf("%T", handle)),
-		)
 	}
+	logutil.BgLogger().Warn("Unexpected kv.Handle type",
+		zap.String("handle Type", fmt.Sprintf("%T", handle)),
+	)
 	return UnknownHandle
 }
 

@@ -179,3 +179,13 @@ set @@group_concat_max_len='hello';
 set global group_concat_max_len = default;
 set @@session.group_concat_max_len = default;
 
+# TestIndexMergeRuntimeStats
+drop table if EXISTS t1;
+create table t1(id int primary key, a int, b int, c int, d int, index t1a(a), index t1b(b));
+insert into t1 values(1,1,1,1,1),(2,2,2,2,2),(3,3,3,3,3),(4,4,4,4,4),(5,5,5,5,5);
+--replace_regex /:[ ]?[.0-9]+[µms]*/:<num>/ /, scan_detail: {.*}// / max_proc_keys:.*?, p95_proc_keys:.*?,// / tot_proc:.*?, tot_wait:.*?,// /[0-9]+ Bytes/<num> Bytes/ /[.0-9]+ KB/<num> KB/
+explain analyze select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4;
+set @@tidb_enable_collect_execution_info=0;
+select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by a;
+set @@tidb_enable_collect_execution_info=default;
+

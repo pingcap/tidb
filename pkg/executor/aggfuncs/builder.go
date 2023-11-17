@@ -457,7 +457,7 @@ func buildGroupConcat(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDe
 	default:
 		// The last arg is promised to be a not-null string constant, so the error can be ignored.
 		c, _ := aggFuncDesc.Args[len(aggFuncDesc.Args)-1].(*expression.Constant)
-		sep, _, err := c.EvalString(nil, chunk.Row{})
+		sep, _, err := c.EvalString(ctx, chunk.Row{})
 		// This err should never happen.
 		if err != nil {
 			panic(fmt.Sprintf("Error happened when buildGroupConcat: %s", err.Error()))
@@ -704,7 +704,7 @@ func buildLeadLag(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, 
 	if len(aggFuncDesc.Args) == 3 {
 		defaultExpr = aggFuncDesc.Args[2]
 		if et, ok := defaultExpr.(*expression.Constant); ok {
-			res, err1 := et.Value.ConvertTo(ctx.GetSessionVars().StmtCtx, aggFuncDesc.RetTp)
+			res, err1 := et.Value.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), aggFuncDesc.RetTp)
 			if err1 == nil {
 				defaultExpr = &expression.Constant{Value: res, RetType: aggFuncDesc.RetTp}
 			}

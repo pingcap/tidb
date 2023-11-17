@@ -209,6 +209,8 @@ const (
 	TableRunawayWatches = "RUNAWAY_WATCHES"
 	// TableCheckConstraints is the list of CHECK constraints.
 	TableCheckConstraints = "CHECK_CONSTRAINTS"
+	// TableTiDBCheckConstraints is the list of CHECK constraints, with non-standard TiDB extensions.
+	TableTiDBCheckConstraints = "TIDB_CHECK_CONSTRAINTS"
 )
 
 const (
@@ -318,6 +320,7 @@ var tableIDMap = map[string]int64{
 	TableResourceGroups:                  autoid.InformationSchemaDBID + 88,
 	TableRunawayWatches:                  autoid.InformationSchemaDBID + 89,
 	TableCheckConstraints:                autoid.InformationSchemaDBID + 90,
+	TableTiDBCheckConstraints:            autoid.InformationSchemaDBID + 91,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -1630,11 +1633,22 @@ var tableRunawayWatchListCols = []columnInfo{
 	{name: "ACTION", tp: mysql.TypeVarchar, size: 12, flag: mysql.NotNullFlag},
 }
 
+// information_schema.CHECK_CONSTRAINTS
 var tableCheckConstraintsCols = []columnInfo{
 	{name: "CONSTRAINT_CATALOG", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 	{name: "CONSTRAINT_SCHEMA", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 	{name: "CONSTRAINT_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 	{name: "CHECK_CLAUSE", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+}
+
+// information_schema.TIDB_CHECK_CONSTRAINTS
+var tableTiDBCheckConstraintsCols = []columnInfo{
+	{name: "CONSTRAINT_CATALOG", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "CONSTRAINT_SCHEMA", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "CONSTRAINT_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "CHECK_CLAUSE", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
@@ -2175,6 +2189,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableResourceGroups:                     tableResourceGroupsCols,
 	TableRunawayWatches:                     tableRunawayWatchListCols,
 	TableCheckConstraints:                   tableCheckConstraintsCols,
+	TableTiDBCheckConstraints:               tableTiDBCheckConstraintsCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {

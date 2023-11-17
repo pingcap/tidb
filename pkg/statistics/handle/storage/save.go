@@ -25,10 +25,10 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
@@ -90,7 +90,7 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 				count -= hg.Buckets[j-1].Count
 			}
 			var upperBound types.Datum
-			upperBound, err = hg.GetUpper(j).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
+			upperBound, err = hg.GetUpper(j).ConvertTo(sc.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
 			if err != nil {
 				return
 			}
@@ -98,7 +98,7 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 				lastAnalyzePos = upperBound.GetBytes()
 			}
 			var lowerBound types.Datum
-			lowerBound, err = hg.GetLower(j).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
+			lowerBound, err = hg.GetLower(j).ConvertTo(sc.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
 			if err != nil {
 				return
 			}
@@ -197,7 +197,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 		if modifyCnt < 0 {
 			modifyCnt = 0
 		}
-		logutil.BgLogger().Info("incrementally update modifyCount", zap.String("category", "stats"),
+		statslogutil.StatsLogger.Info("incrementally update modifyCount",
 			zap.Int64("tableID", tableID),
 			zap.Int64("curModifyCnt", curModifyCnt),
 			zap.Int64("results.BaseModifyCnt", results.BaseModifyCnt),
@@ -208,7 +208,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 			if cnt < 0 {
 				cnt = 0
 			}
-			logutil.BgLogger().Info("incrementally update count", zap.String("category", "stats"),
+			statslogutil.StatsLogger.Info("incrementally update count",
 				zap.Int64("tableID", tableID),
 				zap.Int64("curCnt", curCnt),
 				zap.Int64("results.Count", results.Count),
@@ -219,7 +219,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 			if cnt < 0 {
 				cnt = 0
 			}
-			logutil.BgLogger().Info("directly update count", zap.String("category", "stats"),
+			statslogutil.StatsLogger.Info("directly update count",
 				zap.Int64("tableID", tableID),
 				zap.Int64("results.Count", results.Count),
 				zap.Int64("count", cnt))
