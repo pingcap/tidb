@@ -379,7 +379,22 @@ func (e *Engine) SplitRanges(
 }
 
 // Close implements common.Engine.
-func (e *Engine) Close() error { return nil }
+func (e *Engine) Close() error {
+	if e.bufPool != nil {
+		e.bufPool.Destroy()
+		e.bufPool = nil
+	}
+	return nil
+}
+
+// Reset resets the memory buffer pool.
+func (e *Engine) Reset() error {
+	if e.bufPool != nil {
+		e.bufPool.Destroy()
+		e.bufPool = membuf.NewPool()
+	}
+	return nil
+}
 
 // MemoryIngestData is the in-memory implementation of IngestData.
 type MemoryIngestData struct {
