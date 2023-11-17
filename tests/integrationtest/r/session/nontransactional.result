@@ -1,0 +1,2220 @@
+drop table if exists t;
+create table t(id int, v int);
+insert into t values (1, 1);
+batch limit 1 insert into t select * from t;
+number of jobs	job status
+1	all succeeded
+select * from t;
+id	v
+1	1
+1	1
+drop table t;
+create table t(id int, v int, key(id));
+create table t2(id int, v int, key(id));
+insert into t values (1, 1), (2, 2), (3, 3);
+insert into t2 values (1, 1), (2, 2), (4, 4);
+batch on session__nontransactional.t.id limit 1 update t join t2 on t.id=t2.id set t2.id = t2.id+1;
+number of jobs	job status
+3	all succeeded
+select * from t2;
+id	v
+4	1
+4	2
+4	4
+drop table if exists t, t2, t3;
+create table t(id int, v1 int, v2 int, unique key (id));
+create table t2(id int, v int, key (id));
+create table t3(id int, v int, key (id));
+create database session__nontransactional2;
+use session__nontransactional2;
+create table t(id int, v1 int, v2 int, unique key (id));
+create table t2(id int, v int, key (id));
+create table t3(id int, v int, key (id));
+insert into t values (1, 1, 1), (2, 2, 2);
+use session__nontransactional;
+batch on id limit 1 insert into t select * from session__nontransactional2.t;
+number of jobs	job status
+2	all succeeded
+select * from t;
+id	v1	v2
+1	1	1
+2	2	2
+drop database session__nontransactional2;
+drop table if exists t, t2;
+create table t(id int, v int, unique key(id));
+create table t2(id int, v int, unique key(id));
+insert into t values (1, 1), (2, 2), (3, 3);
+insert into t2 values (1, 1), (2, 2), (4, 4);
+batch on id limit 1 update t set id=id+1;
+Error 1105 (HY000): Non-transactional DML, shard column cannot be updated
+batch on id limit 1 insert into t select * from t on duplicate key update t.id=t.id+10;
+Error 1105 (HY000): Non-transactional DML, shard column cannot be updated
+batch on id limit 1 update t as t1 set t1.id=t1.id+1;
+Error 1105 (HY000): Non-transactional DML, shard column cannot be updated
+batch on id limit 1 insert into t select * from t as t1 on duplicate key update t1.id=t1.id+10;
+Error 1105 (HY000): Non-transactional DML, shard column cannot be updated
+batch on session__nontransactional.t.id limit 1 update t join t2 on t.id=t2.id set t.id=t.id+1;
+Error 1105 (HY000): Non-transactional DML, shard column cannot be updated
+batch on session__nontransactional.tt.id limit 1 update t as tt join t2 as tt2 on tt.id=tt2.id set tt.id=tt.id+10;
+Error 1105 (HY000): Non-transactional DML, shard column cannot be updated
+drop table if exists t, t2, t3;
+create table t(id int, v1 int, v2 int, unique key (id));
+create table t2(id int, v int, key (id));
+create table t3(id int, v int, key (id));
+insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3);
+insert into t2 values (1, 1), (2, 20), (4, 40);
+insert into t3 values (2, 21), (4, 41), (5, 50);
+update t as t1 set v1 = session__nontransactional.t1.id + 1;
+select * from t;
+id	v1	v2
+1	2	1
+2	3	2
+3	4	3
+batch on session__nontransactional.tt2.id limit 1 replace into t select tt2.id, tt2.v, t3.v from t2 as tt2 join t3 on tt2.id=t3.id;
+number of jobs	job status
+3	all succeeded
+select * from t order by id;
+id	v1	v2
+1	2	1
+2	20	21
+3	4	3
+4	40	41
+drop table if exists t, t2, t3;
+create table t(id int, v1 int, v2 int, unique key (id));
+create table t2(id int, v int, key i1(id));
+create table t3(id int, v int, key i1(id));
+insert into t2 values (1, 2), (2, 3), (3, 4);
+insert into t3 values (1, 4), (2, 5), (4, 6);
+batch on session__nontransactional.t2.id limit 1 insert into t select t2.id, t2.v, t3.v from t2 join t3 on t2.id=t3.id;
+number of jobs	job status
+3	all succeeded
+select * from t;
+id	v1	v2
+1	2	4
+2	3	5
+batch on id limit 1 insert into t select t2.id, t2.v, t3.v from t2 join t3 on t2.id=t3.id;
+Error 1105 (HY000): Non-transactional DML, shard column must be fully specified (i.e. `BATCH ON dbname.tablename.colname`) when multiple tables are involved
+batch on session__nontransactional.t1.id limit 1 insert into t select t2.id, t2.v, t3.v from t2 join t3 on t2.id=t3.id;
+Error 1105 (HY000): Non-transactional DML, shard column session__nontransactional.t1.id is not in the tables involved in the join
+batch on session__nontransactional.t2.id limit 1 update t2 join t3 on t2.id=t3.id set t2.v=t2.v*100, t3.v=t3.v*200;
+number of jobs	job status
+3	all succeeded
+select * from t2;
+id	v
+1	200
+2	300
+3	4
+select * from t3;
+id	v
+1	800
+2	1000
+4	6
+batch limit 1 delete t2 from t2 join t3 on t2.id=t3.id;
+number of jobs	job status
+3	all succeeded
+select * from t2;
+id	v
+3	4
+insert into t2 values (1, 11), (2, 22);
+batch limit 1 replace into t select t2.id, t2.v, t3.v from t2 join t3 on t2.id=t3.id;
+number of jobs	job status
+3	all succeeded
+select * from t;
+id	v1	v2
+1	11	800
+2	22	1000
+drop table if exists t, t1, t2;
+create table t(a set('e0', 'e1', 'e2'), b int, primary key(a) clustered, key(b));
+create table t1(a set('e0', 'e1', 'e2'), b int, primary key(a) clustered, key(b));
+insert into t values ('e2,e0', 3);
+batch limit 1 insert into t1 select * from t where a = 'e0,e2';
+Error 1105 (HY000): Failed to restore the DML statement, probably because of unsupported type of the shard column
+select count(*) from t1;
+count(*)
+0
+batch limit 1 insert into t1 select * from t where a = 'e0,e2' on duplicate key update t1.b=t.b;
+Error 1105 (HY000): Failed to restore the DML statement, probably because of unsupported type of the shard column
+select count(*) from t1;
+count(*)
+0
+batch limit 1 delete from t where a = 'e0,e2';
+Error 1105 (HY000): Failed to restore the DML statement, probably because of unsupported type of the shard column
+select count(*) from t;
+count(*)
+1
+create table t2(a enum('e0', 'e1', 'e2'), b int, key(a));
+insert into t2 values ('e0', 1);
+batch on a limit 1 insert into t1 select * from t2;
+Error 1105 (HY000): Failed to restore the DML statement, probably because of unsupported type of the shard column
+select count(*) from t1;
+count(*)
+0
+batch on a limit 1 insert into t1 select * from t2 on duplicate key update t1.b=t2.b;
+Error 1105 (HY000): Failed to restore the DML statement, probably because of unsupported type of the shard column
+select count(*) from t1;
+count(*)
+0
+batch on a limit 1 delete from t2;
+Error 1105 (HY000): Failed to restore the DML statement, probably because of unsupported type of the shard column
+select count(*) from t2;
+count(*)
+1
+drop table if exists session__nontransactional.t, session__nontransactional.s, session__nontransactional.t2;
+create table session__nontransactional.t(a int, b int, key(a));
+create table session__nontransactional.s(a int, b int, unique key(a));
+create table session__nontransactional.t2(a int, b int, key(a));
+insert into session__nontransactional.t values (0, 0);
+insert into session__nontransactional.t values (1, 2);
+insert into session__nontransactional.t values (2, 4);
+insert into session__nontransactional.t values (3, 6);
+insert into session__nontransactional.t values (4, 8);
+batch on session__nontransactional.t1.a limit 5 delete t1.* from session__nontransactional.t as t1;
+number of jobs	job status
+1	all succeeded
+select count(*) from session__nontransactional.t;
+count(*)
+0
+insert into session__nontransactional.t values (0, 0);
+insert into session__nontransactional.t values (1, 2);
+insert into session__nontransactional.t values (2, 4);
+insert into session__nontransactional.t values (3, 6);
+insert into session__nontransactional.t values (4, 8);
+batch on a limit 5 delete t1.* from session__nontransactional.t as t1;
+number of jobs	job status
+1	all succeeded
+select count(*) from session__nontransactional.t;
+count(*)
+0
+insert into session__nontransactional.t values (0, 0);
+insert into session__nontransactional.t values (1, 2);
+insert into session__nontransactional.t values (2, 4);
+insert into session__nontransactional.t values (3, 6);
+insert into session__nontransactional.t values (4, 8);
+batch on _tidb_rowid limit 5 delete from session__nontransactional.t as t1;
+number of jobs	job status
+1	all succeeded
+select count(*) from session__nontransactional.t;
+count(*)
+0
+insert into session__nontransactional.t values (0, 0);
+insert into session__nontransactional.t values (1, 2);
+insert into session__nontransactional.t values (2, 4);
+insert into session__nontransactional.t values (3, 6);
+insert into session__nontransactional.t values (4, 8);
+batch on t1._tidb_rowid limit 5 delete from session__nontransactional.t as t1;
+number of jobs	job status
+1	all succeeded
+select count(*) from session__nontransactional.t;
+count(*)
+0
+insert into session__nontransactional.t values (0, 0);
+insert into session__nontransactional.t values (1, 2);
+insert into session__nontransactional.t values (2, 4);
+insert into session__nontransactional.t values (3, 6);
+insert into session__nontransactional.t values (4, 8);
+batch on session__nontransactional.t1._tidb_rowid limit 5 delete from session__nontransactional.t as t1;
+number of jobs	job status
+1	all succeeded
+select count(*) from session__nontransactional.t;
+count(*)
+0
+insert into session__nontransactional.t values (0, 0);
+insert into session__nontransactional.t values (1, 2);
+insert into session__nontransactional.t values (2, 4);
+insert into session__nontransactional.t values (3, 6);
+insert into session__nontransactional.t values (4, 8);
+batch limit 5 delete from session__nontransactional.t as t1;
+number of jobs	job status
+1	all succeeded
+select count(*) from session__nontransactional.t;
+count(*)
+0
+insert into session__nontransactional.t values (0, 0);
+insert into session__nontransactional.t values (1, 2);
+insert into session__nontransactional.t values (2, 4);
+insert into session__nontransactional.t values (3, 6);
+insert into session__nontransactional.t values (4, 8);
+batch on session__nontransactional.t1.a limit 5 insert into session__nontransactional.s select t1.* from session__nontransactional.t as t1;
+number of jobs	job status
+1	all succeeded
+select * from session__nontransactional.s order by a;
+a	b
+0	0
+1	2
+2	4
+3	6
+4	8
+update session__nontransactional.s set b=a;
+batch on session__nontransactional.t1.a limit 5 insert into session__nontransactional.s select t1.* from session__nontransactional.t as t1 on duplicate key update s.b=t1.b;
+number of jobs	job status
+1	all succeeded
+select * from session__nontransactional.s order by a;
+a	b
+0	0
+1	2
+2	4
+3	6
+4	8
+truncate session__nontransactional.s;
+batch on a limit 5 insert into session__nontransactional.s select t1.* from session__nontransactional.t as t1;
+number of jobs	job status
+1	all succeeded
+select * from session__nontransactional.s order by a;
+a	b
+0	0
+1	2
+2	4
+3	6
+4	8
+update session__nontransactional.s set b=a;
+batch on a limit 5 insert into session__nontransactional.s select t1.* from session__nontransactional.t as t1 on duplicate key update s.b=t1.b;
+number of jobs	job status
+1	all succeeded
+select * from session__nontransactional.s order by a;
+a	b
+0	0
+1	2
+2	4
+3	6
+4	8
+truncate session__nontransactional.s;
+batch on _tidb_rowid limit 5 insert into session__nontransactional.s select t1.* from session__nontransactional.t as t1;
+number of jobs	job status
+1	all succeeded
+select * from session__nontransactional.s order by a;
+a	b
+0	0
+1	2
+2	4
+3	6
+4	8
+update session__nontransactional.s set b=a;
+batch on _tidb_rowid limit 5 insert into session__nontransactional.s select t1.* from session__nontransactional.t as t1 on duplicate key update s.b=t1.b;
+number of jobs	job status
+1	all succeeded
+select * from session__nontransactional.s order by a;
+a	b
+0	0
+1	2
+2	4
+3	6
+4	8
+truncate session__nontransactional.s;
+batch on t1._tidb_rowid limit 5 insert into session__nontransactional.s select t1.* from session__nontransactional.t as t1;
+number of jobs	job status
+1	all succeeded
+select * from session__nontransactional.s order by a;
+a	b
+0	0
+1	2
+2	4
+3	6
+4	8
+update session__nontransactional.s set b=a;
+batch on t1._tidb_rowid limit 5 insert into session__nontransactional.s select t1.* from session__nontransactional.t as t1 on duplicate key update s.b=t1.b;
+number of jobs	job status
+1	all succeeded
+select * from session__nontransactional.s order by a;
+a	b
+0	0
+1	2
+2	4
+3	6
+4	8
+truncate session__nontransactional.s;
+batch on session__nontransactional.t1._tidb_rowid limit 5 insert into session__nontransactional.s select t1.* from session__nontransactional.t as t1;
+number of jobs	job status
+1	all succeeded
+select * from session__nontransactional.s order by a;
+a	b
+0	0
+1	2
+2	4
+3	6
+4	8
+update session__nontransactional.s set b=a;
+batch on session__nontransactional.t1._tidb_rowid limit 5 insert into session__nontransactional.s select t1.* from session__nontransactional.t as t1 on duplicate key update s.b=t1.b;
+number of jobs	job status
+1	all succeeded
+select * from session__nontransactional.s order by a;
+a	b
+0	0
+1	2
+2	4
+3	6
+4	8
+truncate session__nontransactional.s;
+batch limit 5 insert into session__nontransactional.s select t1.* from session__nontransactional.t as t1;
+number of jobs	job status
+1	all succeeded
+select * from session__nontransactional.s order by a;
+a	b
+0	0
+1	2
+2	4
+3	6
+4	8
+update session__nontransactional.s set b=a;
+batch limit 5 insert into session__nontransactional.s select t1.* from session__nontransactional.t as t1 on duplicate key update s.b=t1.b;
+number of jobs	job status
+1	all succeeded
+select * from session__nontransactional.s order by a;
+a	b
+0	0
+1	2
+2	4
+3	6
+4	8
+truncate session__nontransactional.s;
+batch on session__nontransactional.t.a limit 5 delete t1.* from session__nontransactional.t as t1;
+Error 1054 (42S22): Unknown column 'session__nontransactional.t.a' in 'where clause'
+select count(*) from session__nontransactional.t;
+count(*)
+5
+batch on t.a limit 5 delete t1.* from session__nontransactional.t as t1;
+Error 1054 (42S22): Unknown column 't.a' in 'where clause'
+select count(*) from session__nontransactional.t;
+count(*)
+5
+batch on t._tidb_rowid limit 5 delete from session__nontransactional.t as t1;
+Error 1054 (42S22): Unknown column 't._tidb_rowid' in 'where clause'
+select count(*) from session__nontransactional.t;
+count(*)
+5
+batch on session__nontransactional.t._tidb_rowid limit 5 delete from session__nontransactional.t as t1;
+Error 1054 (42S22): Unknown column 'session__nontransactional.t._tidb_rowid' in 'where clause'
+select count(*) from session__nontransactional.t;
+count(*)
+5
+batch on session__nontransactional.t.a limit 5 insert into session__nontransactional.s select t1.* from session__nontransactional.t as t1;
+Error 1054 (42S22): Unknown column 'session__nontransactional.t.a' in 'where clause'
+select count(*) from session__nontransactional.s;
+count(*)
+0
+batch on t.a limit 5 insert into session__nontransactional.s select t1.* from session__nontransactional.t as t1;
+Error 1054 (42S22): Unknown column 't.a' in 'where clause'
+select count(*) from session__nontransactional.s;
+count(*)
+0
+batch on t._tidb_rowid limit 5 insert into session__nontransactional.s select t1.* from session__nontransactional.t as t1;
+Error 1054 (42S22): Unknown column 't._tidb_rowid' in 'where clause'
+select count(*) from session__nontransactional.s;
+count(*)
+0
+batch on session__nontransactional.t._tidb_rowid limit 5 insert into session__nontransactional.s select t1.* from session__nontransactional.t as t1;
+Error 1054 (42S22): Unknown column 'session__nontransactional.t._tidb_rowid' in 'where clause'
+select count(*) from session__nontransactional.s;
+count(*)
+0
+drop table if exists t, t1, t2;
+create table t(a int, b int, key(a));
+create table t1(a int, b int, key(a));
+create table t2(a int, b int, key(a));
+insert into t values (0, 0);
+insert into t values (1, 2);
+insert into t values (2, 4);
+insert into t values (3, 6);
+insert into t values (4, 8);
+insert into t values (5, 10);
+insert into t values (6, 12);
+insert into t values (7, 14);
+insert into t values (8, 16);
+insert into t values (9, 18);
+insert into t values (10, 20);
+insert into t values (11, 22);
+insert into t values (12, 24);
+insert into t values (13, 26);
+insert into t values (14, 28);
+insert into t values (15, 30);
+insert into t values (16, 32);
+insert into t values (17, 34);
+insert into t values (18, 36);
+insert into t values (19, 38);
+insert into t values (20, 40);
+insert into t values (21, 42);
+insert into t values (22, 44);
+insert into t values (23, 46);
+insert into t values (24, 48);
+insert into t values (25, 50);
+insert into t values (26, 52);
+insert into t values (27, 54);
+insert into t values (28, 56);
+insert into t values (29, 58);
+insert into t values (30, 60);
+insert into t values (31, 62);
+insert into t values (32, 64);
+insert into t values (33, 66);
+insert into t values (34, 68);
+insert into t values (35, 70);
+insert into t values (36, 72);
+insert into t values (37, 74);
+insert into t values (38, 76);
+insert into t values (39, 78);
+insert into t values (40, 80);
+insert into t values (41, 82);
+insert into t values (42, 84);
+insert into t values (43, 86);
+insert into t values (44, 88);
+insert into t values (45, 90);
+insert into t values (46, 92);
+insert into t values (47, 94);
+insert into t values (48, 96);
+insert into t values (49, 98);
+insert into t values (50, 100);
+insert into t values (51, 102);
+insert into t values (52, 104);
+insert into t values (53, 106);
+insert into t values (54, 108);
+insert into t values (55, 110);
+insert into t values (56, 112);
+insert into t values (57, 114);
+insert into t values (58, 116);
+insert into t values (59, 118);
+insert into t values (60, 120);
+insert into t values (61, 122);
+insert into t values (62, 124);
+insert into t values (63, 126);
+insert into t values (64, 128);
+insert into t values (65, 130);
+insert into t values (66, 132);
+insert into t values (67, 134);
+insert into t values (68, 136);
+insert into t values (69, 138);
+insert into t values (70, 140);
+insert into t values (71, 142);
+insert into t values (72, 144);
+insert into t values (73, 146);
+insert into t values (74, 148);
+insert into t values (75, 150);
+insert into t values (76, 152);
+insert into t values (77, 154);
+insert into t values (78, 156);
+insert into t values (79, 158);
+insert into t values (80, 160);
+insert into t values (81, 162);
+insert into t values (82, 164);
+insert into t values (83, 166);
+insert into t values (84, 168);
+insert into t values (85, 170);
+insert into t values (86, 172);
+insert into t values (87, 174);
+insert into t values (88, 176);
+insert into t values (89, 178);
+insert into t values (90, 180);
+insert into t values (91, 182);
+insert into t values (92, 184);
+insert into t values (93, 186);
+insert into t values (94, 188);
+insert into t values (95, 190);
+insert into t values (96, 192);
+insert into t values (97, 194);
+insert into t values (98, 196);
+insert into t values (99, 198);
+insert into t1 values (1, 1);
+batch limit 1 insert into t2 select t.a, t1.b from t, t1 where t.a = t1.a;
+Error 1054 (42S22): Unknown column 't1.a' in 'where clause'
+select count(*) from t2;
+count(*)
+0
+batch limit 1 insert into t2 select t.a, t1.b from t, t1 where t.a = t1.a on duplicate key update t2.b=t.b;
+Error 1054 (42S22): Unknown column 't1.a' in 'where clause'
+select count(*) from t2;
+count(*)
+0
+batch limit 1 delete t, t1 from t, t1 where t.a = t1.a;
+Error 1054 (42S22): Unknown column 't1.a' in 'where clause'
+select count(*) from t;
+count(*)
+100
+select count(*) from t1;
+count(*)
+1
+drop table if exists t, t1;
+create table t(a int, b int, key(a));
+create table t1(a int, b int, key(a));
+insert into t values ('0', 0);
+insert into t values ('1', 2);
+insert into t values ('2', 4);
+insert into t values ('3', 6);
+insert into t values ('4', 8);
+insert into t values ('5', 10);
+insert into t values ('6', 12);
+insert into t values ('7', 14);
+insert into t values ('8', 16);
+insert into t values ('9', 18);
+batch on a limit 10 dry run insert into t1 select /*+ USE_INDEX(t) */ * from t;
+split statement examples
+INSERT INTO `session__nontransactional`.`t1` SELECT /*+ USE_INDEX(`t` )*/ * FROM `session__nontransactional`.`t` WHERE `a` BETWEEN 0 AND 9
+batch on a limit 10 dry run insert into t1 select /*+ USE_INDEX(t) */ * from t on duplicate key update t1.b=t.b;
+split statement examples
+INSERT INTO `session__nontransactional`.`t1` SELECT /*+ USE_INDEX(`t` )*/ * FROM `session__nontransactional`.`t` WHERE `a` BETWEEN 0 AND 9 ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`
+batch on a limit 10 dry run delete /*+ USE_INDEX(t) */ from t;
+split statement examples
+DELETE /*+ USE_INDEX(`t` )*/ FROM `session__nontransactional`.`t` WHERE `a` BETWEEN 0 AND 9
+set @@tidb_max_chunk_size=35;
+set @@tidb_read_staleness=-100;
+drop table if exists t, t1;
+create table t(a int, b int, key(a));
+create table t1(a int, b int, unique key(a));
+insert into t values (0, 0);
+insert into t values (1, 2);
+insert into t values (2, 4);
+insert into t values (3, 6);
+insert into t values (4, 8);
+insert into t values (5, 10);
+insert into t values (6, 12);
+insert into t values (7, 14);
+insert into t values (8, 16);
+insert into t values (9, 18);
+insert into t values (10, 20);
+insert into t values (11, 22);
+insert into t values (12, 24);
+insert into t values (13, 26);
+insert into t values (14, 28);
+insert into t values (15, 30);
+insert into t values (16, 32);
+insert into t values (17, 34);
+insert into t values (18, 36);
+insert into t values (19, 38);
+insert into t values (20, 40);
+insert into t values (21, 42);
+insert into t values (22, 44);
+insert into t values (23, 46);
+insert into t values (24, 48);
+insert into t values (25, 50);
+insert into t values (26, 52);
+insert into t values (27, 54);
+insert into t values (28, 56);
+insert into t values (29, 58);
+insert into t values (30, 60);
+insert into t values (31, 62);
+insert into t values (32, 64);
+insert into t values (33, 66);
+insert into t values (34, 68);
+insert into t values (35, 70);
+insert into t values (36, 72);
+insert into t values (37, 74);
+insert into t values (38, 76);
+insert into t values (39, 78);
+insert into t values (40, 80);
+insert into t values (41, 82);
+insert into t values (42, 84);
+insert into t values (43, 86);
+insert into t values (44, 88);
+insert into t values (45, 90);
+insert into t values (46, 92);
+insert into t values (47, 94);
+insert into t values (48, 96);
+insert into t values (49, 98);
+insert into t values (50, 100);
+insert into t values (51, 102);
+insert into t values (52, 104);
+insert into t values (53, 106);
+insert into t values (54, 108);
+insert into t values (55, 110);
+insert into t values (56, 112);
+insert into t values (57, 114);
+insert into t values (58, 116);
+insert into t values (59, 118);
+insert into t values (60, 120);
+insert into t values (61, 122);
+insert into t values (62, 124);
+insert into t values (63, 126);
+insert into t values (64, 128);
+insert into t values (65, 130);
+insert into t values (66, 132);
+insert into t values (67, 134);
+insert into t values (68, 136);
+insert into t values (69, 138);
+insert into t values (70, 140);
+insert into t values (71, 142);
+insert into t values (72, 144);
+insert into t values (73, 146);
+insert into t values (74, 148);
+insert into t values (75, 150);
+insert into t values (76, 152);
+insert into t values (77, 154);
+insert into t values (78, 156);
+insert into t values (79, 158);
+insert into t values (80, 160);
+insert into t values (81, 162);
+insert into t values (82, 164);
+insert into t values (83, 166);
+insert into t values (84, 168);
+insert into t values (85, 170);
+insert into t values (86, 172);
+insert into t values (87, 174);
+insert into t values (88, 176);
+insert into t values (89, 178);
+insert into t values (90, 180);
+insert into t values (91, 182);
+insert into t values (92, 184);
+insert into t values (93, 186);
+insert into t values (94, 188);
+insert into t values (95, 190);
+insert into t values (96, 192);
+insert into t values (97, 194);
+insert into t values (98, 196);
+insert into t values (99, 198);
+batch on a limit 10 insert into t1 select * from t;
+number of jobs	job status
+10	all succeeded
+select * from t1 order by a;
+a	b
+0	0
+1	2
+2	4
+3	6
+4	8
+5	10
+6	12
+7	14
+8	16
+9	18
+10	20
+11	22
+12	24
+13	26
+14	28
+15	30
+16	32
+17	34
+18	36
+19	38
+20	40
+21	42
+22	44
+23	46
+24	48
+25	50
+26	52
+27	54
+28	56
+29	58
+30	60
+31	62
+32	64
+33	66
+34	68
+35	70
+36	72
+37	74
+38	76
+39	78
+40	80
+41	82
+42	84
+43	86
+44	88
+45	90
+46	92
+47	94
+48	96
+49	98
+50	100
+51	102
+52	104
+53	106
+54	108
+55	110
+56	112
+57	114
+58	116
+59	118
+60	120
+61	122
+62	124
+63	126
+64	128
+65	130
+66	132
+67	134
+68	136
+69	138
+70	140
+71	142
+72	144
+73	146
+74	148
+75	150
+76	152
+77	154
+78	156
+79	158
+80	160
+81	162
+82	164
+83	166
+84	168
+85	170
+86	172
+87	174
+88	176
+89	178
+90	180
+91	182
+92	184
+93	186
+94	188
+95	190
+96	192
+97	194
+98	196
+99	198
+update t1 set b=a;
+batch on a limit 10 insert into t1 select * from t on duplicate key update t1.b=t.b;
+number of jobs	job status
+10	all succeeded
+batch on a limit 10 delete from t;
+number of jobs	job status
+10	all succeeded
+set @@tidb_read_staleness=0;
+select * from t;
+a	b
+select * from t1 order by a;
+a	b
+0	0
+1	2
+2	4
+3	6
+4	8
+5	10
+6	12
+7	14
+8	16
+9	18
+10	20
+11	22
+12	24
+13	26
+14	28
+15	30
+16	32
+17	34
+18	36
+19	38
+20	40
+21	42
+22	44
+23	46
+24	48
+25	50
+26	52
+27	54
+28	56
+29	58
+30	60
+31	62
+32	64
+33	66
+34	68
+35	70
+36	72
+37	74
+38	76
+39	78
+40	80
+41	82
+42	84
+43	86
+44	88
+45	90
+46	92
+47	94
+48	96
+49	98
+50	100
+51	102
+52	104
+53	106
+54	108
+55	110
+56	112
+57	114
+58	116
+59	118
+60	120
+61	122
+62	124
+63	126
+64	128
+65	130
+66	132
+67	134
+68	136
+69	138
+70	140
+71	142
+72	144
+73	146
+74	148
+75	150
+76	152
+77	154
+78	156
+79	158
+80	160
+81	162
+82	164
+83	166
+84	168
+85	170
+86	172
+87	174
+88	176
+89	178
+90	180
+91	182
+92	184
+93	186
+94	188
+95	190
+96	192
+97	194
+98	196
+99	198
+set @@tidb_max_chunk_size=default;
+set @@tidb_read_staleness=default;
+set @@tidb_max_chunk_size=35;
+set @@sql_select_limit=3;
+drop table if exists t, t1;
+create table t(a int, b int, key(a));
+create table t1(a int, b int, unique key(a));
+insert into t values (0, 0);
+insert into t values (1, 2);
+insert into t values (2, 4);
+insert into t values (3, 6);
+insert into t values (4, 8);
+insert into t values (5, 10);
+insert into t values (6, 12);
+insert into t values (7, 14);
+insert into t values (8, 16);
+insert into t values (9, 18);
+insert into t values (10, 20);
+insert into t values (11, 22);
+insert into t values (12, 24);
+insert into t values (13, 26);
+insert into t values (14, 28);
+insert into t values (15, 30);
+insert into t values (16, 32);
+insert into t values (17, 34);
+insert into t values (18, 36);
+insert into t values (19, 38);
+insert into t values (20, 40);
+insert into t values (21, 42);
+insert into t values (22, 44);
+insert into t values (23, 46);
+insert into t values (24, 48);
+insert into t values (25, 50);
+insert into t values (26, 52);
+insert into t values (27, 54);
+insert into t values (28, 56);
+insert into t values (29, 58);
+insert into t values (30, 60);
+insert into t values (31, 62);
+insert into t values (32, 64);
+insert into t values (33, 66);
+insert into t values (34, 68);
+insert into t values (35, 70);
+insert into t values (36, 72);
+insert into t values (37, 74);
+insert into t values (38, 76);
+insert into t values (39, 78);
+insert into t values (40, 80);
+insert into t values (41, 82);
+insert into t values (42, 84);
+insert into t values (43, 86);
+insert into t values (44, 88);
+insert into t values (45, 90);
+insert into t values (46, 92);
+insert into t values (47, 94);
+insert into t values (48, 96);
+insert into t values (49, 98);
+insert into t values (50, 100);
+insert into t values (51, 102);
+insert into t values (52, 104);
+insert into t values (53, 106);
+insert into t values (54, 108);
+insert into t values (55, 110);
+insert into t values (56, 112);
+insert into t values (57, 114);
+insert into t values (58, 116);
+insert into t values (59, 118);
+insert into t values (60, 120);
+insert into t values (61, 122);
+insert into t values (62, 124);
+insert into t values (63, 126);
+insert into t values (64, 128);
+insert into t values (65, 130);
+insert into t values (66, 132);
+insert into t values (67, 134);
+insert into t values (68, 136);
+insert into t values (69, 138);
+insert into t values (70, 140);
+insert into t values (71, 142);
+insert into t values (72, 144);
+insert into t values (73, 146);
+insert into t values (74, 148);
+insert into t values (75, 150);
+insert into t values (76, 152);
+insert into t values (77, 154);
+insert into t values (78, 156);
+insert into t values (79, 158);
+insert into t values (80, 160);
+insert into t values (81, 162);
+insert into t values (82, 164);
+insert into t values (83, 166);
+insert into t values (84, 168);
+insert into t values (85, 170);
+insert into t values (86, 172);
+insert into t values (87, 174);
+insert into t values (88, 176);
+insert into t values (89, 178);
+insert into t values (90, 180);
+insert into t values (91, 182);
+insert into t values (92, 184);
+insert into t values (93, 186);
+insert into t values (94, 188);
+insert into t values (95, 190);
+insert into t values (96, 192);
+insert into t values (97, 194);
+insert into t values (98, 196);
+insert into t values (99, 198);
+batch on a limit 10 insert into t1 select * from t;
+number of jobs	job status
+10	all succeeded
+select count(*) from t;
+count(*)
+100
+select count(*) from t1;
+count(*)
+100
+(select * from t1 order by a) except (select * from t order by a);
+a	b
+(select * from t order by a) except (select * from t1 order by a);
+a	b
+update t1 set b=a;
+batch on a limit 10 insert into t1 select * from t on duplicate key update t1.b=t.b;
+number of jobs	job status
+10	all succeeded
+select count(*) from t;
+count(*)
+100
+select count(*) from t1;
+count(*)
+100
+(select * from t1 order by a) except (select * from t order by a);
+a	b
+(select * from t order by a) except (select * from t1 order by a);
+a	b
+batch on a limit 10 delete from t;
+number of jobs	job status
+10	all succeeded
+select * from t;
+a	b
+set @@tidb_max_chunk_size=default;
+set @@sql_select_limit=default;
+set @@tidb_max_chunk_size=35;
+drop table if exists t, t1;
+create table t(a int, b int);
+create table t1(a int, b int);
+insert into t values (0, 0);
+insert into t values (1, 2);
+insert into t values (2, 4);
+insert into t values (3, 6);
+insert into t values (4, 8);
+insert into t values (5, 10);
+insert into t values (6, 12);
+insert into t values (7, 14);
+insert into t values (8, 16);
+insert into t values (9, 18);
+insert into t values (10, 20);
+insert into t values (11, 22);
+insert into t values (12, 24);
+insert into t values (13, 26);
+insert into t values (14, 28);
+insert into t values (15, 30);
+insert into t values (16, 32);
+insert into t values (17, 34);
+insert into t values (18, 36);
+insert into t values (19, 38);
+insert into t values (20, 40);
+insert into t values (21, 42);
+insert into t values (22, 44);
+insert into t values (23, 46);
+insert into t values (24, 48);
+insert into t values (25, 50);
+insert into t values (26, 52);
+insert into t values (27, 54);
+insert into t values (28, 56);
+insert into t values (29, 58);
+insert into t values (30, 60);
+insert into t values (31, 62);
+insert into t values (32, 64);
+insert into t values (33, 66);
+insert into t values (34, 68);
+insert into t values (35, 70);
+insert into t values (36, 72);
+insert into t values (37, 74);
+insert into t values (38, 76);
+insert into t values (39, 78);
+insert into t values (40, 80);
+insert into t values (41, 82);
+insert into t values (42, 84);
+insert into t values (43, 86);
+insert into t values (44, 88);
+insert into t values (45, 90);
+insert into t values (46, 92);
+insert into t values (47, 94);
+insert into t values (48, 96);
+insert into t values (49, 98);
+insert into t values (50, 100);
+insert into t values (51, 102);
+insert into t values (52, 104);
+insert into t values (53, 106);
+insert into t values (54, 108);
+insert into t values (55, 110);
+insert into t values (56, 112);
+insert into t values (57, 114);
+insert into t values (58, 116);
+insert into t values (59, 118);
+insert into t values (60, 120);
+insert into t values (61, 122);
+insert into t values (62, 124);
+insert into t values (63, 126);
+insert into t values (64, 128);
+insert into t values (65, 130);
+insert into t values (66, 132);
+insert into t values (67, 134);
+insert into t values (68, 136);
+insert into t values (69, 138);
+insert into t values (70, 140);
+insert into t values (71, 142);
+insert into t values (72, 144);
+insert into t values (73, 146);
+insert into t values (74, 148);
+insert into t values (75, 150);
+insert into t values (76, 152);
+insert into t values (77, 154);
+insert into t values (78, 156);
+insert into t values (79, 158);
+insert into t values (80, 160);
+insert into t values (81, 162);
+insert into t values (82, 164);
+insert into t values (83, 166);
+insert into t values (84, 168);
+insert into t values (85, 170);
+insert into t values (86, 172);
+insert into t values (87, 174);
+insert into t values (88, 176);
+insert into t values (89, 178);
+insert into t values (90, 180);
+insert into t values (91, 182);
+insert into t values (92, 184);
+insert into t values (93, 186);
+insert into t values (94, 188);
+insert into t values (95, 190);
+insert into t values (96, 192);
+insert into t values (97, 194);
+insert into t values (98, 196);
+insert into t values (99, 198);
+batch on a limit 10 insert into t1 select * from t;
+Error 1105 (HY000): Non-transactional DML, shard column a is not indexed
+batch on a limit 10 insert into t1 select * from t on duplicate key update t1.b=t.b;
+Error 1105 (HY000): Non-transactional DML, shard column a is not indexed
+batch on a limit 10 delete from t;
+Error 1105 (HY000): Non-transactional DML, shard column a is not indexed
+CREATE UNIQUE INDEX c1 ON t (a) INVISIBLE;
+CREATE UNIQUE INDEX c1 ON t1 (a) INVISIBLE;
+batch on a limit 10 insert into t1 select * from t;
+Error 1105 (HY000): Non-transactional DML, shard column a is not indexed
+batch on a limit 10 insert into t1 select * from t on duplicate key update t1.b=t.b;
+Error 1105 (HY000): Non-transactional DML, shard column a is not indexed
+batch on a limit 10 delete from t;
+Error 1105 (HY000): Non-transactional DML, shard column a is not indexed
+CREATE UNIQUE INDEX c2 ON t (a);
+CREATE UNIQUE INDEX c2 ON t1 (a);
+batch on a limit 10 insert into t1 select * from t;
+number of jobs	job status
+10	all succeeded
+select count(t1.a) = count(t.a) from t, t1;
+count(t1.a) = count(t.a)
+1
+(select * from t1 order by a) except (select * from t order by a);
+a	b
+(select * from t order by a) except (select * from t1 order by a);
+a	b
+update t1 set b=a;
+batch on a limit 10 insert into t1 select * from t on duplicate key update t1.b=t.b;
+number of jobs	job status
+10	all succeeded
+select count(*) from t;
+count(*)
+100
+select count(*) from t1;
+count(*)
+100
+(select * from t1 order by a) except (select * from t order by a);
+a	b
+(select * from t order by a) except (select * from t1 order by a);
+a	b
+batch on a limit 10 delete from t;
+number of jobs	job status
+10	all succeeded
+select count(*) from t;
+count(*)
+0
+set @@tidb_max_chunk_size=default;
+set @@tidb_max_chunk_size=35;
+drop table if exists t, t1;
+create table t(a int, b int);
+create table t1(a int, b int);
+insert into t values ('0', 0);
+insert into t values ('1', 2);
+insert into t values ('2', 4);
+insert into t values ('3', 6);
+insert into t values ('4', 8);
+insert into t values ('5', 10);
+insert into t values ('6', 12);
+insert into t values ('7', 14);
+insert into t values ('8', 16);
+insert into t values ('9', 18);
+batch limit 3 insert into t1 select * from t;
+number of jobs	job status
+4	all succeeded
+batch limit 3 insert into t1 select * from t on duplicate key update t1.a=t.a, t1.b=t.b;
+number of jobs	job status
+4	all succeeded
+batch limit 3 delete from t;
+number of jobs	job status
+4	all succeeded
+drop table if exists t, t1;
+create table t(a int, b int, primary key(a) clustered);
+create table t1(a int, b int, primary key(a) clustered);
+insert into t values ('0', 0);
+insert into t values ('1', 2);
+insert into t values ('2', 4);
+insert into t values ('3', 6);
+insert into t values ('4', 8);
+insert into t values ('5', 10);
+insert into t values ('6', 12);
+insert into t values ('7', 14);
+insert into t values ('8', 16);
+insert into t values ('9', 18);
+batch limit 3 insert into t1 select * from t;
+number of jobs	job status
+4	all succeeded
+batch limit 3 insert into t1 select * from t on duplicate key update t1.a=t.a, t1.b=t.b;
+number of jobs	job status
+4	all succeeded
+batch limit 3 delete from t;
+number of jobs	job status
+4	all succeeded
+drop table if exists t, t1;
+create table t(a int, b int, primary key(a) nonclustered);
+create table t1(a int, b int, primary key(a) nonclustered);
+insert into t values ('0', 0);
+insert into t values ('1', 2);
+insert into t values ('2', 4);
+insert into t values ('3', 6);
+insert into t values ('4', 8);
+insert into t values ('5', 10);
+insert into t values ('6', 12);
+insert into t values ('7', 14);
+insert into t values ('8', 16);
+insert into t values ('9', 18);
+batch limit 3 insert into t1 select * from t;
+number of jobs	job status
+4	all succeeded
+batch limit 3 insert into t1 select * from t on duplicate key update t1.a=t.a, t1.b=t.b;
+number of jobs	job status
+4	all succeeded
+batch limit 3 delete from t;
+number of jobs	job status
+4	all succeeded
+drop table if exists t, t1;
+create table t(a int, b int, primary key(a, b) nonclustered);
+create table t1(a int, b int, primary key(a, b) nonclustered);
+insert into t values ('0', 0);
+insert into t values ('1', 2);
+insert into t values ('2', 4);
+insert into t values ('3', 6);
+insert into t values ('4', 8);
+insert into t values ('5', 10);
+insert into t values ('6', 12);
+insert into t values ('7', 14);
+insert into t values ('8', 16);
+insert into t values ('9', 18);
+batch limit 3 insert into t1 select * from t;
+number of jobs	job status
+4	all succeeded
+batch limit 3 insert into t1 select * from t on duplicate key update t1.a=t.a, t1.b=t.b;
+number of jobs	job status
+4	all succeeded
+batch limit 3 delete from t;
+number of jobs	job status
+4	all succeeded
+drop table if exists t, t1;
+create table t(a varchar(30), b int, primary key(a) clustered);
+create table t1(a varchar(30), b int, primary key(a) clustered);
+insert into t values ('0', 0);
+insert into t values ('1', 2);
+insert into t values ('2', 4);
+insert into t values ('3', 6);
+insert into t values ('4', 8);
+insert into t values ('5', 10);
+insert into t values ('6', 12);
+insert into t values ('7', 14);
+insert into t values ('8', 16);
+insert into t values ('9', 18);
+batch limit 3 insert into t1 select * from t;
+number of jobs	job status
+4	all succeeded
+batch limit 3 insert into t1 select * from t on duplicate key update t1.a=t.a, t1.b=t.b;
+number of jobs	job status
+4	all succeeded
+batch limit 3 delete from t;
+number of jobs	job status
+4	all succeeded
+drop table if exists t, t1;
+create table t(a varchar(30), b int, primary key(a, b) nonclustered);
+create table t1(a varchar(30), b int, primary key(a, b) nonclustered);
+insert into t values ('0', 0);
+insert into t values ('1', 2);
+insert into t values ('2', 4);
+insert into t values ('3', 6);
+insert into t values ('4', 8);
+insert into t values ('5', 10);
+insert into t values ('6', 12);
+insert into t values ('7', 14);
+insert into t values ('8', 16);
+insert into t values ('9', 18);
+batch limit 3 insert into t1 select * from t;
+number of jobs	job status
+4	all succeeded
+batch limit 3 insert into t1 select * from t on duplicate key update t1.a=t.a, t1.b=t.b;
+number of jobs	job status
+4	all succeeded
+batch limit 3 delete from t;
+number of jobs	job status
+4	all succeeded
+drop table if exists t, t1;
+create table t(a int, b int, primary key(a, b) clustered);
+create table t1(a int, b int, primary key(a, b) clustered);
+insert into t values ('0', 0);
+insert into t values ('1', 2);
+insert into t values ('2', 4);
+insert into t values ('3', 6);
+insert into t values ('4', 8);
+insert into t values ('5', 10);
+insert into t values ('6', 12);
+insert into t values ('7', 14);
+insert into t values ('8', 16);
+insert into t values ('9', 18);
+batch limit 3 insert into t1 select * from t;
+Error 1105 (HY000): Non-transactional DML, the clustered index contains multiple columns. Please specify a shard column
+batch limit 3 insert into t1 select * from t on duplicate key update t1.a=t.a, t1.b=t.b;
+Error 1105 (HY000): Non-transactional DML, the clustered index contains multiple columns. Please specify a shard column
+batch limit 3 delete from t;
+Error 1105 (HY000): Non-transactional DML, the clustered index contains multiple columns. Please specify a shard column
+drop table if exists t, t1;
+create table t(a varchar(30), b int, primary key(a, b) clustered);
+create table t1(a varchar(30), b int, primary key(a, b) clustered);
+insert into t values ('0', 0);
+insert into t values ('1', 2);
+insert into t values ('2', 4);
+insert into t values ('3', 6);
+insert into t values ('4', 8);
+insert into t values ('5', 10);
+insert into t values ('6', 12);
+insert into t values ('7', 14);
+insert into t values ('8', 16);
+insert into t values ('9', 18);
+batch limit 3 insert into t1 select * from t;
+Error 1105 (HY000): Non-transactional DML, the clustered index contains multiple columns. Please specify a shard column
+batch limit 3 insert into t1 select * from t on duplicate key update t1.a=t.a, t1.b=t.b;
+Error 1105 (HY000): Non-transactional DML, the clustered index contains multiple columns. Please specify a shard column
+batch limit 3 delete from t;
+Error 1105 (HY000): Non-transactional DML, the clustered index contains multiple columns. Please specify a shard column
+set @@tidb_max_chunk_size=35;
+drop table if exists t, t1;
+create table t(a int, b int, c double as (sqrt(a * a + b * b)), key(c));
+create table t1(a int, b int, c double as (sqrt(a * a + b * b)), unique key(c));
+insert into t values (0, 0, default);
+insert into t values (1, 2, default);
+insert into t values (2, 4, default);
+insert into t values (3, 6, default);
+insert into t values (4, 8, default);
+insert into t values (5, 10, default);
+insert into t values (6, 12, default);
+insert into t values (7, 14, default);
+insert into t values (8, 16, default);
+insert into t values (9, 18, default);
+insert into t values (10, 20, default);
+insert into t values (11, 22, default);
+insert into t values (12, 24, default);
+insert into t values (13, 26, default);
+insert into t values (14, 28, default);
+insert into t values (15, 30, default);
+insert into t values (16, 32, default);
+insert into t values (17, 34, default);
+insert into t values (18, 36, default);
+insert into t values (19, 38, default);
+insert into t values (20, 40, default);
+insert into t values (21, 42, default);
+insert into t values (22, 44, default);
+insert into t values (23, 46, default);
+insert into t values (24, 48, default);
+insert into t values (25, 50, default);
+insert into t values (26, 52, default);
+insert into t values (27, 54, default);
+insert into t values (28, 56, default);
+insert into t values (29, 58, default);
+insert into t values (30, 60, default);
+insert into t values (31, 62, default);
+insert into t values (32, 64, default);
+insert into t values (33, 66, default);
+insert into t values (34, 68, default);
+insert into t values (35, 70, default);
+insert into t values (36, 72, default);
+insert into t values (37, 74, default);
+insert into t values (38, 76, default);
+insert into t values (39, 78, default);
+insert into t values (40, 80, default);
+insert into t values (41, 82, default);
+insert into t values (42, 84, default);
+insert into t values (43, 86, default);
+insert into t values (44, 88, default);
+insert into t values (45, 90, default);
+insert into t values (46, 92, default);
+insert into t values (47, 94, default);
+insert into t values (48, 96, default);
+insert into t values (49, 98, default);
+insert into t values (50, 100, default);
+insert into t values (51, 102, default);
+insert into t values (52, 104, default);
+insert into t values (53, 106, default);
+insert into t values (54, 108, default);
+insert into t values (55, 110, default);
+insert into t values (56, 112, default);
+insert into t values (57, 114, default);
+insert into t values (58, 116, default);
+insert into t values (59, 118, default);
+insert into t values (60, 120, default);
+insert into t values (61, 122, default);
+insert into t values (62, 124, default);
+insert into t values (63, 126, default);
+insert into t values (64, 128, default);
+insert into t values (65, 130, default);
+insert into t values (66, 132, default);
+insert into t values (67, 134, default);
+insert into t values (68, 136, default);
+insert into t values (69, 138, default);
+insert into t values (70, 140, default);
+insert into t values (71, 142, default);
+insert into t values (72, 144, default);
+insert into t values (73, 146, default);
+insert into t values (74, 148, default);
+insert into t values (75, 150, default);
+insert into t values (76, 152, default);
+insert into t values (77, 154, default);
+insert into t values (78, 156, default);
+insert into t values (79, 158, default);
+insert into t values (80, 160, default);
+insert into t values (81, 162, default);
+insert into t values (82, 164, default);
+insert into t values (83, 166, default);
+insert into t values (84, 168, default);
+insert into t values (85, 170, default);
+insert into t values (86, 172, default);
+insert into t values (87, 174, default);
+insert into t values (88, 176, default);
+insert into t values (89, 178, default);
+insert into t values (90, 180, default);
+insert into t values (91, 182, default);
+insert into t values (92, 184, default);
+insert into t values (93, 186, default);
+insert into t values (94, 188, default);
+insert into t values (95, 190, default);
+insert into t values (96, 192, default);
+insert into t values (97, 194, default);
+insert into t values (98, 196, default);
+insert into t values (99, 198, default);
+batch on c limit 10 insert into t1(a, b) select a, b from t;
+number of jobs	job status
+10	all succeeded
+select count(*) from t;
+count(*)
+100
+select count(*) from t1;
+count(*)
+100
+(select * from t1 order by a) except (select * from t order by a);
+a	b	c
+(select * from t order by a) except (select * from t1 order by a);
+a	b	c
+update t1 set a=b, b=a;
+select count(*) from t;
+count(*)
+100
+select count(*) from t1;
+count(*)
+100
+(select b, a from t1 order by a) except (select a, b from t order by a);
+b	a
+(select b, a from t order by a) except (select a, b from t1 order by a);
+b	a
+batch on c limit 10 insert into t1(a, b) select a, b from t on duplicate key update t1.a=t.a, t1.b=t.b;
+number of jobs	job status
+10	all succeeded
+select count(*) from t;
+count(*)
+100
+select count(*) from t1;
+count(*)
+100
+(select * from t1 order by a) except (select * from t order by a);
+a	b	c
+(select * from t order by a) except (select * from t1 order by a);
+a	b	c
+batch on c limit 10 delete from t;
+number of jobs	job status
+10	all succeeded
+select count(*) from t;
+count(*)
+0
+set @@tidb_max_chunk_size=default;
+set @@tidb_max_chunk_size=1024;
+drop table if exists t, t1;
+create table t(a int, b int, key(a));
+create table t1(a int, b int, unique key(a));
+insert into t values ('0', 0);
+insert into t values (null, null);
+insert into t values ('1', 2);
+insert into t values (null, null);
+insert into t values ('2', 4);
+insert into t values (null, null);
+insert into t values ('3', 6);
+insert into t values (null, null);
+insert into t values ('4', 8);
+insert into t values (null, null);
+insert into t values ('5', 10);
+insert into t values (null, null);
+insert into t values ('6', 12);
+insert into t values (null, null);
+insert into t values ('7', 14);
+insert into t values (null, null);
+insert into t values ('8', 16);
+insert into t values (null, null);
+insert into t values ('9', 18);
+insert into t values (null, null);
+batch on a limit 1000 dry run delete from t;
+split statement examples
+DELETE FROM `session__nontransactional`.`t` WHERE ((`a` <= 9) OR `a` IS NULL)
+batch on a limit 1000 dry run insert into t1 select * from t;
+split statement examples
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE ((`a` <= 9) OR `a` IS NULL)
+batch on a limit 1000 dry run insert into t1 select * from t on duplicate key update t1.b=t.b;
+split statement examples
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE ((`a` <= 9) OR `a` IS NULL) ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`
+batch on a limit 1000 insert into t1 select * from t;
+number of jobs	job status
+1	all succeeded
+select count(*) from t;
+count(*)
+20
+select count(*) from t1;
+count(*)
+20
+(select * from t1 order by a) except (select * from t order by a);
+a	b
+(select * from t order by a) except (select * from t1 order by a);
+a	b
+update t1 set b = a;
+batch on a limit 1000 insert into t1 select * from t on duplicate key update t1.b=t.b;
+number of jobs	job status
+1	all succeeded
+select count(*) from t where a is not null;
+count(*)
+10
+select count(*) from t1 where a is not null;
+count(*)
+10
+(select * from t1 where a is not null order by a) except (select * from t where a is not null order by a);
+a	b
+(select * from t where a is not null order by a) except (select * from t1 where a is not null order by a);
+a	b
+batch on a limit 1000 delete from t;
+number of jobs	job status
+1	all succeeded
+select count(*) from t;
+count(*)
+0
+set @@tidb_max_chunk_size=default;
+set @@tidb_max_chunk_size=35;
+drop table if exists t, t1;
+create table t(a int, b int, key(a));
+create table t1(a int, b int, key(a));
+insert into t values ('0', 0);
+insert into t values (null, null);
+insert into t values ('1', 2);
+insert into t values (null, null);
+insert into t values ('2', 4);
+insert into t values (null, null);
+insert into t values ('3', 6);
+insert into t values (null, null);
+insert into t values ('4', 8);
+insert into t values (null, null);
+insert into t values ('5', 10);
+insert into t values (null, null);
+insert into t values ('6', 12);
+insert into t values (null, null);
+insert into t values ('7', 14);
+insert into t values (null, null);
+insert into t values ('8', 16);
+insert into t values (null, null);
+insert into t values ('9', 18);
+insert into t values (null, null);
+insert into t values ('10', 20);
+insert into t values (null, null);
+insert into t values ('11', 22);
+insert into t values (null, null);
+insert into t values ('12', 24);
+insert into t values (null, null);
+insert into t values ('13', 26);
+insert into t values (null, null);
+insert into t values ('14', 28);
+insert into t values (null, null);
+insert into t values ('15', 30);
+insert into t values (null, null);
+insert into t values ('16', 32);
+insert into t values (null, null);
+insert into t values ('17', 34);
+insert into t values (null, null);
+insert into t values ('18', 36);
+insert into t values (null, null);
+insert into t values ('19', 38);
+insert into t values (null, null);
+insert into t values ('20', 40);
+insert into t values (null, null);
+insert into t values ('21', 42);
+insert into t values (null, null);
+insert into t values ('22', 44);
+insert into t values (null, null);
+insert into t values ('23', 46);
+insert into t values (null, null);
+insert into t values ('24', 48);
+insert into t values (null, null);
+insert into t values ('25', 50);
+insert into t values (null, null);
+insert into t values ('26', 52);
+insert into t values (null, null);
+insert into t values ('27', 54);
+insert into t values (null, null);
+insert into t values ('28', 56);
+insert into t values (null, null);
+insert into t values ('29', 58);
+insert into t values (null, null);
+insert into t values ('30', 60);
+insert into t values (null, null);
+insert into t values ('31', 62);
+insert into t values (null, null);
+insert into t values ('32', 64);
+insert into t values (null, null);
+insert into t values ('33', 66);
+insert into t values (null, null);
+insert into t values ('34', 68);
+insert into t values (null, null);
+insert into t values ('35', 70);
+insert into t values (null, null);
+insert into t values ('36', 72);
+insert into t values (null, null);
+insert into t values ('37', 74);
+insert into t values (null, null);
+insert into t values ('38', 76);
+insert into t values (null, null);
+insert into t values ('39', 78);
+insert into t values (null, null);
+insert into t values ('40', 80);
+insert into t values (null, null);
+insert into t values ('41', 82);
+insert into t values (null, null);
+insert into t values ('42', 84);
+insert into t values (null, null);
+insert into t values ('43', 86);
+insert into t values (null, null);
+insert into t values ('44', 88);
+insert into t values (null, null);
+insert into t values ('45', 90);
+insert into t values (null, null);
+insert into t values ('46', 92);
+insert into t values (null, null);
+insert into t values ('47', 94);
+insert into t values (null, null);
+insert into t values ('48', 96);
+insert into t values (null, null);
+insert into t values ('49', 98);
+insert into t values (null, null);
+insert into t values ('50', 100);
+insert into t values (null, null);
+insert into t values ('51', 102);
+insert into t values (null, null);
+insert into t values ('52', 104);
+insert into t values (null, null);
+insert into t values ('53', 106);
+insert into t values (null, null);
+insert into t values ('54', 108);
+insert into t values (null, null);
+insert into t values ('55', 110);
+insert into t values (null, null);
+insert into t values ('56', 112);
+insert into t values (null, null);
+insert into t values ('57', 114);
+insert into t values (null, null);
+insert into t values ('58', 116);
+insert into t values (null, null);
+insert into t values ('59', 118);
+insert into t values (null, null);
+insert into t values ('60', 120);
+insert into t values (null, null);
+insert into t values ('61', 122);
+insert into t values (null, null);
+insert into t values ('62', 124);
+insert into t values (null, null);
+insert into t values ('63', 126);
+insert into t values (null, null);
+insert into t values ('64', 128);
+insert into t values (null, null);
+insert into t values ('65', 130);
+insert into t values (null, null);
+insert into t values ('66', 132);
+insert into t values (null, null);
+insert into t values ('67', 134);
+insert into t values (null, null);
+insert into t values ('68', 136);
+insert into t values (null, null);
+insert into t values ('69', 138);
+insert into t values (null, null);
+insert into t values ('70', 140);
+insert into t values (null, null);
+insert into t values ('71', 142);
+insert into t values (null, null);
+insert into t values ('72', 144);
+insert into t values (null, null);
+insert into t values ('73', 146);
+insert into t values (null, null);
+insert into t values ('74', 148);
+insert into t values (null, null);
+insert into t values ('75', 150);
+insert into t values (null, null);
+insert into t values ('76', 152);
+insert into t values (null, null);
+insert into t values ('77', 154);
+insert into t values (null, null);
+insert into t values ('78', 156);
+insert into t values (null, null);
+insert into t values ('79', 158);
+insert into t values (null, null);
+insert into t values ('80', 160);
+insert into t values (null, null);
+insert into t values ('81', 162);
+insert into t values (null, null);
+insert into t values ('82', 164);
+insert into t values (null, null);
+insert into t values ('83', 166);
+insert into t values (null, null);
+insert into t values ('84', 168);
+insert into t values (null, null);
+insert into t values ('85', 170);
+insert into t values (null, null);
+insert into t values ('86', 172);
+insert into t values (null, null);
+insert into t values ('87', 174);
+insert into t values (null, null);
+insert into t values ('88', 176);
+insert into t values (null, null);
+insert into t values ('89', 178);
+insert into t values (null, null);
+insert into t values ('90', 180);
+insert into t values (null, null);
+insert into t values ('91', 182);
+insert into t values (null, null);
+insert into t values ('92', 184);
+insert into t values (null, null);
+insert into t values ('93', 186);
+insert into t values (null, null);
+insert into t values ('94', 188);
+insert into t values (null, null);
+insert into t values ('95', 190);
+insert into t values (null, null);
+insert into t values ('96', 192);
+insert into t values (null, null);
+insert into t values ('97', 194);
+insert into t values (null, null);
+insert into t values ('98', 196);
+insert into t values (null, null);
+insert into t values ('99', 198);
+insert into t values (null, null);
+batch on a limit 3 delete from t;
+number of jobs	job status
+35	all succeeded
+select count(*) from t;
+count(*)
+0
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+insert into t values (null, null);
+batch on a limit 3 insert into t1 select * from t;
+number of jobs	job status
+1	all succeeded
+select count(*) from t;
+count(*)
+100
+select count(*) from t1;
+count(*)
+100
+(select * from t1 order by a) except (select * from t order by a);
+a	b
+(select * from t order by a) except (select * from t1 order by a);
+a	b
+batch on a limit 3 insert into t1 select * from t on duplicate key update t1.b=t.b;
+number of jobs	job status
+1	all succeeded
+select count(*) from t1;
+count(*)
+200
+batch on a limit 3 delete from t;
+number of jobs	job status
+1	all succeeded
+select count(*) from t;
+count(*)
+0
+set @@tidb_max_chunk_size=default;
+set @@tidb_max_chunk_size=35;
+drop table if exists t, t1;
+create table t(a int, b int);
+create table t1(a int, b int, unique key(a));
+insert into t values ('0', 0);
+insert into t values ('1', 2);
+insert into t values ('2', 4);
+insert into t values ('3', 6);
+insert into t values ('4', 8);
+insert into t values ('5', 10);
+insert into t values ('6', 12);
+insert into t values ('7', 14);
+insert into t values ('8', 16);
+insert into t values ('9', 18);
+insert into t values ('10', 20);
+insert into t values ('11', 22);
+insert into t values ('12', 24);
+insert into t values ('13', 26);
+insert into t values ('14', 28);
+insert into t values ('15', 30);
+insert into t values ('16', 32);
+insert into t values ('17', 34);
+insert into t values ('18', 36);
+insert into t values ('19', 38);
+insert into t values ('20', 40);
+insert into t values ('21', 42);
+insert into t values ('22', 44);
+insert into t values ('23', 46);
+insert into t values ('24', 48);
+insert into t values ('25', 50);
+insert into t values ('26', 52);
+insert into t values ('27', 54);
+insert into t values ('28', 56);
+insert into t values ('29', 58);
+insert into t values ('30', 60);
+insert into t values ('31', 62);
+insert into t values ('32', 64);
+insert into t values ('33', 66);
+insert into t values ('34', 68);
+insert into t values ('35', 70);
+insert into t values ('36', 72);
+insert into t values ('37', 74);
+insert into t values ('38', 76);
+insert into t values ('39', 78);
+insert into t values ('40', 80);
+insert into t values ('41', 82);
+insert into t values ('42', 84);
+insert into t values ('43', 86);
+insert into t values ('44', 88);
+insert into t values ('45', 90);
+insert into t values ('46', 92);
+insert into t values ('47', 94);
+insert into t values ('48', 96);
+insert into t values ('49', 98);
+insert into t values ('50', 100);
+insert into t values ('51', 102);
+insert into t values ('52', 104);
+insert into t values ('53', 106);
+insert into t values ('54', 108);
+insert into t values ('55', 110);
+insert into t values ('56', 112);
+insert into t values ('57', 114);
+insert into t values ('58', 116);
+insert into t values ('59', 118);
+insert into t values ('60', 120);
+insert into t values ('61', 122);
+insert into t values ('62', 124);
+insert into t values ('63', 126);
+insert into t values ('64', 128);
+insert into t values ('65', 130);
+insert into t values ('66', 132);
+insert into t values ('67', 134);
+insert into t values ('68', 136);
+insert into t values ('69', 138);
+insert into t values ('70', 140);
+insert into t values ('71', 142);
+insert into t values ('72', 144);
+insert into t values ('73', 146);
+insert into t values ('74', 148);
+insert into t values ('75', 150);
+insert into t values ('76', 152);
+insert into t values ('77', 154);
+insert into t values ('78', 156);
+insert into t values ('79', 158);
+insert into t values ('80', 160);
+insert into t values ('81', 162);
+insert into t values ('82', 164);
+insert into t values ('83', 166);
+insert into t values ('84', 168);
+insert into t values ('85', 170);
+insert into t values ('86', 172);
+insert into t values ('87', 174);
+insert into t values ('88', 176);
+insert into t values ('89', 178);
+insert into t values ('90', 180);
+insert into t values ('91', 182);
+insert into t values ('92', 184);
+insert into t values ('93', 186);
+insert into t values ('94', 188);
+insert into t values ('95', 190);
+insert into t values ('96', 192);
+insert into t values ('97', 194);
+insert into t values ('98', 196);
+insert into t values ('99', 198);
+batch limit 3 dry run delete from t;
+split statement examples
+DELETE FROM `session__nontransactional`.`t` WHERE `session__nontransactional`.`t`.`_tidb_rowid` BETWEEN 1 AND 3
+DELETE FROM `session__nontransactional`.`t` WHERE `session__nontransactional`.`t`.`_tidb_rowid` BETWEEN 100 AND 100
+batch limit 3 dry run update t set b = 42;
+split statement examples
+UPDATE `session__nontransactional`.`t` SET `b`=42 WHERE `session__nontransactional`.`t`.`_tidb_rowid` BETWEEN 1 AND 3
+UPDATE `session__nontransactional`.`t` SET `b`=42 WHERE `session__nontransactional`.`t`.`_tidb_rowid` BETWEEN 100 AND 100
+batch limit 3 dry run insert into t1 select * from t;
+split statement examples
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `session__nontransactional`.`t`.`_tidb_rowid` BETWEEN 1 AND 3
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `session__nontransactional`.`t`.`_tidb_rowid` BETWEEN 100 AND 100
+batch limit 3 dry run insert into t1 select * from t on duplicate key update t1.b=t.b;
+split statement examples
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `session__nontransactional`.`t`.`_tidb_rowid` BETWEEN 1 AND 3 ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `session__nontransactional`.`t`.`_tidb_rowid` BETWEEN 100 AND 100 ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`
+batch on _tidb_rowid limit 3 dry run delete from t;
+split statement examples
+DELETE FROM `session__nontransactional`.`t` WHERE `_tidb_rowid` BETWEEN 1 AND 3
+DELETE FROM `session__nontransactional`.`t` WHERE `_tidb_rowid` BETWEEN 100 AND 100
+batch on t._tidb_rowid limit 3 dry run delete from t;
+split statement examples
+DELETE FROM `session__nontransactional`.`t` WHERE `t`.`_tidb_rowid` BETWEEN 1 AND 3
+DELETE FROM `session__nontransactional`.`t` WHERE `t`.`_tidb_rowid` BETWEEN 100 AND 100
+batch on _tidb_rowid limit 3 dry run update t set b = 42;
+split statement examples
+UPDATE `session__nontransactional`.`t` SET `b`=42 WHERE `_tidb_rowid` BETWEEN 1 AND 3
+UPDATE `session__nontransactional`.`t` SET `b`=42 WHERE `_tidb_rowid` BETWEEN 100 AND 100
+batch on t._tidb_rowid limit 3 dry run update t set b = 42;
+split statement examples
+UPDATE `session__nontransactional`.`t` SET `b`=42 WHERE `t`.`_tidb_rowid` BETWEEN 1 AND 3
+UPDATE `session__nontransactional`.`t` SET `b`=42 WHERE `t`.`_tidb_rowid` BETWEEN 100 AND 100
+batch on _tidb_rowid limit 3 dry run insert into t1 select * from t;
+split statement examples
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `_tidb_rowid` BETWEEN 1 AND 3
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `_tidb_rowid` BETWEEN 100 AND 100
+batch on t._tidb_rowid limit 3 dry run insert into t1 select * from t;
+split statement examples
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `t`.`_tidb_rowid` BETWEEN 1 AND 3
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `t`.`_tidb_rowid` BETWEEN 100 AND 100
+batch on _tidb_rowid limit 3 dry run insert into t1 select * from t on duplicate key update t1.b=t.b;
+split statement examples
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `_tidb_rowid` BETWEEN 1 AND 3 ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `_tidb_rowid` BETWEEN 100 AND 100 ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`
+batch on t._tidb_rowid limit 3 dry run insert into t1 select * from t on duplicate key update t1.b=t.b;
+split statement examples
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `t`.`_tidb_rowid` BETWEEN 1 AND 3 ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `t`.`_tidb_rowid` BETWEEN 100 AND 100 ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`
+batch on _tidb_rowid limit 3 insert into t1 select * from t;
+number of jobs	job status
+34	all succeeded
+select count(*) from t;
+count(*)
+100
+select count(*) from t1;
+count(*)
+100
+(select * from t1 order by a) except (select * from t order by a);
+a	b
+(select * from t order by a) except (select * from t1 order by a);
+a	b
+update t1 set b = 0;
+batch on _tidb_rowid limit 3 insert into t1 select * from t on duplicate key update t1.b=t.b;
+number of jobs	job status
+34	all succeeded
+select count(*) from t;
+count(*)
+100
+select count(*) from t1;
+count(*)
+100
+(select * from t1 order by a) except (select * from t order by a);
+a	b
+(select * from t order by a) except (select * from t1 order by a);
+a	b
+batch on _tidb_rowid limit 3 update t set b = 42;
+number of jobs	job status
+34	all succeeded
+select sum(b) from t;
+sum(b)
+4200
+batch on _tidb_rowid limit 3 delete from t;
+number of jobs	job status
+34	all succeeded
+select count(*) from t;
+count(*)
+0
+set @@tidb_max_chunk_size=default;
+set @@tidb_max_chunk_size=35;
+drop table if exists t, t1;
+create table t(a int, b int, primary key(a, b) clustered);
+create table t1(a int, b int, primary key(a, b) clustered);
+insert into t values ('0', 0);
+insert into t values ('1', 2);
+insert into t values ('2', 4);
+insert into t values ('3', 6);
+insert into t values ('4', 8);
+insert into t values ('5', 10);
+insert into t values ('6', 12);
+insert into t values ('7', 14);
+insert into t values ('8', 16);
+insert into t values ('9', 18);
+insert into t values ('10', 20);
+insert into t values ('11', 22);
+insert into t values ('12', 24);
+insert into t values ('13', 26);
+insert into t values ('14', 28);
+insert into t values ('15', 30);
+insert into t values ('16', 32);
+insert into t values ('17', 34);
+insert into t values ('18', 36);
+insert into t values ('19', 38);
+insert into t values ('20', 40);
+insert into t values ('21', 42);
+insert into t values ('22', 44);
+insert into t values ('23', 46);
+insert into t values ('24', 48);
+insert into t values ('25', 50);
+insert into t values ('26', 52);
+insert into t values ('27', 54);
+insert into t values ('28', 56);
+insert into t values ('29', 58);
+insert into t values ('30', 60);
+insert into t values ('31', 62);
+insert into t values ('32', 64);
+insert into t values ('33', 66);
+insert into t values ('34', 68);
+insert into t values ('35', 70);
+insert into t values ('36', 72);
+insert into t values ('37', 74);
+insert into t values ('38', 76);
+insert into t values ('39', 78);
+insert into t values ('40', 80);
+insert into t values ('41', 82);
+insert into t values ('42', 84);
+insert into t values ('43', 86);
+insert into t values ('44', 88);
+insert into t values ('45', 90);
+insert into t values ('46', 92);
+insert into t values ('47', 94);
+insert into t values ('48', 96);
+insert into t values ('49', 98);
+insert into t values ('50', 100);
+insert into t values ('51', 102);
+insert into t values ('52', 104);
+insert into t values ('53', 106);
+insert into t values ('54', 108);
+insert into t values ('55', 110);
+insert into t values ('56', 112);
+insert into t values ('57', 114);
+insert into t values ('58', 116);
+insert into t values ('59', 118);
+insert into t values ('60', 120);
+insert into t values ('61', 122);
+insert into t values ('62', 124);
+insert into t values ('63', 126);
+insert into t values ('64', 128);
+insert into t values ('65', 130);
+insert into t values ('66', 132);
+insert into t values ('67', 134);
+insert into t values ('68', 136);
+insert into t values ('69', 138);
+insert into t values ('70', 140);
+insert into t values ('71', 142);
+insert into t values ('72', 144);
+insert into t values ('73', 146);
+insert into t values ('74', 148);
+insert into t values ('75', 150);
+insert into t values ('76', 152);
+insert into t values ('77', 154);
+insert into t values ('78', 156);
+insert into t values ('79', 158);
+insert into t values ('80', 160);
+insert into t values ('81', 162);
+insert into t values ('82', 164);
+insert into t values ('83', 166);
+insert into t values ('84', 168);
+insert into t values ('85', 170);
+insert into t values ('86', 172);
+insert into t values ('87', 174);
+insert into t values ('88', 176);
+insert into t values ('89', 178);
+insert into t values ('90', 180);
+insert into t values ('91', 182);
+insert into t values ('92', 184);
+insert into t values ('93', 186);
+insert into t values ('94', 188);
+insert into t values ('95', 190);
+insert into t values ('96', 192);
+insert into t values ('97', 194);
+insert into t values ('98', 196);
+insert into t values ('99', 198);
+batch on a limit 3 dry run insert into t1 select * from t;
+split statement examples
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `a` BETWEEN 0 AND 2
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `a` BETWEEN 99 AND 99
+batch on a limit 3 dry run insert into t1 select * from t on duplicate key update t1.b=t.b;
+split statement examples
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `a` BETWEEN 0 AND 2 ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `a` BETWEEN 99 AND 99 ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`
+batch on a limit 3 dry run delete from t;
+split statement examples
+DELETE FROM `session__nontransactional`.`t` WHERE `a` BETWEEN 0 AND 2
+DELETE FROM `session__nontransactional`.`t` WHERE `a` BETWEEN 99 AND 99
+batch on a limit 3 dry run update t set b = b + 42;
+split statement examples
+UPDATE `session__nontransactional`.`t` SET `b`=(`b` + 42) WHERE `a` BETWEEN 0 AND 2
+UPDATE `session__nontransactional`.`t` SET `b`=(`b` + 42) WHERE `a` BETWEEN 99 AND 99
+batch on a limit 3 dry run query insert into t1 select * from t;
+query statement
+SELECT `a` FROM `session__nontransactional`.`t` WHERE TRUE ORDER BY IF(ISNULL(`a`),0,1),`a`
+batch on a limit 3 dry run query insert into t1 select * from t on duplicate key update t1.b=t.b;
+query statement
+SELECT `a` FROM `session__nontransactional`.`t` WHERE TRUE ORDER BY IF(ISNULL(`a`),0,1),`a`
+batch on a limit 3 dry run query delete from t;
+query statement
+SELECT `a` FROM `session__nontransactional`.`t` WHERE TRUE ORDER BY IF(ISNULL(`a`),0,1),`a`
+batch on a limit 3 dry run query update t set b = b + 42;
+query statement
+SELECT `a` FROM `session__nontransactional`.`t` WHERE TRUE ORDER BY IF(ISNULL(`a`),0,1),`a`
+select count(*) from t;
+count(*)
+100
+select sum(b) from t;
+sum(b)
+9900
+set @@tidb_max_chunk_size=default;

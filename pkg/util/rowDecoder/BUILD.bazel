@@ -1,0 +1,50 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "rowDecoder",
+    srcs = ["decoder.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/rowDecoder",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/expression",
+        "//pkg/kv",
+        "//pkg/parser/model",
+        "//pkg/sessionctx",
+        "//pkg/table",
+        "//pkg/table/tables",
+        "//pkg/tablecodec",
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "//pkg/util/rowcodec",
+    ],
+)
+
+go_test(
+    name = "rowDecoder_test",
+    timeout = "short",
+    srcs = [
+        "decoder_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    deps = [
+        ":rowDecoder",
+        "//pkg/expression",
+        "//pkg/kv",
+        "//pkg/parser/model",
+        "//pkg/parser/mysql",
+        "//pkg/planner/core",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/table/tables",
+        "//pkg/tablecodec",
+        "//pkg/testkit/testsetup",
+        "//pkg/testkit/testutil",
+        "//pkg/types",
+        "//pkg/util/collate",
+        "//pkg/util/mock",
+        "//pkg/util/rowcodec",
+        "@com_github_stretchr_testify//require",
+        "@io_opencensus_go//stats/view",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

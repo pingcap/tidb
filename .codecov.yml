@@ -8,14 +8,22 @@ coverage:
   round: down
   range: "65...90"
 
+  # status:
+  #   project:
+  #     default:
+  #       threshold: 0.2 #Allow the coverage to drop by threshold%, and posting a success status.
+  #   patch:
+  #     default:
+  #       target: 0% # trial operation
+
+  # Ref: https://docs.codecov.com/docs/commit-status#disabling-a-status
   status:
-    project: 
-      default:
-        threshold: 0.2 #Allow the coverage to drop by threshold%, and posting a success status.
-    patch: 
-      default:
-        target: 0% # trial operation
+    project: off # disable it
+    patch: off # disable it
     changes: no
+
+# Ref: https://docs.codecov.com/docs/github-checks#disabling-github-checks-completely-via-yaml
+github_checks: false
 
 parsers:
   gcov:
@@ -35,6 +43,7 @@ component_management:
     statuses:
       - type: project # in this case every component that doens't have a status defined will have a project type one
         target: auto
+        informational: true # resulting status will pass no matter what the coverage is or what other settings are specified. 
   individual_components:
     - component_id: component_dumpling # this is an identifier that should not be changed
       name: dumpling # this is a display name, and can be changed freely
@@ -43,7 +52,7 @@ component_management:
     - component_id: component_parser
       name: parser
       paths:
-        - parser/**      
+        - parser/**
     - component_id: component_br
       name: br
       paths:
@@ -55,28 +64,30 @@ flag_management:
     carryforward: true
     statuses:
       - type: project
-        target: 85%
+        target: auto
+        informational: true # resulting status will pass no matter what the coverage is or what other settings are specified. 
       - type: patch
-        target: 85%
+        target: auto
+        informational: true # resulting status will pass no matter what the coverage is or what other settings are specified. 
 
 ignore:
   - "LICENSES"
-  - "*_test.go"       
+  - "*_test.go"
   - ".git"
   - "*.yml"
   - "*.md"
-  - "cmd/.*"       
+  - "cmd/.*"
   - "docs/.*"
   - "vendor/.*"
-  - "ddl/failtest/.*"
-  - "ddl/testutil/.*"
-  - "executor/seqtest/.*"
-  - "metrics/.*"
-  - "expression/generator/.*"
+  - "pkg/ddl/failtest/.*"
+  - "pkg/ddl/testutil/.*"
+  - "pkg/executor/seqtest/.*"
+  - "pkg/metrics/.*"
+  - "pkg/expression/generator/.*"
   - "br/pkg/mock/.*"
-  - "testkit/.*"
-  - "server/internal/testutil/.*"
-  - "statistics/handle/cache/internal/testutil/.*"
-  - "session/testutil.go"
-  - "store/mockstore/unistore/testutil.go"
+  - "pkg/testkit/.*"
+  - "pkg/server/internal/testutil/.*"
+  - "pkg/statistics/handle/cache/internal/testutil/.*"
+  - "pkg/session/testutil.go"
+  - "pkg/store/mockstore/unistore/testutil.go"
 

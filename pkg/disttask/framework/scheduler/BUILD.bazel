@@ -1,0 +1,63 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "scheduler",
+    srcs = [
+        "interface.go",
+        "manager.go",
+        "register.go",
+        "scheduler.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/disttask/framework/scheduler",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/lightning/common",
+        "//br/pkg/lightning/log",
+        "//pkg/config",
+        "//pkg/disttask/framework/dispatcher",
+        "//pkg/disttask/framework/handle",
+        "//pkg/disttask/framework/proto",
+        "//pkg/disttask/framework/scheduler/execute",
+        "//pkg/disttask/framework/storage",
+        "//pkg/domain/infosync",
+        "//pkg/metrics",
+        "//pkg/parser/terror",
+        "//pkg/resourcemanager/pool/spool",
+        "//pkg/resourcemanager/util",
+        "//pkg/util",
+        "//pkg/util/backoff",
+        "//pkg/util/dbterror",
+        "//pkg/util/gctuner",
+        "//pkg/util/logutil",
+        "//pkg/util/memory",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "scheduler_test",
+    timeout = "short",
+    srcs = [
+        "manager_test.go",
+        "register_test.go",
+        "scheduler_test.go",
+    ],
+    embed = [":scheduler"],
+    flaky = True,
+    race = "on",
+    shard_count = 8,
+    deps = [
+        "//pkg/disttask/framework/mock",
+        "//pkg/disttask/framework/mock/execute",
+        "//pkg/disttask/framework/proto",
+        "//pkg/resourcemanager/pool/spool",
+        "//pkg/resourcemanager/util",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+        "@org_uber_go_mock//gomock",
+    ],
+)

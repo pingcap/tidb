@@ -28,6 +28,7 @@ import (
 	"github.com/cockroachdb/pebble/sstable"
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/stretchr/testify/require"
 )
@@ -61,7 +62,7 @@ func TestGetEngineSizeWhenImport(t *testing.T) {
 		ctx:          engineCtx,
 		cancel:       cancel,
 		sstMetasChan: make(chan metaOrFlush, 64),
-		keyAdapter:   noopKeyAdapter{},
+		keyAdapter:   common.NoopKeyAdapter{},
 		logger:       log.L(),
 	}
 	f.db.Store(db)
@@ -99,7 +100,7 @@ func TestIngestSSTWithClosedEngine(t *testing.T) {
 		ctx:          engineCtx,
 		cancel:       cancel,
 		sstMetasChan: make(chan metaOrFlush, 64),
-		keyAdapter:   noopKeyAdapter{},
+		keyAdapter:   common.NoopKeyAdapter{},
 		logger:       log.L(),
 	}
 	f.db.Store(db)

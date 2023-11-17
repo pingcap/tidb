@@ -19,12 +19,13 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"testing"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	tmysql "github.com/pingcap/tidb/errno"
-	drivererr "github.com/pingcap/tidb/store/driver/error"
+	tmysql "github.com/pingcap/tidb/pkg/errno"
+	drivererr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
@@ -34,6 +35,7 @@ import (
 func TestIsRetryableError(t *testing.T) {
 	require.False(t, IsRetryableError(context.Canceled))
 	require.False(t, IsRetryableError(context.DeadlineExceeded))
+	require.True(t, IsRetryableError(ErrWriteTooSlow))
 	require.False(t, IsRetryableError(io.EOF))
 	require.False(t, IsRetryableError(&net.AddrError{}))
 	require.False(t, IsRetryableError(&net.DNSError{}))
@@ -66,6 +68,9 @@ func TestIsRetryableError(t *testing.T) {
 	_, err := net.Dial("tcp", "localhost:65533")
 	require.Error(t, err)
 	require.True(t, IsRetryableError(err))
+	// wrap net.OpErr inside url.Error
+	urlErr := &url.Error{Op: "post", Err: err}
+	require.True(t, IsRetryableError(urlErr))
 
 	// MySQL Errors
 	require.False(t, IsRetryableError(&mysql.MySQLError{}))

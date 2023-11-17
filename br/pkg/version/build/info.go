@@ -8,9 +8,9 @@ import (
 	"runtime"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/util/israce"
-	"github.com/pingcap/tidb/util/versioninfo"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/israce"
+	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	"go.uber.org/zap"
 )
 

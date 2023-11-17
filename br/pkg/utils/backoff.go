@@ -72,6 +72,10 @@ func (rs *RetryState) ExponentialBackoff() time.Duration {
 	return backoff
 }
 
+func (rs *RetryState) GiveUp() {
+	rs.retryTimes = rs.maxRetry
+}
+
 // InitialRetryState make the initial state for retrying.
 func InitialRetryState(maxRetryTimes int, initialBackoff, maxBackoff time.Duration) RetryState {
 	return RetryState{
@@ -136,6 +140,7 @@ func NewDownloadSSTBackoffer() Backoffer {
 }
 
 func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
+	log.Warn("retry to import ssts", zap.Int("attempt", bo.attempt), zap.Error(err))
 	if MessageIsRetryableStorageError(err.Error()) {
 		bo.delayTime = 2 * bo.delayTime
 		bo.attempt--

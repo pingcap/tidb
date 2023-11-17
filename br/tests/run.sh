@@ -18,7 +18,13 @@ set -eu
 CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export PATH="$PATH:$CUR/../../bin:$CUR/../bin:$CUR/_utils"
 export TEST_DIR=/tmp/backup_restore_test
+export COV_DIR="/tmp/group_cover"
 source $CUR/_utils/run_services
+
+# Create COV_DIR if not exists
+if [ -d "$COV_DIR" ]; then
+   mkdir -p $COV_DIR
+fi
 
 # Reset TEST_DIR
 rm -rf $TEST_DIR && mkdir -p $TEST_DIR

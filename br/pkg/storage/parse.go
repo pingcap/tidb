@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 )
@@ -81,7 +80,7 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 		noop := &backuppb.Noop{}
 		return &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_Noop{Noop: noop}}, nil
 
-	case "s3":
+	case "s3", "ks3":
 		if u.Host == "" {
 			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for s3 in %s", rawURL)
 		}
@@ -93,6 +92,9 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 		ExtractQueryParameters(u, &options.S3)
 		if err := options.S3.Apply(s3); err != nil {
 			return nil, errors.Trace(err)
+		}
+		if u.Scheme == "ks3" {
+			s3.Provider = ks3SDKProvider
 		}
 		return &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_S3{S3: s3}}, nil
 
@@ -206,31 +208,6 @@ func FormatBackendURL(backend *backuppb.StorageBackend) (u url.URL) {
 		u.Path = b.AzureBlobStorage.Prefix
 	}
 	return
-}
-
-// RedactURL redacts the secret tokens in the URL. only S3 url need redaction for now.
-func RedactURL(str string) (string, error) {
-	u, err := ParseRawURL(str)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-	scheme := u.Scheme
-	failpoint.Inject("forceRedactURL", func() {
-		scheme = "s3"
-	})
-	if strings.ToLower(scheme) == "s3" {
-		values := u.Query()
-		for k := range values {
-			// see below on why we normalize key
-			// https://github.com/pingcap/tidb/blob/a7c0d95f16ea2582bb569278c3f829403e6c3a7e/br/pkg/storage/parse.go#L163
-			normalizedKey := strings.ToLower(strings.ReplaceAll(k, "_", "-"))
-			if normalizedKey == "access-key" || normalizedKey == "secret-access-key" {
-				values[k] = []string{"redacted"}
-			}
-		}
-		u.RawQuery = values.Encode()
-	}
-	return u.String(), nil
 }
 
 // IsLocalPath returns true if the path is a local file path.

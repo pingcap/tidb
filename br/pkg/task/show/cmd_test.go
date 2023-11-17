@@ -19,7 +19,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/br/pkg/task/show"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -170,7 +170,7 @@ func cloneFS(f fs.FS, base string, target string) error {
 
 func TestShowViaSQL(t *testing.T) {
 	req := require.New(t)
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tempBackup := tempBackupDir(t)

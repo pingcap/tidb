@@ -1,0 +1,89 @@
+[
+  {
+    "name": "TestJoinOrderHint4DynamicPartitionTable",
+    "cases": [
+      "select /*+ straight_join() */ * from t, t1, t2 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ straight_join() */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b and t2.b=t3.b;",
+      "select /*+ leading(t1) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b and t2.b=t3.b;",
+      "select /*+ leading(t1, t3) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b and t2.b=t3.b;",
+      // outer join
+      // left join
+      "select /*+ leading(t1, t2) */ * from t4 join t on t4.a=t.a left join t1 on t.a = t1.a join t2 on t.b = t2.b join t3 on t2.b=t3.b;",
+      "select /*+ leading(t2, t3) */ * from t4 join t on t4.a=t.a left join t1 on t.a = t1.a join t2 on t.b = t2.b join t3 on t2.b=t3.b;",
+      "select /*+ leading(t4, t3, t2, t, t1) */ * from t4 join t on t4.a=t.a left join t1 on t.a = t1.a join t2 on t.b = t2.b join t3 on t2.b=t3.b;",
+      "select /*+ leading(t4, t3, t2, t) */ * from t4 join t on t4.a=t.a left join t1 on t.a = t1.a join t2 on t.b = t2.b join t3 on t2.b=t3.b;",
+      "select /*+ leading(t3, t2, t) */ * from t4 join t on t4.a=t.a left join t1 on t.a = t1.a join t2 on t.b = t2.b join t3 on t2.b=t3.b;",
+      "select /*+ leading(t3) */ * from t2 left join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;",
+      "select /*+ leading(t2, t1, t3) */ * from t2 left join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;",
+      "select /*+ leading(t2, t3) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b;",
+      "select /*+ leading(t3, t4) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b;",
+      "select /*+ leading(t3, t4) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;",
+      // should support this case later
+      "select /*+ leading(t3, t4) leading(t5, t6) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;",
+      "select /*+ leading(t5, t6, t3, t4) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;",
+      // right join
+      "select /*+ leading(t1, t2) */ * from t4 join t on t4.a=t.a right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
+      "select /*+ leading(t2, t3) */ * from t4 join t on t4.a=t.a right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
+      "select /*+ leading(t1, t3) */ * from t4 join t on t4.a=t.a right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
+      "select /*+ leading(t3) */ * from t2 right join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;",
+      "select /*+ leading(t2, t1, t3) */ * from t2 right join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;",
+      "select /*+ leading(t2, t3) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b;",
+      "select /*+ leading(t3, t4) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b;",
+      "select /*+ leading(t3, t4) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;",
+      "select /*+ leading(t3, t4) leading(t5, t6) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;",
+      "select /*+ leading(t3, t4, t5, t6) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;"
+    ]
+  },
+  {
+    "name": "TestOptEnableHashJoin",
+    "cases": [
+      "select * from t1, t2",
+      "select * from t1, t2 where t1.a=t2.a",
+      "select * from t1, t2 where t1.b=t2.b",
+      "select * from t1, t2 where t1.a=t2.a and t1.b=t2.b",
+      "select * from t1 left join t2 on t1.b=t2.b",
+      "select * from t1 left join t2 on t1.a=t2.a",
+      "select * from t1 right join t2 on t1.b=t2.b",
+      "select * from t1 right join t2 on t1.a=t2.a",
+      "select /*+ hash_join(t1) */ * from t1, t2",
+      "select /*+ hash_join(t2) */ * from t1, t2"
+    ]
+  },
+  {
+    "name": "TestJoinOrderHint4TiFlash",
+    "cases": [
+      "select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
+      "select /*+ leading(t2) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
+      "select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
+      "select /*+ leading(t2, t3) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
+      "select /*+ leading(t3, t2) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
+      "select /*+ leading(t3, t1) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
+      // outer join
+      // left join
+      "select /*+ leading(t1, t2) */ * from t4 join t on t4.a=t.a left join t1 on t.a = t1.a join t2 on t.b = t2.b join t3 on t2.b=t3.b;",
+      "select /*+ leading(t2, t3) */ * from t4 join t on t4.a=t.a left join t1 on t.a = t1.a join t2 on t.b = t2.b join t3 on t2.b=t3.b;",
+      "select /*+ leading(t4, t3, t2, t, t1) */ * from t4 join t on t4.a=t.a left join t1 on t.a = t1.a join t2 on t.b = t2.b join t3 on t2.b=t3.b;",
+      "select /*+ leading(t4, t3, t2, t) */ * from t4 join t on t4.a=t.a left join t1 on t.a = t1.a join t2 on t.b = t2.b join t3 on t2.b=t3.b;",
+      "select /*+ leading(t3, t2, t) */ * from t4 join t on t4.a=t.a left join t1 on t.a = t1.a join t2 on t.b = t2.b join t3 on t2.b=t3.b;",
+      "select /*+ leading(t3) */ * from t2 left join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;",
+      "select /*+ leading(t2, t1, t3) */ * from t2 left join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;",
+      "select /*+ leading(t2, t3) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b;",
+      "select /*+ leading(t3, t4) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b;",
+      "select /*+ leading(t3, t4) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;",
+      // should support this case later
+      "select /*+ leading(t3, t4) leading(t5, t6) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;",
+      "select /*+ leading(t5, t6, t3, t4) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;",
+      // right join
+      "select /*+ leading(t1, t2) */ * from t4 join t on t4.a=t.a right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
+      "select /*+ leading(t2, t3) */ * from t4 join t on t4.a=t.a right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
+      "select /*+ leading(t1, t3) */ * from t4 join t on t4.a=t.a right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
+      "select /*+ leading(t3) */ * from t2 right join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;",
+      "select /*+ leading(t2, t1, t3) */ * from t2 right join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;",
+      "select /*+ leading(t2, t3) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b;",
+      "select /*+ leading(t3, t4) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b;",
+      "select /*+ leading(t3, t4) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;",
+      "select /*+ leading(t3, t4) leading(t5, t6) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;",
+      "select /*+ leading(t3, t4, t5, t6) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;"
+    ]
+  }
+]

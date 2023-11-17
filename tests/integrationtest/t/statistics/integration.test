@@ -1,0 +1,24 @@
+# TestAnalyzeLongString
+drop table if exists t;
+set @@session.tidb_analyze_version = 2;
+create table t(a longtext);
+insert into t value(repeat("a",65536));
+insert into t value(repeat("b",65536));
+analyze table t with 0 topn;
+set @@session.tidb_analyze_version = default;
+
+# TestNotLoadedStatsOnAllNULLCol makes sure that stats on a column that only contains NULLs can be used even when it's
+# not loaded. This is reasonable because it makes no difference whether it's loaded or not.
+drop table if exists t1;
+drop table if exists t2;
+create table t1(a int);
+create table t2(a int);
+insert into t1 values(null), (null), (null), (null);
+insert into t2 values(null), (null);
+analyze table t1;
+analyze table t2;
+explain format = 'brief' select * from t1 left join t2 on t1.a=t2.a order by t1.a, t2.a;
+explain format = 'brief' select * from t2 left join t1 on t1.a=t2.a order by t1.a, t2.a;
+explain format = 'brief' select * from t1 right join t2 on t1.a=t2.a order by t1.a, t2.a;
+explain format = 'brief' select * from t2 right join t1 on t1.a=t2.a order by t1.a, t2.a;
+

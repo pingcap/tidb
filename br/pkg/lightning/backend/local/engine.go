@@ -24,6 +24,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -41,12 +42,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/membuf"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -87,10 +87,10 @@ type engineMeta struct {
 
 type syncedRanges struct {
 	sync.Mutex
-	ranges []Range
+	ranges []common.Range
 }
 
-func (r *syncedRanges) add(g Range) {
+func (r *syncedRanges) add(g common.Range) {
 	r.Lock()
 	r.ranges = append(r.ranges, g)
 	r.Unlock()
@@ -134,7 +134,7 @@ type Engine struct {
 	config    backend.LocalEngineConfig
 	tableInfo *checkpoints.TidbTableInfo
 
-	dupDetectOpt DupDetectOpt
+	dupDetectOpt common.DupDetectOpt
 
 	// total size of SST files waiting to be ingested
 	pendingFileSize atomic.Int64
@@ -143,7 +143,7 @@ type Engine struct {
 	importedKVSize  atomic.Int64
 	importedKVCount atomic.Int64
 
-	keyAdapter         KeyAdapter
+	keyAdapter         common.KeyAdapter
 	duplicateDetection bool
 	duplicateDB        *pebble.DB
 
@@ -273,6 +273,50 @@ func (e *Engine) TotalMemorySize() int64 {
 		return true
 	})
 	return memSize
+}
+
+// KVStatistics returns the total kv size and total kv count.
+func (e *Engine) KVStatistics() (totalSize int64, totalKVCount int64) {
+	return e.TotalSize.Load(), e.Length.Load()
+}
+
+// ImportedStatistics returns the imported kv size and imported kv count.
+func (e *Engine) ImportedStatistics() (importedSize int64, importedKVCount int64) {
+	return e.importedKVSize.Load(), e.importedKVCount.Load()
+}
+
+// ID is the identifier of an engine.
+func (e *Engine) ID() string {
+	return e.UUID.String()
+}
+
+// GetKeyRange implements common.Engine.
+func (e *Engine) GetKeyRange() (startKey []byte, endKey []byte, err error) {
+	firstLey, lastKey, err := e.GetFirstAndLastKey(nil, nil)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	return firstLey, nextKey(lastKey), nil
+}
+
+// SplitRanges gets size properties from pebble and split ranges according to size/keys limit.
+func (e *Engine) SplitRanges(
+	startKey, endKey []byte,
+	sizeLimit, keysLimit int64,
+	logger log.Logger,
+) ([]common.Range, error) {
+	sizeProps, err := getSizePropertiesFn(logger, e.getDB(), e.keyAdapter)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	ranges := splitRangeBySizeProps(
+		common.Range{Start: startKey, End: endKey},
+		sizeProps,
+		sizeLimit,
+		keysLimit,
+	)
+	return ranges, nil
 }
 
 type rangeOffsets struct {
@@ -418,7 +462,7 @@ func (s *sizeProperties) iter(f func(p *rangeProperty) bool) {
 	})
 }
 
-func decodeRangeProperties(data []byte, keyAdapter KeyAdapter) (rangeProperties, error) {
+func decodeRangeProperties(data []byte, keyAdapter common.KeyAdapter) (rangeProperties, error) {
 	r := make(rangeProperties, 0, 16)
 	for len(data) > 0 {
 		if len(data) < 4 {
@@ -449,7 +493,7 @@ func decodeRangeProperties(data []byte, keyAdapter KeyAdapter) (rangeProperties,
 // getSizePropertiesFn is used to let unit test replace the real function.
 var getSizePropertiesFn = getSizeProperties
 
-func getSizeProperties(logger log.Logger, db *pebble.DB, keyAdapter KeyAdapter) (*sizeProperties, error) {
+func getSizeProperties(logger log.Logger, db *pebble.DB, keyAdapter common.KeyAdapter) (*sizeProperties, error) {
 	sstables, err := db.SSTables(pebble.WithProperties())
 	if err != nil {
 		logger.Warn("get sst table properties failed", log.ShortError(err))
@@ -774,8 +818,8 @@ func (e *Engine) batchIngestSSTs(metas []*sstMeta) error {
 	if len(metas) == 0 {
 		return nil
 	}
-	slices.SortFunc(metas, func(i, j *sstMeta) bool {
-		return bytes.Compare(i.minKey, j.minKey) < 0
+	slices.SortFunc(metas, func(i, j *sstMeta) int {
+		return bytes.Compare(i.minKey, j.minKey)
 	})
 
 	// non overlapping sst is grouped, and ingested in that order
@@ -947,7 +991,7 @@ func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions) Iter {
 	return newDupDetectIter(e.getDB(), e.keyAdapter, opts, e.duplicateDB, logger, e.dupDetectOpt)
 }
 
-var _ ingestData = (*Engine)(nil)
+var _ common.IngestData = (*Engine)(nil)
 
 // GetFirstAndLastKey reads the first and last key in range [lowerBound, upperBound)
 // in the engine. Empty upperBound means unbounded.
@@ -961,6 +1005,9 @@ func (e *Engine) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []by
 		LowerBound: lowerBound,
 		UpperBound: upperBound,
 	}
+	failpoint.Inject("mockGetFirstAndLastKey", func() {
+		failpoint.Return(lowerBound, upperBound, nil)
+	})
 
 	iter := e.newKVIter(context.Background(), opt)
 	//nolint: errcheck
@@ -982,20 +1029,43 @@ func (e *Engine) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []by
 	return firstKey, lastKey, nil
 }
 
-// NewIter implements ingestData interface.
-func (e *Engine) NewIter(ctx context.Context, lowerBound, upperBound []byte) ForwardIter {
+// NewIter implements IngestData interface.
+func (e *Engine) NewIter(ctx context.Context, lowerBound, upperBound []byte) common.ForwardIter {
 	return e.newKVIter(ctx, &pebble.IterOptions{LowerBound: lowerBound, UpperBound: upperBound})
 }
 
-// GetTS implements ingestData interface.
+// GetTS implements IngestData interface.
 func (e *Engine) GetTS() uint64 {
 	return e.TS
 }
 
-// Finish implements ingestData interface.
+// IncRef implements IngestData interface.
+func (*Engine) IncRef() {}
+
+// DecRef implements IngestData interface.
+func (*Engine) DecRef() {}
+
+// Finish implements IngestData interface.
 func (e *Engine) Finish(totalBytes, totalCount int64) {
 	e.importedKVSize.Add(totalBytes)
 	e.importedKVCount.Add(totalCount)
+}
+
+// LoadIngestData return (local) Engine itself because Engine has implemented
+// IngestData interface.
+func (e *Engine) LoadIngestData(
+	ctx context.Context,
+	regionRanges []common.Range,
+	outCh chan<- common.DataAndRange,
+) error {
+	for _, r := range regionRanges {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case outCh <- common.DataAndRange{Data: e, Range: r}:
+		}
+	}
+	return nil
 }
 
 type sstMeta struct {
@@ -1055,9 +1125,9 @@ func (w *Writer) appendRowsSorted(kvs []common.KvPair) (err error) {
 		totalKeySize += keySize
 	}
 	w.batchCount += len(kvs)
-	// noopKeyAdapter doesn't really change the key,
+	// NoopKeyAdapter doesn't really change the key,
 	// skipping the encoding to avoid unnecessary alloc and copy.
-	if _, ok := keyAdapter.(noopKeyAdapter); !ok {
+	if _, ok := keyAdapter.(common.NoopKeyAdapter); !ok {
 		if cap(w.sortedKeyBuf) < totalKeySize {
 			w.sortedKeyBuf = make([]byte, totalKeySize)
 		}
@@ -1218,8 +1288,8 @@ func (w *Writer) flushKVs(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	if !w.isWriteBatchSorted {
-		slices.SortFunc(w.writeBatch[:w.batchCount], func(i, j common.KvPair) bool {
-			return bytes.Compare(i.Key, j.Key) < 0
+		slices.SortFunc(w.writeBatch[:w.batchCount], func(i, j common.KvPair) int {
+			return bytes.Compare(i.Key, j.Key)
 		})
 		w.isWriteBatchSorted = true
 	}

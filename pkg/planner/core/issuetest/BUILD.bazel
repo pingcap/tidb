@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "issuetest_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "planner_issue_test.go",
+    ],
+    data = glob(["testdata/**"]),
+    flaky = True,
+    race = "on",
+    deps = [
+        "//pkg/parser",
+        "//pkg/planner",
+        "//pkg/planner/core",
+        "//pkg/testkit",
+        "//pkg/testkit/testdata",
+        "//pkg/testkit/testmain",
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

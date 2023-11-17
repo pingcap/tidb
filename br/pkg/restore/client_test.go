@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"sync"
@@ -26,14 +27,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/types"
-	"github.com/pingcap/tidb/tablecodec"
-	filter "github.com/pingcap/tidb/util/table-filter"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
-	"golang.org/x/exp/slices"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -648,22 +648,32 @@ func MockEmptySchemasReplace() *stream.SchemasReplace {
 	)
 }
 
-func TestRestoreMetaKVFilesWithBatchMethod1(t *testing.T) {
+func TestRestoreBatchMetaKVFiles(t *testing.T) {
+	client := restore.MockClient(nil)
 	files := []*backuppb.DataFileInfo{}
+	// test empty files and entries
+	next, err := client.RestoreBatchMetaKVFiles(context.Background(), files[0:], nil, make([]*restore.KvEntryWithTS, 0), math.MaxUint64, nil, nil, "")
+	require.NoError(t, err)
+	require.Equal(t, 0, len(next))
+}
+
+func TestRestoreMetaKVFilesWithBatchMethod1(t *testing.T) {
+	files_default := []*backuppb.DataFileInfo{}
+	files_write := []*backuppb.DataFileInfo{}
 	batchCount := 0
 
 	client := restore.MockClient(nil)
 	sr := MockEmptySchemasReplace()
 	err := client.RestoreMetaKVFilesWithBatchMethod(
 		context.Background(),
-		files,
-		files,
+		files_default,
+		files_write,
 		sr,
 		nil,
 		nil,
 		func(
 			ctx context.Context,
-			defaultFiles []*backuppb.DataFileInfo,
+			files []*backuppb.DataFileInfo,
 			schemasReplace *stream.SchemasReplace,
 			entries []*restore.KvEntryWithTS,
 			filterTS uint64,
@@ -671,16 +681,19 @@ func TestRestoreMetaKVFilesWithBatchMethod1(t *testing.T) {
 			progressInc func(),
 			cf string,
 		) ([]*restore.KvEntryWithTS, error) {
+			require.Equal(t, 0, len(entries))
+			require.Equal(t, 0, len(files))
 			batchCount++
 			return nil, nil
 		},
 	)
 	require.Nil(t, err)
-	require.Equal(t, batchCount, 0)
+	require.Equal(t, batchCount, 2)
 }
 
-func TestRestoreMetaKVFilesWithBatchMethod2(t *testing.T) {
-	files := []*backuppb.DataFileInfo{
+func TestRestoreMetaKVFilesWithBatchMethod2_default_empty(t *testing.T) {
+	files_default := []*backuppb.DataFileInfo{}
+	files_write := []*backuppb.DataFileInfo{
 		{
 			Path:  "f1",
 			MinTs: 100,
@@ -688,20 +701,19 @@ func TestRestoreMetaKVFilesWithBatchMethod2(t *testing.T) {
 		},
 	}
 	batchCount := 0
-	result := make(map[int][]*backuppb.DataFileInfo)
 
 	client := restore.MockClient(nil)
 	sr := MockEmptySchemasReplace()
 	err := client.RestoreMetaKVFilesWithBatchMethod(
 		context.Background(),
-		files,
-		nil,
+		files_default,
+		files_write,
 		sr,
 		nil,
 		nil,
 		func(
 			ctx context.Context,
-			fs []*backuppb.DataFileInfo,
+			files []*backuppb.DataFileInfo,
 			schemasReplace *stream.SchemasReplace,
 			entries []*restore.KvEntryWithTS,
 			filterTS uint64,
@@ -709,17 +721,202 @@ func TestRestoreMetaKVFilesWithBatchMethod2(t *testing.T) {
 			progressInc func(),
 			cf string,
 		) ([]*restore.KvEntryWithTS, error) {
-			if len(fs) > 0 {
-				result[batchCount] = fs
+			if len(entries) == 0 && len(files) == 0 {
+				require.Equal(t, stream.DefaultCF, cf)
 				batchCount++
+			} else {
+				require.Equal(t, 0, len(entries))
+				require.Equal(t, 1, len(files))
+				require.Equal(t, uint64(100), files[0].MinTs)
+				require.Equal(t, stream.WriteCF, cf)
 			}
+			require.Equal(t, uint64(math.MaxUint64), filterTS)
 			return nil, nil
 		},
 	)
 	require.Nil(t, err)
 	require.Equal(t, batchCount, 1)
-	require.Equal(t, len(result), 1)
-	require.Equal(t, result[0], files)
+}
+
+func TestRestoreMetaKVFilesWithBatchMethod2_write_empty_1(t *testing.T) {
+	files_default := []*backuppb.DataFileInfo{
+		{
+			Path:  "f1",
+			MinTs: 100,
+			MaxTs: 120,
+		},
+	}
+	files_write := []*backuppb.DataFileInfo{}
+	batchCount := 0
+
+	client := restore.MockClient(nil)
+	sr := MockEmptySchemasReplace()
+	err := client.RestoreMetaKVFilesWithBatchMethod(
+		context.Background(),
+		files_default,
+		files_write,
+		sr,
+		nil,
+		nil,
+		func(
+			ctx context.Context,
+			files []*backuppb.DataFileInfo,
+			schemasReplace *stream.SchemasReplace,
+			entries []*restore.KvEntryWithTS,
+			filterTS uint64,
+			updateStats func(kvCount uint64, size uint64),
+			progressInc func(),
+			cf string,
+		) ([]*restore.KvEntryWithTS, error) {
+			if len(entries) == 0 && len(files) == 0 {
+				require.Equal(t, stream.WriteCF, cf)
+				batchCount++
+			} else {
+				require.Equal(t, 0, len(entries))
+				require.Equal(t, 1, len(files))
+				require.Equal(t, uint64(100), files[0].MinTs)
+				require.Equal(t, stream.DefaultCF, cf)
+			}
+			require.Equal(t, uint64(math.MaxUint64), filterTS)
+			return nil, nil
+		},
+	)
+	require.Nil(t, err)
+	require.Equal(t, batchCount, 1)
+}
+
+func TestRestoreMetaKVFilesWithBatchMethod2_write_empty_2(t *testing.T) {
+	files_default := []*backuppb.DataFileInfo{
+		{
+			Path:   "f1",
+			MinTs:  100,
+			MaxTs:  120,
+			Length: restore.MetaKVBatchSize - 1000,
+		},
+		{
+			Path:   "f2",
+			MinTs:  110,
+			MaxTs:  1100,
+			Length: restore.MetaKVBatchSize,
+		},
+	}
+	files_write := []*backuppb.DataFileInfo{}
+	emptyCount := 0
+	batchCount := 0
+
+	client := restore.MockClient(nil)
+	sr := MockEmptySchemasReplace()
+	err := client.RestoreMetaKVFilesWithBatchMethod(
+		context.Background(),
+		files_default,
+		files_write,
+		sr,
+		nil,
+		nil,
+		func(
+			ctx context.Context,
+			files []*backuppb.DataFileInfo,
+			schemasReplace *stream.SchemasReplace,
+			entries []*restore.KvEntryWithTS,
+			filterTS uint64,
+			updateStats func(kvCount uint64, size uint64),
+			progressInc func(),
+			cf string,
+		) ([]*restore.KvEntryWithTS, error) {
+			if len(entries) == 0 && len(files) == 0 {
+				// write - write
+				require.Equal(t, stream.WriteCF, cf)
+				emptyCount++
+				if emptyCount == 1 {
+					require.Equal(t, uint64(110), filterTS)
+				} else {
+					require.Equal(t, uint64(math.MaxUint64), filterTS)
+				}
+			} else {
+				// default - default
+				batchCount++
+				require.Equal(t, 1, len(files))
+				require.Equal(t, stream.DefaultCF, cf)
+				if batchCount == 1 {
+					require.Equal(t, uint64(100), files[0].MinTs)
+					require.Equal(t, uint64(110), filterTS)
+					return nil, nil
+				}
+				require.Equal(t, 0, len(entries))
+			}
+			return nil, nil
+		},
+	)
+	require.Nil(t, err)
+	require.Equal(t, batchCount, 2)
+	require.Equal(t, emptyCount, 2)
+}
+
+func TestRestoreMetaKVFilesWithBatchMethod_with_entries(t *testing.T) {
+	files_default := []*backuppb.DataFileInfo{
+		{
+			Path:   "f1",
+			MinTs:  100,
+			MaxTs:  120,
+			Length: restore.MetaKVBatchSize - 1000,
+		},
+		{
+			Path:   "f2",
+			MinTs:  110,
+			MaxTs:  1100,
+			Length: restore.MetaKVBatchSize,
+		},
+	}
+	files_write := []*backuppb.DataFileInfo{}
+	emptyCount := 0
+	batchCount := 0
+
+	client := restore.MockClient(nil)
+	sr := MockEmptySchemasReplace()
+	err := client.RestoreMetaKVFilesWithBatchMethod(
+		context.Background(),
+		files_default,
+		files_write,
+		sr,
+		nil,
+		nil,
+		func(
+			ctx context.Context,
+			files []*backuppb.DataFileInfo,
+			schemasReplace *stream.SchemasReplace,
+			entries []*restore.KvEntryWithTS,
+			filterTS uint64,
+			updateStats func(kvCount uint64, size uint64),
+			progressInc func(),
+			cf string,
+		) ([]*restore.KvEntryWithTS, error) {
+			if len(entries) == 0 && len(files) == 0 {
+				// write - write
+				require.Equal(t, stream.WriteCF, cf)
+				emptyCount++
+				if emptyCount == 1 {
+					require.Equal(t, uint64(110), filterTS)
+				} else {
+					require.Equal(t, uint64(math.MaxUint64), filterTS)
+				}
+			} else {
+				// default - default
+				batchCount++
+				require.Equal(t, 1, len(files))
+				require.Equal(t, stream.DefaultCF, cf)
+				if batchCount == 1 {
+					require.Equal(t, uint64(100), files[0].MinTs)
+					require.Equal(t, uint64(110), filterTS)
+					return nil, nil
+				}
+				require.Equal(t, 0, len(entries))
+			}
+			return nil, nil
+		},
+	)
+	require.Nil(t, err)
+	require.Equal(t, batchCount, 2)
+	require.Equal(t, emptyCount, 2)
 }
 
 func TestRestoreMetaKVFilesWithBatchMethod3(t *testing.T) {
@@ -988,13 +1185,13 @@ func TestRestoreMetaKVFilesWithBatchMethod6(t *testing.T) {
 			Path:   "f1",
 			MinTs:  100,
 			MaxTs:  120,
-			Length: 1,
+			Length: 100,
 		},
 		{
 			Path:   "f2",
 			MinTs:  100,
 			MaxTs:  120,
-			Length: restore.MetaKVBatchSize,
+			Length: restore.MetaKVBatchSize - 100,
 		},
 		{
 			Path:   "f3",

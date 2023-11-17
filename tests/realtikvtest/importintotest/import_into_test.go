@@ -15,8 +15,6 @@
 package importintotest
 
 import (
-	"bytes"
-	"compress/gzip"
 	"context"
 	"fmt"
 	"net"
@@ -28,7 +26,6 @@ import (
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/golang/mock/gomock"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -38,20 +35,22 @@ import (
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/mock/mocklocal"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/disttask/framework/storage"
-	"github.com/pingcap/tidb/disttask/importinto"
-	"github.com/pingcap/tidb/domain/infosync"
-	"github.com/pingcap/tidb/executor/importer"
-	"github.com/pingcap/tidb/parser/auth"
-	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/util/sem"
+	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/importinto"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
+	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
 )
 
@@ -310,35 +309,35 @@ func (s *mockGCSSuite) TestGeneratedColumnsAndTSVFile() {
 		Content: []byte("1\t2\n2\t3"),
 	})
 
-	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1 
+	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
 	s.tk.MustExec("delete from t_gen1")
 
 	// Specify the column, this should also work.
-	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1(a) 
+	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1(a)
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
 	s.tk.MustExec("delete from t_gen1")
-	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1(a,@1) 
+	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1(a,@1)
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
 
 	// Swap the column and test again.
 	s.tk.MustExec(`create table t_gen2 (a int generated ALWAYS AS (b+1), b int);`)
-	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2 
+	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("3 2", "4 3"))
 	s.tk.MustExec(`delete from t_gen2`)
 
 	// Specify the column b
-	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2(b) 
+	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2(b)
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("2 1", "3 2"))
 	s.tk.MustExec(`delete from t_gen2`)
 
 	// Specify the column a
-	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2(a) 
+	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2(a)
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("<nil> <nil>", "<nil> <nil>"))
 }
@@ -440,60 +439,6 @@ func (s *mockGCSSuite) TestMultiValueIndex() {
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		"1 [1, 2, 3]",
 		"2 [2, 3, 4]",
-	))
-}
-
-func (s *mockGCSSuite) TestMixedCompression() {
-	s.tk.MustExec("DROP DATABASE IF EXISTS multi_load;")
-	s.tk.MustExec("CREATE DATABASE multi_load;")
-	s.tk.MustExec("CREATE TABLE multi_load.t (i INT PRIMARY KEY, s varchar(32));")
-
-	// gzip content
-	var buf bytes.Buffer
-	w := gzip.NewWriter(&buf)
-	_, err := w.Write([]byte(`1,test1
-2,test2
-3,test3
-4,test4`))
-	require.NoError(s.T(), err)
-	err = w.Close()
-	require.NoError(s.T(), err)
-
-	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{
-			BucketName: "test-multi-load",
-			Name:       "compress.001.tsv.gz",
-		},
-		Content: buf.Bytes(),
-	})
-	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{
-			BucketName: "test-multi-load",
-			Name:       "compress.002.tsv",
-		},
-		Content: []byte(`5,test5
-6,test6
-7,test7
-8,test8
-9,test9`),
-	})
-
-	sql := fmt.Sprintf(`IMPORT INTO multi_load.t FROM 'gs://test-multi-load/compress.*?endpoint=%s'
-		WITH thread=1;`, gcsEndpoint)
-	s.tk.MustQuery(sql)
-	s.tk.MustQuery("SELECT * FROM multi_load.t;").Check(testkit.Rows(
-		"1 test1", "2 test2", "3 test3", "4 test4",
-		"5 test5", "6 test6", "7 test7", "8 test8", "9 test9",
-	))
-
-	// with ignore N rows
-	s.tk.MustExec("truncate table multi_load.t")
-	sql = fmt.Sprintf(`IMPORT INTO multi_load.t FROM 'gs://test-multi-load/compress.*?endpoint=%s'
-		WITH skip_rows=3, thread=1;`, gcsEndpoint)
-	s.tk.MustQuery(sql)
-	s.tk.MustQuery("SELECT * FROM multi_load.t;").Check(testkit.Rows(
-		"4 test4",
-		"8 test8", "9 test9",
 	))
 }
 
@@ -710,7 +655,9 @@ func (s *mockGCSSuite) TestMaxWriteSpeed() {
 	start := time.Now()
 	sql := fmt.Sprintf(`IMPORT INTO load_test_write_speed.t FROM 'gs://test-load/speed-test.csv?endpoint=%s'`,
 		gcsEndpoint)
-	s.tk.MustQuery(sql)
+	result := s.tk.MustQuery(sql)
+	fileSize := result.Rows()[0][6].(string)
+	s.Equal("7.598KiB", fileSize)
 	duration := time.Since(start).Seconds()
 	s.tk.MustQuery("SELECT count(1) FROM load_test_write_speed.t;").Check(testkit.Rows(
 		strconv.Itoa(lineCount),
@@ -779,7 +726,7 @@ func (s *mockGCSSuite) TestChecksumNotMatch() {
 }
 
 func (s *mockGCSSuite) TestColumnsAndUserVars() {
-	s.enableFailpoint("github.com/pingcap/tidb/disttask/framework/storage/testSetLastTaskID", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/framework/storage/testSetLastTaskID", "return(true)")
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_data;")
 	s.tk.MustExec("CREATE DATABASE load_data;")
 	s.tk.MustExec(`CREATE TABLE load_data.cols_and_vars (a INT, b INT, c int);`)
@@ -833,7 +780,7 @@ func (s *mockGCSSuite) checkTaskMetaRedacted(jobID int64) {
 	s.NoError(err)
 	taskKey := importinto.TaskKey(jobID)
 	s.NoError(err)
-	globalTask, err2 := globalTaskManager.GetGlobalTaskByKey(taskKey)
+	globalTask, err2 := globalTaskManager.GetGlobalTaskByKeyWithHistory(taskKey)
 	s.NoError(err2)
 	s.Regexp(`[?&]access-key=xxxxxx`, string(globalTask.Meta))
 	s.Contains(string(globalTask.Meta), "secret-access-key=xxxxxx")
@@ -875,7 +822,8 @@ func (s *mockGCSSuite) TestImportMode() {
 
 	// NOTE: this case only runs when current instance is TiDB owner, if you run it locally,
 	// better start a cluster without TiDB instance.
-	s.enableFailpoint("github.com/pingcap/tidb/parser/ast/forceRedactURL", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/pkg/parser/ast/forceRedactURL", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/WaitCleanUpFinished", "return()")
 	sql := fmt.Sprintf(`IMPORT INTO load_data.import_mode FROM 'gs://test-load/import_mode-*.tsv?access-key=aaaaaa&secret-access-key=bbbbbb&endpoint=%s'`, gcsEndpoint)
 	rows := s.tk.MustQuery(sql).Rows()
 	s.Len(rows, 1)
@@ -883,22 +831,23 @@ func (s *mockGCSSuite) TestImportMode() {
 	s.NoError(err)
 	s.tk.MustQuery("SELECT * FROM load_data.import_mode;").Sort().Check(testkit.Rows("1 11 111"))
 	s.Greater(intoNormalTime, intoImportTime)
+	<-dispatcher.WaitCleanUpFinished
 	s.checkTaskMetaRedacted(int64(jobID))
-
 	// after import step, we should enter normal mode, i.e. we only call ToImportMode once
 	intoNormalTime, intoImportTime = time.Time{}, time.Time{}
 	switcher.EXPECT().ToImportMode(gomock.Any(), gomock.Any()).DoAndReturn(toImportModeFn).Times(1)
 	switcher.EXPECT().ToNormalMode(gomock.Any(), gomock.Any()).DoAndReturn(toNormalModeFn).Times(1)
-	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/clearLastSwitchTime", "return(true)")
-	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/waitBeforePostProcess", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/clearLastSwitchTime", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforePostProcess", "return(true)")
 	s.tk.MustExec("truncate table load_data.import_mode;")
 	sql = fmt.Sprintf(`IMPORT INTO load_data.import_mode FROM 'gs://test-load/import_mode-*.tsv?endpoint=%s'`, gcsEndpoint)
 	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_data.import_mode;").Sort().Check(testkit.Rows("1 11 111"))
 	s.tk.MustExec("truncate table load_data.import_mode;")
 	s.Greater(intoNormalTime, intoImportTime)
-	s.NoError(failpoint.Disable("github.com/pingcap/tidb/disttask/importinto/clearLastSwitchTime"))
-	s.NoError(failpoint.Disable("github.com/pingcap/tidb/disttask/importinto/waitBeforePostProcess"))
+	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/clearLastSwitchTime"))
+	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforePostProcess"))
+	<-dispatcher.WaitCleanUpFinished
 
 	// test disable_tikv_import_mode, should not call ToImportMode and ToNormalMode
 	s.tk.MustExec("truncate table load_data.import_mode;")
@@ -906,28 +855,34 @@ func (s *mockGCSSuite) TestImportMode() {
 	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_data.import_mode;").Sort().Check(testkit.Rows("1 11 111"))
 	s.tk.MustExec("truncate table load_data.import_mode;")
+	<-dispatcher.WaitCleanUpFinished
 
 	// test with multirocksdb
-	s.enableFailpoint("github.com/pingcap/tidb/ddl/util/IsRaftKv2", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/pkg/ddl/util/IsRaftKv2", "return(true)")
 	s.tk.MustExec("truncate table load_data.import_mode;")
 	sql = fmt.Sprintf(`IMPORT INTO load_data.import_mode FROM 'gs://test-load/import_mode-*.tsv?endpoint=%s'`, gcsEndpoint)
 	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_data.import_mode;").Sort().Check(testkit.Rows("1 11 111"))
 	s.tk.MustExec("truncate table load_data.import_mode;")
-	s.NoError(failpoint.Disable("github.com/pingcap/tidb/ddl/util/IsRaftKv2"))
+	<-dispatcher.WaitCleanUpFinished
+
+	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/util/IsRaftKv2"))
 
 	// to normal mode should be called on error
 	intoNormalTime, intoImportTime = time.Time{}, time.Time{}
 	switcher.EXPECT().ToImportMode(gomock.Any(), gomock.Any()).DoAndReturn(toImportModeFn).Times(1)
 	switcher.EXPECT().ToNormalMode(gomock.Any(), gomock.Any()).DoAndReturn(toNormalModeFn).Times(1)
-	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/waitBeforeSortChunk", "return(true)")
-	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/errorWhenSortChunk", "return(true)")
-	s.enableFailpoint("github.com/pingcap/tidb/executor/importer/setLastImportJobID", `return(true)`)
+	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforeSortChunk", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/errorWhenSortChunk", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/pkg/executor/importer/setLastImportJobID", `return(true)`)
+
 	sql = fmt.Sprintf(`IMPORT INTO load_data.import_mode FROM 'gs://test-load/import_mode-*.tsv?access-key=aaaaaa&secret-access-key=bbbbbb&endpoint=%s'`, gcsEndpoint)
 	err = s.tk.QueryToErr(sql)
 	s.Error(err)
 	s.Greater(intoNormalTime, intoImportTime)
+	<-dispatcher.WaitCleanUpFinished
 	s.checkTaskMetaRedacted(importer.TestLastImportJobID.Load())
+	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/WaitCleanUpFinished"))
 }
 
 func (s *mockGCSSuite) TestRegisterTask() {
@@ -977,17 +932,17 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	taskRegister.EXPECT().RegisterTaskOnce(gomock.Any()).DoAndReturn(mockedRegister).Times(1)
 	taskRegister.EXPECT().Close(gomock.Any()).DoAndReturn(mockedClose).Times(1)
 	s.tk.MustExec("truncate table load_data.register_task;")
-	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/waitBeforeSortChunk", "return(true)")
-	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/errorWhenSortChunk", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforeSortChunk", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/errorWhenSortChunk", "return(true)")
 	err := s.tk.QueryToErr(sql)
 	s.Error(err)
 	s.Greater(unregisterTime, registerTime)
 
 	importinto.NewTaskRegisterWithTTL = backup
-	s.NoError(failpoint.Disable("github.com/pingcap/tidb/disttask/importinto/waitBeforeSortChunk"))
-	s.NoError(failpoint.Disable("github.com/pingcap/tidb/disttask/importinto/errorWhenSortChunk"))
-	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/syncBeforeSortChunk", "return(true)")
-	s.enableFailpoint("github.com/pingcap/tidb/disttask/framework/storage/testSetLastTaskID", "return(true)")
+	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforeSortChunk"))
+	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/errorWhenSortChunk"))
+	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/syncBeforeSortChunk", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/framework/storage/testSetLastTaskID", "return(true)")
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
@@ -1012,7 +967,7 @@ func (s *mockGCSSuite) TestRegisterTask() {
 		resp, err2 := client.GetClient().Get(context.Background(), etcdKey)
 		s.NoError(err2)
 		return len(resp.Kvs) == 1
-	}, 5*time.Second, 300*time.Millisecond)
+	}, maxWaitTime, 300*time.Millisecond)
 	// continue the execution
 	importinto.TestSyncChan <- struct{}{}
 	wg.Wait()

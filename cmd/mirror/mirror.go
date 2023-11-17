@@ -27,12 +27,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
 	"cloud.google.com/go/storage"
 	"github.com/bazelbuild/rules_go/go/tools/bazel"
-	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/api/googleapi"
 )
@@ -145,7 +145,7 @@ func createTmpDir() (tmpdir string, err error) {
 	if err != nil {
 		return
 	}
-	err = os.MkdirAll(filepath.Join(tmpdir, "parser"), os.ModePerm)
+	err = os.MkdirAll(filepath.Join(tmpdir, "pkg/parser"), os.ModePerm)
 	if err != nil {
 		return
 	}
@@ -157,13 +157,13 @@ func createTmpDir() (tmpdir string, err error) {
 	if err != nil {
 		return
 	}
-	parsergomod := strings.Replace(gomod, "go.mod", "parser/go.mod", 1)
-	parsergosum := strings.Replace(gosum, "go.sum", "parser/go.sum", 1)
+	parsergomod := strings.Replace(gomod, "go.mod", "pkg/parser/go.mod", 1)
+	parsergosum := strings.Replace(gosum, "go.sum", "pkg/parser/go.sum", 1)
 	err = copyFile(gomod, filepath.Join(tmpdir, "go.mod"))
 	if err != nil {
 		return
 	}
-	err = copyFile(parsergomod, filepath.Join(tmpdir, "parser/go.mod"))
+	err = copyFile(parsergomod, filepath.Join(tmpdir, "pkg/parser/go.mod"))
 	if err != nil {
 		return
 	}
@@ -171,7 +171,7 @@ func createTmpDir() (tmpdir string, err error) {
 	if err != nil {
 		return
 	}
-	err = copyFile(parsergosum, filepath.Join(tmpdir, "parser/go.sum"))
+	err = copyFile(parsergosum, filepath.Join(tmpdir, "pkg/parser/go.sum"))
 	return
 }
 
@@ -196,6 +196,9 @@ func downloadZips(
 	}
 	cmd := exec.Command(gobin, downloadArgs...)
 	cmd.Dir = tmpdir
+	env := os.Environ()
+	env = append(env, fmt.Sprintf("GOSUMDB=%s", "sum.golang.org"))
+	cmd.Env = env
 	jsonBytes, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -223,6 +226,9 @@ func listAllModules(tmpdir string) (map[string]listedModule, error) {
 	}
 	cmd := exec.Command(gobin, "list", "-mod=readonly", "-m", "-json", "all")
 	cmd.Dir = tmpdir
+	env := os.Environ()
+	env = append(env, fmt.Sprintf("GOSUMDB=%s", "sum.golang.org"))
+	cmd.Env = env
 	jsonBytes, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -349,7 +355,7 @@ def go_deps():
     # this function FIRST, before calls to pull in dependencies for
     # third-party libraries (e.g. rules_go, gazelle, etc.)`)
 	for _, repoName := range sorted {
-		if repoName == "com_github_pingcap_tidb_parser" {
+		if repoName == "com_github_pingcap_tidb_pkg_parser" {
 			continue
 		}
 		path := repoNameToModPath[repoName]
