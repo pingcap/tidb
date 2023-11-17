@@ -2310,6 +2310,7 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 	}
 	// we use sessionCtx from GetTaskManager, user ctx might not have system table privileges.
 	globalTaskManager, err := fstorage.GetTaskManager()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err != nil {
 		return err
 	}

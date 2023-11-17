@@ -177,6 +177,7 @@ func (e *ImportIntoExec) fillJobInfo(ctx context.Context, jobID int64, req *chun
 	e.dataFilled = true
 	// we use globalTaskManager to get job, user might not have the privilege to system tables.
 	globalTaskManager, err := fstorage.GetTaskManager()
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err != nil {
 		return err
 	}
@@ -255,6 +256,7 @@ func (e *ImportIntoActionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	}
 	// we use sessionCtx from GetTaskManager, user ctx might not have enough privileges.
 	globalTaskManager, err := fstorage.GetTaskManager()
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err != nil {
 		return err
 	}

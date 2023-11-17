@@ -28,10 +28,12 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -137,6 +139,7 @@ func (ti *DistImporter) SubmitTask(ctx context.Context) (int64, *proto.Task, err
 	}
 	// we use globalTaskManager to submit task, user might not have the privilege to system tables.
 	globalTaskManager, err := storage.GetTaskManager()
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -189,7 +192,6 @@ func (ti *DistImporter) SubmitTask(ctx context.Context) (int64, *proto.Task, err
 	}); err != nil {
 		return 0, nil, err
 	}
-
 	globalTask, err := globalTaskManager.GetGlobalTaskByID(ctx, taskID)
 	if err != nil {
 		return 0, nil, err
@@ -220,6 +222,7 @@ func (ti *DistImporter) JobID() int64 {
 
 func getTaskMeta(ctx context.Context, jobID int64) (*TaskMeta, error) {
 	globalTaskManager, err := storage.GetTaskManager()
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err != nil {
 		return nil, err
 	}
@@ -242,6 +245,7 @@ func getTaskMeta(ctx context.Context, jobID int64) (*TaskMeta, error) {
 // Note: for finished job, we can get the number of imported rows from task meta.
 func GetTaskImportedRows(ctx context.Context, jobID int64) (uint64, error) {
 	globalTaskManager, err := storage.GetTaskManager()
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err != nil {
 		return 0, err
 	}
