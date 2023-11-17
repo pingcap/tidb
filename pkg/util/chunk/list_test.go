@@ -161,12 +161,12 @@ func BenchmarkListGetRow(b *testing.B) {
 	for _, chk := range chks {
 		l.Add(chk)
 	}
-	rand.Seed(0)
+	rnd := rand.New(rand.NewSource(0))
 	ptrs := make([]RowPtr, 0, b.N)
 	for i := 0; i < min(b.N, 10000); i++ {
 		ptrs = append(ptrs, RowPtr{
-			ChkIdx: rand.Uint32() % uint32(numChk),
-			RowIdx: rand.Uint32() % uint32(numRow),
+			ChkIdx: rnd.Uint32() % uint32(numChk),
+			RowIdx: rnd.Uint32() % uint32(numRow),
 		})
 	}
 	for i := 10000; i < cap(ptrs); i++ {

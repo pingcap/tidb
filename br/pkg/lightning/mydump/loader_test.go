@@ -23,7 +23,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -1129,9 +1128,6 @@ func TestSampleParquetDataSize(t *testing.T) {
 	pwriter.RowGroupSize = 128 * 1024 * 1024 //128M
 	pwriter.PageSize = 8 * 1024              //8K
 	pwriter.CompressionType = parquet.CompressionCodec_SNAPPY
-	seed := time.Now().Unix()
-	t.Logf("seed: %d", seed)
-	rand.Seed(seed)
 	totalRowSize := 0
 	for i := 0; i < 1000; i++ {
 		kl := rand.Intn(20) + 1
