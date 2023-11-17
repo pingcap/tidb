@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -303,6 +304,7 @@ func cancelImportJob(ctx context.Context, manager *fstorage.TaskManager, jobID i
 		if err2 := importer.CancelJob(ctx, exec, jobID); err2 != nil {
 			return err2
 		}
+		ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 		return manager.CancelGlobalTaskByKeySession(ctx, se, importinto.TaskKey(jobID))
 	})
 }
