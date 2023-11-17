@@ -67,7 +67,7 @@ func newLitBackendCtxMgr(path string, memQuota uint64) BackendCtxMgr {
 	return mgr
 }
 
-// MarkProcessing marks the ingest backfill is processing.
+// MarkProcessing marks ingest backfill is processing.
 func (m *litBackendCtxMgr) MarkProcessing(jobID int64) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
