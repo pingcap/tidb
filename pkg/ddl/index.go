@@ -770,6 +770,7 @@ func pickBackfillType(ctx context.Context, job *model.Job, unique bool, d *ddlCt
 			if err != nil {
 				return model.ReorgTypeNone, err
 			}
+			//nolint:forcetypeassert
 			pdLeaderAddr := d.store.(tikv.Storage).GetRegionCache().PDClient().GetLeaderAddr()
 			if variable.EnableDistTask.Load() {
 				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, d.etcdCli, pdLeaderAddr, job.ReorgMeta.ResourceGroupName)
@@ -965,6 +966,7 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		return true, 0, nil
 	}
 	ctx := logutil.WithCategory(w.ctx, "ddl-ingest")
+	//nolint:forcetypeassert
 	pdLeaderAddr := d.store.(tikv.Storage).GetRegionCache().PDClient().GetLeaderAddr()
 	bc, err = ingest.LitBackCtxMgr.Register(ctx, allIndexInfos[0].Unique, job.ID, nil, pdLeaderAddr, job.ReorgMeta.ResourceGroupName)
 	if err != nil {
@@ -1978,6 +1980,7 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 			if err != nil {
 				return err
 			}
+			//nolint:forcetypeassert
 			pdLeaderAddr := w.store.(tikv.Storage).GetRegionCache().PDClient().GetLeaderAddr()
 			return checkDuplicateForUniqueIndex(w.ctx, t, reorgInfo, pdLeaderAddr)
 		}
