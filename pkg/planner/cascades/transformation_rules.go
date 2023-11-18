@@ -1121,7 +1121,7 @@ func (*EliminateProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 
 	oldCols := old.GetExpr().Group.Prop.Schema.Columns
 	for i, col := range child.Group.Prop.Schema.Columns {
-		if !col.Equal(nil, oldCols[i]) {
+		if !col.EqualColumn(oldCols[i]) {
 			return nil, false, false, nil
 		}
 	}

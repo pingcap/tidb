@@ -14,11 +14,15 @@
 
 package storage
 
-import "github.com/pingcap/tidb/pkg/disttask/framework/proto"
+import (
+	"context"
+
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+)
 
 // GetSubtasksFromHistoryForTest gets subtasks from history table for test.
-func GetSubtasksFromHistoryForTest(stm *TaskManager) (int, error) {
-	rs, err := stm.executeSQLWithNewSession(stm.ctx,
+func GetSubtasksFromHistoryForTest(ctx context.Context, stm *TaskManager) (int, error) {
+	rs, err := stm.executeSQLWithNewSession(ctx,
 		"select * from mysql.tidb_background_subtask_history")
 	if err != nil {
 		return 0, err
@@ -27,8 +31,8 @@ func GetSubtasksFromHistoryForTest(stm *TaskManager) (int, error) {
 }
 
 // GetSubtasksFromHistoryByTaskIDForTest gets subtasks by taskID from history table for test.
-func GetSubtasksFromHistoryByTaskIDForTest(stm *TaskManager, taskID int64) (int, error) {
-	rs, err := stm.executeSQLWithNewSession(stm.ctx,
+func GetSubtasksFromHistoryByTaskIDForTest(ctx context.Context, stm *TaskManager, taskID int64) (int, error) {
+	rs, err := stm.executeSQLWithNewSession(ctx,
 		"select * from mysql.tidb_background_subtask_history where task_key = %?", taskID)
 	if err != nil {
 		return 0, err
@@ -37,8 +41,8 @@ func GetSubtasksFromHistoryByTaskIDForTest(stm *TaskManager, taskID int64) (int,
 }
 
 // GetSubtasksByTaskIDForTest gets subtasks by taskID for test.
-func GetSubtasksByTaskIDForTest(stm *TaskManager, taskID int64) ([]*proto.Subtask, error) {
-	rs, err := stm.executeSQLWithNewSession(stm.ctx,
+func GetSubtasksByTaskIDForTest(ctx context.Context, stm *TaskManager, taskID int64) ([]*proto.Subtask, error) {
+	rs, err := stm.executeSQLWithNewSession(ctx,
 		"select * from mysql.tidb_background_subtask where task_key = %?", taskID)
 	if err != nil {
 		return nil, err
@@ -54,8 +58,8 @@ func GetSubtasksByTaskIDForTest(stm *TaskManager, taskID int64) ([]*proto.Subtas
 }
 
 // GetTasksFromHistoryForTest gets tasks from history table for test.
-func GetTasksFromHistoryForTest(stm *TaskManager) (int, error) {
-	rs, err := stm.executeSQLWithNewSession(stm.ctx,
+func GetTasksFromHistoryForTest(ctx context.Context, stm *TaskManager) (int, error) {
+	rs, err := stm.executeSQLWithNewSession(ctx,
 		"select * from mysql.tidb_global_task_history")
 	if err != nil {
 		return 0, err

@@ -2537,6 +2537,18 @@ from ssci right join csci on (ssci.customer_sk=csci.customer_sk
 limit 100;
 --enable_result_log
 
+# TestBDRRole
+admin show bdr role;
+admin set bdr role primary;
+admin show bdr role;
+admin set bdr role secondary;
+admin show bdr role;
+admin set bdr role local_only;
+admin show bdr role;
+--error 1064
+admin set bdr role test_err;
+admin show bdr role;
+
 # TestCompileOutOfMemoryQuota
 # Test for issue: https://github.com/pingcap/tidb/issues/38322
 set global tidb_mem_oom_action='CANCEL';

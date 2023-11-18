@@ -112,6 +112,7 @@ var (
 	_ exec.Executor = &sortexec.TopNExec{}
 	_ exec.Executor = &UnionExec{}
 	_ exec.Executor = &FastCheckTableExec{}
+	_ exec.Executor = &AdminShowBDRRoleExec{}
 
 	// GlobalMemoryUsageTracker is the ancestor of all the Executors' memory tracker and GlobalMemory Tracker
 	GlobalMemoryUsageTracker *memory.Tracker
@@ -2750,4 +2751,34 @@ func ColumnName(column string) string {
 
 func escapeName(name string) string {
 	return strings.ReplaceAll(name, "`", "``")
+}
+
+// AdminShowBDRRoleExec represents a show BDR role executor.
+type AdminShowBDRRoleExec struct {
+	exec.BaseExecutor
+
+	done bool
+}
+
+// Next implements the Executor Next interface.
+func (e *AdminShowBDRRoleExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.Reset()
+	if e.done {
+		return nil
+	}
+
+	return kv.RunInNewTxn(kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin), e.Ctx().GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+		role, err := meta.NewMeta(txn).GetBDRRole()
+		if err != nil {
+			return err
+		}
+
+		if role == "" {
+			role = string(ast.BDRRoleNone)
+		}
+
+		req.AppendString(0, role)
+		e.done = true
+		return nil
+	})
 }
