@@ -717,9 +717,40 @@ func pickBackfillType(w *worker, job *model.Job) model.ReorgType {
 		// Don't switch the backfill process.
 		return job.ReorgMeta.ReorgTp
 	}
+<<<<<<< HEAD:ddl/index.go
 	if IsEnableFastReorg() {
 		canUseIngest := canUseIngest(w)
 		if ingest.LitInitialized && canUseIngest {
+=======
+	if !IsEnableFastReorg() {
+		job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
+		return model.ReorgTypeTxn, nil
+	}
+	if ingest.LitInitialized {
+		available, err := ingest.LitBackCtxMgr.CheckAvailable()
+		if err != nil {
+			return model.ReorgTypeNone, err
+		}
+		if available {
+			ctx := logutil.WithCategory(ctx, "ddl-ingest")
+			err = cleanupSortPath(ctx, job.ID)
+			if err != nil {
+				return model.ReorgTypeNone, err
+			}
+			var pdLeaderAddr string
+			if d != nil {
+				//nolint:forcetypeassert
+				pdLeaderAddr = d.store.(tikv.Storage).GetRegionCache().PDClient().GetLeaderAddr()
+			}
+			if variable.EnableDistTask.Load() {
+				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, d.etcdCli, pdLeaderAddr, job.ReorgMeta.ResourceGroupName)
+			} else {
+				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, nil, pdLeaderAddr, job.ReorgMeta.ResourceGroupName)
+			}
+			if err != nil {
+				return model.ReorgTypeNone, err
+			}
+>>>>>>> 6260e66ad8f (ddl: use latest PD address to register lightning (#48687)):pkg/ddl/index.go
 			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
 			return model.ReorgTypeLitMerge
 		}
@@ -898,6 +929,88 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 }
 
+<<<<<<< HEAD:ddl/index.go
+=======
+func runIngestReorgJobDist(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
+	tbl table.Table, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
+	done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, allIndexInfos, false)
+	if err != nil {
+		return false, ver, errors.Trace(err)
+	}
+
+	if !done {
+		return false, ver, nil
+	}
+
+	return true, ver, nil
+}
+
+func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
+	tbl table.Table, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
+	bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
+	if ok && bc.Done() {
+		return true, 0, nil
+	}
+	ctx := logutil.WithCategory(w.ctx, "ddl-ingest")
+	var pdLeaderAddr string
+	if d != nil {
+		//nolint:forcetypeassert
+		pdLeaderAddr = d.store.(tikv.Storage).GetRegionCache().PDClient().GetLeaderAddr()
+	}
+	bc, err = ingest.LitBackCtxMgr.Register(ctx, allIndexInfos[0].Unique, job.ID, nil, pdLeaderAddr, job.ReorgMeta.ResourceGroupName)
+	if err != nil {
+		ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
+		return false, ver, errors.Trace(err)
+	}
+	done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, allIndexInfos, false)
+	if err != nil {
+		if !errorIsRetryable(err, job) {
+			logutil.BgLogger().Warn("run reorg job failed, convert job to rollback", zap.String("category", "ddl"),
+				zap.String("job", job.String()), zap.Error(err))
+			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
+		}
+		return false, ver, errors.Trace(err)
+	}
+	if !done {
+		return false, ver, nil
+	}
+	for _, indexInfo := range allIndexInfos {
+		err = bc.FinishImport(indexInfo.ID, indexInfo.Unique, tbl)
+		if err != nil {
+			if common.ErrFoundDuplicateKeys.Equal(err) {
+				err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
+			}
+			if kv.ErrKeyExists.Equal(err) {
+				logutil.BgLogger().Warn("import index duplicate key, convert job to rollback", zap.String("category", "ddl"), zap.String("job", job.String()), zap.Error(err))
+				ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
+			} else {
+				logutil.BgLogger().Warn("lightning import error", zap.String("category", "ddl"), zap.Error(err))
+				if !errorIsRetryable(err, job) {
+					ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
+				}
+			}
+			return false, ver, errors.Trace(err)
+		}
+	}
+	bc.SetDone()
+	return true, ver, nil
+}
+
+func errorIsRetryable(err error, job *model.Job) bool {
+	if job.ErrorCount+1 >= variable.GetDDLErrorCountLimit() {
+		return false
+	}
+	originErr := errors.Cause(err)
+	if tErr, ok := originErr.(*terror.Error); ok {
+		sqlErr := terror.ToSQLError(tErr)
+		_, ok := dbterror.ReorgRetryableErrCodes[sqlErr.Code]
+		return ok
+	}
+	// For the unknown errors, we should retry.
+	return true
+}
+
+>>>>>>> 6260e66ad8f (ddl: use latest PD address to register lightning (#48687)):pkg/ddl/index.go
 func convertToKeyExistsErr(originErr error, idxInfo *model.IndexInfo, tblInfo *model.TableInfo) error {
 	tErr, ok := errors.Cause(originErr).(*terror.Error)
 	if !ok {
@@ -1703,6 +1816,22 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reorgIn
 
 // addTableIndex handles the add index reorganization state for a table.
 func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
+<<<<<<< HEAD:ddl/index.go
+=======
+	// TODO: Support typeAddIndexMergeTmpWorker.
+	if reorgInfo.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
+		if reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+			err := w.executeDistGlobalTask(reorgInfo)
+			if err != nil {
+				return err
+			}
+			//nolint:forcetypeassert
+			pdLeaderAddr := w.store.(tikv.Storage).GetRegionCache().PDClient().GetLeaderAddr()
+			return checkDuplicateForUniqueIndex(w.ctx, t, reorgInfo, pdLeaderAddr)
+		}
+	}
+
+>>>>>>> 6260e66ad8f (ddl: use latest PD address to register lightning (#48687)):pkg/ddl/index.go
 	var err error
 	if tbl, ok := t.(table.PartitionedTable); ok {
 		var finish bool
@@ -1727,10 +1856,207 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 	return errors.Trace(err)
 }
 
+<<<<<<< HEAD:ddl/index.go
 // updateReorgInfo will find the next partition according to current reorgInfo.
 // If no more partitions, or table t is not a partitioned table, returns true to
 // indicate that the reorganize work is finished.
 func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bool, error) {
+=======
+func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo *reorgInfo, pdAddr string) error {
+	var bc ingest.BackendCtx
+	var err error
+	defer func() {
+		if bc != nil {
+			ingest.LitBackCtxMgr.Unregister(reorgInfo.ID)
+		}
+	}()
+	for _, elem := range reorgInfo.elements {
+		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
+		if indexInfo == nil {
+			return errors.New("unexpected error, can't find index info")
+		}
+		if indexInfo.Unique {
+			ctx := logutil.WithCategory(ctx, "ddl-ingest")
+			if bc == nil {
+				bc, err = ingest.LitBackCtxMgr.Register(ctx, indexInfo.Unique, reorgInfo.ID, nil, pdAddr, reorgInfo.ReorgMeta.ResourceGroupName)
+				if err != nil {
+					return err
+				}
+			}
+			err = bc.CollectRemoteDuplicateRows(indexInfo.ID, t)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// MockDMLExecutionOnTaskFinished is used to mock DML execution when tasks finished.
+var MockDMLExecutionOnTaskFinished func()
+
+// MockDMLExecutionOnDDLPaused is used to mock DML execution when ddl job paused.
+var MockDMLExecutionOnDDLPaused func()
+
+// TestSyncChan is used to sync the test.
+var TestSyncChan = make(chan struct{})
+
+func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
+	if reorgInfo.mergingTmpIdx {
+		return errors.New("do not support merge index")
+	}
+
+	taskType := proto.Backfill
+	taskKey := fmt.Sprintf("ddl/%s/%d", taskType, reorgInfo.Job.ID)
+	g, ctx := errgroup.WithContext(context.Background())
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalDistTask)
+
+	done := make(chan struct{})
+
+	// generate taskKey for multi schema change.
+	if mInfo := reorgInfo.Job.MultiSchemaInfo; mInfo != nil {
+		taskKey = fmt.Sprintf("%s/%d", taskKey, mInfo.Seq)
+	}
+
+	// For resuming add index task.
+	// Need to fetch global task by taskKey in tidb_global_task and tidb_global_task_history tables.
+	// When pausing the related ddl job, it is possible that the global task with taskKey is succeed and in tidb_global_task_history.
+	// As a result, when resuming the related ddl job,
+	// it is necessary to check task exits in tidb_global_task and tidb_global_task_history tables.
+	taskManager, err := storage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+	task, err := taskManager.GetGlobalTaskByKeyWithHistory(w.ctx, taskKey)
+	if err != nil {
+		return err
+	}
+	if task != nil {
+		// It's possible that the task state is succeed but the ddl job is paused.
+		// When task in succeed state, we can skip the dist task execution/scheduing process.
+		if task.State == proto.TaskStateSucceed {
+			logutil.BgLogger().Info(
+				"global task succeed, start to resume the ddl job",
+				zap.String("category", "ddl"),
+				zap.String("task-key", taskKey))
+			return nil
+		}
+		g.Go(func() error {
+			defer close(done)
+			backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
+			err := handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logutil.BgLogger(),
+				func(ctx context.Context) (bool, error) {
+					return true, handle.ResumeTask(w.ctx, taskKey)
+				},
+			)
+			if err != nil {
+				return err
+			}
+			err = handle.WaitGlobalTask(ctx, task)
+			if err := w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
+				if dbterror.ErrPausedDDLJob.Equal(err) {
+					logutil.BgLogger().Warn("job paused by user", zap.String("category", "ddl"), zap.Error(err))
+					return dbterror.ErrPausedDDLJob.GenWithStackByArgs(reorgInfo.Job.ID)
+				}
+			}
+			return err
+		})
+	} else {
+		elemIDs := make([]int64, 0, len(reorgInfo.elements))
+		for _, elem := range reorgInfo.elements {
+			elemIDs = append(elemIDs, elem.ID)
+		}
+
+		job := reorgInfo.Job
+		taskMeta := &BackfillGlobalMeta{
+			Job:             *reorgInfo.Job.Clone(),
+			EleIDs:          elemIDs,
+			EleTypeKey:      reorgInfo.currElement.TypeKey,
+			CloudStorageURI: w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI,
+		}
+
+		metaData, err := json.Marshal(taskMeta)
+		if err != nil {
+			return err
+		}
+
+		g.Go(func() error {
+			defer close(done)
+			err := handle.SubmitAndRunGlobalTask(ctx, taskKey, taskType, distPhysicalTableConcurrency, metaData)
+			failpoint.Inject("pauseAfterDistTaskFinished", func() {
+				MockDMLExecutionOnTaskFinished()
+			})
+			if err := w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
+				if dbterror.ErrPausedDDLJob.Equal(err) {
+					logutil.BgLogger().Warn("job paused by user", zap.String("category", "ddl"), zap.Error(err))
+					return dbterror.ErrPausedDDLJob.GenWithStackByArgs(reorgInfo.Job.ID)
+				}
+			}
+			return err
+		})
+	}
+
+	g.Go(func() error {
+		checkFinishTk := time.NewTicker(CheckBackfillJobFinishInterval)
+		defer checkFinishTk.Stop()
+		updateRowCntTk := time.NewTicker(UpdateBackfillJobRowCountInterval)
+		defer updateRowCntTk.Stop()
+		for {
+			select {
+			case <-done:
+				w.updateJobRowCount(taskKey, reorgInfo.Job.ID)
+				return nil
+			case <-checkFinishTk.C:
+				if err = w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
+					if dbterror.ErrPausedDDLJob.Equal(err) {
+						if err = handle.PauseTask(w.ctx, taskKey); err != nil {
+							logutil.BgLogger().Error("pause global task error", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
+							continue
+						}
+						failpoint.Inject("syncDDLTaskPause", func() {
+							// make sure the task is paused.
+							TestSyncChan <- struct{}{}
+						})
+					}
+					if !dbterror.ErrCancelledDDLJob.Equal(err) {
+						return errors.Trace(err)
+					}
+					if err = handle.CancelGlobalTask(w.ctx, taskKey); err != nil {
+						logutil.BgLogger().Error("cancel global task error", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
+						// continue to cancel global task.
+						continue
+					}
+				}
+			case <-updateRowCntTk.C:
+				w.updateJobRowCount(taskKey, reorgInfo.Job.ID)
+			}
+		}
+	})
+	err = g.Wait()
+	return err
+}
+
+func (w *worker) updateJobRowCount(taskKey string, jobID int64) {
+	taskMgr, err := storage.GetTaskManager()
+	if err != nil {
+		logutil.BgLogger().Warn("cannot get task manager", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
+		return
+	}
+	gTask, err := taskMgr.GetGlobalTaskByKey(w.ctx, taskKey)
+	if err != nil || gTask == nil {
+		logutil.BgLogger().Warn("cannot get global task", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
+		return
+	}
+	rowCount, err := taskMgr.GetSubtaskRowCount(w.ctx, gTask.ID, proto.StepOne)
+	if err != nil {
+		logutil.BgLogger().Warn("cannot get subtask row count", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
+		return
+	}
+	w.getReorgCtx(jobID).setRowCount(rowCount)
+}
+
+func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysicalTableID int64) (int64, kv.Key, kv.Key, error) {
+>>>>>>> 6260e66ad8f (ddl: use latest PD address to register lightning (#48687)):pkg/ddl/index.go
 	pi := t.Meta().GetPartitionInfo()
 	if pi == nil {
 		return true, nil
