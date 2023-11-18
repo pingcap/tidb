@@ -756,10 +756,21 @@ func pickBackfillType(ctx context.Context, job *model.Job, unique bool, d *ddlCt
 			if err != nil {
 				return model.ReorgTypeNone, err
 			}
+			var pdLeaderAddr string
+			if d != nil {
+				//nolint:forcetypeassert
+				pdLeaderAddr = d.store.(tikv.Storage).GetRegionCache().PDClient().GetLeaderAddr()
+			}
 			if variable.EnableDistTask.Load() {
+<<<<<<< HEAD:ddl/index.go
 				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, d.etcdCli)
 			} else {
 				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, nil)
+=======
+				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, d.etcdCli, pdLeaderAddr, job.ReorgMeta.ResourceGroupName)
+			} else {
+				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, nil, pdLeaderAddr, job.ReorgMeta.ResourceGroupName)
+>>>>>>> 6260e66ad8f (ddl: use latest PD address to register lightning (#48687)):pkg/ddl/index.go
 			}
 			if err != nil {
 				return model.ReorgTypeNone, err
@@ -911,7 +922,17 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	if ok && bc.Done() {
 		return true, 0, nil
 	}
+<<<<<<< HEAD:ddl/index.go
 	bc, err = ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, job.ID, nil)
+=======
+	ctx := logutil.WithCategory(w.ctx, "ddl-ingest")
+	var pdLeaderAddr string
+	if d != nil {
+		//nolint:forcetypeassert
+		pdLeaderAddr = d.store.(tikv.Storage).GetRegionCache().PDClient().GetLeaderAddr()
+	}
+	bc, err = ingest.LitBackCtxMgr.Register(ctx, allIndexInfos[0].Unique, job.ID, nil, pdLeaderAddr, job.ReorgMeta.ResourceGroupName)
+>>>>>>> 6260e66ad8f (ddl: use latest PD address to register lightning (#48687)):pkg/ddl/index.go
 	if err != nil {
 		ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
 		return false, ver, errors.Trace(err)
@@ -1828,6 +1849,7 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 			if err != nil {
 				return err
 			}
+<<<<<<< HEAD:ddl/index.go
 			indexInfo := model.FindIndexInfoByID(t.Meta().Indices, reorgInfo.currElement.ID)
 			if indexInfo == nil {
 				return errors.New("unexpected error, can't find index info")
@@ -1841,6 +1863,11 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 				return bc.CollectRemoteDuplicateRows(indexInfo.ID, t)
 			}
 			return nil
+=======
+			//nolint:forcetypeassert
+			pdLeaderAddr := w.store.(tikv.Storage).GetRegionCache().PDClient().GetLeaderAddr()
+			return checkDuplicateForUniqueIndex(w.ctx, t, reorgInfo, pdLeaderAddr)
+>>>>>>> 6260e66ad8f (ddl: use latest PD address to register lightning (#48687)):pkg/ddl/index.go
 		}
 	}
 
@@ -1874,6 +1901,48 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 	return errors.Trace(err)
 }
 
+<<<<<<< HEAD:ddl/index.go
+=======
+func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo *reorgInfo, pdAddr string) error {
+	var bc ingest.BackendCtx
+	var err error
+	defer func() {
+		if bc != nil {
+			ingest.LitBackCtxMgr.Unregister(reorgInfo.ID)
+		}
+	}()
+	for _, elem := range reorgInfo.elements {
+		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
+		if indexInfo == nil {
+			return errors.New("unexpected error, can't find index info")
+		}
+		if indexInfo.Unique {
+			ctx := logutil.WithCategory(ctx, "ddl-ingest")
+			if bc == nil {
+				bc, err = ingest.LitBackCtxMgr.Register(ctx, indexInfo.Unique, reorgInfo.ID, nil, pdAddr, reorgInfo.ReorgMeta.ResourceGroupName)
+				if err != nil {
+					return err
+				}
+			}
+			err = bc.CollectRemoteDuplicateRows(indexInfo.ID, t)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// MockDMLExecutionOnTaskFinished is used to mock DML execution when tasks finished.
+var MockDMLExecutionOnTaskFinished func()
+
+// MockDMLExecutionOnDDLPaused is used to mock DML execution when ddl job paused.
+var MockDMLExecutionOnDDLPaused func()
+
+// TestSyncChan is used to sync the test.
+var TestSyncChan = make(chan struct{})
+
+>>>>>>> 6260e66ad8f (ddl: use latest PD address to register lightning (#48687)):pkg/ddl/index.go
 func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {
 		return errors.New("do not support merge index")

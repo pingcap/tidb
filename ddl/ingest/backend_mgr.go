@@ -32,7 +32,11 @@ import (
 // BackendCtxMgr is used to manage the backend context.
 type BackendCtxMgr interface {
 	CheckAvailable() (bool, error)
+<<<<<<< HEAD:ddl/ingest/backend_mgr.go
 	Register(ctx context.Context, unique bool, jobID int64, etcdClient *clientv3.Client) (BackendCtx, error)
+=======
+	Register(ctx context.Context, unique bool, jobID int64, etcdClient *clientv3.Client, pdAddr string, resourceGroupName string) (BackendCtx, error)
+>>>>>>> 6260e66ad8f (ddl: use latest PD address to register lightning (#48687)):pkg/ddl/ingest/backend_mgr.go
 	Unregister(jobID int64)
 	Load(jobID int64) (BackendCtx, bool)
 }
@@ -78,7 +82,11 @@ func (m *litBackendCtxMgr) CheckAvailable() (bool, error) {
 }
 
 // Register creates a new backend and registers it to the backend context.
+<<<<<<< HEAD:ddl/ingest/backend_mgr.go
 func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int64, etcdClient *clientv3.Client) (BackendCtx, error) {
+=======
+func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int64, etcdClient *clientv3.Client, pdAddr string, resourceGroupName string) (BackendCtx, error) {
+>>>>>>> 6260e66ad8f (ddl: use latest PD address to register lightning (#48687)):pkg/ddl/ingest/backend_mgr.go
 	bc, exist := m.Load(jobID)
 	if !exist {
 		m.memRoot.RefreshConsumption()
@@ -91,7 +99,12 @@ func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int6
 			logutil.BgLogger().Warn(LitWarnConfigError, zap.Int64("job ID", jobID), zap.Error(err))
 			return nil, err
 		}
+<<<<<<< HEAD:ddl/ingest/backend_mgr.go
 		bd, err := createLocalBackend(ctx, cfg)
+=======
+		cfg.Lightning.TiDB.PdAddr = pdAddr
+		bd, err := createLocalBackend(ctx, cfg, resourceGroupName)
+>>>>>>> 6260e66ad8f (ddl: use latest PD address to register lightning (#48687)):pkg/ddl/ingest/backend_mgr.go
 		if err != nil {
 			logutil.BgLogger().Error(LitErrCreateBackendFail, zap.Int64("job ID", jobID), zap.Error(err))
 			return nil, err
