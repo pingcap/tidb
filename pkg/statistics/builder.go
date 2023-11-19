@@ -17,7 +17,9 @@ package statistics
 import (
 	"bytes"
 	"math"
+	"sync"
 
+	"github.com/google/btree"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -25,8 +27,10 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 )
 
 // SortedBuilder is used to build histograms for PK and index.
@@ -206,6 +210,83 @@ func buildHist(sc *stmtctx.StatementContext, hg *Histogram, samples []*SampleIte
 	return corrXYSum, nil
 }
 
+// buildHist builds histogram from samples and other information.
+// It stores the built histogram in hg and return corrXYSum used for calculating the correlation.
+func buildHistFromBtree(sc *stmtctx.StatementContext, hg *Histogram, samplesTree *btree.BTreeG[*sortItem], count, ndv, numBuckets int64, memTracker *memory.Tracker) (corrXYSum float64, err error) {
+	sampleNum := 0
+	samplesTree.Ascend(func(i *sortItem) bool {
+		sampleNum += len(i.Sample)
+		return true
+	})
+	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
+	sampleFactor := float64(count) / float64(sampleNum)
+	ndvFactor := float64(count) / float64(ndv)
+	if ndvFactor > sampleFactor {
+		ndvFactor = sampleFactor
+	}
+	// Since bucket count is increased by sampleFactor, so the actual max values per bucket is
+	// floor(valuesPerBucket/sampleFactor)*sampleFactor, which may less than valuesPerBucket,
+	// thus we need to add a sampleFactor to avoid building too many buckets.
+	valuesPerBucket := float64(count)/float64(numBuckets) + sampleFactor
+
+	bucketIdx := 0
+	var lastCount int64
+	corrXYSum = float64(0)
+	bufferedMemSize := int64(0)
+	bufferedReleaseSize := int64(0)
+	defer func() {
+		if memTracker != nil {
+			memTracker.Consume(bufferedMemSize)
+			memTracker.Release(bufferedReleaseSize)
+		}
+	}()
+	var upper = new(types.Datum)
+	totalidx := 0
+	for samplesTree.Len() != 0 {
+		samples, _ := samplesTree.DeleteMin()
+		for _, s := range samples.Sample {
+			if totalidx == 0 {
+				hg.AppendBucket(&s.Value, &s.Value, int64(sampleFactor), int64(ndvFactor))
+			} else {
+				corrXYSum += float64(totalidx) * float64(s.Ordinal)
+				hg.UpperToDatum(bucketIdx, upper)
+				if memTracker != nil {
+					// tmp memory usage
+					deltaSize := upper.MemUsage()
+					memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
+					memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
+				}
+				cmp, err := upper.Compare(sc.TypeCtx(), &s.Value, collate.GetBinaryCollator())
+				if err != nil {
+					return 0, errors.Trace(err)
+				}
+				totalCount := float64(totalidx+1) * sampleFactor
+				if cmp == 0 {
+					// The new item has the same value as current bucket value, to ensure that
+					// a same value only stored in a single bucket, we do not increase bucketIdx even if it exceeds
+					// valuesPerBucket.
+					hg.Buckets[bucketIdx].Count = int64(totalCount)
+					if hg.Buckets[bucketIdx].Repeat == int64(ndvFactor) {
+						hg.Buckets[bucketIdx].Repeat = int64(2 * sampleFactor)
+					} else {
+						hg.Buckets[bucketIdx].Repeat += int64(sampleFactor)
+					}
+				} else if totalCount-float64(lastCount) <= valuesPerBucket {
+					// The bucket still have room to store a new item, update the bucket.
+					hg.updateLastBucket(&s.Value, int64(totalCount), int64(ndvFactor), false)
+				} else {
+					lastCount = hg.Buckets[bucketIdx].Count
+					// The bucket is full, store the item in the next bucket.
+					bucketIdx++
+					hg.AppendBucket(&s.Value, &s.Value, int64(totalCount), int64(ndvFactor))
+				}
+			}
+			totalidx++
+		}
+	}
+	return corrXYSum, nil
+}
+
 // calcCorrelation computes column order correlation with the handle.
 func calcCorrelation(sampleNum int64, corrXYSum float64) float64 {
 	if sampleNum == 1 {
@@ -232,6 +313,37 @@ func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *Sample
 	return BuildColumnHist(ctx, numBuckets, id, collector, tp, collector.Count, collector.FMSketch.NDV(), collector.NullCount)
 }
 
+type sortItem struct {
+	Value       *types.Datum
+	SampleBytes []byte
+	Sample      []*SampleItem
+}
+
+var mapPool = sync.Pool{
+	New: func() interface{} {
+		return make(map[hack.MutableString]*sortItem, 200)
+	},
+}
+
+// Extract the logic of generating a function for getting compared bytes
+func getComparedByteFunction(ctx sessionctx.Context, isColumn bool, memTracker *memory.Tracker, bufferedMemSize *int64, bufferedReleaseSize *int64) func(datum types.Datum) ([]byte, error) {
+	if isColumn {
+		return func(datum types.Datum) ([]byte, error) {
+			encoded, err := codec.EncodeKey(ctx.GetSessionVars().StmtCtx.TimeZone(), nil, datum)
+			err = ctx.GetSessionVars().StmtCtx.HandleError(err)
+			if memTracker != nil {
+				deltaSize := int64(cap(encoded))
+				memTracker.BufferedConsume(bufferedMemSize, deltaSize)
+				memTracker.BufferedRelease(bufferedReleaseSize, deltaSize)
+			}
+			return encoded, err
+		}
+	}
+	return func(datum types.Datum) ([]byte, error) {
+		return datum.GetBytes(), nil
+	}
+}
+
 // BuildHistAndTopN build a histogram and TopN for a column or an index from samples.
 func BuildHistAndTopN(
 	ctx sessionctx.Context,
@@ -242,6 +354,7 @@ func BuildHistAndTopN(
 	isColumn bool,
 	memTracker *memory.Tracker,
 	needExtStats bool,
+	highNDVMode bool,
 ) (*Histogram, *TopN, error) {
 	bufferedMemSize := int64(0)
 	bufferedReleaseSize := int64(0)
@@ -251,24 +364,7 @@ func BuildHistAndTopN(
 			memTracker.Release(bufferedReleaseSize)
 		}
 	}()
-	var getComparedBytes func(datum types.Datum) ([]byte, error)
-	if isColumn {
-		getComparedBytes = func(datum types.Datum) ([]byte, error) {
-			encoded, err := codec.EncodeKey(ctx.GetSessionVars().StmtCtx.TimeZone(), nil, datum)
-			err = ctx.GetSessionVars().StmtCtx.HandleError(err)
-			if memTracker != nil {
-				// tmp memory usage
-				deltaSize := int64(cap(encoded))
-				memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
-				memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
-			}
-			return encoded, err
-		}
-	} else {
-		getComparedBytes = func(datum types.Datum) ([]byte, error) {
-			return datum.GetBytes(), nil
-		}
-	}
+	getComparedBytes := getComparedByteFunction(ctx, isColumn, memTracker, &bufferedMemSize, &bufferedReleaseSize)
 	count := collector.Count
 	ndv := collector.FMSketch.NDV()
 	nullCount := collector.NullCount
@@ -287,15 +383,24 @@ func BuildHistAndTopN(
 	} else {
 		samples = collector.Samples
 	}
+	hg := NewHistogram(id, ndv, nullCount, 0, tp, numBuckets, collector.TotalSize)
+	sampleNum := int64(len(samples))
+	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
+	sampleFactor := float64(count) / float64(len(samples))
+	if highNDVMode {
+		return buildHistAndTopNWithLowNDV(sc, samples, numBuckets, numTopN, sampleNum, sampleFactor, isColumn, hg, ndv, nullCount, count, memTracker, getComparedBytes)
+	}
+	return buildHistAndTopN(sc, samples, numBuckets, numTopN, sampleNum, sampleFactor, isColumn, hg, id, ndv, nullCount, count, memTracker, getComparedBytes)
+}
+
+func buildHistAndTopN(sc *stmtctx.StatementContext, samples []*SampleItem,
+	numBuckets, numTopN int, sampleNum int64, sampleFactor float64, isColumn bool, hg *Histogram,
+	id, ndv, nullCount, count int64, memTracker *memory.Tracker,
+	getComparedBytes func(datum types.Datum) ([]byte, error)) (*Histogram, *TopN, error) {
 	err := sortSampleItems(sc, samples)
 	if err != nil {
 		return nil, nil, err
 	}
-	hg := NewHistogram(id, ndv, nullCount, 0, tp, numBuckets, collector.TotalSize)
-
-	sampleNum := int64(len(samples))
-	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
-	sampleFactor := float64(count) / float64(len(samples))
 
 	// Step1: collect topn from samples
 
@@ -430,7 +535,6 @@ func BuildHistAndTopN(
 			}
 		}
 	}
-
 	topn := &TopN{TopN: topNList}
 	topn.Scale(sampleFactor)
 
@@ -438,7 +542,6 @@ func BuildHistAndTopN(
 		// TopN includes all sample data
 		return hg, topn, nil
 	}
-
 	// Step3: build histogram with the rest samples
 	if len(samples) > 0 {
 		_, err = buildHist(sc, hg, samples, count-int64(topn.TotalCount()), ndv-int64(len(topn.TopN)), int64(numBuckets), memTracker)
@@ -446,8 +549,192 @@ func BuildHistAndTopN(
 			return nil, nil, err
 		}
 	}
+	return hg, topn, nil
+}
+
+func buildHistAndTopNWithLowNDV(sc *stmtctx.StatementContext, samples []*SampleItem,
+	numBuckets, numTopN int, sampleNum int64, sampleFactor float64, isColumn bool, hg *Histogram,
+	ndv, nullCount, count int64, memTracker *memory.Tracker,
+	getComparedBytes func(datum types.Datum) ([]byte, error)) (*Histogram, *TopN, error) {
+	var sMap = mapPool.Get().(map[hack.MutableString]*sortItem)
+	var corrXYSum float64
+	for _, s := range samples {
+		sampleBytes, err := getComparedBytes(s.Value)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		key := hack.String(sampleBytes)
+		if value, ok := sMap[key]; ok {
+			value.Sample = append(value.Sample, s)
+		} else {
+			sMap[key] = &sortItem{
+				Sample:      []*SampleItem{s},
+				SampleBytes: sampleBytes,
+				Value:       &s.Value,
+			}
+		}
+	}
+
+	// Step1: collect topn from samples
+	// the topNList is always sorted by count from more to less
+	var err error
+	topNbtree := btree.NewG(16, func(a, b *sortItem) bool {
+		if len(a.Sample) < len(b.Sample) {
+			return true
+		}
+		if len(a.Sample) > len(b.Sample) {
+			return false
+		}
+		var cmp int
+		cmp, err = a.Value.Compare(sc.TypeCtx(), b.Value, collate.GetBinaryCollator())
+		if err != nil {
+			return true
+		}
+		return cmp > 0
+	})
+	sampleTree := btree.NewG(20, func(a, b *sortItem) bool {
+		var cmp int
+		cmp, err = a.Value.Compare(sc.TypeCtx(), b.Value, collate.GetBinaryCollator())
+		if err != nil {
+			return true
+		}
+		return cmp < 0
+	})
+	for _, value := range sMap {
+		topNbtree.ReplaceOrInsert(value)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		for topNbtree.Len() > numTopN {
+			topNbtree.DeleteMin()
+		}
+		sampleTree.ReplaceOrInsert(value)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+	}
+	maps.Clear(sMap)
+	mapPool.Put(sMap)
+	if isColumn {
+		// Calc the correlation of the column between the handle column.
+		idx := 0
+		sampleTree.Ascend(func(i *sortItem) bool {
+			for _, s := range i.Sample {
+				corrXYSum += float64(idx) * float64(s.Ordinal)
+				idx++
+			}
+			return true
+		})
+		hg.Correlation = calcCorrelation(sampleNum, corrXYSum)
+	}
+	// Handle the counting for the last value. Basically equal to the case 2 above.
+	// now topn is empty: append the "current" count directly
+	topNList, err := pruneTopNItemWithLowNDV(topNbtree, sampleTree, ndv, nullCount, sampleNum, count)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	for i := 0; i < len(topNList); i++ {
+		topNList[i].Count *= uint64(sampleFactor)
+	}
+	topn := &TopN{TopN: topNList}
+
+	if uint64(count) <= topn.TotalCount() || int(hg.NDV) <= len(topn.TopN) {
+		// TopN includes all sample data
+		return hg, topn, nil
+	}
+	// Step3: build histogram with the rest samples
+	if sampleTree.Len() > 0 {
+		_, err = buildHistFromBtree(sc, hg, sampleTree, count-int64(topn.TotalCount()), ndv-int64(len(topn.TopN)), int64(numBuckets), memTracker)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 
 	return hg, topn, nil
+}
+
+func toTopNMeta(topns *btree.BTreeG[*sortItem], n int) ([]TopNMeta, error) {
+	topNList := make([]TopNMeta, 0, n)
+	var err error
+	topns.Descend(func(i *sortItem) bool {
+		topNList = append(topNList, TopNMeta{Count: uint64(len(i.Sample)), Encoded: i.SampleBytes})
+		return len(topNList) != n
+	})
+	return topNList, err
+}
+
+// pruneTopNItemWithLowNDV tries to prune the least common values in the top-n list if it is not significantly more common than the values not in the list.
+//
+//	We assume that the ones not in the top-n list's selectivity is 1/remained_ndv which is the internal implementation of EqualRowCount
+func pruneTopNItemWithLowNDV(topns *btree.BTreeG[*sortItem], sampleTree *btree.BTreeG[*sortItem], ndv, nullCount, sampleRows, totalRows int64) ([]TopNMeta, error) {
+	// If the sampleRows holds all rows, or NDV of samples equals to actual NDV, we just return the TopN directly.
+	if sampleRows == totalRows || totalRows <= 1 || int64(topns.Len()) >= ndv {
+		topns.Descend(func(item *sortItem) bool {
+			sampleTree.Delete(item)
+			return true
+		})
+		result, err := toTopNMeta(topns, topns.Len())
+		return result, err
+	}
+	// Sum the occurrence except the least common one from the top-n list. To check whether the lest common one is worth
+	// storing later.
+	sumCount := uint64(0)
+	topnCountList := make([]uint64, 0, topns.Len())
+	topns.Descend(func(item *sortItem) bool {
+		sampleTree.Delete(item)
+		sumCount += uint64(len(item.Sample))
+		topnCountList = append(topnCountList, uint64(len(item.Sample)))
+		return true
+	})
+	topNNum := topns.Len()
+	for topNNum > 0 {
+		// Selectivity for the ones not in the top-n list.
+		// (1 - things in top-n list - null) / remained ndv.
+		selectivity := 1.0 - float64(sumCount)/float64(sampleRows) - float64(nullCount)/float64(totalRows)
+		if selectivity < 0.0 {
+			selectivity = 0
+		}
+		if selectivity > 1 {
+			selectivity = 1
+		}
+		otherNDV := float64(ndv) - (float64(topNNum) - 1)
+		if otherNDV > 1 {
+			selectivity /= otherNDV
+		}
+		totalRowsN := float64(totalRows)
+		n := float64(sampleRows)
+		k := totalRowsN * float64(topnCountList[topNNum-1]) / n
+		// Since we are sampling without replacement. The distribution would be a hypergeometric distribution.
+		// Thus the variance is the following formula.
+		variance := n * k * (totalRowsN - k) * (totalRowsN - n) / (totalRowsN * totalRowsN * (totalRowsN - 1))
+		stddev := math.Sqrt(variance)
+		// We choose the bound that plus two stddev of the sample frequency, plus an additional 0.5 for the continuity correction.
+		//   Note:
+		//  	The mean + 2 * stddev is known as Wald confidence interval, plus 0.5 would be continuity-corrected Wald interval
+		if float64(topnCountList[topNNum-1]) > selectivity*n+2*stddev+0.5 {
+			// Estimated selectivity of this item in the TopN is significantly higher than values not in TopN.
+			// So this value, and all other values in the TopN (selectivity of which is higher than this value) are
+			// worth being remained in the TopN list, and we stop pruning now.
+			break
+		}
+		// Current one is not worth storing, remove it and subtract it from sumCount, go to next one.
+		topNNum--
+		if topNNum == 0 {
+			break
+		}
+		sumCount -= topnCountList[topNNum-1]
+	}
+	result := make([]TopNMeta, 0, topNNum)
+	topns.Descend(func(item *sortItem) bool {
+		if len(result) < topNNum {
+			result = append(result, TopNMeta{Count: uint64(len(item.Sample)), Encoded: item.SampleBytes})
+		} else {
+			sampleTree.ReplaceOrInsert(item)
+		}
+		return true
+	})
+	return result, nil
 }
 
 // pruneTopNItem tries to prune the least common values in the top-n list if it is not significantly more common than the values not in the list.

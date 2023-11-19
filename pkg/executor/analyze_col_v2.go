@@ -18,6 +18,7 @@ import (
 	"context"
 	stderrors "errors"
 	"math"
+	"math/rand"
 	"slices"
 	"time"
 
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -850,7 +852,14 @@ workLoop:
 					e.memTracker.Release(collector.MemSize)
 				}
 			}
-			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), task.id, collector, task.tp, task.isColumn, e.memTracker, e.ctx.GetSessionVars().EnableExtendedStats)
+
+			// if We have low NDV. we will use new algorithm to build histogram. it will be faster.
+			// if it is in test, it will rand pick the algorithm to build. the data should be the same.
+			isLowNDVMode :=
+				collector.FMSketch.NDV()*100 < collector.Count ||
+					collector.FMSketch.NDV() <= int64(e.opts[ast.AnalyzeOptNumTopN]) ||
+					(intest.InTest && rand.Int63n(2) == 0)
+			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), task.id, collector, task.tp, task.isColumn, e.memTracker, e.ctx.GetSessionVars().EnableExtendedStats, isLowNDVMode)
 			if err != nil {
 				resultCh <- err
 				releaseCollectorMemory()
