@@ -443,7 +443,7 @@ func (e *EC2Session) getFSRCreditBalance(snapshotID *string, targetAZ string) (f
 	startTime := time.Now().Add(-5 * time.Minute)
 	endTime := time.Now()
 
-	// Prepare the input for the GetMetricData API call
+	// Prepare the input for the GetMetricStatisticsWithContext API call
 	input := &cloudwatch.GetMetricStatisticsInput{
 		StartTime:  aws.Time(startTime),
 		EndTime:    aws.Time(endTime),
@@ -463,7 +463,7 @@ func (e *EC2Session) getFSRCreditBalance(snapshotID *string, targetAZ string) (f
 		Statistics: []*string{aws.String("Maximum")},
 	}
 
-	log.Info("metrics info", zap.Any("input", input))
+	log.Info("metrics input", zap.Any("input", input))
 
 	// Call cloudwatchClient API to retrieve the FastSnapshotRestoreCreditsBalance metric data
 	resp, err := e.cloudwatchClient.GetMetricStatisticsWithContext(context.Background(), input)
