@@ -1038,6 +1038,10 @@ const (
 	//   add concurrency/priority/create_time/end_time to `mysql.tidb_background_subtask`/`mysql.tidb_background_subtask_history`
 	//   add idx_exec_id(exec_id) to `mysql.tidb_background_subtask`
 	version180 = 180
+
+	// version 181
+	//   set tidb_txn_mode to Optimistic when tidb_txn_mode is not set.
+	version181 = 181
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
@@ -1713,12 +1717,6 @@ func upgradeToVer32(s sessiontypes.Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY table_priv SET('Select','Insert','Update','Delete','Create','Drop','Grant', 'Index', 'Alter', 'Create View', 'Show View', 'Trigger', 'References')")
-
-	// Set optimistic to tidb_tx_mode.
-	// Related issue: https://github.com/pingcap/tidb/issues/48492
-	sql := fmt.Sprintf("INSERT HIGH_PRIORITY INTO %s.%s VALUES('%s', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE = '%s'",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBTxnMode, variable.OptimisticTxnMode, variable.OptimisticTxnMode)
-	mustExecute(s, sql)
 }
 
 func upgradeToVer33(s sessiontypes.Session, ver int64) {
@@ -1769,15 +1767,6 @@ func upgradeToVer38(s sessiontypes.Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateGlobalPrivTable)
-
-	// Set optimistic to tidb_tx_mode.
-	// Related issue: https://github.com/pingcap/tidb/issues/48492
-	sql := fmt.Sprintf("INSERT HIGH_PRIORITY INTO %s.%s ("+
-		"SELECT '%s', '%s' WHERE NOT EXISTS (SELECT * FROM %s.%s WHERE VARIABLE_NAME = '%s' AND VARIABLE_VALUE = '%s')"+
-		")ON DUPLICATE KEY UPDATE VARIABLE_VALUE = VALUES(VARIABLE_VALUE)",
-		mysql.SystemDB, mysql.GlobalVariablesTable,
-		variable.TiDBTxnMode, variable.OptimisticTxnMode, mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBTxnMode, variable.PessimisticTxnMode)
-	mustExecute(s, sql)
 }
 
 func writeNewCollationParameter(s sessiontypes.Session, flag bool) {
@@ -2946,6 +2935,18 @@ func upgradeToVer180(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `end_time` TIMESTAMP AFTER `state_update_time`", infoschema.ErrColumnExists)
 
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD INDEX idx_exec_id(exec_id)", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer181(s sessiontypes.Session, ver int64) {
+	if ver >= version181 {
+		return
+	}
+	sql := fmt.Sprintf("INSERT HIGH_PRIORITY INTO %s.%s ("+
+		"SELECT '%s', '%s' WHERE NOT EXISTS (SELECT * FROM %s.%s WHERE VARIABLE_NAME = '%s' AND VARIABLE_VALUE = '%s')"+
+		")ON DUPLICATE KEY UPDATE VARIABLE_VALUE = VALUES(VARIABLE_VALUE)",
+		mysql.SystemDB, mysql.GlobalVariablesTable,
+		variable.TiDBTxnMode, variable.OptimisticTxnMode, mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBTxnMode, variable.PessimisticTxnMode)
+	mustExecute(s, sql)
 }
 
 func writeOOMAction(s sessiontypes.Session) {
