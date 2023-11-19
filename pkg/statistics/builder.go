@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"math"
 
+	"github.com/google/btree"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -300,7 +301,11 @@ func BuildHistAndTopN(
 	// Step1: collect topn from samples
 
 	// the topNList is always sorted by count from more to less
-	topNList := make([]TopNMeta, 0, numTopN)
+	var topNbtree *btree.BTreeG[TopNMeta]
+	topNbtree = btree.NewG(32, func(a, b TopNMeta) bool {
+		return a.Count < b.Count
+	})
+
 	cur, err := getComparedBytes(samples[0].Value)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -325,28 +330,23 @@ func BuildHistAndTopN(
 		}
 		// case 2, meet a different value: counting for the "current" is complete
 		// case 2-1, now topn is empty: append the "current" count directly
-		if len(topNList) == 0 {
-			topNList = append(topNList, TopNMeta{Encoded: cur, Count: uint64(curCnt)})
+		if topNbtree.Len() == 0 {
+			topNbtree.ReplaceOrInsert(TopNMeta{Encoded: cur, Count: uint64(curCnt)})
 			cur, curCnt = sampleBytes, 1
 			continue
 		}
 		// case 2-2, now topn is full, and the "current" count is less than the least count in the topn: no need to insert the "current"
-		if len(topNList) >= numTopN && uint64(curCnt) <= topNList[len(topNList)-1].Count {
-			cur, curCnt = sampleBytes, 1
-			continue
-		}
-		// case 2-3, now topn is not full, or the "current" count is larger than the least count in the topn: need to find a slot to insert the "current"
-		j := len(topNList)
-		for ; j > 0; j-- {
-			if uint64(curCnt) < topNList[j-1].Count {
-				break
+		if topNbtree.Len() >= numTopN {
+			minItem, _ := topNbtree.Min()
+			if uint64(curCnt) <= minItem.Count {
+				cur, curCnt = sampleBytes, 1
+				continue
 			}
 		}
-		topNList = append(topNList, TopNMeta{})
-		copy(topNList[j+1:], topNList[j:])
-		topNList[j] = TopNMeta{Encoded: cur, Count: uint64(curCnt)}
-		if len(topNList) > numTopN {
-			topNList = topNList[:numTopN]
+		// case 2-3, now topn is not full, or the "current" count is larger than the least count in the topn: need to find a slot to insert the "current"
+		topNbtree.ReplaceOrInsert(TopNMeta{Encoded: cur, Count: uint64(curCnt)})
+		for topNbtree.Len() > numTopN {
+			topNbtree.DeleteMin()
 		}
 		cur, curCnt = sampleBytes, 1
 	}
@@ -355,25 +355,26 @@ func BuildHistAndTopN(
 	if isColumn {
 		hg.Correlation = calcCorrelation(sampleNum, corrXYSum)
 	}
-
+	var topNList []TopNMeta
 	// Handle the counting for the last value. Basically equal to the case 2 above.
 	// now topn is empty: append the "current" count directly
-	if len(topNList) == 0 {
+	if topNbtree.Len() == 0 {
+		topNList = make([]TopNMeta, 0, 1)
 		topNList = append(topNList, TopNMeta{Encoded: cur, Count: uint64(curCnt)})
-	} else if len(topNList) < numTopN || uint64(curCnt) > topNList[len(topNList)-1].Count {
-		// now topn is not full, or the "current" count is larger than the least count in the topn: need to find a slot to insert the "current"
-		j := len(topNList)
-		for ; j > 0; j-- {
-			if uint64(curCnt) < topNList[j-1].Count {
-				break
+	} else {
+		minItem, _ := topNbtree.Min()
+		if topNbtree.Len() < numTopN || uint64(curCnt) > minItem.Count {
+			// now topn is not full, or the "current" count is larger than the least count in the topn: need to find a slot to insert the "current"
+			topNbtree.ReplaceOrInsert(TopNMeta{Encoded: cur, Count: uint64(curCnt)})
+			for topNbtree.Len() > numTopN {
+				topNbtree.DeleteMin()
 			}
 		}
-		topNList = append(topNList, TopNMeta{})
-		copy(topNList[j+1:], topNList[j:])
-		topNList[j] = TopNMeta{Encoded: cur, Count: uint64(curCnt)}
-		if len(topNList) > numTopN {
-			topNList = topNList[:numTopN]
-		}
+		topNList = make([]TopNMeta, 0, topNbtree.Len())
+		topNbtree.Descend(func(i TopNMeta) bool {
+			topNList = append(topNList, i)
+			return true
+		})
 	}
 
 	topNList = pruneTopNItem(topNList, ndv, nullCount, sampleNum, count)
