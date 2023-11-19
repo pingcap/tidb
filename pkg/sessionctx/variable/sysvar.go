@@ -2982,7 +2982,7 @@ const (
 	// MaskPwd is the mask of password for LDAP variables.
 	MaskPwd = "******"
 
-	// PessimiticTxnMode is the name for tidb_txn_mode system variable.
+	// PessimisticTxnMode is the name for tidb_txn_mode system variable.
 	PessimisticTxnMode = "pessimistic"
 	// OptimisticTxnMode is the name for tidb_txn_mode system variable.
 	OptimisticTxnMode = "optimistic"
