@@ -15,18 +15,18 @@
 package statistics
 
 import (
-	"bytes"
 	"math"
 
+	"github.com/google/btree"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 )
 
 // SortedBuilder is used to build histograms for PK and index.
@@ -232,6 +232,11 @@ func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *Sample
 	return BuildColumnHist(ctx, numBuckets, id, collector, tp, collector.Count, collector.FMSketch.NDV(), collector.NullCount)
 }
 
+type sortItem struct {
+	Value  *types.Datum
+	Sample []*SampleItem
+}
+
 // BuildHistAndTopN build a histogram and TopN for a column or an index from samples.
 func BuildHistAndTopN(
 	ctx sessionctx.Context,
@@ -287,153 +292,103 @@ func BuildHistAndTopN(
 	} else {
 		samples = collector.Samples
 	}
-	err := sortSampleItems(sc, samples)
-	if err != nil {
-		return nil, nil, err
-	}
+
 	hg := NewHistogram(id, ndv, nullCount, 0, tp, numBuckets, collector.TotalSize)
 
-	sampleNum := int64(len(samples))
+	sampleNum := int64(len(collector.Samples))
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
-	sampleFactor := float64(count) / float64(len(samples))
-
-	// Step1: collect topn from samples
-
-	// the topNList is always sorted by count from more to less
-	topNList := make([]TopNMeta, 0, numTopN)
-	cur, err := getComparedBytes(samples[0].Value)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	curCnt := float64(0)
+	sampleFactor := float64(count) / float64(len(collector.Samples))
+	var sMap = make(map[hack.MutableString]*sortItem, ndv)
 	var corrXYSum float64
-
-	// Iterate through the samples
-	for i := int64(0); i < sampleNum; i++ {
-		if isColumn {
-			corrXYSum += float64(i) * float64(samples[i].Ordinal)
-		}
-		if numTopN == 0 {
-			continue
-		}
-		sampleBytes, err := getComparedBytes(samples[i].Value)
+	for _, s := range samples {
+		sampleBytes, err := getComparedBytes(s.Value)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		// case 1, this value is equal to the last one: current count++
-		if bytes.Equal(cur, sampleBytes) {
-			curCnt++
-			continue
-		}
-		// case 2, meet a different value: counting for the "current" is complete
-		// case 2-1, now topn is empty: append the "current" count directly
-		if len(topNList) == 0 {
-			topNList = append(topNList, TopNMeta{Encoded: cur, Count: uint64(curCnt)})
-			cur, curCnt = sampleBytes, 1
-			continue
-		}
-		// case 2-2, now topn is full, and the "current" count is less than the least count in the topn: no need to insert the "current"
-		if len(topNList) >= numTopN && uint64(curCnt) <= topNList[len(topNList)-1].Count {
-			cur, curCnt = sampleBytes, 1
-			continue
-		}
-		// case 2-3, now topn is not full, or the "current" count is larger than the least count in the topn: need to find a slot to insert the "current"
-		j := len(topNList)
-		for ; j > 0; j-- {
-			if uint64(curCnt) < topNList[j-1].Count {
-				break
+		key := hack.String(sampleBytes)
+		if value, ok := sMap[key]; ok {
+			value.Sample = append(value.Sample, s)
+		} else {
+			sMap[key] = &sortItem{
+				Sample: []*SampleItem{s},
+				Value:  &s.Value,
 			}
 		}
-		topNList = append(topNList, TopNMeta{})
-		copy(topNList[j+1:], topNList[j:])
-		topNList[j] = TopNMeta{Encoded: cur, Count: uint64(curCnt)}
-		if len(topNList) > numTopN {
-			topNList = topNList[:numTopN]
-		}
-		cur, curCnt = sampleBytes, 1
 	}
 
-	// Calc the correlation of the column between the handle column.
+	// Step1: collect topn from samples
+	// the topNList is always sorted by count from more to less
+	var err error
+	topNbtree := btree.NewG(16, func(a, b *sortItem) bool {
+		if len(a.Sample) < len(b.Sample) {
+			return true
+		}
+		if len(a.Sample) > len(b.Sample) {
+			return false
+		}
+		var cmp int
+		cmp, err = a.Value.Compare(sc.TypeCtx(), b.Value, collate.GetBinaryCollator())
+		if err != nil {
+			return true
+		}
+		return cmp > 0
+	})
+	sampleTree := btree.NewG(20, func(a, b *sortItem) bool {
+		var cmp int
+		cmp, err = a.Value.Compare(sc.TypeCtx(), b.Value, collate.GetBinaryCollator())
+		if err != nil {
+			return true
+		}
+		return cmp < 0
+	})
+	for _, value := range sMap {
+		topNbtree.ReplaceOrInsert(value)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		for topNbtree.Len() > numTopN {
+			topNbtree.DeleteMin()
+		}
+		sampleTree.ReplaceOrInsert(value)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+	}
+	maps.Clear(sMap)
 	if isColumn {
+		// Calc the correlation of the column between the handle column.
+		idx := 0
+		sampleTree.Ascend(func(i *sortItem) bool {
+			for _, s := range i.Sample {
+				corrXYSum += float64(idx) * float64(s.Ordinal)
+				idx++
+			}
+			return true
+		})
 		hg.Correlation = calcCorrelation(sampleNum, corrXYSum)
 	}
-
+	topNbtree.Ascend(func(i *sortItem) bool {
+		sampleTree.Delete(i)
+		return true
+	})
 	// Handle the counting for the last value. Basically equal to the case 2 above.
 	// now topn is empty: append the "current" count directly
-	if numTopN != 0 {
-		if len(topNList) == 0 {
-			topNList = append(topNList, TopNMeta{Encoded: cur, Count: uint64(curCnt)})
-		} else if len(topNList) < numTopN || uint64(curCnt) > topNList[len(topNList)-1].Count {
-			// now topn is not full, or the "current" count is larger than the least count in the topn: need to find a slot to insert the "current"
-			j := len(topNList)
-			for ; j > 0; j-- {
-				if uint64(curCnt) < topNList[j-1].Count {
-					break
-				}
-			}
-			topNList = append(topNList, TopNMeta{})
-			copy(topNList[j+1:], topNList[j:])
-			topNList[j] = TopNMeta{Encoded: cur, Count: uint64(curCnt)}
-			if len(topNList) > numTopN {
-				topNList = topNList[:numTopN]
-			}
-		}
+	topNList, pop, err := pruneTopNItem(topNbtree, ndv, nullCount, sampleNum, count, getComparedBytes)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, p := range pop {
+		sampleTree.ReplaceOrInsert(p)
+	}
+	ss := make([]*SampleItem, 0, sampleTree.Len())
+	for sampleTree.Len() != 0 {
+		item, _ := sampleTree.DeleteMin()
+		ss = append(ss, item.Sample...)
 	}
 
-	topNList = pruneTopNItem(topNList, ndv, nullCount, sampleNum, count)
-
-	// Step2: exclude topn from samples
-	if numTopN != 0 {
-		for i := int64(0); i < int64(len(samples)); i++ {
-			sampleBytes, err := getComparedBytes(samples[i].Value)
-			if err != nil {
-				return nil, nil, errors.Trace(err)
-			}
-			// For debugging invalid sample data.
-			var (
-				foundTwice      bool
-				firstTimeSample types.Datum
-			)
-			for j := 0; j < len(topNList); j++ {
-				if bytes.Equal(sampleBytes, topNList[j].Encoded) {
-					// This should never happen, but we met this panic before, so we add this check here.
-					// See: https://github.com/pingcap/tidb/issues/35948
-					if foundTwice {
-						datumString, err := firstTimeSample.ToString()
-						if err != nil {
-							statslogutil.StatsLogger.Error("try to convert datum to string failed", zap.Error(err))
-						}
-
-						statslogutil.StatsLogger.Warn(
-							"invalid sample data",
-							zap.Bool("isColumn", isColumn),
-							zap.Int64("columnID", id),
-							zap.String("datum", datumString),
-							zap.Binary("sampleBytes", sampleBytes),
-							zap.Binary("topNBytes", topNList[j].Encoded),
-						)
-						// NOTE: if we don't return here, we may meet panic in the following code.
-						// The i may decrease to a negative value.
-						// We haven't fix the issue here, because we don't know how to
-						// remove the invalid sample data from the samples.
-						break
-					}
-					// First time to find the same value in topN: need to record the sample data for debugging.
-					firstTimeSample = samples[i].Value
-					// Found the same value in topn: need to skip over this value in samples.
-					copy(samples[i:], samples[uint64(i)+topNList[j].Count:])
-					samples = samples[:uint64(len(samples))-topNList[j].Count]
-					i--
-					foundTwice = true
-					continue
-				}
-			}
-		}
-		for i := 0; i < len(topNList); i++ {
-			topNList[i].Count *= uint64(sampleFactor)
-		}
+	for i := 0; i < len(topNList); i++ {
+		topNList[i].Count *= uint64(sampleFactor)
 	}
-
 	topn := &TopN{TopN: topNList}
 
 	if uint64(count) <= topn.TotalCount() || int(hg.NDV) <= len(topn.TopN) {
@@ -442,8 +397,8 @@ func BuildHistAndTopN(
 	}
 
 	// Step3: build histogram with the rest samples
-	if len(samples) > 0 {
-		_, err = buildHist(sc, hg, samples, count-int64(topn.TotalCount()), ndv-int64(len(topn.TopN)), int64(numBuckets), memTracker)
+	if len(ss) > 0 {
+		_, err = buildHist(sc, hg, ss, count-int64(topn.TotalCount()), ndv-int64(len(topn.TopN)), int64(numBuckets), memTracker)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -452,21 +407,40 @@ func BuildHistAndTopN(
 	return hg, topn, nil
 }
 
+func toTopNMeta(topns *btree.BTreeG[*sortItem], n int, getComparedBytes func(datum types.Datum) ([]byte, error)) ([]TopNMeta, error) {
+	topNList := make([]TopNMeta, 0, n)
+	var err error
+	topns.Descend(func(i *sortItem) bool {
+		var encoded []byte
+		encoded, err = getComparedBytes(*i.Value)
+		if err != nil {
+			return false
+		}
+		topNList = append(topNList, TopNMeta{Count: uint64(len(i.Sample)), Encoded: encoded})
+		return len(topNList) != n
+	})
+	return topNList, err
+}
+
 // pruneTopNItem tries to prune the least common values in the top-n list if it is not significantly more common than the values not in the list.
 //
 //	We assume that the ones not in the top-n list's selectivity is 1/remained_ndv which is the internal implementation of EqualRowCount
-func pruneTopNItem(topns []TopNMeta, ndv, nullCount, sampleRows, totalRows int64) []TopNMeta {
+func pruneTopNItem(topns *btree.BTreeG[*sortItem], ndv, nullCount, sampleRows, totalRows int64, getComparedBytes func(datum types.Datum) ([]byte, error)) ([]TopNMeta, []*sortItem, error) {
 	// If the sampleRows holds all rows, or NDV of samples equals to actual NDV, we just return the TopN directly.
-	if sampleRows == totalRows || totalRows <= 1 || int64(len(topns)) >= ndv || len(topns) == 0 {
-		return topns
+	if sampleRows == totalRows || totalRows <= 1 || int64(topns.Len()) >= ndv {
+		result, err := toTopNMeta(topns, topns.Len(), getComparedBytes)
+		return result, nil, err
 	}
 	// Sum the occurrence except the least common one from the top-n list. To check whether the lest common one is worth
 	// storing later.
 	sumCount := uint64(0)
-	for i := 0; i < len(topns)-1; i++ {
-		sumCount += topns[i].Count
-	}
-	topNNum := len(topns)
+	topnCountList := make([]uint64, 0, topns.Len())
+	topns.Descend(func(item *sortItem) bool {
+		sumCount += uint64(len(item.Sample))
+		topnCountList = append(topnCountList, uint64(len(item.Sample)))
+		return true
+	})
+	topNNum := topns.Len()
 	for topNNum > 0 {
 		// Selectivity for the ones not in the top-n list.
 		// (1 - things in top-n list - null) / remained ndv.
@@ -483,7 +457,7 @@ func pruneTopNItem(topns []TopNMeta, ndv, nullCount, sampleRows, totalRows int64
 		}
 		totalRowsN := float64(totalRows)
 		n := float64(sampleRows)
-		k := totalRowsN * float64(topns[topNNum-1].Count) / n
+		k := totalRowsN * float64(topnCountList[topNNum-1]) / n
 		// Since we are sampling without replacement. The distribution would be a hypergeometric distribution.
 		// Thus the variance is the following formula.
 		variance := n * k * (totalRowsN - k) * (totalRowsN - n) / (totalRowsN * totalRowsN * (totalRowsN - 1))
@@ -491,7 +465,7 @@ func pruneTopNItem(topns []TopNMeta, ndv, nullCount, sampleRows, totalRows int64
 		// We choose the bound that plus two stddev of the sample frequency, plus an additional 0.5 for the continuity correction.
 		//   Note:
 		//  	The mean + 2 * stddev is known as Wald confidence interval, plus 0.5 would be continuity-corrected Wald interval
-		if float64(topns[topNNum-1].Count) > selectivity*n+2*stddev+0.5 {
+		if float64(topnCountList[topNNum-1]) > selectivity*n+2*stddev+0.5 {
 			// Estimated selectivity of this item in the TopN is significantly higher than values not in TopN.
 			// So this value, and all other values in the TopN (selectivity of which is higher than this value) are
 			// worth being remained in the TopN list, and we stop pruning now.
@@ -502,7 +476,21 @@ func pruneTopNItem(topns []TopNMeta, ndv, nullCount, sampleRows, totalRows int64
 		if topNNum == 0 {
 			break
 		}
-		sumCount -= topns[topNNum-1].Count
+		sumCount -= topnCountList[topNNum-1]
 	}
-	return topns[:topNNum]
+	result := make([]TopNMeta, 0, topNNum)
+	for i := 0; i < topNNum; i++ {
+		m, _ := topns.DeleteMax()
+		encoded, err := getComparedBytes(*m.Value)
+		if err != nil {
+			return nil, nil, err
+		}
+		result = append(result, TopNMeta{Count: uint64(len(m.Sample)), Encoded: encoded})
+	}
+	popd := make([]*sortItem, 0, topns.Len())
+	for topns.Len() != 0 {
+		m, _ := topns.DeleteMax()
+		popd = append(popd, m)
+	}
+	return result, popd, nil
 }
