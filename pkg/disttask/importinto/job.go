@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -199,6 +200,8 @@ func (ti *DistImporter) SubmitTask(ctx context.Context) (int64, *proto.Task, err
 	if globalTask == nil {
 		return 0, nil, errors.Errorf("cannot find global task with ID %d", taskID)
 	}
+
+	metrics.UpdateMetricsForAddTask(globalTask)
 	// update logger with task id.
 	ti.jobID = jobID
 	ti.taskID = taskID
