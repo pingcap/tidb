@@ -254,7 +254,3 @@ func TestSortSpillDisk(t *testing.T) {
 	onePartitionAndAllDataInDiskCase(t, ctx, sortCase)
 	multiPartitionCase(t, ctx, sortCase)
 }
-
-func TestSortSpillDiskRandomFail(t *testing.T) {
-
-}
