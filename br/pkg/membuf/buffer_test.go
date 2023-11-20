@@ -126,7 +126,6 @@ func BenchmarkStoreSlice(b *testing.B) {
 			bytesBuf := pool.NewBuffer()
 			defer bytesBuf.Destroy()
 
-			b.ResetTimer()
 			for j := range data {
 				data[j] = bytesBuf.AllocBytes(10)
 			}
@@ -143,7 +142,6 @@ func BenchmarkStoreLocation(b *testing.B) {
 			bytesBuf := pool.NewBuffer()
 			defer bytesBuf.Destroy()
 
-			b.ResetTimer()
 			for j := range data {
 				_, data[j] = bytesBuf.AllocBytesWithSliceLocation(10)
 			}
