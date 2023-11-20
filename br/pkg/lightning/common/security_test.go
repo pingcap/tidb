@@ -26,8 +26,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client/http"
 )
 
 func respondPathHandler(w http.ResponseWriter, req *http.Request) {
@@ -94,8 +94,8 @@ func TestWithHost(t *testing.T) {
 			false,
 		},
 		{
-			fmt.Sprintf("http://127.0.0.1:2379%s", pdapi.Stores),
-			fmt.Sprintf("127.0.0.1:2379%s", pdapi.Stores),
+			fmt.Sprintf("http://127.0.0.1:2379%s", pd.Stores),
+			fmt.Sprintf("127.0.0.1:2379%s", pd.Stores),
 			false,
 		},
 		{

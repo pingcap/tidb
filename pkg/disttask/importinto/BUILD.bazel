@@ -110,6 +110,7 @@ go_test(
         "//pkg/disttask/operator",
         "//pkg/domain/infosync",
         "//pkg/executor/importer",
+        "//pkg/kv",
         "//pkg/meta/autoid",
         "//pkg/parser",
         "//pkg/parser/ast",

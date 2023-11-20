@@ -338,7 +338,7 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 	if selected == nil && len(uniqueIdxsWithDoubleScan) > 0 {
 		uniqueIdxAccessCols := make([]util.Col2Len, 0, len(uniqueIdxsWithDoubleScan))
 		for _, uniqueIdx := range uniqueIdxsWithDoubleScan {
-			uniqueIdxAccessCols = append(uniqueIdxAccessCols, uniqueIdx.GetCol2LenFromAccessConds())
+			uniqueIdxAccessCols = append(uniqueIdxAccessCols, uniqueIdx.GetCol2LenFromAccessConds(ds.SCtx()))
 			// Find the unique index with the minimal number of ranges as `uniqueBest`.
 			if uniqueBest == nil || len(uniqueIdx.Ranges) < len(uniqueBest.Ranges) {
 				uniqueBest = uniqueIdx
@@ -353,7 +353,7 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 		// Hence, for each index in `singleScanIdxs`, we check whether it is better than some index in `uniqueIdxsWithDoubleScan`.
 		// If yes, the index is a refined one. We find the refined index with the minimal number of ranges as `refineBest`.
 		for _, singleScanIdx := range singleScanIdxs {
-			col2Len := singleScanIdx.GetCol2LenFromAccessConds()
+			col2Len := singleScanIdx.GetCol2LenFromAccessConds(ds.SCtx())
 			for _, uniqueIdxCol2Len := range uniqueIdxAccessCols {
 				accessResult, comparable1 := util.CompareCol2Len(col2Len, uniqueIdxCol2Len)
 				if comparable1 && accessResult == 1 {

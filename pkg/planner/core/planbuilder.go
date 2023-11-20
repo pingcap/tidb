@@ -1777,6 +1777,12 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		return &Simple{Statement: as}, nil
 	case ast.AdminFlushPlanCache:
 		return &Simple{Statement: as}, nil
+	case ast.AdminSetBDRRole:
+		return &Simple{Statement: as}, nil
+	case ast.AdminShowBDRRole:
+		p := &AdminShowBDRRole{}
+		p.setSchemaAndNames(buildAdminShowBDRRoleFields())
+		ret = p
 	default:
 		return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
@@ -3286,6 +3292,12 @@ func buildPauseDDLJobsFields() (*expression.Schema, types.NameSlice) {
 
 func buildResumeDDLJobsFields() (*expression.Schema, types.NameSlice) {
 	return buildCommandOnDDLJobsFields()
+}
+
+func buildAdminShowBDRRoleFields() (*expression.Schema, types.NameSlice) {
+	schema := newColumnsWithNames(1)
+	schema.Append(buildColumnWithName("", "BDR_ROLE", mysql.TypeString, 1))
+	return schema.col2Schema(), schema.names
 }
 
 func buildShowBackupMetaSchema() (*expression.Schema, types.NameSlice) {
@@ -5351,6 +5363,9 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	var names []string
 	var ftypes []byte
 	switch s.Tp {
+	case ast.ShowBinlogStatus:
+		names = []string{"File", "Position", "Binlog_Do_DB", "Binlog_Ignore_DB", "Executed_Gtid_Set"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowProcedureStatus, ast.ShowFunctionStatus:
 		return buildShowProcedureSchema()
 	case ast.ShowTriggers:

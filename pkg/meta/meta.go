@@ -78,6 +78,7 @@ var (
 	mPolicyGlobalID      = []byte("PolicyGlobalID")
 	mPolicyMagicByte     = CurrentMagicByteVer
 	mDDLTableVersion     = []byte("DDLTableVersion")
+	mBDRRole             = []byte("BDRRole")
 	mMetaDataLock        = []byte("metadataLock")
 	// the id for 'default' group, the internal ddl can ensure
 	// user created resource group won't duplicate with this id.
@@ -680,10 +681,23 @@ func (m *Meta) CreateTableOrView(dbID int64, tableInfo *model.TableInfo) error {
 	return m.txn.HSet(dbKey, tableKey, data)
 }
 
+// SetBDRRole write BDR role into storage.
+func (m *Meta) SetBDRRole(role string) error {
+	return errors.Trace(m.txn.Set(mBDRRole, []byte(role)))
+}
+
+// GetBDRRole get BDR role from storage.
+func (m *Meta) GetBDRRole() (string, error) {
+	v, err := m.txn.Get(mBDRRole)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return string(v), nil
+}
+
 // SetDDLTables write a key into storage.
 func (m *Meta) SetDDLTables(ddlTableVersion DDLTableVersion) error {
-	err := m.txn.Set(mDDLTableVersion, ddlTableVersion.Bytes())
-	return errors.Trace(err)
+	return errors.Trace(m.txn.Set(mDDLTableVersion, ddlTableVersion.Bytes()))
 }
 
 // CheckDDLTableVersion check if the tables related to concurrent DDL exists.

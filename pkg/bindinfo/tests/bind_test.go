@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -34,45 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/stretchr/testify/require"
 )
-
-func TestBindingInListOperation(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`create table t (a int, b int, c int, d int)`)
-
-	// only 1 binding will be left
-	tk.MustExec(`create binding for select * from t where a in(1) using select * from t where a in(1)`)
-	tk.MustExec(`create binding for select * from t where a in(1,2) using select * from t where a in(1)`)
-	tk.MustExec(`create binding for select * from t where a in(1) using select * from t where a in(1,2)`)
-	tk.MustExec(`create binding for select * from t where a in(1,2) using select * from t where a in(1,2)`)
-	tk.MustExec(`create binding for select * from t where a in(1,2,3) using select * from t where a in(1,2,3)`)
-	require.Equal(t, 1, len(tk.MustQuery(`show bindings`).Rows()))
-	tk.MustExec(`drop binding for select * from t where a in(1)`)
-	require.Equal(t, 0, len(tk.MustQuery(`show bindings`).Rows()))
-
-	// create and drop
-	tk.MustExec(`create binding for select * from t where a in(1,2,3) using select * from t where a in(1)`)
-	require.Equal(t, 1, len(tk.MustQuery(`show bindings`).Rows()))
-	tk.MustExec(`drop binding for select * from t where a in(1)`)
-	require.Equal(t, 0, len(tk.MustQuery(`show bindings`).Rows()))
-	tk.MustExec(`create binding for select * from t where a in(1) using select * from t where a in(1)`)
-	require.Equal(t, 1, len(tk.MustQuery(`show bindings`).Rows()))
-	tk.MustExec(`drop binding for select * from t where a in(1,2,3)`)
-	require.Equal(t, 0, len(tk.MustQuery(`show bindings`).Rows()))
-	tk.MustExec(`create binding for select * from t where a in(1) using select * from t where a in(1)`)
-	require.Equal(t, 1, len(tk.MustQuery(`show bindings`).Rows()))
-	tk.MustExec(`drop binding for select * from t where a in(1,2,3,4,5,6,7,8,9,0,11,12)`)
-	require.Equal(t, 0, len(tk.MustQuery(`show bindings`).Rows()))
-
-	// create and set status
-	tk.MustExec(`create global binding for select * from t where a in(1,2,3) using select * from t where a in(1)`)
-	require.Equal(t, "enabled", tk.MustQuery(`show global bindings`).Rows()[0][3].(string))
-	tk.MustExec(`set binding disabled for select * from t where a in(1)`)
-	require.Equal(t, "disabled", tk.MustQuery(`show global bindings`).Rows()[0][3].(string))
-	tk.MustExec(`set binding enabled for select * from t where a in(1,2,3,4,5)`)
-	require.Equal(t, "enabled", tk.MustQuery(`show global bindings`).Rows()[0][3].(string))
-}
 
 func TestPrepareCacheWithBinding(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -417,61 +377,6 @@ func TestBindingInListWithSingleLiteral(t *testing.T) {
 	require.NotNil(t, bind.UpdateTime)
 }
 
-func TestDMLSQLBind(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1(a int, b int, c int, key idx_b(b), key idx_c(c))")
-	tk.MustExec("create table t2(a int, b int, c int, key idx_b(b), key idx_c(c))")
-
-	tk.MustExec("delete from t1 where b = 1 and c > 1")
-	require.Equal(t, "t1:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	require.True(t, tk.MustUseIndex("delete from t1 where b = 1 and c > 1", "idx_b(b)"))
-	tk.MustExec("create global binding for delete from t1 where b = 1 and c > 1 using delete /*+ use_index(t1,idx_c) */ from t1 where b = 1 and c > 1")
-	tk.MustExec("delete from t1 where b = 1 and c > 1")
-	require.Equal(t, "t1:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	require.True(t, tk.MustUseIndex("delete from t1 where b = 1 and c > 1", "idx_c(c)"))
-
-	tk.MustHavePlan("delete t1, t2 from t1 inner join t2 on t1.b = t2.b", "HashJoin")
-	tk.MustExec("create global binding for delete t1, t2 from t1 inner join t2 on t1.b = t2.b using delete /*+ inl_join(t1) */ t1, t2 from t1 inner join t2 on t1.b = t2.b")
-	tk.MustHavePlan("delete t1, t2 from t1 inner join t2 on t1.b = t2.b", "IndexJoin")
-
-	tk.MustExec("update t1 set a = 1 where b = 1 and c > 1")
-	require.Equal(t, "t1:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	require.True(t, tk.MustUseIndex("update t1 set a = 1 where b = 1 and c > 1", "idx_b(b)"))
-	tk.MustExec("create global binding for update t1 set a = 1 where b = 1 and c > 1 using update /*+ use_index(t1,idx_c) */ t1 set a = 1 where b = 1 and c > 1")
-	tk.MustExec("delete from t1 where b = 1 and c > 1")
-	require.Equal(t, "t1:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	require.True(t, tk.MustUseIndex("update t1 set a = 1 where b = 1 and c > 1", "idx_c(c)"))
-
-	tk.MustHavePlan("update t1, t2 set t1.a = 1 where t1.b = t2.b", "HashJoin")
-	tk.MustExec("create global binding for update t1, t2 set t1.a = 1 where t1.b = t2.b using update /*+ inl_join(t1) */ t1, t2 set t1.a = 1 where t1.b = t2.b")
-	tk.MustHavePlan("update t1, t2 set t1.a = 1 where t1.b = t2.b", "IndexJoin")
-
-	tk.MustExec("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2")
-	require.Equal(t, "t2:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	require.True(t, tk.MustUseIndex("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_b(b)"))
-	tk.MustExec("create global binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1 using insert /*+ use_index(t2,idx_c) */ into t1 select * from t2 where t2.b = 1 and t2.c > 1")
-	tk.MustExec("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2")
-	require.Equal(t, "t2:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	require.True(t, tk.MustUseIndex("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_b(b)"))
-	tk.MustExec("drop global binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1")
-	tk.MustExec("create global binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1 using insert into t1 select /*+ use_index(t2,idx_c) */ * from t2 where t2.b = 1 and t2.c > 1")
-	tk.MustExec("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2")
-	require.Equal(t, "t2:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	require.True(t, tk.MustUseIndex("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_c(c)"))
-
-	tk.MustExec("replace into t1 select * from t2 where t2.b = 2 and t2.c > 2")
-	require.Equal(t, "t2:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	require.True(t, tk.MustUseIndex("replace into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_b(b)"))
-	tk.MustExec("create global binding for replace into t1 select * from t2 where t2.b = 1 and t2.c > 1 using replace into t1 select /*+ use_index(t2,idx_c) */ * from t2 where t2.b = 1 and t2.c > 1")
-	tk.MustExec("replace into t1 select * from t2 where t2.b = 2 and t2.c > 2")
-	require.Equal(t, "t2:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	require.True(t, tk.MustUseIndex("replace into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_c(c)"))
-}
-
 func TestBestPlanInBaselines(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
@@ -677,42 +582,6 @@ func TestRuntimeHintsInEvolveTasks(t *testing.T) {
 	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), no_order_index(@`sel_1` `test`.`t` `idx_c`), max_execution_time(5000), set_var(tikv_client_read_timeout = 20)*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0", rows[0][1])
 }
 
-func TestCaptureBaselinesScope(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	tk1 := testkit.NewTestKit(t, store)
-	tk2 := testkit.NewTestKit(t, store)
-
-	internal.UtilCleanBindingEnv(tk1, dom)
-	tk1.MustQuery(`show session variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
-		"tidb_capture_plan_baselines OFF",
-	))
-	tk1.MustQuery(`show global variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
-		"tidb_capture_plan_baselines OFF",
-	))
-	tk1.MustQuery(`select @@global.tidb_capture_plan_baselines`).Check(testkit.Rows(
-		"0",
-	))
-
-	tk1.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")
-	defer func() {
-		tk1.MustExec(" set GLOBAL tidb_capture_plan_baselines = off")
-	}()
-
-	tk1.MustQuery(`show variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
-		"tidb_capture_plan_baselines ON",
-	))
-	tk1.MustQuery(`show global variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
-		"tidb_capture_plan_baselines ON",
-	))
-	tk2.MustQuery(`show global variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
-		"tidb_capture_plan_baselines ON",
-	))
-	tk2.MustQuery(`select @@global.tidb_capture_plan_baselines`).Check(testkit.Rows(
-		"1",
-	))
-}
-
 func TestStmtHints(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -730,23 +599,6 @@ func TestStmtHints(t *testing.T) {
 	require.Equal(t, uint64(0), tk.Session().GetSessionVars().StmtCtx.MaxExecutionTime)
 	// TODO(crazycs520): Fix me.
 	//require.Equal(t, uint64(0), tk.Session().GetSessionVars().GetTiKVClientReadTimeout())
-}
-
-func TestPrivileges(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, index idx(a))")
-	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
-	rows := tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 1)
-	tk.MustExec("create user test@'%'")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test", Hostname: "%"}, nil, nil, nil))
-	rows = tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 0)
 }
 
 func TestHintsSetEvolveTask(t *testing.T) {
@@ -998,54 +850,6 @@ func TestInvisibleIndex(t *testing.T) {
 	tk.MustExec("drop binding for select * from t")
 }
 
-func TestReCreateBind(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, index idx(a))")
-
-	tk.MustQuery("select * from mysql.bind_info where source != 'builtin'").Check(testkit.Rows())
-	tk.MustQuery("show global bindings").Check(testkit.Rows())
-
-	tk.MustExec("create global binding for select * from t using select * from t")
-	tk.MustQuery("select original_sql, status from mysql.bind_info where source != 'builtin';").Check(testkit.Rows(
-		"select * from `test` . `t` enabled",
-	))
-	rows := tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, "select * from `test` . `t`", rows[0][0])
-	require.Equal(t, bindinfo.Enabled, rows[0][3])
-
-	tk.MustExec("create global binding for select * from t using select * from t")
-	rows = tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, "select * from `test` . `t`", rows[0][0])
-	require.Equal(t, bindinfo.Enabled, rows[0][3])
-
-	rows = tk.MustQuery("select original_sql, status from mysql.bind_info where source != 'builtin';").Rows()
-	require.Len(t, rows, 2)
-	require.Equal(t, "deleted", rows[0][1])
-	require.Equal(t, bindinfo.Enabled, rows[1][1])
-}
-
-func TestDMLIndexHintBind(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int, c int, key idx_b(b), key idx_c(c))")
-
-	tk.MustExec("delete from t where b = 1 and c > 1")
-	require.Equal(t, "t:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	require.True(t, tk.MustUseIndex("delete from t where b = 1 and c > 1", "idx_b(b)"))
-	tk.MustExec("create global binding for delete from t where b = 1 and c > 1 using delete from t use index(idx_c) where b = 1 and c > 1")
-	tk.MustExec("delete from t where b = 1 and c > 1")
-	require.Equal(t, "t:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	require.True(t, tk.MustUseIndex("delete from t where b = 1 and c > 1", "idx_c(c)"))
-}
-
 func TestForbidEvolvePlanBaseLinesBeforeGA(t *testing.T) {
 	originalVal := config.CheckTableBeforeDrop
 	config.CheckTableBeforeDrop = false
@@ -1064,60 +868,6 @@ func TestForbidEvolvePlanBaseLinesBeforeGA(t *testing.T) {
 	require.EqualError(t, err, "Cannot enable baseline evolution feature, it is not generally available now")
 	err = tk.ExecToErr("admin evolve bindings")
 	require.EqualError(t, err, "Cannot enable baseline evolution feature, it is not generally available now")
-}
-
-func TestSPMWithoutUseDatabase(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk1 := testkit.NewTestKit(t, store)
-	internal.UtilCleanBindingEnv(tk, dom)
-	internal.UtilCleanBindingEnv(tk1, dom)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, key(a))")
-	tk.MustExec("create global binding for select * from t using select * from t force index(a)")
-
-	err := tk1.ExecToErr("select * from t")
-	require.Error(t, err)
-	require.Regexp(t, "No database selected$", err)
-	tk1.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("0"))
-	require.True(t, tk1.MustUseIndex("select * from test.t", "a"))
-	tk1.MustExec("select * from test.t")
-	tk1.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("1"))
-	tk1.MustExec("set binding disabled for select * from test.t")
-	tk1.MustExec("select * from test.t")
-	tk1.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("0"))
-}
-
-func TestBindingWithoutCharset(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a varchar(10) CHARACTER SET utf8)")
-	tk.MustExec("create global binding for select * from t where a = 'aa' using select * from t where a = 'aa'")
-	rows := tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, "select * from `test` . `t` where `a` = ?", rows[0][0])
-	require.Equal(t, "SELECT * FROM `test`.`t` WHERE `a` = 'aa'", rows[0][1])
-}
-
-func TestBindingWithMultiParenthesis(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int)")
-	tk.MustExec("create global binding for select * from (select * from t where a = 1) tt using select * from (select * from t where a = 1) tt")
-	tk.MustExec("create global binding for select * from ((select * from t where a = 1)) tt using select * from (select * from t where a = 1) tt")
-	rows := tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, "select * from ( select * from `test` . `t` where `a` = ? ) as `tt`", rows[0][0])
-	require.Equal(t, "SELECT * FROM (SELECT * FROM `test`.`t` WHERE `a` = 1) AS `tt`", rows[0][1])
 }
 
 func TestGCBindRecord(t *testing.T) {

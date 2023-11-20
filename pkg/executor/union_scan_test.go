@@ -318,6 +318,7 @@ c6 datetime);`)
 		tk.MustQuery("select * from t_us where c1 = '12345'").Check(testkit.Rows())
 	}
 	b.StopTimer()
+	tk.MustExec("rollback")
 }
 
 func BenchmarkUnionScanIndexReadDescRead(b *testing.B) {
@@ -337,9 +338,10 @@ func BenchmarkUnionScanIndexReadDescRead(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// indexReader
-		tk.MustExec("select b from t use index(k) where b > 50 order by b desc")
+		tk.MustQuery("select b from t use index(k) where b > 50 order by b desc")
 	}
 	b.StopTimer()
+	tk.MustExec("rollback")
 }
 
 func BenchmarkUnionScanTableReadDescRead(b *testing.B) {
@@ -359,9 +361,10 @@ func BenchmarkUnionScanTableReadDescRead(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// tableReader
-		tk.MustExec("select * from t where a > 50 order by a desc")
+		tk.MustQuery("select * from t where a > 50 order by a desc")
 	}
 	b.StopTimer()
+	tk.MustExec("rollback")
 }
 
 func BenchmarkUnionScanIndexLookUpDescRead(b *testing.B) {
@@ -381,9 +384,10 @@ func BenchmarkUnionScanIndexLookUpDescRead(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// indexLookUp
-		tk.MustExec("select * from t use index(k) where b > 50 order by b desc")
+		tk.MustQuery("select * from t use index(k) where b > 50 order by b desc")
 	}
 	b.StopTimer()
+	tk.MustExec("rollback")
 }
 
 func TestBenchDaily(t *testing.T) {

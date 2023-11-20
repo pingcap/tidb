@@ -1481,7 +1481,7 @@ func (b *builtinCastStringAsTimeSig) evalTime(ctx sessionctx.Context, row chunk.
 		return res, isNull, err
 	}
 	sc := ctx.GetSessionVars().StmtCtx
-	res, err = types.ParseTime(sc.TypeCtx(), val, b.tp.GetType(), b.tp.GetDecimal(), nil)
+	res, err = types.ParseTime(sc.TypeCtx(), val, b.tp.GetType(), b.tp.GetDecimal())
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 	}
@@ -1691,11 +1691,17 @@ func (b *builtinCastDurationAsIntSig) evalInt(ctx sessionctx.Context, row chunk.
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	dur, err := val.RoundFrac(types.DefaultFsp, ctx.GetSessionVars().Location())
-	if err != nil {
-		return res, false, err
+
+	if b.tp.GetType() == mysql.TypeYear {
+		res, err = val.ConvertToYear(ctx.GetSessionVars().StmtCtx.TypeCtx())
+	} else {
+		var dur types.Duration
+		dur, err = val.RoundFrac(types.DefaultFsp, ctx.GetSessionVars().Location())
+		if err != nil {
+			return res, false, err
+		}
+		res, err = dur.ToNumber().ToInt()
 	}
-	res, err = dur.ToNumber().ToInt()
 	return res, false, err
 }
 
@@ -1960,7 +1966,7 @@ func (b *builtinCastJSONAsTimeSig) evalTime(ctx sessionctx.Context, row chunk.Ro
 			return res, false, err
 		}
 		sc := ctx.GetSessionVars().StmtCtx
-		res, err = types.ParseTime(sc.TypeCtx(), s, b.tp.GetType(), b.tp.GetDecimal(), nil)
+		res, err = types.ParseTime(sc.TypeCtx(), s, b.tp.GetType(), b.tp.GetDecimal())
 		if err != nil {
 			return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 		}

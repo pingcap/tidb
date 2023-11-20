@@ -616,3 +616,18 @@ execute s;
 id	v
 1	11
 set @@tidb_enable_plan_replayer_capture=default;
+set session tidb_txn_mode='';
+drop table if exists t;
+create table t(pk int primary key, c int);
+insert into t values (1, 1), (2, 2);
+set @@tidb_disable_txn_auto_retry = 0;
+begin;
+select * from t where pk = 1 for update;
+pk	c
+1	1
+set session tidb_txn_mode='';
+update t set c = c + 1 where pk = 1;
+update t set c = c + 1 where pk = 2;
+commit;
+Error 8002 (HY000): <ConnID> can not retry select for update statement
+set session tidb_txn_mode=pessimistic;

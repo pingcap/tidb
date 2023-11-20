@@ -347,7 +347,6 @@ type StatsGlobal interface {
 		physicalID int64,
 		isIndex bool,
 		histIDs []int64,
-		_ map[int64]*statistics.Table,
 	) (globalStats interface{}, err error)
 
 	// UpdateGlobalStats will trigger the merge of global-stats when we drop table partition
