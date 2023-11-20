@@ -706,9 +706,12 @@ func (e *EC2Session) HandleDescribeVolumesResponse(resp *ec2.DescribeVolumesOutp
 	var unfinishedVolumes []*string
 	for _, volume := range resp.Volumes {
 		if *volume.State == ec2.VolumeStateAvailable {
-			if fsrEnabledRequired && !*volume.FastRestored {
-				log.Error("snapshot fsr is not enabled for the volume", zap.String("volume", *volume.SnapshotId))
-				return 0, nil, errors.Errorf("Snapshot [%s] of volume [%s] is not fsr enabled", *volume.SnapshotId, *volume.VolumeId)
+			if fsrEnabledRequired && volume.FastRestored != nil {
+				if !*volume.FastRestored {
+					log.Error("snapshot fsr is not enabled for the volume", zap.String("volume", *volume.SnapshotId))
+					return 0, nil, errors.Errorf("Snapshot [%s] of volume [%s] is not fsr enabled", *volume.SnapshotId, *volume.VolumeId)
+				}
+				log.Info("Check volumes is fsr enabled", zap.Stringp("snapshot", volume.SnapshotId))
 			}
 			log.Info("volume is available", zap.String("id", *volume.VolumeId))
 			totalVolumeSize += *volume.Size
