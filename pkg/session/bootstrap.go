@@ -459,19 +459,18 @@ const (
 	);`
 	// CreateMDLView is a view about metadata locks.
 	CreateMDLView = `CREATE OR REPLACE VIEW mysql.tidb_mdl_view as (
-		SELECT job_id,
+		SELECT ddl_jobs.job_id,
 			db_name,
 			table_name,
 			query,
 			session_id,
-			txnstart,
+			cluster_tidb_trx.start_time,
 			tidb_decode_sql_digests(all_sql_digests, 4096) AS SQL_DIGESTS
 		FROM information_schema.ddl_jobs,
-			information_schema.cluster_tidb_trx,
-			information_schema.cluster_processlist
-		WHERE (ddl_jobs.state != 'synced' and ddl_jobs.state != 'cancelled')
-			AND Find_in_set(ddl_jobs.table_id, cluster_tidb_trx.related_table_ids)
-			AND cluster_tidb_trx.session_id = cluster_processlist.id
+			mysql.tidb_mdl_info,
+			information_schema.cluster_tidb_trx
+		WHERE ddl_jobs.job_id = tidb_mdl_info.job_id
+			AND CONCAT(',', tidb_mdl_info.table_ids, ',') REGEXP CONCAT(',', REPLACE(cluster_tidb_trx.related_table_ids, ',', '|'), ',') != 0
 	);`
 
 	// CreatePlanReplayerStatusTable is a table about plan replayer status
@@ -1022,14 +1021,18 @@ const (
 	//   write mDDLTableVersion into `mysql.tidb` table
 	version178 = 178
 
-	// vresion 179
+	// version 179
 	//   enlarge `VARIABLE_VALUE` of `mysql.global_variables` from `varchar(1024)` to `varchar(16383)`.
 	version179 = 179
+
+	// version 180
+	//   replace `mysql.tidb_mdl_view` table
+	version180 = 180
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version179
+var currentBootstrapVersion int64 = version180
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1184,6 +1187,7 @@ var (
 		upgradeToVer177,
 		upgradeToVer178,
 		upgradeToVer179,
+		upgradeToVer180,
 	}
 )
 
@@ -2890,6 +2894,13 @@ func upgradeToVer179(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.global_variables MODIFY COLUMN `VARIABLE_VALUE` varchar(16383)")
+}
+
+func upgradeToVer180(s Session, ver int64) {
+	if ver >= version180 {
+		return
+	}
+	doReentrantDDL(s, CreateMDLView)
 }
 
 func writeOOMAction(s Session) {
