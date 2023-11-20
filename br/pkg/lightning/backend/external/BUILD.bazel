@@ -31,7 +31,6 @@ go_library(
         "//br/pkg/storage",
         "//pkg/kv",
         "//pkg/metrics",
-        "//pkg/sessionctx/variable",
         "//pkg/util",
         "//pkg/util/hack",
         "//pkg/util/logutil",
@@ -68,7 +67,7 @@ go_test(
     ],
     embed = [":external"],
     flaky = True,
-    shard_count = 48,
+    shard_count = 49,
     deps = [
         "//br/pkg/lightning/backend/kv",
         "//br/pkg/lightning/common",
