@@ -168,11 +168,14 @@ func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) (isA
 	if err != nil {
 		return false, true
 	}
+	likeFuncReserve := !c.isFullLengthColumn()
+	if !collate.IsBinCollation(collation) {
+		likeFuncReserve = true
+	}
 	if len(patternStr) == 0 {
-		return true, !c.isFullLengthColumn()
+		return true, likeFuncReserve
 	}
 	escape := byte(scalar.GetArgs()[2].(*expression.Constant).Value.GetInt64())
-	likeFuncReserve := !c.isFullLengthColumn()
 	for i := 0; i < len(patternStr); i++ {
 		if patternStr[i] == escape {
 			i++
