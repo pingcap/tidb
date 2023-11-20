@@ -40,7 +40,6 @@ go_test(
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/gctuner",
         "//pkg/util/memory",
-        "//pkg/util/pdapi",
         "//pkg/util/resourcegrouptag",
         "//pkg/util/set",
         "//pkg/util/stmtsummary",

@@ -268,7 +268,7 @@ func TestCheckIndexKeysAndCheckHandleConsistency(t *testing.T) {
 				table := MockTableFromMeta(&tableInfo).(*TableCommon)
 				var handle, corruptedHandle kv.Handle
 				if isCommonHandle {
-					encoded, err := codec.EncodeKey(sessVars.StmtCtx, nil, rowToInsert[0])
+					encoded, err := codec.EncodeKey(sessVars.StmtCtx.TimeZone(), nil, rowToInsert[0])
 					require.Nil(t, err)
 					corrupted := make([]byte, len(encoded))
 					copy(corrupted, encoded)

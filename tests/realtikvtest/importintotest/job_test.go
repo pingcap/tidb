@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/tikv/client-go/v2/util"
 )
 
 func (s *mockGCSSuite) compareJobInfoWithoutTime(jobInfo *importer.JobInfo, row []interface{}) {
@@ -375,6 +376,8 @@ func (s *mockGCSSuite) TestCancelJob() {
 	s.prepareAndUseDB("test_cancel_job")
 	s.tk.MustExec("CREATE TABLE t1 (i INT PRIMARY KEY);")
 	s.tk.MustExec("CREATE TABLE t2 (i INT PRIMARY KEY);")
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test_cancel_job", Name: "t.csv"},
 		Content:     []byte("1\n2"),
@@ -401,7 +404,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 		globalTaskManager, err := storage.GetTaskManager()
 		s.NoError(err)
 		taskKey := importinto.TaskKey(jobID)
-		globalTask, err := globalTaskManager.GetGlobalTaskByKeyWithHistory(taskKey)
+		globalTask, err := globalTaskManager.GetGlobalTaskByKeyWithHistory(ctx, taskKey)
 		s.NoError(err)
 		return globalTask
 	}
@@ -493,9 +496,9 @@ func (s *mockGCSSuite) TestCancelJob() {
 	taskKey := importinto.TaskKey(int64(jobID2))
 	s.NoError(err)
 	s.Require().Eventually(func() bool {
-		globalTask, err2 := globalTaskManager.GetGlobalTaskByKeyWithHistory(taskKey)
+		globalTask, err2 := globalTaskManager.GetGlobalTaskByKeyWithHistory(ctx, taskKey)
 		s.NoError(err2)
-		subtasks, err2 := globalTaskManager.GetSubtasksForImportInto(globalTask.ID, importinto.StepPostProcess)
+		subtasks, err2 := globalTaskManager.GetSubtasksForImportInto(ctx, globalTask.ID, importinto.StepPostProcess)
 		s.NoError(err2)
 		s.Len(subtasks, 2) // framework will generate a subtask when canceling
 		var cancelled bool
@@ -587,6 +590,8 @@ func (s *mockGCSSuite) TestJobFailWhenDispatchSubtask() {
 
 func (s *mockGCSSuite) TestKillBeforeFinish() {
 	s.cleanupSysTables()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	s.tk.MustExec("DROP DATABASE IF EXISTS kill_job;")
 	s.tk.MustExec("CREATE DATABASE kill_job;")
 	s.tk.MustExec(`CREATE TABLE kill_job.t (a INT, b INT, c int);`)
@@ -622,7 +627,7 @@ func (s *mockGCSSuite) TestKillBeforeFinish() {
 	taskKey := importinto.TaskKey(jobID)
 	s.NoError(err)
 	s.Require().Eventually(func() bool {
-		globalTask, err2 := globalTaskManager.GetGlobalTaskByKeyWithHistory(taskKey)
+		globalTask, err2 := globalTaskManager.GetGlobalTaskByKeyWithHistory(ctx, taskKey)
 		s.NoError(err2)
 		return globalTask.State == proto.TaskStateReverted
 	}, maxWaitTime, 1*time.Second)

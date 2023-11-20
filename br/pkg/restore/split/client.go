@@ -29,8 +29,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
-	"github.com/pingcap/tidb/pkg/util/pdapi"
 	pd "github.com/tikv/pd/client"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -463,7 +463,7 @@ func (c *pdClient) getStoreCount(ctx context.Context) (int, error) {
 
 func (c *pdClient) getMaxReplica(ctx context.Context) (int, error) {
 	api := c.getPDAPIAddr()
-	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s%s", api, pdapi.ReplicateConfig), nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s%s", api, pdhttp.ReplicateConfig), nil)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -540,7 +540,7 @@ func (c *pdClient) GetPlacementRule(ctx context.Context, groupID, ruleID string)
 		return rule, errors.Annotate(berrors.ErrRestoreSplitFailed, "failed to add stores labels: no leader")
 	}
 	req, err := http.NewRequestWithContext(ctx, "GET",
-		addr+path.Join(pdapi.PlacementRule, groupID, ruleID), nil)
+		addr+path.Join(pdhttp.PlacementRule, groupID, ruleID), nil)
 	if err != nil {
 		return rule, errors.Trace(err)
 	}
@@ -571,7 +571,7 @@ func (c *pdClient) SetPlacementRule(ctx context.Context, rule pdtypes.Rule) erro
 	}
 	m, _ := json.Marshal(rule)
 	req, err := http.NewRequestWithContext(ctx, "POST",
-		addr+path.Join(pdapi.PlacementRule), bytes.NewReader(m))
+		addr+path.Join(pdhttp.PlacementRule), bytes.NewReader(m))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -587,7 +587,7 @@ func (c *pdClient) DeletePlacementRule(ctx context.Context, groupID, ruleID stri
 	if addr == "" {
 		return errors.Annotate(berrors.ErrPDLeaderNotFound, "failed to add stores labels")
 	}
-	req, err := http.NewRequestWithContext(ctx, "DELETE", addr+path.Join(pdapi.PlacementRule, groupID, ruleID), nil)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", addr+path.Join(pdhttp.PlacementRule, groupID, ruleID), nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -610,7 +610,7 @@ func (c *pdClient) SetStoresLabel(
 	for _, id := range stores {
 		req, err := http.NewRequestWithContext(
 			ctx, "POST",
-			addr+pdapi.StoreLabelByID(id),
+			addr+pdhttp.StoreLabelByID(id),
 			bytes.NewReader(b),
 		)
 		if err != nil {

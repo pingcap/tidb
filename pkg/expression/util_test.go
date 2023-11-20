@@ -354,14 +354,14 @@ func TestHashGroupKey(t *testing.T) {
 		var err error
 		err = EvalExpr(ctx, colExpr, colExpr.GetType().EvalType(), input, colBuf)
 		require.NoError(t, err)
-		bufs, err = codec.HashGroupKey(sc, 1024, colBuf, bufs, ft)
+		bufs, err = codec.HashGroupKey(sc.TimeZone(), 1024, colBuf, bufs, ft)
 		require.NoError(t, err)
 
 		var buf []byte
 		for j := 0; j < input.NumRows(); j++ {
 			d, err := colExpr.Eval(input.GetRow(j))
 			require.NoError(t, err)
-			buf, err = codec.EncodeValue(sc, buf[:0], d)
+			buf, err = codec.EncodeValue(sc.TimeZone(), buf[:0], d)
 			require.NoError(t, err)
 			require.Equal(t, string(bufs[j]), string(buf))
 		}
