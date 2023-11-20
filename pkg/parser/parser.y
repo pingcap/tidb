@@ -11362,7 +11362,7 @@ ShowStmt:
 |	"SHOW" "BINARY" "LOG" "STATUS"
 	{
 		$$ = &ast.ShowStmt{
-			Tp: ast.ShowMasterStatus,
+			Tp: ast.ShowBinlogStatus,
 		}
 	}
 |	"SHOW" OptFull "PROCESSLIST"
