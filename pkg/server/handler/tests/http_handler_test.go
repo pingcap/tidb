@@ -50,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/pkg/server/handler/optimizor"
 	"github.com/pingcap/tidb/pkg/server/handler/tikvhandler"
 	"github.com/pingcap/tidb/pkg/server/internal/testserverclient"
-	"github.com/pingcap/tidb/pkg/server/internal/testutil"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -450,7 +449,13 @@ func TestBinlogRecover(t *testing.T) {
 
 func (ts *basicHTTPHandlerTestSuite) startServer(t *testing.T) {
 	var err error
-	ts.store, err = mockstore.NewMockStore()
+	ts.Port = uint(rand.Int31n(50000)) + 10000
+	ts.StatusPort = ts.Port + 1
+	ts.store, err = mockstore.NewMockStore(
+		mockstore.WithTiKVOptions(
+			tikv.WithPDHTTPClient([]string{ts.Addr()}),
+		),
+	)
 	require.NoError(t, err)
 	ts.domain, err = session.BootstrapSession(ts.store)
 	require.NoError(t, err)
@@ -458,14 +463,12 @@ func (ts *basicHTTPHandlerTestSuite) startServer(t *testing.T) {
 
 	cfg := util.NewTestConfig()
 	cfg.Store = "tikv"
-	cfg.Port = 0
-	cfg.Status.StatusPort = 0
+	cfg.Port = ts.Port
+	cfg.Status.StatusPort = ts.StatusPort
 	cfg.Status.ReportStatus = true
 
 	server, err := server2.NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
-	ts.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
-	ts.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	ts.server = server
 	ts.server.SetDomain(ts.domain)
 	go func() {

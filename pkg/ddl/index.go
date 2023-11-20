@@ -770,10 +770,15 @@ func pickBackfillType(ctx context.Context, job *model.Job, unique bool, d *ddlCt
 			if err != nil {
 				return model.ReorgTypeNone, err
 			}
+			var pdLeaderAddr string
+			if d != nil {
+				//nolint:forcetypeassert
+				pdLeaderAddr = d.store.(tikv.Storage).GetRegionCache().PDClient().GetLeaderAddr()
+			}
 			if variable.EnableDistTask.Load() {
-				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, d.etcdCli, job.ReorgMeta.ResourceGroupName)
+				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, d.etcdCli, pdLeaderAddr, job.ReorgMeta.ResourceGroupName)
 			} else {
-				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, nil, job.ReorgMeta.ResourceGroupName)
+				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, nil, pdLeaderAddr, job.ReorgMeta.ResourceGroupName)
 			}
 			if err != nil {
 				return model.ReorgTypeNone, err
@@ -964,7 +969,12 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		return true, 0, nil
 	}
 	ctx := logutil.WithCategory(w.ctx, "ddl-ingest")
-	bc, err = ingest.LitBackCtxMgr.Register(ctx, allIndexInfos[0].Unique, job.ID, nil, job.ReorgMeta.ResourceGroupName)
+	var pdLeaderAddr string
+	if d != nil {
+		//nolint:forcetypeassert
+		pdLeaderAddr = d.store.(tikv.Storage).GetRegionCache().PDClient().GetLeaderAddr()
+	}
+	bc, err = ingest.LitBackCtxMgr.Register(ctx, allIndexInfos[0].Unique, job.ID, nil, pdLeaderAddr, job.ReorgMeta.ResourceGroupName)
 	if err != nil {
 		ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
 		return false, ver, errors.Trace(err)
@@ -1976,7 +1986,9 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 			if err != nil {
 				return err
 			}
-			return checkDuplicateForUniqueIndex(w.ctx, t, reorgInfo)
+			//nolint:forcetypeassert
+			pdLeaderAddr := w.store.(tikv.Storage).GetRegionCache().PDClient().GetLeaderAddr()
+			return checkDuplicateForUniqueIndex(w.ctx, t, reorgInfo, pdLeaderAddr)
 		}
 	}
 
@@ -2013,7 +2025,7 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 	return errors.Trace(err)
 }
 
-func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo *reorgInfo) error {
+func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo *reorgInfo, pdAddr string) error {
 	var bc ingest.BackendCtx
 	var err error
 	defer func() {
@@ -2029,7 +2041,7 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 		if indexInfo.Unique {
 			ctx := logutil.WithCategory(ctx, "ddl-ingest")
 			if bc == nil {
-				bc, err = ingest.LitBackCtxMgr.Register(ctx, indexInfo.Unique, reorgInfo.ID, nil, reorgInfo.ReorgMeta.ResourceGroupName)
+				bc, err = ingest.LitBackCtxMgr.Register(ctx, indexInfo.Unique, reorgInfo.ID, nil, pdAddr, reorgInfo.ReorgMeta.ResourceGroupName)
 				if err != nil {
 					return err
 				}
@@ -2060,6 +2072,8 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 	taskType := proto.Backfill
 	taskKey := fmt.Sprintf("ddl/%s/%d", taskType, reorgInfo.Job.ID)
 	g, ctx := errgroup.WithContext(context.Background())
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalDistTask)
+
 	done := make(chan struct{})
 
 	// generate taskKey for multi schema change.
@@ -2076,7 +2090,7 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 	if err != nil {
 		return err
 	}
-	task, err := taskManager.GetGlobalTaskByKeyWithHistory(taskKey)
+	task, err := taskManager.GetGlobalTaskByKeyWithHistory(w.ctx, taskKey)
 	if err != nil {
 		return err
 	}
@@ -2095,7 +2109,7 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 			backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
 			err := handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logutil.BgLogger(),
 				func(ctx context.Context) (bool, error) {
-					return true, handle.ResumeTask(taskKey)
+					return true, handle.ResumeTask(w.ctx, taskKey)
 				},
 			)
 			if err != nil {
@@ -2158,7 +2172,7 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 			case <-checkFinishTk.C:
 				if err = w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
 					if dbterror.ErrPausedDDLJob.Equal(err) {
-						if err = handle.PauseTask(taskKey); err != nil {
+						if err = handle.PauseTask(w.ctx, taskKey); err != nil {
 							logutil.BgLogger().Error("pause global task error", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
 							continue
 						}
@@ -2170,7 +2184,7 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 					if !dbterror.ErrCancelledDDLJob.Equal(err) {
 						return errors.Trace(err)
 					}
-					if err = handle.CancelGlobalTask(taskKey); err != nil {
+					if err = handle.CancelGlobalTask(w.ctx, taskKey); err != nil {
 						logutil.BgLogger().Error("cancel global task error", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
 						// continue to cancel global task.
 						continue
@@ -2191,12 +2205,12 @@ func (w *worker) updateJobRowCount(taskKey string, jobID int64) {
 		logutil.BgLogger().Warn("cannot get task manager", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
 		return
 	}
-	gTask, err := taskMgr.GetGlobalTaskByKey(taskKey)
+	gTask, err := taskMgr.GetGlobalTaskByKey(w.ctx, taskKey)
 	if err != nil || gTask == nil {
 		logutil.BgLogger().Warn("cannot get global task", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
 		return
 	}
-	rowCount, err := taskMgr.GetSubtaskRowCount(gTask.ID, proto.StepOne)
+	rowCount, err := taskMgr.GetSubtaskRowCount(w.ctx, gTask.ID, proto.StepOne)
 	if err != nil {
 		logutil.BgLogger().Warn("cannot get subtask row count", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
 		return

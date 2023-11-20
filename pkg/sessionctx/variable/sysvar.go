@@ -918,7 +918,7 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal, Name: TiDBAutoAnalyzePartitionBatchSize,
 		Value: strconv.Itoa(DefTiDBAutoAnalyzePartitionBatchSize),
-		Type:  TypeUnsigned, MinValue: 1, MaxValue: 1024,
+		Type:  TypeUnsigned, MinValue: 1, MaxValue: mysql.PartitionCountLimit,
 		SetGlobal: func(_ context.Context, vars *SessionVars, s string) error {
 			var val int64
 			val, err := strconv.ParseInt(s, 10, 64)

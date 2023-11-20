@@ -192,18 +192,20 @@ func TestSetExprColumnInOperand(t *testing.T) {
 	col := &Column{RetType: newIntFieldType()}
 	require.True(t, SetExprColumnInOperand(col).(*Column).InOperand)
 
-	f, err := funcs[ast.Abs].getFunction(mock.NewContext(), []Expression{col})
+	ctx := mock.NewContext()
+	f, err := funcs[ast.Abs].getFunction(ctx, []Expression{col})
 	require.NoError(t, err)
-	fun := &ScalarFunction{Function: f}
+	fun := &ScalarFunction{Function: f, ctx: ctx}
 	SetExprColumnInOperand(fun)
 	require.True(t, f.getArgs()[0].(*Column).InOperand)
 }
 
 func TestPopRowFirstArg(t *testing.T) {
+	ctx := mock.NewContext()
 	c1, c2, c3 := &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}
-	f, err := funcs[ast.RowFunc].getFunction(mock.NewContext(), []Expression{c1, c2, c3})
+	f, err := funcs[ast.RowFunc].getFunction(ctx, []Expression{c1, c2, c3})
 	require.NoError(t, err)
-	fun := &ScalarFunction{Function: f, FuncName: model.NewCIStr(ast.RowFunc), RetType: newIntFieldType()}
+	fun := &ScalarFunction{Function: f, FuncName: model.NewCIStr(ast.RowFunc), RetType: newIntFieldType(), ctx: ctx}
 	fun2, err := PopRowFirstArg(mock.NewContext(), fun)
 	require.NoError(t, err)
 	require.Len(t, fun2.(*ScalarFunction).GetArgs(), 2)
@@ -567,28 +569,32 @@ func (m *MockExpr) EvalJSON(ctx sessionctx.Context, row chunk.Row) (val types.Bi
 func (m *MockExpr) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	return types.Datum{}, m.err
 }
-func (m *MockExpr) GetType() *types.FieldType                                     { return m.t }
-func (m *MockExpr) Clone() Expression                                             { return nil }
-func (m *MockExpr) Equal(ctx sessionctx.Context, e Expression) bool               { return false }
-func (m *MockExpr) IsCorrelated() bool                                            { return false }
-func (m *MockExpr) ConstItem(_ *stmtctx.StatementContext) bool                    { return false }
-func (m *MockExpr) Decorrelate(schema *Schema) Expression                         { return m }
-func (m *MockExpr) ResolveIndices(schema *Schema) (Expression, error)             { return m, nil }
-func (m *MockExpr) resolveIndices(schema *Schema) error                           { return nil }
-func (m *MockExpr) ResolveIndicesByVirtualExpr(schema *Schema) (Expression, bool) { return m, true }
-func (m *MockExpr) resolveIndicesByVirtualExpr(schema *Schema) bool               { return true }
-func (m *MockExpr) RemapColumn(_ map[int64]*Column) (Expression, error)           { return m, nil }
-func (m *MockExpr) ExplainInfo() string                                           { return "" }
-func (m *MockExpr) ExplainNormalizedInfo() string                                 { return "" }
-func (m *MockExpr) ExplainNormalizedInfo4InList() string                          { return "" }
-func (m *MockExpr) HashCode(sc *stmtctx.StatementContext) []byte                  { return nil }
-func (m *MockExpr) Vectorized() bool                                              { return false }
-func (m *MockExpr) SupportReverseEval() bool                                      { return false }
-func (m *MockExpr) HasCoercibility() bool                                         { return false }
-func (m *MockExpr) Coercibility() Coercibility                                    { return 0 }
-func (m *MockExpr) SetCoercibility(Coercibility)                                  {}
-func (m *MockExpr) Repertoire() Repertoire                                        { return UNICODE }
-func (m *MockExpr) SetRepertoire(Repertoire)                                      {}
+func (m *MockExpr) GetType() *types.FieldType                         { return m.t }
+func (m *MockExpr) Clone() Expression                                 { return nil }
+func (m *MockExpr) Equal(ctx sessionctx.Context, e Expression) bool   { return false }
+func (m *MockExpr) IsCorrelated() bool                                { return false }
+func (m *MockExpr) ConstItem(_ *stmtctx.StatementContext) bool        { return false }
+func (m *MockExpr) Decorrelate(schema *Schema) Expression             { return m }
+func (m *MockExpr) ResolveIndices(schema *Schema) (Expression, error) { return m, nil }
+func (m *MockExpr) resolveIndices(schema *Schema) error               { return nil }
+func (m *MockExpr) ResolveIndicesByVirtualExpr(ctx sessionctx.Context, schema *Schema) (Expression, bool) {
+	return m, true
+}
+func (m *MockExpr) resolveIndicesByVirtualExpr(ctx sessionctx.Context, schema *Schema) bool {
+	return true
+}
+func (m *MockExpr) RemapColumn(_ map[int64]*Column) (Expression, error) { return m, nil }
+func (m *MockExpr) ExplainInfo() string                                 { return "" }
+func (m *MockExpr) ExplainNormalizedInfo() string                       { return "" }
+func (m *MockExpr) ExplainNormalizedInfo4InList() string                { return "" }
+func (m *MockExpr) HashCode(sc *stmtctx.StatementContext) []byte        { return nil }
+func (m *MockExpr) Vectorized() bool                                    { return false }
+func (m *MockExpr) SupportReverseEval() bool                            { return false }
+func (m *MockExpr) HasCoercibility() bool                               { return false }
+func (m *MockExpr) Coercibility() Coercibility                          { return 0 }
+func (m *MockExpr) SetCoercibility(Coercibility)                        {}
+func (m *MockExpr) Repertoire() Repertoire                              { return UNICODE }
+func (m *MockExpr) SetRepertoire(Repertoire)                            {}
 
 func (m *MockExpr) CharsetAndCollation() (string, string) {
 	return "", ""

@@ -306,7 +306,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			schemaChanged = true
 		} else {
 			for i, col := range p.Schema().Columns {
-				if !col.Equal(nil, originalSchema.Columns[i]) {
+				if !col.EqualColumn(originalSchema.Columns[i]) {
 					schemaChanged = true
 					break
 				}
@@ -399,7 +399,10 @@ func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup [
 	var leadingJoinGroup []LogicalPlan
 	leftJoinGroup := make([]LogicalPlan, len(curJoinGroup))
 	copy(leftJoinGroup, curJoinGroup)
-	queryBlockNames := *(s.ctx.GetSessionVars().PlannerSelectBlockAsName.Load())
+	var queryBlockNames []ast.HintTable
+	if p := s.ctx.GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
+		queryBlockNames = *p
+	}
 	for _, hintTbl := range hintInfo.leadingJoinOrder {
 		match := false
 		for i, joinGroup := range leftJoinGroup {

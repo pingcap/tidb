@@ -145,6 +145,8 @@ type Session interface {
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
 	SetCommandValue(byte)
+	SetCompressionAlgorithm(int)
+	SetCompressionLevel(int)
 	SetProcessInfo(string, time.Time, byte, uint64)
 	SetTLSState(*tls.ConnectionState)
 	SetCollation(coID int) error
@@ -406,6 +408,14 @@ func (s *session) SetTLSState(tlsState *tls.ConnectionState) {
 	if tlsState != nil {
 		s.sessionVars.TLSConnectionState = tlsState
 	}
+}
+
+func (s *session) SetCompressionAlgorithm(ca int) {
+	s.sessionVars.CompressionAlgorithm = ca
+}
+
+func (s *session) SetCompressionLevel(level int) {
+	s.sessionVars.CompressionLevel = level
 }
 
 func (s *session) SetCommandValue(command byte) {

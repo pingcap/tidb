@@ -91,7 +91,7 @@ func TestAddIndexIngestLimitOneBackend(t *testing.T) {
 	tk2.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3);")
 
 	// Mock there is a running ingest job.
-	_, err := ingest.LitBackCtxMgr.Register(context.Background(), false, 65535, nil, "")
+	_, err := ingest.LitBackCtxMgr.Register(context.Background(), false, 65535, nil, realtikvtest.PDAddr, "")
 	require.NoError(t, err)
 	wg := &sync.WaitGroup{}
 	wg.Add(2)
@@ -521,5 +521,21 @@ func TestAddIndexImportFailed(t *testing.T) {
 	tk.MustExec("alter table t add index idx(a);")
 	err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/mockWritePeerErr")
 	require.NoError(t, err)
+	tk.MustExec("admin check table t;")
+}
+
+func TestAddEmptyMultiValueIndex(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec(`set global tidb_enable_dist_task=off;`)
+
+	tk.MustExec("create table t(j json);")
+	tk.MustExec(`insert into t(j) values ('{"string":[]}');`)
+	tk.MustExec("alter table t add index ((cast(j->'$.string' as char(10) array)));")
 	tk.MustExec("admin check table t;")
 }

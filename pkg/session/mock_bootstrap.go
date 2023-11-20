@@ -28,11 +28,11 @@ import (
 )
 
 // WithMockUpgrade is a flag identify whether tests run with mock upgrading.
-var WithMockUpgrade bool
+var WithMockUpgrade *bool
 
 // RegisterMockUpgradeFlag registers the mock upgrade flag.
 func RegisterMockUpgradeFlag(fSet *flag.FlagSet) {
-	WithMockUpgrade = *(fSet.Bool("with-mock-upgrade", false, "whether tests run with mock upgrade"))
+	WithMockUpgrade = fSet.Bool("with-mock-upgrade", false, "whether tests run with mock upgrade")
 }
 
 var allDDLs = []string{
@@ -133,11 +133,11 @@ var TestHook = TestCallback{}
 
 // modifyBootstrapVersionForTest is used to test SupportUpgradeHTTPOpVer upgrade SupportUpgradeHTTPOpVer++.
 func modifyBootstrapVersionForTest(ver int64) {
-	if !WithMockUpgrade {
+	if WithMockUpgrade == nil || !*WithMockUpgrade {
 		return
 	}
 
-	if ver == SupportUpgradeHTTPOpVer && currentBootstrapVersion == SupportUpgradeHTTPOpVer {
+	if ver >= SupportUpgradeHTTPOpVer && currentBootstrapVersion >= SupportUpgradeHTTPOpVer {
 		currentBootstrapVersion = mockLatestVer
 	}
 }
@@ -152,7 +152,7 @@ const (
 var MockUpgradeToVerLatestKind = defaultMockUpgradeToVerLatest
 
 func addMockBootstrapVersionForTest(s Session) {
-	if !WithMockUpgrade {
+	if WithMockUpgrade == nil || !*WithMockUpgrade {
 		return
 	}
 

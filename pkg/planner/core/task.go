@@ -912,7 +912,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 					sunk = p.sinkIntoIndexMerge(t)
 				}
 			} else {
-				// otherwise, suspend the limit out of index merge reader.
+				// Otherwise, suspend the limit out of index merge reader.
 				t = cop.convertToRootTask(p.SCtx())
 				sunk = p.sinkIntoIndexMerge(t)
 			}
@@ -1027,7 +1027,7 @@ func (p *PhysicalLimit) sinkIntoIndexMerge(t task) bool {
 	needProj := p.schema.Len() != root.p.Schema().Len()
 	if !needProj {
 		for i := 0; i < p.schema.Len(); i++ {
-			if !p.schema.Columns[i].Equal(nil, root.p.Schema().Columns[i]) {
+			if !p.schema.Columns[i].EqualColumn(root.p.Schema().Columns[i]) {
 				needProj = true
 				break
 			}

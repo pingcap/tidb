@@ -197,7 +197,7 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = make(map[int64]bool, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
+		if b.args[i].ConstItem(ctx.GetSessionVars().StmtCtx) {
 			val, isNull, err := b.args[i].EvalInt(ctx, chunk.Row{})
 			if err != nil {
 				return err
@@ -225,7 +225,7 @@ func (b *builtinInIntSig) Clone() builtinFunc {
 }
 
 func (b *builtinInIntSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
-	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
+	arg0, isNull0, err := b.args[0].EvalInt(ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
@@ -249,7 +249,7 @@ func (b *builtinInIntSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64,
 
 	hasNull := b.hasNull
 	for _, arg := range args {
-		evaledArg, isNull, err := arg.EvalInt(b.ctx, row)
+		evaledArg, isNull, err := arg.EvalInt(ctx, row)
 		if err != nil {
 			return 0, true, err
 		}
@@ -290,7 +290,7 @@ func (b *builtinInStringSig) buildHashMapForConstArgs(ctx sessionctx.Context) er
 	b.hashSet = set.NewStringSet()
 	collator := collate.GetCollator(b.collation)
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
+		if b.args[i].ConstItem(ctx.GetSessionVars().StmtCtx) {
 			val, isNull, err := b.args[i].EvalString(ctx, chunk.Row{})
 			if err != nil {
 				return err
@@ -319,7 +319,7 @@ func (b *builtinInStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinInStringSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
-	arg0, isNull0, err := b.args[0].EvalString(b.ctx, row)
+	arg0, isNull0, err := b.args[0].EvalString(ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
@@ -338,7 +338,7 @@ func (b *builtinInStringSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int
 
 	hasNull := b.hasNull
 	for _, arg := range args {
-		evaledArg, isNull, err := arg.EvalString(b.ctx, row)
+		evaledArg, isNull, err := arg.EvalString(ctx, row)
 		if err != nil {
 			return 0, true, err
 		}
@@ -363,7 +363,7 @@ func (b *builtinInRealSig) buildHashMapForConstArgs(ctx sessionctx.Context) erro
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = set.NewFloat64Set()
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
+		if b.args[i].ConstItem(ctx.GetSessionVars().StmtCtx) {
 			val, isNull, err := b.args[i].EvalReal(ctx, chunk.Row{})
 			if err != nil {
 				return err
@@ -392,7 +392,7 @@ func (b *builtinInRealSig) Clone() builtinFunc {
 }
 
 func (b *builtinInRealSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
-	arg0, isNull0, err := b.args[0].EvalReal(b.ctx, row)
+	arg0, isNull0, err := b.args[0].EvalReal(ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
@@ -409,7 +409,7 @@ func (b *builtinInRealSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64
 
 	hasNull := b.hasNull
 	for _, arg := range args {
-		evaledArg, isNull, err := arg.EvalReal(b.ctx, row)
+		evaledArg, isNull, err := arg.EvalReal(ctx, row)
 		if err != nil {
 			return 0, true, err
 		}
@@ -434,7 +434,7 @@ func (b *builtinInDecimalSig) buildHashMapForConstArgs(ctx sessionctx.Context) e
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = set.NewStringSet()
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
+		if b.args[i].ConstItem(ctx.GetSessionVars().StmtCtx) {
 			val, isNull, err := b.args[i].EvalDecimal(ctx, chunk.Row{})
 			if err != nil {
 				return err
@@ -467,7 +467,7 @@ func (b *builtinInDecimalSig) Clone() builtinFunc {
 }
 
 func (b *builtinInDecimalSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
-	arg0, isNull0, err := b.args[0].EvalDecimal(b.ctx, row)
+	arg0, isNull0, err := b.args[0].EvalDecimal(ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
@@ -489,7 +489,7 @@ func (b *builtinInDecimalSig) evalInt(ctx sessionctx.Context, row chunk.Row) (in
 
 	hasNull := b.hasNull
 	for _, arg := range args {
-		evaledArg, isNull, err := arg.EvalDecimal(b.ctx, row)
+		evaledArg, isNull, err := arg.EvalDecimal(ctx, row)
 		if err != nil {
 			return 0, true, err
 		}
@@ -514,7 +514,7 @@ func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx sessionctx.Context) erro
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = make(map[types.CoreTime]struct{}, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
+		if b.args[i].ConstItem(ctx.GetSessionVars().StmtCtx) {
 			val, isNull, err := b.args[i].EvalTime(ctx, chunk.Row{})
 			if err != nil {
 				return err
@@ -543,7 +543,7 @@ func (b *builtinInTimeSig) Clone() builtinFunc {
 }
 
 func (b *builtinInTimeSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
-	arg0, isNull0, err := b.args[0].EvalTime(b.ctx, row)
+	arg0, isNull0, err := b.args[0].EvalTime(ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
@@ -560,7 +560,7 @@ func (b *builtinInTimeSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64
 
 	hasNull := b.hasNull
 	for _, arg := range args {
-		evaledArg, isNull, err := arg.EvalTime(b.ctx, row)
+		evaledArg, isNull, err := arg.EvalTime(ctx, row)
 		if err != nil {
 			return 0, true, err
 		}
@@ -585,7 +585,7 @@ func (b *builtinInDurationSig) buildHashMapForConstArgs(ctx sessionctx.Context) 
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = make(map[time.Duration]struct{}, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
+		if b.args[i].ConstItem(ctx.GetSessionVars().StmtCtx) {
 			val, isNull, err := b.args[i].EvalDuration(ctx, chunk.Row{})
 			if err != nil {
 				return err
@@ -614,7 +614,7 @@ func (b *builtinInDurationSig) Clone() builtinFunc {
 }
 
 func (b *builtinInDurationSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
-	arg0, isNull0, err := b.args[0].EvalDuration(b.ctx, row)
+	arg0, isNull0, err := b.args[0].EvalDuration(ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
@@ -631,7 +631,7 @@ func (b *builtinInDurationSig) evalInt(ctx sessionctx.Context, row chunk.Row) (i
 
 	hasNull := b.hasNull
 	for _, arg := range args {
-		evaledArg, isNull, err := arg.EvalDuration(b.ctx, row)
+		evaledArg, isNull, err := arg.EvalDuration(ctx, row)
 		if err != nil {
 			return 0, true, err
 		}
@@ -658,13 +658,13 @@ func (b *builtinInJSONSig) Clone() builtinFunc {
 }
 
 func (b *builtinInJSONSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
-	arg0, isNull0, err := b.args[0].EvalJSON(b.ctx, row)
+	arg0, isNull0, err := b.args[0].EvalJSON(ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
 	var hasNull bool
 	for _, arg := range b.args[1:] {
-		evaledArg, isNull, err := arg.EvalJSON(b.ctx, row)
+		evaledArg, isNull, err := arg.EvalJSON(ctx, row)
 		if err != nil {
 			return 0, true, err
 		}
@@ -761,8 +761,8 @@ func (b *builtinSetStringVarSig) Clone() builtinFunc {
 
 func (b *builtinSetStringVarSig) evalString(ctx sessionctx.Context, row chunk.Row) (res string, isNull bool, err error) {
 	var varName string
-	sessionVars := b.ctx.GetSessionVars()
-	varName, isNull, err = b.args[0].EvalString(b.ctx, row)
+	sessionVars := ctx.GetSessionVars()
+	varName, isNull, err = b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
@@ -791,8 +791,8 @@ func (b *builtinSetRealVarSig) Clone() builtinFunc {
 
 func (b *builtinSetRealVarSig) evalReal(ctx sessionctx.Context, row chunk.Row) (res float64, isNull bool, err error) {
 	var varName string
-	sessionVars := b.ctx.GetSessionVars()
-	varName, isNull, err = b.args[0].EvalString(b.ctx, row)
+	sessionVars := ctx.GetSessionVars()
+	varName, isNull, err = b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
@@ -818,8 +818,8 @@ func (b *builtinSetDecimalVarSig) Clone() builtinFunc {
 }
 
 func (b *builtinSetDecimalVarSig) evalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.MyDecimal, bool, error) {
-	sessionVars := b.ctx.GetSessionVars()
-	varName, isNull, err := b.args[0].EvalString(b.ctx, row)
+	sessionVars := ctx.GetSessionVars()
+	varName, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return nil, isNull, err
 	}
@@ -845,8 +845,8 @@ func (b *builtinSetIntVarSig) Clone() builtinFunc {
 }
 
 func (b *builtinSetIntVarSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
-	sessionVars := b.ctx.GetSessionVars()
-	varName, isNull, err := b.args[0].EvalString(b.ctx, row)
+	sessionVars := ctx.GetSessionVars()
+	varName, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
@@ -872,14 +872,14 @@ func (b *builtinSetTimeVarSig) Clone() builtinFunc {
 }
 
 func (b *builtinSetTimeVarSig) evalTime(ctx sessionctx.Context, row chunk.Row) (types.Time, bool, error) {
-	sessionVars := b.ctx.GetSessionVars()
-	varName, isNull, err := b.args[0].EvalString(b.ctx, row)
+	sessionVars := ctx.GetSessionVars()
+	varName, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return types.ZeroTime, isNull, err
 	}
 	datum, err := b.args[1].Eval(row)
 	if err != nil || datum.IsNull() {
-		return types.ZeroTime, datum.IsNull(), handleInvalidTimeError(b.ctx, err)
+		return types.ZeroTime, datum.IsNull(), handleInvalidTimeError(ctx, err)
 	}
 	res := datum.GetMysqlTime()
 	varName = strings.ToLower(varName)
@@ -913,6 +913,7 @@ func BuildGetVarFunction(ctx sessionctx.Context, expr Expression, retType *types
 		FuncName: model.NewCIStr(ast.GetVar),
 		RetType:  retType,
 		Function: f,
+		ctx:      ctx,
 	}, nil
 }
 
@@ -954,8 +955,8 @@ func (b *builtinGetStringVarSig) Clone() builtinFunc {
 }
 
 func (b *builtinGetStringVarSig) evalString(ctx sessionctx.Context, row chunk.Row) (string, bool, error) {
-	sessionVars := b.ctx.GetSessionVars()
-	varName, isNull, err := b.args[0].EvalString(b.ctx, row)
+	sessionVars := ctx.GetSessionVars()
+	varName, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
@@ -1006,8 +1007,8 @@ func (b *builtinGetIntVarSig) Clone() builtinFunc {
 }
 
 func (b *builtinGetIntVarSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
-	sessionVars := b.ctx.GetSessionVars()
-	varName, isNull, err := b.args[0].EvalString(b.ctx, row)
+	sessionVars := ctx.GetSessionVars()
+	varName, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
@@ -1046,8 +1047,8 @@ func (b *builtinGetRealVarSig) Clone() builtinFunc {
 }
 
 func (b *builtinGetRealVarSig) evalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
-	sessionVars := b.ctx.GetSessionVars()
-	varName, isNull, err := b.args[0].EvalString(b.ctx, row)
+	sessionVars := ctx.GetSessionVars()
+	varName, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
@@ -1086,8 +1087,8 @@ func (b *builtinGetDecimalVarSig) Clone() builtinFunc {
 }
 
 func (b *builtinGetDecimalVarSig) evalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.MyDecimal, bool, error) {
-	sessionVars := b.ctx.GetSessionVars()
-	varName, isNull, err := b.args[0].EvalString(b.ctx, row)
+	sessionVars := ctx.GetSessionVars()
+	varName, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return nil, isNull, err
 	}
@@ -1134,8 +1135,8 @@ func (b *builtinGetTimeVarSig) Clone() builtinFunc {
 }
 
 func (b *builtinGetTimeVarSig) evalTime(ctx sessionctx.Context, row chunk.Row) (types.Time, bool, error) {
-	sessionVars := b.ctx.GetSessionVars()
-	varName, isNull, err := b.args[0].EvalString(b.ctx, row)
+	sessionVars := ctx.GetSessionVars()
+	varName, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return types.ZeroTime, isNull, err
 	}
@@ -1195,7 +1196,7 @@ func (b *builtinValuesIntSig) Clone() builtinFunc {
 // evalInt evals a builtinValuesIntSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 func (b *builtinValuesIntSig) evalInt(ctx sessionctx.Context, _ chunk.Row) (int64, bool, error) {
-	row := b.ctx.GetSessionVars().CurrInsertValues
+	row := ctx.GetSessionVars().CurrInsertValues
 	if row.IsEmpty() {
 		return 0, true, nil
 	}
@@ -1210,7 +1211,7 @@ func (b *builtinValuesIntSig) evalInt(ctx sessionctx.Context, _ chunk.Row) (int6
 		}
 		if len(val) < 8 {
 			var binary types.BinaryLiteral = val
-			v, err := binary.ToInt(b.ctx.GetSessionVars().StmtCtx.TypeCtx())
+			v, err := binary.ToInt(ctx.GetSessionVars().StmtCtx.TypeCtx())
 			if err != nil {
 				return 0, true, errors.Trace(err)
 			}
@@ -1236,7 +1237,7 @@ func (b *builtinValuesRealSig) Clone() builtinFunc {
 // evalReal evals a builtinValuesRealSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 func (b *builtinValuesRealSig) evalReal(ctx sessionctx.Context, _ chunk.Row) (float64, bool, error) {
-	row := b.ctx.GetSessionVars().CurrInsertValues
+	row := ctx.GetSessionVars().CurrInsertValues
 	if row.IsEmpty() {
 		return 0, true, nil
 	}
@@ -1267,7 +1268,7 @@ func (b *builtinValuesDecimalSig) Clone() builtinFunc {
 // evalDecimal evals a builtinValuesDecimalSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 func (b *builtinValuesDecimalSig) evalDecimal(ctx sessionctx.Context, _ chunk.Row) (*types.MyDecimal, bool, error) {
-	row := b.ctx.GetSessionVars().CurrInsertValues
+	row := ctx.GetSessionVars().CurrInsertValues
 	if row.IsEmpty() {
 		return &types.MyDecimal{}, true, nil
 	}
@@ -1295,7 +1296,7 @@ func (b *builtinValuesStringSig) Clone() builtinFunc {
 // evalString evals a builtinValuesStringSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 func (b *builtinValuesStringSig) evalString(ctx sessionctx.Context, _ chunk.Row) (string, bool, error) {
-	row := b.ctx.GetSessionVars().CurrInsertValues
+	row := ctx.GetSessionVars().CurrInsertValues
 	if row.IsEmpty() {
 		return "", true, nil
 	}
@@ -1332,7 +1333,7 @@ func (b *builtinValuesTimeSig) Clone() builtinFunc {
 // evalTime evals a builtinValuesTimeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 func (b *builtinValuesTimeSig) evalTime(ctx sessionctx.Context, _ chunk.Row) (types.Time, bool, error) {
-	row := b.ctx.GetSessionVars().CurrInsertValues
+	row := ctx.GetSessionVars().CurrInsertValues
 	if row.IsEmpty() {
 		return types.ZeroTime, true, nil
 	}
@@ -1360,7 +1361,7 @@ func (b *builtinValuesDurationSig) Clone() builtinFunc {
 // evalDuration evals a builtinValuesDurationSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 func (b *builtinValuesDurationSig) evalDuration(ctx sessionctx.Context, _ chunk.Row) (types.Duration, bool, error) {
-	row := b.ctx.GetSessionVars().CurrInsertValues
+	row := ctx.GetSessionVars().CurrInsertValues
 	if row.IsEmpty() {
 		return types.Duration{}, true, nil
 	}
@@ -1389,7 +1390,7 @@ func (b *builtinValuesJSONSig) Clone() builtinFunc {
 // evalJSON evals a builtinValuesJSONSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 func (b *builtinValuesJSONSig) evalJSON(ctx sessionctx.Context, _ chunk.Row) (types.BinaryJSON, bool, error) {
-	row := b.ctx.GetSessionVars().CurrInsertValues
+	row := ctx.GetSessionVars().CurrInsertValues
 	if row.IsEmpty() {
 		return types.BinaryJSON{}, true, nil
 	}
@@ -1432,7 +1433,7 @@ func (b *builtinBitCountSig) Clone() builtinFunc {
 // evalInt evals BIT_COUNT(N).
 // See https://dev.mysql.com/doc/refman/5.7/en/bit-functions.html#function_bit-count
 func (b *builtinBitCountSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
-	n, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	n, isNull, err := b.args[0].EvalInt(ctx, row)
 	if err != nil || isNull {
 		if err != nil && types.ErrOverflow.Equal(err) {
 			return 64, false, nil
@@ -1473,8 +1474,8 @@ func (b *builtinGetParamStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinGetParamStringSig) evalString(ctx sessionctx.Context, row chunk.Row) (string, bool, error) {
-	sessionVars := b.ctx.GetSessionVars()
-	idx, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	sessionVars := ctx.GetSessionVars()
+	idx, isNull, err := b.args[0].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}

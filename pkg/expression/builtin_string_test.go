@@ -234,7 +234,7 @@ func TestConcatSig(t *testing.T) {
 		&Column{Index: 0, RetType: colTypes[0]},
 		&Column{Index: 1, RetType: colTypes[1]},
 	}
-	base := baseBuiltinFunc{args: args, ctx: ctx, tp: resultType}
+	base := baseBuiltinFunc{args: args, tp: resultType}
 	concat := &builtinConcatSig{base, 5}
 
 	cases := []struct {
@@ -355,7 +355,7 @@ func TestConcatWSSig(t *testing.T) {
 		&Column{Index: 1, RetType: colTypes[1]},
 		&Column{Index: 2, RetType: colTypes[2]},
 	}
-	base := baseBuiltinFunc{args: args, ctx: ctx, tp: resultType}
+	base := baseBuiltinFunc{args: args, tp: resultType}
 	concat := &builtinConcatWSSig{base, 6}
 
 	cases := []struct {
@@ -532,7 +532,7 @@ func TestRepeatSig(t *testing.T) {
 		&Column{Index: 0, RetType: colTypes[0]},
 		&Column{Index: 1, RetType: colTypes[1]},
 	}
-	base := baseBuiltinFunc{args: args, ctx: ctx, tp: resultType}
+	base := baseBuiltinFunc{args: args, tp: resultType}
 	repeat := &builtinRepeatSig{base, 1000}
 
 	cases := []struct {
@@ -1010,7 +1010,7 @@ func TestSpaceSig(t *testing.T) {
 	args := []Expression{
 		&Column{Index: 0, RetType: colTypes[0]},
 	}
-	base := baseBuiltinFunc{args: args, ctx: ctx, tp: resultType}
+	base := baseBuiltinFunc{args: args, tp: resultType}
 	space := &builtinSpaceSig{base, 1000}
 	input := chunk.NewChunkWithCapacity(colTypes, 10)
 	input.AppendInt64(0, 6)
@@ -1639,7 +1639,7 @@ func TestRpadSig(t *testing.T) {
 		&Column{Index: 2, RetType: colTypes[2]},
 	}
 
-	base := baseBuiltinFunc{args: args, ctx: ctx, tp: resultType}
+	base := baseBuiltinFunc{args: args, tp: resultType}
 	rpad := &builtinRpadUTF8Sig{base, 1000}
 
 	input := chunk.NewChunkWithCapacity(colTypes, 10)
@@ -1685,7 +1685,7 @@ func TestInsertBinarySig(t *testing.T) {
 		&Column{Index: 3, RetType: colTypes[3]},
 	}
 
-	base := baseBuiltinFunc{args: args, ctx: ctx, tp: resultType}
+	base := baseBuiltinFunc{args: args, tp: resultType}
 	insert := &builtinInsertSig{base, 3}
 
 	input := chunk.NewChunkWithCapacity(colTypes, 2)
@@ -2121,7 +2121,7 @@ func TestFromBase64Sig(t *testing.T) {
 		resultType := &types.FieldType{}
 		resultType.SetType(mysql.TypeVarchar)
 		resultType.SetFlen(mysql.MaxBlobWidth)
-		base := baseBuiltinFunc{args: args, ctx: ctx, tp: resultType}
+		base := baseBuiltinFunc{args: args, tp: resultType}
 		fromBase64 := &builtinFromBase64Sig{base, test.maxAllowPacket}
 
 		input := chunk.NewChunkWithCapacity(colTypes, 1)
@@ -2488,7 +2488,7 @@ func TestToBase64Sig(t *testing.T) {
 		resultType := &types.FieldType{}
 		resultType.SetType(mysql.TypeVarchar)
 		resultType.SetFlen(base64NeededEncodedLength(len(test.args)))
-		base := baseBuiltinFunc{args: args, ctx: ctx, tp: resultType}
+		base := baseBuiltinFunc{args: args, tp: resultType}
 		toBase64 := &builtinToBase64Sig{base, test.maxAllowPacket}
 
 		input := chunk.NewChunkWithCapacity(colTypes, 1)
