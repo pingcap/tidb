@@ -676,10 +676,10 @@
       {
         "SQL": "EXPLAIN select o.o_id, count(*) from c, o where c.c_id=o.c_id group by o.o_id; -- 2. test agg push down, group by non-join column",
         "Plan": [
-          "TableReader_84 8000.00 root  data:ExchangeSender_83",
-          "└─ExchangeSender_83 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "TableReader_78 8000.00 root  data:ExchangeSender_77",
+          "└─ExchangeSender_77 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection_10 8000.00 mpp[tiflash]  test.o.o_id, Column#6",
-          "    └─Projection_77 8000.00 mpp[tiflash]  Column#6, test.o.o_id",
+          "    └─Projection_76 8000.00 mpp[tiflash]  Column#6, test.o.o_id",
           "      └─HashAgg_75 8000.00 mpp[tiflash]  group by:test.o.o_id, funcs:sum(Column#7)->Column#6, funcs:firstrow(Column#8)->test.o.o_id",
           "        └─ExchangeReceiver_71 9990.00 mpp[tiflash]  ",
           "          └─ExchangeSender_70 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.o.o_id, collate: binary]",
@@ -699,10 +699,10 @@
       {
         "SQL": "EXPLAIN select o.c_id, count(*) from c, o where c.c_id=o.c_id group by o.c_id; -- 3. test agg push down, group by join column",
         "Plan": [
-          "TableReader_84 8000.00 root  data:ExchangeSender_83",
-          "└─ExchangeSender_83 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "TableReader_78 8000.00 root  data:ExchangeSender_77",
+          "└─ExchangeSender_77 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection_10 8000.00 mpp[tiflash]  test.o.c_id, Column#6",
-          "    └─Projection_77 8000.00 mpp[tiflash]  Column#6, test.o.c_id",
+          "    └─Projection_76 8000.00 mpp[tiflash]  Column#6, test.o.c_id",
           "      └─HashAgg_75 8000.00 mpp[tiflash]  group by:test.o.c_id, funcs:sum(Column#7)->Column#6, funcs:firstrow(Column#8)->test.o.c_id",
           "        └─ExchangeReceiver_71 9990.00 mpp[tiflash]  ",
           "          └─ExchangeSender_70 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.o.c_id, collate: binary]",
