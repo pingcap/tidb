@@ -19,7 +19,6 @@ import (
 	"context"
 	"errors"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -28,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 )
 
 // SortExec represents sorting executor.
@@ -53,9 +51,8 @@ type SortExec struct {
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
 
-	// SortPartitionList is the chunks to store row values for partitions. Every partition is a sorted list.
-	// TODO why it's public?
-	SortPartitionList []*sortPartition
+	// sortPartitionList is the chunks to store row values for partitions. Every partition is a sorted list.
+	sortPartitionList []*sortPartition
 	cursors           []*dataCursor
 
 	// multiWayMerge uses multi-way merge for spill disk.
@@ -67,13 +64,13 @@ type SortExec struct {
 
 // Close implements the Executor Close interface.
 func (e *SortExec) Close() error {
-	for _, partition := range e.SortPartitionList {
+	for _, partition := range e.sortPartitionList {
 		err := partition.close()
 		if err != nil {
 			return err
 		}
 	}
-	e.SortPartitionList = e.SortPartitionList[:0]
+	e.sortPartitionList = e.sortPartitionList[:0]
 
 	e.memTracker = nil
 	e.diskTracker = nil
@@ -98,7 +95,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.diskTracker = memory.NewTracker(e.ID(), -1)
 		e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
 	}
-	e.SortPartitionList = e.SortPartitionList[:0]
+	e.sortPartitionList = e.sortPartitionList[:0]
 	return e.Children(0).Open(ctx)
 }
 
@@ -122,7 +119,7 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.fetched = true
 	}
 
-	sortPartitionListLen := len(e.SortPartitionList)
+	sortPartitionListLen := len(e.sortPartitionList)
 	if sortPartitionListLen == 0 {
 		return nil
 	}
@@ -151,7 +148,7 @@ func (e *SortExec) initExternalSorting() {
 }
 
 func (e *SortExec) nonExternalSorting(req *chunk.Chunk) (err error) {
-	if e.SortPartitionList[0].spillAction.isSpillTriggered() {
+	if e.sortPartitionList[0].spillAction.isSpillTriggered() {
 		// Maybe the spill is triggered by the last chunk, so there is only one partition.
 		cursor := e.cursors[0]
 		for !req.IsFull() {
@@ -176,9 +173,9 @@ func (e *SortExec) nonExternalSorting(req *chunk.Chunk) (err error) {
 		}
 	} else {
 		// Spill is not triggered and all data are in memory.
-		rowNum := e.SortPartitionList[0].numRowInMemory()
+		rowNum := e.sortPartitionList[0].numRowInMemory()
 		for !req.IsFull() && e.Idx < rowNum {
-			e.SortPartitionList[0].getSortedRowFromMemoryAndAppendToChunk(e.Idx, req)
+			e.sortPartitionList[0].getSortedRowFromMemoryAndAppendToChunk(e.Idx, req)
 			e.Idx++
 		}
 	}
@@ -222,7 +219,7 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 
 func (e *SortExec) switchToNewSortPartition(fields []*types.FieldType, byItemsDesc []bool) {
 	// Put the full partition into list
-	e.SortPartitionList = append(e.SortPartitionList, e.partition)
+	e.sortPartitionList = append(e.sortPartitionList, e.partition)
 
 	e.partition = newSortPartition(fields, e.MaxChunkSize(), byItemsDesc, e.keyColumns, e.keyCmpFuncs, e.spillLimit)
 	e.spillAction = e.partition.actionSpill()
@@ -230,13 +227,6 @@ func (e *SortExec) switchToNewSortPartition(fields []*types.FieldType, byItemsDe
 	e.partition.getMemTracker().SetLabel(memory.LabelForRowChunks)
 	e.partition.getDiskTracker().AttachTo(e.diskTracker)
 	e.partition.getDiskTracker().SetLabel(memory.LabelForRowChunks)
-	failpoint.Inject("testSortedRowContainerSpill", func(val failpoint.Value) {
-		// TODO maybe we need to add test here
-		// if val.(bool) {
-		// 	e.spillAction = e.rowChunks.ActionSpillForTest()
-		// 	defer e.spillAction.WaitForTest()
-		// }
-	})
 	e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
 }
 
@@ -253,14 +243,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	e.partition.getMemTracker().SetLabel(memory.LabelForRowChunks)
 
 	if variable.EnableTmpStorageOnOOM.Load() {
-		failpoint.Inject("testSortedRowContainerSpill", func(val failpoint.Value) {
-			// TODO maybe we need to add tests here
-			// if val.(bool) {
-			// 	e.spillAction = e.rowChunks.ActionSpillForTest()
-			// 	defer e.spillAction.WaitForTest()
-			// }
-		})
-		e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
+		e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.spillAction)
 		e.partition.getDiskTracker().AttachTo(e.diskTracker)
 		e.partition.getDiskTracker().SetLabel(memory.LabelForRowChunks)
 	}
@@ -287,14 +270,6 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		}
 	}
 
-	failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
-		if val.(bool) {
-			if e.Ctx().GetSessionVars().ConnectionID == 123456 {
-				e.Ctx().GetSessionVars().MemTracker.Killer.SendKillSignal(sqlkiller.QueryMemoryExceeded)
-			}
-		}
-	})
-
 	if e.isSpillTriggered() {
 		// If e.partition haven't trigger the spill. We need to manually trigger it.
 		// As all data should be in disk when spill is triggered.
@@ -312,13 +287,13 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		}
 	}
 
-	e.SortPartitionList = append(e.SortPartitionList, e.partition)
+	e.sortPartitionList = append(e.sortPartitionList, e.partition)
 	e.partition = nil
-	return e.initCursors(len(e.SortPartitionList))
+	return e.initCursors(len(e.sortPartitionList))
 }
 
 func (e *SortExec) reloadCursor(partitionID int) (bool, error) {
-	partition := e.SortPartitionList[partitionID]
+	partition := e.sortPartitionList[partitionID]
 	cursor := e.cursors[partitionID]
 
 	spilledChkNum := partition.inDisk.NumChunks()
@@ -353,7 +328,7 @@ func (e *SortExec) initCursors(partitionNum int) error {
 	e.cursors = make([]*dataCursor, partitionNum)
 	for i := 0; i < partitionNum; i++ {
 		e.cursors[i] = NewDataCursor()
-		chk, err := e.SortPartitionList[i].inDisk.GetChunk(0)
+		chk, err := e.sortPartitionList[i].inDisk.GetChunk(0)
 		if err != nil {
 			return err
 		}
@@ -401,12 +376,28 @@ func (e *SortExec) compressRow(rowI, rowJ chunk.Row) int {
 }
 
 func (e *SortExec) isSpillTriggered() bool {
-	if len(e.SortPartitionList) > 0 {
-		return e.SortPartitionList[0].spillAction.isSpillTriggered()
+	if len(e.sortPartitionList) > 0 {
+		return e.sortPartitionList[0].spillAction.isSpillTriggered()
 	} else {
 		if e.partition != nil {
 			return e.partition.spillAction.isSpillTriggered()
 		}
 		return false
 	}
+}
+
+func (e *SortExec) IsSpillTriggeredForTest() bool {
+	return e.isSpillTriggered()
+}
+
+func (e *SortExec) IsSpillTriggeredInOnePartitionForTest(idx int) bool {
+	return e.sortPartitionList[idx].spillAction.isSpillTriggered()
+}
+
+func (e *SortExec) GetRowNumInOnePartitionForTest(idx int) int {
+	return e.sortPartitionList[idx].numRowForTest()
+}
+
+func (e *SortExec) GetSortPartitionListLenForTest() int {
+	return len(e.sortPartitionList)
 }

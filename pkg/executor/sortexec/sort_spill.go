@@ -46,7 +46,7 @@ func (s *sortPartitionSpillDiskAction) needSpill() bool {
 func (s *sortPartitionSpillDiskAction) Action(t *memory.Tracker) {
 	// Currently, `Action` is always triggered by only one goroutine, so no lock is needed here so far.
 	if !s.isSpillNeeded && s.partition.hasEnoughDataToSpill() {
-		logutil.BgLogger().Info("memory exceeds quota, spill sort partition data to disk now.",
+		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
 			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
 		s.isSpillNeeded = true
 		// Only set spill flag, the spill action will be executed in other place.

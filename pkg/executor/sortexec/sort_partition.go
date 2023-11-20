@@ -31,7 +31,9 @@ var errSpillIsTriggered = errors.New("can not add because spill has been trigger
 var errSpillEmptyChunk = errors.New("can not spill empty chunk to disk")
 
 const rowPtrSize = int(unsafe.Sizeof(chunk.RowPtr{}))
-const spillChunkSize = 4096
+
+// It should be const, but we need to modify it for test.
+var spillChunkSize int = 4096
 
 // signalCheckpointForSort indicates the times of row comparation that a signal detection will be triggered.
 const signalCheckpointForSort uint = 10240
@@ -247,7 +249,7 @@ func (s *sortPartition) lessRow(rowI, rowJ chunk.Row) bool {
 }
 
 func (s *sortPartition) numRowInMemory() int {
-	return s.inMemory.NumChunks()
+	return s.inMemory.Len()
 }
 
 // keyColumnsLess is the less function for key columns.
@@ -268,4 +270,20 @@ func (s *sortPartition) keyColumnsLess(i, j int) bool {
 	rowI := s.inMemory.GetRow(s.rowPtrs[i])
 	rowJ := s.inMemory.GetRow(s.rowPtrs[j])
 	return s.lessRow(rowI, rowJ)
+}
+
+func (s *sortPartition) numRowForTest() int {
+	rowNumInMemory := s.numRowInMemory()
+	if s.inDisk != nil {
+		if rowNumInMemory > 0 {
+			panic("Data shouldn't be placed in memory and disk simultaneously")
+		}
+		return s.inDisk.Len()
+	}
+
+	return rowNumInMemory
+}
+
+func SetSmallSpillChunkSizeForTest() {
+	spillChunkSize = 16
 }
