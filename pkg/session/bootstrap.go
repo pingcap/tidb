@@ -2941,11 +2941,9 @@ func upgradeToVer181(s sessiontypes.Session, ver int64) {
 	if ver >= version181 {
 		return
 	}
-	sql := fmt.Sprintf("INSERT HIGH_PRIORITY INTO %s.%s ("+
-		"SELECT '%s', '%s' WHERE NOT EXISTS (SELECT * FROM %s.%s WHERE VARIABLE_NAME = '%s' AND VARIABLE_VALUE = '%s')"+
-		")ON DUPLICATE KEY UPDATE VARIABLE_VALUE = VALUES(VARIABLE_VALUE)",
+	sql := fmt.Sprintf("INSERT HIGH_PRIORITY IGNORE INTO %s.%s VALUES('%s', '%s')",
 		mysql.SystemDB, mysql.GlobalVariablesTable,
-		variable.TiDBTxnMode, variable.OptimisticTxnMode, mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBTxnMode, variable.PessimisticTxnMode)
+		variable.TiDBTxnMode, variable.OptimisticTxnMode)
 	mustExecute(s, sql)
 }
 
