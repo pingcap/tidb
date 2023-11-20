@@ -736,7 +736,7 @@ func (rs *S3Storage) Open(ctx context.Context, path string, o *ReaderOption) (Ex
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if o.PrefetchSize > 0 {
+	if o != nil && o.PrefetchSize > 0 {
 		reader = prefetch.NewReader(reader, o.PrefetchSize)
 	}
 	return &s3ObjectReader{
