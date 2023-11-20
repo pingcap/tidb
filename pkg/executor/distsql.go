@@ -1531,6 +1531,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 				task.handles,
 				nil,
 				//missRecords,
+				w.idxLookup.startTS,
 			)
 		}
 	}

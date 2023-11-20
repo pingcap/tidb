@@ -184,13 +184,14 @@ func decodeMvccRecordValue(bs []byte, colMap map[int64]*types.FieldType, tb *mod
 }
 
 // ReportLookupInconsistent reports inconsistent when index rows is more than record rows.
-func (r *Reporter) ReportLookupInconsistent(ctx context.Context, idxCnt, tblCnt int, missHd, fullHd []kv.Handle, missRowIdx []RecordData) error {
+func (r *Reporter) ReportLookupInconsistent(ctx context.Context, idxCnt, tblCnt int, missHd, fullHd []kv.Handle, missRowIdx []RecordData, startTs uint64) error {
 	if r.Sctx.GetSessionVars().EnableRedactLog {
 		logutil.Logger(ctx).Error("indexLookup found data inconsistency",
 			zap.String("table_name", r.Tbl.Name.O),
 			zap.String("index_name", r.Idx.Name.O),
 			zap.Int("index_cnt", idxCnt),
 			zap.Int("table_cnt", tblCnt),
+			zap.Uint64("start_ts", startTs),
 			zap.Stack("stack"))
 	} else {
 		const maxFullHandleCnt = 50
@@ -204,6 +205,7 @@ func (r *Reporter) ReportLookupInconsistent(ctx context.Context, idxCnt, tblCnt 
 			zap.Int("index_cnt", idxCnt), zap.Int("table_cnt", tblCnt),
 			zap.String("missing_handles", fmt.Sprint(missHd)),
 			zap.String("total_handles", fmt.Sprint(fullHd[:displayFullHdCnt])),
+			zap.Uint64("start_ts", startTs),
 		}
 		store, ok := r.Sctx.GetStore().(helper.Storage)
 		if ok {

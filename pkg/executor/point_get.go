@@ -329,6 +329,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				[]kv.Handle{e.handle},
 				[]kv.Handle{e.handle},
 				[]consistency.RecordData{{}},
+				e.txn.StartTS(),
 			)
 		}
 		return nil

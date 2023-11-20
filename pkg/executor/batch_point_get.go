@@ -431,6 +431,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 					e.handles[i:i+1],
 					e.handles,
 					[]consistency.RecordData{{}},
+					e.txn.StartTS(),
 				)
 			}
 			continue
