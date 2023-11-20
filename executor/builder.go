@@ -1710,7 +1710,7 @@ func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) Exe
 	e := &ProjectionExec{
 		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
 		numWorkers:       int64(b.ctx.GetSessionVars().ProjectionConcurrency()),
-		evaluatorSuit:    expression.NewEvaluatorSuite(v.Exprs, v.AvoidColumnEvaluator),
+		evaluatorSuit:    expression.NewEvaluatorSuite(v.Exprs, true),
 		calculateNoDelay: v.CalculateNoDelay,
 	}
 
@@ -4543,7 +4543,7 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(ctx context.Contex
 	e := &ProjectionExec{
 		baseExecutor:     newBaseExecutor(builder.ctx, v.Schema(), v.ID(), childExec),
 		numWorkers:       int64(builder.ctx.GetSessionVars().ProjectionConcurrency()),
-		evaluatorSuit:    expression.NewEvaluatorSuite(v.Exprs, v.AvoidColumnEvaluator),
+		evaluatorSuit:    expression.NewEvaluatorSuite(v.Exprs, true),
 		calculateNoDelay: v.CalculateNoDelay,
 	}
 
