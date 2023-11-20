@@ -812,9 +812,6 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction, newTp
 		r.err = errors.Trace(err)
 		return getFullRange()
 	}
-	if len(startPoint.value.GetBytes()) == 0 {
-		return []*point{{value: types.MinNotNullDatum(), start: true}, {value: types.MaxValueDatum()}}
-	}
 	highValueSortKey := make([]byte, len(startPoint.value.GetBytes()))
 	copy(highValueSortKey, startPoint.value.GetBytes())
 	endPoint := &point{value: types.MaxValueDatum(), excl: true}

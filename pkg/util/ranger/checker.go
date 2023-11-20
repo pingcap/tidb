@@ -190,7 +190,9 @@ func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) (isA
 			if scalar.GetArgs()[0].GetType().GetType() == mysql.TypeEnum {
 				return false, true
 			}
-			likeFuncReserve = true
+			if i != len(patternStr)-1 {
+				likeFuncReserve = true
+			}
 			break
 		}
 		if patternStr[i] == '_' {
