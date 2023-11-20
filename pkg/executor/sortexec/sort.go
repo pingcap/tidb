@@ -91,7 +91,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 	if e.memTracker == nil {
 		e.memTracker = memory.NewTracker(e.ID(), -1)
 		e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
-		e.spillLimit = e.Ctx().GetSessionVars().StmtCtx.MemTracker.GetBytesLimit() / 10
+		e.spillLimit = e.Ctx().GetSessionVars().MemTracker.GetBytesLimit() / 10
 		e.diskTracker = memory.NewTracker(e.ID(), -1)
 		e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
 	}
