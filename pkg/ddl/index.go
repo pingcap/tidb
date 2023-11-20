@@ -771,12 +771,13 @@ func pickBackfillType(ctx context.Context, job *model.Job, unique bool, d *ddlCt
 				return model.ReorgTypeNone, err
 			}
 			var pdLeaderAddr string
+			var isUpgradingSysDB bool
 			if d != nil {
 				//nolint:forcetypeassert
 				pdLeaderAddr = d.store.(tikv.Storage).GetRegionCache().PDClient().GetLeaderAddr()
+				isUpgradingSysDB = d.stateSyncer.IsUpgradingState() && hasSysDB(job)
 			}
 			isDistReorg := false
-			isUpgradingSysDB := d.stateSyncer.IsUpgradingState() && hasSysDB(job)
 			if variable.EnableDistTask.Load() && !isUpgradingSysDB {
 				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, d.etcdCli, pdLeaderAddr, job.ReorgMeta.ResourceGroupName)
 				isDistReorg = true
