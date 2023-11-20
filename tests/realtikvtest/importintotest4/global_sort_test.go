@@ -24,9 +24,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
-
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
