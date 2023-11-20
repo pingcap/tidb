@@ -49,6 +49,7 @@ type visit struct {
 func TestShow(t *testing.T) {
 	node := &ast.ShowStmt{}
 	tps := []ast.ShowStmtType{
+		ast.ShowBinlogStatus,
 		ast.ShowEngines,
 		ast.ShowDatabases,
 		ast.ShowTables,
