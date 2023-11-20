@@ -90,3 +90,63 @@ func TestBufferIsolation(t *testing.T) {
 	require.Equal(t, b3, b2)
 	require.NotEqual(t, b2, b1)
 }
+
+func TestBufferMemLimit(t *testing.T) {
+	pool := NewPool(WithBlockSize(10))
+	defer pool.Destroy()
+	// due to the integer division, the actual memory limit is 10 bytes.
+	bytesBuf := pool.NewBuffer(WithMemoryLimit(15))
+
+	got, _ := bytesBuf.AllocBytesWithSliceLocation(10)
+	require.NotNil(t, got)
+	got, _ = bytesBuf.AllocBytesWithSliceLocation(3)
+	require.Nil(t, got)
+
+	bytesBuf.Destroy()
+
+	// due to the block granularity, the actual memory may be less
+	bytesBuf = pool.NewBuffer(WithMemoryLimit(20))
+
+	got, _ = bytesBuf.AllocBytesWithSliceLocation(6)
+	require.NotNil(t, got)
+	got, _ = bytesBuf.AllocBytesWithSliceLocation(6)
+	require.NotNil(t, got)
+	got, _ = bytesBuf.AllocBytesWithSliceLocation(6)
+	require.Nil(t, got)
+}
+
+const dataNum = 100 * 1024 * 1024
+
+func BenchmarkStoreSlice(b *testing.B) {
+	data := make([][]byte, dataNum)
+	for i := 0; i < b.N; i++ {
+		func() {
+			pool := NewPool()
+			defer pool.Destroy()
+			bytesBuf := pool.NewBuffer()
+			defer bytesBuf.Destroy()
+
+			b.ResetTimer()
+			for j := range data {
+				data[j] = bytesBuf.AllocBytes(10)
+			}
+		}()
+	}
+}
+
+func BenchmarkStoreLocation(b *testing.B) {
+	data := make([]SliceLocation, dataNum)
+	for i := 0; i < b.N; i++ {
+		func() {
+			pool := NewPool()
+			defer pool.Destroy()
+			bytesBuf := pool.NewBuffer()
+			defer bytesBuf.Destroy()
+
+			b.ResetTimer()
+			for j := range data {
+				_, data[j] = bytesBuf.AllocBytesWithSliceLocation(10)
+			}
+		}()
+	}
+}
