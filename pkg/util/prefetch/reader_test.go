@@ -12,7 +12,7 @@ import (
 
 func TestBasic(t *testing.T) {
 	source := bytes.NewReader([]byte("01234567890"))
-	r := NewPrefetchReader(io.NopCloser(source), 3)
+	r := NewReader(io.NopCloser(source), 3)
 	buf := make([]byte, 1)
 	n, err := r.Read(buf)
 	require.NoError(t, err)
@@ -44,7 +44,7 @@ func TestBasic(t *testing.T) {
 	require.ErrorIs(t, err, io.EOF)
 
 	source = bytes.NewReader([]byte("01234567890"))
-	r = NewPrefetchReader(io.NopCloser(source), 3)
+	r = NewReader(io.NopCloser(source), 3)
 	buf = make([]byte, 11)
 	n, err = r.Read(buf)
 	require.NoError(t, err)

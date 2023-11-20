@@ -7,7 +7,8 @@ import (
 	"io"
 )
 
-type PrefetchReader struct {
+// Reader is a reader that prefetches data from the underlying reader.
+type Reader struct {
 	r            io.ReadCloser
 	curBufReader *bytes.Reader
 	buf          [2][]byte
@@ -16,10 +17,11 @@ type PrefetchReader struct {
 	err          error // after bufCh is closed
 }
 
-func NewPrefetchReader(r io.ReadCloser, prefetchSize int) io.ReadCloser {
-	ret := &PrefetchReader{
+// NewReader creates a new Reader.
+func NewReader(r io.ReadCloser, prefetchSize int) io.ReadCloser {
+	ret := &Reader{
 		r:     r,
-		bufCh: make(chan []byte, 0),
+		bufCh: make(chan []byte),
 		err:   nil,
 	}
 	ret.buf[0] = make([]byte, prefetchSize/2)
@@ -28,7 +30,7 @@ func NewPrefetchReader(r io.ReadCloser, prefetchSize int) io.ReadCloser {
 	return ret
 }
 
-func (r *PrefetchReader) run() {
+func (r *Reader) run() {
 	for {
 		r.bufIdx = (r.bufIdx + 1) % 2
 		buf := r.buf[r.bufIdx]
@@ -43,7 +45,8 @@ func (r *PrefetchReader) run() {
 	}
 }
 
-func (r *PrefetchReader) Read(data []byte) (int, error) {
+// Read implements io.Reader.
+func (r *Reader) Read(data []byte) (int, error) {
 	total := 0
 	for {
 		if r.curBufReader == nil {
@@ -73,6 +76,7 @@ func (r *PrefetchReader) Read(data []byte) (int, error) {
 	}
 }
 
-func (r *PrefetchReader) Close() error {
+// Close implements io.Closer.
+func (r *Reader) Close() error {
 	return r.r.Close()
 }
