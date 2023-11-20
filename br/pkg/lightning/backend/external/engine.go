@@ -45,7 +45,7 @@ import (
 // but, ks3 supporter says there's no such limit on connections.
 // And our target for global sort is AWS s3, this default value might not fit well.
 // TODO: adjust it according to cloud storage.
-const maxCloudStorageConnections = 2000
+const maxCloudStorageConnections = 8000
 
 // Engine stored sorted key/value pairs in an external storage.
 type Engine struct {
@@ -146,13 +146,9 @@ func (e *Engine) getAdjustedConcurrency() int {
 		// estimate we will open at most 1000 files, so if e.dataFiles is small we can
 		// try to concurrently process ranges.
 		adjusted := maxCloudStorageConnections / len(e.dataFiles)
-		res := min(adjusted, 8)
-		logutil.BgLogger().Info("ywq test engine concurrency", zap.Any("res", res), zap.Any("adjuested", adjusted))
 		return min(adjusted, 8)
 	}
 	adjusted := min(e.workerConcurrency, maxCloudStorageConnections/len(e.dataFiles))
-	res := max(adjusted, 1)
-	logutil.BgLogger().Info("ywq test engine concurrency", zap.Any("res", res), zap.Any("adjuested", adjusted))
 	return max(adjusted, 1)
 }
 
@@ -172,8 +168,8 @@ func (e *Engine) LoadIngestData(
 		zap.Int("concurrency", concurrency),
 		zap.Int("ranges", len(regionRanges)),
 		zap.Int("range-groups", len(rangeGroups)),
-		zap.Int("data-files", len(e.dataFiles)),
-		zap.Int("stat-files", len(e.statsFiles)),
+		zap.Int("num-data-files", len(e.dataFiles)),
+		zap.Int("num-stat-files", len(e.statsFiles)),
 		zap.Bool("check-hotspot", e.checkHotspot),
 	)
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
@@ -369,11 +365,6 @@ func (e *Engine) SplitRanges(
 	logger log.Logger,
 ) ([]common.Range, error) {
 	splitKeys := e.splitKeys
-	for i, key := range splitKeys {
-		logger.Info("engine split key",
-			zap.Int("idx", i),
-			zap.String("key", hex.EncodeToString(key)))
-	}
 	ranges := make([]common.Range, 0, len(splitKeys)+1)
 	ranges = append(ranges, common.Range{Start: startKey})
 	for i := 0; i < len(splitKeys); i++ {

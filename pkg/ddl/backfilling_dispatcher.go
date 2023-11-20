@@ -175,9 +175,6 @@ func skipMergeSort(stats []external.MultipleFilesStat) bool {
 	failpoint.Inject("forceMergeSort", func() {
 		failpoint.Return(false)
 	})
-	if variable.DDLForceMergeSort.Load() {
-		return false
-	}
 	return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
 }
 
@@ -403,13 +400,6 @@ func generateGlobalSortIngestPlan(
 	logger *zap.Logger,
 ) ([][]byte, error) {
 	startKeyFromSumm, endKeyFromSumm, totalSize, dataFiles, statFiles, err := getSummaryFromLastStep(taskHandle, task.ID, step)
-	logger.Info("ywq test plan",
-		zap.Any("startKey", hex.EncodeToString(startKeyFromSumm)),
-		zap.Any("endKey", hex.EncodeToString(endKeyFromSumm)),
-		zap.Any("totalSize", totalSize),
-		zap.Any("dataFiles", dataFiles),
-		zap.Any("statFiles", statFiles),
-	)
 	if err != nil {
 		return nil, err
 	}
@@ -445,10 +435,6 @@ func generateGlobalSortIngestPlan(
 		logger.Info("split subtask range",
 			zap.String("startKey", hex.EncodeToString(startKey)),
 			zap.String("endKey", hex.EncodeToString(endKey)))
-
-		for i, key := range rangeSplitKeys {
-			logger.Info("split key", zap.Int("idx", i), zap.String("key", hex.EncodeToString(key)))
-		}
 
 		if startKey.Cmp(endKey) >= 0 {
 			return nil, errors.Errorf("invalid range, startKey: %s, endKey: %s",

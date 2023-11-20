@@ -1276,22 +1276,6 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(EnableDistTask.Load()), nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBDDLForceMergeSort, Value: BoolToOnOff(DefTiDBDDLForceMergeSort), Type: TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		if DDLForceMergeSort.Load() != TiDBOptOn(val) {
-			DDLForceMergeSort.Store(TiDBOptOn(val))
-		}
-		return nil
-	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-		return BoolToOnOff(DDLForceMergeSort.Load()), nil
-	}},
-	{Scope: ScopeGlobal, Name: TiDBDDLMergeSortV2, Value: BoolToOnOff(DefTiDBDDLMergeSortV2), Type: TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		if DDLMergeSortV2.Load() != TiDBOptOn(val) {
-			DDLMergeSortV2.Store(TiDBOptOn(val))
-		}
-		return nil
-	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-		return BoolToOnOff(DDLMergeSortV2.Load()), nil
-	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableNoopVariables, Value: BoolToOnOff(DefTiDBEnableNoopVariables), Type: TypeEnum, PossibleValues: []string{Off, On}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		EnableNoopVariables.Store(TiDBOptOn(val))
 		return nil

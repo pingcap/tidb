@@ -19,10 +19,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
-	"fmt"
-	"os"
 	"path/filepath"
-	"runtime/pprof"
 	"slices"
 	"strconv"
 	"time"
@@ -69,32 +66,31 @@ type OneFileWriter struct {
 	statWriter storage.ExternalFileWriter
 	logger     *zap.Logger
 	useSort    bool
-
-	fileIdx int
 }
 
-func (w *OneFileWriter) initWriter(ctx context.Context, partSize int) (
+// initWriter inits the underlying dataFile/statFile path, dataWriter/statWriter for OneFileWriter.
+func (w *OneFileWriter) initWriter(ctx context.Context, partSize int64) (
 	err error,
 ) {
 	w.dataFile = filepath.Join(w.filenamePrefix, strconv.Itoa(0))
-	w.dataWriter, err = w.store.Create(ctx, w.dataFile, &storage.WriterOption{Concurrency: 20, PartSize: (int64)(partSize)})
+	w.dataWriter, err = w.store.Create(ctx, w.dataFile, &storage.WriterOption{Concurrency: 20, PartSize: partSize})
 	if err != nil {
 		return err
 	}
 	w.statFile = filepath.Join(w.filenamePrefix+statSuffix, strconv.Itoa(0))
-	w.statWriter, err = w.store.Create(ctx, w.statFile, &storage.WriterOption{Concurrency: 20, PartSize: (int64)(5 * size.MB)})
+	w.statWriter, err = w.store.Create(ctx, w.statFile, &storage.WriterOption{Concurrency: 20, PartSize: int64(5 * size.MB)})
 	if err != nil {
 		_ = w.dataWriter.Close(ctx)
 		return err
 	}
-	logutil.BgLogger().Info("one file writer", zap.String("data-file", w.dataFile), zap.String("stat-file", w.statFile))
-	w.fileIdx = 0
+	w.logger.Info("one file writer", zap.String("data-file", w.dataFile), zap.String("stat-file", w.statFile))
 	return nil
 }
 
-func (w *OneFileWriter) Init(ctx context.Context, partSize int) (err error) {
-	err = w.initWriter(ctx, partSize)
+// Init inits the OneFileWriter and its underlying KeyValueStore.
+func (w *OneFileWriter) Init(ctx context.Context, partSize int64) (err error) {
 	w.logger = logutil.Logger(ctx)
+	err = w.initWriter(ctx, partSize)
 	if err != nil {
 		return err
 	}
@@ -210,13 +206,6 @@ func (w *OneFileWriter) flushKVs(ctx context.Context, fromClose bool) (err error
 		if err != nil {
 			return err
 		}
-	}
-	{
-		// profile...
-		file, _ := os.Create(fmt.Sprintf("heap-profile-%d.prof", w.fileIdx))
-		w.fileIdx++
-		// check heap profile to see the memory usage is expected
-		err = pprof.WriteHeapProfile(file)
 	}
 
 	w.kvStore.Close()

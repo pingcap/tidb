@@ -8,7 +8,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
@@ -17,7 +16,7 @@ import (
 
 // MergeOverlappingFiles reads from given files whose key range may overlap
 // and writes to new sorted, nonoverlapping files.
-func MergeOverlappingFiles(ctx context.Context, paths []string, store storage.ExternalStorage, partSize int, readBufferSize int,
+func MergeOverlappingFiles(ctx context.Context, paths []string, store storage.ExternalStorage, partSize int64, readBufferSize int,
 	newFilePrefix string, blockSize int, writeBatchCount uint64, propSizeDist uint64, propKeysDist uint64,
 	onClose OnCloseFunc, concurrency int, checkHotspot bool) error {
 	var dataFilesSlice [][]string
@@ -39,32 +38,15 @@ func MergeOverlappingFiles(ctx context.Context, paths []string, store storage.Ex
 		zap.Int("concurrency", concurrency))
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(concurrency)
-	partSize = int(max(5*size.MB+100, uint64(partSize)))
+	partSize = max(int64(5*size.MB), partSize+int64(1*size.MB))
 	for _, files := range dataFilesSlice {
 		files := files
 		eg.Go(func() error {
-			if variable.DDLMergeSortV2.Load() {
-				return MergeOverlappingFilesV2(
-					ctx,
-					files,
-					store,
-					partSize,
-					readBufferSize,
-					newFilePrefix,
-					uuid.New().String(),
-					DefaultMemSizeLimit,
-					blockSize,
-					writeBatchCount,
-					propSizeDist,
-					propKeysDist,
-					onClose,
-					checkHotspot,
-				)
-			}
-			return mergeOverlappingFilesImpl(
+			return MergeOverlappingFilesV2(
 				egCtx,
 				files,
 				store,
+				partSize,
 				readBufferSize,
 				newFilePrefix,
 				uuid.New().String(),
@@ -81,6 +63,7 @@ func MergeOverlappingFiles(ctx context.Context, paths []string, store storage.Ex
 	return eg.Wait()
 }
 
+// unused for now.
 func mergeOverlappingFilesImpl(ctx context.Context,
 	paths []string,
 	store storage.ExternalStorage,
@@ -155,7 +138,7 @@ func MergeOverlappingFilesV2(
 	ctx context.Context,
 	paths []string,
 	store storage.ExternalStorage,
-	partSize int,
+	partSize int64,
 	readBufferSize int,
 	newFilePrefix string,
 	writerID string,

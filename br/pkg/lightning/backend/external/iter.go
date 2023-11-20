@@ -33,7 +33,6 @@ type heapElem interface {
 	// owned memory. Sometimes to reduce allocation the memory is shared between
 	// multiple elements and it's needed to call it before we free the shared memory.
 	cloneInnerFields()
-	len() int
 }
 
 type sortedReader[T heapElem] interface {
@@ -188,7 +187,7 @@ func newMergeIter[
 			elem:      e,
 			readerIdx: j,
 		})
-		sampleKeySize += e.len()
+		sampleKeySize += len(e.sortKey())
 		sampleKeyCnt++
 	}
 	// We check the hotspot when the elements size is almost the same as the concurrent reader buffer size.
@@ -324,10 +323,6 @@ func (p *kvPair) cloneInnerFields() {
 	p.value = append([]byte{}, p.value...)
 }
 
-func (p *kvPair) len() int {
-	return len(p.key) + len(p.value)
-}
-
 type kvReaderProxy struct {
 	p string
 	r *kvReader
@@ -437,10 +432,6 @@ func (p *rangeProperty) sortKey() []byte {
 func (p *rangeProperty) cloneInnerFields() {
 	p.firstKey = append([]byte{}, p.firstKey...)
 	p.lastKey = append([]byte{}, p.lastKey...)
-}
-
-func (p *rangeProperty) len() int {
-	return len(p.firstKey) + len(p.lastKey) + 24
 }
 
 type statReaderProxy struct {

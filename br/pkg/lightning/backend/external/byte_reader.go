@@ -27,9 +27,9 @@ import (
 var (
 	// ConcurrentReaderBufferSizePerConc is the buffer size for concurrent reader per
 	// concurrency.
-	ConcurrentReaderBufferSizePerConc = 2 * 1024 * 1024
+	ConcurrentReaderBufferSizePerConc = 4 * 1024 * 1024
 	// ConcurrentReaderConcurrency is the concurrency for concurrent reader.
-	ConcurrentReaderConcurrency = 16
+	ConcurrentReaderConcurrency = 8
 )
 
 // byteReader provides structured reading on a byte stream of external storage.
