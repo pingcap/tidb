@@ -175,7 +175,7 @@ func writeExternalOneFile(s *writeTestSuite) {
 		s.beforeCreateWriter()
 	}
 	writer := builder.BuildOneFile(
-		s.store, "test/external", "writerID", false)
+		s.store, "test/external", "writerID")
 	_ = writer.Init(ctx, 20*1024*1024)
 	key, val, h := s.source.next()
 	for key != nil {

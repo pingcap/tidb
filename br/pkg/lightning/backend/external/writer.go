@@ -206,7 +206,6 @@ func (b *WriterBuilder) BuildOneFile(
 	store storage.ExternalStorage,
 	prefix string,
 	writerID string,
-	useSort bool,
 ) *OneFileWriter {
 	filenamePrefix := filepath.Join(prefix, writerID)
 	keyAdapter := common.KeyAdapter(common.NoopKeyAdapter{})
@@ -228,7 +227,6 @@ func (b *WriterBuilder) BuildOneFile(
 		kvStore:        nil,
 		onClose:        b.onClose,
 		closed:         false,
-		useSort:        useSort,
 	}
 	ret.multiFileStat.Filenames = make([][2]string, 0, 1)
 	return ret

@@ -42,7 +42,7 @@ func TestOnefileWriter(t *testing.T) {
 	writer := NewWriterBuilder().
 		SetPropSizeDistance(100).
 		SetPropKeysDistance(2).
-		BuildOneFile(memStore, "/test", "0", true)
+		BuildOneFile(memStore, "/test", "0")
 
 	err := writer.Init(ctx, 5*1024*1024)
 	require.NoError(t, err)
@@ -67,10 +67,6 @@ func TestOnefileWriter(t *testing.T) {
 
 	err = writer.Close(ctx)
 	require.NoError(t, err)
-
-	slices.SortFunc(kvs, func(i, j common.KvPair) int {
-		return bytes.Compare(i.Key, j.Key)
-	})
 
 	bufSize := rand.Intn(100) + 1
 	kvReader, err := newKVReader(ctx, "/test/0/0", memStore, 0, bufSize)
@@ -127,7 +123,7 @@ func TestMergeOverlappingFilesV2(t *testing.T) {
 		ctx,
 		[]string{"/test/0/0", "/test/0/1", "/test/0/2", "/test/0/3", "/test/0/4"},
 		memStore,
-		int(5*size.MB),
+		int64(5*size.MB),
 		100,
 		"/test2",
 		"mergeID",
@@ -188,7 +184,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 	writer := NewWriterBuilder().
 		SetPropKeysDistance(2).
 		SetMemorySizeLimit(1000).
-		BuildOneFile(memStore, "/test", "0", false)
+		BuildOneFile(memStore, "/test", "0")
 
 	err := writer.Init(ctx, 5*1024*1024)
 	require.NoError(t, err)
@@ -221,7 +217,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 		ctx,
 		[]string{"/test/0/0"},
 		memStore,
-		int(5*size.MB),
+		int64(5*size.MB),
 		100,
 		"/test2",
 		"mergeID",

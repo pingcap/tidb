@@ -362,7 +362,7 @@ func (e *Engine) GetKeyRange() (startKey []byte, endKey []byte, err error) {
 func (e *Engine) SplitRanges(
 	startKey, endKey []byte,
 	_, _ int64,
-	logger log.Logger,
+	_ log.Logger,
 ) ([]common.Range, error) {
 	splitKeys := e.splitKeys
 	ranges := make([]common.Range, 0, len(splitKeys)+1)

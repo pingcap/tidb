@@ -15,20 +15,16 @@
 package external
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/hex"
 	"path/filepath"
-	"slices"
 	"strconv"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
@@ -65,7 +61,6 @@ type OneFileWriter struct {
 	dataWriter storage.ExternalFileWriter
 	statWriter storage.ExternalFileWriter
 	logger     *zap.Logger
-	useSort    bool
 }
 
 // initWriter inits the underlying dataFile/statFile path, dataWriter/statWriter for OneFileWriter.
@@ -185,22 +180,7 @@ func (w *OneFileWriter) flushKVs(ctx context.Context, fromClose bool) (err error
 	if len(w.kvLocations) == 0 {
 		return nil
 	}
-	var (
-		savedBytes   uint64
-		sortDuration time.Duration
-	)
-
-	savedBytes = w.batchSize
-
-	if w.useSort {
-		sortStart := time.Now()
-		slices.SortFunc(w.kvLocations, func(i, j kvLocation) int {
-			return bytes.Compare(w.getKeyByLoc(i), w.getKeyByLoc(j))
-		})
-		sortDuration = time.Since(sortStart)
-		metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("sort").Observe(sortDuration.Seconds())
-		metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort").Observe(float64(savedBytes) / 1024.0 / 1024.0 / sortDuration.Seconds())
-	}
+	
 	for _, pair := range w.kvLocations {
 		err = w.kvStore.addEncodedData(w.getEncodedKVData(pair))
 		if err != nil {
