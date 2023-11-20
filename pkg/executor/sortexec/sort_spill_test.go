@@ -245,7 +245,6 @@ func multiPartitionCase(t *testing.T, ctx *mock.Context, sortCase *testutil.Sort
 	require.True(t, checkCorrectness(schema, exe, dataSource, resultChunks))
 }
 
-// TODO validate the correctness
 func TestSortSpillDisk(t *testing.T) {
 	sortexec.SetSmallSpillChunkSizeForTest()
 	ctx := mock.NewContext()
@@ -256,4 +255,6 @@ func TestSortSpillDisk(t *testing.T) {
 	multiPartitionCase(t, ctx, sortCase)
 }
 
-// TODO test sort spill with random fail
+func TestSortSpillDiskRandomFail(t *testing.T) {
+
+}
