@@ -159,7 +159,7 @@ func switchPointToSortKey(sctx sessionctx.Context, inputP *point, newTp *types.F
 	}
 	sortKey := p.value.GetBytes()
 	if collate.NewCollationEnabled() {
-		sortKey = collate.GetCollator(newTp.GetCollate()).Key(string(hack.String(sortKey)))
+		sortKey = collate.GetCollator(newTp.GetCollate()).KeyWithoutTrimRightSpace(string(hack.String(sortKey)))
 	}
 	return &point{value: types.NewBytesDatum(sortKey), excl: p.excl, start: p.start}, nil
 }
