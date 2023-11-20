@@ -186,7 +186,6 @@ func checkCorrectness(schema *expression.Schema, exe *sortexec.SortExec, dataSou
 	return checker.check(resultChunks)
 }
 
-// TODO unify these three tests with common codes
 func onePartitionAndAllDataInMemoryCase(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCase) {
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
