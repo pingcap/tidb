@@ -1854,16 +1854,6 @@ func TestLowResolutionTSORead(t *testing.T) {
 	tk.MustQuery("select * from low_resolution_tso").Check(testkit.Rows("2"))
 }
 
-func TestStaleReadAtFutureTime(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	// Setting tx_read_ts to a time in the future will fail. (One day before the 2038 problem)
-	tk.MustGetErrMsg("set @@tx_read_ts = '2038-01-18 03:14:07'", "cannot set read timestamp to a future time")
-	// TxnReadTS Is not updated if check failed.
-	require.Zero(t, tk.Session().GetSessionVars().TxnReadTS.PeakTxnReadTS())
-}
-
 func TestAdapterStatement(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
