@@ -1388,14 +1388,14 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV() {
 	}{
 		{
 			true,
-			"(.*)Skip the csv size check, because config.StrictFormat is true(.*)",
+			"(.*)Skip the data file size check, because config.StrictFormat is true(.*)",
 			true,
 			0,
 			nil,
 		},
 		{
 			false,
-			"(.*)Source csv files size is proper(.*)",
+			"(.*)Source data files size is proper(.*)",
 			true,
 			0,
 			[]*mydump.MDDatabaseMeta{
@@ -1416,7 +1416,7 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV() {
 		},
 		{
 			false,
-			"(.*)large csv: /testPath file exists(.*)",
+			"(.*)large data file: /testPath file exists(.*)",
 			true,
 			1,
 			[]*mydump.MDDatabaseMeta{
