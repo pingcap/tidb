@@ -60,7 +60,7 @@ func TestIter(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		w := NewWriterBuilder().
-			SetMemorySizeLimit(uint64(rand.Intn(100)+1)).
+			SetMemorySizeLimit(uint64(rand.Intn(200)+41)).
 			SetPropSizeDistance(uint64(rand.Intn(50)+1)).
 			SetPropKeysDistance(uint64(rand.Intn(10)+1)).
 			Build(store, "/subtask", strconv.Itoa(i))
