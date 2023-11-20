@@ -401,3 +401,13 @@ func (e *SortExec) GetRowNumInOnePartitionForTest(idx int) int {
 func (e *SortExec) GetSortPartitionListLenForTest() int {
 	return len(e.sortPartitionList)
 }
+
+func (e *SortExec) GetSortMetaForTest() (keyColumns []int, keyCmpFuncs []chunk.CompareFunc, byItemsDesc []bool) {
+	keyColumns = e.keyColumns
+	keyCmpFuncs = e.keyCmpFuncs
+	byItemsDesc = make([]bool, len(e.ByItems))
+	for i, byItem := range e.ByItems {
+		byItemsDesc[i] = byItem.Desc
+	}
+	return
+}

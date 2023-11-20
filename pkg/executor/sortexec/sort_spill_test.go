@@ -16,6 +16,7 @@ package sortexec_test
 
 import (
 	"context"
+	"sort"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -23,17 +24,125 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
-func buildDataSource(ctx *mock.Context, sortCase *testutil.SortCase) *testutil.MockDataSource {
+// It will sort values in memory and compare them with the results produced by sort executor.
+type resultChecker struct {
+	schema      *expression.Schema
+	keyColumns  []int
+	keyCmpFuncs []chunk.CompareFunc
+	byItemsDesc []bool
+
+	// Initially, savedChunks are not sorted
+	savedChunks []*chunk.Chunk
+	rowPtrs     []chunk.RowPtr
+}
+
+func newResultChecker(schema *expression.Schema, keyColumns []int, keyCmpFuncs []chunk.CompareFunc, byItemsDesc []bool, savedChunks []*chunk.Chunk) *resultChecker {
+	checker := resultChecker{}
+	checker.schema = schema
+	checker.keyColumns = keyColumns
+	checker.keyCmpFuncs = keyCmpFuncs
+	checker.byItemsDesc = byItemsDesc
+	checker.savedChunks = savedChunks
+	return &checker
+}
+
+func (r *resultChecker) lessRow(rowI, rowJ chunk.Row) bool {
+	for i, colIdx := range r.keyColumns {
+		cmpFunc := r.keyCmpFuncs[i]
+		if cmpFunc != nil {
+			cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
+			if r.byItemsDesc[i] {
+				cmp = -cmp
+			}
+			if cmp < 0 {
+				return true
+			} else if cmp > 0 {
+				return false
+			}
+		}
+	}
+	return false
+}
+
+func (r *resultChecker) keyColumnsLess(i, j int) bool {
+	rowI := r.savedChunks[r.rowPtrs[i].ChkIdx].GetRow(int(r.rowPtrs[i].RowIdx))
+	rowJ := r.savedChunks[r.rowPtrs[j].ChkIdx].GetRow(int(r.rowPtrs[j].RowIdx))
+	return r.lessRow(rowI, rowJ)
+}
+
+func (r *resultChecker) getSavedChunksRowNumber() int {
+	rowNum := 0
+	for _, chk := range r.savedChunks {
+		rowNum += chk.NumRows()
+	}
+	return rowNum
+}
+
+func (r *resultChecker) initRowPtrs() {
+	r.rowPtrs = make([]chunk.RowPtr, 0, r.getSavedChunksRowNumber())
+	chunkNum := len(r.savedChunks)
+	for chkIdx := 0; chkIdx < chunkNum; chkIdx++ {
+		chk := r.savedChunks[chkIdx]
+		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
+			r.rowPtrs = append(r.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
+		}
+	}
+}
+
+func (r *resultChecker) check(resultChunks []*chunk.Chunk) bool {
+	if r.rowPtrs == nil {
+		r.initRowPtrs()
+		sort.Slice(r.rowPtrs, r.keyColumnsLess)
+	}
+
+	cursor := 0
+	fieldTypes := make([]*types.FieldType, 0)
+	for _, col := range r.schema.Columns {
+		fieldTypes = append(fieldTypes, col.GetType())
+	}
+
+	// Check row number
+	totalResRowNum := 0
+	for _, chk := range resultChunks {
+		totalResRowNum += chk.NumRows()
+	}
+	if totalResRowNum != len(r.rowPtrs) {
+		return false
+	}
+
+	for _, chk := range resultChunks {
+		rowNum := chk.NumRows()
+		for i := 0; i < rowNum; i++ {
+			resRow := chk.GetRow(i)
+			res := resRow.ToString(fieldTypes)
+
+			expectRow := r.savedChunks[r.rowPtrs[cursor].ChkIdx].GetRow(int(r.rowPtrs[cursor].RowIdx))
+			expect := expectRow.ToString(fieldTypes)
+
+			if res != expect {
+				return false
+			}
+			cursor++
+		}
+	}
+
+	return true
+}
+
+func buildDataSource(ctx *mock.Context, sortCase *testutil.SortCase, schema *expression.Schema) *testutil.MockDataSource {
 	opt := testutil.MockDataSourceParameters{
-		DataSchema: expression.NewSchema(sortCase.Columns()...),
+		DataSchema: schema,
 		Rows:       sortCase.Rows,
 		Ctx:        sortCase.Ctx,
 		Ndvs:       sortCase.Ndvs,
+		SaveChunks: true,
 	}
 	return testutil.BuildMockDataSource(opt)
 }
@@ -53,11 +162,12 @@ func buildSortExec(ctx *mock.Context, sortCase *testutil.SortCase, dataSource *t
 	return exe
 }
 
-func executeSortExecutor(t *testing.T, exe *sortexec.SortExec) {
+func executeSortExecutor(t *testing.T, exe *sortexec.SortExec) []*chunk.Chunk {
 	tmpCtx := context.Background()
 	err := exe.Open(tmpCtx)
 	require.NoError(t, err)
 
+	resultChunks := make([]*chunk.Chunk, 0)
 	chk := exec.NewFirstChunk(exe)
 	for {
 		err = exe.Next(tmpCtx, chk)
@@ -65,24 +175,36 @@ func executeSortExecutor(t *testing.T, exe *sortexec.SortExec) {
 		if chk.NumRows() == 0 {
 			break
 		}
+		resultChunks = append(resultChunks, chk.CopyConstruct())
 	}
+	return resultChunks
 }
 
+func checkCorrectness(schema *expression.Schema, exe *sortexec.SortExec, dataSource *testutil.MockDataSource, resultChunks []*chunk.Chunk) bool {
+	keyColumns, keyCmpFuncs, byItemsDesc := exe.GetSortMetaForTest()
+	checker := newResultChecker(schema, keyColumns, keyCmpFuncs, byItemsDesc, dataSource.SavedChunks)
+	return checker.check(resultChunks)
+}
+
+// TODO unify these three tests with common codes
 func onePartitionAndAllDataInMemoryCase(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCase) {
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 1048576)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	dataSource := buildDataSource(ctx, sortCase)
+	schema := expression.NewSchema(sortCase.Columns()...)
+	dataSource := buildDataSource(ctx, sortCase, schema)
 	exe := buildSortExec(ctx, sortCase, dataSource)
-	executeSortExecutor(t, exe)
+	resultChunks := executeSortExecutor(t, exe)
 
 	require.Equal(t, exe.GetSortPartitionListLenForTest(), 1)
 	require.Equal(t, false, exe.IsSpillTriggeredInOnePartitionForTest(0))
 	require.Equal(t, 2048, exe.GetRowNumInOnePartitionForTest(0))
 	err := exe.Close()
 	require.NoError(t, err)
+
+	require.True(t, checkCorrectness(schema, exe, dataSource, resultChunks))
 }
 
 func onePartitionAndAllDataInDiskCase(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCase) {
@@ -91,15 +213,18 @@ func onePartitionAndAllDataInDiskCase(t *testing.T, ctx *mock.Context, sortCase 
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 50000)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	dataSource := buildDataSource(ctx, sortCase)
+	schema := expression.NewSchema(sortCase.Columns()...)
+	dataSource := buildDataSource(ctx, sortCase, schema)
 	exe := buildSortExec(ctx, sortCase, dataSource)
-	executeSortExecutor(t, exe)
+	resultChunks := executeSortExecutor(t, exe)
 
 	require.Equal(t, exe.GetSortPartitionListLenForTest(), 1)
 	require.Equal(t, true, exe.IsSpillTriggeredInOnePartitionForTest(0))
 	require.Equal(t, 2048, exe.GetRowNumInOnePartitionForTest(0))
 	err := exe.Close()
 	require.NoError(t, err)
+
+	require.True(t, checkCorrectness(schema, exe, dataSource, resultChunks))
 }
 
 func multiPartitionCase(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCase) {
@@ -108,14 +233,17 @@ func multiPartitionCase(t *testing.T, ctx *mock.Context, sortCase *testutil.Sort
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 10000)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	dataSource := buildDataSource(ctx, sortCase)
+	schema := expression.NewSchema(sortCase.Columns()...)
+	dataSource := buildDataSource(ctx, sortCase, schema)
 	exe := buildSortExec(ctx, sortCase, dataSource)
-	executeSortExecutor(t, exe)
+	resultChunks := executeSortExecutor(t, exe)
 
 	require.Greater(t, exe.GetSortPartitionListLenForTest(), 1)
 	require.Equal(t, true, exe.IsSpillTriggeredInOnePartitionForTest(0))
 	err := exe.Close()
 	require.NoError(t, err)
+
+	require.True(t, checkCorrectness(schema, exe, dataSource, resultChunks))
 }
 
 // TODO validate the correctness

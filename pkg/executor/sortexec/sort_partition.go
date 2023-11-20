@@ -113,6 +113,17 @@ func (s *sortPartition) add(chk *chunk.Chunk) error {
 	return nil
 }
 
+func (s *sortPartition) initRowPtrs() {
+	s.rowPtrs = make([]chunk.RowPtr, 0, s.inMemory.Len()) // The memory usage has been tracked in SortPartition.add() function
+	chunkNum := s.inMemory.NumChunks()
+	for chkIdx := 0; chkIdx < chunkNum; chkIdx++ {
+		chk := s.inMemory.GetChunk(chkIdx)
+		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
+			s.rowPtrs = append(s.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
+		}
+	}
+}
+
 // sort inits pointers and sorts the records.
 // We shouldn't call this function after spill.
 func (s *sortPartition) sort() (ret error) {
@@ -131,14 +142,7 @@ func (s *sortPartition) sort() (ret error) {
 		return
 	}
 
-	s.rowPtrs = make([]chunk.RowPtr, 0, s.inMemory.Len()) // The memory usage has been tracked in SortPartition.add() function
-	chunkNum := s.inMemory.NumChunks()
-	for chkIdx := 0; chkIdx < chunkNum; chkIdx++ {
-		chk := s.inMemory.GetChunk(chkIdx)
-		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
-			s.rowPtrs = append(s.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
-		}
-	}
+	s.initRowPtrs()
 
 	failpoint.Inject("errorDuringSortRowContainer", func(val failpoint.Value) {
 		if val.(bool) {
