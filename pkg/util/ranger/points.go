@@ -140,7 +140,7 @@ func rangePointEqualValueLess(a, b *point) bool {
 func switchPointsToSortKey(sctx sessionctx.Context, inputPs []*point, newTp *types.FieldType) ([]*point, error) {
 	ps := make([]*point, 0, len(inputPs))
 	for _, p := range inputPs {
-		np, err := switchPointToSortKey(sctx, p, newTp)
+		np, err := switchPointToSortKey(sctx, p, newTp, false)
 		if err != nil {
 			return nil, err
 		}
@@ -149,7 +149,7 @@ func switchPointsToSortKey(sctx sessionctx.Context, inputPs []*point, newTp *typ
 	return ps, nil
 }
 
-func switchPointToSortKey(sctx sessionctx.Context, inputP *point, newTp *types.FieldType) (*point, error) {
+func switchPointToSortKey(sctx sessionctx.Context, inputP *point, newTp *types.FieldType, noTrimRightSpace bool) (*point, error) {
 	p, err := convertPoint(sctx, inputP, newTp)
 	if err != nil {
 		return nil, err
@@ -159,7 +159,11 @@ func switchPointToSortKey(sctx sessionctx.Context, inputP *point, newTp *types.F
 	}
 	sortKey := p.value.GetBytes()
 	if collate.NewCollationEnabled() {
-		sortKey = collate.GetCollator(newTp.GetCollate()).KeyWithoutTrimRightSpace(string(hack.String(sortKey)))
+		if noTrimRightSpace {
+			sortKey = collate.GetCollator(newTp.GetCollate()).KeyWithoutTrimRightSpace(string(hack.String(sortKey)))
+		} else {
+			sortKey = collate.GetCollator(newTp.GetCollate()).Key(string(hack.String(sortKey)))
+		}
 	}
 	return &point{value: types.NewBytesDatum(sortKey), excl: p.excl, start: p.start}, nil
 }
@@ -807,7 +811,7 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction, newTp
 	if prefixLen != types.UnspecifiedLength {
 		fixPrefixPointRange(startPoint, nil, prefixLen, tpOfPattern)
 	}
-	startPoint, err = switchPointToSortKey(r.sctx, startPoint, newTp)
+	startPoint, err = switchPointToSortKey(r.sctx, startPoint, newTp, true)
 	if err != nil {
 		r.err = errors.Trace(err)
 		return getFullRange()
