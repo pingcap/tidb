@@ -243,7 +243,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	e.partition.getMemTracker().SetLabel(memory.LabelForRowChunks)
 
 	if variable.EnableTmpStorageOnOOM.Load() {
-		e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.spillAction)
+		e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
 		e.partition.getDiskTracker().AttachTo(e.diskTracker)
 		e.partition.getDiskTracker().SetLabel(memory.LabelForRowChunks)
 	}
