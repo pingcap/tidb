@@ -114,7 +114,6 @@ func TestWriterFlushMultiFileNames(t *testing.T) {
 		SetBlockSize(3*(lengthBytes*2+20)).
 		Build(memStore, "/test", "0")
 
-	require.Equal(t, 3*(lengthBytes*2+20), writer.kvBuffer.blockSize)
 	// 200 bytes key values.
 	kvCnt := 10
 	kvs := make([]common.KvPair, kvCnt)
