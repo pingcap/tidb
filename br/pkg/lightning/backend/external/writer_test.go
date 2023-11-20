@@ -158,7 +158,6 @@ func TestWriterDuplicateDetect(t *testing.T) {
 	writer := NewWriterBuilder().
 		SetPropKeysDistance(2).
 		SetMemorySizeLimit(1000).
-		SetBlockSize(100).
 		SetKeyDuplicationEncoding(true).
 		Build(memStore, "/test", "0")
 	kvCount := 20
