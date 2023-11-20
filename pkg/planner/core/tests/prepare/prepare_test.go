@@ -104,7 +104,6 @@ func TestRandomFlushPlanCache(t *testing.T) {
 		execStmts = append(execStmts, execStmt)
 	}
 
-	rand.Seed(time.Now().Unix())
 	for i := 0; i < 10; i++ {
 		// Warm up to make sure all the plans are in the cache.
 		for _, execStmt := range execStmts {

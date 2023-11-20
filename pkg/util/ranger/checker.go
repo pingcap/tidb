@@ -18,12 +18,14 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 )
 
 // conditionChecker checks if this condition can be pushed to index planner.
 type conditionChecker struct {
+	ctx                      sessionctx.Context
 	checkerCol               *expression.Column
 	length                   int
 	optPrefixIndexSingleScan bool
@@ -209,7 +211,7 @@ func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) (isA
 func (c *conditionChecker) matchColumn(expr expression.Expression) bool {
 	// Check if virtual expression column matched
 	if c.checkerCol != nil {
-		return c.checkerCol.EqualByExprAndID(nil, expr)
+		return c.checkerCol.EqualByExprAndID(c.ctx, expr)
 	}
 	return false
 }

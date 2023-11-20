@@ -2508,31 +2508,3 @@ func TestForeignKeyAndLockView(t *testing.T) {
 	tk.MustGetErrMsg("update t1 set id=2", "[executor:1213]Deadlock found when trying to get lock; try restarting transaction")
 	wg.Wait()
 }
-
-func TestForeignKeyAndMemoryTracker(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@foreign_key_checks=1")
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (id int auto_increment key, pid int, name varchar(200), index(pid));")
-	tk.MustExec("insert into t1 (name) values ('abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz');")
-	for i := 0; i < 8; i++ {
-		tk.MustExec("insert into t1 (name) select name from t1;")
-	}
-	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("256"))
-	tk.MustExec("update t1 set pid=1 where id>1")
-	tk.MustExec("alter table t1 add foreign key (pid) references t1 (id) on update cascade")
-	tk.MustQuery("select sum(id) from t1").Check(testkit.Rows("32896"))
-	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
-	tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
-	tk.MustExec("set @@tidb_mem_quota_query=40960;")
-	// foreign key cascade behaviour will exceed memory quota.
-	err := tk.ExecToErr("update t1 set id=id+100000 where id=1")
-	require.Error(t, err)
-	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
-	tk.MustQuery("select id,pid from t1 where id = 1").Check(testkit.Rows("1 <nil>"))
-	tk.MustExec("set @@foreign_key_checks=0")
-	// After disable foreign_key_checks, following DML will execute successful.
-	tk.MustExec("update t1 set id=id+100000 where id=1")
-	tk.MustQuery("select id,pid from t1 where id<3 or pid is null order by id").Check(testkit.Rows("2 1", "100001 <nil>"))
-}

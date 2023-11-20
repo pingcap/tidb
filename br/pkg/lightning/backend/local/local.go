@@ -1738,6 +1738,9 @@ func (local *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) err
 			extEngine := engineI.(*external.Engine)
 			return extEngine.Reset()
 		}
+
+		log.FromContext(ctx).Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
+		return nil
 	}
 	defer localEngine.unlock()
 	if err := localEngine.Close(); err != nil {
@@ -1774,6 +1777,8 @@ func (local *Backend) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) e
 			delete(local.externalEngine, engineUUID)
 			return retErr
 		}
+		log.FromContext(ctx).Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
+		return nil
 	}
 	defer localEngine.unlock()
 

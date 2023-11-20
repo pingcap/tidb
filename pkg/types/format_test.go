@@ -68,7 +68,7 @@ func TestTimeFormatMethod(t *testing.T) {
 		},
 	}
 	for i, tt := range tblDate {
-		tm, err := types.ParseTime(typeCtx, tt.Input, mysql.TypeDatetime, 6, nil)
+		tm, err := types.ParseTime(typeCtx, tt.Input, mysql.TypeDatetime, 6)
 		require.NoErrorf(t, err, "Parse time fail: %s", tt.Input)
 
 		str, err := tm.DateFormat(tt.Format)

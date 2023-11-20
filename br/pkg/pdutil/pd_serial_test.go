@@ -22,8 +22,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client/http"
 )
 
 func TestScheduler(t *testing.T) {
@@ -273,7 +273,7 @@ func TestStoreInfo(t *testing.T) {
 		_ context.Context, addr string, prefix string, _ *http.Client, _ string, _ []byte,
 	) ([]byte, error) {
 		require.Equal(t,
-			fmt.Sprintf("http://mock%s", pdapi.StoreByID(1)),
+			fmt.Sprintf("http://mock%s", pd.StoreByID(1)),
 			fmt.Sprintf("%s%s", addr, prefix))
 		ret, err := json.Marshal(storeInfo)
 		require.NoError(t, err)
@@ -307,7 +307,7 @@ func TestPauseSchedulersByKeyRange(t *testing.T) {
 			return
 		}
 		if r.Method == http.MethodDelete {
-			ruleID := strings.TrimPrefix(r.URL.Path, pdapi.RegionLabelRule+"/")
+			ruleID := strings.TrimPrefix(r.URL.Path, pd.RegionLabelRule+"/")
 			delete(labelExpires, ruleID)
 			deleted = true
 			return
