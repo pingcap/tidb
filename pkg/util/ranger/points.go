@@ -814,7 +814,7 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction, newTp
 	}
 	highValueSortKey := make([]byte, len(startPoint.value.GetBytes()))
 	copy(highValueSortKey, startPoint.value.GetBytes())
-	endPoint := &point{excl: true}
+	endPoint := &point{value: types.MaxValueDatum(), excl: true}
 	for i := len(highValueSortKey) - 1; i >= 0; i-- {
 		// Make the end point value more than the start point value,
 		// and the length of the end point value is the same as the length of the start point value.
