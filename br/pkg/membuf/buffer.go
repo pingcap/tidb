@@ -136,8 +136,10 @@ type Buffer struct {
 // BufferOption configures a buffer.
 type BufferOption func(*Buffer)
 
-// WithMemoryLimit limits the maximum memory size of this Buffer. In order to
-// keep compatibility, it will only restrict AllocBytesWithSliceLocation.
+// WithMemoryLimit approximately limits the maximum memory size of this Buffer.
+// Due to it use blocks to allocate memory, the actual memory size is
+// blockSize*ceil(limit/blockSize).
+// In order to keep compatibility, it will only restrict AllocBytesWithSliceLocation.
 func WithMemoryLimit(limit uint64) BufferOption {
 	return func(b *Buffer) {
 		blockCntLimit := int(limit+uint64(b.pool.blockSize)-1) / b.pool.blockSize

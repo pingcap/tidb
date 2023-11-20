@@ -94,24 +94,24 @@ func TestBufferIsolation(t *testing.T) {
 func TestBufferMemLimit(t *testing.T) {
 	pool := NewPool(WithBlockSize(10))
 	defer pool.Destroy()
-	// due to the integer division, the actual memory limit is 10 bytes.
-	bytesBuf := pool.NewBuffer(WithMemoryLimit(15))
+	// the actual memory limit is 10 bytes.
+	bytesBuf := pool.NewBuffer(WithMemoryLimit(5))
 
-	got, _ := bytesBuf.AllocBytesWithSliceLocation(10)
+	got, _ := bytesBuf.AllocBytesWithSliceLocation(9)
 	require.NotNil(t, got)
 	got, _ = bytesBuf.AllocBytesWithSliceLocation(3)
 	require.Nil(t, got)
 
 	bytesBuf.Destroy()
 
-	// due to the block granularity, the actual memory may be less
+	// exactly 2 block
 	bytesBuf = pool.NewBuffer(WithMemoryLimit(20))
 
-	got, _ = bytesBuf.AllocBytesWithSliceLocation(6)
+	got, _ = bytesBuf.AllocBytesWithSliceLocation(9)
 	require.NotNil(t, got)
-	got, _ = bytesBuf.AllocBytesWithSliceLocation(6)
+	got, _ = bytesBuf.AllocBytesWithSliceLocation(9)
 	require.NotNil(t, got)
-	got, _ = bytesBuf.AllocBytesWithSliceLocation(6)
+	got, _ = bytesBuf.AllocBytesWithSliceLocation(2)
 	require.Nil(t, got)
 }
 
