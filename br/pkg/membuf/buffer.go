@@ -140,7 +140,7 @@ type BufferOption func(*Buffer)
 // keep compatibility, it will only restrict AllocBytesWithSliceLocation.
 func WithMemoryLimit(limit uint64) BufferOption {
 	return func(b *Buffer) {
-		blockCntLimit := int(limit / uint64(b.pool.blockSize))
+		blockCntLimit := int(limit+uint64(b.pool.blockSize)-1) / b.pool.blockSize
 		b.blockCntLimit = blockCntLimit
 		b.blocks = make([][]byte, 0, blockCntLimit)
 	}

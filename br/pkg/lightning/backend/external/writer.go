@@ -178,9 +178,7 @@ func (b *WriterBuilder) Build(
 	if b.keyDupeEncoding {
 		keyAdapter = common.DupDetectKeyAdapter{}
 	}
-	// at least one block
-	blockSize := min(b.blockSize, int(b.memSizeLimit))
-	p := membuf.NewPool(membuf.WithPoolSize(0), membuf.WithBlockSize(blockSize))
+	p := membuf.NewPool(membuf.WithPoolSize(0), membuf.WithBlockSize(b.blockSize))
 	ret := &Writer{
 		rc: &rangePropertiesCollector{
 			props:        make([]*rangeProperty, 0, 1024),
