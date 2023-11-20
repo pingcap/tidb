@@ -349,6 +349,8 @@ func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) 
 		}
 	}
 
+	log.Info("Detected max size for snapshots to fsr enabled", zap.Int64("maxVolumeSize", maxVolumeSize))
+
 	// Calculate the time in minutes to fill 1.0 credit according to
 	// https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ebs-fast-snapshot-restore.html#volume-creation-credits
 	fillElapsedTime := 60.0/(math.Min(10, float64(1024.0/maxVolumeSize))) + 5
