@@ -771,22 +771,28 @@ func pickBackfillType(ctx context.Context, job *model.Job, unique bool, d *ddlCt
 				return model.ReorgTypeNone, err
 			}
 			var pdLeaderAddr string
+			var isUpgradingSysDB bool
 			if d != nil {
 				//nolint:forcetypeassert
 				pdLeaderAddr = d.store.(tikv.Storage).GetRegionCache().PDClient().GetLeaderAddr()
+				isUpgradingSysDB = d.stateSyncer.IsUpgradingState() && hasSysDB(job)
 			}
-			if variable.EnableDistTask.Load() {
+			useDistReorg := false
+			if variable.EnableDistTask.Load() && !isUpgradingSysDB {
 				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, d.etcdCli, pdLeaderAddr, job.ReorgMeta.ResourceGroupName)
+				useDistReorg = true
 			} else {
 				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, nil, pdLeaderAddr, job.ReorgMeta.ResourceGroupName)
+				if isUpgradingSysDB {
+					logutil.BgLogger().Info("pick backfill type, cannot be a dist task because the job on the system DB in the upgrade state",
+						zap.String("category", "ddl"), zap.Stringer("job", job))
+				}
 			}
 			if err != nil {
 				return model.ReorgTypeNone, err
 			}
 			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
-			if variable.EnableDistTask.Load() {
-				job.ReorgMeta.IsDistReorg = true
-			}
+			job.ReorgMeta.IsDistReorg = useDistReorg
 			return model.ReorgTypeLitMerge, nil
 		}
 	}
