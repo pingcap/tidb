@@ -1972,6 +1972,7 @@ type CreateBindingStmt struct {
 	stmtNode
 
 	GlobalScope bool
+	IsUniversal bool
 	OriginNode  StmtNode
 	HintedNode  StmtNode
 	PlanDigest  string

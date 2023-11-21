@@ -13828,6 +13828,7 @@ CreateBindingStmt:
 			OriginNode:  originStmt,
 			HintedNode:  hintedStmt,
 			GlobalScope: $2.(bool),
+			IsUniversal: $3.(bool),
 		}
 
 		$$ = x
