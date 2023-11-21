@@ -185,6 +185,7 @@ func decodeMvccRecordValue(bs []byte, colMap map[int64]*types.FieldType, tb *mod
 
 // ReportLookupInconsistent reports inconsistent when index rows is more than record rows.
 func (r *Reporter) ReportLookupInconsistent(ctx context.Context, idxCnt, tblCnt int, missHd, fullHd []kv.Handle, missRowIdx []RecordData, startTs uint64) error {
+	sessVars := r.Sctx.GetSessionVars()
 	if r.Sctx.GetSessionVars().EnableRedactLog {
 		logutil.Logger(ctx).Error("indexLookup found data inconsistency",
 			zap.String("table_name", r.Tbl.Name.O),
@@ -192,6 +193,9 @@ func (r *Reporter) ReportLookupInconsistent(ctx context.Context, idxCnt, tblCnt 
 			zap.Int("index_cnt", idxCnt),
 			zap.Int("table_cnt", tblCnt),
 			zap.Uint64("start_ts", startTs),
+			zap.String("sessionVars", fmt.Sprintf("%#v", sessVars)),
+			zap.String("stmt_ctx", fmt.Sprintf("%#v", sessVars.StmtCtx)),
+			zap.String("txn_ctx", fmt.Sprintf("%#v", sessVars.TxnCtx)),
 			zap.Stack("stack"))
 	} else {
 		const maxFullHandleCnt = 50
@@ -206,6 +210,9 @@ func (r *Reporter) ReportLookupInconsistent(ctx context.Context, idxCnt, tblCnt 
 			zap.String("missing_handles", fmt.Sprint(missHd)),
 			zap.String("total_handles", fmt.Sprint(fullHd[:displayFullHdCnt])),
 			zap.Uint64("start_ts", startTs),
+			zap.String("session_vars", fmt.Sprintf("%#v", sessVars)),
+			zap.String("stmt_ctx", fmt.Sprintf("%#v", sessVars.StmtCtx)),
+			zap.String("txn_ctx", fmt.Sprintf("%#v", sessVars.TxnCtx)),
 		}
 		store, ok := r.Sctx.GetStore().(helper.Storage)
 		if ok {
