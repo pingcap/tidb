@@ -118,10 +118,12 @@ func (e *hashAggExec) Next(ctx context.Context) (value [][]byte, err error) {
 	gk := e.groupKeys[e.currGroupIdx]
 	value = make([][]byte, 0, len(e.groupByExprs)+2*len(e.aggExprs))
 	aggCtxs := e.getContexts(gk)
+	errCtx := e.evalCtx.sc.ErrCtx()
 	for i, agg := range e.aggExprs {
 		partialResults := agg.GetPartialResult(aggCtxs[i])
 		for _, result := range partialResults {
-			data, err := codec.EncodeValue(e.evalCtx.sc, nil, result)
+			data, err := codec.EncodeValue(e.evalCtx.sc.TimeZone(), nil, result)
+			err = errCtx.HandleError(err)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -141,12 +143,14 @@ func (e *hashAggExec) getGroupKey() ([]byte, [][]byte, error) {
 	}
 	bufLen := 0
 	row := make([][]byte, 0, length)
+	errCtx := e.evalCtx.sc.ErrCtx()
 	for _, item := range e.groupByExprs {
 		v, err := item.Eval(chunk.MutRowFromDatums(e.row).ToRow())
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		b, err := codec.EncodeValue(e.evalCtx.sc, nil, v)
+		b, err := codec.EncodeValue(e.evalCtx.sc.TimeZone(), nil, v)
+		err = errCtx.HandleError(err)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -246,10 +250,12 @@ func (e *streamAggExec) Counts() []int64 {
 
 func (e *streamAggExec) getPartialResult() ([][]byte, error) {
 	value := make([][]byte, 0, len(e.groupByExprs)+2*len(e.aggExprs))
+	errCtx := e.evalCtx.sc.ErrCtx()
 	for i, agg := range e.aggExprs {
 		partialResults := agg.GetPartialResult(e.aggCtxs[i])
 		for _, result := range partialResults {
-			data, err := codec.EncodeValue(e.evalCtx.sc, nil, result)
+			data, err := codec.EncodeValue(e.evalCtx.sc.TimeZone(), nil, result)
+			err = errCtx.HandleError(err)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -260,7 +266,8 @@ func (e *streamAggExec) getPartialResult() ([][]byte, error) {
 	}
 	e.currGroupByValues = e.currGroupByValues[:0]
 	for _, d := range e.currGroupByRow {
-		buf, err := codec.EncodeValue(e.evalCtx.sc, nil, d)
+		buf, err := codec.EncodeValue(e.evalCtx.sc.TimeZone(), nil, d)
+		err = errCtx.HandleError(err)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

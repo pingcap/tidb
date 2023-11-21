@@ -502,7 +502,8 @@ func (m *memTableReader) getRowData(handle kv.Handle, value []byte) ([][]byte, e
 			} else {
 				handleDatum = types.NewIntDatum(handle.IntValue())
 			}
-			handleData, err1 := codec.EncodeValue(ctx, buffer.handleBytes, handleDatum)
+			handleData, err1 := codec.EncodeValue(ctx.TimeZone(), buffer.handleBytes, handleDatum)
+			err1 = ctx.HandleError(err1)
 			if err1 != nil {
 				return nil, errors.Trace(err1)
 			}
@@ -623,7 +624,8 @@ func (m *memIndexReader) getMemRowsHandle() ([]kv.Handle, error) {
 		// For https://github.com/pingcap/tidb/issues/41827,
 		// When handle type is year, tablecodec.DecodeIndexHandle will convert it to IntHandle instead of CommonHandle
 		if m.table.IsCommonHandle && handle.IsInt() {
-			b, err := codec.EncodeKey(m.ctx.GetSessionVars().StmtCtx, nil, types.NewDatum(handle.IntValue()))
+			b, err := codec.EncodeKey(m.ctx.GetSessionVars().StmtCtx.TimeZone(), nil, types.NewDatum(handle.IntValue()))
+			err = m.ctx.GetSessionVars().StmtCtx.HandleError(err)
 			if err != nil {
 				return err
 			}

@@ -49,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
@@ -768,7 +767,7 @@ func (s *clusterTablesSuite) setUpMockPDHTTPServer() (*httptest.Server, string) 
 	srv := httptest.NewServer(router)
 	// mock store stats stat
 	mockAddr := strings.TrimPrefix(srv.URL, "http://")
-	router.Handle(pdapi.Stores, fn.Wrap(func() (*pd.StoresInfo, error) {
+	router.Handle(pd.Stores, fn.Wrap(func() (*pd.StoresInfo, error) {
 		return &pd.StoresInfo{
 			Count: 1,
 			Stores: []pd.StoreInfo{
@@ -788,7 +787,7 @@ func (s *clusterTablesSuite) setUpMockPDHTTPServer() (*httptest.Server, string) 
 		}, nil
 	}))
 	// mock PD API
-	router.Handle(pdapi.Status, fn.Wrap(func() (interface{}, error) {
+	router.Handle(pd.Status, fn.Wrap(func() (interface{}, error) {
 		return struct {
 			Version        string `json:"version"`
 			GitHash        string `json:"git_hash"`
@@ -818,7 +817,7 @@ func (s *clusterTablesSuite) setUpMockPDHTTPServer() (*httptest.Server, string) 
 		return configuration, nil
 	}
 	// pd config
-	router.Handle(pdapi.Config, fn.Wrap(mockConfig))
+	router.Handle(pd.Config, fn.Wrap(mockConfig))
 	// TiDB/TiKV config
 	router.Handle("/config", fn.Wrap(mockConfig))
 	return srv, mockAddr

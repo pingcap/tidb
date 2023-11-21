@@ -576,7 +576,8 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 				continue
 			}
 			keyBuf = keyBuf[:0]
-			keyBuf, err = codec.EncodeKey(iw.ctx.GetSessionVars().StmtCtx, keyBuf, dHashKey...)
+			keyBuf, err = codec.EncodeKey(iw.ctx.GetSessionVars().StmtCtx.TimeZone(), keyBuf, dHashKey...)
+			err = iw.ctx.GetSessionVars().StmtCtx.HandleError(err)
 			if err != nil {
 				if terror.ErrorEqual(err, types.ErrWrongValue) {
 					// we ignore rows with invalid datetime
@@ -747,7 +748,8 @@ func (iw *innerWorker) buildLookUpMap(task *lookUpJoinTask) error {
 			for _, keyCol := range iw.hashCols {
 				d := innerRow.GetDatum(keyCol, iw.rowTypes[keyCol])
 				var err error
-				keyBuf, err = codec.EncodeKey(iw.ctx.GetSessionVars().StmtCtx, keyBuf, d)
+				keyBuf, err = codec.EncodeKey(iw.ctx.GetSessionVars().StmtCtx.TimeZone(), keyBuf, d)
+				err = iw.ctx.GetSessionVars().StmtCtx.HandleError(err)
 				if err != nil {
 					return err
 				}

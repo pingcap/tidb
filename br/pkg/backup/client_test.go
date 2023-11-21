@@ -176,9 +176,9 @@ func TestBuildTableRangeCommonHandle(t *testing.T) {
 		ids []int64
 		trs []kv.KeyRange
 	}
-	low, err_l := codec.EncodeKey(nil, nil, []types.Datum{types.MinNotNullDatum()}...)
+	low, err_l := codec.EncodeKey(time.UTC, nil, []types.Datum{types.MinNotNullDatum()}...)
 	require.NoError(t, err_l)
-	high, err_h := codec.EncodeKey(nil, nil, []types.Datum{types.MaxValueDatum()}...)
+	high, err_h := codec.EncodeKey(time.UTC, nil, []types.Datum{types.MaxValueDatum()}...)
 	require.NoError(t, err_h)
 	high = kv.Key(high).PrefixNext()
 	cases := []Case{

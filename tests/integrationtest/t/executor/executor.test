@@ -2660,3 +2660,14 @@ show session bindings where default_db='executor__executor';
 
 drop session binding for select * from testbind using select * from testbind use index for join(index_t);
 drop global binding for select * from testbind using select * from testbind use index for join(index_t);
+
+# TestIndexMergeRuntimeStats
+drop table if EXISTS t1;
+create table t1(id int primary key, a int, b int, c int, d int, index t1a(a), index t1b(b));
+insert into t1 values(1,1,1,1,1),(2,2,2,2,2),(3,3,3,3,3),(4,4,4,4,4),(5,5,5,5,5);
+--replace_regex /.*time:.*loops:.*cop_task:.*/.*time:.*loops:.*cop_task:.*/ /.*time:.*loops:.*index_task:{fetch_handle:.*, merge:.*}.*table_task:{num.*concurrency.*fetch_row.*wait_time.*}.*/.*time:.*loops:.*index_task:{fetch_handle:.*, merge:.*}.*table_task:{num.*concurrency.*fetch_row.*wait_time.*}.*/ /[0-9]+ Bytes/<num> Bytes/ /[.0-9]+ KB/<num> KB/
+explain analyze select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4;
+set @@tidb_enable_collect_execution_info=0;
+select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by a;
+set @@tidb_enable_collect_execution_info=default;
+
