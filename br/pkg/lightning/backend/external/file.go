@@ -56,7 +56,7 @@ func NewKeyValueStore(
 // size or key count exceeds the given distance, a new range property will be
 // appended to the rangePropertiesCollector with current status.
 // `key` must be in strictly ascending order for invocations of a KeyValueStore.
-func (s *KeyValueStore) addEncodedData(key []byte, val []byte) error {
+func (s *KeyValueStore) addEncodedData(data []byte) error {
 	if len(s.memBuffer) > 5*1024*1024 {
 		_, err := s.dataWriter.Write(s.ctx, s.memBuffer)
 		if err != nil {
@@ -65,18 +65,18 @@ func (s *KeyValueStore) addEncodedData(key []byte, val []byte) error {
 		s.memBuffer = s.memBuffer[:0]
 	}
 
-	s.memBuffer = binary.BigEndian.AppendUint64(s.memBuffer, uint64(len(key)))
-	s.memBuffer = binary.BigEndian.AppendUint64(s.memBuffer, uint64(len(val)))
-	s.memBuffer = append(s.memBuffer, key...)
-	s.memBuffer = append(s.memBuffer, val...)
+	s.memBuffer = append(s.memBuffer, data...)
+
+	keyLen := binary.BigEndian.Uint64(data)
+	key := data[2*lengthBytes : lengthBytes+keyLen]
 
 	if len(s.rc.currProp.firstKey) == 0 {
 		s.rc.currProp.firstKey = key
 	}
 	s.rc.currProp.lastKey = key
 
-	s.offset += uint64(lengthBytes*2 + len(key) + len(val))
-	s.rc.currProp.size += uint64(len(key) + len(val))
+	s.offset += uint64(len(data))
+	s.rc.currProp.size += uint64(len(data) - 2*lengthBytes)
 	s.rc.currProp.keys++
 
 	if s.rc.currProp.size >= s.rc.propSizeDist ||

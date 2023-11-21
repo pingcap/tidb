@@ -57,7 +57,7 @@ func checkPartitionBy(p *LogicalWindow, d *DataSource) bool {
 	}
 
 	for i, col := range p.PartitionBy {
-		if !(col.Col.Equal(nil, d.handleCols.GetCol(i))) {
+		if !(col.Col.EqualColumn(d.handleCols.GetCol(i))) {
 			return false
 		}
 	}

@@ -92,6 +92,7 @@ type mockOptions struct {
 	txnLocalLatches  uint
 	storeType        StoreType
 	ddlCheckerHijack bool
+	tikvOptions      []tikv.Option
 }
 
 // MockTiKVStoreOption is used to control some behavior of mock tikv.
@@ -103,6 +104,13 @@ func WithMultipleOptions(opts ...MockTiKVStoreOption) MockTiKVStoreOption {
 		for _, opt := range opts {
 			opt(args)
 		}
+	}
+}
+
+// WithTiKVOptions sets KV options.
+func WithTiKVOptions(opts ...tikv.Option) MockTiKVStoreOption {
+	return func(args *mockOptions) {
+		args.tikvOptions = opts
 	}
 }
 

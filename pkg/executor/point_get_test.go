@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -37,26 +36,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 )
-
-func TestForUpdateRetry(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	_, err := tk.Exec("drop table if exists t")
-	require.NoError(t, err)
-	tk.MustExec("create table t(pk int primary key, c int)")
-	tk.MustExec("insert into t values (1, 1), (2, 2)")
-	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
-	tk.MustExec("begin")
-	tk.MustQuery("select * from t where pk = 1 for update")
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use test")
-	tk2.MustExec("update t set c = c + 1 where pk = 1")
-	tk.MustExec("update t set c = c + 1 where pk = 2")
-	tk.MustGetErrCode("commit", errno.ErrForUpdateCantRetry)
-}
 
 func TestSelectCheckVisibility(t *testing.T) {
 	store := testkit.CreateMockStore(t)

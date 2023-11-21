@@ -88,3 +88,12 @@ cast('61qw' as decimal)
 61
 Level	Code	Message
 Warning	1292	Truncated incorrect DECIMAL value: '61qw'
+drop table if exists t;
+create table t (y year);
+insert into t values (cast('14:15' as time));
+select 1 from t where y = YEAR(CURDATE());
+1
+1
+select cast(cast('14:15' as time) as year) = YEAR(CURDATE());
+cast(cast('14:15' as time) as year) = YEAR(CURDATE())
+1

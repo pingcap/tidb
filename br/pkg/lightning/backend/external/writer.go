@@ -17,13 +17,12 @@ package external
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/hex"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"time"
-
-	"github.com/pingcap/tidb/br/pkg/membuf"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -178,6 +178,7 @@ func (b *WriterBuilder) Build(
 	if b.keyDupeEncoding {
 		keyAdapter = common.DupDetectKeyAdapter{}
 	}
+	p := membuf.NewPool(membuf.WithBlockNum(0), membuf.WithBlockSize(b.blockSize))
 	ret := &Writer{
 		rc: &rangePropertiesCollector{
 			props:        make([]*rangeProperty, 0, 1024),
@@ -185,14 +186,9 @@ func (b *WriterBuilder) Build(
 			propSizeDist: b.propSizeDist,
 			propKeysDist: b.propKeysDist,
 		},
-		memSizeLimit: b.memSizeLimit,
-		store:        store,
-		kvBuffer: membuf.NewPool(
-			membuf.WithBlockSize(b.blockSize),
-			membuf.WithBlockNum(int(b.memSizeLimit)/b.blockSize),
-		).PreAllocPoolSize(int(b.memSizeLimit)).NewBuffer(),
-		writeBatch:     make([]simpleKV, 256*1024),
-		writeCnt:       0,
+		memSizeLimit:   b.memSizeLimit,
+		store:          store,
+		kvBuffer:       p.NewBuffer(membuf.WithMemoryLimit(b.memSizeLimit)),
 		currentSeq:     0,
 		filenamePrefix: filenamePrefix,
 		keyAdapter:     keyAdapter,
@@ -257,11 +253,6 @@ func GetMaxOverlappingTotal(stats []MultipleFilesStat) int64 {
 	return GetMaxOverlapping(points)
 }
 
-type simpleKV struct {
-	key []byte
-	val []byte
-}
-
 // Writer is used to write data into external storage.
 type Writer struct {
 	store          storage.ExternalStorage
@@ -275,9 +266,9 @@ type Writer struct {
 
 	memSizeLimit uint64
 
-	kvBuffer   *membuf.Buffer
-	writeBatch []simpleKV
-	writeCnt   int
+	kvBuffer    *membuf.Buffer
+	kvLocations []membuf.SliceLocation
+	kvSize      int64
 
 	onClose OnCloseFunc
 	closed  bool
@@ -305,22 +296,27 @@ func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tid
 	if handle != nil {
 		rowID = handle.Encoded()
 	}
-	buf := w.kvBuffer.AllocBytes(keyAdapter.EncodedLen(idxKey, rowID))
-	key := keyAdapter.Encode(buf[:0], idxKey, rowID)
-	val := w.kvBuffer.AddBytes(idxVal)
-
-	if w.writeCnt == len(w.writeBatch) {
-		w.writeBatch = append(w.writeBatch, make([]simpleKV, len(w.writeBatch))...)
-	}
-
-	w.writeBatch[w.writeCnt].key = key
-	w.writeBatch[w.writeCnt].val = val
-	w.writeCnt++
-	if w.batchSize >= w.memSizeLimit {
+	encodedKeyLen := keyAdapter.EncodedLen(idxKey, rowID)
+	length := encodedKeyLen + len(idxVal) + lengthBytes*2
+	dataBuf, loc := w.kvBuffer.AllocBytesWithSliceLocation(length)
+	if dataBuf == nil {
 		if err := w.flushKVs(ctx, false); err != nil {
 			return err
 		}
+		dataBuf, loc = w.kvBuffer.AllocBytesWithSliceLocation(length)
+		// we now don't support KV larger than blockSize
+		if dataBuf == nil {
+			return errors.Errorf("failed to allocate kv buffer: %d", length)
+		}
 	}
+	binary.BigEndian.AppendUint64(dataBuf[:0], uint64(encodedKeyLen))
+	binary.BigEndian.AppendUint64(dataBuf[:lengthBytes], uint64(len(idxVal)))
+	keyAdapter.Encode(dataBuf[2*lengthBytes:2*lengthBytes:2*lengthBytes+encodedKeyLen], idxKey, rowID)
+	copy(dataBuf[2*lengthBytes+encodedKeyLen:], idxVal)
+
+	w.kvLocations = append(w.kvLocations, loc)
+	w.kvSize += int64(encodedKeyLen + len(idxVal))
+	w.batchSize += uint64(length)
 	return nil
 }
 
@@ -347,11 +343,8 @@ func (w *Writer) Close(ctx context.Context) error {
 
 	logutil.Logger(ctx).Info("close writer",
 		zap.String("writerID", w.writerID),
-		zap.Int("kv-cnt-cap", cap(w.writeBatch)),
 		zap.String("minKey", hex.EncodeToString(w.minKey)),
 		zap.String("maxKey", hex.EncodeToString(w.maxKey)))
-
-	w.writeBatch = nil
 
 	w.onClose(&WriterSummary{
 		WriterID:           w.writerID,
@@ -375,7 +368,7 @@ func (w *Writer) recordMinMax(newMin, newMax tidbkv.Key, size uint64) {
 }
 
 func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
-	if w.writeCnt == 0 {
+	if len(w.kvLocations) == 0 {
 		return nil
 	}
 
@@ -403,7 +396,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		}
 		return units.HumanSize(float64(n) / dur)
 	}
-	kvCnt := w.writeCnt
+	kvCnt := len(w.kvLocations)
 	defer func() {
 		w.currentSeq++
 		err1, err2 := dataWriter.Close(ctx), statWriter.Close(ctx)
@@ -438,8 +431,8 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	}()
 
 	sortStart := time.Now()
-	slices.SortFunc(w.writeBatch[:w.writeCnt], func(i, j simpleKV) int {
-		return bytes.Compare(i.key, j.key)
+	slices.SortFunc(w.kvLocations, func(i, j membuf.SliceLocation) int {
+		return bytes.Compare(w.getKeyByLoc(i), w.getKeyByLoc(j))
 	})
 	sortDuration = time.Since(sortStart)
 
@@ -451,8 +444,8 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		return err
 	}
 
-	for _, pair := range w.writeBatch[:w.writeCnt] {
-		err = w.kvStore.addEncodedData(pair.key, pair.val)
+	for _, pair := range w.kvLocations {
+		err = w.kvStore.addEncodedData(w.kvBuffer.GetSlice(pair))
 		if err != nil {
 			return err
 		}
@@ -469,9 +462,8 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		return err
 	}
 
-	minKey := tidbkv.Key(w.writeBatch[0].key).Clone()
-	maxKey := tidbkv.Key(w.writeBatch[w.writeCnt-1].key).Clone()
-	w.recordMinMax(minKey, maxKey, w.batchSize)
+	minKey, maxKey := w.getKeyByLoc(w.kvLocations[0]), w.getKeyByLoc(w.kvLocations[len(w.kvLocations)-1])
+	w.recordMinMax(minKey, maxKey, uint64(w.kvSize))
 
 	// maintain 500-batch statistics
 
@@ -490,11 +482,18 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		w.fileMaxKeys = w.fileMaxKeys[:0]
 	}
 
+	w.kvLocations = w.kvLocations[:0]
+	w.kvSize = 0
 	w.kvBuffer.Reset()
 	w.rc.reset()
-	w.writeCnt = 0
 	w.batchSize = 0
 	return nil
+}
+
+func (w *Writer) getKeyByLoc(loc membuf.SliceLocation) []byte {
+	block := w.kvBuffer.GetSlice(loc)
+	keyLen := binary.BigEndian.Uint64(block[:lengthBytes])
+	return block[lengthBytes : lengthBytes+keyLen]
 }
 
 func (w *Writer) createStorageWriter(ctx context.Context) (

@@ -147,14 +147,14 @@ func TestConvertType(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "10:11:12.1", vv.(Duration).String())
 	typeCtx := DefaultStmtNoWarningContext
-	vd, err := ParseTime(typeCtx, "2010-10-10 10:11:11.12345", mysql.TypeDatetime, 2, nil)
+	vd, err := ParseTime(typeCtx, "2010-10-10 10:11:11.12345", mysql.TypeDatetime, 2)
 	require.Equal(t, "2010-10-10 10:11:11.12", vd.String())
 	require.NoError(t, err)
 	v, err = Convert(vd, ft)
 	require.NoError(t, err)
 	require.Equal(t, "10:11:11.1", v.(Duration).String())
 
-	vt, err := ParseTime(typeCtx, "2010-10-10 10:11:11.12345", mysql.TypeTimestamp, 2, nil)
+	vt, err := ParseTime(typeCtx, "2010-10-10 10:11:11.12345", mysql.TypeTimestamp, 2)
 	require.Equal(t, "2010-10-10 10:11:11.12", vt.String())
 	require.NoError(t, err)
 	v, err = Convert(vt, ft)
@@ -271,7 +271,7 @@ func TestConvertType(t *testing.T) {
 	require.Equal(t, int64(2015), v)
 	v, err = Convert(ZeroDuration, ft)
 	require.NoError(t, err)
-	require.Equal(t, int64(0), v)
+	require.Equal(t, int64(time.Now().Year()), v)
 	bj1, err := ParseBinaryJSONFromString("99")
 	require.NoError(t, err)
 	v, err = Convert(bj1, ft)
@@ -343,7 +343,7 @@ func TestConvertToString(t *testing.T) {
 	testToString(t, Enum{Name: "a", Value: 1}, "a")
 	testToString(t, Set{Name: "a", Value: 1}, "a")
 
-	t1, err := ParseTime(DefaultStmtNoWarningContext, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6, nil)
+	t1, err := ParseTime(DefaultStmtNoWarningContext, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
 	require.NoError(t, err)
 	testToString(t, t1, "2011-11-10 11:11:11.999999")
 
