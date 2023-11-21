@@ -68,7 +68,7 @@ func (s *KeyValueStore) addEncodedData(data []byte) error {
 	s.memBuffer = append(s.memBuffer, data...)
 
 	keyLen := binary.BigEndian.Uint64(data)
-	key := data[2*lengthBytes : lengthBytes+keyLen]
+	key := data[2*lengthBytes : 2*lengthBytes+keyLen]
 
 	if len(s.rc.currProp.firstKey) == 0 {
 		s.rc.currProp.firstKey = key
