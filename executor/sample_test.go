@@ -264,8 +264,6 @@ func TestTableSampleNotSupportedPlanWarning(t *testing.T) {
 	tk.MustExec("create index idx_0 on t (b);")
 	tk.MustQuery("select a from t tablesample regions() order by a;").Check(
 		testkit.Rows("1000", "2100", "4500"))
-	tk.MustQuery("select a from t use index (idx_0) tablesample regions() order by a;").Check(
-		testkit.Rows("1000", "1001", "2100", "4500"))
 	tk.MustGetErrCode("select a from t use index (idx_0) tablesample regions() order by a;", errno.ErrInvalidTableSample)
 }
 
