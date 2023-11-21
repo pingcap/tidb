@@ -845,6 +845,7 @@ var tokenMap = map[string]int{
 	"UNICODE":                  unicodeSym,
 	"UNION":                    union,
 	"UNIQUE":                   unique,
+	"UNIVERSAL":                universal,
 	"UNKNOWN":                  unknown,
 	"UNLOCK":                   unlock,
 	"UNLIMITED":                unlimited,
