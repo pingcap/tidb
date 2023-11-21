@@ -162,7 +162,7 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("insert into t_common_handle values (%d, %d, '%d');", i, i, i))
 		tk.MustExec(fmt.Sprintf("insert into t_partition values (%d, %d, '%d');", i, i, i))
 	}
-	tableNames := []string{"t_partition"}
+	tableNames := []string{"t_row_id", "t_int_handle", "t_common_handle", "t_partition"}
 
 	testCases := []struct {
 		name            string
@@ -170,9 +170,9 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 		enableDistTask  string
 		cloudStorageURI string
 	}{
-		// {"txn_backfill", "0", "0", ""},
-		// {"ingest_backfill", "1", "0", ""},
-		// {"ingest_dist_backfill", "1", "1", ""},
+		{"txn_backfill", "0", "0", ""},
+		{"ingest_backfill", "1", "0", ""},
+		{"ingest_dist_backfill", "1", "1", ""},
 		{"ingest_dist_gs_backfill", "1", "1", cloudStorageURI},
 	}
 	for _, tc := range testCases {

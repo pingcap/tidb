@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
-	"gorm.io/gorm/logger"
 )
 
 // BackfillingDispatcherExt is an extension of litBackfillDispatcher, exported for test.
@@ -98,7 +97,7 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 	switch nextStep {
 	case StepReadIndex:
 		if tblInfo.Partition != nil {
-			return dsp.generatePartitionPlan(tblInfo, &backfillMeta)
+			return dsp.generatePartitionPlan(tblInfo, &backfillMeta, logger)
 		}
 		return dsp.generateNonPartitionPlan(dsp.d, &backfillMeta, tblInfo, job, dsp.GlobalSort, len(serverInfo), logger)
 	case StepMergeSort:
@@ -254,7 +253,8 @@ func getTblInfo(d *ddl, job *model.Job) (tblInfo *model.TableInfo, err error) {
 
 func (dsp *BackfillingDispatcherExt) generatePartitionPlan(
 	tblInfo *model.TableInfo,
-	backfillMeta *BackfillGlobalMeta) (metas [][]byte, err error) {
+	backfillMeta *BackfillGlobalMeta,
+	logger *zap.Logger) (metas [][]byte, err error) {
 	memSize, err := dsp.getWriterMemSize(backfillMeta)
 	if err != nil {
 		return nil, errors.Trace(err)
