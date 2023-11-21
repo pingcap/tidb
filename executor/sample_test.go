@@ -266,7 +266,17 @@ func TestTableSampleNotSupportedPlanWarning(t *testing.T) {
 		testkit.Rows("1000", "2100", "4500"))
 	tk.MustQuery("select a from t use index (idx_0) tablesample regions() order by a;").Check(
 		testkit.Rows("1000", "1001", "2100", "4500"))
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 8128 Invalid TABLESAMPLE: plan not supported"))
+	tk.MustGetErrCode("select a from t use index (idx_0) tablesample regions() order by a;", errno.ErrInvalidTableSample)
+}
+
+func TestTableSampleUnsignedIntHandle(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := createSampleTestkit(t, store)
+	tk.MustExec("CREATE TABLE a (pk bigint unsigned primary key clustered, v text);")
+	tk.MustExec("INSERT INTO a WITH RECURSIVE b(pk) AS (SELECT 1 UNION ALL SELECT pk+1 FROM b WHERE pk < 1000) SELECT pk, 'a' FROM b;")
+	tk.MustExec("INSERT INTO a WITH RECURSIVE b(pk) AS (SELECT 1 UNION ALL SELECT pk+1 FROM b WHERE pk < 1000) SELECT pk + (1<<63), 'b' FROM b;")
+	tk.MustQuery("SPLIT TABLE a BY (500);").Check(testkit.Rows("1 1"))
+	tk.MustQuery("SELECT * FROM a TABLESAMPLE REGIONS() ORDER BY pk;").Check(testkit.Rows("500 a", "9223372036854775809 b"))
 }
 
 func TestMaxChunkSize(t *testing.T) {
