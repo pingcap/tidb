@@ -291,7 +291,7 @@ func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*Hints
 				return nil, nil, nil, err
 			}
 			for i, tbl := range tblHint.Tables {
-				if tbl.DBName.String() == "" {
+				if tbl.DBName.String() == "" && db != "*" && db != "" {
 					tblHint.Tables[i].DBName = model.NewCIStr(db)
 				}
 			}
