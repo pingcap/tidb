@@ -1209,6 +1209,10 @@ var defaultSysVars = []*SysVar{
 		s.EnableNonPreparedPlanCache = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableUniversalBinding, Value: BoolToOnOff(false), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableUniversalBinding = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableNonPreparedPlanCacheForDML, Value: BoolToOnOff(DefTiDBEnableNonPreparedPlanCacheForDML), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableNonPreparedPlanCacheForDML = TiDBOptOn(val)
 		return nil
