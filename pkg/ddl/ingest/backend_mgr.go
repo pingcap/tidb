@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
@@ -36,12 +37,18 @@ type BackendCtxMgr interface {
 	Register(ctx context.Context, unique bool, jobID int64, etcdClient *clientv3.Client, pdAddr string, resourceGroupName string) (BackendCtx, error)
 	Unregister(jobID int64)
 	Load(jobID int64) (BackendCtx, bool)
+
+	MarkJobProcessing(jobID int64) (ok bool)
+	MarkJobFinish()
 }
 
 type litBackendCtxMgr struct {
 	generic.SyncMap[int64, *litBackendCtx]
-	memRoot  MemRoot
-	diskRoot DiskRoot
+	memRoot         MemRoot
+	diskRoot        DiskRoot
+	processingJobID int64
+	lastLoggingTime time.Time
+	mu              sync.Mutex
 }
 
 func newLitBackendCtxMgr(path string, memQuota uint64) BackendCtxMgr {
@@ -62,15 +69,32 @@ func newLitBackendCtxMgr(path string, memQuota uint64) BackendCtxMgr {
 	return mgr
 }
 
+// MarkJobProcessing marks ingest backfill is processing.
+func (m *litBackendCtxMgr) MarkJobProcessing(jobID int64) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.processingJobID == 0 || m.processingJobID == jobID {
+		m.processingJobID = jobID
+		return true
+	}
+	if time.Since(m.lastLoggingTime) > 1*time.Minute {
+		logutil.BgLogger().Info("ingest backfill worker is already in used by another DDL job",
+			zap.String("category", "ddl-ingest"),
+			zap.Int64("processing job ID", m.processingJobID))
+		m.lastLoggingTime = time.Now()
+	}
+	return false
+}
+
+// MarkJobFinish marks ingest backfill is finished.
+func (m *litBackendCtxMgr) MarkJobFinish() {
+	m.mu.Lock()
+	m.processingJobID = 0
+	m.mu.Unlock()
+}
+
 // CheckAvailable checks if the ingest backfill is available.
 func (m *litBackendCtxMgr) CheckAvailable() (bool, error) {
-	// We only allow one task to use ingest at the same time, in order to limit the CPU usage.
-	activeJobIDs := m.Keys()
-	if len(activeJobIDs) > 0 {
-		logutil.BgLogger().Info("ingest backfill is already in use by another DDL job", zap.String("category", "ddl-ingest"),
-			zap.Int64("job ID", activeJobIDs[0]))
-		return false, nil
-	}
 	if err := m.diskRoot.PreCheckUsage(); err != nil {
 		logutil.BgLogger().Info("ingest backfill is not available", zap.String("category", "ddl-ingest"), zap.Error(err))
 		return false, err
