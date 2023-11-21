@@ -20,13 +20,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/tiancaiamao/gp"
-	"go.uber.org/zap"
 )
 
 func mergeGlobalStatsTopN(gp *gp.Pool, sc sessionctx.Context, wrapper *StatsWrapper,
@@ -104,7 +102,6 @@ func MergeGlobalStatsTopNByConcurrency(
 			hasErr = true
 			errMsg = append(errMsg, resp.Err.Error())
 		}
-		log.Info("resp", zap.Any("topn", resp.TopN), zap.Any("PopedTopn", resp.PopedTopn))
 		resps = append(resps, resp)
 	}
 	if hasErr {
@@ -218,11 +215,8 @@ func MergePartTopN2GlobalTopN(
 	sorted := make([]statistics.TopNMeta, 0, numTop)
 	for value, cnt := range counter {
 		data := hack.Slice(string(value))
-		d := statistics.TopNMeta{Encoded: data, Count: uint64(cnt)}
-		log.Info("topn", zap.Any("topn", d))
-		sorted = append(sorted, d)
+		sorted = append(sorted, statistics.TopNMeta{Encoded: data, Count: uint64(cnt)})
 	}
-
 	globalTopN, leftTopN := statistics.GetMergedTopNFromSortedSlice(sorted, n)
 	return globalTopN, leftTopN, hists, nil
 }
