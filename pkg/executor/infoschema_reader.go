@@ -3200,7 +3200,7 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context, is info
 		rules = []*label.Rule{
 			{
 				ID:       "schema/test/test_label",
-				Labels:   []label.Label{{Key: "merge_option", Value: "allow"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
+				Labels:   []pd.RegionLabel{{Key: "merge_option", Value: "allow"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
 				RuleType: "key-range",
 				Data: convert(map[string]interface{}{
 					"start_key": "7480000000000000ff395f720000000000fa",
@@ -3209,7 +3209,7 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context, is info
 			},
 			{
 				ID:       "invalidIDtest",
-				Labels:   []label.Label{{Key: "merge_option", Value: "allow"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
+				Labels:   []pd.RegionLabel{{Key: "merge_option", Value: "allow"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
 				RuleType: "key-range",
 				Data: convert(map[string]interface{}{
 					"start_key": "7480000000000000ff395f720000000000fa",
@@ -3218,7 +3218,7 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context, is info
 			},
 			{
 				ID:       "schema/test/test_label",
-				Labels:   []label.Label{{Key: "merge_option", Value: "allow"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
+				Labels:   []pd.RegionLabel{{Key: "merge_option", Value: "allow"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
 				RuleType: "key-range",
 				Data: convert(map[string]interface{}{
 					"start_key": "aaaaa",
@@ -3259,9 +3259,9 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context, is info
 			continue
 		}
 
-		labels := rule.Labels.Restore()
+		labels := label.RestoreRegionLabels(&rule.Labels)
 		var ranges []string
-		for _, data := range rule.Data {
+		for _, data := range rule.Data.([]interface{}) {
 			if kv, ok := data.(map[string]interface{}); ok {
 				startKey := kv["start_key"]
 				endKey := kv["end_key"]
@@ -3462,11 +3462,12 @@ func checkRule(rule *label.Rule) (dbName, tableName string, partitionName string
 }
 
 func decodeTableIDFromRule(rule *label.Rule) (tableID int64, err error) {
-	if len(rule.Data) == 0 {
+	datas := rule.Data.([]interface{})
+	if len(datas) == 0 {
 		err = fmt.Errorf("there is no data in rule %s", rule.ID)
 		return
 	}
-	data := rule.Data[0]
+	data := datas[0]
 	dataMap, ok := data.(map[string]interface{})
 	if !ok {
 		err = fmt.Errorf("get the label rules %s failed", rule.ID)

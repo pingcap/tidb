@@ -90,6 +90,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
+	pdhttp "github.com/tikv/pd/client/http"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -1186,11 +1187,11 @@ func (do *Domain) Init(
 	}
 
 	// step 1: prepare the info/schema syncer which domain reload needed.
-	pdCli := do.GetPDClient()
+	pdCli, pdHTTPCli := do.GetPDClient(), do.GetPDHTTPClient()
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
 	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID,
-		do.etcdClient, do.unprefixedEtcdCli, pdCli, do.Store().GetCodec(),
-		skipRegisterToDashboard)
+		do.etcdClient, do.unprefixedEtcdCli, pdCli, pdHTTPCli,
+		do.Store().GetCodec(), skipRegisterToDashboard)
 	if err != nil {
 		return err
 	}
@@ -1625,6 +1626,14 @@ func (do *Domain) GetEtcdClient() *clientv3.Client {
 func (do *Domain) GetPDClient() pd.Client {
 	if store, ok := do.store.(kv.StorageWithPD); ok {
 		return store.GetPDClient()
+	}
+	return nil
+}
+
+// GetPDHTTPClient returns the PD HTTP client.
+func (do *Domain) GetPDHTTPClient() pdhttp.Client {
+	if store, ok := do.store.(kv.StorageWithPD); ok {
+		return store.GetPDHTTPClient()
 	}
 	return nil
 }
