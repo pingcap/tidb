@@ -48,10 +48,9 @@ func TestReplaceConflictMultipleKeysNonclusteredPk(t *testing.T) {
 	require.NoError(t, err)
 	mockSctx := mock.NewContext()
 	mockSctx.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOff
-	info, err := ddl.MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 1)
+	info, err := ddl.MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 108)
 	require.NoError(t, err)
 	info.State = model.StatePublic
-	info.ID = 108
 	require.False(t, info.PKIsHandle)
 	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(0), info)
 	require.NoError(t, err)
@@ -255,10 +254,9 @@ func TestReplaceConflictOneKeyNonclusteredPk(t *testing.T) {
 	require.NoError(t, err)
 	mockSctx := mock.NewContext()
 	mockSctx.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOff
-	info, err := ddl.MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 1)
+	info, err := ddl.MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 108)
 	require.NoError(t, err)
 	info.State = model.StatePublic
-	info.ID = 108
 	require.False(t, info.PKIsHandle)
 	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(0), info)
 	require.NoError(t, err)
@@ -404,10 +402,9 @@ func TestReplaceConflictOneUniqueKeyNonclusteredPk(t *testing.T) {
 	require.NoError(t, err)
 	mockSctx := mock.NewContext()
 	mockSctx.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOff
-	info, err := ddl.MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 1)
+	info, err := ddl.MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 108)
 	require.NoError(t, err)
 	info.State = model.StatePublic
-	info.ID = 108
 	require.False(t, info.PKIsHandle)
 	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(0), info)
 	require.NoError(t, err)
@@ -601,10 +598,9 @@ func TestReplaceConflictOneUniqueKeyNonclusteredVarcharPk(t *testing.T) {
 	require.NoError(t, err)
 	mockSctx := mock.NewContext()
 	mockSctx.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOff
-	info, err := ddl.MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 1)
+	info, err := ddl.MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 108)
 	require.NoError(t, err)
 	info.State = model.StatePublic
-	info.ID = 108
 	require.False(t, info.PKIsHandle)
 	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(0), info)
 	require.NoError(t, err)
