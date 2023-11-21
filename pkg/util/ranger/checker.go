@@ -17,6 +17,7 @@ package ranger
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -169,7 +170,7 @@ func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) (isA
 		return false, true
 	}
 	likeFuncReserve := !c.isFullLengthColumn()
-	if !collate.IsBinCollation(collation) {
+	if collation != charset.CollationBin {
 		likeFuncReserve = true
 	}
 	if len(patternStr) == 0 {

@@ -137,8 +137,9 @@ CREATE TABLE `t1` (  `a` varchar(10) DEFAULT NULL,  `b` varchar(10) DEFAULT NULL
 explain format='brief' select * from t1  where concat(a, b) like "aadwa" and a = "a";
 id	estRows	task	access object	operator info
 Projection	0.10	root		planner__core__plan.t1.a, planner__core__plan.t1.b
-└─IndexReader	0.10	root		index:IndexRangeScan
-  └─IndexRangeScan	0.10	cop[tikv]	table:t1, index:idx2(a, concat(`a`, `b`), b)	range:["a" "aadwa","a" "aadwa"], keep order:false, stats:pseudo
+└─IndexReader	0.10	root		index:Selection
+  └─Selection	0.10	cop[tikv]		like(concat(planner__core__plan.t1.a, planner__core__plan.t1.b), "aadwa", 92)
+    └─IndexRangeScan	0.10	cop[tikv]	table:t1, index:idx2(a, concat(`a`, `b`), b)	range:["a" "aadwa","a" "aadwa"], keep order:false, stats:pseudo
 explain format='brief' select b from t1 where concat(a, b) >= "aa" and a = "b";
 id	estRows	task	access object	operator info
 Projection	33.33	root		planner__core__plan.t1.b
@@ -147,8 +148,9 @@ Projection	33.33	root		planner__core__plan.t1.b
 explain format='brief' select * from t1  where concat(a, b) like "aadwa" and a = "a";
 id	estRows	task	access object	operator info
 Projection	0.10	root		planner__core__plan.t1.a, planner__core__plan.t1.b
-└─IndexReader	0.10	root		index:IndexRangeScan
-  └─IndexRangeScan	0.10	cop[tikv]	table:t1, index:idx2(a, concat(`a`, `b`), b)	range:["a" "aadwa","a" "aadwa"], keep order:false, stats:pseudo
+└─IndexReader	0.10	root		index:Selection
+  └─Selection	0.10	cop[tikv]		like(concat(planner__core__plan.t1.a, planner__core__plan.t1.b), "aadwa", 92)
+    └─IndexRangeScan	0.10	cop[tikv]	table:t1, index:idx2(a, concat(`a`, `b`), b)	range:["a" "aadwa","a" "aadwa"], keep order:false, stats:pseudo
 explain format='brief' select b from t1 where concat(a, b) >= "aa" and a = "b";
 id	estRows	task	access object	operator info
 Projection	33.33	root		planner__core__plan.t1.b
@@ -157,8 +159,9 @@ Projection	33.33	root		planner__core__plan.t1.b
 explain format='brief' select * from t1  where concat(a, b) like "aadwa" and a = "a";
 id	estRows	task	access object	operator info
 Projection	0.10	root		planner__core__plan.t1.a, planner__core__plan.t1.b
-└─IndexReader	0.10	root		index:IndexRangeScan
-  └─IndexRangeScan	0.10	cop[tikv]	table:t1, index:idx2(a, concat(`a`, `b`), b)	range:["a" "aadwa","a" "aadwa"], keep order:false, stats:pseudo
+└─IndexReader	0.10	root		index:Selection
+  └─Selection	0.10	cop[tikv]		like(concat(planner__core__plan.t1.a, planner__core__plan.t1.b), "aadwa", 92)
+    └─IndexRangeScan	0.10	cop[tikv]	table:t1, index:idx2(a, concat(`a`, `b`), b)	range:["a" "aadwa","a" "aadwa"], keep order:false, stats:pseudo
 explain format='brief' select b from t1 where concat(a, b) >= "aa" and a = "b";
 id	estRows	task	access object	operator info
 Projection	33.33	root		planner__core__plan.t1.b
@@ -167,8 +170,9 @@ Projection	33.33	root		planner__core__plan.t1.b
 explain format='brief' select * from t1  where concat(a, b) like "aadwa" and a = "a";
 id	estRows	task	access object	operator info
 Projection	0.10	root		planner__core__plan.t1.a, planner__core__plan.t1.b
-└─IndexReader	0.10	root		index:IndexRangeScan
-  └─IndexRangeScan	0.10	cop[tikv]	table:t1, index:idx2(a, concat(`a`, `b`), b)	range:["a" "aadwa","a" "aadwa"], keep order:false, stats:pseudo
+└─IndexReader	0.10	root		index:Selection
+  └─Selection	0.10	cop[tikv]		like(concat(planner__core__plan.t1.a, planner__core__plan.t1.b), "aadwa", 92)
+    └─IndexRangeScan	0.10	cop[tikv]	table:t1, index:idx2(a, concat(`a`, `b`), b)	range:["a" "aadwa","a" "aadwa"], keep order:false, stats:pseudo
 explain format='brief' select b from t1 where concat(a, b) >= "aa" and a = "b";
 id	estRows	task	access object	operator info
 Projection	33.33	root		planner__core__plan.t1.b
@@ -177,8 +181,9 @@ Projection	33.33	root		planner__core__plan.t1.b
 explain format='brief' select * from t1  where concat(a, b) like "aadwa" and a = "a";
 id	estRows	task	access object	operator info
 Projection	0.10	root		planner__core__plan.t1.a, planner__core__plan.t1.b
-└─IndexReader	0.10	root		index:IndexRangeScan
-  └─IndexRangeScan	0.10	cop[tikv]	table:t1, index:idx2(a, concat(`a`, `b`), b)	range:["a" "aadwa","a" "aadwa"], keep order:false, stats:pseudo
+└─IndexReader	0.10	root		index:Selection
+  └─Selection	0.10	cop[tikv]		like(concat(planner__core__plan.t1.a, planner__core__plan.t1.b), "aadwa", 92)
+    └─IndexRangeScan	0.10	cop[tikv]	table:t1, index:idx2(a, concat(`a`, `b`), b)	range:["a" "aadwa","a" "aadwa"], keep order:false, stats:pseudo
 explain format='brief' select b from t1 where concat(a, b) >= "aa" and a = "b";
 id	estRows	task	access object	operator info
 Projection	33.33	root		planner__core__plan.t1.b
@@ -187,8 +192,9 @@ Projection	33.33	root		planner__core__plan.t1.b
 explain format='brief' select * from t1  where concat(a, b) like "aadwa" and a = "a";
 id	estRows	task	access object	operator info
 Projection	0.10	root		planner__core__plan.t1.a, planner__core__plan.t1.b
-└─IndexReader	0.10	root		index:IndexRangeScan
-  └─IndexRangeScan	0.10	cop[tikv]	table:t1, index:idx2(a, concat(`a`, `b`), b)	range:["a" "aadwa","a" "aadwa"], keep order:false, stats:pseudo
+└─IndexReader	0.10	root		index:Selection
+  └─Selection	0.10	cop[tikv]		like(concat(planner__core__plan.t1.a, planner__core__plan.t1.b), "aadwa", 92)
+    └─IndexRangeScan	0.10	cop[tikv]	table:t1, index:idx2(a, concat(`a`, `b`), b)	range:["a" "aadwa","a" "aadwa"], keep order:false, stats:pseudo
 explain format='brief' select b from t1 where concat(a, b) >= "aa" and a = "b";
 id	estRows	task	access object	operator info
 Projection	33.33	root		planner__core__plan.t1.b
@@ -197,8 +203,9 @@ Projection	33.33	root		planner__core__plan.t1.b
 explain format='brief' select * from t1  where concat(a, b) like "aadwa" and a = "a";
 id	estRows	task	access object	operator info
 Projection	0.10	root		planner__core__plan.t1.a, planner__core__plan.t1.b
-└─IndexReader	0.10	root		index:IndexRangeScan
-  └─IndexRangeScan	0.10	cop[tikv]	table:t1, index:idx2(a, concat(`a`, `b`), b)	range:["a" "aadwa","a" "aadwa"], keep order:false, stats:pseudo
+└─IndexReader	0.10	root		index:Selection
+  └─Selection	0.10	cop[tikv]		like(concat(planner__core__plan.t1.a, planner__core__plan.t1.b), "aadwa", 92)
+    └─IndexRangeScan	0.10	cop[tikv]	table:t1, index:idx2(a, concat(`a`, `b`), b)	range:["a" "aadwa","a" "aadwa"], keep order:false, stats:pseudo
 explain format='brief' select b from t1 where concat(a, b) >= "aa" and a = "b";
 id	estRows	task	access object	operator info
 Projection	33.33	root		planner__core__plan.t1.b
@@ -207,8 +214,9 @@ Projection	33.33	root		planner__core__plan.t1.b
 explain format='brief' select * from t1  where concat(a, b) like "aadwa" and a = "a";
 id	estRows	task	access object	operator info
 Projection	0.10	root		planner__core__plan.t1.a, planner__core__plan.t1.b
-└─IndexReader	0.10	root		index:IndexRangeScan
-  └─IndexRangeScan	0.10	cop[tikv]	table:t1, index:idx2(a, concat(`a`, `b`), b)	range:["a" "aadwa","a" "aadwa"], keep order:false, stats:pseudo
+└─IndexReader	0.10	root		index:Selection
+  └─Selection	0.10	cop[tikv]		like(concat(planner__core__plan.t1.a, planner__core__plan.t1.b), "aadwa", 92)
+    └─IndexRangeScan	0.10	cop[tikv]	table:t1, index:idx2(a, concat(`a`, `b`), b)	range:["a" "aadwa","a" "aadwa"], keep order:false, stats:pseudo
 explain format='brief' select b from t1 where concat(a, b) >= "aa" and a = "b";
 id	estRows	task	access object	operator info
 Projection	33.33	root		planner__core__plan.t1.b
@@ -217,8 +225,9 @@ Projection	33.33	root		planner__core__plan.t1.b
 explain format='brief' select * from t1  where concat(a, b) like "aadwa" and a = "a";
 id	estRows	task	access object	operator info
 Projection	0.10	root		planner__core__plan.t1.a, planner__core__plan.t1.b
-└─IndexReader	0.10	root		index:IndexRangeScan
-  └─IndexRangeScan	0.10	cop[tikv]	table:t1, index:idx2(a, concat(`a`, `b`), b)	range:["a" "aadwa","a" "aadwa"], keep order:false, stats:pseudo
+└─IndexReader	0.10	root		index:Selection
+  └─Selection	0.10	cop[tikv]		like(concat(planner__core__plan.t1.a, planner__core__plan.t1.b), "aadwa", 92)
+    └─IndexRangeScan	0.10	cop[tikv]	table:t1, index:idx2(a, concat(`a`, `b`), b)	range:["a" "aadwa","a" "aadwa"], keep order:false, stats:pseudo
 explain format='brief' select b from t1 where concat(a, b) >= "aa" and a = "b";
 id	estRows	task	access object	operator info
 Projection	33.33	root		planner__core__plan.t1.b
@@ -227,8 +236,9 @@ Projection	33.33	root		planner__core__plan.t1.b
 explain format='brief' select * from t1  where concat(a, b) like "aadwa" and a = "a";
 id	estRows	task	access object	operator info
 Projection	0.10	root		planner__core__plan.t1.a, planner__core__plan.t1.b
-└─IndexReader	0.10	root		index:IndexRangeScan
-  └─IndexRangeScan	0.10	cop[tikv]	table:t1, index:idx2(a, concat(`a`, `b`), b)	range:["a" "aadwa","a" "aadwa"], keep order:false, stats:pseudo
+└─IndexReader	0.10	root		index:Selection
+  └─Selection	0.10	cop[tikv]		like(concat(planner__core__plan.t1.a, planner__core__plan.t1.b), "aadwa", 92)
+    └─IndexRangeScan	0.10	cop[tikv]	table:t1, index:idx2(a, concat(`a`, `b`), b)	range:["a" "aadwa","a" "aadwa"], keep order:false, stats:pseudo
 explain format='brief' select b from t1 where concat(a, b) >= "aa" and a = "b";
 id	estRows	task	access object	operator info
 Projection	33.33	root		planner__core__plan.t1.b

@@ -811,13 +811,18 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction, newTp
 	if prefixLen != types.UnspecifiedLength {
 		fixPrefixPointRange(startPoint, nil, prefixLen, tpOfPattern)
 	}
-	startPoint, err = switchPointToSortKey(r.sctx, startPoint, newTp, true)
+	startPointCopy, err := switchPointToSortKey(r.sctx, startPoint, newTp, true)
 	if err != nil {
 		r.err = errors.Trace(err)
 		return getFullRange()
 	}
-	highValueSortKey := make([]byte, len(startPoint.value.GetBytes()))
-	copy(highValueSortKey, startPoint.value.GetBytes())
+	startPoint, err = switchPointToSortKey(r.sctx, startPoint, newTp, false)
+	if err != nil {
+		r.err = errors.Trace(err)
+		return getFullRange()
+	}
+	highValueSortKey := make([]byte, len(startPointCopy.value.GetBytes()))
+	copy(highValueSortKey, startPointCopy.value.GetBytes())
 	endPoint := &point{value: types.MaxValueDatum(), excl: true}
 	for i := len(highValueSortKey) - 1; i >= 0; i-- {
 		// Make the end point value more than the start point value,
