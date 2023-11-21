@@ -124,26 +124,28 @@ func RestoreWithDefaultDB(node ast.StmtNode, defaultDB, origin string) string {
 	if s, ok := SimpleCases(node, defaultDB, origin); ok {
 		return s
 	}
+	return restoreStmt(node, defaultDB)
+}
+
+// RestoreWithAsteriskDB ...
+func RestoreWithAsteriskDB(node ast.StmtNode) string {
+	// TODO: simple cases
+	return restoreStmt(node, "", format.RestoreWithSchemaAsAsterisk)
+}
+
+func restoreStmt(node ast.StmtNode, defaultDB string, additionalFlags ...format.RestoreFlags) string {
 	var sb strings.Builder
 	// Three flags for restore with default DB:
 	// 1. RestoreStringSingleQuotes specifies to use single quotes to surround the string;
 	// 2. RestoreSpacesAroundBinaryOperation specifies to add space around binary operation;
 	// 3. RestoreStringWithoutCharset specifies to not print charset before string;
 	// 4. RestoreNameBackQuotes specifies to use back quotes to surround the name;
-	ctx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreSpacesAroundBinaryOperation|format.RestoreStringWithoutCharset|format.RestoreNameBackQuotes, &sb)
-	ctx.DefaultDB = defaultDB
-	if err := node.Restore(ctx); err != nil {
-		logutil.BgLogger().Debug("restore SQL failed", zap.String("category", "sql-bind"), zap.Error(err))
-		return ""
+	rf := format.RestoreStringSingleQuotes | format.RestoreSpacesAroundBinaryOperation | format.RestoreStringWithoutCharset | format.RestoreNameBackQuotes
+	for _, f := range additionalFlags {
+		rf |= f
 	}
-	return sb.String()
-}
-
-// RestoreWithAsteriskDB ...
-func RestoreWithAsteriskDB(node ast.StmtNode) string {
-	// TODO: simple cases
-	var sb strings.Builder
-	ctx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreSpacesAroundBinaryOperation|format.RestoreStringWithoutCharset|format.RestoreNameBackQuotes, &sb)
+	ctx := format.NewRestoreCtx(rf, &sb)
+	ctx.DefaultDB = defaultDB
 	if err := node.Restore(ctx); err != nil {
 		logutil.BgLogger().Debug("restore SQL failed", zap.String("category", "sql-bind"), zap.Error(err))
 		return ""
