@@ -1,0 +1,450 @@
+# TestWriteListPartitionTable2
+# test for write list partition when the partition expression is complicated and contain generated column.
+set @@session.tidb_enable_list_partition = ON;
+drop table if exists t;
+create table t (id int, name varchar(10),b int generated always as (length(name)+1) virtual)
+partition by list  (id*2 + b*b + b*b - b*b*2 - abs(id)) (
+partition p0 values in (3,5,6,9,17),
+partition p1 values in (1,2,10,11,19,20),
+partition p2 values in (4,12,13,14,18),
+partition p3 values in (7,8,15,16,null)
+);
+analyze table t;
+## Test add unique index failed.
+insert into t (id,name) values  (1, 'a'),(1,'b');
+alter table t add unique index idx (id,b);
+Error 1062 (23000): Duplicate entry '1-2' for key 't.idx'
+## Test add unique index success.
+delete from t where name='b';
+alter table t add unique index idx (id,b);
+## --------------------------Test insert---------------------------
+## Test insert 1 partition.
+delete from t;
+insert into t (id,name) values  (1, 'a'),(2,'b'),(10,'c');
+select id,name from t partition(p1) order by id;
+id	name
+1	a
+2	b
+10	c
+## Test insert multi-partitions.
+delete from t;
+insert into t (id,name) values  (1, 'a'),(3,'c'),(4,'e');
+select id,name from t partition(p0) order by id;
+id	name
+3	c
+select id,name from t partition(p1) order by id;
+id	name
+1	a
+select id,name from t partition(p2) order by id;
+id	name
+4	e
+select id,name from t partition(p3) order by id;
+id	name
+## Test insert on duplicate.
+insert into t (id,name) values (1, 'd'), (3,'f'),(5,'g') on duplicate key update name='x';
+select id,name from t partition(p0) order by id;
+id	name
+3	x
+5	g
+select id,name from t partition(p1) order by id;
+id	name
+1	x
+select id,name from t partition(p2) order by id;
+id	name
+4	e
+select id,name from t partition(p3) order by id;
+id	name
+## Test insert on duplicate error
+insert into t (id,name) values (3, 'a'), (11,'x') on duplicate key update id=id+1;
+Error 1062 (23000): Duplicate entry '4-2' for key 't.idx'
+select id,name from t order by id;
+id	name
+1	x
+3	x
+4	e
+5	g
+## Test insert ignore with duplicate
+insert ignore into t (id,name) values  (1, 'b'), (5,'a'),(null,'y');
+show warnings;
+Level	Code	Message
+Warning	1062	Duplicate entry '1-2' for key 't.idx'
+Warning	1062	Duplicate entry '5-2' for key 't.idx'
+select id,name from t partition(p0) order by id;
+id	name
+3	x
+5	g
+select id,name from t partition(p1) order by id;
+id	name
+1	x
+select id,name from t partition(p2) order by id;
+id	name
+4	e
+select id,name from t partition(p3) order by id;
+id	name
+NULL	y
+## Test insert ignore without duplicate
+insert ignore into t (id,name) values  (15, 'a'),(17,'a');
+select id,name from t partition(p0,p1,p2) order by id;
+id	name
+1	x
+3	x
+4	e
+5	g
+17	a
+select id,name from t partition(p3) order by id;
+id	name
+NULL	y
+15	a
+## Test insert meet no partition error.
+insert into t (id,name) values (100, 'd');
+Error 1526 (HY000): Table has no partition for value 100
+## --------------------------Test update---------------------------
+## Test update 1 partition.
+delete from t;
+insert into t (id,name) values  (1, 'a'),(2,'b'),(3,'c');
+update t set name='b' where id=2;;
+select id,name from t partition(p1);
+id	name
+1	a
+2	b
+update t set name='x' where id in (1,2);
+select id,name from t partition(p1);
+id	name
+1	x
+2	x
+update t set name='y' where id < 3;
+select id,name from t order by id;
+id	name
+1	y
+2	y
+3	c
+## Test update meet duplicate error.
+update t set id=2 where id = 1;
+Error 1062 (23000): Duplicate entry '2-2' for key 't.idx'
+select id,name from t order by id;
+id	name
+1	y
+2	y
+3	c
+## Test update multi-partitions
+update t set name='z' where id in (1,2,3);;
+select id,name from t order by id;
+id	name
+1	z
+2	z
+3	z
+update t set name='a' limit 3;
+select id,name from t order by id;
+id	name
+1	a
+2	a
+3	a
+update t set id=id*10 where id in (1,2);
+select id,name from t order by id;
+id	name
+3	a
+10	a
+20	a
+## Test update meet duplicate error.
+update t set id=id+17 where id in (3,10);
+Error 1062 (23000): Duplicate entry '20-2' for key 't.idx'
+select id,name from t order by id;
+id	name
+3	a
+10	a
+20	a
+## Test update meet no partition error.
+update t set id=id*2 where id in (3,20);
+Error 1526 (HY000): Table has no partition for value 40
+select id,name from t order by id;
+id	name
+3	a
+10	a
+20	a
+## --------------------------Test replace---------------------------
+## Test replace 1 partition.
+delete from t;
+replace into t (id,name) values  (1, 'a'),(2,'b');
+select id,name from t order by id;
+id	name
+1	a
+2	b
+## Test replace multi-partitions.
+replace into t (id,name) values  (3, 'c'),(4,'d'),(7,'f');
+select id,name from t partition(p0) order by id;
+id	name
+3	c
+select id,name from t partition(p1) order by id;
+id	name
+1	a
+2	b
+select id,name from t partition(p2) order by id;
+id	name
+4	d
+select id,name from t partition(p3) order by id;
+id	name
+7	f
+## Test replace on duplicate.
+replace into t (id,name) values  (1, 'x'),(7,'x');
+select id,name from t order by id;
+id	name
+1	x
+2	b
+3	c
+4	d
+7	x
+## Test replace meet no partition error.
+replace into t (id,name) values  (10,'x'),(50,'x');
+Error 1526 (HY000): Table has no partition for value 50
+select id,name from t order by id;
+id	name
+1	x
+2	b
+3	c
+4	d
+7	x
+## --------------------------Test delete---------------------------
+## Test delete 1 partition.
+delete from t where id = 3;
+select id,name from t partition(p0) order by id;
+id	name
+delete from t where id in (1,2);
+select id,name from t partition(p1) order by id;
+id	name
+## Test delete multi-partitions.
+delete from t where id in (4,7,10,11);
+select id,name from t;
+id	name
+insert into t (id,name) values  (3, 'c'),(4,'d'),(7,'f');
+delete from t where id < 10;
+select id,name from t;
+id	name
+insert into t (id,name) values  (3, 'c'),(4,'d'),(7,'f');
+delete from t limit 3;
+select id,name from t;
+id	name
+set @@session.tidb_enable_list_partition = default;
+# TestWriteListColumnsPartitionTable1
+set @@session.tidb_enable_list_partition = ON;
+drop table if exists t;
+create table t (id int, name varchar(10)) partition by list columns (id) (
+partition p0 values in (3,5,6,9,17),
+partition p1 values in (1,2,10,11,19,20),
+partition p2 values in (4,12,13,14,18),
+partition p3 values in (7,8,15,16,null)
+);
+analyze table t;
+## Test add unique index failed.
+insert into t values  (1, 'a'),(1,'b');
+alter table t add unique index idx (id);
+Error 1062 (23000): Duplicate entry '1' for key 't.idx'
+## Test add unique index success.
+delete from t where name='b';
+alter table t add unique index idx (id);
+## --------------------------Test insert---------------------------
+## Test insert 1 partition.
+delete from t;
+insert into t values  (1, 'a'),(2,'b'),(10,'c');
+select * from t partition(p1) order by id;
+id	name
+1	a
+2	b
+10	c
+## Test insert multi-partitions.
+delete from t;
+insert into t values  (1, 'a'),(3,'c'),(4,'e');
+select * from t partition(p0) order by id;
+id	name
+3	c
+select * from t partition(p1) order by id;
+id	name
+1	a
+select * from t partition(p2) order by id;
+id	name
+4	e
+select * from t partition(p3) order by id;
+id	name
+## Test insert on duplicate.
+insert into t values (1, 'd'), (3,'f'),(5,'g') on duplicate key update name='x';
+select * from t partition(p0) order by id;
+id	name
+3	x
+5	g
+select * from t partition(p1) order by id;
+id	name
+1	x
+select * from t partition(p2) order by id;
+id	name
+4	e
+select * from t partition(p3) order by id;
+id	name
+## Test insert on duplicate error
+insert into t values (3, 'a'), (11,'x') on duplicate key update id=id+1;
+Error 1062 (23000): Duplicate entry '4' for key 't.idx'
+select * from t order by id;
+id	name
+1	x
+3	x
+4	e
+5	g
+## Test insert ignore with duplicate
+insert ignore into t values  (1, 'b'), (5,'a'),(null,'y');
+show warnings;
+Level	Code	Message
+Warning	1062	Duplicate entry '1' for key 't.idx'
+Warning	1062	Duplicate entry '5' for key 't.idx'
+select * from t partition(p0) order by id;
+id	name
+3	x
+5	g
+select * from t partition(p1) order by id;
+id	name
+1	x
+select * from t partition(p2) order by id;
+id	name
+4	e
+select * from t partition(p3) order by id;
+id	name
+NULL	y
+## Test insert ignore without duplicate
+insert ignore into t values  (15, 'a'),(17,'a');
+select * from t partition(p0,p1,p2) order by id;
+id	name
+1	x
+3	x
+4	e
+5	g
+17	a
+select * from t partition(p3) order by id;
+id	name
+NULL	y
+15	a
+## Test insert meet no partition error.
+insert into t values (100, 'd');
+Error 1526 (HY000): Table has no partition for value from column_list
+## --------------------------Test update---------------------------
+## Test update 1 partition.
+delete from t;
+insert into t values  (1, 'a'),(2,'b'),(3,'c');
+update t set name='b' where id=2;;
+select * from t partition(p1);
+id	name
+1	a
+2	b
+update t set name='x' where id in (1,2);
+select * from t partition(p1);
+id	name
+1	x
+2	x
+update t set name='y' where id < 3;
+select * from t order by id;
+id	name
+1	y
+2	y
+3	c
+## Test update meet duplicate error.
+update t set id=2 where id = 1;
+Error 1062 (23000): Duplicate entry '2' for key 't.idx'
+select * from t order by id;
+id	name
+1	y
+2	y
+3	c
+## Test update multi-partitions
+update t set name='z' where id in (1,2,3);;
+select * from t order by id;
+id	name
+1	z
+2	z
+3	z
+update t set name='a' limit 3;
+select * from t order by id;
+id	name
+1	a
+2	a
+3	a
+update t set id=id*10 where id in (1,2);
+select * from t order by id;
+id	name
+3	a
+10	a
+20	a
+## Test update meet duplicate error.
+update t set id=id+17 where id in (3,10);
+Error 1062 (23000): Duplicate entry '20' for key 't.idx'
+select * from t order by id;
+id	name
+3	a
+10	a
+20	a
+## Test update meet no partition error.
+update t set id=id*2 where id in (3,20);
+Error 1526 (HY000): Table has no partition for value from column_list
+select * from t order by id;
+id	name
+3	a
+10	a
+20	a
+## --------------------------Test replace---------------------------
+## Test replace 1 partition.
+delete from t;
+replace into t values  (1, 'a'),(2,'b');
+select * from t order by id;
+id	name
+1	a
+2	b
+## Test replace multi-partitions.
+replace into t values  (3, 'c'),(4,'d'),(7,'f');
+select * from t partition(p0) order by id;
+id	name
+3	c
+select * from t partition(p1) order by id;
+id	name
+1	a
+2	b
+select * from t partition(p2) order by id;
+id	name
+4	d
+select * from t partition(p3) order by id;
+id	name
+7	f
+## Test replace on duplicate.
+replace into t values  (1, 'x'),(7,'x');
+select * from t order by id;
+id	name
+1	x
+2	b
+3	c
+4	d
+7	x
+## Test replace meet no partition error.
+replace into t values  (10,'x'),(100,'x');
+Error 1526 (HY000): Table has no partition for value from column_list
+select * from t order by id;
+id	name
+1	x
+2	b
+3	c
+4	d
+7	x
+## --------------------------Test delete---------------------------
+## Test delete 1 partition.
+delete from t where id = 3;
+select * from t partition(p0) order by id;
+id	name
+delete from t where id in (1,2);
+select * from t partition(p1) order by id;
+id	name
+## Test delete multi-partitions.
+delete from t where id in (4,7,10,11);
+select * from t;
+id	name
+insert into t values  (3, 'c'),(4,'d'),(7,'f');
+delete from t where id < 10;
+select * from t;
+id	name
+insert into t values  (3, 'c'),(4,'d'),(7,'f');
+delete from t limit 3;
+select * from t;
+id	name
+set @@session.tidb_enable_list_partition = default;
