@@ -35,15 +35,6 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
 		return errors.Trace(err)
 	}
 
-	var reorgMeta *model.DDLReorgMeta
-	if containsDistTaskSubJob(subJobs) {
-		reorgMeta, err = newReorgMetaFromVariables(ctx)
-		if err != nil {
-			return err
-		}
-	} else {
-		reorgMeta = NewDDLReorgMeta(ctx)
-	}
 	job := &model.Job{
 		SchemaID:        schema.ID,
 		TableID:         t.Meta().ID,
@@ -53,8 +44,17 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
 		BinlogInfo:      &model.HistoryInfo{},
 		Args:            nil,
 		MultiSchemaInfo: ctx.GetSessionVars().StmtCtx.MultiSchemaInfo,
-		ReorgMeta:       reorgMeta,
+		ReorgMeta:       nil,
 	}
+	if containsDistTaskSubJob(subJobs) {
+		job.ReorgMeta, err = newReorgMetaFromVariables(d, job, ctx)
+		if err != nil {
+			return err
+		}
+	} else {
+		job.ReorgMeta = NewDDLReorgMeta(ctx)
+	}
+
 	err = checkMultiSchemaInfo(ctx.GetSessionVars().StmtCtx.MultiSchemaInfo, t)
 	if err != nil {
 		return errors.Trace(err)

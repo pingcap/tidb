@@ -20,6 +20,7 @@ import (
 	"math"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -205,7 +206,7 @@ func (s *mockTiKVStore) GetRegionCache() *tikv.RegionCache {
 }
 
 func bytesHandle(t *testing.T, data []byte) kv.Handle {
-	encoded, err := codec.EncodeKey(nil, nil, types.NewBytesDatum(data))
+	encoded, err := codec.EncodeKey(time.UTC, nil, types.NewBytesDatum(data))
 	require.NoError(t, err)
 	h, err := kv.NewCommonHandle(encoded)
 	require.NoError(t, err)
@@ -499,7 +500,7 @@ func TestNoTTLSplitSupportTables(t *testing.T) {
 func TestGetNextBytesHandleDatum(t *testing.T) {
 	tblID := int64(7)
 	buildHandleBytes := func(data []byte) []byte {
-		handleBytes, err := codec.EncodeKey(nil, nil, types.NewBytesDatum(data))
+		handleBytes, err := codec.EncodeKey(time.UTC, nil, types.NewBytesDatum(data))
 		require.NoError(t, err)
 		return handleBytes
 	}

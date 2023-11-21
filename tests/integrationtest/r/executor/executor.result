@@ -4390,3 +4390,18 @@ Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collatio
 select * from `executor__executor` . `testbind`	SELECT * FROM `executor__executor`.`testbind` USE INDEX FOR JOIN (`index_t`)	executor__executor	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	a2fa907992be17801e5976df09b5b3a0d205f4c4aff39a14ab3bc8642026f527	
 drop session binding for select * from testbind using select * from testbind use index for join(index_t);
 drop global binding for select * from testbind using select * from testbind use index for join(index_t);
+drop table if EXISTS t1;
+create table t1(id int primary key, a int, b int, c int, d int, index t1a(a), index t1b(b));
+insert into t1 values(1,1,1,1,1),(2,2,2,2,2),(3,3,3,3,3),(4,4,4,4,4),(5,5,5,5,5);
+explain analyze select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+IndexMerge_8	3334.67	2	root	NULL	.*time:.*loops:.*index_task:{fetch_handle:.*, merge:.*}.*table_task:{num.*concurrency.*fetch_row.*wait_time.*}.*	type: union	<num> KB	N/A
+├─TableRangeScan_5(Build)	3333.33	1	cop[tikv]	table:t1	.*time:.*loops:.*cop_task:.*	range:[-inf,2), keep order:false, stats:pseudo	<num> Bytes	N/A
+├─IndexRangeScan_6(Build)	3333.33	1	cop[tikv]	table:t1, index:t1a(a)	.*time:.*loops:.*cop_task:.*	range:(4,+inf], keep order:false, stats:pseudo	N/A	N/A
+└─TableRowIDScan_7(Probe)	3334.67	2	cop[tikv]	table:t1	.*time:.*loops:.*cop_task:.*	keep order:false, stats:pseudo	N/A	N/A
+set @@tidb_enable_collect_execution_info=0;
+select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by a;
+id	a	b	c	d
+1	1	1	1	1
+5	5	5	5	5
+set @@tidb_enable_collect_execution_info=default;

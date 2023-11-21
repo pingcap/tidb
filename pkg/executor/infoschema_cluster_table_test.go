@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client/http"
@@ -107,7 +106,7 @@ func (s *infosSchemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server
 	srv := httptest.NewServer(router)
 	// mock store stats stat
 	mockAddr := strings.TrimPrefix(srv.URL, "http://")
-	router.Handle(pdapi.Stores, fn.Wrap(func() (*pd.StoresInfo, error) {
+	router.Handle(pd.Stores, fn.Wrap(func() (*pd.StoresInfo, error) {
 		return &pd.StoresInfo{
 			Count: 1,
 			Stores: []pd.StoreInfo{
@@ -127,7 +126,7 @@ func (s *infosSchemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server
 		}, nil
 	}))
 	// mock regions
-	router.Handle(pdapi.Regions, fn.Wrap(func() (*pd.RegionsInfo, error) {
+	router.Handle(pd.Regions, fn.Wrap(func() (*pd.RegionsInfo, error) {
 		return &pd.RegionsInfo{
 			Count: 1,
 			Regions: []pd.RegionInfo{
@@ -148,7 +147,7 @@ func (s *infosSchemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server
 		}, nil
 	}))
 	// mock PD API
-	router.Handle(pdapi.Status, fn.Wrap(func() (interface{}, error) {
+	router.Handle(pd.Status, fn.Wrap(func() (interface{}, error) {
 		return struct {
 			Version        string `json:"version"`
 			GitHash        string `json:"git_hash"`
@@ -178,12 +177,12 @@ func (s *infosSchemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server
 		return configuration, nil
 	}
 	// PD config.
-	router.Handle(pdapi.Config, fn.Wrap(mockConfig))
+	router.Handle(pd.Config, fn.Wrap(mockConfig))
 	// TiDB/TiKV config.
 	router.Handle("/config", fn.Wrap(mockConfig))
 	// PD region.
-	router.Handle(pdapi.RegionStats, fn.Wrap(func() (*helper.PDRegionStats, error) {
-		return &helper.PDRegionStats{
+	router.Handle(pd.StatsRegion, fn.Wrap(func() (*pd.RegionStats, error) {
+		return &pd.RegionStats{
 			Count:            1,
 			EmptyCount:       1,
 			StorageSize:      1,

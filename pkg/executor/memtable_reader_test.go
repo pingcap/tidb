@@ -31,9 +31,9 @@ import (
 	"github.com/pingcap/sysutil"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/pdapi"
 	pmodel "github.com/prometheus/common/model"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client/http"
 	"google.golang.org/grpc"
 )
 
@@ -149,7 +149,7 @@ func TestTiDBClusterConfig(t *testing.T) {
 	}
 
 	// pd config
-	router.Handle(pdapi.Config, fn.Wrap(mockConfig))
+	router.Handle(pd.Config, fn.Wrap(mockConfig))
 	// TiDB/TiKV config
 	router.Handle("/config", fn.Wrap(mockConfig))
 	// Tiproxy config

@@ -6,7 +6,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/store/helper",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/ddl/placement",
         "//pkg/kv",
         "//pkg/parser/model",
         "//pkg/store/driver/error",
@@ -14,7 +13,6 @@ go_library(
         "//pkg/util",
         "//pkg/util/codec",
         "//pkg/util/logutil",
-        "//pkg/util/pdapi",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/deadlock",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
@@ -42,7 +40,6 @@ go_test(
         "//pkg/store/mockstore",
         "//pkg/tablecodec",
         "//pkg/testkit/testsetup",
-        "//pkg/util/pdapi",
         "@com_github_gorilla_mux//:mux",
         "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",

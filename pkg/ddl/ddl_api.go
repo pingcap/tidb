@@ -7075,10 +7075,6 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 
 	unique := true
 	sqlMode := ctx.GetSessionVars().SQLMode
-	reorgMeta, err := newReorgMetaFromVariables(ctx)
-	if err != nil {
-		return err
-	}
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
@@ -7086,10 +7082,15 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		TableName:  t.Meta().Name.L,
 		Type:       model.ActionAddPrimaryKey,
 		BinlogInfo: &model.HistoryInfo{},
-		ReorgMeta:  reorgMeta,
+		ReorgMeta:  nil,
 		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption, sqlMode, nil, global},
 		Priority:   ctx.GetSessionVars().DDLReorgPriority,
 	}
+	reorgMeta, err := newReorgMetaFromVariables(d, job, ctx)
+	if err != nil {
+		return err
+	}
+	job.ReorgMeta = reorgMeta
 
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -7328,10 +7329,6 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		return d.addHypoIndexIntoCtx(ctx, ti.Schema, ti.Name, indexInfo)
 	}
 
-	reorgMeta, err := newReorgMetaFromVariables(ctx)
-	if err != nil {
-		return err
-	}
 	chs, coll := ctx.GetSessionVars().GetCharsetInfo()
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -7340,12 +7337,17 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		TableName:  t.Meta().Name.L,
 		Type:       model.ActionAddIndex,
 		BinlogInfo: &model.HistoryInfo{},
-		ReorgMeta:  reorgMeta,
+		ReorgMeta:  nil,
 		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
 		Priority:   ctx.GetSessionVars().DDLReorgPriority,
 		Charset:    chs,
 		Collate:    coll,
 	}
+	reorgMeta, err := newReorgMetaFromVariables(d, job, ctx)
+	if err != nil {
+		return err
+	}
+	job.ReorgMeta = reorgMeta
 
 	err = d.DoDDLJob(ctx, job)
 	// key exists, but if_not_exists flags is true, so we ignore this error.
@@ -7357,12 +7359,20 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	return errors.Trace(err)
 }
 
-func newReorgMetaFromVariables(sctx sessionctx.Context) (*model.DDLReorgMeta, error) {
+func newReorgMetaFromVariables(d *ddl, job *model.Job, sctx sessionctx.Context) (*model.DDLReorgMeta, error) {
 	reorgMeta := NewDDLReorgMeta(sctx)
 	reorgMeta.IsDistReorg = variable.EnableDistTask.Load()
 	reorgMeta.IsFastReorg = variable.EnableFastReorg.Load()
 	if reorgMeta.IsDistReorg && !reorgMeta.IsFastReorg {
 		return nil, dbterror.ErrUnsupportedDistTask
+	}
+	isUpgradingSysDB := d.stateSyncer.IsUpgradingState() && hasSysDB(job)
+	if isUpgradingSysDB {
+		if reorgMeta.IsDistReorg {
+			logutil.BgLogger().Info("cannot use distributed task execution because the job on system DB is in upgrade state",
+				zap.String("category", "ddl"), zap.Stringer("job", job))
+		}
+		reorgMeta.IsDistReorg = false
 	}
 	return reorgMeta, nil
 }

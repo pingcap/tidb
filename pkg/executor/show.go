@@ -253,7 +253,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowPlugins()
 	case ast.ShowProfiles:
 		// empty result
-	case ast.ShowMasterStatus:
+	case ast.ShowMasterStatus, ast.ShowBinlogStatus:
 		return e.fetchShowMasterStatus()
 	case ast.ShowPrivileges:
 		return e.fetchShowPrivileges()

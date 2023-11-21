@@ -110,12 +110,12 @@ func TestNextKey(t *testing.T) {
 
 	stmtCtx := stmtctx.NewStmtCtx()
 	for _, datums := range testDatums {
-		keyBytes, err := codec.EncodeKey(stmtCtx, nil, types.NewIntDatum(123), datums[0])
+		keyBytes, err := codec.EncodeKey(stmtCtx.TimeZone(), nil, types.NewIntDatum(123), datums[0])
 		require.NoError(t, err)
 		h, err := tidbkv.NewCommonHandle(keyBytes)
 		require.NoError(t, err)
 		key := tablecodec.EncodeRowKeyWithHandle(1, h)
-		nextKeyBytes, err := codec.EncodeKey(stmtCtx, nil, types.NewIntDatum(123), datums[1])
+		nextKeyBytes, err := codec.EncodeKey(stmtCtx.TimeZone(), nil, types.NewIntDatum(123), datums[1])
 		require.NoError(t, err)
 		nextHdl, err := tidbkv.NewCommonHandle(nextKeyBytes)
 		require.NoError(t, err)
@@ -125,7 +125,7 @@ func TestNextKey(t *testing.T) {
 	}
 
 	// a special case that when len(string datum) % 8 == 7, nextKey twice should not panic.
-	keyBytes, err := codec.EncodeKey(stmtCtx, nil, types.NewStringDatum("1234567"))
+	keyBytes, err := codec.EncodeKey(stmtCtx.TimeZone(), nil, types.NewStringDatum("1234567"))
 	require.NoError(t, err)
 	h, err := tidbkv.NewCommonHandle(keyBytes)
 	require.NoError(t, err)
