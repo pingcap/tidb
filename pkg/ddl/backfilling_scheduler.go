@@ -37,7 +37,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/util/mathutil"
+=======
+	"github.com/pingcap/tidb/pkg/util/mock"
+>>>>>>> 36e68a02fb8 (ddl: init internal session with reorg info for dist tasks (#48737))
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"go.uber.org/zap"
 )
@@ -136,10 +140,9 @@ func newSessCtx(
 	resourceGroupName string,
 ) (sessionctx.Context, error) {
 	sessCtx := newContext(store)
-	if err := initSessCtx(sessCtx, sqlMode, tzLocation); err != nil {
+	if err := initSessCtx(sessCtx, sqlMode, tzLocation, resourceGroupName); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sessCtx.GetSessionVars().ResourceGroupName = resourceGroupName
 	return sessCtx, nil
 }
 
@@ -147,6 +150,7 @@ func initSessCtx(
 	sessCtx sessionctx.Context,
 	sqlMode mysql.SQLMode,
 	tzLocation *model.TimeZoneLocation,
+	resGroupName string,
 ) error {
 	// Unify the TimeZone settings in newContext.
 	if sessCtx.GetSessionVars().StmtCtx.TimeZone() == nil {
@@ -167,12 +171,55 @@ func initSessCtx(
 	sessCtx.GetSessionVars().StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().StmtCtx.AllowInvalidDate = sqlMode.HasAllowInvalidDatesMode()
 	sessCtx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = !sqlMode.HasStrictMode()
+<<<<<<< HEAD
 	sessCtx.GetSessionVars().StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
 	sessCtx.GetSessionVars().StmtCtx.NoZeroDate = sqlMode.HasStrictMode()
+=======
+
+	typeFlags := types.StrictFlags.
+		WithTruncateAsWarning(!sqlMode.HasStrictMode()).
+		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
+		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()).
+		WithCastTimeToYearThroughConcat(true)
+	sessCtx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags)
+
+	sessCtx.GetSessionVars().ResourceGroupName = resGroupName
+
+>>>>>>> 36e68a02fb8 (ddl: init internal session with reorg info for dist tasks (#48737))
 	// Prevent initializing the mock context in the workers concurrently.
 	// For details, see https://github.com/pingcap/tidb/issues/40879.
-	_ = sessCtx.GetDomainInfoSchema()
+	if _, ok := sessCtx.(*mock.Context); ok {
+		_ = sessCtx.GetDomainInfoSchema()
+	}
 	return nil
+}
+
+func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context) {
+	sv := sessCtx.GetSessionVars()
+	rowEncoder := sv.RowEncoder.Enable
+	sqlMode := sv.SQLMode
+	var timezone *time.Location
+	if sv.TimeZone != nil {
+		// Copy the content of timezone instead of pointer because it may be changed.
+		tz := *sv.TimeZone
+		timezone = &tz
+	}
+	badNullAsWarn := sv.StmtCtx.BadNullAsWarning
+	overflowAsWarn := sv.StmtCtx.OverflowAsWarning
+	dividedZeroAsWarn := sv.StmtCtx.DividedByZeroAsWarning
+	typeFlags := sv.StmtCtx.TypeFlags()
+	resGroupName := sv.ResourceGroupName
+	return func(usedSessCtx sessionctx.Context) {
+		uv := usedSessCtx.GetSessionVars()
+		uv.RowEncoder.Enable = rowEncoder
+		uv.SQLMode = sqlMode
+		uv.TimeZone = timezone
+		uv.StmtCtx.BadNullAsWarning = badNullAsWarn
+		uv.StmtCtx.OverflowAsWarning = overflowAsWarn
+		uv.StmtCtx.DividedByZeroAsWarning = dividedZeroAsWarn
+		uv.StmtCtx.SetTypeFlags(typeFlags)
+		uv.ResourceGroupName = resGroupName
+	}
 }
 
 func (*txnBackfillScheduler) expectedWorkerSize() (size int) {
