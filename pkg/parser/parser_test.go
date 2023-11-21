@@ -1203,6 +1203,7 @@ func TestDBAStmt(t *testing.T) {
 		{`SHOW PROFILE CPU FOR QUERY 2 LIMIT 1,1`, true, "SHOW PROFILE CPU FOR QUERY 2 LIMIT 1,1"},
 		{`SHOW PROFILE CPU, MEMORY, BLOCK IO, CONTEXT SWITCHES, PAGE FAULTS, IPC, SWAPS, SOURCE FOR QUERY 1 limit 100`, true, "SHOW PROFILE CPU, MEMORY, BLOCK IO, CONTEXT SWITCHES, PAGE FAULTS, IPC, SWAPS, SOURCE FOR QUERY 1 LIMIT 100"},
 		{`SHOW MASTER STATUS`, true, "SHOW MASTER STATUS"},
+		{`SHOW BINARY LOG STATUS`, true, "SHOW BINARY LOG STATUS"},
 		{`SHOW PRIVILEGES`, true, "SHOW PRIVILEGES"},
 		// for show character set
 		{"show character set;", true, "SHOW CHARSET"},
@@ -3411,6 +3412,17 @@ func TestDDL(t *testing.T) {
 		{"flashback cluster to timestamp DATE_SUB(NOW(), INTERVAL 3 SECOND)", false, ""},
 		{"flashback table to timestamp '2021-05-26 16:45:26'", false, ""},
 		{"flashback database to timestamp '2021-05-26 16:45:26'", false, ""},
+
+		// for flashback to tso
+		{"flashback cluster to tso 445494955052105721", true, "FLASHBACK CLUSTER TO TSO 445494955052105721"},
+		{"flashback table t to tso 445494955052105722", true, "FLASHBACK TABLE `t` TO TSO 445494955052105722"},
+		{"flashback table t,t1 to tso 445494955052105723", true, "FLASHBACK TABLE `t`, `t1` TO TSO 445494955052105723"},
+		{"flashback database test to tso 445494955052105724", true, "FLASHBACK DATABASE `test` TO TSO 445494955052105724"},
+		{"flashback schema test to tso 445494955052105725", true, "FLASHBACK DATABASE `test` TO TSO 445494955052105725"},
+		{"flashback table to tso 445494955052105726", false, ""},
+		{"flashback database to tso 445494955052105727", false, ""},
+		{"flashback schema test to tso 0", false, ""},
+		{"flashback schema test to tso -100", false, ""},
 
 		// for remove partitioning
 		{"alter table t remove partitioning", true, "ALTER TABLE `t` REMOVE PARTITIONING"},

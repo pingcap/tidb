@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/mock/gomock"
 )
 
@@ -84,9 +85,12 @@ func TestFrameworkDynamicBasic(t *testing.T) {
 	var m sync.Map
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
 	RegisterTaskMeta(t, ctrl, &m, &testDynamicDispatcherExt{})
 	distContext := testkit.NewDistExecutionContext(t, 3)
-	DispatchTaskAndCheckSuccess("key1", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "key1", t, &m)
 	distContext.Close()
 }
 
@@ -94,18 +98,21 @@ func TestFrameworkDynamicHA(t *testing.T) {
 	var m sync.Map
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
 	RegisterTaskMeta(t, ctrl, &m, &testDynamicDispatcherExt{})
 	distContext := testkit.NewDistExecutionContext(t, 3)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDynamicDispatchErr", "5*return()"))
-	DispatchTaskAndCheckSuccess("key1", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "key1", t, &m)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDynamicDispatchErr"))
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDynamicDispatchErr1", "5*return()"))
-	DispatchTaskAndCheckSuccess("key2", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "key2", t, &m)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDynamicDispatchErr1"))
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDynamicDispatchErr2", "5*return()"))
-	DispatchTaskAndCheckSuccess("key3", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "key3", t, &m)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDynamicDispatchErr2"))
 	distContext.Close()
 }

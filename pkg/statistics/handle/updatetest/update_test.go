@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
@@ -561,6 +562,8 @@ func TestSplitRange(t *testing.T) {
 			result:  "[8,9)",
 		},
 	}
+	sc := new(stmtctx.StatementContext)
+	sc.SetTimeZone(time.UTC)
 	for _, test := range tests {
 		ranges := make([]*ranger.Range, 0, len(test.points)/2)
 		for i := 0; i < len(test.points); i += 2 {
@@ -572,7 +575,7 @@ func TestSplitRange(t *testing.T) {
 				Collators:   collate.GetBinaryCollatorSlice(1),
 			})
 		}
-		ranges, _ = h.SplitRange(nil, ranges, false)
+		ranges, _ = h.SplitRange(sc, ranges, false)
 		var ranStrs []string
 		for _, ran := range ranges {
 			ranStrs = append(ranStrs, ran.String())
@@ -700,7 +703,6 @@ func TestMergeTopN(t *testing.T) {
 
 		topNs := make([]*statistics.TopN, 0, topnNum)
 		res := make(map[int]uint64)
-		rand.Seed(time.Now().Unix())
 		for i := 0; i < topnNum; i++ {
 			topN := statistics.NewTopN(n)
 			occur := make(map[int]bool)

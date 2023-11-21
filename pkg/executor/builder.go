@@ -875,7 +875,7 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) exec.Executor {
 		Extractor:             v.Extractor,
 		ImportJobID:           v.ImportJobID,
 	}
-	if e.Tp == ast.ShowMasterStatus {
+	if e.Tp == ast.ShowMasterStatus || e.Tp == ast.ShowBinlogStatus {
 		// show master status need start ts.
 		if _, err := e.Ctx().Txn(true); err != nil {
 			b.err = err
@@ -2796,7 +2796,7 @@ func (b *executorBuilder) getAdjustedSampleRate(task plannercore.AnalyzeColumnsT
 }
 
 func (b *executorBuilder) getApproximateTableCountFromStorage(tid int64, task plannercore.AnalyzeColumnsTask) (float64, bool) {
-	return pdhelper.GlobalPDHelper.GetApproximateTableCountFromStorage(b.ctx, tid, task.DBName, task.TableName, task.PartitionName)
+	return pdhelper.GlobalPDHelper.GetApproximateTableCountFromStorage(context.Background(), b.ctx, tid, task.DBName, task.TableName, task.PartitionName)
 }
 
 func (b *executorBuilder) buildAnalyzeColumnsPushdown(
@@ -4367,7 +4367,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetFromInfoSchema(e.Ctx().GetInfoSchema()).
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx(), &reqBuilderWithRange.Request, e.netDataSize)).
 		SetPaging(e.paging).
-		SetConnID(e.Ctx().GetSessionVars().ConnectionID).
+		SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias).
 		Build()
 	if err != nil {
 		return nil, err

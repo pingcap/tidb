@@ -198,7 +198,7 @@ func isColEqExpr(expr expression.Expression, col *expression.Column, checkFn fun
 			return false
 		}
 		if checkFn(f.GetArgs()[1]) {
-			if col.Equal(nil, c) {
+			if col.EqualColumn(c) {
 				return true
 			}
 		}
@@ -208,7 +208,7 @@ func isColEqExpr(expr expression.Expression, col *expression.Column, checkFn fun
 			return false
 		}
 		if checkFn(f.GetArgs()[0]) {
-			if col.Equal(nil, c) {
+			if col.EqualColumn(c) {
 				return true
 			}
 		}
@@ -240,22 +240,22 @@ type Col2Len map[int64]int
 
 // ExtractCol2Len collects index/table columns with lengths from expressions. If idxCols and idxColLens are not nil, it collects index columns with lengths(maybe prefix lengths).
 // Otherwise it collects table columns with full lengths.
-func ExtractCol2Len(exprs []expression.Expression, idxCols []*expression.Column, idxColLens []int) Col2Len {
+func ExtractCol2Len(ctx sessionctx.Context, exprs []expression.Expression, idxCols []*expression.Column, idxColLens []int) Col2Len {
 	col2len := make(Col2Len, len(idxCols))
 	for _, expr := range exprs {
-		extractCol2LenFromExpr(expr, idxCols, idxColLens, col2len)
+		extractCol2LenFromExpr(ctx, expr, idxCols, idxColLens, col2len)
 	}
 	return col2len
 }
 
-func extractCol2LenFromExpr(expr expression.Expression, idxCols []*expression.Column, idxColLens []int, col2Len Col2Len) {
+func extractCol2LenFromExpr(ctx sessionctx.Context, expr expression.Expression, idxCols []*expression.Column, idxColLens []int, col2Len Col2Len) {
 	switch v := expr.(type) {
 	case *expression.Column:
 		if idxCols == nil {
 			col2Len[v.UniqueID] = types.UnspecifiedLength
 		} else {
 			for i, col := range idxCols {
-				if col != nil && v.EqualByExprAndID(nil, col) {
+				if col != nil && v.EqualByExprAndID(ctx, col) {
 					col2Len[v.UniqueID] = idxColLens[i]
 					break
 				}
@@ -263,7 +263,7 @@ func extractCol2LenFromExpr(expr expression.Expression, idxCols []*expression.Co
 		}
 	case *expression.ScalarFunction:
 		for _, arg := range v.GetArgs() {
-			extractCol2LenFromExpr(arg, idxCols, idxColLens, col2Len)
+			extractCol2LenFromExpr(ctx, arg, idxCols, idxColLens, col2Len)
 		}
 	}
 }
@@ -332,9 +332,9 @@ func CompareCol2Len(c1, c2 Col2Len) (int, bool) {
 }
 
 // GetCol2LenFromAccessConds returns columns with lengths from path.AccessConds.
-func (path *AccessPath) GetCol2LenFromAccessConds() Col2Len {
+func (path *AccessPath) GetCol2LenFromAccessConds(ctx sessionctx.Context) Col2Len {
 	if path.IsTablePath() {
-		return ExtractCol2Len(path.AccessConds, nil, nil)
+		return ExtractCol2Len(ctx, path.AccessConds, nil, nil)
 	}
-	return ExtractCol2Len(path.AccessConds, path.IdxCols, path.IdxColLens)
+	return ExtractCol2Len(ctx, path.AccessConds, path.IdxCols, path.IdxColLens)
 }

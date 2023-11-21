@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/pingcap/tidb/pkg/util/set"
 	pd "github.com/tikv/pd/client/http"
 	"google.golang.org/grpc"
@@ -199,7 +198,7 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 				var url string
 				switch typ {
 				case "pd":
-					url = fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), statusAddr, pdapi.Config)
+					url = fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), statusAddr, pd.Config)
 				case "tikv", "tidb", "tiflash":
 					url = fmt.Sprintf("%s://%s/config", util.InternalHTTPSchema(), statusAddr)
 				case "tiproxy":
@@ -715,7 +714,7 @@ func (e *hotRegionsHistoryRetriver) startRetrieving(
 			go func(ch chan hotRegionsResult, address string, body *bytes.Buffer) {
 				util.WithRecovery(func() {
 					defer close(ch)
-					url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), address, pdapi.HotHistory)
+					url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), address, pd.HotHistory)
 					req, err := http.NewRequest(http.MethodGet, url, body)
 					if err != nil {
 						ch <- hotRegionsResult{err: errors.Trace(err)}
@@ -886,13 +885,17 @@ func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx
 		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
 	}
+	pdCli, err := tikvHelper.TryGetPDHTTPClient()
+	if err != nil {
+		return nil, err
+	}
 
 	var regionsInfo, regionsInfoByStoreID []pd.RegionInfo
 	regionMap := make(map[int64]*pd.RegionInfo)
 	storeMap := make(map[int64]struct{})
 
 	if len(e.extractor.StoreIDs) == 0 && len(e.extractor.RegionIDs) == 0 {
-		regionsInfo, err := tikvHelper.PDHTTPClient().GetRegions(ctx)
+		regionsInfo, err := pdCli.GetRegions(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -903,7 +906,7 @@ func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx
 		// if a region_id located in 1, 4, 7 store we will get all of them when request any store_id,
 		// storeMap is used to filter peers on unexpected stores.
 		storeMap[int64(storeID)] = struct{}{}
-		storeRegionsInfo, err := tikvHelper.PDHTTPClient().GetRegionsByStoreID(ctx, storeID)
+		storeRegionsInfo, err := pdCli.GetRegionsByStoreID(ctx, storeID)
 		if err != nil {
 			return nil, err
 		}
@@ -926,7 +929,7 @@ func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx
 			// if there is storeIDs, target region_id is fetched by storeIDs,
 			// otherwise we need to fetch it from PD.
 			if len(e.extractor.StoreIDs) == 0 {
-				regionInfo, err := tikvHelper.PDHTTPClient().GetRegionByID(ctx, regionID)
+				regionInfo, err := pdCli.GetRegionByID(ctx, regionID)
 				if err != nil {
 					return nil, err
 				}
