@@ -586,7 +586,7 @@ func buildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Nod
 }
 
 // ExtractSelectAndNormalizeDigest extract the select statement and normalize it.
-func ExtractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string, forBinding bool) (ast.StmtNode, string, string, error) {
+func ExtractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string, forBinding, forUniversalBinding bool) (ast.StmtNode, string, string, error) {
 	switch x := stmtNode.(type) {
 	case *ast.ExplainStmt:
 		// This function is only used to find bind record.
@@ -602,7 +602,11 @@ func ExtractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string,
 			var normalizeSQL string
 			if forBinding {
 				// Apply additional binding rules if enabled
-				normalizeSQL = parser.NormalizeForBinding(utilparser.RestoreWithDefaultDB(x.Stmt, specifiledDB, x.Text()))
+				if forUniversalBinding {
+					normalizeSQL = parser.NormalizeForBinding(utilparser.RestoreWithAsteriskDB(x.Stmt))
+				} else {
+					normalizeSQL = parser.NormalizeForBinding(utilparser.RestoreWithDefaultDB(x.Stmt, specifiledDB, x.Text()))
+				}
 			} else {
 				normalizeSQL = parser.Normalize(utilparser.RestoreWithDefaultDB(x.Stmt, specifiledDB, x.Text()))
 			}
@@ -654,8 +658,12 @@ func ExtractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string,
 		var normalizedSQL string
 		var hash *parser.Digest
 		if forBinding {
-			// Apply additional binding rules
-			normalizedSQL, hash = parser.NormalizeDigestForBinding(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
+			// Apply additional binding rules if enabled
+			if forUniversalBinding {
+				normalizedSQL, hash = parser.NormalizeDigestForBinding(utilparser.RestoreWithAsteriskDB(x))
+			} else {
+				normalizedSQL, hash = parser.NormalizeDigestForBinding(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
+			}
 		} else {
 			normalizedSQL, hash = parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
 		}
@@ -670,7 +678,7 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
 		return nil, "", nil
 	}
-	stmtNode, normalizedSQL, hash, err := ExtractSelectAndNormalizeDigest(stmt, ctx.GetSessionVars().CurrentDB, true)
+	stmtNode, normalizedSQL, hash, err := ExtractSelectAndNormalizeDigest(stmt, ctx.GetSessionVars().CurrentDB, true, false)
 	if err != nil || stmtNode == nil {
 		return nil, "", err
 	}
