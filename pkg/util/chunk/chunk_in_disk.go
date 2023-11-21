@@ -95,7 +95,7 @@ func (d *DataInDiskByChunks) Add(chk *Chunk) (err error) {
 		}
 	}
 
-	serializedBytesNum := d.serializeDataToBufInColumn(chk)
+	serializedBytesNum := d.serializeDataToBuf(chk)
 
 	var writeNum int
 	writeNum, err = d.dataFile.write(d.buf)
@@ -144,7 +144,7 @@ func (d *DataInDiskByChunks) GetChunk(chkIdx int) (*Chunk, error) {
 	}
 
 	chk := NewEmptyChunk(d.fieldTypes)
-	d.deserializeDataToChunkInColumn(chk)
+	d.deserializeDataToChunk(chk)
 
 	return chk, nil
 }
@@ -231,7 +231,7 @@ func (d *DataInDiskByChunks) serializeColumns(pos *int64, chk *Chunk) {
 // columnn data: | length | nullMapSize | dataSize | offsetSize | nullBitmap... | data... | offsets... |
 //
 // `xxx...` means this is a variable field filled by bytes.
-func (d *DataInDiskByChunks) serializeDataToBufInColumn(chk *Chunk) int64 {
+func (d *DataInDiskByChunks) serializeDataToBuf(chk *Chunk) int64 {
 	totalBytes := int64(0)
 
 	// Calculate total memory that buffer needs
@@ -304,7 +304,7 @@ func (d *DataInDiskByChunks) deserializeColumns(chk *Chunk, pos *int64) {
 	}
 }
 
-func (d *DataInDiskByChunks) deserializeDataToChunkInColumn(chk *Chunk) {
+func (d *DataInDiskByChunks) deserializeDataToChunk(chk *Chunk) {
 	pos := int64(0)
 	d.deserializeChunkData(chk, &pos)
 	d.deserializeColumns(chk, &pos)
