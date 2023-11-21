@@ -355,8 +355,6 @@ type ddlCtx struct {
 	statsHandle  *handle.Handle
 	tableLockCkr util.DeadTableLockChecker
 	etcdCli      *clientv3.Client
-	// backfillJobCh gets notification if any backfill jobs coming.
-	backfillJobCh chan struct{}
 
 	*waitSchemaSyncedController
 	*schemaVersionManager
@@ -497,23 +495,6 @@ func (dc *ddlCtx) jobContext(jobID int64, reorgMeta *model.DDLReorgMeta) *JobCon
 		ctx.resourceGroupName = reorgMeta.ResourceGroupName
 	}
 	return ctx
-}
-
-func (dc *ddlCtx) removeBackfillCtxJobCtx(jobID int64) {
-	dc.backfillCtx.Lock()
-	delete(dc.backfillCtx.jobCtxMap, jobID)
-	dc.backfillCtx.Unlock()
-}
-
-func (dc *ddlCtx) backfillCtxJobIDs() []int64 {
-	dc.backfillCtx.Lock()
-	defer dc.backfillCtx.Unlock()
-
-	runningJobIDs := make([]int64, 0, len(dc.backfillCtx.jobCtxMap))
-	for id := range dc.backfillCtx.jobCtxMap {
-		runningJobIDs = append(runningJobIDs, id)
-	}
-	return runningJobIDs
 }
 
 type reorgContexts struct {
