@@ -28,15 +28,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
-type colSizeMetaType = int32
-
-const colSizeMetaLen = int(unsafe.Sizeof(colSizeMetaType(0)))
-
 const byteLen = int64(unsafe.Sizeof(byte(0)))
 const intLen = int64(unsafe.Sizeof(int(0)))
 const int64Len = int64(unsafe.Sizeof(int64(0)))
 
-const chkMetaSize = intLen
 const chkFixedSize = intLen + 3*intLen
 const colMetaSize = int64Len * 4
 
@@ -228,7 +223,14 @@ func (d *DataInDiskByChunks) serializeColumns(pos *int64, chk *Chunk) {
 	}
 }
 
-// TODO describe the serialized format in comment
+// Serialized format of a chunk:
+// chunk's data: | numVirtualRows | capacity | requiredRows | selSize | sel... |
+// column1 data: | length | nullMapSize | dataSize | offsetSize | nullBitmap... | data... | offsets... |
+// column2 data: | length | nullMapSize | dataSize | offsetSize | nullBitmap... | data... | offsets... |
+// ...
+// columnn data: | length | nullMapSize | dataSize | offsetSize | nullBitmap... | data... | offsets... |
+//
+// `xxx...` means this is a variable field filled by bytes.
 func (d *DataInDiskByChunks) serializeDataToBufInColumn(chk *Chunk) int64 {
 	totalBytes := int64(0)
 
@@ -250,83 +252,6 @@ func (d *DataInDiskByChunks) serializeDataToBufInColumn(chk *Chunk) int64 {
 	d.serializeChunkData(&pos, chk)
 	d.serializeColumns(&pos, chk)
 	return totalBytes
-}
-
-// TODO delete it
-// Format of the chunk serialized in buffer:
-// row1: | col1 size | col1 data | col2 size | col2 data | col3 size | col3 data |
-// row2: | col1 size | col1 data | col2 size | col2 data | col3 size | col3 data |
-// row3: | col1 size | col1 data | col2 size | col2 data | col3 size | col3 data |
-// row4: | col1 size | col1 data | col2 size | col2 data | col3 size | col3 data |
-//
-// Column size will be -1 if column data is null.
-func (d *DataInDiskByChunks) serializeDataToBuf(chk *Chunk) int64 {
-	d.buf = d.buf[0:0] // clear the buf data
-
-	rowNum := chk.NumRows()
-	colNum := chk.NumCols()
-	colSizeRecordBytes := int64(colSizeMetaLen * colNum)
-	totalBytes := int64(0)
-	addedBytesNum := int64(0)
-	rowBuf := make([]byte, 0, 1024)
-	tmpBuf := make([]byte, colSizeMetaLen) // Used for storing column size
-
-	for i := 0; i < rowNum; i++ {
-		row := chk.GetRow(i)
-		totalBytes += colSizeRecordBytes
-		rowBuf, addedBytesNum = serializeDataToRowBuf(&row, rowBuf, tmpBuf, colNum)
-		totalBytes += addedBytesNum
-		d.buf = append(d.buf, rowBuf...)
-	}
-	return totalBytes
-}
-
-// Serialize data of a row into a buffer
-func serializeDataToRowBuf(row *Row, rowBuf []byte, tmpBuf []byte, colNum int) ([]byte, int64) {
-	rowBuf = rowBuf[0:0]
-	addedBytesNum := int64(0)
-	for j := 0; j < colNum; j++ {
-		if row.IsNull(j) {
-			*(*colSizeMetaType)(unsafe.Pointer(&tmpBuf[0])) = -1
-			rowBuf = append(rowBuf, tmpBuf...)
-		} else {
-			colBytes := row.GetRaw(j)
-			colBytesNum := colSizeMetaType(len(colBytes))
-
-			*(*colSizeMetaType)(unsafe.Pointer(&tmpBuf[0])) = colBytesNum
-			rowBuf = append(rowBuf, tmpBuf...)
-			rowBuf = append(rowBuf, colBytes...)
-
-			addedBytesNum += int64(colBytesNum)
-		}
-	}
-	return rowBuf, addedBytesNum
-}
-
-// TODO delete it
-func (d *DataInDiskByChunks) deserializeDataToChunk(chk *Chunk) {
-	colNum := len(d.fieldTypes)
-	dataSize := len(d.buf)
-	offset := 0
-	for offset < dataSize {
-		for colIdx := 0; colIdx < colNum; colIdx++ {
-			col := chk.columns[colIdx]
-			colDataSize := *(*colSizeMetaType)(unsafe.Pointer(&d.buf[offset]))
-			offset += colSizeMetaLen
-			if colDataSize == -1 { // The data is null
-				col.AppendNull()
-			} else {
-				chunkData := d.buf[offset : offset+int(colDataSize)]
-				if col.isFixed() {
-					col.elemBuf = chunkData
-					col.finishAppendFixed()
-				} else {
-					col.AppendBytes(chunkData)
-				}
-				offset += int(colDataSize)
-			}
-		}
-	}
 }
 
 func (d *DataInDiskByChunks) deserializeSel(chk *Chunk, pos *int64, selSize int) {
