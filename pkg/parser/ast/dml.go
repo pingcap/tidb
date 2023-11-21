@@ -292,15 +292,20 @@ func (*TableName) resultSet() {}
 // Restore implements Node interface.
 func (n *TableName) restoreName(ctx *format.RestoreCtx) {
 	if !ctx.Flags.HasWithoutSchemaNameFlag() {
-		// restore db name
-		if n.Schema.String() != "" {
-			ctx.WriteName(n.Schema.String())
+		if ctx.Flags.HasWithSchemaAsAsteriskFlag() {
+			ctx.WriteName("*")
 			ctx.WritePlain(".")
-		} else if ctx.DefaultDB != "" {
-			// Try CTE, for a CTE table name, we shouldn't write the database name.
-			if !ctx.IsCTETableName(n.Name.L) {
-				ctx.WriteName(ctx.DefaultDB)
+		} else {
+			// restore db name
+			if n.Schema.String() != "" {
+				ctx.WriteName(n.Schema.String())
 				ctx.WritePlain(".")
+			} else if ctx.DefaultDB != "" {
+				// Try CTE, for a CTE table name, we shouldn't write the database name.
+				if !ctx.IsCTETableName(n.Name.L) {
+					ctx.WriteName(ctx.DefaultDB)
+					ctx.WritePlain(".")
+				}
 			}
 		}
 	}
