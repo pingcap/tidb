@@ -40,8 +40,10 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
+	"gorm.io/gorm/logger"
 )
 
 // BackfillingDispatcherExt is an extension of litBackfillDispatcher, exported for test.
@@ -96,7 +98,7 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 	switch nextStep {
 	case StepReadIndex:
 		if tblInfo.Partition != nil {
-			return generatePartitionPlan(tblInfo)
+			return dsp.generatePartitionPlan(tblInfo, &backfillMeta)
 		}
 		return dsp.generateNonPartitionPlan(dsp.d, &backfillMeta, tblInfo, job, dsp.GlobalSort, len(serverInfo), logger)
 	case StepMergeSort:
@@ -250,7 +252,14 @@ func getTblInfo(d *ddl, job *model.Job) (tblInfo *model.TableInfo, err error) {
 	return tblInfo, nil
 }
 
-func generatePartitionPlan(tblInfo *model.TableInfo) (metas [][]byte, err error) {
+func (dsp *BackfillingDispatcherExt) generatePartitionPlan(
+	tblInfo *model.TableInfo,
+	backfillMeta *BackfillGlobalMeta) (metas [][]byte, err error) {
+	memSize, err := dsp.getWriterMemSize(backfillMeta)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	logger.Info("set writer memSize", zap.String("size", units.BytesSize(float64(memSize))))
 	defs := tblInfo.Partition.Definitions
 	physicalIDs := make([]int64, len(defs))
 	for i := range defs {
@@ -261,6 +270,7 @@ func generatePartitionPlan(tblInfo *model.TableInfo) (metas [][]byte, err error)
 	for _, physicalID := range physicalIDs {
 		subTaskMeta := &BackfillSubTaskMeta{
 			PhysicalTableID: physicalID,
+			MemSize:         memSize,
 		}
 
 		metaBytes, err := json.Marshal(subTaskMeta)
@@ -271,38 +281,6 @@ func generatePartitionPlan(tblInfo *model.TableInfo) (metas [][]byte, err error)
 		subTaskMetas = append(subTaskMetas, metaBytes)
 	}
 	return subTaskMetas, nil
-}
-
-func (dsp *BackfillingDispatcherExt) getWriterMemSize(backfillMeta *BackfillGlobalMeta) (uint64, error) {
-	jobMeta := &backfillMeta.Job
-	_, tbl, err := dsp.d.getTableByTxn((*asAutoIDRequirement)(dsp.d.ddlCtx), jobMeta.SchemaID, jobMeta.TableID)
-	if err != nil {
-		return 0, err
-	}
-	_, writerCnt := expectedIngestWorkerCnt()
-	indexInfos := make([]*model.IndexInfo, 0, len(backfillMeta.EleIDs))
-	for _, eid := range backfillMeta.EleIDs {
-		indexInfo := model.FindIndexInfoByID(tbl.Meta().Indices, eid)
-		if indexInfo == nil {
-			logutil.BgLogger().Warn("index info not found", zap.String("category", "ddl-ingest"),
-				zap.Int64("table ID", tbl.Meta().ID), zap.Int64("index ID", eid))
-			return 0, errors.Errorf("index info not found: %d", eid)
-		}
-		indexInfos = append(indexInfos, indexInfo)
-	}
-	memTotal, err := memory.MemTotal()
-	if err != nil {
-		return 0, err
-	}
-	return (memTotal / 2) / uint64(writerCnt) / uint64(len(indexInfos)), nil
-}
-
-func (dsp *BackfillingDispatcherExt) getMergeSortPartSize(backfillMeta *BackfillGlobalMeta, concurrency int) (uint64, error) {
-	writerMemSize, err := dsp.getWriterMemSize(backfillMeta)
-	if err != nil {
-		return 0, nil
-	}
-	return writerMemSize / uint64(concurrency) / 10, nil
 }
 
 func (dsp *BackfillingDispatcherExt) generateNonPartitionPlan(
@@ -373,6 +351,41 @@ func (dsp *BackfillingDispatcherExt) generateNonPartitionPlan(
 		subTaskMetas = append(subTaskMetas, metaBytes)
 	}
 	return subTaskMetas, nil
+}
+
+func (dsp *BackfillingDispatcherExt) getWriterMemSize(backfillMeta *BackfillGlobalMeta) (uint64, error) {
+	failpoint.Inject("mockWriterMemSize", func() {
+		failpoint.Return(1*size.GB, nil)
+	})
+	jobMeta := &backfillMeta.Job
+	_, tbl, err := dsp.d.getTableByTxn((*asAutoIDRequirement)(dsp.d.ddlCtx), jobMeta.SchemaID, jobMeta.TableID)
+	if err != nil {
+		return 0, err
+	}
+	_, writerCnt := expectedIngestWorkerCnt()
+	indexInfos := make([]*model.IndexInfo, 0, len(backfillMeta.EleIDs))
+	for _, eid := range backfillMeta.EleIDs {
+		indexInfo := model.FindIndexInfoByID(tbl.Meta().Indices, eid)
+		if indexInfo == nil {
+			logutil.BgLogger().Warn("index info not found", zap.String("category", "ddl-ingest"),
+				zap.Int64("table ID", tbl.Meta().ID), zap.Int64("index ID", eid))
+			return 0, errors.Errorf("index info not found: %d", eid)
+		}
+		indexInfos = append(indexInfos, indexInfo)
+	}
+	memTotal, err := memory.MemTotal()
+	if err != nil {
+		return 0, err
+	}
+	return (memTotal / 2) / uint64(writerCnt) / uint64(len(indexInfos)), nil
+}
+
+func (dsp *BackfillingDispatcherExt) getMergeSortPartSize(backfillMeta *BackfillGlobalMeta, concurrency int) (uint64, error) {
+	writerMemSize, err := dsp.getWriterMemSize(backfillMeta)
+	if err != nil {
+		return 0, nil
+	}
+	return writerMemSize / uint64(concurrency) / 10, nil
 }
 
 func calculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool) int {

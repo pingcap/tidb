@@ -280,8 +280,8 @@ func (m *mergeSortStepExecutor) Init(ctx context.Context) error {
 		return err
 	}
 	m.controller = controller
-
-	m.partSize = int64(getWriterMemorySizeLimit(&m.taskMeta.Plan) / uint64(m.taskMeta.Plan.ThreadCnt) / 10000 * uint64(external.MergeSortOverlapThreshold))
+	// 10000 = max part num
+	m.partSize = int64(getWriterMemorySizeLimit(&m.taskMeta.Plan) / 10000 * uint64(external.MergeSortOverlapThreshold))
 	return nil
 }
 
