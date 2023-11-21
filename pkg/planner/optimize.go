@@ -685,8 +685,10 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	if normalBinding != nil {
 		return normalBinding, scope, nil
 	}
-
-	return getSpecifiedBinding(ctx, stmt, true)
+	if ctx.GetSessionVars().EnableUniversalBinding {
+		return getSpecifiedBinding(ctx, stmt, true)
+	}
+	return nil, "", nil
 }
 
 func getSpecifiedBinding(ctx sessionctx.Context, stmt ast.StmtNode, universalBinding bool) (*bindinfo.BindRecord, string, error) {
