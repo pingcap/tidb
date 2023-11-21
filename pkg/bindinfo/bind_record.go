@@ -77,7 +77,8 @@ type Binding struct {
 	SQLDigest  string
 	PlanDigest string
 
-	IsUniversal bool // indicate whether this binding is a universal binding.
+	BindSQLUni  string // bind sql in universal format
+	IsUniversal bool   // indicate whether this binding is a universal binding.
 }
 
 func (b *Binding) isSame(rb *Binding) bool {

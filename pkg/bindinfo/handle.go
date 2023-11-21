@@ -215,6 +215,9 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 		return err
 	}
 
+	// TODO: make this implementation more graceful
+	record.Bindings[0].BindSQL = record.Bindings[0].BindSQLUni
+
 	record.Db = strings.ToLower(record.Db)
 	h.bindInfo.Lock()
 	h.sctx.Lock()

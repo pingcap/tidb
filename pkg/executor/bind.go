@@ -32,6 +32,7 @@ type SQLBindExec struct {
 	sqlBindOp    plannercore.SQLBindOpType
 	normdOrigSQL string
 	bindSQL      string
+	bindSQLUni   string // bind sql in universal format
 	charset      string
 	collation    string
 	db           string
@@ -145,6 +146,7 @@ func (e *SQLBindExec) createSQLBind() error {
 
 	bindInfo := bindinfo.Binding{
 		BindSQL:    e.bindSQL,
+		BindSQLUni: e.bindSQLUni,
 		Charset:    e.charset,
 		Collation:  e.collation,
 		Status:     bindinfo.Enabled,
