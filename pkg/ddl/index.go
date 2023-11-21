@@ -1831,7 +1831,6 @@ func writeChunkToLocal(
 				row, copCtx.IndexColumnOutputOffsets(idxID), c.ExprColumnInfos, idxDataBuf)
 			idxData := idxDataBuf[:len(index.Meta().Columns)]
 			rsData := getRestoreData(c.TableInfo, copCtx.IndexInfo(idxID), c.PrimaryKeyInfo, handleDataBuf)
-			logutil.BgLogger().Warn("writeChunkToLocal", zap.String("time", idxData[0].GetMysqlTime().String()))
 			err = writeOneKVToLocal(ctx, writers[i], index, sCtx, writeBufs, idxData, rsData, h)
 			if err != nil {
 				return 0, nil, errors.Trace(err)

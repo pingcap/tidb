@@ -185,6 +185,7 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 	sqlMode := sv.SQLMode
 	var timezone *time.Location
 	if sv.TimeZone != nil {
+		// Copy the content of timezone instead of pointer because it may be changed.
 		tz := *sv.TimeZone
 		timezone = &tz
 	}
