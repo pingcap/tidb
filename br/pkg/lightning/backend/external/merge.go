@@ -2,9 +2,9 @@ package external
 
 import (
 	"context"
+	"errors"
 
 	"github.com/google/uuid"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -85,16 +85,6 @@ func mergeOverlappingFilesImpl(ctx context.Context,
 	defer func() {
 		task.End(zap.ErrorLevel, err)
 	}()
-	failpoint.Inject("mergeOverlappingFilesImpl", func(val failpoint.Value) {
-		if val.(string) == paths[0] {
-			failpoint.Return(errors.New("injected error"))
-		} else {
-			select {
-			case <-ctx.Done():
-				failpoint.Return(ctx.Err())
-			}
-		}
-	})
 
 	zeroOffsets := make([]uint64, len(paths))
 	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, readBufferSize, checkHotspot)
@@ -157,6 +147,18 @@ func MergeOverlappingFilesV2(
 	defer func() {
 		task.End(zap.ErrorLevel, err)
 	}()
+
+	failpoint.Inject("mergeOverlappingFilesImpl", func(val failpoint.Value) {
+		if val.(string) == paths[0] {
+			failpoint.Return(errors.New("injected error"))
+		} else {
+			select {
+			case <-ctx.Done():
+				failpoint.Return(ctx.Err())
+			}
+		}
+	})
+
 	zeroOffsets := make([]uint64, len(paths))
 	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, readBufferSize, checkHotspot)
 	if err != nil {
