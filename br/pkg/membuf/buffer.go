@@ -152,12 +152,14 @@ func WithMemoryLimit(limit uint64) BufferOption {
 func (p *Pool) NewBuffer(opts ...BufferOption) *Buffer {
 	b := &Buffer{
 		pool:          p,
-		blocks:        make([][]byte, 0, 128),
 		curBlockIdx:   -1,
 		blockCntLimit: -1,
 	}
 	for _, opt := range opts {
 		opt(b)
+	}
+	if b.blocks == nil {
+		b.blocks = make([][]byte, 0, 128)
 	}
 	return b
 }
