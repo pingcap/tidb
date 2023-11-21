@@ -678,7 +678,19 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
 		return nil, "", nil
 	}
-	stmtNode, normalizedSQL, hash, err := ExtractSelectAndNormalizeDigest(stmt, ctx.GetSessionVars().CurrentDB, true, false)
+	normalBinding, scope, err := getSpecifiedBinding(ctx, stmt, false)
+	if err != nil {
+		return nil, "", err
+	}
+	if normalBinding != nil {
+		return normalBinding, scope, nil
+	}
+
+	return getSpecifiedBinding(ctx, stmt, true)
+}
+
+func getSpecifiedBinding(ctx sessionctx.Context, stmt ast.StmtNode, universalBinding bool) (*bindinfo.BindRecord, string, error) {
+	stmtNode, normalizedSQL, hash, err := ExtractSelectAndNormalizeDigest(stmt, ctx.GetSessionVars().CurrentDB, true, universalBinding)
 	if err != nil || stmtNode == nil {
 		return nil, "", err
 	}
