@@ -16,7 +16,6 @@ package chunk
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"math/rand"
 	"os"
@@ -34,6 +33,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func genString() string {
+	retStr := "西xi瓜gua"
+	factor := rand.Intn(5)
+	for i := 0; i < factor; i++ {
+		retStr += retStr
+	}
+
+	return retStr
+}
+
 func initChunks(numChk, numRow int) ([]*Chunk, []*types.FieldType) {
 	fields := []*types.FieldType{
 		types.NewFieldType(mysql.TypeVarString),
@@ -48,12 +57,12 @@ func initChunks(numChk, numRow int) ([]*Chunk, []*types.FieldType) {
 		chk := NewChunkWithCapacity(fields, numRow)
 		for rowIdx := 0; rowIdx < numRow; rowIdx++ {
 			data := int64(chkIdx*numRow + rowIdx)
-			chk.AppendString(0, fmt.Sprint(data))
+			chk.AppendString(0, genString())
 			chk.AppendNull(1)
 			chk.AppendNull(2)
 			chk.AppendInt64(3, data)
 			if chkIdx%2 == 0 {
-				chk.AppendJSON(4, types.CreateBinaryJSON(fmt.Sprint(data)))
+				chk.AppendJSON(4, types.CreateBinaryJSON(genString()))
 			} else {
 				chk.AppendNull(4)
 			}

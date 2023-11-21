@@ -191,16 +191,17 @@ func (d *DataInDiskByChunks) serializeOffset(pos *int64, offsets []int64, offset
 	}
 }
 
-func (d *DataInDiskByChunks) serializeChunkData(pos *int64, chk *Chunk) {
+func (d *DataInDiskByChunks) serializeChunkData(pos *int64, chk *Chunk, selSize int64) {
 	d.buf = d.buf[:chkFixedSize]
 	*(*int)(unsafe.Pointer(&d.buf[*pos])) = chk.numVirtualRows
 	*(*int)(unsafe.Pointer(&d.buf[*pos+intLen])) = chk.capacity
 	*(*int)(unsafe.Pointer(&d.buf[*pos+intLen*2])) = chk.requiredRows
+	*(*int)(unsafe.Pointer(&d.buf[*pos+intLen*3])) = int(selSize)
+	*pos += chkFixedSize
+
+	d.buf = d.buf[:*pos+selSize]
 
 	selLen := len(chk.sel)
-	*(*int)(unsafe.Pointer(&d.buf[*pos+intLen*2])) = selLen * int(intLen)
-	*pos += intLen * 4
-
 	for i := 0; i < selLen; i++ {
 		*(*int)(unsafe.Pointer(&d.buf[*pos])) = chk.sel[i]
 		*pos += intLen
@@ -249,7 +250,7 @@ func (d *DataInDiskByChunks) serializeDataToBuf(chk *Chunk) int64 {
 	}
 
 	pos := int64(0)
-	d.serializeChunkData(&pos, chk)
+	d.serializeChunkData(&pos, chk, selSize)
 	d.serializeColumns(&pos, chk)
 	return totalBytes
 }
