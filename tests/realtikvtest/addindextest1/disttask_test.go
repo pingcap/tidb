@@ -192,3 +192,26 @@ func TestAddIndexDistPauseAndResume(t *testing.T) {
 
 	tk.MustExec(`set global tidb_enable_dist_task=0;`)
 }
+
+func TestAddIndexForCurrentTimestampColumn(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_enable_dist_task = off;")
+	})
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+
+	tk.MustExec("create table t (a timestamp default current_timestamp);")
+	tk.MustExec("insert into t values ();")
+
+	tk.MustExec("set global tidb_enable_dist_task = off;")
+	tk.MustExec("alter table t add index idx1(a);")
+	tk.MustExec("admin check table t;")
+
+	tk.MustExec("set global tidb_enable_dist_task = on;")
+	tk.MustExec("alter table t add index idx2(a);")
+	tk.MustExec("admin check table t;")
+}
