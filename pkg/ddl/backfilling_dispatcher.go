@@ -357,27 +357,12 @@ func (dsp *BackfillingDispatcherExt) getWriterMemSize(backfillMeta *BackfillGlob
 	failpoint.Inject("mockWriterMemSize", func() {
 		failpoint.Return(1*size.GB, nil)
 	})
-	jobMeta := &backfillMeta.Job
-	_, tbl, err := dsp.d.getTableByTxn((*asAutoIDRequirement)(dsp.d.ddlCtx), jobMeta.SchemaID, jobMeta.TableID)
-	if err != nil {
-		return 0, err
-	}
 	_, writerCnt := expectedIngestWorkerCnt()
-	indexInfos := make([]*model.IndexInfo, 0, len(backfillMeta.EleIDs))
-	for _, eid := range backfillMeta.EleIDs {
-		indexInfo := model.FindIndexInfoByID(tbl.Meta().Indices, eid)
-		if indexInfo == nil {
-			logutil.BgLogger().Warn("index info not found", zap.String("category", "ddl-ingest"),
-				zap.Int64("table ID", tbl.Meta().ID), zap.Int64("index ID", eid))
-			return 0, errors.Errorf("index info not found: %d", eid)
-		}
-		indexInfos = append(indexInfos, indexInfo)
-	}
 	memTotal, err := memory.MemTotal()
 	if err != nil {
 		return 0, err
 	}
-	return (memTotal / 2) / uint64(writerCnt) / uint64(len(indexInfos)), nil
+	return (memTotal / 2) / uint64(writerCnt) / uint64(len(backfillMeta.EleIDs)), nil
 }
 
 func (dsp *BackfillingDispatcherExt) getMergeSortPartSize(backfillMeta *BackfillGlobalMeta, concurrency int) (uint64, error) {

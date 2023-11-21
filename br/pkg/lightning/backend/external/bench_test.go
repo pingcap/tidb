@@ -177,17 +177,17 @@ func writeExternalOneFile(s *writeTestSuite) {
 	writer := builder.BuildOneFile(
 		s.store, "test/external", "writerID")
 	_ = writer.Init(ctx, 20*1024*1024)
-	key, val, h := s.source.next()
+	key, val, _ := s.source.next()
 	for key != nil {
-		err := writer.WriteRow(ctx, key, val, h)
-		intest.Assert(err == nil)
-		key, val, h = s.source.next()
+		err := writer.WriteRow(ctx, key, val)
+		intest.AssertNoError(err)
+		key, val, _ = s.source.next()
 	}
 	if s.beforeWriterClose != nil {
 		s.beforeWriterClose()
 	}
 	err := writer.Close(ctx)
-	intest.Assert(err == nil)
+	intest.AssertNoError(err)
 	if s.afterWriterClose != nil {
 		s.afterWriterClose()
 	}

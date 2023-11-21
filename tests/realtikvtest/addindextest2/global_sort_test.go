@@ -162,7 +162,7 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("insert into t_common_handle values (%d, %d, '%d');", i, i, i))
 		tk.MustExec(fmt.Sprintf("insert into t_partition values (%d, %d, '%d');", i, i, i))
 	}
-	tableNames := []string{"t_row_id", "t_int_handle", "t_common_handle", "t_partition"}
+	tableNames := []string{"t_rowid", "t_int_handle", "t_common_handle", "t_partition"}
 
 	testCases := []struct {
 		name            string

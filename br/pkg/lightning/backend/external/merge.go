@@ -172,7 +172,7 @@ func MergeOverlappingFilesV2(
 	}()
 
 	writer := NewWriterBuilder().
-		SetMemorySizeLimit(memSizeLimit/2).
+		SetMemorySizeLimit(memSizeLimit).
 		SetBlockSize(blockSize).
 		SetWriterBatchCount(writeBatchCount).
 		SetPropKeysDistance(propKeysDist).
@@ -187,7 +187,7 @@ func MergeOverlappingFilesV2(
 	// currently use same goroutine to do read and write. The main advantage is
 	// there's no KV copy and iter can reuse the buffer.
 	for iter.Next() {
-		err = writer.WriteRow(ctx, iter.Key(), iter.Value(), nil)
+		err = writer.WriteRow(ctx, iter.Key(), iter.Value())
 		if err != nil {
 			return err
 		}

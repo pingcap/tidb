@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/docker/go-units"
@@ -302,5 +303,5 @@ func getSpeed(n uint64, dur float64, isBytes bool) string {
 	if isBytes {
 		return units.BytesSize(float64(n) / dur)
 	}
-	return units.HumanSize(float64(n) / dur)
+	return strconv.FormatFloat(float64(n)/dur, 'f', 4, 64)
 }

@@ -19,7 +19,6 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"path/filepath"
-	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -67,12 +66,12 @@ type OneFileWriter struct {
 func (w *OneFileWriter) initWriter(ctx context.Context, partSize int64) (
 	err error,
 ) {
-	w.dataFile = filepath.Join(w.filenamePrefix, strconv.Itoa(0))
+	w.dataFile = filepath.Join(w.filenamePrefix, "one-file")
 	w.dataWriter, err = w.store.Create(ctx, w.dataFile, &storage.WriterOption{Concurrency: 20, PartSize: partSize})
 	if err != nil {
 		return err
 	}
-	w.statFile = filepath.Join(w.filenamePrefix+statSuffix, strconv.Itoa(0))
+	w.statFile = filepath.Join(w.filenamePrefix+statSuffix, "one-file")
 	w.statWriter, err = w.store.Create(ctx, w.statFile, &storage.WriterOption{Concurrency: 20, PartSize: int64(5 * size.MB)})
 	if err != nil {
 		_ = w.dataWriter.Close(ctx)
@@ -94,13 +93,9 @@ func (w *OneFileWriter) Init(ctx context.Context, partSize int64) (err error) {
 }
 
 // WriteRow implements ingest.Writer.
-func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tidbkv.Handle) error {
+func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) error {
 	keyAdapter := w.keyAdapter
-
 	var rowID []byte
-	if handle != nil {
-		rowID = handle.Encoded()
-	}
 	encodedKeyLen := keyAdapter.EncodedLen(idxKey, rowID)
 	length := encodedKeyLen + len(idxVal) + lengthBytes*2
 	blockIdx, dataBuf, off, allocated := w.kvBuffer.Alloc(length)
@@ -180,7 +175,7 @@ func (w *OneFileWriter) flushKVs(ctx context.Context, fromClose bool) (err error
 	if len(w.kvLocations) == 0 {
 		return nil
 	}
-	
+
 	for _, pair := range w.kvLocations {
 		err = w.kvStore.addEncodedData(w.getEncodedKVData(pair))
 		if err != nil {

@@ -61,7 +61,7 @@ func TestOnefileWriter(t *testing.T) {
 	}
 
 	for _, item := range kvs {
-		err := writer.WriteRow(ctx, item.Key, item.Val, nil)
+		err := writer.WriteRow(ctx, item.Key, item.Val)
 		require.NoError(t, err)
 	}
 
@@ -69,7 +69,7 @@ func TestOnefileWriter(t *testing.T) {
 	require.NoError(t, err)
 
 	bufSize := rand.Intn(100) + 1
-	kvReader, err := newKVReader(ctx, "/test/0/0", memStore, 0, bufSize)
+	kvReader, err := newKVReader(ctx, "/test/0/one-file", memStore, 0, bufSize)
 	require.NoError(t, err)
 	for i := 0; i < kvCnt; i++ {
 		key, value, err := kvReader.nextKV()
@@ -81,7 +81,7 @@ func TestOnefileWriter(t *testing.T) {
 	require.Equal(t, io.EOF, err)
 	require.NoError(t, kvReader.Close())
 
-	statReader, err := newStatsReader(ctx, memStore, "/test/0_stat/0", bufSize)
+	statReader, err := newStatsReader(ctx, memStore, "/test/0_stat/one-file", bufSize)
 	require.NoError(t, err)
 
 	var keyCnt uint64 = 0
@@ -140,7 +140,7 @@ func TestMergeOverlappingFilesV2(t *testing.T) {
 	keys := make([][]byte, 0, kvCount)
 	values := make([][]byte, 0, kvCount)
 
-	kvReader, err := newKVReader(ctx, "/test2/mergeID/0", memStore, 0, 100)
+	kvReader, err := newKVReader(ctx, "/test2/mergeID/one-file", memStore, 0, 100)
 	require.NoError(t, err)
 	for i := 0; i < kvCount; i++ {
 		key, value, err := kvReader.nextKV()
@@ -207,7 +207,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 	})
 
 	for _, item := range kvs {
-		err := writer.WriteRow(ctx, item.Key, item.Val, nil)
+		err := writer.WriteRow(ctx, item.Key, item.Val)
 		require.NoError(t, err)
 	}
 	err = writer.Close(ctx)
@@ -215,7 +215,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 
 	err = MergeOverlappingFilesV2(
 		ctx,
-		[]string{"/test/0/0"},
+		[]string{"/test/0/one-file"},
 		memStore,
 		int64(5*size.MB),
 		100,
@@ -232,7 +232,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 	require.NoError(t, err)
 
 	bufSize := rand.Intn(100) + 1
-	kvReader, err := newKVReader(ctx, "/test2/mergeID/0", memStore, 0, bufSize)
+	kvReader, err := newKVReader(ctx, "/test2/mergeID/one-file", memStore, 0, bufSize)
 	require.NoError(t, err)
 	for i := 0; i < kvCnt; i++ {
 		key, value, err := kvReader.nextKV()
@@ -244,5 +244,3 @@ func TestOnefileWriterManyRows(t *testing.T) {
 	require.Equal(t, io.EOF, err)
 	require.NoError(t, kvReader.Close())
 }
-
-// add more tests for rc
