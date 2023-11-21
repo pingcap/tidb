@@ -173,12 +173,13 @@
         "SQL": "select /*+ use_index_merge(t8, primary,is2,is3,is4,is5) */ * from t8 where s1 like '啊A%' and s2 > 'abc' and s3 > 'cba' and s4 in ('aA', '??') and s5 = 'test,2'",
         "Plan": [
           "Selection 0.04 root  eq(test.t8.s5, \"test,2\")",
-          "└─IndexMerge 0.02 root  type: intersection",
+          "└─IndexMerge 0.06 root  type: intersection",
+          "  ├─IndexRangeScan(Build) 250.00 cop[tikv] table:t8, index:PRIMARY(s1) range:[\"UJ\\x00A\",\"UJ\\x00B\"), keep order:false, stats:pseudo",
           "  ├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t8, index:is2(s2) range:(\"abc\",+inf], keep order:false, stats:pseudo",
           "  ├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t8, index:is3(s3) range:(\"cba\",+inf], keep order:false, stats:pseudo",
           "  ├─IndexRangeScan(Build) 20.00 cop[tikv] table:t8, index:is4(s4) range:[\"aA\",\"aA\"], [\"??\",\"??\"], keep order:false, stats:pseudo",
-          "  └─Selection(Probe) 0.02 cop[tikv]  gt(test.t8.s3, \"cba\"), like(test.t8.s1, \"啊A%\", 92)",
-          "    └─TableRowIDScan 2.22 cop[tikv] table:t8 keep order:false, stats:pseudo"
+          "  └─Selection(Probe) 0.06 cop[tikv]  gt(test.t8.s3, \"cba\"), like(test.t8.s1, \"啊A%\", 92)",
+          "    └─TableRowIDScan 0.06 cop[tikv] table:t8 keep order:false, stats:pseudo"
         ],
         "Result": [
           "啊aabbccdd abcc cccc aA tEsT,2"
