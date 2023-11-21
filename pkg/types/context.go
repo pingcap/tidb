@@ -61,6 +61,8 @@ const (
 	FlagSkipUTF8Check
 	// FlagSkipUTF8MB4Check indicates to skip the UTF8MB4 check when converting the value to an UTF8 string.
 	FlagSkipUTF8MB4Check
+	// FlagCastTimeToYearThroughConcat indicates to cast time to year through concatenation. For example, `00:19:59` will be converted to '1959'
+	FlagCastTimeToYearThroughConcat
 )
 
 // AllowNegativeToUnsigned indicates whether the flag `FlagAllowNegativeToUnsigned` is set
@@ -180,6 +182,19 @@ func (f Flags) WithIgnoreZeroDateErr(ignore bool) Flags {
 	return f &^ FlagIgnoreZeroDateErr
 }
 
+// CastTimeToYearThroughConcat whether `FlagCastTimeToYearThroughConcat` is set
+func (f Flags) CastTimeToYearThroughConcat() bool {
+	return f&FlagCastTimeToYearThroughConcat != 0
+}
+
+// WithCastTimeToYearThroughConcat returns a new flags with `FlagCastTimeToYearThroughConcat` set/unset according to the flag parameter
+func (f Flags) WithCastTimeToYearThroughConcat(flag bool) Flags {
+	if flag {
+		return f | FlagCastTimeToYearThroughConcat
+	}
+	return f &^ FlagCastTimeToYearThroughConcat
+}
+
 // Context provides the information when converting between different types.
 type Context struct {
 	flags           Flags
@@ -249,4 +264,10 @@ const DefaultStmtFlags = StrictFlags | FlagAllowNegativeToUnsigned | FlagIgnoreZ
 // DefaultStmtNoWarningContext is the context with default statement flags without any other special configuration
 var DefaultStmtNoWarningContext = NewContext(DefaultStmtFlags, time.UTC, func(_ error) {
 	// the error is ignored
+})
+
+// StrictContext is the most strict context which returns every error it meets
+var StrictContext = NewContext(StrictFlags, time.UTC, func(_ error) {
+	// this context should never append warnings
+	// However, the implementation of `types` may still append some warnings. TODO: remove them in the future.
 })

@@ -540,6 +540,12 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 }
 
 func (e *DDLExec) executeFlashBackCluster(s *ast.FlashBackToTimestampStmt) error {
+	// Check `TO TSO` clause
+	if s.FlashbackTSO > 0 {
+		return domain.GetDomain(e.Ctx()).DDL().FlashbackCluster(e.Ctx(), s.FlashbackTSO)
+	}
+
+	// Check `TO TIMESTAMP` clause
 	flashbackTS, err := staleread.CalculateAsOfTsExpr(context.Background(), e.Ctx(), s.FlashbackTS)
 	if err != nil {
 		return err

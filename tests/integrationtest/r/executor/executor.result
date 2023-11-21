@@ -4276,3 +4276,132 @@ select  sum(case when ssci.customer_sk is not null and csci.customer_sk is null 
 from ssci right join csci on (ssci.customer_sk=csci.customer_sk
 and ssci.item_sk = csci.item_sk)
 limit 100;
+admin show bdr role;
+BDR_ROLE
+none
+admin set bdr role primary;
+admin show bdr role;
+BDR_ROLE
+primary
+admin set bdr role secondary;
+admin show bdr role;
+BDR_ROLE
+secondary
+admin set bdr role local_only;
+admin show bdr role;
+BDR_ROLE
+local_only
+admin set bdr role test_err;
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 27 near "test_err;" 
+admin show bdr role;
+BDR_ROLE
+local_only
+set global tidb_mem_oom_action='CANCEL';
+drop table if exists t, t1;
+create table t(a int, b int, index idx(a));
+create table t1(a int, c int, index idx(a));
+set tidb_mem_quota_query=10;
+select t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a;
+Error 8175 (HY000): Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=<num>]
+set global tidb_mem_oom_action=default;
+set tidb_mem_quota_query=default;
+drop table if exists t, t1;
+create table t (a int primary key, b double);
+insert into t values (1,1);
+SET GLOBAL tidb_mem_oom_action='CANCEL';
+set @@tidb_mem_quota_query=1;
+select sum(b) from t group by a;
+Error 8175 (HY000): Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=<num>]
+drop table if exists t,t1;
+create table t (a bigint);
+create table t1 (a bigint);
+set @@tidb_mem_quota_query=200;
+insert into t1 values (1),(2),(3),(4),(5);
+Error 8175 (HY000): Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=<num>]
+replace into t1 values (1),(2),(3),(4),(5);
+Error 8175 (HY000): Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=<num>]
+set @@tidb_mem_quota_query=10000;
+insert into t1 values (1),(2),(3),(4),(5);
+set @@tidb_mem_quota_query=10;
+insert into t select a from t1 order by a desc;
+Error 8175 (HY000): Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=<num>]
+replace into t select a from t1 order by a desc;
+Error 8175 (HY000): Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=<num>]
+set @@tidb_mem_quota_query=10000;
+insert into t values (1),(2),(3),(4),(5);
+set @@tidb_mem_quota_query=244;
+delete from t;
+Error 8175 (HY000): Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=<num>]
+set @@tidb_mem_quota_query=10000;
+delete from t1;
+insert into t1 values(1);
+insert into t values (1),(2),(3),(4),(5);
+set @@tidb_mem_quota_query=244;
+delete t, t1 from t join t1 on t.a = t1.a;
+Error 8175 (HY000): Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=<num>]
+set @@tidb_mem_quota_query=100000;
+truncate table t;
+insert into t values(1),(2),(3);
+set @@tidb_mem_quota_query=244;
+update t set a = 4;
+Error 8175 (HY000): Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=<num>]
+SET GLOBAL tidb_mem_oom_action = DEFAULT;
+set @@tidb_mem_quota_query=DEFAULT;
+drop table if exists t;
+create table t(a int);
+insert into t values(1);
+set tidb_track_aggregate_memory_usage = off;
+explain analyze select /*+ HASH_AGG() */ sum(a) from t;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+HashAgg_9	1.00	1	root	<execution_info>	<operator_info>	funcs:sum(Column#4)->Column#3	N/A	N/A
+└─TableReader_10	1.00	1	root	<execution_info>	<operator_info>	data:HashAgg_5	<num> Bytes	N/A
+  └─HashAgg_5	1.00	1	cop[tikv]	<execution_info>	<operator_info>	funcs:sum(executor__executor.t.a)->Column#4	N/A	N/A
+    └─TableFullScan_8	10000.00	1	cop[tikv]	<execution_info>	<operator_info>	keep order:false, stats:pseudo	N/A	N/A
+explain analyze select /*+ STREAM_AGG() */ sum(a) from t;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+StreamAgg_14	1.00	1	root	<execution_info>	<operator_info>	funcs:sum(Column#4)->Column#3	N/A	N/A
+└─TableReader_15	1.00	1	root	<execution_info>	<operator_info>	data:StreamAgg_8	<num> Bytes	N/A
+  └─StreamAgg_8	1.00	1	cop[tikv]	<execution_info>	<operator_info>	funcs:sum(executor__executor.t.a)->Column#4	N/A	N/A
+    └─TableFullScan_13	10000.00	1	cop[tikv]	<execution_info>	<operator_info>	keep order:false, stats:pseudo	N/A	N/A
+set tidb_track_aggregate_memory_usage = on;
+explain analyze select /*+ HASH_AGG() */ sum(a) from t;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+HashAgg_9	1.00	1	root	<execution_info>	<operator_info>	funcs:sum(Column#4)->Column#3	<num> KB	N/A
+└─TableReader_10	1.00	1	root	<execution_info>	<operator_info>	data:HashAgg_5	<num> Bytes	N/A
+  └─HashAgg_5	1.00	1	cop[tikv]	<execution_info>	<operator_info>	funcs:sum(executor__executor.t.a)->Column#4	N/A	N/A
+    └─TableFullScan_8	10000.00	1	cop[tikv]	<execution_info>	<operator_info>	keep order:false, stats:pseudo	N/A	N/A
+explain analyze select /*+ STREAM_AGG() */ sum(a) from t;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+StreamAgg_14	1.00	1	root	<execution_info>	<operator_info>	funcs:sum(Column#4)->Column#3	<num> KB	N/A
+└─TableReader_15	1.00	1	root	<execution_info>	<operator_info>	data:StreamAgg_8	<num> Bytes	N/A
+  └─StreamAgg_8	1.00	1	cop[tikv]	<execution_info>	<operator_info>	funcs:sum(executor__executor.t.a)->Column#4	N/A	N/A
+    └─TableFullScan_13	10000.00	1	cop[tikv]	<execution_info>	<operator_info>	keep order:false, stats:pseudo	N/A	N/A
+set tidb_track_aggregate_memory_usage = default;
+drop table if exists testbind;
+create table testbind(i int, s varchar(20));
+create index index_t on testbind(i,s);
+create global binding for select * from testbind using select * from testbind use index for join(index_t);
+show global bindings where default_db='executor__executor';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+select * from `executor__executor` . `testbind`	SELECT * FROM `executor__executor`.`testbind` USE INDEX FOR JOIN (`index_t`)	executor__executor	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	a2fa907992be17801e5976df09b5b3a0d205f4c4aff39a14ab3bc8642026f527	
+create session binding for select * from testbind using select * from testbind use index for join(index_t);
+show session bindings where default_db='executor__executor';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+select * from `executor__executor` . `testbind`	SELECT * FROM `executor__executor`.`testbind` USE INDEX FOR JOIN (`index_t`)	executor__executor	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	a2fa907992be17801e5976df09b5b3a0d205f4c4aff39a14ab3bc8642026f527	
+drop session binding for select * from testbind using select * from testbind use index for join(index_t);
+drop global binding for select * from testbind using select * from testbind use index for join(index_t);
+drop table if EXISTS t1;
+create table t1(id int primary key, a int, b int, c int, d int, index t1a(a), index t1b(b));
+insert into t1 values(1,1,1,1,1),(2,2,2,2,2),(3,3,3,3,3),(4,4,4,4,4),(5,5,5,5,5);
+explain analyze select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+IndexMerge_8	3334.67	2	root	NULL	.*time:.*loops:.*index_task:{fetch_handle:.*, merge:.*}.*table_task:{num.*concurrency.*fetch_row.*wait_time.*}.*	type: union	<num> KB	N/A
+├─TableRangeScan_5(Build)	3333.33	1	cop[tikv]	table:t1	.*time:.*loops:.*cop_task:.*	range:[-inf,2), keep order:false, stats:pseudo	<num> Bytes	N/A
+├─IndexRangeScan_6(Build)	3333.33	1	cop[tikv]	table:t1, index:t1a(a)	.*time:.*loops:.*cop_task:.*	range:(4,+inf], keep order:false, stats:pseudo	N/A	N/A
+└─TableRowIDScan_7(Probe)	3334.67	2	cop[tikv]	table:t1	.*time:.*loops:.*cop_task:.*	keep order:false, stats:pseudo	N/A	N/A
+set @@tidb_enable_collect_execution_info=0;
+select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by a;
+id	a	b	c	d
+1	1	1	1	1
+5	5	5	5	5
+set @@tidb_enable_collect_execution_info=default;

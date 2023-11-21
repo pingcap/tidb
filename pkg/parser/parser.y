@@ -55,6 +55,7 @@ import (
 	identifier           "identifier"
 	asof                 "AS OF"
 	toTimestamp          "TO TIMESTAMP"
+	toTSO                "TO TSO"
 	memberof             "MEMBER OF"
 	optionallyEnclosedBy "OPTIONALLY ENCLOSED BY"
 
@@ -336,6 +337,7 @@ import (
 	backend               "BACKEND"
 	backup                "BACKUP"
 	backups               "BACKUPS"
+	bdr                   "BDR"
 	begin                 "BEGIN"
 	bernoulli             "BERNOULLI"
 	binding               "BINDING"
@@ -473,6 +475,7 @@ import (
 	level                 "LEVEL"
 	list                  "LIST"
 	local                 "LOCAL"
+	local_only            "LOCAL_ONLY"
 	locked                "LOCKED"
 	location              "LOCATION"
 	logs                  "LOGS"
@@ -585,6 +588,7 @@ import (
 	san                   "SAN"
 	savepoint             "SAVEPOINT"
 	second                "SECOND"
+	secondary             "SECONDARY"
 	secondaryEngine       "SECONDARY_ENGINE"
 	secondaryLoad         "SECONDARY_LOAD"
 	secondaryUnload       "SECONDARY_UNLOAD"
@@ -653,6 +657,7 @@ import (
 	transaction           "TRANSACTION"
 	triggers              "TRIGGERS"
 	truncate              "TRUNCATE"
+	tsoType               "TSO"
 	ttl                   "TTL"
 	ttlEnable             "TTL_ENABLE"
 	ttlJobInterval        "TTL_JOB_INTERVAL"
@@ -723,6 +728,7 @@ import (
 	learner               "LEARNER"
 	learnerConstraints    "LEARNER_CONSTRAINTS"
 	learners              "LEARNERS"
+	log                   "LOG"
 	min                   "MIN"
 	max                   "MAX"
 	metadata              "METADATA"
@@ -1092,6 +1098,7 @@ import (
 	AuthOption                             "User auth option"
 	AutoRandomOpt                          "Auto random option"
 	Boolean                                "Boolean (0, 1, false, true)"
+	BDRRole                                "BDR role (none, primary, secondary, local_only)"
 	OptionalBraces                         "optional braces"
 	CastType                               "Cast function target type"
 	CharsetOpt                             "CHARACTER SET option in LOAD DATA"
@@ -2976,6 +2983,7 @@ FlashbackToTimestampStmt:
 	{
 		$$ = &ast.FlashBackToTimestampStmt{
 			FlashbackTS: ast.NewValueExpr($4, "", ""),
+			FlashbackTSO: 0,
 		}
 	}
 |	"FLASHBACK" "TABLE" TableNameList toTimestamp stringLit
@@ -2983,6 +2991,7 @@ FlashbackToTimestampStmt:
 		$$ = &ast.FlashBackToTimestampStmt{
 			Tables:      $3.([]*ast.TableName),
 			FlashbackTS: ast.NewValueExpr($5, "", ""),
+			FlashbackTSO: 0,
 		}
 	}
 |	"FLASHBACK" DatabaseSym DBName toTimestamp stringLit
@@ -2990,8 +2999,45 @@ FlashbackToTimestampStmt:
 		$$ = &ast.FlashBackToTimestampStmt{
 			DBName:      model.NewCIStr($3),
 			FlashbackTS: ast.NewValueExpr($5, "", ""),
+			FlashbackTSO: 0,
 		}
 	}
+|	"FLASHBACK" "CLUSTER" toTSO LengthNum
+	{
+		if tsoValue, ok := $4.(uint64); ok && tsoValue > 0 {
+			$$ = &ast.FlashBackToTimestampStmt{
+        		FlashbackTSO: tsoValue,
+        	}
+		} else {
+    		yylex.AppendError(yylex.Errorf("Invalid TSO value provided: %d", $4))
+    		return 1
+		}
+	}
+|	"FLASHBACK" "TABLE" TableNameList toTSO LengthNum
+	{
+		if tsoValue, ok := $5.(uint64); ok && tsoValue > 0 {
+			$$ = &ast.FlashBackToTimestampStmt{
+            	Tables:      $3.([]*ast.TableName),
+            	FlashbackTSO: tsoValue,
+            }
+		} else {
+			yylex.AppendError(yylex.Errorf("Invalid TSO value provided: %d", $5))
+			return 1
+		}
+	}
+|	"FLASHBACK" DatabaseSym DBName toTSO LengthNum
+	{
+		if tsoValue, ok := $5.(uint64); ok && tsoValue > 0 {
+			$$ = &ast.FlashBackToTimestampStmt{
+            	DBName:      model.NewCIStr($3),
+            	FlashbackTSO: tsoValue,
+			}
+		} else {
+			yylex.AppendError(yylex.Errorf("Invalid TSO value provided: %d", $5))
+			return 1
+		}
+	}
+
 
 /*******************************************************************
  *
@@ -6525,6 +6571,7 @@ UnReservedKeyword:
 |	"AFTER"
 |	"ALWAYS"
 |	"AVG"
+|	"BDR"
 |	"BEGIN"
 |	"BIT"
 |	"BOOL"
@@ -6582,6 +6629,7 @@ UnReservedKeyword:
 |	"INSERT_METHOD"
 |	"LESS"
 |	"LOCAL"
+|	"LOCAL_ONLY"
 |	"LAST"
 |	"NAMES"
 |	"NVARCHAR"
@@ -6621,6 +6669,7 @@ UnReservedKeyword:
 |	"TRACE"
 |	"TRANSACTION"
 |	"TRUNCATE"
+|	"TSO"
 |	"UNBOUNDED"
 |	"UNKNOWN"
 |	"VALUE" %prec lowerThanValueKeyword
@@ -6759,6 +6808,7 @@ UnReservedKeyword:
 |	"STORAGE"
 |	"DISK"
 |	"STATS_SAMPLE_PAGES"
+|   "SECONDARY"
 |	"SECONDARY_ENGINE"
 |	"SECONDARY_LOAD"
 |	"SECONDARY_UNLOAD"
@@ -6947,6 +6997,7 @@ NotKeywordToken:
 |	"INPLACE"
 |	"INSTANT"
 |	"INTERNAL"
+|	"LOG"
 |	"MIN"
 |	"MAX"
 |	"NOW"
@@ -7818,6 +7869,7 @@ FunctionNameConflict:
 |	"HOUR"
 |	"IF"
 |	"INTERVAL"
+|	"LOG"
 |	"FORMAT"
 |	"LEFT"
 |	"MICROSECOND"
@@ -10874,6 +10926,24 @@ AdminStmtLimitOpt:
 		$$ = &ast.LimitSimple{Offset: $4.(uint64), Count: $2.(uint64)}
 	}
 
+BDRRole:
+	"PRIMARY"
+	{
+		$$ = ast.BDRRolePrimary
+	}
+|   "SECONDARY"
+	{
+		$$ = ast.BDRRoleSecondary
+	}
+|   "LOCAL_ONLY"
+	{
+		$$ = ast.BDRRoleLocalOnly
+	}
+|   "NONE"
+	{
+		$$ = ast.BDRRoleNone
+	}
+
 AdminStmt:
 	"ADMIN" "SHOW" "DDL"
 	{
@@ -11090,6 +11160,19 @@ AdminStmt:
 			StatementScope: $3.(ast.StatementScope),
 		}
 	}
+|	"ADMIN" "SET" "BDR" "ROLE" BDRRole
+	{
+		$$ = &ast.AdminStmt{
+			Tp:      ast.AdminSetBDRRole,
+			BDRRole: $5.(ast.BDRRole),
+		}
+	}
+|	"ADMIN" "SHOW" "BDR" "ROLE"
+	{
+		$$ = &ast.AdminStmt{
+			Tp:      ast.AdminShowBDRRole,
+		}
+	}
 
 AdminShowSlow:
 	"RECENT" NUM
@@ -11270,9 +11353,16 @@ ShowStmt:
 		}
 	}
 |	"SHOW" "MASTER" "STATUS"
+	// "SHOW MASTER STATUS" was deprecated in MySQL 8.2.0 in favor of "SHOW BINARY LOG STATUS"
 	{
 		$$ = &ast.ShowStmt{
 			Tp: ast.ShowMasterStatus,
+		}
+	}
+|	"SHOW" "BINARY" "LOG" "STATUS"
+	{
+		$$ = &ast.ShowStmt{
+			Tp: ast.ShowBinlogStatus,
 		}
 	}
 |	"SHOW" OptFull "PROCESSLIST"

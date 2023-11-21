@@ -354,10 +354,7 @@ func (sf *ScalarFunction) GetType() *types.FieldType {
 
 // Equal implements Expression interface.
 func (sf *ScalarFunction) Equal(ctx sessionctx.Context, e Expression) bool {
-	if ctx == nil {
-		ctx = sf.GetCtx()
-	}
-
+	intest.Assert(ctx != nil)
 	fun, ok := e.(*ScalarFunction)
 	if !ok {
 		return false
@@ -660,15 +657,15 @@ func (sf *ScalarFunction) resolveIndices(schema *Schema) error {
 }
 
 // ResolveIndicesByVirtualExpr implements Expression interface.
-func (sf *ScalarFunction) ResolveIndicesByVirtualExpr(schema *Schema) (Expression, bool) {
+func (sf *ScalarFunction) ResolveIndicesByVirtualExpr(ctx sessionctx.Context, schema *Schema) (Expression, bool) {
 	newSf := sf.Clone()
-	isOK := newSf.resolveIndicesByVirtualExpr(schema)
+	isOK := newSf.resolveIndicesByVirtualExpr(ctx, schema)
 	return newSf, isOK
 }
 
-func (sf *ScalarFunction) resolveIndicesByVirtualExpr(schema *Schema) bool {
+func (sf *ScalarFunction) resolveIndicesByVirtualExpr(ctx sessionctx.Context, schema *Schema) bool {
 	for _, arg := range sf.GetArgs() {
-		isOk := arg.resolveIndicesByVirtualExpr(schema)
+		isOk := arg.resolveIndicesByVirtualExpr(ctx, schema)
 		if !isOk {
 			return false
 		}

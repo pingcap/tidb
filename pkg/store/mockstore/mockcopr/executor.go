@@ -638,7 +638,7 @@ func getRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle int64, 
 			} else {
 				handleDatum = types.NewIntDatum(handle)
 			}
-			handleData, err1 := codec.EncodeValue(nil, nil, handleDatum)
+			handleData, err1 := codec.EncodeValue(time.UTC, nil, handleDatum)
 			if err1 != nil {
 				return nil, errors.Trace(err1)
 			}

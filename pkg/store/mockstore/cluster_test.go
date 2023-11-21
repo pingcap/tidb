@@ -62,7 +62,7 @@ func TestClusterSplit(t *testing.T) {
 		require.NoError(t, err1)
 		txn.Set(rowKey, rowValue)
 
-		encodedIndexValue, err1 := codec.EncodeKey(sc, nil, []types.Datum{colValue, types.NewIntDatum(handle)}...)
+		encodedIndexValue, err1 := codec.EncodeKey(sc.TimeZone(), nil, []types.Datum{colValue, types.NewIntDatum(handle)}...)
 		require.NoError(t, err1)
 		idxKey := tablecodec.EncodeIndexSeekKey(tblID, idxID, encodedIndexValue)
 		txn.Set(idxKey, []byte{'0'})

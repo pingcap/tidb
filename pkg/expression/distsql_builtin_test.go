@@ -905,7 +905,7 @@ func datumExpr(t *testing.T, d types.Datum) *tipb.Expr {
 		expr.Tp = tipb.ExprType_MysqlJson
 		var err error
 		expr.Val = make([]byte, 0, 1024)
-		expr.Val, err = codec.EncodeValue(nil, expr.Val, d)
+		expr.Val, err = codec.EncodeValue(time.UTC, expr.Val, d)
 		require.NoError(t, err)
 	case types.KindMysqlTime:
 		expr.Tp = tipb.ExprType_MysqlTime

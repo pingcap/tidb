@@ -234,7 +234,8 @@ func buildHandleFromDatumRow(sctx *stmtctx.StatementContext, row []types.Datum, 
 		}
 		pkDts = append(pkDts, d)
 	}
-	handleBytes, err := codec.EncodeKey(sctx, nil, pkDts...)
+	handleBytes, err := codec.EncodeKey(sctx.TimeZone(), nil, pkDts...)
+	err = sctx.HandleError(err)
 	if err != nil {
 		return nil, err
 	}
