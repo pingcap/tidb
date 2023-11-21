@@ -199,7 +199,6 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 	// to avoid too many sst files for tikv to compact.
 	if bc.etcdClient != nil {
 		failpoint.Inject("mockSessionExpired", func() {
-			logutil.BgLogger().Info("ywq test trigger....")
 			failpoint.Return(true, false, concurrency.ErrSessionExpired)
 		})
 		distLockKey := fmt.Sprintf("/tidb/distributeLock/%d/%d", bc.jobID, indexID)
