@@ -192,26 +192,6 @@ func TestAddIndexDistPauseAndResume(t *testing.T) {
 
 	tk.MustExec(`set global tidb_enable_dist_task=0;`)
 }
-<<<<<<< HEAD
-=======
-
-func TestAddIndexInvalidDistTaskVariableSetting(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("drop database if exists addindexlit;")
-	tk.MustExec("create database addindexlit;")
-	tk.MustExec("use addindexlit;")
-	t.Cleanup(func() {
-		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
-		tk.MustExec("set global tidb_enable_dist_task = off;")
-	})
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=off;`)
-	tk.MustExec("set global tidb_enable_dist_task = on;")
-	tk.MustExec("create table t (a int);")
-	tk.MustGetErrCode("alter table t add index idx(a);", errno.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t add column b int, add index idx(a);", errno.ErrUnsupportedDDLOperation)
-	tk.MustExec("alter table t add column b int, add column c int;")
-}
 
 func TestAddIndexForCurrentTimestampColumn(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
@@ -230,4 +210,3 @@ func TestAddIndexForCurrentTimestampColumn(t *testing.T) {
 	tk.MustExec("alter table t add index idx(a);")
 	tk.MustExec("admin check table t;")
 }
->>>>>>> 36e68a02fb8 (ddl: init internal session with reorg info for dist tasks (#48737))

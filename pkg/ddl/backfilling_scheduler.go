@@ -37,11 +37,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/util/mathutil"
-=======
 	"github.com/pingcap/tidb/pkg/util/mock"
->>>>>>> 36e68a02fb8 (ddl: init internal session with reorg info for dist tasks (#48737))
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"go.uber.org/zap"
 )
@@ -171,21 +168,9 @@ func initSessCtx(
 	sessCtx.GetSessionVars().StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().StmtCtx.AllowInvalidDate = sqlMode.HasAllowInvalidDatesMode()
 	sessCtx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = !sqlMode.HasStrictMode()
-<<<<<<< HEAD
 	sessCtx.GetSessionVars().StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
 	sessCtx.GetSessionVars().StmtCtx.NoZeroDate = sqlMode.HasStrictMode()
-=======
-
-	typeFlags := types.StrictFlags.
-		WithTruncateAsWarning(!sqlMode.HasStrictMode()).
-		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
-		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()).
-		WithCastTimeToYearThroughConcat(true)
-	sessCtx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags)
-
 	sessCtx.GetSessionVars().ResourceGroupName = resGroupName
-
->>>>>>> 36e68a02fb8 (ddl: init internal session with reorg info for dist tasks (#48737))
 	// Prevent initializing the mock context in the workers concurrently.
 	// For details, see https://github.com/pingcap/tidb/issues/40879.
 	if _, ok := sessCtx.(*mock.Context); ok {
@@ -207,7 +192,8 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 	badNullAsWarn := sv.StmtCtx.BadNullAsWarning
 	overflowAsWarn := sv.StmtCtx.OverflowAsWarning
 	dividedZeroAsWarn := sv.StmtCtx.DividedByZeroAsWarning
-	typeFlags := sv.StmtCtx.TypeFlags()
+	ignoreZeroInDate := sv.StmtCtx.IgnoreZeroInDate
+	noZeroDate := sv.StmtCtx.NoZeroDate
 	resGroupName := sv.ResourceGroupName
 	return func(usedSessCtx sessionctx.Context) {
 		uv := usedSessCtx.GetSessionVars()
@@ -217,7 +203,8 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 		uv.StmtCtx.BadNullAsWarning = badNullAsWarn
 		uv.StmtCtx.OverflowAsWarning = overflowAsWarn
 		uv.StmtCtx.DividedByZeroAsWarning = dividedZeroAsWarn
-		uv.StmtCtx.SetTypeFlags(typeFlags)
+		uv.StmtCtx.IgnoreZeroInDate = ignoreZeroInDate
+		uv.StmtCtx.NoZeroDate = noZeroDate
 		uv.ResourceGroupName = resGroupName
 	}
 }
