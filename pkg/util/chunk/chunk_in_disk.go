@@ -32,6 +32,14 @@ type colSizeMetaType = int32
 
 const colSizeMetaLen = int(unsafe.Sizeof(colSizeMetaType(0)))
 
+const byteLen = int64(unsafe.Sizeof(byte(0)))
+const intLen = int64(unsafe.Sizeof(int(0)))
+const int64Len = int64(unsafe.Sizeof(int64(0)))
+
+const chkMetaSize = intLen
+const chkFixedSize = intLen + 3*intLen
+const colMetaSize = int64Len * 4
+
 // DataInDiskByChunks represents some data stored in temporary disk.
 // They can only be restored by chunks.
 type DataInDiskByChunks struct {
@@ -92,7 +100,7 @@ func (d *DataInDiskByChunks) Add(chk *Chunk) (err error) {
 		}
 	}
 
-	serializedBytesNum := d.serializeDataToBuf(chk)
+	serializedBytesNum := d.serializeDataToBufInColumn(chk)
 
 	var writeNum int
 	writeNum, err = d.dataFile.write(d.buf)
@@ -140,8 +148,8 @@ func (d *DataInDiskByChunks) GetChunk(chkIdx int) (*Chunk, error) {
 		return nil, errors2.New("Fail to restore the spilled chunk")
 	}
 
-	chk := NewChunkWithCapacity(d.fieldTypes, 2048)
-	d.deserializeDataToChunk(d.buf, chk)
+	chk := NewEmptyChunk(d.fieldTypes)
+	d.deserializeDataToChunkInColumn(chk)
 
 	return chk, nil
 }
@@ -154,6 +162,94 @@ func (d *DataInDiskByChunks) Close() error {
 		terror.Log(os.Remove(d.dataFile.file.Name()))
 	}
 	return nil
+}
+
+func (d *DataInDiskByChunks) serializeColMeta(pos int64, length int64, nullMapSize int64, dataSize int64, offsetSize int64) {
+	// TODO we can replace these with spill util in the future
+	*(*int64)(unsafe.Pointer(&d.buf[pos])) = length
+	*(*int64)(unsafe.Pointer(&d.buf[pos+int64Len])) = nullMapSize
+	*(*int64)(unsafe.Pointer(&d.buf[pos+int64Len*2])) = dataSize
+	*(*int64)(unsafe.Pointer(&d.buf[pos+int64Len*3])) = offsetSize
+}
+
+func (d *DataInDiskByChunks) deserializeColMeta(pos *int64) (length int64, nullMapSize int64, dataSize int64, offsetSize int64) {
+	// TODO we can replace these with spill util in the future
+	length = *(*int64)(unsafe.Pointer(&d.buf[*pos]))
+	*pos += int64Len
+
+	nullMapSize = *(*int64)(unsafe.Pointer(&d.buf[*pos]))
+	*pos += int64Len
+
+	dataSize = *(*int64)(unsafe.Pointer(&d.buf[*pos]))
+	*pos += int64Len
+
+	offsetSize = *(*int64)(unsafe.Pointer(&d.buf[*pos]))
+	*pos += int64Len
+	return
+}
+
+func (d *DataInDiskByChunks) serializeOffset(pos *int64, offsets []int64, offsetSize int64) {
+	d.buf = d.buf[:*pos+offsetSize]
+	for _, offset := range offsets {
+		*(*int64)(unsafe.Pointer(&d.buf[*pos])) = offset
+		*pos += int64Len
+	}
+}
+
+func (d *DataInDiskByChunks) serializeChunkData(pos *int64, chk *Chunk) {
+	d.buf = d.buf[:chkFixedSize]
+	*(*int)(unsafe.Pointer(&d.buf[*pos])) = chk.numVirtualRows
+	*(*int)(unsafe.Pointer(&d.buf[*pos+intLen])) = chk.capacity
+	*(*int)(unsafe.Pointer(&d.buf[*pos+intLen*2])) = chk.requiredRows
+
+	selLen := len(chk.sel)
+	*(*int)(unsafe.Pointer(&d.buf[*pos+intLen*2])) = selLen * int(intLen)
+	*pos += intLen * 4
+
+	for i := 0; i < selLen; i++ {
+		*(*int)(unsafe.Pointer(&d.buf[*pos])) = chk.sel[i]
+		*pos += intLen
+	}
+}
+
+func (d *DataInDiskByChunks) serializeColumns(pos *int64, chk *Chunk) {
+	for _, col := range chk.columns {
+		d.buf = d.buf[:*pos+colMetaSize]
+		nullMapSize := int64(len(col.nullBitmap)) * byteLen
+		dataSize := int64(len(col.data)) * byteLen
+		offsetSize := int64(len(col.offsets)) * int64Len
+		d.serializeColMeta(*pos, int64(col.length), nullMapSize, dataSize, offsetSize)
+		*pos += colMetaSize
+
+		d.buf = append(d.buf, col.nullBitmap...)
+		d.buf = append(d.buf, col.data...)
+		*pos += nullMapSize + dataSize
+		d.serializeOffset(pos, col.offsets, offsetSize)
+	}
+}
+
+// TODO describe the serialized format in comment
+func (d *DataInDiskByChunks) serializeDataToBufInColumn(chk *Chunk) int64 {
+	totalBytes := int64(0)
+
+	// Calculate total memory that buffer needs
+	selSize := int64(len(chk.sel)) * intLen
+	totalBytes += chkFixedSize + selSize
+	for _, col := range chk.columns {
+		nullMapSize := int64(len(col.nullBitmap)) * byteLen
+		dataSize := int64(len(col.data)) * byteLen
+		offsetSize := int64(len(col.offsets)) * int64Len
+		totalBytes += colMetaSize + nullMapSize + dataSize + offsetSize
+	}
+
+	if cap(d.buf) < int(totalBytes) {
+		d.buf = make([]byte, 0, totalBytes)
+	}
+
+	pos := int64(0)
+	d.serializeChunkData(&pos, chk)
+	d.serializeColumns(&pos, chk)
+	return totalBytes
 }
 
 // Format of the chunk serialized in buffer:
@@ -206,19 +302,19 @@ func serializeDataToRowBuf(row *Row, rowBuf []byte, tmpBuf []byte, colNum int) (
 	return rowBuf, addedBytesNum
 }
 
-func (d *DataInDiskByChunks) deserializeDataToChunk(data []byte, chk *Chunk) {
+func (d *DataInDiskByChunks) deserializeDataToChunk(chk *Chunk) {
 	colNum := len(d.fieldTypes)
-	dataSize := len(data)
+	dataSize := len(d.buf)
 	offset := 0
 	for offset < dataSize {
 		for colIdx := 0; colIdx < colNum; colIdx++ {
 			col := chk.columns[colIdx]
-			colDataSize := *(*colSizeMetaType)(unsafe.Pointer(&data[offset]))
+			colDataSize := *(*colSizeMetaType)(unsafe.Pointer(&d.buf[offset]))
 			offset += colSizeMetaLen
 			if colDataSize == -1 { // The data is null
 				col.AppendNull()
 			} else {
-				chunkData := data[offset : offset+int(colDataSize)]
+				chunkData := d.buf[offset : offset+int(colDataSize)]
 				if col.isFixed() {
 					col.elemBuf = chunkData
 					col.finishAppendFixed()
@@ -229,6 +325,62 @@ func (d *DataInDiskByChunks) deserializeDataToChunk(data []byte, chk *Chunk) {
 			}
 		}
 	}
+}
+
+func (d *DataInDiskByChunks) deserializeSel(chk *Chunk, pos *int64, selSize int) {
+	selLen := int64(selSize) / intLen
+	chk.sel = make([]int, selLen)
+	for i := int64(0); i < selLen; i++ {
+		chk.sel[i] = *(*int)(unsafe.Pointer(&d.buf[*pos]))
+		*pos += intLen
+	}
+}
+
+func (d *DataInDiskByChunks) deserializeChunkData(chk *Chunk, pos *int64) {
+	chk.numVirtualRows = *(*int)(unsafe.Pointer(&d.buf[*pos]))
+	*pos += intLen
+
+	chk.capacity = *(*int)(unsafe.Pointer(&d.buf[*pos]))
+	*pos += intLen
+
+	chk.requiredRows = *(*int)(unsafe.Pointer(&d.buf[*pos]))
+	*pos += intLen
+
+	selSize := *(*int)(unsafe.Pointer(&d.buf[*pos]))
+	*pos += intLen
+	if selSize != 0 {
+		d.deserializeSel(chk, pos, selSize)
+	}
+}
+
+func (d *DataInDiskByChunks) deserializeOffsets(dst []int64, pos *int64) {
+	offsetNum := len(dst)
+	for i := 0; i < offsetNum; i++ {
+		dst[i] = *(*int64)(unsafe.Pointer(&d.buf[*pos]))
+		*pos += int64Len
+	}
+}
+
+func (d *DataInDiskByChunks) deserializeColumns(chk *Chunk, pos *int64) {
+	for _, col := range chk.columns {
+		length, nullMapSize, dataSize, offsetSize := d.deserializeColMeta(pos)
+		col.nullBitmap = make([]byte, nullMapSize)
+		col.data = make([]byte, dataSize)
+		col.offsets = make([]int64, offsetSize/int64Len)
+
+		col.length = int(length)
+		copy(col.nullBitmap, d.buf[*pos:*pos+nullMapSize])
+		*pos += nullMapSize
+		copy(col.data, d.buf[*pos:*pos+dataSize])
+		*pos += dataSize
+		d.deserializeOffsets(col.offsets, pos)
+	}
+}
+
+func (d *DataInDiskByChunks) deserializeDataToChunkInColumn(chk *Chunk) {
+	pos := int64(0)
+	d.deserializeChunkData(chk, &pos)
+	d.deserializeColumns(chk, &pos)
 }
 
 func (d *DataInDiskByChunks) NumRows() int64 {

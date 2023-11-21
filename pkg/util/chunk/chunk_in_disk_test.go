@@ -29,6 +29,12 @@ func checkChunk(t *testing.T, chk1, chk2 *Chunk) {
 	}
 }
 
+// TODO
+// var nullable
+// fixed nullable
+// var not-null
+// fixed not-null
+// chunk with sel and data
 func TestDataInDiskByChunks(t *testing.T) {
 	numChk, numRow := 100, 1000
 	chks, fields := initChunks(numChk, numRow)
