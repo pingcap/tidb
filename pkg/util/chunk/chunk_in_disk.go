@@ -252,6 +252,7 @@ func (d *DataInDiskByChunks) serializeDataToBufInColumn(chk *Chunk) int64 {
 	return totalBytes
 }
 
+// TODO delete it
 // Format of the chunk serialized in buffer:
 // row1: | col1 size | col1 data | col2 size | col2 data | col3 size | col3 data |
 // row2: | col1 size | col1 data | col2 size | col2 data | col3 size | col3 data |
@@ -302,6 +303,7 @@ func serializeDataToRowBuf(row *Row, rowBuf []byte, tmpBuf []byte, colNum int) (
 	return rowBuf, addedBytesNum
 }
 
+// TODO delete it
 func (d *DataInDiskByChunks) deserializeDataToChunk(chk *Chunk) {
 	colNum := len(d.fieldTypes)
 	dataSize := len(d.buf)
