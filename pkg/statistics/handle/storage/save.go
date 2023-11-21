@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
@@ -113,6 +114,7 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 			sql.WriteString(val)
 		}
 		i = end
+		logutil.BgLogger().Info("save buckets to storage", zap.String("sql", sql.String()))
 		if _, err = util.Exec(sctx, sql.String()); err != nil {
 			return
 		}
