@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
+	"go.uber.org/zap"
 )
 
 // Histogram represents statistics for a column or index.
@@ -648,11 +650,13 @@ func validRange(sc *stmtctx.StatementContext, ran *ranger.Range, encoded bool) b
 		low, high = ran.LowVal[0].GetBytes(), ran.HighVal[0].GetBytes()
 	} else {
 		var err error
-		low, err = codec.EncodeKey(sc, nil, ran.LowVal[0])
+		low, err = codec.EncodeKey(sc.TimeZone(), nil, ran.LowVal[0])
+		err = sc.HandleError(err)
 		if err != nil {
 			return false
 		}
-		high, err = codec.EncodeKey(sc, nil, ran.HighVal[0])
+		high, err = codec.EncodeKey(sc.TimeZone(), nil, ran.HighVal[0])
+		err = sc.HandleError(err)
 		if err != nil {
 			return false
 		}
@@ -1262,7 +1266,9 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 	// _______left____|
 	// illegal order.
 	if upperCompare < 0 {
-		return nil, errors.Errorf("illegal bucket order")
+		err := errors.Errorf("illegal bucket order")
+		statslogutil.StatsLogger.Warn("fail to mergeBucketNDV", zap.Error(err))
+		return nil, err
 	}
 	//  ___right_|
 	//  ___left__|
@@ -1276,7 +1282,9 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 		//         |__left____|
 		// illegal order.
 		if lowerCompare < 0 {
-			return nil, errors.Errorf("illegal bucket order")
+			err := errors.Errorf("illegal bucket order")
+			statslogutil.StatsLogger.Warn("fail to mergeBucketNDV", zap.Error(err))
+			return nil, err
 		}
 		// |___right___|
 		// |____left___|

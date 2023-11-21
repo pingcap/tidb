@@ -776,7 +776,7 @@ func checkGlobalIndexRow(
 	it.Close()
 
 	// Check global index entry.
-	encodedValue, err := codec.EncodeKey(sc, nil, idxVals...)
+	encodedValue, err := codec.EncodeKey(sc.TimeZone(), nil, idxVals...)
 	require.NoError(t, err)
 	key := tablecodec.EncodeIndexSeekKey(tblInfo.ID, indexInfo.ID, encodedValue)
 	require.NoError(t, err)
