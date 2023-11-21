@@ -214,11 +214,14 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 	if err != nil {
 		return err
 	}
+	record.Db = strings.ToLower(record.Db)
 
 	// TODO: make this implementation more graceful
-	record.Bindings[0].BindSQL = record.Bindings[0].BindSQLUni
+	if record.Bindings[0].IsUniversal {
+		record.Bindings[0].BindSQL = record.Bindings[0].BindSQLUni
+		record.Db = "*"
+	}
 
-	record.Db = strings.ToLower(record.Db)
 	h.bindInfo.Lock()
 	h.sctx.Lock()
 	defer func() {
