@@ -42,9 +42,13 @@ func NewMockBackendCtxMgr(sessCtxProvider func() sessionctx.Context) *MockBacken
 	}
 }
 
-// MarkProcessing marks the ingest backfill is processing.
-func (*MockBackendCtxMgr) MarkProcessing(_ int64) bool {
+// MarkJobProcessing implements BackendCtxMgr.MarkJobProcessing interface.
+func (*MockBackendCtxMgr) MarkJobProcessing(_ int64) bool {
 	return true
+}
+
+// MarkJobFinish implements BackendCtxMgr.MarkJobFinish interface.
+func (*MockBackendCtxMgr) MarkJobFinish() {
 }
 
 // CheckAvailable implements BackendCtxMgr.Available interface.

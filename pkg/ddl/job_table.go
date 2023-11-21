@@ -249,7 +249,7 @@ func (d *ddl) getReorgJob(sess *sess.Session) (*model.Job, error) {
 			job.ReorgMeta != nil &&
 			job.ReorgMeta.IsFastReorg &&
 			ingest.LitBackCtxMgr != nil {
-			succeed := ingest.LitBackCtxMgr.MarkProcessing(job.ID)
+			succeed := ingest.LitBackCtxMgr.MarkJobProcessing(job.ID)
 			if !succeed {
 				// We only allow one task to use ingest at the same time in order to limit the CPU/memory usage.
 				return false, nil

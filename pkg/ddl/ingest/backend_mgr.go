@@ -33,11 +33,13 @@ import (
 
 // BackendCtxMgr is used to manage the backend context.
 type BackendCtxMgr interface {
-	MarkProcessing(jobID int64) (ok bool)
 	CheckAvailable() (bool, error)
 	Register(ctx context.Context, unique bool, jobID int64, etcdClient *clientv3.Client, pdAddr string, resourceGroupName string) (BackendCtx, error)
 	Unregister(jobID int64)
 	Load(jobID int64) (BackendCtx, bool)
+
+	MarkJobProcessing(jobID int64) (ok bool)
+	MarkJobFinish()
 }
 
 type litBackendCtxMgr struct {
@@ -67,8 +69,8 @@ func newLitBackendCtxMgr(path string, memQuota uint64) BackendCtxMgr {
 	return mgr
 }
 
-// MarkProcessing marks ingest backfill is processing.
-func (m *litBackendCtxMgr) MarkProcessing(jobID int64) bool {
+// MarkJobProcessing marks ingest backfill is processing.
+func (m *litBackendCtxMgr) MarkJobProcessing(jobID int64) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.processingJobID == 0 || m.processingJobID == jobID {
@@ -82,6 +84,13 @@ func (m *litBackendCtxMgr) MarkProcessing(jobID int64) bool {
 		m.lastLoggingTime = time.Now()
 	}
 	return false
+}
+
+// MarkJobFinish marks ingest backfill is finished.
+func (m *litBackendCtxMgr) MarkJobFinish() {
+	m.mu.Lock()
+	m.processingJobID = 0
+	m.mu.Unlock()
 }
 
 // CheckAvailable checks if the ingest backfill is available.
@@ -167,11 +176,6 @@ func newBackendContext(ctx context.Context, jobID int64, be *local.Backend, cfg 
 
 // Unregister removes a backend context from the backend context manager.
 func (m *litBackendCtxMgr) Unregister(jobID int64) {
-	defer func() {
-		m.mu.Lock()
-		m.processingJobID = 0
-		m.mu.Unlock()
-	}()
 	bc, exist := m.SyncMap.Delete(jobID)
 	if !exist {
 		return
