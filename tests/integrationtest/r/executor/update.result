@@ -384,3 +384,31 @@ id	a
 1	0
 2	4294967295
 set sql_mode=default;
+drop table if exists t1;
+create table t1(id int primary key, name varchar(40));
+insert into t1 values(1, 'abc');
+begin pessimistic;
+begin pessimistic;
+update t1 set name='xyz' where id=1;
+affected rows: 1
+info: Rows matched: 1  Changed: 1  Warnings: 0
+select * from t1 where id = 1;
+id	name
+1	xyz
+commit;
+update t1 set name='xyz' where id=1;
+affected rows: 0
+info: Rows matched: 1  Changed: 0  Warnings: 0
+select * from t1 where id = 1;
+id	name
+1	abc
+select * from t1 where id = 1 for update;
+id	name
+1	xyz
+select * from t1 where id in (1, 2);
+id	name
+1	abc
+select * from t1 where id in (1, 2) for update;
+id	name
+1	xyz
+commit;

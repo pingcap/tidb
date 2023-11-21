@@ -69,32 +69,6 @@ func getPresumeExistsCount(t *testing.T, se session.Session) int {
 	return presumeNotExistsCnt
 }
 
-func TestIssue21447(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk1, tk2 := testkit.NewTestKit(t, store), testkit.NewTestKit(t, store)
-	tk1.MustExec("use test")
-	tk2.MustExec("use test")
-
-	tk1.MustExec("drop table if exists t1")
-	tk1.MustExec("create table t1(id int primary key, name varchar(40))")
-	tk1.MustExec("insert into t1 values(1, 'abc')")
-
-	tk1.MustExec("begin pessimistic")
-	tk2.MustExec("begin pessimistic")
-	tk2.MustExec("update t1 set name='xyz' where id=1")
-	tk2.CheckExecResult(1, 0)
-	tk2.MustQuery("select * from t1 where id = 1").Check(testkit.Rows("1 xyz"))
-	tk2.MustExec("commit")
-	tk1.MustExec("update t1 set name='xyz' where id=1")
-	tk1.CheckExecResult(0, 0)
-	tk1.MustQuery("select * from t1 where id = 1").Check(testkit.Rows("1 abc"))
-	tk1.MustQuery("select * from t1 where id = 1 for update").Check(testkit.Rows("1 xyz"))
-	tk1.MustQuery("select * from t1 where id in (1, 2)").Check(testkit.Rows("1 abc"))
-	tk1.MustQuery("select * from t1 where id in (1, 2) for update").Check(testkit.Rows("1 xyz"))
-	tk1.MustExec("commit")
-}
-
 func TestLockUnchangedUniqueKeys(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

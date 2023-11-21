@@ -266,3 +266,27 @@ update t1 set a='1000000000000000000' where id=2;
 select id, a from t1 order by id asc;
 set sql_mode=default;
 
+# TestIssue21447
+drop table if exists t1;
+create table t1(id int primary key, name varchar(40));
+insert into t1 values(1, 'abc');
+
+begin pessimistic;
+
+connect (conn1, localhost, root,, executor__update);
+begin pessimistic;
+--enable_info
+update t1 set name='xyz' where id=1;
+--disable_info
+select * from t1 where id = 1;
+commit;
+disconnect conn1;
+
+--enable_info
+update t1 set name='xyz' where id=1;
+--disable_info
+select * from t1 where id = 1;
+select * from t1 where id = 1 for update;
+select * from t1 where id in (1, 2);
+select * from t1 where id in (1, 2) for update;
+commit;
