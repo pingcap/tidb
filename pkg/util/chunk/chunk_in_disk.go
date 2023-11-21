@@ -125,7 +125,7 @@ func (d *DataInDiskByChunks) GetChunk(chkIdx int) (*Chunk, error) {
 	reader := bufio.NewReader(d.dataFile.getSectionReader(d.offsetOfEachChunk[chkIdx]))
 	chkSize := d.getChunkSize(chkIdx)
 
-	if len(d.buf) < int(chkSize) {
+	if cap(d.buf) < int(chkSize) {
 		d.buf = make([]byte, chkSize)
 	} else {
 		d.buf = d.buf[:chkSize]
