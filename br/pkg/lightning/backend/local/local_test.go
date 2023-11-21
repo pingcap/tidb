@@ -1200,7 +1200,9 @@ func (m *mockIngestIter) Close() error { return nil }
 
 func (m *mockIngestIter) Error() error { return nil }
 
-func (m mockIngestData) NewIter(ctx context.Context, lowerBound, upperBound []byte) common.ForwardIter {
+func (m *mockIngestIter) ReleaseBuf() {}
+
+func (m mockIngestData) NewIter(_ context.Context, lowerBound, upperBound []byte, _ *membuf.Pool) common.ForwardIter {
 	i, j := m.getFirstAndLastKeyIdx(lowerBound, upperBound)
 	return &mockIngestIter{data: m, startIdx: i, endIdx: j, curIdx: i}
 }
@@ -2358,7 +2360,7 @@ func TestExternalEngine(t *testing.T) {
 	kvIdx := 0
 	for i, job := range jobs {
 		require.Equal(t, expectedKeyRanges[i], job.keyRange)
-		iter := job.ingestData.NewIter(ctx, job.keyRange.Start, job.keyRange.End)
+		iter := job.ingestData.NewIter(ctx, job.keyRange.Start, job.keyRange.End, nil)
 		for iter.First(); iter.Valid(); iter.Next() {
 			require.Equal(t, keys[kvIdx], iter.Key())
 			require.Equal(t, values[kvIdx], iter.Value())
