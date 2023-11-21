@@ -2777,8 +2777,8 @@ type Concurrency struct {
 	// SourceAddr is the source address of request. Available in coprocessor ONLY.
 	SourceAddr net.TCPAddr
 
-	// IdleTransactionTimeout indicates the maximum time duration a transaction could be idle, unit is second.
-	IdleTransactionTimeout int
+	// KillIdleTransactionTimeout indicates the maximum time duration a transaction could be idle, unit is second.
+	KillIdleTransactionTimeout int
 }
 
 // SetIndexLookupConcurrency set the number of concurrent index lookup worker.
