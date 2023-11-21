@@ -274,6 +274,7 @@ type SQLBindPlan struct {
 	NormdOrigSQL string
 	BindSQL      string
 	IsGlobal     bool
+	IsUniversal  bool
 	BindStmt     ast.StmtNode
 	Db           string
 	Charset      string

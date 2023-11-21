@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -37,6 +36,7 @@ type SQLBindExec struct {
 	collation    string
 	db           string
 	isGlobal     bool
+	isUniversal  bool
 	bindAst      ast.StmtNode
 	newStatus    string
 	source       string // by manual or from history, only in create stmt
@@ -151,6 +151,8 @@ func (e *SQLBindExec) createSQLBind() error {
 		Source:     e.source,
 		SQLDigest:  e.sqlDigest,
 		PlanDigest: e.planDigest,
+
+		IsUniversal: e.isUniversal,
 	}
 	record := &bindinfo.BindRecord{
 		OriginalSQL: e.normdOrigSQL,

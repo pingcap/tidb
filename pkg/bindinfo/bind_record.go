@@ -76,6 +76,8 @@ type Binding struct {
 	ID         string `json:"-"`
 	SQLDigest  string
 	PlanDigest string
+
+	IsUniversal bool // indicate whether this binding is a universal binding.
 }
 
 func (b *Binding) isSame(rb *Binding) bool {
