@@ -667,6 +667,7 @@ import (
 	unicodeSym            "UNICODE"
 	unknown               "UNKNOWN"
 	user                  "USER"
+	universal             "UNIVERSAL"
 	validation            "VALIDATION"
 	value                 "VALUE"
 	variables             "VARIABLES"
@@ -1165,6 +1166,7 @@ import (
 	FuncDatetimePrec                       "Function datetime precision"
 	GetFormatSelector                      "{DATE|DATETIME|TIME|TIMESTAMP}"
 	GlobalScope                            "The scope of variable"
+	BindingType                            "The type of binding"
 	StatementScope                         "The scope of statement"
 	GroupByClause                          "GROUP BY clause"
 	HavingClause                           "HAVING clause"
@@ -11786,6 +11788,15 @@ ShowLikeOrWhereOpt:
 		$$ = $2
 	}
 
+BindingType:
+	{
+		$$ = false
+	}
+|	"UNIVERSAL"
+	{
+		$$ = true
+	}
+
 GlobalScope:
 	{
 		$$ = false
@@ -13803,7 +13814,7 @@ BindableStmt:
  *      CREATE GLOBAL BINDING FOR select Col1,Col2 from table USING select Col1,Col2 from table use index(Col1)
  *******************************************************************/
 CreateBindingStmt:
-	"CREATE" GlobalScope "BINDING" "FOR" BindableStmt "USING" BindableStmt
+	"CREATE" GlobalScope BindingType "BINDING" "FOR" BindableStmt "USING" BindableStmt
 	{
 		startOffset := parser.startOffset(&yyS[yypt-2])
 		endOffset := parser.startOffset(&yyS[yypt-1])
