@@ -1207,7 +1207,13 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error
 		return nil, err
 	}
 
-	normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigestForBinding(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text()))
+	restoredSQL := utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())
+	db := utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB)
+	if v.IsUniversal {
+		restoredSQL = utilparser.RestoreWithAsteriskDB(v.OriginNode)
+		db = "*"
+	}
+	normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigestForBinding(restoredSQL)
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindCreate,
 		NormdOrigSQL: normdOrigSQL,
@@ -1215,7 +1221,7 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error
 		IsGlobal:     v.GlobalScope,
 		IsUniversal:  v.IsUniversal,
 		BindStmt:     v.HintedNode,
-		Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
+		Db:           db,
 		Charset:      charSet,
 		Collation:    collation,
 		Source:       bindinfo.Manual,
