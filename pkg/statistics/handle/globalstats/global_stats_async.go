@@ -33,7 +33,6 @@ import (
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -514,20 +513,19 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			if err != nil {
 				return err
 			}
+
 			// Merge histogram.
-			logutil.BgLogger().Info("fuck before hg", zap.Any("topn", a.globalStats.TopN[item.idx]), zap.Any("poppedTopN", poppedTopN), zap.Any("allhg", allhg), zap.Bool("isIndex", isIndex))
 			a.globalStats.Hg[item.idx], err = statistics.MergePartitionHist2GlobalHist(stmtCtx, allhg, poppedTopN,
 				int64(opts[ast.AnalyzeOptNumBuckets]), isIndex)
 			if err != nil {
 				return err
 			}
-			logutil.BgLogger().Info("fuck hg", zap.Int("buckets", len(a.globalStats.Hg[item.idx].Buckets)))
+
 			// NOTICE: after merging bucket NDVs have the trend to be underestimated, so for safe we don't use them.
 			for j := range a.globalStats.Hg[item.idx].Buckets {
 				a.globalStats.Hg[item.idx].Buckets[j].NDV = 0
 			}
 			a.globalStats.Hg[item.idx].NDV = a.globalStatsNDV[item.idx]
-			logutil.BgLogger().Info("ndv", zap.Int64("NDV", a.globalStats.Hg[item.idx].NDV))
 		case <-a.ioWorkerExitWhenErrChan:
 			return nil
 		}
