@@ -138,3 +138,15 @@ func RestoreWithDefaultDB(node ast.StmtNode, defaultDB, origin string) string {
 	}
 	return sb.String()
 }
+
+// RestoreWithAsteriskDB ...
+func RestoreWithAsteriskDB(node ast.StmtNode) string {
+	// TODO: simple cases
+	var sb strings.Builder
+	ctx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreSpacesAroundBinaryOperation|format.RestoreStringWithoutCharset|format.RestoreNameBackQuotes, &sb)
+	if err := node.Restore(ctx); err != nil {
+		logutil.BgLogger().Debug("restore SQL failed", zap.String("category", "sql-bind"), zap.Error(err))
+		return ""
+	}
+	return sb.String()
+}

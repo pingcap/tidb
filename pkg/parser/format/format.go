@@ -237,6 +237,7 @@ const (
 	SkipPlacementRuleForRestore
 	RestoreWithTTLEnableOff
 	RestoreWithoutSchemaName
+	RestoreWithSchemaAsAsterisk
 	RestoreWithoutTableName
 	RestoreForNonPrepPlanCache
 )
@@ -253,6 +254,11 @@ func (rf RestoreFlags) has(flag RestoreFlags) bool {
 // HasWithoutSchemaNameFlag returns a boolean indicating when `rf` has `RestoreWithoutSchemaName` flag.
 func (rf RestoreFlags) HasWithoutSchemaNameFlag() bool {
 	return rf.has(RestoreWithoutSchemaName)
+}
+
+// HasWithSchemaAsAsteriskFlag ...
+func (rf RestoreFlags) HasWithSchemaAsAsteriskFlag() bool {
+	return rf.has(RestoreWithSchemaAsAsterisk)
 }
 
 // HasWithoutTableNameFlag returns a boolean indicating when `rf` has `RestoreWithoutTableName` flag.
