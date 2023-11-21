@@ -451,32 +451,37 @@ func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *m
 
 // pdResponseHandler will be injected into the PD HTTP client to handle the response,
 // this is to maintain consistency with the logic in the `doRequest`.
-func pdResponseHandler(resp *http.Response) error {
+func pdResponseHandler(resp *http.Response, res interface{}) error {
+	defer func() { terror.Log(resp.Body.Close()) }()
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		terror.Log(resp.Body.Close())
 		return err
 	}
-	if resp.StatusCode != http.StatusOK {
-		logutil.BgLogger().Warn("response not 200",
-			zap.String("method", resp.Request.Method),
-			zap.String("host", resp.Request.URL.Host),
-			zap.String("url", resp.Request.URL.RequestURI()),
-			zap.Int("http status", resp.StatusCode),
-		)
-		if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusPreconditionFailed {
-			err = ErrHTTPServiceError.FastGen("%s", bodyBytes)
+	if resp.StatusCode == http.StatusOK {
+		if res != nil {
+			return json.Unmarshal(bodyBytes, res)
 		}
+		return nil
 	}
-	terror.Log(resp.Body.Close())
-	return err
+	logutil.BgLogger().Warn("response not 200",
+		zap.String("method", resp.Request.Method),
+		zap.String("host", resp.Request.URL.Host),
+		zap.String("url", resp.Request.URL.RequestURI()),
+		zap.Int("http status", resp.StatusCode),
+	)
+	if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusPreconditionFailed {
+		return ErrHTTPServiceError.FastGen("%s", bodyBytes)
+	}
+	return nil
 }
 
 // TODO: replace with the unified PD HTTP client.
 func doRequest(ctx context.Context, apiName string, addrs []string, route, method string, body io.Reader) ([]byte, error) {
-	var err error
-	var req *http.Request
-	var res *http.Response
+	var (
+		err error
+		req *http.Request
+		res *http.Response
+	)
 	for idx, addr := range addrs {
 		url := util2.ComposeURL(addr, route)
 		req, err = http.NewRequestWithContext(ctx, method, url, body)
