@@ -15,7 +15,11 @@
 package membuf
 
 import (
+	"bytes"
 	"crypto/rand"
+	rand2 "math/rand"
+	"runtime"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -145,6 +149,104 @@ func BenchmarkStoreLocation(b *testing.B) {
 			for j := range data {
 				_, data[j] = bytesBuf.AllocBytesWithSliceLocation(10)
 			}
+		}()
+	}
+}
+
+const sortDataNum = 1024 * 1024
+
+func BenchmarkSortSlice(b *testing.B) {
+	data := make([][]byte, sortDataNum)
+	// fixed seed for benchmark
+	rnd := rand2.New(rand2.NewSource(6716))
+
+	for i := 0; i < b.N; i++ {
+		func() {
+			pool := NewPool()
+			defer pool.Destroy()
+			bytesBuf := pool.NewBuffer()
+			defer bytesBuf.Destroy()
+
+			for j := range data {
+				data[j] = bytesBuf.AllocBytes(10)
+				rnd.Read(data[j])
+			}
+			slices.SortFunc(data, func(a, b []byte) int {
+				return bytes.Compare(a, b)
+			})
+		}()
+	}
+}
+
+func BenchmarkSortLocation(b *testing.B) {
+	data := make([]SliceLocation, sortDataNum)
+	// fixed seed for benchmark
+	rnd := rand2.New(rand2.NewSource(6716))
+
+	for i := 0; i < b.N; i++ {
+		func() {
+			pool := NewPool()
+			defer pool.Destroy()
+			bytesBuf := pool.NewBuffer()
+			defer bytesBuf.Destroy()
+
+			for j := range data {
+				var buf []byte
+				buf, data[j] = bytesBuf.AllocBytesWithSliceLocation(10)
+				rnd.Read(buf)
+			}
+			slices.SortFunc(data, func(a, b SliceLocation) int {
+				return bytes.Compare(bytesBuf.GetSlice(a), bytesBuf.GetSlice(b))
+			})
+		}()
+	}
+}
+
+func BenchmarkSortSliceWithGC(b *testing.B) {
+	data := make([][]byte, sortDataNum)
+	// fixed seed for benchmark
+	rnd := rand2.New(rand2.NewSource(6716))
+
+	for i := 0; i < b.N; i++ {
+		func() {
+			pool := NewPool()
+			defer pool.Destroy()
+			bytesBuf := pool.NewBuffer()
+			defer bytesBuf.Destroy()
+
+			for j := range data {
+				data[j] = bytesBuf.AllocBytes(10)
+				rnd.Read(data[j])
+			}
+			runtime.GC()
+			slices.SortFunc(data, func(a, b []byte) int {
+				return bytes.Compare(a, b)
+			})
+		}()
+	}
+}
+
+func BenchmarkSortLocationWithGC(b *testing.B) {
+	data := make([]SliceLocation, sortDataNum)
+	// fixed seed for benchmark
+	rnd := rand2.New(rand2.NewSource(6716))
+
+	for i := 0; i < b.N; i++ {
+		func() {
+			pool := NewPool()
+			defer pool.Destroy()
+			bytesBuf := pool.NewBuffer()
+			defer bytesBuf.Destroy()
+
+			for j := range data {
+				var buf []byte
+				buf, data[j] = bytesBuf.AllocBytesWithSliceLocation(10)
+				rnd.Read(buf)
+			}
+			runtime.GC()
+			slices.SortFunc(data, func(a, b SliceLocation) int {
+				return bytes.Compare(bytesBuf.GetSlice(a), bytesBuf.GetSlice(b))
+			})
 		}()
 	}
 }
