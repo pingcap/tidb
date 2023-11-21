@@ -619,7 +619,8 @@ func (e *exchSenderExec) toTiPBChunk(chk *chunk.Chunk) ([]tipb.Chunk, error) {
 		}
 		var err error
 		var oldRowBuf []byte
-		oldRowBuf, err = codec.EncodeValue(e.sc, oldRowBuf[:0], oldRow...)
+		oldRowBuf, err = codec.EncodeValue(e.sc.TimeZone(), oldRowBuf[:0], oldRow...)
+		err = e.sc.HandleError(err)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -663,7 +664,7 @@ func (e *exchSenderExec) next() (*chunk.Chunk, error) {
 				hashVals.Reset()
 				// use hash values to get unique uint64 to mod.
 				// collect all the hash key datum.
-				err := codec.HashChunkRow(e.sc, hashVals, row, e.hashKeyTypes, e.hashKeyOffsets, payload)
+				err := codec.HashChunkRow(e.sc.TypeCtx(), hashVals, row, e.hashKeyTypes, e.hashKeyOffsets, payload)
 				if err != nil {
 					for _, tunnel := range e.tunnels {
 						tunnel.ErrCh <- err
@@ -1012,7 +1013,8 @@ func (e *aggExec) getGroupKey(row chunk.Row) (*chunk.MutRow, []byte, error) {
 			return nil, nil, errors.Trace(err)
 		}
 		gbyRow.SetDatum(i, v)
-		b, err := codec.EncodeValue(e.sc, nil, v)
+		b, err := codec.EncodeValue(e.sc.TimeZone(), nil, v)
+		err = e.sc.HandleError(err)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}

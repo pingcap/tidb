@@ -39,14 +39,16 @@ import (
 
 func validInterval(sctx sessionctx.Context, low, high *point) (bool, error) {
 	sc := sctx.GetSessionVars().StmtCtx
-	l, err := codec.EncodeKey(sc, nil, low.value)
+	l, err := codec.EncodeKey(sc.TimeZone(), nil, low.value)
+	err = sc.HandleError(err)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 	if low.excl {
 		l = kv.Key(l).PrefixNext()
 	}
-	r, err := codec.EncodeKey(sc, nil, high.value)
+	r, err := codec.EncodeKey(sc.TimeZone(), nil, high.value)
+	err = sc.HandleError(err)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -587,14 +589,16 @@ func UnionRanges(sctx sessionctx.Context, ranges Ranges, mergeConsecutive bool) 
 	}
 	objects := make([]*sortRange, 0, len(ranges))
 	for _, ran := range ranges {
-		left, err := codec.EncodeKey(sc, nil, ran.LowVal...)
+		left, err := codec.EncodeKey(sc.TimeZone(), nil, ran.LowVal...)
+		err = sc.HandleError(err)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if ran.LowExclude {
 			left = kv.Key(left).PrefixNext()
 		}
-		right, err := codec.EncodeKey(sc, nil, ran.HighVal...)
+		right, err := codec.EncodeKey(sc.TimeZone(), nil, ran.HighVal...)
+		err = sc.HandleError(err)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
