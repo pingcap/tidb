@@ -146,15 +146,12 @@ func (e *SQLBindExec) createSQLBind() error {
 
 	bindInfo := bindinfo.Binding{
 		BindSQL:    e.bindSQL,
-		BindSQLUni: e.bindSQLUni,
 		Charset:    e.charset,
 		Collation:  e.collation,
 		Status:     bindinfo.Enabled,
 		Source:     e.source,
 		SQLDigest:  e.sqlDigest,
 		PlanDigest: e.planDigest,
-
-		IsUniversal: e.isUniversal,
 	}
 	record := &bindinfo.BindRecord{
 		OriginalSQL: e.normdOrigSQL,

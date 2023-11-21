@@ -63,12 +63,6 @@ func (h *SessionHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRe
 	}
 	record.Db = strings.ToLower(record.Db)
 
-	// TODO: make this implementation more graceful
-	if record.Bindings[0].IsUniversal {
-		record.Bindings[0].BindSQL = record.Bindings[0].BindSQLUni
-		record.Db = "*"
-	}
-
 	now := types.NewTime(types.FromGoTime(time.Now().In(sctx.GetSessionVars().StmtCtx.TimeZone())), mysql.TypeTimestamp, 3)
 	for i := range record.Bindings {
 		record.Bindings[i].CreateTime = now

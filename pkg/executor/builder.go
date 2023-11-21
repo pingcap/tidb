@@ -4911,7 +4911,6 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) exec.Exec
 		sqlBindOp:    v.SQLBindOp,
 		normdOrigSQL: v.NormdOrigSQL,
 		bindSQL:      v.BindSQL,
-		bindSQLUni:   v.BindSQLUni,
 		charset:      v.Charset,
 		collation:    v.Collation,
 		db:           v.Db,

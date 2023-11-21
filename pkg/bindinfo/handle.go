@@ -217,10 +217,10 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 	record.Db = strings.ToLower(record.Db)
 
 	// TODO: make this implementation more graceful
-	if record.Bindings[0].IsUniversal {
-		record.Bindings[0].BindSQL = record.Bindings[0].BindSQLUni
-		record.Db = "*"
-	}
+	//if record.Bindings[0].IsUniversal {
+	//	record.Bindings[0].BindSQL = record.Bindings[0].BindSQLUni
+	//	record.Db = "*"
+	//}
 
 	h.bindInfo.Lock()
 	h.sctx.Lock()

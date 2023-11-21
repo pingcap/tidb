@@ -1212,7 +1212,6 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error
 		SQLBindOp:    OpSQLBindCreate,
 		NormdOrigSQL: normdOrigSQL,
 		BindSQL:      utilparser.RestoreWithDefaultDB(v.HintedNode, b.ctx.GetSessionVars().CurrentDB, v.HintedNode.Text()),
-		BindSQLUni:   utilparser.RestoreWithAsteriskDB(v.HintedNode),
 		IsGlobal:     v.GlobalScope,
 		IsUniversal:  v.IsUniversal,
 		BindStmt:     v.HintedNode,
