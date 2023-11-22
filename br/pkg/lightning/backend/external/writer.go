@@ -490,7 +490,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 func (w *Writer) getKeyByLoc(loc membuf.SliceLocation) []byte {
 	block := w.kvBuffer.GetSlice(loc)
 	keyLen := binary.BigEndian.Uint64(block[:lengthBytes])
-	return block[lengthBytes : lengthBytes+keyLen]
+	return block[2*lengthBytes : 2*lengthBytes+keyLen]
 }
 
 func (w *Writer) createStorageWriter(ctx context.Context) (
