@@ -1744,7 +1744,7 @@ drop table if exists t;
 # TestIssues29711
 drop table if exists tbl_29711;
 CREATE TABLE `tbl_29711` (`col_250` text COLLATE utf8_unicode_ci NOT NULL,`col_251` enum('Alice','Bob','Charlie','David') COLLATE utf8_unicode_ci NOT NULL DEFAULT 'Charlie',PRIMARY KEY (`col_251`,`col_250`(1)) NONCLUSTERED);
-explain format=brief select col_250,col_251 from tbl_29711 where col_251 between 'Bob' and 'David' order by col_250,col_251 limit 6;
+explain format=brief select col_250,col_251 from tbl_29711 use index (primary) where col_251 between 'Bob' and 'David' order by col_250,col_251 limit 6;
 drop table if exists t29711;
 CREATE TABLE `t29711` (`a` varchar(10) DEFAULT NULL,`b` int(11) DEFAULT NULL,`c` int(11) DEFAULT NULL,KEY `ia` (`a`(2)));
 explain format=brief select * from t29711 use index (ia) order by a limit 10;
