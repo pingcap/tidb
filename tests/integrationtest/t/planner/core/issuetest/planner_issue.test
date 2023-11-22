@@ -136,3 +136,18 @@ FROM
   t2 db 
   LEFT JOIN tmp3 c2 ON c2.id = '1' 
   LEFT JOIN tmp3 c3 ON c3.id = '1';
+
+# https://github.com/pingcap/tidb/issues/48755
+drop table if exists t;
+create table t(a int, b int);
+set @@tidb_max_chunk_size = 32;
+# insert into more than 32 rows to the table.
+insert into t values(1, 1);
+insert into t select a+1, a+1 from t;
+insert into t select a+2, a+2 from t;
+insert into t select a+4, a+4 from t;
+insert into t select a+8, a+8 from t;
+insert into t select a+16, a+16 from t;
+insert into t select a+32, a+32 from t;
+select a from (select 100 as a, 100 as b union all select * from t) t where b != 0;
+set @@tidb_max_chunk_size = default;
