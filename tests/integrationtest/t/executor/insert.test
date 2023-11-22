@@ -1437,3 +1437,178 @@ INSERT t1 VALUES (1, 1) ON DUPLICATE KEY UPDATE f2 = null;
 show warnings;
 SELECT * FROM t1 order by f1;
 set sql_mode=default;
+
+# TestInsertOnDuplicateKey
+drop table if exists t1, t2;
+create table t1(a1 bigint primary key, b1 bigint);
+create table t2(a2 bigint primary key, b2 bigint);
+--enable_info
+insert into t1 values(1, 100);
+insert into t2 values(1, 200);
+insert into t1 select a2, b2 from t2 on duplicate key update b1 = a2;
+--disable_info
+select * from t1;
+--enable_info
+insert into t1 select a2, b2 from t2 on duplicate key update b1 = b2;
+--disable_info
+select * from t1;
+--enable_info
+insert into t1 select a2, b2 from t2 on duplicate key update a1 = a2;
+--disable_info
+select * from t1;
+--enable_info
+insert into t1 select a2, b2 from t2 on duplicate key update b1 = 300;
+--disable_info
+select * from t1;
+--enable_info
+insert into t1 values(1, 1) on duplicate key update b1 = 400;
+--disable_info
+select * from t1;
+--enable_info
+insert into t1 select 1, 500 from t2 on duplicate key update b1 = 400;
+--disable_info
+select * from t1;
+
+drop table if exists t1, t2;
+create table t1(a bigint primary key, b bigint);
+create table t2(a bigint primary key, b bigint);
+-- error 1054
+insert into t1 select * from t2 on duplicate key update c = t2.b;
+
+drop table if exists t1, t2;
+create table t1(a bigint primary key, b bigint);
+create table t2(a bigint primary key, b bigint);
+-- error 1052
+insert into t1 select * from t2 on duplicate key update a = b;
+
+drop table if exists t1, t2;
+create table t1(a bigint primary key, b bigint);
+create table t2(a bigint primary key, b bigint);
+-- error 1054
+insert into t1 select * from t2 on duplicate key update c = b;
+
+drop table if exists t1, t2;
+create table t1(a1 bigint primary key, b1 bigint);
+create table t2(a2 bigint primary key, b2 bigint);
+-- error 1054
+insert into t1 select * from t2 on duplicate key update a1 = values(b2);
+
+drop table if exists t1, t2;
+create table t1(a1 bigint primary key, b1 bigint);
+create table t2(a2 bigint primary key, b2 bigint);
+--enable_info
+insert into t1 values(1, 100);
+insert into t2 values(1, 200);
+insert into t1 select * from t2 on duplicate key update b1 = values(b1) + b2;
+--disable_info
+select * from t1;
+--enable_info
+insert into t1 select * from t2 on duplicate key update b1 = values(b1) + b2;
+--disable_info
+select * from t1;
+
+drop table if exists t;
+create table t(k1 bigint, k2 bigint, val bigint, primary key(k1, k2));
+--enable_info
+insert into t (val, k1, k2) values (3, 1, 2);
+--disable_info
+select * from t;
+--enable_info
+insert into t (val, k1, k2) select c, a, b from (select 1 as a, 2 as b, 4 as c) tmp on duplicate key update val = tmp.c;
+--disable_info
+select * from t;
+
+drop table if exists t;
+create table t(k1 double, k2 double, v double, primary key(k1, k2));
+--enable_info
+insert into t (v, k1, k2) select c, a, b from (select "3" c, "1" a, "2" b) tmp on duplicate key update v=c;
+--disable_info
+select * from t;
+--enable_info
+insert into t (v, k1, k2) select c, a, b from (select "3" c, "1" a, "2" b) tmp on duplicate key update v=c;
+--disable_info
+select * from t;
+
+drop table if exists t1, t2;
+create table t1(id int, a int, b int);
+--enable_info
+insert into t1 values (1, 1, 1);
+insert into t1 values (2, 2, 1);
+insert into t1 values (3, 3, 1);
+--disable_info
+create table t2(a int primary key, b int, unique(b));
+--enable_info
+insert into t2 select a, b from t1 order by id on duplicate key update a=t1.a, b=t1.b;
+--disable_info
+select * from t2 order by a;
+
+drop table if exists t1, t2;
+create table t1(id int, a int, b int);
+--enable_info
+insert into t1 values (1, 1, 1);
+insert into t1 values (2, 1, 2);
+insert into t1 values (3, 3, 1);
+--disable_info
+create table t2(a int primary key, b int, unique(b));
+--enable_info
+insert into t2 select a, b from t1 order by id on duplicate key update a=t1.a, b=t1.b;
+--disable_info
+select * from t2 order by a;
+
+drop table if exists t1, t2;
+create table t1(id int, a int, b int, c int);
+--enable_info
+insert into t1 values (1, 1, 1, 1);
+insert into t1 values (2, 2, 1, 2);
+insert into t1 values (3, 3, 2, 2);
+insert into t1 values (4, 4, 2, 2);
+--disable_info
+create table t2(a int primary key, b int, c int, unique(b), unique(c));
+--enable_info
+insert into t2 select a, b, c from t1 order by id on duplicate key update b=t2.b, c=t2.c;
+--disable_info
+select * from t2 order by a;
+
+drop table if exists t1;
+create table t1(a int primary key, b int);
+--enable_info
+insert into t1 values(1,1),(2,2),(3,3),(4,4),(5,5);
+insert into t1 values(4,14),(5,15),(6,16),(7,17),(8,18) on duplicate key update b=b+10;
+--disable_info
+
+drop table if exists a, b;
+create table a(x int primary key);
+create table b(x int, y int);
+--enable_info
+insert into a values(1);
+insert into b values(1, 2);
+insert into a select x from b ON DUPLICATE KEY UPDATE a.x=b.y;
+--disable_info
+select * from a;
+
+--echo ## Test issue 28078.
+--echo ## Use different types of columns so that there's likely to be error if the types mismatches.
+drop table if exists a, b;
+create table a(id int, a1 timestamp, a2 varchar(10), a3 float, unique(id));
+create table b(id int, b1 time, b2 varchar(10), b3 int);
+--enable_info
+insert into a values (1, '2022-01-04 07:02:04', 'a', 1.1), (2, '2022-01-04 07:02:05', 'b', 2.2);
+insert into b values (2, '12:34:56', 'c', 10), (3, '01:23:45', 'd', 20);
+insert into a (id) select id from b on duplicate key update a.a2 = b.b2, a.a3 = 3.3;
+--disable_info
+select * from a;
+--enable_info
+insert into a (id) select 4 from b where b3 = 20 on duplicate key update a.a3 = b.b3;
+--disable_info
+select * from a;
+--enable_info
+insert into a (a2, a3) select 'x', 1.2 from b on duplicate key update a.a2 = b.b3;
+--disable_info
+select * from a;
+
+--echo ## reproduce insert on duplicate key update bug under new row format.
+drop table if exists t1;
+create table t1(c1 decimal(6,4), primary key(c1));
+insert into t1 set c1 = 0.1;
+insert into t1 set c1 = 0.1 on duplicate key update c1 = 1;
+select * from t1 use index(primary);
