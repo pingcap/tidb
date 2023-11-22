@@ -1147,11 +1147,14 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(errStr + ")")
 		}
 		var valStr string
-		if currVal.Kind() == types.KindMysqlTime && timeUnit == ast.TimeUnitDay {
-			// if unit is day, no need to display time part. such as 2023-01-01, instead of 2023-01-01 00:00:00.
+		if currVal.Kind() == types.KindMysqlTime {
 			t := currVal.GetMysqlTime()
 			if t.Hour() == 0 && t.Minute() == 0 && t.Second() == 0 {
-				t.SetType(mysql.TypeDate)
+				switch timeUnit {
+				case ast.TimeUnitDay, ast.TimeUnitWeek, ast.TimeUnitMonth, ast.TimeUnitQuarter, ast.TimeUnitYear:
+					// no need to display time part. such as 2023-01-01, instead of 2023-01-01 00:00:00.
+					t.SetType(mysql.TypeDate)
+				}
 			}
 			valStr = t.String()
 		} else {
