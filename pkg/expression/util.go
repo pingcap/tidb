@@ -879,20 +879,20 @@ func pushNotAcrossExpr(ctx sessionctx.Context, expr Expression, not bool) (_ Exp
 				return expr, false
 			}
 			var childExpr Expression
-			childExpr, changed = pushNotAcrossExpr(f.GetCtx(), child, !not)
+			childExpr, changed = pushNotAcrossExpr(ctx, child, !not)
 			if !changed && !not {
 				return expr, false
 			}
 			return childExpr, true
 		case ast.LT, ast.GE, ast.GT, ast.LE, ast.EQ, ast.NE:
 			if not {
-				return NewFunctionInternal(f.GetCtx(), oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...), true
+				return NewFunctionInternal(ctx, oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...), true
 			}
-			newArgs, changed := pushNotAcrossArgs(f.GetCtx(), f.GetArgs(), false)
+			newArgs, changed := pushNotAcrossArgs(ctx, f.GetArgs(), false)
 			if !changed {
 				return f, false
 			}
-			return NewFunctionInternal(f.GetCtx(), f.FuncName.L, f.GetType(), newArgs...), true
+			return NewFunctionInternal(ctx, f.FuncName.L, f.GetType(), newArgs...), true
 		case ast.LogicAnd, ast.LogicOr:
 			var (
 				newArgs []Expression
@@ -900,16 +900,16 @@ func pushNotAcrossExpr(ctx sessionctx.Context, expr Expression, not bool) (_ Exp
 			)
 			funcName := f.FuncName.L
 			if not {
-				newArgs, _ = pushNotAcrossArgs(f.GetCtx(), f.GetArgs(), true)
+				newArgs, _ = pushNotAcrossArgs(ctx, f.GetArgs(), true)
 				funcName = oppositeOp[f.FuncName.L]
 				changed = true
 			} else {
-				newArgs, changed = pushNotAcrossArgs(f.GetCtx(), f.GetArgs(), false)
+				newArgs, changed = pushNotAcrossArgs(ctx, f.GetArgs(), false)
 			}
 			if !changed {
 				return f, false
 			}
-			return NewFunctionInternal(f.GetCtx(), funcName, f.GetType(), newArgs...), true
+			return NewFunctionInternal(ctx, funcName, f.GetType(), newArgs...), true
 		}
 	}
 	if not {
@@ -1082,12 +1082,11 @@ func extractFiltersFromDNF(ctx sessionctx.Context, dnfFunc *ScalarFunction) ([]E
 // the original expression must satisfy the derived expression. Return nil when the derived expression is universal set.
 // A running example is: for schema of t1, `(t1.a=1 and t2.a=1) or (t1.a=2 and t2.a=2)` would be derived as
 // `t1.a=1 or t1.a=2`, while `t1.a=1 or t2.a=1` would get nil.
-func DeriveRelaxedFiltersFromDNF(expr Expression, schema *Schema) Expression {
+func DeriveRelaxedFiltersFromDNF(ctx sessionctx.Context, expr Expression, schema *Schema) Expression {
 	sf, ok := expr.(*ScalarFunction)
 	if !ok || sf.FuncName.L != ast.LogicOr {
 		return nil
 	}
-	ctx := sf.GetCtx()
 	dnfItems := FlattenDNFConditions(sf)
 	newDNFItems := make([]Expression, 0, len(dnfItems))
 	for _, dnfItem := range dnfItems {
@@ -1095,7 +1094,7 @@ func DeriveRelaxedFiltersFromDNF(expr Expression, schema *Schema) Expression {
 		newCNFItems := make([]Expression, 0, len(cnfItems))
 		for _, cnfItem := range cnfItems {
 			if itemSF, ok := cnfItem.(*ScalarFunction); ok && itemSF.FuncName.L == ast.LogicOr {
-				relaxedCNFItem := DeriveRelaxedFiltersFromDNF(cnfItem, schema)
+				relaxedCNFItem := DeriveRelaxedFiltersFromDNF(ctx, cnfItem, schema)
 				if relaxedCNFItem != nil {
 					newCNFItems = append(newCNFItems, relaxedCNFItem)
 				}

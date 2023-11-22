@@ -626,6 +626,7 @@ func (p *LogicalJoin) ExtractOnCondition(
 	deriveLeft bool,
 	deriveRight bool) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
 	rightCond []expression.Expression, otherCond []expression.Expression) {
+	ctx := p.SCtx()
 	for _, expr := range conditions {
 		// For queries like `select a in (select a from s where s.b = t.b) from t`,
 		// if subquery is empty caused by `s.b = t.b`, the result should always be
@@ -638,7 +639,6 @@ func (p *LogicalJoin) ExtractOnCondition(
 		}
 		binop, ok := expr.(*expression.ScalarFunction)
 		if ok && len(binop.GetArgs()) == 2 {
-			ctx := binop.GetCtx()
 			arg0, lOK := binop.GetArgs()[0].(*expression.Column)
 			arg1, rOK := binop.GetArgs()[1].(*expression.Column)
 			if lOK && rOK {
@@ -695,13 +695,13 @@ func (p *LogicalJoin) ExtractOnCondition(
 			// `expr AND leftRelaxedCond AND rightRelaxedCond`. Motivation is to push filters down to
 			// children as much as possible.
 			if deriveLeft {
-				leftRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(expr, leftSchema)
+				leftRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(ctx, expr, leftSchema)
 				if leftRelaxedCond != nil {
 					leftCond = append(leftCond, leftRelaxedCond)
 				}
 			}
 			if deriveRight {
-				rightRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(expr, rightSchema)
+				rightRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(ctx, expr, rightSchema)
 				if rightRelaxedCond != nil {
 					rightCond = append(rightCond, rightRelaxedCond)
 				}
