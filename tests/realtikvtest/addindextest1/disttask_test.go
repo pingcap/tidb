@@ -23,11 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
->>>>>>> d2cfbdef67f (ddl,lightning: fix ingest data unexpectedly using zero commit ts (#48797))
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
