@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -38,11 +39,11 @@ const (
 
 // statsGlobalImpl implements util.StatsGlobal
 type statsGlobalImpl struct {
-	statsHandler util.StatsHandle
+	statsHandler statstypes.StatsHandle
 }
 
 // NewStatsGlobal creates a new StatsGlobal.
-func NewStatsGlobal(statsHandler util.StatsHandle) util.StatsGlobal {
+func NewStatsGlobal(statsHandler statstypes.StatsHandle) statstypes.StatsGlobal {
 	return &statsGlobalImpl{statsHandler: statsHandler}
 }
 
@@ -95,7 +96,7 @@ func newGlobalStats(histCount int) *GlobalStats {
 // MergePartitionStats2GlobalStats merge the partition-level stats to global-level stats based on the tableInfo.
 func MergePartitionStats2GlobalStats(
 	sc sessionctx.Context,
-	statsHandle util.StatsHandle,
+	statsHandle statstypes.StatsHandle,
 	opts map[ast.AnalyzeOptionType]uint64,
 	is infoschema.InfoSchema,
 	globalTableInfo *model.TableInfo,
@@ -119,7 +120,7 @@ func MergePartitionStats2GlobalStats(
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
 func MergePartitionStats2GlobalStatsByTableID(
 	sc sessionctx.Context,
-	statsHandle util.StatsHandle,
+	statsHandle statstypes.StatsHandle,
 	opts map[ast.AnalyzeOptionType]uint64,
 	is infoschema.InfoSchema,
 	tableID int64,
@@ -172,7 +173,7 @@ var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
 // UpdateGlobalStats update the global-level stats based on the partition-level stats.
 func UpdateGlobalStats(
 	sctx sessionctx.Context,
-	statsHandle util.StatsHandle,
+	statsHandle statstypes.StatsHandle,
 	tblInfo *model.TableInfo) error {
 	tableID := tblInfo.ID
 	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
@@ -281,7 +282,7 @@ func blockingMergePartitionStats2GlobalStats(
 	isIndex bool,
 	histIDs []int64,
 	allPartitionStats map[int64]*statistics.Table,
-	statsHandle util.StatsHandle,
+	statsHandle statstypes.StatsHandle,
 ) (globalStats *GlobalStats, err error) {
 	externalCache := false
 	if allPartitionStats != nil {

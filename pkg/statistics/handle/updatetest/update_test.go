@@ -297,7 +297,7 @@ func TestTxnWithFailure(t *testing.T) {
 func TestUpdatePartition(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
-	pruneMode, err := dom.StatsHandle().GetCurrentPruneMode()
+	pruneMode, err := util.GetCurrentPruneMode(dom.StatsHandle().SPool())
 	require.NoError(t, err)
 	testKit.MustQuery("select @@tidb_partition_prune_mode").Check(testkit.Rows(pruneMode))
 	testKit.MustExec("use test")
@@ -753,7 +753,7 @@ func TestStatsVariables(t *testing.T) {
 	h := dom.StatsHandle()
 	sctx := tk.Session().(sessionctx.Context)
 
-	pruneMode, err := h.GetCurrentPruneMode()
+	pruneMode, err := util.GetCurrentPruneMode(h.SPool())
 	require.NoError(t, err)
 	require.Equal(t, string(variable.Dynamic), pruneMode)
 	err = util.UpdateSCtxVarsForStats(sctx)
@@ -770,7 +770,7 @@ func TestStatsVariables(t *testing.T) {
 	tk.MustExec(`set global tidb_enable_analyze_snapshot=1`)
 	tk.MustExec(`set global tidb_skip_missing_partition_stats=0`)
 
-	pruneMode, err = h.GetCurrentPruneMode()
+	pruneMode, err = util.GetCurrentPruneMode(h.SPool())
 	require.NoError(t, err)
 	require.Equal(t, string(variable.Static), pruneMode)
 	err = util.UpdateSCtxVarsForStats(sctx)
