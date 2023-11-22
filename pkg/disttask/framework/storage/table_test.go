@@ -312,6 +312,7 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, sm.UpdateSubtasksSchedulerIDs(ctx, 5, subtasks))
 	subtasks, err = sm.GetSubtasksByStepAndState(ctx, 5, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
+	// ywq todo fail the test
 	require.Equal(t, "tidb1", subtasks[0].SchedulerID)
 	subtasks, err = sm.GetSubtasksByStepAndState(ctx, 5, proto.StepInit, proto.TaskStateRunning)
 	require.NoError(t, err)
