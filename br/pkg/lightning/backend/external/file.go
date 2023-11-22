@@ -46,13 +46,13 @@ func NewKeyValueStore(
 		dataWriter: dataWriter,
 		ctx:        ctx,
 		rc:         rangePropertiesCollector,
-		memBuffer:  make([]byte, 0, 1024*8),
+		memBuffer:  make([]byte, 0, 5*1024*1024),
 	}
 	return kvStore, nil
 }
 
 // addEncodedData saves encoded key-value pairs to the KeyValueStore.
-// data layout: keyLen + key + valueLen + value. If the accumulated
+// data layout: keyLen + valueLen + key + value. If the accumulated
 // size or key count exceeds the given distance, a new range property will be
 // appended to the rangePropertiesCollector with current status.
 // `key` must be in strictly ascending order for invocations of a KeyValueStore.
