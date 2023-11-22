@@ -229,15 +229,18 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 		zap.String("engineTag", "<import-and-reset>"),
 		zap.Stringer("engineUUID", ei.uuid),
 	)
-	regionSplitSize := int64(lightning.SplitRegionSize) * int64(lightning.MaxSplitRegionSizeRatio)
-	regionSplitKeys := int64(lightning.SplitRegionKeys)
+
 	ei.openedEngine = nil
 	ei.closedEngine = backend.NewClosedEngine(bc.backend, logger, ei.uuid, 0)
+
+	regionSplitSize := int64(lightning.SplitRegionSize) * int64(lightning.MaxSplitRegionSizeRatio)
+	regionSplitKeys := int64(lightning.SplitRegionKeys)
 	if err := ei.closedEngine.Import(bc.ctx, regionSplitSize, regionSplitKeys); err != nil {
 		logutil.Logger(bc.ctx).Error(LitErrIngestDataErr, zap.Int64("index ID", ei.indexID),
 			zap.String("usage info", bc.diskRoot.UsageInfo()))
 		return err
 	}
+
 	err := bc.backend.ResetEngine(bc.ctx, ei.uuid)
 	if err != nil {
 		logutil.Logger(bc.ctx).Error(LitErrResetEngineFail, zap.Int64("index ID", ei.indexID))
