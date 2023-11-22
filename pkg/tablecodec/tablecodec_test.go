@@ -355,7 +355,7 @@ func TestCutKeyNew(t *testing.T) {
 	handle := types.NewIntDatum(100)
 	values = append(values, handle)
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-	encodedValue, err := codec.EncodeKey(sc, nil, values...)
+	encodedValue, err := codec.EncodeKey(sc.TimeZone(), nil, values...)
 	require.NoError(t, err)
 	tableID := int64(4)
 	indexID := int64(5)
@@ -378,7 +378,7 @@ func TestCutKey(t *testing.T) {
 	handle := types.NewIntDatum(100)
 	values = append(values, handle)
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-	encodedValue, err := codec.EncodeKey(sc, nil, values...)
+	encodedValue, err := codec.EncodeKey(sc.TimeZone(), nil, values...)
 	require.NoError(t, err)
 	tableID := int64(4)
 	indexID := int64(5)
@@ -494,7 +494,7 @@ func TestDecodeIndexKey(t *testing.T) {
 		valueStrs = append(valueStrs, str)
 	}
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-	encodedValue, err := codec.EncodeKey(sc, nil, values...)
+	encodedValue, err := codec.EncodeKey(sc.TimeZone(), nil, values...)
 	require.NoError(t, err)
 	indexKey := EncodeIndexSeekKey(tableID, indexID, encodedValue)
 
@@ -601,7 +601,7 @@ func TestUntouchedIndexKValue(t *testing.T) {
 
 func TestTempIndexKey(t *testing.T) {
 	values := []types.Datum{types.NewIntDatum(1), types.NewBytesDatum([]byte("abc")), types.NewFloat64Datum(5.5)}
-	encodedValue, err := codec.EncodeKey(stmtctx.NewStmtCtxWithTimeZone(time.UTC), nil, values...)
+	encodedValue, err := codec.EncodeKey(stmtctx.NewStmtCtxWithTimeZone(time.UTC).TimeZone(), nil, values...)
 	require.NoError(t, err)
 	tableID := int64(4)
 	indexID := int64(5)
@@ -628,7 +628,7 @@ func TestTempIndexKey(t *testing.T) {
 
 func TestTempIndexValueCodec(t *testing.T) {
 	// Test encode temp index value.
-	encodedValue, err := codec.EncodeValue(stmtctx.NewStmtCtxWithTimeZone(time.UTC), nil, types.NewIntDatum(1))
+	encodedValue, err := codec.EncodeValue(stmtctx.NewStmtCtxWithTimeZone(time.UTC).TimeZone(), nil, types.NewIntDatum(1))
 	require.NoError(t, err)
 	encodedValueCopy := make([]byte, len(encodedValue))
 	copy(encodedValueCopy, encodedValue)

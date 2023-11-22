@@ -2835,7 +2835,7 @@ func TestRCPointWriteLockIfExists(t *testing.T) {
 	tk.MustQuery("show variables like 'transaction_isolation'").Check(testkit.Rows("transaction_isolation READ-COMMITTED"))
 
 	tableID := external.GetTableByName(t, tk, "test", "t1").Meta().ID
-	idxVal, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, nil, types.NewIntDatum(1))
+	idxVal, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(), nil, types.NewIntDatum(1))
 	require.NoError(t, err)
 	secIdxKey1 := tablecodec.EncodeIndexSeekKey(tableID, 1, idxVal)
 	key1 := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(1))

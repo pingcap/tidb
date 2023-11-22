@@ -510,11 +510,15 @@ func (m *memoryDataIter) Error() error {
 	return nil
 }
 
+// ReleaseBuf implements ForwardIter.
+func (m *memoryDataIter) ReleaseBuf() {}
+
 type memoryDataDupDetectIter struct {
 	iter           *memoryDataIter
 	dupDetector    *common.DupDetector
 	err            error
 	curKey, curVal []byte
+	buf            *membuf.Buffer
 }
 
 // First implements ForwardIter.
@@ -550,16 +554,17 @@ func (m *memoryDataDupDetectIter) Next() bool {
 
 // Key implements ForwardIter.
 func (m *memoryDataDupDetectIter) Key() []byte {
-	return m.curKey
+	return m.buf.AddBytes(m.curKey)
 }
 
 // Value implements ForwardIter.
 func (m *memoryDataDupDetectIter) Value() []byte {
-	return m.curVal
+	return m.buf.AddBytes(m.curVal)
 }
 
 // Close implements ForwardIter.
 func (m *memoryDataDupDetectIter) Close() error {
+	m.buf.Destroy()
 	return m.dupDetector.Close()
 }
 
@@ -568,8 +573,17 @@ func (m *memoryDataDupDetectIter) Error() error {
 	return m.err
 }
 
+// ReleaseBuf implements ForwardIter.
+func (m *memoryDataDupDetectIter) ReleaseBuf() {
+	m.buf.Reset()
+}
+
 // NewIter implements IngestData.NewIter.
-func (m *MemoryIngestData) NewIter(ctx context.Context, lowerBound, upperBound []byte) common.ForwardIter {
+func (m *MemoryIngestData) NewIter(
+	ctx context.Context,
+	lowerBound, upperBound []byte,
+	bufPool *membuf.Pool,
+) common.ForwardIter {
 	firstKeyIdx, lastKeyIdx := m.firstAndLastKeyIndex(lowerBound, upperBound)
 	iter := &memoryDataIter{
 		keys:        m.keys,
@@ -585,6 +599,7 @@ func (m *MemoryIngestData) NewIter(ctx context.Context, lowerBound, upperBound [
 	return &memoryDataDupDetectIter{
 		iter:        iter,
 		dupDetector: detector,
+		buf:         bufPool.NewBuffer(),
 	}
 }
 

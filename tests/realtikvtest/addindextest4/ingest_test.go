@@ -15,7 +15,6 @@
 package addindextest_test
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -90,9 +89,6 @@ func TestAddIndexIngestLimitOneBackend(t *testing.T) {
 	tk2.MustExec("create table t2 (a int, b int);")
 	tk2.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3);")
 
-	// Mock there is a running ingest job.
-	_, err := ingest.LitBackCtxMgr.Register(context.Background(), false, 65535, nil, realtikvtest.PDAddr, "")
-	require.NoError(t, err)
 	wg := &sync.WaitGroup{}
 	wg.Add(2)
 	go func() {
@@ -106,18 +102,10 @@ func TestAddIndexIngestLimitOneBackend(t *testing.T) {
 	wg.Wait()
 	rows := tk.MustQuery("admin show ddl jobs 2;").Rows()
 	require.Len(t, rows, 2)
-	require.False(t, strings.Contains(rows[0][3].(string) /* job_type */, "ingest"))
-	require.False(t, strings.Contains(rows[1][3].(string) /* job_type */, "ingest"))
+	require.True(t, strings.Contains(rows[0][3].(string) /* job_type */, "ingest"))
+	require.True(t, strings.Contains(rows[1][3].(string) /* job_type */, "ingest"))
 	require.Equal(t, rows[0][7].(string) /* row_count */, "3")
 	require.Equal(t, rows[1][7].(string) /* row_count */, "3")
-
-	// Remove the running ingest job.
-	ingest.LitBackCtxMgr.Unregister(65535)
-	tk.MustExec("alter table t add index idx_a(a);")
-	rows = tk.MustQuery("admin show ddl jobs 1;").Rows()
-	require.Len(t, rows, 1)
-	require.True(t, strings.Contains(rows[0][3].(string) /* job_type */, "ingest"))
-	require.Equal(t, rows[0][7].(string) /* row_count */, "3")
 }
 
 func TestAddIndexIngestWriterCountOnPartitionTable(t *testing.T) {
