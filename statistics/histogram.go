@@ -1239,6 +1239,24 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN
 	return nil
 }
 
+<<<<<<< HEAD:statistics/histogram.go
+=======
+var bucket4MergingPool = sync.Pool{
+	New: func() any {
+		return newBucket4Meging()
+	},
+}
+
+func newbucket4MergingForRecycle() *bucket4Merging {
+	return bucket4MergingPool.Get().(*bucket4Merging)
+}
+
+func releasebucket4MergingForRecycle(b *bucket4Merging) {
+	b.disjointNDV = 0
+	bucket4MergingPool.Put(b)
+}
+
+>>>>>>> 8de6d307e5e (statistics: fix wrong result in the MergeGlobalStatsTopNByConcurrency (#48757)):pkg/statistics/histogram.go
 // bucket4Merging is only used for merging partition hists to global hist.
 type bucket4Merging struct {
 	lower *types.Datum
