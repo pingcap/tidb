@@ -157,6 +157,20 @@ func TestWalkDirSkipSubDir(t *testing.T) {
 	}))
 }
 
+func TestLocalURI(t *testing.T) {
+	ctx := context.Background()
+
+	url := "file:///tmp/folder"
+	sb, err := ParseBackend(url, &BackendOptions{})
+	require.NoError(t, err)
+
+	store, err := Create(ctx, sb, true)
+	require.NoError(t, err)
+
+	obtained := store.URI()
+	require.Equal(t, url, obtained)
+}
+
 func TestLocalFileReadRange(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()

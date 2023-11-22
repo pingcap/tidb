@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
@@ -782,7 +783,7 @@ func TestEval(t *testing.T) {
 	for _, tt := range tests {
 		expr, err := PBToExpr(tt.expr, fieldTps, sc)
 		require.NoError(t, err)
-		result, err := expr.Eval(row)
+		result, err := expr.Eval(mock.NewContext(), row)
 		require.NoError(t, err)
 		require.Equal(t, tt.result.Kind(), result.Kind())
 		cmp, err := result.Compare(sc.TypeCtx(), &tt.result, collate.GetCollator(fieldTps[0].GetCollate()))
@@ -904,7 +905,7 @@ func datumExpr(t *testing.T, d types.Datum) *tipb.Expr {
 		expr.Tp = tipb.ExprType_MysqlJson
 		var err error
 		expr.Val = make([]byte, 0, 1024)
-		expr.Val, err = codec.EncodeValue(nil, expr.Val, d)
+		expr.Val, err = codec.EncodeValue(time.UTC, expr.Val, d)
 		require.NoError(t, err)
 	case types.KindMysqlTime:
 		expr.Tp = tipb.ExprType_MysqlTime

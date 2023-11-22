@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/mock/gomock"
 )
 
@@ -120,9 +121,12 @@ func TestPlanErr(t *testing.T) {
 	m := sync.Map{}
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
 	RegisterTaskMeta(t, ctrl, &m, &planErrDispatcherExt{0, 0})
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	DispatchTaskAndCheckSuccess("key1", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "key1", t, &m)
 	distContext.Close()
 }
 
@@ -131,9 +135,12 @@ func TestRevertPlanErr(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
 	RegisterTaskMeta(t, ctrl, &m, &planErrDispatcherExt{0, 0})
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	DispatchTaskAndCheckSuccess("key1", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "key1", t, &m)
 	distContext.Close()
 }
 
@@ -141,8 +148,11 @@ func TestPlanNotRetryableErr(t *testing.T) {
 	m := sync.Map{}
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
 	RegisterTaskMeta(t, ctrl, &m, &planNotRetryableErrDispatcherExt{})
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	DispatchTaskAndCheckState("key1", t, &m, proto.TaskStateFailed)
+	DispatchTaskAndCheckState(ctx, "key1", t, &m, proto.TaskStateFailed)
 	distContext.Close()
 }

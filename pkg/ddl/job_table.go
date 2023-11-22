@@ -245,6 +245,16 @@ func (*ddl) NoConflictJob(se *sess.Session, sql string) (bool, error) {
 
 func (d *ddl) getReorgJob(sess *sess.Session) (*model.Job, error) {
 	return d.getJob(sess, reorg, func(job *model.Job) (bool, error) {
+		if (job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey) &&
+			job.ReorgMeta != nil &&
+			job.ReorgMeta.IsFastReorg &&
+			ingest.LitBackCtxMgr != nil {
+			succeed := ingest.LitBackCtxMgr.MarkJobProcessing(job.ID)
+			if !succeed {
+				// We only allow one task to use ingest at the same time in order to limit the CPU/memory usage.
+				return false, nil
+			}
+		}
 		// Check if there is any block ddl running, like drop schema and flashback cluster.
 		sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where "+
 			"(CONCAT(',', schema_ids, ',') REGEXP CONCAT(',', %s, ',') != 0 and type = %d and processing) "+

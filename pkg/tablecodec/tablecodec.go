@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -329,7 +330,18 @@ func EncodeValue(sc *stmtctx.StatementContext, b []byte, raw types.Datum) ([]byt
 	if err != nil {
 		return nil, err
 	}
-	return codec.EncodeValue(sc, b, v)
+
+	// `sc` is possible to be `nil` here.
+	tz := time.UTC
+	errCtx := errctx.StrictNoWarningContext
+	if sc != nil {
+		tz = sc.TimeZone()
+		errCtx = sc.ErrCtx()
+	}
+	val, err := codec.EncodeValue(tz, b, v)
+	err = errCtx.HandleError(err)
+
+	return val, err
 }
 
 // EncodeRow encode row data and column ids into a slice of byte.
@@ -370,7 +382,7 @@ func EncodeOldRow(sc *stmtctx.StatementContext, row []types.Datum, colIDs []int6
 		// We could not set nil value into kv.
 		return append(valBuf, codec.NilFlag), nil
 	}
-	return codec.EncodeValue(sc, valBuf, values...)
+	return codec.EncodeValue(sc.TimeZone(), valBuf, values...)
 }
 
 func flatten(sc *stmtctx.StatementContext, data types.Datum, ret *types.Datum) error {
@@ -783,7 +795,7 @@ func reEncodeHandle(handle kv.Handle, unsigned bool) ([][]byte, error) {
 	if unsigned {
 		handleDatum.SetUint64(handleDatum.GetUint64())
 	}
-	intHandleBytes, err := codec.EncodeValue(nil, nil, handleDatum)
+	intHandleBytes, err := codec.EncodeValue(time.UTC, nil, handleDatum)
 	return [][]byte{intHandleBytes}, err
 }
 
@@ -1132,7 +1144,7 @@ func GenIndexKey(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo
 	key = GetIndexKeyBuf(buf, RecordRowKeyLen+len(indexedValues)*9+9)
 	key = appendTableIndexPrefix(key, phyTblID)
 	key = codec.EncodeInt(key, idxInfo.ID)
-	key, err = codec.EncodeKey(sc, key, indexedValues...)
+	key, err = codec.EncodeKey(sc.TimeZone(), key, indexedValues...)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1791,7 +1803,7 @@ func decodeIndexKvForClusteredIndexVersion1(key, value []byte, colsLen int, hdSt
 			return nil, err
 		}
 		datum := types.NewIntDatum(pid)
-		pidBytes, err := codec.EncodeValue(nil, nil, datum)
+		pidBytes, err := codec.EncodeValue(time.UTC, nil, datum)
 		if err != nil {
 			return nil, err
 		}
@@ -1848,7 +1860,7 @@ func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus,
 			return nil, err
 		}
 		datum := types.NewIntDatum(pid)
-		pidBytes, err := codec.EncodeValue(nil, nil, datum)
+		pidBytes, err := codec.EncodeValue(time.UTC, nil, datum)
 		if err != nil {
 			return nil, err
 		}

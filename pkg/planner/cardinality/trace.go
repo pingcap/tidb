@@ -99,7 +99,7 @@ func exprToString(e expression.Expression) (string, error) {
 	case *expression.CorrelatedColumn:
 		return "", errors.New("tracing for correlated columns not supported now")
 	case *expression.Constant:
-		value, err := expr.Eval(chunk.Row{})
+		value, err := expr.EvalWithInnerCtx(chunk.Row{})
 		if err != nil {
 			return "", err
 		}

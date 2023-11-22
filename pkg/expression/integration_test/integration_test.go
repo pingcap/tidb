@@ -466,7 +466,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 		return ret
 	}
 	buildCommonKeyFromData := func(tableID int64, data []types.Datum) string {
-		k, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, nil, data...)
+		k, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(), nil, data...)
 		require.NoError(t, err)
 		h, err := kv.NewCommonHandle(k)
 		require.NoError(t, err)
@@ -493,7 +493,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	buildIndexKeyFromData := func(tableID, indexID int64, data []types.Datum) string {
-		k, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, nil, data...)
+		k, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(), nil, data...)
 		require.NoError(t, err)
 		k = tablecodec.EncodeIndexSeekKey(tableID, indexID, k)
 		return hex.EncodeToString(codec.EncodeBytes(nil, k))

@@ -50,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -918,8 +917,8 @@ func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 	if !clientAvailable || len(pdAddrs) == 0 {
 		return "", errors.Errorf("pd unavailable")
 	}
-	// Get prometheus address from pdApi.
-	url := util2.ComposeURL(pdAddrs[0], pdapi.Config)
+	// Get prometheus address from pdhttp.
+	url := util2.ComposeURL(pdAddrs[0], pdhttp.Config)
 	resp, err := util2.InternalHTTPClient().Get(url)
 	if err != nil {
 		return "", err

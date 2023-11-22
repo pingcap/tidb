@@ -228,7 +228,8 @@ func TestUpgradeVersion75(t *testing.T) {
 }
 
 func TestUpgradeVersionMockLatest(t *testing.T) {
-	session.WithMockUpgrade = true
+	mock := true
+	session.WithMockUpgrade = &mock
 
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -291,7 +292,8 @@ func TestUpgradeVersionMockLatest(t *testing.T) {
 
 // TestUpgradeVersionWithUpgradeHTTPOp tests SupportUpgradeHTTPOpVer upgrade SupportUpgradeHTTPOpVer++ with HTTP op.
 func TestUpgradeVersionWithUpgradeHTTPOp(t *testing.T) {
-	session.WithMockUpgrade = true
+	mock := true
+	session.WithMockUpgrade = &mock
 	session.MockUpgradeToVerLatestKind = session.MockSimpleUpgradeToVerLatest
 
 	store, dom := session.CreateStoreAndBootstrap(t)
@@ -339,7 +341,8 @@ func TestUpgradeVersionWithUpgradeHTTPOp(t *testing.T) {
 
 // TestUpgradeVersionWithoutUpgradeHTTPOp tests SupportUpgradeHTTPOpVer upgrade SupportUpgradeHTTPOpVer++ without HTTP op.
 func TestUpgradeVersionWithoutUpgradeHTTPOp(t *testing.T) {
-	session.WithMockUpgrade = true
+	mock := true
+	session.WithMockUpgrade = &mock
 	session.MockUpgradeToVerLatestKind = session.MockSimpleUpgradeToVerLatest
 
 	store, dom := session.CreateStoreAndBootstrap(t)
@@ -463,7 +466,8 @@ func checkDDLJobExecSucc(t *testing.T, se session.Session, jobID int64) {
 // Then we do re-upgrade(This operation will pause all DDL jobs by the system).
 func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 	// Mock a general and a reorg job in boostrap.
-	session.WithMockUpgrade = true
+	mock := true
+	session.WithMockUpgrade = &mock
 	session.MockUpgradeToVerLatestKind = session.MockSimpleUpgradeToVerLatest
 
 	store, dom := session.CreateStoreAndBootstrap(t)
@@ -746,7 +750,8 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 	}
 	session.TestHook = tc
 
-	session.WithMockUpgrade = true
+	mock := true
+	session.WithMockUpgrade = &mock
 	seV := session.CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)

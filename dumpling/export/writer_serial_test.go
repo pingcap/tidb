@@ -296,7 +296,7 @@ func TestWriteInsertInCsvWithDialect(t *testing.T) {
 	}
 	{
 		// test Base64
-		conf.CsvOutputDialect = CSVDialectBase64
+		conf.CsvOutputDialect = CSVDialectBigQuery
 		tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
 		m := newMetrics(conf.PromFactory, conf.Labels)
 		bf := storage.NewBufferWriter()

@@ -33,7 +33,7 @@ func (ff *firstRowFunction) Update(evalCtx *AggEvaluateContext, _ *stmtctx.State
 	if len(ff.Args) != 1 {
 		return errors.New("Wrong number of args for AggFuncFirstRow")
 	}
-	value, err := ff.Args[0].Eval(row)
+	value, err := ff.Args[0].EvalWithInnerCtx(row)
 	if err != nil {
 		return err
 	}
