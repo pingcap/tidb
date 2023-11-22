@@ -259,7 +259,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			proj := LogicalProjection{
 				Exprs: expression.Column2Exprs(originalSchema.Columns),
 			}.Init(p.SCtx(), p.SelectBlockOffset())
-			// Clone the schema here, because the schema may be changed by the projection optimization later.
+			// Clone the schema here, because the schema may be changed by column pruning rules.
 			proj.SetSchema(originalSchema.Clone())
 			proj.SetChildren(p)
 			p = proj
