@@ -205,7 +205,7 @@ var ActionBDRMap = map[ActionType]DDLBDRType{
 	ActionModifyColumn:                  SafeDDL, // add or update comments for column, change default values of one particular column
 	ActionRebaseAutoID:                  UnknownDDL,
 	ActionRenameTable:                   UnsafeDDL,
-	ActionSetDefaultValue:               UnknownDDL,
+	ActionSetDefaultValue:               SafeDDL,
 	ActionShardRowID:                    UnknownDDL,
 	ActionModifyTableComment:            SafeDDL,
 	ActionRenameIndex:                   SafeDDL, // rename any index
@@ -257,8 +257,8 @@ var ActionBDRMap = map[ActionType]DDLBDRType{
 	ActionFlashbackCluster:              UnknownDDL,
 	ActionRecoverSchema:                 UnknownDDL,
 	ActionReorganizePartition:           UnknownDDL,
-	ActionAlterTTLInfo:                  UnknownDDL,
-	ActionAlterTTLRemove:                UnknownDDL,
+	ActionAlterTTLInfo:                  SafeDDL,
+	ActionAlterTTLRemove:                SafeDDL,
 	ActionCreateResourceGroup:           UnmanagementDDL,
 	ActionAlterResourceGroup:            UnmanagementDDL,
 	ActionDropResourceGroup:             UnmanagementDDL,
