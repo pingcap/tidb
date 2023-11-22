@@ -781,7 +781,7 @@ func comparePartitionAstAndModel(ctx sessionctx.Context, pAst *ast.PartitionOpti
 
 	evalFn := func(expr ast.ExprNode) (types.Datum, error) {
 		val, err := expression.EvalAstExpr(ctx, ast.NewValueExpr(expr, "", ""))
-		if err != nil {
+		if err != nil || partCol == nil {
 			return val, err
 		}
 		return val.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), &partCol.FieldType)
@@ -1069,9 +1069,11 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 	if err != nil {
 		return err
 	}
-	lastVal, err = lastVal.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), &partCol.FieldType)
-	if err != nil {
-		return err
+	if partCol != nil {
+		lastVal, err = lastVal.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), &partCol.FieldType)
+		if err != nil {
+			return err
+		}
 	}
 	var partDefs []*ast.PartitionDefinition
 	if len(partitionOptions.Definitions) != 0 {
@@ -1116,9 +1118,11 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 		if err != nil {
 			return err
 		}
-		currVal, err := currVal.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), &partCol.FieldType)
-		if err != nil {
-			return err
+		if partCol != nil {
+			currVal, err = currVal.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), &partCol.FieldType)
+			if err != nil {
+				return err
+			}
 		}
 		cmp, err := currVal.Compare(ctx.GetSessionVars().StmtCtx.TypeCtx(), &lastVal, collate.GetBinaryCollator())
 		if err != nil {
