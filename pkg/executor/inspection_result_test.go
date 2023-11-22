@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
@@ -204,14 +205,16 @@ func createInspectionContext(t *testing.T, mockData map[string][][]types.Datum, 
 			},
 		}
 		// mock cluster information
+		timeNow := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 0)
 		configurations[infoschema.TableClusterInfo] = variable.TableSnapshot{
 			Rows: [][]types.Datum{
-				types.MakeDatums("pd", "pd-0", "pd-0", "4.0", "a234c", "", ""),
-				types.MakeDatums("tidb", "tidb-0", "tidb-0s", "4.0", "a234c", "", ""),
-				types.MakeDatums("tidb", "tidb-1", "tidb-1s", "4.0", "a234c", "", ""),
-				types.MakeDatums("tikv", "tikv-0", "tikv-0s", "4.0", "a234c", "", ""),
-				types.MakeDatums("tikv", "tikv-1", "tikv-1s", "4.0", "a234c", "", ""),
-				types.MakeDatums("tikv", "tikv-2", "tikv-2s", "4.0", "a234c", "", ""),
+				// Columns: TYPE, INSTANCE, STATUS_ADDRESS, VERSION, GIT_HASH, START_TIME, UPTIME
+				types.MakeDatums("pd", "pd-0", "pd-0", "4.0", "a234c", timeNow, ""),
+				types.MakeDatums("tidb", "tidb-0", "tidb-0s", "4.0", "a234c", timeNow, ""),
+				types.MakeDatums("tidb", "tidb-1", "tidb-1s", "4.0", "a234c", timeNow, ""),
+				types.MakeDatums("tikv", "tikv-0", "tikv-0s", "4.0", "a234c", timeNow, ""),
+				types.MakeDatums("tikv", "tikv-1", "tikv-1s", "4.0", "a234c", timeNow, ""),
+				types.MakeDatums("tikv", "tikv-2", "tikv-2s", "4.0", "a234c", timeNow, ""),
 			},
 		}
 		// mock cluster system information
