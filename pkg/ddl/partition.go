@@ -1153,6 +1153,15 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 		if len(valStr) == 0 || valStr[0:1] == "'" {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning: Error when generating partition values")
 		}
+		if currVal.Kind() == types.KindMysqlTime {
+			t := currVal.GetMysqlTime()
+			h, m, s := t.Clock()
+			f := t.Fsp()
+			if h == 0 && m == 0 && s == 0 && f == 0 {
+				t.SetType(mysql.TypeDate)
+				valStr = t.String()
+			}
+		}
 		partName := "P_LT_" + valStr
 		if timeUnit != ast.TimeUnitInvalid {
 			currExpr = ast.NewValueExpr(valStr, "", "")

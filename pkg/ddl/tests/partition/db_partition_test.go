@@ -3659,20 +3659,20 @@ func TestAlterLastIntervalPartition(t *testing.T) {
 	require.NoError(t, err)
 	pd := tbl.Meta().Partition.Definitions
 	require.Equal(t, 3, len(pd))
-	require.Equal(t, "'2023-01-01 00:00:00'", pd[0].LessThan[0])
-	require.Equal(t, "'2023-01-02 00:00:00'", pd[1].LessThan[0])
-	require.Equal(t, "'2023-01-03 00:00:00'", pd[2].LessThan[0])
+	require.Equal(t, "'2023-01-01'", pd[0].LessThan[0])
+	require.Equal(t, "'2023-01-02'", pd[1].LessThan[0])
+	require.Equal(t, "'2023-01-03'", pd[2].LessThan[0])
 	tk.MustExec("alter table t last partition less than ('2024-01-04')")
 	tk.MustExec("alter table t last partition less than ('2025-01-01 00:00:00')")
 	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	pd = tbl.Meta().Partition.Definitions
 	require.Equal(t, 732, len(pd))
-	require.Equal(t, "'2023-01-01 00:00:00'", pd[0].LessThan[0])
-	require.Equal(t, "'2023-01-02 00:00:00'", pd[1].LessThan[0])
-	require.Equal(t, "'2023-01-03 00:00:00'", pd[2].LessThan[0])
-	require.Equal(t, "'2024-12-31 00:00:00'", pd[730].LessThan[0])
-	require.Equal(t, "'2025-01-01 00:00:00'", pd[731].LessThan[0])
+	require.Equal(t, "'2023-01-01'", pd[0].LessThan[0])
+	require.Equal(t, "'2023-01-02'", pd[1].LessThan[0])
+	require.Equal(t, "'2023-01-03'", pd[2].LessThan[0])
+	require.Equal(t, "'2024-12-31'", pd[730].LessThan[0])
+	require.Equal(t, "'2025-01-01'", pd[731].LessThan[0])
 
 	// Test for interval 2 days.
 	tk.MustExec(`create table t2 (id int, create_time datetime)
@@ -3684,21 +3684,21 @@ func TestAlterLastIntervalPartition(t *testing.T) {
 	require.NoError(t, err)
 	pd = tbl.Meta().Partition.Definitions
 	require.Equal(t, 3, len(pd))
-	require.Equal(t, "'2023-01-01 00:00:00'", pd[0].LessThan[0])
-	require.Equal(t, "'2023-01-03 00:00:00'", pd[1].LessThan[0])
-	require.Equal(t, "'2023-01-05 00:00:00'", pd[2].LessThan[0])
+	require.Equal(t, "'2023-01-01'", pd[0].LessThan[0])
+	require.Equal(t, "'2023-01-03'", pd[1].LessThan[0])
+	require.Equal(t, "'2023-01-05'", pd[2].LessThan[0])
 	tk.MustExec("alter table t2 last partition less than ('2023-01-09')")
 	tk.MustExec("alter table t2 last partition less than ('2023-01-11 00:00:00')")
 	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	pd = tbl.Meta().Partition.Definitions
 	require.Equal(t, 6, len(pd))
-	require.Equal(t, "'2023-01-01 00:00:00'", pd[0].LessThan[0])
-	require.Equal(t, "'2023-01-03 00:00:00'", pd[1].LessThan[0])
-	require.Equal(t, "'2023-01-05 00:00:00'", pd[2].LessThan[0])
-	require.Equal(t, "'2023-01-07 00:00:00'", pd[3].LessThan[0])
-	require.Equal(t, "'2023-01-09 00:00:00'", pd[4].LessThan[0])
-	require.Equal(t, "'2023-01-11 00:00:00'", pd[5].LessThan[0])
+	require.Equal(t, "'2023-01-01'", pd[0].LessThan[0])
+	require.Equal(t, "'2023-01-03'", pd[1].LessThan[0])
+	require.Equal(t, "'2023-01-05'", pd[2].LessThan[0])
+	require.Equal(t, "'2023-01-07'", pd[3].LessThan[0])
+	require.Equal(t, "'2023-01-09'", pd[4].LessThan[0])
+	require.Equal(t, "'2023-01-11'", pd[5].LessThan[0])
 
 	// Test for day with time.
 	tk.MustExec(`create table t3 (id int, create_time datetime)
@@ -3734,29 +3734,29 @@ func TestAlterLastIntervalPartition(t *testing.T) {
 	require.NoError(t, err)
 	pd = tbl.Meta().Partition.Definitions
 	require.Equal(t, 3, len(pd))
-	require.Equal(t, "'2023-01-01 00:00:00'", pd[0].LessThan[0])
-	require.Equal(t, "'2023-01-03 00:00:00'", pd[1].LessThan[0])
-	require.Equal(t, "'2023-01-05 00:00:00'", pd[2].LessThan[0])
+	require.Equal(t, "'2023-01-01'", pd[0].LessThan[0])
+	require.Equal(t, "'2023-01-03'", pd[1].LessThan[0])
+	require.Equal(t, "'2023-01-05'", pd[2].LessThan[0])
 	tk.MustExec("alter table t4 last partition less than ('2023-01-09 00:00:00')")
 	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
 	require.NoError(t, err)
 	pd = tbl.Meta().Partition.Definitions
 	require.Equal(t, 5, len(pd))
-	require.Equal(t, "'2023-01-01 00:00:00'", pd[0].LessThan[0])
-	require.Equal(t, "'2023-01-03 00:00:00'", pd[1].LessThan[0])
-	require.Equal(t, "'2023-01-05 00:00:00'", pd[2].LessThan[0])
-	require.Equal(t, "'2023-01-07 00:00:00'", pd[3].LessThan[0])
-	require.Equal(t, "'2023-01-09 00:00:00'", pd[4].LessThan[0])
+	require.Equal(t, "'2023-01-01'", pd[0].LessThan[0])
+	require.Equal(t, "'2023-01-03'", pd[1].LessThan[0])
+	require.Equal(t, "'2023-01-05'", pd[2].LessThan[0])
+	require.Equal(t, "'2023-01-07'", pd[3].LessThan[0])
+	require.Equal(t, "'2023-01-09'", pd[4].LessThan[0])
 	tk.MustQuery("show create table t4").Check(testkit.Rows("t4 CREATE TABLE `t4` (\n" +
 		"  `id` int(11) DEFAULT NULL,\n" +
 		"  `create_time` datetime DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY RANGE COLUMNS(`create_time`)\n" +
-		"(PARTITION `P_LT_2023-01-01 00:00:00` VALUES LESS THAN ('2023-01-01 00:00:00'),\n" +
-		" PARTITION `P_LT_2023-01-03 00:00:00` VALUES LESS THAN ('2023-01-03 00:00:00'),\n" +
-		" PARTITION `P_LT_2023-01-05 00:00:00` VALUES LESS THAN ('2023-01-05 00:00:00'),\n" +
-		" PARTITION `P_LT_2023-01-07 00:00:00` VALUES LESS THAN ('2023-01-07 00:00:00'),\n" +
-		" PARTITION `P_LT_2023-01-09 00:00:00` VALUES LESS THAN ('2023-01-09 00:00:00'))"))
+		"(PARTITION `P_LT_2023-01-01` VALUES LESS THAN ('2023-01-01'),\n" +
+		" PARTITION `P_LT_2023-01-03` VALUES LESS THAN ('2023-01-03'),\n" +
+		" PARTITION `P_LT_2023-01-05` VALUES LESS THAN ('2023-01-05'),\n" +
+		" PARTITION `P_LT_2023-01-07` VALUES LESS THAN ('2023-01-07'),\n" +
+		" PARTITION `P_LT_2023-01-09` VALUES LESS THAN ('2023-01-09'))"))
 
 	tk.MustExec(`create table t5 (id int, create_time datetime)
 		partition by range columns (create_time)
@@ -3768,11 +3768,11 @@ func TestAlterLastIntervalPartition(t *testing.T) {
 		"  `create_time` datetime DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY RANGE COLUMNS(`create_time`)\n" +
-		"(PARTITION `P_LT_2023-01-01 00:00:00` VALUES LESS THAN ('2023-01-01 00:00:00'),\n" +
-		" PARTITION `P_LT_2023-02-01 00:00:00` VALUES LESS THAN ('2023-02-01 00:00:00'),\n" +
-		" PARTITION `P_LT_2023-03-01 00:00:00` VALUES LESS THAN ('2023-03-01 00:00:00'),\n" +
-		" PARTITION `P_LT_2023-04-01 00:00:00` VALUES LESS THAN ('2023-04-01 00:00:00'),\n" +
-		" PARTITION `P_LT_2023-05-01 00:00:00` VALUES LESS THAN ('2023-05-01 00:00:00'))"))
+		"(PARTITION `P_LT_2023-01-01` VALUES LESS THAN ('2023-01-01'),\n" +
+		" PARTITION `P_LT_2023-02-01` VALUES LESS THAN ('2023-02-01'),\n" +
+		" PARTITION `P_LT_2023-03-01` VALUES LESS THAN ('2023-03-01'),\n" +
+		" PARTITION `P_LT_2023-04-01` VALUES LESS THAN ('2023-04-01'),\n" +
+		" PARTITION `P_LT_2023-05-01` VALUES LESS THAN ('2023-05-01'))"))
 
 	tk.MustExec("CREATE TABLE `t6` (\n" +
 		"  `id` int(11) DEFAULT NULL,\n" +
@@ -3789,8 +3789,8 @@ func TestAlterLastIntervalPartition(t *testing.T) {
 		"PARTITION BY RANGE COLUMNS(`create_time`)\n" +
 		"(PARTITION `P_LT_2023-01-01` VALUES LESS THAN ('2023-01-01'),\n" +
 		" PARTITION `P_LT_2023-01-02` VALUES LESS THAN ('2023-01-02'),\n" +
-		" PARTITION `P_LT_2023-01-03 00:00:00` VALUES LESS THAN ('2023-01-03 00:00:00'),\n" +
-		" PARTITION `P_LT_2023-01-04 00:00:00` VALUES LESS THAN ('2023-01-04 00:00:00'))"))
+		" PARTITION `P_LT_2023-01-03` VALUES LESS THAN ('2023-01-03'),\n" +
+		" PARTITION `P_LT_2023-01-04` VALUES LESS THAN ('2023-01-04'))"))
 }
 
 // TODO: check EXCHANGE how it handles null (for all types of partitioning!!!)
