@@ -858,7 +858,7 @@ func TestIndexMergeUpgradeFrom400To540Enable(t *testing.T) {
 }
 
 func TestIndexMergeUpgradeFrom400To540Disable(t *testing.T) {
-	indexMergeUpgradeFrom400To540Helper(t, false)
+	testIndexMergeUpgradeFrom400To540(t, false)
 }
 
 func testIndexMergeUpgradeFrom400To540(t *testing.T, enable bool) {
