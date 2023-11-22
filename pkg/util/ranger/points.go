@@ -854,7 +854,7 @@ func (r *builder) buildFromNot(
 			isUnsignedIntCol bool
 			nonNegativePos   int
 		)
-		rangePoints, hasNull := r.buildFromIn(expr, newTp, types.UnspecifiedLength, true)
+		rangePoints, hasNull := r.buildFromIn(expr, newTp, types.UnspecifiedLength, false)
 		if hasNull {
 			return nil
 		}
