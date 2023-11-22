@@ -3772,6 +3772,24 @@ func TestAlterLastIntervalPartition(t *testing.T) {
 		" PARTITION `P_LT_2023-03-01` VALUES LESS THAN ('2023-03-01'),\n" +
 		" PARTITION `P_LT_2023-04-01` VALUES LESS THAN ('2023-04-01'),\n" +
 		" PARTITION `P_LT_2023-05-01` VALUES LESS THAN ('2023-05-01'))"))
+
+	tk.MustExec("CREATE TABLE `t6` (\n" +
+		"  `id` int(11) DEFAULT NULL,\n" +
+		"  `create_time` datetime DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE COLUMNS(`create_time`)\n" +
+		"(PARTITION `P_LT_2023-01-01` VALUES LESS THAN ('2023-01-01'),\n" +
+		" PARTITION `P_LT_2023-01-02` VALUES LESS THAN ('2023-01-02'))")
+	tk.MustExec("alter table t6 last partition less than ('2023-01-04')")
+	tk.MustQuery("show create table t6").Check(testkit.Rows("t6 CREATE TABLE `t6` (\n" +
+		"  `id` int(11) DEFAULT NULL,\n" +
+		"  `create_time` datetime DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE COLUMNS(`create_time`)\n" +
+		"(PARTITION `P_LT_2023-01-01` VALUES LESS THAN ('2023-01-01'),\n" +
+		" PARTITION `P_LT_2023-01-02` VALUES LESS THAN ('2023-01-02'),\n" +
+		" PARTITION `P_LT_2023-01-03` VALUES LESS THAN ('2023-01-03'),\n" +
+		" PARTITION `P_LT_2023-01-04` VALUES LESS THAN ('2023-01-04'))"))
 }
 
 // TODO: check EXCHANGE how it handles null (for all types of partitioning!!!)
