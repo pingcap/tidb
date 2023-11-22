@@ -143,6 +143,7 @@ go_test(
         "//pkg/meta",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
+        "//pkg/session/types",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
