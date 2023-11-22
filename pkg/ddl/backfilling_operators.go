@@ -648,9 +648,6 @@ func (w *indexIngestWorker) initSessCtx() {
 			return
 		}
 		w.restore = restoreSessCtx(sessCtx)
-		tz := *time.UTC
-		sessCtx.GetSessionVars().TimeZone = &tz
-		sessCtx.GetSessionVars().StmtCtx.SetTimeZone(&tz)
 		if err := initSessCtx(sessCtx,
 			w.reorgMeta.SQLMode,
 			w.reorgMeta.Location,
