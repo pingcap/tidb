@@ -428,6 +428,13 @@ func (r *builder) buildFromBinOp(
 		endPoint := &point{value: types.MaxValueDatum()}
 		res = []*point{startPoint, endPoint}
 	}
+	for i, p := range res {
+		res[i], err = convertPoint(r.sctx, p, newTp)
+		if err != nil {
+			r.err = err
+			return getFullRange()
+		}
+	}
 	cutPrefixForPoints(res, prefixLen, ft)
 	if convertToSortKey {
 		res, err = pointsConvertToSortKey(r.sctx, res, newTp)
@@ -702,13 +709,21 @@ func (r *builder) buildFromIn(
 		curPos++
 	}
 	rangePoints = rangePoints[:curPos]
+	for i, p := range rangePoints {
+		var err error
+		rangePoints[i], err = convertPoint(r.sctx, p, newTp)
+		if err != nil {
+			r.err = err
+			return getFullRange(), hasNull
+		}
+	}
 	cutPrefixForPoints(rangePoints, prefixLen, ft)
 	var err error
 	if convertToSortKey {
 		rangePoints, err = pointsConvertToSortKey(r.sctx, rangePoints, newTp)
 		if err != nil {
 			r.err = err
-			return getFullRange(), false
+			return getFullRange(), hasNull
 		}
 	}
 	return rangePoints, hasNull
@@ -789,6 +804,14 @@ func (r *builder) newBuildFromPatternLike(
 		startPoint := &point{value: val, start: true}
 		endPoint := &point{value: val}
 		res := []*point{startPoint, endPoint}
+		for i, p := range res {
+			var err error
+			res[i], err = convertPoint(r.sctx, p, newTp)
+			if err != nil {
+				r.err = err
+				return getFullRange()
+			}
+		}
 		cutPrefixForPoints(res, prefixLen, tpOfPattern)
 		if convertToSortKey {
 			res, err = pointsConvertToSortKey(r.sctx, res, newTp)
@@ -805,6 +828,13 @@ func (r *builder) newBuildFromPatternLike(
 	}
 	startPoint := &point{start: true, excl: exclude}
 	startPoint.value.SetBytesAsString(lowValue, tpOfPattern.GetCollate(), uint32(tpOfPattern.GetFlen()))
+
+	startPoint, err = convertPoint(r.sctx, startPoint, newTp)
+	if err != nil {
+		r.err = err
+		return getFullRange()
+	}
+
 	cutPrefixForPoints([]*point{startPoint}, prefixLen, tpOfPattern)
 
 	startPointCopy, err := pointConvertToSortKey(r.sctx, startPoint, newTp, false)
@@ -881,6 +911,14 @@ func (r *builder) buildFromNot(
 		// Append the interval (last element, max value].
 		retRangePoints = append(retRangePoints, &point{value: previousValue, start: true, excl: true})
 		retRangePoints = append(retRangePoints, &point{value: types.MaxValueDatum()})
+		for i, p := range retRangePoints {
+			var err error
+			retRangePoints[i], err = convertPoint(r.sctx, p, newTp)
+			if err != nil {
+				r.err = err
+				return getFullRange()
+			}
+		}
 		cutPrefixForPoints(retRangePoints, prefixLen, expr.GetArgs()[0].GetType())
 		if convertToSortKey {
 			var err error
