@@ -19,7 +19,6 @@ import (
 	"os"
 
 	"github.com/pingcap/errors"
-	errors2 "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/util/checksum"
 	"github.com/pingcap/tidb/pkg/util/encrypt"
@@ -193,7 +192,7 @@ type diskFileReaderWriter struct {
 func (l *diskFileReaderWriter) initWithFileName(fileName string) (err error) {
 	l.file, err = os.CreateTemp(config.GetGlobalConfig().TempStoragePath, fileName)
 	if err != nil {
-		return errors2.Trace(err)
+		return errors.Trace(err)
 	}
 	var underlying io.WriteCloser = l.file
 	if config.GetGlobalConfig().Security.SpilledFileEncryptionMethod != config.SpilledFileEncryptionMethodPlaintext {
