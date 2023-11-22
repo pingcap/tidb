@@ -1258,9 +1258,10 @@ func TestIssues24349WithConcurrency(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	testKit.MustExec("set @@tidb_analyze_version=2")
-	testKit.MustExec("set global @@tidb_merge_partition_stats_concurrency=2")
+	testKit.MustExec("set global tidb_merge_partition_stats_concurrency=2")
 	defer testKit.MustExec("set @@tidb_analyze_version=1")
 	defer testKit.MustExec("set @@tidb_partition_prune_mode='static'")
+	defer testKit.MustExec("set global tidb_merge_partition_stats_concurrency=1")
 	testIssues24349(testKit)
 }
 
