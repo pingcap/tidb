@@ -448,3 +448,367 @@ delete from t limit 3;
 select * from t;
 id	name
 set @@session.tidb_enable_list_partition = default;
+set tidb_opt_fix_control = "44262:ON";
+drop table if exists replace_test;
+create table replace_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1)
+partition by range (id) (
+PARTITION p0 VALUES LESS THAN (3),
+PARTITION p1 VALUES LESS THAN (5),
+PARTITION p2 VALUES LESS THAN (7),
+PARTITION p3 VALUES LESS THAN (9));
+replace replace_test (c1) values (1),(2),(NULL);
+affected rows: 3
+info: Records: 3  Duplicates: 0  Warnings: 0
+begin;
+replace replace_test (c1) values ();
+Error 1136 (21S01): Column count doesn't match value count at row 1
+rollback;
+begin;
+replace replace_test (c1, c2) values (1,2),(1);
+Error 1136 (21S01): Column count doesn't match value count at row 2
+rollback;
+begin;
+replace replace_test (xxx) values (3);
+Error 1054 (42S22): Unknown column 'xxx' in 'field list'
+rollback;
+begin;
+replace replace_test_xxx (c1) values ();
+Error 1146 (42S02): Table 'executor__partition__write.replace_test_xxx' doesn't exist
+rollback;
+replace replace_test set c1 = 3;
+affected rows: 1
+info: 
+begin;
+replace replace_test set c1 = 4, c1 = 5;
+Error 1110 (42000): Column 'c1' specified twice
+rollback;
+begin;
+replace replace_test set xxx = 6;
+Error 1054 (42S22): Unknown column 'xxx' in 'field list'
+rollback;
+drop table if exists replace_test_1;
+create table replace_test_1 (id int, c1 int) partition by range (id) (
+PARTITION p0 VALUES LESS THAN (4),
+PARTITION p1 VALUES LESS THAN (6),
+PARTITION p2 VALUES LESS THAN (8),
+PARTITION p3 VALUES LESS THAN (10),
+PARTITION p4 VALUES LESS THAN (100));
+replace replace_test_1 select id, c1 from replace_test;
+affected rows: 4
+info: Records: 4  Duplicates: 0  Warnings: 0
+drop table if exists replace_test_2;
+create table replace_test_2 (id int, c1 int) partition by range (id) (
+PARTITION p0 VALUES LESS THAN (10),
+PARTITION p1 VALUES LESS THAN (50),
+PARTITION p2 VALUES LESS THAN (100),
+PARTITION p3 VALUES LESS THAN (300));
+replace replace_test_2 select id, c1 from replace_test union select id * 10, c1 * 10 from replace_test;
+affected rows: 8
+info: Records: 8  Duplicates: 0  Warnings: 0
+begin;
+replace replace_test_2 select c1 from replace_test;
+Error 1136 (21S01): Column count doesn't match value count at row 1
+rollback;
+drop table if exists replace_test_3;
+create table replace_test_3 (c1 int, c2 int, UNIQUE INDEX (c2)) partition by range (c2) (
+PARTITION p0 VALUES LESS THAN (4),
+PARTITION p1 VALUES LESS THAN (7),
+PARTITION p2 VALUES LESS THAN (11));
+replace into replace_test_3 set c2=8;
+affected rows: 1
+info: 
+replace into replace_test_3 set c2=8;
+affected rows: 1
+info: 
+replace into replace_test_3 set c1=8, c2=8;
+affected rows: 2
+info: 
+replace into replace_test_3 set c2=NULL;
+affected rows: 1
+info: 
+replace into replace_test_3 set c2=NULL;
+affected rows: 1
+info: 
+drop table if exists replace_test_4;
+create table replace_test_4 (c1 int, c2 int, c3 int, UNIQUE INDEX (c1, c2)) partition by range (c1) (
+PARTITION p0 VALUES LESS THAN (4),
+PARTITION p1 VALUES LESS THAN (7),
+PARTITION p2 VALUES LESS THAN (11));
+replace into replace_test_4 set c2=NULL;
+affected rows: 1
+info: 
+replace into replace_test_4 set c2=NULL;
+affected rows: 1
+info: 
+drop table if exists replace_test_5;
+create table replace_test_5 (c1 int, c2 int, c3 int, PRIMARY KEY (c1, c2)) partition by range (c2) (
+PARTITION p0 VALUES LESS THAN (4),
+PARTITION p1 VALUES LESS THAN (7),
+PARTITION p2 VALUES LESS THAN (11));
+replace into replace_test_5 set c1=1, c2=2;
+affected rows: 1
+info: 
+replace into replace_test_5 set c1=1, c2=2;
+affected rows: 1
+info: 
+drop table if exists tIssue989;
+CREATE TABLE tIssue989 (a int, b int, KEY(a), UNIQUE KEY(b)) partition by range (b) (
+PARTITION p1 VALUES LESS THAN (100),
+PARTITION p2 VALUES LESS THAN (200));
+insert into tIssue989 (a, b) values (1, 2);
+affected rows: 1
+info: 
+replace into tIssue989(a, b) values (111, 2);
+affected rows: 2
+info: 
+select * from tIssue989;
+a	b
+111	2
+set tidb_opt_fix_control = default;
+set tidb_opt_fix_control = "44262:ON";
+drop table if exists t;
+create table t (id int not null default 1, name varchar(255))
+PARTITION BY RANGE ( id ) (
+PARTITION p0 VALUES LESS THAN (6),
+PARTITION p1 VALUES LESS THAN (11),
+PARTITION p2 VALUES LESS THAN (16),
+PARTITION p3 VALUES LESS THAN (21));
+insert INTO t VALUES (1, "hello");
+insert INTO t VALUES (7, "hello");
+## update non partition column
+UPDATE t SET name = "abc" where id > 0;
+affected rows: 2
+info: Rows matched: 2  Changed: 2  Warnings: 0
+SELECT * from t order by id limit 2;
+id	name
+1	abc
+7	abc
+## update partition column
+update t set id = id + 1;
+affected rows: 2
+info: Rows matched: 2  Changed: 2  Warnings: 0
+SELECT * from t order by id limit 2;
+id	name
+2	abc
+8	abc
+## update partition column, old and new record locates on different partitions
+update t set id = 20 where id = 8;
+affected rows: 1
+info: Rows matched: 1  Changed: 1  Warnings: 0
+SELECT * from t order by id limit 2;
+id	name
+2	abc
+20	abc
+## table option is auto-increment
+drop table if exists t;
+create table t (id int not null auto_increment, name varchar(255), primary key(id))
+PARTITION BY RANGE ( id ) (
+PARTITION p0 VALUES LESS THAN (6),
+PARTITION p1 VALUES LESS THAN (11),
+PARTITION p2 VALUES LESS THAN (16),
+PARTITION p3 VALUES LESS THAN (21));
+insert into t(name) values ('aa');
+update t set id = 8 where name = 'aa';
+affected rows: 1
+info: Rows matched: 1  Changed: 1  Warnings: 0
+insert into t(name) values ('bb');
+select * from t;
+id	name
+8	aa
+9	bb
+update t set id = null where name = 'aa';
+Error 1048 (23000): Column 'id' cannot be null
+## Test that in a transaction, when a constraint failed in an update statement, the record is not inserted.
+drop table if exists t;
+create table t (id int, name int unique)
+PARTITION BY RANGE ( name ) (
+PARTITION p0 VALUES LESS THAN (6),
+PARTITION p1 VALUES LESS THAN (11),
+PARTITION p2 VALUES LESS THAN (16),
+PARTITION p3 VALUES LESS THAN (21));
+insert t values (1, 1), (2, 2);
+update t set name = 1 where id = 2;
+Error 1062 (23000): Duplicate entry '1' for key 't.name'
+select * from t;
+id	name
+1	1
+2	2
+## test update ignore for pimary key
+drop table if exists t;
+create table t(a bigint, primary key (a))
+PARTITION BY RANGE (a) (
+PARTITION p0 VALUES LESS THAN (6),
+PARTITION p1 VALUES LESS THAN (11));
+insert into t values (5);
+insert into t values (7);
+update ignore t set a = 5 where a = 7;
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1062	Duplicate entry '5' for key 't.PRIMARY'
+select * from t order by a;
+a
+5
+7
+## test update ignore for truncate as warning
+update ignore t set a = 1 where a = (select '2a');
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Truncated incorrect DOUBLE value: '2a'
+Warning	1292	Truncated incorrect DOUBLE value: '2a'
+## test update ignore for unique key
+drop table if exists t;
+create table t(a bigint, unique key I_uniq (a))
+PARTITION BY RANGE (a) (
+PARTITION p0 VALUES LESS THAN (6),
+PARTITION p1 VALUES LESS THAN (11));
+insert into t values (5);
+insert into t values (7);
+update ignore t set a = 5 where a = 7;
+affected rows: 0
+info: Rows matched: 1  Changed: 0  Warnings: 1
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1062	Duplicate entry '5' for key 't.I_uniq'
+select * from t order by a;
+a
+5
+7
+set tidb_opt_fix_control = default;
+drop table if exists t;
+set tidb_opt_fix_control = "44262:ON";
+CREATE TABLE t (id int not null default 1, name varchar(255), index(id))
+PARTITION BY RANGE ( id ) (
+PARTITION p0 VALUES LESS THAN (6),
+PARTITION p1 VALUES LESS THAN (11),
+PARTITION p2 VALUES LESS THAN (16),
+PARTITION p3 VALUES LESS THAN (21));
+insert into t values (1, "hello"),(2, "hello"),(3, "hello"),(4, "hello"),(5, "hello"),(6, "hello"),(7, "hello"),(8, "hello"),(9, "hello"),(10, "hello"),(11, "hello"),(12, "hello"),(13, "hello"),(14, "hello"),(15, "hello"),(16, "hello"),(17, "hello"),(18, "hello"),(19, "hello"),(20, "hello");
+delete from t where id = 2 limit 1;
+affected rows: 1
+info: 
+## Test delete with false condition
+delete from t where 0;
+affected rows: 0
+info: 
+insert into t values (2, 'abc');
+delete from t where t.id = 2 limit 1;
+affected rows: 1
+info: 
+## Test delete ignore
+insert into t values (2, 'abc');
+delete from t where id = (select '2a');
+Error 1292 (22007): Truncated incorrect DOUBLE value: '2a'
+delete ignore from t where id = (select '2a');
+affected rows: 1
+info: 
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Truncated incorrect DOUBLE value: '2a'
+Warning	1292	Truncated incorrect DOUBLE value: '2a'
+## Test delete without using index, involve multiple partitions.
+delete from t ignore index(id) where id >= 13 and id <= 17;
+affected rows: 5
+info: 
+admin check table t;
+delete from t;
+affected rows: 14
+info: 
+## Fix that partitioned table should not use PointGetPlan.
+drop table if exists t1;
+create table t1 (c1 bigint, c2 bigint, c3 bigint, primary key(c1)) partition by range (c1) (partition p0 values less than (3440));
+insert into t1 values (379, 379, 379);
+delete from t1 where c1 = 379;
+affected rows: 1
+info: 
+drop table t1;
+set tidb_opt_fix_control=default;
+set @@session.tidb_enable_table_partition = '1';
+drop table if exists replace_test;
+create table replace_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1)
+partition by hash(id) partitions 4;
+replace replace_test (c1) values (1),(2),(NULL);
+begin;
+replace replace_test (c1) values ();
+Error 1136 (21S01): Column count doesn't match value count at row 1
+rollback;
+begin;
+replace replace_test (c1, c2) values (1,2),(1);
+Error 1136 (21S01): Column count doesn't match value count at row 2
+rollback;
+begin;
+replace replace_test (xxx) values (3);
+Error 1054 (42S22): Unknown column 'xxx' in 'field list'
+rollback;
+begin;
+replace replace_test_xxx (c1) values ();
+Error 1146 (42S02): Table 'executor__partition__write.replace_test_xxx' doesn't exist
+rollback;
+begin;
+replace replace_test set c1 = 4, c1 = 5;
+Error 1110 (42000): Column 'c1' specified twice
+rollback;
+begin;
+replace replace_test set xxx = 6;
+Error 1054 (42S22): Unknown column 'xxx' in 'field list'
+rollback;
+replace replace_test set c1 = 3;
+replace replace_test set c1 = 4;
+replace replace_test set c1 = 5;
+replace replace_test set c1 = 6;
+replace replace_test set c1 = 7;
+drop table if exists replace_test_1;
+create table replace_test_1 (id int, c1 int) partition by hash(id) partitions 5;
+replace replace_test_1 select id, c1 from replace_test;
+drop table if exists replace_test_2;
+create table replace_test_2 (id int, c1 int) partition by hash(id) partitions 6;
+replace replace_test_1 select id, c1 from replace_test union select id * 10, c1 * 10 from replace_test;
+begin;
+replace replace_test_1 select c1 from replace_test;
+Error 1136 (21S01): Column count doesn't match value count at row 1
+rollback;
+drop table if exists replace_test_3;
+create table replace_test_3 (c1 int, c2 int, UNIQUE INDEX (c2)) partition by hash(c2) partitions 7;
+replace into replace_test_3 set c2=8;
+replace into replace_test_3 set c2=8;
+affected rows: 1
+info: 
+replace into replace_test_3 set c1=8, c2=8;
+affected rows: 2
+info: 
+replace into replace_test_3 set c2=NULL;
+replace into replace_test_3 set c2=NULL;
+affected rows: 1
+info: 
+replace into replace_test_3 set c2=0;
+replace into replace_test_3 set c2=1;
+replace into replace_test_3 set c2=2;
+replace into replace_test_3 set c2=3;
+replace into replace_test_3 set c2=4;
+replace into replace_test_3 set c2=5;
+replace into replace_test_3 set c2=6;
+replace into replace_test_3 set c2=7;
+replace into replace_test_3 set c2=8;
+replace into replace_test_3 set c2=9;
+select count(*) from replace_test_3;
+count(*)
+12
+drop table if exists replace_test_4;
+create table replace_test_4 (c1 int, c2 int, c3 int, UNIQUE INDEX (c1, c2)) partition by hash(c1) partitions 8;
+replace into replace_test_4 set c2=NULL;
+replace into replace_test_4 set c2=NULL;
+affected rows: 1
+info: 
+drop table if exists replace_test_5;
+create table replace_test_5 (c1 int, c2 int, c3 int, PRIMARY KEY (c1, c2)) partition by hash (c2) partitions 9;
+replace into replace_test_5 set c1=1, c2=2;
+replace into replace_test_5 set c1=1, c2=2;
+affected rows: 1
+info: 
+drop table if exists tIssue989;
+CREATE TABLE tIssue989 (a int, b int, KEY(a), UNIQUE KEY(b)) partition by hash (b) partitions 10;
+insert into tIssue989 (a, b) values (1, 2);
+replace into tIssue989(a, b) values (111, 2);
+select * from tIssue989;
+a	b
+111	2
+set @@session.tidb_enable_table_partition = default;
