@@ -470,11 +470,11 @@ func (c *Constant) resolveIndices(_ *Schema) error {
 }
 
 // ResolveIndicesByVirtualExpr implements Expression interface.
-func (c *Constant) ResolveIndicesByVirtualExpr(_ *Schema) (Expression, bool) {
+func (c *Constant) ResolveIndicesByVirtualExpr(_ sessionctx.Context, _ *Schema) (Expression, bool) {
 	return c, true
 }
 
-func (c *Constant) resolveIndicesByVirtualExpr(_ *Schema) bool {
+func (c *Constant) resolveIndicesByVirtualExpr(_ sessionctx.Context, _ *Schema) bool {
 	return true
 }
 

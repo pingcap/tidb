@@ -165,6 +165,14 @@ func DeleteTableStatsFromKV(sctx sessionctx.Context, statsIDs []int64) (err erro
 	return nil
 }
 
+func forCount(total int64, batch int64) int64 {
+	result := total / batch
+	if total%batch > 0 {
+		result++
+	}
+	return result
+}
+
 // ClearOutdatedHistoryStats clear outdated historical stats
 func ClearOutdatedHistoryStats(sctx sessionctx.Context) error {
 	sql := "select count(*) from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
@@ -182,15 +190,19 @@ func ClearOutdatedHistoryStats(sctx sessionctx.Context) error {
 	}
 	count := rows[0].GetInt64(0)
 	if count > 0 {
-		sql = "delete from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
-		_, err = util.Exec(sctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
-		if err != nil {
+		for n := int64(0); n < forCount(count, int64(1000)); n++ {
+			sql = "delete from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND limit 1000 "
+			_, err = util.Exec(sctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
+			if err != nil {
+				return err
+			}
+		}
+		for n := int64(0); n < forCount(count, int64(50)); n++ {
+			sql = "delete from mysql.stats_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND limit 50 "
+			_, err = util.Exec(sctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
 			return err
 		}
-		sql = "delete from mysql.stats_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
-		_, err = util.Exec(sctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
 		logutil.BgLogger().Info("clear outdated historical stats")
-		return err
 	}
 	return nil
 }

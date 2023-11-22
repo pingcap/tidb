@@ -64,13 +64,13 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	tmock "github.com/pingcap/tidb/pkg/util/mock"
-	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/tikv/client-go/v2/testutils"
 	pd "github.com/tikv/pd/client"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/mock/gomock"
 )
 
@@ -211,7 +211,7 @@ func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
 func (s *tableRestoreSuiteBase) setupTest(t *testing.T) {
 	// Collect into the test TableImporter structure
 	var err error
-	s.tr, err = NewTableImporter("`db`.`table`", s.tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
+	s.tr, err = NewTableImporter("`db`.`table`", s.tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, nil, log.L())
 	require.NoError(t, err)
 
 	s.cfg = config.NewConfig()
@@ -516,7 +516,7 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 	cfg.Mydumper.StrictFormat = true
 	rc := &Controller{cfg: cfg, ioWorkers: worker.NewPool(context.Background(), 1, "io"), store: store}
 
-	tr, err := NewTableImporter("`db`.`table`", tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
+	tr, err := NewTableImporter("`db`.`table`", tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, nil, log.L())
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), tr.populateChunks(context.Background(), rc, cp))
 
@@ -767,7 +767,7 @@ func (s *tableRestoreSuite) TestInitializeColumnsGenerated() {
 		require.NoError(s.T(), err)
 		core.State = model.StatePublic
 		tableInfo := &checkpoints.TidbTableInfo{Name: "table", DB: "db", Core: core}
-		s.tr, err = NewTableImporter("`db`.`table`", s.tableMeta, s.dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
+		s.tr, err = NewTableImporter("`db`.`table`", s.tableMeta, s.dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, nil, log.L())
 		require.NoError(s.T(), err)
 		ccp := &checkpoints.ChunkCheckpoint{}
 
@@ -1324,9 +1324,9 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 	for i, ca := range testCases {
 		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			var err error
-			if req.URL.Path == pdapi.Stores {
+			if req.URL.Path == pdhttp.Stores {
 				_, err = w.Write(mustMarshal(ca.stores))
-			} else if req.URL.Path == pdapi.EmptyRegions {
+			} else if req.URL.Path == pdhttp.EmptyRegions {
 				_, err = w.Write(mustMarshal(ca.emptyRegions))
 			} else {
 				w.WriteHeader(http.StatusNotFound)
@@ -1388,14 +1388,14 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV() {
 	}{
 		{
 			true,
-			"(.*)Skip the csv size check, because config.StrictFormat is true(.*)",
+			"(.*)Skip the data file size check, because config.StrictFormat is true(.*)",
 			true,
 			0,
 			nil,
 		},
 		{
 			false,
-			"(.*)Source csv files size is proper(.*)",
+			"(.*)Source data files size is proper(.*)",
 			true,
 			0,
 			[]*mydump.MDDatabaseMeta{
@@ -1416,7 +1416,7 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV() {
 		},
 		{
 			false,
-			"(.*)large csv: /testPath file exists(.*)",
+			"(.*)large data file: /testPath file exists(.*)",
 			true,
 			1,
 			[]*mydump.MDDatabaseMeta{

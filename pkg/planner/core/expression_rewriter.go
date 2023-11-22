@@ -1677,7 +1677,10 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 						continue // no need to refine it
 					}
 					er.sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("'%v' may be converted to INT", c.String()))
-					expression.RemoveMutableConst(er.sctx, []expression.Expression{c})
+					if err := expression.RemoveMutableConst(er.sctx, []expression.Expression{c}); err != nil {
+						er.err = err
+						return
+					}
 				}
 				args[i], isExceptional = expression.RefineComparedConstant(er.sctx, *leftFt, c, opcode.EQ)
 				if isExceptional {
@@ -1846,7 +1849,7 @@ func (er *expressionRewriter) patternLikeOrIlikeToExpression(v *ast.PatternLikeO
 	isPatternExactMatch := false
 	// Treat predicate 'like' or 'ilike' the same way as predicate '=' when it is an exact match and new collation is not enabled.
 	if patExpression, ok := er.ctxStack[l-1].(*expression.Constant); ok && !collate.NewCollationEnabled() {
-		patString, isNull, err := patExpression.EvalString(nil, chunk.Row{})
+		patString, isNull, err := patExpression.EvalString(er.sctx, chunk.Row{})
 		if err != nil {
 			er.err = err
 			return

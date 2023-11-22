@@ -1585,9 +1585,10 @@ func (p *LogicalIndexScan) MatchIndexProp(prop *property.PhysicalProperty) (matc
 	if all, _ := prop.AllSameOrder(); !all {
 		return false
 	}
+	sctx := p.SCtx()
 	for i, col := range p.IdxCols {
-		if col.Equal(nil, prop.SortItems[0].Col) {
-			return matchIndicesProp(p.IdxCols[i:], p.IdxColLens[i:], prop.SortItems)
+		if col.Equal(sctx, prop.SortItems[0].Col) {
+			return matchIndicesProp(sctx, p.IdxCols[i:], p.IdxColLens[i:], prop.SortItems)
 		} else if i >= p.EqCondCount {
 			break
 		}
@@ -1753,6 +1754,9 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 	if len(conds) == 0 {
 		return nil
 	}
+	// for cnf condition combination, c=1 and c=2 and (1 member of (a)),
+	// c=1 and c=2 will derive invalid range represented by an access condition as constant of 0 (false).
+	// later this constant of 0 will be built as empty range.
 	path.AccessConds, path.TableFilters = ranger.DetachCondsForColumn(ds.SCtx(), conds, pkCol)
 	// If there's no access cond, we try to find that whether there's expression containing correlated column that
 	// can be used to access data.
@@ -1818,7 +1822,7 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.GetFlag()) {
 			alreadyHandle := false
 			for _, col := range path.IdxCols {
-				if col.ID == model.ExtraHandleID || col.Equal(nil, handleCol) {
+				if col.ID == model.ExtraHandleID || col.EqualColumn(handleCol) {
 					alreadyHandle = true
 				}
 			}

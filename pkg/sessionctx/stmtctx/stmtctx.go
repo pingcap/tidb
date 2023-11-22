@@ -29,6 +29,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -157,6 +158,9 @@ type StatementContext struct {
 
 	// 	typeCtx is used to indicate how to make the type conversation.
 	typeCtx types.Context
+
+	// errCtx is used to indicate how to handle the errors
+	errCtx errctx.Context
 
 	// Set the following variables before execution
 	StmtHints
@@ -431,7 +435,7 @@ func NewStmtCtx() *StatementContext {
 
 // NewStmtCtxWithTimeZone creates a new StatementContext with the given timezone
 func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
-	intest.Assert(tz)
+	intest.AssertNotNil(tz)
 	sc := &StatementContext{}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc.AppendWarning)
 	return sc
@@ -446,18 +450,40 @@ func (sc *StatementContext) Reset() {
 
 // TimeZone returns the timezone of the type context
 func (sc *StatementContext) TimeZone() *time.Location {
+	intest.AssertNotNil(sc)
+	if sc == nil {
+		return time.UTC
+	}
+
 	return sc.typeCtx.Location()
 }
 
 // SetTimeZone sets the timezone
 func (sc *StatementContext) SetTimeZone(tz *time.Location) {
-	intest.Assert(tz)
+	intest.AssertNotNil(tz)
 	sc.typeCtx = sc.typeCtx.WithLocation(tz)
 }
 
 // TypeCtx returns the type context
 func (sc *StatementContext) TypeCtx() types.Context {
 	return sc.typeCtx
+}
+
+// ErrCtx returns the error context
+// TODO: add a cache to the `ErrCtx` if needed, though it's not a big burden to generate `ErrCtx` everytime.
+func (sc *StatementContext) ErrCtx() errctx.Context {
+	ctx := errctx.NewContext(sc.AppendWarning)
+
+	if sc.TypeFlags().IgnoreTruncateErr() {
+		ctx = ctx.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
+	} else if sc.TypeFlags().TruncateAsWarning() {
+		ctx = ctx.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
+	}
+
+	if sc.OverflowAsWarning {
+		ctx = ctx.WithErrGroupLevel(errctx.ErrGroupOverflow, errctx.LevelWarn)
+	}
+	return ctx
 }
 
 // TypeFlags returns the type flags
@@ -471,8 +497,15 @@ func (sc *StatementContext) SetTypeFlags(flags types.Flags) {
 }
 
 // HandleTruncate ignores or returns the error based on the TypeContext inside.
+// TODO: replace this function with `HandleError`, for `TruncatedError` they should have the same effect.
 func (sc *StatementContext) HandleTruncate(err error) error {
 	return sc.typeCtx.HandleTruncate(err)
+}
+
+// HandleError handles the error based on `ErrCtx()`
+func (sc *StatementContext) HandleError(err error) error {
+	errCtx := sc.ErrCtx()
+	return errCtx.HandleError(err)
 }
 
 // StmtHints are SessionVars related sql hints.

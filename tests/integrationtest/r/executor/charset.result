@@ -18,7 +18,7 @@ select @@collation_connection;
 @@collation_connection
 gbk_chinese_ci
 select _gbk 'a';
-[ddl:1115]Unsupported character introducer: 'gbk'
+Error 1115 (42000): Unsupported character introducer: 'gbk'
 create table t1(a char(10) charset gbk);
 create table t2(a char(10) charset gbk collate gbk_bin);
 create table t3(a char(10)) charset gbk;

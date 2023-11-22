@@ -21,10 +21,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
 )
@@ -253,7 +253,8 @@ func BuildHistAndTopN(
 	var getComparedBytes func(datum types.Datum) ([]byte, error)
 	if isColumn {
 		getComparedBytes = func(datum types.Datum) ([]byte, error) {
-			encoded, err := codec.EncodeKey(ctx.GetSessionVars().StmtCtx, nil, datum)
+			encoded, err := codec.EncodeKey(ctx.GetSessionVars().StmtCtx.TimeZone(), nil, datum)
+			err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 			if memTracker != nil {
 				// tmp memory usage
 				deltaSize := int64(cap(encoded))
@@ -387,14 +388,10 @@ func BuildHistAndTopN(
 				if foundTwice {
 					datumString, err := firstTimeSample.ToString()
 					if err != nil {
-						logutil.BgLogger().With(
-							zap.String("category", "stats"),
-						).Error("try to convert datum to string failed", zap.Error(err))
+						statslogutil.StatsLogger.Error("try to convert datum to string failed", zap.Error(err))
 					}
 
-					logutil.BgLogger().With(
-						zap.String("category", "stats"),
-					).Warn(
+					statslogutil.StatsLogger.Warn(
 						"invalid sample data",
 						zap.Bool("isColumn", isColumn),
 						zap.Int64("columnID", id),

@@ -16,17 +16,14 @@ package importintotest
 
 import (
 	"fmt"
-	"reflect"
 	"slices"
-	"unsafe"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
-	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 func (s *mockGCSSuite) TestWriteAfterImport() {
@@ -143,7 +140,7 @@ func (s *mockGCSSuite) TestWriteAfterImport() {
 		tableObj, err := is.TableByName(model.NewCIStr("write_after_import"), model.NewCIStr("t"))
 		s.NoError(err)
 		if common.TableHasAutoID(tableObj.Meta()) {
-			allocators, err := common.GetGlobalAutoIDAlloc(s.store, dbInfo.ID, tableObj.Meta())
+			allocators, err := common.GetGlobalAutoIDAlloc(domain.GetDomain(s.tk.Session()), dbInfo.ID, tableObj.Meta())
 			s.NoError(err)
 			var nextGlobalAutoID []int64
 			for _, alloc := range allocators {
@@ -160,18 +157,6 @@ func (s *mockGCSSuite) TestWriteAfterImport() {
 			newAllData := append(allData, c.insertedData)
 			slices.Sort(newAllData)
 			s.tk.MustQuery(querySQL).Sort().Check(testkit.Rows(newAllData...))
-		}
-
-		// workaround for issue https://github.com/pingcap/tidb/issues/46324,
-		// and we MUST drop the table after test.
-		if tableObj.Meta().SepAutoInc() && tableObj.Meta().GetAutoIncrementColInfo() != nil {
-			allocators := tableObj.Allocators(nil)
-			alloc := allocators.Get(autoid.AutoIncrementType)
-			cf := reflect.ValueOf(alloc).Elem().FieldByName("clientDiscover")
-			cliF := cf.FieldByName("etcdCli")
-			elem := reflect.NewAt(cliF.Type(), unsafe.Pointer(cliF.UnsafeAddr())).Elem()
-			client := elem.Interface().(*clientv3.Client)
-			s.NoError(client.Close())
 		}
 	}
 }

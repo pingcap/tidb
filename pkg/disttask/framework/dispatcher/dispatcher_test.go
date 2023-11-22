@@ -51,7 +51,7 @@ type testDispatcherExt struct{}
 func (*testDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (*testDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ proto.Step) (metas [][]byte, err error) {
+func (*testDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
 	return nil, nil
 }
 
@@ -61,8 +61,8 @@ func (*testDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle,
 
 var mockedAllServerInfos = []*infosync.ServerInfo{}
 
-func (*testDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
-	return mockedAllServerInfos, nil
+func (*testDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
+	return mockedAllServerInfos, true, nil
 }
 
 func (*testDispatcherExt) IsRetryableErr(error) bool {
@@ -78,7 +78,7 @@ type numberExampleDispatcherExt struct{}
 func (*numberExampleDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (n *numberExampleDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, _ proto.Step) (metas [][]byte, err error) {
+func (n *numberExampleDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
 	switch task.Step {
 	case proto.StepInit:
 		for i := 0; i < subtaskCnt; i++ {
@@ -99,8 +99,9 @@ func (n *numberExampleDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.
 	return nil, nil
 }
 
-func (*numberExampleDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
-	return dispatcher.GenerateSchedulerNodes(ctx)
+func (*numberExampleDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
+	serverInfo, err := dispatcher.GenerateSchedulerNodes(ctx)
+	return serverInfo, true, err
 }
 
 func (*numberExampleDispatcherExt) IsRetryableErr(error) bool {
@@ -118,7 +119,7 @@ func (*numberExampleDispatcherExt) GetNextStep(task *proto.Task) proto.Step {
 
 func MockDispatcherManager(t *testing.T, pool *pools.ResourcePool) (*dispatcher.Manager, *storage.TaskManager) {
 	ctx := context.WithValue(context.Background(), "etcd", true)
-	mgr := storage.NewTaskManager(util.WithInternalSourceType(ctx, "taskManager"), pool)
+	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
 	dsp, err := dispatcher.NewManager(util.WithInternalSourceType(ctx, "dispatcher"), mgr, "host:port")
 	require.NoError(t, err)
@@ -151,13 +152,15 @@ func deleteTasks(t *testing.T, store kv.Storage, taskID int64) {
 
 func TestGetInstance(t *testing.T) {
 	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
 	store := testkit.CreateMockStore(t)
 	gtk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
 		return gtk.Session(), nil
 	}, 1, 1, time.Second)
 	defer pool.Close()
-
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockSchedulerNodes", "return()"))
 	dspManager, mgr := MockDispatcherManager(t, pool)
 	// test no server
 	task := &proto.Task{ID: 1, Type: proto.TaskTypeExample}
@@ -173,7 +176,7 @@ func TestGetInstance(t *testing.T) {
 	uuids := []string{"ddl_id_1", "ddl_id_2"}
 	serverIDs := []string{"10.123.124.10:32457", "[ABCD:EF01:2345:6789:ABCD:EF01:2345:6789]:65535"}
 
-	mockedAllServerInfos = []*infosync.ServerInfo{
+	dispatcher.MockServerInfo = []*infosync.ServerInfo{
 		{
 			ID:   uuids[0],
 			IP:   "10.123.124.10",
@@ -196,7 +199,7 @@ func TestGetInstance(t *testing.T) {
 		TaskID:      task.ID,
 		SchedulerID: serverIDs[1],
 	}
-	err = mgr.AddNewSubTask(task.ID, proto.StepInit, subtask.SchedulerID, nil, subtask.Type, true)
+	err = mgr.AddNewSubTask(ctx, task.ID, proto.StepInit, subtask.SchedulerID, nil, subtask.Type, true)
 	require.NoError(t, err)
 	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, task)
 	require.NoError(t, err)
@@ -208,12 +211,13 @@ func TestGetInstance(t *testing.T) {
 		TaskID:      task.ID,
 		SchedulerID: serverIDs[0],
 	}
-	err = mgr.AddNewSubTask(task.ID, proto.StepInit, subtask.SchedulerID, nil, subtask.Type, true)
+	err = mgr.AddNewSubTask(ctx, task.ID, proto.StepInit, subtask.SchedulerID, nil, subtask.Type, true)
 	require.NoError(t, err)
 	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, task)
 	require.NoError(t, err)
 	require.Len(t, instanceIDs, len(serverIDs))
 	require.ElementsMatch(t, instanceIDs, serverIDs)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockSchedulerNodes"))
 }
 
 func TestTaskFailInManager(t *testing.T) {
@@ -225,6 +229,8 @@ func TestTaskFailInManager(t *testing.T) {
 	defer pool.Close()
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "handle_test")
 
 	mockDispatcher := mock.NewMockDispatcher(ctrl)
 	mockDispatcher.EXPECT().Init().Return(errors.New("mock dispatcher init error"))
@@ -238,20 +244,20 @@ func TestTaskFailInManager(t *testing.T) {
 	defer dspManager.Stop()
 
 	// unknown task type
-	taskID, err := mgr.AddNewGlobalTask("test", "test-type", 1, nil)
+	taskID, err := mgr.AddNewGlobalTask(ctx, "test", "test-type", 1, nil)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
-		task, err := mgr.GetGlobalTaskByID(taskID)
+		task, err := mgr.GetGlobalTaskByID(ctx, taskID)
 		require.NoError(t, err)
 		return task.State == proto.TaskStateFailed &&
 			strings.Contains(task.Error.Error(), "unknown task type")
 	}, time.Second*10, time.Millisecond*300)
 
 	// dispatcher init error
-	taskID, err = mgr.AddNewGlobalTask("test2", proto.TaskTypeExample, 1, nil)
+	taskID, err = mgr.AddNewGlobalTask(ctx, "test2", proto.TaskTypeExample, 1, nil)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
-		task, err := mgr.GetGlobalTaskByID(taskID)
+		task, err := mgr.GetGlobalTaskByID(ctx, taskID)
 		require.NoError(t, err)
 		return task.State == proto.TaskStateFailed &&
 			strings.Contains(task.Error.Error(), "mock dispatcher init error")
@@ -278,6 +284,9 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	}, 1, 1, time.Second)
 	defer pool.Close()
 
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
 	dsp, mgr := MockDispatcherManager(t, pool)
 	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
 		func(ctx context.Context, taskMgr dispatcher.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
@@ -294,7 +303,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 		}
 	}()
 
-	require.NoError(t, mgr.StartManager(":4000", "background"))
+	require.NoError(t, mgr.StartManager(ctx, ":4000", "background"))
 
 	// 3s
 	cnt := 60
@@ -308,7 +317,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 		var tasks []*proto.Task
 		require.Eventually(t, func() bool {
 			var err error
-			tasks, err = mgr.GetGlobalTasksInStates(proto.TaskStateRunning)
+			tasks, err = mgr.GetGlobalTasksInStates(ctx, proto.TaskStateRunning)
 			require.NoError(t, err)
 			return len(tasks) == taskCnt
 		}, time.Second, 50*time.Millisecond)
@@ -319,7 +328,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 		for i, taskID := range taskIDs {
 			require.Equal(t, int64(i+1), tasks[i].ID)
 			require.Eventually(t, func() bool {
-				cnt, err := mgr.GetSubtaskInStatesCnt(taskID, proto.TaskStatePending)
+				cnt, err := mgr.GetSubtaskInStatesCnt(ctx, taskID, proto.TaskStatePending)
 				require.NoError(t, err)
 				return int64(subtaskCnt) == cnt
 			}, time.Second, 50*time.Millisecond)
@@ -329,7 +338,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	// Mock add tasks.
 	taskIDs := make([]int64, 0, taskCnt)
 	for i := 0; i < taskCnt; i++ {
-		taskID, err := mgr.AddNewGlobalTask(fmt.Sprintf("%d", i), proto.TaskTypeExample, 0, nil)
+		taskID, err := mgr.AddNewGlobalTask(ctx, fmt.Sprintf("%d", i), proto.TaskTypeExample, 0, nil)
 		require.NoError(t, err)
 		taskIDs = append(taskIDs, taskID)
 	}
@@ -339,7 +348,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	checkSubtaskCnt(tasks, taskIDs)
 	// test parallelism control
 	if taskCnt == 1 {
-		taskID, err := mgr.AddNewGlobalTask(fmt.Sprintf("%d", taskCnt), proto.TaskTypeExample, 0, nil)
+		taskID, err := mgr.AddNewGlobalTask(ctx, fmt.Sprintf("%d", taskCnt), proto.TaskTypeExample, 0, nil)
 		require.NoError(t, err)
 		checkGetRunningTaskCnt(taskCnt)
 		// Clean the task.
@@ -351,12 +360,12 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	checkGetTaskState := func(expectedState proto.TaskState) {
 		i := 0
 		for ; i < cnt; i++ {
-			tasks, err := mgr.GetGlobalTasksInStates(expectedState)
+			tasks, err := mgr.GetGlobalTasksInStates(ctx, expectedState)
 			require.NoError(t, err)
 			if len(tasks) == taskCnt {
 				break
 			}
-			historyTasks, err := mgr.GetGlobalTasksFromHistoryInStates(expectedState)
+			historyTasks, err := mgr.GetGlobalTasksFromHistoryInStates(ctx, expectedState)
 			require.NoError(t, err)
 			if len(tasks)+len(historyTasks) == taskCnt {
 				break
@@ -370,7 +379,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	if isSucc {
 		// Mock subtasks succeed.
 		for i := 1; i <= subtaskCnt*taskCnt; i++ {
-			err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateSucceed, nil)
+			err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.TaskStateSucceed, nil)
 			require.NoError(t, err)
 		}
 		checkGetTaskState(proto.TaskStateSucceed)
@@ -382,29 +391,29 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 
 	if isCancel {
 		for i := 1; i <= taskCnt; i++ {
-			err = mgr.CancelGlobalTask(int64(i))
+			err = mgr.CancelGlobalTask(ctx, int64(i))
 			require.NoError(t, err)
 		}
 	} else if isPauseAndResume {
 		for i := 0; i < taskCnt; i++ {
-			found, err := mgr.PauseTask(fmt.Sprintf("%d", i))
+			found, err := mgr.PauseTask(ctx, fmt.Sprintf("%d", i))
 			require.Equal(t, true, found)
 			require.NoError(t, err)
 		}
 		for i := 1; i <= subtaskCnt*taskCnt; i++ {
-			err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStatePaused, nil)
+			err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.TaskStatePaused, nil)
 			require.NoError(t, err)
 		}
 		checkGetTaskState(proto.TaskStatePaused)
 		for i := 0; i < taskCnt; i++ {
-			found, err := mgr.ResumeTask(fmt.Sprintf("%d", i))
+			found, err := mgr.ResumeTask(ctx, fmt.Sprintf("%d", i))
 			require.Equal(t, true, found)
 			require.NoError(t, err)
 		}
 
 		// Mock subtasks succeed.
 		for i := 1; i <= subtaskCnt*taskCnt; i++ {
-			err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateSucceed, nil)
+			err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.TaskStateSucceed, nil)
 			require.NoError(t, err)
 		}
 		checkGetTaskState(proto.TaskStateSucceed)
@@ -419,13 +428,13 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 		if isSubtaskCancel {
 			// Mock a subtask canceled
 			for i := 1; i <= subtaskCnt*taskCnt; i += subtaskCnt {
-				err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateCanceled, nil)
+				err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.TaskStateCanceled, nil)
 				require.NoError(t, err)
 			}
 		} else {
 			// Mock a subtask fails.
 			for i := 1; i <= subtaskCnt*taskCnt; i += subtaskCnt {
-				err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateFailed, nil)
+				err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.TaskStateFailed, nil)
 				require.NoError(t, err)
 			}
 		}
@@ -436,7 +445,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	// Mock all subtask reverted.
 	start := subtaskCnt * taskCnt
 	for i := start; i <= start+subtaskCnt*taskCnt; i++ {
-		err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateReverted, nil)
+		err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.TaskStateReverted, nil)
 		require.NoError(t, err)
 	}
 	checkGetTaskState(proto.TaskStateReverted)

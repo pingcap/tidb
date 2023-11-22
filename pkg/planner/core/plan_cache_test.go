@@ -755,9 +755,8 @@ func planCachePointGetQueries(isNonPrep bool) []string {
 			return fmt.Sprintf("%v %v (%v, %v, %v)", col, op, v(), v(), v())
 		} else if op == "is null" {
 			return fmt.Sprintf("%v %v", col, op)
-		} else {
-			return fmt.Sprintf("%v %v %v", col, op, v())
 		}
+		return fmt.Sprintf("%v %v %v", col, op, v())
 	}
 	var queries []string
 	for i := 0; i < 50; i++ {
@@ -1436,6 +1435,16 @@ func TestNonPreparedPlanCacheBuiltinFuncs(t *testing.T) {
 		tk.MustExec(sql)
 		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 	}
+}
+
+func TestIssue48165(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(a int)`)
+	tk.MustExec(`insert into t values(1)`)
+	tk.MustExec(`prepare s from "select * from t where tidb_parse_tso(a) > unix_timestamp()"`)
+	tk.MustQuery(`execute s`).Check(testkit.Rows("1"))
 }
 
 func BenchmarkPlanCacheInsert(b *testing.B) {

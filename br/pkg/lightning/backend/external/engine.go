@@ -31,10 +31,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 )
 
 // during test on ks3, we found that we can open about 8000 connections to ks3,
@@ -171,7 +171,7 @@ func (e *Engine) LoadIngestData(
 		zap.Int("data-files", len(e.dataFiles)),
 		zap.Bool("check-hotspot", e.checkHotspot),
 	)
-	eg, egCtx := errgroup.WithContext(ctx)
+	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 	for _, ranges := range rangeGroups {
 		ranges := ranges
 		eg.Go(func() error {
@@ -379,7 +379,22 @@ func (e *Engine) SplitRanges(
 }
 
 // Close implements common.Engine.
-func (e *Engine) Close() error { return nil }
+func (e *Engine) Close() error {
+	if e.bufPool != nil {
+		e.bufPool.Destroy()
+		e.bufPool = nil
+	}
+	return nil
+}
+
+// Reset resets the memory buffer pool.
+func (e *Engine) Reset() error {
+	if e.bufPool != nil {
+		e.bufPool.Destroy()
+		e.bufPool = membuf.NewPool()
+	}
+	return nil
+}
 
 // MemoryIngestData is the in-memory implementation of IngestData.
 type MemoryIngestData struct {
@@ -494,11 +509,15 @@ func (m *memoryDataIter) Error() error {
 	return nil
 }
 
+// ReleaseBuf implements ForwardIter.
+func (m *memoryDataIter) ReleaseBuf() {}
+
 type memoryDataDupDetectIter struct {
 	iter           *memoryDataIter
 	dupDetector    *common.DupDetector
 	err            error
 	curKey, curVal []byte
+	buf            *membuf.Buffer
 }
 
 // First implements ForwardIter.
@@ -534,16 +553,17 @@ func (m *memoryDataDupDetectIter) Next() bool {
 
 // Key implements ForwardIter.
 func (m *memoryDataDupDetectIter) Key() []byte {
-	return m.curKey
+	return m.buf.AddBytes(m.curKey)
 }
 
 // Value implements ForwardIter.
 func (m *memoryDataDupDetectIter) Value() []byte {
-	return m.curVal
+	return m.buf.AddBytes(m.curVal)
 }
 
 // Close implements ForwardIter.
 func (m *memoryDataDupDetectIter) Close() error {
+	m.buf.Destroy()
 	return m.dupDetector.Close()
 }
 
@@ -552,8 +572,17 @@ func (m *memoryDataDupDetectIter) Error() error {
 	return m.err
 }
 
+// ReleaseBuf implements ForwardIter.
+func (m *memoryDataDupDetectIter) ReleaseBuf() {
+	m.buf.Reset()
+}
+
 // NewIter implements IngestData.NewIter.
-func (m *MemoryIngestData) NewIter(ctx context.Context, lowerBound, upperBound []byte) common.ForwardIter {
+func (m *MemoryIngestData) NewIter(
+	ctx context.Context,
+	lowerBound, upperBound []byte,
+	bufPool *membuf.Pool,
+) common.ForwardIter {
 	firstKeyIdx, lastKeyIdx := m.firstAndLastKeyIndex(lowerBound, upperBound)
 	iter := &memoryDataIter{
 		keys:        m.keys,
@@ -569,6 +598,7 @@ func (m *MemoryIngestData) NewIter(ctx context.Context, lowerBound, upperBound [
 	return &memoryDataDupDetectIter{
 		iter:        iter,
 		dupDetector: detector,
+		buf:         bufPool.NewBuffer(),
 	}
 }
 

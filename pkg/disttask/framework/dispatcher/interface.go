@@ -25,25 +25,25 @@ import (
 
 // TaskManager defines the interface to access task table.
 type TaskManager interface {
-	GetGlobalTasksInStates(states ...interface{}) (task []*proto.Task, err error)
-	GetGlobalTaskByID(taskID int64) (task *proto.Task, err error)
-	UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtasks []*proto.Subtask, prevState proto.TaskState) (bool, error)
-	GCSubtasks() error
-	GetAllNodes() ([]string, error)
-	CleanUpMeta(nodes []string) error
-	TransferTasks2History(tasks []*proto.Task) error
-	CancelGlobalTask(taskID int64) error
-	PauseTask(taskKey string) (bool, error)
-	GetSubtaskInStatesCnt(taskID int64, states ...interface{}) (int64, error)
-	ResumeSubtasks(taskID int64) error
-	CollectSubTaskError(taskID int64) ([]error, error)
-	TransferSubTasks2History(taskID int64) error
-	UpdateSubtasksSchedulerIDs(taskID int64, subtasks []*proto.Subtask) error
-	GetNodesByRole(role string) (map[string]bool, error)
-	GetSchedulerIDsByTaskID(taskID int64) ([]string, error)
-	GetSubtasksByStepAndState(taskID int64, step proto.Step, state proto.TaskState) ([]*proto.Subtask, error)
-	GetSubtasksByStepExceptStates(taskID int64, step proto.Step, exceptState ...interface{}) ([]*proto.Subtask, error)
-	GetSchedulerIDsByTaskIDAndStep(taskID int64, step proto.Step) ([]string, error)
+	GetGlobalTasksInStates(ctx context.Context, states ...interface{}) (task []*proto.Task, err error)
+	GetGlobalTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
+	UpdateGlobalTaskAndAddSubTasks(ctx context.Context, gTask *proto.Task, subtasks []*proto.Subtask, prevState proto.TaskState) (bool, error)
+	GCSubtasks(ctx context.Context) error
+	GetAllNodes(ctx context.Context) ([]string, error)
+	CleanUpMeta(ctx context.Context, nodes []string) error
+	TransferTasks2History(ctx context.Context, tasks []*proto.Task) error
+	CancelGlobalTask(ctx context.Context, taskID int64) error
+	PauseTask(ctx context.Context, taskKey string) (bool, error)
+	GetSubtaskInStatesCnt(ctx context.Context, taskID int64, states ...interface{}) (int64, error)
+	ResumeSubtasks(ctx context.Context, taskID int64) error
+	CollectSubTaskError(ctx context.Context, taskID int64) ([]error, error)
+	TransferSubTasks2History(ctx context.Context, taskID int64) error
+	UpdateFailedSchedulerIDs(ctx context.Context, taskID int64, replaceNodes map[string]string) error
+	GetNodesByRole(ctx context.Context, role string) (map[string]bool, error)
+	GetSchedulerIDsByTaskID(ctx context.Context, taskID int64) ([]string, error)
+	GetSucceedSubtasksByStep(ctx context.Context, taskID int64, step proto.Step) ([]*proto.Subtask, error)
+	GetSubtasksByStepExceptStates(ctx context.Context, taskID int64, step proto.Step, exceptState ...interface{}) ([]*proto.Subtask, error)
+	GetSchedulerIDsByTaskIDAndStep(ctx context.Context, taskID int64, step proto.Step) ([]string, error)
 
 	WithNewSession(fn func(se sessionctx.Context) error) error
 	WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error
@@ -65,7 +65,7 @@ type Extension interface {
 	// 	1. task is pending and entering it's first step.
 	// 	2. subtasks dispatched has all finished with no error.
 	// when next step is StepDone, it should return nil, nil.
-	OnNextSubtasksBatch(ctx context.Context, h TaskHandle, task *proto.Task, step proto.Step) (subtaskMetas [][]byte, err error)
+	OnNextSubtasksBatch(ctx context.Context, h TaskHandle, task *proto.Task, serverInfo []*infosync.ServerInfo, step proto.Step) (subtaskMetas [][]byte, err error)
 
 	// OnErrStage is called when:
 	// 	1. subtask is finished with error.
@@ -74,7 +74,8 @@ type Extension interface {
 
 	// GetEligibleInstances is used to get the eligible instances for the task.
 	// on certain condition we may want to use some instances to do the task, such as instances with more disk.
-	GetEligibleInstances(ctx context.Context, task *proto.Task) ([]*infosync.ServerInfo, error)
+	// The bool return value indicates whether filter instances by role.
+	GetEligibleInstances(ctx context.Context, task *proto.Task) ([]*infosync.ServerInfo, bool, error)
 
 	// IsRetryableErr is used to check whether the error occurred in dispatcher is retryable.
 	IsRetryableErr(err error) bool

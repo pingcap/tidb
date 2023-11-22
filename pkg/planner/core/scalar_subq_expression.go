@@ -201,12 +201,12 @@ func (s *ScalarSubQueryExpr) ResolveIndices(_ *expression.Schema) (expression.Ex
 }
 
 // ResolveIndicesByVirtualExpr implements the Expression interface.
-func (s *ScalarSubQueryExpr) ResolveIndicesByVirtualExpr(_ *expression.Schema) (expression.Expression, bool) {
+func (s *ScalarSubQueryExpr) ResolveIndicesByVirtualExpr(_ sessionctx.Context, _ *expression.Schema) (expression.Expression, bool) {
 	return s, false
 }
 
 // resolveIndicesByVirtualExpr implements the Expression interface.
-func (*ScalarSubQueryExpr) resolveIndicesByVirtualExpr(_ *expression.Schema) bool {
+func (*ScalarSubQueryExpr) resolveIndicesByVirtualExpr(_ sessionctx.Context, _ *expression.Schema) bool {
 	return false
 }
 

@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "ddl",
+    srcs = ["ddl.go"],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/ddl",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser/model",
+        "//pkg/sessionctx/variable",
+        "//pkg/statistics/handle/util",
+    ],
+)
+
+go_test(
+    name = "ddl_test",
+    timeout = "short",
+    srcs = ["ddl_test.go"],
+    flaky = True,
+    shard_count = 4,
+    deps = [
+        "//pkg/parser/model",
+        "//pkg/planner/cardinality",
+        "//pkg/testkit",
+        "//pkg/types",
+        "//pkg/util/mock",
+        "@com_github_stretchr_testify//require",
+    ],
+)

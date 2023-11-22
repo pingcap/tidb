@@ -240,6 +240,7 @@ func useDefaultEncoding(chk *chunk.Chunk, dagCtx *dagContext, dagReq *tipb.DAGRe
 	var datums []types.Datum
 	var err error
 	numRows := chk.NumRows()
+	errCtx := dagCtx.sc.ErrCtx()
 	for i := 0; i < numRows; i++ {
 		datums = datums[:0]
 		if dagReq.OutputOffsets != nil {
@@ -251,7 +252,8 @@ func useDefaultEncoding(chk *chunk.Chunk, dagCtx *dagContext, dagReq *tipb.DAGRe
 				datums = append(datums, chk.GetRow(i).GetDatum(j, ft))
 			}
 		}
-		buf, err = codec.EncodeValue(dagCtx.sc, buf[:0], datums...)
+		buf, err = codec.EncodeValue(dagCtx.sc.TimeZone(), buf[:0], datums...)
+		err = errCtx.HandleError(err)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
