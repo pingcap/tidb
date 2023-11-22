@@ -1148,7 +1148,7 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 		}
 		var valStr string
 		if currVal.Kind() == types.KindMysqlTime && timeUnit == ast.TimeUnitDay {
-			// if unit is dat, no need to display time part. such as 2023-01-01, instead of 2023-01-01 00:00:00.
+			// if unit is day, no need to display time part. such as 2023-01-01, instead of 2023-01-01 00:00:00.
 			t := currVal.GetMysqlTime()
 			t.SetType(mysql.TypeDate)
 			valStr = t.String()
