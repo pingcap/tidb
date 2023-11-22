@@ -1438,6 +1438,9 @@ show warnings;
 SELECT * FROM t1 order by f1;
 set sql_mode=default;
 
+set tidb_init_chunk_size=default;
+
+
 # TestInsertOnDuplicateKey
 drop table if exists t1, t2;
 create table t1(a1 bigint primary key, b1 bigint);

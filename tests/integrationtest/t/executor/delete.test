@@ -33,6 +33,8 @@ begin;
 SELECT * from delete_test limit 2;
 commit;
 insert into delete_test values (2, 'abc');
+## TODO: https://github.com/pingcap/tidb/issues/48120
+--replace_regex /INTEGER/DOUBLE/
 -- error 1292
 delete from delete_test where id = (select '2a');
 --enable_info

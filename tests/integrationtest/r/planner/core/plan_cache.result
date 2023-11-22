@@ -2316,6 +2316,7 @@ TableReader_7	10.00	0	root	<access_object>	<execution_info>	<operator_info>	<mem
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
+set tidb_enable_non_prepared_plan_cache=default;
 drop table if exists t1, t2, t3, t4;
 set @@tidb_opt_fix_control = "45798:on";
 create table t1 (a int, info json, city varchar(64) as (JSON_UNQUOTE(JSON_EXTRACT(info, '$.city'))));
@@ -2513,6 +2514,7 @@ select 1,2 from t where a<20;
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 1
+set tidb_enable_non_prepared_plan_cache=default;
 drop table if exists t;
 create table t(a int);
 insert into t values(1);

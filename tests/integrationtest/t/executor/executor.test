@@ -2804,6 +2804,7 @@ connection default;
 commit;
 
 begin;
+--sorted_result
 select 1 as a union select a from t limit 5 for update;
 select 1 as a union select a from t order by a for update;
 

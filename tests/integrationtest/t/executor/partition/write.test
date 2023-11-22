@@ -478,6 +478,8 @@ delete from t where t.id = 2 limit 1;
 
 --echo ## Test delete ignore
 insert into t values (2, 'abc');
+## TODO: https://github.com/pingcap/tidb/issues/48120
+--replace_regex /INTEGER/DOUBLE/
 -- error 1292
 delete from t where id = (select '2a');
 --enable_info

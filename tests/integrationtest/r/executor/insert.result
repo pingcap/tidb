@@ -1887,6 +1887,7 @@ f1	f2
 1	0
 2	2
 set sql_mode=default;
+set tidb_init_chunk_size=default;
 drop table if exists t1, t2;
 create table t1(a1 bigint primary key, b1 bigint);
 create table t2(a2 bigint primary key, b2 bigint);

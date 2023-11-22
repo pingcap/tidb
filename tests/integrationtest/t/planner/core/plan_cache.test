@@ -1470,6 +1470,7 @@ select @@last_plan_from_cache;
 --replace_column 5 <access_object> 6 <execution_info> 7 <operator_info> 8 <memory> 9 <disk>
 explain analyze select * from t where a=2;
 select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=default;
 
 # TestPlanCacheGeneratedCols
 drop table if exists t1, t2, t3, t4;
@@ -1601,6 +1602,7 @@ select 1,2 from t where a<10;
 select @@last_plan_from_cache;
 select 1,2 from t where a<20;
 select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=default;
 
 # TestIssue48165
 drop table if exists t;
