@@ -114,7 +114,7 @@ func (*baseSum4Float64) MergePartialResult(_ sessionctx.Context, src, dst Partia
 	return 0, nil
 }
 
-func (e *baseSum4Float64) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (e *baseSum4Float64) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *AggSpillSerializeHelper) {
 	pr := (*partialResult4SumFloat64)(partialResult)
 	resBuf := spillHelper.serializePartialResult4SumFloat64(*pr)
 	chk.AppendBytes(e.ordinal, resBuf)
@@ -124,7 +124,7 @@ func (e *baseSum4Float64) DeserializePartialResult(src *chunk.Chunk) ([]PartialR
 	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
 }
 
-func (e *baseSum4Float64) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+func (e *baseSum4Float64) deserializeForSpill(helper *aggSpillDeserializeHelper) (PartialResult, int64) {
 	pr, memDelta := e.AllocPartialResult()
 	result := (*partialResult4SumFloat64)(pr)
 	success := helper.deserializePartialResult4SumFloat64(result)
@@ -175,7 +175,7 @@ type sum4Decimal struct {
 	baseSumAggFunc
 }
 
-func (e *sum4Decimal) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (e *sum4Decimal) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *AggSpillSerializeHelper) {
 	pr := (*partialResult4SumDecimal)(partialResult)
 	resBuf := spillHelper.serializePartialResult4SumDecimal(*pr)
 	chk.AppendBytes(e.ordinal, resBuf)
@@ -185,7 +185,7 @@ func (e *sum4Decimal) DeserializePartialResult(src *chunk.Chunk) ([]PartialResul
 	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
 }
 
-func (e *sum4Decimal) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+func (e *sum4Decimal) deserializeForSpill(helper *aggSpillDeserializeHelper) (PartialResult, int64) {
 	pr, memDelta := e.AllocPartialResult()
 	result := (*partialResult4SumDecimal)(pr)
 	success := helper.deserializePartialResult4SumDecimal(result)

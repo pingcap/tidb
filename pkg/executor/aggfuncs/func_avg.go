@@ -47,7 +47,7 @@ type baseAvgDecimal struct {
 	baseAggFunc
 }
 
-func (e *baseAvgDecimal) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (e *baseAvgDecimal) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *AggSpillSerializeHelper) {
 	pr := (*partialResult4AvgDecimal)(partialResult)
 	resBuf := spillHelper.serializePartialResult4AvgDecimal(*pr)
 	chk.AppendBytes(e.ordinal, resBuf)
@@ -57,7 +57,7 @@ func (e *baseAvgDecimal) DeserializePartialResult(src *chunk.Chunk) ([]PartialRe
 	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
 }
 
-func (e *baseAvgDecimal) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+func (e *baseAvgDecimal) deserializeForSpill(helper *aggSpillDeserializeHelper) (PartialResult, int64) {
 	pr, memDelta := e.AllocPartialResult()
 	result := (*partialResult4AvgDecimal)(pr)
 	success := helper.deserializePartialResult4AvgDecimal(result)
@@ -340,7 +340,7 @@ func (e *baseAvgFloat64) AppendFinalResult2Chunk(_ sessionctx.Context, pr Partia
 	return nil
 }
 
-func (e *baseAvgFloat64) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (e *baseAvgFloat64) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *AggSpillSerializeHelper) {
 	pr := (*partialResult4AvgFloat64)(partialResult)
 	resBuf := spillHelper.serializePartialResult4AvgFloat64(*pr)
 	chk.AppendBytes(e.ordinal, resBuf)
@@ -350,7 +350,7 @@ func (e *baseAvgFloat64) DeserializePartialResult(src *chunk.Chunk) ([]PartialRe
 	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
 }
 
-func (e *baseAvgFloat64) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+func (e *baseAvgFloat64) deserializeForSpill(helper *aggSpillDeserializeHelper) (PartialResult, int64) {
 	pr, memDelta := e.AllocPartialResult()
 	result := (*partialResult4AvgFloat64)(pr)
 	success := helper.deserializePartialResult4AvgFloat64(result)

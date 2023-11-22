@@ -47,7 +47,7 @@ func (e *baseCount) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResu
 	return nil
 }
 
-func (e *baseCount) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (e *baseCount) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *AggSpillSerializeHelper) {
 	pr := (*partialResult4Count)(partialResult)
 	resBuf := spillHelper.serializePartialResult4Count(*pr)
 	chk.AppendBytes(e.ordinal, resBuf)
@@ -57,7 +57,7 @@ func (e *baseCount) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult,
 	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
 }
 
-func (e *baseCount) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+func (e *baseCount) deserializeForSpill(helper *aggSpillDeserializeHelper) (PartialResult, int64) {
 	pr, memDelta := e.AllocPartialResult()
 	result := *(*partialResult4Count)(pr)
 	success := helper.deserializePartialResult4Count(&result)
