@@ -137,10 +137,15 @@ func rangePointEqualValueLess(a, b *point) bool {
 	return a.excl && !b.excl
 }
 
-func switchPointsToSortKey(sctx sessionctx.Context, inputPs []*point, newTp *types.FieldType) ([]*point, error) {
+func pointsConvertToSortKey(sctx sessionctx.Context, inputPs []*point, newTp *types.FieldType) ([]*point, error) {
+	if newTp.EvalType() != types.ETString ||
+		newTp.GetType() == mysql.TypeEnum ||
+		newTp.GetType() == mysql.TypeSet {
+		return inputPs, nil
+	}
 	ps := make([]*point, 0, len(inputPs))
 	for _, p := range inputPs {
-		np, err := switchPointToSortKey(sctx, p, newTp, false)
+		np, err := pointConvertToSortKey(sctx, p, newTp, true)
 		if err != nil {
 			return nil, err
 		}
@@ -149,7 +154,12 @@ func switchPointsToSortKey(sctx sessionctx.Context, inputPs []*point, newTp *typ
 	return ps, nil
 }
 
-func switchPointToSortKey(sctx sessionctx.Context, inputP *point, newTp *types.FieldType, noTrimRightSpace bool) (*point, error) {
+func pointConvertToSortKey(
+	sctx sessionctx.Context,
+	inputP *point,
+	newTp *types.FieldType,
+	trimTrailingSpace bool,
+) (*point, error) {
 	p, err := convertPoint(sctx, inputP, newTp)
 	if err != nil {
 		return nil, err
@@ -159,7 +169,7 @@ func switchPointToSortKey(sctx sessionctx.Context, inputP *point, newTp *types.F
 	}
 	sortKey := p.value.GetBytes()
 	if collate.NewCollationEnabled() {
-		if noTrimRightSpace {
+		if !trimTrailingSpace {
 			sortKey = collate.GetCollator(newTp.GetCollate()).KeyWithoutTrimRightSpace(string(hack.String(sortKey)))
 		} else {
 			sortKey = collate.GetCollator(newTp.GetCollate()).Key(string(hack.String(sortKey)))
@@ -220,12 +230,17 @@ type builder struct {
 	sctx sessionctx.Context
 }
 
-func (r *builder) build(expr expression.Expression, newTp *types.FieldType, prefixLen int, noConvertToSortKey bool) []*point {
+func (r *builder) build(
+	expr expression.Expression,
+	newTp *types.FieldType,
+	prefixLen int,
+	convertToSortKey bool,
+) []*point {
 	switch x := expr.(type) {
 	case *expression.Column:
 		return r.buildFromColumn()
 	case *expression.ScalarFunction:
-		return r.buildFromScalarFunc(x, newTp, prefixLen, noConvertToSortKey)
+		return r.buildFromScalarFunc(x, newTp, prefixLen, convertToSortKey)
 	case *expression.Constant:
 		return r.buildFromConstant(x)
 	}
@@ -266,7 +281,12 @@ func (*builder) buildFromColumn() []*point {
 	return []*point{startPoint1, endPoint1, startPoint2, endPoint2}
 }
 
-func (r *builder) buildFromBinOp(expr *expression.ScalarFunction, newTp *types.FieldType, prefixLen int, noConvertToSortKey bool) []*point {
+func (r *builder) buildFromBinOp(
+	expr *expression.ScalarFunction,
+	newTp *types.FieldType,
+	prefixLen int,
+	convertToSortKey bool,
+) []*point {
 	// This has been checked that the binary operation is comparison operation, and one of
 	// the operand is column name expression.
 	var (
@@ -383,55 +403,33 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction, newTp *types.F
 	case ast.EQ:
 		startPoint := &point{value: value, start: true}
 		endPoint := &point{value: value}
-		if prefixLen != types.UnspecifiedLength {
-			fixPrefixPointRange(startPoint, endPoint, prefixLen, ft)
-		}
 		res = []*point{startPoint, endPoint}
 	case ast.NE:
 		startPoint1 := &point{value: types.MinNotNullDatum(), start: true}
 		endPoint1 := &point{value: value, excl: true}
 		startPoint2 := &point{value: value, start: true, excl: true}
 		endPoint2 := &point{value: types.MaxValueDatum()}
-		if prefixLen != types.UnspecifiedLength {
-			fixPrefixPointRange(startPoint1, endPoint1, prefixLen, ft)
-			fixPrefixPointRange(startPoint2, endPoint2, prefixLen, ft)
-		}
 		res = []*point{startPoint1, endPoint1, startPoint2, endPoint2}
 	case ast.LT:
 		startPoint := &point{value: types.MinNotNullDatum(), start: true}
 		endPoint := &point{value: value, excl: true}
-		if prefixLen != types.UnspecifiedLength {
-			fixPrefixPointRange(startPoint, endPoint, prefixLen, ft)
-		}
 		res = []*point{startPoint, endPoint}
 	case ast.LE:
 		startPoint := &point{value: types.MinNotNullDatum(), start: true}
 		endPoint := &point{value: value}
-		if prefixLen != types.UnspecifiedLength {
-			fixPrefixPointRange(startPoint, endPoint, prefixLen, ft)
-		}
 		res = []*point{startPoint, endPoint}
 	case ast.GT:
 		startPoint := &point{value: value, start: true, excl: true}
 		endPoint := &point{value: types.MaxValueDatum()}
-		if prefixLen != types.UnspecifiedLength {
-			fixPrefixPointRange(startPoint, endPoint, prefixLen, ft)
-		}
 		res = []*point{startPoint, endPoint}
 	case ast.GE:
 		startPoint := &point{value: value, start: true}
 		endPoint := &point{value: types.MaxValueDatum()}
-		if prefixLen != types.UnspecifiedLength {
-			fixPrefixPointRange(startPoint, endPoint, prefixLen, ft)
-		}
 		res = []*point{startPoint, endPoint}
 	}
-
-	if !noConvertToSortKey &&
-		ft.EvalType() == types.ETString &&
-		ft.GetType() != mysql.TypeEnum &&
-		ft.GetType() != mysql.TypeSet {
-		res, err = switchPointsToSortKey(r.sctx, res, newTp)
+	cutPrefixForPoints(res, prefixLen, ft)
+	if convertToSortKey {
+		res, err = pointsConvertToSortKey(r.sctx, res, newTp)
 		if err != nil {
 			r.err = err
 			return getFullRange()
@@ -619,7 +617,12 @@ func (*builder) buildFromIsFalse(_ *expression.ScalarFunction, isNot int) []*poi
 	return []*point{startPoint, endPoint}
 }
 
-func (r *builder) buildFromIn(expr *expression.ScalarFunction, newTp *types.FieldType, prefixLen int, noConvertToSortKey bool) ([]*point, bool) {
+func (r *builder) buildFromIn(
+	expr *expression.ScalarFunction,
+	newTp *types.FieldType,
+	prefixLen int,
+	convertToSortKey bool,
+) ([]*point, bool) {
 	list := expr.GetArgs()[1:]
 	rangePoints := make([]*point, 0, len(list)*2)
 	hasNull := false
@@ -675,11 +678,10 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction, newTp *types.Fiel
 		dt.Copy(&endValue)
 		startPoint := &point{value: startValue, start: true}
 		endPoint := &point{value: endValue}
-		if prefixLen != types.UnspecifiedLength {
-			fixPrefixPointRange(startPoint, endPoint, prefixLen, ft)
-		}
+
 		rangePoints = append(rangePoints, startPoint, endPoint)
 	}
+	cutPrefixForPoints(rangePoints, prefixLen, ft)
 	sorter := pointSorter{points: rangePoints, sc: r.sctx.GetSessionVars().StmtCtx, collator: collate.GetCollator(colCollate)}
 	sort.Sort(&sorter)
 	if sorter.err != nil {
@@ -701,11 +703,8 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction, newTp *types.Fiel
 	}
 	rangePoints = rangePoints[:curPos]
 	var err error
-	if !noConvertToSortKey &&
-		newTp.EvalType() == types.ETString &&
-		newTp.GetType() != mysql.TypeEnum &&
-		newTp.GetType() != mysql.TypeSet {
-		rangePoints, err = switchPointsToSortKey(r.sctx, rangePoints, newTp)
+	if convertToSortKey {
+		rangePoints, err = pointsConvertToSortKey(r.sctx, rangePoints, newTp)
 		if err != nil {
 			r.err = err
 			return getFullRange(), false
@@ -714,7 +713,12 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction, newTp *types.Fiel
 	return rangePoints, hasNull
 }
 
-func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction, newTp *types.FieldType, prefixLen int, noConvertToSortKey bool) []*point {
+func (r *builder) newBuildFromPatternLike(
+	expr *expression.ScalarFunction,
+	newTp *types.FieldType,
+	prefixLen int,
+	convertToSortKey bool,
+) []*point {
 	_, collation := expr.CharsetAndCollation()
 	if !collate.CompatibleCollate(expr.GetArgs()[0].GetType().GetCollate(), collation) {
 		return getFullRange()
@@ -734,11 +738,11 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction, newTp
 		startPoint := &point{value: types.NewStringDatum(""), start: true}
 		endPoint := &point{value: types.NewStringDatum("")}
 		res := []*point{startPoint, endPoint}
-		if !noConvertToSortKey &&
+		if convertToSortKey &&
 			newTp.EvalType() == types.ETString &&
 			newTp.GetType() != mysql.TypeEnum &&
 			newTp.GetType() != mysql.TypeSet {
-			res, err = switchPointsToSortKey(r.sctx, res, newTp)
+			res, err = pointsConvertToSortKey(r.sctx, res, newTp)
 			if err != nil {
 				r.err = err
 				return getFullRange()
@@ -786,15 +790,10 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction, newTp
 		val := types.NewCollationStringDatum(string(lowValue), tpOfPattern.GetCollate())
 		startPoint := &point{value: val, start: true}
 		endPoint := &point{value: val}
-		if prefixLen != types.UnspecifiedLength {
-			fixPrefixPointRange(startPoint, endPoint, prefixLen, tpOfPattern)
-		}
 		res := []*point{startPoint, endPoint}
-		if !noConvertToSortKey &&
-			newTp.EvalType() == types.ETString &&
-			newTp.GetType() != mysql.TypeEnum &&
-			newTp.GetType() != mysql.TypeSet {
-			res, err = switchPointsToSortKey(r.sctx, res, newTp)
+		cutPrefixForPoints(res, prefixLen, tpOfPattern)
+		if convertToSortKey {
+			res, err = pointsConvertToSortKey(r.sctx, res, newTp)
 			if err != nil {
 				r.err = err
 				return getFullRange()
@@ -802,21 +801,20 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction, newTp
 		}
 		return res
 	}
-	if noConvertToSortKey &&
+	if !convertToSortKey &&
 		!collate.IsBinCollation(tpOfPattern.GetCollate()) {
 		return []*point{{value: types.MinNotNullDatum(), start: true}, {value: types.MaxValueDatum()}}
 	}
 	startPoint := &point{start: true, excl: exclude}
 	startPoint.value.SetBytesAsString(lowValue, tpOfPattern.GetCollate(), uint32(tpOfPattern.GetFlen()))
-	if prefixLen != types.UnspecifiedLength {
-		fixPrefixPointRange(startPoint, nil, prefixLen, tpOfPattern)
-	}
-	startPointCopy, err := switchPointToSortKey(r.sctx, startPoint, newTp, true)
+	cutPrefixForPoints([]*point{startPoint}, prefixLen, tpOfPattern)
+
+	startPointCopy, err := pointConvertToSortKey(r.sctx, startPoint, newTp, false)
 	if err != nil {
 		r.err = errors.Trace(err)
 		return getFullRange()
 	}
-	startPoint, err = switchPointToSortKey(r.sctx, startPoint, newTp, false)
+	startPoint, err = pointConvertToSortKey(r.sctx, startPoint, newTp, true)
 	if err != nil {
 		r.err = errors.Trace(err)
 		return getFullRange()
@@ -841,7 +839,12 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction, newTp
 	return []*point{startPoint, endPoint}
 }
 
-func (r *builder) buildFromNot(expr *expression.ScalarFunction, newTp *types.FieldType, prefixLen int, noConvertToSortKey bool) []*point {
+func (r *builder) buildFromNot(
+	expr *expression.ScalarFunction,
+	newTp *types.FieldType,
+	prefixLen int,
+	convertToSortKey bool,
+) []*point {
 	switch n := expr.FuncName.L; n {
 	case ast.IsTruthWithoutNull:
 		return r.buildFromIsTrue(expr, 1, false)
@@ -880,17 +883,10 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction, newTp *types.Fie
 		// Append the interval (last element, max value].
 		retRangePoints = append(retRangePoints, &point{value: previousValue, start: true, excl: true})
 		retRangePoints = append(retRangePoints, &point{value: types.MaxValueDatum()})
-		for i := 0; i < len(retRangePoints); i += 2 {
-			if prefixLen != types.UnspecifiedLength {
-				fixPrefixPointRange(retRangePoints[i], retRangePoints[i+1], prefixLen, expr.GetArgs()[0].GetType())
-			}
-		}
-		if !noConvertToSortKey &&
-			newTp.EvalType() == types.ETString &&
-			newTp.GetType() != mysql.TypeEnum &&
-			newTp.GetType() != mysql.TypeSet {
+		cutPrefixForPoints(retRangePoints, prefixLen, expr.GetArgs()[0].GetType())
+		if convertToSortKey {
 			var err error
-			retRangePoints, err = switchPointsToSortKey(r.sctx, retRangePoints, newTp)
+			retRangePoints, err = pointsConvertToSortKey(r.sctx, retRangePoints, newTp)
 			if err != nil {
 				r.err = err
 				return getFullRange()
@@ -912,22 +908,27 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction, newTp *types.Fie
 	return getFullRange()
 }
 
-func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction, newTp *types.FieldType, prefixLen int, noConvertToSortKey bool) []*point {
+func (r *builder) buildFromScalarFunc(
+	expr *expression.ScalarFunction,
+	newTp *types.FieldType,
+	prefixLen int,
+	convertToSortKey bool,
+) []*point {
 	switch op := expr.FuncName.L; op {
 	case ast.GE, ast.GT, ast.LT, ast.LE, ast.EQ, ast.NE, ast.NullEQ:
-		return r.buildFromBinOp(expr, newTp, prefixLen, noConvertToSortKey)
+		return r.buildFromBinOp(expr, newTp, prefixLen, convertToSortKey)
 	case ast.LogicAnd:
 		collator := collate.GetCollator(newTp.GetCollate())
-		if !noConvertToSortKey {
+		if convertToSortKey {
 			collator = collate.GetCollator(charset.CollationBin)
 		}
-		return r.intersection(r.build(expr.GetArgs()[0], newTp, prefixLen, noConvertToSortKey), r.build(expr.GetArgs()[1], newTp, prefixLen, noConvertToSortKey), collator)
+		return r.intersection(r.build(expr.GetArgs()[0], newTp, prefixLen, convertToSortKey), r.build(expr.GetArgs()[1], newTp, prefixLen, convertToSortKey), collator)
 	case ast.LogicOr:
 		collator := collate.GetCollator(newTp.GetCollate())
-		if !noConvertToSortKey {
+		if convertToSortKey {
 			collator = collate.GetCollator(charset.CollationBin)
 		}
-		return r.union(r.build(expr.GetArgs()[0], newTp, prefixLen, noConvertToSortKey), r.build(expr.GetArgs()[1], newTp, prefixLen, noConvertToSortKey), collator)
+		return r.union(r.build(expr.GetArgs()[0], newTp, prefixLen, convertToSortKey), r.build(expr.GetArgs()[1], newTp, prefixLen, convertToSortKey), collator)
 	case ast.IsTruthWithoutNull:
 		return r.buildFromIsTrue(expr, 0, false)
 	case ast.IsTruthWithNull:
@@ -935,16 +936,16 @@ func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction, newTp *ty
 	case ast.IsFalsity:
 		return r.buildFromIsFalse(expr, 0)
 	case ast.In:
-		retPoints, _ := r.buildFromIn(expr, newTp, prefixLen, noConvertToSortKey)
+		retPoints, _ := r.buildFromIn(expr, newTp, prefixLen, convertToSortKey)
 		return retPoints
 	case ast.Like:
-		return r.newBuildFromPatternLike(expr, newTp, prefixLen, noConvertToSortKey)
+		return r.newBuildFromPatternLike(expr, newTp, prefixLen, convertToSortKey)
 	case ast.IsNull:
 		startPoint := &point{start: true}
 		endPoint := &point{}
 		return []*point{startPoint, endPoint}
 	case ast.UnaryNot:
-		return r.buildFromNot(expr.GetArgs()[0].(*expression.ScalarFunction), newTp, prefixLen, noConvertToSortKey)
+		return r.buildFromNot(expr.GetArgs()[0].(*expression.ScalarFunction), newTp, prefixLen, convertToSortKey)
 	}
 
 	return nil
