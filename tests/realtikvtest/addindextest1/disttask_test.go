@@ -229,3 +229,29 @@ func TestAddIndexForCurrentTimestampColumn(t *testing.T) {
 	tk.MustExec("alter table t add index idx(a);")
 	tk.MustExec("admin check table t;")
 }
+
+func TestAddIndexTSErrorWhenResetImportEngine(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_enable_dist_task = off;")
+	})
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("set global tidb_enable_dist_task = on;")
+
+	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/mockAllocateTSErr", `1*return`)
+	require.NoError(t, err)
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1), (2), (3);")
+	tk.MustExec("alter table t add index idx(a);")
+	err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/mockAllocateTSErr")
+	require.NoError(t, err)
+
+	tk.MustExec("update t set a = 4 where a = 1;")
+	tk.MustExec("insert into t values (5);")
+	tk.MustExec("delete from t where a = 2;")
+	tk.MustQuery("select a from t use index(idx) order by a;").Check(testkit.Rows("3", "4", "5"))
+}

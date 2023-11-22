@@ -1761,10 +1761,26 @@ func (local *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) err
 		if err = local.allocateTSIfNotExists(ctx, localEngine); err != nil {
 			return errors.Trace(err)
 		}
+		failpoint.Inject("mockAllocateTSErr", func() {
+			// mock generate timestamp error when reset engine.
+			localEngine.TS = 0
+			failpoint.Return(errors.Trace(&mockGRPCErr{}))
+		})
 	}
 	localEngine.pendingFileSize.Store(0)
 
 	return err
+}
+
+type mockGRPCErr struct {
+}
+
+func (m *mockGRPCErr) GRPCStatus() *status.Status {
+	return status.New(codes.Unknown, "mock generate timestamp error")
+}
+
+func (m *mockGRPCErr) Error() string {
+	return "mock generate timestamp error"
 }
 
 // CleanupEngine cleanup the engine and reclaim the space.
