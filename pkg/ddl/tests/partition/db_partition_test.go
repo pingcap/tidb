@@ -3645,4 +3645,17 @@ func TestRemovePartitioningAutoIDs(t *testing.T) {
 		"32 31 10", "35 34 21", "38 37 22", "41 40 23"))
 }
 
+func TestAlterLastIntervalPartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (id int, create_time datetime)
+		partition by range columns (create_time)
+		interval (1 day)
+		first partition less than ('2023-01-01')
+		last partition less than ('2023-12-31');`)
+	tk.MustExec("alter table t last partition less than ('2024-01-01')")
+	tk.MustExec("alter table t last partition less than ('2025-01-01')")
+}
+
 // TODO: check EXCHANGE how it handles null (for all types of partitioning!!!)
