@@ -515,9 +515,12 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 		}
 	}
 	var tmpNewTp *types.FieldType
-	if d.convertToSortKey &&
-		(eqAndInCount == 0 || eqAndInCount < len(accessConds)) {
-		tmpNewTp = convertStringFTToBinaryCollate(newTp[eqAndInCount])
+	if eqAndInCount == 0 || eqAndInCount < len(accessConds) {
+		if d.convertToSortKey {
+			tmpNewTp = convertStringFTToBinaryCollate(newTp[eqAndInCount])
+		} else {
+			tmpNewTp = newTp[eqAndInCount]
+		}
 	}
 	if eqAndInCount == 0 {
 		ranges, rangeFallback, err = points2Ranges(d.sctx, rangePoints, tmpNewTp, d.rangeMaxSize)
