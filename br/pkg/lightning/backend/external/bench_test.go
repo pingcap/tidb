@@ -195,7 +195,7 @@ func writeExternalOneFile(s *writeTestSuite) {
 
 func TestCompareWriter(t *testing.T) {
 	store := openTestingStorage(t)
-	source := newAscendingKeySource(20, 100, 10000000)
+	source := newAscendingKeySource(20, 100, 10000)
 	memoryLimit := 64 * 1024 * 1024
 	fileIdx := 0
 	var (
@@ -233,18 +233,18 @@ func TestCompareWriter(t *testing.T) {
 		afterWriterClose:   afterClose,
 	}
 
-	writePlainFile(suite)
-	baseSpeed := float64(source.outputSize()) / elapsed.Seconds() / 1024 / 1024
-	t.Logf("base speed for %d bytes: %.2f MB/s", source.outputSize(), baseSpeed)
+	// writePlainFile(suite)
+	// baseSpeed := float64(source.outputSize()) / elapsed.Seconds() / 1024 / 1024
+	// t.Logf("base speed for %d bytes: %.2f MB/s", source.outputSize(), baseSpeed)
 
-	suite.source = newAscendingKeySource(20, 100, 10000000)
-	writeExternalFile(suite)
-	writerSpeed := float64(source.outputSize()) / elapsed.Seconds() / 1024 / 1024
-	t.Logf("writer speed for %d bytes: %.2f MB/s", source.outputSize(), writerSpeed)
+	// suite.source = newAscendingKeySource(20, 100, 10000000)
+	// writeExternalFile(suite)
+	// writerSpeed := float64(source.outputSize()) / elapsed.Seconds() / 1024 / 1024
+	// t.Logf("writer speed for %d bytes: %.2f MB/s", source.outputSize(), writerSpeed)
 
-	suite.source = newAscendingKeySource(20, 100, 10000000)
+	suite.source = newAscendingKeySource(20, 100, 10000)
 	writeExternalOneFile(suite)
-	writerSpeed = float64(source.outputSize()) / elapsed.Seconds() / 1024 / 1024
+	writerSpeed := float64(source.outputSize()) / elapsed.Seconds() / 1024 / 1024
 	t.Logf("one file writer speed for %d bytes: %.2f MB/s", source.outputSize(), writerSpeed)
 }
 

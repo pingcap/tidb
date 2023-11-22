@@ -21,7 +21,6 @@ import (
 	"path/filepath"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -29,37 +28,34 @@ import (
 	"go.uber.org/zap"
 )
 
-// OneFileWriter is used to write data into external storage with one file.
+// OneFileWriter is used to write data into external storage
+// with only one file for data and stat.
 type OneFileWriter struct {
-	store          storage.ExternalStorage
+	// storage related.
+	store    storage.ExternalStorage
+	kvStore  *KeyValueStore
+	kvBuffer *preAllocKVBuf
+
+	// Statistic information per writer.
+	multiFileStat MultipleFilesStat
+	minKey        tidbkv.Key
+	maxKey        tidbkv.Key
+	memSizeLimit  uint64
+	totalSize     uint64
+	rc            *rangePropertiesCollector
+
+	// file information.
 	writerID       string
 	filenamePrefix string
-	keyAdapter     common.KeyAdapter
-
-	kvStore *KeyValueStore
-	rc      *rangePropertiesCollector
-
-	kvBuffer    *preAllocKVBuf
-	kvLocations []kvLocation
-	kvSize      int64
+	dataFile       string
+	statFile       string
+	dataWriter     storage.ExternalFileWriter
+	statWriter     storage.ExternalFileWriter
 
 	onClose OnCloseFunc
 	closed  bool
 
-	// Statistic information per batch.
-	batchSize uint64
-
-	multiFileStat MultipleFilesStat
-	// Statistic information per writer.
-	minKey    tidbkv.Key
-	maxKey    tidbkv.Key
-	totalSize uint64
-
-	dataFile   string
-	statFile   string
-	dataWriter storage.ExternalFileWriter
-	statWriter storage.ExternalFileWriter
-	logger     *zap.Logger
+	logger *zap.Logger
 }
 
 // initWriter inits the underlying dataFile/statFile path, dataWriter/statWriter for OneFileWriter.
@@ -94,41 +90,41 @@ func (w *OneFileWriter) Init(ctx context.Context, partSize int64) (err error) {
 
 // WriteRow implements ingest.Writer.
 func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) error {
-	keyAdapter := w.keyAdapter
-	var rowID []byte
-	encodedKeyLen := keyAdapter.EncodedLen(idxKey, rowID)
-	length := encodedKeyLen + len(idxVal) + lengthBytes*2
-	blockIdx, dataBuf, off, allocated := w.kvBuffer.Alloc(length)
+	// 1. encode data and write to kvStore.
+	keyLen := len(idxKey)
+	length := len(idxKey) + len(idxVal) + lengthBytes*2
+	_, buf, _, allocated := w.kvBuffer.Alloc(length)
 	if !allocated {
-		if err := w.flushKVs(ctx, false); err != nil {
-			return err
+		w.kvBuffer.reset()
+		_, buf, _, allocated = w.kvBuffer.Alloc(length)
+		var newKey tidbkv.Key
+		newKey = idxKey
+		if len(w.maxKey) == 0 || newKey.Cmp(w.maxKey) > 0 {
+			w.maxKey = newKey.Clone()
 		}
-		blockIdx, dataBuf, off, allocated = w.kvBuffer.Alloc(length)
 		// we now don't support KV larger than blockSize
 		if !allocated {
 			return errors.Errorf("failed to allocate kv buffer: %d", length)
 		}
+		// 2. write statistics if data is enough.
+		w.kvStore.Close()
+		encodedStat := w.rc.encode()
+		_, err := w.statWriter.Write(ctx, encodedStat)
+		if err != nil {
+			return err
+		}
+		w.rc.reset()
 	}
-	binary.BigEndian.AppendUint64(dataBuf[:0], uint64(encodedKeyLen))
-	keyAdapter.Encode(dataBuf[lengthBytes:lengthBytes:lengthBytes+encodedKeyLen], idxKey, rowID)
-	binary.BigEndian.AppendUint64(dataBuf[lengthBytes+encodedKeyLen:lengthBytes+encodedKeyLen], uint64(len(idxVal)))
-	copy(dataBuf[lengthBytes*2+encodedKeyLen:], idxVal)
-
-	w.kvLocations = append(w.kvLocations, kvLocation{
-		blockIdx: blockIdx,
-		offset:   off,
-		length:   int32(length)},
-	)
-	w.kvSize += int64(encodedKeyLen + len(idxVal))
-	w.batchSize += uint64(length)
+	binary.BigEndian.AppendUint64(buf[:0], uint64(keyLen))
+	copy(buf[lengthBytes:], idxKey)
+	binary.BigEndian.AppendUint64(buf[lengthBytes+keyLen:lengthBytes+keyLen], uint64(len(idxVal)))
+	copy(buf[lengthBytes*2+keyLen:], idxVal)
+	w.kvStore.addEncodedData(buf[:length])
+	if w.minKey == nil {
+		w.minKey = idxKey
+	}
+	w.totalSize = uint64(keyLen + len(idxVal))
 	return nil
-}
-
-// LockForWrite implements ingest.Writer.
-// Since flushKVs is thread-safe in external storage writer,
-// this is implemented as noop.
-func (w *OneFileWriter) LockForWrite() func() {
-	return func() {}
 }
 
 // Close closes the writer.
@@ -136,19 +132,14 @@ func (w *OneFileWriter) Close(ctx context.Context) error {
 	if w.closed {
 		return errors.Errorf("writer %s has been closed", w.writerID)
 	}
-	w.closed = true
-	defer w.kvBuffer.destroy()
-	err := w.flushKVs(ctx, true)
+	err := w.closeImpl(ctx)
 	if err != nil {
 		return err
 	}
 	w.logger.Info("close one file writer",
 		zap.String("writerID", w.writerID),
-		zap.Int("kv-cnt-cap", cap(w.kvLocations)),
 		zap.String("minKey", hex.EncodeToString(w.minKey)),
 		zap.String("maxKey", hex.EncodeToString(w.maxKey)))
-
-	w.kvLocations = nil
 
 	w.onClose(&WriterSummary{
 		WriterID:           w.writerID,
@@ -158,78 +149,41 @@ func (w *OneFileWriter) Close(ctx context.Context) error {
 		TotalSize:          w.totalSize,
 		MultipleFilesStats: []MultipleFilesStat{w.multiFileStat},
 	})
+	w.totalSize = 0
+	w.closed = true
 	return nil
 }
 
-func (w *OneFileWriter) recordMinMax(newMin, newMax tidbkv.Key, size uint64) {
-	if len(w.minKey) == 0 || newMin.Cmp(w.minKey) < 0 {
-		w.minKey = newMin.Clone()
-	}
-	if len(w.maxKey) == 0 || newMax.Cmp(w.maxKey) > 0 {
-		w.maxKey = newMax.Clone()
-	}
-	w.totalSize += size
-}
-
-func (w *OneFileWriter) flushKVs(ctx context.Context, fromClose bool) (err error) {
-	if len(w.kvLocations) == 0 {
-		return nil
-	}
-
-	for _, pair := range w.kvLocations {
-		err = w.kvStore.addEncodedData(w.getEncodedKVData(pair))
-		if err != nil {
-			return err
-		}
-	}
-
+func (w *OneFileWriter) closeImpl(ctx context.Context) (err error) {
+	// 1. write remaining statistic.
 	w.kvStore.Close()
 	encodedStat := w.rc.encode()
 	_, err = w.statWriter.Write(ctx, encodedStat)
 	if err != nil {
 		return err
 	}
-
-	minKey, maxKey := w.getKeyByLoc(w.kvLocations[0]), w.getKeyByLoc(w.kvLocations[len(w.kvLocations)-1])
-	w.recordMinMax(minKey, maxKey, uint64(w.kvSize))
-
-	if fromClose {
-		w.multiFileStat.Filenames = append(w.multiFileStat.Filenames,
-			[2]string{w.dataFile, w.statFile},
-		)
-		w.multiFileStat.build(
-			[]tidbkv.Key{w.minKey},
-			[]tidbkv.Key{w.maxKey})
-
-		err1 := w.dataWriter.Close(ctx)
-		if err1 != nil {
-			w.logger.Error("Close data writer failed", zap.Error(err))
-			err = err1
-			return
-		}
-
-		err2 := w.statWriter.Close(ctx)
-		if err2 != nil {
-			w.logger.Error("Close stat writer failed", zap.Error(err))
-			err = err2
-			return
-		}
-	}
-	w.kvLocations = w.kvLocations[:0]
-	w.kvSize = 0
-	w.kvBuffer.reset()
 	w.rc.reset()
-	w.batchSize = 0
+
+	// 2. build multiFileStat.
+	w.multiFileStat.Filenames = append(w.multiFileStat.Filenames,
+		[2]string{w.dataFile, w.statFile},
+	)
+	w.multiFileStat.build(
+		[]tidbkv.Key{w.minKey},
+		[]tidbkv.Key{w.maxKey})
+	// 3. close data writer.
+	err1 := w.dataWriter.Close(ctx)
+	if err1 != nil {
+		w.logger.Error("Close data writer failed", zap.Error(err))
+		err = err1
+		return
+	}
+	// 4. close stat writer.
+	err2 := w.statWriter.Close(ctx)
+	if err2 != nil {
+		w.logger.Error("Close stat writer failed", zap.Error(err))
+		err = err2
+		return
+	}
 	return nil
-}
-
-func (w *OneFileWriter) getEncodedKVData(pos kvLocation) []byte {
-	block := w.kvBuffer.blocks[pos.blockIdx]
-	return block[pos.offset : pos.offset+pos.length]
-}
-
-func (w *OneFileWriter) getKeyByLoc(pos kvLocation) []byte {
-	block := w.kvBuffer.blocks[pos.blockIdx]
-	keyLen := binary.BigEndian.Uint64(block[pos.offset : pos.offset+lengthBytes])
-	return block[pos.offset+lengthBytes : uint64(pos.offset)+lengthBytes+keyLen]
 }

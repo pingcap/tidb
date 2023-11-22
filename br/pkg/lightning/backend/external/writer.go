@@ -208,7 +208,6 @@ func (b *WriterBuilder) BuildOneFile(
 	writerID string,
 ) *OneFileWriter {
 	filenamePrefix := filepath.Join(prefix, writerID)
-	keyAdapter := common.KeyAdapter(common.NoopKeyAdapter{})
 	ret := &OneFileWriter{
 		rc: &rangePropertiesCollector{
 			props:        make([]*rangeProperty, 0, 1024),
@@ -216,10 +215,10 @@ func (b *WriterBuilder) BuildOneFile(
 			propSizeDist: b.propSizeDist,
 			propKeysDist: b.propKeysDist,
 		},
-		store:          store,
 		kvBuffer:       newPreAllocKVBuf(b.memSizeLimit, b.blockSize),
+		memSizeLimit:   b.memSizeLimit,
+		store:          store,
 		filenamePrefix: filenamePrefix,
-		keyAdapter:     keyAdapter,
 		writerID:       writerID,
 		kvStore:        nil,
 		onClose:        b.onClose,

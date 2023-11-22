@@ -25,8 +25,10 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
@@ -95,6 +97,8 @@ func TestOnefileWriter(t *testing.T) {
 	}
 	require.Equal(t, uint64(kvCnt), keyCnt)
 	require.NoError(t, statReader.Close())
+
+	// todo check minKey and maxKey
 }
 
 func TestMergeOverlappingFilesV2(t *testing.T) {
@@ -169,7 +173,9 @@ func TestMergeOverlappingFilesV2(t *testing.T) {
 		values:             values,
 		ts:                 123,
 	}
-	iter := data.NewIter(ctx, nil, nil)
+	pool := membuf.NewPool()
+	defer pool.Destroy()
+	iter := data.NewIter(ctx, nil, nil, pool)
 
 	for iter.First(); iter.Valid(); iter.Next() {
 	}
@@ -189,7 +195,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 	err := writer.Init(ctx, 5*1024*1024)
 	require.NoError(t, err)
 
-	kvCnt := 1000000
+	kvCnt := 10000000
 	kvs := make([]common.KvPair, kvCnt)
 	for i := 0; i < kvCnt; i++ {
 		randLen := rand.Intn(10) + 1
@@ -211,6 +217,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 		require.NoError(t, err)
 	}
 	err = writer.Close(ctx)
+	logutil.BgLogger().Info("ywqt test")
 	require.NoError(t, err)
 
 	err = MergeOverlappingFilesV2(
