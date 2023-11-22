@@ -651,7 +651,7 @@ update t1, t2 set t1.c1 = 10, t2.c2 = 2 where t2.c2 = 1;
 select * from t1;
 
 ## test https://github.com/pingcap/tidb/issues/3604
-drop table if exists t, t;
+drop table if exists t;
 create table t (a int, b int);
 --enable_info
 insert into t values(1, 1), (2, 2), (3, 3);

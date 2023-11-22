@@ -829,7 +829,7 @@ select * from t1;
 c1
 10
 10
-drop table if exists t, t;
+drop table if exists t;
 create table t (a int, b int);
 insert into t values(1, 1), (2, 2), (3, 3);
 affected rows: 3
