@@ -53,6 +53,7 @@ go_library(
         "//pkg/privilege/privileges",
         "//pkg/session/metrics",
         "//pkg/session/txninfo",
+        "//pkg/session/types",
         "//pkg/sessionctx",
         "//pkg/sessionctx/binloginfo",
         "//pkg/sessionctx/sessionstates",
