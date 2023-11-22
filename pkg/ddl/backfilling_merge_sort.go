@@ -81,6 +81,9 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	m.subtaskSortedKVMeta = &external.SortedKVMeta{}
 	onClose := func(summary *external.WriterSummary) {
 		m.mu.Lock()
+		logutil.BgLogger().Error("ywq test summary",
+			zap.String("category", "ddl"),
+			zap.Any("summary", summary))
 		m.subtaskSortedKVMeta.MergeSummary(summary)
 		m.mu.Unlock()
 	}

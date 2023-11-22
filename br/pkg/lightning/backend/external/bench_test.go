@@ -233,18 +233,18 @@ func TestCompareWriter(t *testing.T) {
 		afterWriterClose:   afterClose,
 	}
 
-	// writePlainFile(suite)
-	// baseSpeed := float64(source.outputSize()) / elapsed.Seconds() / 1024 / 1024
-	// t.Logf("base speed for %d bytes: %.2f MB/s", source.outputSize(), baseSpeed)
+	writePlainFile(suite)
+	baseSpeed := float64(source.outputSize()) / elapsed.Seconds() / 1024 / 1024
+	t.Logf("base speed for %d bytes: %.2f MB/s", source.outputSize(), baseSpeed)
 
-	// suite.source = newAscendingKeySource(20, 100, 10000000)
-	// writeExternalFile(suite)
-	// writerSpeed := float64(source.outputSize()) / elapsed.Seconds() / 1024 / 1024
-	// t.Logf("writer speed for %d bytes: %.2f MB/s", source.outputSize(), writerSpeed)
-
-	suite.source = newAscendingKeySource(20, 100, 10000)
-	writeExternalOneFile(suite)
+	suite.source = newAscendingKeySource(20, 100, 10000000)
+	writeExternalFile(suite)
 	writerSpeed := float64(source.outputSize()) / elapsed.Seconds() / 1024 / 1024
+	t.Logf("writer speed for %d bytes: %.2f MB/s", source.outputSize(), writerSpeed)
+
+	suite.source = newAscendingKeySource(20, 100, 10000000)
+	writeExternalOneFile(suite)
+	writerSpeed = float64(source.outputSize()) / elapsed.Seconds() / 1024 / 1024
 	t.Logf("one file writer speed for %d bytes: %.2f MB/s", source.outputSize(), writerSpeed)
 }
 

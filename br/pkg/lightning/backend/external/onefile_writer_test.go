@@ -45,7 +45,6 @@ func TestOnefileWriterBasic(t *testing.T) {
 	// 1. write into one file.
 	// 2. read kv file and check result.
 	// 3. read stat file and check result.
-
 	writer := NewWriterBuilder().
 		SetPropSizeDistance(100).
 		SetPropKeysDistance(2).
@@ -281,16 +280,20 @@ func TestOnefileWriterManyRows(t *testing.T) {
 	require.NoError(t, err)
 
 	kvCnt := 100000
+	expectedTotalSize := 0
 	kvs := make([]common.KvPair, kvCnt)
 	for i := 0; i < kvCnt; i++ {
 		randLen := rand.Intn(10) + 1
 		kvs[i].Key = make([]byte, randLen)
 		_, err := rand.Read(kvs[i].Key)
+		expectedTotalSize += randLen
+
 		require.NoError(t, err)
 		randLen = rand.Intn(10) + 1
 		kvs[i].Val = make([]byte, randLen)
 		_, err = rand.Read(kvs[i].Val)
 		require.NoError(t, err)
+		expectedTotalSize += randLen
 	}
 
 	slices.SortFunc(kvs, func(i, j common.KvPair) int {
@@ -352,4 +355,5 @@ func TestOnefileWriterManyRows(t *testing.T) {
 	require.EqualValues(t, expected.MaxKey, resSummary.Max)
 	require.Equal(t, expected.Filenames, resSummary.MultipleFilesStats[0].Filenames)
 	require.Equal(t, expected.MaxOverlappingNum, resSummary.MultipleFilesStats[0].MaxOverlappingNum)
+	require.EqualValues(t, expectedTotalSize, resSummary.TotalSize)
 }

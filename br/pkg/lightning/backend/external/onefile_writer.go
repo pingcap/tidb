@@ -90,7 +90,6 @@ func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) err
 	_, buf, _, allocated := w.kvBuffer.Alloc(length)
 	if !allocated {
 		w.kvBuffer.reset()
-		logutil.BgLogger().Info("ywq test here...")
 		_, buf, _, allocated = w.kvBuffer.Alloc(length)
 		// we now don't support KV larger than blockSize
 		if !allocated {
@@ -110,7 +109,7 @@ func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) err
 	binary.BigEndian.AppendUint64(buf[lengthBytes+keyLen:lengthBytes+keyLen], uint64(len(idxVal)))
 	copy(buf[lengthBytes*2+keyLen:], idxVal)
 	w.kvStore.addEncodedData(buf[:length])
-	w.totalSize = uint64(keyLen + len(idxVal))
+	w.totalSize += uint64(keyLen + len(idxVal))
 	return nil
 }
 

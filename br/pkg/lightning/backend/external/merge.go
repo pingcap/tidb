@@ -202,10 +202,7 @@ func MergeOverlappingFilesV2(
 		return err
 	}
 	maxKey = tidbkv.Key(iter.Key()).Clone()
-	err = writer.Close(ctx)
-	if err != nil {
-		return err
-	}
+
 	var stat MultipleFilesStat
 	stat.Filenames = append(stat.Filenames,
 		[2]string{writer.dataFile, writer.statFile})
@@ -219,6 +216,11 @@ func MergeOverlappingFilesV2(
 			TotalSize:          writer.totalSize,
 			MultipleFilesStats: []MultipleFilesStat{stat},
 		})
+	}
+
+	err = writer.Close(ctx)
+	if err != nil {
+		return err
 	}
 	return nil
 }
