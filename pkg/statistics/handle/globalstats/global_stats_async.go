@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -508,12 +509,13 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			var poppedTopN []statistics.TopNMeta
 			var allhg []*statistics.Histogram
 			wrapper := item.item
+
 			a.globalStats.TopN[item.idx], poppedTopN, allhg, err = mergeGlobalStatsTopN(a.statsHandle.GPool(), sctx, wrapper,
 				tz, analyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex)
 			if err != nil {
 				return err
 			}
-
+			log.Info("before", zap.Any("poppedTopN", poppedTopN), zap.Any("topn", a.globalStats.TopN[item.idx]))
 			// Merge histogram.
 			a.globalStats.Hg[item.idx], err = statistics.MergePartitionHist2GlobalHist(stmtCtx, allhg, poppedTopN,
 				int64(opts[ast.AnalyzeOptNumBuckets]), isIndex)
