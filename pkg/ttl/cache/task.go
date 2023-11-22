@@ -68,11 +68,11 @@ func PeekWaitingTTLTask(hbExpire time.Time) (string, []interface{}) {
 // InsertIntoTTLTask returns an SQL statement to insert a ttl task into mysql.tidb_ttl_task
 func InsertIntoTTLTask(sctx sessionctx.Context, jobID string, tableID int64, scanID int, scanRangeStart []types.Datum,
 	scanRangeEnd []types.Datum, expireTime time.Time, createdTime time.Time) (string, []interface{}, error) {
-	rangeStart, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, []byte{}, scanRangeStart...)
+	rangeStart, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx.TimeZone(), []byte{}, scanRangeStart...)
 	if err != nil {
 		return "", nil, err
 	}
-	rangeEnd, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, []byte{}, scanRangeEnd...)
+	rangeEnd, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx.TimeZone(), []byte{}, scanRangeEnd...)
 	if err != nil {
 		return "", nil, err
 	}
