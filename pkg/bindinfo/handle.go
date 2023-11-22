@@ -99,6 +99,14 @@ const (
 	Prompt = "bindinfo"
 	// BuiltinPseudoSQL4BindLock is used to simulate LOCK TABLE for mysql.bind_info.
 	BuiltinPseudoSQL4BindLock = "builtin_pseudo_sql_for_bind_lock"
+
+	// StmtRemoveDuplicatedPseudoBinding is used to remove duplicated pseudo binding.
+	// After using BR to sync bind_info between two clusters, the pseudo binding may be duplicated, and
+	// BR use this statement to remove duplicated rows, and this SQL should only be executed by BR.
+	StmtRemoveDuplicatedPseudoBinding = `DELETE FROM mysql.bind_info
+       WHERE original_sql='builtin_pseudo_sql_for_bind_lock' AND
+       _tidb_rowid NOT IN ( -- keep one arbitrary pseudo binding
+         SELECT _tidb_rowid FROM mysql.bind_info WHERE original_sql='builtin_pseudo_sql_for_bind_lock' limit 1)`
 )
 
 type bindRecordUpdate struct {
