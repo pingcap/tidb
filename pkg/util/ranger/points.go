@@ -200,7 +200,7 @@ func (r *builder) build(expr expression.Expression, collator collate.Collator) [
 }
 
 func (r *builder) buildFromConstant(expr *expression.Constant) []*point {
-	dt, err := expr.Eval(chunk.Row{})
+	dt, err := expr.EvalWithInnerCtx(chunk.Row{})
 	if err != nil {
 		r.err = err
 		return nil
@@ -283,7 +283,7 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 	var ok bool
 	if col, ok = expr.GetArgs()[0].(*expression.Column); ok {
 		ft = col.RetType
-		value, err = expr.GetArgs()[1].Eval(chunk.Row{})
+		value, err = expr.GetArgs()[1].EvalWithInnerCtx(chunk.Row{})
 		if err != nil {
 			return nil
 		}
@@ -294,7 +294,7 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 			return nil
 		}
 		ft = col.RetType
-		value, err = expr.GetArgs()[0].Eval(chunk.Row{})
+		value, err = expr.GetArgs()[0].EvalWithInnerCtx(chunk.Row{})
 		if err != nil {
 			return nil
 		}
@@ -564,7 +564,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 			r.err = ErrUnsupportedType.GenWithStack("expr:%v is not constant", e)
 			return getFullRange(), hasNull
 		}
-		dt, err := v.Eval(chunk.Row{})
+		dt, err := v.EvalWithInnerCtx(chunk.Row{})
 		if err != nil {
 			r.err = ErrUnsupportedType.GenWithStack("expr:%v is not evaluated", e)
 			return getFullRange(), hasNull
@@ -637,7 +637,7 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []*po
 	if !collate.CompatibleCollate(expr.GetArgs()[0].GetType().GetCollate(), collation) {
 		return getFullRange()
 	}
-	pdt, err := expr.GetArgs()[1].(*expression.Constant).Eval(chunk.Row{})
+	pdt, err := expr.GetArgs()[1].(*expression.Constant).EvalWithInnerCtx(chunk.Row{})
 	tpOfPattern := expr.GetArgs()[0].GetType()
 	if err != nil {
 		r.err = errors.Trace(err)
@@ -654,7 +654,7 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []*po
 		return []*point{startPoint, endPoint}
 	}
 	lowValue := make([]byte, 0, len(pattern))
-	edt, err := expr.GetArgs()[2].(*expression.Constant).Eval(chunk.Row{})
+	edt, err := expr.GetArgs()[2].(*expression.Constant).EvalWithInnerCtx(chunk.Row{})
 	if err != nil {
 		r.err = errors.Trace(err)
 		return getFullRange()

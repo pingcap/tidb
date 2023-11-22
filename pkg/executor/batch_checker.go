@@ -288,7 +288,7 @@ func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction,
 			// only the virtual column needs fill back.
 			// Insert doesn't fill the generated columns at non-public state.
 			if !col.GeneratedStored {
-				val, err := genExprs[gIdx].Eval(chunk.MutRowFromDatums(oldRow).ToRow())
+				val, err := genExprs[gIdx].Eval(sctx, chunk.MutRowFromDatums(oldRow).ToRow())
 				if err != nil {
 					return nil, err
 				}

@@ -3794,6 +3794,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 						Name: model.NewCIStr(opt.StrValue),
 					}
 				case ast.TableOptionEngine:
+				case ast.TableOptionRowFormat:
 				case ast.TableOptionTTL, ast.TableOptionTTLEnable, ast.TableOptionTTLJobInterval:
 					var ttlInfo *model.TTLInfo
 					var ttlEnable *bool
@@ -4375,6 +4376,10 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 		return err
 	}
 	newPartInfo := newMeta.Partition
+
+	if err = handlePartitionPlacement(ctx, newPartInfo); err != nil {
+		return errors.Trace(err)
+	}
 
 	if err = d.assignPartitionIDs(newPartInfo.Definitions); err != nil {
 		return errors.Trace(err)
