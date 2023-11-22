@@ -31,7 +31,6 @@ import (
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -90,20 +89,12 @@ func (local *local) SplitAndScatterRegionByRanges(
 	ctx context.Context,
 	ranges []Range,
 	needSplit bool,
-<<<<<<< HEAD
-	regionSplitSize int64,
 ) error {
-=======
-) (err error) {
->>>>>>> f15ba117bc2 (pkg/lightning : remove get_regions call in physical backend (#46202))
 	if len(ranges) == 0 {
 		return nil
 	}
 
-	db, err := local.g.GetDB()
-	if err != nil {
-		return errors.Trace(err)
-	}
+	var err error
 
 	minKey := codec.EncodeBytes([]byte{}, ranges[0].start)
 	maxKey := codec.EncodeBytes([]byte{}, ranges[len(ranges)-1].end)
@@ -172,19 +163,6 @@ func (local *local) SplitAndScatterRegionByRanges(
 			return nil
 		}
 
-<<<<<<< HEAD
-		var tableRegionStats map[uint64]int64
-		if tableInfo != nil {
-			tableRegionStats, err = fetchTableRegionSizeStats(ctx, db, tableInfo.ID)
-			if err != nil {
-				log.FromContext(ctx).Warn("fetch table region size statistics failed",
-					zap.String("table", tableInfo.Name), zap.Error(err))
-				tableRegionStats, err = make(map[uint64]int64), nil
-			}
-		}
-
-=======
->>>>>>> f15ba117bc2 (pkg/lightning : remove get_regions call in physical backend (#46202))
 		regionMap := make(map[uint64]*split.RegionInfo)
 		for _, region := range regions {
 			regionMap[region.Region.GetId()] = region

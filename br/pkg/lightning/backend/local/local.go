@@ -1333,7 +1333,6 @@ func (local *local) writeAndIngestByRange(
 	ctx, cancel := context.WithCancel(ctxt)
 	defer cancel()
 
-<<<<<<< HEAD
 WriteAndIngest:
 	for retry := 0; retry < maxRetryTimes; {
 		if retry != 0 {
@@ -1377,11 +1376,6 @@ WriteAndIngest:
 					logutil.Key("endKey", end), log.ShortError(err), zap.Int("retry", retry))
 				continue WriteAndIngest
 			}
-=======
-		err = local.SplitAndScatterRegionInBatches(ctx, initialSplitRanges, needSplit, maxBatchSplitRanges)
-		if err == nil || common.IsContextCanceledError(err) {
-			break
->>>>>>> f15ba117bc2 (pkg/lightning : remove get_regions call in physical backend (#46202))
 		}
 
 		return err
@@ -1678,7 +1672,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 			needSplit = true
 		})
 		for i := 0; i < maxRetryTimes; i++ {
-			err = local.SplitAndScatterRegionInBatches(ctx, unfinishedRanges, lf.tableInfo, needSplit, regionSplitSize, maxBatchSplitRanges)
+			err = local.SplitAndScatterRegionInBatches(ctx, unfinishedRanges, needSplit, maxBatchSplitRanges)
 			if err == nil || common.IsContextCanceledError(err) {
 				break
 			}
