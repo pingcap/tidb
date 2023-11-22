@@ -458,7 +458,7 @@ func pdResponseHandler(resp *http.Response, res interface{}) error {
 		return err
 	}
 	if resp.StatusCode == http.StatusOK {
-		if res != nil {
+		if res != nil && bodyBytes != nil {
 			return json.Unmarshal(bodyBytes, res)
 		}
 		return nil
