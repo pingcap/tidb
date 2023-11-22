@@ -1775,11 +1775,11 @@ func (local *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) err
 type mockGRPCErr struct {
 }
 
-func (m *mockGRPCErr) GRPCStatus() *status.Status {
+func (*mockGRPCErr) GRPCStatus() *status.Status {
 	return status.New(codes.Unknown, "mock generate timestamp error")
 }
 
-func (m *mockGRPCErr) Error() string {
+func (*mockGRPCErr) Error() string {
 	return "mock generate timestamp error"
 }
 
