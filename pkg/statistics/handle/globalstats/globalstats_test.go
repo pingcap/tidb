@@ -1240,3 +1240,37 @@ func TestGlobalIndexStatistics(t *testing.T) {
 				"└─IndexRangeScan_11 4.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
 	}
 }
+
+func TestIssues24349(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	defer testKit.MustExec("set @@tidb_analyze_version=1")
+	defer testKit.MustExec("set @@tidb_partition_prune_mode='static'")
+	testIssues24349(testKit)
+}
+
+func TestIssues24349WithConcurrency(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	testKit.MustExec("set global @@tidb_merge_partition_stats_concurrency=2")
+	defer testKit.MustExec("set @@tidb_analyze_version=1")
+	defer testKit.MustExec("set @@tidb_partition_prune_mode='static'")
+	testIssues24349(testKit)
+}
+
+func testIssues24349(testKit *testkit.TestKit) {
+	testKit.MustExec("create table t (a int, b int) partition by hash(a) partitions 3")
+	testKit.MustExec("insert into t values (0, 3), (0, 3), (0, 3), (0, 2), (1, 1), (1, 2), (1, 2), (1, 2), (1, 3), (1, 4), (2, 1), (2, 1)")
+	testKit.MustExec("analyze table t with 1 topn, 3 buckets")
+	testKit.MustQuery("show stats_buckets where partition_name='global'").Check(testkit.Rows(
+		"test t global a 0 0 2 2 0 2 0",
+		"test t global b 0 0 3 1 1 2 0",
+		"test t global b 0 1 10 1 4 4 0",
+	))
+}
