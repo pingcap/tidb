@@ -272,6 +272,10 @@ func Redact(field zap.Field) zap.Field {
 	return field
 }
 
+func StringifyRangeOf(start, end []byte) StringifyRange {
+	return StringifyRange{StartKey: start, EndKey: end}
+}
+
 // StringifyKeys wraps the key range into a stringer.
 type StringifyKeys []kv.KeyRange
 

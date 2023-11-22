@@ -11,10 +11,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	preparesnap "github.com/pingcap/tidb/br/pkg/backup/prepare_snap"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/keepalive"
@@ -45,6 +47,11 @@ func (cx *AdaptEnvForSnapshotBackupContext) cleanUpWithErr(f func(ctx context.Co
 	ctx, cancel := context.WithTimeout(context.Background(), cx.cfg.TTL)
 	defer cancel()
 	return f(ctx)
+}
+
+func (cx *AdaptEnvForSnapshotBackupContext) run(f func() error) {
+	cx.rdGrp.Add(1)
+	cx.runGrp.Go(f)
 }
 
 type AdaptEnvForSnapshotBackupContext struct {
@@ -97,17 +104,42 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 		rdGrp:   sync.WaitGroup{},
 		runGrp:  eg,
 	}
-	cx.rdGrp.Add(3)
 
-	eg.Go(func() error { return pauseGCKeeper(cx) })
-	eg.Go(func() error { return pauseSchedulerKeeper(cx) })
-	eg.Go(func() error { return pauseImporting(cx) })
+	cx.run(func() error { return pauseGCKeeper(cx) })
+	cx.run(func() error { return pauseSchedulerKeeper(cx) })
+	cx.run(func() error { return pauseImporting(cx) })
+	cx.run(func() error { return pauseAdminAndWaitApply(cx) })
 	go func() {
 		cx.rdGrp.Wait()
 		hintAllReady()
 	}()
 
 	return eg.Wait()
+}
+
+func pauseAdminAndWaitApply(cx *AdaptEnvForSnapshotBackupContext) error {
+	env := preparesnap.CliEnv{
+		Cache: tikv.NewRegionCache(cx.pdMgr.GetPDClient()),
+		Mgr:   cx.kvMgr,
+	}
+	begin := time.Now()
+	prep := preparesnap.New(env)
+
+	defer cx.cleanUpWith(func(ctx context.Context) {
+		if err := prep.Finalize(ctx); err != nil {
+			logutil.CL(ctx).Warn("failed to finalize the prepare stream", logutil.ShortError(err))
+		}
+	})
+
+	// We must use our own context here, or once we are cleaning up the client will be invalid.
+	myCtx := logutil.ContextWithField(context.Background(), zap.String("category", "pause_admin_and_wait_apply"))
+	if err := prep.DriveLoopAndWaitPrepare(myCtx); err != nil {
+		return err
+	}
+
+	cx.ReadyL("pause_admin_and_wait_apply", zap.Stringer("take", time.Since(begin)))
+	<-cx.Done()
+	return nil
 }
 
 func pauseImporting(cx *AdaptEnvForSnapshotBackupContext) error {
