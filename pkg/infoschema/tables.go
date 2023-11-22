@@ -211,6 +211,8 @@ const (
 	TableCheckConstraints = "CHECK_CONSTRAINTS"
 	// TableTiDBCheckConstraints is the list of CHECK constraints, with non-standard TiDB extensions.
 	TableTiDBCheckConstraints = "TIDB_CHECK_CONSTRAINTS"
+	// TableKeywords is the list of keywords.
+	TableKeywords = "KEYWORDS"
 )
 
 const (
@@ -321,6 +323,7 @@ var tableIDMap = map[string]int64{
 	TableRunawayWatches:                  autoid.InformationSchemaDBID + 89,
 	TableCheckConstraints:                autoid.InformationSchemaDBID + 90,
 	TableTiDBCheckConstraints:            autoid.InformationSchemaDBID + 91,
+	TableKeywords:                        autoid.InformationSchemaDBID + 92,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -1651,6 +1654,11 @@ var tableTiDBCheckConstraintsCols = []columnInfo{
 	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
 }
 
+var tableKeywords = []columnInfo{
+	{name: "WORD", tp: mysql.TypeVarchar, size: 128},
+	{name: "RESERVED", tp: mysql.TypeLong, size: 11},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //   - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -2190,6 +2198,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableRunawayWatches:                     tableRunawayWatchListCols,
 	TableCheckConstraints:                   tableCheckConstraintsCols,
 	TableTiDBCheckConstraints:               tableTiDBCheckConstraintsCols,
+	TableKeywords:                           tableKeywords,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
