@@ -567,6 +567,8 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 		}
 		chk.SwapColumns(result.chk)
 		result.chk.Reset()
+
+		// So that we can reuse the chunk
 		result.giveBackCh <- result.chk
 		if chk.NumRows() > 0 {
 			e.IsChildReturnEmpty = false

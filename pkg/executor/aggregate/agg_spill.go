@@ -218,7 +218,7 @@ func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
 			if len(a.e.partialWorkers) > 0 {
 				a.doActionForParallelHashAgg(t)
 			} else {
-				logutil.BgLogger().Error("0 length of partialWorkers0 in parallel hash aggregation is illegal")
+				logutil.BgLogger().Error("0 length of partialWorkers in parallel hash aggregation is illegal")
 			}
 		} else {
 			a.triggerFallBackAction(t)
@@ -252,10 +252,9 @@ func (a *AggSpillDiskAction) doActionForParallelHashAgg(t *memory.Tracker) {
 		a.isLogPrinted = true
 	}
 
-	runningPartialWorkerNum := a.spillHelper.runningPartialWorkerNum
 	a.spillHelper.setIsSpillingNoLock()
 	a.e.partialWorkers[0].spillHelper.triggerSpillWithNoLock()
-	go a.doActionForParallelHashAggImpl(runningPartialWorkerNum)
+	go a.doActionForParallelHashAggImpl(a.spillHelper.runningPartialWorkerNum)
 }
 
 func (a *AggSpillDiskAction) doActionForParallelHashAggImpl(runningPartialWorkerNum int) {
