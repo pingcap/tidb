@@ -861,7 +861,7 @@ func TestIndexMergeUpgradeFrom400To540Disable(t *testing.T) {
 	indexMergeUpgradeFrom400To540Helper(t, false)
 }
 
-func indexMergeUpgradeFrom400To540(t *testing.T, enable bool) {
+func testIndexMergeUpgradeFrom400To540(t *testing.T, enable bool) {
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
