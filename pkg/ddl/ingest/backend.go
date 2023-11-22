@@ -229,7 +229,6 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 		zap.Stringer("engineUUID", ei.uuid),
 	)
 
-	ei.openedEngine = nil
 	ei.closedEngine = backend.NewClosedEngine(bc.backend, logger, ei.uuid, 0)
 
 	regionSplitSize := int64(lightning.SplitRegionSize) * int64(lightning.MaxSplitRegionSizeRatio)
@@ -248,6 +247,7 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 			logutil.Logger(ei.ctx).Error(LitErrCleanEngineErr, zap.Error(err1),
 				zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 		}
+		ei.openedEngine = nil
 		ei.closedEngine = nil
 		return err
 	}
