@@ -854,7 +854,7 @@ func TestIndexMergeUpgradeFrom300To540(t *testing.T) {
 // We set tidb_enable_index_merge as on.
 // And after upgrade to 5.x, tidb_enable_index_merge should remains to be on.
 func TestIndexMergeUpgradeFrom400To540Enable(t *testing.T) {
-	indexMergeUpgradeFrom400To540Helper(t, true)
+	testIndexMergeUpgradeFrom400To540(t, true)
 }
 
 func TestIndexMergeUpgradeFrom400To540Disable(t *testing.T) {
