@@ -88,7 +88,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to open parser.y: %s", err)
 	}
-	keywordsFile, err := os.OpenFile("keywords.go", os.O_CREATE|os.O_WRONLY, 0644)
+	keywordsFile, err := os.OpenFile("keywords.go", os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		log.Fatalf("Failed to create keywords.go: %s", err)
 	}
