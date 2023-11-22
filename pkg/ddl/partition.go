@@ -734,11 +734,7 @@ func getPartitionIntervalFromTable(ctx sessionctx.Context, tbInfo *model.TableIn
 		// 2022-01-31, 2022-02-28, 2022-03-31 etc. so we just assume that if there is a
 		// diff >= 28 days, we will try with Month and not retry with something else...
 		i := val / int64(endIdx-startIdx)
-		if i%(24*60*60) == 0 { // unit is day
-			// If unit is day, then we no need to display the time part.
-			interval.IntervalExpr.Expr = ast.NewValueExpr(i/(24*60*60), "", "")
-			interval.IntervalExpr.TimeUnit = ast.TimeUnitDay
-		} else if i < (28 * 24 * 60 * 60) {
+		if i < (28 * 24 * 60 * 60) {
 			// Since it is not stored or displayed, non need to try Minute..Week!
 			interval.IntervalExpr.Expr = ast.NewValueExpr(i, "", "")
 			interval.IntervalExpr.TimeUnit = ast.TimeUnitSecond
@@ -1146,22 +1142,9 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 			}
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(errStr + ")")
 		}
-		var valStr string
-		if currVal.Kind() == types.KindMysqlTime {
-			t := currVal.GetMysqlTime()
-			if t.Hour() == 0 && t.Minute() == 0 && t.Second() == 0 {
-				switch timeUnit {
-				case ast.TimeUnitDay, ast.TimeUnitWeek, ast.TimeUnitMonth, ast.TimeUnitQuarter, ast.TimeUnitYear:
-					// no need to display time part. such as 2023-01-01, instead of 2023-01-01 00:00:00.
-					t.SetType(mysql.TypeDate)
-				}
-			}
-			valStr = t.String()
-		} else {
-			valStr, err = currVal.ToString()
-			if err != nil {
-				return err
-			}
+		valStr, err := currVal.ToString()
+		if err != nil {
+			return err
 		}
 		if len(valStr) == 0 || valStr[0:1] == "'" {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning: Error when generating partition values")
