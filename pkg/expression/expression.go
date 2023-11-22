@@ -852,7 +852,7 @@ func evaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}
 	case *Constant:
 		if x.DeferredExpr != nil {
-			return FoldConstant(x)
+			return FoldConstant(ctx, x)
 		}
 	}
 	return expr
@@ -917,7 +917,7 @@ func evaluateExprWithNullInNullRejectCheck(ctx sessionctx.Context, schema *Schem
 		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}, true
 	case *Constant:
 		if x.DeferredExpr != nil {
-			return FoldConstant(x), false
+			return FoldConstant(ctx, x), false
 		}
 	}
 	return expr, false
@@ -1521,7 +1521,7 @@ func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression, wrapF
 	if keepNull {
 		sf.FuncName = model.NewCIStr(ast.IsTruthWithNull)
 	}
-	return FoldConstant(sf), nil
+	return FoldConstant(ctx, sf), nil
 }
 
 // PropagateType propagates the type information to the `expr`.
