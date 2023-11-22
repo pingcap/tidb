@@ -1691,7 +1691,7 @@ func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
-				eval, err := expr.Eval(chunk.Row{})
+				eval, err := expr.Eval(ctx, chunk.Row{})
 				if err != nil {
 					return nil, errors.Trace(err)
 				}

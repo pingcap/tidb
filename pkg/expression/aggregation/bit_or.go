@@ -37,7 +37,7 @@ func (*bitOrFunction) ResetContext(_ *stmtctx.StatementContext, evalCtx *AggEval
 // Update implements Aggregation interface.
 func (bf *bitOrFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) error {
 	a := bf.Args[0]
-	value, err := a.Eval(row)
+	value, err := a.EvalWithInnerCtx(row)
 	if err != nil {
 		return err
 	}

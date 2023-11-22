@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"go.uber.org/zap"
@@ -72,7 +73,7 @@ func toSQLIndex(isIndex bool) int {
 // └────────────────────────┘        └───────────────────────┘
 type AsyncMergePartitionStats2GlobalStats struct {
 	is                  infoschema.InfoSchema
-	statsHandle         util.StatsHandle
+	statsHandle         statstypes.StatsHandle
 	globalStats         *GlobalStats
 	cmsketch            chan mergeItem[*statistics.CMSketch]
 	fmsketch            chan mergeItem[*statistics.FMSketch]
@@ -96,7 +97,7 @@ type AsyncMergePartitionStats2GlobalStats struct {
 
 // NewAsyncMergePartitionStats2GlobalStats creates a new AsyncMergePartitionStats2GlobalStats.
 func NewAsyncMergePartitionStats2GlobalStats(
-	statsHandle util.StatsHandle,
+	statsHandle statstypes.StatsHandle,
 	globalTableInfo *model.TableInfo,
 	histIDs []int64,
 	is infoschema.InfoSchema) (*AsyncMergePartitionStats2GlobalStats, error) {

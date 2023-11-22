@@ -354,14 +354,14 @@ func TestHashGroupKey(t *testing.T) {
 		var err error
 		err = EvalExpr(ctx, colExpr, colExpr.GetType().EvalType(), input, colBuf)
 		require.NoError(t, err)
-		bufs, err = codec.HashGroupKey(sc, 1024, colBuf, bufs, ft)
+		bufs, err = codec.HashGroupKey(sc.TimeZone(), 1024, colBuf, bufs, ft)
 		require.NoError(t, err)
 
 		var buf []byte
 		for j := 0; j < input.NumRows(); j++ {
-			d, err := colExpr.Eval(input.GetRow(j))
+			d, err := colExpr.Eval(ctx, input.GetRow(j))
 			require.NoError(t, err)
-			buf, err = codec.EncodeValue(sc, buf[:0], d)
+			buf, err = codec.EncodeValue(sc.TimeZone(), buf[:0], d)
 			require.NoError(t, err)
 			require.Equal(t, string(bufs[j]), string(buf))
 		}
@@ -521,9 +521,14 @@ func (m *MockExpr) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, resul
 	return nil
 }
 
-func (m *MockExpr) String() string                          { return "" }
-func (m *MockExpr) MarshalJSON() ([]byte, error)            { return nil, nil }
-func (m *MockExpr) Eval(row chunk.Row) (types.Datum, error) { return types.NewDatum(m.i), m.err }
+func (m *MockExpr) String() string               { return "" }
+func (m *MockExpr) MarshalJSON() ([]byte, error) { return nil, nil }
+func (m *MockExpr) Eval(ctx sessionctx.Context, row chunk.Row) (types.Datum, error) {
+	return types.NewDatum(m.i), m.err
+}
+func (m *MockExpr) EvalWithInnerCtx(row chunk.Row) (types.Datum, error) {
+	return types.NewDatum(m.i), m.err
+}
 func (m *MockExpr) EvalInt(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error) {
 	if x, ok := m.i.(int64); ok {
 		return x, false, m.err

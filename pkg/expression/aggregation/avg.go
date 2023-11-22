@@ -29,7 +29,7 @@ type avgFunction struct {
 
 func (af *avgFunction) updateAvg(ctx types.Context, evalCtx *AggEvaluateContext, row chunk.Row) error {
 	a := af.Args[1]
-	value, err := a.Eval(row)
+	value, err := a.EvalWithInnerCtx(row)
 	if err != nil {
 		return err
 	}
@@ -40,7 +40,7 @@ func (af *avgFunction) updateAvg(ctx types.Context, evalCtx *AggEvaluateContext,
 	if err != nil {
 		return err
 	}
-	count, err := af.Args[0].Eval(row)
+	count, err := af.Args[0].EvalWithInnerCtx(row)
 	if err != nil {
 		return err
 	}

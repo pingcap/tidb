@@ -600,7 +600,7 @@ func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
 			allConstant = allConstant && ok
 		}
 		if allConstant {
-			val, err := x.Eval(chunk.Row{})
+			val, err := x.EvalWithInnerCtx(chunk.Row{})
 			if err != nil {
 				return nil, err
 			}
@@ -1405,7 +1405,7 @@ func GetUint64FromConstant(expr Expression) (uint64, bool, bool) {
 		dt = con.ParamMarker.GetUserVar()
 	} else if con.DeferredExpr != nil {
 		var err error
-		dt, err = con.DeferredExpr.Eval(chunk.Row{})
+		dt, err = con.DeferredExpr.EvalWithInnerCtx(chunk.Row{})
 		if err != nil {
 			logutil.BgLogger().Warn("eval deferred expr failed", zap.Error(err))
 			return 0, false, false
@@ -1503,7 +1503,7 @@ func RemoveMutableConst(ctx sessionctx.Context, exprs []Expression) (err error) 
 			v.ParamMarker = nil
 			if v.DeferredExpr != nil { // evaluate and update v.Value to convert v to a complete immutable constant.
 				// TODO: remove or hide DefferedExpr since it's too dangerous (hard to be consistent with v.Value all the time).
-				v.Value, err = v.DeferredExpr.Eval(chunk.Row{})
+				v.Value, err = v.DeferredExpr.Eval(ctx, chunk.Row{})
 				if err != nil {
 					return err
 				}

@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/failpoint"
 	_ "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/telemetry"
@@ -562,7 +561,7 @@ func TestAddIndexAccelerationAndMDL(t *testing.T) {
 	require.Equal(t, int64(0), usage.DDLUsageCounter.AddIndexIngestUsed)
 	require.NoError(t, err)
 
-	allow := ddl.IsEnableFastReorg()
+	allow := variable.EnableFastReorg.Load()
 	require.Equal(t, true, allow)
 	tk.MustExec("set global tidb_enable_metadata_lock = 0")
 	tk.MustExec("use test")
@@ -577,7 +576,7 @@ func TestAddIndexAccelerationAndMDL(t *testing.T) {
 
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = on")
 	tk.MustExec("set global tidb_enable_metadata_lock = 1")
-	allow = ddl.IsEnableFastReorg()
+	allow = variable.EnableFastReorg.Load()
 	require.Equal(t, true, allow)
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)

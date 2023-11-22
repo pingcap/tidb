@@ -110,14 +110,6 @@ func (p *Pool) release(b []byte) {
 	}
 }
 
-// PreAllocPoolSize pre-allocates given memory for the pool.
-func (p *Pool) PreAllocPoolSize(bytes int) *Pool {
-	for i := 0; i < bytes/p.blockSize; i++ {
-		p.blockCache <- p.allocator.Alloc(p.blockSize)
-	}
-	return p
-}
-
 // Destroy frees all buffers.
 func (p *Pool) Destroy() {
 	close(p.blockCache)
@@ -160,12 +152,14 @@ func WithMemoryLimit(limit uint64) BufferOption {
 func (p *Pool) NewBuffer(opts ...BufferOption) *Buffer {
 	b := &Buffer{
 		pool:          p,
-		blocks:        make([][]byte, 0, 128),
 		curBlockIdx:   -1,
 		blockCntLimit: -1,
 	}
 	for _, opt := range opts {
 		opt(b)
+	}
+	if b.blocks == nil {
+		b.blocks = make([][]byte, 0, 128)
 	}
 	return b
 }

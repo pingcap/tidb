@@ -31,7 +31,7 @@ func (cf *countFunction) Update(evalCtx *AggEvaluateContext, _ *stmtctx.Statemen
 		datumBuf = make([]types.Datum, 0, len(cf.Args))
 	}
 	for _, a := range cf.Args {
-		value, err := a.Eval(row)
+		value, err := a.EvalWithInnerCtx(row)
 		if err != nil {
 			return err
 		}

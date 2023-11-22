@@ -406,7 +406,7 @@ func (e *selectionExec) Counts() []int64 {
 // evalBool evaluates expression to a boolean value.
 func evalBool(exprs []expression.Expression, row []types.Datum, ctx *stmtctx.StatementContext) (bool, error) {
 	for _, expr := range exprs {
-		data, err := expr.Eval(chunk.MutRowFromDatums(row).ToRow())
+		data, err := expr.EvalWithInnerCtx(chunk.MutRowFromDatums(row).ToRow())
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -542,7 +542,7 @@ func (e *topNExec) evalTopN(value [][]byte) error {
 		return errors.Trace(err)
 	}
 	for i, expr := range e.orderByExprs {
-		newRow.key[i], err = expr.Eval(chunk.MutRowFromDatums(e.row).ToRow())
+		newRow.key[i], err = expr.EvalWithInnerCtx(chunk.MutRowFromDatums(e.row).ToRow())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -638,7 +638,7 @@ func getRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle int64, 
 			} else {
 				handleDatum = types.NewIntDatum(handle)
 			}
-			handleData, err1 := codec.EncodeValue(nil, nil, handleDatum)
+			handleData, err1 := codec.EncodeValue(time.UTC, nil, handleDatum)
 			if err1 != nil {
 				return nil, errors.Trace(err1)
 			}
