@@ -225,29 +225,18 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), cnt)
 
-<<<<<<< HEAD
-	subtasks, err := sm.GetSubtasksByStepAndState(2, proto.StepInit, proto.TaskStateSucceed)
+	subtasks, err := sm.GetSubtasksByStepAndState(ctx, 2, proto.StepInit, proto.TaskStateSucceed)
 	require.NoError(t, err)
 	require.Len(t, subtasks, 0)
 
-	subtasks, err = sm.GetSubtasksByStepExceptStates(2, proto.StepInit, proto.TaskStateSucceed)
+	subtasks, err = sm.GetSubtasksByStepExceptStates(ctx, 2, proto.StepInit, proto.TaskStateSucceed)
 	require.NoError(t, err)
 	require.Len(t, subtasks, 1)
-
-	err = sm.FinishSubtask(2, []byte{})
-	require.NoError(t, err)
-
-	subtasks, err = sm.GetSubtasksByStepAndState(2, proto.StepInit, proto.TaskStateSucceed)
-=======
-	subtasks, err := sm.GetSucceedSubtasksByStep(ctx, 2, proto.StepInit)
-	require.NoError(t, err)
-	require.Len(t, subtasks, 0)
 
 	err = sm.FinishSubtask(ctx, "tidb1", 2, []byte{})
 	require.NoError(t, err)
 
-	subtasks, err = sm.GetSucceedSubtasksByStep(ctx, 2, proto.StepInit)
->>>>>>> 058a9614b22b42e1a93546e1f0e7ee1aae1ceb05
+	subtasks, err = sm.GetSubtasksByStepAndState(ctx, 2, proto.StepInit, proto.TaskStateSucceed)
 	require.NoError(t, err)
 	require.Len(t, subtasks, 1)
 
@@ -287,13 +276,8 @@ func TestSubTaskTable(t *testing.T) {
 	require.Equal(t, subtask2.StartTime, subtask.StartTime)
 	require.Greater(t, subtask2.UpdateTime, subtask.UpdateTime)
 
-<<<<<<< HEAD
 	// test IsSchedulerCanceled
-	canceled, err := sm.IsSchedulerCanceled("for_test999", 4)
-=======
-	// test UpdateFailedSchedulerIDs and IsSchedulerCanceled
 	canceled, err := sm.IsSchedulerCanceled(ctx, "for_test999", 4)
->>>>>>> 058a9614b22b42e1a93546e1f0e7ee1aae1ceb05
 	require.NoError(t, err)
 	require.True(t, canceled)
 	canceled, err = sm.IsSchedulerCanceled(ctx, "for_test1", 4)
@@ -303,49 +287,33 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, canceled)
 
-<<<<<<< HEAD
 	// test UpdateSubtasksSchedulerIDs
 	// 1. update one subtask
-	require.NoError(t, sm.AddNewSubTask(5, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, false))
-	subtasks, err = sm.GetSubtasksByStepAndState(5, proto.StepInit, proto.TaskStatePending)
+	require.NoError(t, sm.AddNewSubTask(ctx, 5, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, false))
+	subtasks, err = sm.GetSubtasksByStepAndState(ctx, 5, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
 	subtasks[0].SchedulerID = "tidb2"
-	require.NoError(t, sm.UpdateSubtasksSchedulerIDs(5, subtasks))
-	subtasks, err = sm.GetSubtasksByStepAndState(5, proto.StepInit, proto.TaskStatePending)
+	require.NoError(t, sm.UpdateSubtasksSchedulerIDs(ctx, 5, subtasks))
+	subtasks, err = sm.GetSubtasksByStepAndState(ctx, 5, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
 	require.Equal(t, "tidb2", subtasks[0].SchedulerID)
 	// 2. update 2 subtasks
-	require.NoError(t, sm.AddNewSubTask(5, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, false))
-	subtasks, err = sm.GetSubtasksByStepAndState(5, proto.StepInit, proto.TaskStatePending)
-=======
-	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, "for_test1", 4, proto.TaskStateRunning, nil))
-	require.NoError(t, sm.UpdateFailedSchedulerIDs(ctx, 4, map[string]string{
-		"for_test1": "for_test999",
-		"for_test2": "for_test999",
-	}))
-
-	canceled, err = sm.IsSchedulerCanceled(ctx, "for_test1", 4)
-	require.NoError(t, err)
-	require.True(t, canceled)
-	canceled, err = sm.IsSchedulerCanceled(ctx, "for_test2", 4)
-	require.NoError(t, err)
-	require.True(t, canceled)
-	canceled, err = sm.IsSchedulerCanceled(ctx, "for_test999", 4)
->>>>>>> 058a9614b22b42e1a93546e1f0e7ee1aae1ceb05
+	require.NoError(t, sm.AddNewSubTask(ctx, 5, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, false))
+	subtasks, err = sm.GetSubtasksByStepAndState(ctx, 5, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
 	subtasks[0].SchedulerID = "tidb3"
-	require.NoError(t, sm.UpdateSubtasksSchedulerIDs(5, subtasks))
-	subtasks, err = sm.GetSubtasksByStepAndState(5, proto.StepInit, proto.TaskStatePending)
+	require.NoError(t, sm.UpdateSubtasksSchedulerIDs(ctx, 5, subtasks))
+	subtasks, err = sm.GetSubtasksByStepAndState(ctx, 5, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
 	require.Equal(t, "tidb3", subtasks[0].SchedulerID)
 	require.Equal(t, "tidb1", subtasks[1].SchedulerID)
-	require.NoError(t, sm.UpdateSubtaskStateAndError(subtasks[0].ID, proto.TaskStateRunning, nil))
+	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, "tidb1", subtasks[0].ID, proto.TaskStateRunning, nil))
 	subtasks[0].SchedulerID = "tidb2"
-	require.NoError(t, sm.UpdateSubtasksSchedulerIDs(5, subtasks))
-	subtasks, err = sm.GetSubtasksByStepAndState(5, proto.StepInit, proto.TaskStatePending)
+	require.NoError(t, sm.UpdateSubtasksSchedulerIDs(ctx, 5, subtasks))
+	subtasks, err = sm.GetSubtasksByStepAndState(ctx, 5, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
 	require.Equal(t, "tidb1", subtasks[0].SchedulerID)
-	subtasks, err = sm.GetSubtasksByStepAndState(5, proto.StepInit, proto.TaskStateRunning)
+	subtasks, err = sm.GetSubtasksByStepAndState(ctx, 5, proto.StepInit, proto.TaskStateRunning)
 	require.NoError(t, err)
 	require.Equal(t, "tidb3", subtasks[0].SchedulerID)
 }
