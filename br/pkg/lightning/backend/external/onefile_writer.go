@@ -17,12 +17,10 @@ package external
 import (
 	"context"
 	"encoding/binary"
-	"encoding/hex"
 	"path/filepath"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
@@ -37,12 +35,8 @@ type OneFileWriter struct {
 	kvBuffer *preAllocKVBuf
 
 	// Statistic information per writer.
-	multiFileStat MultipleFilesStat
-	minKey        tidbkv.Key
-	maxKey        tidbkv.Key
-	memSizeLimit  uint64
-	totalSize     uint64
-	rc            *rangePropertiesCollector
+	totalSize uint64
+	rc        *rangePropertiesCollector
 
 	// file information.
 	writerID       string
@@ -96,17 +90,13 @@ func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) err
 	_, buf, _, allocated := w.kvBuffer.Alloc(length)
 	if !allocated {
 		w.kvBuffer.reset()
+		logutil.BgLogger().Info("ywq test here...")
 		_, buf, _, allocated = w.kvBuffer.Alloc(length)
-		var newKey tidbkv.Key
-		newKey = idxKey
-		if len(w.maxKey) == 0 || newKey.Cmp(w.maxKey) > 0 {
-			w.maxKey = newKey.Clone()
-		}
 		// we now don't support KV larger than blockSize
 		if !allocated {
 			return errors.Errorf("failed to allocate kv buffer: %d", length)
 		}
-		// 2. write statistics if data is enough.
+		// 2. write statistics if one kvBuffer is used.
 		w.kvStore.Close()
 		encodedStat := w.rc.encode()
 		_, err := w.statWriter.Write(ctx, encodedStat)
@@ -120,9 +110,6 @@ func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) err
 	binary.BigEndian.AppendUint64(buf[lengthBytes+keyLen:lengthBytes+keyLen], uint64(len(idxVal)))
 	copy(buf[lengthBytes*2+keyLen:], idxVal)
 	w.kvStore.addEncodedData(buf[:length])
-	if w.minKey == nil {
-		w.minKey = idxKey
-	}
 	w.totalSize = uint64(keyLen + len(idxVal))
 	return nil
 }
@@ -137,18 +124,8 @@ func (w *OneFileWriter) Close(ctx context.Context) error {
 		return err
 	}
 	w.logger.Info("close one file writer",
-		zap.String("writerID", w.writerID),
-		zap.String("minKey", hex.EncodeToString(w.minKey)),
-		zap.String("maxKey", hex.EncodeToString(w.maxKey)))
+		zap.String("writerID", w.writerID))
 
-	w.onClose(&WriterSummary{
-		WriterID:           w.writerID,
-		Seq:                0,
-		Min:                w.minKey,
-		Max:                w.maxKey,
-		TotalSize:          w.totalSize,
-		MultipleFilesStats: []MultipleFilesStat{w.multiFileStat},
-	})
 	w.totalSize = 0
 	w.closed = true
 	return nil
@@ -163,15 +140,7 @@ func (w *OneFileWriter) closeImpl(ctx context.Context) (err error) {
 		return err
 	}
 	w.rc.reset()
-
-	// 2. build multiFileStat.
-	w.multiFileStat.Filenames = append(w.multiFileStat.Filenames,
-		[2]string{w.dataFile, w.statFile},
-	)
-	w.multiFileStat.build(
-		[]tidbkv.Key{w.minKey},
-		[]tidbkv.Key{w.maxKey})
-	// 3. close data writer.
+	// 2. close data writer.
 	err1 := w.dataWriter.Close(ctx)
 	if err1 != nil {
 		w.logger.Error("Close data writer failed", zap.Error(err))

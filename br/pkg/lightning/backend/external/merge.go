@@ -8,6 +8,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
@@ -183,10 +184,14 @@ func MergeOverlappingFilesV2(
 	if err != nil {
 		return nil
 	}
+	var minKey, maxKey tidbkv.Key
 
 	// currently use same goroutine to do read and write. The main advantage is
 	// there's no KV copy and iter can reuse the buffer.
 	for iter.Next() {
+		if len(minKey) == 0 {
+			minKey = tidbkv.Key(iter.Key()).Clone()
+		}
 		err = writer.WriteRow(ctx, iter.Key(), iter.Value())
 		if err != nil {
 			return err
@@ -196,5 +201,24 @@ func MergeOverlappingFilesV2(
 	if err != nil {
 		return err
 	}
-	return writer.Close(ctx)
+	maxKey = tidbkv.Key(iter.Key()).Clone()
+	err = writer.Close(ctx)
+	if err != nil {
+		return err
+	}
+	var stat MultipleFilesStat
+	stat.Filenames = append(stat.Filenames,
+		[2]string{writer.dataFile, writer.statFile})
+	stat.build([]tidbkv.Key{minKey}, []tidbkv.Key{maxKey})
+	if onClose != nil {
+		onClose(&WriterSummary{
+			WriterID:           writer.writerID,
+			Seq:                0,
+			Min:                minKey,
+			Max:                maxKey,
+			TotalSize:          writer.totalSize,
+			MultipleFilesStats: []MultipleFilesStat{stat},
+		})
+	}
+	return nil
 }

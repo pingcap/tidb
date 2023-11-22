@@ -118,6 +118,7 @@ func NewWriterBuilder() *WriterBuilder {
 // SetMemorySizeLimit sets the memory size limit of the writer. When accumulated
 // data size exceeds this limit, the writer will flush data as a file to external
 // storage.
+// When the writer is OneFileWriter SetMemorySizeLimit sets the preAllocated memory buffer size.
 func (b *WriterBuilder) SetMemorySizeLimit(size uint64) *WriterBuilder {
 	b.memSizeLimit = size
 	return b
@@ -216,7 +217,6 @@ func (b *WriterBuilder) BuildOneFile(
 			propKeysDist: b.propKeysDist,
 		},
 		kvBuffer:       newPreAllocKVBuf(b.memSizeLimit, b.blockSize),
-		memSizeLimit:   b.memSizeLimit,
 		store:          store,
 		filenamePrefix: filenamePrefix,
 		writerID:       writerID,
@@ -224,7 +224,6 @@ func (b *WriterBuilder) BuildOneFile(
 		onClose:        b.onClose,
 		closed:         false,
 	}
-	ret.multiFileStat.Filenames = make([][2]string, 0, 1)
 	return ret
 }
 

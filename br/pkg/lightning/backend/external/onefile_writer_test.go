@@ -17,9 +17,11 @@ package external
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"path"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -28,18 +30,21 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
 )
 
-func TestOnefileWriter(t *testing.T) {
+func TestOnefileWriterBasic(t *testing.T) {
 	seed := time.Now().Unix()
 	rand.Seed(uint64(seed))
 	t.Logf("seed: %d", seed)
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
+
+	// 1. write into one file.
+	// 2. read kv file and check result.
+	// 3. read stat file and check result.
 
 	writer := NewWriterBuilder().
 		SetPropSizeDistance(100).
@@ -97,11 +102,87 @@ func TestOnefileWriter(t *testing.T) {
 	}
 	require.Equal(t, uint64(kvCnt), keyCnt)
 	require.NoError(t, statReader.Close())
+}
 
-	// todo check minKey and maxKey
+func TestOnefileWriterStat(t *testing.T) {
+	distanceCntArr := []uint64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+	kvCntArr := []int{10, 100, 200, 1000} // won't large than DefaultMemSizeLimit.
+	// 1. write into one file.
+	// 2. read kv file and check result.
+	// 3. read stat file and check result.
+	for _, kvCnt := range kvCntArr {
+		for _, distance := range distanceCntArr {
+			checkOneFileWriterStatWithDistance(t, kvCnt, distance, DefaultMemSizeLimit, "test"+strconv.Itoa(int(distance)))
+		}
+	}
+}
+
+func checkOneFileWriterStatWithDistance(t *testing.T, kvCnt int, keysDistance uint64, memSizeLimit uint64, prefix string) {
+	ctx := context.Background()
+	memStore := storage.NewMemStorage()
+	writer := NewWriterBuilder().
+		SetPropSizeDistance(100).
+		SetPropKeysDistance(keysDistance).
+		BuildOneFile(memStore, "/"+prefix, "0")
+
+	err := writer.Init(ctx, 5*1024*1024)
+	require.NoError(t, err)
+	kvs := make([]common.KvPair, 0, kvCnt)
+	for i := 0; i < kvCnt; i++ {
+		kvs = append(kvs, common.KvPair{
+			Key: []byte(fmt.Sprintf("key%02d", i)),
+			Val: []byte("56789"),
+		})
+	}
+	for _, item := range kvs {
+		err := writer.WriteRow(ctx, item.Key, item.Val)
+		require.NoError(t, err)
+	}
+	err = writer.Close(ctx)
+	require.NoError(t, err)
+
+	bufSize := rand.Intn(100) + 1
+	kvReader, err := newKVReader(ctx, "/"+prefix+"/0/one-file", memStore, 0, bufSize)
+	require.NoError(t, err)
+	for i := 0; i < kvCnt; i++ {
+		key, value, err := kvReader.nextKV()
+		require.NoError(t, err)
+		require.Equal(t, kvs[i].Key, key)
+		require.Equal(t, kvs[i].Val, value)
+	}
+	_, _, err = kvReader.nextKV()
+	require.Equal(t, io.EOF, err)
+	require.NoError(t, kvReader.Close())
+
+	statReader, err := newStatsReader(ctx, memStore, "/"+prefix+"/0_stat/one-file", bufSize)
+	require.NoError(t, err)
+
+	var keyCnt uint64 = 0
+	idx := 0
+	for {
+		p, err := statReader.nextProp()
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+		keyCnt += p.keys
+		require.Equal(t, kvs[idx].Key, p.firstKey)
+		lastIdx := idx + int(keysDistance) - 1
+		if lastIdx >= len(kvs) {
+			lastIdx = len(kvs) - 1
+		}
+		require.Equal(t, kvs[lastIdx].Key, p.lastKey)
+		idx += int(keysDistance)
+	}
+	require.Equal(t, uint64(kvCnt), keyCnt)
+	require.NoError(t, statReader.Close())
 }
 
 func TestMergeOverlappingFilesV2(t *testing.T) {
+	// 1. Write to 5 files.
+	// 2. merge 5 files into one file.
+	// 3. read one file and check result.
+	// 4. check duplicate key.
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
 	writer := NewWriterBuilder().
@@ -185,6 +266,10 @@ func TestMergeOverlappingFilesV2(t *testing.T) {
 }
 
 func TestOnefileWriterManyRows(t *testing.T) {
+	// 1. write into one file with sorted order.
+	// 2. merge one file.
+	// 3. read kv file and check the result.
+	// 4. check the writeSummary.
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
 	writer := NewWriterBuilder().
@@ -195,7 +280,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 	err := writer.Init(ctx, 5*1024*1024)
 	require.NoError(t, err)
 
-	kvCnt := 10000000
+	kvCnt := 100000
 	kvs := make([]common.KvPair, kvCnt)
 	for i := 0; i < kvCnt; i++ {
 		randLen := rand.Intn(10) + 1
@@ -217,9 +302,12 @@ func TestOnefileWriterManyRows(t *testing.T) {
 		require.NoError(t, err)
 	}
 	err = writer.Close(ctx)
-	logutil.BgLogger().Info("ywqt test")
 	require.NoError(t, err)
 
+	var resSummary *WriterSummary
+	onClose := func(summary *WriterSummary) {
+		resSummary = summary
+	}
 	err = MergeOverlappingFilesV2(
 		ctx,
 		[]string{"/test/0/one-file"},
@@ -233,7 +321,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 		8*1024,
 		1*size.MB,
 		2,
-		nil,
+		onClose,
 		true,
 	)
 	require.NoError(t, err)
@@ -250,4 +338,18 @@ func TestOnefileWriterManyRows(t *testing.T) {
 	_, _, err = kvReader.nextKV()
 	require.Equal(t, io.EOF, err)
 	require.NoError(t, kvReader.Close())
+
+	// check writerSummary.
+	expected := MultipleFilesStat{
+		MinKey: kvs[0].Key,
+		MaxKey: kvs[len(kvs)-1].Key,
+		Filenames: [][2]string{
+			{"/test2/mergeID/one-file", "/test2/mergeID_stat/one-file"},
+		},
+		MaxOverlappingNum: 1,
+	}
+	require.EqualValues(t, expected.MinKey, resSummary.Min)
+	require.EqualValues(t, expected.MaxKey, resSummary.Max)
+	require.Equal(t, expected.Filenames, resSummary.MultipleFilesStats[0].Filenames)
+	require.Equal(t, expected.MaxOverlappingNum, resSummary.MultipleFilesStats[0].MaxOverlappingNum)
 }
