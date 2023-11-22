@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/set"
 	"go.uber.org/zap"
 )
 
@@ -49,7 +48,6 @@ type HashAggFinalWorker struct {
 	partialResultMap    aggfuncs.AggPartialResultMapper
 	BInMap              int
 	isFirstInput        bool
-	groupSet            set.StringSetWithMemoryUsage
 	inputCh             chan *aggfuncs.AggPartialResultMapper
 	outputCh            chan *AfFinalResult
 	finalResultHolderCh chan *chunk.Chunk
@@ -335,6 +333,7 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 	w.isSpilledTriggered = w.spillHelper.isSpillTriggered()
 	if w.isSpilledTriggered {
 		// Do not put `w.isSpilledTriggered` and `w.spillHelper.checkError()` judgement in one line.
+		// As when w.isSpilledTriggered == false and error == true, we still want to enter into this if-branch.
 		if w.spillHelper.checkError() {
 			return
 		}

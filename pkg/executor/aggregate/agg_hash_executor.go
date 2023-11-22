@@ -257,16 +257,13 @@ func (e *HashAggExec) initForUnparallelExec() {
 
 func (e *HashAggExec) initSpillHelper(partialConcurrency int) *parallelHashAggSpillHelper {
 	return &parallelHashAggSpillHelper{
-		spilledChunksIO:                           make([][]*chunk.DataInDiskByRows, spilledPartitionNum),
-		spillTriggered:                            0,
-		isSpilling:                                0,
-		isPartialStage:                            partialStageFlag,
-		hasError:                                  0,
-		runningPartialWorkerNum:                   partialConcurrency,
-		partitionNeedRestore:                      spilledPartitionNum - 1,
-		waitForPartialWorkersSyncer:               make(chan struct{}),
-		spillActionAndPartialWorkerSyncer:         make(chan struct{}, partialConcurrency),
-		isSpillActionAndPartialWorkerSyncerClosed: false,
+		spilledChunksIO:      make([][]*chunk.DataInDiskByRows, spilledPartitionNum),
+		spillTriggered:       0,
+		isSpilling:           0,
+		isPartialStage:       partialStageFlag,
+		hasError:             0,
+		syncLock:             sync.RWMutex{},
+		partitionNeedRestore: spilledPartitionNum - 1,
 	}
 }
 

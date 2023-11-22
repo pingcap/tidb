@@ -84,34 +84,81 @@ func (w *HashAggPartialWorker) getChildInput() bool {
 	return true
 }
 
-func (w *HashAggPartialWorker) waitForTheFinishOfSpill(isLeaving bool) {
-	// Notify the action that I'm in waiting status
-	w.spillHelper.lock.Lock()
-	if isLeaving {
-		w.spillHelper.runningPartialWorkerNum--
-		if w.spillHelper.runningPartialWorkerNum == 0 {
-			w.spillHelper.leavePartialStage()
+func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasError *bool, needShuffle *bool, enableIntest bool) bool {
+	w.spillHelper.syncLock.RLock()
+	defer w.spillHelper.syncLock.RUnlock()
+
+	if w.spillHelper.isInSpilling() {
+		// Repeatly release lock so that spill could get write lock when spill is in execution.
+		return true
+	}
+
+	waitStart := time.Now()
+	ok := w.getChildInput()
+	if w.stats != nil {
+		w.stats.WaitTime += int64(time.Since(waitStart))
+	}
+
+	if !ok {
+		return false
+	}
+
+	execStart := time.Now()
+	if err := w.updatePartialResult(ctx, w.chk, len(w.partialResultsMap)); err != nil {
+		*hasError = true
+		w.processError(err)
+		return false
+	}
+	if w.stats != nil {
+		w.stats.ExecTime += int64(time.Since(execStart))
+		w.stats.TaskNum++
+	}
+
+	// The intermData can be promised to be not empty if reaching here,
+	// so we set needShuffle to be true.
+	*needShuffle = true
+
+	if intest.InTest && enableIntest {
+		num := rand.Intn(10000)
+		if num < 7 {
+			panic("Intest panic: partial worker is panicked when running")
+		} else if num < 14 {
+			time.Sleep(1 * time.Second)
+		} else if num < 21 {
+			*hasError = true
+			w.processError(errors.Errorf("Random fail is triggered in partial worker"))
+			return false
+		} else if num < 28 {
+			w.memTracker.Consume(104857600) // Consume 100MiB
 		}
 	}
-	w.spillHelper.lock.Unlock()
-	w.spillHelper.waitForPartialWorkersSyncer <- struct{}{}
 
-	// Wait for the finish of spill
-	<-w.spillHelper.spillActionAndPartialWorkerSyncer
+	if w.spillHelper.checkError() {
+		*hasError = true
+		return false
+	}
+	return true
 }
 
-func (w *HashAggPartialWorker) waitForSpillDoneBeforeWorkerExit() {
-	w.spillHelper.lock.Lock()
-	if w.spillHelper.isInSpillingNoLock() {
-		w.spillHelper.lock.Unlock()
-		w.waitForTheFinishOfSpill(true)
+func (w *HashAggPartialWorker) handleSpillBeforeExist() {
+	w.spillHelper.syncLock.RLock()
+	defer w.spillHelper.syncLock.RUnlock()
+
+	if w.spillHelper.checkError() {
 		return
 	}
-	w.spillHelper.runningPartialWorkerNum--
-	if w.spillHelper.runningPartialWorkerNum == 0 {
-		w.spillHelper.leavePartialStage()
+
+	hasError := false
+	if len(w.groupKey) > 0 {
+		if err := w.spillDataToDisk(); err != nil {
+			w.processError(err)
+			hasError = true
+		}
 	}
-	w.spillHelper.lock.Unlock()
+
+	if !hasError {
+		w.spillHelper.addListInDisks(w.spilledChunksIO)
+	}
 }
 
 func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup, finalConcurrency int) {
@@ -123,24 +170,11 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 			recoveryHashAgg(w.globalOutputCh, r)
 		}
 
-		w.waitForSpillDoneBeforeWorkerExit()
 		w.workerSync.waitForRunningWorkers()
 
 		if !hasError {
-			isSpilled := w.spillHelper.isSpillTriggered()
-			spillError := w.spillHelper.checkError()
-			if isSpilled && !spillError {
-				// Do not put `w.spillHelper.needSpill()` and `len(w.groupKey) > 0` judgement in one line
-				if len(w.groupKey) > 0 {
-					if err := w.spillDataToDisk(); err != nil {
-						w.globalOutputCh <- &AfFinalResult{err: err}
-						w.spillHelper.setError()
-						hasError = true
-					}
-				}
-				if !hasError && len(w.spilledChunksIO) == spilledPartitionNum {
-					w.spillHelper.addListInDisks(w.spilledChunksIO)
-				}
+			if w.spillHelper.isSpillTriggered() {
+				w.handleSpillBeforeExist()
 			} else if needShuffle {
 				w.shuffleIntermData(finalConcurrency)
 			}
@@ -177,56 +211,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		}
 	}
 
-	for {
-		waitStart := time.Now()
-		ok := w.getChildInput()
-		if w.stats != nil {
-			w.stats.WaitTime += int64(time.Since(waitStart))
-		}
-
-		if !ok {
-			return
-		}
-
-		execStart := time.Now()
-		if err := w.updatePartialResult(ctx, w.chk, len(w.partialResultsMap)); err != nil {
-			hasError = true
-			w.globalOutputCh <- &AfFinalResult{err: err}
-			w.spillHelper.setError()
-			return
-		}
-		if w.stats != nil {
-			w.stats.ExecTime += int64(time.Since(execStart))
-			w.stats.TaskNum++
-		}
-
-		// The intermData can be promised to be not empty if reaching here,
-		// so we set needShuffle to be true.
-		needShuffle = true
-
-		if intest.InTest && enableIntest {
-			num := rand.Intn(10000)
-			if num < 7 {
-				panic("Intest panic: partial worker is panicked when running")
-			} else if num < 14 {
-				time.Sleep(1 * time.Second)
-			} else if num < 21 {
-				hasError = true
-				w.globalOutputCh <- &AfFinalResult{err: errors.Errorf("Random fail is triggered in partial worker")}
-				w.spillHelper.setError()
-				return
-			} else if num < 28 {
-				w.memTracker.Consume(104857600) // Consume 100MiB
-			}
-		}
-
-		if w.spillHelper.isInSpilling() {
-			w.waitForTheFinishOfSpill(false)
-			if w.spillHelper.checkError() {
-				hasError = true
-				return
-			}
-		}
+	for w.fetchChunkAndProcess(ctx, &hasError, &needShuffle, enableIntest) {
 	}
 }
 
@@ -306,7 +291,7 @@ func (w *HashAggPartialWorker) shuffleIntermData(finalConcurrency int) {
 	}
 }
 
-func (w *HashAggPartialWorker) prepareForSpillWhenNeeded() {
+func (w *HashAggPartialWorker) prepareForSpill() {
 	if !w.isSpillPrepared {
 		w.isSpillPrepared = true
 		w.tmpChksForSpill = make([]*chunk.Chunk, spilledPartitionNum)
@@ -331,7 +316,7 @@ func (w *HashAggPartialWorker) spillDataToDisk() error {
 		return nil
 	}
 
-	w.prepareForSpillWhenNeeded()
+	w.prepareForSpill()
 	for _, partialResultsMap := range w.partialResultsMap {
 		for key, partialResults := range partialResultsMap {
 			partitionNum := int(murmur3.Sum32([]byte(key))) % spilledPartitionNum
@@ -387,6 +372,11 @@ func (w *HashAggPartialWorker) spillRemainingDataToDisk(ctx sessionctx.Context) 
 		}
 	}
 	return nil
+}
+
+func (w *HashAggPartialWorker) processError(err error) {
+	w.globalOutputCh <- &AfFinalResult{err: err}
+	w.spillHelper.setError()
 }
 
 // Exist is split into three stage: 1. wait running workers 2. do something 3. wait alive workers
