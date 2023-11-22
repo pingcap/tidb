@@ -195,7 +195,7 @@ func writeExternalOneFile(s *writeTestSuite) {
 
 func TestCompareWriter(t *testing.T) {
 	store := openTestingStorage(t)
-	source := newAscendingKeySource(20, 100, 10000)
+	source := newAscendingKeySource(20, 100, 10000000)
 	memoryLimit := 64 * 1024 * 1024
 	fileIdx := 0
 	var (
