@@ -35,21 +35,21 @@ const float64Len = int64(unsafe.Sizeof(float64(0)))
 const timeLen = int64(unsafe.Sizeof(types.Time{}))
 const durationLen = int64(unsafe.Sizeof(time.Duration(0)))
 
-type aggSpillDeserializeHelper struct {
+type spillDeserializeHelper struct {
 	column       *chunk.Column
 	readRowIndex int
 	totalRowCnt  int
 }
 
-func newDeserializeHelper(column *chunk.Column, rowNum int) aggSpillDeserializeHelper {
-	return aggSpillDeserializeHelper{
+func newDeserializeHelper(column *chunk.Column, rowNum int) spillDeserializeHelper {
+	return spillDeserializeHelper{
 		column:       column,
 		readRowIndex: 0,
 		totalRowCnt:  rowNum,
 	}
 }
 
-func (s *aggSpillDeserializeHelper) deserializePartialResult4Count(dst *partialResult4Count) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4Count(dst *partialResult4Count) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		*dst = spill.DeserializeInt64(bytes, 0)
@@ -59,7 +59,7 @@ func (s *aggSpillDeserializeHelper) deserializePartialResult4Count(dst *partialR
 	return false
 }
 
-func (s *aggSpillDeserializeHelper) deserializePartialResult4MaxMinInt(dst *partialResult4MaxMinInt) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4MaxMinInt(dst *partialResult4MaxMinInt) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		dst.isNull = spill.DeserializeBool(bytes, 0)
@@ -70,7 +70,7 @@ func (s *aggSpillDeserializeHelper) deserializePartialResult4MaxMinInt(dst *part
 	return false
 }
 
-func (s *aggSpillDeserializeHelper) deserializePartialResult4MaxMinUint(dst *partialResult4MaxMinUint) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4MaxMinUint(dst *partialResult4MaxMinUint) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		dst.isNull = spill.DeserializeBool(bytes, 0)
@@ -81,7 +81,7 @@ func (s *aggSpillDeserializeHelper) deserializePartialResult4MaxMinUint(dst *par
 	return false
 }
 
-func (s *aggSpillDeserializeHelper) deserializePartialResult4MaxMinDecimal(dst *partialResult4MaxMinDecimal) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4MaxMinDecimal(dst *partialResult4MaxMinDecimal) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		dst.isNull = spill.DeserializeBool(bytes, 0)
@@ -92,7 +92,7 @@ func (s *aggSpillDeserializeHelper) deserializePartialResult4MaxMinDecimal(dst *
 	return false
 }
 
-func (s *aggSpillDeserializeHelper) deserializePartialResult4MaxMinFloat32(dst *partialResult4MaxMinFloat32) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4MaxMinFloat32(dst *partialResult4MaxMinFloat32) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		dst.isNull = spill.DeserializeBool(bytes, 0)
@@ -103,7 +103,7 @@ func (s *aggSpillDeserializeHelper) deserializePartialResult4MaxMinFloat32(dst *
 	return false
 }
 
-func (s *aggSpillDeserializeHelper) deserializePartialResult4MaxMinFloat64(dst *partialResult4MaxMinFloat64) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4MaxMinFloat64(dst *partialResult4MaxMinFloat64) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		dst.isNull = spill.DeserializeBool(bytes, 0)
@@ -114,7 +114,7 @@ func (s *aggSpillDeserializeHelper) deserializePartialResult4MaxMinFloat64(dst *
 	return false
 }
 
-func (s *aggSpillDeserializeHelper) deserializePartialResult4MaxMinTime(dst *partialResult4MaxMinTime) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4MaxMinTime(dst *partialResult4MaxMinTime) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		dst.isNull = spill.DeserializeBool(bytes, 0)
@@ -125,7 +125,7 @@ func (s *aggSpillDeserializeHelper) deserializePartialResult4MaxMinTime(dst *par
 	return false
 }
 
-func (s *aggSpillDeserializeHelper) deserializePartialResult4MaxMinDuration(dst *partialResult4MaxMinDuration) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4MaxMinDuration(dst *partialResult4MaxMinDuration) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		dst.isNull = spill.DeserializeBool(bytes, 0)
@@ -137,7 +137,7 @@ func (s *aggSpillDeserializeHelper) deserializePartialResult4MaxMinDuration(dst 
 	return false
 }
 
-func (s *aggSpillDeserializeHelper) deserializePartialResult4MaxMinString(dst *partialResult4MaxMinString) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4MaxMinString(dst *partialResult4MaxMinString) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		dst.isNull = spill.DeserializeBool(bytes, 0)
@@ -148,7 +148,7 @@ func (s *aggSpillDeserializeHelper) deserializePartialResult4MaxMinString(dst *p
 	return false
 }
 
-func (s *aggSpillDeserializeHelper) deserializePartialResult4MaxMinJSON(dst *partialResult4MaxMinJSON) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4MaxMinJSON(dst *partialResult4MaxMinJSON) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		dst.isNull = spill.DeserializeBool(bytes, 0)
@@ -159,7 +159,7 @@ func (s *aggSpillDeserializeHelper) deserializePartialResult4MaxMinJSON(dst *par
 	return false
 }
 
-func (s *aggSpillDeserializeHelper) deserializePartialResult4MaxMinEnum(dst *partialResult4MaxMinEnum) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4MaxMinEnum(dst *partialResult4MaxMinEnum) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		dst.isNull = spill.DeserializeBool(bytes, 0)
@@ -170,7 +170,7 @@ func (s *aggSpillDeserializeHelper) deserializePartialResult4MaxMinEnum(dst *par
 	return false
 }
 
-func (s *aggSpillDeserializeHelper) deserializePartialResult4MaxMinSet(dst *partialResult4MaxMinSet) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4MaxMinSet(dst *partialResult4MaxMinSet) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		dst.isNull = spill.DeserializeBool(bytes, 0)
@@ -181,7 +181,7 @@ func (s *aggSpillDeserializeHelper) deserializePartialResult4MaxMinSet(dst *part
 	return false
 }
 
-func (s *aggSpillDeserializeHelper) deserializePartialResult4AvgDecimal(dst *partialResult4AvgDecimal) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4AvgDecimal(dst *partialResult4AvgDecimal) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		dst.sum = spill.DeserializeMyDecimal(bytes, 0)
@@ -192,7 +192,7 @@ func (s *aggSpillDeserializeHelper) deserializePartialResult4AvgDecimal(dst *par
 	return false
 }
 
-func (s *aggSpillDeserializeHelper) deserializePartialResult4AvgFloat64(dst *partialResult4AvgFloat64) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4AvgFloat64(dst *partialResult4AvgFloat64) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		dst.sum = spill.DeserializeFloat64(bytes, 0)
@@ -203,7 +203,7 @@ func (s *aggSpillDeserializeHelper) deserializePartialResult4AvgFloat64(dst *par
 	return false
 }
 
-func (s *aggSpillDeserializeHelper) deserializePartialResult4SumDecimal(dst *partialResult4SumDecimal) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4SumDecimal(dst *partialResult4SumDecimal) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		dst.val = spill.DeserializeMyDecimal(bytes, 0)
@@ -214,7 +214,7 @@ func (s *aggSpillDeserializeHelper) deserializePartialResult4SumDecimal(dst *par
 	return false
 }
 
-func (s *aggSpillDeserializeHelper) deserializePartialResult4SumFloat64(dst *partialResult4SumFloat64) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4SumFloat64(dst *partialResult4SumFloat64) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		dst.val = spill.DeserializeFloat64(bytes, 0)
@@ -225,7 +225,7 @@ func (s *aggSpillDeserializeHelper) deserializePartialResult4SumFloat64(dst *par
 	return false
 }
 
-func (s *aggSpillDeserializeHelper) deserializeBasePartialResult4GroupConcat(dst *basePartialResult4GroupConcat) bool {
+func (s *spillDeserializeHelper) deserializeBasePartialResult4GroupConcat(dst *basePartialResult4GroupConcat) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		restoredBytes := s.column.GetBytes(s.readRowIndex)
 		valsBufLen := spill.DeserializeInt64(restoredBytes, 0)
@@ -237,7 +237,7 @@ func (s *aggSpillDeserializeHelper) deserializeBasePartialResult4GroupConcat(dst
 	return false
 }
 
-func (s *aggSpillDeserializeHelper) deserializePartialResult4GroupConcat(dst *partialResult4GroupConcat) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4GroupConcat(dst *partialResult4GroupConcat) bool {
 	base := basePartialResult4GroupConcat{}
 	success := s.deserializeBasePartialResult4GroupConcat(&base)
 	dst.valsBuf = base.valsBuf
@@ -245,7 +245,7 @@ func (s *aggSpillDeserializeHelper) deserializePartialResult4GroupConcat(dst *pa
 	return success
 }
 
-func (s *aggSpillDeserializeHelper) deserializePartialResult4BitFunc(dst *partialResult4BitFunc) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4BitFunc(dst *partialResult4BitFunc) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		*dst = spill.DeserializeUint64(bytes, 0)
@@ -255,7 +255,7 @@ func (s *aggSpillDeserializeHelper) deserializePartialResult4BitFunc(dst *partia
 	return false
 }
 
-func (s *aggSpillDeserializeHelper) deserializePartialResult4JsonArrayagg(dst *partialResult4JsonArrayagg) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4JsonArrayagg(dst *partialResult4JsonArrayagg) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		byteNum := int64(len(bytes))
@@ -270,7 +270,7 @@ func (s *aggSpillDeserializeHelper) deserializePartialResult4JsonArrayagg(dst *p
 	return false
 }
 
-func (s *aggSpillDeserializeHelper) deserializePartialResult4JsonObjectAgg(dst *partialResult4JsonObjectAgg) (bool, int64) {
+func (s *spillDeserializeHelper) deserializePartialResult4JsonObjectAgg(dst *partialResult4JsonObjectAgg) (bool, int64) {
 	memDelta := int64(0)
 	dst.bInMap = 0
 	dst.entries = make(map[string]interface{})
@@ -299,7 +299,7 @@ func (s *aggSpillDeserializeHelper) deserializePartialResult4JsonObjectAgg(dst *
 	return false, memDelta
 }
 
-func (*aggSpillDeserializeHelper) deserializeBasePartialResult4FirstRow(dst *basePartialResult4FirstRow, bytes []byte, readPos int64) int64 {
+func (*spillDeserializeHelper) deserializeBasePartialResult4FirstRow(dst *basePartialResult4FirstRow, bytes []byte, readPos int64) int64 {
 	dst.isNull = spill.DeserializeBool(bytes, readPos)
 	readPos += boolLen
 	dst.gotFirstRow = spill.DeserializeBool(bytes, readPos)
@@ -307,7 +307,7 @@ func (*aggSpillDeserializeHelper) deserializeBasePartialResult4FirstRow(dst *bas
 	return readPos
 }
 
-func (s *aggSpillDeserializeHelper) deserializePartialResult4FirstRowInt(dst *partialResult4FirstRowInt) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4FirstRowInt(dst *partialResult4FirstRowInt) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		readPos := int64(0)
@@ -319,7 +319,7 @@ func (s *aggSpillDeserializeHelper) deserializePartialResult4FirstRowInt(dst *pa
 	return false
 }
 
-func (s *aggSpillDeserializeHelper) deserializePartialResult4FirstRowFloat32(dst *partialResult4FirstRowFloat32) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4FirstRowFloat32(dst *partialResult4FirstRowFloat32) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		readPos := int64(0)
@@ -331,7 +331,7 @@ func (s *aggSpillDeserializeHelper) deserializePartialResult4FirstRowFloat32(dst
 	return false
 }
 
-func (s *aggSpillDeserializeHelper) deserializePartialResult4FirstRowFloat64(dst *partialResult4FirstRowFloat64) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4FirstRowFloat64(dst *partialResult4FirstRowFloat64) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		readPos := int64(0)
@@ -343,7 +343,7 @@ func (s *aggSpillDeserializeHelper) deserializePartialResult4FirstRowFloat64(dst
 	return false
 }
 
-func (s *aggSpillDeserializeHelper) deserializePartialResult4FirstRowDecimal(dst *partialResult4FirstRowDecimal) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4FirstRowDecimal(dst *partialResult4FirstRowDecimal) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		readPos := int64(0)
@@ -355,7 +355,7 @@ func (s *aggSpillDeserializeHelper) deserializePartialResult4FirstRowDecimal(dst
 	return false
 }
 
-func (s *aggSpillDeserializeHelper) deserializePartialResult4FirstRowString(dst *partialResult4FirstRowString) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4FirstRowString(dst *partialResult4FirstRowString) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		readPos := int64(0)
@@ -367,7 +367,7 @@ func (s *aggSpillDeserializeHelper) deserializePartialResult4FirstRowString(dst 
 	return false
 }
 
-func (s *aggSpillDeserializeHelper) deserializePartialResult4FirstRowTime(dst *partialResult4FirstRowTime) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4FirstRowTime(dst *partialResult4FirstRowTime) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		readPos := int64(0)
@@ -379,7 +379,7 @@ func (s *aggSpillDeserializeHelper) deserializePartialResult4FirstRowTime(dst *p
 	return false
 }
 
-func (s *aggSpillDeserializeHelper) deserializePartialResult4FirstRowDuration(dst *partialResult4FirstRowDuration) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4FirstRowDuration(dst *partialResult4FirstRowDuration) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		readPos := int64(0)
@@ -393,7 +393,7 @@ func (s *aggSpillDeserializeHelper) deserializePartialResult4FirstRowDuration(ds
 	return false
 }
 
-func (s *aggSpillDeserializeHelper) deserializePartialResult4FirstRowJSON(dst *partialResult4FirstRowJSON) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4FirstRowJSON(dst *partialResult4FirstRowJSON) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		readPos := s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, 0)
@@ -404,7 +404,7 @@ func (s *aggSpillDeserializeHelper) deserializePartialResult4FirstRowJSON(dst *p
 	return false
 }
 
-func (s *aggSpillDeserializeHelper) deserializePartialResult4FirstRowEnum(dst *partialResult4FirstRowEnum) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4FirstRowEnum(dst *partialResult4FirstRowEnum) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		readPos := s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, 0)
@@ -415,7 +415,7 @@ func (s *aggSpillDeserializeHelper) deserializePartialResult4FirstRowEnum(dst *p
 	return false
 }
 
-func (s *aggSpillDeserializeHelper) deserializePartialResult4FirstRowSet(dst *partialResult4FirstRowSet) bool {
+func (s *spillDeserializeHelper) deserializePartialResult4FirstRowSet(dst *partialResult4FirstRowSet) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		readPos := int64(0)

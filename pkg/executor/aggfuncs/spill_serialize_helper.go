@@ -19,117 +19,117 @@ import (
 	"github.com/pingcap/tidb/pkg/util/spill"
 )
 
-// AggSpillSerializeHelper can only be used for one aggregator function.
-// It may cause error if agg func1 and agg func2 use the same AggSpillSerializeHelper.
-type AggSpillSerializeHelper struct {
+// SpillSerializeHelper can only be used for one aggregator function.
+// It may cause error if agg func1 and agg func2 use the same SpillSerializeHelper.
+type SpillSerializeHelper struct {
 	buf []byte
 }
 
 // NewSpillSerializeHelper creates a new SpillSerializeHelper
-func NewSpillSerializeHelper() *AggSpillSerializeHelper {
-	return &AggSpillSerializeHelper{
+func NewSpillSerializeHelper() *SpillSerializeHelper {
+	return &SpillSerializeHelper{
 		buf: make([]byte, 1024),
 	}
 }
 
-func (s *AggSpillSerializeHelper) serializePartialResult4Count(value partialResult4Count) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4Count(value partialResult4Count) []byte {
 	spill.SerializeInt64(value, s.buf[0:])
 	return s.buf[:int64Len]
 }
 
-func (s *AggSpillSerializeHelper) serializePartialResult4MaxMinInt(value partialResult4MaxMinInt) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4MaxMinInt(value partialResult4MaxMinInt) []byte {
 	spill.SerializeBool(value.isNull, s.buf)
 	spill.SerializeInt64(value.val, s.buf[boolLen:])
 	return s.buf[0 : int64Len+boolLen]
 }
 
-func (s *AggSpillSerializeHelper) serializePartialResult4MaxMinUint(value partialResult4MaxMinUint) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4MaxMinUint(value partialResult4MaxMinUint) []byte {
 	spill.SerializeBool(value.isNull, s.buf)
 	spill.SerializeUint64(value.val, s.buf[boolLen:])
 	return s.buf[0 : uint64Len+boolLen]
 }
 
-func (s *AggSpillSerializeHelper) serializePartialResult4MaxMinDecimal(value partialResult4MaxMinDecimal) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4MaxMinDecimal(value partialResult4MaxMinDecimal) []byte {
 	spill.SerializeBool(value.isNull, s.buf)
 	spill.SerializeMyDecimal(&value.val, s.buf[boolLen:])
 	return s.buf[0 : types.MyDecimalStructSize+boolLen]
 }
 
-func (s *AggSpillSerializeHelper) serializePartialResult4MaxMinFloat32(value partialResult4MaxMinFloat32) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4MaxMinFloat32(value partialResult4MaxMinFloat32) []byte {
 	spill.SerializeBool(value.isNull, s.buf)
 	spill.SerializeFloat32(value.val, s.buf[boolLen:])
 	return s.buf[0 : float32Len+boolLen]
 }
 
-func (s *AggSpillSerializeHelper) serializePartialResult4MaxMinFloat64(value partialResult4MaxMinFloat64) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4MaxMinFloat64(value partialResult4MaxMinFloat64) []byte {
 	spill.SerializeBool(value.isNull, s.buf)
 	spill.SerializeFloat64(value.val, s.buf[boolLen:])
 	return s.buf[0 : float64Len+boolLen]
 }
 
-func (s *AggSpillSerializeHelper) serializePartialResult4MaxMinTime(value partialResult4MaxMinTime) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4MaxMinTime(value partialResult4MaxMinTime) []byte {
 	spill.SerializeBool(value.isNull, s.buf)
 	spill.SerializeTime(value.val, s.buf[boolLen:])
 	return s.buf[0 : timeLen+boolLen]
 }
 
-func (s *AggSpillSerializeHelper) serializePartialResult4MaxMinDuration(value partialResult4MaxMinDuration) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4MaxMinDuration(value partialResult4MaxMinDuration) []byte {
 	spill.SerializeBool(value.isNull, s.buf)
 	spill.SerializeDuration(value.val.Duration, s.buf[boolLen:])
 	spill.SerializeInt(value.val.Fsp, s.buf[boolLen+int64Len:])
 	return s.buf[0 : int64Len+intLen+boolLen]
 }
 
-func (s *AggSpillSerializeHelper) serializePartialResult4MaxMinString(value partialResult4MaxMinString) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4MaxMinString(value partialResult4MaxMinString) []byte {
 	spill.SerializeBool(value.isNull, s.buf[0:boolLen])
 	s.buf = s.buf[:boolLen]
 	s.buf = append(s.buf, value.val...)
 	return s.buf
 }
 
-func (s *AggSpillSerializeHelper) serializePartialResult4MaxMinJSON(value partialResult4MaxMinJSON) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4MaxMinJSON(value partialResult4MaxMinJSON) []byte {
 	spill.SerializeBool(value.isNull, s.buf[0:])
 	spill.SerializeBinaryJSON(&value.val, &s.buf, boolLen)
 	return s.buf
 }
 
-func (s *AggSpillSerializeHelper) serializePartialResult4MaxMinEnum(value partialResult4MaxMinEnum) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4MaxMinEnum(value partialResult4MaxMinEnum) []byte {
 	spill.SerializeBool(value.isNull, s.buf[0:])
 	spill.SerializeEnum(&value.val, &s.buf, boolLen)
 	return s.buf
 }
 
-func (s *AggSpillSerializeHelper) serializePartialResult4MaxMinSet(value partialResult4MaxMinSet) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4MaxMinSet(value partialResult4MaxMinSet) []byte {
 	spill.SerializeBool(value.isNull, s.buf)
 	spill.SerializeSet(&value.val, &s.buf, boolLen)
 	return s.buf
 }
 
-func (s *AggSpillSerializeHelper) serializePartialResult4AvgDecimal(value partialResult4AvgDecimal) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4AvgDecimal(value partialResult4AvgDecimal) []byte {
 	spill.SerializeMyDecimal(&value.sum, s.buf)
 	spill.SerializeInt64(value.count, s.buf[types.MyDecimalStructSize:])
 	return s.buf[0 : types.MyDecimalStructSize+int64Len]
 }
 
-func (s *AggSpillSerializeHelper) serializePartialResult4AvgFloat64(value partialResult4AvgFloat64) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4AvgFloat64(value partialResult4AvgFloat64) []byte {
 	spill.SerializeFloat64(value.sum, s.buf[:])
 	spill.SerializeInt64(value.count, s.buf[float64Len:])
 	return s.buf[0 : float64Len+int64Len]
 }
 
-func (s *AggSpillSerializeHelper) serializePartialResult4SumDecimal(value partialResult4SumDecimal) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4SumDecimal(value partialResult4SumDecimal) []byte {
 	spill.SerializeMyDecimal(&value.val, s.buf)
 	spill.SerializeInt64(value.notNullRowCount, s.buf[types.MyDecimalStructSize:])
 	return s.buf[0 : types.MyDecimalStructSize+int64Len]
 }
 
-func (s *AggSpillSerializeHelper) serializePartialResult4SumFloat64(value partialResult4SumFloat64) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4SumFloat64(value partialResult4SumFloat64) []byte {
 	spill.SerializeFloat64(value.val, s.buf[:])
 	spill.SerializeInt64(value.notNullRowCount, s.buf[float64Len:])
 	return s.buf[0 : float64Len+int64Len]
 }
 
-func (s *AggSpillSerializeHelper) serializeBasePartialResult4GroupConcat(value basePartialResult4GroupConcat) []byte {
+func (s *SpillSerializeHelper) serializeBasePartialResult4GroupConcat(value basePartialResult4GroupConcat) []byte {
 	valsBuf := value.valsBuf.Bytes()
 	valsBufLen := int64(len(valsBuf))
 	buffer := value.buffer.Bytes()
@@ -141,19 +141,19 @@ func (s *AggSpillSerializeHelper) serializeBasePartialResult4GroupConcat(value b
 	return s.buf
 }
 
-func (s *AggSpillSerializeHelper) serializePartialResult4GroupConcat(value partialResult4GroupConcat) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4GroupConcat(value partialResult4GroupConcat) []byte {
 	return s.serializeBasePartialResult4GroupConcat(basePartialResult4GroupConcat{
 		valsBuf: value.valsBuf,
 		buffer:  value.buffer,
 	})
 }
 
-func (s *AggSpillSerializeHelper) serializePartialResult4BitFunc(value partialResult4BitFunc) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4BitFunc(value partialResult4BitFunc) []byte {
 	spill.SerializeUint64(value, s.buf[:])
 	return s.buf[0:uint64Len]
 }
 
-func (s *AggSpillSerializeHelper) serializePartialResult4JsonArrayagg(value partialResult4JsonArrayagg) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4JsonArrayagg(value partialResult4JsonArrayagg) []byte {
 	varBuf := make([]byte, 0)
 	for _, value := range value.entries {
 		spill.SerializeInterface(value, &varBuf, s.buf[:])
@@ -161,7 +161,7 @@ func (s *AggSpillSerializeHelper) serializePartialResult4JsonArrayagg(value part
 	return varBuf
 }
 
-func (s *AggSpillSerializeHelper) serializePartialResult4JsonObjectAgg(value partialResult4JsonObjectAgg) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4JsonObjectAgg(value partialResult4JsonObjectAgg) []byte {
 	resBuf := make([]byte, 0)
 	for key, value := range value.entries {
 		spill.SerializeInt64(int64(len(key)), s.buf)
@@ -172,68 +172,68 @@ func (s *AggSpillSerializeHelper) serializePartialResult4JsonObjectAgg(value par
 	return resBuf
 }
 
-func (s *AggSpillSerializeHelper) serializeBasePartialResult4FirstRow(value basePartialResult4FirstRow) ([]byte, int64) {
+func (s *SpillSerializeHelper) serializeBasePartialResult4FirstRow(value basePartialResult4FirstRow) ([]byte, int64) {
 	spill.SerializeBool(value.isNull, s.buf[:])
 	spill.SerializeBool(value.gotFirstRow, s.buf[1:])
 	return s.buf[:2*boolLen], 2 * boolLen
 }
 
-func (s *AggSpillSerializeHelper) serializePartialResult4FirstRowDecimal(value partialResult4FirstRowDecimal) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4FirstRowDecimal(value partialResult4FirstRowDecimal) []byte {
 	_, baseBytesNum := s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
 	spill.SerializeMyDecimal(&value.val, s.buf[baseBytesNum:])
 	return s.buf[:types.MyDecimalStructSize+baseBytesNum]
 }
 
-func (s *AggSpillSerializeHelper) serializePartialResult4FirstRowInt(value partialResult4FirstRowInt) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4FirstRowInt(value partialResult4FirstRowInt) []byte {
 	_, baseBytesNum := s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
 	spill.SerializeInt64(value.val, s.buf[baseBytesNum:])
 	return s.buf[:int64Len+baseBytesNum]
 }
 
-func (s *AggSpillSerializeHelper) serializePartialResult4FirstRowTime(value partialResult4FirstRowTime) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4FirstRowTime(value partialResult4FirstRowTime) []byte {
 	_, baseBytesNum := s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
 	spill.SerializeTime(value.val, s.buf[baseBytesNum:])
 	return s.buf[:timeLen+baseBytesNum]
 }
 
-func (s *AggSpillSerializeHelper) serializePartialResult4FirstRowString(value partialResult4FirstRowString) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4FirstRowString(value partialResult4FirstRowString) []byte {
 	resBuf, _ := s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
 	resBuf = append(resBuf, value.val...)
 	return resBuf
 }
 
-func (s *AggSpillSerializeHelper) serializePartialResult4FirstRowFloat32(value partialResult4FirstRowFloat32) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4FirstRowFloat32(value partialResult4FirstRowFloat32) []byte {
 	_, baseBytesNum := s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
 	spill.SerializeFloat32(value.val, s.buf[baseBytesNum:])
 	return s.buf[:float32Len+baseBytesNum]
 }
 
-func (s *AggSpillSerializeHelper) serializePartialResult4FirstRowFloat64(value partialResult4FirstRowFloat64) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4FirstRowFloat64(value partialResult4FirstRowFloat64) []byte {
 	_, baseBytesNum := s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
 	spill.SerializeFloat64(value.val, s.buf[baseBytesNum:])
 	return s.buf[:float64Len+baseBytesNum]
 }
 
-func (s *AggSpillSerializeHelper) serializePartialResult4FirstRowDuration(value partialResult4FirstRowDuration) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4FirstRowDuration(value partialResult4FirstRowDuration) []byte {
 	_, baseBytesNum := s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
 	spill.SerializeInt64(int64(value.val.Duration), s.buf[baseBytesNum:])
 	spill.SerializeInt(value.val.Fsp, s.buf[baseBytesNum+int64Len:int64Len+intLen])
 	return s.buf[:int64Len+intLen+baseBytesNum]
 }
 
-func (s *AggSpillSerializeHelper) serializePartialResult4FirstRowJSON(value partialResult4FirstRowJSON) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4FirstRowJSON(value partialResult4FirstRowJSON) []byte {
 	_, baseBytesNum := s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
 	spill.SerializeBinaryJSON(&value.val, &s.buf, baseBytesNum)
 	return s.buf
 }
 
-func (s *AggSpillSerializeHelper) serializePartialResult4FirstRowEnum(value partialResult4FirstRowEnum) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4FirstRowEnum(value partialResult4FirstRowEnum) []byte {
 	_, baseBytesNum := s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
 	spill.SerializeEnum(&value.val, &s.buf, baseBytesNum)
 	return s.buf
 }
 
-func (s *AggSpillSerializeHelper) serializePartialResult4FirstRowSet(value partialResult4FirstRowSet) []byte {
+func (s *SpillSerializeHelper) serializePartialResult4FirstRowSet(value partialResult4FirstRowSet) []byte {
 	_, baseBytesNum := s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
 	spill.SerializeSet(&value.val, &s.buf, baseBytesNum)
 	return s.buf
