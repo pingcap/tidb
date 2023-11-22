@@ -3673,6 +3673,31 @@ func TestAlterLastIntervalPartition(t *testing.T) {
 	require.Equal(t, "'2023-01-03'", pd[2].LessThan[0])
 	require.Equal(t, "'2024-12-31'", pd[730].LessThan[0])
 	require.Equal(t, "'2025-01-01'", pd[731].LessThan[0])
+
+	// Test for interval 2 days.
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (id int, create_time datetime)
+		partition by range columns (create_time)
+		interval (2 day)
+		first partition less than ('2023-01-01')
+		last partition less than ('2023-01-05');`)
+	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	pd = tbl.Meta().Partition.Definitions
+	require.Equal(t, 3, len(pd))
+	require.Equal(t, "'2023-01-01'", pd[0].LessThan[0])
+	require.Equal(t, "'2023-01-03'", pd[1].LessThan[0])
+	require.Equal(t, "'2023-01-05'", pd[2].LessThan[0])
+	tk.MustExec("alter table t last partition less than ('2023-01-09')")
+	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	pd = tbl.Meta().Partition.Definitions
+	require.Equal(t, 5, len(pd))
+	require.Equal(t, "'2023-01-01'", pd[0].LessThan[0])
+	require.Equal(t, "'2023-01-03'", pd[1].LessThan[0])
+	require.Equal(t, "'2023-01-05'", pd[2].LessThan[0])
+	require.Equal(t, "'2023-01-07'", pd[3].LessThan[0])
+	require.Equal(t, "'2023-01-09'", pd[4].LessThan[0])
 }
 
 // TODO: check EXCHANGE how it handles null (for all types of partitioning!!!)

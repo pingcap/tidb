@@ -734,8 +734,9 @@ func getPartitionIntervalFromTable(ctx sessionctx.Context, tbInfo *model.TableIn
 		// 2022-01-31, 2022-02-28, 2022-03-31 etc. so we just assume that if there is a
 		// diff >= 28 days, we will try with Month and not retry with something else...
 		i := val / int64(endIdx-startIdx)
-		if i == (24 * 60 * 60) { // 1 day
-			interval.IntervalExpr.Expr = ast.NewValueExpr(1, "", "")
+		if i%(24*60*60) == 0 { // unit is day
+			// If unit is day, then we no need to display the time part.
+			interval.IntervalExpr.Expr = ast.NewValueExpr(i/(24*60*60), "", "")
 			interval.IntervalExpr.TimeUnit = ast.TimeUnitDay
 		} else if i < (28 * 24 * 60 * 60) {
 			// Since it is not stored or displayed, non need to try Minute..Week!
