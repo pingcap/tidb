@@ -203,7 +203,13 @@ func NewWriteIndexToExternalStoragePipeline(
 	if err != nil {
 		return nil, err
 	}
-	memSize := (memTotal / 2) / uint64(writerCnt) / uint64(len(indexes))
+	memUsed, err := memory.MemUsed()
+	if err != nil {
+		return nil, err
+	}
+	memAvailable := memTotal - memUsed
+	memSize := (memAvailable / 2) / uint64(writerCnt) / uint64(len(indexes))
+	logutil.BgLogger().Info("build operators that write index to cloud storage", zap.Uint64("memory total", memTotal), zap.Uint64("memory used", memUsed), zap.Uint64("memory size", memSize))
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
