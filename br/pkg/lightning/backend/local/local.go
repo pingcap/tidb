@@ -1764,23 +1764,13 @@ func (local *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) err
 		failpoint.Inject("mockAllocateTSErr", func() {
 			// mock generate timestamp error when reset engine.
 			localEngine.TS = 0
-			failpoint.Return(errors.Trace(&mockGRPCErr{}))
+			mockGRPCErr, _ := status.FromError(errors.Errorf("mock generate timestamp error"))
+			failpoint.Return(errors.Trace(mockGRPCErr.Err()))
 		})
 	}
 	localEngine.pendingFileSize.Store(0)
 
 	return err
-}
-
-type mockGRPCErr struct {
-}
-
-func (*mockGRPCErr) GRPCStatus() *status.Status {
-	return status.New(codes.Unknown, "mock generate timestamp error")
-}
-
-func (*mockGRPCErr) Error() string {
-	return "mock generate timestamp error"
 }
 
 // CleanupEngine cleanup the engine and reclaim the space.

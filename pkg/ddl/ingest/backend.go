@@ -226,7 +226,6 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 	logutil.Logger(bc.ctx).Info(LitInfoUnsafeImport, zap.Int64("index ID", ei.indexID),
 		zap.String("usage info", bc.diskRoot.UsageInfo()))
 	logger := log.FromContext(bc.ctx).With(
-		zap.String("engineTag", "<import-and-reset>"),
 		zap.Stringer("engineUUID", ei.uuid),
 	)
 

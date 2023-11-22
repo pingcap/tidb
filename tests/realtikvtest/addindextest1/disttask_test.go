@@ -278,9 +278,8 @@ func TestAddIndexTSErrorWhenResetImportEngine(t *testing.T) {
 	newHelper := helper.NewHelper(tikvStore)
 	mvccResp, err := newHelper.GetMvccByEncodedKeyWithTS(idxKey, 0)
 	require.NoError(t, err)
-	if mvccResp == nil || mvccResp.Info == nil || len(mvccResp.Info.Writes) == 0 {
-		require.Fail(t, "fail to get mvcc info")
-	}
+	require.NotNil(t, mvccResp)
+	require.NotNil(t, mvccResp.Info)
 	require.Greater(t, len(mvccResp.Info.Writes), 0)
 	require.Greater(t, mvccResp.Info.Writes[0].CommitTs, uint64(0))
 }
