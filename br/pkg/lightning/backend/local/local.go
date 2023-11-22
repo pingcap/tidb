@@ -17,6 +17,7 @@ package local
 import (
 	"bytes"
 	"context"
+	goerrors "errors"
 	"fmt"
 	"io"
 	"math"
@@ -907,17 +908,30 @@ type rangeStats struct {
 // we don't need to do cleanup for the pairs written to tikv if encounters an error,
 // tikv will takes the responsibility to do so.
 func (local *local) WriteToTiKV(
-	ctx context.Context,
+	pCtx context.Context,
 	engine *Engine,
 	region *split.RegionInfo,
 	start, end []byte,
 	regionSplitSize int64,
 	regionSplitKeys int64,
-) ([]*sst.SSTMeta, Range, rangeStats, error) {
+) (s []*sst.SSTMeta, r Range, r2 rangeStats, errRet error) {
 	failpoint.Inject("WriteToTiKVNotEnoughDiskSpace", func(_ failpoint.Value) {
 		failpoint.Return(nil, Range{}, rangeStats{},
 			errors.Errorf("The available disk of TiKV (%s) only left %d, and capacity is %d", "", 0, 0))
 	})
+	ctx, cancel := context.WithTimeout(pCtx, 15*time.Minute)
+	defer cancel()
+	defer func() {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			// should not happen
+			return
+		}
+		if goerrors.Is(errRet, context.DeadlineExceeded) && time.Now().After(deadline) {
+			errRet = common.ErrWriteTooSlow
+		}
+	}()
+
 	if local.checkTiKVAvaliable {
 		for _, peer := range region.Region.GetPeers() {
 			var e error
