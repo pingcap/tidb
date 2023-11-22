@@ -1616,17 +1616,17 @@ func TestSortByItem2Pb(t *testing.T) {
 }
 
 func TestPushCollationDown(t *testing.T) {
-	fc, err := NewFunction(mock.NewContext(), ast.EQ, types.NewFieldType(mysql.TypeUnspecified), genColumn(mysql.TypeVarchar, 0), genColumn(mysql.TypeVarchar, 1))
+	ctx := mock.NewContext()
+	fc, err := NewFunction(ctx, ast.EQ, types.NewFieldType(mysql.TypeUnspecified), genColumn(mysql.TypeVarchar, 0), genColumn(mysql.TypeVarchar, 1))
 	require.NoError(t, err)
 	client := new(mock.Client)
-	sc := stmtctx.NewStmtCtx()
 
 	tps := []*types.FieldType{types.NewFieldType(mysql.TypeVarchar), types.NewFieldType(mysql.TypeVarchar)}
 	for _, coll := range []string{charset.CollationBin, charset.CollationLatin1, charset.CollationUTF8, charset.CollationUTF8MB4} {
 		fc.SetCharsetAndCollation("binary", coll) // only collation matters
-		pbExpr, err := ExpressionsToPBList(sc, []Expression{fc}, client)
+		pbExpr, err := ExpressionsToPBList(ctx.GetSessionVars().StmtCtx, []Expression{fc}, client)
 		require.NoError(t, err)
-		expr, err := PBToExpr(pbExpr[0], tps, sc)
+		expr, err := PBToExpr(ctx, pbExpr[0], tps)
 		require.NoError(t, err)
 		_, eColl := expr.CharsetAndCollation()
 		require.Equal(t, coll, eColl)

@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -238,6 +239,9 @@ func (s *rpcServer) createSession() (session.Session, error) {
 	if variable.OOMAction.Load() == variable.OOMActionCancel {
 		action := &memory.PanicOnExceed{Killer: &vars.SQLKiller}
 		vars.MemTracker.SetActionOnExceed(action)
+	}
+	if err = vars.SetSystemVar(variable.MaxAllowedPacket, strconv.FormatUint(variable.DefMaxAllowedPacket, 10)); err != nil {
+		return nil, err
 	}
 	se.SetSessionManager(s.sm)
 	return se, nil

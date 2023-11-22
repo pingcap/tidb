@@ -17,6 +17,7 @@ package aggregation
 import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -29,7 +30,7 @@ type avgFunction struct {
 
 func (af *avgFunction) updateAvg(ctx types.Context, evalCtx *AggEvaluateContext, row chunk.Row) error {
 	a := af.Args[1]
-	value, err := a.EvalWithInnerCtx(row)
+	value, err := a.Eval(evalCtx.Ctx, row)
 	if err != nil {
 		return err
 	}
@@ -40,7 +41,7 @@ func (af *avgFunction) updateAvg(ctx types.Context, evalCtx *AggEvaluateContext,
 	if err != nil {
 		return err
 	}
-	count, err := af.Args[0].EvalWithInnerCtx(row)
+	count, err := af.Args[0].Eval(evalCtx.Ctx, row)
 	if err != nil {
 		return err
 	}
@@ -48,10 +49,11 @@ func (af *avgFunction) updateAvg(ctx types.Context, evalCtx *AggEvaluateContext,
 	return nil
 }
 
-func (af *avgFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext) {
+func (af *avgFunction) ResetContext(ctx sessionctx.Context, evalCtx *AggEvaluateContext) {
 	if af.HasDistinct {
-		evalCtx.DistinctChecker = createDistinctChecker(sc)
+		evalCtx.DistinctChecker = createDistinctChecker(ctx.GetSessionVars().StmtCtx)
 	}
+	evalCtx.Ctx = ctx
 	evalCtx.Value.SetNull()
 	evalCtx.Count = 0
 }
