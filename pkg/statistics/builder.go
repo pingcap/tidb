@@ -253,7 +253,8 @@ func BuildHistAndTopN(
 	var getComparedBytes func(datum types.Datum) ([]byte, error)
 	if isColumn {
 		getComparedBytes = func(datum types.Datum) ([]byte, error) {
-			encoded, err := codec.EncodeKey(ctx.GetSessionVars().StmtCtx, nil, datum)
+			encoded, err := codec.EncodeKey(ctx.GetSessionVars().StmtCtx.TimeZone(), nil, datum)
+			err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 			if memTracker != nil {
 				// tmp memory usage
 				deltaSize := int64(cap(encoded))

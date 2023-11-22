@@ -664,7 +664,7 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec exec.Exec
 		},
 	}
 
-	childrenUsedSchema := markChildrenUsedColsForTest(e.Schema(), e.Children(0).Schema(), e.Children(1).Schema())
+	childrenUsedSchema := markChildrenUsedColsForTest(testCase.ctx, e.Schema(), e.Children(0).Schema(), e.Children(1).Schema())
 	defaultValues := make([]types.Datum, e.buildWorker.buildSideExec.Schema().Len())
 	lhsTypes, rhsTypes := exec.RetTypes(innerExec), exec.RetTypes(outerExec)
 	for i := uint(0); i < e.concurrency; i++ {
@@ -693,7 +693,7 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec exec.Exec
 
 // markChildrenUsedColsForTest compares each child with the output schema, and mark
 // each column of the child is used by output or not.
-func markChildrenUsedColsForTest(outputSchema *expression.Schema, childSchemas ...*expression.Schema) (childrenUsed [][]bool) {
+func markChildrenUsedColsForTest(ctx sessionctx.Context, outputSchema *expression.Schema, childSchemas ...*expression.Schema) (childrenUsed [][]bool) {
 	childrenUsed = make([][]bool, 0, len(childSchemas))
 	markedOffsets := make(map[int]struct{})
 	for _, col := range outputSchema.Columns {
@@ -710,7 +710,7 @@ func markChildrenUsedColsForTest(outputSchema *expression.Schema, childSchemas .
 		childrenUsed = append(childrenUsed, used)
 	}
 	for _, child := range childSchemas {
-		used := expression.GetUsedList(outputSchema.Columns, child)
+		used := expression.GetUsedList(ctx, outputSchema.Columns, child)
 		childrenUsed = append(childrenUsed, used)
 	}
 	return

@@ -1658,10 +1658,10 @@ func (e *maxMin4Enum) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialRe
 	return nil
 }
 
-func (e *maxMin4Enum) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *maxMin4Enum) UpdatePartialResult(ctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4MaxMinEnum)(pr)
 	for _, row := range rowsInGroup {
-		d, err := e.args[0].Eval(row)
+		d, err := e.args[0].Eval(ctx, row)
 		if err != nil {
 			return memDelta, err
 		}
@@ -1745,10 +1745,10 @@ func (e *maxMin4Set) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialRes
 	return nil
 }
 
-func (e *maxMin4Set) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *maxMin4Set) UpdatePartialResult(ctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4MaxMinSet)(pr)
 	for _, row := range rowsInGroup {
-		d, err := e.args[0].Eval(row)
+		d, err := e.args[0].Eval(ctx, row)
 		if err != nil {
 			return memDelta, err
 		}

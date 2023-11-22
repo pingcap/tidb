@@ -518,12 +518,12 @@ func (p *PhysicalHashJoin) extractUsedCols(parentUsedCols []*expression.Column) 
 
 func prunePhysicalColumnForHashJoinChild(sctx sessionctx.Context, hashJoin *PhysicalHashJoin, joinUsedCols []*expression.Column, sender *PhysicalExchangeSender) error {
 	var err error
-	joinUsed := expression.GetUsedList(joinUsedCols, sender.Schema())
+	joinUsed := expression.GetUsedList(sctx, joinUsedCols, sender.Schema())
 	hashCols := make([]*expression.Column, len(sender.HashCols))
 	for i, mppCol := range sender.HashCols {
 		hashCols[i] = mppCol.Col
 	}
-	hashUsed := expression.GetUsedList(hashCols, sender.Schema())
+	hashUsed := expression.GetUsedList(sctx, hashCols, sender.Schema())
 
 	needPrune := false
 	usedExprs := make([]expression.Expression, len(sender.Schema().Columns))

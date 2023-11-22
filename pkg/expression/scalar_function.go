@@ -354,10 +354,7 @@ func (sf *ScalarFunction) GetType() *types.FieldType {
 
 // Equal implements Expression interface.
 func (sf *ScalarFunction) Equal(ctx sessionctx.Context, e Expression) bool {
-	if ctx == nil {
-		ctx = sf.GetCtx()
-	}
-
+	intest.Assert(ctx != nil)
 	fun, ok := e.(*ScalarFunction)
 	if !ok {
 		return false
@@ -405,13 +402,21 @@ func (sf *ScalarFunction) Traverse(action TraverseAction) Expression {
 	return action.Transform(sf)
 }
 
+// EvalWithInnerCtx evaluates expression with inner ctx.
+// Deprecated: This function is only used during refactoring, please do not use it in new code.
+// TODO: remove this method after refactoring.
+func (sf *ScalarFunction) EvalWithInnerCtx(row chunk.Row) (types.Datum, error) {
+	return sf.Eval(sf.ctx, row)
+}
+
 // Eval implements Expression interface.
-func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
+func (sf *ScalarFunction) Eval(ctx sessionctx.Context, row chunk.Row) (d types.Datum, err error) {
 	var (
 		res    interface{}
 		isNull bool
 	)
-	switch ctx, tp, evalType := sf.GetCtx(), sf.GetType(), sf.GetType().EvalType(); evalType {
+	intest.AssertNotNil(ctx)
+	switch tp, evalType := sf.GetType(), sf.GetType().EvalType(); evalType {
 	case types.ETInt:
 		var intRes int64
 		intRes, isNull, err = sf.EvalInt(ctx, row)
@@ -435,10 +440,8 @@ func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 		str, isNull, err = sf.EvalString(ctx, row)
 		if !isNull && err == nil && tp.GetType() == mysql.TypeEnum {
 			res, err = types.ParseEnum(tp.GetElems(), str, tp.GetCollate())
-			if ctx := sf.GetCtx(); ctx != nil {
-				if sc := ctx.GetSessionVars().StmtCtx; sc != nil {
-					err = sc.HandleTruncate(err)
-				}
+			if sc := ctx.GetSessionVars().StmtCtx; sc != nil {
+				err = sc.HandleTruncate(err)
 			}
 		} else {
 			res = str
@@ -654,15 +657,15 @@ func (sf *ScalarFunction) resolveIndices(schema *Schema) error {
 }
 
 // ResolveIndicesByVirtualExpr implements Expression interface.
-func (sf *ScalarFunction) ResolveIndicesByVirtualExpr(schema *Schema) (Expression, bool) {
+func (sf *ScalarFunction) ResolveIndicesByVirtualExpr(ctx sessionctx.Context, schema *Schema) (Expression, bool) {
 	newSf := sf.Clone()
-	isOK := newSf.resolveIndicesByVirtualExpr(schema)
+	isOK := newSf.resolveIndicesByVirtualExpr(ctx, schema)
 	return newSf, isOK
 }
 
-func (sf *ScalarFunction) resolveIndicesByVirtualExpr(schema *Schema) bool {
+func (sf *ScalarFunction) resolveIndicesByVirtualExpr(ctx sessionctx.Context, schema *Schema) bool {
 	for _, arg := range sf.GetArgs() {
-		isOk := arg.resolveIndicesByVirtualExpr(schema)
+		isOk := arg.resolveIndicesByVirtualExpr(ctx, schema)
 		if !isOk {
 			return false
 		}

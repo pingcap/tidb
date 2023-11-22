@@ -673,13 +673,13 @@ func (*firstRow4Enum) ResetPartialResult(pr PartialResult) {
 	p.isNull, p.gotFirstRow = false, false
 }
 
-func (e *firstRow4Enum) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *firstRow4Enum) UpdatePartialResult(ctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4FirstRowEnum)(pr)
 	if p.gotFirstRow {
 		return memDelta, nil
 	}
 	if len(rowsInGroup) > 0 {
-		d, err := e.args[0].Eval(rowsInGroup[0])
+		d, err := e.args[0].Eval(ctx, rowsInGroup[0])
 		if err != nil {
 			return memDelta, err
 		}
@@ -740,13 +740,13 @@ func (*firstRow4Set) ResetPartialResult(pr PartialResult) {
 	p.isNull, p.gotFirstRow = false, false
 }
 
-func (e *firstRow4Set) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *firstRow4Set) UpdatePartialResult(ctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4FirstRowSet)(pr)
 	if p.gotFirstRow {
 		return memDelta, nil
 	}
 	if len(rowsInGroup) > 0 {
-		d, err := e.args[0].Eval(rowsInGroup[0])
+		d, err := e.args[0].Eval(ctx, rowsInGroup[0])
 		if err != nil {
 			return memDelta, err
 		}

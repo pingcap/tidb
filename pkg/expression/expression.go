@@ -113,8 +113,13 @@ type Expression interface {
 
 	Traverse(TraverseAction) Expression
 
+	// EvalWithInnerCtx evaluates expression with inner ctx.
+	// Deprecated: This function is only used during refactoring, please do not use it in new code.
+	// TODO: remove this method after refactoring.
+	EvalWithInnerCtx(row chunk.Row) (types.Datum, error)
+
 	// Eval evaluates an expression through a row.
-	Eval(row chunk.Row) (types.Datum, error)
+	Eval(ctx sessionctx.Context, row chunk.Row) (types.Datum, error)
 
 	// EvalInt returns the int64 representation of expression.
 	EvalInt(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error)
@@ -169,10 +174,10 @@ type Expression interface {
 	resolveIndices(schema *Schema) error
 
 	// ResolveIndicesByVirtualExpr resolves indices by the given schema in terms of virual expression. It will copy the original expression and return the copied one.
-	ResolveIndicesByVirtualExpr(schema *Schema) (Expression, bool)
+	ResolveIndicesByVirtualExpr(ctx sessionctx.Context, schema *Schema) (Expression, bool)
 
 	// resolveIndicesByVirtualExpr is called inside the `ResolveIndicesByVirtualExpr` It will perform on the expression itself.
-	resolveIndicesByVirtualExpr(schema *Schema) bool
+	resolveIndicesByVirtualExpr(ctx sessionctx.Context, schema *Schema) bool
 
 	// RemapColumn remaps columns with provided mapping and returns new expression
 	RemapColumn(map[int64]*Column) (Expression, error)
@@ -260,7 +265,7 @@ func HandleOverflowOnSelection(sc *stmtctx.StatementContext, val int64, err erro
 func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, bool, error) {
 	hasNull := false
 	for _, expr := range exprList {
-		data, err := expr.Eval(row)
+		data, err := expr.Eval(ctx, row)
 		if err != nil {
 			return false, false, err
 		}

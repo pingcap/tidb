@@ -675,7 +675,8 @@ func (e *countStarProcessor) Finish() error {
 // countFinish is used for `count(*)`.
 func (e *closureExecutor) countFinish() error {
 	d := types.NewIntDatum(int64(e.rowCount))
-	rowData, err := codec.EncodeValue(e.sc, nil, d)
+	rowData, err := codec.EncodeValue(e.sc.TimeZone(), nil, d)
+	err = e.sc.HandleError(err)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -791,7 +792,7 @@ func (e *closureExecutor) processSelection(needCollectDetail bool) (gotRow bool,
 	gotRow = true
 	for _, expr := range e.selectionCtx.conditions {
 		wc := e.sc.WarningCount()
-		d, err := expr.Eval(row)
+		d, err := expr.Eval(e.seCtx, row)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -946,6 +947,7 @@ func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
 
 func (e *closureExecutor) chunkToOldChunk(chk *chunk.Chunk) error {
 	var oldRow []types.Datum
+	errCtx := e.sc.ErrCtx()
 	for i := 0; i < chk.NumRows(); i++ {
 		oldRow = oldRow[:0]
 		if e.outputOff != nil {
@@ -960,7 +962,8 @@ func (e *closureExecutor) chunkToOldChunk(chk *chunk.Chunk) error {
 			}
 		}
 		var err error
-		e.oldRowBuf, err = codec.EncodeValue(e.sc, e.oldRowBuf[:0], oldRow...)
+		e.oldRowBuf, err = codec.EncodeValue(e.sc.TimeZone(), e.oldRowBuf[:0], oldRow...)
+		err = errCtx.HandleError(err)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1027,7 +1030,7 @@ func (e *topNProcessor) Process(key, value []byte) (err error) {
 	ctx := e.topNCtx
 	row := e.scanCtx.chk.GetRow(0)
 	for i, expr := range ctx.orderByExprs {
-		d, err := expr.Eval(row)
+		d, err := expr.Eval(e.seCtx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1122,12 +1125,14 @@ func (e *hashAggProcessor) getGroupKey(row chunk.Row) ([]byte, error) {
 		return nil, nil
 	}
 	key := make([]byte, 0, 32)
+	errCtx := e.sc.ErrCtx()
 	for _, item := range e.groupByExprs {
-		v, err := item.Eval(row)
+		v, err := item.Eval(e.seCtx, row)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		b, err := codec.EncodeValue(e.sc, nil, v)
+		b, err := codec.EncodeValue(e.sc.TimeZone(), nil, v)
+		err = errCtx.HandleError(err)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1149,13 +1154,15 @@ func (e *hashAggProcessor) getContexts(groupKey []byte) []*aggregation.AggEvalua
 }
 
 func (e *hashAggProcessor) Finish() error {
+	errCtx := e.sc.ErrCtx()
 	for i, gk := range e.groupKeys {
 		aggCtxs := e.getContexts(gk)
 		e.oldRowBuf = e.oldRowBuf[:0]
 		for i, agg := range e.aggExprs {
 			partialResults := agg.GetPartialResult(aggCtxs[i])
 			var err error
-			e.oldRowBuf, err = codec.EncodeValue(e.sc, e.oldRowBuf, partialResults...)
+			e.oldRowBuf, err = codec.EncodeValue(e.sc.TimeZone(), e.oldRowBuf, partialResults...)
+			err = errCtx.HandleError(err)
 			if err != nil {
 				return err
 			}

@@ -1262,12 +1262,14 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoff.Backo
 	}
 
 	copReq := coprocessor.BatchRequest{
-		Tp:           b.req.Tp,
-		StartTs:      b.req.StartTs,
-		Data:         b.req.Data,
-		SchemaVer:    b.req.SchemaVar,
-		Regions:      regionInfos,
-		TableRegions: task.PartitionTableRegions,
+		Tp:              b.req.Tp,
+		StartTs:         b.req.StartTs,
+		Data:            b.req.Data,
+		SchemaVer:       b.req.SchemaVar,
+		Regions:         regionInfos,
+		TableRegions:    task.PartitionTableRegions,
+		ConnectionId:    b.req.ConnID,
+		ConnectionAlias: b.req.ConnAlias,
 	}
 
 	rgName := b.req.ResourceGroupName
