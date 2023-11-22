@@ -107,6 +107,7 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 		datumMap := statistics.NewDatumMapCache()
 
 		for i, topN := range checkTopNs {
+			i = i + start
 			if err := worker.killer.HandleSignal(); err != nil {
 				resp.Err = err
 				worker.respCh <- resp

@@ -4376,6 +4376,10 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 	}
 	newPartInfo := newMeta.Partition
 
+	if err = handlePartitionPlacement(ctx, newPartInfo); err != nil {
+		return errors.Trace(err)
+	}
+
 	if err = d.assignPartitionIDs(newPartInfo.Definitions); err != nil {
 		return errors.Trace(err)
 	}
