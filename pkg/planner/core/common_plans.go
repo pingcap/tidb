@@ -1444,6 +1444,7 @@ func IsAutoCommitTxn(ctx sessionctx.Context) bool {
 	return ctx.GetSessionVars().IsAutocommit() && !ctx.GetSessionVars().InTxn()
 }
 
+// AdminShowBDRRole represents a show bdr role plan.
 type AdminShowBDRRole struct {
 	baseSchemaProducer
 }

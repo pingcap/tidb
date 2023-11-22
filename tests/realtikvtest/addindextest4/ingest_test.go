@@ -523,3 +523,19 @@ func TestAddIndexImportFailed(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec("admin check table t;")
 }
+
+func TestAddEmptyMultiValueIndex(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec(`set global tidb_enable_dist_task=off;`)
+
+	tk.MustExec("create table t(j json);")
+	tk.MustExec(`insert into t(j) values ('{"string":[]}');`)
+	tk.MustExec("alter table t add index ((cast(j->'$.string' as char(10) array)));")
+	tk.MustExec("admin check table t;")
+}

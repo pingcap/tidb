@@ -1443,12 +1443,13 @@ func (h RegionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				writeError(w, err)
 				return
 			}
-			hotRead, err := h.ScrapeHotInfo(pdapi.HotRead, schema.AllSchemas())
+			ctx := context.Background()
+			hotRead, err := h.ScrapeHotInfo(ctx, helper.HotRead, schema.AllSchemas())
 			if err != nil {
 				writeError(w, err)
 				return
 			}
-			hotWrite, err := h.ScrapeHotInfo(pdapi.HotWrite, schema.AllSchemas())
+			hotWrite, err := h.ScrapeHotInfo(ctx, helper.HotWrite, schema.AllSchemas())
 			if err != nil {
 				writeError(w, err)
 				return

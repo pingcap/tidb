@@ -23,5 +23,6 @@ import (
 var Analyzer = ineffassign.Analyzer
 
 func init() {
+	util.SkipAnalyzerByConfig(Analyzer)
 	util.SkipAnalyzer(Analyzer)
 }
