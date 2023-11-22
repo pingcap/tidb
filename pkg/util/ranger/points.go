@@ -738,10 +738,7 @@ func (r *builder) newBuildFromPatternLike(
 		startPoint := &point{value: types.NewStringDatum(""), start: true}
 		endPoint := &point{value: types.NewStringDatum("")}
 		res := []*point{startPoint, endPoint}
-		if convertToSortKey &&
-			newTp.EvalType() == types.ETString &&
-			newTp.GetType() != mysql.TypeEnum &&
-			newTp.GetType() != mysql.TypeSet {
+		if convertToSortKey {
 			res, err = pointsConvertToSortKey(r.sctx, res, newTp)
 			if err != nil {
 				r.err = err

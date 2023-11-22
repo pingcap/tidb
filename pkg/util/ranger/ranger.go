@@ -427,13 +427,7 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 		rangeFallback bool
 		err           error
 	)
-	if newTp.EvalType() == types.ETString &&
-		newTp.GetType() != mysql.TypeEnum &&
-		newTp.GetType() != mysql.TypeSet {
-		newTp = newTp.Clone()
-		newTp.SetCharset(charset.CharsetBin)
-		newTp.SetCollate(charset.CollationBin)
-	}
+	newTp = convertStringFTToBinaryCollate(newTp)
 	if tableRange {
 		ranges, rangeFallback, err = points2TableRanges(sctx, rangePoints, newTp, rangeMaxSize)
 	} else {
@@ -494,14 +488,7 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 		if rb.err != nil {
 			return nil, nil, nil, errors.Trace(rb.err)
 		}
-		tmpNewTp := newTp[i]
-		if tmpNewTp.EvalType() == types.ETString &&
-			tmpNewTp.GetType() != mysql.TypeEnum &&
-			tmpNewTp.GetType() != mysql.TypeSet {
-			tmpNewTp = tmpNewTp.Clone()
-			tmpNewTp.SetCharset(charset.CharsetBin)
-			tmpNewTp.SetCollate(charset.CollationBin)
-		}
+		tmpNewTp := convertStringFTToBinaryCollate(newTp[i])
 		if i == 0 {
 			ranges, rangeFallback, err = points2Ranges(d.sctx, point, tmpNewTp, d.rangeMaxSize)
 		} else {
@@ -528,15 +515,9 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 		}
 	}
 	var tmpNewTp *types.FieldType
-	if eqAndInCount == 0 || eqAndInCount < len(accessConds) {
-		tmpNewTp = newTp[eqAndInCount]
-		if tmpNewTp.EvalType() == types.ETString &&
-			tmpNewTp.GetType() != mysql.TypeEnum &&
-			tmpNewTp.GetType() != mysql.TypeSet {
-			tmpNewTp = tmpNewTp.Clone()
-			tmpNewTp.SetCharset(charset.CharsetBin)
-			tmpNewTp.SetCollate(charset.CollationBin)
-		}
+	if d.convertToSortKey &&
+		(eqAndInCount == 0 || eqAndInCount < len(accessConds)) {
+		tmpNewTp = convertStringFTToBinaryCollate(newTp[eqAndInCount])
 	}
 	if eqAndInCount == 0 {
 		ranges, rangeFallback, err = points2Ranges(d.sctx, rangePoints, tmpNewTp, d.rangeMaxSize)
@@ -551,6 +532,18 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 		return ranges, accessConds[:eqAndInCount], accessConds[eqAndInCount:], nil
 	}
 	return ranges, accessConds, nil, nil
+}
+
+func convertStringFTToBinaryCollate(ft *types.FieldType) *types.FieldType {
+	if ft.EvalType() != types.ETString ||
+		ft.GetType() == mysql.TypeEnum ||
+		ft.GetType() == mysql.TypeSet {
+		return ft
+	}
+	newTp := ft.Clone()
+	newTp.SetCharset(charset.CharsetBin)
+	newTp.SetCollate(charset.CollationBin)
+	return newTp
 }
 
 // buildCNFIndexRange builds the range for index where the top layer is CNF.

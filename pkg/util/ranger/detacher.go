@@ -776,14 +776,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 				hasResidual = true
 			}
 			points := rb.build(item, newTpSlice[0], d.lengths[0], d.convertToSortKey)
-			tmpNewTp := newTpSlice[0]
-			if tmpNewTp.EvalType() == types.ETString &&
-				tmpNewTp.GetType() != mysql.TypeEnum &&
-				tmpNewTp.GetType() != mysql.TypeSet {
-				tmpNewTp = tmpNewTp.Clone()
-				tmpNewTp.SetCharset(charset.CharsetBin)
-				tmpNewTp.SetCollate(charset.CollationBin)
-			}
+			tmpNewTp := convertStringFTToBinaryCollate(newTpSlice[0])
 			// TODO: restrict the mem usage of ranges
 			ranges, rangeFallback, err := points2Ranges(d.sctx, points, tmpNewTp, d.rangeMaxSize)
 			if err != nil {
