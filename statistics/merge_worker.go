@@ -109,8 +109,14 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 		datumMap := make(map[hack.MutableString]types.Datum)
 
 		for i, topN := range checkTopNs {
+<<<<<<< HEAD:statistics/merge_worker.go
 			if atomic.LoadUint32(worker.killed) == 1 {
 				resp.Err = errors.Trace(ErrQueryInterrupted)
+=======
+			i = i + start
+			if err := worker.killer.HandleSignal(); err != nil {
+				resp.Err = err
+>>>>>>> 8de6d307e5e (statistics: fix wrong result in the MergeGlobalStatsTopNByConcurrency (#48757)):pkg/statistics/handle/globalstats/merge_worker.go
 				worker.respCh <- resp
 				return
 			}
