@@ -38,7 +38,7 @@ type TaskManager interface {
 	ResumeSubtasks(ctx context.Context, taskID int64) error
 	CollectSubTaskError(ctx context.Context, taskID int64) ([]error, error)
 	TransferSubTasks2History(ctx context.Context, taskID int64) error
-	UpdateSubtasksSchedulerIDs(taskID int64, subtasks []*proto.Subtask) error
+	UpdateSubtasksSchedulerIDs(ctx context.Context, taskID int64, subtasks []*proto.Subtask) error
 	GetNodesByRole(ctx context.Context, role string) (map[string]bool, error)
 	GetSchedulerIDsByTaskID(ctx context.Context, taskID int64) ([]string, error)
 	GetSubtasksByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.TaskState) ([]*proto.Subtask, error)

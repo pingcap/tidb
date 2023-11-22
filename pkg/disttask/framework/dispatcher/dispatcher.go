@@ -702,32 +702,11 @@ func (d *BaseDispatcher) dispatchSubTask(
 	metas [][]byte,
 	serverNodes []*infosync.ServerInfo) error {
 	logutil.Logger(d.logCtx).Info("dispatch subtasks", zap.Stringer("state", d.Task.State), zap.Int64("step", int64(d.Task.Step)), zap.Uint64("concurrency", d.Task.Concurrency), zap.Int("subtasks", len(metas)))
-
-	// select all available TiDB nodes for task.
-	serverNodes, err := d.GetEligibleInstances(d.ctx, d.Task)
-	logutil.Logger(d.logCtx).Debug("eligible instances", zap.Int("num", len(serverNodes)))
-
-	if err != nil {
-		return err
-	}
-	// 4. filter by role.
-	serverNodes, err = d.filterByRole(serverNodes)
-	if err != nil {
-		return err
-	}
-
-	logutil.Logger(d.logCtx).Info("eligible instances", zap.Int("num", len(serverNodes)))
-
-	if len(serverNodes) == 0 {
-		return errors.New("no available TiDB node to dispatch subtasks")
-	}
 	d.TaskNodes = make([]string, len(serverNodes))
 	for i := range serverNodes {
-		execID := disttaskutil.GenerateExecID(serverNodes[i].IP, serverNodes[i].Port)
-		d.TaskNodes[i] = execID
+		d.TaskNodes[i] = disttaskutil.GenerateExecID(serverNodes[i].IP, serverNodes[i].Port)
 	}
 	subTasks := make([]*proto.Subtask, 0, len(metas))
-	logutil.BgLogger().Info("ywq test len subtask", zap.Any("len", len(metas)))
 	for i, meta := range metas {
 		// we assign the subtask to the instance in a round-robin way.
 		// TODO: assign the subtask to the instance according to the system load of each nodes
