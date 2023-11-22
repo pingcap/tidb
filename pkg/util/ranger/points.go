@@ -681,7 +681,6 @@ func (r *builder) buildFromIn(
 
 		rangePoints = append(rangePoints, startPoint, endPoint)
 	}
-	cutPrefixForPoints(rangePoints, prefixLen, ft)
 	sorter := pointSorter{points: rangePoints, sc: r.sctx.GetSessionVars().StmtCtx, collator: collate.GetCollator(colCollate)}
 	sort.Sort(&sorter)
 	if sorter.err != nil {
@@ -702,6 +701,7 @@ func (r *builder) buildFromIn(
 		curPos++
 	}
 	rangePoints = rangePoints[:curPos]
+	cutPrefixForPoints(rangePoints, prefixLen, ft)
 	var err error
 	if convertToSortKey {
 		rangePoints, err = pointsConvertToSortKey(r.sctx, rangePoints, newTp)
