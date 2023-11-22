@@ -24,7 +24,7 @@ Issue Number: close #xxx
 
 Problem Summary:
 
-### What has changed and how does it work?
+### What changed and how does it work?
 
 ### Check List
 
