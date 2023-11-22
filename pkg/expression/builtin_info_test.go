@@ -187,7 +187,7 @@ func TestBenchMark(t *testing.T) {
 		})...)
 		require.NoError(t, err)
 
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		require.NoError(t, err)
 		if c.IsNil {
 			require.True(t, d.IsNull())
@@ -250,7 +250,7 @@ func TestTiDBVersion(t *testing.T) {
 	ctx := createContext(t)
 	f, err := newFunctionForTest(ctx, ast.TiDBVersion, primitiveValsToConstants(ctx, []interface{}{})...)
 	require.NoError(t, err)
-	v, err := f.Eval(chunk.Row{})
+	v, err := f.Eval(ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, printer.GetTiDBInfo(), v.GetString())
 }
@@ -294,7 +294,7 @@ func TestLastInsertID(t *testing.T) {
 		require.Equal(t, charset.CollationBin, tp.GetCollate())
 		require.Equal(t, mysql.BinaryFlag, tp.GetFlag()&mysql.BinaryFlag)
 		require.Equal(t, mysql.MaxIntWidth, tp.GetFlen())
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {

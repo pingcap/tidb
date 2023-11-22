@@ -1386,7 +1386,7 @@ func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.Fiel
 	if con.GetType().EvalType() == types.ETInt {
 		return con, false
 	}
-	dt, err := con.Eval(chunk.Row{})
+	dt, err := con.Eval(ctx, chunk.Row{})
 	if err != nil {
 		return con, false
 	}
@@ -1421,7 +1421,7 @@ func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.Fiel
 //	If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
 //	If the op == EQ,NullEQ and the constant can never be equal to the int column, return ‘con’(the input, a non-int constant).
 func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldType, con *Constant, op opcode.Op) (_ *Constant, isExceptional bool) {
-	dt, err := con.Eval(chunk.Row{})
+	dt, err := con.Eval(ctx, chunk.Row{})
 	if err != nil {
 		return con, false
 	}
@@ -1681,7 +1681,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 
 // see https://github.com/pingcap/tidb/issues/38361 for more details
 func (c *compareFunctionClass) refineNumericConstantCmpDatetime(ctx sessionctx.Context, args []Expression, constArg *Constant, constArgIdx int) []Expression {
-	dt, err := constArg.Eval(chunk.Row{})
+	dt, err := constArg.Eval(ctx, chunk.Row{})
 	if err != nil || dt.IsNull() {
 		return args
 	}
