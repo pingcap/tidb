@@ -353,7 +353,7 @@ func (dsp *BackfillingDispatcherExt) generateNonPartitionPlan(
 	return subTaskMetas, nil
 }
 
-func (dsp *BackfillingDispatcherExt) getWriterMemSize(backfillMeta *BackfillGlobalMeta) (uint64, error) {
+func (*BackfillingDispatcherExt) getWriterMemSize(backfillMeta *BackfillGlobalMeta) (uint64, error) {
 	failpoint.Inject("mockWriterMemSize", func() {
 		failpoint.Return(1*size.GB, nil)
 	})
