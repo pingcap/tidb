@@ -5,7 +5,7 @@
 
 ## Introduction
 
-Grouping Sets is internal implementation mechanism for supporting Multi-Distinct-Aggregate MPP Optimization and Rollup/Cube syntax. Both scenarios need the underlying data to be grouped with different grouping layout, consequently feeding different aggregation accordingly, while one replica of source data can rarely do that, that's why grouping sets is concluded and additional data replication is necessary under our trade-off.
+Grouping Sets is internal implementation mechanism for supporting Multi-Distinct-Aggregate MPP Optimization and Rollup/Cube syntax. Both scenarios need the underlying data to be grouped with different grouping layout, consequently feeding different aggregation function accordingly or feeding all the same aggregation functions continuously , while one replica of source data can rarely do that, that's why grouping sets is introduced and additional data replication is necessary even under our trade-off.
 
 ## Motivation or Background
 
@@ -27,7 +27,7 @@ MySQL [test]> explain select count(distinct a), count(distinct b) from t;
 +------------------------------------+----------+--------------+---------------+------------------------------------------------------------------------------------+
 8 rows in set (0.000 sec)
 ```
-As shown above, the source data will be pass through to single node, and all the intensive aggregation computation resides on that node (especially on operator `HashAgg_28`). Once the number of rows on that node is large, the single point bottleneck will be too obvious.
+As shown above, the source data will be pass through to single node, and all the intensive aggregation computation resides that node (especially on operator `HashAgg_28`). Once the number of rows on it is large, the single point bottleneck will appear to be obvious.
 
 **Rollup Syntax**
 ```sql
@@ -47,9 +47,9 @@ MySQL [test]> explain SELECT a, b, sum(1) FROM t GROUP BY a, b With Rollup;
 +--------------------------------------+----------+--------------+---------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
 9 rows in set (0.018 sec)
 ```
-Most modern databases with AP functions always include multi-dimensional aggregate analysis. Rollup/Cute are two common syntax forms of them. MySQL also provides rollup syntax support after version 8.0, along with the supporting implementation of the grouping function. Expand operator can supply underlying data replication, different replica being grouped with different dimensional grouping layout, and consequently outputting different dimensional aggregation results.
+Most modern databases with AP functionality always include multi-dimensional aggregate analysis. Rollup/Cute are two common syntax forms of them. MySQL also provides rollup syntax support after version 8.0, along with supporting implementation of the grouping function. Expand operator can supply underlying data replication, data being grouped with different dimensional grouping layout, and consequently outputting different dimensional aggregation results.
 
-Behind the realization of both phenomena, the essence is the application of grouping sets. We discover and analyze the necessary requirements for data replication from different scenarios, replicate the underlying data via building Expand operator consuming grouping sets collected, and polish up the functionality by rewriting the upper aggregation / expression / grouping-function.
+Behind the realization of both phenomena, the essence is the application of grouping sets. We are going to discover and analyze the necessary requirements for data replication from different scenarios, replicate the underlying data via building Expand operator consuming grouping sets collected, and feedback the grouping function and grouping column related expressions in the upper layer by rewriting.
 
 ## Detailed Design
 
