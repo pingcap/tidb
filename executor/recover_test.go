@@ -444,7 +444,7 @@ func TestFlashbackTSOWithSafeTs(t *testing.T) {
 	}
 	for _, testcase := range testcases {
 		t.Log(testcase.name)
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
 			fmt.Sprintf("return(%v)", testcase.injectSafeTS)))
 		if testcase.compareWithSafeTS == 1 {
 			start := time.Now()
