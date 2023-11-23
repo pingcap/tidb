@@ -166,9 +166,37 @@ func writeExternalFile(s *writeTestSuite) {
 	}
 }
 
+func writeExternalOneFile(s *writeTestSuite) {
+	ctx := context.Background()
+	builder := NewWriterBuilder().
+		SetMemorySizeLimit(uint64(s.memoryLimit))
+
+	if s.beforeCreateWriter != nil {
+		s.beforeCreateWriter()
+	}
+	writer := builder.BuildOneFile(
+		s.store, "test/external", "writerID")
+	_ = writer.Init(ctx, 20*1024*1024)
+	key, val, _ := s.source.next()
+	for key != nil {
+		err := writer.WriteRow(ctx, key, val)
+		intest.AssertNoError(err)
+		key, val, _ = s.source.next()
+	}
+	if s.beforeWriterClose != nil {
+		s.beforeWriterClose()
+	}
+	err := writer.Close(ctx)
+	intest.AssertNoError(err)
+	if s.afterWriterClose != nil {
+		s.afterWriterClose()
+	}
+}
+
 func TestCompareWriter(t *testing.T) {
 	store := openTestingStorage(t)
-	source := newAscendingKeySource(20, 100, 10000000)
+	sourceKVNum := 10000000
+	source := newAscendingKeySource(20, 100, sourceKVNum)
 	memoryLimit := 64 * 1024 * 1024
 	fileIdx := 0
 	var (
@@ -210,10 +238,15 @@ func TestCompareWriter(t *testing.T) {
 	baseSpeed := float64(source.outputSize()) / elapsed.Seconds() / 1024 / 1024
 	t.Logf("base speed for %d bytes: %.2f MB/s", source.outputSize(), baseSpeed)
 
-	suite.source = newAscendingKeySource(20, 100, 10000000)
+	suite.source = newAscendingKeySource(20, 100, sourceKVNum)
 	writeExternalFile(suite)
 	writerSpeed := float64(source.outputSize()) / elapsed.Seconds() / 1024 / 1024
 	t.Logf("writer speed for %d bytes: %.2f MB/s", source.outputSize(), writerSpeed)
+
+	suite.source = newAscendingKeySource(20, 100, sourceKVNum)
+	writeExternalOneFile(suite)
+	writerSpeed = float64(source.outputSize()) / elapsed.Seconds() / 1024 / 1024
+	t.Logf("one file writer speed for %d bytes: %.2f MB/s", source.outputSize(), writerSpeed)
 }
 
 type readTestSuite struct {
