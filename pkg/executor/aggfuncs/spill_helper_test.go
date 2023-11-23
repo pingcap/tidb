@@ -16,6 +16,7 @@ package aggfuncs
 
 import (
 	"bytes"
+	"math/rand"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -39,6 +40,15 @@ func getLongString(originStr string) string {
 		returnStr += returnStr
 	}
 	return returnStr
+}
+
+func getRandBuffer() []byte {
+	bufLen := rand.Intn(10000)
+	retVal := make([]byte, bufLen)
+	for i := 0; i < bufLen; i++ {
+		retVal[i] = byte(i % 8)
+	}
+	return retVal
 }
 
 func TestPartialResult4Count(t *testing.T) {
@@ -72,6 +82,8 @@ func TestPartialResult4Count(t *testing.T) {
 		}
 		index++
 	}
+
+	chunk.Column(0).DestroyDataForTest()
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
@@ -116,6 +128,8 @@ func TestPartialResult4MaxMinInt(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -158,6 +172,8 @@ func TestPartialResult4MaxMinUint(t *testing.T) {
 		}
 		index++
 	}
+
+	chunk.Column(0).DestroyDataForTest()
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
@@ -202,6 +218,8 @@ func TestPartialResult4MaxMinDecimal(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -244,6 +262,8 @@ func TestPartialResult4MaxMinFloat32(t *testing.T) {
 		}
 		index++
 	}
+
+	chunk.Column(0).DestroyDataForTest()
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
@@ -288,6 +308,8 @@ func TestPartialResult4MaxMinFloat64(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -330,6 +352,8 @@ func TestPartialResult4MaxMinTime(t *testing.T) {
 		}
 		index++
 	}
+
+	chunk.Column(0).DestroyDataForTest()
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
@@ -374,6 +398,8 @@ func TestPartialResult4MaxMinString(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -416,6 +442,8 @@ func TestPartialResult4MaxMinJSON(t *testing.T) {
 		}
 		index++
 	}
+
+	chunk.Column(0).DestroyDataForTest()
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
@@ -460,6 +488,8 @@ func TestPartialResult4MaxMinEnum(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -502,6 +532,8 @@ func TestPartialResult4MaxMinSet(t *testing.T) {
 		}
 		index++
 	}
+
+	chunk.Column(0).DestroyDataForTest()
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
@@ -546,6 +578,8 @@ func TestPartialResult4AvgDecimal(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -588,6 +622,8 @@ func TestPartialResult4AvgFloat64(t *testing.T) {
 		}
 		index++
 	}
+
+	chunk.Column(0).DestroyDataForTest()
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
@@ -632,6 +668,8 @@ func TestPartialResult4SumDecimal(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -674,6 +712,8 @@ func TestPartialResult4SumFloat64(t *testing.T) {
 		}
 		index++
 	}
+
+	chunk.Column(0).DestroyDataForTest()
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
@@ -718,6 +758,8 @@ func TestBasePartialResult4GroupConcat(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -758,6 +800,8 @@ func TestPartialResult4BitFunc(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -770,10 +814,10 @@ func TestPartialResult4JsonArrayagg(t *testing.T) {
 
 	// Initialize test data
 	expectData := []partialResult4JsonArrayagg{
-		{entries: []interface{}{int64(1), float64(1.1), testLongStr1, false}},
-		{entries: []interface{}{int64(1), float64(1.1), "", true}},
-		{entries: []interface{}{"dw啊q", float64(-1.1), int64(0)}},
-		{entries: []interface{}{"dw啊q", float64(-1.1), types.BinaryJSON{TypeCode: 1, Value: []byte(testLongStr2)}}},
+		{entries: []interface{}{int64(1), float64(1.1), testLongStr1, false, types.NewDuration(1, 2, 3, 4, 5)}},
+		{entries: []interface{}{int64(1), float64(1.1), "", true, types.Opaque{TypeCode: 1, Buf: getRandBuffer()}, types.NewTime(9876, 12, 10)}},
+		{entries: []interface{}{"dw啊q", float64(-1.1), int64(0), types.NewDuration(1, 2, 3, 4, 5), types.NewTime(123, 1, 2)}},
+		{entries: []interface{}{"dw啊q", float64(-1.1), types.BinaryJSON{TypeCode: 1, Value: []byte(testLongStr2)}, types.Opaque{TypeCode: 3, Buf: getRandBuffer()}}},
 	}
 	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
@@ -801,6 +845,8 @@ func TestPartialResult4JsonArrayagg(t *testing.T) {
 		}
 		index++
 	}
+
+	chunk.Column(0).DestroyDataForTest()
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
@@ -845,6 +891,8 @@ func TestPartialResult4JsonObjectAgg(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -887,6 +935,8 @@ func TestPartialResult4FirstRowDecimal(t *testing.T) {
 		}
 		index++
 	}
+
+	chunk.Column(0).DestroyDataForTest()
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
@@ -931,6 +981,8 @@ func TestPartialResult4FirstRowInt(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -973,6 +1025,8 @@ func TestPartialResult4FirstRowTime(t *testing.T) {
 		}
 		index++
 	}
+
+	chunk.Column(0).DestroyDataForTest()
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
@@ -1017,6 +1071,8 @@ func TestPartialResult4FirstRowString(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -1059,6 +1115,8 @@ func TestPartialResult4FirstRowFloat32(t *testing.T) {
 		}
 		index++
 	}
+
+	chunk.Column(0).DestroyDataForTest()
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
@@ -1103,6 +1161,8 @@ func TestPartialResult4FirstRowFloat64(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -1145,6 +1205,8 @@ func TestPartialResult4FirstRowDuration(t *testing.T) {
 		}
 		index++
 	}
+
+	chunk.Column(0).DestroyDataForTest()
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
@@ -1189,6 +1251,8 @@ func TestPartialResult4FirstRowJSON(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -1232,6 +1296,8 @@ func TestPartialResult4FirstRowEnum(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -1274,6 +1340,8 @@ func TestPartialResult4FirstRowSet(t *testing.T) {
 		}
 		index++
 	}
+
+	chunk.Column(0).DestroyDataForTest()
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
