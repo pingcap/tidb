@@ -608,7 +608,7 @@ func extractValueInfo(expr expression.Expression) *valueInfo {
 func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
 	lengths []int) ([]expression.Expression, []expression.Expression, []expression.Expression, []*valueInfo, bool) {
 	var filters []expression.Expression
-	rb := builder{sc: sctx.GetSessionVars().StmtCtx}
+	rb := builder{ctx: sctx}
 	accesses := make([]expression.Expression, len(cols))
 	points := make([][]*point, len(cols))
 	mergedAccesses := make([]expression.Expression, len(cols))
@@ -715,7 +715,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 		optPrefixIndexSingleScan: d.sctx.GetSessionVars().OptPrefixIndexSingleScan,
 		ctx:                      d.sctx,
 	}
-	rb := builder{sc: d.sctx.GetSessionVars().StmtCtx}
+	rb := builder{ctx: d.sctx}
 	dnfItems := expression.FlattenDNFConditions(condition)
 	newAccessItems := make([]expression.Expression, 0, len(dnfItems))
 	var totalRanges Ranges

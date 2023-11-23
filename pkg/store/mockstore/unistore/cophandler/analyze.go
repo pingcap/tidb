@@ -493,6 +493,7 @@ func (e *analyzeColumnsExec) Process(key, value []byte) error {
 		return errors.Trace(err)
 	}
 	row := e.chk.GetRow(0)
+	sc := e.evalCtx.sctx.GetSessionVars().StmtCtx
 	for i, tp := range e.evalCtx.fieldTps {
 		d := row.GetDatum(i, tp)
 		if d.IsNull() {
@@ -500,7 +501,8 @@ func (e *analyzeColumnsExec) Process(key, value []byte) error {
 			continue
 		}
 
-		value, err := tablecodec.EncodeValue(e.evalCtx.sctx.GetSessionVars().StmtCtx, nil, d)
+		value, err := tablecodec.EncodeValue(sc.TimeZone(), nil, d)
+		err = sc.HandleError(err)
 		if err != nil {
 			return err
 		}

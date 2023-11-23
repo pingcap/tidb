@@ -20,6 +20,7 @@ go_test(
         "//pkg/parser/model",
         "//pkg/parser/terror",
         "//pkg/session",
+        "//pkg/session/types",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",

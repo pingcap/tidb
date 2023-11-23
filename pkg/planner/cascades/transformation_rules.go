@@ -938,8 +938,8 @@ func (*pushDownJoin) predicatePushDown(
 	default:
 		// TODO: Enhance this rule to deal with Semi/SmiAnti Joins.
 	}
-	leftCond = expression.RemoveDupExprs(sctx, leftCond)
-	rightCond = expression.RemoveDupExprs(sctx, rightCond)
+	leftCond = expression.RemoveDupExprs(leftCond)
+	rightCond = expression.RemoveDupExprs(rightCond)
 
 	return
 }
@@ -1168,7 +1168,7 @@ func (*MergeAdjacentProjection) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	replace := make(map[string]*expression.Column)
 	for i, col := range childGroup.Prop.Schema.Columns {
 		if colOrigin, ok := child.Exprs[i].(*expression.Column); ok {
-			replace[string(col.HashCode(nil))] = colOrigin
+			replace[string(col.HashCode())] = colOrigin
 		}
 	}
 
