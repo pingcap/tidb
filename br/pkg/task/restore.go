@@ -497,30 +497,6 @@ func IsStreamRestore(cmdName string) bool {
 	return cmdName == PointRestoreCmd
 }
 
-<<<<<<< HEAD
-=======
-func registerTaskToPD(ctx context.Context, etcdCLI *clientv3.Client) (closeF func(context.Context) error, err error) {
-	register := utils.NewTaskRegister(etcdCLI, utils.RegisterRestore, fmt.Sprintf("restore-%s", uuid.New()))
-	err = register.RegisterTask(ctx)
-	return register.Close, errors.Trace(err)
-}
-
-func removeCheckpointDataForSnapshotRestore(ctx context.Context, storageName string, taskName string, config *Config) error {
-	_, s, err := GetStorage(ctx, storageName, config)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return errors.Trace(checkpoint.RemoveCheckpointDataForRestore(ctx, s, taskName))
-}
-
-func removeCheckpointDataForLogRestore(ctx context.Context, storageName string, taskName string, clusterID uint64, config *Config) error {
-	_, s, err := GetStorage(ctx, storageName, config)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return errors.Trace(checkpoint.RemoveCheckpointDataForLogRestore(ctx, s, taskName, clusterID))
-}
-
 func DefaultRestoreConfig() RestoreConfig {
 	fs := pflag.NewFlagSet("dummy", pflag.ContinueOnError)
 	DefineCommonFlags(fs)
@@ -538,7 +514,6 @@ func DefaultRestoreConfig() RestoreConfig {
 	return cfg
 }
 
->>>>>>> 632cd843b0e (executor/brie: use the default value from flags (#48025))
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
 	if err := checkTaskExists(c, cfg); err != nil {

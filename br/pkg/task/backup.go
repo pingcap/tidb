@@ -36,11 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/oracle"
-<<<<<<< HEAD
-=======
-	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/multierr"
->>>>>>> 632cd843b0e (executor/brie: use the default value from flags (#48025))
 	"go.uber.org/zap"
 )
 
