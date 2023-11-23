@@ -194,7 +194,7 @@ func GlobalInfoSyncerInit(
 	id string,
 	serverIDGetter func() uint64,
 	etcdCli, unprefixedEtcdCli *clientv3.Client,
-	pdCli pd.Client,
+	pdCli pd.Client, pdHTTPCli pdhttp.Client,
 	codec tikv.Codec,
 	skipRegisterToDashBoard bool,
 ) (*InfoSyncer, error) {
@@ -209,7 +209,10 @@ func GlobalInfoSyncerInit(
 	if err != nil {
 		return nil, err
 	}
-	is.labelRuleManager = initLabelRuleManager(etcdCli)
+	if pdHTTPCli != nil {
+		pdHTTPCli = pdHTTPCli.WithRespHandler(pdResponseHandler)
+	}
+	is.labelRuleManager = initLabelRuleManager(pdHTTPCli)
 	is.placementManager = initPlacementManager(etcdCli)
 	is.scheduleManager = initScheduleManager(etcdCli)
 	is.tiflashReplicaManager = initTiFlashReplicaManager(etcdCli, codec)
@@ -244,11 +247,11 @@ func (is *InfoSyncer) GetSessionManager() util2.SessionManager {
 	return is.managerMu.SessionManager
 }
 
-func initLabelRuleManager(etcdCli *clientv3.Client) LabelRuleManager {
-	if etcdCli == nil {
+func initLabelRuleManager(pdHTTPCli pdhttp.Client) LabelRuleManager {
+	if pdHTTPCli == nil {
 		return &mockLabelManager{labelRules: map[string][]byte{}}
 	}
-	return &PDLabelManager{etcdCli: etcdCli}
+	return &PDLabelManager{pdHTTPCli}
 }
 
 func initPlacementManager(etcdCli *clientv3.Client) PlacementManager {
@@ -446,11 +449,39 @@ func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *m
 	return progress, nil
 }
 
+// pdResponseHandler will be injected into the PD HTTP client to handle the response,
+// this is to maintain consistency with the logic in the `doRequest`.
+func pdResponseHandler(resp *http.Response, res interface{}) error {
+	defer func() { terror.Log(resp.Body.Close()) }()
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode == http.StatusOK {
+		if res != nil && bodyBytes != nil {
+			return json.Unmarshal(bodyBytes, res)
+		}
+		return nil
+	}
+	logutil.BgLogger().Warn("response not 200",
+		zap.String("method", resp.Request.Method),
+		zap.String("host", resp.Request.URL.Host),
+		zap.String("url", resp.Request.URL.RequestURI()),
+		zap.Int("http status", resp.StatusCode),
+	)
+	if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusPreconditionFailed {
+		return ErrHTTPServiceError.FastGen("%s", bodyBytes)
+	}
+	return nil
+}
+
 // TODO: replace with the unified PD HTTP client.
 func doRequest(ctx context.Context, apiName string, addrs []string, route, method string, body io.Reader) ([]byte, error) {
-	var err error
-	var req *http.Request
-	var res *http.Response
+	var (
+		err error
+		req *http.Request
+		res *http.Response
+	)
 	for idx, addr := range addrs {
 		url := util2.ComposeURL(addr, route)
 		req, err = http.NewRequestWithContext(ctx, method, url, body)
@@ -1052,7 +1083,7 @@ func PutLabelRule(ctx context.Context, rule *label.Rule) error {
 }
 
 // UpdateLabelRules synchronizes the label rule to PD.
-func UpdateLabelRules(ctx context.Context, patch *label.RulePatch) error {
+func UpdateLabelRules(ctx context.Context, patch *pdhttp.LabelRulePatch) error {
 	if patch == nil || (len(patch.DeleteRules) == 0 && len(patch.SetRules) == 0) {
 		return nil
 	}
