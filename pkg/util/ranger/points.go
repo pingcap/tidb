@@ -614,7 +614,6 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction, prefixLen int) ([
 		endPoint := &point{value: endValue}
 		rangePoints = append(rangePoints, startPoint, endPoint)
 	}
-	cutPrefixForPoints(rangePoints, prefixLen, ft)
 	sorter := pointSorter{points: rangePoints, sc: r.sc, collator: collate.GetCollator(colCollate)}
 	sort.Sort(&sorter)
 	if sorter.err != nil {
@@ -635,6 +634,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction, prefixLen int) ([
 		curPos++
 	}
 	rangePoints = rangePoints[:curPos]
+	cutPrefixForPoints(rangePoints, prefixLen, ft)
 	return rangePoints, hasNull
 }
 
