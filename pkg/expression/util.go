@@ -1016,14 +1016,13 @@ func ExtractFiltersFromDNFs(ctx sessionctx.Context, conditions []Expression) []E
 // extractFiltersFromDNF extracts the same condition that occurs in every DNF item and remove them from dnf leaves.
 func extractFiltersFromDNF(ctx sessionctx.Context, dnfFunc *ScalarFunction) ([]Expression, Expression) {
 	dnfItems := FlattenDNFConditions(dnfFunc)
-	sc := ctx.GetSessionVars().StmtCtx
 	codeMap := make(map[string]int)
 	hashcode2Expr := make(map[string]Expression)
 	for i, dnfItem := range dnfItems {
 		innerMap := make(map[string]struct{})
 		cnfItems := SplitCNFItems(dnfItem)
 		for _, cnfItem := range cnfItems {
-			code := cnfItem.HashCode(sc)
+			code := cnfItem.HashCode()
 			if i == 0 {
 				codeMap[string(code)] = 1
 				hashcode2Expr[string(code)] = cnfItem
@@ -1053,7 +1052,7 @@ func extractFiltersFromDNF(ctx sessionctx.Context, dnfFunc *ScalarFunction) ([]E
 		cnfItems := SplitCNFItems(dnfItem)
 		newCNFItems := make([]Expression, 0, len(cnfItems))
 		for _, cnfItem := range cnfItems {
-			code := cnfItem.HashCode(sc)
+			code := cnfItem.HashCode()
 			_, ok := hashcode2Expr[string(code)]
 			if !ok {
 				newCNFItems = append(newCNFItems, cnfItem)
@@ -1378,12 +1377,11 @@ func IsInmutableExpr(expr Expression) bool {
 // RemoveDupExprs removes identical exprs. Not that if expr contains functions which
 // are mutable or have side effects, we cannot remove it even if it has duplicates;
 // if the plan is going to be cached, we cannot remove expressions containing `?` neither.
-func RemoveDupExprs(ctx sessionctx.Context, exprs []Expression) []Expression {
+func RemoveDupExprs(exprs []Expression) []Expression {
 	res := make([]Expression, 0, len(exprs))
 	exists := make(map[string]struct{}, len(exprs))
-	sc := ctx.GetSessionVars().StmtCtx
 	for _, expr := range exprs {
-		key := string(expr.HashCode(sc))
+		key := string(expr.HashCode())
 		if _, ok := exists[key]; !ok || IsMutableEffectsExpr(expr) {
 			res = append(res, expr)
 			exists[key] = struct{}{}

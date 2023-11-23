@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
 )
@@ -327,8 +326,7 @@ func TestDistinctGroupingSets(t *testing.T) {
 	// case1: non-duplicated case.
 	// raw rollup expressions: [a,b,c,d]
 	rawRollupExprs := []Expression{a, b, c, d}
-	mockCtx := mock.NewContext()
-	deduplicateExprs, pos := DeduplicateGbyExpression(mockCtx, rawRollupExprs)
+	deduplicateExprs, pos := DeduplicateGbyExpression(rawRollupExprs)
 
 	// nothing to deduplicate.
 	require.Equal(t, len(rawRollupExprs), len(deduplicateExprs))
@@ -352,7 +350,7 @@ func TestDistinctGroupingSets(t *testing.T) {
 
 	// case2: duplicated case.
 	rawRollupExprs = []Expression{a, b, b, c}
-	deduplicateExprs, pos = DeduplicateGbyExpression(mockCtx, rawRollupExprs)
+	deduplicateExprs, pos = DeduplicateGbyExpression(rawRollupExprs)
 	require.Equal(t, len(deduplicateExprs), 3)
 	require.Equal(t, deduplicateExprs[0].String(), "Column#1")
 	require.Equal(t, deduplicateExprs[1].String(), "Column#2")

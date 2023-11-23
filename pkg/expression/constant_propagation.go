@@ -353,7 +353,7 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
 	s.conditions = propagateConstantDNF(s.ctx, s.conditions)
-	s.conditions = RemoveDupExprs(s.ctx, s.conditions)
+	s.conditions = RemoveDupExprs(s.conditions)
 	return s.conditions
 }
 

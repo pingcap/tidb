@@ -95,7 +95,7 @@ type MPPPartitionColumn struct {
 }
 
 func (partitionCol *MPPPartitionColumn) hashCode(ctx *stmtctx.StatementContext) []byte {
-	hashcode := partitionCol.Col.HashCode(ctx)
+	hashcode := partitionCol.Col.HashCode()
 	if partitionCol.CollateID < 0 {
 		// collateId < 0 means new collation is not enabled
 		hashcode = codec.EncodeInt(hashcode, int64(partitionCol.CollateID))
@@ -330,7 +330,7 @@ func (p *PhysicalProperty) HashCode() []byte {
 	p.hashcode = codec.EncodeInt(p.hashcode, int64(p.TaskTp))
 	p.hashcode = codec.EncodeFloat(p.hashcode, p.ExpectedCnt)
 	for _, item := range p.SortItems {
-		p.hashcode = append(p.hashcode, item.Col.HashCode(nil)...)
+		p.hashcode = append(p.hashcode, item.Col.HashCode()...)
 		if item.Desc {
 			p.hashcode = codec.EncodeInt(p.hashcode, 1)
 		} else {

@@ -722,16 +722,10 @@ func (p *LogicalExpand) GenerateGroupingMarks(sourceCols []*expression.Column) [
 }
 
 func (p *LogicalExpand) trySubstituteExprWithGroupingSetCol(expr expression.Expression) (expression.Expression, bool) {
-	sc := p.SCtx().GetSessionVars().StmtCtx
-	sc.CanonicalHashCode = true
-	defer func() {
-		sc.CanonicalHashCode = false
-	}()
-
 	// since all the original group items has been projected even single col,
 	// let's check the origin gby expression here, and map it to new gby col.
 	for i, oneExpr := range p.distinctGbyExprs {
-		if bytes.Equal(expr.HashCode(sc), oneExpr.HashCode(sc)) {
+		if bytes.Equal(expr.CanonicalHashCode(), oneExpr.CanonicalHashCode()) {
 			// found
 			return p.distinctGroupByCol[i], true
 		}
@@ -742,11 +736,6 @@ func (p *LogicalExpand) trySubstituteExprWithGroupingSetCol(expr expression.Expr
 
 // CheckGroupingFuncArgsInGroupBy checks whether grouping function args is in grouping items.
 func (p *LogicalExpand) resolveGroupingFuncArgsInGroupBy(groupingFuncArgs []expression.Expression) ([]*expression.Column, error) {
-	sc := p.SCtx().GetSessionVars().StmtCtx
-	sc.CanonicalHashCode = true
-	defer func() {
-		sc.CanonicalHashCode = false
-	}()
 	// build GBYColMap
 	distinctGBYColMap := make(map[int64]struct{}, len(p.distinctGroupByCol))
 	for _, oneDistinctGBYCol := range p.distinctGroupByCol {
@@ -759,7 +748,7 @@ func (p *LogicalExpand) resolveGroupingFuncArgsInGroupBy(groupingFuncArgs []expr
 		// since all the original group items has been projected even single col,
 		// let's check the origin gby expression here, and map it to new gby col.
 		for i, oneExpr := range p.distinctGbyExprs {
-			if bytes.Equal(oneArg.HashCode(sc), oneExpr.HashCode(sc)) {
+			if bytes.Equal(oneArg.CanonicalHashCode(), oneExpr.CanonicalHashCode()) {
 				refPos = i
 				break
 			}
@@ -878,21 +867,21 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 			// take c as constant column here.
 			continue
 		case *expression.Constant:
-			hashCode := string(x.HashCode(p.SCtx().GetSessionVars().StmtCtx))
+			hashCode := string(x.HashCode())
 			var (
 				ok               bool
 				constantUniqueID int
 			)
 			if constantUniqueID, ok = fds.IsHashCodeRegistered(hashCode); !ok {
 				constantUniqueID = outputColsUniqueIDsArray[idx]
-				fds.RegisterUniqueID(string(x.HashCode(p.SCtx().GetSessionVars().StmtCtx)), constantUniqueID)
+				fds.RegisterUniqueID(string(x.HashCode()), constantUniqueID)
 			}
 			fds.AddConstants(intset.NewFastIntSet(constantUniqueID))
 		case *expression.ScalarFunction:
 			// t1(a,b,c), t2(m,n)
 			// select a, (select c+n from t2 where m=b) from t1;
 			// expr(c+n) contains correlated column , but we can treat it as constant here.
-			hashCode := string(x.HashCode(p.SCtx().GetSessionVars().StmtCtx))
+			hashCode := string(x.HashCode())
 			var (
 				ok             bool
 				scalarUniqueID int
@@ -1038,7 +1027,7 @@ func (la *LogicalAggregation) ExtractFD() *fd.FDSet {
 			// shouldn't be here, interpreted as pos param by plan builder.
 			continue
 		case *expression.ScalarFunction:
-			hashCode := string(x.HashCode(la.SCtx().GetSessionVars().StmtCtx))
+			hashCode := string(x.HashCode())
 			var (
 				ok             bool
 				scalarUniqueID int
@@ -1253,12 +1242,12 @@ func extractConstantCols(conditions []expression.Expression, sctx sessionctx.Con
 		case *expression.Column:
 			constUniqueIDs.Insert(int(x.UniqueID))
 		case *expression.ScalarFunction:
-			hashCode := string(x.HashCode(sctx.GetSessionVars().StmtCtx))
+			hashCode := string(x.HashCode())
 			if uniqueID, ok := fds.IsHashCodeRegistered(hashCode); ok {
 				constUniqueIDs.Insert(uniqueID)
 			} else {
 				scalarUniqueID := int(sctx.GetSessionVars().AllocPlanColumnID())
-				fds.RegisterUniqueID(string(x.HashCode(sctx.GetSessionVars().StmtCtx)), scalarUniqueID)
+				fds.RegisterUniqueID(string(x.HashCode()), scalarUniqueID)
 				constUniqueIDs.Insert(scalarUniqueID)
 			}
 		}
@@ -1280,12 +1269,12 @@ func extractEquivalenceCols(conditions []expression.Expression, sctx sessionctx.
 		case *expression.Column:
 			lhsUniqueID = int(x.UniqueID)
 		case *expression.ScalarFunction:
-			hashCode := string(x.HashCode(sctx.GetSessionVars().StmtCtx))
+			hashCode := string(x.HashCode())
 			if uniqueID, ok := fds.IsHashCodeRegistered(hashCode); ok {
 				lhsUniqueID = uniqueID
 			} else {
 				scalarUniqueID := int(sctx.GetSessionVars().AllocPlanColumnID())
-				fds.RegisterUniqueID(string(x.HashCode(sctx.GetSessionVars().StmtCtx)), scalarUniqueID)
+				fds.RegisterUniqueID(string(x.HashCode()), scalarUniqueID)
 				lhsUniqueID = scalarUniqueID
 			}
 		}
@@ -1294,12 +1283,12 @@ func extractEquivalenceCols(conditions []expression.Expression, sctx sessionctx.
 		case *expression.Column:
 			rhsUniqueID = int(x.UniqueID)
 		case *expression.ScalarFunction:
-			hashCode := string(x.HashCode(sctx.GetSessionVars().StmtCtx))
+			hashCode := string(x.HashCode())
 			if uniqueID, ok := fds.IsHashCodeRegistered(hashCode); ok {
 				rhsUniqueID = uniqueID
 			} else {
 				scalarUniqueID := int(sctx.GetSessionVars().AllocPlanColumnID())
-				fds.RegisterUniqueID(string(x.HashCode(sctx.GetSessionVars().StmtCtx)), scalarUniqueID)
+				fds.RegisterUniqueID(string(x.HashCode()), scalarUniqueID)
 				rhsUniqueID = scalarUniqueID
 			}
 		}

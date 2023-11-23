@@ -495,7 +495,8 @@ func (e *analyzeColumnsExec) Process(key, value []byte) error {
 			continue
 		}
 
-		value, err := tablecodec.EncodeValue(e.evalCtx.sc, nil, d)
+		value, err := tablecodec.EncodeValue(e.evalCtx.sc.TimeZone(), nil, d)
+		err = e.evalCtx.sc.HandleError(err)
 		if err != nil {
 			return err
 		}

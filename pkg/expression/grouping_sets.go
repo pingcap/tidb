@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -515,23 +514,18 @@ func AdjustNullabilityFromGroupingSets(gss GroupingSets, schema *Schema) {
 // eg: group by a+b, b+a, b with rollup.
 // the 1st and 2nd expression is semantically equivalent, so we only need to keep the distinct expression: [a+b, b]
 // down, and output another position slice out, the [0, 0, 1] for the case above.
-func DeduplicateGbyExpression(ctx sessionctx.Context, exprs []Expression) ([]Expression, []int) {
+func DeduplicateGbyExpression(exprs []Expression) ([]Expression, []int) {
 	distinctExprs := make([]Expression, 0, len(exprs))
-	sc := ctx.GetSessionVars().StmtCtx
-	sc.CanonicalHashCode = true
-	defer func() {
-		sc.CanonicalHashCode = false
-	}()
 	distinctMap := make(map[string]int, len(exprs))
 	for _, expr := range exprs {
 		// -1 means pos is not assigned yet.
-		distinctMap[string(expr.HashCode(sc))] = -1
+		distinctMap[string(expr.CanonicalHashCode())] = -1
 	}
 	// pos is from 0 to len(distinctMap)-1
 	pos := 0
 	posSlice := make([]int, 0, len(exprs))
 	for _, one := range exprs {
-		key := string(one.HashCode(sc))
+		key := string(one.CanonicalHashCode())
 		if val, ok := distinctMap[key]; ok {
 			if val == -1 {
 				// means a new distinct expr.
