@@ -150,20 +150,11 @@ func initSessCtx(
 	tzLocation *model.TimeZoneLocation,
 	resGroupName string,
 ) error {
-<<<<<<< HEAD
-	// Unify the TimeZone settings in newContext.
-	if sessCtx.GetSessionVars().StmtCtx.TimeZone() == nil {
-		tz := *time.UTC
-		sessCtx.GetSessionVars().StmtCtx.SetTimeZone(&tz)
-	}
-	sessCtx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
-=======
 	// Correct the initial timezone.
 	tz := *time.UTC
 	sessCtx.GetSessionVars().TimeZone = &tz
 	sessCtx.GetSessionVars().StmtCtx.SetTimeZone(&tz)
 
->>>>>>> 1cf28267277 (ddl: fix add wrong timezone during adding index (#48805))
 	// Set the row encode format version.
 	rowFormat := variable.GetDDLReorgRowFormat()
 	sessCtx.GetSessionVars().RowEncoder.Enable = rowFormat != variable.DefTiDBRowFormatV1
