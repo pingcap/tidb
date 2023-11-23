@@ -294,17 +294,7 @@ func generateNonPartitionPlan(
 	if err != nil {
 		return nil, err
 	}
-
-	regionBatch := 1
-	logutil.BgLogger().Info("ywq test region Batch", zap.Any("len recordRegionMetas",
-		len(recordRegionMetas)), zap.Any("regionBatch", regionBatch))
-	// if !useCloud {
-	// 	// Make subtask large enough to reduce the overhead of local/global flush.
-	// 	quota := variable.DDLDiskQuota.Load()
-	// 	regionBatch = int(int64(quota) / int64(config.SplitRegionSize))
-	// }
-	// regionBatch = min(regionBatch, len(recordRegionMetas)/instanceCnt)
-	// regionBatch := calculateRegionBatch(len(recordRegionMetas), instanceCnt, !useCloud)
+	regionBatch := calculateRegionBatch(len(recordRegionMetas), instanceCnt, !useCloud)
 
 	subTaskMetas := make([][]byte, 0, 4)
 	sort.Slice(recordRegionMetas, func(i, j int) bool {

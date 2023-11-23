@@ -406,7 +406,6 @@ func (d *BaseDispatcher) RebalanceSubtasks() error {
 			}
 		}
 		d.LiveNodes = newInfos
-		logutil.BgLogger().Info("ywq test liveNodes", zap.Any("nodes", d.LiveNodes))
 	}
 	// 3. rebalance subtasks depends on length of LiveNodes and TaskNodes.
 	var err error
@@ -414,11 +413,6 @@ func (d *BaseDispatcher) RebalanceSubtasks() error {
 	if err != nil {
 		return err
 	}
-	logutil.BgLogger().Info("ywq test cnt",
-		zap.Any("liveNodes len", len(d.LiveNodes)),
-		zap.Any("liveNodes", d.LiveNodes),
-		zap.Any("task nodes len", len(d.TaskNodes)),
-		zap.Any("Tasknodes", d.TaskNodes))
 
 	if len(d.LiveNodes) > 0 {
 		return d.RebalanceSubtasksImpl()
@@ -435,7 +429,6 @@ func (d *BaseDispatcher) replaceTaskNodes() {
 
 // ScaleOutSubtasks rebalance subtasks from taskNodes to liveNodes.
 func (d *BaseDispatcher) RebalanceSubtasksImpl() error {
-	logutil.BgLogger().Info("ywq test reach scaleout")
 	// 1. find out nodes that scaled out.
 	scaleOutNodes := make([]string, 0)
 	for _, node := range d.LiveNodes {
@@ -454,20 +447,16 @@ func (d *BaseDispatcher) RebalanceSubtasksImpl() error {
 			cleanNodes = append(cleanNodes, node)
 		}
 	}
-	logutil.BgLogger().Info("ywq test show nodes", zap.Any("scaleOutNodes", scaleOutNodes), zap.Any("cleanNodes", cleanNodes))
 
 	if len(scaleOutNodes) == 0 && len(cleanNodes) == 0 {
-		logutil.BgLogger().Info("ywq test no need to rebalance")
 		return nil
 	}
 
 	// 3. get subtasks for each node before scaling out.
 	subtasks, err := d.taskMgr.GetSubtasksByStepExceptStates(d.ctx, d.Task.ID, d.Task.Step, proto.TaskStateSucceed)
 	if err != nil {
-		logutil.BgLogger().Error("ywq test wtf err", zap.Error(err))
 		return err
 	}
-	logutil.BgLogger().Info("ywq test show subtasks", zap.Any("subtasks", subtasks))
 
 	subtasksForEachScheduler := make(map[string][]*proto.Subtask, len(d.LiveNodes))
 	for _, subtask := range subtasks {
@@ -475,7 +464,6 @@ func (d *BaseDispatcher) RebalanceSubtasksImpl() error {
 			subtasksForEachScheduler[subtask.SchedulerID],
 			subtask)
 	}
-	logutil.BgLogger().Info("ywq test cp 1")
 
 	// 4. scale out subtasks to scaleOutNodes.
 	lastScaleOutIdx := 0
@@ -486,7 +474,6 @@ func (d *BaseDispatcher) RebalanceSubtasksImpl() error {
 		}
 		liveNodeSubtaskCnt += len(v)
 	}
-	logutil.BgLogger().Info("ywq test cp 2")
 
 	averageSubtaskCnt := liveNodeSubtaskCnt / len(d.LiveNodes)
 	for id, v := range subtasksForEachScheduler {
@@ -500,7 +487,6 @@ func (d *BaseDispatcher) RebalanceSubtasksImpl() error {
 			}
 		}
 	}
-	logutil.BgLogger().Info("ywq test cp 3")
 
 	// 5. scale out clean nodes subtasks to LiveNodes.
 	liveNodeIdx := 0
@@ -512,12 +498,11 @@ func (d *BaseDispatcher) RebalanceSubtasksImpl() error {
 			liveNodeIdx++
 		}
 	}
-	logutil.BgLogger().Info("ywq test cp 4")
 
-	logutil.Logger(d.logCtx).Info("scale out subtasks",
-		zap.Any("subtasks", subtasks),
-		zap.Any("scaleoutNodes", scaleOutNodes),
-		zap.Any("cleanNodes", cleanNodes))
+	logutil.Logger(d.logCtx).Info("rebalance subtasks",
+		zap.Stringers("subtasks-rebalanced", subtasks),
+		zap.Strings("scaleout-nodes", scaleOutNodes),
+		zap.Strings("cleaned-nodes", cleanNodes))
 
 	if err = d.taskMgr.UpdateSubtasksSchedulerIDs(d.ctx, d.Task.ID, subtasks); err != nil {
 		return err
