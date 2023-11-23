@@ -47,6 +47,8 @@ import (
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -110,6 +112,31 @@ func (ctx *OperatorCtx) OperatorErr() error {
 	return *err
 }
 
+func getWriterMemSize(idxNum int) (uint64, error) {
+	failpoint.Inject("mockWriterMemSize", func() {
+		failpoint.Return(1*size.GB, nil)
+	})
+	_, writerCnt := expectedIngestWorkerCnt()
+	memTotal, err := memory.MemTotal()
+	if err != nil {
+		return 0, err
+	}
+	memUsed, err := memory.MemUsed()
+	if err != nil {
+		return 0, err
+	}
+	memAvailable := memTotal - memUsed
+	return (memAvailable / 2) / uint64(writerCnt) / uint64(idxNum), nil
+}
+
+func getMergeSortPartSize(concurrency int, idxNum int) (uint64, error) {
+	writerMemSize, err := getWriterMemSize(idxNum)
+	if err != nil {
+		return 0, nil
+	}
+	return writerMemSize / uint64(concurrency) / 10, nil
+}
+
 // NewAddIndexIngestPipeline creates a pipeline for adding index in ingest mode.
 func NewAddIndexIngestPipeline(
 	ctx *OperatorCtx,
@@ -168,7 +195,6 @@ func NewWriteIndexToExternalStoragePipeline(
 	idxInfos []*model.IndexInfo,
 	startKey, endKey kv.Key,
 	totalRowCount *atomic.Int64,
-	memSize uint64,
 	metricCounter prometheus.Counter,
 	onClose external.OnCloseFunc,
 	reorgMeta *model.DDLReorgMeta,
@@ -195,6 +221,11 @@ func NewWriteIndexToExternalStoragePipeline(
 		return nil, err
 	}
 	extStore, err := storage.NewWithDefaultOpt(ctx, backend)
+	if err != nil {
+		return nil, err
+	}
+
+	memSize, err := getWriterMemSize(len(indexes))
 	if err != nil {
 		return nil, err
 	}

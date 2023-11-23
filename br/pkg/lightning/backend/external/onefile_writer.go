@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -32,7 +33,7 @@ type OneFileWriter struct {
 	// storage related.
 	store    storage.ExternalStorage
 	kvStore  *KeyValueStore
-	kvBuffer *preAllocKVBuf
+	kvBuffer *membuf.Buffer
 
 	// Statistic information per writer.
 	totalSize uint64
@@ -87,12 +88,12 @@ func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) err
 	// 1. encode data and write to kvStore.
 	keyLen := len(idxKey)
 	length := len(idxKey) + len(idxVal) + lengthBytes*2
-	_, buf, _, allocated := w.kvBuffer.Alloc(length)
-	if !allocated {
-		w.kvBuffer.reset()
-		_, buf, _, allocated = w.kvBuffer.Alloc(length)
+	buf, _ := w.kvBuffer.AllocBytesWithSliceLocation(length)
+	if buf == nil {
+		w.kvBuffer.Reset()
+		buf, _ = w.kvBuffer.AllocBytesWithSliceLocation(length)
 		// we now don't support KV larger than blockSize
-		if !allocated {
+		if buf == nil {
 			return errors.Errorf("failed to allocate kv buffer: %d", length)
 		}
 		// 2. write statistics if one kvBuffer is used.

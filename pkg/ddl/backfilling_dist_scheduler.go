@@ -54,10 +54,6 @@ type BackfillSubTaskMeta struct {
 	DataFiles             []string `json:"data-files"`
 	StatFiles             []string `json:"stat-files"`
 	external.SortedKVMeta `json:",inline"`
-	// MemSize for writer
-	MemSize uint64 `json:"mem-size"`
-	// PartSize for one file writer
-	PartSize uint64 `json:"part-size"`
 }
 
 // NewBackfillSubtaskExecutor creates a new backfill subtask executor.
@@ -93,7 +89,7 @@ func NewBackfillSubtaskExecutor(_ context.Context, taskMeta []byte, d *ddl,
 		return newReadIndexExecutor(
 			d, &bgm.Job, indexInfos, tbl.(table.PhysicalTable), jc, bc, summary, bgm.CloudStorageURI), nil
 	case proto.StepTwo:
-		return newMergeSortExecutor(jobMeta.ID, indexInfos[0], tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)
+		return newMergeSortExecutor(jobMeta.ID, len(indexInfos), tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)
 	case proto.StepThree:
 		if len(bgm.CloudStorageURI) > 0 {
 			return newCloudImportExecutor(&bgm.Job, jobMeta.ID, indexInfos[0], tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)

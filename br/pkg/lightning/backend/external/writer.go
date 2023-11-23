@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
@@ -213,6 +214,8 @@ func (b *WriterBuilder) BuildOneFile(
 	writerID string,
 ) *OneFileWriter {
 	filenamePrefix := filepath.Join(prefix, writerID)
+	p := membuf.NewPool(membuf.WithPoolSize(0), membuf.WithBlockSize(b.blockSize))
+
 	ret := &OneFileWriter{
 		rc: &rangePropertiesCollector{
 			props:        make([]*rangeProperty, 0, 1024),
@@ -220,7 +223,7 @@ func (b *WriterBuilder) BuildOneFile(
 			propSizeDist: b.propSizeDist,
 			propKeysDist: b.propKeysDist,
 		},
-		kvBuffer:       newPreAllocKVBuf(b.memSizeLimit, b.blockSize),
+		kvBuffer:       p.NewBuffer(membuf.WithMemoryLimit(b.memSizeLimit)),
 		store:          store,
 		filenamePrefix: filenamePrefix,
 		writerID:       writerID,

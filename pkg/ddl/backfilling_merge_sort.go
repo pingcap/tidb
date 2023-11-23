@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -37,7 +36,7 @@ import (
 
 type mergeSortExecutor struct {
 	jobID               int64
-	index               *model.IndexInfo
+	idxNum              int
 	ptbl                table.PhysicalTable
 	bc                  ingest.BackendCtx
 	cloudStoreURI       string
@@ -47,14 +46,14 @@ type mergeSortExecutor struct {
 
 func newMergeSortExecutor(
 	jobID int64,
-	index *model.IndexInfo,
+	idxNum int,
 	ptbl table.PhysicalTable,
 	bc ingest.BackendCtx,
 	cloudStoreURI string,
 ) (*mergeSortExecutor, error) {
 	return &mergeSortExecutor{
 		jobID:         jobID,
-		index:         index,
+		idxNum:        idxNum,
 		ptbl:          ptbl,
 		bc:            bc,
 		cloudStoreURI: cloudStoreURI,
@@ -100,11 +99,16 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 
 	prefix := path.Join(strconv.Itoa(int(m.jobID)), strconv.Itoa(int(subtask.ID)))
 
+	partSize, err := getMergeSortPartSize(int(variable.GetDDLReorgWorkerCounter()), m.idxNum)
+	if err != nil {
+		return err
+	}
+
 	return external.MergeOverlappingFiles(
 		ctx,
 		sm.DataFiles,
 		store,
-		int64(sm.PartSize),
+		int64(partSize),
 		64*1024,
 		prefix,
 		external.DefaultBlockSize,

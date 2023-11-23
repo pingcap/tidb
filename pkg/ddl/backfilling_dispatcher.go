@@ -22,7 +22,6 @@ import (
 	"math"
 	"sort"
 
-	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
@@ -39,8 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -255,11 +252,6 @@ func (dsp *BackfillingDispatcherExt) generatePartitionPlan(
 	tblInfo *model.TableInfo,
 	backfillMeta *BackfillGlobalMeta,
 	logger *zap.Logger) (metas [][]byte, err error) {
-	memSize, err := dsp.getWriterMemSize(backfillMeta)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	logger.Info("set writer memSize", zap.String("size", units.BytesSize(float64(memSize))))
 	defs := tblInfo.Partition.Definitions
 	physicalIDs := make([]int64, len(defs))
 	for i := range defs {
@@ -270,7 +262,6 @@ func (dsp *BackfillingDispatcherExt) generatePartitionPlan(
 	for _, physicalID := range physicalIDs {
 		subTaskMeta := &BackfillSubTaskMeta{
 			PhysicalTableID: physicalID,
-			MemSize:         memSize,
 		}
 
 		metaBytes, err := json.Marshal(subTaskMeta)
@@ -300,11 +291,6 @@ func (dsp *BackfillingDispatcherExt) generateNonPartitionPlan(
 		return nil, errors.Trace(err)
 	}
 
-	memSize, err := dsp.getWriterMemSize(backfillMeta)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	logger.Info("set writer memSize", zap.String("size", units.BytesSize(float64(memSize))))
 	startKey, endKey, err := getTableRange(d.jobContext(job.ID, job.ReorgMeta), d.ddlCtx, tbl.(table.PhysicalTable), ver.Ver, job.Priority)
 	if startKey == nil && endKey == nil {
 		// Empty table.
@@ -336,7 +322,6 @@ func (dsp *BackfillingDispatcherExt) generateNonPartitionPlan(
 				StartKey: batch[0].StartKey(),
 				EndKey:   batch[len(batch)-1].EndKey(),
 			},
-			MemSize: memSize,
 		}
 		if i == 0 {
 			subTaskMeta.StartKey = startKey
@@ -351,26 +336,6 @@ func (dsp *BackfillingDispatcherExt) generateNonPartitionPlan(
 		subTaskMetas = append(subTaskMetas, metaBytes)
 	}
 	return subTaskMetas, nil
-}
-
-func (*BackfillingDispatcherExt) getWriterMemSize(backfillMeta *BackfillGlobalMeta) (uint64, error) {
-	failpoint.Inject("mockWriterMemSize", func() {
-		failpoint.Return(1*size.GB, nil)
-	})
-	_, writerCnt := expectedIngestWorkerCnt()
-	memTotal, err := memory.MemTotal()
-	if err != nil {
-		return 0, err
-	}
-	return (memTotal / 2) / uint64(writerCnt) / uint64(len(backfillMeta.EleIDs)), nil
-}
-
-func (dsp *BackfillingDispatcherExt) getMergeSortPartSize(backfillMeta *BackfillGlobalMeta, concurrency int) (uint64, error) {
-	writerMemSize, err := dsp.getWriterMemSize(backfillMeta)
-	if err != nil {
-		return 0, nil
-	}
-	return writerMemSize / uint64(concurrency) / 10, nil
 }
 
 func calculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool) int {
@@ -465,11 +430,6 @@ func (dsp *BackfillingDispatcherExt) generateMergePlan(
 	task *proto.Task,
 	logger *zap.Logger,
 ) ([][]byte, error) {
-	partSize, err := dsp.getMergeSortPartSize(backfillMeta, int(variable.GetDDLReorgWorkerCounter()))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	logger.Info("set merge sort writer partSize", zap.String("size", units.BytesSize(float64(partSize))))
 	// check data files overlaps,
 	// if data files overlaps too much, we need a merge step.
 	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, StepReadIndex)
@@ -506,7 +466,6 @@ func (dsp *BackfillingDispatcherExt) generateMergePlan(
 		}
 		m := &BackfillSubTaskMeta{
 			DataFiles: dataFiles[start:end],
-			PartSize:  partSize,
 		}
 		metaBytes, err := json.Marshal(m)
 		if err != nil {
