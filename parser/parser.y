@@ -50,19 +50,10 @@ import (
 %token	<ident>
 
 	/*yy:token "%c"     */
-<<<<<<< HEAD:parser/parser.y
-	identifier  "identifier"
-	asof        "AS OF"
-	toTimestamp "TO TIMESTAMP"
-=======
 	identifier           "identifier"
 	asof                 "AS OF"
 	toTimestamp          "TO TIMESTAMP"
 	toTSO                "TO TSO"
-	memberof             "MEMBER OF"
-	optionallyEnclosedBy "OPTIONALLY ENCLOSED BY"
->>>>>>> 6b3df662ca5 (flashback: support to flashback to tso syntax (#48493)):pkg/parser/parser.y
-
 	/*yy:token "_%c"    */
 	underscoreCS "UNDERSCORE_CHARSET"
 
