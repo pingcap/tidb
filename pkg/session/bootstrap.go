@@ -2919,7 +2919,7 @@ func upgradeToVer179(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.global_variables MODIFY COLUMN `VARIABLE_VALUE` varchar(16383)")
 }
 
-func upgradeToVer180(s Session, ver int64) {
+func upgradeToVer180(s sessiontypes.Session, ver int64) {
 	if ver >= version180 {
 		return
 	}
