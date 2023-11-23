@@ -109,20 +109,27 @@ func MergeGlobalStatsTopNByConcurrency(
 	}
 
 	// fetch the response from each worker and merge them into global topn stats
-	sorted := make([]statistics.TopNMeta, 0, mergeConcurrency)
-	leftTopn := make([]statistics.TopNMeta, 0)
+	counter := make(map[hack.MutableString]float64)
 	for _, resp := range resps {
 		if resp.TopN != nil {
-			sorted = append(sorted, resp.TopN.TopN...)
+			for _, val := range resp.TopN.TopN {
+				encodedVal := hack.String(val.Encoded)
+				counter[encodedVal] += float64(val.Count)
+			}
 		}
-		leftTopn = append(leftTopn, resp.PopedTopn...)
+		for _, val := range resp.PopedTopn {
+			encodedVal := hack.String(val.Encoded)
+			counter[encodedVal] += float64(val.Count)
+		}
 	}
-
+	numTop := len(counter)
+	sorted := make([]statistics.TopNMeta, 0, numTop)
+	for value, cnt := range counter {
+		data := hack.Slice(string(value))
+		sorted = append(sorted, statistics.TopNMeta{Encoded: data, Count: uint64(cnt)})
+	}
 	globalTopN, popedTopn := statistics.GetMergedTopNFromSortedSlice(sorted, n)
-
-	result := append(leftTopn, popedTopn...)
-	statistics.SortTopnMeta(result)
-	return globalTopN, result, wrapper.AllHg, nil
+	return globalTopN, popedTopn, wrapper.AllHg, nil
 }
 
 // MergePartTopN2GlobalTopN is used to merge the partition-level topN to global-level topN.
