@@ -24,3 +24,24 @@ func TestKeywords(t *testing.T) {
 	require.Equal(t, parser.Keywords[0].Word, "ADD")
 	require.Equal(t, parser.Keywords[0].Reserved, true)
 }
+
+func TestKeywordsLength(t *testing.T) {
+	require.Equal(t, len(parser.Keywords), 602)
+
+	reservedNr := 0
+	for _, kw := range parser.Keywords {
+		if kw.Reserved {
+			reservedNr += 1
+		}
+	}
+	require.Equal(t, reservedNr, 233)
+}
+
+func TestKeywordsSorting(t *testing.T) {
+	for i, kw := range parser.Keywords {
+		if i > 1 && parser.Keywords[i-1].Word > kw.Word && parser.Keywords[i-1].Reserved == kw.Reserved {
+			t.Errorf("%s should come after %s, please update parser.y and re-generate keywords.go\n",
+				parser.Keywords[i-1].Word, kw.Word)
+		}
+	}
+}
