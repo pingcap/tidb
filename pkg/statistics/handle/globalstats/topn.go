@@ -15,12 +15,14 @@
 package globalstats
 
 import (
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -30,19 +32,25 @@ import (
 func mergeGlobalStatsTopN(gp *gp.Pool, sc sessionctx.Context, wrapper *StatsWrapper,
 	timeZone *time.Location, version int, n uint32, isIndex bool) (*statistics.TopN,
 	[]statistics.TopNMeta, []*statistics.Histogram, error) {
-	mergeConcurrency := sc.GetSessionVars().AnalyzePartitionMergeConcurrency
-	killer := &sc.GetSessionVars().SQLKiller
-	// use original method if concurrency equals 1 or for version1
+	verInString, err := sc.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBMergePartitionStatsConcurrency)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	mergeConcurrency, err := strconv.ParseInt(verInString, 10, 64)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	killer := &sc.GetSessionVars().SQLKiller // use original method if concurrency equals 1 or for version1
 	if mergeConcurrency < 2 {
 		return MergePartTopN2GlobalTopN(timeZone, version, wrapper.AllTopN, n, wrapper.AllHg, isIndex, killer)
 	}
-	batchSize := len(wrapper.AllTopN) / mergeConcurrency
+	batchSize := len(wrapper.AllTopN) / int(mergeConcurrency)
 	if batchSize < 1 {
 		batchSize = 1
 	} else if batchSize > MaxPartitionMergeBatchSize {
 		batchSize = MaxPartitionMergeBatchSize
 	}
-	return MergeGlobalStatsTopNByConcurrency(gp, mergeConcurrency, batchSize, wrapper, timeZone, version, n, isIndex, killer)
+	return MergeGlobalStatsTopNByConcurrency(gp, int(mergeConcurrency), batchSize, wrapper, timeZone, version, n, isIndex, killer)
 }
 
 // MergeGlobalStatsTopNByConcurrency merge partition topN by concurrency.
