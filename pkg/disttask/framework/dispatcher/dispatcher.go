@@ -359,11 +359,7 @@ func (d *BaseDispatcher) onFinished() error {
 	return d.taskMgr.TransferSubTasks2History(d.ctx, d.Task.ID)
 }
 
-// RebalanceSubtasks checks count of nodes which run subtasks(taskNodes) and count of live nodes(liveNodes).
-//  1. If len(taskNodes) > len(liveNodes):
-//     dispatcher needs to scale-in subtasks to liveNodes to make sure all subtasks will be scheduled.
-//  2. If len(taskNodes) <= len(liveNodes):
-//     dispatcher needs to scale-out subtasks to liveNodes to make sure all nodes have balanced workload.
+// RebalanceSubtasks check the liveNode num every liveNodeFetchInterval then rebalance subtasks.
 func (d *BaseDispatcher) RebalanceSubtasks() error {
 	// 1. init TaskNodes if need.
 	if len(d.TaskNodes) == 0 {
@@ -406,16 +402,16 @@ func (d *BaseDispatcher) RebalanceSubtasks() error {
 			}
 		}
 		d.LiveNodes = newInfos
-	}
-	// 3. rebalance subtasks depends on length of LiveNodes and TaskNodes.
-	var err error
-	d.LiveNodes, err = d.filterByRole(d.LiveNodes)
-	if err != nil {
-		return err
-	}
+		// 3. rebalance subtasks.
+		d.LiveNodes, err = d.filterByRole(d.LiveNodes)
+		if err != nil {
+			return err
+		}
 
-	if len(d.LiveNodes) > 0 {
-		return d.RebalanceSubtasksImpl()
+		if len(d.LiveNodes) > 0 {
+			return d.RebalanceSubtasksImpl()
+		}
+		return nil
 	}
 	return nil
 }
@@ -427,7 +423,7 @@ func (d *BaseDispatcher) replaceTaskNodes() {
 	}
 }
 
-// ScaleOutSubtasks rebalance subtasks from taskNodes to liveNodes.
+// RebalanceSubtasksImpl rebalance subtasks from taskNodes to liveNodes.
 func (d *BaseDispatcher) RebalanceSubtasksImpl() error {
 	// 1. find out nodes that scaled out.
 	scaleOutNodes := make([]string, 0)

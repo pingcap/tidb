@@ -307,16 +307,17 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "tidb3", subtasks[0].SchedulerID)
 	require.Equal(t, "tidb1", subtasks[1].SchedulerID)
+	// update fail
 	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, "tidb1", subtasks[0].ID, proto.TaskStateRunning, nil))
+	subtasks, err = sm.GetSubtasksByStepAndState(ctx, 5, proto.StepInit, proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Equal(t, "tidb3", subtasks[0].SchedulerID)
 	subtasks[0].SchedulerID = "tidb2"
+	// update success
 	require.NoError(t, sm.UpdateSubtasksSchedulerIDs(ctx, 5, subtasks))
 	subtasks, err = sm.GetSubtasksByStepAndState(ctx, 5, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
-	// ywq todo fail the test
-	require.Equal(t, "tidb1", subtasks[0].SchedulerID)
-	subtasks, err = sm.GetSubtasksByStepAndState(ctx, 5, proto.StepInit, proto.TaskStateRunning)
-	require.NoError(t, err)
-	require.Equal(t, "tidb3", subtasks[0].SchedulerID)
+	require.Equal(t, "tidb2", subtasks[0].SchedulerID)
 }
 
 func TestBothGlobalAndSubTaskTable(t *testing.T) {
