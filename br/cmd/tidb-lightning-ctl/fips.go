@@ -12,20 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package internal
+//go:build boringcrypto
+// +build boringcrypto
+
+package main
 
 import (
-	"fmt"
+	_ "crypto/tls/fipsonly"
 
-	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/br/pkg/version/build"
 )
 
-// FillData fill data into table
-func FillData(tk *testkit.TestKit, table string) {
-	tk.MustExec("use test")
-	tk.MustExec(fmt.Sprintf("create table %s(id int not null default 1, name varchar(255), PRIMARY KEY(id));", table))
-
-	// insert data
-	tk.MustExec(fmt.Sprintf("insert INTO %s VALUES (1, \"hello\");", table))
-	tk.MustExec(fmt.Sprintf("insert into %s values (2, \"hello\");", table))
+func init() {
+	build.ReleaseVersion += "-fips"
 }

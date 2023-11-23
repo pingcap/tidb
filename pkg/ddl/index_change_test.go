@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -232,7 +233,7 @@ func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table
 		return errors.Trace(err)
 	}
 	err = checkIndexExists(ctx, publicTbl, 6, 6, true)
-	if ddl.IsEnableFastReorg() {
+	if variable.EnableFastReorg.Load() {
 		// Need check temp index also.
 		err1 = checkIndexExists(ctx, writeTbl, 6, 6, true)
 	}
@@ -255,14 +256,14 @@ func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table
 		return errors.Trace(err)
 	}
 	err = checkIndexExists(ctx, publicTbl, 5, 7, true)
-	if ddl.IsEnableFastReorg() {
+	if variable.EnableFastReorg.Load() {
 		// Need check temp index also.
 		err1 = checkIndexExists(ctx, writeTbl, 5, 7, true)
 	}
 	if err != nil && err1 != nil {
 		return errors.Trace(err)
 	}
-	if ddl.IsEnableFastReorg() {
+	if variable.EnableFastReorg.Load() {
 		err = checkIndexExists(ctx, writeTbl, 7, 7, false)
 	} else {
 		err = checkIndexExists(ctx, publicTbl, 7, 7, false)
@@ -296,7 +297,7 @@ func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table
 		idxVal := row[1].GetInt64()
 		handle := row[0].GetInt64()
 		err = checkIndexExists(ctx, publicTbl, idxVal, handle, true)
-		if ddl.IsEnableFastReorg() {
+		if variable.EnableFastReorg.Load() {
 			// Need check temp index also.
 			err1 = checkIndexExists(ctx, writeTbl, idxVal, handle, true)
 		}

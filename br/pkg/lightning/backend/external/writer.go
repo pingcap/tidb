@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -51,6 +52,8 @@ var (
 const (
 	// DefaultMemSizeLimit is the default memory size limit for writer.
 	DefaultMemSizeLimit = 256 * size.MB
+	// DefaultBlockSize is the default block size for writer.
+	DefaultBlockSize = 16 * units.MiB
 )
 
 // rangePropertiesCollector collects range properties for each range. The zero
@@ -175,6 +178,7 @@ func (b *WriterBuilder) Build(
 	if b.keyDupeEncoding {
 		keyAdapter = common.DupDetectKeyAdapter{}
 	}
+	p := membuf.NewPool(membuf.WithPoolSize(0), membuf.WithBlockSize(b.blockSize))
 	ret := &Writer{
 		rc: &rangePropertiesCollector{
 			props:        make([]*rangeProperty, 0, 1024),
@@ -184,7 +188,7 @@ func (b *WriterBuilder) Build(
 		},
 		memSizeLimit:   b.memSizeLimit,
 		store:          store,
-		kvBuffer:       newPreAllocKVBuf(b.memSizeLimit, b.blockSize),
+		kvBuffer:       p.NewBuffer(membuf.WithMemoryLimit(b.memSizeLimit)),
 		currentSeq:     0,
 		filenamePrefix: filenamePrefix,
 		keyAdapter:     keyAdapter,
@@ -249,12 +253,6 @@ func GetMaxOverlappingTotal(stats []MultipleFilesStat) int64 {
 	return GetMaxOverlapping(points)
 }
 
-type kvLocation struct {
-	blockIdx int32
-	offset   int32
-	length   int32
-}
-
 // Writer is used to write data into external storage.
 type Writer struct {
 	store          storage.ExternalStorage
@@ -268,8 +266,8 @@ type Writer struct {
 
 	memSizeLimit uint64
 
-	kvBuffer    *preAllocKVBuf
-	kvLocations []kvLocation
+	kvBuffer    *membuf.Buffer
+	kvLocations []membuf.SliceLocation
 	kvSize      int64
 
 	onClose OnCloseFunc
@@ -299,14 +297,14 @@ func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tid
 	}
 	encodedKeyLen := keyAdapter.EncodedLen(idxKey, rowID)
 	length := encodedKeyLen + len(idxVal) + lengthBytes*2
-	blockIdx, dataBuf, off, allocated := w.kvBuffer.Alloc(length)
-	if !allocated {
+	dataBuf, loc := w.kvBuffer.AllocBytesWithSliceLocation(length)
+	if dataBuf == nil {
 		if err := w.flushKVs(ctx, false); err != nil {
 			return err
 		}
-		blockIdx, dataBuf, off, allocated = w.kvBuffer.Alloc(length)
+		dataBuf, loc = w.kvBuffer.AllocBytesWithSliceLocation(length)
 		// we now don't support KV larger than blockSize
-		if !allocated {
+		if dataBuf == nil {
 			return errors.Errorf("failed to allocate kv buffer: %d", length)
 		}
 	}
@@ -315,11 +313,7 @@ func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tid
 	binary.BigEndian.AppendUint64(dataBuf[lengthBytes+encodedKeyLen:lengthBytes+encodedKeyLen], uint64(len(idxVal)))
 	copy(dataBuf[lengthBytes*2+encodedKeyLen:], idxVal)
 
-	w.kvLocations = append(w.kvLocations, kvLocation{
-		blockIdx: blockIdx,
-		offset:   off,
-		length:   int32(length)},
-	)
+	w.kvLocations = append(w.kvLocations, loc)
 	w.kvSize += int64(encodedKeyLen + len(idxVal))
 	w.batchSize += uint64(length)
 	return nil
@@ -338,7 +332,7 @@ func (w *Writer) Close(ctx context.Context) error {
 		return errors.Errorf("writer %s has been closed", w.writerID)
 	}
 	w.closed = true
-	defer w.kvBuffer.destroy()
+	defer w.kvBuffer.Destroy()
 	err := w.flushKVs(ctx, true)
 	if err != nil {
 		return err
@@ -439,7 +433,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	}()
 
 	sortStart := time.Now()
-	slices.SortFunc(w.kvLocations, func(i, j kvLocation) int {
+	slices.SortFunc(w.kvLocations, func(i, j membuf.SliceLocation) int {
 		return bytes.Compare(w.getKeyByLoc(i), w.getKeyByLoc(j))
 	})
 	sortDuration = time.Since(sortStart)
@@ -453,7 +447,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	}
 
 	for _, pair := range w.kvLocations {
-		err = w.kvStore.addEncodedData(w.getEncodedKVData(pair))
+		err = w.kvStore.addEncodedData(w.kvBuffer.GetSlice(pair))
 		if err != nil {
 			return err
 		}
@@ -489,21 +483,16 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 
 	w.kvLocations = w.kvLocations[:0]
 	w.kvSize = 0
-	w.kvBuffer.reset()
+	w.kvBuffer.Reset()
 	w.rc.reset()
 	w.batchSize = 0
 	return nil
 }
 
-func (w *Writer) getEncodedKVData(pos kvLocation) []byte {
-	block := w.kvBuffer.blocks[pos.blockIdx]
-	return block[pos.offset : pos.offset+pos.length]
-}
-
-func (w *Writer) getKeyByLoc(pos kvLocation) []byte {
-	block := w.kvBuffer.blocks[pos.blockIdx]
-	keyLen := binary.BigEndian.Uint64(block[pos.offset : pos.offset+lengthBytes])
-	return block[pos.offset+lengthBytes : uint64(pos.offset)+lengthBytes+keyLen]
+func (w *Writer) getKeyByLoc(loc membuf.SliceLocation) []byte {
+	block := w.kvBuffer.GetSlice(loc)
+	keyLen := binary.BigEndian.Uint64(block[:lengthBytes])
+	return block[lengthBytes : lengthBytes+keyLen]
 }
 
 func (w *Writer) createStorageWriter(ctx context.Context) (

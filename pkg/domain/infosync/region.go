@@ -21,7 +21,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/util/pdapi"
+	pd "github.com/tikv/pd/client/http"
 )
 
 // PlacementScheduleState is the returned third-valued state from GetReplicationState(). For convenience, the string of PD is deserialized into an enum first.
@@ -66,7 +66,7 @@ func GetReplicationState(ctx context.Context, startKey []byte, endKey []byte) (P
 		return PlacementScheduleStatePending, errors.Errorf("pd unavailable")
 	}
 
-	res, err := doRequest(ctx, "GetReplicationState", addrs, fmt.Sprintf("%s/replicated?startKey=%s&endKey=%s", pdapi.Regions, hex.EncodeToString(startKey), hex.EncodeToString(endKey)), "GET", nil)
+	res, err := doRequest(ctx, "GetReplicationState", addrs, fmt.Sprintf("%s/replicated?startKey=%s&endKey=%s", pd.Regions, hex.EncodeToString(startKey), hex.EncodeToString(endKey)), "GET", nil)
 	if err == nil && res != nil {
 		st := PlacementScheduleStatePending
 		// it should not fail

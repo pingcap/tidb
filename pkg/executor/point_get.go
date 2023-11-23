@@ -571,7 +571,8 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 		}
 	}
 
-	encodedIdxVals, err := codec.EncodeKey(sc, nil, idxVals...)
+	encodedIdxVals, err := codec.EncodeKey(sc.TimeZone(), nil, idxVals...)
+	err = sc.HandleError(err)
 	if err != nil {
 		return nil, err
 	}

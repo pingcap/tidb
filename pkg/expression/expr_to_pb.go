@@ -78,7 +78,7 @@ func (pc PbConverter) ExprToPB(expr Expression) *tipb.Expr {
 
 func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
 	ft := expr.GetType()
-	d, err := expr.Eval(chunk.Row{})
+	d, err := expr.EvalWithInnerCtx(chunk.Row{})
 	if err != nil {
 		logutil.BgLogger().Error("eval constant or correlated column", zap.String("expression", expr.ExplainInfo()), zap.Error(err))
 		return nil
@@ -143,7 +143,8 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 	case types.KindMysqlTime:
 		if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, int64(tipb.ExprType_MysqlTime)) {
 			tp = tipb.ExprType_MysqlTime
-			val, err := codec.EncodeMySQLTime(pc.sc, d.GetMysqlTime(), ft.GetType(), nil)
+			val, err := codec.EncodeMySQLTime(pc.sc.TimeZone(), d.GetMysqlTime(), ft.GetType(), nil)
+			err = pc.sc.HandleError(err)
 			if err != nil {
 				logutil.BgLogger().Error("encode mysql time", zap.Error(err))
 				return tp, nil, false

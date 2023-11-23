@@ -282,7 +282,9 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 	for _, col := range e.corCols[id] {
 		*col.Data = e.outerRow[id].GetDatum(col.Index, col.RetType)
 		if e.useCache {
-			if key, err = codec.EncodeKey(e.Ctx().GetSessionVars().StmtCtx, key, *col.Data); err != nil {
+			key, err = codec.EncodeKey(e.Ctx().GetSessionVars().StmtCtx.TimeZone(), key, *col.Data)
+			err = e.Ctx().GetSessionVars().StmtCtx.HandleError(err)
+			if err != nil {
 				return err
 			}
 		}

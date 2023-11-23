@@ -54,11 +54,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -462,7 +462,7 @@ var columnsCols = []columnInfo{
 	{name: "COLLATION_NAME", tp: mysql.TypeVarchar, size: 32},
 	{name: "COLUMN_TYPE", tp: mysql.TypeBlob, size: 196606},
 	{name: "COLUMN_KEY", tp: mysql.TypeVarchar, size: 3},
-	{name: "EXTRA", tp: mysql.TypeVarchar, size: 30},
+	{name: "EXTRA", tp: mysql.TypeVarchar, size: 45},
 	{name: "PRIVILEGES", tp: mysql.TypeVarchar, size: 80},
 	{name: "COLUMN_COMMENT", tp: mysql.TypeVarchar, size: 1024},
 	{name: "GENERATION_EXPRESSION", tp: mysql.TypeBlob, size: 589779, flag: mysql.NotNullFlag},
@@ -1160,7 +1160,7 @@ var tableClusterInfoCols = []columnInfo{
 	{name: "STATUS_ADDRESS", tp: mysql.TypeVarchar, size: 64},
 	{name: "VERSION", tp: mysql.TypeVarchar, size: 64},
 	{name: "GIT_HASH", tp: mysql.TypeVarchar, size: 64},
-	{name: "START_TIME", tp: mysql.TypeVarchar, size: 32},
+	{name: "START_TIME", tp: mysql.TypeDatetime, size: 19},
 	{name: "UPTIME", tp: mysql.TypeVarchar, size: 32},
 	{name: "SERVER_ID", tp: mysql.TypeLonglong, size: 21, comment: "invalid if the configuration item `enable-global-kill` is set to FALSE"},
 }
@@ -1853,7 +1853,7 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	// Try on each member until one succeeds or all fail.
 	for _, addr := range members {
 		// Get PD version, git_hash
-		url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), addr, pdapi.Status)
+		url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), addr, pd.Status)
 		req, err := http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(err)

@@ -113,9 +113,9 @@ func (col *Column) ExplainNormalizedInfo4InList() string {
 
 // ExplainInfo implements the Expression interface.
 func (expr *Constant) ExplainInfo() string {
-	dt, err := expr.Eval(chunk.Row{})
+	dt, err := expr.EvalWithInnerCtx(chunk.Row{})
 	if err != nil {
-		return "not recognized const vanue"
+		return "not recognized const value"
 	}
 	return expr.format(dt)
 }

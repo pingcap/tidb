@@ -63,6 +63,7 @@ go_library(
         "//pkg/server/metrics",
         "//pkg/session",
         "//pkg/session/txninfo",
+        "//pkg/session/types",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sessionstates",
         "//pkg/sessionctx/stmtctx",

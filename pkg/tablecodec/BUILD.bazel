@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/tablecodec",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/errctx",
         "//pkg/errno",
         "//pkg/kv",
         "//pkg/parser/charset",

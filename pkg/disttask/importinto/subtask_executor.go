@@ -135,6 +135,7 @@ func verifyChecksum(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *PostPr
 	})
 
 	globalTaskManager, err := storage.GetTaskManager()
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err != nil {
 		return err
 	}

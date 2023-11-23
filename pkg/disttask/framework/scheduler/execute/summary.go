@@ -80,7 +80,7 @@ func (s *Summary) PersistRowCount(ctx context.Context, taskMgr *storage.TaskMana
 	s.mu.Unlock()
 
 	for subtaskID, rowCount := range copiedRowCount {
-		err := taskMgr.UpdateSubtaskRowCount(subtaskID, rowCount)
+		err := taskMgr.UpdateSubtaskRowCount(ctx, subtaskID, rowCount)
 		if err != nil {
 			logutil.Logger(ctx).Warn("update subtask row count failed", zap.Error(err))
 		}
