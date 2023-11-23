@@ -1694,7 +1694,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 			needSplit = true
 		})
 		for i := 0; i < maxRetryTimes; i++ {
-			err = local.SplitAndScatterRegionInBatches(ctx, unfinishedRanges, lf.tableInfo, needSplit, regionSplitSize, maxBatchSplitRanges)
+			err = local.SplitAndScatterRegionInBatches(ctx, unfinishedRanges, needSplit, maxBatchSplitRanges)
 			if err == nil || common.IsContextCanceledError(err) {
 				break
 			}
