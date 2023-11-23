@@ -126,6 +126,7 @@ func getWriterMemSize(idxNum int) (uint64, error) {
 		return 0, err
 	}
 	memAvailable := memTotal - memUsed
+	logutil.BgLogger().Info("build operators that write index to cloud storage", zap.Uint64("memory total", memTotal), zap.Uint64("memory used", memUsed), zap.Uint64("memory size", memSize))
 	return (memAvailable / 2) / uint64(writerCnt) / uint64(idxNum), nil
 }
 
@@ -233,7 +234,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
 	writeOp := NewWriteExternalStoreOperator(
-		ctx, copCtx, sessPool, jobID, subtaskID, tbl, indexes, extStore, srcChkPool, writerCnt, onClose, memSize, reorgMeta)
+		ctx, copCtx, sessPool, jobID, subtaskID, tbl, indexes, extStore, srcChkPool, writerCnt, onClose, ,reorgMeta)
 	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, totalRowCount, metricCounter)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)

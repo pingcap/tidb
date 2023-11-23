@@ -318,9 +318,10 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		clients = append(clients, wstream)
 		allPeers = append(allPeers, peer)
 	}
+	dataCommitTS := j.ingestData.GetTS()
 	req.Chunk = &sst.WriteRequest_Batch{
 		Batch: &sst.WriteBatch{
-			CommitTs: j.ingestData.GetTS(),
+			CommitTs: dataCommitTS,
 		},
 	}
 
@@ -407,7 +408,8 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 					logutil.Key("endKey", j.keyRange.End),
 					logutil.Key("remainStart", remainingStartKey),
 					logutil.Region(region),
-					logutil.Leader(j.region.Leader))
+					logutil.Leader(j.region.Leader),
+					zap.Uint64("commitTS", dataCommitTS))
 			}
 			break
 		}
