@@ -537,6 +537,9 @@ type Job struct {
 
 	// BDRRole indicates the role of BDR cluste when executing this DDL.
 	BDRRole string `json:"bdr_role"`
+
+	// CDCWriteSource indicates the source of CDC write.
+	CDCWriteSource uint64 `json:"cdc_write_source"`
 }
 
 // FinishTableJob is called when a job is finished.
