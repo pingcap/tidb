@@ -400,6 +400,67 @@ func TestFlashbackWithSafeTs(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/changeFlashbackGetMinSafeTimeTimeout"))
 }
 
+func TestFlashbackTSOWithSafeTs(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockFlashbackTest", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/changeFlashbackGetMinSafeTimeTimeout", `return(0)`))
+
+	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	defer resetGC()
+
+	// Set GC safe point.
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
+	time.Sleep(time.Second)
+	ts, _ := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	flashbackTs := oracle.GetTimeFromTS(ts)
+	testcases := []struct {
+		name         string
+		sql          string
+		injectSafeTS uint64
+		// compareWithSafeTS will be 0 if FlashbackTS==SafeTS, -1 if FlashbackTS < SafeTS, and +1 if FlashbackTS > SafeTS.
+		compareWithSafeTS int
+	}{
+		{
+			name:              "5 seconds ago to now, safeTS 5 secs ago",
+			sql:               fmt.Sprintf("flashback cluster to timestamp '%d'", ts),
+			injectSafeTS:      oracle.GoTimeToTS(flashbackTs),
+			compareWithSafeTS: 0,
+		},
+		{
+			name:              "10 seconds ago to now, safeTS 5 secs ago",
+			sql:               fmt.Sprintf("flashback cluster to timestamp '%d'", ts),
+			injectSafeTS:      oracle.GoTimeToTS(flashbackTs.Add(10 * time.Second)),
+			compareWithSafeTS: -1,
+		},
+		{
+			name:              "5 seconds ago to now, safeTS 10 secs ago",
+			sql:               fmt.Sprintf("flashback cluster to timestamp '%d'", ts),
+			injectSafeTS:      oracle.GoTimeToTS(flashbackTs.Add(-10 * time.Second)),
+			compareWithSafeTS: 1,
+		},
+	}
+	for _, testcase := range testcases {
+		t.Log(testcase.name)
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
+			fmt.Sprintf("return(%v)", testcase.injectSafeTS)))
+		if testcase.compareWithSafeTS == 1 {
+			start := time.Now()
+			tk.MustContainErrMsg(testcase.sql,
+				"cannot set flashback timestamp after min-resolved-ts")
+			// When set `flashbackGetMinSafeTimeTimeout` = 0, no retry for `getStoreGlobalMinSafeTS`.
+			require.Less(t, time.Since(start), time.Second)
+		} else {
+			tk.MustExec(testcase.sql)
+		}
+	}
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/injectSafeTS"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFlashbackTest"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/changeFlashbackGetMinSafeTimeTimeout"))
+}
+
 func TestFlashbackRetryGetMinSafeTime(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
