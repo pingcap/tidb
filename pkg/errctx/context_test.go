@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/multierr"
 )
 
 func TestContext(t *testing.T) {
@@ -50,4 +51,13 @@ func TestContext(t *testing.T) {
 	require.Equal(t, warn, testWarn)
 	// newCtx2 will return all errors
 	require.Equal(t, newCtx2.HandleErrorWithAlias(testInternalErr, testErr, testWarn), testErr)
+
+	// test `multierr`
+	testErrs := multierr.Append(testInternalErr, testErr)
+	require.Equal(t, ctx.HandleError(testErrs), testInternalErr)
+	require.Equal(t, newCtx.HandleError(testErrs), testErr)
+	require.Equal(t, warn, testInternalErr)
+
+	// test nil
+	require.Nil(t, ctx.HandleError(nil))
 }

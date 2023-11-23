@@ -504,6 +504,10 @@ func (sc *StatementContext) HandleTruncate(err error) error {
 
 // HandleError handles the error based on `ErrCtx()`
 func (sc *StatementContext) HandleError(err error) error {
+	intest.AssertNotNil(sc)
+	if sc == nil {
+		return err
+	}
 	errCtx := sc.ErrCtx()
 	return errCtx.HandleError(err)
 }
