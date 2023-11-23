@@ -108,6 +108,7 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 		datumMap := statistics.NewDatumMapCache()
 
 		for i, topN := range checkTopNs {
+			i = i + start
 			if atomic.LoadUint32(worker.killed) == 1 {
 				resp.Err = errors.Trace(statistics.ErrQueryInterrupted)
 				worker.respCh <- resp

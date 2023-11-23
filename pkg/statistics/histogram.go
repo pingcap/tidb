@@ -1177,6 +1177,7 @@ func newbucket4MergingForRecycle() *bucket4Merging {
 }
 
 func releasebucket4MergingForRecycle(b *bucket4Merging) {
+	b.disjointNDV = 0
 	bucket4MergingPool.Put(b)
 }
 
