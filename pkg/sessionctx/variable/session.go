@@ -2037,6 +2037,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		hashJoinConcurrency:               DefTiDBHashJoinConcurrency,
 		projectionConcurrency:             DefTiDBProjectionConcurrency,
 		distSQLScanConcurrency:            DefDistSQLScanConcurrency,
+		analyzeDistSQLScanConcurrency:     DefAnalyzeDistSQLScanConcurrency,
 		hashAggPartialConcurrency:         DefTiDBHashAggPartialConcurrency,
 		hashAggFinalConcurrency:           DefTiDBHashAggFinalConcurrency,
 		windowConcurrency:                 DefTiDBWindowConcurrency,
@@ -2740,6 +2741,9 @@ type Concurrency struct {
 	// distSQLScanConcurrency is the number of concurrent dist SQL scan worker.
 	distSQLScanConcurrency int
 
+	// analyzeDistSQLScanConcurrency is the number of concurrent dist SQL scan worker when to analyze.
+	analyzeDistSQLScanConcurrency int
+
 	// hashJoinConcurrency is the number of concurrent hash join outer worker.
 	// hashJoinConcurrency is deprecated, use ExecutorConcurrency instead.
 	hashJoinConcurrency int
@@ -2794,6 +2798,11 @@ func (c *Concurrency) SetIndexLookupJoinConcurrency(n int) {
 // SetDistSQLScanConcurrency set the number of concurrent dist SQL scan worker.
 func (c *Concurrency) SetDistSQLScanConcurrency(n int) {
 	c.distSQLScanConcurrency = n
+}
+
+// SetAnalyzeDistSQLScanConcurrency set the number of concurrent dist SQL scan worker when to analyze.
+func (c *Concurrency) SetAnalyzeDistSQLScanConcurrency(n int) {
+	c.analyzeDistSQLScanConcurrency = n
 }
 
 // SetHashJoinConcurrency set the number of concurrent hash join outer worker.
