@@ -64,6 +64,14 @@ func TestGetCorrectResult(t *testing.T) {
 
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
+	
+}
+
+func TestGetCorrectResultDeprecated(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/enableAggSpillIntest", `return(false)`)
+
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists test.test_spill_bin;")
 	tk.MustExec("create table test.test_spill_bin(k varchar(30), v int);")
@@ -114,7 +122,7 @@ func TestGetCorrectResult(t *testing.T) {
 }
 
 // TODO maybe add more random fail?
-func TestRandomFail(t *testing.T) {
+func TestRandomFailDeprecated(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
