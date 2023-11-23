@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/session"
+	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -214,7 +215,7 @@ func (s *rpcServer) handleCopRequest(ctx context.Context, req *coprocessor.Reque
 	return h.HandleRequest(ctx, req)
 }
 
-func (s *rpcServer) createSession() (session.Session, error) {
+func (s *rpcServer) createSession() (sessiontypes.Session, error) {
 	se, err := session.CreateSessionWithDomain(s.dom.Store(), s.dom)
 	if err != nil {
 		return nil, err

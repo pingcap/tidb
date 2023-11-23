@@ -15,7 +15,11 @@
 package membuf
 
 import (
+	"bytes"
 	"crypto/rand"
+	rand2 "math/rand"
+	"runtime"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -89,4 +93,160 @@ func TestBufferIsolation(t *testing.T) {
 	b1 = append(b1, 0, 1, 2, 3)
 	require.Equal(t, b3, b2)
 	require.NotEqual(t, b2, b1)
+}
+
+func TestBufferMemLimit(t *testing.T) {
+	pool := NewPool(WithBlockSize(10))
+	defer pool.Destroy()
+	// the actual memory limit is 10 bytes.
+	bytesBuf := pool.NewBuffer(WithMemoryLimit(5))
+
+	got, _ := bytesBuf.AllocBytesWithSliceLocation(9)
+	require.NotNil(t, got)
+	got, _ = bytesBuf.AllocBytesWithSliceLocation(3)
+	require.Nil(t, got)
+
+	bytesBuf.Destroy()
+
+	// exactly 2 block
+	bytesBuf = pool.NewBuffer(WithMemoryLimit(20))
+
+	got, _ = bytesBuf.AllocBytesWithSliceLocation(9)
+	require.NotNil(t, got)
+	got, _ = bytesBuf.AllocBytesWithSliceLocation(9)
+	require.NotNil(t, got)
+	got, _ = bytesBuf.AllocBytesWithSliceLocation(2)
+	require.Nil(t, got)
+}
+
+const dataNum = 100 * 1024 * 1024
+
+func BenchmarkStoreSlice(b *testing.B) {
+	data := make([][]byte, dataNum)
+	for i := 0; i < b.N; i++ {
+		func() {
+			pool := NewPool()
+			defer pool.Destroy()
+			bytesBuf := pool.NewBuffer()
+			defer bytesBuf.Destroy()
+
+			for j := range data {
+				data[j] = bytesBuf.AllocBytes(10)
+			}
+		}()
+	}
+}
+
+func BenchmarkStoreLocation(b *testing.B) {
+	data := make([]SliceLocation, dataNum)
+	for i := 0; i < b.N; i++ {
+		func() {
+			pool := NewPool()
+			defer pool.Destroy()
+			bytesBuf := pool.NewBuffer()
+			defer bytesBuf.Destroy()
+
+			for j := range data {
+				_, data[j] = bytesBuf.AllocBytesWithSliceLocation(10)
+			}
+		}()
+	}
+}
+
+const sortDataNum = 1024 * 1024
+
+func BenchmarkSortSlice(b *testing.B) {
+	data := make([][]byte, sortDataNum)
+	// fixed seed for benchmark
+	rnd := rand2.New(rand2.NewSource(6716))
+
+	for i := 0; i < b.N; i++ {
+		func() {
+			pool := NewPool()
+			defer pool.Destroy()
+			bytesBuf := pool.NewBuffer()
+			defer bytesBuf.Destroy()
+
+			for j := range data {
+				data[j] = bytesBuf.AllocBytes(10)
+				rnd.Read(data[j])
+			}
+			slices.SortFunc(data, func(a, b []byte) int {
+				return bytes.Compare(a, b)
+			})
+		}()
+	}
+}
+
+func BenchmarkSortLocation(b *testing.B) {
+	data := make([]SliceLocation, sortDataNum)
+	// fixed seed for benchmark
+	rnd := rand2.New(rand2.NewSource(6716))
+
+	for i := 0; i < b.N; i++ {
+		func() {
+			pool := NewPool()
+			defer pool.Destroy()
+			bytesBuf := pool.NewBuffer()
+			defer bytesBuf.Destroy()
+
+			for j := range data {
+				var buf []byte
+				buf, data[j] = bytesBuf.AllocBytesWithSliceLocation(10)
+				rnd.Read(buf)
+			}
+			slices.SortFunc(data, func(a, b SliceLocation) int {
+				return bytes.Compare(bytesBuf.GetSlice(a), bytesBuf.GetSlice(b))
+			})
+		}()
+	}
+}
+
+func BenchmarkSortSliceWithGC(b *testing.B) {
+	data := make([][]byte, sortDataNum)
+	// fixed seed for benchmark
+	rnd := rand2.New(rand2.NewSource(6716))
+
+	for i := 0; i < b.N; i++ {
+		func() {
+			pool := NewPool()
+			defer pool.Destroy()
+			bytesBuf := pool.NewBuffer()
+			defer bytesBuf.Destroy()
+
+			for j := range data {
+				data[j] = bytesBuf.AllocBytes(10)
+				rnd.Read(data[j])
+			}
+			runtime.GC()
+			slices.SortFunc(data, func(a, b []byte) int {
+				return bytes.Compare(a, b)
+			})
+		}()
+	}
+}
+
+func BenchmarkSortLocationWithGC(b *testing.B) {
+	data := make([]SliceLocation, sortDataNum)
+	// fixed seed for benchmark
+	rnd := rand2.New(rand2.NewSource(6716))
+
+	for i := 0; i < b.N; i++ {
+		func() {
+			pool := NewPool()
+			defer pool.Destroy()
+			bytesBuf := pool.NewBuffer()
+			defer bytesBuf.Destroy()
+
+			for j := range data {
+				var buf []byte
+				buf, data[j] = bytesBuf.AllocBytesWithSliceLocation(10)
+				rnd.Read(buf)
+			}
+			runtime.GC()
+			slices.SortFunc(data, func(a, b SliceLocation) int {
+				return bytes.Compare(bytesBuf.GetSlice(a), bytesBuf.GetSlice(b))
+			})
+		}()
+	}
 }

@@ -59,7 +59,7 @@ func evalAstExpr(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error
 	if err != nil {
 		return types.Datum{}, err
 	}
-	return newExpr.Eval(chunk.Row{})
+	return newExpr.Eval(sctx, chunk.Row{})
 }
 
 // rewriteAstExpr rewrites ast expression directly.
