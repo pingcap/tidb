@@ -43,11 +43,11 @@ type topnStatsMergeWorker struct {
 	respCh chan<- *TopnStatsMergeResponse
 	// the stats in the wrapper should only be read during the worker
 	statsWrapper *StatsWrapper
-	// shardMutex is used to protect `statsWrapper.AllHg`
-	shardMutex []sync.Mutex
 	// Different TopN structures may hold the same value, we have to merge them.
 	counter map[hack.MutableString]float64
-	mu      sync.Mutex
+	// shardMutex is used to protect `statsWrapper.AllHg`
+	shardMutex []sync.Mutex
+	mu         sync.Mutex
 }
 
 // NewTopnStatsMergeWorker returns topn merge worker
