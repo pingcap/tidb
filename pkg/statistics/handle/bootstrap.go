@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -35,7 +36,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache util.StatsCache, iter *chunk.Iterator4Chunk) {
+func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		physicalID := row.GetInt64(1)
 		// The table is read-only. Please do not modify it.
@@ -62,7 +63,7 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache util.StatsC
 	}
 }
 
-func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (util.StatsCache, error) {
+func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statstypes.StatsCache, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	sql := "select HIGH_PRIORITY version, table_id, modify_count, count from mysql.stats_meta"
 	rc, err := util.Exec(h.initStatsCtx, sql)
@@ -89,7 +90,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (util.StatsCache, error
 	return tables, nil
 }
 
-func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache util.StatsCache, iter *chunk.Iterator4Chunk) {
+func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tblID := row.GetInt64(0)
 		table, ok := cache.Get(tblID)
@@ -160,7 +161,7 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache u
 	}
 }
 
-func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache util.StatsCache, iter *chunk.Iterator4Chunk) {
+func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tblID, statsVer := row.GetInt64(0), row.GetInt64(8)
 		table, ok := cache.Get(tblID)
@@ -230,7 +231,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache util.
 	}
 }
 
-func (h *Handle) initStatsHistogramsLite(is infoschema.InfoSchema, cache util.StatsCache) error {
+func (h *Handle) initStatsHistogramsLite(is infoschema.InfoSchema, cache statstypes.StatsCache) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms"
 	rc, err := util.Exec(h.initStatsCtx, sql)
@@ -253,7 +254,7 @@ func (h *Handle) initStatsHistogramsLite(is infoschema.InfoSchema, cache util.St
 	return nil
 }
 
-func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache util.StatsCache) error {
+func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache statstypes.StatsCache) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms"
 	rc, err := util.Exec(h.initStatsCtx, sql)
@@ -276,7 +277,7 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache util.StatsC
 	return nil
 }
 
-func (*Handle) initStatsTopN4Chunk(cache util.StatsCache, iter *chunk.Iterator4Chunk) {
+func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 	affectedIndexes := make(map[*statistics.Index]struct{})
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		table, ok := cache.Get(row.GetInt64(0))
@@ -302,7 +303,7 @@ func (*Handle) initStatsTopN4Chunk(cache util.StatsCache, iter *chunk.Iterator4C
 	}
 }
 
-func (h *Handle) initStatsTopN(cache util.StatsCache) error {
+func (h *Handle) initStatsTopN(cache statstypes.StatsCache) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	sql := "select HIGH_PRIORITY table_id, hist_id, value, count from mysql.stats_top_n where is_index = 1"
 	rc, err := util.Exec(h.initStatsCtx, sql)
@@ -325,7 +326,7 @@ func (h *Handle) initStatsTopN(cache util.StatsCache) error {
 	return nil
 }
 
-func (*Handle) initStatsFMSketch4Chunk(cache util.StatsCache, iter *chunk.Iterator4Chunk) {
+func (*Handle) initStatsFMSketch4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		table, ok := cache.Get(row.GetInt64(0))
 		if !ok {
@@ -352,7 +353,7 @@ func (*Handle) initStatsFMSketch4Chunk(cache util.StatsCache, iter *chunk.Iterat
 	}
 }
 
-func (h *Handle) initStatsFMSketch(cache util.StatsCache) error {
+func (h *Handle) initStatsFMSketch(cache statstypes.StatsCache) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, value from mysql.stats_fm_sketch"
 	rc, err := util.Exec(h.initStatsCtx, sql)
@@ -375,7 +376,7 @@ func (h *Handle) initStatsFMSketch(cache util.StatsCache) error {
 	return nil
 }
 
-func (*Handle) initStatsBuckets4Chunk(cache util.StatsCache, iter *chunk.Iterator4Chunk) {
+func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tableID, isIndex, histID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
 		table, ok := cache.Get(tableID)
@@ -426,7 +427,7 @@ func (*Handle) initStatsBuckets4Chunk(cache util.StatsCache, iter *chunk.Iterato
 	}
 }
 
-func (h *Handle) initStatsBuckets(cache util.StatsCache) error {
+func (h *Handle) initStatsBuckets(cache statstypes.StatsCache) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets order by table_id, is_index, hist_id, bucket_id"
 	rc, err := util.Exec(h.initStatsCtx, sql)

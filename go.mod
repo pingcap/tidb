@@ -144,9 +144,9 @@ require (
 require (
 	github.com/cenkalti/backoff/v4 v4.1.1 // indirect
 	github.com/dolthub/maphash v0.1.0 // indirect
+	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/golang-jwt/jwt/v4 v4.4.2 // indirect
 	github.com/google/s2a-go v0.1.7 // indirect
-	github.com/grpc-ecosystem/grpc-gateway/v2 v2.11.3 // indirect
 	github.com/jfcg/sixb v1.3.8 // indirect
 	github.com/matttproud/golang_protobuf_extensions/v2 v2.0.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
@@ -155,9 +155,10 @@ require (
 	github.com/shabbyrobe/gocovmerge v0.0.0-20190829150210-3e036491d500 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.0.1 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.0.1 // indirect
+	go.opentelemetry.io/otel/metric v1.21.0 // indirect
 	gonum.org/v1/gonum v0.8.2 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20231120223509-83a465c0220f // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20231106174013-bbf56f31fb17 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20231030173426-d783a09b4405 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20231120223509-83a465c0220f // indirect
 	k8s.io/utils v0.0.0-20230209194617-a36077c30491 // indirect
 )
 
@@ -201,8 +202,8 @@ require (
 	github.com/go-asn1-ber/asn1-ber v1.5.4 // indirect
 	github.com/go-kit/kit v0.9.0 // indirect
 	github.com/go-logfmt/logfmt v0.5.1 // indirect
-	github.com/go-logr/logr v1.2.3 // indirect
-	github.com/go-ole/go-ole v1.2.6 // indirect
+	github.com/go-logr/logr v1.3.0 // indirect
+	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/golang-jwt/jwt v3.2.1+incompatible // indirect
 	github.com/golang/glog v1.1.2 // indirect
@@ -285,17 +286,17 @@ require (
 	go.etcd.io/etcd/client/v2 v2.305.10 // indirect
 	go.etcd.io/etcd/pkg/v3 v3.5.10 // indirect
 	go.etcd.io/etcd/raft/v3 v3.5.10 // indirect
-	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.25.0 // indirect
-	go.opentelemetry.io/otel v1.0.1 // indirect
-	go.opentelemetry.io/otel/sdk v1.0.1 // indirect
-	go.opentelemetry.io/otel/trace v1.0.1 // indirect
-	go.opentelemetry.io/proto/otlp v0.19.0 // indirect
+	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.46.1 // indirect
+	go.opentelemetry.io/otel v1.21.0 // indirect
+	go.opentelemetry.io/otel/sdk v1.21.0 // indirect
+	go.opentelemetry.io/otel/trace v1.21.0 // indirect
+	go.opentelemetry.io/proto/otlp v0.9.0 // indirect
 	golang.org/x/crypto v0.15.0 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20230307190834-24139beb5833 // indirect
 	golang.org/x/mod v0.14.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
-	google.golang.org/genproto v0.0.0-20231120223509-83a465c0220f // indirect
+	google.golang.org/genproto v0.0.0-20231106174013-bbf56f31fb17 // indirect
 	google.golang.org/protobuf v1.31.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect

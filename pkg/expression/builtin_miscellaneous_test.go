@@ -139,7 +139,7 @@ func TestUUID(t *testing.T) {
 	ctx := createContext(t)
 	f, err := newFunctionForTest(ctx, ast.UUID)
 	require.NoError(t, err)
-	d, err := f.Eval(chunk.Row{})
+	d, err := f.Eval(ctx, chunk.Row{})
 	require.NoError(t, err)
 	parts := strings.Split(d.GetString(), "-")
 	require.Equal(t, 5, len(parts))
@@ -414,7 +414,7 @@ func TestNameConst(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.NameConst, primitiveValsToConstants(ctx, []interface{}{c.colName, c.arg})...)
 		require.NoError(t, err)
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		require.NoError(t, err)
 		c.asserts(d)
 	}
@@ -499,7 +499,7 @@ func TestUUIDToBin(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.UUIDToBin, primitiveValsToConstants(ctx, test.args)...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(chunk.Row{})
+		result, err := f.Eval(ctx, chunk.Row{})
 		if test.getError {
 			require.Error(t, err)
 		} else if test.getWarning {
@@ -570,7 +570,7 @@ func TestBinToUUID(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.BinToUUID, primitiveValsToConstants(ctx, test.args)...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(chunk.Row{})
+		result, err := f.Eval(ctx, chunk.Row{})
 		if test.getError {
 			require.Error(t, err)
 		} else if test.getWarning {

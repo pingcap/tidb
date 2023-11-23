@@ -131,7 +131,7 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 				return -1
 			}
 			if constVal, ok := f.GetArgs()[1].(*expression.Constant); ok {
-				val, err := constVal.Eval(chunk.Row{})
+				val, err := constVal.Eval(sctx, chunk.Row{})
 				if err != nil || (!sctx.GetSessionVars().RegardNULLAsPoint && val.IsNull()) {
 					// treat col<=>null as range scan instead of point get to avoid incorrect results
 					// when nullable unique index has multiple matches for filter x is null
@@ -153,7 +153,7 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 				return -1
 			}
 			if constVal, ok := f.GetArgs()[0].(*expression.Constant); ok {
-				val, err := constVal.Eval(chunk.Row{})
+				val, err := constVal.Eval(sctx, chunk.Row{})
 				if err != nil || (!sctx.GetSessionVars().RegardNULLAsPoint && val.IsNull()) {
 					return -1
 				}
@@ -1101,14 +1101,14 @@ func AddGcColumn4InCond(sctx sessionctx.Context,
 	for i, arg := range sf.GetArgs()[1:] {
 		// get every const value and calculate tidb_shard(val)
 		con := arg.(*expression.Constant)
-		conVal, err := con.Eval(chunk.Row{})
+		conVal, err := con.Eval(sctx, chunk.Row{})
 		if err != nil {
 			return accessesCond, err
 		}
 
 		record[0] = conVal
 		mutRow := chunk.MutRowFromDatums(record)
-		exprVal, err := expr.Eval(mutRow.ToRow())
+		exprVal, err := expr.Eval(sctx, mutRow.ToRow())
 		if err != nil {
 			return accessesCond, err
 		}
@@ -1169,7 +1169,7 @@ func AddGcColumn4EqCond(sctx sessionctx.Context,
 	}
 
 	mutRow := chunk.MutRowFromDatums(record)
-	evaluated, err := expr.Eval(mutRow.ToRow())
+	evaluated, err := expr.Eval(sctx, mutRow.ToRow())
 	if err != nil {
 		return accessesCond, err
 	}
