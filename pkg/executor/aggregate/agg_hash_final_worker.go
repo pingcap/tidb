@@ -53,9 +53,6 @@ type HashAggFinalWorker struct {
 	finalResultHolderCh chan *chunk.Chunk
 	groupKeys           [][]byte
 
-	// It means that all partial workers have be finished when we receive data from this chan
-	partialAndFinalNotifier chan struct{}
-
 	spillHelper        *parallelHashAggSpillHelper
 	isSpilledTriggered bool
 	spilledDataChan    chan *aggfuncs.AggPartialResultMapper
@@ -326,9 +323,6 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 			time.Sleep(2 * time.Second)
 		}
 	}
-
-	// Wait for the finish of all partial workers
-	<-w.partialAndFinalNotifier
 
 	w.isSpilledTriggered = w.spillHelper.isSpillTriggered()
 	if w.isSpilledTriggered {

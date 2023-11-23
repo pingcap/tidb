@@ -50,15 +50,18 @@ type HashAggPartialWorker struct {
 	partialResultNumInRow int
 
 	// Length of this map is equal to the number of final workers
+	// All data in one AggPartialResultMapper are specifically sent to a target final worker.
+	// e.g. all data in partialResultsMap[3] should be sent to final worker 3.
 	partialResultsMap []aggfuncs.AggPartialResultMapper
-	groupByItems      []expression.Expression
-	groupKey          [][]byte
+
+	groupByItems []expression.Expression
+	groupKey     [][]byte
 	// chk stores the input data from child,
 	// and is reused by childExec and partial worker.
 	chk *chunk.Chunk
 
 	isSpillPrepared       bool
-	workerSync            *partialWorkerSync
+	runningWorkerWaiter   *sync.WaitGroup
 	spillHelper           *parallelHashAggSpillHelper
 	tmpChksForSpill       []*chunk.Chunk
 	spillSerializeHelpers []*aggfuncs.SpillSerializeHelper
@@ -89,7 +92,8 @@ func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasE
 	defer w.spillHelper.syncLock.RUnlock()
 
 	if w.spillHelper.isInSpilling() {
-		// Repeatly release lock so that spill could get write lock when spill is in execution.
+		// Repeatedly release lock so that it could stop processing data when
+		// spill is in execution and spill action could have more chance to get write lock.
 		return true
 	}
 
@@ -140,7 +144,7 @@ func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasE
 	return true
 }
 
-func (w *HashAggPartialWorker) handleSpillBeforeExist() {
+func (w *HashAggPartialWorker) handleSpillBeforeExit() {
 	w.spillHelper.syncLock.RLock()
 	defer w.spillHelper.syncLock.RUnlock()
 
@@ -161,6 +165,27 @@ func (w *HashAggPartialWorker) handleSpillBeforeExist() {
 	}
 }
 
+func (w *HashAggPartialWorker) sendDataToFinalWorkersBeforeExit(needShuffle bool, finalConcurrency int, hasError bool) {
+	if hasError {
+		return
+	}
+
+	w.spillHelper.syncLock.RLock()
+	defer w.spillHelper.syncLock.RUnlock()
+
+	w.runningWorkerWaiter.Done()
+	w.runningWorkerWaiter.Wait()
+
+	w.spillHelper.setAllPartialWorkersFinished()
+
+	// We should always check spill status first.
+	if w.spillHelper.isSpillTriggered() {
+		w.handleSpillBeforeExit()
+	} else if needShuffle {
+		w.shuffleIntermData(finalConcurrency)
+	}
+}
+
 func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup, finalConcurrency int) {
 	start := time.Now()
 	hasError := false
@@ -170,17 +195,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 			recoveryHashAgg(w.globalOutputCh, r)
 		}
 
-		w.workerSync.waitForRunningWorkers()
-
-		if !hasError {
-			if w.spillHelper.isSpillTriggered() {
-				w.handleSpillBeforeExist()
-			} else if needShuffle {
-				w.shuffleIntermData(finalConcurrency)
-			}
-		}
-
-		w.workerSync.waitForExitOfAliveWorkers()
+		w.sendDataToFinalWorkersBeforeExit(needShuffle, finalConcurrency, hasError)
 
 		w.memTracker.Consume(-w.chk.MemoryUsage())
 		if w.stats != nil {
@@ -377,54 +392,4 @@ func (w *HashAggPartialWorker) spillRemainingDataToDisk(ctx sessionctx.Context) 
 func (w *HashAggPartialWorker) processError(err error) {
 	w.globalOutputCh <- &AfFinalResult{err: err}
 	w.spillHelper.setError()
-}
-
-// Exist is split into three stage: 1. wait running workers 2. do something 3. wait alive workers
-//
-//	Stage 1. decrease one running partial worker number and wait for the existence of the rest of workers
-//	Stage 2. do something, include checking if we need to spill data to disk
-//	Stage 3. descrease one alive partial worker number and notify final worker to execute
-type partialWorkerSync struct {
-	lock                    sync.Mutex
-	totalFinalWorkerNum     int
-	totalPartialWorkerNum   int
-	runningPartialWorkerNum int
-	alivePartialWorkerNum   int
-
-	// The last running partial worker will send msg to this channel
-	// so that the waiting workers can step to the next stage.
-	partialWorkDoneNotifier chan struct{}
-
-	// The last alive partial worker will send msg to this channel
-	// so that the final workers will start their tasks.
-	partialAndFinalNotifier chan struct{}
-}
-
-func (p *partialWorkerSync) waitForRunningWorkers() {
-	p.lock.Lock()
-	p.runningPartialWorkerNum--
-	isTheLastWorker := (p.runningPartialWorkerNum == 0)
-	p.lock.Unlock()
-
-	if isTheLastWorker {
-		// sendNum starts from 1 as it should not send to itself
-		for sendNum := 1; sendNum < p.totalPartialWorkerNum; sendNum++ {
-			p.partialWorkDoneNotifier <- struct{}{}
-		}
-	} else {
-		<-p.partialWorkDoneNotifier
-	}
-}
-
-func (p *partialWorkerSync) waitForExitOfAliveWorkers() {
-	p.lock.Lock()
-	p.alivePartialWorkerNum--
-	isTheLastWorker := (p.alivePartialWorkerNum == 0)
-	p.lock.Unlock()
-
-	if isTheLastWorker {
-		for sendNum := 0; sendNum < p.totalFinalWorkerNum; sendNum++ {
-			p.partialAndFinalNotifier <- struct{}{}
-		}
-	}
 }

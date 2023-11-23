@@ -40,14 +40,15 @@ const spilledPartitionNum = 256
 const spillTasksDoneFlag = -1
 
 type parallelHashAggSpillHelper struct {
-	lock             sync.Mutex
-	diskTracker      *disk.Tracker
-	isTrackerEnabled bool
-	spilledChunksIO  [][]*chunk.DataInDiskByRows
-	spillTriggered   int32
-	isSpilling       int32
-	isPartialStage   int32
-	hasError         int32
+	lock                        sync.Mutex
+	diskTracker                 *disk.Tracker
+	isTrackerEnabled            bool
+	spilledChunksIO             [][]*chunk.DataInDiskByRows
+	spillTriggered              int32
+	isSpilling                  int32
+	isPartialStage              int32
+	hasError                    int32
+	areAllPartialWorkerFinished bool
 
 	// When spill is triggered, all partial workers should stop
 	// and we can ensure this when the spill action gets write lock.
@@ -106,7 +107,9 @@ func (p *parallelHashAggSpillHelper) isSpillTriggered() bool {
 	return p.spillTriggered == spillFlag
 }
 
-func (p *parallelHashAggSpillHelper) triggerSpillWithNoLock() {
+func (p *parallelHashAggSpillHelper) setSpillTriggered() {
+	p.lock.Lock()
+	defer p.lock.Unlock()
 	p.spillTriggered = spillFlag
 }
 
@@ -134,10 +137,24 @@ func (p *parallelHashAggSpillHelper) resetIsSpilling() {
 	p.isSpilling = isSpillingFlag + 1
 }
 
+func (p *parallelHashAggSpillHelper) setAllPartialWorkersFinished() {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	p.areAllPartialWorkerFinished = true
+}
+
+func (p *parallelHashAggSpillHelper) checkAllPartialWorkersFinished() bool {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	return p.areAllPartialWorkerFinished
+}
+
+// We need to check error with atmoic as multi partial workers may access it.
 func (p *parallelHashAggSpillHelper) checkError() bool {
 	return atomic.LoadInt32(&p.hasError) == hasErrorFlag
 }
 
+// We need to set error with atmoic as multi partial workers may access it.
 func (p *parallelHashAggSpillHelper) setError() {
 	atomic.StoreInt32(&p.hasError, hasErrorFlag)
 }
@@ -196,19 +213,29 @@ func (a *AggSpillDiskAction) doActionForParallelHashAgg(t *memory.Tracker) {
 	a.spillHelper.lock.Lock()
 	defer a.spillHelper.lock.Unlock()
 	if a.spillHelper.isInSpillingNoLock() {
+		// It means that another goroutine is in spill execution, we should return here.
 		return
 	}
 
 	a.spillHelper.setIsSpillingNoLock()
-	a.e.partialWorkers[0].spillHelper.triggerSpillWithNoLock()
 	go a.doActionForParallelHashAggImpl(t)
 }
 
 func (a *AggSpillDiskAction) doActionForParallelHashAggImpl(t *memory.Tracker) {
 	a.spillHelper.syncLock.Lock()
 	defer a.spillHelper.syncLock.Unlock()
+	defer a.spillHelper.resetIsSpilling()
 
 	if a.spillHelper.checkError() {
+		return
+	}
+
+	// When all partial workers exit, we shouldn't spill.
+	// When it's the first triggered spill, spillTriggered flag has not been set yet
+	// and partial workers will shuffle data to final workers by channels as spillTriggered
+	// flag tells them there is no spill triggered. It will cause unexpected behaviour
+	// if we still spill data when all data have been shuffled to final workers.
+	if a.spillHelper.checkAllPartialWorkersFinished() {
 		return
 	}
 
@@ -219,8 +246,8 @@ func (a *AggSpillDiskAction) doActionForParallelHashAggImpl(t *memory.Tracker) {
 		a.isLogPrinted = true
 	}
 
+	a.spillHelper.setSpillTriggered()
 	a.spill()
-	a.spillHelper.resetIsSpilling()
 }
 
 func (a *AggSpillDiskAction) spill() {
@@ -231,8 +258,8 @@ func (a *AggSpillDiskAction) spill() {
 		}
 	})
 
-	spilledPartialWorkerNum := len(a.e.partialWorkers)
-	syncer := make(chan struct{}, spilledPartialWorkerNum)
+	waiter := sync.WaitGroup{}
+	waiter.Add(len(a.e.partialWorkers))
 	for i := range a.e.partialWorkers {
 		go func(worker *HashAggPartialWorker) {
 			err := worker.spillDataToDisk()
@@ -245,17 +272,10 @@ func (a *AggSpillDiskAction) spill() {
 			if err != nil {
 				worker.processError(err)
 			}
-			syncer <- struct{}{}
+			waiter.Done()
 		}(&a.e.partialWorkers[i])
 	}
 
 	// Wait for the finish of spill
-	finishedWorkerNum := 0
-	for {
-		<-syncer
-		finishedWorkerNum++
-		if finishedWorkerNum == spilledPartialWorkerNum {
-			break
-		}
-	}
+	waiter.Wait()
 }

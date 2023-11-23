@@ -257,28 +257,18 @@ func (e *HashAggExec) initForUnparallelExec() {
 
 func (e *HashAggExec) initSpillHelper(partialConcurrency int) *parallelHashAggSpillHelper {
 	return &parallelHashAggSpillHelper{
-		spilledChunksIO:      make([][]*chunk.DataInDiskByRows, spilledPartitionNum),
-		spillTriggered:       0,
-		isSpilling:           0,
-		isPartialStage:       partialStageFlag,
-		hasError:             0,
-		syncLock:             sync.RWMutex{},
-		partitionNeedRestore: spilledPartitionNum - 1,
+		spilledChunksIO:             make([][]*chunk.DataInDiskByRows, spilledPartitionNum),
+		spillTriggered:              0,
+		isSpilling:                  0,
+		isPartialStage:              partialStageFlag,
+		hasError:                    0,
+		syncLock:                    sync.RWMutex{},
+		partitionNeedRestore:        spilledPartitionNum - 1,
+		areAllPartialWorkerFinished: false,
 	}
 }
 
-func (e *HashAggExec) initPartialWorkerSync(partialConcurrency int, finalConcurrency int) partialWorkerSync {
-	return partialWorkerSync{
-		totalFinalWorkerNum:     finalConcurrency,
-		totalPartialWorkerNum:   partialConcurrency,
-		runningPartialWorkerNum: partialConcurrency,
-		alivePartialWorkerNum:   partialConcurrency,
-		partialWorkDoneNotifier: make(chan struct{}, partialConcurrency),
-		partialAndFinalNotifier: make(chan struct{}, finalConcurrency),
-	}
-}
-
-func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrency int, ctx sessionctx.Context, workerSync *partialWorkerSync) {
+func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrency int, ctx sessionctx.Context) {
 	baseRetTypeNum := len(e.Base().RetFieldTypes())
 	spillChunkFieldTypes := make([]*types.FieldType, baseRetTypeNum+1)
 	for i := 0; i < baseRetTypeNum; i++ {
@@ -286,6 +276,7 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 	}
 	spillChunkFieldTypes[baseRetTypeNum] = types.NewFieldType(mysql.TypeString)
 
+	runningWorkerWaiter := &sync.WaitGroup{}
 	for i := 0; i < partialConcurrency; i++ {
 		partialResultsMap := make([]aggfuncs.AggPartialResultMapper, finalConcurrency)
 		for i := 0; i < finalConcurrency; i++ {
@@ -293,7 +284,6 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 		}
 
 		partialAggFuncsLen := len(e.PartialAggFuncs)
-
 		w := HashAggPartialWorker{
 			baseHashAggWorker:    newBaseHashAggWorker(e.Ctx(), e.finishCh, e.PartialAggFuncs, e.MaxChunkSize(), e.memTracker),
 			ctx:                  ctx,
@@ -307,15 +297,15 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 			groupByItems:         e.GroupByItems,
 			chk:                  exec.TryNewCacheChunk(e.Children(0)),
 			groupKey:             make([][]byte, 0, 8),
-			isSpillPrepared:      false,
 			getNewTmpChunkFunc: func() *chunk.Chunk {
 				base := e.Base()
 				return chunk.New(spillChunkFieldTypes, base.InitCap(), base.MaxChunkSize())
 			},
 			spillChunkFieldTypes:  spillChunkFieldTypes,
 			spillSerializeHelpers: make([]*aggfuncs.SpillSerializeHelper, len(e.PartialAggFuncs)),
+			isSpillPrepared:       false,
+			runningWorkerWaiter:   runningWorkerWaiter,
 			spillHelper:           e.spillHelper,
-			workerSync:            workerSync,
 		}
 
 		for i := 0; i < partialAggFuncsLen; i++ {
@@ -343,26 +333,27 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 		e.memTracker.Consume(input.chk.MemoryUsage())
 		e.inputCh <- input
 	}
+
+	runningWorkerWaiter.Add(partialConcurrency)
 }
 
-func (e *HashAggExec) initFinalWorkers(finalConcurrency int, workerSync *partialWorkerSync) {
+func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {
 	for i := 0; i < finalConcurrency; i++ {
 		w := HashAggFinalWorker{
-			baseHashAggWorker:       newBaseHashAggWorker(e.Ctx(), e.finishCh, e.FinalAggFuncs, e.MaxChunkSize(), e.memTracker),
-			partialResultMap:        make(aggfuncs.AggPartialResultMapper),
-			BInMap:                  0,
-			isFirstInput:            true,
-			inputCh:                 e.partialOutputChs[i],
-			outputCh:                e.finalOutputCh,
-			finalResultHolderCh:     make(chan *chunk.Chunk, 1),
-			rowBuffer:               make([]types.Datum, 0, e.Schema().Len()),
-			mutableRow:              chunk.MutRowFromTypes(exec.RetTypes(e)),
-			groupKeys:               make([][]byte, 0, 8),
-			aggFuncsForRestoring:    e.PartialAggFuncs,
-			restoredMemDelta:        0,
-			partialAndFinalNotifier: workerSync.partialAndFinalNotifier,
-			spillHelper:             e.spillHelper,
-			isSpilledTriggered:      false,
+			baseHashAggWorker:    newBaseHashAggWorker(e.Ctx(), e.finishCh, e.FinalAggFuncs, e.MaxChunkSize(), e.memTracker),
+			partialResultMap:     make(aggfuncs.AggPartialResultMapper),
+			BInMap:               0,
+			isFirstInput:         true,
+			inputCh:              e.partialOutputChs[i],
+			outputCh:             e.finalOutputCh,
+			finalResultHolderCh:  make(chan *chunk.Chunk, 1),
+			rowBuffer:            make([]types.Datum, 0, e.Schema().Len()),
+			mutableRow:           chunk.MutRowFromTypes(exec.RetTypes(e)),
+			groupKeys:            make([][]byte, 0, 8),
+			aggFuncsForRestoring: e.PartialAggFuncs,
+			restoredMemDelta:     0,
+			spillHelper:          e.spillHelper,
+			isSpilledTriggered:   false,
 		}
 		// There is a bucket in the empty partialResultsMap.
 		e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMap))
@@ -398,9 +389,8 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	e.initRuntimeStats()
 
 	e.spillHelper = e.initSpillHelper(partialConcurrency)
-	workerSync := e.initPartialWorkerSync(partialConcurrency, finalConcurrency)
-	e.initPartialWorkers(partialConcurrency, finalConcurrency, ctx, &workerSync)
-	e.initFinalWorkers(finalConcurrency, &workerSync)
+	e.initPartialWorkers(partialConcurrency, finalConcurrency, ctx)
+	e.initFinalWorkers(finalConcurrency)
 
 	vars := e.Ctx().GetSessionVars()
 	e.spillHelper.isTrackerEnabled = e.Ctx().GetSessionVars().TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load()
@@ -499,30 +489,30 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 		partialWallTimePtr = &e.stats.PartialWallTime
 		finalWallTimePtr = &e.stats.FinalWallTime
 	}
+
 	partialWorkerWaitGroup := &sync.WaitGroup{}
 	partialWorkerWaitGroup.Add(len(e.partialWorkers))
 	partialStart := time.Now()
 	for i := range e.partialWorkers {
 		go e.partialWorkers[i].run(e.Ctx(), partialWorkerWaitGroup, len(e.finalWorkers))
 	}
-	go func() {
-		e.waitPartialWorkerAndCloseOutputChs(partialWorkerWaitGroup)
-		if partialWallTimePtr != nil {
-			atomic.AddInt64(partialWallTimePtr, int64(time.Since(partialStart)))
-		}
-	}()
+
+	e.waitPartialWorkerAndCloseOutputChs(partialWorkerWaitGroup)
+	if partialWallTimePtr != nil {
+		atomic.AddInt64(partialWallTimePtr, int64(time.Since(partialStart)))
+	}
+
 	finalWorkerWaitGroup := &sync.WaitGroup{}
 	finalWorkerWaitGroup.Add(len(e.finalWorkers))
 	finalStart := time.Now()
 	for i := range e.finalWorkers {
 		go e.finalWorkers[i].run(e.Ctx(), finalWorkerWaitGroup)
 	}
-	go func() {
-		finalWorkerWaitGroup.Wait()
-		if finalWallTimePtr != nil {
-			atomic.AddInt64(finalWallTimePtr, int64(time.Since(finalStart)))
-		}
-	}()
+
+	finalWorkerWaitGroup.Wait()
+	if finalWallTimePtr != nil {
+		atomic.AddInt64(finalWallTimePtr, int64(time.Since(finalStart)))
+	}
 
 	// All workers may send error message to e.finalOutputCh when they panic.
 	// And e.finalOutputCh should be closed after all goroutines gone.
