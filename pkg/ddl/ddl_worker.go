@@ -405,10 +405,19 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		job.Version = currentVersion
 		job.StartTS = startTS
 		job.ID = ids[i]
+		if len(bdrRole) == 0 {
+			bdrRole = string(ast.BDRRoleNone)
+		}
 		job.BDRRole = bdrRole
 
-		if ast.DeniedByBDR(ast.BDRRole(bdrRole), job.Type) {
-			return errors.Errorf("Can't add ddl job, denied by bdr role")
+		if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
+			for _, subJob := range job.MultiSchemaInfo.SubJobs {
+				if ast.DeniedByBDR(ast.BDRRole(bdrRole), subJob.Type) {
+					return errors.Errorf("Can't add ddl job(%s), denied by bdr role %s", subJob.Type.String(), bdrRole)
+				}
+			}
+		} else if ast.DeniedByBDR(ast.BDRRole(bdrRole), job.Type) {
+			return errors.Errorf("Can't add ddl job(%s), denied by bdr role %s", job.Type.String(), bdrRole)
 		}
 
 		setJobStateToQueueing(job)

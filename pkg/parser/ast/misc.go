@@ -2354,17 +2354,27 @@ const (
 
 // DeniedByBDR checks whether the DDL is denied by BDR.
 func DeniedByBDR(role BDRRole, action model.ActionType) bool {
+	ddlType, ok := model.ActionBDRMap[action]
 	switch role {
 	case BDRRoleNone, BDRRoleLocalOnly:
 		return false
 	case BDRRolePrimary:
-		if model.ActionBDRMap[action] == model.SafeDDL && model.ActionBDRMap[action] == model.UnmanagementDDL {
+		if !ok {
+			return true
+		}
+		if ddlType == model.SafeDDL || ddlType == model.UnmanagementDDL {
 			return false
 		}
 	case BDRRoleSecondary:
-		if model.ActionBDRMap[action] == model.UnmanagementDDL {
+		if !ok {
+			return true
+		}
+		if ddlType == model.UnmanagementDDL {
 			return false
 		}
+	default:
+		// if user do not set bdr role, we will not deny any ddl as `none`
+		return false
 	}
 	return true
 }

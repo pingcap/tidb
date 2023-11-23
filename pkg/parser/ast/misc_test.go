@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
 )
@@ -423,4 +424,8 @@ func TestRedactURL(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDeniedByBDR(t *testing.T) {
+	require.False(t, ast.DeniedByBDR(ast.BDRRolePrimary, model.ActionCreateTable))
 }
