@@ -403,11 +403,6 @@ func (d *BaseDispatcher) RebalanceSubtasks() error {
 		}
 		d.LiveNodes = newInfos
 		// 3. rebalance subtasks.
-		d.LiveNodes, err = d.filterByRole(d.LiveNodes)
-		if err != nil {
-			return err
-		}
-
 		if len(d.LiveNodes) > 0 {
 			return d.RebalanceSubtasksImpl()
 		}
