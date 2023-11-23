@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -1163,11 +1162,6 @@ func TestGlobalStats(t *testing.T) {
 }
 
 func TestGlobalIndexStatistics(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	h := dom.StatsHandle()
 	originLease := h.Lease()
@@ -1175,6 +1169,10 @@ func TestGlobalIndexStatistics(t *testing.T) {
 	h.SetLease(time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 
 	for i, version := range []string{"1", "2"} {
 		tk.MustExec("set @@session.tidb_analyze_version = " + version)

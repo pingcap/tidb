@@ -241,8 +241,6 @@ type Config struct {
 	// 2. 'zone' is a special key that indicates the DC location of this tidb-server. If it is set, the value for this
 	// key will be the default value of the session variable `txn_scope` for this tidb-server.
 	Labels map[string]string `toml:"labels" json:"labels"`
-	// EnableGlobalIndex enables creating global index.
-	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`
 	// DeprecateIntegerDisplayWidth indicates whether deprecating the max display length for integer.
 	DeprecateIntegerDisplayWidth bool `toml:"deprecate-integer-display-length" json:"deprecate-integer-display-length"`
 	// EnableEnumLengthLimit indicates whether the enum/set element length is limited.
@@ -1044,7 +1042,6 @@ var defaultConf = Config{
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            false,
 	Labels:                     make(map[string]string),
-	EnableGlobalIndex:          false,
 	Security: Security{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 		EnableSEM:                   false,

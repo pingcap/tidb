@@ -7063,7 +7063,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 			return err
 		}
 		if !ck {
-			if !config.GetGlobalConfig().EnableGlobalIndex {
+			if !ctx.GetSessionVars().EnableGlobalIndex {
 				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY")
 			}
 			// index columns does not contain all partition columns, must set global
@@ -7311,7 +7311,7 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 			return err
 		}
 		if !ck {
-			if !config.GetGlobalConfig().EnableGlobalIndex {
+			if !ctx.GetSessionVars().EnableGlobalIndex {
 				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
 			}
 			// index columns does not contain all partition columns, must set global
