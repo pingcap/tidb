@@ -186,6 +186,12 @@ type builder struct {
 	ctx sessionctx.Context
 }
 
+// build converts Expression on one column into point, which can be further built into Range.
+// The input collator is used for intersection/union between points, which corresponds to AND/OR in the expression. Since
+// our (*Datum).Compare(), which is used there, needs an explicit collator input to handle comparison for string and bytes,
+// we pass it down from here.
+// If the input prefixLen is not types.UnspecifiedLength, it means it's for a prefix column in a prefix index. In such
+// cases, we should cut the prefix and adjust the exclusiveness. Ref: cutPrefixForPoints().
 func (r *builder) build(expr expression.Expression, collator collate.Collator, prefixLen int) []*point {
 	switch x := expr.(type) {
 	case *expression.Column:
