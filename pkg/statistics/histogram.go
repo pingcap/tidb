@@ -34,12 +34,12 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
@@ -1258,7 +1258,7 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 	// illegal order.
 	if upperCompare < 0 {
 		err := errors.Errorf("illegal bucket order")
-		statslogutil.StatsLogger.Warn("fail to mergeBucketNDV", zap.Error(err))
+		logutil.BgLogger().Warn("fail to mergeBucketNDV", zap.String("category", "stats"), zap.Error(err))
 		return nil, err
 	}
 	//  ___right_|
@@ -1274,7 +1274,7 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 		// illegal order.
 		if lowerCompare < 0 {
 			err := errors.Errorf("illegal bucket order")
-			statslogutil.StatsLogger.Warn("fail to mergeBucketNDV", zap.Error(err))
+			logutil.BgLogger().Warn("fail to mergeBucketNDV", zap.String("category", "stats"), zap.Error(err))
 			return nil, err
 		}
 		// |___right___|
