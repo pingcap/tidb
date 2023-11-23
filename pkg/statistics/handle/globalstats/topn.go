@@ -112,7 +112,7 @@ func MergeGlobalStatsTopNByConcurrency(
 	counter := make(map[hack.MutableString]float64)
 	for _, resp := range resps {
 		for encoded, count := range resp.Counter {
-			counter[encoded] += float64(count)
+			counter[encoded] += count
 		}
 	}
 	numTop := len(counter)
