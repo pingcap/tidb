@@ -23,8 +23,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/task"
