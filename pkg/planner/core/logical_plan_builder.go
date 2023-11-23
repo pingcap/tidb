@@ -221,7 +221,7 @@ func (b *PlanBuilder) buildExpand(p LogicalPlan, gbyItems []expression.Expressio
 	b.optFlag |= flagResolveExpand
 
 	// Rollup syntax require expand OP to do the data expansion, different data replica supply the different grouping layout.
-	distinctGbyExprs, gbyExprsRefPos := expression.DeduplicateGbyExpression(b.ctx, gbyItems)
+	distinctGbyExprs, gbyExprsRefPos := expression.DeduplicateGbyExpression(gbyItems)
 	// build another projection below.
 	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, p.Schema().Len()+len(distinctGbyExprs))}.Init(b.ctx, b.getSelectOffset())
 	// project: child's output and distinct GbyExprs in advance. (make every group-by item to be a column)
@@ -1562,7 +1562,7 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 		if b.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol == nil {
 			b.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = make(map[string]int, 1)
 		}
-		b.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol[string(expr.HashCode(b.ctx.GetSessionVars().StmtCtx))] = int(newCol.UniqueID)
+		b.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol[string(expr.HashCode())] = int(newCol.UniqueID)
 	}
 	newCol.SetCoercibility(expr.Coercibility())
 	return newCol, name, nil
@@ -1829,7 +1829,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 					if expression.CheckFuncInExpr(x, ast.AnyValue) {
 						continue
 					}
-					scalarUniqueID, ok := fds.IsHashCodeRegistered(string(hack.String(x.HashCode(p.SCtx().GetSessionVars().StmtCtx))))
+					scalarUniqueID, ok := fds.IsHashCodeRegistered(string(hack.String(x.HashCode())))
 					if !ok {
 						logutil.BgLogger().Warn("Error occurred while maintaining the functional dependency")
 						continue
@@ -1894,7 +1894,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 					case *expression.Column:
 						projectionUniqueIDs.Insert(int(x.UniqueID))
 					case *expression.ScalarFunction:
-						scalarUniqueID, ok := fds.IsHashCodeRegistered(string(hack.String(x.HashCode(p.SCtx().GetSessionVars().StmtCtx))))
+						scalarUniqueID, ok := fds.IsHashCodeRegistered(string(hack.String(x.HashCode())))
 						if !ok {
 							logutil.BgLogger().Warn("Error occurred while maintaining the functional dependency")
 							continue
@@ -4909,7 +4909,7 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			}
 
 			for i, col := range lp.schema.Columns {
-				lp.cte.ColumnMap[string(col.HashCode(nil))] = prevSchema.Columns[i]
+				lp.cte.ColumnMap[string(col.HashCode())] = prevSchema.Columns[i]
 			}
 			p = lp
 			p.SetOutputNames(cte.seedLP.OutputNames())
