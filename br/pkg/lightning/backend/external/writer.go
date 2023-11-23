@@ -214,7 +214,7 @@ func (b *WriterBuilder) BuildOneFile(
 	writerID string,
 ) *OneFileWriter {
 	filenamePrefix := filepath.Join(prefix, writerID)
-	p := membuf.NewPool(membuf.WithPoolSize(0), membuf.WithBlockSize(b.blockSize))
+	p := membuf.NewPool(membuf.WithBlockNum(0), membuf.WithBlockSize(b.blockSize))
 
 	ret := &OneFileWriter{
 		rc: &rangePropertiesCollector{
