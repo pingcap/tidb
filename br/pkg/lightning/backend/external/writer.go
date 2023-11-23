@@ -320,7 +320,6 @@ type Writer struct {
 // WriteRow implements ingest.Writer.
 func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tidbkv.Handle) error {
 	keyAdapter := w.keyAdapter
-	w.batchSize += uint64(len(idxKey) + len(idxVal) + 2*lengthBytes)
 
 	var rowID []byte
 	if handle != nil {
@@ -376,6 +375,7 @@ func (w *Writer) Close(ctx context.Context) error {
 		zap.String("minKey", hex.EncodeToString(w.minKey)),
 		zap.String("maxKey", hex.EncodeToString(w.maxKey)))
 
+	w.kvLocations = nil
 	w.onClose(&WriterSummary{
 		WriterID:           w.writerID,
 		Seq:                w.currentSeq,
