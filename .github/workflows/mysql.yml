@@ -1,0 +1,24 @@
+name: MySQL Tests
+
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  keywords:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: yes
+          MYSQL_DATABASE: test
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v4
+        with:
+          go-version-file: 'go.mod'
+      - name: Run TestCompareReservedWordsWithMySQL
+        run: |
+           cd pkg/parser
+           go test -tags reserved_words_test -run '^TestCompareReservedWordsWithMySQL$'
