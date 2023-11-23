@@ -250,6 +250,7 @@ go_test(
         "//pkg/planner/property",
         "//pkg/planner/util",
         "//pkg/session",
+        "//pkg/session/types",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",

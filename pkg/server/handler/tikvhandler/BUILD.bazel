@@ -19,6 +19,7 @@ go_library(
         "//pkg/server/handler",
         "//pkg/session",
         "//pkg/session/txninfo",
+        "//pkg/session/types",
         "//pkg/sessionctx",
         "//pkg/sessionctx/binloginfo",
         "//pkg/sessionctx/variable",
