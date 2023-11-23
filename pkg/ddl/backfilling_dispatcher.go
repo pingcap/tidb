@@ -94,11 +94,11 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 	switch nextStep {
 	case StepReadIndex:
 		if tblInfo.Partition != nil {
-			return dsp.generatePartitionPlan(tblInfo, &backfillMeta, logger)
+			return generatePartitionPlan(tblInfo)
 		}
-		return dsp.generateNonPartitionPlan(dsp.d, &backfillMeta, tblInfo, job, dsp.GlobalSort, len(serverInfo), logger)
+		return generateNonPartitionPlan(dsp.d, tblInfo, job, dsp.GlobalSort, len(serverInfo))
 	case StepMergeSort:
-		res, err := dsp.generateMergePlan(taskHandle, &backfillMeta, gTask, logger)
+		res, err := generateMergePlan(taskHandle, gTask, logger)
 		if err != nil {
 			return nil, err
 		}
@@ -248,10 +248,7 @@ func getTblInfo(d *ddl, job *model.Job) (tblInfo *model.TableInfo, err error) {
 	return tblInfo, nil
 }
 
-func (dsp *BackfillingDispatcherExt) generatePartitionPlan(
-	tblInfo *model.TableInfo,
-	backfillMeta *BackfillGlobalMeta,
-	logger *zap.Logger) (metas [][]byte, err error) {
+func generatePartitionPlan(tblInfo *model.TableInfo) (metas [][]byte, err error) {
 	defs := tblInfo.Partition.Definitions
 	physicalIDs := make([]int64, len(defs))
 	for i := range defs {
@@ -274,14 +271,12 @@ func (dsp *BackfillingDispatcherExt) generatePartitionPlan(
 	return subTaskMetas, nil
 }
 
-func (dsp *BackfillingDispatcherExt) generateNonPartitionPlan(
+func generateNonPartitionPlan(
 	d *ddl,
-	backfillMeta *BackfillGlobalMeta,
 	tblInfo *model.TableInfo,
 	job *model.Job,
 	useCloud bool,
-	instanceCnt int,
-	logger *zap.Logger) (metas [][]byte, err error) {
+	instanceCnt int) (metas [][]byte, err error) {
 	tbl, err := getTable((*asAutoIDRequirement)(d.ddlCtx), job.SchemaID, tblInfo)
 	if err != nil {
 		return nil, err
@@ -424,9 +419,8 @@ func generateGlobalSortIngestPlan(
 	}
 }
 
-func (dsp *BackfillingDispatcherExt) generateMergePlan(
+func generateMergePlan(
 	taskHandle dispatcher.TaskHandle,
-	backfillMeta *BackfillGlobalMeta,
 	task *proto.Task,
 	logger *zap.Logger,
 ) ([][]byte, error) {
