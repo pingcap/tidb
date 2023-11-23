@@ -1,3 +1,6 @@
+## Delete it when https://github.com/pingcap/tidb/issues/48808 merged
+set tidb_max_chunk_size=default;
+
 # TestBasicCTE
 with recursive cte1 as (select 1 c1 union all select c1 + 1 c1 from cte1 where c1 < 5) select * from cte1;
 with recursive cte1 as (select 1 c1 union all select 2 c1 union all select c1 + 1 c1 from cte1 where c1 < 10) select * from cte1 order by c1;

@@ -122,6 +122,7 @@ func NewWriterBuilder() *WriterBuilder {
 // SetMemorySizeLimit sets the memory size limit of the writer. When accumulated
 // data size exceeds this limit, the writer will flush data as a file to external
 // storage.
+// When the writer is OneFileWriter SetMemorySizeLimit sets the preAllocated memory buffer size.
 func (b *WriterBuilder) SetMemorySizeLimit(size uint64) *WriterBuilder {
 	b.memSizeLimit = size
 	return b
@@ -201,6 +202,35 @@ func (b *WriterBuilder) Build(
 		fileMaxKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
 	}
 	ret.multiFileStats[0].Filenames = make([][2]string, 0, multiFileStatNum)
+
+	return ret
+}
+
+// BuildOneFile builds a new one file Writer. The writer will create only one file under the prefix
+// of "{prefix}/{writerID}".
+func (b *WriterBuilder) BuildOneFile(
+	store storage.ExternalStorage,
+	prefix string,
+	writerID string,
+) *OneFileWriter {
+	filenamePrefix := filepath.Join(prefix, writerID)
+	p := membuf.NewPool(membuf.WithPoolSize(0), membuf.WithBlockSize(b.blockSize))
+
+	ret := &OneFileWriter{
+		rc: &rangePropertiesCollector{
+			props:        make([]*rangeProperty, 0, 1024),
+			currProp:     &rangeProperty{},
+			propSizeDist: b.propSizeDist,
+			propKeysDist: b.propKeysDist,
+		},
+		kvBuffer:       p.NewBuffer(membuf.WithMemoryLimit(b.memSizeLimit)),
+		store:          store,
+		filenamePrefix: filenamePrefix,
+		writerID:       writerID,
+		kvStore:        nil,
+		onClose:        b.onClose,
+		closed:         false,
+	}
 	return ret
 }
 
@@ -387,15 +417,6 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	savedBytes = w.batchSize
 	startTs := time.Now()
 
-	getSpeed := func(n uint64, dur float64, isBytes bool) string {
-		if dur == 0 {
-			return "-"
-		}
-		if isBytes {
-			return units.BytesSize(float64(n) / dur)
-		}
-		return units.HumanSize(float64(n) / dur)
-	}
 	kvCnt := len(w.kvLocations)
 	defer func() {
 		w.currentSeq++
@@ -499,12 +520,12 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 	err error,
 ) {
 	dataPath := filepath.Join(w.filenamePrefix, strconv.Itoa(w.currentSeq))
-	dataWriter, err := w.store.Create(ctx, dataPath, &storage.WriterOption{Concurrency: 20})
+	dataWriter, err := w.store.Create(ctx, dataPath, &storage.WriterOption{Concurrency: 20, PartSize: (int64)(5 * size.MB)})
 	if err != nil {
 		return "", "", nil, nil, err
 	}
 	statPath := filepath.Join(w.filenamePrefix+statSuffix, strconv.Itoa(w.currentSeq))
-	statsWriter, err := w.store.Create(ctx, statPath, &storage.WriterOption{Concurrency: 20})
+	statsWriter, err := w.store.Create(ctx, statPath, &storage.WriterOption{Concurrency: 20, PartSize: (int64)(5 * size.MB)})
 	if err != nil {
 		_ = dataWriter.Close(ctx)
 		return "", "", nil, nil, err

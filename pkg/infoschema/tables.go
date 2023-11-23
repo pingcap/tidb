@@ -462,7 +462,7 @@ var columnsCols = []columnInfo{
 	{name: "COLLATION_NAME", tp: mysql.TypeVarchar, size: 32},
 	{name: "COLUMN_TYPE", tp: mysql.TypeBlob, size: 196606},
 	{name: "COLUMN_KEY", tp: mysql.TypeVarchar, size: 3},
-	{name: "EXTRA", tp: mysql.TypeVarchar, size: 30},
+	{name: "EXTRA", tp: mysql.TypeVarchar, size: 45},
 	{name: "PRIVILEGES", tp: mysql.TypeVarchar, size: 80},
 	{name: "COLUMN_COMMENT", tp: mysql.TypeVarchar, size: 1024},
 	{name: "GENERATION_EXPRESSION", tp: mysql.TypeBlob, size: 589779, flag: mysql.NotNullFlag},

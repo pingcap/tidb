@@ -230,8 +230,6 @@ func (i *mergeIter[T, R]) currElem() T {
 // next forwards the iterator to the next element. It returns false if there is
 // no available element.
 func (i *mergeIter[T, R]) next() bool {
-	var zeroT T
-	i.curr = zeroT
 	if i.lastReaderIdx >= 0 {
 		if i.checkHotspot {
 			i.hotspotMap[i.lastReaderIdx] = i.hotspotMap[i.lastReaderIdx] + 1

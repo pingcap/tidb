@@ -168,7 +168,8 @@ func (e *Engine) LoadIngestData(
 		zap.Int("concurrency", concurrency),
 		zap.Int("ranges", len(regionRanges)),
 		zap.Int("range-groups", len(rangeGroups)),
-		zap.Int("data-files", len(e.dataFiles)),
+		zap.Int("num-data-files", len(e.dataFiles)),
+		zap.Int("num-stat-files", len(e.statsFiles)),
 		zap.Bool("check-hotspot", e.checkHotspot),
 	)
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)

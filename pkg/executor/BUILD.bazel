@@ -401,6 +401,7 @@ go_test(
         "//pkg/planner/util",
         "//pkg/server",
         "//pkg/session",
+        "//pkg/session/types",
         "//pkg/sessionctx",
         "//pkg/sessionctx/binloginfo",
         "//pkg/sessionctx/stmtctx",

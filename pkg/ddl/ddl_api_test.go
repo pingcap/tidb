@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/session"
+	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -134,7 +134,7 @@ func TestIsJobRollbackable(t *testing.T) {
 	}
 }
 
-func enQueueDDLJobs(t *testing.T, sess session.Session, txn kv.Transaction, jobType model.ActionType, start, end int) {
+func enQueueDDLJobs(t *testing.T, sess sessiontypes.Session, txn kv.Transaction, jobType model.ActionType, start, end int) {
 	for i := start; i < end; i++ {
 		job := &model.Job{
 			ID:       int64(i),

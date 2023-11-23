@@ -1,3 +1,4 @@
+set tidb_max_chunk_size=default;
 with recursive cte1 as (select 1 c1 union all select c1 + 1 c1 from cte1 where c1 < 5) select * from cte1;
 c1
 1
