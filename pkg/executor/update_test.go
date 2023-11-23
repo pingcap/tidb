@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/session"
+	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -50,7 +50,7 @@ func testUpdatePKLazyCheck(t *testing.T, tk *testkit.TestKit, clusteredIndex var
 	tk.MustExec("commit")
 }
 
-func getPresumeExistsCount(t *testing.T, se session.Session) int {
+func getPresumeExistsCount(t *testing.T, se sessiontypes.Session) int {
 	txn, err := se.Txn(false)
 	require.NoError(t, err)
 	buf := txn.GetMemBuffer()
