@@ -139,7 +139,7 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt 
 	// TODO: remove it to the place building logical plan
 	predicates = ds.AddPrefix4ShardIndexes(ds.SCtx(), predicates)
 	ds.allConds = predicates
-	ds.pushedDownConds, predicates = expression.PushDownExprs(ds.SCtx().GetSessionVars().StmtCtx, predicates, ds.SCtx().GetClient(), kv.UnSpecified)
+	ds.pushedDownConds, predicates = expression.PushDownExprs(ds.SCtx(), predicates, ds.SCtx().GetClient(), kv.UnSpecified)
 	appendDataSourcePredicatePushDownTraceStep(ds, opt)
 	return predicates, ds
 }
