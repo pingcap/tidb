@@ -122,7 +122,7 @@ func main() {
 		case SectionTiDBKeyword:
 			word := parseLine(line)
 			if len(word) > 0 {
-				fmt.Fprintf(keywordsFile, "\t{\"%s\", true},\n", word)
+				fmt.Fprintf(keywordsFile, "\t{\"%s\", false},\n", word)
 			}
 		case SectionUnreservedKeyword:
 			word := parseLine(line)
