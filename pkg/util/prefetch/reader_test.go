@@ -63,6 +63,15 @@ func TestBasic(t *testing.T) {
 	require.EqualValues(t, 11, n)
 	_, err = r.Read(buf)
 	require.ErrorIs(t, err, io.EOF)
+
+	source = bytes.NewReader([]byte("01234"))
+	r = NewReader(io.NopCloser(source), 100)
+	buf = make([]byte, 11)
+	n, err = r.Read(buf)
+	require.NoError(t, err)
+	require.EqualValues(t, 5, n)
+	_, err = r.Read(buf)
+	require.ErrorIs(t, err, io.EOF)
 }
 
 func TestCloseBeforeDrainRead(t *testing.T) {

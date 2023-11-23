@@ -30,17 +30,17 @@ type Reader struct {
 	err          error // after bufCh is closed
 	wg           sync.WaitGroup
 
-	closeOnce sync.Once
-	closed    chan struct{}
+	closed   bool
+	closedCh chan struct{}
 }
 
 // NewReader creates a new Reader.
 func NewReader(r io.ReadCloser, prefetchSize int) io.ReadCloser {
 	ret := &Reader{
-		r:      r,
-		bufCh:  make(chan []byte),
-		err:    nil,
-		closed: make(chan struct{}),
+		r:        r,
+		bufCh:    make(chan []byte),
+		err:      nil,
+		closedCh: make(chan struct{}),
 	}
 	ret.buf[0] = make([]byte, prefetchSize/2)
 	ret.buf[1] = make([]byte, prefetchSize/2)
@@ -57,7 +57,7 @@ func (r *Reader) run() {
 		n, err := r.r.Read(buf)
 		buf = buf[:n]
 		select {
-		case <-r.closed:
+		case <-r.closedCh:
 			return
 		case r.bufCh <- buf:
 		}
@@ -102,10 +102,12 @@ func (r *Reader) Read(data []byte) (int, error) {
 
 // Close implements io.Closer. Close should not be called concurrently with Read.
 func (r *Reader) Close() error {
+	if r.closed {
+		return nil
+	}
 	ret := r.r.Close()
-	r.closeOnce.Do(func() {
-		close(r.closed)
-	})
+	close(r.closedCh)
 	r.wg.Wait()
+	r.closed = true
 	return ret
 }
