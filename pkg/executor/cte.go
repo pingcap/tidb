@@ -549,7 +549,7 @@ func (p *cteProducer) computeChunkHash(chk *chunk.Chunk) (sel []int, err error) 
 		// Length of p.sel is init as MaxChunkSize, but the row num of chunk may still exceeds MaxChunkSize.
 		// So needs to handle here to make sure len(p.sel) == chk.NumRows().
 		if len(p.sel) < numRows {
-			tmpSel := make([]int, numRows - len(p.sel))
+			tmpSel := make([]int, numRows-len(p.sel))
 			for i := 0; i < len(tmpSel); i++ {
 				tmpSel[i] = i + len(p.sel)
 			}
