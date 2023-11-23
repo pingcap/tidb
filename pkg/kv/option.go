@@ -245,6 +245,7 @@ func getCDCWriteSource(txnSource uint64) uint64 {
 	return txnSource & cdcWriteSourceMax
 }
 
+// IsCDCWriteSourceSet checks whether the TiCDC write source is set.
 func IsCDCWriteSourceSet(txnSource uint64) bool {
 	return (txnSource & cdcWriteSourceMax) != 0
 }

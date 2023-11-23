@@ -180,15 +180,21 @@ var actionMap = map[ActionType]string{
 	__DEPRECATED_ActionAlterTableAlterPartition: "alter partition",
 }
 
+// DDLBDRType is the type for DDL when BDR enable.
 type DDLBDRType string
 
 const (
-	UnsafeDDL       DDLBDRType = "unsafe DDL"
-	SafeDDL         DDLBDRType = "safe DDL"
+	// UnsafeDDL means the DDL can't be executed by user when cluster is Primary/Secondary.
+	UnsafeDDL DDLBDRType = "unsafe DDL"
+	// SafeDDL means the DDL can be executed by user when cluster is Primary.
+	SafeDDL DDLBDRType = "safe DDL"
+	// UnmanagementDDL means the DDL can't be synced by CDC.
 	UnmanagementDDL DDLBDRType = "unmanagement DDL"
-	UnknownDDL      DDLBDRType = "unknown DDL"
+	// UnknownDDL means the DDL is unknown.
+	UnknownDDL DDLBDRType = "unknown DDL"
 )
 
+// ActionBDRMap is the map of DDL ActionType to DDLBDRType.
 var ActionBDRMap = map[ActionType]DDLBDRType{
 	ActionNone:                          UnknownDDL,
 	ActionCreateSchema:                  SafeDDL,
