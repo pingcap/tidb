@@ -143,18 +143,18 @@ func newSessCtx(
 	return sessCtx, nil
 }
 
+// initSessCtx initializes the session context. Be careful to the timezone.
 func initSessCtx(
 	sessCtx sessionctx.Context,
 	sqlMode mysql.SQLMode,
 	tzLocation *model.TimeZoneLocation,
 	resGroupName string,
 ) error {
-	// Unify the TimeZone settings in newContext.
-	if sessCtx.GetSessionVars().StmtCtx.TimeZone() == nil {
-		tz := *time.UTC
-		sessCtx.GetSessionVars().StmtCtx.SetTimeZone(&tz)
-	}
-	sessCtx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
+	// Correct the initial timezone.
+	tz := *time.UTC
+	sessCtx.GetSessionVars().TimeZone = &tz
+	sessCtx.GetSessionVars().StmtCtx.SetTimeZone(&tz)
+
 	// Set the row encode format version.
 	rowFormat := variable.GetDDLReorgRowFormat()
 	sessCtx.GetSessionVars().RowEncoder.Enable = rowFormat != variable.DefTiDBRowFormatV1
