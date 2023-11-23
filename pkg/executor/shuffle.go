@@ -116,7 +116,7 @@ func (e *ShuffleExec) Open(ctx context.Context) error {
 
 	e.prepared = false
 	e.finishCh = make(chan struct{}, 1)
-	e.outputCh = make(chan *shuffleOutput, e.concurrency)
+	e.outputCh = make(chan *shuffleOutput, e.concurrency+len(e.dataSources))
 
 	for _, w := range e.workers {
 		w.finishCh = e.finishCh
@@ -202,13 +202,13 @@ func (e *ShuffleExec) Close() error {
 }
 
 func (e *ShuffleExec) prepare4ParallelExec(ctx context.Context) {
+	waitGroup := &sync.WaitGroup{}
+	waitGroup.Add(len(e.workers) + len(e.dataSources))
 	// create a goroutine for each dataSource to fetch and split data
 	for i := range e.dataSources {
-		go e.fetchDataAndSplit(ctx, i)
+		go e.fetchDataAndSplit(ctx, i, waitGroup)
 	}
 
-	waitGroup := &sync.WaitGroup{}
-	waitGroup.Add(len(e.workers))
 	for _, w := range e.workers {
 		go w.run(ctx, waitGroup)
 	}
@@ -259,7 +259,7 @@ func recoveryShuffleExec(output chan *shuffleOutput, r interface{}) {
 	logutil.BgLogger().Error("shuffle panicked", zap.Error(err), zap.Stack("stack"))
 }
 
-func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context, dataSourceIndex int) {
+func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context, dataSourceIndex int, waitGroup *sync.WaitGroup) {
 	var (
 		err           error
 		workerIndices []int
@@ -274,6 +274,7 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context, dataSourceIndex int
 		for _, w := range e.workers {
 			close(w.receivers[dataSourceIndex].inputCh)
 		}
+		waitGroup.Done()
 	}()
 
 	for {
