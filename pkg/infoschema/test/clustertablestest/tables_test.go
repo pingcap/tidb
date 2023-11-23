@@ -1417,3 +1417,11 @@ func TestAddFieldsForBinding(t *testing.T) {
 	require.Equal(t, rows[0][7], "use_index(@`sel_1` `test`.`t` ), ignore_index(`t` `a`)")
 	require.Equal(t, rows[0][8], "select * from `t` where `a` = ?")
 }
+
+func TestClusterInfoTime(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("SELECT START_TIME+1 FROM information_schema.CLUSTER_INFO")
+	warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	require.Nil(t, warnings)
+}
