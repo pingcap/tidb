@@ -1414,6 +1414,10 @@ func (ts *tidbTestSuite) TestSumAvg(c *C) {
 	ts.runTestSumAvg(c)
 }
 
+func (ts *tidbTestSuite) TestStmtCountLimit(c *C) {
+	ts.RunTestStmtCountLimit(c)
+}
+
 func (ts *tidbTestSuite) TestNullFlag(c *C) {
 	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
 	c.Assert(err, IsNil)

@@ -221,6 +221,10 @@ func (dbt *DBTest) mustQueryRows(query string, args ...interface{}) {
 	rows.Close()
 }
 
+func (dbt *DBTest) getDB() *sql.DB {
+	return dbt.db
+}
+
 func (cli *testServerClient) runTestRegression(c *C, overrider configOverrider, dbName string) {
 	cli.runTestsOnNewDB(c, overrider, dbName, func(dbt *DBTest) {
 		// Show the user
@@ -2115,5 +2119,78 @@ func (cli *testServerClient) runTestInfoschemaClientErrors(t *C) {
 			}
 		}
 
+	})
+}
+
+func (cli *testServerClient) RunTestStmtCountLimit(c *C) {
+	originalStmtCountLimit := config.GetGlobalConfig().Performance.StmtCountLimit
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.StmtCountLimit = 3
+	})
+	defer func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.Performance.StmtCountLimit = originalStmtCountLimit
+		})
+	}()
+
+	cli.runTests(c, nil, func(dbt *DBTest) {
+		dbt.mustExec("create table t (id int key);")
+		dbt.mustExec("set @@tidb_disable_txn_auto_retry=0;")
+		dbt.mustExec("set autocommit=0;")
+		dbt.mustExec("begin optimistic;")
+		dbt.mustExec("insert into t values (1);")
+		dbt.mustExec("insert into t values (2);")
+		_, err := dbt.getDB().Query("select * from t for update;")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "Error 1105: statement count 4 exceeds the transaction limitation, transaction has been rollback, autocommit = false")
+		dbt.mustExec("insert into t values (3);")
+		dbt.mustExec("commit;")
+		rows := dbt.mustQuery("select * from t;")
+		var id int
+		count := 0
+		for rows.Next() {
+			rows.Scan(&id)
+			count++
+		}
+		c.Assert(rows.Close(), IsNil)
+		c.Assert(id, Equals, 3)
+		c.Assert(count, Equals, 1)
+
+		dbt.mustExec("delete from t;")
+		dbt.mustExec("commit;")
+		dbt.mustExec("set @@tidb_disable_txn_auto_retry=0;")
+		dbt.mustExec("set autocommit=0;")
+		dbt.mustExec("begin optimistic;")
+		dbt.mustExec("insert into t values (1);")
+		dbt.mustExec("insert into t values (2);")
+		_, err = dbt.getDB().Exec("insert into t values (3);")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "Error 1105: statement count 4 exceeds the transaction limitation, transaction has been rollback, autocommit = false")
+		dbt.mustExec("commit;")
+		rows = dbt.mustQuery("select count(*) from t;")
+		for rows.Next() {
+			rows.Scan(&count)
+		}
+		c.Assert(rows.Close(), IsNil)
+		c.Assert(count, Equals, 0)
+
+		dbt.mustExec("delete from t;")
+		dbt.mustExec("commit;")
+		dbt.mustExec("set @@tidb_batch_commit=1;")
+		dbt.mustExec("set @@tidb_disable_txn_auto_retry=0;")
+		dbt.mustExec("set autocommit=0;")
+		dbt.mustExec("begin optimistic;")
+		dbt.mustExec("insert into t values (1);")
+		dbt.mustExec("insert into t values (2);")
+		dbt.mustExec("insert into t values (3);")
+		dbt.mustExec("insert into t values (4);")
+		dbt.mustExec("insert into t values (5);")
+		dbt.mustExec("commit;")
+		rows = dbt.mustQuery("select count(*) from t;")
+		for rows.Next() {
+			rows.Scan(&count)
+		}
+		c.Assert(rows.Close(), IsNil)
+		c.Assert(count, Equals, 5)
 	})
 }
