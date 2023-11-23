@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/session"
+	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -148,7 +148,7 @@ func TestGetDDLInfo(t *testing.T) {
 	tk.MustExec("rollback")
 }
 
-func addDDLJobs(sess session.Session, txn kv.Transaction, job *model.Job) error {
+func addDDLJobs(sess sessiontypes.Session, txn kv.Transaction, job *model.Job) error {
 	b, err := job.Encode(true)
 	if err != nil {
 		return err

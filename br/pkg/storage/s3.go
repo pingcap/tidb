@@ -1031,6 +1031,7 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 		}
 	} else {
 		up := s3manager.NewUploaderWithClient(rs.svc, func(u *s3manager.Uploader) {
+			u.PartSize = option.PartSize
 			u.Concurrency = option.Concurrency
 			u.BufferProvider = s3manager.NewBufferedReadSeekerWriteToPool(option.Concurrency * hardcodedS3ChunkSize)
 		})

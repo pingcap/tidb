@@ -32,6 +32,7 @@ func TestMergeOverlappingFiles(t *testing.T) {
 		[]string{"a", "b", "c", "d", "e"},
 		nil,
 		1,
+		1,
 		"",
 		1,
 		1,
