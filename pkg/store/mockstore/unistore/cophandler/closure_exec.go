@@ -792,7 +792,7 @@ func (e *closureExecutor) processSelection(needCollectDetail bool) (gotRow bool,
 	gotRow = true
 	for _, expr := range e.selectionCtx.conditions {
 		wc := e.sc.WarningCount()
-		d, err := expr.Eval(row)
+		d, err := expr.Eval(e.seCtx, row)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -1030,7 +1030,7 @@ func (e *topNProcessor) Process(key, value []byte) (err error) {
 	ctx := e.topNCtx
 	row := e.scanCtx.chk.GetRow(0)
 	for i, expr := range ctx.orderByExprs {
-		d, err := expr.Eval(row)
+		d, err := expr.Eval(e.seCtx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1127,7 +1127,7 @@ func (e *hashAggProcessor) getGroupKey(row chunk.Row) ([]byte, error) {
 	key := make([]byte, 0, 32)
 	errCtx := e.sc.ErrCtx()
 	for _, item := range e.groupByExprs {
-		v, err := item.Eval(row)
+		v, err := item.Eval(e.seCtx, row)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

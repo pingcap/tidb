@@ -701,7 +701,7 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 	iter := chunk.NewIterator4Chunk(req)
 	for i, idx := range virtualColumnIndex {
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			datum, err := expCols[idx].EvalVirtualColumn(row)
+			datum, err := expCols[idx].EvalVirtualColumn(sctx, row)
 			if err != nil {
 				return err
 			}

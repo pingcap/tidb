@@ -4700,7 +4700,7 @@ func (b *PlanBuilder) convertValue(valueItem ast.ExprNode, mockTablePlan Logical
 	if !ok {
 		return d, errors.New("Expect constant values")
 	}
-	value, err := constant.Eval(chunk.Row{})
+	value, err := constant.Eval(b.ctx, chunk.Row{})
 	if err != nil {
 		return d, err
 	}

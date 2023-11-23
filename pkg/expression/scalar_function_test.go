@@ -130,7 +130,7 @@ func TestIssue23309(t *testing.T) {
 	null := NewNull()
 	null.RetType = types.NewFieldType(mysql.TypeNull)
 	sf, _ := newFunction(ast.NE, a, null).(*ScalarFunction)
-	v, err := sf.GetArgs()[1].Eval(chunk.Row{})
+	v, err := sf.GetArgs()[1].Eval(mock.NewContext(), chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, v.IsNull())
 	require.False(t, mysql.HasNotNullFlag(sf.GetArgs()[1].GetType().GetFlag()))

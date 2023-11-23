@@ -461,7 +461,7 @@ func (e *groupConcatOrder) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 			byItems: make([]*types.Datum, 0, len(e.byItems)),
 		}
 		for _, byItem := range e.byItems {
-			d, err := byItem.Expr.Eval(row)
+			d, err := byItem.Expr.Eval(sctx, row)
 			if err != nil {
 				return memDelta, err
 			}
@@ -585,7 +585,7 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 			byItems: make([]*types.Datum, 0, len(e.byItems)),
 		}
 		for _, byItem := range e.byItems {
-			d, err := byItem.Expr.Eval(row)
+			d, err := byItem.Expr.Eval(sctx, row)
 			if err != nil {
 				return memDelta, err
 			}
