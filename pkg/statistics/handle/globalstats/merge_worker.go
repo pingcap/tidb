@@ -79,9 +79,8 @@ func NewTopnStatsMergeTask(start, end int) *TopnStatsMergeTask {
 
 // TopnStatsMergeResponse indicates topn merge worker response
 type TopnStatsMergeResponse struct {
-	Err       error
-	TopN      *statistics.TopN
-	PopedTopn []statistics.TopNMeta
+	Err     error
+	Counter map[hack.MutableString]float64
 }
 
 // Run runs topn merge like statistics.MergePartTopN2GlobalTopN
@@ -164,14 +163,7 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 			worker.respCh <- resp
 			continue
 		}
-		sorted := make([]statistics.TopNMeta, 0, numTop)
-		for value, cnt := range counter {
-			data := hack.Slice(string(value))
-			sorted = append(sorted, statistics.TopNMeta{Encoded: data, Count: uint64(cnt)})
-		}
-		globalTopN, leftTopN := statistics.GetMergedTopNFromSortedSlice(sorted, n)
-		resp.TopN = globalTopN
-		resp.PopedTopn = leftTopN
+		resp.Counter = counter
 		worker.respCh <- resp
 	}
 }

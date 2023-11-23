@@ -111,15 +111,8 @@ func MergeGlobalStatsTopNByConcurrency(
 	// fetch the response from each worker and merge them into global topn stats
 	counter := make(map[hack.MutableString]float64)
 	for _, resp := range resps {
-		if resp.TopN != nil {
-			for _, val := range resp.TopN.TopN {
-				encodedVal := hack.String(val.Encoded)
-				counter[encodedVal] += float64(val.Count)
-			}
-		}
-		for _, val := range resp.PopedTopn {
-			encodedVal := hack.String(val.Encoded)
-			counter[encodedVal] += float64(val.Count)
+		for encoded, count := range resp.Counter {
+			counter[encoded] += float64(count)
 		}
 	}
 	numTop := len(counter)
