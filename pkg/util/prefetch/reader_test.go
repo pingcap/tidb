@@ -64,3 +64,10 @@ func TestBasic(t *testing.T) {
 	_, err = r.Read(buf)
 	require.ErrorIs(t, err, io.EOF)
 }
+
+func TestCloseBeforeDrainRead(t *testing.T) {
+	data := make([]byte, 1024)
+	r := NewReader(io.NopCloser(bytes.NewReader(data)), 2)
+	err := r.Close()
+	require.NoError(t, err)
+}
