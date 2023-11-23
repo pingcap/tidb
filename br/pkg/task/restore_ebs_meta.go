@@ -41,6 +41,7 @@ const (
 	flagVolumeType       = "volume-type"
 	flagVolumeIOPS       = "volume-iops"
 	flagVolumeThroughput = "volume-throughput"
+	flagVolumeScope      = "volume-scope"
 	flagTargetAZ         = "target-az"
 )
 
@@ -56,6 +57,7 @@ func DefineRestoreSnapshotFlags(command *cobra.Command) {
 	command.Flags().Int64(flagVolumeThroughput, 0, "volume throughout in MiB/s(0 means default for that volume type)")
 	command.Flags().String(flagProgressFile, "progress.txt", "the file name of progress file")
 	command.Flags().String(flagTargetAZ, "", "the target AZ for restored volumes")
+	command.Flags().Int64(flagVolumeScope, 0, "volume scope to create, 0 stands for all volumes, 1 stands for data volumes only, and 2 stands for non data volumes only")
 
 	_ = command.Flags().MarkHidden(flagFullBackupType)
 	_ = command.Flags().MarkHidden(flagPrepare)
@@ -67,6 +69,7 @@ func DefineRestoreSnapshotFlags(command *cobra.Command) {
 	_ = command.Flags().MarkHidden(flagVolumeThroughput)
 	_ = command.Flags().MarkHidden(flagProgressFile)
 	_ = command.Flags().MarkHidden(flagTargetAZ)
+	_ = command.Flags().MarkHidden(flagVolumeScope)
 }
 
 // RunRestoreEBSMeta phase 1 of EBS based restore
@@ -248,7 +251,7 @@ func (h *restoreEBSMetaHelper) restoreVolumes(progress glue.Progress) (map[strin
 	}()
 
 	// Turn on FSR for TiKV data snapshots
-	if h.cfg.UseFSR {
+	if h.cfg.UseFSR && (h.cfg.VolumeScope == aws.ALLVolumes || h.cfg.VolumeScope == aws.DATAVolumes) {
 		snapshotsIDsMap, err = ec2Session.EnableDataFSR(h.metaInfo, h.cfg.TargetAZ)
 		if err != nil {
 			return nil, 0, errors.Trace(err)
@@ -256,7 +259,7 @@ func (h *restoreEBSMetaHelper) restoreVolumes(progress glue.Progress) (map[strin
 	}
 
 	volumeIDMap, err = ec2Session.CreateVolumes(h.metaInfo,
-		string(h.cfg.VolumeType), h.cfg.VolumeIOPS, h.cfg.VolumeThroughput, h.cfg.TargetAZ)
+		string(h.cfg.VolumeType), h.cfg.VolumeIOPS, h.cfg.VolumeThroughput, h.cfg.TargetAZ, h.cfg.VolumeScope)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
