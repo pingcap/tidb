@@ -78,12 +78,12 @@ func MergeGlobalStatsTopNByConcurrency(
 	taskNum := len(tasks)
 	taskCh := make(chan *TopnStatsMergeTask, taskNum)
 	respCh := make(chan *TopnStatsMergeResponse, taskNum)
+	worker := NewTopnStatsMergeWorker(taskCh, respCh, wrapper, killer)
 	for i := 0; i < mergeConcurrency; i++ {
-		worker := NewTopnStatsMergeWorker(taskCh, respCh, wrapper, killer)
 		wg.Add(1)
 		gp.Go(func() {
 			defer wg.Done()
-			worker.Run(timeZone, isIndex, n, version)
+			worker.Run(timeZone, isIndex, version)
 		})
 	}
 	for _, task := range tasks {
@@ -92,8 +92,6 @@ func MergeGlobalStatsTopNByConcurrency(
 	close(taskCh)
 	wg.Wait()
 	close(respCh)
-	resps := make([]*TopnStatsMergeResponse, 0)
-
 	// handle Error
 	hasErr := false
 	errMsg := make([]string, 0)
@@ -102,19 +100,13 @@ func MergeGlobalStatsTopNByConcurrency(
 			hasErr = true
 			errMsg = append(errMsg, resp.Err.Error())
 		}
-		resps = append(resps, resp)
 	}
 	if hasErr {
 		return nil, nil, nil, errors.New(strings.Join(errMsg, ","))
 	}
 
 	// fetch the response from each worker and merge them into global topn stats
-	counter := make(map[hack.MutableString]float64)
-	for _, resp := range resps {
-		for encoded, count := range resp.Counter {
-			counter[encoded] += count
-		}
-	}
+	counter := worker.Result()
 	numTop := len(counter)
 	sorted := make([]statistics.TopNMeta, 0, numTop)
 	for value, cnt := range counter {
