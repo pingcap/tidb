@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/testkit"
 )
 
@@ -67,15 +68,16 @@ func TestGetCorrectResult(t *testing.T) {
 	tk.MustExec("drop table if exists test.test_spill_bin;")
 	tk.MustExec("create table test.test_spill_bin(k varchar(30), v int);")
 	tk.MustExec("insert into test.test_spill_bin (k, v) values ('aa', 1), ('AA', 1), ('aA', 1), ('Aa', 1), ('bb', 1), ('BB', 1), ('bB', 1), ('Bb', 1), ('cc', 1), ('CC', 1), ('cC', 1), ('Cc', 1), ('dd', 1), ('DD', 1), ('dD', 1), ('Dd', 1), ('ee', 1), ('aa', 1), ('AA', 1), ('aA', 1), ('Aa', 1), ('bb', 1), ('BB', 1), ('bB', 1), ('Bb', 1);")
-
+	log.Info("xzxdebugtt")
 	tk.MustExec("drop table if exists test.test_spill_ci;")
 	tk.MustExec("create table test.test_spill_ci(k varchar(30), v int) DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;")
 	tk.MustExec("insert into test.test_spill_ci (k, v) values ('aa', 1), ('AA', 1), ('aA', 1), ('Aa', 1), ('bb', 1), ('BB', 1), ('bB', 1), ('Bb', 1), ('cc', 1), ('CC', 1), ('cC', 1), ('Cc', 1), ('dd', 1), ('DD', 1), ('dD', 1), ('Dd', 1), ('ee', 1), ('aa', 1), ('AA', 1), ('aA', 1), ('Aa', 1), ('bb', 1), ('BB', 1), ('bB', 1), ('Bb', 1);")
-
+	log.Info("xzxdebugtt")
 	hardLimitBytesNum := 1000000
 	tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%d;", hardLimitBytesNum))
+	log.Info("xzxdebugtt")
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/triggerSpill", fmt.Sprintf("return(%d)", hardLimitBytesNum))
-
+	log.Info("xzxdebugtt")
 	// bin collation
 	binCollationResult := make(map[string]string)
 	binCollationResult["CC"] = "1"
@@ -95,7 +97,9 @@ func TestGetCorrectResult(t *testing.T) {
 	binCollationResult["cC"] = "1"
 	binCollationResult["dd"] = "1"
 	binCollationResult["cc"] = "1"
+	log.Info("xzxdebugtt")
 	res := tk.MustQuery("select k, sum(v) from test_spill_bin group by k;")
+	log.Info("xzxdebugtt")
 	tk.RequireEqual(true, checkResults(res.Rows(), binCollationResult))
 
 	// ci collation
@@ -109,6 +113,7 @@ func TestGetCorrectResult(t *testing.T) {
 	tk.RequireEqual(true, checkResults(res.Rows(), ciCollationResult))
 }
 
+// TODO maybe add more random fail?
 func TestRandomFail(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

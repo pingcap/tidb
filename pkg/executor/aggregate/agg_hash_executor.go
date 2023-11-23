@@ -509,10 +509,12 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 		go e.finalWorkers[i].run(e.Ctx(), finalWorkerWaitGroup)
 	}
 
-	finalWorkerWaitGroup.Wait()
-	if finalWallTimePtr != nil {
-		atomic.AddInt64(finalWallTimePtr, int64(time.Since(finalStart)))
-	}
+	go func() {
+		finalWorkerWaitGroup.Wait()
+		if finalWallTimePtr != nil {
+			atomic.AddInt64(finalWallTimePtr, int64(time.Since(finalStart)))
+		}
+	}()
 
 	// All workers may send error message to e.finalOutputCh when they panic.
 	// And e.finalOutputCh should be closed after all goroutines gone.
