@@ -25,12 +25,14 @@ const (
 	ReservedKeywordStart   = "The following tokens belong to ReservedKeyword"
 	UnreservedkeywordStart = "The following tokens belong to UnReservedKeyword"
 	NotKeywordStart        = "The following tokens belong to NotKeywordToken"
+	TiDBKeywordStart       = "The following tokens belong to TiDBKeyword"
 )
 
 const (
 	SectionNone = iota
 	SectionReservedKeyword
 	SectionUnreservedKeyword
+	SectionTiDBKeyword
 )
 
 const (
@@ -99,16 +101,25 @@ func main() {
 
 	section := SectionNone
 	for _, line := range strings.Split(string(parserData), "\n") {
-		if strings.Contains(line, ReservedKeywordStart) {
+		if line == "" { // Empty line indicates section end
+			section = SectionNone
+		} else if strings.Contains(line, ReservedKeywordStart) {
 			section = SectionReservedKeyword
 		} else if strings.Contains(line, UnreservedkeywordStart) {
 			section = SectionUnreservedKeyword
+		} else if strings.Contains(line, TiDBKeywordStart) {
+			section = SectionTiDBKeyword
 		} else if strings.Contains(line, NotKeywordStart) {
 			section = SectionNone
 		}
 
 		switch section {
 		case SectionReservedKeyword:
+			word := parseLine(line)
+			if len(word) > 0 {
+				fmt.Fprintf(keywordsFile, "\t{\"%s\", true},\n", word)
+			}
+		case SectionTiDBKeyword:
 			word := parseLine(line)
 			if len(word) > 0 {
 				fmt.Fprintf(keywordsFile, "\t{\"%s\", true},\n", word)

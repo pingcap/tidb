@@ -21,12 +21,22 @@ import (
 )
 
 func TestKeywords(t *testing.T) {
+	// Test for the first keyword
 	require.Equal(t, parser.Keywords[0].Word, "ADD")
 	require.Equal(t, parser.Keywords[0].Reserved, true)
+
+	// Make sure TiDBKeywords are included.
+	found := false
+	for _, kw := range parser.Keywords {
+		if kw.Word == "ADMIN" {
+			found = true
+		}
+	}
+	require.Equal(t, found, true, "TiDBKeyword ADMIN is part of the list")
 }
 
 func TestKeywordsLength(t *testing.T) {
-	require.Equal(t, len(parser.Keywords), 602)
+	require.Equal(t, len(parser.Keywords), 646)
 
 	reservedNr := 0
 	for _, kw := range parser.Keywords {
@@ -34,7 +44,7 @@ func TestKeywordsLength(t *testing.T) {
 			reservedNr += 1
 		}
 	}
-	require.Equal(t, reservedNr, 233)
+	require.Equal(t, reservedNr, 277)
 }
 
 func TestKeywordsSorting(t *testing.T) {
