@@ -29,11 +29,8 @@ var retryableServerError = []string{
 	"internalerror",
 	"not read from or written to within the timeout period",
 	"<code>requesttimeout</code>",
-<<<<<<< HEAD
-=======
 	"<code>invalidpart</code>",
 	"end of file before message length reached",
->>>>>>> f33d5a76a57 (br: add more retryable error for br_import (#48529))
 }
 
 // RetryableFunc presents a retryable operation.
