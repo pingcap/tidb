@@ -163,9 +163,9 @@ type Subtask struct {
 	Summary    string
 }
 
-func (s *Subtask) String() string {
+func (t *Subtask) String() string {
 	return fmt.Sprintf("Subtask[ID=%d, Step=%d, Type=%s, TaskID=%d, State=%s, SchedulerID=%s]",
-		s.ID, s.Step, s.Type, s.TaskID, s.State, s.SchedulerID)
+		t.ID, t.Step, t.Type, t.TaskID, t.State, t.SchedulerID)
 }
 
 // IsFinished checks if the subtask is finished.
