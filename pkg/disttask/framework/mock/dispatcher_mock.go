@@ -307,25 +307,25 @@ func (mr *MockTaskManagerMockRecorder) GetSubtaskInStatesCnt(arg0, arg1 interfac
 }
 
 // GetSubtasksByStepAndState mocks base method.
-func (m *MockTaskManager) GetSubtasksByStepAndState(arg0 int64, arg1 proto.Step, arg2 proto.TaskState) ([]*proto.Subtask, error) {
+func (m *MockTaskManager) GetSubtasksByStepAndState(arg0 context.Context, arg1 int64, arg2 proto.Step, arg3 proto.TaskState) ([]*proto.Subtask, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetSubtasksByStepAndState", arg0, arg1, arg2)
+	ret := m.ctrl.Call(m, "GetSubtasksByStepAndState", arg0, arg1, arg2, arg3)
 	ret0, _ := ret[0].([]*proto.Subtask)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetSubtasksByStepAndState indicates an expected call of GetSubtasksByStepAndState.
-func (mr *MockTaskManagerMockRecorder) GetSubtasksByStepAndState(arg0, arg1, arg2 interface{}) *gomock.Call {
+func (mr *MockTaskManagerMockRecorder) GetSubtasksByStepAndState(arg0, arg1, arg2, arg3 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtasksByStepAndState", reflect.TypeOf((*MockTaskManager)(nil).GetSubtasksByStepAndState), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtasksByStepAndState", reflect.TypeOf((*MockTaskManager)(nil).GetSubtasksByStepAndState), arg0, arg1, arg2, arg3)
 }
 
 // GetSubtasksByStepExceptStates mocks base method.
-func (m *MockTaskManager) GetSubtasksByStepExceptStates(arg0 int64, arg1 proto.Step, arg2 ...interface{}) ([]*proto.Subtask, error) {
+func (m *MockTaskManager) GetSubtasksByStepExceptStates(arg0 context.Context, arg1 int64, arg2 proto.Step, arg3 ...interface{}) ([]*proto.Subtask, error) {
 	m.ctrl.T.Helper()
-	varargs := []interface{}{arg0, arg1}
-	for _, a := range arg2 {
+	varargs := []interface{}{arg0, arg1, arg2}
+	for _, a := range arg3 {
 		varargs = append(varargs, a)
 	}
 	ret := m.ctrl.Call(m, "GetSubtasksByStepExceptStates", varargs...)
@@ -335,9 +335,9 @@ func (m *MockTaskManager) GetSubtasksByStepExceptStates(arg0 int64, arg1 proto.S
 }
 
 // GetSubtasksByStepExceptStates indicates an expected call of GetSubtasksByStepExceptStates.
-func (mr *MockTaskManagerMockRecorder) GetSubtasksByStepExceptStates(arg0, arg1 interface{}, arg2 ...interface{}) *gomock.Call {
+func (mr *MockTaskManagerMockRecorder) GetSubtasksByStepExceptStates(arg0, arg1, arg2 interface{}, arg3 ...interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	varargs := append([]interface{}{arg0, arg1}, arg2...)
+	varargs := append([]interface{}{arg0, arg1, arg2}, arg3...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtasksByStepExceptStates", reflect.TypeOf((*MockTaskManager)(nil).GetSubtasksByStepExceptStates), varargs...)
 }
 
@@ -414,17 +414,17 @@ func (mr *MockTaskManagerMockRecorder) UpdateGlobalTaskAndAddSubTasks(arg0, arg1
 }
 
 // UpdateSubtasksSchedulerIDs mocks base method.
-func (m *MockTaskManager) UpdateSubtasksSchedulerIDs(arg0 int64, arg1 []*proto.Subtask) error {
+func (m *MockTaskManager) UpdateSubtasksSchedulerIDs(arg0 context.Context, arg1 int64, arg2 []*proto.Subtask) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateSubtasksSchedulerIDs", arg0, arg1)
+	ret := m.ctrl.Call(m, "UpdateSubtasksSchedulerIDs", arg0, arg1, arg2)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // UpdateSubtasksSchedulerIDs indicates an expected call of UpdateSubtasksSchedulerIDs.
-func (mr *MockTaskManagerMockRecorder) UpdateSubtasksSchedulerIDs(arg0, arg1 interface{}) *gomock.Call {
+func (mr *MockTaskManagerMockRecorder) UpdateSubtasksSchedulerIDs(arg0, arg1, arg2 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateSubtasksSchedulerIDs", reflect.TypeOf((*MockTaskManager)(nil).UpdateSubtasksSchedulerIDs), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateSubtasksSchedulerIDs", reflect.TypeOf((*MockTaskManager)(nil).UpdateSubtasksSchedulerIDs), arg0, arg1, arg2)
 }
 
 // WithNewSession mocks base method.

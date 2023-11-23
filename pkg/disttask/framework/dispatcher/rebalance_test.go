@@ -44,11 +44,11 @@ func scaleTest(t *testing.T,
 	mockTaskMgr *mock.MockTaskManager,
 	testCase scaleTestCase) {
 	ctx := context.Background()
-	mockTaskMgr.EXPECT().GetSubtasksByStepExceptStates(int64(0), proto.StepInit, proto.TaskStateSucceed).Return(
+	mockTaskMgr.EXPECT().GetSubtasksByStepExceptStates(ctx, int64(0), proto.StepInit, proto.TaskStateSucceed).Return(
 		testCase.subtasks,
 		nil)
-	mockTaskMgr.EXPECT().UpdateSubtasksSchedulerIDs(int64(0), testCase.subtasks).Return(nil)
-	mockTaskMgr.EXPECT().CleanUpMeta(testCase.cleanedNodes).Return(nil)
+	mockTaskMgr.EXPECT().UpdateSubtasksSchedulerIDs(ctx, int64(0), testCase.subtasks).Return(nil)
+	mockTaskMgr.EXPECT().CleanUpMeta(ctx, testCase.cleanedNodes).Return(nil)
 	dsp := dispatcher.NewBaseDispatcher(ctx, mockTaskMgr, "server", &proto.Task{Step: proto.StepInit})
 	dsp.LiveNodes = testCase.liveNodes
 	dsp.TaskNodes = testCase.taskNodes
@@ -376,31 +376,3 @@ func TestScaleInNodes(t *testing.T) {
 		scaleTest(t, mockTaskMgr, testCase)
 	}
 }
-
-// // decide whether add the tests
-// func mockDispatcherWithTaskMgr(t *testing.T, pool *pools.ResourcePool) (*dispatcher.BaseDispatcher, *storage.TaskManager) {
-// 	ctx := context.Background()
-// 	mgr := storage.NewTaskManager(util.WithInternalSourceType(ctx, "taskManager"), pool)
-// 	storage.SetTaskManager(mgr)
-
-// 	handle.SubmitGlobalTask("test", proto.TaskTypeExample, 1, nil)
-// 	task, err := mgr.GetGlobalTaskByKey("test")
-// 	require.NoError(t, err)
-// 	mockDispatcher := dispatcher.NewBaseDispatcher(ctx, mgr, "server", task)
-// 	mockDispatcher.Extension = &testDispatcherExt{}
-// 	return mockDispatcher, mgr
-// }
-
-// func TestScaleWithTable(t *testing.T) {
-// 	store := testkit.CreateMockStore(t)
-// 	gtk := testkit.NewTestKit(t, store)
-// 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
-// 		return gtk.Session(), nil
-// 	}, 1, 1, time.Second)
-// 	defer pool.Close()
-// 	ctrl := gomock.NewController(t)
-// 	defer ctrl.Finish()
-
-// 	dsp, _ := mockDispatcherWithTaskMgr(t, pool)
-// 	dsp.OnPending()
-// }
