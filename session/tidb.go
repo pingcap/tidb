@@ -250,7 +250,7 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 	if err != nil {
 		return err
 	}
-	return checkStmtLimit(ctx, se)
+	return checkStmtLimit(ctx, se, true)
 }
 
 func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
@@ -280,18 +280,29 @@ func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql s
 	return nil
 }
 
-func checkStmtLimit(ctx context.Context, se *session) error {
+func checkStmtLimit(ctx context.Context, se *session, isFinish bool) error {
 	// If the user insert, insert, insert ... but never commit, TiDB would OOM.
 	// So we limit the statement count in a transaction here.
 	var err error
 	sessVars := se.GetSessionVars()
 	history := GetHistory(se)
-	if history.Count() > int(config.GetGlobalConfig().Performance.StmtCountLimit) {
+	stmtCount := history.Count()
+	if !isFinish {
+		// history stmt count + current stmt, since current stmt is not finish, it has not add to history.
+		stmtCount++
+	}
+	if stmtCount > int(config.GetGlobalConfig().Performance.StmtCountLimit) {
 		if !sessVars.BatchCommit {
 			se.RollbackTxn(ctx)
-			return errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
-				history.Count(), sessVars.IsAutocommit())
+			return errors.Errorf("statement count %d exceeds the transaction limitation, transaction has been rollback, autocommit = %t",
+				stmtCount, sessVars.IsAutocommit())
 		}
+		if !isFinish {
+			// if the stmt is not finish execute, then just return, since some work need to be done such as StmtCommit.
+			return nil
+		}
+		// If the stmt is finish execute, and exceed the StmtCountLimit, and BatchCommit is true,
+		// then commit the current transaction and create a new transaction.
 		err = se.NewTxn(ctx)
 		// The transaction does not committed yet, we need to keep it in transaction.
 		// The last history could not be "commit"/"rollback" statement.
