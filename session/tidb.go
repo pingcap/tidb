@@ -314,6 +314,7 @@ func checkStmtLimit(ctx context.Context, se *session, isFinish bool) error {
 }
 
 // GetHistory get all stmtHistory in current txn. Exported only for test.
+// If stmtHistory is nil, will create a new one for current txn.
 func GetHistory(ctx sessionctx.Context) *StmtHistory {
 	hist, ok := ctx.GetSessionVars().TxnCtx.History.(*StmtHistory)
 	if ok {
