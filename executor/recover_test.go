@@ -395,22 +395,17 @@ func TestFlashbackWithSafeTs(t *testing.T) {
 			tk.MustExec(testcase.sql)
 		}
 	}
-<<<<<<< HEAD:executor/recover_test.go
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/injectSafeTS"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFlashbackTest"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/changeFlashbackGetMinSafeTimeTimeout"))
-=======
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/changeFlashbackGetMinSafeTimeTimeout"))
 }
 
 func TestFlashbackTSOWithSafeTs(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest", `return(true)`))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/changeFlashbackGetMinSafeTimeTimeout", `return(0)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockFlashbackTest", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/changeFlashbackGetMinSafeTimeTimeout", `return(0)`))
 
 	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
 	defer resetGC()
@@ -449,7 +444,7 @@ func TestFlashbackTSOWithSafeTs(t *testing.T) {
 	}
 	for _, testcase := range testcases {
 		t.Log(testcase.name)
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
 			fmt.Sprintf("return(%v)", testcase.injectSafeTS)))
 		if testcase.compareWithSafeTS == 1 {
 			start := time.Now()
@@ -461,10 +456,9 @@ func TestFlashbackTSOWithSafeTs(t *testing.T) {
 			tk.MustExec(testcase.sql)
 		}
 	}
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/changeFlashbackGetMinSafeTimeTimeout"))
->>>>>>> 6b3df662ca5 (flashback: support to flashback to tso syntax (#48493)):pkg/executor/recover_test.go
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/injectSafeTS"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFlashbackTest"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/changeFlashbackGetMinSafeTimeTimeout"))
 }
 
 func TestFlashbackRetryGetMinSafeTime(t *testing.T) {
