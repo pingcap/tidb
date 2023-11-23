@@ -30,6 +30,9 @@ go_test(
         "multi_schema_change_test.go",
         "pitr_test.go",
     ],
+    data = [
+        "//:tidb_test_binary",
+    ],
     embed = [":addindextest"],
     deps = [
         "//pkg/config",

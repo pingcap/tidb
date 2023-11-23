@@ -8,6 +8,9 @@ go_test(
         "from_server_test.go",
         "main_test.go",
     ],
+    data = [
+        "//:tidb_test_binary",
+    ],
     flaky = True,
     race = "on",
     deps = [

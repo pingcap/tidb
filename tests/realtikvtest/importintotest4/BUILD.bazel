@@ -8,6 +8,9 @@ go_test(
         "main_test.go",
         "split_file_test.go",
     ],
+    data = [
+        "//:tidb_test_binary",
+    ],
     flaky = True,
     race = "on",
     deps = [
