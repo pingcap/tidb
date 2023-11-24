@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -291,7 +290,7 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt 
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			prunedColumns = append(prunedColumns, p.schema.Columns[i])
-			p.schema.Columns = slices.Delete(p.schema.Columns, i, i)
+			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
 		}
 	}
 	appendColumnPruneTraceStep(p, prunedColumns, opt)
