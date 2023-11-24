@@ -42,6 +42,7 @@ type singlePointAlloc struct {
 	*ClientDiscover
 }
 
+// ClientDiscover is used to get the AutoIDAllocClient, it creates the grpc connection with autoid service leader.
 type ClientDiscover struct {
 	// This the etcd client for service discover
 	etcdCli *clientv3.Client
@@ -66,6 +67,8 @@ func NewClientDiscover(etcdCli *clientv3.Client) *ClientDiscover {
 	}
 }
 
+
+// GetClient gets the AutoIDAllocClient.
 func (d *ClientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClient, error) {
 	d.mu.RLock()
 	cli := d.mu.AutoIDAllocClient
@@ -164,6 +167,8 @@ retry:
 
 const backoffDuration = 200 * time.Millisecond
 
+// ResetConn reset the AutoIDAllocClient and underlying grpc connection.
+// The next GetClient() call will recreate the client connecting to the correct leader by querying etcd.
 func (d *ClientDiscover) ResetConn(reason error) {
 	if reason != nil {
 		logutil.BgLogger().Info("[autoid client] reset grpc connection",

@@ -61,7 +61,6 @@ go_test(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
-        "@io_etcd_go_etcd_client_v3//:client",
         "@org_uber_go_goleak//:goleak",
     ],
 )
