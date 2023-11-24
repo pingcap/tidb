@@ -416,8 +416,6 @@ type StatementContext struct {
 	useChunkAlloc bool
 	// Check if TiFlash read engine is removed due to strict sql mode.
 	TiFlashEngineRemovedDueToStrictSQLMode bool
-	// CanonicalHashCode try to get the canonical hash code from expression.
-	CanonicalHashCode bool
 	// StaleTSOProvider is used to provide stale timestamp oracle for read-only transactions.
 	StaleTSOProvider struct {
 		sync.Mutex
@@ -504,6 +502,10 @@ func (sc *StatementContext) HandleTruncate(err error) error {
 
 // HandleError handles the error based on `ErrCtx()`
 func (sc *StatementContext) HandleError(err error) error {
+	intest.AssertNotNil(sc)
+	if sc == nil {
+		return err
+	}
 	errCtx := sc.ErrCtx()
 	return errCtx.HandleError(err)
 }

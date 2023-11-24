@@ -30,12 +30,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestInsertOnDuplicateKey(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	testInsertOnDuplicateKey(t, tk)
-}
-
 func TestInsertOnDuplicateKeyWithBinlog(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

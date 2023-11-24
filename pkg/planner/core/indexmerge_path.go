@@ -531,7 +531,7 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int, usedAccessMa
 			// since idx2's access cond has already been covered by idx1.
 			containRelation := true
 			for _, access := range originalPath.AccessConds {
-				if _, ok := usedAccessMap[string(access.HashCode(ds.SCtx().GetSessionVars().StmtCtx))]; !ok {
+				if _, ok := usedAccessMap[string(access.HashCode())]; !ok {
 					// some condition is not covered in previous mv index partial path, use it!
 					containRelation = false
 					break
@@ -542,8 +542,8 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int, usedAccessMa
 			}
 			// for this picked normal index, mark its access conds.
 			for _, access := range originalPath.AccessConds {
-				if _, ok := usedAccessMap[string(access.HashCode(ds.SCtx().GetSessionVars().StmtCtx))]; !ok {
-					usedAccessMap[string(access.HashCode(ds.SCtx().GetSessionVars().StmtCtx))] = access
+				if _, ok := usedAccessMap[string(access.HashCode())]; !ok {
+					usedAccessMap[string(access.HashCode())] = access
 				}
 			}
 		}
@@ -586,11 +586,11 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int, usedAccessMa
 		// avoid wrong deduplication.
 		notCoveredHashCodeSet := make(map[string]struct{})
 		for _, cond := range notCoveredConds {
-			hashCode := string(cond.HashCode(ds.SCtx().GetSessionVars().StmtCtx))
+			hashCode := string(cond.HashCode())
 			notCoveredHashCodeSet[hashCode] = struct{}{}
 		}
 		for _, cond := range coveredConds {
-			hashCode := string(cond.HashCode(ds.SCtx().GetSessionVars().StmtCtx))
+			hashCode := string(cond.HashCode())
 			if _, ok := notCoveredHashCodeSet[hashCode]; !ok {
 				hashCodeSet[hashCode] = struct{}{}
 			}
@@ -603,7 +603,7 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int, usedAccessMa
 	// Remove covered filters from finalFilters and deduplicate finalFilters.
 	dedupedFinalFilters := make([]expression.Expression, 0, len(finalFilters))
 	for _, cond := range finalFilters {
-		hashCode := string(cond.HashCode(ds.SCtx().GetSessionVars().StmtCtx))
+		hashCode := string(cond.HashCode())
 		if _, ok := hashCodeSet[hashCode]; !ok {
 			dedupedFinalFilters = append(dedupedFinalFilters, cond)
 			hashCodeSet[hashCode] = struct{}{}
@@ -778,7 +778,7 @@ func (ds *DataSource) generateMVIndexMergePartialPaths4And(normalPathCnt int, in
 			//		And(path1, path2, And(path3, path4)) => And(path1, path2, path3, path4, merge(table-action like filter)
 			if len(partialPaths) == 1 || isIntersection {
 				for _, accessF := range accessFilters {
-					usedAccessCondsMap[string(accessF.HashCode(ds.SCtx().GetSessionVars().StmtCtx))] = accessF
+					usedAccessCondsMap[string(accessF.HashCode())] = accessF
 				}
 				mvAndPartialPath = append(mvAndPartialPath, partialPaths...)
 			}
@@ -1065,7 +1065,7 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 	// collect the remained CNF conditions
 	var remainedCNFs []expression.Expression
 	for _, CNFItem := range indexMergeConds {
-		if _, ok := usedAccessMap[string(CNFItem.HashCode(ds.SCtx().GetSessionVars().StmtCtx))]; !ok {
+		if _, ok := usedAccessMap[string(CNFItem.HashCode())]; !ok {
 			remainedCNFs = append(remainedCNFs, CNFItem)
 		}
 	}

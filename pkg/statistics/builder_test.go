@@ -28,9 +28,10 @@ import (
 // go test -benchmem -run=^$ -bench ^BenchmarkBuildHistAndTopN$ github.com/pingcap/tidb/pkg/statistics
 func BenchmarkBuildHistAndTopN(b *testing.B) {
 	ctx := mock.NewContext()
-	sketch := NewFMSketch(1000)
+	const cnt = 1000_000
+	sketch := NewFMSketch(cnt)
 	data := make([]*SampleItem, 0, 8)
-	for i := 1; i <= 1000; i++ {
+	for i := 1; i <= cnt; i++ {
 		d := types.NewIntDatum(int64(i))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(b, err)
@@ -68,9 +69,9 @@ func BenchmarkBuildHistAndTopN(b *testing.B) {
 		TotalSize: int64(len(data)) * 8,
 	}
 	filedType := types.NewFieldType(mysql.TypeLong)
-	memoryTracker := memory.NewTracker(10, 10)
+	memoryTracker := memory.NewTracker(10, 1024*1024*1024)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _, _ = BuildHistAndTopN(ctx, 0, 0, 0, collector, filedType, true, memoryTracker)
+		_, _, _ = BuildHistAndTopN(ctx, 256, 500, 0, collector, filedType, true, memoryTracker)
 	}
 }
