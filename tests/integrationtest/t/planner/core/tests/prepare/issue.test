@@ -315,13 +315,13 @@ drop table if exists t;
 create table t(a int);
 prepare stmt from 'select * from t';
 execute stmt;
-select EXEC_COUNT,plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`';
+select EXEC_COUNT,plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`' and TABLE_NAMES = 'planner__core__tests__prepare__issue.t';
 execute stmt;
-select EXEC_COUNT,plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`';
+select EXEC_COUNT,plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`' and TABLE_NAMES = 'planner__core__tests__prepare__issue.t';
 prepare stmt from 'select * from t';
 execute stmt;
 select @@last_plan_from_cache;
-select EXEC_COUNT, plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`';
+select EXEC_COUNT, plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`' and TABLE_NAMES = 'planner__core__tests__prepare__issue.t';
 
 ## TestIssue26873
 drop table if exists t;

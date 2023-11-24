@@ -442,12 +442,12 @@ create table t(a int);
 prepare stmt from 'select * from t';
 execute stmt;
 a
-select EXEC_COUNT,plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`';
+select EXEC_COUNT,plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`' and TABLE_NAMES = 'planner__core__tests__prepare__issue.t';
 EXEC_COUNT	plan_cache_hits	plan_in_cache
 1	0	0
 execute stmt;
 a
-select EXEC_COUNT,plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`';
+select EXEC_COUNT,plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`' and TABLE_NAMES = 'planner__core__tests__prepare__issue.t';
 EXEC_COUNT	plan_cache_hits	plan_in_cache
 2	1	1
 prepare stmt from 'select * from t';
@@ -456,7 +456,7 @@ a
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 1
-select EXEC_COUNT, plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`';
+select EXEC_COUNT, plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`' and TABLE_NAMES = 'planner__core__tests__prepare__issue.t';
 EXEC_COUNT	plan_cache_hits	plan_in_cache
 3	2	1
 drop table if exists t;
