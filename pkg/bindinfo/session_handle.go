@@ -76,8 +76,8 @@ func (h *SessionHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRe
 // DropBindRecord drops a BindRecord in the cache.
 func (h *SessionHandle) DropBindRecord(originalSQL, db string, binding *Binding) error {
 	db = strings.ToLower(db)
-	hash := parser.DigestNormalized(originalSQL).String()
-	oldRecord := h.GetBindRecord(hash, originalSQL, db)
+	sqlDigest := parser.DigestNormalized(originalSQL).String()
+	oldRecord := h.GetBindRecord(sqlDigest, originalSQL, db)
 	var newRecord *BindRecord
 	record := &BindRecord{OriginalSQL: originalSQL, Db: db}
 	if binding != nil {
@@ -88,7 +88,7 @@ func (h *SessionHandle) DropBindRecord(originalSQL, db string, binding *Binding)
 	} else {
 		newRecord = record
 	}
-	err := h.ch.SetBindRecord(hash, newRecord)
+	err := h.ch.SetBindRecord(sqlDigest, newRecord)
 	if err != nil {
 		// Should never reach here, just return an error for safety
 		return err
