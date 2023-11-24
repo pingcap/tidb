@@ -1336,3 +1336,9 @@ func TestAutoScalerConfig(t *testing.T) {
 		conf.UseAutoScaler = false
 	})
 }
+
+func TestGetGlobalConfigDetail(t *testing.T) {
+	d, err := GetGlobalConfigDetail()
+	require.NoError(t, err)
+	require.NotNil(t, d)
+}

@@ -27,4 +27,5 @@ const (
 	Config       = "/pd/api/v1/config"
 	ScanRegions  = "/pd/api/v1/regions/key"
 	RegionKey    = "/pd/api/v1/region/key"
+	ConfigDetail = "/pd/api/v1/config/detail"
 )

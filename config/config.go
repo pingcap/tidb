@@ -1551,3 +1551,47 @@ func ContainHiddenConfig(s string) bool {
 func GetGlobalKeyspaceName() string {
 	return GetGlobalConfig().KeyspaceName
 }
+
+type ConfigDetail struct {
+	// config name
+	Name string `json:"name"`
+	// current config value
+	Value any `json:"value"`
+	// default config value
+	DefaultValue any `json:"default_value"`
+}
+
+// GetGlobalConfigDetail returns all configuration details.
+func GetGlobalConfigDetail() ([]ConfigDetail, error) {
+	cfgMap := make(map[string]interface{})
+	gs, err := GetJSONConfig()
+	if err != nil {
+		return nil, err
+	}
+	err = json.Unmarshal([]byte(gs), &cfgMap)
+	if err != nil {
+		return nil, err
+	}
+	cfgItems := FlattenConfigItems(cfgMap)
+
+	j, err := json.Marshal(&defaultConf)
+	if err != nil {
+		return nil, err
+	}
+	dg := make(map[string]interface{})
+	err = json.Unmarshal(j, &dg)
+	if err != nil {
+		return nil, err
+	}
+	defaultCfgItems := FlattenConfigItems(dg)
+
+	result := make([]ConfigDetail, 0)
+	for k, v := range cfgItems {
+		result = append(result, ConfigDetail{
+			Name:         k,
+			Value:        v,
+			DefaultValue: defaultCfgItems[k],
+		})
+	}
+	return result, nil
+}

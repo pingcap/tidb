@@ -209,6 +209,8 @@ const (
 	TableRunawayWatches = "RUNAWAY_WATCHES"
 	// TableCheckConstraints is the list of CHECK constraints.
 	TableCheckConstraints = "CHECK_CONSTRAINTS"
+	// TableTiDBParams is the list of all variables and configurations.
+	TableTiDBParams = "TIDB_PARAMS"
 )
 
 const (
@@ -318,6 +320,7 @@ var tableIDMap = map[string]int64{
 	TableResourceGroups:                  autoid.InformationSchemaDBID + 88,
 	TableRunawayWatches:                  autoid.InformationSchemaDBID + 89,
 	TableCheckConstraints:                autoid.InformationSchemaDBID + 90,
+	TableTiDBParams:                      autoid.InformationSchemaDBID + 91,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -1637,6 +1640,22 @@ var tableCheckConstraintsCols = []columnInfo{
 	{name: "CHECK_CLAUSE", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
 }
 
+var tableTiDBParamsCols = []columnInfo{
+	{name: "COMPONENT", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "TYPE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "NAME", tp: mysql.TypeVarchar, size: 256, flag: mysql.NotNullFlag},
+	{name: "INSTANCE", tp: mysql.TypeVarchar, size: 64},
+	{name: "SCOPE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "VALUE", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+	{name: "DEFAULT_VALUE", tp: mysql.TypeVarchar, size: 64},
+	{name: "MIN_VAL", tp: mysql.TypeLonglong, size: 64},
+	{name: "MAX_VAL", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
+	{name: "POSSIBLE_VALUES", tp: mysql.TypeVarchar, size: 256},
+	{name: "IS_CLUSTER_DYNAMIC", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, deflt: 0},
+	{name: "IS_INST_DYNAMIC", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, deflt: 0},
+	{name: "IS_SESS_DYNAMIC", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, deflt: 0},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //   - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -2155,6 +2174,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableResourceGroups:                     tableResourceGroupsCols,
 	TableRunawayWatches:                     tableRunawayWatchListCols,
 	TableCheckConstraints:                   tableCheckConstraintsCols,
+	TableTiDBParams:                         tableTiDBParamsCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {

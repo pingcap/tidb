@@ -16,14 +16,17 @@ package executor
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
+	"net/http"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -46,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
@@ -196,6 +200,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromRunawayWatches(sctx)
 		case infoschema.TableCheckConstraints:
 			err = e.setDataFromCheckConstraints(sctx, dbs)
+		case infoschema.TableTiDBParams:
+			err = e.setDataFromTiDBParams(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -3381,6 +3387,201 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			)
 			rows = append(rows, row)
 		}
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromTiDBParams(ctx sessionctx.Context) error {
+	if !hasPriv(ctx, mysql.ConfigPriv) {
+		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
+	}
+
+	var rows [][]types.Datum
+	// Get variables info
+	sysVars := variable.GetSysVars()
+	for _, sv := range sysVars {
+		if infoschema.SysVarHiddenForSem(ctx, sv.Name) {
+			continue
+		}
+		currentVal, err := ctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), sv.Name)
+		if err != nil {
+			currentVal = ""
+		}
+		instance := "*"
+		if sv.HasInstanceScope() {
+			serverInfo, err := infosync.GetServerInfo()
+			if err != nil {
+				logutil.BgLogger().Error("failed to get server info", zap.Error(err))
+				instance = "unknown"
+			} else {
+				instance = serverInfo.IP
+			}
+		}
+		isClusterDynamic := false
+		if sv.HasGlobalScope() {
+			isClusterDynamic = true
+		}
+		isInstDynamic := false
+		if sv.HasInstanceScope() {
+			isInstDynamic = true
+		}
+		isSessionDynamic := false
+		if sv.HasSessionScope() {
+			isSessionDynamic = true
+		}
+		row := types.MakeDatums(
+			"tidb",
+			"VAR",
+			sv.Name,
+			instance,
+			sv.Scope.String(),
+			currentVal,
+			sv.Value,
+			sv.MinValue,
+			sv.MaxValue,
+			nil,
+			isClusterDynamic,
+			isInstDynamic,
+			isSessionDynamic,
+		)
+		// min and max value is only supported for numeric types
+		if !(sv.Type == variable.TypeUnsigned || sv.Type == variable.TypeInt || sv.Type == variable.TypeFloat) {
+			row[7].SetNull()
+			row[8].SetNull()
+		}
+		if sv.Type == variable.TypeEnum {
+			possibleValues := strings.Join(sv.PossibleValues, ",")
+			row[9].SetString(possibleValues, mysql.DefaultCollationName)
+		}
+		rows = append(rows, row)
+	}
+
+	// Get configuration info
+	type result struct {
+		idx  int
+		rows [][]types.Datum
+		err  error
+	}
+	serversInfo, err := infoschema.GetClusterServerInfo(ctx)
+	if val, _err_ := failpoint.Eval(_curpkg_("mockDefaultClusterConfigServerInfo")); _err_ == nil {
+		if s := val.(string); len(s) > 0 {
+			serversInfo, err = parseFailpointServerInfo(s), nil
+		}
+	}
+	if err != nil {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		return nil
+	}
+	wg := sync.WaitGroup{}
+	ch := make(chan result, len(serversInfo))
+	for i, srv := range serversInfo {
+		typ := srv.ServerType
+		address := srv.Address
+		statusAddr := srv.StatusAddr
+		if len(statusAddr) == 0 {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("%s node %s does not contain status address", srv.ServerType, address))
+			continue
+		}
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			var url string
+			switch typ {
+			case "pd":
+				url = fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), statusAddr, pdapi.ConfigDetail)
+			case "tikv", "tidb", "tiflash":
+				url = fmt.Sprintf("%s://%s/config/detail", util.InternalHTTPSchema(), statusAddr)
+			default:
+				ch <- result{err: errors.Errorf("currently we do not support get config from node type: %s(%s)", typ, address)}
+				return
+			}
+			req, err := http.NewRequest(http.MethodGet, url, nil)
+			if err != nil {
+				ch <- result{err: errors.Trace(err)}
+				return
+			}
+			req.Header.Add("PD-Allow-follower-handle", "true")
+			resp, err := util.InternalHTTPClient().Do(req)
+			if err != nil {
+				ch <- result{err: errors.Trace(err)}
+				return
+			}
+			defer func() {
+				terror.Log(resp.Body.Close())
+			}()
+			if resp.StatusCode != http.StatusOK {
+				ch <- result{err: errors.Errorf("request %s failed: %s", url, resp.Status)}
+				return
+			}
+			var configDetails []struct {
+				Name         string `json:"name"`
+				Value        any    `json:"value"`
+				DefaultValue any    `json:"default_value"`
+			}
+			err = json.NewDecoder(resp.Body).Decode(&configDetails)
+			if err != nil {
+				ch <- result{err: errors.Trace(err)}
+				return
+			}
+			var rows [][]types.Datum
+			for _, dv := range configDetails {
+				var value, defaultValue string
+				switch val := dv.Value.(type) {
+				case string: // remove quotes
+					value = val
+				default:
+					tmp, err := json.Marshal(val)
+					if err != nil {
+						ch <- result{err: errors.Trace(err)}
+						return
+					}
+					value = string(tmp)
+				}
+				switch val := dv.DefaultValue.(type) {
+				case string: // remove quotes
+					defaultValue = val
+				default:
+					tmp, err := json.Marshal(val)
+					if err != nil {
+						ch <- result{err: errors.Trace(err)}
+						return
+					}
+					defaultValue = string(tmp)
+				}
+				rows = append(rows, types.MakeDatums(
+					typ,
+					"CONFIG",
+					dv.Name,
+					address,
+					variable.ScopeInstance.String(),
+					value,
+					defaultValue,
+					nil,
+					nil,
+					nil,
+					false,
+					true,
+					false,
+				))
+			}
+			ch <- result{idx: idx, rows: rows}
+		}(i)
+	}
+	wg.Wait()
+	close(ch)
+	// Keep the original order to make the result more stable
+	var results []result //nolint: prealloc
+	for result := range ch {
+		if result.err != nil {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
+			continue
+		}
+		results = append(results, result)
+	}
+	slices.SortFunc(results, func(i, j result) int { return cmp.Compare(i.idx, j.idx) })
+	for _, result := range results {
+		rows = append(rows, result.rows...)
 	}
 	e.rows = rows
 	return nil

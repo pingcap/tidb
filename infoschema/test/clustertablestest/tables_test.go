@@ -16,7 +16,11 @@ package clustertablestest
 
 import (
 	"fmt"
+	"github.com/gorilla/mux"
+	"github.com/pingcap/fn"
+	"github.com/pingcap/tidb/util/pdapi"
 	"math"
+	"net/http/httptest"
 	"os"
 	"strconv"
 	"strings"
@@ -1844,4 +1848,79 @@ func TestCheckConstraints(t *testing.T) {
 	tk.MustExec("DROP TABLE test.t2")
 	rows = tk.MustQuery("SELECT * FROM information_schema.CHECK_CONSTRAINTS").Rows()
 	require.Equal(t, len(rows), 0)
+}
+
+func TestTiDBParams(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	// mock http server
+	router := mux.NewRouter()
+
+	type mockServer struct {
+		address string
+		server  *httptest.Server
+	}
+	server := httptest.NewServer(router)
+	address := strings.TrimPrefix(server.URL, "http://")
+	testServer := &mockServer{
+		address: address,
+		server:  server,
+	}
+	defer func() {
+		testServer.server.Close()
+	}()
+
+	var mockConfig = func() ([]config.ConfigDetail, error) {
+		configuration := []config.ConfigDetail{
+			{
+				Name:         "key1",
+				Value:        "value1",
+				DefaultValue: "default_value1",
+			},
+			{
+				Name:         "key2",
+				Value:        "value2",
+				DefaultValue: "default_value2",
+			},
+		}
+		return configuration, nil
+	}
+
+	// PD config
+	router.Handle(pdapi.ConfigDetail, fn.Wrap(mockConfig))
+	// TiDB/TiKV/TiFlash config
+	router.Handle("/config/detail", fn.Wrap(mockConfig))
+
+	var servers []string
+	for _, typ := range []string{"tidb", "tikv", "tiflash", "pd"} {
+		servers = append(servers, strings.Join([]string{typ, testServer.address, testServer.address}, ","))
+	}
+
+	fpName := "github.com/pingcap/tidb/executor/mockDefaultClusterConfigServerInfo"
+	fpExpr := strings.Join(servers, ";")
+	require.NoError(t, failpoint.Enable(fpName, fmt.Sprintf(`return("%s")`, fpExpr)))
+	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use information_schema")
+
+	// global/session variable
+	tk.MustQuery("select * from tidb_params where name like '%authentication_ldap_sasl_bind_root_pwd%'").Check(testkit.Rows("tidb VAR authentication_ldap_sasl_bind_root_pwd * GLOBAL   <nil> <nil> <nil> 1 0 0"))
+	tk.MustQuery(`SELECT * FROM tidb_params WHERE name = 'tidb_txn_mode'`).Check(testkit.Rows("tidb VAR tidb_txn_mode * SESSION,GLOBAL pessimistic  <nil> <nil> pessimistic,optimistic 1 0 1"))
+	tk.MustQuery(`SELECT * FROM tidb_params WHERE name = 'tidb_checksum_table_concurrency'`).Check(testkit.Rows("tidb VAR tidb_checksum_table_concurrency * SESSION 4 4 1 256 <nil> 0 0 1"))
+
+	// instance variable
+	tk.MustQuery(`SELECT * FROM tidb_params WHERE name = 'tidb_expensive_query_time_threshold'`).Check(testkit.Rows("tidb VAR tidb_expensive_query_time_threshold  INSTANCE 60 60 10 2147483647 <nil> 0 1 0"))
+
+	// update global variable
+	tk.MustExec("SET GLOBAL innodb_compression_level = 8;")
+	tk.MustQuery(`SELECT * FROM tidb_params WHERE name = 'innodb_compression_level'`).Check(testkit.Rows("tidb VAR innodb_compression_level * GLOBAL 8 6 <nil> <nil> <nil> 1 0 0"))
+
+	// config
+	tk.MustQuery(`SELECT * FROM tidb_params WHERE name = 'key1'`).Check(testkit.Rows(
+		fmt.Sprintf("tidb CONFIG key1 %s INSTANCE value1 default_value1 <nil> <nil> <nil> 0 1 0", address),
+		fmt.Sprintf("tikv CONFIG key1 %s INSTANCE value1 default_value1 <nil> <nil> <nil> 0 1 0", address),
+		fmt.Sprintf("tiflash CONFIG key1 %s INSTANCE value1 default_value1 <nil> <nil> <nil> 0 1 0", address),
+		fmt.Sprintf("pd CONFIG key1 %s INSTANCE value1 default_value1 <nil> <nil> <nil> 0 1 0", address),
+	))
 }
