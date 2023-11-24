@@ -89,8 +89,6 @@ func (s *SpillSerializeHelper) serializePartialResult4MaxMinString(value partial
 func (s *SpillSerializeHelper) serializePartialResult4MaxMinJSON(value partialResult4MaxMinJSON) []byte {
 	s.buf = s.buf[:0]
 	s.buf = spill.SerializeBool(value.isNull, s.buf)
-
-	// Do not return s.buf directly as we need to enlarge it when serialized data is large
 	s.buf = spill.SerializeBinaryJSON(&value.val, s.buf)
 	return s.buf
 }
@@ -98,8 +96,6 @@ func (s *SpillSerializeHelper) serializePartialResult4MaxMinJSON(value partialRe
 func (s *SpillSerializeHelper) serializePartialResult4MaxMinEnum(value partialResult4MaxMinEnum) []byte {
 	s.buf = s.buf[:0]
 	s.buf = spill.SerializeBool(value.isNull, s.buf)
-
-	// Do not return s.buf directly as we need to enlarge it when serialized data is large
 	s.buf = spill.SerializeEnum(&value.val, s.buf)
 	return s.buf
 }
@@ -107,8 +103,6 @@ func (s *SpillSerializeHelper) serializePartialResult4MaxMinEnum(value partialRe
 func (s *SpillSerializeHelper) serializePartialResult4MaxMinSet(value partialResult4MaxMinSet) []byte {
 	s.buf = s.buf[:0]
 	s.buf = spill.SerializeBool(value.isNull, s.buf)
-
-	// Do not return s.buf directly as we need to enlarge it when serialized data is large
 	s.buf = spill.SerializeSet(&value.val, s.buf)
 	return s.buf
 }
@@ -203,8 +197,6 @@ func (s *SpillSerializeHelper) serializePartialResult4FirstRowTime(value partial
 
 func (s *SpillSerializeHelper) serializePartialResult4FirstRowString(value partialResult4FirstRowString) []byte {
 	s.buf = s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
-
-	// Do not return s.buf directly as we need to enlarge it when serialized data is large
 	s.buf = append(s.buf, value.val...)
 	return s.buf
 }
