@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "parser",
+    srcs = ["parser.go"],
+    importpath = "github.com/pingcap/tidb/pkg/parser",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_pingcap_tidb_pkg_parser//ast:go_default_library",
+        "@com_github_pingcap_tidb_pkg_parser//auth:go_default_library",
+        "@com_github_pingcap_tidb_pkg_parser//charset:go_default_library",
+        "@com_github_pingcap_tidb_pkg_parser//duration:go_default_library",
+        "@com_github_pingcap_tidb_pkg_parser//model:go_default_library",
+        "@com_github_pingcap_tidb_pkg_parser//mysql:go_default_library",
+        "@com_github_pingcap_tidb_pkg_parser//opcode:go_default_library",
+        "@com_github_pingcap_tidb_pkg_parser//types:go_default_library",
+    ],
+)
