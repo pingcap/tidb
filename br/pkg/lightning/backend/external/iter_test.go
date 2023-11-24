@@ -499,7 +499,7 @@ func TestMemoryUsageWhenHotspotChange(t *testing.T) {
 
 	beforeMem := getMemoryInUse()
 
-	iter, err := NewMergeKVIter(ctx, filenames, make([]uint64, len(filenames)), store, 1024, true, 0)
+	iter, err := NewMergeKVIter(ctx, filenames, make([]uint64, len(filenames)), store, 1024, true, 16)
 	require.NoError(t, err)
 	iter.iter.checkHotspotPeriod = 10
 	i := 0
