@@ -30,6 +30,9 @@ import (
 func mergeGlobalStatsTopN(gp *gp.Pool, sc sessionctx.Context, wrapper *StatsWrapper,
 	timeZone *time.Location, version int, n uint32, isIndex bool) (*statistics.TopN,
 	[]statistics.TopNMeta, []*statistics.Histogram, error) {
+	if statistics.CheckEmptyTopNs(wrapper.AllTopN) {
+		return nil, nil, wrapper.AllHg, nil
+	}
 	mergeConcurrency := sc.GetSessionVars().AnalyzePartitionMergeConcurrency
 	killed := &sc.GetSessionVars().Killed
 	// use original method if concurrency equals 1 or for version1
@@ -69,12 +72,12 @@ func MergeGlobalStatsTopNByConcurrency(gp *gp.Pool, mergeConcurrency, mergeBatch
 	taskNum := len(tasks)
 	taskCh := make(chan *TopnStatsMergeTask, taskNum)
 	respCh := make(chan *TopnStatsMergeResponse, taskNum)
+	worker := NewTopnStatsMergeWorker(taskCh, respCh, wrapper, killed)
 	for i := 0; i < mergeConcurrency; i++ {
-		worker := NewTopnStatsMergeWorker(taskCh, respCh, wrapper, killed)
 		wg.Add(1)
 		gp.Go(func() {
 			defer wg.Done()
-			worker.Run(timeZone, isIndex, n, version)
+			worker.Run(timeZone, isIndex, version)
 		})
 	}
 	for _, task := range tasks {
@@ -83,8 +86,6 @@ func MergeGlobalStatsTopNByConcurrency(gp *gp.Pool, mergeConcurrency, mergeBatch
 	close(taskCh)
 	wg.Wait()
 	close(respCh)
-	resps := make([]*TopnStatsMergeResponse, 0)
-
 	// handle Error
 	hasErr := false
 	errMsg := make([]string, 0)
@@ -93,27 +94,21 @@ func MergeGlobalStatsTopNByConcurrency(gp *gp.Pool, mergeConcurrency, mergeBatch
 			hasErr = true
 			errMsg = append(errMsg, resp.Err.Error())
 		}
-		resps = append(resps, resp)
 	}
 	if hasErr {
 		return nil, nil, nil, errors.New(strings.Join(errMsg, ","))
 	}
 
 	// fetch the response from each worker and merge them into global topn stats
-	sorted := make([]statistics.TopNMeta, 0, mergeConcurrency)
-	leftTopn := make([]statistics.TopNMeta, 0)
-	for _, resp := range resps {
-		if resp.TopN != nil {
-			sorted = append(sorted, resp.TopN.TopN...)
-		}
-		leftTopn = append(leftTopn, resp.PopedTopn...)
+	counter := worker.Result()
+	numTop := len(counter)
+	sorted := make([]statistics.TopNMeta, 0, numTop)
+	for value, cnt := range counter {
+		data := hack.Slice(string(value))
+		sorted = append(sorted, statistics.TopNMeta{Encoded: data, Count: uint64(cnt)})
 	}
-
 	globalTopN, popedTopn := statistics.GetMergedTopNFromSortedSlice(sorted, n)
-
-	result := append(leftTopn, popedTopn...)
-	statistics.SortTopnMeta(result)
-	return globalTopN, result, wrapper.AllHg, nil
+	return globalTopN, popedTopn, wrapper.AllHg, nil
 }
 
 // MergePartTopN2GlobalTopN is used to merge the partition-level topN to global-level topN.
@@ -124,13 +119,19 @@ func MergeGlobalStatsTopNByConcurrency(gp *gp.Pool, mergeConcurrency, mergeBatch
 //
 // The output parameters:
 //  1. `*TopN` is the final global-level topN.
-//  2. `[]TopNMeta` is the left topN value from the partition-level TopNs, but is not placed to global-level TopN. We should put them back to histogram latter.
-//  3. `[]*Histogram` are the partition-level histograms which just delete some values when we merge the global-level topN.
-func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*statistics.TopN, n uint32, hists []*statistics.Histogram,
-	isIndex bool, killed *uint32) (*statistics.TopN, []statistics.TopNMeta, []*statistics.Histogram, error) {
-	if statistics.CheckEmptyTopNs(topNs) {
-		return nil, nil, hists, nil
-	}
+//  2. `[]TopNMeta` is the left topN value from the partition-level TopNs,
+//     but is not placed to global-level TopN. We should put them back to histogram latter.
+//  3. `[]*Histogram` are the partition-level histograms which
+//     just delete some values when we merge the global-level topN.
+func MergePartTopN2GlobalTopN(
+	loc *time.Location,
+	version int,
+	topNs []*statistics.TopN,
+	n uint32,
+	hists []*statistics.Histogram,
+	isIndex bool,
+	killed *uint32,
+) (*statistics.TopN, []statistics.TopNMeta, []*statistics.Histogram, error) {
 	partNum := len(topNs)
 	// Different TopN structures may hold the same value, we have to merge them.
 	counter := make(map[hack.MutableString]float64)
