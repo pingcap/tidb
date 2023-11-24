@@ -28,6 +28,7 @@ go_library(
         "//br/pkg/logutil",
         "//pkg/sessionctx/variable",
         "//pkg/util/intest",
+        "//pkg/util/prefetch",
         "@com_github_aliyun_alibaba_cloud_sdk_go//sdk/auth/credentials",
         "@com_github_aliyun_alibaba_cloud_sdk_go//sdk/auth/credentials/providers",
         "@com_github_aws_aws_sdk_go//aws",
