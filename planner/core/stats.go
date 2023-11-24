@@ -418,9 +418,12 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 		ds.stats = ds.tableStats.Scale(selectivity)
 		return ds.stats, nil
 	}
-	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
+	// two preprocess here.
+	// 1: PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
+	// 2: EliminateNoPrecisionCast here can convert query 'cast(c<int> as bigint) = 1' to 'c = 1' to leverage access range.
 	for i, expr := range ds.pushedDownConds {
-		ds.pushedDownConds[i] = expression.PushDownNot(ds.ctx, expr)
+		ds.pushedDownConds[i] = expression.PushDownNot(ds.SCtx(), expr)
+		ds.pushedDownConds[i] = expression.EliminateNoPrecisionLossCast(ds.SCtx(), ds.pushedDownConds[i])
 	}
 	for _, path := range ds.possibleAccessPaths {
 		if path.IsTablePath() {

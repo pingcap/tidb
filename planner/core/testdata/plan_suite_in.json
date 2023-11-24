@@ -629,6 +629,10 @@
   {
     "name": "TestSingleConsumerCTE",
     "cases": [
+      "with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 1) select * from cte1; -- non-recursive limit, inline cte1",
+      "with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 100 offset 100) select * from cte1; -- non-recursive limit, inline cte1",
+      "with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 0 offset 0) select * from cte1; -- non-recursive limit, inline cte1",
+      "with cte1 as (select 1), cte2 as (select 2) select * from cte1 union (with cte2 as (select 3) select * from cte2 union all select * from cte2) -- inline cte1, not inline cte2",
       "with base1 as (WITH RECURSIVE cte(a) AS (with tmp as (select 1 as a) SELECT a from tmp UNION SELECT a+1 FROM cte) SELECT * FROM cte) select * from base1; -- issue #43318",
       "with cte as (select 1) select * from cte; -- inline cte",
       "with cte1 as (select 1), cte2 as (select 2) select * from cte1 union select * from cte2; -- inline cte1, cte2",
@@ -643,7 +647,10 @@
       "set tidb_opt_force_inline_cte=1; -- enable force inline CTE",
       "with cte as (select 1) select * from cte union select * from cte; -- force inline cte while multi-consumer",
       "set tidb_opt_force_inline_cte=0; -- disable force inline CTE",
-      "with cte as (select 1) select /*+ MERGE() */ * from cte union select * from cte; -- firstly inline cte, secondly cannot be inlined"
+      "with cte as (select 1) select /*+ MERGE() */ * from cte union select * from cte; -- firstly inline cte, secondly cannot be inlined",
+      "with a as (select 8 as id from dual),maxa as (select max(id) as max_id from a),b as (with recursive temp as (select 1 as lvl from dual union all select lvl+1 from temp, maxa where lvl < max_id)select * from temp) select * from b; -- issue #47711, maxa cannot be inlined because it contains agg and in the recursive part of cte temp",
+      "with a as (select count(*) from t1), b as (select 2 as bb from a), c as (with recursive tmp as (select 1 as res from t1 union all select res+1 from tmp,b where res+1 < bb) select * from tmp) select * from c; -- inline a, cannot be inline b because b indirectly contains agg and in the recursive part of cte tmp",
+      "with a as (select count(*) from t1), b as (select 2 as bb from a), c as (with recursive tmp as (select bb as res from b union all select res+1 from tmp where res +1 < 10) select * from tmp) select * from c; -- inline a, b, cannot be inline tmp, c"
     ]
   },
   {

@@ -470,6 +470,42 @@ func TestPanicWhenSpillToDisk(t *testing.T) {
 	require.EqualError(t, rc.Add(chk), "out of disk quota when spilling")
 }
 
+func TestPanicDuringSortedRowContainerSpill(t *testing.T) {
+	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	byItemsDesc := []bool{false}
+	keyColumns := []int{0}
+	keyCmpFuncs := []CompareFunc{cmpInt64}
+	sz := 20
+	rc := NewSortedRowContainer(fields, sz, byItemsDesc, keyColumns, keyCmpFuncs)
+
+	chk := NewChunkWithCapacity(fields, sz)
+	for i := 0; i < sz; i++ {
+		chk.AppendInt64(0, int64(i))
+	}
+	var tracker *memory.Tracker
+	var err error
+	tracker = rc.GetMemTracker()
+	tracker.SetBytesLimit(chk.MemoryUsage() + int64(8*chk.NumRows()) + 1)
+	tracker.FallbackOldAndSetNewAction(rc.ActionSpillForTest())
+	require.False(t, rc.AlreadySpilledSafeForTest())
+	err = rc.Add(chk)
+	require.NoError(t, err)
+	rc.actionSpill.WaitForTest()
+	require.False(t, rc.AlreadySpilledSafeForTest())
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/chunk/errorDuringSortRowContainer", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/chunk/errorDuringSortRowContainer"))
+	}()
+	err = rc.Add(chk)
+	require.NoError(t, err)
+	rc.actionSpill.WaitForTest()
+	require.True(t, rc.AlreadySpilledSafeForTest())
+
+	_, err = rc.GetRow(RowPtr{})
+	require.EqualError(t, err, "sort meet error")
+}
+
 func BenchmarkRowContainerReaderInDiskWithRowSize512(b *testing.B) {
 	benchmarkRowContainerReaderInDiskWithRowLength(b, 512)
 }

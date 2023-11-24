@@ -275,6 +275,7 @@ func InjectProjBelowSort(p PhysicalPlan, orderByItems []*util.ByItems) PhysicalP
 	if origChildProj, isChildProj := childPlan.(*PhysicalProjection); isChildProj {
 		refine4NeighbourProj(bottomProj, origChildProj)
 	}
+	refine4NeighbourProj(topProj, bottomProj)
 
 	return topProj
 }
@@ -336,6 +337,7 @@ func TurnNominalSortIntoProj(p PhysicalPlan, onlyColumn bool, orderByItems []*ut
 	if origChildProj, isChildProj := childPlan.(*PhysicalProjection); isChildProj {
 		refine4NeighbourProj(bottomProj, origChildProj)
 	}
+	refine4NeighbourProj(topProj, bottomProj)
 
 	return topProj
 }

@@ -1977,6 +1977,20 @@ func TestIndexMergeHint4CNF(t *testing.T) {
 	}
 }
 
+func TestIssue46580(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t0(c0 INT);`)
+	tk.MustExec(`CREATE TABLE t1(c0 BOOL, c1 BOOL);`)
+	tk.MustExec(`INSERT INTO t1 VALUES (false, true);`)
+	tk.MustExec(`INSERT INTO t1 VALUES (true, true);`)
+	tk.MustExec(`CREATE definer='root'@'localhost'  VIEW v0(c0, c1, c2) AS SELECT t1.c0, LOG10(t0.c0), t1.c0 FROM t0, t1;`)
+	tk.MustExec(`INSERT INTO t0(c0) VALUES (3);`)
+	tk.MustQuery(`SELECT /*+ MERGE_JOIN(t1, t0, v0)*/v0.c2, t1.c0 FROM v0,  t0 CROSS JOIN t1 ORDER BY -v0.c1;`).Sort().Check(
+		testkit.Rows(`0 0`, `0 1`, `1 0`, `1 1`))
+}
+
 func TestInvisibleIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -8433,4 +8447,53 @@ func TestIssue43116(t *testing.T) {
 		"└─Selection 8000.00 cop[tikv]  in(test.sbtest1.id, 1, 1, 1, 1, 1), in(test.sbtest1.pad, \"1\", \"1\", \"1\", \"1\", \"1\")",
 		"  └─TableFullScan 10000.00 cop[tikv] table:a keep order:false, stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 111 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
+}
+
+func TestDowncastPointGetOrRangeScan(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a bigint key)")
+	tk.MustExec("create table t2 (a int key)")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v1 as (select a from t1) union (select a from t2)")
+	// select * from v where a = 1 will lead a condition: EQ(cast(t2.a as bigint), 1),
+	// we should downcast it, utilizing t2.a =1 to walking through the pk point-get. Because cast doesn't contain any precision loss.
+
+	tk.MustExec("create table t3 (a varchar(100) key)")
+	tk.MustExec("create table t4 (a varchar(10) key)")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v2 as (select a from t3) union (select a from t4)")
+	// select * from v2 where a = 'test' will lead a condition: EQ(cast(t2.a as varchar(100) same collation), 1),
+	// we should downcast it, utilizing t2.a = 'test' to walking through the pk point-get. Because cast doesn't contain any precision loss.
+
+	tk.MustExec("create table t5 (a char(100) key)")
+	tk.MustExec("create table t6 (a char(10) key)")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v3 as (select a from t5) union (select a from t6)")
+	// select * from v3 where a = 'test' will lead a condition: EQ(cast(t2.a as char(100) same collation), 1),
+	// for char type, it depends, with binary collate, the appended '0' after cast column a from char(10) to char(100) will make some difference
+	// on comparison on where a = 'test' before and after the UNION operator; so we didn't allow this kind of type downcast currently (precision diff).
+
+	tk.MustExec("create table t7 (a varchar(100) key)")
+	tk.MustExec("create table t8 (a int key)")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v4 as (select a from t7) union (select a from t8)")
+	// since UNION OP will unify the a(int) and a(varchar100) as varchar(100)
+	// select * from v4 where a = "test" will lead a condition: EQ(cast(t2.a as varchar(100)), "test"), and since
+	// cast int to varchar(100) may have some precision loss, we couldn't utilize a="test" to get the range directly.
+
+	var input []string
+	var output []struct {
+		SQL    string
+		Plan   []string
+		Result []string
+	}
+	integrationSuiteData := core.GetIntegrationSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief' " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
+		})
+		tk.MustQuery("explain format='brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Result...))
+	}
 }

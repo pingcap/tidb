@@ -3249,6 +3249,7 @@ func TestDDL(t *testing.T) {
 		{"recover table by job 11", true, "RECOVER TABLE BY JOB 11"},
 		{"recover table by job 11,12,13", false, ""},
 		{"recover table by job", false, ""},
+		{"recover table by job 0", true, "RECOVER TABLE BY JOB 0"},
 		{"recover table t1", true, "RECOVER TABLE `t1`"},
 		{"recover table t1,t2", false, ""},
 		{"recover table ", false, ""},

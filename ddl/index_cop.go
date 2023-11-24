@@ -492,7 +492,7 @@ func getRestoreData(tblInfo *model.TableInfo, targetIdx, pkIdx *model.IndexInfo,
 
 func buildDAGPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
-	_, dagReq.TimeZoneOffset = timeutil.Zone(sCtx.GetSessionVars().Location())
+	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(sCtx.GetSessionVars().Location())
 	sc := sCtx.GetSessionVars().StmtCtx
 	dagReq.Flags = sc.PushDownFlags()
 	for i := range colInfos {

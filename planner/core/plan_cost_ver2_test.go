@@ -53,6 +53,18 @@ func testCostQueries(t *testing.T, tk *testkit.TestKit, queries []string) {
 	}
 }
 
+func TestHugeTopNCost(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`insert into t values (1)`)
+	tk.MustExec(`analyze table t`)
+	plan1 := tk.MustQuery("explain format='verbose' select /*+ limit_to_cop() */ * from t where a=1 order by a limit 1")
+	plan2 := tk.MustQuery("explain format='verbose' select /*+ limit_to_cop() */ * from t where a=1 order by a limit 1000000000")
+	require.Equal(t, plan1.Rows()[0][2], plan2.Rows()[0][2]) // should have the same plan cost
+}
+
 func TestCostModelVer2(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

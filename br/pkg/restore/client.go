@@ -2242,7 +2242,7 @@ func (rc *Client) InitSchemasReplaceForDDL(
 		dbReplace.TableMap[t.Info.ID] = &stream.TableReplace{
 			OldTableInfo: t.Info,
 			NewTableID:   newTableInfo.ID,
-			PartitionMap: getTableIDMap(newTableInfo, t.Info),
+			PartitionMap: getPartitionIDMap(newTableInfo, t.Info),
 			IndexMap:     getIndexIDMap(newTableInfo, t.Info),
 		}
 	}

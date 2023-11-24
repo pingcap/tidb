@@ -1236,7 +1236,7 @@ func (h *Handle) fmSketchFromStorage(reader *statsReader, tblID int64, isIndex, 
 	return statistics.DecodeFMSketch(rows[0].GetBytes(0))
 }
 
-func (h *Handle) indexStatsFromStorage(reader *statsReader, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo, loadAll bool) error {
+func (h *Handle) indexStatsFromStorage(reader *statsReader, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo, loadAll bool, tracker *memory.Tracker) error {
 	histID := row.GetInt64(2)
 	distinct := row.GetInt64(3)
 	histVer := row.GetUint64(4)
@@ -1292,6 +1292,9 @@ func (h *Handle) indexStatsFromStorage(reader *statsReader, row chunk.Row, table
 		break
 	}
 	if idx != nil {
+		if tracker != nil {
+			tracker.Consume(idx.MemoryUsage().TotalMemoryUsage())
+		}
 		table.Indices[histID] = idx
 	} else {
 		logutil.BgLogger().Debug("we cannot find index id in table info. It may be deleted.", zap.Int64("indexID", histID), zap.String("table", tableInfo.Name.O))
@@ -1299,7 +1302,7 @@ func (h *Handle) indexStatsFromStorage(reader *statsReader, row chunk.Row, table
 	return nil
 }
 
-func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo, loadAll bool) error {
+func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo, loadAll bool, tracker *memory.Tracker) error {
 	histID := row.GetInt64(2)
 	distinct := row.GetInt64(3)
 	histVer := row.GetUint64(4)
@@ -1402,6 +1405,9 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 		break
 	}
 	if col != nil {
+		if tracker != nil {
+			tracker.Consume(col.MemoryUsage().TotalMemoryUsage())
+		}
 		table.Columns[col.ID] = col
 	} else {
 		// If we didn't find a Column or Index in tableInfo, we won't load the histogram for it.
@@ -1424,6 +1430,9 @@ func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 			err = err1
 		}
 	}()
+	tracker := memory.NewTracker(memory.LabelForAnalyzeMemory, -1)
+	tracker.AttachTo(h.mu.ctx.GetSessionVars().MemTracker)
+	defer tracker.Detach()
 	table, ok := h.statsCache.Load().(statsCache).Get(physicalID)
 	// If table stats is pseudo, we also need to copy it, since we will use the column stats when
 	// the average error rate of it is small.
@@ -1456,10 +1465,13 @@ func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 		return nil, nil
 	}
 	for _, row := range rows {
+		if atomic.LoadUint32(&h.mu.ctx.GetSessionVars().Killed) == 1 {
+			return nil, errors.Trace(statistics.ErrQueryInterrupted)
+		}
 		if row.GetInt64(1) > 0 {
-			err = h.indexStatsFromStorage(reader, row, table, tableInfo, loadAll)
+			err = h.indexStatsFromStorage(reader, row, table, tableInfo, loadAll, tracker)
 		} else {
-			err = h.columnStatsFromStorage(reader, row, table, tableInfo, loadAll)
+			err = h.columnStatsFromStorage(reader, row, table, tableInfo, loadAll, tracker)
 		}
 		if err != nil {
 			return nil, err

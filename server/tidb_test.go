@@ -1125,6 +1125,11 @@ func TestSumAvg(t *testing.T) {
 	ts.runTestSumAvg(t)
 }
 
+func TestStmtCountLimit(t *testing.T) {
+	ts := createTidbTestSuite(t)
+	ts.RunTestStmtCountLimit(t)
+}
+
 func TestNullFlag(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
@@ -3216,4 +3221,5 @@ func TestProxyProtocolWithIpNoFallbackable(t *testing.T) {
 func TestLoadData(t *testing.T) {
 	ts := createTidbTestSuite(t)
 	ts.runTestLoadDataReplace(t)
+	ts.runTestLoadDataReplaceNonclusteredPK(t)
 }

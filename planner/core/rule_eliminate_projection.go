@@ -250,6 +250,9 @@ func (la *LogicalAggregation) replaceExprColumns(replace map[string]*expression.
 		for _, aggExpr := range agg.Args {
 			ResolveExprAndReplace(aggExpr, replace)
 		}
+		for _, orderExpr := range agg.OrderByItems {
+			ResolveExprAndReplace(orderExpr.Expr, replace)
+		}
 	}
 	for _, gbyItem := range la.GroupByItems {
 		ResolveExprAndReplace(gbyItem, replace)

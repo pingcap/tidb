@@ -31,7 +31,6 @@ import (
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -67,9 +66,7 @@ var (
 func (local *local) SplitAndScatterRegionInBatches(
 	ctx context.Context,
 	ranges []Range,
-	tableInfo *checkpoints.TidbTableInfo,
 	needSplit bool,
-	regionSplitSize int64,
 	batchCnt int,
 ) error {
 	for i := 0; i < len(ranges); i += batchCnt {
@@ -77,7 +74,7 @@ func (local *local) SplitAndScatterRegionInBatches(
 		if len(batch) > batchCnt {
 			batch = batch[:batchCnt]
 		}
-		if err := local.SplitAndScatterRegionByRanges(ctx, batch, tableInfo, needSplit, regionSplitSize); err != nil {
+		if err := local.SplitAndScatterRegionByRanges(ctx, batch, needSplit); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -91,18 +88,13 @@ func (local *local) SplitAndScatterRegionInBatches(
 func (local *local) SplitAndScatterRegionByRanges(
 	ctx context.Context,
 	ranges []Range,
-	tableInfo *checkpoints.TidbTableInfo,
 	needSplit bool,
-	regionSplitSize int64,
 ) error {
 	if len(ranges) == 0 {
 		return nil
 	}
 
-	db, err := local.g.GetDB()
-	if err != nil {
-		return errors.Trace(err)
-	}
+	var err error
 
 	minKey := codec.EncodeBytes([]byte{}, ranges[0].start)
 	maxKey := codec.EncodeBytes([]byte{}, ranges[len(ranges)-1].end)
@@ -110,7 +102,6 @@ func (local *local) SplitAndScatterRegionByRanges(
 	scatterRegions := make([]*split.RegionInfo, 0)
 	var retryKeys [][]byte
 	waitTime := splitRegionBaseBackOffTime
-	skippedKeys := 0
 	for i := 0; i < splitRetryTimes; i++ {
 		log.FromContext(ctx).Info("split and scatter region",
 			logutil.Key("minKey", minKey),
@@ -170,16 +161,6 @@ func (local *local) SplitAndScatterRegionByRanges(
 		if len(ranges) == 0 {
 			log.FromContext(ctx).Info("no ranges need to be split, skipped.")
 			return nil
-		}
-
-		var tableRegionStats map[uint64]int64
-		if tableInfo != nil {
-			tableRegionStats, err = fetchTableRegionSizeStats(ctx, db, tableInfo.ID)
-			if err != nil {
-				log.FromContext(ctx).Warn("fetch table region size statistics failed",
-					zap.String("table", tableInfo.Name), zap.Error(err))
-				tableRegionStats, err = make(map[uint64]int64), nil
-			}
 		}
 
 		regionMap := make(map[uint64]*split.RegionInfo)
@@ -291,15 +272,6 @@ func (local *local) SplitAndScatterRegionByRanges(
 		}
 	sendLoop:
 		for regionID, keys := range splitKeyMap {
-			// if region not in tableRegionStats, that means this region is newly split, so
-			// we can skip split it again.
-			regionSize, ok := tableRegionStats[regionID]
-			if !ok {
-				log.FromContext(ctx).Warn("region stats not found", zap.Uint64("region", regionID))
-			}
-			if len(keys) == 1 && regionSize < regionSplitSize {
-				skippedKeys++
-			}
 			select {
 			case ch <- &splitInfo{region: regionMap[regionID], keys: keys}:
 			case <-ctx.Done():
@@ -335,11 +307,9 @@ func (local *local) SplitAndScatterRegionByRanges(
 	scatterCount, err := local.waitForScatterRegions(ctx, scatterRegions)
 	if scatterCount == len(scatterRegions) {
 		log.FromContext(ctx).Info("waiting for scattering regions done",
-			zap.Int("skipped_keys", skippedKeys),
 			zap.Int("regions", len(scatterRegions)), zap.Duration("take", time.Since(startTime)))
 	} else {
 		log.FromContext(ctx).Info("waiting for scattering regions timeout",
-			zap.Int("skipped_keys", skippedKeys),
 			zap.Int("scatterCount", scatterCount),
 			zap.Int("regions", len(scatterRegions)),
 			zap.Duration("take", time.Since(startTime)),

@@ -926,6 +926,8 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		isLoadData:   true,
 		txnInUse:     sync.Mutex{},
 	}
+	restrictive := b.ctx.GetSessionVars().SQLMode.HasStrictMode() &&
+		v.OnDuplicate != ast.OnDuplicateKeyHandlingIgnore
 	loadDataInfo := &LoadDataInfo{
 		row:                make([]types.Datum, 0, len(insertVal.insertColumns)),
 		InsertValues:       insertVal,
@@ -937,6 +939,10 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		ColumnAssignments:  v.ColumnAssignments,
 		ColumnsAndUserVars: v.ColumnsAndUserVars,
 		Ctx:                b.ctx,
+		restrictive:        restrictive,
+	}
+	if !restrictive {
+		b.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 	}
 	columnNames := loadDataInfo.initFieldMappings()
 	err := loadDataInfo.initLoadColumns(columnNames)
@@ -4646,7 +4652,7 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 		memTracker.Consume(int64(2 * cap(kvRanges[0].StartKey) * len(kvRanges)))
 	}
 	if len(tmpDatumRanges) != 0 && memTracker != nil {
-		memTracker.Consume(2 * int64(len(tmpDatumRanges)) * types.EstimatedMemUsage(tmpDatumRanges[0].LowVal, len(tmpDatumRanges)))
+		memTracker.Consume(2 * types.EstimatedMemUsage(tmpDatumRanges[0].LowVal, len(tmpDatumRanges)))
 	}
 	if cwc == nil {
 		slices.SortFunc(kvRanges, func(i, j kv.KeyRange) bool {

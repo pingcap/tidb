@@ -2353,6 +2353,8 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 	if rowCount != 0 {
 		return errors.Trace(dbterror.ErrRowDoesNotMatchPartition)
 	}
+	// Check warnings!
+	// Is it possible to check how many rows where checked as well?
 	return nil
 }
 
@@ -2393,13 +2395,13 @@ func buildCheckSQLForRangeExprPartition(pi *model.PartitionInfo, index int, sche
 		buf.WriteString("select 1 from %n.%n where ")
 		buf.WriteString(pi.Expr)
 		buf.WriteString(" >= %? limit 1")
-		paramList = append(paramList, schemaName.L, tableName.L, trimQuotation(pi.Definitions[index].LessThan[0]))
+		paramList = append(paramList, schemaName.L, tableName.L, driver.UnwrapFromSingleQuotes(pi.Definitions[index].LessThan[0]))
 		return buf.String(), paramList
 	} else if index == len(pi.Definitions)-1 && strings.EqualFold(pi.Definitions[index].LessThan[0], partitionMaxValue) {
 		buf.WriteString("select 1 from %n.%n where ")
 		buf.WriteString(pi.Expr)
 		buf.WriteString(" < %? limit 1")
-		paramList = append(paramList, schemaName.L, tableName.L, trimQuotation(pi.Definitions[index-1].LessThan[0]))
+		paramList = append(paramList, schemaName.L, tableName.L, driver.UnwrapFromSingleQuotes(pi.Definitions[index-1].LessThan[0]))
 		return buf.String(), paramList
 	} else {
 		buf.WriteString("select 1 from %n.%n where ")
@@ -2407,26 +2409,22 @@ func buildCheckSQLForRangeExprPartition(pi *model.PartitionInfo, index int, sche
 		buf.WriteString(" < %? or ")
 		buf.WriteString(pi.Expr)
 		buf.WriteString(" >= %? limit 1")
-		paramList = append(paramList, schemaName.L, tableName.L, trimQuotation(pi.Definitions[index-1].LessThan[0]), trimQuotation(pi.Definitions[index].LessThan[0]))
+		paramList = append(paramList, schemaName.L, tableName.L, driver.UnwrapFromSingleQuotes(pi.Definitions[index-1].LessThan[0]), driver.UnwrapFromSingleQuotes(pi.Definitions[index].LessThan[0]))
 		return buf.String(), paramList
 	}
-}
-
-func trimQuotation(str string) string {
-	return strings.Trim(str, "'")
 }
 
 func buildCheckSQLForRangeColumnsPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) (string, []interface{}) {
 	paramList := make([]interface{}, 0, 6)
 	colName := pi.Columns[0].L
 	if index == 0 {
-		paramList = append(paramList, schemaName.L, tableName.L, colName, trimQuotation(pi.Definitions[index].LessThan[0]))
+		paramList = append(paramList, schemaName.L, tableName.L, colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index].LessThan[0]))
 		return "select 1 from %n.%n where %n >= %? limit 1", paramList
 	} else if index == len(pi.Definitions)-1 && strings.EqualFold(pi.Definitions[index].LessThan[0], partitionMaxValue) {
-		paramList = append(paramList, schemaName.L, tableName.L, colName, trimQuotation(pi.Definitions[index-1].LessThan[0]))
+		paramList = append(paramList, schemaName.L, tableName.L, colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index-1].LessThan[0]))
 		return "select 1 from %n.%n where %n < %? limit 1", paramList
 	} else {
-		paramList = append(paramList, schemaName.L, tableName.L, colName, trimQuotation(pi.Definitions[index-1].LessThan[0]), colName, trimQuotation(pi.Definitions[index].LessThan[0]))
+		paramList = append(paramList, schemaName.L, tableName.L, colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index-1].LessThan[0]), colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index].LessThan[0]))
 		return "select 1 from %n.%n where %n < %? or %n >= %? limit 1", paramList
 	}
 }
@@ -2434,32 +2432,57 @@ func buildCheckSQLForRangeColumnsPartition(pi *model.PartitionInfo, index int, s
 func buildCheckSQLForListPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) (string, []interface{}) {
 	var buf strings.Builder
 	buf.WriteString("select 1 from %n.%n where ")
-	buf.WriteString(pi.Expr)
-	buf.WriteString(" not in (%?) limit 1")
-	inValues := getInValues(pi, index)
-
-	paramList := make([]interface{}, 0, 3)
-	paramList = append(paramList, schemaName.L, tableName.L, inValues)
+	buf.WriteString(" not (")
+	for i, inValue := range pi.Definitions[index].InValues {
+		if i != 0 {
+			buf.WriteString(" OR ")
+		}
+		// AND has higher priority than OR, so no need for parentheses
+		for j, val := range inValue {
+			if j != 0 {
+				// Should never happen, since there should be no multi-columns, only a single expression :)
+				buf.WriteString(" AND ")
+			}
+			// null-safe compare '<=>'
+			buf.WriteString(fmt.Sprintf("(%s) <=> %s", pi.Expr, val))
+		}
+	}
+	buf.WriteString(") limit 1")
+	paramList := make([]interface{}, 0, 2)
+	paramList = append(paramList, schemaName.L, tableName.L)
 	return buf.String(), paramList
 }
 
 func buildCheckSQLForListColumnsPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) (string, []interface{}) {
-	colName := pi.Columns[0].L
 	var buf strings.Builder
-	buf.WriteString("select 1 from %n.%n where %n not in (%?) limit 1")
-	inValues := getInValues(pi, index)
-
-	paramList := make([]interface{}, 0, 4)
-	paramList = append(paramList, schemaName.L, tableName.L, colName, inValues)
-	return buf.String(), paramList
-}
-
-func getInValues(pi *model.PartitionInfo, index int) []string {
-	inValues := make([]string, 0, len(pi.Definitions[index].InValues))
-	for _, inValue := range pi.Definitions[index].InValues {
-		inValues = append(inValues, inValue...)
+	// How to find a match?
+	// (row <=> vals1) OR (row <=> vals2)
+	// How to find a non-matching row:
+	// NOT ( (row <=> vals1) OR (row <=> vals2) ... )
+	buf.WriteString("select 1 from %n.%n where not (")
+	colNames := make([]string, 0, len(pi.Columns))
+	for i := range pi.Columns {
+		// TODO: check if there are no proper quoting function for this?
+		n := "`" + strings.ReplaceAll(pi.Columns[i].O, "`", "``") + "`"
+		colNames = append(colNames, n)
 	}
-	return inValues
+	for i, colValues := range pi.Definitions[index].InValues {
+		if i != 0 {
+			buf.WriteString(" OR ")
+		}
+		// AND has higher priority than OR, so no need for parentheses
+		for j, val := range colValues {
+			if j != 0 {
+				buf.WriteString(" AND ")
+			}
+			// null-safe compare '<=>'
+			buf.WriteString(fmt.Sprintf("%s <=> %s", colNames[j], val))
+		}
+	}
+	buf.WriteString(") limit 1")
+	paramList := make([]interface{}, 0, 2)
+	paramList = append(paramList, schemaName.L, tableName.L)
+	return buf.String(), paramList
 }
 
 func checkAddPartitionTooManyPartitions(piDefs uint64) error {
