@@ -228,8 +228,10 @@ func (s *subscription) doConnect(ctx context.Context, dialer LogBackupService) e
 		cancel()
 		return errors.Annotate(err, "failed to subscribe events")
 	}
+	lcx := logutil.ContextWithField(cx, zap.Uint64("store-id", s.storeID),
+		zap.String("category", "log backup flush subscriber"))
 	s.cancel = cancel
-	s.background = spawnJoinable(func() { s.listenOver(cli) })
+	s.background = spawnJoinable(func() { s.listenOver(lcx, cli) })
 	return nil
 }
 
@@ -242,15 +244,16 @@ func (s *subscription) close() {
 	// because it is a ever-sharing channel.
 }
 
-func (s *subscription) listenOver(cli eventStream) {
+func (s *subscription) listenOver(ctx context.Context, cli eventStream) {
 	storeID := s.storeID
-	log.Info("[log backup flush subscriber] Listen starting.", zap.Uint64("store", storeID))
+	logutil.CL(ctx).Info("Listen starting.", zap.Uint64("store", storeID))
 	for {
 		// Shall we use RecvMsg for better performance?
 		// Note that the spans.Full requires the input slice be immutable.
 		msg, err := cli.Recv()
 		if err != nil {
-			log.Info("[log backup flush subscriber] Listen stopped.", zap.Uint64("store", storeID), logutil.ShortError(err))
+			logutil.CL(ctx).Info("Listen stopped.",
+				zap.Uint64("store", storeID), logutil.ShortError(err))
 			if err == io.EOF || err == context.Canceled || status.Code(err) == codes.Canceled {
 				return
 			}
@@ -261,12 +264,14 @@ func (s *subscription) listenOver(cli eventStream) {
 		for _, m := range msg.Events {
 			start, err := decodeKey(m.StartKey)
 			if err != nil {
-				log.Warn("start key not encoded, skipping", logutil.Key("event", m.StartKey), logutil.ShortError(err))
+				logutil.CL(ctx).Warn("start key not encoded, skipping",
+					logutil.Key("event", m.StartKey), logutil.ShortError(err))
 				continue
 			}
 			end, err := decodeKey(m.EndKey)
 			if err != nil {
-				log.Warn("end key not encoded, skipping", logutil.Key("event", m.EndKey), logutil.ShortError(err))
+				logutil.CL(ctx).Warn("end key not encoded, skipping",
+					logutil.Key("event", m.EndKey), logutil.ShortError(err))
 				continue
 			}
 			s.output <- spans.Valued{
