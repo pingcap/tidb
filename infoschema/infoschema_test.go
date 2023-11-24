@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
-	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 func TestBasic(t *testing.T) {
@@ -464,7 +463,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 }
 
 func TestBuildBundle(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -552,7 +551,7 @@ func (r mockRequirement) Store() kv.Storage {
 	return r.Storage
 }
 
-func (r mockRequirement) GetEtcdClient() *clientv3.Client {
+func (r mockRequirement) AutoIDClient() *autoid.ClientDiscover {
 	return nil
 }
 
