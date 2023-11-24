@@ -19,6 +19,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"io/ioutil"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -101,6 +103,20 @@ type jsonColumn struct {
 	StatsVer *int64 `json:"stats_ver"`
 }
 
+// TotalMemoryUsage returns the total memory usage of this column.
+func (col *jsonColumn) TotalMemoryUsage() (size int64) {
+	if col.Histogram != nil {
+		size += int64(col.Histogram.Size())
+	}
+	if col.CMSketch != nil {
+		size += int64(col.CMSketch.Size())
+	}
+	if col.FMSketch != nil {
+		size += int64(col.FMSketch.Size())
+	}
+	return size
+}
+
 func dumpJSONCol(hist *statistics.Histogram, CMSketch *statistics.CMSketch, topn *statistics.TopN, FMSketch *statistics.FMSketch, statsVer *int64) *jsonColumn {
 	jsonCol := &jsonColumn{
 		Histogram:         statistics.HistogramToProto(hist),
@@ -169,7 +185,10 @@ func (h *Handle) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.Table
 }
 
 // GenJSONTableFromStats generate jsonTable from tableInfo and stats
-func GenJSONTableFromStats(dbName string, tableInfo *model.TableInfo, tbl *statistics.Table) (*JSONTable, error) {
+func GenJSONTableFromStats(sctx sessionctx.Context, dbName string, tableInfo *model.TableInfo, tbl *statistics.Table) (*JSONTable, error) {
+	tracker := memory.NewTracker(memory.LabelForAnalyzeMemory, -1)
+	tracker.AttachTo(sctx.GetSessionVars().MemTracker)
+	defer tracker.Detach()
 	jsonTbl := &JSONTable{
 		DatabaseName: dbName,
 		TableName:    tableInfo.Name.L,
@@ -184,11 +203,21 @@ func GenJSONTableFromStats(dbName string, tableInfo *model.TableInfo, tbl *stati
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		jsonTbl.Columns[col.Info.Name.L] = dumpJSONCol(hist, col.CMSketch, col.TopN, col.FMSketch, &col.StatsVer)
+		proto := dumpJSONCol(hist, col.CMSketch, col.TopN, col.FMSketch, &col.StatsVer)
+		tracker.Consume(proto.TotalMemoryUsage())
+		if atomic.LoadUint32(&sctx.GetSessionVars().Killed) == 1 {
+			return nil, errors.Trace(statistics.ErrQueryInterrupted)
+		}
+		jsonTbl.Columns[col.Info.Name.L] = proto
 	}
 
 	for _, idx := range tbl.Indices {
-		jsonTbl.Indices[idx.Info.Name.L] = dumpJSONCol(&idx.Histogram, idx.CMSketch, idx.TopN, nil, &idx.StatsVer)
+		proto := dumpJSONCol(&idx.Histogram, idx.CMSketch, idx.TopN, nil, &idx.StatsVer)
+		tracker.Consume(proto.TotalMemoryUsage())
+		if atomic.LoadUint32(&sctx.GetSessionVars().Killed) == 1 {
+			return nil, errors.Trace(statistics.ErrQueryInterrupted)
+		}
+		jsonTbl.Indices[idx.Info.Name.L] = proto
 	}
 	jsonTbl.ExtStats = dumpJSONExtendedStats(tbl.ExtendedStats)
 	return jsonTbl, nil
@@ -203,7 +232,9 @@ func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, phy
 	if err != nil {
 		return nil, err
 	}
-	jsonTbl, err := GenJSONTableFromStats(dbName, tableInfo, tbl)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	jsonTbl, err := GenJSONTableFromStats(h.mu.ctx, dbName, tableInfo, tbl)
 	if err != nil {
 		return nil, err
 	}

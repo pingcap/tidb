@@ -1,0 +1,7 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "analyzetest_test",
+    srcs = ["analyze_bench_test.go"],
+    deps = ["//testkit"],
+)

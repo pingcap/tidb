@@ -319,7 +319,7 @@ func (h *planReplayerTaskDumpHandle) dumpPlanReplayerDumpTask(task *PlanReplayer
 		if !ok {
 			return false
 		}
-		r, err := handle.GenJSONTableFromStats(schema.Name.String(), tbl.Meta(), stat.(*statistics.Table))
+		r, err := handle.GenJSONTableFromStats(h.sctx, schema.Name.String(), tbl.Meta(), stat.(*statistics.Table))
 		if err != nil {
 			logutil.BgLogger().Warn("generate plan replayer capture task json stats failed",
 				zap.String("sqlDigest", taskKey.SQLDigest),
