@@ -69,9 +69,9 @@ func BenchmarkBuildHistAndTopN(b *testing.B) {
 		TotalSize: int64(len(data)) * 8,
 	}
 	filedType := types.NewFieldType(mysql.TypeLong)
-	memoryTracker := memory.NewTracker(10, 10)
+	memoryTracker := memory.NewTracker(10, 1024*1024*1024)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _, _ = BuildHistAndTopN(ctx, 0, 0, 0, collector, filedType, true, memoryTracker)
+		_, _, _ = BuildHistAndTopN(ctx, 256, 500, 0, collector, filedType, true, memoryTracker)
 	}
 }
