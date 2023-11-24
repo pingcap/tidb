@@ -780,7 +780,7 @@ func comparePartitionAstAndModel(ctx sessionctx.Context, pAst *ast.PartitionOpti
 		if err != nil || partCol == nil {
 			return val, err
 		}
-		return val.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), &partCol.FieldType)
+		return val.ConvertTo(ctx.GetSessionVars().StmtCtx, &partCol.FieldType)
 	}
 	for i := range pAst.Definitions {
 		// Allow options to differ! (like Placement Rules)
@@ -812,7 +812,7 @@ func comparePartitionAstAndModel(ctx sessionctx.Context, pAst *ast.PartitionOpti
 		if err != nil {
 			return err
 		}
-		cmp, err := lessThanVal.Compare(ctx.GetSessionVars().StmtCtx.TypeCtx(), &generatedExprVal, collate.GetBinaryCollator())
+		cmp, err := lessThanVal.Compare(ctx.GetSessionVars().StmtCtx, &generatedExprVal, collate.GetBinaryCollator())
 		if err != nil {
 			return err
 		}
@@ -1066,7 +1066,7 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 		return err
 	}
 	if partCol != nil {
-		lastVal, err = lastVal.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), &partCol.FieldType)
+		lastVal, err = lastVal.ConvertTo(ctx.GetSessionVars().StmtCtx, &partCol.FieldType)
 		if err != nil {
 			return err
 		}
@@ -1114,17 +1114,13 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 		if err != nil {
 			return err
 		}
-<<<<<<< HEAD
-		cmp, err := currVal.Compare(ctx.GetSessionVars().StmtCtx, &lastVal, collate.GetBinaryCollator())
-=======
 		if partCol != nil {
-			currVal, err = currVal.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), &partCol.FieldType)
+			currVal, err = currVal.ConvertTo(ctx.GetSessionVars().StmtCtx, &partCol.FieldType)
 			if err != nil {
 				return err
 			}
 		}
-		cmp, err := currVal.Compare(ctx.GetSessionVars().StmtCtx.TypeCtx(), &lastVal, collate.GetBinaryCollator())
->>>>>>> 522cd038678 (ddl: fix issue of alter last partition failed when partition column is datetime (#48815))
+		cmp, err := currVal.Compare(ctx.GetSessionVars().StmtCtx, &lastVal, collate.GetBinaryCollator())
 		if err != nil {
 			return err
 		}
