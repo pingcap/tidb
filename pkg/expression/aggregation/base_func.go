@@ -214,6 +214,14 @@ func (a *baseFuncDesc) TypeInfer4AvgSum(avgRetType *types.FieldType) {
 	}
 }
 
+// TypeInfer4FinalCount infers the type of sum agg which is rewritten from final count agg run on MPP mode.
+func (a *baseFuncDesc) TypeInfer4FinalCount(finalCountRetType *types.FieldType) {
+	if a.Name != ast.AggFuncSum {
+		return
+	}
+	a.RetTp = finalCountRetType.Clone()
+}
+
 // typeInfer4Avg should returns a "decimal", otherwise it returns a "double".
 // Because child returns integer or decimal type.
 func (a *baseFuncDesc) typeInfer4Avg(sessionctx.Context) {
