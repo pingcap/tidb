@@ -94,13 +94,6 @@ func NewHelper(store Storage) *Helper {
 	}
 }
 
-<<<<<<< HEAD:store/helper/helper.go
-// GetMvccByEncodedKey get the MVCC value by the specific encoded key.
-func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyResponse, error) {
-	keyLocation, err := h.RegionCache.LocateKey(tikv.NewBackofferWithVars(context.Background(), 500, nil), encodedKey)
-	if err != nil {
-		return nil, derr.ToTiDBErr(err)
-=======
 // MaxBackoffTimeoutForMvccGet is a derived value from previous implementation possible experiencing value 5000ms.
 const MaxBackoffTimeoutForMvccGet = 5000
 
@@ -201,21 +194,7 @@ func (h *Helper) GetMvccByEncodedKeyWithTS(encodedKey kv.Key, startTS uint64) (*
 			continue
 		}
 		return mvccResp, nil
->>>>>>> 64e5ea06226 (domain: add resolve lock logic for mvcc get key loading schema diff (#48330)):pkg/store/helper/helper.go
 	}
-
-	tikvReq := tikvrpc.NewRequest(tikvrpc.CmdMvccGetByKey, &kvrpcpb.MvccGetByKeyRequest{Key: encodedKey})
-	kvResp, err := h.Store.SendReq(tikv.NewBackofferWithVars(context.Background(), 500, nil), tikvReq, keyLocation.Region, time.Minute)
-	if err != nil {
-		logutil.BgLogger().Info("get MVCC by encoded key failed",
-			zap.Stringer("encodeKey", encodedKey),
-			zap.Reflect("region", keyLocation.Region),
-			zap.Stringer("keyLocation", keyLocation),
-			zap.Reflect("kvResp", kvResp),
-			zap.Error(err))
-		return nil, errors.Trace(err)
-	}
-	return kvResp.Resp.(*kvrpcpb.MvccGetByKeyResponse), nil
 }
 
 // GetMvccByEncodedKey get the MVCC value by the specific encoded key.
