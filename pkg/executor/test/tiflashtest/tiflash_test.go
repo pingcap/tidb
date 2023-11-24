@@ -1735,6 +1735,45 @@ func TestMppStoreCntWithErrors(t *testing.T) {
 	require.Nil(t, failpoint.Disable(mppStoreCountPDError))
 }
 
+func TestIssue27125(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(1))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a varchar(20),b set(\"a\",\"b\"))")
+	tk.MustExec("alter table t1 set tiflash replica 1")
+	tk.MustExec("alter table t2 set tiflash replica 1")
+	t1 := external.GetTableByName(t, tk, "test", "t1")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(
+		tk.Session(), t1.Meta().ID, true)
+	require.NoError(t, err)
+	t2 := external.GetTableByName(t, tk, "test", "t2")
+	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(
+		tk.Session(), t2.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustQuery("explain select max(length(t2.a)) from t1 right join t2 on (t2.b is NULL)").Check(testkit.Rows(
+		"StreamAgg_13 1.00 root  funcs:max(Column#10)->Column#6",
+		"└─Projection_44 1.00 root  length(test.t2.a)->Column#10",
+		"  └─Projection_42 1.00 root  test.t2.a",
+		"    └─TopN_16 1.00 root  Column#9:desc, offset:0, count:1",
+		"      └─Projection_43 10000.00 root  test.t2.a, length(test.t2.a)->Column#9",
+		"        └─HashJoin_18 10000.00 root  CARTESIAN right outer join, right cond:isnull(test.t2.b)",
+		"          ├─Projection_40(Build) 1.00 root  test.t2.a, test.t2.b",
+		"          │ └─TopN_27 1.00 root  Column#8:desc, offset:0, count:1",
+		"          │   └─Projection_41 1.00 root  test.t2.a, test.t2.b, length(test.t2.a)->Column#8",
+		"          │     └─TableReader_37 1.00 root  MppVersion: 2, data:ExchangeSender_36",
+		"          │       └─ExchangeSender_36 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+		"          │         └─Projection_38 1.00 mpp[tiflash]  test.t2.a, test.t2.b",
+		"          │           └─TopN_35 1.00 mpp[tiflash]  Column#7:desc, offset:0, count:1",
+		"          │             └─Projection_39 8000.00 mpp[tiflash]  test.t2.a, test.t2.b, length(test.t2.a)->Column#7",
+		"          │               └─Selection_34 8000.00 mpp[tiflash]  not(isnull(length(test.t2.a)))",
+		"          │                 └─TableFullScan_33 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
+		"          └─TableReader_24(Probe) 10000.00 root  MppVersion: 2, data:ExchangeSender_23",
+		"            └─ExchangeSender_23 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+		"              └─TableFullScan_22 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+	))
+}
+
 func TestMPP47766(t *testing.T) {
 	store := testkit.CreateMockStore(t, withMockTiFlash(1))
 	tk := testkit.NewTestKit(t, store)
