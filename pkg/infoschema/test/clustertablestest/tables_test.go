@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"github.com/gorilla/mux"
 	"github.com/pingcap/fn"
-	"github.com/pingcap/tidb/util/pdapi"
 	"math"
 	"net/http/httptest"
 	"os"
@@ -1467,7 +1466,7 @@ func TestTiDBParams(t *testing.T) {
 	}
 
 	// PD config
-	router.Handle(pdapi.ConfigDetail, fn.Wrap(mockConfig))
+	router.Handle("/pd/api/v1/config/detail", fn.Wrap(mockConfig))
 	// TiDB/TiKV/TiFlash config
 	router.Handle("/config/detail", fn.Wrap(mockConfig))
 

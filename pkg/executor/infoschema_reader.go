@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
@@ -3538,7 +3539,7 @@ func (e *memtableRetriever) setDataFromTiDBParams(ctx sessionctx.Context) error 
 			var url string
 			switch typ {
 			case "pd":
-				url = fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), statusAddr, pdapi.ConfigDetail)
+				url = fmt.Sprintf("%s://%s/pd/api/v1/config/detail", util.InternalHTTPSchema(), statusAddr)
 			case "tikv", "tidb", "tiflash":
 				url = fmt.Sprintf("%s://%s/config/detail", util.InternalHTTPSchema(), statusAddr)
 			default:
