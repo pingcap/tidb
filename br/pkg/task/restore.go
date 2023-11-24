@@ -216,6 +216,7 @@ type RestoreConfig struct {
 	VolumeType          pconfig.EBSVolumeType `json:"volume-type" toml:"volume-type"`
 	VolumeIOPS          int64                 `json:"volume-iops" toml:"volume-iops"`
 	VolumeThroughput    int64                 `json:"volume-throughput" toml:"volume-throughput"`
+	VolumeEncrypted     bool                  `json:"volume-encrypted" toml:"volume-encrypted"`
 	ProgressFile        string                `json:"progress-file" toml:"progress-file"`
 	TargetAZ            string                `json:"target-az" toml:"target-az"`
 }
@@ -378,6 +379,9 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 			return errors.Trace(err)
 		}
 		if cfg.VolumeThroughput, err = flags.GetInt64(flagVolumeThroughput); err != nil {
+			return errors.Trace(err)
+		}
+		if cfg.VolumeEncrypted, err = flags.GetBool(flagVolumeEncrypted); err != nil {
 			return errors.Trace(err)
 		}
 
