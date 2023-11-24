@@ -1628,6 +1628,7 @@ func (do *Domain) GetEtcdClient() *clientv3.Client {
 	return do.etcdClient
 }
 
+// AutoIDClient returns the autoid client.
 func (do *Domain) AutoIDClient() *autoid.ClientDiscover {
 	return do.autoidClient
 }
