@@ -106,7 +106,8 @@ const (
 	ActionRemovePartitioning            ActionType = 72
 )
 
-var actionMap = map[ActionType]string{
+// ActionMap is the map of DDL ActionType to string.
+var ActionMap = map[ActionType]string{
 	ActionCreateSchema:                  "create schema",
 	ActionDropSchema:                    "drop schema",
 	ActionCreateTable:                   "create table",
@@ -196,7 +197,6 @@ const (
 
 // ActionBDRMap is the map of DDL ActionType to DDLBDRType.
 var ActionBDRMap = map[ActionType]DDLBDRType{
-	ActionNone:                          UnknownDDL,
 	ActionCreateSchema:                  SafeDDL,
 	ActionDropSchema:                    UnsafeDDL,
 	ActionCreateTable:                   SafeDDL,
@@ -233,9 +233,7 @@ var ActionBDRMap = map[ActionType]DDLBDRType{
 	ActionCreateSequence:                UnsafeDDL,
 	ActionAlterSequence:                 UnsafeDDL,
 	ActionDropSequence:                  UnsafeDDL,
-	ActionAddColumns:                    UnknownDDL, // Deprecated, we use ActionMultiSchemaChange instead.
-	ActionDropColumns:                   UnknownDDL, // Deprecated, we use ActionMultiSchemaChange instead.
-	ActionModifyTableAutoIdCache:        UnsafeDDL,  //nolint:revive
+	ActionModifyTableAutoIdCache:        UnsafeDDL, //nolint:revive
 	ActionRebaseAutoRandomBase:          UnsafeDDL,
 	ActionAlterIndexVisibility:          SafeDDL,
 	ActionExchangeTablePartition:        UnsafeDDL,
@@ -246,7 +244,6 @@ var ActionBDRMap = map[ActionType]DDLBDRType{
 	__DEPRECATED_ActionAlterTableAlterPartition: UnknownDDL, // Deprecated
 
 	ActionRenameTables:                  UnsafeDDL,
-	ActionDropIndexes:                   UnknownDDL, // Deprecated, we use ActionMultiSchemaChange instead.
 	ActionAlterTableAttributes:          UnsafeDDL,
 	ActionAlterTablePartitionAttributes: UnsafeDDL,
 	ActionCreatePlacementPolicy:         UnmanagementDDL,
@@ -274,7 +271,7 @@ var ActionBDRMap = map[ActionType]DDLBDRType{
 
 // String return current ddl action in string
 func (action ActionType) String() string {
-	if v, ok := actionMap[action]; ok {
+	if v, ok := ActionMap[action]; ok {
 		return v
 	}
 	return "none"

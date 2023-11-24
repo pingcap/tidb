@@ -54,7 +54,7 @@ func TestSetCDCWriteSource(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			require.Equal(t, tc.expectedSet, IsCDCWriteSourceSet(txnOption))
+			require.Equal(t, tc.expectedSet, isCDCWriteSourceSet(txnOption))
 			require.Equal(t, tc.expectedCdcWriteSource, getCDCWriteSource(txnOption))
 		})
 	}

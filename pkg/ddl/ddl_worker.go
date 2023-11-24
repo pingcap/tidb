@@ -411,7 +411,7 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		job.BDRRole = bdrRole
 
 		// BDR mode only affects the DDL not from CDC
-		if job.CDCWriteSource != 0 {
+		if job.CDCWriteSource == 0 {
 			if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
 				for _, subJob := range job.MultiSchemaInfo.SubJobs {
 					if ast.DeniedByBDR(ast.BDRRole(bdrRole), subJob.Type) {

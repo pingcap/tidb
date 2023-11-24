@@ -104,3 +104,7 @@ func TestMayNeedReorg(t *testing.T) {
 		require.False(t, job.MayNeedReorg())
 	}
 }
+
+func TestActionBDRMap(t *testing.T) {
+	require.Equal(t, len(model.ActionMap), len(model.ActionBDRMap))
+}
