@@ -27,6 +27,7 @@ import (
 	"github.com/cockroachdb/pebble"
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -280,7 +281,7 @@ func readAllData(
 		zap.Binary("end-key", endKey),
 	)
 
-	concurrencys, startOffsets, err := checkConcurrentFiles(
+	concurrences, startOffsets, err := checkConcurrentFiles(
 		ctx,
 		storage,
 		statsFiles,
@@ -301,7 +302,7 @@ func readAllData(
 				startKey,
 				endKey,
 				startOffsets[i],
-				concurrencys[i],
+				concurrences[i],
 				bufPool,
 				output,
 			)
@@ -400,6 +401,9 @@ func (e *Engine) LoadIngestData(
 	outCh chan<- common.DataAndRange,
 ) error {
 	regionBatchSize := 40
+	failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
+		regionBatchSize = val.(int)
+	})
 	for i := 0; i < len(regionRanges); i += regionBatchSize {
 		err := e.loadBatchRegionData(ctx, regionRanges[i].Start, regionRanges[min(i+regionBatchSize, len(regionRanges))-1].End, outCh)
 		if err != nil {

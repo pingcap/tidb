@@ -2266,13 +2266,16 @@ func TestWorkerFailedWhenGeneratingJobs(t *testing.T) {
 }
 
 func TestExternalEngine(t *testing.T) {
+	log.InitLogger(&log.Config{Level: "debug"}, "debug")
 	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
 	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipStartWorker", "return()")
 	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/injectVariables", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/external/LoadIngestDataBatchSize", "return(2)")
 	t.Cleanup(func() {
 		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter")
 		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipStartWorker")
 		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/injectVariables")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/external/LoadIngestDataBatchSize")
 	})
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -2300,7 +2303,7 @@ func TestExternalEngine(t *testing.T) {
 		StatFiles:     statFiles,
 		StartKey:      keys[0],
 		EndKey:        endKey,
-		SplitKeys:     [][]byte{keys[30], keys[60], keys[90]},
+		SplitKeys:     [][]byte{keys[20], keys[30], keys[50], keys[60], keys[80], keys[90]},
 		TotalFileSize: int64(config.SplitRegionSize) + 1,
 		TotalKVCount:  int64(config.SplitRegionKeys) + 1,
 	}
