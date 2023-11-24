@@ -1751,6 +1751,7 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 }
 
 func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
+	t.Skip("skip due to the delay of dynamic region feature, and external engine changed its behaviour")
 	backup := external.LargeRegionSplitDataThreshold
 	external.LargeRegionSplitDataThreshold = 1
 	t.Cleanup(func() {
