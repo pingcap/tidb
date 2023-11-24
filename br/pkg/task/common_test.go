@@ -216,7 +216,6 @@ func expectedDefaultRestoreConfig() RestoreConfig {
 		BatchFlushInterval:  16000000000,
 		DdlBatchSize:        0x80,
 		WithPlacementPolicy: "STRICT",
-		UseCheckpoint:       true,
 	}
 }
 
