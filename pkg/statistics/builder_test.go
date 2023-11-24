@@ -72,6 +72,6 @@ func BenchmarkBuildHistAndTopN(b *testing.B) {
 	memoryTracker := memory.NewTracker(10, 1024*1024*1024)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _, _ = BuildHistAndTopN(ctx, 256, 500, 0, collector, filedType, true, memoryTracker)
+		_, _, _ = BuildHistAndTopN(ctx, 256, 500, 0, collector, filedType, true, memoryTracker, false)
 	}
 }
