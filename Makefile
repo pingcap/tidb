@@ -497,7 +497,7 @@ bazel_test: failpoint-enable bazel_prepare
 
 
 bazel_coverage_test: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) --jobs=35 --instrumentation_filter=/pkg,/br,/dumpling --build_tests_only --test_keep_going=false \
+	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) --nocache_test_results --jobs=35 --instrumentation_filter=/pkg,/br,/dumpling --build_tests_only --test_keep_going=false \
 		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=deadlock,intest \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...
