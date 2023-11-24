@@ -291,16 +291,12 @@ func New(selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Co
 	}
 
 	l := owner.NewOwnerManager(context.Background(), cli, "autoid", selfAddr, autoIDLeaderPath)
-<<<<<<< HEAD
-	err = l.CampaignOwner()
-=======
 	l.SetBeOwnerHook(func() {
 		logutil.BgLogger().Info("leader change of autoid service, this node become owner",
 			zap.String("addr", selfAddr),
 			zap.String("category", "autoid service"))
 	})
-	err := l.CampaignOwner()
->>>>>>> 4f2f5e1061d (autoid_service: add some debug log for rebase related operation (#46526))
+	err = l.CampaignOwner()
 	if err != nil {
 		panic(err)
 	}
