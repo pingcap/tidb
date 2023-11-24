@@ -160,7 +160,7 @@ func (e *HashAggExec) Close() error {
 			e.memTracker.ReplaceBytesUsed(0)
 		}
 		if e.dataInDisk != nil {
-			firstErr = e.dataInDisk.Close()
+			e.dataInDisk.Close()
 		}
 		e.spillAction, e.tmpChkForSpill = nil, nil
 		if err := e.BaseExecutor.Close(); firstErr == nil {
