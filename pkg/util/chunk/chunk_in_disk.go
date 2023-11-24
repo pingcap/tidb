@@ -70,9 +70,6 @@ func (d *DataInDiskByChunks) initDiskFile() (err error) {
 		return
 	}
 	err = d.dataFile.initWithFileName(defaultChunkDataInDiskByRowsPath + strconv.Itoa(d.diskTracker.Label()))
-	if err != nil {
-		return
-	}
 	return
 }
 
@@ -150,13 +147,12 @@ func (d *DataInDiskByChunks) GetChunk(chkIdx int) (*Chunk, error) {
 }
 
 // Close releases the disk resource.
-func (d *DataInDiskByChunks) Close() error {
+func (d *DataInDiskByChunks) Close() {
 	if d.dataFile.file != nil {
 		d.diskTracker.Consume(-d.diskTracker.BytesConsumed())
 		terror.Call(d.dataFile.file.Close)
 		terror.Log(os.Remove(d.dataFile.file.Name()))
 	}
-	return nil
 }
 
 func (d *DataInDiskByChunks) serializeColMeta(pos int64, length int64, nullMapSize int64, dataSize int64, offsetSize int64) {
