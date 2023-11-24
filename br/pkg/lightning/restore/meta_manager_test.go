@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	tmock "github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -489,7 +488,7 @@ func (r mockRequirement) Store() kv.Storage {
 	return r.Storage
 }
 
-func (r mockRequirement) GetEtcdClient() *clientv3.Client {
+func (r mockRequirement) AutoIDClient() *autoid.ClientDiscover {
 	return nil
 }
 
