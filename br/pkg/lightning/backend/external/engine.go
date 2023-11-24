@@ -160,6 +160,9 @@ func (e *Engine) getAdjustedConcurrency() int {
 		// estimate we will open at most 1000 files, so if e.dataFiles is small we can
 		// try to concurrently process ranges.
 		adjusted := maxCloudStorageConnections / len(e.dataFiles)
+		if adjusted == 0 {
+			return 1
+		}
 		return min(adjusted, 8)
 	}
 	adjusted := min(e.workerConcurrency, maxCloudStorageConnections/len(e.dataFiles))
