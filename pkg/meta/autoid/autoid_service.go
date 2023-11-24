@@ -40,11 +40,11 @@ type singlePointAlloc struct {
 	tblID         int64
 	lastAllocated int64
 	isUnsigned    bool
-	clientDiscover
+	*ClientDiscover
 	keyspaceID uint32
 }
 
-type clientDiscover struct {
+type ClientDiscover struct {
 	// This the etcd client for service discover
 	etcdCli *clientv3.Client
 	// This is the real client for the AutoIDAlloc service
@@ -61,7 +61,13 @@ const (
 	autoIDLeaderPath = "tidb/autoid/leader"
 )
 
-func (d *clientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClient, error) {
+func NewClientDiscover(etcdCli *clientv3.Client) *ClientDiscover {
+	return &ClientDiscover{
+		etcdCli: etcdCli,
+	}
+}
+
+func (d *ClientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClient, error) {
 	d.mu.RLock()
 	cli := d.mu.AutoIDAllocClient
 	if cli != nil {
@@ -140,7 +146,7 @@ retry:
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
 			time.Sleep(backoffDuration)
-			sp.resetConn(err)
+			sp.ResetConn(err)
 			goto retry
 		}
 		return 0, 0, errors.Trace(err)
@@ -157,9 +163,11 @@ retry:
 
 const backoffDuration = 200 * time.Millisecond
 
-func (sp *singlePointAlloc) resetConn(reason error) {
-	logutil.BgLogger().Info("reset grpc connection", zap.String("category", "autoid client"),
-		zap.String("reason", reason.Error()))
+func (sp *ClientDiscover) ResetConn(reason error) {
+	if reason != nil {
+		logutil.BgLogger().Info("reset grpc connection", zap.String("category", "autoid client"),
+			zap.String("reason", reason.Error()))
+	}
 	var grpcConn *grpc.ClientConn
 	sp.mu.Lock()
 	grpcConn = sp.mu.ClientConn
@@ -212,7 +220,7 @@ retry:
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
 			time.Sleep(backoffDuration)
-			sp.resetConn(err)
+			sp.ResetConn(err)
 			goto retry
 		}
 		return errors.Trace(err)
