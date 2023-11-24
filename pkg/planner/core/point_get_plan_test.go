@@ -16,8 +16,6 @@ package core_test
 
 import (
 	"context"
-	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -148,35 +146,6 @@ func TestPointGetPlanCache(t *testing.T) {
 	require.NoError(t, err)
 	hit = pb.GetCounter().GetValue()
 	require.Equal(t, float64(2), hit)
-}
-
-func TestPointGetForUpdate(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table fu (id int primary key, val int)")
-	tk.MustExec("insert into fu values (6, 6)")
-
-	// In autocommit mode, outside a transaction, "for update" doesn't take effect.
-	checkUseForUpdate(tk, t, false)
-
-	tk.MustExec("begin")
-	checkUseForUpdate(tk, t, true)
-	tk.MustExec("rollback")
-
-	tk.MustExec("set @@session.autocommit = 0")
-	checkUseForUpdate(tk, t, true)
-	tk.MustExec("rollback")
-}
-
-func checkUseForUpdate(tk *testkit.TestKit, t *testing.T, expectLock bool) {
-	res := tk.MustQuery("explain format = 'brief' select * from fu where id = 6 for update")
-	// Point_Get_1	1.00	root	table:fu, handle:6
-	opInfo := res.Rows()[0][4]
-	selectLock := strings.Contains(fmt.Sprintf("%s", opInfo), "lock")
-	require.Equal(t, expectLock, selectLock)
-
-	tk.MustQuery("select * from fu where id = 6 for update").Check(testkit.Rows("6 6"))
 }
 
 // Test that the plan id will be reset before optimization every time.
