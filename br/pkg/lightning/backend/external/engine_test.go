@@ -337,7 +337,7 @@ func TestGetAdjustedConcurrency(t *testing.T) {
 		workerConcurrency: 32,
 		dataFiles:         genFiles(100),
 	}
-	require.Equal(t, 8, e.getAdjustedConcurrency())
+	require.Equal(t, 16, e.getAdjustedConcurrency())
 	e.dataFiles = genFiles(8000)
 	require.Equal(t, 1, e.getAdjustedConcurrency())
 

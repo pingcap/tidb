@@ -99,6 +99,14 @@ const (
 	Prompt = "bindinfo"
 	// BuiltinPseudoSQL4BindLock is used to simulate LOCK TABLE for mysql.bind_info.
 	BuiltinPseudoSQL4BindLock = "builtin_pseudo_sql_for_bind_lock"
+
+	// StmtRemoveDuplicatedPseudoBinding is used to remove duplicated pseudo binding.
+	// After using BR to sync bind_info between two clusters, the pseudo binding may be duplicated, and
+	// BR use this statement to remove duplicated rows, and this SQL should only be executed by BR.
+	StmtRemoveDuplicatedPseudoBinding = `DELETE FROM mysql.bind_info
+       WHERE original_sql='builtin_pseudo_sql_for_bind_lock' AND
+       _tidb_rowid NOT IN ( -- keep one arbitrary pseudo binding
+         SELECT _tidb_rowid FROM mysql.bind_info WHERE original_sql='builtin_pseudo_sql_for_bind_lock' limit 1)`
 )
 
 type bindRecordUpdate struct {
@@ -173,7 +181,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 		if row.GetString(0) == BuiltinPseudoSQL4BindLock {
 			continue
 		}
-		hash, meta, err := h.newBindRecord(row)
+		sqlDigest, meta, err := h.newBindRecord(row)
 
 		// Update lastUpdateTime to the newest one.
 		// Even if this one is an invalid bind.
@@ -186,17 +194,17 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 			continue
 		}
 
-		oldRecord := newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db)
+		oldRecord := newCache.GetBindRecord(sqlDigest, meta.OriginalSQL, meta.Db)
 		newRecord := merge(oldRecord, meta).removeDeletedBindings()
 		if len(newRecord.Bindings) > 0 {
-			err = newCache.SetBindRecord(hash, newRecord)
+			err = newCache.SetBindRecord(sqlDigest, newRecord)
 			if err != nil {
 				memExceededErr = err
 			}
 		} else {
-			newCache.RemoveBindRecord(hash, newRecord)
+			newCache.RemoveBindRecord(sqlDigest, newRecord)
 		}
-		updateMetrics(metrics.ScopeGlobal, oldRecord, newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db), true)
+		updateMetrics(metrics.ScopeGlobal, oldRecord, newCache.GetBindRecord(sqlDigest, meta.OriginalSQL, meta.Db), true)
 	}
 	if memExceededErr != nil {
 		// When the memory capacity of bing_cache is not enough,
@@ -674,9 +682,9 @@ func (h *BindHandle) Size() int {
 	return size
 }
 
-// GetBindRecord returns the BindRecord of the (normdOrigSQL,db) if BindRecord exist.
-func (h *BindHandle) GetBindRecord(hash, normdOrigSQL, db string) *BindRecord {
-	return h.bindInfo.Load().(*bindCache).GetBindRecord(hash, normdOrigSQL, db)
+// GetBindRecord returns the BindRecord of the (normalizedSQL,db) if BindRecord exist.
+func (h *BindHandle) GetBindRecord(sqlDigest, normalizedSQL, db string) *BindRecord {
+	return h.bindInfo.Load().(*bindCache).GetBindRecord(sqlDigest, normalizedSQL, db)
 }
 
 // GetBindRecordBySQLDigest returns the BindRecord of the sql digest.
@@ -728,23 +736,23 @@ func (h *BindHandle) newBindRecord(row chunk.Row) (string, *BindRecord, error) {
 		Db:          strings.ToLower(row.GetString(2)),
 		Bindings:    []Binding{hint},
 	}
-	hash := parser.DigestNormalized(bindRecord.OriginalSQL)
+	sqlDigest := parser.DigestNormalized(bindRecord.OriginalSQL)
 	h.sctx.Lock()
 	defer h.sctx.Unlock()
 	h.sctx.GetSessionVars().CurrentDB = bindRecord.Db
 	err := bindRecord.prepareHints(h.sctx.Context)
-	return hash.String(), bindRecord, err
+	return sqlDigest.String(), bindRecord, err
 }
 
 // setBindRecord sets the BindRecord to the cache, if there already exists a BindRecord,
 // it will be overridden.
-func (h *BindHandle) setBindRecord(hash string, meta *BindRecord) {
+func (h *BindHandle) setBindRecord(sqlDigest string, meta *BindRecord) {
 	newCache, err0 := h.bindInfo.Value.Load().(*bindCache).Copy()
 	if err0 != nil {
 		logutil.BgLogger().Warn("BindHandle.setBindRecord", zap.String("category", "sql-bind"), zap.Error(err0))
 	}
-	oldRecord := newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db)
-	err1 := newCache.SetBindRecord(hash, meta)
+	oldRecord := newCache.GetBindRecord(sqlDigest, meta.OriginalSQL, meta.Db)
+	err1 := newCache.SetBindRecord(sqlDigest, meta)
 	if err1 != nil && err0 == nil {
 		logutil.BgLogger().Warn("BindHandle.setBindRecord", zap.String("category", "sql-bind"), zap.Error(err1))
 	}
@@ -754,14 +762,14 @@ func (h *BindHandle) setBindRecord(hash string, meta *BindRecord) {
 
 // appendBindRecord adds the BindRecord to the cache, all the stale BindRecords are
 // removed from the cache after this operation.
-func (h *BindHandle) appendBindRecord(hash string, meta *BindRecord) {
+func (h *BindHandle) appendBindRecord(sqlDigest string, meta *BindRecord) {
 	newCache, err0 := h.bindInfo.Value.Load().(*bindCache).Copy()
 	if err0 != nil {
 		logutil.BgLogger().Warn("BindHandle.appendBindRecord", zap.String("category", "sql-bind"), zap.Error(err0))
 	}
-	oldRecord := newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db)
+	oldRecord := newCache.GetBindRecord(sqlDigest, meta.OriginalSQL, meta.Db)
 	newRecord := merge(oldRecord, meta)
-	err1 := newCache.SetBindRecord(hash, newRecord)
+	err1 := newCache.SetBindRecord(sqlDigest, newRecord)
 	if err1 != nil && err0 == nil {
 		// Only need to handle the error once.
 		logutil.BgLogger().Warn("BindHandle.appendBindRecord", zap.String("category", "sql-bind"), zap.Error(err1))
@@ -771,15 +779,15 @@ func (h *BindHandle) appendBindRecord(hash string, meta *BindRecord) {
 }
 
 // removeBindRecord removes the BindRecord from the cache.
-func (h *BindHandle) removeBindRecord(hash string, meta *BindRecord) {
+func (h *BindHandle) removeBindRecord(sqlDigest string, meta *BindRecord) {
 	newCache, err := h.bindInfo.Value.Load().(*bindCache).Copy()
 	if err != nil {
 		logutil.BgLogger().Warn("", zap.String("category", "sql-bind"), zap.Error(err))
 	}
-	oldRecord := newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db)
-	newCache.RemoveBindRecord(hash, meta)
+	oldRecord := newCache.GetBindRecord(sqlDigest, meta.OriginalSQL, meta.Db)
+	newCache.RemoveBindRecord(sqlDigest, meta)
 	h.bindInfo.Value.Store(newCache)
-	updateMetrics(metrics.ScopeGlobal, oldRecord, newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db), false)
+	updateMetrics(metrics.ScopeGlobal, oldRecord, newCache.GetBindRecord(sqlDigest, meta.OriginalSQL, meta.Db), false)
 }
 
 func copyBindRecordUpdateMap(oldMap map[string]*bindRecordUpdate) map[string]*bindRecordUpdate {

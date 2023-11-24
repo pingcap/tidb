@@ -106,10 +106,13 @@ func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) err
 		w.rc.reset()
 	}
 	binary.BigEndian.AppendUint64(buf[:0], uint64(keyLen))
-	copy(buf[lengthBytes:], idxKey)
-	binary.BigEndian.AppendUint64(buf[lengthBytes+keyLen:lengthBytes+keyLen], uint64(len(idxVal)))
+	binary.BigEndian.AppendUint64(buf[lengthBytes:lengthBytes], uint64(len(idxVal)))
+	copy(buf[lengthBytes*2:], idxKey)
 	copy(buf[lengthBytes*2+keyLen:], idxVal)
-	w.kvStore.addEncodedData(buf[:length])
+	err := w.kvStore.addEncodedData(buf[:length])
+	if err != nil {
+		return err
+	}
 	w.totalSize += uint64(keyLen + len(idxVal))
 	return nil
 }

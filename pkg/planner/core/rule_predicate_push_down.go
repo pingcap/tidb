@@ -350,7 +350,7 @@ func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.C
 	if col, ok := expr.(*expression.Column); ok {
 		return col
 	}
-	expr = expression.ColumnSubstitute(expr, p.schema, p.Exprs)
+	expr = expression.ColumnSubstitute(p.SCtx(), expr, p.schema, p.Exprs)
 	p.Exprs = append(p.Exprs, expr)
 
 	col := &expression.Column{
@@ -481,8 +481,9 @@ func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression
 			return predicates, p
 		}
 	}
+	ctx := p.SCtx()
 	for _, cond := range predicates {
-		substituted, hasFailed, newFilter := expression.ColumnSubstituteImpl(cond, p.Schema(), p.Exprs, true)
+		substituted, hasFailed, newFilter := expression.ColumnSubstituteImpl(ctx, cond, p.Schema(), p.Exprs, true)
 		if substituted && !hasFailed && !expression.HasGetSetVarFunc(newFilter) {
 			canBePushed = append(canBePushed, newFilter)
 		} else {
@@ -525,7 +526,7 @@ func (la *LogicalAggregation) pushDownPredicatesForAggregation(cond expression.E
 			}
 		}
 		if ok {
-			newFunc := expression.ColumnSubstitute(cond, la.Schema(), exprsOriginal)
+			newFunc := expression.ColumnSubstitute(la.SCtx(), cond, la.Schema(), exprsOriginal)
 			condsToPush = append(condsToPush, newFunc)
 		} else {
 			ret = append(ret, cond)
@@ -635,19 +636,20 @@ func DeriveOtherConditions(
 	deriveLeft bool, deriveRight bool) (
 	leftCond []expression.Expression, rightCond []expression.Expression) {
 	isOuterSemi := (p.JoinType == LeftOuterSemiJoin) || (p.JoinType == AntiLeftOuterSemiJoin)
+	ctx := p.SCtx()
 	for _, expr := range p.OtherConditions {
 		if deriveLeft {
-			leftRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(expr, leftSchema)
+			leftRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(ctx, expr, leftSchema)
 			if leftRelaxedCond != nil {
 				leftCond = append(leftCond, leftRelaxedCond)
 			}
-			notNullExpr := deriveNotNullExpr(expr, leftSchema)
+			notNullExpr := deriveNotNullExpr(ctx, expr, leftSchema)
 			if notNullExpr != nil {
 				leftCond = append(leftCond, notNullExpr)
 			}
 		}
 		if deriveRight {
-			rightRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(expr, rightSchema)
+			rightRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(ctx, expr, rightSchema)
 			if rightRelaxedCond != nil {
 				rightCond = append(rightCond, rightRelaxedCond)
 			}
@@ -661,7 +663,7 @@ func DeriveOtherConditions(
 			if isOuterSemi {
 				continue
 			}
-			notNullExpr := deriveNotNullExpr(expr, rightSchema)
+			notNullExpr := deriveNotNullExpr(ctx, expr, rightSchema)
 			if notNullExpr != nil {
 				rightCond = append(rightCond, notNullExpr)
 			}
@@ -673,12 +675,11 @@ func DeriveOtherConditions(
 // deriveNotNullExpr generates a new expression `not(isnull(col))` given `col1 op col2`,
 // in which `col` is in specified schema. Caller guarantees that only one of `col1` or
 // `col2` is in schema.
-func deriveNotNullExpr(expr expression.Expression, schema *expression.Schema) expression.Expression {
+func deriveNotNullExpr(ctx sessionctx.Context, expr expression.Expression, schema *expression.Schema) expression.Expression {
 	binop, ok := expr.(*expression.ScalarFunction)
 	if !ok || len(binop.GetArgs()) != 2 {
 		return nil
 	}
-	ctx := binop.GetCtx()
 	arg0, lOK := binop.GetArgs()[0].(*expression.Column)
 	arg1, rOK := binop.GetArgs()[1].(*expression.Column)
 	if !lOK || !rOK {
