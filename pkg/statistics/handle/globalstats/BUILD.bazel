@@ -45,7 +45,6 @@ go_test(
     ],
     embed = [":globalstats"],
     flaky = True,
-    race = "on",
     shard_count = 23,
     deps = [
         "//pkg/config",
