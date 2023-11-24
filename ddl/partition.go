@@ -711,19 +711,11 @@ func getPartitionIntervalFromTable(ctx sessionctx.Context, tbInfo *model.TableIn
 }
 
 // comparePartitionAstAndModel compares a generated *ast.PartitionOptions and a *model.PartitionInfo
-func comparePartitionAstAndModel(ctx sessionctx.Context, pAst *ast.PartitionOptions, pModel *model.PartitionInfo, partCol *model.ColumnInfo) error {
+func comparePartitionAstAndModel(ctx sessionctx.Context, pAst *ast.PartitionOptions, pModel *model.PartitionInfo) error {
 	a := pAst.Definitions
 	m := pModel.Definitions
 	if len(pAst.Definitions) != len(pModel.Definitions) {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning: number of partitions generated != partition defined (%d != %d)", len(a), len(m))
-	}
-
-	evalFn := func(expr ast.ExprNode) (types.Datum, error) {
-		val, err := expression.EvalAstExpr(ctx, ast.NewValueExpr(expr, "", ""))
-		if err != nil || partCol == nil {
-			return val, err
-		}
-		return val.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), &partCol.FieldType)
 	}
 	for i := range pAst.Definitions {
 		// Allow options to differ! (like Placement Rules)
@@ -747,19 +739,16 @@ func comparePartitionAstAndModel(ctx sessionctx.Context, pAst *ast.PartitionOpti
 		if len(lessThan) > 1 && lessThan[:1] == "'" && lessThan[len(lessThan)-1:] == "'" {
 			lessThan = driver.UnwrapFromSingleQuotes(lessThan)
 		}
-		lessThanVal, err := evalFn(ast.NewValueExpr(lessThan, "", ""))
+		cmpExpr := &ast.BinaryOperationExpr{
+			Op: opcode.EQ,
+			L:  ast.NewValueExpr(lessThan, "", ""),
+			R:  generatedExpr,
+		}
+		cmp, err := expression.EvalAstExpr(ctx, cmpExpr)
 		if err != nil {
 			return err
 		}
-		generatedExprVal, err := evalFn(generatedExpr)
-		if err != nil {
-			return err
-		}
-		cmp, err := lessThanVal.Compare(ctx.GetSessionVars().StmtCtx.TypeCtx(), &generatedExprVal, collate.GetBinaryCollator())
-		if err != nil {
-			return err
-		}
-		if cmp != 0 {
+		if cmp.GetInt64() != 1 {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("INTERVAL partitioning: LESS THAN for partition %s differs between generated and defined", m[i].Name.O))
 		}
 	}
@@ -934,7 +923,7 @@ func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, partOption
 		// Seems valid, so keep the defined so that the user defined names are kept etc.
 		partOptions.Definitions = definedPartDefs
 	} else if len(tbInfo.Partition.Definitions) > 0 {
-		err := comparePartitionAstAndModel(ctx, partOptions, tbInfo.Partition, partCol)
+		err := comparePartitionAstAndModel(ctx, partOptions, tbInfo.Partition)
 		if err != nil {
 			return err
 		}
@@ -1008,12 +997,6 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 	if err != nil {
 		return err
 	}
-	if partCol != nil {
-		lastVal, err = lastVal.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), &partCol.FieldType)
-		if err != nil {
-			return err
-		}
-	}
 	var partDefs []*ast.PartitionDefinition
 	if len(partitionOptions.Definitions) != 0 {
 		partDefs = partitionOptions.Definitions
@@ -1057,17 +1040,7 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 		if err != nil {
 			return err
 		}
-<<<<<<< HEAD:ddl/partition.go
 		cmp, err := currVal.Compare(ctx.GetSessionVars().StmtCtx, &lastVal, collate.GetBinaryCollator())
-=======
-		if partCol != nil {
-			currVal, err = currVal.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), &partCol.FieldType)
-			if err != nil {
-				return err
-			}
-		}
-		cmp, err := currVal.Compare(ctx.GetSessionVars().StmtCtx.TypeCtx(), &lastVal, collate.GetBinaryCollator())
->>>>>>> 522cd038678 (ddl: fix issue of alter last partition failed when partition column is datetime (#48815)):pkg/ddl/partition.go
 		if err != nil {
 			return err
 		}
