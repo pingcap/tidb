@@ -50,7 +50,6 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/codes"
@@ -501,7 +500,7 @@ func (r mockRequirement) Store() kv.Storage {
 	return r.Storage
 }
 
-func (r mockRequirement) GetEtcdClient() *clientv3.Client {
+func (r mockRequirement) AutoIDClient() *autoid.ClientDiscover {
 	return nil
 }
 

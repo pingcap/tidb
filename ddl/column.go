@@ -50,7 +50,6 @@ import (
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/prometheus/client_golang/prometheus"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -1612,8 +1611,8 @@ func (r *asAutoIDRequirement) Store() kv.Storage {
 	return r.store
 }
 
-func (r *asAutoIDRequirement) GetEtcdClient() *clientv3.Client {
-	return r.etcdCli
+func (r *asAutoIDRequirement) AutoIDClient() *autoid.ClientDiscover {
+	return r.autoidCli
 }
 
 // applyNewAutoRandomBits set auto_random bits to TableInfo and

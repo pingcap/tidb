@@ -60,6 +60,7 @@ type TableRestore struct {
 	logger    log.Logger
 	kvStore   tidbkv.Storage
 	etcdCli   *clientv3.Client
+	autoidCli *autoid.ClientDiscover
 
 	ignoreColumns map[string]struct{}
 }
@@ -80,6 +81,7 @@ func NewTableRestore(
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", tableName)
 	}
+	autoidCli := autoid.NewClientDiscover(etcdCli)
 
 	return &TableRestore{
 		tableName:     tableName,
@@ -90,6 +92,7 @@ func NewTableRestore(
 		alloc:         idAlloc,
 		kvStore:       kvStore,
 		etcdCli:       etcdCli,
+		autoidCli:     autoidCli,
 		logger:        logger.With(zap.String("table", tableName)),
 		ignoreColumns: ignoreColumns,
 	}, nil
@@ -99,8 +102,8 @@ func (tr *TableRestore) Store() tidbkv.Storage {
 	return tr.kvStore
 }
 
-func (tr *TableRestore) GetEtcdClient() *clientv3.Client {
-	return tr.etcdCli
+func (tr *TableRestore) AutoIDClient() *autoid.ClientDiscover {
+	return tr.autoidCli
 }
 
 func (tr *TableRestore) Close() {
