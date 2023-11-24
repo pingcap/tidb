@@ -34,12 +34,7 @@ func mergeGlobalStatsTopN(gp *gp.Pool, sc sessionctx.Context, wrapper *StatsWrap
 		return nil, nil, wrapper.AllHg, nil
 	}
 	mergeConcurrency := sc.GetSessionVars().AnalyzePartitionMergeConcurrency
-<<<<<<< HEAD
 	killed := &sc.GetSessionVars().Killed
-=======
-	killer := &sc.GetSessionVars().SQLKiller
-
->>>>>>> 26db5909628 (*: fix wrong result when to concurrency merge global stats (#48852))
 	// use original method if concurrency equals 1 or for version1
 	if mergeConcurrency < 2 {
 		return MergePartTopN2GlobalTopN(timeZone, version, wrapper.AllTopN, n, wrapper.AllHg, isIndex, killed)
@@ -77,12 +72,8 @@ func MergeGlobalStatsTopNByConcurrency(gp *gp.Pool, mergeConcurrency, mergeBatch
 	taskNum := len(tasks)
 	taskCh := make(chan *TopnStatsMergeTask, taskNum)
 	respCh := make(chan *TopnStatsMergeResponse, taskNum)
-	worker := NewTopnStatsMergeWorker(taskCh, respCh, wrapper, killer)
+	worker := NewTopnStatsMergeWorker(taskCh, respCh, wrapper, killed)
 	for i := 0; i < mergeConcurrency; i++ {
-<<<<<<< HEAD
-		worker := NewTopnStatsMergeWorker(taskCh, respCh, wrapper, killed)
-=======
->>>>>>> 26db5909628 (*: fix wrong result when to concurrency merge global stats (#48852))
 		wg.Add(1)
 		gp.Go(func() {
 			defer wg.Done()
@@ -128,15 +119,6 @@ func MergeGlobalStatsTopNByConcurrency(gp *gp.Pool, mergeConcurrency, mergeBatch
 //
 // The output parameters:
 //  1. `*TopN` is the final global-level topN.
-<<<<<<< HEAD
-//  2. `[]TopNMeta` is the left topN value from the partition-level TopNs, but is not placed to global-level TopN. We should put them back to histogram latter.
-//  3. `[]*Histogram` are the partition-level histograms which just delete some values when we merge the global-level topN.
-func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*statistics.TopN, n uint32, hists []*statistics.Histogram,
-	isIndex bool, killed *uint32) (*statistics.TopN, []statistics.TopNMeta, []*statistics.Histogram, error) {
-	if statistics.CheckEmptyTopNs(topNs) {
-		return nil, nil, hists, nil
-	}
-=======
 //  2. `[]TopNMeta` is the left topN value from the partition-level TopNs,
 //     but is not placed to global-level TopN. We should put them back to histogram latter.
 //  3. `[]*Histogram` are the partition-level histograms which
@@ -148,9 +130,8 @@ func MergePartTopN2GlobalTopN(
 	n uint32,
 	hists []*statistics.Histogram,
 	isIndex bool,
-	killer *sqlkiller.SQLKiller,
+	killed *uint32,
 ) (*statistics.TopN, []statistics.TopNMeta, []*statistics.Histogram, error) {
->>>>>>> 26db5909628 (*: fix wrong result when to concurrency merge global stats (#48852))
 	partNum := len(topNs)
 	// Different TopN structures may hold the same value, we have to merge them.
 	counter := make(map[hack.MutableString]float64)
