@@ -214,7 +214,7 @@ func PBExprToAggFuncDesc(ctx sessionctx.Context, aggFunc *tipb.Expr, fieldTps []
 		return nil, errors.Errorf("unknown aggregation function type: %v", aggFunc.Tp)
 	}
 
-	args, err := expression.PBToExprs(aggFunc.Children, fieldTps, ctx.GetSessionVars().StmtCtx)
+	args, err := expression.PBToExprs(ctx, aggFunc.Children, fieldTps)
 	if err != nil {
 		return nil, err
 	}
