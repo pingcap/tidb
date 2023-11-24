@@ -290,6 +290,9 @@ func (i *mergeIter[T, R]) next() bool {
 			i.readers[i.lastReaderIdx] = nil
 			delete(i.hotspotMap, i.lastReaderIdx)
 		default:
+			i.logger.Error("failed to read next element",
+				zap.String("path", rd.path()),
+				zap.Error(err))
 			i.err = err
 			return false
 		}
