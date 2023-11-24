@@ -1207,7 +1207,7 @@ func generateHashPartitionExpr(ctx sessionctx.Context, exprStr string,
 			}
 		}
 	}
-	exprs.HashCode(ctx.GetSessionVars().StmtCtx)
+	exprs.HashCode()
 	return &PartitionExpr{
 		Expr:         exprs,
 		OrigExpr:     origExpr,

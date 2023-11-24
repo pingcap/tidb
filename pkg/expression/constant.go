@@ -448,13 +448,26 @@ func (c *Constant) Decorrelate(_ *Schema) Expression {
 }
 
 // HashCode implements Expression interface.
-func (c *Constant) HashCode(sc *stmtctx.StatementContext) []byte {
+func (c *Constant) HashCode() []byte {
+	return c.getHashCode(false)
+}
+
+// CanonicalHashCode implements Expression interface.
+func (c *Constant) CanonicalHashCode() []byte {
+	return c.getHashCode(true)
+}
+
+func (c *Constant) getHashCode(canonical bool) []byte {
 	if len(c.hashcode) > 0 {
 		return c.hashcode
 	}
 
 	if c.DeferredExpr != nil {
-		c.hashcode = c.DeferredExpr.HashCode(sc)
+		if canonical {
+			c.hashcode = c.DeferredExpr.CanonicalHashCode()
+		} else {
+			c.hashcode = c.DeferredExpr.HashCode()
+		}
 		return c.hashcode
 	}
 

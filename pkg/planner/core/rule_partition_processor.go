@@ -123,7 +123,7 @@ func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo, 
 	if err != nil {
 		return nil, err
 	}
-	exprs[0].HashCode(ctx.GetSessionVars().StmtCtx)
+	exprs[0].HashCode()
 	return exprs[0], nil
 }
 

@@ -90,6 +90,7 @@ type Writer interface {
 
 type WriterOption struct {
 	Concurrency int
+	PartSize    int64
 }
 
 type ReaderOption struct {
@@ -97,6 +98,8 @@ type ReaderOption struct {
 	StartOffset *int64
 	// EndOffset is exclusive. And it's incompatible with Seek.
 	EndOffset *int64
+	// PrefetchSize will switch to NewPrefetchReader if value is positive.
+	PrefetchSize int
 }
 
 // ExternalStorage represents a kind of file system storage.
@@ -193,6 +196,25 @@ func NewWithDefaultOpt(ctx context.Context, backend *backuppb.StorageBackend) (E
 		opts.NoCredentials = true
 	}
 	return New(ctx, backend, &opts)
+}
+
+// NewFromURL creates an ExternalStorage from URL.
+func NewFromURL(ctx context.Context, uri string, opts *ExternalStorageOptions) (ExternalStorage, error) {
+	if len(uri) == 0 {
+		return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "empty store is not allowed")
+	}
+	u, err := ParseRawURL(uri)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if u.Scheme == "memstore" {
+		return NewMemStorage(), nil
+	}
+	b, err := parseBackend(u, uri, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return New(ctx, b, opts)
 }
 
 // New creates an ExternalStorage with options.
