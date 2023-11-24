@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -33,6 +34,7 @@ type heapElem interface {
 	// owned memory. Sometimes to reduce allocation the memory is shared between
 	// multiple elements and it's needed to call it before we free the shared memory.
 	cloneInnerFields()
+	len() int
 }
 
 type sortedReader[T heapElem] interface {
@@ -187,7 +189,7 @@ func newMergeIter[
 			elem:      e,
 			readerIdx: j,
 		})
-		sampleKeySize += len(e.sortKey())
+		sampleKeySize += e.len()
 		sampleKeyCnt++
 	}
 	// We check the hotspot when the elements size is almost the same as the concurrent reader buffer size.
@@ -195,7 +197,8 @@ func newMergeIter[
 	if sampleKeySize == 0 || sampleKeySize/sampleKeyCnt == 0 {
 		i.checkHotspotPeriod = 10000
 	} else {
-		i.checkHotspotPeriod = max(1000, ConcurrentReaderBufferSizePerConc*ConcurrentReaderConcurrency/(sampleKeySize/sampleKeyCnt))
+		sizeThreshold := int(32 * size.MB)
+		i.checkHotspotPeriod = max(1000, sizeThreshold/(sampleKeySize/sampleKeyCnt))
 	}
 	heap.Init(&i.h)
 	return i, nil
@@ -321,6 +324,10 @@ func (p *kvPair) cloneInnerFields() {
 	p.value = append([]byte{}, p.value...)
 }
 
+func (p *kvPair) len() int {
+	return len(p.key) + len(p.value)
+}
+
 type kvReaderProxy struct {
 	p string
 	r *kvReader
@@ -430,6 +437,10 @@ func (p *rangeProperty) sortKey() []byte {
 func (p *rangeProperty) cloneInnerFields() {
 	p.firstKey = append([]byte{}, p.firstKey...)
 	p.lastKey = append([]byte{}, p.lastKey...)
+}
+
+func (p *rangeProperty) len() int {
+	return len(p.firstKey) + len(p.lastKey) + 24
 }
 
 type statReaderProxy struct {
