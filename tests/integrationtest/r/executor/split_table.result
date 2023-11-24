@@ -116,5 +116,5 @@ Error 1265 (01000): Incorrect value: '' for column 'b'
 drop table t;
 CREATE TABLE t (`id` varchar(10) NOT NULL, primary key (`id`) CLUSTERED);
 split table t index `primary` between (0) and (1000) regions 2;
-Error 1176 (42000): Key 'primary' doesn't exist in table 't'
+Error 1176 (42000): unable to split clustered index, please split table instead.
 set tidb_enable_clustered_index=default;
