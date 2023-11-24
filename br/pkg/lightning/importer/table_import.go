@@ -69,6 +69,14 @@ type TableImporter struct {
 	alloc     autoid.Allocators
 	logger    log.Logger
 	kvStore   tidbkv.Storage
+<<<<<<< HEAD
+=======
+	etcdCli   *clientv3.Client
+	autoidCli *autoid.ClientDiscover
+
+	// dupIgnoreRows tracks the rowIDs of rows that are duplicated and should be ignored.
+	dupIgnoreRows extsort.ExternalSorter
+>>>>>>> 8eb191303ac (*: fix grpc client leak bug for AUTO_ID_CACHE=1 tables (#48870))
 
 	ignoreColumns map[string]struct{}
 }
@@ -89,6 +97,7 @@ func NewTableImporter(
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", tableName)
 	}
+	autoidCli := autoid.NewClientDiscover(etcdCli)
 
 	return &TableImporter{
 		tableName:     tableName,
@@ -98,6 +107,11 @@ func NewTableImporter(
 		encTable:      tbl,
 		alloc:         idAlloc,
 		kvStore:       kvStore,
+<<<<<<< HEAD
+=======
+		etcdCli:       etcdCli,
+		autoidCli:     autoidCli,
+>>>>>>> 8eb191303ac (*: fix grpc client leak bug for AUTO_ID_CACHE=1 tables (#48870))
 		logger:        logger.With(zap.String("table", tableName)),
 		ignoreColumns: ignoreColumns,
 	}, nil
@@ -268,6 +282,22 @@ func (tr *TableImporter) populateChunks(ctx context.Context, rc *Controller, cp 
 	return err
 }
 
+<<<<<<< HEAD
+=======
+// AutoIDRequirement implements autoid.Requirement.
+var _ autoid.Requirement = &TableImporter{}
+
+// Store implements the autoid.Requirement interface.
+func (tr *TableImporter) Store() tidbkv.Storage {
+	return tr.kvStore
+}
+
+// AutoIDClient implements the autoid.Requirement interface.
+func (tr *TableImporter) AutoIDClient() *autoid.ClientDiscover {
+	return tr.autoidCli
+}
+
+>>>>>>> 8eb191303ac (*: fix grpc client leak bug for AUTO_ID_CACHE=1 tables (#48870))
 // RebaseChunkRowIDs rebase the row id of the chunks.
 func (*TableImporter) RebaseChunkRowIDs(cp *checkpoints.TableCheckpoint, rowIDBase int64) {
 	if rowIDBase == 0 {
