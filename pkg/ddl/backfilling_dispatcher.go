@@ -175,19 +175,9 @@ func skipMergeSort(stats []external.MultipleFilesStat) bool {
 	return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
 }
 
-// OnErrStage generate error handling stage's plan.
-func (*BackfillingDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, receiveErrs []error) (meta []byte, err error) {
-	// We do not need extra meta info when rolling back
-	logger := logutil.BgLogger().With(
-		zap.Stringer("type", task.Type),
-		zap.Int64("task-id", task.ID),
-		zap.String("step", StepStr(task.Step)),
-	)
-	logger.Info("on error stage", zap.Errors("errors", receiveErrs))
-	firstErr := receiveErrs[0]
-	task.Error = firstErr
-
-	return nil, nil
+// OnDone implements dispatcher.Extension interface.
+func (*BackfillingDispatcherExt) OnDone(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task) error {
+	return nil
 }
 
 // GetEligibleInstances implements dispatcher.Extension interface.

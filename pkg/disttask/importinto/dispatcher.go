@@ -218,22 +218,6 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 	}
 	logger.Info("on next subtasks batch")
 
-	defer func() {
-		taskFinished := err == nil && nextStep == proto.StepDone
-		if taskFinished {
-			// todo: we're not running in a transaction with task update
-			if err2 := dsp.finishJob(ctx, logger, taskHandle, gTask, taskMeta); err2 != nil {
-				err = err2
-			}
-		} else if err != nil && !dsp.IsRetryableErr(err) {
-			if err2 := dsp.failJob(ctx, taskHandle, gTask, taskMeta, logger, err.Error()); err2 != nil {
-				// todo: we're not running in a transaction with task update, there might be case
-				// failJob return error, but task update succeed.
-				logger.Error("call failJob failed", zap.Error(err2))
-			}
-		}
-	}()
-
 	previousSubtaskMetas := make(map[proto.Step][][]byte, 1)
 	switch nextStep {
 	case StepImport, StepEncodeAndSort:
@@ -324,43 +308,26 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 	return metaBytes, nil
 }
 
-// OnErrStage implements dispatcher.Extension interface.
-func (dsp *ImportDispatcherExt) OnErrStage(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, receiveErrs []error) ([]byte, error) {
+// OnDone implements dispatcher.Extension interface.
+func (dsp *ImportDispatcherExt) OnDone(ctx context.Context, handle dispatcher.TaskHandle, task *proto.Task) error {
 	logger := logutil.BgLogger().With(
-		zap.Stringer("type", gTask.Type),
-		zap.Int64("task-id", gTask.ID),
-		zap.String("step", stepStr(gTask.Step)),
+		zap.Stringer("type", task.Type),
+		zap.Int64("task-id", task.ID),
+		zap.String("step", stepStr(task.Step)),
 	)
-	logger.Info("on error stage", zap.Errors("errors", receiveErrs))
+	logger.Info("task done", zap.Stringer("state", task.State), zap.Error(task.Error))
 	taskMeta := &TaskMeta{}
-	err := json.Unmarshal(gTask.Meta, taskMeta)
+	err := json.Unmarshal(task.Meta, taskMeta)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
-	errStrs := make([]string, 0, len(receiveErrs))
-	for _, receiveErr := range receiveErrs {
-		errStrs = append(errStrs, receiveErr.Error())
+	if task.Error == nil {
+		return dsp.finishJob(ctx, logger, handle, task, taskMeta)
 	}
-	if err = dsp.failJob(ctx, handle, gTask, taskMeta, logger, strings.Join(errStrs, "; ")); err != nil {
-		return nil, err
+	if dispatcher.IsCancelledErr(task.Error) {
+		return dsp.cancelJob(ctx, handle, task, taskMeta, logger)
 	}
-
-	gTask.Error = receiveErrs[0]
-
-	errStr := receiveErrs[0].Error()
-	// do nothing if the error is resumable
-	if isResumableErr(errStr) {
-		return nil, nil
-	}
-
-	if gTask.Step == StepImport {
-		err = rollback(ctx, handle, gTask, logger)
-		if err != nil {
-			// TODO: add error code according to spec.
-			gTask.Error = errors.New(errStr + ", " + err.Error())
-		}
-	}
-	return nil, err
+	return dsp.failJob(ctx, handle, task, taskMeta, logger, task.Error.Error())
 }
 
 // GetEligibleInstances implements dispatcher.Extension interface.
@@ -665,6 +632,7 @@ func job2Step(ctx context.Context, logger *zap.Logger, taskMeta *TaskMeta, step 
 
 func (dsp *ImportDispatcherExt) finishJob(ctx context.Context, logger *zap.Logger,
 	taskHandle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta) error {
+	// we have already switch import-mode when switch to post-process step.
 	dsp.unregisterTask(ctx, gTask)
 	summary := &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt}
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
@@ -695,6 +663,22 @@ func (dsp *ImportDispatcherExt) failJob(ctx context.Context, taskHandle dispatch
 	)
 }
 
+func (dsp *ImportDispatcherExt) cancelJob(ctx context.Context, taskHandle dispatcher.TaskHandle, task *proto.Task,
+	meta *TaskMeta, logger *zap.Logger) error {
+	dsp.switchTiKV2NormalMode(ctx, task, logger)
+	dsp.unregisterTask(ctx, task)
+	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
+	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
+	return handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
+		func(ctx context.Context) (bool, error) {
+			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
+				exec := se.(sqlexec.SQLExecutor)
+				return importer.CancelJob(ctx, exec, meta.JobID)
+			})
+		},
+	)
+}
+
 func redactSensitiveInfo(gTask *proto.Task, taskMeta *TaskMeta) {
 	taskMeta.Stmt = ""
 	taskMeta.Plan.Path = ast.RedactURL(taskMeta.Plan.Path)
@@ -711,27 +695,6 @@ func redactSensitiveInfo(gTask *proto.Task, taskMeta *TaskMeta) {
 func isResumableErr(string) bool {
 	// TODO: add more cases
 	return false
-}
-
-func rollback(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, logger *zap.Logger) (err error) {
-	taskMeta := &TaskMeta{}
-	err = json.Unmarshal(gTask.Meta, taskMeta)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	logger.Info("rollback")
-
-	//	// TODO: create table indexes depends on the option.
-	//	// create table indexes even if the rollback is failed.
-	//	defer func() {
-	//		err2 := createTableIndexes(ctx, handle, taskMeta, logger)
-	//		err = multierr.Append(err, err2)
-	//	}()
-
-	tableName := common.UniqueTable(taskMeta.Plan.DBName, taskMeta.Plan.TableInfo.Name.L)
-	// truncate the table
-	return executeSQL(ctx, handle, logger, "TRUNCATE "+tableName)
 }
 
 func stepStr(step proto.Step) string {
