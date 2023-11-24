@@ -67,7 +67,6 @@ func NewClientDiscover(etcdCli *clientv3.Client) *ClientDiscover {
 	}
 }
 
-
 // GetClient gets the AutoIDAllocClient.
 func (d *ClientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClient, error) {
 	d.mu.RLock()
