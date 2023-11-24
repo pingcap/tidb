@@ -376,20 +376,21 @@ func TestIntersectionWithDifferentConcurrency(t *testing.T) {
 		for _, concurrency := range execCon {
 			tk.MustExec(fmt.Sprintf("set tidb_executor_concurrency = %d", concurrency))
 			for i := 0; i < 2; i++ {
+				sql := "select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024"
 				if i == 0 {
 					// Dynamic mode.
 					tk.MustExec("set tidb_partition_prune_mode = 'dynamic'")
-					res := tk.MustQuery("explain select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024")
-					require.Contains(t, res.Rows()[1][0], "IndexMerge")
+					tk.MustHavePlan(sql, "IndexMerge")
+					tk.MustNotHavePlan(sql, "PartitionUnion")
 				} else {
 					tk.MustExec("set tidb_partition_prune_mode = 'static'")
-					res := tk.MustQuery("explain select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024")
 					if tblIdx == 0 {
 						// partition table
-						require.Contains(t, res.Rows()[1][0], "PartitionUnion")
-						require.Contains(t, res.Rows()[2][0], "IndexMerge")
+						tk.MustHavePlan(sql, "IndexMerge")
+						tk.MustHavePlan(sql, "PartitionUnion")
 					} else {
-						require.Contains(t, res.Rows()[1][0], "IndexMerge")
+						tk.MustHavePlan(sql, "IndexMerge")
+						tk.MustNotHavePlan(sql, "PartitionUnion")
 					}
 				}
 				for i := 0; i < queryCnt; i++ {
