@@ -353,7 +353,7 @@ func createEvenlyDistributedFiles(
 			SetMemorySizeLimit(uint64(float64(fileSize) * 1.1))
 		writer := builder.Build(
 			store,
-			"evenly_distributed",
+			subDir,
 			fmt.Sprintf("%d", i),
 		)
 
@@ -492,7 +492,7 @@ func createAscendingFiles(
 			SetMemorySizeLimit(uint64(float64(fileSize) * 1.1))
 		writer := builder.Build(
 			store,
-			"evenly_distributed",
+			subDir,
 			fmt.Sprintf("%d", i),
 		)
 
