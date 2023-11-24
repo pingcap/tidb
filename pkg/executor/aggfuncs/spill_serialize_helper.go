@@ -82,8 +82,6 @@ func (s *SpillSerializeHelper) serializePartialResult4MaxMinDuration(value parti
 func (s *SpillSerializeHelper) serializePartialResult4MaxMinString(value partialResult4MaxMinString) []byte {
 	s.buf = s.buf[:0]
 	s.buf = spill.SerializeBool(value.isNull, s.buf)
-
-	// Do not return s.buf directly as we need to enlarge it when serialized data is large
 	s.buf = append(s.buf, value.val...)
 	return s.buf
 }
@@ -141,14 +139,14 @@ func (s *SpillSerializeHelper) serializePartialResult4SumFloat64(value partialRe
 
 func (s *SpillSerializeHelper) serializeBasePartialResult4GroupConcat(value basePartialResult4GroupConcat) []byte {
 	valsBuf := value.valsBuf.Bytes()
-	valsBufLen := int64(len(valsBuf))
+	valsBufLen := len(valsBuf)
 	buffer := value.buffer.Bytes()
+	bufferLen := len(buffer)
 
 	s.buf = s.buf[:0]
-	s.buf = spill.SerializeInt64(valsBufLen, s.buf)
+	s.buf = spill.SerializeInt(valsBufLen, s.buf)
 	s.buf = append(s.buf, valsBuf...)
-
-	// Do not return s.buf directly as we need to enlarge it when serialized data is large
+	s.buf = spill.SerializeInt(bufferLen, s.buf)
 	s.buf = append(s.buf, buffer...)
 	return s.buf
 }
@@ -229,24 +227,18 @@ func (s *SpillSerializeHelper) serializePartialResult4FirstRowDuration(value par
 
 func (s *SpillSerializeHelper) serializePartialResult4FirstRowJSON(value partialResult4FirstRowJSON) []byte {
 	s.buf = s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
-
-	// Do not return s.buf directly as we need to enlarge it when serialized data is large
 	s.buf = spill.SerializeBinaryJSON(&value.val, s.buf)
 	return s.buf
 }
 
 func (s *SpillSerializeHelper) serializePartialResult4FirstRowEnum(value partialResult4FirstRowEnum) []byte {
 	s.buf = s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
-
-	// Do not return s.buf directly as we need to enlarge it when serialized data is large
 	s.buf = spill.SerializeEnum(&value.val, s.buf)
 	return s.buf
 }
 
 func (s *SpillSerializeHelper) serializePartialResult4FirstRowSet(value partialResult4FirstRowSet) []byte {
 	s.buf = s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
-
-	// Do not return s.buf directly as we need to enlarge it when serialized data is large
 	s.buf = spill.SerializeSet(&value.val, s.buf)
 	return s.buf
 }

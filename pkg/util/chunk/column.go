@@ -765,10 +765,10 @@ func (c *Column) MergeNulls(cols ...*Column) {
 }
 
 // DestroyDataForTest destroies data in the column so that
-// we can test if data in column are deep copied.
+// we can test if data in column are deeply copied.
 func (c *Column) DestroyDataForTest() {
 	dataByteNum := len(c.data)
 	for i := 0; i < dataByteNum; i++ {
-		c.data[i] = byte(rand.Intn(8))
+		c.data[i] = byte(rand.Intn(256))
 	}
 }

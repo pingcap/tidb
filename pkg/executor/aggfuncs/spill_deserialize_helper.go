@@ -16,24 +16,14 @@ package aggfuncs
 
 import (
 	"bytes"
-	"time"
 	"unsafe"
 
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/spill"
 )
 
-const byteLen = int64(1)
-const intLen = int64(unsafe.Sizeof(int(0)))
 const boolLen = int64(unsafe.Sizeof(true))
-const uint64Len = int64(unsafe.Sizeof(uint64(0)))
-const int64Len = int64(unsafe.Sizeof(int64(0)))
-const float32Len = int64(unsafe.Sizeof(float32(0)))
-const float64Len = int64(unsafe.Sizeof(float64(0)))
-const timeLen = int64(unsafe.Sizeof(types.Time{}))
-const durationLen = int64(unsafe.Sizeof(time.Duration(0)))
 
 type spillDeserializeHelper struct {
 	column       *chunk.Column
@@ -245,10 +235,16 @@ func (s *spillDeserializeHelper) deserializeBasePartialResult4GroupConcat(dst *b
 	if s.readRowIndex < s.totalRowCnt {
 		pos := int64(0)
 		restoredBytes := s.column.GetBytes(s.readRowIndex)
-		valsBufLen := spill.DeserializeInt64(restoredBytes, &pos)
-		dst.valsBuf = bytes.NewBuffer(restoredBytes[pos : pos+valsBufLen])
-		pos += valsBufLen
-		dst.buffer = bytes.NewBuffer(restoredBytes[pos:])
+		valsBufLen := spill.DeserializeInt(restoredBytes, &pos)
+		tmpBuffer := make([]byte, valsBufLen)
+		copy(tmpBuffer, restoredBytes[pos:pos+int64(valsBufLen)])
+		dst.valsBuf = bytes.NewBuffer(tmpBuffer)
+		pos += int64(valsBufLen)
+
+		bufferLen := spill.DeserializeInt(restoredBytes, &pos)
+		tmpBuffer = make([]byte, bufferLen)
+		copy(tmpBuffer, restoredBytes[pos:pos+int64(bufferLen)])
+		dst.buffer = bytes.NewBuffer(tmpBuffer)
 		s.readRowIndex++
 		return true
 	}
