@@ -95,10 +95,7 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool, v
 		allTopNs := worker.statsWrapper.AllTopN
 		allHists := worker.statsWrapper.AllHg
 		resp := &TopnStatsMergeResponse{}
-		if statistics.CheckEmptyTopNs(checkTopNs) {
-			worker.respCh <- resp
-			return
-		}
+
 		partNum := len(allTopNs)
 
 		// datumMap is used to store the mapping from the string type to datum type.

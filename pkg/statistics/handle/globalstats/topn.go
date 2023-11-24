@@ -30,8 +30,12 @@ import (
 func mergeGlobalStatsTopN(gp *gp.Pool, sc sessionctx.Context, wrapper *StatsWrapper,
 	timeZone *time.Location, version int, n uint32, isIndex bool) (*statistics.TopN,
 	[]statistics.TopNMeta, []*statistics.Histogram, error) {
+	if statistics.CheckEmptyTopNs(wrapper.AllTopN) {
+		return nil, nil, wrapper.AllHg, nil
+	}
 	mergeConcurrency := sc.GetSessionVars().AnalyzePartitionMergeConcurrency
 	killer := &sc.GetSessionVars().SQLKiller
+
 	// use original method if concurrency equals 1 or for version1
 	if mergeConcurrency < 2 {
 		return MergePartTopN2GlobalTopN(timeZone, version, wrapper.AllTopN, n, wrapper.AllHg, isIndex, killer)
@@ -141,9 +145,6 @@ func MergePartTopN2GlobalTopN(
 	isIndex bool,
 	killer *sqlkiller.SQLKiller,
 ) (*statistics.TopN, []statistics.TopNMeta, []*statistics.Histogram, error) {
-	if statistics.CheckEmptyTopNs(topNs) {
-		return nil, nil, hists, nil
-	}
 
 	partNum := len(topNs)
 	// Different TopN structures may hold the same value, we have to merge them.
