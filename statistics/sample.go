@@ -61,6 +61,7 @@ func CopySampleItems(items []*SampleItem) []*SampleItem {
 	return n
 }
 
+<<<<<<< HEAD:statistics/sample.go
 // SortSampleItems shallow copies and sorts a slice of SampleItem.
 func SortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) ([]*SampleItem, error) {
 	sortedItems := make([]*SampleItem, len(items))
@@ -91,6 +92,19 @@ func (s *sampleItemSorter) Less(i, j int) bool {
 
 func (s *sampleItemSorter) Swap(i, j int) {
 	s.items[i], s.items[j] = s.items[j], s.items[i]
+=======
+func sortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) error {
+	var err error
+	slices.SortStableFunc(items, func(i, j *SampleItem) int {
+		var cmp int
+		cmp, err = i.Value.Compare(sc.TypeCtx(), &j.Value, collate.GetBinaryCollator())
+		if err != nil {
+			return -1
+		}
+		return cmp
+	})
+	return err
+>>>>>>> 4279cd6f230 (*: avoid copy in the SortSampleItems (#48683)):pkg/statistics/sample.go
 }
 
 // SampleCollector will collect Samples and calculate the count and ndv of an attribute.
