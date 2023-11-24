@@ -3464,11 +3464,12 @@ func (e *memtableRetriever) setDataFromTiDBParams(ctx sessionctx.Context) error 
 		err  error
 	}
 	serversInfo, err := infoschema.GetClusterServerInfo(ctx)
-	if val, _err_ := failpoint.Eval(_curpkg_("mockDefaultClusterConfigServerInfo")); _err_ == nil {
+	failpoint.Inject("mockDefaultClusterConfigServerInfo", func(val failpoint.Value) {
 		if s := val.(string); len(s) > 0 {
+			// erase the error
 			serversInfo, err = parseFailpointServerInfo(s), nil
 		}
-	}
+	})
 	if err != nil {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		return nil
