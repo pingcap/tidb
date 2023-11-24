@@ -251,9 +251,11 @@ func TestCompareWriter(t *testing.T) {
 
 type readTestSuite struct {
 	store              storage.ExternalStorage
+	subDir             string
 	totalKVCnt         int
 	concurrency        int
 	memoryLimit        int
+	mergeIterHotspot   bool
 	beforeCreateReader func()
 	beforeReaderClose  func()
 	afterReaderClose   func()
@@ -261,7 +263,7 @@ type readTestSuite struct {
 
 func readFileSequential(s *readTestSuite) {
 	ctx := context.Background()
-	files, _, err := GetAllFileNames(ctx, s.store, "evenly_distributed")
+	files, _, err := GetAllFileNames(ctx, s.store, s.subDir)
 	intest.Assert(err == nil)
 
 	buf := make([]byte, s.memoryLimit)
@@ -291,7 +293,7 @@ func readFileSequential(s *readTestSuite) {
 
 func readFileConcurrently(s *readTestSuite) {
 	ctx := context.Background()
-	files, _, err := GetAllFileNames(ctx, s.store, "evenly_distributed")
+	files, _, err := GetAllFileNames(ctx, s.store, s.subDir)
 	intest.Assert(err == nil)
 
 	conc := min(s.concurrency, len(files))
@@ -332,11 +334,12 @@ func readFileConcurrently(s *readTestSuite) {
 func createEvenlyDistributedFiles(
 	t *testing.T,
 	fileSize, fileCount int,
+	subDir string,
 ) (storage.ExternalStorage, int) {
 	store := openTestingStorage(t)
 	ctx := context.Background()
 
-	files, statFiles, err := GetAllFileNames(ctx, store, "evenly_distributed")
+	files, statFiles, err := GetAllFileNames(ctx, store, subDir)
 	intest.Assert(err == nil)
 	err = store.DeleteFiles(ctx, files)
 	intest.Assert(err == nil)
@@ -372,7 +375,7 @@ func createEvenlyDistributedFiles(
 
 func readMergeIter(s *readTestSuite) {
 	ctx := context.Background()
-	files, _, err := GetAllFileNames(ctx, s.store, "evenly_distributed")
+	files, _, err := GetAllFileNames(ctx, s.store, s.subDir)
 	intest.Assert(err == nil)
 
 	if s.beforeCreateReader != nil {
@@ -381,7 +384,7 @@ func readMergeIter(s *readTestSuite) {
 
 	readBufSize := s.memoryLimit / len(files)
 	zeroOffsets := make([]uint64, len(files))
-	iter, err := NewMergeKVIter(ctx, files, zeroOffsets, s.store, readBufSize, false)
+	iter, err := NewMergeKVIter(ctx, files, zeroOffsets, s.store, readBufSize, s.mergeIterHotspot)
 	intest.Assert(err == nil)
 
 	kvCnt := 0
@@ -401,10 +404,11 @@ func readMergeIter(s *readTestSuite) {
 	}
 }
 
-func TestCompareReader(t *testing.T) {
+func TestCompareReaderEvenlyDistributedContent(t *testing.T) {
 	fileSize := 50 * 1024 * 1024
 	fileCnt := 24
-	store, kvCnt := createEvenlyDistributedFiles(t, fileSize, fileCnt)
+	subDir := "evenly_distributed"
+	store, kvCnt := createEvenlyDistributedFiles(t, fileSize, fileCnt, subDir)
 	memoryLimit := 64 * 1024 * 1024
 	fileIdx := 0
 	var (
@@ -441,6 +445,7 @@ func TestCompareReader(t *testing.T) {
 		beforeCreateReader: beforeTest,
 		beforeReaderClose:  beforeClose,
 		afterReaderClose:   afterClose,
+		subDir:             subDir,
 	}
 	readFileSequential(suite)
 	t.Logf(
@@ -459,6 +464,121 @@ func TestCompareReader(t *testing.T) {
 	readMergeIter(suite)
 	t.Logf(
 		"merge iter read speed for %d bytes: %.2f MB/s",
+		fileSize*fileCnt,
+		float64(fileSize*fileCnt)/elapsed.Seconds()/1024/1024,
+	)
+}
+
+func createAscendingFiles(
+	t *testing.T,
+	fileSize, fileCount int,
+	subDir string,
+) (storage.ExternalStorage, int) {
+	store := openTestingStorage(t)
+	ctx := context.Background()
+
+	files, statFiles, err := GetAllFileNames(ctx, store, subDir)
+	intest.Assert(err == nil)
+	err = store.DeleteFiles(ctx, files)
+	intest.Assert(err == nil)
+	err = store.DeleteFiles(ctx, statFiles)
+	intest.Assert(err == nil)
+
+	keyIdx := 0
+	value := make([]byte, 100)
+	kvCnt := 0
+	for i := 0; i < fileCount; i++ {
+		builder := NewWriterBuilder().
+			SetMemorySizeLimit(uint64(float64(fileSize) * 1.1))
+		writer := builder.Build(
+			store,
+			"evenly_distributed",
+			fmt.Sprintf("%d", i),
+		)
+
+		totalSize := 0
+		for totalSize < fileSize {
+			key := fmt.Sprintf("key_%09d", keyIdx)
+			err := writer.WriteRow(ctx, []byte(key), value, nil)
+			intest.AssertNoError(err)
+			keyIdx++
+			totalSize += len(key) + len(value)
+			kvCnt++
+		}
+		err := writer.Close(ctx)
+		intest.AssertNoError(err)
+	}
+	return store, kvCnt
+}
+
+func TestCompareReaderAscendingContent(t *testing.T) {
+	fileSize := 50 * 1024 * 1024
+	fileCnt := 24
+	subDir := "ascending"
+	store, kvCnt := createAscendingFiles(t, fileSize, fileCnt, subDir)
+	memoryLimit := 64 * 1024 * 1024
+	fileIdx := 0
+	var (
+		now     time.Time
+		elapsed time.Duration
+		file    *os.File
+		err     error
+	)
+	beforeTest := func() {
+		fileIdx++
+		file, err = os.Create(fmt.Sprintf("cpu-profile-%d.prof", fileIdx))
+		intest.AssertNoError(err)
+		err = pprof.StartCPUProfile(file)
+		intest.AssertNoError(err)
+		now = time.Now()
+	}
+	beforeClose := func() {
+		file, err = os.Create(fmt.Sprintf("heap-profile-%d.prof", fileIdx))
+		intest.AssertNoError(err)
+		// check heap profile to see the memory usage is expected
+		err = pprof.WriteHeapProfile(file)
+		intest.AssertNoError(err)
+	}
+	afterClose := func() {
+		elapsed = time.Since(now)
+		pprof.StopCPUProfile()
+	}
+
+	suite := &readTestSuite{
+		store:              store,
+		totalKVCnt:         kvCnt,
+		concurrency:        100,
+		memoryLimit:        memoryLimit,
+		beforeCreateReader: beforeTest,
+		beforeReaderClose:  beforeClose,
+		afterReaderClose:   afterClose,
+		subDir:             subDir,
+	}
+	readFileSequential(suite)
+	t.Logf(
+		"sequential read speed for %d bytes: %.2f MB/s",
+		fileSize*fileCnt,
+		float64(fileSize*fileCnt)/elapsed.Seconds()/1024/1024,
+	)
+
+	readFileConcurrently(suite)
+	t.Logf(
+		"concurrent read speed for %d bytes: %.2f MB/s",
+		fileSize*fileCnt,
+		float64(fileSize*fileCnt)/elapsed.Seconds()/1024/1024,
+	)
+
+	readMergeIter(suite)
+	t.Logf(
+		"merge iter read (hotspot=false) speed for %d bytes: %.2f MB/s",
+		fileSize*fileCnt,
+		float64(fileSize*fileCnt)/elapsed.Seconds()/1024/1024,
+	)
+
+	suite.mergeIterHotspot = true
+	readMergeIter(suite)
+	t.Logf(
+		"merge iter read (hotspot=true) speed for %d bytes: %.2f MB/s",
 		fileSize*fileCnt,
 		float64(fileSize*fileCnt)/elapsed.Seconds()/1024/1024,
 	)
