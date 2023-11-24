@@ -16,7 +16,6 @@ package spill
 
 import (
 	"time"
-	gotime "time"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -41,21 +40,21 @@ const (
 	TimeType
 	DurationType
 
-	InterfaceTypeLen = int64(1)
-	JSONTypeCodeLen  = int64(types.JSONTypeCode(1))
-	BoolLen          = int64(unsafe.Sizeof(true))
-	ByteLen          = int64(unsafe.Sizeof(byte(0)))
-	Int8Len          = int64(unsafe.Sizeof(int8(0)))
-	Uint8Len         = int64(unsafe.Sizeof(uint8(0)))
-	IntLen           = int64(unsafe.Sizeof(int(0)))
-	Int32Len         = int64(unsafe.Sizeof(int32(0)))
-	Uint32Len        = int64(unsafe.Sizeof(uint32(0)))
-	Int64Len         = int64(unsafe.Sizeof(int64(0)))
-	Uint64Len        = int64(unsafe.Sizeof(uint64(0)))
-	Float32Len       = int64(unsafe.Sizeof(float32(0)))
-	Float64Len       = int64(unsafe.Sizeof(float64(0)))
-	TimeLen          = int64(unsafe.Sizeof(types.Time{}))
-	DurationLen      = int64(unsafe.Sizeof(time.Duration(0)))
+	InterfaceTypeCodeLen = int64(1)
+	JSONTypeCodeLen      = int64(types.JSONTypeCode(1))
+	BoolLen              = int64(unsafe.Sizeof(true))
+	ByteLen              = int64(unsafe.Sizeof(byte(0)))
+	Int8Len              = int64(unsafe.Sizeof(int8(0)))
+	Uint8Len             = int64(unsafe.Sizeof(uint8(0)))
+	IntLen               = int64(unsafe.Sizeof(int(0)))
+	Int32Len             = int64(unsafe.Sizeof(int32(0)))
+	Uint32Len            = int64(unsafe.Sizeof(uint32(0)))
+	Int64Len             = int64(unsafe.Sizeof(int64(0)))
+	Uint64Len            = int64(unsafe.Sizeof(uint64(0)))
+	Float32Len           = int64(unsafe.Sizeof(float32(0)))
+	Float64Len           = int64(unsafe.Sizeof(float64(0)))
+	TimeLen              = int64(unsafe.Sizeof(types.Time{}))
+	TimeDurationLen      = int64(unsafe.Sizeof(time.Duration(0)))
 )
 
 // DeserializeBool deserializes bool type
@@ -128,7 +127,7 @@ func DeserializeFloat64(buf []byte, pos *int64) float64 {
 	return retVal
 }
 
-// DeserializeMyDecimal deserializes float64 type
+// DeserializeMyDecimal deserializes MyDecimal type
 func DeserializeMyDecimal(buf []byte, pos *int64) types.MyDecimal {
 	retVal := *(*types.MyDecimal)(unsafe.Pointer(&buf[*pos]))
 	*pos += types.MyDecimalStructSize
@@ -142,10 +141,18 @@ func DeserializeTime(buf []byte, pos *int64) types.Time {
 	return retVal
 }
 
-// DeserializeDuration deserializes Duration type
-func DeserializeDuration(buf []byte, pos *int64) gotime.Duration {
-	retVal := *(*gotime.Duration)(unsafe.Pointer(&buf[*pos]))
-	*pos += DurationLen
+// DeserializeTimeDuration deserializes time.Duration type
+func DeserializeTimeDuration(buf []byte, pos *int64) time.Duration {
+	retVal := *(*time.Duration)(unsafe.Pointer(&buf[*pos]))
+	*pos += TimeDurationLen
+	return retVal
+}
+
+// DeserializeTypesDuration deserializes types.Duration type
+func DeserializeTypesDuration(buf []byte, pos *int64) types.Duration {
+	retVal := types.Duration{}
+	retVal.Duration = DeserializeTimeDuration(buf, pos)
+	retVal.Fsp = DeserializeInt(buf, pos)
 	return retVal
 }
 
@@ -160,46 +167,33 @@ func DeserializeJSONTypeCode(buf []byte, pos *int64) types.JSONTypeCode {
 func DeserializeInterface(buf []byte, pos *int64) interface{} {
 	// Get type
 	dataType := int(buf[*pos])
-	*pos += InterfaceTypeLen
+	*pos += InterfaceTypeCodeLen
 
 	switch dataType {
 	case BoolType:
-		res := DeserializeBool(buf, pos)
-		return res
+		return DeserializeBool(buf, pos)
 	case Int64Type:
-		res := DeserializeInt64(buf, pos)
-		return res
+		return DeserializeInt64(buf, pos)
 	case Uint64Type:
-		res := DeserializeUint64(buf, pos)
-		return res
+		return DeserializeUint64(buf, pos)
 	case FloatType:
-		res := DeserializeFloat64(buf, pos)
-		return res
+		return DeserializeFloat64(buf, pos)
 	case StringType:
-		strLen := DeserializeInt64(buf, pos)
-		res := string(buf[*pos : *pos+strLen])
-		*pos += strLen
-		return res
+		return DeserializeString(buf, pos)
 	case BinaryJSONType:
-		retValue := DeserializeBinaryJSON(buf, pos)
-		return retValue
+		return DeserializeBinaryJSON(buf, pos)
 	case OpaqueType:
 		return DeserializeOpaque(buf, pos)
 	case TimeType:
 		return DeserializeTime(buf, pos)
 	case DurationType:
-		value := DeserializeInt64(buf, pos)
-		fsp := DeserializeInt(buf, pos)
-		return types.Duration{
-			Duration: gotime.Duration(value),
-			Fsp:      fsp,
-		}
+		return DeserializeTypesDuration(buf, pos)
 	default:
 		panic("Invalid data type happens in agg spill deserializing!")
 	}
 }
 
-// DeserializeBinaryJSON deserializes Set type and return the size of deserialized object
+// DeserializeBinaryJSON deserializes BinaryJSON type
 func DeserializeBinaryJSON(buf []byte, pos *int64) types.BinaryJSON {
 	retValue := types.BinaryJSON{}
 	retValue.TypeCode = DeserializeJSONTypeCode(buf, pos)
@@ -214,19 +208,15 @@ func DeserializeBinaryJSON(buf []byte, pos *int64) types.BinaryJSON {
 func DeserializeSet(buf []byte, pos *int64) types.Set {
 	retValue := types.Set{}
 	retValue.Value = DeserializeUint64(buf, pos)
-	nameLen := DeserializeInt(buf, pos)
-	retValue.Name = string(buf[*pos : *pos+int64(nameLen)])
-	*pos += int64(len(retValue.Name))
+	retValue.Name = DeserializeString(buf, pos)
 	return retValue
 }
 
-// DeserializeEnum deserializes Set type
+// DeserializeEnum deserializes Enum type
 func DeserializeEnum(buf []byte, pos *int64) types.Enum {
 	retValue := types.Enum{}
 	retValue.Value = DeserializeUint64(buf, pos)
-	nameLen := DeserializeInt(buf, pos)
-	retValue.Name = string(buf[*pos : *pos+int64(nameLen)])
-	*pos += int64(len(retValue.Name))
+	retValue.Name = DeserializeString(buf, pos)
 	return retValue
 }
 
@@ -239,6 +229,14 @@ func DeserializeOpaque(buf []byte, pos *int64) types.Opaque {
 	retVal.Buf = make([]byte, retValBufLen)
 	copy(retVal.Buf, buf[*pos:*pos+int64(retValBufLen)])
 	*pos += int64(retValBufLen)
+	return retVal
+}
+
+// DeserializeString deserializes String type
+func DeserializeString(buf []byte, pos *int64) string {
+	strLen := DeserializeInt(buf, pos)
+	retVal := string(buf[*pos : *pos+int64(strLen)])
+	*pos += int64(strLen)
 	return retVal
 }
 
@@ -326,11 +324,17 @@ func SerializeTime(value types.Time, buf []byte) []byte {
 	return append(buf, tmp[:]...)
 }
 
-// SerializeDuration serializes Duration type
-func SerializeDuration(value gotime.Duration, buf []byte) []byte {
-	var tmp [DurationLen]byte
-	*(*gotime.Duration)(unsafe.Pointer(&tmp[0])) = value
+// SerializeGoTimeDuration serializes time.Duration type
+func SerializeGoTimeDuration(value time.Duration, buf []byte) []byte {
+	var tmp [TimeDurationLen]byte
+	*(*time.Duration)(unsafe.Pointer(&tmp[0])) = value
 	return append(buf, tmp[:]...)
+}
+
+// SerializeTypesDuration serializes types.Duration type
+func SerializeTypesDuration(value types.Duration, buf []byte) []byte {
+	buf = SerializeGoTimeDuration(value.Duration, buf)
+	return SerializeInt(value.Fsp, buf)
 }
 
 // SerializeJSONTypeCode serializes JSONTypeCode type
@@ -340,7 +344,7 @@ func SerializeJSONTypeCode(value types.JSONTypeCode, buf []byte) []byte {
 	return append(buf, tmp[:]...)
 }
 
-// SerializeInterface serialize interface type and return the number of bytes serialized
+// SerializeInterface serialize interface type
 func SerializeInterface(value interface{}, buf []byte) []byte {
 	switch v := value.(type) {
 	case bool:
@@ -370,14 +374,13 @@ func SerializeInterface(value interface{}, buf []byte) []byte {
 		return SerializeTime(v, buf)
 	case types.Duration:
 		buf = append(buf, DurationType)
-		buf = SerializeInt64(int64(v.Duration), buf)
-		return SerializeInt(v.Fsp, buf)
+		return SerializeTypesDuration(v, buf)
 	default:
 		panic("Agg spill encounters an unexpected interface type!")
 	}
 }
 
-// SerializeBinaryJSON serializes Set type
+// SerializeBinaryJSON serializes BinaryJSON type
 func SerializeBinaryJSON(value *types.BinaryJSON, buf []byte) []byte {
 	buf = append(buf, value.TypeCode)
 	buf = SerializeInt(len(value.Value), buf)
@@ -391,7 +394,7 @@ func SerializeSet(value *types.Set, buf []byte) []byte {
 	return append(buf, value.Name...)
 }
 
-// SerializeEnum serializes Set type
+// SerializeEnum serializes Enum type
 func SerializeEnum(value *types.Enum, buf []byte) []byte {
 	buf = SerializeUint64(value.Value, buf)
 	buf = SerializeInt(len(value.Name), buf)
@@ -403,4 +406,11 @@ func SerializeOpaque(value types.Opaque, buf []byte) []byte {
 	buf = append(buf, value.TypeCode)
 	buf = SerializeInt(len(value.Buf), buf)
 	return append(buf, value.Buf...)
+}
+
+// SerializeString serializes String type
+func SerializeString(value string, buf []byte) []byte {
+	strLen := len(value)
+	buf = SerializeInt(strLen, buf)
+	return append(buf, value...)
 }

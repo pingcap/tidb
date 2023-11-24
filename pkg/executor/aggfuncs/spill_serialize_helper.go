@@ -75,14 +75,13 @@ func (s *SpillSerializeHelper) serializePartialResult4MaxMinTime(value partialRe
 func (s *SpillSerializeHelper) serializePartialResult4MaxMinDuration(value partialResult4MaxMinDuration) []byte {
 	s.buf = s.buf[:0]
 	s.buf = spill.SerializeBool(value.isNull, s.buf)
-	s.buf = spill.SerializeDuration(value.val.Duration, s.buf)
-	return spill.SerializeInt(value.val.Fsp, s.buf)
+	return spill.SerializeTypesDuration(value.val, s.buf)
 }
 
 func (s *SpillSerializeHelper) serializePartialResult4MaxMinString(value partialResult4MaxMinString) []byte {
 	s.buf = s.buf[:0]
 	s.buf = spill.SerializeBool(value.isNull, s.buf)
-	s.buf = append(s.buf, value.val...)
+	s.buf = spill.SerializeString(value.val, s.buf)
 	return s.buf
 }
 
@@ -167,8 +166,7 @@ func (s *SpillSerializeHelper) serializePartialResult4JsonArrayagg(value partial
 func (s *SpillSerializeHelper) serializePartialResult4JsonObjectAgg(value partialResult4JsonObjectAgg) []byte {
 	s.buf = s.buf[:0]
 	for key, value := range value.entries {
-		s.buf = spill.SerializeInt64(int64(len(key)), s.buf)
-		s.buf = append(s.buf, key...)
+		s.buf = spill.SerializeString(key, s.buf)
 		s.buf = spill.SerializeInterface(value, s.buf)
 	}
 	return s.buf
@@ -197,7 +195,7 @@ func (s *SpillSerializeHelper) serializePartialResult4FirstRowTime(value partial
 
 func (s *SpillSerializeHelper) serializePartialResult4FirstRowString(value partialResult4FirstRowString) []byte {
 	s.buf = s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
-	s.buf = append(s.buf, value.val...)
+	s.buf = spill.SerializeString(value.val, s.buf)
 	return s.buf
 }
 

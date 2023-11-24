@@ -127,8 +127,7 @@ func (s *spillDeserializeHelper) deserializePartialResult4MaxMinDuration(dst *pa
 		pos := int64(0)
 		bytes := s.column.GetBytes(s.readRowIndex)
 		dst.isNull = spill.DeserializeBool(bytes, &pos)
-		dst.val.Duration = spill.DeserializeDuration(bytes, &pos)
-		dst.val.Fsp = spill.DeserializeInt(bytes, &pos)
+		dst.val = spill.DeserializeTypesDuration(bytes, &pos)
 		s.readRowIndex++
 		return true
 	}
@@ -140,7 +139,7 @@ func (s *spillDeserializeHelper) deserializePartialResult4MaxMinString(dst *part
 		pos := int64(0)
 		bytes := s.column.GetBytes(s.readRowIndex)
 		dst.isNull = spill.DeserializeBool(bytes, &pos)
-		dst.val = string(bytes[boolLen:])
+		dst.val = spill.DeserializeString(bytes, &pos)
 		s.readRowIndex++
 		return true
 	}
@@ -294,9 +293,7 @@ func (s *spillDeserializeHelper) deserializePartialResult4JsonObjectAgg(dst *par
 		byteNum := int64(len(bytes))
 		readPos := int64(0)
 		for readPos < byteNum {
-			keyLen := spill.DeserializeInt64(bytes, &readPos)
-			key := string(bytes[readPos : readPos+keyLen])
-			readPos += keyLen
+			key := spill.DeserializeString(bytes, &readPos)
 			realVal := spill.DeserializeInterface(bytes, &readPos)
 			if _, ok := dst.entries[key]; !ok {
 				memDelta += int64(len(key)) + getValMemDelta(realVal)
@@ -371,7 +368,7 @@ func (s *spillDeserializeHelper) deserializePartialResult4FirstRowString(dst *pa
 		bytes := s.column.GetBytes(s.readRowIndex)
 		pos := int64(0)
 		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, &pos)
-		dst.val = string(bytes[pos:])
+		dst.val = spill.DeserializeString(bytes, &pos)
 		s.readRowIndex++
 		return true
 	}
@@ -395,8 +392,7 @@ func (s *spillDeserializeHelper) deserializePartialResult4FirstRowDuration(dst *
 		bytes := s.column.GetBytes(s.readRowIndex)
 		pos := int64(0)
 		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, &pos)
-		dst.val.Duration = spill.DeserializeDuration(bytes, &pos)
-		dst.val.Fsp = spill.DeserializeInt(bytes, &pos)
+		dst.val = spill.DeserializeTypesDuration(bytes, &pos)
 		s.readRowIndex++
 		return true
 	}
