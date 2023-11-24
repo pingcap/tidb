@@ -134,12 +134,12 @@ func (c *bindCache) delete(key bindCacheKey) bool {
 // GetBindRecord gets the BindRecord from the cache.
 // The return value is not read-only, but it shouldn't be changed in the caller functions.
 // The function is thread-safe.
-func (c *bindCache) GetBindRecord(hash, normdOrigSQL, _ string) *BindRecord {
+func (c *bindCache) GetBindRecord(sqlDigest, normalizedSQL, _ string) *BindRecord {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	bindRecords := c.get(bindCacheKey(hash))
+	bindRecords := c.get(bindCacheKey(sqlDigest))
 	for _, bindRecord := range bindRecords {
-		if bindRecord.OriginalSQL == normdOrigSQL {
+		if bindRecord.OriginalSQL == normalizedSQL {
 			return bindRecord
 		}
 	}
