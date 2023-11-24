@@ -2702,7 +2702,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
-		concurrency: b.ctx.GetSessionVars().DistSQLScanConcurrency(),
+		concurrency: b.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency(),
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeFullSampling,
 			Flags:          sc.PushDownFlags(),
@@ -2836,7 +2836,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
-		concurrency: b.ctx.GetSessionVars().DistSQLScanConcurrency(),
+		concurrency: b.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency(),
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeColumn,
 			Flags:          sc.PushDownFlags(),

@@ -2871,6 +2871,11 @@ func (c *Concurrency) DistSQLScanConcurrency() int {
 	return c.distSQLScanConcurrency
 }
 
+// AnalyzeDistSQLScanConcurrency return the number of concurrent dist SQL scan worker when to analyze.
+func (c *Concurrency) AnalyzeDistSQLScanConcurrency() int {
+	return c.analyzeDistSQLScanConcurrency
+}
+
 // HashJoinConcurrency return the number of concurrent hash join outer worker.
 func (c *Concurrency) HashJoinConcurrency() int {
 	if c.hashJoinConcurrency != ConcurrencyUnset {
