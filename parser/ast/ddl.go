@@ -4121,9 +4121,10 @@ func (n *RecoverTableStmt) Accept(v Visitor) (Node, bool) {
 type FlashBackToTimestampStmt struct {
 	ddlNode
 
-	FlashbackTS ExprNode
-	Tables      []*TableName
-	DBName      model.CIStr
+	FlashbackTS  ExprNode
+	FlashbackTSO uint64
+	Tables       []*TableName
+	DBName       model.CIStr
 }
 
 // Restore implements Node interface
@@ -4145,9 +4146,14 @@ func (n *FlashBackToTimestampStmt) Restore(ctx *format.RestoreCtx) error {
 	} else {
 		ctx.WriteKeyWord("CLUSTER")
 	}
-	ctx.WriteKeyWord(" TO TIMESTAMP ")
-	if err := n.FlashbackTS.Restore(ctx); err != nil {
-		return errors.Annotate(err, "An error occurred while splicing FlashBackToTimestampStmt.FlashbackTS")
+	if n.FlashbackTSO == 0 {
+		ctx.WriteKeyWord(" TO TIMESTAMP ")
+		if err := n.FlashbackTS.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while splicing FlashBackToTimestampStmt.FlashbackTS")
+		}
+	} else {
+		ctx.WriteKeyWord(" TO TSO ")
+		ctx.WritePlainf("%d", n.FlashbackTSO)
 	}
 	return nil
 }
@@ -4168,11 +4174,14 @@ func (n *FlashBackToTimestampStmt) Accept(v Visitor) (Node, bool) {
 			n.Tables[i] = node.(*TableName)
 		}
 	}
-	node, ok := n.FlashbackTS.Accept(v)
-	if !ok {
-		return n, false
+
+	if n.FlashbackTSO == 0 {
+		node, ok := n.FlashbackTS.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.FlashbackTS = node.(ExprNode)
 	}
-	n.FlashbackTS = node.(ExprNode)
 	return v.Leave(n)
 }
 

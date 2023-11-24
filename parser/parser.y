@@ -50,10 +50,10 @@ import (
 %token	<ident>
 
 	/*yy:token "%c"     */
-	identifier  "identifier"
-	asof        "AS OF"
-	toTimestamp "TO TIMESTAMP"
-
+	identifier           "identifier"
+	asof                 "AS OF"
+	toTimestamp          "TO TIMESTAMP"
+	toTSO                "TO TSO"
 	/*yy:token "_%c"    */
 	underscoreCS "UNDERSCORE_CHARSET"
 
@@ -615,6 +615,7 @@ import (
 	transaction           "TRANSACTION"
 	triggers              "TRIGGERS"
 	truncate              "TRUNCATE"
+	tsoType               "TSO"
 	ttl                   "TTL"
 	ttlEnable             "TTL_ENABLE"
 	unbounded             "UNBOUNDED"
@@ -2620,6 +2621,7 @@ FlashbackToTimestampStmt:
 	{
 		$$ = &ast.FlashBackToTimestampStmt{
 			FlashbackTS: ast.NewValueExpr($4, "", ""),
+			FlashbackTSO: 0,
 		}
 	}
 |	"FLASHBACK" "TABLE" TableNameList toTimestamp stringLit
@@ -2627,6 +2629,7 @@ FlashbackToTimestampStmt:
 		$$ = &ast.FlashBackToTimestampStmt{
 			Tables:      $3.([]*ast.TableName),
 			FlashbackTS: ast.NewValueExpr($5, "", ""),
+			FlashbackTSO: 0,
 		}
 	}
 |	"FLASHBACK" DatabaseSym DBName toTimestamp stringLit
@@ -2634,8 +2637,45 @@ FlashbackToTimestampStmt:
 		$$ = &ast.FlashBackToTimestampStmt{
 			DBName:      model.NewCIStr($3),
 			FlashbackTS: ast.NewValueExpr($5, "", ""),
+			FlashbackTSO: 0,
 		}
 	}
+|	"FLASHBACK" "CLUSTER" toTSO LengthNum
+	{
+		if tsoValue, ok := $4.(uint64); ok && tsoValue > 0 {
+			$$ = &ast.FlashBackToTimestampStmt{
+        		FlashbackTSO: tsoValue,
+        	}
+		} else {
+    		yylex.AppendError(yylex.Errorf("Invalid TSO value provided: %d", $4))
+    		return 1
+		}
+	}
+|	"FLASHBACK" "TABLE" TableNameList toTSO LengthNum
+	{
+		if tsoValue, ok := $5.(uint64); ok && tsoValue > 0 {
+			$$ = &ast.FlashBackToTimestampStmt{
+            	Tables:      $3.([]*ast.TableName),
+            	FlashbackTSO: tsoValue,
+            }
+		} else {
+			yylex.AppendError(yylex.Errorf("Invalid TSO value provided: %d", $5))
+			return 1
+		}
+	}
+|	"FLASHBACK" DatabaseSym DBName toTSO LengthNum
+	{
+		if tsoValue, ok := $5.(uint64); ok && tsoValue > 0 {
+			$$ = &ast.FlashBackToTimestampStmt{
+            	DBName:      model.NewCIStr($3),
+            	FlashbackTSO: tsoValue,
+			}
+		} else {
+			yylex.AppendError(yylex.Errorf("Invalid TSO value provided: %d", $5))
+			return 1
+		}
+	}
+
 
 /*******************************************************************
  *
@@ -6175,6 +6215,7 @@ UnReservedKeyword:
 |	"TRACE"
 |	"TRANSACTION"
 |	"TRUNCATE"
+|	"TSO"
 |	"UNBOUNDED"
 |	"UNKNOWN"
 |	"VALUE" %prec lowerThanValueKeyword

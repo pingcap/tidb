@@ -430,19 +430,19 @@ func TestFlashbackTSOWithSafeTs(t *testing.T) {
 	}{
 		{
 			name:              "5 seconds ago to now, safeTS 5 secs ago",
-			sql:               fmt.Sprintf("flashback cluster to timestamp '%d'", ts),
+			sql:               fmt.Sprintf("flashback cluster to tso %d", ts),
 			injectSafeTS:      oracle.GoTimeToTS(flashbackTs),
 			compareWithSafeTS: 0,
 		},
 		{
 			name:              "10 seconds ago to now, safeTS 5 secs ago",
-			sql:               fmt.Sprintf("flashback cluster to timestamp '%d'", ts),
+			sql:               fmt.Sprintf("flashback cluster to tso %d", ts),
 			injectSafeTS:      oracle.GoTimeToTS(flashbackTs.Add(10 * time.Second)),
 			compareWithSafeTS: -1,
 		},
 		{
 			name:              "5 seconds ago to now, safeTS 10 secs ago",
-			sql:               fmt.Sprintf("flashback cluster to timestamp '%d'", ts),
+			sql:               fmt.Sprintf("flashback cluster to tso %d", ts),
 			injectSafeTS:      oracle.GoTimeToTS(flashbackTs.Add(-10 * time.Second)),
 			compareWithSafeTS: 1,
 		},
