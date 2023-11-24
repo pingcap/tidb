@@ -5317,7 +5317,8 @@ func ProcessColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 			setOnUpdateNow = true
 		case ast.ColumnOptionGenerated:
 			sb.Reset()
-			err = opt.Expr.Restore(restoreCtx)
+			optExpr := opt.Expr
+			err = optExpr.Restore(restoreCtx)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -5328,10 +5329,10 @@ func ProcessColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 				expr, err := generatedexpr.ParseExpression(col.GeneratedExprString)
 				if err != nil {
 					logutil.BgLogger().Warn("parse expression failed", zap.String("expression", col.GeneratedExprString), zap.Error(err))
-					return opt.Expr
+					return optExpr
 				}
 				return expr
-			}, opt.Expr)
+			}, optExpr)
 			for _, colName := range FindColumnNamesInExpr(opt.Expr) {
 				col.Dependences[colName.Name.L] = struct{}{}
 			}
