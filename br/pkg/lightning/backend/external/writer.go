@@ -179,7 +179,7 @@ func (b *WriterBuilder) Build(
 	if b.keyDupeEncoding {
 		keyAdapter = common.DupDetectKeyAdapter{}
 	}
-	p := membuf.NewPool(membuf.WithPoolSize(0), membuf.WithBlockSize(b.blockSize))
+	p := membuf.NewPool(membuf.WithBlockNum(0), membuf.WithBlockSize(b.blockSize))
 	ret := &Writer{
 		rc: &rangePropertiesCollector{
 			props:        make([]*rangeProperty, 0, 1024),
@@ -214,7 +214,7 @@ func (b *WriterBuilder) BuildOneFile(
 	writerID string,
 ) *OneFileWriter {
 	filenamePrefix := filepath.Join(prefix, writerID)
-	p := membuf.NewPool(membuf.WithPoolSize(0), membuf.WithBlockSize(b.blockSize))
+	p := membuf.NewPool(membuf.WithBlockNum(0), membuf.WithBlockSize(b.blockSize))
 
 	ret := &OneFileWriter{
 		rc: &rangePropertiesCollector{
@@ -339,9 +339,9 @@ func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tid
 		}
 	}
 	binary.BigEndian.AppendUint64(dataBuf[:0], uint64(encodedKeyLen))
-	keyAdapter.Encode(dataBuf[lengthBytes:lengthBytes:lengthBytes+encodedKeyLen], idxKey, rowID)
-	binary.BigEndian.AppendUint64(dataBuf[lengthBytes+encodedKeyLen:lengthBytes+encodedKeyLen], uint64(len(idxVal)))
-	copy(dataBuf[lengthBytes*2+encodedKeyLen:], idxVal)
+	binary.BigEndian.AppendUint64(dataBuf[:lengthBytes], uint64(len(idxVal)))
+	keyAdapter.Encode(dataBuf[2*lengthBytes:2*lengthBytes:2*lengthBytes+encodedKeyLen], idxKey, rowID)
+	copy(dataBuf[2*lengthBytes+encodedKeyLen:], idxVal)
 
 	w.kvLocations = append(w.kvLocations, loc)
 	w.kvSize += int64(encodedKeyLen + len(idxVal))
@@ -372,12 +372,10 @@ func (w *Writer) Close(ctx context.Context) error {
 
 	logutil.Logger(ctx).Info("close writer",
 		zap.String("writerID", w.writerID),
-		zap.Int("kv-cnt-cap", cap(w.kvLocations)),
 		zap.String("minKey", hex.EncodeToString(w.minKey)),
 		zap.String("maxKey", hex.EncodeToString(w.maxKey)))
 
 	w.kvLocations = nil
-
 	w.onClose(&WriterSummary{
 		WriterID:           w.writerID,
 		Seq:                w.currentSeq,
@@ -513,7 +511,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 func (w *Writer) getKeyByLoc(loc membuf.SliceLocation) []byte {
 	block := w.kvBuffer.GetSlice(loc)
 	keyLen := binary.BigEndian.Uint64(block[:lengthBytes])
-	return block[lengthBytes : lengthBytes+keyLen]
+	return block[2*lengthBytes : 2*lengthBytes+keyLen]
 }
 
 func (w *Writer) createStorageWriter(ctx context.Context) (

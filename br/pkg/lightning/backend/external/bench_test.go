@@ -350,6 +350,7 @@ func createEvenlyDistributedFiles(
 	kvCnt := 0
 	for i := 0; i < fileCount; i++ {
 		builder := NewWriterBuilder().
+			SetBlockSize(10 * 1024 * 1024).
 			SetMemorySizeLimit(uint64(float64(fileSize) * 1.1))
 		writer := builder.Build(
 			store,

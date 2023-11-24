@@ -366,7 +366,7 @@ func NewMergeKVIter(
 	readerOpeners := make([]readerOpenerFn[*kvPair, kvReaderProxy], 0, len(paths))
 	largeBufSize := ConcurrentReaderBufferSizePerConc * ConcurrentReaderConcurrency
 	memPool := membuf.NewPool(
-		membuf.WithPoolSize(1), // currently only one reader will become hotspot
+		membuf.WithBlockNum(1), // currently only one reader will become hotspot
 		membuf.WithBlockSize(largeBufSize),
 		membuf.WithLargeAllocThreshold(largeBufSize),
 	)
