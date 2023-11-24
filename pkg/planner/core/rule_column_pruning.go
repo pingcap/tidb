@@ -216,7 +216,7 @@ func pruneByItems(p LogicalPlan, old []*util.ByItems, opt *logicalOptimizeOp) (b
 	seen := make(map[string]struct{}, len(old))
 	for _, byItem := range old {
 		pruned := true
-		hash := string(byItem.Expr.HashCode(nil))
+		hash := string(byItem.Expr.HashCode())
 		_, hashMatch := seen[hash]
 		seen[hash] = struct{}{}
 		cols := expression.ExtractColumns(byItem.Expr)

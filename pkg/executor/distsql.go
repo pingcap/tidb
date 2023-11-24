@@ -151,7 +151,7 @@ func closeAll(objs ...Closeable) error {
 func rebuildIndexRanges(ctx sessionctx.Context, is *plannercore.PhysicalIndexScan, idxCols []*expression.Column, colLens []int) (ranges []*ranger.Range, err error) {
 	access := make([]expression.Expression, 0, len(is.AccessCondition))
 	for _, cond := range is.AccessCondition {
-		newCond, err1 := expression.SubstituteCorCol2Constant(cond)
+		newCond, err1 := expression.SubstituteCorCol2Constant(ctx, cond)
 		if err1 != nil {
 			return nil, err1
 		}

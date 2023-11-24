@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -109,6 +110,33 @@ func (ctx *OperatorCtx) OperatorErr() error {
 		return nil
 	}
 	return *err
+}
+
+func getWriterMemSize(idxNum int) (uint64, error) {
+	failpoint.Inject("mockWriterMemSize", func() {
+		failpoint.Return(1*size.GB, nil)
+	})
+	_, writerCnt := expectedIngestWorkerCnt()
+	memTotal, err := memory.MemTotal()
+	if err != nil {
+		return 0, err
+	}
+	memUsed, err := memory.MemUsed()
+	if err != nil {
+		return 0, err
+	}
+	memAvailable := memTotal - memUsed
+	memSize := (memAvailable / 2) / uint64(writerCnt) / uint64(idxNum)
+	logutil.BgLogger().Info("build operators that write index to cloud storage", zap.Uint64("memory total", memTotal), zap.Uint64("memory used", memUsed), zap.Uint64("memory size", memSize))
+	return memSize, nil
+}
+
+func getMergeSortPartSize(concurrency int, idxNum int) (uint64, error) {
+	writerMemSize, err := getWriterMemSize(idxNum)
+	if err != nil {
+		return 0, nil
+	}
+	return writerMemSize / uint64(concurrency) / 10, nil
 }
 
 // NewAddIndexIngestPipeline creates a pipeline for adding index in ingest mode.
@@ -199,11 +227,10 @@ func NewWriteIndexToExternalStoragePipeline(
 		return nil, err
 	}
 
-	memTotal, err := memory.MemTotal()
+	memSize, err := getWriterMemSize(len(indexes))
 	if err != nil {
 		return nil, err
 	}
-	memSize := (memTotal / 2) / uint64(writerCnt) / uint64(len(indexes))
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
