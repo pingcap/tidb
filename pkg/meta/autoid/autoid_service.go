@@ -44,6 +44,7 @@ type singlePointAlloc struct {
 	keyspaceID uint32
 }
 
+// ClientDiscover is used to get the AutoIDAllocClient, it creates the grpc connection with autoid service leader.
 type ClientDiscover struct {
 	// This the etcd client for service discover
 	etcdCli *clientv3.Client
@@ -61,12 +62,14 @@ const (
 	autoIDLeaderPath = "tidb/autoid/leader"
 )
 
+// NewClientDiscover creates a ClientDiscover object.
 func NewClientDiscover(etcdCli *clientv3.Client) *ClientDiscover {
 	return &ClientDiscover{
 		etcdCli: etcdCli,
 	}
 }
 
+// GetClient gets the AutoIDAllocClient.
 func (d *ClientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClient, error) {
 	d.mu.RLock()
 	cli := d.mu.AutoIDAllocClient
@@ -163,17 +166,19 @@ retry:
 
 const backoffDuration = 200 * time.Millisecond
 
-func (sp *ClientDiscover) ResetConn(reason error) {
+// ResetConn reset the AutoIDAllocClient and underlying grpc connection.
+// The next GetClient() call will recreate the client connecting to the correct leader by querying etcd.
+func (d *ClientDiscover) ResetConn(reason error) {
 	if reason != nil {
 		logutil.BgLogger().Info("reset grpc connection", zap.String("category", "autoid client"),
 			zap.String("reason", reason.Error()))
 	}
 	var grpcConn *grpc.ClientConn
-	sp.mu.Lock()
-	grpcConn = sp.mu.ClientConn
-	sp.mu.AutoIDAllocClient = nil
-	sp.mu.ClientConn = nil
-	sp.mu.Unlock()
+	d.mu.Lock()
+	grpcConn = d.mu.ClientConn
+	d.mu.AutoIDAllocClient = nil
+	d.mu.ClientConn = nil
+	d.mu.Unlock()
 	// Close grpc.ClientConn to release resource.
 	if grpcConn != nil {
 		err := grpcConn.Close()
