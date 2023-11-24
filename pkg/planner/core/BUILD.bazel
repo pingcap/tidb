@@ -231,7 +231,6 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/domain",
-        "//pkg/errno",
         "//pkg/expression",
         "//pkg/expression/aggregation",
         "//pkg/infoschema",
