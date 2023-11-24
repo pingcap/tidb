@@ -204,6 +204,7 @@ type RestoreConfig struct {
 	VolumeIOPS          int64                 `json:"volume-iops" toml:"volume-iops"`
 	VolumeThroughput    int64                 `json:"volume-throughput" toml:"volume-throughput"`
 	VolumeScope         int64                 `json:"volume-scope" toml:"volume-scope"`
+	VolumeEncrypted     bool                  `json:"volume-encrypted" toml:"volume-encrypted"`
 	ProgressFile        string                `json:"progress-file" toml:"progress-file"`
 	TargetAZ            string                `json:"target-az" toml:"target-az"`
 	UseFSR              bool                  `json:"use-fsr" toml:"use-fsr"`
@@ -355,6 +356,9 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 			return errors.Trace(err)
 		}
 		if cfg.VolumeScope, err = flags.GetInt64(flagVolumeScope); err != nil {
+			return errors.Trace(err)
+		}
+		if cfg.VolumeEncrypted, err = flags.GetBool(flagVolumeEncrypted); err != nil {
 			return errors.Trace(err)
 		}
 

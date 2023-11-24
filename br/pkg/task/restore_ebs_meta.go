@@ -42,6 +42,7 @@ const (
 	flagVolumeIOPS       = "volume-iops"
 	flagVolumeThroughput = "volume-throughput"
 	flagVolumeScope      = "volume-scope"
+	flagVolumeEncrypted  = "volume-encrypted"
 	flagTargetAZ         = "target-az"
 )
 
@@ -55,6 +56,7 @@ func DefineRestoreSnapshotFlags(command *cobra.Command) {
 	command.Flags().String(flagVolumeType, string(config.GP3Volume), "volume type: gp3, io1, io2")
 	command.Flags().Int64(flagVolumeIOPS, 0, "volume iops(0 means default for that volume type)")
 	command.Flags().Int64(flagVolumeThroughput, 0, "volume throughout in MiB/s(0 means default for that volume type)")
+	command.Flags().Bool(flagVolumeEncrypted, false, "whether encryption is enabled for the volume")
 	command.Flags().String(flagProgressFile, "progress.txt", "the file name of progress file")
 	command.Flags().String(flagTargetAZ, "", "the target AZ for restored volumes")
 	command.Flags().Int64(flagVolumeScope, 0, "volume scope to create, 0 stands for all volumes, 1 stands for data volumes only, and 2 stands for non data volumes only")
@@ -67,6 +69,7 @@ func DefineRestoreSnapshotFlags(command *cobra.Command) {
 	_ = command.Flags().MarkHidden(flagVolumeType)
 	_ = command.Flags().MarkHidden(flagVolumeIOPS)
 	_ = command.Flags().MarkHidden(flagVolumeThroughput)
+	_ = command.Flags().MarkHidden(flagVolumeEncrypted)
 	_ = command.Flags().MarkHidden(flagProgressFile)
 	_ = command.Flags().MarkHidden(flagTargetAZ)
 	_ = command.Flags().MarkHidden(flagVolumeScope)
@@ -259,7 +262,7 @@ func (h *restoreEBSMetaHelper) restoreVolumes(progress glue.Progress) (map[strin
 	}
 
 	volumeIDMap, err = ec2Session.CreateVolumes(h.metaInfo,
-		string(h.cfg.VolumeType), h.cfg.VolumeIOPS, h.cfg.VolumeThroughput, h.cfg.TargetAZ, h.cfg.VolumeScope)
+		string(h.cfg.VolumeType), h.cfg.VolumeIOPS, h.cfg.VolumeThroughput, h.cfg.VolumeEncrypted, h.cfg.TargetAZ, h.cfg.VolumeScope)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}

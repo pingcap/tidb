@@ -555,7 +555,7 @@ func fetchTargetSnapshots(meta *config.EBSBasedBRMeta, specifiedAZ string) map[s
 // CreateVolumes create volumes from snapshots
 // if err happens in the middle, return half-done result
 // returned map: store id -> old volume id -> new volume id
-func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType string, iops, throughput int64, targetAZ string, volumeScope int64) (map[string]string, error) {
+func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType string, iops, throughput int64, encrypted bool, targetAZ string, volumeScope int64) (map[string]string, error) {
 	template := ec2.CreateVolumeInput{
 		VolumeType: &volumeType,
 	}
@@ -565,6 +565,7 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 	if throughput > 0 {
 		template.SetThroughput(throughput)
 	}
+	template.Encrypted = &encrypted
 
 	newVolumeIDMap := make(map[string]string)
 	var mutex sync.Mutex
