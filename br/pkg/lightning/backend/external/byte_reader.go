@@ -29,7 +29,7 @@ var (
 	// concurrency.
 	ConcurrentReaderBufferSizePerConc = 4 * 1024 * 1024
 	// ConcurrentReaderConcurrency is the concurrency for concurrent reader.
-	ConcurrentReaderConcurrency = 8
+	ConcurrentReaderConcurrency = 16
 )
 
 // byteReader provides structured reading on a byte stream of external storage.
