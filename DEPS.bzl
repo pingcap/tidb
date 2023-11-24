@@ -3488,6 +3488,10 @@ def go_deps():
         name = "com_github_grpc_ecosystem_grpc_gateway_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/grpc-ecosystem/grpc-gateway/v2",
+                patch_args = ["-p1"],
+        patches = [
+            "//build/patches:com_github_grpc_ecosystem_grpc_gateway_v2.patch",
+        ],
         sha256 = "12995bc9a8d7a18ff3fb7fe3575dd2d9b7447d2f2749f0dbd99ef2efbaf9a6e2",
         strip_prefix = "github.com/grpc-ecosystem/grpc-gateway/v2@v2.16.0",
         urls = [
