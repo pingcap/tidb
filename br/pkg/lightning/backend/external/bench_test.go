@@ -261,7 +261,7 @@ type readTestSuite struct {
 
 func readFileSequential(s *readTestSuite) {
 	ctx := context.Background()
-	files, _, err := GetAllFileNames(ctx, s.store, s.subDir)
+	files, _, err := GetAllFileNames(ctx, s.store, "/"+s.subDir)
 	intest.AssertNoError(err)
 
 	buf := make([]byte, s.memoryLimit)
@@ -291,7 +291,7 @@ func readFileSequential(s *readTestSuite) {
 
 func readFileConcurrently(s *readTestSuite) {
 	ctx := context.Background()
-	files, _, err := GetAllFileNames(ctx, s.store, s.subDir)
+	files, _, err := GetAllFileNames(ctx, s.store, "/"+s.subDir)
 	intest.AssertNoError(err)
 
 	conc := min(s.concurrency, len(files))
@@ -337,7 +337,7 @@ func createEvenlyDistributedFiles(
 	store := openTestingStorage(t)
 	ctx := context.Background()
 
-	files, statFiles, err := GetAllFileNames(ctx, store, subDir)
+	files, statFiles, err := GetAllFileNames(ctx, store, "/"+subDir)
 	intest.AssertNoError(err)
 	err = store.DeleteFiles(ctx, files)
 	intest.AssertNoError(err)
@@ -352,7 +352,7 @@ func createEvenlyDistributedFiles(
 			SetMemorySizeLimit(uint64(float64(fileSize) * 1.1))
 		writer := builder.Build(
 			store,
-			subDir,
+			"/"+subDir,
 			fmt.Sprintf("%d", i),
 		)
 
@@ -374,7 +374,7 @@ func createEvenlyDistributedFiles(
 
 func readMergeIter(s *readTestSuite) {
 	ctx := context.Background()
-	files, _, err := GetAllFileNames(ctx, s.store, s.subDir)
+	files, _, err := GetAllFileNames(ctx, s.store, "/"+s.subDir)
 	intest.AssertNoError(err)
 
 	if s.beforeCreateReader != nil {
@@ -477,7 +477,7 @@ func createAscendingFiles(
 	store := openTestingStorage(t)
 	ctx := context.Background()
 
-	files, statFiles, err := GetAllFileNames(ctx, store, subDir)
+	files, statFiles, err := GetAllFileNames(ctx, store, "/"+subDir)
 	intest.Assert(err == nil)
 	err = store.DeleteFiles(ctx, files)
 	intest.Assert(err == nil)
@@ -492,7 +492,7 @@ func createAscendingFiles(
 			SetMemorySizeLimit(uint64(float64(fileSize) * 1.1))
 		writer := builder.Build(
 			store,
-			subDir,
+			"/"+subDir,
 			fmt.Sprintf("%d", i),
 		)
 
