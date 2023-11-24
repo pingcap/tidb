@@ -58,6 +58,14 @@ type TableRestore struct {
 	alloc     autoid.Allocators
 	logger    log.Logger
 	kvStore   tidbkv.Storage
+<<<<<<< HEAD:br/pkg/lightning/restore/table_restore.go
+=======
+	etcdCli   *clientv3.Client
+	autoidCli *autoid.ClientDiscover
+
+	// dupIgnoreRows tracks the rowIDs of rows that are duplicated and should be ignored.
+	dupIgnoreRows extsort.ExternalSorter
+>>>>>>> 8eb191303ac (*: fix grpc client leak bug for AUTO_ID_CACHE=1 tables (#48870)):br/pkg/lightning/importer/table_import.go
 
 	ignoreColumns map[string]struct{}
 }
@@ -77,6 +85,7 @@ func NewTableRestore(
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", tableName)
 	}
+	autoidCli := autoid.NewClientDiscover(etcdCli)
 
 	return &TableRestore{
 		tableName:     tableName,
@@ -86,6 +95,11 @@ func NewTableRestore(
 		encTable:      tbl,
 		alloc:         idAlloc,
 		kvStore:       kvStore,
+<<<<<<< HEAD:br/pkg/lightning/restore/table_restore.go
+=======
+		etcdCli:       etcdCli,
+		autoidCli:     autoidCli,
+>>>>>>> 8eb191303ac (*: fix grpc client leak bug for AUTO_ID_CACHE=1 tables (#48870)):br/pkg/lightning/importer/table_import.go
 		logger:        logger.With(zap.String("table", tableName)),
 		ignoreColumns: ignoreColumns,
 	}, nil
@@ -146,7 +160,25 @@ func (tr *TableRestore) populateChunks(ctx context.Context, rc *Controller, cp *
 	return err
 }
 
+<<<<<<< HEAD:br/pkg/lightning/restore/table_restore.go
 func (tr *TableRestore) RebaseChunkRowIDs(cp *checkpoints.TableCheckpoint, rowIDBase int64) {
+=======
+// AutoIDRequirement implements autoid.Requirement.
+var _ autoid.Requirement = &TableImporter{}
+
+// Store implements the autoid.Requirement interface.
+func (tr *TableImporter) Store() tidbkv.Storage {
+	return tr.kvStore
+}
+
+// AutoIDClient implements the autoid.Requirement interface.
+func (tr *TableImporter) AutoIDClient() *autoid.ClientDiscover {
+	return tr.autoidCli
+}
+
+// RebaseChunkRowIDs rebase the row id of the chunks.
+func (*TableImporter) RebaseChunkRowIDs(cp *checkpoints.TableCheckpoint, rowIDBase int64) {
+>>>>>>> 8eb191303ac (*: fix grpc client leak bug for AUTO_ID_CACHE=1 tables (#48870)):br/pkg/lightning/importer/table_import.go
 	if rowIDBase == 0 {
 		return
 	}

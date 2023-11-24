@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	tikvutil "github.com/tikv/client-go/v2/util"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -575,6 +574,7 @@ func newSinglePointAlloc(store kv.Storage, dbID, tblID int64, isUnsigned bool) *
 		tblID:      tblID,
 		isUnsigned: isUnsigned,
 	}
+<<<<<<< HEAD:meta/autoid/autoid.go
 	if len(addrs) > 0 {
 		etcdCli, err := clientv3.New(clientv3.Config{
 			Endpoints:        addrs,
@@ -589,6 +589,14 @@ func newSinglePointAlloc(store kv.Storage, dbID, tblID int64, isUnsigned bool) *
 	} else {
 		spa.clientDiscover = clientDiscover{}
 		spa.mu.AutoIDAllocClient = autoid.MockForTest(store)
+=======
+	if r.AutoIDClient() == nil {
+		// Only for test in mockstore
+		spa.ClientDiscover = &ClientDiscover{}
+		spa.mu.AutoIDAllocClient = MockForTest(r.Store())
+	} else {
+		spa.ClientDiscover = r.AutoIDClient()
+>>>>>>> 8eb191303ac (*: fix grpc client leak bug for AUTO_ID_CACHE=1 tables (#48870)):pkg/meta/autoid/autoid.go
 	}
 
 	// mockAutoIDChange failpoint is not implemented in this allocator, so fallback to use the default one.
@@ -600,6 +608,15 @@ func newSinglePointAlloc(store kv.Storage, dbID, tblID int64, isUnsigned bool) *
 	return spa
 }
 
+<<<<<<< HEAD:meta/autoid/autoid.go
+=======
+// Requirement is the parameter required by NewAllocator
+type Requirement interface {
+	Store() kv.Storage
+	AutoIDClient() *ClientDiscover
+}
+
+>>>>>>> 8eb191303ac (*: fix grpc client leak bug for AUTO_ID_CACHE=1 tables (#48870)):pkg/meta/autoid/autoid.go
 // NewAllocator returns a new auto increment id generator on the store.
 func NewAllocator(store kv.Storage, dbID, tbID int64, isUnsigned bool,
 	allocType AllocatorType, opts ...AllocOption) Allocator {

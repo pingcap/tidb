@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+<<<<<<< HEAD:ddl/column.go
 	"github.com/pingcap/tidb/config"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/expression"
@@ -50,6 +51,34 @@ import (
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/prometheus/client_golang/prometheus"
+=======
+	"github.com/pingcap/tidb/pkg/config"
+	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
+	"github.com/pingcap/tidb/pkg/util/rowcodec"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	kvutil "github.com/tikv/client-go/v2/util"
+>>>>>>> 8eb191303ac (*: fix grpc client leak bug for AUTO_ID_CACHE=1 tables (#48870)):pkg/ddl/column.go
 	"go.uber.org/zap"
 )
 
@@ -1603,6 +1632,21 @@ func checkNewAutoRandomBits(idAccessors meta.AutoIDAccessors, oldCol *model.Colu
 	return nil
 }
 
+<<<<<<< HEAD:ddl/column.go
+=======
+type asAutoIDRequirement ddlCtx
+
+var _ autoid.Requirement = &asAutoIDRequirement{}
+
+func (r *asAutoIDRequirement) Store() kv.Storage {
+	return r.store
+}
+
+func (r *asAutoIDRequirement) AutoIDClient() *autoid.ClientDiscover {
+	return r.autoidCli
+}
+
+>>>>>>> 8eb191303ac (*: fix grpc client leak bug for AUTO_ID_CACHE=1 tables (#48870)):pkg/ddl/column.go
 // applyNewAutoRandomBits set auto_random bits to TableInfo and
 // migrate auto_increment ID to auto_random ID if possible.
 func applyNewAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo,
