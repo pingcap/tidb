@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	tidbutil "github.com/pingcap/tidb/util"
@@ -841,6 +842,17 @@ func (ds *DataSource) isPointGetConvertableSchema() bool {
 	return true
 }
 
+// exploreEnforcedPlan determines whether to explore enforced plans for this DataSource if it has already found an unenforced plan.
+// See #46177 for more information.
+func (ds *DataSource) exploreEnforcedPlan() bool {
+	// default value is false to keep it compatible with previous versions.
+	fixValue, ok := ds.ctx.GetSessionVars().GetOptimizerFixControlValue(variable.TiDBOptFixControl46177)
+	if !ok {
+		return false
+	}
+	return variable.TiDBOptOn(fixValue)
+}
+
 // findBestTask implements the PhysicalPlan interface.
 // It will enumerate all the available indices and choose a plan with least cost.
 func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (t task, cntPlan int64, err error) {
@@ -881,23 +893,25 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		return
 	}
 	var cnt int64
+	var unenforcedTask task
 	// If prop.CanAddEnforcer is true, the prop.SortItems need to be set nil for ds.findBestTask.
 	// Before function return, reset it for enforcing task prop and storing map<prop,task>.
 	oldProp := prop.CloneEssentialFields()
 	if prop.CanAddEnforcer {
 		// First, get the bestTask without enforced prop
 		prop.CanAddEnforcer = false
-		t, cnt, err = ds.findBestTask(prop, planCounter, opt)
+		unenforcedTask, cnt, err = ds.findBestTask(prop, planCounter, opt)
 		if err != nil {
 			return nil, 0, err
 		}
-		prop.CanAddEnforcer = true
-		if t != invalidTask {
-			ds.storeTask(prop, t)
-			cntPlan = cnt
-			return
+		if !unenforcedTask.invalid() && !ds.exploreEnforcedPlan() {
+			ds.storeTask(prop, unenforcedTask)
+			return unenforcedTask, cnt, nil
 		}
-		// Next, get the bestTask with enforced prop
+
+		// Then, explore the bestTask with enforced prop
+		prop.CanAddEnforcer = true
+		cntPlan += cnt
 		prop.SortItems = []property.SortItem{}
 		prop.MPPPartitionTp = property.AnyType
 	} else if prop.MPPPartitionTp != property.AnyType {
@@ -912,6 +926,18 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			t = enforceProperty(prop, t, ds.basePlan.ctx)
 			prop.CanAddEnforcer = true
 		}
+
+		if unenforcedTask != nil && !unenforcedTask.invalid() {
+			curIsBest, cerr := compareTaskCost(ds.SCtx(), unenforcedTask, t, opt)
+			if cerr != nil {
+				err = cerr
+				return
+			}
+			if curIsBest {
+				t = unenforcedTask
+			}
+		}
+
 		ds.storeTask(prop, t)
 		err = validateTableSamplePlan(ds, t, err)
 	}()
