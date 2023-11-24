@@ -145,7 +145,6 @@ func MergePartTopN2GlobalTopN(
 	isIndex bool,
 	killer *sqlkiller.SQLKiller,
 ) (*statistics.TopN, []statistics.TopNMeta, []*statistics.Histogram, error) {
-
 	partNum := len(topNs)
 	// Different TopN structures may hold the same value, we have to merge them.
 	counter := make(map[hack.MutableString]float64)
