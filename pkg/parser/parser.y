@@ -13822,6 +13822,19 @@ CreateBindingStmt:
 
 		$$ = x
 	}
+	"CREATE" GlobalScope "BINDING" "USING" BindableStmt
+	{
+		startOffset = parser.startOffset(&yyS[yypt])
+		hintedStmt := $5
+		hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+
+		x := &ast.CreateBindingStmt{
+			HintedNode:  hintedStmt,
+			GlobalScope: $2.(bool),
+		}
+
+		$$ = x
+	}
 |	"CREATE" GlobalScope "BINDING" "FROM" "HISTORY" "USING" "PLAN" "DIGEST" stringLit
 	{
 		x := &ast.CreateBindingStmt{
