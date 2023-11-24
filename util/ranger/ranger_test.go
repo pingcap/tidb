@@ -1401,7 +1401,7 @@ create table t(
 			indexPos:    0,
 			exprStr:     `a LIKE 'abc%'`,
 			accessConds: `[like(test.t.a, abc%, 92)]`,
-			filterConds: "[]",
+			filterConds: "[like(test.t.a, abc%, 92)]",
 			resultStr:   "[[\"abc\",\"abd\")]",
 		},
 		{
@@ -1415,14 +1415,14 @@ create table t(
 			indexPos:    0,
 			exprStr:     "a LIKE 'abc'",
 			accessConds: "[like(test.t.a, abc, 92)]",
-			filterConds: "[]",
+			filterConds: "[like(test.t.a, abc, 92)]",
 			resultStr:   "[[\"abc\",\"abc\"]]",
 		},
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE "ab\_c"`,
 			accessConds: "[like(test.t.a, ab\\_c, 92)]",
-			filterConds: "[]",
+			filterConds: "[like(test.t.a, ab\\_c, 92)]",
 			resultStr:   "[[\"ab_c\",\"ab_c\"]]",
 		},
 		{
@@ -1436,22 +1436,32 @@ create table t(
 			indexPos:    0,
 			exprStr:     `a LIKE '\%a'`,
 			accessConds: "[like(test.t.a, \\%a, 92)]",
-			filterConds: "[]",
+			filterConds: "[like(test.t.a, \\%a, 92)]",
 			resultStr:   `[["%a","%a"]]`,
 		},
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE "\\"`,
 			accessConds: "[like(test.t.a, \\, 92)]",
+<<<<<<< HEAD:util/ranger/ranger_test.go
 			filterConds: "[]",
 			resultStr:   "[[\"\\\",\"\\\"]]",
+=======
+			filterConds: "[like(test.t.a, \\, 92)]",
+			resultStr:   "[[\"\\\\\",\"\\\\\"]]",
+>>>>>>> 27d2ba5fdfb (util/ranger: add missing `Selection` for range scan from `like` on PAD SPACE column (#48845)):pkg/util/ranger/ranger_test.go
 		},
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE "\\\\a%"`,
 			accessConds: `[like(test.t.a, \\a%, 92)]`,
+<<<<<<< HEAD:util/ranger/ranger_test.go
 			filterConds: "[]",
 			resultStr:   "[[\"\\a\",\"\\b\")]",
+=======
+			filterConds: "[like(test.t.a, \\\\a%, 92)]",
+			resultStr:   "[[\"\\\\a\",\"\\\\b\")]",
+>>>>>>> 27d2ba5fdfb (util/ranger: add missing `Selection` for range scan from `like` on PAD SPACE column (#48845)):pkg/util/ranger/ranger_test.go
 		},
 		{
 			indexPos:    0,
