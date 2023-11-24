@@ -414,13 +414,6 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
 		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable,
 		model.ActionModifyTableAutoIdCache, model.ActionAlterIndexVisibility,
-<<<<<<< HEAD:ddl/rollingback.go
-		model.ActionModifySchemaDefaultPlacement,
-		model.ActionRecoverSchema:
-		ver, err = cancelOnlyNotHandledJob(job, model.StateNone)
-	case model.ActionMultiSchemaChange:
-		err = rollingBackMultiSchemaChange(job)
-=======
 		model.ActionModifySchemaDefaultPlacement, model.ActionRecoverSchema:
 		ver, err = cancelOnlyNotHandledJob(job, model.StateNone)
 	case model.ActionMultiSchemaChange:
@@ -431,7 +424,6 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingBackDropConstraint(t, job)
 	case model.ActionAlterCheckConstraint:
 		ver, err = rollingBackAlterConstraint(d, t, job)
->>>>>>> 14ff60dca07 (ddl: fix create and alter check constraints problems (#47633)):pkg/ddl/rollingback.go
 	default:
 		job.State = model.JobStateCancelled
 		err = dbterror.ErrCancelledDDLJob
@@ -477,8 +469,6 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 
 	return
 }
-<<<<<<< HEAD:ddl/rollingback.go
-=======
 
 func rollingBackAddConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	_, tblInfo, constrInfoInMeta, _, err := checkAddCheckConstraint(t, job)
@@ -541,4 +531,3 @@ func rollingBackAlterConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true)
 	return ver, errors.Trace(err)
 }
->>>>>>> 14ff60dca07 (ddl: fix create and alter check constraints problems (#47633)):pkg/ddl/rollingback.go
