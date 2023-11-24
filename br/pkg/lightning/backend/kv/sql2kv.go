@@ -115,7 +115,7 @@ func CollectGeneratedColumns(se *Session, meta *model.TableInfo, cols []*table.C
 	var genCols []GeneratedCol
 	for i, col := range cols {
 		if col.GeneratedExpr != nil {
-			expr, err := expression.RewriteAstExpr(se, col.GeneratedExpr, schema, names, true)
+			expr, err := expression.RewriteAstExpr(se, col.GeneratedExpr.Clone(), schema, names, true)
 			if err != nil {
 				return nil, err
 			}
