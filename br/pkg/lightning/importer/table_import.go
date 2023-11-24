@@ -331,7 +331,7 @@ func (tr *TableImporter) Store() tidbkv.Storage {
 	return tr.kvStore
 }
 
-// GetEtcdClient implements the autoid.Requirement interface.
+// AutoIDClient implements the autoid.Requirement interface.
 func (tr *TableImporter) AutoIDClient() *autoid.ClientDiscover {
 	return tr.autoidCli
 }
