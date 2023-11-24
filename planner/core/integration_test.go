@@ -8367,7 +8367,7 @@ func TestIssue46177(t *testing.T) {
 )`)
 
 	// cannot choose the best plan with RangeScan.
-	tk.MustExec(`set @@tidb_opt_fix_control = '46177:off'`)
+	tk.MustExec(`set @@tidb_opt_fix_control = '46177:OFF'`)
 	tk.MustQuery(`explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a`).Check(testkit.Rows(
 		`Projection 10.00 root  Column#6`,
 		`└─Window 10.00 root  row_number()->Column#6 over(order by test.sbtest.k rows between current row and current row)`,
@@ -8375,7 +8375,7 @@ func TestIssue46177(t *testing.T) {
 		`    └─Selection 10.00 cop[tikv]  lt(test.sbtest.id, 10)`,
 		`      └─IndexFullScan 10000.00 cop[tikv] table:sbtest, index:k(k) keep order:true, stats:pseudo`))
 
-	tk.MustExec(`set @@tidb_opt_fix_control = '46177:on'`)
+	tk.MustExec(`set @@tidb_opt_fix_control = '46177:ON'`)
 	tk.MustQuery(`explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a`).Check(testkit.Rows(
 		`Projection 10.00 root  Column#6`,
 		`└─Window 10.00 root  row_number()->Column#6 over(order by test.sbtest.k rows between current row and current row)`,
@@ -8384,7 +8384,7 @@ func TestIssue46177(t *testing.T) {
 		`      └─TableRangeScan 10.00 cop[tikv] table:sbtest range:[0,10), keep order:false, stats:pseudo`))
 
 	// cannot choose the range scan plan.
-	tk.MustExec(`set @@tidb_opt_fix_control = '46177:off'`)
+	tk.MustExec(`set @@tidb_opt_fix_control = '46177:OFF'`)
 	tk.MustQuery(`explain format='brief' select /*+ stream_agg() */ count(1) from sbtest where id<1 group by k`).Check(testkit.Rows(
 		`StreamAgg 1.00 root  group by:test.sbtest.k, funcs:count(Column#6)->Column#5`,
 		`└─IndexReader 1.00 root  index:StreamAgg`,
@@ -8392,7 +8392,7 @@ func TestIssue46177(t *testing.T) {
 		`    └─Selection 1.00 cop[tikv]  lt(test.sbtest.id, 1)`,
 		`      └─IndexFullScan 10000.00 cop[tikv] table:sbtest, index:k(k) keep order:true, stats:pseudo`))
 
-	tk.MustExec(`set @@tidb_opt_fix_control = '46177:on'`)
+	tk.MustExec(`set @@tidb_opt_fix_control = '46177:ON'`)
 	tk.MustQuery(`explain format='brief' select /*+ stream_agg() */ count(1) from sbtest where id<1 group by k`).Check(testkit.Rows(
 		`StreamAgg 1.00 root  group by:test.sbtest.k, funcs:count(1)->Column#5`,
 		`└─Sort 1.00 root  test.sbtest.k`,

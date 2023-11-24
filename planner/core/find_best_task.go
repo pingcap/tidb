@@ -847,7 +847,7 @@ func (ds *DataSource) isPointGetConvertableSchema() bool {
 func (ds *DataSource) exploreEnforcedPlan() bool {
 	// default value is false to keep it compatible with previous versions.
 	fixValue, ok := ds.ctx.GetSessionVars().GetOptimizerFixControlValue(variable.TiDBOptFixControl46177)
-	if ok {
+	if !ok {
 		return false
 	}
 	return variable.TiDBOptOn(fixValue)
