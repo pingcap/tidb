@@ -55,14 +55,13 @@ HashJoin	4166.67	root		left outer join, equal:[eq(explain_easy.t1.c2, explain_ea
 explain format = 'brief' update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A
-└─Point_Get	1.00	root	table:t1	handle:1, lock
+└─Point_Get	1.00	root	table:t1	handle:1
 explain format = 'brief' delete from t1 where t1.c2 = 1;
 id	estRows	task	access object	operator info
 Delete	N/A	root		N/A
-└─SelectLock	10.00	root		for update 0
-  └─IndexLookUp	10.00	root		
-    ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:pseudo
-    └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─IndexLookUp	10.00	root		
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	estRows	task	access object	operator info
 Projection	9990.00	root		Column#7
@@ -466,7 +465,7 @@ Projection	10000.00	root		or(<nil>, gt(explain_easy.t.a, 1))->Column#2
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select * from t where a = 1 for update;
 id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t	handle:1, lock
+Point_Get	1.00	root	table:t	handle:1
 drop table if exists ta, tb;
 create table ta (a varchar(20));
 create table tb (a varchar(20));
@@ -795,10 +794,9 @@ IndexLookUp	0.10	root
 explain format = 'brief' update t set c = 'ssss' where a=x'FA34E1093CB428485734E3917F000000' and b='xb';
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A
-└─SelectLock	0.10	root		for update 0
-  └─IndexLookUp	0.10	root		
-    ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:a(a, b)	range:[0xFA34E1093CB428485734E3917F000000 "xb",0xFA34E1093CB428485734E3917F000000 "xb"], keep order:false, stats:pseudo
-    └─TableRowIDScan(Probe)	0.10	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─IndexLookUp	0.10	root		
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:a(a, b)	range:[0xFA34E1093CB428485734E3917F000000 "xb",0xFA34E1093CB428485734E3917F000000 "xb"], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	0.10	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int, b int);
 explain format = 'brief' select (select count(n.a) from t) from t n;
@@ -862,7 +860,6 @@ drop table if exists t;
 create table t(a tinyint, b smallint, c mediumint, d int, e bigint);
 insert into mysql.opt_rule_blacklist VALUES("aggregation_push_down");
 admin reload opt_rule_blacklist;
-
 explain format = 'brief' select sum(t1.a) from t t1 join t t2 on t1.a=t2.a;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:sum(Column#14)->Column#13
@@ -976,5 +973,4 @@ StreamAgg	1.00	root		funcs:avg(Column#14)->Column#13
 drop table if exists t;
 delete from mysql.opt_rule_blacklist where name="aggregation_push_down";
 admin reload opt_rule_blacklist;
-
 set @@sql_mode = default;

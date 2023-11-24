@@ -38,8 +38,7 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"go.uber.org/zap"
 )
 
@@ -544,7 +543,7 @@ type RebaseCheckpointMerger struct {
 // MergeInto implements TableCheckpointMerger.MergeInto.
 func (merger *RebaseCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
 	cpd.hasRebase = true
-	cpd.allocBase = mathutil.Max(cpd.allocBase, merger.AllocBase)
+	cpd.allocBase = max(cpd.allocBase, merger.AllocBase)
 }
 
 // DestroyedTableCheckpoint is the checkpoint for a table that has been

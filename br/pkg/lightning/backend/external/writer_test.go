@@ -21,15 +21,19 @@ import (
 	"io"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/jfcg/sorty/v2"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	dbkv "github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/size"
+	dbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
 )
@@ -41,10 +45,12 @@ func TestWriter(t *testing.T) {
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
 
-	writer := NewWriterBuilder().
+	w := NewWriterBuilder().
 		SetPropSizeDistance(100).
 		SetPropKeysDistance(2).
 		Build(memStore, "/test", "0")
+
+	writer := NewEngineWriter(w)
 
 	kvCnt := rand.Intn(10) + 10
 	kvs := make([]common.KvPair, kvCnt)
@@ -58,12 +64,9 @@ func TestWriter(t *testing.T) {
 		_, err = rand.Read(kvs[i].Val)
 		require.NoError(t, err)
 	}
-	for _, pair := range kvs {
-		err := writer.WriteRow(ctx, pair.Key, pair.Val, nil)
-		require.NoError(t, err)
-	}
 
-	err := writer.Close(ctx)
+	require.NoError(t, writer.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvs)))
+	_, err := writer.Close(ctx)
 	require.NoError(t, err)
 
 	slices.SortFunc(kvs, func(i, j common.KvPair) int {
@@ -81,6 +84,7 @@ func TestWriter(t *testing.T) {
 	}
 	_, _, err = kvReader.nextKV()
 	require.Equal(t, io.EOF, err)
+	require.NoError(t, kvReader.Close())
 
 	statReader, err := newStatsReader(ctx, memStore, "/test/0_stat/0", bufSize)
 	require.NoError(t, err)
@@ -95,6 +99,7 @@ func TestWriter(t *testing.T) {
 		keyCnt += p.keys
 	}
 	require.Equal(t, uint64(kvCnt), keyCnt)
+	require.NoError(t, statReader.Close())
 }
 
 func TestWriterFlushMultiFileNames(t *testing.T) {
@@ -106,7 +111,8 @@ func TestWriterFlushMultiFileNames(t *testing.T) {
 
 	writer := NewWriterBuilder().
 		SetPropKeysDistance(2).
-		SetMemorySizeLimit(60).
+		SetMemorySizeLimit(3*(lengthBytes*2+20)).
+		SetBlockSize(3*(lengthBytes*2+20)).
 		Build(memStore, "/test", "0")
 
 	// 200 bytes key values.
@@ -169,7 +175,7 @@ func TestWriterDuplicateDetect(t *testing.T) {
 	require.NoError(t, err)
 
 	// test MergeOverlappingFiles will not change duplicate detection functionality.
-	err = MergeOverlappingFiles(
+	err = mergeOverlappingFilesImpl(
 		ctx,
 		[]string{"/test/0/0"},
 		memStore,
@@ -177,10 +183,12 @@ func TestWriterDuplicateDetect(t *testing.T) {
 		"/test2",
 		"mergeID",
 		1000,
+		1000,
 		8*1024,
 		1*size.MB,
 		2,
 		nil,
+		false,
 	)
 	require.NoError(t, err)
 
@@ -201,6 +209,7 @@ func TestWriterDuplicateDetect(t *testing.T) {
 	}
 	_, _, err = kvReader.nextKV()
 	require.Equal(t, io.EOF, err)
+	require.NoError(t, kvReader.Close())
 
 	dir := t.TempDir()
 	db, err := pebble.Open(path.Join(dir, "duplicate"), nil)
@@ -215,7 +224,9 @@ func TestWriterDuplicateDetect(t *testing.T) {
 		values:             values,
 		ts:                 123,
 	}
-	iter := data.NewIter(ctx, nil, nil)
+	pool := membuf.NewPool()
+	defer pool.Destroy()
+	iter := data.NewIter(ctx, nil, nil, pool)
 
 	for iter.First(); iter.Valid(); iter.Next() {
 	}
@@ -264,7 +275,8 @@ func TestWriterMultiFileStat(t *testing.T) {
 
 	writer := NewWriterBuilder().
 		SetPropKeysDistance(2).
-		SetMemorySizeLimit(20). // 2 KV pair will trigger flush
+		SetMemorySizeLimit(52).
+		SetBlockSize(52). // 2 KV pair will trigger flush
 		SetOnCloseFunc(closeFn).
 		Build(memStore, "/test", "0")
 
@@ -363,18 +375,20 @@ func TestWriterMultiFileStat(t *testing.T) {
 		allDataFiles[i] = fmt.Sprintf("/test/0/%d", i)
 	}
 
-	err = MergeOverlappingFiles(
+	err = mergeOverlappingFilesImpl(
 		ctx,
 		allDataFiles,
 		memStore,
 		100,
 		"/test2",
 		"mergeID",
-		20,
+		52,
+		52,
 		8*1024,
 		1*size.MB,
 		2,
 		closeFn,
+		true,
 	)
 	require.NoError(t, err)
 	require.Equal(t, 3, len(summary.MultipleFilesStats))
@@ -413,4 +427,41 @@ func TestWriterMultiFileStat(t *testing.T) {
 	require.Equal(t, expected, summary.MultipleFilesStats[2])
 	require.EqualValues(t, "key01", summary.Min)
 	require.EqualValues(t, "key24", summary.Max)
+}
+
+func TestWriterSort(t *testing.T) {
+	t.Skip("it only tests the performance of sorty")
+	commonPrefix := "abcabcabcabcabcabcabcabc"
+
+	kvs := make([]common.KvPair, 1000000)
+	for i := 0; i < 1000000; i++ {
+		kvs[i].Key = []byte(commonPrefix + strconv.Itoa(int(rand.Int31())))
+		kvs[i].Val = []byte(commonPrefix)
+	}
+
+	kvs2 := make([]common.KvPair, 1000000)
+	copy(kvs2, kvs)
+
+	ts := time.Now()
+	sorty.MaxGor = 8
+	sorty.Sort(len(kvs), func(i, j, r, s int) bool {
+		if bytes.Compare(kvs[i].Key, kvs[j].Key) < 0 { // strict comparator like < or >
+			if r != s {
+				kvs[r], kvs[s] = kvs[s], kvs[r]
+			}
+			return true
+		}
+		return false
+	})
+	println("thread quick sort", time.Since(ts).String())
+
+	ts = time.Now()
+	slices.SortFunc(kvs2, func(i, j common.KvPair) int {
+		return bytes.Compare(i.Key, j.Key)
+	})
+	println("quick sort", time.Since(ts).String())
+
+	for i := 0; i < 1000000; i++ {
+		require.True(t, bytes.Compare(kvs[i].Key, kvs2[i].Key) == 0)
+	}
 }

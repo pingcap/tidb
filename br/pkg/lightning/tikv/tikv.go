@@ -30,9 +30,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/version"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/tikv/client-go/v2/util"
+	pd "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
@@ -124,7 +125,7 @@ func ForAllStores(
 			Store Store
 		}
 	}
-	err := tls.GetJSON(ctx, "/pd/api/v1/stores", &stores)
+	err := tls.GetJSON(ctx, pd.Stores, &stores)
 	if err != nil {
 		return err
 	}

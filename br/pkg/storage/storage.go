@@ -7,13 +7,12 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/request"
-	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
@@ -31,6 +30,9 @@ const (
 	GetObject Permission = "GetObject"
 	// PutObject represents PutObject permission
 	PutObject Permission = "PutObject"
+	// PutAndDeleteObject represents PutAndDeleteObject permission
+	// we cannot check DeleteObject permission alone, so we use PutAndDeleteObject instead.
+	PutAndDeleteObject Permission = "PutAndDeleteObject"
 
 	DefaultRequestConcurrency uint = 128
 )
@@ -88,6 +90,16 @@ type Writer interface {
 
 type WriterOption struct {
 	Concurrency int
+	PartSize    int64
+}
+
+type ReaderOption struct {
+	// StartOffset is inclusive. And it's incompatible with Seek.
+	StartOffset *int64
+	// EndOffset is exclusive. And it's incompatible with Seek.
+	EndOffset *int64
+	// PrefetchSize will switch to NewPrefetchReader if value is positive.
+	PrefetchSize int
 }
 
 // ExternalStorage represents a kind of file system storage.
@@ -100,8 +112,11 @@ type ExternalStorage interface {
 	FileExists(ctx context.Context, name string) (bool, error)
 	// DeleteFile delete the file in storage
 	DeleteFile(ctx context.Context, name string) error
-	// Open a Reader by file path. path is relative path to storage base path
-	Open(ctx context.Context, path string) (ExternalFileReader, error)
+	// Open a Reader by file path. path is relative path to storage base path.
+	// Some implementation will use the given ctx as the inner context of the reader.
+	Open(ctx context.Context, path string, option *ReaderOption) (ExternalFileReader, error)
+	// DeleteFiles delete the files in storage
+	DeleteFiles(ctx context.Context, names []string) error
 	// WalkDir traverse all the files in a dir.
 	//
 	// fn is the function called for each regular file visited by WalkDir.
@@ -122,6 +137,8 @@ type ExternalStorage interface {
 // ExternalFileReader represents the streaming external file reader.
 type ExternalFileReader interface {
 	io.ReadSeekCloser
+	// GetFileSize returns the file size.
+	GetFileSize() (int64, error)
 }
 
 // ExternalFileWriter represents the streaming external file writer.
@@ -144,7 +161,9 @@ type ExternalStorageOptions struct {
 	NoCredentials bool
 
 	// HTTPClient to use. The created storage may ignore this field if it is not
-	// directly using HTTP (e.g. the local storage).
+	// directly using HTTP (e.g. the local storage) or use self-design HTTP client
+	// with credential (e.g. the gcs).
+	// NOTICE: the HTTPClient is only used by s3 storage and azure blob storage.
 	HTTPClient *http.Client
 
 	// CheckPermissions check the given permission in New() function.
@@ -170,6 +189,34 @@ func Create(ctx context.Context, backend *backuppb.StorageBackend, sendCreds boo
 	})
 }
 
+// NewWithDefaultOpt creates ExternalStorage with default options.
+func NewWithDefaultOpt(ctx context.Context, backend *backuppb.StorageBackend) (ExternalStorage, error) {
+	var opts ExternalStorageOptions
+	if intest.InTest {
+		opts.NoCredentials = true
+	}
+	return New(ctx, backend, &opts)
+}
+
+// NewFromURL creates an ExternalStorage from URL.
+func NewFromURL(ctx context.Context, uri string, opts *ExternalStorageOptions) (ExternalStorage, error) {
+	if len(uri) == 0 {
+		return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "empty store is not allowed")
+	}
+	u, err := ParseRawURL(uri)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if u.Scheme == "memstore" {
+		return NewMemStorage(), nil
+	}
+	b, err := parseBackend(u, uri, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return New(ctx, b, opts)
+}
+
 // New creates an ExternalStorage with options.
 func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalStorageOptions) (ExternalStorage, error) {
 	if opts == nil {
@@ -190,6 +237,9 @@ func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalSt
 		if backend.S3 == nil {
 			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "s3 config not found")
 		}
+		if backend.S3.Provider == ks3SDKProvider {
+			return NewKS3Storage(ctx, backend.S3, opts)
+		}
 		return NewS3Storage(ctx, backend.S3, opts)
 	case *backuppb.StorageBackend_Noop:
 		return newNoopStorage(), nil
@@ -197,6 +247,9 @@ func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalSt
 		if backend.Gcs == nil {
 			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "GCS config not found")
 		}
+		// the HTTPClient should has credential, currently the HTTPClient only has the http.Transport.
+		// Issue: https: //github.com/pingcap/tidb/issues/47022
+		opts.HTTPClient = nil
 		return NewGCSStorage(ctx, backend.Gcs, opts)
 	case *backuppb.StorageBackend_AzureBlobStorage:
 		return newAzureBlobStorage(ctx, backend.AzureBlobStorage, opts)
@@ -221,29 +274,19 @@ func CloneDefaultHttpTransport() (*http.Transport, bool) {
 	return transport.Clone(), ok
 }
 
-// GetMaxOffset returns the max offset of the file.
-func GetMaxOffset(ctx context.Context, storage ExternalStorage, name string) (n int64, err error) {
-	s3storage, ok := storage.(*S3Storage)
-	if !ok {
-		return 0, errors.New("only support s3 storage")
-	}
-	output, err := s3storage.svc.HeadObjectWithContext(ctx, &s3.HeadObjectInput{
-		Bucket: aws.String(s3storage.options.Bucket),
-		Key:    aws.String(s3storage.options.Prefix + name),
-	})
-	if err != nil {
-		return 0, err
-	}
-	return *output.ContentLength, nil
-}
-
 // ReadDataInRange reads data from storage in range [start, start+len(p)).
-func ReadDataInRange(ctx context.Context, storage ExternalStorage, name string, start int64, p []byte) (n int, err error) {
-	s3storage, ok := storage.(*S3Storage)
-	if !ok {
-		return 0, errors.New("only support s3 storage")
-	}
-	rd, _, err := s3storage.open(ctx, name, start, start+int64(len(p)))
+func ReadDataInRange(
+	ctx context.Context,
+	storage ExternalStorage,
+	name string,
+	start int64,
+	p []byte,
+) (n int, err error) {
+	end := start + int64(len(p))
+	rd, err := storage.Open(ctx, name, &ReaderOption{
+		StartOffset: &start,
+		EndOffset:   &end,
+	})
 	if err != nil {
 		return 0, err
 	}

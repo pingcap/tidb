@@ -32,8 +32,8 @@ WORKDIR /go/src/github.com/pingcap/tidb
 
 COPY go.mod .
 COPY go.sum .
-COPY parser/go.mod parser/go.mod
-COPY parser/go.sum parser/go.sum
+COPY pkg/parser/go.mod pkg/parser/go.mod
+COPY pkg/parser/go.sum pkg/parser/go.sum
 
 ARG GOPROXY
 RUN GO111MODULE=on GOPROXY=${GOPROXY} go mod download

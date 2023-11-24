@@ -50,14 +50,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/keyspace"
-	tidbkv "github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/engine"
-	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/pkg/keyspace"
+	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/engine"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 	"google.golang.org/grpc"
@@ -108,14 +108,14 @@ func TestNextKey(t *testing.T) {
 		{types.NewStringDatum("test\255"), types.NewStringDatum("test\255\000")},
 	}
 
-	stmtCtx := new(stmtctx.StatementContext)
+	stmtCtx := stmtctx.NewStmtCtx()
 	for _, datums := range testDatums {
-		keyBytes, err := codec.EncodeKey(stmtCtx, nil, types.NewIntDatum(123), datums[0])
+		keyBytes, err := codec.EncodeKey(stmtCtx.TimeZone(), nil, types.NewIntDatum(123), datums[0])
 		require.NoError(t, err)
 		h, err := tidbkv.NewCommonHandle(keyBytes)
 		require.NoError(t, err)
 		key := tablecodec.EncodeRowKeyWithHandle(1, h)
-		nextKeyBytes, err := codec.EncodeKey(stmtCtx, nil, types.NewIntDatum(123), datums[1])
+		nextKeyBytes, err := codec.EncodeKey(stmtCtx.TimeZone(), nil, types.NewIntDatum(123), datums[1])
 		require.NoError(t, err)
 		nextHdl, err := tidbkv.NewCommonHandle(nextKeyBytes)
 		require.NoError(t, err)
@@ -125,7 +125,7 @@ func TestNextKey(t *testing.T) {
 	}
 
 	// a special case that when len(string datum) % 8 == 7, nextKey twice should not panic.
-	keyBytes, err := codec.EncodeKey(stmtCtx, nil, types.NewStringDatum("1234567"))
+	keyBytes, err := codec.EncodeKey(stmtCtx.TimeZone(), nil, types.NewStringDatum("1234567"))
 	require.NoError(t, err)
 	h, err := tidbkv.NewCommonHandle(keyBytes)
 	require.NoError(t, err)
@@ -1123,7 +1123,7 @@ func TestGetRegionSplitSizeKeys(t *testing.T) {
 		}
 		return 0, 0, errors.New("invalid connection")
 	}
-	splitSize, splitKeys, err := getRegionSplitSizeKeys(ctx, cli, nil)
+	splitSize, splitKeys, err := GetRegionSplitSizeKeys(ctx, cli, nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), splitSize)
 	require.Equal(t, int64(2), splitKeys)
@@ -1200,12 +1200,18 @@ func (m *mockIngestIter) Close() error { return nil }
 
 func (m *mockIngestIter) Error() error { return nil }
 
-func (m mockIngestData) NewIter(ctx context.Context, lowerBound, upperBound []byte) common.ForwardIter {
+func (m *mockIngestIter) ReleaseBuf() {}
+
+func (m mockIngestData) NewIter(_ context.Context, lowerBound, upperBound []byte, _ *membuf.Pool) common.ForwardIter {
 	i, j := m.getFirstAndLastKeyIdx(lowerBound, upperBound)
 	return &mockIngestIter{data: m, startIdx: i, endIdx: j, curIdx: i}
 }
 
 func (m mockIngestData) GetTS() uint64 { return 0 }
+
+func (m mockIngestData) IncRef() {}
+
+func (m mockIngestData) DecRef() {}
 
 func (m mockIngestData) Finish(_, _ int64) {}
 
@@ -1744,6 +1750,79 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 	jobWg.Wait()
 }
 
+func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
+	backup := external.LargeRegionSplitDataThreshold
+	external.LargeRegionSplitDataThreshold = 1
+	t.Cleanup(func() {
+		external.LargeRegionSplitDataThreshold = backup
+	})
+
+	ctx := context.Background()
+	local := &Backend{
+		splitCli: initTestSplitClient(
+			[][]byte{{1}, {11}},      // we have one big region
+			panicSplitRegionClient{}, // make sure no further split region
+		),
+	}
+	local.BackendConfig.WorkerConcurrency = 1
+	bigRegionRange := []common.Range{{Start: []byte{1}, End: []byte{11}}}
+
+	keys := make([][]byte, 0, 10)
+	value := make([][]byte, 0, 10)
+	for i := byte(1); i <= 10; i++ {
+		keys = append(keys, []byte{i})
+		value = append(value, []byte{i})
+	}
+	memStore := storage.NewMemStorage()
+
+	dataFiles, statFiles, err := external.MockExternalEngine(memStore, keys, value)
+	require.NoError(t, err)
+
+	extEngine := external.NewExternalEngine(
+		memStore,
+		dataFiles,
+		statFiles,
+		[]byte{1},
+		[]byte{10},
+		[][]byte{{1}, {11}},
+		1<<30,
+		common.NoopKeyAdapter{},
+		false,
+		nil,
+		common.DupDetectOpt{},
+		10,
+		123,
+		456,
+		789,
+		true,
+	)
+
+	jobCh := make(chan *regionJob, 10)
+	jobWg := sync.WaitGroup{}
+	err = local.generateAndSendJob(
+		ctx,
+		extEngine,
+		bigRegionRange,
+		10*units.GB,
+		1<<30,
+		jobCh,
+		&jobWg,
+	)
+	require.NoError(t, err)
+	require.Len(t, jobCh, 10)
+	for i := 0; i < 10; i++ {
+		job := <-jobCh
+		require.Equal(t, []byte{byte(i + 1)}, job.keyRange.Start)
+		require.Equal(t, []byte{byte(i + 2)}, job.keyRange.End)
+		firstKey, lastKey, err := job.ingestData.GetFirstAndLastKey(nil, nil)
+		require.NoError(t, err)
+		require.Equal(t, []byte{byte(i + 1)}, firstKey)
+		require.Equal(t, []byte{byte(i + 1)}, lastKey)
+		jobWg.Done()
+	}
+	jobWg.Wait()
+}
+
 func getSuccessInjectedBehaviour() []injectedBehaviour {
 	return []injectedBehaviour{
 		{
@@ -2149,6 +2228,43 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 	require.ErrorContains(t, err, "the remaining storage capacity of TiKV")
 }
 
+func TestWorkerFailedWhenGeneratingJobs(t *testing.T) {
+	backup := maxRetryBackoffSecond
+	maxRetryBackoffSecond = 1
+	t.Cleanup(func() {
+		maxRetryBackoffSecond = backup
+	})
+
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/sendDummyJob", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/mockGetFirstAndLastKey", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return()")
+	t.Cleanup(func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/sendDummyJob")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/mockGetFirstAndLastKey")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace")
+	})
+
+	initRanges := []common.Range{
+		{Start: []byte{'c'}, End: []byte{'d'}},
+	}
+
+	ctx := context.Background()
+	l := &Backend{
+		BackendConfig: BackendConfig{
+			WorkerConcurrency: 1,
+		},
+		splitCli: initTestSplitClient(
+			[][]byte{{1}, {11}},
+			panicSplitRegionClient{},
+		),
+	}
+	e := &Engine{}
+	err := l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	require.ErrorContains(t, err, "the remaining storage capacity of TiKV")
+}
+
 func TestExternalEngine(t *testing.T) {
 	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
 	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipStartWorker", "return()")
@@ -2182,8 +2298,8 @@ func TestExternalEngine(t *testing.T) {
 		StorageURI:    storageURI,
 		DataFiles:     dataFiles,
 		StatFiles:     statFiles,
-		MinKey:        keys[0],
-		MaxKey:        keys[99],
+		StartKey:      keys[0],
+		EndKey:        endKey,
 		SplitKeys:     [][]byte{keys[30], keys[60], keys[90]},
 		TotalFileSize: int64(config.SplitRegionSize) + 1,
 		TotalKVCount:  int64(config.SplitRegionKeys) + 1,
@@ -2244,7 +2360,7 @@ func TestExternalEngine(t *testing.T) {
 	kvIdx := 0
 	for i, job := range jobs {
 		require.Equal(t, expectedKeyRanges[i], job.keyRange)
-		iter := job.ingestData.NewIter(ctx, job.keyRange.Start, job.keyRange.End)
+		iter := job.ingestData.NewIter(ctx, job.keyRange.Start, job.keyRange.End, nil)
 		for iter.First(); iter.Valid(); iter.Next() {
 			require.Equal(t, keys[kvIdx], iter.Key())
 			require.Equal(t, values[kvIdx], iter.Value())
@@ -2254,4 +2370,14 @@ func TestExternalEngine(t *testing.T) {
 		require.NoError(t, iter.Close())
 	}
 	require.Equal(t, 100, kvIdx)
+}
+
+func TestGetExternalEngineKVStatistics(t *testing.T) {
+	b := Backend{
+		externalEngine: map[uuid.UUID]common.Engine{},
+	}
+	// non existent uuid
+	size, count := b.GetExternalEngineKVStatistics(uuid.New())
+	require.Zero(t, size)
+	require.Zero(t, count)
 }

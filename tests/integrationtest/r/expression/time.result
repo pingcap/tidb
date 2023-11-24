@@ -147,7 +147,7 @@ insert into t values('2022-10-30 00:30:00');
 insert into t values('2022-10-30 01:30:00');
 set time_zone = 'Europe/Amsterdam';
 insert into t values('2022-03-27 02:30:00');
-Error 1292: Incorrect timestamp value: '2022-03-27 02:30:00' for column 'ts' at row 1
+Error 1292 (22007): Incorrect timestamp value: '2022-03-27 02:30:00' for column 'ts' at row 1
 select date_add(ts, interval 1 hour) from t order by ts;
 date_add(ts, interval 1 hour)
 2022-03-27 02:30:00
@@ -178,8 +178,8 @@ timestampadd(minute, 1.5, '2021-08-20 00:00:00.0001')
 SELECT timestampadd(year,1.212208e+308,'1995-01-05 06:32:20.859724') as result;
 result
 NULL
-show warnings;
 Level	Code	Message
+Warning	1441	Datetime function: datetime field overflow
 select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2 SECOND_MICROSECOND);
 DATE_ADD('2007-03-28 22:08:28',INTERVAL -2 SECOND_MICROSECOND)
 2007-03-28 22:08:27.800000
@@ -505,3 +505,26 @@ select least(c_dt, cast('1999-10-10 10:10:10.1234' as datetime)) from t1;
 least(c_dt, cast('1999-10-10 10:10:10.1234' as datetime))
 1999-10-10 10:10:10
 set @@tidb_enable_vectorized_expression = default;
+drop table if exists t1;
+create table t1 (d date);
+set sql_mode='traditional';
+insert into t1 (d) select date_add('2000-01-01',interval 8000 year);
+Error 1441 (22008): Datetime function: datetime field overflow
+insert into t1 (d) select date_sub('2000-01-01', INTERVAL 2001 YEAR);
+Error 1441 (22008): Datetime function: datetime field overflow
+insert into t1 (d) select date_add('9999-12-31',interval 1 year);
+Error 1441 (22008): Datetime function: datetime field overflow
+insert into t1 (d) select date_add('9999-12-31',interval 1 day);
+Error 1441 (22008): Datetime function: datetime field overflow
+set sql_mode='';
+insert into t1 (d) select date_add('2000-01-01',interval 8000 year);
+insert into t1 (d) select date_sub('2000-01-01', INTERVAL 2001 YEAR);
+insert into t1 (d) select date_add('9999-12-31',interval 1 year);
+insert into t1 (d) select date_add('9999-12-31',interval 1 day);
+select * from t1;
+d
+NULL
+NULL
+NULL
+NULL
+set sql_mode=default;

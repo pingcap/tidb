@@ -78,9 +78,9 @@ function build_tidb_server()
     echo "building tidb-server binary: $tidb_server"
     rm -rf $tidb_server
     if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
-        GO111MODULE=on go build -o $tidb_server github.com/pingcap/tidb/tidb-server
+        GO111MODULE=on go build -o $tidb_server github.com/pingcap/tidb/cmd/tidb-server
     else
-        GO111MODULE=on go build -race -o $tidb_server github.com/pingcap/tidb/tidb-server
+        GO111MODULE=on go build -race -o $tidb_server github.com/pingcap/tidb/cmd/tidb-server
     fi
 }
 
@@ -88,7 +88,7 @@ function build_mysql_tester()
 {
     echo "building mysql-tester binary: $mysql_tester"
     rm -rf $mysql_tester
-    GOBIN=$PWD go install github.com/defined2014/mysql-tester/src@1da6225968e19999d28be4d06c357b9378df8b78
+    GOBIN=$PWD go install github.com/pingcap/mysql-tester/src@77628a8d2fae0c2f4cbc059d45785ae9615c817a
     mv src mysql_tester
 }
 
@@ -264,7 +264,6 @@ enabled_new_collation=""
 if [[ $collation_opt = 0 || $collation_opt = 2 ]]; then
     enabled_new_collation=0
     start_tidb_server
-    sleep 5
     run_mysql_tester
     kill -15 $SERVER_PID
     while ps -p $SERVER_PID > /dev/null; do
@@ -276,7 +275,6 @@ fi
 if [[ $collation_opt = 1 || $collation_opt = 2 ]]; then
     enabled_new_collation=1
     start_tidb_server
-    sleep 5
     run_mysql_tester
     kill -15 $SERVER_PID
     while ps -p $SERVER_PID > /dev/null; do

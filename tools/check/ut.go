@@ -448,7 +448,6 @@ func main() {
 
 	// Get the correct count of CPU if it's in docker.
 	p = runtime.GOMAXPROCS(0)
-	rand.Seed(time.Now().Unix())
 	var err error
 	workDir, err = os.Getwd()
 	if err != nil {
@@ -831,7 +830,7 @@ func (n *numa) testCommand(pkg string, fn string) *exec.Cmd {
 }
 
 func skipDIR(pkg string) bool {
-	skipDir := []string{"br", "cmd", "dumpling", "tests", "tools/check"}
+	skipDir := []string{"br", "cmd", "dumpling", "tests", "tools/check", "build"}
 	for _, ignore := range skipDir {
 		if strings.HasPrefix(pkg, ignore) {
 			return true
@@ -953,7 +952,6 @@ func filter(input []string, f func(string) bool) []string {
 }
 
 func shuffle(tasks []task) {
-	rand.Seed(time.Now().UnixNano())
 	for i := 0; i < len(tasks); i++ {
 		pos := rand.Intn(len(tasks))
 		tasks[i], tasks[pos] = tasks[pos], tasks[i]

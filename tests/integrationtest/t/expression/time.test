@@ -81,8 +81,9 @@ select timestampadd(second, 9.9999e2, a) from t;
 select timestampadd(second, 1, '2021-08-20 00:00:01.0001');
 select timestampadd(minute, 1.5, '2021-08-20 00:00:00');
 select timestampadd(minute, 1.5, '2021-08-20 00:00:00.0001');
+--enable_warnings
 SELECT timestampadd(year,1.212208e+308,'1995-01-05 06:32:20.859724') as result;
-show warnings;
+--disable_warnings
 
 # TestDatetimeMicrosecond
 # for int
@@ -208,3 +209,23 @@ select least(c_d, cast('1999-10-10' as date)) from t1;
 select greatest(c_dt, cast('1999-10-10 10:10:10.1234' as datetime)) from t1;
 select least(c_dt, cast('1999-10-10 10:10:10.1234' as datetime)) from t1;
 set @@tidb_enable_vectorized_expression = default;
+
+# TestDatetimeOverflow
+drop table if exists t1;
+create table t1 (d date);
+set sql_mode='traditional';
+-- error 1441
+insert into t1 (d) select date_add('2000-01-01',interval 8000 year);
+-- error 1441
+insert into t1 (d) select date_sub('2000-01-01', INTERVAL 2001 YEAR);
+-- error 1441
+insert into t1 (d) select date_add('9999-12-31',interval 1 year);
+-- error 1441
+insert into t1 (d) select date_add('9999-12-31',interval 1 day);
+set sql_mode='';
+insert into t1 (d) select date_add('2000-01-01',interval 8000 year);
+insert into t1 (d) select date_sub('2000-01-01', INTERVAL 2001 YEAR);
+insert into t1 (d) select date_add('9999-12-31',interval 1 year);
+insert into t1 (d) select date_add('9999-12-31',interval 1 day);
+select * from t1;
+set sql_mode=default;

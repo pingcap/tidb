@@ -37,3 +37,4 @@ bazel-testlogs
 bazel-tidb
 .ijwb/
 /oom_record/
+*.log.json

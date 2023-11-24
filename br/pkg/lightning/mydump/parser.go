@@ -30,9 +30,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/zeropool"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/zeropool"
 	"github.com/spkg/bom"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -670,9 +670,9 @@ func OpenReader(
 		if err2 != nil {
 			return nil, err2
 		}
-		reader, err = storage.WithCompression(store, compressType, decompressCfg).Open(ctx, fileMeta.Path)
+		reader, err = storage.WithCompression(store, compressType, decompressCfg).Open(ctx, fileMeta.Path, nil)
 	default:
-		reader, err = store.Open(ctx, fileMeta.Path)
+		reader, err = store.Open(ctx, fileMeta.Path, nil)
 	}
 	return
 }

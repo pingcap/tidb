@@ -1,0 +1,53 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "helper",
+    srcs = ["helper.go"],
+    importpath = "github.com/pingcap/tidb/pkg/store/helper",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/kv",
+        "//pkg/parser/model",
+        "//pkg/store/driver/error",
+        "//pkg/tablecodec",
+        "//pkg/util",
+        "//pkg/util/codec",
+        "//pkg/util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/deadlock",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_tikv_client_go_v2//tikvrpc",
+        "@com_github_tikv_client_go_v2//txnkv/txnlock",
+        "@com_github_tikv_pd_client//http",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "helper_test",
+    timeout = "short",
+    srcs = [
+        "helper_test.go",
+        "main_test.go",
+    ],
+    embed = [":helper"],
+    flaky = True,
+    shard_count = 6,
+    deps = [
+        "//pkg/parser/model",
+        "//pkg/store/mockstore",
+        "//pkg/tablecodec",
+        "//pkg/testkit/testsetup",
+        "@com_github_gorilla_mux//:mux",
+        "@com_github_pingcap_log//:log",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//testutils",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_tikv_pd_client//http",
+        "@io_opencensus_go//stats/view",
+        "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
+    ],
+)

@@ -12,7 +12,7 @@ import (
 	uuid "github.com/google/uuid"
 	backend "github.com/pingcap/tidb/br/pkg/lightning/backend"
 	encode "github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
-	model "github.com/pingcap/tidb/parser/model"
+	model "github.com/pingcap/tidb/pkg/parser/model"
 	gomock "go.uber.org/mock/gomock"
 )
 

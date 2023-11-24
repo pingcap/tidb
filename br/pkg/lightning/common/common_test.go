@@ -20,16 +20,17 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/store/mockstore"
-	tmock "github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
+	tmock "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 func newTableInfo(t *testing.T,
@@ -134,11 +135,11 @@ func TestAllocGlobalAutoID(t *testing.T) {
 	ctx := context.Background()
 	for _, c := range cases {
 		ti := newTableInfo(t, 1, c.tableID, c.createTableSQL, kvStore)
-		allocators, err := common.GetGlobalAutoIDAlloc(kvStore, 1, ti)
+		allocators, err := common.GetGlobalAutoIDAlloc(mockRequirement{kvStore}, 1, ti)
 		if c.expectErrStr == "" {
 			require.NoError(t, err, c.tableID)
-			require.NoError(t, common.RebaseGlobalAutoID(ctx, 123, kvStore, 1, ti))
-			base, idMax, err := common.AllocGlobalAutoID(ctx, 100, kvStore, 1, ti)
+			require.NoError(t, common.RebaseGlobalAutoID(ctx, 123, mockRequirement{kvStore}, 1, ti))
+			base, idMax, err := common.AllocGlobalAutoID(ctx, 100, mockRequirement{kvStore}, 1, ti)
 			require.NoError(t, err, c.tableID)
 			require.Equal(t, int64(123), base, c.tableID)
 			require.Equal(t, int64(223), idMax, c.tableID)
@@ -160,6 +161,18 @@ func TestAllocGlobalAutoID(t *testing.T) {
 	}
 }
 
+type mockRequirement struct {
+	kv.Storage
+}
+
+func (r mockRequirement) Store() kv.Storage {
+	return r.Storage
+}
+
+func (r mockRequirement) GetEtcdClient() *clientv3.Client {
+	return nil
+}
+
 func TestRebaseTableAllocators(t *testing.T) {
 	storePath := t.TempDir()
 	kvStore, err := mockstore.NewMockStore(mockstore.WithPath(storePath))
@@ -169,7 +182,7 @@ func TestRebaseTableAllocators(t *testing.T) {
 	})
 	ti := newTableInfo(t, 1, 42,
 		"create table t42 (a int primary key nonclustered auto_increment) AUTO_ID_CACHE 1", kvStore)
-	allocators, err := common.GetGlobalAutoIDAlloc(kvStore, 1, ti)
+	allocators, err := common.GetGlobalAutoIDAlloc(mockRequirement{kvStore}, 1, ti)
 	require.NoError(t, err)
 	require.Len(t, allocators, 2)
 	for _, alloc := range allocators {
@@ -186,7 +199,7 @@ func TestRebaseTableAllocators(t *testing.T) {
 	}
 	require.Equal(t, []autoid.AllocatorType{autoid.AutoIncrementType, autoid.RowIDAllocType}, allocatorTypes)
 	// this call does nothing
-	require.NoError(t, common.RebaseTableAllocators(ctx, nil, kvStore, 1, ti))
+	require.NoError(t, common.RebaseTableAllocators(ctx, nil, mockRequirement{kvStore}, 1, ti))
 	for _, alloc := range allocators {
 		nextID, err := alloc.NextGlobalAutoID()
 		require.NoError(t, err)
@@ -195,7 +208,7 @@ func TestRebaseTableAllocators(t *testing.T) {
 	// this call rebase AutoIncrementType allocator to 223
 	require.NoError(t, common.RebaseTableAllocators(ctx, map[autoid.AllocatorType]int64{
 		autoid.AutoIncrementType: 223,
-	}, kvStore, 1, ti))
+	}, mockRequirement{kvStore}, 1, ti))
 	next, err := allocators[0].NextGlobalAutoID()
 	require.NoError(t, err)
 	require.Equal(t, int64(224), next)
@@ -206,7 +219,7 @@ func TestRebaseTableAllocators(t *testing.T) {
 	require.NoError(t, common.RebaseTableAllocators(ctx, map[autoid.AllocatorType]int64{
 		autoid.AutoIncrementType: 323,
 		autoid.RowIDAllocType:    423,
-	}, kvStore, 1, ti))
+	}, mockRequirement{kvStore}, 1, ti))
 	next, err = allocators[0].NextGlobalAutoID()
 	require.NoError(t, err)
 	require.Equal(t, int64(324), next)

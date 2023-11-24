@@ -20,12 +20,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
@@ -176,9 +176,9 @@ func TestBuildTableRangeCommonHandle(t *testing.T) {
 		ids []int64
 		trs []kv.KeyRange
 	}
-	low, err_l := codec.EncodeKey(nil, nil, []types.Datum{types.MinNotNullDatum()}...)
+	low, err_l := codec.EncodeKey(time.UTC, nil, []types.Datum{types.MinNotNullDatum()}...)
 	require.NoError(t, err_l)
-	high, err_h := codec.EncodeKey(nil, nil, []types.Datum{types.MaxValueDatum()}...)
+	high, err_h := codec.EncodeKey(time.UTC, nil, []types.Datum{types.MaxValueDatum()}...)
 	require.NoError(t, err_h)
 	high = kv.Key(high).PrefixNext()
 	cases := []Case{

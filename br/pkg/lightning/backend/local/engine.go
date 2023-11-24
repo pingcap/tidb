@@ -42,8 +42,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/membuf"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -291,8 +291,12 @@ func (e *Engine) ID() string {
 }
 
 // GetKeyRange implements common.Engine.
-func (e *Engine) GetKeyRange() (firstKey []byte, lastKey []byte, err error) {
-	return e.GetFirstAndLastKey(nil, nil)
+func (e *Engine) GetKeyRange() (startKey []byte, endKey []byte, err error) {
+	firstLey, lastKey, err := e.GetFirstAndLastKey(nil, nil)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	return firstLey, nextKey(lastKey), nil
 }
 
 // SplitRanges gets size properties from pebble and split ranges according to size/keys limit.
@@ -971,20 +975,28 @@ func (e *Engine) loadEngineMeta() error {
 	return nil
 }
 
-func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions) Iter {
+func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions, buf *membuf.Buffer) IngestLocalEngineIter {
 	if bytes.Compare(opts.LowerBound, normalIterStartKey) < 0 {
 		newOpts := *opts
 		newOpts.LowerBound = normalIterStartKey
 		opts = &newOpts
 	}
 	if !e.duplicateDetection {
-		return pebbleIter{Iterator: e.getDB().NewIter(opts)}
+		return &pebbleIter{Iterator: e.getDB().NewIter(opts), buf: buf}
 	}
 	logger := log.FromContext(ctx).With(
 		zap.String("table", common.UniqueTable(e.tableInfo.DB, e.tableInfo.Name)),
 		zap.Int64("tableID", e.tableInfo.ID),
 		zap.Stringer("engineUUID", e.UUID))
-	return newDupDetectIter(e.getDB(), e.keyAdapter, opts, e.duplicateDB, logger, e.dupDetectOpt)
+	return newDupDetectIter(
+		e.getDB(),
+		e.keyAdapter,
+		opts,
+		e.duplicateDB,
+		logger,
+		e.dupDetectOpt,
+		buf,
+	)
 }
 
 var _ common.IngestData = (*Engine)(nil)
@@ -1001,8 +1013,11 @@ func (e *Engine) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []by
 		LowerBound: lowerBound,
 		UpperBound: upperBound,
 	}
+	failpoint.Inject("mockGetFirstAndLastKey", func() {
+		failpoint.Return(lowerBound, upperBound, nil)
+	})
 
-	iter := e.newKVIter(context.Background(), opt)
+	iter := e.newKVIter(context.Background(), opt, nil)
 	//nolint: errcheck
 	defer iter.Close()
 	// Needs seek to first because NewIter returns an iterator that is unpositioned
@@ -1023,14 +1038,28 @@ func (e *Engine) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []by
 }
 
 // NewIter implements IngestData interface.
-func (e *Engine) NewIter(ctx context.Context, lowerBound, upperBound []byte) common.ForwardIter {
-	return e.newKVIter(ctx, &pebble.IterOptions{LowerBound: lowerBound, UpperBound: upperBound})
+func (e *Engine) NewIter(
+	ctx context.Context,
+	lowerBound, upperBound []byte,
+	bufPool *membuf.Pool,
+) common.ForwardIter {
+	return e.newKVIter(
+		ctx,
+		&pebble.IterOptions{LowerBound: lowerBound, UpperBound: upperBound},
+		bufPool.NewBuffer(),
+	)
 }
 
 // GetTS implements IngestData interface.
 func (e *Engine) GetTS() uint64 {
 	return e.TS
 }
+
+// IncRef implements IngestData interface.
+func (*Engine) IncRef() {}
+
+// DecRef implements IngestData interface.
+func (*Engine) DecRef() {}
 
 // Finish implements IngestData interface.
 func (e *Engine) Finish(totalBytes, totalCount int64) {
@@ -1040,8 +1069,19 @@ func (e *Engine) Finish(totalBytes, totalCount int64) {
 
 // LoadIngestData return (local) Engine itself because Engine has implemented
 // IngestData interface.
-func (e *Engine) LoadIngestData(_ context.Context, _, _ []byte) (common.IngestData, error) {
-	return e, nil
+func (e *Engine) LoadIngestData(
+	ctx context.Context,
+	regionRanges []common.Range,
+	outCh chan<- common.DataAndRange,
+) error {
+	for _, r := range regionRanges {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case outCh <- common.DataAndRange{Data: e, Range: r}:
+		}
+	}
+	return nil
 }
 
 type sstMeta struct {

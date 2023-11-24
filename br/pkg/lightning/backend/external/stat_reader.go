@@ -26,11 +26,11 @@ type statsReader struct {
 }
 
 func newStatsReader(ctx context.Context, store storage.ExternalStorage, name string, bufSize int) (*statsReader, error) {
-	sr, err := openStoreReaderAndSeek(ctx, store, name, 0)
+	sr, err := openStoreReaderAndSeek(ctx, store, name, 0, 0)
 	if err != nil {
 		return nil, err
 	}
-	br, err := newByteReader(ctx, sr, bufSize, store, name, false)
+	br, err := newByteReader(ctx, sr, bufSize)
 	if err != nil {
 		return nil, err
 	}

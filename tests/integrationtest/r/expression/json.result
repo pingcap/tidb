@@ -47,11 +47,11 @@ JSON_PRETTY(t.j)	JSON_PRETTY(vc)
   }
 }
 select JSON_PRETTY(t.j), JSON_PRETTY(vc) from t where id = 2;
-Error 3140: Invalid JSON text: The document root must not be followed by other values.
+Error 3140 (22032): Invalid JSON text: The document root must not be followed by other values.
 select JSON_PRETTY(t.j), JSON_PRETTY(vc) from t where id in (1,2);
-Error 3140: Invalid JSON text: The document root must not be followed by other values.
+Error 3140 (22032): Invalid JSON text: The document root must not be followed by other values.
 select JSON_PRETTY("[1,2,3]}");
-Error 3140: Invalid JSON text: The document root must not be followed by other values.
+Error 3140 (22032): Invalid JSON text: The document root must not be followed by other values.
 drop table if exists t;
 CREATE TABLE t (
 a int(11),
@@ -145,7 +145,7 @@ a
 DROP TABLE IF EXISTS my_collection;
 CREATE TABLE `my_collection` (	`doc` json DEFAULT NULL, `_id` varchar(32) GENERATED ALWAYS AS (JSON_UNQUOTE(JSON_EXTRACT(doc,'$._id'))) STORED NOT NULL, PRIMARY KEY (`_id`));
 UPDATE `my_collection` SET doc=JSON_SET(doc) WHERE (JSON_EXTRACT(doc,'$.name') = 'clare');
-Error 1582: Incorrect parameter count in the call to native function 'json_set'
+Error 1582 (42000): Incorrect parameter count in the call to native function 'json_set'
 select json_valid(null);
 json_valid(null)
 NULL
@@ -180,19 +180,19 @@ select json_valid('"2019-8-19"');
 json_valid('"2019-8-19"')
 1
 select json_merge(1, 2);
-Error 3146: Invalid data type for JSON data in argument 0 to function json_merge; a JSON string or JSON type is required.
+Error 3146 (HY000): Invalid data type for JSON data in argument 0 to function json_merge; a JSON string or JSON type is required.
 select json_merge_preserve(1, 2);
-Error 3146: Invalid data type for JSON data in argument 0 to function json_merge_preserve; a JSON string or JSON type is required.
+Error 3146 (HY000): Invalid data type for JSON data in argument 0 to function json_merge_preserve; a JSON string or JSON type is required.
 select json_merge_patch(1, 2);
-Error 3146: Invalid data type for JSON data in argument 0 to function json_merge_patch; a JSON string or JSON type is required.
+Error 3146 (HY000): Invalid data type for JSON data in argument 0 to function json_merge_patch; a JSON string or JSON type is required.
 select JSON_CONTAINS_PATH(1, 'one', '$.a');
-Error 3146: Invalid data type for JSON data in argument 0 to function json_contains_path; a JSON string or JSON type is required.
+Error 3146 (HY000): Invalid data type for JSON data in argument 0 to function json_contains_path; a JSON string or JSON type is required.
 select json_search(1, 'one', '$.a');
-Error 3146: Invalid data type for JSON data in argument 0 to function json_search; a JSON string or JSON type is required.
+Error 3146 (HY000): Invalid data type for JSON data in argument 0 to function json_search; a JSON string or JSON type is required.
 select json_keys(1, '$.a');
-Error 3146: Invalid data type for JSON data in argument 0 to function json_keys; a JSON string or JSON type is required.
+Error 3146 (HY000): Invalid data type for JSON data in argument 0 to function json_keys; a JSON string or JSON type is required.
 select JSON_extract(1, '$.a');
-Error 3146: Invalid data type for JSON data in argument 0 to function json_extract; a JSON string or JSON type is required.
+Error 3146 (HY000): Invalid data type for JSON data in argument 0 to function json_extract; a JSON string or JSON type is required.
 DROP TABLE IF EXISTS table_json;
 CREATE TABLE table_json(a json, b VARCHAR(255));
 INSERT INTO table_json values('{"\\"hello\\"": "world", "a": [1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}], "b": true, "c": ["d"]}', '{"\\"hello\\"": "world", "a": [1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}], "b": true, "c": ["d"]}');
@@ -202,21 +202,21 @@ json_type(a)	json_type(b)
 OBJECT	OBJECT
 ARRAY	ARRAY
 select json_quote();
-Error 1582: Incorrect parameter count in the call to native function 'json_quote'
+Error 1582 (42000): Incorrect parameter count in the call to native function 'json_quote'
 select json_quote('abc', 'def');
-Error 1582: Incorrect parameter count in the call to native function 'json_quote'
+Error 1582 (42000): Incorrect parameter count in the call to native function 'json_quote'
 select json_quote(NULL, 'def');
-Error 1582: Incorrect parameter count in the call to native function 'json_quote'
+Error 1582 (42000): Incorrect parameter count in the call to native function 'json_quote'
 select json_quote('abc', NULL);
-Error 1582: Incorrect parameter count in the call to native function 'json_quote'
+Error 1582 (42000): Incorrect parameter count in the call to native function 'json_quote'
 select json_unquote();
-Error 1582: Incorrect parameter count in the call to native function 'json_unquote'
+Error 1582 (42000): Incorrect parameter count in the call to native function 'json_unquote'
 select json_unquote('abc', 'def');
-Error 1582: Incorrect parameter count in the call to native function 'json_unquote'
+Error 1582 (42000): Incorrect parameter count in the call to native function 'json_unquote'
 select json_unquote(NULL, 'def');
-Error 1582: Incorrect parameter count in the call to native function 'json_unquote'
+Error 1582 (42000): Incorrect parameter count in the call to native function 'json_unquote'
 select json_unquote('abc', NULL);
-Error 1582: Incorrect parameter count in the call to native function 'json_unquote'
+Error 1582 (42000): Incorrect parameter count in the call to native function 'json_unquote'
 select json_quote(NULL);
 json_quote(NULL)
 NULL
@@ -305,45 +305,45 @@ select json_unquote(json_unquote(json_unquote(json_quote(json_quote(json_quote('
 json_unquote(json_unquote(json_unquote(json_quote(json_quote(json_quote('abc'))))))
 abc
 select json_quote(123);
-Error 3064: Incorrect type for argument 1 in function json_quote.
+Error 3064 (HY000): Incorrect type for argument 1 in function json_quote.
 select json_quote(-100);
-Error 3064: Incorrect type for argument 1 in function json_quote.
+Error 3064 (HY000): Incorrect type for argument 1 in function json_quote.
 select json_quote(123.123);
-Error 3064: Incorrect type for argument 1 in function json_quote.
+Error 3064 (HY000): Incorrect type for argument 1 in function json_quote.
 select json_quote(-100.000);
-Error 3064: Incorrect type for argument 1 in function json_quote.
+Error 3064 (HY000): Incorrect type for argument 1 in function json_quote.
 select json_quote(true);
-Error 3064: Incorrect type for argument 1 in function json_quote.
+Error 3064 (HY000): Incorrect type for argument 1 in function json_quote.
 select json_quote(false);
-Error 3064: Incorrect type for argument 1 in function json_quote.
+Error 3064 (HY000): Incorrect type for argument 1 in function json_quote.
 select json_quote(cast("{}" as JSON));
-Error 3064: Incorrect type for argument 1 in function json_quote.
+Error 3064 (HY000): Incorrect type for argument 1 in function json_quote.
 select json_quote(cast("[]" as JSON));
-Error 3064: Incorrect type for argument 1 in function json_quote.
+Error 3064 (HY000): Incorrect type for argument 1 in function json_quote.
 select json_quote(cast("2015-07-29" as date));
-Error 3064: Incorrect type for argument 1 in function json_quote.
+Error 3064 (HY000): Incorrect type for argument 1 in function json_quote.
 select json_quote(cast("12:18:29.000000" as time));
-Error 3064: Incorrect type for argument 1 in function json_quote.
+Error 3064 (HY000): Incorrect type for argument 1 in function json_quote.
 select json_quote(cast("2015-07-29 12:18:29.000000" as datetime));
-Error 3064: Incorrect type for argument 1 in function json_quote.
+Error 3064 (HY000): Incorrect type for argument 1 in function json_quote.
 select json_unquote(123);
-Error 3064: Incorrect type for argument 1 in function json_unquote.
+Error 3064 (HY000): Incorrect type for argument 1 in function json_unquote.
 select json_unquote(-100);
-Error 3064: Incorrect type for argument 1 in function json_unquote.
+Error 3064 (HY000): Incorrect type for argument 1 in function json_unquote.
 select json_unquote(123.123);
-Error 3064: Incorrect type for argument 1 in function json_unquote.
+Error 3064 (HY000): Incorrect type for argument 1 in function json_unquote.
 select json_unquote(-100.000);
-Error 3064: Incorrect type for argument 1 in function json_unquote.
+Error 3064 (HY000): Incorrect type for argument 1 in function json_unquote.
 select json_unquote(true);
-Error 3064: Incorrect type for argument 1 in function json_unquote.
+Error 3064 (HY000): Incorrect type for argument 1 in function json_unquote.
 select json_unquote(false);
-Error 3064: Incorrect type for argument 1 in function json_unquote.
+Error 3064 (HY000): Incorrect type for argument 1 in function json_unquote.
 select json_unquote(cast("2015-07-29" as date));
-Error 3064: Incorrect type for argument 1 in function json_unquote.
+Error 3064 (HY000): Incorrect type for argument 1 in function json_unquote.
 select json_unquote(cast("12:18:29.000000" as time));
-Error 3064: Incorrect type for argument 1 in function json_unquote.
+Error 3064 (HY000): Incorrect type for argument 1 in function json_unquote.
 select json_unquote(cast("2015-07-29 12:18:29.000000" as datetime));
-Error 3064: Incorrect type for argument 1 in function json_unquote.
+Error 3064 (HY000): Incorrect type for argument 1 in function json_unquote.
 select json_extract(a, '$.a[1]'), json_extract(b, '$.b') from table_json;
 json_extract(a, '$.a[1]')	json_extract(b, '$.b')
 "2"	true
@@ -385,7 +385,7 @@ select json_contains('{"a": 1}', '1', "$.c"), json_contains('{"a": [1, 2]}', '1'
 json_contains('{"a": 1}', '1', "$.c")	json_contains('{"a": [1, 2]}', '1', "$.a[2]")	json_contains('{"a": [1, {"a": 1}]}', '1', "$.a[1].b")
 NULL	NULL	NULL
 select json_contains('1','1','$.*');
-Error 3149: In this situation, path expressions may not contain the * and ** tokens or range selection.
+Error 3149 (42000): In this situation, path expressions may not contain the * and ** tokens or range selection.
 select
 json_contains_path(NULL, 'one', "$.c"),
 json_contains_path(NULL, 'all', "$.c"),
@@ -496,7 +496,7 @@ select c member of ('"a"') from t;
 c member of ('"a"')
 0
 select 'a' member of ('a');
-Error 3140: Invalid JSON text: The document root must not be followed by other values.
+Error 3140 (22032): Invalid JSON text: The document root must not be followed by other values.
 drop table if exists t;
 create table t(a char(20), b blob);
 insert into t values ('a string', 'a binary string');
@@ -507,24 +507,24 @@ select json_objectagg(a, b) from t;
 json_objectagg(a, b)
 {"a string": "base64:type252:YSBiaW5hcnkgc3RyaW5n"}
 select json_object(b, a) from t;
-Error 3144: Cannot create a JSON value from a string with CHARACTER SET 'binary'.
+Error 3144 (HY000): Cannot create a JSON value from a string with CHARACTER SET 'binary'.
 select json_objectagg(b, a) from t;
-Error 3144: Cannot create a JSON value from a string with CHARACTER SET 'binary'.
+Error 3144 (HY000): Cannot create a JSON value from a string with CHARACTER SET 'binary'.
 select cast(cast(b'010101' as json) as signed);
 cast(cast(b'010101' as json) as signed)
 0
-show warnings;
 Level	Code	Message
+Warning	1292	Truncated incorrect INTEGER value: '"base64:type253:FQ=="'
 select cast(json_extract(json_objectagg('a', b'010101'), '$.a') as signed);
 cast(json_extract(json_objectagg('a', b'010101'), '$.a') as signed)
 0
-show warnings;
 Level	Code	Message
+Warning	1292	Truncated incorrect INTEGER value: '"base64:type253:FQ=="'
 select cast(json_extract(json_objectagg('a', b'010101'), '$.a') as double);
 cast(json_extract(json_objectagg('a', b'010101'), '$.a') as double)
 0
-show warnings;
 Level	Code	Message
+Warning	1292	Truncated incorrect FLOAT value: '"base64:type253:FQ=="'
 drop table if exists t;
 create table t(a JSON);
 insert into t values ('{}'), ('true'), ('5');
@@ -546,7 +546,7 @@ select c + 1, json_array_insert(a, concat('$', repeat('[0]', c)), json_array(1))
 from c1
 where c < 101)
 select a from c1 where c > 100;
-Error 3157: The JSON document exceeds the maximum depth.
+Error 3157 (HY000): The JSON document exceeds the maximum depth.
 insert into t with recursive c1 as (select cast(1 as signed) c, json_array(1) as a
 union
 select c + 1, json_array_insert(a, concat('$', repeat('[0]', c)), json_array(1))
@@ -554,13 +554,13 @@ from c1
 where c < 100)
 select a from c1 where c > 99;
 select json_array(a, 1) from t;
-Error 3157: The JSON document exceeds the maximum depth.
+Error 3157 (HY000): The JSON document exceeds the maximum depth.
 select json_object(1, a) from t;
-Error 3157: The JSON document exceeds the maximum depth.
+Error 3157 (HY000): The JSON document exceeds the maximum depth.
 select json_set(a, concat('$', repeat('[0]', 100)), json_array(json_array(3))) from t;
-Error 3157: The JSON document exceeds the maximum depth.
+Error 3157 (HY000): The JSON document exceeds the maximum depth.
 select json_array_append(a, concat('$', repeat('[0]', 100)), 1) from t;
-Error 3157: The JSON document exceeds the maximum depth.
+Error 3157 (HY000): The JSON document exceeds the maximum depth.
 select json_storage_free(NULL);
 json_storage_free(NULL)
 NULL
@@ -574,7 +574,7 @@ select json_storage_free('{"a": "b"}');
 json_storage_free('{"a": "b"}')
 0
 select json_storage_free('{"c":["a","b"]');
-Error 3140: Invalid JSON text: The document root must not be followed by other values.
+Error 3140 (22032): Invalid JSON text: The document root must not be followed by other values.
 select json_extract('[{"a": [1,2,3,4]}]', '$[0] . a[last]');
 json_extract('[{"a": [1,2,3,4]}]', '$[0] . a[last]')
 4
@@ -602,3 +602,18 @@ json_extract('[{"a": [1,2,3,4]}]', '$[0].a[0 to last]')
 select json_extract('[{"a": [1,2,3,4]}]', '$[0].a[0 to 2]');
 json_extract('[{"a": [1,2,3,4]}]', '$[0].a[0 to 2]')
 [1, 2, 3]
+drop table if exists t;
+create table t (a json);
+insert into t values ('"-1"');
+insert into t values ('"18446744073709551615"');
+insert into t values ('"18446744073709552000"');
+select a, cast(a as unsigned) from t;
+a	cast(a as unsigned)
+"-1"	18446744073709551615
+"18446744073709551615"	18446744073709551615
+"18446744073709552000"	18446744073709551615
+select a, cast(a as signed) from t;
+a	cast(a as signed)
+"-1"	-1
+"18446744073709551615"	-1
+"18446744073709552000"	-1

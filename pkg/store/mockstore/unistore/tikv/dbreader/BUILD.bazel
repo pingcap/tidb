@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "dbreader",
+    srcs = ["db_reader.go"],
+    importpath = "github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/dbreader",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/store/mockstore/unistore/tikv/kverrors",
+        "//pkg/store/mockstore/unistore/tikv/mvcc",
+        "@com_github_pingcap_badger//:badger",
+        "@com_github_pingcap_badger//y",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+    ],
+)

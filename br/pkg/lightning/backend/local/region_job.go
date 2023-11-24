@@ -18,6 +18,7 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -35,9 +36,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -158,13 +158,51 @@ func (j *regionJob) convertStageTo(stage jobStageTp) {
 	}
 }
 
+// ref means that the ingestData of job will be accessed soon.
+func (j *regionJob) ref(wg *sync.WaitGroup) {
+	if wg != nil {
+		wg.Add(1)
+	}
+	if j.ingestData != nil {
+		j.ingestData.IncRef()
+	}
+}
+
+// done promises that the ingestData of job will not be accessed. Same amount of
+// done should be called to release the ingestData.
+func (j *regionJob) done(wg *sync.WaitGroup) {
+	if j.ingestData != nil {
+		j.ingestData.DecRef()
+	}
+	if wg != nil {
+		wg.Done()
+	}
+}
+
 // writeToTiKV writes the data to TiKV and mark this job as wrote stage.
-// if any write logic has error, writeToTiKV will set job to a proper stage and return nil. TODO: <-check this
+// if any write logic has error, writeToTiKV will set job to a proper stage and return nil.
 // if any underlying logic has error, writeToTiKV will return an error.
 // we don't need to do cleanup for the pairs written to tikv if encounters an error,
 // tikv will take the responsibility to do so.
 // TODO: let client-go provide a high-level write interface.
 func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
+	err := local.doWrite(ctx, j)
+	if err == nil {
+		return nil
+	}
+	if !common.IsRetryableError(err) {
+		return err
+	}
+	// currently only one case will restart write
+	if strings.Contains(err.Error(), "RequestTooNew") {
+		j.convertStageTo(regionScanned)
+		return err
+	}
+	j.convertStageTo(needRescan)
+	return err
+}
+
+func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	if j.stage != regionScanned {
 		return nil
 	}
@@ -179,6 +217,10 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		}
 		failpoint.Return(err)
 	})
+
+	var cancel context.CancelFunc
+	ctx, cancel = context.WithTimeoutCause(ctx, 15*time.Minute, common.ErrWriteTooSlow)
+	defer cancel()
 
 	apiVersion := local.tikvCodec.GetAPIVersion()
 	clientFactory := local.importClientFactory
@@ -218,9 +260,25 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		ApiVersion: apiVersion,
 	}
 
-	annotateErr := func(in error, peer *metapb.Peer) error {
+	failpoint.Inject("changeEpochVersion", func(val failpoint.Value) {
+		cloned := *meta.RegionEpoch
+		meta.RegionEpoch = &cloned
+		i := val.(int)
+		if i >= 0 {
+			meta.RegionEpoch.Version += uint64(i)
+		} else {
+			meta.RegionEpoch.ConfVer -= uint64(-i)
+		}
+	})
+
+	annotateErr := func(in error, peer *metapb.Peer, msg string) error {
 		// annotate the error with peer/store/region info to help debug.
-		return errors.Annotatef(in, "peer %d, store %d, region %d, epoch %s", peer.Id, peer.StoreId, region.Id, region.RegionEpoch.String())
+		return errors.Annotatef(
+			in,
+			"peer %d, store %d, region %d, epoch %s, %s",
+			peer.Id, peer.StoreId, region.Id, region.RegionEpoch.String(),
+			msg,
+		)
 	}
 
 	leaderID := j.region.Leader.GetId()
@@ -240,29 +298,33 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	for _, peer := range region.GetPeers() {
 		cli, err := clientFactory.Create(ctx, peer.StoreId)
 		if err != nil {
-			return annotateErr(err, peer)
+			return annotateErr(err, peer, "when create client")
 		}
 
 		wstream, err := cli.Write(ctx)
 		if err != nil {
-			return annotateErr(err, peer)
+			return annotateErr(err, peer, "when open write stream")
 		}
+
+		failpoint.Inject("mockWritePeerErr", func() {
+			err = errors.Errorf("mock write peer error")
+			failpoint.Return(annotateErr(err, peer, "when open write stream"))
+		})
 
 		// Bind uuid for this write request
 		if err = wstream.Send(req); err != nil {
-			return annotateErr(err, peer)
+			return annotateErr(err, peer, "when send meta")
 		}
 		clients = append(clients, wstream)
 		allPeers = append(allPeers, peer)
 	}
+	dataCommitTS := j.ingestData.GetTS()
 	req.Chunk = &sst.WriteRequest_Batch{
 		Batch: &sst.WriteBatch{
-			CommitTs: j.ingestData.GetTS(),
+			CommitTs: dataCommitTS,
 		},
 	}
 
-	bytesBuf := bufferPool.NewBuffer()
-	defer bytesBuf.Destroy()
 	pairs := make([]*sst.Pair, 0, defaultKVBatchCount)
 	count := 0
 	size := int64(0)
@@ -289,7 +351,12 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 				return errors.Trace(err)
 			}
 			if err := clients[i].SendMsg(preparedMsg); err != nil {
-				return annotateErr(err, allPeers[i])
+				if err == io.EOF {
+					// if it's EOF, need RecvMsg to get the error
+					dummy := &sst.WriteResponse{}
+					err = clients[i].RecvMsg(dummy)
+				}
+				return annotateErr(err, allPeers[i], "when send data")
 			}
 		}
 		failpoint.Inject("afterFlushKVs", func() {
@@ -298,21 +365,22 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		return nil
 	}
 
-	iter := j.ingestData.NewIter(ctx, j.keyRange.Start, j.keyRange.End)
+	iter := j.ingestData.NewIter(ctx, j.keyRange.Start, j.keyRange.End, bufferPool)
 	//nolint: errcheck
 	defer iter.Close()
 
 	var remainingStartKey []byte
 	for iter.First(); iter.Valid(); iter.Next() {
-		kvSize := int64(len(iter.Key()) + len(iter.Value()))
+		k, v := iter.Key(), iter.Value()
+		kvSize := int64(len(k) + len(v))
 		// here we reuse the `*sst.Pair`s to optimize object allocation
 		if count < len(pairs) {
-			pairs[count].Key = bytesBuf.AddBytes(iter.Key())
-			pairs[count].Value = bytesBuf.AddBytes(iter.Value())
+			pairs[count].Key = k
+			pairs[count].Value = v
 		} else {
 			pair := &sst.Pair{
-				Key:   bytesBuf.AddBytes(iter.Key()),
-				Value: bytesBuf.AddBytes(iter.Value()),
+				Key:   k,
+				Value: v,
 			}
 			pairs = append(pairs, pair)
 		}
@@ -327,7 +395,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 			}
 			count = 0
 			size = 0
-			bytesBuf.Reset()
+			iter.ReleaseBuf()
 		}
 		if totalSize >= regionMaxSize || totalCount >= j.regionSplitKeys {
 			// we will shrink the key range of this job to real written range
@@ -340,7 +408,8 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 					logutil.Key("endKey", j.keyRange.End),
 					logutil.Key("remainStart", remainingStartKey),
 					logutil.Region(region),
-					logutil.Leader(j.region.Leader))
+					logutil.Leader(j.region.Leader),
+					zap.Uint64("commitTS", dataCommitTS))
 			}
 			break
 		}
@@ -356,17 +425,17 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		}
 		count = 0
 		size = 0
-		bytesBuf.Reset()
+		iter.ReleaseBuf()
 	}
 
 	var leaderPeerMetas []*sst.SSTMeta
 	for i, wStream := range clients {
 		resp, closeErr := wStream.CloseAndRecv()
 		if closeErr != nil {
-			return annotateErr(closeErr, allPeers[i])
+			return annotateErr(closeErr, allPeers[i], "when close write stream")
 		}
 		if resp.Error != nil {
-			return annotateErr(errors.New(resp.Error.Message), allPeers[i])
+			return annotateErr(errors.New("resp error: "+resp.Error.Message), allPeers[i], "when close write stream")
 		}
 		if leaderID == region.Peers[i].GetId() {
 			leaderPeerMetas = resp.Metas
@@ -393,7 +462,6 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	log.FromContext(ctx).Debug("write to kv", zap.Reflect("region", j.region), zap.Uint64("leader", leaderID),
 		zap.Reflect("meta", meta), zap.Reflect("return metas", leaderPeerMetas),
 		zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", totalSize),
-		zap.Int64("buf_size", bytesBuf.TotalSize()),
 		zap.Stringer("takeTime", takeTime))
 	if m, ok := metric.FromContext(ctx); ok {
 		m.SSTSecondsHistogram.WithLabelValues(metric.SSTProcessWrite).Observe(takeTime.Seconds())
@@ -523,7 +591,7 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 
 	var resp *sst.IngestResponse
 	for start := 0; start < len(j.writeResult.sstMeta); start += batch {
-		end := mathutil.Min(start+batch, len(j.writeResult.sstMeta))
+		end := min(start+batch, len(j.writeResult.sstMeta))
 		ingestMetas := j.writeResult.sstMeta[start:end]
 
 		log.FromContext(ctx).Debug("ingest meta", zap.Reflect("meta", ingestMetas))
@@ -809,13 +877,11 @@ func (q *regionJobRetryer) close() {
 	defer q.protectedClosed.mu.Unlock()
 	q.protectedClosed.closed = true
 
-	count := len(q.protectedQueue.q)
 	if q.protectedToPutBack.toPutBack != nil {
-		count++
+		q.protectedToPutBack.toPutBack.done(q.jobWg)
 	}
-	for count > 0 {
-		q.jobWg.Done()
-		count--
+	for _, job := range q.protectedQueue.q {
+		job.done(q.jobWg)
 	}
 }
 

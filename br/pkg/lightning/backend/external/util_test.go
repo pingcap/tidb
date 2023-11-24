@@ -22,20 +22,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPrettyFileNames(t *testing.T) {
-	filenames := []string{
-		"/tmp/br/backup/1/1_1.sst",
-		"/tmp/br/2/1_2.sst",
-		"/tmp/123/1/1_3",
-	}
-	expected := []string{
-		"1/1_1.sst",
-		"2/1_2.sst",
-		"1/1_3",
-	}
-	require.Equal(t, expected, prettyFileNames(filenames))
-}
-
 func TestSeekPropsOffsets(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewMemStorage()
@@ -84,18 +70,18 @@ func TestSeekPropsOffsets(t *testing.T) {
 	err = w2.Close(ctx)
 	require.NoError(t, err)
 
-	got, err := seekPropsOffsets(ctx, []byte("key2.5"), []string{file1, file2}, store)
+	got, err := seekPropsOffsets(ctx, []byte("key2.5"), []string{file1, file2}, store, true)
 	require.NoError(t, err)
 	require.Equal(t, []uint64{10, 20}, got)
-	got, err = seekPropsOffsets(ctx, []byte("key3"), []string{file1, file2}, store)
+	got, err = seekPropsOffsets(ctx, []byte("key3"), []string{file1, file2}, store, true)
 	require.NoError(t, err)
 	require.Equal(t, []uint64{30, 20}, got)
-	_, err = seekPropsOffsets(ctx, []byte("key0"), []string{file1, file2}, store)
+	_, err = seekPropsOffsets(ctx, []byte("key0"), []string{file1, file2}, store, true)
 	require.ErrorContains(t, err, "start key 6b657930 is too small for stat files [/test1 /test2]")
-	got, err = seekPropsOffsets(ctx, []byte("key1"), []string{file1, file2}, store)
+	got, err = seekPropsOffsets(ctx, []byte("key1"), []string{file1, file2}, store, false)
 	require.NoError(t, err)
 	require.Equal(t, []uint64{10, 0}, got)
-	got, err = seekPropsOffsets(ctx, []byte("key999"), []string{file1, file2}, store)
+	got, err = seekPropsOffsets(ctx, []byte("key999"), []string{file1, file2}, store, false)
 	require.NoError(t, err)
 	require.Equal(t, []uint64{50, 40}, got)
 
@@ -112,7 +98,7 @@ func TestSeekPropsOffsets(t *testing.T) {
 	require.NoError(t, err)
 	err = w4.Close(ctx)
 	require.NoError(t, err)
-	got, err = seekPropsOffsets(ctx, []byte("key3"), []string{file1, file2, file3, file4}, store)
+	got, err = seekPropsOffsets(ctx, []byte("key3"), []string{file1, file2, file3, file4}, store, true)
 	require.NoError(t, err)
 	require.Equal(t, []uint64{30, 20, 0, 30}, got)
 }
@@ -121,7 +107,8 @@ func TestGetAllFileNames(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewMemStorage()
 	w := NewWriterBuilder().
-		SetMemorySizeLimit(20).
+		SetMemorySizeLimit(10*(lengthBytes*2+2)).
+		SetBlockSize(10*(lengthBytes*2+2)).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
 		Build(store, "/subtask", "0")
@@ -141,7 +128,8 @@ func TestGetAllFileNames(t *testing.T) {
 	require.NoError(t, err)
 
 	w2 := NewWriterBuilder().
-		SetMemorySizeLimit(20).
+		SetMemorySizeLimit(10*(lengthBytes*2+2)).
+		SetBlockSize(10*(lengthBytes*2+2)).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
 		Build(store, "/subtask", "3")
@@ -154,7 +142,8 @@ func TestGetAllFileNames(t *testing.T) {
 	require.NoError(t, err)
 
 	w3 := NewWriterBuilder().
-		SetMemorySizeLimit(20).
+		SetMemorySizeLimit(10*(lengthBytes*2+2)).
+		SetBlockSize(10*(lengthBytes*2+2)).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
 		Build(store, "/subtask", "12")
@@ -183,7 +172,8 @@ func TestCleanUpFiles(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewMemStorage()
 	w := NewWriterBuilder().
-		SetMemorySizeLimit(20).
+		SetMemorySizeLimit(10*(lengthBytes*2+2)).
+		SetBlockSize(10*(lengthBytes*2+2)).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
 		Build(store, "/subtask", "0")
@@ -209,7 +199,7 @@ func TestCleanUpFiles(t *testing.T) {
 		"/subtask/0/0", "/subtask/0/1", "/subtask/0/2",
 	}, dataFiles)
 
-	require.NoError(t, CleanUpFiles(ctx, store, "/subtask", 10))
+	require.NoError(t, CleanUpFiles(ctx, store, "/subtask"))
 
 	dataFiles, statFiles, err = GetAllFileNames(ctx, store, "/subtask")
 	require.NoError(t, err)
@@ -246,4 +236,65 @@ func TestGetMaxOverlapping(t *testing.T) {
 		{Key: []byte{5}, Tp: InclusiveEnd, Weight: 1},
 	}
 	require.EqualValues(t, 3, GetMaxOverlapping(points))
+}
+
+func TestSortedKVMeta(t *testing.T) {
+	summary := []*WriterSummary{
+		{
+			Min:       []byte("a"),
+			Max:       []byte("b"),
+			TotalSize: 123,
+			MultipleFilesStats: []MultipleFilesStat{
+				{
+					Filenames: [][2]string{
+						{"f1", "stat1"},
+						{"f2", "stat2"},
+					},
+				},
+			},
+		},
+		{
+			Min:       []byte("x"),
+			Max:       []byte("y"),
+			TotalSize: 177,
+			MultipleFilesStats: []MultipleFilesStat{
+				{
+					Filenames: [][2]string{
+						{"f3", "stat3"},
+						{"f4", "stat4"},
+					},
+				},
+			},
+		},
+	}
+	meta0 := NewSortedKVMeta(summary[0])
+	require.Equal(t, []byte("a"), meta0.StartKey)
+	require.Equal(t, []byte{'b', 0}, meta0.EndKey)
+	require.Equal(t, uint64(123), meta0.TotalKVSize)
+	require.Equal(t, summary[0].MultipleFilesStats, meta0.MultipleFilesStats)
+	meta1 := NewSortedKVMeta(summary[1])
+	require.Equal(t, []byte("x"), meta1.StartKey)
+	require.Equal(t, []byte{'y', 0}, meta1.EndKey)
+	require.Equal(t, uint64(177), meta1.TotalKVSize)
+	require.Equal(t, summary[1].MultipleFilesStats, meta1.MultipleFilesStats)
+
+	meta0.MergeSummary(summary[1])
+	require.Equal(t, []byte("a"), meta0.StartKey)
+	require.Equal(t, []byte{'y', 0}, meta0.EndKey)
+	require.Equal(t, uint64(300), meta0.TotalKVSize)
+	mergedStats := append([]MultipleFilesStat{}, summary[0].MultipleFilesStats...)
+	mergedStats = append(mergedStats, summary[1].MultipleFilesStats...)
+	require.Equal(t, mergedStats, meta0.MultipleFilesStats)
+
+	meta00 := NewSortedKVMeta(summary[0])
+	meta00.Merge(meta1)
+	require.Equal(t, meta0, meta00)
+}
+
+func TestKeyMinMax(t *testing.T) {
+	require.Equal(t, []byte("a"), BytesMin([]byte("a"), []byte("b")))
+	require.Equal(t, []byte("a"), BytesMin([]byte("b"), []byte("a")))
+
+	require.Equal(t, []byte("b"), BytesMax([]byte("a"), []byte("b")))
+	require.Equal(t, []byte("b"), BytesMax([]byte("b"), []byte("a")))
 }

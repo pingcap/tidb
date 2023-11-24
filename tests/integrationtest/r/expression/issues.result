@@ -50,20 +50,22 @@ t	CREATE TABLE `t` (
 drop table if exists t;
 create table t(a tinyint, b bit(63));
 insert ignore into t values(599999999, -1);
-show warnings;
 Level	Code	Message
-select * from t;
-a	b
-127	ÿÿÿÿÿÿÿ
+Warning	1264	Out of range value for column 'a' at row 1
+Warning	1406	Data too long for column 'b' at row 1
+select hex(a), hex(b) from t;
+hex(a)	hex(b)
+7F	7FFFFFFFFFFFFFFF
 drop table if exists t;
 create table t(b bit(16));
 insert ignore into t values(0x3635313836),(0x333830);
-show warnings;
 Level	Code	Message
-select * from t;
-b
-ÿÿ
-ÿÿ
+Warning	1406	Data too long for column 'b' at row 1
+Warning	1406	Data too long for column 'b' at row 2
+select hex(b) from t;
+hex(b)
+FFFF
+FFFF
 drop table if exists t;
 create table t(a char(32) not null, b float default '0') engine=innodb default charset=utf8mb4;
 insert into t value('0a6f9d012f98467f8e671e9870044528', 208.867);
@@ -83,7 +85,7 @@ b+0	BIN(b)	OCT(b)	HEX(b)
 drop table if exists t;
 create table t(a char(20));
 select convert(a using a) from t;
-[parser:1115]Unknown character set: 'a'
+Error 1115 (42000): Unknown character set: 'a'
 drop table if exists t1;
 create table t1(c1 varbinary(100));
 insert into t1 values('abc');
@@ -93,8 +95,8 @@ drop table if exists t;
 create table t (id int NOT NULL DEFAULT 8);
 SET sql_mode = '';
 insert into t values (1), (NULL), (2);
-show warnings;
 Level	Code	Message
+Warning	1048	Column 'id' cannot be null
 select * from t;
 id
 1
@@ -203,8 +205,8 @@ insert into ft values(1234567890,123467890.1234,123467890.1234,'123467890.123400
 SELECT FROM_UNIXTIME(tchar) from ft;
 FROM_UNIXTIME(tchar)
 1973-11-30 08:38:10.123400
-show warnings;
 Level	Code	Message
+Warning	1292	Truncated incorrect DECIMAL value: '123467890.1234000000000000000000100111111111'
 truncate table ft;
 insert into ft values(1234567890,123467890.1234,123467890.1234,'11111123467890.1234');
 SELECT FROM_UNIXTIME(tchar) from ft;
@@ -278,36 +280,36 @@ min	max
 drop table if exists t_tiny, t_small, t_medium, t_int, t_big;
 create table t_tiny (c0 TINYINT UNSIGNED);
 INSERT IGNORE INTO t_tiny(c0) VALUES (1E9);
-show warnings;
 Level	Code	Message
+Warning	1264	Out of range value for column 'c0' at row 1
 select * from t_tiny;
 c0
 255
 create table t_small (c0 SMALLINT UNSIGNED);
 INSERT IGNORE INTO t_small(c0) VALUES (1E9);
-show warnings;
 Level	Code	Message
+Warning	1264	Out of range value for column 'c0' at row 1
 select * from t_small;
 c0
 65535
 create table t_medium (c0 MEDIUMINT UNSIGNED);
 INSERT IGNORE INTO t_medium(c0) VALUES (1E9);
-show warnings;
 Level	Code	Message
+Warning	1264	Out of range value for column 'c0' at row 1
 select * from t_medium;
 c0
 16777215
 create table t_int (c0 INT UNSIGNED);
 INSERT IGNORE INTO t_int(c0) VALUES (1E20);
-show warnings;
 Level	Code	Message
+Warning	1264	Out of range value for column 'c0' at row 1
 select * from t_int;
 c0
 4294967295
 create table t_big (c0 BIGINT UNSIGNED);
 INSERT IGNORE INTO t_big(c0) VALUES (1E20);
-show warnings;
 Level	Code	Message
+Warning	1264	Out of range value for column 'c0' at row 1
 select * from t_big;
 c0
 18446744073709551615
@@ -857,7 +859,6 @@ null
 "0"
 insert into mysql.expr_pushdown_blacklist values('json_extract','tikv','');
 admin reload expr_pushdown_blacklist;
-
 SELECT * FROM testjson WHERE JSON_EXTRACT(j,'$.test');
 j
 {"test": 3}
@@ -899,6 +900,8 @@ j
 ""
 null
 "0"
+delete from mysql.expr_pushdown_blacklist;
+admin reload expr_pushdown_blacklist;
 drop table if exists t0;
 CREATE TABLE t0(c0 int);
 INSERT INTO t0 VALUES (1);
@@ -1118,12 +1121,12 @@ rollback;
 drop table if exists t;
 create table t (a int) partition by range(a) (PARTITION p0 VALUES LESS THAN (10));
 alter table t add partition (partition p1 values less than (a));
-Error 1054: Unknown column 'a' in 'expression'
+Error 1054 (42S22): Unknown column 'a' in 'expression'
 select * from t;
 a
 drop table if exists t;
 create table t (a int) partition by range(a) (PARTITION p0 VALUES LESS THAN (a));
-Error 1054: Unknown column 'a' in 'expression'
+Error 1054 (42S22): Unknown column 'a' in 'expression'
 DROP TABLE IF EXISTS `table_float`;
 DROP TABLE IF EXISTS `table_int_float_varchar`;
 CREATE TABLE `table_float` (`id_1` int(16) NOT NULL AUTO_INCREMENT,`col_float_1` float DEFAULT NULL,PRIMARY KEY (`id_1`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=97635;
@@ -1202,7 +1205,7 @@ drop table if exists t;
 create table t(id int primary key, c int, d timestamp null default null);
 insert into t values(1, 2, '2038-01-18 20:20:30');
 update t set d = adddate(d, interval 1 day) where id < 10;
-Error 1292: Incorrect timestamp value: '2038-01-19 20:20:30'
+Error 1292 (22007): Incorrect timestamp value: '2038-01-19 20:20:30'
 drop view if exists t15847;
 CREATE VIEW t15847(c0) AS SELECT NULL;
 SELECT * FROM t15847 WHERE (NOT (IF(t15847.c0, NULL, NULL)));
@@ -1357,8 +1360,8 @@ insert into t12205 values('-1038024704','-527892480');
 select SEC_TO_TIME( ( `col_varchar_64` & `col_varchar_64_key` ) ),`col_varchar_64` & `col_varchar_64_key` from t12205;
 SEC_TO_TIME( ( `col_varchar_64` & `col_varchar_64_key` ) )	`col_varchar_64` & `col_varchar_64_key`
 838:59:59	18446744072635875328
-show warnings;
 Level	Code	Message
+Warning	1292	Truncated incorrect time value: '18446744072635875000'
 drop table if exists t;
 create table t(1e int);
 insert into t values (1);
@@ -1376,7 +1379,7 @@ select .78$123;
 $123
 0.78
 select .78$421+1;
-[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 15 near "+1;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 15 near "+1;" 
 select t. `r10` > 3 from t;
 t. `r10` > 3
 1
@@ -1400,8 +1403,8 @@ insert into t12206 values(73,0,0000);
 SELECT TIME_FORMAT( `col_tinyint_unsigned`, ( IFNULL( `col_double_unsigned`, `col_year_key` ) ) ) AS field1 FROM `t12206`;
 field1
 NULL
-show warnings;
 Level	Code	Message
+Warning	1292	Truncated incorrect time value: '73'
 drop table if exists t12209;
 create table t12209(a bigint(20));
 insert into t12209 values(1);
@@ -1412,12 +1415,7 @@ drop table if exists ta, tb;
 CREATE TABLE `ta` (  `k` varchar(32) NOT NULL DEFAULT ' ',  `c0` varchar(32) NOT NULL DEFAULT ' ',  `c` varchar(18) NOT NULL DEFAULT ' ',  `e0` varchar(1) NOT NULL DEFAULT ' ',  PRIMARY KEY (`k`,`c0`,`c`),  KEY `idx` (`c`,`e0`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 CREATE TABLE `tb` (  `k` varchar(32) NOT NULL DEFAULT ' ',  `e` int(11) NOT NULL DEFAULT '0',  `i` int(11) NOT NULL DEFAULT '0',  `s` varchar(1) NOT NULL DEFAULT ' ',  `c` varchar(50) NOT NULL DEFAULT ' ',  PRIMARY KEY (`k`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 prepare stmt from "select a.* from ta a left join tb b on a.k = b.k where (a.k <> '000000' and ((b.s = ? and i = ? ) or (b.s = ? and e = ?) or (b.s not in(?, ?))) and b.c like '%1%') or (a.c <> '000000' and a.k = '000000')";
-set @a=3;
-set @b=20200414;
-set @c='a';
-set @d=20200414;
-set @e=3;
-set @f='a';
+set @a=3;set @b=20200414;set @c='a';set @d=20200414;set @e=3;set @f='a';
 execute stmt using @a,@b,@c,@d,@e,@f;
 k	c0	c	e0
 drop table if exists t;
@@ -1703,7 +1701,7 @@ create table t(a int);
 insert into t values(1),(1),(2),(2);
 set tidb_window_concurrency = 1;
 select (FIRST_VALUE(1) over (partition by v.a)) as c3 from (select a from t where t.a = (select a from t t2 where t.a = t2.a)) as v;
-Error 1242: Subquery returns more than 1 row
+Error 1242 (21000): Subquery returns more than 1 row
 drop table if exists t1,t2;
 CREATE TABLE `t1` (
 `c1` enum('Alice','Bob','Charlie','David') NOT NULL,
@@ -1726,25 +1724,25 @@ c1	c2	c3
 drop table if exists t1;
 CREATE TABLE t1 (a text)character set utf8 ;
 INSERT INTO t1 VALUES  (REPEAT(0125,200000000));
-Error 1301: Result of repeat() was larger than max_allowed_packet (67108864) - truncated
+Error 1301 (HY000): Result of repeat() was larger than max_allowed_packet (67108864) - truncated
 select * from t1;
 a
 insert into t1 (a) values ('a'),('b');
 insert into t1 select REPEAT(a,200000000) from t1;
-Error 1301: Result of repeat() was larger than max_allowed_packet (67108864) - truncated
+Error 1301 (HY000): Result of repeat() was larger than max_allowed_packet (67108864) - truncated
 select a from t1 order by a;
 a
 a
 b
 insert into t1 values  (cast("a" as binary(4294967295)));
-Error 1301: Result of cast_as_binary() was larger than max_allowed_packet (67108864) - truncated
+Error 1301 (HY000): Result of cast_as_binary() was larger than max_allowed_packet (67108864) - truncated
 select a from t1 order by a;
 a
 a
 b
 INSERT IGNORE INTO t1 VALUES (REPEAT(0125,200000000));
-show warnings;
 Level	Code	Message
+Warning	1301	Result of repeat() was larger than max_allowed_packet (67108864) - truncated
 select a from t1 order by a;
 a
 NULL
@@ -1959,11 +1957,10 @@ create table t (c int primary key, c2 enum('a', 'b'));
 set session sql_mode = '';
 insert into t values(4, 'a');
 insert into t values(4, 0) on duplicate key update c=values(c), c2=values(c2);
-show warnings;
 Level	Code	Message
+Warning	1265	Data truncated for column 'c2' at row 1
+Warning	1265	Data truncated for column 'c2' at row 1
 insert into t values(4, 'a') on duplicate key update c=values(c), c2=values(c2);
-show warnings;
-Level	Code	Message
 set @@sql_mode=default;
 drop table if exists t0, t1;
 CREATE TABLE t0(c0 BOOL, c1 INT);
@@ -2071,7 +2068,7 @@ EXECUTE mystmt USING @a;
 id	a
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 prepare stmt from 'select unix_timestamp(?)';
 set @a = '2020-05-30 20:30:00';
 execute stmt using @a;
@@ -2148,11 +2145,11 @@ approx_count_distinct(b, c)
 1
 drop table if exists t;
 create table t(a enum('a', 'a ')) charset utf8 collate utf8_bin;
-Error 1291: Column 'a' has duplicated value 'a' in ENUM
+Error 1291 (HY000): Column 'a' has duplicated value 'a' in ENUM
 create table t(a enum('a', 'Ã')) charset utf8 collate utf8_general_ci;
-Error 1291: Column 'a' has duplicated value 'Ã' in ENUM
+Error 1291 (HY000): Column 'a' has duplicated value 'Ã' in ENUM
 create table t(a enum('a', 'a ')) charset utf8mb4 collate utf8mb4_bin;
-Error 1291: Column 'a' has duplicated value 'a' in ENUM
+Error 1291 (HY000): Column 'a' has duplicated value 'a' in ENUM
 create table t(a enum('a', 'A')) charset utf8 collate utf8_bin;
 drop table if exists t3;
 create table t3(a enum('a', 'A')) charset utf8mb4 collate utf8mb4_bin;
@@ -2165,18 +2162,6 @@ a	A	a	A
 select * from t t1 left join t t2 on t1.a = t2.b collate utf8mb4_general_ci;
 a	b	a	b
 a	A	a	A
-drop table if exists t;
-create table t(a varchar(10) collate utf8mb4_bin, b varchar(10) collate utf8mb4_general_ci);
-insert into t (a, b) values ('a', 'A');
-select * from t where field('A', a collate utf8mb4_general_ci, b) > 1;
-a	b
-select * from t where field('A', a, b collate utf8mb4_general_ci) > 1;
-a	b
-select * from t where field('A' collate utf8mb4_general_ci, a, b) > 1;
-a	b
-select * from t where field('A', a, b) > 1;
-a	b
-a	A
 set names utf8mb4 collate utf8mb4_general_ci;
 select collation(concat(1 collate `binary`));
 collation(concat(1 collate `binary`))
@@ -2242,37 +2227,35 @@ coercibility(lag(b, 1, 'B') over w)
 SELECT 'lvuleck' BETWEEN '2008-09-16 22:23:50' AND 0;
 'lvuleck' BETWEEN '2008-09-16 22:23:50' AND 0
 0
-show warnings;
 Level	Code	Message
+Warning	1292	Truncated incorrect DOUBLE value: '2008-09-16 22:23:50'
+Warning	1292	Truncated incorrect DOUBLE value: 'lvuleck'
 SELECT 'aa' BETWEEN 'bb' AND 0;
 'aa' BETWEEN 'bb' AND 0
 1
-show warnings;
 Level	Code	Message
+Warning	1292	Truncated incorrect DOUBLE value: 'aa'
+Warning	1292	Truncated incorrect DOUBLE value: 'bb'
 select 1 between 0 and b'110';
 1 between 0 and b'110'
 1
-show warnings;
-Level	Code	Message
 select 'b' between 'a' and b'110';
 'b' between 'a' and b'110'
 0
-show warnings;
-Level	Code	Message
 drop table if exists t;
 create table t(a set('a', 'b', 'c'));
 alter table t change a a set('a', 'b', 'c', 'c');
-Error 1291: Column 'a' has duplicated value 'c' in SET
+Error 1291 (HY000): Column 'a' has duplicated value 'c' in SET
 drop table if exists t;
 create table t(a enum('a', 'b', 'c'));
 alter table t change a a enum('a', 'b', 'c', 'c');
-Error 1291: Column 'a' has duplicated value 'c' in ENUM
+Error 1291 (HY000): Column 'a' has duplicated value 'c' in ENUM
 drop table if exists t;
 create table t(a set('a', 'b', 'c'));
 alter table t change a a set('a', 'b', 'c', 'd');
 insert into t values('d');
 alter table t change a a set('a', 'b', 'c', 'e', 'f');
-Error 1265: Data truncated for column 'a', value is 'd'
+Error 1265 (01000): Data truncated for column 'a', value is 'd'
 set @@character_set_client=utf8mb4;
 set @@collation_connection=utf8_bin;
 CREATE VIEW tview_1 AS SELECT 'a' AS `id`;
@@ -2320,11 +2303,11 @@ select t2.b from (select t1.a as b from t1 union all select t1.a as b from t1) t
 b
 set names default;
 select case 1 when 1 then 'a' collate utf8mb4_unicode_ci else 'b' collate utf8mb4_general_ci end;
-Error 1267: Illegal mix of collations (utf8mb4_unicode_ci,EXPLICIT) and (utf8mb4_general_ci,EXPLICIT) for operation 'case'
+Error 1267 (HY000): Illegal mix of collations (utf8mb4_unicode_ci,EXPLICIT) and (utf8mb4_general_ci,EXPLICIT) for operation 'case'
 select case when 1 then 'a' collate utf8mb4_unicode_ci when 2 then 'b' collate utf8mb4_general_ci end;
-Error 1267: Illegal mix of collations (utf8mb4_unicode_ci,EXPLICIT) and (utf8mb4_general_ci,EXPLICIT) for operation 'case'
+Error 1267 (HY000): Illegal mix of collations (utf8mb4_unicode_ci,EXPLICIT) and (utf8mb4_general_ci,EXPLICIT) for operation 'case'
 select case 1 when 1 then 'a' collate utf8mb4_unicode_ci when 2 then 'b' collate utf8mb4_general_ci else 'b' collate utf8mb4_bin end;
-Error 1270: Illegal mix of collations (utf8mb4_unicode_ci,EXPLICIT), (utf8mb4_general_ci,EXPLICIT), (utf8mb4_bin,EXPLICIT) for operation 'case'
+Error 1270 (HY000): Illegal mix of collations (utf8mb4_unicode_ci,EXPLICIT), (utf8mb4_general_ci,EXPLICIT), (utf8mb4_bin,EXPLICIT) for operation 'case'
 drop table if exists t0,t1;
 create table t0(col1 varchar(255));
 create table t1(col1 int(11));
@@ -2448,7 +2431,6 @@ select c from t;
 c
 128
 admin check table t;
-
 set @@sql_mode=default;
 DROP TABLE IF EXISTS t1;
 CREATE TABLE t1 ( `pk` int not null primary key auto_increment, `col_smallint_key_signed` smallint  , key (`col_smallint_key_signed`));
@@ -2511,6 +2493,81 @@ z	25.18040000000000000000
 select * from t where t.b < t.c;
 b	c
 z	26.18040000000000000000
+drop table if exists t1;
+CREATE TABLE t1 (c1 INT);
+INSERT INTO t1 VALUES (1), (null);
+SELECT IFNULL(c1, 0.0) from t1;
+IFNULL(c1, 0.0)
+1.0
+0.0
+SELECT if(c1 is not null, c1, 0.0) from t1;
+if(c1 is not null, c1, 0.0)
+1.0
+0.0
+SELECT case when c1 is not null then c1 else 0.0 end from t1;
+case when c1 is not null then c1 else 0.0 end
+1.0
+0.0
+drop table if exists t1;
+CREATE TABLE t1 (v1 datetime(3), v2 datetime(4));
+INSERT INTO t1 VALUES ('2020-01-01 11:11:11.123', null), (null, '2020-01-01 11:11:11.1234');
+SELECT IFNULL(v1, v2) from t1;
+IFNULL(v1, v2)
+2020-01-01 11:11:11.1230
+2020-01-01 11:11:11.1234
+SELECT if(v1 is not null, v1, v2) from t1;
+if(v1 is not null, v1, v2)
+2020-01-01 11:11:11.1230
+2020-01-01 11:11:11.1234
+SELECT case when v1 is not null then v1 else v2 end from t1;
+case when v1 is not null then v1 else v2 end
+2020-01-01 11:11:11.1230
+2020-01-01 11:11:11.1234
+drop table if exists t1;
+CREATE TABLE t1 (v1 timestamp(3), v2 timestamp(4));
+INSERT INTO t1 VALUES ('2020-01-01 11:11:11.123', null), (null, '2020-01-01 11:11:11.1234');
+SELECT IFNULL(v1, v2) from t1;
+IFNULL(v1, v2)
+2020-01-01 11:11:11.1230
+2020-01-01 11:11:11.1234
+SELECT if(v1 is not null, v1, v2) from t1;
+if(v1 is not null, v1, v2)
+2020-01-01 11:11:11.1230
+2020-01-01 11:11:11.1234
+SELECT case when v1 is not null then v1 else v2 end from t1;
+case when v1 is not null then v1 else v2 end
+2020-01-01 11:11:11.1230
+2020-01-01 11:11:11.1234
+drop table if exists t1;
+CREATE TABLE t1 (v1 time(3), v2 time(4));
+INSERT INTO t1 VALUES ('11:11:11.123', null), (null, '11:11:11.1234');
+SELECT IFNULL(v1, v2) from t1;
+IFNULL(v1, v2)
+11:11:11.1230
+11:11:11.1234
+SELECT if(v1 is not null, v1, v2) from t1;
+if(v1 is not null, v1, v2)
+11:11:11.1230
+11:11:11.1234
+SELECT case when v1 is not null then v1 else v2 end from t1;
+case when v1 is not null then v1 else v2 end
+11:11:11.1230
+11:11:11.1234
+drop table if exists t1;
+CREATE TABLE t1 (var_fld int(11) DEFAULT '0' );
+INSERT INTO t1 VALUES (4500), (6000);
+SELECT IF ( var_fld  > 5000, ( 00001 / var_fld ) , 5000 ) if_var FROM t1;
+if_var
+5000.0000
+0.0002
+SELECT CASE WHEN var_fld  > 5000 THEN ( 1 / var_fld ) ELSE 5000 END case_var FROM t1;
+case_var
+5000.0000
+0.0002
+SELECT CASE var_fld  > 5000 WHEN TRUE THEN ( 1 / var_fld ) ELSE 5000 END case_var FROM t1;
+case_var
+5000.0000
+0.0002
 drop table if exists t1;
 CREATE TABLE t1 (c1 TINYINT(1) UNSIGNED NOT NULL);
 INSERT INTO t1 VALUES (0);
@@ -2659,3 +2716,452 @@ AND fk.table_schema = database()
 AND fk.table_name = 'authors';
 to_table	primary_key	column	name	on_update	on_delete
 author_addresses	id	author_address_id	fk_rails_94423a17a3	CASCADE	RESTRICT
+drop table if exists t;
+CREATE TABLE t (a CHAR(5) CHARACTER SET latin1);
+INSERT INTO t VALUES ('oe');
+INSERT INTO t VALUES (0xf6);
+SELECT * FROM t WHERE a= 'oe';
+a
+oe
+SELECT HEX(a) FROM t WHERE a= 0xf6;
+HEX(a)
+F6
+drop table if exists tb;
+create table tb(id int auto_increment primary key, v varchar(32));
+insert into tb(v) (select v from tb);
+SELECT * FROM tb;
+id	v
+insert into tb(v) values('hello');
+insert into tb(v) (select v from tb);
+SELECT * FROM tb;
+id	v
+1	hello
+2	hello
+drop table if exists t;
+create table t(c varchar(32));
+insert into t values('1e649'),('-1e649');
+SELECT * FROM t where c < 1;
+c
+-1e649
+SELECT * FROM t where c > 1;
+c
+1e649
+drop table if exists t;
+create table t(a int);
+insert t values (1);
+select * from t where cast(a as binary);
+a
+1
+drop table if exists t2;
+create table t2(a int, b varchar(20));
+insert into t2 values(1,"1111"),(2,"2222"),(3,"3333"),(4,"4444"),(5,"5555"),(6,"6666"),(7,"7777"),(8,"8888"),(9,"9999"),(10,"0000");
+select (@j := case when substr(t2.b,1,3)=@i then 1 else @j+1 end) from t2, (select @j := 0, @i := "0") tt limit 10;
+(@j := case when substr(t2.b,1,3)=@i then 1 else @j+1 end)
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+select b'10000000' DIV 10;
+b'10000000' DIV 10
+12
+select cast(b'10000000' as unsigned) / 10;
+cast(b'10000000' as unsigned) / 10
+12.8000
+select b'10000000' / 10;
+b'10000000' / 10
+12.8000
+drop table if exists t0;
+create table t0 (c0 int);
+select * from (select (92 / 4) as c4) as subq_0 where exists (
+select 1 as c0
+union all
+select 1 as c0 from (t0 as ref_88) where (subq_0.c4) >= (subq_0.c4)
+);
+c4
+23.0000
+drop table if exists poi_clearing_time_topic;
+CREATE TABLE poi_clearing_time_topic (effective_date datetime DEFAULT NULL , clearing_time int(11) DEFAULT NULL);
+insert into poi_clearing_time_topic values ('2023:08:25', 1);
+SELECT GROUP_CONCAT(effective_date order by stlmnt_hour DESC) FROM ( SELECT (COALESCE(pct.clearing_time, 0)/3600000) AS stlmnt_hour ,COALESCE(pct.effective_date, '1970-01-01 08:00:00') AS effective_date FROM poi_clearing_time_topic pct ORDER BY pct.effective_date DESC ) a;
+GROUP_CONCAT(effective_date order by stlmnt_hour DESC)
+2023-08-25 00:00:00
+SELECT @@information_schema_stats_expiry;
+@@information_schema_stats_expiry
+86400
+/*!80000 SET SESSION information_schema_stats_expiry=0 */;
+SELECT @@information_schema_stats_expiry;
+@@information_schema_stats_expiry
+0
+SELECT @@GLOBAL.information_schema_stats_expiry;
+@@GLOBAL.information_schema_stats_expiry
+86400
+/*!80000 SET GLOBAL information_schema_stats_expiry=0 */;
+SELECT @@GLOBAL.information_schema_stats_expiry;
+@@GLOBAL.information_schema_stats_expiry
+0
+set @@SESSION.information_schema_stats_expiry=default;
+set @@GLOBAL.information_schema_stats_expiry=default;
+drop table if exists t;
+drop table if exists t1;
+create table t(col1 decimal);
+insert into t values(0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000);
+select * from t;
+col1
+0
+create table t1(col1 decimal(65,30));
+insert into t1 values(0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000);
+select * from t1;
+col1
+0.000000000000000000000000000000
+select 0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000;
+0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0.000000000000000000000000000000000000000000000000000000000000000000000000
+select 0.0000000000000000000000000000000000000000000000000000000000000000000000012;
+0.0000000000000000000000000000000000000000000000000000000000000000000000012
+0.000000000000000000000000000000000000000000000000000000000000000000000001
+select 0.000000000000000000000000000000000000000000000000000000000000000000000001;
+0.000000000000000000000000000000000000000000000000000000000000000000000001
+0.000000000000000000000000000000000000000000000000000000000000000000000001
+drop table if exists dd;
+CREATE TABLE dd(a date, b datetime, c timestamp);
+SET sql_mode='';
+TRUNCATE TABLE dd;
+INSERT INTO dd(a) values('0000-00-00');
+SHOW WARNINGS;
+Level	Code	Message
+SELECT a FROM dd;
+a
+0000-00-00
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) values('2000-10-01');
+UPDATE dd SET b = '0000-00-00';
+SHOW WARNINGS;
+Level	Code	Message
+SELECT b FROM dd;
+b
+0000-00-00 00:00:00
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('0000-00-00 20:00:00');
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '0000-00-00 20:00:00' for column 'c' at row 1
+SELECT c FROM dd;
+c
+0000-00-00 00:00:00
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('2000-10-01 20:00:00');
+UPDATE dd SET c = '0000-00-00 20:00:00';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '0000-00-00 20:00:00'
+SELECT c FROM dd;
+c
+0000-00-00 00:00:00
+SET sql_mode='NO_ZERO_DATE';
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) values('0000-0-00');
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect datetime value: '0000-0-00' for column 'b' at row 1
+SELECT b FROM dd;
+b
+0000-00-00 00:00:00
+TRUNCATE TABLE dd;
+INSERT INTO dd(a) values('2000-10-01');
+UPDATE dd SET a = '0000-00-00';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect date value: '0000-00-00'
+SELECT a FROM dd;
+a
+0000-00-00
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('2000-10-01 10:00:00');
+UPDATE dd SET c = '0000-00-00 10:00:00';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '0000-00-00 10:00:00'
+SELECT c FROM dd;
+c
+0000-00-00 00:00:00
+SET sql_mode='NO_ZERO_DATE,STRICT_TRANS_TABLES';
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) VALUES ('0000-00-00 20:00:00');
+Error 1292 (22007): Incorrect timestamp value: '0000-00-00 20:00:00' for column 'c' at row 1
+INSERT IGNORE INTO dd(c) VALUES ('0000-00-00 20:00:00');
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '0000-00-00 20:00:00' for column 'c' at row 1
+SELECT c FROM dd;
+c
+0000-00-00 00:00:00
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) values('2000-10-01');
+UPDATE dd SET b = '0000-00-00';
+Error 1292 (22007): Incorrect datetime value: '0000-00-00'
+UPDATE IGNORE dd SET b = '0000-00-00';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect datetime value: '0000-00-00'
+SELECT b FROM dd;
+b
+0000-00-00 00:00:00
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('2000-10-01 10:00:00');
+UPDATE dd SET c = '0000-00-00 00:00:00';
+Error 1292 (22007): Incorrect timestamp value: '0000-00-00 00:00:00'
+UPDATE IGNORE dd SET c = '0000-00-00 00:00:00';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '0000-00-00 00:00:00'
+SELECT c FROM dd;
+c
+0000-00-00 00:00:00
+SET sql_mode='';
+TRUNCATE TABLE dd;
+INSERT INTO dd(a) values('2000-01-00');
+SHOW WARNINGS;
+Level	Code	Message
+SELECT a FROM dd;
+a
+2000-01-00
+INSERT INTO dd(a) values('2000-00-01');
+SHOW WARNINGS;
+Level	Code	Message
+SELECT a FROM dd;
+a
+2000-01-00
+2000-00-01
+INSERT INTO dd(a) values('0-01-02');
+SHOW WARNINGS;
+Level	Code	Message
+SELECT a FROM dd;
+a
+2000-01-00
+2000-00-01
+2000-01-02
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) values('2000-01-02');
+UPDATE dd SET b = '2000-00-02';
+SHOW WARNINGS;
+Level	Code	Message
+SELECT b FROM dd;
+b
+2000-00-02 00:00:00
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('2000-01-02 20:00:00');
+UPDATE dd SET c = '0000-01-02 20:00:00';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '0000-01-02 20:00:00'
+SELECT c FROM dd;
+c
+0000-00-00 00:00:00
+SET sql_mode='NO_ZERO_IN_DATE';
+TRUNCATE TABLE dd;
+INSERT INTO dd(a) values('2000-01-00');
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect date value: '2000-01-00' for column 'a' at row 1
+SELECT a FROM dd;
+a
+0000-00-00
+TRUNCATE TABLE dd;
+INSERT INTO dd(a) values('2000-01-02');
+UPDATE dd SET a = '2000-00-02';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect date value: '2000-00-02'
+SELECT a FROM dd;
+a
+0000-00-00
+UPDATE dd SET b = '2000-01-0';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect datetime value: '2000-01-0'
+SELECT b FROM dd;
+b
+0000-00-00 00:00:00
+UPDATE dd SET b = '0-01-02';
+SHOW WARNINGS;
+Level	Code	Message
+SELECT b FROM dd;
+b
+2000-01-02 00:00:00
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('2000-01-02 20:00:00');
+UPDATE dd SET c = '2000-00-02 20:00:00';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2000-00-02 20:00:00'
+SELECT c FROM dd;
+c
+0000-00-00 00:00:00
+SET sql_mode='NO_ZERO_IN_DATE,STRICT_TRANS_TABLES';
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) VALUES ('2000-01-00');
+Error 1292 (22007): Incorrect datetime value: '2000-01-00' for column 'b' at row 1
+INSERT IGNORE INTO dd(b) VALUES ('2000-00-01');
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect datetime value: '2000-00-01' for column 'b' at row 1
+SELECT b FROM dd;
+b
+0000-00-00 00:00:00
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) VALUES ('2000-01-02');
+UPDATE dd SET b = '2000-01-00';
+Error 1292 (22007): Incorrect datetime value: '2000-01-00'
+UPDATE IGNORE dd SET b = '2000-01-0';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect datetime value: '2000-01-0'
+SELECT b FROM dd;
+b
+0000-00-00 00:00:00
+UPDATE dd SET b = '0000-1-2';
+SELECT b FROM dd;
+b
+0000-01-02 00:00:00
+UPDATE dd SET c = '0000-01-05';
+Error 1292 (22007): Incorrect timestamp value: '0000-01-05'
+UPDATE IGNORE dd SET c = '0000-01-5';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '0000-01-5'
+SELECT c FROM dd;
+c
+0000-00-00 00:00:00
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) VALUES ('2000-01-00 20:00:00');
+Error 1292 (22007): Incorrect timestamp value: '2000-01-00 20:00:00' for column 'c' at row 1
+INSERT INTO dd(c) VALUES ('2000-01-02');
+UPDATE dd SET c = '2000-01-00 20:00:00';
+Error 1292 (22007): Incorrect timestamp value: '2000-01-00 20:00:00'
+UPDATE IGNORE dd SET b = '2000-01-00';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect datetime value: '2000-01-00'
+SELECT b FROM dd;
+b
+0000-00-00 00:00:00
+SET sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
+TRUNCATE TABLE dd;
+INSERT INTO dd(a) values('0000-00-00');
+SHOW WARNINGS;
+Level	Code	Message
+SELECT a FROM dd;
+a
+0000-00-00
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) values('2000-10-01');
+UPDATE dd SET b = '0000-00-00';
+SHOW WARNINGS;
+Level	Code	Message
+SELECT b FROM dd;
+b
+0000-00-00 00:00:00
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('0000-00-00 00:00:00');
+SHOW WARNINGS;
+Level	Code	Message
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('2000-10-01 10:00:00');
+UPDATE dd SET c = '0000-00-00 00:00:00';
+SHOW WARNINGS;
+Level	Code	Message
+SELECT c FROM dd;
+c
+0000-00-00 00:00:00
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) VALUES ('2000-01-00');
+Error 1292 (22007): Incorrect datetime value: '2000-01-00' for column 'b' at row 1
+INSERT IGNORE INTO dd(b) VALUES ('2000-00-01');
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect datetime value: '2000-00-01' for column 'b' at row 1
+SELECT b FROM dd;
+b
+0000-00-00 00:00:00
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) VALUES ('2000-01-02');
+UPDATE dd SET b = '2000-01-00';
+Error 1292 (22007): Incorrect datetime value: '2000-01-00'
+UPDATE IGNORE dd SET b = '2000-01-0';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect datetime value: '2000-01-0'
+SELECT b FROM dd;
+b
+0000-00-00 00:00:00
+UPDATE dd SET b = '0000-1-2';
+SELECT b FROM dd;
+b
+0000-01-02 00:00:00
+UPDATE dd SET c = '0000-01-05';
+Error 1292 (22007): Incorrect timestamp value: '0000-01-05'
+UPDATE IGNORE dd SET c = '0000-01-5';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '0000-01-5'
+SELECT c FROM dd;
+c
+0000-00-00 00:00:00
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) VALUES ('2000-01-00 20:00:00');
+Error 1292 (22007): Incorrect timestamp value: '2000-01-00 20:00:00' for column 'c' at row 1
+INSERT INTO dd(c) VALUES ('2000-01-02');
+UPDATE dd SET c = '2000-01-00 20:00:00';
+Error 1292 (22007): Incorrect timestamp value: '2000-01-00 20:00:00'
+UPDATE IGNORE dd SET b = '2000-01-00';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect datetime value: '2000-01-00'
+SELECT b FROM dd;
+b
+0000-00-00 00:00:00
+SET sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
+TRUNCATE TABLE dd;
+INSERT INTO dd(a) values('2000-00-10');
+SHOW WARNINGS;
+Level	Code	Message
+SELECT a FROM dd;
+a
+2000-00-10
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) values('2000-10-01');
+UPDATE dd SET b = '2000-00-10';
+SHOW WARNINGS;
+Level	Code	Message
+SELECT b FROM dd;
+b
+2000-00-10 00:00:00
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('2000-10-01 10:00:00');
+UPDATE dd SET c = '2000-00-10 00:00:00';
+Error 1292 (22007): Incorrect timestamp value: '2000-00-10 00:00:00'
+UPDATE IGNORE dd SET c = '2000-01-00 00:00:00';
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2000-01-00 00:00:00'
+SELECT c FROM dd;
+c
+0000-00-00 00:00:00
+drop table if exists table_20220419;
+CREATE TABLE table_20220419 (
+id bigint(20) NOT NULL AUTO_INCREMENT,
+lastLoginDate datetime NOT NULL,
+PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+set sql_mode='';
+insert into table_20220419 values(1,'0000-00-00 00:00:00');
+set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
+insert into table_20220419(lastLoginDate) select lastLoginDate from table_20220419;
+Error 1292 (22007): Incorrect datetime value: '0000-00-00 00:00:00'
+set sql_mode=default;

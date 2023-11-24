@@ -1,14 +1,11 @@
 # TestCastStrToInt
+--enable_warnings
 select cast('' as signed);
-show warnings;
 select cast('12345abcde' as signed);
-show warnings;
 select cast('123e456' as signed);
-show warnings;
 select cast('-12345abcde' as signed);
-show warnings;
 select cast('-123e456' as signed);
-show warnings;
+--disable_warnings
 
 # TestCastCoer
 select coercibility(binary('a'));
@@ -48,3 +45,20 @@ select cast(col3 as time(31)) from t where col1 is null;
 select cast(col4 as time(31)) from t where col1 is null;
 -- error 1426
 select cast(col5 as time(31)) from t where col1 is null;
+
+# TestCastErrMsg
+drop table if exists t1;
+create table t1 (c1 text);
+insert into t1 values ('a');
+--error 1292
+update t1 set c1 = cast('61qw' as decimal);
+--enable_warnings
+select cast('61qw' as decimal);
+--disable_warnings
+
+# TestCastTimeAsYear
+drop table if exists t;
+create table t (y year);
+insert into t values (cast('14:15' as time));
+select 1 from t where y = YEAR(CURDATE());
+select cast(cast('14:15' as time) as year) = YEAR(CURDATE());
