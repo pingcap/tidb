@@ -57,3 +57,9 @@ func TestCascadePlannerHashedPartTable(t *testing.T) {
 		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
 	}
 }
+
+func TestWWz(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select * from (select 6 id from information_schema.columns) t where id = 1")
+}
