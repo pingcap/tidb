@@ -22,13 +22,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 )
 
 var (
 	// ConcurrentReaderBufferSizePerConc is the buffer size for concurrent reader per
 	// concurrency.
-	ConcurrentReaderBufferSizePerConc = 4 * 1024 * 1024
+	ConcurrentReaderBufferSizePerConc = int(4 * size.MB)
 	// ConcurrentReaderConcurrency is the concurrency for concurrent reader.
 	ConcurrentReaderConcurrency = 8
 )
@@ -203,8 +204,8 @@ func (r *byteReader) readNBytes(n int) ([]byte, error) {
 	}
 	// If the reader has fewer than n bytes remaining in current buffer,
 	// `auxBuf` is used as a container instead.
-	if n > 1024*1024*1024 {
-		return nil, errors.Errorf("read %d bytes from external storage, exceed max limit %d", n, 1024*1024*1024)
+	if n > int(size.GB) {
+		return nil, errors.Errorf("read %d bytes from external storage, exceed max limit %d", n, size.GB)
 	}
 	auxBuf := make([]byte, n)
 	copy(auxBuf, b)

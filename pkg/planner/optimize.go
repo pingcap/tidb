@@ -670,12 +670,12 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
 		return nil, "", nil
 	}
-	stmtNode, normalizedSQL, hash, err := ExtractSelectAndNormalizeDigest(stmt, ctx.GetSessionVars().CurrentDB, true)
+	stmtNode, normalizedSQL, sqlDigest, err := ExtractSelectAndNormalizeDigest(stmt, ctx.GetSessionVars().CurrentDB, true)
 	if err != nil || stmtNode == nil {
 		return nil, "", err
 	}
 	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	bindRecord := sessionHandle.GetBindRecord(hash, normalizedSQL, "")
+	bindRecord := sessionHandle.GetBindRecord(sqlDigest, normalizedSQL, "")
 	if bindRecord != nil {
 		if bindRecord.HasEnabledBinding() {
 			return bindRecord, metrics.ScopeSession, nil
@@ -686,7 +686,7 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	if globalHandle == nil {
 		return nil, "", nil
 	}
-	bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, "")
+	bindRecord = globalHandle.GetBindRecord(sqlDigest, normalizedSQL, "")
 	return bindRecord, metrics.ScopeGlobal, nil
 }
 
