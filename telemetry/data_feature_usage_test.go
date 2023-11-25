@@ -18,9 +18,9 @@ import (
 	"fmt"
 	"testing"
 
+	_ "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
-	_ "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/testkit"
