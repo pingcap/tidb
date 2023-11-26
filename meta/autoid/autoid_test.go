@@ -44,7 +44,7 @@ func (r mockRequirement) Store() kv.Storage {
 	return r.Storage
 }
 
-func (r mockRequirement) GetEtcdClient() *clientv3.Client {
+func (r mockRequirement) AutoIDClient() *ClientDiscover {
 	return nil
 }
 

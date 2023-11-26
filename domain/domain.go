@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/parser/ast"
@@ -135,6 +136,8 @@ type Domain struct {
 	exit            chan struct{}
 	// `etcdClient` must be used when keyspace is not set, or when the logic to each etcd path needs to be separated by keyspace.
 	etcdClient *clientv3.Client
+	// autoidClient is used when there are tables with AUTO_ID_CACHE=1, it is the client to the autoid service.
+	autoidClient *autoid.ClientDiscover
 	// `unprefixedEtcdCli` will never set the etcd namespace prefix by keyspace.
 	// It is only used in storeMinStartTS and RemoveMinStartTS now.
 	// It must be used when the etcd path isn't needed to separate by keyspace.
@@ -1091,6 +1094,7 @@ func (do *Domain) Init(
 			etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(do.store.GetCodec()))
 
 			do.etcdClient = cli
+			do.autoidClient = autoid.NewClientDiscover(cli)
 
 			unprefixedEtcdCli, err := newEtcdCli(addrs, ebd)
 			if err != nil {
@@ -1124,6 +1128,7 @@ func (do *Domain) Init(
 		ctx,
 		ddl.WithEtcdClient(do.etcdClient),
 		ddl.WithStore(do.store),
+		ddl.WithAutoIDClient(do.autoidClient),
 		ddl.WithInfoCache(do.infoCache),
 		ddl.WithHook(callback),
 		ddl.WithLease(ddlLease),
@@ -1554,6 +1559,11 @@ func (do *Domain) SysProcTracker() sessionctx.SysProcTracker {
 // GetEtcdClient returns the etcd client.
 func (do *Domain) GetEtcdClient() *clientv3.Client {
 	return do.etcdClient
+}
+
+// AutoIDClient returns the autoid client.
+func (do *Domain) AutoIDClient() *autoid.ClientDiscover {
+	return do.autoidClient
 }
 
 // GetPDClient returns the PD client.
