@@ -369,6 +369,7 @@ func TestCheckActRowsWithUnistore(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableCollectExecutionInfo = true
 	})
+
 	store := testkit.CreateMockStore(t)
 	// testSuite1 use default mockstore which is unistore
 	tk := testkit.NewTestKit(t, store)
