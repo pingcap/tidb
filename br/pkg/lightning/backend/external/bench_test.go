@@ -230,7 +230,12 @@ func writePlainFile(s *writeTestSuite) {
 func writeExternalFile(s *writeTestSuite) {
 	ctx := context.Background()
 	filePath := "/test/external"
-	_ = s.store.DeleteFile(ctx, filePath)
+	files, statFiles, err := GetAllFileNames(ctx, s.store, filePath)
+	intest.AssertNoError(err)
+	err = s.store.DeleteFiles(ctx, files)
+	intest.AssertNoError(err)
+	err = s.store.DeleteFiles(ctx, statFiles)
+	intest.AssertNoError(err)
 	builder := NewWriterBuilder().
 		SetMemorySizeLimit(uint64(s.memoryLimit))
 
@@ -247,7 +252,7 @@ func writeExternalFile(s *writeTestSuite) {
 	if s.beforeWriterClose != nil {
 		s.beforeWriterClose()
 	}
-	err := writer.Close(ctx)
+	err = writer.Close(ctx)
 	intest.AssertNoError(err)
 	if s.afterWriterClose != nil {
 		s.afterWriterClose()
@@ -257,7 +262,12 @@ func writeExternalFile(s *writeTestSuite) {
 func writeExternalOneFile(s *writeTestSuite) {
 	ctx := context.Background()
 	filePath := "/test/external_one_file"
-	_ = s.store.DeleteFile(ctx, filePath)
+	files, statFiles, err := GetAllFileNames(ctx, s.store, filePath)
+	intest.AssertNoError(err)
+	err = s.store.DeleteFiles(ctx, files)
+	intest.AssertNoError(err)
+	err = s.store.DeleteFiles(ctx, statFiles)
+	intest.AssertNoError(err)
 	builder := NewWriterBuilder().
 		SetMemorySizeLimit(uint64(s.memoryLimit))
 
@@ -276,7 +286,7 @@ func writeExternalOneFile(s *writeTestSuite) {
 	if s.beforeWriterClose != nil {
 		s.beforeWriterClose()
 	}
-	err := writer.Close(ctx)
+	err = writer.Close(ctx)
 	intest.AssertNoError(err)
 	if s.afterWriterClose != nil {
 		s.afterWriterClose()
@@ -353,7 +363,7 @@ func TestCompareWriter(t *testing.T) {
 							testIdx+1, sourceName, storeName, writerName, kvSize[0], kvSize[1], keyCommonPrefixSize)
 						fn(suite)
 						speed := float64(source.outputSize()) / elapsed.Seconds() / 1024 / 1024
-						t.Logf("\ttest %d: speed for %d bytes: %.2f MB/s", testIdx, source.outputSize(), speed)
+						t.Logf("test %d: speed for %d bytes: %.2f MB/s", testIdx, source.outputSize(), speed)
 					}
 				}
 			}
@@ -592,11 +602,11 @@ func createAscendingFiles(
 	ctx := context.Background()
 
 	files, statFiles, err := GetAllFileNames(ctx, store, "/"+subDir)
-	intest.Assert(err == nil)
+	intest.AssertNoError(err)
 	err = store.DeleteFiles(ctx, files)
-	intest.Assert(err == nil)
+	intest.AssertNoError(err)
 	err = store.DeleteFiles(ctx, statFiles)
-	intest.Assert(err == nil)
+	intest.AssertNoError(err)
 
 	keyIdx := 0
 	value := make([]byte, 100)
