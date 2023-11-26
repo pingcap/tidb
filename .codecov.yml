@@ -91,4 +91,5 @@ ignore:
   - "pkg/session/testutil.go"
   - "pkg/store/mockstore/unistore/testutil.go"
   - "k8s.io/apimachinery/pkg"
+  - "build/.*"
 
