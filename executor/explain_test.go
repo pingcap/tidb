@@ -381,6 +381,7 @@ func TestCheckActRowsWithUnistore(t *testing.T) {
 	tk.MustExec("analyze table t_unistore_act_rows")
 	tk.MustExec("set @@tidb_merge_join_concurrency= 5;")
 
+	time.Sleep(time.Second * 5)
 	type testStruct struct {
 		sql      string
 		expected []string
