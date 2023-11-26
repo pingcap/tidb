@@ -19,6 +19,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"math/rand"
 	"os"
 	"runtime/pprof"
@@ -76,7 +77,7 @@ func newAscendingKeySource(
 }
 
 func (s *ascendingKeySource) run() {
-	incSuffixLen := (s.count-1)/256 + 1
+	incSuffixLen := int(math.Ceil(math.Log2(float64(s.count)) / 8))
 	if s.keySize-s.keyCommonPrefixSize < incSuffixLen {
 		panic(fmt.Sprintf("key size %d is too small, keyCommonPrefixSize: %d, incSuffixLen: %d",
 			s.keySize, s.keyCommonPrefixSize, incSuffixLen))
@@ -142,7 +143,7 @@ func newRandomKeySource(
 }
 
 func (s *randomKeySource) run() {
-	incSuffixLen := (s.count-1)/256 + 1
+	incSuffixLen := int(math.Ceil(math.Log2(float64(s.count)) / 8))
 	randomLen := s.keySize - s.keyCommonPrefixSize - incSuffixLen
 	if randomLen < 0 {
 		panic(fmt.Sprintf("key size %d is too small, keyCommonPrefixSize: %d, incSuffixLen: %d",
