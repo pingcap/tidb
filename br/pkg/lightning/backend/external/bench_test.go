@@ -19,6 +19,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math/rand"
 	"os"
 	"runtime/pprof"
 	"sync"
@@ -48,15 +49,26 @@ type kvSource interface {
 }
 
 type ascendingKeySource struct {
-	keySize, valueSize int
-	count              int
-	kvChan             chan [2][]byte
-	curKey             []byte
-	totalSize          int
+	keySize, valueSize  int
+	keyCommonPrefixSize int
+	count               int
+	kvChan              chan [2][]byte
+	curKey              []byte
+	totalSize           int
 }
 
-func newAscendingKeySource(keySize, valueSize, count int) *ascendingKeySource {
-	s := &ascendingKeySource{keySize: keySize, valueSize: valueSize, count: count}
+func newAscendingKeySource(
+	count int,
+	keySize int,
+	valueSize int,
+	keyCommonPrefixSize int,
+) *ascendingKeySource {
+	s := &ascendingKeySource{
+		keySize:             keySize,
+		valueSize:           valueSize,
+		count:               count,
+		keyCommonPrefixSize: keyCommonPrefixSize,
+	}
 	s.curKey = make([]byte, keySize)
 	s.kvChan = make(chan [2][]byte, 100)
 	s.run()
@@ -64,10 +76,15 @@ func newAscendingKeySource(keySize, valueSize, count int) *ascendingKeySource {
 }
 
 func (s *ascendingKeySource) run() {
+	incSuffixLen := (s.count-1)/256 + 1
+	if s.keySize-s.keyCommonPrefixSize < incSuffixLen {
+		panic(fmt.Sprintf("key size %d is too small, keyCommonPrefixSize: %d, incSuffixLen: %d",
+			s.keySize, s.keyCommonPrefixSize, incSuffixLen))
+	}
 	go func() {
 		defer close(s.kvChan)
 		for i := 0; i < s.count; i++ {
-			for j := len(s.curKey) - 1; j >= 0; j-- {
+			for j := len(s.curKey) - 1; j >= s.keyCommonPrefixSize; j-- {
 				s.curKey[j]++
 				if s.curKey[j] != 0 {
 					break
@@ -91,6 +108,74 @@ func (s *ascendingKeySource) next() (key, value []byte, handle kv.Handle) {
 }
 
 func (s *ascendingKeySource) outputSize() int {
+	return s.totalSize
+}
+
+type randomKeySource struct {
+	keySize, valueSize  int
+	keyCommonPrefixSize int
+	rnd                 *rand.Rand
+	count               int
+	kvChan              chan [2][]byte
+	curKey              []byte
+	totalSize           int
+}
+
+func newRandomKeySource(
+	count int,
+	keySize int,
+	valueSize int,
+	keyCommonPrefixSize int,
+	seed int,
+) *randomKeySource {
+	s := &randomKeySource{
+		keySize:             keySize,
+		valueSize:           valueSize,
+		count:               count,
+		keyCommonPrefixSize: keyCommonPrefixSize,
+		rnd:                 rand.New(rand.NewSource(int64(seed))),
+	}
+	s.curKey = make([]byte, keySize)
+	s.kvChan = make(chan [2][]byte, 100)
+	s.run()
+	return s
+}
+
+func (s *randomKeySource) run() {
+	incSuffixLen := (s.count-1)/256 + 1
+	randomLen := s.keySize - s.keyCommonPrefixSize - incSuffixLen
+	if randomLen < 0 {
+		panic(fmt.Sprintf("key size %d is too small, keyCommonPrefixSize: %d, incSuffixLen: %d",
+			s.keySize, s.keyCommonPrefixSize, incSuffixLen))
+	}
+	go func() {
+		defer close(s.kvChan)
+		for i := 0; i < s.count; i++ {
+			s.rnd.Read(s.curKey[s.keyCommonPrefixSize : s.keyCommonPrefixSize+randomLen])
+			for j := len(s.curKey) - 1; j >= s.keyCommonPrefixSize+randomLen; j-- {
+				s.curKey[j]++
+				if s.curKey[j] != 0 {
+					break
+				}
+			}
+			key := make([]byte, s.keySize)
+			copy(key, s.curKey)
+			value := make([]byte, s.valueSize)
+			s.kvChan <- [2][]byte{key, value}
+			s.totalSize += len(key) + len(value)
+		}
+	}()
+}
+
+func (s *randomKeySource) next() (key, value []byte, handle kv.Handle) {
+	pair, ok := <-s.kvChan
+	if !ok {
+		return nil, nil, nil
+	}
+	return pair[0], pair[1], nil
+}
+
+func (s *randomKeySource) outputSize() int {
 	return s.totalSize
 }
 
@@ -192,11 +277,12 @@ func writeExternalOneFile(s *writeTestSuite) {
 }
 
 func TestCompareWriter(t *testing.T) {
-	store := openTestingStorage(t)
+	externalStore := openTestingStorage(t)
 	sourceKVNum := 10000000
-	source := newAscendingKeySource(20, 100, sourceKVNum)
 	memoryLimit := 64 * 1024 * 1024
-	fileIdx := 0
+	testIdx := 0
+	seed := time.Now().Nanosecond()
+	t.Logf("random seed: %d", seed)
 	var (
 		now     time.Time
 		elapsed time.Duration
@@ -204,15 +290,15 @@ func TestCompareWriter(t *testing.T) {
 		err     error
 	)
 	beforeTest := func() {
-		fileIdx++
-		file, err = os.Create(fmt.Sprintf("cpu-profile-%d.prof", fileIdx))
+		testIdx++
+		file, err = os.Create(fmt.Sprintf("cpu-profile-%d.prof", testIdx))
 		intest.AssertNoError(err)
 		err = pprof.StartCPUProfile(file)
 		intest.AssertNoError(err)
 		now = time.Now()
 	}
 	beforeClose := func() {
-		file, err = os.Create(fmt.Sprintf("heap-profile-%d.prof", fileIdx))
+		file, err = os.Create(fmt.Sprintf("heap-profile-%d.prof", testIdx))
 		intest.AssertNoError(err)
 		// check heap profile to see the memory usage is expected
 		err = pprof.WriteHeapProfile(file)
@@ -224,27 +310,42 @@ func TestCompareWriter(t *testing.T) {
 	}
 
 	suite := &writeTestSuite{
-		store:              store,
-		source:             source,
 		memoryLimit:        memoryLimit,
 		beforeCreateWriter: beforeTest,
 		beforeWriterClose:  beforeClose,
 		afterWriterClose:   afterClose,
 	}
 
-	writePlainFile(suite)
-	baseSpeed := float64(source.outputSize()) / elapsed.Seconds() / 1024 / 1024
-	t.Logf("base speed for %d bytes: %.2f MB/s", source.outputSize(), baseSpeed)
+	stores := map[string]storage.ExternalStorage{
+		"external store": externalStore,
+		"memory store":   storage.NewMemStorage(),
+	}
+	writerTestFn := map[string]func(*writeTestSuite){
+		"plain file":        writePlainFile,
+		"external file":     writeExternalFile,
+		"external one file": writeExternalOneFile,
+	}
 
-	suite.source = newAscendingKeySource(20, 100, sourceKVNum)
-	writeExternalFile(suite)
-	writerSpeed := float64(source.outputSize()) / elapsed.Seconds() / 1024 / 1024
-	t.Logf("writer speed for %d bytes: %.2f MB/s", source.outputSize(), writerSpeed)
-
-	suite.source = newAscendingKeySource(20, 100, sourceKVNum)
-	writeExternalOneFile(suite)
-	writerSpeed = float64(source.outputSize()) / elapsed.Seconds() / 1024 / 1024
-	t.Logf("one file writer speed for %d bytes: %.2f MB/s", source.outputSize(), writerSpeed)
+	for _, kvSize := range [][2]int{{20, 1000}, {20, 100}, {20, 10}} {
+		for _, keyCommonPrefixSize := range []int{3, 10} {
+			sources := map[string]kvSource{}
+			sources["ascending key"] = newAscendingKeySource(sourceKVNum, kvSize[0], kvSize[1], keyCommonPrefixSize)
+			sources["random key"] = newRandomKeySource(sourceKVNum, kvSize[0], kvSize[1], keyCommonPrefixSize, seed)
+			for sourceName, source := range sources {
+				for storeName, store := range stores {
+					for writerName, fn := range writerTestFn {
+						suite.store = store
+						suite.source = source
+						t.Logf("test %d: %s, %s, %s, key size: %d, value size: %d, key common prefix size: %d",
+							testIdx+1, sourceName, storeName, writerName, kvSize[0], kvSize[1], keyCommonPrefixSize)
+						fn(suite)
+						speed := float64(source.outputSize()) / elapsed.Seconds() / 1024 / 1024
+						t.Logf("test %d: speed for %d bytes: %.2f MB/s", testIdx, source.outputSize(), speed)
+					}
+				}
+			}
+		}
+	}
 }
 
 type readTestSuite struct {
