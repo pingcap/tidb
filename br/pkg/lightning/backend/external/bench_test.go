@@ -191,7 +191,7 @@ type writeTestSuite struct {
 
 func writePlainFile(s *writeTestSuite) {
 	ctx := context.Background()
-	filePath := "/test/plain_file"
+	filePath := "/test/writer"
 	_ = s.store.DeleteFile(ctx, filePath)
 	buf := make([]byte, s.memoryLimit)
 	offset := 0
@@ -229,7 +229,7 @@ func writePlainFile(s *writeTestSuite) {
 
 func writeExternalFile(s *writeTestSuite) {
 	ctx := context.Background()
-	filePath := "/test/external"
+	filePath := "/test/writer"
 	files, statFiles, err := GetAllFileNames(ctx, s.store, filePath)
 	intest.AssertNoError(err)
 	err = s.store.DeleteFiles(ctx, files)
@@ -261,7 +261,7 @@ func writeExternalFile(s *writeTestSuite) {
 
 func writeExternalOneFile(s *writeTestSuite) {
 	ctx := context.Background()
-	filePath := "/test/external_one_file"
+	filePath := "/test/writer"
 	files, statFiles, err := GetAllFileNames(ctx, s.store, filePath)
 	intest.AssertNoError(err)
 	err = s.store.DeleteFiles(ctx, files)
