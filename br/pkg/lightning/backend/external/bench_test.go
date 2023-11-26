@@ -203,7 +203,7 @@ func writePlainFile(s *writeTestSuite) {
 	if s.beforeCreateWriter != nil {
 		s.beforeCreateWriter()
 	}
-	writer, err := s.store.Create(ctx, "test/plain_file", nil)
+	writer, err := s.store.Create(ctx, "/test/plain_file", nil)
 	intest.AssertNoError(err)
 	key, val, _ := s.source.next()
 	for key != nil {
@@ -233,7 +233,7 @@ func writeExternalFile(s *writeTestSuite) {
 	if s.beforeCreateWriter != nil {
 		s.beforeCreateWriter()
 	}
-	writer := builder.Build(s.store, "test/external", "writerID")
+	writer := builder.Build(s.store, "/test/external", "writerID")
 	key, val, h := s.source.next()
 	for key != nil {
 		err := writer.WriteRow(ctx, key, val, h)
@@ -259,7 +259,7 @@ func writeExternalOneFile(s *writeTestSuite) {
 		s.beforeCreateWriter()
 	}
 	writer := builder.BuildOneFile(
-		s.store, "test/external", "writerID")
+		s.store, "/test/external_one_file", "writerID")
 	_ = writer.Init(ctx, 20*1024*1024)
 	key, val, _ := s.source.next()
 	for key != nil {
