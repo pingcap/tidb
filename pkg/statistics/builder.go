@@ -300,7 +300,7 @@ func BuildHistAndTopN(
 
 	// Step1: collect topn from samples
 	// the topNList is always sorted by count from more to less
-	topNbtree := btree.NewG(32, func(a, b TopNMeta) bool {
+	topNbtree := btree.NewG(8, func(a, b TopNMeta) bool {
 		return a.Count <= b.Count
 	})
 
