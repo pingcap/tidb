@@ -191,6 +191,8 @@ type writeTestSuite struct {
 
 func writePlainFile(s *writeTestSuite) {
 	ctx := context.Background()
+	filePath := "/test/plain_file"
+	_ = s.store.DeleteFile(ctx, filePath)
 	buf := make([]byte, s.memoryLimit)
 	offset := 0
 	flush := func(w storage.ExternalFileWriter) {
@@ -203,7 +205,7 @@ func writePlainFile(s *writeTestSuite) {
 	if s.beforeCreateWriter != nil {
 		s.beforeCreateWriter()
 	}
-	writer, err := s.store.Create(ctx, "/test/plain_file", nil)
+	writer, err := s.store.Create(ctx, filePath, nil)
 	intest.AssertNoError(err)
 	key, val, _ := s.source.next()
 	for key != nil {
@@ -227,13 +229,15 @@ func writePlainFile(s *writeTestSuite) {
 
 func writeExternalFile(s *writeTestSuite) {
 	ctx := context.Background()
+	filePath := "/test/external"
+	_ = s.store.DeleteFile(ctx, filePath)
 	builder := NewWriterBuilder().
 		SetMemorySizeLimit(uint64(s.memoryLimit))
 
 	if s.beforeCreateWriter != nil {
 		s.beforeCreateWriter()
 	}
-	writer := builder.Build(s.store, "/test/external", "writerID")
+	writer := builder.Build(s.store, filePath, "writerID")
 	key, val, h := s.source.next()
 	for key != nil {
 		err := writer.WriteRow(ctx, key, val, h)
@@ -252,6 +256,8 @@ func writeExternalFile(s *writeTestSuite) {
 
 func writeExternalOneFile(s *writeTestSuite) {
 	ctx := context.Background()
+	filePath := "/test/external_one_file"
+	_ = s.store.DeleteFile(ctx, filePath)
 	builder := NewWriterBuilder().
 		SetMemorySizeLimit(uint64(s.memoryLimit))
 
@@ -259,7 +265,7 @@ func writeExternalOneFile(s *writeTestSuite) {
 		s.beforeCreateWriter()
 	}
 	writer := builder.BuildOneFile(
-		s.store, "/test/external_one_file", "writerID")
+		s.store, filePath, "writerID")
 	_ = writer.Init(ctx, 20*1024*1024)
 	key, val, _ := s.source.next()
 	for key != nil {
@@ -347,7 +353,7 @@ func TestCompareWriter(t *testing.T) {
 							testIdx+1, sourceName, storeName, writerName, kvSize[0], kvSize[1], keyCommonPrefixSize)
 						fn(suite)
 						speed := float64(source.outputSize()) / elapsed.Seconds() / 1024 / 1024
-						t.Logf("test %d: speed for %d bytes: %.2f MB/s", testIdx, source.outputSize(), speed)
+						t.Logf("\ttest %d: speed for %d bytes: %.2f MB/s", testIdx, source.outputSize(), speed)
 					}
 				}
 			}
