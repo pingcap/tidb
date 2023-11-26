@@ -279,7 +279,7 @@ func writeExternalOneFile(s *writeTestSuite) {
 
 func TestCompareWriter(t *testing.T) {
 	externalStore := openTestingStorage(t)
-	sourceKVNum := 10000000
+	expectedKVSize := 1024 * 1024 * 1024
 	memoryLimit := 64 * 1024 * 1024
 	testIdx := 0
 	seed := time.Now().Nanosecond()
@@ -328,10 +328,11 @@ func TestCompareWriter(t *testing.T) {
 	}
 
 	for _, kvSize := range [][2]int{{20, 1000}, {20, 100}, {20, 10}} {
+		expectedKVNum := expectedKVSize / (kvSize[0] + kvSize[1])
 		for _, keyCommonPrefixSize := range []int{3, 10} {
 			sources := map[string]kvSource{}
-			sources["ascending key"] = newAscendingKeySource(sourceKVNum, kvSize[0], kvSize[1], keyCommonPrefixSize)
-			sources["random key"] = newRandomKeySource(sourceKVNum, kvSize[0], kvSize[1], keyCommonPrefixSize, seed)
+			sources["ascending key"] = newAscendingKeySource(expectedKVNum, kvSize[0], kvSize[1], keyCommonPrefixSize)
+			sources["random key"] = newRandomKeySource(expectedKVNum, kvSize[0], kvSize[1], keyCommonPrefixSize, seed)
 			for sourceName, source := range sources {
 				for storeName, store := range stores {
 					for writerName, fn := range writerTestFn {
