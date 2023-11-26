@@ -330,13 +330,18 @@ func TestCompareWriter(t *testing.T) {
 	for _, kvSize := range [][2]int{{20, 1000}, {20, 100}, {20, 10}} {
 		expectedKVNum := expectedKVSize / (kvSize[0] + kvSize[1])
 		for _, keyCommonPrefixSize := range []int{3, 10} {
-			sources := map[string]kvSource{}
-			sources["ascending key"] = newAscendingKeySource(expectedKVNum, kvSize[0], kvSize[1], keyCommonPrefixSize)
-			sources["random key"] = newRandomKeySource(expectedKVNum, kvSize[0], kvSize[1], keyCommonPrefixSize, seed)
-			for sourceName, source := range sources {
+			sources := map[string]func() kvSource{}
+			sources["ascending key"] = func() kvSource {
+				return newAscendingKeySource(expectedKVNum, kvSize[0], kvSize[1], keyCommonPrefixSize)
+			}
+			sources["random key"] = func() kvSource {
+				return newRandomKeySource(expectedKVNum, kvSize[0], kvSize[1], keyCommonPrefixSize, seed)
+			}
+			for sourceName, sourceGetter := range sources {
 				for storeName, store := range stores {
 					for writerName, fn := range writerTestFn {
 						suite.store = store
+						source := sourceGetter()
 						suite.source = source
 						t.Logf("test %d: %s, %s, %s, key size: %d, value size: %d, key common prefix size: %d",
 							testIdx+1, sourceName, storeName, writerName, kvSize[0], kvSize[1], keyCommonPrefixSize)
