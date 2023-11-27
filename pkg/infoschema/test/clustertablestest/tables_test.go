@@ -16,8 +16,6 @@ package clustertablestest
 
 import (
 	"fmt"
-	"github.com/gorilla/mux"
-	"github.com/pingcap/fn"
 	"math"
 	"net/http/httptest"
 	"os"
@@ -26,7 +24,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/mux"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/fn"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -1470,9 +1470,10 @@ func TestTiDBParams(t *testing.T) {
 	// TiDB/TiKV/TiFlash config
 	router.Handle("/config/detail", fn.Wrap(mockConfig))
 
-	var servers []string
-	for _, typ := range []string{"tidb", "tikv", "tiflash", "pd"} {
-		servers = append(servers, strings.Join([]string{typ, testServer.address, testServer.address}, ","))
+	typ := []string{"tidb", "tikv", "tiflash", "pd"}
+	servers := make([]string, 0, len(typ))
+	for _, v := range typ {
+		servers = append(servers, strings.Join([]string{v, testServer.address, testServer.address}, ","))
 	}
 
 	fpName := "github.com/pingcap/tidb/executor/mockDefaultClusterConfigServerInfo"
