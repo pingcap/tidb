@@ -481,7 +481,7 @@ func (d *BaseDispatcher) onErrHandlingStage(receiveErrs []error) error {
 
 func (d *BaseDispatcher) dispatchSubTask4Revert(meta []byte) error {
 	var subTasks []*proto.Subtask
-	// task might be cancelled when subtask dispatched but task state not updated.
+	// when step of task is `StepInit`, we do not need revert its subtasks.
 	if d.Task.Step != proto.StepInit {
 		instanceIDs, err := d.GetAllSchedulerIDs(d.ctx, d.Task)
 		if err != nil {
