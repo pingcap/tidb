@@ -66,7 +66,7 @@ func NewClonableExprNode(ctor func() ast.ExprNode, internal ast.ExprNode) *Clona
 	}
 }
 
-// Clone mades a "copy" of the internal ast.ExprNode by reconstructing it.
+// Clone makes a "copy" of the internal ast.ExprNode by reconstructing it.
 func (n *ClonableExprNode) Clone() ast.ExprNode {
 	intest.AssertNotNil(n.ctor)
 	if n.ctor == nil {
@@ -76,7 +76,7 @@ func (n *ClonableExprNode) Clone() ast.ExprNode {
 }
 
 // Internal returns the reference of the internal ast.ExprNode.
-// Note: only use this method when you are sure that the internal ast.ExprNode is not modified.
+// Note: only use this method when you are sure that the internal ast.ExprNode is not modified concurrently.
 func (n *ClonableExprNode) Internal() ast.ExprNode {
 	return n.internal
 }
