@@ -116,12 +116,23 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 			}
 		}
 	case model.ActionDropTablePartition:
-		// TODO: Update the modify count and count for the global table.
-		_, droppedPartitionInfo := t.GetDropPartitionInfo()
+		globalTableInfo, droppedPartitionInfo := t.GetDropPartitionInfo()
+
+		var delta int64
+		var count int64
 		for _, def := range droppedPartitionInfo.Definitions {
+			// Get the count and modify count of the partition.
+			stats := h.statsHandler.GetPartitionStats(globalTableInfo, def.ID)
+			delta -= stats.RealtimeCount
+			count += stats.RealtimeCount
 			if err := h.statsWriter.ResetTableStats2KVForDrop(def.ID); err != nil {
 				return err
 			}
+		}
+		if err := h.statsWriter.UpdateStatsMetaDelta(
+			globalTableInfo.ID, delta, count,
+		); err != nil {
+			return err
 		}
 	case model.ActionReorganizePartition:
 		globalTableInfo, addedPartInfo, _ := t.GetReorganizePartitionInfo()

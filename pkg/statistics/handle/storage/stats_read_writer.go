@@ -215,6 +215,32 @@ func (s *statsReadWriter) StatsMetaCountAndModifyCount(tableID int64) (count, mo
 	return
 }
 
+func (s *statsReadWriter) UpdateStatsMetaDelta(tableID int64, count, modifyCount int64) (err error) {
+	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+		startTS, err := util.GetStartTS(sctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		lockedTables, err := s.statsHandler.GetLockedTables(tableID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		var isLocked bool
+		if len(lockedTables) > 0 {
+			isLocked = true
+		}
+		err = UpdateStatsMeta(
+			sctx,
+			startTS,
+			variable.TableDelta{Count: count, Delta: modifyCount},
+			tableID,
+			isLocked,
+		)
+		return err
+	}, util.FlagWrapTxn)
+	return
+}
+
 // TableStatsFromStorage loads table stats info from storage.
 func (s *statsReadWriter) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error) {
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
