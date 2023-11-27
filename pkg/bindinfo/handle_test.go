@@ -67,8 +67,8 @@ func TestBindingLastUpdateTime(t *testing.T) {
 	bindHandle := bindinfo.NewBindHandle(tk.Session())
 	err := bindHandle.Update(true)
 	require.NoError(t, err)
-	sql, hash := parser.NormalizeDigest("select * from test . t0")
-	bindData := bindHandle.GetBindRecord(hash.String(), sql, "test")
+	sql, sqlDigest := parser.NormalizeDigest("select * from test . t0")
+	bindData := bindHandle.GetBindRecord(sqlDigest.String(), sql, "test")
 	require.Equal(t, 1, len(bindData.Bindings))
 	bind := bindData.Bindings[0]
 	updateTime := bind.UpdateTime.String()
@@ -132,8 +132,8 @@ func TestBindParse(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, bindHandle.Size())
 
-	sql, hash := parser.NormalizeDigest("select * from test . t")
-	bindData := bindHandle.GetBindRecord(hash.String(), sql, "test")
+	sql, sqlDigest := parser.NormalizeDigest("select * from test . t")
+	bindData := bindHandle.GetBindRecord(sqlDigest.String(), sql, "test")
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t`", bindData.OriginalSQL)
 	bind := bindData.Bindings[0]
@@ -488,9 +488,9 @@ func TestGlobalBinding(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, testSQL.memoryUsage, pb.GetGauge().GetValue())
 
-		sql, hash := internal.UtilNormalizeWithDefaultDB(t, testSQL.querySQL)
+		sql, sqlDigest := internal.UtilNormalizeWithDefaultDB(t, testSQL.querySQL)
 
-		bindData := dom.BindHandle().GetBindRecord(hash, sql, "test")
+		bindData := dom.BindHandle().GetBindRecord(sqlDigest, sql, "test")
 		require.NotNil(t, bindData)
 		require.Equal(t, testSQL.originSQL, bindData.OriginalSQL)
 		bind := bindData.Bindings[0]
@@ -523,7 +523,7 @@ func TestGlobalBinding(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 1, bindHandle.Size())
 
-		bindData = bindHandle.GetBindRecord(hash, sql, "test")
+		bindData = bindHandle.GetBindRecord(sqlDigest, sql, "test")
 		require.NotNil(t, bindData)
 		require.Equal(t, testSQL.originSQL, bindData.OriginalSQL)
 		bind = bindData.Bindings[0]
@@ -538,7 +538,7 @@ func TestGlobalBinding(t *testing.T) {
 		_, err = tk.Exec("drop global " + testSQL.dropSQL)
 		require.Equal(t, uint64(1), tk.Session().AffectedRows())
 		require.NoError(t, err)
-		bindData = dom.BindHandle().GetBindRecord(hash, sql, "test")
+		bindData = dom.BindHandle().GetBindRecord(sqlDigest, sql, "test")
 		require.Nil(t, bindData)
 
 		err = metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Enabled).Write(pb)
@@ -554,7 +554,7 @@ func TestGlobalBinding(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 0, bindHandle.Size())
 
-		bindData = bindHandle.GetBindRecord(hash, sql, "test")
+		bindData = bindHandle.GetBindRecord(sqlDigest, sql, "test")
 		require.Nil(t, bindData)
 
 		rs, err = tk.Exec("show global bindings")
@@ -606,4 +606,38 @@ func TestReloadBindings(t *testing.T) {
 	tk.MustExec("admin reload bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Equal(t, 0, len(rows))
+}
+
+func TestRemoveDuplicatedPseudoBinding(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	checkPseudoBinding := func(num int) {
+		tk.MustQuery(fmt.Sprintf("select count(1) from mysql.bind_info where original_sql='%s'",
+			bindinfo.BuiltinPseudoSQL4BindLock)).Check(testkit.Rows(fmt.Sprintf("%d", num)))
+	}
+	insertPseudoBinding := func() {
+		tk.MustExec(fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source)
+            VALUES ('%v', '%v', "mysql", '%v', "2000-01-01 00:00:00", "2000-01-01 00:00:00", "", "", '%v')`,
+			bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.Builtin, bindinfo.Builtin))
+	}
+	removeDuplicated := func() {
+		tk.MustExec(bindinfo.StmtRemoveDuplicatedPseudoBinding)
+	}
+
+	checkPseudoBinding(1)
+	insertPseudoBinding()
+	checkPseudoBinding(2)
+	removeDuplicated()
+	checkPseudoBinding(1)
+
+	insertPseudoBinding()
+	insertPseudoBinding()
+	insertPseudoBinding()
+	checkPseudoBinding(4)
+	removeDuplicated()
+	checkPseudoBinding(1)
+	removeDuplicated()
+	checkPseudoBinding(1)
 }

@@ -272,7 +272,11 @@ func generatePartitionPlan(tblInfo *model.TableInfo) (metas [][]byte, err error)
 }
 
 func generateNonPartitionPlan(
-	d *ddl, tblInfo *model.TableInfo, job *model.Job, useCloud bool, instanceCnt int) (metas [][]byte, err error) {
+	d *ddl,
+	tblInfo *model.TableInfo,
+	job *model.Job,
+	useCloud bool,
+	instanceCnt int) (metas [][]byte, err error) {
 	tbl, err := getTable((*asAutoIDRequirement)(d.ddlCtx), job.SchemaID, tblInfo)
 	if err != nil {
 		return nil, err
@@ -281,6 +285,7 @@ func generateNonPartitionPlan(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	startKey, endKey, err := getTableRange(d.jobContext(job.ID, job.ReorgMeta), d.ddlCtx, tbl.(table.PhysicalTable), ver.Ver, job.Priority)
 	if startKey == nil && endKey == nil {
 		// Empty table.
@@ -386,6 +391,7 @@ func generateGlobalSortIngestPlan(
 		logger.Info("split subtask range",
 			zap.String("startKey", hex.EncodeToString(startKey)),
 			zap.String("endKey", hex.EncodeToString(endKey)))
+
 		if startKey.Cmp(endKey) >= 0 {
 			return nil, errors.Errorf("invalid range, startKey: %s, endKey: %s",
 				hex.EncodeToString(startKey), hex.EncodeToString(endKey))

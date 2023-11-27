@@ -12,4 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package partitiontest
+package statistics
+
+import (
+	"testing"
+
+	"github.com/pingcap/tidb/pkg/util/benchdaily"
+)
+
+func TestBenchDaily(*testing.T) {
+	benchdaily.Run(
+		BenchmarkBuildHistAndTopN,
+	)
+}

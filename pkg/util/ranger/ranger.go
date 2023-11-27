@@ -412,7 +412,7 @@ func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types
 // The second return value is the conditions used to build ranges and the third return value is the remained conditions.
 func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.Context, tp *types.FieldType, tableRange bool,
 	colLen int, rangeMaxSize int64) (Ranges, []expression.Expression, []expression.Expression, error) {
-	rb := builder{sc: sctx.GetSessionVars().StmtCtx}
+	rb := builder{ctx: sctx}
 	rangePoints := getFullRange()
 	for _, cond := range accessConditions {
 		collator := collate.GetCollator(tp.GetCollate())
@@ -486,7 +486,7 @@ func BuildColumnRange(conds []expression.Expression, sctx sessionctx.Context, tp
 
 func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAndInCount int,
 	accessConds []expression.Expression) (Ranges, []expression.Expression, []expression.Expression, error) {
-	rb := builder{sc: d.sctx.GetSessionVars().StmtCtx}
+	rb := builder{ctx: d.sctx}
 	var (
 		ranges        Ranges
 		rangeFallback bool

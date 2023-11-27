@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
@@ -223,10 +224,10 @@ func TestTiDBClusterInfo(t *testing.T) {
 		row("pd", mockAddr, mockAddr, "4.0.0-alpha", "mock-pd-githash"),
 		row("tikv", "store1", "", "", ""),
 	))
-	startTime := s.startTime.Format(time.RFC3339)
+	startTime := types.NewTime(types.FromGoTime(s.startTime), mysql.TypeDatetime, 0).String()
 	tk.MustQuery("select type, instance, start_time from information_schema.cluster_info where type != 'tidb'").Check(testkit.Rows(
 		row("pd", mockAddr, startTime),
-		row("tikv", "store1", ""),
+		row("tikv", "store1", startTime),
 	))
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockStoreTombstone", `return(true)`))

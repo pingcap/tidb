@@ -216,7 +216,7 @@ func pruneByItems(p LogicalPlan, old []*util.ByItems, opt *logicalOptimizeOp) (b
 	seen := make(map[string]struct{}, len(old))
 	for _, byItem := range old {
 		pruned := true
-		hash := string(byItem.Expr.HashCode(nil))
+		hash := string(byItem.Expr.HashCode())
 		_, hashMatch := seen[hash]
 		seen[hash] = struct{}{}
 		cols := expression.ExtractColumns(byItem.Expr)
@@ -275,6 +275,9 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt 
 	if !hasBeenUsed {
 		parentUsedCols = make([]*expression.Column, len(p.schema.Columns))
 		copy(parentUsedCols, p.schema.Columns)
+		for i := range used {
+			used[i] = true
+		}
 	}
 	for _, child := range p.Children() {
 		err := child.PruneColumns(parentUsedCols, opt, p)
@@ -284,16 +287,14 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt 
 	}
 
 	prunedColumns := make([]*expression.Column, 0)
-	if hasBeenUsed {
-		// keep the schema of LogicalUnionAll same as its children's
-		used := expression.GetUsedList(p.SCtx(), p.children[0].Schema().Columns, p.schema)
-		for i := len(used) - 1; i >= 0; i-- {
-			if !used[i] {
-				prunedColumns = append(prunedColumns, p.schema.Columns[i])
-				p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
-			}
+	for i := len(used) - 1; i >= 0; i-- {
+		if !used[i] {
+			prunedColumns = append(prunedColumns, p.schema.Columns[i])
+			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
 		}
-		appendColumnPruneTraceStep(p, prunedColumns, opt)
+	}
+	appendColumnPruneTraceStep(p, prunedColumns, opt)
+	if hasBeenUsed {
 		// It's possible that the child operator adds extra columns to the schema.
 		// Currently, (*LogicalAggregation).PruneColumns() might do this.
 		// But we don't need such columns, so we add an extra Projection to prune this column when this happened.

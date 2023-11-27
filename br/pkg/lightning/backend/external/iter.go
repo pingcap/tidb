@@ -230,8 +230,6 @@ func (i *mergeIter[T, R]) currElem() T {
 // next forwards the iterator to the next element. It returns false if there is
 // no available element.
 func (i *mergeIter[T, R]) next() bool {
-	var zeroT T
-	i.curr = zeroT
 	if i.lastReaderIdx >= 0 {
 		if i.checkHotspot {
 			i.hotspotMap[i.lastReaderIdx] = i.hotspotMap[i.lastReaderIdx] + 1
@@ -292,6 +290,9 @@ func (i *mergeIter[T, R]) next() bool {
 			i.readers[i.lastReaderIdx] = nil
 			delete(i.hotspotMap, i.lastReaderIdx)
 		default:
+			i.logger.Error("failed to read next element",
+				zap.String("path", rd.path()),
+				zap.Error(err))
 			i.err = err
 			return false
 		}
@@ -368,7 +369,7 @@ func NewMergeKVIter(
 	readerOpeners := make([]readerOpenerFn[*kvPair, kvReaderProxy], 0, len(paths))
 	largeBufSize := ConcurrentReaderBufferSizePerConc * ConcurrentReaderConcurrency
 	memPool := membuf.NewPool(
-		membuf.WithPoolSize(1), // currently only one reader will become hotspot
+		membuf.WithBlockNum(1), // currently only one reader will become hotspot
 		membuf.WithBlockSize(largeBufSize),
 		membuf.WithLargeAllocThreshold(largeBufSize),
 	)

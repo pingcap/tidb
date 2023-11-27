@@ -17,22 +17,23 @@ package ddl
 import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 )
 
 type ddlHandlerImpl struct {
 	ddlEventCh         chan *util.DDLEvent
-	statsWriter        util.StatsReadWriter
-	statsHandler       util.StatsHandle
-	globalStatsHandler util.StatsGlobal
+	statsWriter        types.StatsReadWriter
+	statsHandler       types.StatsHandle
+	globalStatsHandler types.StatsGlobal
 }
 
 // NewDDLHandler creates a new ddl handler.
 func NewDDLHandler(
-	statsWriter util.StatsReadWriter,
-	statsHandler util.StatsHandle,
-	globalStatsHandler util.StatsGlobal,
-) util.DDL {
+	statsWriter types.StatsReadWriter,
+	statsHandler types.StatsHandle,
+	globalStatsHandler types.StatsGlobal,
+) types.DDL {
 	return &ddlHandlerImpl{
 		ddlEventCh:         make(chan *util.DDLEvent, 1000),
 		statsWriter:        statsWriter,
@@ -115,16 +116,8 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 			}
 		}
 	case model.ActionDropTablePartition:
-		pruneMode, err := h.statsHandler.GetCurrentPruneMode()
-		if err != nil {
-			return err
-		}
-		globalTableInfo, droppedPartitionInfo := t.GetDropPartitionInfo()
-		if variable.PartitionPruneMode(pruneMode) == variable.Dynamic && droppedPartitionInfo != nil {
-			if err := h.globalStatsHandler.UpdateGlobalStats(globalTableInfo); err != nil {
-				return err
-			}
-		}
+		// TODO: Update the modify count and count for the global table.
+		_, droppedPartitionInfo := t.GetDropPartitionInfo()
 		for _, def := range droppedPartitionInfo.Definitions {
 			if err := h.statsWriter.ResetTableStats2KVForDrop(def.ID); err != nil {
 				return err
@@ -175,7 +168,7 @@ func (h *ddlHandlerImpl) getInitStateTableIDs(tblInfo *model.TableInfo) (ids []i
 	for _, def := range pi.Definitions {
 		ids = append(ids, def.ID)
 	}
-	pruneMode, err := h.statsHandler.GetCurrentPruneMode()
+	pruneMode, err := util.GetCurrentPruneMode(h.statsHandler.SPool())
 	if err != nil {
 		return nil, err
 	}
