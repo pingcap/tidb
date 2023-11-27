@@ -288,6 +288,8 @@ func writeExternalOneFile(s *writeTestSuite) {
 	}
 }
 
+// TestCompareWriter should be run like
+// go test ./br/pkg/lightning/backend/external -v -timeout=1h --tags=intest -test.run TestCompareWriter -testing-storage-uri="s3://xxx".
 func TestCompareWriter(t *testing.T) {
 	externalStore := openTestingStorage(t)
 	expectedKVSize := 1024 * 1024 * 1024
