@@ -51,7 +51,6 @@ func scaleTest(t *testing.T,
 	mockTaskMgr *mock.MockTaskManager,
 	testCase scaleTestCase,
 	id int) {
-
 	ctx := context.Background()
 	mockTaskMgr.EXPECT().GetSubtasksByStepAndState(ctx, int64(id), proto.StepInit, proto.TaskStatePending).Return(
 		testCase.subtasks,
@@ -76,7 +75,6 @@ func balanceTest(t *testing.T,
 	mockTaskMgr *mock.MockTaskManager,
 	testCase balanceTestCase,
 	id int) {
-
 	ctx := context.Background()
 	mockTaskMgr.EXPECT().GetSubtasksByStepAndState(ctx, int64(id), proto.StepInit, proto.TaskStatePending).Return(
 		testCase.subtasks,
