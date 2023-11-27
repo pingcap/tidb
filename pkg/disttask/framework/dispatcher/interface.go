@@ -41,8 +41,8 @@ type TaskManager interface {
 	UpdateSubtasksSchedulerIDs(ctx context.Context, taskID int64, subtasks []*proto.Subtask) error
 	GetNodesByRole(ctx context.Context, role string) (map[string]bool, error)
 	GetSchedulerIDsByTaskID(ctx context.Context, taskID int64) ([]string, error)
+	// ywq todo
 	GetSubtasksByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.TaskState) ([]*proto.Subtask, error)
-	GetSubtasksByStepExceptStates(ctx context.Context, taskID int64, step proto.Step, exceptState ...interface{}) ([]*proto.Subtask, error)
 	GetSchedulerIDsByTaskIDAndStep(ctx context.Context, taskID int64, step proto.Step) ([]string, error)
 
 	WithNewSession(fn func(se sessionctx.Context) error) error

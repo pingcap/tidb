@@ -229,10 +229,6 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, subtasks, 0)
 
-	subtasks, err = sm.GetSubtasksByStepExceptStates(ctx, 2, proto.StepInit, proto.TaskStateSucceed)
-	require.NoError(t, err)
-	require.Len(t, subtasks, 1)
-
 	err = sm.FinishSubtask(ctx, "tidb1", 2, []byte{})
 	require.NoError(t, err)
 

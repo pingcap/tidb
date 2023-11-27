@@ -361,7 +361,7 @@ func (d *BaseDispatcher) onFinished() error {
 
 // RebalanceSubtasks check the liveNode num every liveNodeFetchInterval then rebalance subtasks.
 func (d *BaseDispatcher) RebalanceSubtasks() error {
-	// 1. init TaskNodes if need.
+	// 1. init TaskNodes if needed.
 	if len(d.TaskNodes) == 0 {
 		var err error
 		d.TaskNodes, err = d.taskMgr.GetSchedulerIDsByTaskIDAndStep(d.ctx, d.Task.ID, d.Task.Step)
@@ -404,7 +404,7 @@ func (d *BaseDispatcher) RebalanceSubtasks() error {
 		d.LiveNodes = newInfos
 		// 3. rebalance subtasks.
 		if len(d.LiveNodes) > 0 {
-			return d.RebalanceSubtasksImpl()
+			return d.BalanceSubtasks()
 		}
 		return nil
 	}
@@ -418,75 +418,129 @@ func (d *BaseDispatcher) replaceTaskNodes() {
 	}
 }
 
-// RebalanceSubtasksImpl rebalance subtasks from taskNodes to liveNodes.
-func (d *BaseDispatcher) RebalanceSubtasksImpl() error {
+// BalanceSubtasks rebalance subtasks from taskNodes to liveNodes.
+func (d *BaseDispatcher) BalanceSubtasks() error {
 	// 1. find out nodes that scaled out.
 	scaleOutNodes := make([]string, 0)
+	liveNodeExecIds := make([]string, 0, len(d.LiveNodes))
 	for _, node := range d.LiveNodes {
 		execID := disttaskutil.GenerateExecID(node.IP, node.Port)
-		if !disttaskutil.MatchSchedulerID(d.TaskNodes, disttaskutil.GenerateExecID(node.IP, node.Port)) {
+		liveNodeExecIds = append(liveNodeExecIds, execID)
+		if !disttaskutil.MatchSchedulerID(d.TaskNodes, execID) {
 			scaleOutNodes = append(scaleOutNodes, execID)
 		}
 	}
 
 	// 2. find out nodes need to clean subtasks.
 	cleanNodes := make([]string, 0)
-	cleanNodeMap := make(map[string]bool, 0)
+	deadNodes := make(map[string]bool, 0)
 	for _, node := range d.TaskNodes {
 		if !disttaskutil.MatchServerInfo(d.LiveNodes, node) {
-			cleanNodeMap[node] = true
+			deadNodes[node] = true
 			cleanNodes = append(cleanNodes, node)
 		}
 	}
-
-	if len(scaleOutNodes) == 0 && len(cleanNodes) == 0 {
-		return nil
-	}
-
 	// 3. get subtasks for each node before scaling out.
-	subtasks, err := d.taskMgr.GetSubtasksByStepExceptStates(d.ctx, d.Task.ID, d.Task.Step, proto.TaskStateSucceed)
+	subtasks, err := d.taskMgr.GetSubtasksByStepAndState(d.ctx, d.Task.ID, d.Task.Step, proto.TaskStatePending)
 	if err != nil {
 		return err
 	}
 
-	subtasksForEachScheduler := make(map[string][]*proto.Subtask, len(d.LiveNodes))
+	subtasksOnScheduler := make(map[string][]*proto.Subtask, len(d.LiveNodes)+len(deadNodes))
 	for _, subtask := range subtasks {
-		subtasksForEachScheduler[subtask.SchedulerID] = append(
-			subtasksForEachScheduler[subtask.SchedulerID],
+		subtasksOnScheduler[subtask.SchedulerID] = append(
+			subtasksOnScheduler[subtask.SchedulerID],
 			subtask)
 	}
-
-	// 4. scale out subtasks to scaleOutNodes.
-	lastScaleOutIdx := 0
-	liveNodeSubtaskCnt := 0
-	for id, v := range subtasksForEachScheduler {
-		if ok := cleanNodeMap[id]; ok {
-			continue
-		}
-		liveNodeSubtaskCnt += len(v)
+	for _, node := range scaleOutNodes {
+		subtasksOnScheduler[node] = make([]*proto.Subtask, 0)
 	}
 
-	averageSubtaskCnt := liveNodeSubtaskCnt / len(d.LiveNodes)
-	for id, v := range subtasksForEachScheduler {
-		if ok := cleanNodeMap[id]; ok {
-			continue
+	averageSubtaskCnt := len(subtasks) / len(d.LiveNodes)
+
+	if len(scaleOutNodes) == 0 && len(deadNodes) == 0 {
+		if averageSubtaskCnt == 0 {
+			return nil
 		}
-		if len(v) > averageSubtaskCnt {
-			for i := 0; i < len(v)-averageSubtaskCnt; i++ {
-				v[i].SchedulerID = scaleOutNodes[lastScaleOutIdx%len(scaleOutNodes)]
-				lastScaleOutIdx++
+
+		// 4.a rebalance subtasks from schedulers with more subtasks to schedulers with less subtasks.
+		belowAverageNodesIdx := 0
+		belowAverageNodesMap := make(map[string]bool, 0)
+		belowAverageNodes := make([]string, 0)
+		for _, node := range d.LiveNodes {
+			schedulerID := disttaskutil.GenerateExecID(node.IP, node.Port)
+			subtasks := subtasksOnScheduler[schedulerID]
+			// Deal with cases like 1 tidb with 5 subtasks, 5 tidb with 0 subtasks.
+			if averageSubtaskCnt == 0 && len(subtasks) == 0 {
+				belowAverageNodesMap[schedulerID] = true
+				belowAverageNodes = append(belowAverageNodes, schedulerID)
+			} else if len(subtasks) < averageSubtaskCnt {
+				belowAverageNodesMap[schedulerID] = true
+				belowAverageNodes = append(belowAverageNodes, schedulerID)
+			}
+		}
+		for _, node := range d.LiveNodes {
+			schedulerID := disttaskutil.GenerateExecID(node.IP, node.Port)
+			if ok := belowAverageNodesMap[schedulerID]; !ok {
+				subtasks := subtasksOnScheduler[schedulerID]
+				for i := 0; i < len(subtasks)-averageSubtaskCnt; i++ {
+					subtasks[i].SchedulerID = belowAverageNodes[belowAverageNodesIdx%len(belowAverageNodes)]
+					belowAverageNodesIdx++
+				}
+			}
+		}
+		logutil.Logger(d.logCtx).Info("rebalance subtasks",
+			zap.Stringers("subtasks-rebalanced", subtasks))
+
+		return d.taskMgr.UpdateSubtasksSchedulerIDs(d.ctx, d.Task.ID, subtasks)
+	}
+
+	// 4.b scale out subtasks to scaleOutNodes.
+	lastScaleOutIdx := 0
+	for id, v := range subtasksOnScheduler {
+		if ok := deadNodes[id]; !ok {
+			// averageSubtaskCnt might be 0 when liveNodeSubtaskCnt < len(d.LiveNodes),
+			// if len(v) == 1, no need to schedule it.
+			if averageSubtaskCnt == 0 && len(v) == 0 {
+				continue
+			}
+			if len(v) > averageSubtaskCnt {
+				for i := 0; i < len(v)-averageSubtaskCnt; i++ {
+					schedulerID := scaleOutNodes[lastScaleOutIdx%len(scaleOutNodes)]
+					v[i].SchedulerID = schedulerID
+					lastScaleOutIdx++
+					// move the subtask to scaleOut nodes.
+					subtasksOnScheduler[schedulerID] = append(
+						subtasksOnScheduler[schedulerID],
+						v[i])
+				}
+				// truncate subtasks.
+				v = v[len(v)-averageSubtaskCnt:]
+				subtasksOnScheduler[id] = v
 			}
 		}
 	}
 
-	// 5. scale out clean nodes subtasks to LiveNodes.
-	liveNodeIdx := 0
-	for node := range cleanNodeMap {
-		subtasks := subtasksForEachScheduler[node]
-		for _, subtask := range subtasks {
-			node := d.LiveNodes[liveNodeIdx%len(d.LiveNodes)]
-			subtask.SchedulerID = disttaskutil.GenerateExecID(node.IP, node.Port)
-			liveNodeIdx++
+	// 5. scale out dead nodes subtasks to LiveNodes
+	for node := range deadNodes {
+		deadSubtasks := subtasksOnScheduler[node]
+		for _, subtask := range deadSubtasks {
+			// find the node with minimal num of subtasks
+			idx := 0
+			minCnt := -1
+			for i, execId := range liveNodeExecIds {
+				cnt := len(subtasksOnScheduler[execId])
+				if minCnt == -1 {
+					minCnt = cnt
+					idx = i
+				}
+				if cnt < minCnt {
+					idx = i
+					minCnt = cnt
+				}
+			}
+			subtask.SchedulerID = liveNodeExecIds[idx]
+			subtasksOnScheduler[liveNodeExecIds[idx]] = append(subtasksOnScheduler[liveNodeExecIds[idx]], subtask)
 		}
 	}
 

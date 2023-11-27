@@ -464,25 +464,6 @@ func (stm *TaskManager) GetSubtasksByStepAndState(ctx context.Context, taskID in
 	return subtasks, nil
 }
 
-// GetSubtasksByStepExceptState gets the subtask by step except for the exceptState.
-func (stm *TaskManager) GetSubtasksByStepExceptStates(ctx context.Context, taskID int64, step proto.Step, exceptStates ...interface{}) ([]*proto.Subtask, error) {
-	args := []interface{}{taskID, step}
-	args = append(args, exceptStates...)
-	rs, err := stm.executeSQLWithNewSession(ctx, `select * from mysql.tidb_background_subtask
-		where task_key = %? and step = %? and state not in (`+strings.Repeat("%?,", len(exceptStates)-1)+"%?)", args...)
-	if err != nil {
-		return nil, err
-	}
-	if len(rs) == 0 {
-		return nil, nil
-	}
-	subtasks := make([]*proto.Subtask, 0, len(rs))
-	for _, r := range rs {
-		subtasks = append(subtasks, row2SubTask(r))
-	}
-	return subtasks, nil
-}
-
 // GetSubtaskRowCount gets the subtask row count.
 func (stm *TaskManager) GetSubtaskRowCount(ctx context.Context, taskID int64, step proto.Step) (int64, error) {
 	rs, err := stm.executeSQLWithNewSession(ctx, `select
