@@ -1100,7 +1100,6 @@ func newDistSQLFunctionBySig(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig,
 		FuncName: model.NewCIStr(fmt.Sprintf("sig_%T", f)),
 		Function: f,
 		RetType:  f.getRetTp(),
-		ctx:      ctx,
 	}, nil
 }
 

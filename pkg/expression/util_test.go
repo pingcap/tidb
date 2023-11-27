@@ -195,7 +195,7 @@ func TestSetExprColumnInOperand(t *testing.T) {
 	ctx := mock.NewContext()
 	f, err := funcs[ast.Abs].getFunction(ctx, []Expression{col})
 	require.NoError(t, err)
-	fun := &ScalarFunction{Function: f, ctx: ctx}
+	fun := &ScalarFunction{Function: f}
 	SetExprColumnInOperand(fun)
 	require.True(t, f.getArgs()[0].(*Column).InOperand)
 }
@@ -205,7 +205,7 @@ func TestPopRowFirstArg(t *testing.T) {
 	c1, c2, c3 := &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}
 	f, err := funcs[ast.RowFunc].getFunction(ctx, []Expression{c1, c2, c3})
 	require.NoError(t, err)
-	fun := &ScalarFunction{Function: f, FuncName: model.NewCIStr(ast.RowFunc), RetType: newIntFieldType(), ctx: ctx}
+	fun := &ScalarFunction{Function: f, FuncName: model.NewCIStr(ast.RowFunc), RetType: newIntFieldType()}
 	fun2, err := PopRowFirstArg(mock.NewContext(), fun)
 	require.NoError(t, err)
 	require.Len(t, fun2.(*ScalarFunction).GetArgs(), 2)
@@ -524,9 +524,6 @@ func (m *MockExpr) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, resul
 func (m *MockExpr) String() string               { return "" }
 func (m *MockExpr) MarshalJSON() ([]byte, error) { return nil, nil }
 func (m *MockExpr) Eval(ctx sessionctx.Context, row chunk.Row) (types.Datum, error) {
-	return types.NewDatum(m.i), m.err
-}
-func (m *MockExpr) EvalWithInnerCtx(row chunk.Row) (types.Datum, error) {
 	return types.NewDatum(m.i), m.err
 }
 func (m *MockExpr) EvalInt(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error) {
