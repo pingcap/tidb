@@ -480,16 +480,20 @@ func (d *BaseDispatcher) onErrHandlingStage(receiveErrs []error) error {
 }
 
 func (d *BaseDispatcher) dispatchSubTask4Revert(meta []byte) error {
-	instanceIDs, err := d.GetAllSchedulerIDs(d.ctx, d.Task)
-	if err != nil {
-		logutil.Logger(d.logCtx).Warn("get task's all instances failed", zap.Error(err))
-		return err
-	}
+	var subTasks []*proto.Subtask
+	// task might be cancelled when subtask dispatched but task state not updated.
+	if d.Task.Step != proto.StepInit {
+		instanceIDs, err := d.GetAllSchedulerIDs(d.ctx, d.Task)
+		if err != nil {
+			logutil.Logger(d.logCtx).Warn("get task's all instances failed", zap.Error(err))
+			return err
+		}
 
-	subTasks := make([]*proto.Subtask, 0, len(instanceIDs))
-	for _, id := range instanceIDs {
-		// reverting subtasks belong to the same step as current active step.
-		subTasks = append(subTasks, proto.NewSubtask(d.Task.Step, d.Task.ID, d.Task.Type, id, meta))
+		subTasks = make([]*proto.Subtask, 0, len(instanceIDs))
+		for _, id := range instanceIDs {
+			// reverting subtasks belong to the same step as current active step.
+			subTasks = append(subTasks, proto.NewSubtask(d.Task.Step, d.Task.ID, d.Task.Type, id, meta))
+		}
 	}
 	return d.updateTask(proto.TaskStateReverting, subTasks, RetrySQLTimes)
 }
@@ -615,6 +619,10 @@ func (d *BaseDispatcher) dispatchSubTask(
 		logutil.Logger(d.logCtx).Debug("create subtasks", zap.String("instanceID", instanceID))
 		subTasks = append(subTasks, proto.NewSubtask(subtaskStep, d.Task.ID, d.Task.Type, instanceID, meta))
 	}
+	failpoint.Inject("cancelBeforeUpdateTask", func() {
+		_ = d.updateTask(proto.TaskStateCancelling, subTasks, RetrySQLTimes)
+	})
+
 	return d.updateTask(d.Task.State, subTasks, RetrySQLTimes)
 }
 
