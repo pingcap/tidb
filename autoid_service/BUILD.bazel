@@ -9,6 +9,7 @@ go_library(
         "//config",
         "//kv",
         "//meta",
+        "//meta/autoid",
         "//metrics",
         "//owner",
         "//parser/model",

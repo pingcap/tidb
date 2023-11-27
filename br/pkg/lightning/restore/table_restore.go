@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/mathutil"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -58,6 +59,8 @@ type TableRestore struct {
 	alloc     autoid.Allocators
 	logger    log.Logger
 	kvStore   tidbkv.Storage
+	etcdCli   *clientv3.Client
+	autoidCli *autoid.ClientDiscover
 
 	ignoreColumns map[string]struct{}
 }
@@ -70,6 +73,7 @@ func NewTableRestore(
 	cp *checkpoints.TableCheckpoint,
 	ignoreColumns map[string]struct{},
 	kvStore tidbkv.Storage,
+	etcdCli *clientv3.Client,
 	logger log.Logger,
 ) (*TableRestore, error) {
 	idAlloc := kv.NewPanickingAllocators(cp.AllocBase)
@@ -77,6 +81,7 @@ func NewTableRestore(
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", tableName)
 	}
+	autoidCli := autoid.NewClientDiscover(etcdCli)
 
 	return &TableRestore{
 		tableName:     tableName,
@@ -86,9 +91,19 @@ func NewTableRestore(
 		encTable:      tbl,
 		alloc:         idAlloc,
 		kvStore:       kvStore,
+		etcdCli:       etcdCli,
+		autoidCli:     autoidCli,
 		logger:        logger.With(zap.String("table", tableName)),
 		ignoreColumns: ignoreColumns,
 	}, nil
+}
+
+func (tr *TableRestore) Store() tidbkv.Storage {
+	return tr.kvStore
+}
+
+func (tr *TableRestore) AutoIDClient() *autoid.ClientDiscover {
+	return tr.autoidCli
 }
 
 func (tr *TableRestore) Close() {
@@ -146,6 +161,7 @@ func (tr *TableRestore) populateChunks(ctx context.Context, rc *Controller, cp *
 	return err
 }
 
+// RebaseChunkRowIDs rebase the row id of the chunks.
 func (tr *TableRestore) RebaseChunkRowIDs(cp *checkpoints.TableCheckpoint, rowIDBase int64) {
 	if rowIDBase == 0 {
 		return
@@ -758,7 +774,7 @@ func (tr *TableRestore) postProcess(
 				// And in this case, ALTER TABLE xxx AUTO_INCREMENT = xxx only works on the allocator of auto_increment column,
 				// not for allocator of _tidb_rowid.
 				// So we need to rebase IDs for those 2 allocators explicitly.
-				err = rebaseGlobalAutoID(ctx, adjustIDBase(newBase), tr.kvStore, tr.dbInfo.ID, tr.tableInfo.Core)
+				err = rebaseGlobalAutoID(ctx, adjustIDBase(newBase), tr, tr.dbInfo.ID, tr.tableInfo.Core)
 			}
 		}
 		rc.alterTableLock.Unlock()

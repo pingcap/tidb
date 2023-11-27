@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/infoschema/perfschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/parser/ast"
@@ -95,20 +96,22 @@ func NewMockDomain() *Domain {
 // Domain represents a storage space. Different domains can use the same database name.
 // Multiple domains can be used in parallel without synchronization.
 type Domain struct {
-	store                   kv.Storage
-	infoCache               *infoschema.InfoCache
-	privHandle              *privileges.Handle
-	bindHandle              atomic.Pointer[bindinfo.BindHandle]
-	statsHandle             unsafe.Pointer
-	statsLease              time.Duration
-	ddl                     ddl.DDL
-	info                    *infosync.InfoSyncer
-	globalCfgSyncer         *globalconfigsync.GlobalConfigSyncer
-	m                       sync.Mutex
-	SchemaValidator         SchemaValidator
-	sysSessionPool          *sessionPool
-	exit                    chan struct{}
-	etcdClient              *clientv3.Client
+	store           kv.Storage
+	infoCache       *infoschema.InfoCache
+	privHandle      *privileges.Handle
+	bindHandle      atomic.Pointer[bindinfo.BindHandle]
+	statsHandle     unsafe.Pointer
+	statsLease      time.Duration
+	ddl             ddl.DDL
+	info            *infosync.InfoSyncer
+	globalCfgSyncer *globalconfigsync.GlobalConfigSyncer
+	m               sync.Mutex
+	SchemaValidator SchemaValidator
+	sysSessionPool  *sessionPool
+	exit            chan struct{}
+	etcdClient      *clientv3.Client
+	// autoidClient is used when there are tables with AUTO_ID_CACHE=1, it is the client to the autoid service.
+	autoidClient            *autoid.ClientDiscover
 	sysVarCache             sysVarCache // replaces GlobalVariableCache
 	slowQuery               *topNSlowQueries
 	expensiveQueryHandle    *expensivequery.Handle
@@ -231,7 +234,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
-	newISBuilder, err := infoschema.NewBuilder(do.Store(), do.sysFacHack).InitWithDBInfos(schemas, policies, neededSchemaVersion)
+	newISBuilder, err := infoschema.NewBuilder(do, do.sysFacHack).InitWithDBInfos(schemas, policies, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -371,7 +374,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		}
 		diffs = append(diffs, diff)
 	}
-	builder := infoschema.NewBuilder(do.Store(), do.sysFacHack).InitWithOldInfoSchema(do.infoCache.GetLatest())
+	builder := infoschema.NewBuilder(do, do.sysFacHack).InitWithOldInfoSchema(do.infoCache.GetLatest())
 	builder.SetDeltaUpdateBundles()
 	phyTblIDs := make([]int64, 0, len(diffs))
 	actions := make([]uint64, 0, len(diffs))
@@ -989,6 +992,7 @@ func (do *Domain) Init(
 				return errors.Trace(err)
 			}
 			do.etcdClient = cli
+			do.autoidClient = autoid.NewClientDiscover(cli)
 		}
 	}
 
@@ -1015,6 +1019,7 @@ func (do *Domain) Init(
 		ctx,
 		ddl.WithEtcdClient(do.etcdClient),
 		ddl.WithStore(do.store),
+		ddl.WithAutoIDClient(do.autoidClient),
 		ddl.WithInfoCache(do.infoCache),
 		ddl.WithHook(callback),
 		ddl.WithLease(ddlLease),
@@ -1345,6 +1350,11 @@ func (do *Domain) SysProcTracker() sessionctx.SysProcTracker {
 // GetEtcdClient returns the etcd client.
 func (do *Domain) GetEtcdClient() *clientv3.Client {
 	return do.etcdClient
+}
+
+// AutoIDClient returns the autoid client.
+func (do *Domain) AutoIDClient() *autoid.ClientDiscover {
+	return do.autoidClient
 }
 
 // GetPDClient returns the PD client.

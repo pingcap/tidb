@@ -16,7 +16,6 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"go.uber.org/zap"
@@ -255,10 +254,10 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 			if curStatus == metaStatusInitial {
 				if needAutoID {
 					// maxRowIDMax is the max row_id that other tasks has allocated, we need to rebase the global autoid base first.
-					if err := rebaseGlobalAutoID(ctx, maxRowIDMax, m.tr.kvStore, m.tr.dbInfo.ID, m.tr.tableInfo.Core); err != nil {
+					if err := rebaseGlobalAutoID(ctx, maxRowIDMax, m.tr, m.tr.dbInfo.ID, m.tr.tableInfo.Core); err != nil {
 						return errors.Trace(err)
 					}
-					newRowIDBase, newRowIDMax, err = allocGlobalAutoID(ctx, rawRowIDMax, m.tr.kvStore, m.tr.dbInfo.ID, m.tr.tableInfo.Core)
+					newRowIDBase, newRowIDMax, err = allocGlobalAutoID(ctx, rawRowIDMax, m.tr, m.tr.dbInfo.ID, m.tr.tableInfo.Core)
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -1159,8 +1158,8 @@ func (m *singleTaskMetaMgr) CleanupAllMetas(ctx context.Context) error {
 func (m *singleTaskMetaMgr) Close() {
 }
 
-func allocGlobalAutoID(ctx context.Context, n int64, store kv.Storage, dbID int64, tblInfo *model.TableInfo) (autoIDBase, autoIDMax int64, err error) {
-	allocators, err := getGlobalAutoIDAlloc(store, dbID, tblInfo)
+func allocGlobalAutoID(ctx context.Context, n int64, r autoid.Requirement, dbID int64, tblInfo *model.TableInfo) (autoIDBase, autoIDMax int64, err error) {
+	allocators, err := getGlobalAutoIDAlloc(r, dbID, tblInfo)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -1177,8 +1176,8 @@ func allocGlobalAutoID(ctx context.Context, n int64, store kv.Storage, dbID int6
 	return
 }
 
-func rebaseGlobalAutoID(ctx context.Context, newBase int64, store kv.Storage, dbID int64, tblInfo *model.TableInfo) error {
-	allocators, err := getGlobalAutoIDAlloc(store, dbID, tblInfo)
+func rebaseGlobalAutoID(ctx context.Context, newBase int64, r autoid.Requirement, dbID int64, tblInfo *model.TableInfo) error {
+	allocators, err := getGlobalAutoIDAlloc(r, dbID, tblInfo)
 	if err != nil {
 		return err
 	}
@@ -1191,8 +1190,8 @@ func rebaseGlobalAutoID(ctx context.Context, newBase int64, store kv.Storage, db
 	return nil
 }
 
-func getGlobalAutoIDAlloc(store kv.Storage, dbID int64, tblInfo *model.TableInfo) ([]autoid.Allocator, error) {
-	if store == nil {
+func getGlobalAutoIDAlloc(r autoid.Requirement, dbID int64, tblInfo *model.TableInfo) ([]autoid.Allocator, error) {
+	if r == nil || r.Store() == nil {
 		return nil, errors.New("internal error: kv store should not be nil")
 	}
 	if dbID == 0 {
@@ -1224,15 +1223,15 @@ func getGlobalAutoIDAlloc(store kv.Storage, dbID int64, tblInfo *model.TableInfo
 	case hasRowID || hasAutoIncID:
 		allocators := make([]autoid.Allocator, 0, 2)
 		if tblInfo.SepAutoInc() && hasAutoIncID {
-			allocators = append(allocators, autoid.NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(),
+			allocators = append(allocators, autoid.NewAllocator(r, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(),
 				autoid.AutoIncrementType, noCache, tblVer))
 		}
 		// this allocator is NOT used when SepAutoInc=true and auto increment column is clustered.
-		allocators = append(allocators, autoid.NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(),
+		allocators = append(allocators, autoid.NewAllocator(r, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(),
 			autoid.RowIDAllocType, noCache, tblVer))
 		return allocators, nil
 	case hasAutoRandID:
-		return []autoid.Allocator{autoid.NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(),
+		return []autoid.Allocator{autoid.NewAllocator(r, dbID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(),
 			autoid.AutoRandomType, noCache, tblVer)}, nil
 	default:
 		return nil, errors.Errorf("internal error: table %s has no auto ID", tblInfo.Name)
