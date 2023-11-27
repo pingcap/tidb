@@ -130,16 +130,9 @@ func (s *SerializeHelper) serializePartialResult4SumFloat64(value partialResult4
 }
 
 func (s *SerializeHelper) serializeBasePartialResult4GroupConcat(value basePartialResult4GroupConcat) []byte {
-	valsBuf := value.valsBuf.Bytes()
-	valsBufLen := len(valsBuf)
-	buffer := value.buffer.Bytes()
-	bufferLen := len(buffer)
-
 	s.buf = s.buf[:0]
-	s.buf = util.SerializeInt(valsBufLen, s.buf)
-	s.buf = append(s.buf, valsBuf...)
-	s.buf = util.SerializeInt(bufferLen, s.buf)
-	s.buf = append(s.buf, buffer...)
+	s.buf = util.SerializeBytesBuffer(value.valsBuf, s.buf)
+	s.buf = util.SerializeBytesBuffer(value.buffer, s.buf)
 	return s.buf
 }
 

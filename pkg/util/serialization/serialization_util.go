@@ -15,6 +15,7 @@
 package serialization
 
 import (
+	"bytes"
 	"time"
 	"unsafe"
 
@@ -158,6 +159,14 @@ func SerializeString(value string, buf []byte) []byte {
 	strLen := len(value)
 	buf = SerializeInt(strLen, buf)
 	return append(buf, value...)
+}
+
+// SerializeBytesBuffer serializes bytes.Buffer type
+func SerializeBytesBuffer(value *bytes.Buffer, buf []byte) []byte {
+	bufferBytes := value.Bytes()
+	bytesLen := len(bufferBytes)
+	buf = SerializeInt(bytesLen, buf)
+	return append(buf, bufferBytes...)
 }
 
 // SerializeInterface serialize interface type

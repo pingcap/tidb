@@ -15,6 +15,7 @@
 package serialization
 
 import (
+	"bytes"
 	"time"
 	"unsafe"
 
@@ -172,6 +173,15 @@ func DeserializeString(buf []byte, pos *int64) string {
 	retVal := string(buf[*pos : *pos+int64(strLen)])
 	*pos += int64(strLen)
 	return retVal
+}
+
+// DeserializeBytesBuffer deserializes bytes.Buffer type
+func DeserializeBytesBuffer(buf []byte, pos *int64) *bytes.Buffer {
+	bufLen := DeserializeInt(buf, pos)
+	tmp := make([]byte, bufLen)
+	copy(tmp, buf[*pos:*pos+int64(bufLen)])
+	*pos += int64(bufLen)
+	return bytes.NewBuffer(tmp)
 }
 
 // DeserializeInterface deserializes interface type

@@ -15,7 +15,6 @@
 package aggfuncs
 
 import (
-	"bytes"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -234,16 +233,8 @@ func (s *deserializeHelper) deserializeBasePartialResult4GroupConcat(dst *basePa
 	if s.readRowIndex < s.totalRowCnt {
 		pos := int64(0)
 		restoredBytes := s.column.GetBytes(s.readRowIndex)
-		valsBufLen := util.DeserializeInt(restoredBytes, &pos)
-		tmpBuffer := make([]byte, valsBufLen)
-		copy(tmpBuffer, restoredBytes[pos:pos+int64(valsBufLen)])
-		dst.valsBuf = bytes.NewBuffer(tmpBuffer)
-		pos += int64(valsBufLen)
-
-		bufferLen := util.DeserializeInt(restoredBytes, &pos)
-		tmpBuffer = make([]byte, bufferLen)
-		copy(tmpBuffer, restoredBytes[pos:pos+int64(bufferLen)])
-		dst.buffer = bytes.NewBuffer(tmpBuffer)
+		dst.valsBuf = util.DeserializeBytesBuffer(restoredBytes, &pos)
+		dst.buffer = util.DeserializeBytesBuffer(restoredBytes, &pos)
 		s.readRowIndex++
 		return true
 	}
