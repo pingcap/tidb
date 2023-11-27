@@ -775,7 +775,9 @@ func (r *builder) newBuildFromPatternLike(
 			// Get the prefix, but exclude the prefix.
 			// e.g., "abc_x", the start point exclude "abc",
 			// because the string length is more than 3.
-			exclude = true
+			if collation == charset.CollationBin {
+				exclude = true
+			}
 			isExactMatch = false
 			break
 		}
