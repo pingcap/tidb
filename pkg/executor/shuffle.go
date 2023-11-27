@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -277,6 +278,13 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context, dataSourceIndex int
 		waitGroup.Done()
 	}()
 
+	failpoint.Inject("shuffleExecFetchDataAndSplit", func(val failpoint.Value) {
+		if val.(bool) {
+			time.Sleep(100 * time.Millisecond)
+			panic("shuffleExecFetchDataAndSplitPanic")
+		}
+	})
+
 	for {
 		err = exec.Next(ctx, e.dataSources[dataSourceIndex], chk)
 		if err != nil {
@@ -391,6 +399,7 @@ func (e *shuffleWorker) run(ctx context.Context, waitGroup *sync.WaitGroup) {
 		waitGroup.Done()
 	}()
 
+	failpoint.Inject("shuffleWorkerRun", nil)
 	for {
 		select {
 		case <-e.finishCh:
