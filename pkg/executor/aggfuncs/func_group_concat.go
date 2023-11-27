@@ -173,7 +173,7 @@ func (e *groupConcat) MergePartialResult(sctx sessionctx.Context, src, dst Parti
 	return memDelta, e.truncatePartialResultIfNeed(sctx, p2.buffer)
 }
 
-func (e *groupConcat) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+func (e *groupConcat) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
 	pr := (*partialResult4GroupConcat)(partialResult)
 	resBuf := spillHelper.serializePartialResult4GroupConcat(*pr)
 	chk.AppendBytes(e.ordinal, resBuf)
@@ -183,7 +183,7 @@ func (e *groupConcat) DeserializePartialResult(src *chunk.Chunk) ([]PartialResul
 	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
 }
 
-func (e *groupConcat) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+func (e *groupConcat) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
 	pr, memDelta := e.AllocPartialResult()
 	result := (*partialResult4GroupConcat)(pr)
 	success := helper.deserializePartialResult4GroupConcat(result)

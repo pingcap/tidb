@@ -16,6 +16,7 @@ package aggfuncs
 
 import (
 	"bytes"
+	"math/rand"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -41,8 +42,35 @@ func getLongString(originStr string) string {
 	return returnStr
 }
 
+func getLargeRandBuffer() []byte {
+	byteLen := 10000
+	ret := make([]byte, byteLen)
+	randStart := rand.Int31()
+	for i := 0; i < byteLen; i++ {
+		ret[i] = byte((int(randStart) + i) % 8)
+	}
+	return ret
+}
+
+type bufferSizeChecker struct {
+	lastCap int
+}
+
+func newBufferSizeChecker() *bufferSizeChecker {
+	return &bufferSizeChecker{lastCap: -1}
+}
+
+// We need to ensure that buffer in `SerializeHelper` should be enlarged
+// when it serialize an object whose size is larger than it's capacity.
+func (b *bufferSizeChecker) checkBufferCapacity(helper *SerializeHelper) bool {
+	newCap := cap(helper.buf)
+	retVal := (newCap > b.lastCap)
+	b.lastCap = newCap
+	return retVal
+}
+
 func TestPartialResult4Count(t *testing.T) {
-	var serializeHelper = NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4Count{-123, 0, 123}
@@ -73,6 +101,8 @@ func TestPartialResult4Count(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -81,7 +111,7 @@ func TestPartialResult4Count(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinInt(t *testing.T) {
-	var serializeHelper = NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4MaxMinInt{
@@ -116,6 +146,8 @@ func TestPartialResult4MaxMinInt(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -124,7 +156,7 @@ func TestPartialResult4MaxMinInt(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinUint(t *testing.T) {
-	var serializeHelper = NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4MaxMinUint{
@@ -159,6 +191,8 @@ func TestPartialResult4MaxMinUint(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -167,7 +201,7 @@ func TestPartialResult4MaxMinUint(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinDecimal(t *testing.T) {
-	var serializeHelper = NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4MaxMinDecimal{
@@ -202,6 +236,8 @@ func TestPartialResult4MaxMinDecimal(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -210,7 +246,7 @@ func TestPartialResult4MaxMinDecimal(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinFloat32(t *testing.T) {
-	var serializeHelper = NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4MaxMinFloat32{
@@ -245,6 +281,8 @@ func TestPartialResult4MaxMinFloat32(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -253,7 +291,7 @@ func TestPartialResult4MaxMinFloat32(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinFloat64(t *testing.T) {
-	var serializeHelper = NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4MaxMinFloat64{
@@ -288,6 +326,8 @@ func TestPartialResult4MaxMinFloat64(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -296,7 +336,7 @@ func TestPartialResult4MaxMinFloat64(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinTime(t *testing.T) {
-	var serializeHelper = NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4MaxMinTime{
@@ -331,6 +371,8 @@ func TestPartialResult4MaxMinTime(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -339,13 +381,13 @@ func TestPartialResult4MaxMinTime(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinString(t *testing.T) {
-	var serializeHelper = NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
+	bufSizeChecker := newBufferSizeChecker()
 
 	// Initialize test data
 	expectData := []partialResult4MaxMinString{
 		{val: string("12312412312"), isNull: true},
-		{val: string(""), isNull: false},
-		{val: testLongStr1, isNull: true},
+		{val: testLongStr1, isNull: false},
 	}
 	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
@@ -360,6 +402,7 @@ func TestPartialResult4MaxMinString(t *testing.T) {
 	for _, pr := range serializedPartialResults {
 		serializedData := serializeHelper.serializePartialResult4MaxMinString(*(*partialResult4MaxMinString)(pr))
 		chunk.AppendBytes(0, serializedData)
+		require.True(t, bufSizeChecker.checkBufferCapacity(serializeHelper))
 	}
 
 	// Deserialize test data
@@ -374,6 +417,8 @@ func TestPartialResult4MaxMinString(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -382,13 +427,13 @@ func TestPartialResult4MaxMinString(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinJSON(t *testing.T) {
-	var serializeHelper = NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
+	bufSizeChecker := newBufferSizeChecker()
 
 	// Initialize test data
 	expectData := []partialResult4MaxMinJSON{
-		{val: types.BinaryJSON{TypeCode: 1, Value: []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0}}, isNull: true},
 		{val: types.BinaryJSON{TypeCode: 3, Value: []byte{}}, isNull: false},
-		{val: types.BinaryJSON{TypeCode: 6, Value: []byte{0, 4, 2, 3, 0}}, isNull: true},
+		{val: types.BinaryJSON{TypeCode: 6, Value: getLargeRandBuffer()}, isNull: true},
 	}
 	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
@@ -403,6 +448,7 @@ func TestPartialResult4MaxMinJSON(t *testing.T) {
 	for _, pr := range serializedPartialResults {
 		serializedData := serializeHelper.serializePartialResult4MaxMinJSON(*(*partialResult4MaxMinJSON)(pr))
 		chunk.AppendBytes(0, serializedData)
+		require.True(t, bufSizeChecker.checkBufferCapacity(serializeHelper))
 	}
 
 	// Deserialize test data
@@ -417,6 +463,8 @@ func TestPartialResult4MaxMinJSON(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -425,13 +473,13 @@ func TestPartialResult4MaxMinJSON(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinEnum(t *testing.T) {
-	var serializeHelper = NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
+	bufSizeChecker := newBufferSizeChecker()
 
 	// Initialize test data
 	expectData := []partialResult4MaxMinEnum{
 		{val: types.Enum{Name: string(""), Value: 123}, isNull: true},
 		{val: types.Enum{Name: testLongStr1, Value: 0}, isNull: false},
-		{val: types.Enum{Name: testLongStr2, Value: 0}, isNull: true},
 	}
 	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
@@ -446,6 +494,7 @@ func TestPartialResult4MaxMinEnum(t *testing.T) {
 	for _, pr := range serializedPartialResults {
 		serializedData := serializeHelper.serializePartialResult4MaxMinEnum(*(*partialResult4MaxMinEnum)(pr))
 		chunk.AppendBytes(0, serializedData)
+		require.True(t, bufSizeChecker.checkBufferCapacity(serializeHelper))
 	}
 
 	// Deserialize test data
@@ -460,6 +509,8 @@ func TestPartialResult4MaxMinEnum(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -468,13 +519,13 @@ func TestPartialResult4MaxMinEnum(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinSet(t *testing.T) {
-	var serializeHelper = NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
+	bufSizeChecker := newBufferSizeChecker()
 
 	// Initialize test data
 	expectData := []partialResult4MaxMinSet{
 		{val: types.Set{Name: string(""), Value: 123}, isNull: true},
 		{val: types.Set{Name: testLongStr1, Value: 0}, isNull: false},
-		{val: types.Set{Name: testLongStr2, Value: 0}, isNull: true},
 	}
 	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
@@ -489,6 +540,7 @@ func TestPartialResult4MaxMinSet(t *testing.T) {
 	for _, pr := range serializedPartialResults {
 		serializedData := serializeHelper.serializePartialResult4MaxMinSet(*(*partialResult4MaxMinSet)(pr))
 		chunk.AppendBytes(0, serializedData)
+		require.True(t, bufSizeChecker.checkBufferCapacity(serializeHelper))
 	}
 
 	// Deserialize test data
@@ -503,6 +555,8 @@ func TestPartialResult4MaxMinSet(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -511,7 +565,7 @@ func TestPartialResult4MaxMinSet(t *testing.T) {
 }
 
 func TestPartialResult4AvgDecimal(t *testing.T) {
-	var serializeHelper = NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4AvgDecimal{
@@ -546,6 +600,8 @@ func TestPartialResult4AvgDecimal(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -554,7 +610,7 @@ func TestPartialResult4AvgDecimal(t *testing.T) {
 }
 
 func TestPartialResult4AvgFloat64(t *testing.T) {
-	var serializeHelper = NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4AvgFloat64{
@@ -589,6 +645,8 @@ func TestPartialResult4AvgFloat64(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -597,7 +655,7 @@ func TestPartialResult4AvgFloat64(t *testing.T) {
 }
 
 func TestPartialResult4SumDecimal(t *testing.T) {
-	var serializeHelper = NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4SumDecimal{
@@ -632,6 +690,8 @@ func TestPartialResult4SumDecimal(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -640,7 +700,7 @@ func TestPartialResult4SumDecimal(t *testing.T) {
 }
 
 func TestPartialResult4SumFloat64(t *testing.T) {
-	var serializeHelper = NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4SumFloat64{
@@ -675,6 +735,8 @@ func TestPartialResult4SumFloat64(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -683,12 +745,13 @@ func TestPartialResult4SumFloat64(t *testing.T) {
 }
 
 func TestBasePartialResult4GroupConcat(t *testing.T) {
-	var serializeHelper = NewSpillSerializeHelper()
+	var serializeHelper = NewSerializeHelper()
+	bufSizeChecker := newBufferSizeChecker()
 
 	// Initialize test data
 	expectData := []basePartialResult4GroupConcat{
-		{valsBuf: bytes.NewBufferString("xzxx"), buffer: bytes.NewBufferString("dwaa啊啊a啊")},
 		{valsBuf: bytes.NewBufferString(""), buffer: bytes.NewBufferString("")},
+		{valsBuf: bytes.NewBufferString("xzxx"), buffer: bytes.NewBufferString(testLongStr2)},
 		{valsBuf: bytes.NewBufferString(testLongStr1), buffer: bytes.NewBufferString(testLongStr2)},
 	}
 	serializedPartialResults := make([]PartialResult, len(expectData))
@@ -704,6 +767,7 @@ func TestBasePartialResult4GroupConcat(t *testing.T) {
 	for _, pr := range serializedPartialResults {
 		serializedData := serializeHelper.serializeBasePartialResult4GroupConcat(*(*basePartialResult4GroupConcat)(pr))
 		chunk.AppendBytes(0, serializedData)
+		require.True(t, bufSizeChecker.checkBufferCapacity(serializeHelper))
 	}
 
 	// Deserialize test data
@@ -718,6 +782,8 @@ func TestBasePartialResult4GroupConcat(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -727,7 +793,7 @@ func TestBasePartialResult4GroupConcat(t *testing.T) {
 }
 
 func TestPartialResult4BitFunc(t *testing.T) {
-	var serializeHelper = NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4BitFunc{0, 1, 2}
@@ -758,6 +824,8 @@ func TestPartialResult4BitFunc(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -766,14 +834,14 @@ func TestPartialResult4BitFunc(t *testing.T) {
 }
 
 func TestPartialResult4JsonArrayagg(t *testing.T) {
-	var serializeHelper = NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
+	bufSizeChecker := newBufferSizeChecker()
 
 	// Initialize test data
 	expectData := []partialResult4JsonArrayagg{
-		{entries: []interface{}{int64(1), float64(1.1), testLongStr1, false}},
-		{entries: []interface{}{int64(1), float64(1.1), "", true}},
-		{entries: []interface{}{"dw啊q", float64(-1.1), int64(0)}},
-		{entries: []interface{}{"dw啊q", float64(-1.1), types.BinaryJSON{TypeCode: 1, Value: []byte(testLongStr2)}}},
+		{entries: []interface{}{int64(1), float64(1.1), "", true, types.Opaque{TypeCode: 1, Buf: getLargeRandBuffer()}, types.NewTime(9876, 12, 10)}},
+		{entries: []interface{}{int64(1), float64(1.1), false, types.NewDuration(1, 2, 3, 4, 5), testLongStr1}},
+		{entries: []interface{}{"dw啊q", float64(-1.1), int64(0), types.NewDuration(1, 2, 3, 4, 5), types.NewTime(123, 1, 2), testLongStr1, types.BinaryJSON{TypeCode: 1, Value: []byte(testLongStr2)}, types.Opaque{TypeCode: 6, Buf: getLargeRandBuffer()}}},
 	}
 	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
@@ -788,6 +856,7 @@ func TestPartialResult4JsonArrayagg(t *testing.T) {
 	for _, pr := range serializedPartialResults {
 		serializedData := serializeHelper.serializePartialResult4JsonArrayagg(*(*partialResult4JsonArrayagg)(pr))
 		chunk.AppendBytes(0, serializedData)
+		require.True(t, bufSizeChecker.checkBufferCapacity(serializeHelper))
 	}
 
 	// Deserialize test data
@@ -802,6 +871,8 @@ func TestPartialResult4JsonArrayagg(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -810,13 +881,14 @@ func TestPartialResult4JsonArrayagg(t *testing.T) {
 }
 
 func TestPartialResult4JsonObjectAgg(t *testing.T) {
-	var serializeHelper = NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
+	bufSizeChecker := newBufferSizeChecker()
 
 	// Initialize test data
 	expectData := []partialResult4JsonObjectAgg{
 		{entries: map[string]interface{}{"123": int64(1), "234": float64(1.1), "999": true, "235": "123"}, bInMap: 0},
-		{entries: map[string]interface{}{"啊": testLongStr1, "我": float64(1.1), "反": testLongStr2}, bInMap: 0},
-		{entries: map[string]interface{}{"fe": int64(12), " ": float64(1.1), "888": false, "": "123"}, bInMap: 0},
+		{entries: map[string]interface{}{"啊": testLongStr1, "我": float64(1.1), "反": int64(456)}, bInMap: 0},
+		{entries: map[string]interface{}{"fe": testLongStr1, " ": int64(36798), "888": false, "": testLongStr2}, bInMap: 0},
 	}
 	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
@@ -831,6 +903,7 @@ func TestPartialResult4JsonObjectAgg(t *testing.T) {
 	for _, pr := range serializedPartialResults {
 		serializedData := serializeHelper.serializePartialResult4JsonObjectAgg(*(*partialResult4JsonObjectAgg)(pr))
 		chunk.AppendBytes(0, serializedData)
+		require.True(t, bufSizeChecker.checkBufferCapacity(serializeHelper))
 	}
 
 	// Deserialize test data
@@ -845,6 +918,8 @@ func TestPartialResult4JsonObjectAgg(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -853,7 +928,7 @@ func TestPartialResult4JsonObjectAgg(t *testing.T) {
 }
 
 func TestPartialResult4FirstRowDecimal(t *testing.T) {
-	var serializeHelper = NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4FirstRowDecimal{
@@ -888,6 +963,8 @@ func TestPartialResult4FirstRowDecimal(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -896,7 +973,7 @@ func TestPartialResult4FirstRowDecimal(t *testing.T) {
 }
 
 func TestPartialResult4FirstRowInt(t *testing.T) {
-	var serializeHelper = NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4FirstRowInt{
@@ -931,6 +1008,8 @@ func TestPartialResult4FirstRowInt(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -939,7 +1018,7 @@ func TestPartialResult4FirstRowInt(t *testing.T) {
 }
 
 func TestPartialResult4FirstRowTime(t *testing.T) {
-	var serializeHelper = NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4FirstRowTime{
@@ -974,6 +1053,8 @@ func TestPartialResult4FirstRowTime(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -982,13 +1063,13 @@ func TestPartialResult4FirstRowTime(t *testing.T) {
 }
 
 func TestPartialResult4FirstRowString(t *testing.T) {
-	var serializeHelper = NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
+	bufSizeChecker := newBufferSizeChecker()
 
 	// Initialize test data
 	expectData := []partialResult4FirstRowString{
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: ""},
-		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: false, gotFirstRow: false}, val: "123"},
-		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: true}, val: "a阿达瓦dwd"},
+		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: false, gotFirstRow: false}, val: testLongStr1},
 	}
 	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
@@ -1003,6 +1084,7 @@ func TestPartialResult4FirstRowString(t *testing.T) {
 	for _, pr := range serializedPartialResults {
 		serializedData := serializeHelper.serializePartialResult4FirstRowString(*(*partialResult4FirstRowString)(pr))
 		chunk.AppendBytes(0, serializedData)
+		require.True(t, bufSizeChecker.checkBufferCapacity(serializeHelper))
 	}
 
 	// Deserialize test data
@@ -1017,6 +1099,8 @@ func TestPartialResult4FirstRowString(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -1025,7 +1109,7 @@ func TestPartialResult4FirstRowString(t *testing.T) {
 }
 
 func TestPartialResult4FirstRowFloat32(t *testing.T) {
-	var serializeHelper = NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4FirstRowFloat32{
@@ -1060,6 +1144,8 @@ func TestPartialResult4FirstRowFloat32(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -1068,7 +1154,7 @@ func TestPartialResult4FirstRowFloat32(t *testing.T) {
 }
 
 func TestPartialResult4FirstRowFloat64(t *testing.T) {
-	var serializeHelper = NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4FirstRowFloat64{
@@ -1103,6 +1189,8 @@ func TestPartialResult4FirstRowFloat64(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -1111,7 +1199,7 @@ func TestPartialResult4FirstRowFloat64(t *testing.T) {
 }
 
 func TestPartialResult4FirstRowDuration(t *testing.T) {
-	var serializeHelper = NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4FirstRowDuration{
@@ -1146,6 +1234,8 @@ func TestPartialResult4FirstRowDuration(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -1154,13 +1244,13 @@ func TestPartialResult4FirstRowDuration(t *testing.T) {
 }
 
 func TestPartialResult4FirstRowJSON(t *testing.T) {
-	var serializeHelper = NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
+	bufSizeChecker := newBufferSizeChecker()
 
 	// Initialize test data
 	expectData := []partialResult4FirstRowJSON{
-		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: types.BinaryJSON{TypeCode: 1, Value: []byte{0, 1, 2, 3, 1, 9, 5, 7, 8, 5, 0}}},
-		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: false, gotFirstRow: false}, val: types.BinaryJSON{TypeCode: 2, Value: []byte{}}},
-		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: true}, val: types.BinaryJSON{TypeCode: 3, Value: []byte{0, 1, 9, 5, 3, 2, 0}}},
+		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: false, gotFirstRow: false}, val: types.BinaryJSON{TypeCode: 6, Value: []byte{}}},
+		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: types.BinaryJSON{TypeCode: 8, Value: getLargeRandBuffer()}},
 	}
 	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
@@ -1175,6 +1265,7 @@ func TestPartialResult4FirstRowJSON(t *testing.T) {
 	for _, pr := range serializedPartialResults {
 		serializedData := serializeHelper.serializePartialResult4FirstRowJSON(*(*partialResult4FirstRowJSON)(pr))
 		chunk.AppendBytes(0, serializedData)
+		require.True(t, bufSizeChecker.checkBufferCapacity(serializeHelper))
 	}
 
 	// Deserialize test data
@@ -1189,6 +1280,8 @@ func TestPartialResult4FirstRowJSON(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -1197,13 +1290,13 @@ func TestPartialResult4FirstRowJSON(t *testing.T) {
 }
 
 func TestPartialResult4FirstRowEnum(t *testing.T) {
-	var serializeHelper = NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
+	bufSizeChecker := newBufferSizeChecker()
 
 	// Initialize test data
 	expectData := []partialResult4FirstRowEnum{
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: types.Enum{Name: string(""), Value: 123}},
-		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: types.Enum{Name: string("123"), Value: 0}},
-		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: types.Enum{Name: string("1达瓦fe"), Value: 999}},
+		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: types.Enum{Name: testLongStr2, Value: 999}},
 	}
 	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
@@ -1218,6 +1311,7 @@ func TestPartialResult4FirstRowEnum(t *testing.T) {
 	for _, pr := range serializedPartialResults {
 		serializedData := serializeHelper.serializePartialResult4FirstRowEnum(*(*partialResult4FirstRowEnum)(pr))
 		chunk.AppendBytes(0, serializedData)
+		require.True(t, bufSizeChecker.checkBufferCapacity(serializeHelper))
 	}
 
 	// Deserialize test data
@@ -1232,6 +1326,8 @@ func TestPartialResult4FirstRowEnum(t *testing.T) {
 		index++
 	}
 
+	chunk.Column(0).DestroyDataForTest()
+
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
@@ -1240,12 +1336,12 @@ func TestPartialResult4FirstRowEnum(t *testing.T) {
 }
 
 func TestPartialResult4FirstRowSet(t *testing.T) {
-	var serializeHelper = NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
+	bufSizeChecker := newBufferSizeChecker()
 
 	// Initialize test data
 	expectData := []partialResult4FirstRowSet{
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: types.Set{Name: string(""), Value: 123}},
-		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: types.Set{Name: string("123"), Value: 0}},
 		{basePartialResult4FirstRow: basePartialResult4FirstRow{isNull: true, gotFirstRow: false}, val: types.Set{Name: testLongStr1, Value: 999}},
 	}
 	serializedPartialResults := make([]PartialResult, len(expectData))
@@ -1261,6 +1357,7 @@ func TestPartialResult4FirstRowSet(t *testing.T) {
 	for _, pr := range serializedPartialResults {
 		serializedData := serializeHelper.serializePartialResult4FirstRowSet(*(*partialResult4FirstRowSet)(pr))
 		chunk.AppendBytes(0, serializedData)
+		require.True(t, bufSizeChecker.checkBufferCapacity(serializeHelper))
 	}
 
 	// Deserialize test data
@@ -1274,6 +1371,8 @@ func TestPartialResult4FirstRowSet(t *testing.T) {
 		}
 		index++
 	}
+
+	chunk.Column(0).DestroyDataForTest()
 
 	// Check some results
 	require.Equal(t, testDataNum, index)
