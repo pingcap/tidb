@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "concurrencyddl",
-    srcs = ["default.go"],
+    srcs = [
+        "default.go",
+        "non_default.go",  #keep
+    ],
     importpath = "github.com/pingcap/tidb/sessionctx/variable/featuretag/concurrencyddl",
     visibility = ["//visibility:public"],
 )
