@@ -292,8 +292,8 @@ func writeExternalOneFile(s *writeTestSuite) {
 // go test ./br/pkg/lightning/backend/external -v -timeout=1h --tags=intest -test.run TestCompareWriter --testing-storage-uri="s3://xxx".
 func TestCompareWriter(t *testing.T) {
 	externalStore := openTestingStorage(t)
-	expectedKVSize := 1024 * 1024 * 1024
-	memoryLimit := 64 * 1024 * 1024
+	expectedKVSize := 4 * 1024 * 1024 * 1024
+	memoryLimit := 256 * 1024 * 1024
 	testIdx := 0
 	seed := time.Now().Nanosecond()
 	t.Logf("random seed: %d", seed)
@@ -340,29 +340,34 @@ func TestCompareWriter(t *testing.T) {
 		"external one file": writeExternalOneFile,
 	}
 
+	// not much difference between 3 & 10
+	keyCommonPrefixSize := 3
+
 	for _, kvSize := range [][2]int{{20, 1000}, {20, 100}, {20, 10}} {
 		expectedKVNum := expectedKVSize / (kvSize[0] + kvSize[1])
-		for _, keyCommonPrefixSize := range []int{3, 10} {
-			sources := map[string]func() kvSource{}
-			sources["ascending key"] = func() kvSource {
-				return newAscendingKeySource(expectedKVNum, kvSize[0], kvSize[1], keyCommonPrefixSize)
-			}
-			sources["random key"] = func() kvSource {
-				return newRandomKeySource(expectedKVNum, kvSize[0], kvSize[1], keyCommonPrefixSize, seed)
-			}
-			for sourceName, sourceGetter := range sources {
-				for storeName, store := range stores {
-					for writerName, fn := range writerTestFn {
-						suite.store = store
-						source := sourceGetter()
-						suite.source = source
-						t.Logf("test %d: %s, %s, %s, key size: %d, value size: %d, key common prefix size: %d",
-							testIdx+1, sourceName, storeName, writerName, kvSize[0], kvSize[1], keyCommonPrefixSize)
-						fn(suite)
-						speed := float64(source.outputSize()) / elapsed.Seconds() / 1024 / 1024
-						t.Logf("test %d: speed for %d bytes: %.2f MB/s", testIdx, source.outputSize(), speed)
-						suite.source = nil
+		sources := map[string]func() kvSource{}
+		sources["ascending key"] = func() kvSource {
+			return newAscendingKeySource(expectedKVNum, kvSize[0], kvSize[1], keyCommonPrefixSize)
+		}
+		sources["random key"] = func() kvSource {
+			return newRandomKeySource(expectedKVNum, kvSize[0], kvSize[1], keyCommonPrefixSize, seed)
+		}
+		for sourceName, sourceGetter := range sources {
+			for storeName, store := range stores {
+				for writerName, fn := range writerTestFn {
+					if writerName == "plain file" && storeName == "external store" {
+						// about 27MB/s
+						continue
 					}
+					suite.store = store
+					source := sourceGetter()
+					suite.source = source
+					t.Logf("test %d: %s, %s, %s, key size: %d, value size: %d",
+						testIdx+1, sourceName, storeName, writerName, kvSize[0], kvSize[1])
+					fn(suite)
+					speed := float64(source.outputSize()) / elapsed.Seconds() / 1024 / 1024
+					t.Logf("test %d: speed for %d bytes: %.2f MB/s", testIdx, source.outputSize(), speed)
+					suite.source = nil
 				}
 			}
 		}
