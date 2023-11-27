@@ -4948,6 +4948,10 @@ def go_deps():
         name = "io_etcd_go_etcd_api_v3",
         build_file_proto_mode = "disable",
         importpath = "go.etcd.io/etcd/api/v3",
+        patch_args = ["-p2"],
+        patches = [
+            "//build/patches:io_etcd_go_etcd_api_v3.patch",
+        ],
         sum = "h1:tXok5yLlKyuQ/SXSjtqHc4uzNaMqZi2XsoSPr/LlJXI=",
         version = "v3.5.2",
     )
