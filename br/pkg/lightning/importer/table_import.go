@@ -1003,7 +1003,7 @@ func (tr *TableImporter) postProcess(
 		if !tr.tableInfo.Core.PKIsHandle && !tr.tableInfo.Core.IsCommonHandle {
 			indexNum++
 		}
-		estimatedModifyCnt = int(localChecksum.SumKVS()) / indexNum
+		estimatedModifyCnt = int(localChecksum.SumKVS()) / (1 + indexNum)
 		tr.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
 
 		// 4.5. do duplicate detection.
@@ -1180,11 +1180,11 @@ func updateStatsMeta(ctx context.Context, db *sql.DB, tableID int64, count int) 
 	err := s.Transact(ctx, "update stats_meta", func(ctx context.Context, tx *sql.Tx) error {
 		rs, err := tx.ExecContext(ctx, `
 update mysql.stats_meta
-	where table_id = ?
 	set modify_count = ?,
-		row_count = ?,
-		version = @@tidb_current_ts;
-`, tableID, count, count)
+		count = ?,
+		version = @@tidb_current_ts
+	where table_id = ?;
+`, count, count, tableID)
 		if err != nil {
 			return errors.Trace(err)
 		}
