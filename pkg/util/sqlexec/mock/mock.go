@@ -14,10 +14,10 @@
 
 package mock
 
-// MockRestrictedSQLExecutorKey is the key to represent MockRestrictedSQLExecutorMockRecorder in ctx.
-type MockRestrictedSQLExecutorKey struct{}
+// RestrictedSQLExecutorKey is the key to represent MockRestrictedSQLExecutorMockRecorder in ctx.
+type RestrictedSQLExecutorKey struct{}
 
 // String implements the string.Stringer interface.
-func (k MockRestrictedSQLExecutorKey) String() string {
+func (k RestrictedSQLExecutorKey) String() string {
 	return "__MockRestrictedSQLExecutor"
 }

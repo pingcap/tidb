@@ -495,7 +495,7 @@ func (d *BaseDispatcher) onErrHandlingStage(receiveErrs []error) error {
 		subTasks = make([]*proto.Subtask, 0, len(instanceIDs))
 		for _, id := range instanceIDs {
 			// reverting subtasks belong to the same step as current active step.
-			subTasks = append(subTasks, proto.NewSubtask(d.Task.Step, d.Task.ID, d.Task.Type, id, nil))
+			subTasks = append(subTasks, proto.NewSubtask(d.Task.Step, d.Task.ID, d.Task.Type, id, []byte("{}")))
 		}
 	}
 	return d.updateTask(proto.TaskStateReverting, subTasks, RetrySQLTimes)

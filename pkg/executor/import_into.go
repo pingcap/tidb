@@ -229,7 +229,7 @@ func (e *ImportIntoExec) doImport(ctx context.Context, se sessionctx.Context, di
 			return err2
 		}
 		// use background, since ctx is canceled already.
-		return cancelImportJob(context.Background(), globalTaskManager, distImporter.JobID())
+		return cancelAndWaitImportJob(context.Background(), globalTaskManager, distImporter.JobID())
 	}
 	if err2 := flushStats(ctx, se, e.importPlan.TableInfo.ID, distImporter.Result(ctx)); err2 != nil {
 		logutil.Logger(ctx).Error("flush stats failed", zap.Error(err2))
@@ -271,10 +271,7 @@ func (e *ImportIntoActionExec) Next(ctx context.Context, _ *chunk.Chunk) (err er
 	defer func() {
 		task.End(zap.ErrorLevel, err)
 	}()
-	if err = cancelImportJob(ctx, globalTaskManager, e.jobID); err != nil {
-		return err
-	}
-	return handle.WaitTaskDoneByKey(ctx, importinto.TaskKey(e.jobID))
+	return cancelAndWaitImportJob(ctx, globalTaskManager, e.jobID)
 }
 
 func (e *ImportIntoActionExec) checkPrivilegeAndStatus(ctx context.Context, manager *fstorage.TaskManager, hasSuperPriv bool) error {
@@ -306,9 +303,12 @@ func flushStats(ctx context.Context, se sessionctx.Context, tableID int64, resul
 	return se.CommitTxn(ctx)
 }
 
-func cancelImportJob(ctx context.Context, manager *fstorage.TaskManager, jobID int64) error {
-	return manager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+func cancelAndWaitImportJob(ctx context.Context, manager *fstorage.TaskManager, jobID int64) error {
+	if err := manager.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 		return manager.CancelGlobalTaskByKeySession(ctx, se, importinto.TaskKey(jobID))
-	})
+	}); err != nil {
+		return err
+	}
+	return handle.WaitTaskDoneByKey(ctx, importinto.TaskKey(jobID))
 }

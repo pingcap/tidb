@@ -253,7 +253,7 @@ func GetTaskImportedRows(ctx context.Context, jobID int64) (uint64, error) {
 		return 0, err
 	}
 	taskKey := TaskKey(jobID)
-	task, err := globalTaskManager.GetGlobalTaskByKey(ctx, taskKey)
+	task, err := globalTaskManager.GetGlobalTaskByKeyWithHistory(ctx, taskKey)
 	if err != nil {
 		return 0, err
 	}
