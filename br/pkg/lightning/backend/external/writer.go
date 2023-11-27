@@ -510,8 +510,9 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 
 func (w *Writer) getKeyByLoc(loc membuf.SliceLocation) []byte {
 	block := w.kvBuffer.GetSlice(loc)
-	keyLen := binary.BigEndian.Uint64(block[:lengthBytes])
-	return block[2*lengthBytes : 2*lengthBytes+keyLen]
+	// the data layout is: keyLen + valueLen + key + value so we directly skip the
+	// first 16 bytes. in most cases keys are not duplicated
+	return block[2*lengthBytes:]
 }
 
 func (w *Writer) createStorageWriter(ctx context.Context) (
