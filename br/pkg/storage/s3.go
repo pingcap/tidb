@@ -1062,8 +1062,8 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 		}()
 		uploader = s3Writer
 	}
-	uploaderWriter := newBufferedWriter(uploader, WriteBufferSize, NoCompression)
-	return uploaderWriter, nil
+	//uploaderWriter := newBufferedWriter(uploader, WriteBufferSize, NoCompression)
+	return uploader, nil
 }
 
 // Rename implements ExternalStorage interface.

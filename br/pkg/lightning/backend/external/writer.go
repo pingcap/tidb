@@ -20,7 +20,6 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"time"
 
@@ -469,11 +468,9 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		}
 		return false
 	})
-	slices.SortFunc(w.kvLocations, func(i, j membuf.SliceLocation) int {
-		return bytes.Compare(w.getSortKeyByLoc(i), w.getSortKeyByLoc(j))
-	})
 	sortDuration = time.Since(sortStart)
 
+	// TODO(lance6716): async write?
 	writeStartTime = time.Now()
 	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("sort").Observe(sortDuration.Seconds())
 	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort").Observe(float64(savedBytes) / 1024.0 / 1024.0 / sortDuration.Seconds())
