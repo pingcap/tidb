@@ -29,6 +29,10 @@ const (
 	pollingPendingSnapshotInterval = 30 * time.Second
 	errCodeTooManyPendingSnapshots = "PendingSnapshotLimitExceeded"
 	FsrApiSnapshotsThreshold       = 10
+
+	ALLVolumes     = 0
+	DATAVolumes    = 1
+	NONDATAVolumes = 2
 )
 
 type EC2Session struct {
@@ -550,7 +554,7 @@ func fetchTargetSnapshots(meta *config.EBSBasedBRMeta, specifiedAZ string) map[s
 // CreateVolumes create volumes from snapshots
 // if err happens in the middle, return half-done result
 // returned map: store id -> old volume id -> new volume id
-func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType string, iops, throughput int64, targetAZ string) (map[string]string, error) {
+func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType string, iops, throughput int64, targetAZ string, volumeScope int64) (map[string]string, error) {
 	template := ec2.CreateVolumeInput{
 		VolumeType: &volumeType,
 	}
@@ -575,6 +579,10 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 		store := meta.TiKVComponent.Stores[i]
 		for j := range store.Volumes {
 			oldVol := store.Volumes[j]
+			if (volumeScope == DATAVolumes && strings.Compare(oldVol.Type, "storage.data-dir") != 0) ||
+				(volumeScope == NONDATAVolumes && strings.Compare(oldVol.Type, "storage.data-dir") == 0) {
+				continue
+			}
 			workerPool.ApplyOnErrorGroup(eg, func() error {
 				log.Debug("create volume from snapshot", zap.Any("volume", oldVol))
 				req := template
