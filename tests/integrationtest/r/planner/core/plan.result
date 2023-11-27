@@ -434,3 +434,22 @@ fcbpdt	fcbpsq	procst	cipstx	cipsst	dyngtg	blncdt
 20230925	12023092502158016	1	CI010000	ACSC	EAYT	20230925
 EXPLAIN FORMAT = TRADITIONAL ((VALUES ROW ()) ORDER BY 1);
 Error 1051 (42S02): Unknown table ''
+drop table if exists p, t;
+create table p (id int, c int, key i_id(id), key i_c(c));
+create table t (id int);
+insert into p values (3,3), (4,4), (6,6), (9,9);
+insert into t values (4), (9);
+select /*+ INL_JOIN(p) */ * from p, t where p.id = t.id;
+id	c	id
+4	4	4
+9	9	9
+explain analyze format='brief' select /*+ INL_JOIN(p) */ * from p, t where p.id = t.id;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+IndexJoin	12487.50	2	root	<access_object>	<execution_info>	<operator_info>	<memory>	<disk>
+├─TableReader(Build)	9990.00	2	root	<access_object>	<execution_info>	<operator_info>	<memory>	<disk>
+│ └─Selection	9990.00	2	cop[tikv]	<access_object>	<execution_info>	<operator_info>	<memory>	<disk>
+│   └─TableFullScan	10000.00	2	cop[tikv]	<access_object>	<execution_info>	<operator_info>	<memory>	<disk>
+└─IndexLookUp(Probe)	12487.50	2	root	<access_object>	<execution_info>	<operator_info>	<memory>	<disk>
+  ├─Selection(Build)	12487.50	2	cop[tikv]	<access_object>	<execution_info>	<operator_info>	<memory>	<disk>
+  │ └─IndexRangeScan	12500.00	2	cop[tikv]	<access_object>	<execution_info>	<operator_info>	<memory>	<disk>
+  └─TableRowIDScan(Probe)	12487.50	2	cop[tikv]	<access_object>	<execution_info>	<operator_info>	<memory>	<disk>

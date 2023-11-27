@@ -789,23 +789,23 @@ drop table if exists tc;
 drop view if exists v;
 CREATE TABLE `ta`  (
   `id` varchar(36) NOT NULL ,
-  `status` varchar(1) NOT NULL 
+  `status` varchar(1) NOT NULL
 );
 CREATE TABLE `tb`  (
   `id` varchar(36) NOT NULL ,
-  `status` varchar(1) NOT NULL 
+  `status` varchar(1) NOT NULL
 );
 CREATE TABLE `tc`  (
   `id` varchar(36) NOT NULL ,
-  `status` varchar(1) NOT NULL 
+  `status` varchar(1) NOT NULL
 );
 insert into ta values('1','1');
 insert into tb values('1','1');
 insert into tc values('1','1');
 create definer='root'@'localhost' view v as
-select 
-concat(`ta`.`status`,`tb`.`status`) AS `status`, 
-`ta`.`id` AS `id`  from (`ta` join `tb`) 
+select
+concat(`ta`.`status`,`tb`.`status`) AS `status`,
+`ta`.`id` AS `id`  from (`ta` join `tb`)
 where (`ta`.`id` = `tb`.`id`);
 SELECT tc.status,v.id FROM tc, v WHERE tc.id = v.id AND v.status = '11';
 
@@ -2187,6 +2187,7 @@ execute stmt;
 select @@last_plan_from_binding;
 drop global binding for select * from t27949 where b=1;
 
+set @@sql_select_limit=default;
 
 # TestIssue30804
 drop table if exists t1, t2;
@@ -2295,3 +2296,93 @@ create table t1(c1 int);
 select * from t1 group by t1.c1 having count(1) > 1 order by count(1) limit 10;
 set tidb_enable_ordered_result_mode = DEFAULT;
 
+
+# TestViewHintWithBinding
+set tidb_cost_model_version=2;
+drop view if exists v, v1, v2;
+drop table if exists t, t1, t2, t3;
+create table t(a int, b int);
+create table t1(a int, b int);
+create table t2(a int, b int);
+create table t3(a int, b int);
+create definer='root'@'localhost' view v as select t.a, t.b from t join (select count(*) as a from t1 join t2 join t3 where t1.b=t2.b and t2.a = t3.a group by t2.a) tt on t.a = tt.a;
+create definer='root'@'localhost' view v1 as select t.a, t.b from t join (select count(*) as a from t1 join v on t1.b=v.b group by v.a) tt on t.a = tt.a;
+create definer='root'@'localhost' view v2 as select t.a, t.b from t join (select count(*) as a from t1 join v1 on t1.b=v1.b group by v1.a) tt on t.a = tt.a;
+select * from v2;
+select @@last_plan_from_binding;
+create global binding for select * from v2 using select /*+ qb_name(qb_v_2, v2.v1@sel_2 .v@sel_2 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v2. v1@sel_2 .v@sel_2 .@sel_1), merge_join(t@qb_v_1) */ * from v2;
+select * from v2;
+select @@last_plan_from_binding;
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%planner__core__integration%';
+drop global binding for select * from v2;
+select * from v2;
+select @@last_plan_from_binding;
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%planner__core__integration%';
+
+set tidb_cost_model_version=default;
+
+
+# TestKeepOrderHintWithBinding
+set tidb_cost_model_version=2;
+drop table if exists t1;
+create table t1(a int, b int, index idx_a(a));
+--echo
+--echo ## create binding for order_index hint
+select * from t1 where a<10 order by a limit 1;
+select @@last_plan_from_binding;
+create global binding for select * from t1 where a<10 order by a limit 1 using select /*+ order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
+select * from t1 where a<10 order by a limit 1;
+select @@last_plan_from_binding;
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%planner__core__integration%';
+--echo
+drop global binding for select * from t1 where a<10 order by a limit 1;
+select * from t1 where a<10 order by a limit 1;
+select @@last_plan_from_binding;
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%planner__core__integration%';
+--echo
+--echo ## create binding for no_order_index hint
+create global binding for select * from t1 where a<10 order by a limit 1 using select /*+ no_order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
+select * from t1 where a<10 order by a limit 1;
+select @@last_plan_from_binding;
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%planner__core__integration%';
+--echo
+drop global binding for select * from t1 where a<10 order by a limit 1;
+select * from t1 where a<10 order by a limit 1;
+select @@last_plan_from_binding;
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%planner__core__integration%';
+
+set tidb_cost_model_version=default;
+
+
+# TestIssue20139
+drop table if exists t;
+set tidb_opt_fix_control='44262:ON';
+create table t (id int, c int) partition by range (id) (partition p0 values less than (4), partition p1 values less than (7));
+insert into t values(3, 3), (5, 5);
+explain format = 'brief' select * from t where c = 1 and id = c;
+
+
+# TestIssue46177
+drop table if exists sbtest;
+CREATE TABLE sbtest (
+  id int(10) unsigned NOT NULL AUTO_INCREMENT,
+  k int(10) unsigned NOT NULL DEFAULT '0',
+  c char(120) NOT NULL DEFAULT '',
+  pad char(60) NOT NULL DEFAULT '',
+  PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,
+  KEY k (k)
+);
+## cannot choose the best plan with RangeScan.
+set @@tidb_opt_fix_control = '46177:off';
+explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a;
+explain format='brief' select /*+ stream_agg() */ count(1) from sbtest where id<1 group by k;
+set @@tidb_opt_fix_control = '46177:on';
+explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a;
+explain format='brief' select /*+ stream_agg() */ count(1) from sbtest where id<1 group by k;
+set @@tidb_opt_fix_control = default;

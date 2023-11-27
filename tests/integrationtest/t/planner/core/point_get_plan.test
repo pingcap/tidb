@@ -336,3 +336,23 @@ select * from t2 where col1 = 0x000039;
 drop table t1, t2;
 
 
+# TestPointGetForUpdate
+drop table if exists fu;
+create table fu (id int primary key, val int);
+insert into fu values (6, 6);
+
+## In autocommit mode, outside a transaction, "for update" doesn't take effect.
+explain format = 'brief' select * from fu where id = 6 for update;
+select * from fu where id = 6 for update;
+
+begin;
+explain format = 'brief' select * from fu where id = 6 for update;
+select * from fu where id = 6 for update;
+rollback;
+
+set @@session.autocommit = 0;
+explain format = 'brief' select * from fu where id = 6 for update;
+select * from fu where id = 6 for update;
+rollback;
+
+set @@session.autocommit = default;
