@@ -68,6 +68,8 @@ type Extension interface {
 
 	// OnDone is called when task is done, either finished successfully or failed
 	// with error.
+	// if the task is failed when initializing dispatcher, or it's a known task,
+	// we don't call this function.
 	OnDone(ctx context.Context, h TaskHandle, task *proto.Task) error
 
 	// GetEligibleInstances is used to get the eligible instances for the task.

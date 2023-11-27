@@ -691,12 +691,6 @@ func redactSensitiveInfo(gTask *proto.Task, taskMeta *TaskMeta) {
 	}
 }
 
-// isResumableErr checks whether it's possible to rely on checkpoint to re-import data after the error has been fixed.
-func isResumableErr(string) bool {
-	// TODO: add more cases
-	return false
-}
-
 func stepStr(step proto.Step) string {
 	switch step {
 	case proto.StepInit:
