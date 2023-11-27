@@ -10,8 +10,8 @@ set -eo pipefail
 CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 group=$1
 export COV_DIR="/tmp/group_cover"
-rm -rf COV_DIR
-mkdir $COV_DIR
+rm -rf $COV_DIR
+mkdir -p $COV_DIR
 
 # Define groups
 # Note: If new group is added, the group name must also be added to CI
@@ -38,7 +38,6 @@ for script in "$CUR"/*/run.sh; do
 	if [[ $test_name == br* ]]; then
 		echo "this is br test: ${test_name}"
 	else
-		echo "this is br test: ${test_name}"
 		continue
 	fi
 	# shellcheck disable=SC2076

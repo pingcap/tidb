@@ -10,8 +10,8 @@ set -eo pipefail
 CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 group=$1
 export COV_DIR="/tmp/group_cover"
-rm -rf COV_DIR
-mkdir $COV_DIR
+rm -rf $COV_DIR
+mkdir -p $COV_DIR
 
 # Define groups
 # Note: If new group is added, the group name must also be added to CI
@@ -35,10 +35,9 @@ groups=(
 others=()
 for script in "$CUR"/*/run.sh; do
 	test_name="$(basename "$(dirname "$script")")"
-	if [[ $test_name == lightning* ]]; then
+	if [[ $test_name == lightning_* ]]; then
 		echo "this is lightning test: ${test_name}"
 	else
-		echo "this is not lightning test: ${test_name}"
 		continue
 	fi
 	# shellcheck disable=SC2076
