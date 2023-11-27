@@ -589,7 +589,7 @@ func (m *MockExpr) resolveIndicesByVirtualExpr(ctx sessionctx.Context, schema *S
 	return true
 }
 func (m *MockExpr) RemapColumn(_ map[int64]*Column) (Expression, error) { return m, nil }
-func (m *MockExpr) ExplainInfo() string                                 { return "" }
+func (m *MockExpr) ExplainInfo(sessionctx.Context) string               { return "" }
 func (m *MockExpr) ExplainNormalizedInfo() string                       { return "" }
 func (m *MockExpr) ExplainNormalizedInfo4InList() string                { return "" }
 func (m *MockExpr) HashCode() []byte                                    { return nil }

@@ -58,7 +58,7 @@ func isNullHandler(ctx sessionctx.Context, expr *ScalarFunction) (Expression, bo
 			// Failed to fold this expr to a constant, print the DEBUG log and
 			// return the original expression to let the error to be evaluated
 			// again, in that time, the error is returned to the client.
-			logutil.BgLogger().Debug("fold expression to constant", zap.String("expression", expr.ExplainInfo()), zap.Error(err))
+			logutil.BgLogger().Debug("fold expression to constant", zap.String("expression", expr.ExplainInfo(ctx)), zap.Error(err))
 			return expr, isDeferredConst
 		}
 		if isDeferredConst {
@@ -81,7 +81,7 @@ func ifFoldHandler(ctx sessionctx.Context, expr *ScalarFunction) (Expression, bo
 			// Failed to fold this expr to a constant, print the DEBUG log and
 			// return the original expression to let the error to be evaluated
 			// again, in that time, the error is returned to the client.
-			logutil.BgLogger().Debug("fold expression to constant", zap.String("expression", expr.ExplainInfo()), zap.Error(err))
+			logutil.BgLogger().Debug("fold expression to constant", zap.String("expression", expr.ExplainInfo(ctx)), zap.Error(err))
 			return expr, false
 		}
 		if !isNull0 && arg0 != 0 {
@@ -230,7 +230,7 @@ func foldConstant(ctx sessionctx.Context, expr Expression) (Expression, bool) {
 			}
 		}
 		if err != nil {
-			logutil.BgLogger().Debug("fold expression to constant", zap.String("expression", x.ExplainInfo()), zap.Error(err))
+			logutil.BgLogger().Debug("fold expression to constant", zap.String("expression", x.ExplainInfo(ctx)), zap.Error(err))
 			return expr, isDeferredConst
 		}
 		if isDeferredConst {
@@ -248,7 +248,7 @@ func foldConstant(ctx sessionctx.Context, expr Expression) (Expression, bool) {
 		} else if x.DeferredExpr != nil {
 			value, err := x.DeferredExpr.Eval(ctx, chunk.Row{})
 			if err != nil {
-				logutil.BgLogger().Debug("fold expression to constant", zap.String("expression", x.ExplainInfo()), zap.Error(err))
+				logutil.BgLogger().Debug("fold expression to constant", zap.String("expression", x.ExplainInfo(ctx)), zap.Error(err))
 				return expr, true
 			}
 			return &Constant{Value: value, RetType: x.RetType, DeferredExpr: x.DeferredExpr}, true

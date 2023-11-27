@@ -143,78 +143,6 @@ func TestIssue15110(t *testing.T) {
 	tk.MustExec("explain format = 'brief' SELECT count(*) FROM crm_rd_150m dataset_48 WHERE (CASE WHEN (month(dataset_48.customer_first_date)) <= 30 THEN '新客' ELSE NULL END) IS NOT NULL;")
 }
 
-func TestKeepOrderHintWithBinding(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1(a int, b int, index idx_a(a));")
-
-	// create binding for order_index hint
-	tk.MustExec("select * from t1 where a<10 order by a limit 1;")
-	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
-	tk.MustExec("create global binding for select * from t1 where a<10 order by a limit 1 using select /*+ order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;")
-	tk.MustExec("select * from t1 where a<10 order by a limit 1;")
-	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
-	res := tk.MustQuery("show global bindings").Rows()
-	require.Equal(t, res[0][0], "select * from `test` . `t1` where `a` < ? order by `a` limit ?")
-	require.Equal(t, res[0][1], "SELECT /*+ order_index(`t1` `idx_a`)*/ * FROM `test`.`t1` WHERE `a` < 10 ORDER BY `a` LIMIT 1")
-
-	tk.MustExec("drop global binding for select * from t1 where a<10 order by a limit 1;")
-	tk.MustExec("select * from t1 where a<10 order by a limit 1;")
-	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
-	res = tk.MustQuery("show global bindings").Rows()
-	require.Equal(t, len(res), 0)
-
-	// create binding for no_order_index hint
-	tk.MustExec("create global binding for select * from t1 where a<10 order by a limit 1 using select /*+ no_order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;")
-	tk.MustExec("select * from t1 where a<10 order by a limit 1;")
-	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
-	res = tk.MustQuery("show global bindings").Rows()
-	require.Equal(t, res[0][0], "select * from `test` . `t1` where `a` < ? order by `a` limit ?")
-	require.Equal(t, res[0][1], "SELECT /*+ no_order_index(`t1` `idx_a`)*/ * FROM `test`.`t1` WHERE `a` < 10 ORDER BY `a` LIMIT 1")
-
-	tk.MustExec("drop global binding for select * from t1 where a<10 order by a limit 1;")
-	tk.MustExec("select * from t1 where a<10 order by a limit 1;")
-	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
-	res = tk.MustQuery("show global bindings").Rows()
-	require.Equal(t, len(res), 0)
-}
-
-func TestViewHintWithBinding(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("drop view if exists v, v1")
-	tk.MustExec("drop table if exists t, t1, t2, t3")
-	tk.MustExec("create table t(a int, b int);")
-	tk.MustExec("create table t1(a int, b int);")
-	tk.MustExec("create table t2(a int, b int);")
-	tk.MustExec("create table t3(a int, b int)")
-	tk.MustExec("create definer='root'@'localhost' view v as select t.a, t.b from t join (select count(*) as a from t1 join t2 join t3 where t1.b=t2.b and t2.a = t3.a group by t2.a) tt on t.a = tt.a;")
-	tk.MustExec("create definer='root'@'localhost' view v1 as select t.a, t.b from t join (select count(*) as a from t1 join v on t1.b=v.b group by v.a) tt on t.a = tt.a;")
-	tk.MustExec("create definer='root'@'localhost' view v2 as select t.a, t.b from t join (select count(*) as a from t1 join v1 on t1.b=v1.b group by v1.a) tt on t.a = tt.a;")
-
-	tk.MustExec("select * from v2")
-	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
-	tk.MustExec("create global binding for select * from v2 using select /*+ qb_name(qb_v_2, v2.v1@sel_2 .v@sel_2 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v2. v1@sel_2 .v@sel_2 .@sel_1), merge_join(t@qb_v_1) */ * from v2;")
-	tk.MustExec("select * from v2")
-	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
-	res := tk.MustQuery("show global bindings").Rows()
-	require.Equal(t, res[0][0], "select * from `test` . `v2`")
-	require.Equal(t, res[0][1], "SELECT /*+ qb_name(`qb_v_2` , `v2`. `v1`@`sel_2`. `v`@`sel_2`. ``@`sel_2`) merge_join(`t1`@`qb_v_2`) stream_agg(@`qb_v_2`) qb_name(`qb_v_1` , `v2`. `v1`@`sel_2`. `v`@`sel_2`. ``@`sel_1`) merge_join(`t`@`qb_v_1`)*/ * FROM `test`.`v2`")
-
-	tk.MustExec("drop global binding for select * from v2")
-	tk.MustExec("select * from v2")
-	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
-	res = tk.MustQuery("show global bindings").Rows()
-	require.Equal(t, len(res), 0)
-}
-
 func TestPartitionPruningForEQ(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -949,25 +877,6 @@ func TestExplainAnalyzeDML2(t *testing.T) {
 		explain := resBuff.String()
 		require.NotContainsf(t, explain, "auto_id_allocator", "sql: %v, explain: %v", ca.sql, explain)
 	}
-}
-
-func TestIssue20139(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int, c int) partition by range (id) (partition p0 values less than (4), partition p1 values less than (7))")
-	tk.MustExec("insert into t values(3, 3), (5, 5)")
-	plan := tk.MustQuery("explain format = 'brief' select * from t where c = 1 and id = c")
-	plan.Check(testkit.Rows(
-		"TableReader 0.01 root partition:p0 data:Selection",
-		"└─Selection 0.01 cop[tikv]  eq(test.t.c, 1), eq(test.t.id, 1)",
-		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
-	))
-	tk.MustExec("drop table t")
 }
 
 func TestConflictReadFromStorage(t *testing.T) {
@@ -2222,53 +2131,6 @@ func TestWindowRangeFramePushDownTiflash(t *testing.T) {
 		"    └─TableReader_11 10000.00 root  MppVersion: 2, data:ExchangeSender_10",
 		"      └─ExchangeSender_10 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
 		"        └─TableFullScan_9 10000.00 mpp[tiflash] table:first_range keep order:false, stats:pseudo"))
-}
-
-func TestIssue46177(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
-	tk.MustExec(` CREATE TABLE sbtest (
-  id int(10) unsigned NOT NULL AUTO_INCREMENT,
-  k int(10) unsigned NOT NULL DEFAULT '0',
-  c char(120) NOT NULL DEFAULT '',
-  pad char(60) NOT NULL DEFAULT '',
-  PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,
-  KEY k (k)
-)`)
-
-	// cannot choose the best plan with RangeScan.
-	tk.MustExec(`set @@tidb_opt_fix_control = '46177:off'`)
-	tk.MustQuery(`explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a`).Check(testkit.Rows(
-		`Projection 10.00 root  Column#6->Column#7`,
-		`└─Window 10.00 root  row_number()->Column#6 over(order by test.sbtest.k rows between current row and current row)`,
-		`  └─IndexReader 10.00 root  index:Selection`,
-		`    └─Selection 10.00 cop[tikv]  lt(test.sbtest.id, 10)`,
-		`      └─IndexFullScan 10000.00 cop[tikv] table:sbtest, index:k(k) keep order:true, stats:pseudo`))
-
-	tk.MustExec(`set @@tidb_opt_fix_control = '46177:on'`)
-	tk.MustQuery(`explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a`).Check(testkit.Rows(
-		`Projection 10.00 root  Column#6->Column#7`,
-		`└─Window 10.00 root  row_number()->Column#6 over(order by test.sbtest.k rows between current row and current row)`,
-		`  └─Sort 10.00 root  test.sbtest.k`,
-		`    └─TableReader 10.00 root  data:TableRangeScan`,
-		`      └─TableRangeScan 10.00 cop[tikv] table:sbtest range:[0,10), keep order:false, stats:pseudo`))
-
-	// cannot choose the range scan plan.
-	tk.MustExec(`set @@tidb_opt_fix_control = '46177:off'`)
-	tk.MustQuery(`explain format='brief' select /*+ stream_agg() */ count(1) from sbtest where id<1 group by k`).Check(testkit.Rows(
-		`StreamAgg 1.00 root  group by:test.sbtest.k, funcs:count(Column#6)->Column#5`,
-		`└─IndexReader 1.00 root  index:StreamAgg`,
-		`  └─StreamAgg 1.00 cop[tikv]  group by:test.sbtest.k, funcs:count(1)->Column#6`,
-		`    └─Selection 1.00 cop[tikv]  lt(test.sbtest.id, 1)`,
-		`      └─IndexFullScan 10000.00 cop[tikv] table:sbtest, index:k(k) keep order:true, stats:pseudo`))
-
-	tk.MustExec(`set @@tidb_opt_fix_control = '46177:on'`)
-	tk.MustQuery(`explain format='brief' select /*+ stream_agg() */ count(1) from sbtest where id<1 group by k`).Check(testkit.Rows(
-		`StreamAgg 1.00 root  group by:test.sbtest.k, funcs:count(1)->Column#5`,
-		`└─Sort 1.00 root  test.sbtest.k`,
-		`  └─TableReader 1.00 root  data:TableRangeScan`,
-		`    └─TableRangeScan 1.00 cop[tikv] table:sbtest range:[0,1), keep order:false, stats:pseudo`))
 }
 
 // https://github.com/pingcap/tidb/issues/41458

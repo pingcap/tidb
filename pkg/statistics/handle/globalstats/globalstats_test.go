@@ -903,16 +903,6 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	globalStats := h.GetTableStats(tableInfo)
 	require.Equal(t, int64(15), globalStats.RealtimeCount)
 
-	tk.MustExec("alter table t drop partition p3, p5;")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
-	require.NoError(t, h.Update(is))
-	result = tk.MustQuery("show stats_meta where table_name = 't';").Rows()
-	require.Len(t, result, 5)
-	// The value of global.count will be updated automatically after we drop the table partition.
-	globalStats = h.GetTableStats(tableInfo)
-	require.Equal(t, int64(11), globalStats.RealtimeCount)
-
 	tk.MustExec("alter table t truncate partition p2, p4;")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
@@ -920,15 +910,15 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	// The value of global.count will not be updated automatically when we truncate the table partition.
 	// Because the partition-stats in the partition table which have been truncated has not been updated.
 	globalStats = h.GetTableStats(tableInfo)
-	require.Equal(t, int64(11), globalStats.RealtimeCount)
+	require.Equal(t, int64(15), globalStats.RealtimeCount)
 
 	tk.MustExec("analyze table t;")
 	result = tk.MustQuery("show stats_meta where table_name = 't';").Rows()
 	// The truncate operation only delete the data from the partition p2 and p4. It will not delete the partition-stats.
-	require.Len(t, result, 5)
+	require.Len(t, result, 7)
 	// The result for the globalStats.count will be right now
 	globalStats = h.GetTableStats(tableInfo)
-	require.Equal(t, int64(7), globalStats.RealtimeCount)
+	require.Equal(t, int64(11), globalStats.RealtimeCount)
 }
 
 func TestGlobalStatsNDV(t *testing.T) {

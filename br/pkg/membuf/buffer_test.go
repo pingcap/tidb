@@ -42,7 +42,7 @@ func (t *testAllocator) Free(_ []byte) {
 func TestBufferPool(t *testing.T) {
 	allocator := &testAllocator{}
 	pool := NewPool(
-		WithPoolSize(2),
+		WithBlockNum(2),
 		WithAllocator(allocator),
 		WithBlockSize(1024),
 		WithLargeAllocThreshold(512),

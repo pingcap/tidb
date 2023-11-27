@@ -314,19 +314,19 @@ var _ json.Marshaler = (*RuleOp)(nil)
 var _ json.Unmarshaler = (*RuleOp)(nil)
 
 type ruleOp struct {
-	GroupID          string                 `json:"group_id"`
-	ID               string                 `json:"id"`
-	Index            int                    `json:"index,omitempty"`
-	Override         bool                   `json:"override,omitempty"`
-	Role             placement.PeerRoleType `json:"role"`
-	Count            int                    `json:"count"`
-	Constraints      placement.Constraints  `json:"label_constraints,omitempty"`
-	LocationLabels   []string               `json:"location_labels,omitempty"`
-	IsolationLevel   string                 `json:"isolation_level,omitempty"`
-	StartKeyHex      string                 `json:"start_key"`
-	EndKeyHex        string                 `json:"end_key"`
-	Action           RuleOpType             `json:"action"`
-	DeleteByIDPrefix bool                   `json:"delete_by_id_prefix"`
+	GroupID          string               `json:"group_id"`
+	ID               string               `json:"id"`
+	Index            int                  `json:"index,omitempty"`
+	Override         bool                 `json:"override,omitempty"`
+	Role             pd.PeerRoleType      `json:"role"`
+	Count            int                  `json:"count"`
+	Constraints      []pd.LabelConstraint `json:"label_constraints,omitempty"`
+	LocationLabels   []string             `json:"location_labels,omitempty"`
+	IsolationLevel   string               `json:"isolation_level,omitempty"`
+	StartKeyHex      string               `json:"start_key"`
+	EndKeyHex        string               `json:"end_key"`
+	Action           RuleOpType           `json:"action"`
+	DeleteByIDPrefix bool                 `json:"delete_by_id_prefix"`
 }
 
 // MarshalJSON implements json.Marshaler interface for RuleOp.
@@ -495,7 +495,7 @@ func (m *TiFlashReplicaManagerCtx) GetRegionCountFromPD(ctx context.Context, tab
 	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 	startKey, endKey = m.codec.EncodeRegionRange(startKey, endKey)
 
-	p := fmt.Sprintf("%s&count", pd.RegionStatsByKeyRange(startKey, endKey))
+	p := fmt.Sprintf("%s&count", pd.RegionStatsByKeyRange(pd.NewKeyRange(startKey, endKey)))
 	res, err := doRequest(ctx, "GetPDRegionStats", m.etcdCli.Endpoints(), p, "GET", nil)
 	if err != nil {
 		return errors.Trace(err)
@@ -544,12 +544,12 @@ func makeBaseRule() placement.TiFlashRule {
 		ID:       "",
 		Index:    placement.RuleIndexTiFlash,
 		Override: false,
-		Role:     placement.Learner,
+		Role:     pd.Learner,
 		Count:    2,
-		Constraints: []placement.Constraint{
+		Constraints: []pd.LabelConstraint{
 			{
 				Key:    "engine",
-				Op:     placement.In,
+				Op:     pd.In,
 				Values: []string{"tiflash"},
 			},
 		},
@@ -874,7 +874,7 @@ func isRuleMatch(rule placement.TiFlashRule, startKey []byte, endKey []byte, cou
 	}
 	ok := false
 	for _, c := range rule.Constraints {
-		if c.Key == "engine" && len(c.Values) == 1 && c.Values[0] == "tiflash" && c.Op == placement.In {
+		if c.Key == "engine" && len(c.Values) == 1 && c.Values[0] == "tiflash" && c.Op == pd.In {
 			ok = true
 			break
 		}
@@ -894,7 +894,7 @@ func isRuleMatch(rule placement.TiFlashRule, startKey []byte, endKey []byte, cou
 	if rule.Count != count {
 		return false
 	}
-	if rule.Role != placement.Learner {
+	if rule.Role != pd.Learner {
 		return false
 	}
 	return true
