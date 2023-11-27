@@ -60,9 +60,9 @@ func newBufferSizeChecker() *bufferSizeChecker {
 	return &bufferSizeChecker{lastCap: -1}
 }
 
-// We need to ensure that buffer in `SpillSerializeHelper` should be enlarged
+// We need to ensure that buffer in `SerializeHelper` should be enlarged
 // when it serialize an object whose size is larger than it's capacity.
-func (b *bufferSizeChecker) checkBufferCapacity(helper *SpillSerializeHelper) bool {
+func (b *bufferSizeChecker) checkBufferCapacity(helper *SerializeHelper) bool {
 	newCap := cap(helper.buf)
 	retVal := (newCap > b.lastCap)
 	b.lastCap = newCap
@@ -70,7 +70,7 @@ func (b *bufferSizeChecker) checkBufferCapacity(helper *SpillSerializeHelper) bo
 }
 
 func TestPartialResult4Count(t *testing.T) {
-	serializeHelper := NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4Count{-123, 0, 123}
@@ -111,7 +111,7 @@ func TestPartialResult4Count(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinInt(t *testing.T) {
-	serializeHelper := NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4MaxMinInt{
@@ -156,7 +156,7 @@ func TestPartialResult4MaxMinInt(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinUint(t *testing.T) {
-	serializeHelper := NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4MaxMinUint{
@@ -201,7 +201,7 @@ func TestPartialResult4MaxMinUint(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinDecimal(t *testing.T) {
-	serializeHelper := NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4MaxMinDecimal{
@@ -246,7 +246,7 @@ func TestPartialResult4MaxMinDecimal(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinFloat32(t *testing.T) {
-	serializeHelper := NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4MaxMinFloat32{
@@ -291,7 +291,7 @@ func TestPartialResult4MaxMinFloat32(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinFloat64(t *testing.T) {
-	serializeHelper := NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4MaxMinFloat64{
@@ -336,7 +336,7 @@ func TestPartialResult4MaxMinFloat64(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinTime(t *testing.T) {
-	serializeHelper := NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4MaxMinTime{
@@ -381,7 +381,7 @@ func TestPartialResult4MaxMinTime(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinString(t *testing.T) {
-	serializeHelper := NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 	bufSizeChecker := newBufferSizeChecker()
 
 	// Initialize test data
@@ -427,7 +427,7 @@ func TestPartialResult4MaxMinString(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinJSON(t *testing.T) {
-	serializeHelper := NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 	bufSizeChecker := newBufferSizeChecker()
 
 	// Initialize test data
@@ -473,7 +473,7 @@ func TestPartialResult4MaxMinJSON(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinEnum(t *testing.T) {
-	serializeHelper := NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 	bufSizeChecker := newBufferSizeChecker()
 
 	// Initialize test data
@@ -519,7 +519,7 @@ func TestPartialResult4MaxMinEnum(t *testing.T) {
 }
 
 func TestPartialResult4MaxMinSet(t *testing.T) {
-	serializeHelper := NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 	bufSizeChecker := newBufferSizeChecker()
 
 	// Initialize test data
@@ -565,7 +565,7 @@ func TestPartialResult4MaxMinSet(t *testing.T) {
 }
 
 func TestPartialResult4AvgDecimal(t *testing.T) {
-	serializeHelper := NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4AvgDecimal{
@@ -610,7 +610,7 @@ func TestPartialResult4AvgDecimal(t *testing.T) {
 }
 
 func TestPartialResult4AvgFloat64(t *testing.T) {
-	serializeHelper := NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4AvgFloat64{
@@ -655,7 +655,7 @@ func TestPartialResult4AvgFloat64(t *testing.T) {
 }
 
 func TestPartialResult4SumDecimal(t *testing.T) {
-	serializeHelper := NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4SumDecimal{
@@ -700,7 +700,7 @@ func TestPartialResult4SumDecimal(t *testing.T) {
 }
 
 func TestPartialResult4SumFloat64(t *testing.T) {
-	serializeHelper := NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4SumFloat64{
@@ -745,7 +745,7 @@ func TestPartialResult4SumFloat64(t *testing.T) {
 }
 
 func TestBasePartialResult4GroupConcat(t *testing.T) {
-	var serializeHelper = NewSpillSerializeHelper()
+	var serializeHelper = NewSerializeHelper()
 	bufSizeChecker := newBufferSizeChecker()
 
 	// Initialize test data
@@ -793,7 +793,7 @@ func TestBasePartialResult4GroupConcat(t *testing.T) {
 }
 
 func TestPartialResult4BitFunc(t *testing.T) {
-	serializeHelper := NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4BitFunc{0, 1, 2}
@@ -834,7 +834,7 @@ func TestPartialResult4BitFunc(t *testing.T) {
 }
 
 func TestPartialResult4JsonArrayagg(t *testing.T) {
-	serializeHelper := NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 	bufSizeChecker := newBufferSizeChecker()
 
 	// Initialize test data
@@ -881,7 +881,7 @@ func TestPartialResult4JsonArrayagg(t *testing.T) {
 }
 
 func TestPartialResult4JsonObjectAgg(t *testing.T) {
-	serializeHelper := NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 	bufSizeChecker := newBufferSizeChecker()
 
 	// Initialize test data
@@ -928,7 +928,7 @@ func TestPartialResult4JsonObjectAgg(t *testing.T) {
 }
 
 func TestPartialResult4FirstRowDecimal(t *testing.T) {
-	serializeHelper := NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4FirstRowDecimal{
@@ -973,7 +973,7 @@ func TestPartialResult4FirstRowDecimal(t *testing.T) {
 }
 
 func TestPartialResult4FirstRowInt(t *testing.T) {
-	serializeHelper := NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4FirstRowInt{
@@ -1018,7 +1018,7 @@ func TestPartialResult4FirstRowInt(t *testing.T) {
 }
 
 func TestPartialResult4FirstRowTime(t *testing.T) {
-	serializeHelper := NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4FirstRowTime{
@@ -1063,7 +1063,7 @@ func TestPartialResult4FirstRowTime(t *testing.T) {
 }
 
 func TestPartialResult4FirstRowString(t *testing.T) {
-	serializeHelper := NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 	bufSizeChecker := newBufferSizeChecker()
 
 	// Initialize test data
@@ -1109,7 +1109,7 @@ func TestPartialResult4FirstRowString(t *testing.T) {
 }
 
 func TestPartialResult4FirstRowFloat32(t *testing.T) {
-	serializeHelper := NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4FirstRowFloat32{
@@ -1154,7 +1154,7 @@ func TestPartialResult4FirstRowFloat32(t *testing.T) {
 }
 
 func TestPartialResult4FirstRowFloat64(t *testing.T) {
-	serializeHelper := NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4FirstRowFloat64{
@@ -1199,7 +1199,7 @@ func TestPartialResult4FirstRowFloat64(t *testing.T) {
 }
 
 func TestPartialResult4FirstRowDuration(t *testing.T) {
-	serializeHelper := NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 
 	// Initialize test data
 	expectData := []partialResult4FirstRowDuration{
@@ -1244,7 +1244,7 @@ func TestPartialResult4FirstRowDuration(t *testing.T) {
 }
 
 func TestPartialResult4FirstRowJSON(t *testing.T) {
-	serializeHelper := NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 	bufSizeChecker := newBufferSizeChecker()
 
 	// Initialize test data
@@ -1290,7 +1290,7 @@ func TestPartialResult4FirstRowJSON(t *testing.T) {
 }
 
 func TestPartialResult4FirstRowEnum(t *testing.T) {
-	serializeHelper := NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 	bufSizeChecker := newBufferSizeChecker()
 
 	// Initialize test data
@@ -1336,7 +1336,7 @@ func TestPartialResult4FirstRowEnum(t *testing.T) {
 }
 
 func TestPartialResult4FirstRowSet(t *testing.T) {
-	serializeHelper := NewSpillSerializeHelper()
+	serializeHelper := NewSerializeHelper()
 	bufSizeChecker := newBufferSizeChecker()
 
 	// Initialize test data

@@ -144,7 +144,7 @@ type AggPartialResultMapper map[string][]PartialResult
 
 type serializer interface {
 	// SerializePartialResult will serialize meta data of aggregate function into bytes and put them into chunk.
-	SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper)
+	SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper)
 
 	// DeserializePartialResult deserializes from bytes to PartialResult.
 	DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64)
@@ -209,7 +209,7 @@ func (*baseAggFunc) MergePartialResult(sessionctx.Context, PartialResult, Partia
 	return 0, nil
 }
 
-func (*baseAggFunc) SerializePartialResult(_ PartialResult, _ *chunk.Chunk, _ *SpillSerializeHelper) {
+func (*baseAggFunc) SerializePartialResult(_ PartialResult, _ *chunk.Chunk, _ *SerializeHelper) {
 }
 
 func (*baseAggFunc) DeserializePartialResult(_ *chunk.Chunk) ([]PartialResult, int64) {
@@ -233,7 +233,7 @@ type MaxMinSlidingWindowAggFunc interface {
 	SetWindowStart(start uint64)
 }
 
-type deserializeFunc func(*spillDeserializeHelper) (PartialResult, int64)
+type deserializeFunc func(*deserializeHelper) (PartialResult, int64)
 
 func deserializePartialResultCommon(src *chunk.Chunk, ordinal int, deserializeFuncImpl deserializeFunc) ([]PartialResult, int64) {
 	dataCol := src.Column(ordinal)
