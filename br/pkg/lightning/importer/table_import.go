@@ -1000,7 +1000,7 @@ func (tr *TableImporter) postProcess(
 			}
 		}
 		indexNum := len(tr.tableInfo.Core.Indices)
-		if !tr.tableInfo.Core.PKIsHandle && !tr.tableInfo.Core.IsCommonHandle {
+		if common.TableHasAutoRowID(tr.tableInfo.Core) {
 			indexNum++
 		}
 		estimatedModifyCnt = int(localChecksum.SumKVS()) / (1 + indexNum)
