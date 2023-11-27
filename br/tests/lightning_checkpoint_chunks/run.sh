@@ -114,3 +114,5 @@ check_contains "count(i): $(($ROW_COUNT*$CHUNK_COUNT))"
 check_contains "sum(i): $(( $ROW_COUNT*$CHUNK_COUNT*(($CHUNK_COUNT+2)*$ROW_COUNT + 1)/2 ))"
 [ ! -e "$TEST_DIR/cpch.pb" ]
 [ -e "$TEST_DIR/cpch.pb.1234567890.bak" ]
+
+read -p 123
