@@ -15,14 +15,25 @@
 package aggfuncs
 
 import (
-	"unsafe"
-
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	util "github.com/pingcap/tidb/pkg/util/serialization"
 )
 
-const boolLen = int64(unsafe.Sizeof(true))
+type posAndBytes struct {
+	bytes []byte
+	pos   *int64
+}
+
+func newPosAndBytes() *posAndBytes {
+	pos := int64(0)
+	return &posAndBytes{pos: &pos}
+}
+
+func (p *posAndBytes) prepare(col *chunk.Column, idx int) {
+	p.bytes = col.GetBytes(idx)
+	*(p.pos) = 0
+}
 
 type deserializeHelper struct {
 	column       *chunk.Column
@@ -39,10 +50,10 @@ func newDeserializeHelper(column *chunk.Column, rowNum int) deserializeHelper {
 }
 
 func (s *deserializeHelper) deserializePartialResult4Count(dst *partialResult4Count) bool {
+	helper := newPosAndBytes()
 	if s.readRowIndex < s.totalRowCnt {
-		pos := int64(0)
-		bytes := s.column.GetBytes(s.readRowIndex)
-		*dst = util.DeserializeInt64(bytes, &pos)
+		helper.prepare(s.column, s.readRowIndex)
+		*dst = util.DeserializeInt64(helper.bytes, helper.pos)
 		s.readRowIndex++
 		return true
 	}
@@ -50,11 +61,11 @@ func (s *deserializeHelper) deserializePartialResult4Count(dst *partialResult4Co
 }
 
 func (s *deserializeHelper) deserializePartialResult4MaxMinInt(dst *partialResult4MaxMinInt) bool {
+	helper := newPosAndBytes()
 	if s.readRowIndex < s.totalRowCnt {
-		pos := int64(0)
-		bytes := s.column.GetBytes(s.readRowIndex)
-		dst.isNull = util.DeserializeBool(bytes, &pos)
-		dst.val = util.DeserializeInt64(bytes, &pos)
+		helper.prepare(s.column, s.readRowIndex)
+		dst.isNull = util.DeserializeBool(helper.bytes, helper.pos)
+		dst.val = util.DeserializeInt64(helper.bytes, helper.pos)
 		s.readRowIndex++
 		return true
 	}
@@ -62,11 +73,11 @@ func (s *deserializeHelper) deserializePartialResult4MaxMinInt(dst *partialResul
 }
 
 func (s *deserializeHelper) deserializePartialResult4MaxMinUint(dst *partialResult4MaxMinUint) bool {
+	helper := newPosAndBytes()
 	if s.readRowIndex < s.totalRowCnt {
-		pos := int64(0)
-		bytes := s.column.GetBytes(s.readRowIndex)
-		dst.isNull = util.DeserializeBool(bytes, &pos)
-		dst.val = util.DeserializeUint64(bytes, &pos)
+		helper.prepare(s.column, s.readRowIndex)
+		dst.isNull = util.DeserializeBool(helper.bytes, helper.pos)
+		dst.val = util.DeserializeUint64(helper.bytes, helper.pos)
 		s.readRowIndex++
 		return true
 	}
@@ -74,11 +85,11 @@ func (s *deserializeHelper) deserializePartialResult4MaxMinUint(dst *partialResu
 }
 
 func (s *deserializeHelper) deserializePartialResult4MaxMinDecimal(dst *partialResult4MaxMinDecimal) bool {
+	helper := newPosAndBytes()
 	if s.readRowIndex < s.totalRowCnt {
-		pos := int64(0)
-		bytes := s.column.GetBytes(s.readRowIndex)
-		dst.isNull = util.DeserializeBool(bytes, &pos)
-		dst.val = util.DeserializeMyDecimal(bytes, &pos)
+		helper.prepare(s.column, s.readRowIndex)
+		dst.isNull = util.DeserializeBool(helper.bytes, helper.pos)
+		dst.val = util.DeserializeMyDecimal(helper.bytes, helper.pos)
 		s.readRowIndex++
 		return true
 	}
@@ -86,11 +97,11 @@ func (s *deserializeHelper) deserializePartialResult4MaxMinDecimal(dst *partialR
 }
 
 func (s *deserializeHelper) deserializePartialResult4MaxMinFloat32(dst *partialResult4MaxMinFloat32) bool {
+	helper := newPosAndBytes()
 	if s.readRowIndex < s.totalRowCnt {
-		pos := int64(0)
-		bytes := s.column.GetBytes(s.readRowIndex)
-		dst.isNull = util.DeserializeBool(bytes, &pos)
-		dst.val = util.DeserializeFloat32(bytes, &pos)
+		helper.prepare(s.column, s.readRowIndex)
+		dst.isNull = util.DeserializeBool(helper.bytes, helper.pos)
+		dst.val = util.DeserializeFloat32(helper.bytes, helper.pos)
 		s.readRowIndex++
 		return true
 	}
@@ -98,11 +109,11 @@ func (s *deserializeHelper) deserializePartialResult4MaxMinFloat32(dst *partialR
 }
 
 func (s *deserializeHelper) deserializePartialResult4MaxMinFloat64(dst *partialResult4MaxMinFloat64) bool {
+	helper := newPosAndBytes()
 	if s.readRowIndex < s.totalRowCnt {
-		pos := int64(0)
-		bytes := s.column.GetBytes(s.readRowIndex)
-		dst.isNull = util.DeserializeBool(bytes, &pos)
-		dst.val = util.DeserializeFloat64(bytes, &pos)
+		helper.prepare(s.column, s.readRowIndex)
+		dst.isNull = util.DeserializeBool(helper.bytes, helper.pos)
+		dst.val = util.DeserializeFloat64(helper.bytes, helper.pos)
 		s.readRowIndex++
 		return true
 	}
@@ -110,11 +121,11 @@ func (s *deserializeHelper) deserializePartialResult4MaxMinFloat64(dst *partialR
 }
 
 func (s *deserializeHelper) deserializePartialResult4MaxMinTime(dst *partialResult4MaxMinTime) bool {
+	helper := newPosAndBytes()
 	if s.readRowIndex < s.totalRowCnt {
-		pos := int64(0)
-		bytes := s.column.GetBytes(s.readRowIndex)
-		dst.isNull = util.DeserializeBool(bytes, &pos)
-		dst.val = util.DeserializeTime(bytes, &pos)
+		helper.prepare(s.column, s.readRowIndex)
+		dst.isNull = util.DeserializeBool(helper.bytes, helper.pos)
+		dst.val = util.DeserializeTime(helper.bytes, helper.pos)
 		s.readRowIndex++
 		return true
 	}
@@ -122,11 +133,11 @@ func (s *deserializeHelper) deserializePartialResult4MaxMinTime(dst *partialResu
 }
 
 func (s *deserializeHelper) deserializePartialResult4MaxMinDuration(dst *partialResult4MaxMinDuration) bool {
+	helper := newPosAndBytes()
 	if s.readRowIndex < s.totalRowCnt {
-		pos := int64(0)
-		bytes := s.column.GetBytes(s.readRowIndex)
-		dst.isNull = util.DeserializeBool(bytes, &pos)
-		dst.val = util.DeserializeTypesDuration(bytes, &pos)
+		helper.prepare(s.column, s.readRowIndex)
+		dst.isNull = util.DeserializeBool(helper.bytes, helper.pos)
+		dst.val = util.DeserializeTypesDuration(helper.bytes, helper.pos)
 		s.readRowIndex++
 		return true
 	}
@@ -134,11 +145,11 @@ func (s *deserializeHelper) deserializePartialResult4MaxMinDuration(dst *partial
 }
 
 func (s *deserializeHelper) deserializePartialResult4MaxMinString(dst *partialResult4MaxMinString) bool {
+	helper := newPosAndBytes()
 	if s.readRowIndex < s.totalRowCnt {
-		pos := int64(0)
-		bytes := s.column.GetBytes(s.readRowIndex)
-		dst.isNull = util.DeserializeBool(bytes, &pos)
-		dst.val = util.DeserializeString(bytes, &pos)
+		helper.prepare(s.column, s.readRowIndex)
+		dst.isNull = util.DeserializeBool(helper.bytes, helper.pos)
+		dst.val = util.DeserializeString(helper.bytes, helper.pos)
 		s.readRowIndex++
 		return true
 	}
@@ -146,11 +157,11 @@ func (s *deserializeHelper) deserializePartialResult4MaxMinString(dst *partialRe
 }
 
 func (s *deserializeHelper) deserializePartialResult4MaxMinJSON(dst *partialResult4MaxMinJSON) bool {
+	helper := newPosAndBytes()
 	if s.readRowIndex < s.totalRowCnt {
-		pos := int64(0)
-		bytes := s.column.GetBytes(s.readRowIndex)
-		dst.isNull = util.DeserializeBool(bytes, &pos)
-		dst.val = util.DeserializeBinaryJSON(bytes, &pos)
+		helper.prepare(s.column, s.readRowIndex)
+		dst.isNull = util.DeserializeBool(helper.bytes, helper.pos)
+		dst.val = util.DeserializeBinaryJSON(helper.bytes, helper.pos)
 		s.readRowIndex++
 		return true
 	}
@@ -158,11 +169,11 @@ func (s *deserializeHelper) deserializePartialResult4MaxMinJSON(dst *partialResu
 }
 
 func (s *deserializeHelper) deserializePartialResult4MaxMinEnum(dst *partialResult4MaxMinEnum) bool {
+	helper := newPosAndBytes()
 	if s.readRowIndex < s.totalRowCnt {
-		pos := int64(0)
-		bytes := s.column.GetBytes(s.readRowIndex)
-		dst.isNull = util.DeserializeBool(bytes, &pos)
-		dst.val = util.DeserializeEnum(bytes, &pos)
+		helper.prepare(s.column, s.readRowIndex)
+		dst.isNull = util.DeserializeBool(helper.bytes, helper.pos)
+		dst.val = util.DeserializeEnum(helper.bytes, helper.pos)
 		s.readRowIndex++
 		return true
 	}
@@ -170,11 +181,11 @@ func (s *deserializeHelper) deserializePartialResult4MaxMinEnum(dst *partialResu
 }
 
 func (s *deserializeHelper) deserializePartialResult4MaxMinSet(dst *partialResult4MaxMinSet) bool {
+	helper := newPosAndBytes()
 	if s.readRowIndex < s.totalRowCnt {
-		pos := int64(0)
-		bytes := s.column.GetBytes(s.readRowIndex)
-		dst.isNull = util.DeserializeBool(bytes, &pos)
-		dst.val = util.DeserializeSet(bytes, &pos)
+		helper.prepare(s.column, s.readRowIndex)
+		dst.isNull = util.DeserializeBool(helper.bytes, helper.pos)
+		dst.val = util.DeserializeSet(helper.bytes, helper.pos)
 		s.readRowIndex++
 		return true
 	}
@@ -182,11 +193,11 @@ func (s *deserializeHelper) deserializePartialResult4MaxMinSet(dst *partialResul
 }
 
 func (s *deserializeHelper) deserializePartialResult4AvgDecimal(dst *partialResult4AvgDecimal) bool {
+	helper := newPosAndBytes()
 	if s.readRowIndex < s.totalRowCnt {
-		pos := int64(0)
-		bytes := s.column.GetBytes(s.readRowIndex)
-		dst.sum = util.DeserializeMyDecimal(bytes, &pos)
-		dst.count = util.DeserializeInt64(bytes, &pos)
+		helper.prepare(s.column, s.readRowIndex)
+		dst.sum = util.DeserializeMyDecimal(helper.bytes, helper.pos)
+		dst.count = util.DeserializeInt64(helper.bytes, helper.pos)
 		s.readRowIndex++
 		return true
 	}
@@ -194,11 +205,11 @@ func (s *deserializeHelper) deserializePartialResult4AvgDecimal(dst *partialResu
 }
 
 func (s *deserializeHelper) deserializePartialResult4AvgFloat64(dst *partialResult4AvgFloat64) bool {
+	helper := newPosAndBytes()
 	if s.readRowIndex < s.totalRowCnt {
-		pos := int64(0)
-		bytes := s.column.GetBytes(s.readRowIndex)
-		dst.sum = util.DeserializeFloat64(bytes, &pos)
-		dst.count = util.DeserializeInt64(bytes, &pos)
+		helper.prepare(s.column, s.readRowIndex)
+		dst.sum = util.DeserializeFloat64(helper.bytes, helper.pos)
+		dst.count = util.DeserializeInt64(helper.bytes, helper.pos)
 		s.readRowIndex++
 		return true
 	}
@@ -206,11 +217,11 @@ func (s *deserializeHelper) deserializePartialResult4AvgFloat64(dst *partialResu
 }
 
 func (s *deserializeHelper) deserializePartialResult4SumDecimal(dst *partialResult4SumDecimal) bool {
+	helper := newPosAndBytes()
 	if s.readRowIndex < s.totalRowCnt {
-		pos := int64(0)
-		bytes := s.column.GetBytes(s.readRowIndex)
-		dst.val = util.DeserializeMyDecimal(bytes, &pos)
-		dst.notNullRowCount = util.DeserializeInt64(bytes, &pos)
+		helper.prepare(s.column, s.readRowIndex)
+		dst.val = util.DeserializeMyDecimal(helper.bytes, helper.pos)
+		dst.notNullRowCount = util.DeserializeInt64(helper.bytes, helper.pos)
 		s.readRowIndex++
 		return true
 	}
@@ -218,11 +229,11 @@ func (s *deserializeHelper) deserializePartialResult4SumDecimal(dst *partialResu
 }
 
 func (s *deserializeHelper) deserializePartialResult4SumFloat64(dst *partialResult4SumFloat64) bool {
+	helper := newPosAndBytes()
 	if s.readRowIndex < s.totalRowCnt {
-		pos := int64(0)
-		bytes := s.column.GetBytes(s.readRowIndex)
-		dst.val = util.DeserializeFloat64(bytes, &pos)
-		dst.notNullRowCount = util.DeserializeInt64(bytes, &pos)
+		helper.prepare(s.column, s.readRowIndex)
+		dst.val = util.DeserializeFloat64(helper.bytes, helper.pos)
+		dst.notNullRowCount = util.DeserializeInt64(helper.bytes, helper.pos)
 		s.readRowIndex++
 		return true
 	}
@@ -230,11 +241,11 @@ func (s *deserializeHelper) deserializePartialResult4SumFloat64(dst *partialResu
 }
 
 func (s *deserializeHelper) deserializeBasePartialResult4GroupConcat(dst *basePartialResult4GroupConcat) bool {
+	helper := newPosAndBytes()
 	if s.readRowIndex < s.totalRowCnt {
-		pos := int64(0)
-		restoredBytes := s.column.GetBytes(s.readRowIndex)
-		dst.valsBuf = util.DeserializeBytesBuffer(restoredBytes, &pos)
-		dst.buffer = util.DeserializeBytesBuffer(restoredBytes, &pos)
+		helper.prepare(s.column, s.readRowIndex)
+		dst.valsBuf = util.DeserializeBytesBuffer(helper.bytes, helper.pos)
+		dst.buffer = util.DeserializeBytesBuffer(helper.bytes, helper.pos)
 		s.readRowIndex++
 		return true
 	}
@@ -250,10 +261,10 @@ func (s *deserializeHelper) deserializePartialResult4GroupConcat(dst *partialRes
 }
 
 func (s *deserializeHelper) deserializePartialResult4BitFunc(dst *partialResult4BitFunc) bool {
+	helper := newPosAndBytes()
 	if s.readRowIndex < s.totalRowCnt {
-		pos := int64(0)
-		bytes := s.column.GetBytes(s.readRowIndex)
-		*dst = util.DeserializeUint64(bytes, &pos)
+		helper.prepare(s.column, s.readRowIndex)
+		*dst = util.DeserializeUint64(helper.bytes, helper.pos)
 		s.readRowIndex++
 		return true
 	}
@@ -261,12 +272,12 @@ func (s *deserializeHelper) deserializePartialResult4BitFunc(dst *partialResult4
 }
 
 func (s *deserializeHelper) deserializePartialResult4JsonArrayagg(dst *partialResult4JsonArrayagg) bool {
+	helper := newPosAndBytes()
 	if s.readRowIndex < s.totalRowCnt {
-		bytes := s.column.GetBytes(s.readRowIndex)
-		byteNum := int64(len(bytes))
-		readPos := int64(0)
-		for readPos < byteNum {
-			value := util.DeserializeInterface(bytes, &readPos)
+		helper.prepare(s.column, s.readRowIndex)
+		byteNum := int64(len(helper.bytes))
+		for *helper.pos < byteNum {
+			value := util.DeserializeInterface(helper.bytes, helper.pos)
 			dst.entries = append(dst.entries, value)
 		}
 		s.readRowIndex++
@@ -276,16 +287,16 @@ func (s *deserializeHelper) deserializePartialResult4JsonArrayagg(dst *partialRe
 }
 
 func (s *deserializeHelper) deserializePartialResult4JsonObjectAgg(dst *partialResult4JsonObjectAgg) (bool, int64) {
+	helper := newPosAndBytes()
 	memDelta := int64(0)
 	dst.bInMap = 0
 	dst.entries = make(map[string]interface{})
 	if s.readRowIndex < s.totalRowCnt {
-		bytes := s.column.GetBytes(s.readRowIndex)
-		byteNum := int64(len(bytes))
-		readPos := int64(0)
-		for readPos < byteNum {
-			key := util.DeserializeString(bytes, &readPos)
-			realVal := util.DeserializeInterface(bytes, &readPos)
+		helper.prepare(s.column, s.readRowIndex)
+		byteNum := int64(len(helper.bytes))
+		for *helper.pos < byteNum {
+			key := util.DeserializeString(helper.bytes, helper.pos)
+			realVal := util.DeserializeInterface(helper.bytes, helper.pos)
 			if _, ok := dst.entries[key]; !ok {
 				memDelta += int64(len(key)) + getValMemDelta(realVal)
 				if len(dst.entries)+1 > (1<<dst.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
@@ -307,11 +318,11 @@ func (*deserializeHelper) deserializeBasePartialResult4FirstRow(dst *basePartial
 }
 
 func (s *deserializeHelper) deserializePartialResult4FirstRowInt(dst *partialResult4FirstRowInt) bool {
+	helper := newPosAndBytes()
 	if s.readRowIndex < s.totalRowCnt {
-		bytes := s.column.GetBytes(s.readRowIndex)
-		pos := int64(0)
-		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, &pos)
-		dst.val = util.DeserializeInt64(bytes, &pos)
+		helper.prepare(s.column, s.readRowIndex)
+		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, helper.bytes, helper.pos)
+		dst.val = util.DeserializeInt64(helper.bytes, helper.pos)
 		s.readRowIndex++
 		return true
 	}
@@ -319,11 +330,11 @@ func (s *deserializeHelper) deserializePartialResult4FirstRowInt(dst *partialRes
 }
 
 func (s *deserializeHelper) deserializePartialResult4FirstRowFloat32(dst *partialResult4FirstRowFloat32) bool {
+	helper := newPosAndBytes()
 	if s.readRowIndex < s.totalRowCnt {
-		bytes := s.column.GetBytes(s.readRowIndex)
-		pos := int64(0)
-		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, &pos)
-		dst.val = util.DeserializeFloat32(bytes, &pos)
+		helper.prepare(s.column, s.readRowIndex)
+		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, helper.bytes, helper.pos)
+		dst.val = util.DeserializeFloat32(helper.bytes, helper.pos)
 		s.readRowIndex++
 		return true
 	}
@@ -331,11 +342,11 @@ func (s *deserializeHelper) deserializePartialResult4FirstRowFloat32(dst *partia
 }
 
 func (s *deserializeHelper) deserializePartialResult4FirstRowFloat64(dst *partialResult4FirstRowFloat64) bool {
+	helper := newPosAndBytes()
 	if s.readRowIndex < s.totalRowCnt {
-		bytes := s.column.GetBytes(s.readRowIndex)
-		pos := int64(0)
-		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, &pos)
-		dst.val = util.DeserializeFloat64(bytes, &pos)
+		helper.prepare(s.column, s.readRowIndex)
+		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, helper.bytes, helper.pos)
+		dst.val = util.DeserializeFloat64(helper.bytes, helper.pos)
 		s.readRowIndex++
 		return true
 	}
@@ -343,11 +354,11 @@ func (s *deserializeHelper) deserializePartialResult4FirstRowFloat64(dst *partia
 }
 
 func (s *deserializeHelper) deserializePartialResult4FirstRowDecimal(dst *partialResult4FirstRowDecimal) bool {
+	helper := newPosAndBytes()
 	if s.readRowIndex < s.totalRowCnt {
-		bytes := s.column.GetBytes(s.readRowIndex)
-		pos := int64(0)
-		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, &pos)
-		dst.val = util.DeserializeMyDecimal(bytes, &pos)
+		helper.prepare(s.column, s.readRowIndex)
+		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, helper.bytes, helper.pos)
+		dst.val = util.DeserializeMyDecimal(helper.bytes, helper.pos)
 		s.readRowIndex++
 		return true
 	}
@@ -355,11 +366,11 @@ func (s *deserializeHelper) deserializePartialResult4FirstRowDecimal(dst *partia
 }
 
 func (s *deserializeHelper) deserializePartialResult4FirstRowString(dst *partialResult4FirstRowString) bool {
+	helper := newPosAndBytes()
 	if s.readRowIndex < s.totalRowCnt {
-		bytes := s.column.GetBytes(s.readRowIndex)
-		pos := int64(0)
-		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, &pos)
-		dst.val = util.DeserializeString(bytes, &pos)
+		helper.prepare(s.column, s.readRowIndex)
+		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, helper.bytes, helper.pos)
+		dst.val = util.DeserializeString(helper.bytes, helper.pos)
 		s.readRowIndex++
 		return true
 	}
@@ -367,11 +378,11 @@ func (s *deserializeHelper) deserializePartialResult4FirstRowString(dst *partial
 }
 
 func (s *deserializeHelper) deserializePartialResult4FirstRowTime(dst *partialResult4FirstRowTime) bool {
+	helper := newPosAndBytes()
 	if s.readRowIndex < s.totalRowCnt {
-		bytes := s.column.GetBytes(s.readRowIndex)
-		pos := int64(0)
-		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, &pos)
-		dst.val = util.DeserializeTime(bytes, &pos)
+		helper.prepare(s.column, s.readRowIndex)
+		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, helper.bytes, helper.pos)
+		dst.val = util.DeserializeTime(helper.bytes, helper.pos)
 		s.readRowIndex++
 		return true
 	}
@@ -379,11 +390,11 @@ func (s *deserializeHelper) deserializePartialResult4FirstRowTime(dst *partialRe
 }
 
 func (s *deserializeHelper) deserializePartialResult4FirstRowDuration(dst *partialResult4FirstRowDuration) bool {
+	helper := newPosAndBytes()
 	if s.readRowIndex < s.totalRowCnt {
-		bytes := s.column.GetBytes(s.readRowIndex)
-		pos := int64(0)
-		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, &pos)
-		dst.val = util.DeserializeTypesDuration(bytes, &pos)
+		helper.prepare(s.column, s.readRowIndex)
+		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, helper.bytes, helper.pos)
+		dst.val = util.DeserializeTypesDuration(helper.bytes, helper.pos)
 		s.readRowIndex++
 		return true
 	}
@@ -391,11 +402,11 @@ func (s *deserializeHelper) deserializePartialResult4FirstRowDuration(dst *parti
 }
 
 func (s *deserializeHelper) deserializePartialResult4FirstRowJSON(dst *partialResult4FirstRowJSON) bool {
+	helper := newPosAndBytes()
 	if s.readRowIndex < s.totalRowCnt {
-		bytes := s.column.GetBytes(s.readRowIndex)
-		pos := int64(0)
-		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, &pos)
-		dst.val = util.DeserializeBinaryJSON(bytes, &pos)
+		helper.prepare(s.column, s.readRowIndex)
+		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, helper.bytes, helper.pos)
+		dst.val = util.DeserializeBinaryJSON(helper.bytes, helper.pos)
 		s.readRowIndex++
 		return true
 	}
@@ -403,11 +414,11 @@ func (s *deserializeHelper) deserializePartialResult4FirstRowJSON(dst *partialRe
 }
 
 func (s *deserializeHelper) deserializePartialResult4FirstRowEnum(dst *partialResult4FirstRowEnum) bool {
+	helper := newPosAndBytes()
 	if s.readRowIndex < s.totalRowCnt {
-		bytes := s.column.GetBytes(s.readRowIndex)
-		pos := int64(0)
-		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, &pos)
-		dst.val = util.DeserializeEnum(bytes, &pos)
+		helper.prepare(s.column, s.readRowIndex)
+		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, helper.bytes, helper.pos)
+		dst.val = util.DeserializeEnum(helper.bytes, helper.pos)
 		s.readRowIndex++
 		return true
 	}
@@ -415,11 +426,11 @@ func (s *deserializeHelper) deserializePartialResult4FirstRowEnum(dst *partialRe
 }
 
 func (s *deserializeHelper) deserializePartialResult4FirstRowSet(dst *partialResult4FirstRowSet) bool {
+	helper := newPosAndBytes()
 	if s.readRowIndex < s.totalRowCnt {
-		bytes := s.column.GetBytes(s.readRowIndex)
-		pos := int64(0)
-		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, &pos)
-		dst.val = util.DeserializeSet(bytes, &pos)
+		helper.prepare(s.column, s.readRowIndex)
+		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, helper.bytes, helper.pos)
+		dst.val = util.DeserializeSet(helper.bytes, helper.pos)
 		s.readRowIndex++
 		return true
 	}
