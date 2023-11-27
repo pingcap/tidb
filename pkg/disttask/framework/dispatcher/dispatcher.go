@@ -402,7 +402,7 @@ func (d *BaseDispatcher) RebalanceSubtasks() error {
 			}
 		}
 		d.LiveNodes = newInfos
-		// 3. rebalance subtasks.
+		// 3. balance subtasks.
 		if len(d.LiveNodes) > 0 {
 			return d.BalanceSubtasks()
 		}
@@ -418,145 +418,74 @@ func (d *BaseDispatcher) replaceTaskNodes() {
 	}
 }
 
-// BalanceSubtasks rebalance subtasks from taskNodes to liveNodes.
+// BalanceSubtasks make count of subtasks on each liveNodes balanced and clean up subtasks on dead nodes.
 func (d *BaseDispatcher) BalanceSubtasks() error {
-	// 1. find out nodes that scaled out.
-	scaleOutNodes := make([]string, 0)
-	liveNodeExecIds := make([]string, 0, len(d.LiveNodes))
-	for _, node := range d.LiveNodes {
-		execID := disttaskutil.GenerateExecID(node.IP, node.Port)
-		liveNodeExecIds = append(liveNodeExecIds, execID)
-		if !disttaskutil.MatchSchedulerID(d.TaskNodes, execID) {
-			scaleOutNodes = append(scaleOutNodes, execID)
-		}
-	}
-
-	// 2. find out nodes need to clean subtasks.
+	// 1. find out nodes need to clean subtasks.
 	cleanNodes := make([]string, 0)
 	deadNodes := make(map[string]bool, 0)
 	for _, node := range d.TaskNodes {
 		if !disttaskutil.MatchServerInfo(d.LiveNodes, node) {
-			deadNodes[node] = true
 			cleanNodes = append(cleanNodes, node)
+			deadNodes[node] = true
 		}
 	}
-	// 3. get subtasks for each node before scaling out.
+	// 2. get subtasks for each node before scaling out.
 	subtasks, err := d.taskMgr.GetSubtasksByStepAndState(d.ctx, d.Task.ID, d.Task.Step, proto.TaskStatePending)
 	if err != nil {
 		return err
 	}
-
+	// 3. group subtasks for each scheduler.
 	subtasksOnScheduler := make(map[string][]*proto.Subtask, len(d.LiveNodes)+len(deadNodes))
+	for _, node := range d.LiveNodes {
+		execID := disttaskutil.GenerateExecID(node.IP, node.Port)
+		subtasksOnScheduler[execID] = make([]*proto.Subtask, 0)
+	}
 	for _, subtask := range subtasks {
 		subtasksOnScheduler[subtask.SchedulerID] = append(
 			subtasksOnScheduler[subtask.SchedulerID],
 			subtask)
 	}
-	for _, node := range scaleOutNodes {
-		subtasksOnScheduler[node] = make([]*proto.Subtask, 0)
-	}
-
+	// 4. prepare subtasks that need to rebalance to other nodes.
 	averageSubtaskCnt := len(subtasks) / len(d.LiveNodes)
-
-	if len(scaleOutNodes) == 0 && len(deadNodes) == 0 {
-		if averageSubtaskCnt == 0 {
-			return nil
+	rebalanceSubtasks := make([]*proto.Subtask, 0)
+	for k, v := range subtasksOnScheduler {
+		if ok := deadNodes[k]; ok {
+			rebalanceSubtasks = append(rebalanceSubtasks, v...)
+			continue
 		}
-
-		// 4.a rebalance subtasks from schedulers with more subtasks to schedulers with less subtasks.
-		belowAverageNodesIdx := 0
-		belowAverageNodesMap := make(map[string]bool, 0)
-		belowAverageNodes := make([]string, 0)
-		for _, node := range d.LiveNodes {
-			schedulerID := disttaskutil.GenerateExecID(node.IP, node.Port)
-			subtasks := subtasksOnScheduler[schedulerID]
-			// Deal with cases like 1 tidb with 5 subtasks, 5 tidb with 0 subtasks.
-			if averageSubtaskCnt == 0 && len(subtasks) == 0 {
-				belowAverageNodesMap[schedulerID] = true
-				belowAverageNodes = append(belowAverageNodes, schedulerID)
-			} else if len(subtasks) < averageSubtaskCnt {
-				belowAverageNodesMap[schedulerID] = true
-				belowAverageNodes = append(belowAverageNodes, schedulerID)
-			}
+		if len(v) > averageSubtaskCnt {
+			rebalanceSubtasks = append(rebalanceSubtasks, v[0:len(v)-averageSubtaskCnt]...)
 		}
-		for _, node := range d.LiveNodes {
-			schedulerID := disttaskutil.GenerateExecID(node.IP, node.Port)
-			if ok := belowAverageNodesMap[schedulerID]; !ok {
-				subtasks := subtasksOnScheduler[schedulerID]
-				for i := 0; i < len(subtasks)-averageSubtaskCnt; i++ {
-					subtasks[i].SchedulerID = belowAverageNodes[belowAverageNodesIdx%len(belowAverageNodes)]
-					belowAverageNodesIdx++
-				}
-			}
-		}
-		logutil.Logger(d.logCtx).Info("rebalance subtasks",
-			zap.Stringers("subtasks-rebalanced", subtasks))
-
-		return d.taskMgr.UpdateSubtasksSchedulerIDs(d.ctx, d.Task.ID, subtasks)
 	}
-
-	// 4.b scale out subtasks to scaleOutNodes.
-	lastScaleOutIdx := 0
-	for id, v := range subtasksOnScheduler {
-		if ok := deadNodes[id]; !ok {
-			// averageSubtaskCnt might be 0 when liveNodeSubtaskCnt < len(d.LiveNodes),
-			// if len(v) == 1, no need to schedule it.
-			if averageSubtaskCnt == 0 && len(v) == 0 {
-				continue
-			}
-			if len(v) > averageSubtaskCnt {
-				for i := 0; i < len(v)-averageSubtaskCnt; i++ {
-					schedulerID := scaleOutNodes[lastScaleOutIdx%len(scaleOutNodes)]
-					v[i].SchedulerID = schedulerID
-					lastScaleOutIdx++
-					// move the subtask to scaleOut nodes.
-					subtasksOnScheduler[schedulerID] = append(
-						subtasksOnScheduler[schedulerID],
-						v[i])
+	// 5.rebalance subtasks to other nodes.
+	rebalanceIdx := 0
+	for k, v := range subtasksOnScheduler {
+		if ok := deadNodes[k]; !ok {
+			if len(v) < averageSubtaskCnt {
+				for i := 0; i < averageSubtaskCnt-len(v) && rebalanceIdx < len(rebalanceSubtasks); i++ {
+					rebalanceSubtasks[rebalanceIdx].SchedulerID = k
+					rebalanceIdx++
 				}
-				// truncate subtasks.
-				v = v[len(v)-averageSubtaskCnt:]
-				subtasksOnScheduler[id] = v
 			}
 		}
 	}
-
-	// 5. scale out dead nodes subtasks to LiveNodes
-	for node := range deadNodes {
-		deadSubtasks := subtasksOnScheduler[node]
-		for _, subtask := range deadSubtasks {
-			// find the node with minimal num of subtasks
-			idx := 0
-			minCnt := -1
-			for i, execId := range liveNodeExecIds {
-				cnt := len(subtasksOnScheduler[execId])
-				if minCnt == -1 {
-					minCnt = cnt
-					idx = i
-				}
-				if cnt < minCnt {
-					idx = i
-					minCnt = cnt
-				}
-			}
-			subtask.SchedulerID = liveNodeExecIds[idx]
-			subtasksOnScheduler[liveNodeExecIds[idx]] = append(subtasksOnScheduler[liveNodeExecIds[idx]], subtask)
-		}
+	// 6. rebalance rest subtasks evenly to liveNodes.
+	liveNodeIdx := 0
+	for rebalanceIdx < len(rebalanceSubtasks) {
+		node := d.LiveNodes[liveNodeIdx]
+		rebalanceSubtasks[rebalanceIdx].SchedulerID = disttaskutil.GenerateExecID(node.IP, node.Port)
+		rebalanceIdx++
+		liveNodeIdx++
 	}
-
-	logutil.Logger(d.logCtx).Info("rebalance subtasks",
-		zap.Stringers("subtasks-rebalanced", subtasks),
-		zap.Strings("scaleout-nodes", scaleOutNodes),
-		zap.Strings("cleaned-nodes", cleanNodes))
-
+	// 7. update subtasks and do clean up logic.
 	if err = d.taskMgr.UpdateSubtasksSchedulerIDs(d.ctx, d.Task.ID, subtasks); err != nil {
 		return err
 	}
-
-	if err := d.taskMgr.CleanUpMeta(d.ctx, cleanNodes); err != nil {
+	logutil.Logger(d.logCtx).Info("rebalance subtasks",
+		zap.Stringers("subtasks-rebalanced", subtasks))
+	if err = d.taskMgr.CleanUpMeta(d.ctx, cleanNodes); err != nil {
 		return err
 	}
-	// 6. replace local cache.
 	d.replaceTaskNodes()
 	return nil
 }

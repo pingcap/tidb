@@ -49,15 +49,16 @@ type balanceTestCase struct {
 
 func scaleTest(t *testing.T,
 	mockTaskMgr *mock.MockTaskManager,
-	testCase scaleTestCase) {
+	testCase scaleTestCase,
+	id int) {
 
 	ctx := context.Background()
-	mockTaskMgr.EXPECT().GetSubtasksByStepAndState(ctx, int64(0), proto.StepInit, proto.TaskStatePending).Return(
+	mockTaskMgr.EXPECT().GetSubtasksByStepAndState(ctx, int64(id), proto.StepInit, proto.TaskStatePending).Return(
 		testCase.subtasks,
 		nil)
-	mockTaskMgr.EXPECT().UpdateSubtasksSchedulerIDs(ctx, int64(0), testCase.subtasks).Return(nil)
+	mockTaskMgr.EXPECT().UpdateSubtasksSchedulerIDs(ctx, int64(id), testCase.subtasks).Return(nil)
 	mockTaskMgr.EXPECT().CleanUpMeta(ctx, testCase.cleanedNodes).Return(nil)
-	dsp := dispatcher.NewBaseDispatcher(ctx, mockTaskMgr, "server", &proto.Task{Step: proto.StepInit})
+	dsp := dispatcher.NewBaseDispatcher(ctx, mockTaskMgr, "server", &proto.Task{Step: proto.StepInit, ID: int64(id)})
 	dsp.LiveNodes = testCase.liveNodes
 	dsp.TaskNodes = testCase.taskNodes
 	require.NoError(t, dsp.BalanceSubtasks())
@@ -73,14 +74,17 @@ func scaleTest(t *testing.T,
 
 func balanceTest(t *testing.T,
 	mockTaskMgr *mock.MockTaskManager,
-	testCase balanceTestCase) {
+	testCase balanceTestCase,
+	id int) {
 
 	ctx := context.Background()
-	mockTaskMgr.EXPECT().GetSubtasksByStepAndState(ctx, int64(0), proto.StepInit, proto.TaskStatePending).Return(
+	mockTaskMgr.EXPECT().GetSubtasksByStepAndState(ctx, int64(id), proto.StepInit, proto.TaskStatePending).Return(
 		testCase.subtasks,
 		nil)
-	mockTaskMgr.EXPECT().UpdateSubtasksSchedulerIDs(ctx, int64(0), testCase.subtasks).Return(nil)
-	dsp := dispatcher.NewBaseDispatcher(ctx, mockTaskMgr, "server", &proto.Task{Step: proto.StepInit})
+	mockTaskMgr.EXPECT().CleanUpMeta(ctx, gomock.Any()).Return(nil)
+
+	mockTaskMgr.EXPECT().UpdateSubtasksSchedulerIDs(ctx, int64(id), testCase.subtasks).Return(nil)
+	dsp := dispatcher.NewBaseDispatcher(ctx, mockTaskMgr, "server", &proto.Task{Step: proto.StepInit, ID: int64(id)})
 	dsp.LiveNodes = testCase.liveNodes
 	dsp.TaskNodes = testCase.taskNodes
 	require.NoError(t, dsp.BalanceSubtasks())
@@ -104,7 +108,7 @@ func TestScaleOutNodes(t *testing.T) {
 	defer ctrl.Finish()
 	mockTaskMgr := mock.NewMockTaskManager(ctrl)
 	testCases := []scaleTestCase{
-		// 1. scale out from 1 node to 2 nodes.
+		// 1. scale out from 1 node to 2 nodes. 4 subtasks.
 		{
 			/// 1.1 4 subtasks.
 			[]*proto.Subtask{
@@ -122,8 +126,8 @@ func TestScaleOutNodes(t *testing.T) {
 				{SchedulerID: "1.1.1.2:4000"},
 				{SchedulerID: "1.1.1.2:4000"}},
 		},
+		// 2. scale out from 1 node to 2 nodes. 3 subtasks.
 		{
-			/// 1.2 3 subtasks.
 			[]*proto.Subtask{
 				{SchedulerID: "1.1.1.1:4000"},
 				{SchedulerID: "1.1.1.1:4000"},
@@ -134,12 +138,11 @@ func TestScaleOutNodes(t *testing.T) {
 			[]string{"1.1.1.1:4000", "1.1.1.2:4000"},
 			[]*proto.Subtask{
 				{SchedulerID: "1.1.1.1:4000"},
-				{SchedulerID: "1.1.1.2:4000"},
+				{SchedulerID: "1.1.1.1:4000"},
 				{SchedulerID: "1.1.1.2:4000"}},
 		},
-		// 2. scale out from 2 nodes to 4 nodes.
+		// 3. scale out from 2 nodes to 4 nodes. 4 subtasks.
 		{
-			/// 2.1 4 subtasks
 			[]*proto.Subtask{
 				{SchedulerID: "1.1.1.2:4000"},
 				{SchedulerID: "1.1.1.2:4000"},
@@ -155,8 +158,8 @@ func TestScaleOutNodes(t *testing.T) {
 				{SchedulerID: "1.1.1.3:4000"},
 				{SchedulerID: "1.1.1.4:4000"}},
 		},
+		// 4. scale out from 2 nodes to 4 nodes. 9 subtasks.
 		{
-			/// 2.2 9 subtasks.
 			[]*proto.Subtask{
 				{SchedulerID: "1.1.1.2:4000"},
 				{SchedulerID: "1.1.1.2:4000"},
@@ -174,15 +177,15 @@ func TestScaleOutNodes(t *testing.T) {
 			[]*proto.Subtask{
 				{SchedulerID: "1.1.1.1:4000"},
 				{SchedulerID: "1.1.1.1:4000"},
+				{SchedulerID: "1.1.1.1:4000"},
 				{SchedulerID: "1.1.1.2:4000"},
 				{SchedulerID: "1.1.1.2:4000"},
-				{SchedulerID: "1.1.1.3:4000"},
 				{SchedulerID: "1.1.1.3:4000"},
 				{SchedulerID: "1.1.1.3:4000"},
 				{SchedulerID: "1.1.1.4:4000"},
 				{SchedulerID: "1.1.1.4:4000"}},
 		},
-		// 3. scale out from 2 nodes to 3 nodes.
+		// 5. scale out from 2 nodes to 3 nodes.
 		{
 			[]*proto.Subtask{
 				{SchedulerID: "1.1.1.2:4000"},
@@ -195,11 +198,11 @@ func TestScaleOutNodes(t *testing.T) {
 			[]string{"1.1.1.1:4000", "1.1.1.2:4000", "1.1.1.3:4000"},
 			[]*proto.Subtask{
 				{SchedulerID: "1.1.1.1:4000"},
+				{SchedulerID: "1.1.1.1:4000"},
 				{SchedulerID: "1.1.1.2:4000"},
-				{SchedulerID: "1.1.1.3:4000"},
 				{SchedulerID: "1.1.1.3:4000"}},
 		},
-		// 4. scale out from 1 node to another 2 node.
+		// 6. scale out from 1 node to another 2 node.
 		{
 			[]*proto.Subtask{
 				{SchedulerID: "1.1.1.1:4000"},
@@ -216,7 +219,7 @@ func TestScaleOutNodes(t *testing.T) {
 				{SchedulerID: "1.1.1.3:4000"},
 				{SchedulerID: "1.1.1.3:4000"}},
 		},
-		// 5. scale out from tidb1, tidb2 to tidb2, tidb3.
+		// 7. scale out from tidb1, tidb2 to tidb2, tidb3.
 		{
 			[]*proto.Subtask{
 				{SchedulerID: "1.1.1.1:4000"},
@@ -233,7 +236,7 @@ func TestScaleOutNodes(t *testing.T) {
 				{SchedulerID: "1.1.1.3:4000"},
 				{SchedulerID: "1.1.1.3:4000"}},
 		},
-		// 6. scale from tidb1, tidb2 to tidb3, tidb4.
+		// 8. scale from tidb1, tidb2 to tidb3, tidb4.
 		{
 			[]*proto.Subtask{
 				{SchedulerID: "1.1.1.1:4000"},
@@ -250,7 +253,7 @@ func TestScaleOutNodes(t *testing.T) {
 				{SchedulerID: "1.1.1.4:4000"},
 				{SchedulerID: "1.1.1.4:4000"}},
 		},
-		// 7. scale from tidb1, tidb2 to tidb2, tidb3, tidb4.
+		// 9. scale from tidb1, tidb2 to tidb2, tidb3, tidb4.
 		{
 			[]*proto.Subtask{
 				{SchedulerID: "1.1.1.1:4000"},
@@ -267,7 +270,7 @@ func TestScaleOutNodes(t *testing.T) {
 				{SchedulerID: "1.1.1.3:4000"},
 				{SchedulerID: "1.1.1.4:4000"}},
 		},
-		// 8. scale form tidb1, tidb2 to tidb2, tidb3, tidb4.
+		// 10. scale form tidb1, tidb2 to tidb2, tidb3, tidb4.
 		{
 
 			[]*proto.Subtask{
@@ -287,7 +290,7 @@ func TestScaleOutNodes(t *testing.T) {
 				{SchedulerID: "1.1.1.3:4000"},
 				{SchedulerID: "1.1.1.4:4000"}},
 		},
-		// 9. scale from tidb1(2 subtasks), tidb2(3 subtasks), tidb3(0 subtasks) to tidb1, tidb3, tidb4, tidb5, tidb6.
+		// 11. scale from tidb1(2 subtasks), tidb2(3 subtasks), tidb3(0 subtasks) to tidb1, tidb3, tidb4, tidb5, tidb6.
 		{
 			[]*proto.Subtask{
 				{SchedulerID: "1.1.1.1:4000"},
@@ -307,8 +310,8 @@ func TestScaleOutNodes(t *testing.T) {
 				{SchedulerID: "1.1.1.6:4000"}},
 		},
 	}
-	for _, testCase := range testCases {
-		scaleTest(t, mockTaskMgr, testCase)
+	for i, testCase := range testCases {
+		scaleTest(t, mockTaskMgr, testCase, i+1)
 	}
 }
 
@@ -435,8 +438,8 @@ func TestScaleInNodes(t *testing.T) {
 				{SchedulerID: "1.1.1.1:4000"}},
 		},
 	}
-	for _, testCase := range testCases {
-		scaleTest(t, mockTaskMgr, testCase)
+	for i, testCase := range testCases {
+		scaleTest(t, mockTaskMgr, testCase, i+1)
 	}
 }
 
@@ -502,7 +505,7 @@ func TestRebalanceWithoutScale(t *testing.T) {
 				{SchedulerID: "1.1.1.2:4000"},
 				{SchedulerID: "1.1.1.2:4000"}},
 		},
-		// 4. from tidb1:5, tidb2:0, tidb3:0, tidb4:0, tidb5:0, tidb6:0 to 1,1,1,1,1,0. Have bug for now..
+		// 4. from tidb1:5, tidb2:0, tidb3:0, tidb4:0, tidb5:0, tidb6:0 to 1,1,1,1,1,0.
 		{
 			[]*proto.Subtask{
 				{SchedulerID: "1.1.1.1:4000"},
@@ -522,11 +525,7 @@ func TestRebalanceWithoutScale(t *testing.T) {
 				{SchedulerID: "1.1.1.5:4000"}},
 		},
 	}
-	for _, testCase := range testCases {
-		balanceTest(t, mockTaskMgr, testCase)
+	for i, testCase := range testCases {
+		balanceTest(t, mockTaskMgr, testCase, i+1)
 	}
-}
-
-func TestRandomRebalance(t *testing.T) {
-
 }
