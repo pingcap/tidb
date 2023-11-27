@@ -40,12 +40,7 @@ type singlePointAlloc struct {
 	tblID         int64
 	lastAllocated int64
 	isUnsigned    bool
-<<<<<<< HEAD:meta/autoid/autoid_service.go
-	clientDiscover
-=======
 	*ClientDiscover
-	keyspaceID uint32
->>>>>>> 8eb191303ac (*: fix grpc client leak bug for AUTO_ID_CACHE=1 tables (#48870)):pkg/meta/autoid/autoid_service.go
 }
 
 // ClientDiscover is used to get the AutoIDAllocClient, it creates the grpc connection with autoid service leader.
@@ -169,11 +164,6 @@ retry:
 
 const backoffDuration = 200 * time.Millisecond
 
-<<<<<<< HEAD:meta/autoid/autoid_service.go
-func (sp *singlePointAlloc) resetConn(reason error) {
-	logutil.BgLogger().Info("[autoid client] reset grpc connection",
-		zap.String("reason", reason.Error()))
-=======
 // ResetConn reset the AutoIDAllocClient and underlying grpc connection.
 // The next GetClient() call will recreate the client connecting to the correct leader by querying etcd.
 func (d *ClientDiscover) ResetConn(reason error) {
@@ -181,7 +171,6 @@ func (d *ClientDiscover) ResetConn(reason error) {
 		logutil.BgLogger().Info("reset grpc connection", zap.String("category", "autoid client"),
 			zap.String("reason", reason.Error()))
 	}
->>>>>>> 8eb191303ac (*: fix grpc client leak bug for AUTO_ID_CACHE=1 tables (#48870)):pkg/meta/autoid/autoid_service.go
 	var grpcConn *grpc.ClientConn
 	d.mu.Lock()
 	grpcConn = d.mu.ClientConn

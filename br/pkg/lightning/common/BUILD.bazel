@@ -23,7 +23,6 @@ go_library(
         "//br/pkg/lightning/log",
         "//br/pkg/utils",
         "//errno",
-        "//kv",
         "//meta/autoid",
         "//parser/model",
         "//sessionctx/variable",
@@ -102,7 +101,7 @@ go_test(
     ],
     embed = [":common"],
     flaky = True,
-    shard_count = 20,
+    shard_count = 21,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/lightning/log",

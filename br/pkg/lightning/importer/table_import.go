@@ -69,6 +69,8 @@ type TableImporter struct {
 	alloc     autoid.Allocators
 	logger    log.Logger
 	kvStore   tidbkv.Storage
+	etcdCli   *clientv3.Client
+	autoidCli *autoid.ClientDiscover
 
 	ignoreColumns map[string]struct{}
 }
@@ -89,6 +91,7 @@ func NewTableImporter(
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", tableName)
 	}
+	autoidCli := autoid.NewClientDiscover(etcdCli)
 
 	return &TableImporter{
 		tableName:     tableName,
@@ -98,6 +101,8 @@ func NewTableImporter(
 		encTable:      tbl,
 		alloc:         idAlloc,
 		kvStore:       kvStore,
+		etcdCli:       etcdCli,
+		autoidCli:     autoidCli,
 		logger:        logger.With(zap.String("table", tableName)),
 		ignoreColumns: ignoreColumns,
 	}, nil
@@ -266,6 +271,19 @@ func (tr *TableImporter) populateChunks(ctx context.Context, rc *Controller, cp 
 		zap.Int("filesCnt", len(tableRegions)),
 	)
 	return err
+}
+
+// AutoIDRequirement implements autoid.Requirement.
+var _ autoid.Requirement = &TableImporter{}
+
+// Store implements the autoid.Requirement interface.
+func (tr *TableImporter) Store() tidbkv.Storage {
+	return tr.kvStore
+}
+
+// AutoIDClient implements the autoid.Requirement interface.
+func (tr *TableImporter) AutoIDClient() *autoid.ClientDiscover {
+	return tr.autoidCli
 }
 
 // RebaseChunkRowIDs rebase the row id of the chunks.

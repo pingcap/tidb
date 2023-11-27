@@ -35,6 +35,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type mockRequirement struct {
+	kv.Storage
+}
+
+func (r mockRequirement) Store() kv.Storage {
+	return r.Storage
+}
+
+func (r mockRequirement) AutoIDClient() *autoid.ClientDiscover {
+	return nil
+}
+
 func TestSignedAutoid(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`))
 	defer func() {

@@ -17,14 +17,9 @@ package ddl
 import (
 	"time"
 
-<<<<<<< HEAD:ddl/options.go
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-=======
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/autoid"
->>>>>>> 8eb191303ac (*: fix grpc client leak bug for AUTO_ID_CACHE=1 tables (#48870)):pkg/ddl/options.go
+	"github.com/pingcap/tidb/meta/autoid"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 

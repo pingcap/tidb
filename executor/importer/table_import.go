@@ -393,8 +393,9 @@ func (ti *TableImporter) PopulateChunks(ctx context.Context) (map[int32]*checkpo
 				ti.logger.Error("close etcd client error", zap.Error(err))
 			}
 		}()
+		autoidCli := autoid.NewClientDiscover(etcdCli)
 
-		r := &asAutoIDRequirement{ti.kvStore, etcdCli}
+		r := &asAutoIDRequirement{ti.kvStore, autoidCli}
 		// todo: the new base should be the max row id of the last Node if we support distributed import.
 		if err = common.RebaseGlobalAutoID(ctx, 0, r, ti.dbID, ti.tableInfo.Core); err != nil {
 			return nil, errors.Trace(err)
@@ -412,8 +413,8 @@ func (ti *TableImporter) PopulateChunks(ctx context.Context) (map[int32]*checkpo
 }
 
 type asAutoIDRequirement struct {
-	kvStore tidbkv.Storage
-	etcdCli *clientv3.Client
+	kvStore   tidbkv.Storage
+	autoidCli *autoid.ClientDiscover
 }
 
 var _ autoid.Requirement = &asAutoIDRequirement{}
@@ -422,8 +423,8 @@ func (r *asAutoIDRequirement) Store() tidbkv.Storage {
 	return r.kvStore
 }
 
-func (r *asAutoIDRequirement) GetEtcdClient() *clientv3.Client {
-	return r.etcdCli
+func (r *asAutoIDRequirement) AutoIDClient() *autoid.ClientDiscover {
+	return r.autoidCli
 }
 
 func (ti *TableImporter) rebaseChunkRowID(rowIDBase int64) {

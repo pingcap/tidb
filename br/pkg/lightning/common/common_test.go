@@ -159,3 +159,70 @@ func TestAllocGlobalAutoID(t *testing.T) {
 		require.Equal(t, c.expectAllocatorTypes, allocatorTypes, c.tableID)
 	}
 }
+
+type mockRequirement struct {
+	kv.Storage
+}
+
+func (r mockRequirement) Store() kv.Storage {
+	return r.Storage
+}
+
+func (r mockRequirement) AutoIDClient() *autoid.ClientDiscover {
+	return nil
+}
+
+func TestRebaseTableAllocators(t *testing.T) {
+	storePath := t.TempDir()
+	kvStore, err := mockstore.NewMockStore(mockstore.WithPath(storePath))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, kvStore.Close())
+	})
+	ti := newTableInfo(t, 1, 42,
+		"create table t42 (a int primary key nonclustered auto_increment) AUTO_ID_CACHE 1", kvStore)
+	allocators, err := common.GetGlobalAutoIDAlloc(mockRequirement{kvStore}, 1, ti)
+	require.NoError(t, err)
+	require.Len(t, allocators, 2)
+	for _, alloc := range allocators {
+		id, err := alloc.NextGlobalAutoID()
+		require.NoError(t, err)
+		require.Equal(t, int64(1), id)
+	}
+	ctx := context.Background()
+	allocatorTypes := make([]autoid.AllocatorType, 0, len(allocators))
+	// rebase to 123
+	for _, alloc := range allocators {
+		require.NoError(t, alloc.Rebase(ctx, 123, false))
+		allocatorTypes = append(allocatorTypes, alloc.GetType())
+	}
+	require.Equal(t, []autoid.AllocatorType{autoid.AutoIncrementType, autoid.RowIDAllocType}, allocatorTypes)
+	// this call does nothing
+	require.NoError(t, common.RebaseTableAllocators(ctx, nil, mockRequirement{kvStore}, 1, ti))
+	for _, alloc := range allocators {
+		nextID, err := alloc.NextGlobalAutoID()
+		require.NoError(t, err)
+		require.Equal(t, int64(124), nextID)
+	}
+	// this call rebase AutoIncrementType allocator to 223
+	require.NoError(t, common.RebaseTableAllocators(ctx, map[autoid.AllocatorType]int64{
+		autoid.AutoIncrementType: 223,
+	}, mockRequirement{kvStore}, 1, ti))
+	next, err := allocators[0].NextGlobalAutoID()
+	require.NoError(t, err)
+	require.Equal(t, int64(224), next)
+	next, err = allocators[1].NextGlobalAutoID()
+	require.NoError(t, err)
+	require.Equal(t, int64(124), next)
+	// this call rebase AutoIncrementType allocator to 323, RowIDAllocType allocator to 423
+	require.NoError(t, common.RebaseTableAllocators(ctx, map[autoid.AllocatorType]int64{
+		autoid.AutoIncrementType: 323,
+		autoid.RowIDAllocType:    423,
+	}, mockRequirement{kvStore}, 1, ti))
+	next, err = allocators[0].NextGlobalAutoID()
+	require.NoError(t, err)
+	require.Equal(t, int64(324), next)
+	next, err = allocators[1].NextGlobalAutoID()
+	require.NoError(t, err)
+	require.Equal(t, int64(424), next)
+}
