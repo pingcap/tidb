@@ -35,9 +35,7 @@ groups=(
 others=()
 for script in "$CUR"/*/run.sh; do
 	test_name="$(basename "$(dirname "$script")")"
-	if [[ $test_name == br* ]]; then
-		echo "this is br test: ${test_name}"
-	else
+	if [[ $test_name != br* ]]; then
 		continue
 	fi
 	# shellcheck disable=SC2076
