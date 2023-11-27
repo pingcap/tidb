@@ -98,7 +98,7 @@ func (s *ascendingKeySource) run() {
 }
 
 func (s *ascendingKeySource) next() (key, value []byte, handle kv.Handle) {
-	if s.keysIdx > len(s.keys) {
+	if s.keysIdx >= len(s.keys) {
 		return nil, nil, nil
 	}
 	key = s.keys[s.keysIdx]
@@ -163,7 +163,7 @@ func (s *randomKeySource) run() {
 }
 
 func (s *randomKeySource) next() (key, value []byte, handle kv.Handle) {
-	if s.keysIdx > len(s.keys) {
+	if s.keysIdx >= len(s.keys) {
 		return nil, nil, nil
 	}
 	key = s.keys[s.keysIdx]
@@ -289,7 +289,7 @@ func writeExternalOneFile(s *writeTestSuite) {
 }
 
 // TestCompareWriter should be run like
-// go test ./br/pkg/lightning/backend/external -v -timeout=1h --tags=intest -test.run TestCompareWriter -testing-storage-uri="s3://xxx".
+// go test ./br/pkg/lightning/backend/external -v -timeout=1h --tags=intest -test.run TestCompareWriter --testing-storage-uri="s3://xxx".
 func TestCompareWriter(t *testing.T) {
 	externalStore := openTestingStorage(t)
 	expectedKVSize := 1024 * 1024 * 1024
