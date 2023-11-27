@@ -52,7 +52,7 @@ type Column struct {
 	DefaultExpr ast.ExprNode
 }
 
-// ClonableExprNode is an wrapper for ast.ExprNode.
+// ClonableExprNode is a wrapper for ast.ExprNode.
 type ClonableExprNode struct {
 	ctor     func() ast.ExprNode
 	internal ast.ExprNode
@@ -66,7 +66,7 @@ func NewClonableExprNode(ctor func() ast.ExprNode, internal ast.ExprNode) *Clona
 	}
 }
 
-// Clone makes a "copy" of the internal ast.ExprNode by reconstructing it.
+// Clone makes a "copy" of internal ast.ExprNode by reconstructing it.
 func (n *ClonableExprNode) Clone() ast.ExprNode {
 	intest.AssertNotNil(n.ctor)
 	if n.ctor == nil {
