@@ -43,6 +43,7 @@ type singlePointAlloc struct {
 	*ClientDiscover
 }
 
+// ClientDiscover is used to get the AutoIDAllocClient, it creates the grpc connection with autoid service leader.
 type ClientDiscover struct {
 	// This the etcd client for service discover
 	etcdCli *clientv3.Client
