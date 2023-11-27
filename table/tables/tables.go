@@ -30,6 +30,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+<<<<<<< HEAD:table/tables/tables.go
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -52,6 +53,32 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tidb/util/tracing"
+=======
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/generatedexpr"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/rowcodec"
+	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/pingcap/tidb/pkg/util/tableutil"
+	"github.com/pingcap/tidb/pkg/util/tracing"
+>>>>>>> d3f399f25d8 (*: fix data race of Column.GeneratedExpr (#48888)):pkg/table/tables/tables.go
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -131,15 +158,21 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 
 		col := table.ToColumn(colInfo)
 		if col.IsGenerated() {
-			expr, err := generatedexpr.ParseExpression(colInfo.GeneratedExprString)
+			genStr := colInfo.GeneratedExprString
+			expr, err := buildGeneratedExpr(tblInfo, genStr)
 			if err != nil {
 				return nil, err
 			}
-			expr, err = generatedexpr.SimpleResolveName(expr, tblInfo)
-			if err != nil {
-				return nil, err
-			}
-			col.GeneratedExpr = expr
+			col.GeneratedExpr = table.NewClonableExprNode(func() ast.ExprNode {
+				newExpr, err1 := buildGeneratedExpr(tblInfo, genStr)
+				if err1 != nil {
+					logutil.BgLogger().Warn("unexpected parse generated string error",
+						zap.String("generatedStr", genStr),
+						zap.Error(err1))
+					return expr
+				}
+				return newExpr
+			}, expr)
 		}
 		// default value is expr.
 		if col.DefaultIsExpr {
@@ -164,6 +197,18 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 		return &t, nil
 	}
 	return newPartitionedTable(&t, tblInfo)
+}
+
+func buildGeneratedExpr(tblInfo *model.TableInfo, genExpr string) (ast.ExprNode, error) {
+	expr, err := generatedexpr.ParseExpression(genExpr)
+	if err != nil {
+		return nil, err
+	}
+	expr, err = generatedexpr.SimpleResolveName(expr, tblInfo)
+	if err != nil {
+		return nil, err
+	}
+	return expr, nil
 }
 
 // initTableCommon initializes a TableCommon struct.
