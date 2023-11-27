@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/docker/go-units"
+	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
@@ -452,6 +453,19 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	}()
 
 	sortStart := time.Now()
+	sorty.MaxGor = 5
+	sorty.Sort(len(w.kvLocations), func(i, k, r, s int) bool {
+		if bytes.Compare(
+			w.getSortKeyByLoc(w.kvLocations[i]),
+			w.getSortKeyByLoc(w.kvLocations[k]),
+		) == -1 { // strict comparator like < or >
+			if r != s {
+				w.kvLocations[r], w.kvLocations[s] = w.kvLocations[s], w.kvLocations[r]
+			}
+			return true
+		}
+		return false
+	})
 	slices.SortFunc(w.kvLocations, func(i, j membuf.SliceLocation) int {
 		return bytes.Compare(w.getSortKeyByLoc(i), w.getSortKeyByLoc(j))
 	})
