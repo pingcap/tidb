@@ -176,7 +176,7 @@ func skipMergeSort(stats []external.MultipleFilesStat) bool {
 }
 
 // OnDone implements dispatcher.Extension interface.
-func (*BackfillingDispatcherExt) OnDone(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task) error {
+func (*BackfillingDispatcherExt) OnDone(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task) error {
 	return nil
 }
 
