@@ -1553,7 +1553,8 @@ func GetGlobalKeyspaceName() string {
 	return GetGlobalConfig().KeyspaceName
 }
 
-type ConfigDetail struct {
+// OptionDetail is the detail of a config option with its current value and default value.
+type OptionDetail struct {
 	// config name
 	Name string `json:"name"`
 	// current config value
@@ -1563,7 +1564,7 @@ type ConfigDetail struct {
 }
 
 // GetGlobalConfigDetail returns all configuration details.
-func GetGlobalConfigDetail() ([]ConfigDetail, error) {
+func GetGlobalConfigDetail() ([]OptionDetail, error) {
 	cfgMap := make(map[string]interface{})
 	gs, err := GetJSONConfig()
 	if err != nil {
@@ -1586,9 +1587,9 @@ func GetGlobalConfigDetail() ([]ConfigDetail, error) {
 	}
 	defaultCfgItems := FlattenConfigItems(dg)
 
-	result := make([]ConfigDetail, 0)
+	result := make([]OptionDetail, 0)
 	for k, v := range cfgItems {
-		result = append(result, ConfigDetail{
+		result = append(result, OptionDetail{
 			Name:         k,
 			Value:        v,
 			DefaultValue: defaultCfgItems[k],

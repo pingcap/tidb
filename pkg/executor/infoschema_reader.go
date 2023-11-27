@@ -3446,6 +3446,7 @@ func (e *memtableRetriever) setDataFromTiDBParams(ctx sessionctx.Context) error 
 		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
 	}
 
+	//nolint: prealloc
 	var rows [][]types.Datum
 	// Get variables info
 	sysVars := variable.GetSysVars()
@@ -3564,18 +3565,18 @@ func (e *memtableRetriever) setDataFromTiDBParams(ctx sessionctx.Context) error 
 				ch <- result{err: errors.Errorf("request %s failed: %s", url, resp.Status)}
 				return
 			}
-			var configDetails []struct {
+			var configDetail []struct {
 				Name         string `json:"name"`
 				Value        any    `json:"value"`
 				DefaultValue any    `json:"default_value"`
 			}
-			err = json.NewDecoder(resp.Body).Decode(&configDetails)
+			err = json.NewDecoder(resp.Body).Decode(&configDetail)
 			if err != nil {
 				ch <- result{err: errors.Trace(err)}
 				return
 			}
 			var rows [][]types.Datum
-			for _, dv := range configDetails {
+			for _, dv := range configDetail {
 				var value, defaultValue string
 				switch val := dv.Value.(type) {
 				case string: // remove quotes

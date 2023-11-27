@@ -1449,8 +1449,8 @@ func TestTiDBParams(t *testing.T) {
 		testServer.server.Close()
 	}()
 
-	var mockConfig = func() ([]config.ConfigDetail, error) {
-		configuration := []config.ConfigDetail{
+	var mockConfig = func() ([]config.OptionDetail, error) {
+		configuration := []config.OptionDetail{
 			{
 				Name:         "key1",
 				Value:        "value1",
