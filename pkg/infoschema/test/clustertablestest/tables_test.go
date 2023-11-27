@@ -1476,7 +1476,7 @@ func TestTiDBParams(t *testing.T) {
 		servers = append(servers, strings.Join([]string{v, testServer.address, testServer.address}, ","))
 	}
 
-	fpName := "github.com/pingcap/tidb/executor/mockDefaultClusterConfigServerInfo"
+	fpName := "github.com/pingcap/tidb/pkg/executor/mockParamsServerInfo"
 	fpExpr := strings.Join(servers, ";")
 	require.NoError(t, failpoint.Enable(fpName, fmt.Sprintf(`return("%s")`, fpExpr)))
 	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
