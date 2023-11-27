@@ -161,19 +161,6 @@ func (tr *TableRestore) populateChunks(ctx context.Context, rc *Controller, cp *
 	return err
 }
 
-// // AutoIDRequirement implements autoid.Requirement.
-// var _ autoid.Requirement = &TableImporter{}
-
-// // Store implements the autoid.Requirement interface.
-// func (tr *TableImporter) Store() tidbkv.Storage {
-// 	return tr.kvStore
-// }
-
-// // GetEtcdClient implements the autoid.Requirement interface.
-// func (tr *TableImporter) GetEtcdClient() *clientv3.Client {
-// 	return tr.etcdCli
-// }
-
 // RebaseChunkRowIDs rebase the row id of the chunks.
 func (tr *TableRestore) RebaseChunkRowIDs(cp *checkpoints.TableCheckpoint, rowIDBase int64) {
 	if rowIDBase == 0 {

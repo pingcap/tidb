@@ -309,30 +309,6 @@ func (d *ddl) markJobProcessing(sess *session, job *model.Job) error {
 	return errors.Trace(err)
 }
 
-// <<<<<<< HEAD
-// =======
-// func (d *ddl) getTableByTxn(r autoid.Requirement, schemaID, tableID int64) (*model.DBInfo, table.Table, error) {
-// 	var tbl table.Table
-// 	var dbInfo *model.DBInfo
-// 	err := kv.RunInNewTxn(d.ctx, r.Store(), false, func(ctx context.Context, txn kv.Transaction) error {
-// 		t := meta.NewMeta(txn)
-// 		var err1 error
-// 		dbInfo, err1 = t.GetDatabase(schemaID)
-// 		if err1 != nil {
-// 			return errors.Trace(err1)
-// 		}
-// 		tblInfo, err1 := getTableInfo(t, tableID, schemaID)
-// 		if err1 != nil {
-// 			return errors.Trace(err1)
-// 		}
-// 		tbl, err1 = getTable(r, schemaID, tblInfo)
-// 		return errors.Trace(err1)
-// 	})
-// 	return dbInfo, tbl, err
-// }
-
-// >>>>>>> a062330246... *: share etcd client from domain for autoid allocator #46647 (#48335)
-
 const (
 	addDDLJobSQL    = "insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing) values"
 	updateDDLJobSQL = "update mysql.tidb_ddl_job set job_meta = %s where job_id = %d"
