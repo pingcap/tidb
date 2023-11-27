@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
-	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 type mockRequirement struct {
@@ -44,7 +43,7 @@ func (r mockRequirement) Store() kv.Storage {
 	return r.Storage
 }
 
-func (r mockRequirement) AutoIDClient() *ClientDiscover {
+func (r mockRequirement) AutoIDClient() *autoid.ClientDiscover {
 	return nil
 }
 
