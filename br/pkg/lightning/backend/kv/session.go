@@ -29,11 +29,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/manual"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"go.uber.org/zap"
 )
@@ -287,7 +287,6 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 	vars.StmtCtx.InInsertStmt = true
 	vars.StmtCtx.BatchCheck = true
 	vars.StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
-	vars.StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
 	vars.SQLMode = sqlMode
 
 	typeFlags := vars.StmtCtx.TypeFlags().
@@ -315,7 +314,11 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 		}
 	}
 	vars.StmtCtx.SetTimeZone(vars.Location())
-	vars.StmtCtx.SetTypeFlags(types.StrictFlags)
+
+	if !sqlMode.HasStrictMode() {
+		vars.StmtCtx.SetErrGroupLevel(errctx.ErrGroupOverflow, errctx.LevelWarn)
+	}
+
 	if err := vars.SetSystemVar("timestamp", strconv.FormatInt(options.Timestamp, 10)); err != nil {
 		logger.Warn("new session: failed to set timestamp",
 			log.ShortError(err))

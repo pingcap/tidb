@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -786,7 +787,7 @@ func TestDecimal(t *testing.T) {
 	err = sc.HandleError(err)
 	require.NoError(t, err)
 
-	sc.OverflowAsWarning = true
+	sc.SetErrGroupLevel(errctx.ErrGroupOverflow, errctx.LevelWarn)
 	decimalDatum.SetLength(12)
 	decimalDatum.SetFrac(10)
 	_, err = EncodeValue(sc.TimeZone(), nil, decimalDatum)

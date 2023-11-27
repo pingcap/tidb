@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -98,8 +99,7 @@ func TestCastFunctions(t *testing.T) {
 	defer func() {
 		sc.InSelectStmt = oldInSelectStmt
 	}()
-	sc.OverflowAsWarning = true
-
+	sc.SetErrGroupLevel(errctx.ErrGroupOverflow, errctx.LevelWarn)
 	// cast('18446744073709551616' as unsigned);
 	tp1 := types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxIntWidth).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()
 	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("18446744073709551616"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)

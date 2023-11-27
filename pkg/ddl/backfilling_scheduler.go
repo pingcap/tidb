@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -165,7 +166,6 @@ func initSessCtx(
 	}
 	sessCtx.GetSessionVars().StmtCtx.SetTimeZone(sessCtx.GetSessionVars().Location())
 	sessCtx.GetSessionVars().StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
-	sessCtx.GetSessionVars().StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = !sqlMode.HasStrictMode()
 
 	typeFlags := types.StrictFlags.
@@ -174,6 +174,9 @@ func initSessCtx(
 		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()).
 		WithCastTimeToYearThroughConcat(true)
 	sessCtx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags)
+	if !sqlMode.HasStrictMode() {
+		sessCtx.GetSessionVars().StmtCtx.SetErrGroupLevel(errctx.ErrGroupOverflow, errctx.LevelWarn)
+	}
 
 	sessCtx.GetSessionVars().ResourceGroupName = resGroupName
 
@@ -196,7 +199,7 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 		timezone = &tz
 	}
 	badNullAsWarn := sv.StmtCtx.BadNullAsWarning
-	overflowAsWarn := sv.StmtCtx.OverflowAsWarning
+	errCtx := sv.StmtCtx.ErrCtx()
 	dividedZeroAsWarn := sv.StmtCtx.DividedByZeroAsWarning
 	typeFlags := sv.StmtCtx.TypeFlags()
 	resGroupName := sv.ResourceGroupName
@@ -206,9 +209,12 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 		uv.SQLMode = sqlMode
 		uv.TimeZone = timezone
 		uv.StmtCtx.BadNullAsWarning = badNullAsWarn
-		uv.StmtCtx.OverflowAsWarning = overflowAsWarn
 		uv.StmtCtx.DividedByZeroAsWarning = dividedZeroAsWarn
 		uv.StmtCtx.SetTypeFlags(typeFlags)
+
+		for eg := errctx.ErrGroup(0); eg < errctx.ErrGroupCount; eg++ {
+			uv.StmtCtx.SetErrGroupLevel(eg, errCtx.GetLevel(eg))
+		}
 		uv.ResourceGroupName = resGroupName
 	}
 }

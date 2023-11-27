@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/aggregate"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/pdhelper"
@@ -2146,7 +2147,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		// said "For statements such as SELECT that do not change data, invalid values
 		// generate a warning in strict mode, not an error."
 		// and https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
-		sc.OverflowAsWarning = true
+		sc.SetErrGroupLevel(errctx.ErrGroupOverflow, errctx.LevelWarn)
 
 		// Return warning for truncate error in selection.
 		sc.SetTypeFlags(sc.TypeFlags().
@@ -2160,7 +2161,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.WeakConsistency = isWeakConsistencyRead(ctx, stmt)
 	case *ast.SetOprStmt:
 		sc.InSelectStmt = true
-		sc.OverflowAsWarning = true
+		sc.SetErrGroupLevel(errctx.ErrGroupOverflow, errctx.LevelWarn)
 		sc.SetTypeFlags(sc.TypeFlags().
 			WithTruncateAsWarning(true).
 			WithIgnoreZeroInDate(true).

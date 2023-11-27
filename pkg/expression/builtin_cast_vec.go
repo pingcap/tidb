@@ -49,7 +49,7 @@ func (b *builtinCastIntAsDurationSig) vecEvalDuration(ctx sessionctx.Context, in
 		dur, err := types.NumberToDuration(i64s[i], b.tp.GetDecimal())
 		if err != nil {
 			if types.ErrOverflow.Equal(err) {
-				err = ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err)
+				err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 			}
 			if types.ErrTruncatedWrongVal.Equal(err) {
 				err = ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
@@ -309,7 +309,7 @@ func (b *builtinCastTimeAsDecimalSig) vecEvalDecimal(ctx sessionctx.Context, inp
 		*dec = types.MyDecimal{}
 		times[i].FillNumber(dec)
 		dec, err = types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), dec, b.tp)
-		if err = sc.HandleOverflow(err, err); err != nil {
+		if err = sc.HandleError(err); err != nil {
 			return err
 		}
 		decs[i] = *dec
@@ -633,7 +633,7 @@ func (b *builtinCastDecimalAsDecimalSig) vecEvalDecimal(ctx sessionctx.Context, 
 			*dec = decs[i]
 		}
 		dec, err := types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), dec, b.tp)
-		if err = sc.HandleOverflow(err, err); err != nil {
+		if err = sc.HandleError(err); err != nil {
 			return err
 		}
 		decs[i] = *dec
@@ -779,7 +779,7 @@ func (b *builtinCastRealAsIntSig) vecEvalInt(ctx sessionctx.Context, input *chun
 			i64s[i] = int64(uintVal)
 		}
 		if types.ErrOverflow.Equal(err) {
-			err = ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err)
+			err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 		}
 		if err != nil {
 			return err
@@ -813,7 +813,7 @@ func (b *builtinCastTimeAsRealSig) vecEvalReal(ctx sessionctx.Context, input *ch
 		f64, err := times[i].ToNumber().ToFloat64()
 		if err != nil {
 			if types.ErrOverflow.Equal(err) {
-				err = ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err)
+				err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 			}
 			if err != nil {
 				return err
@@ -917,7 +917,7 @@ func (b *builtinCastRealAsDecimalSig) vecEvalDecimal(ctx sessionctx.Context, inp
 			if err = resdecimal[i].FromFloat64(bufreal[i]); err != nil {
 				if types.ErrOverflow.Equal(err) {
 					warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", b.args[0])
-					err = ctx.GetSessionVars().StmtCtx.HandleOverflow(err, warnErr)
+					err = ctx.GetSessionVars().StmtCtx.HandleErrorWithAlias(err, err, warnErr)
 				} else if types.ErrTruncated.Equal(err) {
 					// This behavior is consistent with MySQL.
 					err = nil
@@ -928,7 +928,7 @@ func (b *builtinCastRealAsDecimalSig) vecEvalDecimal(ctx sessionctx.Context, inp
 			}
 		}
 		dec, err := types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), &resdecimal[i], b.tp)
-		if err = sc.HandleOverflow(err, err); err != nil {
+		if err = sc.HandleError(err); err != nil {
 			return err
 		}
 		resdecimal[i] = *dec
@@ -1069,7 +1069,7 @@ func (b *builtinCastDurationAsDecimalSig) vecEvalDecimal(ctx sessionctx.Context,
 		duration.Duration = ds[i]
 		duration.Fsp = fsp
 		res, err := types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), duration.ToNumber(), b.tp)
-		if err = sc.HandleOverflow(err, err); err != nil {
+		if err = sc.HandleError(err); err != nil {
 			return err
 		}
 		d64s[i] = *res
@@ -1115,7 +1115,7 @@ func (b *builtinCastIntAsDecimalSig) vecEvalDecimal(ctx sessionctx.Context, inpu
 		}
 
 		dec, err = types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), dec, b.tp)
-		if err = sc.HandleOverflow(err, err); err != nil {
+		if err = sc.HandleError(err); err != nil {
 			return err
 		}
 		decs[i] = *dec
@@ -1270,7 +1270,7 @@ func (b *builtinCastJSONAsIntSig) vecEvalInt(ctx sessionctx.Context, input *chun
 			continue
 		}
 		i64s[i], err = types.ConvertJSONToInt64(tc, buf.GetJSON(i), mysql.HasUnsignedFlag(b.tp.GetFlag()))
-		if err = sc.HandleOverflow(err, err); err != nil {
+		if err = sc.HandleError(err); err != nil {
 			return err
 		}
 	}
@@ -1456,7 +1456,7 @@ func (b *builtinCastDecimalAsRealSig) vecEvalReal(ctx sessionctx.Context, input 
 		res, err := d[i].ToFloat64()
 		if err != nil {
 			if types.ErrOverflow.Equal(err) {
-				err = ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err)
+				err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 			}
 			if err != nil {
 				return err
@@ -1655,7 +1655,7 @@ func (b *builtinCastJSONAsDecimalSig) vecEvalDecimal(ctx sessionctx.Context, inp
 			return err
 		}
 		tempres, err = types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), tempres, b.tp)
-		if err = sc.HandleOverflow(err, err); err != nil {
+		if err = sc.HandleError(err); err != nil {
 			return err
 		}
 		res[i] = *tempres
@@ -1745,7 +1745,7 @@ func (b *builtinCastStringAsDecimalSig) vecEvalDecimal(ctx sessionctx.Context, i
 				return err
 			}
 			dec, err := types.ProduceDecWithSpecifiedTp(stmtCtx.TypeCtx(), dec, b.tp)
-			if err = stmtCtx.HandleOverflow(err, err); err != nil {
+			if err = stmtCtx.HandleError(err); err != nil {
 				return err
 			}
 			res[i] = *dec
@@ -1849,7 +1849,7 @@ func (b *builtinCastDecimalAsIntSig) vecEvalInt(ctx sessionctx.Context, input *c
 
 		if types.ErrOverflow.Equal(err) {
 			warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", d64s[i])
-			err = ctx.GetSessionVars().StmtCtx.HandleOverflow(err, warnErr)
+			err = ctx.GetSessionVars().StmtCtx.HandleErrorWithAlias(err, err, warnErr)
 		}
 
 		if err != nil {

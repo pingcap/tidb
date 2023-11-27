@@ -34,7 +34,7 @@ const (
 
 // Context defines how to handle an error
 type Context struct {
-	levelMap        [errGroupCount]Level
+	levelMap        [ErrGroupCount]Level
 	appendWarningFn func(err error)
 }
 
@@ -133,6 +133,11 @@ func (ctx *Context) HandleErrorWithAlias(internalErr error, err error, warnErr e
 	return nil
 }
 
+// GetLevel returns a level of the given `ErrGroup`
+func (ctx *Context) GetLevel(eg ErrGroup) Level {
+	return ctx.levelMap[eg]
+}
+
 // NewContext creates an error context to handle the errors and warnings
 func NewContext(appendWarningFn func(err error)) Context {
 	intest.Assert(appendWarningFn != nil)
@@ -157,8 +162,8 @@ const (
 	// ErrGroupOverflow is the group of overflow errors
 	ErrGroupOverflow
 
-	// errGroupCount is the count of all `ErrGroup`. Please leave it at the end of the list.
-	errGroupCount
+	// ErrGroupCount is the count of all `ErrGroup`. Please leave it at the end of the list.
+	ErrGroupCount
 )
 
 func init() {

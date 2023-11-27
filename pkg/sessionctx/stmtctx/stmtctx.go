@@ -183,7 +183,6 @@ type StatementContext struct {
 	DupKeyAsWarning               bool
 	BadNullAsWarning              bool
 	DividedByZeroAsWarning        bool
-	OverflowAsWarning             bool
 	ErrAutoincReadFailedAsWarning bool
 	InShowWarning                 bool
 	UseCache                      bool
@@ -428,6 +427,7 @@ type StatementContext struct {
 func NewStmtCtx() *StatementContext {
 	sc := &StatementContext{}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc.AppendWarning)
+	sc.errCtx = errctx.NewContext(sc.AppendWarning)
 	return sc
 }
 
@@ -436,6 +436,7 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 	intest.AssertNotNil(tz)
 	sc := &StatementContext{}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc.AppendWarning)
+	sc.errCtx = errctx.NewContext(sc.AppendWarning)
 	return sc
 }
 
@@ -443,6 +444,7 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 func (sc *StatementContext) Reset() {
 	*sc = StatementContext{
 		typeCtx: types.NewContext(types.DefaultStmtFlags, time.UTC, sc.AppendWarning),
+		errCtx:  errctx.NewContext(sc.AppendWarning),
 	}
 }
 
@@ -470,18 +472,18 @@ func (sc *StatementContext) TypeCtx() types.Context {
 // ErrCtx returns the error context
 // TODO: add a cache to the `ErrCtx` if needed, though it's not a big burden to generate `ErrCtx` everytime.
 func (sc *StatementContext) ErrCtx() errctx.Context {
-	ctx := errctx.NewContext(sc.AppendWarning)
-
+	var ctx errctx.Context
 	if sc.TypeFlags().IgnoreTruncateErr() {
-		ctx = ctx.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
+		ctx = sc.errCtx.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 	} else if sc.TypeFlags().TruncateAsWarning() {
-		ctx = ctx.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
-	}
-
-	if sc.OverflowAsWarning {
-		ctx = ctx.WithErrGroupLevel(errctx.ErrGroupOverflow, errctx.LevelWarn)
+		ctx = sc.errCtx.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
 	}
 	return ctx
+}
+
+// SetErrGroupLevel sets the level for an `ErrGroup`
+func (sc *StatementContext) SetErrGroupLevel(eg errctx.ErrGroup, lvl errctx.Level) {
+	sc.errCtx = sc.errCtx.WithErrGroupLevel(eg, lvl)
 }
 
 // TypeFlags returns the type flags
@@ -508,6 +510,16 @@ func (sc *StatementContext) HandleError(err error) error {
 	}
 	errCtx := sc.ErrCtx()
 	return errCtx.HandleError(err)
+}
+
+// HandleErrorWithAlias handles the error based on `ErrCtx()`
+func (sc *StatementContext) HandleErrorWithAlias(internalErr error, err error, warnErr error) error {
+	intest.AssertNotNil(sc)
+	if sc == nil {
+		return err
+	}
+	errCtx := sc.ErrCtx()
+	return errCtx.HandleErrorWithAlias(internalErr, err, warnErr)
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -1052,19 +1064,6 @@ func (sc *StatementContext) AppendExtraError(warn error) {
 	}
 }
 
-// HandleOverflow treats ErrOverflow as warnings or returns the error based on the StmtCtx.OverflowAsWarning state.
-func (sc *StatementContext) HandleOverflow(err error, warnErr error) error {
-	if err == nil {
-		return nil
-	}
-
-	if sc.OverflowAsWarning {
-		sc.AppendWarning(warnErr)
-		return nil
-	}
-	return err
-}
-
 // resetMuForRetry resets the changed states of sc.mu during execution.
 func (sc *StatementContext) resetMuForRetry() {
 	sc.mu.Lock()
@@ -1174,7 +1173,7 @@ func (sc *StatementContext) PushDownFlags() uint64 {
 	} else if sc.TypeFlags().TruncateAsWarning() {
 		flags |= model.FlagTruncateAsWarning
 	}
-	if sc.OverflowAsWarning {
+	if sc.errCtx.GetLevel(errctx.ErrGroupOverflow) == errctx.LevelWarn {
 		flags |= model.FlagOverflowAsWarning
 	}
 	if sc.TypeFlags().IgnoreZeroInDate() {
@@ -1241,7 +1240,6 @@ func (sc *StatementContext) InitFromPBFlagAndTz(flags uint64, tz *time.Location)
 	sc.InInsertStmt = (flags & model.FlagInInsertStmt) > 0
 	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
 	sc.InDeleteStmt = (flags & model.FlagInUpdateOrDeleteStmt) > 0
-	sc.OverflowAsWarning = (flags & model.FlagOverflowAsWarning) > 0
 	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
 	sc.SetTimeZone(tz)
 	sc.SetTypeFlags(types.DefaultStmtFlags.
@@ -1249,6 +1247,10 @@ func (sc *StatementContext) InitFromPBFlagAndTz(flags uint64, tz *time.Location)
 		WithTruncateAsWarning((flags & model.FlagTruncateAsWarning) > 0).
 		WithIgnoreZeroInDate((flags & model.FlagIgnoreZeroInDate) > 0).
 		WithAllowNegativeToUnsigned(!sc.InInsertStmt))
+
+	if (flags & model.FlagOverflowAsWarning) > 0 {
+		sc.SetErrGroupLevel(errctx.ErrGroupOverflow, errctx.LevelWarn)
+	}
 }
 
 // GetLockWaitStartTime returns the statement pessimistic lock wait start time
