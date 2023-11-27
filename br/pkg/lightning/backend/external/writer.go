@@ -453,7 +453,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 
 	sortStart := time.Now()
 	slices.SortFunc(w.kvLocations, func(i, j membuf.SliceLocation) int {
-		return bytes.Compare(w.getKeyByLoc(i), w.getKeyByLoc(j))
+		return bytes.Compare(w.getSortKeyByLoc(i), w.getSortKeyByLoc(j))
 	})
 	sortDuration = time.Since(sortStart)
 
@@ -508,11 +508,17 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	return nil
 }
 
-func (w *Writer) getKeyByLoc(loc membuf.SliceLocation) []byte {
+func (w *Writer) getSortKeyByLoc(loc membuf.SliceLocation) []byte {
 	block := w.kvBuffer.GetSlice(loc)
 	// the data layout is: keyLen + valueLen + key + value so we directly skip the
 	// first 16 bytes. in most cases keys are not duplicated
 	return block[2*lengthBytes:]
+}
+
+func (w *Writer) getKeyByLoc(loc membuf.SliceLocation) []byte {
+	block := w.kvBuffer.GetSlice(loc)
+	keyLen := binary.BigEndian.Uint64(block[:lengthBytes])
+	return block[2*lengthBytes : 2*lengthBytes+keyLen]
 }
 
 func (w *Writer) createStorageWriter(ctx context.Context) (
