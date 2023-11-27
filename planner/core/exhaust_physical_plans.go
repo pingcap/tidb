@@ -2693,9 +2693,15 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 	finalAggAdjust := func(aggFuncs []*aggregation.AggFuncDesc) {
 		for i, agg := range aggFuncs {
 			if agg.Mode == aggregation.FinalMode && agg.Name == ast.AggFuncCount {
+<<<<<<< HEAD:planner/core/exhaust_physical_plans.go
 				oldFt := agg.RetTp
 				aggFuncs[i], _ = aggregation.NewAggFuncDesc(la.SCtx(), ast.AggFuncSum, agg.Args, false)
 				aggFuncs[i].RetTp = oldFt
+=======
+				oldFT := agg.RetTp
+				aggFuncs[i], _ = aggregation.NewAggFuncDesc(la.SCtx(), ast.AggFuncSum, agg.Args, false)
+				aggFuncs[i].TypeInfer4FinalCount(oldFT)
+>>>>>>> d38039e62b9 (planner: don't change the multi stage count's final return type (#48675)):pkg/planner/core/exhaust_physical_plans.go
 			}
 		}
 	}
