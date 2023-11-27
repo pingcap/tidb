@@ -15,7 +15,6 @@
 package chunk
 
 import (
-	"bufio"
 	"io"
 	"os"
 	"strconv"
@@ -122,7 +121,7 @@ func (d *DataInDiskByChunks) getChunkSize(chkIdx int) int64 {
 
 // GetChunk gets a Chunk from the DataInDiskByChunks by chkIdx.
 func (d *DataInDiskByChunks) GetChunk(chkIdx int) (*Chunk, error) {
-	reader := bufio.NewReader(d.dataFile.getSectionReader(d.offsetOfEachChunk[chkIdx]))
+	reader := d.dataFile.getSectionReader(d.offsetOfEachChunk[chkIdx])
 	chkSize := d.getChunkSize(chkIdx)
 
 	if cap(d.buf) < int(chkSize) {
@@ -261,6 +260,7 @@ func (d *DataInDiskByChunks) deserializeSel(chk *Chunk, pos *int64, selSize int)
 }
 
 func (d *DataInDiskByChunks) deserializeChunkData(chk *Chunk, pos *int64) {
+	// TODO we can replace these with spill util in the future
 	chk.numVirtualRows = *(*int)(unsafe.Pointer(&d.buf[*pos]))
 	*pos += intLen
 
