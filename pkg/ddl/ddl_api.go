@@ -63,7 +63,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
-	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -5317,22 +5316,15 @@ func ProcessColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 			setOnUpdateNow = true
 		case ast.ColumnOptionGenerated:
 			sb.Reset()
-			optExpr := opt.Expr
-			err = optExpr.Restore(restoreCtx)
+			err = opt.Expr.Restore(restoreCtx)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			col.GeneratedExprString = sb.String()
 			col.GeneratedStored = opt.Stored
 			col.Dependences = make(map[string]struct{})
-			col.GeneratedExpr = table.NewClonableExprNode(func() ast.ExprNode {
-				expr, err := generatedexpr.ParseExpression(col.GeneratedExprString)
-				if err != nil {
-					logutil.BgLogger().Warn("parse expression failed", zap.String("expression", col.GeneratedExprString), zap.Error(err))
-					return optExpr
-				}
-				return expr
-			}, optExpr)
+			// Only used by checkModifyGeneratedColumn, there is no need to set a ctor for it.
+			col.GeneratedExpr = table.NewClonableExprNode(nil, opt.Expr)
 			for _, colName := range FindColumnNamesInExpr(opt.Expr) {
 				col.Dependences[colName.Name.L] = struct{}{}
 			}
