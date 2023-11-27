@@ -22,6 +22,10 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 )
 
+func deserializeLength(buf []byte, pos *int64) int {
+	return DeserializeInt(buf, pos)
+}
+
 // DeserializeBool deserializes bool type
 func DeserializeBool(buf []byte, pos *int64) bool {
 	retVal := *(*bool)(unsafe.Pointer(&buf[*pos]))
@@ -132,7 +136,7 @@ func DeserializeJSONTypeCode(buf []byte, pos *int64) types.JSONTypeCode {
 func DeserializeBinaryJSON(buf []byte, pos *int64) types.BinaryJSON {
 	retValue := types.BinaryJSON{}
 	retValue.TypeCode = DeserializeJSONTypeCode(buf, pos)
-	jsonValueLen := DeserializeInt(buf, pos)
+	jsonValueLen := deserializeLength(buf, pos)
 	retValue.Value = make([]byte, jsonValueLen)
 	copy(retValue.Value, buf[*pos:*pos+int64(jsonValueLen)])
 	*pos += int64(jsonValueLen)
@@ -160,7 +164,7 @@ func DeserializeOpaque(buf []byte, pos *int64) types.Opaque {
 	retVal := types.Opaque{}
 	retVal.TypeCode = buf[*pos]
 	*pos++
-	retValBufLen := DeserializeInt(buf, pos)
+	retValBufLen := deserializeLength(buf, pos)
 	retVal.Buf = make([]byte, retValBufLen)
 	copy(retVal.Buf, buf[*pos:*pos+int64(retValBufLen)])
 	*pos += int64(retValBufLen)
@@ -169,7 +173,7 @@ func DeserializeOpaque(buf []byte, pos *int64) types.Opaque {
 
 // DeserializeString deserializes String type
 func DeserializeString(buf []byte, pos *int64) string {
-	strLen := DeserializeInt(buf, pos)
+	strLen := deserializeLength(buf, pos)
 	retVal := string(buf[*pos : *pos+int64(strLen)])
 	*pos += int64(strLen)
 	return retVal
@@ -177,7 +181,7 @@ func DeserializeString(buf []byte, pos *int64) string {
 
 // DeserializeBytesBuffer deserializes bytes.Buffer type
 func DeserializeBytesBuffer(buf []byte, pos *int64) *bytes.Buffer {
-	bufLen := DeserializeInt(buf, pos)
+	bufLen := deserializeLength(buf, pos)
 	tmp := make([]byte, bufLen)
 	copy(tmp, buf[*pos:*pos+int64(bufLen)])
 	*pos += int64(bufLen)

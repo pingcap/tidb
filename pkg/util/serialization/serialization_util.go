@@ -22,6 +22,10 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 )
 
+func serializeLength(len int, buf []byte) []byte {
+	return SerializeInt(len, buf)
+}
+
 // SerializeBool serializes bool type
 func SerializeBool(value bool, buf []byte) []byte {
 	var tmp [BoolLen]byte
@@ -129,35 +133,35 @@ func SerializeJSONTypeCode(value types.JSONTypeCode, buf []byte) []byte {
 // SerializeBinaryJSON serializes BinaryJSON type
 func SerializeBinaryJSON(value *types.BinaryJSON, buf []byte) []byte {
 	buf = append(buf, value.TypeCode)
-	buf = SerializeInt(len(value.Value), buf)
+	buf = serializeLength(len(value.Value), buf)
 	return append(buf, value.Value...)
 }
 
 // SerializeSet serializes Set type
 func SerializeSet(value *types.Set, buf []byte) []byte {
 	buf = SerializeUint64(value.Value, buf)
-	buf = SerializeInt(len(value.Name), buf)
+	buf = serializeLength(len(value.Name), buf)
 	return append(buf, value.Name...)
 }
 
 // SerializeEnum serializes Enum type
 func SerializeEnum(value *types.Enum, buf []byte) []byte {
 	buf = SerializeUint64(value.Value, buf)
-	buf = SerializeInt(len(value.Name), buf)
+	buf = serializeLength(len(value.Name), buf)
 	return append(buf, value.Name...)
 }
 
 // SerializeOpaque serializes Opaque type
 func SerializeOpaque(value types.Opaque, buf []byte) []byte {
 	buf = append(buf, value.TypeCode)
-	buf = SerializeInt(len(value.Buf), buf)
+	buf = serializeLength(len(value.Buf), buf)
 	return append(buf, value.Buf...)
 }
 
 // SerializeString serializes String type
 func SerializeString(value string, buf []byte) []byte {
 	strLen := len(value)
-	buf = SerializeInt(strLen, buf)
+	buf = serializeLength(strLen, buf)
 	return append(buf, value...)
 }
 
@@ -165,7 +169,7 @@ func SerializeString(value string, buf []byte) []byte {
 func SerializeBytesBuffer(value *bytes.Buffer, buf []byte) []byte {
 	bufferBytes := value.Bytes()
 	bytesLen := len(bufferBytes)
-	buf = SerializeInt(bytesLen, buf)
+	buf = serializeLength(bytesLen, buf)
 	return append(buf, bufferBytes...)
 }
 
@@ -186,8 +190,7 @@ func SerializeInterface(value interface{}, buf []byte) []byte {
 		return SerializeFloat64(v, buf)
 	case string:
 		buf = append(buf, StringType)
-		buf = SerializeInt64(int64(len(v)), buf)
-		return append(buf, v...)
+		return SerializeString(v, buf)
 	case types.BinaryJSON:
 		buf = append(buf, BinaryJSONType)
 		return SerializeBinaryJSON(&v, buf)
