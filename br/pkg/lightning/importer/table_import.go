@@ -990,6 +990,7 @@ func (tr *TableImporter) postProcess(
 	defer rc.checksumWorks.Recycle(w)
 
 	shouldSkipAnalyze := false
+	estimatedModifyCnt := 100_000_000
 	if cp.Status < checkpoints.CheckpointStatusChecksumSkipped {
 		// 4. do table checksum
 		var localChecksum verify.KVChecksum
@@ -998,6 +999,11 @@ func (tr *TableImporter) postProcess(
 				localChecksum.Add(&chunk.Checksum)
 			}
 		}
+		indexNum := len(tr.tableInfo.Core.Indices)
+		if !tr.tableInfo.Core.PKIsHandle && !tr.tableInfo.Core.IsCommonHandle {
+			indexNum++
+		}
+		estimatedModifyCnt = int(localChecksum.SumKVS()) / indexNum
 		tr.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
 
 		// 4.5. do duplicate detection.
@@ -1138,6 +1144,9 @@ func (tr *TableImporter) postProcess(
 	if cp.Status < checkpoints.CheckpointStatusAnalyzeSkipped {
 		switch {
 		case shouldSkipAnalyze || rc.cfg.PostRestore.Analyze == config.OpLevelOff:
+			if !shouldSkipAnalyze {
+				updateStatsMeta(ctx, rc.db, tr.tableInfo.ID, estimatedModifyCnt)
+			}
 			tr.logger.Info("skip analyze")
 			if err := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, nil, checkpoints.CheckpointStatusAnalyzeSkipped); err != nil {
 				return false, errors.Trace(err)
@@ -1161,6 +1170,36 @@ func (tr *TableImporter) postProcess(
 	}
 
 	return true, nil
+}
+
+func updateStatsMeta(ctx context.Context, db *sql.DB, tableID int64, count int) {
+	s := common.SQLWithRetry{
+		DB:     db,
+		Logger: log.FromContext(ctx).With(zap.Int64("tableID", tableID)),
+	}
+	err := s.Transact(ctx, "update stats_meta", func(ctx context.Context, tx *sql.Tx) error {
+		rs, err := tx.ExecContext(ctx, `
+update mysql.stats_meta
+	where table_id = ?
+	set modify_count = ?,
+		row_count = ?,
+		version = @@tidb_current_ts;
+`, tableID, count, count)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		affected, err := rs.RowsAffected()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if affected == 0 {
+			return errors.Errorf("record with table_id %d not found", tableID)
+		}
+		return nil
+	})
+	if err != nil {
+		s.Logger.Warn("failed to update stats_meta", zap.Error(err))
+	}
 }
 
 func parseColumnPermutations(
