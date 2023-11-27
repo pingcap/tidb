@@ -68,7 +68,7 @@ type Extension interface {
 
 	// OnDone is called when task is done, either finished successfully or failed
 	// with error.
-	// if the task is failed when initializing dispatcher, or it's a known task,
+	// if the task is failed when initializing dispatcher, or it's an unknown task,
 	// we don't call this function.
 	OnDone(ctx context.Context, h TaskHandle, task *proto.Task) error
 
