@@ -156,6 +156,65 @@ explain select * from t use index (primary) where a like 'Приве__' and b li
 select * from t use index (primary) where a like 'Приве__' and b like ' %' order by a,b;
 explain select * from t use index (primary) where a like ' %' and b like '123%' order by a,b;
 select * from t use index (primary) where a like ' %' and b like '123%' order by a,b;
+drop table t;
+# Suite 5: utf8mb4_general_ci + prefix index
+create table t(a varchar(20) collate utf8mb4_general_ci, b bigint, index ia(a(3)));
+insert into t value
+('测试',222),
+('测试Abc',324),
+('测试     ',543),
+('你好',111),
+('aABBccdd',890),
+('Aa',456),
+('',234),
+(' ',11111),
+('       ',66666),
+(' 语言',55555),
+('  语 言',3579),
+('测测试 ',2468),
+('测测试    ',99999),
+(NULL,10);
+explain select * from t use index (ia) where a like '测试abc' order by a,_tidb_rowid;
+select * from t use index (ia) where a like '测试abc' order by a,_tidb_rowid;
+explain select * from t use index (ia) where a = '测试abc' order by a,_tidb_rowid;
+select * from t use index (ia) where a = '测试abc' order by a,_tidb_rowid;
+explain select * from t use index (ia) where a like 'aa' order by a,_tidb_rowid;
+select * from t use index (ia) where a like 'aa' order by a,_tidb_rowid;
+explain select * from t use index (ia) where a = 'aa' order by a,_tidb_rowid;
+select * from t use index (ia) where a = 'aa' order by a,_tidb_rowid;
+explain select * from t use index (ia) where a like '测测试 ' order by a,_tidb_rowid;
+select * from t use index (ia) where a like '测测试 ' order by a,_tidb_rowid;
+explain select * from t use index (ia) where a = '测测试 ' order by a,_tidb_rowid;
+select * from t use index (ia) where a = '测测试 ' order by a,_tidb_rowid;
+explain select * from t use index (ia) where a like '  语 言' order by a,_tidb_rowid;
+select * from t use index (ia) where a like '  语 言' order by a,_tidb_rowid;
+explain select * from t use index (ia) where a = '  语 言' order by a,_tidb_rowid;
+select * from t use index (ia) where a = '  语 言' order by a,_tidb_rowid;
+explain select * from t use index (ia) where a like '测试%' order by a,_tidb_rowid;
+select * from t use index (ia) where a like '测试%' order by a,_tidb_rowid;
+explain select * from t use index (ia) where a like '测_' order by a,_tidb_rowid;
+select * from t use index (ia) where a like '测_' order by a,_tidb_rowid;
+explain select * from t use index (ia) where a like '测测试 %' order by a,_tidb_rowid;
+select * from t use index (ia) where a like '测测试 %' order by a,_tidb_rowid;
+explain select * from t use index (ia) where a like '测试a__' order by a,_tidb_rowid;
+select * from t use index (ia) where a like '测试a__' order by a,_tidb_rowid;
+explain select * from t use index (ia) where a like '测试   __' order by a,_tidb_rowid;
+select * from t use index (ia) where a like '测试   __' order by a,_tidb_rowid;
+explain select * from t use index (ia) where a like ' _' order by a,_tidb_rowid;
+select * from t use index (ia) where a like ' _' order by a,_tidb_rowid;
+explain select * from t use index (ia) where a like '    %' order by a,_tidb_rowid;
+select * from t use index (ia) where a like '    %' order by a,_tidb_rowid;
+explain select * from t use index (ia) where a like ' 语言%%' order by a,_tidb_rowid;
+select * from t use index (ia) where a like ' 语言%%' order by a,_tidb_rowid;
+
+
+
+
+
+
+
+
+
 
 
 

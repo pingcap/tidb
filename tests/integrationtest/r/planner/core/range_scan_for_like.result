@@ -640,3 +640,199 @@ Sort_5	6.25	root		planner__core__range_scan_for_like.t.a, planner__core__range_s
 select * from t use index (primary) where a like ' %' and b like '123%' order by a,b;
 a	b	c
  	12345	35678
+drop table t;
+create table t(a varchar(20) collate utf8mb4_general_ci, b bigint, index ia(a(3)));
+insert into t value
+('测试',222),
+('测试Abc',324),
+('测试     ',543),
+('你好',111),
+('aABBccdd',890),
+('Aa',456),
+('',234),
+(' ',11111),
+('       ',66666),
+(' 语言',55555),
+('  语 言',3579),
+('测测试 ',2468),
+('测测试    ',99999),
+(NULL,10);
+explain select * from t use index (ia) where a like '测试abc' order by a,_tidb_rowid;
+id	estRows	task	access object	operator info
+Projection_6	10.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
+└─Sort_7	10.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
+  └─IndexLookUp_12	10.00	root		
+    ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:ia(a)	range:["mK\x8b\xd5\x00A","mK\x8b\xd5\x00A"], keep order:false, stats:pseudo
+    └─Selection_11(Probe)	10.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测试abc", 92)
+      └─TableRowIDScan_10	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (ia) where a like '测试abc' order by a,_tidb_rowid;
+a	b
+测试Abc	324
+explain select * from t use index (ia) where a = '测试abc' order by a,_tidb_rowid;
+id	estRows	task	access object	operator info
+Projection_6	10.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
+└─Sort_7	10.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
+  └─IndexLookUp_12	10.00	root		
+    ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:ia(a)	range:["mK\x8b\xd5\x00A","mK\x8b\xd5\x00A"], keep order:false, stats:pseudo
+    └─Selection_11(Probe)	10.00	cop[tikv]		eq(planner__core__range_scan_for_like.t.a, "测试abc")
+      └─TableRowIDScan_10	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (ia) where a = '测试abc' order by a,_tidb_rowid;
+a	b
+测试Abc	324
+explain select * from t use index (ia) where a like 'aa' order by a,_tidb_rowid;
+id	estRows	task	access object	operator info
+Projection_6	10.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
+└─Sort_7	10.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
+  └─IndexLookUp_12	10.00	root		
+    ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:ia(a)	range:["\x00A\x00A","\x00A\x00A"], keep order:false, stats:pseudo
+    └─Selection_11(Probe)	10.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "aa", 92)
+      └─TableRowIDScan_10	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (ia) where a like 'aa' order by a,_tidb_rowid;
+a	b
+Aa	456
+explain select * from t use index (ia) where a = 'aa' order by a,_tidb_rowid;
+id	estRows	task	access object	operator info
+Projection_6	10.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
+└─Sort_7	10.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
+  └─IndexLookUp_12	10.00	root		
+    ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:ia(a)	range:["\x00A\x00A","\x00A\x00A"], keep order:false, stats:pseudo
+    └─Selection_11(Probe)	10.00	cop[tikv]		eq(planner__core__range_scan_for_like.t.a, "aa")
+      └─TableRowIDScan_10	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (ia) where a = 'aa' order by a,_tidb_rowid;
+a	b
+Aa	456
+explain select * from t use index (ia) where a like '测测试 ' order by a,_tidb_rowid;
+id	estRows	task	access object	operator info
+Projection_6	10.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
+└─Sort_7	10.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
+  └─IndexLookUp_12	10.00	root		
+    ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:ia(a)	range:["mKmK\x8b\xd5","mKmK\x8b\xd5"], keep order:false, stats:pseudo
+    └─Selection_11(Probe)	10.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测测试 ", 92)
+      └─TableRowIDScan_10	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (ia) where a like '测测试 ' order by a,_tidb_rowid;
+a	b
+测测试 	2468
+explain select * from t use index (ia) where a = '测测试 ' order by a,_tidb_rowid;
+id	estRows	task	access object	operator info
+Projection_6	10.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
+└─Sort_7	10.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
+  └─IndexLookUp_12	10.00	root		
+    ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:ia(a)	range:["mKmK\x8b\xd5","mKmK\x8b\xd5"], keep order:false, stats:pseudo
+    └─Selection_11(Probe)	10.00	cop[tikv]		eq(planner__core__range_scan_for_like.t.a, "测测试 ")
+      └─TableRowIDScan_10	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (ia) where a = '测测试 ' order by a,_tidb_rowid;
+a	b
+测测试 	2468
+测测试    	99999
+explain select * from t use index (ia) where a like '  语 言' order by a,_tidb_rowid;
+id	estRows	task	access object	operator info
+Projection_6	10.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
+└─Sort_7	10.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
+  └─IndexLookUp_12	10.00	root		
+    ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:ia(a)	range:["\x00 \x00 \x8b\xed","\x00 \x00 \x8b\xed"], keep order:false, stats:pseudo
+    └─Selection_11(Probe)	10.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "  语 言", 92)
+      └─TableRowIDScan_10	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (ia) where a like '  语 言' order by a,_tidb_rowid;
+a	b
+  语 言	3579
+explain select * from t use index (ia) where a = '  语 言' order by a,_tidb_rowid;
+id	estRows	task	access object	operator info
+Projection_6	10.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
+└─Sort_7	10.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
+  └─IndexLookUp_12	10.00	root		
+    ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:ia(a)	range:["\x00 \x00 \x8b\xed","\x00 \x00 \x8b\xed"], keep order:false, stats:pseudo
+    └─Selection_11(Probe)	10.00	cop[tikv]		eq(planner__core__range_scan_for_like.t.a, "  语 言")
+      └─TableRowIDScan_10	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (ia) where a = '  语 言' order by a,_tidb_rowid;
+a	b
+  语 言	3579
+explain select * from t use index (ia) where a like '测试%' order by a,_tidb_rowid;
+id	estRows	task	access object	operator info
+Projection_6	250.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
+└─Sort_7	250.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
+  └─IndexLookUp_12	250.00	root		
+    ├─IndexRangeScan_9(Build)	250.00	cop[tikv]	table:t, index:ia(a)	range:["mK\x8b\xd5","mK\x8b\xd6"), keep order:false, stats:pseudo
+    └─Selection_11(Probe)	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测试%", 92)
+      └─TableRowIDScan_10	250.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (ia) where a like '测试%' order by a,_tidb_rowid;
+a	b
+测试	222
+测试     	543
+测试Abc	324
+explain select * from t use index (ia) where a like '测_' order by a,_tidb_rowid;
+id	estRows	task	access object	operator info
+Projection_6	250.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
+└─Sort_7	250.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
+  └─IndexLookUp_12	250.00	root		
+    ├─IndexRangeScan_9(Build)	250.00	cop[tikv]	table:t, index:ia(a)	range:["mK","mL"), keep order:false, stats:pseudo
+    └─Selection_11(Probe)	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测_", 92)
+      └─TableRowIDScan_10	250.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (ia) where a like '测_' order by a,_tidb_rowid;
+a	b
+测试	222
+explain select * from t use index (ia) where a like '测测试 %' order by a,_tidb_rowid;
+id	estRows	task	access object	operator info
+Projection_6	250.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
+└─Sort_7	250.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
+  └─IndexLookUp_12	250.00	root		
+    ├─IndexRangeScan_9(Build)	250.00	cop[tikv]	table:t, index:ia(a)	range:["mKmK\x8b\xd5","mKmK\x8b\xd6"), keep order:false, stats:pseudo
+    └─Selection_11(Probe)	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测测试 %", 92)
+      └─TableRowIDScan_10	250.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (ia) where a like '测测试 %' order by a,_tidb_rowid;
+a	b
+测测试 	2468
+测测试    	99999
+explain select * from t use index (ia) where a like '测试a__' order by a,_tidb_rowid;
+id	estRows	task	access object	operator info
+Projection_6	250.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
+└─Sort_7	250.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
+  └─IndexLookUp_12	250.00	root		
+    ├─IndexRangeScan_9(Build)	250.00	cop[tikv]	table:t, index:ia(a)	range:["mK\x8b\xd5\x00A","mK\x8b\xd5\x00B"), keep order:false, stats:pseudo
+    └─Selection_11(Probe)	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测试a__", 92)
+      └─TableRowIDScan_10	250.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (ia) where a like '测试a__' order by a,_tidb_rowid;
+a	b
+测试Abc	324
+explain select * from t use index (ia) where a like '测试   __' order by a,_tidb_rowid;
+id	estRows	task	access object	operator info
+Projection_6	250.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
+└─Sort_7	250.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
+  └─IndexLookUp_12	250.00	root		
+    ├─IndexRangeScan_9(Build)	250.00	cop[tikv]	table:t, index:ia(a)	range:["mK\x8b\xd5","mK\x8b\xd5\x00!"), keep order:false, stats:pseudo
+    └─Selection_11(Probe)	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测试   __", 92)
+      └─TableRowIDScan_10	250.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (ia) where a like '测试   __' order by a,_tidb_rowid;
+a	b
+测试     	543
+explain select * from t use index (ia) where a like ' _' order by a,_tidb_rowid;
+id	estRows	task	access object	operator info
+Projection_6	250.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
+└─Sort_7	250.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
+  └─IndexLookUp_12	250.00	root		
+    ├─IndexRangeScan_9(Build)	250.00	cop[tikv]	table:t, index:ia(a)	range:["","\x00!"), keep order:false, stats:pseudo
+    └─Selection_11(Probe)	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, " _", 92)
+      └─TableRowIDScan_10	250.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (ia) where a like ' _' order by a,_tidb_rowid;
+a	b
+explain select * from t use index (ia) where a like '    %' order by a,_tidb_rowid;
+id	estRows	task	access object	operator info
+Projection_6	250.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
+└─Sort_7	250.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
+  └─IndexLookUp_12	250.00	root		
+    ├─IndexRangeScan_9(Build)	250.00	cop[tikv]	table:t, index:ia(a)	range:["","\x00 \x00 \x00!"), keep order:false, stats:pseudo
+    └─Selection_11(Probe)	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "    %", 92)
+      └─TableRowIDScan_10	250.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (ia) where a like '    %' order by a,_tidb_rowid;
+a	b
+       	66666
+explain select * from t use index (ia) where a like ' 语言%%' order by a,_tidb_rowid;
+id	estRows	task	access object	operator info
+Projection_6	250.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
+└─Sort_7	250.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
+  └─IndexLookUp_12	250.00	root		
+    ├─IndexRangeScan_9(Build)	250.00	cop[tikv]	table:t, index:ia(a)	range:["\x00 \x8b\xed\x8a\x00","\x00 \x8b\xed\x8a\x01"), keep order:false, stats:pseudo
+    └─Selection_11(Probe)	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, " 语言%%", 92)
+      └─TableRowIDScan_10	250.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (ia) where a like ' 语言%%' order by a,_tidb_rowid;
+a	b
+ 语言	55555
