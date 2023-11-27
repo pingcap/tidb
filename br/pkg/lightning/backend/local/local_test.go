@@ -2267,7 +2267,6 @@ func TestWorkerFailedWhenGeneratingJobs(t *testing.T) {
 }
 
 func TestExternalEngine(t *testing.T) {
-	log.InitLogger(&log.Config{Level: "debug"}, "debug")
 	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
 	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipStartWorker", "return()")
 	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/injectVariables", "return()")
