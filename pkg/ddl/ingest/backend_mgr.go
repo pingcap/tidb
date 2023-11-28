@@ -24,17 +24,18 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	kvutil "github.com/tikv/client-go/v2/util"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
 // BackendCtxMgr is used to manage the backend context.
 type BackendCtxMgr interface {
 	CheckAvailable() (bool, error)
-	Register(ctx context.Context, unique bool, jobID int64, etcdClient *clientv3.Client, pdAddr string, resourceGroupName string) (BackendCtx, error)
+	Register(ctx context.Context, unique bool, jobID int64, pdAddr string, resourceGroupName string,
+		instanceID string, useDistributedLock bool) (BackendCtx, error)
 	Unregister(jobID int64)
 	Load(jobID int64) (BackendCtx, bool)
 
@@ -49,11 +50,13 @@ type litBackendCtxMgr struct {
 	processingJobID int64
 	lastLoggingTime time.Time
 	mu              sync.Mutex
+	store           kv.Storage
 }
 
-func newLitBackendCtxMgr(path string, memQuota uint64) BackendCtxMgr {
+func newLitBackendCtxMgr(store kv.Storage, path string, memQuota uint64) BackendCtxMgr {
 	mgr := &litBackendCtxMgr{
 		SyncMap:  generic.NewSyncMap[int64, *litBackendCtx](10),
+		store:    store,
 		memRoot:  nil,
 		diskRoot: nil,
 	}
@@ -103,7 +106,15 @@ func (m *litBackendCtxMgr) CheckAvailable() (bool, error) {
 }
 
 // Register creates a new backend and registers it to the backend context.
-func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int64, etcdClient *clientv3.Client, pdAddr string, resourceGroupName string) (BackendCtx, error) {
+func (m *litBackendCtxMgr) Register(
+	ctx context.Context,
+	unique bool,
+	jobID int64,
+	pdAddr string,
+	resourceGroupName string,
+	instanceID string,
+	useDistributedLock bool,
+) (BackendCtx, error) {
 	bc, exist := m.Load(jobID)
 	if !exist {
 		m.memRoot.RefreshConsumption()
@@ -123,7 +134,8 @@ func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int6
 			return nil, err
 		}
 
-		bcCtx := newBackendContext(ctx, jobID, bd, cfg.Lightning, defaultImportantVariables, m.memRoot, m.diskRoot, etcdClient)
+		bcCtx := newBackendContext(ctx, jobID, bd, cfg.Lightning, defaultImportantVariables,
+			m.memRoot, m.diskRoot, m.store, instanceID, useDistributedLock)
 		m.Store(jobID, bcCtx)
 
 		m.memRoot.Consume(StructSizeBackendCtx)
@@ -156,19 +168,32 @@ func createLocalBackend(ctx context.Context, cfg *Config, resourceGroupName stri
 
 const checkpointUpdateInterval = 10 * time.Minute
 
-func newBackendContext(ctx context.Context, jobID int64, be *local.Backend, cfg *config.Config, vars map[string]string, memRoot MemRoot, diskRoot DiskRoot, etcdClient *clientv3.Client) *litBackendCtx {
+func newBackendContext(
+	ctx context.Context,
+	jobID int64,
+	be *local.Backend,
+	cfg *config.Config,
+	vars map[string]string,
+	memRoot MemRoot,
+	diskRoot DiskRoot,
+	store kv.Storage,
+	instanceID string,
+	useDistributedLock bool,
+) *litBackendCtx {
 	bCtx := &litBackendCtx{
-		SyncMap:        generic.NewSyncMap[int64, *engineInfo](10),
-		MemRoot:        memRoot,
-		DiskRoot:       diskRoot,
-		jobID:          jobID,
-		backend:        be,
-		ctx:            ctx,
-		cfg:            cfg,
-		sysVars:        vars,
-		diskRoot:       diskRoot,
-		updateInterval: checkpointUpdateInterval,
-		etcdClient:     etcdClient,
+		SyncMap:            generic.NewSyncMap[int64, *engineInfo](10),
+		MemRoot:            memRoot,
+		DiskRoot:           diskRoot,
+		jobID:              jobID,
+		backend:            be,
+		ctx:                ctx,
+		cfg:                cfg,
+		sysVars:            vars,
+		diskRoot:           diskRoot,
+		updateInterval:     checkpointUpdateInterval,
+		store:              store,
+		instanceID:         instanceID,
+		useDistributedLock: useDistributedLock,
 	}
 	bCtx.timeOfLastFlush.Store(time.Now())
 	return bCtx

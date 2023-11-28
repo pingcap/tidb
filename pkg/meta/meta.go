@@ -185,6 +185,11 @@ func NewSnapshotMeta(snapshot kv.Snapshot) *Meta {
 	return &Meta{txn: t}
 }
 
+// NewMetaStructure creates a TxStructure for meta.
+func NewMetaStructure(txn kv.Transaction) *structure.TxStructure {
+	return structure.NewStructure(txn, txn, mMetaPrefix)
+}
+
 // GenGlobalID generates next id globally.
 func (m *Meta) GenGlobalID() (int64, error) {
 	globalIDMutex.Lock()

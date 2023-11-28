@@ -958,7 +958,8 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		//nolint:forcetypeassert
 		pdLeaderAddr = d.store.(tikv.Storage).GetRegionCache().PDClient().GetLeaderAddr()
 	}
-	bc, err = ingest.LitBackCtxMgr.Register(ctx, allIndexInfos[0].Unique, job.ID, nil, pdLeaderAddr, job.ReorgMeta.ResourceGroupName)
+	bc, err = ingest.LitBackCtxMgr.Register(
+		ctx, allIndexInfos[0].Unique, job.ID, pdLeaderAddr, job.ReorgMeta.ResourceGroupName, d.ownerManager.ID(), false)
 	if err != nil {
 		ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
 		return false, ver, errors.Trace(err)
@@ -2025,7 +2026,7 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 		if indexInfo.Unique {
 			ctx := logutil.WithCategory(ctx, "ddl-ingest")
 			if bc == nil {
-				bc, err = ingest.LitBackCtxMgr.Register(ctx, indexInfo.Unique, reorgInfo.ID, nil, pdAddr, reorgInfo.ReorgMeta.ResourceGroupName)
+				bc, err = ingest.LitBackCtxMgr.Register(ctx, indexInfo.Unique, reorgInfo.ID, pdAddr, reorgInfo.ReorgMeta.ResourceGroupName, "", false)
 				if err != nil {
 					return err
 				}

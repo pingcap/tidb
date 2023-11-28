@@ -796,7 +796,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	}
 	defer d.sessPool.Put(ctx)
 
-	ingest.InitGlobalLightningEnv()
+	ingest.InitGlobalLightningEnv(d.store)
 
 	return nil
 }

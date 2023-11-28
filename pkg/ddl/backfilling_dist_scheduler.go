@@ -144,7 +144,9 @@ func (s *backfillDistScheduler) Init(ctx context.Context) error {
 		return errors.Trace(errors.Errorf("index info not found: %d", bgm.EleIDs[0]))
 	}
 	pdLeaderAddr := d.store.(tikv.Storage).GetRegionCache().PDClient().GetLeaderAddr()
-	bc, err := ingest.LitBackCtxMgr.Register(ctx, idx.Unique, job.ID, d.etcdCli, pdLeaderAddr, job.ReorgMeta.ResourceGroupName)
+	useDistLock := len(bgm.CloudStorageURI) == 0
+	bc, err := ingest.LitBackCtxMgr.Register(
+		ctx, idx.Unique, job.ID, pdLeaderAddr, job.ReorgMeta.ResourceGroupName, d.OwnerManager().ID(), useDistLock)
 	if err != nil {
 		return errors.Trace(err)
 	}

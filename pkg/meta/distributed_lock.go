@@ -26,14 +26,18 @@ import (
 	"go.uber.org/zap"
 )
 
-type dataStore interface {
-	begin() (startTS uint64, err error)
-	rollback()
-	commit() error
+type DataStore interface {
+	Begin() (txn DataTxn, err error)
+}
 
-	put(key, value []byte) error
-	get(key []byte) ([]byte, error)
-	del(key []byte) error
+type DataTxn interface {
+	Rollback()
+	Commit() error
+
+	StartTS() uint64
+	Set(key, value []byte) error
+	Get(key []byte) ([]byte, error)
+	Del(key []byte) error
 }
 
 type lockContent struct {
@@ -59,7 +63,7 @@ func (c *lockContent) decode(data []byte) error {
 type DistributedLock struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
-	store      dataStore
+	store      DataStore
 	instanceID string
 
 	lockName []byte
@@ -67,7 +71,7 @@ type DistributedLock struct {
 	lease    time.Duration
 }
 
-func NewDistributedLock(ctx context.Context, store dataStore, instanceID string, lockName string) *DistributedLock {
+func NewDistributedLock(ctx context.Context, store DataStore, instanceID string, lockName string) *DistributedLock {
 	ctx = logutil.WithCategory(ctx, "distributed-lock")
 	ctx, cancel := context.WithCancel(ctx)
 	return &DistributedLock{
@@ -111,20 +115,20 @@ func (d *DistributedLock) renewLockLoop() {
 }
 
 func (d *DistributedLock) renew() error {
-	return d.getLockInTxnWithRetry(d.store,
-		func(lc *lockContent, startTS uint64) (bool, error) {
+	return d.getLockInTxnWithRetry(
+		func(lc *lockContent, txn DataTxn) (bool, error) {
 			if lc == nil || lc.InstanceID != d.instanceID {
 				logutil.Logger(d.ctx).Warn("lock is unexpectedly removed", zap.String("instanceID", d.instanceID))
 				return false, nil
 			}
 
 			// Lock is exist, update it.
-			lc.StartTS = startTS
+			lc.StartTS = txn.StartTS()
 			data, err := lc.encode()
 			if err != nil {
 				return false, errors.Trace(err)
 			}
-			err = d.store.put(d.lockName, data)
+			err = txn.Set(d.lockName, data)
 			if err != nil {
 				return true, errors.Trace(err)
 			}
@@ -133,8 +137,9 @@ func (d *DistributedLock) renew() error {
 }
 
 func (d *DistributedLock) Lock() error {
-	return d.getLockInTxnWithRetry(d.store,
-		func(lc *lockContent, startTS uint64) (bool, error) {
+	return d.getLockInTxnWithRetry(
+		func(lc *lockContent, txn DataTxn) (bool, error) {
+			startTS := txn.StartTS()
 			// Lock is not exist or expired, create or overwrite it.
 			if lc == nil || d.lockExpired(lc, startTS) {
 				lc := newLockContent(startTS, d.instanceID)
@@ -142,7 +147,7 @@ func (d *DistributedLock) Lock() error {
 				if err != nil {
 					return false, errors.Trace(err)
 				}
-				err = d.store.put(d.lockName, data)
+				err = txn.Set(d.lockName, data)
 				if err != nil {
 					return true, errors.Trace(err)
 				}
@@ -157,6 +162,9 @@ func (d *DistributedLock) Lock() error {
 }
 
 func (d *DistributedLock) lockExpired(lc *lockContent, currentStartTS uint64) bool {
+	if intest.InTest {
+		return false
+	}
 	lockStartTime := model.TSConvert2Time(lc.StartTS)
 	currentTime := model.TSConvert2Time(currentStartTS)
 	expired := currentTime.Sub(lockStartTime) > d.lease
@@ -171,15 +179,15 @@ func (d *DistributedLock) lockExpired(lc *lockContent, currentStartTS uint64) bo
 
 func (d *DistributedLock) Unlock() error {
 	defer d.cancel()
-	return d.getLockInTxnWithRetry(d.store,
-		func(lc *lockContent, startTS uint64) (bool, error) {
+	return d.getLockInTxnWithRetry(
+		func(lc *lockContent, txn DataTxn) (bool, error) {
 			if lc == nil || lc.InstanceID != d.instanceID {
 				logutil.Logger(d.ctx).Warn("lock is unexpectedly removed", zap.String("instanceID", d.instanceID))
 				return false, nil
 			}
 
 			// Lock is exist, remove it.
-			err := d.store.del(d.lockName)
+			err := txn.Del(d.lockName)
 			if err != nil {
 				return true, errors.Trace(err)
 			}
@@ -187,16 +195,15 @@ func (d *DistributedLock) Unlock() error {
 		})
 }
 
-func (d *DistributedLock) getLockInTxnWithRetry(store dataStore,
-	fn func(lc *lockContent, startTS uint64) (retry bool, err error)) error {
+func (d *DistributedLock) getLockInTxnWithRetry(fn lockHandleFunc) error {
 	for {
 		if contextIsDone(d.ctx) {
 			return d.ctx.Err()
 		}
 
 		var noRetry bool
-		err := runInTxn(d.store, func(startTS uint64) error {
-			data, err := d.store.get(d.lockName)
+		err := runInTxn(d.store, func(txn DataTxn) error {
+			data, err := txn.Get(d.lockName)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -207,7 +214,7 @@ func (d *DistributedLock) getLockInTxnWithRetry(store dataStore,
 				return errors.Trace(err)
 			}
 
-			needRetry, err := fn(lc, startTS)
+			needRetry, err := fn(lc, txn)
 			noRetry = !needRetry
 			return err
 		})
@@ -222,6 +229,9 @@ func (d *DistributedLock) getLockInTxnWithRetry(store dataStore,
 	}
 }
 
+type lockHandleFunc func(lc *lockContent, txn DataTxn) (bool, error)
+type txnHandleFunc func(txn DataTxn) error
+
 func contextIsDone(ctx context.Context) bool {
 	select {
 	case <-ctx.Done():
@@ -231,17 +241,17 @@ func contextIsDone(ctx context.Context) bool {
 	}
 }
 
-func runInTxn(store dataStore, fn func(startTS uint64) error) error {
-	startTS, err := store.begin()
+func runInTxn(store DataStore, fn txnHandleFunc) error {
+	txn, err := store.Begin()
 	if err != nil {
 		return err
 	}
-	err = fn(startTS)
+	err = fn(txn)
 	if err != nil {
-		store.rollback()
+		txn.Rollback()
 		return err
 	}
-	return store.commit()
+	return txn.Commit()
 }
 
 func decodeLockContent(data []byte) (*lockContent, error) {

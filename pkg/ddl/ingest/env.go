@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -46,7 +47,7 @@ var (
 const defaultMemoryQuota = 2 * size.GB
 
 // InitGlobalLightningEnv initialize Lightning backfill environment.
-func InitGlobalLightningEnv() {
+func InitGlobalLightningEnv(store kv.Storage) {
 	log.SetAppLogger(logutil.BgLogger())
 	globalCfg := config.GetGlobalConfig()
 	if globalCfg.Store != "tikv" {
@@ -72,7 +73,7 @@ func InitGlobalLightningEnv() {
 	} else {
 		memTotal = memTotal / 2
 	}
-	LitBackCtxMgr = newLitBackendCtxMgr(LitSortPath, memTotal)
+	LitBackCtxMgr = newLitBackendCtxMgr(store, LitSortPath, memTotal)
 	LitRLimit = util.GenRLimit("ddl-ingest")
 	LitInitialized = true
 	logutil.BgLogger().Info(LitInfoEnvInitSucc,
