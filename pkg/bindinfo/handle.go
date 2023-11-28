@@ -77,9 +77,6 @@ type BindHandle struct {
 	// invalidBindRecordMap indicates the invalid bind records found during querying.
 	// A record will be deleted from this map, after 2 bind-lease, after it is dropped from the kv.
 	invalidBindRecordMap tmpBindRecordMap
-
-	// pendingVerifyBindRecordMap indicates the pending verify bind records that found during query.
-	pendingVerifyBindRecordMap tmpBindRecordMap
 }
 
 // Lease influences the duration of loading bind info and handling invalid bind.
@@ -124,11 +121,6 @@ func (h *BindHandle) Reset(ctx sessionctx.Context) {
 	h.invalidBindRecordMap.flushFunc = func(record *BindRecord) error {
 		_, err := h.DropGlobalBinding(record.OriginalSQL, record.Db, &record.Bindings[0])
 		return err
-	}
-	h.pendingVerifyBindRecordMap.Value.Store(make(map[string]*bindRecordUpdate))
-	h.pendingVerifyBindRecordMap.flushFunc = func(record *BindRecord) error {
-		// BindSQL has already been validated when coming here, so we use nil sctx parameter.
-		return h.AddGlobalBinding(nil, record)
 	}
 	variable.RegisterStatistics(h)
 }
@@ -908,7 +900,6 @@ func (h *BindHandle) Clear() {
 	h.bindInfo.lastUpdateTime = types.ZeroTimestamp
 	h.bindInfo.Unlock()
 	h.invalidBindRecordMap.Store(make(map[string]*bindRecordUpdate))
-	h.pendingVerifyBindRecordMap.Store(make(map[string]*bindRecordUpdate))
 }
 
 // FlushGlobalBindings flushes the BindRecord in temp maps to storage and loads them into cache.
