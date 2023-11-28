@@ -45,9 +45,9 @@ func NewSessionBindHandle() *SessionHandle {
 
 // appendBindRecord adds the BindRecord to the cache, all the stale bindMetas are
 // removed from the cache after this operation.
-func (h *SessionHandle) appendBindRecord(hash string, meta *BindRecord) {
-	oldRecord := h.ch.GetBindRecord(hash, meta.OriginalSQL, meta.Db)
-	err := h.ch.SetBindRecord(hash, meta)
+func (h *SessionHandle) appendBindRecord(sqlDigest string, meta *BindRecord) {
+	oldRecord := h.ch.GetBindRecord(sqlDigest, meta.OriginalSQL, meta.Db)
+	err := h.ch.SetBindRecord(sqlDigest, meta)
 	if err != nil {
 		logutil.BgLogger().Warn("SessionHandle.appendBindRecord", zap.String("category", "sql-bind"), zap.Error(err))
 	}
@@ -76,8 +76,8 @@ func (h *SessionHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRe
 // DropBindRecord drops a BindRecord in the cache.
 func (h *SessionHandle) DropBindRecord(originalSQL, db string, binding *Binding) error {
 	db = strings.ToLower(db)
-	hash := parser.DigestNormalized(originalSQL).String()
-	oldRecord := h.GetBindRecord(hash, originalSQL, db)
+	sqlDigest := parser.DigestNormalized(originalSQL).String()
+	oldRecord := h.GetBindRecord(sqlDigest, originalSQL, db)
 	var newRecord *BindRecord
 	record := &BindRecord{OriginalSQL: originalSQL, Db: db}
 	if binding != nil {
@@ -88,7 +88,7 @@ func (h *SessionHandle) DropBindRecord(originalSQL, db string, binding *Binding)
 	} else {
 		newRecord = record
 	}
-	err := h.ch.SetBindRecord(hash, newRecord)
+	err := h.ch.SetBindRecord(sqlDigest, newRecord)
 	if err != nil {
 		// Should never reach here, just return an error for safety
 		return err
@@ -107,8 +107,8 @@ func (h *SessionHandle) DropBindRecordByDigest(sqlDigest string) error {
 }
 
 // GetBindRecord return the BindMeta of the (normdOrigSQL,db) if BindMeta exist.
-func (h *SessionHandle) GetBindRecord(hash, normdOrigSQL, db string) *BindRecord {
-	return h.ch.GetBindRecord(hash, normdOrigSQL, db)
+func (h *SessionHandle) GetBindRecord(sqlDigest, normdOrigSQL, db string) *BindRecord {
+	return h.ch.GetBindRecord(sqlDigest, normdOrigSQL, db)
 }
 
 // GetBindRecordBySQLDigest return all BindMeta corresponding to sqlDigest.

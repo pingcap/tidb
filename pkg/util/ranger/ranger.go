@@ -39,14 +39,16 @@ import (
 
 func validInterval(sctx sessionctx.Context, low, high *point) (bool, error) {
 	sc := sctx.GetSessionVars().StmtCtx
-	l, err := codec.EncodeKey(sc, nil, low.value)
+	l, err := codec.EncodeKey(sc.TimeZone(), nil, low.value)
+	err = sc.HandleError(err)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 	if low.excl {
 		l = kv.Key(l).PrefixNext()
 	}
-	r, err := codec.EncodeKey(sc, nil, high.value)
+	r, err := codec.EncodeKey(sc.TimeZone(), nil, high.value)
+	err = sc.HandleError(err)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -410,7 +412,7 @@ func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types
 // The second return value is the conditions used to build ranges and the third return value is the remained conditions.
 func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.Context, tp *types.FieldType, tableRange bool,
 	colLen int, rangeMaxSize int64) (Ranges, []expression.Expression, []expression.Expression, error) {
-	rb := builder{sc: sctx.GetSessionVars().StmtCtx}
+	rb := builder{ctx: sctx}
 	rangePoints := getFullRange()
 	for _, cond := range accessConditions {
 		collator := collate.GetCollator(tp.GetCollate())
@@ -484,7 +486,7 @@ func BuildColumnRange(conds []expression.Expression, sctx sessionctx.Context, tp
 
 func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAndInCount int,
 	accessConds []expression.Expression) (Ranges, []expression.Expression, []expression.Expression, error) {
-	rb := builder{sc: d.sctx.GetSessionVars().StmtCtx}
+	rb := builder{ctx: d.sctx}
 	var (
 		ranges        Ranges
 		rangeFallback bool
@@ -571,14 +573,16 @@ func UnionRanges(sctx sessionctx.Context, ranges Ranges, mergeConsecutive bool) 
 	}
 	objects := make([]*sortRange, 0, len(ranges))
 	for _, ran := range ranges {
-		left, err := codec.EncodeKey(sc, nil, ran.LowVal...)
+		left, err := codec.EncodeKey(sc.TimeZone(), nil, ran.LowVal...)
+		err = sc.HandleError(err)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if ran.LowExclude {
 			left = kv.Key(left).PrefixNext()
 		}
-		right, err := codec.EncodeKey(sc, nil, ran.HighVal...)
+		right, err := codec.EncodeKey(sc.TimeZone(), nil, ran.HighVal...)
+		err = sc.HandleError(err)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

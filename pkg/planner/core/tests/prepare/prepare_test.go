@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
+	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -104,7 +105,6 @@ func TestRandomFlushPlanCache(t *testing.T) {
 		execStmts = append(execStmts, execStmt)
 	}
 
-	rand.Seed(time.Now().Unix())
 	for i := 0; i < 10; i++ {
 		// Warm up to make sure all the plans are in the cache.
 		for _, execStmt := range execStmts {
@@ -636,7 +636,7 @@ func TestPrepareCacheForPartition(t *testing.T) {
 	}
 }
 
-func newSession(t *testing.T, store kv.Storage, dbName string) session.Session {
+func newSession(t *testing.T, store kv.Storage, dbName string) sessiontypes.Session {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	mustExec(t, se, "create database if not exists "+dbName)
@@ -644,7 +644,7 @@ func newSession(t *testing.T, store kv.Storage, dbName string) session.Session {
 	return se
 }
 
-func mustExec(t *testing.T, se session.Session, sql string) {
+func mustExec(t *testing.T, se sessiontypes.Session, sql string) {
 	_, err := se.Execute(context.Background(), sql)
 	require.NoError(t, err)
 }

@@ -155,7 +155,7 @@ func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Exp
 		return false, true, cond
 	}
 	for idx, expr := range sf.GetArgs() {
-		if src.Equal(nil, expr) {
+		if src.EqualColumn(expr) {
 			_, coll := cond.CharsetAndCollation()
 			if tgt.GetType().GetCollate() != coll {
 				continue
@@ -212,7 +212,7 @@ func (s *propConstSolver) propagateConstantEQ() {
 		}
 		for i, cond := range s.conditions {
 			if !visited[i] {
-				s.conditions[i] = ColumnSubstitute(cond, NewSchema(cols...), cons)
+				s.conditions[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
 			}
 		}
 	}
@@ -353,7 +353,7 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
 	s.conditions = propagateConstantDNF(s.ctx, s.conditions)
-	s.conditions = RemoveDupExprs(s.ctx, s.conditions)
+	s.conditions = RemoveDupExprs(s.conditions)
 	return s.conditions
 }
 
@@ -470,7 +470,7 @@ func (s *propOuterJoinConstSolver) propagateConstantEQ() {
 		}
 		for i, cond := range s.joinConds {
 			if !visited[i+lenFilters] {
-				s.joinConds[i] = ColumnSubstitute(cond, NewSchema(cols...), cons)
+				s.joinConds[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
 			}
 		}
 	}

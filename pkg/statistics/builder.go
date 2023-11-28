@@ -127,7 +127,7 @@ func BuildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *Sa
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	samples := collector.Samples
-	samples, err := SortSampleItems(sc, samples)
+	err := sortSampleItems(sc, samples)
 	if err != nil {
 		return nil, err
 	}
@@ -241,6 +241,7 @@ func BuildHistAndTopN(
 	tp *types.FieldType,
 	isColumn bool,
 	memTracker *memory.Tracker,
+	needExtStats bool,
 ) (*Histogram, *TopN, error) {
 	bufferedMemSize := int64(0)
 	bufferedReleaseSize := int64(0)
@@ -253,7 +254,8 @@ func BuildHistAndTopN(
 	var getComparedBytes func(datum types.Datum) ([]byte, error)
 	if isColumn {
 		getComparedBytes = func(datum types.Datum) ([]byte, error) {
-			encoded, err := codec.EncodeKey(ctx.GetSessionVars().StmtCtx, nil, datum)
+			encoded, err := codec.EncodeKey(ctx.GetSessionVars().StmtCtx.TimeZone(), nil, datum)
+			err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 			if memTracker != nil {
 				// tmp memory usage
 				deltaSize := int64(cap(encoded))
@@ -277,8 +279,15 @@ func BuildHistAndTopN(
 		return NewHistogram(id, ndv, nullCount, 0, tp, 0, collector.TotalSize), nil, nil
 	}
 	sc := ctx.GetSessionVars().StmtCtx
-	samples := collector.Samples
-	samples, err := SortSampleItems(sc, samples)
+	var samples []*SampleItem
+	// if we need to build extended stats, we need to copy the samples to avoid modifying the original samples.
+	if needExtStats {
+		samples = make([]*SampleItem, len(collector.Samples))
+		copy(samples, collector.Samples)
+	} else {
+		samples = collector.Samples
+	}
+	err := sortSampleItems(sc, samples)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -236,7 +236,7 @@ func (bq *brieQueue) clearTask(sc *stmtctx.StatementContext) {
 
 func (b *executorBuilder) parseTSString(ts string) (uint64, error) {
 	sc := stmtctx.NewStmtCtxWithTimeZone(b.ctx.GetSessionVars().Location())
-	t, err := types.ParseTime(sc.TypeCtx(), ts, mysql.TypeTimestamp, types.MaxFsp, nil)
+	t, err := types.ParseTime(sc.TypeCtx(), ts, mysql.TypeTimestamp, types.MaxFsp)
 	if err != nil {
 		return 0, err
 	}

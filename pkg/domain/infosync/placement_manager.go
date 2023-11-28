@@ -15,17 +15,11 @@
 package infosync
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"path"
 	"sync"
 
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
-	"github.com/pingcap/tidb/pkg/util/pdapi"
-	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.uber.org/zap"
+	pd "github.com/tikv/pd/client/http"
 )
 
 // PlacementManager manages placement settings
@@ -40,27 +34,30 @@ type PlacementManager interface {
 
 // PDPlacementManager manages placement with pd
 type PDPlacementManager struct {
-	etcdCli *clientv3.Client
+	pdHTTPCli pd.Client
 }
 
 // GetRuleBundle is used to get one specific rule bundle from PD.
 func (m *PDPlacementManager) GetRuleBundle(ctx context.Context, name string) (*placement.Bundle, error) {
-	bundle := &placement.Bundle{ID: name}
-	res, err := doRequest(ctx, "GetPlacementRule", m.etcdCli.Endpoints(), path.Join(pdapi.Config, "placement-rule", name), "GET", nil)
-	if err == nil && res != nil {
-		err = json.Unmarshal(res, bundle)
+	groupBundle, err := m.pdHTTPCli.GetPlacementRuleBundleByGroup(ctx, name)
+	if err != nil {
+		return nil, err
 	}
-	return bundle, err
+	groupBundle.ID = name
+	return (*placement.Bundle)(groupBundle), err
 }
 
 // GetAllRuleBundles is used to get all rule bundles from PD. It is used to load full rules from PD while fullload infoschema.
 func (m *PDPlacementManager) GetAllRuleBundles(ctx context.Context) ([]*placement.Bundle, error) {
-	var bundles []*placement.Bundle
-	res, err := doRequest(ctx, "GetAllPlacementRules", m.etcdCli.Endpoints(), path.Join(pdapi.Config, "placement-rule"), "GET", nil)
-	if err == nil && res != nil {
-		err = json.Unmarshal(res, &bundles)
+	bundles, err := m.pdHTTPCli.GetAllPlacementRuleBundles(ctx)
+	if err != nil {
+		return nil, err
 	}
-	return bundles, err
+	rules := make([]*placement.Bundle, 0, len(bundles))
+	for _, bundle := range bundles {
+		rules = append(rules, (*placement.Bundle)(bundle))
+	}
+	return rules, nil
 }
 
 // PutRuleBundles is used to post specific rule bundles to PD.
@@ -68,15 +65,11 @@ func (m *PDPlacementManager) PutRuleBundles(ctx context.Context, bundles []*plac
 	if len(bundles) == 0 {
 		return nil
 	}
-
-	b, err := json.Marshal(bundles)
-	if err != nil {
-		return err
+	ruleBundles := make([]*pd.GroupBundle, 0, len(bundles))
+	for _, bundle := range bundles {
+		ruleBundles = append(ruleBundles, (*pd.GroupBundle)(bundle))
 	}
-
-	log.Debug("Put placement rule bundles", zap.String("rules", string(b)))
-	_, err = doRequest(ctx, "PutPlacementRules", m.etcdCli.Endpoints(), path.Join(pdapi.Config, "placement-rule")+"?partial=true", "POST", bytes.NewReader(b))
-	return err
+	return m.pdHTTPCli.SetPlacementRuleBundles(ctx, ruleBundles, true)
 }
 
 type mockPlacementManager struct {

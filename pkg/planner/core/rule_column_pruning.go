@@ -76,7 +76,7 @@ func (p *LogicalExpand) PruneColumns(parentUsedCols []*expression.Column, opt *l
 	// Expand need those extra redundant distinct group by columns projected from underlying projection.
 	// distinct GroupByCol must be used by aggregate above, to make sure this, append distinctGroupByCol again.
 	parentUsedCols = append(parentUsedCols, p.distinctGroupByCol...)
-	used := expression.GetUsedList(parentUsedCols, p.Schema())
+	used := expression.GetUsedList(p.SCtx(), parentUsedCols, p.Schema())
 	prunedColumns := make([]*expression.Column, 0)
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
@@ -94,7 +94,7 @@ func (p *LogicalExpand) PruneColumns(parentUsedCols []*expression.Column, opt *l
 // If any expression has SetVar function or Sleep function, we do not prune it.
 func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp, _ LogicalPlan) error {
 	child := p.children[0]
-	used := expression.GetUsedList(parentUsedCols, p.schema)
+	used := expression.GetUsedList(p.SCtx(), parentUsedCols, p.schema)
 	prunedColumns := make([]*expression.Column, 0)
 
 	// for implicit projected cols, once the ancestor doesn't use it, the implicit expr will be automatically pruned here.
@@ -121,7 +121,7 @@ func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column, opt
 // PruneColumns implements LogicalPlan interface.
 func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp, _ LogicalPlan) error {
 	child := la.children[0]
-	used := expression.GetUsedList(parentUsedCols, la.Schema())
+	used := expression.GetUsedList(la.SCtx(), parentUsedCols, la.Schema())
 	prunedColumns := make([]*expression.Column, 0)
 	prunedFunctions := make([]*aggregation.AggFuncDesc, 0)
 	prunedGroupByItems := make([]expression.Expression, 0)
@@ -216,7 +216,7 @@ func pruneByItems(p LogicalPlan, old []*util.ByItems, opt *logicalOptimizeOp) (b
 	seen := make(map[string]struct{}, len(old))
 	for _, byItem := range old {
 		pruned := true
-		hash := string(byItem.Expr.HashCode(nil))
+		hash := string(byItem.Expr.HashCode())
 		_, hashMatch := seen[hash]
 		seen[hash] = struct{}{}
 		cols := expression.ExtractColumns(byItem.Expr)
@@ -264,7 +264,7 @@ func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column, opt *lo
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp, _ LogicalPlan) error {
-	used := expression.GetUsedList(parentUsedCols, p.schema)
+	used := expression.GetUsedList(p.SCtx(), parentUsedCols, p.schema)
 	hasBeenUsed := false
 	for i := range used {
 		hasBeenUsed = hasBeenUsed || used[i]
@@ -275,6 +275,9 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt 
 	if !hasBeenUsed {
 		parentUsedCols = make([]*expression.Column, len(p.schema.Columns))
 		copy(parentUsedCols, p.schema.Columns)
+		for i := range used {
+			used[i] = true
+		}
 	}
 	for _, child := range p.Children() {
 		err := child.PruneColumns(parentUsedCols, opt, p)
@@ -284,16 +287,14 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt 
 	}
 
 	prunedColumns := make([]*expression.Column, 0)
-	if hasBeenUsed {
-		// keep the schema of LogicalUnionAll same as its children's
-		used := expression.GetUsedList(p.children[0].Schema().Columns, p.schema)
-		for i := len(used) - 1; i >= 0; i-- {
-			if !used[i] {
-				prunedColumns = append(prunedColumns, p.schema.Columns[i])
-				p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
-			}
+	for i := len(used) - 1; i >= 0; i-- {
+		if !used[i] {
+			prunedColumns = append(prunedColumns, p.schema.Columns[i])
+			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
 		}
-		appendColumnPruneTraceStep(p, prunedColumns, opt)
+	}
+	appendColumnPruneTraceStep(p, prunedColumns, opt)
+	if hasBeenUsed {
 		// It's possible that the child operator adds extra columns to the schema.
 		// Currently, (*LogicalAggregation).PruneColumns() might do this.
 		// But we don't need such columns, so we add an extra Projection to prune this column when this happened.
@@ -332,10 +333,10 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt
 
 // PruneColumns implements LogicalPlan interface.
 func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp, _ LogicalPlan) error {
-	used := expression.GetUsedList(parentUsedCols, ds.schema)
+	used := expression.GetUsedList(ds.SCtx(), parentUsedCols, ds.schema)
 
 	exprCols := expression.ExtractColumnsFromExpressions(nil, ds.allConds, nil)
-	exprUsed := expression.GetUsedList(exprCols, ds.schema)
+	exprUsed := expression.GetUsedList(ds.SCtx(), exprCols, ds.schema)
 	prunedColumns := make([]*expression.Column, 0)
 
 	originSchemaColumns := ds.schema.Columns
@@ -400,7 +401,7 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column, opt 
 		return nil
 	}
 	prunedColumns := make([]*expression.Column, 0)
-	used := expression.GetUsedList(parentUsedCols, p.schema)
+	used := expression.GetUsedList(p.SCtx(), parentUsedCols, p.schema)
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && p.schema.Len() > 1 {
 			prunedColumns = append(prunedColumns, p.schema.Columns[i])
@@ -415,7 +416,7 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column, opt 
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalTableDual) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp, _ LogicalPlan) error {
-	used := expression.GetUsedList(parentUsedCols, p.Schema())
+	used := expression.GetUsedList(p.SCtx(), parentUsedCols, p.Schema())
 	prunedColumns := make([]*expression.Column, 0)
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
@@ -540,7 +541,7 @@ func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column, opt *l
 	for _, col := range parentUsedCols {
 		used := false
 		for _, windowColumn := range windowColumns {
-			if windowColumn.Equal(nil, col) {
+			if windowColumn.EqualColumn(col) {
 				used = true
 				break
 			}

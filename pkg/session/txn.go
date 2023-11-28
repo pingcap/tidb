@@ -569,7 +569,7 @@ func (txn *LazyTxn) KeysNeedToLock() ([]kv.Key, error) {
 	keys := make([]kv.Key, 0, txn.countHint())
 	buf := txn.Transaction.GetMemBuffer()
 	buf.InspectStage(txn.stagingHandle, func(k kv.Key, flags kv.KeyFlags, v []byte) {
-		if !keyNeedToLock(k, v, flags) {
+		if !KeyNeedToLock(k, v, flags) {
 			return
 		}
 		keys = append(keys, k)
@@ -603,7 +603,8 @@ func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Trans
 	return txn, nil
 }
 
-func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
+// KeyNeedToLock returns true if the key need to lock.
+func KeyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 	isTableKey := bytes.HasPrefix(k, tablecodec.TablePrefix())
 	if !isTableKey {
 		// meta key always need to lock.

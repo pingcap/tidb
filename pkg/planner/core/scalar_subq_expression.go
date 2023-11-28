@@ -104,8 +104,15 @@ func (s *ScalarSubQueryExpr) selfEvaluate() error {
 	return nil
 }
 
+// EvalWithInnerCtx evaluates expression with inner ctx.
+// Deprecated: This function is only used during refactoring, please do not use it in new code.
+// TODO: remove this method after refactoring.
+func (s *ScalarSubQueryExpr) EvalWithInnerCtx(row chunk.Row) (types.Datum, error) {
+	return s.Eval(nil, row)
+}
+
 // Eval implements the Expression interface.
-func (s *ScalarSubQueryExpr) Eval(_ chunk.Row) (types.Datum, error) {
+func (s *ScalarSubQueryExpr) Eval(_ sessionctx.Context, _ chunk.Row) (types.Datum, error) {
 	if s.evaled {
 		return s.Value, nil
 	}
@@ -201,12 +208,12 @@ func (s *ScalarSubQueryExpr) ResolveIndices(_ *expression.Schema) (expression.Ex
 }
 
 // ResolveIndicesByVirtualExpr implements the Expression interface.
-func (s *ScalarSubQueryExpr) ResolveIndicesByVirtualExpr(_ *expression.Schema) (expression.Expression, bool) {
+func (s *ScalarSubQueryExpr) ResolveIndicesByVirtualExpr(_ sessionctx.Context, _ *expression.Schema) (expression.Expression, bool) {
 	return s, false
 }
 
 // resolveIndicesByVirtualExpr implements the Expression interface.
-func (*ScalarSubQueryExpr) resolveIndicesByVirtualExpr(_ *expression.Schema) bool {
+func (*ScalarSubQueryExpr) resolveIndicesByVirtualExpr(_ sessionctx.Context, _ *expression.Schema) bool {
 	return false
 }
 
@@ -216,7 +223,7 @@ func (s *ScalarSubQueryExpr) RemapColumn(_ map[int64]*expression.Column) (expres
 }
 
 // ExplainInfo implements the Expression interface.
-func (s *ScalarSubQueryExpr) ExplainInfo() string {
+func (s *ScalarSubQueryExpr) ExplainInfo(sessionctx.Context) string {
 	return s.String()
 }
 
@@ -226,7 +233,7 @@ func (s *ScalarSubQueryExpr) ExplainNormalizedInfo() string {
 }
 
 // HashCode implements the Expression interface.
-func (s *ScalarSubQueryExpr) HashCode(_ *stmtctx.StatementContext) []byte {
+func (s *ScalarSubQueryExpr) HashCode() []byte {
 	if len(s.hashcode) != 0 {
 		return s.hashcode
 	}
@@ -234,6 +241,11 @@ func (s *ScalarSubQueryExpr) HashCode(_ *stmtctx.StatementContext) []byte {
 	s.hashcode = append(s.hashcode, expression.ScalarSubQFlag)
 	s.hashcode = codec.EncodeInt(s.hashcode, s.scalarSubqueryColID)
 	return s.hashcode
+}
+
+// CanonicalHashCode implements the Expression interface.
+func (s *ScalarSubQueryExpr) CanonicalHashCode() []byte {
+	return s.HashCode()
 }
 
 // MemoryUsage implements the Expression interface.

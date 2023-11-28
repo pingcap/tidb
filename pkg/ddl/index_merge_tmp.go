@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -32,11 +31,6 @@ import (
 	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
-
-// IsEnableFastReorg check whether Fast Reorg is allowed.
-func IsEnableFastReorg() bool {
-	return variable.EnableFastReorg.Load()
-}
 
 func (w *mergeIndexWorker) batchCheckTemporaryUniqueKey(
 	txn kv.Transaction,

@@ -93,7 +93,9 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 	if c.idxInfo.Global {
 		idxTblID = c.tblInfo.ID
 	}
-	return tablecodec.GenIndexKey(sc, c.tblInfo, c.idxInfo, idxTblID, indexedValues, h, buf)
+	key, distinct, err = tablecodec.GenIndexKey(sc.TimeZone(), c.tblInfo, c.idxInfo, idxTblID, indexedValues, h, buf)
+	err = sc.HandleError(err)
+	return
 }
 
 // GenIndexValue generates the index value.
@@ -102,7 +104,9 @@ func (c *index) GenIndexValue(sc *stmtctx.StatementContext, distinct bool, index
 	c.initNeedRestoreData.Do(func() {
 		c.needRestoredData = NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
 	})
-	return tablecodec.GenIndexValuePortal(sc, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, false, indexedValues, h, c.phyTblID, restoredData, buf)
+	idx, err := tablecodec.GenIndexValuePortal(sc.TimeZone(), c.tblInfo, c.idxInfo, c.needRestoredData, distinct, false, indexedValues, h, c.phyTblID, restoredData, buf)
+	err = sc.HandleError(err)
+	return idx, err
 }
 
 // getIndexedValue will produce the result like:
@@ -233,8 +237,9 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 		c.initNeedRestoreData.Do(func() {
 			c.needRestoredData = NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
 		})
-		idxVal, err := tablecodec.GenIndexValuePortal(sctx.GetSessionVars().StmtCtx, c.tblInfo, c.idxInfo,
+		idxVal, err := tablecodec.GenIndexValuePortal(sctx.GetSessionVars().StmtCtx.TimeZone(), c.tblInfo, c.idxInfo,
 			c.needRestoredData, distinct, opt.Untouched, value, h, c.phyTblID, handleRestoreData, nil)
+		err = sctx.GetSessionVars().StmtCtx.HandleError(err)
 		if err != nil {
 			return nil, err
 		}
@@ -477,8 +482,9 @@ func (c *index) GenIndexKVIter(sc *stmtctx.StatementContext, indexedValue []type
 	var mvIndexValues [][]types.Datum
 	if c.Meta().MVIndex {
 		mvIndexValues = c.getIndexedValue(indexedValue)
+		return table.NewMultiValueIndexKVGenerator(c, sc, h, handleRestoreData, mvIndexValues)
 	}
-	return table.NewIndexKVGenerator(c, sc, h, handleRestoreData, mvIndexValues, indexedValue)
+	return table.NewPlainIndexKVGenerator(c, sc, h, handleRestoreData, indexedValue)
 }
 
 const (
