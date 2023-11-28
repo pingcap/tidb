@@ -16,11 +16,25 @@ package aggregate_test
 
 import (
 	"fmt"
+	"math/rand"
 	"testing"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
+	"github.com/pingcap/tidb/pkg/executor/aggregate"
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/mock"
 )
 
 func checkResults(actualRes [][]interface{}, expectedRes map[string]string) bool {
@@ -59,12 +73,171 @@ func checkResults(actualRes [][]interface{}, expectedRes map[string]string) bool
 	return true
 }
 
-func TestGetCorrectResult(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/enableAggSpillIntest", `return(false)`)
+const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
-	store, _ := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	
+func getRandString() string {
+	strLen := rand.Intn(50) + 1 // At least 1
+	b := make([]byte, strLen)
+	for i := range b {
+		b[i] = letterBytes[rand.Intn(len(letterBytes))]
+	}
+	return string(b)
+}
+
+func generateData(rowNum int, ndv int) ([]string, []int64) {
+	keys := make([]string, 0)
+	for i := 0; i < ndv; i++ {
+		keys = append(keys, getRandString())
+	}
+
+	col1Data := make([]string, 0)
+	col2Data := make([]int64, 0)
+
+	// Generate data
+	for i := 0; i < rowNum; i++ {
+		key := keys[i%ndv]
+		col1Data = append(col1Data, key)
+		col2Data = append(col2Data, 1) // Always 1
+	}
+
+	// Shuffle data
+	rand.Shuffle(rowNum, func(i, j int) {
+		col1Data[i], col1Data[j] = col1Data[j], col1Data[i]
+		// There is no need to shuffle col2Data as all of it's values are 1.
+	})
+	return col1Data, col2Data
+}
+
+// chunk schema: | column1: string | column2: int |
+func buildMockDataSource(opt testutil.MockDataSourceParameters, col1Data []string, col2Data []int64) *testutil.MockDataSource {
+	baseExec := exec.NewBaseExecutor(opt.Ctx, opt.DataSchema, 0)
+	mockDatasource := &testutil.MockDataSource{
+		BaseExecutor: baseExec,
+		ChunkPtr:     0,
+		P:            opt,
+		GenData:      nil,
+		Chunks:       nil}
+
+	maxChunkSize := mockDatasource.MaxChunkSize()
+	rowNum := len(col1Data)
+	mockDatasource.GenData = make([]*chunk.Chunk, rowNum/maxChunkSize)
+	for i := range mockDatasource.GenData {
+		mockDatasource.GenData[i] = chunk.NewChunkWithCapacity(exec.RetTypes(mockDatasource), maxChunkSize)
+	}
+
+	for i := 0; i < rowNum; i++ {
+		chkIdx := i / maxChunkSize
+		mockDatasource.GenData[chkIdx].AppendString(0, col1Data[i])
+		mockDatasource.GenData[chkIdx].AppendInt64(1, col2Data[i])
+	}
+
+	return mockDatasource
+}
+
+func generateResult(col1 []string, col2 []int64) map[string]int64 {
+	result := make(map[string]int64, 0)
+	length := len(col1)
+
+	for i := 0; i < length; i++ {
+		_, ok := result[col1[i]]
+		if ok {
+			result[col1[i]]++
+		} else {
+			result[col1[i]] = 1
+		}
+	}
+	return result
+}
+
+func getSchema() *expression.Schema {
+	return expression.NewSchema(
+		&expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeVarString)},
+		&expression.Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)})
+}
+
+func getMockDataSourceParameters() testutil.MockDataSourceParameters {
+	return testutil.MockDataSourceParameters{
+		DataSchema: getSchema(),
+		// Ctx:        ctx,
+	}
+}
+
+func buildHashAggExecutor(b *testing.B, testCase *testutil.AggTestCase, child exec.Executor) *aggregate.HashAggExec {
+	ctx := testCase.Ctx
+	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggFinalConcurrency, fmt.Sprintf("%v", testCase.Concurrency)); err != nil {
+		b.Fatal(err)
+	}
+	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggPartialConcurrency, fmt.Sprintf("%v", testCase.Concurrency)); err != nil {
+		b.Fatal(err)
+	}
+
+	childCols := testCase.Columns()
+	schema := expression.NewSchema(childCols...)
+	groupItems := []expression.Expression{childCols[1]}
+	aggFunc, err := aggregation.NewAggFuncDesc(testCase.Ctx, testCase.AggFunc, []expression.Expression{childCols[0]}, testCase.HasDistinct)
+	if err != nil {
+		b.Fatal(err)
+	}
+	aggFuncs := []*aggregation.AggFuncDesc{aggFunc}
+
+	plan := new(core.PhysicalHashAgg)
+	plan.AggFuncs = aggFuncs
+	plan.GroupByItems = groupItems
+	plan.SetSchema(schema)
+	plan.Init(ctx, nil, 0)
+	plan.SetChildren(nil)
+
+	aggExec := &aggregate.HashAggExec{
+		BaseExecutor:    exec.NewBaseExecutor(ctx, schema, 0, child),
+		Sc:              ctx.GetSessionVars().StmtCtx,
+		PartialAggFuncs: make([]aggfuncs.AggFunc, 0, len(aggFuncs)),
+		GroupByItems:    groupItems,
+	}
+
+	partialOrdinal := 0
+	for i, aggDesc := range aggFuncs {
+		ordinal := []int{partialOrdinal}
+		partialOrdinal++
+		partialAggDesc, finalDesc := aggDesc.Split(ordinal)
+		partialAggFunc := aggfuncs.Build(ctx, partialAggDesc, i)
+		finalAggFunc := aggfuncs.Build(ctx, finalDesc, i)
+		aggExec.PartialAggFuncs = append(aggExec.PartialAggFuncs, partialAggFunc)
+		aggExec.FinalAggFuncs = append(aggExec.FinalAggFuncs, finalAggFunc)
+	}
+
+	aggExec.SetChildren(0, child)
+
+	// first_row?
+
+	return aggExec
+}
+
+func TestGetCorrectResult(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/enableAggSpillIntest", `return(false)`)
+	// rowNum := rand.Intn(3000) + 3000
+	// ndv := rand.Intn(50) + 50
+	// col1, col2 := generateData(rowNum, ndv)
+	// result := generateResult(col1, col2)
+	// opt := getMockDataSourceParameters()
+	// dataSource := buildMockDataSource(opt, col1, col2)
+
+	// aggTestCase := testutil.AggTestCase{
+	// 	ExecType:         "hash",
+	// 	AggFunc:          ast.AggFuncSum,
+	// 	GroupByNDV:       ndv,
+	// 	HasDistinct:      false,
+	// 	Rows:             rowNum,
+	// 	Concurrency:      5,
+	// 	DataSourceSorted: false,
+	// 	Ctx:              ctx,
+	// }
 }
 
 func TestGetCorrectResultDeprecated(t *testing.T) {
@@ -76,16 +249,13 @@ func TestGetCorrectResultDeprecated(t *testing.T) {
 	tk.MustExec("drop table if exists test.test_spill_bin;")
 	tk.MustExec("create table test.test_spill_bin(k varchar(30), v int);")
 	tk.MustExec("insert into test.test_spill_bin (k, v) values ('aa', 1), ('AA', 1), ('aA', 1), ('Aa', 1), ('bb', 1), ('BB', 1), ('bB', 1), ('Bb', 1), ('cc', 1), ('CC', 1), ('cC', 1), ('Cc', 1), ('dd', 1), ('DD', 1), ('dD', 1), ('Dd', 1), ('ee', 1), ('aa', 1), ('AA', 1), ('aA', 1), ('Aa', 1), ('bb', 1), ('BB', 1), ('bB', 1), ('Bb', 1);")
-	log.Info("xzxdebugtt")
 	tk.MustExec("drop table if exists test.test_spill_ci;")
 	tk.MustExec("create table test.test_spill_ci(k varchar(30), v int) DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;")
 	tk.MustExec("insert into test.test_spill_ci (k, v) values ('aa', 1), ('AA', 1), ('aA', 1), ('Aa', 1), ('bb', 1), ('BB', 1), ('bB', 1), ('Bb', 1), ('cc', 1), ('CC', 1), ('cC', 1), ('Cc', 1), ('dd', 1), ('DD', 1), ('dD', 1), ('Dd', 1), ('ee', 1), ('aa', 1), ('AA', 1), ('aA', 1), ('Aa', 1), ('bb', 1), ('BB', 1), ('bB', 1), ('Bb', 1);")
-	log.Info("xzxdebugtt")
 	hardLimitBytesNum := 1000000
 	tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%d;", hardLimitBytesNum))
-	log.Info("xzxdebugtt")
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/triggerSpill", fmt.Sprintf("return(%d)", hardLimitBytesNum))
-	log.Info("xzxdebugtt")
+
 	// bin collation
 	binCollationResult := make(map[string]string)
 	binCollationResult["CC"] = "1"

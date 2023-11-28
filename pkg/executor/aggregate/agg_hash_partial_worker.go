@@ -64,7 +64,7 @@ type HashAggPartialWorker struct {
 	runningWorkerWaiter   *sync.WaitGroup
 	spillHelper           *parallelHashAggSpillHelper
 	tmpChksForSpill       []*chunk.Chunk
-	spillSerializeHelpers []*aggfuncs.SpillSerializeHelper
+	spillSerializeHelpers []*aggfuncs.SerializeHelper
 	getNewTmpChunkFunc    func() *chunk.Chunk
 	spillChunkFieldTypes  []*types.FieldType
 	spilledChunksIO       []*chunk.DataInDiskByRows // TODO replace it with DataInDiskByChunks

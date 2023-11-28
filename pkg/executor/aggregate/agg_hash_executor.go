@@ -302,14 +302,14 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 				return chunk.New(spillChunkFieldTypes, base.InitCap(), base.MaxChunkSize())
 			},
 			spillChunkFieldTypes:  spillChunkFieldTypes,
-			spillSerializeHelpers: make([]*aggfuncs.SpillSerializeHelper, len(e.PartialAggFuncs)),
+			spillSerializeHelpers: make([]*aggfuncs.SerializeHelper, len(e.PartialAggFuncs)),
 			isSpillPrepared:       false,
 			runningWorkerWaiter:   runningWorkerWaiter,
 			spillHelper:           e.spillHelper,
 		}
 
 		for i := 0; i < partialAggFuncsLen; i++ {
-			w.spillSerializeHelpers[i] = aggfuncs.NewSpillSerializeHelper()
+			w.spillSerializeHelpers[i] = aggfuncs.NewSerializeHelper()
 		}
 
 		w.partialResultNumInRow = w.getPartialResultSliceLenConsiderByteAlign()
