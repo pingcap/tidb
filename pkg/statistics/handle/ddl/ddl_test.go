@@ -15,10 +15,12 @@
 package ddl_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -283,4 +285,60 @@ PARTITION BY RANGE ( a ) (
 			require.False(t, statsTbl.Pseudo)
 		}
 	}
+}
+
+func TestDropAPartition(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := do.StatsHandle()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec(`
+		create table t (
+			a int,
+			b int,
+			primary key(a),
+			index idx(b)
+		)
+		partition by range (a) (
+			partition p0 values less than (6),
+			partition p1 values less than (11),
+			partition p2 values less than (16),
+			partition p3 values less than (21)
+		)
+	`)
+	testKit.MustExec("insert into t values (1,2),(6,2),(11,2),(16,2)")
+	testKit.MustExec("analyze table t")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(
+		model.NewCIStr("test"), model.NewCIStr("t"),
+	)
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	pi := tableInfo.GetPartitionInfo()
+	for _, def := range pi.Definitions {
+		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		require.False(t, statsTbl.Pseudo)
+	}
+	err = h.Update(is)
+	require.NoError(t, err)
+
+	testKit.MustExec("alter table t drop partition p0")
+	// Find the drop partition event.
+	var dropPartitionEvent *util.DDLEvent
+	for {
+		event := <-h.DDLEventCh()
+		if event.GetType() == model.ActionDropTablePartition {
+			dropPartitionEvent = event
+			break
+		}
+	}
+	err = h.HandleDDLEvent(dropPartitionEvent)
+	require.NoError(t, err)
+	// Check the global stats meta.
+	testKit.MustQuery(
+		fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableInfo.ID),
+	).Check(
+		testkit.Rows("3 1"),
+	)
 }

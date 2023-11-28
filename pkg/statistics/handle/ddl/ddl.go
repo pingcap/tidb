@@ -141,7 +141,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 			}
 		}
 		if err := h.statsWriter.UpdateStatsMetaDelta(
-			globalTableInfo.ID, delta, count,
+			globalTableInfo.ID, count, delta,
 		); err != nil {
 			return err
 		}
