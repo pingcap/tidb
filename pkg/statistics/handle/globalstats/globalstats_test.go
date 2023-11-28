@@ -956,3 +956,19 @@ func TestIssues24349WithConcurrency(t *testing.T) {
 	defer testKit.MustExec("set global tidb_merge_partition_stats_concurrency=1")
 	testIssues24349(testKit)
 }
+
+func TestGlobalStatsAndSQLBinding(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_merge_partition_stats_concurrency=1")
+	testGlobalStatsAndSQLBinding(tk)
+}
+
+func TestGlobalStatsAndSQLBindingWithConcurrency(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_merge_partition_stats_concurrency=2")
+	testGlobalStatsAndSQLBinding(tk)
+}
