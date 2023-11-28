@@ -1188,19 +1188,6 @@ def go_deps():
         ],
     )
     go_repository(
-        name = "com_github_coocood_freecache",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/coocood/freecache",
-        sha256 = "e0f3b9924ea5919fbae2043680d6e6ae6bac8e9765159aa9ba2a67a4b8dd43ca",
-        strip_prefix = "github.com/coocood/freecache@v1.2.1",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/coocood/freecache/com_github_coocood_freecache-v1.2.1.zip",
-            "http://ats.apps.svc/gomod/github.com/coocood/freecache/com_github_coocood_freecache-v1.2.1.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/coocood/freecache/com_github_coocood_freecache-v1.2.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/coocood/freecache/com_github_coocood_freecache-v1.2.1.zip",
-        ],
-    )
-    go_repository(
         name = "com_github_coocood_rtutil",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/coocood/rtutil",
