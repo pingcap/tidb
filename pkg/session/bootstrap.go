@@ -2816,6 +2816,7 @@ func upgradeToVer175(s sessiontypes.Session, ver int64) {
 		return
 	}
 	req := rs.NewChunk(nil)
+	updateStmts := make([]string, 0, 4)
 	for {
 		err = rs.Next(ctx, req)
 		if err != nil {
@@ -2832,12 +2833,17 @@ func upgradeToVer175(s sessiontypes.Session, ver int64) {
 			if originalNormalizedSQL == newNormalizedSQL {
 				continue // no need to update
 			}
-			mustExecute(s, fmt.Sprintf("UPDATE mysql.bind_info SET original_sql='%s' WHERE original_sql='%s'", newNormalizedSQL, originalNormalizedSQL))
+			// must run those update statements outside this loop, otherwise may cause some concurrency problems,
+			// since the current statement over this session has not been finished yet.
+			updateStmts = append(updateStmts, fmt.Sprintf("UPDATE mysql.bind_info SET original_sql='%s' WHERE original_sql='%s'", newNormalizedSQL, originalNormalizedSQL))
 		}
 		req.Reset()
 	}
 	if err := rs.Close(); err != nil {
 		logutil.BgLogger().Fatal("upgradeToVer175 error", zap.Error(err))
+	}
+	for _, updateStmt := range updateStmts {
+		mustExecute(s, updateStmt)
 	}
 }
 
