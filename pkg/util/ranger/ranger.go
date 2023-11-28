@@ -634,6 +634,9 @@ func hasPrefix(lengths []int) bool {
 	return false
 }
 
+// cutPrefixForPoints cuts the prefix of points according to the prefix length of the prefix index.
+// It may modify the point.value and point.excl. The modification is in-place.
+// This function doesn't require the start and end points to be paired in the input.
 func cutPrefixForPoints(points []*point, length int, tp *types.FieldType) {
 	if length == types.UnspecifiedLength {
 		return

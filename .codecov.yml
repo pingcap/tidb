@@ -90,5 +90,6 @@ ignore:
   - "pkg/statistics/handle/cache/internal/testutil/.*"
   - "pkg/session/testutil.go"
   - "pkg/store/mockstore/unistore/testutil.go"
-  - "k8s.io/apimachinery/pkg/*"
+  - "k8s.io/apimachinery/pkg"
+  - "build/.*"
 
