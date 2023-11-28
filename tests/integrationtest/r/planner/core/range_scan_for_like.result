@@ -648,7 +648,10 @@ insert into t value
 ('测试     ',543),
 ('你好',111),
 ('aABBccdd',890),
+('A',456),
 ('Aa',456),
+('aab',456),
+('aabB',456),
 ('',234),
 (' ',11111),
 ('       ',66666),
@@ -657,6 +660,162 @@ insert into t value
 ('测测试 ',2468),
 ('测测试    ',99999),
 (NULL,10);
+explain select * from t use index (ia) where a > 'aabb' order by a,_tidb_rowid;
+id	estRows	task	access object	operator info
+Projection_6	3333.33	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
+└─Sort_7	3333.33	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
+  └─IndexLookUp_12	3333.33	root		
+    ├─IndexRangeScan_9(Build)	3333.33	cop[tikv]	table:t, index:ia(a)	range:["\x00A\x00A\x00B",+inf], keep order:false, stats:pseudo
+    └─Selection_11(Probe)	3333.33	cop[tikv]		gt(planner__core__range_scan_for_like.t.a, "aabb")
+      └─TableRowIDScan_10	3333.33	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (ia) where a > 'aabb' order by a,_tidb_rowid;
+a	b
+aABBccdd	890
+你好	111
+测测试 	2468
+测测试    	99999
+测试	222
+测试     	543
+测试Abc	324
+explain select * from t use index (ia) where a > 'aab' order by a,_tidb_rowid;
+id	estRows	task	access object	operator info
+Projection_6	3333.33	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
+└─Sort_7	3333.33	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
+  └─IndexLookUp_12	3333.33	root		
+    ├─IndexRangeScan_9(Build)	3333.33	cop[tikv]	table:t, index:ia(a)	range:["\x00A\x00A\x00B",+inf], keep order:false, stats:pseudo
+    └─Selection_11(Probe)	3333.33	cop[tikv]		gt(planner__core__range_scan_for_like.t.a, "aab")
+      └─TableRowIDScan_10	3333.33	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (ia) where a > 'aab' order by a,_tidb_rowid;
+a	b
+aabB	456
+aABBccdd	890
+你好	111
+测测试 	2468
+测测试    	99999
+测试	222
+测试     	543
+测试Abc	324
+explain select * from t use index (ia) where a > 'aa' order by a,_tidb_rowid;
+id	estRows	task	access object	operator info
+Projection_6	3333.33	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
+└─Sort_7	3333.33	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
+  └─IndexLookUp_12	3333.33	root		
+    ├─IndexRangeScan_9(Build)	3333.33	cop[tikv]	table:t, index:ia(a)	range:("\x00A\x00A",+inf], keep order:false, stats:pseudo
+    └─Selection_11(Probe)	3333.33	cop[tikv]		gt(planner__core__range_scan_for_like.t.a, "aa")
+      └─TableRowIDScan_10	3333.33	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (ia) where a > 'aa' order by a,_tidb_rowid;
+a	b
+aab	456
+aabB	456
+aABBccdd	890
+你好	111
+测测试 	2468
+测测试    	99999
+测试	222
+测试     	543
+测试Abc	324
+explain select * from t use index (ia) where a < 'aabb' order by a,_tidb_rowid;
+id	estRows	task	access object	operator info
+Projection_6	3323.33	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
+└─Sort_7	3323.33	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
+  └─IndexLookUp_12	3323.33	root		
+    ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t, index:ia(a)	range:[-inf,"\x00A\x00A\x00B"], keep order:false, stats:pseudo
+    └─Selection_11(Probe)	3323.33	cop[tikv]		lt(planner__core__range_scan_for_like.t.a, "aabb")
+      └─TableRowIDScan_10	3323.33	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (ia) where a < 'aabb' order by a,_tidb_rowid;
+a	b
+	234
+ 	11111
+       	66666
+  语 言	3579
+ 语言	55555
+A	456
+Aa	456
+aab	456
+explain select * from t use index (ia) where a < 'aab' order by a,_tidb_rowid;
+id	estRows	task	access object	operator info
+Projection_6	3323.33	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
+└─Sort_7	3323.33	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
+  └─IndexLookUp_12	3323.33	root		
+    ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t, index:ia(a)	range:[-inf,"\x00A\x00A\x00B"), keep order:false, stats:pseudo
+    └─Selection_11(Probe)	3323.33	cop[tikv]		lt(planner__core__range_scan_for_like.t.a, "aab")
+      └─TableRowIDScan_10	3323.33	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (ia) where a < 'aab' order by a,_tidb_rowid;
+a	b
+	234
+ 	11111
+       	66666
+  语 言	3579
+ 语言	55555
+A	456
+Aa	456
+explain select * from t use index (ia) where a < 'aa' order by a,_tidb_rowid;
+id	estRows	task	access object	operator info
+Projection_6	3323.33	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
+└─Sort_7	3323.33	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
+  └─IndexLookUp_12	3323.33	root		
+    ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t, index:ia(a)	range:[-inf,"\x00A\x00A"), keep order:false, stats:pseudo
+    └─Selection_11(Probe)	3323.33	cop[tikv]		lt(planner__core__range_scan_for_like.t.a, "aa")
+      └─TableRowIDScan_10	3323.33	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (ia) where a < 'aa' order by a,_tidb_rowid;
+a	b
+	234
+ 	11111
+       	66666
+  语 言	3579
+ 语言	55555
+A	456
+explain select * from t use index (ia) where a != 'aa' order by a,_tidb_rowid;
+id	estRows	task	access object	operator info
+Projection_6	6656.67	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
+└─Sort_7	6656.67	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
+  └─IndexLookUp_12	6656.67	root		
+    ├─IndexFullScan_9(Build)	10000.00	cop[tikv]	table:t, index:ia(a)	keep order:false, stats:pseudo
+    └─Selection_11(Probe)	6656.67	cop[tikv]		ne(planner__core__range_scan_for_like.t.a, "aa")
+      └─TableRowIDScan_10	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (ia) where a != 'aa' order by a,_tidb_rowid;
+a	b
+	234
+ 	11111
+       	66666
+  语 言	3579
+ 语言	55555
+A	456
+aab	456
+aabB	456
+aABBccdd	890
+你好	111
+测测试 	2468
+测测试    	99999
+测试	222
+测试     	543
+测试Abc	324
+explain select * from t use index (ia) where a != 'aaBbc' order by a,_tidb_rowid;
+id	estRows	task	access object	operator info
+Projection_6	6656.67	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
+└─Sort_7	6656.67	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
+  └─IndexLookUp_12	6656.67	root		
+    ├─IndexFullScan_9(Build)	10000.00	cop[tikv]	table:t, index:ia(a)	keep order:false, stats:pseudo
+    └─Selection_11(Probe)	6656.67	cop[tikv]		ne(planner__core__range_scan_for_like.t.a, "aaBbc")
+      └─TableRowIDScan_10	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (ia) where a != 'aaBbc' order by a,_tidb_rowid;
+a	b
+	234
+ 	11111
+       	66666
+  语 言	3579
+ 语言	55555
+A	456
+Aa	456
+aab	456
+aabB	456
+aABBccdd	890
+你好	111
+测测试 	2468
+测测试    	99999
+测试	222
+测试     	543
+测试Abc	324
 explain select * from t use index (ia) where a like '测试abc' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
 Projection_6	10.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b

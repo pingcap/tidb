@@ -165,7 +165,10 @@ insert into t value
 ('测试     ',543),
 ('你好',111),
 ('aABBccdd',890),
+('A',456),
 ('Aa',456),
+('aab',456),
+('aabB',456),
 ('',234),
 (' ',11111),
 ('       ',66666),
@@ -174,6 +177,22 @@ insert into t value
 ('测测试 ',2468),
 ('测测试    ',99999),
 (NULL,10);
+explain select * from t use index (ia) where a > 'aabb' order by a,_tidb_rowid;
+select * from t use index (ia) where a > 'aabb' order by a,_tidb_rowid;
+explain select * from t use index (ia) where a > 'aab' order by a,_tidb_rowid;
+select * from t use index (ia) where a > 'aab' order by a,_tidb_rowid;
+explain select * from t use index (ia) where a > 'aa' order by a,_tidb_rowid;
+select * from t use index (ia) where a > 'aa' order by a,_tidb_rowid;
+explain select * from t use index (ia) where a < 'aabb' order by a,_tidb_rowid;
+select * from t use index (ia) where a < 'aabb' order by a,_tidb_rowid;
+explain select * from t use index (ia) where a < 'aab' order by a,_tidb_rowid;
+select * from t use index (ia) where a < 'aab' order by a,_tidb_rowid;
+explain select * from t use index (ia) where a < 'aa' order by a,_tidb_rowid;
+select * from t use index (ia) where a < 'aa' order by a,_tidb_rowid;
+explain select * from t use index (ia) where a != 'aa' order by a,_tidb_rowid;
+select * from t use index (ia) where a != 'aa' order by a,_tidb_rowid;
+explain select * from t use index (ia) where a != 'aaBbc' order by a,_tidb_rowid;
+select * from t use index (ia) where a != 'aaBbc' order by a,_tidb_rowid;
 explain select * from t use index (ia) where a like '测试abc' order by a,_tidb_rowid;
 select * from t use index (ia) where a like '测试abc' order by a,_tidb_rowid;
 explain select * from t use index (ia) where a = '测试abc' order by a,_tidb_rowid;
