@@ -132,18 +132,21 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 					zap.String("table", globalTableInfo.Name.O),
 					zap.String("partition", def.Name.O),
 				)
-				break
+			} else {
+				delta -= stats.RealtimeCount
+				count += stats.RealtimeCount
 			}
-			delta -= stats.RealtimeCount
-			count += stats.RealtimeCount
+			// Always reset the partition stats.
 			if err := h.statsWriter.ResetTableStats2KVForDrop(def.ID); err != nil {
 				return err
 			}
 		}
-		if err := h.statsWriter.UpdateStatsMetaDelta(
-			globalTableInfo.ID, count, delta,
-		); err != nil {
-			return err
+		if count != 0 {
+			if err := h.statsWriter.UpdateStatsMetaDelta(
+				globalTableInfo.ID, count, delta,
+			); err != nil {
+				return err
+			}
 		}
 	case model.ActionReorganizePartition:
 		globalTableInfo, addedPartInfo, _ := t.GetReorganizePartitionInfo()
