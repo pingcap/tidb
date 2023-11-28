@@ -36,8 +36,18 @@ func NewPosAndBuf(col *chunk.Column, idx int) PosAndBuf {
 		Pos: &pos}
 }
 
-func deserializeLength(posAndBuf PosAndBuf) int {
-	return DeserializeInt(posAndBuf)
+func deserializeBuffer(posAndBuf PosAndBuf) []byte {
+	bufLen := DeserializeInt(posAndBuf) // Get buffer length
+	retVal := posAndBuf.Buf[*posAndBuf.Pos : *posAndBuf.Pos+int64(bufLen)]
+	*posAndBuf.Pos += int64(bufLen)
+	return retVal
+}
+
+// DeserializeByte deserializes byte type
+func DeserializeByte(posAndBuf PosAndBuf) byte {
+	retVal := posAndBuf.Buf[*posAndBuf.Pos]
+	*posAndBuf.Pos++
+	return retVal
 }
 
 // DeserializeBool deserializes bool type
@@ -150,10 +160,9 @@ func DeserializeJSONTypeCode(posAndBuf PosAndBuf) types.JSONTypeCode {
 func DeserializeBinaryJSON(posAndBuf PosAndBuf) types.BinaryJSON {
 	retValue := types.BinaryJSON{}
 	retValue.TypeCode = DeserializeJSONTypeCode(posAndBuf)
-	jsonValueLen := deserializeLength(posAndBuf)
-	retValue.Value = make([]byte, jsonValueLen)
-	copy(retValue.Value, posAndBuf.Buf[*posAndBuf.Pos:*posAndBuf.Pos+int64(jsonValueLen)])
-	*posAndBuf.Pos += int64(jsonValueLen)
+	buf := deserializeBuffer(posAndBuf)
+	retValue.Value = make([]byte, len(buf))
+	copy(retValue.Value, buf)
 	return retValue
 }
 
@@ -176,29 +185,24 @@ func DeserializeEnum(posAndBuf PosAndBuf) types.Enum {
 // DeserializeOpaque deserializes Opaque type
 func DeserializeOpaque(posAndBuf PosAndBuf) types.Opaque {
 	retVal := types.Opaque{}
-	retVal.TypeCode = posAndBuf.Buf[*posAndBuf.Pos]
-	*posAndBuf.Pos++
-	retValBufLen := deserializeLength(posAndBuf)
-	retVal.Buf = make([]byte, retValBufLen)
-	copy(retVal.Buf, posAndBuf.Buf[*posAndBuf.Pos:*posAndBuf.Pos+int64(retValBufLen)])
-	*posAndBuf.Pos += int64(retValBufLen)
+	retVal.TypeCode = DeserializeByte(posAndBuf)
+	buf := deserializeBuffer(posAndBuf)
+	retVal.Buf = make([]byte, len(buf))
+	copy(retVal.Buf, buf)
 	return retVal
 }
 
 // DeserializeString deserializes String type
 func DeserializeString(posAndBuf PosAndBuf) string {
-	strLen := deserializeLength(posAndBuf)
-	retVal := string(posAndBuf.Buf[*posAndBuf.Pos : *posAndBuf.Pos+int64(strLen)])
-	*posAndBuf.Pos += int64(strLen)
-	return retVal
+	buf := deserializeBuffer(posAndBuf)
+	return string(buf)
 }
 
 // DeserializeBytesBuffer deserializes bytes.Buffer type
 func DeserializeBytesBuffer(posAndBuf PosAndBuf) *bytes.Buffer {
-	bufLen := deserializeLength(posAndBuf)
-	tmp := make([]byte, bufLen)
-	copy(tmp, posAndBuf.Buf[*posAndBuf.Pos:*posAndBuf.Pos+int64(bufLen)])
-	*posAndBuf.Pos += int64(bufLen)
+	buf := deserializeBuffer(posAndBuf)
+	tmp := make([]byte, len(buf))
+	copy(tmp, buf)
 	return bytes.NewBuffer(tmp)
 }
 
