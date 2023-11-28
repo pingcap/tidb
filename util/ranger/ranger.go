@@ -414,7 +414,7 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 	rangePoints := getFullRange()
 	for _, cond := range accessConditions {
 		collator := collate.GetCollator(tp.GetCollate())
-		rangePoints = rb.intersection(rangePoints, rb.build(cond, collator), collator)
+		rangePoints = rb.intersection(rangePoints, rb.build(cond, collator, colLen), collator)
 		if rb.err != nil {
 			return nil, nil, nil, errors.Trace(rb.err)
 		}
@@ -438,17 +438,6 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 		return ranges, nil, accessConditions, nil
 	}
 	if colLen != types.UnspecifiedLength {
-		for _, ran := range ranges {
-			// If the length of the last column of LowVal is equal to the prefix length, LowExclude should be set false.
-			// For example, `col_varchar > 'xx'` should be converted to range [xx, +inf) when the prefix index length of
-			// `col_varchar` is 2. Otherwise we would miss values like 'xxx' if we execute (xx, +inf) index range scan.
-			if CutDatumByPrefixLen(&ran.LowVal[0], colLen, tp) || ReachPrefixLen(&ran.LowVal[0], colLen, tp) {
-				ran.LowExclude = false
-			}
-			if CutDatumByPrefixLen(&ran.HighVal[0], colLen, tp) {
-				ran.HighExclude = false
-			}
-		}
 		ranges, err = UnionRanges(sctx, ranges, true)
 		if err != nil {
 			return nil, nil, nil, err
@@ -492,7 +481,7 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 	)
 	for i := 0; i < eqAndInCount; i++ {
 		// Build ranges for equal or in access conditions.
-		point := rb.build(accessConds[i], collate.GetCollator(newTp[i].GetCollate()))
+		point := rb.build(accessConds[i], collate.GetCollator(newTp[i].GetCollate()), d.lengths[i])
 		if rb.err != nil {
 			return nil, nil, nil, errors.Trace(rb.err)
 		}
@@ -513,7 +502,7 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 	// Build rangePoints for non-equal access conditions.
 	for i := eqAndInCount; i < len(accessConds); i++ {
 		collator := collate.GetCollator(newTp[eqAndInCount].GetCollate())
-		rangePoints = rb.intersection(rangePoints, rb.build(accessConds[i], collator), collator)
+		rangePoints = rb.intersection(rangePoints, rb.build(accessConds[i], collator, d.lengths[eqAndInCount]), collator)
 		if rb.err != nil {
 			return nil, nil, nil, errors.Trace(rb.err)
 		}
@@ -543,11 +532,9 @@ func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType, eqAndInCoun
 
 	// Take prefix index into consideration.
 	if hasPrefix(d.lengths) {
-		if fixPrefixColRange(ranges, d.lengths, newTp) {
-			ranges, err = UnionRanges(d.sctx, ranges, d.mergeConsecutive)
-			if err != nil {
-				return nil, nil, nil, errors.Trace(err)
-			}
+		ranges, err = UnionRanges(d.sctx, ranges, d.mergeConsecutive)
+		if err != nil {
+			return nil, nil, nil, errors.Trace(err)
 		}
 	}
 
@@ -618,47 +605,28 @@ func hasPrefix(lengths []int) bool {
 	return false
 }
 
-// fixPrefixColRange checks whether the range of one column exceeds the length and needs to be cut.
-// It specially handles the last column of each range point. If the last one need to be cut, it will
-// change the exclude status of that point and return `true` to tell
-// that we need do a range merging since that interval may have intersection.
-// e.g. if the interval is (-inf -inf, a xxxxx), (a xxxxx, +inf +inf) and the length of the last column is 3,
-//
-//	then we'll change it to (-inf -inf, a xxx], [a xxx, +inf +inf). You can see that this two interval intersect,
-//	so we need a merge operation.
-//
-// Q: only checking the last column to decide whether the endpoint's exclude status needs to be reset is enough?
-// A: Yes, suppose that the interval is (-inf -inf, a xxxxx b) and only the second column needs to be cut.
-//
-//	The result would be (-inf -inf, a xxx b) if the length of it is 3. Obviously we only need to care about the data
-//	whose the first two key is `a` and `xxx`. It read all data whose index value begins with `a` and `xxx` and the third
-//	value less than `b`, covering the values begin with `a` and `xxxxx` and the third value less than `b` perfectly.
-//	So in this case we don't need to reset its exclude status. The right endpoint case can be proved in the same way.
-func fixPrefixColRange(ranges Ranges, lengths []int, tp []*types.FieldType) bool {
-	var hasCut bool
-	for _, ran := range ranges {
-		lowTail := len(ran.LowVal) - 1
-		for i := 0; i < lowTail; i++ {
-			hasCut = CutDatumByPrefixLen(&ran.LowVal[i], lengths[i], tp[i]) || hasCut
-		}
-		lowCut := CutDatumByPrefixLen(&ran.LowVal[lowTail], lengths[lowTail], tp[lowTail])
-		// If the length of the last column of LowVal is equal to the prefix length, LowExclude should be set false.
-		// For example, `col_varchar > 'xx'` should be converted to range [xx, +inf) when the prefix index length of
-		// `col_varchar` is 2. Otherwise we would miss values like 'xxx' if we execute (xx, +inf) index range scan.
-		if lowCut || ReachPrefixLen(&ran.LowVal[lowTail], lengths[lowTail], tp[lowTail]) {
-			ran.LowExclude = false
-		}
-		highTail := len(ran.HighVal) - 1
-		for i := 0; i < highTail; i++ {
-			hasCut = CutDatumByPrefixLen(&ran.HighVal[i], lengths[i], tp[i]) || hasCut
-		}
-		highCut := CutDatumByPrefixLen(&ran.HighVal[highTail], lengths[highTail], tp[highTail])
-		if highCut {
-			ran.HighExclude = false
-		}
-		hasCut = hasCut || lowCut || highCut
+// cutPrefixForPoints cuts the prefix of points according to the prefix length of the prefix index.
+// It may modify the point.value and point.excl. The modification is in-place.
+// This function doesn't require the start and end points to be paired in the input.
+func cutPrefixForPoints(points []*point, length int, tp *types.FieldType) {
+	if length == types.UnspecifiedLength {
+		return
 	}
-	return hasCut
+	for _, p := range points {
+		if p == nil {
+			continue
+		}
+		cut := CutDatumByPrefixLen(&p.value, length, tp)
+		// In two cases, we need to convert the exclusive point to an inclusive point.
+		// case 1: we actually cut the value to accommodate the prefix index.
+		if cut ||
+			// case 2: the value is already equal to the prefix index.
+			// For example, col_varchar > 'xx' should be converted to range [xx, +inf) when the prefix index length of
+			// `col_varchar` is 2. Otherwise, we would miss values like 'xxx' if we execute (xx, +inf) index range scan.
+			(p.start && ReachPrefixLen(&p.value, length, tp)) {
+			p.excl = false
+		}
+	}
 }
 
 // CutDatumByPrefixLen cuts the datum according to the prefix length.
