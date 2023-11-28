@@ -173,7 +173,7 @@ func (e *SQLBindExec) captureBindings() {
 }
 
 func (e *SQLBindExec) evolveBindings() error {
-	return domain.GetDomain(e.Ctx()).BindHandle().HandleEvolvePlanTask(e.Ctx(), true)
+	return nil // not support yet
 }
 
 func (e *SQLBindExec) reloadBindings() error {

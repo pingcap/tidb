@@ -336,19 +336,6 @@ func TestBindingSource(t *testing.T) {
 	bind := bindData.Bindings[0]
 	require.Equal(t, bindinfo.Manual, bind.Source)
 
-	// Test Source for evolved sql
-	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
-	tk.MustQuery("select * from t where a > 10")
-	bindHandle.SaveEvolveTasksToStore()
-	sql, sqlDigest = internal.UtilNormalizeWithDefaultDB(t, "select * from t where a > ?")
-	bindData = bindHandle.GetGlobalBinding(sqlDigest, sql, "test")
-	require.NotNil(t, bindData)
-	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
-	require.Len(t, bindData.Bindings, 2)
-	bind = bindData.Bindings[1]
-	require.Equal(t, bindinfo.Evolve, bind.Source)
-	tk.MustExec("set @@tidb_evolve_plan_baselines=0")
-
 	// Test Source for captured sqls
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")
