@@ -9,7 +9,7 @@ COL1	COL2	COL3	COL4
 set @a=-27225, @b='-836:46:08';
 execute stmt using @a,@b;
 COL1	COL2	COL3	COL4
-O۠�Bٙ�0���Ǉ���F	�t	-836:46:08	735655453
+�O۠�Bٙ�0����Ǉ���F �t -836:46:08 735655453
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
