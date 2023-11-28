@@ -470,7 +470,6 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	})
 	sortDuration = time.Since(sortStart)
 
-	// TODO(lance6716): async write?
 	writeStartTime = time.Now()
 	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("sort").Observe(sortDuration.Seconds())
 	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort").Observe(float64(savedBytes) / 1024.0 / 1024.0 / sortDuration.Seconds())
