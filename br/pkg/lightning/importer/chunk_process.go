@@ -208,9 +208,8 @@ func (cr *chunkProcessor) process(
 	logTask := logger.Begin(zap.InfoLevel, "restore file")
 
 	go func() {
-		time.Sleep(5 * time.Second)
-		currentTime := time.Now().Unix()
-		name := fmt.Sprintf("heap_profile_%v", currentTime)
+		currentTime := time.Now().UnixNano()
+		name := fmt.Sprintf("heap_profile_%v.prof", currentTime)
 		file, err := os.Create(name)
 		if err != nil {
 			panic("pprof error")
