@@ -16604,6 +16604,10 @@
           "dashLength": 10,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "TiDB auto id client connection reset counter",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "fill": 1,
           "gridPos": {
             "h": 7,
@@ -16627,13 +16631,17 @@
           "linewidth": 1,
           "links": [],
           "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "pluginVersion": "7.5.11",
           "pointradius": 5,
           "renderer": "flot",
           "seriesOverrides": [],
           "spaceLength": 10,
           "targets": [
             {
-              "expr": "sum(tidb_meta_autoid_client_conn_reset_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}) by (instance)",
+              "expr": "increase(tidb_meta_autoid_client_conn_reset_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[2m])",
               "legendFormat": "",
               "interval": "",
               "exemplar": true,
@@ -16660,44 +16668,39 @@
           },
           "yaxes": [
             {
-              "format": "s",
+              "format": "short",
               "label": null,
-              "logBase": 2,
+              "logBase": 1,
               "max": null,
-              "min": "0.001",
-              "show": true
+              "min": "1",
+              "show": true,
+              "$$hashKey": "object:259",
+              "decimals": null
             },
             {
               "format": "short",
               "label": null,
               "logBase": 1,
               "max": null,
-              "min": null,
-              "show": true
+              "min": "1",
+              "show": true,
+              "$$hashKey": "object:260"
             }
           ],
           "yaxis": {
             "align": false,
             "alignLevel": null
           },
-          "options": {
-            "alertThreshold": true
-          },
-          "fieldConfig": {
-            "defaults": {},
-            "overrides": []
-          },
-          "pluginVersion": "7.5.11",
           "bars": false,
           "dashes": false,
+          "fillGradient": 0,
+          "hiddenSeries": false,
           "percentage": false,
           "points": false,
           "stack": false,
           "steppedLine": false,
           "timeFrom": null,
-          "timeShift": null,
-          "fillGradient": 0,
-          "hiddenSeries": false
+          "timeShift": null
         }
       ],
       "repeat": null,
