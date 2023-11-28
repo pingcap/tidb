@@ -1394,7 +1394,7 @@ func RemoveDupExprs(exprs []Expression) []Expression {
 func GetUint64FromConstant(ctx sessionctx.Context, expr Expression) (uint64, bool, bool) {
 	con, ok := expr.(*Constant)
 	if !ok {
-		logutil.BgLogger().Warn("not a constant expression", zap.String("expression", expr.ExplainInfo()))
+		logutil.BgLogger().Warn("not a constant expression", zap.String("expression", expr.ExplainInfo(ctx)))
 		return 0, false, false
 	}
 	dt := con.Value

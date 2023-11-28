@@ -977,6 +977,33 @@ func TestBindSQLDigest(t *testing.T) {
 	}
 }
 
+func TestSimplifiedCreateBinding(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, key(a))`)
+
+	check := func(scope, sql, binding string) {
+		r := tk.MustQuery(fmt.Sprintf("show %s bindings", scope)).Rows()
+		require.Equal(t, len(r), 1)
+		require.Equal(t, r[0][0].(string), sql)
+		require.Equal(t, r[0][1].(string), binding)
+	}
+
+	tk.MustExec(`create binding using select /*+ use_index(t, a) */ * from t`)
+	check("", "select * from `test` . `t`", "SELECT /*+ use_index(`t` `a`)*/ * FROM `test`.`t`")
+	tk.MustExec(`drop binding for select * from t`)
+	tk.MustExec(`create binding using select /*+ use_index(t, a) */ * from t where a<10`)
+	check("", "select * from `test` . `t` where `a` < ?", "SELECT /*+ use_index(`t` `a`)*/ * FROM `test`.`t` WHERE `a` < 10")
+	tk.MustExec(`drop binding for select * from t where a<10`)
+	tk.MustExec(`create global binding using select /*+ use_index(t, a) */ * from t where a in (1)`)
+	check("global", "select * from `test` . `t` where `a` in ( ... )", "SELECT /*+ use_index(`t` `a`)*/ * FROM `test`.`t` WHERE `a` IN (1)")
+	tk.MustExec(`drop global binding for select * from t where a in (1)`)
+	tk.MustExec(`create global binding using select /*+ use_index(t, a) */ * from t where a in (1,2,3)`)
+	check("global", "select * from `test` . `t` where `a` in ( ... )", "SELECT /*+ use_index(`t` `a`)*/ * FROM `test`.`t` WHERE `a` IN (1,2,3)")
+	tk.MustExec(`drop global binding for select * from t where a in (1,2,3)`)
+}
+
 func TestDropBindBySQLDigest(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
