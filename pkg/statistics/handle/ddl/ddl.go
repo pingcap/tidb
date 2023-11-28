@@ -19,6 +19,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 type ddlHandlerImpl struct {
@@ -118,11 +120,20 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 	case model.ActionDropTablePartition:
 		globalTableInfo, droppedPartitionInfo := t.GetDropPartitionInfo()
 
-		var delta int64
-		var count int64
+		delta := int64(0)
+		count := int64(0)
 		for _, def := range droppedPartitionInfo.Definitions {
 			// Get the count and modify count of the partition.
 			stats := h.statsHandler.GetPartitionStats(globalTableInfo, def.ID)
+			if stats.Pseudo {
+				logutil.BgLogger().Warn(
+					"drop partition with pseudo stats, "+
+						"usually it won't happen because we always load stats when initializing the handle",
+					zap.String("table", globalTableInfo.Name.O),
+					zap.String("partition", def.Name.O),
+				)
+				break
+			}
 			delta -= stats.RealtimeCount
 			count += stats.RealtimeCount
 			if err := h.statsWriter.ResetTableStats2KVForDrop(def.ID); err != nil {
