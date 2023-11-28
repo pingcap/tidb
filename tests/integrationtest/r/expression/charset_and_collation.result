@@ -883,7 +883,7 @@ CREATE TABLE t (`COL1` tinyblob NOT NULL,  `COL2` binary(1) NOT NULL,  `COL3` bi
 insert into t values(0x1E,0xEC,6966939640596047133);
 select * from t where col1 not in (0x1B,0x20) order by col1;
 COL1	COL2	COL3
-	�	6966939640596047133
+	�	6966939640596047133
 drop table if exists t;
 create table t(a varchar(10));
 insert into t values('aaaaaaaaa'),('天王盖地虎宝塔镇河妖');
