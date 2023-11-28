@@ -9,19 +9,19 @@ COL1	COL2	COL3	COL4
 set @a=-27225, @b='-836:46:08';
 execute stmt using @a,@b;
 COL1	COL2	COL3	COL4
-ï¿½OÛ ï¿½BÙ™ï¿½0ï¿½ï¿½ï¿½ï¿½Ç‡ï¿½ï¿½ï¿½F ï¿½t -836:46:08 735655453
+OÛ ›BÙ™¬0¶©ÀÇ‡û „F	Êt	-836:46:08	735655453
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
 execute stmt using @a,@b;
 COL1	COL2	COL3	COL4
-OÛ ï¿½BÙ™ï¿½0ï¿½ï¿½ï¿½Ç‡ï¿½ï¿½ï¿½F	ï¿½t	-836:46:08	735655453
+OÛ ›BÙ™¬0¶©ÀÇ‡û „F	Êt	-836:46:08	735655453
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 1
 select * from UK_MU15569 where col2 >= -27225 and col1 is not null and col3 = '-836:46:08';
 COL1	COL2	COL3	COL4
-OÛ ï¿½BÙ™ï¿½0ï¿½ï¿½ï¿½Ç‡ï¿½ï¿½ï¿½F	ï¿½t	-836:46:08	735655453
+OÛ ›BÙ™¬0¶©ÀÇ‡û „F	Êt	-836:46:08	735655453
 set tidb_enable_prepared_plan_cache=1;
 drop table if exists IDT_MULTI15844STROBJSTROBJ;
 CREATE TABLE `IDT_MULTI15844STROBJSTROBJ` (`COL1` enum('bb','aa') DEFAULT NULL,`COL2` smallint(41) DEFAULT NULL,`COL3` year(4) DEFAULT NULL,KEY `U_M_COL4` (`COL1`,`COL2`),KEY `U_M_COL5` (`COL3`,`COL2`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
