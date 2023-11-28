@@ -17,9 +17,9 @@ package ddl
 import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -126,7 +126,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 			// Get the count and modify count of the partition.
 			stats := h.statsHandler.GetPartitionStats(globalTableInfo, def.ID)
 			if stats.Pseudo {
-				logutil.BgLogger().Warn(
+				logutil.StatsLogger.Warn(
 					"drop partition with pseudo stats, "+
 						"usually it won't happen because we always load stats when initializing the handle",
 					zap.String("table", globalTableInfo.Name.O),

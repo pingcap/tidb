@@ -8,9 +8,9 @@ go_library(
     deps = [
         "//pkg/parser/model",
         "//pkg/sessionctx/variable",
+        "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/util",
-        "//pkg/util/logutil",
         "@org_uber_go_zap//:zap",
     ],
 )
