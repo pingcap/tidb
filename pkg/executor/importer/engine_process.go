@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/executor/asyncloaddata"
 	"go.uber.org/zap"
 )
@@ -78,15 +79,21 @@ func ProcessChunkWith(
 	progress *asyncloaddata.Progress,
 	logger *zap.Logger,
 ) error {
-	parser, err := tableImporter.getParser(ctx, chunk)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err2 := parser.Close(); err2 != nil {
-			logger.Warn("close parser failed", zap.Error(err2))
+	var (
+		err    error
+		parser mydump.Parser
+	)
+	if tableImporter.DataSourceType == DataSourceTypeFile {
+		parser, err = tableImporter.getParser(ctx, chunk)
+		if err != nil {
+			return err
 		}
-	}()
+		defer func() {
+			if err2 := parser.Close(); err2 != nil {
+				logger.Warn("close parser failed", zap.Error(err2))
+			}
+		}()
+	}
 	encoder, err := tableImporter.getKVEncoder(chunk)
 	if err != nil {
 		return err
@@ -99,10 +106,18 @@ func ProcessChunkWith(
 
 	// TODO: right now we use this chunk processor for global sort too, will
 	// impl another one for it later.
-	cp := NewLocalSortChunkProcessor(
-		parser, encoder, tableImporter.kvStore.GetCodec(), chunk, logger,
-		tableImporter.diskQuotaLock, dataWriter, indexWriter,
-	)
+	var cp ChunkProcessor
+	if tableImporter.DataSourceType == DataSourceTypeQuery {
+		cp = newQueryChunkProcessor(
+			tableImporter.rowCh, encoder, tableImporter.kvStore.GetCodec(), chunk, logger,
+			tableImporter.diskQuotaLock, dataWriter, indexWriter,
+		)
+	} else {
+		cp = NewLocalSortChunkProcessor(
+			parser, encoder, tableImporter.kvStore.GetCodec(), chunk, logger,
+			tableImporter.diskQuotaLock, dataWriter, indexWriter,
+		)
+	}
 	err = cp.Process(ctx)
 	if err != nil {
 		return err

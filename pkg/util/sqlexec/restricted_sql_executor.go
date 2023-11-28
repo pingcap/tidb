@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -234,4 +235,18 @@ func DrainRecordSet(ctx context.Context, rs RecordSet, maxChunkSize int) ([]chun
 		}
 		req = chunk.Renew(req, maxChunkSize)
 	}
+}
+
+// ExecSQL executes the sql and returns the result.
+// TODO: consider retry.
+func ExecSQL(ctx context.Context, se sessionctx.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
+	rs, err := se.(SQLExecutor).ExecuteInternal(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	if rs != nil {
+		defer terror.Call(rs.Close)
+		return DrainRecordSet(ctx, rs, 1024)
+	}
+	return nil, nil
 }

@@ -2077,6 +2077,8 @@ type ImportIntoStmt struct {
 	Path               string
 	Format             *string
 	Options            []*LoadDataOpt
+
+	Select ResultSetNode
 }
 
 var _ SensitiveStmtNode = &ImportIntoStmt{}
@@ -2113,10 +2115,16 @@ func (n *ImportIntoStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 	ctx.WriteKeyWord(" FROM ")
-	ctx.WriteString(n.Path)
-	if n.Format != nil {
-		ctx.WriteKeyWord(" FORMAT ")
-		ctx.WriteString(*n.Format)
+	if n.Select != nil {
+		if err := n.Select.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ImportIntoStmt.Select")
+		}
+	} else {
+		ctx.WriteString(n.Path)
+		if n.Format != nil {
+			ctx.WriteKeyWord(" FORMAT ")
+			ctx.WriteString(*n.Format)
+		}
 	}
 
 	if len(n.Options) > 0 {
@@ -2163,6 +2171,15 @@ func (n *ImportIntoStmt) Accept(v Visitor) (Node, bool) {
 		}
 		n.ColumnAssignments[i] = node.(*Assignment)
 	}
+
+	if n.Select != nil {
+		node, ok := n.Select.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Select = node.(ResultSetNode)
+	}
+
 	return v.Leave(n)
 }
 

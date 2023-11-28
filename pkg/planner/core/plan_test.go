@@ -777,3 +777,20 @@ func TestExplainValuesStatement(t *testing.T) {
 
 	tk.MustMatchErrMsg("EXPLAIN FORMAT = TRADITIONAL ((VALUES ROW ()) ORDER BY 1)", ".*Unknown table ''.*")
 }
+
+func TestImportIntoBuildPlan(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int, b int);")
+	tk.MustExec("create table t2 (a int, b int);")
+	require.ErrorIs(t, tk.ExecToErr("IMPORT INTO t1 FROM select a from t2;"),
+		core.ErrWrongValueCountOnRow)
+	require.ErrorIs(t, tk.ExecToErr("IMPORT INTO t1(a) FROM select * from t2;"),
+		core.ErrWrongValueCountOnRow)
+	require.ErrorIs(t, tk.ExecToErr("IMPORT INTO t1(a, @1) FROM select * from t2;"),
+		core.ErrUnknownColumn)
+	require.ErrorIs(t, tk.ExecToErr("IMPORT INTO t1(a, @b) FROM select * from t2;"),
+		core.ErrUnknownColumn)
+}

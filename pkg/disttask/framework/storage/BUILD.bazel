@@ -11,7 +11,6 @@ go_library(
     deps = [
         "//pkg/disttask/framework/proto",
         "//pkg/kv",
-        "//pkg/parser/terror",
         "//pkg/sessionctx",
         "//pkg/util/chunk",
         "//pkg/util/intest",
