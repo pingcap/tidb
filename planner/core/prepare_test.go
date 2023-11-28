@@ -3065,3 +3065,28 @@ func TestIssue42150(t *testing.T) {
 	tk.MustExec("execute st")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
+
+func TestIssue42739(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists t0;")
+	tk.MustExec("CREATE TABLE t0 (c1 double, c2 double);")
+	tk.MustExec(`select
+  exists (
+    select
+          subq_2.c0 as c8
+        from
+          (select
+                ref_153.c1 as c0
+              from
+                t0 as ref_153
+              group by ref_153.c1 having 0 <> (
+                  select 1
+                    from
+                      t0 as ref_173
+                    where count(ref_153.c2) = avg(ref_153.c2)
+                    order by c1 desc limit 1)) as subq_2
+     ) as c10;`)
+}
