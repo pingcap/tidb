@@ -42,6 +42,7 @@ type TaskManager interface {
 	GetNodesByRole(ctx context.Context, role string) (map[string]bool, error)
 	GetSchedulerIDsByTaskID(ctx context.Context, taskID int64) ([]string, error)
 	GetSubtasksByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.TaskState) ([]*proto.Subtask, error)
+	GetSubtasksByExecIdsAndStep(ctx context.Context, tidbIDs []string, taskID int64, step proto.Step) ([]*proto.Subtask, error)
 	GetSchedulerIDsByTaskIDAndStep(ctx context.Context, taskID int64, step proto.Step) ([]string, error)
 
 	WithNewSession(fn func(se sessionctx.Context) error) error

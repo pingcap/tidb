@@ -385,6 +385,26 @@ func (stm *TaskManager) GetSubtasksInStates(ctx context.Context, tidbID string, 
 	return subtasks, nil
 }
 
+// GetSubtasksByExecIdAndStep gets all subtasks by given taskID, exec_id and step.
+func (stm *TaskManager) GetSubtasksByExecIdsAndStep(ctx context.Context, tidbIDs []string, taskID int64, step proto.Step) ([]*proto.Subtask, error) {
+	args := []interface{}{taskID, step}
+	for _, tidbID := range tidbIDs {
+		args = append(args, tidbID)
+	}
+	rs, err := stm.executeSQLWithNewSession(ctx, `select * from mysql.tidb_background_subtask
+		where task_key = %? and step = %?
+		and exec_id in (`+strings.Repeat("%?,", len(tidbIDs)-1)+"%?)", args...)
+	if err != nil {
+		return nil, err
+	}
+
+	subtasks := make([]*proto.Subtask, len(rs))
+	for i, row := range rs {
+		subtasks[i] = row2SubTask(row)
+	}
+	return subtasks, nil
+}
+
 // GetFirstSubtaskInStates gets the first subtask by given states.
 func (stm *TaskManager) GetFirstSubtaskInStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...interface{}) (*proto.Subtask, error) {
 	args := []interface{}{tidbID, taskID, step}

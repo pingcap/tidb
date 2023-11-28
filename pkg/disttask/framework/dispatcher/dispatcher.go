@@ -419,6 +419,7 @@ func (d *BaseDispatcher) replaceTaskNodes() {
 }
 
 // BalanceSubtasks make count of subtasks on each liveNodes balanced and clean up subtasks on dead nodes.
+// TODO(ywqzzy): refine to make it easier for testing.
 func (d *BaseDispatcher) BalanceSubtasks() error {
 	// 1. find out nodes need to clean subtasks.
 	cleanNodes := make([]string, 0)
@@ -433,6 +434,15 @@ func (d *BaseDispatcher) BalanceSubtasks() error {
 	subtasks, err := d.taskMgr.GetSubtasksByStepAndState(d.ctx, d.Task.ID, d.Task.Step, proto.TaskStatePending)
 	if err != nil {
 		return err
+	}
+	if len(cleanNodes) != 0 {
+		/// get subtask from deadNodes, since there might be some running subtasks on deadNodes.
+		/// In this case, all subtasks on cleanNodes are in running/pending state.
+		subtasksOnDeadNodes, err := d.taskMgr.GetSubtasksByExecIdsAndStep(d.ctx, cleanNodes, d.Task.ID, d.Task.Step)
+		if err != nil {
+			return err
+		}
+		subtasks = append(subtasks, subtasksOnDeadNodes...)
 	}
 	// 3. group subtasks for each scheduler.
 	subtasksOnScheduler := make(map[string][]*proto.Subtask, len(d.LiveNodes)+len(deadNodes))
@@ -453,11 +463,24 @@ func (d *BaseDispatcher) BalanceSubtasks() error {
 			rebalanceSubtasks = append(rebalanceSubtasks, v...)
 			continue
 		}
+		// When no tidb scale-in/out and averageSubtaskCnt*len(d.LiveNodes) < len(subtasks),
+		// no need to send subtask to other nodes.
+		// eg: tidb1 with 3 subtasks, tidb2 with 2 subtasks, subtasks are balanced now.
+		if averageSubtaskCnt*len(d.LiveNodes) < len(subtasks) && len(d.TaskNodes) == len(d.LiveNodes) {
+			if len(v) > averageSubtaskCnt+1 {
+				rebalanceSubtasks = append(rebalanceSubtasks, v[0:len(v)-averageSubtaskCnt]...)
+			}
+			continue
+		}
 		if len(v) > averageSubtaskCnt {
 			rebalanceSubtasks = append(rebalanceSubtasks, v[0:len(v)-averageSubtaskCnt]...)
 		}
 	}
-	// 5.rebalance subtasks to other nodes.
+	// 5. skip rebalance.
+	if len(rebalanceSubtasks) == 0 {
+		return nil
+	}
+	// 6.rebalance subtasks to other nodes.
 	rebalanceIdx := 0
 	for k, v := range subtasksOnScheduler {
 		if ok := deadNodes[k]; !ok {
@@ -469,7 +492,7 @@ func (d *BaseDispatcher) BalanceSubtasks() error {
 			}
 		}
 	}
-	// 6. rebalance rest subtasks evenly to liveNodes.
+	// 7. rebalance rest subtasks evenly to liveNodes.
 	liveNodeIdx := 0
 	for rebalanceIdx < len(rebalanceSubtasks) {
 		node := d.LiveNodes[liveNodeIdx]
@@ -477,7 +500,8 @@ func (d *BaseDispatcher) BalanceSubtasks() error {
 		rebalanceIdx++
 		liveNodeIdx++
 	}
-	// 7. update subtasks and do clean up logic.
+
+	// 8. update subtasks and do clean up logic.
 	if err = d.taskMgr.UpdateSubtasksSchedulerIDs(d.ctx, d.Task.ID, subtasks); err != nil {
 		return err
 	}

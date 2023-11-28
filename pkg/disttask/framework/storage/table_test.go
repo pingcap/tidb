@@ -314,6 +314,21 @@ func TestSubTaskTable(t *testing.T) {
 	subtasks, err = sm.GetSubtasksByStepAndState(ctx, 5, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
 	require.Equal(t, "tidb2", subtasks[0].SchedulerID)
+
+	// test GetSubtasksByExecIdsAndStep
+	require.NoError(t, sm.AddNewSubTask(ctx, 6, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, false))
+	meta1 := []byte("test1")
+	require.NoError(t, sm.AddNewSubTask(ctx, 6, proto.StepInit, "tidb1", meta1, proto.TaskTypeExample, false))
+	subtasks, err = sm.GetSubtasksByStepAndState(ctx, 6, proto.StepInit, proto.TaskStatePending)
+	require.NoError(t, err)
+	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, "tidb1", subtasks[0].ID, proto.TaskStateRunning, nil))
+	subtasks, err = sm.GetSubtasksByExecIdsAndStep(ctx, []string{"tidb1"}, 6, proto.StepInit)
+	require.NoError(t, err)
+	require.Equal(t, 2, len(subtasks))
+	require.NoError(t, sm.AddNewSubTask(ctx, 6, proto.StepInit, "tidb2", meta1, proto.TaskTypeExample, false))
+	subtasks, err = sm.GetSubtasksByExecIdsAndStep(ctx, []string{"tidb1", "tidb2"}, 6, proto.StepInit)
+	require.NoError(t, err)
+	require.Equal(t, 3, len(subtasks))
 }
 
 func TestBothGlobalAndSubTaskTable(t *testing.T) {

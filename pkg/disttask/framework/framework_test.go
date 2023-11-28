@@ -126,6 +126,7 @@ func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, m *sync.Map, dispat
 			return nil
 		}).AnyTimes()
 	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()
+	mockExtension.EXPECT().IsIdempotent(gomock.Any()).Return(true).AnyTimes()
 	registerTaskMetaInner(t, proto.TaskTypeExample, mockExtension, mockCleanupRountine, dispatcherHandle)
 }
 

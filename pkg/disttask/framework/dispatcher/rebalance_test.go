@@ -55,8 +55,11 @@ func scaleTest(t *testing.T,
 	mockTaskMgr.EXPECT().GetSubtasksByStepAndState(ctx, int64(id), proto.StepInit, proto.TaskStatePending).Return(
 		testCase.subtasks,
 		nil)
-	mockTaskMgr.EXPECT().UpdateSubtasksSchedulerIDs(ctx, int64(id), testCase.subtasks).Return(nil)
-	mockTaskMgr.EXPECT().CleanUpMeta(ctx, testCase.cleanedNodes).Return(nil)
+	mockTaskMgr.EXPECT().UpdateSubtasksSchedulerIDs(ctx, int64(id), testCase.subtasks).Return(nil).AnyTimes()
+	mockTaskMgr.EXPECT().CleanUpMeta(ctx, testCase.cleanedNodes).Return(nil).AnyTimes()
+	if len(testCase.cleanedNodes) > 0 {
+		mockTaskMgr.EXPECT().GetSubtasksByExecIdsAndStep(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
+	}
 	dsp := dispatcher.NewBaseDispatcher(ctx, mockTaskMgr, "server", &proto.Task{Step: proto.StepInit, ID: int64(id)})
 	dsp.LiveNodes = testCase.liveNodes
 	dsp.TaskNodes = testCase.taskNodes
@@ -79,9 +82,9 @@ func balanceTest(t *testing.T,
 	mockTaskMgr.EXPECT().GetSubtasksByStepAndState(ctx, int64(id), proto.StepInit, proto.TaskStatePending).Return(
 		testCase.subtasks,
 		nil)
-	mockTaskMgr.EXPECT().CleanUpMeta(ctx, gomock.Any()).Return(nil)
+	mockTaskMgr.EXPECT().CleanUpMeta(ctx, gomock.Any()).Return(nil).AnyTimes()
 
-	mockTaskMgr.EXPECT().UpdateSubtasksSchedulerIDs(ctx, int64(id), testCase.subtasks).Return(nil)
+	mockTaskMgr.EXPECT().UpdateSubtasksSchedulerIDs(ctx, int64(id), testCase.subtasks).Return(nil).AnyTimes()
 	dsp := dispatcher.NewBaseDispatcher(ctx, mockTaskMgr, "server", &proto.Task{Step: proto.StepInit, ID: int64(id)})
 	dsp.LiveNodes = testCase.liveNodes
 	dsp.TaskNodes = testCase.taskNodes
@@ -108,7 +111,6 @@ func TestScaleOutNodes(t *testing.T) {
 	testCases := []scaleTestCase{
 		// 1. scale out from 1 node to 2 nodes. 4 subtasks.
 		{
-			/// 1.1 4 subtasks.
 			[]*proto.Subtask{
 				{SchedulerID: "1.1.1.1:4000"},
 				{SchedulerID: "1.1.1.1:4000"},
@@ -521,6 +523,38 @@ func TestRebalanceWithoutScale(t *testing.T) {
 				{SchedulerID: "1.1.1.3:4000"},
 				{SchedulerID: "1.1.1.4:4000"},
 				{SchedulerID: "1.1.1.5:4000"}},
+		},
+		// 5. no balance needed. tidb1:2, tidb2:3
+		{
+			[]*proto.Subtask{
+				{SchedulerID: "1.1.1.1:4000"},
+				{SchedulerID: "1.1.1.1:4000"},
+				{SchedulerID: "1.1.1.2:4000"},
+				{SchedulerID: "1.1.1.2:4000"},
+				{SchedulerID: "1.1.1.2:4000"}},
+			[]*infosync.ServerInfo{{IP: "1.1.1.1", Port: 4000}, {IP: "1.1.1.2", Port: 4000}},
+			[]string{"1.1.1.1:4000", "1.1.1.2:4000"},
+			[]*proto.Subtask{
+				{SchedulerID: "1.1.1.1:4000"},
+				{SchedulerID: "1.1.1.1:4000"},
+				{SchedulerID: "1.1.1.2:4000"},
+				{SchedulerID: "1.1.1.2:4000"},
+				{SchedulerID: "1.1.1.2:4000"}},
+		},
+		// 6. no balance needed. tidb1:2, tidb2:2
+		{
+			[]*proto.Subtask{
+				{SchedulerID: "1.1.1.1:4000"},
+				{SchedulerID: "1.1.1.1:4000"},
+				{SchedulerID: "1.1.1.2:4000"},
+				{SchedulerID: "1.1.1.2:4000"}},
+			[]*infosync.ServerInfo{{IP: "1.1.1.1", Port: 4000}, {IP: "1.1.1.2", Port: 4000}},
+			[]string{"1.1.1.1:4000", "1.1.1.2:4000"},
+			[]*proto.Subtask{
+				{SchedulerID: "1.1.1.1:4000"},
+				{SchedulerID: "1.1.1.1:4000"},
+				{SchedulerID: "1.1.1.2:4000"},
+				{SchedulerID: "1.1.1.2:4000"}},
 		},
 	}
 	for i, testCase := range testCases {
