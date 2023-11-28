@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
+	mockDispatch "github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -37,87 +38,87 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-var (
-	_ dispatcher.Extension = (*testDispatcherExt)(nil)
-	_ dispatcher.Extension = (*numberExampleDispatcherExt)(nil)
-)
-
 const (
 	subtaskCnt = 3
 )
 
-type testDispatcherExt struct{}
-
-func (*testDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
-}
-
-func (*testDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
-	return nil, nil
-}
-
-func (*testDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
-	return nil, nil
-}
-
 var mockedAllServerInfos = []*infosync.ServerInfo{}
 
-func (*testDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
-	return mockedAllServerInfos, true, nil
+func getTestDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
+	mockDispatcher := mockDispatch.NewMockExtension(ctrl)
+	mockDispatcher.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
+	mockDispatcher.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
+			return mockedAllServerInfos, true, nil
+		},
+	).AnyTimes()
+	mockDispatcher.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
+	mockDispatcher.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
+		func(task *proto.Task) proto.Step {
+			return proto.StepDone
+		},
+	).AnyTimes()
+	mockDispatcher.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
+			return nil, nil
+		},
+	).AnyTimes()
+
+	mockDispatcher.EXPECT().OnErrStage(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
+			return nil, nil
+		},
+	).AnyTimes()
+	return mockDispatcher
 }
 
-func (*testDispatcherExt) IsRetryableErr(error) bool {
-	return true
+func getNumberExampleDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
+	mockDispatcher := mockDispatch.NewMockExtension(ctrl)
+	mockDispatcher.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
+	mockDispatcher.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
+			serverInfo, err := dispatcher.GenerateSchedulerNodes(ctx)
+			return serverInfo, true, err
+		},
+	).AnyTimes()
+	mockDispatcher.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
+	mockDispatcher.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
+		func(task *proto.Task) proto.Step {
+			switch task.Step {
+			case proto.StepInit:
+				return proto.StepOne
+			default:
+				return proto.StepDone
+			}
+		},
+	).AnyTimes()
+	mockDispatcher.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
+			switch task.Step {
+			case proto.StepInit:
+				for i := 0; i < subtaskCnt; i++ {
+					metas = append(metas, []byte{'1'})
+				}
+				logutil.BgLogger().Info("progress step init")
+			case proto.StepOne:
+				logutil.BgLogger().Info("progress step one")
+				return nil, nil
+			default:
+				return nil, errors.New("unknown step")
+			}
+			return metas, nil
+		},
+	).AnyTimes()
+
+	mockDispatcher.EXPECT().OnErrStage(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
+			return nil, nil
+		},
+	).AnyTimes()
+	return mockDispatcher
 }
 
-func (*testDispatcherExt) GetNextStep(*proto.Task) proto.Step {
-	return proto.StepDone
-}
-
-type numberExampleDispatcherExt struct{}
-
-func (*numberExampleDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
-}
-
-func (n *numberExampleDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
-	switch task.Step {
-	case proto.StepInit:
-		for i := 0; i < subtaskCnt; i++ {
-			metas = append(metas, []byte{'1'})
-		}
-		logutil.BgLogger().Info("progress step init")
-	case proto.StepOne:
-		logutil.BgLogger().Info("progress step one")
-		return nil, nil
-	default:
-		return nil, errors.New("unknown step")
-	}
-	return metas, nil
-}
-
-func (n *numberExampleDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
-	// Don't handle not.
-	return nil, nil
-}
-
-func (*numberExampleDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
-	serverInfo, err := dispatcher.GenerateSchedulerNodes(ctx)
-	return serverInfo, true, err
-}
-
-func (*numberExampleDispatcherExt) IsRetryableErr(error) bool {
-	return true
-}
-
-func (*numberExampleDispatcherExt) GetNextStep(task *proto.Task) proto.Step {
-	switch task.Step {
-	case proto.StepInit:
-		return proto.StepOne
-	default:
-		return proto.StepDone
-	}
-}
-
-func MockDispatcherManager(t *testing.T, pool *pools.ResourcePool) (*dispatcher.Manager, *storage.TaskManager) {
+func MockDispatcherManager(t *testing.T, ctrl *gomock.Controller, pool *pools.ResourcePool, ext dispatcher.Extension, cleanUp dispatcher.CleanUpRoutine) (*dispatcher.Manager, *storage.TaskManager) {
 	ctx := context.WithValue(context.Background(), "etcd", true)
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
@@ -126,21 +127,25 @@ func MockDispatcherManager(t *testing.T, pool *pools.ResourcePool) (*dispatcher.
 	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
 		func(ctx context.Context, taskMgr dispatcher.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
 			mockDispatcher := dsp.MockDispatcher(task)
-			mockDispatcher.Extension = &testDispatcherExt{}
+			mockDispatcher.Extension = ext
 			return mockDispatcher
 		})
 	return dsp, mgr
 }
 
-func MockDispatcherManagerWithMockTaskMgr(t *testing.T, pool *pools.ResourcePool, taskMgr *mock.MockTaskManager) *dispatcher.Manager {
+func MockDispatcherManagerWithMockTaskMgr(t *testing.T, ctrl *gomock.Controller, pool *pools.ResourcePool, taskMgr *mock.MockTaskManager, ext dispatcher.Extension, cleanUp dispatcher.CleanUpRoutine) *dispatcher.Manager {
 	ctx := context.WithValue(context.Background(), "etcd", true)
 	dsp, err := dispatcher.NewManager(util.WithInternalSourceType(ctx, "dispatcher"), taskMgr, "host:port")
 	require.NoError(t, err)
 	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
 		func(ctx context.Context, taskMgr dispatcher.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
 			mockDispatcher := dsp.MockDispatcher(task)
-			mockDispatcher.Extension = &testDispatcherExt{}
+			mockDispatcher.Extension = ext
 			return mockDispatcher
+		})
+	dispatcher.RegisterDispatcherCleanUpFactory(proto.TaskTypeExample,
+		func() dispatcher.CleanUpRoutine {
+			return cleanUp
 		})
 	return dsp
 }
@@ -160,12 +165,14 @@ func TestGetInstance(t *testing.T) {
 		return gtk.Session(), nil
 	}, 1, 1, time.Second)
 	defer pool.Close()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockSchedulerNodes", "return()"))
-	dspManager, mgr := MockDispatcherManager(t, pool)
+	dspManager, mgr := MockDispatcherManager(t, ctrl, pool, getTestDispatcherExt(ctrl), nil)
 	// test no server
 	task := &proto.Task{ID: 1, Type: proto.TaskTypeExample}
 	dsp := dspManager.MockDispatcher(task)
-	dsp.Extension = &testDispatcherExt{}
+	dsp.Extension = getTestDispatcherExt(ctrl)
 	instanceIDs, err := dsp.GetAllSchedulerIDs(ctx, task)
 	require.Lenf(t, instanceIDs, 0, "GetAllSchedulerIDs when there's no subtask")
 	require.NoError(t, err)
@@ -234,8 +241,7 @@ func TestTaskFailInManager(t *testing.T) {
 
 	mockDispatcher := mock.NewMockDispatcher(ctrl)
 	mockDispatcher.EXPECT().Init().Return(errors.New("mock dispatcher init error"))
-
-	dspManager, mgr := MockDispatcherManager(t, pool)
+	dspManager, mgr := MockDispatcherManager(t, ctrl, pool, getTestDispatcherExt(ctrl), nil)
 	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
 		func(ctx context.Context, taskMgr dispatcher.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
 			return mockDispatcher
@@ -283,17 +289,13 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 		return gtk.Session(), nil
 	}, 1, 1, time.Second)
 	defer pool.Close()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
 
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "dispatcher")
 
-	dsp, mgr := MockDispatcherManager(t, pool)
-	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
-		func(ctx context.Context, taskMgr dispatcher.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
-			mockDispatcher := dsp.MockDispatcher(task)
-			mockDispatcher.Extension = &numberExampleDispatcherExt{}
-			return mockDispatcher
-		})
+	dsp, mgr := MockDispatcherManager(t, ctrl, pool, getNumberExampleDispatcherExt(ctrl), nil)
 	dsp.Start()
 	defer func() {
 		dsp.Stop()
