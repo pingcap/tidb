@@ -212,12 +212,9 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		clients:           make(map[uint64]*clientConn),
 		globalConnID:      util.NewGlobalConnID(0, true),
 		internalSessions:  make(map[interface{}]struct{}, 100),
-<<<<<<< HEAD
 		printMDLLogTime:   time.Now(),
-=======
 		health:            uatomic.NewBool(true),
 		inShutdownMode:    uatomic.NewBool(false),
->>>>>>> 0d7e7b875f8 (server: enhance graceful stop by closing connections after finish the ongoing txn (#32111))
 	}
 	s.capability = defaultCapability
 	setTxnScope()
