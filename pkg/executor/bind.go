@@ -59,7 +59,7 @@ func (e *SQLBindExec) Next(_ context.Context, req *chunk.Chunk) error {
 	case plannercore.OpCaptureBindings:
 		e.captureBindings()
 	case plannercore.OpEvolveBindings:
-		return e.evolveBindings()
+		return nil // not support yet
 	case plannercore.OpReloadBindings:
 		return e.reloadBindings()
 	case plannercore.OpSetBindingStatus:
@@ -170,10 +170,6 @@ func (e *SQLBindExec) flushBindings() error {
 
 func (e *SQLBindExec) captureBindings() {
 	domain.GetDomain(e.Ctx()).BindHandle().CaptureBaselines()
-}
-
-func (e *SQLBindExec) evolveBindings() error {
-	return domain.GetDomain(e.Ctx()).BindHandle().HandleEvolvePlanTask(e.Ctx(), true)
 }
 
 func (e *SQLBindExec) reloadBindings() error {

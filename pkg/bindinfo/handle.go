@@ -17,8 +17,6 @@ package bindinfo
 import (
 	"context"
 	"fmt"
-	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
@@ -42,9 +39,6 @@ import (
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
-	tablefilter "github.com/pingcap/tidb/pkg/util/table-filter"
-	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 )
@@ -83,9 +77,6 @@ type BindHandle struct {
 	// invalidBindRecordMap indicates the invalid bind records found during querying.
 	// A record will be deleted from this map, after 2 bind-lease, after it is dropped from the kv.
 	invalidBindRecordMap tmpBindRecordMap
-
-	// pendingVerifyBindRecordMap indicates the pending verify bind records that found during query.
-	pendingVerifyBindRecordMap tmpBindRecordMap
 }
 
 // Lease influences the duration of loading bind info and handling invalid bind.
@@ -130,11 +121,6 @@ func (h *BindHandle) Reset(ctx sessionctx.Context) {
 	h.invalidBindRecordMap.flushFunc = func(record *BindRecord) error {
 		_, err := h.DropGlobalBinding(record.OriginalSQL, record.Db, &record.Bindings[0])
 		return err
-	}
-	h.pendingVerifyBindRecordMap.Value.Store(make(map[string]*bindRecordUpdate))
-	h.pendingVerifyBindRecordMap.flushFunc = func(record *BindRecord) error {
-		// BindSQL has already been validated when coming here, so we use nil sctx parameter.
-		return h.AddGlobalBinding(nil, record)
 	}
 	variable.RegisterStatistics(h)
 }
@@ -794,171 +780,6 @@ func copyBindRecordUpdateMap(oldMap map[string]*bindRecordUpdate) map[string]*bi
 	return newMap
 }
 
-type captureFilter struct {
-	frequency int64
-	tables    []tablefilter.Filter // `schema.table`
-	users     map[string]struct{}
-
-	fail      bool
-	currentDB string
-}
-
-func (cf *captureFilter) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	if x, ok := in.(*ast.TableName); ok {
-		tblEntry := stmtctx.TableEntry{
-			DB:    x.Schema.L,
-			Table: x.Name.L,
-		}
-		if x.Schema.L == "" {
-			tblEntry.DB = cf.currentDB
-		}
-		for _, tableFilter := range cf.tables {
-			if tableFilter.MatchTable(tblEntry.DB, tblEntry.Table) {
-				cf.fail = true // some filter is matched
-			}
-		}
-	}
-	return in, cf.fail
-}
-
-func (*captureFilter) Leave(in ast.Node) (out ast.Node, ok bool) {
-	return in, true
-}
-
-func (cf *captureFilter) isEmpty() bool {
-	return len(cf.tables) == 0 && len(cf.users) == 0
-}
-
-// ParseCaptureTableFilter checks whether this filter is valid and parses it.
-func ParseCaptureTableFilter(tableFilter string) (f tablefilter.Filter, valid bool) {
-	// forbid wildcards '!' and '@' for safety,
-	// please see https://github.com/pingcap/tidb-tools/tree/master/pkg/table-filter for more details.
-	tableFilter = strings.TrimLeft(tableFilter, " \t")
-	if tableFilter == "" {
-		return nil, false
-	}
-	if tableFilter[0] == '!' || tableFilter[0] == '@' {
-		return nil, false
-	}
-	var err error
-	f, err = tablefilter.Parse([]string{tableFilter})
-	if err != nil {
-		return nil, false
-	}
-	return f, true
-}
-
-func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
-	filter = &captureFilter{
-		frequency: 1,
-		users:     make(map[string]struct{}),
-	}
-	exec := h.sctx.Context.(sqlexec.RestrictedSQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
-	// No need to acquire the session context lock for ExecRestrictedSQL, it
-	// uses another background session.
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT filter_type, filter_value FROM mysql.capture_plan_baselines_blacklist order by filter_type`)
-	if err != nil {
-		logutil.BgLogger().Warn("failed to load mysql.capture_plan_baselines_blacklist", zap.String("category", "sql-bind"), zap.Error(err))
-		return
-	}
-	for _, row := range rows {
-		filterTp := strings.ToLower(row.GetString(0))
-		valStr := strings.ToLower(row.GetString(1))
-		switch filterTp {
-		case "table":
-			tfilter, valid := ParseCaptureTableFilter(valStr)
-			if !valid {
-				logutil.BgLogger().Warn("capture table filter is invalid, ignore it", zap.String("category", "sql-bind"), zap.String("filter_value", valStr))
-				continue
-			}
-			filter.tables = append(filter.tables, tfilter)
-		case "user":
-			filter.users[valStr] = struct{}{}
-		case "frequency":
-			f, err := strconv.ParseInt(valStr, 10, 64)
-			if err != nil {
-				logutil.BgLogger().Warn("failed to parse frequency type value, ignore it", zap.String("category", "sql-bind"), zap.String("filter_value", valStr), zap.Error(err))
-				continue
-			}
-			if f < 1 {
-				logutil.BgLogger().Warn("frequency threshold is less than 1, ignore it", zap.String("category", "sql-bind"), zap.Int64("frequency", f))
-				continue
-			}
-			if f > filter.frequency {
-				filter.frequency = f
-			}
-		default:
-			logutil.BgLogger().Warn("unknown capture filter type, ignore it", zap.String("category", "sql-bind"), zap.String("filter_type", filterTp))
-		}
-	}
-	return
-}
-
-// CaptureBaselines is used to automatically capture plan baselines.
-func (h *BindHandle) CaptureBaselines() {
-	parser4Capture := parser.New()
-	captureFilter := h.extractCaptureFilterFromStorage()
-	emptyCaptureFilter := captureFilter.isEmpty()
-	bindableStmts := stmtsummaryv2.GetMoreThanCntBindableStmt(captureFilter.frequency)
-	for _, bindableStmt := range bindableStmts {
-		stmt, err := parser4Capture.ParseOneStmt(bindableStmt.Query, bindableStmt.Charset, bindableStmt.Collation)
-		if err != nil {
-			logutil.BgLogger().Debug("parse SQL failed in baseline capture", zap.String("category", "sql-bind"), zap.String("SQL", bindableStmt.Query), zap.Error(err))
-			continue
-		}
-		if insertStmt, ok := stmt.(*ast.InsertStmt); ok && insertStmt.Select == nil {
-			continue
-		}
-		if !emptyCaptureFilter {
-			captureFilter.fail = false
-			captureFilter.currentDB = bindableStmt.Schema
-			stmt.Accept(captureFilter)
-			if captureFilter.fail {
-				continue
-			}
-
-			if len(captureFilter.users) > 0 {
-				filteredByUser := true
-				for user := range bindableStmt.Users {
-					if _, ok := captureFilter.users[user]; !ok {
-						filteredByUser = false // some user not in the black-list has processed this stmt
-						break
-					}
-				}
-				if filteredByUser {
-					continue
-				}
-			}
-		}
-		dbName := utilparser.GetDefaultDB(stmt, bindableStmt.Schema)
-		normalizedSQL, digest := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, dbName, bindableStmt.Query))
-		if r := h.GetGlobalBinding(digest.String(), normalizedSQL, dbName); r != nil && r.HasAvailableBinding() {
-			continue
-		}
-		bindSQL := GenerateBindSQL(context.TODO(), stmt, bindableStmt.PlanHint, true, dbName)
-		if bindSQL == "" {
-			continue
-		}
-		h.sctx.Lock()
-		charset, collation := h.sctx.GetSessionVars().GetCharsetInfo()
-		h.sctx.Unlock()
-		binding := Binding{
-			BindSQL:   bindSQL,
-			Status:    Enabled,
-			Charset:   charset,
-			Collation: collation,
-			Source:    Capture,
-			SQLDigest: digest.String(),
-		}
-		// We don't need to pass the `sctx` because the BindSQL has been validated already.
-		err = h.CreateGlobalBinding(nil, &BindRecord{OriginalSQL: normalizedSQL, Db: dbName, Bindings: []Binding{binding}})
-		if err != nil {
-			logutil.BgLogger().Debug("create bind record failed in baseline capture", zap.String("category", "sql-bind"), zap.String("SQL", bindableStmt.Query), zap.Error(err))
-		}
-	}
-}
-
 func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
 	origVals := sctx.GetSessionVars().UsePlanBaselines
 	sctx.GetSessionVars().UsePlanBaselines = false
@@ -1072,201 +893,6 @@ func (*paramMarkerChecker) Leave(in ast.Node) (ast.Node, bool) {
 	return in, true
 }
 
-// AddEvolvePlanTask adds the evolve plan task into memory cache. It would be flushed to store periodically.
-func (h *BindHandle) AddEvolvePlanTask(originalSQL, db string, binding Binding) {
-	br := &BindRecord{
-		OriginalSQL: originalSQL,
-		Db:          db,
-		Bindings:    []Binding{binding},
-	}
-	h.pendingVerifyBindRecordMap.Add(br)
-}
-
-// SaveEvolveTasksToStore saves the evolve task into store.
-func (h *BindHandle) SaveEvolveTasksToStore() {
-	h.pendingVerifyBindRecordMap.flushToStore()
-}
-
-func getEvolveParameters(sctx sessionctx.Context) (time.Duration, time.Time, time.Time, error) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
-	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(
-		ctx,
-		nil,
-		"SELECT variable_name, variable_value FROM mysql.global_variables WHERE variable_name IN (%?, %?, %?)",
-		variable.TiDBEvolvePlanTaskMaxTime,
-		variable.TiDBEvolvePlanTaskStartTime,
-		variable.TiDBEvolvePlanTaskEndTime,
-	)
-	if err != nil {
-		return 0, time.Time{}, time.Time{}, err
-	}
-	maxTime, startTimeStr, endTimeStr := int64(variable.DefTiDBEvolvePlanTaskMaxTime), variable.DefTiDBEvolvePlanTaskStartTime, variable.DefAutoAnalyzeEndTime
-	for _, row := range rows {
-		switch row.GetString(0) {
-		case variable.TiDBEvolvePlanTaskMaxTime:
-			maxTime, err = strconv.ParseInt(row.GetString(1), 10, 64)
-			if err != nil {
-				return 0, time.Time{}, time.Time{}, err
-			}
-		case variable.TiDBEvolvePlanTaskStartTime:
-			startTimeStr = row.GetString(1)
-		case variable.TiDBEvolvePlanTaskEndTime:
-			endTimeStr = row.GetString(1)
-		}
-	}
-	startTime, err := time.ParseInLocation(variable.FullDayTimeFormat, startTimeStr, time.UTC)
-	if err != nil {
-		return 0, time.Time{}, time.Time{}, err
-	}
-	endTime, err := time.ParseInLocation(variable.FullDayTimeFormat, endTimeStr, time.UTC)
-	if err != nil {
-		return 0, time.Time{}, time.Time{}, err
-	}
-	return time.Duration(maxTime) * time.Second, startTime, endTime, nil
-}
-
-const (
-	// acceptFactor is the factor to decide should we accept the pending verified plan.
-	// A pending verified plan will be accepted if it performs at least `acceptFactor` times better than the accepted plans.
-	acceptFactor = 1.5
-	// verifyTimeoutFactor is how long to wait to verify the pending plan.
-	// For debugging purposes it is useful to wait a few times longer than the current execution time so that
-	// an informative error can be written to the log.
-	verifyTimeoutFactor = 2.0
-	// nextVerifyDuration is the duration that we will retry the rejected plans.
-	nextVerifyDuration = 7 * 24 * time.Hour
-)
-
-func (h *BindHandle) getOnePendingVerifyJob() (originalSQL, db string, binding Binding) {
-	cache := h.bindInfo.Value.Load().(*bindCache)
-	for _, bindRecord := range cache.GetAllBindings() {
-		for _, bind := range bindRecord.Bindings {
-			if bind.Status == PendingVerify {
-				return bindRecord.OriginalSQL, bindRecord.Db, bind
-			}
-			if bind.Status != Rejected {
-				continue
-			}
-			dur, err := bind.SinceUpdateTime()
-			// Should not happen.
-			if err != nil {
-				continue
-			}
-			// Rejected and retry it now.
-			if dur > nextVerifyDuration {
-				return bindRecord.OriginalSQL, bindRecord.Db, bind
-			}
-		}
-	}
-	return "", "", Binding{}
-}
-
-func (*BindHandle) getRunningDuration(sctx sessionctx.Context, db, sql string, maxTime time.Duration) (time.Duration, error) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
-	if db != "" {
-		_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "use %n", db)
-		if err != nil {
-			return 0, err
-		}
-	}
-	ctx, cancelFunc := context.WithCancel(ctx)
-	timer := time.NewTimer(maxTime)
-	defer timer.Stop()
-	resultChan := make(chan error)
-	startTime := time.Now()
-	go runSQL(ctx, sctx, sql, resultChan)
-	select {
-	case err := <-resultChan:
-		cancelFunc()
-		if err != nil {
-			return 0, err
-		}
-		return time.Since(startTime), nil
-	case <-timer.C:
-		cancelFunc()
-		logutil.BgLogger().Debug("plan verification timed out", zap.String("category", "sql-bind"), zap.Duration("timeElapsed", time.Since(startTime)), zap.String("query", sql))
-	}
-	<-resultChan
-	return -1, nil
-}
-
-func runSQL(ctx context.Context, sctx sessionctx.Context, sql string, resultChan chan<- error) {
-	defer func() {
-		if r := recover(); r != nil {
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			resultChan <- fmt.Errorf("run sql panicked: %v", string(buf))
-		}
-	}()
-	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
-	if err != nil {
-		if rs != nil {
-			terror.Call(rs.Close)
-		}
-		resultChan <- err
-		return
-	}
-	chk := rs.NewChunk(nil)
-	for {
-		err = rs.Next(ctx, chk)
-		if err != nil || chk.NumRows() == 0 {
-			break
-		}
-	}
-	terror.Call(rs.Close)
-	resultChan <- err
-}
-
-// HandleEvolvePlanTask tries to evolve one plan task.
-// It only processes one task at a time because we want each task to use the latest parameters.
-func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context, adminEvolve bool) error {
-	originalSQL, db, binding := h.getOnePendingVerifyJob()
-	if originalSQL == "" {
-		return nil
-	}
-	maxTime, startTime, endTime, err := getEvolveParameters(sctx)
-	if err != nil {
-		return err
-	}
-	if maxTime == 0 || (!timeutil.WithinDayTimePeriod(startTime, endTime, time.Now()) && !adminEvolve) {
-		return nil
-	}
-	sctx.GetSessionVars().UsePlanBaselines = true
-	currentPlanTime, err := h.getRunningDuration(sctx, db, binding.BindSQL, maxTime)
-	// If we just return the error to the caller, this job will be retried again and again and cause endless logs,
-	// since it is still in the bind record. Now we just drop it and if it is actually retryable,
-	// we will hope for that we can capture this evolve task again.
-	if err != nil {
-		_, err = h.DropGlobalBinding(originalSQL, db, &binding)
-		return err
-	}
-	// If the accepted plan timeouts, it is hard to decide the timeout for verify plan.
-	// Currently we simply mark the verify plan as `using` if it could run successfully within maxTime.
-	if currentPlanTime > 0 {
-		maxTime = time.Duration(float64(currentPlanTime) * verifyTimeoutFactor)
-	}
-	sctx.GetSessionVars().UsePlanBaselines = false
-	verifyPlanTime, err := h.getRunningDuration(sctx, db, binding.BindSQL, maxTime)
-	if err != nil {
-		_, err = h.DropGlobalBinding(originalSQL, db, &binding)
-		return err
-	}
-	if verifyPlanTime == -1 || (float64(verifyPlanTime)*acceptFactor > float64(currentPlanTime)) {
-		binding.Status = Rejected
-		digestText, _ := parser.NormalizeDigest(binding.BindSQL) // for log desensitization
-		logutil.BgLogger().Debug("new plan rejected", zap.String("category", "sql-bind"),
-			zap.Duration("currentPlanTime", currentPlanTime),
-			zap.Duration("verifyPlanTime", verifyPlanTime),
-			zap.String("digestText", digestText),
-		)
-	} else {
-		binding.Status = Enabled
-	}
-	// We don't need to pass the `sctx` because the BindSQL has been validated already.
-	return h.AddGlobalBinding(nil, &BindRecord{OriginalSQL: originalSQL, Db: db, Bindings: []Binding{binding}})
-}
-
 // Clear resets the bind handle. It is only used for test.
 func (h *BindHandle) Clear() {
 	h.bindInfo.Lock()
@@ -1274,13 +900,11 @@ func (h *BindHandle) Clear() {
 	h.bindInfo.lastUpdateTime = types.ZeroTimestamp
 	h.bindInfo.Unlock()
 	h.invalidBindRecordMap.Store(make(map[string]*bindRecordUpdate))
-	h.pendingVerifyBindRecordMap.Store(make(map[string]*bindRecordUpdate))
 }
 
 // FlushGlobalBindings flushes the BindRecord in temp maps to storage and loads them into cache.
 func (h *BindHandle) FlushGlobalBindings() error {
 	h.DropInvalidGlobalBinding()
-	h.SaveEvolveTasksToStore()
 	return h.Update(false)
 }
 
