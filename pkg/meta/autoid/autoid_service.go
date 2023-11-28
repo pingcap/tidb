@@ -130,7 +130,6 @@ func (sp *singlePointAlloc) Alloc(ctx context.Context, n uint64, increment, offs
 	}
 
 	var bo backoffer
-	bo.Reset()
 retry:
 	cli, err := sp.GetClient(ctx)
 	if err != nil {
@@ -179,10 +178,14 @@ func (b *backoffer) Reset() {
 }
 
 func (b *backoffer) Backoff() {
+	if b.Duration == 0 {
+		b.Duration = backoffMin
+	}
 	b.Duration *= 2
 	if b.Duration > backoffMax {
 		b.Duration = backoffMax
 	}
+	time.Sleep(b.Duration)
 }
 
 // ResetConn reset the AutoIDAllocClient and underlying grpc connection.
@@ -231,7 +234,6 @@ func (sp *singlePointAlloc) Rebase(ctx context.Context, newBase int64, _ bool) e
 
 func (sp *singlePointAlloc) rebase(ctx context.Context, newBase int64, force bool) error {
 	var bo backoffer
-	bo.Reset()
 retry:
 	cli, err := sp.GetClient(ctx)
 	if err != nil {
