@@ -385,7 +385,7 @@ func (stm *TaskManager) GetSubtasksInStates(ctx context.Context, tidbID string, 
 	return subtasks, nil
 }
 
-// GetSubtasksByExecIdAndStep gets all subtasks by given taskID, exec_id and step.
+// GetSubtasksByExecIdsAndStep gets all subtasks by given taskID, exec_id and step.
 func (stm *TaskManager) GetSubtasksByExecIdsAndStep(ctx context.Context, tidbIDs []string, taskID int64, step proto.Step) ([]*proto.Subtask, error) {
 	args := []interface{}{taskID, step}
 	for _, tidbID := range tidbIDs {
