@@ -191,13 +191,13 @@ func (w *GCSWriter) completeMultipartUpload(parts map[int]objectPart) error {
 	req.Header.Add("Content-Type", "application/xml")
 	w.token.SetAuthHeader(req)
 	resp, err := w.httpClient.Do(req)
-	defer resp.Body.Close()
 	if err != nil {
 		return err
 	}
 	if err := checkResponse(resp); err != nil {
 		return err
 	}
+	resp.Body.Close()
 
 	return nil
 }
@@ -243,14 +243,13 @@ func initMultipartUpload(httpClient httpClient, token authToken, bucketName, obj
 	token.SetAuthHeader(req)
 
 	resp, err := httpClient.Do(req)
-	defer resp.Body.Close()
 	if err != nil {
 		return "", fmt.Errorf("failed to init multipart upload, err: %w", err)
 	}
 	if err := checkResponse(resp); err != nil {
 		return "", fmt.Errorf("multipart upload failed, err: %w", err)
 	}
-
+	defer resp.Body.Close()
 	// Extract the uploadID of the multipart upload
 	parsedResult := &struct {
 		UploadID string `xml:"UploadId"`
@@ -376,14 +375,13 @@ func (uw *uploadWorker) uploadPart(partNumber int, data []byte) error {
 	req.Header.Add("Date", clock.Now().Format(http.TimeFormat))
 	uw.token.SetAuthHeader(req)
 	resp, err := uw.httpClient.Do(req)
-	defer resp.Body.Close()
 	if err != nil {
 		return err
 	}
-
 	if err := checkResponse(resp); err != nil {
 		return err
 	}
+	defer resp.Body.Close()
 
 	etag := resp.Header.Get("ETag")
 	if etag == "" {
