@@ -3041,7 +3041,7 @@ func handleAnalyzeOptionsV2(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]ui
 			optMap[opt.Type] = v
 		case ast.AnalyzeOptSampleRate:
 			// Only Int/Float/decimal is accepted, so pass nil here is safe.
-			fVal, err := datumValue.ToFloat64(types.DefaultStmtNoWarningContext)
+			fVal, err := datumValue.ToFloat64()
 			if err != nil {
 				return nil, err
 			}
@@ -3104,7 +3104,7 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeO
 			optMap[opt.Type] = v
 		case ast.AnalyzeOptSampleRate:
 			// Only Int/Float/decimal is accepted, so pass nil here is safe.
-			fVal, err := datumValue.ToFloat64(types.DefaultStmtNoWarningContext)
+			fVal, err := datumValue.ToFloat64()
 			if err != nil {
 				return nil, err
 			}
@@ -4709,7 +4709,9 @@ func (b *PlanBuilder) convertValue(valueItem ast.ExprNode, mockTablePlan Logical
 	if err != nil {
 		return d, err
 	}
-	d, err = value.ConvertTo(b.ctx.GetSessionVars().StmtCtx.TypeCtx(), &col.FieldType)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	d, err = value.ConvertTo(sc.TypeCtx(), &col.FieldType)
+	err = sc.HandleError(err)
 	if err != nil {
 		if !types.ErrTruncated.Equal(err) && !types.ErrTruncatedWrongVal.Equal(err) && !types.ErrBadNumber.Equal(err) {
 			return d, err
@@ -5617,7 +5619,9 @@ func calcTSForPlanReplayer(sctx sessionctx.Context, tsExpr ast.ExprNode) uint64 
 	// this part is similar to CalculateAsOfTsExpr
 	tpDateTime := types.NewFieldType(mysql.TypeDatetime)
 	tpDateTime.SetDecimal(6)
-	timestamp, err := tsVal.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), tpDateTime)
+	sc := sctx.GetSessionVars().StmtCtx
+	timestamp, err := tsVal.ConvertTo(sc.TypeCtx(), tpDateTime)
+	err = sc.HandleError(err)
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		return 0

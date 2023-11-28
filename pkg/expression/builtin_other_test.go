@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -35,7 +36,7 @@ func TestBitCount(t *testing.T) {
 	defer func() {
 		stmtCtx.SetTypeFlags(oldTypeFlags)
 	}()
-	stmtCtx.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
+	stmtCtx.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 	fc := funcs[ast.BitCount]
 	var bitCountCases = []struct {
 		origin interface{}
@@ -66,8 +67,9 @@ func TestBitCount(t *testing.T) {
 			require.Nil(t, test.count)
 			continue
 		}
-		ctx := types.DefaultStmtNoWarningContext.WithFlags(types.DefaultStmtFlags.WithIgnoreTruncateErr(true))
-		res, err := count.ToInt64(ctx)
+		errCtx := errctx.StrictNoWarningContext.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
+		res, err := count.ToInt64(types.DefaultStmtNoWarningContext)
+		err = errCtx.HandleError(err)
 		require.NoError(t, err)
 		require.Equal(t, test.count, res)
 	}

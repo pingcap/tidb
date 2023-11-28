@@ -215,8 +215,8 @@ func (r *builder) buildFromConstant(expr *expression.Constant) []*point {
 		return nil
 	}
 
-	tc := r.ctx.GetSessionVars().StmtCtx.TypeCtx()
-	val, err := dt.ToBool(tc)
+	val, err := dt.ToBool()
+	err = r.ctx.GetSessionVars().StmtCtx.HandleError(err)
 	if err != nil {
 		r.err = err
 		return nil

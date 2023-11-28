@@ -188,6 +188,7 @@ func GetColumnRowCount(sctx sessionctx.Context, c *statistics.Column, ranges []*
 			lowVal.SetBytes(collate.GetCollator(lowVal.Collation()).Key(lowVal.GetString()))
 		}
 		cmp, err := lowVal.Compare(sc.TypeCtx(), &highVal, collate.GetBinaryCollator())
+		err = sc.HandleError(err)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}

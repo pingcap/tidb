@@ -667,7 +667,8 @@ func (e *exchSenderExec) next() (*chunk.Chunk, error) {
 				hashVals.Reset()
 				// use hash values to get unique uint64 to mod.
 				// collect all the hash key datum.
-				err := codec.HashChunkRow(sc.TypeCtx(), hashVals, row, e.hashKeyTypes, e.hashKeyOffsets, payload)
+				err := codec.HashChunkRow(hashVals, row, e.hashKeyTypes, e.hashKeyOffsets, payload)
+				err = sc.HandleError(err)
 				if err != nil {
 					for _, tunnel := range e.tunnels {
 						tunnel.ErrCh <- err
@@ -854,7 +855,9 @@ type joinExec struct {
 }
 
 func (e *joinExec) getHashKey(keyCol types.Datum) (str string, err error) {
-	keyCol, err = keyCol.ConvertTo(e.sctx.GetSessionVars().StmtCtx.TypeCtx(), e.comKeyTp)
+	sc := e.sctx.GetSessionVars().StmtCtx
+	keyCol, err = keyCol.ConvertTo(sc.TypeCtx(), e.comKeyTp)
+	err = sc.HandleError(err)
 	if err != nil {
 		return str, errors.Trace(err)
 	}
@@ -1075,6 +1078,7 @@ func (e *aggExec) processAllRows() (*chunk.Chunk, error) {
 
 	chk := chunk.NewChunkWithCapacity(e.fieldTypes, 0)
 
+	sc := e.sctx.GetSessionVars().StmtCtx
 	for i, gk := range e.groupKeys {
 		newRow := chunk.MutRowFromTypes(e.fieldTypes)
 		aggCtxs := e.getContexts(gk)
@@ -1082,7 +1086,8 @@ func (e *aggExec) processAllRows() (*chunk.Chunk, error) {
 			result := agg.GetResult(aggCtxs[i])
 			if e.fieldTypes[i].GetType() == mysql.TypeLonglong && result.Kind() == types.KindMysqlDecimal {
 				var err error
-				result, err = result.ConvertTo(e.sctx.GetSessionVars().StmtCtx.TypeCtx(), e.fieldTypes[i])
+				result, err = result.ConvertTo(sc.TypeCtx(), e.fieldTypes[i])
+				err = sc.HandleError(err)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -1139,7 +1144,8 @@ func (e *selExec) next() (*chunk.Chunk, error) {
 				if d.IsNull() {
 					passCheck = false
 				} else {
-					isBool, err := d.ToBool(e.sctx.GetSessionVars().StmtCtx.TypeCtx())
+					isBool, err := d.ToBool()
+					err = e.sctx.GetSessionVars().StmtCtx.HandleError(err)
 					if err != nil {
 						return nil, errors.Trace(err)
 					}

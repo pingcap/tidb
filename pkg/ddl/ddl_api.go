@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/resourcegroup"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	rg "github.com/pingcap/tidb/pkg/domain/resourcegroup"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -1353,7 +1354,8 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 			return str, false, err
 		}
 		// For other kind of fields (e.g. INT), we supply its integer as string value.
-		value, err := v.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx.TypeCtx())
+		value, err := v.GetBinaryLiteral().ToInt()
+		err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 		if err != nil {
 			return nil, false, err
 		}
@@ -1368,7 +1370,9 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 		val, err := getEnumDefaultValue(v, col)
 		return val, false, err
 	case mysql.TypeDuration, mysql.TypeDate:
-		if v, err = v.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), &col.FieldType); err != nil {
+		v, err = v.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), &col.FieldType)
+		err = ctx.GetSessionVars().StmtCtx.HandleError(err)
+		if err != nil {
 			return "", false, errors.Trace(err)
 		}
 	case mysql.TypeBit:
@@ -1380,7 +1384,9 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 		// For these types, convert it to standard format firstly.
 		// like integer fields, convert it into integer string literals. like convert "1.25" into "1" and "2.8" into "3".
 		// if raise a error, we will use original expression. We will handle it in check phase
-		if temp, err := v.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), &col.FieldType); err == nil {
+		temp, err := v.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), &col.FieldType)
+		err = ctx.GetSessionVars().StmtCtx.HandleError(err)
+		if err == nil {
 			v = temp
 		}
 	}
@@ -5628,12 +5634,12 @@ func GetModifiableColumnJob(
 				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("cannot parse generated PartitionInfo")
 			}
 			pAst := at.Specs[0].Partition
-			sv := sctx.GetSessionVars().StmtCtx
-			oldTypeFlags := sv.TypeFlags()
-			newTypeFlags := oldTypeFlags.WithTruncateAsWarning(false).WithIgnoreTruncateErr(false)
-			sv.SetTypeFlags(newTypeFlags)
+			sc := sctx.GetSessionVars().StmtCtx
+			errCtx := sc.ErrCtx()
+			oldTruncateLevel := errCtx.GetLevel(errctx.ErrGroupTruncate)
+			sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelError)
 			_, err = buildPartitionDefinitionsInfo(sctx, pAst.Definitions, &newTblInfo, uint64(len(newTblInfo.Partition.Definitions)))
-			sv.SetTypeFlags(oldTypeFlags)
+			sc.SetErrGroupLevel(errctx.ErrGroupTruncate, oldTruncateLevel)
 			if err != nil {
 				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("New column does not match partition definitions: %s", err.Error())
 			}
@@ -7873,6 +7879,7 @@ func checkAndGetColumnsTypeAndValuesMatch(ctx sessionctx.Context, colTypes []typ
 			}
 		}
 		newVal, err := val.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), &colType)
+		// Don't need to handle errors here. Truncated values are not allowed even if the SQL_MODE is set to non-strict.
 		if err != nil {
 			return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
 		}

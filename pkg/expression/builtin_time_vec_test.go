@@ -19,6 +19,7 @@ import (
 	"math/rand"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -581,8 +582,7 @@ func BenchmarkVectorizedBuiltinTimeFunc(b *testing.B) {
 func TestVecMonth(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().SQLMode |= mysql.ModeNoZeroDate
-	typeFlags := ctx.GetSessionVars().StmtCtx.TypeFlags()
-	ctx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags.WithTruncateAsWarning(true))
+	ctx.GetSessionVars().StmtCtx.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
 	input := chunk.New([]*types.FieldType{types.NewFieldType(mysql.TypeDatetime)}, 3, 3)
 	input.Reset()
 	input.AppendTime(0, types.ZeroDate)
@@ -595,6 +595,6 @@ func TestVecMonth(t *testing.T) {
 	require.Equal(t, 0, len(ctx.GetSessionVars().StmtCtx.GetWarnings()))
 
 	ctx.GetSessionVars().StmtCtx.InInsertStmt = true
-	ctx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags.WithTruncateAsWarning(false))
+	ctx.GetSessionVars().StmtCtx.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelError)
 	require.NoError(t, f.vecEvalInt(ctx, input, result))
 }

@@ -629,6 +629,7 @@ func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, chkIdx, row
 		}
 		innerColType := iw.rowTypes[iw.hashCols[i]]
 		innerValue, err := outerValue.ConvertTo(sc.TypeCtx(), innerColType)
+		// errors are explicitly handled in following lines, so don't need to use `sc.HandleError`
 		if err != nil && !(terror.ErrorEqual(err, types.ErrTruncated) && (innerColType.GetType() == mysql.TypeSet || innerColType.GetType() == mysql.TypeEnum)) {
 			// If the converted outerValue overflows or invalid to innerValue, we don't need to lookup it.
 			if terror.ErrorEqual(err, types.ErrOverflow) || terror.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
@@ -637,6 +638,7 @@ func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, chkIdx, row
 			return nil, nil, err
 		}
 		cmp, err := outerValue.Compare(sc.TypeCtx(), &innerValue, iw.hashCollators[i])
+		err = sc.HandleError(err)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -677,6 +679,7 @@ func (iw *innerWorker) sortAndDedupLookUpContents(lookUpContents []*indexJoinLoo
 func compareRow(sc *stmtctx.StatementContext, left, right []types.Datum, ctors []collate.Collator) int {
 	for idx := 0; idx < len(left); idx++ {
 		cmp, err := left[idx].Compare(sc.TypeCtx(), &right[idx], ctors[idx])
+		err = sc.HandleError(err)
 		// We only compare rows with the same type, no error to return.
 		terror.Log(err)
 		if cmp > 0 {

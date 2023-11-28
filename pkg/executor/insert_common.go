@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -709,7 +710,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 		if err != nil && gCol.FieldType.IsArray() {
 			return nil, completeError(tbl, gCol.Offset, rowIdx, err)
 		}
-		if e.Ctx().GetSessionVars().StmtCtx.HandleTruncate(err) != nil {
+		if e.Ctx().GetSessionVars().StmtCtx.HandleError(err) != nil {
 			return nil, err
 		}
 		row[colIdx], err = table.CastValue(e.Ctx(), val, gCol.ToInfo(), false, false)
@@ -793,8 +794,9 @@ func setDatumAutoIDAndCast(ctx sessionctx.Context, d *types.Datum, id int64, col
 	if err == nil && d.GetInt64() < id {
 		// Auto ID is out of range.
 		sc := ctx.GetSessionVars().StmtCtx
+		errCtx := sc.ErrCtx()
 		insertPlan, ok := sc.GetPlan().(*core.Insert)
-		if ok && sc.TypeFlags().TruncateAsWarning() && len(insertPlan.OnDuplicate) > 0 {
+		if ok && errCtx.GetLevel(errctx.ErrGroupTruncate) == errctx.LevelWarn && len(insertPlan.OnDuplicate) > 0 {
 			// Fix issue #38950: AUTO_INCREMENT is incompatible with mysql
 			// An auto id out of range error occurs in `insert ignore into ... on duplicate ...`.
 			// We should allow the SQL to be executed successfully.
@@ -1370,8 +1372,10 @@ func (e *InsertValues) equalDatumsAsBinary(a []types.Datum, b []types.Datum) (bo
 	if len(a) != len(b) {
 		return false, nil
 	}
+	sc := e.Ctx().GetSessionVars().StmtCtx
 	for i, ai := range a {
-		v, err := ai.Compare(e.Ctx().GetSessionVars().StmtCtx.TypeCtx(), &b[i], collate.GetBinaryCollator())
+		v, err := ai.Compare(sc.TypeCtx(), &b[i], collate.GetBinaryCollator())
+		err = sc.HandleError(err)
 		if err != nil {
 			return false, errors.Trace(err)
 		}

@@ -275,9 +275,9 @@ func ConvertDecimalToUint(d *MyDecimal, upperBound uint64, tp byte) (uint64, err
 }
 
 // StrToInt converts a string to an integer at the best-effort.
-func StrToInt(ctx Context, str string, isFuncCast bool) (int64, error) {
+func StrToInt(str string, isFuncCast bool) (int64, error) {
 	str = strings.TrimSpace(str)
-	validPrefix, err := getValidIntPrefix(ctx, str, isFuncCast)
+	validPrefix, err := getValidIntPrefix(str, isFuncCast)
 	iVal, err1 := strconv.ParseInt(validPrefix, 10, 64)
 	if err1 != nil {
 		return iVal, ErrOverflow.GenWithStackByArgs("BIGINT", validPrefix)
@@ -286,9 +286,9 @@ func StrToInt(ctx Context, str string, isFuncCast bool) (int64, error) {
 }
 
 // StrToUint converts a string to an unsigned integer at the best-effort.
-func StrToUint(ctx Context, str string, isFuncCast bool) (uint64, error) {
+func StrToUint(str string, isFuncCast bool) (uint64, error) {
 	str = strings.TrimSpace(str)
-	validPrefix, err := getValidIntPrefix(ctx, str, isFuncCast)
+	validPrefix, err := getValidIntPrefix(str, isFuncCast)
 	uVal := uint64(0)
 	hasParseErr := false
 
@@ -342,9 +342,6 @@ func StrToDuration(ctx Context, str string, fsp int) (d Duration, t Time, isDura
 	}
 
 	d, _, err = ParseDuration(ctx, str, fsp)
-	if ErrTruncatedWrongVal.Equal(err) {
-		err = ctx.HandleTruncate(err)
-	}
 	return d, t, true, errors.Trace(err)
 }
 
@@ -381,11 +378,15 @@ func NumberToDuration(number int64, fsp int) (Duration, error) {
 }
 
 // getValidIntPrefix gets prefix of the string which can be successfully parsed as int.
-func getValidIntPrefix(ctx Context, str string, isFuncCast bool) (string, error) {
+func getValidIntPrefix(str string, isFuncCast bool) (string, error) {
 	if !isFuncCast {
-		floatPrefix, err := getValidFloatPrefix(ctx, str, isFuncCast)
+		floatPrefix, err := getValidFloatPrefix(str, isFuncCast)
 		if err != nil {
-			return floatPrefix, errors.Trace(err)
+			intPrefix, err2 := floatStrToIntStr(floatPrefix, str)
+			if err2 != nil {
+				return intPrefix, errors.Trace(err2)
+			}
+			return intPrefix, errors.Trace(err)
 		}
 		return floatStrToIntStr(floatPrefix, str)
 	}
@@ -410,7 +411,7 @@ func getValidIntPrefix(ctx Context, str string, isFuncCast bool) (string, error)
 		valid = "0"
 	}
 	if validLen == 0 || validLen != len(str) {
-		return valid, errors.Trace(ctx.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", str)))
+		return valid, errors.Trace(ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", str))
 	}
 	return valid, nil
 }
@@ -552,15 +553,15 @@ func floatStrToIntStr(validFloat string, oriStr string) (intStr string, _ error)
 }
 
 // StrToFloat converts a string to a float64 at the best-effort.
-func StrToFloat(ctx Context, str string, isFuncCast bool) (float64, error) {
+func StrToFloat(str string, isFuncCast bool) (float64, error) {
 	str = strings.TrimSpace(str)
-	validStr, err := getValidFloatPrefix(ctx, str, isFuncCast)
+	validStr, err := getValidFloatPrefix(str, isFuncCast)
 	f, err1 := strconv.ParseFloat(validStr, 64)
 	if err1 != nil {
 		if err2, ok := err1.(*strconv.NumError); ok {
 			// value will truncate to MAX/MIN if out of range.
 			if err2.Err == strconv.ErrRange {
-				err1 = ctx.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("DOUBLE", str))
+				err1 = ErrTruncatedWrongVal.GenWithStackByArgs("DOUBLE", str)
 				if math.IsInf(f, 1) {
 					f = math.MaxFloat64
 				} else if math.IsInf(f, -1) {
@@ -582,13 +583,13 @@ func ConvertJSONToInt64(ctx Context, j BinaryJSON, unsigned bool) (int64, error)
 func ConvertJSONToInt(ctx Context, j BinaryJSON, unsigned bool, tp byte) (int64, error) {
 	switch j.TypeCode {
 	case JSONTypeCodeObject, JSONTypeCodeArray, JSONTypeCodeOpaque, JSONTypeCodeDate, JSONTypeCodeDatetime, JSONTypeCodeTimestamp, JSONTypeCodeDuration:
-		return 0, ctx.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", j.String()))
+		return 0, ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", j.String())
 	case JSONTypeCodeLiteral:
 		switch j.Value[0] {
 		case JSONLiteralFalse:
 			return 0, nil
 		case JSONLiteralNil:
-			return 0, ctx.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", j.String()))
+			return 0, ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", j.String())
 		default:
 			return 1, nil
 		}
@@ -631,26 +632,26 @@ func ConvertJSONToInt(ctx Context, j BinaryJSON, unsigned bool, tp byte) (int64,
 		// doesn't append any warning. This behavior is compatible with MySQL.
 		isNegative := len(str) > 1 && str[0] == '-'
 		if !isNegative {
-			r, err := StrToUint(ctx, str, false)
+			r, err := StrToUint(str, false)
 			return int64(r), err
 		}
 
-		return StrToInt(ctx, str, false)
+		return StrToInt(str, false)
 	}
 	return 0, errors.New("Unknown type code in JSON")
 }
 
 // ConvertJSONToFloat casts JSON into float64.
-func ConvertJSONToFloat(ctx Context, j BinaryJSON) (float64, error) {
+func ConvertJSONToFloat(j BinaryJSON) (float64, error) {
 	switch j.TypeCode {
 	case JSONTypeCodeObject, JSONTypeCodeArray, JSONTypeCodeOpaque, JSONTypeCodeDate, JSONTypeCodeDatetime, JSONTypeCodeTimestamp, JSONTypeCodeDuration:
-		return 0, ctx.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("FLOAT", j.String()))
+		return 0, ErrTruncatedWrongVal.GenWithStackByArgs("FLOAT", j.String())
 	case JSONTypeCodeLiteral:
 		switch j.Value[0] {
 		case JSONLiteralFalse:
 			return 0, nil
 		case JSONLiteralNil:
-			return 0, ctx.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("FLOAT", j.String()))
+			return 0, ErrTruncatedWrongVal.GenWithStackByArgs("FLOAT", j.String())
 		default:
 			return 1, nil
 		}
@@ -662,13 +663,13 @@ func ConvertJSONToFloat(ctx Context, j BinaryJSON) (float64, error) {
 		return j.GetFloat64(), nil
 	case JSONTypeCodeString:
 		str := string(hack.String(j.GetString()))
-		return StrToFloat(ctx, str, false)
+		return StrToFloat(str, false)
 	}
 	return 0, errors.New("Unknown type code in JSON")
 }
 
 // ConvertJSONToDecimal casts JSON into decimal.
-func ConvertJSONToDecimal(ctx Context, j BinaryJSON) (*MyDecimal, error) {
+func ConvertJSONToDecimal(j BinaryJSON) (*MyDecimal, error) {
 	var err error = nil
 	res := new(MyDecimal)
 	switch j.TypeCode {
@@ -692,15 +693,11 @@ func ConvertJSONToDecimal(ctx Context, j BinaryJSON) (*MyDecimal, error) {
 	case JSONTypeCodeString:
 		err = res.FromString(j.GetString())
 	}
-	err = ctx.HandleTruncate(err)
-	if err != nil {
-		return res, errors.Trace(err)
-	}
 	return res, errors.Trace(err)
 }
 
 // getValidFloatPrefix gets prefix of string which can be successfully parsed as float.
-func getValidFloatPrefix(ctx Context, s string, isFuncCast bool) (valid string, err error) {
+func getValidFloatPrefix(s string, isFuncCast bool) (valid string, err error) {
 	if isFuncCast && s == "" {
 		return "0", nil
 	}
@@ -748,7 +745,7 @@ func getValidFloatPrefix(ctx Context, s string, isFuncCast bool) (valid string, 
 		valid = "0"
 	}
 	if validLen == 0 || validLen != len(s) {
-		err = errors.Trace(ctx.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("DOUBLE", s)))
+		err = errors.Trace(ErrTruncatedWrongVal.GenWithStackByArgs("DOUBLE", s))
 	}
 	return valid, err
 }

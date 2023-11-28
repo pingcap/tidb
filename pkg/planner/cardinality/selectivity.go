@@ -277,14 +277,18 @@ func Selectivity(
 			ret *= 0
 			mask &^= 1 << uint64(i)
 			delete(notCoveredConstants, i)
-		} else if isTrue, err := c.Value.ToBool(sc.TypeCtx()); err == nil {
-			if isTrue == 0 {
-				// c is false
-				ret *= 0
+		} else {
+			isTrue, err := c.Value.ToBool()
+			err = sc.HandleError(err)
+			if err == nil {
+				if isTrue == 0 {
+					// c is false
+					ret *= 0
+				}
+				// c is true, no need to change ret
+				mask &^= 1 << uint64(i)
+				delete(notCoveredConstants, i)
 			}
-			// c is true, no need to change ret
-			mask &^= 1 << uint64(i)
-			delete(notCoveredConstants, i)
 		}
 		// Not expected to come here:
 		// err != nil, no need to do anything.

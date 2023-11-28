@@ -24,6 +24,7 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -282,7 +283,8 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, b
 			continue
 		}
 
-		i, err := data.ToBool(ctx.GetSessionVars().StmtCtx.TypeCtx())
+		i, err := data.ToBool()
+		err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 		if err != nil {
 			i, err = HandleOverflowOnSelection(ctx.GetSessionVars().StmtCtx, i, err)
 			if err != nil {
@@ -502,14 +504,16 @@ func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalT
 						}
 					case mysql.TypeBit:
 						var bl types.BinaryLiteral = buf.GetBytes(i)
-						iVal, err := bl.ToInt(sc.TypeCtx())
+						iVal, err := bl.ToInt()
+						err = sc.HandleError(err)
 						if err != nil {
 							return err
 						}
 						fVal = float64(iVal)
 					}
 				} else {
-					fVal, err = types.StrToFloat(sc.TypeCtx(), sVal, false)
+					fVal, err = types.StrToFloat(sVal, false)
+					err = sc.HandleError(err)
 					if err != nil {
 						return err
 					}
@@ -997,12 +1001,14 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 	// Resolve virtual generated column.
 	mockSchema := NewSchema(columns...)
 	// Ignore redundant warning here.
-	flags := ctx.GetSessionVars().StmtCtx.TypeFlags()
-	if !flags.IgnoreTruncateErr() {
+	sc := ctx.GetSessionVars().StmtCtx
+	errCtx := sc.ErrCtx()
+	oldTruncateLevel := errCtx.GetLevel(errctx.ErrGroupTruncate)
+	if oldTruncateLevel != errctx.LevelIgnore {
 		defer func() {
-			ctx.GetSessionVars().StmtCtx.SetTypeFlags(flags)
+			sc.SetErrGroupLevel(errctx.ErrGroupTruncate, oldTruncateLevel)
 		}()
-		ctx.GetSessionVars().StmtCtx.SetTypeFlags(flags.WithIgnoreTruncateErr(true))
+		sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 	}
 
 	for i, col := range colInfos {

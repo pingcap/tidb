@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -85,7 +86,7 @@ func TestCodecKey(t *testing.T) {
 		b, err = EncodeValue(sc.TimeZone(), nil, datums.Input...)
 		require.NoError(t, err, comment)
 
-		size, err := estimateValuesSize(sc, datums.Input)
+		size, err := estimateValuesSize(datums.Input)
 		require.NoError(t, err, comment)
 		require.Len(t, b, size, comment)
 
@@ -100,10 +101,10 @@ func TestCodecKey(t *testing.T) {
 	require.Error(t, err)
 }
 
-func estimateValuesSize(sc *stmtctx.StatementContext, vals []types.Datum) (int, error) {
+func estimateValuesSize(vals []types.Datum) (int, error) {
 	size := 0
 	for _, val := range vals {
-		length, err := EstimateValueSize(sc.TypeCtx(), val)
+		length, err := EstimateValueSize(val)
 		if err != nil {
 			return 0, err
 		}
@@ -720,12 +721,12 @@ func TestDecimal(t *testing.T) {
 	}
 	for _, decimalNums := range tblCmp {
 		d1 := types.NewDatum(decimalNums.Arg1)
-		dec1, err := d1.ToDecimal(sc.TypeCtxOrDefault())
+		dec1, err := d1.ToDecimal()
 		require.NoError(t, err)
 		d1.SetMysqlDecimal(dec1)
 
 		d2 := types.NewDatum(decimalNums.Arg2)
-		dec2, err := d2.ToDecimal(sc.TypeCtxOrDefault())
+		dec2, err := d2.ToDecimal()
 		require.NoError(t, err)
 		d2.SetMysqlDecimal(dec2)
 
@@ -744,7 +745,7 @@ func TestDecimal(t *testing.T) {
 
 		b1, err = EncodeValue(sc.TimeZone(), b1[:0], d1)
 		require.NoError(t, err)
-		size, err := EstimateValueSize(sc.TypeCtx(), d1)
+		size, err := EstimateValueSize(d1)
 		require.NoError(t, err)
 		require.Len(t, b1, size)
 	}
@@ -761,7 +762,7 @@ func TestDecimal(t *testing.T) {
 		b, err := EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac())
 		require.NoError(t, err)
 		decs = append(decs, b)
-		size, err := EstimateValueSize(sc.TypeCtx(), d)
+		size, err := EstimateValueSize(d)
 		require.NoError(t, err)
 		// size - 1 because the flag occupy 1 bit.
 		require.Len(t, b, size-1)
@@ -778,7 +779,7 @@ func TestDecimal(t *testing.T) {
 	_, err = EncodeDecimal(nil, d, 12, 10)
 	require.Truef(t, terror.ErrorEqual(err, types.ErrOverflow), "err %v", err)
 
-	sc.SetTypeFlags(types.DefaultStmtFlags.WithIgnoreTruncateErr(true))
+	sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 	decimalDatum := types.NewDatum(d)
 	decimalDatum.SetLength(20)
 	decimalDatum.SetFrac(5)
@@ -1105,7 +1106,6 @@ func TestDecodeRange(t *testing.T) {
 }
 
 func testHashChunkRowEqual(t *testing.T, a, b interface{}, equal bool) {
-	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	buf1 := make([]byte, 1)
 	buf2 := make([]byte, 1)
 
@@ -1124,10 +1124,10 @@ func testHashChunkRowEqual(t *testing.T, a, b interface{}, equal bool) {
 	chk2.AppendDatum(0, &d)
 
 	h := crc32.NewIEEE()
-	err1 := HashChunkRow(sc.TypeCtx(), h, chk1.GetRow(0), []*types.FieldType{tp1}, []int{0}, buf1)
+	err1 := HashChunkRow(h, chk1.GetRow(0), []*types.FieldType{tp1}, []int{0}, buf1)
 	sum1 := h.Sum32()
 	h.Reset()
-	err2 := HashChunkRow(sc.TypeCtx(), h, chk2.GetRow(0), []*types.FieldType{tp2}, []int{0}, buf2)
+	err2 := HashChunkRow(h, chk2.GetRow(0), []*types.FieldType{tp2}, []int{0}, buf2)
 	sum2 := h.Sum32()
 	require.NoError(t, err1)
 	require.NoError(t, err2)
@@ -1136,7 +1136,7 @@ func testHashChunkRowEqual(t *testing.T, a, b interface{}, equal bool) {
 	} else {
 		require.NotEqual(t, sum2, sum1)
 	}
-	e, err := EqualChunkRow(sc.TypeCtx(),
+	e, err := EqualChunkRow(
 		chk1.GetRow(0), []*types.FieldType{tp1}, []int{0},
 		chk2.GetRow(0), []*types.FieldType{tp2}, []int{0})
 	require.NoError(t, err)
@@ -1158,16 +1158,16 @@ func TestHashChunkRow(t *testing.T) {
 		colIdx[i] = i
 	}
 	h := crc32.NewIEEE()
-	err1 := HashChunkRow(sc.TypeCtx(), h, chk.GetRow(0), tps, colIdx, buf)
+	err1 := HashChunkRow(h, chk.GetRow(0), tps, colIdx, buf)
 	sum1 := h.Sum32()
 	h.Reset()
-	err2 := HashChunkRow(sc.TypeCtx(), h, chk.GetRow(0), tps, colIdx, buf)
+	err2 := HashChunkRow(h, chk.GetRow(0), tps, colIdx, buf)
 	sum2 := h.Sum32()
 
 	require.NoError(t, err1)
 	require.NoError(t, err2)
 	require.Equal(t, sum2, sum1)
-	e, err := EqualChunkRow(sc.TypeCtx(),
+	e, err := EqualChunkRow(
 		chk.GetRow(0), tps, colIdx,
 		chk.GetRow(0), tps, colIdx)
 	require.NoError(t, err)
@@ -1257,10 +1257,10 @@ func TestHashChunkColumns(t *testing.T) {
 	// Test hash value of the first 12 `Null` columns
 	for i := 0; i < 12; i++ {
 		require.True(t, chk.GetRow(0).IsNull(i))
-		err1 := HashChunkSelected(sc.TypeCtx(), vecHash, chk, tps[i], i, buf, hasNull, sel, false)
-		err2 := HashChunkRow(sc.TypeCtx(), rowHash[0], chk.GetRow(0), tps[i:i+1], colIdx[i:i+1], buf)
-		err3 := HashChunkRow(sc.TypeCtx(), rowHash[1], chk.GetRow(1), tps[i:i+1], colIdx[i:i+1], buf)
-		err4 := HashChunkRow(sc.TypeCtx(), rowHash[2], chk.GetRow(2), tps[i:i+1], colIdx[i:i+1], buf)
+		err1 := HashChunkSelected(vecHash, chk, tps[i], i, buf, hasNull, sel, false)
+		err2 := HashChunkRow(rowHash[0], chk.GetRow(0), tps[i:i+1], colIdx[i:i+1], buf)
+		err3 := HashChunkRow(rowHash[1], chk.GetRow(1), tps[i:i+1], colIdx[i:i+1], buf)
+		err4 := HashChunkRow(rowHash[2], chk.GetRow(2), tps[i:i+1], colIdx[i:i+1], buf)
 		require.NoError(t, err1)
 		require.NoError(t, err2)
 		require.NoError(t, err3)
@@ -1282,10 +1282,10 @@ func TestHashChunkColumns(t *testing.T) {
 
 		require.False(t, chk.GetRow(0).IsNull(i))
 
-		err1 := HashChunkSelected(sc.TypeCtx(), vecHash, chk, tps[i], i, buf, hasNull, sel, false)
-		err2 := HashChunkRow(sc.TypeCtx(), rowHash[0], chk.GetRow(0), tps[i:i+1], colIdx[i:i+1], buf)
-		err3 := HashChunkRow(sc.TypeCtx(), rowHash[1], chk.GetRow(1), tps[i:i+1], colIdx[i:i+1], buf)
-		err4 := HashChunkRow(sc.TypeCtx(), rowHash[2], chk.GetRow(2), tps[i:i+1], colIdx[i:i+1], buf)
+		err1 := HashChunkSelected(vecHash, chk, tps[i], i, buf, hasNull, sel, false)
+		err2 := HashChunkRow(rowHash[0], chk.GetRow(0), tps[i:i+1], colIdx[i:i+1], buf)
+		err3 := HashChunkRow(rowHash[1], chk.GetRow(1), tps[i:i+1], colIdx[i:i+1], buf)
+		err4 := HashChunkRow(rowHash[2], chk.GetRow(2), tps[i:i+1], colIdx[i:i+1], buf)
 
 		require.NoError(t, err1)
 		require.NoError(t, err2)

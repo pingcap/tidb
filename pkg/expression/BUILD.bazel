@@ -70,6 +70,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
+        "//pkg/errctx",
         "//pkg/errno",
         "//pkg/extension",
         "//pkg/kv",
@@ -191,6 +192,7 @@ go_test(
     shard_count = 50,
     deps = [
         "//pkg/config",
+        "//pkg/errctx",
         "//pkg/errno",
         "//pkg/kv",
         "//pkg/parser",

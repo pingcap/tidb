@@ -90,6 +90,7 @@ go_library(
         "//pkg/config",
         "//pkg/distsql",
         "//pkg/domain",
+        "//pkg/errctx",
         "//pkg/errno",
         "//pkg/expression",
         "//pkg/expression/aggregation",

@@ -52,6 +52,7 @@ func (mmf *maxMinFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.State
 	}
 	var c int
 	c, err = evalCtx.Value.Compare(sc.TypeCtx(), &value, mmf.ctor)
+	err = sc.HandleError(err)
 	if err != nil {
 		return err
 	}

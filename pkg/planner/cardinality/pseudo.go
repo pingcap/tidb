@@ -218,6 +218,7 @@ func getPseudoRowCountByColumnRanges(sc *stmtctx.StatementContext, tableRowCount
 			rowCount += tableRowCount / pseudoLessRate
 		} else {
 			compare, err := ran.LowVal[colIdx].Compare(sc.TypeCtx(), &ran.HighVal[colIdx], ran.Collators[colIdx])
+			err = sc.HandleError(err)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}

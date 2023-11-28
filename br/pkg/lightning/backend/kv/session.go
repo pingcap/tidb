@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/manual"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -291,10 +292,13 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 	vars.SQLMode = sqlMode
 
 	typeFlags := vars.StmtCtx.TypeFlags().
-		WithTruncateAsWarning(!sqlMode.HasStrictMode()).
 		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
 		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode())
 	vars.StmtCtx.SetTypeFlags(typeFlags)
+
+	if !sqlMode.HasStrictMode() {
+		vars.StmtCtx.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
+	}
 	if options.SysVars != nil {
 		for k, v := range options.SysVars {
 			// since 6.3(current master) tidb checks whether we can set a system variable

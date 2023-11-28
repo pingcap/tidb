@@ -1457,7 +1457,9 @@ func (t *partitionedTable) locateHashPartition(ctx sessionctx.Context, partExpr 
 			data = r[col.Index]
 		default:
 			var err error
-			data, err = r[col.Index].ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), types.NewFieldType(mysql.TypeLong))
+			sc := ctx.GetSessionVars().StmtCtx
+			data, err = r[col.Index].ConvertTo(sc.TypeCtx(), types.NewFieldType(mysql.TypeLong))
+			err = sc.HandleError(err)
 			if err != nil {
 				return 0, err
 			}

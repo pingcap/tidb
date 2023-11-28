@@ -778,12 +778,16 @@ func comparePartitionAstAndModel(ctx sessionctx.Context, pAst *ast.PartitionOpti
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning: number of partitions generated != partition defined (%d != %d)", len(a), len(m))
 	}
 
+	sc := ctx.GetSessionVars().StmtCtx
+
 	evalFn := func(expr ast.ExprNode) (types.Datum, error) {
 		val, err := expression.EvalAstExpr(ctx, ast.NewValueExpr(expr, "", ""))
 		if err != nil || partCol == nil {
 			return val, err
 		}
-		return val.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), &partCol.FieldType)
+		result, err := val.ConvertTo(sc.TypeCtx(), &partCol.FieldType)
+		err = sc.HandleError(err)
+		return result, err
 	}
 	for i := range pAst.Definitions {
 		// Allow options to differ! (like Placement Rules)
@@ -816,6 +820,7 @@ func comparePartitionAstAndModel(ctx sessionctx.Context, pAst *ast.PartitionOpti
 			return err
 		}
 		cmp, err := lessThanVal.Compare(ctx.GetSessionVars().StmtCtx.TypeCtx(), &generatedExprVal, collate.GetBinaryCollator())
+		err = sc.HandleError(err)
 		if err != nil {
 			return err
 		}
@@ -1069,7 +1074,9 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 		return err
 	}
 	if partCol != nil {
-		lastVal, err = lastVal.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), &partCol.FieldType)
+		sc := ctx.GetSessionVars().StmtCtx
+		lastVal, err = lastVal.ConvertTo(sc.TypeCtx(), &partCol.FieldType)
+		err = sc.HandleError(err)
 		if err != nil {
 			return err
 		}
@@ -1117,13 +1124,17 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 		if err != nil {
 			return err
 		}
+
+		sc := ctx.GetSessionVars().StmtCtx
 		if partCol != nil {
-			currVal, err = currVal.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), &partCol.FieldType)
+			currVal, err = currVal.ConvertTo(sc.TypeCtx(), &partCol.FieldType)
+			err = sc.HandleError(err)
 			if err != nil {
 				return err
 			}
 		}
 		cmp, err := currVal.Compare(ctx.GetSessionVars().StmtCtx.TypeCtx(), &lastVal, collate.GetBinaryCollator())
+		err = sc.HandleError(err)
 		if err != nil {
 			return err
 		}
@@ -1453,7 +1464,9 @@ func checkPartitionValuesIsInt(ctx sessionctx.Context, defName interface{}, expr
 			return dbterror.ErrValuesIsNotIntType.GenWithStackByArgs(defName)
 		}
 
-		_, err = val.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), tp)
+		sc := ctx.GetSessionVars().StmtCtx
+		_, err = val.ConvertTo(sc.TypeCtx(), tp)
+		err = sc.HandleError(err)
 		if err != nil && !types.ErrOverflow.Equal(err) {
 			return dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
 		}

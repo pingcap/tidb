@@ -89,7 +89,8 @@ func getTimeCurrentTimeStamp(ctx sessionctx.Context, tp byte, fsp int) (t types.
 // GetTimeValue gets the time value with type tp.
 func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int, explicitTz *time.Location) (d types.Datum, err error) {
 	var value types.Time
-	tc := ctx.GetSessionVars().StmtCtx.TypeCtx()
+	sc := ctx.GetSessionVars().StmtCtx
+	tc := sc.TypeCtx()
 	if explicitTz != nil {
 		tc = tc.WithLocation(explicitTz)
 	}
@@ -141,6 +142,7 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int, expli
 		}
 		ft := types.NewFieldType(mysql.TypeLonglong)
 		xval, err := v.ConvertTo(tc, ft)
+		err = sc.HandleError(err)
 		if err != nil {
 			return d, err
 		}
@@ -185,7 +187,8 @@ func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
 		return now, err
 	}
 
-	timestamp, err := types.StrToFloat(sessionVars.StmtCtx.TypeCtx(), timestampStr, false)
+	timestamp, err := types.StrToFloat(timestampStr, false)
+	err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 	if err != nil {
 		return time.Time{}, err
 	}

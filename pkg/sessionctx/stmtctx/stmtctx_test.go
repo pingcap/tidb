@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -93,19 +94,19 @@ func TestStatementContextPushDownFLags(t *testing.T) {
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.InUpdateStmt = true }), 16},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.InDeleteStmt = true }), 16},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.InSelectStmt = true }), 32},
-		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true)) }), 1},
-		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true)) }), 2},
+		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore) }), 1},
+		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn) }), 2},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.OverflowAsWarning = true }), 64},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.SetTypeFlags(sc.TypeFlags().WithIgnoreZeroInDate(true)) }), 128},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.DividedByZeroAsWarning = true }), 256},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.InLoadDataStmt = true }), 1024},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) {
 			sc.InSelectStmt = true
-			sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true))
+			sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
 		}), 34},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) {
 			sc.DividedByZeroAsWarning = true
-			sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
+			sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 		}), 257},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) {
 			sc.InUpdateStmt = true
@@ -352,8 +353,8 @@ func TestSetStmtCtxTypeFlags(t *testing.T) {
 	require.Equal(t, types.FlagAllowNegativeToUnsigned|types.FlagSkipASCIICheck, sc.TypeFlags())
 	require.Equal(t, sc.TypeFlags(), sc.TypeFlags())
 
-	sc.SetTypeFlags(types.FlagSkipASCIICheck | types.FlagSkipUTF8Check | types.FlagTruncateAsWarning)
-	require.Equal(t, types.FlagSkipASCIICheck|types.FlagSkipUTF8Check|types.FlagTruncateAsWarning, sc.TypeFlags())
+	sc.SetTypeFlags(types.FlagSkipASCIICheck | types.FlagSkipUTF8Check)
+	require.Equal(t, types.FlagSkipASCIICheck|types.FlagSkipUTF8Check, sc.TypeFlags())
 	require.Equal(t, sc.TypeFlags(), sc.TypeFlags())
 }
 

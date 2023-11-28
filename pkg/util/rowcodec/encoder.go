@@ -194,7 +194,7 @@ func encodeValueDatum(loc *time.Location, d *types.Datum, buffer []byte) (nBuffe
 	case types.KindBinaryLiteral, types.KindMysqlBit:
 		// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
 		var val uint64
-		val, err = d.GetBinaryLiteral().ToInt(types.StrictContext)
+		val, err = d.GetBinaryLiteral().ToInt()
 		if err != nil {
 			return
 		}

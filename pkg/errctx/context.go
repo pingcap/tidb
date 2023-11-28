@@ -58,6 +58,11 @@ func (ctx *Context) WithErrGroupLevel(eg ErrGroup, l Level) Context {
 	return newCtx
 }
 
+// GetLevel returns a level of the given `ErrGroup`
+func (ctx *Context) GetLevel(eg ErrGroup) Level {
+	return ctx.levelMap[eg]
+}
+
 // appendWarning appends the error to warning. If the inner `appendWarningFn` is nil, do nothing.
 func (ctx *Context) appendWarning(err error) {
 	intest.Assert(ctx.appendWarningFn != nil)
@@ -177,6 +182,4 @@ func init() {
 	for _, errCode := range truncateErrCodes {
 		errGroupMap[errCode] = ErrGroupTruncate
 	}
-
-	errGroupMap[errno.ErrDataOutOfRange] = ErrGroupOverflow
 }

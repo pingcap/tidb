@@ -1445,6 +1445,7 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 			return nil, false
 		}
 		dVal, err := d.ConvertTo(stmtCtx.TypeCtx(), &col.FieldType)
+		// errors are handled explicitly, so don't need to use `stmtCtx.HandleError`
 		if err != nil {
 			if terror.ErrorEqual(types.ErrOverflow, err) {
 				return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: &col.FieldType, value: d, con: con}), true
@@ -1456,6 +1457,7 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 		}
 		// The converted result must be same as original datum.
 		cmp, err := dVal.Compare(stmtCtx.TypeCtx(), &d, collate.GetCollator(col.GetCollate()))
+		err = stmtCtx.HandleError(err)
 		if err != nil || cmp != 0 {
 			return nil, false
 		}
@@ -1469,11 +1471,13 @@ func getPointGetValue(stmtCtx *stmtctx.StatementContext, col *model.ColumnInfo, 
 		return nil
 	}
 	dVal, err := d.ConvertTo(stmtCtx.TypeCtx(), &col.FieldType)
+	err = stmtCtx.HandleError(err)
 	if err != nil {
 		return nil
 	}
 	// The converted result must be same as original datum.
 	cmp, err := dVal.Compare(stmtCtx.TypeCtx(), d, collate.GetCollator(col.GetCollate()))
+	err = stmtCtx.HandleError(err)
 	if err != nil || cmp != 0 {
 		return nil
 	}

@@ -409,6 +409,7 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 			sc.SetTypeFlags(sc.TypeFlags().WithIgnoreInvalidDateErr(true).WithIgnoreZeroInDate(true))
 			var err error
 			lower, err = d.ConvertTo(sc.TypeCtx(), &column.Info.FieldType)
+			err = sc.HandleError(err)
 			if err != nil {
 				logutil.BgLogger().Debug("decode bucket lower bound failed", zap.Error(err))
 				delete(table.Columns, histID)
@@ -416,6 +417,7 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 			}
 			d = types.NewBytesDatum(row.GetBytes(6))
 			upper, err = d.ConvertTo(sc.TypeCtx(), &column.Info.FieldType)
+			err = sc.HandleError(err)
 			if err != nil {
 				logutil.BgLogger().Debug("decode bucket upper bound failed", zap.Error(err))
 				delete(table.Columns, histID)

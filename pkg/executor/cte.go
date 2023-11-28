@@ -562,9 +562,11 @@ func (p *cteProducer) computeChunkHash(chk *chunk.Chunk) (sel []int, err error) 
 	}
 
 	for i := 0; i < chk.NumCols(); i++ {
-		if err = codec.HashChunkSelected(p.ctx.GetSessionVars().StmtCtx.TypeCtx(), p.hCtx.hashVals,
+		err := codec.HashChunkSelected(p.hCtx.hashVals,
 			chk, p.hCtx.allTypes[i], i, p.hCtx.buf, p.hCtx.hasNull,
-			hashBitMap, false); err != nil {
+			hashBitMap, false)
+		err = p.ctx.GetSessionVars().StmtCtx.HandleError(err)
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -657,9 +659,10 @@ func (p *cteProducer) checkHasDup(probeKey uint64,
 		if err != nil {
 			return false, err
 		}
-		isEqual, err := codec.EqualChunkRow(p.ctx.GetSessionVars().StmtCtx.TypeCtx(),
+		isEqual, err := codec.EqualChunkRow(
 			row, p.hCtx.allTypes, p.hCtx.keyColIdx,
 			matchedRow, p.hCtx.allTypes, p.hCtx.keyColIdx)
+		err = p.ctx.GetSessionVars().StmtCtx.HandleError(err)
 		if err != nil {
 			return false, err
 		}

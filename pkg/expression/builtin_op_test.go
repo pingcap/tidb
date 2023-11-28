@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
@@ -70,11 +71,7 @@ func TestUnary(t *testing.T) {
 func TestLogicAnd(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := sc.TypeFlags()
-	defer func() {
-		sc.SetTypeFlags(oldTypeFlags)
-	}()
-	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
+	sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 
 	cases := []struct {
 		args     []interface{}
@@ -243,11 +240,7 @@ func TestBitXor(t *testing.T) {
 func TestBitOr(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := sc.TypeFlags()
-	defer func() {
-		sc.SetTypeFlags(oldTypeFlags)
-	}()
-	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
+	sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 
 	cases := []struct {
 		args     []interface{}
@@ -289,11 +282,7 @@ func TestBitOr(t *testing.T) {
 func TestLogicOr(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := sc.TypeFlags()
-	defer func() {
-		sc.SetTypeFlags(oldTypeFlags)
-	}()
-	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
+	sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 
 	cases := []struct {
 		args     []interface{}
@@ -395,11 +384,7 @@ func TestBitAnd(t *testing.T) {
 func TestBitNeg(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := sc.TypeFlags()
-	defer func() {
-		sc.SetTypeFlags(oldTypeFlags)
-	}()
-	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
+	sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 
 	cases := []struct {
 		args     []interface{}
@@ -441,11 +426,7 @@ func TestBitNeg(t *testing.T) {
 func TestUnaryNot(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := sc.TypeFlags()
-	defer func() {
-		sc.SetTypeFlags(oldTypeFlags)
-	}()
-	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
+	sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 
 	cases := []struct {
 		args     []interface{}
@@ -495,11 +476,7 @@ func TestUnaryNot(t *testing.T) {
 func TestIsTrueOrFalse(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := sc.TypeFlags()
-	defer func() {
-		sc.SetTypeFlags(oldTypeFlags)
-	}()
-	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
+	sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 
 	testCases := []struct {
 		args    []interface{}
@@ -602,11 +579,7 @@ func TestIsTrueOrFalse(t *testing.T) {
 func TestLogicXor(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := sc.TypeFlags()
-	defer func() {
-		sc.SetTypeFlags(oldTypeFlags)
-	}()
-	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
+	sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 
 	cases := []struct {
 		args     []interface{}

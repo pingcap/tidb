@@ -300,6 +300,7 @@ func (ce compareExec) compare(sctx *stmtctx.StatementContext, a, b []types.Datum
 		aColumn := a[colOff]
 		bColumn := b[colOff]
 		cmp, err = aColumn.Compare(sctx.TypeCtx(), &bColumn, ce.collators[colOff])
+		err = sctx.HandleError(err)
 		if err != nil {
 			return 0, err
 		}

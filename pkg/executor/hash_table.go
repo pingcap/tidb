@@ -245,7 +245,7 @@ func (c *hashRowContainer) GetAllMatchedRows(probeHCtx *hashContext, probeSideRo
 		}
 		if probeKeyNullBits != nil && len(probeHCtx.naKeyColIdx) > 1 {
 			// check the idxs-th value of the join columns.
-			ok, err = codec.EqualChunkRow(c.sc.TypeCtx(), mayMatchedRow, needCheckBuildTypes, needCheckBuildColPos, probeSideRow, needCheckProbeTypes, needCheckProbeColPos)
+			ok, err = codec.EqualChunkRow(mayMatchedRow, needCheckBuildTypes, needCheckBuildColPos, probeSideRow, needCheckProbeTypes, needCheckProbeColPos)
 			if err != nil {
 				return nil, err
 			}
@@ -381,7 +381,8 @@ func (c *hashRowContainer) GetNullBucketRows(probeHCtx *hashContext, probeSideRo
 				needCheckProbeTypes = append(needCheckProbeTypes, probeHCtx.allTypes[i])
 			}
 			// check the idxs-th value of the join columns.
-			ok, err = codec.EqualChunkRow(c.sc.TypeCtx(), mayMatchedRow, needCheckBuildTypes, needCheckBuildColPos, probeSideRow, needCheckProbeTypes, needCheckProbeColPos)
+			ok, err = codec.EqualChunkRow(mayMatchedRow, needCheckBuildTypes, needCheckBuildColPos, probeSideRow, needCheckProbeTypes, needCheckProbeColPos)
+			err = c.sc.HandleError(err)
 			if err != nil {
 				return nil, err
 			}
@@ -404,7 +405,8 @@ func (c *hashRowContainer) GetNullBucketRows(probeHCtx *hashContext, probeSideRo
 				needCheckProbeTypes = append(needCheckProbeTypes, probeHCtx.allTypes[i])
 			}
 			// check the idxs-th value of the join columns.
-			ok, err = codec.EqualChunkRow(c.sc.TypeCtx(), mayMatchedRow, needCheckBuildTypes, needCheckBuildColPos, probeSideRow, needCheckProbeTypes, needCheckProbeColPos)
+			ok, err = codec.EqualChunkRow(mayMatchedRow, needCheckBuildTypes, needCheckBuildColPos, probeSideRow, needCheckProbeTypes, needCheckProbeColPos)
+			err = c.sc.HandleError(err)
 			if err != nil {
 				return nil, err
 			}
@@ -421,13 +423,15 @@ func (c *hashRowContainer) GetNullBucketRows(probeHCtx *hashContext, probeSideRo
 // matchJoinKey checks if join keys of buildRow and probeRow are logically equal.
 func (c *hashRowContainer) matchJoinKey(buildRow, probeRow chunk.Row, probeHCtx *hashContext) (ok bool, err error) {
 	if len(c.hCtx.naKeyColIdx) > 0 {
-		return codec.EqualChunkRow(c.sc.TypeCtx(),
+		ok, err = codec.EqualChunkRow(
 			buildRow, c.hCtx.allTypes, c.hCtx.naKeyColIdx,
 			probeRow, probeHCtx.allTypes, probeHCtx.naKeyColIdx)
+		return ok, c.sc.HandleError(err)
 	}
-	return codec.EqualChunkRow(c.sc.TypeCtx(),
+	ok, err = codec.EqualChunkRow(
 		buildRow, c.hCtx.allTypes, c.hCtx.keyColIdx,
 		probeRow, probeHCtx.allTypes, probeHCtx.keyColIdx)
+	return ok, c.sc.HandleError(err)
 }
 
 // alreadySpilledSafeForTest indicates that records have spilled out into disk. It's thread-safe.
@@ -463,7 +467,8 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 	// 1: write the row data of join key to hashVals. (normal EQ key should ignore the null values.) null-EQ for Except statement is an exception.
 	for keyIdx, colIdx := range c.hCtx.keyColIdx {
 		ignoreNull := len(ignoreNulls) > keyIdx && ignoreNulls[keyIdx]
-		err := codec.HashChunkSelected(c.sc.TypeCtx(), hCtx.hashVals, chk, hCtx.allTypes[keyIdx], colIdx, hCtx.buf, hCtx.hasNull, selected, ignoreNull)
+		err := codec.HashChunkSelected(hCtx.hashVals, chk, hCtx.allTypes[keyIdx], colIdx, hCtx.buf, hCtx.hasNull, selected, ignoreNull)
+		err = c.sc.HandleError(err)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -473,7 +478,8 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 	hasNullMark := make([]bool, len(hCtx.hasNull))
 	for keyIdx, colIdx := range c.hCtx.naKeyColIdx {
 		// NAAJ won't ignore any null values, but collect them as one hash bucket.
-		err := codec.HashChunkSelected(c.sc.TypeCtx(), hCtx.hashVals, chk, hCtx.allTypes[keyIdx], colIdx, hCtx.buf, hCtx.hasNull, selected, false)
+		err := codec.HashChunkSelected(hCtx.hashVals, chk, hCtx.allTypes[keyIdx], colIdx, hCtx.buf, hCtx.hasNull, selected, false)
+		err = c.sc.HandleError(err)
 		if err != nil {
 			return errors.Trace(err)
 		}

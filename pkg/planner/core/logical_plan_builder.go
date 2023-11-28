@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -2457,8 +2458,7 @@ func getUintFromNode(ctx sessionctx.Context, n ast.Node, mustInt64orUint64 bool)
 			return uint64(v), false, true
 		}
 	case string:
-		ctx := ctx.GetSessionVars().StmtCtx.TypeCtx()
-		uVal, err := types.StrToUint(ctx, v, false)
+		uVal, err := types.StrToUint(v, false)
 		if err != nil {
 			return 0, false, false
 		}
@@ -6835,11 +6835,11 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast
 	if !checker.InPrepareStmt {
 		// Do not raise warnings for truncate.
 		sc := b.ctx.GetSessionVars().StmtCtx
-		oldTypeFlags := sc.TypeFlags()
-		newTypeFlags := oldTypeFlags.WithIgnoreTruncateErr(true)
-		sc.SetTypeFlags(newTypeFlags)
+		errCtx := sc.ErrCtx()
+		oldTruncateLevel := errCtx.GetLevel(errctx.ErrGroupTruncate)
+		sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 		uVal, isNull, err := expr.EvalInt(b.ctx, chunk.Row{})
-		sc.SetTypeFlags(oldTypeFlags)
+		sc.SetErrGroupLevel(errctx.ErrGroupTruncate, oldTruncateLevel)
 		if uVal < 0 || isNull || err != nil {
 			return nil, ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
 		}

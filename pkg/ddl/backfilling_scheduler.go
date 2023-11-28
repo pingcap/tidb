@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -169,11 +170,14 @@ func initSessCtx(
 	sessCtx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = !sqlMode.HasStrictMode()
 
 	typeFlags := types.StrictFlags.
-		WithTruncateAsWarning(!sqlMode.HasStrictMode()).
 		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
 		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()).
 		WithCastTimeToYearThroughConcat(true)
 	sessCtx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags)
+
+	if !sqlMode.HasStrictMode() {
+		sessCtx.GetSessionVars().StmtCtx.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
+	}
 
 	sessCtx.GetSessionVars().ResourceGroupName = resGroupName
 

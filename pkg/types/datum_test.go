@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -55,8 +56,9 @@ func TestDatum(t *testing.T) {
 func testDatumToBool(t *testing.T, in interface{}, res int) {
 	datum := NewDatum(in)
 	res64 := int64(res)
-	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(true))
-	b, err := datum.ToBool(ctx)
+	errCtx := errctx.StrictNoWarningContext.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
+	b, err := datum.ToBool()
+	err = errCtx.HandleError(err)
 	require.NoError(t, err)
 	require.Equal(t, res64, b)
 }
@@ -106,17 +108,19 @@ func TestToBool(t *testing.T) {
 	require.NoError(t, err)
 	testDatumToBool(t, v, 1)
 	d := NewDatum(&invalidMockType{})
-	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(true))
-	_, err = d.ToBool(ctx)
+	errCtx := errctx.StrictNoWarningContext.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
+	_, err = d.ToBool()
+	err = errCtx.HandleError(err)
 	require.Error(t, err)
 }
 
 func testDatumToInt64(t *testing.T, val interface{}, expect int64) {
 	d := NewDatum(val)
 
-	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(true))
+	errCtx := errctx.StrictNoWarningContext.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 
-	b, err := d.ToInt64(ctx)
+	b, err := d.ToInt64(DefaultStmtNoWarningContext)
+	err = errCtx.HandleError(err)
 	require.NoError(t, err)
 	require.Equal(t, expect, b)
 }
@@ -150,12 +154,10 @@ func TestToInt64(t *testing.T) {
 
 func testDatumToUInt32(t *testing.T, val interface{}, expect uint32, hasError bool) {
 	d := NewDatum(val)
-	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(true))
 
 	ft := NewFieldType(mysql.TypeLong)
 	ft.AddFlag(mysql.UnsignedFlag)
-	converted, err := d.ConvertTo(ctx, ft)
-
+	converted, err := d.ConvertTo(DefaultStmtNoWarningContext, ft)
 	if hasError {
 		require.Error(t, err)
 	} else {
@@ -201,9 +203,8 @@ func TestConvertToFloat(t *testing.T) {
 		{NewDatum("281.37"), mysql.TypeFloat, "", 281.37, 281.37},
 	}
 
-	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(true))
 	for _, testCase := range testCases {
-		converted, err := testCase.d.ConvertTo(ctx, NewFieldType(testCase.tp))
+		converted, err := testCase.d.ConvertTo(DefaultStmtNoWarningContext, NewFieldType(testCase.tp))
 		if testCase.errMsg == "" {
 			require.NoError(t, err)
 		} else {
@@ -350,11 +351,12 @@ func TestCloneDatum(t *testing.T) {
 		raw,
 	}
 
-	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(true))
+	errCtx := errctx.StrictNoWarningContext.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 
 	for _, tt := range tests {
 		tt1 := *tt.Clone()
-		res, err := tt.Compare(ctx, &tt1, collate.GetBinaryCollator())
+		res, err := tt.Compare(DefaultStmtNoWarningContext, &tt1, collate.GetBinaryCollator())
+		err = errCtx.HandleError(err)
 		require.NoError(t, err)
 		require.Equal(t, 0, res)
 		if tt.b != nil {
@@ -404,7 +406,7 @@ func TestEstimatedMemUsage(t *testing.T) {
 }
 
 func TestChangeReverseResultByUpperLowerBound(t *testing.T) {
-	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(true))
+	errCtx := errctx.StrictNoWarningContext.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 	// TODO: add more reserve convert tests for each pair of convert type.
 	testData := []struct {
 		a         Datum
@@ -489,10 +491,12 @@ func TestChangeReverseResultByUpperLowerBound(t *testing.T) {
 		},
 	}
 	for ith, test := range testData {
-		reverseRes, err := ChangeReverseResultByUpperLowerBound(ctx, test.retType, test.a, test.roundType)
+		reverseRes, err := ChangeReverseResultByUpperLowerBound(DefaultStmtNoWarningContext, test.retType, test.a, test.roundType)
+		err = errCtx.HandleError(err)
 		require.NoError(t, err)
 		var cmp int
-		cmp, err = reverseRes.Compare(ctx, &test.res, collate.GetBinaryCollator())
+		cmp, err = reverseRes.Compare(DefaultStmtNoWarningContext, &test.res, collate.GetBinaryCollator())
+		err = errCtx.HandleError(err)
 		require.NoError(t, err)
 		require.Equalf(t, 0, cmp, "%dth got:%#v, expect:%#v", ith, reverseRes, test.res)
 	}

@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"unsafe"
 
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -72,7 +73,9 @@ func (e *baseGroupConcat4String) AppendFinalResult2Chunk(_ sessionctx.Context, p
 
 func (e *baseGroupConcat4String) handleTruncateError(sctx sessionctx.Context) (err error) {
 	if atomic.CompareAndSwapInt32(e.truncated, 0, 1) {
-		if !sctx.GetSessionVars().StmtCtx.TypeFlags().TruncateAsWarning() {
+		errCtx := sctx.GetSessionVars().StmtCtx.ErrCtx()
+
+		if errCtx.GetLevel(errctx.ErrGroupTruncate) != errctx.LevelWarn {
 			return expression.ErrCutValueGroupConcat.GenWithStackByArgs(e.args[0].String())
 		}
 		sctx.GetSessionVars().StmtCtx.AppendWarning(expression.ErrCutValueGroupConcat.GenWithStackByArgs(e.args[0].String()))
@@ -303,8 +306,10 @@ func (h topNRows) Len() int {
 
 func (h topNRows) Less(i, j int) bool {
 	n := len(h.rows[i].byItems)
+	sc := h.sctx.GetSessionVars().StmtCtx
 	for k := 0; k < n; k++ {
-		ret, err := h.rows[i].byItems[k].Compare(h.sctx.GetSessionVars().StmtCtx.TypeCtx(), h.rows[j].byItems[k], h.collators[k])
+		ret, err := h.rows[i].byItems[k].Compare(sc.TypeCtx(), h.rows[j].byItems[k], h.collators[k])
+		err = sc.HandleError(err)
 		if err != nil {
 			h.err = err
 			return false

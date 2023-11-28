@@ -2097,6 +2097,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
 		if binParam, ok := execStmt.BinaryArgs.([]param.BinaryParam); ok {
 			args, err := param.ExecArgs(s.GetSessionVars().StmtCtx.TypeCtx(), binParam)
+			err = s.GetSessionVars().StmtCtx.HandleError(err)
 			if err != nil {
 				return nil, err
 			}

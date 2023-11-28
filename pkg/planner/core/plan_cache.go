@@ -619,13 +619,16 @@ func convertConstant2Datum(ctx sessionctx.Context, con *expression.Constant, tar
 	if err != nil {
 		return nil, err
 	}
-	tc := ctx.GetSessionVars().StmtCtx.TypeCtx()
+	sc := ctx.GetSessionVars().StmtCtx
+	tc := sc.TypeCtx()
 	dVal, err := val.ConvertTo(tc, target)
+	err = sc.HandleError(err)
 	if err != nil {
 		return nil, err
 	}
 	// The converted result must be same as original datum.
 	cmp, err := dVal.Compare(tc, &val, collate.GetCollator(target.GetCollate()))
+	err = sc.HandleError(err)
 	if err != nil || cmp != 0 {
 		return nil, errors.New("Convert constant to datum is failed, because the constant has changed after the covert")
 	}

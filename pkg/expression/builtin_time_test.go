@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -1493,11 +1494,7 @@ func TestStrToDate(t *testing.T) {
 func TestFromDays(t *testing.T) {
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := stmtCtx.TypeFlags()
-	defer func() {
-		stmtCtx.SetTypeFlags(oldTypeFlags)
-	}()
-	stmtCtx.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
+	stmtCtx.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 	tests := []struct {
 		day    int64
 		expect string
@@ -1782,7 +1779,8 @@ func TestTimestampDiff(t *testing.T) {
 	}
 
 	sc := ctx.GetSessionVars().StmtCtx
-	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true).WithIgnoreZeroInDate(true))
+	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreZeroInDate(true))
+	sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 	resetStmtContext(ctx)
 	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewStringDatum("DAY"),
 		types.NewStringDatum("2017-01-00"),
@@ -2721,11 +2719,7 @@ func TestTimeToSec(t *testing.T) {
 func TestSecToTime(t *testing.T) {
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := stmtCtx.TypeFlags()
-	defer func() {
-		stmtCtx.SetTypeFlags(oldTypeFlags)
-	}()
-	stmtCtx.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
+	stmtCtx.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 
 	fc := funcs[ast.SecToTime]
 

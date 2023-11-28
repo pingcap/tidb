@@ -101,16 +101,14 @@ func (b BinaryLiteral) ToBitLiteralString(trimLeadingZero bool) string {
 }
 
 // ToInt returns the int value for the literal.
-func (b BinaryLiteral) ToInt(ctx Context) (uint64, error) {
+func (b BinaryLiteral) ToInt() (uint64, error) {
 	buf := trimLeadingZeroBytes(b)
 	length := len(buf)
 	if length == 0 {
 		return 0, nil
 	}
 	if length > 8 {
-		var err = ErrTruncatedWrongVal.FastGenByArgs("BINARY", b)
-		err = ctx.HandleTruncate(err)
-		return math.MaxUint64, err
+		return math.MaxUint64, ErrTruncatedWrongVal.FastGenByArgs("BINARY", b)
 	}
 	// Note: the byte-order is BigEndian.
 	val := uint64(buf[0])

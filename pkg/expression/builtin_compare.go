@@ -1393,6 +1393,8 @@ func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.Fiel
 	sc := ctx.GetSessionVars().StmtCtx
 
 	dt, err = dt.ConvertTo(sc.TypeCtx(), targetFieldType)
+	// errors cannot be ignored here, so don't need to use `sc.HandleError`. The special case `types.ErrOverflow` is
+	// handled in the following condition
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrOverflow) {
 			return &Constant{
@@ -1432,18 +1434,20 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 	}
 	var intDatum types.Datum
 	intDatum, err = dt.ConvertTo(sc.TypeCtx(), &targetFieldType)
+	if terror.ErrorEqual(err, types.ErrOverflow) {
+		return &Constant{
+			Value:        intDatum,
+			RetType:      &targetFieldType,
+			DeferredExpr: con.DeferredExpr,
+			ParamMarker:  con.ParamMarker,
+		}, true
+	}
+	err = sc.HandleError(err)
 	if err != nil {
-		if terror.ErrorEqual(err, types.ErrOverflow) {
-			return &Constant{
-				Value:        intDatum,
-				RetType:      &targetFieldType,
-				DeferredExpr: con.DeferredExpr,
-				ParamMarker:  con.ParamMarker,
-			}, true
-		}
 		return con, false
 	}
 	c, err := intDatum.Compare(sc.TypeCtx(), &con.Value, collate.GetBinaryCollator())
+	err = sc.HandleError(err)
 	if err != nil {
 		return con, false
 	}
@@ -1489,6 +1493,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 			//    will be 2.0 and the value of `intDatum` will be 2002 in this case.
 			var doubleDatum types.Datum
 			doubleDatum, err = dt.ConvertTo(sc.TypeCtx(), types.NewFieldType(mysql.TypeDouble))
+			err = sc.HandleError(err)
 			if err != nil {
 				return con, false
 			}
@@ -1689,6 +1694,7 @@ func (c *compareFunctionClass) refineNumericConstantCmpDatetime(ctx sessionctx.C
 	var datetimeDatum types.Datum
 	targetFieldType := types.NewFieldType(mysql.TypeDatetime)
 	datetimeDatum, err = dt.ConvertTo(sc.TypeCtx(), targetFieldType)
+	err = sc.HandleError(err)
 	if err != nil || datetimeDatum.IsNull() {
 		return args
 	}

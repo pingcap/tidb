@@ -518,7 +518,8 @@ func newListPartitionPruner(ctx sessionctx.Context, tbl table.Table, partitionNa
 func (l *listPartitionPruner) locatePartition(cond expression.Expression) (tables.ListPartitionLocation, bool, error) {
 	switch sf := cond.(type) {
 	case *expression.Constant:
-		b, err := sf.Value.ToBool(l.ctx.GetSessionVars().StmtCtx.TypeCtx())
+		b, err := sf.Value.ToBool()
+		err = l.ctx.GetSessionVars().StmtCtx.HandleError(err)
 		if err == nil && b == 0 {
 			// A constant false expression.
 			return nil, false, nil
@@ -1081,7 +1082,9 @@ func minCmp(ctx sessionctx.Context, lowVal []types.Datum, columnsPruner *rangeCo
 				return true
 			}
 			// Add Null as point here?
-			cmp, err := con.Value.Compare(ctx.GetSessionVars().StmtCtx.TypeCtx(), &lowVal[j], comparer[j])
+			sc := ctx.GetSessionVars().StmtCtx
+			cmp, err := con.Value.Compare(sc.TypeCtx(), &lowVal[j], comparer[j])
+			err = sc.HandleError(err)
 			if err != nil {
 				*gotError = true
 			}
@@ -1160,7 +1163,9 @@ func maxCmp(ctx sessionctx.Context, hiVal []types.Datum, columnsPruner *rangeCol
 				return false
 			}
 			// Add Null as point here?
-			cmp, err := con.Value.Compare(ctx.GetSessionVars().StmtCtx.TypeCtx(), &hiVal[j], comparer[j])
+			sc := ctx.GetSessionVars().StmtCtx
+			cmp, err := con.Value.Compare(sc.TypeCtx(), &hiVal[j], comparer[j])
+			err = sc.HandleError(err)
 			if err != nil {
 				*gotError = true
 				// error pushed, we will still use the cmp value
@@ -1297,7 +1302,9 @@ type rangePruner struct {
 
 func (p *rangePruner) partitionRangeForExpr(sctx sessionctx.Context, expr expression.Expression) (start int, end int, ok bool) {
 	if constExpr, ok := expr.(*expression.Constant); ok {
-		if b, err := constExpr.Value.ToBool(sctx.GetSessionVars().StmtCtx.TypeCtx()); err == nil && b == 0 {
+		b, err := constExpr.Value.ToBool()
+		err = sctx.GetSessionVars().StmtCtx.HandleError(err)
+		if err == nil && b == 0 {
 			// A constant false expression.
 			return 0, 0, true
 		}

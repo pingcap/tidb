@@ -502,6 +502,7 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se s
 			continue
 		}
 
+		sc := se.GetSessionVars().StmtCtx
 		iter := chunk.NewIterator4Chunk(chk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			if currentSize == 0 {
@@ -510,7 +511,8 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se s
 			}
 			newEnd := row.GetDatum(0, &rs.Fields()[0].Column.FieldType)
 			if currentSize >= batchSize {
-				cmp, err := newEnd.Compare(se.GetSessionVars().StmtCtx.TypeCtx(), &currentEnd, collate.GetCollator(shardColumnCollate))
+				cmp, err := newEnd.Compare(sc.TypeCtx(), &currentEnd, collate.GetCollator(shardColumnCollate))
+				err = sc.HandleError(err)
 				if err != nil {
 					return nil, err
 				}

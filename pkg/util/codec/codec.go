@@ -118,7 +118,7 @@ func encode(loc *time.Location, b []byte, vals []types.Datum, comparable1 bool) 
 		case types.KindMysqlBit, types.KindBinaryLiteral:
 			// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
 			var val uint64
-			val, err = vals[i].GetBinaryLiteral().ToInt(types.StrictContext)
+			val, err = vals[i].GetBinaryLiteral().ToInt()
 			terror.Log(errors.Trace(err))
 			b = encodeUnsignedInt(b, val, comparable1)
 		case types.KindMysqlJSON:
@@ -141,7 +141,7 @@ func encode(loc *time.Location, b []byte, vals []types.Datum, comparable1 bool) 
 }
 
 // EstimateValueSize uses to estimate the value  size of the encoded values.
-func EstimateValueSize(typeCtx types.Context, val types.Datum) (int, error) {
+func EstimateValueSize(val types.Datum) (int, error) {
 	l := 0
 	switch val.Kind() {
 	case types.KindInt64:
@@ -164,7 +164,7 @@ func EstimateValueSize(typeCtx types.Context, val types.Datum) (int, error) {
 	case types.KindMysqlSet:
 		l = valueSizeOfUnsignedInt(val.GetMysqlSet().Value)
 	case types.KindMysqlBit, types.KindBinaryLiteral:
-		val, err := val.GetBinaryLiteral().ToInt(typeCtx)
+		val, err := val.GetBinaryLiteral().ToInt()
 		terror.Log(errors.Trace(err))
 		l = valueSizeOfUnsignedInt(val)
 	case types.KindMysqlJSON:
@@ -297,7 +297,7 @@ func EncodeValue(loc *time.Location, b []byte, v ...types.Datum) ([]byte, error)
 	return encode(loc, b, v, false)
 }
 
-func encodeHashChunkRowIdx(typeCtx types.Context, row chunk.Row, tp *types.FieldType, idx int) (flag byte, b []byte, err error) {
+func encodeHashChunkRowIdx(row chunk.Row, tp *types.FieldType, idx int) (flag byte, b []byte, err error) {
 	if row.IsNull(idx) {
 		flag = NilFlag
 		return
@@ -378,7 +378,7 @@ func encodeHashChunkRowIdx(typeCtx types.Context, row chunk.Row, tp *types.Field
 	case mysql.TypeBit:
 		// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
 		flag = uvarintFlag
-		v, err1 := types.BinaryLiteral(row.GetBytes(idx)).ToInt(typeCtx)
+		v, err1 := types.BinaryLiteral(row.GetBytes(idx)).ToInt()
 		terror.Log(errors.Trace(err1))
 		b = unsafe.Slice((*byte)(unsafe.Pointer(&v)), unsafe.Sizeof(v))
 	case mysql.TypeJSON:
@@ -392,13 +392,13 @@ func encodeHashChunkRowIdx(typeCtx types.Context, row chunk.Row, tp *types.Field
 }
 
 // HashChunkColumns writes the encoded value of each row's column, which of index `colIdx`, to h.
-func HashChunkColumns(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk, tp *types.FieldType, colIdx int, buf []byte, isNull []bool) (err error) {
-	return HashChunkSelected(typeCtx, h, chk, tp, colIdx, buf, isNull, nil, false)
+func HashChunkColumns(h []hash.Hash64, chk *chunk.Chunk, tp *types.FieldType, colIdx int, buf []byte, isNull []bool) (err error) {
+	return HashChunkSelected(h, chk, tp, colIdx, buf, isNull, nil, false)
 }
 
 // HashChunkSelected writes the encoded value of selected row's column, which of index `colIdx`, to h.
 // sel indicates which rows are selected. If it is nil, all rows are selected.
-func HashChunkSelected(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk, tp *types.FieldType, colIdx int, buf []byte,
+func HashChunkSelected(h []hash.Hash64, chk *chunk.Chunk, tp *types.FieldType, colIdx int, buf []byte,
 	isNull, sel []bool, ignoreNull bool) (err error) {
 	var b []byte
 	column := chk.Column(colIdx)
@@ -623,7 +623,7 @@ func HashChunkSelected(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk,
 			} else {
 				// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
 				buf[0] = uvarintFlag
-				v, err1 := types.BinaryLiteral(column.GetBytes(i)).ToInt(typeCtx)
+				v, err1 := types.BinaryLiteral(column.GetBytes(i)).ToInt()
 				terror.Log(errors.Trace(err1))
 				b = unsafe.Slice((*byte)(unsafe.Pointer(&v)), sizeUint64)
 			}
@@ -670,10 +670,10 @@ func HashChunkSelected(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk,
 
 // HashChunkRow writes the encoded values to w.
 // If two rows are logically equal, it will generate the same bytes.
-func HashChunkRow(typeCtx types.Context, w io.Writer, row chunk.Row, allTypes []*types.FieldType, colIdx []int, buf []byte) (err error) {
+func HashChunkRow(w io.Writer, row chunk.Row, allTypes []*types.FieldType, colIdx []int, buf []byte) (err error) {
 	var b []byte
 	for i, idx := range colIdx {
-		buf[0], b, err = encodeHashChunkRowIdx(typeCtx, row, allTypes[i], idx)
+		buf[0], b, err = encodeHashChunkRowIdx(row, allTypes[i], idx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -691,7 +691,7 @@ func HashChunkRow(typeCtx types.Context, w io.Writer, row chunk.Row, allTypes []
 
 // EqualChunkRow returns a boolean reporting whether row1 and row2
 // with their types and column index are logically equal.
-func EqualChunkRow(typeCtx types.Context,
+func EqualChunkRow(
 	row1 chunk.Row, allTypes1 []*types.FieldType, colIdx1 []int,
 	row2 chunk.Row, allTypes2 []*types.FieldType, colIdx2 []int,
 ) (bool, error) {
@@ -700,11 +700,11 @@ func EqualChunkRow(typeCtx types.Context,
 	}
 	for i := range colIdx1 {
 		idx1, idx2 := colIdx1[i], colIdx2[i]
-		flag1, b1, err := encodeHashChunkRowIdx(typeCtx, row1, allTypes1[i], idx1)
+		flag1, b1, err := encodeHashChunkRowIdx(row1, allTypes1[i], idx1)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-		flag2, b2, err := encodeHashChunkRowIdx(typeCtx, row2, allTypes2[i], idx2)
+		flag2, b2, err := encodeHashChunkRowIdx(row2, allTypes2[i], idx2)
 		if err != nil {
 			return false, errors.Trace(err)
 		}

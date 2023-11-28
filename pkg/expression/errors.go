@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"github.com/pingcap/tidb/pkg/errctx"
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	pmysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -76,7 +77,7 @@ func handleInvalidTimeError(ctx sessionctx.Context, err error) error {
 		return err
 	}
 	sc := ctx.GetSessionVars().StmtCtx
-	err = sc.HandleTruncate(err)
+	err = sc.HandleError(err)
 	if ctx.GetSessionVars().StrictSQLMode && (sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt) {
 		return err
 	}
@@ -102,9 +103,10 @@ func handleDivisionByZeroError(ctx sessionctx.Context) error {
 func handleAllowedPacketOverflowed(ctx sessionctx.Context, exprName string, maxAllowedPacketSize uint64) error {
 	err := errWarnAllowedPacketOverflowed.GenWithStackByArgs(exprName, maxAllowedPacketSize)
 	sc := ctx.GetSessionVars().StmtCtx
+	errCtx := sc.ErrCtx()
 
 	// insert|update|delete ignore ...
-	if sc.TypeFlags().TruncateAsWarning() {
+	if errCtx.GetLevel(errctx.ErrGroupTruncate) == errctx.LevelWarn {
 		sc.AppendWarning(err)
 		return nil
 	}
