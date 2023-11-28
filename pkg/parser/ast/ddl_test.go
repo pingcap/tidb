@@ -843,6 +843,39 @@ func TestRemovePlacementRestore(t *testing.T) {
 	}
 }
 
+func TestRestorePrettyFormat(t *testing.T) {
+	f := format.DefaultRestoreFlags | format.RestorePrettyFormat
+	cases := []struct {
+		sourceSQL string
+		expectSQL string
+	}{
+		{
+			sourceSQL: "CREATE TABLE t1(id BIGINT NOT NULL AUTO_INCREMENT, `schema` mediumtext NOT NULL, namespace text NOT NULL, sequence BIGINT UNSIGNED NOT NULL, created_ts BIGINT NOT NULL, PRIMARY KEY(id)," +
+				"UNIQUE KEY `bytebase_idx_unique_migration_history_namespace_sequence` (`namespace`(256),`sequence`),KEY `bytebase_idx_migration_history_namespace_created` (`namespace`(256),`created_ts`));",
+			expectSQL: "CREATE TABLE `t1` (\n" +
+				"  `id` BIGINT NOT NULL AUTO_INCREMENT,\n" +
+				"  `schema` MEDIUMTEXT NOT NULL,\n" +
+				"  `namespace` TEXT NOT NULL,\n" +
+				"  `sequence` BIGINT UNSIGNED NOT NULL,\n" +
+				"  `created_ts` BIGINT NOT NULL,\n" +
+				"  PRIMARY KEY (`id`),\n" +
+				"  UNIQUE `bytebase_idx_unique_migration_history_namespace_sequence` (`namespace`(256), `sequence`),\n" +
+				"  INDEX `bytebase_idx_migration_history_namespace_created` (`namespace`(256), `created_ts`)\n" +
+				")",
+		},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node
+	}
+
+	for _, ca := range cases {
+		testCases := []NodeRestoreTestCase{
+			{ca.sourceSQL, ca.expectSQL},
+		}
+		runNodeRestoreTestWithFlagsStmtChange(t, testCases, "%s", extractNodeFunc, f)
+	}
+}
+
 func TestFlashBackDatabaseRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"flashback database M", "FLASHBACK DATABASE `M`"},
