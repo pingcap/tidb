@@ -239,6 +239,9 @@ const (
 	RestoreWithoutSchemaName
 	RestoreWithoutTableName
 	RestoreForNonPrepPlanCache
+
+	// RestorePrettyFormat is used to pretty print the CREATE TABLE statement and CREATE VIEW statement.
+	RestorePrettyFormat
 )
 
 const (
@@ -347,6 +350,10 @@ func (rf RestoreFlags) HasRestoreWithTTLEnableOff() bool {
 // HasRestoreForNonPrepPlanCache returns a boolean indicating whether `rf` has `RestoreForNonPrepPlanCache` flag.
 func (rf RestoreFlags) HasRestoreForNonPrepPlanCache() bool {
 	return rf.has(RestoreForNonPrepPlanCache)
+}
+
+func (rf RestoreFlags) HasPrettyFormatFlag() bool {
+	return rf.has(RestorePrettyFormat)
 }
 
 // RestoreWriter is the interface for `Restore` to write.
