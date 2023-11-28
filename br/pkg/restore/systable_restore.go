@@ -149,7 +149,7 @@ func (rc *Client) ClearSystemUsers(ctx context.Context, resetUsers []string) err
 
 // RestoreSystemSchemas restores the system schema(i.e. the `mysql` schema).
 // Detail see https://github.com/pingcap/br/issues/679#issuecomment-762592254.
-func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) {
+func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) error {
 	sysDB := mysql.SystemDB
 
 	temporaryDB := utils.TemporaryDBName(sysDB)
@@ -157,18 +157,18 @@ func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) {
 
 	if !f.MatchSchema(sysDB) || !rc.withSysTable {
 		log.Debug("system database filtered out", zap.String("database", sysDB))
-		return
+		return nil
 	}
 	originDatabase, ok := rc.databases[temporaryDB.O]
 	if !ok {
 		log.Info("system database not backed up, skipping", zap.String("database", sysDB))
-		return
+		return nil
 	}
 	db, ok := rc.getDatabaseByName(sysDB)
 	if !ok {
 		// Or should we create the database here?
 		log.Warn("target database not exist, aborting", zap.String("database", sysDB))
-		return
+		return nil
 	}
 
 	tablesRestored := make([]string, 0, len(originDatabase.Tables))
@@ -180,15 +180,13 @@ func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) {
 					logutil.ShortError(err),
 					zap.Stringer("table", tableName),
 				)
+				return errors.Trace(err)
 			}
 			tablesRestored = append(tablesRestored, tableName.L)
 		}
 	}
-	if err := rc.afterSystemTablesReplaced(ctx, tablesRestored); err != nil {
-		for _, e := range multierr.Errors(err) {
-			log.Warn("error during reconfigurating the system tables", zap.String("database", sysDB), logutil.ShortError(e))
-		}
-	}
+	err := rc.afterSystemTablesReplaced(ctx, tablesRestored)
+	return errors.Trace(err)
 }
 
 // database is a record of a database.
