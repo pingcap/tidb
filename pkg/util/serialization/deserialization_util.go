@@ -29,11 +29,9 @@ type PosAndBuf struct {
 	Pos *int64
 }
 
-func NewPosAndBuf(col *chunk.Column, idx int) PosAndBuf {
-	pos := int64(0)
-	return PosAndBuf{
-		Buf: col.GetBytes(idx),
-		Pos: &pos}
+func (p *PosAndBuf) Reset(col *chunk.Column, idx int) {
+	p.Buf = col.GetBytes(idx)
+	*p.Pos = 0
 }
 
 func deserializeBuffer(posAndBuf PosAndBuf) []byte {
