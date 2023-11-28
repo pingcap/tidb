@@ -229,6 +229,13 @@ type builder struct {
 	sctx sessionctx.Context
 }
 
+// build converts Expression on one column into point, which can be further built into Range.
+// If the input prefixLen is not types.UnspecifiedLength, it means it's for a prefix column in a prefix index. In such
+// cases, we should cut the prefix and adjust the exclusiveness. Ref: cutPrefixForPoints().
+// convertToSortKey indicates whether the string values should be converted to sort key.
+// Converting to sort key can make `like` function be built into Range for new collation column. But we can't restore
+// the original value from the sort key, so the usage of the result may be limited, like when you need to restore the
+// result points back to Expression.
 func (r *builder) build(
 	expr expression.Expression,
 	newTp *types.FieldType,
@@ -951,10 +958,16 @@ func (r *builder) buildFromScalarFunc(
 	return nil
 }
 
+// We need an input collator because our (*Datum).Compare(), which is used in this method, needs an explicit collator
+// input to handle comparison for string and bytes.
+// Note that if the points are converted to sort key, the collator should be set to charset.CollationBin.
 func (r *builder) intersection(a, b []*point, collator collate.Collator) []*point {
 	return r.merge(a, b, false, collator)
 }
 
+// We need an input collator because our (*Datum).Compare(), which is used in this method, needs an explicit collator
+// input to handle comparison for string and bytes.
+// Note that if the points are converted to sort key, the collator should be set to charset.CollationBin.
 func (r *builder) union(a, b []*point, collator collate.Collator) []*point {
 	return r.merge(a, b, true, collator)
 }

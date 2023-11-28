@@ -1439,9 +1439,13 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 		if col == nil { // Handling the case when the column is _tidb_rowid.
 			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: types.NewFieldType(mysql.TypeLonglong), value: d, con: con}), false
 		}
+
+		// As in buildFromBinOp in util/ranger, when we build key from the expression to do range scan or point get on
+		// a string column, we should set the collation of the string datum to collation of the column.
 		if col.FieldType.EvalType() == types.ETString && (d.Kind() == types.KindString || d.Kind() == types.KindBinaryLiteral) {
-			d.SetString(d.GetString(), col.FieldType.GetCollate()) // refine the string like what we did in builder.buildFromBinOp
+			d.SetString(d.GetString(), col.FieldType.GetCollate())
 		}
+
 		if col.GetType() == mysql.TypeString && col.GetCollate() == charset.CollationBin { // This type we needn't to pad `\0` in here.
 			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: &col.FieldType, value: d, con: con}), false
 		}
@@ -1472,8 +1476,10 @@ func getPointGetValue(stmtCtx *stmtctx.StatementContext, col *model.ColumnInfo, 
 	if !checkCanConvertInPointGet(col, *d) {
 		return nil
 	}
+	// As in buildFromBinOp in util/ranger, when we build key from the expression to do range scan or point get on
+	// a string column, we should set the collation of the string datum to collation of the column.
 	if col.FieldType.EvalType() == types.ETString && (d.Kind() == types.KindString || d.Kind() == types.KindBinaryLiteral) {
-		d.SetString(d.GetString(), col.FieldType.GetCollate()) // refine the string like what we did in builder.buildFromBinOp
+		d.SetString(d.GetString(), col.FieldType.GetCollate())
 	}
 	dVal, err := d.ConvertTo(stmtCtx.TypeCtx(), &col.FieldType)
 	if err != nil {

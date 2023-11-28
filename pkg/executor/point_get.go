@@ -541,11 +541,12 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 		// table.CastValue will append 0x0 if the string value's length is smaller than the BINARY column's length.
 		// So we don't use CastValue for string value for now.
 		// TODO: The first if branch should have been removed, because the functionality of set the collation of the datum
-		// have been moved to util/ranger (normal path) and getNameValuePairs/getPointGetValue (fast path).
+		// have been moved to util/ranger (normal path) and getNameValuePairs/getPointGetValue (fast path). But this change
+		// will be cherry-picked to a hotfix, so we choose to be a bit conservative and keep this for now.
 		if colInfo.GetType() == mysql.TypeString || colInfo.GetType() == mysql.TypeVarString || colInfo.GetType() == mysql.TypeVarchar {
-			//var str string
-			//str, err = idxVals[i].ToString()
-			//idxVals[i].SetString(str, idxVals[i].Collation())
+			var str string
+			str, err = idxVals[i].ToString()
+			idxVals[i].SetString(str, idxVals[i].Collation())
 		} else if colInfo.GetType() == mysql.TypeEnum && (idxVals[i].Kind() == types.KindString || idxVals[i].Kind() == types.KindBytes || idxVals[i].Kind() == types.KindBinaryLiteral) {
 			var str string
 			var e types.Enum
