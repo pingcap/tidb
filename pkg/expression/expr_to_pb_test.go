@@ -1327,7 +1327,7 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	// CastDurationAsJson
+	// CastJsonAsJson
 	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), jsonColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
