@@ -214,7 +214,6 @@ func (b *WriterBuilder) Build(
 		propSizeDist: b.propSizeDist,
 		propKeysDist: b.propKeysDist,
 	}
-	ret.kvLocations = ret.doubleKVLocations[0]
 	ret.kvBuffer = ret.doubleKVBuffer[0]
 	ret.rc = ret.doubleRC[0]
 
@@ -311,13 +310,12 @@ type Writer struct {
 
 	memSizeLimit uint64
 
-	currentSeq        int
-	doubleKVBuffer    [2]*membuf.Buffer
-	doubleKVLocations [2][]membuf.SliceLocation
-	doubleRC          [2]*rangePropertiesCollector
-	kvBuffer          *membuf.Buffer
-	kvLocations       []membuf.SliceLocation
-	rc                *rangePropertiesCollector
+	currentSeq     int
+	doubleKVBuffer [2]*membuf.Buffer
+	doubleRC       [2]*rangePropertiesCollector
+	kvBuffer       *membuf.Buffer
+	kvLocations    []membuf.SliceLocation
+	rc             *rangePropertiesCollector
 
 	kvSize        int64
 	asyncFlushCh  chan *asyncFlushTask
@@ -430,10 +428,10 @@ func (w *Writer) recordMinMax(newMin, newMax tidbkv.Key, size uint64) {
 type asyncFlushTask struct {
 	ctx         context.Context
 	seq         int
-	savedBytes  uint64
 	kvLocations []membuf.SliceLocation
 	kvBuffer    *membuf.Buffer
 	kvSize      int64
+	savedBytes  uint64
 	rc          *rangePropertiesCollector
 
 	fromClose bool
@@ -467,6 +465,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("sort").Observe(sortDuration.Seconds())
 	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort").Observe(float64(savedBytes) / 1024.0 / 1024.0 / sortDuration.Seconds())
 
+	kvLocationsSize := len(w.kvLocations)
 	task := &asyncFlushTask{
 		ctx:          ctx,
 		seq:          w.currentSeq,
@@ -488,9 +487,10 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		return err
 	}
 	w.currentSeq++
-	w.kvLocations = w.doubleKVLocations[w.currentSeq%2]
+	w.kvLocations = make([]membuf.SliceLocation, 0, kvLocationsSize)
 	w.kvBuffer = w.doubleKVBuffer[w.currentSeq%2]
 	w.rc = w.doubleRC[w.currentSeq%2]
+	w.kvSize = 0
 	return nil
 }
 
@@ -558,8 +558,6 @@ func (w *Writer) asyncFlush(taskCh <-chan *asyncFlushTask) {
 				w.fileMaxKeys = w.fileMaxKeys[:0]
 			}
 
-			kvCnt := len(task.kvLocations)
-			task.kvLocations = task.kvLocations[:0]
 			task.kvBuffer.Destroy()
 			task.rc.reset()
 
@@ -576,6 +574,7 @@ func (w *Writer) asyncFlush(taskCh <-chan *asyncFlushTask) {
 				continue
 			}
 			writeDuration := time.Since(writeStartTime)
+			kvCnt := len(task.kvLocations)
 			logger.Info("flush kv",
 				zap.Uint64("bytes", task.savedBytes),
 				zap.Int("kv-cnt", kvCnt),
