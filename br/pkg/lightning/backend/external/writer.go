@@ -451,8 +451,8 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	sortStart := time.Now()
 	sorty.Sort(len(w.kvLocations), func(i, k, r, s int) bool {
 		if bytes.Compare(
-			w.getSortKeyByLoc(w.kvLocations[i]),
-			w.getSortKeyByLoc(w.kvLocations[k]),
+			w.getKeyByLoc(w.kvBuffer, w.kvLocations[i]),
+			w.getKeyByLoc(w.kvBuffer, w.kvLocations[k]),
 		) == -1 { // strict comparator like < or >
 			if r != s {
 				w.kvLocations[r], w.kvLocations[s] = w.kvLocations[s], w.kvLocations[r]
@@ -591,13 +591,6 @@ func (w *Writer) asyncFlush(taskCh <-chan *asyncFlushTask) {
 			metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort_and_write").Observe(float64(task.savedBytes) / 1024.0 / 1024.0 / time.Since(task.startTs).Seconds())
 		}
 	}
-}
-
-func (w *Writer) getSortKeyByLoc(loc membuf.SliceLocation) []byte {
-	block := w.kvBuffer.GetSlice(loc)
-	// the data layout is: keyLen + valueLen + key + value so we directly skip the
-	// first 16 bytes. in most cases keys are not duplicated
-	return block[2*lengthBytes:]
 }
 
 func (w *Writer) getKeyByLoc(kvBuffer *membuf.Buffer, loc membuf.SliceLocation) []byte {
