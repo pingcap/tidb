@@ -422,23 +422,23 @@ func (d *BaseDispatcher) replaceTaskNodes() {
 // TODO(ywqzzy): refine to make it easier for testing.
 func (d *BaseDispatcher) BalanceSubtasks() error {
 	// 1. find out nodes need to clean subtasks.
-	cleanNodes := make([]string, 0)
-	deadNodes := make(map[string]bool, 0)
+	deadNodes := make([]string, 0)
+	deadNodesMap := make(map[string]bool, 0)
 	for _, node := range d.TaskNodes {
 		if !disttaskutil.MatchServerInfo(d.LiveNodes, node) {
-			cleanNodes = append(cleanNodes, node)
-			deadNodes[node] = true
+			deadNodes = append(deadNodes, node)
+			deadNodesMap[node] = true
 		}
 	}
-	// 2. get subtasks for each node before scaling out.
+	// 2. get subtasks for each node before rebalance.
 	subtasks, err := d.taskMgr.GetSubtasksByStepAndState(d.ctx, d.Task.ID, d.Task.Step, proto.TaskStatePending)
 	if err != nil {
 		return err
 	}
-	if len(cleanNodes) != 0 {
+	if len(deadNodes) != 0 {
 		/// get subtask from deadNodes, since there might be some running subtasks on deadNodes.
-		/// In this case, all subtasks on cleanNodes are in running/pending state.
-		subtasksOnDeadNodes, err := d.taskMgr.GetSubtasksByExecIdsAndStep(d.ctx, cleanNodes, d.Task.ID, d.Task.Step)
+		/// In this case, all subtasks on deadNodes are in running/pending state.
+		subtasksOnDeadNodes, err := d.taskMgr.GetSubtasksByExecIdsAndStepAndState(d.ctx, deadNodes, d.Task.ID, d.Task.Step, proto.TaskStateRunning)
 		if err != nil {
 			return err
 		}
@@ -459,7 +459,7 @@ func (d *BaseDispatcher) BalanceSubtasks() error {
 	averageSubtaskCnt := len(subtasks) / len(d.LiveNodes)
 	rebalanceSubtasks := make([]*proto.Subtask, 0)
 	for k, v := range subtasksOnScheduler {
-		if ok := deadNodes[k]; ok {
+		if ok := deadNodesMap[k]; ok {
 			rebalanceSubtasks = append(rebalanceSubtasks, v...)
 			continue
 		}
@@ -483,7 +483,7 @@ func (d *BaseDispatcher) BalanceSubtasks() error {
 	// 6.rebalance subtasks to other nodes.
 	rebalanceIdx := 0
 	for k, v := range subtasksOnScheduler {
-		if ok := deadNodes[k]; !ok {
+		if ok := deadNodesMap[k]; !ok {
 			if len(v) < averageSubtaskCnt {
 				for i := 0; i < averageSubtaskCnt-len(v) && rebalanceIdx < len(rebalanceSubtasks); i++ {
 					rebalanceSubtasks[rebalanceIdx].SchedulerID = k
@@ -507,7 +507,7 @@ func (d *BaseDispatcher) BalanceSubtasks() error {
 	}
 	logutil.Logger(d.logCtx).Info("rebalance subtasks",
 		zap.Stringers("subtasks-rebalanced", subtasks))
-	if err = d.taskMgr.CleanUpMeta(d.ctx, cleanNodes); err != nil {
+	if err = d.taskMgr.CleanUpMeta(d.ctx, deadNodes); err != nil {
 		return err
 	}
 	d.replaceTaskNodes()

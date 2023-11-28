@@ -385,14 +385,14 @@ func (stm *TaskManager) GetSubtasksInStates(ctx context.Context, tidbID string, 
 	return subtasks, nil
 }
 
-// GetSubtasksByExecIdsAndStep gets all subtasks by given taskID, exec_id and step.
-func (stm *TaskManager) GetSubtasksByExecIdsAndStep(ctx context.Context, tidbIDs []string, taskID int64, step proto.Step) ([]*proto.Subtask, error) {
-	args := []interface{}{taskID, step}
+// GetSubtasksByExecIdsAndStepAndState gets all subtasks by given taskID, exec_id, step and state.
+func (stm *TaskManager) GetSubtasksByExecIdsAndStepAndState(ctx context.Context, tidbIDs []string, taskID int64, step proto.Step, state proto.TaskState) ([]*proto.Subtask, error) {
+	args := []interface{}{taskID, step, state}
 	for _, tidbID := range tidbIDs {
 		args = append(args, tidbID)
 	}
 	rs, err := stm.executeSQLWithNewSession(ctx, `select * from mysql.tidb_background_subtask
-		where task_key = %? and step = %?
+		where task_key = %? and step = %? and state = %?
 		and exec_id in (`+strings.Repeat("%?,", len(tidbIDs)-1)+"%?)", args...)
 	if err != nil {
 		return nil, err

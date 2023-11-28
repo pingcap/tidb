@@ -306,19 +306,19 @@ func (mr *MockTaskManagerMockRecorder) GetSubtaskInStatesCnt(arg0, arg1 interfac
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtaskInStatesCnt", reflect.TypeOf((*MockTaskManager)(nil).GetSubtaskInStatesCnt), varargs...)
 }
 
-// GetSubtasksByExecIdsAndStep mocks base method.
-func (m *MockTaskManager) GetSubtasksByExecIdsAndStep(arg0 context.Context, arg1 []string, arg2 int64, arg3 proto.Step) ([]*proto.Subtask, error) {
+// GetSubtasksByExecIdsAndStepAndState mocks base method.
+func (m *MockTaskManager) GetSubtasksByExecIdsAndStepAndState(arg0 context.Context, arg1 []string, arg2 int64, arg3 proto.Step, arg4 proto.TaskState) ([]*proto.Subtask, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetSubtasksByExecIdsAndStep", arg0, arg1, arg2, arg3)
+	ret := m.ctrl.Call(m, "GetSubtasksByExecIdsAndStepAndState", arg0, arg1, arg2, arg3, arg4)
 	ret0, _ := ret[0].([]*proto.Subtask)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetSubtasksByExecIdsAndStep indicates an expected call of GetSubtasksByExecIdsAndStep.
-func (mr *MockTaskManagerMockRecorder) GetSubtasksByExecIdsAndStep(arg0, arg1, arg2, arg3 interface{}) *gomock.Call {
+// GetSubtasksByExecIdsAndStepAndState indicates an expected call of GetSubtasksByExecIdsAndStepAndState.
+func (mr *MockTaskManagerMockRecorder) GetSubtasksByExecIdsAndStepAndState(arg0, arg1, arg2, arg3, arg4 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtasksByExecIdsAndStep", reflect.TypeOf((*MockTaskManager)(nil).GetSubtasksByExecIdsAndStep), arg0, arg1, arg2, arg3)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtasksByExecIdsAndStepAndState", reflect.TypeOf((*MockTaskManager)(nil).GetSubtasksByExecIdsAndStepAndState), arg0, arg1, arg2, arg3, arg4)
 }
 
 // GetSubtasksByStepAndState mocks base method.
