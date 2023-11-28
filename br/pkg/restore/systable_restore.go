@@ -233,9 +233,9 @@ func (rc *Client) afterSystemTablesReplaced(ctx context.Context, tables []string
 			}
 		} else if table == "bind_info" {
 			if serr := rc.db.se.Execute(ctx, bindinfo.StmtRemoveDuplicatedPseudoBinding); serr != nil {
-				log.Warn("failed to delete duplicated pseudo binding", zap.Error(err))
+				log.Warn("failed to delete duplicated pseudo binding", zap.Error(serr))
 				err = multierr.Append(err,
-					berrors.ErrUnknown.Wrap(err).GenWithStack("failed to delete duplicated pseudo binding %s", bindinfo.StmtRemoveDuplicatedPseudoBinding))
+					berrors.ErrUnknown.Wrap(serr).GenWithStack("failed to delete duplicated pseudo binding %s", bindinfo.StmtRemoveDuplicatedPseudoBinding))
 			} else {
 				log.Info("success to remove duplicated pseudo binding")
 			}
