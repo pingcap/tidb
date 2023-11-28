@@ -2454,49 +2454,6 @@ func TestExchangePartitionAutoID(t *testing.T) {
 	tk.MustQuery("select count(*) from pt where a >= 4000000").Check(testkit.Rows("1"))
 }
 
-func TestExchangePartitionExpressIndex(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		// Test for table lock.
-		conf.EnableTableLock = true
-		conf.Instance.SlowThreshold = 10000
-		conf.TiKVClient.AsyncCommit.SafeWindow = 0
-		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
-		conf.Experimental.AllowsExpressionIndex = true
-	})
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_exchange_partition=1")
-	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
-	tk.MustExec("drop table if exists pt1;")
-	tk.MustExec("create table pt1(a int, b int, c int) PARTITION BY hash (a) partitions 1;")
-	tk.MustExec("alter table pt1 add index idx((a+c));")
-
-	tk.MustExec("drop table if exists nt1;")
-	tk.MustExec("create table nt1(a int, b int, c int);")
-	tk.MustGetErrCode("alter table pt1 exchange partition p0 with table nt1;", errno.ErrTablesDifferentMetadata)
-
-	tk.MustExec("alter table nt1 add column (`_V$_idx_0` bigint(20) generated always as (a+b) virtual);")
-	tk.MustGetErrCode("alter table pt1 exchange partition p0 with table nt1;", errno.ErrTablesDifferentMetadata)
-
-	// test different expression index when expression returns same field type
-	tk.MustExec("alter table nt1 drop column `_V$_idx_0`;")
-	tk.MustExec("alter table nt1 add index idx((b-c));")
-	tk.MustGetErrCode("alter table pt1 exchange partition p0 with table nt1;", errno.ErrTablesDifferentMetadata)
-
-	// test different expression index when expression returns different field type
-	tk.MustExec("alter table nt1 drop index idx;")
-	tk.MustExec("alter table nt1 add index idx((concat(a, b)));")
-	tk.MustGetErrCode("alter table pt1 exchange partition p0 with table nt1;", errno.ErrTablesDifferentMetadata)
-
-	tk.MustExec("drop table if exists nt2;")
-	tk.MustExec("create table nt2 (a int, b int, c int)")
-	tk.MustExec("alter table nt2 add index idx((a+c))")
-	tk.MustExec("alter table pt1 exchange partition p0 with table nt2")
-}
-
 func TestAddPartitionTooManyPartitions(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -3036,14 +2993,6 @@ func TestPartitionErrorCode(t *testing.T) {
 }
 
 func TestCommitWhenSchemaChange(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		// Test for table lock.
-		conf.EnableTableLock = true
-		conf.Instance.SlowThreshold = 10000
-		conf.Experimental.AllowsExpressionIndex = true
-	})
 	store := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_metadata_lock=0")
