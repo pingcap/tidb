@@ -42,6 +42,7 @@ go_test(
     race = "off",
     shard_count = 15,
     deps = [
+        "//pkg/disttask/framework/dispatcher/mock",
         "//pkg/disttask/framework/mock",
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/storage",
