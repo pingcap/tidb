@@ -375,9 +375,80 @@ func NewRestoreCtx(flags RestoreFlags, in RestoreWriter) *RestoreCtx {
 	return &RestoreCtx{Flags: flags, In: in, DefaultDB: ""}
 }
 
+var prettyKeywords = map[string]bool{
+	"PRIMARY_REGION ":       true,
+	"REGIONS ":              true,
+	"FOLLOWERS ":            true,
+	"VOTERS ":               true,
+	"LEARNERS ":             true,
+	"SCHEDULE ":             true,
+	"CONSTRAINTS ":          true,
+	"LEADER_CONSTRAINTS ":   true,
+	"FOLLOWER_CONSTRAINTS ": true,
+	"VOTER_CONSTRAINTS ":    true,
+	"LEARNER_CONSTRAINTS ":  true,
+	"PLACEMENT POLICY ":     true,
+	"SURVIVAL_PREFERENCES ": true,
+	"RU_PER_SEC ":           true,
+	"PRIORITY ":             true,
+	"CPU ":                  true,
+	"IO_READ_BANDWIDTH ":    true,
+	"IO_WRITE_BANDWIDTH ":   true,
+	"BURSTABLE ":            true,
+	"QUERY_LIMIT ":          true,
+	"BACKGROUND ":           true,
+	"EXEC_ELAPSED ":         true,
+	"ACTION ":               true,
+	"WATCH ":                true,
+	"DURATION ":             true,
+	"TASK_TYPES ":           true,
+	"ENGINE ":               true,
+	"DEFAULT COLLATE ":      true,
+	"AUTO_INCREMENT ":       true,
+	"AUTO_ID_CACHE ":        true,
+	"AUTO_RANDOM_BASE ":     true,
+	"COMMENT ":              true,
+	"AVG_ROW_LENGTH ":       true,
+	"CHECKSUM ":             true,
+	"COMPRESSION ":          true,
+	"CONNECTION ":           true,
+	"PASSWORD ":             true,
+	"KEY_BLOCK_SIZE ":       true,
+	"MAX_ROWS ":             true,
+	"MIN_ROWS ":             true,
+	"DELAY_KEY_WRITE ":      true,
+	"ROW_FORMAT ":           true,
+	"STATS_PERSISTENT ":     true,
+	"STATS_AUTO_RECALC ":    true,
+	"PACK_KEYS ":            true,
+	"TABLESPACE ":           true,
+	"DATA DIRECTORY ":       true,
+	"INDEX DIRECTORY ":      true,
+	"STATS_SAMPLE_PAGES ":   true,
+	"SECONDARY_ENGINE ":     true,
+	"INSERT_METHOD ":        true,
+	"TABLE_CHECKSUM ":       true,
+	"ENCRYPTION ":           true,
+	"STATS_BUCKETS ":        true,
+	"STATS_TOPN ":           true,
+	"STATS_SAMPLE_RATE ":    true,
+	"STATS_COL_CHOICE ":     true,
+	"STATS_COL_LIST ":       true,
+	"TTL ":                  true,
+	"TTL_ENABLE ":           true,
+	"TTL_JOB_INTERVAL ":     true,
+	"LOCK ":                 true,
+	"ALGORITHM ":            true,
+}
+
 // WriteKeyWord writes the `keyWord` into writer.
 // `keyWord` will be converted format(uppercase and lowercase for now) according to `RestoreFlags`.
 func (ctx *RestoreCtx) WriteKeyWord(keyWord string) {
+	if ctx.Flags.HasPrettyFormatFlag() {
+		if _, ok := prettyKeywords[keyWord]; ok {
+			keyWord = strings.TrimSuffix(keyWord, " ")
+		}
+	}
 	switch {
 	case ctx.Flags.HasKeyWordUppercaseFlag():
 		keyWord = strings.ToUpper(keyWord)
@@ -451,7 +522,15 @@ func (ctx *RestoreCtx) WriteName(name string) {
 
 // WritePlain writes the plain text into writer without any handling.
 func (ctx *RestoreCtx) WritePlain(plainText string) {
-	ctx.In.WriteString(plainText)
+	if plainText == "= " {
+		if ctx.Flags.HasPrettyFormatFlag() {
+			ctx.WritePlain("=")
+		} else {
+			ctx.WritePlain(" = ")
+		}
+	} else {
+		ctx.In.WriteString(plainText)
+	}
 }
 
 // WritePlainf write the plain text into writer without any handling.

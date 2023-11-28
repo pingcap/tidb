@@ -880,9 +880,16 @@ func (n *Constraint) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteName(n.Name)
 			ctx.WritePlain(" ")
 		}
-		ctx.WriteKeyWord("FOREIGN KEY ")
-		if n.IfNotExists {
-			ctx.WriteKeyWord("IF NOT EXISTS ")
+		if ctx.Flags.HasPrettyFormatFlag() {
+			ctx.WriteKeyWord("FOREIGN KEY")
+			if n.IfNotExists {
+				ctx.WriteKeyWord(" IF NOT EXISTS")
+			}
+		} else {
+			ctx.WriteKeyWord("FOREIGN KEY ")
+			if n.IfNotExists {
+				ctx.WriteKeyWord("IF NOT EXISTS ")
+			}
 		}
 	} else if n.Name != "" || n.IsEmptyIndex {
 		ctx.WritePlain(" ")
@@ -2433,9 +2440,15 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 		} else {
 			ctx.WriteKeyWord("DEFAULT ")
 		}
-		ctx.WriteKeyWord("CHARACTER SET ")
+		ctx.WriteKeyWord("CHARACTER SET")
+		if !ctx.Flags.HasPrettyFormatFlag() {
+			ctx.WritePlain(" ")
+		}
 		if n.UintValue == TableOptionCharsetWithoutConvertTo {
-			ctx.WriteKeyWord("= ")
+			ctx.WritePlain("=")
+			if !ctx.Flags.HasPrettyFormatFlag() {
+				ctx.WritePlain(" ")
+			}
 		}
 		if n.Default {
 			ctx.WriteKeyWord("DEFAULT")

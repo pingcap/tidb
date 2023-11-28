@@ -844,7 +844,7 @@ func TestRemovePlacementRestore(t *testing.T) {
 }
 
 func TestRestorePrettyFormat(t *testing.T) {
-	f := format.DefaultRestoreFlags | format.RestorePrettyFormat
+	f := format.DefaultRestoreFlags | format.RestorePrettyFormat | format.RestoreStringWithoutCharset
 	cases := []struct {
 		sourceSQL string
 		expectSQL string
@@ -862,6 +862,50 @@ func TestRestorePrettyFormat(t *testing.T) {
 				"  UNIQUE `bytebase_idx_unique_migration_history_namespace_sequence` (`namespace`(256), `sequence`),\n" +
 				"  INDEX `bytebase_idx_migration_history_namespace_created` (`namespace`(256), `created_ts`)\n" +
 				")",
+		},
+		{
+			sourceSQL: `CREATE TABLE film(
+				film_id smallint unsigned NOT NULL AUTO_INCREMENT,
+				title varchar(255) NOT NULL,
+				description text,
+				release_year year DEFAULT NULL,
+				language_id tinyint unsigned NOT NULL,
+				original_language_id tinyint unsigned DEFAULT NULL,
+				rental_duration tinyint unsigned NOT NULL DEFAULT '3',
+				rental_rate decimal(4,2) NOT NULL DEFAULT '4.99',
+				length smallint unsigned DEFAULT NULL,
+				replacement_cost decimal(5,2) NOT NULL DEFAULT '19.99',
+				rating enum('G','PG','PG-13','R','NC-17') NOT NULL DEFAULT 'G',
+				special_features set('Trailers','Commentaries','Deleted Scenes','Behind the Scenes') DEFAULT NULL,
+				last_update timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+				PRIMARY KEY (film_id),
+				KEY idx_title (title),
+				KEY idx_fk_language_id (language_id),
+				KEY idx_fk_original_language_id (original_language_id),
+				CONSTRAINT fk_film_language FOREIGN KEY (language_id) REFERENCES language (language_id) ON DELETE RESTRICT ON UPDATE CASCADE,
+				CONSTRAINT fk_film_language_original FOREIGN KEY (original_language_id) REFERENCES language (language_id) ON DELETE RESTRICT ON UPDATE CASCADE
+			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;`,
+			expectSQL: "CREATE TABLE `film` (\n" +
+				"  `film_id` SMALLINT UNSIGNED NOT NULL AUTO_INCREMENT,\n" +
+				"  `title` VARCHAR(255) NOT NULL,\n" +
+				"  `description` TEXT,\n" +
+				"  `release_year` YEAR DEFAULT NULL,\n" +
+				"  `language_id` TINYINT UNSIGNED NOT NULL,\n" +
+				"  `original_language_id` TINYINT UNSIGNED DEFAULT NULL,\n" +
+				"  `rental_duration` TINYINT UNSIGNED NOT NULL DEFAULT '3',\n" +
+				"  `rental_rate` DECIMAL(4,2) NOT NULL DEFAULT '4.99',\n" +
+				"  `length` SMALLINT UNSIGNED DEFAULT NULL,\n" +
+				"  `replacement_cost` DECIMAL(5,2) NOT NULL DEFAULT '19.99',\n" +
+				"  `rating` ENUM('G','PG','PG-13','R','NC-17') NOT NULL DEFAULT 'G',\n" +
+				"  `special_features` SET('Trailers','Commentaries','Deleted Scenes','Behind the Scenes') DEFAULT NULL,\n" +
+				"  `last_update` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP() ON UPDATE CURRENT_TIMESTAMP(),\n" +
+				"  PRIMARY KEY (`film_id`),\n" +
+				"  INDEX `idx_title` (`title`),\n" +
+				"  INDEX `idx_fk_language_id` (`language_id`),\n" +
+				"  INDEX `idx_fk_original_language_id` (`original_language_id`),\n" +
+				"  CONSTRAINT `fk_film_language` FOREIGN KEY (`language_id`) REFERENCES `language`(`language_id`) ON DELETE RESTRICT ON UPDATE CASCADE,\n" +
+				"  CONSTRAINT `fk_film_language_original` FOREIGN KEY (`original_language_id`) REFERENCES `language`(`language_id`) ON DELETE RESTRICT ON UPDATE CASCADE\n" +
+				") ENGINE=InnoDB DEFAULT CHARACTER SET=UTF8MB4 DEFAULT COLLATE=UTF8MB4_0900_AI_CI",
 		},
 	}
 	extractNodeFunc := func(node Node) Node {
