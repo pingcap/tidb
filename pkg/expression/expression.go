@@ -113,11 +113,6 @@ type Expression interface {
 
 	Traverse(TraverseAction) Expression
 
-	// EvalWithInnerCtx evaluates expression with inner ctx.
-	// Deprecated: This function is only used during refactoring, please do not use it in new code.
-	// TODO: remove this method after refactoring.
-	EvalWithInnerCtx(row chunk.Row) (types.Datum, error)
-
 	// Eval evaluates an expression through a row.
 	Eval(ctx sessionctx.Context, row chunk.Row) (types.Datum, error)
 
@@ -1045,7 +1040,6 @@ func NewValuesFunc(ctx sessionctx.Context, offset int, retTp *types.FieldType) *
 		FuncName: model.NewCIStr(ast.Values),
 		RetType:  retTp,
 		Function: bt,
-		ctx:      ctx,
 	}
 }
 
@@ -1526,7 +1520,6 @@ func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression, wrapF
 		FuncName: model.NewCIStr(ast.IsTruthWithoutNull),
 		Function: f,
 		RetType:  f.getRetTp(),
-		ctx:      ctx,
 	}
 	if keepNull {
 		sf.FuncName = model.NewCIStr(ast.IsTruthWithNull)
