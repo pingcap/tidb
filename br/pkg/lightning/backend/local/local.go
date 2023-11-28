@@ -508,6 +508,58 @@ var (
 	LastAlloc manual.Allocator
 )
 
+// NewBackendForTest creates a new Backend for test.
+func NewBackendForTest(ctx context.Context, config BackendConfig, codec tikvclient.Codec) (b *Backend, err error) {
+	config.adjust()
+
+	shouldCreate := true
+	if config.CheckpointEnabled {
+		if info, err := os.Stat(config.LocalStoreDir); err != nil {
+			if !os.IsNotExist(err) {
+				return nil, err
+			}
+		} else if info.IsDir() {
+			shouldCreate = false
+		}
+	}
+
+	if shouldCreate {
+		err = os.Mkdir(config.LocalStoreDir, 0o700)
+		if err != nil {
+			return nil, common.ErrInvalidSortedKVDir.Wrap(err).GenWithStackByArgs(config.LocalStoreDir)
+		}
+	}
+
+	keyAdapter := common.KeyAdapter(common.NoopKeyAdapter{})
+	var writeLimiter StoreWriteLimiter
+	if config.StoreWriteBWLimit > 0 {
+		writeLimiter = newStoreWriteLimiter(config.StoreWriteBWLimit)
+	} else {
+		writeLimiter = noopStoreWriteLimiter{}
+	}
+	alloc := manual.Allocator{}
+	if RunInTest {
+		alloc.RefCnt = new(atomic.Int64)
+		LastAlloc = alloc
+	}
+	local := &Backend{
+		engines:        sync.Map{},
+		externalEngine: map[uuid.UUID]common.Engine{},
+		tikvCodec:      codec,
+
+		BackendConfig: config,
+		keyAdapter:    keyAdapter,
+		bufferPool:    membuf.NewPool(membuf.WithAllocator(alloc)),
+		writeLimiter:  writeLimiter,
+		logger:        log.FromContext(ctx),
+	}
+	if m, ok := metric.GetCommonMetric(ctx); ok {
+		local.metrics = m
+	}
+
+	return local, nil
+}
+
 // NewBackend creates new connections to tikv.
 func NewBackend(
 	ctx context.Context,
@@ -929,6 +981,9 @@ func (local *Backend) OpenEngine(ctx context.Context, cfg *backend.EngineConfig,
 }
 
 func (local *Backend) allocateTSIfNotExists(ctx context.Context, engine *Engine) error {
+	failpoint.Inject("skipAllocateTS", func() {
+		failpoint.Return(nil)
+	})
 	if engine.TS > 0 {
 		return nil
 	}

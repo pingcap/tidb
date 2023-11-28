@@ -4466,9 +4466,11 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		importFromServer bool
 	)
 
-	importFromServer, err = storage.IsLocalPath(ld.Path)
-	if err != nil {
-		return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(ImportIntoDataSource, err.Error())
+	if ld.Select == nil {
+		importFromServer, err = storage.IsLocalPath(ld.Path)
+		if err != nil {
+			return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(ImportIntoDataSource, err.Error())
+		}
 	}
 
 	if importFromServer && sem.IsEnabled() {
@@ -4531,8 +4533,33 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		return nil, err
 	}
 
-	outputSchema, outputFields := convert2OutputSchemasAndNames(importIntoSchemaNames, importIntoSchemaFTypes)
-	p.setSchemaAndNames(outputSchema, outputFields)
+	if ld.Select != nil {
+		// privilege of tables in select will be checked here
+		selectPlan, err2 := b.Build(ctx, ld.Select)
+		if err2 != nil {
+			return nil, err2
+		}
+		// it's allowed to use IMPORT INTO t FROM SELECT * FROM t
+		// as we pre-check that the target table must be empty.
+		if (len(ld.ColumnsAndUserVars) > 0 && len(selectPlan.Schema().Columns) != len(ld.ColumnsAndUserVars)) ||
+			(len(ld.ColumnsAndUserVars) == 0 && len(selectPlan.Schema().Columns) != len(tableInPlan.VisibleCols())) {
+			return nil, ErrWrongValueCountOnRow.GenWithStackByArgs(1)
+		}
+		for _, cu := range ld.ColumnsAndUserVars {
+			// all fields must be column
+			if cu.ColumnName == nil {
+				return nil, ErrUnknownColumn.GenWithStackByArgs(cu.UserVar.Name, "field list")
+			}
+		}
+		p.SelectPlan, _, err2 = DoOptimize(ctx, b.ctx, b.optFlag, selectPlan.(LogicalPlan))
+		if err2 != nil {
+			return nil, err2
+		}
+	} else {
+		outputSchema, outputFields := convert2OutputSchemasAndNames(importIntoSchemaNames, importIntoSchemaFTypes)
+		p.setSchemaAndNames(outputSchema, outputFields)
+	}
+
 	return p, nil
 }
 

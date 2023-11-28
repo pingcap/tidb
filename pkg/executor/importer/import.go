@@ -65,6 +65,10 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+type (
+	dataSourceType string
+)
+
 const (
 	// DataFormatCSV represents the data source file of IMPORT INTO is csv.
 	DataFormatCSV = "csv"
@@ -74,6 +78,12 @@ const (
 	DataFormatSQL = "sql"
 	// DataFormatParquet represents the data source file of IMPORT INTO is parquet.
 	DataFormatParquet = "parquet"
+
+	// DataSourceTypeFile represents the data source of IMPORT INTO is file.
+	// exported for test.
+	DataSourceTypeFile dataSourceType = "file"
+	// DataSourceTypeQuery represents the data source of IMPORT INTO is query.
+	DataSourceTypeQuery dataSourceType = "query"
 
 	// DefaultDiskQuota is the default disk quota for IMPORT INTO
 	DefaultDiskQuota = config.ByteSize(50 << 30) // 50GiB
@@ -102,6 +112,7 @@ const (
 )
 
 var (
+	// all supported options.
 	// name -> whether the option has value
 	supportedOptions = map[string]bool{
 		characterSetOption:          true,
@@ -123,6 +134,7 @@ var (
 		cloudStorageURIOption:       true,
 	}
 
+	// options that can only be used when import from CSV files.
 	csvOnlyOptions = map[string]struct{}{
 		characterSetOption:        {},
 		fieldsTerminatedByOption:  {},
@@ -132,6 +144,11 @@ var (
 		linesTerminatedByOption:   {},
 		skipRowsOption:            {},
 		splitFileOption:           {},
+	}
+
+	// options that can be used when import from query.
+	importFromQueryOptions = map[string]struct{}{
+		threadOption: {},
 	}
 
 	// LoadDataReadBlockSize is exposed for test.
@@ -175,7 +192,8 @@ type Plan struct {
 	// after import.
 	DesiredTableInfo *model.TableInfo
 
-	Path   string
+	Path string
+	// only effective when data source is file.
 	Format string
 	// Data interpretation is restrictive if the SQL mode is restrictive and neither
 	// the IGNORE nor the LOCAL modifier is specified. Errors terminate the load
@@ -214,7 +232,8 @@ type Plan struct {
 	DistSQLScanConcurrency int
 
 	// todo: remove it when load data code is reverted.
-	InImportInto bool
+	InImportInto   bool
+	DataSourceType dataSourceType
 	// only initialized for IMPORT INTO, used when creating job.
 	Parameters *ImportParameters `json:"-"`
 	// the user who executes the statement, in the form of user@host
@@ -345,6 +364,7 @@ func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.Load
 		ImportantSysVars: getImportantSysVars(userSctx),
 
 		DistSQLScanConcurrency: userSctx.GetSessionVars().DistSQLScanConcurrency(),
+		DataSourceType:         DataSourceTypeFile,
 	}, nil
 }
 
@@ -386,6 +406,7 @@ func NewImportPlan(userSctx sessionctx.Context, plan *plannercore.ImportInto, tb
 
 		DistSQLScanConcurrency: userSctx.GetSessionVars().DistSQLScanConcurrency(),
 		InImportInto:           true,
+		DataSourceType:         getDataSourceType(plan),
 		User:                   userSctx.GetSessionVars().User.String(),
 	}
 	if err := p.initOptions(userSctx, plan.Options); err != nil {
@@ -472,7 +493,7 @@ func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs) (*Load
 }
 
 func (e *LoadDataController) checkFieldParams() error {
-	if e.Path == "" {
+	if e.DataSourceType == DataSourceTypeFile && e.Path == "" {
 		return exeerrors.ErrLoadDataEmptyPath
 	}
 	if e.InImportInto {
@@ -506,7 +527,12 @@ func (p *Plan) initDefaultOptions() {
 	failpoint.Inject("mockNumCpu", func(val failpoint.Value) {
 		threadCnt = val.(int)
 	})
-	threadCnt = int(math.Max(1, float64(threadCnt)*0.5))
+	if p.DataSourceType == DataSourceTypeFile {
+		threadCnt = int(math.Max(1, float64(threadCnt)*0.5))
+	} else {
+		// if we import from query, we use 1 thread to do encode&deliver on default.
+		threadCnt = 1
+	}
 
 	p.Checksum = config.OpLevelRequired
 	p.ThreadCnt = int64(threadCnt)
@@ -544,6 +570,13 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 		for k := range csvOnlyOptions {
 			if _, ok := specifiedOptions[k]; ok {
 				return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(k, "non-CSV format")
+			}
+		}
+	}
+	if p.DataSourceType == DataSourceTypeQuery {
+		for k := range specifiedOptions {
+			if _, ok := importFromQueryOptions[k]; !ok {
+				return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(k, "import from query")
 			}
 		}
 	}
@@ -717,10 +750,17 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 
 func (p *Plan) adjustOptions() {
 	// max value is cpu-count
-	numCPU := int64(runtime.GOMAXPROCS(0))
-	if p.ThreadCnt > numCPU {
-		log.L().Info("IMPORT INTO thread count is larger than cpu-count, set to cpu-count")
-		p.ThreadCnt = numCPU
+	limit := int64(runtime.GOMAXPROCS(0))
+	if p.DataSourceType == DataSourceTypeQuery {
+		// for query, row is produced using 1 thread, the max cpu used is much
+		// lower than cpu-count when we set ThreadCnt=cpu-count, so we set
+		// limit to 2*cpu-count.
+		limit *= 2
+	}
+	if p.ThreadCnt > limit {
+		log.L().Info("adjust IMPORT INTO thread count",
+			zap.Int64("before", p.ThreadCnt), zap.Int64("after", limit))
+		p.ThreadCnt = limit
 	}
 }
 
@@ -1291,6 +1331,13 @@ func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.Ba
 		backendConfig.RaftKV2SwitchModeDuration = config.DefaultSwitchTiKVModeInterval
 	}
 	return backendConfig
+}
+
+func getDataSourceType(p *plannercore.ImportInto) dataSourceType {
+	if p.SelectPlan != nil {
+		return DataSourceTypeQuery
+	}
+	return DataSourceTypeFile
 }
 
 // JobImportParam is the param of the job import.

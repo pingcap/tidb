@@ -49,8 +49,10 @@ var GetEtcdClient = getEtcdClient
 // todo: check if there's running lightning tasks?
 // we check them one by one, and return the first error we meet.
 func (e *LoadDataController) CheckRequirements(ctx context.Context, conn sqlexec.SQLExecutor) error {
-	if err := e.checkTotalFileSize(); err != nil {
-		return err
+	if e.DataSourceType == DataSourceTypeFile {
+		if err := e.checkTotalFileSize(); err != nil {
+			return err
+		}
 	}
 	if err := e.checkTableEmpty(ctx, conn); err != nil {
 		return err
