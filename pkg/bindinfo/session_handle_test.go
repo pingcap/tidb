@@ -118,7 +118,7 @@ func TestSessionBinding(t *testing.T) {
 
 		handle := tk.Session().Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 		sqlDigest := parser.DigestNormalized(testSQL.originSQL).String()
-		bindData := handle.GetBindRecord(sqlDigest, testSQL.originSQL, "test")
+		bindData := handle.GetSessionBinding(sqlDigest, testSQL.originSQL, "test")
 		require.NotNil(t, bindData)
 		require.Equal(t, testSQL.originSQL, bindData.OriginalSQL)
 		bind := bindData.Bindings[0]
@@ -155,7 +155,7 @@ func TestSessionBinding(t *testing.T) {
 
 		_, err = tk.Exec("drop session " + testSQL.dropSQL)
 		require.NoError(t, err)
-		bindData = handle.GetBindRecord(sqlDigest, testSQL.originSQL, "test")
+		bindData = handle.GetSessionBinding(sqlDigest, testSQL.originSQL, "test")
 		require.NotNil(t, bindData)
 		require.Equal(t, testSQL.originSQL, bindData.OriginalSQL)
 		require.Len(t, bindData.Bindings, 0)
