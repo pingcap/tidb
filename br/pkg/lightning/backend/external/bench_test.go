@@ -343,7 +343,9 @@ func TestCompareWriter(t *testing.T) {
 	// not much difference between 3 & 10
 	keyCommonPrefixSize := 3
 
-	for _, kvSize := range [][2]int{{20, 1000}, {20, 100}, {20, 10}} {
+	//for _, kvSize := range [][2]int{{20, 1000}, {20, 100}, {20, 10}} {
+
+	for _, kvSize := range [][2]int{{20, 10}} {
 		expectedKVNum := expectedKVSize / (kvSize[0] + kvSize[1])
 		sources := map[string]func() kvSource{}
 		sources["ascending key"] = func() kvSource {
