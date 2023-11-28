@@ -30,7 +30,6 @@ go_library(
         "//br/pkg/storage",
         "//pkg/kv",
         "//pkg/metrics",
-        "//pkg/util",
         "//pkg/util/hack",
         "//pkg/util/logutil",
         "//pkg/util/size",

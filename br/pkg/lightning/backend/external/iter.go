@@ -372,9 +372,14 @@ func NewMergeKVIter(
 	exStorage storage.ExternalStorage,
 	readBufferSize int,
 	checkHotspot bool,
+	outerConcurrency int,
 ) (*MergeKVIter, error) {
 	readerOpeners := make([]readerOpenerFn[*kvPair, kvReaderProxy], 0, len(paths))
-	largeBufSize := ConcurrentReaderBufferSizePerConc * ConcurrentReaderConcurrency
+	if outerConcurrency <= 0 {
+		outerConcurrency = 1
+	}
+	concurrentReaderConcurrency := max(256/outerConcurrency, 8)
+	largeBufSize := ConcurrentReaderBufferSizePerConc * concurrentReaderConcurrency
 	memPool := membuf.NewPool(
 		membuf.WithBlockNum(1), // currently only one reader will become hotspot
 		membuf.WithBlockSize(largeBufSize),
@@ -391,7 +396,7 @@ func NewMergeKVIter(
 			rd.byteReader.enableConcurrentRead(
 				exStorage,
 				paths[i],
-				ConcurrentReaderConcurrency,
+				concurrentReaderConcurrency,
 				ConcurrentReaderBufferSizePerConc,
 				memPool.NewBuffer(),
 			)
@@ -443,6 +448,7 @@ func (p *rangeProperty) cloneInnerFields() {
 }
 
 func (p *rangeProperty) len() int {
+	// 24 is the length of member offset, size and keys, which are all uint64
 	return len(p.firstKey) + len(p.lastKey) + 24
 }
 

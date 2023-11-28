@@ -42,7 +42,6 @@ type ScalarFunction struct {
 	// TODO: Implement type inference here, now we use ast's return type temporarily.
 	RetType           *types.FieldType
 	Function          builtinFunc
-	ctx               sessionctx.Context
 	hashcode          []byte
 	canonicalhashcode []byte
 }
@@ -112,14 +111,6 @@ func (sf *ScalarFunction) SupportReverseEval() bool {
 // ReverseEval evaluates the only one column value with given function result.
 func (sf *ScalarFunction) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	return sf.Function.reverseEval(sc, res, rType)
-}
-
-// GetCtx returns the inner context
-// Deprecated: we are going to remove ctx from expression completely.
-// Do not use this method anymore.
-func (sf *ScalarFunction) GetCtx() sessionctx.Context {
-	intest.Assert(sf.ctx != nil)
-	return sf.ctx
 }
 
 // String implements fmt.Stringer interface.
@@ -259,7 +250,6 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 		FuncName: model.NewCIStr(funcName),
 		RetType:  retType,
 		Function: f,
-		ctx:      ctx,
 	}
 	if fold == 1 {
 		return FoldConstant(ctx, sf), nil
@@ -339,7 +329,6 @@ func (sf *ScalarFunction) Clone() Expression {
 		RetType:  sf.RetType,
 		Function: sf.Function.Clone(),
 		hashcode: sf.hashcode,
-		ctx:      sf.ctx,
 	}
 	c.SetCharsetAndCollation(sf.CharsetAndCollation())
 	c.SetCoercibility(sf.Coercibility())
@@ -400,13 +389,6 @@ func (sf *ScalarFunction) Decorrelate(schema *Schema) Expression {
 // Traverse implements the TraverseDown interface.
 func (sf *ScalarFunction) Traverse(action TraverseAction) Expression {
 	return action.Transform(sf)
-}
-
-// EvalWithInnerCtx evaluates expression with inner ctx.
-// Deprecated: This function is only used during refactoring, please do not use it in new code.
-// TODO: remove this method after refactoring.
-func (sf *ScalarFunction) EvalWithInnerCtx(row chunk.Row) (types.Datum, error) {
-	return sf.Eval(sf.ctx, row)
 }
 
 // Eval implements Expression interface.

@@ -320,7 +320,7 @@ func TestBindingSymbolList(t *testing.T) {
 	// Normalize
 	sql, hash := parser.NormalizeDigestForBinding("select a, b from test . t where a = 1 limit 0, 1")
 
-	bindData := dom.BindHandle().GetBindRecord(hash.String(), sql, "test")
+	bindData := dom.BindHandle().GetGlobalBinding(hash.String(), sql, "test")
 	require.NotNil(t, bindData)
 	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` = ? limit ...", bindData.OriginalSQL)
 	bind := bindData.Bindings[0]
@@ -364,7 +364,7 @@ func TestBindingInListWithSingleLiteral(t *testing.T) {
 	// Normalize
 	sql, hash := parser.NormalizeDigestForBinding("select a, b from test . t where a in (1)")
 
-	bindData := dom.BindHandle().GetBindRecord(hash.String(), sql, "test")
+	bindData := dom.BindHandle().GetGlobalBinding(hash.String(), sql, "test")
 	require.NotNil(t, bindData)
 	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` in ( ... )", bindData.OriginalSQL)
 	bind := bindData.Bindings[0]
@@ -399,7 +399,7 @@ func TestBestPlanInBaselines(t *testing.T) {
 	tk.MustExec(`create global binding for select a, b from t where b = 1 limit 0, 1 using select /*+ use_index(@sel_1 test.t ib) */ a, b from t where b = 1 limit 0, 1`)
 
 	sql, hash := internal.UtilNormalizeWithDefaultDB(t, "select a, b from t where a = 1 limit 0, 1")
-	bindData := dom.BindHandle().GetBindRecord(hash, sql, "test")
+	bindData := dom.BindHandle().GetGlobalBinding(hash, sql, "test")
 	require.NotNil(t, bindData)
 	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` = ? limit ...", bindData.OriginalSQL)
 	bind := bindData.Bindings[0]
@@ -432,7 +432,7 @@ func TestErrorBind(t *testing.T) {
 	require.NoError(t, err, "err %v", err)
 
 	sql, hash := parser.NormalizeDigestForBinding("select * from test . t where i > ?")
-	bindData := dom.BindHandle().GetBindRecord(hash.String(), sql, "test")
+	bindData := dom.BindHandle().GetGlobalBinding(hash.String(), sql, "test")
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t` where `i` > ?", bindData.OriginalSQL)
 	bind := bindData.Bindings[0]
@@ -449,7 +449,7 @@ func TestErrorBind(t *testing.T) {
 	require.NoError(t, err)
 	rs.Close()
 
-	dom.BindHandle().DropInvalidBindRecord()
+	dom.BindHandle().DropInvalidGlobalBinding()
 
 	rs, err = tk.Exec("show global bindings")
 	require.NoError(t, err)
@@ -621,7 +621,7 @@ func TestHintsSetEvolveTask(t *testing.T) {
 	bindHandle.SaveEvolveTasksToStore()
 	// Verify the added Binding for evolution contains valid ID and Hint, otherwise, panic may happen.
 	sql, hash := internal.UtilNormalizeWithDefaultDB(t, "select * from t where a > ?")
-	bindData := bindHandle.GetBindRecord(hash, sql, "test")
+	bindData := bindHandle.GetGlobalBinding(hash, sql, "test")
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
 	require.Len(t, bindData.Bindings, 2)
@@ -642,7 +642,7 @@ func TestHintsSetID(t *testing.T) {
 	bindHandle := dom.BindHandle()
 	// Verify the added Binding contains ID with restored query block.
 	sql, hash := internal.UtilNormalizeWithDefaultDB(t, "select * from t where a > ?")
-	bindData := bindHandle.GetBindRecord(hash, sql, "test")
+	bindData := bindHandle.GetGlobalBinding(hash, sql, "test")
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
 	require.Len(t, bindData.Bindings, 1)
@@ -651,7 +651,7 @@ func TestHintsSetID(t *testing.T) {
 
 	internal.UtilCleanBindingEnv(tk, dom)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(t, idx_a) */ * from t where a > 10")
-	bindData = bindHandle.GetBindRecord(hash, sql, "test")
+	bindData = bindHandle.GetGlobalBinding(hash, sql, "test")
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
 	require.Len(t, bindData.Bindings, 1)
@@ -660,7 +660,7 @@ func TestHintsSetID(t *testing.T) {
 
 	internal.UtilCleanBindingEnv(tk, dom)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(@sel_1 t, idx_a) */ * from t where a > 10")
-	bindData = bindHandle.GetBindRecord(hash, sql, "test")
+	bindData = bindHandle.GetGlobalBinding(hash, sql, "test")
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
 	require.Len(t, bindData.Bindings, 1)
@@ -669,7 +669,7 @@ func TestHintsSetID(t *testing.T) {
 
 	internal.UtilCleanBindingEnv(tk, dom)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(@qb1 t, idx_a) qb_name(qb1) */ * from t where a > 10")
-	bindData = bindHandle.GetBindRecord(hash, sql, "test")
+	bindData = bindHandle.GetGlobalBinding(hash, sql, "test")
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
 	require.Len(t, bindData.Bindings, 1)
@@ -678,7 +678,7 @@ func TestHintsSetID(t *testing.T) {
 
 	internal.UtilCleanBindingEnv(tk, dom)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(T, IDX_A) */ * from t where a > 10")
-	bindData = bindHandle.GetBindRecord(hash, sql, "test")
+	bindData = bindHandle.GetGlobalBinding(hash, sql, "test")
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
 	require.Len(t, bindData.Bindings, 1)
@@ -689,7 +689,7 @@ func TestHintsSetID(t *testing.T) {
 	err := tk.ExecToErr("create global binding for select * from t using select /*+ non_exist_hint() */ * from t")
 	require.True(t, terror.ErrorEqual(err, parser.ErrParse))
 	tk.MustExec("create global binding for select * from t where a > 10 using select * from t where a > 10")
-	bindData = bindHandle.GetBindRecord(hash, sql, "test")
+	bindData = bindHandle.GetGlobalBinding(hash, sql, "test")
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
 	require.Len(t, bindData.Bindings, 1)
@@ -896,7 +896,7 @@ func TestGCBindRecord(t *testing.T) {
 
 	h := dom.BindHandle()
 	// bindinfo.Lease is set to 0 for test env in SetUpSuite.
-	require.NoError(t, h.GCBindRecord())
+	require.NoError(t, h.GCGlobalBinding())
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `test` . `t` where `a` = ?", rows[0][0])
@@ -910,7 +910,7 @@ func TestGCBindRecord(t *testing.T) {
 	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows(
 		"deleted",
 	))
-	require.NoError(t, h.GCBindRecord())
+	require.NoError(t, h.GCGlobalBinding())
 	tk.MustQuery("show global bindings").Check(testkit.Rows())
 	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows())
 }
@@ -977,6 +977,33 @@ func TestBindSQLDigest(t *testing.T) {
 	}
 }
 
+func TestSimplifiedCreateBinding(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, key(a))`)
+
+	check := func(scope, sql, binding string) {
+		r := tk.MustQuery(fmt.Sprintf("show %s bindings", scope)).Rows()
+		require.Equal(t, len(r), 1)
+		require.Equal(t, r[0][0].(string), sql)
+		require.Equal(t, r[0][1].(string), binding)
+	}
+
+	tk.MustExec(`create binding using select /*+ use_index(t, a) */ * from t`)
+	check("", "select * from `test` . `t`", "SELECT /*+ use_index(`t` `a`)*/ * FROM `test`.`t`")
+	tk.MustExec(`drop binding for select * from t`)
+	tk.MustExec(`create binding using select /*+ use_index(t, a) */ * from t where a<10`)
+	check("", "select * from `test` . `t` where `a` < ?", "SELECT /*+ use_index(`t` `a`)*/ * FROM `test`.`t` WHERE `a` < 10")
+	tk.MustExec(`drop binding for select * from t where a<10`)
+	tk.MustExec(`create global binding using select /*+ use_index(t, a) */ * from t where a in (1)`)
+	check("global", "select * from `test` . `t` where `a` in ( ... )", "SELECT /*+ use_index(`t` `a`)*/ * FROM `test`.`t` WHERE `a` IN (1)")
+	tk.MustExec(`drop global binding for select * from t where a in (1)`)
+	tk.MustExec(`create global binding using select /*+ use_index(t, a) */ * from t where a in (1,2,3)`)
+	check("global", "select * from `test` . `t` where `a` in ( ... )", "SELECT /*+ use_index(`t` `a`)*/ * FROM `test`.`t` WHERE `a` IN (1,2,3)")
+	tk.MustExec(`drop global binding for select * from t where a in (1,2,3)`)
+}
+
 func TestDropBindBySQLDigest(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1030,15 +1057,15 @@ func TestDropBindBySQLDigest(t *testing.T) {
 		internal.UtilCleanBindingEnv(tk, dom)
 		sql := "create global binding for " + c.origin + " using " + c.hint
 		tk.MustExec(sql)
-		h.ReloadBindings()
+		h.ReloadGlobalBindings()
 		res := tk.MustQuery(`show global bindings`).Rows()
 
 		require.Equal(t, len(res), 1)
 		require.Equal(t, len(res[0]), 11)
 		drop := fmt.Sprintf("drop global binding for sql digest '%s'", res[0][9])
 		tk.MustExec(drop)
-		require.NoError(t, h.GCBindRecord())
-		h.ReloadBindings()
+		require.NoError(t, h.GCGlobalBinding())
+		h.ReloadGlobalBindings()
 		tk.MustQuery("show global bindings").Check(testkit.Rows())
 	}
 
@@ -1053,7 +1080,7 @@ func TestDropBindBySQLDigest(t *testing.T) {
 		require.Equal(t, len(res[0]), 11)
 		drop := fmt.Sprintf("drop binding for sql digest '%s'", res[0][9])
 		tk.MustExec(drop)
-		require.NoError(t, h.GCBindRecord())
+		require.NoError(t, h.GCGlobalBinding())
 		tk.MustQuery("show bindings").Check(testkit.Rows())
 	}
 
