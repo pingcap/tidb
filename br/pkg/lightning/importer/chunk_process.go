@@ -207,6 +207,22 @@ func (cr *chunkProcessor) process(
 
 	logTask := logger.Begin(zap.InfoLevel, "restore file")
 
+	go func() {
+		time.Sleep(5 * time.Second)
+		currentTime := time.Now().Unix()
+		name := fmt.Sprintf("heap_profile_%v", currentTime)
+		file, err := os.Create(name)
+		if err != nil {
+			panic("pprof error")
+		}
+		defer file.Close()
+
+		err = pprof.WriteHeapProfile(file)
+		if err != nil {
+			panic("pprof error")
+		}
+	}()
+
 	readTotalDur, encodeTotalDur, encodeErr := cr.encodeLoop(
 		ctx,
 		kvsCh,
@@ -233,19 +249,6 @@ func (cr *chunkProcessor) process(
 		}
 	case <-ctx.Done():
 		deliverErr = ctx.Err()
-	}
-
-	currentTime := time.Now().Unix()
-	name := fmt.Sprintf("heap_profile_%v", currentTime)
-	file, err := os.Create(name)
-	if err != nil {
-		panic("pprof error")
-	}
-	defer file.Close()
-
-	err = pprof.WriteHeapProfile(file)
-	if err != nil {
-		panic("pprof error")
 	}
 	return errors.Trace(firstErr(encodeErr, deliverErr))
 }
