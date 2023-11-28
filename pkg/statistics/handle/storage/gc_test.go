@@ -15,10 +15,12 @@
 package storage_test
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -47,11 +49,26 @@ func TestGCStats(t *testing.T) {
 	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("1"))
 	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("3"))
 
+	// mock a `t` related record in predicate_stats
+	ret := testKit.MustQuery(" SELECT tidb_table_id FROM information_schema.tables WHERE table_schema='test' AND table_name='t'")
+	require.Len(t, ret.Rows(), 1)
+	tIDStr := ret.Rows()[0][0].(string)
+	tID, err := strconv.Atoi(tIDStr)
+	require.Nil(t, err)
+	rTbl := variable.ReadTableDelta{TableID: int64(tID), Count: 10, StepHash: 1234, PredicateSelectivity: 0.01}
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	ver := txn.StartTS()
+	err = storage.UpdatePredicateStatsMeta(testKit.Session(), ver, rTbl)
+	require.Nil(t, err)
+	testKit.MustQuery("select count(*) from mysql.predicate_stats").Check(testkit.Rows("1"))
+
 	testKit.MustExec("drop table t")
 	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 	testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("1"))
 	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("0"))
 	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("0"))
+	testKit.MustQuery("select count(*) from mysql.predicate_stats").Check(testkit.Rows("0"))
 	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 	testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("0"))
 }

@@ -400,3 +400,17 @@ func SaveMetaToStorage(
 	cache.TableRowStatsCache.Invalidate(tableID)
 	return
 }
+
+// SaveHistoryToStorage will save predicate_stats to storage.
+func SaveHistoryToStorage(
+	sctx sessionctx.Context,
+	tableID, count, stepHash int64, predicateSelectivity float32) (statsVer uint64, err error) {
+	version, err := util.GetStartTS(sctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	_, err = util.Exec(sctx, "replace into mysql.predicate_stats (table_id, count, step_hash, predicate_selectivity, version) values (%?, %?, %?, %?, %?)", tableID, count, stepHash, predicateSelectivity, version)
+	statsVer = version
+	// cache.TableRowStatsCache.Invalidate(tableID)
+	return
+}

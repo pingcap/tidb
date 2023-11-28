@@ -2708,6 +2708,14 @@ type TableDelta struct {
 	TableID  int64
 }
 
+// ReadTableDelta stands for the changed count for one table or partition after reading.
+type ReadTableDelta struct {
+	TableID              int64
+	Count                int64
+	StepHash             uint64
+	PredicateSelectivity float32
+}
+
 // Clone returns a cloned TableDelta.
 func (td TableDelta) Clone() TableDelta {
 	colSize := make(map[int64]int64, len(td.ColSize))

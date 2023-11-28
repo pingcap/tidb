@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/atomic"
@@ -115,6 +116,12 @@ type HistColl struct {
 	// The physical id is used when try to load column stats from storage.
 	HavePhysicalID bool
 	Pseudo         bool
+}
+
+// TablePredicateItem is the cached item of a mysql.predicate_stats record.
+type TablePredicateItem struct {
+	variable.ReadTableDelta
+	Version uint64
 }
 
 // TableMemoryUsage records tbl memory usage

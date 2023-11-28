@@ -19,6 +19,8 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
@@ -104,4 +106,33 @@ func TestLoadStats(t *testing.T) {
 	topN = idx.TopN
 	require.Greater(t, float64(cms.TotalCount()+topN.TotalCount())+hg.TotalRowCount(), float64(0))
 	require.True(t, idx.IsFullLoad())
+}
+
+func TestReadPredicateStats(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	// no record
+	item, err := storage.TablePredicateStatsFromStorage(testKit.Session(), 1, 123)
+	require.Nil(t, err)
+	require.Nil(t, item)
+	// tblID: 1, stepHash: 1234
+	rTbl := variable.ReadTableDelta{TableID: 1, Count: 10, StepHash: 1234, PredicateSelectivity: 0.01}
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	ver := txn.StartTS()
+	err = storage.UpdatePredicateStatsMeta(testKit.Session(), ver, rTbl)
+	require.Nil(t, err)
+	item, err = storage.TablePredicateStatsFromStorage(testKit.Session(), rTbl.TableID, rTbl.StepHash)
+	require.Nil(t, err)
+	require.Equal(t, rTbl, item.ReadTableDelta)
+	require.Equal(t, ver, item.Version)
+	// tblID: 1, stepHash: 1234
+	// tblID: 1, stepHash: 12345
+	rTbl1 := variable.ReadTableDelta{TableID: 1, Count: 10, StepHash: 12345, PredicateSelectivity: 0.02}
+	err = storage.UpdatePredicateStatsMeta(testKit.Session(), ver, rTbl1)
+	require.Nil(t, err)
+	item, err = storage.TablePredicateStatsFromStorage(testKit.Session(), rTbl1.TableID, rTbl1.StepHash)
+	require.Nil(t, err)
+	require.Equal(t, rTbl1, item.ReadTableDelta)
+	require.Equal(t, ver, item.Version)
 }
