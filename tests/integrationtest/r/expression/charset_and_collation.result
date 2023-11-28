@@ -883,7 +883,7 @@ CREATE TABLE t (`COL1` tinyblob NOT NULL,  `COL2` binary(1) NOT NULL,  `COL3` bi
 insert into t values(0x1E,0xEC,6966939640596047133);
 select * from t where col1 not in (0x1B,0x20) order by col1;
 COL1	COL2	COL3
-	�	6966939640596047133
+	�	6966939640596047133
 drop table if exists t;
 create table t(a varchar(10));
 insert into t values('aaaaaaaaa'),('天王盖地虎宝塔镇河妖');
@@ -1916,7 +1916,7 @@ a
 explain format="brief" select v from t_bin where v < 'b' order by v;
 id	estRows	task	access object	operator info
 IndexReader	3323.33	root		index:IndexRangeScan
-└─IndexRangeScan	3323.33	cop[tikv]	table:t_bin, index:v(v)	range:[-inf,0x62), keep order:true, stats:pseudo
+└─IndexRangeScan	3323.33	cop[tikv]	table:t_bin, index:v(v)	range:[-inf,"b"), keep order:true, stats:pseudo
 select v from t_bin where v < 'b' order by v;
 v
  
@@ -1924,7 +1924,7 @@ a
 explain format="brief" select v from t_bin where v < 'b' and v > ' ' order by v;
 id	estRows	task	access object	operator info
 IndexReader	250.00	root		index:IndexRangeScan
-└─IndexRangeScan	250.00	cop[tikv]	table:t_bin, index:v(v)	range:(0x20,0x62), keep order:true, stats:pseudo
+└─IndexRangeScan	250.00	cop[tikv]	table:t_bin, index:v(v)	range:(" ","b"), keep order:true, stats:pseudo
 select v from t_bin where v < 'b' and v > ' ' order by v;
 v
 a
@@ -1957,7 +1957,7 @@ explain format="brief" select id from t_bin use index(v) where v < 'b';
 id	estRows	task	access object	operator info
 Projection	3323.33	root		expression__charset_and_collation.t_bin.id
 └─IndexLookUp	3323.33	root		
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t_bin, index:v(v)	range:[-inf,0x62), keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t_bin, index:v(v)	range:[-inf,"b"), keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	3323.33	cop[tikv]	table:t_bin	keep order:false, stats:pseudo
 select id from t_bin use index(v) where v < 'b';
 id
@@ -1967,7 +1967,7 @@ explain format="brief" select id from t_bin use index(v) where v < 'b' and v > '
 id	estRows	task	access object	operator info
 Projection	250.00	root		expression__charset_and_collation.t_bin.id
 └─IndexLookUp	250.00	root		
-  ├─IndexRangeScan(Build)	250.00	cop[tikv]	table:t_bin, index:v(v)	range:(0x20,0x62), keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	250.00	cop[tikv]	table:t_bin, index:v(v)	range:(" ","b"), keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	250.00	cop[tikv]	table:t_bin	keep order:false, stats:pseudo
 select id from t_bin use index(v) where v < 'b' and v > ' ';
 id

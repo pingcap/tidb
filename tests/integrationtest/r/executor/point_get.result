@@ -256,21 +256,21 @@ set @@sql_mode="";
 explain format='brief' select * from t where a = "a";
 id	estRows	task	access object	operator info
 IndexLookUp	10.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:[0x61,0x61], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:["a","a"], keep order:false, stats:pseudo
 └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a = "a";
 a	b
 explain format='brief' select * from t where a = "a ";
 id	estRows	task	access object	operator info
 IndexLookUp	10.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:[0x6120,0x6120], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:["a ","a "], keep order:false, stats:pseudo
 └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a = "a ";
 a	b
 explain format='brief' select * from t where a = "a  ";
 id	estRows	task	access object	operator info
 IndexLookUp	10.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:[0x612020,0x612020], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:["a  ","a  "], keep order:false, stats:pseudo
 └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a = "a  ";
 a	b
@@ -278,7 +278,7 @@ explain format='brief' select hex(a), hex(b) from t where a = "a\0";
 id	estRows	task	access object	operator info
 Projection	10.00	root		hex(executor__point_get.t.a)->Column#4, hex(executor__point_get.t.b)->Column#5
 └─IndexLookUp	10.00	root		
-  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:[0x6100,0x6100], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:["a\x00","a\x00"], keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select hex(a), hex(b) from t where a = "a\0";
 hex(a)	hex(b)
@@ -287,21 +287,21 @@ set @@sql_mode="";
 explain format='brief' select * from t tmp where a = "a";
 id	estRows	task	access object	operator info
 IndexLookUp	10.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tmp, index:idx_1(a)	range:[0x61,0x61], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tmp, index:idx_1(a)	range:["a","a"], keep order:false, stats:pseudo
 └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:tmp	keep order:false, stats:pseudo
 select * from t tmp where a = "a";
 a	b
 explain format='brief' select * from t tmp where a = "a ";
 id	estRows	task	access object	operator info
 IndexLookUp	10.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tmp, index:idx_1(a)	range:[0x6120,0x6120], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tmp, index:idx_1(a)	range:["a ","a "], keep order:false, stats:pseudo
 └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:tmp	keep order:false, stats:pseudo
 select * from t tmp where a = "a ";
 a	b
 explain format='brief' select * from t tmp where a = "a  ";
 id	estRows	task	access object	operator info
 IndexLookUp	10.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tmp, index:idx_1(a)	range:[0x612020,0x612020], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tmp, index:idx_1(a)	range:["a  ","a  "], keep order:false, stats:pseudo
 └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:tmp	keep order:false, stats:pseudo
 select * from t tmp where a = "a  ";
 a	b
@@ -309,7 +309,7 @@ explain format='brief' select hex(a), hex(b) from t tmp where a = "a\0";
 id	estRows	task	access object	operator info
 Projection	10.00	root		hex(executor__point_get.t.a)->Column#4, hex(executor__point_get.t.b)->Column#5
 └─IndexLookUp	10.00	root		
-  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tmp, index:idx_1(a)	range:[0x6100,0x6100], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tmp, index:idx_1(a)	range:["a\x00","a\x00"], keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:tmp	keep order:false, stats:pseudo
 select hex(a), hex(b) from t tmp where a = "a\0";
 hex(a)	hex(b)
@@ -318,14 +318,14 @@ insert into t values("a ", "b ");
 explain format='brief' select * from t where a = "a";
 id	estRows	task	access object	operator info
 IndexLookUp	10.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:[0x61,0x61], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:["a","a"], keep order:false, stats:pseudo
 └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a = "a";
 a	b
 explain format='brief' select * from t where a = "a ";
 id	estRows	task	access object	operator info
 IndexLookUp	10.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:[0x6120,0x6120], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:["a ","a "], keep order:false, stats:pseudo
 └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a = "a ";
 a	b
@@ -333,21 +333,21 @@ a 	b
 explain format='brief' select * from t where a = "a  ";
 id	estRows	task	access object	operator info
 IndexLookUp	10.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:[0x612020,0x612020], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:["a  ","a  "], keep order:false, stats:pseudo
 └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a = "a  ";
 a	b
 explain format='brief' select * from t where a = "a";
 id	estRows	task	access object	operator info
 IndexLookUp	10.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:[0x61,0x61], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:["a","a"], keep order:false, stats:pseudo
 └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a = "a";
 a	b
 explain format='brief' select * from t where a = "a ";
 id	estRows	task	access object	operator info
 IndexLookUp	10.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:[0x6120,0x6120], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:["a ","a "], keep order:false, stats:pseudo
 └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a = "a ";
 a	b
@@ -355,7 +355,7 @@ a 	b
 explain format='brief' select * from t where a = "a  ";
 id	estRows	task	access object	operator info
 IndexLookUp	10.00	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:[0x612020,0x612020], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:["a  ","a  "], keep order:false, stats:pseudo
 └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a = "a  ";
 a	b
