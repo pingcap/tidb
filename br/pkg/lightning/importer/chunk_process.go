@@ -17,7 +17,10 @@ package importer
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
+	"os"
+	"runtime/pprof"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -230,6 +233,19 @@ func (cr *chunkProcessor) process(
 		}
 	case <-ctx.Done():
 		deliverErr = ctx.Err()
+	}
+
+	currentTime := time.Now().Unix()
+	name := fmt.Sprintf("heap_profile_%v", currentTime)
+	file, err := os.Create(name)
+	if err != nil {
+		panic("pprof error")
+	}
+	defer file.Close()
+
+	err = pprof.WriteHeapProfile(file)
+	if err != nil {
+		panic("pprof error")
 	}
 	return errors.Trace(firstErr(encodeErr, deliverErr))
 }
