@@ -2833,7 +2833,8 @@ func upgradeToVer175(s sessiontypes.Session, ver int64) {
 			if originalNormalizedSQL == newNormalizedSQL {
 				continue // no need to update
 			}
-			// must run those update statements outside this loop, otherwise may cause some concurrency problems.
+			// must run those update statements outside this loop, otherwise may cause some concurrency problems,
+			// since the current statement over this session has not been finished yet.
 			updateStmts = append(updateStmts, fmt.Sprintf("UPDATE mysql.bind_info SET original_sql='%s' WHERE original_sql='%s'", newNormalizedSQL, originalNormalizedSQL))
 		}
 		req.Reset()
