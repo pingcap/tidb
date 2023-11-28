@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/hex"
 	"io"
-	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -56,6 +55,7 @@ type memKVsAndBuffers struct {
 	keys         [][]byte
 	values       [][]byte
 	memKVBuffers []*membuf.Buffer
+	size         int
 }
 
 // Engine stored sorted key/value pairs in an external storage.
@@ -170,9 +170,7 @@ func (e *Engine) getAdjustedConcurrency() int {
 	return max(adjusted, 1)
 }
 
-const concurrentReadThreshold = 4 * 1024 * 1024
-
-func checkConcurrentFiles(ctx context.Context, storage storage.ExternalStorage, statsFiles []string, startKey, endKey []byte) ([]uint64, []uint64, error) {
+func getFilesReadConcurrency(ctx context.Context, storage storage.ExternalStorage, statsFiles []string, startKey, endKey []byte) ([]uint64, []uint64, error) {
 	result := make([]uint64, len(statsFiles))
 	startOffs, err := seekPropsOffsets(ctx, startKey, statsFiles, storage, false)
 	if err != nil {
@@ -187,7 +185,7 @@ func checkConcurrentFiles(ctx context.Context, storage storage.ExternalStorage, 
 		if result[i] < 16 {
 			result[i] = 1
 		} else {
-			logutil.Logger(ctx).Info("found hotspot file in checkConcurrentFiles",
+			logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
 				zap.String("filename", statsFiles[i]),
 			)
 		}
@@ -232,8 +230,8 @@ func readOneFile(
 	memBuf := bufPool.NewBuffer()
 	keys := make([][]byte, 0, 1024)
 	values := make([][]byte, 0, 1024)
+	size := 0
 
-	var prevKey []byte
 	for {
 		k, v, err := rd.nextKV()
 		if err != nil {
@@ -248,20 +246,18 @@ func readOneFile(
 		if bytes.Compare(k, endKey) >= 0 {
 			break
 		}
-		if prevKey != nil && bytes.Compare(prevKey, k) >= 0 {
-			log.FromContext(ctx).Error("kv is not in increasing order", zap.ByteString("prevKey", prevKey), zap.ByteString("key", k))
-		}
-		prevKey = slices.Clone(k)
 		// TODO(lance6716): we are copying every KV from rd's buffer to memBuf, can we
 		// directly read into memBuf?
 		keys = append(keys, memBuf.AddBytes(k))
 		values = append(values, memBuf.AddBytes(v))
+		size += len(k) + len(v)
 	}
 	readAndSortDurHist.Observe(time.Since(ts).Seconds())
 	output.mu.Lock()
 	output.keys = append(output.keys, keys...)
 	output.values = append(output.values, values...)
 	output.memKVBuffers = append(output.memKVBuffers, memBuf)
+	output.size += size
 	output.mu.Unlock()
 	return nil
 }
@@ -273,15 +269,19 @@ func readAllData(
 	startKey, endKey []byte,
 	bufPool *membuf.Pool,
 	output *memKVsAndBuffers,
-) error {
-	logutil.Logger(ctx).Info("enter readAllData",
+) (err error) {
+	task := log.BeginTask(logutil.Logger(ctx), "read all data")
+	task.Info("arguments",
 		zap.Int("data-file-count", len(dataFiles)),
 		zap.Int("stat-file-count", len(statsFiles)),
 		zap.Binary("start-key", startKey),
 		zap.Binary("end-key", endKey),
 	)
+	defer func() {
+		task.End(zap.ErrorLevel, err)
+	}()
 
-	concurrences, startOffsets, err := checkConcurrentFiles(
+	concurrences, startOffsets, err := getFilesReadConcurrency(
 		ctx,
 		storage,
 		statsFiles,
@@ -338,6 +338,7 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 	logutil.Logger(ctx).Info("reading external storage in loadBatchRegionData",
 		zap.Duration("cost time", time.Since(readStart)))
 	sortStart := time.Now()
+	oldSortyGor := sorty.MaxGor
 	sorty.MaxGor = uint64(e.workerConcurrency * 2)
 	sorty.Sort(len(e.memKVsAndBuffers.keys), func(i, k, r, s int) bool {
 		if bytes.Compare(e.memKVsAndBuffers.keys[i], e.memKVsAndBuffers.keys[k]) < 0 { // strict comparator like < or >
@@ -349,6 +350,7 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 		}
 		return false
 	})
+	sorty.MaxGor = oldSortyGor
 	sortSecond := time.Since(sortStart).Seconds()
 	sortDurHist.Observe(sortSecond)
 	logutil.Logger(ctx).Info("sorting in loadBatchRegionData",
@@ -357,10 +359,7 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 	readAndSortSecond := time.Since(readStart).Seconds()
 	readAndSortDurHist.Observe(readAndSortSecond)
 
-	size := 0
-	for i := range e.memKVsAndBuffers.keys {
-		size += len(e.memKVsAndBuffers.keys[i]) + len(e.memKVsAndBuffers.values[i])
-	}
+	size := e.memKVsAndBuffers.size
 	readAndSortRateHist.Observe(float64(size) / 1024.0 / 1024.0 / readAndSortSecond)
 	readRateHist.Observe(float64(size) / 1024.0 / 1024.0 / readSecond)
 	sortRateHist.Observe(float64(size) / 1024.0 / 1024.0 / sortSecond)
@@ -400,6 +399,8 @@ func (e *Engine) LoadIngestData(
 	regionRanges []common.Range,
 	outCh chan<- common.DataAndRange,
 ) error {
+	// currently we assume the region size is 96MB and will download 96MB*40 = 3.8GB
+	// data at once
 	regionBatchSize := 40
 	failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
 		regionBatchSize = val.(int)
@@ -432,6 +433,8 @@ func (e *Engine) buildIngestData(keys, values [][]byte, buf []*membuf.Buffer) *M
 // LargeRegionSplitDataThreshold is exposed for test.
 var LargeRegionSplitDataThreshold = int(config.SplitRegionSize)
 
+// createMergeIter is unused now.
+// TODO(lance6716): check the performance of new design and remove it.
 func (e *Engine) createMergeIter(ctx context.Context, start kv.Key) (*MergeKVIter, error) {
 	logger := logutil.Logger(ctx)
 

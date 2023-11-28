@@ -447,6 +447,7 @@ func (p *rangeProperty) cloneInnerFields() {
 }
 
 func (p *rangeProperty) len() int {
+	// 24 is the length of member offset, size and keys, which are all uint64
 	return len(p.firstKey) + len(p.lastKey) + 24
 }
 
