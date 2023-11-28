@@ -308,13 +308,6 @@ func (d *BaseDispatcher) onReverting() error {
 		return err
 	}
 	if cnt == 0 {
-		// Finish the rollback step.
-		logutil.Logger(d.logCtx).Info("task reverted",
-			zap.Stringer("type", d.Task.Type),
-			zap.Int64("task-id", d.Task.ID),
-			zap.Int64("step", int64(d.Task.Step)),
-			zap.Error(d.Task.Error),
-		)
 		if err = d.OnDone(d.ctx, d, d.Task); err != nil {
 			return errors.Trace(err)
 		}
@@ -547,10 +540,6 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 			taskState := proto.TaskStateRunning
 			if d.Task.Step == proto.StepDone {
 				taskState = proto.TaskStateSucceed
-				logutil.Logger(d.logCtx).Info("task succeed",
-					zap.Stringer("type", d.Task.Type),
-					zap.Int64("task-id", d.Task.ID),
-				)
 				if err = d.OnDone(d.ctx, d, d.Task); err != nil {
 					err = errors.Trace(err)
 					return
@@ -643,12 +632,6 @@ func (d *BaseDispatcher) handlePlanErr(err error) error {
 	}
 	d.Task.Error = err
 
-	logutil.Logger(d.logCtx).Info("task failed",
-		zap.Stringer("type", d.Task.Type),
-		zap.Int64("task-id", d.Task.ID),
-		zap.Int64("step", int64(d.Task.Step)),
-		zap.Error(d.Task.Error),
-	)
 	if err = d.OnDone(d.ctx, d, d.Task); err != nil {
 		return errors.Trace(err)
 	}
