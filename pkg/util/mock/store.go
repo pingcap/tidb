@@ -63,11 +63,6 @@ func (*Store) Describe() string {
 	return "UtilMockStorage is a mock Store implementation, only for unittests in util package"
 }
 
-// GetMemCache implements kv.Storage interface
-func (*Store) GetMemCache() kv.MemManager {
-	return nil
-}
-
 // ShowStatus implements kv.Storage interface.
 func (*Store) ShowStatus(_ context.Context, _ string) (interface{}, error) { return nil, nil }
 

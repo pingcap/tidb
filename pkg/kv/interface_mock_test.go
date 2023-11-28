@@ -252,10 +252,6 @@ func (s *mockStorage) ShowStatus(ctx context.Context, key string) (interface{}, 
 	return nil, nil
 }
 
-func (s *mockStorage) GetMemCache() MemManager {
-	return nil
-}
-
 func (s *mockStorage) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
 	return nil, nil
 }

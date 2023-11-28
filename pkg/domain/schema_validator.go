@@ -149,10 +149,7 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 			tblIDs = change.PhyTblIDS
 			actionTypes = change.ActionTypes
 		}
-		for idx, ac := range actionTypes {
-			if ac == uint64(model.ActionUnlockTable) {
-				s.do.Store().GetMemCache().Delete(tblIDs[idx])
-			}
+		for _, ac := range actionTypes {
 			if ac == uint64(model.ActionFlashbackCluster) {
 				if s.do != nil && s.do.InfoSyncer() != nil && s.do.InfoSyncer().GetSessionManager() != nil {
 					s.do.InfoSyncer().GetSessionManager().KillNonFlashbackClusterConn()

@@ -3,7 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "kv",
     srcs = [
-        "cachedb.go",
         "checker.go",
         "error.go",
         "fault_injection.go",
@@ -38,7 +37,6 @@ go_library(
         "//pkg/util/tiflash",
         "//pkg/util/tiflashcompute",
         "//pkg/util/trxevents",
-        "@com_github_coocood_freecache//:freecache",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/deadlock",

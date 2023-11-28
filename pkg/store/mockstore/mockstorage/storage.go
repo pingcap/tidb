@@ -30,7 +30,6 @@ import (
 type mockStorage struct {
 	*tikv.KVStore
 	*copr.Store
-	memCache  kv.MemManager
 	LockWaits []*deadlockpb.WaitForEntry
 }
 
@@ -42,9 +41,8 @@ func NewMockStorage(tikvStore *tikv.KVStore) (kv.Storage, error) {
 		return nil, err
 	}
 	return &mockStorage{
-		KVStore:  tikvStore,
-		Store:    coprStore,
-		memCache: kv.NewCacheDB(),
+		KVStore: tikvStore,
+		Store:   coprStore,
 	}, nil
 }
 
@@ -54,11 +52,6 @@ func (s *mockStorage) EtcdAddrs() ([]string, error) {
 
 func (s *mockStorage) TLSConfig() *tls.Config {
 	return nil
-}
-
-// GetMemCache return memory mamager of the storage
-func (s *mockStorage) GetMemCache() kv.MemManager {
-	return s.memCache
 }
 
 func (s *mockStorage) StartGCWorker() error {

@@ -234,7 +234,6 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		KVStore:   s,
 		etcdAddrs: etcdAddrs,
 		tlsConfig: tlsConfig,
-		memCache:  kv.NewCacheDB(),
 		enableGC:  !disableGC,
 		coprStore: coprStore,
 		codec:     codec,
@@ -248,7 +247,6 @@ type tikvStore struct {
 	*tikv.KVStore
 	etcdAddrs []string
 	tlsConfig *tls.Config
-	memCache  kv.MemManager // this is used to query from memory
 	enableGC  bool
 	gcWorker  *gcworker.GCWorker
 	coprStore *copr.Store
@@ -351,11 +349,6 @@ func (s *tikvStore) Close() error {
 	s.coprStore.Close()
 	err := s.KVStore.Close()
 	return derr.ToTiDBErr(err)
-}
-
-// GetMemCache return memory manager of the storage
-func (s *tikvStore) GetMemCache() kv.MemManager {
-	return s.memCache
 }
 
 // Begin a global transaction.

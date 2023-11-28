@@ -696,8 +696,6 @@ type Storage interface {
 	Describe() string
 	// ShowStatus returns the specified status of the storage
 	ShowStatus(ctx context.Context, key string) (interface{}, error)
-	// GetMemCache return memory manager of the storage.
-	GetMemCache() MemManager
 	// GetMinSafeTS return the minimal SafeTS of the storage with given txnScope.
 	GetMinSafeTS(txnScope string) uint64
 	// GetLockWaits return all lock wait information
