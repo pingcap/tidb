@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "bind_cache.go",
         "bind_record.go",
+        "capture.go",
         "handle.go",
         "session_handle.go",
         "stat.go",
@@ -37,7 +38,6 @@ go_library(
         "//pkg/util/sqlexec",
         "//pkg/util/stmtsummary/v2:stmtsummary",
         "//pkg/util/table-filter",
-        "//pkg/util/timeutil",
         "@org_golang_x_exp//maps",
         "@org_uber_go_zap//:zap",
     ],
@@ -57,7 +57,7 @@ go_test(
     embed = [":bindinfo"],
     flaky = True,
     race = "on",
-    shard_count = 41,
+    shard_count = 40,
     deps = [
         "//pkg/bindinfo/internal",
         "//pkg/config",
