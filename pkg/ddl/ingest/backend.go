@@ -155,12 +155,8 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 }
 
 func acquireLock(ctx context.Context, se *concurrency.Session, key string) (*concurrency.Mutex, error) {
-	var err error
-	var mu *concurrency.Mutex
-	for err == nil || err == concurrency.ErrSessionExpired {
-		mu := concurrency.NewMutex(se, key)
-		err = mu.Lock(ctx)
-	}
+	mu := concurrency.NewMutex(se, key)
+	err := mu.Lock(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -201,9 +197,6 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 		distLockKey := fmt.Sprintf("/tidb/distributeLock/%d/%d", bc.jobID, indexID)
 		se, _ := concurrency.NewSession(bc.etcdClient)
 		mu, err := acquireLock(bc.ctx, se, distLockKey)
-		if err == concurrency.ErrSessionExpired {
-
-		}
 		if err != nil {
 			return true, false, err
 		}
