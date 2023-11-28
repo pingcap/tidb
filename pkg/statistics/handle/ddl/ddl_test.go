@@ -307,7 +307,7 @@ func TestDropAPartition(t *testing.T) {
 			partition p3 values less than (21)
 		)
 	`)
-	testKit.MustExec("insert into t values (1,2),(6,2),(11,2),(16,2)")
+	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(
@@ -336,9 +336,10 @@ func TestDropAPartition(t *testing.T) {
 	err = h.HandleDDLEvent(dropPartitionEvent)
 	require.NoError(t, err)
 	// Check the global stats meta.
+	// Because we have dropped a partition, the count should be 3 and the modify count should be 2.
 	testKit.MustQuery(
 		fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableInfo.ID),
 	).Check(
-		testkit.Rows("3 1"),
+		testkit.Rows("3 2"),
 	)
 }
