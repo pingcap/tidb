@@ -37,6 +37,7 @@ go_test(
     name = "globalstats_test",
     timeout = "short",
     srcs = [
+        "globalstats_internal_test.go",
         "globalstats_test.go",
         "main_test.go",
         "topn_bench_test.go",
@@ -44,9 +45,10 @@ go_test(
     ],
     embed = [":globalstats"],
     flaky = True,
-    shard_count = 23,
+    shard_count = 24,
     deps = [
         "//pkg/config",
+        "//pkg/domain",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/stmtctx",
