@@ -348,9 +348,6 @@ type StatsGlobal interface {
 		isIndex bool,
 		histIDs []int64,
 	) (globalStats interface{}, err error)
-
-	// UpdateGlobalStats will trigger the merge of global-stats when we drop table partition
-	UpdateGlobalStats(tblInfo *model.TableInfo) error
 }
 
 // DDL is used to handle ddl events.

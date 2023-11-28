@@ -22,5 +22,6 @@ go_test(
         "//pkg/types",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
+        "@org_uber_go_multierr//:multierr",
     ],
 )

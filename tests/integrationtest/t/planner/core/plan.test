@@ -198,3 +198,14 @@ select * from golang1;
 # TestExplainValuesStatement
 --error 1051
 EXPLAIN FORMAT = TRADITIONAL ((VALUES ROW ()) ORDER BY 1);
+
+
+# TestIssue35090
+drop table if exists p, t;
+create table p (id int, c int, key i_id(id), key i_c(c));
+create table t (id int);
+insert into p values (3,3), (4,4), (6,6), (9,9);
+insert into t values (4), (9);
+select /*+ INL_JOIN(p) */ * from p, t where p.id = t.id;
+--replace_column 5 <access_object> 6 <execution_info> 7 <operator_info> 8 <memory> 9 <disk>
+explain analyze format='brief' select /*+ INL_JOIN(p) */ * from p, t where p.id = t.id;

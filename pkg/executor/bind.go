@@ -83,10 +83,10 @@ func (e *SQLBindExec) dropSQLBind() error {
 	}
 	if !e.isGlobal {
 		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-		err := handle.DropBindRecord(e.normdOrigSQL, e.db, bindInfo)
+		err := handle.DropSessionBinding(e.normdOrigSQL, e.db, bindInfo)
 		return err
 	}
-	affectedRows, err := domain.GetDomain(e.Ctx()).BindHandle().DropBindRecord(e.normdOrigSQL, e.db, bindInfo)
+	affectedRows, err := domain.GetDomain(e.Ctx()).BindHandle().DropGlobalBinding(e.normdOrigSQL, e.db, bindInfo)
 	e.Ctx().GetSessionVars().StmtCtx.AddAffectedRows(affectedRows)
 	return err
 }
@@ -97,10 +97,10 @@ func (e *SQLBindExec) dropSQLBindByDigest() error {
 	}
 	if !e.isGlobal {
 		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-		err := handle.DropBindRecordByDigest(e.sqlDigest)
+		err := handle.DropSessionBindingByDigest(e.sqlDigest)
 		return err
 	}
-	affectedRows, err := domain.GetDomain(e.Ctx()).BindHandle().DropBindRecordByDigest(e.sqlDigest)
+	affectedRows, err := domain.GetDomain(e.Ctx()).BindHandle().DropGlobalBindingByDigest(e.sqlDigest)
 	e.Ctx().GetSessionVars().StmtCtx.AddAffectedRows(affectedRows)
 	return err
 }
@@ -114,7 +114,7 @@ func (e *SQLBindExec) setBindingStatus() error {
 			Collation: e.collation,
 		}
 	}
-	ok, err := domain.GetDomain(e.Ctx()).BindHandle().SetBindRecordStatus(e.normdOrigSQL, bindInfo, e.newStatus)
+	ok, err := domain.GetDomain(e.Ctx()).BindHandle().SetGlobalBindingStatus(e.normdOrigSQL, bindInfo, e.newStatus)
 	if err == nil && !ok {
 		warningMess := errors.New("There are no bindings can be set the status. Please check the SQL text")
 		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(warningMess)
@@ -123,7 +123,7 @@ func (e *SQLBindExec) setBindingStatus() error {
 }
 
 func (e *SQLBindExec) setBindingStatusByDigest() error {
-	ok, err := domain.GetDomain(e.Ctx()).BindHandle().SetBindRecordStatusByDigest(e.newStatus, e.sqlDigest)
+	ok, err := domain.GetDomain(e.Ctx()).BindHandle().SetGlobalBindingStatusByDigest(e.newStatus, e.sqlDigest)
 	if err == nil && !ok {
 		warningMess := errors.New("There are no bindings can be set the status. Please check the SQL text")
 		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(warningMess)
@@ -159,13 +159,13 @@ func (e *SQLBindExec) createSQLBind() error {
 	}
 	if !e.isGlobal {
 		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-		return handle.CreateBindRecord(e.Ctx(), record)
+		return handle.CreateSessionBinding(e.Ctx(), record)
 	}
-	return domain.GetDomain(e.Ctx()).BindHandle().CreateBindRecord(e.Ctx(), record)
+	return domain.GetDomain(e.Ctx()).BindHandle().CreateGlobalBinding(e.Ctx(), record)
 }
 
 func (e *SQLBindExec) flushBindings() error {
-	return domain.GetDomain(e.Ctx()).BindHandle().FlushBindings()
+	return domain.GetDomain(e.Ctx()).BindHandle().FlushGlobalBindings()
 }
 
 func (e *SQLBindExec) captureBindings() {
@@ -177,5 +177,5 @@ func (e *SQLBindExec) evolveBindings() error {
 }
 
 func (e *SQLBindExec) reloadBindings() error {
-	return domain.GetDomain(e.Ctx()).BindHandle().ReloadBindings()
+	return domain.GetDomain(e.Ctx()).BindHandle().ReloadGlobalBindings()
 }

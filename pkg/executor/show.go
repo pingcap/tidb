@@ -324,9 +324,9 @@ func (e *ShowExec) fetchShowBind() error {
 	var tmp []*bindinfo.BindRecord
 	if !e.GlobalScope {
 		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-		tmp = handle.GetAllBindRecord()
+		tmp = handle.GetAllSessionBindRecord()
 	} else {
-		tmp = domain.GetDomain(e.Ctx()).BindHandle().GetAllBindRecord()
+		tmp = domain.GetDomain(e.Ctx()).BindHandle().GetAllGlobalBinding()
 	}
 	bindRecords := make([]*bindinfo.BindRecord, 0)
 	for _, bindRecord := range tmp {
@@ -408,7 +408,7 @@ func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
 
 	handle := domain.GetDomain(e.Ctx()).BindHandle()
 
-	bindRecords := handle.GetAllBindRecord()
+	bindRecords := handle.GetAllGlobalBinding()
 	numBindings := 0
 	for _, bindRecord := range bindRecords {
 		for _, binding := range bindRecord.Bindings {

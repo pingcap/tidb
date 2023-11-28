@@ -102,13 +102,15 @@ func TestOnlyOneGroup(t *testing.T) {
 	subDir := "/mock-test"
 
 	writer := NewWriterBuilder().
-		SetMemorySizeLimit(15).
+		SetMemorySizeLimit(20).
 		SetPropSizeDistance(1).
 		SetPropKeysDistance(1).
 		Build(memStore, subDir, "5")
 
 	dataFiles, statFiles, err := MockExternalEngineWithWriter(memStore, writer, subDir, [][]byte{{1}, {2}}, [][]byte{{1}, {2}})
 	require.NoError(t, err)
+	require.Len(t, dataFiles, 1)
+	require.Len(t, statFiles, 1)
 
 	splitter, err := NewRangeSplitter(
 		ctx, dataFiles, statFiles, memStore, 1000, 30, 1000, 10, true,
