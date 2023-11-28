@@ -15,6 +15,7 @@
 package aggregate_test
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"testing"
@@ -27,8 +28,9 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -120,7 +122,7 @@ func buildMockDataSource(opt testutil.MockDataSourceParameters, col1Data []strin
 
 	maxChunkSize := mockDatasource.MaxChunkSize()
 	rowNum := len(col1Data)
-	mockDatasource.GenData = make([]*chunk.Chunk, rowNum/maxChunkSize)
+	mockDatasource.GenData = make([]*chunk.Chunk, (rowNum+maxChunkSize-1)/maxChunkSize)
 	for i := range mockDatasource.GenData {
 		mockDatasource.GenData[i] = chunk.NewChunkWithCapacity(exec.RetTypes(mockDatasource), maxChunkSize)
 	}
@@ -149,49 +151,54 @@ func generateResult(col1 []string, col2 []int64) map[string]int64 {
 	return result
 }
 
-func getSchema() *expression.Schema {
-	return expression.NewSchema(
-		&expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeVarString)},
-		&expression.Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)})
+func getColumns() []*expression.Column {
+	return []*expression.Column{
+		{Index: 0, RetType: types.NewFieldType(mysql.TypeVarString)},
+		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
+	}
 }
 
-func getMockDataSourceParameters() testutil.MockDataSourceParameters {
+func getSchema() *expression.Schema {
+	return expression.NewSchema(getColumns()...)
+}
+
+func getMockDataSourceParameters(ctx sessionctx.Context) testutil.MockDataSourceParameters {
 	return testutil.MockDataSourceParameters{
 		DataSchema: getSchema(),
-		// Ctx:        ctx,
+		Ctx:        ctx,
 	}
 }
 
-func buildHashAggExecutor(b *testing.B, testCase *testutil.AggTestCase, child exec.Executor) *aggregate.HashAggExec {
-	ctx := testCase.Ctx
-	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggFinalConcurrency, fmt.Sprintf("%v", testCase.Concurrency)); err != nil {
-		b.Fatal(err)
+func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Executor) *aggregate.HashAggExec {
+	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggFinalConcurrency, fmt.Sprintf("%v", 5)); err != nil {
+		t.Fatal(err)
 	}
-	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggPartialConcurrency, fmt.Sprintf("%v", testCase.Concurrency)); err != nil {
-		b.Fatal(err)
+	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggPartialConcurrency, fmt.Sprintf("%v", 5)); err != nil {
+		t.Fatal(err)
 	}
 
-	childCols := testCase.Columns()
+	childCols := getColumns()
 	schema := expression.NewSchema(childCols...)
-	groupItems := []expression.Expression{childCols[1]}
-	aggFunc, err := aggregation.NewAggFuncDesc(testCase.Ctx, testCase.AggFunc, []expression.Expression{childCols[0]}, testCase.HasDistinct)
-	if err != nil {
-		b.Fatal(err)
-	}
-	aggFuncs := []*aggregation.AggFuncDesc{aggFunc}
+	groupItems := []expression.Expression{childCols[0]}
 
-	plan := new(core.PhysicalHashAgg)
-	plan.AggFuncs = aggFuncs
-	plan.GroupByItems = groupItems
-	plan.SetSchema(schema)
-	plan.Init(ctx, nil, 0)
-	plan.SetChildren(nil)
+	aggFirstRow, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncFirstRow, []expression.Expression{childCols[0]}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	aggFunc, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncSum, []expression.Expression{childCols[1]}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	aggFuncs := []*aggregation.AggFuncDesc{aggFirstRow, aggFunc}
 
 	aggExec := &aggregate.HashAggExec{
-		BaseExecutor:    exec.NewBaseExecutor(ctx, schema, 0, child),
-		Sc:              ctx.GetSessionVars().StmtCtx,
-		PartialAggFuncs: make([]aggfuncs.AggFunc, 0, len(aggFuncs)),
-		GroupByItems:    groupItems,
+		BaseExecutor:     exec.NewBaseExecutor(ctx, schema, 0, child),
+		Sc:               ctx.GetSessionVars().StmtCtx,
+		PartialAggFuncs:  make([]aggfuncs.AggFunc, 0, len(aggFuncs)),
+		GroupByItems:     groupItems,
+		IsUnparallelExec: false,
 	}
 
 	partialOrdinal := 0
@@ -206,9 +213,6 @@ func buildHashAggExecutor(b *testing.B, testCase *testutil.AggTestCase, child ex
 	}
 
 	aggExec.SetChildren(0, child)
-
-	// first_row?
-
 	return aggExec
 }
 
@@ -217,27 +221,21 @@ func TestGetCorrectResult(t *testing.T) {
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, -1)
+	ctx.GetSessionVars().TrackAggregateMemoryUsage = true
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/enableAggSpillIntest", `return(false)`)
-	// rowNum := rand.Intn(3000) + 3000
-	// ndv := rand.Intn(50) + 50
-	// col1, col2 := generateData(rowNum, ndv)
+	rowNum := rand.Intn(3000) + 3000
+	ndv := rand.Intn(50) + 50
+	col1, col2 := generateData(rowNum, ndv)
 	// result := generateResult(col1, col2)
-	// opt := getMockDataSourceParameters()
-	// dataSource := buildMockDataSource(opt, col1, col2)
+	opt := getMockDataSourceParameters(ctx)
+	dataSource := buildMockDataSource(opt, col1, col2)
+	aggExec := buildHashAggExecutor(t, ctx, dataSource)
 
-	// aggTestCase := testutil.AggTestCase{
-	// 	ExecType:         "hash",
-	// 	AggFunc:          ast.AggFuncSum,
-	// 	GroupByNDV:       ndv,
-	// 	HasDistinct:      false,
-	// 	Rows:             rowNum,
-	// 	Concurrency:      5,
-	// 	DataSourceSorted: false,
-	// 	Ctx:              ctx,
-	// }
+	tmpCtx := context.Background()
+	aggExec.Open(tmpCtx)
 }
 
 func TestGetCorrectResultDeprecated(t *testing.T) {
