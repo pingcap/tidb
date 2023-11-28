@@ -12,6 +12,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -183,7 +184,7 @@ func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) {
 			tablesRestored = append(tablesRestored, tableName.L)
 		}
 	}
-	if err := rc.afterSystemTablesReplaced(tablesRestored); err != nil {
+	if err := rc.afterSystemTablesReplaced(ctx, tablesRestored); err != nil {
 		for _, e := range multierr.Errors(err) {
 			log.Warn("error during reconfigurating the system tables", zap.String("database", sysDB), logutil.ShortError(e))
 		}
@@ -218,19 +219,27 @@ func (rc *Client) getDatabaseByName(name string) (*database, bool) {
 
 // afterSystemTablesReplaced do some extra work for special system tables.
 // e.g. after inserting to the table mysql.user, we must execute `FLUSH PRIVILEGES` to allow it take effect.
-func (rc *Client) afterSystemTablesReplaced(tables []string) error {
+func (rc *Client) afterSystemTablesReplaced(ctx context.Context, tables []string) error {
 	var err error
 	for _, table := range tables {
 		if table == "user" {
 			if rc.fullClusterRestore {
 				log.Info("privilege system table restored, please reconnect to make it effective")
-				err = rc.dom.NotifyUpdatePrivilege()
+				err = multierr.Append(err, rc.dom.NotifyUpdatePrivilege())
 			} else {
 				// to make it compatible with older version
 				// todo: should we allow restore system table in non-fresh cluster in later br version?
 				// if we don't, we can check it at first place.
 				err = multierr.Append(err, errors.Annotatef(berrors.ErrUnsupportedSystemTable,
 					"restored user info may not take effect, until you should execute `FLUSH PRIVILEGES` manually"))
+			}
+		} else if table == "bind_info" {
+			if serr := rc.db.se.Execute(ctx, bindinfo.StmtRemoveDuplicatedPseudoBinding); serr != nil {
+				log.Warn("failed to delete duplicated pseudo binding", zap.Error(err))
+				err = multierr.Append(err,
+					berrors.ErrUnknown.Wrap(err).GenWithStack("failed to delete duplicated pseudo binding %s", bindinfo.StmtRemoveDuplicatedPseudoBinding))
+			} else {
+				log.Info("success to remove duplicated pseudo binding")
 			}
 		}
 	}
