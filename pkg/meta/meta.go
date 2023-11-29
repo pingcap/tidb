@@ -42,6 +42,10 @@ var (
 	policyIDMutex sync.Mutex
 )
 
+type DataStore interface {
+	Begin() (err error)
+}
+
 // Meta structure:
 //	NextGlobalID -> int64
 //	SchemaVersion -> int64
