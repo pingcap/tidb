@@ -57,6 +57,7 @@ NULL	1
 update t1 set id=-1 where id=1;
 LOCK TABLE t1 READ;
 update t1 set id=1 where id=1;
+Error 1099 (HY000): Table 't1' was locked with a READ lock and can't be updated
 unlock tables;
 update t1 set id=1 where id=-1;
 drop table t1;
