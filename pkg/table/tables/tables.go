@@ -1130,6 +1130,7 @@ func genIndexKeyStr(colVals []types.Datum) (string, error) {
 func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r []types.Datum, txn kv.Transaction, opts []table.CreateIdxOptFunc) (kv.Handle, error) {
 	writeBufs := sctx.GetSessionVars().GetWriteStmtBufs()
 	indexVals := writeBufs.IndexValsBuf
+	skipCheck := sctx.GetSessionVars().StmtCtx.BatchCheck
 	for _, v := range t.Indices() {
 		if !IsIndexWritable(v) {
 			continue
@@ -1141,17 +1142,21 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r 
 		if err != nil {
 			return nil, err
 		}
+		var dupErr error
+		if !skipCheck && v.Meta().Unique {
+			// Make error message consistent with MySQL.
+			tablecodec.TruncateIndexValues(t.meta, v.Meta(), indexVals)
+			entryKey, err := genIndexKeyStr(indexVals)
+			if err != nil {
+				// if genIndexKeyStr failed, return the original error.
+				return nil, err
+			}
+			dupErr = kv.ErrKeyExists.FastGenByArgs(entryKey, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String()))
+		}
 		rsData := TryGetHandleRestoredDataWrapper(t.meta, r, nil, v.Meta())
 		if dupHandle, err := v.Create(sctx, txn, indexVals, recordID, rsData, opts...); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
-				// Make error message consistent with MySQL.
-				tablecodec.TruncateIndexValues(t.meta, v.Meta(), indexVals)
-				entryKey, err1 := genIndexKeyStr(indexVals)
-				if err1 != nil {
-					// if genIndexKeyStr failed, return the original error.
-					return nil, err
-				}
-				return dupHandle, kv.ErrKeyExists.FastGenByArgs(entryKey, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String()))
+				return dupHandle, dupErr
 			}
 			return nil, err
 		}
@@ -1977,8 +1982,10 @@ func getDuplicateErrorHandleString(tblInfo *model.TableInfo, handle kv.Handle, r
 	if handle.IsInt() {
 		return kv.GetDuplicateErrorHandleString(handle)
 	}
-	// Here pkIdx must not be null because of hanle.IsInt() is false?
 	pkIdx := FindPrimaryIndex(tblInfo)
+	if pkIdx == nil {
+		return kv.GetDuplicateErrorHandleString(handle)
+	}
 	pkDts := make([]types.Datum, 0, len(pkIdx.Columns))
 	for _, idxCol := range pkIdx.Columns {
 		pkDts = append(pkDts, row[idxCol.Offset])
