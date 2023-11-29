@@ -225,7 +225,7 @@ func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Execu
 }
 
 func TestGetCorrectResult(t *testing.T) {
-	hardLimitBytesNum := int64(15000000)
+	hardLimitBytesNum := int64(5000000)
 
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
