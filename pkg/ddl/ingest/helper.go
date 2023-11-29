@@ -72,7 +72,11 @@ func (t *distLockDataTxn) Set(key, value []byte) error {
 
 func (t *distLockDataTxn) Get(key []byte) ([]byte, error) {
 	mKey := distLockKey(key)
-	return t.metaTxn.Get(mKey)
+	val, err := t.metaTxn.Get(mKey)
+	if kv.ErrNotExist.Equal(err) {
+		err = nil
+	}
+	return val, err
 }
 
 func (t *distLockDataTxn) Del(key []byte) error {
