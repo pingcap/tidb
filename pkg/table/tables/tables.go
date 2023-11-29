@@ -1148,7 +1148,6 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r 
 			tablecodec.TruncateIndexValues(t.meta, v.Meta(), indexVals)
 			entryKey, err := genIndexKeyStr(indexVals)
 			if err != nil {
-				// if genIndexKeyStr failed, return the original error.
 				return nil, err
 			}
 			dupErr = kv.ErrKeyExists.FastGenByArgs(entryKey, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String()))
