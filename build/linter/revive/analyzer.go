@@ -47,7 +47,7 @@ type jsonObject struct {
 	lint.Failure `json:",inline"`
 }
 
-var defaultRules = []lint.Rule{
+var allRules = append([]lint.Rule{
 	&rule.VarDeclarationsRule{},
 	//&rule.PackageCommentsRule{},
 	&rule.DotImportsRule{},
@@ -56,9 +56,6 @@ var defaultRules = []lint.Rule{
 	&rule.IncrementDecrementRule{},
 	//&rule.UnexportedReturnRule{},
 	&rule.ContextKeysType{},
-}
-
-var allRules = append([]lint.Rule{
 	//&rule.ArgumentsLimitRule{},
 	//&rule.CyclomaticRule{},
 	//&rule.FileHeaderRule{},
@@ -88,7 +85,7 @@ var allRules = append([]lint.Rule{
 	//&rule.NestedStructs{},
 	&rule.UselessBreak{},
 	//&rule.BannedCharsRule{},
-}, defaultRules...)
+})
 
 func run(pass *analysis.Pass) (any, error) {
 	files := make([]string, 0, len(pass.Files))
