@@ -34,7 +34,6 @@ func exec(sctx sessionctx.Context, sql string, args ...interface{}) (sqlexec.Rec
 	if !ok {
 		return nil, errors.Errorf("invalid sql executor")
 	}
-	// TODO: use RestrictedSQLExecutor + ExecOptionUseCurSession instead of SQLExecutor
 	return sqlExec.ExecuteInternal(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo), sql, args...)
 }
 
