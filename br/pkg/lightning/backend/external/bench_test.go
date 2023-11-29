@@ -514,7 +514,7 @@ func TestPrepareLargeData(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			writer := NewWriterBuilder().
-				SetMemorySizeLimit(uint64(float64(fileSize))).
+				SetMemorySizeLimit(uint64(fileSize)).
 				Build(store, largeAscendingDataPath, fmt.Sprintf("%02d", i))
 			endFile := min((i+1)*filePerConcUpperBound, fileCnt)
 			startFile := min(i*filePerConcUpperBound, endFile)
@@ -537,10 +537,20 @@ func TestPrepareLargeData(t *testing.T) {
 		size.Load(), elapsed, float64(size.Load())/elapsed.Seconds()/1024/1024)
 	dataFiles, _, err = GetAllFileNames(ctx, store, largeAscendingDataPath)
 	intest.AssertNoError(err)
+
 	r, err := store.Open(ctx, dataFiles[0], nil)
 	intest.AssertNoError(err)
-	oneFileSize, err := r.GetFileSize()
+	firstFileSize, err := r.GetFileSize()
 	intest.AssertNoError(err)
-	t.Logf("total %d data files, first file size: %d MB",
-		len(dataFiles), oneFileSize/1024/1024)
+	err = r.Close()
+	intest.AssertNoError(err)
+
+	r, err = store.Open(ctx, dataFiles[len(dataFiles)-1], nil)
+	intest.AssertNoError(err)
+	lastFileSize, err := r.GetFileSize()
+	intest.AssertNoError(err)
+	err = r.Close()
+	intest.AssertNoError(err)
+	t.Logf("total %d data files, first file size: %d MB, last file size: %d MB",
+		len(dataFiles), firstFileSize/1024/1024, lastFileSize/1024/1024)
 }
