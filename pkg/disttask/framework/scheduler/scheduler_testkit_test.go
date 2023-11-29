@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	mockexecute "github.com/pingcap/tidb/pkg/disttask/framework/mock/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -33,12 +34,35 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-func runOneTask(t *testing.T, ctx context.Context, mgr *storage.TaskManager) {
-	mgr.AddNewGlobalTask(ctx, "key1", proto.TaskTypeExample, 1, nil)
-	task, err := mgr.GetGlobalTaskByKey(ctx, "key1")
+func runOneTask(t *testing.T, ctx context.Context, mgr *storage.TaskManager, taskKey string, subtaskCnt int) {
+	taskID, err := mgr.AddNewGlobalTask(ctx, taskKey, proto.TaskTypeExample, 1, nil)
 	require.NoError(t, err)
-	scheduler := scheduler.NewBaseScheduler(ctx, "id", 1, mgr)
-	scheduler.Run(ctx, task)
+	task, err := mgr.GetGlobalTaskByID(ctx, taskID)
+	require.NoError(t, err)
+	// 1. stepOne
+	task.Step = proto.StepOne
+	task.State = proto.TaskStateRunning
+	_, err = mgr.UpdateGlobalTaskAndAddSubTasks(ctx, task, nil, proto.TaskStatePending)
+	require.NoError(t, err)
+	for i := 0; i < subtaskCnt; i++ {
+		require.NoError(t, mgr.AddNewSubTask(ctx, taskID, proto.StepOne, "test", nil, proto.TaskTypeExample, false))
+	}
+	task, err = mgr.GetGlobalTaskByID(ctx, taskID)
+	require.NoError(t, err)
+	factory := scheduler.GetSchedulerFactory(task.Type)
+	require.NotNil(t, factory)
+	scheduler := factory(ctx, "test", task, mgr)
+	require.NoError(t, scheduler.Run(ctx, task))
+	// 2. stepTwo
+	task.Step = proto.StepTwo
+	_, err = mgr.UpdateGlobalTaskAndAddSubTasks(ctx, task, nil, proto.TaskStateRunning)
+	require.NoError(t, err)
+	for i := 0; i < subtaskCnt; i++ {
+		require.NoError(t, mgr.AddNewSubTask(ctx, taskID, proto.StepTwo, "test", nil, proto.TaskTypeExample, false))
+	}
+	task, err = mgr.GetGlobalTaskByID(ctx, taskID)
+	require.NoError(t, err)
+	require.NoError(t, scheduler.Run(ctx, task))
 }
 
 func getMockSubtaskExecutor(ctrl *gomock.Controller) *mockexecute.MockSubtaskExecutor {
@@ -50,7 +74,36 @@ func getMockSubtaskExecutor(ctrl *gomock.Controller) *mockexecute.MockSubtaskExe
 	return executor
 }
 
-func TestScheduler(t *testing.T) {
+func getMockSchedulerExtension(ctrl *gomock.Controller, mockSubtaskExecutor *mockexecute.MockSubtaskExecutor) *mock.MockExtension {
+	mockExtension := mock.NewMockExtension(ctrl)
+	mockExtension.EXPECT().
+		GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(mockSubtaskExecutor, nil).AnyTimes()
+	return mockExtension
+}
+
+func initScheduler(ctrl *gomock.Controller, runSubtaskFn func(ctx context.Context, subtask *proto.Subtask) error) {
+	mockSubtaskExecutor := getMockSubtaskExecutor(ctrl)
+	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
+		runSubtaskFn,
+	).AnyTimes()
+
+	mockExtension := getMockSchedulerExtension(ctrl, mockSubtaskExecutor)
+	scheduler.RegisterTaskType(proto.TaskTypeExample,
+		func(ctx context.Context, id string, task *proto.Task, taskTable scheduler.TaskTable) scheduler.Scheduler {
+			s := scheduler.NewBaseScheduler(ctx, id, task.ID, taskTable)
+			s.Extension = mockExtension
+			return s
+		},
+	)
+}
+
+func TestSchedulerBasic(t *testing.T) {
+	// must disable disttask framework to ensure the test pure.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask"))
+	}()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
@@ -61,31 +114,19 @@ func TestScheduler(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-
 	mgr := storage.NewTaskManager(pool)
 
-	// mock init
-	mockExtension := mock.NewMockExtension(ctrl)
-	mockSubtaskExecutor := getMockSubtaskExecutor(ctrl)
-	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(ctx context.Context, subtask *proto.Subtask) error {
-			switch subtask.Step {
-			case proto.StepOne:
-				logutil.BgLogger().Info("ywq 1")
-			case proto.StepTwo:
-				logutil.BgLogger().Info("ywq 2")
-			default:
-				panic("invalid step")
-			}
-			return nil
-		}).AnyTimes()
-	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()
-	scheduler.RegisterTaskType(proto.TaskTypeExample,
-		func(ctx context.Context, id string, task *proto.Task, taskTable scheduler.TaskTable) scheduler.Scheduler {
-			s := scheduler.NewBaseScheduler(ctx, id, task.ID, taskTable)
-			s.Extension = mockExtension
-			return s
-		},
-	)
-	runOneTask(t, ctx, mgr)
+	initScheduler(ctrl, func(ctx context.Context, subtask *proto.Subtask) error {
+		switch subtask.Step {
+		case proto.StepOne:
+			logutil.BgLogger().Info("ywq 1")
+		case proto.StepTwo:
+			logutil.BgLogger().Info("ywq 2")
+		default:
+			panic("invalid step")
+		}
+		return nil
+	})
+	runOneTask(t, ctx, mgr, "key1", 0)
+	// runOneTask(t, ctx, mgr, "key2", 1)
 }

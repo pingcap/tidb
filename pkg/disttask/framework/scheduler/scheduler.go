@@ -208,6 +208,7 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) (resErr error
 		}
 		return s.getError()
 	}
+	logutil.BgLogger().Info("ywq test task num", zap.Any("subtasks", subtasks))
 	for _, subtask := range subtasks {
 		metrics.IncDistTaskSubTaskCnt(subtask)
 		metrics.StartDistTaskSubTask(subtask)
@@ -235,6 +236,7 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) (resErr error
 				logutil.Logger(s.logCtx).Warn("GetGlobalTaskByID meets error", zap.Error(err))
 				continue
 			}
+			// ywq todo how to break the loop.
 			// When the task move to next step or task state changes, the scheduler should exit.
 			if newTask.Step != task.Step || newTask.State != task.State {
 				break
