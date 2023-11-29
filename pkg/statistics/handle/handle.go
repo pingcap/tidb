@@ -53,7 +53,10 @@ type Handle struct {
 	// LeaseGetter is used to get stats lease.
 	util.LeaseGetter
 
-	// initStatsCtx is the ctx only used for initStats
+	// initStatsCtx is a context specifically used for initStats.
+	// It's not designed for concurrent use, so avoid using it in such scenarios.
+	// Currently, it's only utilized within initStats, which is exclusively used during bootstrap.
+	// Since bootstrap is a one-time operation, using this context remains safe.
 	initStatsCtx sessionctx.Context
 
 	// TableInfoGetter is used to fetch table meta info.
