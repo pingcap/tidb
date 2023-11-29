@@ -1116,6 +1116,7 @@ func TestBatchGetforRangeandListPartitionTable(t *testing.T) {
 	tk.MustQuery(queryRange).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 }
 
+<<<<<<< HEAD:executor/partition_table_test.go
 func TestGlobalStatsAndSQLBinding(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -1192,6 +1193,8 @@ func TestGlobalStatsAndSQLBinding(t *testing.T) {
 	require.True(t, tk.HasPlan("select * from tlist where a<1", "TableFullScan"))
 }
 
+=======
+>>>>>>> f17ba4a4a14 (statistics: add more test for tidb_merge_partition_stats_concurrency (#48965)):pkg/executor/partition_table_test.go
 func TestPartitionTableWithDifferentJoin(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
