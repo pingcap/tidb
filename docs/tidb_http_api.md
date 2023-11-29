@@ -251,6 +251,67 @@
     }
     ```
 
+    *Hint: List MVCC Information of the keys startted with a specified handle ID:*
+    
+    step 1: Get the hex of the start key
+     ```shell
+        $curl http://127.0.0.1:10080/mvcc/key/test/t1/1
+        {
+        "key": "7480000000000008C65F728000000000000001",
+        "region_id": 10,
+        "value": {
+            "info": {
+                "writes": [
+                    {
+                        "start_ts": 445971968923271174,
+                        "commit_ts": 445971968923271175,
+                        "short_value": "gAACAAAAAgMIAAkAc2hpcmx5YTQi"
+                    },
+                    {
+                        "start_ts": 445971959499980803,
+                        "commit_ts": 445971959499980804,
+                        "short_value": "gAACAAAAAgMIAAkAc2hpcmx5YTQL"
+                    }
+                ]
+            }
+        }
+        }
+     ```
+     step 2: convert the hex key from tidb to escaped key with [tikv-ctl](https://docs.pingcap.com/tidb/stable/tikv-control)
+     ```shell
+      ./tikv-ctl --to-escaped '7480000000000008C65F728000000000000001'
+      t\200\000\000\000\000\000\010\306_r\200\000\000\000\000\000\000\001
+     ```
+     step 3: Encode the key to make it memcomparable in tikv with [tikv-ctl](https://docs.pingcap.com/tidb/stable/tikv-control)
+     ```
+     ./tikv-ctl --encode 't\200\000\000\000\000\000\010\306_r\200\000\000\000\000\000\000\001'
+     7480000000000008FFC65F728000000000FF0000010000000000FA
+     ```
+     step4: convert the hex key to escaped key since `tikv-ctl scan` only accepts escaped key with [tikv-ctl](https://docs.pingcap.com/tidb/stable/tikv-control)
+     ```
+     ./tikv-ctl --to-escaped    '7480000000000008FFC65F728000000000FF0000010000000000FA'
+     t\200\000\000\000\000\000\010\377\306_r\200\000\000\000\000\377\000\000\001\000\000\000\000\000\372
+     ```
+     step 5: Add the prefix "z" as the start-key to scan from tikv with [tikv-ctl](https://docs.pingcap.com/tidb/stable/tikv-control)
+     ```
+     ./tikv-ctl  --host "127.0.0.1:20162" scan --from 'zt\200\000\000\000\000\000\010\377\306_r\200\000\000\000\000\377\000\000\001\000\000\000\000\000\372' --limit 5 --show-cf write,lock,default 
+        key: zt\200\000\000\000\000\000\010\377\306_r\200\000\000\000\000\377\000\000\001\000\000\000\000\000\372
+         write cf value: start_ts: 445971968923271174 commit_ts: 445971968923271175 short_value: 800002000000020308000900736869726C79613422
+         write cf value: start_ts: 445971959499980803 commit_ts: 445971959499980804 short_value: 800002000000020308000900736869726C7961340B
+
+        key: zt\200\000\000\000\000\000\010\377\306_r\200\000\000\000\000\377\000\000\002\000\000\000\000\000\372
+         write cf value: start_ts: 445971960836390913 commit_ts: 445971960836390914 short_value: 80000200000002030500060073686972340B
+
+        key: zt\200\000\377\377\377\377\377\377\373_r\200\000\000\000\000\377\000\000\003\000\000\000\000\000\372
+         write cf value: r_type: Del start_ts: 444068474890485761 commit_ts: 444068474890485762
+
+        key: zt\200\000\377\377\377\377\377\377\373_r\200\000\000\000\000\377\000\000\005\000\000\000\000\000\372
+         write cf value: r_type: Del start_ts: 444068474929545217 commit_ts: 444068474929545218
+
+        key: zt\200\000\377\377\377\377\377\377\373_r\200\000\000\000\000\377\000\000\007\000\000\000\000\000\372
+         write cf value: r_type: Del start_ts: 444068474981974017 commit_ts: 444068474981974018
+     ```
+
 1. Get MVCC Information of the first key in the table with a specified start ts
 
     ```shell
