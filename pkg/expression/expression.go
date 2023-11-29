@@ -1180,6 +1180,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			tipb.ScalarFuncSig_IfDuration,
 			tipb.ScalarFuncSig_CaseWhenDuration:
 			return false
+		}
 		return true
 	case ast.Regexp, ast.RegexpLike, ast.RegexpInStr, ast.RegexpSubstr, ast.RegexpReplace:
 		funcCharset, funcCollation := function.Function.CharsetAndCollation()
