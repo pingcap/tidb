@@ -133,7 +133,6 @@ func NewHandle(
 	handle.StatsSyncLoad = syncload.NewStatsSyncLoad(handle)
 	handle.StatsGlobal = globalstats.NewStatsGlobal(handle)
 	handle.DDL = ddl.NewDDLHandler(
-		initStatsCtx,
 		handle.StatsReadWriter,
 		handle,
 		handle.StatsGlobal,
