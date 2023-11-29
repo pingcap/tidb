@@ -688,7 +688,11 @@ func (rs *KS3Storage) Create(ctx context.Context, name string, option *WriterOpt
 		}()
 		uploader = s3Writer
 	}
-	uploaderWriter := newBufferedWriter(uploader, WriteBufferSize, NoCompression)
+	bufSize := WriteBufferSize
+	if option != nil && option.PartSize > 0 {
+		bufSize = int(option.PartSize)
+	}
+	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression)
 	return uploaderWriter, nil
 }
 
