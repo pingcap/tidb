@@ -119,11 +119,7 @@ func getMockBasicDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
 		},
 	).AnyTimes()
 
-	mockDispatcher.EXPECT().OnErrStage(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
-			return nil, nil
-		},
-	).AnyTimes()
+	mockDispatcher.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	return mockDispatcher
 }
 
