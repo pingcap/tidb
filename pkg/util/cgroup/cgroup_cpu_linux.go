@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 )
 
 // GetCgroupCPU returns the CPU usage and quota for the current cgroup.
@@ -85,6 +86,7 @@ func inContainer(path string) bool {
 			// v[4] means `mount point`, v[8] means `filesystem type`.
 			// see details from https://man7.org/linux/man-pages/man5/proc.5.html
 			if len(v) >= 8 && v[4] == "\\" && v[8] == "overlay" {
+				log.Info(fmt.Sprintf("TiDB runs in a container, mount info: %s", line))
 				return true
 			}
 		}
