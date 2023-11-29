@@ -734,7 +734,7 @@ func TestTaskCancelledBeforeUpdateTask(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "dispatcher")
 
-	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
+	RegisterTaskMeta(t, ctrl, &m, getMockBasicDispatcherExt(ctrl))
 	distContext := testkit.NewDistExecutionContext(t, 1)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/cancelBeforeUpdateTask", "1*return(true)"))
 	DispatchTaskAndCheckState(ctx, "key1", t, &m, proto.TaskStateReverted)
