@@ -66,7 +66,7 @@ type GCSWriter struct {
 }
 
 // NewGCSWriter returns a GCSWriter which uses GCS multipart upload API behind the scene.
-func NewGCSWriter(ctx context.Context, uri string, partSize int, parallelCnt int, bucketRegion string) (*GCSWriter, error) {
+func NewGCSWriter(ctx context.Context, uri string, partSize int, parallelCnt int, bucketName string, bucketRegion string) (*GCSWriter, error) {
 	// multipart upload protocol: go/gcs-pb-multipart-upload#performing-a-multipart-upload
 
 	u, err := url.Parse(uri)
@@ -74,7 +74,6 @@ func NewGCSWriter(ctx context.Context, uri string, partSize int, parallelCnt int
 		return nil, fmt.Errorf("failed to parse GCS URI: '%v', err: %w", uri, err)
 	}
 
-	bucketName := u.Host
 	objName := strings.TrimLeft(u.Path, "/")
 
 	token := &oauth2.Token{}

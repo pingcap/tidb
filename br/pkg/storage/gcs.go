@@ -271,7 +271,7 @@ func (s *GCSStorage) URI() string {
 // Create implements ExternalStorage interface.
 func (s *GCSStorage) Create(ctx context.Context, name string, _ *WriterOption) (ExternalFileWriter, error) {
 	uri := path.Join(s.URI(), name)
-	w, err := NewGCSWriter(ctx, uri, 5*1024*1024, 50, "")
+	w, err := NewGCSWriter(ctx, uri, 5*1024*1024, 50, s.gcs.Bucket, "")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
