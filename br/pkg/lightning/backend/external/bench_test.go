@@ -19,7 +19,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
+	"runtime"
 	"runtime/pprof"
 	"sync"
 	"testing"
@@ -28,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"go.uber.org/atomic"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -49,45 +52,61 @@ type kvSource interface {
 
 type ascendingKeySource struct {
 	keySize, valueSize int
+	keyCommonPrefix    []byte
 	count              int
-	kvChan             chan [2][]byte
+	keys               [][]byte
+	keysIdx            int
 	curKey             []byte
 	totalSize          int
 }
 
-func newAscendingKeySource(keySize, valueSize, count int) *ascendingKeySource {
-	s := &ascendingKeySource{keySize: keySize, valueSize: valueSize, count: count}
+func newAscendingKeySource(
+	count int,
+	keySize int,
+	valueSize int,
+	keyCommonPrefix []byte,
+) *ascendingKeySource {
+	s := &ascendingKeySource{
+		keySize:         keySize,
+		valueSize:       valueSize,
+		count:           count,
+		keyCommonPrefix: keyCommonPrefix,
+	}
 	s.curKey = make([]byte, keySize)
-	s.kvChan = make(chan [2][]byte, 100)
+	copy(s.curKey, keyCommonPrefix)
+	s.keys = make([][]byte, count)
 	s.run()
 	return s
 }
 
 func (s *ascendingKeySource) run() {
-	go func() {
-		defer close(s.kvChan)
-		for i := 0; i < s.count; i++ {
-			for j := len(s.curKey) - 1; j >= 0; j-- {
-				s.curKey[j]++
-				if s.curKey[j] != 0 {
-					break
-				}
+	keyCommonPrefixSize := len(s.keyCommonPrefix)
+	incSuffixLen := int(math.Ceil(math.Log2(float64(s.count)) / 8))
+	if s.keySize-keyCommonPrefixSize < incSuffixLen {
+		panic(fmt.Sprintf("key size %d is too small, keyCommonPrefixSize: %d, incSuffixLen: %d",
+			s.keySize, keyCommonPrefixSize, incSuffixLen))
+	}
+	for i := range s.keys {
+		// ret to use most left bytes to alternate the key
+		for j := keyCommonPrefixSize + incSuffixLen - 1; j >= keyCommonPrefixSize; j-- {
+			s.curKey[j]++
+			if s.curKey[j] != 0 {
+				break
 			}
-			key := make([]byte, s.keySize)
-			copy(key, s.curKey)
-			value := make([]byte, s.valueSize)
-			s.kvChan <- [2][]byte{key, value}
-			s.totalSize += len(key) + len(value)
 		}
-	}()
+		s.keys[i] = make([]byte, s.keySize)
+		copy(s.keys[i], s.curKey)
+		s.totalSize += s.keySize + s.valueSize
+	}
 }
 
 func (s *ascendingKeySource) next() (key, value []byte, handle kv.Handle) {
-	pair, ok := <-s.kvChan
-	if !ok {
+	if s.keysIdx >= len(s.keys) {
 		return nil, nil, nil
 	}
-	return pair[0], pair[1], nil
+	key = s.keys[s.keysIdx]
+	s.keysIdx++
+	return key, make([]byte, s.valueSize), nil
 }
 
 func (s *ascendingKeySource) outputSize() int {
@@ -194,7 +213,7 @@ func writeExternalOneFile(s *writeTestSuite) {
 func TestCompareWriter(t *testing.T) {
 	store := openTestingStorage(t)
 	sourceKVNum := 10000000
-	source := newAscendingKeySource(20, 100, sourceKVNum)
+	source := newAscendingKeySource(20, 100, sourceKVNum, []byte{1, 2, 3})
 	memoryLimit := 64 * 1024 * 1024
 	fileIdx := 0
 	var (
@@ -236,12 +255,12 @@ func TestCompareWriter(t *testing.T) {
 	baseSpeed := float64(source.outputSize()) / elapsed.Seconds() / 1024 / 1024
 	t.Logf("base speed for %d bytes: %.2f MB/s", source.outputSize(), baseSpeed)
 
-	suite.source = newAscendingKeySource(20, 100, sourceKVNum)
+	suite.source = newAscendingKeySource(20, 100, sourceKVNum, []byte{1, 2, 3})
 	writeExternalFile(suite)
 	writerSpeed := float64(source.outputSize()) / elapsed.Seconds() / 1024 / 1024
 	t.Logf("writer speed for %d bytes: %.2f MB/s", source.outputSize(), writerSpeed)
 
-	suite.source = newAscendingKeySource(20, 100, sourceKVNum)
+	suite.source = newAscendingKeySource(20, 100, sourceKVNum, []byte{1, 2, 3})
 	writeExternalOneFile(suite)
 	writerSpeed = float64(source.outputSize()) / elapsed.Seconds() / 1024 / 1024
 	t.Logf("one file writer speed for %d bytes: %.2f MB/s", source.outputSize(), writerSpeed)
@@ -462,4 +481,53 @@ func TestCompareReader(t *testing.T) {
 		fileSize*fileCnt,
 		float64(fileSize*fileCnt)/elapsed.Seconds()/1024/1024,
 	)
+}
+
+const largeAscendingDataPath = "large_ascending_data"
+
+// TestPrepareLargeData will write 1000 * 256MB data to the storage.
+func TestPrepareLargeData(t *testing.T) {
+	store := openTestingStorage(t)
+	fileSize := 256 * 1024 * 1024
+	//fileCnt := 1000
+	fileCnt := 50
+	keySize := 20
+	valueSize := 100
+	ctx := context.Background()
+	concurrency := runtime.NumCPU()
+	filePerConcUpperBound := (fileCnt + concurrency - 1) / concurrency
+
+	size := atomic.NewInt64(0)
+	now := time.Now()
+	wg := sync.WaitGroup{}
+	wg.Add(concurrency)
+	for i := 0; i < concurrency; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			writer := NewWriterBuilder().
+				SetMemorySizeLimit(uint64(float64(fileSize))).
+				Build(store, largeAscendingDataPath, fmt.Sprintf("%02d", i))
+			startFile := i * filePerConcUpperBound
+			endFile := min((i+1)*filePerConcUpperBound, fileCnt)
+			kvCnt := fileSize * (endFile - startFile) / (keySize + valueSize)
+			source := newAscendingKeySource(kvCnt, keySize, valueSize, []byte{byte(i)})
+			key, val, _ := source.next()
+			for key != nil {
+				err := writer.WriteRow(ctx, key, val, nil)
+				intest.AssertNoError(err)
+				size.Add(int64(len(key) + len(val)))
+				key, val, _ = source.next()
+			}
+			err := writer.Close(ctx)
+			intest.AssertNoError(err)
+		}()
+	}
+	wg.Wait()
+	elapsed := time.Since(now)
+	t.Logf("write %d bytes in %s, speed: %.2f MB/s",
+		size.Load(), elapsed, float64(size.Load())/elapsed.Seconds()/1024/1024)
+	dataFiles, _, err := GetAllFileNames(ctx, store, largeAscendingDataPath)
+	intest.AssertNoError(err)
+	t.Logf("total %d data files", len(dataFiles))
 }
