@@ -518,7 +518,7 @@ func TestPrepareLargeData(t *testing.T) {
 				Build(store, largeAscendingDataPath, fmt.Sprintf("%02d", i))
 			endFile := min((i+1)*filePerConcUpperBound, fileCnt)
 			startFile := min(i*filePerConcUpperBound, endFile)
-			kvCnt := fileSize * (endFile - startFile) / (keySize + valueSize)
+			kvCnt := fileSize * (endFile - startFile) / (keySize + valueSize + 16)
 			source := newAscendingKeySource(kvCnt, keySize, valueSize, []byte{byte(i)})
 			key, val, _ := source.next()
 			for key != nil {
@@ -551,6 +551,6 @@ func TestPrepareLargeData(t *testing.T) {
 	intest.AssertNoError(err)
 	err = r.Close()
 	intest.AssertNoError(err)
-	t.Logf("total %d data files, first file size: %d MB, last file size: %d MB",
-		len(dataFiles), firstFileSize/1024/1024, lastFileSize/1024/1024)
+	t.Logf("total %d data files, first file size: %.2f MB, last file size: %.2f MB",
+		len(dataFiles), float64(firstFileSize)/1024/1024, float64(lastFileSize)/1024/1024)
 }

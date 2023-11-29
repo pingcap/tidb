@@ -118,6 +118,7 @@ func TestBufferMemLimit(t *testing.T) {
 	got, _ = bytesBuf.AllocBytesWithSliceLocation(2)
 	require.Nil(t, got)
 
+	// after reset, can get same allocation again
 	bytesBuf.Reset()
 
 	got, _ = bytesBuf.AllocBytesWithSliceLocation(9)
