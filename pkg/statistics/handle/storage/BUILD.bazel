@@ -25,7 +25,9 @@ go_library(
         "//pkg/statistics",
         "//pkg/statistics/handle/cache",
         "//pkg/statistics/handle/lockstats",
+        "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/metrics",
+        "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/util",
         "//pkg/types",
         "//pkg/util/chunk",
@@ -52,7 +54,7 @@ go_test(
         "read_test.go",
     ],
     flaky = True,
-    shard_count = 21,
+    shard_count = 20,
     deps = [
         ":storage",
         "//pkg/domain",

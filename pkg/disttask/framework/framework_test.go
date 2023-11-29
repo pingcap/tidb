@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/mock/gomock"
 )
 
@@ -197,15 +198,15 @@ func RegisterTaskMetaForExample3(t *testing.T, ctrl *gomock.Controller, m *sync.
 	registerTaskMetaInner(t, proto.TaskTypeExample3, mockExtension, mockCleanupRountine, dispatcherHandle)
 }
 
-func DispatchTask(taskKey string, t *testing.T) *proto.Task {
+func DispatchTask(ctx context.Context, taskKey string, t *testing.T) *proto.Task {
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
-	_, err = mgr.AddNewGlobalTask(taskKey, proto.TaskTypeExample, 8, nil)
+	_, err = mgr.AddNewGlobalTask(ctx, taskKey, proto.TaskTypeExample, 8, nil)
 	require.NoError(t, err)
-	return WaitTaskExit(t, taskKey)
+	return WaitTaskExit(ctx, t, taskKey)
 }
 
-func WaitTaskExit(t *testing.T, taskKey string) *proto.Task {
+func WaitTaskExit(ctx context.Context, t *testing.T, taskKey string) *proto.Task {
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
 	var task *proto.Task
@@ -216,7 +217,7 @@ func WaitTaskExit(t *testing.T, taskKey string) *proto.Task {
 		}
 
 		time.Sleep(time.Second)
-		task, err = mgr.GetGlobalTaskByKeyWithHistory(taskKey)
+		task, err = mgr.GetGlobalTaskByKeyWithHistory(ctx, taskKey)
 		require.NoError(t, err)
 		require.NotNil(t, task)
 		if task.State != proto.TaskStatePending && task.State != proto.TaskStateRunning && task.State != proto.TaskStateCancelling && task.State != proto.TaskStateReverting && task.State != proto.TaskStatePausing {
@@ -226,8 +227,8 @@ func WaitTaskExit(t *testing.T, taskKey string) *proto.Task {
 	return task
 }
 
-func DispatchTaskAndCheckSuccess(taskKey string, t *testing.T, m *sync.Map) {
-	task := DispatchTask(taskKey, t)
+func DispatchTaskAndCheckSuccess(ctx context.Context, taskKey string, t *testing.T, m *sync.Map) {
+	task := DispatchTask(ctx, taskKey, t)
 	require.Equal(t, proto.TaskStateSucceed, task.State)
 	v, ok := m.Load("1")
 	require.Equal(t, true, ok)
@@ -238,12 +239,12 @@ func DispatchTaskAndCheckSuccess(taskKey string, t *testing.T, m *sync.Map) {
 	m = &sync.Map{}
 }
 
-func DispatchAndCancelTask(taskKey string, t *testing.T, m *sync.Map) {
+func DispatchAndCancelTask(ctx context.Context, taskKey string, t *testing.T, m *sync.Map) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/MockExecutorRunCancel", "1*return(1)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/MockExecutorRunCancel"))
 	}()
-	task := DispatchTask(taskKey, t)
+	task := DispatchTask(ctx, taskKey, t)
 	require.Equal(t, proto.TaskStateReverted, task.State)
 	m.Range(func(key, value interface{}) bool {
 		m.Delete(key)
@@ -251,8 +252,8 @@ func DispatchAndCancelTask(taskKey string, t *testing.T, m *sync.Map) {
 	})
 }
 
-func DispatchTaskAndCheckState(taskKey string, t *testing.T, m *sync.Map, state proto.TaskState) {
-	task := DispatchTask(taskKey, t)
+func DispatchTaskAndCheckState(ctx context.Context, taskKey string, t *testing.T, m *sync.Map, state proto.TaskState) {
+	task := DispatchTask(ctx, taskKey, t)
 	require.Equal(t, state, task.State)
 	m.Range(func(key, value interface{}) bool {
 		m.Delete(key)
@@ -260,7 +261,7 @@ func DispatchTaskAndCheckState(taskKey string, t *testing.T, m *sync.Map, state 
 	})
 }
 
-func DispatchMultiTasksAndOneFail(t *testing.T, num int, m []sync.Map) []*proto.Task {
+func DispatchMultiTasksAndOneFail(ctx context.Context, t *testing.T, num int, m []sync.Map) []*proto.Task {
 	var tasks []*proto.Task
 	var taskID []int64
 	var start []time.Time
@@ -273,7 +274,7 @@ func DispatchMultiTasksAndOneFail(t *testing.T, num int, m []sync.Map) []*proto.
 	for i := 0; i < num; i++ {
 		if i == 0 {
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/MockExecutorRunErr", "1*return(true)"))
-			taskID[0], err = mgr.AddNewGlobalTask("key0", "Example", 8, nil)
+			taskID[0], err = mgr.AddNewGlobalTask(ctx, "key0", "Example", 8, nil)
 			require.NoError(t, err)
 			start[0] = time.Now()
 			var task *proto.Task
@@ -282,7 +283,7 @@ func DispatchMultiTasksAndOneFail(t *testing.T, num int, m []sync.Map) []*proto.
 					require.FailNow(t, "timeout")
 				}
 				time.Sleep(time.Second)
-				task, err = mgr.GetTaskByIDWithHistory(taskID[0])
+				task, err = mgr.GetTaskByIDWithHistory(ctx, taskID[0])
 				require.NoError(t, err)
 				require.NotNil(t, task)
 				tasks[0] = task
@@ -292,7 +293,7 @@ func DispatchMultiTasksAndOneFail(t *testing.T, num int, m []sync.Map) []*proto.
 			}
 			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/MockExecutorRunErr"))
 		} else {
-			taskID[i], err = mgr.AddNewGlobalTask(fmt.Sprintf("key%d", i), proto.Int2Type(i+2), 8, nil)
+			taskID[i], err = mgr.AddNewGlobalTask(ctx, fmt.Sprintf("key%d", i), proto.Int2Type(i+2), 8, nil)
 			require.NoError(t, err)
 			start[i] = time.Now()
 		}
@@ -305,7 +306,7 @@ func DispatchMultiTasksAndOneFail(t *testing.T, num int, m []sync.Map) []*proto.
 				require.FailNow(t, "timeout")
 			}
 			time.Sleep(time.Second)
-			task, err = mgr.GetTaskByIDWithHistory(taskID[i])
+			task, err = mgr.GetTaskByIDWithHistory(ctx, taskID[i])
 			require.NoError(t, err)
 			require.NotNil(t, task)
 			tasks[i] = task
@@ -326,17 +327,20 @@ func TestFrameworkBasic(t *testing.T) {
 	var m sync.Map
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
 	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	DispatchTaskAndCheckSuccess("key1", t, &m)
-	DispatchTaskAndCheckSuccess("key2", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "key1", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "key2", t, &m)
 	distContext.SetOwner(0)
 	time.Sleep(2 * time.Second) // make sure owner changed
-	DispatchTaskAndCheckSuccess("key3", t, &m)
-	DispatchTaskAndCheckSuccess("key4", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "key3", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "key4", t, &m)
 	distContext.SetOwner(1)
 	time.Sleep(2 * time.Second) // make sure owner changed
-	DispatchTaskAndCheckSuccess("key5", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "key5", t, &m)
 	distContext.Close()
 }
 
@@ -344,14 +348,17 @@ func TestFramework3Server(t *testing.T) {
 	var m sync.Map
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
 	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
 	distContext := testkit.NewDistExecutionContext(t, 3)
-	DispatchTaskAndCheckSuccess("key1", t, &m)
-	DispatchTaskAndCheckSuccess("key2", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "key1", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "key2", t, &m)
 	distContext.SetOwner(0)
 	time.Sleep(2 * time.Second) // make sure owner changed
-	DispatchTaskAndCheckSuccess("key3", t, &m)
-	DispatchTaskAndCheckSuccess("key4", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "key3", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "key4", t, &m)
 	distContext.Close()
 }
 
@@ -360,17 +367,20 @@ func TestFrameworkAddDomain(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
 	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	DispatchTaskAndCheckSuccess("key1", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "key1", t, &m)
 	distContext.AddDomain()
-	DispatchTaskAndCheckSuccess("key2", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "key2", t, &m)
 	distContext.SetOwner(1)
 	time.Sleep(2 * time.Second) // make sure owner changed
-	DispatchTaskAndCheckSuccess("key3", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "key3", t, &m)
 	distContext.Close()
 	distContext.AddDomain()
-	DispatchTaskAndCheckSuccess("key4", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "key4", t, &m)
 }
 
 func TestFrameworkDeleteDomain(t *testing.T) {
@@ -378,12 +388,15 @@ func TestFrameworkDeleteDomain(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
 	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	DispatchTaskAndCheckSuccess("key1", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "key1", t, &m)
 	distContext.DeleteDomain(1)
 	time.Sleep(2 * time.Second) // make sure the owner changed
-	DispatchTaskAndCheckSuccess("key2", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "key2", t, &m)
 	distContext.Close()
 }
 
@@ -392,9 +405,12 @@ func TestFrameworkWithQuery(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
 	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	DispatchTaskAndCheckSuccess("key1", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "key1", t, &m)
 
 	tk := testkit.NewTestKit(t, distContext.Store)
 
@@ -415,9 +431,12 @@ func TestFrameworkCancelGTask(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
 	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	DispatchAndCancelTask("key1", t, &m)
+	DispatchAndCancelTask(ctx, "key1", t, &m)
 	distContext.Close()
 }
 
@@ -426,13 +445,16 @@ func TestFrameworkSubTaskFailed(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
 	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
 	distContext := testkit.NewDistExecutionContext(t, 1)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/MockExecutorRunErr", "1*return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/MockExecutorRunErr"))
 	}()
-	DispatchTaskAndCheckState("key1", t, &m, proto.TaskStateReverted)
+	DispatchTaskAndCheckState(ctx, "key1", t, &m, proto.TaskStateReverted)
 
 	distContext.Close()
 }
@@ -442,13 +464,16 @@ func TestFrameworkSubTaskInitEnvFailed(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
 	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
 	distContext := testkit.NewDistExecutionContext(t, 1)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockExecSubtaskInitEnvErr", "return()"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockExecSubtaskInitEnvErr"))
 	}()
-	DispatchTaskAndCheckState("key1", t, &m, proto.TaskStateReverted)
+	DispatchTaskAndCheckState(ctx, "key1", t, &m, proto.TaskStateReverted)
 	distContext.Close()
 }
 
@@ -457,6 +482,9 @@ func TestOwnerChange(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
 	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
 
 	distContext := testkit.NewDistExecutionContext(t, 3)
@@ -464,7 +492,7 @@ func TestOwnerChange(t *testing.T) {
 		distContext.SetOwner(0)
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockOwnerChange", "1*return(true)"))
-	DispatchTaskAndCheckSuccess("😊", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "😊", t, &m)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockOwnerChange"))
 	distContext.Close()
 }
@@ -474,10 +502,13 @@ func TestFrameworkCancelThenSubmitSubTask(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
 	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
 	distContext := testkit.NewDistExecutionContext(t, 3)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/cancelBeforeUpdate", "return()"))
-	DispatchTaskAndCheckState("😊", t, &m, proto.TaskStateReverted)
+	DispatchTaskAndCheckState(ctx, "😊", t, &m, proto.TaskStateReverted)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/cancelBeforeUpdate"))
 	distContext.Close()
 }
@@ -487,13 +518,16 @@ func TestSchedulerDownBasic(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
 	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
 
 	distContext := testkit.NewDistExecutionContext(t, 4)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockCleanScheduler", "return()"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockStopManager", "4*return(\":4000\")"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTiDBDown", "return(\":4000\")"))
-	DispatchTaskAndCheckSuccess("😊", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "😊", t, &m)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockCleanScheduler"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTiDBDown"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockStopManager"))
@@ -505,13 +539,16 @@ func TestSchedulerDownManyNodes(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
 	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
 
 	distContext := testkit.NewDistExecutionContext(t, 30)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockCleanScheduler", "return()"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockStopManager", "30*return(\":4000\")"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTiDBDown", "return(\":4000\")"))
-	DispatchTaskAndCheckSuccess("😊", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "😊", t, &m)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockCleanScheduler"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTiDBDown"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockStopManager"))
@@ -522,22 +559,25 @@ func TestFrameworkSetLabel(t *testing.T) {
 	var m sync.Map
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
 	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
 	distContext := testkit.NewDistExecutionContext(t, 3)
 	tk := testkit.NewTestKit(t, distContext.Store)
 
 	// 1. all "" role.
-	DispatchTaskAndCheckSuccess("😁", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "😁", t, &m)
 
 	// 2. one "background" role.
 	tk.MustExec("set global tidb_service_scope=background")
 	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows("background"))
 	tk.MustQuery("select @@tidb_service_scope").Check(testkit.Rows("background"))
-	DispatchTaskAndCheckSuccess("😊", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "😊", t, &m)
 
 	// 3. 2 "background" role.
 	tk.MustExec("update mysql.dist_framework_meta set role = \"background\" where host = \":4001\"")
-	DispatchTaskAndCheckSuccess("😆", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "😆", t, &m)
 
 	// 4. set wrong sys var.
 	tk.MustMatchErrMsg("set global tidb_service_scope=wrong", `incorrect value: .*. tidb_service_scope options: "", background`)
@@ -557,12 +597,15 @@ func TestMultiTasks(t *testing.T) {
 	m := make([]sync.Map, num)
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
 	RegisterTaskMeta(t, ctrl, &(m[0]), &testDispatcherExt{})
 	RegisterTaskMetaForExample2(t, ctrl, &(m[1]), &testDispatcherExt{})
 	RegisterTaskMetaForExample3(t, ctrl, &(m[2]), &testDispatcherExt{})
 
 	distContext := testkit.NewDistExecutionContext(t, 3)
-	tasks := DispatchMultiTasksAndOneFail(t, num, m)
+	tasks := DispatchMultiTasksAndOneFail(ctx, t, num, m)
 	require.Equal(t, proto.TaskStateReverted, tasks[0].State)
 	v, ok := m[0].Load("0")
 	require.Equal(t, false, ok)
@@ -592,6 +635,9 @@ func TestGC(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
 	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/storage/subtaskHistoryKeepSeconds", "return(1)"))
@@ -602,14 +648,14 @@ func TestGC(t *testing.T) {
 	}()
 
 	distContext := testkit.NewDistExecutionContext(t, 3)
-	DispatchTaskAndCheckSuccess("😊", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "😊", t, &m)
 
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
 
 	var historySubTasksCnt int
 	require.Eventually(t, func() bool {
-		historySubTasksCnt, err = storage.GetSubtasksFromHistoryForTest(mgr)
+		historySubTasksCnt, err = storage.GetSubtasksFromHistoryForTest(ctx, mgr)
 		if err != nil {
 			return false
 		}
@@ -619,7 +665,7 @@ func TestGC(t *testing.T) {
 	dispatcher.WaitTaskFinished <- struct{}{}
 
 	require.Eventually(t, func() bool {
-		historySubTasksCnt, err := storage.GetSubtasksFromHistoryForTest(mgr)
+		historySubTasksCnt, err := storage.GetSubtasksFromHistoryForTest(ctx, mgr)
 		if err != nil {
 			return false
 		}
@@ -634,13 +680,16 @@ func TestFrameworkSubtaskFinishedCancel(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
 	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
 	distContext := testkit.NewDistExecutionContext(t, 3)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/MockSubtaskFinishedCancel", "1*return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/MockSubtaskFinishedCancel"))
 	}()
-	DispatchTaskAndCheckState("key1", t, &m, proto.TaskStateReverted)
+	DispatchTaskAndCheckState(ctx, "key1", t, &m, proto.TaskStateReverted)
 	distContext.Close()
 }
 
@@ -649,10 +698,13 @@ func TestFrameworkRunSubtaskCancel(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
 	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
 	distContext := testkit.NewDistExecutionContext(t, 3)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/MockRunSubtaskCancel", "1*return(true)"))
-	DispatchTaskAndCheckState("key1", t, &m, proto.TaskStateReverted)
+	DispatchTaskAndCheckState(ctx, "key1", t, &m, proto.TaskStateReverted)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/MockRunSubtaskCancel"))
 	distContext.Close()
 }
@@ -661,15 +713,33 @@ func TestFrameworkCleanUpRoutine(t *testing.T) {
 	var m sync.Map
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
 	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
 	distContext := testkit.NewDistExecutionContext(t, 3)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/WaitCleanUpFinished", "return()"))
-	DispatchTaskAndCheckSuccess("key1", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "key1", t, &m)
 	<-dispatcher.WaitCleanUpFinished
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
-	tasks, err := mgr.GetGlobalTaskByKeyWithHistory("key1")
+	tasks, err := mgr.GetGlobalTaskByKeyWithHistory(ctx, "key1")
 	require.NoError(t, err)
 	require.NotEmpty(t, tasks)
+	distContext.Close()
+}
+
+func TestTaskCancelledBeforeUpdateTask(t *testing.T) {
+	var m sync.Map
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
+	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
+	distContext := testkit.NewDistExecutionContext(t, 1)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/cancelBeforeUpdateTask", "1*return(true)"))
+	DispatchTaskAndCheckState(ctx, "key1", t, &m, proto.TaskStateReverted)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/cancelBeforeUpdateTask"))
 	distContext.Close()
 }

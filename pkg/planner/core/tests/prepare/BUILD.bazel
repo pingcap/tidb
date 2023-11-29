@@ -20,6 +20,7 @@ go_test(
         "//pkg/parser/auth",
         "//pkg/planner/core",
         "//pkg/session",
+        "//pkg/session/types",
         "//pkg/sessionctx/variable",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",

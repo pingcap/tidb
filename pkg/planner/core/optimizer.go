@@ -302,8 +302,15 @@ func checkStableResultMode(sctx sessionctx.Context) bool {
 	return s.EnableStableResultMode && (!st.InInsertStmt && !st.InUpdateStmt && !st.InDeleteStmt && !st.InLoadDataStmt)
 }
 
-// DoOptimizeAndLogicAsRet optimizes a logical plan to a physical plan and return the optimized logical plan.
-func DoOptimizeAndLogicAsRet(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (LogicalPlan, PhysicalPlan, float64, error) {
+// doOptimize optimizes a logical plan into a physical plan,
+// while also returning the optimized logical plan, the final physical plan, and the cost of the final plan.
+// The returned logical plan is necessary for generating plans for Common Table Expressions (CTEs).
+func doOptimize(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	flag uint64,
+	logic LogicalPlan,
+) (LogicalPlan, PhysicalPlan, float64, error) {
 	sessVars := sctx.GetSessionVars()
 	// if there is something after flagPrunColumns, do flagPrunColumnsAgain
 	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
@@ -349,13 +356,18 @@ func DoOptimizeAndLogicAsRet(ctx context.Context, sctx sessionctx.Context, flag 
 }
 
 // DoOptimize optimizes a logical plan to a physical plan.
-func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (PhysicalPlan, float64, error) {
+func DoOptimize(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	flag uint64,
+	logic LogicalPlan,
+) (PhysicalPlan, float64, error) {
 	sessVars := sctx.GetSessionVars()
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer debugtrace.LeaveContextCommon(sctx)
 	}
-	_, finalPlan, cost, err := DoOptimizeAndLogicAsRet(ctx, sctx, flag, logic)
+	_, finalPlan, cost, err := doOptimize(ctx, sctx, flag, logic)
 	return finalPlan, cost, err
 }
 
@@ -506,12 +518,12 @@ func (p *PhysicalHashJoin) extractUsedCols(parentUsedCols []*expression.Column) 
 
 func prunePhysicalColumnForHashJoinChild(sctx sessionctx.Context, hashJoin *PhysicalHashJoin, joinUsedCols []*expression.Column, sender *PhysicalExchangeSender) error {
 	var err error
-	joinUsed := expression.GetUsedList(joinUsedCols, sender.Schema())
+	joinUsed := expression.GetUsedList(sctx, joinUsedCols, sender.Schema())
 	hashCols := make([]*expression.Column, len(sender.HashCols))
 	for i, mppCol := range sender.HashCols {
 		hashCols[i] = mppCol.Col
 	}
-	hashUsed := expression.GetUsedList(hashCols, sender.Schema())
+	hashUsed := expression.GetUsedList(sctx, hashCols, sender.Schema())
 
 	needPrune := false
 	usedExprs := make([]expression.Expression, len(sender.Schema().Columns))

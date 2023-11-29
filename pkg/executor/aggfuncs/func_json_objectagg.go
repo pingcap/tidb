@@ -86,7 +86,7 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 		}
 
 		key = strings.Clone(key)
-		value, err := e.args[1].Eval(row)
+		value, err := e.args[1].Eval(sctx, row)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}

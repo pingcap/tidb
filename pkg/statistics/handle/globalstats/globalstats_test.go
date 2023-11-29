@@ -903,16 +903,6 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	globalStats := h.GetTableStats(tableInfo)
 	require.Equal(t, int64(15), globalStats.RealtimeCount)
 
-	tk.MustExec("alter table t drop partition p3, p5;")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
-	require.NoError(t, h.Update(is))
-	result = tk.MustQuery("show stats_meta where table_name = 't';").Rows()
-	require.Len(t, result, 5)
-	// The value of global.count will be updated automatically after we drop the table partition.
-	globalStats = h.GetTableStats(tableInfo)
-	require.Equal(t, int64(11), globalStats.RealtimeCount)
-
 	tk.MustExec("alter table t truncate partition p2, p4;")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
@@ -920,15 +910,15 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	// The value of global.count will not be updated automatically when we truncate the table partition.
 	// Because the partition-stats in the partition table which have been truncated has not been updated.
 	globalStats = h.GetTableStats(tableInfo)
-	require.Equal(t, int64(11), globalStats.RealtimeCount)
+	require.Equal(t, int64(15), globalStats.RealtimeCount)
 
 	tk.MustExec("analyze table t;")
 	result = tk.MustQuery("show stats_meta where table_name = 't';").Rows()
 	// The truncate operation only delete the data from the partition p2 and p4. It will not delete the partition-stats.
-	require.Len(t, result, 5)
+	require.Len(t, result, 7)
 	// The result for the globalStats.count will be right now
 	globalStats = h.GetTableStats(tableInfo)
-	require.Equal(t, int64(7), globalStats.RealtimeCount)
+	require.Equal(t, int64(11), globalStats.RealtimeCount)
 }
 
 func TestGlobalStatsNDV(t *testing.T) {
@@ -1239,4 +1229,39 @@ func TestGlobalIndexStatistics(t *testing.T) {
 			Check(testkit.Rows("IndexReader_12 4.00 root partition:all index:IndexRangeScan_11",
 				"└─IndexRangeScan_11 4.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
 	}
+}
+
+func TestIssues24349(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	defer testKit.MustExec("set @@tidb_analyze_version=1")
+	defer testKit.MustExec("set @@tidb_partition_prune_mode='static'")
+	testIssues24349(testKit)
+}
+
+func TestIssues24349WithConcurrency(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	testKit.MustExec("set global tidb_merge_partition_stats_concurrency=2")
+	defer testKit.MustExec("set @@tidb_analyze_version=1")
+	defer testKit.MustExec("set @@tidb_partition_prune_mode='static'")
+	defer testKit.MustExec("set global tidb_merge_partition_stats_concurrency=1")
+	testIssues24349(testKit)
+}
+
+func testIssues24349(testKit *testkit.TestKit) {
+	testKit.MustExec("create table t (a int, b int) partition by hash(a) partitions 3")
+	testKit.MustExec("insert into t values (0, 3), (0, 3), (0, 3), (0, 2), (1, 1), (1, 2), (1, 2), (1, 2), (1, 3), (1, 4), (2, 1), (2, 1)")
+	testKit.MustExec("analyze table t with 1 topn, 3 buckets")
+	testKit.MustQuery("show stats_buckets where partition_name='global'").Check(testkit.Rows(
+		"test t global a 0 0 2 2 0 2 0",
+		"test t global b 0 0 3 1 1 2 0",
+		"test t global b 0 1 10 1 4 4 0",
+	))
 }

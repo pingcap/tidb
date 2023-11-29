@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -127,6 +128,8 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		parentCtx = context.Background()
 	}
 	group, groupCtx := errgroup.WithContext(parentCtx)
+	groupCtx = kv.WithInternalSourceType(groupCtx, kv.InternalDistTask)
+
 	param := &importer.JobImportParam{
 		Job:      &asyncloaddata.Job{},
 		Group:    group,
@@ -174,6 +177,7 @@ func (e *ImportIntoExec) fillJobInfo(ctx context.Context, jobID int64, req *chun
 	e.dataFilled = true
 	// we use globalTaskManager to get job, user might not have the privilege to system tables.
 	globalTaskManager, err := fstorage.GetTaskManager()
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err != nil {
 		return err
 	}
@@ -225,7 +229,7 @@ func (e *ImportIntoExec) doImport(ctx context.Context, se sessionctx.Context, di
 		// use background, since ctx is canceled already.
 		return cancelImportJob(context.Background(), globalTaskManager, distImporter.JobID())
 	}
-	if err2 := flushStats(ctx, se, e.importPlan.TableInfo.ID, distImporter.Result()); err2 != nil {
+	if err2 := flushStats(ctx, se, e.importPlan.TableInfo.ID, distImporter.Result(ctx)); err2 != nil {
 		logutil.Logger(ctx).Error("flush stats failed", zap.Error(err2))
 	}
 	return err
@@ -252,6 +256,7 @@ func (e *ImportIntoActionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	}
 	// we use sessionCtx from GetTaskManager, user ctx might not have enough privileges.
 	globalTaskManager, err := fstorage.GetTaskManager()
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err != nil {
 		return err
 	}
@@ -301,6 +306,7 @@ func cancelImportJob(ctx context.Context, manager *fstorage.TaskManager, jobID i
 		if err2 := importer.CancelJob(ctx, exec, jobID); err2 != nil {
 			return err2
 		}
-		return manager.CancelGlobalTaskByKeySession(se, importinto.TaskKey(jobID))
+		ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+		return manager.CancelGlobalTaskByKeySession(ctx, se, importinto.TaskKey(jobID))
 	})
 }
