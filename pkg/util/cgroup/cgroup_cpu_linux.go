@@ -66,10 +66,27 @@ func inContainer(path string) bool {
 	if err != nil {
 		return false
 	}
-	if strings.Contains(string(v), "docker") ||
-		strings.Contains(string(v), "kubepods") ||
-		strings.Contains(string(v), "containerd") {
-		return true
+
+	// For cgroup V1, check /proc/self/cgroup
+	if path == procPathCGroup {
+		if strings.Contains(string(v), "docker") ||
+			strings.Contains(string(v), "kubepods") ||
+			strings.Contains(string(v), "containerd") {
+			return true
+		}
 	}
+
+	// For cgroup V2, check /proc/self/mountinfo
+	if path == procPathMountInfo {
+		lines := strings.Split(string(v), "\n")
+		for _, line := range lines {
+			words := strings.Split(line, " ")
+			// check root dir is on overlay or not.
+			if len(words) >= 8 && words[3] == "\\" && words[4] == "\\" && words[8] == "overlay" {
+				return true
+			}
+		}
+	}
+
 	return false
 }
