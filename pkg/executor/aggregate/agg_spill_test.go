@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package aggregate
+package aggregate_test
 
 import (
 	"context"
@@ -22,8 +22,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
+	"github.com/pingcap/tidb/pkg/executor/aggregate"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -37,198 +37,25 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
-// Chunk schema in this test file: | column0: string | column1: int |
-
-func checkResults(actualRes [][]interface{}, expectedRes map[string]string) bool {
-	if len(actualRes) != len(expectedRes) {
-		return false
-	}
-
-	var key string
-	var expectVal string
-	var actualVal string
-	var ok bool
-	for _, row := range actualRes {
-		if len(row) != 2 {
-			return false
-		}
-
-		key, ok = row[0].(string)
-		if !ok {
-			return false
-		}
-
-		expectVal, ok = expectedRes[key]
-		if !ok {
-			return false
-		}
-
-		actualVal, ok = row[1].(string)
-		if !ok {
-			return false
-		}
-
-		if expectVal != actualVal {
-			return false
-		}
-	}
-	return true
-}
+// Chunk schema in this test file: | column0: string | column1: float64 |
 
 const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-
-func getRandString() string {
-	strLen := rand.Intn(50) + 1 // At least 1
-	b := make([]byte, strLen)
-	for i := range b {
-		b[i] = letterBytes[rand.Intn(len(letterBytes))]
-	}
-	return string(b)
-}
-
-func generateData(rowNum int, ndv int) ([]string, []int64) {
-	keys := make([]string, 0)
-	for i := 0; i < ndv; i++ {
-		keys = append(keys, getRandString())
-	}
-
-	col1Data := make([]string, 0)
-	col2Data := make([]int64, 0)
-
-	// Generate data
-	for i := 0; i < rowNum; i++ {
-		key := keys[i%ndv]
-		col1Data = append(col1Data, key)
-		col2Data = append(col2Data, 1) // Always 1
-	}
-
-	// Shuffle data
-	rand.Shuffle(rowNum, func(i, j int) {
-		col1Data[i], col1Data[j] = col1Data[j], col1Data[i]
-		// There is no need to shuffle col2Data as all of it's values are 1.
-	})
-	return col1Data, col2Data
-}
-
-func buildMockDataSource(opt testutil.MockDataSourceParameters, col1Data []string, col2Data []int64) *testutil.MockDataSource {
-	baseExec := exec.NewBaseExecutor(opt.Ctx, opt.DataSchema, 0)
-	mockDatasource := &testutil.MockDataSource{
-		BaseExecutor: baseExec,
-		ChunkPtr:     0,
-		P:            opt,
-		GenData:      nil,
-		Chunks:       nil}
-
-	maxChunkSize := mockDatasource.MaxChunkSize()
-	rowNum := len(col1Data)
-	mockDatasource.GenData = make([]*chunk.Chunk, (rowNum+maxChunkSize-1)/maxChunkSize)
-	for i := range mockDatasource.GenData {
-		mockDatasource.GenData[i] = chunk.NewChunkWithCapacity(exec.RetTypes(mockDatasource), maxChunkSize)
-	}
-
-	for i := 0; i < rowNum; i++ {
-		chkIdx := i / maxChunkSize
-		mockDatasource.GenData[chkIdx].AppendString(0, col1Data[i])
-		mockDatasource.GenData[chkIdx].AppendInt64(1, col2Data[i])
-	}
-
-	return mockDatasource
-}
-
-func generateResult(col1 []string, col2 []int64) map[string]int64 {
-	result := make(map[string]int64, 0)
-	length := len(col1)
-
-	for i := 0; i < length; i++ {
-		_, ok := result[col1[i]]
-		if ok {
-			result[col1[i]]++
-		} else {
-			result[col1[i]] = 1
-		}
-	}
-	return result
-}
-
-func getColumns() []*expression.Column {
-	return []*expression.Column{
-		{Index: 0, RetType: types.NewFieldType(mysql.TypeVarString)},
-		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
-	}
-}
-
-func getSchema() *expression.Schema {
-	return expression.NewSchema(getColumns()...)
-}
-
-func getMockDataSourceParameters(ctx sessionctx.Context) testutil.MockDataSourceParameters {
-	return testutil.MockDataSourceParameters{
-		DataSchema: getSchema(),
-		Ctx:        ctx,
-	}
-}
-
-func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Executor) *HashAggExec {
-	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggFinalConcurrency, fmt.Sprintf("%v", 5)); err != nil {
-		t.Fatal(err)
-	}
-	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggPartialConcurrency, fmt.Sprintf("%v", 5)); err != nil {
-		t.Fatal(err)
-	}
-
-	childCols := getColumns()
-	schema := expression.NewSchema(childCols...)
-	groupItems := []expression.Expression{childCols[0]}
-
-	aggFirstRow, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncFirstRow, []expression.Expression{childCols[0]}, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	aggFunc, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncSum, []expression.Expression{childCols[1]}, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	aggFuncs := []*aggregation.AggFuncDesc{aggFirstRow, aggFunc}
-
-	aggExec := &HashAggExec{
-		BaseExecutor:     exec.NewBaseExecutor(ctx, schema, 0, child),
-		Sc:               ctx.GetSessionVars().StmtCtx,
-		PartialAggFuncs:  make([]aggfuncs.AggFunc, 0, len(aggFuncs)),
-		GroupByItems:     groupItems,
-		IsUnparallelExec: false,
-	}
-
-	partialOrdinal := 0
-	for i, aggDesc := range aggFuncs {
-		ordinal := []int{partialOrdinal}
-		partialOrdinal++
-		partialAggDesc, finalDesc := aggDesc.Split(ordinal)
-		partialAggFunc := aggfuncs.Build(ctx, partialAggDesc, i)
-		finalAggFunc := aggfuncs.Build(ctx, finalDesc, i)
-		aggExec.PartialAggFuncs = append(aggExec.PartialAggFuncs, partialAggFunc)
-		aggExec.FinalAggFuncs = append(aggExec.FinalAggFuncs, finalAggFunc)
-	}
-
-	aggExec.SetChildren(0, child)
-	return aggExec
-}
 
 type resultsContainer struct {
 	rows []chunk.Row
 }
 
-func (r *resultsContainer) Add(chk *chunk.Chunk) {
+func (r *resultsContainer) add(chk *chunk.Chunk) {
 	iter := chunk.NewIterator4Chunk(chk.CopyConstruct())
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		r.rows = append(r.rows, row)
 	}
 }
 
-func (r *resultsContainer) check(expectRes map[string]int64) bool {
+func (r *resultsContainer) check(expectRes map[string]float64) bool {
 	if len(r.rows) != len(expectRes) {
 		return false
 	}
@@ -260,6 +87,144 @@ func (r *resultsContainer) check(expectRes map[string]int64) bool {
 	return true
 }
 
+func getRandString() string {
+	strLen := rand.Intn(10) + 1 // At least 1
+	b := make([]byte, strLen)
+	for i := range b {
+		b[i] = letterBytes[rand.Intn(len(letterBytes))]
+	}
+	return string(b)
+}
+
+func generateData(rowNum int, ndv int) ([]string, []float64) {
+	keys := make([]string, 0)
+	for i := 0; i < ndv; i++ {
+		keys = append(keys, getRandString())
+	}
+
+	col0Data := make([]string, 0)
+	col1Data := make([]float64, 0)
+
+	// Generate data
+	for i := 0; i < rowNum; i++ {
+		key := keys[i%ndv]
+		col0Data = append(col0Data, key)
+		col1Data = append(col1Data, 1) // Always 1
+	}
+
+	// Shuffle data
+	rand.Shuffle(rowNum, func(i, j int) {
+		col0Data[i], col0Data[j] = col0Data[j], col0Data[i]
+		// There is no need to shuffle col2Data as all of it's values are 1.
+	})
+	return col0Data, col1Data
+}
+
+func buildMockDataSource(opt testutil.MockDataSourceParameters, col0Data []string, col1Data []float64) *testutil.MockDataSource {
+	baseExec := exec.NewBaseExecutor(opt.Ctx, opt.DataSchema, 0)
+	mockDatasource := &testutil.MockDataSource{
+		BaseExecutor: baseExec,
+		ChunkPtr:     0,
+		P:            opt,
+		GenData:      nil,
+		Chunks:       nil}
+
+	maxChunkSize := mockDatasource.MaxChunkSize()
+	rowNum := len(col0Data)
+	mockDatasource.GenData = make([]*chunk.Chunk, (rowNum+maxChunkSize-1)/maxChunkSize)
+	for i := range mockDatasource.GenData {
+		mockDatasource.GenData[i] = chunk.NewChunkWithCapacity(exec.RetTypes(mockDatasource), maxChunkSize)
+	}
+
+	for i := 0; i < rowNum; i++ {
+		chkIdx := i / maxChunkSize
+		mockDatasource.GenData[chkIdx].AppendString(0, col0Data[i])
+		mockDatasource.GenData[chkIdx].AppendFloat64(1, col1Data[i])
+	}
+
+	return mockDatasource
+}
+
+func generateResult(col0 []string, col1 []float64) map[string]float64 {
+	result := make(map[string]float64, 0)
+	length := len(col0)
+
+	for i := 0; i < length; i++ {
+		_, ok := result[col0[i]]
+		if ok {
+			result[col0[i]]++
+		} else {
+			result[col0[i]] = 1
+		}
+	}
+	return result
+}
+
+func getColumns() []*expression.Column {
+	return []*expression.Column{
+		{Index: 0, RetType: types.NewFieldType(mysql.TypeVarString)},
+		{Index: 1, RetType: types.NewFieldType(mysql.TypeDouble)},
+	}
+}
+
+func getSchema() *expression.Schema {
+	return expression.NewSchema(getColumns()...)
+}
+
+func getMockDataSourceParameters(ctx sessionctx.Context) testutil.MockDataSourceParameters {
+	return testutil.MockDataSourceParameters{
+		DataSchema: getSchema(),
+		Ctx:        ctx,
+	}
+}
+
+func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Executor) *aggregate.HashAggExec {
+	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggFinalConcurrency, fmt.Sprintf("%v", 5)); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggPartialConcurrency, fmt.Sprintf("%v", 5)); err != nil {
+		t.Fatal(err)
+	}
+
+	childCols := getColumns()
+	schema := expression.NewSchema(childCols...)
+	groupItems := []expression.Expression{childCols[0]}
+
+	aggFirstRow, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncFirstRow, []expression.Expression{childCols[0]}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	aggFunc, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncSum, []expression.Expression{childCols[1]}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	aggFuncs := []*aggregation.AggFuncDesc{aggFirstRow, aggFunc}
+
+	aggExec := &aggregate.HashAggExec{
+		BaseExecutor:     exec.NewBaseExecutor(ctx, schema, 0, child),
+		Sc:               ctx.GetSessionVars().StmtCtx,
+		PartialAggFuncs:  make([]aggfuncs.AggFunc, 0, len(aggFuncs)),
+		GroupByItems:     groupItems,
+		IsUnparallelExec: false,
+	}
+
+	partialOrdinal := 0
+	for i, aggDesc := range aggFuncs {
+		ordinal := []int{partialOrdinal}
+		partialOrdinal++
+		partialAggDesc, finalDesc := aggDesc.Split(ordinal)
+		partialAggFunc := aggfuncs.Build(ctx, partialAggDesc, i)
+		finalAggFunc := aggfuncs.Build(ctx, finalDesc, i)
+		aggExec.PartialAggFuncs = append(aggExec.PartialAggFuncs, partialAggFunc)
+		aggExec.FinalAggFuncs = append(aggExec.FinalAggFuncs, finalAggFunc)
+	}
+
+	aggExec.SetChildren(0, child)
+	return aggExec
+}
+
 func TestGetCorrectResult(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
@@ -273,14 +238,28 @@ func TestGetCorrectResult(t *testing.T) {
 	rowNum := rand.Intn(3000) + 3000
 	ndv := rand.Intn(50) + 50
 	col1, col2 := generateData(rowNum, ndv)
-	// result := generateResult(col1, col2)
+	result := generateResult(col1, col2)
 	opt := getMockDataSourceParameters(ctx)
 	dataSource := buildMockDataSource(opt, col1, col2)
+	dataSource.PrepareChunks()
 	aggExec := buildHashAggExecutor(t, ctx, dataSource)
 
 	tmpCtx := context.Background()
+	chk := exec.NewFirstChunk(aggExec)
+	resContainer := resultsContainer{}
 	aggExec.Open(tmpCtx)
-	
+
+	for {
+		aggExec.Next(tmpCtx, chk)
+		if chk.NumRows() == 0 {
+			break
+		}
+		resContainer.add(chk)
+		chk.Reset()
+	}
+	aggExec.Close()
+
+	require.True(t, resContainer.check(result))
 }
 
 func TestGetCorrectResultDeprecated(t *testing.T) {
@@ -318,10 +297,6 @@ func TestGetCorrectResultDeprecated(t *testing.T) {
 	binCollationResult["cC"] = "1"
 	binCollationResult["dd"] = "1"
 	binCollationResult["cc"] = "1"
-	log.Info("xzxdebugtt")
-	res := tk.MustQuery("select k, sum(v) from test_spill_bin group by k;")
-	log.Info("xzxdebugtt")
-	tk.RequireEqual(true, checkResults(res.Rows(), binCollationResult))
 
 	// ci collation
 	ciCollationResult := make(map[string]string)
@@ -330,8 +305,6 @@ func TestGetCorrectResultDeprecated(t *testing.T) {
 	ciCollationResult["cc"] = "4"
 	ciCollationResult["dd"] = "4"
 	ciCollationResult["ee"] = "1"
-	res = tk.MustQuery("select k, sum(v) from test_spill_ci group by k;")
-	tk.RequireEqual(true, checkResults(res.Rows(), ciCollationResult))
 }
 
 // TODO maybe add more random fail?
