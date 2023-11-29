@@ -31,8 +31,10 @@ const byteLen = int64(unsafe.Sizeof(byte(0)))
 const intLen = int64(unsafe.Sizeof(int(0)))
 const int64Len = int64(unsafe.Sizeof(int64(0)))
 
-const chkFixedSize = intLen + 3*intLen
+const chkFixedSize = intLen * 4
 const colMetaSize = int64Len * 4
+
+const defaultChunkDataInDiskByChunksPath = "defaultChunkDataInDiskByChunksPath"
 
 // DataInDiskByChunks represents some data stored in temporary disk.
 // They can only be restored by chunks.
@@ -52,7 +54,7 @@ type DataInDiskByChunks struct {
 
 // NewDataInDiskByChunks creates a new DataInDiskByChunks with field types.
 func NewDataInDiskByChunks(fieldTypes []*types.FieldType) *DataInDiskByChunks {
-	l := &DataInDiskByChunks{
+	d := &DataInDiskByChunks{
 		fieldTypes:    fieldTypes,
 		totalDataSize: 0,
 		totalRowNum:   0,
@@ -60,7 +62,7 @@ func NewDataInDiskByChunks(fieldTypes []*types.FieldType) *DataInDiskByChunks {
 		diskTracker: disk.NewTracker(memory.LabelForChunkDataInDiskByChunks, -1),
 		buf:         make([]byte, 0, 4096),
 	}
-	return l
+	return d
 }
 
 func (d *DataInDiskByChunks) initDiskFile() (err error) {
@@ -68,7 +70,7 @@ func (d *DataInDiskByChunks) initDiskFile() (err error) {
 	if err != nil {
 		return
 	}
-	err = d.dataFile.initWithFileName(defaultChunkDataInDiskByRowsPath + strconv.Itoa(d.diskTracker.Label()))
+	err = d.dataFile.initWithFileName(defaultChunkDataInDiskByChunksPath + strconv.Itoa(d.diskTracker.Label()))
 	return
 }
 
@@ -162,22 +164,6 @@ func (d *DataInDiskByChunks) serializeColMeta(pos int64, length int64, nullMapSi
 	*(*int64)(unsafe.Pointer(&d.buf[pos+int64Len*3])) = offsetSize
 }
 
-func (d *DataInDiskByChunks) deserializeColMeta(pos *int64) (length int64, nullMapSize int64, dataSize int64, offsetSize int64) {
-	// TODO we can replace these with spill util in the future
-	length = *(*int64)(unsafe.Pointer(&d.buf[*pos]))
-	*pos += int64Len
-
-	nullMapSize = *(*int64)(unsafe.Pointer(&d.buf[*pos]))
-	*pos += int64Len
-
-	dataSize = *(*int64)(unsafe.Pointer(&d.buf[*pos]))
-	*pos += int64Len
-
-	offsetSize = *(*int64)(unsafe.Pointer(&d.buf[*pos]))
-	*pos += int64Len
-	return
-}
-
 func (d *DataInDiskByChunks) serializeOffset(pos *int64, offsets []int64, offsetSize int64) {
 	d.buf = d.buf[:*pos+offsetSize]
 	for _, offset := range offsets {
@@ -248,6 +234,22 @@ func (d *DataInDiskByChunks) serializeDataToBuf(chk *Chunk) int64 {
 	d.serializeChunkData(&pos, chk, selSize)
 	d.serializeColumns(&pos, chk)
 	return totalBytes
+}
+
+func (d *DataInDiskByChunks) deserializeColMeta(pos *int64) (length int64, nullMapSize int64, dataSize int64, offsetSize int64) {
+	// TODO we can replace these with spill util in the future
+	length = *(*int64)(unsafe.Pointer(&d.buf[*pos]))
+	*pos += int64Len
+
+	nullMapSize = *(*int64)(unsafe.Pointer(&d.buf[*pos]))
+	*pos += int64Len
+
+	dataSize = *(*int64)(unsafe.Pointer(&d.buf[*pos]))
+	*pos += int64Len
+
+	offsetSize = *(*int64)(unsafe.Pointer(&d.buf[*pos]))
+	*pos += int64Len
+	return
 }
 
 func (d *DataInDiskByChunks) deserializeSel(chk *Chunk, pos *int64, selSize int) {

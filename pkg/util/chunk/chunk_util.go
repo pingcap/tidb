@@ -190,6 +190,7 @@ type diskFileReaderWriter struct {
 }
 
 func (l *diskFileReaderWriter) initWithFileName(fileName string) (err error) {
+	// `os.CreateTemp` will insert random string so that a random file name will be generated.
 	l.file, err = os.CreateTemp(config.GetGlobalConfig().TempStoragePath, fileName)
 	if err != nil {
 		return errors.Trace(err)
