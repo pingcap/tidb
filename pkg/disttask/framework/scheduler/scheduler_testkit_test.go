@@ -16,16 +16,16 @@ package scheduler_test
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
-	mockexecute "github.com/pingcap/tidb/pkg/disttask/framework/mock/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -65,44 +65,14 @@ func runOneTask(t *testing.T, ctx context.Context, mgr *storage.TaskManager, tas
 	require.NoError(t, scheduler.Run(ctx, task))
 }
 
-func getMockSubtaskExecutor(ctrl *gomock.Controller) *mockexecute.MockSubtaskExecutor {
-	executor := mockexecute.NewMockSubtaskExecutor(ctrl)
-	executor.EXPECT().Init(gomock.Any()).Return(nil).AnyTimes()
-	executor.EXPECT().Cleanup(gomock.Any()).Return(nil).AnyTimes()
-	executor.EXPECT().Rollback(gomock.Any()).Return(nil).AnyTimes()
-	executor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	return executor
-}
-
-func getMockSchedulerExtension(ctrl *gomock.Controller, mockSubtaskExecutor *mockexecute.MockSubtaskExecutor) *mock.MockExtension {
-	mockExtension := mock.NewMockExtension(ctrl)
-	mockExtension.EXPECT().
-		GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(mockSubtaskExecutor, nil).AnyTimes()
-	return mockExtension
-}
-
-func initScheduler(ctrl *gomock.Controller, runSubtaskFn func(ctx context.Context, subtask *proto.Subtask) error) {
-	mockSubtaskExecutor := getMockSubtaskExecutor(ctrl)
-	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
-		runSubtaskFn,
-	).AnyTimes()
-
-	mockExtension := getMockSchedulerExtension(ctrl, mockSubtaskExecutor)
-	scheduler.RegisterTaskType(proto.TaskTypeExample,
-		func(ctx context.Context, id string, task *proto.Task, taskTable scheduler.TaskTable) scheduler.Scheduler {
-			s := scheduler.NewBaseScheduler(ctx, id, task.ID, taskTable)
-			s.Extension = mockExtension
-			return s
-		},
-	)
-}
-
 func TestSchedulerBasic(t *testing.T) {
 	// must disable disttask framework to ensure the test pure.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/breakInSchedulerUT", "return()"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/breakInSchedulerUT"))
+
 	}()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -116,17 +86,18 @@ func TestSchedulerBasic(t *testing.T) {
 	defer ctrl.Finish()
 	mgr := storage.NewTaskManager(pool)
 
-	initScheduler(ctrl, func(ctx context.Context, subtask *proto.Subtask) error {
+	testutil.InitScheduler(ctrl, func(ctx context.Context, subtask *proto.Subtask) error {
 		switch subtask.Step {
 		case proto.StepOne:
-			logutil.BgLogger().Info("ywq 1")
+			logutil.BgLogger().Info("run step one")
 		case proto.StepTwo:
-			logutil.BgLogger().Info("ywq 2")
+			logutil.BgLogger().Info("run step two")
 		default:
 			panic("invalid step")
 		}
 		return nil
 	})
-	runOneTask(t, ctx, mgr, "key1", 0)
-	// runOneTask(t, ctx, mgr, "key2", 1)
+	for i := 0; i < 10; i++ {
+		runOneTask(t, ctx, mgr, "key"+strconv.Itoa(i), i)
+	}
 }
