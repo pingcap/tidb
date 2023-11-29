@@ -208,7 +208,6 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) (resErr error
 		}
 		return s.getError()
 	}
-	logutil.BgLogger().Info("ywq test task num", zap.Any("subtasks", subtasks))
 	for _, subtask := range subtasks {
 		metrics.IncDistTaskSubTaskCnt(subtask)
 		metrics.StartDistTaskSubTask(subtask)

@@ -22,28 +22,28 @@ import (
 )
 
 func TestPlanErr(t *testing.T) {
-	ctx, ctrl, test_context, distContext := testutil.InitTestContext(t, 2)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 2)
 	defer ctrl.Finish()
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetPlanErrDispatcherExt(ctrl, test_context), test_context)
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "key1", test_context)
-	test_context.CallTime = 0
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetPlanErrDispatcherExt(ctrl, testContext), testContext, nil)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key1", testContext, nil)
+	testContext.CallTime = 0
 	distContext.Close()
 }
 
 func TestRevertPlanErr(t *testing.T) {
-	ctx, ctrl, test_context, distContext := testutil.InitTestContext(t, 2)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 2)
 	defer ctrl.Finish()
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetPlanErrDispatcherExt(ctrl, test_context), test_context)
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "key1", test_context)
-	test_context.CallTime = 0
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetPlanErrDispatcherExt(ctrl, testContext), testContext, nil)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key1", testContext, nil)
+	testContext.CallTime = 0
 	distContext.Close()
 }
 
 func TestPlanNotRetryableErr(t *testing.T) {
-	ctx, ctrl, test_context, distContext := testutil.InitTestContext(t, 2)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 2)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetPlanNotRetryableErrDispatcherExt(ctrl), test_context)
-	testutil.DispatchTaskAndCheckState(t, ctx, "key1", test_context, proto.TaskStateFailed)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetPlanNotRetryableErrDispatcherExt(ctrl), testContext, nil)
+	testutil.DispatchTaskAndCheckState(ctx, t, "key1", testContext, proto.TaskStateFailed)
 	distContext.Close()
 }

@@ -25,6 +25,7 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+// GetMockBasicDispatcherExt returns mock dispatcher.Extension with basic functionalities.
 func GetMockBasicDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
 	mockDispatcher := mockDispatch.NewMockExtension(ctrl)
 	mockDispatcher.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
@@ -72,6 +73,7 @@ func GetMockBasicDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
 	return mockDispatcher
 }
 
+// GetMockHATestDispatcherExt returns mock dispatcher.Extension for HA testing with multiple steps.
 func GetMockHATestDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
 	mockDispatcher := mockDispatch.NewMockExtension(ctrl)
 	mockDispatcher.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
@@ -144,6 +146,7 @@ func generateSchedulerNodes4Test() ([]*infosync.ServerInfo, bool, error) {
 	return serverNodes, true, nil
 }
 
+// GetPlanNotRetryableErrDispatcherExt returns mock dispatcher.Extension which will generate non retryable error when planning.
 func GetPlanNotRetryableErrDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
 	mockDispatcher := mockDispatch.NewMockExtension(ctrl)
 	mockDispatcher.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
@@ -172,7 +175,8 @@ func GetPlanNotRetryableErrDispatcherExt(ctrl *gomock.Controller) dispatcher.Ext
 	return mockDispatcher
 }
 
-func GetPlanErrDispatcherExt(ctrl *gomock.Controller, test_context *TestContext) dispatcher.Extension {
+// GetPlanErrDispatcherExt returns mock dispatcher.Extension which will generate error when planning.
+func GetPlanErrDispatcherExt(ctrl *gomock.Controller, testContext *TestContext) dispatcher.Extension {
 	mockDispatcher := mockDispatch.NewMockExtension(ctrl)
 	mockDispatcher.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
 	mockDispatcher.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
@@ -196,8 +200,8 @@ func GetPlanErrDispatcherExt(ctrl *gomock.Controller, test_context *TestContext)
 	mockDispatcher.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
 			if gTask.Step == proto.StepInit {
-				if test_context.CallTime == 0 {
-					test_context.CallTime++
+				if testContext.CallTime == 0 {
+					testContext.CallTime++
 					return nil, errors.New("retryable err")
 				}
 				return [][]byte{
@@ -217,8 +221,8 @@ func GetPlanErrDispatcherExt(ctrl *gomock.Controller, test_context *TestContext)
 
 	mockDispatcher.EXPECT().OnErrStage(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
-			if test_context.CallTime == 1 {
-				test_context.CallTime++
+			if testContext.CallTime == 1 {
+				testContext.CallTime++
 				return nil, errors.New("not retryable err")
 			}
 			return []byte("planErrTask"), nil
@@ -227,6 +231,7 @@ func GetPlanErrDispatcherExt(ctrl *gomock.Controller, test_context *TestContext)
 	return mockDispatcher
 }
 
+// GetMockRollbackDispatcherExt returns mock dispatcher.Extension which will generate rollback subtasks.
 func GetMockRollbackDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
 	mockDispatcher := mockDispatch.NewMockExtension(ctrl)
 	mockDispatcher.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
@@ -267,6 +272,7 @@ func GetMockRollbackDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension 
 	return mockDispatcher
 }
 
+// GetMockDynamicDispatchExt returns mock dispatcher.Extension which will generate subtask in multiple batches.
 func GetMockDynamicDispatchExt(ctrl *gomock.Controller) dispatcher.Extension {
 	mockDispatcher := mockDispatch.NewMockExtension(ctrl)
 	mockDispatcher.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()

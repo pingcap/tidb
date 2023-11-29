@@ -24,6 +24,7 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+// GetMockSubtaskExecutor returns one mock subtaskExecutor.
 func GetMockSubtaskExecutor(ctrl *gomock.Controller) *mockexecute.MockSubtaskExecutor {
 	executor := mockexecute.NewMockSubtaskExecutor(ctrl)
 	executor.EXPECT().Init(gomock.Any()).Return(nil).AnyTimes()
@@ -33,6 +34,7 @@ func GetMockSubtaskExecutor(ctrl *gomock.Controller) *mockexecute.MockSubtaskExe
 	return executor
 }
 
+// GetMockSchedulerExtension returns one mock SchedulerExtension.
 func GetMockSchedulerExtension(ctrl *gomock.Controller, mockSubtaskExecutor *mockexecute.MockSubtaskExecutor) *mock.MockExtension {
 	mockExtension := mock.NewMockExtension(ctrl)
 	mockExtension.EXPECT().
@@ -41,6 +43,7 @@ func GetMockSchedulerExtension(ctrl *gomock.Controller, mockSubtaskExecutor *moc
 	return mockExtension
 }
 
+// InitScheduler inits all mock components for scheduler.
 func InitScheduler(ctrl *gomock.Controller, runSubtaskFn func(ctx context.Context, subtask *proto.Subtask) error) {
 	mockSubtaskExecutor := GetMockSubtaskExecutor(ctrl)
 	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(

@@ -25,14 +25,17 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+// TestContext defines shared variables for disttask tests.
 type TestContext struct {
-	m sync.Map
-	// for rollback test.
+	// for basic tests.
+	M sync.Map
+	// for rollback tests.
 	RollbackCnt atomic.Int32
-	// for plan err handling test.
+	// for plan err handling tests.
 	CallTime int
 }
 
+// InitTestContext inits test context for disttask tests.
 func InitTestContext(t *testing.T, nodeNum int) (context.Context, *gomock.Controller, *TestContext, *testkit.DistExecutionContext) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()

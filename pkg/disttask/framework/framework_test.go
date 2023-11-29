@@ -29,69 +29,69 @@ import (
 )
 
 func TestFrameworkBasic(t *testing.T) {
-	ctx, ctrl, test_context, distContext := testutil.InitTestContext(t, 2)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 2)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), test_context)
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "key1", test_context)
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "key2", test_context)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), testContext, nil)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key1", testContext, nil)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key2", testContext, nil)
 	distContext.SetOwner(0)
 	time.Sleep(2 * time.Second) // make sure owner changed
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "key3", test_context)
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "key4", test_context)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key3", testContext, nil)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key4", testContext, nil)
 	distContext.SetOwner(1)
 	time.Sleep(2 * time.Second) // make sure owner changed
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "key5", test_context)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key5", testContext, nil)
 	distContext.Close()
 }
 
 func TestFramework3Server(t *testing.T) {
-	ctx, ctrl, test_context, distContext := testutil.InitTestContext(t, 3)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
 	defer ctrl.Finish()
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), test_context)
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "key1", test_context)
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "key2", test_context)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), testContext, nil)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key1", testContext, nil)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key2", testContext, nil)
 	distContext.SetOwner(0)
 	time.Sleep(2 * time.Second) // make sure owner changed
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "key3", test_context)
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "key4", test_context)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key3", testContext, nil)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key4", testContext, nil)
 	distContext.Close()
 }
 
 func TestFrameworkAddDomain(t *testing.T) {
-	ctx, ctrl, test_context, distContext := testutil.InitTestContext(t, 3)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), test_context)
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "key1", test_context)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), testContext, nil)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key1", testContext, nil)
 	distContext.AddDomain()
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "key2", test_context)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key2", testContext, nil)
 	distContext.SetOwner(1)
 	time.Sleep(2 * time.Second) // make sure owner changed
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "key3", test_context)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key3", testContext, nil)
 	distContext.Close()
 	distContext.AddDomain()
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "key4", test_context)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key4", testContext, nil)
 }
 
 func TestFrameworkDeleteDomain(t *testing.T) {
-	ctx, ctrl, test_context, distContext := testutil.InitTestContext(t, 2)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 2)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), test_context)
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "key1", test_context)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), testContext, nil)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key1", testContext, nil)
 	distContext.DeleteDomain(1)
 	time.Sleep(2 * time.Second) // make sure the owner changed
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "key2", test_context)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key2", testContext, nil)
 	distContext.Close()
 }
 
 func TestFrameworkWithQuery(t *testing.T) {
-	ctx, ctrl, test_context, distContext := testutil.InitTestContext(t, 2)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 2)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), test_context)
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "key1", test_context)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), testContext, nil)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key1", testContext, nil)
 
 	tk := testkit.NewTestKit(t, distContext.Store)
 
@@ -108,73 +108,73 @@ func TestFrameworkWithQuery(t *testing.T) {
 }
 
 func TestFrameworkCancelGTask(t *testing.T) {
-	ctx, ctrl, test_context, distContext := testutil.InitTestContext(t, 2)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 2)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), test_context)
-	testutil.DispatchAndCancelTask(t, ctx, "key1", test_context)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), testContext, nil)
+	testutil.DispatchAndCancelTask(ctx, t, "key1", testContext)
 	distContext.Close()
 }
 
 func TestFrameworkSubTaskFailed(t *testing.T) {
-	ctx, ctrl, test_context, distContext := testutil.InitTestContext(t, 1)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 1)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), test_context)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), testContext, nil)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/MockExecutorRunErr", "1*return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/MockExecutorRunErr"))
 	}()
-	testutil.DispatchTaskAndCheckState(t, ctx, "key1", test_context, proto.TaskStateReverted)
+	testutil.DispatchTaskAndCheckState(ctx, t, "key1", testContext, proto.TaskStateReverted)
 
 	distContext.Close()
 }
 
 func TestFrameworkSubTaskInitEnvFailed(t *testing.T) {
-	ctx, ctrl, test_context, distContext := testutil.InitTestContext(t, 1)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 1)
 	defer ctrl.Finish()
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), test_context)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), testContext, nil)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockExecSubtaskInitEnvErr", "return()"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockExecSubtaskInitEnvErr"))
 	}()
-	testutil.DispatchTaskAndCheckState(t, ctx, "key1", test_context, proto.TaskStateReverted)
+	testutil.DispatchTaskAndCheckState(ctx, t, "key1", testContext, proto.TaskStateReverted)
 	distContext.Close()
 }
 
 func TestOwnerChange(t *testing.T) {
-	ctx, ctrl, test_context, distContext := testutil.InitTestContext(t, 3)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
 	defer ctrl.Finish()
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), test_context)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), testContext, nil)
 	dispatcher.MockOwnerChange = func() {
 		distContext.SetOwner(0)
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockOwnerChange", "1*return(true)"))
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "😊", test_context)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "😊", testContext, nil)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockOwnerChange"))
 	distContext.Close()
 }
 
 func TestFrameworkCancelThenSubmitSubTask(t *testing.T) {
-	ctx, ctrl, test_context, distContext := testutil.InitTestContext(t, 3)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), test_context)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), testContext, nil)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/cancelBeforeUpdate", "return()"))
-	testutil.DispatchTaskAndCheckState(t, ctx, "😊", test_context, proto.TaskStateReverted)
+	testutil.DispatchTaskAndCheckState(ctx, t, "😊", testContext, proto.TaskStateReverted)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/cancelBeforeUpdate"))
 	distContext.Close()
 }
 
 func TestSchedulerDownBasic(t *testing.T) {
-	ctx, ctrl, test_context, distContext := testutil.InitTestContext(t, 4)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 4)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), test_context)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), testContext, nil)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockCleanScheduler", "return()"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockStopManager", "4*return(\":4000\")"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTiDBDown", "return(\":4000\")"))
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "😊", test_context)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "😊", testContext, nil)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockCleanScheduler"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTiDBDown"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockStopManager"))
@@ -182,13 +182,13 @@ func TestSchedulerDownBasic(t *testing.T) {
 }
 
 func TestSchedulerDownManyNodes(t *testing.T) {
-	ctx, ctrl, test_context, distContext := testutil.InitTestContext(t, 30)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 30)
 	defer ctrl.Finish()
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), test_context)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), testContext, nil)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockCleanScheduler", "return()"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockStopManager", "30*return(\":4000\")"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTiDBDown", "return(\":4000\")"))
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "😊", test_context)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "😊", testContext, nil)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockCleanScheduler"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTiDBDown"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockStopManager"))
@@ -196,24 +196,24 @@ func TestSchedulerDownManyNodes(t *testing.T) {
 }
 
 func TestFrameworkSetLabel(t *testing.T) {
-	ctx, ctrl, test_context, distContext := testutil.InitTestContext(t, 3)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), test_context)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), testContext, nil)
 	tk := testkit.NewTestKit(t, distContext.Store)
 
 	// 1. all "" role.
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "😁", test_context)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "😁", testContext, nil)
 
 	// 2. one "background" role.
 	tk.MustExec("set global tidb_service_scope=background")
 	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows("background"))
 	tk.MustQuery("select @@tidb_service_scope").Check(testkit.Rows("background"))
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "😊", test_context)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "😊", testContext, nil)
 
 	// 3. 2 "background" role.
 	tk.MustExec("update mysql.dist_framework_meta set role = \"background\" where host = \":4001\"")
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "😆", test_context)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "😆", testContext, nil)
 
 	// 4. set wrong sys var.
 	tk.MustMatchErrMsg("set global tidb_service_scope=wrong", `incorrect value: .*. tidb_service_scope options: "", background`)
@@ -233,21 +233,18 @@ func TestMultiTasks(t *testing.T) {
 	ctx, ctrl, _, distContext := testutil.InitTestContext(t, 3)
 	defer ctrl.Finish()
 
-	test_contexts := make([]*testutil.TestContext, 3)
+	testContext := &testutil.TestContext{}
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), testContext, nil)
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), test_contexts[0])
-	testutil.RegisterTaskMetaForExample2(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), test_contexts[1])
-	testutil.RegisterTaskMetaForExample3(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), test_contexts[2])
-
-	testutil.DispatchMultiTasksAndOneFail(t, ctx, num, test_contexts)
+	testutil.DispatchMultiTasksAndOneFail(ctx, t, num, testContext)
 	distContext.Close()
 }
 
 func TestGC(t *testing.T) {
-	ctx, ctrl, test_context, distContext := testutil.InitTestContext(t, 3)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), test_context)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), testContext, nil)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/storage/subtaskHistoryKeepSeconds", "return(1)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/historySubtaskTableGcInterval", "return(1)"))
@@ -256,7 +253,7 @@ func TestGC(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/historySubtaskTableGcInterval"))
 	}()
 
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "😊", test_context)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "😊", testContext, nil)
 
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
@@ -284,35 +281,35 @@ func TestGC(t *testing.T) {
 }
 
 func TestFrameworkSubtaskFinishedCancel(t *testing.T) {
-	ctx, ctrl, test_context, distContext := testutil.InitTestContext(t, 3)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), test_context)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), testContext, nil)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/MockSubtaskFinishedCancel", "1*return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/MockSubtaskFinishedCancel"))
 	}()
-	testutil.DispatchTaskAndCheckState(t, ctx, "key1", test_context, proto.TaskStateReverted)
+	testutil.DispatchTaskAndCheckState(ctx, t, "key1", testContext, proto.TaskStateReverted)
 	distContext.Close()
 }
 
 func TestFrameworkRunSubtaskCancel(t *testing.T) {
-	ctx, ctrl, test_context, distContext := testutil.InitTestContext(t, 3)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), test_context)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), testContext, nil)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/MockRunSubtaskCancel", "1*return(true)"))
-	testutil.DispatchTaskAndCheckState(t, ctx, "key1", test_context, proto.TaskStateReverted)
+	testutil.DispatchTaskAndCheckState(ctx, t, "key1", testContext, proto.TaskStateReverted)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/MockRunSubtaskCancel"))
 	distContext.Close()
 }
 
 func TestFrameworkCleanUpRoutine(t *testing.T) {
-	ctx, ctrl, test_context, distContext := testutil.InitTestContext(t, 3)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
 	defer ctrl.Finish()
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), test_context)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), testContext, nil)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/WaitCleanUpFinished", "return()"))
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "key1", test_context)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key1", testContext, nil)
 	<-dispatcher.WaitCleanUpFinished
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
@@ -323,12 +320,12 @@ func TestFrameworkCleanUpRoutine(t *testing.T) {
 }
 
 func TestTaskCancelledBeforeUpdateTask(t *testing.T) {
-	ctx, ctrl, test_context, distContext := testutil.InitTestContext(t, 1)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 1)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), test_context)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), testContext, nil)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/cancelBeforeUpdateTask", "1*return(true)"))
-	testutil.DispatchTaskAndCheckState(t, ctx, "key1", test_context, proto.TaskStateReverted)
+	testutil.DispatchTaskAndCheckState(ctx, t, "key1", testContext, proto.TaskStateReverted)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/cancelBeforeUpdateTask"))
 	distContext.Close()
 }

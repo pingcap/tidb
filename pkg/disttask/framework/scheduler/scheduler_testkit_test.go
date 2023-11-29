@@ -34,7 +34,7 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-func runOneTask(t *testing.T, ctx context.Context, mgr *storage.TaskManager, taskKey string, subtaskCnt int) {
+func runOneTask(ctx context.Context, t *testing.T, mgr *storage.TaskManager, taskKey string, subtaskCnt int) {
 	taskID, err := mgr.AddNewGlobalTask(ctx, taskKey, proto.TaskTypeExample, 1, nil)
 	require.NoError(t, err)
 	task, err := mgr.GetGlobalTaskByID(ctx, taskID)
@@ -98,6 +98,6 @@ func TestSchedulerBasic(t *testing.T) {
 		return nil
 	})
 	for i := 0; i < 10; i++ {
-		runOneTask(t, ctx, mgr, "key"+strconv.Itoa(i), i)
+		runOneTask(ctx, t, mgr, "key"+strconv.Itoa(i), i)
 	}
 }

@@ -23,29 +23,29 @@ import (
 )
 
 func TestFrameworkDynamicBasic(t *testing.T) {
-	ctx, ctrl, test_context, distContext := testutil.InitTestContext(t, 3)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockDynamicDispatchExt(ctrl), test_context)
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "key1", test_context)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockDynamicDispatchExt(ctrl), testContext, nil)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key1", testContext, nil)
 	distContext.Close()
 }
 
 func TestFrameworkDynamicHA(t *testing.T) {
-	ctx, ctrl, test_context, distContext := testutil.InitTestContext(t, 3)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockDynamicDispatchExt(ctrl), test_context)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockDynamicDispatchExt(ctrl), testContext, nil)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDynamicDispatchErr", "5*return()"))
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "key1", test_context)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key1", testContext, nil)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDynamicDispatchErr"))
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDynamicDispatchErr1", "5*return()"))
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "key2", test_context)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key2", testContext, nil)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDynamicDispatchErr1"))
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDynamicDispatchErr2", "5*return()"))
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "key3", test_context)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key3", testContext, nil)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDynamicDispatchErr2"))
 	distContext.Close()
 }

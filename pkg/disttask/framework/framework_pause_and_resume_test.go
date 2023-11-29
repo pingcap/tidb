@@ -39,19 +39,19 @@ func CheckSubtasksState(ctx context.Context, t *testing.T, taskID int64, state p
 }
 
 func TestFrameworkPauseAndResume(t *testing.T) {
-	ctx, ctrl, test_context, distContext := testutil.InitTestContext(t, 3)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), test_context)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), testContext, nil)
 	// 1. dispatch and pause one running task.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/pauseTaskAfterRefreshTask", "2*return(true)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/syncAfterResume", "return()"))
-	testutil.DispatchTaskAndCheckState(t, ctx, "key1", test_context, proto.TaskStatePaused)
+	testutil.DispatchTaskAndCheckState(ctx, t, "key1", testContext, proto.TaskStatePaused)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/pauseTaskAfterRefreshTask"))
 	// 4 subtask dispatched.
 	require.NoError(t, handle.ResumeTask(ctx, "key1"))
 	<-dispatcher.TestSyncChan
-	testutil.WaitTaskExit(t, ctx, "key1")
+	testutil.WaitTaskExit(ctx, t, "key1")
 	CheckSubtasksState(ctx, t, 1, proto.TaskStateSucceed, 4)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/syncAfterResume"))
 
@@ -64,13 +64,13 @@ func TestFrameworkPauseAndResume(t *testing.T) {
 	// 2. pause pending task.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/pausePendingTask", "2*return(true)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/syncAfterResume", "1*return()"))
-	testutil.DispatchTaskAndCheckState(t, ctx, "key2", test_context, proto.TaskStatePaused)
+	testutil.DispatchTaskAndCheckState(ctx, t, "key2", testContext, proto.TaskStatePaused)
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/pausePendingTask"))
 	// 4 subtask dispatched.
 	require.NoError(t, handle.ResumeTask(ctx, "key2"))
 	<-dispatcher.TestSyncChan
-	testutil.WaitTaskExit(t, ctx, "key2")
+	testutil.WaitTaskExit(ctx, t, "key2")
 	CheckSubtasksState(ctx, t, 1, proto.TaskStateSucceed, 4)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/syncAfterResume"))
 

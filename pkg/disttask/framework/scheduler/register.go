@@ -48,6 +48,7 @@ func RegisterTaskType(taskType proto.TaskType, factory schedulerFactoryFn, opts 
 	taskSchedulerFactories[taskType] = factory
 }
 
+// GetSchedulerFactory gets schedulerFactory by task type.
 func GetSchedulerFactory(taskType proto.TaskType) schedulerFactoryFn {
 	return taskSchedulerFactories[taskType]
 }

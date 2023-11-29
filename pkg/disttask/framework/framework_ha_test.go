@@ -23,14 +23,14 @@ import (
 )
 
 func TestHABasic(t *testing.T) {
-	ctx, ctrl, test_context, distContext := testutil.InitTestContext(t, 4)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 4)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestDispatcherExt(ctrl), test_context)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestDispatcherExt(ctrl), testContext, nil)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockCleanScheduler", "return()"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockStopManager", "4*return()"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTiDBDown", "return(\":4000\")"))
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "😊", test_context)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "😊", testContext, nil)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTiDBDown"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockStopManager"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockCleanScheduler"))
@@ -38,14 +38,14 @@ func TestHABasic(t *testing.T) {
 }
 
 func TestHAManyNodes(t *testing.T) {
-	ctx, ctrl, test_context, distContext := testutil.InitTestContext(t, 30)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 30)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestDispatcherExt(ctrl), test_context)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestDispatcherExt(ctrl), testContext, nil)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockCleanScheduler", "return()"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockStopManager", "30*return()"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTiDBDown", "return(\":4000\")"))
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "😊", test_context)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "😊", testContext, nil)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTiDBDown"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockStopManager"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockCleanScheduler"))
@@ -53,10 +53,10 @@ func TestHAManyNodes(t *testing.T) {
 }
 
 func TestHAFailInDifferentStage(t *testing.T) {
-	ctx, ctrl, test_context, distContext := testutil.InitTestContext(t, 6)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 6)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestDispatcherExt(ctrl), test_context)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestDispatcherExt(ctrl), testContext, nil)
 	// stage1 : server num from 6 to 3.
 	// stage2 : server num from 3 to 2.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockCleanScheduler", "return()"))
@@ -64,7 +64,7 @@ func TestHAFailInDifferentStage(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTiDBDown", "return(\":4000\")"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTiDBDown2", "return()"))
 
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "😊", test_context)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "😊", testContext, nil)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTiDBDown"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTiDBDown2"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockStopManager"))
@@ -73,10 +73,10 @@ func TestHAFailInDifferentStage(t *testing.T) {
 }
 
 func TestHAFailInDifferentStageManyNodes(t *testing.T) {
-	ctx, ctrl, test_context, distContext := testutil.InitTestContext(t, 30)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 30)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestDispatcherExt(ctrl), test_context)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestDispatcherExt(ctrl), testContext, nil)
 	// stage1 : server num from 30 to 27.
 	// stage2 : server num from 27 to 26.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockCleanScheduler", "return()"))
@@ -84,7 +84,7 @@ func TestHAFailInDifferentStageManyNodes(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTiDBDown", "return(\":4000\")"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTiDBDown2", "return()"))
 
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "😊", test_context)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "😊", testContext, nil)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTiDBDown"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTiDBDown2"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockStopManager"))
@@ -93,23 +93,23 @@ func TestHAFailInDifferentStageManyNodes(t *testing.T) {
 }
 
 func TestHAReplacedButRunning(t *testing.T) {
-	ctx, ctrl, test_context, distContext := testutil.InitTestContext(t, 4)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 4)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestDispatcherExt(ctrl), test_context)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestDispatcherExt(ctrl), testContext, nil)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTiDBPartitionThenResume", "10*return(true)"))
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "😊", test_context)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "😊", testContext, nil)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTiDBPartitionThenResume"))
 	distContext.Close()
 }
 
 func TestHAReplacedButRunningManyNodes(t *testing.T) {
-	ctx, ctrl, test_context, distContext := testutil.InitTestContext(t, 30)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 30)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestDispatcherExt(ctrl), test_context)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestDispatcherExt(ctrl), testContext, nil)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTiDBPartitionThenResume", "30*return(true)"))
-	testutil.DispatchTaskAndCheckSuccess(t, ctx, "😊", test_context)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "😊", testContext, nil)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTiDBPartitionThenResume"))
 	distContext.Close()
 }
