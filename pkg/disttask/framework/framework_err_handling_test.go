@@ -28,9 +28,38 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+<<<<<<< HEAD
 type planErrDispatcherExt struct {
 	callTime int
 	cnt      int
+=======
+var (
+	callTime = 0
+)
+
+func getPlanNotRetryableErrDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
+	mockDispatcher := mockDispatch.NewMockExtension(ctrl)
+	mockDispatcher.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
+	mockDispatcher.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
+			return generateSchedulerNodes4Test()
+		},
+	).AnyTimes()
+	mockDispatcher.EXPECT().IsRetryableErr(gomock.Any()).Return(false).AnyTimes()
+	mockDispatcher.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
+		func(task *proto.Task) proto.Step {
+			return proto.StepDone
+		},
+	).AnyTimes()
+	mockDispatcher.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
+			return nil, errors.New("not retryable err")
+		},
+	).AnyTimes()
+
+	mockDispatcher.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	return mockDispatcher
+>>>>>>> 86df166bd32 (importinto: make cancel wait task done and some fixes (#48928))
 }
 
 var (
@@ -38,6 +67,7 @@ var (
 	_ dispatcher.Extension = (*planNotRetryableErrDispatcherExt)(nil)
 )
 
+<<<<<<< HEAD
 func (*planErrDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
@@ -115,6 +145,13 @@ func (*planNotRetryableErrDispatcherExt) IsRetryableErr(error) bool {
 
 func (p *planNotRetryableErrDispatcherExt) GetNextStep(*proto.Task) proto.Step {
 	return proto.StepDone
+=======
+	gomock.InOrder(
+		mockDispatcher.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("not retryable err")),
+		mockDispatcher.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes(),
+	)
+	return mockDispatcher
+>>>>>>> 86df166bd32 (importinto: make cancel wait task done and some fixes (#48928))
 }
 
 func TestPlanErr(t *testing.T) {

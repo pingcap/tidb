@@ -33,7 +33,11 @@ type haTestDispatcherExt struct {
 	cnt int
 }
 
+<<<<<<< HEAD
 var _ dispatcher.Extension = (*haTestDispatcherExt)(nil)
+=======
+	mockDispatcher.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+>>>>>>> 86df166bd32 (importinto: make cancel wait task done and some fixes (#48928))
 
 func (*haTestDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }

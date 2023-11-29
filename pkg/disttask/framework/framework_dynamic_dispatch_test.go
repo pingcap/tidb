@@ -36,7 +36,11 @@ type testDynamicDispatcherExt struct {
 
 var _ dispatcher.Extension = (*testDynamicDispatcherExt)(nil)
 
+<<<<<<< HEAD
 func (*testDynamicDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {}
+=======
+	mockDispatcher.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+>>>>>>> 86df166bd32 (importinto: make cancel wait task done and some fixes (#48928))
 
 func (dsp *testDynamicDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
 	// step1

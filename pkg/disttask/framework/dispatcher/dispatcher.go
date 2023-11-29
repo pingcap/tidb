@@ -17,6 +17,7 @@ package dispatcher
 import (
 	"context"
 	"math/rand"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -39,6 +40,10 @@ const (
 	MaxSubtaskConcurrency = 256
 	// DefaultLiveNodesCheckInterval is the tick interval of fetching all server infos from etcd.
 	DefaultLiveNodesCheckInterval = 2
+	// for a cancelled task, it's terminal state is reverted or reverted_failed,
+	// so we use a special error message to indicate that the task is cancelled
+	// by user.
+	taskCancelMsg = "cancelled by user"
 )
 
 var (
@@ -236,7 +241,7 @@ func (d *BaseDispatcher) scheduleTask() {
 // handle task in cancelling state, dispatch revert subtasks.
 func (d *BaseDispatcher) onCancelling() error {
 	logutil.Logger(d.logCtx).Info("on cancelling state", zap.Stringer("state", d.Task.State), zap.Int64("stage", int64(d.Task.Step)))
-	errs := []error{errors.New("cancel")}
+	errs := []error{errors.New(taskCancelMsg)}
 	return d.onErrHandlingStage(errs)
 }
 
@@ -303,8 +308,9 @@ func (d *BaseDispatcher) onReverting() error {
 		return err
 	}
 	if cnt == 0 {
-		// Finish the rollback step.
-		logutil.Logger(d.logCtx).Info("all reverting tasks finished, update the task to reverted state")
+		if err = d.OnDone(d.ctx, d, d.Task); err != nil {
+			return errors.Trace(err)
+		}
 		return d.updateTask(proto.TaskStateReverted, nil, RetrySQLTimes)
 	}
 	// Wait all subtasks in this stage finished.
@@ -467,14 +473,10 @@ func (d *BaseDispatcher) updateTask(taskState proto.TaskState, newSubTasks []*pr
 }
 
 func (d *BaseDispatcher) onErrHandlingStage(receiveErrs []error) error {
-	// 1. generate the needed task meta and subTask meta (dist-plan).
-	meta, err := d.OnErrStage(d.ctx, d, d.Task, receiveErrs)
-	if err != nil {
-		// OnErrStage must be retryable, if not, there will have resource leak for tasks.
-		logutil.Logger(d.logCtx).Warn("handle error failed", zap.Error(err))
-		return err
-	}
+	// we only store the first error.
+	d.Task.Error = receiveErrs[0]
 
+<<<<<<< HEAD
 	// 2. dispatch revert dist-plan to EligibleInstances.
 	return d.dispatchSubTask4Revert(meta)
 }
@@ -490,6 +492,22 @@ func (d *BaseDispatcher) dispatchSubTask4Revert(meta []byte) error {
 	for _, id := range instanceIDs {
 		// reverting subtasks belong to the same step as current active step.
 		subTasks = append(subTasks, proto.NewSubtask(d.Task.Step, d.Task.ID, d.Task.Type, id, meta))
+=======
+	var subTasks []*proto.Subtask
+	// when step of task is `StepInit`, no need to do revert
+	if d.Task.Step != proto.StepInit {
+		instanceIDs, err := d.GetAllSchedulerIDs(d.ctx, d.Task)
+		if err != nil {
+			logutil.Logger(d.logCtx).Warn("get task's all instances failed", zap.Error(err))
+			return err
+		}
+
+		subTasks = make([]*proto.Subtask, 0, len(instanceIDs))
+		for _, id := range instanceIDs {
+			// reverting subtasks belong to the same step as current active step.
+			subTasks = append(subTasks, proto.NewSubtask(d.Task.Step, d.Task.ID, d.Task.Type, id, []byte("{}")))
+		}
+>>>>>>> 86df166bd32 (importinto: make cancel wait task done and some fixes (#48928))
 	}
 	return d.updateTask(proto.TaskStateReverting, subTasks, RetrySQLTimes)
 }
@@ -540,7 +558,10 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 			taskState := proto.TaskStateRunning
 			if d.Task.Step == proto.StepDone {
 				taskState = proto.TaskStateSucceed
-				logutil.Logger(d.logCtx).Info("all subtasks dispatched and processed, finish the task")
+				if err = d.OnDone(d.ctx, d, d.Task); err != nil {
+					err = errors.Trace(err)
+					return
+				}
 			} else {
 				logutil.Logger(d.logCtx).Info("move to next stage",
 					zap.Int64("from", int64(currStep)), zap.Int64("to", int64(d.Task.Step)))
@@ -624,7 +645,10 @@ func (d *BaseDispatcher) handlePlanErr(err error) error {
 		return err
 	}
 	d.Task.Error = err
-	// state transform: pending -> failed.
+
+	if err = d.OnDone(d.ctx, d, d.Task); err != nil {
+		return errors.Trace(err)
+	}
 	return d.updateTask(proto.TaskStateFailed, nil, RetrySQLTimes)
 }
 
@@ -733,4 +757,9 @@ func (d *BaseDispatcher) WithNewSession(fn func(se sessionctx.Context) error) er
 // WithNewTxn executes the fn in a new transaction.
 func (d *BaseDispatcher) WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error {
 	return d.taskMgr.WithNewTxn(ctx, fn)
+}
+
+// IsCancelledErr checks if the error is a cancelled error.
+func IsCancelledErr(err error) bool {
+	return strings.Contains(err.Error(), taskCancelMsg)
 }

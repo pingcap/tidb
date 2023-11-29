@@ -92,6 +92,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/glue",
+        "//br/pkg/lightning/log",
         "//br/pkg/lightning/mydump",
         "//br/pkg/storage",
         "//br/pkg/task",
@@ -104,6 +105,7 @@ go_library(
         "//pkg/ddl/placement",
         "//pkg/ddl/schematracker",
         "//pkg/distsql",
+        "//pkg/disttask/framework/handle",
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/storage",
         "//pkg/disttask/importinto",
