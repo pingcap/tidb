@@ -24,6 +24,7 @@ import (
 	"os"
 	"runtime"
 	"runtime/pprof"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -51,14 +52,59 @@ type kvSource interface {
 	outputSize() int
 }
 
+type ascendingKeyGenerator struct {
+	keySize         int
+	keyCommonPrefix []byte
+	count           int
+	curKey          []byte
+	keyOutCh        chan []byte
+}
+
+func generateAscendingKey(
+	count int,
+	keySize int,
+	keyCommonPrefix []byte,
+) chan []byte {
+	c := &ascendingKeyGenerator{
+		keySize:         keySize,
+		count:           count,
+		keyCommonPrefix: keyCommonPrefix,
+		keyOutCh:        make(chan []byte, 100),
+	}
+	c.curKey = make([]byte, keySize)
+	copy(c.curKey, keyCommonPrefix)
+	c.run()
+	return c.keyOutCh
+}
+
+func (c *ascendingKeyGenerator) run() {
+	keyCommonPrefixSize := len(c.keyCommonPrefix)
+	incSuffixLen := int(math.Ceil(math.Log2(float64(c.count)) / 8))
+	if c.keySize-keyCommonPrefixSize < incSuffixLen {
+		panic(fmt.Sprintf("key size %d is too small, keyCommonPrefixSize: %d, incSuffixLen: %d",
+			c.keySize, keyCommonPrefixSize, incSuffixLen))
+	}
+
+	go func() {
+		defer close(c.keyOutCh)
+		for i := 0; i < c.count; i++ {
+			// ret to use most left bytes to alternate the key
+			for j := keyCommonPrefixSize + incSuffixLen - 1; j >= keyCommonPrefixSize; j-- {
+				c.curKey[j]++
+				if c.curKey[j] != 0 {
+					break
+				}
+			}
+			c.keyOutCh <- slices.Clone(c.curKey)
+		}
+	}()
+}
+
 type ascendingKeySource struct {
-	keySize, valueSize int
-	keyCommonPrefix    []byte
-	count              int
-	keys               [][]byte
-	keysIdx            int
-	curKey             []byte
-	totalSize          int
+	valueSize int
+	keys      [][]byte
+	keysIdx   int
+	totalSize int
 }
 
 func newAscendingKeySource(
@@ -67,38 +113,17 @@ func newAscendingKeySource(
 	valueSize int,
 	keyCommonPrefix []byte,
 ) *ascendingKeySource {
+	keyCh := generateAscendingKey(count, keySize, keyCommonPrefix)
 	s := &ascendingKeySource{
-		keySize:         keySize,
-		valueSize:       valueSize,
-		count:           count,
-		keyCommonPrefix: keyCommonPrefix,
+		valueSize: valueSize,
+		keys:      make([][]byte, count),
 	}
-	s.curKey = make([]byte, keySize)
-	copy(s.curKey, keyCommonPrefix)
-	s.keys = make([][]byte, count)
-	s.run()
+	for i := 0; i < count; i++ {
+		key := <-keyCh
+		s.keys[i] = key
+		s.totalSize += len(key) + valueSize
+	}
 	return s
-}
-
-func (s *ascendingKeySource) run() {
-	keyCommonPrefixSize := len(s.keyCommonPrefix)
-	incSuffixLen := int(math.Ceil(math.Log2(float64(s.count)) / 8))
-	if s.keySize-keyCommonPrefixSize < incSuffixLen {
-		panic(fmt.Sprintf("key size %d is too small, keyCommonPrefixSize: %d, incSuffixLen: %d",
-			s.keySize, keyCommonPrefixSize, incSuffixLen))
-	}
-	for i := range s.keys {
-		// ret to use most left bytes to alternate the key
-		for j := keyCommonPrefixSize + incSuffixLen - 1; j >= keyCommonPrefixSize; j-- {
-			s.curKey[j]++
-			if s.curKey[j] != 0 {
-				break
-			}
-		}
-		s.keys[i] = make([]byte, s.keySize)
-		copy(s.keys[i], s.curKey)
-		s.totalSize += s.keySize + s.valueSize
-	}
 }
 
 func (s *ascendingKeySource) next() (key, value []byte, handle kv.Handle) {
@@ -114,15 +139,95 @@ func (s *ascendingKeySource) outputSize() int {
 	return s.totalSize
 }
 
+type ascendingKeyAsyncSource struct {
+	valueSize int
+	keyOutCh  chan []byte
+	totalSize int
+}
+
+func newAscendingKeyAsyncSource(
+	count int,
+	keySize int,
+	valueSize int,
+	keyCommonPrefix []byte,
+) *ascendingKeyAsyncSource {
+	s := &ascendingKeyAsyncSource{
+		valueSize: valueSize,
+		keyOutCh:  generateAscendingKey(count, keySize, keyCommonPrefix),
+	}
+	return s
+}
+
+func (s *ascendingKeyAsyncSource) next() (key, value []byte, handle kv.Handle) {
+	key, ok := <-s.keyOutCh
+	if !ok {
+		return nil, nil, nil
+	}
+	s.totalSize += len(key) + s.valueSize
+	return key, make([]byte, s.valueSize), nil
+}
+
+func (s *ascendingKeyAsyncSource) outputSize() int {
+	return s.totalSize
+}
+
+type randomKeyGenerator struct {
+	keySize         int
+	keyCommonPrefix []byte
+	rnd             *rand.Rand
+	count           int
+	curKey          []byte
+	keyOutCh        chan []byte
+}
+
+func generateRandomKey(
+	count int,
+	keySize int,
+	keyCommonPrefix []byte,
+	seed int,
+) chan []byte {
+	c := &randomKeyGenerator{
+		keySize:         keySize,
+		count:           count,
+		keyCommonPrefix: keyCommonPrefix,
+		rnd:             rand.New(rand.NewSource(int64(seed))),
+		keyOutCh:        make(chan []byte, 100),
+	}
+	c.curKey = make([]byte, keySize)
+	copy(c.curKey, keyCommonPrefix)
+	c.run()
+	return c.keyOutCh
+}
+
+func (c *randomKeyGenerator) run() {
+	keyCommonPrefixSize := len(c.keyCommonPrefix)
+	incSuffixLen := int(math.Ceil(math.Log2(float64(c.count)) / 8))
+	randomLen := c.keySize - keyCommonPrefixSize - incSuffixLen
+	if randomLen < 0 {
+		panic(fmt.Sprintf("key size %d is too small, keyCommonPrefixSize: %d, incSuffixLen: %d",
+			c.keySize, keyCommonPrefixSize, incSuffixLen))
+	}
+
+	go func() {
+		defer close(c.keyOutCh)
+		for i := 0; i < c.count; i++ {
+			c.rnd.Read(c.curKey[keyCommonPrefixSize : keyCommonPrefixSize+randomLen])
+			for j := len(c.curKey) - 1; j >= keyCommonPrefixSize+randomLen; j-- {
+				c.curKey[j]++
+				if c.curKey[j] != 0 {
+					break
+				}
+			}
+			c.keyOutCh <- slices.Clone(c.curKey)
+		}
+	}()
+}
+
 type randomKeySource struct {
-	keySize, valueSize int
-	keyCommonPrefix    []byte
-	rnd                *rand.Rand
-	count              int
-	keys               [][]byte
-	keysIdx            int
-	curKey             []byte
-	totalSize          int
+	valueSize int
+	keys      [][]byte
+	keysIdx   int
+	totalSize int
 }
 
 func newRandomKeySource(
@@ -132,40 +237,17 @@ func newRandomKeySource(
 	keyCommonPrefix []byte,
 	seed int,
 ) *randomKeySource {
+	keyCh := generateRandomKey(count, keySize, keyCommonPrefix, seed)
 	s := &randomKeySource{
-		keySize:         keySize,
-		valueSize:       valueSize,
-		count:           count,
-		keyCommonPrefix: keyCommonPrefix,
-		rnd:             rand.New(rand.NewSource(int64(seed))),
+		valueSize: valueSize,
+		keys:      make([][]byte, count),
 	}
-	s.curKey = make([]byte, keySize)
-	copy(s.curKey, keyCommonPrefix)
-	s.keys = make([][]byte, count)
-	s.run()
+	for i := 0; i < count; i++ {
+		key := <-keyCh
+		s.keys[i] = key
+		s.totalSize += len(key) + valueSize
+	}
 	return s
-}
-
-func (s *randomKeySource) run() {
-	keyCommonPrefixSize := len(s.keyCommonPrefix)
-	incSuffixLen := int(math.Ceil(math.Log2(float64(s.count)) / 8))
-	randomLen := s.keySize - keyCommonPrefixSize - incSuffixLen
-	if randomLen < 0 {
-		panic(fmt.Sprintf("key size %d is too small, keyCommonPrefixSize: %d, incSuffixLen: %d",
-			s.keySize, keyCommonPrefixSize, incSuffixLen))
-	}
-	for i := 0; i < s.count; i++ {
-		s.rnd.Read(s.curKey[keyCommonPrefixSize : keyCommonPrefixSize+randomLen])
-		for j := len(s.curKey) - 1; j >= keyCommonPrefixSize+randomLen; j-- {
-			s.curKey[j]++
-			if s.curKey[j] != 0 {
-				break
-			}
-		}
-		s.keys[i] = make([]byte, s.keySize)
-		copy(s.keys[i], s.curKey)
-		s.totalSize += s.keySize + s.valueSize
-	}
 }
 
 func (s *randomKeySource) next() (key, value []byte, handle kv.Handle) {
@@ -757,7 +839,7 @@ func TestPrepareLargeData(t *testing.T) {
 				return
 			}
 			kvCnt := fileSize * (endFile - startFile) / (keySize + valueSize + 16)
-			source := newAscendingKeySource(kvCnt, keySize, valueSize, []byte{byte(i)})
+			source := newAscendingKeyAsyncSource(kvCnt, keySize, valueSize, []byte{byte(i)})
 			key, val, _ := source.next()
 			for key != nil {
 				err := writer.WriteRow(ctx, key, val, nil)
