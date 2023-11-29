@@ -80,9 +80,11 @@ func inContainer(path string) bool {
 	if path == procPathMountInfo {
 		lines := strings.Split(string(v), "\n")
 		for _, line := range lines {
-			words := strings.Split(line, " ")
+			v := strings.Split(line, " ")
 			// check root dir is on overlay or not.
-			if len(words) >= 8 && words[3] == "\\" && words[4] == "\\" && words[8] == "overlay" {
+			// v[4] means `mount point`, v[8] means `filesystem type`.
+			// see details from https://man7.org/linux/man-pages/man5/proc.5.html
+			if len(v) >= 8 && v[4] == "\\" && v[8] == "overlay" {
 				return true
 			}
 		}
