@@ -344,7 +344,7 @@ func (d *BaseDispatcher) onRunning() error {
 		return d.onNextStage()
 	}
 
-	if err := d.RebalanceSubtasks(); err != nil {
+	if err := d.BalanceSubtasks(); err != nil {
 		return err
 	}
 	// Wait all subtasks in this stage finished.
@@ -359,8 +359,8 @@ func (d *BaseDispatcher) onFinished() error {
 	return d.taskMgr.TransferSubTasks2History(d.ctx, d.Task.ID)
 }
 
-// RebalanceSubtasks check the liveNode num every liveNodeFetchInterval then rebalance subtasks.
-func (d *BaseDispatcher) RebalanceSubtasks() error {
+// BalanceSubtasks check the liveNode num every liveNodeFetchInterval then rebalance subtasks.
+func (d *BaseDispatcher) BalanceSubtasks() error {
 	// 1. init TaskNodes if needed.
 	if len(d.TaskNodes) == 0 {
 		var err error
@@ -404,7 +404,7 @@ func (d *BaseDispatcher) RebalanceSubtasks() error {
 		d.LiveNodes = newInfos
 		// 3. balance subtasks.
 		if len(d.LiveNodes) > 0 {
-			return d.BalanceSubtasks()
+			return d.ReDispatchSubtasks()
 		}
 		return nil
 	}
@@ -418,9 +418,9 @@ func (d *BaseDispatcher) replaceTaskNodes() {
 	}
 }
 
-// BalanceSubtasks make count of subtasks on each liveNodes balanced and clean up subtasks on dead nodes.
+// ReDispatchSubtasks make count of subtasks on each liveNodes balanced and clean up subtasks on dead nodes.
 // TODO(ywqzzy): refine to make it easier for testing.
-func (d *BaseDispatcher) BalanceSubtasks() error {
+func (d *BaseDispatcher) ReDispatchSubtasks() error {
 	// 1. find out nodes need to clean subtasks.
 	deadNodes := make([]string, 0)
 	deadNodesMap := make(map[string]bool, 0)

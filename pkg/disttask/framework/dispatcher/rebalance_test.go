@@ -63,7 +63,7 @@ func scaleTest(t *testing.T,
 	dsp := dispatcher.NewBaseDispatcher(ctx, mockTaskMgr, "server", &proto.Task{Step: proto.StepInit, ID: int64(id)})
 	dsp.LiveNodes = testCase.liveNodes
 	dsp.TaskNodes = testCase.taskNodes
-	require.NoError(t, dsp.BalanceSubtasks())
+	require.NoError(t, dsp.ReDispatchSubtasks())
 	slices.SortFunc(dsp.TaskNodes, func(i, j string) int {
 		return strings.Compare(i, j)
 	})
@@ -88,7 +88,7 @@ func balanceTest(t *testing.T,
 	dsp := dispatcher.NewBaseDispatcher(ctx, mockTaskMgr, "server", &proto.Task{Step: proto.StepInit, ID: int64(id)})
 	dsp.LiveNodes = testCase.liveNodes
 	dsp.TaskNodes = testCase.taskNodes
-	require.NoError(t, dsp.BalanceSubtasks())
+	require.NoError(t, dsp.ReDispatchSubtasks())
 	slices.SortFunc(dsp.TaskNodes, func(i, j string) int {
 		return strings.Compare(i, j)
 	})
