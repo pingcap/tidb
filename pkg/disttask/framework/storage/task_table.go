@@ -195,7 +195,7 @@ func (stm *TaskManager) AddNewGlobalTask(ctx context.Context, key string, tp pro
 }
 
 // AddGlobalTaskWithSession adds a new task to global task table with session.
-func (stm *TaskManager) AddGlobalTaskWithSession(ctx context.Context, se sessionctx.Context, key string, tp proto.TaskType, concurrency int, meta []byte) (taskID int64, err error) {
+func (*TaskManager) AddGlobalTaskWithSession(ctx context.Context, se sessionctx.Context, key string, tp proto.TaskType, concurrency int, meta []byte) (taskID int64, err error) {
 	_, err = ExecSQL(ctx, se,
 		`insert into mysql.tidb_global_task(task_key, type, state, concurrency, step, meta, start_time, state_update_time)
 		values (%?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())`,
@@ -813,7 +813,7 @@ func (stm *TaskManager) CancelGlobalTask(ctx context.Context, taskID int64) erro
 }
 
 // CancelGlobalTaskByKeySession cancels global task by key using input session.
-func (stm *TaskManager) CancelGlobalTaskByKeySession(ctx context.Context, se sessionctx.Context, taskKey string) error {
+func (*TaskManager) CancelGlobalTaskByKeySession(ctx context.Context, se sessionctx.Context, taskKey string) error {
 	_, err := ExecSQL(ctx, se,
 		"update mysql.tidb_global_task set state=%?, state_update_time = CURRENT_TIMESTAMP() "+
 			"where task_key=%? and state in (%?, %?)",
