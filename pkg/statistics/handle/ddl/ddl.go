@@ -17,8 +17,10 @@ package ddl
 import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"go.uber.org/zap"
 )
 
 type ddlHandlerImpl struct {
@@ -116,10 +118,33 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 			}
 		}
 	case model.ActionDropTablePartition:
-		// TODO: Update the modify count and count for the global table.
-		_, droppedPartitionInfo := t.GetDropPartitionInfo()
+		globalTableInfo, droppedPartitionInfo := t.GetDropPartitionInfo()
+
+		count := int64(0)
 		for _, def := range droppedPartitionInfo.Definitions {
+			// Get the count and modify count of the partition.
+			stats := h.statsHandler.GetPartitionStats(globalTableInfo, def.ID)
+			if stats.Pseudo {
+				logutil.StatsLogger.Warn(
+					"drop partition with pseudo stats, "+
+						"usually it won't happen because we always load stats when initializing the handle",
+					zap.String("table", globalTableInfo.Name.O),
+					zap.String("partition", def.Name.O),
+				)
+			} else {
+				count += stats.RealtimeCount
+			}
+			// Always reset the partition stats.
 			if err := h.statsWriter.ResetTableStats2KVForDrop(def.ID); err != nil {
+				return err
+			}
+		}
+		if count != 0 {
+			// Because we drop the partition, we should subtract the count from the global stats.
+			delta := -count
+			if err := h.statsWriter.UpdateStatsMetaDelta(
+				globalTableInfo.ID, count, delta,
+			); err != nil {
 				return err
 			}
 		}
