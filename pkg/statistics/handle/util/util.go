@@ -19,7 +19,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -59,12 +58,6 @@ var (
 	// StatsCtx is used to mark the request is from stats module.
 	StatsCtx = kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 )
-
-// SessionPool is used to recycle sessionctx.
-type SessionPool interface {
-	Get() (pools.Resource, error)
-	Put(pools.Resource)
-}
 
 // finishTransaction will execute `commit` when error is nil, otherwise `rollback`.
 func finishTransaction(sctx sessionctx.Context, err error) error {
@@ -169,6 +162,15 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 	}
 	sctx.GetSessionVars().AnalyzePartitionMergeConcurrency = int(ver)
 	return nil
+}
+
+// GetCurrentPruneMode returns the current latest partitioning table prune mode.
+func GetCurrentPruneMode(pool SessionPool) (mode string, err error) {
+	err = CallWithSCtx(pool, func(sctx sessionctx.Context) error {
+		mode = sctx.GetSessionVars().PartitionPruneMode.Load()
+		return nil
+	})
+	return
 }
 
 // WrapTxn uses a transaction here can let different SQLs in this operation have the same data visibility.

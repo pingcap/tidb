@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
+	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -29,12 +30,12 @@ import (
 
 // statsHistoryImpl implements util.StatsHistory.
 type statsHistoryImpl struct {
-	statsHandle util.StatsHandle
+	statsHandle types.StatsHandle
 }
 
 // NewStatsHistory creates a new StatsHistory.
-func NewStatsHistory(statsHandle util.StatsHandle,
-) util.StatsHistory {
+func NewStatsHistory(statsHandle types.StatsHandle,
+) types.StatsHistory {
 	return &statsHistoryImpl{
 		statsHandle: statsHandle,
 	}

@@ -12,22 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package issue
+//go:build boringcrypto
+// +build boringcrypto
+
+package main
 
 import (
-	"flag"
-	"testing"
+	_ "crypto/tls/fipsonly"
 
-	"github.com/pingcap/tidb/pkg/testkit/testsetup"
-	"go.uber.org/goleak"
+	"github.com/pingcap/tidb/br/pkg/version/build"
 )
 
-func TestMain(m *testing.M) {
-	testsetup.SetupForCommonTest()
-	flag.Parse()
-	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
-		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
-	}
-	goleak.VerifyTestMain(m, opts...)
+func init() {
+	build.ReleaseVersion += "-fips"
 }

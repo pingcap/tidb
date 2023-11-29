@@ -12,4 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package partitiontest
+//go:build boringcrypto
+// +build boringcrypto
+
+package main
+
+import (
+	_ "crypto/tls/fipsonly"
+
+	"github.com/pingcap/tidb/br/pkg/version/build"
+)
+
+func init() {
+	build.ReleaseVersion += "-fips"
+}

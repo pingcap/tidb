@@ -154,37 +154,37 @@ func TestClone(t *testing.T) {
 }
 
 func TestGetUint64FromConstant(t *testing.T) {
+	ctx := mock.NewContext()
 	con := &Constant{
 		Value: types.NewDatum(nil),
 	}
-	_, isNull, ok := GetUint64FromConstant(con)
+	_, isNull, ok := GetUint64FromConstant(ctx, con)
 	require.True(t, ok)
 	require.True(t, isNull)
 
 	con = &Constant{
 		Value: types.NewIntDatum(-1),
 	}
-	_, _, ok = GetUint64FromConstant(con)
+	_, _, ok = GetUint64FromConstant(ctx, con)
 	require.False(t, ok)
 
 	con.Value = types.NewIntDatum(1)
-	num, isNull, ok := GetUint64FromConstant(con)
+	num, isNull, ok := GetUint64FromConstant(ctx, con)
 	require.True(t, ok)
 	require.False(t, isNull)
 	require.Equal(t, uint64(1), num)
 
 	con.Value = types.NewUintDatum(1)
-	num, _, _ = GetUint64FromConstant(con)
+	num, _, _ = GetUint64FromConstant(ctx, con)
 	require.Equal(t, uint64(1), num)
 
 	con.DeferredExpr = &Constant{Value: types.NewIntDatum(1)}
-	num, _, _ = GetUint64FromConstant(con)
+	num, _, _ = GetUint64FromConstant(ctx, con)
 	require.Equal(t, uint64(1), num)
 
-	ctx := mock.NewContext()
 	ctx.GetSessionVars().PlanCacheParams.Append(types.NewUintDatum(100))
 	con.ParamMarker = &ParamMarker{order: 0, ctx: ctx}
-	num, _, _ = GetUint64FromConstant(con)
+	num, _, _ = GetUint64FromConstant(ctx, con)
 	require.Equal(t, uint64(100), num)
 }
 
@@ -195,7 +195,7 @@ func TestSetExprColumnInOperand(t *testing.T) {
 	ctx := mock.NewContext()
 	f, err := funcs[ast.Abs].getFunction(ctx, []Expression{col})
 	require.NoError(t, err)
-	fun := &ScalarFunction{Function: f, ctx: ctx}
+	fun := &ScalarFunction{Function: f}
 	SetExprColumnInOperand(fun)
 	require.True(t, f.getArgs()[0].(*Column).InOperand)
 }
@@ -205,7 +205,7 @@ func TestPopRowFirstArg(t *testing.T) {
 	c1, c2, c3 := &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}
 	f, err := funcs[ast.RowFunc].getFunction(ctx, []Expression{c1, c2, c3})
 	require.NoError(t, err)
-	fun := &ScalarFunction{Function: f, FuncName: model.NewCIStr(ast.RowFunc), RetType: newIntFieldType(), ctx: ctx}
+	fun := &ScalarFunction{Function: f, FuncName: model.NewCIStr(ast.RowFunc), RetType: newIntFieldType()}
 	fun2, err := PopRowFirstArg(mock.NewContext(), fun)
 	require.NoError(t, err)
 	require.Len(t, fun2.(*ScalarFunction).GetArgs(), 2)
@@ -245,21 +245,21 @@ func TestSubstituteCorCol2Constant(t *testing.T) {
 	corCol2 := &CorrelatedColumn{Data: &NewOne().Value}
 	corCol2.RetType = types.NewFieldType(mysql.TypeLonglong)
 	cast := BuildCastFunction(ctx, corCol1, types.NewFieldType(mysql.TypeLonglong))
-	plus := newFunction(ast.Plus, cast, corCol2)
-	plus2 := newFunction(ast.Plus, plus, NewOne())
+	plus := newFunctionWithMockCtx(ast.Plus, cast, corCol2)
+	plus2 := newFunctionWithMockCtx(ast.Plus, plus, NewOne())
 	ans1 := &Constant{Value: types.NewIntDatum(3), RetType: types.NewFieldType(mysql.TypeLonglong)}
-	ret, err := SubstituteCorCol2Constant(plus2)
+	ret, err := SubstituteCorCol2Constant(ctx, plus2)
 	require.NoError(t, err)
 	require.True(t, ret.Equal(ctx, ans1))
 	col1 := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
-	ret, err = SubstituteCorCol2Constant(col1)
+	ret, err = SubstituteCorCol2Constant(ctx, col1)
 	require.NoError(t, err)
 	ans2 := col1
 	require.True(t, ret.Equal(ctx, ans2))
-	plus3 := newFunction(ast.Plus, plus2, col1)
-	ret, err = SubstituteCorCol2Constant(plus3)
+	plus3 := newFunctionWithMockCtx(ast.Plus, plus2, col1)
+	ret, err = SubstituteCorCol2Constant(ctx, plus3)
 	require.NoError(t, err)
-	ans3 := newFunction(ast.Plus, ans1, col1)
+	ans3 := newFunctionWithMockCtx(ast.Plus, ans1, col1)
 	require.True(t, ret.Equal(ctx, ans3))
 }
 
@@ -267,14 +267,14 @@ func TestPushDownNot(t *testing.T) {
 	ctx := mock.NewContext()
 	col := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	// !((a=1||a=1)&&a=1)
-	eqFunc := newFunction(ast.EQ, col, NewOne())
-	orFunc := newFunction(ast.LogicOr, eqFunc, eqFunc)
-	andFunc := newFunction(ast.LogicAnd, orFunc, eqFunc)
-	notFunc := newFunction(ast.UnaryNot, andFunc)
+	eqFunc := newFunctionWithMockCtx(ast.EQ, col, NewOne())
+	orFunc := newFunctionWithMockCtx(ast.LogicOr, eqFunc, eqFunc)
+	andFunc := newFunctionWithMockCtx(ast.LogicAnd, orFunc, eqFunc)
+	notFunc := newFunctionWithMockCtx(ast.UnaryNot, andFunc)
 	// (a!=1&&a!=1)||a=1
-	neFunc := newFunction(ast.NE, col, NewOne())
-	andFunc2 := newFunction(ast.LogicAnd, neFunc, neFunc)
-	orFunc2 := newFunction(ast.LogicOr, andFunc2, neFunc)
+	neFunc := newFunctionWithMockCtx(ast.NE, col, NewOne())
+	andFunc2 := newFunctionWithMockCtx(ast.LogicAnd, neFunc, neFunc)
+	orFunc2 := newFunctionWithMockCtx(ast.LogicOr, andFunc2, neFunc)
 	notFuncCopy := notFunc.Clone()
 	ret := PushDownNot(ctx, notFunc)
 	require.True(t, ret.Equal(ctx, orFunc2))
@@ -282,37 +282,37 @@ func TestPushDownNot(t *testing.T) {
 
 	// issue 15725
 	// (not not a) should be optimized to (a is true)
-	notFunc = newFunction(ast.UnaryNot, col)
-	notFunc = newFunction(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, col)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	require.True(t, ret.Equal(ctx, newFunction(ast.IsTruthWithNull, col)))
+	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.IsTruthWithNull, col)))
 
 	// (not not (a+1)) should be optimized to (a+1 is true)
-	plusFunc := newFunction(ast.Plus, col, NewOne())
-	notFunc = newFunction(ast.UnaryNot, plusFunc)
-	notFunc = newFunction(ast.UnaryNot, notFunc)
+	plusFunc := newFunctionWithMockCtx(ast.Plus, col, NewOne())
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, plusFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	require.True(t, ret.Equal(ctx, newFunction(ast.IsTruthWithNull, plusFunc)))
+	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.IsTruthWithNull, plusFunc)))
 	// (not not not a) should be optimized to (not (a is true))
-	notFunc = newFunction(ast.UnaryNot, col)
-	notFunc = newFunction(ast.UnaryNot, notFunc)
-	notFunc = newFunction(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, col)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	require.True(t, ret.Equal(ctx, newFunction(ast.UnaryNot, newFunction(ast.IsTruthWithNull, col))))
+	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.UnaryNot, newFunctionWithMockCtx(ast.IsTruthWithNull, col))))
 	// (not not not not a) should be optimized to (a is true)
-	notFunc = newFunction(ast.UnaryNot, col)
-	notFunc = newFunction(ast.UnaryNot, notFunc)
-	notFunc = newFunction(ast.UnaryNot, notFunc)
-	notFunc = newFunction(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, col)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	require.True(t, ret.Equal(ctx, newFunction(ast.IsTruthWithNull, col)))
+	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.IsTruthWithNull, col)))
 }
 
 func TestFilter(t *testing.T) {
 	conditions := []Expression{
-		newFunction(ast.EQ, newColumn(0), newColumn(1)),
-		newFunction(ast.EQ, newColumn(1), newColumn(2)),
-		newFunction(ast.LogicOr, newLonglong(1), newColumn(0)),
+		newFunctionWithMockCtx(ast.EQ, newColumn(0), newColumn(1)),
+		newFunctionWithMockCtx(ast.EQ, newColumn(1), newColumn(2)),
+		newFunctionWithMockCtx(ast.LogicOr, newLonglong(1), newColumn(0)),
 	}
 	result := make([]Expression, 0, 5)
 	result = Filter(result, conditions, isLogicOrFunction)
@@ -321,9 +321,9 @@ func TestFilter(t *testing.T) {
 
 func TestFilterOutInPlace(t *testing.T) {
 	conditions := []Expression{
-		newFunction(ast.EQ, newColumn(0), newColumn(1)),
-		newFunction(ast.EQ, newColumn(1), newColumn(2)),
-		newFunction(ast.LogicOr, newLonglong(1), newColumn(0)),
+		newFunctionWithMockCtx(ast.EQ, newColumn(0), newColumn(1)),
+		newFunctionWithMockCtx(ast.EQ, newColumn(1), newColumn(2)),
+		newFunctionWithMockCtx(ast.LogicOr, newLonglong(1), newColumn(0)),
 	}
 	remained, filtered := FilterOutInPlace(conditions, isLogicOrFunction)
 	require.Equal(t, 2, len(remained))
@@ -354,14 +354,14 @@ func TestHashGroupKey(t *testing.T) {
 		var err error
 		err = EvalExpr(ctx, colExpr, colExpr.GetType().EvalType(), input, colBuf)
 		require.NoError(t, err)
-		bufs, err = codec.HashGroupKey(sc, 1024, colBuf, bufs, ft)
+		bufs, err = codec.HashGroupKey(sc.TimeZone(), 1024, colBuf, bufs, ft)
 		require.NoError(t, err)
 
 		var buf []byte
 		for j := 0; j < input.NumRows(); j++ {
-			d, err := colExpr.Eval(input.GetRow(j))
+			d, err := colExpr.Eval(ctx, input.GetRow(j))
 			require.NoError(t, err)
-			buf, err = codec.EncodeValue(sc, buf[:0], d)
+			buf, err = codec.EncodeValue(sc.TimeZone(), buf[:0], d)
 			require.NoError(t, err)
 			require.Equal(t, string(bufs[j]), string(buf))
 		}
@@ -459,11 +459,11 @@ func TestSQLDigestTextRetriever(t *testing.T) {
 
 func BenchmarkExtractColumns(b *testing.B) {
 	conditions := []Expression{
-		newFunction(ast.EQ, newColumn(0), newColumn(1)),
-		newFunction(ast.EQ, newColumn(1), newColumn(2)),
-		newFunction(ast.EQ, newColumn(2), newColumn(3)),
-		newFunction(ast.EQ, newColumn(3), newLonglong(1)),
-		newFunction(ast.LogicOr, newLonglong(1), newColumn(0)),
+		newFunctionWithMockCtx(ast.EQ, newColumn(0), newColumn(1)),
+		newFunctionWithMockCtx(ast.EQ, newColumn(1), newColumn(2)),
+		newFunctionWithMockCtx(ast.EQ, newColumn(2), newColumn(3)),
+		newFunctionWithMockCtx(ast.EQ, newColumn(3), newLonglong(1)),
+		newFunctionWithMockCtx(ast.LogicOr, newLonglong(1), newColumn(0)),
 	}
 	expr := ComposeCNFCondition(mock.NewContext(), conditions...)
 
@@ -476,11 +476,11 @@ func BenchmarkExtractColumns(b *testing.B) {
 
 func BenchmarkExprFromSchema(b *testing.B) {
 	conditions := []Expression{
-		newFunction(ast.EQ, newColumn(0), newColumn(1)),
-		newFunction(ast.EQ, newColumn(1), newColumn(2)),
-		newFunction(ast.EQ, newColumn(2), newColumn(3)),
-		newFunction(ast.EQ, newColumn(3), newLonglong(1)),
-		newFunction(ast.LogicOr, newLonglong(1), newColumn(0)),
+		newFunctionWithMockCtx(ast.EQ, newColumn(0), newColumn(1)),
+		newFunctionWithMockCtx(ast.EQ, newColumn(1), newColumn(2)),
+		newFunctionWithMockCtx(ast.EQ, newColumn(2), newColumn(3)),
+		newFunctionWithMockCtx(ast.EQ, newColumn(3), newLonglong(1)),
+		newFunctionWithMockCtx(ast.LogicOr, newLonglong(1), newColumn(0)),
 	}
 	expr := ComposeCNFCondition(mock.NewContext(), conditions...)
 	schema := &Schema{Columns: ExtractColumns(expr)}
@@ -521,9 +521,11 @@ func (m *MockExpr) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, resul
 	return nil
 }
 
-func (m *MockExpr) String() string                          { return "" }
-func (m *MockExpr) MarshalJSON() ([]byte, error)            { return nil, nil }
-func (m *MockExpr) Eval(row chunk.Row) (types.Datum, error) { return types.NewDatum(m.i), m.err }
+func (m *MockExpr) String() string               { return "" }
+func (m *MockExpr) MarshalJSON() ([]byte, error) { return nil, nil }
+func (m *MockExpr) Eval(ctx sessionctx.Context, row chunk.Row) (types.Datum, error) {
+	return types.NewDatum(m.i), m.err
+}
 func (m *MockExpr) EvalInt(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error) {
 	if x, ok := m.i.(int64); ok {
 		return x, false, m.err
@@ -584,10 +586,11 @@ func (m *MockExpr) resolveIndicesByVirtualExpr(ctx sessionctx.Context, schema *S
 	return true
 }
 func (m *MockExpr) RemapColumn(_ map[int64]*Column) (Expression, error) { return m, nil }
-func (m *MockExpr) ExplainInfo() string                                 { return "" }
+func (m *MockExpr) ExplainInfo(sessionctx.Context) string               { return "" }
 func (m *MockExpr) ExplainNormalizedInfo() string                       { return "" }
 func (m *MockExpr) ExplainNormalizedInfo4InList() string                { return "" }
-func (m *MockExpr) HashCode(sc *stmtctx.StatementContext) []byte        { return nil }
+func (m *MockExpr) HashCode() []byte                                    { return nil }
+func (m *MockExpr) CanonicalHashCode() []byte                           { return nil }
 func (m *MockExpr) Vectorized() bool                                    { return false }
 func (m *MockExpr) SupportReverseEval() bool                            { return false }
 func (m *MockExpr) HasCoercibility() bool                               { return false }

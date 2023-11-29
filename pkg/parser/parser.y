@@ -728,6 +728,7 @@ import (
 	learner               "LEARNER"
 	learnerConstraints    "LEARNER_CONSTRAINTS"
 	learners              "LEARNERS"
+	log                   "LOG"
 	min                   "MIN"
 	max                   "MAX"
 	metadata              "METADATA"
@@ -2981,23 +2982,23 @@ FlashbackToTimestampStmt:
 	"FLASHBACK" "CLUSTER" toTimestamp stringLit
 	{
 		$$ = &ast.FlashBackToTimestampStmt{
-			FlashbackTS: ast.NewValueExpr($4, "", ""),
+			FlashbackTS:  ast.NewValueExpr($4, "", ""),
 			FlashbackTSO: 0,
 		}
 	}
 |	"FLASHBACK" "TABLE" TableNameList toTimestamp stringLit
 	{
 		$$ = &ast.FlashBackToTimestampStmt{
-			Tables:      $3.([]*ast.TableName),
-			FlashbackTS: ast.NewValueExpr($5, "", ""),
+			Tables:       $3.([]*ast.TableName),
+			FlashbackTS:  ast.NewValueExpr($5, "", ""),
 			FlashbackTSO: 0,
 		}
 	}
 |	"FLASHBACK" DatabaseSym DBName toTimestamp stringLit
 	{
 		$$ = &ast.FlashBackToTimestampStmt{
-			DBName:      model.NewCIStr($3),
-			FlashbackTS: ast.NewValueExpr($5, "", ""),
+			DBName:       model.NewCIStr($3),
+			FlashbackTS:  ast.NewValueExpr($5, "", ""),
 			FlashbackTSO: 0,
 		}
 	}
@@ -3005,20 +3006,20 @@ FlashbackToTimestampStmt:
 	{
 		if tsoValue, ok := $4.(uint64); ok && tsoValue > 0 {
 			$$ = &ast.FlashBackToTimestampStmt{
-        		FlashbackTSO: tsoValue,
-        	}
+				FlashbackTSO: tsoValue,
+			}
 		} else {
-    		yylex.AppendError(yylex.Errorf("Invalid TSO value provided: %d", $4))
-    		return 1
+			yylex.AppendError(yylex.Errorf("Invalid TSO value provided: %d", $4))
+			return 1
 		}
 	}
 |	"FLASHBACK" "TABLE" TableNameList toTSO LengthNum
 	{
 		if tsoValue, ok := $5.(uint64); ok && tsoValue > 0 {
 			$$ = &ast.FlashBackToTimestampStmt{
-            	Tables:      $3.([]*ast.TableName),
-            	FlashbackTSO: tsoValue,
-            }
+				Tables:       $3.([]*ast.TableName),
+				FlashbackTSO: tsoValue,
+			}
 		} else {
 			yylex.AppendError(yylex.Errorf("Invalid TSO value provided: %d", $5))
 			return 1
@@ -3028,15 +3029,14 @@ FlashbackToTimestampStmt:
 	{
 		if tsoValue, ok := $5.(uint64); ok && tsoValue > 0 {
 			$$ = &ast.FlashBackToTimestampStmt{
-            	DBName:      model.NewCIStr($3),
-            	FlashbackTSO: tsoValue,
+				DBName:       model.NewCIStr($3),
+				FlashbackTSO: tsoValue,
 			}
 		} else {
 			yylex.AppendError(yylex.Errorf("Invalid TSO value provided: %d", $5))
 			return 1
 		}
 	}
-
 
 /*******************************************************************
  *
@@ -6807,7 +6807,7 @@ UnReservedKeyword:
 |	"STORAGE"
 |	"DISK"
 |	"STATS_SAMPLE_PAGES"
-|   "SECONDARY"
+|	"SECONDARY"
 |	"SECONDARY_ENGINE"
 |	"SECONDARY_LOAD"
 |	"SECONDARY_UNLOAD"
@@ -6996,6 +6996,7 @@ NotKeywordToken:
 |	"INPLACE"
 |	"INSTANT"
 |	"INTERNAL"
+|	"LOG"
 |	"MIN"
 |	"MAX"
 |	"NOW"
@@ -7867,6 +7868,7 @@ FunctionNameConflict:
 |	"HOUR"
 |	"IF"
 |	"INTERVAL"
+|	"LOG"
 |	"FORMAT"
 |	"LEFT"
 |	"MICROSECOND"
@@ -10928,15 +10930,15 @@ BDRRole:
 	{
 		$$ = ast.BDRRolePrimary
 	}
-|   "SECONDARY"
+|	"SECONDARY"
 	{
 		$$ = ast.BDRRoleSecondary
 	}
-|   "LOCAL_ONLY"
+|	"LOCAL_ONLY"
 	{
 		$$ = ast.BDRRoleLocalOnly
 	}
-|   "NONE"
+|	"NONE"
 	{
 		$$ = ast.BDRRoleNone
 	}
@@ -11167,7 +11169,7 @@ AdminStmt:
 |	"ADMIN" "SHOW" "BDR" "ROLE"
 	{
 		$$ = &ast.AdminStmt{
-			Tp:      ast.AdminShowBDRRole,
+			Tp: ast.AdminShowBDRRole,
 		}
 	}
 
@@ -11350,9 +11352,16 @@ ShowStmt:
 		}
 	}
 |	"SHOW" "MASTER" "STATUS"
+	// "SHOW MASTER STATUS" was deprecated in MySQL 8.2.0 in favor of "SHOW BINARY LOG STATUS"
 	{
 		$$ = &ast.ShowStmt{
 			Tp: ast.ShowMasterStatus,
+		}
+	}
+|	"SHOW" "BINARY" "LOG" "STATUS"
+	{
+		$$ = &ast.ShowStmt{
+			Tp: ast.ShowBinlogStatus,
 		}
 	}
 |	"SHOW" OptFull "PROCESSLIST"
@@ -13806,6 +13815,20 @@ CreateBindingStmt:
 
 		x := &ast.CreateBindingStmt{
 			OriginNode:  originStmt,
+			HintedNode:  hintedStmt,
+			GlobalScope: $2.(bool),
+		}
+
+		$$ = x
+	}
+|	"CREATE" GlobalScope "BINDING" "USING" BindableStmt
+	{
+		startOffset := parser.startOffset(&yyS[yypt])
+		hintedStmt := $5
+		hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+
+		x := &ast.CreateBindingStmt{
+			OriginNode:  hintedStmt,
 			HintedNode:  hintedStmt,
 			GlobalScope: $2.(bool),
 		}
