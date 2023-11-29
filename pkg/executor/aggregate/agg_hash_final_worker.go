@@ -320,7 +320,7 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 		if num == 0 {
 			panic("Intest panic: final worker is panicked before start")
 		} else if num == 1 {
-			time.Sleep(2 * time.Second)
+			time.Sleep(2 * time.Millisecond)
 		}
 	}
 
@@ -348,7 +348,7 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 				if num < 7 {
 					panic("Intest panic: final worker is panicked when running")
 				} else if num < 14 {
-					time.Sleep(1 * time.Second)
+					time.Sleep(2 * time.Millisecond)
 				} else if num < 21 {
 					// Consume 1TB, and the query should be killed
 					w.memTracker.Consume(1099511627776)

@@ -127,7 +127,7 @@ func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasE
 		if num < 7 {
 			panic("Intest panic: partial worker is panicked when running")
 		} else if num < 14 {
-			time.Sleep(1 * time.Second)
+			time.Sleep(2 * time.Millisecond)
 		} else if num < 21 {
 			*hasError = true
 			w.processError(errors.Errorf("Random fail is triggered in partial worker"))
@@ -166,12 +166,12 @@ func (w *HashAggPartialWorker) handleSpillBeforeExit() {
 }
 
 func (w *HashAggPartialWorker) sendDataToFinalWorkersBeforeExit(needShuffle bool, finalConcurrency int, hasError bool) {
+	w.runningWorkerWaiter.Done()
+	w.runningWorkerWaiter.Wait()
+
 	if hasError {
 		return
 	}
-
-	w.runningWorkerWaiter.Done()
-	w.runningWorkerWaiter.Wait()
 
 	w.spillHelper.syncLock.RLock()
 	defer w.spillHelper.syncLock.RUnlock()
@@ -216,7 +216,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		if num < 2 {
 			panic("Intest panic: partial worker is panicked before start")
 		} else if num >= 2 && num < 4 {
-			time.Sleep(2 * time.Second)
+			time.Sleep(2 * time.Millisecond)
 		}
 	}
 

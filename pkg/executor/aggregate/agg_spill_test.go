@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -264,67 +263,39 @@ func TestGetCorrectResult(t *testing.T) {
 	require.True(t, resContainer.check(result))
 }
 
-func TestGetCorrectResultDeprecated(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/enableAggSpillIntest", `return(false)`)
-
-	store, _ := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists test.test_spill_bin;")
-	tk.MustExec("create table test.test_spill_bin(k varchar(30), v int);")
-	tk.MustExec("insert into test.test_spill_bin (k, v) values ('aa', 1), ('AA', 1), ('aA', 1), ('Aa', 1), ('bb', 1), ('BB', 1), ('bB', 1), ('Bb', 1), ('cc', 1), ('CC', 1), ('cC', 1), ('Cc', 1), ('dd', 1), ('DD', 1), ('dD', 1), ('Dd', 1), ('ee', 1), ('aa', 1), ('AA', 1), ('aA', 1), ('Aa', 1), ('bb', 1), ('BB', 1), ('bB', 1), ('Bb', 1);")
-	tk.MustExec("drop table if exists test.test_spill_ci;")
-	tk.MustExec("create table test.test_spill_ci(k varchar(30), v int) DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;")
-	tk.MustExec("insert into test.test_spill_ci (k, v) values ('aa', 1), ('AA', 1), ('aA', 1), ('Aa', 1), ('bb', 1), ('BB', 1), ('bB', 1), ('Bb', 1), ('cc', 1), ('CC', 1), ('cC', 1), ('Cc', 1), ('dd', 1), ('DD', 1), ('dD', 1), ('Dd', 1), ('ee', 1), ('aa', 1), ('AA', 1), ('aA', 1), ('Aa', 1), ('bb', 1), ('BB', 1), ('bB', 1), ('Bb', 1);")
-	hardLimitBytesNum := 1000000
-	tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%d;", hardLimitBytesNum))
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/triggerSpill", fmt.Sprintf("return(%d)", hardLimitBytesNum))
-
-	// bin collation
-	binCollationResult := make(map[string]string)
-	binCollationResult["CC"] = "1"
-	binCollationResult["aA"] = "2"
-	binCollationResult["DD"] = "1"
-	binCollationResult["Bb"] = "2"
-	binCollationResult["ee"] = "1"
-	binCollationResult["bb"] = "2"
-	binCollationResult["BB"] = "2"
-	binCollationResult["bB"] = "2"
-	binCollationResult["Cc"] = "1"
-	binCollationResult["Dd"] = "1"
-	binCollationResult["dD"] = "1"
-	binCollationResult["Aa"] = "2"
-	binCollationResult["AA"] = "2"
-	binCollationResult["aa"] = "2"
-	binCollationResult["cC"] = "1"
-	binCollationResult["dd"] = "1"
-	binCollationResult["cc"] = "1"
-
-	// ci collation
-	ciCollationResult := make(map[string]string)
-	ciCollationResult["aa"] = "8"
-	ciCollationResult["bb"] = "8"
-	ciCollationResult["cc"] = "4"
-	ciCollationResult["dd"] = "4"
-	ciCollationResult["ee"] = "1"
-}
-
 // TODO maybe add more random fail?
-func TestRandomFailDeprecated(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists test.test_spill_random_fail;")
-	tk.MustExec("create table test.test_spill_random_fail(k varchar(30), v int);")
-	tk.MustExec("insert into test.test_spill_random_fail (k, v) values ('aa', 1), ('AA', 1), ('aA', 1), ('Aa', 1), ('bb', 1), ('BB', 1), ('bB', 1), ('Bb', 1), ('cc', 1), ('CC', 1), ('cC', 1), ('Cc', 1), ('dd', 1), ('DD', 1), ('dD', 1), ('Dd', 1), ('ee', 1), ('aa', 1), ('AA', 1), ('aA', 1), ('Aa', 1), ('bb', 1), ('BB', 1), ('bB', 1), ('Bb', 1);")
+func TestRandomFail(t *testing.T) {
+	hardLimitBytesNum := int64(5000000)
 
-	hardLimitBytesNum := 1000000
-	tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%d;", hardLimitBytesNum))
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/triggerSpill", fmt.Sprintf("return(%d)", hardLimitBytesNum))
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, hardLimitBytesNum)
+	ctx.GetSessionVars().TrackAggregateMemoryUsage = true
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/enableAggSpillIntest", `return(true)`)
+	rowNum := rand.Intn(300000)
+	ndv := rand.Intn(100000)
+	col1, col2 := generateData(rowNum, ndv)
+	opt := getMockDataSourceParameters(ctx)
+	dataSource := buildMockDataSource(opt, col1, col2)
 
 	// Test is successful when all sqls are not hung
-	for i := 0; i < 50; i++ {
-		tk.ExecuteAndResultSetToResultWithCtx("select k, sum(v) from test_spill_random_fail group by k;")
+	for i := 0; i < 200; i++ {
+		dataSource.PrepareChunks()
+		aggExec := buildHashAggExecutor(t, ctx, dataSource)
+		tmpCtx := context.Background()
+		chk := exec.NewFirstChunk(aggExec)
+		aggExec.Open(tmpCtx)
+		for {
+			aggExec.Next(tmpCtx, chk)
+			if chk.NumRows() == 0 {
+				break
+			}
+			chk.Reset()
+		}
+		aggExec.Close()
 	}
 }
