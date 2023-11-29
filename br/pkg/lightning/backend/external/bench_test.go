@@ -508,8 +508,8 @@ func TestPrepareLargeData(t *testing.T) {
 			writer := NewWriterBuilder().
 				SetMemorySizeLimit(uint64(float64(fileSize))).
 				Build(store, largeAscendingDataPath, fmt.Sprintf("%02d", i))
-			startFile := i * filePerConcUpperBound
 			endFile := min((i+1)*filePerConcUpperBound, fileCnt)
+			startFile := min(i*filePerConcUpperBound, endFile)
 			kvCnt := fileSize * (endFile - startFile) / (keySize + valueSize)
 			source := newAscendingKeySource(kvCnt, keySize, valueSize, []byte{byte(i)})
 			key, val, _ := source.next()
