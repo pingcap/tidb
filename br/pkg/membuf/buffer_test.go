@@ -117,6 +117,15 @@ func TestBufferMemLimit(t *testing.T) {
 	require.NotNil(t, got)
 	got, _ = bytesBuf.AllocBytesWithSliceLocation(2)
 	require.Nil(t, got)
+
+	bytesBuf.Reset()
+
+	got, _ = bytesBuf.AllocBytesWithSliceLocation(9)
+	require.NotNil(t, got)
+	got, _ = bytesBuf.AllocBytesWithSliceLocation(9)
+	require.NotNil(t, got)
+	got, _ = bytesBuf.AllocBytesWithSliceLocation(2)
+	require.Nil(t, got)
 }
 
 const dataNum = 100 * 1024 * 1024

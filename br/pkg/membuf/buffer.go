@@ -235,7 +235,7 @@ func (b *Buffer) AllocBytesWithSliceLocation(n int) ([]byte, SliceLocation) {
 	}
 
 	if b.curIdx+n > len(b.curBlock) {
-		if b.blockCntLimit >= 0 && len(b.blocks) >= b.blockCntLimit {
+		if b.blockCntLimit >= 0 && b.curBlockIdx+1 >= b.blockCntLimit {
 			return nil, SliceLocation{}
 		}
 		b.addBuf()
