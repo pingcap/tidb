@@ -12,18 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package aggregate_test
+package aggregate
 
 import (
 	"context"
 	"fmt"
 	"math/rand"
+	"strconv"
 	"testing"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
-	"github.com/pingcap/tidb/pkg/executor/aggregate"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -38,6 +38,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 )
+
+// Chunk schema in this test file: | column0: string | column1: int |
 
 func checkResults(actualRes [][]interface{}, expectedRes map[string]string) bool {
 	if len(actualRes) != len(expectedRes) {
@@ -110,7 +112,6 @@ func generateData(rowNum int, ndv int) ([]string, []int64) {
 	return col1Data, col2Data
 }
 
-// chunk schema: | column1: string | column2: int |
 func buildMockDataSource(opt testutil.MockDataSourceParameters, col1Data []string, col2Data []int64) *testutil.MockDataSource {
 	baseExec := exec.NewBaseExecutor(opt.Ctx, opt.DataSchema, 0)
 	mockDatasource := &testutil.MockDataSource{
@@ -169,7 +170,7 @@ func getMockDataSourceParameters(ctx sessionctx.Context) testutil.MockDataSource
 	}
 }
 
-func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Executor) *aggregate.HashAggExec {
+func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Executor) *HashAggExec {
 	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggFinalConcurrency, fmt.Sprintf("%v", 5)); err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +194,7 @@ func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Execu
 
 	aggFuncs := []*aggregation.AggFuncDesc{aggFirstRow, aggFunc}
 
-	aggExec := &aggregate.HashAggExec{
+	aggExec := &HashAggExec{
 		BaseExecutor:     exec.NewBaseExecutor(ctx, schema, 0, child),
 		Sc:               ctx.GetSessionVars().StmtCtx,
 		PartialAggFuncs:  make([]aggfuncs.AggFunc, 0, len(aggFuncs)),
@@ -216,6 +217,49 @@ func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Execu
 	return aggExec
 }
 
+type resultsContainer struct {
+	rows []chunk.Row
+}
+
+func (r *resultsContainer) Add(chk *chunk.Chunk) {
+	iter := chunk.NewIterator4Chunk(chk.CopyConstruct())
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		r.rows = append(r.rows, row)
+	}
+}
+
+func (r *resultsContainer) check(expectRes map[string]int64) bool {
+	if len(r.rows) != len(expectRes) {
+		return false
+	}
+
+	cols := getColumns()
+	retFields := []*types.FieldType{cols[0].RetType, cols[1].RetType}
+	for _, row := range r.rows {
+		key := ""
+		for i, field := range retFields {
+			d := row.GetDatum(i, field)
+			resStr, err := d.ToString()
+			if err != nil {
+				panic("Fail to convert to string")
+			}
+
+			if i == 0 {
+				key = resStr
+			} else {
+				expectVal, ok := expectRes[key]
+				if !ok {
+					return false
+				}
+				if resStr != strconv.Itoa(int(expectVal)) {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
 func TestGetCorrectResult(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
@@ -236,6 +280,7 @@ func TestGetCorrectResult(t *testing.T) {
 
 	tmpCtx := context.Background()
 	aggExec.Open(tmpCtx)
+	
 }
 
 func TestGetCorrectResultDeprecated(t *testing.T) {
