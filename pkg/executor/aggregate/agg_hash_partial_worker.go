@@ -170,11 +170,11 @@ func (w *HashAggPartialWorker) sendDataToFinalWorkersBeforeExit(needShuffle bool
 		return
 	}
 
-	w.spillHelper.syncLock.RLock()
-	defer w.spillHelper.syncLock.RUnlock()
-
 	w.runningWorkerWaiter.Done()
 	w.runningWorkerWaiter.Wait()
+
+	w.spillHelper.syncLock.RLock()
+	defer w.spillHelper.syncLock.RUnlock()
 
 	w.spillHelper.setAllPartialWorkersFinished()
 
@@ -209,12 +209,6 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		if val.(bool) {
 			enableIntest = true
 		}
-	})
-
-	failpoint.Inject("triggerSpill", func(val failpoint.Value) {
-		// 0.9 ensure that it will exceed the soft limit, soft limit factor is 0.8.
-		consumeNum := float32(val.(int)) * 0.9
-		w.memTracker.Consume(int64(consumeNum))
 	})
 
 	if intest.InTest && enableIntest {

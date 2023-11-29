@@ -765,3 +765,7 @@ func (e *HashAggExec) initRuntimeStats() {
 		e.stats = stats
 	}
 }
+
+func (e *HashAggExec) IsSpillTriggeredForTest() bool {
+	return e.spillHelper.isSpillTriggered()
+}

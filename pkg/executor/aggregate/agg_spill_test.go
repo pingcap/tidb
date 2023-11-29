@@ -88,8 +88,7 @@ func (r *resultsContainer) check(expectRes map[string]float64) bool {
 }
 
 func getRandString() string {
-	strLen := rand.Intn(10) + 1 // At least 1
-	b := make([]byte, strLen)
+	b := make([]byte, 5)
 	for i := range b {
 		b[i] = letterBytes[rand.Intn(len(letterBytes))]
 	}
@@ -226,17 +225,19 @@ func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Execu
 }
 
 func TestGetCorrectResult(t *testing.T) {
+	hardLimitBytesNum := int64(15000000)
+
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, -1)
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, hardLimitBytesNum)
 	ctx.GetSessionVars().TrackAggregateMemoryUsage = true
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/enableAggSpillIntest", `return(false)`)
-	rowNum := rand.Intn(3000) + 3000
-	ndv := rand.Intn(50) + 50
+	rowNum := rand.Intn(300000)
+	ndv := rand.Intn(100000)
 	col1, col2 := generateData(rowNum, ndv)
 	result := generateResult(col1, col2)
 	opt := getMockDataSourceParameters(ctx)
@@ -259,6 +260,7 @@ func TestGetCorrectResult(t *testing.T) {
 	}
 	aggExec.Close()
 
+	require.True(t, aggExec.IsSpillTriggeredForTest())
 	require.True(t, resContainer.check(result))
 }
 
