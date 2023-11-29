@@ -59,7 +59,6 @@ func GetReplicationState(ctx context.Context, startKey []byte, endKey []byte) (P
 		return PlacementScheduleStatePending, err
 	}
 	st := PlacementScheduleStatePending
-	// it should not fail
 	switch state {
 	case "REPLICATED":
 		st = PlacementScheduleStateScheduled

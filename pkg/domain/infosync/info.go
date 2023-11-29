@@ -199,10 +199,13 @@ func GlobalInfoSyncerInit(
 	codec tikv.Codec,
 	skipRegisterToDashBoard bool,
 ) (*InfoSyncer, error) {
+	if pdHTTPCli != nil {
+		pdHTTPCli = pdHTTPCli.WithRespHandler(pdResponseHandler)
+	}
 	is := &InfoSyncer{
 		etcdCli:           etcdCli,
-		pdHTTPCli:         pdHTTPCli.WithRespHandler(pdResponseHandler),
 		unprefixedEtcdCli: unprefixedEtcdCli,
+		pdHTTPCli:         pdHTTPCli,
 		info:              getServerInfo(id, serverIDGetter),
 		serverInfoPath:    fmt.Sprintf("%s/%s", ServerInformationPath, id),
 		minStartTSPath:    fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
@@ -211,11 +214,11 @@ func GlobalInfoSyncerInit(
 	if err != nil {
 		return nil, err
 	}
-	is.labelRuleManager = initLabelRuleManager(is.pdHTTPCli)
-	is.placementManager = initPlacementManager(is.pdHTTPCli)
-	is.scheduleManager = initScheduleManager(is.pdHTTPCli)
-	is.tiflashReplicaManager = initTiFlashReplicaManager(is.pdHTTPCli, codec)
-	is.resourceManagerClient = initResourceManagerClient(pdCli)
+	is.initLabelRuleManager()
+	is.initPlacementManager()
+	is.initScheduleManager()
+	is.initTiFlashReplicaManager(codec)
+	is.initResourceManagerClient(pdCli)
 	setGlobalInfoSyncer(is)
 	return is, nil
 }
@@ -246,22 +249,24 @@ func (is *InfoSyncer) GetSessionManager() util2.SessionManager {
 	return is.managerMu.SessionManager
 }
 
-func initLabelRuleManager(pdHTTPCli pdhttp.Client) LabelRuleManager {
-	if pdHTTPCli == nil {
-		return &mockLabelManager{labelRules: map[string][]byte{}}
+func (is *InfoSyncer) initLabelRuleManager() {
+	if is.pdHTTPCli == nil {
+		is.labelRuleManager = &mockLabelManager{labelRules: map[string][]byte{}}
+		return
 	}
-	return &PDLabelManager{pdHTTPCli}
+	is.labelRuleManager = &PDLabelManager{is.pdHTTPCli}
 }
 
-func initPlacementManager(pdHTTPCli pdhttp.Client) PlacementManager {
-	if pdHTTPCli == nil {
-		return &mockPlacementManager{}
+func (is *InfoSyncer) initPlacementManager() {
+	if is.pdHTTPCli == nil {
+		is.placementManager = &mockPlacementManager{}
+		return
 	}
-	return &PDPlacementManager{pdHTTPCli}
+	is.placementManager = &PDPlacementManager{is.pdHTTPCli}
 }
 
-func initResourceManagerClient(pdCli pd.Client) (cli pd.ResourceManagerClient) {
-	cli = pdCli
+func (is *InfoSyncer) initResourceManagerClient(pdCli pd.Client) {
+	var cli pd.ResourceManagerClient = pdCli
 	if pdCli == nil {
 		cli = NewMockResourceManagerClient()
 	}
@@ -295,23 +300,24 @@ func initResourceManagerClient(pdCli pd.Client) (cli pd.ResourceManagerClient) {
 			}
 		}
 	})
-	return
+	is.resourceManagerClient = cli
 }
 
-func initTiFlashReplicaManager(pdHTTPCli pdhttp.Client, codec tikv.Codec) TiFlashReplicaManager {
-	if pdHTTPCli == nil {
-		m := mockTiFlashReplicaManagerCtx{tiflashProgressCache: make(map[int64]float64)}
-		return &m
+func (is *InfoSyncer) initTiFlashReplicaManager(codec tikv.Codec) {
+	if is.pdHTTPCli == nil {
+		is.tiflashReplicaManager = &mockTiFlashReplicaManagerCtx{tiflashProgressCache: make(map[int64]float64)}
+		return
 	}
 	logutil.BgLogger().Warn("init TiFlashReplicaManager")
-	return &TiFlashReplicaManagerCtx{pdHTTPCli: pdHTTPCli, tiflashProgressCache: make(map[int64]float64), codec: codec}
+	is.tiflashReplicaManager = &TiFlashReplicaManagerCtx{pdHTTPCli: is.pdHTTPCli, tiflashProgressCache: make(map[int64]float64), codec: codec}
 }
 
-func initScheduleManager(pdHTTPCli pdhttp.Client) ScheduleManager {
-	if pdHTTPCli == nil {
-		return &mockScheduleManager{}
+func (is *InfoSyncer) initScheduleManager() {
+	if is.pdHTTPCli == nil {
+		is.scheduleManager = &mockScheduleManager{}
+		return
 	}
-	return &PDScheduleManager{pdHTTPCli}
+	is.scheduleManager = &PDScheduleManager{is.pdHTTPCli}
 }
 
 // GetMockTiFlash can only be used in tests to get MockTiFlash

@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
-	pd "github.com/tikv/pd/client/http"
 	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/goleak"
 )
@@ -279,44 +278,4 @@ func TestTiFlashManager(t *testing.T) {
 	require.Equal(t, true, z.Accel)
 
 	CloseTiFlashManager(ctx)
-}
-
-func TestRuleOp(t *testing.T) {
-	rule := MakeNewRule(1, 2, []string{"a"})
-	ruleOp := pd.RuleOp{
-		Rule:             &rule,
-		Action:           pd.RuleOpAdd,
-		DeleteByIDPrefix: false,
-	}
-	j, err := json.Marshal(&ruleOp)
-	require.NoError(t, err)
-	ruleOpExpect := &pd.RuleOp{}
-	json.Unmarshal(j, ruleOpExpect)
-	require.Equal(t, ruleOp.Action, ruleOpExpect.Action)
-	require.Equal(t, *ruleOp.Rule, *ruleOpExpect.Rule)
-	ruleOps := make([]pd.RuleOp, 0, 2)
-	for i := 0; i < 10; i += 2 {
-		rule := MakeNewRule(int64(i), 2, []string{"a"})
-		ruleOps = append(ruleOps, pd.RuleOp{
-			Rule:             &rule,
-			Action:           pd.RuleOpAdd,
-			DeleteByIDPrefix: false,
-		})
-	}
-	for i := 1; i < 10; i += 2 {
-		rule := MakeNewRule(int64(i), 2, []string{"b"})
-		ruleOps = append(ruleOps, pd.RuleOp{
-			Rule:             &rule,
-			Action:           pd.RuleOpDel,
-			DeleteByIDPrefix: false,
-		})
-	}
-	j, err = json.Marshal(ruleOps)
-	require.NoError(t, err)
-	var ruleOpsExpect []pd.RuleOp
-	json.Unmarshal(j, &ruleOpsExpect)
-	for i := 0; i < len(ruleOps); i++ {
-		require.Equal(t, ruleOps[i].Action, ruleOpsExpect[i].Action)
-		require.Equal(t, *ruleOps[i].Rule, *ruleOpsExpect[i].Rule)
-	}
 }
