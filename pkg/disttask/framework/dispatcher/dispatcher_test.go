@@ -64,11 +64,7 @@ func getTestDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
 		},
 	).AnyTimes()
 
-	mockDispatcher.EXPECT().OnErrStage(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
-			return nil, nil
-		},
-	).AnyTimes()
+	mockDispatcher.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	return mockDispatcher
 }
 
@@ -110,11 +106,7 @@ func getNumberExampleDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension
 		},
 	).AnyTimes()
 
-	mockDispatcher.EXPECT().OnErrStage(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
-			return nil, nil
-		},
-	).AnyTimes()
+	mockDispatcher.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	return mockDispatcher
 }
 
@@ -514,4 +506,10 @@ func TestVerifyTaskStateTransform(t *testing.T) {
 	for _, tc := range testCases {
 		require.Equal(t, tc.expect, dispatcher.VerifyTaskStateTransform(tc.oldState, tc.newState))
 	}
+}
+
+func TestIsCancelledErr(t *testing.T) {
+	require.False(t, dispatcher.IsCancelledErr(errors.New("some err")))
+	require.False(t, dispatcher.IsCancelledErr(context.Canceled))
+	require.True(t, dispatcher.IsCancelledErr(errors.New("cancelled by user")))
 }

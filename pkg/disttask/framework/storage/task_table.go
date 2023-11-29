@@ -119,8 +119,8 @@ func row2GlobeTask(r chunk.Row) *proto.Task {
 		stdErr := errors.Normalize("")
 		err := stdErr.UnmarshalJSON(errBytes)
 		if err != nil {
-			logutil.BgLogger().Error("unmarshal error", zap.Error(err))
-			task.Error = err
+			logutil.BgLogger().Error("unmarshal task error", zap.Error(err))
+			task.Error = errors.New(string(errBytes))
 		} else {
 			task.Error = stdErr
 		}
