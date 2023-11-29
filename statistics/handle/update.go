@@ -499,6 +499,18 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	return
 }
 
+// UpdatePredicateStatsMeta update the predicate stats meta for this Table.
+func (h *Handle) UpdatePredicateStatsMeta(
+	startTS uint64,
+	delta variable.ReadTableDelta,
+) (err error) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	_, _, err = h.execRestrictedSQL(ctx, "replace into mysql.predicate_stats (table_id, count, step_hash, predicate_selectivity, version) values (%?, %?, %?, %?, %?)",
+		delta.TableID, delta.Count, delta.StepHash, delta.PredicateSelectivity, startTS)
+	logutil.BgLogger().Warn("xxxxxx--------------------------------------- replace", zap.Error(err))
+	return err
+}
+
 func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) error {
 	if len(delta.ColSize) == 0 {
 		return nil

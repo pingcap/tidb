@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/atomic"
@@ -68,6 +69,12 @@ type Table struct {
 	// and the schema of the table does not change, we don't need to load the stats for this
 	// table again.
 	TblInfoUpdateTS uint64
+}
+
+// TablePredicateItem is the cached item of a mysql.predicate_stats record.
+type TablePredicateItem struct {
+	variable.ReadTableDelta
+	Version uint64
 }
 
 // ExtendedStatsItem is the cached item of a mysql.stats_extended record.

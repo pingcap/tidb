@@ -670,6 +670,15 @@ const (
 		PRIMARY KEY (id),
 		KEY (created_by),
 		KEY (status));`
+
+	// CreateHistoryStats is a table that predicate stats uses.
+	CreateHistoryStats = `CREATE TABLE IF NOT EXISTS mysql.predicate_stats (
+		table_id bigint(64) NOT NULL,
+		count bigint(64) unsigned NOT NULL DEFAULT '0',
+		step_hash bigint(16) unsigned NOT NULL,
+		predicate_selectivity float NOT NULL DEFAULT '1.0',
+		version bigint(64) unsigned NOT NULL DEFAULT 0,
+		UNIQUE KEY tbl (table_id, step_hash));`
 )
 
 // CreateTimers is a table to store all timers for tidb
@@ -985,11 +994,14 @@ const (
 	// version 175
 	//   add column `scan_predicate_hash` to `mysql.stats_meta`.
 	version175 = 175
+	// vresion 180
+	//	 add `mysql.predicate_stats`
+	version180 = 180
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version175
+var currentBootstrapVersion int64 = version180
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1132,6 +1144,7 @@ var (
 		upgradeToVer172,
 		upgradeToVer173,
 		upgradeToVer175,
+		upgradeToVer180,
 	}
 )
 
@@ -2734,6 +2747,13 @@ func upgradeToVer175(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN scan_predicate_hash BIGINT(16) DEFAULT NULL", infoschema.ErrColumnExists)
 }
 
+func upgradeToVer180(s Session, ver int64) {
+	if ver >= version180 {
+		return
+	}
+	doReentrantDDL(s, CreateHistoryStats)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2861,6 +2881,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateDoneRunawayWatchTable)
 	// create dist_framework_meta
 	mustExecute(s, CreateDistFrameworkMeta)
+	// create predicate_stats
+	mustExecute(s, CreateHistoryStats)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.

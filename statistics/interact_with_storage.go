@@ -450,3 +450,23 @@ func TableStatsFromStorage(reader *StatsReader, tableInfo *model.TableInfo, phys
 	}
 	return ExtendedStatsFromStorage(reader, table, physicalID, loadAll)
 }
+
+// TablePredicateStatsFromStorage loads table predicate stats info from storage.
+func TablePredicateStatsFromStorage(reader *StatsReader, tableID int64, stepHash uint64) (*TablePredicateItem, error) {
+	rows, _, err := reader.Read("select count, predicate_selectivity, version from mysql.predicate_stats where table_id = %? and step_hash = %?", tableID, stepHash)
+	// Check deleted table.
+	if err != nil || len(rows) == 0 {
+		return nil, nil
+	}
+
+	table := &TablePredicateItem{}
+	table.TableID = tableID
+	table.StepHash = stepHash
+	for _, row := range rows {
+		table.Count = row.GetInt64(0)
+		table.PredicateSelectivity = row.GetFloat32(1)
+		table.Version = row.GetUint64(2)
+		return table, nil
+	}
+	return nil, nil
+}
