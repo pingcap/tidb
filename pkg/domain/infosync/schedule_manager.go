@@ -23,23 +23,13 @@ import (
 
 // ScheduleManager manages schedule configs
 type ScheduleManager interface {
-	GetPDScheduleConfig(ctx context.Context) (map[string]interface{}, error)
-	SetPDScheduleConfig(ctx context.Context, config map[string]interface{}) error
+	GetScheduleConfig(ctx context.Context) (map[string]interface{}, error)
+	SetScheduleConfig(ctx context.Context, config map[string]interface{}) error
 }
 
 // PDScheduleManager manages schedule with pd
 type PDScheduleManager struct {
-	pdHTTPCli pd.Client
-}
-
-// GetPDScheduleConfig get schedule config from pd
-func (sm *PDScheduleManager) GetPDScheduleConfig(ctx context.Context) (map[string]interface{}, error) {
-	return sm.pdHTTPCli.GetScheduleConfig(ctx)
-}
-
-// SetPDScheduleConfig set schedule config to pd
-func (sm *PDScheduleManager) SetPDScheduleConfig(ctx context.Context, config map[string]interface{}) error {
-	return sm.pdHTTPCli.SetScheduleConfig(ctx, config)
+	pd.Client
 }
 
 type mockScheduleManager struct {
@@ -47,8 +37,8 @@ type mockScheduleManager struct {
 	schedules map[string]interface{}
 }
 
-// GetPDScheduleConfig get schedule config from schedules map
-func (mm *mockScheduleManager) GetPDScheduleConfig(ctx context.Context) (map[string]interface{}, error) {
+// GetScheduleConfig get schedule config from schedules map
+func (mm *mockScheduleManager) GetScheduleConfig(ctx context.Context) (map[string]interface{}, error) {
 	mm.Lock()
 
 	schedules := make(map[string]interface{})
@@ -60,8 +50,8 @@ func (mm *mockScheduleManager) GetPDScheduleConfig(ctx context.Context) (map[str
 	return schedules, nil
 }
 
-// SetPDScheduleConfig set schedule config to schedules map
-func (mm *mockScheduleManager) SetPDScheduleConfig(ctx context.Context, config map[string]interface{}) error {
+// SetScheduleConfig set schedule config to schedules map
+func (mm *mockScheduleManager) SetScheduleConfig(ctx context.Context, config map[string]interface{}) error {
 	mm.Lock()
 
 	if mm.schedules == nil {

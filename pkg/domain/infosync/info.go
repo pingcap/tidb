@@ -1259,7 +1259,7 @@ func GetPDScheduleConfig(ctx context.Context) (map[string]interface{}, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return is.scheduleManager.GetPDScheduleConfig(ctx)
+	return is.scheduleManager.GetScheduleConfig(ctx)
 }
 
 // SetPDScheduleConfig sets the schedule information for pd
@@ -1268,7 +1268,7 @@ func SetPDScheduleConfig(ctx context.Context, config map[string]interface{}) err
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return is.scheduleManager.SetPDScheduleConfig(ctx, config)
+	return is.scheduleManager.SetScheduleConfig(ctx, config)
 }
 
 // TiProxyServerInfo is the server info for TiProxy.
