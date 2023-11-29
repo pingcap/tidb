@@ -499,7 +499,7 @@ func TestPrepareLargeData(t *testing.T) {
 
 	fileSize := 256 * 1024 * 1024
 	//fileCnt := 1000
-	fileCnt := 50
+	fileCnt := 200
 	keySize := 20
 	valueSize := 100
 	concurrency := runtime.NumCPU()
@@ -518,6 +518,9 @@ func TestPrepareLargeData(t *testing.T) {
 				Build(store, largeAscendingDataPath, fmt.Sprintf("%02d", i))
 			endFile := min((i+1)*filePerConcUpperBound, fileCnt)
 			startFile := min(i*filePerConcUpperBound, endFile)
+			if startFile == endFile {
+				return
+			}
 			kvCnt := fileSize * (endFile - startFile) / (keySize + valueSize + 16)
 			source := newAscendingKeySource(kvCnt, keySize, valueSize, []byte{byte(i)})
 			key, val, _ := source.next()
