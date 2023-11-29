@@ -171,7 +171,6 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) (resErr error
 		return s.getError()
 	}
 	defer cleanup()
-
 	executor, err := s.GetSubtaskExecutor(ctx, task, summary)
 	if err != nil {
 		s.onError(err)
