@@ -54,6 +54,8 @@ func TestBackfillingDispatcherLocalMode(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockWriterMemSize", "return()"))
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockWriterMemSize")
 	/// 1. test partition table.
 	tk.MustExec("create table tp1(id int primary key, v int) PARTITION BY RANGE (id) (\n    " +
 		"PARTITION p0 VALUES LESS THAN (10),\n" +

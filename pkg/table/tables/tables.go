@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -138,15 +139,21 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 
 		col := table.ToColumn(colInfo)
 		if col.IsGenerated() {
-			expr, err := generatedexpr.ParseExpression(colInfo.GeneratedExprString)
+			genStr := colInfo.GeneratedExprString
+			expr, err := buildGeneratedExpr(tblInfo, genStr)
 			if err != nil {
 				return nil, err
 			}
-			expr, err = generatedexpr.SimpleResolveName(expr, tblInfo)
-			if err != nil {
-				return nil, err
-			}
-			col.GeneratedExpr = expr
+			col.GeneratedExpr = table.NewClonableExprNode(func() ast.ExprNode {
+				newExpr, err1 := buildGeneratedExpr(tblInfo, genStr)
+				if err1 != nil {
+					logutil.BgLogger().Warn("unexpected parse generated string error",
+						zap.String("generatedStr", genStr),
+						zap.Error(err1))
+					return expr
+				}
+				return newExpr
+			}, expr)
 		}
 		// default value is expr.
 		if col.DefaultIsExpr {
@@ -175,6 +182,18 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 		return &t, nil
 	}
 	return newPartitionedTable(&t, tblInfo)
+}
+
+func buildGeneratedExpr(tblInfo *model.TableInfo, genExpr string) (ast.ExprNode, error) {
+	expr, err := generatedexpr.ParseExpression(genExpr)
+	if err != nil {
+		return nil, err
+	}
+	expr, err = generatedexpr.SimpleResolveName(expr, tblInfo)
+	if err != nil {
+		return nil, err
+	}
+	return expr, nil
 }
 
 // initTableCommon initializes a TableCommon struct.
@@ -549,7 +568,8 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	key := t.RecordKey(h)
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
 	checksums, writeBufs.RowValBuf = t.calcChecksums(sctx, h, checksumData, writeBufs.RowValBuf)
-	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, rd, checksums...)
+	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc.TimeZone(), row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, rd, checksums...)
+	err = sc.HandleError(err)
 	if err != nil {
 		return err
 	}
@@ -988,7 +1008,8 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		zap.Stringer("key", key))
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
 	checksums, writeBufs.RowValBuf = t.calcChecksums(sctx, recordID, checksumData, writeBufs.RowValBuf)
-	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, rd, checksums...)
+	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc.TimeZone(), row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, rd, checksums...)
+	err = sc.HandleError(err)
 	if err != nil {
 		return nil, err
 	}
@@ -1395,7 +1416,8 @@ func (t *TableCommon) addInsertBinlog(ctx sessionctx.Context, h kv.Handle, row [
 	if err != nil {
 		return err
 	}
-	value, err := tablecodec.EncodeOldRow(ctx.GetSessionVars().StmtCtx, row, colIDs, nil, nil)
+	value, err := tablecodec.EncodeOldRow(ctx.GetSessionVars().StmtCtx.TimeZone(), row, colIDs, nil, nil)
+	err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 	if err != nil {
 		return err
 	}
@@ -1406,11 +1428,13 @@ func (t *TableCommon) addInsertBinlog(ctx sessionctx.Context, h kv.Handle, row [
 }
 
 func (t *TableCommon) addUpdateBinlog(ctx sessionctx.Context, oldRow, newRow []types.Datum, colIDs []int64) error {
-	old, err := tablecodec.EncodeOldRow(ctx.GetSessionVars().StmtCtx, oldRow, colIDs, nil, nil)
+	old, err := tablecodec.EncodeOldRow(ctx.GetSessionVars().StmtCtx.TimeZone(), oldRow, colIDs, nil, nil)
+	err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 	if err != nil {
 		return err
 	}
-	newVal, err := tablecodec.EncodeOldRow(ctx.GetSessionVars().StmtCtx, newRow, colIDs, nil, nil)
+	newVal, err := tablecodec.EncodeOldRow(ctx.GetSessionVars().StmtCtx.TimeZone(), newRow, colIDs, nil, nil)
+	err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 	if err != nil {
 		return err
 	}
@@ -1422,7 +1446,8 @@ func (t *TableCommon) addUpdateBinlog(ctx sessionctx.Context, oldRow, newRow []t
 }
 
 func (t *TableCommon) addDeleteBinlog(ctx sessionctx.Context, r []types.Datum, colIDs []int64) error {
-	data, err := tablecodec.EncodeOldRow(ctx.GetSessionVars().StmtCtx, r, colIDs, nil, nil)
+	data, err := tablecodec.EncodeOldRow(ctx.GetSessionVars().StmtCtx.TimeZone(), r, colIDs, nil, nil)
+	err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 	if err != nil {
 		return err
 	}
@@ -2316,7 +2341,8 @@ func SetPBColumnsDefaultValue(ctx sessionctx.Context, pbColumns []*tipb.ColumnIn
 			return err
 		}
 
-		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(sessVars.StmtCtx, nil, d)
+		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(sessVars.StmtCtx.TimeZone(), nil, d)
+		err = sessVars.StmtCtx.HandleError(err)
 		if err != nil {
 			return err
 		}

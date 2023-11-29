@@ -734,6 +734,11 @@ type Performance struct {
 
 	EnableLoadFMSketch bool `toml:"enable-load-fmsketch" json:"enable-load-fmsketch"`
 
+	// LiteInitStats indicates whether to use the lite version of stats.
+	// 1. Basic stats meta data is loaded.(count, modify count, etc.)
+	// 2. Column/index stats are loaded. (only histogram)
+	// 3. TopN, Bucket, FMSketch are not loaded.
+	// The lite version of stats is enabled by default.
 	LiteInitStats bool `toml:"lite-init-stats" json:"lite-init-stats"`
 
 	// If ForceInitStats is true, when tidb starts up, it doesn't provide service until init stats is finished.

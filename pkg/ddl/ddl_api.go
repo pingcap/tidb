@@ -5334,7 +5334,8 @@ func ProcessColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 			col.GeneratedExprString = sb.String()
 			col.GeneratedStored = opt.Stored
 			col.Dependences = make(map[string]struct{})
-			col.GeneratedExpr = opt.Expr
+			// Only used by checkModifyGeneratedColumn, there is no need to set a ctor for it.
+			col.GeneratedExpr = table.NewClonableExprNode(nil, opt.Expr)
 			for _, colName := range FindColumnNamesInExpr(opt.Expr) {
 				col.Dependences[colName.Name.L] = struct{}{}
 			}
@@ -5400,7 +5401,7 @@ func checkModifyColumnWithGeneratedColumnsConstraint(allCols []*table.Column, ol
 		if col.GeneratedExpr == nil {
 			continue
 		}
-		dependedColNames := FindColumnNamesInExpr(col.GeneratedExpr)
+		dependedColNames := FindColumnNamesInExpr(col.GeneratedExpr.Internal())
 		for _, name := range dependedColNames {
 			if name.Name.L == oldColName.L {
 				if col.Hidden {

@@ -94,13 +94,6 @@ func (col *CorrelatedColumn) Eval(_ sessionctx.Context, _ chunk.Row) (types.Datu
 	return *col.Data, nil
 }
 
-// EvalWithInnerCtx evaluates expression with inner ctx.
-// Deprecated: This function is only used during refactoring, please do not use it in new code.
-// TODO: remove this method after refactoring.
-func (col *CorrelatedColumn) EvalWithInnerCtx(_ chunk.Row) (types.Datum, error) {
-	return *col.Data, nil
-}
-
 // EvalInt returns int representation of CorrelatedColumn.
 func (col *CorrelatedColumn) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
 	if col.Data.IsNull() {
@@ -431,13 +424,6 @@ func (col *Column) Eval(_ sessionctx.Context, row chunk.Row) (types.Datum, error
 	return row.GetDatum(col.Index, col.RetType), nil
 }
 
-// EvalWithInnerCtx evaluates expression with inner ctx.
-// Deprecated: This function is only used during refactoring, please do not use it in new code.
-// TODO: remove this method after refactoring.
-func (col *Column) EvalWithInnerCtx(row chunk.Row) (types.Datum, error) {
-	return row.GetDatum(col.Index, col.RetType), nil
-}
-
 // EvalInt returns int representation of Column.
 func (col *Column) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
 	if col.GetType().Hybrid() {
@@ -541,7 +527,7 @@ func (col *Column) Decorrelate(_ *Schema) Expression {
 }
 
 // HashCode implements Expression interface.
-func (col *Column) HashCode(_ *stmtctx.StatementContext) []byte {
+func (col *Column) HashCode() []byte {
 	if len(col.hashcode) != 0 {
 		return col.hashcode
 	}
@@ -549,6 +535,11 @@ func (col *Column) HashCode(_ *stmtctx.StatementContext) []byte {
 	col.hashcode = append(col.hashcode, columnFlag)
 	col.hashcode = codec.EncodeInt(col.hashcode, col.UniqueID)
 	return col.hashcode
+}
+
+// CanonicalHashCode implements Expression interface.
+func (col *Column) CanonicalHashCode() []byte {
+	return col.HashCode()
 }
 
 // CleanHashCode will clean the hashcode you may be cached before. It's used especially in schema-cloned & reallocated-uniqueID's cases.

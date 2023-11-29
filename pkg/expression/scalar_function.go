@@ -42,7 +42,6 @@ type ScalarFunction struct {
 	// TODO: Implement type inference here, now we use ast's return type temporarily.
 	RetType           *types.FieldType
 	Function          builtinFunc
-	ctx               sessionctx.Context
 	hashcode          []byte
 	canonicalhashcode []byte
 }
@@ -112,14 +111,6 @@ func (sf *ScalarFunction) SupportReverseEval() bool {
 // ReverseEval evaluates the only one column value with given function result.
 func (sf *ScalarFunction) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	return sf.Function.reverseEval(sc, res, rType)
-}
-
-// GetCtx returns the inner context
-// Deprecated: we are going to remove ctx from expression completely.
-// Do not use this method anymore.
-func (sf *ScalarFunction) GetCtx() sessionctx.Context {
-	intest.Assert(sf.ctx != nil)
-	return sf.ctx
 }
 
 // String implements fmt.Stringer interface.
@@ -259,15 +250,14 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 		FuncName: model.NewCIStr(funcName),
 		RetType:  retType,
 		Function: f,
-		ctx:      ctx,
 	}
 	if fold == 1 {
-		return FoldConstant(sf), nil
+		return FoldConstant(ctx, sf), nil
 	} else if fold == -1 {
 		// try to fold constants, and return the original function if errors/warnings occur
 		sc := ctx.GetSessionVars().StmtCtx
 		beforeWarns := sc.WarningCount()
-		newSf := FoldConstant(sf)
+		newSf := FoldConstant(ctx, sf)
 		afterWarns := sc.WarningCount()
 		if afterWarns > beforeWarns {
 			sc.TruncateWarnings(int(beforeWarns))
@@ -339,7 +329,6 @@ func (sf *ScalarFunction) Clone() Expression {
 		RetType:  sf.RetType,
 		Function: sf.Function.Clone(),
 		hashcode: sf.hashcode,
-		ctx:      sf.ctx,
 	}
 	c.SetCharsetAndCollation(sf.CharsetAndCollation())
 	c.SetCoercibility(sf.Coercibility())
@@ -400,13 +389,6 @@ func (sf *ScalarFunction) Decorrelate(schema *Schema) Expression {
 // Traverse implements the TraverseDown interface.
 func (sf *ScalarFunction) Traverse(action TraverseAction) Expression {
 	return action.Transform(sf)
-}
-
-// EvalWithInnerCtx evaluates expression with inner ctx.
-// Deprecated: This function is only used during refactoring, please do not use it in new code.
-// TODO: remove this method after refactoring.
-func (sf *ScalarFunction) EvalWithInnerCtx(row chunk.Row) (types.Datum, error) {
-	return sf.Eval(sf.ctx, row)
 }
 
 // Eval implements Expression interface.
@@ -499,33 +481,30 @@ func (sf *ScalarFunction) EvalJSON(ctx sessionctx.Context, row chunk.Row) (types
 }
 
 // HashCode implements Expression interface.
-func (sf *ScalarFunction) HashCode(sc *stmtctx.StatementContext) []byte {
-	if sc != nil && sc.CanonicalHashCode {
-		if len(sf.canonicalhashcode) > 0 {
-			return sf.canonicalhashcode
-		}
-		simpleCanonicalizedHashCode(sf, sc)
-		return sf.canonicalhashcode
-	}
+func (sf *ScalarFunction) HashCode() []byte {
 	if len(sf.hashcode) > 0 {
 		return sf.hashcode
 	}
-	ReHashCode(sf, sc)
+	ReHashCode(sf)
 	return sf.hashcode
 }
 
+// CanonicalHashCode implements Expression interface.
+func (sf *ScalarFunction) CanonicalHashCode() []byte {
+	if len(sf.canonicalhashcode) > 0 {
+		return sf.canonicalhashcode
+	}
+	simpleCanonicalizedHashCode(sf)
+	return sf.canonicalhashcode
+}
+
 // ExpressionsSemanticEqual is used to judge whether two expression tree is semantic equivalent.
-func ExpressionsSemanticEqual(ctx sessionctx.Context, expr1, expr2 Expression) bool {
-	sc := ctx.GetSessionVars().StmtCtx
-	sc.CanonicalHashCode = true
-	defer func() {
-		sc.CanonicalHashCode = false
-	}()
-	return bytes.Equal(expr1.HashCode(sc), expr2.HashCode(sc))
+func ExpressionsSemanticEqual(expr1, expr2 Expression) bool {
+	return bytes.Equal(expr1.CanonicalHashCode(), expr2.CanonicalHashCode())
 }
 
 // simpleCanonicalizedHashCode is used to judge whether two expression is semantically equal.
-func simpleCanonicalizedHashCode(sf *ScalarFunction, sc *stmtctx.StatementContext) {
+func simpleCanonicalizedHashCode(sf *ScalarFunction) {
 	if sf.canonicalhashcode != nil {
 		sf.canonicalhashcode = sf.canonicalhashcode[:0]
 	}
@@ -533,7 +512,7 @@ func simpleCanonicalizedHashCode(sf *ScalarFunction, sc *stmtctx.StatementContex
 
 	argsHashCode := make([][]byte, 0, len(sf.GetArgs()))
 	for _, arg := range sf.GetArgs() {
-		argsHashCode = append(argsHashCode, arg.HashCode(sc))
+		argsHashCode = append(argsHashCode, arg.CanonicalHashCode())
 	}
 	switch sf.FuncName.L {
 	case ast.Plus, ast.Mul, ast.EQ, ast.In, ast.LogicOr, ast.LogicAnd:
@@ -583,7 +562,7 @@ func simpleCanonicalizedHashCode(sf *ScalarFunction, sc *stmtctx.StatementContex
 		} else {
 			childArgsHashCode := make([][]byte, 0, len(child.GetArgs()))
 			for _, arg := range child.GetArgs() {
-				childArgsHashCode = append(childArgsHashCode, arg.HashCode(sc))
+				childArgsHashCode = append(childArgsHashCode, arg.CanonicalHashCode())
 			}
 			switch child.FuncName.L {
 			case ast.GT: // not GT  ==> LE  ==> use GE and switch args
@@ -624,12 +603,12 @@ func simpleCanonicalizedHashCode(sf *ScalarFunction, sc *stmtctx.StatementContex
 }
 
 // ReHashCode is used after we change the argument in place.
-func ReHashCode(sf *ScalarFunction, sc *stmtctx.StatementContext) {
+func ReHashCode(sf *ScalarFunction) {
 	sf.hashcode = sf.hashcode[:0]
 	sf.hashcode = append(sf.hashcode, scalarFunctionFlag)
 	sf.hashcode = codec.EncodeCompactBytes(sf.hashcode, hack.Slice(sf.FuncName.L))
 	for _, arg := range sf.GetArgs() {
-		sf.hashcode = append(sf.hashcode, arg.HashCode(sc)...)
+		sf.hashcode = append(sf.hashcode, arg.HashCode()...)
 	}
 	// Cast is a special case. The RetType should also be considered as an argument.
 	// Please see `newFunctionImpl()` for detail.

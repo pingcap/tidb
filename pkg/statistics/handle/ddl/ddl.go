@@ -17,8 +17,10 @@ package ddl
 import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"go.uber.org/zap"
 )
 
 type ddlHandlerImpl struct {
@@ -116,18 +118,33 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 			}
 		}
 	case model.ActionDropTablePartition:
-		pruneMode, err := util.GetCurrentPruneMode(h.statsHandler.SPool())
-		if err != nil {
-			return err
-		}
 		globalTableInfo, droppedPartitionInfo := t.GetDropPartitionInfo()
-		if variable.PartitionPruneMode(pruneMode) == variable.Dynamic && droppedPartitionInfo != nil {
-			if err := h.globalStatsHandler.UpdateGlobalStats(globalTableInfo); err != nil {
+
+		count := int64(0)
+		for _, def := range droppedPartitionInfo.Definitions {
+			// Get the count and modify count of the partition.
+			stats := h.statsHandler.GetPartitionStats(globalTableInfo, def.ID)
+			if stats.Pseudo {
+				logutil.StatsLogger.Warn(
+					"drop partition with pseudo stats, "+
+						"usually it won't happen because we always load stats when initializing the handle",
+					zap.String("table", globalTableInfo.Name.O),
+					zap.String("partition", def.Name.O),
+				)
+			} else {
+				count += stats.RealtimeCount
+			}
+			// Always reset the partition stats.
+			if err := h.statsWriter.ResetTableStats2KVForDrop(def.ID); err != nil {
 				return err
 			}
 		}
-		for _, def := range droppedPartitionInfo.Definitions {
-			if err := h.statsWriter.ResetTableStats2KVForDrop(def.ID); err != nil {
+		if count != 0 {
+			// Because we drop the partition, we should subtract the count from the global stats.
+			delta := -count
+			if err := h.statsWriter.UpdateStatsMetaDelta(
+				globalTableInfo.ID, count, delta,
+			); err != nil {
 				return err
 			}
 		}

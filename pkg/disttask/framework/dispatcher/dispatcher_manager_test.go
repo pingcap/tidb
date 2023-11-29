@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
-	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -40,20 +39,10 @@ func TestCleanUpRoutine(t *testing.T) {
 	defer ctrl.Finish()
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "dispatcher_manager")
-
-	dsp, mgr := MockDispatcherManager(t, pool)
 	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
+
+	dsp, mgr := MockDispatcherManager(t, ctrl, pool, getNumberExampleDispatcherExt(ctrl), mockCleanupRountine)
 	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
-		func(ctx context.Context, taskMgr dispatcher.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
-			mockDispatcher := dsp.MockDispatcher(task)
-			mockDispatcher.Extension = &numberExampleDispatcherExt{}
-			return mockDispatcher
-		})
-	dispatcher.RegisterDispatcherCleanUpFactory(proto.TaskTypeExample,
-		func() dispatcher.CleanUpRoutine {
-			return mockCleanupRountine
-		})
 	dsp.Start()
 	defer dsp.Stop()
 	require.NoError(t, mgr.StartManager(ctx, ":4000", "background"))
@@ -104,17 +93,7 @@ func TestCleanUpMeta(t *testing.T) {
 	defer ctrl.Finish()
 	mockTaskMgr := mock.NewMockTaskManager(ctrl)
 	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
-	dspMgr := MockDispatcherManagerWithMockTaskMgr(t, pool, mockTaskMgr)
-	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
-		func(ctx context.Context, taskMgr dispatcher.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
-			mockDispatcher := dspMgr.MockDispatcher(task)
-			mockDispatcher.Extension = &numberExampleDispatcherExt{}
-			return mockDispatcher
-		})
-	dispatcher.RegisterDispatcherCleanUpFactory(proto.TaskTypeExample,
-		func() dispatcher.CleanUpRoutine {
-			return mockCleanupRountine
-		})
+	dspMgr := MockDispatcherManagerWithMockTaskMgr(t, ctrl, pool, mockTaskMgr, getNumberExampleDispatcherExt(ctrl), mockCleanupRountine)
 
 	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]string{":4000", ":4001"}, nil)
 	mockTaskMgr.EXPECT().CleanUpMeta(gomock.Any(), gomock.Any()).Return(nil)

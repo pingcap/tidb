@@ -24,12 +24,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -1093,9 +1091,7 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	return f, nil
 }
 
-func newDistSQLFunctionBySig(sc *stmtctx.StatementContext, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (Expression, error) {
-	ctx := mock.NewContext()
-	ctx.GetSessionVars().StmtCtx = sc
+func newDistSQLFunctionBySig(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (Expression, error) {
 	f, err := getSignatureByPB(ctx, sigCode, tp, args)
 	if err != nil {
 		return nil, err
@@ -1104,15 +1100,14 @@ func newDistSQLFunctionBySig(sc *stmtctx.StatementContext, sigCode tipb.ScalarFu
 		FuncName: model.NewCIStr(fmt.Sprintf("sig_%T", f)),
 		Function: f,
 		RetType:  f.getRetTp(),
-		ctx:      ctx,
 	}, nil
 }
 
 // PBToExprs converts pb structures to expressions.
-func PBToExprs(pbExprs []*tipb.Expr, fieldTps []*types.FieldType, sc *stmtctx.StatementContext) ([]Expression, error) {
+func PBToExprs(ctx sessionctx.Context, pbExprs []*tipb.Expr, fieldTps []*types.FieldType) ([]Expression, error) {
 	exprs := make([]Expression, 0, len(pbExprs))
 	for _, expr := range pbExprs {
-		e, err := PBToExpr(expr, fieldTps, sc)
+		e, err := PBToExpr(ctx, expr, fieldTps)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1125,7 +1120,8 @@ func PBToExprs(pbExprs []*tipb.Expr, fieldTps []*types.FieldType, sc *stmtctx.St
 }
 
 // PBToExpr converts pb structure to expression.
-func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementContext) (Expression, error) {
+func PBToExpr(ctx sessionctx.Context, expr *tipb.Expr, tps []*types.FieldType) (Expression, error) {
+	sc := ctx.GetSessionVars().StmtCtx
 	switch expr.Tp {
 	case tipb.ExprType_ColumnRef:
 		_, offset, err := codec.DecodeInt(expr.Val)
@@ -1177,13 +1173,13 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 			args = append(args, results...)
 			continue
 		}
-		arg, err := PBToExpr(child, tps, sc)
+		arg, err := PBToExpr(ctx, child, tps)
 		if err != nil {
 			return nil, err
 		}
 		args = append(args, arg)
 	}
-	sf, err := newDistSQLFunctionBySig(sc, expr.Sig, expr.FieldType, args)
+	sf, err := newDistSQLFunctionBySig(ctx, expr.Sig, expr.FieldType, args)
 	if err != nil {
 		return nil, err
 	}
