@@ -72,7 +72,12 @@ func NewTestServerClient() *TestServerClient {
 	}
 }
 
-// statusURL return the full URL of a status path
+// Addr returns the address of the server.
+func (cli *TestServerClient) Addr() string {
+	return fmt.Sprintf("%s://localhost:%d", cli.StatusScheme, cli.Port)
+}
+
+// StatusURL returns the full URL of a status path
 func (cli *TestServerClient) StatusURL(path string) string {
 	return fmt.Sprintf("%s://localhost:%d%s", cli.StatusScheme, cli.StatusPort, path)
 }

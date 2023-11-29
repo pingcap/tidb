@@ -399,7 +399,6 @@ func TestFilterExtractFromDNF(t *testing.T) {
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprStr
 		sctx := tk.Session()
-		sc := sctx.GetSessionVars().StmtCtx
 		stmts, err := session.Parse(sctx, sql)
 		require.NoError(t, err, "error %v, for expr %s", err, tt.exprStr)
 		require.Len(t, stmts, 1)
@@ -415,7 +414,7 @@ func TestFilterExtractFromDNF(t *testing.T) {
 		}
 		afterFunc := expression.ExtractFiltersFromDNFs(sctx, conds)
 		sort.Slice(afterFunc, func(i, j int) bool {
-			return bytes.Compare(afterFunc[i].HashCode(sc), afterFunc[j].HashCode(sc)) < 0
+			return bytes.Compare(afterFunc[i].HashCode(), afterFunc[j].HashCode()) < 0
 		})
 		require.Equal(t, fmt.Sprintf("%s", afterFunc), tt.result, "wrong result for expr: %s", tt.exprStr)
 	}
@@ -466,7 +465,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 		return ret
 	}
 	buildCommonKeyFromData := func(tableID int64, data []types.Datum) string {
-		k, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, nil, data...)
+		k, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(), nil, data...)
 		require.NoError(t, err)
 		h, err := kv.NewCommonHandle(k)
 		require.NoError(t, err)
@@ -493,7 +492,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	buildIndexKeyFromData := func(tableID, indexID int64, data []types.Datum) string {
-		k, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, nil, data...)
+		k, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(), nil, data...)
 		require.NoError(t, err)
 		k = tablecodec.EncodeIndexSeekKey(tableID, indexID, k)
 		return hex.EncodeToString(codec.EncodeBytes(nil, k))

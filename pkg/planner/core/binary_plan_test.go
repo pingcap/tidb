@@ -377,23 +377,6 @@ func TestDecodeBinaryPlan(t *testing.T) {
 	}
 }
 
-func TestInvalidDecodeBinaryPlan(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	str1 := "some random bytes"
-	str2 := base64.StdEncoding.EncodeToString([]byte(str1))
-	str3 := base64.StdEncoding.EncodeToString(snappy.Encode(nil, []byte(str1)))
-
-	tk.MustQuery(`select tidb_decode_binary_plan('` + str1 + `')`).Check(testkit.Rows(""))
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 illegal base64 data at input byte 4"))
-	tk.MustQuery(`select tidb_decode_binary_plan('` + str2 + `')`).Check(testkit.Rows(""))
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 snappy: corrupt input"))
-	tk.MustQuery(`select tidb_decode_binary_plan('` + str3 + `')`).Check(testkit.Rows(""))
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 proto: illegal wireType 7"))
-}
-
 func TestUnnecessaryBinaryPlanInSlowLog(t *testing.T) {
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg

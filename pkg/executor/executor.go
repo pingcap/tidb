@@ -112,6 +112,7 @@ var (
 	_ exec.Executor = &sortexec.TopNExec{}
 	_ exec.Executor = &UnionExec{}
 	_ exec.Executor = &FastCheckTableExec{}
+	_ exec.Executor = &AdminShowBDRRoleExec{}
 
 	// GlobalMemoryUsageTracker is the ancestor of all the Executors' memory tracker and GlobalMemory Tracker
 	GlobalMemoryUsageTracker *memory.Tracker
@@ -2572,13 +2573,15 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 			return
 		}
 
+		errCtx := w.sctx.GetSessionVars().StmtCtx.ErrCtx()
 		getHandleFromRow := func(row chunk.Row) (kv.Handle, error) {
 			handleDatum := make([]types.Datum, 0)
 			for i, t := range pkTypes {
 				handleDatum = append(handleDatum, row.GetDatum(i, t))
 			}
 			if w.table.Meta().IsCommonHandle {
-				handleBytes, err := codec.EncodeKey(w.sctx.GetSessionVars().StmtCtx, nil, handleDatum...)
+				handleBytes, err := codec.EncodeKey(w.sctx.GetSessionVars().StmtCtx.TimeZone(), nil, handleDatum...)
+				err = errCtx.HandleError(err)
 				if err != nil {
 					return nil, err
 				}
@@ -2750,4 +2753,34 @@ func ColumnName(column string) string {
 
 func escapeName(name string) string {
 	return strings.ReplaceAll(name, "`", "``")
+}
+
+// AdminShowBDRRoleExec represents a show BDR role executor.
+type AdminShowBDRRoleExec struct {
+	exec.BaseExecutor
+
+	done bool
+}
+
+// Next implements the Executor Next interface.
+func (e *AdminShowBDRRoleExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.Reset()
+	if e.done {
+		return nil
+	}
+
+	return kv.RunInNewTxn(kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin), e.Ctx().GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+		role, err := meta.NewMeta(txn).GetBDRRole()
+		if err != nil {
+			return err
+		}
+
+		if role == "" {
+			role = string(ast.BDRRoleNone)
+		}
+
+		req.AppendString(0, role)
+		e.done = true
+		return nil
+	})
 }

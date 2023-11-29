@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/build/linter/constructor",
     visibility = ["//visibility:public"],
     deps = [
+        "//build/linter/util",
         "@com_github_fatih_structtag//:structtag",
         "@org_golang_x_tools//go/analysis",
         "@org_golang_x_tools//go/ast/inspector",

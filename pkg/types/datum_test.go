@@ -92,7 +92,7 @@ func TestToBool(t *testing.T) {
 	testDatumToBool(t, CreateBinaryJSON(true), 1)
 	testDatumToBool(t, CreateBinaryJSON(false), 1)
 	testDatumToBool(t, CreateBinaryJSON(""), 1)
-	t1, err := ParseTime(DefaultStmtNoWarningContext, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6, nil)
+	t1, err := ParseTime(DefaultStmtNoWarningContext, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
 	require.NoError(t, err)
 	testDatumToBool(t, t1, 1)
 
@@ -133,7 +133,7 @@ func TestToInt64(t *testing.T) {
 	testDatumToInt64(t, Set{Name: "a", Value: 1}, int64(1))
 	testDatumToInt64(t, CreateBinaryJSON(int64(3)), int64(3))
 
-	t1, err := ParseTime(DefaultStmtNoWarningContext, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 0, nil)
+	t1, err := ParseTime(DefaultStmtNoWarningContext, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 0)
 	require.NoError(t, err)
 	testDatumToInt64(t, t1, int64(20111110111112))
 
@@ -221,7 +221,7 @@ func TestConvertToFloat(t *testing.T) {
 }
 
 func mustParseTime(s string, tp byte, fsp int) Time {
-	t, err := ParseTime(DefaultStmtNoWarningContext, s, tp, fsp, nil)
+	t, err := ParseTime(DefaultStmtNoWarningContext, s, tp, fsp)
 	if err != nil {
 		panic("ParseTime fail")
 	}

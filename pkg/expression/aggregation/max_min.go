@@ -40,7 +40,7 @@ func (mmf *maxMinFunction) GetPartialResult(evalCtx *AggEvaluateContext) []types
 // Update implements Aggregation interface.
 func (mmf *maxMinFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) error {
 	a := mmf.Args[0]
-	value, err := a.Eval(row)
+	value, err := a.Eval(evalCtx.Ctx, row)
 	if err != nil {
 		return err
 	}

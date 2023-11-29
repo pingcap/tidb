@@ -21,108 +21,112 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
+	mockDispatch "github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/mock/gomock"
 )
 
-type planErrDispatcherExt struct {
-	callTime int
-	cnt      int
-}
-
 var (
-	_ dispatcher.Extension = (*planErrDispatcherExt)(nil)
-	_ dispatcher.Extension = (*planNotRetryableErrDispatcherExt)(nil)
+	callTime = 0
 )
 
-func (*planErrDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
+func getPlanNotRetryableErrDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
+	mockDispatcher := mockDispatch.NewMockExtension(ctrl)
+	mockDispatcher.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
+	mockDispatcher.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
+			return generateSchedulerNodes4Test()
+		},
+	).AnyTimes()
+	mockDispatcher.EXPECT().IsRetryableErr(gomock.Any()).Return(false).AnyTimes()
+	mockDispatcher.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
+		func(task *proto.Task) proto.Step {
+			return proto.StepDone
+		},
+	).AnyTimes()
+	mockDispatcher.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
+			return nil, errors.New("not retryable err")
+		},
+	).AnyTimes()
+
+	mockDispatcher.EXPECT().OnErrStage(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
+			return nil, errors.New("not retryable err")
+		},
+	).AnyTimes()
+	return mockDispatcher
 }
 
-func (p *planErrDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
-	if gTask.Step == proto.StepInit {
-		if p.callTime == 0 {
-			p.callTime++
-			return nil, errors.New("retryable err")
-		}
-		p.cnt = 3
-		return [][]byte{
-			[]byte("task1"),
-			[]byte("task2"),
-			[]byte("task3"),
-		}, nil
-	}
-	if gTask.Step == proto.StepOne {
-		p.cnt = 4
-		return [][]byte{
-			[]byte("task4"),
-		}, nil
-	}
-	return nil, nil
-}
+func getPlanErrDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
+	mockDispatcher := mockDispatch.NewMockExtension(ctrl)
+	mockDispatcher.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
+	mockDispatcher.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
+			return generateSchedulerNodes4Test()
+		},
+	).AnyTimes()
+	mockDispatcher.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
+	mockDispatcher.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
+		func(task *proto.Task) proto.Step {
+			switch task.Step {
+			case proto.StepInit:
+				return proto.StepOne
+			case proto.StepOne:
+				return proto.StepTwo
+			default:
+				return proto.StepDone
+			}
+		},
+	).AnyTimes()
+	mockDispatcher.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
+			if gTask.Step == proto.StepInit {
+				if callTime == 0 {
+					callTime++
+					return nil, errors.New("retryable err")
+				}
+				return [][]byte{
+					[]byte("task1"),
+					[]byte("task2"),
+					[]byte("task3"),
+				}, nil
+			}
+			if gTask.Step == proto.StepOne {
+				return [][]byte{
+					[]byte("task4"),
+				}, nil
+			}
+			return nil, nil
+		},
+	).AnyTimes()
 
-func (p *planErrDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
-	if p.callTime == 1 {
-		p.callTime++
-		return nil, errors.New("not retryable err")
-	}
-	return []byte("planErrTask"), nil
-}
-
-func (*planErrDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
-	return generateSchedulerNodes4Test()
-}
-
-func (*planErrDispatcherExt) IsRetryableErr(error) bool {
-	return true
-}
-
-func (p *planErrDispatcherExt) GetNextStep(task *proto.Task) proto.Step {
-	switch task.Step {
-	case proto.StepInit:
-		return proto.StepOne
-	case proto.StepOne:
-		return proto.StepTwo
-	default:
-		return proto.StepDone
-	}
-}
-
-type planNotRetryableErrDispatcherExt struct {
-	cnt int
-}
-
-func (*planNotRetryableErrDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
-}
-
-func (p *planNotRetryableErrDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
-	return nil, errors.New("not retryable err")
-}
-
-func (*planNotRetryableErrDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
-	return nil, errors.New("not retryable err")
-}
-
-func (*planNotRetryableErrDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
-	return generateSchedulerNodes4Test()
-}
-
-func (*planNotRetryableErrDispatcherExt) IsRetryableErr(error) bool {
-	return false
-}
-
-func (p *planNotRetryableErrDispatcherExt) GetNextStep(*proto.Task) proto.Step {
-	return proto.StepDone
+	mockDispatcher.EXPECT().OnErrStage(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
+			if callTime == 1 {
+				callTime++
+				return nil, errors.New("not retryable err")
+			}
+			return []byte("planErrTask"), nil
+		},
+	).AnyTimes()
+	return mockDispatcher
 }
 
 func TestPlanErr(t *testing.T) {
 	m := sync.Map{}
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	RegisterTaskMeta(t, ctrl, &m, &planErrDispatcherExt{0, 0})
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
+	RegisterTaskMeta(t, ctrl, &m, getPlanErrDispatcherExt(ctrl))
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	DispatchTaskAndCheckSuccess("key1", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "key1", t, &m)
+	callTime = 0
 	distContext.Close()
 }
 
@@ -131,9 +135,12 @@ func TestRevertPlanErr(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	RegisterTaskMeta(t, ctrl, &m, &planErrDispatcherExt{0, 0})
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
+	RegisterTaskMeta(t, ctrl, &m, getPlanErrDispatcherExt(ctrl))
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	DispatchTaskAndCheckSuccess("key1", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "key1", t, &m)
 	distContext.Close()
 }
 
@@ -141,8 +148,11 @@ func TestPlanNotRetryableErr(t *testing.T) {
 	m := sync.Map{}
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	RegisterTaskMeta(t, ctrl, &m, &planNotRetryableErrDispatcherExt{})
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
+	RegisterTaskMeta(t, ctrl, &m, getPlanNotRetryableErrDispatcherExt(ctrl))
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	DispatchTaskAndCheckState("key1", t, &m, proto.TaskStateFailed)
+	DispatchTaskAndCheckState(ctx, "key1", t, &m, proto.TaskStateFailed)
 	distContext.Close()
 }

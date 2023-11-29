@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -58,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -349,15 +351,14 @@ type ddlCtx struct {
 	schemaSyncer syncer.SchemaSyncer
 	stateSyncer  syncer.StateSyncer
 	ddlJobDoneCh chan struct{}
-	ddlEventCh   chan<- *util.Event
+	ddlEventCh   chan<- *statsutil.DDLEvent
 	lease        time.Duration        // lease is schema lease.
 	binlogCli    *pumpcli.PumpsClient // binlogCli is used for Binlog.
 	infoCache    *infoschema.InfoCache
 	statsHandle  *handle.Handle
 	tableLockCkr util.DeadTableLockChecker
 	etcdCli      *clientv3.Client
-	// backfillJobCh gets notification if any backfill jobs coming.
-	backfillJobCh chan struct{}
+	autoidCli    *autoid.ClientDiscover
 
 	*waitSchemaSyncedController
 	*schemaVersionManager
@@ -500,23 +501,6 @@ func (dc *ddlCtx) jobContext(jobID int64, reorgMeta *model.DDLReorgMeta) *JobCon
 	return ctx
 }
 
-func (dc *ddlCtx) removeBackfillCtxJobCtx(jobID int64) {
-	dc.backfillCtx.Lock()
-	delete(dc.backfillCtx.jobCtxMap, jobID)
-	dc.backfillCtx.Unlock()
-}
-
-func (dc *ddlCtx) backfillCtxJobIDs() []int64 {
-	dc.backfillCtx.Lock()
-	defer dc.backfillCtx.Unlock()
-
-	runningJobIDs := make([]int64, 0, len(dc.backfillCtx.jobCtxMap))
-	for id := range dc.backfillCtx.jobCtxMap {
-		runningJobIDs = append(runningJobIDs, id)
-	}
-	return runningJobIDs
-}
-
 type reorgContexts struct {
 	sync.RWMutex
 	// reorgCtxMap maps job ID to reorg context.
@@ -599,7 +583,7 @@ func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 
 // asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
 // give up notify and log it.
-func asyncNotifyEvent(d *ddlCtx, e *util.Event) {
+func asyncNotifyEvent(d *ddlCtx, e *statsutil.DDLEvent) {
 	if d.ddlEventCh != nil {
 		if d.lease == 0 {
 			// If lease is 0, it's always used in test.
@@ -673,6 +657,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		infoCache:                  opt.InfoCache,
 		tableLockCkr:               deadLockCkr,
 		etcdCli:                    opt.EtcdCli,
+		autoidCli:                  opt.AutoIDClient,
 		schemaVersionManager:       newSchemaVersionManager(),
 		waitSchemaSyncedController: newWaitSchemaSyncedController(),
 		runningJobIDs:              make([]string, 0, jobRecordCapacity),

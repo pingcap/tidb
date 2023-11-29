@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/session"
+	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -232,7 +233,7 @@ func (w *GCWorker) start(ctx context.Context, wg *sync.WaitGroup) {
 	}
 }
 
-func createSession(store kv.Storage) session.Session {
+func createSession(store kv.Storage) sessiontypes.Session {
 	for {
 		se, err := session.CreateSession(store)
 		if err != nil {
@@ -1874,7 +1875,7 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 // GC placement rules when the partitions are removed by the GC worker.
 // Placement rules cannot be removed immediately after drop table / truncate table,
 // because the tables can be flashed back or recovered.
-func (w *GCWorker) doGCPlacementRules(se session.Session, safePoint uint64, dr util.DelRangeTask, gcPlacementRuleCache map[int64]interface{}) (err error) {
+func (w *GCWorker) doGCPlacementRules(se sessiontypes.Session, safePoint uint64, dr util.DelRangeTask, gcPlacementRuleCache map[int64]interface{}) (err error) {
 	// Get the job from the job history
 	var historyJob *model.Job
 	failpoint.Inject("mockHistoryJobForGC", func(v failpoint.Value) {
@@ -2017,7 +2018,7 @@ func getGCRules(ids []int64, rules map[string]*label.Rule) []string {
 	var gcRules []string
 	for _, rule := range rules {
 		find := false
-		for _, d := range rule.Data {
+		for _, d := range rule.Data.([]interface{}) {
 			if r, ok := d.(map[string]interface{}); ok {
 				nowRange := fmt.Sprintf("%s%s", r["start_key"], r["end_key"])
 				if _, ok := oldRange[nowRange]; ok {

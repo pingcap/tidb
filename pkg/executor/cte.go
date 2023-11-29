@@ -546,13 +546,23 @@ func (p *cteProducer) computeChunkHash(chk *chunk.Chunk) (sel []int, err error) 
 			hashBitMap[val] = true
 		}
 	} else {
+		// Length of p.sel is init as MaxChunkSize, but the row num of chunk may still exceeds MaxChunkSize.
+		// So needs to handle here to make sure len(p.sel) == chk.NumRows().
+		if len(p.sel) < numRows {
+			tmpSel := make([]int, numRows-len(p.sel))
+			for i := 0; i < len(tmpSel); i++ {
+				tmpSel[i] = i + len(p.sel)
+			}
+			p.sel = append(p.sel, tmpSel...)
+		}
+
 		// All rows is selected, sel will be [0....numRows).
 		// e.sel is setup when building executor.
 		sel = p.sel
 	}
 
 	for i := 0; i < chk.NumCols(); i++ {
-		if err = codec.HashChunkSelected(p.ctx.GetSessionVars().StmtCtx, p.hCtx.hashVals,
+		if err = codec.HashChunkSelected(p.ctx.GetSessionVars().StmtCtx.TypeCtx(), p.hCtx.hashVals,
 			chk, p.hCtx.allTypes[i], i, p.hCtx.buf, p.hCtx.hasNull,
 			hashBitMap, false); err != nil {
 			return nil, err
@@ -647,7 +657,7 @@ func (p *cteProducer) checkHasDup(probeKey uint64,
 		if err != nil {
 			return false, err
 		}
-		isEqual, err := codec.EqualChunkRow(p.ctx.GetSessionVars().StmtCtx,
+		isEqual, err := codec.EqualChunkRow(p.ctx.GetSessionVars().StmtCtx.TypeCtx(),
 			row, p.hCtx.allTypes, p.hCtx.keyColIdx,
 			matchedRow, p.hCtx.allTypes, p.hCtx.keyColIdx)
 		if err != nil {

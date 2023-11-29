@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -95,7 +96,7 @@ type MPPPartitionColumn struct {
 }
 
 func (partitionCol *MPPPartitionColumn) hashCode(ctx *stmtctx.StatementContext) []byte {
-	hashcode := partitionCol.Col.HashCode(ctx)
+	hashcode := partitionCol.Col.HashCode()
 	if partitionCol.CollateID < 0 {
 		// collateId < 0 means new collation is not enabled
 		hashcode = codec.EncodeInt(hashcode, int64(partitionCol.CollateID))
@@ -113,7 +114,7 @@ func (partitionCol *MPPPartitionColumn) Equal(other *MPPPartitionColumn) bool {
 			return false
 		}
 	}
-	return partitionCol.Col.Equal(nil, other.Col)
+	return partitionCol.Col.EqualColumn(other.Col)
 }
 
 // MemoryUsage return the memory usage of MPPPartitionColumn
@@ -130,11 +131,11 @@ func (partitionCol *MPPPartitionColumn) MemoryUsage() (sum int64) {
 }
 
 // ExplainColumnList generates explain information for a list of columns.
-func ExplainColumnList(cols []*MPPPartitionColumn) []byte {
+func ExplainColumnList(ctx sessionctx.Context, cols []*MPPPartitionColumn) []byte {
 	buffer := bytes.NewBufferString("")
 	for i, col := range cols {
 		buffer.WriteString("[name: ")
-		buffer.WriteString(col.Col.ExplainInfo())
+		buffer.WriteString(col.Col.ExplainInfo(ctx))
 		buffer.WriteString(", collate: ")
 		if collate.NewCollationEnabled() {
 			buffer.WriteString(GetCollateNameByIDForPartition(col.CollateID))
@@ -289,8 +290,7 @@ func (p *PhysicalProperty) IsPrefix(prop *PhysicalProperty) bool {
 		return false
 	}
 	for i := range p.SortItems {
-		if !p.SortItems[i].Col.Equal(nil,
-			prop.SortItems[i].Col) || p.SortItems[i].Desc != prop.SortItems[i].Desc {
+		if !p.SortItems[i].Col.EqualColumn(prop.SortItems[i].Col) || p.SortItems[i].Desc != prop.SortItems[i].Desc {
 			return false
 		}
 	}
@@ -303,8 +303,8 @@ func (p *PhysicalProperty) IsSortItemAllForPartition() bool {
 		return false
 	}
 	for i := range p.SortItemsForPartition {
-		if !p.SortItemsForPartition[i].Col.Equal(nil,
-			p.SortItems[i].Col) || p.SortItemsForPartition[i].Desc != p.SortItems[i].Desc {
+		if !p.SortItemsForPartition[i].Col.EqualColumn(p.SortItems[i].Col) ||
+			p.SortItemsForPartition[i].Desc != p.SortItems[i].Desc {
 			return false
 		}
 	}
@@ -331,7 +331,7 @@ func (p *PhysicalProperty) HashCode() []byte {
 	p.hashcode = codec.EncodeInt(p.hashcode, int64(p.TaskTp))
 	p.hashcode = codec.EncodeFloat(p.hashcode, p.ExpectedCnt)
 	for _, item := range p.SortItems {
-		p.hashcode = append(p.hashcode, item.Col.HashCode(nil)...)
+		p.hashcode = append(p.hashcode, item.Col.HashCode()...)
 		if item.Desc {
 			p.hashcode = codec.EncodeInt(p.hashcode, 1)
 		} else {

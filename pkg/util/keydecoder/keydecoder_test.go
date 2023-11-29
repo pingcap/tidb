@@ -117,7 +117,7 @@ func TestDecodeKey(t *testing.T) {
 
 	values := types.MakeDatums("abc", 1)
 	sc := stmtctx.NewStmtCtx()
-	encodedValue, err := codec.EncodeKey(sc, nil, values...)
+	encodedValue, err := codec.EncodeKey(sc.TimeZone(), nil, values...)
 	assert.Nil(t, err)
 	key = []byte{
 		't',
@@ -166,7 +166,7 @@ func TestDecodeKey(t *testing.T) {
 
 	// Index key in a partitioned table.
 	values = types.MakeDatums("abcde", 2)
-	encodedValue, err = codec.EncodeKey(sc, nil, values...)
+	encodedValue, err = codec.EncodeKey(sc.TimeZone(), nil, values...)
 	assert.Nil(t, err)
 	key = []byte("t\x80\x00\x00\x00\x00\x00\x00\x06_i\x80\x00\x00\x00\x00\x00\x00\x04")
 	key = append(key, encodedValue...)
