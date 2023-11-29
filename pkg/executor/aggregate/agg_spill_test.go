@@ -223,6 +223,7 @@ func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Execu
 	return aggExec
 }
 
+// TODO the spill may still not be triggered
 func TestGetCorrectResult(t *testing.T) {
 	hardLimitBytesNum := int64(5000000)
 
