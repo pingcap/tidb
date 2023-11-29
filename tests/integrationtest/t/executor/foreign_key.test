@@ -347,3 +347,33 @@ set @@tidb_mem_quota_query=DEFAULT;
 set @@foreign_key_checks=DEFAULT;
 
 
+# TestTableLockInForeignKeyCascade
+set @@global.tidb_enable_foreign_key=1;
+set @@foreign_key_checks=1;
+drop table if exists t1, t2;
+create table t1 (id int key);
+create table t2 (id int key, foreign key fk (id) references t1(id) ON DELETE CASCADE ON UPDATE CASCADE);
+insert into t1 values (1), (2), (3);
+insert into t2 values (1), (2), (3);
+lock table t2 read;
+
+connect (conn1, localhost, root,, executor__foreign_key);
+set @@foreign_key_checks=1;
+--replace_regex /server: .*session: .*/server: <server> session: <session>/
+--error 1099
+delete from t1 where id = 1;
+
+connection default;
+unlock tables;
+
+connection conn1;
+delete from t1 where id = 1;
+
+connection default;
+select * from t1 order by id;
+select * from t2 order by id;
+disconnect conn1;
+
+set @@global.tidb_enable_foreign_key=default;
+set @@foreign_key_checks=default;
+

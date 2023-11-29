@@ -540,6 +540,11 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	// json_unquote's argument is not cast(json as string)
+	function, err = NewFunction(mock.NewContext(), ast.JSONUnquote, types.NewFieldType(mysql.TypeString), stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	// json_array
 	function, err = NewFunction(mock.NewContext(), ast.JSONArray, types.NewFieldType(mysql.TypeJSON), jsonColumn, jsonColumn, jsonColumn, jsonColumn, jsonColumn)
 	require.NoError(t, err)
@@ -980,11 +985,6 @@ func TestExprPushDownToFlash(t *testing.T) {
 
 	exprs = exprs[:0]
 
-	// json_unquote's argument is not cast(json as string)
-	function, err = NewFunction(mock.NewContext(), ast.JSONUnquote, types.NewFieldType(mysql.TypeString), stringColumn)
-	require.NoError(t, err)
-	exprs = append(exprs, function)
-
 	// Substring2Args: can not be pushed
 	function, err = NewFunction(mock.NewContext(), ast.Substr, types.NewFieldType(mysql.TypeString), binaryStringColumn, intColumn)
 	require.NoError(t, err)
@@ -1288,6 +1288,44 @@ func TestExprPushDownToFlash(t *testing.T) {
 		return groupingFunc, err
 	}
 	function, err = NewFunctionWithInit(mock.NewContext(), ast.Grouping, types.NewFieldType(mysql.TypeLonglong), init, uintColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastIntAsJson
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastRealAsJson
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), realColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastDecimalAsJson
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), decimalColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastStringAsJson
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), binaryStringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastTimeAsJson
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), datetimeColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastDurationAsJson
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), durationColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastJsonAsJson
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), jsonColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 

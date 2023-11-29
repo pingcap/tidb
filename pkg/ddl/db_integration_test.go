@@ -1817,8 +1817,6 @@ func TestParserIssue284(t *testing.T) {
 
 func TestAddExpressionIndex(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
-		// Test for table lock.
-		conf.EnableTableLock = true
 		conf.Instance.SlowThreshold = 10000
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
@@ -1895,60 +1893,6 @@ func TestAddExpressionIndex(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Experimental.AllowsExpressionIndex = true
 	})
-}
-
-func TestCreateExpressionIndexError(t *testing.T) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		// Test for table lock.
-		conf.EnableTableLock = true
-		conf.Instance.SlowThreshold = 10000
-		conf.TiKVClient.AsyncCommit.SafeWindow = 0
-		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
-		conf.Experimental.AllowsExpressionIndex = true
-	})
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a int, b real);")
-	tk.MustGetErrCode("alter table t add primary key ((a+b)) nonclustered;", errno.ErrFunctionalIndexPrimaryKey)
-
-	tk.MustGetErrCode("create table t(a int, index((cast(a as JSON))))", errno.ErrFunctionalIndexOnJSONOrGeometryFunction)
-
-	// Test for error
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a int, b real);")
-	tk.MustGetErrCode("alter table t add primary key ((a+b)) nonclustered;", errno.ErrFunctionalIndexPrimaryKey)
-	tk.MustGetErrCode("alter table t add index ((rand()));", errno.ErrFunctionalIndexFunctionIsNotAllowed)
-	tk.MustGetErrCode("alter table t add index ((now()+1));", errno.ErrFunctionalIndexFunctionIsNotAllowed)
-
-	tk.MustExec("alter table t add column (_V$_idx_0 int);")
-	tk.MustGetErrCode("alter table t add index idx((a+1));", errno.ErrDupFieldName)
-	tk.MustExec("alter table t drop column _V$_idx_0;")
-	tk.MustExec("alter table t add index idx((a+1));")
-	tk.MustGetErrCode("alter table t add column (_V$_idx_0 int);", errno.ErrDupFieldName)
-	tk.MustExec("alter table t drop index idx;")
-	tk.MustExec("alter table t add column (_V$_idx_0 int);")
-
-	tk.MustExec("alter table t add column (_V$_expression_index_0 int);")
-	tk.MustGetErrCode("alter table t add index ((a+1));", errno.ErrDupFieldName)
-	tk.MustExec("alter table t drop column _V$_expression_index_0;")
-	tk.MustExec("alter table t add index ((a+1));")
-	tk.MustGetErrCode("alter table t drop column _V$_expression_index_0;", errno.ErrCantDropFieldOrKey)
-	tk.MustGetErrCode("alter table t add column e int as (_V$_expression_index_0 + 1);", errno.ErrBadField)
-
-	// NOTE (#18150): In creating expression index, row value is not allowed.
-	tk.MustExec("drop table if exists t;")
-	tk.MustGetErrCode("create table t (j json, key k (((j,j))))", errno.ErrFunctionalIndexRowValueIsNotAllowed)
-	tk.MustExec("create table t (j json, key k ((j+1),(j+1)))")
-
-	tk.MustGetErrCode("create table t1 (col1 int, index ((concat(''))));", errno.ErrWrongKeyColumnFunctionalIndex)
-	tk.MustGetErrCode("CREATE TABLE t1 (col1 INT, PRIMARY KEY ((ABS(col1))) NONCLUSTERED);", errno.ErrFunctionalIndexPrimaryKey)
-
-	// For issue 26349
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(id char(10) primary key, short_name char(10), name char(10), key n((upper(`name`))));")
-	tk.MustExec("update t t1 set t1.short_name='a' where t1.id='1';")
 }
 
 func queryIndexOnTable(dbName, tableName string) string {
@@ -2349,20 +2293,6 @@ func TestEnumAndSetDefaultValue(t *testing.T) {
 	require.Equal(t, "a", tbl.Meta().Columns[1].DefaultValue)
 }
 
-func TestStrictDoubleTypeCheck(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_strict_double_type_check = 'ON'")
-	sql := "create table double_type_check(id int, c double(10));"
-	_, err := tk.Exec(sql)
-	require.Error(t, err)
-	require.Equal(t, "[parser:1149]You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use", err.Error())
-	tk.MustExec("set @@tidb_enable_strict_double_type_check = 'OFF'")
-	defer tk.MustExec("set @@tidb_enable_strict_double_type_check = 'ON'")
-	tk.MustExec(sql)
-}
-
 func TestDuplicateErrorMessage(t *testing.T) {
 	defer collate.SetNewCollationEnabledForTest(true)
 	store := testkit.CreateMockStore(t)
@@ -2669,8 +2599,6 @@ func TestAvoidCreateViewOnLocalTemporaryTable(t *testing.T) {
 
 func TestDropTemporaryTable(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
-		// Test for table lock.
-		conf.EnableTableLock = true
 		conf.Instance.SlowThreshold = 10000
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
@@ -2934,42 +2862,6 @@ func TestIssue29282(t *testing.T) {
 		t.Fail()
 	case <-ch:
 	}
-}
-
-// See https://github.com/pingcap/tidb/issues/35644
-func TestCreateTempTableInTxn(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("begin")
-	// new created temporary table should be visible
-	tk.MustExec("create temporary table t1(id int primary key, v int)")
-	tk.MustQuery("select * from t1").Check(testkit.Rows())
-	// new inserted data should be visible
-	tk.MustExec("insert into t1 values(123, 456)")
-	tk.MustQuery("select * from t1 where id=123").Check(testkit.Rows("123 456"))
-	// truncate table will clear data but table still visible
-	tk.MustExec("truncate table t1")
-	tk.MustQuery("select * from t1 where id=123").Check(testkit.Rows())
-	tk.MustExec("commit")
-
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("use test")
-	tk1.MustExec("create table tt(id int)")
-	tk1.MustExec("begin")
-	tk1.MustExec("create temporary table t1(id int)")
-	tk1.MustExec("insert into tt select * from t1")
-	tk1.MustExec("drop table tt")
-
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use test")
-	tk2.MustExec("create table t2(id int primary key, v int)")
-	tk2.MustExec("insert into t2 values(234, 567)")
-	tk2.MustExec("begin")
-	// create a new temporary table with the same name will override physical table
-	tk2.MustExec("create temporary table t2(id int primary key, v int)")
-	tk2.MustQuery("select * from t2 where id=234").Check(testkit.Rows())
-	tk2.MustExec("commit")
 }
 
 // See https://github.com/pingcap/tidb/issues/29327

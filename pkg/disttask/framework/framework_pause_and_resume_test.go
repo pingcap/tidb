@@ -48,7 +48,7 @@ func TestFrameworkPauseAndResume(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "dispatcher")
 
-	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
+	RegisterTaskMeta(t, ctrl, &m, getMockBasicDispatcherExt(ctrl))
 	distContext := testkit.NewDistExecutionContext(t, 3)
 	// 1. dispatch and pause one running task.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/pauseTaskAfterRefreshTask", "2*return(true)"))

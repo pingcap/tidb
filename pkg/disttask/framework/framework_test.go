@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
+	mockDispatch "github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	mockexecute "github.com/pingcap/tidb/pkg/disttask/framework/mock/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -36,48 +37,6 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-type testDispatcherExt struct {
-	cnt int
-}
-
-var _ dispatcher.Extension = (*testDispatcherExt)(nil)
-
-func (*testDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
-}
-
-func (dsp *testDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
-	if gTask.Step == proto.StepInit {
-		dsp.cnt = 3
-		return [][]byte{
-			[]byte("task1"),
-			[]byte("task2"),
-			[]byte("task3"),
-		}, nil
-	}
-	if gTask.Step == proto.StepOne {
-		dsp.cnt = 4
-		return [][]byte{
-			[]byte("task4"),
-		}, nil
-	}
-	return nil, nil
-}
-
-func (*testDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
-	return nil, nil
-}
-
-func (dsp *testDispatcherExt) GetNextStep(task *proto.Task) proto.Step {
-	switch task.Step {
-	case proto.StepInit:
-		return proto.StepOne
-	case proto.StepOne:
-		return proto.StepTwo
-	default:
-		return proto.StepDone
-	}
-}
-
 func generateSchedulerNodes4Test() ([]*infosync.ServerInfo, bool, error) {
 	serverInfos := infosync.MockGlobalServerInfoManagerEntry.GetAllServerInfo()
 	if len(serverInfos) == 0 {
@@ -89,14 +48,6 @@ func generateSchedulerNodes4Test() ([]*infosync.ServerInfo, bool, error) {
 		serverNodes = append(serverNodes, serverInfo)
 	}
 	return serverNodes, true, nil
-}
-
-func (*testDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
-	return generateSchedulerNodes4Test()
-}
-
-func (*testDispatcherExt) IsRetryableErr(error) bool {
-	return true
 }
 
 func getMockSubtaskExecutor(ctrl *gomock.Controller) *mockexecute.MockSubtaskExecutor {
@@ -128,6 +79,49 @@ func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, m *sync.Map, dispat
 	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()
 	mockExtension.EXPECT().IsIdempotent(gomock.Any()).Return(true).AnyTimes()
 	registerTaskMetaInner(t, proto.TaskTypeExample, mockExtension, mockCleanupRountine, dispatcherHandle)
+}
+
+func getMockBasicDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
+	mockDispatcher := mockDispatch.NewMockExtension(ctrl)
+	mockDispatcher.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
+	mockDispatcher.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
+			return generateSchedulerNodes4Test()
+		},
+	).AnyTimes()
+	mockDispatcher.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
+	mockDispatcher.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
+		func(task *proto.Task) proto.Step {
+			switch task.Step {
+			case proto.StepInit:
+				return proto.StepOne
+			case proto.StepOne:
+				return proto.StepTwo
+			default:
+				return proto.StepDone
+			}
+		},
+	).AnyTimes()
+	mockDispatcher.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
+			if gTask.Step == proto.StepInit {
+				return [][]byte{
+					[]byte("task1"),
+					[]byte("task2"),
+					[]byte("task3"),
+				}, nil
+			}
+			if gTask.Step == proto.StepOne {
+				return [][]byte{
+					[]byte("task4"),
+				}, nil
+			}
+			return nil, nil
+		},
+	).AnyTimes()
+
+	mockDispatcher.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	return mockDispatcher
 }
 
 func registerTaskMetaInner(t *testing.T, taskType proto.TaskType, mockExtension scheduler.Extension, mockCleanup dispatcher.CleanUpRoutine, dispatcherHandle dispatcher.Extension) {
@@ -331,7 +325,7 @@ func TestFrameworkBasic(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "dispatcher")
 
-	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
+	RegisterTaskMeta(t, ctrl, &m, getMockBasicDispatcherExt(ctrl))
 	distContext := testkit.NewDistExecutionContext(t, 2)
 	DispatchTaskAndCheckSuccess(ctx, "key1", t, &m)
 	DispatchTaskAndCheckSuccess(ctx, "key2", t, &m)
@@ -352,7 +346,7 @@ func TestFramework3Server(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "dispatcher")
 
-	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
+	RegisterTaskMeta(t, ctrl, &m, getMockBasicDispatcherExt(ctrl))
 	distContext := testkit.NewDistExecutionContext(t, 3)
 	DispatchTaskAndCheckSuccess(ctx, "key1", t, &m)
 	DispatchTaskAndCheckSuccess(ctx, "key2", t, &m)
@@ -371,7 +365,7 @@ func TestFrameworkAddDomain(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "dispatcher")
 
-	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
+	RegisterTaskMeta(t, ctrl, &m, getMockBasicDispatcherExt(ctrl))
 	distContext := testkit.NewDistExecutionContext(t, 2)
 	DispatchTaskAndCheckSuccess(ctx, "key1", t, &m)
 	distContext.AddDomain()
@@ -392,7 +386,7 @@ func TestFrameworkDeleteDomain(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "dispatcher")
 
-	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
+	RegisterTaskMeta(t, ctrl, &m, getMockBasicDispatcherExt(ctrl))
 	distContext := testkit.NewDistExecutionContext(t, 2)
 	DispatchTaskAndCheckSuccess(ctx, "key1", t, &m)
 	distContext.DeleteDomain(1)
@@ -409,7 +403,7 @@ func TestFrameworkWithQuery(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "dispatcher")
 
-	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
+	RegisterTaskMeta(t, ctrl, &m, getMockBasicDispatcherExt(ctrl))
 	distContext := testkit.NewDistExecutionContext(t, 2)
 	DispatchTaskAndCheckSuccess(ctx, "key1", t, &m)
 
@@ -435,7 +429,7 @@ func TestFrameworkCancelGTask(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "dispatcher")
 
-	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
+	RegisterTaskMeta(t, ctrl, &m, getMockBasicDispatcherExt(ctrl))
 	distContext := testkit.NewDistExecutionContext(t, 2)
 	DispatchAndCancelTask(ctx, "key1", t, &m)
 	distContext.Close()
@@ -449,7 +443,7 @@ func TestFrameworkSubTaskFailed(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "dispatcher")
 
-	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
+	RegisterTaskMeta(t, ctrl, &m, getMockBasicDispatcherExt(ctrl))
 	distContext := testkit.NewDistExecutionContext(t, 1)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/MockExecutorRunErr", "1*return(true)"))
 	defer func() {
@@ -468,7 +462,7 @@ func TestFrameworkSubTaskInitEnvFailed(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "dispatcher")
 
-	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
+	RegisterTaskMeta(t, ctrl, &m, getMockBasicDispatcherExt(ctrl))
 	distContext := testkit.NewDistExecutionContext(t, 1)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockExecSubtaskInitEnvErr", "return()"))
 	defer func() {
@@ -486,7 +480,7 @@ func TestOwnerChange(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "dispatcher")
 
-	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
+	RegisterTaskMeta(t, ctrl, &m, getMockBasicDispatcherExt(ctrl))
 
 	distContext := testkit.NewDistExecutionContext(t, 3)
 	dispatcher.MockOwnerChange = func() {
@@ -506,7 +500,7 @@ func TestFrameworkCancelThenSubmitSubTask(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "dispatcher")
 
-	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
+	RegisterTaskMeta(t, ctrl, &m, getMockBasicDispatcherExt(ctrl))
 	distContext := testkit.NewDistExecutionContext(t, 3)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/cancelBeforeUpdate", "return()"))
 	DispatchTaskAndCheckState(ctx, "😊", t, &m, proto.TaskStateReverted)
@@ -522,7 +516,7 @@ func TestSchedulerDownBasic(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "dispatcher")
 
-	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
+	RegisterTaskMeta(t, ctrl, &m, getMockBasicDispatcherExt(ctrl))
 
 	distContext := testkit.NewDistExecutionContext(t, 4)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockCleanScheduler", "return()"))
@@ -543,7 +537,7 @@ func TestSchedulerDownManyNodes(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "dispatcher")
 
-	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
+	RegisterTaskMeta(t, ctrl, &m, getMockBasicDispatcherExt(ctrl))
 
 	distContext := testkit.NewDistExecutionContext(t, 30)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockCleanScheduler", "return()"))
@@ -563,7 +557,7 @@ func TestFrameworkSetLabel(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "dispatcher")
 
-	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
+	RegisterTaskMeta(t, ctrl, &m, getMockBasicDispatcherExt(ctrl))
 	distContext := testkit.NewDistExecutionContext(t, 3)
 	tk := testkit.NewTestKit(t, distContext.Store)
 
@@ -601,9 +595,9 @@ func TestMultiTasks(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "dispatcher")
 
-	RegisterTaskMeta(t, ctrl, &(m[0]), &testDispatcherExt{})
-	RegisterTaskMetaForExample2(t, ctrl, &(m[1]), &testDispatcherExt{})
-	RegisterTaskMetaForExample3(t, ctrl, &(m[2]), &testDispatcherExt{})
+	RegisterTaskMeta(t, ctrl, &(m[0]), getMockBasicDispatcherExt(ctrl))
+	RegisterTaskMetaForExample2(t, ctrl, &(m[1]), getMockBasicDispatcherExt(ctrl))
+	RegisterTaskMetaForExample3(t, ctrl, &(m[2]), getMockBasicDispatcherExt(ctrl))
 
 	distContext := testkit.NewDistExecutionContext(t, 3)
 	tasks := DispatchMultiTasksAndOneFail(ctx, t, num, m)
@@ -639,7 +633,7 @@ func TestGC(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "dispatcher")
 
-	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
+	RegisterTaskMeta(t, ctrl, &m, getMockBasicDispatcherExt(ctrl))
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/storage/subtaskHistoryKeepSeconds", "return(1)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/historySubtaskTableGcInterval", "return(1)"))
@@ -684,7 +678,7 @@ func TestFrameworkSubtaskFinishedCancel(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "dispatcher")
 
-	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
+	RegisterTaskMeta(t, ctrl, &m, getMockBasicDispatcherExt(ctrl))
 	distContext := testkit.NewDistExecutionContext(t, 3)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/MockSubtaskFinishedCancel", "1*return(true)"))
 	defer func() {
@@ -702,7 +696,7 @@ func TestFrameworkRunSubtaskCancel(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "dispatcher")
 
-	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
+	RegisterTaskMeta(t, ctrl, &m, getMockBasicDispatcherExt(ctrl))
 	distContext := testkit.NewDistExecutionContext(t, 3)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/MockRunSubtaskCancel", "1*return(true)"))
 	DispatchTaskAndCheckState(ctx, "key1", t, &m, proto.TaskStateReverted)
@@ -717,7 +711,7 @@ func TestFrameworkCleanUpRoutine(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "dispatcher")
 
-	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
+	RegisterTaskMeta(t, ctrl, &m, getMockBasicDispatcherExt(ctrl))
 	distContext := testkit.NewDistExecutionContext(t, 3)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/WaitCleanUpFinished", "return()"))
 	DispatchTaskAndCheckSuccess(ctx, "key1", t, &m)
@@ -737,7 +731,7 @@ func TestTaskCancelledBeforeUpdateTask(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "dispatcher")
 
-	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
+	RegisterTaskMeta(t, ctrl, &m, getMockBasicDispatcherExt(ctrl))
 	distContext := testkit.NewDistExecutionContext(t, 1)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/cancelBeforeUpdateTask", "1*return(true)"))
 	DispatchTaskAndCheckState(ctx, "key1", t, &m, proto.TaskStateReverted)

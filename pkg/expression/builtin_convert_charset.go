@@ -228,7 +228,6 @@ func BuildToBinaryFunction(ctx sessionctx.Context, expr Expression) (res Express
 		FuncName: model.NewCIStr(InternalFuncToBinary),
 		RetType:  f.getRetTp(),
 		Function: f,
-		ctx:      ctx,
 	}
 	return FoldConstant(ctx, res)
 }
@@ -244,7 +243,6 @@ func BuildFromBinaryFunction(ctx sessionctx.Context, expr Expression, tp *types.
 		FuncName: model.NewCIStr(InternalFuncFromBinary),
 		RetType:  tp,
 		Function: f,
-		ctx:      ctx,
 	}
 	return FoldConstant(ctx, res)
 }
