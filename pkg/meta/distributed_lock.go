@@ -234,8 +234,12 @@ func (d *DistributedLock) Unlock() error {
 }
 
 func (d *DistributedLock) getLockInTxnWithRetry(fn lockHandleFunc) error {
+	tryCnt := 0
 	for {
-		if contextIsDone(d.ctx) {
+		tryCnt++
+		// We only check context error after retry 10 times,
+		// so that the lock can be released even if the context is canceled.
+		if tryCnt >= 10 && contextIsDone(d.ctx) {
 			return d.ctx.Err()
 		}
 
@@ -265,7 +269,7 @@ func (d *DistributedLock) getLockInTxnWithRetry(fn lockHandleFunc) error {
 				time.Sleep(d.backoff)
 				continue
 			}
-			logutil.Logger(d.ctx).Warn("lock encounter error",
+			logutil.Logger(d.ctx).Info("lock encounter error",
 				zap.Error(err), zap.Bool("retry", !noRetry))
 			if noRetry {
 				return err
