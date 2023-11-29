@@ -195,11 +195,11 @@ func TestGetInstance(t *testing.T) {
 	// server ids: uuid0, uuid1
 	// subtask instance ids: uuid1
 	subtask := &proto.Subtask{
-		Type:        proto.TaskTypeExample,
-		TaskID:      task.ID,
-		SchedulerID: serverIDs[1],
+		Type:       proto.TaskTypeExample,
+		TaskID:     task.ID,
+		ExecutorID: serverIDs[1],
 	}
-	err = mgr.AddNewSubTask(ctx, task.ID, proto.StepInit, subtask.SchedulerID, nil, subtask.Type, true)
+	err = mgr.AddNewSubTask(ctx, task.ID, proto.StepInit, subtask.ExecutorID, nil, subtask.Type, true)
 	require.NoError(t, err)
 	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, task)
 	require.NoError(t, err)
@@ -207,11 +207,11 @@ func TestGetInstance(t *testing.T) {
 	// server ids: uuid0, uuid1
 	// subtask instance ids: uuid0, uuid1
 	subtask = &proto.Subtask{
-		Type:        proto.TaskTypeExample,
-		TaskID:      task.ID,
-		SchedulerID: serverIDs[0],
+		Type:       proto.TaskTypeExample,
+		TaskID:     task.ID,
+		ExecutorID: serverIDs[0],
 	}
-	err = mgr.AddNewSubTask(ctx, task.ID, proto.StepInit, subtask.SchedulerID, nil, subtask.Type, true)
+	err = mgr.AddNewSubTask(ctx, task.ID, proto.StepInit, subtask.ExecutorID, nil, subtask.Type, true)
 	require.NoError(t, err)
 	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, task)
 	require.NoError(t, err)

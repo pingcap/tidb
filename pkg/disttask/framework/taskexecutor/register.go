@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package scheduler
+package taskexecutor
 
 import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler/execute"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 )
 
 type taskTypeOptions struct {
@@ -32,33 +32,33 @@ type TaskTypeOption func(opts *taskTypeOptions)
 
 var (
 	// key is task type
-	taskTypes              = make(map[proto.TaskType]taskTypeOptions)
-	taskSchedulerFactories = make(map[proto.TaskType]schedulerFactoryFn)
+	taskTypes             = make(map[proto.TaskType]taskTypeOptions)
+	taskExecutorFactories = make(map[proto.TaskType]TaskExecutorFactoryFn)
 )
 
-type schedulerFactoryFn func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) Scheduler
+type TaskExecutorFactoryFn func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) Executor
 
 // RegisterTaskType registers the task type.
-func RegisterTaskType(taskType proto.TaskType, factory schedulerFactoryFn, opts ...TaskTypeOption) {
+func RegisterTaskType(taskType proto.TaskType, factory TaskExecutorFactoryFn, opts ...TaskTypeOption) {
 	var option taskTypeOptions
 	for _, opt := range opts {
 		opt(&option)
 	}
 	taskTypes[taskType] = option
-	taskSchedulerFactories[taskType] = factory
+	taskExecutorFactories[taskType] = factory
 }
 
-func getSchedulerFactory(taskType proto.TaskType) schedulerFactoryFn {
-	return taskSchedulerFactories[taskType]
+func getTaskExecutorFactory(taskType proto.TaskType) TaskExecutorFactoryFn {
+	return taskExecutorFactories[taskType]
 }
 
-// ClearSchedulers is only used in test
-func ClearSchedulers() {
+// ClearTaskExecutors is only used in test
+func ClearTaskExecutors() {
 	taskTypes = make(map[proto.TaskType]taskTypeOptions)
-	taskSchedulerFactories = make(map[proto.TaskType]schedulerFactoryFn)
+	taskExecutorFactories = make(map[proto.TaskType]TaskExecutorFactoryFn)
 }
 
-// WithSummary is the option of Scheduler to set the summary.
+// WithSummary is the option of TaskExecutor to set the summary.
 var WithSummary TaskTypeOption = func(opts *taskTypeOptions) {
 	opts.Summary = execute.NewSummary()
 }

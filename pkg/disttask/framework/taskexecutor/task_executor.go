@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package scheduler
+package taskexecutor
 
 import (
 	"context"
@@ -26,8 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -56,8 +56,8 @@ var (
 	TestSyncChan = make(chan struct{})
 )
 
-// BaseScheduler is the base implementation of Scheduler.
-type BaseScheduler struct {
+// BaseTaskExecutor is the base implementation of Scheduler.
+type BaseTaskExecutor struct {
 	// id, it's the same as server id now, i.e. host:port.
 	id        string
 	taskID    int64
@@ -77,9 +77,9 @@ type BaseScheduler struct {
 	}
 }
 
-// NewBaseScheduler creates a new BaseScheduler.
-func NewBaseScheduler(ctx context.Context, id string, taskID int64, taskTable TaskTable) *BaseScheduler {
-	schedulerImpl := &BaseScheduler{
+// NewBaseTaskExecutor creates a new BaseTaskExecutor.
+func NewBaseTaskExecutor(ctx context.Context, id string, taskID int64, taskTable TaskTable) *BaseTaskExecutor {
+	schedulerImpl := &BaseTaskExecutor{
 		id:        id,
 		taskID:    taskID,
 		taskTable: taskTable,
@@ -89,7 +89,7 @@ func NewBaseScheduler(ctx context.Context, id string, taskID int64, taskTable Ta
 	return schedulerImpl
 }
 
-func (s *BaseScheduler) startCancelCheck(ctx context.Context, wg *sync.WaitGroup, cancelFn context.CancelCauseFunc) {
+func (s *BaseTaskExecutor) startCancelCheck(ctx context.Context, wg *sync.WaitGroup, cancelFn context.CancelCauseFunc) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -119,15 +119,15 @@ func (s *BaseScheduler) startCancelCheck(ctx context.Context, wg *sync.WaitGroup
 }
 
 // Init implements the Scheduler interface.
-func (*BaseScheduler) Init(_ context.Context) error {
+func (*BaseTaskExecutor) Init(_ context.Context) error {
 	return nil
 }
 
 // Run runs the scheduler task.
-func (s *BaseScheduler) Run(ctx context.Context, task *proto.Task) (err error) {
+func (s *BaseTaskExecutor) Run(ctx context.Context, task *proto.Task) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.Logger(s.logCtx).Error("BaseScheduler panicked", zap.Any("recover", r), zap.Stack("stack"))
+			logutil.Logger(s.logCtx).Error("BaseTaskExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
 			err4Panic := errors.Errorf("%v", r)
 			err1 := s.updateErrorToSubtask(ctx, task.ID, err4Panic)
 			if err == nil {
@@ -145,7 +145,7 @@ func (s *BaseScheduler) Run(ctx context.Context, task *proto.Task) (err error) {
 	return s.updateErrorToSubtask(ctx, task.ID, err)
 }
 
-func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) (resErr error) {
+func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr error) {
 	if ctx.Err() != nil {
 		s.onError(ctx.Err())
 		return s.getError()
@@ -281,7 +281,7 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) (resErr error
 	return s.getError()
 }
 
-func (s *BaseScheduler) runSubtask(ctx context.Context, executor execute.SubtaskExecutor, subtask *proto.Subtask) {
+func (s *BaseTaskExecutor) runSubtask(ctx context.Context, executor execute.SubtaskExecutor, subtask *proto.Subtask) {
 	err := executor.RunSubtask(ctx, subtask)
 	failpoint.Inject("MockRunSubtaskCancel", func(val failpoint.Value) {
 		if val.(bool) {
@@ -357,7 +357,7 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, executor execute.Subtask
 	s.onSubtaskFinished(ctx, executor, subtask)
 }
 
-func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, executor execute.SubtaskExecutor, subtask *proto.Subtask) {
+func (s *BaseTaskExecutor) onSubtaskFinished(ctx context.Context, executor execute.SubtaskExecutor, subtask *proto.Subtask) {
 	if err := s.getError(); err == nil {
 		if err = executor.OnFinished(ctx, subtask); err != nil {
 			s.onError(err)
@@ -388,7 +388,7 @@ func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, executor execute.
 }
 
 // Rollback rollbacks the scheduler task.
-func (s *BaseScheduler) Rollback(ctx context.Context, task *proto.Task) error {
+func (s *BaseTaskExecutor) Rollback(ctx context.Context, task *proto.Task) error {
 	rollbackCtx, rollbackCancel := context.WithCancelCause(ctx)
 	defer rollbackCancel(ErrFinishRollback)
 	s.registerCancelFunc(rollbackCancel)
@@ -450,7 +450,7 @@ func (s *BaseScheduler) Rollback(ctx context.Context, task *proto.Task) error {
 }
 
 // Pause pause the scheduler task.
-func (s *BaseScheduler) Pause(ctx context.Context, task *proto.Task) error {
+func (s *BaseTaskExecutor) Pause(ctx context.Context, task *proto.Task) error {
 	logutil.Logger(s.logCtx).Info("scheduler pause subtasks")
 	// pause all running subtasks.
 	if err := s.taskTable.PauseSubtasks(ctx, s.id, task.ID); err != nil {
@@ -461,7 +461,7 @@ func (s *BaseScheduler) Pause(ctx context.Context, task *proto.Task) error {
 }
 
 // Close closes the scheduler when all the subtasks are complete.
-func (*BaseScheduler) Close() {
+func (*BaseTaskExecutor) Close() {
 }
 
 func runSummaryCollectLoop(
@@ -486,13 +486,13 @@ func runSummaryCollectLoop(
 	return nil, func() {}, nil
 }
 
-func (s *BaseScheduler) registerCancelFunc(cancel context.CancelCauseFunc) {
+func (s *BaseTaskExecutor) registerCancelFunc(cancel context.CancelCauseFunc) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.mu.runtimeCancel = cancel
 }
 
-func (s *BaseScheduler) onError(err error) {
+func (s *BaseTaskExecutor) onError(err error) {
 	if err == nil {
 		return
 	}
@@ -511,26 +511,26 @@ func (s *BaseScheduler) onError(err error) {
 	}
 }
 
-func (s *BaseScheduler) markErrorHandled() {
+func (s *BaseTaskExecutor) markErrorHandled() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.mu.handled = true
 }
 
-func (s *BaseScheduler) getError() error {
+func (s *BaseTaskExecutor) getError() error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.mu.err
 }
 
-func (s *BaseScheduler) resetError() {
+func (s *BaseTaskExecutor) resetError() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.mu.err = nil
 	s.mu.handled = false
 }
 
-func (s *BaseScheduler) startSubtaskAndUpdateState(ctx context.Context, subtask *proto.Subtask) {
+func (s *BaseTaskExecutor) startSubtaskAndUpdateState(ctx context.Context, subtask *proto.Subtask) {
 	metrics.DecDistTaskSubTaskCnt(subtask)
 	metrics.EndDistTaskSubTask(subtask)
 	s.startSubtask(ctx, subtask.ID)
@@ -539,7 +539,7 @@ func (s *BaseScheduler) startSubtaskAndUpdateState(ctx context.Context, subtask 
 	metrics.StartDistTaskSubTask(subtask)
 }
 
-func (s *BaseScheduler) updateSubtaskStateAndErrorImpl(ctx context.Context, tidbID string, subtaskID int64, state proto.TaskState, subTaskErr error) {
+func (s *BaseTaskExecutor) updateSubtaskStateAndErrorImpl(ctx context.Context, tidbID string, subtaskID int64, state proto.TaskState, subTaskErr error) {
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	logger := logutil.Logger(s.logCtx)
 	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
@@ -553,7 +553,7 @@ func (s *BaseScheduler) updateSubtaskStateAndErrorImpl(ctx context.Context, tidb
 	}
 }
 
-func (s *BaseScheduler) startSubtask(ctx context.Context, subtaskID int64) {
+func (s *BaseTaskExecutor) startSubtask(ctx context.Context, subtaskID int64) {
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	logger := logutil.Logger(s.logCtx)
 	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
@@ -567,12 +567,12 @@ func (s *BaseScheduler) startSubtask(ctx context.Context, subtaskID int64) {
 	}
 }
 
-func (s *BaseScheduler) finishSubtask(ctx context.Context, subtask *proto.Subtask) {
+func (s *BaseTaskExecutor) finishSubtask(ctx context.Context, subtask *proto.Subtask) {
 	logger := logutil.Logger(s.logCtx)
 	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
 	err := handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
-			return true, s.taskTable.FinishSubtask(ctx, subtask.SchedulerID, subtask.ID, subtask.Meta)
+			return true, s.taskTable.FinishSubtask(ctx, subtask.ExecutorID, subtask.ID, subtask.Meta)
 		},
 	)
 	if err != nil {
@@ -580,10 +580,10 @@ func (s *BaseScheduler) finishSubtask(ctx context.Context, subtask *proto.Subtas
 	}
 }
 
-func (s *BaseScheduler) updateSubtaskStateAndError(ctx context.Context, subtask *proto.Subtask, state proto.TaskState, subTaskErr error) {
+func (s *BaseTaskExecutor) updateSubtaskStateAndError(ctx context.Context, subtask *proto.Subtask, state proto.TaskState, subTaskErr error) {
 	metrics.DecDistTaskSubTaskCnt(subtask)
 	metrics.EndDistTaskSubTask(subtask)
-	s.updateSubtaskStateAndErrorImpl(ctx, subtask.SchedulerID, subtask.ID, state, subTaskErr)
+	s.updateSubtaskStateAndErrorImpl(ctx, subtask.ExecutorID, subtask.ID, state, subTaskErr)
 	subtask.State = state
 	metrics.IncDistTaskSubTaskCnt(subtask)
 	if !subtask.IsFinished() {
@@ -591,7 +591,7 @@ func (s *BaseScheduler) updateSubtaskStateAndError(ctx context.Context, subtask 
 	}
 }
 
-func (s *BaseScheduler) finishSubtaskAndUpdateState(ctx context.Context, subtask *proto.Subtask) {
+func (s *BaseTaskExecutor) finishSubtaskAndUpdateState(ctx context.Context, subtask *proto.Subtask) {
 	metrics.DecDistTaskSubTaskCnt(subtask)
 	metrics.EndDistTaskSubTask(subtask)
 	s.finishSubtask(ctx, subtask)
@@ -615,7 +615,7 @@ func isRetryableError(err error) bool {
 // 1. Only cancel subtasks when meet ErrCancelSubtask.
 // 2. Only fail subtasks when meet non retryable error.
 // 3. When meet other errors, don't change subtasks' state.
-func (s *BaseScheduler) markSubTaskCanceledOrFailed(ctx context.Context, subtask *proto.Subtask) bool {
+func (s *BaseTaskExecutor) markSubTaskCanceledOrFailed(ctx context.Context, subtask *proto.Subtask) bool {
 	if err := s.getError(); err != nil {
 		err := errors.Cause(err)
 		if ctx.Err() != nil && context.Cause(ctx) == ErrCancelSubtask {
@@ -635,7 +635,7 @@ func (s *BaseScheduler) markSubTaskCanceledOrFailed(ctx context.Context, subtask
 	return false
 }
 
-func (s *BaseScheduler) updateErrorToSubtask(ctx context.Context, taskID int64, err error) error {
+func (s *BaseTaskExecutor) updateErrorToSubtask(ctx context.Context, taskID int64, err error) error {
 	logger := logutil.Logger(s.logCtx)
 	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
 	err1 := handle.RunWithRetry(s.logCtx, dispatcher.RetrySQLTimes, backoffer, logger,

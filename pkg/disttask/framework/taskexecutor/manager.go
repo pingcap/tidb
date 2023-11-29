@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package scheduler
+package taskexecutor
 
 import (
 	"context"
@@ -326,7 +326,7 @@ var testContexts sync.Map
 func (m *Manager) onRunnableTask(task *proto.Task) {
 	logutil.Logger(m.logCtx).Info("onRunnableTask", zap.Int64("task-id", task.ID), zap.Stringer("type", task.Type))
 	// runCtx only used in scheduler.Run, cancel in m.fetchAndFastCancelTasks.
-	factory := getSchedulerFactory(task.Type)
+	factory := getTaskExecutorFactory(task.Type)
 	if factory == nil {
 		err := errors.Errorf("task type %s not found", task.Type)
 		m.logErrAndPersist(err, task.ID)

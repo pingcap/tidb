@@ -149,9 +149,9 @@ type Subtask struct {
 	// taken from task_key of the subtask table
 	TaskID int64
 	State  TaskState
-	// SchedulerID is the ID of scheduler, right now it's the same as instance_id, exec_id.
+	// ExecutorID is the ID of scheduler, right now it's the same as instance_id, exec_id.
 	// its value is IP:PORT, see GenerateExecID
-	SchedulerID string
+	ExecutorID string
 	// StartTime is the time when the subtask is started.
 	// it's 0 if it hasn't started yet.
 	StartTime time.Time
@@ -172,11 +172,11 @@ func (t *Subtask) IsFinished() bool {
 // NewSubtask create a new subtask.
 func NewSubtask(step Step, taskID int64, tp TaskType, schedulerID string, meta []byte) *Subtask {
 	return &Subtask{
-		Step:        step,
-		Type:        tp,
-		TaskID:      taskID,
-		SchedulerID: schedulerID,
-		Meta:        meta,
+		Step:       step,
+		Type:       tp,
+		TaskID:     taskID,
+		ExecutorID: schedulerID,
+		Meta:       meta,
 	}
 }
 

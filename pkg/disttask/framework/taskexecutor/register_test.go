@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package scheduler
+package taskexecutor
 
 import (
 	"context"
@@ -24,18 +24,18 @@ import (
 
 func TestRegisterTaskType(t *testing.T) {
 	// other case might add task types, so we need to clear it first
-	ClearSchedulers()
-	factoryFn := func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) Scheduler {
+	ClearTaskExecutors()
+	factoryFn := func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) Executor {
 		return nil
 	}
 	RegisterTaskType("test1", factoryFn)
 	require.Len(t, taskTypes, 1)
-	require.Len(t, taskSchedulerFactories, 1)
+	require.Len(t, taskExecutorFactories, 1)
 	RegisterTaskType("test2", factoryFn)
 	require.Len(t, taskTypes, 2)
-	require.Len(t, taskSchedulerFactories, 2)
+	require.Len(t, taskExecutorFactories, 2)
 	// register again
 	RegisterTaskType("test2", factoryFn)
 	require.Len(t, taskTypes, 2)
-	require.Len(t, taskSchedulerFactories, 2)
+	require.Len(t, taskExecutorFactories, 2)
 }

@@ -12,7 +12,6 @@ go_library(
     deps = [
         "//pkg/disttask/framework/planner",
         "//pkg/disttask/framework/proto",
-        "//pkg/disttask/framework/scheduler/execute",
         "//pkg/sessionctx",
         "@org_uber_go_mock//gomock",
     ],
