@@ -684,3 +684,13 @@ func TestKillStmt(t *testing.T) {
 	tk.MustExecToErr("kill rand()", "Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
 	// remote kill is tested in `tests/globalkilltest`
 }
+
+func TestNavicatUser(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	rootTK := testkit.NewTestKit(t, store)
+
+	// Besides the usual columns navicat user management also queries a few more columns.
+	// https://github.com/pingcap/tidb/issues/45154
+	rootTK.MustQuery(`SELECT ssl_type,ssl_cipher,x509_issuer,x509_subject,max_questions,max_updates,` +
+		`max_connections,max_user_connections FROM mysql.user`)
+}

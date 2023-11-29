@@ -94,7 +94,7 @@ const (
 		Index_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_user_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Event_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Repl_slave_priv	    	ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Repl_slave_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Repl_client_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Trigger_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_role_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
@@ -104,14 +104,22 @@ const (
 		Reload_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		FILE_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Config_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Create_Tablespace_Priv  ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Password_reuse_history  smallint unsigned DEFAULT NULL,
-		Password_reuse_time     smallint unsigned DEFAULT NULL,
+		Create_Tablespace_Priv	ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Password_reuse_history	smallint unsigned DEFAULT NULL,
+		Password_reuse_time		smallint unsigned DEFAULT NULL,
 		User_attributes			json,
 		Token_issuer			VARCHAR(255),
 		Password_expired		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Password_last_changed	TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
 		Password_lifetime		SMALLINT UNSIGNED DEFAULT NULL,
+		ssl_type 				ENUM('','ANY','X509','SPECIFIED') NOT NULL DEFAULT '',
+		ssl_cipher 				blob,
+		x509_issuer 			blob,
+		x509_subject 			blob,
+		max_questions 			int unsigned NOT NULL DEFAULT '0',
+		max_updates 			int unsigned NOT NULL DEFAULT '0',
+		max_connections 		int unsigned NOT NULL DEFAULT '0',
+		max_user_connections 	int unsigned NOT NULL DEFAULT '0',
 		PRIMARY KEY (Host, User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
@@ -179,6 +187,17 @@ const (
 		Timestamp	TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		Column_priv	SET('Select','Insert','Update','References'),
 		PRIMARY KEY (Host, DB, User, Table_name, Column_name));`
+	// CreateProcsPrivTable is the SQL statement that creates the procedures privileges table (for compatibility).
+	CreateProcsPrivTable = `CREATE TABLE IF NOT EXISTS mysql.procs_priv (
+        Host char(255) NOT NULL DEFAULT '',
+        Db char(64) NOT NULL DEFAULT '',
+        User char(32) NOT NULL DEFAULT '',
+        Routine_name char(64) NOT NULL DEFAULT '',
+        Routine_type enum('FUNCTION','PROCEDURE')  NOT NULL,
+        Grantor varchar(288) COLLATE utf8mb3_bin NOT NULL DEFAULT '',
+        Proc_priv set('Execute','Alter Routine','Grant')  NOT NULL DEFAULT '',
+        Timestamp timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (Host,User,Db,Routine_name,Routine_type));`
 	// CreateGlobalVariablesTable is the SQL statement creates global variable table in system db.
 	// TODO: MySQL puts GLOBAL_VARIABLES table in INFORMATION_SCHEMA db.
 	// INFORMATION_SCHEMA is a virtual db in TiDB. So we put this table in system db.
@@ -1023,14 +1042,18 @@ const (
 	//   write mDDLTableVersion into `mysql.tidb` table
 	version178 = 178
 
-	// vresion 179
+	// version 179
 	//   enlarge `VARIABLE_VALUE` of `mysql.global_variables` from `varchar(1024)` to `varchar(16383)`.
 	version179 = 179
+
+	// version 180
+	// Add procs_priv table
+	version180 = 180
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version179
+var currentBootstrapVersion int64 = version180
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1185,6 +1208,7 @@ var (
 		upgradeToVer177,
 		upgradeToVer178,
 		upgradeToVer179,
+		upgradeToVer180,
 	}
 )
 
@@ -2899,6 +2923,50 @@ func upgradeToVer179(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.global_variables MODIFY COLUMN `VARIABLE_VALUE` varchar(16383)")
 }
 
+func upgradeToVer180(s sessiontypes.Session, ver int64) {
+	if ver >= version180 {
+		return
+	}
+	doReentrantDDL(s, `ALTER TABLE mysql.user
+	ADD COLUMN ssl_type enum('','ANY','X509','SPECIFIED') NOT NULL DEFAULT '',
+	ADD COLUMN ssl_cipher blob NOT NULL,
+	ADD COLUMN x509_issuer blob NOT NULL,
+	ADD COLUMN x509_subject blob NOT NULL,
+	ADD COLUMN max_questions int unsigned NOT NULL DEFAULT '0',
+	ADD COLUMN max_updates int unsigned NOT NULL DEFAULT '0',
+	ADD COLUMN max_connections int unsigned NOT NULL DEFAULT '0',
+	ADD COLUMN max_user_connections int unsigned NOT NULL DEFAULT '0'`, infoschema.ErrColumnExists)
+
+	// Update mysql.user table with data from mysql.global_priv
+	mustExecute(s, `UPDATE mysql.user u JOIN mysql.global_priv p ON u.Host=p.Host AND u.User=p.User
+	SET u.ssl_type='ANY' WHERE p.Priv->'$.ssl_type'=1`)
+	mustExecute(s, `UPDATE mysql.user u JOIN mysql.global_priv p ON u.Host=p.Host AND u.User=p.User
+	SET u.ssl_type='X509' WHERE p.Priv->'$.ssl_type'=2`)
+	mustExecute(s, `UPDATE mysql.user u JOIN mysql.global_priv p ON u.Host=p.Host AND u.User=p.User
+	SET u.ssl_type='SPECIFIED' WHERE p.Priv->'$.ssl_type'=3`)
+
+	mustExecute(s, `UPDATE mysql.user u JOIN mysql.global_priv p ON u.Host=p.Host AND u.User=p.User
+	SET u.ssl_cipher=p.Priv->>'$.ssl_cipher' WHERE p.Priv->>'$.ssl_cipher' IS NOT NULL`)
+	mustExecute(s, `UPDATE mysql.user u JOIN mysql.global_priv p ON u.Host=p.Host AND u.User=p.User
+	SET u.x509_issuer=p.Priv->>'$.ssl_issuer' WHERE p.Priv->>'$.ssl_issuer' IS NOT NULL`)
+	mustExecute(s, `UPDATE mysql.user u JOIN mysql.global_priv p ON u.Host=p.Host AND u.User=p.User
+	SET u.x509_subject=p.Priv->>'$.ssl_subject' WHERE p.Priv->>'$.ssl_subject' IS NOT NULL`)
+
+	mustExecute(s,
+		`CREATE TABLE IF NOT EXISTS mysql.procs_priv (
+           Host char(255) NOT NULL DEFAULT '',
+           Db char(64) NOT NULL DEFAULT '',
+           User char(32) NOT NULL DEFAULT '',
+           Routine_name char(64) NOT NULL DEFAULT '',
+           Routine_type enum('FUNCTION','PROCEDURE')  NOT NULL,
+           Grantor varchar(288) COLLATE utf8mb3_bin NOT NULL DEFAULT '',
+           Proc_priv set('Execute','Alter Routine','Grant')  NOT NULL DEFAULT '',
+           Timestamp timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+           PRIMARY KEY (Host,User,Db,Routine_name,Routine_type)
+         )`,
+	)
+}
+
 func writeOOMAction(s sessiontypes.Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2941,6 +3009,7 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateDBPrivTable)
 	mustExecute(s, CreateTablePrivTable)
 	mustExecute(s, CreateColumnPrivTable)
+	mustExecute(s, CreateProcsPrivTable)
 	// Create global system variable table.
 	mustExecute(s, CreateGlobalVariablesTable)
 	// Create TiDB table.

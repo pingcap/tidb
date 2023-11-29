@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
+	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -1040,7 +1041,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 	}
 
-	privData, err := tlsOption2GlobalPriv(s.AuthTokenOrTLSOptions)
+	privData, gp, err := tlsOption2GlobalPriv(s.AuthTokenOrTLSOptions)
 	if err != nil {
 		return err
 	}
@@ -1110,8 +1111,8 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	passwordInit := true
 	// Get changed user password reuse info.
 	savePasswdHistory := whetherSavePasswordHistory(plOptions)
-	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime,  Password_reuse_time, Password_reuse_history) VALUES "
-	valueTemplate := "(%?, %?, %?, %?, %?, %?, %?, %?, %?"
+	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime, max_questions, max_updates, max_connections, max_user_connections, ssl_type, ssl_cipher, x509_issuer, x509_subject, Password_reuse_time, Password_reuse_history) VALUES "
+	valueTemplate := "(%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?"
 
 	sqlescape.MustFormatSQL(sql, sqlTemplate, mysql.SystemDB, mysql.UserTable)
 	if savePasswdHistory {
@@ -1185,7 +1186,36 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 
 		hostName := strings.ToLower(spec.User.Hostname)
-		sqlescape.MustFormatSQL(sql, valueTemplate, hostName, spec.User.Username, pwd, authPlugin, userAttributesStr, plOptions.lockAccount, recordTokenIssuer, plOptions.passwordExpired, plOptions.passwordLifetime)
+
+		var resQryHour, resUpdHour, resConHour, resUserCon int64 = 0, 0, 0, 0
+		for _, resOpt := range s.ResourceOptions {
+			switch resOpt.Type {
+			case ast.MaxQueriesPerHour:
+				resQryHour = resOpt.Count
+			case ast.MaxUpdatesPerHour:
+				resUpdHour = resOpt.Count
+			case ast.MaxConnectionsPerHour:
+				resConHour = resOpt.Count
+			case ast.MaxUserConnections:
+				resUserCon = resOpt.Count
+			default:
+				return errors.New("Unknown resource option")
+			}
+		}
+
+		var sslType string
+		switch gp.SSLType {
+		case privileges.SslTypeAny:
+			sslType = "ANY"
+		case privileges.SslTypeX509:
+			sslType = "X509"
+		case privileges.SslTypeSpecified:
+			sslType = "SPECIFIED"
+		}
+
+		sqlescape.MustFormatSQL(sql, valueTemplate, hostName, spec.User.Username, pwd, authPlugin, userAttributesStr,
+			plOptions.lockAccount, recordTokenIssuer, plOptions.passwordExpired, plOptions.passwordLifetime,
+			resQryHour, resUpdHour, resConHour, resUserCon, sslType, gp.SSLCipher, gp.X509Issuer, gp.X509Subject)
 		// add Password_reuse_time value.
 		if plOptions.passwordReuseIntervalChange && (plOptions.passwordReuseInterval != notSpecified) {
 			sqlescape.MustFormatSQL(sql, `, %?`, plOptions.passwordReuseInterval)
@@ -1671,7 +1701,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		return err
 	}
 
-	privData, err := tlsOption2GlobalPriv(s.AuthTokenOrTLSOptions)
+	privData, _, err := tlsOption2GlobalPriv(s.AuthTokenOrTLSOptions)
 	if err != nil {
 		return err
 	}
