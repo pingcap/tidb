@@ -32,6 +32,7 @@ func TestCPUValue(t *testing.T) {
 	// If it's not in the container,
 	// it will have less files and the test case will fail forever.
 	if !cgroup.InContainer() {
+		t.Fatal("Shouldn't skip in CI")
 		t.Skip("Not in container, skip this test case.")
 	}
 	observer := cpu.NewCPUObserver()
