@@ -488,12 +488,20 @@ const largeAscendingDataPath = "large_ascending_data"
 // TestPrepareLargeData will write 1000 * 256MB data to the storage.
 func TestPrepareLargeData(t *testing.T) {
 	store := openTestingStorage(t)
+	ctx := context.Background()
+
+	dataFiles, statFiles, err := GetAllFileNames(ctx, store, largeAscendingDataPath)
+	intest.AssertNoError(err)
+	err = store.DeleteFiles(ctx, dataFiles)
+	intest.AssertNoError(err)
+	err = store.DeleteFiles(ctx, statFiles)
+	intest.AssertNoError(err)
+
 	fileSize := 256 * 1024 * 1024
 	//fileCnt := 1000
 	fileCnt := 50
 	keySize := 20
 	valueSize := 100
-	ctx := context.Background()
 	concurrency := runtime.NumCPU()
 	filePerConcUpperBound := (fileCnt + concurrency - 1) / concurrency
 
@@ -527,7 +535,12 @@ func TestPrepareLargeData(t *testing.T) {
 	elapsed := time.Since(now)
 	t.Logf("write %d bytes in %s, speed: %.2f MB/s",
 		size.Load(), elapsed, float64(size.Load())/elapsed.Seconds()/1024/1024)
-	dataFiles, _, err := GetAllFileNames(ctx, store, largeAscendingDataPath)
+	dataFiles, _, err = GetAllFileNames(ctx, store, largeAscendingDataPath)
 	intest.AssertNoError(err)
-	t.Logf("total %d data files", len(dataFiles))
+	r, err := store.Open(ctx, dataFiles[0], nil)
+	intest.AssertNoError(err)
+	oneFileSize, err := r.GetFileSize()
+	intest.AssertNoError(err)
+	t.Logf("total %d data files, first file size: %d MB",
+		len(dataFiles), oneFileSize/1024/1024)
 }
