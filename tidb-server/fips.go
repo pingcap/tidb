@@ -19,7 +19,7 @@ package main
 
 import _ "crypto/tls/fipsonly"
 
-import "github.com/pingcap/tidb/pkg/parser/mysql"
+import "github.com/pingcap/tidb/parser/mysql"
 
 func init() {
 	mysql.TiDBReleaseVersion += "-fips"
