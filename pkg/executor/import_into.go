@@ -307,6 +307,6 @@ func cancelImportJob(ctx context.Context, manager *fstorage.TaskManager, jobID i
 			return err2
 		}
 		ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
-		return manager.CancelGlobalTaskByKeySession(ctx, se, importinto.TaskKey(jobID))
+		return manager.CancelTaskByKeySession(ctx, se, importinto.TaskKey(jobID))
 	})
 }

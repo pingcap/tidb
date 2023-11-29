@@ -37,18 +37,18 @@ func SubmitGlobalTask(ctx context.Context, taskKey string, taskType proto.TaskTy
 	if err != nil {
 		return nil, err
 	}
-	globalTask, err := globalTaskManager.GetGlobalTaskByKey(ctx, taskKey)
+	globalTask, err := globalTaskManager.GetTaskByKey(ctx, taskKey)
 	if err != nil {
 		return nil, err
 	}
 
 	if globalTask == nil {
-		taskID, err := globalTaskManager.AddNewGlobalTask(ctx, taskKey, taskType, concurrency, taskMeta)
+		taskID, err := globalTaskManager.NewTask(ctx, taskKey, taskType, concurrency, taskMeta)
 		if err != nil {
 			return nil, err
 		}
 
-		globalTask, err = globalTaskManager.GetGlobalTaskByID(ctx, taskID)
+		globalTask, err = globalTaskManager.GetTaskByID(ctx, taskID)
 		if err != nil {
 			return nil, err
 		}
@@ -117,7 +117,7 @@ func CancelGlobalTask(ctx context.Context, taskKey string) error {
 	if err != nil {
 		return err
 	}
-	task, err := taskManager.GetGlobalTaskByKey(ctx, taskKey)
+	task, err := taskManager.GetTaskByKey(ctx, taskKey)
 	if err != nil {
 		return err
 	}
@@ -126,7 +126,7 @@ func CancelGlobalTask(ctx context.Context, taskKey string) error {
 
 		return nil
 	}
-	return taskManager.CancelGlobalTask(ctx, task.ID)
+	return taskManager.CancelTask(ctx, task.ID)
 }
 
 // PauseTask pauses a task.

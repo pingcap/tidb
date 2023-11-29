@@ -62,7 +62,7 @@ func (s *mockGCSSuite) TestSplitFile() {
 	s.NoError(err)
 	taskKey := importinto.TaskKey(int64(jobID))
 	s.NoError(err)
-	globalTask, err2 := globalTaskManager.GetGlobalTaskByKeyWithHistory(ctx, taskKey)
+	globalTask, err2 := globalTaskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 	s.NoError(err2)
 
 	subtasks, err2 := globalTaskManager.GetSubtasksForImportInto(ctx, globalTask.ID, importinto.StepImport)

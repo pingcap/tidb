@@ -201,7 +201,7 @@ func RegisterTaskMetaForExample3(t *testing.T, ctrl *gomock.Controller, m *sync.
 func DispatchTask(ctx context.Context, taskKey string, t *testing.T) *proto.Task {
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
-	_, err = mgr.AddNewGlobalTask(ctx, taskKey, proto.TaskTypeExample, 8, nil)
+	_, err = mgr.NewTask(ctx, taskKey, proto.TaskTypeExample, 8, nil)
 	require.NoError(t, err)
 	return WaitTaskExit(ctx, t, taskKey)
 }
@@ -217,7 +217,7 @@ func WaitTaskExit(ctx context.Context, t *testing.T, taskKey string) *proto.Task
 		}
 
 		time.Sleep(time.Second)
-		task, err = mgr.GetGlobalTaskByKeyWithHistory(ctx, taskKey)
+		task, err = mgr.GetTaskByKeyWithHistory(ctx, taskKey)
 		require.NoError(t, err)
 		require.NotNil(t, task)
 		if task.State != proto.TaskStatePending && task.State != proto.TaskStateRunning && task.State != proto.TaskStateCancelling && task.State != proto.TaskStateReverting && task.State != proto.TaskStatePausing {
@@ -274,7 +274,7 @@ func DispatchMultiTasksAndOneFail(ctx context.Context, t *testing.T, num int, m 
 	for i := 0; i < num; i++ {
 		if i == 0 {
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/MockExecutorRunErr", "1*return(true)"))
-			taskID[0], err = mgr.AddNewGlobalTask(ctx, "key0", "Example", 8, nil)
+			taskID[0], err = mgr.NewTask(ctx, "key0", "Example", 8, nil)
 			require.NoError(t, err)
 			start[0] = time.Now()
 			var task *proto.Task
@@ -293,7 +293,7 @@ func DispatchMultiTasksAndOneFail(ctx context.Context, t *testing.T, num int, m 
 			}
 			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/MockExecutorRunErr"))
 		} else {
-			taskID[i], err = mgr.AddNewGlobalTask(ctx, fmt.Sprintf("key%d", i), proto.Int2Type(i+2), 8, nil)
+			taskID[i], err = mgr.NewTask(ctx, fmt.Sprintf("key%d", i), proto.Int2Type(i+2), 8, nil)
 			require.NoError(t, err)
 			start[i] = time.Now()
 		}
@@ -723,7 +723,7 @@ func TestFrameworkCleanUpRoutine(t *testing.T) {
 	<-dispatcher.WaitCleanUpFinished
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
-	tasks, err := mgr.GetGlobalTaskByKeyWithHistory(ctx, "key1")
+	tasks, err := mgr.GetTaskByKeyWithHistory(ctx, "key1")
 	require.NoError(t, err)
 	require.NotEmpty(t, tasks)
 	distContext.Close()

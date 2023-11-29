@@ -176,7 +176,7 @@ func TestBackfillingDispatcherGlobalSortMode(t *testing.T) {
 	ext.(*ddl.BackfillingDispatcherExt).GlobalSort = true
 	dsp.Extension = ext
 
-	taskID, err := mgr.AddNewGlobalTask(ctx, task.Key, proto.Backfill, 1, task.Meta)
+	taskID, err := mgr.NewTask(ctx, task.Key, proto.Backfill, 1, task.Meta)
 	require.NoError(t, err)
 	task.ID = taskID
 	serverInfos, _, err := dsp.GetEligibleInstances(context.Background(), task)
@@ -191,9 +191,9 @@ func TestBackfillingDispatcherGlobalSortMode(t *testing.T) {
 	// update task/subtask, and finish subtask, so we can go to next stage
 	subtasks := make([]*proto.Subtask, 0, len(subtaskMetas))
 	for _, m := range subtaskMetas {
-		subtasks = append(subtasks, proto.NewSubtask(task.Step, task.ID, task.Type, "", m))
+		subtasks = append(subtasks, proto.NewSubtask(task.Step, task.ID, task.Type, "", 1, m))
 	}
-	_, err = mgr.UpdateGlobalTaskAndAddSubTasks(ctx, task, subtasks, proto.TaskStatePending)
+	_, err = mgr.UpdateTaskAndAddSubTasks(ctx, task, subtasks, proto.TaskStatePending)
 	require.NoError(t, err)
 	gotSubtasks, err := mgr.GetSubtasksForImportInto(ctx, taskID, ddl.StepReadIndex)
 	require.NoError(t, err)
@@ -216,7 +216,7 @@ func TestBackfillingDispatcherGlobalSortMode(t *testing.T) {
 	sortStepMetaBytes, err := json.Marshal(sortStepMeta)
 	require.NoError(t, err)
 	for _, s := range gotSubtasks {
-		require.NoError(t, mgr.FinishSubtask(ctx, s.SchedulerID, s.ID, sortStepMetaBytes))
+		require.NoError(t, mgr.FinishSubtask(ctx, s.ExecID, s.ID, sortStepMetaBytes))
 	}
 	// 2. to merge-sort stage.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort", `return()`))
@@ -232,9 +232,9 @@ func TestBackfillingDispatcherGlobalSortMode(t *testing.T) {
 	// update meta, same as import into.
 	subtasks = make([]*proto.Subtask, 0, len(subtaskMetas))
 	for _, m := range subtaskMetas {
-		subtasks = append(subtasks, proto.NewSubtask(task.Step, task.ID, task.Type, "", m))
+		subtasks = append(subtasks, proto.NewSubtask(task.Step, task.ID, task.Type, "", 1, m))
 	}
-	_, err = mgr.UpdateGlobalTaskAndAddSubTasks(ctx, task, subtasks, proto.TaskStatePending)
+	_, err = mgr.UpdateTaskAndAddSubTasks(ctx, task, subtasks, proto.TaskStatePending)
 	require.NoError(t, err)
 	gotSubtasks, err = mgr.GetSubtasksForImportInto(ctx, taskID, task.Step)
 	require.NoError(t, err)
@@ -255,7 +255,7 @@ func TestBackfillingDispatcherGlobalSortMode(t *testing.T) {
 	mergeSortStepMetaBytes, err := json.Marshal(mergeSortStepMeta)
 	require.NoError(t, err)
 	for _, s := range gotSubtasks {
-		require.NoError(t, mgr.FinishSubtask(ctx, s.SchedulerID, s.ID, mergeSortStepMetaBytes))
+		require.NoError(t, mgr.FinishSubtask(ctx, s.ExecID, s.ID, mergeSortStepMetaBytes))
 	}
 	// 3. to write&ingest stage.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockWriteIngest", "return(true)"))

@@ -36,7 +36,7 @@ func (*Planner) Run(planCtx PlanCtx, plan LogicalPlan) (int64, error) {
 		return 0, err
 	}
 
-	return globalTaskManager.AddGlobalTaskWithSession(
+	return globalTaskManager.NewTaskWithSession(
 		planCtx.Ctx,
 		planCtx.SessionCtx,
 		planCtx.TaskKey,

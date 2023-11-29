@@ -404,7 +404,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 		globalTaskManager, err := storage.GetTaskManager()
 		s.NoError(err)
 		taskKey := importinto.TaskKey(jobID)
-		globalTask, err := globalTaskManager.GetGlobalTaskByKeyWithHistory(ctx, taskKey)
+		globalTask, err := globalTaskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 		s.NoError(err)
 		return globalTask
 	}
@@ -496,7 +496,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 	taskKey := importinto.TaskKey(int64(jobID2))
 	s.NoError(err)
 	s.Require().Eventually(func() bool {
-		globalTask, err2 := globalTaskManager.GetGlobalTaskByKeyWithHistory(ctx, taskKey)
+		globalTask, err2 := globalTaskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 		s.NoError(err2)
 		subtasks, err2 := globalTaskManager.GetSubtasksForImportInto(ctx, globalTask.ID, importinto.StepPostProcess)
 		s.NoError(err2)
@@ -627,7 +627,7 @@ func (s *mockGCSSuite) TestKillBeforeFinish() {
 	taskKey := importinto.TaskKey(jobID)
 	s.NoError(err)
 	s.Require().Eventually(func() bool {
-		globalTask, err2 := globalTaskManager.GetGlobalTaskByKeyWithHistory(ctx, taskKey)
+		globalTask, err2 := globalTaskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 		s.NoError(err2)
 		return globalTask.State == proto.TaskStateReverted
 	}, maxWaitTime, 1*time.Second)

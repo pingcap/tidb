@@ -168,7 +168,7 @@ func (dm *Manager) dispatchTaskLoop() {
 			}
 
 			// TODO: Consider getting these tasks, in addition to the task being worked on..
-			tasks, err := dm.taskMgr.GetGlobalTasksInStates(
+			tasks, err := dm.taskMgr.GetTasksInStates(
 				dm.ctx,
 				proto.TaskStatePending,
 				proto.TaskStateRunning,
@@ -224,7 +224,7 @@ func (dm *Manager) failTask(task *proto.Task, err error) {
 	prevState := task.State
 	task.State = proto.TaskStateFailed
 	task.Error = err
-	if _, err2 := dm.taskMgr.UpdateGlobalTaskAndAddSubTasks(dm.ctx, task, nil, prevState); err2 != nil {
+	if _, err2 := dm.taskMgr.UpdateTaskAndAddSubTasks(dm.ctx, task, nil, prevState); err2 != nil {
 		logutil.BgLogger().Warn("failed to update task state to failed",
 			zap.Int64("task-id", task.ID), zap.Error(err2))
 	}
@@ -318,7 +318,7 @@ func (dm *Manager) doCleanUpRoutine() {
 	if cnt != 0 {
 		logutil.BgLogger().Info("clean up nodes in framework meta since nodes shutdown", zap.Int("cnt", cnt))
 	}
-	tasks, err := dm.taskMgr.GetGlobalTasksInStates(
+	tasks, err := dm.taskMgr.GetTasksInStates(
 		dm.ctx,
 		proto.TaskStateFailed,
 		proto.TaskStateReverted,

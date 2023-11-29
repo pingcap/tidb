@@ -50,7 +50,7 @@ func TestHandle(t *testing.T) {
 	err := handle.SubmitAndRunGlobalTask(ctx, "1", proto.TaskTypeExample, 2, []byte("byte"))
 	require.Error(t, err)
 
-	task, err := mgr.GetGlobalTaskByID(ctx, 1)
+	task, err := mgr.GetTaskByID(ctx, 1)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), task.ID)
 	require.Equal(t, "1", task.Key)

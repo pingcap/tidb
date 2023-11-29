@@ -774,7 +774,7 @@ func (s *mockGCSSuite) TestColumnsAndUserVars() {
 	serverInfo, err := infosync.GetServerInfo()
 	s.NoError(err)
 	for _, st := range subtasks {
-		s.Equal(net.JoinHostPort(serverInfo.IP, strconv.Itoa(int(serverInfo.Port))), st.SchedulerID)
+		s.Equal(net.JoinHostPort(serverInfo.IP, strconv.Itoa(int(serverInfo.Port))), st.ExecID)
 	}
 }
 
@@ -785,7 +785,7 @@ func (s *mockGCSSuite) checkTaskMetaRedacted(jobID int64) {
 	s.NoError(err)
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
-	globalTask, err2 := globalTaskManager.GetGlobalTaskByKeyWithHistory(ctx, taskKey)
+	globalTask, err2 := globalTaskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 	s.NoError(err2)
 	s.Regexp(`[?&]access-key=xxxxxx`, string(globalTask.Meta))
 	s.Contains(string(globalTask.Meta), "secret-access-key=xxxxxx")

@@ -116,19 +116,28 @@ const (
 	StepThree Step = 3
 )
 
-// TaskIDLabelName is the label name of task id.
-const TaskIDLabelName = "task_id"
+const (
+	// TaskIDLabelName is the label name of task id.
+	TaskIDLabelName = "task_id"
+	// NormalPriority represents the normal priority of task.
+	NormalPriority = 100
+)
 
 // Task represents the task of distributed framework.
+// tasks are run in the order of: priority desc, create_time asc, id asc.
 type Task struct {
 	ID    int64
 	Key   string
 	Type  TaskType
 	State TaskState
 	Step  Step
+	// Priority is the priority of task, the larger value means the higher priority.
+	// valid range is [1, 1024], default is NormalPriority.
+	Priority int
 	// DispatcherID is not used now.
 	DispatcherID    string
 	Concurrency     uint64
+	CreateTime      time.Time
 	StartTime       time.Time
 	StateUpdateTime time.Time
 	Meta            []byte
@@ -149,9 +158,14 @@ type Subtask struct {
 	// taken from task_key of the subtask table
 	TaskID int64
 	State  TaskState
-	// SchedulerID is the ID of scheduler, right now it's the same as instance_id, exec_id.
+	// Concurrency is the concurrency of the subtask, should <= task's concurrency.
+	// some subtasks like post-process of import into, don't consume too many resources,
+	// can lower this value.
+	Concurrency int
+	// ExecID is the ID of target executor, right now it's the same as instance_id,
 	// its value is IP:PORT, see GenerateExecID
-	SchedulerID string
+	ExecID     string
+	CreateTime time.Time
 	// StartTime is the time when the subtask is started.
 	// it's 0 if it hasn't started yet.
 	StartTime time.Time
@@ -170,12 +184,13 @@ func (t *Subtask) IsFinished() bool {
 }
 
 // NewSubtask create a new subtask.
-func NewSubtask(step Step, taskID int64, tp TaskType, schedulerID string, meta []byte) *Subtask {
+func NewSubtask(step Step, taskID int64, tp TaskType, schedulerID string, concurrency int, meta []byte) *Subtask {
 	return &Subtask{
 		Step:        step,
 		Type:        tp,
 		TaskID:      taskID,
-		SchedulerID: schedulerID,
+		ExecID:      schedulerID,
+		Concurrency: concurrency,
 		Meta:        meta,
 	}
 }

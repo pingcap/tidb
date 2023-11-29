@@ -148,7 +148,7 @@ func (m *Manager) fetchAndHandleRunnableTasksLoop() {
 			logutil.Logger(m.logCtx).Info("fetchAndHandleRunnableTasksLoop done")
 			return
 		case <-ticker.C:
-			tasks, err := m.taskTable.GetGlobalTasksInStates(m.ctx, proto.TaskStateRunning, proto.TaskStateReverting)
+			tasks, err := m.taskTable.GetTasksInStates(m.ctx, proto.TaskStateRunning, proto.TaskStateReverting)
 			if err != nil {
 				m.logErr(err)
 				continue
@@ -170,7 +170,7 @@ func (m *Manager) fetchAndFastCancelTasksLoop() {
 			logutil.Logger(m.logCtx).Info("fetchAndFastCancelTasksLoop done")
 			return
 		case <-ticker.C:
-			tasks, err := m.taskTable.GetGlobalTasksInStates(m.ctx, proto.TaskStateReverting)
+			tasks, err := m.taskTable.GetTasksInStates(m.ctx, proto.TaskStateReverting)
 			if err != nil {
 				m.logErr(err)
 				continue
@@ -178,7 +178,7 @@ func (m *Manager) fetchAndFastCancelTasksLoop() {
 			m.onCanceledTasks(m.ctx, tasks)
 
 			// cancel pending/running subtasks, and mark them as paused.
-			pausingTasks, err := m.taskTable.GetGlobalTasksInStates(m.ctx, proto.TaskStatePausing)
+			pausingTasks, err := m.taskTable.GetTasksInStates(m.ctx, proto.TaskStatePausing)
 			if err != nil {
 				m.logErr(err)
 				continue
@@ -361,7 +361,7 @@ func (m *Manager) onRunnableTask(task *proto.Task) {
 				}
 			}()
 		})
-		task, err := m.taskTable.GetGlobalTaskByID(m.ctx, task.ID)
+		task, err := m.taskTable.GetTaskByID(m.ctx, task.ID)
 		if err != nil {
 			m.logErr(err)
 			return

@@ -2074,7 +2074,7 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 	if err != nil {
 		return err
 	}
-	task, err := taskManager.GetGlobalTaskByKeyWithHistory(w.ctx, taskKey)
+	task, err := taskManager.GetTaskByKeyWithHistory(w.ctx, taskKey)
 	if err != nil {
 		return err
 	}
@@ -2189,7 +2189,7 @@ func (w *worker) updateJobRowCount(taskKey string, jobID int64) {
 		logutil.BgLogger().Warn("cannot get task manager", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
 		return
 	}
-	gTask, err := taskMgr.GetGlobalTaskByKey(w.ctx, taskKey)
+	gTask, err := taskMgr.GetTaskByKey(w.ctx, taskKey)
 	if err != nil || gTask == nil {
 		logutil.BgLogger().Warn("cannot get global task", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
 		return

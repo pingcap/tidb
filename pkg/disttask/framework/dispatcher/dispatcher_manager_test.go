@@ -57,14 +57,14 @@ func TestCleanUpRoutine(t *testing.T) {
 	dsp.Start()
 	defer dsp.Stop()
 	require.NoError(t, mgr.StartManager(ctx, ":4000", "background"))
-	taskID, err := mgr.AddNewGlobalTask(ctx, "test", proto.TaskTypeExample, 1, nil)
+	taskID, err := mgr.NewTask(ctx, "test", proto.TaskTypeExample, 1, nil)
 	require.NoError(t, err)
 
 	checkTaskRunningCnt := func() []*proto.Task {
 		var tasks []*proto.Task
 		require.Eventually(t, func() bool {
 			var err error
-			tasks, err = mgr.GetGlobalTasksInStates(ctx, proto.TaskStateRunning)
+			tasks, err = mgr.GetTasksInStates(ctx, proto.TaskStateRunning)
 			require.NoError(t, err)
 			return len(tasks) == 1
 		}, time.Second, 50*time.Millisecond)
@@ -87,7 +87,7 @@ func TestCleanUpRoutine(t *testing.T) {
 	}
 	dsp.DoCleanUpRoutine()
 	require.Eventually(t, func() bool {
-		tasks, err := mgr.GetGlobalTasksFromHistoryInStates(ctx, proto.TaskStateSucceed)
+		tasks, err := mgr.GetTasksFromHistoryInStates(ctx, proto.TaskStateSucceed)
 		require.NoError(t, err)
 		return len(tasks) != 0
 	}, time.Second*10, time.Millisecond*300)

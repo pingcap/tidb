@@ -193,7 +193,7 @@ func (ti *DistImporter) SubmitTask(ctx context.Context) (int64, *proto.Task, err
 	}); err != nil {
 		return 0, nil, err
 	}
-	globalTask, err := globalTaskManager.GetGlobalTaskByID(ctx, taskID)
+	globalTask, err := globalTaskManager.GetTaskByID(ctx, taskID)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -230,7 +230,7 @@ func getTaskMeta(ctx context.Context, jobID int64) (*TaskMeta, error) {
 		return nil, err
 	}
 	taskKey := TaskKey(jobID)
-	globalTask, err := globalTaskManager.GetGlobalTaskByKey(ctx, taskKey)
+	globalTask, err := globalTaskManager.GetTaskByKey(ctx, taskKey)
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +253,7 @@ func GetTaskImportedRows(ctx context.Context, jobID int64) (uint64, error) {
 		return 0, err
 	}
 	taskKey := TaskKey(jobID)
-	task, err := globalTaskManager.GetGlobalTaskByKey(ctx, taskKey)
+	task, err := globalTaskManager.GetTaskByKey(ctx, taskKey)
 	if err != nil {
 		return 0, err
 	}
