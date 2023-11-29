@@ -11,10 +11,10 @@ In this example, you will build a project, which can extract all the column name
 ## Create a Project
 
 ```bash
-~ $ mkdir colx
-~ $ cd colx
-~/colx $ go mod init colx
-~/colx $ touch main.go
+mkdir colx
+cd colx
+go mod init colx
+touch main.go
 ```
 
 ## Import Dependencies
