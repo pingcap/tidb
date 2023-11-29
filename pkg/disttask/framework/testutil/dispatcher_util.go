@@ -65,11 +65,7 @@ func GetMockBasicDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
 		},
 	).AnyTimes()
 
-	mockDispatcher.EXPECT().OnErrStage(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
-			return nil, nil
-		},
-	).AnyTimes()
+	mockDispatcher.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	return mockDispatcher
 }
 
@@ -124,11 +120,7 @@ func GetMockHATestDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
 		},
 	).AnyTimes()
 
-	mockDispatcher.EXPECT().OnErrStage(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
-			return nil, nil
-		},
-	).AnyTimes()
+	mockDispatcher.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
 	return mockDispatcher
 }
@@ -167,11 +159,7 @@ func GetPlanNotRetryableErrDispatcherExt(ctrl *gomock.Controller) dispatcher.Ext
 		},
 	).AnyTimes()
 
-	mockDispatcher.EXPECT().OnErrStage(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
-			return nil, errors.New("not retryable err")
-		},
-	).AnyTimes()
+	mockDispatcher.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	return mockDispatcher
 }
 
@@ -219,15 +207,10 @@ func GetPlanErrDispatcherExt(ctrl *gomock.Controller, testContext *TestContext) 
 		},
 	).AnyTimes()
 
-	mockDispatcher.EXPECT().OnErrStage(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
-			if testContext.CallTime == 1 {
-				testContext.CallTime++
-				return nil, errors.New("not retryable err")
-			}
-			return []byte("planErrTask"), nil
-		},
-	).AnyTimes()
+	gomock.InOrder(
+		mockDispatcher.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("not retryable err")),
+		mockDispatcher.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes(),
+	)
 	return mockDispatcher
 }
 
@@ -264,11 +247,7 @@ func GetMockRollbackDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension 
 		},
 	).AnyTimes()
 
-	mockDispatcher.EXPECT().OnErrStage(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
-			return []byte("rollbacktask1"), nil
-		},
-	).AnyTimes()
+	mockDispatcher.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	return mockDispatcher
 }
 
@@ -313,11 +292,7 @@ func GetMockDynamicDispatchExt(ctrl *gomock.Controller) dispatcher.Extension {
 		},
 	).AnyTimes()
 
-	mockDispatcher.EXPECT().OnErrStage(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
-			return nil, nil
-		},
-	).AnyTimes()
+	mockDispatcher.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
 	return mockDispatcher
 }
