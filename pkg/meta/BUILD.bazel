@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "meta",
     srcs = [
+        "distributed_lock.go",
         "meta.go",
         "meta_autoid.go",
     ],
@@ -17,8 +18,11 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/structure",
         "//pkg/util/dbterror",
+        "//pkg/util/intest",
+        "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@org_uber_go_zap//:zap",
     ],
 )
 

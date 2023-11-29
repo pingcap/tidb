@@ -479,6 +479,7 @@
       "pkg/kv/": "kv code",
       "pkg/util/memory": "util/memory",
       "pkg/ddl/": "ddl",
+      "pkg/meta/": "meta",
       "pkg/planner/": "planner",
       "pkg/extension/": "extension code"
     }
@@ -530,7 +531,7 @@
       "pkg/planner/": "planner code",
       "pkg/plugin/": "plugin code",
       "pkg/util/": "util code",
-      "pkg/meta/": "parser code",
+      "pkg/meta/": "meta code",
       "pkg/extension/": "extension code",
       "pkg/resourcemanager/": "resourcemanager code",
       "pkg/keyspace/": "keyspace code",
