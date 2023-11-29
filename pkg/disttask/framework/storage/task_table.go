@@ -129,8 +129,8 @@ func row2Task(r chunk.Row) *proto.Task {
 		stdErr := errors.Normalize("")
 		err := stdErr.UnmarshalJSON(errBytes)
 		if err != nil {
-			logutil.BgLogger().Error("unmarshal error", zap.Error(err))
-			task.Error = err
+			logutil.BgLogger().Error("unmarshal task error", zap.Error(err))
+			task.Error = errors.New(string(errBytes))
 		} else {
 			task.Error = stdErr
 		}
@@ -205,7 +205,7 @@ func (stm *TaskManager) NewTask(ctx context.Context, key string, tp proto.TaskTy
 }
 
 // NewTaskWithSession adds a new task to task table with session.
-func (stm *TaskManager) NewTaskWithSession(ctx context.Context, se sessionctx.Context, key string, tp proto.TaskType, concurrency int, meta []byte) (taskID int64, err error) {
+func (*TaskManager) NewTaskWithSession(ctx context.Context, se sessionctx.Context, key string, tp proto.TaskType, concurrency int, meta []byte) (taskID int64, err error) {
 	_, err = ExecSQL(ctx, se, `insert into mysql.tidb_global_task(
 			task_key, type, state, priority, concurrency, step, meta, create_time, start_time, state_update_time)
 			values (%?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())`,
@@ -825,7 +825,7 @@ func (stm *TaskManager) CancelTask(ctx context.Context, taskID int64) error {
 }
 
 // CancelTaskByKeySession cancels task by key using input session.
-func (stm *TaskManager) CancelTaskByKeySession(ctx context.Context, se sessionctx.Context, taskKey string) error {
+func (*TaskManager) CancelTaskByKeySession(ctx context.Context, se sessionctx.Context, taskKey string) error {
 	_, err := ExecSQL(ctx, se,
 		"update mysql.tidb_global_task set state=%?, state_update_time = CURRENT_TIMESTAMP() "+
 			"where task_key=%? and state in (%?, %?)",

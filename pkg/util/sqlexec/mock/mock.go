@@ -12,16 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package util
+package mock
 
-import (
-	"testing"
+// RestrictedSQLExecutorKey is the key to represent MockRestrictedSQLExecutorMockRecorder in ctx.
+type RestrictedSQLExecutorKey struct{}
 
-	"github.com/stretchr/testify/require"
-)
-
-func TestShouldRun(t *testing.T) {
-	require.True(t, shouldRun("gofmt", "some.go"))
-	require.False(t, shouldRun("gofmt", "uca_generated.go"))
-	require.True(t, shouldRun("revive", "/pkg/meta/distributed_lock.go"))
+// String implements the string.Stringer interface.
+func (k RestrictedSQLExecutorKey) String() string {
+	return "__MockRestrictedSQLExecutor"
 }

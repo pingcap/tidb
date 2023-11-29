@@ -22,7 +22,6 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/ngaut/pools"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -89,14 +88,9 @@ func TestBackfillingDispatcherLocalMode(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, metas, 0)
 
-	// 1.3 test partition table OnErrStage.
-	errMeta, err := dsp.OnErrStage(context.Background(), nil, gTask, []error{errors.New("mockErr")})
+	// 1.3 test partition table OnDone.
+	err = dsp.OnDone(context.Background(), nil, gTask)
 	require.NoError(t, err)
-	require.Nil(t, errMeta)
-
-	errMeta, err = dsp.OnErrStage(context.Background(), nil, gTask, []error{errors.New("mockErr")})
-	require.NoError(t, err)
-	require.Nil(t, errMeta)
 
 	/// 2. test non partition table.
 	// 2.1 empty table

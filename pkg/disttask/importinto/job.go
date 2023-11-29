@@ -109,7 +109,7 @@ func (ti *DistImporter) ImportTask(task *proto.Task) {
 	ti.Group.Go(func() error {
 		defer close(ti.Done)
 		// task is run using distribute framework, so we only wait for the task to finish.
-		return handle.WaitGlobalTask(ti.GroupCtx, task)
+		return handle.WaitGlobalTask(ti.GroupCtx, task.ID)
 	})
 }
 
@@ -253,7 +253,7 @@ func GetTaskImportedRows(ctx context.Context, jobID int64) (uint64, error) {
 		return 0, err
 	}
 	taskKey := TaskKey(jobID)
-	task, err := globalTaskManager.GetTaskByKey(ctx, taskKey)
+	task, err := globalTaskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 	if err != nil {
 		return 0, err
 	}
