@@ -1514,6 +1514,11 @@ type SessionVars struct {
 	// use the ExpectedCnt to adjust the estimated row count for index scan.
 	OptOrderingIdxSelThresh float64
 
+	// OptOrderingIdxSelRatio is the ratio for optimizer to determine when qualified rows from filtering outside
+	// of the index will be found during the scan of an ordering index.
+	// If all filtering is applied as matching on the ordering index, this ratio will have no impact.
+	OptOrderingIdxSelRatio float64
+
 	// EnableMPPSharedCTEExecution indicates whether we enable the shared CTE execution strategy on MPP side.
 	EnableMPPSharedCTEExecution bool
 

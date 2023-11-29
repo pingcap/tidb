@@ -92,6 +92,10 @@ func AdjustRowCountForIndexScanByLimit(sctx sessionctx.Context,
 		correlationFactor := math.Pow(1-abs, float64(sctx.GetSessionVars().CorrelationExpFactor))
 		selectivity := dsStatsInfo.RowCount / rowCount
 		rowCount = min(expectedCnt/selectivity/correlationFactor, rowCount)
+		orderRatio := sctx.GetSessionVars().OptOrderingIdxSelRatio
+		if dsStatsInfo.RowCount < path.CountAfterAccess && orderRatio > 0 {
+			rowCount = max(rowCount, (path.CountAfterAccess-dsStatsInfo.RowCount)*orderRatio)
+		}
 	}
 	return rowCount
 }
