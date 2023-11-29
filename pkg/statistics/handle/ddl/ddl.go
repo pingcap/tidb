@@ -120,7 +120,6 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 	case model.ActionDropTablePartition:
 		globalTableInfo, droppedPartitionInfo := t.GetDropPartitionInfo()
 
-		delta := int64(0)
 		count := int64(0)
 		for _, def := range droppedPartitionInfo.Definitions {
 			// Get the count and modify count of the partition.
@@ -133,7 +132,6 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 					zap.String("partition", def.Name.O),
 				)
 			} else {
-				delta -= stats.RealtimeCount
 				count += stats.RealtimeCount
 			}
 			// Always reset the partition stats.
@@ -142,6 +140,8 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 			}
 		}
 		if count != 0 {
+			// Because we drop the partition, we should subtract the count from the global stats.
+			delta := -count
 			if err := h.statsWriter.UpdateStatsMetaDelta(
 				globalTableInfo.ID, count, delta,
 			); err != nil {
