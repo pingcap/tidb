@@ -47,7 +47,7 @@ type jsonObject struct {
 	lint.Failure `json:",inline"`
 }
 
-var allRules = append([]lint.Rule{
+var defaultRules = []lint.Rule{
 	&rule.VarDeclarationsRule{},
 	//&rule.PackageCommentsRule{},
 	&rule.DotImportsRule{},
@@ -85,7 +85,7 @@ var allRules = append([]lint.Rule{
 	//&rule.NestedStructs{},
 	&rule.UselessBreak{},
 	//&rule.BannedCharsRule{},
-})
+}
 
 func run(pass *analysis.Pass) (any, error) {
 	files := make([]string, 0, len(pass.Files))
@@ -103,12 +103,13 @@ func run(pass *analysis.Pass) (any, error) {
 		WarningCode:           -1,
 		Rules:                 map[string]lint.RuleConfig{},
 	}
-	for _, r := range allRules {
+	for _, r := range defaultRules {
 		conf.Rules[r.Name()] = lint.RuleConfig{}
 	}
 	conf.Rules["defer"] = lint.RuleConfig{
 		Arguments: []interface{}{[]interface{}{"loop", "method-call", "immediate-recover", "return"}},
 	}
+
 	lintingRules, err := config.GetLintingRules(&conf, []lint.Rule{})
 	if err != nil {
 		return nil, err
