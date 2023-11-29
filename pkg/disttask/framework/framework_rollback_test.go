@@ -35,28 +35,7 @@ import (
 
 var rollbackCnt atomic.Int32
 
-func registerRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, m *sync.Map) {
-	mockExtension := mock.NewMockExtension(ctrl)
-	mockExecutor := mockexecute.NewMockSubtaskExecutor(ctrl)
-	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
-	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	mockExecutor.EXPECT().Init(gomock.Any()).Return(nil).AnyTimes()
-	mockExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil).AnyTimes()
-	mockExecutor.EXPECT().Rollback(gomock.Any()).DoAndReturn(
-		func(_ context.Context) error {
-			rollbackCnt.Add(1)
-			return nil
-		},
-	).AnyTimes()
-	mockExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ *proto.Subtask) error {
-			m.Store("1", "1")
-			return nil
-		}).AnyTimes()
-	mockExecutor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockExecutor, nil).AnyTimes()
-
-	// init mockDispatcher
+func getMockRollbackDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
 	mockDispatcher := mockDispatch.NewMockExtension(ctrl)
 	mockDispatcher.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
 	mockDispatcher.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
@@ -93,6 +72,30 @@ func registerRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, m *sync.Map
 			return []byte("rollbacktask1"), nil
 		},
 	).AnyTimes()
+	return mockDispatcher
+}
+
+func registerRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, m *sync.Map, mockDispatcher dispatcher.Extension) {
+	mockExtension := mock.NewMockExtension(ctrl)
+	mockExecutor := mockexecute.NewMockSubtaskExecutor(ctrl)
+	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
+	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockExecutor.EXPECT().Init(gomock.Any()).Return(nil).AnyTimes()
+	mockExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil).AnyTimes()
+	mockExecutor.EXPECT().Rollback(gomock.Any()).DoAndReturn(
+		func(_ context.Context) error {
+			rollbackCnt.Add(1)
+			return nil
+		},
+	).AnyTimes()
+	mockExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ *proto.Subtask) error {
+			m.Store("1", "1")
+			return nil
+		}).AnyTimes()
+	mockExecutor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockExecutor, nil).AnyTimes()
+
 	registerTaskMetaInner(t, proto.TaskTypeExample, mockExtension, mockCleanupRountine, mockDispatcher)
 	rollbackCnt.Store(0)
 }
@@ -105,7 +108,7 @@ func TestFrameworkRollback(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "dispatcher")
 
-	registerRollbackTaskMeta(t, ctrl, &m)
+	registerRollbackTaskMeta(t, ctrl, &m, getMockRollbackDispatcherExt(ctrl))
 	distContext := testkit.NewDistExecutionContext(t, 2)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/cancelTaskAfterRefreshTask", "2*return(true)"))
 	defer func() {

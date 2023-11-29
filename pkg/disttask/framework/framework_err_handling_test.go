@@ -34,7 +34,6 @@ var (
 )
 
 func getPlanNotRetryableErrDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
-	// init mockDispatcher
 	mockDispatcher := mockDispatch.NewMockExtension(ctrl)
 	mockDispatcher.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
 	mockDispatcher.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
@@ -63,7 +62,6 @@ func getPlanNotRetryableErrDispatcherExt(ctrl *gomock.Controller) dispatcher.Ext
 }
 
 func getPlanErrDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
-	// init mockDispatcher
 	mockDispatcher := mockDispatch.NewMockExtension(ctrl)
 	mockDispatcher.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
 	mockDispatcher.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
