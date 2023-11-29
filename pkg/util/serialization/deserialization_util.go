@@ -20,199 +20,215 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
-func deserializeLength(buf []byte, pos *int64) int {
-	return DeserializeInt(buf, pos)
+// PosAndBuf is the parameter of all DeserializeXXX functions
+type PosAndBuf struct {
+	Buf []byte
+	Pos *int64
+}
+
+func (p *PosAndBuf) Reset(col *chunk.Column, idx int) {
+	p.Buf = col.GetBytes(idx)
+	*p.Pos = 0
+}
+
+func deserializeBuffer(posAndBuf PosAndBuf) []byte {
+	bufLen := DeserializeInt(posAndBuf) // Get buffer length
+	retVal := posAndBuf.Buf[*posAndBuf.Pos : *posAndBuf.Pos+int64(bufLen)]
+	*posAndBuf.Pos += int64(bufLen)
+	return retVal
+}
+
+// DeserializeByte deserializes byte type
+func DeserializeByte(posAndBuf PosAndBuf) byte {
+	retVal := posAndBuf.Buf[*posAndBuf.Pos]
+	*posAndBuf.Pos++
+	return retVal
 }
 
 // DeserializeBool deserializes bool type
-func DeserializeBool(buf []byte, pos *int64) bool {
-	retVal := *(*bool)(unsafe.Pointer(&buf[*pos]))
-	*pos += BoolLen
+func DeserializeBool(posAndBuf PosAndBuf) bool {
+	retVal := *(*bool)(unsafe.Pointer(&posAndBuf.Buf[*posAndBuf.Pos]))
+	*posAndBuf.Pos += BoolLen
 	return retVal
 }
 
 // DeserializeInt deserializes int type
-func DeserializeInt(buf []byte, pos *int64) int {
-	retVal := *(*int)(unsafe.Pointer(&buf[*pos]))
-	*pos += IntLen
+func DeserializeInt(posAndBuf PosAndBuf) int {
+	retVal := *(*int)(unsafe.Pointer(&posAndBuf.Buf[*posAndBuf.Pos]))
+	*posAndBuf.Pos += IntLen
 	return retVal
 }
 
 // DeserializeInt8 deserializes int8 type
-func DeserializeInt8(buf []byte, pos *int64) int8 {
-	retVal := *(*int8)(unsafe.Pointer(&buf[*pos]))
-	*pos += Int8Len
+func DeserializeInt8(posAndBuf PosAndBuf) int8 {
+	retVal := *(*int8)(unsafe.Pointer(&posAndBuf.Buf[*posAndBuf.Pos]))
+	*posAndBuf.Pos += Int8Len
 	return retVal
 }
 
 // DeserializeUint8 deserializes int8 type
-func DeserializeUint8(buf []byte, pos *int64) uint8 {
-	retVal := *(*uint8)(unsafe.Pointer(&buf[*pos]))
-	*pos += Uint8Len
+func DeserializeUint8(posAndBuf PosAndBuf) uint8 {
+	retVal := *(*uint8)(unsafe.Pointer(&posAndBuf.Buf[*posAndBuf.Pos]))
+	*posAndBuf.Pos += Uint8Len
 	return retVal
 }
 
 // DeserializeInt32 deserializes int32 type
-func DeserializeInt32(buf []byte, pos *int64) int32 {
-	retVal := *(*int32)(unsafe.Pointer(&buf[*pos]))
-	*pos += Int32Len
+func DeserializeInt32(posAndBuf PosAndBuf) int32 {
+	retVal := *(*int32)(unsafe.Pointer(&posAndBuf.Buf[*posAndBuf.Pos]))
+	*posAndBuf.Pos += Int32Len
 	return retVal
 }
 
 // DeserializeUint32 deserializes uint32 type
-func DeserializeUint32(buf []byte, pos *int64) uint32 {
-	retVal := *(*uint32)(unsafe.Pointer(&buf[*pos]))
-	*pos += Uint32Len
+func DeserializeUint32(posAndBuf PosAndBuf) uint32 {
+	retVal := *(*uint32)(unsafe.Pointer(&posAndBuf.Buf[*posAndBuf.Pos]))
+	*posAndBuf.Pos += Uint32Len
 	return retVal
 }
 
 // DeserializeUint64 deserializes uint64 type
-func DeserializeUint64(buf []byte, pos *int64) uint64 {
-	retVal := *(*uint64)(unsafe.Pointer(&buf[*pos]))
-	*pos += Uint64Len
+func DeserializeUint64(posAndBuf PosAndBuf) uint64 {
+	retVal := *(*uint64)(unsafe.Pointer(&posAndBuf.Buf[*posAndBuf.Pos]))
+	*posAndBuf.Pos += Uint64Len
 	return retVal
 }
 
 // DeserializeInt64 deserializes int64 type
-func DeserializeInt64(buf []byte, pos *int64) int64 {
-	retVal := *(*int64)(unsafe.Pointer(&buf[*pos]))
-	*pos += Int64Len
+func DeserializeInt64(posAndBuf PosAndBuf) int64 {
+	retVal := *(*int64)(unsafe.Pointer(&posAndBuf.Buf[*posAndBuf.Pos]))
+	*posAndBuf.Pos += Int64Len
 	return retVal
 }
 
 // DeserializeFloat32 deserializes float32 type
-func DeserializeFloat32(buf []byte, pos *int64) float32 {
-	retVal := *(*float32)(unsafe.Pointer(&buf[*pos]))
-	*pos += Float32Len
+func DeserializeFloat32(posAndBuf PosAndBuf) float32 {
+	retVal := *(*float32)(unsafe.Pointer(&posAndBuf.Buf[*posAndBuf.Pos]))
+	*posAndBuf.Pos += Float32Len
 	return retVal
 }
 
 // DeserializeFloat64 deserializes float64 type
-func DeserializeFloat64(buf []byte, pos *int64) float64 {
-	retVal := *(*float64)(unsafe.Pointer(&buf[*pos]))
-	*pos += Float64Len
+func DeserializeFloat64(posAndBuf PosAndBuf) float64 {
+	retVal := *(*float64)(unsafe.Pointer(&posAndBuf.Buf[*posAndBuf.Pos]))
+	*posAndBuf.Pos += Float64Len
 	return retVal
 }
 
 // DeserializeMyDecimal deserializes MyDecimal type
-func DeserializeMyDecimal(buf []byte, pos *int64) types.MyDecimal {
-	retVal := *(*types.MyDecimal)(unsafe.Pointer(&buf[*pos]))
-	*pos += types.MyDecimalStructSize
+func DeserializeMyDecimal(posAndBuf PosAndBuf) types.MyDecimal {
+	retVal := *(*types.MyDecimal)(unsafe.Pointer(&posAndBuf.Buf[*posAndBuf.Pos]))
+	*posAndBuf.Pos += types.MyDecimalStructSize
 	return retVal
 }
 
 // DeserializeTime deserializes Time type
-func DeserializeTime(buf []byte, pos *int64) types.Time {
-	retVal := *(*types.Time)(unsafe.Pointer(&buf[*pos]))
-	*pos += TimeLen
+func DeserializeTime(posAndBuf PosAndBuf) types.Time {
+	retVal := *(*types.Time)(unsafe.Pointer(&posAndBuf.Buf[*posAndBuf.Pos]))
+	*posAndBuf.Pos += TimeLen
 	return retVal
 }
 
 // DeserializeTimeDuration deserializes time.Duration type
-func DeserializeTimeDuration(buf []byte, pos *int64) time.Duration {
-	retVal := *(*time.Duration)(unsafe.Pointer(&buf[*pos]))
-	*pos += TimeDurationLen
+func DeserializeTimeDuration(posAndBuf PosAndBuf) time.Duration {
+	retVal := *(*time.Duration)(unsafe.Pointer(&posAndBuf.Buf[*posAndBuf.Pos]))
+	*posAndBuf.Pos += TimeDurationLen
 	return retVal
 }
 
 // DeserializeTypesDuration deserializes types.Duration type
-func DeserializeTypesDuration(buf []byte, pos *int64) types.Duration {
+func DeserializeTypesDuration(posAndBuf PosAndBuf) types.Duration {
 	retVal := types.Duration{}
-	retVal.Duration = DeserializeTimeDuration(buf, pos)
-	retVal.Fsp = DeserializeInt(buf, pos)
+	retVal.Duration = DeserializeTimeDuration(posAndBuf)
+	retVal.Fsp = DeserializeInt(posAndBuf)
 	return retVal
 }
 
 // DeserializeJSONTypeCode deserializes JSONTypeCode type
-func DeserializeJSONTypeCode(buf []byte, pos *int64) types.JSONTypeCode {
-	retVal := *(*types.JSONTypeCode)(unsafe.Pointer(&buf[*pos]))
-	*pos += JSONTypeCodeLen
+func DeserializeJSONTypeCode(posAndBuf PosAndBuf) types.JSONTypeCode {
+	retVal := *(*types.JSONTypeCode)(unsafe.Pointer(&posAndBuf.Buf[*posAndBuf.Pos]))
+	*posAndBuf.Pos += JSONTypeCodeLen
 	return retVal
 }
 
 // DeserializeBinaryJSON deserializes BinaryJSON type
-func DeserializeBinaryJSON(buf []byte, pos *int64) types.BinaryJSON {
+func DeserializeBinaryJSON(posAndBuf PosAndBuf) types.BinaryJSON {
 	retValue := types.BinaryJSON{}
-	retValue.TypeCode = DeserializeJSONTypeCode(buf, pos)
-	jsonValueLen := deserializeLength(buf, pos)
-	retValue.Value = make([]byte, jsonValueLen)
-	copy(retValue.Value, buf[*pos:*pos+int64(jsonValueLen)])
-	*pos += int64(jsonValueLen)
+	retValue.TypeCode = DeserializeJSONTypeCode(posAndBuf)
+	buf := deserializeBuffer(posAndBuf)
+	retValue.Value = make([]byte, len(buf))
+	copy(retValue.Value, buf)
 	return retValue
 }
 
 // DeserializeSet deserializes Set type
-func DeserializeSet(buf []byte, pos *int64) types.Set {
+func DeserializeSet(posAndBuf PosAndBuf) types.Set {
 	retValue := types.Set{}
-	retValue.Value = DeserializeUint64(buf, pos)
-	retValue.Name = DeserializeString(buf, pos)
+	retValue.Value = DeserializeUint64(posAndBuf)
+	retValue.Name = DeserializeString(posAndBuf)
 	return retValue
 }
 
 // DeserializeEnum deserializes Enum type
-func DeserializeEnum(buf []byte, pos *int64) types.Enum {
+func DeserializeEnum(posAndBuf PosAndBuf) types.Enum {
 	retValue := types.Enum{}
-	retValue.Value = DeserializeUint64(buf, pos)
-	retValue.Name = DeserializeString(buf, pos)
+	retValue.Value = DeserializeUint64(posAndBuf)
+	retValue.Name = DeserializeString(posAndBuf)
 	return retValue
 }
 
 // DeserializeOpaque deserializes Opaque type
-func DeserializeOpaque(buf []byte, pos *int64) types.Opaque {
+func DeserializeOpaque(posAndBuf PosAndBuf) types.Opaque {
 	retVal := types.Opaque{}
-	retVal.TypeCode = buf[*pos]
-	*pos++
-	retValBufLen := deserializeLength(buf, pos)
-	retVal.Buf = make([]byte, retValBufLen)
-	copy(retVal.Buf, buf[*pos:*pos+int64(retValBufLen)])
-	*pos += int64(retValBufLen)
+	retVal.TypeCode = DeserializeByte(posAndBuf)
+	buf := deserializeBuffer(posAndBuf)
+	retVal.Buf = make([]byte, len(buf))
+	copy(retVal.Buf, buf)
 	return retVal
 }
 
 // DeserializeString deserializes String type
-func DeserializeString(buf []byte, pos *int64) string {
-	strLen := deserializeLength(buf, pos)
-	retVal := string(buf[*pos : *pos+int64(strLen)])
-	*pos += int64(strLen)
-	return retVal
+func DeserializeString(posAndBuf PosAndBuf) string {
+	buf := deserializeBuffer(posAndBuf)
+	return string(buf)
 }
 
 // DeserializeBytesBuffer deserializes bytes.Buffer type
-func DeserializeBytesBuffer(buf []byte, pos *int64) *bytes.Buffer {
-	bufLen := deserializeLength(buf, pos)
-	tmp := make([]byte, bufLen)
-	copy(tmp, buf[*pos:*pos+int64(bufLen)])
-	*pos += int64(bufLen)
+func DeserializeBytesBuffer(posAndBuf PosAndBuf) *bytes.Buffer {
+	buf := deserializeBuffer(posAndBuf)
+	tmp := make([]byte, len(buf))
+	copy(tmp, buf)
 	return bytes.NewBuffer(tmp)
 }
 
 // DeserializeInterface deserializes interface type
-func DeserializeInterface(buf []byte, pos *int64) interface{} {
+func DeserializeInterface(posAndBuf PosAndBuf) interface{} {
 	// Get type
-	dataType := int(buf[*pos])
-	*pos += InterfaceTypeCodeLen
+	dataType := int(posAndBuf.Buf[*posAndBuf.Pos])
+	*posAndBuf.Pos += InterfaceTypeCodeLen
 
 	switch dataType {
 	case BoolType:
-		return DeserializeBool(buf, pos)
+		return DeserializeBool(posAndBuf)
 	case Int64Type:
-		return DeserializeInt64(buf, pos)
+		return DeserializeInt64(posAndBuf)
 	case Uint64Type:
-		return DeserializeUint64(buf, pos)
+		return DeserializeUint64(posAndBuf)
 	case FloatType:
-		return DeserializeFloat64(buf, pos)
+		return DeserializeFloat64(posAndBuf)
 	case StringType:
-		return DeserializeString(buf, pos)
+		return DeserializeString(posAndBuf)
 	case BinaryJSONType:
-		return DeserializeBinaryJSON(buf, pos)
+		return DeserializeBinaryJSON(posAndBuf)
 	case OpaqueType:
-		return DeserializeOpaque(buf, pos)
+		return DeserializeOpaque(posAndBuf)
 	case TimeType:
-		return DeserializeTime(buf, pos)
+		return DeserializeTime(posAndBuf)
 	case DurationType:
-		return DeserializeTypesDuration(buf, pos)
+		return DeserializeTypesDuration(posAndBuf)
 	default:
 		panic("Invalid data type happens in agg spill deserializing!")
 	}

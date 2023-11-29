@@ -26,6 +26,17 @@ func serializeLength(len int, buf []byte) []byte {
 	return SerializeInt(len, buf)
 }
 
+func serializeBuffer(value []byte, buf []byte) []byte {
+	length := len(value)
+	buf = SerializeInt(length, buf)
+	return append(buf, value...)
+}
+
+// SerializeByte serializes byte type
+func SerializeByte(value byte, buf []byte) []byte {
+	return append(buf, value)
+}
+
 // SerializeBool serializes bool type
 func SerializeBool(value bool, buf []byte) []byte {
 	var tmp [BoolLen]byte
@@ -132,45 +143,37 @@ func SerializeJSONTypeCode(value types.JSONTypeCode, buf []byte) []byte {
 
 // SerializeBinaryJSON serializes BinaryJSON type
 func SerializeBinaryJSON(value *types.BinaryJSON, buf []byte) []byte {
-	buf = append(buf, value.TypeCode)
-	buf = serializeLength(len(value.Value), buf)
-	return append(buf, value.Value...)
+	buf = SerializeByte(value.TypeCode, buf)
+	return serializeBuffer(value.Value, buf)
 }
 
 // SerializeSet serializes Set type
 func SerializeSet(value *types.Set, buf []byte) []byte {
 	buf = SerializeUint64(value.Value, buf)
-	buf = serializeLength(len(value.Name), buf)
-	return append(buf, value.Name...)
+	return serializeBuffer([]byte(value.Name), buf)
 }
 
 // SerializeEnum serializes Enum type
 func SerializeEnum(value *types.Enum, buf []byte) []byte {
 	buf = SerializeUint64(value.Value, buf)
-	buf = serializeLength(len(value.Name), buf)
-	return append(buf, value.Name...)
+	return serializeBuffer([]byte(value.Name), buf)
 }
 
 // SerializeOpaque serializes Opaque type
 func SerializeOpaque(value types.Opaque, buf []byte) []byte {
-	buf = append(buf, value.TypeCode)
-	buf = serializeLength(len(value.Buf), buf)
-	return append(buf, value.Buf...)
+	buf = SerializeByte(value.TypeCode, buf)
+	return serializeBuffer(value.Buf, buf)
 }
 
 // SerializeString serializes String type
 func SerializeString(value string, buf []byte) []byte {
-	strLen := len(value)
-	buf = serializeLength(strLen, buf)
-	return append(buf, value...)
+	return serializeBuffer([]byte(value), buf)
 }
 
 // SerializeBytesBuffer serializes bytes.Buffer type
 func SerializeBytesBuffer(value *bytes.Buffer, buf []byte) []byte {
 	bufferBytes := value.Bytes()
-	bytesLen := len(bufferBytes)
-	buf = serializeLength(bytesLen, buf)
-	return append(buf, bufferBytes...)
+	return serializeBuffer(bufferBytes, buf)
 }
 
 // SerializeInterface serialize interface type
