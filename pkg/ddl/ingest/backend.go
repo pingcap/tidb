@@ -189,8 +189,12 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 	}
 
 	if bc.useDistributedLock {
-		ds := newDistLockDataStore(bc.ctx, bc.store)
-		dLock := meta.NewDistributedLock(bc.ctx, ds, bc.instanceID, strconv.Itoa(int(bc.jobID)))
+		store := newDistLockDataStore(bc.ctx, bc.store)
+		dKey := strconv.Itoa(int(bc.jobID))
+		dLock := meta.NewDistributedLockBuilder().
+			SetBackoff(5*time.Second).
+			SetLease(2*time.Minute).
+			Build(bc.ctx, store, bc.instanceID, dKey)
 		err = dLock.Lock()
 		if err != nil {
 			return true, false, err

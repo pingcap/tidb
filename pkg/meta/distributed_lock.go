@@ -76,8 +76,37 @@ type DistributedLock struct {
 	renewCancel context.CancelFunc
 }
 
-// NewDistributedLock creates a new distributed lock.
-func NewDistributedLock(ctx context.Context, store DataStore, instanceID string, lockName string) *DistributedLock {
+// DistributedLockBuilder is used to build a DistributedLock.
+type DistributedLockBuilder struct {
+	backoff time.Duration
+	lease   time.Duration
+}
+
+// NewDistributedLockBuilder creates a new DistributedLockBuilder.
+func NewDistributedLockBuilder() *DistributedLockBuilder {
+	return &DistributedLockBuilder{
+		backoff: 3 * time.Second,
+		lease:   30 * time.Second,
+	}
+}
+
+// SetBackoff sets the backoff time between two lock operations.
+// Default is 3 * time.Second.
+func (b *DistributedLockBuilder) SetBackoff(backoff time.Duration) *DistributedLockBuilder {
+	b.backoff = backoff
+	return b
+}
+
+// SetLease sets the lease time of the lock.
+// Default is 30 * time.Second.
+func (b *DistributedLockBuilder) SetLease(lease time.Duration) *DistributedLockBuilder {
+	b.lease = lease
+	return b
+}
+
+// Build builds a DistributedLock.
+func (b *DistributedLockBuilder) Build(
+	ctx context.Context, store DataStore, instanceID string, lockName string) *DistributedLock {
 	ctx = logutil.WithCategory(ctx, "distributed-lock")
 	return &DistributedLock{
 		ctx:        ctx,
@@ -85,21 +114,9 @@ func NewDistributedLock(ctx context.Context, store DataStore, instanceID string,
 		instanceID: instanceID,
 
 		lockName: []byte(lockName),
-		backoff:  3 * time.Second,
-		lease:    30 * time.Second,
+		backoff:  b.backoff,
+		lease:    b.lease,
 	}
-}
-
-// SetBackoff sets the backoff time between two lock operations.
-func (d *DistributedLock) SetBackoff(backoff time.Duration) *DistributedLock {
-	d.backoff = backoff
-	return d
-}
-
-// SetLease sets the lease time of the lock.
-func (d *DistributedLock) SetLease(lease time.Duration) *DistributedLock {
-	d.lease = lease
-	return d
 }
 
 func (d *DistributedLock) renewLockLoop() {
