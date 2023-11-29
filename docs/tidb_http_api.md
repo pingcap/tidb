@@ -253,7 +253,7 @@
 
     *Hint: List MVCC Information of the keys startted with a specified handle ID:*
     
-    step 1: Get the hex of the start key
+    step 1: Get the hex of the start key from tidb.
      ```shell
         $curl http://127.0.0.1:10080/mvcc/key/test/t1/1
         {
@@ -287,7 +287,7 @@
      ./tikv-ctl --encode 't\200\000\000\000\000\000\010\306_r\200\000\000\000\000\000\000\001'
      7480000000000008FFC65F728000000000FF0000010000000000FA
      ```
-     step4: convert the hex key to escaped key since `tikv-ctl scan` only accepts escaped key with [tikv-ctl](https://docs.pingcap.com/tidb/stable/tikv-control)
+     step 4: convert the hex key to escaped key since `tikv-ctl scan` only accepts escaped key.
      ```
      ./tikv-ctl --to-escaped    '7480000000000008FFC65F728000000000FF0000010000000000FA'
      t\200\000\000\000\000\000\010\377\306_r\200\000\000\000\000\377\000\000\001\000\000\000\000\000\372
