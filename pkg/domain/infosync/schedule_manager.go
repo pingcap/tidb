@@ -15,15 +15,10 @@
 package infosync
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"path"
 	"sync"
 
-	"github.com/pingcap/errors"
 	pd "github.com/tikv/pd/client/http"
-	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 // ScheduleManager manages schedule configs
@@ -34,37 +29,17 @@ type ScheduleManager interface {
 
 // PDScheduleManager manages schedule with pd
 type PDScheduleManager struct {
-	etcdCli *clientv3.Client
+	pdHTTPCli pd.Client
 }
 
 // GetPDScheduleConfig get schedule config from pd
 func (sm *PDScheduleManager) GetPDScheduleConfig(ctx context.Context) (map[string]interface{}, error) {
-	ret, err := doRequest(ctx, "GetPDSchedule", sm.etcdCli.Endpoints(), path.Join(pd.Config, "schedule"), "GET", nil)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	var schedule map[string]interface{}
-	if err = json.Unmarshal(ret, &schedule); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	return schedule, nil
+	return sm.pdHTTPCli.GetScheduleConfig(ctx)
 }
 
 // SetPDScheduleConfig set schedule config to pd
 func (sm *PDScheduleManager) SetPDScheduleConfig(ctx context.Context, config map[string]interface{}) error {
-	configJSON, err := json.Marshal(config)
-	if err != nil {
-		return err
-	}
-
-	_, err = doRequest(ctx, "SetPDSchedule", sm.etcdCli.Endpoints(), path.Join(pd.Config, "schedule"), "POST", bytes.NewReader(configJSON))
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	return nil
+	return sm.pdHTTPCli.SetScheduleConfig(ctx, config)
 }
 
 type mockScheduleManager struct {
