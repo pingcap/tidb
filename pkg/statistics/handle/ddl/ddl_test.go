@@ -397,14 +397,7 @@ func TestExchangeAPartition(t *testing.T) {
 
 	testKit.MustExec("alter table t exchange partition p0 with table t1")
 	// Find the exchange partition event.
-	var exchangePartitionEvent *util.DDLEvent
-	for {
-		event := <-h.DDLEventCh()
-		if event.GetType() == model.ActionExchangeTablePartition {
-			exchangePartitionEvent = event
-			break
-		}
-	}
+	exchangePartitionEvent := findEvent(h.DDLEventCh(), model.ActionExchangeTablePartition)
 	err = h.HandleDDLEvent(exchangePartitionEvent)
 	require.NoError(t, err)
 	// Check the global stats meta.
@@ -414,4 +407,42 @@ func TestExchangeAPartition(t *testing.T) {
 	).Check(
 		testkit.Rows("8 3"),
 	)
+
+	// Create another normal table with no data to exchange partition.
+	testKit.MustExec("drop table if exists t2")
+	testKit.MustExec("create table t2 (a int, b int, primary key(a), index idx(b))")
+	testKit.MustExec("analyze table t2")
+	is = do.InfoSchema()
+	tbl2, err := is.TableByName(
+		model.NewCIStr("test"), model.NewCIStr("t2"),
+	)
+	require.NoError(t, err)
+	tableInfo2 := tbl2.Meta()
+	statsTbl2 := h.GetTableStats(tableInfo2)
+	require.False(t, statsTbl2.Pseudo)
+	err = h.Update(is)
+	require.NoError(t, err)
+
+	testKit.MustExec("alter table t exchange partition p1 with table t2")
+	// Find the exchange partition event.
+	exchangePartitionEvent = findEvent(h.DDLEventCh(), model.ActionExchangeTablePartition)
+	err = h.HandleDDLEvent(exchangePartitionEvent)
+	require.NoError(t, err)
+	// Check the global stats meta.
+	// Because we have exchanged a partition, the count should be 5 and the modify count should be 4.
+	testKit.MustQuery(
+		fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableInfo.ID),
+	).Check(
+		testkit.Rows("7 4"),
+	)
+}
+
+func findEvent(eventCh <-chan *util.DDLEvent, eventType model.ActionType) *util.DDLEvent {
+	// Find the target event.
+	for {
+		event := <-eventCh
+		if event.GetType() == eventType {
+			return event
+		}
+	}
 }
