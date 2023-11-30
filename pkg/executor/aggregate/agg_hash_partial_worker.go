@@ -133,7 +133,7 @@ func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasE
 			w.processError(errors.Errorf("Random fail is triggered in partial worker"))
 			return false
 		} else if num < 28 {
-			w.memTracker.Consume(104857600) // Consume 100MiB
+			w.memTracker.Consume(500000)
 		}
 	}
 

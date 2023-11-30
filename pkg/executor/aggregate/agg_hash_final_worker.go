@@ -350,8 +350,7 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 				} else if num < 14 {
 					time.Sleep(2 * time.Millisecond)
 				} else if num < 21 {
-					// Consume 1TB, and the query should be killed
-					w.memTracker.Consume(1099511627776)
+					w.memTracker.Consume(1000000)
 				} else if num < 28 {
 					w.outputCh <- &AfFinalResult{err: errors.Errorf("Random fail is triggered in final worker")}
 					return

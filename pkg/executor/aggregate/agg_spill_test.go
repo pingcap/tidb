@@ -223,9 +223,8 @@ func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Execu
 	return aggExec
 }
 
-// TODO the spill may still not be triggered
 func TestGetCorrectResult(t *testing.T) {
-	hardLimitBytesNum := int64(5000000)
+	hardLimitBytesNum := int64(1000000)
 
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
@@ -264,13 +263,12 @@ func TestGetCorrectResult(t *testing.T) {
 	require.True(t, resContainer.check(result))
 }
 
-// TODO maybe add more random fail?
 func TestRandomFail(t *testing.T) {
-	hardLimitBytesNum := int64(5000000)
+	hardLimitBytesNum := int64(1000000)
 
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().InitChunkSize = 32
-	ctx.GetSessionVars().MaxChunkSize = 32
+	ctx.GetSessionVars().InitChunkSize = 500
+	ctx.GetSessionVars().MaxChunkSize = 500
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, hardLimitBytesNum)
 	ctx.GetSessionVars().TrackAggregateMemoryUsage = true
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
