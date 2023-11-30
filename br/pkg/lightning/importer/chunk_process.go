@@ -17,7 +17,10 @@ package importer
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
+	"os"
+	"runtime/pprof"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -203,6 +206,21 @@ func (cr *chunkProcessor) process(
 	}()
 
 	logTask := logger.Begin(zap.InfoLevel, "restore file")
+
+	go func() {
+		currentTime := time.Now().UnixNano()
+		name := fmt.Sprintf("heap_profile_%v.prof", currentTime)
+		file, err := os.Create(name)
+		if err != nil {
+			panic("pprof error")
+		}
+		defer file.Close()
+
+		err = pprof.WriteHeapProfile(file)
+		if err != nil {
+			panic("pprof error")
+		}
+	}()
 
 	readTotalDur, encodeTotalDur, encodeErr := cr.encodeLoop(
 		ctx,
