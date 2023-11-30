@@ -826,6 +826,20 @@ func TestPrepareLargeData(t *testing.T) {
 	now := time.Now()
 	wg := sync.WaitGroup{}
 	wg.Add(concurrency)
+
+	go func() {
+		for {
+			select {
+			case <-time.After(time.Second):
+				now := time.Now()
+				file, err := os.Create(fmt.Sprintf("/tmp/heap-%d.prof", now.UnixMicro()))
+				intest.AssertNoError(err)
+				err = pprof.WriteHeapProfile(file)
+				intest.AssertNoError(err)
+				file.Close()
+			}
+		}
+	}()
 	for i := 0; i < concurrency; i++ {
 		i := i
 		go func() {
