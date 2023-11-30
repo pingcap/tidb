@@ -2,6 +2,7 @@ package mydump
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"path/filepath"
 	"strconv"
@@ -318,6 +319,29 @@ func TestHiveParquetParser(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, results[i], ts)
 	}
+}
+
+func TestReadTotalCompressedSize(t *testing.T) {
+	name := "test.parquet.0000.parquet"
+	dir := "./parquet/"
+	store, err := storage.NewLocalStorage(dir)
+	require.NoError(t, err)
+	r, err := store.Open(context.TODO(), name, nil)
+	require.NoError(t, err)
+	reader, err := NewParquetParser(context.TODO(), store, r, name)
+	require.NoError(t, err)
+	defer reader.Close()
+	err = reader.Reader.ReadFooter()
+	require.NoError(t, err)
+	rowGroups := reader.Reader.Footer.GetRowGroups()
+	for _, rowGroup := range rowGroups {
+		columnChunks := rowGroup.GetColumns()
+		for _, columnChunk := range columnChunks {
+			size := columnChunk.MetaData.GetTotalCompressedSize()
+			fmt.Println(size)
+		}
+	}
+	fmt.Println(rowGroups)
 }
 
 func TestNsecOutSideRange(t *testing.T) {
