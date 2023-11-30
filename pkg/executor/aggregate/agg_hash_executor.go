@@ -94,7 +94,7 @@ type HashAggExec struct {
 	Sc               *stmtctx.StatementContext
 	PartialAggFuncs  []aggfuncs.AggFunc
 	FinalAggFuncs    []aggfuncs.AggFunc
-	partialResultMap AggPartialResultMapper
+	partialResultMap aggfuncs.AggPartialResultMapper
 	bInMap           int64 // indicate there are 2^bInMap buckets in partialResultMap
 	groupSet         set.StringSetWithMemoryUsage
 	groupKeys        []string
@@ -104,7 +104,7 @@ type HashAggExec struct {
 
 	finishCh         chan struct{}
 	finalOutputCh    chan *AfFinalResult
-	partialOutputChs []chan *AggPartialResultMapper
+	partialOutputChs []chan *aggfuncs.AggPartialResultMapper
 	inputCh          chan *HashAggInput
 	partialInputChs  []chan *chunk.Chunk
 	partialWorkers   []HashAggPartialWorker
@@ -230,7 +230,7 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 func (e *HashAggExec) initForUnparallelExec() {
 	var setSize int64
 	e.groupSet, setSize = set.NewStringSetWithMemoryUsage()
-	e.partialResultMap = make(AggPartialResultMapper)
+	e.partialResultMap = make(aggfuncs.AggPartialResultMapper)
 	e.bInMap = 0
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice*(1<<e.bInMap) + setSize)
@@ -264,9 +264,9 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 	for i := range e.partialInputChs {
 		e.partialInputChs[i] = make(chan *chunk.Chunk, 1)
 	}
-	e.partialOutputChs = make([]chan *AggPartialResultMapper, finalConcurrency)
+	e.partialOutputChs = make([]chan *aggfuncs.AggPartialResultMapper, finalConcurrency)
 	for i := range e.partialOutputChs {
-		e.partialOutputChs[i] = make(chan *AggPartialResultMapper, partialConcurrency)
+		e.partialOutputChs[i] = make(chan *aggfuncs.AggPartialResultMapper, partialConcurrency)
 	}
 
 	e.partialWorkers = make([]HashAggPartialWorker, partialConcurrency)
@@ -275,9 +275,9 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 
 	// Init partial workers.
 	for i := 0; i < partialConcurrency; i++ {
-		partialResultsMap := make([]AggPartialResultMapper, finalConcurrency)
+		partialResultsMap := make([]aggfuncs.AggPartialResultMapper, finalConcurrency)
 		for i := 0; i < finalConcurrency; i++ {
-			partialResultsMap[i] = make(AggPartialResultMapper)
+			partialResultsMap[i] = make(aggfuncs.AggPartialResultMapper)
 		}
 
 		w := HashAggPartialWorker{
@@ -321,7 +321,7 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 		groupSet, setSize := set.NewStringSetWithMemoryUsage()
 		w := HashAggFinalWorker{
 			baseHashAggWorker:   newBaseHashAggWorker(e.Ctx(), e.finishCh, e.FinalAggFuncs, e.MaxChunkSize(), e.memTracker),
-			partialResultMap:    make(AggPartialResultMapper),
+			partialResultMap:    make(aggfuncs.AggPartialResultMapper),
 			BInMap:              0,
 			isFirstInput:        true,
 			groupSet:            groupSet,
@@ -550,7 +550,7 @@ func (e *HashAggExec) resetSpillMode() {
 	e.cursor4GroupKey, e.groupKeys = 0, e.groupKeys[:0]
 	var setSize int64
 	e.groupSet, setSize = set.NewStringSetWithMemoryUsage()
-	e.partialResultMap = make(AggPartialResultMapper)
+	e.partialResultMap = make(aggfuncs.AggPartialResultMapper)
 	e.bInMap = 0
 	e.prepared = false
 	e.executed = e.numOfSpilledChks == e.dataInDisk.NumChunks() // No data is spilling again, all data have been processed.
