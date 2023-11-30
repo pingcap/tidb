@@ -26,7 +26,7 @@ type SerializeHelper struct {
 // NewSerializeHelper creates a new SerializeHelper
 func NewSerializeHelper() *SerializeHelper {
 	return &SerializeHelper{
-		buf: make([]byte, 1024),
+		buf: make([]byte, 0, 64),
 	}
 }
 
