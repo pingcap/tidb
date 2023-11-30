@@ -96,7 +96,7 @@ func (b *builtinArithmeticDivideDecimalSig) vecEvalDecimal(ctx sessionctx.Contex
 			result.SetNull(i, true)
 			continue
 		} else if err == types.ErrTruncated {
-			if err = sc.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", to)); err != nil {
+			if err = sc.HandleError(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", to)); err != nil {
 				return err
 			}
 		} else if err == nil {
@@ -618,7 +618,7 @@ func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(ctx sessionctx.Context
 			continue
 		}
 		if err == types.ErrTruncated {
-			err = sc.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c))
+			err = sc.HandleError(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c))
 		} else if err == types.ErrOverflow {
 			newErr := errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c)
 			err = sc.HandleOverflow(newErr, newErr)

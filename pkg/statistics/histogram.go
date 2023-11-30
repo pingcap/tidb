@@ -205,6 +205,7 @@ func (hg *Histogram) ConvertTo(sc *stmtctx.StatementContext, tp *types.FieldType
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		d := row.GetDatum(0, hg.Tp)
 		d, err := d.ConvertTo(sc.TypeCtx(), tp)
+		err = sc.HandleError(err)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -837,6 +838,7 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 	lh.NDV += rh.NDV
 	lLen := lh.Len()
 	cmp, err := lh.GetUpper(lLen-1).Compare(sc.TypeCtx(), rh.GetLower(0), collate.GetBinaryCollator())
+	err = sc.HandleError(err)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1260,6 +1262,7 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 		return &res, nil
 	}
 	upperCompare, err := right.upper.Compare(sc.TypeCtx(), left.upper, collate.GetBinaryCollator())
+	err = sc.HandleError(err)
 	if err != nil {
 		return nil, err
 	}
@@ -1276,6 +1279,7 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 	// They have the same upper.
 	if upperCompare == 0 {
 		lowerCompare, err := right.lower.Compare(sc.TypeCtx(), left.lower, collate.GetBinaryCollator())
+		err = sc.HandleError(err)
 		if err != nil {
 			return nil, err
 		}
@@ -1309,6 +1313,7 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 	// ____left__|
 	// right.upper > left.upper
 	lowerCompareUpper, err := right.lower.Compare(sc.TypeCtx(), left.upper, collate.GetBinaryCollator())
+	err = sc.HandleError(err)
 	if err != nil {
 		return nil, err
 	}
@@ -1326,6 +1331,7 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 	}
 	upperRatio := calcFraction4Datums(right.lower, right.upper, left.upper)
 	lowerCompare, err := right.lower.Compare(sc.TypeCtx(), left.lower, collate.GetBinaryCollator())
+	err = sc.HandleError(err)
 	if err != nil {
 		return nil, err
 	}
@@ -1380,6 +1386,7 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 		totNDV += buckets[i].NDV
 		res.Count += buckets[i].Count
 		compare, err := buckets[i].upper.Compare(sc.TypeCtx(), res.upper, collate.GetBinaryCollator())
+		err = sc.HandleError(err)
 		if err != nil {
 			return nil, err
 		}
@@ -1436,6 +1443,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			}
 			tmpValue := hist.GetLower(0)
 			res, err := tmpValue.Compare(sc.TypeCtx(), minValue, collate.GetBinaryCollator())
+			err = sc.HandleError(err)
 			if err != nil {
 				return nil, err
 			}
@@ -1465,6 +1473,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			continue
 		}
 		res, err := d.Compare(sc.TypeCtx(), minValue, collate.GetBinaryCollator())
+		err = sc.HandleError(err)
 		if err != nil {
 			return nil, err
 		}
@@ -1490,6 +1499,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	var sortError error
 	slices.SortFunc(buckets, func(i, j *bucket4Merging) int {
 		res, err := i.upper.Compare(sc.TypeCtx(), j.upper, collate.GetBinaryCollator())
+		err = sc.HandleError(err)
 		if err != nil {
 			sortError = err
 		}
@@ -1497,6 +1507,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			return res
 		}
 		res, err = i.lower.Compare(sc.TypeCtx(), j.lower, collate.GetBinaryCollator())
+		err = sc.HandleError(err)
 		if err != nil {
 			sortError = err
 		}
@@ -1517,6 +1528,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		if sum >= totCount*bucketCount/expBucketNumber && sum-prevSum >= gBucketCountThreshold {
 			for ; i > 0; i-- { // if the buckets have the same upper, we merge them into the same new buckets.
 				res, err := buckets[i-1].upper.Compare(sc.TypeCtx(), buckets[i].upper, collate.GetBinaryCollator())
+				err = sc.HandleError(err)
 				if err != nil {
 					return nil, err
 				}

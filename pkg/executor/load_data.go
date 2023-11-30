@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/asyncloaddata"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -102,7 +103,7 @@ func setNonRestrictiveFlags(stmtCtx *stmtctx.StatementContext) {
 	stmtCtx.DupKeyAsWarning = true
 	stmtCtx.BadNullAsWarning = true
 
-	stmtCtx.SetTypeFlags(stmtCtx.TypeFlags().WithTruncateAsWarning(true))
+	stmtCtx.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
 }
 
 // NewLoadDataWorker creates a new LoadDataWorker that is ready to work.

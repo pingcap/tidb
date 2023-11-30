@@ -428,6 +428,7 @@ type StatementContext struct {
 func NewStmtCtx() *StatementContext {
 	sc := &StatementContext{}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc.AppendWarning)
+	sc.errCtx = errctx.NewContext(sc.AppendWarning)
 	return sc
 }
 
@@ -436,6 +437,7 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 	intest.AssertNotNil(tz)
 	sc := &StatementContext{}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc.AppendWarning)
+	sc.errCtx = errctx.NewContext(sc.AppendWarning)
 	return sc
 }
 
@@ -443,6 +445,7 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 func (sc *StatementContext) Reset() {
 	*sc = StatementContext{
 		typeCtx: types.NewContext(types.DefaultStmtFlags, time.UTC, sc.AppendWarning),
+		errCtx:  errctx.NewContext(sc.AppendWarning),
 	}
 }
 
@@ -468,20 +471,18 @@ func (sc *StatementContext) TypeCtx() types.Context {
 }
 
 // ErrCtx returns the error context
-// TODO: add a cache to the `ErrCtx` if needed, though it's not a big burden to generate `ErrCtx` everytime.
 func (sc *StatementContext) ErrCtx() errctx.Context {
-	ctx := errctx.NewContext(sc.AppendWarning)
-
-	if sc.TypeFlags().IgnoreTruncateErr() {
-		ctx = ctx.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
-	} else if sc.TypeFlags().TruncateAsWarning() {
-		ctx = ctx.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
-	}
+	ctx := sc.errCtx
 
 	if sc.OverflowAsWarning {
 		ctx = ctx.WithErrGroupLevel(errctx.ErrGroupOverflow, errctx.LevelWarn)
 	}
 	return ctx
+}
+
+// SetErrGroupLevel sets the level for an `ErrGroup`
+func (sc *StatementContext) SetErrGroupLevel(eg errctx.ErrGroup, lvl errctx.Level) {
+	sc.errCtx = sc.errCtx.WithErrGroupLevel(eg, lvl)
 }
 
 // TypeFlags returns the type flags
@@ -492,12 +493,6 @@ func (sc *StatementContext) TypeFlags() types.Flags {
 // SetTypeFlags sets the type flags
 func (sc *StatementContext) SetTypeFlags(flags types.Flags) {
 	sc.typeCtx = sc.typeCtx.WithFlags(flags)
-}
-
-// HandleTruncate ignores or returns the error based on the TypeContext inside.
-// TODO: replace this function with `HandleError`, for `TruncatedError` they should have the same effect.
-func (sc *StatementContext) HandleTruncate(err error) error {
-	return sc.typeCtx.HandleTruncate(err)
 }
 
 // HandleError handles the error based on `ErrCtx()`
@@ -1169,9 +1164,11 @@ func (sc *StatementContext) PushDownFlags() uint64 {
 	} else if sc.InSelectStmt {
 		flags |= model.FlagInSelectStmt
 	}
-	if sc.TypeFlags().IgnoreTruncateErr() {
+	errCtx := sc.ErrCtx()
+	truncateLevel := errCtx.GetLevel(errctx.ErrGroupTruncate)
+	if truncateLevel == errctx.LevelIgnore {
 		flags |= model.FlagIgnoreTruncate
-	} else if sc.TypeFlags().TruncateAsWarning() {
+	} else if truncateLevel == errctx.LevelWarn {
 		flags |= model.FlagTruncateAsWarning
 	}
 	if sc.OverflowAsWarning {
@@ -1245,10 +1242,14 @@ func (sc *StatementContext) InitFromPBFlagAndTz(flags uint64, tz *time.Location)
 	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
 	sc.SetTimeZone(tz)
 	sc.SetTypeFlags(types.DefaultStmtFlags.
-		WithIgnoreTruncateErr((flags & model.FlagIgnoreTruncate) > 0).
-		WithTruncateAsWarning((flags & model.FlagTruncateAsWarning) > 0).
 		WithIgnoreZeroInDate((flags & model.FlagIgnoreZeroInDate) > 0).
 		WithAllowNegativeToUnsigned(!sc.InInsertStmt))
+
+	if (flags & model.FlagIgnoreTruncate) > 0 {
+		sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
+	} else if (flags & model.FlagTruncateAsWarning) > 0 {
+		sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
+	}
 }
 
 // GetLockWaitStartTime returns the statement pessimistic lock wait start time

@@ -91,6 +91,7 @@ func updateRecord(
 	for i, col := range t.Cols() {
 		// We should use binary collation to compare datum, otherwise the result will be incorrect.
 		cmp, err := newData[i].Compare(sc.TypeCtx(), &oldData[i], collate.GetBinaryCollator())
+		err = sc.HandleError(err)
 		if err != nil {
 			return false, err
 		}

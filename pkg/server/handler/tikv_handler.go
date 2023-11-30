@@ -162,6 +162,7 @@ func (*TikvHandlerTool) formValue2DatumRow(sc *stmtctx.StatementContext, values 
 		case 1:
 			bDatum := types.NewStringDatum(vals[0])
 			cDatum, err := bDatum.ConvertTo(sc.TypeCtx(), &col.FieldType)
+			err = sc.HandleError(err)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

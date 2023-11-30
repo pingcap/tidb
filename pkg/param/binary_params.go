@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"go.uber.org/multierr"
 )
 
 var errUnknownFieldType = dbterror.ClassServer.NewStd(errno.ErrUnknownFieldType)
@@ -39,13 +40,14 @@ type BinaryParam struct {
 }
 
 // ExecArgs parse execute arguments to datum slice.
-func ExecArgs(typectx types.Context, binaryParams []BinaryParam) (params []expression.Expression, err error) {
+func ExecArgs(typectx types.Context, binaryParams []BinaryParam) ([]expression.Expression, error) {
 	var (
 		tmp interface{}
 	)
 
-	params = make([]expression.Expression, len(binaryParams))
+	params := make([]expression.Expression, len(binaryParams))
 	args := make([]types.Datum, len(binaryParams))
+	var errs error
 	for i := 0; i < len(args); i++ {
 		tp := binaryParams[i].Tp
 		isUnsigned := binaryParams[i].IsUnsigned
@@ -113,8 +115,7 @@ func ExecArgs(typectx types.Context, binaryParams []BinaryParam) (params []expre
 			case 13:
 				_, tmp = binaryTimestampWithTZ(0, binaryParams[i].Val)
 			default:
-				err = mysql.ErrMalformPacket
-				return
+				return nil, mysql.ErrMalformPacket
 			}
 			// TODO: generate the time datum directly
 			var parseTime func(types.Context, string) (types.Time, error)
@@ -128,11 +129,9 @@ func ExecArgs(typectx types.Context, binaryParams []BinaryParam) (params []expre
 				// TypeTimestamp, the return type should also be `Datetime`.
 				parseTime = types.ParseDatetime
 			}
-			var time types.Time
-			time, err = parseTime(typectx, tmp.(string))
-			err = typectx.HandleTruncate(err)
+			time, err := parseTime(typectx, tmp.(string))
 			if err != nil {
-				return
+				errs = multierr.Append(errs, err)
 			}
 			args[i] = types.NewDatum(time)
 			continue
@@ -145,28 +144,23 @@ func ExecArgs(typectx types.Context, binaryParams []BinaryParam) (params []expre
 			case 8:
 				isNegative := binaryParams[i].Val[0]
 				if isNegative > 1 {
-					err = mysql.ErrMalformPacket
-					return
+					return nil, mysql.ErrMalformPacket
 				}
 				_, tmp = binaryDuration(1, binaryParams[i].Val, isNegative)
 			case 12:
 				isNegative := binaryParams[i].Val[0]
 				if isNegative > 1 {
-					err = mysql.ErrMalformPacket
-					return
+					return nil, mysql.ErrMalformPacket
 				}
 				_, tmp = binaryDurationWithMS(1, binaryParams[i].Val, isNegative)
 				fsp = types.MaxFsp
 			default:
-				err = mysql.ErrMalformPacket
-				return
+				return nil, mysql.ErrMalformPacket
 			}
 			// TODO: generate the duration datum directly
-			var dur types.Duration
-			dur, _, err = types.ParseDuration(typectx, tmp.(string), fsp)
-			err = typectx.HandleTruncate(err)
+			dur, _, err := types.ParseDuration(typectx, tmp.(string), fsp)
 			if err != nil {
-				return
+				errs = multierr.Append(errs, err)
 			}
 			args[i] = types.NewDatum(dur)
 			continue
@@ -175,9 +169,9 @@ func ExecArgs(typectx types.Context, binaryParams []BinaryParam) (params []expre
 				args[i] = types.NewDecimalDatum(nil)
 			} else {
 				var dec types.MyDecimal
-				err = typectx.HandleTruncate(dec.FromString(binaryParams[i].Val))
+				err := dec.FromString(binaryParams[i].Val)
 				if err != nil {
-					return nil, err
+					errs = multierr.Append(errs, err)
 				}
 				args[i] = types.NewDecimalDatum(&dec)
 			}
@@ -199,8 +193,7 @@ func ExecArgs(typectx types.Context, binaryParams []BinaryParam) (params []expre
 			args[i] = types.NewDatum(tmp)
 			continue
 		default:
-			err = errUnknownFieldType.GenWithStack("stmt unknown field type %d", tp)
-			return
+			return nil, errUnknownFieldType.GenWithStack("stmt unknown field type %d", tp)
 		}
 	}
 
@@ -209,7 +202,7 @@ func ExecArgs(typectx types.Context, binaryParams []BinaryParam) (params []expre
 		types.InferParamTypeFromUnderlyingValue(args[i].GetValue(), ft)
 		params[i] = &expression.Constant{Value: args[i], RetType: ft}
 	}
-	return
+	return params, errs
 }
 
 func binaryDate(pos int, paramValues []byte) (int, string) {

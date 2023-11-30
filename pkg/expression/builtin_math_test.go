@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -61,11 +62,7 @@ func TestAbs(t *testing.T) {
 func TestCeil(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := sc.TypeFlags()
-	defer func() {
-		sc.SetTypeFlags(oldTypeFlags)
-	}()
-	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
+	sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 
 	type testCase struct {
 		arg    interface{}
@@ -177,11 +174,7 @@ func TestExp(t *testing.T) {
 func TestFloor(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := sc.TypeFlags()
-	defer func() {
-		sc.SetTypeFlags(oldTypeFlags)
-	}()
-	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
+	sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 
 	genDuration := func(h, m, s int64) types.Duration {
 		duration := time.Duration(h)*time.Hour +
@@ -631,11 +624,7 @@ func TestConv(t *testing.T) {
 func TestSign(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := sc.TypeFlags()
-	defer func() {
-		sc.SetTypeFlags(oldTypeFlags)
-	}()
-	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
+	sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 
 	for _, tt := range []struct {
 		num []interface{}
@@ -666,11 +655,7 @@ func TestSign(t *testing.T) {
 func TestDegrees(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := sc.TypeFlags()
-	defer func() {
-		sc.SetTypeFlags(oldTypeFlags)
-	}()
-	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(false))
+	sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
 
 	cases := []struct {
 		args       interface{}

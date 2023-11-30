@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -143,7 +144,7 @@ func (af *aggFunction) ResetContext(ctx sessionctx.Context, evalCtx *AggEvaluate
 	evalCtx.Value.SetNull()
 }
 
-func (af *aggFunction) updateSum(ctx types.Context, evalCtx *AggEvaluateContext, row chunk.Row) error {
+func (af *aggFunction) updateSum(errCtx errctx.Context, evalCtx *AggEvaluateContext, row chunk.Row) error {
 	a := af.Args[0]
 	value, err := a.Eval(evalCtx.Ctx, row)
 	if err != nil {
@@ -161,7 +162,7 @@ func (af *aggFunction) updateSum(ctx types.Context, evalCtx *AggEvaluateContext,
 			return nil
 		}
 	}
-	evalCtx.Value, err = calculateSum(ctx, evalCtx.Value, value)
+	evalCtx.Value, err = calculateSum(errCtx, evalCtx.Value, value)
 	if err != nil {
 		return err
 	}

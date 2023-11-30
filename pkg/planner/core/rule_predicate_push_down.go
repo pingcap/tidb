@@ -447,7 +447,11 @@ func isNullRejected(ctx sessionctx.Context, schema *expression.Schema, expr expr
 		}
 		if x.Value.IsNull() {
 			return true
-		} else if isTrue, err := x.Value.ToBool(sc.TypeCtxOrDefault()); err == nil && isTrue == 0 {
+		}
+
+		isTrue, err := x.Value.ToBool()
+		err = ctx.GetSessionVars().StmtCtx.HandleError(err)
+		if err == nil && isTrue == 0 {
 			return true
 		}
 	}
@@ -708,7 +712,10 @@ func Conds2TableDual(p LogicalPlan, conds []expression.Expression) LogicalPlan {
 	if expression.MaybeOverOptimized4PlanCache(p.SCtx(), []expression.Expression{con}) {
 		return nil
 	}
-	if isTrue, err := con.Value.ToBool(sc.TypeCtxOrDefault()); (err == nil && isTrue == 0) || con.Value.IsNull() {
+
+	isTrue, err := con.Value.ToBool()
+	err = sc.HandleError(err)
+	if (err == nil && isTrue == 0) || con.Value.IsNull() {
 		dual := LogicalTableDual{}.Init(p.SCtx(), p.SelectBlockOffset())
 		dual.SetSchema(p.Schema())
 		return dual
@@ -730,7 +737,9 @@ func DeleteTrueExprs(p LogicalPlan, conds []expression.Expression) []expression.
 			continue
 		}
 		sc := p.SCtx().GetSessionVars().StmtCtx
-		if isTrue, err := con.Value.ToBool(sc.TypeCtx()); err == nil && isTrue == 1 {
+		isTrue, err := con.Value.ToBool()
+		err = sc.HandleError(err)
+		if err == nil && isTrue == 1 {
 			continue
 		}
 		newConds = append(newConds, cond)

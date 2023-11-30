@@ -91,6 +91,7 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 			}
 			var upperBound types.Datum
 			upperBound, err = hg.GetUpper(j).ConvertTo(sc.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
+			err = sc.HandleError(err)
 			if err != nil {
 				return
 			}
@@ -99,6 +100,7 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 			}
 			var lowerBound types.Datum
 			lowerBound, err = hg.GetLower(j).ConvertTo(sc.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
+			err = sc.HandleError(err)
 			if err != nil {
 				return
 			}

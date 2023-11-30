@@ -52,7 +52,7 @@ func (b *builtinCastIntAsDurationSig) vecEvalDuration(ctx sessionctx.Context, in
 				err = ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err)
 			}
 			if types.ErrTruncatedWrongVal.Equal(err) {
-				err = ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
+				err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 			}
 			if err != nil {
 				return err
@@ -225,6 +225,7 @@ func (b *builtinCastRealAsStringSig) vecEvalString(ctx sessionctx.Context, input
 			continue
 		}
 		res, err = types.ProduceStrWithSpecifiedTp(strconv.FormatFloat(v, 'f', -1, bits), b.tp, sc.TypeCtx(), false)
+		err = sc.HandleError(err)
 		if err != nil {
 			return err
 		}
@@ -265,6 +266,7 @@ func (b *builtinCastDecimalAsStringSig) vecEvalString(ctx sessionctx.Context, in
 			continue
 		}
 		res, e := types.ProduceStrWithSpecifiedTp(string(v.ToString()), b.tp, sc.TypeCtx(), false)
+		err = sc.HandleError(err)
 		if e != nil {
 			return e
 		}
@@ -465,7 +467,8 @@ func (b *builtinCastJSONAsRealSig) vecEvalReal(ctx sessionctx.Context, input *ch
 		if result.IsNull(i) {
 			continue
 		}
-		f64s[i], err = types.ConvertJSONToFloat(sc.TypeCtx(), buf.GetJSON(i))
+		f64s[i], err = types.ConvertJSONToFloat(buf.GetJSON(i))
+		err = sc.HandleError(err)
 		if err != nil {
 			return err
 		}
@@ -725,7 +728,9 @@ func (b *builtinCastIntAsStringSig) vecEvalString(ctx sessionctx.Context, input 
 		if isYearType && str == "0" {
 			str = "0000"
 		}
-		str, err = types.ProduceStrWithSpecifiedTp(str, b.tp, ctx.GetSessionVars().StmtCtx.TypeCtx(), false)
+		sc := ctx.GetSessionVars().StmtCtx
+		str, err = types.ProduceStrWithSpecifiedTp(str, b.tp, sc.TypeCtx(), false)
+		err = sc.HandleError(err)
 		if err != nil {
 			return err
 		}
@@ -961,7 +966,7 @@ func (b *builtinCastStringAsIntSig) vecEvalInt(ctx sessionctx.Context, input *ch
 		return err
 	}
 	result.MergeNulls(buf)
-	typeCtx := ctx.GetSessionVars().StmtCtx.TypeCtx()
+	sc := ctx.GetSessionVars().StmtCtx
 	i64s := result.Int64s()
 	isUnsigned := mysql.HasUnsignedFlag(b.tp.GetFlag())
 	unionUnsigned := isUnsigned && b.inUnion
@@ -976,18 +981,26 @@ func (b *builtinCastStringAsIntSig) vecEvalInt(ctx sessionctx.Context, input *ch
 		val := strings.TrimSpace(buf.GetString(i))
 		isNegative := len(val) > 1 && val[0] == '-'
 		if !isNegative {
-			ures, err = types.StrToUint(typeCtx, val, true)
+			ures, err = types.StrToUint(val, true)
+			// `types.ErrOverflow` is handled in the `b.handleOverflow`, so only need to handle other errors
+			if !types.ErrOverflow.Equal(err) {
+				err = sc.HandleError(err)
+			}
 			if !isUnsigned && err == nil && ures > uint64(math.MaxInt64) {
-				typeCtx.AppendWarning(types.ErrCastAsSignedOverflow)
+				sc.AppendWarning(types.ErrCastAsSignedOverflow)
 			}
 			res = int64(ures)
 		} else if unionUnsigned {
 			res = 0
 		} else {
-			res, err = types.StrToInt(typeCtx, val, true)
+			res, err = types.StrToInt(val, true)
+			// `types.ErrOverflow` is handled in the `b.handleOverflow`, so only need to handle other errors
+			if !types.ErrOverflow.Equal(err) {
+				err = sc.HandleError(err)
+			}
 			if err == nil && isUnsigned {
 				// If overflow, don't append this warnings
-				typeCtx.AppendWarning(types.ErrCastNegIntAsUnsigned)
+				sc.AppendWarning(types.ErrCastNegIntAsUnsigned)
 			}
 		}
 		res, err = b.handleOverflow(ctx, res, val, err, isNegative)
@@ -1023,7 +1036,7 @@ func (b *builtinCastStringAsDurationSig) vecEvalDuration(ctx sessionctx.Context,
 		dur, isNull, err := types.ParseDuration(ctx.GetSessionVars().StmtCtx.TypeCtx(), buf.GetString(i), b.tp.GetDecimal())
 		if err != nil {
 			if types.ErrTruncatedWrongVal.Equal(err) {
-				err = ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
+				err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 			}
 			if err != nil {
 				return err
@@ -1197,7 +1210,9 @@ func (b *builtinCastJSONAsStringSig) vecEvalString(ctx sessionctx.Context, input
 			result.AppendNull()
 			continue
 		}
-		s, err := types.ProduceStrWithSpecifiedTp(buf.GetJSON(i).String(), b.tp, ctx.GetSessionVars().StmtCtx.TypeCtx(), false)
+		sc := ctx.GetSessionVars().StmtCtx
+		s, err := types.ProduceStrWithSpecifiedTp(buf.GetJSON(i).String(), b.tp, sc.TypeCtx(), false)
+		err = sc.HandleError(err)
 		if err != nil {
 			return err
 		}
@@ -1302,7 +1317,7 @@ func (b *builtinCastRealAsDurationSig) vecEvalDuration(ctx sessionctx.Context, i
 		dur, _, err := types.ParseDuration(ctx.GetSessionVars().StmtCtx.TypeCtx(), strconv.FormatFloat(f64s[i], 'f', -1, 64), b.tp.GetDecimal())
 		if err != nil {
 			if types.ErrTruncatedWrongVal.Equal(err) {
-				err = ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
+				err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 				if err != nil {
 					return err
 				}
@@ -1407,6 +1422,7 @@ func (b *builtinCastDurationAsStringSig) vecEvalString(ctx sessionctx.Context, i
 			continue
 		}
 		res, err = types.ProduceStrWithSpecifiedTp(buf.GetDuration(i, fsp).String(), b.tp, sc.TypeCtx(), false)
+		err = sc.HandleError(err)
 		if err != nil {
 			return err
 		}
@@ -1612,6 +1628,7 @@ func (b *builtinCastTimeAsStringSig) vecEvalString(ctx sessionctx.Context, input
 			continue
 		}
 		res, err = types.ProduceStrWithSpecifiedTp(v.String(), b.tp, sc.TypeCtx(), false)
+		err = sc.HandleError(err)
 		if err != nil {
 			return err
 		}
@@ -1650,7 +1667,8 @@ func (b *builtinCastJSONAsDecimalSig) vecEvalDecimal(ctx sessionctx.Context, inp
 		if result.IsNull(i) {
 			continue
 		}
-		tempres, err := types.ConvertJSONToDecimal(sc.TypeCtx(), buf.GetJSON(i))
+		tempres, err := types.ConvertJSONToDecimal(buf.GetJSON(i))
+		err = sc.HandleError(err)
 		if err != nil {
 			return err
 		}
@@ -1696,7 +1714,8 @@ func (b *builtinCastStringAsRealSig) vecEvalReal(ctx sessionctx.Context, input *
 		if result.IsNull(i) {
 			continue
 		}
-		res, err := types.StrToFloat(sc.TypeCtx(), buf.GetString(i), true)
+		res, err := types.StrToFloat(buf.GetString(i), true)
+		err = sc.HandleError(err)
 		if err != nil {
 			return err
 		}
@@ -1741,7 +1760,7 @@ func (b *builtinCastStringAsDecimalSig) vecEvalDecimal(ctx sessionctx.Context, i
 		isNegative := len(val) > 0 && val[0] == '-'
 		dec := new(types.MyDecimal)
 		if !(b.inUnion && mysql.HasUnsignedFlag(b.tp.GetFlag()) && isNegative) {
-			if err := stmtCtx.HandleTruncate(dec.FromString([]byte(val))); err != nil {
+			if err := stmtCtx.HandleError(dec.FromString([]byte(val))); err != nil {
 				return err
 			}
 			dec, err := types.ProduceDecWithSpecifiedTp(stmtCtx.TypeCtx(), dec, b.tp)
@@ -1885,7 +1904,7 @@ func (b *builtinCastDecimalAsDurationSig) vecEvalDuration(ctx sessionctx.Context
 		dur, _, err := types.ParseDuration(ctx.GetSessionVars().StmtCtx.TypeCtx(), string(args[i].ToString()), b.tp.GetDecimal())
 		if err != nil {
 			if types.ErrTruncatedWrongVal.Equal(err) {
-				err = ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
+				err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 				if err != nil {
 					return err
 				}
@@ -1925,6 +1944,7 @@ func (b *builtinCastStringAsStringSig) vecEvalString(ctx sessionctx.Context, inp
 			continue
 		}
 		res, err = types.ProduceStrWithSpecifiedTp(buf.GetString(i), b.tp, sc.TypeCtx(), false)
+		err = sc.HandleError(err)
 		if err != nil {
 			return err
 		}
@@ -1990,7 +2010,7 @@ func (b *builtinCastJSONAsDurationSig) vecEvalDuration(ctx sessionctx.Context, i
 			}
 			dur, _, err = types.ParseDuration(stmtCtx.TypeCtx(), s, b.tp.GetDecimal())
 			if types.ErrTruncatedWrongVal.Equal(err) {
-				err = stmtCtx.HandleTruncate(err)
+				err = stmtCtx.HandleError(err)
 			}
 			if err != nil {
 				return err
@@ -1998,7 +2018,7 @@ func (b *builtinCastJSONAsDurationSig) vecEvalDuration(ctx sessionctx.Context, i
 			ds[i] = dur.Duration
 		default:
 			err = types.ErrTruncatedWrongVal.GenWithStackByArgs(types.TypeStr(b.tp.GetType()), val.String())
-			err = stmtCtx.HandleTruncate(err)
+			err = stmtCtx.HandleError(err)
 			if err != nil {
 				return err
 			}

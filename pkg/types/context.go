@@ -27,17 +27,12 @@ const StrictFlags Flags = 0
 type Flags uint16
 
 const (
-	// FlagIgnoreTruncateErr indicates to ignore the truncate error.
-	// If this flag is set, `FlagTruncateAsWarning` will be ignored.
-	FlagIgnoreTruncateErr Flags = 1 << iota
-	// FlagTruncateAsWarning indicates to append the truncate error to warnings instead of returning it to user.
-	FlagTruncateAsWarning
 	// FlagAllowNegativeToUnsigned indicates to allow the casting from negative to unsigned int.
 	// When this flag is not set by default, casting a negative value to unsigned results an overflow error.
 	// Otherwise, a negative value will be cast to the corresponding unsigned value without any error.
 	// For example, when casting -1 to an unsigned bigint with `FlagAllowNegativeToUnsigned` set,
 	// we will get `18446744073709551615` which is the biggest unsigned value.
-	FlagAllowNegativeToUnsigned
+	FlagAllowNegativeToUnsigned Flags = 1 << iota
 	// FlagIgnoreZeroDateErr indicates to ignore the zero-date error.
 	// See: https://dev.mysql.com/doc/refman/8.0/en/sql-mode.html#sqlmode_no_zero_date for details about the "zero-date" error.
 	// If this flag is set, `FlagZeroDateAsWarning` will be ignored.
@@ -115,32 +110,6 @@ func (f Flags) WithSkipUTF8MB4Check(skip bool) Flags {
 		return f | FlagSkipUTF8MB4Check
 	}
 	return f &^ FlagSkipUTF8MB4Check
-}
-
-// IgnoreTruncateErr indicates whether the flag `FlagIgnoreTruncateErr` is set
-func (f Flags) IgnoreTruncateErr() bool {
-	return f&FlagIgnoreTruncateErr != 0
-}
-
-// WithIgnoreTruncateErr returns a new flags with `FlagIgnoreTruncateErr` set/unset according to the skip parameter
-func (f Flags) WithIgnoreTruncateErr(ignore bool) Flags {
-	if ignore {
-		return f | FlagIgnoreTruncateErr
-	}
-	return f &^ FlagIgnoreTruncateErr
-}
-
-// TruncateAsWarning indicates whether the flag `FlagTruncateAsWarning` is set
-func (f Flags) TruncateAsWarning() bool {
-	return f&FlagTruncateAsWarning != 0
-}
-
-// WithTruncateAsWarning returns a new flags with `FlagTruncateAsWarning` set/unset according to the skip parameter
-func (f Flags) WithTruncateAsWarning(warn bool) Flags {
-	if warn {
-		return f | FlagTruncateAsWarning
-	}
-	return f &^ FlagTruncateAsWarning
 }
 
 // IgnoreZeroInDate indicates whether the flag `FlagIgnoreZeroInData` is set

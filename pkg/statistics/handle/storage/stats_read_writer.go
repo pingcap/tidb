@@ -87,7 +87,9 @@ func (s *statsReadWriter) InsertColStats2KV(physicalID int64, colInfos []*model.
 			count := req.GetRow(0).GetInt64(0)
 			for _, colInfo := range colInfos {
 				value := types.NewDatum(colInfo.GetOriginDefaultValue())
-				value, err = value.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), &colInfo.FieldType)
+				sc := sctx.GetSessionVars().StmtCtx
+				value, err = value.ConvertTo(sc.TypeCtx(), &colInfo.FieldType)
+				err = sc.HandleError(err)
 				if err != nil {
 					return err
 				}
@@ -101,7 +103,8 @@ func (s *statsReadWriter) InsertColStats2KV(physicalID int64, colInfos []*model.
 					if _, err := util.Exec(sctx, "insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, tot_col_size) values (%?, %?, 0, %?, 1, %?)", startTS, physicalID, colInfo.ID, int64(len(value.GetBytes()))*count); err != nil {
 						return err
 					}
-					value, err = value.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
+					value, err = value.ConvertTo(sc.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
+					err = sc.HandleError(err)
 					if err != nil {
 						return err
 					}

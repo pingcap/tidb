@@ -1034,7 +1034,7 @@ func parseDatetime(ctx Context, str string, fsp int, isFloat bool) (Time, error)
 		l := len(seps[0])
 		// Values specified as numbers
 		if isFloat {
-			numOfTime, err := StrToInt(ctx, seps[0], false)
+			numOfTime, err := StrToInt(seps[0], false)
 			if err != nil {
 				return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
 			}

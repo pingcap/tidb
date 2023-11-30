@@ -16,6 +16,7 @@ package aggregation
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -56,7 +57,7 @@ func (d *distinctChecker) Check(values []types.Datum) (bool, error) {
 }
 
 // calculateSum adds v to sum.
-func calculateSum(ctx types.Context, sum, v types.Datum) (data types.Datum, err error) {
+func calculateSum(errCtx errctx.Context, sum, v types.Datum) (data types.Datum, err error) {
 	// for avg and sum calculation
 	// avg and sum use decimal for integer and decimal type, use float for others
 	// see https://dev.mysql.com/doc/refman/5.7/en/group-by-functions.html
@@ -65,7 +66,8 @@ func calculateSum(ctx types.Context, sum, v types.Datum) (data types.Datum, err 
 	case types.KindNull:
 	case types.KindInt64, types.KindUint64:
 		var d *types.MyDecimal
-		d, err = v.ToDecimal(ctx)
+		d, err = v.ToDecimal()
+		err = errCtx.HandleError(err)
 		if err == nil {
 			data = types.NewDecimalDatum(d)
 		}
@@ -73,7 +75,8 @@ func calculateSum(ctx types.Context, sum, v types.Datum) (data types.Datum, err 
 		v.Copy(&data)
 	default:
 		var f float64
-		f, err = v.ToFloat64(ctx)
+		f, err = v.ToFloat64()
+		err = errCtx.HandleError(err)
 		if err == nil {
 			data = types.NewFloat64Datum(f)
 		}

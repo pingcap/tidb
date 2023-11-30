@@ -38,6 +38,7 @@ func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (boo
 	for i := 0; i < len(hg.Buckets); i++ {
 		lower, upper := hg.GetLower(i), hg.GetUpper(i)
 		cmp, err := upper.Compare(sc.TypeCtx(), lower, collate.GetBinaryCollator())
+		err = sc.HandleError(err)
 		if cmp < 0 || err != nil {
 			return false, err
 		}
@@ -46,6 +47,7 @@ func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (boo
 		}
 		previousUpper := hg.GetUpper(i - 1)
 		cmp, err = lower.Compare(sc.TypeCtx(), previousUpper, collate.GetBinaryCollator())
+		err = sc.HandleError(err)
 		if cmp <= 0 || err != nil {
 			return false, err
 		}

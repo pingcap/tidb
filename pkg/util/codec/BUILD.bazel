@@ -39,6 +39,7 @@ go_test(
     embed = [":codec"],
     flaky = True,
     deps = [
+        "//pkg/errctx",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/sessionctx/stmtctx",

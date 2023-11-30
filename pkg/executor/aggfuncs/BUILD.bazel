@@ -33,6 +33,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/executor/aggfuncs",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/errctx",
         "//pkg/expression",
         "//pkg/expression/aggregation",
         "//pkg/parser/ast",

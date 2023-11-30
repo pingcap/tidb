@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
@@ -65,7 +66,7 @@ func TestIf(t *testing.T) {
 	defer func() {
 		stmtCtx.SetTypeFlags(oldTypeFlags)
 	}()
-	stmtCtx.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
+	stmtCtx.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 	tbl := []struct {
 		Arg1 interface{}
 		Arg2 interface{}

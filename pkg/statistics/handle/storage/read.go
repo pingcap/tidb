@@ -88,11 +88,13 @@ func HistogramFromStorage(sctx sessionctx.Context, tableID int64, colID int64, t
 				tp = types.NewFieldType(mysql.TypeBlob)
 			}
 			lowerBound, err = d.ConvertTo(sc.TypeCtx(), tp)
+			err = sc.HandleError(err)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			d = rows[i].GetDatum(3, &fields[3].Column.FieldType)
 			upperBound, err = d.ConvertTo(sc.TypeCtx(), tp)
+			err = sc.HandleError(err)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

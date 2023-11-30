@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/testkit/testmain"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -59,7 +60,7 @@ func createContext(t *testing.T) *mock.Context {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx.SetTimeZone(time.Local)
 	sc := ctx.GetSessionVars().StmtCtx
-	sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true))
+	sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
 	require.NoError(t, ctx.GetSessionVars().SetSystemVar("max_allowed_packet", "67108864"))
 	ctx.GetSessionVars().PlanColumnID.Store(0)
 	return ctx

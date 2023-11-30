@@ -111,6 +111,7 @@ go_library(
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/domain/resourcegroup",
+        "//pkg/errctx",
         "//pkg/errno",
         "//pkg/executor/aggfuncs",
         "//pkg/executor/aggregate",

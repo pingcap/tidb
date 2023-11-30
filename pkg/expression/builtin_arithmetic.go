@@ -724,7 +724,7 @@ func (s *builtinArithmeticDivideDecimalSig) evalDecimal(ctx sessionctx.Context, 
 		return c, true, handleDivisionByZeroError(ctx)
 	} else if err == types.ErrTruncated {
 		sc := ctx.GetSessionVars().StmtCtx
-		err = sc.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c))
+		err = sc.HandleError(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c))
 	} else if err == nil {
 		_, frac := c.PrecisionAndFrac()
 		if frac < s.baseBuiltinFunc.tp.GetDecimal() {
@@ -839,7 +839,7 @@ func (s *builtinArithmeticIntDivideDecimalSig) evalInt(ctx sessionctx.Context, r
 		return 0, true, handleDivisionByZeroError(ctx)
 	}
 	if err == types.ErrTruncated {
-		err = sc.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c))
+		err = sc.HandleError(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c))
 	}
 	if err == types.ErrOverflow {
 		newErr := errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c)

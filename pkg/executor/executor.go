@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/aggregate"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/pdhelper"
@@ -929,11 +930,12 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	defer func() { e.done = true }()
 
 	// See the comment of `ColumnInfos2ColumnsAndNames`. It's fixing #42341
-	originalTypeFlags := e.Ctx().GetSessionVars().StmtCtx.TypeFlags()
+	errCtx := e.Ctx().GetSessionVars().StmtCtx.ErrCtx()
+	originalTruncateErrLevel := errCtx.GetLevel(errctx.ErrGroupTruncate)
 	defer func() {
-		e.Ctx().GetSessionVars().StmtCtx.SetTypeFlags(originalTypeFlags)
+		e.Ctx().GetSessionVars().StmtCtx.SetErrGroupLevel(errctx.ErrGroupTruncate, originalTruncateErrLevel)
 	}()
-	e.Ctx().GetSessionVars().StmtCtx.SetTypeFlags(originalTypeFlags.WithIgnoreTruncateErr(true))
+	e.Ctx().GetSessionVars().StmtCtx.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
 
 	idxNames := make([]string, 0, len(e.indexInfos))
 	for _, idx := range e.indexInfos {
@@ -2121,20 +2123,23 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.Priority = stmt.Priority
 		sc.SetTypeFlags(sc.TypeFlags().
-			WithTruncateAsWarning(!vars.StrictSQLMode || stmt.IgnoreErr).
 			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()).
 			WithIgnoreZeroInDate(!vars.SQLMode.HasNoZeroInDateMode() ||
 				!vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || stmt.IgnoreErr ||
 				vars.SQLMode.HasAllowInvalidDatesMode()))
+		if !vars.StrictSQLMode || stmt.IgnoreErr {
+			sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
+		}
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		sc.InCreateOrAlterStmt = true
 		sc.SetTypeFlags(sc.TypeFlags().
-			WithTruncateAsWarning(!vars.StrictSQLMode).
 			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()).
 			WithIgnoreZeroInDate(!vars.SQLMode.HasNoZeroInDateMode() || !vars.StrictSQLMode ||
 				vars.SQLMode.HasAllowInvalidDatesMode()).
 			WithIgnoreZeroDateErr(!vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode))
-
+		if !vars.StrictSQLMode {
+			sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
+		}
 	case *ast.LoadDataStmt:
 		sc.InLoadDataStmt = true
 		// return warning instead of error when load data meet no partition for value
@@ -2150,9 +2155,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 
 		// Return warning for truncate error in selection.
 		sc.SetTypeFlags(sc.TypeFlags().
-			WithTruncateAsWarning(true).
 			WithIgnoreZeroInDate(true).
 			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()))
+		sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
 		if opts := stmt.SelectStmtOpts; opts != nil {
 			sc.Priority = opts.Priority
 			sc.NotFillCache = !opts.SQLCache
@@ -2162,34 +2167,33 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.InSelectStmt = true
 		sc.OverflowAsWarning = true
 		sc.SetTypeFlags(sc.TypeFlags().
-			WithTruncateAsWarning(true).
 			WithIgnoreZeroInDate(true).
 			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()))
+		sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
 	case *ast.ShowStmt:
 		sc.SetTypeFlags(sc.TypeFlags().
-			WithIgnoreTruncateErr(true).
 			WithIgnoreZeroInDate(true).
 			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()))
+		sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 		if stmt.Tp == ast.ShowWarnings || stmt.Tp == ast.ShowErrors || stmt.Tp == ast.ShowSessionStates {
 			sc.InShowWarning = true
 			sc.SetWarnings(vars.StmtCtx.GetWarnings())
 		}
 	case *ast.SplitRegionStmt:
 		sc.SetTypeFlags(sc.TypeFlags().
-			WithIgnoreTruncateErr(false).
 			WithIgnoreZeroInDate(true).
 			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()))
 	case *ast.SetSessionStatesStmt:
 		sc.InSetSessionStatesStmt = true
 		sc.SetTypeFlags(sc.TypeFlags().
-			WithIgnoreTruncateErr(true).
 			WithIgnoreZeroInDate(true).
 			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()))
+		sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 	default:
 		sc.SetTypeFlags(sc.TypeFlags().
-			WithIgnoreTruncateErr(true).
 			WithIgnoreZeroInDate(true).
 			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()))
+		sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 	}
 
 	sc.SetTypeFlags(sc.TypeFlags().
@@ -2254,10 +2258,13 @@ func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars
 	sc.Priority = stmt.Priority
 	sc.IgnoreNoPartition = stmt.IgnoreErr
 	sc.SetTypeFlags(sc.TypeFlags().
-		WithTruncateAsWarning(!vars.StrictSQLMode || stmt.IgnoreErr).
 		WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()).
 		WithIgnoreZeroInDate(!vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() ||
 			!vars.StrictSQLMode || stmt.IgnoreErr || vars.SQLMode.HasAllowInvalidDatesMode()))
+
+	if !vars.StrictSQLMode || stmt.IgnoreErr {
+		sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
+	}
 }
 
 // ResetDeleteStmtCtx resets statement context for DeleteStmt.
@@ -2268,10 +2275,13 @@ func ResetDeleteStmtCtx(sc *stmtctx.StatementContext, stmt *ast.DeleteStmt, vars
 	sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 	sc.Priority = stmt.Priority
 	sc.SetTypeFlags(sc.TypeFlags().
-		WithTruncateAsWarning(!vars.StrictSQLMode || stmt.IgnoreErr).
 		WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()).
 		WithIgnoreZeroInDate(!vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() ||
 			!vars.StrictSQLMode || stmt.IgnoreErr || vars.SQLMode.HasAllowInvalidDatesMode()))
+
+	if !vars.StrictSQLMode || stmt.IgnoreErr {
+		sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
+	}
 }
 
 func setOptionForTopSQL(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {

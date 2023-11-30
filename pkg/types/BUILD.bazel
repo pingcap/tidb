@@ -36,7 +36,6 @@ go_library(
         "overflow.go",
         "set.go",
         "time.go",
-        "truncate.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/types",
     visibility = [
@@ -101,6 +100,7 @@ go_test(
     flaky = True,
     shard_count = 50,
     deps = [
+        "//pkg/errctx",
         "//pkg/parser/charset",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",

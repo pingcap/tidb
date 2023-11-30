@@ -672,6 +672,7 @@ func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, 
 		}
 		innerColType := imw.rowTypes[imw.keyCols[i]]
 		innerValue, err := outerValue.ConvertTo(sc.TypeCtx(), innerColType)
+		err = sc.HandleError(err)
 		if err != nil {
 			// If the converted outerValue overflows, we don't need to lookup it.
 			if terror.ErrorEqual(err, types.ErrOverflow) || terror.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
@@ -683,6 +684,7 @@ func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, 
 			return nil, err
 		}
 		cmp, err := outerValue.Compare(sc.TypeCtx(), &innerValue, imw.keyCollators[i])
+		err = sc.HandleError(err)
 		if err != nil {
 			return nil, err
 		}

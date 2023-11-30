@@ -596,7 +596,7 @@ func calculateTimeDiff(sc *stmtctx.StatementContext, lhs, rhs types.Time) (d typ
 	d = lhs.Sub(sc.TypeCtx(), &rhs)
 	d.Duration, err = types.TruncateOverflowMySQLTime(d.Duration)
 	if types.ErrTruncatedWrongVal.Equal(err) {
-		err = sc.HandleTruncate(err)
+		err = sc.HandleError(err)
 	}
 	return d, err != nil, err
 }
@@ -611,7 +611,7 @@ func calculateDurationTimeDiff(ctx sessionctx.Context, lhs, rhs types.Duration) 
 	d.Duration, err = types.TruncateOverflowMySQLTime(d.Duration)
 	if types.ErrTruncatedWrongVal.Equal(err) {
 		sc := ctx.GetSessionVars().StmtCtx
-		err = sc.HandleTruncate(err)
+		err = sc.HandleError(err)
 	}
 	return d, err != nil, err
 }
@@ -756,7 +756,9 @@ func convertStringToDuration(sc *stmtctx.StatementContext, str string, fsp int) 
 			fsp = mathutil.Max(lenStrFsp, fsp)
 		}
 	}
-	return types.StrToDuration(sc.TypeCtx(), str, fsp)
+	d, t, isDuration, err = types.StrToDuration(sc.TypeCtx(), str, fsp)
+	err = sc.HandleError(err)
+	return
 }
 
 type dateFormatFunctionClass struct {
@@ -2271,7 +2273,7 @@ func (b *builtinTimeSig) evalDuration(ctx sessionctx.Context, row chunk.Row) (re
 	sc := ctx.GetSessionVars().StmtCtx
 	res, _, err = types.ParseDuration(sc.TypeCtx(), expr, fsp)
 	if types.ErrTruncatedWrongVal.Equal(err) {
-		err = sc.HandleTruncate(err)
+		err = sc.HandleError(err)
 	}
 	return res, isNull, err
 }
@@ -5562,7 +5564,7 @@ func (b *builtinSecToTimeSig) evalDuration(ctx sessionctx.Context, row chunk.Row
 		minute = 59
 		second = 59
 		demical = 0
-		err = ctx.GetSessionVars().StmtCtx.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("time", strconv.FormatFloat(secondsFloat, 'f', -1, 64)))
+		err = ctx.GetSessionVars().StmtCtx.HandleError(errTruncatedWrongValue.GenWithStackByArgs("time", strconv.FormatFloat(secondsFloat, 'f', -1, 64)))
 		if err != nil {
 			return types.Duration{}, err != nil, err
 		}

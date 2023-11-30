@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -393,11 +394,7 @@ func TestConcatWSSig(t *testing.T) {
 func TestLeft(t *testing.T) {
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := stmtCtx.TypeFlags()
-	defer func() {
-		stmtCtx.SetTypeFlags(oldTypeFlags)
-	}()
-	stmtCtx.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
+	stmtCtx.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 
 	cases := []struct {
 		args   []interface{}
@@ -443,11 +440,7 @@ func TestLeft(t *testing.T) {
 func TestRight(t *testing.T) {
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := stmtCtx.TypeFlags()
-	defer func() {
-		stmtCtx.SetTypeFlags(oldTypeFlags)
-	}()
-	stmtCtx.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
+	stmtCtx.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 
 	cases := []struct {
 		args   []interface{}
@@ -956,11 +949,7 @@ func TestSubstringIndex(t *testing.T) {
 func TestSpace(t *testing.T) {
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := stmtCtx.TypeFlags()
-	defer func() {
-		stmtCtx.SetTypeFlags(oldTypeFlags)
-	}()
-	stmtCtx.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
+	stmtCtx.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 
 	cases := []struct {
 		arg    interface{}
@@ -1388,8 +1377,7 @@ func TestBitLength(t *testing.T) {
 
 func TestChar(t *testing.T) {
 	ctx := createContext(t)
-	typeFlags := ctx.GetSessionVars().StmtCtx.TypeFlags()
-	ctx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags.WithIgnoreTruncateErr(true))
+	ctx.GetSessionVars().StmtCtx.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 	tbl := []struct {
 		str      string
 		iNum     int64
@@ -1510,11 +1498,7 @@ func TestFindInSet(t *testing.T) {
 func TestField(t *testing.T) {
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := stmtCtx.TypeFlags()
-	defer func() {
-		stmtCtx.SetTypeFlags(oldTypeFlags)
-	}()
-	stmtCtx.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
+	stmtCtx.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 
 	tbl := []struct {
 		argLst []interface{}
@@ -1992,8 +1976,9 @@ func TestFormat(t *testing.T) {
 		testutil.DatumEqual(t, types.NewDatum(tt.ret), r)
 	}
 
-	origTypeFlags := ctx.GetSessionVars().StmtCtx.TypeFlags()
-	ctx.GetSessionVars().StmtCtx.SetTypeFlags(origTypeFlags.WithTruncateAsWarning(true))
+	errCtx := ctx.GetSessionVars().StmtCtx.ErrCtx()
+	origTruncateLevel := errCtx.GetLevel(errctx.ErrGroupTruncate)
+	ctx.GetSessionVars().StmtCtx.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
 	for _, tt := range formatTests1 {
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.number, tt.precision)))
 		require.NoError(t, err)
@@ -2010,7 +1995,7 @@ func TestFormat(t *testing.T) {
 			ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
 		}
 	}
-	ctx.GetSessionVars().StmtCtx.SetTypeFlags(origTypeFlags)
+	ctx.GetSessionVars().StmtCtx.SetErrGroupLevel(errctx.ErrGroupTruncate, origTruncateLevel)
 
 	f2, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(formatTests2.number, formatTests2.precision, formatTests2.locale)))
 	require.NoError(t, err)
@@ -2307,8 +2292,7 @@ func TestBin(t *testing.T) {
 	fc := funcs[ast.Bin]
 	dtbl := tblToDtbl(tbl)
 	ctx := mock.NewContext()
-	typeFlags := ctx.GetSessionVars().StmtCtx.TypeFlags()
-	ctx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags.WithIgnoreTruncateErr(true))
+	ctx.GetSessionVars().StmtCtx.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 	for _, c := range dtbl {
 		f, err := fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)

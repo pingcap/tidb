@@ -175,6 +175,7 @@ func (fkc *FKCheckExec) updateRowNeedToCheck(sc *stmtctx.StatementContext, oldRo
 		isSameValue := true
 		for i := range oldVals {
 			cmp, err := oldVals[i].Compare(sc.TypeCtx(), &newVals[i], collate.GetCollator(oldVals[i].Collation()))
+			err = sc.HandleError(err)
 			if err != nil || cmp != 0 {
 				isSameValue = false
 				break

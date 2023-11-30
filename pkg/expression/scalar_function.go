@@ -423,7 +423,7 @@ func (sf *ScalarFunction) Eval(ctx sessionctx.Context, row chunk.Row) (d types.D
 		if !isNull && err == nil && tp.GetType() == mysql.TypeEnum {
 			res, err = types.ParseEnum(tp.GetElems(), str, tp.GetCollate())
 			if sc := ctx.GetSessionVars().StmtCtx; sc != nil {
-				err = sc.HandleTruncate(err)
+				err = sc.HandleError(err)
 			}
 		} else {
 			res = str

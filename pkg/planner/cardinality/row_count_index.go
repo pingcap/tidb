@@ -522,6 +522,7 @@ func getOrdinalOfRangeCond(sc *stmtctx.StatementContext, ran *ranger.Range) int 
 	for i := range ran.LowVal {
 		a, b := ran.LowVal[i], ran.HighVal[i]
 		cmp, err := a.Compare(sc.TypeCtx(), &b, ran.Collators[0])
+		err = sc.HandleError(err)
 		if err != nil {
 			return 0
 		}

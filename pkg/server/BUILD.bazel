@@ -149,6 +149,7 @@ go_test(
         "//pkg/config",
         "//pkg/domain",
         "//pkg/domain/infosync",
+        "//pkg/errctx",
         "//pkg/expression",
         "//pkg/extension",
         "//pkg/keyspace",

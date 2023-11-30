@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/param"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -45,14 +46,10 @@ func decodeAndParse(typectx types.Context, args []expression.Expression, boundPa
 	}
 
 	parsedArgs, err := param.ExecArgs(typectx, binParams)
-	if err != nil {
-		return err
-	}
-
 	for i := 0; i < len(args); i++ {
 		args[i] = parsedArgs[i]
 	}
-	return
+	return err
 }
 
 func TestParseExecArgs(t *testing.T) {
@@ -268,10 +265,15 @@ func TestParseExecArgs(t *testing.T) {
 	}
 	for _, tt := range tests {
 		var warn error
-		typectx := types.NewContext(types.DefaultStmtFlags.WithTruncateAsWarning(true), time.UTC, func(err error) {
+		typectx := types.NewContext(types.DefaultStmtFlags, time.UTC, func(err error) {
 			warn = err
 		})
+		errCtx := errctx.NewContext(func(err error) {
+			warn = err
+		})
+		errCtx = errCtx.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
 		err := decodeAndParse(typectx, tt.args.args, tt.args.boundParams, tt.args.nullBitmap, tt.args.paramTypes, tt.args.paramValues, nil)
+		err = errCtx.HandleError(err)
 		require.Truef(t, terror.ErrorEqual(err, tt.err), "err %v", err)
 		require.Truef(t, terror.ErrorEqual(warn, tt.warn), "warn %v", warn)
 		if err == nil {

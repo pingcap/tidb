@@ -704,7 +704,9 @@ func buildLeadLag(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, 
 	if len(aggFuncDesc.Args) == 3 {
 		defaultExpr = aggFuncDesc.Args[2]
 		if et, ok := defaultExpr.(*expression.Constant); ok {
-			res, err1 := et.Value.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), aggFuncDesc.RetTp)
+			sc := ctx.GetSessionVars().StmtCtx
+			res, err1 := et.Value.ConvertTo(sc.TypeCtx(), aggFuncDesc.RetTp)
+			err1 = sc.HandleError(err1)
 			if err1 == nil {
 				defaultExpr = &expression.Constant{Value: res, RetType: aggFuncDesc.RetTp}
 			}

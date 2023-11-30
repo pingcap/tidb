@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -141,11 +142,7 @@ func TestLoadData(t *testing.T) {
 	selectSQL := "select * from load_data_test;"
 
 	sc := ctx.GetSessionVars().StmtCtx
-	oldFlags := sc.TypeFlags()
-	defer func() {
-		sc.SetTypeFlags(oldFlags)
-	}()
-	sc.SetTypeFlags(oldFlags.WithIgnoreTruncateErr(false))
+	sc.SetErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelError)
 	// fields and lines are default, ReadOneBatchRows returns data is nil
 	tests := []testCase{
 		// In MySQL we have 4 warnings: 1*"Incorrect integer value: '' for column 'id' at row", 3*"Row 1 doesn't contain data for all columns"

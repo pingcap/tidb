@@ -176,6 +176,7 @@ func (cb *CommonHandleCols) Compare(a, b []types.Datum, ctors []collate.Collator
 		aDatum := &a[col.Index]
 		bDatum := &b[col.Index]
 		cmp, err := aDatum.Compare(cb.sc.TypeCtx(), bDatum, ctors[i])
+		err = cb.sc.HandleError(err)
 		if err != nil {
 			return 0, err
 		}

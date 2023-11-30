@@ -405,7 +405,7 @@ func flatten(loc *time.Location, data types.Datum, ret *types.Datum) error {
 		return nil
 	case types.KindBinaryLiteral, types.KindMysqlBit:
 		// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
-		val, err := data.GetBinaryLiteral().ToInt(types.StrictContext)
+		val, err := data.GetBinaryLiteral().ToInt()
 		if err != nil {
 			return errors.Trace(err)
 		}
