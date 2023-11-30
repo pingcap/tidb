@@ -304,7 +304,7 @@ func unionColumnValues(lhs, rhs []*valueInfo) []*valueInfo {
 // detachCNFCondAndBuildRangeForIndex will detach the index filters from table filters. These conditions are connected with `and`
 // It will first find the point query column and then extract the range query column.
 // considerDNF is true means it will try to extract access conditions from the DNF expressions.
-func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expression.Expression, tpSlice []*types.FieldType, considerDNF bool) (*DetachRangeResult, error) {
+func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expression.Expression, newTpSlice []*types.FieldType, considerDNF bool) (*DetachRangeResult, error) {
 	var (
 		eqCount int
 		ranges  Ranges
@@ -317,7 +317,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		return res, nil
 	}
 	var remainedConds []expression.Expression
-	ranges, accessConds, remainedConds, err = d.buildRangeOnColsByCNFCond(tpSlice, len(accessConds), accessConds)
+	ranges, accessConds, remainedConds, err = d.buildRangeOnColsByCNFCond(newTpSlice, len(accessConds), accessConds)
 	if err != nil {
 		return nil, err
 	}
@@ -457,7 +457,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		}
 		// `eqOrInCount` must be 0 when coming here.
 		res.AccessConds, res.RemainedConds = detachColumnCNFConditions(d.sctx, newConditions, checker)
-		ranges, res.AccessConds, remainedConds, err = d.buildCNFIndexRange(tpSlice, 0, res.AccessConds)
+		ranges, res.AccessConds, remainedConds, err = d.buildCNFIndexRange(newTpSlice, 0, res.AccessConds)
 		if err != nil {
 			return nil, err
 		}
@@ -478,7 +478,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		accessConds = append(accessConds, cond)
 		// TODO: if it's prefix column, we need to add cond to filterConds?
 	}
-	ranges, accessConds, remainedConds, err = d.buildCNFIndexRange(tpSlice, eqOrInCount, accessConds)
+	ranges, accessConds, remainedConds, err = d.buildCNFIndexRange(newTpSlice, eqOrInCount, accessConds)
 	if err != nil {
 		return nil, err
 	}
@@ -613,7 +613,7 @@ func extractValueInfo(expr expression.Expression) *valueInfo {
 func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
 	lengths []int) ([]expression.Expression, []expression.Expression, []expression.Expression, []*valueInfo, bool) {
 	var filters []expression.Expression
-	rb := builder{ctx: sctx}
+	rb := builder{sctx: sctx}
 	accesses := make([]expression.Expression, len(cols))
 	points := make([][]*point, len(cols))
 	mergedAccesses := make([]expression.Expression, len(cols))
@@ -720,7 +720,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 		length:                   d.lengths[0],
 		optPrefixIndexSingleScan: d.sctx.GetSessionVars().OptPrefixIndexSingleScan,
 	}
-	rb := builder{ctx: d.sctx}
+	rb := builder{sctx: d.sctx}
 	dnfItems := expression.FlattenDNFConditions(condition)
 	newAccessItems := make([]expression.Expression, 0, len(dnfItems))
 	var totalRanges Ranges

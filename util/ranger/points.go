@@ -183,8 +183,8 @@ func NullRange() Ranges {
 
 // builder is the range builder struct.
 type builder struct {
-	err error
-	ctx sessionctx.Context
+	err  error
+	sctx sessionctx.Context
 }
 
 // build converts Expression on one column into point, which can be further built into Range.
@@ -193,7 +193,11 @@ type builder struct {
 // we pass it down from here.
 // If the input prefixLen is not types.UnspecifiedLength, it means it's for a prefix column in a prefix index. In such
 // cases, we should cut the prefix and adjust the exclusiveness. Ref: cutPrefixForPoints().
-func (r *builder) build(expr expression.Expression, collator collate.Collator, prefixLen int) []*point {
+func (r *builder) build(
+	expr expression.Expression,
+	collator collate.Collator,
+	prefixLen int,
+) []*point {
 	switch x := expr.(type) {
 	case *expression.Column:
 		return r.buildFromColumn()
@@ -216,7 +220,7 @@ func (r *builder) buildFromConstant(expr *expression.Constant) []*point {
 		return nil
 	}
 
-	val, err := dt.ToBool(r.ctx.GetSessionVars().StmtCtx)
+	val, err := dt.ToBool(r.sctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		r.err = err
 		return nil
@@ -239,7 +243,10 @@ func (*builder) buildFromColumn() []*point {
 	return []*point{startPoint1, endPoint1, startPoint2, endPoint2}
 }
 
-func (r *builder) buildFromBinOp(expr *expression.ScalarFunction, prefixLen int) []*point {
+func (r *builder) buildFromBinOp(
+	expr *expression.ScalarFunction,
+	prefixLen int,
+) []*point {
 	// This has been checked that the binary operation is comparison operation, and one of
 	// the operand is column name expression.
 	var (
@@ -261,11 +268,11 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction, prefixLen int)
 			// If the original value is adjusted, we need to change the condition.
 			// For example, col < 2156. Since the max year is 2155, 2156 is changed to 2155.
 			// col < 2155 is wrong. It should be col <= 2155.
-			preValue, err1 := value.ToInt64(r.ctx.GetSessionVars().StmtCtx)
+			preValue, err1 := value.ToInt64(r.sctx.GetSessionVars().StmtCtx)
 			if err1 != nil {
 				return err1
 			}
-			*value, err = value.ConvertToMysqlYear(r.ctx.GetSessionVars().StmtCtx, col.RetType)
+			*value, err = value.ConvertToMysqlYear(r.sctx.GetSessionVars().StmtCtx, col.RetType)
 			if errors.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
 				// Keep err for EQ and NE.
 				switch *op {
@@ -342,7 +349,7 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction, prefixLen int)
 	}
 
 	if ft.GetType() == mysql.TypeEnum && ft.EvalType() == types.ETString {
-		return handleEnumFromBinOp(r.ctx.GetSessionVars().StmtCtx, ft, value, op)
+		return handleEnumFromBinOp(r.sctx.GetSessionVars().StmtCtx, ft, value, op)
 	}
 
 	var res []*point
@@ -563,7 +570,10 @@ func (*builder) buildFromIsFalse(_ *expression.ScalarFunction, isNot int) []*poi
 	return []*point{startPoint, endPoint}
 }
 
-func (r *builder) buildFromIn(expr *expression.ScalarFunction, prefixLen int) ([]*point, bool) {
+func (r *builder) buildFromIn(
+	expr *expression.ScalarFunction,
+	prefixLen int,
+) ([]*point, bool) {
 	list := expr.GetArgs()[1:]
 	rangePoints := make([]*point, 0, len(list)*2)
 	hasNull := false
@@ -596,7 +606,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction, prefixLen int) ([
 					err = parseErr
 				}
 			default:
-				dt, err = dt.ConvertTo(r.ctx.GetSessionVars().StmtCtx, expr.GetArgs()[0].GetType())
+				dt, err = dt.ConvertTo(r.sctx.GetSessionVars().StmtCtx, expr.GetArgs()[0].GetType())
 			}
 
 			if err != nil {
@@ -605,7 +615,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction, prefixLen int) ([
 			}
 		}
 		if expr.GetArgs()[0].GetType().GetType() == mysql.TypeYear {
-			dt, err = dt.ConvertToMysqlYear(r.ctx.GetSessionVars().StmtCtx, expr.GetArgs()[0].GetType())
+			dt, err = dt.ConvertToMysqlYear(r.sctx.GetSessionVars().StmtCtx, expr.GetArgs()[0].GetType())
 			if err != nil {
 				// in (..., an impossible value (not valid year), ...), the range is empty, so skip it.
 				continue
@@ -621,7 +631,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction, prefixLen int) ([
 		endPoint := &point{value: endValue}
 		rangePoints = append(rangePoints, startPoint, endPoint)
 	}
-	sorter := pointSorter{points: rangePoints, sc: r.ctx.GetSessionVars().StmtCtx, collator: collate.GetCollator(colCollate)}
+	sorter := pointSorter{points: rangePoints, sc: r.sctx.GetSessionVars().StmtCtx, collator: collate.GetCollator(colCollate)}
 	sort.Sort(&sorter)
 	if sorter.err != nil {
 		r.err = sorter.err
@@ -645,7 +655,10 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction, prefixLen int) ([
 	return rangePoints, hasNull
 }
 
-func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction, prefixLen int) []*point {
+func (r *builder) newBuildFromPatternLike(
+	expr *expression.ScalarFunction,
+	prefixLen int,
+) []*point {
 	_, collation := expr.CharsetAndCollation()
 	if !collate.CompatibleCollate(expr.GetArgs()[0].GetType().GetCollate(), collation) {
 		return getFullRange()
@@ -748,7 +761,10 @@ func isPadSpaceCollation(collation string) bool {
 	return collation != charset.CollationBin
 }
 
-func (r *builder) buildFromNot(expr *expression.ScalarFunction, prefixLen int) []*point {
+func (r *builder) buildFromNot(
+	expr *expression.ScalarFunction,
+	prefixLen int,
+) []*point {
 	switch n := expr.FuncName.L; n {
 	case ast.IsTruthWithoutNull:
 		return r.buildFromIsTrue(expr, 1, false)
@@ -804,7 +820,11 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction, prefixLen int) [
 	return getFullRange()
 }
 
-func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction, collator collate.Collator, prefixLen int) []*point {
+func (r *builder) buildFromScalarFunc(
+	expr *expression.ScalarFunction,
+	collator collate.Collator,
+	prefixLen int,
+) []*point {
 	switch op := expr.FuncName.L; op {
 	case ast.GE, ast.GT, ast.LT, ast.LE, ast.EQ, ast.NE, ast.NullEQ:
 		return r.buildFromBinOp(expr, prefixLen)
@@ -846,7 +866,7 @@ func (r *builder) mergeSorted(a, b []*point, collator collate.Collator) []*point
 	ret := make([]*point, 0, len(a)+len(b))
 	i, j := 0, 0
 	for i < len(a) && j < len(b) {
-		less, err := rangePointLess(r.ctx.GetSessionVars().StmtCtx, a[i], b[j], collator)
+		less, err := rangePointLess(r.sctx.GetSessionVars().StmtCtx, a[i], b[j], collator)
 		if err != nil {
 			r.err = err
 			return nil
