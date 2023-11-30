@@ -37,8 +37,8 @@ go_test(
     name = "globalstats_test",
     timeout = "short",
     srcs = [
-        "globalstats_internal_test.go",
-        "globalstats_test.go",
+        "global_stats_internal_test.go",
+        "global_stats_test.go",
         "main_test.go",
         "topn_bench_test.go",
         "topn_test.go",

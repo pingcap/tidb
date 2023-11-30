@@ -83,30 +83,6 @@ func newGlobalStats(histCount int) *GlobalStats {
 	return globalStats
 }
 
-// MergePartitionStats2GlobalStats merge the partition-level stats to global-level stats based on the tableInfo.
-func MergePartitionStats2GlobalStats(
-	sc sessionctx.Context,
-	statsHandle statstypes.StatsHandle,
-	opts map[ast.AnalyzeOptionType]uint64,
-	is infoschema.InfoSchema,
-	globalTableInfo *model.TableInfo,
-	isIndex bool,
-	histIDs []int64,
-) (globalStats *GlobalStats, err error) {
-	if sc.GetSessionVars().EnableAsyncMergeGlobalStats {
-		worker, err := NewAsyncMergePartitionStats2GlobalStats(statsHandle, globalTableInfo, histIDs, is)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		err = worker.MergePartitionStats2GlobalStats(sc, opts, isIndex)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return worker.Result(), nil
-	}
-	return blockingMergePartitionStats2GlobalStats(sc, statsHandle.GPool(), opts, is, globalTableInfo, isIndex, histIDs, nil, statsHandle)
-}
-
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
 func MergePartitionStats2GlobalStatsByTableID(
 	sc sessionctx.Context,
