@@ -15,8 +15,6 @@
 package ddl
 
 import (
-	"math"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -238,7 +236,7 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 	//
 	// The count difference is 200 - 100 = 100, which is also considered as the table's delta.
 	delta := tableCount - partCount
-	count := int64(math.Abs(float64(delta)))
+	count := delta
 
 	// Adjust the delta to account for the modify count of the partition.
 	// For example, if the partition's modify_count is 10 and the count difference is 100,
@@ -275,16 +273,31 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 		delta -= tableModifyCount
 	}
 	// Update the global stats.
-	if count != 0 {
-		if err := h.statsWriter.UpdateStatsMetaDelta(
-			globalTableInfo.ID, count, delta,
-		); err != nil {
+	if delta != 0 || count != 0 {
+		if err = util.CallWithSCtx(h.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+			// TODO: handle the lock and make this to be a API.
+			// lockedTables, err := h.statsHandler.GetLockedTables(globalTableInfo.ID)
+			// if err != nil {
+			// 	return errors.Trace(err)
+			// }
+			// isLocked := false
+			// if len(lockedTables) > 0 {
+			// 	isLocked = true
+			// }
+			startTS, err := util.GetStartTS(sctx)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			_, err = util.Exec(sctx, "update mysql.stats_meta set version = %?, modify_count = modify_count + %?, count = count + %? where table_id = %?",
+				startTS, delta, count, globalTableInfo.ID)
+			return err
+		}, util.FlagWrapTxn); err != nil {
 			return err
 		}
+
 		logutil.StatsLogger.Info(
 			"Update global stats after exchange partition",
 			zap.Int64("tableID", globalTableInfo.ID),
-			zap.Int64("count", count),
 			zap.Int64("delta", delta),
 			zap.Int64("partitionID", originalPartInfo.Definitions[0].ID),
 			zap.String("partitionName", originalPartInfo.Definitions[0].Name.O),

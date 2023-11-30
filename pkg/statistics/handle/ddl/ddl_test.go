@@ -366,6 +366,8 @@ func TestExchangeAPartition(t *testing.T) {
 		)
 	`)
 	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
+	h.DumpStatsDeltaToKV(true)
+
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(
@@ -383,6 +385,9 @@ func TestExchangeAPartition(t *testing.T) {
 	testKit.MustExec("create table t1 (a int, b int, primary key(a), index idx(b))")
 	// Insert some data which meets the condition of the partition p0.
 	testKit.MustExec("insert into t1 values (1,2),(2,2),(3,2),(4,2),(5,2)")
+	err = h.DumpStatsDeltaToKV(true)
+	require.NoError(t, err)
+
 	testKit.MustExec("analyze table t1")
 	is = do.InfoSchema()
 	tbl1, err := is.TableByName(
@@ -392,9 +397,8 @@ func TestExchangeAPartition(t *testing.T) {
 	tableInfo1 := tbl1.Meta()
 	statsTbl1 := h.GetTableStats(tableInfo1)
 	require.False(t, statsTbl1.Pseudo)
-	err = h.Update(is)
-	require.NoError(t, err)
 
+	// Exchange partition p0 with table t1.
 	testKit.MustExec("alter table t exchange partition p0 with table t1")
 	// Find the exchange partition event.
 	exchangePartitionEvent := findEvent(h.DDLEventCh(), model.ActionExchangeTablePartition)
@@ -420,8 +424,18 @@ func TestExchangeAPartition(t *testing.T) {
 	tableInfo2 := tbl2.Meta()
 	statsTbl2 := h.GetTableStats(tableInfo2)
 	require.False(t, statsTbl2.Pseudo)
-	err = h.Update(is)
+	err = h.Update(do.InfoSchema())
 	require.NoError(t, err)
+
+	// Insert some data to partition p1 before exchange partition.
+	testKit.MustExec("insert into t values (7,2),(8,2),(9,2),(10,2)")
+	err = h.DumpStatsDeltaToKV(true)
+	require.NoError(t, err)
+	testKit.MustQuery(
+		fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableInfo.ID),
+	).Check(
+		testkit.Rows("12 7"),
+	)
 
 	testKit.MustExec("alter table t exchange partition p1 with table t2")
 	// Find the exchange partition event.
@@ -433,7 +447,7 @@ func TestExchangeAPartition(t *testing.T) {
 	testKit.MustQuery(
 		fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableInfo.ID),
 	).Check(
-		testkit.Rows("7 4"),
+		testkit.Rows("7 6"),
 	)
 }
 
