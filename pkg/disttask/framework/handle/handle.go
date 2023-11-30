@@ -43,7 +43,7 @@ func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, co
 	}
 
 	if task == nil {
-		taskID, err := taskManager.NewTask(ctx, taskKey, taskType, concurrency, taskMeta)
+		taskID, err := taskManager.CreateTask(ctx, taskKey, taskType, concurrency, taskMeta)
 		if err != nil {
 			return nil, err
 		}

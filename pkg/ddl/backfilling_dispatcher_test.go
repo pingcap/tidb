@@ -170,7 +170,7 @@ func TestBackfillingDispatcherGlobalSortMode(t *testing.T) {
 	ext.(*ddl.BackfillingDispatcherExt).GlobalSort = true
 	dsp.Extension = ext
 
-	taskID, err := mgr.NewTask(ctx, task.Key, proto.Backfill, 1, task.Meta)
+	taskID, err := mgr.CreateTask(ctx, task.Key, proto.Backfill, 1, task.Meta)
 	require.NoError(t, err)
 	task.ID = taskID
 	serverInfos, _, err := dsp.GetEligibleInstances(context.Background(), task)

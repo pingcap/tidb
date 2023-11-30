@@ -67,7 +67,7 @@ func TestTaskTable(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "table_test")
 
 	timeBeforeCreate := time.Unix(time.Now().Unix(), 0)
-	id, err := gm.NewTask(ctx, "key1", "test", 4, []byte("test"))
+	id, err := gm.CreateTask(ctx, "key1", "test", 4, []byte("test"))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), id)
 
@@ -116,11 +116,11 @@ func TestTaskTable(t *testing.T) {
 	require.Equal(t, task.State, task6.State)
 
 	// test cannot insert task with dup key
-	_, err = gm.NewTask(ctx, "key1", "test2", 4, []byte("test2"))
+	_, err = gm.CreateTask(ctx, "key1", "test2", 4, []byte("test2"))
 	require.EqualError(t, err, "[kv:1062]Duplicate entry 'key1' for key 'tidb_global_task.task_key'")
 
 	// test cancel task
-	id, err = gm.NewTask(ctx, "key2", "test", 4, []byte("test"))
+	id, err = gm.CreateTask(ctx, "key2", "test", 4, []byte("test"))
 	require.NoError(t, err)
 
 	cancelling, err := gm.IsTaskCancelling(ctx, id)
@@ -141,7 +141,7 @@ func TestSubTaskTable(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "table_test")
 
 	timeBeforeCreate := time.Unix(time.Now().Unix(), 0)
-	id, err := sm.NewTask(ctx, "key1", "test", 4, []byte("test"))
+	id, err := sm.CreateTask(ctx, "key1", "test", 4, []byte("test"))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), id)
 	_, err = sm.UpdateTaskAndAddSubTasks(
@@ -247,7 +247,7 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, ok)
 
-	err = sm.NewSubTask(ctx, 2, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, true)
+	err = sm.CreateSubTask(ctx, 2, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, true)
 	require.NoError(t, err)
 
 	cnt, err = sm.GetSubtaskInStatesCnt(ctx, 2, proto.TaskStateRevertPending)
@@ -275,7 +275,7 @@ func TestSubTaskTable(t *testing.T) {
 	require.Equal(t, int64(100), rowCount)
 
 	// test UpdateErrorToSubtask do update start/update time
-	err = sm.NewSubTask(ctx, 3, proto.StepInit, "for_test", []byte("test"), proto.TaskTypeExample, false)
+	err = sm.CreateSubTask(ctx, 3, proto.StepInit, "for_test", []byte("test"), proto.TaskTypeExample, false)
 	require.NoError(t, err)
 	require.NoError(t, sm.UpdateErrorToSubtask(ctx, "for_test", 3, errors.New("fail")))
 	subtask, err = sm.GetFirstSubtaskInStates(ctx, "for_test", 3, proto.StepInit, proto.TaskStateFailed)
@@ -285,7 +285,7 @@ func TestSubTaskTable(t *testing.T) {
 	require.Greater(t, subtask.UpdateTime, ts)
 
 	// test FinishSubtask do update update time
-	err = sm.NewSubTask(ctx, 4, proto.StepInit, "for_test1", []byte("test"), proto.TaskTypeExample, false)
+	err = sm.CreateSubTask(ctx, 4, proto.StepInit, "for_test1", []byte("test"), proto.TaskTypeExample, false)
 	require.NoError(t, err)
 	subtask, err = sm.GetFirstSubtaskInStates(ctx, "for_test1", 4, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
@@ -336,7 +336,7 @@ func TestBothTaskAndSubTaskTable(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "table_test")
 
-	id, err := sm.NewTask(ctx, "key1", "test", 4, []byte("test"))
+	id, err := sm.CreateTask(ctx, "key1", "test", 4, []byte("test"))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), id)
 
@@ -510,11 +510,11 @@ func TestSubtaskHistoryTable(t *testing.T) {
 		finishedMeta = "finished"
 	)
 
-	require.NoError(t, sm.NewSubTask(ctx, taskID, proto.StepInit, tidb1, []byte(meta), proto.TaskTypeExample, false))
+	require.NoError(t, sm.CreateSubTask(ctx, taskID, proto.StepInit, tidb1, []byte(meta), proto.TaskTypeExample, false))
 	require.NoError(t, sm.FinishSubtask(ctx, tidb1, subTask1, []byte(finishedMeta)))
-	require.NoError(t, sm.NewSubTask(ctx, taskID, proto.StepInit, tidb2, []byte(meta), proto.TaskTypeExample, false))
+	require.NoError(t, sm.CreateSubTask(ctx, taskID, proto.StepInit, tidb2, []byte(meta), proto.TaskTypeExample, false))
 	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, tidb2, subTask2, proto.TaskStateCanceled, nil))
-	require.NoError(t, sm.NewSubTask(ctx, taskID, proto.StepInit, tidb3, []byte(meta), proto.TaskTypeExample, false))
+	require.NoError(t, sm.CreateSubTask(ctx, taskID, proto.StepInit, tidb3, []byte(meta), proto.TaskTypeExample, false))
 	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, tidb3, subTask3, proto.TaskStateFailed, nil))
 
 	subTasks, err := storage.GetSubtasksByTaskIDForTest(ctx, sm, taskID)
@@ -547,7 +547,7 @@ func TestSubtaskHistoryTable(t *testing.T) {
 	}()
 	time.Sleep(2 * time.Second)
 
-	require.NoError(t, sm.NewSubTask(ctx, taskID2, proto.StepInit, tidb1, []byte(meta), proto.TaskTypeExample, false))
+	require.NoError(t, sm.CreateSubTask(ctx, taskID2, proto.StepInit, tidb1, []byte(meta), proto.TaskTypeExample, false))
 	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, tidb1, subTask4, proto.TaskStateFailed, nil))
 	require.NoError(t, sm.TransferSubTasks2History(ctx, taskID2))
 
@@ -565,9 +565,9 @@ func TestTaskHistoryTable(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "table_test")
 
-	_, err := gm.NewTask(ctx, "1", proto.TaskTypeExample, 1, nil)
+	_, err := gm.CreateTask(ctx, "1", proto.TaskTypeExample, 1, nil)
 	require.NoError(t, err)
-	taskID, err := gm.NewTask(ctx, "2", proto.TaskTypeExample, 1, nil)
+	taskID, err := gm.CreateTask(ctx, "2", proto.TaskTypeExample, 1, nil)
 	require.NoError(t, err)
 
 	tasks, err := gm.GetTasksInStates(ctx, proto.TaskStatePending)
@@ -592,7 +592,7 @@ func TestTaskHistoryTable(t *testing.T) {
 	require.NotNil(t, task)
 
 	// task with fail transfer
-	_, err = gm.NewTask(ctx, "3", proto.TaskTypeExample, 1, nil)
+	_, err = gm.CreateTask(ctx, "3", proto.TaskTypeExample, 1, nil)
 	require.NoError(t, err)
 	tasks, err = gm.GetTasksInStates(ctx, proto.TaskStatePending)
 	require.NoError(t, err)
@@ -611,9 +611,9 @@ func TestPauseAndResume(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "table_test")
 
-	require.NoError(t, sm.NewSubTask(ctx, 1, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, false))
-	require.NoError(t, sm.NewSubTask(ctx, 1, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, false))
-	require.NoError(t, sm.NewSubTask(ctx, 1, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, false))
+	require.NoError(t, sm.CreateSubTask(ctx, 1, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, false))
+	require.NoError(t, sm.CreateSubTask(ctx, 1, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, false))
+	require.NoError(t, sm.CreateSubTask(ctx, 1, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, false))
 	// 1.1 pause all subtasks.
 	require.NoError(t, sm.PauseSubtasks(ctx, "tidb1", 1))
 	cnt, err := sm.GetSubtaskInStatesCnt(ctx, 1, proto.TaskStatePaused)
@@ -645,7 +645,7 @@ func TestCancelAndExecIdChanged(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	ctx = util.WithInternalSourceType(ctx, "table_test")
 
-	require.NoError(t, sm.NewSubTask(ctx, 1, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, false))
+	require.NoError(t, sm.CreateSubTask(ctx, 1, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, false))
 	subtask, err := sm.GetFirstSubtaskInStates(ctx, "tidb1", 1, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
 	// 1. cancel the ctx, then update subtask state.

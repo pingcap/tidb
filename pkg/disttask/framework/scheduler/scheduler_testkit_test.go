@@ -35,7 +35,7 @@ import (
 )
 
 func runOneTask(ctx context.Context, t *testing.T, mgr *storage.TaskManager, taskKey string, subtaskCnt int) {
-	taskID, err := mgr.NewTask(ctx, taskKey, proto.TaskTypeExample, 1, nil)
+	taskID, err := mgr.CreateTask(ctx, taskKey, proto.TaskTypeExample, 1, nil)
 	require.NoError(t, err)
 	task, err := mgr.GetTaskByID(ctx, taskID)
 	require.NoError(t, err)
@@ -45,7 +45,7 @@ func runOneTask(ctx context.Context, t *testing.T, mgr *storage.TaskManager, tas
 	_, err = mgr.UpdateTaskAndAddSubTasks(ctx, task, nil, proto.TaskStatePending)
 	require.NoError(t, err)
 	for i := 0; i < subtaskCnt; i++ {
-		require.NoError(t, mgr.NewSubTask(ctx, taskID, proto.StepOne, "test", nil, proto.TaskTypeExample, false))
+		require.NoError(t, mgr.CreateSubTask(ctx, taskID, proto.StepOne, "test", nil, proto.TaskTypeExample, false))
 	}
 	task, err = mgr.GetTaskByID(ctx, taskID)
 	require.NoError(t, err)
@@ -58,7 +58,7 @@ func runOneTask(ctx context.Context, t *testing.T, mgr *storage.TaskManager, tas
 	_, err = mgr.UpdateTaskAndAddSubTasks(ctx, task, nil, proto.TaskStateRunning)
 	require.NoError(t, err)
 	for i := 0; i < subtaskCnt; i++ {
-		require.NoError(t, mgr.NewSubTask(ctx, taskID, proto.StepTwo, "test", nil, proto.TaskTypeExample, false))
+		require.NoError(t, mgr.CreateSubTask(ctx, taskID, proto.StepTwo, "test", nil, proto.TaskTypeExample, false))
 	}
 	task, err = mgr.GetTaskByID(ctx, taskID)
 	require.NoError(t, err)

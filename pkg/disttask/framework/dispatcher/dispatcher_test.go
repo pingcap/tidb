@@ -198,7 +198,7 @@ func TestGetInstance(t *testing.T) {
 		TaskID: task.ID,
 		ExecID: serverIDs[1],
 	}
-	err = mgr.NewSubTask(ctx, task.ID, proto.StepInit, subtask.ExecID, nil, subtask.Type, true)
+	err = mgr.CreateSubTask(ctx, task.ID, proto.StepInit, subtask.ExecID, nil, subtask.Type, true)
 	require.NoError(t, err)
 	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, task)
 	require.NoError(t, err)
@@ -210,7 +210,7 @@ func TestGetInstance(t *testing.T) {
 		TaskID: task.ID,
 		ExecID: serverIDs[0],
 	}
-	err = mgr.NewSubTask(ctx, task.ID, proto.StepInit, subtask.ExecID, nil, subtask.Type, true)
+	err = mgr.CreateSubTask(ctx, task.ID, proto.StepInit, subtask.ExecID, nil, subtask.Type, true)
 	require.NoError(t, err)
 	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, task)
 	require.NoError(t, err)
@@ -242,7 +242,7 @@ func TestTaskFailInManager(t *testing.T) {
 	defer dspManager.Stop()
 
 	// unknown task type
-	taskID, err := mgr.NewTask(ctx, "test", "test-type", 1, nil)
+	taskID, err := mgr.CreateTask(ctx, "test", "test-type", 1, nil)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
 		task, err := mgr.GetTaskByID(ctx, taskID)
@@ -252,7 +252,7 @@ func TestTaskFailInManager(t *testing.T) {
 	}, time.Second*10, time.Millisecond*300)
 
 	// dispatcher init error
-	taskID, err = mgr.NewTask(ctx, "test2", proto.TaskTypeExample, 1, nil)
+	taskID, err = mgr.CreateTask(ctx, "test2", proto.TaskTypeExample, 1, nil)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
 		task, err := mgr.GetTaskByID(ctx, taskID)
@@ -332,7 +332,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	// Mock add tasks.
 	taskIDs := make([]int64, 0, taskCnt)
 	for i := 0; i < taskCnt; i++ {
-		taskID, err := mgr.NewTask(ctx, fmt.Sprintf("%d", i), proto.TaskTypeExample, 0, nil)
+		taskID, err := mgr.CreateTask(ctx, fmt.Sprintf("%d", i), proto.TaskTypeExample, 0, nil)
 		require.NoError(t, err)
 		taskIDs = append(taskIDs, taskID)
 	}
@@ -342,7 +342,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	checkSubtaskCnt(tasks, taskIDs)
 	// test parallelism control
 	if taskCnt == 1 {
-		taskID, err := mgr.NewTask(ctx, fmt.Sprintf("%d", taskCnt), proto.TaskTypeExample, 0, nil)
+		taskID, err := mgr.CreateTask(ctx, fmt.Sprintf("%d", taskCnt), proto.TaskTypeExample, 0, nil)
 		require.NoError(t, err)
 		checkGetRunningTaskCnt(taskCnt)
 		// Clean the task.

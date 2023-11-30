@@ -46,7 +46,7 @@ func TestCleanUpRoutine(t *testing.T) {
 	dsp.Start()
 	defer dsp.Stop()
 	require.NoError(t, mgr.StartManager(ctx, ":4000", "background"))
-	taskID, err := mgr.NewTask(ctx, "test", proto.TaskTypeExample, 1, nil)
+	taskID, err := mgr.CreateTask(ctx, "test", proto.TaskTypeExample, 1, nil)
 	require.NoError(t, err)
 
 	checkTaskRunningCnt := func() []*proto.Task {
