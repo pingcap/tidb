@@ -196,7 +196,6 @@ func HandleAutoAnalyze(
 		sysProcTracker,
 		is,
 		autoAnalyzeRatio,
-		start, end,
 		pruneMode,
 	)
 }
@@ -212,7 +211,6 @@ func randomPickOneTableAndTryAutoAnalyze(
 	sysProcTracker sessionctx.SysProcTracker,
 	is infoschema.InfoSchema,
 	autoAnalyzeRatio float64,
-	start, end time.Time,
 	pruneMode variable.PartitionPruneMode,
 ) bool {
 	dbs := is.AllSchemaNames()
