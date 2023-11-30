@@ -41,7 +41,8 @@ func execRows(sctx sessionctx.Context, sql string, args ...interface{}) (rows []
 	if !ok {
 		return nil, nil, errors.Errorf("invalid sql executor")
 	}
-	return sqlExec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo), nil, sql, args...)
+	return sqlExec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo),
+		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql, args...)
 }
 
 // finishTransaction will execute `commit` when error is nil, otherwise `rollback`.
