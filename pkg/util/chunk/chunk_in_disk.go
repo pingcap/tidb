@@ -157,7 +157,6 @@ func (d *DataInDiskByChunks) Close() {
 }
 
 func (d *DataInDiskByChunks) serializeColMeta(pos int64, length int64, nullMapSize int64, dataSize int64, offsetSize int64) {
-	// TODO we can replace these with spill util in the future
 	*(*int64)(unsafe.Pointer(&d.buf[pos])) = length
 	*(*int64)(unsafe.Pointer(&d.buf[pos+int64Len])) = nullMapSize
 	*(*int64)(unsafe.Pointer(&d.buf[pos+int64Len*2])) = dataSize
@@ -206,11 +205,11 @@ func (d *DataInDiskByChunks) serializeColumns(pos *int64, chk *Chunk) {
 }
 
 // Serialized format of a chunk:
-// chunk's data: | numVirtualRows | capacity | requiredRows | selSize | sel... |
+// chunk   data: | numVirtualRows | capacity | requiredRows | selSize | sel... |
 // column1 data: | length | nullMapSize | dataSize | offsetSize | nullBitmap... | data... | offsets... |
 // column2 data: | length | nullMapSize | dataSize | offsetSize | nullBitmap... | data... | offsets... |
 // ...
-// columnn data: | length | nullMapSize | dataSize | offsetSize | nullBitmap... | data... | offsets... |
+// columnN data: | length | nullMapSize | dataSize | offsetSize | nullBitmap... | data... | offsets... |
 //
 // `xxx...` means this is a variable field filled by bytes.
 func (d *DataInDiskByChunks) serializeDataToBuf(chk *Chunk) int64 {
@@ -237,7 +236,6 @@ func (d *DataInDiskByChunks) serializeDataToBuf(chk *Chunk) int64 {
 }
 
 func (d *DataInDiskByChunks) deserializeColMeta(pos *int64) (length int64, nullMapSize int64, dataSize int64, offsetSize int64) {
-	// TODO we can replace these with spill util in the future
 	length = *(*int64)(unsafe.Pointer(&d.buf[*pos]))
 	*pos += int64Len
 
@@ -262,7 +260,6 @@ func (d *DataInDiskByChunks) deserializeSel(chk *Chunk, pos *int64, selSize int)
 }
 
 func (d *DataInDiskByChunks) deserializeChunkData(chk *Chunk, pos *int64) {
-	// TODO we can replace these with spill util in the future
 	chk.numVirtualRows = *(*int)(unsafe.Pointer(&d.buf[*pos]))
 	*pos += intLen
 
