@@ -343,3 +343,75 @@ func TestDropAPartition(t *testing.T) {
 		testkit.Rows("3 2"),
 	)
 }
+
+func TestExchangeAPartition(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := do.StatsHandle()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	// Create a table with 4 partitions.
+	testKit.MustExec(`
+		create table t (
+			a int,
+			b int,
+			primary key(a),
+			index idx(b)
+		)
+		partition by range (a) (
+			partition p0 values less than (6),
+			partition p1 values less than (11),
+			partition p2 values less than (16),
+			partition p3 values less than (21)
+		)
+	`)
+	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
+	testKit.MustExec("analyze table t")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(
+		model.NewCIStr("test"), model.NewCIStr("t"),
+	)
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	pi := tableInfo.GetPartitionInfo()
+	for _, def := range pi.Definitions {
+		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		require.False(t, statsTbl.Pseudo)
+	}
+	// Create a normal table to exchange partition.
+	testKit.MustExec("drop table if exists t1")
+	testKit.MustExec("create table t1 (a int, b int, primary key(a), index idx(b))")
+	// Insert some data which meets the condition of the partition p0.
+	testKit.MustExec("insert into t1 values (1,2),(2,2),(3,2),(4,2),(5,2)")
+	testKit.MustExec("analyze table t1")
+	is = do.InfoSchema()
+	tbl1, err := is.TableByName(
+		model.NewCIStr("test"), model.NewCIStr("t1"),
+	)
+	require.NoError(t, err)
+	tableInfo1 := tbl1.Meta()
+	statsTbl1 := h.GetTableStats(tableInfo1)
+	require.False(t, statsTbl1.Pseudo)
+	err = h.Update(is)
+	require.NoError(t, err)
+
+	testKit.MustExec("alter table t exchange partition p0 with table t1")
+	// Find the exchange partition event.
+	var exchangePartitionEvent *util.DDLEvent
+	for {
+		event := <-h.DDLEventCh()
+		if event.GetType() == model.ActionExchangeTablePartition {
+			exchangePartitionEvent = event
+			break
+		}
+	}
+	err = h.HandleDDLEvent(exchangePartitionEvent)
+	require.NoError(t, err)
+	// Check the global stats meta.
+	// Because we have exchanged a partition, the count should be 5 and the modify count should be 4.
+	testKit.MustQuery(
+		fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableInfo.ID),
+	).Check(
+		testkit.Rows("8 3"),
+	)
+}

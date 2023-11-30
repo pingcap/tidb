@@ -15,6 +15,8 @@
 package ddl
 
 import (
+	"math"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -226,10 +228,10 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 	// If the original partition has substantial changes (contributing a large delta to global stats),
 	// it will help us trigger auto-analyze quickly.
 	// If the changes are minor, it won't have a significant effect.
-	count := tableCount - partCount
+	delta := tableCount - partCount
+	count := int64(math.Abs(float64(delta)))
 	// Update the global stats.
 	if count != 0 {
-		delta := -count
 		if err := h.statsWriter.UpdateStatsMetaDelta(
 			globalTableInfo.ID, count, delta,
 		); err != nil {
