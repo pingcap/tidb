@@ -360,21 +360,23 @@ func BuildHistAndTopN(
 
 	// Handle the counting for the last value. Basically equal to the case 2 above.
 	// now topn is empty: append the "current" count directly
-	if len(topNList) == 0 && numTopN != 0 {
-		topNList = append(topNList, TopNMeta{Encoded: cur, Count: uint64(curCnt)})
-	} else if len(topNList) < numTopN || uint64(curCnt) > topNList[len(topNList)-1].Count {
-		// now topn is not full, or the "current" count is larger than the least count in the topn: need to find a slot to insert the "current"
-		j := len(topNList)
-		for ; j > 0; j-- {
-			if uint64(curCnt) < topNList[j-1].Count {
-				break
+	if numTopN != 0 {
+		if len(topNList) == 0 {
+			topNList = append(topNList, TopNMeta{Encoded: cur, Count: uint64(curCnt)})
+		} else if len(topNList) < numTopN || uint64(curCnt) > topNList[len(topNList)-1].Count {
+			// now topn is not full, or the "current" count is larger than the least count in the topn: need to find a slot to insert the "current"
+			j := len(topNList)
+			for ; j > 0; j-- {
+				if uint64(curCnt) < topNList[j-1].Count {
+					break
+				}
 			}
-		}
-		topNList = append(topNList, TopNMeta{})
-		copy(topNList[j+1:], topNList[j:])
-		topNList[j] = TopNMeta{Encoded: cur, Count: uint64(curCnt)}
-		if len(topNList) > numTopN {
-			topNList = topNList[:numTopN]
+			topNList = append(topNList, TopNMeta{})
+			copy(topNList[j+1:], topNList[j:])
+			topNList[j] = TopNMeta{Encoded: cur, Count: uint64(curCnt)}
+			if len(topNList) > numTopN {
+				topNList = topNList[:numTopN]
+			}
 		}
 	}
 
