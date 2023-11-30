@@ -63,7 +63,6 @@ func NewKS3Storage(
 		return nil, errors.New("ks3 region is empty")
 	}
 	awsConfig.Region = qs.Region
-	awsConfig.LogLevel = 1
 
 	if qs.Endpoint != "" {
 		awsConfig.Endpoint = qs.Endpoint
@@ -664,16 +663,16 @@ func (rs *KS3Storage) Create(ctx context.Context, name string, option *WriterOpt
 			return nil, err
 		}
 	} else {
-		up := s3manager.NewUploader(&s3manager.UploadOptions{
-			Parallel: option.Concurrency,
-			S3:       rs.svc,
-		})
-		rd, wd := io.Pipe()
 		partSize := int64(5 * 1024 * 1024)
 		if option != nil && option.PartSize > 0 {
 			partSize = option.PartSize
 		}
-		println("use partSize", partSize)
+		up := s3manager.NewUploader(&s3manager.UploadOptions{
+			PartSize: partSize,
+			Parallel: option.Concurrency,
+			S3:       rs.svc,
+		})
+		rd, wd := io.Pipe()
 		upParams := &s3manager.UploadInput{
 			Bucket: aws.String(rs.options.Bucket),
 			Key:    aws.String(rs.options.Prefix + name),
