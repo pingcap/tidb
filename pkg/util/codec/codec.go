@@ -360,11 +360,14 @@ func encodeHashChunkRowIdx(typeCtx types.Context, row chunk.Row, tp *types.Field
 			b = unsafe.Slice((*byte)(unsafe.Pointer(&v)), sizeUint64)
 		} else {
 			flag = compactBytesFlag
-			v := row.GetEnum(idx).Value
-			str := ""
-			if enum, err := types.ParseEnumValue(tp.GetElems(), v); err == nil {
-				// str will be empty string if v out of definition of enum.
-				str = enum.Name
+			enumVal := row.GetEnum(idx)
+			str := enumVal.Name
+			if str == "" {
+				enum, err := types.ParseEnumValue(tp.GetElems(), enumVal.Value)
+				if err == nil {
+					// str will be empty string if v out of definition of enum.
+					str = enum.Name
+				}
 			}
 			b = ConvertByCollation(hack.Slice(str), tp)
 		}
@@ -576,11 +579,14 @@ func HashChunkSelected(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk,
 				b = unsafe.Slice((*byte)(unsafe.Pointer(&v)), sizeUint64)
 			} else {
 				buf[0] = compactBytesFlag
-				v := column.GetEnum(i).Value
-				str := ""
-				if enum, err := types.ParseEnumValue(tp.GetElems(), v); err == nil {
-					// str will be empty string if v out of definition of enum.
-					str = enum.Name
+				enumVal := column.GetEnum(i)
+				str := enumVal.Name
+				if str == "" {
+					enum, err := types.ParseEnumValue(tp.GetElems(), enumVal.Value)
+					if err == nil {
+						// str will be empty string if v out of definition of enum.
+						str = enum.Name
+					}
 				}
 				b = ConvertByCollation(hack.Slice(str), tp)
 			}
