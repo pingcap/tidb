@@ -971,7 +971,7 @@ func (stm *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 	return stm.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		insertSQL := new(strings.Builder)
 		if err := sqlescape.FormatSQL(insertSQL, "replace into mysql.tidb_global_task_history"+
-			"(id, task_key, type, dispatcher_id, state, start_time, state_update_time,"+
+			"(id, task_key, type, dispatcher_id, state, priority, start_time, state_update_time,"+
 			"meta, concurrency, step, error) values"); err != nil {
 			return err
 		}
@@ -982,9 +982,9 @@ func (stm *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 					return err
 				}
 			}
-			if err := sqlescape.FormatSQL(insertSQL, "(%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)",
+			if err := sqlescape.FormatSQL(insertSQL, "(%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)",
 				task.ID, task.Key, task.Type, task.DispatcherID,
-				task.State, task.StartTime, task.StateUpdateTime,
+				task.State, task.Priority, task.StartTime, task.StateUpdateTime,
 				task.Meta, task.Concurrency, task.Step, serializeErr(task.Error)); err != nil {
 				return err
 			}

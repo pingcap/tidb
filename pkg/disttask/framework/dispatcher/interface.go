@@ -124,7 +124,8 @@ func ClearDispatcherFactory() {
 
 // CleanUpRoutine is used for the framework to do some clean up work if the task is finished.
 type CleanUpRoutine interface {
-	// CleanUp do the clean up work.
+	// CleanUp do the cleanup work.
+	// task.Meta can be updated here, such as redacting some sensitive info.
 	CleanUp(ctx context.Context, task *proto.Task) error
 }
 type cleanUpFactoryFn func() CleanUpRoutine
