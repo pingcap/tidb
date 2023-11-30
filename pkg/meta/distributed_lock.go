@@ -28,7 +28,7 @@ import (
 
 // DataStore is an interface to create transaction.
 type DataStore interface {
-	Begin() (txn DataTxn, err error)
+	Begin(ctx context.Context) (txn DataTxn, err error)
 }
 
 // DataTxn is an interface to operate data in transaction.
@@ -64,7 +64,7 @@ func (c *lockContent) decode(data []byte) error {
 
 // DistributedLock is a distributed lock implementation based on meta key transaction.
 type DistributedLock struct {
-	ctx        context.Context
+	outerCtx   context.Context
 	store      DataStore
 	instanceID string
 
@@ -72,8 +72,7 @@ type DistributedLock struct {
 	backoff  time.Duration
 	lease    time.Duration
 
-	renewCtx    context.Context
-	renewCancel context.CancelFunc
+	cancelRenewLoop context.CancelFunc
 }
 
 // DistributedLockBuilder is used to build a DistributedLock.
@@ -109,7 +108,7 @@ func (b *DistributedLockBuilder) Build(
 	ctx context.Context, store DataStore, instanceID string, lockName string) *DistributedLock {
 	ctx = logutil.WithCategory(ctx, "distributed-lock")
 	return &DistributedLock{
-		ctx:        ctx,
+		outerCtx:   ctx,
 		store:      store,
 		instanceID: instanceID,
 
@@ -119,16 +118,16 @@ func (b *DistributedLockBuilder) Build(
 	}
 }
 
-func (d *DistributedLock) renewLockLoop() {
+func (d *DistributedLock) renewLockLoop(ctx context.Context) {
 	ticker := time.NewTicker(d.lease / 3)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-d.renewCtx.Done():
+		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			err := d.renew()
+			err := d.renew(ctx)
 			if err != nil {
 				logutil.BgLogger().Warn("renew lock failed", zap.Error(err))
 				return
@@ -137,11 +136,11 @@ func (d *DistributedLock) renewLockLoop() {
 	}
 }
 
-func (d *DistributedLock) renew() error {
-	return d.getLockInTxnWithRetry(
+func (d *DistributedLock) renew(ctx context.Context) error {
+	return d.getLockInTxnWithRetry(ctx,
 		func(lc *lockContent, txn DataTxn) (storeErr, otherErr error) {
 			if lc == nil || lc.InstanceID != d.instanceID {
-				logutil.Logger(d.ctx).Warn("lock is unexpectedly removed", zap.String("instanceID", d.instanceID))
+				logutil.Logger(d.outerCtx).Warn("lock is unexpectedly removed", zap.String("instanceID", d.instanceID))
 				return nil, nil
 			}
 
@@ -164,7 +163,7 @@ var lockHeldErr error = errors.Errorf("lock is held")
 // Lock locks the distributed lock.
 func (d *DistributedLock) Lock() error {
 	newLockCreated := false
-	err := d.getLockInTxnWithRetry(
+	err := d.getLockInTxnWithRetry(d.outerCtx,
 		func(lc *lockContent, txn DataTxn) (storeErr, otherErr error) {
 			startTS := txn.StartTS()
 			// Lock is not exist or expired, create or overwrite it.
@@ -188,8 +187,9 @@ func (d *DistributedLock) Lock() error {
 		return err
 	}
 	if !intest.InTest && newLockCreated {
-		d.renewCtx, d.renewCancel = context.WithCancel(d.ctx)
-		go d.renewLockLoop()
+		var renewCtx context.Context
+		renewCtx, d.cancelRenewLoop = context.WithCancel(d.outerCtx)
+		go d.renewLockLoop(renewCtx)
 	}
 	return nil
 }
@@ -202,7 +202,7 @@ func (d *DistributedLock) lockExpired(lc *lockContent, currentStartTS uint64) bo
 	currentTime := model.TSConvert2Time(currentStartTS)
 	expired := currentTime.Sub(lockStartTime) > d.lease
 	if expired {
-		logutil.Logger(d.ctx).Warn("lock is expired",
+		logutil.Logger(d.outerCtx).Warn("lock is expired",
 			zap.Time("lockStartTime", lockStartTime),
 			zap.Time("currentTime", currentTime),
 			zap.Duration("lease", d.lease))
@@ -213,14 +213,14 @@ func (d *DistributedLock) lockExpired(lc *lockContent, currentStartTS uint64) bo
 // Unlock unlocks the distributed lock.
 func (d *DistributedLock) Unlock() error {
 	defer func() {
-		if d.renewCancel != nil {
-			d.renewCancel()
+		if d.cancelRenewLoop != nil {
+			d.cancelRenewLoop()
 		}
 	}()
-	return d.getLockInTxnWithRetry(
+	return d.getLockInTxnWithRetry(context.Background(),
 		func(lc *lockContent, txn DataTxn) (storeErr, otherErr error) {
 			if lc == nil || lc.InstanceID != d.instanceID {
-				logutil.Logger(d.ctx).Warn("lock is unexpectedly removed", zap.String("instanceID", d.instanceID))
+				logutil.Logger(d.outerCtx).Warn("lock is unexpectedly removed", zap.String("instanceID", d.instanceID))
 				return nil, nil
 			}
 
@@ -233,18 +233,23 @@ func (d *DistributedLock) Unlock() error {
 		})
 }
 
-func (d *DistributedLock) getLockInTxnWithRetry(fn lockHandleFunc) error {
-	tryCnt := 0
+func (d *DistributedLock) getLockInTxnWithRetry(ctx context.Context, fn lockHandleFunc) error {
+	retryCnt := 0
 	for {
-		tryCnt++
-		// We only check context error after retry 10 times,
-		// so that the lock can be released even if the context is canceled.
-		if tryCnt >= 10 && contextIsDone(d.ctx) {
-			return d.ctx.Err()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-d.outerCtx.Done():
+			// We only check the outer context error after retry 10 times,
+			// so that the lock can be released even if the outer context is canceled.
+			if retryCnt >= 10 {
+				return d.outerCtx.Err()
+			}
+		default:
 		}
 
 		var noRetry bool
-		err := runInTxn(d.store, func(txn DataTxn) error {
+		err := runInTxn(ctx, d.store, func(txn DataTxn) error {
 			data, err := txn.Get(d.lockName)
 			if err != nil {
 				return errors.Trace(err)
@@ -269,11 +274,12 @@ func (d *DistributedLock) getLockInTxnWithRetry(fn lockHandleFunc) error {
 				time.Sleep(d.backoff)
 				continue
 			}
-			logutil.Logger(d.ctx).Info("lock encounter error",
+			logutil.Logger(d.outerCtx).Info("lock encounter error",
 				zap.Error(err), zap.Bool("retry", !noRetry))
 			if noRetry {
 				return err
 			}
+			retryCnt++
 			time.Sleep(d.backoff)
 			continue
 		}
@@ -284,17 +290,8 @@ func (d *DistributedLock) getLockInTxnWithRetry(fn lockHandleFunc) error {
 type lockHandleFunc func(lc *lockContent, txn DataTxn) (storeErr, otherErr error)
 type txnHandleFunc func(txn DataTxn) error
 
-func contextIsDone(ctx context.Context) bool {
-	select {
-	case <-ctx.Done():
-		return true
-	default:
-		return false
-	}
-}
-
-func runInTxn(store DataStore, fn txnHandleFunc) error {
-	txn, err := store.Begin()
+func runInTxn(ctx context.Context, store DataStore, fn txnHandleFunc) error {
+	txn, err := store.Begin(ctx)
 	if err != nil {
 		return err
 	}

@@ -27,22 +27,21 @@ const mDistributedLock = "distLock"
 var _ meta.DataStore = (*distLockDataStore)(nil)
 
 type distLockDataStore struct {
-	ctx   context.Context
 	store kv.Storage
 }
 
-func (s *distLockDataStore) Begin() (meta.DataTxn, error) {
+func (s *distLockDataStore) Begin(ctx context.Context) (meta.DataTxn, error) {
 	txn, err := s.store.Begin()
 	if err != nil {
 		return nil, err
 	}
 	metaTxn := meta.NewMetaStructure(txn)
-	ret := &distLockDataTxn{ctx: s.ctx, txn: txn, metaTxn: metaTxn}
+	ret := &distLockDataTxn{ctx: ctx, txn: txn, metaTxn: metaTxn}
 	return ret, nil
 }
 
-func newDistLockDataStore(ctx context.Context, store kv.Storage) *distLockDataStore {
-	return &distLockDataStore{ctx: ctx, store: store}
+func newDistLockDataStore(store kv.Storage) *distLockDataStore {
+	return &distLockDataStore{store: store}
 }
 
 var _ meta.DataTxn = (*distLockDataTxn)(nil)

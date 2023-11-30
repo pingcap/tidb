@@ -112,7 +112,7 @@ type mockDataStore struct {
 	store kv.Storage
 }
 
-func (m *mockDataStore) Begin() (meta.DataTxn, error) {
+func (m *mockDataStore) Begin(_ context.Context) (meta.DataTxn, error) {
 	txn, err := m.store.Begin()
 	if err != nil {
 		return nil, err

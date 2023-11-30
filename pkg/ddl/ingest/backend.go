@@ -189,7 +189,7 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 	}
 
 	if bc.useDistributedLock {
-		store := newDistLockDataStore(bc.ctx, bc.store)
+		store := newDistLockDataStore(bc.store)
 		dKey := strconv.Itoa(int(bc.jobID))
 		dLock := meta.NewDistributedLockBuilder().
 			SetBackoff(5*time.Second).
