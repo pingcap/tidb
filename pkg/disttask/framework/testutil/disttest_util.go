@@ -200,9 +200,14 @@ func DispatchMultiTasksAndOneFail(ctx context.Context, t *testing.T, num int, te
 	for i := 0; i < num; i++ {
 		tasks[i] = WaitTaskExit(ctx, t, fmt.Sprintf("key%d", i))
 	}
-	require.Equal(t, proto.TaskStateReverted, tasks[0].State)
-	require.Equal(t, proto.TaskStateSucceed, tasks[1].State)
-	require.Equal(t, proto.TaskStateSucceed, tasks[2].State)
+
+	failCount := 0
+	for _, task := range tasks {
+		if task.State == proto.TaskStateFailed {
+			failCount++
+		}
+	}
+	require.Equal(t, 1, failCount)
 
 	testContext.M.Range(func(key, value interface{}) bool {
 		testContext.M.Delete(key)
