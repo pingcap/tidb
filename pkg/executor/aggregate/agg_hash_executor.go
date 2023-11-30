@@ -152,7 +152,6 @@ func (e *HashAggExec) Close() error {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
 	if e.IsUnparallelExec {
-		var firstErr error
 		e.childResult = nil
 		e.groupSet, _ = set.NewStringSetWithMemoryUsage()
 		e.partialResultMap = nil
@@ -163,10 +162,11 @@ func (e *HashAggExec) Close() error {
 			e.dataInDisk.Close()
 		}
 		e.spillAction, e.tmpChkForSpill = nil, nil
-		if err := e.BaseExecutor.Close(); firstErr == nil {
-			firstErr = err
+		err := e.BaseExecutor.Close()
+		if err != nil {
+			return err
 		}
-		return firstErr
+		return nil
 	}
 	if e.parallelExecValid {
 		// `Close` may be called after `Open` without calling `Next` in test.
