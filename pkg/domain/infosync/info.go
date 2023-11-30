@@ -213,7 +213,7 @@ func GlobalInfoSyncerInit(
 		pdHTTPCli = pdHTTPCli.WithRespHandler(pdResponseHandler)
 	}
 	is.labelRuleManager = initLabelRuleManager(pdHTTPCli)
-	is.placementManager = initPlacementManager(etcdCli)
+	is.placementManager = initPlacementManager(pdHTTPCli)
 	is.scheduleManager = initScheduleManager(etcdCli)
 	is.tiflashReplicaManager = initTiFlashReplicaManager(etcdCli, codec)
 	is.resourceManagerClient = initResourceManagerClient(pdCli)
@@ -254,11 +254,11 @@ func initLabelRuleManager(pdHTTPCli pdhttp.Client) LabelRuleManager {
 	return &PDLabelManager{pdHTTPCli}
 }
 
-func initPlacementManager(etcdCli *clientv3.Client) PlacementManager {
-	if etcdCli == nil {
+func initPlacementManager(pdHTTPCli pdhttp.Client) PlacementManager {
+	if pdHTTPCli == nil {
 		return &mockPlacementManager{}
 	}
-	return &PDPlacementManager{etcdCli: etcdCli}
+	return &PDPlacementManager{pdHTTPCli}
 }
 
 func initResourceManagerClient(pdCli pd.Client) (cli pd.ResourceManagerClient) {

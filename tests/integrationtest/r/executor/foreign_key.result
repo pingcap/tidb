@@ -431,3 +431,26 @@ id	pid
 SET GLOBAL tidb_mem_oom_action = DEFAULT;
 set @@tidb_mem_quota_query=DEFAULT;
 set @@foreign_key_checks=DEFAULT;
+set @@global.tidb_enable_foreign_key=1;
+set @@foreign_key_checks=1;
+drop table if exists t1, t2;
+create table t1 (id int key);
+create table t2 (id int key, foreign key fk (id) references t1(id) ON DELETE CASCADE ON UPDATE CASCADE);
+insert into t1 values (1), (2), (3);
+insert into t2 values (1), (2), (3);
+lock table t2 read;
+set @@foreign_key_checks=1;
+delete from t1 where id = 1;
+Error 8020 (HY000): Table 't2' was locked in READ by server: <server> session: <session>
+unlock tables;
+delete from t1 where id = 1;
+select * from t1 order by id;
+id
+2
+3
+select * from t2 order by id;
+id
+2
+3
+set @@global.tidb_enable_foreign_key=default;
+set @@foreign_key_checks=default;

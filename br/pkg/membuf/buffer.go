@@ -49,17 +49,17 @@ type Pool struct {
 // Option configures a pool.
 type Option func(p *Pool)
 
-// WithPoolSize configures how many blocks cached by this pool.
-func WithPoolSize(size int) Option {
+// WithBlockNum configures how many blocks cached by this pool.
+func WithBlockNum(num int) Option {
 	return func(p *Pool) {
-		p.blockCache = make(chan []byte, size)
+		p.blockCache = make(chan []byte, num)
 	}
 }
 
 // WithBlockSize configures the size of each block.
-func WithBlockSize(size int) Option {
+func WithBlockSize(bytes int) Option {
 	return func(p *Pool) {
-		p.blockSize = size
+		p.blockSize = bytes
 	}
 }
 
@@ -179,6 +179,9 @@ func (b *Buffer) Destroy() {
 		b.pool.release(buf)
 	}
 	b.blocks = nil
+	b.curBlock = nil
+	b.curBlockIdx = -1
+	b.curIdx = 0
 }
 
 // TotalSize represents the total memory size of this Buffer.
@@ -235,7 +238,7 @@ func (b *Buffer) AllocBytesWithSliceLocation(n int) ([]byte, SliceLocation) {
 	}
 
 	if b.curIdx+n > len(b.curBlock) {
-		if b.blockCntLimit >= 0 && len(b.blocks) >= b.blockCntLimit {
+		if b.blockCntLimit >= 0 && b.curBlockIdx+1 >= b.blockCntLimit {
 			return nil, SliceLocation{}
 		}
 		b.addBuf()

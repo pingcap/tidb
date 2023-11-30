@@ -2147,13 +2147,12 @@ func BuildCastFunctionWithCheck(ctx sessionctx.Context, expr Expression, tp *typ
 		FuncName: model.NewCIStr(ast.Cast),
 		RetType:  tp,
 		Function: f,
-		ctx:      ctx,
 	}
 	// We do not fold CAST if the eval type of this scalar function is ETJson
 	// since we may reset the flag of the field type of CastAsJson later which
 	// would affect the evaluation of it.
 	if tp.EvalType() != types.ETJson && err == nil {
-		res = FoldConstant(res)
+		res = FoldConstant(ctx, res)
 	}
 	return res, err
 }
@@ -2394,7 +2393,7 @@ func TryPushCastIntoControlFunctionForHybridType(ctx sessionctx.Context, expr Ex
 			if err != nil {
 				return expr
 			}
-			sf.RetType, sf.Function, sf.ctx = f.getRetTp(), f, ctx
+			sf.RetType, sf.Function = f.getRetTp(), f
 			return sf
 		}
 	case ast.Case:
@@ -2419,7 +2418,7 @@ func TryPushCastIntoControlFunctionForHybridType(ctx sessionctx.Context, expr Ex
 		if err != nil {
 			return expr
 		}
-		sf.RetType, sf.Function, sf.ctx = f.getRetTp(), f, ctx
+		sf.RetType, sf.Function = f.getRetTp(), f
 		return sf
 	case ast.Elt:
 		hasHybrid := false
@@ -2437,7 +2436,7 @@ func TryPushCastIntoControlFunctionForHybridType(ctx sessionctx.Context, expr Ex
 		if err != nil {
 			return expr
 		}
-		sf.RetType, sf.Function, sf.ctx = f.getRetTp(), f, ctx
+		sf.RetType, sf.Function = f.getRetTp(), f
 		return sf
 	default:
 		return expr

@@ -42,7 +42,7 @@ func (t *testAllocator) Free(_ []byte) {
 func TestBufferPool(t *testing.T) {
 	allocator := &testAllocator{}
 	pool := NewPool(
-		WithPoolSize(2),
+		WithBlockNum(2),
 		WithAllocator(allocator),
 		WithBlockSize(1024),
 		WithLargeAllocThreshold(512),
@@ -107,9 +107,22 @@ func TestBufferMemLimit(t *testing.T) {
 	require.Nil(t, got)
 
 	bytesBuf.Destroy()
+	// test the buffer is still usable after destroy.
+	got, _ = bytesBuf.AllocBytesWithSliceLocation(3)
+	require.NotNil(t, got)
 
 	// exactly 2 block
 	bytesBuf = pool.NewBuffer(WithMemoryLimit(20))
+
+	got, _ = bytesBuf.AllocBytesWithSliceLocation(9)
+	require.NotNil(t, got)
+	got, _ = bytesBuf.AllocBytesWithSliceLocation(9)
+	require.NotNil(t, got)
+	got, _ = bytesBuf.AllocBytesWithSliceLocation(2)
+	require.Nil(t, got)
+
+	// after reset, can get same allocation again
+	bytesBuf.Reset()
 
 	got, _ = bytesBuf.AllocBytesWithSliceLocation(9)
 	require.NotNil(t, got)
