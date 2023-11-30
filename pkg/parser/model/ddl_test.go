@@ -107,4 +107,14 @@ func TestMayNeedReorg(t *testing.T) {
 
 func TestActionBDRMap(t *testing.T) {
 	require.Equal(t, len(model.ActionMap), len(model.ActionBDRMap))
+
+	totalActions := 0
+	for bdrType, actions := range model.BDRActionMap {
+		for _, action := range actions {
+			require.Equal(t, bdrType, model.ActionBDRMap[action], "action %s", action)
+		}
+		totalActions += len(actions)
+	}
+
+	require.Equal(t, totalActions, len(model.ActionBDRMap))
 }
