@@ -36,11 +36,16 @@ go_test(
         "dispatcher_manager_test.go",
         "dispatcher_test.go",
         "main_test.go",
+        "rebalance_test.go",
     ],
     embed = [":dispatcher"],
     flaky = True,
     race = "off",
+<<<<<<< HEAD
     shard_count = 15,
+=======
+    shard_count = 19,
+>>>>>>> ef02d728739 (disttask: subtasks rebalance during task execution (#48306))
     deps = [
         "//pkg/disttask/framework/mock",
         "//pkg/disttask/framework/proto",
