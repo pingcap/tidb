@@ -30,7 +30,7 @@ import (
 
 // MustNewCommonHandle create a common handle with given values.
 func MustNewCommonHandle(t *testing.T, values ...interface{}) kv.Handle {
-	encoded, err := codec.EncodeKey(stmtctx.NewStmtCtx(), nil, types.MakeDatums(values...)...)
+	encoded, err := codec.EncodeKey(stmtctx.NewStmtCtx().TimeZone(), nil, types.MakeDatums(values...)...)
 	require.NoError(t, err)
 	ch, err := kv.NewCommonHandle(encoded)
 	require.NoError(t, err)

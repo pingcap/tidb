@@ -124,7 +124,7 @@ type indexHashJoinTask struct {
 
 // Open implements the IndexNestedLoopHashJoin Executor interface.
 func (e *IndexNestedLoopHashJoin) Open(ctx context.Context) error {
-	err := e.Children(0).Open(ctx)
+	err := exec.Open(ctx, e.Children(0))
 	if err != nil {
 		return err
 	}
@@ -581,7 +581,7 @@ func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(task *indexHash
 				}
 			}
 			h.Reset()
-			err := codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx, h, row, iw.outerCtx.hashTypes, hashColIdx, buf)
+			err := codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx.TypeCtx(), h, row, iw.outerCtx.hashTypes, hashColIdx, buf)
 			failpoint.Inject("testIndexHashJoinBuildErr", func() {
 				err = errors.New("mockIndexHashJoinBuildErr")
 			})
@@ -709,7 +709,7 @@ func (iw *indexHashJoinInnerWorker) doJoinUnordered(ctx context.Context, task *i
 
 func (iw *indexHashJoinInnerWorker) getMatchedOuterRows(innerRow chunk.Row, task *indexHashJoinTask, h hash.Hash64, buf []byte) (matchedRows []chunk.Row, matchedRowPtr []chunk.RowPtr, err error) {
 	h.Reset()
-	err = codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx, h, innerRow, iw.hashTypes, iw.hashCols, buf)
+	err = codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx.TypeCtx(), h, innerRow, iw.hashTypes, iw.hashCols, buf)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -722,7 +722,7 @@ func (iw *indexHashJoinInnerWorker) getMatchedOuterRows(innerRow chunk.Row, task
 	for ; matchedOuterEntry != nil; matchedOuterEntry = matchedOuterEntry.next {
 		ptr := matchedOuterEntry.ptr
 		outerRow := task.outerResult.GetRow(ptr)
-		ok, err := codec.EqualChunkRow(iw.ctx.GetSessionVars().StmtCtx, innerRow, iw.hashTypes, iw.hashCols, outerRow, iw.outerCtx.hashTypes, iw.outerCtx.hashCols)
+		ok, err := codec.EqualChunkRow(iw.ctx.GetSessionVars().StmtCtx.TypeCtx(), innerRow, iw.hashTypes, iw.hashCols, outerRow, iw.outerCtx.hashTypes, iw.outerCtx.hashCols)
 		if err != nil {
 			return nil, nil, err
 		}

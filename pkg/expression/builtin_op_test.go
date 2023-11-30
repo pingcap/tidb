@@ -50,7 +50,7 @@ func TestUnary(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.UnaryMinus, primitiveValsToConstants(ctx, []interface{}{c.args})...)
 		require.NoError(t, err)
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if !c.getErr {
 			require.NoError(t, err)
 			if !c.overflow {
@@ -109,7 +109,7 @@ func TestLogicAnd(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.LogicAnd, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -148,7 +148,7 @@ func TestLeftShift(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.LeftShift, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -180,7 +180,7 @@ func TestRightShift(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.RightShift, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -219,7 +219,7 @@ func TestBitXor(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.Xor, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -265,7 +265,7 @@ func TestBitOr(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.Or, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -332,7 +332,7 @@ func TestLogicOr(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.LogicOr, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -371,7 +371,7 @@ func TestBitAnd(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.And, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -417,7 +417,7 @@ func TestBitNeg(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.BitNeg, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -471,7 +471,7 @@ func TestUnaryNot(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.UnaryNot, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -583,7 +583,7 @@ func TestIsTrueOrFalse(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, isTrueSig)
 
-		isTrue, err := evalBuiltinFunc(isTrueSig, chunk.Row{})
+		isTrue, err := evalBuiltinFunc(isTrueSig, ctx, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(tc.isTrue), isTrue)
 	}
@@ -593,7 +593,7 @@ func TestIsTrueOrFalse(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, isFalseSig)
 
-		isFalse, err := evalBuiltinFunc(isFalseSig, chunk.Row{})
+		isFalse, err := evalBuiltinFunc(isFalseSig, ctx, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(tc.isFalse), isFalse)
 	}
@@ -642,7 +642,7 @@ func TestLogicXor(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.LogicXor, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {

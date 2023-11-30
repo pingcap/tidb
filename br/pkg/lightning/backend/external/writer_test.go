@@ -17,6 +17,7 @@ package external
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"path"
@@ -30,6 +31,7 @@ import (
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -114,7 +116,6 @@ func TestWriterFlushMultiFileNames(t *testing.T) {
 		SetBlockSize(3*(lengthBytes*2+20)).
 		Build(memStore, "/test", "0")
 
-	require.Equal(t, 3*(lengthBytes*2+20), writer.kvBuffer.blockSize)
 	// 200 bytes key values.
 	kvCnt := 10
 	kvs := make([]common.KvPair, kvCnt)
@@ -224,7 +225,9 @@ func TestWriterDuplicateDetect(t *testing.T) {
 		values:             values,
 		ts:                 123,
 	}
-	iter := data.NewIter(ctx, nil, nil)
+	pool := membuf.NewPool()
+	defer pool.Destroy()
+	iter := data.NewIter(ctx, nil, nil, pool)
 
 	for iter.First(); iter.Valid(); iter.Next() {
 	}
@@ -425,6 +428,27 @@ func TestWriterMultiFileStat(t *testing.T) {
 	require.Equal(t, expected, summary.MultipleFilesStats[2])
 	require.EqualValues(t, "key01", summary.Min)
 	require.EqualValues(t, "key24", summary.Max)
+}
+
+func TestCancelWhileWrite(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	memStore := storage.NewMemStorage()
+
+	writer := NewWriterBuilder().
+		SetMemorySizeLimit(20).
+		Build(memStore, "/test", "0")
+
+	for {
+		err := writer.WriteRow(ctx, []byte("key45"), []byte("value"), nil)
+		if errors.Is(err, context.DeadlineExceeded) {
+			break
+		}
+		require.NoError(t, err)
+	}
+
+	err := writer.Close(ctx)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
 func TestWriterSort(t *testing.T) {

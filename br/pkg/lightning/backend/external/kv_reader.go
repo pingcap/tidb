@@ -36,11 +36,12 @@ func newKVReader(
 	initFileOffset uint64,
 	bufSize int,
 ) (*kvReader, error) {
-	sr, err := openStoreReaderAndSeek(ctx, store, name, initFileOffset)
+	oneThird := bufSize / 3
+	sr, err := openStoreReaderAndSeek(ctx, store, name, initFileOffset, oneThird*2)
 	if err != nil {
 		return nil, err
 	}
-	br, err := newByteReader(ctx, sr, bufSize)
+	br, err := newByteReader(ctx, sr, oneThird)
 	if err != nil {
 		return nil, err
 	}
@@ -50,26 +51,21 @@ func newKVReader(
 }
 
 func (r *kvReader) nextKV() (key, val []byte, err error) {
-	r.byteReader.reset()
 	lenBytes, err := r.byteReader.readNBytes(8)
 	if err != nil {
 		return nil, nil, err
 	}
-	keyLen := int(binary.BigEndian.Uint64(*lenBytes))
-	keyPtr, err := r.byteReader.readNBytes(keyLen)
-	if err != nil {
-		return nil, nil, noEOF(err)
-	}
+	keyLen := int(binary.BigEndian.Uint64(lenBytes))
 	lenBytes, err = r.byteReader.readNBytes(8)
 	if err != nil {
 		return nil, nil, noEOF(err)
 	}
-	valLen := int(binary.BigEndian.Uint64(*lenBytes))
-	valPtr, err := r.byteReader.readNBytes(valLen)
+	valLen := int(binary.BigEndian.Uint64(lenBytes))
+	keyAndValue, err := r.byteReader.readNBytes(keyLen + valLen)
 	if err != nil {
 		return nil, nil, noEOF(err)
 	}
-	return *keyPtr, *valPtr, nil
+	return keyAndValue[:keyLen], keyAndValue[keyLen:], nil
 }
 
 // noEOF converts the EOF error to io.ErrUnexpectedEOF.

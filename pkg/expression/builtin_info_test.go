@@ -35,11 +35,11 @@ func TestDatabase(t *testing.T) {
 	ctx := mock.NewContext()
 	f, err := fc.getFunction(ctx, nil)
 	require.NoError(t, err)
-	d, err := evalBuiltinFunc(f, chunk.Row{})
+	d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, types.KindNull, d.Kind())
 	ctx.GetSessionVars().CurrentDB = "test"
-	d, err = evalBuiltinFunc(f, chunk.Row{})
+	d, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, "test", d.GetString())
 	require.Equal(t, f.PbCode(), f.Clone().PbCode())
@@ -49,7 +49,7 @@ func TestDatabase(t *testing.T) {
 	require.NotNil(t, fc)
 	f, err = fc.getFunction(ctx, nil)
 	require.NoError(t, err)
-	d, err = evalBuiltinFunc(f, chunk.MutRowFromDatums(types.MakeDatums()).ToRow())
+	d, err = evalBuiltinFunc(f, ctx, chunk.MutRowFromDatums(types.MakeDatums()).ToRow())
 	require.NoError(t, err)
 	require.Equal(t, "test", d.GetString())
 	require.Equal(t, f.PbCode(), f.Clone().PbCode())
@@ -63,7 +63,7 @@ func TestFoundRows(t *testing.T) {
 	fc := funcs[ast.FoundRows]
 	f, err := fc.getFunction(ctx, nil)
 	require.NoError(t, err)
-	d, err := evalBuiltinFunc(f, chunk.Row{})
+	d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, uint64(2), d.GetUint64())
 }
@@ -76,7 +76,7 @@ func TestUser(t *testing.T) {
 	fc := funcs[ast.User]
 	f, err := fc.getFunction(ctx, nil)
 	require.NoError(t, err)
-	d, err := evalBuiltinFunc(f, chunk.Row{})
+	d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, "root@localhost", d.GetString())
 	require.Equal(t, f.PbCode(), f.Clone().PbCode())
@@ -90,7 +90,7 @@ func TestCurrentUser(t *testing.T) {
 	fc := funcs[ast.CurrentUser]
 	f, err := fc.getFunction(ctx, nil)
 	require.NoError(t, err)
-	d, err := evalBuiltinFunc(f, chunk.Row{})
+	d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, "root@localhost", d.GetString())
 	require.Equal(t, f.PbCode(), f.Clone().PbCode())
@@ -104,7 +104,7 @@ func TestCurrentResourceGroup(t *testing.T) {
 	fc := funcs[ast.CurrentResourceGroup]
 	f, err := fc.getFunction(ctx, nil)
 	require.NoError(t, err)
-	d, err := evalBuiltinFunc(f, chunk.Row{})
+	d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, "rg1", d.GetString())
 	require.Equal(t, f.PbCode(), f.Clone().PbCode())
@@ -118,7 +118,7 @@ func TestCurrentRole(t *testing.T) {
 
 	// empty roles
 	var d types.Datum
-	d, err = evalBuiltinFunc(f, chunk.Row{})
+	d, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, "NONE", d.GetString())
 	require.Equal(t, f.PbCode(), f.Clone().PbCode())
@@ -129,7 +129,7 @@ func TestCurrentRole(t *testing.T) {
 	sessionVars.ActiveRoles = append(sessionVars.ActiveRoles, &auth.RoleIdentity{Username: "r_1", Hostname: "%"})
 	sessionVars.ActiveRoles = append(sessionVars.ActiveRoles, &auth.RoleIdentity{Username: "r_2", Hostname: "localhost"})
 
-	d, err = evalBuiltinFunc(f, chunk.Row{})
+	d, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, "`r_1`@`%`,`r_2`@`localhost`", d.GetString())
 	require.Equal(t, f.PbCode(), f.Clone().PbCode())
@@ -143,7 +143,7 @@ func TestConnectionID(t *testing.T) {
 	fc := funcs[ast.ConnectionID]
 	f, err := fc.getFunction(ctx, nil)
 	require.NoError(t, err)
-	d, err := evalBuiltinFunc(f, chunk.Row{})
+	d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), d.GetUint64())
 	require.Equal(t, f.PbCode(), f.Clone().PbCode())
@@ -154,7 +154,7 @@ func TestVersion(t *testing.T) {
 	fc := funcs[ast.Version]
 	f, err := fc.getFunction(ctx, nil)
 	require.NoError(t, err)
-	v, err := evalBuiltinFunc(f, chunk.Row{})
+	v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, mysql.ServerVersion, v.GetString())
 	require.Equal(t, f.PbCode(), f.Clone().PbCode())
@@ -187,7 +187,7 @@ func TestBenchMark(t *testing.T) {
 		})...)
 		require.NoError(t, err)
 
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		require.NoError(t, err)
 		if c.IsNil {
 			require.True(t, d.IsNull())
@@ -238,7 +238,7 @@ func TestRowCount(t *testing.T) {
 	sig, ok := f.(*builtinRowCountSig)
 	require.True(t, ok)
 	require.NotNil(t, sig)
-	intResult, isNull, err := sig.evalInt(chunk.Row{})
+	intResult, isNull, err := sig.evalInt(ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.False(t, isNull)
 	require.Equal(t, int64(10), intResult)
@@ -250,7 +250,7 @@ func TestTiDBVersion(t *testing.T) {
 	ctx := createContext(t)
 	f, err := newFunctionForTest(ctx, ast.TiDBVersion, primitiveValsToConstants(ctx, []interface{}{})...)
 	require.NoError(t, err)
-	v, err := f.Eval(chunk.Row{})
+	v, err := f.Eval(ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, printer.GetTiDBInfo(), v.GetString())
 }
@@ -294,7 +294,7 @@ func TestLastInsertID(t *testing.T) {
 		require.Equal(t, charset.CollationBin, tp.GetCollate())
 		require.Equal(t, mysql.BinaryFlag, tp.GetFlag()&mysql.BinaryFlag)
 		require.Equal(t, mysql.MaxIntWidth, tp.GetFlen())
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -334,7 +334,7 @@ func TestFormatBytes(t *testing.T) {
 		fc := funcs[ast.FormatBytes]
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
 		require.NoError(t, err)
-		v, err := evalBuiltinFunc(f, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
@@ -363,7 +363,7 @@ func TestFormatNanoTime(t *testing.T) {
 		fc := funcs[ast.FormatNanoTime]
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
 		require.NoError(t, err)
-		v, err := evalBuiltinFunc(f, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}

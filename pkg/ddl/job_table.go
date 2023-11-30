@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -244,6 +245,16 @@ func (*ddl) NoConflictJob(se *sess.Session, sql string) (bool, error) {
 
 func (d *ddl) getReorgJob(sess *sess.Session) (*model.Job, error) {
 	return d.getJob(sess, reorg, func(job *model.Job) (bool, error) {
+		if (job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey) &&
+			job.ReorgMeta != nil &&
+			job.ReorgMeta.IsFastReorg &&
+			ingest.LitBackCtxMgr != nil {
+			succeed := ingest.LitBackCtxMgr.MarkJobProcessing(job.ID)
+			if !succeed {
+				// We only allow one task to use ingest at the same time in order to limit the CPU/memory usage.
+				return false, nil
+			}
+		}
 		// Check if there is any block ddl running, like drop schema and flashback cluster.
 		sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where "+
 			"(CONCAT(',', schema_ids, ',') REGEXP CONCAT(',', %s, ',') != 0 and type = %d and processing) "+
@@ -459,10 +470,10 @@ func (*ddl) markJobProcessing(se *sess.Session, job *model.Job) error {
 	return errors.Trace(err)
 }
 
-func (d *ddl) getTableByTxn(store kv.Storage, schemaID, tableID int64) (*model.DBInfo, table.Table, error) {
+func (d *ddl) getTableByTxn(r autoid.Requirement, schemaID, tableID int64) (*model.DBInfo, table.Table, error) {
 	var tbl table.Table
 	var dbInfo *model.DBInfo
-	err := kv.RunInNewTxn(d.ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(d.ctx, r.Store(), false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
 		dbInfo, err1 = t.GetDatabase(schemaID)
@@ -473,7 +484,7 @@ func (d *ddl) getTableByTxn(store kv.Storage, schemaID, tableID int64) (*model.D
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
-		tbl, err1 = getTable(store, schemaID, tblInfo)
+		tbl, err1 = getTable(r, schemaID, tblInfo)
 		return errors.Trace(err1)
 	})
 	return dbInfo, tbl, err

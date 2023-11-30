@@ -110,7 +110,7 @@ func TestConstant(t *testing.T) {
 	require.False(t, NewZero().IsCorrelated())
 	require.True(t, NewZero().ConstItem(sc))
 	require.True(t, NewZero().Decorrelate(nil).Equal(ctx, NewZero()))
-	require.Equal(t, []byte{0x0, 0x8, 0x0}, NewZero().HashCode(sc))
+	require.Equal(t, []byte{0x0, 0x8, 0x0}, NewZero().HashCode())
 	require.False(t, NewZero().Equal(ctx, NewOne()))
 	res, err := NewZero().MarshalJSON()
 	require.NoError(t, err)
@@ -135,19 +135,19 @@ func TestIsBinaryLiteral(t *testing.T) {
 
 func TestConstItem(t *testing.T) {
 	ctx := createContext(t)
-	sf := newFunction(ast.Rand)
+	sf := newFunctionWithMockCtx(ast.Rand)
 	require.False(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx))
-	sf = newFunction(ast.UUID)
+	sf = newFunctionWithMockCtx(ast.UUID)
 	require.False(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx))
-	sf = newFunction(ast.GetParam, NewOne())
+	sf = newFunctionWithMockCtx(ast.GetParam, NewOne())
 	require.False(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx))
-	sf = newFunction(ast.Abs, NewOne())
+	sf = newFunctionWithMockCtx(ast.Abs, NewOne())
 	require.True(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx))
 }
 
 func TestVectorizable(t *testing.T) {
 	exprs := make([]Expression, 0, 4)
-	sf := newFunction(ast.Rand)
+	sf := newFunctionWithMockCtx(ast.Rand)
 	column := &Column{
 		UniqueID: 0,
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
@@ -171,21 +171,21 @@ func TestVectorizable(t *testing.T) {
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	}
 	exprs = exprs[:0]
-	sf = newFunction(ast.SetVar, column0, column1)
+	sf = newFunctionWithMockCtx(ast.SetVar, column0, column1)
 	exprs = append(exprs, sf)
 	require.False(t, Vectorizable(exprs))
 
 	exprs = exprs[:0]
-	sf = newFunction(ast.GetVar, column0)
+	sf = newFunctionWithMockCtx(ast.GetVar, column0)
 	exprs = append(exprs, sf)
 	require.False(t, Vectorizable(exprs))
 
 	exprs = exprs[:0]
-	sf = newFunction(ast.NextVal, column0)
+	sf = newFunctionWithMockCtx(ast.NextVal, column0)
 	exprs = append(exprs, sf)
-	sf = newFunction(ast.LastVal, column0)
+	sf = newFunctionWithMockCtx(ast.LastVal, column0)
 	exprs = append(exprs, sf)
-	sf = newFunction(ast.SetVal, column1, column2)
+	sf = newFunctionWithMockCtx(ast.SetVal, column1, column2)
 	exprs = append(exprs, sf)
 	require.False(t, Vectorizable(exprs))
 }

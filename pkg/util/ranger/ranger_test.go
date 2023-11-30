@@ -307,7 +307,8 @@ create table t(
 	index idx_float_unsigned(float_unsigned),
 	index idx_double_unsigned(double_unsigned),
 	index idx_int(col_int),
-	index idx_float(col_float)
+	index idx_float(col_float),
+	index idx_int_bigint(a, col_int)
 )`)
 	tests := []struct {
 		indexPos    int
@@ -316,6 +317,13 @@ create table t(
 		filterConds string
 		resultStr   string
 	}{
+		{
+			indexPos:    6,
+			exprStr:     `a = 1 and a = 2`,
+			accessConds: "[]",
+			filterConds: "[]",
+			resultStr:   `[]`,
+		},
 		{
 			indexPos:    0,
 			exprStr:     `a not in (0, 1, 2)`,
@@ -1098,7 +1106,7 @@ create table t(
 			indexPos:    0,
 			exprStr:     `a LIKE 'abc%'`,
 			accessConds: `[like(test.t.a, abc%, 92)]`,
-			filterConds: "[]",
+			filterConds: "[like(test.t.a, abc%, 92)]",
 			resultStr:   "[[\"abc\",\"abd\")]",
 		},
 		{
@@ -1112,14 +1120,14 @@ create table t(
 			indexPos:    0,
 			exprStr:     "a LIKE 'abc'",
 			accessConds: "[like(test.t.a, abc, 92)]",
-			filterConds: "[]",
+			filterConds: "[like(test.t.a, abc, 92)]",
 			resultStr:   "[[\"abc\",\"abc\"]]",
 		},
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE "ab\_c"`,
 			accessConds: "[like(test.t.a, ab\\_c, 92)]",
-			filterConds: "[]",
+			filterConds: "[like(test.t.a, ab\\_c, 92)]",
 			resultStr:   "[[\"ab_c\",\"ab_c\"]]",
 		},
 		{
@@ -1133,21 +1141,21 @@ create table t(
 			indexPos:    0,
 			exprStr:     `a LIKE '\%a'`,
 			accessConds: "[like(test.t.a, \\%a, 92)]",
-			filterConds: "[]",
+			filterConds: "[like(test.t.a, \\%a, 92)]",
 			resultStr:   `[["%a","%a"]]`,
 		},
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE "\\"`,
 			accessConds: "[like(test.t.a, \\, 92)]",
-			filterConds: "[]",
+			filterConds: "[like(test.t.a, \\, 92)]",
 			resultStr:   "[[\"\\\\\",\"\\\\\"]]",
 		},
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE "\\\\a%"`,
 			accessConds: `[like(test.t.a, \\a%, 92)]`,
-			filterConds: "[]",
+			filterConds: "[like(test.t.a, \\\\a%, 92)]",
 			resultStr:   "[[\"\\\\a\",\"\\\\b\")]",
 		},
 		{

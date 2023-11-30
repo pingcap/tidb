@@ -10,6 +10,7 @@ go_test(
         "//pkg/domain",
         "//pkg/kv",
         "//pkg/session",
+        "//pkg/session/types",
         "//pkg/store/mockstore",
         "//pkg/testkit/testsetup",
         "@com_github_stretchr_testify//require",

@@ -34,6 +34,7 @@ go_test(
     shard_count = 12,
     deps = [
         "//pkg/kv",
+        "//pkg/parser/ast",
         "//pkg/parser/model",
         "//pkg/store/mockstore",
         "//pkg/testkit/testsetup",

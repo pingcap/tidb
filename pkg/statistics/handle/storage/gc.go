@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
+	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -39,11 +40,11 @@ import (
 
 // statsGCImpl implements StatsGC interface.
 type statsGCImpl struct {
-	statsHandle util.StatsHandle
+	statsHandle types.StatsHandle
 }
 
 // NewStatsGC creates a new StatsGC.
-func NewStatsGC(statsHandle util.StatsHandle) util.StatsGC {
+func NewStatsGC(statsHandle types.StatsHandle) types.StatsGC {
 	return &statsGCImpl{
 		statsHandle: statsHandle,
 	}
@@ -76,7 +77,7 @@ func (gc *statsGCImpl) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
 // For dropped tables, we will first update their version
 // so that other tidb could know that table is deleted.
 func GCStats(sctx sessionctx.Context,
-	statsHandle util.StatsHandle,
+	statsHandle types.StatsHandle,
 	is infoschema.InfoSchema, ddlLease time.Duration) (err error) {
 	// To make sure that all the deleted tables' schema and stats info have been acknowledged to all tidb,
 	// we only garbage collect version before 10 lease.
@@ -165,6 +166,14 @@ func DeleteTableStatsFromKV(sctx sessionctx.Context, statsIDs []int64) (err erro
 	return nil
 }
 
+func forCount(total int64, batch int64) int64 {
+	result := total / batch
+	if total%batch > 0 {
+		result++
+	}
+	return result
+}
+
 // ClearOutdatedHistoryStats clear outdated historical stats
 func ClearOutdatedHistoryStats(sctx sessionctx.Context) error {
 	sql := "select count(*) from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
@@ -182,15 +191,19 @@ func ClearOutdatedHistoryStats(sctx sessionctx.Context) error {
 	}
 	count := rows[0].GetInt64(0)
 	if count > 0 {
-		sql = "delete from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
-		_, err = util.Exec(sctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
-		if err != nil {
+		for n := int64(0); n < forCount(count, int64(1000)); n++ {
+			sql = "delete from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND limit 1000 "
+			_, err = util.Exec(sctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
+			if err != nil {
+				return err
+			}
+		}
+		for n := int64(0); n < forCount(count, int64(50)); n++ {
+			sql = "delete from mysql.stats_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND limit 50 "
+			_, err = util.Exec(sctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
 			return err
 		}
-		sql = "delete from mysql.stats_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
-		_, err = util.Exec(sctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
 		logutil.BgLogger().Info("clear outdated historical stats")
-		return err
 	}
 	return nil
 }
@@ -251,7 +264,7 @@ func removeDeletedExtendedStats(sctx sessionctx.Context, version uint64) (err er
 
 // gcTableStats GC this table's stats.
 func gcTableStats(sctx sessionctx.Context,
-	statsHandler util.StatsHandle,
+	statsHandler types.StatsHandle,
 	is infoschema.InfoSchema, physicalID int64) error {
 	rows, _, err := util.ExecRows(sctx, "select is_index, hist_id from mysql.stats_histograms where table_id = %?", physicalID)
 	if err != nil {
@@ -372,7 +385,7 @@ func writeGCTimestampToKV(sctx sessionctx.Context, newTS uint64) error {
 
 // MarkExtendedStatsDeleted update the status of mysql.stats_extended to be `deleted` and the version of mysql.stats_meta.
 func MarkExtendedStatsDeleted(sctx sessionctx.Context,
-	statsCache util.StatsCache,
+	statsCache types.StatsCache,
 	statsName string, tableID int64, ifExists bool) (statsVer uint64, err error) {
 	rows, _, err := util.ExecRows(sctx, "SELECT name FROM mysql.stats_extended WHERE name = %? and table_id = %? and status in (%?, %?)", statsName, tableID, statistics.ExtendedStatsInited, statistics.ExtendedStatsAnalyzed)
 	if err != nil {

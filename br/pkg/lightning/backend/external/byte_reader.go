@@ -18,18 +18,18 @@ import (
 	"context"
 	"io"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 )
 
 var (
 	// ConcurrentReaderBufferSizePerConc is the buffer size for concurrent reader per
 	// concurrency.
-	ConcurrentReaderBufferSizePerConc = 4 * 1024 * 1024
-	// ConcurrentReaderConcurrency is the concurrency for concurrent reader.
-	ConcurrentReaderConcurrency = 8
+	ConcurrentReaderBufferSizePerConc = int(4 * size.MB)
 )
 
 // byteReader provides structured reading on a byte stream of external storage.
@@ -43,8 +43,6 @@ type byteReader struct {
 	curBuf       []byte
 	curBufOffset int
 	smallBuf     []byte
-
-	retPointers []*[]byte
 
 	concurrentReader struct {
 		largeBufferPool *membuf.Buffer
@@ -68,8 +66,9 @@ func openStoreReaderAndSeek(
 	store storage.ExternalStorage,
 	name string,
 	initFileOffset uint64,
+	prefetchSize int,
 ) (storage.ExternalFileReader, error) {
-	storageReader, err := store.Open(ctx, name, nil)
+	storageReader, err := store.Open(ctx, name, &storage.ReaderOption{PrefetchSize: prefetchSize})
 	if err != nil {
 		return nil, err
 	}
@@ -192,24 +191,23 @@ func (r *byteReader) switchToConcurrentReader() error {
 	return nil
 }
 
-// readNBytes reads the next n bytes from the reader and returns a buffer slice containing those bytes.
-// The returned slice (pointer) can not be used after r.reset. In the same interval of r.reset,
-// byteReader guarantees that the returned slice (pointer) will point to the same content
-// though the slice may be changed.
-func (r *byteReader) readNBytes(n int) (*[]byte, error) {
+// readNBytes reads the next n bytes from the reader and returns a buffer slice
+// containing those bytes. The content of returned slice may be changed after
+// next call.
+func (r *byteReader) readNBytes(n int) ([]byte, error) {
 	b := r.next(n)
 	readLen := len(b)
 	if readLen == n {
-		ret := &b
-		r.retPointers = append(r.retPointers, ret)
-		return ret, nil
+		return b, nil
 	}
 	// If the reader has fewer than n bytes remaining in current buffer,
 	// `auxBuf` is used as a container instead.
+	if n > int(size.GB) {
+		return nil, errors.Errorf("read %d bytes from external storage, exceed max limit %d", n, size.GB)
+	}
 	auxBuf := make([]byte, n)
 	copy(auxBuf, b)
 	for readLen < n {
-		r.cloneSlices()
 		err := r.reload()
 		switch err {
 		case nil:
@@ -225,24 +223,7 @@ func (r *byteReader) readNBytes(n int) (*[]byte, error) {
 		copy(auxBuf[readLen:], b)
 		readLen += len(b)
 	}
-	return &auxBuf, nil
-}
-
-func (r *byteReader) reset() {
-	for i := range r.retPointers {
-		r.retPointers[i] = nil
-	}
-	r.retPointers = r.retPointers[:0]
-}
-
-func (r *byteReader) cloneSlices() {
-	for i := range r.retPointers {
-		copied := make([]byte, len(*r.retPointers[i]))
-		copy(copied, *r.retPointers[i])
-		*r.retPointers[i] = copied
-		r.retPointers[i] = nil
-	}
-	r.retPointers = r.retPointers[:0]
+	return auxBuf, nil
 }
 
 func (r *byteReader) next(n int) []byte {

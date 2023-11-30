@@ -80,29 +80,92 @@ func TestPrepareSortDir(t *testing.T) {
 	require.Nil(t, info)
 }
 
-func TestLoadDataControllerGetAdjustedMaxEngineSize(t *testing.T) {
+func TestCalculateSubtaskCnt(t *testing.T) {
 	tests := []struct {
-		totalSize     int64
-		maxEngineSize config.ByteSize
-		want          int64
+		totalSize       int64
+		maxEngineSize   config.ByteSize
+		executeNodeCnt  int
+		cloudStorageURL string
+		want            int
 	}{
-		{1, 500, 1},
-		{499, 500, 499},
-		{500, 500, 500},
-		{749, 500, 749},
-		{750, 500, 375},
-		{1249, 500, 625},
-		{1250, 500, 417},
-		// ceil(100/3)
-		{100, 30, 34},
+		{1, 500, 0, "", 1},
+		{499, 500, 1, "", 1},
+		{500, 500, 2, "", 1},
+		{749, 500, 3, "", 1},
+		{750, 500, 4, "", 2},
+		{1249, 500, 5, "", 2},
+		{1250, 500, 6, "", 3},
+		{100, 30, 7, "", 3},
+
+		{1, 500, 0, "url", 1},
+		{499, 500, 1, "url", 1},
+		{500, 500, 2, "url", 2},
+		{749, 500, 3, "url", 3},
+		{750, 500, 4, "url", 4},
+		{1249, 500, 5, "url", 5},
+		{1250, 500, 6, "url", 6},
+		{100, 30, 2, "url", 4},
+		{400, 99, 3, "url", 6},
+		{500, 100, 5, "url", 5},
+		{500, 200, 5, "url", 5},
 	}
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%d/%d", tt.totalSize, tt.maxEngineSize), func(t *testing.T) {
 			e := &LoadDataController{
 				Plan: &Plan{
-					MaxEngineSize: tt.maxEngineSize,
-					TotalFileSize: tt.totalSize,
+					MaxEngineSize:   tt.maxEngineSize,
+					TotalFileSize:   tt.totalSize,
+					CloudStorageURI: tt.cloudStorageURL,
 				},
+				ExecuteNodesCnt: tt.executeNodeCnt,
+			}
+			if got := e.calculateSubtaskCnt(); got != tt.want {
+				t.Errorf("calculateSubtaskCnt() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadDataControllerGetAdjustedMaxEngineSize(t *testing.T) {
+	tests := []struct {
+		totalSize       int64
+		maxEngineSize   config.ByteSize
+		executeNodeCnt  int
+		cloudStorageURL string
+		want            int64
+	}{
+		{1, 500, 0, "", 1},
+		{499, 500, 1, "", 499},
+		{500, 500, 2, "", 500},
+		{749, 500, 3, "", 749},
+		{750, 500, 4, "", 375},
+		{1249, 500, 5, "", 625},
+		{1250, 500, 6, "", 417},
+		// ceil(100/3)
+		{100, 30, 7, "", 34},
+
+		{1, 500, 0, "url", 1},
+		{499, 500, 1, "url", 499},
+		{500, 500, 2, "url", 250},
+		{749, 500, 3, "url", 250},
+		{750, 500, 4, "url", 188},
+		{1249, 500, 5, "url", 250},
+		{1250, 500, 6, "url", 209},
+		{100, 30, 2, "url", 25},
+		{400, 99, 3, "url", 67},
+		{500, 100, 5, "url", 100},
+		{500, 200, 5, "url", 100},
+		{500, 100, 1, "url", 100},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%d/%d", tt.totalSize, tt.maxEngineSize), func(t *testing.T) {
+			e := &LoadDataController{
+				Plan: &Plan{
+					MaxEngineSize:   tt.maxEngineSize,
+					TotalFileSize:   tt.totalSize,
+					CloudStorageURI: tt.cloudStorageURL,
+				},
+				ExecuteNodesCnt: tt.executeNodeCnt,
 			}
 			if got := e.getAdjustedMaxEngineSize(); got != tt.want {
 				t.Errorf("getAdjustedMaxEngineSize() = %v, want %v", got, tt.want)

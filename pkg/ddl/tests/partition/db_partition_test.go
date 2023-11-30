@@ -27,7 +27,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
@@ -1262,14 +1261,13 @@ func TestCreateTableWithKeyPartition(t *testing.T) {
 }
 
 func TestCreatePartitionTableWithGlobalIndex(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int, unique key p_b(b))
 	partition by range( a ) (
@@ -1311,13 +1309,13 @@ func TestCreatePartitionTableWithGlobalIndex(t *testing.T) {
 }
 
 func TestDropPartitionWithGlobalIndex(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
 	partition by range( a ) (
@@ -1348,13 +1346,13 @@ func TestDropPartitionWithGlobalIndex(t *testing.T) {
 }
 
 func TestDropMultiPartitionWithGlobalIndex(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
 	partition by range( a ) (
@@ -1386,14 +1384,13 @@ func TestDropMultiPartitionWithGlobalIndex(t *testing.T) {
 }
 
 func TestGlobalIndexInsertInDropPartition(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
 	partition by range( a ) (
@@ -1424,14 +1421,13 @@ func TestGlobalIndexInsertInDropPartition(t *testing.T) {
 }
 
 func TestUpdateGlobalIndex(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
 	partition by range( a ) (
@@ -1448,14 +1444,13 @@ func TestUpdateGlobalIndex(t *testing.T) {
 }
 
 func TestGlobalIndexUpdateInDropPartition(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
 	partition by range( a ) (
@@ -1486,14 +1481,13 @@ func TestGlobalIndexUpdateInDropPartition(t *testing.T) {
 }
 
 func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
 	partition by range( a ) (
@@ -1556,13 +1550,13 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 }
 
 func TestGlobalIndexUpdateInTruncatePartition(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	tk.MustExec("drop table if exists test_global")
@@ -1596,13 +1590,13 @@ func TestGlobalIndexUpdateInTruncatePartition(t *testing.T) {
 }
 
 func TestGlobalIndexUpdateInTruncatePartition4Hash(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	tk.MustExec("drop table if exists test_global")
@@ -1632,13 +1626,13 @@ func TestGlobalIndexUpdateInTruncatePartition4Hash(t *testing.T) {
 }
 
 func TestGlobalIndexReaderInTruncatePartition(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
 	partition by range( a ) (
@@ -1666,12 +1660,13 @@ func TestGlobalIndexReaderInTruncatePartition(t *testing.T) {
 }
 
 func TestGlobalIndexInsertInTruncatePartition(t *testing.T) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	tk.MustExec("drop table if exists test_global")
@@ -1702,13 +1697,13 @@ func TestGlobalIndexInsertInTruncatePartition(t *testing.T) {
 }
 
 func TestGlobalIndexReaderInDropPartition(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
 	partition by range( a ) (
@@ -1738,14 +1733,13 @@ func TestGlobalIndexReaderInDropPartition(t *testing.T) {
 }
 
 func TestGlobalIndexLookUpInDropPartition(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
 	partition by range( a ) (
@@ -1777,14 +1771,13 @@ func TestGlobalIndexLookUpInDropPartition(t *testing.T) {
 func TestGlobalIndexShowTableRegions(t *testing.T) {
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("drop table if exists p")
 	tk.MustExec("set @@global.tidb_scatter_region = on")
 	tk.MustExec(`create table p (id int, c int, d int, unique key uidx(c)) partition by range (c) (
@@ -2085,11 +2078,6 @@ func TestAlterTableExchangePartition(t *testing.T) {
 
 func TestExchangePartitionTableCompatiable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
 	type testCase struct {
 		ptSQL       string
 		ntSQL       string
@@ -2317,6 +2305,10 @@ func TestExchangePartitionTableCompatiable(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	err := tk.Session().GetSessionVars().SetSystemVar("tidb_enable_exchange_partition", "1")
 	require.NoError(t, err)
 	for i, tt := range cases {
@@ -2452,49 +2444,6 @@ func TestExchangePartitionAutoID(t *testing.T) {
 	tk.MustExec("insert into nt values (NULL)")
 	tk.MustQuery("select count(*) from nt where a >= 4000000").Check(testkit.Rows("1"))
 	tk.MustQuery("select count(*) from pt where a >= 4000000").Check(testkit.Rows("1"))
-}
-
-func TestExchangePartitionExpressIndex(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		// Test for table lock.
-		conf.EnableTableLock = true
-		conf.Instance.SlowThreshold = 10000
-		conf.TiKVClient.AsyncCommit.SafeWindow = 0
-		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
-		conf.Experimental.AllowsExpressionIndex = true
-	})
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_exchange_partition=1")
-	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
-	tk.MustExec("drop table if exists pt1;")
-	tk.MustExec("create table pt1(a int, b int, c int) PARTITION BY hash (a) partitions 1;")
-	tk.MustExec("alter table pt1 add index idx((a+c));")
-
-	tk.MustExec("drop table if exists nt1;")
-	tk.MustExec("create table nt1(a int, b int, c int);")
-	tk.MustGetErrCode("alter table pt1 exchange partition p0 with table nt1;", errno.ErrTablesDifferentMetadata)
-
-	tk.MustExec("alter table nt1 add column (`_V$_idx_0` bigint(20) generated always as (a+b) virtual);")
-	tk.MustGetErrCode("alter table pt1 exchange partition p0 with table nt1;", errno.ErrTablesDifferentMetadata)
-
-	// test different expression index when expression returns same field type
-	tk.MustExec("alter table nt1 drop column `_V$_idx_0`;")
-	tk.MustExec("alter table nt1 add index idx((b-c));")
-	tk.MustGetErrCode("alter table pt1 exchange partition p0 with table nt1;", errno.ErrTablesDifferentMetadata)
-
-	// test different expression index when expression returns different field type
-	tk.MustExec("alter table nt1 drop index idx;")
-	tk.MustExec("alter table nt1 add index idx((concat(a, b)));")
-	tk.MustGetErrCode("alter table pt1 exchange partition p0 with table nt1;", errno.ErrTablesDifferentMetadata)
-
-	tk.MustExec("drop table if exists nt2;")
-	tk.MustExec("create table nt2 (a int, b int, c int)")
-	tk.MustExec("alter table nt2 add index idx((a+c))")
-	tk.MustExec("alter table pt1 exchange partition p0 with table nt2")
 }
 
 func TestAddPartitionTooManyPartitions(t *testing.T) {
@@ -3036,14 +2985,6 @@ func TestPartitionErrorCode(t *testing.T) {
 }
 
 func TestCommitWhenSchemaChange(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		// Test for table lock.
-		conf.EnableTableLock = true
-		conf.Instance.SlowThreshold = 10000
-		conf.Experimental.AllowsExpressionIndex = true
-	})
 	store := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_metadata_lock=0")
@@ -3643,6 +3584,154 @@ func TestRemovePartitioningAutoIDs(t *testing.T) {
 		"13 11 11", "14 2 2", "15 12 12", "17 16 18",
 		"19 18 4", "21 20 5", "23 22 6", "25 24 7", "27 26 8", "30 29 9",
 		"32 31 10", "35 34 21", "38 37 22", "41 40 23"))
+}
+
+func TestAlterLastIntervalPartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (id int, create_time datetime)
+		partition by range columns (create_time)
+		interval (1 day)
+		first partition less than ('2023-01-01')
+		last partition less than ('2023-01-03');`)
+	ctx := tk.Session()
+	tbl, err := domain.GetDomain(ctx).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	pd := tbl.Meta().Partition.Definitions
+	require.Equal(t, 3, len(pd))
+	require.Equal(t, "'2023-01-01 00:00:00'", pd[0].LessThan[0])
+	require.Equal(t, "'2023-01-02 00:00:00'", pd[1].LessThan[0])
+	require.Equal(t, "'2023-01-03 00:00:00'", pd[2].LessThan[0])
+	tk.MustExec("alter table t last partition less than ('2024-01-04')")
+	tk.MustExec("alter table t last partition less than ('2025-01-01 00:00:00')")
+	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	pd = tbl.Meta().Partition.Definitions
+	require.Equal(t, 732, len(pd))
+	require.Equal(t, "'2023-01-01 00:00:00'", pd[0].LessThan[0])
+	require.Equal(t, "'2023-01-02 00:00:00'", pd[1].LessThan[0])
+	require.Equal(t, "'2023-01-03 00:00:00'", pd[2].LessThan[0])
+	require.Equal(t, "'2024-12-31 00:00:00'", pd[730].LessThan[0])
+	require.Equal(t, "'2025-01-01 00:00:00'", pd[731].LessThan[0])
+
+	// Test for interval 2 days.
+	tk.MustExec(`create table t2 (id int, create_time datetime)
+		partition by range columns (create_time)
+		interval (2 day)
+		first partition less than ('2023-01-01')
+		last partition less than ('2023-01-05');`)
+	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	require.NoError(t, err)
+	pd = tbl.Meta().Partition.Definitions
+	require.Equal(t, 3, len(pd))
+	require.Equal(t, "'2023-01-01 00:00:00'", pd[0].LessThan[0])
+	require.Equal(t, "'2023-01-03 00:00:00'", pd[1].LessThan[0])
+	require.Equal(t, "'2023-01-05 00:00:00'", pd[2].LessThan[0])
+	tk.MustExec("alter table t2 last partition less than ('2023-01-09')")
+	tk.MustExec("alter table t2 last partition less than ('2023-01-11 00:00:00')")
+	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	require.NoError(t, err)
+	pd = tbl.Meta().Partition.Definitions
+	require.Equal(t, 6, len(pd))
+	require.Equal(t, "'2023-01-01 00:00:00'", pd[0].LessThan[0])
+	require.Equal(t, "'2023-01-03 00:00:00'", pd[1].LessThan[0])
+	require.Equal(t, "'2023-01-05 00:00:00'", pd[2].LessThan[0])
+	require.Equal(t, "'2023-01-07 00:00:00'", pd[3].LessThan[0])
+	require.Equal(t, "'2023-01-09 00:00:00'", pd[4].LessThan[0])
+	require.Equal(t, "'2023-01-11 00:00:00'", pd[5].LessThan[0])
+
+	// Test for day with time.
+	tk.MustExec(`create table t3 (id int, create_time datetime)
+		partition by range columns (create_time)
+		interval (2 day)
+		first partition less than ('2023-01-01 12:01:02')
+		last partition less than ('2023-01-05 12:01:02');`)
+	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
+	require.NoError(t, err)
+	pd = tbl.Meta().Partition.Definitions
+	require.Equal(t, 3, len(pd))
+	require.Equal(t, "'2023-01-01 12:01:02'", pd[0].LessThan[0])
+	require.Equal(t, "'2023-01-03 12:01:02'", pd[1].LessThan[0])
+	require.Equal(t, "'2023-01-05 12:01:02'", pd[2].LessThan[0])
+	tk.MustExec("alter table t3 last partition less than ('2023-01-09 12:01:02')")
+	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
+	require.NoError(t, err)
+	pd = tbl.Meta().Partition.Definitions
+	require.Equal(t, 5, len(pd))
+	require.Equal(t, "'2023-01-01 12:01:02'", pd[0].LessThan[0])
+	require.Equal(t, "'2023-01-03 12:01:02'", pd[1].LessThan[0])
+	require.Equal(t, "'2023-01-05 12:01:02'", pd[2].LessThan[0])
+	require.Equal(t, "'2023-01-07 12:01:02'", pd[3].LessThan[0])
+	require.Equal(t, "'2023-01-09 12:01:02'", pd[4].LessThan[0])
+
+	// Some other test.
+	tk.MustExec(`create table t4 (id int, create_time datetime)
+		partition by range columns (create_time)
+		interval (48 hour)
+		first partition less than ('2023-01-01')
+		last partition less than ('2023-01-05');`)
+	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
+	require.NoError(t, err)
+	pd = tbl.Meta().Partition.Definitions
+	require.Equal(t, 3, len(pd))
+	require.Equal(t, "'2023-01-01 00:00:00'", pd[0].LessThan[0])
+	require.Equal(t, "'2023-01-03 00:00:00'", pd[1].LessThan[0])
+	require.Equal(t, "'2023-01-05 00:00:00'", pd[2].LessThan[0])
+	tk.MustExec("alter table t4 last partition less than ('2023-01-09 00:00:00')")
+	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
+	require.NoError(t, err)
+	pd = tbl.Meta().Partition.Definitions
+	require.Equal(t, 5, len(pd))
+	require.Equal(t, "'2023-01-01 00:00:00'", pd[0].LessThan[0])
+	require.Equal(t, "'2023-01-03 00:00:00'", pd[1].LessThan[0])
+	require.Equal(t, "'2023-01-05 00:00:00'", pd[2].LessThan[0])
+	require.Equal(t, "'2023-01-07 00:00:00'", pd[3].LessThan[0])
+	require.Equal(t, "'2023-01-09 00:00:00'", pd[4].LessThan[0])
+	tk.MustQuery("show create table t4").Check(testkit.Rows("t4 CREATE TABLE `t4` (\n" +
+		"  `id` int(11) DEFAULT NULL,\n" +
+		"  `create_time` datetime DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE COLUMNS(`create_time`)\n" +
+		"(PARTITION `P_LT_2023-01-01 00:00:00` VALUES LESS THAN ('2023-01-01 00:00:00'),\n" +
+		" PARTITION `P_LT_2023-01-03 00:00:00` VALUES LESS THAN ('2023-01-03 00:00:00'),\n" +
+		" PARTITION `P_LT_2023-01-05 00:00:00` VALUES LESS THAN ('2023-01-05 00:00:00'),\n" +
+		" PARTITION `P_LT_2023-01-07 00:00:00` VALUES LESS THAN ('2023-01-07 00:00:00'),\n" +
+		" PARTITION `P_LT_2023-01-09 00:00:00` VALUES LESS THAN ('2023-01-09 00:00:00'))"))
+
+	tk.MustExec(`create table t5 (id int, create_time datetime)
+		partition by range columns (create_time)
+		interval (1 month)
+		first partition less than ('2023-01-01')
+		last partition less than ('2023-05-01');`)
+	tk.MustQuery("show create table t5").Check(testkit.Rows("t5 CREATE TABLE `t5` (\n" +
+		"  `id` int(11) DEFAULT NULL,\n" +
+		"  `create_time` datetime DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE COLUMNS(`create_time`)\n" +
+		"(PARTITION `P_LT_2023-01-01 00:00:00` VALUES LESS THAN ('2023-01-01 00:00:00'),\n" +
+		" PARTITION `P_LT_2023-02-01 00:00:00` VALUES LESS THAN ('2023-02-01 00:00:00'),\n" +
+		" PARTITION `P_LT_2023-03-01 00:00:00` VALUES LESS THAN ('2023-03-01 00:00:00'),\n" +
+		" PARTITION `P_LT_2023-04-01 00:00:00` VALUES LESS THAN ('2023-04-01 00:00:00'),\n" +
+		" PARTITION `P_LT_2023-05-01 00:00:00` VALUES LESS THAN ('2023-05-01 00:00:00'))"))
+
+	tk.MustExec("CREATE TABLE `t6` (\n" +
+		"  `id` int(11) DEFAULT NULL,\n" +
+		"  `create_time` datetime DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE COLUMNS(`create_time`)\n" +
+		"(PARTITION `P_LT_2023-01-01` VALUES LESS THAN ('2023-01-01'),\n" +
+		" PARTITION `P_LT_2023-01-02` VALUES LESS THAN ('2023-01-02'))")
+	tk.MustExec("alter table t6 last partition less than ('2023-01-04')")
+	tk.MustQuery("show create table t6").Check(testkit.Rows("t6 CREATE TABLE `t6` (\n" +
+		"  `id` int(11) DEFAULT NULL,\n" +
+		"  `create_time` datetime DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE COLUMNS(`create_time`)\n" +
+		"(PARTITION `P_LT_2023-01-01` VALUES LESS THAN ('2023-01-01'),\n" +
+		" PARTITION `P_LT_2023-01-02` VALUES LESS THAN ('2023-01-02'),\n" +
+		" PARTITION `P_LT_2023-01-03 00:00:00` VALUES LESS THAN ('2023-01-03 00:00:00'),\n" +
+		" PARTITION `P_LT_2023-01-04 00:00:00` VALUES LESS THAN ('2023-01-04 00:00:00'))"))
 }
 
 // TODO: check EXCHANGE how it handles null (for all types of partitioning!!!)

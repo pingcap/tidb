@@ -244,7 +244,7 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 	counter := metrics.BackfillTotalCounter.WithLabelValues(
 		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
 	return NewAddIndexIngestPipeline(
-		opCtx, d.store, d.sessPool, r.bc, engines, sessCtx, tbl, r.indexes, start, end, totalRowCount, counter)
+		opCtx, d.store, d.sessPool, r.bc, engines, sessCtx, tbl, r.indexes, start, end, totalRowCount, counter, r.job.ReorgMeta)
 }
 
 func (r *readIndexExecutor) buildExternalStorePipeline(
@@ -273,6 +273,19 @@ func (r *readIndexExecutor) buildExternalStorePipeline(
 	counter := metrics.BackfillTotalCounter.WithLabelValues(
 		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
 	return NewWriteIndexToExternalStoragePipeline(
-		opCtx, d.store, r.cloudStorageURI, r.d.sessPool, sessCtx, r.job.ID, subtaskID,
-		tbl, r.indexes, start, end, totalRowCount, counter, onClose)
+		opCtx,
+		d.store,
+		r.cloudStorageURI,
+		r.d.sessPool,
+		sessCtx,
+		r.job.ID,
+		subtaskID,
+		tbl,
+		r.indexes,
+		start,
+		end,
+		totalRowCount,
+		counter,
+		onClose,
+		r.job.ReorgMeta)
 }

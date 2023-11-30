@@ -90,7 +90,7 @@ type ParallelNestedLoopApplyExec struct {
 
 // Open implements the Executor interface.
 func (e *ParallelNestedLoopApplyExec) Open(ctx context.Context) error {
-	err := e.outerExec.Open(ctx)
+	err := exec.Open(ctx, e.outerExec)
 	if err != nil {
 		return err
 	}
@@ -282,7 +282,9 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 	for _, col := range e.corCols[id] {
 		*col.Data = e.outerRow[id].GetDatum(col.Index, col.RetType)
 		if e.useCache {
-			if key, err = codec.EncodeKey(e.Ctx().GetSessionVars().StmtCtx, key, *col.Data); err != nil {
+			key, err = codec.EncodeKey(e.Ctx().GetSessionVars().StmtCtx.TimeZone(), key, *col.Data)
+			err = e.Ctx().GetSessionVars().StmtCtx.HandleError(err)
+			if err != nil {
 				return err
 			}
 		}
@@ -301,7 +303,7 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 		}
 	}
 
-	err = e.innerExecs[id].Open(ctx)
+	err = exec.Open(ctx, e.innerExecs[id])
 	defer terror.Call(e.innerExecs[id].Close)
 	if err != nil {
 		return err

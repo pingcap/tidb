@@ -10,7 +10,7 @@ ALTER TABLE t1 ADD COLUMN cc1 CHAR(36)    NULL DEFAULT '';
 ALTER TABLE t1 ADD COLUMN cc2 VARCHAR(36) NULL DEFAULT '';
 ALTER TABLE t1 ADD INDEX idx1 (cc1);
 ALTER TABLE t1 ADD INDEX idx2 (cc2);
-ALTER TABLE t1 engine=innodb;
+ALTER TABLE t1 engine=innodb, ROW_FORMAT=DYNAMIC;
 admin check table t1;
 drop table if exists t1;
 create table t1 (

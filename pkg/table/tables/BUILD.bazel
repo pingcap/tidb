@@ -88,6 +88,7 @@ go_test(
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/session",
+        "//pkg/session/types",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",

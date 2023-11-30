@@ -15,97 +15,37 @@
 package framework_test
 
 import (
-	"context"
-	"fmt"
-	"sync"
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/mock/gomock"
 )
 
-type testDynamicDispatcherExt struct {
-	cnt int
-}
-
-var _ dispatcher.Extension = (*testDynamicDispatcherExt)(nil)
-
-func (*testDynamicDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {}
-
-func (dsp *testDynamicDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ proto.Step) (metas [][]byte, err error) {
-	// step1
-	if gTask.Step == proto.StepInit {
-		dsp.cnt++
-		return [][]byte{
-			[]byte(fmt.Sprintf("task%d", dsp.cnt)),
-			[]byte(fmt.Sprintf("task%d", dsp.cnt)),
-		}, nil
-	}
-
-	// step2
-	if gTask.Step == proto.StepOne {
-		dsp.cnt++
-		return [][]byte{
-			[]byte(fmt.Sprintf("task%d", dsp.cnt)),
-		}, nil
-	}
-	return nil, nil
-}
-
-func (*testDynamicDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
-	return nil, nil
-}
-
-func (dsp *testDynamicDispatcherExt) GetNextStep(task *proto.Task) proto.Step {
-	switch task.Step {
-	case proto.StepInit:
-		return proto.StepOne
-	case proto.StepOne:
-		return proto.StepTwo
-	default:
-		return proto.StepDone
-	}
-}
-
-func (*testDynamicDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
-	return generateSchedulerNodes4Test()
-}
-
-func (*testDynamicDispatcherExt) IsRetryableErr(error) bool {
-	return true
-}
-
 func TestFrameworkDynamicBasic(t *testing.T) {
-	var m sync.Map
-	ctrl := gomock.NewController(t)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
 	defer ctrl.Finish()
-	RegisterTaskMeta(t, ctrl, &m, &testDynamicDispatcherExt{})
-	distContext := testkit.NewDistExecutionContext(t, 3)
-	DispatchTaskAndCheckSuccess("key1", t, &m)
+
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockDynamicDispatchExt(ctrl), testContext, nil)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key1", testContext, nil)
 	distContext.Close()
 }
 
 func TestFrameworkDynamicHA(t *testing.T) {
-	var m sync.Map
-	ctrl := gomock.NewController(t)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
 	defer ctrl.Finish()
-	RegisterTaskMeta(t, ctrl, &m, &testDynamicDispatcherExt{})
-	distContext := testkit.NewDistExecutionContext(t, 3)
+
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockDynamicDispatchExt(ctrl), testContext, nil)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDynamicDispatchErr", "5*return()"))
-	DispatchTaskAndCheckSuccess("key1", t, &m)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key1", testContext, nil)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDynamicDispatchErr"))
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDynamicDispatchErr1", "5*return()"))
-	DispatchTaskAndCheckSuccess("key2", t, &m)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key2", testContext, nil)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDynamicDispatchErr1"))
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDynamicDispatchErr2", "5*return()"))
-	DispatchTaskAndCheckSuccess("key3", t, &m)
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key3", testContext, nil)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDynamicDispatchErr2"))
 	distContext.Close()
 }

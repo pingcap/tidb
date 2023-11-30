@@ -20,11 +20,11 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
-	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/mock/gomock"
 )
 
@@ -37,32 +37,23 @@ func TestCleanUpRoutine(t *testing.T) {
 	defer pool.Close()
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-
-	dsp, mgr := MockDispatcherManager(t, pool)
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher_manager")
 	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
+
+	dsp, mgr := MockDispatcherManager(t, ctrl, pool, getNumberExampleDispatcherExt(ctrl), mockCleanupRountine)
 	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
-		func(ctx context.Context, taskMgr dispatcher.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
-			mockDispatcher := dsp.MockDispatcher(task)
-			mockDispatcher.Extension = &numberExampleDispatcherExt{}
-			return mockDispatcher
-		})
-	dispatcher.RegisterDispatcherCleanUpFactory(proto.TaskTypeExample,
-		func() dispatcher.CleanUpRoutine {
-			return mockCleanupRountine
-		})
 	dsp.Start()
 	defer dsp.Stop()
-	require.NoError(t, mgr.StartManager(":4000", "background"))
-
-	taskID, err := mgr.AddNewGlobalTask("test", proto.TaskTypeExample, 1, nil)
+	require.NoError(t, mgr.StartManager(ctx, ":4000", "background"))
+	taskID, err := mgr.AddNewGlobalTask(ctx, "test", proto.TaskTypeExample, 1, nil)
 	require.NoError(t, err)
 
 	checkTaskRunningCnt := func() []*proto.Task {
 		var tasks []*proto.Task
 		require.Eventually(t, func() bool {
 			var err error
-			tasks, err = mgr.GetGlobalTasksInStates(proto.TaskStateRunning)
+			tasks, err = mgr.GetGlobalTasksInStates(ctx, proto.TaskStateRunning)
 			require.NoError(t, err)
 			return len(tasks) == 1
 		}, time.Second, 50*time.Millisecond)
@@ -71,7 +62,7 @@ func TestCleanUpRoutine(t *testing.T) {
 
 	checkSubtaskCnt := func(tasks []*proto.Task, taskID int64) {
 		require.Eventually(t, func() bool {
-			cnt, err := mgr.GetSubtaskInStatesCnt(taskID, proto.TaskStatePending)
+			cnt, err := mgr.GetSubtaskInStatesCnt(ctx, taskID, proto.TaskStatePending)
 			require.NoError(t, err)
 			return int64(subtaskCnt) == cnt
 		}, time.Second, 50*time.Millisecond)
@@ -80,12 +71,12 @@ func TestCleanUpRoutine(t *testing.T) {
 	tasks := checkTaskRunningCnt()
 	checkSubtaskCnt(tasks, taskID)
 	for i := 1; i <= subtaskCnt; i++ {
-		err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateSucceed, nil)
+		err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.TaskStateSucceed, nil)
 		require.NoError(t, err)
 	}
 	dsp.DoCleanUpRoutine()
 	require.Eventually(t, func() bool {
-		tasks, err := mgr.GetGlobalTasksFromHistoryInStates(proto.TaskStateSucceed)
+		tasks, err := mgr.GetGlobalTasksFromHistoryInStates(ctx, proto.TaskStateSucceed)
 		require.NoError(t, err)
 		return len(tasks) != 0
 	}, time.Second*10, time.Millisecond*300)
@@ -102,29 +93,19 @@ func TestCleanUpMeta(t *testing.T) {
 	defer ctrl.Finish()
 	mockTaskMgr := mock.NewMockTaskManager(ctrl)
 	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
-	dspMgr := MockDispatcherManagerWithMockTaskMgr(t, pool, mockTaskMgr)
-	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
-		func(ctx context.Context, taskMgr dispatcher.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
-			mockDispatcher := dspMgr.MockDispatcher(task)
-			mockDispatcher.Extension = &numberExampleDispatcherExt{}
-			return mockDispatcher
-		})
-	dispatcher.RegisterDispatcherCleanUpFactory(proto.TaskTypeExample,
-		func() dispatcher.CleanUpRoutine {
-			return mockCleanupRountine
-		})
+	dspMgr := MockDispatcherManagerWithMockTaskMgr(t, ctrl, pool, mockTaskMgr, getNumberExampleDispatcherExt(ctrl), mockCleanupRountine)
 
-	mockTaskMgr.EXPECT().GetAllNodes().Return([]string{":4000", ":4001"}, nil)
-	mockTaskMgr.EXPECT().CleanUpMeta(gomock.Any()).Return(nil)
+	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]string{":4000", ":4001"}, nil)
+	mockTaskMgr.EXPECT().CleanUpMeta(gomock.Any(), gomock.Any()).Return(nil)
 	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	require.Equal(t, 1, dspMgr.CleanUpMeta())
 
-	mockTaskMgr.EXPECT().GetAllNodes().Return([]string{":4000"}, nil)
+	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]string{":4000"}, nil)
 	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	require.Equal(t, 0, dspMgr.CleanUpMeta())
 
-	mockTaskMgr.EXPECT().GetAllNodes().Return([]string{":4000", ":4001", ":4003"}, nil)
-	mockTaskMgr.EXPECT().CleanUpMeta(gomock.Any()).Return(nil)
+	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]string{":4000", ":4001", ":4003"}, nil)
+	mockTaskMgr.EXPECT().CleanUpMeta(gomock.Any(), gomock.Any()).Return(nil)
 	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	require.Equal(t, 2, dspMgr.CleanUpMeta())
 }

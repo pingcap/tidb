@@ -2,7 +2,6 @@ drop table if exists t;
 create table t(a bigint unsigned primary key, b int, c int, index idx(a, b));
 insert into t values(1, 1, 1);
 admin check table t;
-
 drop table if exists t1;
 CREATE TABLE t1 (c1 int);
 INSERT INTO t1 SET c1 = 1;
@@ -10,9 +9,8 @@ ALTER TABLE t1 ADD COLUMN cc1 CHAR(36)    NULL DEFAULT '';
 ALTER TABLE t1 ADD COLUMN cc2 VARCHAR(36) NULL DEFAULT '';
 ALTER TABLE t1 ADD INDEX idx1 (cc1);
 ALTER TABLE t1 ADD INDEX idx2 (cc2);
-ALTER TABLE t1 engine=innodb;
+ALTER TABLE t1 engine=innodb, ROW_FORMAT=DYNAMIC;
 admin check table t1;
-
 drop table if exists t1;
 create table t1 (
 a int             as (JSON_EXTRACT(k,'$.a')),
@@ -37,13 +35,11 @@ alter table t1 add index idx_j(j);
 alter table t1 add index idx_i(i);
 alter table t1 add index idx_m(a,c,d,e,f,g,h,i,j);
 admin check table t1;
-
 drop table if exists t;
 create table t (a bigint, b varchar(255), c int, primary key (a, b), index idx_0(a, b), index idx_1(b, c));
 insert into t values (1, '1', 1);
 insert into t values (2, '2', 2);
 admin check table t;
-
 insert into t values (3, '3', 3);
 insert into t values (4, '4', 4);
 insert into t values (5, '5', 5);
@@ -242,19 +238,13 @@ insert into t values (197, '197', 197);
 insert into t values (198, '198', 198);
 insert into t values (199, '199', 199);
 admin check table t;
-
 create index idx_2 on t (c);
 admin check table t;
-
 create index idx_3 on t (a,c);
 admin check table t;
-
 alter table t add column e char(36);
 admin check table t;
-
 alter table t add column d char(36) NULL DEFAULT '';
 admin check table t;
-
 insert into t values (1000, '1000', 1000, '1000', '1000');
 admin check table t;
-

@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -36,18 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
-
-// getPartialResultBatch fetches a batch of partial results from HashAggIntermData.
-func (d *HashAggIntermData) getPartialResultBatch(_ *stmtctx.StatementContext, prs [][]aggfuncs.PartialResult, _ []aggfuncs.AggFunc, maxChunkSize int) (_ [][]aggfuncs.PartialResult, groupKeys []string, reachEnd bool) {
-	keyStart := d.cursor
-	for ; d.cursor < len(d.groupKeys) && len(prs) < maxChunkSize; d.cursor++ {
-		prs = append(prs, d.partialResultMap[d.groupKeys[d.cursor]])
-	}
-	if d.cursor == len(d.groupKeys) {
-		reachEnd = true
-	}
-	return prs, d.groupKeys[keyStart:d.cursor], reachEnd
-}
 
 func closeBaseExecutor(b *exec.BaseExecutor) {
 	if r := recover(); r != nil {
@@ -84,6 +71,7 @@ func GetGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 		groupKey = append(groupKey, make([]byte, 0, 10*len(groupByItems)))
 	}
 
+	errCtx := ctx.GetSessionVars().StmtCtx.ErrCtx()
 	for _, item := range groupByItems {
 		tp := item.GetType()
 
@@ -115,14 +103,15 @@ func GetGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 			tp = &newTp
 		}
 
-		groupKey, err = codec.HashGroupKey(ctx.GetSessionVars().StmtCtx, input.NumRows(), buf, groupKey, tp)
+		groupKey, err = codec.HashGroupKey(ctx.GetSessionVars().StmtCtx.TimeZone(), input.NumRows(), buf, groupKey, tp)
+		err = errCtx.HandleError(err)
 		if err != nil {
 			expression.PutColumn(buf)
 			return nil, err
 		}
 		expression.PutColumn(buf)
 	}
-	return groupKey, nil
+	return groupKey[:numRows], nil
 }
 
 // HashAggRuntimeStats record the HashAggExec runtime stat

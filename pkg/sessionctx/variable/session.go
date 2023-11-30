@@ -1203,6 +1203,9 @@ type SessionVars struct {
 	// EnableClusteredIndex indicates whether to enable clustered index when creating a new table.
 	EnableClusteredIndex ClusteredIndexDefMode
 
+	// EnableGlobalIndex indicates whether we could create an global index on a partition table or not.
+	EnableGlobalIndex bool
+
 	// PresumeKeyNotExists indicates lazy existence checking is enabled.
 	PresumeKeyNotExists bool
 
@@ -1559,6 +1562,9 @@ type SessionVars struct {
 	// OptObjectiveModerate: The default value. The optimizer considers the real-time stats (real-time row count, modify count).
 	// OptObjectiveDeterminate: The optimizer doesn't consider the real-time stats.
 	OptObjective string
+
+	CompressionAlgorithm int
+	CompressionLevel     int
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.

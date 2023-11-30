@@ -17,6 +17,7 @@ package dispatcher
 import (
 	"context"
 	"math/rand"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -39,6 +40,10 @@ const (
 	MaxSubtaskConcurrency = 256
 	// DefaultLiveNodesCheckInterval is the tick interval of fetching all server infos from etcd.
 	DefaultLiveNodesCheckInterval = 2
+	// for a cancelled task, it's terminal state is reverted or reverted_failed,
+	// so we use a special error message to indicate that the task is cancelled
+	// by user.
+	taskCancelMsg = "cancelled by user"
 )
 
 var (
@@ -138,7 +143,7 @@ func (*BaseDispatcher) Close() {
 
 // refreshTask fetch task state from tidb_global_task table.
 func (d *BaseDispatcher) refreshTask() error {
-	newTask, err := d.taskMgr.GetGlobalTaskByID(d.Task.ID)
+	newTask, err := d.taskMgr.GetGlobalTaskByID(d.ctx, d.Task.ID)
 	if err != nil {
 		logutil.Logger(d.logCtx).Error("refresh task failed", zap.Error(err))
 		return err
@@ -166,7 +171,7 @@ func (d *BaseDispatcher) scheduleTask() {
 			}
 			failpoint.Inject("cancelTaskAfterRefreshTask", func(val failpoint.Value) {
 				if val.(bool) && d.Task.State == proto.TaskStateRunning {
-					err := d.taskMgr.CancelGlobalTask(d.Task.ID)
+					err := d.taskMgr.CancelGlobalTask(d.ctx, d.Task.ID)
 					if err != nil {
 						logutil.Logger(d.logCtx).Error("cancel task failed", zap.Error(err))
 					}
@@ -175,7 +180,7 @@ func (d *BaseDispatcher) scheduleTask() {
 
 			failpoint.Inject("pausePendingTask", func(val failpoint.Value) {
 				if val.(bool) && d.Task.State == proto.TaskStatePending {
-					_, err := d.taskMgr.PauseTask(d.Task.Key)
+					_, err := d.taskMgr.PauseTask(d.ctx, d.Task.Key)
 					if err != nil {
 						logutil.Logger(d.logCtx).Error("pause task failed", zap.Error(err))
 					}
@@ -185,7 +190,7 @@ func (d *BaseDispatcher) scheduleTask() {
 
 			failpoint.Inject("pauseTaskAfterRefreshTask", func(val failpoint.Value) {
 				if val.(bool) && d.Task.State == proto.TaskStateRunning {
-					_, err := d.taskMgr.PauseTask(d.Task.Key)
+					_, err := d.taskMgr.PauseTask(d.ctx, d.Task.Key)
 					if err != nil {
 						logutil.Logger(d.logCtx).Error("pause task failed", zap.Error(err))
 					}
@@ -236,14 +241,14 @@ func (d *BaseDispatcher) scheduleTask() {
 // handle task in cancelling state, dispatch revert subtasks.
 func (d *BaseDispatcher) onCancelling() error {
 	logutil.Logger(d.logCtx).Info("on cancelling state", zap.Stringer("state", d.Task.State), zap.Int64("stage", int64(d.Task.Step)))
-	errs := []error{errors.New("cancel")}
+	errs := []error{errors.New(taskCancelMsg)}
 	return d.onErrHandlingStage(errs)
 }
 
 // handle task in pausing state, cancel all running subtasks.
 func (d *BaseDispatcher) onPausing() error {
 	logutil.Logger(d.logCtx).Info("on pausing state", zap.Stringer("state", d.Task.State), zap.Int64("stage", int64(d.Task.Step)))
-	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(d.Task.ID, proto.TaskStateRunning, proto.TaskStatePending)
+	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(d.ctx, d.Task.ID, proto.TaskStateRunning, proto.TaskStatePending)
 	if err != nil {
 		logutil.Logger(d.logCtx).Warn("check task failed", zap.Error(err))
 		return err
@@ -276,7 +281,7 @@ var TestSyncChan = make(chan struct{})
 // handle task in resuming state
 func (d *BaseDispatcher) onResuming() error {
 	logutil.Logger(d.logCtx).Info("on resuming state", zap.Stringer("state", d.Task.State), zap.Int64("stage", int64(d.Task.Step)))
-	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(d.Task.ID, proto.TaskStatePaused)
+	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(d.ctx, d.Task.ID, proto.TaskStatePaused)
 	if err != nil {
 		logutil.Logger(d.logCtx).Warn("check task failed", zap.Error(err))
 		return err
@@ -291,20 +296,21 @@ func (d *BaseDispatcher) onResuming() error {
 		return err
 	}
 
-	return d.taskMgr.ResumeSubtasks(d.Task.ID)
+	return d.taskMgr.ResumeSubtasks(d.ctx, d.Task.ID)
 }
 
 // handle task in reverting state, check all revert subtasks finished.
 func (d *BaseDispatcher) onReverting() error {
 	logutil.Logger(d.logCtx).Debug("on reverting state", zap.Stringer("state", d.Task.State), zap.Int64("stage", int64(d.Task.Step)))
-	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(d.Task.ID, proto.TaskStateRevertPending, proto.TaskStateReverting)
+	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(d.ctx, d.Task.ID, proto.TaskStateRevertPending, proto.TaskStateReverting)
 	if err != nil {
 		logutil.Logger(d.logCtx).Warn("check task failed", zap.Error(err))
 		return err
 	}
 	if cnt == 0 {
-		// Finish the rollback step.
-		logutil.Logger(d.logCtx).Info("all reverting tasks finished, update the task to reverted state")
+		if err = d.OnDone(d.ctx, d, d.Task); err != nil {
+			return errors.Trace(err)
+		}
 		return d.updateTask(proto.TaskStateReverted, nil, RetrySQLTimes)
 	}
 	// Wait all subtasks in this stage finished.
@@ -323,7 +329,7 @@ func (d *BaseDispatcher) onPending() error {
 // If subtasks finished, run into the next stage.
 func (d *BaseDispatcher) onRunning() error {
 	logutil.Logger(d.logCtx).Debug("on running state", zap.Stringer("state", d.Task.State), zap.Int64("stage", int64(d.Task.Step)))
-	subTaskErrs, err := d.taskMgr.CollectSubTaskError(d.Task.ID)
+	subTaskErrs, err := d.taskMgr.CollectSubTaskError(d.ctx, d.Task.ID)
 	if err != nil {
 		logutil.Logger(d.logCtx).Warn("collect subtask error failed", zap.Error(err))
 		return err
@@ -333,7 +339,7 @@ func (d *BaseDispatcher) onRunning() error {
 		return d.onErrHandlingStage(subTaskErrs)
 	}
 	// check current stage finished.
-	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(d.Task.ID, proto.TaskStatePending, proto.TaskStateRunning)
+	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(d.ctx, d.Task.ID, proto.TaskStatePending, proto.TaskStateRunning)
 	if err != nil {
 		logutil.Logger(d.logCtx).Warn("check task failed", zap.Error(err))
 		return err
@@ -355,13 +361,13 @@ func (d *BaseDispatcher) onRunning() error {
 func (d *BaseDispatcher) onFinished() error {
 	metrics.UpdateMetricsForFinishTask(d.Task)
 	logutil.Logger(d.logCtx).Debug("schedule task, task is finished", zap.Stringer("state", d.Task.State))
-	return d.taskMgr.TransferSubTasks2History(d.Task.ID)
+	return d.taskMgr.TransferSubTasks2History(d.ctx, d.Task.ID)
 }
 
 func (d *BaseDispatcher) replaceDeadNodesIfAny() error {
 	if len(d.taskNodes) == 0 {
 		var err error
-		d.taskNodes, err = d.taskMgr.GetSchedulerIDsByTaskIDAndStep(d.Task.ID, d.Task.Step)
+		d.taskNodes, err = d.taskMgr.GetSchedulerIDsByTaskIDAndStep(d.ctx, d.Task.ID, d.Task.Step)
 		if err != nil {
 			return err
 		}
@@ -373,9 +379,16 @@ func (d *BaseDispatcher) replaceDeadNodesIfAny() error {
 		if err != nil {
 			return err
 		}
-		eligibleServerInfos, err := d.GetEligibleInstances(d.ctx, d.Task)
+
+		eligibleServerInfos, filter, err := d.GetEligibleInstances(d.ctx, d.Task)
 		if err != nil {
 			return err
+		}
+		if filter {
+			eligibleServerInfos, err = d.filterByRole(eligibleServerInfos)
+			if err != nil {
+				return err
+			}
 		}
 		newInfos := serverInfos[:0]
 		for _, m := range serverInfos {
@@ -404,10 +417,10 @@ func (d *BaseDispatcher) replaceDeadNodesIfAny() error {
 		}
 		if len(replaceNodes) > 0 {
 			logutil.Logger(d.logCtx).Info("reschedule subtasks to other nodes", zap.Int("node-cnt", len(replaceNodes)))
-			if err := d.taskMgr.UpdateFailedSchedulerIDs(d.Task.ID, replaceNodes); err != nil {
+			if err := d.taskMgr.UpdateFailedSchedulerIDs(d.ctx, d.Task.ID, replaceNodes); err != nil {
 				return err
 			}
-			if err := d.taskMgr.CleanUpMeta(cleanNodes); err != nil {
+			if err := d.taskMgr.CleanUpMeta(d.ctx, cleanNodes); err != nil {
 				return err
 			}
 			// replace local cache.
@@ -434,7 +447,7 @@ func (d *BaseDispatcher) updateTask(taskState proto.TaskState, newSubTasks []*pr
 	}
 
 	failpoint.Inject("cancelBeforeUpdate", func() {
-		err := d.taskMgr.CancelGlobalTask(d.Task.ID)
+		err := d.taskMgr.CancelGlobalTask(d.ctx, d.Task.ID)
 		if err != nil {
 			logutil.Logger(d.logCtx).Error("cancel task failed", zap.Error(err))
 		}
@@ -442,7 +455,7 @@ func (d *BaseDispatcher) updateTask(taskState proto.TaskState, newSubTasks []*pr
 
 	var retryable bool
 	for i := 0; i < retryTimes; i++ {
-		retryable, err = d.taskMgr.UpdateGlobalTaskAndAddSubTasks(d.Task, newSubTasks, prevState)
+		retryable, err = d.taskMgr.UpdateGlobalTaskAndAddSubTasks(d.ctx, d.Task, newSubTasks, prevState)
 		if err == nil || !retryable {
 			break
 		}
@@ -460,29 +473,23 @@ func (d *BaseDispatcher) updateTask(taskState proto.TaskState, newSubTasks []*pr
 }
 
 func (d *BaseDispatcher) onErrHandlingStage(receiveErrs []error) error {
-	// 1. generate the needed task meta and subTask meta (dist-plan).
-	meta, err := d.OnErrStage(d.ctx, d, d.Task, receiveErrs)
-	if err != nil {
-		// OnErrStage must be retryable, if not, there will have resource leak for tasks.
-		logutil.Logger(d.logCtx).Warn("handle error failed", zap.Error(err))
-		return err
-	}
+	// we only store the first error.
+	d.Task.Error = receiveErrs[0]
 
-	// 2. dispatch revert dist-plan to EligibleInstances.
-	return d.dispatchSubTask4Revert(meta)
-}
+	var subTasks []*proto.Subtask
+	// when step of task is `StepInit`, no need to do revert
+	if d.Task.Step != proto.StepInit {
+		instanceIDs, err := d.GetAllSchedulerIDs(d.ctx, d.Task)
+		if err != nil {
+			logutil.Logger(d.logCtx).Warn("get task's all instances failed", zap.Error(err))
+			return err
+		}
 
-func (d *BaseDispatcher) dispatchSubTask4Revert(meta []byte) error {
-	instanceIDs, err := d.GetAllSchedulerIDs(d.ctx, d.Task)
-	if err != nil {
-		logutil.Logger(d.logCtx).Warn("get task's all instances failed", zap.Error(err))
-		return err
-	}
-
-	subTasks := make([]*proto.Subtask, 0, len(instanceIDs))
-	for _, id := range instanceIDs {
-		// reverting subtasks belong to the same step as current active step.
-		subTasks = append(subTasks, proto.NewSubtask(d.Task.Step, d.Task.ID, d.Task.Type, id, meta))
+		subTasks = make([]*proto.Subtask, 0, len(instanceIDs))
+		for _, id := range instanceIDs {
+			// reverting subtasks belong to the same step as current active step.
+			subTasks = append(subTasks, proto.NewSubtask(d.Task.Step, d.Task.ID, d.Task.Type, id, []byte("{}")))
+		}
 	}
 	return d.updateTask(proto.TaskStateReverting, subTasks, RetrySQLTimes)
 }
@@ -533,7 +540,10 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 			taskState := proto.TaskStateRunning
 			if d.Task.Step == proto.StepDone {
 				taskState = proto.TaskStateSucceed
-				logutil.Logger(d.logCtx).Info("all subtasks dispatched and processed, finish the task")
+				if err = d.OnDone(d.ctx, d, d.Task); err != nil {
+					err = errors.Trace(err)
+					return
+				}
 			} else {
 				logutil.Logger(d.logCtx).Info("move to next stage",
 					zap.Int64("from", int64(currStep)), zap.Int64("to", int64(d.Task.Step)))
@@ -545,7 +555,25 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 
 	for {
 		// 3. generate a batch of subtasks.
-		metas, err := d.OnNextSubtasksBatch(d.ctx, d, d.Task, nextStep)
+		/// select all available TiDB nodes for task.
+		serverNodes, filter, err := d.GetEligibleInstances(d.ctx, d.Task)
+		logutil.Logger(d.logCtx).Debug("eligible instances", zap.Int("num", len(serverNodes)))
+
+		if err != nil {
+			return err
+		}
+		if filter {
+			serverNodes, err = d.filterByRole(serverNodes)
+			if err != nil {
+				return err
+			}
+		}
+		logutil.Logger(d.logCtx).Info("eligible instances", zap.Int("num", len(serverNodes)))
+		if len(serverNodes) == 0 {
+			return errors.New("no available TiDB node to dispatch subtasks")
+		}
+
+		metas, err := d.OnNextSubtasksBatch(d.ctx, d, d.Task, serverNodes, nextStep)
 		if err != nil {
 			logutil.Logger(d.logCtx).Warn("generate part of subtasks failed", zap.Error(err))
 			return d.handlePlanErr(err)
@@ -556,7 +584,7 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 		})
 
 		// 4. dispatch batch of subtasks to EligibleInstances.
-		err = d.dispatchSubTask(nextStep, metas)
+		err = d.dispatchSubTask(nextStep, metas, serverNodes)
 		if err != nil {
 			return err
 		}
@@ -572,27 +600,11 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 	return nil
 }
 
-func (d *BaseDispatcher) dispatchSubTask(subtaskStep proto.Step, metas [][]byte) error {
+func (d *BaseDispatcher) dispatchSubTask(
+	subtaskStep proto.Step,
+	metas [][]byte,
+	serverNodes []*infosync.ServerInfo) error {
 	logutil.Logger(d.logCtx).Info("dispatch subtasks", zap.Stringer("state", d.Task.State), zap.Int64("step", int64(d.Task.Step)), zap.Uint64("concurrency", d.Task.Concurrency), zap.Int("subtasks", len(metas)))
-
-	// select all available TiDB nodes for task.
-	serverNodes, err := d.GetEligibleInstances(d.ctx, d.Task)
-	logutil.Logger(d.logCtx).Debug("eligible instances", zap.Int("num", len(serverNodes)))
-
-	if err != nil {
-		return err
-	}
-	// 4. filter by role.
-	serverNodes, err = d.filterByRole(serverNodes)
-	if err != nil {
-		return err
-	}
-
-	logutil.Logger(d.logCtx).Info("eligible instances", zap.Int("num", len(serverNodes)))
-
-	if len(serverNodes) == 0 {
-		return errors.New("no available TiDB node to dispatch subtasks")
-	}
 	d.taskNodes = make([]string, len(serverNodes))
 	for i := range serverNodes {
 		d.taskNodes[i] = disttaskutil.GenerateExecID(serverNodes[i].IP, serverNodes[i].Port)
@@ -606,6 +618,10 @@ func (d *BaseDispatcher) dispatchSubTask(subtaskStep proto.Step, metas [][]byte)
 		logutil.Logger(d.logCtx).Debug("create subtasks", zap.String("instanceID", instanceID))
 		subTasks = append(subTasks, proto.NewSubtask(subtaskStep, d.Task.ID, d.Task.Type, instanceID, meta))
 	}
+	failpoint.Inject("cancelBeforeUpdateTask", func() {
+		_ = d.updateTask(proto.TaskStateCancelling, subTasks, RetrySQLTimes)
+	})
+
 	return d.updateTask(d.Task.State, subTasks, RetrySQLTimes)
 }
 
@@ -615,12 +631,21 @@ func (d *BaseDispatcher) handlePlanErr(err error) error {
 		return err
 	}
 	d.Task.Error = err
-	// state transform: pending -> failed.
+
+	if err = d.OnDone(d.ctx, d, d.Task); err != nil {
+		return errors.Trace(err)
+	}
 	return d.updateTask(proto.TaskStateFailed, nil, RetrySQLTimes)
 }
 
+// MockServerInfo exported for dispatcher_test.go
+var MockServerInfo []*infosync.ServerInfo
+
 // GenerateSchedulerNodes generate a eligible TiDB nodes.
 func GenerateSchedulerNodes(ctx context.Context) (serverNodes []*infosync.ServerInfo, err error) {
+	failpoint.Inject("mockSchedulerNodes", func() {
+		failpoint.Return(MockServerInfo, nil)
+	})
 	var serverInfos map[string]*infosync.ServerInfo
 	_, etcd := ctx.Value("etcd").(bool)
 	if intest.InTest && !etcd {
@@ -643,13 +668,13 @@ func GenerateSchedulerNodes(ctx context.Context) (serverNodes []*infosync.Server
 }
 
 func (d *BaseDispatcher) filterByRole(infos []*infosync.ServerInfo) ([]*infosync.ServerInfo, error) {
-	nodes, err := d.taskMgr.GetNodesByRole("background")
+	nodes, err := d.taskMgr.GetNodesByRole(d.ctx, "background")
 	if err != nil {
 		return nil, err
 	}
 
 	if len(nodes) == 0 {
-		nodes, err = d.taskMgr.GetNodesByRole("")
+		nodes, err = d.taskMgr.GetNodesByRole(d.ctx, "")
 	}
 
 	if err != nil {
@@ -668,7 +693,9 @@ func (d *BaseDispatcher) filterByRole(infos []*infosync.ServerInfo) ([]*infosync
 
 // GetAllSchedulerIDs gets all the scheduler IDs.
 func (d *BaseDispatcher) GetAllSchedulerIDs(ctx context.Context, task *proto.Task) ([]string, error) {
-	serverInfos, err := d.GetEligibleInstances(ctx, task)
+	// We get all servers instead of eligible servers here
+	// because eligible servers may change during the task execution.
+	serverInfos, err := GenerateSchedulerNodes(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -676,7 +703,7 @@ func (d *BaseDispatcher) GetAllSchedulerIDs(ctx context.Context, task *proto.Tas
 		return nil, nil
 	}
 
-	schedulerIDs, err := d.taskMgr.GetSchedulerIDsByTaskID(task.ID)
+	schedulerIDs, err := d.taskMgr.GetSchedulerIDsByTaskID(d.ctx, task.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -691,7 +718,7 @@ func (d *BaseDispatcher) GetAllSchedulerIDs(ctx context.Context, task *proto.Tas
 
 // GetPreviousSubtaskMetas get subtask metas from specific step.
 func (d *BaseDispatcher) GetPreviousSubtaskMetas(taskID int64, step proto.Step) ([][]byte, error) {
-	previousSubtasks, err := d.taskMgr.GetSucceedSubtasksByStep(taskID, step)
+	previousSubtasks, err := d.taskMgr.GetSucceedSubtasksByStep(d.ctx, taskID, step)
 	if err != nil {
 		logutil.Logger(d.logCtx).Warn("get previous succeed subtask failed", zap.Int64("step", int64(step)))
 		return nil, err
@@ -705,7 +732,7 @@ func (d *BaseDispatcher) GetPreviousSubtaskMetas(taskID int64, step proto.Step) 
 
 // GetPreviousSchedulerIDs gets scheduler IDs that run previous step.
 func (d *BaseDispatcher) GetPreviousSchedulerIDs(_ context.Context, taskID int64, step proto.Step) ([]string, error) {
-	return d.taskMgr.GetSchedulerIDsByTaskIDAndStep(taskID, step)
+	return d.taskMgr.GetSchedulerIDsByTaskIDAndStep(d.ctx, taskID, step)
 }
 
 // WithNewSession executes the function with a new session.
@@ -716,4 +743,9 @@ func (d *BaseDispatcher) WithNewSession(fn func(se sessionctx.Context) error) er
 // WithNewTxn executes the fn in a new transaction.
 func (d *BaseDispatcher) WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error {
 	return d.taskMgr.WithNewTxn(ctx, fn)
+}
+
+// IsCancelledErr checks if the error is a cancelled error.
+func IsCancelledErr(err error) bool {
+	return strings.Contains(err.Error(), taskCancelMsg)
 }
