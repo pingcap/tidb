@@ -43,7 +43,8 @@ const (
 	// DefaultRecordPlanInSlowLog is the default value for whether enable log query plan in the slow log.
 	DefaultRecordPlanInSlowLog = 1
 	// DefaultTiDBEnableSlowLog enables TiDB to log slow queries.
-	DefaultTiDBEnableSlowLog  = true
+	DefaultTiDBEnableSlowLog = true
+	// DefaultExpensiveScanRatio is the ratio of iterated keys and processed keys.
 	DefaultExpensiveScanRatio = 20
 )
 
