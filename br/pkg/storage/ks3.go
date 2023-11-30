@@ -672,6 +672,7 @@ func (rs *KS3Storage) Create(ctx context.Context, name string, option *WriterOpt
 		if option != nil && option.PartSize > 0 {
 			partSize = option.PartSize
 		}
+		println("use partSize", partSize)
 		upParams := &s3manager.UploadInput{
 			Bucket: aws.String(rs.options.Bucket),
 			Key:    aws.String(rs.options.Prefix + name),
