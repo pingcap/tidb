@@ -404,7 +404,7 @@ func (stm *TaskManager) GetSubtasksByExecIdsAndStepAndState(ctx context.Context,
 	for _, tidbID := range tidbIDs {
 		args = append(args, tidbID)
 	}
-	rs, err := stm.executeSQLWithNewSession(ctx, `select * from mysql.tidb_background_subtask
+	rs, err := stm.executeSQLWithNewSession(ctx, `select `+subtaskColumns+` from mysql.tidb_background_subtask
 		where task_key = %? and step = %? and state = %?
 		and exec_id in (`+strings.Repeat("%?,", len(tidbIDs)-1)+"%?)", args...)
 	if err != nil {
@@ -941,7 +941,7 @@ func (stm *TaskManager) GetSubtasksForImportInto(ctx context.Context, taskID int
 // TransferSubTasks2History move all the finished subTask to tidb_background_subtask_history by taskID
 func (stm *TaskManager) TransferSubTasks2History(ctx context.Context, taskID int64) error {
 	return stm.WithNewTxn(ctx, func(se sessionctx.Context) error {
-		_, err := ExecSQL(ctx, se, `insert into mysql.tidb_background_subtask_history select `+subtaskColumns+` from mysql.tidb_background_subtask where task_key = %?`, taskID)
+		_, err := ExecSQL(ctx, se, `insert into mysql.tidb_background_subtask_history select * from mysql.tidb_background_subtask where task_key = %?`, taskID)
 		if err != nil {
 			return err
 		}
