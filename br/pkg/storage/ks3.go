@@ -663,16 +663,16 @@ func (rs *KS3Storage) Create(ctx context.Context, name string, option *WriterOpt
 			return nil, err
 		}
 	} else {
-		partSize := int64(5 * 1024 * 1024)
-		if option != nil && option.PartSize > 0 {
-			partSize = option.PartSize
-		}
 		up := s3manager.NewUploader(&s3manager.UploadOptions{
-			PartSize: partSize,
+			PartSize: option.PartSize,
 			Parallel: option.Concurrency,
 			S3:       rs.svc,
 		})
 		rd, wd := io.Pipe()
+		partSize := int64(5 * 1024 * 1024)
+		if option.PartSize > 0 {
+			partSize = option.PartSize
+		}
 		upParams := &s3manager.UploadInput{
 			Bucket: aws.String(rs.options.Bucket),
 			Key:    aws.String(rs.options.Prefix + name),
