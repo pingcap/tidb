@@ -376,3 +376,4 @@ select * from point where id = 1;
 --replace_regex /.*num_rpc.*/.*num_rpc.*/
 explain analyze select * from point where id = 1;
 unlock tables;
+
