@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/mock/mocklocal"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -768,7 +769,7 @@ func (s *mockGCSSuite) TestColumnsAndUserVars() {
 	taskManager := storage.NewTaskManager(pool)
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
-	subtasks, err := taskManager.GetSucceedSubtasksByStep(ctx, storage.TestLastTaskID.Load(), importinto.StepImport)
+	subtasks, err := taskManager.GetSubtasksByStepAndState(ctx, storage.TestLastTaskID.Load(), importinto.StepImport, proto.TaskStateSucceed)
 	s.NoError(err)
 	s.Len(subtasks, 1)
 	serverInfo, err := infosync.GetServerInfo()

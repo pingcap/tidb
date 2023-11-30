@@ -225,14 +225,14 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), cnt)
 
-	subtasks, err := sm.GetSucceedSubtasksByStep(ctx, 2, proto.StepInit)
+	subtasks, err := sm.GetSubtasksByStepAndState(ctx, 2, proto.StepInit, proto.TaskStateSucceed)
 	require.NoError(t, err)
 	require.Len(t, subtasks, 0)
 
 	err = sm.FinishSubtask(ctx, "tidb1", 2, []byte{})
 	require.NoError(t, err)
 
-	subtasks, err = sm.GetSucceedSubtasksByStep(ctx, 2, proto.StepInit)
+	subtasks, err = sm.GetSubtasksByStepAndState(ctx, 2, proto.StepInit, proto.TaskStateSucceed)
 	require.NoError(t, err)
 	require.Len(t, subtasks, 1)
 
@@ -283,21 +283,57 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, canceled)
 
-	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, "for_test1", 4, proto.TaskStateRunning, nil))
-	require.NoError(t, sm.UpdateFailedTaskExecutorIDs(ctx, 4, map[string]string{
-		"for_test1": "for_test999",
-		"for_test2": "for_test999",
-	}))
+	// test UpdateSubtasksExecIDs
+	// 1. update one subtask
+	require.NoError(t, sm.AddNewSubTask(ctx, 5, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, false))
+	subtasks, err = sm.GetSubtasksByStepAndState(ctx, 5, proto.StepInit, proto.TaskStatePending)
+	require.NoError(t, err)
+	subtasks[0].ExecID = "tidb2"
+	require.NoError(t, sm.UpdateSubtasksExecIDs(ctx, 5, subtasks))
+	subtasks, err = sm.GetSubtasksByStepAndState(ctx, 5, proto.StepInit, proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Equal(t, "tidb2", subtasks[0].ExecID)
+	// 2. update 2 subtasks
+	require.NoError(t, sm.AddNewSubTask(ctx, 5, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, false))
+	subtasks, err = sm.GetSubtasksByStepAndState(ctx, 5, proto.StepInit, proto.TaskStatePending)
+	require.NoError(t, err)
+	subtasks[0].ExecID = "tidb3"
+	require.NoError(t, sm.UpdateSubtasksExecIDs(ctx, 5, subtasks))
+	subtasks, err = sm.GetSubtasksByStepAndState(ctx, 5, proto.StepInit, proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Equal(t, "tidb3", subtasks[0].ExecID)
+	require.Equal(t, "tidb1", subtasks[1].ExecID)
+	// update fail
+	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, "tidb1", subtasks[0].ID, proto.TaskStateRunning, nil))
+	subtasks, err = sm.GetSubtasksByStepAndState(ctx, 5, proto.StepInit, proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Equal(t, "tidb3", subtasks[0].ExecID)
+	subtasks[0].ExecID = "tidb2"
+	// update success
+	require.NoError(t, sm.UpdateSubtasksExecIDs(ctx, 5, subtasks))
+	subtasks, err = sm.GetSubtasksByStepAndState(ctx, 5, proto.StepInit, proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Equal(t, "tidb2", subtasks[0].ExecID)
 
-	canceled, err = sm.IsTaskExecutorCanceled(ctx, "for_test1", 4)
+	// test GetSubtasksByExecIdsAndStepAndState
+	require.NoError(t, sm.AddNewSubTask(ctx, 6, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, false))
+	require.NoError(t, sm.AddNewSubTask(ctx, 6, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, false))
+	subtasks, err = sm.GetSubtasksByStepAndState(ctx, 6, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
-	require.True(t, canceled)
-	canceled, err = sm.IsTaskExecutorCanceled(ctx, "for_test2", 4)
+	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, "tidb1", subtasks[0].ID, proto.TaskStateRunning, nil))
+	subtasks, err = sm.GetSubtasksByExecIdsAndStepAndState(ctx, []string{"tidb1"}, 6, proto.StepInit, proto.TaskStateRunning)
 	require.NoError(t, err)
-	require.True(t, canceled)
-	canceled, err = sm.IsTaskExecutorCanceled(ctx, "for_test999", 4)
+	require.Equal(t, 1, len(subtasks))
+	subtasks, err = sm.GetSubtasksByExecIdsAndStepAndState(ctx, []string{"tidb1"}, 6, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
-	require.False(t, canceled)
+	require.Equal(t, 1, len(subtasks))
+	require.NoError(t, sm.AddNewSubTask(ctx, 6, proto.StepInit, "tidb2", []byte("test"), proto.TaskTypeExample, false))
+	subtasks, err = sm.GetSubtasksByExecIdsAndStepAndState(ctx, []string{"tidb1", "tidb2"}, 6, proto.StepInit, proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Equal(t, 2, len(subtasks))
+	subtasks, err = sm.GetSubtasksByExecIdsAndStepAndState(ctx, []string{"tidb1"}, 6, proto.StepInit, proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(subtasks))
 }
 
 func TestBothGlobalAndSubTaskTable(t *testing.T) {

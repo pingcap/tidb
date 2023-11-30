@@ -289,7 +289,6 @@ func generateNonPartitionPlan(
 	if err != nil {
 		return nil, err
 	}
-
 	regionBatch := calculateRegionBatch(len(recordRegionMetas), instanceCnt, !useCloud)
 
 	subTaskMetas := make([][]byte, 0, 4)
