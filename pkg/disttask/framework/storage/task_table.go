@@ -724,13 +724,13 @@ func (stm *TaskManager) ResumeSubtasks(ctx context.Context, taskID int64) error 
 }
 
 // UpdateTaskAndAddSubTasks update the task and add new subtasks
-func (stm *TaskManager) UpdateTaskAndAddSubTasks(ctx context.Context, gTask *proto.Task, subtasks []*proto.Subtask, prevState proto.TaskState) (bool, error) {
+func (stm *TaskManager) UpdateTaskAndAddSubTasks(ctx context.Context, task *proto.Task, subtasks []*proto.Subtask, prevState proto.TaskState) (bool, error) {
 	retryable := true
 	err := stm.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		_, err := ExecSQL(ctx, se, "update mysql.tidb_global_task "+
 			"set state = %?, dispatcher_id = %?, step = %?, concurrency = %?, meta = %?, error = %?, state_update_time = CURRENT_TIMESTAMP()"+
 			"where id = %? and state = %?",
-			gTask.State, gTask.DispatcherID, gTask.Step, gTask.Concurrency, gTask.Meta, serializeErr(gTask.Error), gTask.ID, prevState)
+			task.State, task.DispatcherID, task.Step, task.Concurrency, task.Meta, serializeErr(task.Error), task.ID, prevState)
 		if err != nil {
 			return err
 		}
@@ -750,7 +750,7 @@ func (stm *TaskManager) UpdateTaskAndAddSubTasks(ctx context.Context, gTask *pro
 			//
 			// For now, we update nothing in proto.Task in UT's OnNextSubtasksBatch, so the AffectedRows will be 0. So UT can't fully compatible
 			// with current UpdateTaskAndAddSubTasks implementation.
-			rs, err := ExecSQL(ctx, se, "select id from mysql.tidb_global_task where id = %? and state = %?", gTask.ID, prevState)
+			rs, err := ExecSQL(ctx, se, "select id from mysql.tidb_global_task where id = %? and state = %?", task.ID, prevState)
 			if err != nil {
 				return err
 			}
@@ -768,7 +768,7 @@ func (stm *TaskManager) UpdateTaskAndAddSubTasks(ctx context.Context, gTask *pro
 		})
 		if len(subtasks) > 0 {
 			subtaskState := proto.TaskStatePending
-			if gTask.State == proto.TaskStateReverting {
+			if task.State == proto.TaskStateReverting {
 				subtaskState = proto.TaskStateRevertPending
 			}
 
@@ -783,7 +783,7 @@ func (stm *TaskManager) UpdateTaskAndAddSubTasks(ctx context.Context, gTask *pro
 					}
 				}
 				if err := sqlescape.FormatSQL(sql, "(%?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), '{}', '{}')",
-					subtask.Step, gTask.ID, subtask.ExecID, subtask.Meta, subtaskState, proto.Type2Int(subtask.Type), subtask.Concurrency); err != nil {
+					subtask.Step, task.ID, subtask.ExecID, subtask.Meta, subtaskState, proto.Type2Int(subtask.Type), subtask.Concurrency); err != nil {
 					return err
 				}
 			}

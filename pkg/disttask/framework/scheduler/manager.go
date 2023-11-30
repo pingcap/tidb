@@ -62,7 +62,7 @@ func (b *ManagerBuilder) setPoolFactory(poolFactory func(name string, size int32
 	b.newPool = poolFactory
 }
 
-// Manager monitors the global task table and manages the schedulers.
+// Manager monitors the task table and manages the schedulers.
 type Manager struct {
 	taskTable     TaskTable
 	schedulerPool Pool
@@ -138,7 +138,7 @@ func (m *Manager) Stop() {
 	m.wg.Wait()
 }
 
-// fetchAndHandleRunnableTasks fetches the runnable tasks from the global task table and handles them.
+// fetchAndHandleRunnableTasks fetches the runnable tasks from the task table and handles them.
 func (m *Manager) fetchAndHandleRunnableTasksLoop() {
 	defer tidbutil.Recover(metrics.LabelDomain, "fetchAndHandleRunnableTasksLoop", m.fetchAndHandleRunnableTasksLoop, false)
 	ticker := time.NewTicker(checkTime)
@@ -158,7 +158,7 @@ func (m *Manager) fetchAndHandleRunnableTasksLoop() {
 	}
 }
 
-// fetchAndFastCancelTasks fetches the reverting/pausing tasks from the global task table and fast cancels them.
+// fetchAndFastCancelTasks fetches the reverting/pausing tasks from the task table and fast cancels them.
 func (m *Manager) fetchAndFastCancelTasksLoop() {
 	defer tidbutil.Recover(metrics.LabelDomain, "fetchAndFastCancelTasksLoop", m.fetchAndFastCancelTasksLoop, false)
 

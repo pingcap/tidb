@@ -779,18 +779,18 @@ func (s *mockGCSSuite) TestColumnsAndUserVars() {
 }
 
 func (s *mockGCSSuite) checkTaskMetaRedacted(jobID int64) {
-	globalTaskManager, err := storage.GetTaskManager()
+	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
 	taskKey := importinto.TaskKey(jobID)
 	s.NoError(err)
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
-	globalTask, err2 := globalTaskManager.GetTaskByKeyWithHistory(ctx, taskKey)
+	task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 	s.NoError(err2)
-	s.Regexp(`[?&]access-key=xxxxxx`, string(globalTask.Meta))
-	s.Contains(string(globalTask.Meta), "secret-access-key=xxxxxx")
-	s.NotContains(string(globalTask.Meta), "aaaaaa")
-	s.NotContains(string(globalTask.Meta), "bbbbbb")
+	s.Regexp(`[?&]access-key=xxxxxx`, string(task.Meta))
+	s.Contains(string(task.Meta), "secret-access-key=xxxxxx")
+	s.NotContains(string(task.Meta), "aaaaaa")
+	s.NotContains(string(task.Meta), "bbbbbb")
 }
 
 func (s *mockGCSSuite) TestImportMode() {

@@ -511,7 +511,7 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 		zap.Int64("current-step", int64(d.Task.Step)),
 		zap.Int64("next-step", int64(nextStep)))
 
-	// 1. Adjust the global task's concurrency.
+	// 1. Adjust the task's concurrency.
 	if d.Task.State == proto.TaskStatePending {
 		if d.Task.Concurrency == 0 {
 			d.Task.Concurrency = DefaultSubtaskConcurrency

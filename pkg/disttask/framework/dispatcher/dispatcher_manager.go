@@ -151,7 +151,7 @@ func (dm *Manager) Inited() bool {
 	return dm.inited
 }
 
-// dispatchTaskLoop dispatches the global tasks.
+// dispatchTaskLoop dispatches the tasks.
 func (dm *Manager) dispatchTaskLoop() {
 	logutil.BgLogger().Info("dispatch task loop start")
 	ticker := time.NewTicker(checkTaskRunningInterval)
@@ -181,12 +181,12 @@ func (dm *Manager) dispatchTaskLoop() {
 				break
 			}
 
-			// There are currently no global tasks to work on.
+			// There are currently no tasks to work on.
 			if len(tasks) == 0 {
 				break
 			}
 			for _, task := range tasks {
-				// This global task is running, so no need to reprocess it.
+				// This task is running, so no need to reprocess it.
 				if dm.isRunningTask(task.ID) {
 					continue
 				}

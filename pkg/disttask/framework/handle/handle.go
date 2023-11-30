@@ -31,39 +31,39 @@ var (
 	checkTaskFinishInterval = 300 * time.Millisecond
 )
 
-// SubmitGlobalTask submits a global task.
-func SubmitGlobalTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, taskMeta []byte) (*proto.Task, error) {
-	globalTaskManager, err := storage.GetTaskManager()
+// SubmitTask submits a task.
+func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, taskMeta []byte) (*proto.Task, error) {
+	taskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return nil, err
 	}
-	globalTask, err := globalTaskManager.GetTaskByKey(ctx, taskKey)
+	task, err := taskManager.GetTaskByKey(ctx, taskKey)
 	if err != nil {
 		return nil, err
 	}
 
-	if globalTask == nil {
-		taskID, err := globalTaskManager.NewTask(ctx, taskKey, taskType, concurrency, taskMeta)
+	if task == nil {
+		taskID, err := taskManager.NewTask(ctx, taskKey, taskType, concurrency, taskMeta)
 		if err != nil {
 			return nil, err
 		}
 
-		globalTask, err = globalTaskManager.GetTaskByID(ctx, taskID)
+		task, err = taskManager.GetTaskByID(ctx, taskID)
 		if err != nil {
 			return nil, err
 		}
 
-		if globalTask == nil {
-			return nil, errors.Errorf("cannot find global task with ID %d", taskID)
+		if task == nil {
+			return nil, errors.Errorf("cannot find task with ID %d", taskID)
 		}
-		metrics.UpdateMetricsForAddTask(globalTask)
+		metrics.UpdateMetricsForAddTask(task)
 	}
-	return globalTask, nil
+	return task, nil
 }
 
-// WaitGlobalTask waits for a global task done or paused.
+// WaitTask waits for a task done or paused.
 // this API returns error if task failed or cancelled.
-func WaitGlobalTask(ctx context.Context, id int64) error {
+func WaitTask(ctx context.Context, id int64) error {
 	logger := logutil.Logger(ctx).With(zap.Int64("task-id", id))
 	found, err := waitTask(ctx, id, func(t *proto.Task) bool {
 		return t.IsDone() || t.State == proto.TaskStatePaused
@@ -76,10 +76,10 @@ func WaitGlobalTask(ctx context.Context, id int64) error {
 	case proto.TaskStateSucceed:
 		return nil
 	case proto.TaskStateReverted:
-		logger.Error("global task reverted", zap.Error(found.Error))
+		logger.Error("task reverted", zap.Error(found.Error))
 		return found.Error
 	case proto.TaskStatePaused:
-		logger.Error("global task paused")
+		logger.Error("task paused")
 		return nil
 	case proto.TaskStateFailed:
 		return errors.Errorf("task stopped with state %s, err %v", found.State, found.Error)
@@ -87,18 +87,18 @@ func WaitGlobalTask(ctx context.Context, id int64) error {
 	return nil
 }
 
-// WaitTaskDoneByKey waits for a global task done by task key.
+// WaitTaskDoneByKey waits for a task done by task key.
 func WaitTaskDoneByKey(ctx context.Context, taskKey string) error {
-	globalTaskManager, err := storage.GetTaskManager()
+	taskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return err
 	}
-	task, err := globalTaskManager.GetTaskByKeyWithHistory(ctx, taskKey)
+	task, err := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 	if err != nil {
 		return err
 	}
 	if task == nil {
-		return errors.Errorf("cannot find global task with key %s", taskKey)
+		return errors.Errorf("cannot find task with key %s", taskKey)
 	}
 	_, err = waitTask(ctx, task.ID, func(t *proto.Task) bool {
 		return t.IsDone()
@@ -107,7 +107,7 @@ func WaitTaskDoneByKey(ctx context.Context, taskKey string) error {
 }
 
 func waitTask(ctx context.Context, id int64, matchFn func(*proto.Task) bool) (*proto.Task, error) {
-	globalTaskManager, err := storage.GetTaskManager()
+	taskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return nil, err
 	}
@@ -120,13 +120,13 @@ func waitTask(ctx context.Context, id int64, matchFn func(*proto.Task) bool) (*p
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-ticker.C:
-			found, err := globalTaskManager.GetTaskByIDWithHistory(ctx, id)
+			found, err := taskManager.GetTaskByIDWithHistory(ctx, id)
 			if err != nil {
-				logger.Error("cannot get global task during waiting", zap.Error(err))
+				logger.Error("cannot get task during waiting", zap.Error(err))
 				continue
 			}
 			if found == nil {
-				return nil, errors.Errorf("cannot find global task with ID %d", id)
+				return nil, errors.Errorf("cannot find task with ID %d", id)
 			}
 
 			if matchFn(found) {
@@ -136,17 +136,17 @@ func waitTask(ctx context.Context, id int64, matchFn func(*proto.Task) bool) (*p
 	}
 }
 
-// SubmitAndRunGlobalTask submits a global task and wait for it to finish.
-func SubmitAndRunGlobalTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, taskMeta []byte) error {
-	globalTask, err := SubmitGlobalTask(ctx, taskKey, taskType, concurrency, taskMeta)
+// SubmitAndWaitTask submits a task and wait for it to finish.
+func SubmitAndWaitTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, taskMeta []byte) error {
+	task, err := SubmitTask(ctx, taskKey, taskType, concurrency, taskMeta)
 	if err != nil {
 		return err
 	}
-	return WaitGlobalTask(ctx, globalTask.ID)
+	return WaitTask(ctx, task.ID)
 }
 
-// CancelGlobalTask cancels a global task.
-func CancelGlobalTask(ctx context.Context, taskKey string) error {
+// CancelTask cancels a task.
+func CancelTask(ctx context.Context, taskKey string) error {
 	taskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return err

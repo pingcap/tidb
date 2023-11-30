@@ -351,7 +351,7 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, executor execute.Subtask
 			} else {
 				err = mgr.CancelTask(ctx, int64(taskID))
 				if err != nil {
-					logutil.BgLogger().Error("cancel global task failed", zap.Error(err))
+					logutil.BgLogger().Error("cancel task failed", zap.Error(err))
 				}
 			}
 		}
