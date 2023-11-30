@@ -310,15 +310,19 @@ func writePlainFile(s *writeTestSuite) {
 	}
 }
 
+func cleanOldFiles(ctx context.Context, store storage.ExternalStorage, subDir string) {
+	dataFiles, statFiles, err := GetAllFileNames(ctx, store, subDir)
+	intest.AssertNoError(err)
+	err = store.DeleteFiles(ctx, dataFiles)
+	intest.AssertNoError(err)
+	err = store.DeleteFiles(ctx, statFiles)
+	intest.AssertNoError(err)
+}
+
 func writeExternalFile(s *writeTestSuite) {
 	ctx := context.Background()
 	filePath := "/test/writer"
-	files, statFiles, err := GetAllFileNames(ctx, s.store, filePath)
-	intest.AssertNoError(err)
-	err = s.store.DeleteFiles(ctx, files)
-	intest.AssertNoError(err)
-	err = s.store.DeleteFiles(ctx, statFiles)
-	intest.AssertNoError(err)
+	cleanOldFiles(ctx, s.store, filePath)
 	builder := NewWriterBuilder().
 		SetMemorySizeLimit(uint64(s.memoryLimit))
 
@@ -335,7 +339,7 @@ func writeExternalFile(s *writeTestSuite) {
 	if s.beforeWriterClose != nil {
 		s.beforeWriterClose()
 	}
-	err = writer.Close(ctx)
+	err := writer.Close(ctx)
 	intest.AssertNoError(err)
 	if s.afterWriterClose != nil {
 		s.afterWriterClose()
@@ -345,12 +349,7 @@ func writeExternalFile(s *writeTestSuite) {
 func writeExternalOneFile(s *writeTestSuite) {
 	ctx := context.Background()
 	filePath := "/test/writer"
-	files, statFiles, err := GetAllFileNames(ctx, s.store, filePath)
-	intest.AssertNoError(err)
-	err = s.store.DeleteFiles(ctx, files)
-	intest.AssertNoError(err)
-	err = s.store.DeleteFiles(ctx, statFiles)
-	intest.AssertNoError(err)
+	cleanOldFiles(ctx, s.store, filePath)
 	builder := NewWriterBuilder().
 		SetMemorySizeLimit(uint64(s.memoryLimit))
 
@@ -369,7 +368,7 @@ func writeExternalOneFile(s *writeTestSuite) {
 	if s.beforeWriterClose != nil {
 		s.beforeWriterClose()
 	}
-	err = writer.Close(ctx)
+	err := writer.Close(ctx)
 	intest.AssertNoError(err)
 	if s.afterWriterClose != nil {
 		s.afterWriterClose()
@@ -552,12 +551,7 @@ func createEvenlyDistributedFiles(
 	store := openTestingStorage(t)
 	ctx := context.Background()
 
-	files, statFiles, err := GetAllFileNames(ctx, store, "/"+subDir)
-	intest.AssertNoError(err)
-	err = store.DeleteFiles(ctx, files)
-	intest.AssertNoError(err)
-	err = store.DeleteFiles(ctx, statFiles)
-	intest.AssertNoError(err)
+	cleanOldFiles(ctx, store, "/"+subDir)
 
 	value := make([]byte, 100)
 	kvCnt := 0
@@ -692,12 +686,7 @@ func createAscendingFiles(
 	store := openTestingStorage(t)
 	ctx := context.Background()
 
-	files, statFiles, err := GetAllFileNames(ctx, store, "/"+subDir)
-	intest.AssertNoError(err)
-	err = store.DeleteFiles(ctx, files)
-	intest.AssertNoError(err)
-	err = store.DeleteFiles(ctx, statFiles)
-	intest.AssertNoError(err)
+	cleanOldFiles(ctx, store, "/"+subDir)
 
 	keyIdx := 0
 	value := make([]byte, 100)
@@ -807,16 +796,10 @@ func TestPrepareLargeData(t *testing.T) {
 	store := openTestingStorage(t)
 	ctx := context.Background()
 
-	dataFiles, statFiles, err := GetAllFileNames(ctx, store, largeAscendingDataPath)
-	intest.AssertNoError(err)
-	err = store.DeleteFiles(ctx, dataFiles)
-	intest.AssertNoError(err)
-	err = store.DeleteFiles(ctx, statFiles)
-	intest.AssertNoError(err)
+	cleanOldFiles(ctx, store, largeAscendingDataPath)
 
 	fileSize := 256 * 1024 * 1024
-	//fileCnt := 1000
-	fileCnt := 200
+	fileCnt := 1000
 	keySize := 20
 	valueSize := 100
 	concurrency := runtime.NumCPU() / 2
@@ -827,19 +810,6 @@ func TestPrepareLargeData(t *testing.T) {
 	wg := sync.WaitGroup{}
 	wg.Add(concurrency)
 
-	go func() {
-		for {
-			select {
-			case <-time.After(time.Second):
-				now := time.Now()
-				file, err := os.Create(fmt.Sprintf("/tmp/heap-%d.prof", now.UnixMicro()))
-				intest.AssertNoError(err)
-				err = pprof.WriteHeapProfile(file)
-				intest.AssertNoError(err)
-				file.Close()
-			}
-		}
-	}()
 	for i := 0; i < concurrency; i++ {
 		i := i
 		go func() {
@@ -872,7 +842,7 @@ func TestPrepareLargeData(t *testing.T) {
 	elapsed := time.Since(now)
 	t.Logf("write %d bytes in %s, speed: %.2f MB/s",
 		size.Load(), elapsed, float64(size.Load())/elapsed.Seconds()/1024/1024)
-	dataFiles, _, err = GetAllFileNames(ctx, store, largeAscendingDataPath)
+	dataFiles, _, err := GetAllFileNames(ctx, store, largeAscendingDataPath)
 	intest.AssertNoError(err)
 
 	r, err := store.Open(ctx, dataFiles[0], nil)
