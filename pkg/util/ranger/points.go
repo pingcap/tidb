@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -86,7 +86,7 @@ func (rp *point) Clone(value types.Datum) *point {
 type pointSorter struct {
 	err      error
 	collator collate.Collator
-	sc       *stmtctx.StatementContext
+	tc       types.Context
 	points   []*point
 }
 
@@ -97,25 +97,25 @@ func (r *pointSorter) Len() int {
 func (r *pointSorter) Less(i, j int) bool {
 	a := r.points[i]
 	b := r.points[j]
-	less, err := rangePointLess(r.sc, a, b, r.collator)
+	less, err := rangePointLess(r.tc, a, b, r.collator)
 	if err != nil {
 		r.err = err
 	}
 	return less
 }
 
-func rangePointLess(sc *stmtctx.StatementContext, a, b *point, collator collate.Collator) (bool, error) {
+func rangePointLess(tc types.Context, a, b *point, collator collate.Collator) (bool, error) {
 	if a.value.Kind() == types.KindMysqlEnum && b.value.Kind() == types.KindMysqlEnum {
-		return rangePointEnumLess(sc, a, b)
+		return rangePointEnumLess(a, b)
 	}
-	cmp, err := a.value.Compare(sc.TypeCtx(), &b.value, collator)
+	cmp, err := a.value.Compare(tc, &b.value, collator)
 	if cmp != 0 {
 		return cmp < 0, nil
 	}
 	return rangePointEqualValueLess(a, b), errors.Trace(err)
 }
 
-func rangePointEnumLess(_ *stmtctx.StatementContext, a, b *point) (bool, error) {
+func rangePointEnumLess(a, b *point) (bool, error) {
 	cmp := cmp.Compare(a.value.GetInt64(), b.value.GetInt64())
 	if cmp != 0 {
 		return cmp < 0, nil
@@ -183,15 +183,21 @@ func NullRange() Ranges {
 // builder is the range builder struct.
 type builder struct {
 	err error
-	sc  *stmtctx.StatementContext
+	ctx sessionctx.Context
 }
 
-func (r *builder) build(expr expression.Expression, collator collate.Collator) []*point {
+// build converts Expression on one column into point, which can be further built into Range.
+// The input collator is used for intersection/union between points, which corresponds to AND/OR in the expression. Since
+// our (*Datum).Compare(), which is used there, needs an explicit collator input to handle comparison for string and bytes,
+// we pass it down from here.
+// If the input prefixLen is not types.UnspecifiedLength, it means it's for a prefix column in a prefix index. In such
+// cases, we should cut the prefix and adjust the exclusiveness. Ref: cutPrefixForPoints().
+func (r *builder) build(expr expression.Expression, collator collate.Collator, prefixLen int) []*point {
 	switch x := expr.(type) {
 	case *expression.Column:
 		return r.buildFromColumn()
 	case *expression.ScalarFunction:
-		return r.buildFromScalarFunc(x, collator)
+		return r.buildFromScalarFunc(x, collator, prefixLen)
 	case *expression.Constant:
 		return r.buildFromConstant(x)
 	}
@@ -200,7 +206,7 @@ func (r *builder) build(expr expression.Expression, collator collate.Collator) [
 }
 
 func (r *builder) buildFromConstant(expr *expression.Constant) []*point {
-	dt, err := expr.EvalWithInnerCtx(chunk.Row{})
+	dt, err := expr.Eval(r.ctx, chunk.Row{})
 	if err != nil {
 		r.err = err
 		return nil
@@ -209,7 +215,8 @@ func (r *builder) buildFromConstant(expr *expression.Constant) []*point {
 		return nil
 	}
 
-	val, err := dt.ToBool(r.sc.TypeCtx())
+	tc := r.ctx.GetSessionVars().StmtCtx.TypeCtx()
+	val, err := dt.ToBool(tc)
 	if err != nil {
 		r.err = err
 		return nil
@@ -232,7 +239,7 @@ func (*builder) buildFromColumn() []*point {
 	return []*point{startPoint1, endPoint1, startPoint2, endPoint2}
 }
 
-func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
+func (r *builder) buildFromBinOp(expr *expression.ScalarFunction, prefixLen int) []*point {
 	// This has been checked that the binary operation is comparison operation, and one of
 	// the operand is column name expression.
 	var (
@@ -242,6 +249,7 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 		ft    *types.FieldType
 	)
 
+	tc := r.ctx.GetSessionVars().StmtCtx.TypeCtx()
 	// refineValueAndOp refines the constant datum and operator:
 	// 1. for string type since we may eval the constant to another collation instead of its own collation.
 	// 2. for year type since 2-digit year value need adjustment, see https://dev.mysql.com/doc/refman/5.6/en/year.html
@@ -254,11 +262,11 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 			// If the original value is adjusted, we need to change the condition.
 			// For example, col < 2156. Since the max year is 2155, 2156 is changed to 2155.
 			// col < 2155 is wrong. It should be col <= 2155.
-			preValue, err1 := value.ToInt64(r.sc.TypeCtx())
+			preValue, err1 := value.ToInt64(tc)
 			if err1 != nil {
 				return err1
 			}
-			*value, err = value.ConvertToMysqlYear(r.sc.TypeCtx(), col.RetType)
+			*value, err = value.ConvertToMysqlYear(tc, col.RetType)
 			if errors.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
 				// Keep err for EQ and NE.
 				switch *op {
@@ -283,7 +291,7 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 	var ok bool
 	if col, ok = expr.GetArgs()[0].(*expression.Column); ok {
 		ft = col.RetType
-		value, err = expr.GetArgs()[1].EvalWithInnerCtx(chunk.Row{})
+		value, err = expr.GetArgs()[1].Eval(r.ctx, chunk.Row{})
 		if err != nil {
 			return nil
 		}
@@ -294,7 +302,7 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 			return nil
 		}
 		ft = col.RetType
-		value, err = expr.GetArgs()[0].EvalWithInnerCtx(chunk.Row{})
+		value, err = expr.GetArgs()[0].Eval(r.ctx, chunk.Row{})
 		if err != nil {
 			return nil
 		}
@@ -335,43 +343,46 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 	}
 
 	if ft.GetType() == mysql.TypeEnum && ft.EvalType() == types.ETString {
-		return handleEnumFromBinOp(r.sc, ft, value, op)
+		return handleEnumFromBinOp(tc, ft, value, op)
 	}
 
+	var res []*point
 	switch op {
 	case ast.NullEQ:
 		if value.IsNull() {
-			return []*point{{start: true}, {}} // [null, null]
+			res = []*point{{start: true}, {}} // [null, null]
+			break
 		}
 		fallthrough
 	case ast.EQ:
 		startPoint := &point{value: value, start: true}
 		endPoint := &point{value: value}
-		return []*point{startPoint, endPoint}
+		res = []*point{startPoint, endPoint}
 	case ast.NE:
 		startPoint1 := &point{value: types.MinNotNullDatum(), start: true}
 		endPoint1 := &point{value: value, excl: true}
 		startPoint2 := &point{value: value, start: true, excl: true}
 		endPoint2 := &point{value: types.MaxValueDatum()}
-		return []*point{startPoint1, endPoint1, startPoint2, endPoint2}
+		res = []*point{startPoint1, endPoint1, startPoint2, endPoint2}
 	case ast.LT:
 		startPoint := &point{value: types.MinNotNullDatum(), start: true}
 		endPoint := &point{value: value, excl: true}
-		return []*point{startPoint, endPoint}
+		res = []*point{startPoint, endPoint}
 	case ast.LE:
 		startPoint := &point{value: types.MinNotNullDatum(), start: true}
 		endPoint := &point{value: value}
-		return []*point{startPoint, endPoint}
+		res = []*point{startPoint, endPoint}
 	case ast.GT:
 		startPoint := &point{value: value, start: true, excl: true}
 		endPoint := &point{value: types.MaxValueDatum()}
-		return []*point{startPoint, endPoint}
+		res = []*point{startPoint, endPoint}
 	case ast.GE:
 		startPoint := &point{value: value, start: true}
 		endPoint := &point{value: types.MaxValueDatum()}
-		return []*point{startPoint, endPoint}
+		res = []*point{startPoint, endPoint}
 	}
-	return nil
+	cutPrefixForPoints(res, prefixLen, ft)
+	return res
 }
 
 // handleUnsignedCol handles the case when unsigned column meets negative value.
@@ -452,7 +463,7 @@ func handleBoundCol(ft *types.FieldType, val types.Datum, op string) (types.Datu
 	return val, op, true
 }
 
-func handleEnumFromBinOp(sc *stmtctx.StatementContext, ft *types.FieldType, val types.Datum, op string) []*point {
+func handleEnumFromBinOp(tc types.Context, ft *types.FieldType, val types.Datum, op string) []*point {
 	res := make([]*point, 0, len(ft.GetElems())*2)
 	appendPointFunc := func(d types.Datum) {
 		res = append(res, &point{value: d, excl: false, start: true})
@@ -473,7 +484,7 @@ func handleEnumFromBinOp(sc *stmtctx.StatementContext, ft *types.FieldType, val 
 		}
 
 		d := types.NewCollateMysqlEnumDatum(tmpEnum, ft.GetCollate())
-		if v, err := d.Compare(sc.TypeCtx(), &val, collate.GetCollator(ft.GetCollate())); err == nil {
+		if v, err := d.Compare(tc, &val, collate.GetCollator(ft.GetCollate())); err == nil {
 			switch op {
 			case ast.LT:
 				if v < 0 {
@@ -553,18 +564,20 @@ func (*builder) buildFromIsFalse(_ *expression.ScalarFunction, isNot int) []*poi
 	return []*point{startPoint, endPoint}
 }
 
-func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) {
+func (r *builder) buildFromIn(expr *expression.ScalarFunction, prefixLen int) ([]*point, bool) {
 	list := expr.GetArgs()[1:]
 	rangePoints := make([]*point, 0, len(list)*2)
 	hasNull := false
-	colCollate := expr.GetArgs()[0].GetType().GetCollate()
+	ft := expr.GetArgs()[0].GetType()
+	colCollate := ft.GetCollate()
+	tc := r.ctx.GetSessionVars().StmtCtx.TypeCtx()
 	for _, e := range list {
 		v, ok := e.(*expression.Constant)
 		if !ok {
 			r.err = ErrUnsupportedType.GenWithStack("expr:%v is not constant", e)
 			return getFullRange(), hasNull
 		}
-		dt, err := v.EvalWithInnerCtx(chunk.Row{})
+		dt, err := v.Eval(r.ctx, chunk.Row{})
 		if err != nil {
 			r.err = ErrUnsupportedType.GenWithStack("expr:%v is not evaluated", e)
 			return getFullRange(), hasNull
@@ -585,7 +598,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 					err = parseErr
 				}
 			default:
-				dt, err = dt.ConvertTo(r.sc.TypeCtx(), expr.GetArgs()[0].GetType())
+				dt, err = dt.ConvertTo(tc, expr.GetArgs()[0].GetType())
 			}
 
 			if err != nil {
@@ -594,7 +607,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 			}
 		}
 		if expr.GetArgs()[0].GetType().GetType() == mysql.TypeYear {
-			dt, err = dt.ConvertToMysqlYear(r.sc.TypeCtx(), expr.GetArgs()[0].GetType())
+			dt, err = dt.ConvertToMysqlYear(tc, expr.GetArgs()[0].GetType())
 			if err != nil {
 				// in (..., an impossible value (not valid year), ...), the range is empty, so skip it.
 				continue
@@ -610,7 +623,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 		endPoint := &point{value: endValue}
 		rangePoints = append(rangePoints, startPoint, endPoint)
 	}
-	sorter := pointSorter{points: rangePoints, sc: r.sc, collator: collate.GetCollator(colCollate)}
+	sorter := pointSorter{points: rangePoints, tc: tc, collator: collate.GetCollator(colCollate)}
 	sort.Sort(&sorter)
 	if sorter.err != nil {
 		r.err = sorter.err
@@ -629,15 +642,17 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 	if curPos > 0 {
 		curPos++
 	}
-	return rangePoints[:curPos], hasNull
+	rangePoints = rangePoints[:curPos]
+	cutPrefixForPoints(rangePoints, prefixLen, ft)
+	return rangePoints, hasNull
 }
 
-func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []*point {
+func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction, prefixLen int) []*point {
 	_, collation := expr.CharsetAndCollation()
 	if !collate.CompatibleCollate(expr.GetArgs()[0].GetType().GetCollate(), collation) {
 		return getFullRange()
 	}
-	pdt, err := expr.GetArgs()[1].(*expression.Constant).EvalWithInnerCtx(chunk.Row{})
+	pdt, err := expr.GetArgs()[1].(*expression.Constant).Eval(r.ctx, chunk.Row{})
 	tpOfPattern := expr.GetArgs()[0].GetType()
 	if err != nil {
 		r.err = errors.Trace(err)
@@ -651,10 +666,11 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []*po
 	if pattern == "" {
 		startPoint := &point{value: types.NewStringDatum(""), start: true}
 		endPoint := &point{value: types.NewStringDatum("")}
-		return []*point{startPoint, endPoint}
+		res := []*point{startPoint, endPoint}
+		return res
 	}
 	lowValue := make([]byte, 0, len(pattern))
-	edt, err := expr.GetArgs()[2].(*expression.Constant).EvalWithInnerCtx(chunk.Row{})
+	edt, err := expr.GetArgs()[2].(*expression.Constant).Eval(r.ctx, chunk.Row{})
 	if err != nil {
 		r.err = errors.Trace(err)
 		return getFullRange()
@@ -691,10 +707,15 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []*po
 	}
 	if isExactMatch {
 		val := types.NewCollationStringDatum(string(lowValue), tpOfPattern.GetCollate())
-		return []*point{{value: val, start: true}, {value: val}}
+		startPoint := &point{value: val, start: true}
+		endPoint := &point{value: val}
+		res := []*point{startPoint, endPoint}
+		cutPrefixForPoints(res, prefixLen, tpOfPattern)
+		return res
 	}
 	startPoint := &point{start: true, excl: exclude}
 	startPoint.value.SetBytesAsString(lowValue, tpOfPattern.GetCollate(), uint32(tpOfPattern.GetFlen()))
+	cutPrefixForPoints([]*point{startPoint}, prefixLen, tpOfPattern)
 	highValue := make([]byte, len(lowValue))
 	copy(highValue, lowValue)
 	endPoint := &point{excl: true}
@@ -715,7 +736,7 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []*po
 	return []*point{startPoint, endPoint}
 }
 
-func (r *builder) buildFromNot(expr *expression.ScalarFunction) []*point {
+func (r *builder) buildFromNot(expr *expression.ScalarFunction, prefixLen int) []*point {
 	switch n := expr.FuncName.L; n {
 	case ast.IsTruthWithoutNull:
 		return r.buildFromIsTrue(expr, 1, false)
@@ -728,7 +749,7 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []*point {
 			isUnsignedIntCol bool
 			nonNegativePos   int
 		)
-		rangePoints, hasNull := r.buildFromIn(expr)
+		rangePoints, hasNull := r.buildFromIn(expr, types.UnspecifiedLength)
 		if hasNull {
 			return nil
 		}
@@ -754,6 +775,7 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []*point {
 		// Append the interval (last element, max value].
 		retRangePoints = append(retRangePoints, &point{value: previousValue, start: true, excl: true})
 		retRangePoints = append(retRangePoints, &point{value: types.MaxValueDatum()})
+		cutPrefixForPoints(retRangePoints, prefixLen, expr.GetArgs()[0].GetType())
 		return retRangePoints
 	case ast.Like:
 		// Pattern not like is not supported.
@@ -770,14 +792,14 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []*point {
 	return getFullRange()
 }
 
-func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction, collator collate.Collator) []*point {
+func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction, collator collate.Collator, prefixLen int) []*point {
 	switch op := expr.FuncName.L; op {
 	case ast.GE, ast.GT, ast.LT, ast.LE, ast.EQ, ast.NE, ast.NullEQ:
-		return r.buildFromBinOp(expr)
+		return r.buildFromBinOp(expr, prefixLen)
 	case ast.LogicAnd:
-		return r.intersection(r.build(expr.GetArgs()[0], collator), r.build(expr.GetArgs()[1], collator), collator)
+		return r.intersection(r.build(expr.GetArgs()[0], collator, prefixLen), r.build(expr.GetArgs()[1], collator, prefixLen), collator)
 	case ast.LogicOr:
-		return r.union(r.build(expr.GetArgs()[0], collator), r.build(expr.GetArgs()[1], collator), collator)
+		return r.union(r.build(expr.GetArgs()[0], collator, prefixLen), r.build(expr.GetArgs()[1], collator, prefixLen), collator)
 	case ast.IsTruthWithoutNull:
 		return r.buildFromIsTrue(expr, 0, false)
 	case ast.IsTruthWithNull:
@@ -785,16 +807,16 @@ func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction, collator 
 	case ast.IsFalsity:
 		return r.buildFromIsFalse(expr, 0)
 	case ast.In:
-		retPoints, _ := r.buildFromIn(expr)
+		retPoints, _ := r.buildFromIn(expr, prefixLen)
 		return retPoints
 	case ast.Like:
-		return r.newBuildFromPatternLike(expr)
+		return r.newBuildFromPatternLike(expr, prefixLen)
 	case ast.IsNull:
 		startPoint := &point{start: true}
 		endPoint := &point{}
 		return []*point{startPoint, endPoint}
 	case ast.UnaryNot:
-		return r.buildFromNot(expr.GetArgs()[0].(*expression.ScalarFunction))
+		return r.buildFromNot(expr.GetArgs()[0].(*expression.ScalarFunction), prefixLen)
 	}
 
 	return nil
@@ -811,8 +833,9 @@ func (r *builder) union(a, b []*point, collator collate.Collator) []*point {
 func (r *builder) mergeSorted(a, b []*point, collator collate.Collator) []*point {
 	ret := make([]*point, 0, len(a)+len(b))
 	i, j := 0, 0
+	tc := r.ctx.GetSessionVars().StmtCtx.TypeCtx()
 	for i < len(a) && j < len(b) {
-		less, err := rangePointLess(r.sc, a[i], b[j], collator)
+		less, err := rangePointLess(tc, a[i], b[j], collator)
 		if err != nil {
 			r.err = err
 			return nil

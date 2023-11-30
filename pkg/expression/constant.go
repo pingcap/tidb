@@ -19,7 +19,6 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -237,21 +236,9 @@ func (c *Constant) Traverse(action TraverseAction) Expression {
 	return action.Transform(c)
 }
 
-// EvalWithInnerCtx evaluates expression with inner ctx.
-// Deprecated: This function is only used during refactoring, please do not use it in new code.
-// TODO: remove this method after refactoring.
-func (c *Constant) EvalWithInnerCtx(row chunk.Row) (types.Datum, error) {
-	var ctx sessionctx.Context
-	if c.DeferredExpr != nil {
-		if sf, sfOk := c.DeferredExpr.(*ScalarFunction); sfOk {
-			ctx = sf.GetCtx()
-		}
-	}
-	return c.Eval(ctx, row)
-}
-
 // Eval implements Expression interface.
 func (c *Constant) Eval(ctx sessionctx.Context, row chunk.Row) (types.Datum, error) {
+	intest.AssertNotNil(ctx)
 	if dt, lazy, err := c.getLazyDatum(ctx, row); lazy {
 		if err != nil {
 			return c.Value, err
@@ -261,18 +248,15 @@ func (c *Constant) Eval(ctx sessionctx.Context, row chunk.Row) (types.Datum, err
 			return c.Value, nil
 		}
 		if c.DeferredExpr != nil {
-			if _, sfOk := c.DeferredExpr.(*ScalarFunction); sfOk {
-				intest.AssertNotNil(ctx)
-				if dt.Kind() != types.KindMysqlDecimal {
-					val, err := dt.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), c.RetType)
-					if err != nil {
-						return dt, err
-					}
-					return val, nil
-				}
-				if err := c.adjustDecimal(dt.GetMysqlDecimal()); err != nil {
+			if dt.Kind() != types.KindMysqlDecimal {
+				val, err := dt.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), c.RetType)
+				if err != nil {
 					return dt, err
 				}
+				return val, nil
+			}
+			if err := c.adjustDecimal(dt.GetMysqlDecimal()); err != nil {
+				return dt, err
 			}
 		}
 		return dt, nil
@@ -449,13 +433,26 @@ func (c *Constant) Decorrelate(_ *Schema) Expression {
 }
 
 // HashCode implements Expression interface.
-func (c *Constant) HashCode(sc *stmtctx.StatementContext) []byte {
+func (c *Constant) HashCode() []byte {
+	return c.getHashCode(false)
+}
+
+// CanonicalHashCode implements Expression interface.
+func (c *Constant) CanonicalHashCode() []byte {
+	return c.getHashCode(true)
+}
+
+func (c *Constant) getHashCode(canonical bool) []byte {
 	if len(c.hashcode) > 0 {
 		return c.hashcode
 	}
 
 	if c.DeferredExpr != nil {
-		c.hashcode = c.DeferredExpr.HashCode(sc)
+		if canonical {
+			c.hashcode = c.DeferredExpr.CanonicalHashCode()
+		} else {
+			c.hashcode = c.DeferredExpr.HashCode()
+		}
 		return c.hashcode
 	}
 
@@ -465,10 +462,7 @@ func (c *Constant) HashCode(sc *stmtctx.StatementContext) []byte {
 		return c.hashcode
 	}
 
-	_, err := c.EvalWithInnerCtx(chunk.Row{})
-	if err != nil {
-		terror.Log(err)
-	}
+	intest.Assert(c.DeferredExpr == nil && c.ParamMarker == nil)
 	c.hashcode = append(c.hashcode, constantFlag)
 	c.hashcode = codec.HashCode(c.hashcode, c.Value)
 	return c.hashcode

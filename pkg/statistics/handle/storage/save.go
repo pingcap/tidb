@@ -325,9 +325,18 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 // If count is negative, both count and modify count would not be used and not be written to the table. Unless, corresponding
 // fields in the stats_meta table will be updated.
 // TODO: refactor to reduce the number of parameters
-func SaveStatsToStorage(sctx sessionctx.Context,
-	tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
-	cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool) (statsVer uint64, err error) {
+func SaveStatsToStorage(
+	sctx sessionctx.Context,
+	tableID int64,
+	count, modifyCount int64,
+	isIndex int,
+	hg *statistics.Histogram,
+	cms *statistics.CMSketch,
+	topN *statistics.TopN,
+	statsVersion int,
+	isAnalyzed int64,
+	updateAnalyzeTime bool,
+) (statsVer uint64, err error) {
 	version, err := util.GetStartTS(sctx)
 	if err != nil {
 		return 0, errors.Trace(err)

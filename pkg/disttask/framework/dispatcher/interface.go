@@ -38,10 +38,11 @@ type TaskManager interface {
 	ResumeSubtasks(ctx context.Context, taskID int64) error
 	CollectSubTaskError(ctx context.Context, taskID int64) ([]error, error)
 	TransferSubTasks2History(ctx context.Context, taskID int64) error
-	UpdateFailedSchedulerIDs(ctx context.Context, taskID int64, replaceNodes map[string]string) error
+	UpdateSubtasksSchedulerIDs(ctx context.Context, taskID int64, subtasks []*proto.Subtask) error
 	GetNodesByRole(ctx context.Context, role string) (map[string]bool, error)
 	GetSchedulerIDsByTaskID(ctx context.Context, taskID int64) ([]string, error)
-	GetSucceedSubtasksByStep(ctx context.Context, taskID int64, step proto.Step) ([]*proto.Subtask, error)
+	GetSubtasksByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.TaskState) ([]*proto.Subtask, error)
+	GetSubtasksByExecIdsAndStepAndState(ctx context.Context, tidbIDs []string, taskID int64, step proto.Step, state proto.TaskState) ([]*proto.Subtask, error)
 	GetSchedulerIDsByTaskIDAndStep(ctx context.Context, taskID int64, step proto.Step) ([]string, error)
 
 	WithNewSession(fn func(se sessionctx.Context) error) error
@@ -66,10 +67,11 @@ type Extension interface {
 	// when next step is StepDone, it should return nil, nil.
 	OnNextSubtasksBatch(ctx context.Context, h TaskHandle, task *proto.Task, serverInfo []*infosync.ServerInfo, step proto.Step) (subtaskMetas [][]byte, err error)
 
-	// OnErrStage is called when:
-	// 	1. subtask is finished with error.
-	// 	2. task is cancelled after we have dispatched some subtasks.
-	OnErrStage(ctx context.Context, h TaskHandle, task *proto.Task, receiveErrs []error) (subtaskMeta []byte, err error)
+	// OnDone is called when task is done, either finished successfully or failed
+	// with error.
+	// if the task is failed when initializing dispatcher, or it's an unknown task,
+	// we don't call this function.
+	OnDone(ctx context.Context, h TaskHandle, task *proto.Task) error
 
 	// GetEligibleInstances is used to get the eligible instances for the task.
 	// on certain condition we may want to use some instances to do the task, such as instances with more disk.

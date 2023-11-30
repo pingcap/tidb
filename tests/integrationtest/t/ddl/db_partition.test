@@ -2213,3 +2213,36 @@ partition by range(unix_timestamp(time_recorded)) (
 	partition p1 values less than (1559192604)
 );
 set @@session.tidb_enable_table_partition = default;
+
+
+# TestExchangePartitionExpressIndex
+set @@tidb_enable_exchange_partition=1;
+drop table if exists pt1;
+create table pt1(a int, b int, c int) PARTITION BY hash (a) partitions 1;
+alter table pt1 add index idx((a+c));
+
+drop table if exists nt1;
+create table nt1(a int, b int, c int);
+--error 1736
+alter table pt1 exchange partition p0 with table nt1;
+
+alter table nt1 add column (`_V$_idx_0` bigint(20) generated always as (a+b) virtual);
+--error 1736
+alter table pt1 exchange partition p0 with table nt1;
+
+## test different expression index when expression returns same field type
+alter table nt1 drop column `_V$_idx_0`;
+alter table nt1 add index idx((b-c));
+--error 1736
+alter table pt1 exchange partition p0 with table nt1;
+
+## test different expression index when expression returns different field type
+alter table nt1 drop index idx;
+alter table nt1 add index idx((concat(a, b)));
+--error 1736
+alter table pt1 exchange partition p0 with table nt1;
+
+drop table if exists nt2;
+create table nt2 (a int, b int, c int);
+alter table nt2 add index idx((a+c));
+alter table pt1 exchange partition p0 with table nt2;

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -47,12 +48,17 @@ import (
 // statsAnalyze implements util.StatsAnalyze.
 // statsAnalyze is used to handle auto-analyze and manage analyze jobs.
 type statsAnalyze struct {
-	statsHandle statsutil.StatsHandle
+	statsHandle statstypes.StatsHandle
+	// sysProcTracker is used to track sys process like analyze
+	sysProcTracker sessionctx.SysProcTracker
 }
 
 // NewStatsAnalyze creates a new StatsAnalyze.
-func NewStatsAnalyze(statsHandle statsutil.StatsHandle) statsutil.StatsAnalyze {
-	return &statsAnalyze{statsHandle: statsHandle}
+func NewStatsAnalyze(
+	statsHandle statstypes.StatsHandle,
+	sysProcTracker sessionctx.SysProcTracker,
+) statstypes.StatsAnalyze {
+	return &statsAnalyze{statsHandle: statsHandle, sysProcTracker: sysProcTracker}
 }
 
 // InsertAnalyzeJob inserts the analyze job to the storage.
@@ -73,7 +79,7 @@ func (sa *statsAnalyze) DeleteAnalyzeJobs(updateTime time.Time) error {
 // HandleAutoAnalyze analyzes the newly created table or index.
 func (sa *statsAnalyze) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 	_ = statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		analyzed = HandleAutoAnalyze(sctx, sa.statsHandle, is)
+		analyzed = HandleAutoAnalyze(sctx, sa.statsHandle, sa.sysProcTracker, is)
 		return nil
 	})
 	return
@@ -151,7 +157,8 @@ func getAllTidsAndPids(tbls []table.Table) []int64 {
 // HandleAutoAnalyze analyzes the newly created table or index.
 func HandleAutoAnalyze(
 	sctx sessionctx.Context,
-	statsHandle statsutil.StatsHandle,
+	statsHandle statstypes.StatsHandle,
+	sysProcTracker sessionctx.SysProcTracker,
 	is infoschema.InfoSchema,
 ) (analyzed bool) {
 	defer func() {
@@ -164,10 +171,8 @@ func HandleAutoAnalyze(
 		}
 	}()
 
-	dbs := is.AllSchemaNames()
 	parameters := getAutoAnalyzeParameters(sctx)
 	autoAnalyzeRatio := parseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
-
 	// Get the available time period for auto analyze and check if the current time is in the period.
 	start, end, err := parseAnalyzePeriod(
 		parameters[variable.TiDBAutoAnalyzeStartTime],
@@ -183,8 +188,32 @@ func HandleAutoAnalyze(
 	if !timeutil.WithinDayTimePeriod(start, end, time.Now()) {
 		return false
 	}
-
 	pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
+
+	return randomPickOneTableAndTryAutoAnalyze(
+		sctx,
+		statsHandle,
+		sysProcTracker,
+		is,
+		autoAnalyzeRatio,
+		pruneMode,
+	)
+}
+
+// randomPickOneTableAndTryAutoAnalyze randomly picks one table and tries to analyze it.
+// 1. If the table is not analyzed, analyze it.
+// 2. If the table is analyzed, analyze it when "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio".
+// 3. If the table is analyzed, analyze its indices when the index is not analyzed.
+// 4. If the table is locked, skip it.
+func randomPickOneTableAndTryAutoAnalyze(
+	sctx sessionctx.Context,
+	statsHandle statstypes.StatsHandle,
+	sysProcTracker sessionctx.SysProcTracker,
+	is infoschema.InfoSchema,
+	autoAnalyzeRatio float64,
+	pruneMode variable.PartitionPruneMode,
+) bool {
+	dbs := is.AllSchemaNames()
 	// Shuffle the database and table slice to randomize the order of analyzing tables.
 	rd := rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404
 	rd.Shuffle(len(dbs), func(i, j int) {
@@ -233,7 +262,7 @@ func HandleAutoAnalyze(
 			if pi == nil {
 				statsTbl := statsHandle.GetTableStats(tblInfo)
 				sql := "analyze table %n.%n"
-				analyzed := tryAutoAnalyzeTable(sctx, statsHandle, tblInfo, statsTbl, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
+				analyzed := tryAutoAnalyzeTable(sctx, statsHandle, sysProcTracker, tblInfo, statsTbl, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
 				if analyzed {
 					// analyze one table at a time to let it get the freshest parameters.
 					// others will be analyzed next round which is just 3s later.
@@ -249,7 +278,7 @@ func HandleAutoAnalyze(
 				}
 			}
 			if pruneMode == variable.Dynamic {
-				analyzed := tryAutoAnalyzePartitionTableInDynamicMode(sctx, statsHandle, tblInfo, partitionDefs, db, autoAnalyzeRatio)
+				analyzed := tryAutoAnalyzePartitionTableInDynamicMode(sctx, statsHandle, sysProcTracker, tblInfo, partitionDefs, db, autoAnalyzeRatio)
 				if analyzed {
 					return true
 				}
@@ -258,7 +287,7 @@ func HandleAutoAnalyze(
 			for _, def := range partitionDefs {
 				sql := "analyze table %n.%n partition %n"
 				statsTbl := statsHandle.GetPartitionStats(tblInfo, def.ID)
-				analyzed := tryAutoAnalyzeTable(sctx, statsHandle, tblInfo, statsTbl, autoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
+				analyzed := tryAutoAnalyzeTable(sctx, statsHandle, sysProcTracker, tblInfo, statsTbl, autoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
 				if analyzed {
 					return true
 				}
@@ -276,7 +305,8 @@ var AutoAnalyzeMinCnt int64 = 1000
 // Determine whether the table and index require analysis.
 func tryAutoAnalyzeTable(
 	sctx sessionctx.Context,
-	statsHandle statsutil.StatsHandle,
+	statsHandle statstypes.StatsHandle,
+	sysProcTracker sessionctx.SysProcTracker,
 	tblInfo *model.TableInfo,
 	statsTbl *statistics.Table,
 	ratio float64,
@@ -307,7 +337,7 @@ func tryAutoAnalyzeTable(
 
 		tableStatsVer := sctx.GetSessionVars().AnalyzeVersion
 		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-		execAutoAnalyze(sctx, statsHandle, tableStatsVer, sql, params...)
+		execAutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, sql, params...)
 
 		return true
 	}
@@ -328,7 +358,7 @@ func tryAutoAnalyzeTable(
 			)
 			tableStatsVer := sctx.GetSessionVars().AnalyzeVersion
 			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-			execAutoAnalyze(sctx, statsHandle, tableStatsVer, sqlWithIdx, paramsWithIdx...)
+			execAutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, sqlWithIdx, paramsWithIdx...)
 			return true
 		}
 	}
@@ -380,7 +410,8 @@ func TableAnalyzed(tbl *statistics.Table) bool {
 // It is very similar to tryAutoAnalyzeTable, but it commits the analyze job in batch for partitions.
 func tryAutoAnalyzePartitionTableInDynamicMode(
 	sctx sessionctx.Context,
-	statsHandle statsutil.StatsHandle,
+	statsHandle statstypes.StatsHandle,
+	sysProcTracker sessionctx.SysProcTracker,
 	tblInfo *model.TableInfo,
 	partitionDefs []model.PartitionDefinition,
 	db string,
@@ -454,7 +485,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 				zap.String("table", tblInfo.Name.String()),
 				zap.Any("partitions", needAnalyzePartitionNames[start:end]),
 			)
-			execAutoAnalyze(sctx, statsHandle, tableStatsVer, sql, params...)
+			execAutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, sql, params...)
 		}
 
 		return true
@@ -492,7 +523,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 					zap.String("index", idx.Name.String()),
 					zap.Any("partitions", needAnalyzePartitionNames[start:end]),
 				)
-				execAutoAnalyze(sctx, statsHandle, tableStatsVer, sql, params...)
+				execAutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, sql, params...)
 			}
 
 			return true
@@ -510,13 +541,14 @@ var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
 
 func execAutoAnalyze(
 	sctx sessionctx.Context,
-	statsHandle statsutil.StatsHandle,
+	statsHandle statstypes.StatsHandle,
+	sysProcTracker sessionctx.SysProcTracker,
 	statsVer int,
 	sql string,
 	params ...interface{},
 ) {
 	startTime := time.Now()
-	_, _, err := execAnalyzeStmt(sctx, statsHandle, statsVer, sql, params...)
+	_, _, err := execAnalyzeStmt(sctx, statsHandle, sysProcTracker, statsVer, sql, params...)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
@@ -538,7 +570,8 @@ func execAutoAnalyze(
 
 func execAnalyzeStmt(
 	sctx sessionctx.Context,
-	statsHandle statsutil.StatsHandle,
+	statsHandle statstypes.StatsHandle,
+	sysProcTracker sessionctx.SysProcTracker,
 	statsVer int,
 	sql string,
 	params ...interface{},
@@ -550,7 +583,7 @@ func execAnalyzeStmt(
 		sqlexec.GetAnalyzeSnapshotOption(analyzeSnapshot),
 		sqlexec.GetPartitionPruneModeOption(pruneMode),
 		sqlexec.ExecOptionUseCurSession,
-		sqlexec.ExecOptionWithSysProcTrack(statsHandle.AutoAnalyzeProcID(), statsHandle.SysProcTracker().Track, statsHandle.SysProcTracker().UnTrack),
+		sqlexec.ExecOptionWithSysProcTrack(statsHandle.AutoAnalyzeProcID(), sysProcTracker.Track, sysProcTracker.UnTrack),
 	}
 	return statsutil.ExecWithOpts(sctx, optFuncs, sql, params...)
 }

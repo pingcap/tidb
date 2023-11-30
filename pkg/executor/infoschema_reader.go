@@ -1420,11 +1420,11 @@ func (e *memtableRetriever) dataForTiDBClusterInfo(ctx sessionctx.Context) error
 	}
 	rows := make([][]types.Datum, 0, len(servers))
 	for _, server := range servers {
-		startTimeStr := ""
 		upTimeStr := ""
+		startTimeNative := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 0)
 		if server.StartTimestamp > 0 {
 			startTime := time.Unix(server.StartTimestamp, 0)
-			startTimeStr = startTime.Format(time.RFC3339)
+			startTimeNative = types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, 0)
 			upTimeStr = time.Since(startTime).String()
 		}
 		serverType := server.ServerType
@@ -1437,7 +1437,7 @@ func (e *memtableRetriever) dataForTiDBClusterInfo(ctx sessionctx.Context) error
 			server.StatusAddr,
 			server.Version,
 			server.GitHash,
-			startTimeStr,
+			startTimeNative,
 			upTimeStr,
 			server.ServerID,
 		)
@@ -1730,7 +1730,7 @@ func (*memtableRetriever) getRegionsInfoForSingleTable(ctx context.Context, help
 	if err != nil {
 		return nil, err
 	}
-	return pdCli.GetRegionsByKeyRange(ctx, sk, ek, -1)
+	return pdCli.GetRegionsByKeyRange(ctx, pd.NewKeyRange(sk, ek), -1)
 }
 
 func (e *memtableRetriever) setNewTiKVRegionStatusCol(region *pd.RegionInfo, table *helper.TableInfo) {
@@ -3200,7 +3200,7 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context, is info
 		rules = []*label.Rule{
 			{
 				ID:       "schema/test/test_label",
-				Labels:   []label.Label{{Key: "merge_option", Value: "allow"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
+				Labels:   []pd.RegionLabel{{Key: "merge_option", Value: "allow"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
 				RuleType: "key-range",
 				Data: convert(map[string]interface{}{
 					"start_key": "7480000000000000ff395f720000000000fa",
@@ -3209,7 +3209,7 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context, is info
 			},
 			{
 				ID:       "invalidIDtest",
-				Labels:   []label.Label{{Key: "merge_option", Value: "allow"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
+				Labels:   []pd.RegionLabel{{Key: "merge_option", Value: "allow"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
 				RuleType: "key-range",
 				Data: convert(map[string]interface{}{
 					"start_key": "7480000000000000ff395f720000000000fa",
@@ -3218,7 +3218,7 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context, is info
 			},
 			{
 				ID:       "schema/test/test_label",
-				Labels:   []label.Label{{Key: "merge_option", Value: "allow"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
+				Labels:   []pd.RegionLabel{{Key: "merge_option", Value: "allow"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
 				RuleType: "key-range",
 				Data: convert(map[string]interface{}{
 					"start_key": "aaaaa",
@@ -3259,9 +3259,9 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context, is info
 			continue
 		}
 
-		labels := rule.Labels.Restore()
+		labels := label.RestoreRegionLabels(&rule.Labels)
 		var ranges []string
-		for _, data := range rule.Data {
+		for _, data := range rule.Data.([]interface{}) {
 			if kv, ok := data.(map[string]interface{}); ok {
 				startKey := kv["start_key"]
 				endKey := kv["end_key"]
@@ -3462,11 +3462,12 @@ func checkRule(rule *label.Rule) (dbName, tableName string, partitionName string
 }
 
 func decodeTableIDFromRule(rule *label.Rule) (tableID int64, err error) {
-	if len(rule.Data) == 0 {
+	datas := rule.Data.([]interface{})
+	if len(datas) == 0 {
 		err = fmt.Errorf("there is no data in rule %s", rule.ID)
 		return
 	}
-	data := rule.Data[0]
+	data := datas[0]
 	dataMap, ok := data.(map[string]interface{})
 	if !ok {
 		err = fmt.Errorf("get the label rules %s failed", rule.ID)
