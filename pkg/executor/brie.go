@@ -564,7 +564,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	defer bq.releaseTask()
 
 	e.info.execTime = types.CurrentTime(mysql.TypeDatetime)
-	glue := &tidbGlueSession{se: e.Ctx(), progress: progress, info: e.info}
+	glue := &tidbGlue{se: e.Ctx(), progress: progress, info: e.info}
 
 	switch e.info.kind {
 	case ast.BRIEKindBackup:
@@ -632,25 +632,82 @@ func (e *ShowExec) fetchShowBRIE(kind ast.BRIEKind) error {
 	return nil
 }
 
-type tidbGlueSession struct {
+type tidbGlue struct {
+	// the session context of the brie task
 	se       sessionctx.Context
 	progress *brieTaskProgress
 	info     *brieTaskInfo
 }
 
-// GetSessionCtx implements glue.Glue
-func (gs *tidbGlueSession) GetSessionCtx() sessionctx.Context {
-	return gs.se
-}
-
 // GetDomain implements glue.Glue
-func (gs *tidbGlueSession) GetDomain(_ kv.Storage) (*domain.Domain, error) {
+func (gs *tidbGlue) GetDomain(_ kv.Storage) (*domain.Domain, error) {
 	return domain.GetDomain(gs.se), nil
 }
 
 // CreateSession implements glue.Glue
-func (gs *tidbGlueSession) CreateSession(_ kv.Storage) (glue.Session, error) {
-	return gs, nil
+func (gs *tidbGlue) CreateSession(_ kv.Storage) (glue.Session, error) {
+	newSCtx, err := CreateSession(gs.se)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &tidbGlueSession{se: newSCtx}, nil
+}
+
+// Open implements glue.Glue
+func (gs *tidbGlue) Open(string, pd.SecurityOption) (kv.Storage, error) {
+	return gs.se.GetStore(), nil
+}
+
+// OwnsStorage implements glue.Glue
+func (*tidbGlue) OwnsStorage() bool {
+	return false
+}
+
+// StartProgress implements glue.Glue
+func (gs *tidbGlue) StartProgress(_ context.Context, cmdName string, total int64, _ bool) glue.Progress {
+	gs.progress.lock.Lock()
+	gs.progress.cmd = cmdName
+	gs.progress.total = total
+	atomic.StoreInt64(&gs.progress.current, 0)
+	gs.progress.lock.Unlock()
+	return gs.progress
+}
+
+// Record implements glue.Glue
+func (gs *tidbGlue) Record(name string, value uint64) {
+	switch name {
+	case "BackupTS":
+		gs.info.backupTS = value
+	case "RestoreTS":
+		gs.info.restoreTS = value
+	case "Size":
+		gs.info.archiveSize = value
+	}
+}
+
+func (*tidbGlue) GetVersion() string {
+	return "TiDB\n" + printer.GetTiDBInfo()
+}
+
+// UseOneShotSession implements glue.Glue
+func (gs *tidbGlue) UseOneShotSession(_ kv.Storage, _ bool, fn func(se glue.Session) error) error {
+	// In SQL backup, we don't need to close domain,
+	// but need to create an new session.
+	newSCtx, err := CreateSession(gs.se)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	glueSession := &tidbGlueSession{se: newSCtx}
+	defer func() {
+		CloseSession(newSCtx)
+		log.Info("one shot session from brie closed")
+	}()
+	return fn(glueSession)
+}
+
+type tidbGlueSession struct {
+	// the session context of the brie task's subtask, such as `CREATE TABLE`.
+	se sessionctx.Context
 }
 
 // Execute implements glue.Session
@@ -719,7 +776,8 @@ func (gs *tidbGlueSession) CreatePlacementPolicy(_ context.Context, policy *mode
 }
 
 // Close implements glue.Session
-func (*tidbGlueSession) Close() {
+func (gs *tidbGlueSession) Close() {
+	CloseSession(gs.se)
 }
 
 // GetGlobalVariables implements glue.Session.
@@ -727,46 +785,9 @@ func (gs *tidbGlueSession) GetGlobalVariable(name string) (string, error) {
 	return gs.se.GetSessionVars().GlobalVarsAccessor.GetTiDBTableValue(name)
 }
 
-// Open implements glue.Glue
-func (gs *tidbGlueSession) Open(string, pd.SecurityOption) (kv.Storage, error) {
-	return gs.se.GetStore(), nil
-}
-
-// OwnsStorage implements glue.Glue
-func (*tidbGlueSession) OwnsStorage() bool {
-	return false
-}
-
-// StartProgress implements glue.Glue
-func (gs *tidbGlueSession) StartProgress(_ context.Context, cmdName string, total int64, _ bool) glue.Progress {
-	gs.progress.lock.Lock()
-	gs.progress.cmd = cmdName
-	gs.progress.total = total
-	atomic.StoreInt64(&gs.progress.current, 0)
-	gs.progress.lock.Unlock()
-	return gs.progress
-}
-
-// Record implements glue.Glue
-func (gs *tidbGlueSession) Record(name string, value uint64) {
-	switch name {
-	case "BackupTS":
-		gs.info.backupTS = value
-	case "RestoreTS":
-		gs.info.restoreTS = value
-	case "Size":
-		gs.info.archiveSize = value
-	}
-}
-
-func (*tidbGlueSession) GetVersion() string {
-	return "TiDB\n" + printer.GetTiDBInfo()
-}
-
-// UseOneShotSession implements glue.Glue
-func (gs *tidbGlueSession) UseOneShotSession(_ kv.Storage, _ bool, fn func(se glue.Session) error) error {
-	// in SQL backup. we don't need to close domain.
-	return fn(gs)
+// GetSessionCtx implements glue.Glue
+func (gs *tidbGlueSession) GetSessionCtx() sessionctx.Context {
+	return gs.se
 }
 
 func restoreQuery(stmt *ast.BRIEStmt) string {
