@@ -49,7 +49,7 @@ go_library(
         "//pkg/util/hack",
         "//pkg/util/logutil",
         "//pkg/util/selection",
-        "//pkg/util/serialization:spill",
+        "//pkg/util/serialization",
         "//pkg/util/set",
         "//pkg/util/stringutil",
         "@com_github_dgryski_go_farm//:go-farm",

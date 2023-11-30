@@ -24,6 +24,7 @@ go_library(
     deps = [
         "//pkg/parser/mysql",
         "//pkg/types",
+        "//pkg/util/chunk",
         "//pkg/util/dbterror",
     ],
 )
