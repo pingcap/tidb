@@ -269,8 +269,14 @@ func (bc *litBackendCtx) ShouldSync(mode FlushMode) (shouldFlush bool, shouldImp
 	if mode == FlushModeForceLocalAndCheckDiskQuota {
 		shouldFlush = true
 	} else {
+		interval := bc.updateInterval
+		failpoint.Inject("mockSyncInterval", func(val failpoint.Value) {
+			if v, ok := val.(int); ok {
+				interval = time.Duration(v) * time.Millisecond
+			}
+		})
 		shouldFlush = shouldImport ||
-			time.Since(bc.timeOfLastFlush.Load()) >= bc.updateInterval
+			time.Since(bc.timeOfLastFlush.Load()) >= interval
 	}
 	return shouldFlush, shouldImport
 }
