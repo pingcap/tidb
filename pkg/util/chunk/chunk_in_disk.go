@@ -309,10 +309,12 @@ func (d *DataInDiskByChunks) deserializeDataToChunk(chk *Chunk) {
 	d.deserializeColumns(chk, &pos)
 }
 
+// NumRows returns total spilled row number
 func (d *DataInDiskByChunks) NumRows() int64 {
 	return d.totalRowNum
 }
 
+// NumChunks returns total spilled chunk number
 func (d *DataInDiskByChunks) NumChunks() int {
 	return len(d.offsetOfEachChunk)
 }
