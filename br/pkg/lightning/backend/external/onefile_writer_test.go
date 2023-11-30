@@ -203,7 +203,7 @@ func TestMergeOverlappingFilesV2(t *testing.T) {
 	err := writer.Close(ctx)
 	require.NoError(t, err)
 
-	err = MergeOverlappingFilesV2(
+	err = mergeOverlappingFilesV2(
 		ctx,
 		[]string{"/test/0/0", "/test/0/1", "/test/0/2", "/test/0/3", "/test/0/4"},
 		memStore,
@@ -311,7 +311,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 	onClose := func(summary *WriterSummary) {
 		resSummary = summary
 	}
-	err = MergeOverlappingFilesV2(
+	err = mergeOverlappingFilesV2(
 		ctx,
 		[]string{"/test/0/one-file"},
 		memStore,
