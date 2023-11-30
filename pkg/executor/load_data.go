@@ -175,9 +175,9 @@ func (e *LoadDataWorker) load(ctx context.Context, readerInfos []importer.LoadDa
 	// commitWork goroutines -> done -> UpdateJobProgress goroutine
 
 	// TODO: support explicit transaction and non-autocommit
-	if err = sessiontxn.NewTxn(groupCtx, e.UserSctx); err != nil {
-		return err
-	}
+	// if err = sessiontxn.NewTxn(groupCtx, e.UserSctx); err != nil {
+	// 	return err
+	// }
 
 	// processOneStream goroutines.
 	group.Go(func() error {
@@ -532,16 +532,7 @@ func (w *commitWorker) commitWork(ctx context.Context, inCh <-chan commitTask) (
 				zap.Stack("stack"))
 			err = util.GetRecoverError(r)
 		}
-
-		if err != nil {
-			background := context.Background()
-			w.Ctx().StmtRollback(background, false)
-			w.Ctx().RollbackTxn(background)
-		} else {
-			if err = w.Ctx().CommitTxn(ctx); err != nil {
-				logutil.Logger(ctx).Error("commit error refresh", zap.Error(err))
-			}
-		}
+		w.Ctx().StmtCommit(ctx)
 	}()
 
 	var (
@@ -580,7 +571,8 @@ func (w *commitWorker) commitOneTask(ctx context.Context, task commitTask) error
 	failpoint.Inject("commitOneTaskErr", func() {
 		failpoint.Return(errors.New("mock commit one task error"))
 	})
-	w.Ctx().StmtCommit(ctx)
+	// NOTE: this is not the end of a statement. Should not call StmtCommit here
+	// w.Ctx().StmtCommit(ctx)
 	return nil
 }
 

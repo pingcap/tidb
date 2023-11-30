@@ -1613,6 +1613,13 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *execut
 			}
 		}
 	}
+	// if current session is auto-commit and not in a transaction, commit it here
+	if cc.ctx.GetSessionVars().IsAutocommit() && !cc.ctx.GetSessionVars().InTxn() {
+		err = cc.ctx.CommitTxn(ctx)
+		if err != nil {
+			return err
+		}
+	}
 	return err
 }
 
