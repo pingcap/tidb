@@ -253,7 +253,7 @@
 
     *Hint: The method to convert the Hex format key returned by TiDB API into the format recognized by [tikv-ctl](https://docs.pingcap.com/tidb/stable/tikv-control).*
     
-    Step 1: Get the hex of the key you need. For example you could find the key by the following TiDB API.
+    Step 1: Get the hex format of the key you need. For example you could find the key by the following TiDB API.
 
      ```shell
         $curl http://127.0.0.1:10080/mvcc/key/test/t1/1
@@ -279,7 +279,7 @@
         }
      ```
 
-     Step 2: Convert the hex format from tidb to escaped format with [tikv-ctl](https://docs.pingcap.com/tidb/stable/tikv-control)
+     Step 2: Convert the key from hex format to escaped format with [tikv-ctl](https://docs.pingcap.com/tidb/stable/tikv-control)
 
      ```shell
       ./tikv-ctl --to-escaped '7480000000000008C65F728000000000000001'
@@ -293,7 +293,7 @@
      7480000000000008FFC65F728000000000FF0000010000000000FA
      ```
 
-     Step 4: Convert the hex format to escaped format again since most `tikv-ctl` commands only accept keys in escaped format while the `--encode` command outputs the key in hex format.
+     Step 4: Convert the key from hex format to escaped format again since most `tikv-ctl` commands only accept keys in escaped format while the `--encode` command outputs the key in hex format.
      
      ```
      ./tikv-ctl --to-escaped '7480000000000008FFC65F728000000000FF0000010000000000FA'
