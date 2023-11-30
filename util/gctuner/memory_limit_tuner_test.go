@@ -57,12 +57,28 @@ func TestGlobalMemoryTuner(t *testing.T) {
 	memory.ServerMemoryLimit.Store(1 << 30)   // 1GB
 	GlobalMemoryLimitTuner.SetPercentage(0.8) // 1GB * 80% = 800MB
 	GlobalMemoryLimitTuner.UpdateMemoryLimit()
-	require.True(t, GlobalMemoryLimitTuner.isTuning.Load())
+	require.True(t, GlobalMemoryLimitTuner.isValidValueSet.Load())
 	defer func() {
+<<<<<<< HEAD:util/gctuner/memory_limit_tuner_test.go
 		time.Sleep(1 * time.Second) // If test.count > 1, wait tuning finished.
 		require.True(t, GlobalMemoryLimitTuner.isTuning.Load())
 		require.False(t, GlobalMemoryLimitTuner.waitingReset.Load())
 		require.Equal(t, GlobalMemoryLimitTuner.nextGCTriggeredByMemoryLimit.Load(), false)
+=======
+		// If test.count > 1, wait tuning finished.
+		require.Eventually(t, func() bool {
+			//nolint: all_revive
+			return GlobalMemoryLimitTuner.isValidValueSet.Load()
+		}, 5*time.Second, 100*time.Millisecond)
+		require.Eventually(t, func() bool {
+			//nolint: all_revive
+			return !GlobalMemoryLimitTuner.adjustPercentageInProgress.Load()
+		}, 5*time.Second, 100*time.Millisecond)
+		require.Eventually(t, func() bool {
+			//nolint: all_revive
+			return !GlobalMemoryLimitTuner.nextGCTriggeredByMemoryLimit.Load()
+		}, 5*time.Second, 100*time.Millisecond)
+>>>>>>> df623ac5961 (pkg/util: refine tidb_server_memory_limit to make the cpu usage more stable (#48927)):pkg/util/gctuner/memory_limit_tuner_test.go
 	}()
 
 	allocator := &mockAllocator{}
@@ -76,7 +92,7 @@ func TestGlobalMemoryTuner(t *testing.T) {
 		runtime.ReadMemStats(r)
 		nextGC := r.NextGC
 		memoryLimit := GlobalMemoryLimitTuner.calcMemoryLimit(GlobalMemoryLimitTuner.GetPercentage())
-		// In golang source, nextGC = memoryLimit - three parts memory.
+		// Refer to golang source code, nextGC = memoryLimit - nonHeapMemory - overageMemory - headroom
 		require.True(t, nextGC < uint64(memoryLimit))
 	}
 
@@ -84,9 +100,15 @@ func TestGlobalMemoryTuner(t *testing.T) {
 	gcNum := getNowGCNum()
 
 	memory210mb := allocator.alloc(210 << 20)
+<<<<<<< HEAD:util/gctuner/memory_limit_tuner_test.go
 	time.Sleep(100 * time.Millisecond)
 	require.True(t, GlobalMemoryLimitTuner.waitingReset.Load())
 	require.True(t, gcNum < getNowGCNum())
+=======
+	require.Eventually(t, func() bool {
+		return GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() && gcNum < getNowGCNum()
+	}, 5*time.Second, 100*time.Millisecond)
+>>>>>>> df623ac5961 (pkg/util: refine tidb_server_memory_limit to make the cpu usage more stable (#48927)):pkg/util/gctuner/memory_limit_tuner_test.go
 	// Test waiting for reset
 	time.Sleep(500 * time.Millisecond)
 	require.Equal(t, GlobalMemoryLimitTuner.calcMemoryLimit(fallbackPercentage), debug.SetMemoryLimit(-1))
@@ -109,4 +131,98 @@ func TestGlobalMemoryTuner(t *testing.T) {
 	require.True(t, gcNum < getNowGCNum())
 	allocator.free(memory210mb)
 	allocator.free(memory600mb)
+}
+
+func TestIssue48741(t *testing.T) {
+	// Close GOGCTuner
+	gogcTuner := EnableGOGCTuner.Load()
+	EnableGOGCTuner.Store(false)
+	defer EnableGOGCTuner.Store(gogcTuner)
+
+	r := &runtime.MemStats{}
+	getNowGCNum := func() uint32 {
+		runtime.ReadMemStats(r)
+		return r.NumGC
+	}
+	allocator := &mockAllocator{}
+	defer allocator.freeAll()
+
+	checkIfMemoryLimitIsModified := func() {
+		memory.ServerMemoryLimit.Store(1500 << 20) // 1.5 GB
+
+		// Try to trigger GC by 1GB * 80% = 800MB (tidb_server_memory_limit * tidb_server_memory_limit_gc_trigger)
+		gcNum := getNowGCNum()
+		memory810mb := allocator.alloc(810 << 20)
+		require.Eventually(t,
+			// Wait for the GC triggered by memory810mb
+			func() bool {
+				return GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() && gcNum < getNowGCNum()
+			},
+			500*time.Millisecond, 100*time.Millisecond)
+
+		gcNumAfterMemory810mb := getNowGCNum()
+		// After the GC triggered by memory810mb.
+		time.Sleep(4500 * time.Millisecond)
+		require.Equal(t, debug.SetMemoryLimit(-1), int64(1500<<20*80/100))
+
+		memory700mb := allocator.alloc(200 << 20)
+		time.Sleep(5 * time.Second)
+		// The heapInUse is less than 1.5GB * 80% = 1.2GB, so the gc will not be triggered.
+		require.Equal(t, gcNumAfterMemory810mb, getNowGCNum())
+
+		memory150mb := allocator.alloc(300 << 20)
+		require.Eventually(t,
+			// Wait for the GC triggered by memory810mb
+			func() bool {
+				return GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() && gcNumAfterMemory810mb < getNowGCNum()
+			},
+			5*time.Second, 100*time.Millisecond)
+
+		time.Sleep(4500 * time.Millisecond)
+		require.Equal(t, debug.SetMemoryLimit(-1), int64(1500<<20*110/100))
+
+		allocator.free(memory810mb)
+		allocator.free(memory700mb)
+		allocator.free(memory150mb)
+	}
+
+	checkIfMemoryLimitNotModified := func() {
+		// Try to trigger GC by 1GB * 80% = 800MB (tidb_server_memory_limit * tidb_server_memory_limit_gc_trigger)
+		gcNum := getNowGCNum()
+		memory810mb := allocator.alloc(810 << 20)
+		require.Eventually(t,
+			// Wait for the GC triggered by memory810mb
+			func() bool {
+				return GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() && gcNum < getNowGCNum()
+			},
+			500*time.Millisecond, 100*time.Millisecond)
+
+		gcNumAfterMemory810mb := getNowGCNum()
+		// After the GC triggered by memory810mb.
+		time.Sleep(4500 * time.Millisecond)
+		// During the process of adjusting the percentage, the memory limit will be set to 1GB * 110% = 1.1GB.
+		require.Equal(t, debug.SetMemoryLimit(-1), int64(1<<30*110/100))
+
+		require.Eventually(t,
+			// The GC will be trigged immediately after memoryLimit is set back to 1GB * 80% = 800MB.
+			func() bool {
+				return GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() && gcNumAfterMemory810mb < getNowGCNum()
+			},
+			2*time.Second, 100*time.Millisecond)
+
+		allocator.free(memory810mb)
+	}
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/gctuner/mockUpdateGlobalVarDuringAdjustPercentage", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/gctuner/mockUpdateGlobalVarDuringAdjustPercentage"))
+	}()
+
+	memory.ServerMemoryLimit.Store(1 << 30)   // 1GB
+	GlobalMemoryLimitTuner.SetPercentage(0.8) // 1GB * 80% = 800MB
+	GlobalMemoryLimitTuner.UpdateMemoryLimit()
+	require.Equal(t, debug.SetMemoryLimit(-1), int64(1<<30*80/100))
+
+	checkIfMemoryLimitNotModified()
+	checkIfMemoryLimitIsModified()
 }
