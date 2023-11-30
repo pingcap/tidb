@@ -846,13 +846,13 @@ func TestCanceledJobTakeTime(t *testing.T) {
 	require.Less(t, sub, ddl.GetWaitTimeWhenErrorOccurred())
 }
 
-func TestTableLocksEnable(t *testing.T) {
+func TestTableLocksDisable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (a int)")
 
-	// Test for enable table lock config.
+	// Test for disable table lock config.
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableTableLock = false
@@ -1284,21 +1284,4 @@ func TestGetReverseKey(t *testing.T) {
 	startKey = tablecodec.EncodeRecordKey(tbl.RecordPrefix(), kv.IntHandle(3<<61))
 	endKey = maxKey.Next()
 	checkRet(startKey, endKey, endKey)
-}
-
-func TestLocalTemporaryTableBlockedDDL(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (id int)")
-	tk.MustExec("create temporary table tmp1 (id int primary key, a int unique, b int)")
-	require.ErrorIs(t, tk.ExecToErr("rename table tmp1 to tmp2"), dbterror.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("alter table tmp1 add column c int"), dbterror.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("alter table tmp1 add index b(b)"), dbterror.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("create index a on tmp1(b)"), dbterror.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("drop index a on tmp1"), dbterror.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("lock tables tmp1 read"), dbterror.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("lock tables tmp1 write"), dbterror.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("lock tables t1 read, tmp1 read"), dbterror.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("admin cleanup table lock tmp1"), dbterror.ErrUnsupportedLocalTempTableDDL)
 }

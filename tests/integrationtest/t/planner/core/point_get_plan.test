@@ -356,3 +356,14 @@ select * from fu where id = 6 for update;
 rollback;
 
 set @@session.autocommit = default;
+
+
+# TestUpdateWithTableReadLockWillFail
+drop table if exists tbllock;
+create table tbllock(id int, c int);
+insert into tbllock values(1, 2), (2, 2);
+lock table tbllock read;
+--error 1099
+update tbllock set c = 3 where id = 2;
+
+unlock tables;

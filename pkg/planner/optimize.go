@@ -181,7 +181,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx)
-	originStmtHints, originStmtHintsOffs, warns := handleStmtHints(tableHints)
+	originStmtHints, _, warns := handleStmtHints(tableHints)
 	sessVars.StmtCtx.StmtHints = originStmtHints
 	for _, warn := range warns {
 		sessVars.StmtCtx.AppendWarning(warn)
@@ -380,15 +380,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 				if hint.HintName.String() == core.HintReadFromStorage {
 					return bestPlan, names, nil
 				}
-			}
-			// The hints generated from the plan do not contain the statement hints of the query, add them back.
-			for _, off := range originStmtHintsOffs {
-				defPlanHints = append(defPlanHints, tableHints[off])
-			}
-			defPlanHintsStr := hint.RestoreOptimizerHints(defPlanHints)
-			binding := bindRecord.FindBinding(defPlanHintsStr)
-			if binding == nil {
-				handleEvolveTasks(ctx, sctx, bindRecord, stmtNode, defPlanHintsStr)
 			}
 		}
 	}
@@ -702,25 +693,6 @@ func handleInvalidBinding(ctx context.Context, sctx sessionctx.Context, level st
 
 	globalHandle := domain.GetDomain(sctx).BindHandle()
 	globalHandle.AddInvalidGlobalBinding(&bindRecord)
-}
-
-func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinfo.BindRecord, stmtNode ast.StmtNode, planHint string) {
-	bindSQL := bindinfo.GenerateBindSQL(ctx, stmtNode, planHint, false, br.Db)
-	if bindSQL == "" {
-		return
-	}
-	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
-	_, sqlDigestWithDB := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmtNode, br.Db, br.OriginalSQL))
-	binding := bindinfo.Binding{
-		BindSQL:   bindSQL,
-		Status:    bindinfo.PendingVerify,
-		Charset:   charset,
-		Collation: collation,
-		Source:    bindinfo.Evolve,
-		SQLDigest: sqlDigestWithDB.String(),
-	}
-	globalHandle := domain.GetDomain(sctx).BindHandle()
-	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding)
 }
 
 func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHints, offs []int, warns []error) {
