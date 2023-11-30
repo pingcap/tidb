@@ -819,7 +819,7 @@ func TestPrepareLargeData(t *testing.T) {
 	fileCnt := 200
 	keySize := 20
 	valueSize := 100
-	concurrency := runtime.NumCPU()
+	concurrency := runtime.NumCPU() / 2
 	filePerConcUpperBound := (fileCnt + concurrency - 1) / concurrency
 
 	size := atomic.NewInt64(0)
@@ -852,7 +852,10 @@ func TestPrepareLargeData(t *testing.T) {
 			if startFile == endFile {
 				return
 			}
-			kvCnt := fileSize * (endFile - startFile) / (keySize + valueSize + 16)
+
+			// slightly reduce total size to avoid generate a small file at the end
+			totalSize := fileSize*(endFile-startFile) - 20*1024*1024
+			kvCnt := totalSize / (keySize + valueSize + 16)
 			source := newAscendingKeyAsyncSource(kvCnt, keySize, valueSize, []byte{byte(i)})
 			key, val, _ := source.next()
 			for key != nil {
