@@ -27,7 +27,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
@@ -1262,14 +1261,13 @@ func TestCreateTableWithKeyPartition(t *testing.T) {
 }
 
 func TestCreatePartitionTableWithGlobalIndex(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int, unique key p_b(b))
 	partition by range( a ) (
@@ -1311,13 +1309,13 @@ func TestCreatePartitionTableWithGlobalIndex(t *testing.T) {
 }
 
 func TestDropPartitionWithGlobalIndex(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
 	partition by range( a ) (
@@ -1348,13 +1346,13 @@ func TestDropPartitionWithGlobalIndex(t *testing.T) {
 }
 
 func TestDropMultiPartitionWithGlobalIndex(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
 	partition by range( a ) (
@@ -1386,14 +1384,13 @@ func TestDropMultiPartitionWithGlobalIndex(t *testing.T) {
 }
 
 func TestGlobalIndexInsertInDropPartition(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
 	partition by range( a ) (
@@ -1424,14 +1421,13 @@ func TestGlobalIndexInsertInDropPartition(t *testing.T) {
 }
 
 func TestUpdateGlobalIndex(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
 	partition by range( a ) (
@@ -1448,14 +1444,13 @@ func TestUpdateGlobalIndex(t *testing.T) {
 }
 
 func TestGlobalIndexUpdateInDropPartition(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
 	partition by range( a ) (
@@ -1486,14 +1481,13 @@ func TestGlobalIndexUpdateInDropPartition(t *testing.T) {
 }
 
 func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
 	partition by range( a ) (
@@ -1556,13 +1550,13 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 }
 
 func TestGlobalIndexUpdateInTruncatePartition(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	tk.MustExec("drop table if exists test_global")
@@ -1596,13 +1590,13 @@ func TestGlobalIndexUpdateInTruncatePartition(t *testing.T) {
 }
 
 func TestGlobalIndexUpdateInTruncatePartition4Hash(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	tk.MustExec("drop table if exists test_global")
@@ -1632,13 +1626,13 @@ func TestGlobalIndexUpdateInTruncatePartition4Hash(t *testing.T) {
 }
 
 func TestGlobalIndexReaderInTruncatePartition(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
 	partition by range( a ) (
@@ -1666,12 +1660,13 @@ func TestGlobalIndexReaderInTruncatePartition(t *testing.T) {
 }
 
 func TestGlobalIndexInsertInTruncatePartition(t *testing.T) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	tk.MustExec("drop table if exists test_global")
@@ -1702,13 +1697,13 @@ func TestGlobalIndexInsertInTruncatePartition(t *testing.T) {
 }
 
 func TestGlobalIndexReaderInDropPartition(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
 	partition by range( a ) (
@@ -1738,14 +1733,13 @@ func TestGlobalIndexReaderInDropPartition(t *testing.T) {
 }
 
 func TestGlobalIndexLookUpInDropPartition(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
 	partition by range( a ) (
@@ -1777,14 +1771,13 @@ func TestGlobalIndexLookUpInDropPartition(t *testing.T) {
 func TestGlobalIndexShowTableRegions(t *testing.T) {
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("drop table if exists p")
 	tk.MustExec("set @@global.tidb_scatter_region = on")
 	tk.MustExec(`create table p (id int, c int, d int, unique key uidx(c)) partition by range (c) (
@@ -2085,11 +2078,6 @@ func TestAlterTableExchangePartition(t *testing.T) {
 
 func TestExchangePartitionTableCompatiable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
 	type testCase struct {
 		ptSQL       string
 		ntSQL       string
@@ -2317,6 +2305,10 @@ func TestExchangePartitionTableCompatiable(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	err := tk.Session().GetSessionVars().SetSystemVar("tidb_enable_exchange_partition", "1")
 	require.NoError(t, err)
 	for i, tt := range cases {

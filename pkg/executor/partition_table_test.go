@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -2088,11 +2087,10 @@ func TestGlobalIndexScan(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists p")
 	tk.MustExec(`create table p (id int, c int) partition by range (c) (
@@ -2109,11 +2107,10 @@ func TestAggWithGlobalIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists p")
 	tk.MustExec(`create table p (id int, c int) partition by range (c) (
@@ -2133,11 +2130,10 @@ func TestGlobalIndexDoubleRead(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists p")
 	tk.MustExec(`create table p (id int, c int) partition by range (c) (
@@ -2153,11 +2149,10 @@ func TestDropGlobalIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists p")
 	tk.MustExec(`create table p (id int, c int) partition by range (c) (
@@ -2308,11 +2303,10 @@ func TestIssue26251(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk1 := testkit.NewTestKit(t, store)
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
+	tk1.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk1.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk1.MustExec("use test")
 	tk1.MustExec("create table tp (id int primary key) partition by range (id) (partition p0 values less than (100));")
 	tk1.MustExec("create table tn (id int primary key);")
@@ -2479,15 +2473,14 @@ func TestIssue31024(t *testing.T) {
 func TestIssue21732(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
 
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("create database TestIssue21732")
 	tk.MustExec("use TestIssue21732")
 	tk.MustExec("drop table if exists p")
@@ -2501,15 +2494,14 @@ func TestIssue21732(t *testing.T) {
 func TestGlobalIndexSelectSpecifiedPartition(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
 
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists p")
 	tk.MustExec(`create table p (id int, c int) partition by range (c) (
@@ -2522,15 +2514,13 @@ partition p2 values less than (10))`)
 }
 
 func TestGlobalIndexScanSpecifiedPartition(t *testing.T) {
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists p")
 	tk.MustExec(`create table p (id int, c int) partition by range (c) (
@@ -2544,15 +2534,13 @@ partition p2 values less than (10))`)
 }
 
 func TestGlobalIndexScanForClusteredSpecifiedPartition(t *testing.T) {
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists p")
 	tk.MustExec(`create table p (id int, c int, d int, e int, primary key(d, c) clustered) partition by range (c) (
@@ -2566,15 +2554,13 @@ partition p2 values less than (10))`)
 }
 
 func TestGlobalIndexJoin(t *testing.T) {
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists p")
 	tk.MustExec(`create table t1 (id int, c int) partition by range (c) (
@@ -2594,15 +2580,13 @@ partition p2 values less than (10))`)
 }
 
 func TestGlobalIndexJoinSpecifiedPartition(t *testing.T) {
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists p")
 	tk.MustExec(`create table t1 (id int, c int) partition by range (c) (
@@ -2622,15 +2606,13 @@ partition p2 values less than (10))`)
 }
 
 func TestGlobalIndexJoinForClusteredSpecifiedPartition(t *testing.T) {
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists p")
 	tk.MustExec(`create table t1 (id int, c int, d int, e int, primary key(d, c) clustered) partition by range (c) (
@@ -2650,15 +2632,13 @@ partition p2 values less than (10))`)
 }
 
 func TestGlobalIndexForIssue40149(t *testing.T) {
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	for _, opt := range []string{"true", "false"} {
 		failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(`+opt+`)`)
 		tk.MustExec("use test")
@@ -2678,14 +2658,12 @@ func TestGlobalIndexForIssue40149(t *testing.T) {
 }
 
 func TestGlobalIndexMerge(t *testing.T) {
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("use test")
 	tk.MustExec("SET session tidb_enable_index_merge = ON;")
 	tk.MustExec("drop table if exists t")
