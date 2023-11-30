@@ -417,16 +417,31 @@ func (e *writeAndIngestStepExecutor) Rollback(context.Context) error {
 	return nil
 }
 
+<<<<<<< HEAD
 type postStepExecutor struct {
 	taskexecutor.EmptySubtaskExecutor
+=======
+type postProcessStepExecutor struct {
+	scheduler.EmptySubtaskExecutor
+>>>>>>> 94a7844732fd0e31f1bcf276f391bbff27d56d12
 	taskID   int64
 	taskMeta *TaskMeta
 	logger   *zap.Logger
 }
 
-var _ execute.SubtaskExecutor = &postStepExecutor{}
+var _ execute.SubtaskExecutor = &postProcessStepExecutor{}
 
-func (p *postStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
+// NewPostProcessStepExecutor creates a new post process step executor.
+// exported for testing.
+func NewPostProcessStepExecutor(taskID int64, taskMeta *TaskMeta, logger *zap.Logger) execute.SubtaskExecutor {
+	return &postProcessStepExecutor{
+		taskID:   taskID,
+		taskMeta: taskMeta,
+		logger:   logger,
+	}
+}
+
+func (p *postProcessStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
 	logger := p.logger.With(zap.Int64("subtask-id", subtask.ID))
 	task := log.BeginTask(logger, "run subtask")
 	defer func() {
@@ -499,11 +514,7 @@ func (*importExecutor) GetSubtaskExecutor(_ context.Context, task *proto.Task, _
 			logger:   logger,
 		}, nil
 	case StepPostProcess:
-		return &postStepExecutor{
-			taskID:   task.ID,
-			taskMeta: &taskMeta,
-			logger:   logger,
-		}, nil
+		return NewPostProcessStepExecutor(task.ID, &taskMeta, logger), nil
 	default:
 		return nil, errors.Errorf("unknown step %d for import task %d", task.Step, task.ID)
 	}

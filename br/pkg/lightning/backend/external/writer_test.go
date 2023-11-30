@@ -17,6 +17,7 @@ package external
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"path"
@@ -427,6 +428,27 @@ func TestWriterMultiFileStat(t *testing.T) {
 	require.Equal(t, expected, summary.MultipleFilesStats[2])
 	require.EqualValues(t, "key01", summary.Min)
 	require.EqualValues(t, "key24", summary.Max)
+}
+
+func TestCancelWhileWrite(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	memStore := storage.NewMemStorage()
+
+	writer := NewWriterBuilder().
+		SetMemorySizeLimit(20).
+		Build(memStore, "/test", "0")
+
+	for {
+		err := writer.WriteRow(ctx, []byte("key45"), []byte("value"), nil)
+		if errors.Is(err, context.DeadlineExceeded) {
+			break
+		}
+		require.NoError(t, err)
+	}
+
+	err := writer.Close(ctx)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
 func TestWriterSort(t *testing.T) {

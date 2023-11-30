@@ -107,6 +107,9 @@ func TestBufferMemLimit(t *testing.T) {
 	require.Nil(t, got)
 
 	bytesBuf.Destroy()
+	// test the buffer is still usable after destroy.
+	got, _ = bytesBuf.AllocBytesWithSliceLocation(3)
+	require.NotNil(t, got)
 
 	// exactly 2 block
 	bytesBuf = pool.NewBuffer(WithMemoryLimit(20))

@@ -48,7 +48,7 @@ func RegisterTaskType(taskType proto.TaskType, factory TaskExecutorFactoryFn, op
 	taskExecutorFactories[taskType] = factory
 }
 
-func getTaskExecutorFactory(taskType proto.TaskType) TaskExecutorFactoryFn {
+func GetTaskExecutorFactory(taskType proto.TaskType) TaskExecutorFactoryFn {
 	return taskExecutorFactories[taskType]
 }
 

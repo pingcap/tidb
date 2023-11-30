@@ -22,11 +22,18 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
+=======
+>>>>>>> 94a7844732fd0e31f1bcf276f391bbff27d56d12
 	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	mockexecute "github.com/pingcap/tidb/pkg/disttask/framework/mock/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
+>>>>>>> 94a7844732fd0e31f1bcf276f391bbff27d56d12
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -54,7 +61,10 @@ func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, dispatcherHandle di
 	} else {
 		mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(runSubtaskFn).AnyTimes()
 	}
+<<<<<<< HEAD
 	mockExtension.EXPECT().IsIdempotent(gomock.Any()).Return(true).AnyTimes()
+=======
+>>>>>>> 94a7844732fd0e31f1bcf276f391bbff27d56d12
 	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()
 	registerTaskMetaInner(t, proto.TaskTypeExample, mockExtension, mockCleanupRountine, dispatcherHandle)
 }
@@ -106,7 +116,10 @@ func RegisterRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, mockDispatc
 			return nil
 		}).AnyTimes()
 	mockExecutor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+<<<<<<< HEAD
 	mockExtension.EXPECT().IsIdempotent(gomock.Any()).Return(true).AnyTimes()
+=======
+>>>>>>> 94a7844732fd0e31f1bcf276f391bbff27d56d12
 	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockExecutor, nil).AnyTimes()
 
 	registerTaskMetaInner(t, proto.TaskTypeExample, mockExtension, mockCleanupRountine, mockDispatcher)
@@ -163,9 +176,15 @@ func DispatchTaskAndCheckSuccess(ctx context.Context, t *testing.T, taskKey stri
 
 // DispatchAndCancelTask dispatch one task then cancel it.
 func DispatchAndCancelTask(ctx context.Context, t *testing.T, taskKey string, testContext *TestContext) {
+<<<<<<< HEAD
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunCancel", "1*return(1)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunCancel"))
+=======
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/MockExecutorRunCancel", "1*return(1)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/MockExecutorRunCancel"))
+>>>>>>> 94a7844732fd0e31f1bcf276f391bbff27d56d12
 	}()
 	task := DispatchTask(ctx, t, taskKey)
 	require.Equal(t, proto.TaskStateReverted, task.State)
@@ -191,7 +210,11 @@ func DispatchMultiTasksAndOneFail(ctx context.Context, t *testing.T, num int, te
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
 	tasks := make([]*proto.Task, num)
+<<<<<<< HEAD
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunErr", "1*return(true)"))
+=======
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/MockExecutorRunErr", "1*return(true)"))
+>>>>>>> 94a7844732fd0e31f1bcf276f391bbff27d56d12
 
 	for i := 0; i < num; i++ {
 		_, err = mgr.AddNewGlobalTask(ctx, fmt.Sprintf("key%d", i), proto.TaskTypeExample, 8, nil)
@@ -208,5 +231,9 @@ func DispatchMultiTasksAndOneFail(ctx context.Context, t *testing.T, num int, te
 		testContext.M.Delete(key)
 		return true
 	})
+<<<<<<< HEAD
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunErr"))
+=======
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/MockExecutorRunErr"))
+>>>>>>> 94a7844732fd0e31f1bcf276f391bbff27d56d12
 }
