@@ -36,11 +36,12 @@ go_test(
         "dispatcher_manager_test.go",
         "dispatcher_test.go",
         "main_test.go",
+        "rebalance_test.go",
     ],
     embed = [":dispatcher"],
     flaky = True,
     race = "off",
-    shard_count = 16,
+    shard_count = 19,
     deps = [
         "//pkg/disttask/framework/dispatcher/mock",
         "//pkg/disttask/framework/mock",
