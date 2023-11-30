@@ -8,7 +8,7 @@ go_library(
         "register.go",
         "scheduler.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/disttask/framework/scheduler",
+    importpath = "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor",
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/lightning/common",
@@ -17,7 +17,7 @@ go_library(
         "//pkg/disttask/framework/dispatcher",
         "//pkg/disttask/framework/handle",
         "//pkg/disttask/framework/proto",
-        "//pkg/disttask/framework/scheduler/execute",
+        "//pkg/disttask/framework/taskexecutor/execute",
         "//pkg/disttask/framework/storage",
         "//pkg/domain/infosync",
         "//pkg/metrics",
