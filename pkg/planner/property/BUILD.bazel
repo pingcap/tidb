@@ -13,7 +13,6 @@ go_library(
     deps = [
         "//pkg/expression",
         "//pkg/sessionctx",
-        "//pkg/sessionctx/stmtctx",
         "//pkg/statistics",
         "//pkg/util/codec",
         "//pkg/util/collate",
