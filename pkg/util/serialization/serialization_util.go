@@ -22,10 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 )
 
-func serializeLength(length int, buf []byte) []byte {
-	return SerializeInt(length, buf)
-}
-
 func serializeBuffer(value []byte, buf []byte) []byte {
 	length := len(value)
 	buf = SerializeInt(length, buf)
