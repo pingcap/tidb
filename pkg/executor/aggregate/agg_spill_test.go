@@ -264,19 +264,19 @@ func TestGetCorrectResult(t *testing.T) {
 }
 
 func TestRandomFail(t *testing.T) {
-	hardLimitBytesNum := int64(1000000)
+	hardLimitBytesNum := int64(100000)
 
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().InitChunkSize = 500
-	ctx.GetSessionVars().MaxChunkSize = 500
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, hardLimitBytesNum)
 	ctx.GetSessionVars().TrackAggregateMemoryUsage = true
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/enableAggSpillIntest", `return(true)`)
-	rowNum := rand.Intn(300000)
-	ndv := rand.Intn(100000)
+	rowNum := rand.Intn(30000)
+	ndv := rand.Intn(5000)
 	col1, col2 := generateData(rowNum, ndv)
 	opt := getMockDataSourceParameters(ctx)
 	dataSource := buildMockDataSource(opt, col1, col2)

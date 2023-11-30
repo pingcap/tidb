@@ -316,7 +316,7 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 	})
 
 	if intest.InTest && enableIntest {
-		num := rand.Intn(80)
+		num := rand.Intn(50)
 		if num == 0 {
 			panic("Intest panic: final worker is panicked before start")
 		} else if num == 1 {
@@ -344,7 +344,7 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 			}
 
 			if intest.InTest && enableIntest {
-				num := rand.Intn(100000)
+				num := rand.Intn(10000)
 				if num < 7 {
 					panic("Intest panic: final worker is panicked when running")
 				} else if num < 14 {
