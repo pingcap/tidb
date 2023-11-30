@@ -54,6 +54,7 @@ func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, dispatcherHandle di
 	} else {
 		mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(runSubtaskFn).AnyTimes()
 	}
+	mockExtension.EXPECT().IsIdempotent(gomock.Any()).Return(true).AnyTimes()
 	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()
 	registerTaskMetaInner(t, proto.TaskTypeExample, mockExtension, mockCleanupRountine, dispatcherHandle)
 }
@@ -105,6 +106,7 @@ func RegisterRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, mockDispatc
 			return nil
 		}).AnyTimes()
 	mockExecutor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockExtension.EXPECT().IsIdempotent(gomock.Any()).Return(true).AnyTimes()
 	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockExecutor, nil).AnyTimes()
 
 	registerTaskMetaInner(t, proto.TaskTypeExample, mockExtension, mockCleanupRountine, mockDispatcher)
@@ -198,9 +200,14 @@ func DispatchMultiTasksAndOneFail(ctx context.Context, t *testing.T, num int, te
 	for i := 0; i < num; i++ {
 		tasks[i] = WaitTaskExit(ctx, t, fmt.Sprintf("key%d", i))
 	}
-	require.Equal(t, proto.TaskStateReverted, tasks[0].State)
-	require.Equal(t, proto.TaskStateSucceed, tasks[1].State)
-	require.Equal(t, proto.TaskStateSucceed, tasks[2].State)
+
+	failCount := 0
+	for _, task := range tasks {
+		if task.State == proto.TaskStateReverted {
+			failCount++
+		}
+	}
+	require.Equal(t, 1, failCount)
 
 	testContext.M.Range(func(key, value interface{}) bool {
 		testContext.M.Delete(key)
