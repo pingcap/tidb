@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 )
 
 // Vectorizable checks whether a list of expressions can employ vectorized execution.
@@ -179,7 +180,11 @@ func evalOneVec(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, out
 				if result.IsNull(i) {
 					buf.AppendNull()
 				} else {
-					buf.AppendEnum(types.Enum{Value: 0, Name: result.GetString(i)})
+					enum, err := types.ParseEnumName(ft.GetElems(), result.GetString(i), ft.GetCollate())
+					if err != nil {
+						return errors.Errorf("Wrong enum value parsed during evaluation")
+					}
+					buf.AppendEnum(enum)
 				}
 			}
 			output.SetCol(colIdx, buf)
@@ -191,7 +196,11 @@ func evalOneVec(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, out
 				if result.IsNull(i) {
 					buf.AppendNull()
 				} else {
-					buf.AppendSet(types.Set{Value: 0, Name: result.GetString(i)})
+					set, err := types.ParseSetName(ft.GetElems(), result.GetString(i), ft.GetCollate())
+					if err != nil {
+						return errors.Errorf("Wrong set value parsed during evaluation")
+					}
+					buf.AppendSet(set)
 				}
 			}
 			output.SetCol(colIdx, buf)
