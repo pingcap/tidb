@@ -2099,7 +2099,7 @@ func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.
 		PlanReplayerTaskKey: key,
 		StartTS:             startTS,
 		TblStats:            stmtCtx.TableStats,
-		SessionBindings:     handle.GetAllBindRecord(),
+		SessionBindings:     handle.GetAllSessionBindRecord(),
 		SessionVars:         sctx.GetSessionVars(),
 		ExecStmts:           []ast.StmtNode{stmtNode},
 		DebugTrace:          []interface{}{stmtCtx.OptimizerDebugTrace},

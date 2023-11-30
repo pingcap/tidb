@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client/http"
 )
 
 type metaBundleSuite struct {
@@ -342,9 +343,9 @@ func (s *metaBundleSuite) checkPartitionBundle(t *testing.T, def model.Partition
 	s.checkTwoJSONObjectEquals(t, expected, got)
 }
 
-func (s *metaBundleSuite) expectedRules(t *testing.T, ref *model.PolicyRefInfo) []*placement.Rule {
+func (s *metaBundleSuite) expectedRules(t *testing.T, ref *model.PolicyRefInfo) []*pd.Rule {
 	if ref == nil {
-		return []*placement.Rule{}
+		return []*pd.Rule{}
 	}
 
 	var policy *model.PolicyInfo

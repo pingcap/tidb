@@ -266,6 +266,7 @@ type mergeSortStepExecutor struct {
 	// subtask of a task is run in serial now, so we don't need lock here.
 	// change to SyncMap when we support parallel subtask in the future.
 	subtaskSortedKVMeta *external.SortedKVMeta
+	partSize            int64
 }
 
 var _ execute.SubtaskExecutor = &mergeSortStepExecutor{}
@@ -279,6 +280,8 @@ func (m *mergeSortStepExecutor) Init(ctx context.Context) error {
 		return err
 	}
 	m.controller = controller
+	// 10000 = max part num
+	m.partSize = int64(getWriterMemorySizeLimit(&m.taskMeta.Plan) / 10000 * uint64(external.MergeSortOverlapThreshold))
 	return nil
 }
 
@@ -305,7 +308,9 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	prefix := subtaskPrefix(m.taskID, subtask.ID)
 
-	return external.MergeOverlappingFiles(ctx, sm.DataFiles, m.controller.GlobalSortStore, 64*1024,
+	logger.Info("merge sort partSize", zap.String("size", units.BytesSize(float64(m.partSize))))
+
+	return external.MergeOverlappingFiles(ctx, sm.DataFiles, m.controller.GlobalSortStore, m.partSize, 64*1024,
 		prefix, getKVGroupBlockSize(sm.KVGroup), 8*1024, 1*size.MB, 8*1024,
 		onClose, int(m.taskMeta.Plan.ThreadCnt), false)
 }
@@ -412,16 +417,26 @@ func (e *writeAndIngestStepExecutor) Rollback(context.Context) error {
 	return nil
 }
 
-type postStepExecutor struct {
+type postProcessStepExecutor struct {
 	scheduler.EmptySubtaskExecutor
 	taskID   int64
 	taskMeta *TaskMeta
 	logger   *zap.Logger
 }
 
-var _ execute.SubtaskExecutor = &postStepExecutor{}
+var _ execute.SubtaskExecutor = &postProcessStepExecutor{}
 
-func (p *postStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
+// NewPostProcessStepExecutor creates a new post process step executor.
+// exported for testing.
+func NewPostProcessStepExecutor(taskID int64, taskMeta *TaskMeta, logger *zap.Logger) execute.SubtaskExecutor {
+	return &postProcessStepExecutor{
+		taskID:   taskID,
+		taskMeta: taskMeta,
+		logger:   logger,
+	}
+}
+
+func (p *postProcessStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
 	logger := p.logger.With(zap.Int64("subtask-id", subtask.ID))
 	task := log.BeginTask(logger, "run subtask")
 	defer func() {
@@ -494,11 +509,7 @@ func (*importScheduler) GetSubtaskExecutor(_ context.Context, task *proto.Task, 
 			logger:   logger,
 		}, nil
 	case StepPostProcess:
-		return &postStepExecutor{
-			taskID:   task.ID,
-			taskMeta: &taskMeta,
-			logger:   logger,
-		}, nil
+		return NewPostProcessStepExecutor(task.ID, &taskMeta, logger), nil
 	default:
 		return nil, errors.Errorf("unknown step %d for import task %d", task.Step, task.ID)
 	}

@@ -336,7 +336,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 	// Therefore, we need to calculate pointRanges separately so that it can be used to append tail ranges in considerDNF branch.
 	// See https://github.com/pingcap/tidb/issues/26029 for details.
 	var pointRanges Ranges
-	if hasPrefix(d.lengths) && fixPrefixColRange(ranges, d.lengths, tpSlice) {
+	if hasPrefix(d.lengths) {
 		if d.mergeConsecutive {
 			pointRanges = make(Ranges, 0, len(ranges))
 			for _, ran := range ranges {
@@ -608,7 +608,7 @@ func extractValueInfo(expr expression.Expression) *valueInfo {
 func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
 	lengths []int) ([]expression.Expression, []expression.Expression, []expression.Expression, []*valueInfo, bool) {
 	var filters []expression.Expression
-	rb := builder{sc: sctx.GetSessionVars().StmtCtx}
+	rb := builder{ctx: sctx}
 	accesses := make([]expression.Expression, len(cols))
 	points := make([][]*point, len(cols))
 	mergedAccesses := make([]expression.Expression, len(cols))
@@ -630,9 +630,9 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 		collator := collate.GetCollator(cols[offset].GetType().GetCollate())
 		if mergedAccesses[offset] == nil {
 			mergedAccesses[offset] = accesses[offset]
-			points[offset] = rb.build(accesses[offset], collator)
+			points[offset] = rb.build(accesses[offset], collator, lengths[offset])
 		}
-		points[offset] = rb.intersection(points[offset], rb.build(cond, collator), collator)
+		points[offset] = rb.intersection(points[offset], rb.build(cond, collator, lengths[offset]), collator)
 		if len(points[offset]) == 0 { // Early termination if false expression found
 			if expression.MaybeOverOptimized4PlanCache(sctx, conditions) {
 				// `a>@x and a<@y` --> `invalid-range if @x>=@y`
@@ -715,7 +715,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 		optPrefixIndexSingleScan: d.sctx.GetSessionVars().OptPrefixIndexSingleScan,
 		ctx:                      d.sctx,
 	}
-	rb := builder{sc: d.sctx.GetSessionVars().StmtCtx}
+	rb := builder{ctx: d.sctx}
 	dnfItems := expression.FlattenDNFConditions(condition)
 	newAccessItems := make([]expression.Expression, 0, len(dnfItems))
 	var totalRanges Ranges
@@ -773,7 +773,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 			if shouldReserve {
 				hasResidual = true
 			}
-			points := rb.build(item, collate.GetCollator(newTpSlice[0].GetCollate()))
+			points := rb.build(item, collate.GetCollator(newTpSlice[0].GetCollate()), d.lengths[0])
 			// TODO: restrict the mem usage of ranges
 			ranges, rangeFallback, err := points2Ranges(d.sctx, points, newTpSlice[0], d.rangeMaxSize)
 			if err != nil {
@@ -805,10 +805,6 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 		}
 	}
 
-	// Take prefix index into consideration.
-	if hasPrefix(d.lengths) {
-		fixPrefixColRange(totalRanges, d.lengths, newTpSlice)
-	}
 	totalRanges, err := UnionRanges(d.sctx, totalRanges, d.mergeConsecutive)
 	if err != nil {
 		return nil, nil, nil, false, errors.Trace(err)

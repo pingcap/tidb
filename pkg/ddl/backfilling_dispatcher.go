@@ -175,19 +175,9 @@ func skipMergeSort(stats []external.MultipleFilesStat) bool {
 	return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
 }
 
-// OnErrStage generate error handling stage's plan.
-func (*BackfillingDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, receiveErrs []error) (meta []byte, err error) {
-	// We do not need extra meta info when rolling back
-	logger := logutil.BgLogger().With(
-		zap.Stringer("type", task.Type),
-		zap.Int64("task-id", task.ID),
-		zap.String("step", StepStr(task.Step)),
-	)
-	logger.Info("on error stage", zap.Errors("errors", receiveErrs))
-	firstErr := receiveErrs[0]
-	task.Error = firstErr
-
-	return nil, nil
+// OnDone implements dispatcher.Extension interface.
+func (*BackfillingDispatcherExt) OnDone(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task) error {
+	return nil
 }
 
 // GetEligibleInstances implements dispatcher.Extension interface.
@@ -272,7 +262,11 @@ func generatePartitionPlan(tblInfo *model.TableInfo) (metas [][]byte, err error)
 }
 
 func generateNonPartitionPlan(
-	d *ddl, tblInfo *model.TableInfo, job *model.Job, useCloud bool, instanceCnt int) (metas [][]byte, err error) {
+	d *ddl,
+	tblInfo *model.TableInfo,
+	job *model.Job,
+	useCloud bool,
+	instanceCnt int) (metas [][]byte, err error) {
 	tbl, err := getTable((*asAutoIDRequirement)(d.ddlCtx), job.SchemaID, tblInfo)
 	if err != nil {
 		return nil, err
@@ -281,6 +275,7 @@ func generateNonPartitionPlan(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	startKey, endKey, err := getTableRange(d.jobContext(job.ID, job.ReorgMeta), d.ddlCtx, tbl.(table.PhysicalTable), ver.Ver, job.Priority)
 	if startKey == nil && endKey == nil {
 		// Empty table.
@@ -294,7 +289,6 @@ func generateNonPartitionPlan(
 	if err != nil {
 		return nil, err
 	}
-
 	regionBatch := calculateRegionBatch(len(recordRegionMetas), instanceCnt, !useCloud)
 
 	subTaskMetas := make([][]byte, 0, 4)
@@ -387,6 +381,7 @@ func generateGlobalSortIngestPlan(
 		logger.Info("split subtask range",
 			zap.String("startKey", hex.EncodeToString(startKey)),
 			zap.String("endKey", hex.EncodeToString(endKey)))
+
 		if startKey.Cmp(endKey) >= 0 {
 			return nil, errors.Errorf("invalid range, startKey: %s, endKey: %s",
 				hex.EncodeToString(startKey), hex.EncodeToString(endKey))

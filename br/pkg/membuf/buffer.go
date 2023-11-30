@@ -49,17 +49,17 @@ type Pool struct {
 // Option configures a pool.
 type Option func(p *Pool)
 
-// WithPoolSize configures how many blocks cached by this pool.
-func WithPoolSize(size int) Option {
+// WithBlockNum configures how many blocks cached by this pool.
+func WithBlockNum(num int) Option {
 	return func(p *Pool) {
-		p.blockCache = make(chan []byte, size)
+		p.blockCache = make(chan []byte, num)
 	}
 }
 
 // WithBlockSize configures the size of each block.
-func WithBlockSize(size int) Option {
+func WithBlockSize(bytes int) Option {
 	return func(p *Pool) {
-		p.blockSize = size
+		p.blockSize = bytes
 	}
 }
 
@@ -110,11 +110,6 @@ func (p *Pool) release(b []byte) {
 	}
 }
 
-// NewBuffer creates a new buffer in current pool.
-func (p *Pool) NewBuffer() *Buffer {
-	return &Buffer{pool: p, bufs: make([][]byte, 0, 128), curBufIdx: -1}
-}
-
 // Destroy frees all buffers.
 func (p *Pool) Destroy() {
 	close(p.blockCache)
@@ -130,51 +125,68 @@ func (p *Pool) TotalSize() int64 {
 
 // Buffer represents the reuse buffer.
 type Buffer struct {
-	pool      *Pool
-	bufs      [][]byte
-	curBuf    []byte
-	curIdx    int
-	curBufIdx int
-	curBufLen int
+	pool          *Pool
+	blocks        [][]byte
+	blockCntLimit int
+	curBlock      []byte
+	curBlockIdx   int
+	curIdx        int
 }
 
-// addBuf adds buffer to Buffer.
-func (b *Buffer) addBuf() {
-	if b.curBufIdx < len(b.bufs)-1 {
-		b.curBufIdx++
-		b.curBuf = b.bufs[b.curBufIdx]
-	} else {
-		buf := b.pool.acquire()
-		b.bufs = append(b.bufs, buf)
-		b.curBuf = buf
-		b.curBufIdx = len(b.bufs) - 1
-	}
+// BufferOption configures a buffer.
+type BufferOption func(*Buffer)
 
-	b.curBufLen = len(b.curBuf)
-	b.curIdx = 0
+// WithMemoryLimit approximately limits the maximum memory size of this Buffer.
+// Due to it use blocks to allocate memory, the actual memory size is
+// blockSize*ceil(limit/blockSize).
+// In order to keep compatibility, it will only restrict AllocBytesWithSliceLocation.
+func WithMemoryLimit(limit uint64) BufferOption {
+	return func(b *Buffer) {
+		blockCntLimit := int(limit+uint64(b.pool.blockSize)-1) / b.pool.blockSize
+		b.blockCntLimit = blockCntLimit
+		b.blocks = make([][]byte, 0, blockCntLimit)
+	}
+}
+
+// NewBuffer creates a new buffer in current pool.
+func (p *Pool) NewBuffer(opts ...BufferOption) *Buffer {
+	b := &Buffer{
+		pool:          p,
+		curBlockIdx:   -1,
+		blockCntLimit: -1,
+	}
+	for _, opt := range opts {
+		opt(b)
+	}
+	if b.blocks == nil {
+		b.blocks = make([][]byte, 0, 128)
+	}
+	return b
 }
 
 // Reset resets the buffer.
 func (b *Buffer) Reset() {
-	if len(b.bufs) > 0 {
-		b.curBuf = b.bufs[0]
-		b.curBufLen = len(b.bufs[0])
-		b.curBufIdx = 0
+	if len(b.blocks) > 0 {
+		b.curBlock = b.blocks[0]
+		b.curBlockIdx = 0
 		b.curIdx = 0
 	}
 }
 
 // Destroy frees all buffers.
 func (b *Buffer) Destroy() {
-	for _, buf := range b.bufs {
+	for _, buf := range b.blocks {
 		b.pool.release(buf)
 	}
-	b.bufs = nil
+	b.blocks = nil
+	b.curBlock = nil
+	b.curBlockIdx = -1
+	b.curIdx = 0
 }
 
 // TotalSize represents the total memory size of this Buffer.
 func (b *Buffer) TotalSize() int64 {
-	return int64(len(b.bufs) * b.pool.blockSize)
+	return int64(len(b.blocks) * b.pool.blockSize)
 }
 
 // AllocBytes allocates bytes with the given length.
@@ -182,12 +194,66 @@ func (b *Buffer) AllocBytes(n int) []byte {
 	if n > b.pool.largeAllocThreshold {
 		return make([]byte, n)
 	}
-	if b.curIdx+n > b.curBufLen {
+	if b.curIdx+n > len(b.curBlock) {
 		b.addBuf()
 	}
 	idx := b.curIdx
 	b.curIdx += n
-	return b.curBuf[idx:b.curIdx:b.curIdx]
+	return b.curBlock[idx:b.curIdx:b.curIdx]
+}
+
+// addBuf adds buffer to Buffer.
+func (b *Buffer) addBuf() {
+	if b.curBlockIdx < len(b.blocks)-1 {
+		b.curBlockIdx++
+		b.curBlock = b.blocks[b.curBlockIdx]
+	} else {
+		buf := b.pool.acquire()
+		b.blocks = append(b.blocks, buf)
+		b.curBlock = buf
+		b.curBlockIdx = len(b.blocks) - 1
+	}
+
+	b.curIdx = 0
+}
+
+// SliceLocation is like a reflect.SliceHeader, but it's associated with a
+// Buffer. The advantage is that it's smaller than a slice, and it doesn't
+// contain a pointer thus more GC-friendly.
+type SliceLocation struct {
+	bufIdx int32
+	offset int32
+	length int32
+}
+
+// AllocBytesWithSliceLocation is like AllocBytes, but it also returns a
+// SliceLocation. The expected usage is after writing data into returned slice we
+// do not store the slice itself, but only the SliceLocation. Later we can use
+// the SliceLocation to get the slice again. When we have a large number of
+// slices in memory this can improve performance.
+// nil returned slice means allocation failed.
+func (b *Buffer) AllocBytesWithSliceLocation(n int) ([]byte, SliceLocation) {
+	if n > b.pool.blockSize {
+		return nil, SliceLocation{}
+	}
+
+	if b.curIdx+n > len(b.curBlock) {
+		if b.blockCntLimit >= 0 && len(b.blocks) >= b.blockCntLimit {
+			return nil, SliceLocation{}
+		}
+		b.addBuf()
+	}
+	blockIdx := int32(b.curBlockIdx)
+	offset := int32(b.curIdx)
+	loc := SliceLocation{bufIdx: blockIdx, offset: offset, length: int32(n)}
+
+	idx := b.curIdx
+	b.curIdx += n
+	return b.curBlock[idx:b.curIdx:b.curIdx], loc
+}
+
+func (b *Buffer) GetSlice(loc SliceLocation) []byte {
+	return b.blocks[loc.bufIdx][loc.offset : loc.offset+loc.length]
 }
 
 // AddBytes adds the bytes into this Buffer.

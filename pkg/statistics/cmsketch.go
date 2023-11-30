@@ -23,6 +23,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -259,10 +260,15 @@ func (c *CMSketch) SubValue(h1, h2 uint64, count uint64) {
 // QueryValue is used to query the count of specified value.
 func QueryValue(sctx sessionctx.Context, c *CMSketch, t *TopN, val types.Datum) (uint64, error) {
 	var sc *stmtctx.StatementContext
+	tz := time.UTC
 	if sctx != nil {
 		sc = sctx.GetSessionVars().StmtCtx
+		tz = sc.TimeZone()
 	}
-	rawData, err := tablecodec.EncodeValue(sc, nil, val)
+	rawData, err := tablecodec.EncodeValue(tz, nil, val)
+	if sc != nil {
+		err = sc.HandleError(err)
+	}
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

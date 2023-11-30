@@ -12,4 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package partitiontest
+package mock
+
+// RestrictedSQLExecutorKey is the key to represent MockRestrictedSQLExecutorMockRecorder in ctx.
+type RestrictedSQLExecutorKey struct{}
+
+// String implements the string.Stringer interface.
+func (k RestrictedSQLExecutorKey) String() string {
+	return "__MockRestrictedSQLExecutor"
+}
