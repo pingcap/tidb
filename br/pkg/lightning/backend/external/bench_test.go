@@ -22,7 +22,9 @@ import (
 	"math"
 	"math/rand"
 	"os"
+	"runtime"
 	"runtime/pprof"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -30,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"go.uber.org/atomic"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -49,52 +52,78 @@ type kvSource interface {
 	outputSize() int
 }
 
+type ascendingKeyGenerator struct {
+	keySize         int
+	keyCommonPrefix []byte
+	count           int
+	curKey          []byte
+	keyOutCh        chan []byte
+}
+
+func generateAscendingKey(
+	count int,
+	keySize int,
+	keyCommonPrefix []byte,
+) chan []byte {
+	c := &ascendingKeyGenerator{
+		keySize:         keySize,
+		count:           count,
+		keyCommonPrefix: keyCommonPrefix,
+		keyOutCh:        make(chan []byte, 100),
+	}
+	c.curKey = make([]byte, keySize)
+	copy(c.curKey, keyCommonPrefix)
+	c.run()
+	return c.keyOutCh
+}
+
+func (c *ascendingKeyGenerator) run() {
+	keyCommonPrefixSize := len(c.keyCommonPrefix)
+	incSuffixLen := int(math.Ceil(math.Log2(float64(c.count)) / 8))
+	if c.keySize-keyCommonPrefixSize < incSuffixLen {
+		panic(fmt.Sprintf("key size %d is too small, keyCommonPrefixSize: %d, incSuffixLen: %d",
+			c.keySize, keyCommonPrefixSize, incSuffixLen))
+	}
+
+	go func() {
+		defer close(c.keyOutCh)
+		for i := 0; i < c.count; i++ {
+			// ret to use most left bytes to alternate the key
+			for j := keyCommonPrefixSize + incSuffixLen - 1; j >= keyCommonPrefixSize; j-- {
+				c.curKey[j]++
+				if c.curKey[j] != 0 {
+					break
+				}
+			}
+			c.keyOutCh <- slices.Clone(c.curKey)
+		}
+	}()
+}
+
 type ascendingKeySource struct {
-	keySize, valueSize  int
-	keyCommonPrefixSize int
-	count               int
-	keys                [][]byte
-	keysIdx             int
-	curKey              []byte
-	totalSize           int
+	valueSize int
+	keys      [][]byte
+	keysIdx   int
+	totalSize int
 }
 
 func newAscendingKeySource(
 	count int,
 	keySize int,
 	valueSize int,
-	keyCommonPrefixSize int,
+	keyCommonPrefix []byte,
 ) *ascendingKeySource {
+	keyCh := generateAscendingKey(count, keySize, keyCommonPrefix)
 	s := &ascendingKeySource{
-		keySize:             keySize,
-		valueSize:           valueSize,
-		count:               count,
-		keyCommonPrefixSize: keyCommonPrefixSize,
+		valueSize: valueSize,
+		keys:      make([][]byte, count),
 	}
-	s.curKey = make([]byte, keySize)
-	s.keys = make([][]byte, count)
-	s.run()
+	for i := 0; i < count; i++ {
+		key := <-keyCh
+		s.keys[i] = key
+		s.totalSize += len(key) + valueSize
+	}
 	return s
-}
-
-func (s *ascendingKeySource) run() {
-	incSuffixLen := int(math.Ceil(math.Log2(float64(s.count)) / 8))
-	if s.keySize-s.keyCommonPrefixSize < incSuffixLen {
-		panic(fmt.Sprintf("key size %d is too small, keyCommonPrefixSize: %d, incSuffixLen: %d",
-			s.keySize, s.keyCommonPrefixSize, incSuffixLen))
-	}
-	for i := range s.keys {
-		// ret to use most left bytes to alternate the key
-		for j := s.keyCommonPrefixSize + incSuffixLen - 1; j >= s.keyCommonPrefixSize; j-- {
-			s.curKey[j]++
-			if s.curKey[j] != 0 {
-				break
-			}
-		}
-		s.keys[i] = make([]byte, s.keySize)
-		copy(s.keys[i], s.curKey)
-		s.totalSize += s.keySize + s.valueSize
-	}
 }
 
 func (s *ascendingKeySource) next() (key, value []byte, handle kv.Handle) {
@@ -110,56 +139,115 @@ func (s *ascendingKeySource) outputSize() int {
 	return s.totalSize
 }
 
+type ascendingKeyAsyncSource struct {
+	valueSize int
+	keyOutCh  chan []byte
+	totalSize int
+}
+
+func newAscendingKeyAsyncSource(
+	count int,
+	keySize int,
+	valueSize int,
+	keyCommonPrefix []byte,
+) *ascendingKeyAsyncSource {
+	s := &ascendingKeyAsyncSource{
+		valueSize: valueSize,
+		keyOutCh:  generateAscendingKey(count, keySize, keyCommonPrefix),
+	}
+	return s
+}
+
+func (s *ascendingKeyAsyncSource) next() (key, value []byte, handle kv.Handle) {
+	key, ok := <-s.keyOutCh
+	if !ok {
+		return nil, nil, nil
+	}
+	s.totalSize += len(key) + s.valueSize
+	return key, make([]byte, s.valueSize), nil
+}
+
+func (s *ascendingKeyAsyncSource) outputSize() int {
+	return s.totalSize
+}
+
+type randomKeyGenerator struct {
+	keySize         int
+	keyCommonPrefix []byte
+	rnd             *rand.Rand
+	count           int
+	curKey          []byte
+	keyOutCh        chan []byte
+}
+
+func generateRandomKey(
+	count int,
+	keySize int,
+	keyCommonPrefix []byte,
+	seed int,
+) chan []byte {
+	c := &randomKeyGenerator{
+		keySize:         keySize,
+		count:           count,
+		keyCommonPrefix: keyCommonPrefix,
+		rnd:             rand.New(rand.NewSource(int64(seed))),
+		keyOutCh:        make(chan []byte, 100),
+	}
+	c.curKey = make([]byte, keySize)
+	copy(c.curKey, keyCommonPrefix)
+	c.run()
+	return c.keyOutCh
+}
+
+func (c *randomKeyGenerator) run() {
+	keyCommonPrefixSize := len(c.keyCommonPrefix)
+	incSuffixLen := int(math.Ceil(math.Log2(float64(c.count)) / 8))
+	randomLen := c.keySize - keyCommonPrefixSize - incSuffixLen
+	if randomLen < 0 {
+		panic(fmt.Sprintf("key size %d is too small, keyCommonPrefixSize: %d, incSuffixLen: %d",
+			c.keySize, keyCommonPrefixSize, incSuffixLen))
+	}
+
+	go func() {
+		defer close(c.keyOutCh)
+		for i := 0; i < c.count; i++ {
+			c.rnd.Read(c.curKey[keyCommonPrefixSize : keyCommonPrefixSize+randomLen])
+			for j := len(c.curKey) - 1; j >= keyCommonPrefixSize+randomLen; j-- {
+				c.curKey[j]++
+				if c.curKey[j] != 0 {
+					break
+				}
+			}
+			c.keyOutCh <- slices.Clone(c.curKey)
+		}
+	}()
+}
+
 type randomKeySource struct {
-	keySize, valueSize  int
-	keyCommonPrefixSize int
-	rnd                 *rand.Rand
-	count               int
-	keys                [][]byte
-	keysIdx             int
-	curKey              []byte
-	totalSize           int
+	valueSize int
+	keys      [][]byte
+	keysIdx   int
+	totalSize int
 }
 
 func newRandomKeySource(
 	count int,
 	keySize int,
 	valueSize int,
-	keyCommonPrefixSize int,
+	keyCommonPrefix []byte,
 	seed int,
 ) *randomKeySource {
+	keyCh := generateRandomKey(count, keySize, keyCommonPrefix, seed)
 	s := &randomKeySource{
-		keySize:             keySize,
-		valueSize:           valueSize,
-		count:               count,
-		keyCommonPrefixSize: keyCommonPrefixSize,
-		rnd:                 rand.New(rand.NewSource(int64(seed))),
+		valueSize: valueSize,
+		keys:      make([][]byte, count),
 	}
-	s.curKey = make([]byte, keySize)
-	s.keys = make([][]byte, count)
-	s.run()
+	for i := 0; i < count; i++ {
+		key := <-keyCh
+		s.keys[i] = key
+		s.totalSize += len(key) + valueSize
+	}
 	return s
-}
-
-func (s *randomKeySource) run() {
-	incSuffixLen := int(math.Ceil(math.Log2(float64(s.count)) / 8))
-	randomLen := s.keySize - s.keyCommonPrefixSize - incSuffixLen
-	if randomLen < 0 {
-		panic(fmt.Sprintf("key size %d is too small, keyCommonPrefixSize: %d, incSuffixLen: %d",
-			s.keySize, s.keyCommonPrefixSize, incSuffixLen))
-	}
-	for i := 0; i < s.count; i++ {
-		s.rnd.Read(s.curKey[s.keyCommonPrefixSize : s.keyCommonPrefixSize+randomLen])
-		for j := len(s.curKey) - 1; j >= s.keyCommonPrefixSize+randomLen; j-- {
-			s.curKey[j]++
-			if s.curKey[j] != 0 {
-				break
-			}
-		}
-		s.keys[i] = make([]byte, s.keySize)
-		copy(s.keys[i], s.curKey)
-		s.totalSize += s.keySize + s.valueSize
-	}
 }
 
 func (s *randomKeySource) next() (key, value []byte, handle kv.Handle) {
@@ -222,15 +310,19 @@ func writePlainFile(s *writeTestSuite) {
 	}
 }
 
+func cleanOldFiles(ctx context.Context, store storage.ExternalStorage, subDir string) {
+	dataFiles, statFiles, err := GetAllFileNames(ctx, store, subDir)
+	intest.AssertNoError(err)
+	err = store.DeleteFiles(ctx, dataFiles)
+	intest.AssertNoError(err)
+	err = store.DeleteFiles(ctx, statFiles)
+	intest.AssertNoError(err)
+}
+
 func writeExternalFile(s *writeTestSuite) {
 	ctx := context.Background()
 	filePath := "/test/writer"
-	files, statFiles, err := GetAllFileNames(ctx, s.store, filePath)
-	intest.AssertNoError(err)
-	err = s.store.DeleteFiles(ctx, files)
-	intest.AssertNoError(err)
-	err = s.store.DeleteFiles(ctx, statFiles)
-	intest.AssertNoError(err)
+	cleanOldFiles(ctx, s.store, filePath)
 	builder := NewWriterBuilder().
 		SetMemorySizeLimit(uint64(s.memoryLimit))
 
@@ -247,7 +339,7 @@ func writeExternalFile(s *writeTestSuite) {
 	if s.beforeWriterClose != nil {
 		s.beforeWriterClose()
 	}
-	err = writer.Close(ctx)
+	err := writer.Close(ctx)
 	intest.AssertNoError(err)
 	if s.afterWriterClose != nil {
 		s.afterWriterClose()
@@ -257,12 +349,7 @@ func writeExternalFile(s *writeTestSuite) {
 func writeExternalOneFile(s *writeTestSuite) {
 	ctx := context.Background()
 	filePath := "/test/writer"
-	files, statFiles, err := GetAllFileNames(ctx, s.store, filePath)
-	intest.AssertNoError(err)
-	err = s.store.DeleteFiles(ctx, files)
-	intest.AssertNoError(err)
-	err = s.store.DeleteFiles(ctx, statFiles)
-	intest.AssertNoError(err)
+	cleanOldFiles(ctx, s.store, filePath)
 	builder := NewWriterBuilder().
 		SetMemorySizeLimit(uint64(s.memoryLimit))
 
@@ -281,7 +368,7 @@ func writeExternalOneFile(s *writeTestSuite) {
 	if s.beforeWriterClose != nil {
 		s.beforeWriterClose()
 	}
-	err = writer.Close(ctx)
+	err := writer.Close(ctx)
 	intest.AssertNoError(err)
 	if s.afterWriterClose != nil {
 		s.afterWriterClose()
@@ -340,17 +427,17 @@ func TestCompareWriter(t *testing.T) {
 		"external one file": writeExternalOneFile,
 	}
 
-	// not much difference between 3 & 10
-	keyCommonPrefixSize := 3
+	// not much difference between size 3 & 10
+	keyCommonPrefix := []byte{1, 2, 3}
 
 	for _, kvSize := range [][2]int{{20, 1000}, {20, 100}, {20, 10}} {
 		expectedKVNum := expectedKVSize / (kvSize[0] + kvSize[1])
 		sources := map[string]func() kvSource{}
 		sources["ascending key"] = func() kvSource {
-			return newAscendingKeySource(expectedKVNum, kvSize[0], kvSize[1], keyCommonPrefixSize)
+			return newAscendingKeySource(expectedKVNum, kvSize[0], kvSize[1], keyCommonPrefix)
 		}
 		sources["random key"] = func() kvSource {
-			return newRandomKeySource(expectedKVNum, kvSize[0], kvSize[1], keyCommonPrefixSize, seed)
+			return newRandomKeySource(expectedKVNum, kvSize[0], kvSize[1], keyCommonPrefix, seed)
 		}
 		for sourceName, sourceGetter := range sources {
 			for storeName, store := range stores {
@@ -464,12 +551,7 @@ func createEvenlyDistributedFiles(
 	store := openTestingStorage(t)
 	ctx := context.Background()
 
-	files, statFiles, err := GetAllFileNames(ctx, store, "/"+subDir)
-	intest.AssertNoError(err)
-	err = store.DeleteFiles(ctx, files)
-	intest.AssertNoError(err)
-	err = store.DeleteFiles(ctx, statFiles)
-	intest.AssertNoError(err)
+	cleanOldFiles(ctx, store, "/"+subDir)
 
 	value := make([]byte, 100)
 	kvCnt := 0
@@ -604,12 +686,7 @@ func createAscendingFiles(
 	store := openTestingStorage(t)
 	ctx := context.Background()
 
-	files, statFiles, err := GetAllFileNames(ctx, store, "/"+subDir)
-	intest.AssertNoError(err)
-	err = store.DeleteFiles(ctx, files)
-	intest.AssertNoError(err)
-	err = store.DeleteFiles(ctx, statFiles)
-	intest.AssertNoError(err)
+	cleanOldFiles(ctx, store, "/"+subDir)
 
 	keyIdx := 0
 	value := make([]byte, 100)
@@ -710,4 +787,77 @@ func TestCompareReaderAscendingContent(t *testing.T) {
 		fileSize*fileCnt,
 		float64(fileSize*fileCnt)/elapsed.Seconds()/1024/1024,
 	)
+}
+
+const largeAscendingDataPath = "large_ascending_data"
+
+// TestPrepareLargeData will write 1000 * 256MB data to the storage.
+func TestPrepareLargeData(t *testing.T) {
+	store := openTestingStorage(t)
+	ctx := context.Background()
+
+	cleanOldFiles(ctx, store, largeAscendingDataPath)
+
+	fileSize := 256 * 1024 * 1024
+	fileCnt := 1000
+	keySize := 20
+	valueSize := 100
+	concurrency := runtime.NumCPU() / 2
+	filePerConcUpperBound := (fileCnt + concurrency - 1) / concurrency
+
+	size := atomic.NewInt64(0)
+	now := time.Now()
+	wg := sync.WaitGroup{}
+	wg.Add(concurrency)
+
+	for i := 0; i < concurrency; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			writer := NewWriterBuilder().
+				SetMemorySizeLimit(uint64(fileSize)).
+				Build(store, largeAscendingDataPath, fmt.Sprintf("%02d", i))
+			endFile := min((i+1)*filePerConcUpperBound, fileCnt)
+			startFile := min(i*filePerConcUpperBound, endFile)
+			if startFile == endFile {
+				return
+			}
+
+			// slightly reduce total size to avoid generate a small file at the end
+			totalSize := fileSize*(endFile-startFile) - 20*1024*1024
+			kvCnt := totalSize / (keySize + valueSize + 16)
+			source := newAscendingKeyAsyncSource(kvCnt, keySize, valueSize, []byte{byte(i)})
+			key, val, _ := source.next()
+			for key != nil {
+				err := writer.WriteRow(ctx, key, val, nil)
+				intest.AssertNoError(err)
+				size.Add(int64(len(key) + len(val)))
+				key, val, _ = source.next()
+			}
+			err := writer.Close(ctx)
+			intest.AssertNoError(err)
+		}()
+	}
+	wg.Wait()
+	elapsed := time.Since(now)
+	t.Logf("write %d bytes in %s, speed: %.2f MB/s",
+		size.Load(), elapsed, float64(size.Load())/elapsed.Seconds()/1024/1024)
+	dataFiles, _, err := GetAllFileNames(ctx, store, largeAscendingDataPath)
+	intest.AssertNoError(err)
+
+	r, err := store.Open(ctx, dataFiles[0], nil)
+	intest.AssertNoError(err)
+	firstFileSize, err := r.GetFileSize()
+	intest.AssertNoError(err)
+	err = r.Close()
+	intest.AssertNoError(err)
+
+	r, err = store.Open(ctx, dataFiles[len(dataFiles)-1], nil)
+	intest.AssertNoError(err)
+	lastFileSize, err := r.GetFileSize()
+	intest.AssertNoError(err)
+	err = r.Close()
+	intest.AssertNoError(err)
+	t.Logf("total %d data files, first file size: %.2f MB, last file size: %.2f MB",
+		len(dataFiles), float64(firstFileSize)/1024/1024, float64(lastFileSize)/1024/1024)
 }
