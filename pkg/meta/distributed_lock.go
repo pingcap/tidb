@@ -162,7 +162,6 @@ var lockHeldErr error = errors.Errorf("lock is held")
 
 // Lock locks the distributed lock.
 func (d *DistributedLock) Lock() error {
-	newLockCreated := false
 	err := d.getLockInTxnWithRetry(d.outerCtx,
 		func(lc *lockContent, txn DataTxn) (storeErr, otherErr error) {
 			startTS := txn.StartTS()
@@ -177,7 +176,6 @@ func (d *DistributedLock) Lock() error {
 				if err != nil {
 					return errors.Trace(err), nil
 				}
-				newLockCreated = true
 				return nil, nil
 			}
 			// Lock is valid, wait for a while.
@@ -186,7 +184,7 @@ func (d *DistributedLock) Lock() error {
 	if err != nil {
 		return err
 	}
-	if !intest.InTest && newLockCreated {
+	if !intest.InTest {
 		var renewCtx context.Context
 		renewCtx, d.cancelRenewLoop = context.WithCancel(d.outerCtx)
 		go d.renewLockLoop(renewCtx)
