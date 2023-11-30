@@ -253,7 +253,8 @@
 
     *Hint: The method to convert the Hex format key returned by TiDB API into the format recognized by [tikv-ctl](https://docs.pingcap.com/tidb/stable/tikv-control).*
     
-    step 1: Get the hex of the start key from tidb.
+    Step 1: Get the hex of the key you need. For example you could find the key by the following TiDB  API.
+
      ```shell
         $curl http://127.0.0.1:10080/mvcc/key/test/t1/1
         {
@@ -277,22 +278,30 @@
         }
         }
      ```
-     step 2: convert the hex key from tidb to escaped key with [tikv-ctl](https://docs.pingcap.com/tidb/stable/tikv-control)
+
+     Step 2: convert the hex key from tidb to escaped key with [tikv-ctl](https://docs.pingcap.com/tidb/stable/tikv-control)
+
      ```shell
       ./tikv-ctl --to-escaped '7480000000000008C65F728000000000000001'
       t\200\000\000\000\000\000\010\306_r\200\000\000\000\000\000\000\001
      ```
-     step 3: Encode the key to make it memcomparable in tikv with [tikv-ctl](https://docs.pingcap.com/tidb/stable/tikv-control)
+
+     Step 3: Encode the key to make it memcomparable in tikv with [tikv-ctl](https://docs.pingcap.com/tidb/stable/tikv-control)
+
      ```
      ./tikv-ctl --encode 't\200\000\000\000\000\000\010\306_r\200\000\000\000\000\000\000\001'
      7480000000000008FFC65F728000000000FF0000010000000000FA
      ```
-     step 4: convert the hex key to escaped key since `tikv-ctl scan` only accepts escaped key.
+
+     Step 4: convert the hex key to escaped key since `tikv-ctl scan` only accepts escaped key.
+     
      ```
      ./tikv-ctl --to-escaped '7480000000000008FFC65F728000000000FF0000010000000000FA'
      t\200\000\000\000\000\000\010\377\306_r\200\000\000\000\000\377\000\000\001\000\000\000\000\000\372
      ```
-     step 5: Add the prefix "z" as the start-key to scan from tikv with [tikv-ctl](https://docs.pingcap.com/tidb/stable/tikv-control)
+
+     Step 5: Add a prefix "z" to the key. Then the key can be recognized by [tikv-ctl](https://docs.pingcap.com/tidb/stable/tikv-control). For example, use the following command to scan from tikv.
+
      ```
      ./tikv-ctl  --host "<tikv_ip>:<port>" scan --from 'zt\200\000\000\000\000\000\010\377\306_r\200\000\000\000\000\377\000\000\001\000\000\000\000\000\372' --limit 5 --show-cf write,lock,default 
         key: zt\200\000\000\000\000\000\010\377\306_r\200\000\000\000\000\377\000\000\001\000\000\000\000\000\372
