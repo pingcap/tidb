@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -694,9 +695,15 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction, prefi
 			break
 		} else if pattern[i] == '_' {
 			// Get the prefix, but exclude the prefix.
-			// e.g., "abc_x", the start point exclude "abc",
-			// because the string length is more than 3.
-			exclude = true
+			// e.g., "abc_x", the start point excludes "abc" because the string length is more than 3.
+			//
+			// However, like the similar check in (*conditionChecker).checkLikeFunc(), in tidb's implementation, for
+			// PAD SPACE collations, the trailing spaces are removed in the index key. So we are unable to distinguish
+			// 'xxx' from 'xxx   ' by a single index range scan. If we exclude the start point for PAD SPACE collation,
+			// we will actually miss 'xxx   ', which will cause wrong results.
+			if !isPadSpaceCollation(collation) {
+				exclude = true
+			}
 			isExactMatch = false
 			break
 		}
@@ -734,6 +741,14 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction, prefi
 		}
 	}
 	return []*point{startPoint, endPoint}
+}
+
+// isPadSpaceCollation returns whether the collation is a PAD SPACE collation.
+// Since all collations, except for binary, implemented in tidb are PAD SPACE collations for now, we use a simple
+// collation != binary check here. We may also move it to collation related packages when NO PAD collations are
+// implemented in the future.
+func isPadSpaceCollation(collation string) bool {
+	return collation != charset.CollationBin
 }
 
 func (r *builder) buildFromNot(expr *expression.ScalarFunction, prefixLen int) []*point {
