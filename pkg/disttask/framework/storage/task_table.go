@@ -664,10 +664,11 @@ func (stm *TaskManager) UpdateSubtasksSchedulerIDs(ctx context.Context, taskID i
 	err := stm.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		for _, subtask := range subtasks {
 			_, err := ExecSQL(ctx, se,
-				"update mysql.tidb_background_subtask set exec_id = %? where id = %? and state = %?",
+				"update mysql.tidb_background_subtask set exec_id = %? where id = %? and state = %? and task_key = %?",
 				subtask.SchedulerID,
 				subtask.ID,
-				subtask.State)
+				subtask.State,
+				taskID)
 			if err != nil {
 				return err
 			}
