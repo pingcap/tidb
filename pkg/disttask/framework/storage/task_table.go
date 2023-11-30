@@ -289,7 +289,7 @@ func (stm *TaskManager) GetTaskByID(ctx context.Context, taskID int64) (task *pr
 // GetTaskByIDWithHistory gets the task by the task ID from both tidb_global_task and tidb_global_task_history.
 func (stm *TaskManager) GetTaskByIDWithHistory(ctx context.Context, taskID int64) (task *proto.Task, err error) {
 	rs, err := stm.executeSQLWithNewSession(ctx, "select "+taskColumns+" from mysql.tidb_global_task where id = %? "+
-		"union select "+taskColumns+"from mysql.tidb_global_task_history where id = %?", taskID, taskID)
+		"union select "+taskColumns+" from mysql.tidb_global_task_history where id = %?", taskID, taskID)
 	if err != nil {
 		return task, err
 	}
@@ -316,7 +316,7 @@ func (stm *TaskManager) GetTaskByKey(ctx context.Context, key string) (task *pro
 // GetTaskByKeyWithHistory gets the task from history table by the task key.
 func (stm *TaskManager) GetTaskByKeyWithHistory(ctx context.Context, key string) (task *proto.Task, err error) {
 	rs, err := stm.executeSQLWithNewSession(ctx, "select "+taskColumns+" from mysql.tidb_global_task where task_key = %?"+
-		"union select "+taskColumns+"from mysql.tidb_global_task_history where task_key = %?", key, key)
+		"union select "+taskColumns+" from mysql.tidb_global_task_history where task_key = %?", key, key)
 	if err != nil {
 		return task, err
 	}
