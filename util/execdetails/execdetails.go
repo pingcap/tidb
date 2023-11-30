@@ -35,13 +35,14 @@ import (
 // ExecDetails contains execution detail information.
 type ExecDetails struct {
 	DetailsNeedP90
-	CommitDetail     *util.CommitDetails
-	LockKeysDetail   *util.LockKeysDetails
-	ScanDetail       *util.ScanDetail
-	CopTime          time.Duration
-	BackoffTime      time.Duration
-	LockKeysDuration time.Duration
-	RequestCount     int
+	CommitDetail       *util.CommitDetails
+	LockKeysDetail     *util.LockKeysDetails
+	ScanDetail         *util.ScanDetail
+	CopTime            time.Duration
+	BackoffTime        time.Duration
+	LockKeysDuration   time.Duration
+	RequestCount       int
+	ScanExpensiveRatio uint64
 }
 
 // DetailsNeedP90 contains execution detail information which need calculate P90.
@@ -177,6 +178,8 @@ const (
 	RocksdbBlockReadByteStr = "Rocksdb_block_read_byte"
 	// RocksdbBlockReadTimeStr means the time spent on rocksdb block read.
 	RocksdbBlockReadTimeStr = "Rocksdb_block_read_time"
+	// ScanExpensiveRatio is the ratio of total iterated keys and processed keys.
+	ScanExpensiveRatio = "Scan_expensive_ratio"
 )
 
 // String implements the fmt.Stringer interface.
@@ -291,6 +294,9 @@ func (d ExecDetails) String() string {
 		if scanDetail.RocksdbBlockReadDuration > 0 {
 			parts = append(parts, RocksdbBlockReadTimeStr+": "+strconv.FormatFloat(scanDetail.RocksdbBlockReadDuration.Seconds(), 'f', 3, 64))
 		}
+	}
+	if d.ScanExpensiveRatio > 0 {
+		parts = append(parts, ScanExpensiveRatio+": "+strconv.FormatUint(d.ScanExpensiveRatio, 10))
 	}
 	return strings.Join(parts, " ")
 }
