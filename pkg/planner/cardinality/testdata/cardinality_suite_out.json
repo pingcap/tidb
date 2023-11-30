@@ -198,8 +198,8 @@
       {
         "SQL": "explain format = 'brief' select * from t where a > 800 and a < 1000",
         "Result": [
-          "TableReader 793.13 root  data:Selection",
-          "└─Selection 793.13 cop[tikv]  gt(test.t.a, 800), lt(test.t.a, 1000)",
+          "TableReader 793.20 root  data:Selection",
+          "└─Selection 793.20 cop[tikv]  gt(test.t.a, 800), lt(test.t.a, 1000)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
