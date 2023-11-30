@@ -203,7 +203,7 @@ func DispatchMultiTasksAndOneFail(ctx context.Context, t *testing.T, num int, te
 
 	failCount := 0
 	for _, task := range tasks {
-		if task.State == proto.TaskStateFailed {
+		if task.State == proto.TaskStateReverted {
 			failCount++
 		}
 	}
