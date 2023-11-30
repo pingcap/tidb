@@ -204,7 +204,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 	globalTableInfo, originalPartInfo, originalTableInfo := t.GetExchangePartitionInfo()
 	// Get the count of the partition.
-	partCount, _, err := h.statsWriter.StatsMetaCountAndModifyCount(
+	partCount, partModifyCount, err := h.statsWriter.StatsMetaCountAndModifyCount(
 		// You only can exchange one partition at a time.
 		originalPartInfo.Definitions[0].ID,
 	)
@@ -212,7 +212,7 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 		return err
 	}
 	// Get the count of the table.
-	tableCount, _, err := h.statsWriter.StatsMetaCountAndModifyCount(
+	tableCount, tableModifyCount, err := h.statsWriter.StatsMetaCountAndModifyCount(
 		originalTableInfo.ID,
 	)
 	if err != nil {
@@ -220,16 +220,60 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 	}
 
 	// Compute the difference between the partition and the table.
-	// For instance, if the partition has a modify_count of 10 and a count of 100,
-	// and the table has a modify_count of 20 and a count of 200,
-	// after the partition exchange, the partition becomes the table and vice versa.
+	// For instance, consider the following scenario:
+	//
+	// | Entity    | modify_count                       | count |
+	// |-----------|------------------------------------|-------|
+	// | Partition | 10                                 | 100   |
+	// | Table     | 20                                 | 200   |
+	// | Global    | 30 (20 from other partitions + 10) | 300   |
+	//
+	// After the partition exchange, the partition becomes the table and vice versa:
+	//
+	// | Entity    | modify_count | count |
+	// |-----------|--------------|-------|
+	// | Partition | 20           | 200   |
+	// | Table     | 10           | 100   |
+	// | Global    | 30           | 300   |
+	//
 	// The count difference is 200 - 100 = 100, which is also considered as the table's delta.
-	// Precise updating isn't necessary as it doesn't significantly impact the outcome.
-	// If the original partition has substantial changes (contributing a large delta to global stats),
-	// it will help us trigger auto-analyze quickly.
-	// If the changes are minor, it won't have a significant effect.
 	delta := tableCount - partCount
 	count := int64(math.Abs(float64(delta)))
+
+	// Adjust the delta to account for the modify count of the partition.
+	// For example, if the partition's modify_count is 10 and the count difference is 100,
+	// the actual delta after the exchange is 100 - 10 = 90.
+	// When updating the global stats, the count increases by 100 and the modify_count increases by 90.
+	// The final modify_count becomes 30 (original) + 90 (delta) = 120, which is the correct value.
+	//
+	// | Entity    | modify_count                             | count |
+	// |-----------|------------------------------------------|-------|
+	// | Partition | 20                                       | 200   |
+	// | Table     | 10                                       | 100   |
+	// | Global    | 120 (20 from other partitions + 10 + 90) | 400   |
+	// If we do not do this, the modify_count will be 30 (original) + 100 (delta) = 130, which is incorrect.
+	if delta > 0 {
+		delta -= partModifyCount
+	} else {
+		delta += partModifyCount
+	}
+	// Adjust the delta to account for the modify count of the table.
+	// For example, if the table's modify_count is 20 and the count difference is 100,
+	// the actual delta after the exchange is 100 + 20 = 120.
+	// When updating the global stats, the count increases by 100 and the modify_count increases by 120.
+	// The final modify_count becomes 20 (original) + 120 (delta) = 140, which is the correct value.
+	//
+	// | Entity    | modify_count                                     | count |
+	// |-----------|--------------------------------------------------|-------|
+	// | Partition | 20                                               | 200   |
+	// | Table     | 10                                               | 100   |
+	// | Global    | 140 (20 from other partitions + 20 + 10 + 90)    | 400   |
+	// If we do not do this, the modify_count will be 20 (original) + 10 + 90 (delta) = 120, which is incorrect.
+	if delta > 0 {
+		delta += tableModifyCount
+	} else {
+		delta -= tableModifyCount
+	}
 	// Update the global stats.
 	if count != 0 {
 		if err := h.statsWriter.UpdateStatsMetaDelta(
