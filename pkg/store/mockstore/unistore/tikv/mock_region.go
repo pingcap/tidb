@@ -854,7 +854,7 @@ func (pd *MockPD) GetAllStores(ctx context.Context, opts ...pdclient.GetStoreOpt
 // Limit limits the maximum number of regions returned.
 // If a region has no leader, corresponding leader will be placed by a peer
 // with empty value (PeerID is 0).
-func (pd *MockPD) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int) ([]*pdclient.Region, error) {
+func (pd *MockPD) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int, opts ...pdclient.GetRegionOption) ([]*pdclient.Region, error) {
 	regions := pd.rm.ScanRegions(startKey, endKey, limit)
 	return regions, nil
 }

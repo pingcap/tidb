@@ -1603,6 +1603,10 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		UsedStats:         stmtCtx.GetUsedStatsInfo(false),
 		IsSyncStatsFailed: stmtCtx.IsSyncStatsFailed,
 		Warnings:          collectWarningsForSlowLog(stmtCtx),
+		ResourceGroupName: sessVars.ResourceGroupName,
+		RRU:               float64(atomic.LoadInt64(&tikvExecDetail.MilliRRU)) / 1000.0,
+		WRU:               float64(atomic.LoadInt64(&tikvExecDetail.MilliWRU)) / 1000.0,
+		WaitRUDuration:    time.Duration(atomic.LoadInt64(&tikvExecDetail.WaitRUDuration)),
 	}
 	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
 		if val.(bool) {
