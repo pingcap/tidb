@@ -159,6 +159,10 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 				return err
 			}
 		}
+	case model.ActionExchangeTablePartition:
+		if err := h.onExchangeAPartition(t); err != nil {
+			return err
+		}
 	case model.ActionReorganizePartition:
 		globalTableInfo, addedPartInfo, _ := t.GetReorganizePartitionInfo()
 		for _, def := range addedPartInfo.Definitions {
@@ -191,6 +195,58 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 		return h.statsWriter.ChangeGlobalStatsID(droppedPartInfo.NewTableID, newSingleTableInfo.ID)
 	case model.ActionFlashbackCluster:
 		return h.statsWriter.UpdateStatsVersion()
+	}
+	return nil
+}
+
+func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
+	globalTableInfo, originalPartInfo, originalTableInfo := t.GetExchangePartitionInfo()
+	// Get the count of the partition.
+	partCount, _, err := h.statsWriter.StatsMetaCountAndModifyCount(
+		// You only can exchange one partition at a time.
+		originalPartInfo.Definitions[0].ID,
+	)
+	if err != nil {
+		return err
+	}
+	// Get the count of the table.
+	tableCount, _, err := h.statsWriter.StatsMetaCountAndModifyCount(
+		originalTableInfo.ID,
+	)
+	if err != nil {
+		return err
+	}
+
+	// Compute the difference between the partition and the table.
+	// For instance, if the partition has a modify_count of 10 and a count of 100,
+	// and the table has a modify_count of 20 and a count of 200,
+	// after the partition exchange, the partition becomes the table and vice versa.
+	// The count difference is 200 - 100 = 100, which is also considered as the table's delta.
+	// Precise updating isn't necessary as it doesn't significantly impact the outcome.
+	// If the original partition has substantial changes (contributing a large delta to global stats),
+	// it will help us trigger auto-analyze quickly.
+	// If the changes are minor, it won't have a significant effect.
+	count := tableCount - partCount
+	// Update the global stats.
+	if count != 0 {
+		delta := -count
+		if err := h.statsWriter.UpdateStatsMetaDelta(
+			globalTableInfo.ID, count, delta,
+		); err != nil {
+			return err
+		}
+		logutil.StatsLogger.Info(
+			"Update global stats after exchange partition",
+			zap.Int64("tableID", globalTableInfo.ID),
+			zap.Int64("count", count),
+			zap.Int64("delta", delta),
+			zap.Int64("partitionID", originalPartInfo.Definitions[0].ID),
+			zap.String("partitionName", originalPartInfo.Definitions[0].Name.O),
+			zap.Int64("partitionCount", partCount),
+			zap.Int64("tableID", originalTableInfo.ID),
+			zap.String("tableName", originalTableInfo.Name.O),
+			zap.Int64("tableCount", tableCount),
+		)
 	}
 	return nil
 }
