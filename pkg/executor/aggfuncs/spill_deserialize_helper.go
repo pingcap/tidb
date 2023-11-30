@@ -33,7 +33,7 @@ func newDeserializeHelper(column *chunk.Column, rowNum int) deserializeHelper {
 		readRowIndex: 0,
 		totalRowCnt:  rowNum,
 		pab: &util.PosAndBuf{
-			Pos: new(int64),
+			Pos: 0,
 		},
 	}
 }
@@ -41,7 +41,7 @@ func newDeserializeHelper(column *chunk.Column, rowNum int) deserializeHelper {
 func (s *deserializeHelper) deserializePartialResult4Count(dst *partialResult4Count) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
-		*dst = util.DeserializeInt64(*s.pab)
+		*dst = util.DeserializeInt64(s.pab)
 		s.readRowIndex++
 		return true
 	}
@@ -51,8 +51,8 @@ func (s *deserializeHelper) deserializePartialResult4Count(dst *partialResult4Co
 func (s *deserializeHelper) deserializePartialResult4MaxMinInt(dst *partialResult4MaxMinInt) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
-		dst.isNull = util.DeserializeBool(*s.pab)
-		dst.val = util.DeserializeInt64(*s.pab)
+		dst.isNull = util.DeserializeBool(s.pab)
+		dst.val = util.DeserializeInt64(s.pab)
 		s.readRowIndex++
 		return true
 	}
@@ -62,8 +62,8 @@ func (s *deserializeHelper) deserializePartialResult4MaxMinInt(dst *partialResul
 func (s *deserializeHelper) deserializePartialResult4MaxMinUint(dst *partialResult4MaxMinUint) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
-		dst.isNull = util.DeserializeBool(*s.pab)
-		dst.val = util.DeserializeUint64(*s.pab)
+		dst.isNull = util.DeserializeBool(s.pab)
+		dst.val = util.DeserializeUint64(s.pab)
 		s.readRowIndex++
 		return true
 	}
@@ -73,8 +73,8 @@ func (s *deserializeHelper) deserializePartialResult4MaxMinUint(dst *partialResu
 func (s *deserializeHelper) deserializePartialResult4MaxMinDecimal(dst *partialResult4MaxMinDecimal) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
-		dst.isNull = util.DeserializeBool(*s.pab)
-		dst.val = util.DeserializeMyDecimal(*s.pab)
+		dst.isNull = util.DeserializeBool(s.pab)
+		dst.val = util.DeserializeMyDecimal(s.pab)
 		s.readRowIndex++
 		return true
 	}
@@ -84,8 +84,8 @@ func (s *deserializeHelper) deserializePartialResult4MaxMinDecimal(dst *partialR
 func (s *deserializeHelper) deserializePartialResult4MaxMinFloat32(dst *partialResult4MaxMinFloat32) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
-		dst.isNull = util.DeserializeBool(*s.pab)
-		dst.val = util.DeserializeFloat32(*s.pab)
+		dst.isNull = util.DeserializeBool(s.pab)
+		dst.val = util.DeserializeFloat32(s.pab)
 		s.readRowIndex++
 		return true
 	}
@@ -95,8 +95,8 @@ func (s *deserializeHelper) deserializePartialResult4MaxMinFloat32(dst *partialR
 func (s *deserializeHelper) deserializePartialResult4MaxMinFloat64(dst *partialResult4MaxMinFloat64) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
-		dst.isNull = util.DeserializeBool(*s.pab)
-		dst.val = util.DeserializeFloat64(*s.pab)
+		dst.isNull = util.DeserializeBool(s.pab)
+		dst.val = util.DeserializeFloat64(s.pab)
 		s.readRowIndex++
 		return true
 	}
@@ -106,8 +106,8 @@ func (s *deserializeHelper) deserializePartialResult4MaxMinFloat64(dst *partialR
 func (s *deserializeHelper) deserializePartialResult4MaxMinTime(dst *partialResult4MaxMinTime) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
-		dst.isNull = util.DeserializeBool(*s.pab)
-		dst.val = util.DeserializeTime(*s.pab)
+		dst.isNull = util.DeserializeBool(s.pab)
+		dst.val = util.DeserializeTime(s.pab)
 		s.readRowIndex++
 		return true
 	}
@@ -117,8 +117,8 @@ func (s *deserializeHelper) deserializePartialResult4MaxMinTime(dst *partialResu
 func (s *deserializeHelper) deserializePartialResult4MaxMinDuration(dst *partialResult4MaxMinDuration) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
-		dst.isNull = util.DeserializeBool(*s.pab)
-		dst.val = util.DeserializeTypesDuration(*s.pab)
+		dst.isNull = util.DeserializeBool(s.pab)
+		dst.val = util.DeserializeTypesDuration(s.pab)
 		s.readRowIndex++
 		return true
 	}
@@ -128,8 +128,8 @@ func (s *deserializeHelper) deserializePartialResult4MaxMinDuration(dst *partial
 func (s *deserializeHelper) deserializePartialResult4MaxMinString(dst *partialResult4MaxMinString) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
-		dst.isNull = util.DeserializeBool(*s.pab)
-		dst.val = util.DeserializeString(*s.pab)
+		dst.isNull = util.DeserializeBool(s.pab)
+		dst.val = util.DeserializeString(s.pab)
 		s.readRowIndex++
 		return true
 	}
@@ -139,8 +139,8 @@ func (s *deserializeHelper) deserializePartialResult4MaxMinString(dst *partialRe
 func (s *deserializeHelper) deserializePartialResult4MaxMinJSON(dst *partialResult4MaxMinJSON) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
-		dst.isNull = util.DeserializeBool(*s.pab)
-		dst.val = util.DeserializeBinaryJSON(*s.pab)
+		dst.isNull = util.DeserializeBool(s.pab)
+		dst.val = util.DeserializeBinaryJSON(s.pab)
 		s.readRowIndex++
 		return true
 	}
@@ -150,8 +150,8 @@ func (s *deserializeHelper) deserializePartialResult4MaxMinJSON(dst *partialResu
 func (s *deserializeHelper) deserializePartialResult4MaxMinEnum(dst *partialResult4MaxMinEnum) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
-		dst.isNull = util.DeserializeBool(*s.pab)
-		dst.val = util.DeserializeEnum(*s.pab)
+		dst.isNull = util.DeserializeBool(s.pab)
+		dst.val = util.DeserializeEnum(s.pab)
 		s.readRowIndex++
 		return true
 	}
@@ -161,8 +161,8 @@ func (s *deserializeHelper) deserializePartialResult4MaxMinEnum(dst *partialResu
 func (s *deserializeHelper) deserializePartialResult4MaxMinSet(dst *partialResult4MaxMinSet) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
-		dst.isNull = util.DeserializeBool(*s.pab)
-		dst.val = util.DeserializeSet(*s.pab)
+		dst.isNull = util.DeserializeBool(s.pab)
+		dst.val = util.DeserializeSet(s.pab)
 		s.readRowIndex++
 		return true
 	}
@@ -172,8 +172,8 @@ func (s *deserializeHelper) deserializePartialResult4MaxMinSet(dst *partialResul
 func (s *deserializeHelper) deserializePartialResult4AvgDecimal(dst *partialResult4AvgDecimal) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
-		dst.sum = util.DeserializeMyDecimal(*s.pab)
-		dst.count = util.DeserializeInt64(*s.pab)
+		dst.sum = util.DeserializeMyDecimal(s.pab)
+		dst.count = util.DeserializeInt64(s.pab)
 		s.readRowIndex++
 		return true
 	}
@@ -183,8 +183,8 @@ func (s *deserializeHelper) deserializePartialResult4AvgDecimal(dst *partialResu
 func (s *deserializeHelper) deserializePartialResult4AvgFloat64(dst *partialResult4AvgFloat64) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
-		dst.sum = util.DeserializeFloat64(*s.pab)
-		dst.count = util.DeserializeInt64(*s.pab)
+		dst.sum = util.DeserializeFloat64(s.pab)
+		dst.count = util.DeserializeInt64(s.pab)
 		s.readRowIndex++
 		return true
 	}
@@ -194,8 +194,8 @@ func (s *deserializeHelper) deserializePartialResult4AvgFloat64(dst *partialResu
 func (s *deserializeHelper) deserializePartialResult4SumDecimal(dst *partialResult4SumDecimal) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
-		dst.val = util.DeserializeMyDecimal(*s.pab)
-		dst.notNullRowCount = util.DeserializeInt64(*s.pab)
+		dst.val = util.DeserializeMyDecimal(s.pab)
+		dst.notNullRowCount = util.DeserializeInt64(s.pab)
 		s.readRowIndex++
 		return true
 	}
@@ -205,8 +205,8 @@ func (s *deserializeHelper) deserializePartialResult4SumDecimal(dst *partialResu
 func (s *deserializeHelper) deserializePartialResult4SumFloat64(dst *partialResult4SumFloat64) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
-		dst.val = util.DeserializeFloat64(*s.pab)
-		dst.notNullRowCount = util.DeserializeInt64(*s.pab)
+		dst.val = util.DeserializeFloat64(s.pab)
+		dst.notNullRowCount = util.DeserializeInt64(s.pab)
 		s.readRowIndex++
 		return true
 	}
@@ -216,8 +216,8 @@ func (s *deserializeHelper) deserializePartialResult4SumFloat64(dst *partialResu
 func (s *deserializeHelper) deserializeBasePartialResult4GroupConcat(dst *basePartialResult4GroupConcat) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
-		dst.valsBuf = util.DeserializeBytesBuffer(*s.pab)
-		dst.buffer = util.DeserializeBytesBuffer(*s.pab)
+		dst.valsBuf = util.DeserializeBytesBuffer(s.pab)
+		dst.buffer = util.DeserializeBytesBuffer(s.pab)
 		s.readRowIndex++
 		return true
 	}
@@ -235,7 +235,7 @@ func (s *deserializeHelper) deserializePartialResult4GroupConcat(dst *partialRes
 func (s *deserializeHelper) deserializePartialResult4BitFunc(dst *partialResult4BitFunc) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
-		*dst = util.DeserializeUint64(*s.pab)
+		*dst = util.DeserializeUint64(s.pab)
 		s.readRowIndex++
 		return true
 	}
@@ -246,8 +246,8 @@ func (s *deserializeHelper) deserializePartialResult4JsonArrayagg(dst *partialRe
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
 		byteNum := int64(len(s.pab.Buf))
-		for *s.pab.Pos < byteNum {
-			value := util.DeserializeInterface(*s.pab)
+		for s.pab.Pos < byteNum {
+			value := util.DeserializeInterface(s.pab)
 			dst.entries = append(dst.entries, value)
 		}
 		s.readRowIndex++
@@ -263,9 +263,9 @@ func (s *deserializeHelper) deserializePartialResult4JsonObjectAgg(dst *partialR
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
 		byteNum := int64(len(s.pab.Buf))
-		for *s.pab.Pos < byteNum {
-			key := util.DeserializeString(*s.pab)
-			realVal := util.DeserializeInterface(*s.pab)
+		for s.pab.Pos < byteNum {
+			key := util.DeserializeString(s.pab)
+			realVal := util.DeserializeInterface(s.pab)
 			if _, ok := dst.entries[key]; !ok {
 				memDelta += int64(len(key)) + getValMemDelta(realVal)
 				if len(dst.entries)+1 > (1<<dst.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
@@ -282,15 +282,15 @@ func (s *deserializeHelper) deserializePartialResult4JsonObjectAgg(dst *partialR
 }
 
 func (s *deserializeHelper) deserializeBasePartialResult4FirstRow(dst *basePartialResult4FirstRow) {
-	dst.isNull = util.DeserializeBool(*s.pab)
-	dst.gotFirstRow = util.DeserializeBool(*s.pab)
+	dst.isNull = util.DeserializeBool(s.pab)
+	dst.gotFirstRow = util.DeserializeBool(s.pab)
 }
 
 func (s *deserializeHelper) deserializePartialResult4FirstRowInt(dst *partialResult4FirstRowInt) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
 		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow)
-		dst.val = util.DeserializeInt64(*s.pab)
+		dst.val = util.DeserializeInt64(s.pab)
 		s.readRowIndex++
 		return true
 	}
@@ -301,7 +301,7 @@ func (s *deserializeHelper) deserializePartialResult4FirstRowFloat32(dst *partia
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
 		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow)
-		dst.val = util.DeserializeFloat32(*s.pab)
+		dst.val = util.DeserializeFloat32(s.pab)
 		s.readRowIndex++
 		return true
 	}
@@ -312,7 +312,7 @@ func (s *deserializeHelper) deserializePartialResult4FirstRowFloat64(dst *partia
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
 		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow)
-		dst.val = util.DeserializeFloat64(*s.pab)
+		dst.val = util.DeserializeFloat64(s.pab)
 		s.readRowIndex++
 		return true
 	}
@@ -323,7 +323,7 @@ func (s *deserializeHelper) deserializePartialResult4FirstRowDecimal(dst *partia
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
 		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow)
-		dst.val = util.DeserializeMyDecimal(*s.pab)
+		dst.val = util.DeserializeMyDecimal(s.pab)
 		s.readRowIndex++
 		return true
 	}
@@ -334,7 +334,7 @@ func (s *deserializeHelper) deserializePartialResult4FirstRowString(dst *partial
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
 		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow)
-		dst.val = util.DeserializeString(*s.pab)
+		dst.val = util.DeserializeString(s.pab)
 		s.readRowIndex++
 		return true
 	}
@@ -345,7 +345,7 @@ func (s *deserializeHelper) deserializePartialResult4FirstRowTime(dst *partialRe
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
 		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow)
-		dst.val = util.DeserializeTime(*s.pab)
+		dst.val = util.DeserializeTime(s.pab)
 		s.readRowIndex++
 		return true
 	}
@@ -356,7 +356,7 @@ func (s *deserializeHelper) deserializePartialResult4FirstRowDuration(dst *parti
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
 		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow)
-		dst.val = util.DeserializeTypesDuration(*s.pab)
+		dst.val = util.DeserializeTypesDuration(s.pab)
 		s.readRowIndex++
 		return true
 	}
@@ -367,7 +367,7 @@ func (s *deserializeHelper) deserializePartialResult4FirstRowJSON(dst *partialRe
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
 		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow)
-		dst.val = util.DeserializeBinaryJSON(*s.pab)
+		dst.val = util.DeserializeBinaryJSON(s.pab)
 		s.readRowIndex++
 		return true
 	}
@@ -378,7 +378,7 @@ func (s *deserializeHelper) deserializePartialResult4FirstRowEnum(dst *partialRe
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
 		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow)
-		dst.val = util.DeserializeEnum(*s.pab)
+		dst.val = util.DeserializeEnum(s.pab)
 		s.readRowIndex++
 		return true
 	}
@@ -389,7 +389,7 @@ func (s *deserializeHelper) deserializePartialResult4FirstRowSet(dst *partialRes
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
 		s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow)
-		dst.val = util.DeserializeSet(*s.pab)
+		dst.val = util.DeserializeSet(s.pab)
 		s.readRowIndex++
 		return true
 	}
