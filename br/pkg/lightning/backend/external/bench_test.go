@@ -861,3 +861,36 @@ func TestPrepareLargeData(t *testing.T) {
 	t.Logf("total %d data files, first file size: %.2f MB, last file size: %.2f MB",
 		len(dataFiles), float64(firstFileSize)/1024/1024, float64(lastFileSize)/1024/1024)
 }
+
+func TestMerge(t *testing.T) {
+	ctx := context.Background()
+	store := openTestingStorage(t)
+	dataFiles, _, err := GetAllFileNames(ctx, store, largeAscendingDataPath)
+	intest.AssertNoError(err)
+
+	mergeOutput := "merge_output"
+	totalSize := atomic.NewUint64(0)
+	onClose := func(s *WriterSummary) {
+		totalSize.Add(s.TotalSize)
+	}
+
+	now := time.Now()
+	err = MergeOverlappingFiles(
+		ctx,
+		dataFiles,
+		store,
+		5*1024*1024,
+		64*1024,
+		mergeOutput,
+		DefaultBlockSize,
+		8*1024,
+		1024*1024,
+		8*1024,
+		onClose,
+		4,
+		true)
+	intest.AssertNoError(err)
+	elapsed := time.Since(now)
+	t.Logf("merge %d bytes in %s, speed: %.2f MB/s",
+		totalSize.Load(), elapsed, float64(totalSize.Load())/elapsed.Seconds()/1024/1024)
+}
