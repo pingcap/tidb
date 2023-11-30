@@ -251,7 +251,7 @@
     }
     ```
 
-    *Hint: List MVCC Information of the keys startted with a specified handle ID:*
+    *Hint: The method to convert the Hex format key returned by TiDB API into the format recognized by [tikv-ctl](https://docs.pingcap.com/tidb/stable/tikv-control).*
     
     step 1: Get the hex of the start key from tidb.
      ```shell
@@ -289,12 +289,12 @@
      ```
      step 4: convert the hex key to escaped key since `tikv-ctl scan` only accepts escaped key.
      ```
-     ./tikv-ctl --to-escaped    '7480000000000008FFC65F728000000000FF0000010000000000FA'
+     ./tikv-ctl --to-escaped '7480000000000008FFC65F728000000000FF0000010000000000FA'
      t\200\000\000\000\000\000\010\377\306_r\200\000\000\000\000\377\000\000\001\000\000\000\000\000\372
      ```
      step 5: Add the prefix "z" as the start-key to scan from tikv with [tikv-ctl](https://docs.pingcap.com/tidb/stable/tikv-control)
      ```
-     ./tikv-ctl  --host "127.0.0.1:20162" scan --from 'zt\200\000\000\000\000\000\010\377\306_r\200\000\000\000\000\377\000\000\001\000\000\000\000\000\372' --limit 5 --show-cf write,lock,default 
+     ./tikv-ctl  --host "<tikv_ip>:<port>" scan --from 'zt\200\000\000\000\000\000\010\377\306_r\200\000\000\000\000\377\000\000\001\000\000\000\000\000\372' --limit 5 --show-cf write,lock,default 
         key: zt\200\000\000\000\000\000\010\377\306_r\200\000\000\000\000\377\000\000\001\000\000\000\000\000\372
          write cf value: start_ts: 445971968923271174 commit_ts: 445971968923271175 short_value: 800002000000020308000900736869726C79613422
          write cf value: start_ts: 445971959499980803 commit_ts: 445971959499980804 short_value: 800002000000020308000900736869726C7961340B
