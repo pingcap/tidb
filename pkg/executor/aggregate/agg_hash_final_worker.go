@@ -326,8 +326,6 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 
 	w.isSpilledTriggered = w.spillHelper.isSpillTriggered()
 	if w.isSpilledTriggered {
-		// Do not put `w.isSpilledTriggered` and `w.spillHelper.checkError()` judgement in one line.
-		// As when w.isSpilledTriggered == false and error == true, we still want to enter into this if-branch.
 		if w.spillHelper.checkError() {
 			return
 		}
