@@ -54,6 +54,7 @@ func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, dispatcherHandle di
 	} else {
 		mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(runSubtaskFn).AnyTimes()
 	}
+	mockExtension.EXPECT().IsIdempotent(gomock.Any()).Return(true).AnyTimes()
 	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()
 	registerTaskMetaInner(t, proto.TaskTypeExample, mockExtension, mockCleanupRountine, dispatcherHandle)
 }
@@ -105,6 +106,7 @@ func RegisterRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, mockDispatc
 			return nil
 		}).AnyTimes()
 	mockExecutor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockExtension.EXPECT().IsIdempotent(gomock.Any()).Return(true).AnyTimes()
 	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockExecutor, nil).AnyTimes()
 
 	registerTaskMetaInner(t, proto.TaskTypeExample, mockExtension, mockCleanupRountine, mockDispatcher)
