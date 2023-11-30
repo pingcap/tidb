@@ -169,8 +169,9 @@ type clientConn struct {
 	lastActive    time.Time             // last active time
 	authPlugin    string                // default authentication plugin
 	isUnixSocket  bool                  // connection is Unix Socket file
-	rsEncoder     *column.ResultEncoder // rsEncoder is used to encode the string result to different charsets.
-	inputDecoder  *util2.InputDecoder   // inputDecoder is used to decode the different charsets of incoming strings to utf-8.
+	isClosed      int32                 // atomic variable to track whether the connection is closed
+	rsEncoder     *column.ResultEncoder // rsEncoder is used to encode the string result to different charsets
+	inputDecoder  *util2.InputDecoder   // inputDecoder is used to decode the different charsets of incoming strings to utf-8
 	socketCredUID uint32                // UID from the other end of the Unix Socket
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
@@ -349,9 +350,13 @@ func (cc *clientConn) Close() error {
 	return closeConn(cc, connections)
 }
 
-// closeConn should be idempotent.
+// closeConn is idempotent and thread-safe.
 // It will be called on the same `clientConn` more than once to avoid connection leak.
 func closeConn(cc *clientConn, connections int) error {
+	if !atomic.CompareAndSwapInt32(&cc.isClosed, 0, 1) {
+		return nil
+	}
+
 	metrics.ConnGauge.Set(float64(connections))
 	if cc.connectionID > 0 {
 		cc.server.dom.ReleaseConnID(cc.connectionID)

@@ -25,6 +25,7 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -2051,4 +2052,44 @@ func TestStats(t *testing.T) {
 	require.Equal(t, "ON", m["Compression"])
 	require.Equal(t, "zstd", m["Compression_algorithm"])
 	require.Equal(t, 1, m["Compression_level"])
+}
+
+func TestCloseConn(t *testing.T) {
+	var outBuffer bytes.Buffer
+
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	cfg := serverutil.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	drv := NewTiDBDriver(store)
+	server, err := NewServer(cfg, drv)
+	require.NoError(t, err)
+
+	cc := &clientConn{
+		connectionID: 0,
+		salt: []byte{
+			0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A,
+			0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14,
+		},
+		server:     server,
+		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(&outBuffer)),
+		collation:  mysql.DefaultCollationID,
+		peerHost:   "localhost",
+		alloc:      arena.NewAllocator(512),
+		chunkAlloc: chunk.NewAllocator(),
+		capability: mysql.ClientProtocol41,
+	}
+
+	var wg sync.WaitGroup
+	const numGoroutines = 10
+	wg.Add(numGoroutines)
+	for i := 0; i < numGoroutines; i++ {
+		go func() {
+			defer wg.Done()
+			err := closeConn(cc, 1)
+			require.NoError(t, err)
+		}()
+	}
+	wg.Wait()
+	require.Equalf(t, int32(1), cc.isClosed, "Expected isClosed to be 1, got 0")
 }
