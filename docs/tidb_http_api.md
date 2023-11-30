@@ -293,7 +293,7 @@
      7480000000000008FFC65F728000000000FF0000010000000000FA
      ```
 
-     Step 4: Convert the hex key to escaped format since `tikv-ctl scan` only accepts escaped key.
+     Step 4: Convert the hex key to escaped format again since `tikv-ctl scan` only accepts escaped key while the `--encode` command outputs the key in hex format.
      
      ```
      ./tikv-ctl --to-escaped '7480000000000008FFC65F728000000000FF0000010000000000FA'
