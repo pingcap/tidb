@@ -179,6 +179,9 @@ func (b *Buffer) Destroy() {
 		b.pool.release(buf)
 	}
 	b.blocks = nil
+	b.curBlock = nil
+	b.curBlockIdx = -1
+	b.curIdx = 0
 }
 
 // TotalSize represents the total memory size of this Buffer.
