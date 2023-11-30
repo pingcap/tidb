@@ -171,7 +171,6 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) (resErr error
 		return s.getError()
 	}
 	defer cleanup()
-
 	executor, err := s.GetSubtaskExecutor(ctx, task, summary)
 	if err != nil {
 		s.onError(err)
@@ -231,6 +230,9 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) (resErr error
 			continue
 		}
 		if subtask == nil {
+			failpoint.Inject("breakInSchedulerUT", func() {
+				failpoint.Break()
+			})
 			newTask, err := s.taskTable.GetGlobalTaskByID(runCtx, task.ID)
 			if err != nil {
 				logutil.Logger(s.logCtx).Warn("GetGlobalTaskByID meets error", zap.Error(err))

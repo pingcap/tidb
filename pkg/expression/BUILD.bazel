@@ -101,7 +101,6 @@ go_library(
         "//pkg/util/intset",
         "//pkg/util/logutil",
         "//pkg/util/mathutil",
-        "//pkg/util/mock",
         "//pkg/util/parser",
         "//pkg/util/password-validation",
         "//pkg/util/plancodec",

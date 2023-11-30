@@ -131,25 +131,25 @@ func (c *bindCache) delete(key bindCacheKey) bool {
 	return false
 }
 
-// GetBindRecord gets the BindRecord from the cache.
+// GetBinding gets the BindRecord from the cache.
 // The return value is not read-only, but it shouldn't be changed in the caller functions.
 // The function is thread-safe.
-func (c *bindCache) GetBindRecord(hash, normdOrigSQL, _ string) *BindRecord {
+func (c *bindCache) GetBinding(sqlDigest, normalizedSQL, _ string) *BindRecord {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	bindRecords := c.get(bindCacheKey(hash))
+	bindRecords := c.get(bindCacheKey(sqlDigest))
 	for _, bindRecord := range bindRecords {
-		if bindRecord.OriginalSQL == normdOrigSQL {
+		if bindRecord.OriginalSQL == normalizedSQL {
 			return bindRecord
 		}
 	}
 	return nil
 }
 
-// GetBindRecordBySQLDigest gets the BindRecord from the cache.
+// GetBindingBySQLDigest gets the BindRecord from the cache.
 // The return value is not read-only, but it shouldn't be changed in the caller functions.
 // The function is thread-safe.
-func (c *bindCache) GetBindRecordBySQLDigest(sqlDigest string) (*BindRecord, error) {
+func (c *bindCache) GetBindingBySQLDigest(sqlDigest string) (*BindRecord, error) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	bindings := c.get(bindCacheKey(sqlDigest))
@@ -163,10 +163,10 @@ func (c *bindCache) GetBindRecordBySQLDigest(sqlDigest string) (*BindRecord, err
 	return bindings[0], nil
 }
 
-// GetAllBindRecords return all the bindRecords from the bindCache.
+// GetAllBindings return all the bindRecords from the bindCache.
 // The return value is not read-only, but it shouldn't be changed in the caller functions.
 // The function is thread-safe.
-func (c *bindCache) GetAllBindRecords() []*BindRecord {
+func (c *bindCache) GetAllBindings() []*BindRecord {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	values := c.cache.Values()
@@ -178,12 +178,12 @@ func (c *bindCache) GetAllBindRecords() []*BindRecord {
 	return bindRecords
 }
 
-// SetBindRecord sets the BindRecord to the cache.
+// SetBinding sets the BindRecord to the cache.
 // The function is thread-safe.
-func (c *bindCache) SetBindRecord(hash string, meta *BindRecord) (err error) {
+func (c *bindCache) SetBinding(sqlDigest string, meta *BindRecord) (err error) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	cacheKey := bindCacheKey(hash)
+	cacheKey := bindCacheKey(sqlDigest)
 	metas := c.getCopiedVal(cacheKey)
 	for i := range metas {
 		if metas[i].OriginalSQL == meta.OriginalSQL {
@@ -194,12 +194,12 @@ func (c *bindCache) SetBindRecord(hash string, meta *BindRecord) (err error) {
 	return
 }
 
-// RemoveBindRecord removes the BindRecord which has same originSQL with specified BindRecord.
+// RemoveBinding removes the BindRecord which has same originSQL with specified BindRecord.
 // The function is thread-safe.
-func (c *bindCache) RemoveBindRecord(hash string, meta *BindRecord) {
+func (c *bindCache) RemoveBinding(sqlDigest string, meta *BindRecord) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	metas := c.getCopiedVal(bindCacheKey(hash))
+	metas := c.getCopiedVal(bindCacheKey(sqlDigest))
 	if metas == nil {
 		return
 	}
@@ -211,14 +211,14 @@ func (c *bindCache) RemoveBindRecord(hash string, meta *BindRecord) {
 				metas = append(metas[:i], metas[i+1:]...)
 			}
 			if len(metas) == 0 {
-				c.delete(bindCacheKey(hash))
+				c.delete(bindCacheKey(sqlDigest))
 				return
 			}
 		}
 	}
 	// This function can guarantee the memory usage for the cache will never grow up.
 	// So we don't need to handle the return value here.
-	_, _ = c.set(bindCacheKey(hash), metas)
+	_, _ = c.set(bindCacheKey(sqlDigest), metas)
 }
 
 // SetMemCapacity sets the memory capacity for the cache.

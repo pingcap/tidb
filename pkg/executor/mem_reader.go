@@ -252,7 +252,9 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, kvRanges []kv.K
 		if err != nil {
 			return nil, err
 		}
-		return tablecodec.EncodeValue(us.Ctx().GetSessionVars().StmtCtx, nil, d)
+		sctx := us.Ctx().GetSessionVars().StmtCtx
+		buf, err := tablecodec.EncodeValue(sctx.TimeZone(), nil, d)
+		return buf, sctx.HandleError(err)
 	}
 	cd := NewRowDecoder(us.Ctx(), us.Schema(), us.table.Meta())
 	rd := rowcodec.NewByteDecoder(colInfo, pkColIDs, defVal, us.Ctx().GetSessionVars().Location())
@@ -1164,7 +1166,8 @@ func getColIDAndPkColIDs(ctx sessionctx.Context, tbl table.Table, columns []*mod
 		if err != nil {
 			return nil, err
 		}
-		return tablecodec.EncodeValue(ctx.GetSessionVars().StmtCtx, nil, d)
+		buf, err := tablecodec.EncodeValue(ctx.GetSessionVars().StmtCtx.TimeZone(), nil, d)
+		return buf, ctx.GetSessionVars().StmtCtx.HandleError(err)
 	}
 	rd := rowcodec.NewByteDecoder(colInfos, pkColIDs, defVal, ctx.GetSessionVars().Location())
 	return colIDs, pkColIDs, rd

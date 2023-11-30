@@ -20,7 +20,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	fstorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
@@ -227,7 +229,7 @@ func (e *ImportIntoExec) doImport(ctx context.Context, se sessionctx.Context, di
 			return err2
 		}
 		// use background, since ctx is canceled already.
-		return cancelImportJob(context.Background(), globalTaskManager, distImporter.JobID())
+		return cancelAndWaitImportJob(context.Background(), globalTaskManager, distImporter.JobID())
 	}
 	if err2 := flushStats(ctx, se, e.importPlan.TableInfo.ID, distImporter.Result(ctx)); err2 != nil {
 		logutil.Logger(ctx).Error("flush stats failed", zap.Error(err2))
@@ -247,7 +249,7 @@ var (
 )
 
 // Next implements the Executor Next interface.
-func (e *ImportIntoActionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+func (e *ImportIntoActionExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalImportInto)
 
 	var hasSuperPriv bool
@@ -264,8 +266,12 @@ func (e *ImportIntoActionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		return err
 	}
 
-	logutil.Logger(ctx).Info("import into action", zap.Int64("jobID", e.jobID), zap.Any("action", e.tp))
-	return cancelImportJob(ctx, globalTaskManager, e.jobID)
+	task := log.BeginTask(logutil.Logger(ctx).With(zap.Int64("jobID", e.jobID),
+		zap.Any("action", e.tp)), "import into action")
+	defer func() {
+		task.End(zap.ErrorLevel, err)
+	}()
+	return cancelAndWaitImportJob(ctx, globalTaskManager, e.jobID)
 }
 
 func (e *ImportIntoActionExec) checkPrivilegeAndStatus(ctx context.Context, manager *fstorage.TaskManager, hasSuperPriv bool) error {
@@ -297,16 +303,12 @@ func flushStats(ctx context.Context, se sessionctx.Context, tableID int64, resul
 	return se.CommitTxn(ctx)
 }
 
-func cancelImportJob(ctx context.Context, manager *fstorage.TaskManager, jobID int64) error {
-	// todo: cancel is async operation, we don't wait here now, maybe add a wait syntax later.
-	// todo: after CANCEL, user can see the job status is Canceled immediately, but the job might still running.
-	// todo: add a CANCELLING status?
-	return manager.WithNewTxn(ctx, func(se sessionctx.Context) error {
-		exec := se.(sqlexec.SQLExecutor)
-		if err2 := importer.CancelJob(ctx, exec, jobID); err2 != nil {
-			return err2
-		}
+func cancelAndWaitImportJob(ctx context.Context, manager *fstorage.TaskManager, jobID int64) error {
+	if err := manager.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 		return manager.CancelGlobalTaskByKeySession(ctx, se, importinto.TaskKey(jobID))
-	})
+	}); err != nil {
+		return err
+	}
+	return handle.WaitTaskDoneByKey(ctx, importinto.TaskKey(jobID))
 }

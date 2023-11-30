@@ -613,7 +613,7 @@ func (d SchemaTracker) renameColumn(_ sessionctx.Context, ident ast.Ident, spec 
 		if col.GeneratedExpr == nil {
 			continue
 		}
-		dependedColNames := ddl.FindColumnNamesInExpr(col.GeneratedExpr)
+		dependedColNames := ddl.FindColumnNamesInExpr(col.GeneratedExpr.Internal())
 		for _, name := range dependedColNames {
 			if name.Name.L == oldColName.L {
 				if col.Hidden {

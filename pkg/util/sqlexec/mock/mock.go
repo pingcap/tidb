@@ -12,22 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package issue
+package mock
 
-import (
-	"flag"
-	"testing"
+// RestrictedSQLExecutorKey is the key to represent MockRestrictedSQLExecutorMockRecorder in ctx.
+type RestrictedSQLExecutorKey struct{}
 
-	"github.com/pingcap/tidb/pkg/testkit/testsetup"
-	"go.uber.org/goleak"
-)
-
-func TestMain(m *testing.M) {
-	testsetup.SetupForCommonTest()
-	flag.Parse()
-	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
-		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
-	}
-	goleak.VerifyTestMain(m, opts...)
+// String implements the string.Stringer interface.
+func (k RestrictedSQLExecutorKey) String() string {
+	return "__MockRestrictedSQLExecutor"
 }
