@@ -1,18 +1,6 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
-    name = "spill",
-    srcs = ["agg_spill_util.go"],
-    importpath = "github.com/pingcap/tidb/pkg/util/spill",
-    visibility = ["//visibility:public"],
-    deps = [
-        "//pkg/parser/mysql",
-        "//pkg/types",
-        "//pkg/util/dbterror",
-    ],
-)
-
-go_library(
     name = "serialization",
     srcs = [
         "common_util.go",

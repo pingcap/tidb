@@ -127,9 +127,9 @@ type HashAggExec struct {
 
 	stats *HashAggRuntimeStats
 
-	// listInDisk is the chunks to store row values for spilled data.
+	// dataInDisk is the chunks to store row values for spilled data.
 	// The HashAggExec may be set to `spill mode` multiple times, and all spilled data will be appended to DataInDiskByRows.
-	listInDisk *chunk.DataInDiskByRows
+	dataInDisk *chunk.DataInDiskByChunks
 	// numOfSpilledChks indicates the number of all the spilled chunks.
 	numOfSpilledChks int
 	// offsetOfSpilledChks indicates the offset of the chunk be read from the disk.
@@ -155,21 +155,21 @@ func (e *HashAggExec) Close() error {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
 	if e.IsUnparallelExec {
-		var firstErr error
 		e.childResult = nil
 		e.groupSet, _ = set.NewStringSetWithMemoryUsage()
 		e.partialResultMap = nil
 		if e.memTracker != nil {
 			e.memTracker.ReplaceBytesUsed(0)
 		}
-		if e.listInDisk != nil {
-			firstErr = e.listInDisk.Close()
+		if e.dataInDisk != nil {
+			e.dataInDisk.Close()
 		}
 		e.spillAction, e.tmpChkForSpill = nil, nil
-		if err := e.BaseExecutor.Close(); firstErr == nil {
-			firstErr = err
+		err := e.BaseExecutor.Close()
+		if err != nil {
+			return err
 		}
-		return firstErr
+		return nil
 	}
 	if e.parallelExecValid {
 		// `Close` may be called after `Open` without calling `Next` in test.
@@ -244,13 +244,13 @@ func (e *HashAggExec) initForUnparallelExec() {
 
 	e.offsetOfSpilledChks, e.numOfSpilledChks = 0, 0
 	e.executed, e.isChildDrained = false, false
-	e.listInDisk = chunk.NewDataInDiskByRows(exec.RetTypes(e.Children(0)))
+	e.dataInDisk = chunk.NewDataInDiskByChunks(exec.RetTypes(e.Children(0)))
 
 	e.tmpChkForSpill = exec.TryNewCacheChunk(e.Children(0))
 	if vars := e.Ctx().GetSessionVars(); vars.TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load() {
 		e.diskTracker = disk.NewTracker(e.ID(), -1)
 		e.diskTracker.AttachTo(vars.StmtCtx.DiskTracker)
-		e.listInDisk.GetDiskTracker().AttachTo(e.diskTracker)
+		e.dataInDisk.GetDiskTracker().AttachTo(e.diskTracker)
 		vars.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())
 	}
 }
@@ -610,8 +610,8 @@ func (e *HashAggExec) resetSpillMode() {
 	e.partialResultMap = make(aggfuncs.AggPartialResultMapper)
 	e.bInMap = 0
 	e.prepared = false
-	e.executed = e.numOfSpilledChks == e.listInDisk.NumChunks() // No data is spilling again, all data have been processed.
-	e.numOfSpilledChks = e.listInDisk.NumChunks()
+	e.executed = e.numOfSpilledChks == e.dataInDisk.NumChunks() // No data is spilling again, all data have been processed.
+	e.numOfSpilledChks = e.dataInDisk.NumChunks()
 	e.memTracker.ReplaceBytesUsed(setSize)
 	atomic.StoreUint32(&e.inSpillMode, 0)
 }
@@ -620,7 +620,7 @@ func (e *HashAggExec) resetSpillMode() {
 func (e *HashAggExec) execute(ctx context.Context) (err error) {
 	defer func() {
 		if e.tmpChkForSpill.NumRows() > 0 && err == nil {
-			err = e.listInDisk.Add(e.tmpChkForSpill)
+			err = e.dataInDisk.Add(e.tmpChkForSpill)
 			e.tmpChkForSpill.Reset()
 		}
 	}()
@@ -690,12 +690,12 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 
 func (e *HashAggExec) spillUnprocessedData(isFullChk bool) (err error) {
 	if isFullChk {
-		return e.listInDisk.Add(e.childResult)
+		return e.dataInDisk.Add(e.childResult)
 	}
 	for i := 0; i < e.childResult.NumRows(); i++ {
 		e.tmpChkForSpill.AppendRow(e.childResult.GetRow(i))
 		if e.tmpChkForSpill.IsFull() {
-			err = e.listInDisk.Add(e.tmpChkForSpill)
+			err = e.dataInDisk.Add(e.tmpChkForSpill)
 			if err != nil {
 				return err
 			}
@@ -717,7 +717,7 @@ func (e *HashAggExec) getNextChunk(ctx context.Context) (err error) {
 		e.isChildDrained = true
 	}
 	if e.offsetOfSpilledChks < e.numOfSpilledChks {
-		e.childResult, err = e.listInDisk.GetChunk(e.offsetOfSpilledChks)
+		e.childResult, err = e.dataInDisk.GetChunk(e.offsetOfSpilledChks)
 		if err != nil {
 			return err
 		}

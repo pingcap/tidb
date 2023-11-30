@@ -83,6 +83,16 @@ func (DefaultColumnAllocator) NewColumn(ft *types.FieldType, capacity int) *Colu
 	return newColumn(getFixedLen(ft), capacity)
 }
 
+// NewEmptyColumn creates a new column with nothing.
+func NewEmptyColumn(ft *types.FieldType) *Column {
+	elemLen := getFixedLen(ft)
+	col := Column{}
+	if elemLen != varElemLen {
+		col.elemBuf = make([]byte, elemLen)
+	}
+	return &col
+}
+
 // NewColumn creates a new column with the specific type and capacity.
 func NewColumn(ft *types.FieldType, capacity int) *Column {
 	return newColumn(getFixedLen(ft), capacity)
