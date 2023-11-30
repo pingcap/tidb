@@ -21,7 +21,6 @@ go_test(
         "//pkg/disttask/framework/mock/execute",
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/storage",
-        "//pkg/disttask/framework/taskexecutor",
         "//pkg/domain/infosync",
         "//pkg/testkit",
         "@com_github_pingcap_failpoint//:failpoint",

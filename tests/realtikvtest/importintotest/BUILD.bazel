@@ -26,7 +26,6 @@ go_test(
         "//pkg/disttask/framework/dispatcher",
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/storage",
-        "//pkg/disttask/framework/taskexecutor",
         "//pkg/disttask/importinto",
         "//pkg/domain/infosync",
         "//pkg/executor",
