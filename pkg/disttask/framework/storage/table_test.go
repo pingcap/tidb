@@ -147,7 +147,7 @@ func TestSubTaskTable(t *testing.T) {
 	require.Equal(t, proto.TaskTypeExample, subtask.Type)
 	require.Equal(t, int64(1), subtask.TaskID)
 	require.Equal(t, proto.TaskStatePending, subtask.State)
-	require.Equal(t, "tidb1", subtask.ExecutorID)
+	require.Equal(t, "tidb1", subtask.ExecID)
 	require.Equal(t, []byte("test"), subtask.Meta)
 	require.Zero(t, subtask.StartTime)
 	require.Zero(t, subtask.UpdateTime)
@@ -190,7 +190,7 @@ func TestSubTaskTable(t *testing.T) {
 	require.Equal(t, proto.TaskTypeExample, subtask.Type)
 	require.Equal(t, int64(1), subtask.TaskID)
 	require.Equal(t, proto.TaskStateRunning, subtask.State)
-	require.Equal(t, "tidb1", subtask.ExecutorID)
+	require.Equal(t, "tidb1", subtask.ExecID)
 	require.Equal(t, []byte("test"), subtask.Meta)
 	require.GreaterOrEqual(t, subtask.StartTime, ts)
 	require.GreaterOrEqual(t, subtask.UpdateTime, ts)
@@ -320,16 +320,16 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 	task.State = proto.TaskStateRunning
 	subTasks := []*proto.Subtask{
 		{
-			Step:       proto.StepInit,
-			Type:       proto.TaskTypeExample,
-			ExecutorID: "instance1",
-			Meta:       []byte("m1"),
+			Step:   proto.StepInit,
+			Type:   proto.TaskTypeExample,
+			ExecID: "instance1",
+			Meta:   []byte("m1"),
 		},
 		{
-			Step:       proto.StepInit,
-			Type:       proto.TaskTypeExample,
-			ExecutorID: "instance2",
-			Meta:       []byte("m2"),
+			Step:   proto.StepInit,
+			Type:   proto.TaskTypeExample,
+			ExecID: "instance2",
+			Meta:   []byte("m2"),
 		},
 	}
 	retryable, err := sm.UpdateGlobalTaskAndAddSubTasks(ctx, task, subTasks, prevState)
@@ -361,16 +361,16 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 	task.State = proto.TaskStateReverting
 	subTasks = []*proto.Subtask{
 		{
-			Step:       proto.StepInit,
-			Type:       proto.TaskTypeExample,
-			ExecutorID: "instance3",
-			Meta:       []byte("m3"),
+			Step:   proto.StepInit,
+			Type:   proto.TaskTypeExample,
+			ExecID: "instance3",
+			Meta:   []byte("m3"),
 		},
 		{
-			Step:       proto.StepInit,
-			Type:       proto.TaskTypeExample,
-			ExecutorID: "instance4",
-			Meta:       []byte("m4"),
+			Step:   proto.StepInit,
+			Type:   proto.TaskTypeExample,
+			ExecID: "instance4",
+			Meta:   []byte("m4"),
 		},
 	}
 	retryable, err = sm.UpdateGlobalTaskAndAddSubTasks(ctx, task, subTasks, prevState)
@@ -633,7 +633,7 @@ func TestCancelAndExecIdChanged(t *testing.T) {
 	// exec_id changed
 	require.NoError(t, sm.UpdateSubtaskExecID(ctx, "tidb2", subtask.ID))
 	// exec_id in memory unchanged, call UpdateSubtaskStateAndError.
-	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, subtask.ExecutorID, subtask.ID, proto.TaskStateFailed, nil))
+	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, subtask.ExecID, subtask.ID, proto.TaskStateFailed, nil))
 	subtask, err = sm.GetFirstSubtaskInStates(ctx, "tidb2", 1, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
 	// state unchanged

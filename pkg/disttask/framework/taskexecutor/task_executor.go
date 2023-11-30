@@ -47,16 +47,16 @@ const (
 var (
 	// ErrCancelSubtask is the cancel cause when cancelling subtasks.
 	ErrCancelSubtask = errors.New("cancel subtasks")
-	// ErrFinishSubtask is the cancel cause when scheduler successfully processed subtasks.
+	// ErrFinishSubtask is the cancel cause when TaskExecutor successfully processed subtasks.
 	ErrFinishSubtask = errors.New("finish subtasks")
-	// ErrFinishRollback is the cancel cause when scheduler rollback successfully.
+	// ErrFinishRollback is the cancel cause when TaskExecutor rollback successfully.
 	ErrFinishRollback = errors.New("finish rollback")
 
 	// TestSyncChan is used to sync the test.
 	TestSyncChan = make(chan struct{})
 )
 
-// BaseTaskExecutor is the base implementation of Scheduler.
+// BaseTaskExecutor is the base implementation of TaskExecutor.
 type BaseTaskExecutor struct {
 	// id, it's the same as server id now, i.e. host:port.
 	id        string
@@ -79,14 +79,14 @@ type BaseTaskExecutor struct {
 
 // NewBaseTaskExecutor creates a new BaseTaskExecutor.
 func NewBaseTaskExecutor(ctx context.Context, id string, taskID int64, taskTable TaskTable) *BaseTaskExecutor {
-	schedulerImpl := &BaseTaskExecutor{
+	taskExecutorImpl := &BaseTaskExecutor{
 		id:        id,
 		taskID:    taskID,
 		taskTable: taskTable,
 		ctx:       ctx,
 		logCtx:    logutil.WithFields(context.Background(), zap.Int64("task-id", taskID)),
 	}
-	return schedulerImpl
+	return taskExecutorImpl
 }
 
 func (s *BaseTaskExecutor) startCancelCheck(ctx context.Context, wg *sync.WaitGroup, cancelFn context.CancelCauseFunc) {
@@ -98,7 +98,7 @@ func (s *BaseTaskExecutor) startCancelCheck(ctx context.Context, wg *sync.WaitGr
 		for {
 			select {
 			case <-ctx.Done():
-				logutil.Logger(s.logCtx).Info("scheduler exits", zap.Error(ctx.Err()))
+				logutil.Logger(s.logCtx).Info("taskExecutor exits", zap.Error(ctx.Err()))
 				return
 			case <-ticker.C:
 				canceled, err := s.taskTable.IsSchedulerCanceled(ctx, s.id, s.taskID)
@@ -106,7 +106,7 @@ func (s *BaseTaskExecutor) startCancelCheck(ctx context.Context, wg *sync.WaitGr
 					continue
 				}
 				if canceled {
-					logutil.Logger(s.logCtx).Info("scheduler canceled")
+					logutil.Logger(s.logCtx).Info("taskExecutor canceled")
 					if cancelFn != nil {
 						// subtask transferred to other tidb, don't mark subtask as canceled.
 						// Should not change the subtask's state.
@@ -118,12 +118,12 @@ func (s *BaseTaskExecutor) startCancelCheck(ctx context.Context, wg *sync.WaitGr
 	}()
 }
 
-// Init implements the Scheduler interface.
+// Init implements the TaskExecutor interface.
 func (*BaseTaskExecutor) Init(_ context.Context) error {
 	return nil
 }
 
-// Run runs the scheduler task.
+// Run start to fetch and run all subtasks of the task on the node.
 func (s *BaseTaskExecutor) Run(ctx context.Context, task *proto.Task) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -220,7 +220,7 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 			break
 		}
 		if runCtx.Err() != nil {
-			logutil.Logger(s.logCtx).Info("scheduler runSubtask loop exit")
+			logutil.Logger(s.logCtx).Info("TaskExecutor runSubtask loop exit")
 			break
 		}
 
@@ -236,7 +236,7 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 				logutil.Logger(s.logCtx).Warn("GetGlobalTaskByID meets error", zap.Error(err))
 				continue
 			}
-			// When the task move to next step or task state changes, the scheduler should exit.
+			// When the task move to next step or task state changes, the TaskExecutor should exit.
 			if newTask.Step != task.Step || newTask.State != task.State {
 				break
 			}
@@ -387,14 +387,14 @@ func (s *BaseTaskExecutor) onSubtaskFinished(ctx context.Context, executor execu
 	})
 }
 
-// Rollback rollbacks the scheduler task.
+// Rollback rollbacks the subtask.
 func (s *BaseTaskExecutor) Rollback(ctx context.Context, task *proto.Task) error {
 	rollbackCtx, rollbackCancel := context.WithCancelCause(ctx)
 	defer rollbackCancel(ErrFinishRollback)
 	s.registerCancelFunc(rollbackCancel)
 
 	s.resetError()
-	logutil.Logger(s.logCtx).Info("scheduler rollback a step", zap.Any("step", task.Step))
+	logutil.Logger(s.logCtx).Info("TaskExecutor rollback a step", zap.Any("step", task.Step))
 
 	// We should cancel all subtasks before rolling back
 	for {
@@ -427,7 +427,7 @@ func (s *BaseTaskExecutor) Rollback(ctx context.Context, task *proto.Task) error
 		return s.getError()
 	}
 	if subtask == nil {
-		logutil.BgLogger().Warn("scheduler rollback a step, but no subtask in revert_pending state", zap.Any("step", task.Step))
+		logutil.BgLogger().Warn("TaskExecutor rollback a step, but no subtask in revert_pending state", zap.Any("step", task.Step))
 		return nil
 	}
 	if subtask.State == proto.TaskStateRevertPending {
@@ -449,9 +449,9 @@ func (s *BaseTaskExecutor) Rollback(ctx context.Context, task *proto.Task) error
 	return s.getError()
 }
 
-// Pause pause the scheduler task.
+// Pause pause the TaskExecutor's subtasks.
 func (s *BaseTaskExecutor) Pause(ctx context.Context, task *proto.Task) error {
-	logutil.Logger(s.logCtx).Info("scheduler pause subtasks")
+	logutil.Logger(s.logCtx).Info("TaskExecutor pause subtasks")
 	// pause all running subtasks.
 	if err := s.taskTable.PauseSubtasks(ctx, s.id, task.ID); err != nil {
 		s.onError(err)
@@ -460,7 +460,7 @@ func (s *BaseTaskExecutor) Pause(ctx context.Context, task *proto.Task) error {
 	return nil
 }
 
-// Close closes the scheduler when all the subtasks are complete.
+// Close closes the TaskExecutor when all the subtasks are complete.
 func (*BaseTaskExecutor) Close() {
 }
 
@@ -475,7 +475,7 @@ func runSummaryCollectLoop(
 	}
 	opt, ok := taskTypes[task.Type]
 	if !ok {
-		return nil, func() {}, errors.Errorf("scheduler option for type %s not found", task.Type)
+		return nil, func() {}, errors.Errorf("TaskExecutor option for type %s not found", task.Type)
 	}
 	if opt.Summary != nil {
 		go opt.Summary.UpdateRowCountLoop(ctx, taskMgr)
@@ -503,7 +503,7 @@ func (s *BaseTaskExecutor) onError(err error) {
 
 	if s.mu.err == nil {
 		s.mu.err = err
-		logutil.Logger(s.logCtx).Error("scheduler met first error", zap.Error(err))
+		logutil.Logger(s.logCtx).Error("TaskExecutor met first error", zap.Error(err))
 	}
 
 	if s.mu.runtimeCancel != nil {
@@ -572,7 +572,7 @@ func (s *BaseTaskExecutor) finishSubtask(ctx context.Context, subtask *proto.Sub
 	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
 	err := handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
-			return true, s.taskTable.FinishSubtask(ctx, subtask.ExecutorID, subtask.ID, subtask.Meta)
+			return true, s.taskTable.FinishSubtask(ctx, subtask.ExecID, subtask.ID, subtask.Meta)
 		},
 	)
 	if err != nil {
@@ -583,7 +583,7 @@ func (s *BaseTaskExecutor) finishSubtask(ctx context.Context, subtask *proto.Sub
 func (s *BaseTaskExecutor) updateSubtaskStateAndError(ctx context.Context, subtask *proto.Subtask, state proto.TaskState, subTaskErr error) {
 	metrics.DecDistTaskSubTaskCnt(subtask)
 	metrics.EndDistTaskSubTask(subtask)
-	s.updateSubtaskStateAndErrorImpl(ctx, subtask.ExecutorID, subtask.ID, state, subTaskErr)
+	s.updateSubtaskStateAndErrorImpl(ctx, subtask.ExecID, subtask.ID, state, subTaskErr)
 	subtask.State = state
 	metrics.IncDistTaskSubTaskCnt(subtask)
 	if !subtask.IsFinished() {

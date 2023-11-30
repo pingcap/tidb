@@ -334,7 +334,7 @@ func row2SubTask(r chunk.Row) *proto.Subtask {
 		ID:         r.GetInt64(0),
 		Step:       proto.Step(r.GetInt64(1)),
 		Type:       proto.Int2Type(int(r.GetInt64(5))),
-		ExecutorID: r.GetString(6),
+		ExecID:     r.GetString(6),
 		State:      proto.TaskState(r.GetString(8)),
 		Meta:       r.GetBytes(12),
 		Summary:    r.GetString(14),
@@ -771,7 +771,7 @@ func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(ctx context.Context, gTas
 					}
 				}
 				if err := sqlescape.FormatSQL(sql, "(%?, %?, %?, %?, %?, %?, %?, %?)",
-					subtask.Step, gTask.ID, subtask.ExecutorID, subtask.Meta, subtaskState, proto.Type2Int(subtask.Type), []byte{}, "{}"); err != nil {
+					subtask.Step, gTask.ID, subtask.ExecID, subtask.Meta, subtaskState, proto.Type2Int(subtask.Type), []byte{}, "{}"); err != nil {
 					return err
 				}
 			}

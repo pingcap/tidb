@@ -46,9 +46,9 @@ type Pool interface {
 	ReleaseAndWait()
 }
 
-// Executor is the subtask executor for a task.
+// TaskExecutor is the subtask executor for a task.
 // Each task type should implement this interface.
-type Executor interface {
+type TaskExecutor interface {
 	Init(context.Context) error
 	Run(context.Context, *proto.Task) error
 	Rollback(context.Context, *proto.Task) error
@@ -56,7 +56,7 @@ type Executor interface {
 	Close()
 }
 
-// Extension extends the Executor.
+// Extension extends the TaskExecutor.
 // each task type should implement this interface.
 type Extension interface {
 	// IsIdempotent returns whether the subtask is idempotent.
