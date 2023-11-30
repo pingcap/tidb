@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -33,6 +34,7 @@ type heapElem interface {
 	// owned memory. Sometimes to reduce allocation the memory is shared between
 	// multiple elements and it's needed to call it before we free the shared memory.
 	cloneInnerFields()
+	len() int
 }
 
 type sortedReader[T heapElem] interface {
@@ -187,7 +189,7 @@ func newMergeIter[
 			elem:      e,
 			readerIdx: j,
 		})
-		sampleKeySize += len(e.sortKey())
+		sampleKeySize += e.len()
 		sampleKeyCnt++
 	}
 	// We check the hotspot when the elements size is almost the same as the concurrent reader buffer size.
@@ -195,7 +197,8 @@ func newMergeIter[
 	if sampleKeySize == 0 || sampleKeySize/sampleKeyCnt == 0 {
 		i.checkHotspotPeriod = 10000
 	} else {
-		i.checkHotspotPeriod = max(1000, ConcurrentReaderBufferSizePerConc*ConcurrentReaderConcurrency/(sampleKeySize/sampleKeyCnt))
+		sizeThreshold := int(32 * size.MB)
+		i.checkHotspotPeriod = max(1000, sizeThreshold/(sampleKeySize/sampleKeyCnt))
 	}
 	heap.Init(&i.h)
 	return i, nil
@@ -324,6 +327,10 @@ func (p *kvPair) cloneInnerFields() {
 	p.value = append([]byte{}, p.value...)
 }
 
+func (p *kvPair) len() int {
+	return len(p.key) + len(p.value)
+}
+
 type kvReaderProxy struct {
 	p string
 	r *kvReader
@@ -365,9 +372,14 @@ func NewMergeKVIter(
 	exStorage storage.ExternalStorage,
 	readBufferSize int,
 	checkHotspot bool,
+	outerConcurrency int,
 ) (*MergeKVIter, error) {
 	readerOpeners := make([]readerOpenerFn[*kvPair, kvReaderProxy], 0, len(paths))
-	largeBufSize := ConcurrentReaderBufferSizePerConc * ConcurrentReaderConcurrency
+	if outerConcurrency <= 0 {
+		outerConcurrency = 1
+	}
+	concurrentReaderConcurrency := max(256/outerConcurrency, 8)
+	largeBufSize := ConcurrentReaderBufferSizePerConc * concurrentReaderConcurrency
 	memPool := membuf.NewPool(
 		membuf.WithBlockNum(1), // currently only one reader will become hotspot
 		membuf.WithBlockSize(largeBufSize),
@@ -384,7 +396,7 @@ func NewMergeKVIter(
 			rd.byteReader.enableConcurrentRead(
 				exStorage,
 				paths[i],
-				ConcurrentReaderConcurrency,
+				concurrentReaderConcurrency,
 				ConcurrentReaderBufferSizePerConc,
 				memPool.NewBuffer(),
 			)
@@ -433,6 +445,11 @@ func (p *rangeProperty) sortKey() []byte {
 func (p *rangeProperty) cloneInnerFields() {
 	p.firstKey = append([]byte{}, p.firstKey...)
 	p.lastKey = append([]byte{}, p.lastKey...)
+}
+
+func (p *rangeProperty) len() int {
+	// 24 is the length of member offset, size and keys, which are all uint64
+	return len(p.firstKey) + len(p.lastKey) + 24
 }
 
 type statReaderProxy struct {

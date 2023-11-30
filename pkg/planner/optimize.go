@@ -181,7 +181,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx)
-	originStmtHints, originStmtHintsOffs, warns := handleStmtHints(tableHints)
+	originStmtHints, _, warns := handleStmtHints(tableHints)
 	sessVars.StmtCtx.StmtHints = originStmtHints
 	for _, warn := range warns {
 		sessVars.StmtCtx.AppendWarning(warn)
@@ -309,7 +309,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			plan, curNames, cost, err := optimize(ctx, sctx, node, is)
 			if err != nil {
 				binding.Status = bindinfo.Invalid
-				handleInvalidBindRecord(ctx, sctx, scope, bindinfo.BindRecord{
+				handleInvalidBinding(ctx, sctx, scope, bindinfo.BindRecord{
 					OriginalSQL: bindRecord.OriginalSQL,
 					Db:          bindRecord.Db,
 					Bindings:    []bindinfo.Binding{binding},
@@ -380,15 +380,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 				if hint.HintName.String() == core.HintReadFromStorage {
 					return bestPlan, names, nil
 				}
-			}
-			// The hints generated from the plan do not contain the statement hints of the query, add them back.
-			for _, off := range originStmtHintsOffs {
-				defPlanHints = append(defPlanHints, tableHints[off])
-			}
-			defPlanHintsStr := hint.RestoreOptimizerHints(defPlanHints)
-			binding := bindRecord.FindBinding(defPlanHintsStr)
-			if binding == nil {
-				handleEvolveTasks(ctx, sctx, bindRecord, stmtNode, defPlanHintsStr)
 			}
 		}
 	}
@@ -675,7 +666,7 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 		return nil, "", err
 	}
 	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	bindRecord := sessionHandle.GetBindRecord(sqlDigest, normalizedSQL, "")
+	bindRecord := sessionHandle.GetSessionBinding(sqlDigest, normalizedSQL, "")
 	if bindRecord != nil {
 		if bindRecord.HasEnabledBinding() {
 			return bindRecord, metrics.ScopeSession, nil
@@ -686,13 +677,13 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	if globalHandle == nil {
 		return nil, "", nil
 	}
-	bindRecord = globalHandle.GetBindRecord(sqlDigest, normalizedSQL, "")
+	bindRecord = globalHandle.GetGlobalBinding(sqlDigest, normalizedSQL, "")
 	return bindRecord, metrics.ScopeGlobal, nil
 }
 
-func handleInvalidBindRecord(ctx context.Context, sctx sessionctx.Context, level string, bindRecord bindinfo.BindRecord) {
+func handleInvalidBinding(ctx context.Context, sctx sessionctx.Context, level string, bindRecord bindinfo.BindRecord) {
 	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	err := sessionHandle.DropBindRecord(bindRecord.OriginalSQL, bindRecord.Db, &bindRecord.Bindings[0])
+	err := sessionHandle.DropSessionBinding(bindRecord.OriginalSQL, bindRecord.Db, &bindRecord.Bindings[0])
 	if err != nil {
 		logutil.Logger(ctx).Info("drop session bindings failed")
 	}
@@ -701,26 +692,7 @@ func handleInvalidBindRecord(ctx context.Context, sctx sessionctx.Context, level
 	}
 
 	globalHandle := domain.GetDomain(sctx).BindHandle()
-	globalHandle.AddDropInvalidBindTask(&bindRecord)
-}
-
-func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinfo.BindRecord, stmtNode ast.StmtNode, planHint string) {
-	bindSQL := bindinfo.GenerateBindSQL(ctx, stmtNode, planHint, false, br.Db)
-	if bindSQL == "" {
-		return
-	}
-	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
-	_, sqlDigestWithDB := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmtNode, br.Db, br.OriginalSQL))
-	binding := bindinfo.Binding{
-		BindSQL:   bindSQL,
-		Status:    bindinfo.PendingVerify,
-		Charset:   charset,
-		Collation: collation,
-		Source:    bindinfo.Evolve,
-		SQLDigest: sqlDigestWithDB.String(),
-	}
-	globalHandle := domain.GetDomain(sctx).BindHandle()
-	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding)
+	globalHandle.AddInvalidGlobalBinding(&bindRecord)
 }
 
 func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHints, offs []int, warns []error) {

@@ -2100,7 +2100,7 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 			if err != nil {
 				return err
 			}
-			err = handle.WaitGlobalTask(ctx, task)
+			err = handle.WaitGlobalTask(ctx, task.ID)
 			if err := w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
 				if dbterror.ErrPausedDDLJob.Equal(err) {
 					logutil.BgLogger().Warn("job paused by user", zap.String("category", "ddl"), zap.Error(err))
