@@ -80,6 +80,17 @@ func UpdateStatsMeta(
 	return err
 }
 
+// UpdatePredicateStatsMeta update the predicate stats meta for this Table.
+func UpdatePredicateStatsMeta(
+	sctx sessionctx.Context,
+	startTS uint64,
+	delta variable.ReadTableDelta,
+) (err error) {
+	_, err = statsutil.Exec(sctx, "replace into mysql.predicate_stats (table_id, count, step_hash, predicate_selectivity, version) values (%?, %?, %?, %?, %?)",
+		delta.TableID, delta.Count, delta.StepHash, delta.PredicateSelectivity, startTS)
+	return err
+}
+
 // DumpTableStatColSizeToKV dumps the column size stats to storage.
 func DumpTableStatColSizeToKV(sctx sessionctx.Context, id int64, delta variable.TableDelta) error {
 	if len(delta.ColSize) == 0 {

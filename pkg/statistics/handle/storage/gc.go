@@ -114,6 +114,9 @@ func GCStats(sctx sessionctx.Context,
 			if err := gcHistoryStatsFromKV(sctx, row.GetInt64(0)); err != nil {
 				return errors.Trace(err)
 			}
+			if err := gcPredicateStatsFromKV(sctx, row.GetInt64(0)); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 
@@ -216,6 +219,13 @@ func gcHistoryStatsFromKV(sctx sessionctx.Context, physicalID int64) (err error)
 		return errors.Trace(err)
 	}
 	sql = "delete from mysql.stats_meta_history where table_id = %?"
+	_, err = util.Exec(sctx, sql, physicalID)
+	return err
+}
+
+// gcPredicateStatsFromKV delete predicate stats from kv.
+func gcPredicateStatsFromKV(sctx sessionctx.Context, physicalID int64) (err error) {
+	sql := "delete from mysql.predicate_stats where table_id = %?"
 	_, err = util.Exec(sctx, sql, physicalID)
 	return err
 }

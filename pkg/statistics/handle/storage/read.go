@@ -465,6 +465,26 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 	return ExtendedStatsFromStorage(sctx, table, tableID, loadAll)
 }
 
+// TablePredicateStatsFromStorage loads table predicate stats info from storage.
+func TablePredicateStatsFromStorage(sctx sessionctx.Context, tableID int64, stepHash uint64) (*statistics.TablePredicateItem, error) {
+	rows, _, err := util.ExecRows(sctx, "select count, predicate_selectivity, version from mysql.predicate_stats where table_id = %? and step_hash = %?", tableID, stepHash)
+	// Check deleted table.
+	if err != nil || len(rows) == 0 {
+		return nil, nil
+	}
+
+	table := &statistics.TablePredicateItem{}
+	table.TableID = tableID
+	table.StepHash = stepHash
+	for _, row := range rows {
+		table.Count = row.GetInt64(0)
+		table.PredicateSelectivity = row.GetFloat32(1)
+		table.Version = row.GetUint64(2)
+		return table, nil
+	}
+	return nil, nil
+}
+
 // LoadHistogram will load histogram from storage.
 func LoadHistogram(sctx sessionctx.Context, tableID int64, isIndex int, histID int64, tableInfo *model.TableInfo) (*statistics.Histogram, error) {
 	row, _, err := util.ExecRows(sctx, "select distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, histID)

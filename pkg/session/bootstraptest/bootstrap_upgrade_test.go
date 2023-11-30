@@ -228,6 +228,44 @@ func TestUpgradeVersion75(t *testing.T) {
 	require.Equal(t, "char(255)", strings.ToLower(row.GetString(1)))
 }
 
+func TestUpgradeVersion180(t *testing.T) {
+	// for bootstrap
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("SELECT count(*) FROM information_schema.tables WHERE table_schema='mysql' AND table_name='predicate_stats'").Check(testkit.Rows("1"))
+
+	// mock version179 without predicate_stats
+	seV179 := session.CreateSessionAndSetID(t, store)
+	session.MustExec(t, seV179, "drop table mysql.predicate_stats")
+	tk = testkit.NewTestKit(t, store)
+	tk.MustQuery("SELECT count(*) FROM information_schema.tables WHERE table_schema='mysql' AND table_name='predicate_stats'").Check(testkit.Rows("0"))
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(179))
+	require.NoError(t, err)
+	session.MustExec(t, seV179, "update mysql.tidb set variable_value='179' where variable_name='tidb_server_version'")
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	session.UnsetStoreBootstrapped(store.UUID())
+	ver, err := session.GetBootstrapVersion(seV179)
+	require.NoError(t, err)
+	require.Equal(t, int64(179), ver)
+	dom.Close()
+
+	// for upgrade
+	domV180, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer domV180.Close()
+	seV180 := session.CreateSessionAndSetID(t, store)
+	ver, err = session.GetBootstrapVersion(seV180)
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion, ver)
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustQuery("SELECT count(*) FROM information_schema.tables WHERE table_schema='mysql' AND table_name='predicate_stats'").Check(testkit.Rows("1"))
+}
+
 func TestUpgradeVersionMockLatest(t *testing.T) {
 	mock := true
 	session.WithMockUpgrade = &mock
