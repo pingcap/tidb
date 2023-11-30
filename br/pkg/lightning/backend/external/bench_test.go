@@ -879,7 +879,7 @@ func TestMerge(t *testing.T) {
 		ctx,
 		dataFiles,
 		store,
-		5*1024*1024,
+		10*1024*1024,
 		64*1024,
 		mergeOutput,
 		DefaultBlockSize,
