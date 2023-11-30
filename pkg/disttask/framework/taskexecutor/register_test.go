@@ -25,7 +25,7 @@ import (
 func TestRegisterTaskType(t *testing.T) {
 	// other case might add task types, so we need to clear it first
 	ClearTaskExecutors()
-	factoryFn := func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) Executor {
+	factoryFn := func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) TaskExecutor {
 		return nil
 	}
 	RegisterTaskType("test1", factoryFn)

@@ -149,19 +149,19 @@ func (mr *MockTaskTableMockRecorder) HasSubtasksInStates(arg0, arg1, arg2, arg3 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HasSubtasksInStates", reflect.TypeOf((*MockTaskTable)(nil).HasSubtasksInStates), varargs...)
 }
 
-// IsSchedulerCanceled mocks base method.
-func (m *MockTaskTable) IsSchedulerCanceled(arg0 context.Context, arg1 string, arg2 int64) (bool, error) {
+// IsTaskExecutorCanceled mocks base method.
+func (m *MockTaskTable) IsTaskExecutorCanceled(arg0 context.Context, arg1 string, arg2 int64) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IsSchedulerCanceled", arg0, arg1, arg2)
+	ret := m.ctrl.Call(m, "IsTaskExecutorCanceled", arg0, arg1, arg2)
 	ret0, _ := ret[0].(bool)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// IsSchedulerCanceled indicates an expected call of IsSchedulerCanceled.
-func (mr *MockTaskTableMockRecorder) IsSchedulerCanceled(arg0, arg1, arg2 any) *gomock.Call {
+// IsTaskExecutorCanceled indicates an expected call of IsTaskExecutorCanceled.
+func (mr *MockTaskTableMockRecorder) IsTaskExecutorCanceled(arg0, arg1, arg2 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsSchedulerCanceled", reflect.TypeOf((*MockTaskTable)(nil).IsSchedulerCanceled), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsTaskExecutorCanceled", reflect.TypeOf((*MockTaskTable)(nil).IsTaskExecutorCanceled), arg0, arg1, arg2)
 }
 
 // PauseSubtasks mocks base method.

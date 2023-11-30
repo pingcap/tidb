@@ -60,8 +60,8 @@ var (
 // TaskHandle provides the interface for operations needed by Dispatcher.
 // Then we can use dispatcher's function in Dispatcher interface.
 type TaskHandle interface {
-	// GetPreviousSchedulerIDs gets previous scheduler IDs.
-	GetPreviousSchedulerIDs(_ context.Context, taskID int64, step proto.Step) ([]string, error)
+	// GetPreviousTaskExecutorIDs gets previous task executor IDs.
+	GetPreviousTaskExecutorIDs(_ context.Context, taskID int64, step proto.Step) ([]string, error)
 	// GetPreviousSubtaskMetas gets previous subtask metas.
 	GetPreviousSubtaskMetas(taskID int64, step proto.Step) ([][]byte, error)
 	storage.SessionExecutor
@@ -98,7 +98,7 @@ type BaseDispatcher struct {
 	liveNodeFetchInterval int
 	// liveNodeFetchTick is the tick variable.
 	liveNodeFetchTick int
-	// taskNodes stores the id of current scheduler nodes.
+	// taskNodes stores the id of current task executor nodes.
 	taskNodes []string
 	// rand is for generating random selection of nodes.
 	rand *rand.Rand
@@ -367,7 +367,7 @@ func (d *BaseDispatcher) onFinished() error {
 func (d *BaseDispatcher) replaceDeadNodesIfAny() error {
 	if len(d.taskNodes) == 0 {
 		var err error
-		d.taskNodes, err = d.taskMgr.GetSchedulerIDsByTaskIDAndStep(d.ctx, d.Task.ID, d.Task.Step)
+		d.taskNodes, err = d.taskMgr.GetTaskExecutorIDsByTaskIDAndStep(d.ctx, d.Task.ID, d.Task.Step)
 		if err != nil {
 			return err
 		}
@@ -375,7 +375,7 @@ func (d *BaseDispatcher) replaceDeadNodesIfAny() error {
 	d.liveNodeFetchTick++
 	if d.liveNodeFetchTick == d.liveNodeFetchInterval {
 		d.liveNodeFetchTick = 0
-		serverInfos, err := GenerateSchedulerNodes(d.ctx)
+		serverInfos, err := GenerateTaskExecutorNodes(d.ctx)
 		if err != nil {
 			return err
 		}
@@ -417,7 +417,7 @@ func (d *BaseDispatcher) replaceDeadNodesIfAny() error {
 		}
 		if len(replaceNodes) > 0 {
 			logutil.Logger(d.logCtx).Info("reschedule subtasks to other nodes", zap.Int("node-cnt", len(replaceNodes)))
-			if err := d.taskMgr.UpdateFailedSchedulerIDs(d.ctx, d.Task.ID, replaceNodes); err != nil {
+			if err := d.taskMgr.UpdateFailedTaskExecutorIDs(d.ctx, d.Task.ID, replaceNodes); err != nil {
 				return err
 			}
 			if err := d.taskMgr.CleanUpMeta(d.ctx, cleanNodes); err != nil {
@@ -479,7 +479,7 @@ func (d *BaseDispatcher) onErrHandlingStage(receiveErrs []error) error {
 	var subTasks []*proto.Subtask
 	// when step of task is `StepInit`, no need to do revert
 	if d.Task.Step != proto.StepInit {
-		instanceIDs, err := d.GetAllSchedulerIDs(d.ctx, d.Task)
+		instanceIDs, err := d.GetAllTaskExecutorIDs(d.ctx, d.Task)
 		if err != nil {
 			logutil.Logger(d.logCtx).Warn("get task's all instances failed", zap.Error(err))
 			return err
@@ -641,9 +641,9 @@ func (d *BaseDispatcher) handlePlanErr(err error) error {
 // MockServerInfo exported for dispatcher_test.go
 var MockServerInfo []*infosync.ServerInfo
 
-// GenerateSchedulerNodes generate a eligible TiDB nodes.
-func GenerateSchedulerNodes(ctx context.Context) (serverNodes []*infosync.ServerInfo, err error) {
-	failpoint.Inject("mockSchedulerNodes", func() {
+// GenerateTaskExecutorNodes generate a eligible TiDB nodes.
+func GenerateTaskExecutorNodes(ctx context.Context) (serverNodes []*infosync.ServerInfo, err error) {
+	failpoint.Inject("mockTaskExecutorNodes", func() {
 		failpoint.Return(MockServerInfo, nil)
 	})
 	var serverInfos map[string]*infosync.ServerInfo
@@ -691,11 +691,11 @@ func (d *BaseDispatcher) filterByRole(infos []*infosync.ServerInfo) ([]*infosync
 	return res, nil
 }
 
-// GetAllSchedulerIDs gets all the scheduler IDs.
-func (d *BaseDispatcher) GetAllSchedulerIDs(ctx context.Context, task *proto.Task) ([]string, error) {
+// GetAllTaskExecutorIDs gets all the task executor IDs.
+func (d *BaseDispatcher) GetAllTaskExecutorIDs(ctx context.Context, task *proto.Task) ([]string, error) {
 	// We get all servers instead of eligible servers here
 	// because eligible servers may change during the task execution.
-	serverInfos, err := GenerateSchedulerNodes(ctx)
+	serverInfos, err := GenerateTaskExecutorNodes(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -703,12 +703,12 @@ func (d *BaseDispatcher) GetAllSchedulerIDs(ctx context.Context, task *proto.Tas
 		return nil, nil
 	}
 
-	schedulerIDs, err := d.taskMgr.GetSchedulerIDsByTaskID(d.ctx, task.ID)
+	executorIDs, err := d.taskMgr.GetTaskExecutorIDsByTaskID(d.ctx, task.ID)
 	if err != nil {
 		return nil, err
 	}
-	ids := make([]string, 0, len(schedulerIDs))
-	for _, id := range schedulerIDs {
+	ids := make([]string, 0, len(executorIDs))
+	for _, id := range executorIDs {
 		if ok := disttaskutil.MatchServerInfo(serverInfos, id); ok {
 			ids = append(ids, id)
 		}
@@ -730,9 +730,9 @@ func (d *BaseDispatcher) GetPreviousSubtaskMetas(taskID int64, step proto.Step) 
 	return previousSubtaskMetas, nil
 }
 
-// GetPreviousSchedulerIDs gets scheduler IDs that run previous step.
-func (d *BaseDispatcher) GetPreviousSchedulerIDs(_ context.Context, taskID int64, step proto.Step) ([]string, error) {
-	return d.taskMgr.GetSchedulerIDsByTaskIDAndStep(d.ctx, taskID, step)
+// GetPreviousTaskExecutorIDs gets task executor IDs that run previous step.
+func (d *BaseDispatcher) GetPreviousTaskExecutorIDs(_ context.Context, taskID int64, step proto.Step) ([]string, error) {
+	return d.taskMgr.GetTaskExecutorIDsByTaskIDAndStep(d.ctx, taskID, step)
 }
 
 // WithNewSession executes the function with a new session.

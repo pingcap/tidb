@@ -38,11 +38,11 @@ type TaskManager interface {
 	ResumeSubtasks(ctx context.Context, taskID int64) error
 	CollectSubTaskError(ctx context.Context, taskID int64) ([]error, error)
 	TransferSubTasks2History(ctx context.Context, taskID int64) error
-	UpdateFailedSchedulerIDs(ctx context.Context, taskID int64, replaceNodes map[string]string) error
+	UpdateFailedTaskExecutorIDs(ctx context.Context, taskID int64, replaceNodes map[string]string) error
 	GetNodesByRole(ctx context.Context, role string) (map[string]bool, error)
-	GetSchedulerIDsByTaskID(ctx context.Context, taskID int64) ([]string, error)
+	GetTaskExecutorIDsByTaskID(ctx context.Context, taskID int64) ([]string, error)
 	GetSucceedSubtasksByStep(ctx context.Context, taskID int64, step proto.Step) ([]*proto.Subtask, error)
-	GetSchedulerIDsByTaskIDAndStep(ctx context.Context, taskID int64, step proto.Step) ([]string, error)
+	GetTaskExecutorIDsByTaskIDAndStep(ctx context.Context, taskID int64, step proto.Step) ([]string, error)
 
 	WithNewSession(fn func(se sessionctx.Context) error) error
 	WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error

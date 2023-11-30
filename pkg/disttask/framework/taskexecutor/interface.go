@@ -35,7 +35,7 @@ type TaskTable interface {
 
 	HasSubtasksInStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...interface{}) (bool, error)
 	UpdateErrorToSubtask(ctx context.Context, tidbID string, taskID int64, err error) error
-	IsSchedulerCanceled(ctx context.Context, tidbID string, taskID int64) (bool, error)
+	IsTaskExecutorCanceled(ctx context.Context, tidbID string, taskID int64) (bool, error)
 	PauseSubtasks(ctx context.Context, tidbID string, taskID int64) error
 }
 

@@ -35,7 +35,7 @@ import (
 )
 
 var (
-	schedulerPoolSize int32 = 4
+	executorPoolSize int32 = 4
 	// same as dispatcher
 	checkTime           = 300 * time.Millisecond
 	recoverMetaInterval = 90 * time.Second
@@ -62,14 +62,14 @@ func (b *ManagerBuilder) setPoolFactory(poolFactory func(name string, size int32
 	b.newPool = poolFactory
 }
 
-// Manager monitors the global task table and manages the schedulers.
+// Manager monitors the global task table and manages the taskExecutors.
 type Manager struct {
-	taskTable     TaskTable
-	schedulerPool Pool
-	mu            struct {
+	taskTable    TaskTable
+	executorPool Pool
+	mu           struct {
 		sync.RWMutex
 		// taskID -> CancelCauseFunc.
-		// CancelCauseFunc is used to fast cancel the scheduler.Run.
+		// CancelCauseFunc is used to fast cancel the executor.Run.
 		handlingTasks map[int64]context.CancelCauseFunc
 	}
 	// id, it's the same as server id now, i.e. host:port.
@@ -92,11 +92,11 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.mu.handlingTasks = make(map[int64]context.CancelCauseFunc)
 
-	schedulerPool, err := m.newPool("scheduler_pool", schedulerPoolSize, util.DistTask)
+	executorPool, err := m.newPool("executor_pool", executorPoolSize, util.DistTask)
 	if err != nil {
 		return nil, err
 	}
-	m.schedulerPool = schedulerPool
+	m.executorPool = executorPool
 
 	return m, nil
 }
@@ -134,7 +134,7 @@ func (m *Manager) Start() error {
 // Stop stops the Manager.
 func (m *Manager) Stop() {
 	m.cancel()
-	m.schedulerPool.ReleaseAndWait()
+	m.executorPool.ReleaseAndWait()
 	m.wg.Wait()
 }
 
@@ -213,7 +213,7 @@ func (m *Manager) onRunnableTasks(tasks []*proto.Task) {
 		logutil.Logger(m.logCtx).Info("detect new subtask", zap.Int64("task-id", task.ID))
 		m.addHandlingTask(task.ID)
 		t := task
-		err = m.schedulerPool.Run(func() {
+		err = m.executorPool.Run(func() {
 			m.onRunnableTask(t)
 			m.removeHandlingTask(t.ID)
 		})
@@ -263,7 +263,7 @@ func (m *Manager) onPausingTasks(tasks []*proto.Task) error {
 	return nil
 }
 
-// recoverMetaLoop inits and recovers dist_framework_meta for the tidb node running the scheduler manager.
+// recoverMetaLoop inits and recovers dist_framework_meta for the tidb node running the taskExecutor manager.
 // This is necessary when the TiDB node experiences a prolonged network partition
 // and the dispatcher deletes `dist_framework_meta`.
 // When the TiDB node recovers from the network partition,
@@ -325,24 +325,24 @@ var testContexts sync.Map
 // onRunnableTask handles a runnable task.
 func (m *Manager) onRunnableTask(task *proto.Task) {
 	logutil.Logger(m.logCtx).Info("onRunnableTask", zap.Int64("task-id", task.ID), zap.Stringer("type", task.Type))
-	// runCtx only used in scheduler.Run, cancel in m.fetchAndFastCancelTasks.
-	factory := GetSchedulerFactory(task.Type)
+	// runCtx only used in executor.Run, cancel in m.fetchAndFastCancelTasks.
+	factory := GetTaskExecutorFactory(task.Type)
 	if factory == nil {
 		err := errors.Errorf("task type %s not found", task.Type)
 		m.logErrAndPersist(err, task.ID)
 		return
 	}
-	scheduler := factory(m.ctx, m.id, task, m.taskTable)
+	executor := factory(m.ctx, m.id, task, m.taskTable)
 	taskCtx, taskCancel := context.WithCancelCause(m.ctx)
 	m.registerCancelFunc(task.ID, taskCancel)
 	defer taskCancel(nil)
-	// scheduler should init before run()/pause()/rollback().
-	err := scheduler.Init(taskCtx)
+	// executor should init before run()/pause()/rollback().
+	err := executor.Init(taskCtx)
 	if err != nil {
 		m.logErrAndPersist(err, task.ID)
 		return
 	}
-	defer scheduler.Close()
+	defer executor.Close()
 	for {
 		select {
 		case <-m.ctx.Done():
@@ -388,13 +388,13 @@ func (m *Manager) onRunnableTask(task *proto.Task) {
 		switch task.State {
 		case proto.TaskStateRunning:
 			// use taskCtx for canceling.
-			err = scheduler.Run(taskCtx, task)
+			err = executor.Run(taskCtx, task)
 		case proto.TaskStatePausing:
 			// use m.ctx since this process should not be canceled.
-			err = scheduler.Pause(m.ctx, task)
+			err = executor.Pause(m.ctx, task)
 		case proto.TaskStateReverting:
 			// use m.ctx since this process should not be canceled.
-			err = scheduler.Rollback(m.ctx, task)
+			err = executor.Rollback(m.ctx, task)
 		}
 		if err != nil {
 			logutil.Logger(m.logCtx).Error("failed to handle task", zap.Error(err))

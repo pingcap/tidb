@@ -100,7 +100,7 @@ func TestOnRunnableTasks(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	mockTaskTable := mock.NewMockTaskTable(ctrl)
-	mockInternalExecutor := mock.NewMockScheduler(ctrl)
+	mockInternalExecutor := mock.NewMockTaskExecutor(ctrl)
 	mockPool := mock.NewMockPool(ctrl)
 	ctx := context.Background()
 
@@ -119,7 +119,7 @@ func TestOnRunnableTasks(t *testing.T) {
 	m.onRunnableTasks(nil)
 
 	RegisterTaskType("type",
-		func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) Executor {
+		func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) TaskExecutor {
 			return mockInternalExecutor
 		})
 
@@ -177,14 +177,14 @@ func TestManager(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	mockTaskTable := mock.NewMockTaskTable(ctrl)
-	mockInternalExecutor := mock.NewMockScheduler(ctrl)
+	mockInternalExecutor := mock.NewMockTaskExecutor(ctrl)
 	mockPool := mock.NewMockPool(ctrl)
 	b := NewManagerBuilder()
 	b.setPoolFactory(func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error) {
 		return mockPool, nil
 	})
 	RegisterTaskType("type",
-		func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) Executor {
+		func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) TaskExecutor {
 			return mockInternalExecutor
 		})
 	id := "test"
@@ -241,7 +241,7 @@ func TestManager(t *testing.T) {
 	// task3
 	mockTaskTable.EXPECT().PauseSubtasks(m.ctx, id, taskID3).Return(nil).AnyTimes()
 
-	// for scheduler pool
+	// for taskExecutor pool
 	mockPool.EXPECT().ReleaseAndWait().Do(func() {
 		wg.Wait()
 	})

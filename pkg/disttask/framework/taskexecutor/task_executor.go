@@ -101,7 +101,7 @@ func (s *BaseTaskExecutor) startCancelCheck(ctx context.Context, wg *sync.WaitGr
 				logutil.Logger(s.logCtx).Info("taskExecutor exits", zap.Error(ctx.Err()))
 				return
 			case <-ticker.C:
-				canceled, err := s.taskTable.IsSchedulerCanceled(ctx, s.id, s.taskID)
+				canceled, err := s.taskTable.IsTaskExecutorCanceled(ctx, s.id, s.taskID)
 				if err != nil {
 					continue
 				}
@@ -230,7 +230,7 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 			continue
 		}
 		if subtask == nil {
-			failpoint.Inject("breakInSchedulerUT", func() {
+			failpoint.Inject("breakInTaskExecutorUT", func() {
 				failpoint.Break()
 			})
 			newTask, err := s.taskTable.GetGlobalTaskByID(runCtx, task.ID)
@@ -265,7 +265,7 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 			}
 		}
 
-		failpoint.Inject("mockCleanScheduler", func() {
+		failpoint.Inject("mockCleanExecutor", func() {
 			v, ok := testContexts.Load(s.id)
 			if ok {
 				if v.(*TestContext).mockDown.Load() {

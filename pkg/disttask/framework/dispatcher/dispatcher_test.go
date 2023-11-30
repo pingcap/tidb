@@ -73,7 +73,7 @@ func getNumberExampleDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension
 	mockDispatcher.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
 	mockDispatcher.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
-			serverInfo, err := dispatcher.GenerateSchedulerNodes(ctx)
+			serverInfo, err := dispatcher.GenerateTaskExecutorNodes(ctx)
 			return serverInfo, true, err
 		},
 	).AnyTimes()
@@ -159,14 +159,14 @@ func TestGetInstance(t *testing.T) {
 	defer pool.Close()
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockSchedulerNodes", "return()"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockTaskExecutorNodes", "return()"))
 	dspManager, mgr := MockDispatcherManager(t, ctrl, pool, getTestDispatcherExt(ctrl), nil)
 	// test no server
 	task := &proto.Task{ID: 1, Type: proto.TaskTypeExample}
 	dsp := dspManager.MockDispatcher(task)
 	dsp.Extension = getTestDispatcherExt(ctrl)
-	instanceIDs, err := dsp.GetAllSchedulerIDs(ctx, task)
-	require.Lenf(t, instanceIDs, 0, "GetAllSchedulerIDs when there's no subtask")
+	instanceIDs, err := dsp.GetAllTaskExecutorIDs(ctx, task)
+	require.Lenf(t, instanceIDs, 0, "GetAllTaskExecutorIDs when there's no subtask")
 	require.NoError(t, err)
 
 	// test 2 servers
@@ -187,36 +187,36 @@ func TestGetInstance(t *testing.T) {
 			Port: 65535,
 		},
 	}
-	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, task)
-	require.Lenf(t, instanceIDs, 0, "GetAllSchedulerIDs")
+	instanceIDs, err = dsp.GetAllTaskExecutorIDs(ctx, task)
+	require.Lenf(t, instanceIDs, 0, "GetAllTaskExecutorIDs")
 	require.NoError(t, err)
 
 	// server ids: uuid0, uuid1
 	// subtask instance ids: uuid1
 	subtask := &proto.Subtask{
-		Type:       proto.TaskTypeExample,
-		TaskID:     task.ID,
-		ExecutorID: serverIDs[1],
+		Type:   proto.TaskTypeExample,
+		TaskID: task.ID,
+		ExecID: serverIDs[1],
 	}
-	err = mgr.AddNewSubTask(ctx, task.ID, proto.StepInit, subtask.ExecutorID, nil, subtask.Type, true)
+	err = mgr.AddNewSubTask(ctx, task.ID, proto.StepInit, subtask.ExecID, nil, subtask.Type, true)
 	require.NoError(t, err)
-	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, task)
+	instanceIDs, err = dsp.GetAllTaskExecutorIDs(ctx, task)
 	require.NoError(t, err)
 	require.Equal(t, []string{serverIDs[1]}, instanceIDs)
 	// server ids: uuid0, uuid1
 	// subtask instance ids: uuid0, uuid1
 	subtask = &proto.Subtask{
-		Type:       proto.TaskTypeExample,
-		TaskID:     task.ID,
-		ExecutorID: serverIDs[0],
+		Type:   proto.TaskTypeExample,
+		TaskID: task.ID,
+		ExecID: serverIDs[0],
 	}
-	err = mgr.AddNewSubTask(ctx, task.ID, proto.StepInit, subtask.ExecutorID, nil, subtask.Type, true)
+	err = mgr.AddNewSubTask(ctx, task.ID, proto.StepInit, subtask.ExecID, nil, subtask.Type, true)
 	require.NoError(t, err)
-	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, task)
+	instanceIDs, err = dsp.GetAllTaskExecutorIDs(ctx, task)
 	require.NoError(t, err)
 	require.Len(t, instanceIDs, len(serverIDs))
 	require.ElementsMatch(t, instanceIDs, serverIDs)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockSchedulerNodes"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockTaskExecutorNodes"))
 }
 
 func TestTaskFailInManager(t *testing.T) {

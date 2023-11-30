@@ -340,7 +340,7 @@ func (*ImportDispatcherExt) GetEligibleInstances(ctx context.Context, gTask *pro
 	if len(taskMeta.EligibleInstances) > 0 {
 		return taskMeta.EligibleInstances, false, nil
 	}
-	serverInfo, err := dispatcher.GenerateSchedulerNodes(ctx)
+	serverInfo, err := dispatcher.GenerateTaskExecutorNodes(ctx)
 	return serverInfo, true, err
 }
 

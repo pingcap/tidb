@@ -31,7 +31,7 @@ func GetMockBasicDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
 	mockDispatcher.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
 	mockDispatcher.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
-			return generateSchedulerNodes4Test()
+			return generateTaskExecutorNodes4Test()
 		},
 	).AnyTimes()
 	mockDispatcher.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
@@ -75,7 +75,7 @@ func GetMockHATestDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
 	mockDispatcher.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
 	mockDispatcher.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
-			return generateSchedulerNodes4Test()
+			return generateTaskExecutorNodes4Test()
 		},
 	).AnyTimes()
 	mockDispatcher.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
@@ -125,7 +125,7 @@ func GetMockHATestDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
 	return mockDispatcher
 }
 
-func generateSchedulerNodes4Test() ([]*infosync.ServerInfo, bool, error) {
+func generateTaskExecutorNodes4Test() ([]*infosync.ServerInfo, bool, error) {
 	serverInfos := infosync.MockGlobalServerInfoManagerEntry.GetAllServerInfo()
 	if len(serverInfos) == 0 {
 		return nil, true, errors.New("not found instance")
@@ -144,7 +144,7 @@ func GetPlanNotRetryableErrDispatcherExt(ctrl *gomock.Controller) dispatcher.Ext
 	mockDispatcher.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
 	mockDispatcher.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
-			return generateSchedulerNodes4Test()
+			return generateTaskExecutorNodes4Test()
 		},
 	).AnyTimes()
 	mockDispatcher.EXPECT().IsRetryableErr(gomock.Any()).Return(false).AnyTimes()
@@ -169,7 +169,7 @@ func GetPlanErrDispatcherExt(ctrl *gomock.Controller, testContext *TestContext) 
 	mockDispatcher.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
 	mockDispatcher.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
-			return generateSchedulerNodes4Test()
+			return generateTaskExecutorNodes4Test()
 		},
 	).AnyTimes()
 	mockDispatcher.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
@@ -220,7 +220,7 @@ func GetMockRollbackDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension 
 	mockDispatcher.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
 	mockDispatcher.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
-			return generateSchedulerNodes4Test()
+			return generateTaskExecutorNodes4Test()
 		},
 	).AnyTimes()
 	mockDispatcher.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
@@ -257,7 +257,7 @@ func GetMockDynamicDispatchExt(ctrl *gomock.Controller) dispatcher.Extension {
 	mockDispatcher.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
 	mockDispatcher.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
-			return generateSchedulerNodes4Test()
+			return generateTaskExecutorNodes4Test()
 		},
 	).AnyTimes()
 	mockDispatcher.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()

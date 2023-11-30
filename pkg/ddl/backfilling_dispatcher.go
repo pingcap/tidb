@@ -182,7 +182,7 @@ func (*BackfillingDispatcherExt) OnDone(_ context.Context, _ dispatcher.TaskHand
 
 // GetEligibleInstances implements dispatcher.Extension interface.
 func (*BackfillingDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
-	serverInfos, err := dispatcher.GenerateSchedulerNodes(ctx)
+	serverInfos, err := dispatcher.GenerateTaskExecutorNodes(ctx)
 	if err != nil {
 		return nil, true, err
 	}
@@ -350,7 +350,7 @@ func generateGlobalSortIngestPlan(
 	if err != nil {
 		return nil, err
 	}
-	instanceIDs, err := dispatcher.GenerateSchedulerNodes(ctx)
+	instanceIDs, err := dispatcher.GenerateTaskExecutorNodes(ctx)
 	if err != nil {
 		return nil, err
 	}

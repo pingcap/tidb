@@ -586,8 +586,8 @@ func (stm *TaskManager) DeleteSubtasksByTaskID(ctx context.Context, taskID int64
 	return nil
 }
 
-// GetSchedulerIDsByTaskID gets the scheduler IDs of the given global task ID.
-func (stm *TaskManager) GetSchedulerIDsByTaskID(ctx context.Context, taskID int64) ([]string, error) {
+// GetTaskExecutorIDsByTaskID gets the task executor IDs of the given global task ID.
+func (stm *TaskManager) GetTaskExecutorIDsByTaskID(ctx context.Context, taskID int64) ([]string, error) {
 	rs, err := stm.executeSQLWithNewSession(ctx, `select distinct(exec_id) from mysql.tidb_background_subtask
 		where task_key = %?`, taskID)
 	if err != nil {
@@ -606,8 +606,8 @@ func (stm *TaskManager) GetSchedulerIDsByTaskID(ctx context.Context, taskID int6
 	return instanceIDs, nil
 }
 
-// GetSchedulerIDsByTaskIDAndStep gets the scheduler IDs of the given global task ID and step.
-func (stm *TaskManager) GetSchedulerIDsByTaskIDAndStep(ctx context.Context, taskID int64, step proto.Step) ([]string, error) {
+// GetTaskExecutorIDsByTaskIDAndStep gets the task executor IDs of the given global task ID and step.
+func (stm *TaskManager) GetTaskExecutorIDsByTaskIDAndStep(ctx context.Context, taskID int64, step proto.Step) ([]string, error) {
 	rs, err := stm.executeSQLWithNewSession(ctx, `select distinct(exec_id) from mysql.tidb_background_subtask
 		where task_key = %? and step = %?`, taskID, step)
 	if err != nil {
@@ -626,8 +626,8 @@ func (stm *TaskManager) GetSchedulerIDsByTaskIDAndStep(ctx context.Context, task
 	return instanceIDs, nil
 }
 
-// IsSchedulerCanceled checks if subtask 'execID' of task 'taskID' has been canceled somehow.
-func (stm *TaskManager) IsSchedulerCanceled(ctx context.Context, execID string, taskID int64) (bool, error) {
+// IsTaskExecutorCanceled checks if subtask 'execID' of task 'taskID' has been canceled somehow.
+func (stm *TaskManager) IsTaskExecutorCanceled(ctx context.Context, execID string, taskID int64) (bool, error) {
 	rs, err := stm.executeSQLWithNewSession(ctx, "select 1 from mysql.tidb_background_subtask where task_key = %? and exec_id = %?", taskID, execID)
 	if err != nil {
 		return false, err
@@ -635,8 +635,8 @@ func (stm *TaskManager) IsSchedulerCanceled(ctx context.Context, execID string, 
 	return len(rs) == 0, nil
 }
 
-// UpdateFailedSchedulerIDs replace failed scheduler nodes with alive nodes.
-func (stm *TaskManager) UpdateFailedSchedulerIDs(ctx context.Context, taskID int64, replaceNodes map[string]string) error {
+// UpdateFailedTaskExecutorIDs replace failed task executor nodes with alive nodes.
+func (stm *TaskManager) UpdateFailedTaskExecutorIDs(ctx context.Context, taskID int64, replaceNodes map[string]string) error {
 	// skip
 	if len(replaceNodes) == 0 {
 		return nil

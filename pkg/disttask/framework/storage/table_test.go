@@ -156,12 +156,12 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, subtask, subtask2)
 
-	ids, err := sm.GetSchedulerIDsByTaskID(ctx, 1)
+	ids, err := sm.GetTaskExecutorIDsByTaskID(ctx, 1)
 	require.NoError(t, err)
 	require.Len(t, ids, 1)
 	require.Equal(t, "tidb1", ids[0])
 
-	ids, err = sm.GetSchedulerIDsByTaskID(ctx, 3)
+	ids, err = sm.GetTaskExecutorIDsByTaskID(ctx, 3)
 	require.NoError(t, err)
 	require.Len(t, ids, 0)
 
@@ -272,30 +272,30 @@ func TestSubTaskTable(t *testing.T) {
 	require.Equal(t, subtask2.StartTime, subtask.StartTime)
 	require.Greater(t, subtask2.UpdateTime, subtask.UpdateTime)
 
-	// test UpdateFailedSchedulerIDs and IsSchedulerCanceled
-	canceled, err := sm.IsSchedulerCanceled(ctx, "for_test999", 4)
+	// test UpdateFailedTaskExecutorIDs and IsTaskExecutorCanceled
+	canceled, err := sm.IsTaskExecutorCanceled(ctx, "for_test999", 4)
 	require.NoError(t, err)
 	require.True(t, canceled)
-	canceled, err = sm.IsSchedulerCanceled(ctx, "for_test1", 4)
+	canceled, err = sm.IsTaskExecutorCanceled(ctx, "for_test1", 4)
 	require.NoError(t, err)
 	require.False(t, canceled)
-	canceled, err = sm.IsSchedulerCanceled(ctx, "for_test2", 4)
+	canceled, err = sm.IsTaskExecutorCanceled(ctx, "for_test2", 4)
 	require.NoError(t, err)
 	require.True(t, canceled)
 
 	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, "for_test1", 4, proto.TaskStateRunning, nil))
-	require.NoError(t, sm.UpdateFailedSchedulerIDs(ctx, 4, map[string]string{
+	require.NoError(t, sm.UpdateFailedTaskExecutorIDs(ctx, 4, map[string]string{
 		"for_test1": "for_test999",
 		"for_test2": "for_test999",
 	}))
 
-	canceled, err = sm.IsSchedulerCanceled(ctx, "for_test1", 4)
+	canceled, err = sm.IsTaskExecutorCanceled(ctx, "for_test1", 4)
 	require.NoError(t, err)
 	require.True(t, canceled)
-	canceled, err = sm.IsSchedulerCanceled(ctx, "for_test2", 4)
+	canceled, err = sm.IsTaskExecutorCanceled(ctx, "for_test2", 4)
 	require.NoError(t, err)
 	require.True(t, canceled)
-	canceled, err = sm.IsSchedulerCanceled(ctx, "for_test999", 4)
+	canceled, err = sm.IsTaskExecutorCanceled(ctx, "for_test999", 4)
 	require.NoError(t, err)
 	require.False(t, canceled)
 }

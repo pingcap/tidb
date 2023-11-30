@@ -5,7 +5,6 @@ go_library(
     srcs = [
         "dispatcher_mock.go",
         "plan_mock.go",
-        "scheduler_mock.go",
         "task_executor_mock.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/disttask/framework/mock",

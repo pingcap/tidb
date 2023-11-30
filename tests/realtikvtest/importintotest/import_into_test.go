@@ -774,7 +774,7 @@ func (s *mockGCSSuite) TestColumnsAndUserVars() {
 	serverInfo, err := infosync.GetServerInfo()
 	s.NoError(err)
 	for _, st := range subtasks {
-		s.Equal(net.JoinHostPort(serverInfo.IP, strconv.Itoa(int(serverInfo.Port))), st.ExecutorID)
+		s.Equal(net.JoinHostPort(serverInfo.IP, strconv.Itoa(int(serverInfo.Port))), st.ExecID)
 	}
 }
 

@@ -417,13 +417,8 @@ func (e *writeAndIngestStepExecutor) Rollback(context.Context) error {
 	return nil
 }
 
-<<<<<<< HEAD
-type postStepExecutor struct {
-	taskexecutor.EmptySubtaskExecutor
-=======
 type postProcessStepExecutor struct {
-	scheduler.EmptySubtaskExecutor
->>>>>>> 94a7844732fd0e31f1bcf276f391bbff27d56d12
+	taskexecutor.EmptySubtaskExecutor
 	taskID   int64
 	taskMeta *TaskMeta
 	logger   *zap.Logger
