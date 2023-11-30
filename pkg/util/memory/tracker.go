@@ -839,6 +839,8 @@ const (
 	LabelForMemDB int = -28
 	// LabelForCursorFetch represents the label of the execution of cursor fetch
 	LabelForCursorFetch int = -29
+	// LabelForChunkDataInDiskByChunks represents the label of the chunk list in disk
+	LabelForChunkDataInDiskByChunks int = -30
 )
 
 // MetricsTypes is used to get label for metrics

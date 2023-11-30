@@ -24,9 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -2337,36 +2335,6 @@ func TestPrivilegeCheckInForeignKeyCascade(t *testing.T) {
 		tk.MustQuery("select * from t1 order by id").Check(testkit.Rows(ca.t1Rows...))
 		tk.MustQuery("select * from t2 order by id").Check(testkit.Rows(ca.t2Rows...))
 	}
-}
-
-func TestTableLockInForeignKeyCascade(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
-	tk.MustExec("set @@foreign_key_checks=1")
-	tk.MustExec("use test")
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use test")
-	tk2.MustExec("set @@foreign_key_checks=1")
-	// enable table lock
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableTableLock = true
-	})
-	defer func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.EnableTableLock = false
-		})
-	}()
-	tk.MustExec("create table t1 (id int key);")
-	tk.MustExec("create table t2 (id int key, foreign key fk (id) references t1(id) ON DELETE CASCADE ON UPDATE CASCADE);")
-	tk.MustExec("insert into t1 values (1), (2), (3);")
-	tk.MustExec("insert into t2 values (1), (2), (3);")
-	tk.MustExec("lock table t2 read;")
-	tk2.MustGetDBError("delete from t1 where id = 1", infoschema.ErrTableLocked)
-	tk.MustExec("unlock tables;")
-	tk2.MustExec("delete from t1 where id = 1")
-	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows("2", "3"))
-	tk.MustQuery("select * from t2 order by id").Check(testkit.Rows("2", "3"))
 }
 
 func TestForeignKeyIssue39732(t *testing.T) {

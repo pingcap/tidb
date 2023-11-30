@@ -561,3 +561,24 @@ select @@last_plan_from_cache;
 @@last_plan_from_cache
 1
 set tidb_enable_prepared_plan_cache=DEFAULT;
+use test;
+drop table if exists t0;
+CREATE TABLE t0 (c1 double, c2 double);
+select
+exists (
+select
+subq_2.c0 as c8
+from
+(select
+ref_153.c1 as c0
+from
+t0 as ref_153
+group by ref_153.c1 having 0 <> (
+select 1
+from
+t0 as ref_173
+where count(ref_153.c2) = avg(ref_153.c2)
+order by c1 desc limit 1)) as subq_2
+) as c10;
+c10
+0

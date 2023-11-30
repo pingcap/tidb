@@ -1852,7 +1852,6 @@ func (do *Domain) LoadBindInfoLoop(ctxForHandle sessionctx.Context, ctxForEvolve
 
 	owner := do.newOwnerManager(bindinfo.Prompt, bindinfo.OwnerKey)
 	do.globalBindHandleWorkerLoop(owner)
-	do.handleEvolvePlanTasksLoop(ctxForEvolve, owner)
 	return nil
 }
 
@@ -1872,6 +1871,7 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 		for {
 			select {
 			case <-do.exit:
+				owner.Cancel()
 				return
 			case <-bindWorkerTicker.C:
 				bindHandle := do.bindHandle.Load()
@@ -1885,7 +1885,6 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				if err == nil && variable.TiDBOptOn(optVal) {
 					bindHandle.CaptureBaselines()
 				}
-				bindHandle.SaveEvolveTasksToStore()
 			case <-gcBindTicker.C:
 				if !owner.IsOwner() {
 					continue
@@ -1897,30 +1896,6 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 			}
 		}
 	}, "globalBindHandleWorkerLoop")
-}
-
-func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context, owner owner.Manager) {
-	do.wg.Run(func() {
-		defer func() {
-			logutil.BgLogger().Info("handleEvolvePlanTasksLoop exited.")
-		}()
-		defer util.Recover(metrics.LabelDomain, "handleEvolvePlanTasksLoop", nil, false)
-
-		for {
-			select {
-			case <-do.exit:
-				owner.Cancel()
-				return
-			case <-time.After(bindinfo.Lease):
-			}
-			if owner.IsOwner() {
-				err := do.bindHandle.Load().HandleEvolvePlanTask(ctx, false)
-				if err != nil {
-					logutil.BgLogger().Info("evolve plan failed", zap.Error(err))
-				}
-			}
-		}
-	}, "handleEvolvePlanTasksLoop")
 }
 
 // TelemetryReportLoop create a goroutine that reports usage data in a loop, it should be called only once

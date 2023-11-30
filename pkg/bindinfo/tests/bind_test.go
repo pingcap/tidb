@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/bindinfo/internal"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -459,129 +458,6 @@ func TestErrorBind(t *testing.T) {
 	require.Equal(t, 0, chk.NumRows())
 }
 
-func TestDMLEvolveBaselines(t *testing.T) {
-	originalVal := config.CheckTableBeforeDrop
-	config.CheckTableBeforeDrop = true
-	defer func() {
-		config.CheckTableBeforeDrop = originalVal
-	}()
-
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, c int, index idx_b(b), index idx_c(c))")
-	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5)")
-	tk.MustExec("analyze table t")
-	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
-
-	tk.MustExec("create global binding for delete from t where b = 1 and c > 1 using delete /*+ use_index(t,idx_c) */ from t where b = 1 and c > 1")
-	rows := tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 1)
-	tk.MustExec("delete /*+ use_index(t,idx_b) */ from t where b = 2 and c > 1")
-	require.Equal(t, "t:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	tk.MustExec("admin flush bindings")
-	rows = tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 1)
-	tk.MustExec("admin evolve bindings")
-	rows = tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 1)
-
-	tk.MustExec("create global binding for update t set a = 1 where b = 1 and c > 1 using update /*+ use_index(t,idx_c) */ t set a = 1 where b = 1 and c > 1")
-	rows = tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 2)
-	tk.MustExec("update /*+ use_index(t,idx_b) */ t set a = 2 where b = 2 and c > 1")
-	require.Equal(t, "t:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	tk.MustExec("admin flush bindings")
-	rows = tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 2)
-	tk.MustExec("admin evolve bindings")
-	rows = tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 2)
-
-	tk.MustExec("create table t1 like t")
-	tk.MustExec("create global binding for insert into t1 select * from t where t.b = 1 and t.c > 1 using insert into t1 select /*+ use_index(t,idx_c) */ * from t where t.b = 1 and t.c > 1")
-	rows = tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 3)
-	tk.MustExec("insert into t1 select /*+ use_index(t,idx_b) */ * from t where t.b = 2 and t.c > 2")
-	require.Equal(t, "t:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	tk.MustExec("admin flush bindings")
-	rows = tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 3)
-	tk.MustExec("admin evolve bindings")
-	rows = tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 3)
-
-	tk.MustExec("create global binding for replace into t1 select * from t where t.b = 1 and t.c > 1 using replace into t1 select /*+ use_index(t,idx_c) */ * from t where t.b = 1 and t.c > 1")
-	rows = tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 4)
-	tk.MustExec("replace into t1 select /*+ use_index(t,idx_b) */ * from t where t.b = 2 and t.c > 2")
-	require.Equal(t, "t:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	tk.MustExec("admin flush bindings")
-	rows = tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 4)
-	tk.MustExec("admin evolve bindings")
-	rows = tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 4)
-}
-
-func TestAddEvolveTasks(t *testing.T) {
-	originalVal := config.CheckTableBeforeDrop
-	config.CheckTableBeforeDrop = true
-	defer func() {
-		config.CheckTableBeforeDrop = originalVal
-	}()
-
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, c int, index idx_a(a), index idx_b(b), index idx_c(c))")
-	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5)")
-	tk.MustExec("analyze table t")
-	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 and c = 0 using select * from t use index(idx_a) where a >= 1 and b >= 1 and c = 0")
-	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
-	// It cannot choose table path although it has lowest cost.
-	tk.MustQuery("select * from t where a >= 4 and b >= 1 and c = 0")
-	require.Equal(t, "t:idx_a", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	tk.MustExec("admin flush bindings")
-	rows := tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 2)
-	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0", rows[0][1])
-	require.Equal(t, "pending verify", rows[0][3])
-	tk.MustExec("admin evolve bindings")
-	rows = tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 2)
-	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0", rows[0][1])
-	status := rows[0][3].(string)
-	require.True(t, status == bindinfo.Enabled || status == bindinfo.Rejected)
-}
-
-func TestRuntimeHintsInEvolveTasks(t *testing.T) {
-	originalVal := config.CheckTableBeforeDrop
-	config.CheckTableBeforeDrop = true
-	defer func() {
-		config.CheckTableBeforeDrop = originalVal
-	}()
-
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
-	tk.MustExec("create table t(a int, b int, c int, index idx_a(a), index idx_b(b), index idx_c(c))")
-
-	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 and c = 0 using select * from t use index(idx_a) where a >= 1 and b >= 1 and c = 0")
-	tk.MustQuery("select /*+ MAX_EXECUTION_TIME(5000), SET_VAR(TIKV_CLIENT_READ_TIMEOUT=20) */ * from t where a >= 4 and b >= 1 and c = 0")
-	tk.MustExec("admin flush bindings")
-	rows := tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 2)
-	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), no_order_index(@`sel_1` `test`.`t` `idx_c`), max_execution_time(5000), set_var(tikv_client_read_timeout = 20)*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0", rows[0][1])
-}
-
 func TestStmtHints(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -599,36 +475,6 @@ func TestStmtHints(t *testing.T) {
 	require.Equal(t, uint64(0), tk.Session().GetSessionVars().StmtCtx.MaxExecutionTime)
 	// TODO(crazycs520): Fix me.
 	//require.Equal(t, uint64(0), tk.Session().GetSessionVars().GetTiKVClientReadTimeout())
-}
-
-func TestHintsSetEvolveTask(t *testing.T) {
-	originalVal := config.CheckTableBeforeDrop
-	config.CheckTableBeforeDrop = true
-	defer func() {
-		config.CheckTableBeforeDrop = originalVal
-	}()
-
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, index idx_a(a))")
-	tk.MustExec("create global binding for select * from t where a > 10 using select * from t ignore index(idx_a) where a > 10")
-	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
-	tk.MustQuery("select * from t use index(idx_a) where a > 0")
-	bindHandle := dom.BindHandle()
-	bindHandle.SaveEvolveTasksToStore()
-	// Verify the added Binding for evolution contains valid ID and Hint, otherwise, panic may happen.
-	sql, hash := internal.UtilNormalizeWithDefaultDB(t, "select * from t where a > ?")
-	bindData := bindHandle.GetGlobalBinding(hash, sql, "test")
-	require.NotNil(t, bindData)
-	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
-	require.Len(t, bindData.Bindings, 2)
-	bind := bindData.Bindings[1]
-	require.Equal(t, bindinfo.PendingVerify, bind.Status)
-	require.NotEqual(t, "", bind.ID)
-	require.NotNil(t, bind.Hint)
 }
 
 func TestHintsSetID(t *testing.T) {
@@ -697,57 +543,6 @@ func TestHintsSetID(t *testing.T) {
 	require.Equal(t, "", bind.ID)
 }
 
-func TestNotEvolvePlanForReadStorageHint(t *testing.T) {
-	originalVal := config.CheckTableBeforeDrop
-	config.CheckTableBeforeDrop = true
-	defer func() {
-		config.CheckTableBeforeDrop = originalVal
-	}()
-
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, index idx_a(a), index idx_b(b))")
-	tk.MustExec("insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,6), (7,7), (8,8), (9,9), (10,10)")
-	tk.MustExec("analyze table t")
-	// Create virtual tiflash replica info.
-	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
-		if tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
-
-	// Make sure the best plan of the SQL is use TiKV index.
-	tk.MustExec("set @@session.tidb_executor_concurrency = 4; set @@tidb_allow_mpp=0;")
-	rows := tk.MustQuery("explain select * from t where a >= 11 and b >= 11").Rows()
-	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[len(rows)-1][2]))
-	tk.MustExec("set @@tidb_allow_mpp=1")
-
-	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 using select /*+ read_from_storage(tiflash[t]) */ * from t where a >= 1 and b >= 1")
-	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
-
-	// Even if index of TiKV has lower cost, it chooses TiFlash.
-	rows = tk.MustQuery("explain select * from t where a >= 11 and b >= 11").Rows()
-	require.Equal(t, "mpp[tiflash]", fmt.Sprintf("%v", rows[len(rows)-1][2]))
-
-	tk.MustExec("admin flush bindings")
-	rows = tk.MustQuery("show global bindings").Rows()
-	// None evolve task, because of the origin binding is a read_from_storage binding.
-	require.Len(t, rows, 1)
-	require.Equal(t, "SELECT /*+ read_from_storage(tiflash[`t`])*/ * FROM `test`.`t` WHERE `a` >= 1 AND `b` >= 1", rows[0][1])
-	require.Equal(t, bindinfo.Enabled, rows[0][3])
-}
-
 func TestBindingWithIsolationRead(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -779,41 +574,6 @@ func TestBindingWithIsolationRead(t *testing.T) {
 	tk.MustExec("set @@tidb_isolation_read_engines = \"tiflash\"")
 	rows = tk.MustQuery("explain select * from t where a >= 11 and b >= 11").Rows()
 	require.Equal(t, "mpp[tiflash]", rows[len(rows)-1][2])
-}
-
-func TestReCreateBindAfterEvolvePlan(t *testing.T) {
-	originalVal := config.CheckTableBeforeDrop
-	config.CheckTableBeforeDrop = true
-	defer func() {
-		config.CheckTableBeforeDrop = originalVal
-	}()
-
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, c int, index idx_a(a), index idx_b(b), index idx_c(c))")
-	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5)")
-	tk.MustExec("analyze table t")
-	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 using select * from t use index(idx_a) where a >= 1 and b >= 1")
-	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
-
-	// It cannot choose table path although it has lowest cost.
-	tk.MustQuery("select * from t where a >= 0 and b >= 0")
-	require.Equal(t, "t:idx_a", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-
-	tk.MustExec("admin flush bindings")
-	rows := tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 2)
-	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a` >= 0 AND `b` >= 0", rows[0][1])
-	require.Equal(t, "pending verify", rows[0][3])
-
-	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 using select * from t use index(idx_b) where a >= 1 and b >= 1")
-	rows = tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 1)
-	tk.MustQuery("select * from t where a >= 4 and b >= 1")
-	require.Equal(t, "t:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 }
 
 func TestInvisibleIndex(t *testing.T) {
@@ -848,26 +608,6 @@ func TestInvisibleIndex(t *testing.T) {
 	require.Len(t, tk.Session().GetSessionVars().StmtCtx.IndexNames, 0)
 
 	tk.MustExec("drop binding for select * from t")
-}
-
-func TestForbidEvolvePlanBaseLinesBeforeGA(t *testing.T) {
-	originalVal := config.CheckTableBeforeDrop
-	config.CheckTableBeforeDrop = false
-	defer func() {
-		config.CheckTableBeforeDrop = originalVal
-	}()
-
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	err := tk.ExecToErr("set @@tidb_evolve_plan_baselines=0")
-	require.Equal(t, nil, err)
-	err = tk.ExecToErr("set @@TiDB_Evolve_pLan_baselines=1")
-	require.EqualError(t, err, "Cannot enable baseline evolution feature, it is not generally available now")
-	err = tk.ExecToErr("set @@TiDB_Evolve_pLan_baselines=oN")
-	require.EqualError(t, err, "Cannot enable baseline evolution feature, it is not generally available now")
-	err = tk.ExecToErr("admin evolve bindings")
-	require.EqualError(t, err, "Cannot enable baseline evolution feature, it is not generally available now")
 }
 
 func TestGCBindRecord(t *testing.T) {

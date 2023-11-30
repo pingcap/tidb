@@ -187,7 +187,7 @@ func IsContextCanceledError(err error) bool {
 		return true
 	}
 
-	// see https://github.com/aws/aws-sdk-go/blob/9d1f49ba63bdac44a5b9f4d736e79d792e389e8a/aws/credentials/credentials.go#L246-L249
+	// see https://github.com/aws/aws-sdk-go/blob/9d1f49ba/aws/credentials/credentials.go#L246-L249
 	if v, ok := err.(awserr.Error); ok {
 		return v.Code() == request.CanceledErrorCode
 	}

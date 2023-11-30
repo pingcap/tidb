@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/bindinfo/internal"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -189,48 +188,6 @@ func TestBindParse(t *testing.T) {
 	tk.MustExec("create table t1(i int, s varchar(20))")
 	_, err = tk.Exec("create global binding for select * from t using select * from t1 use index for join(index_t)")
 	require.NotNil(t, err, "err %v", err)
-}
-
-func TestEvolveInvalidBindings(t *testing.T) {
-	originalVal := config.CheckTableBeforeDrop
-	config.CheckTableBeforeDrop = true
-	defer func() {
-		config.CheckTableBeforeDrop = originalVal
-	}()
-
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, index idx_a(a))")
-	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ USE_INDEX(t) */ * from t where a > 10")
-	// Manufacture a rejected binding by hacking mysql.bind_info.
-	tk.MustExec("insert into mysql.bind_info values('select * from test . t where a > ?', 'SELECT /*+ USE_INDEX(t,idx_a) */ * FROM test.t WHERE a > 10', 'test', 'rejected', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.Manual + "', '', '')")
-	tk.MustQuery("select bind_sql, status from mysql.bind_info where source != 'builtin'").Sort().Check(testkit.Rows(
-		"SELECT /*+ USE_INDEX(`t` )*/ * FROM `test`.`t` WHERE `a` > 10 enabled",
-		"SELECT /*+ USE_INDEX(t,idx_a) */ * FROM test.t WHERE a > 10 rejected",
-	))
-	// Reload cache from mysql.bind_info.
-	dom.BindHandle().Clear()
-	require.Nil(t, dom.BindHandle().Update(true))
-
-	tk.MustExec("alter table t drop index idx_a")
-	tk.MustExec("admin evolve bindings")
-	require.Nil(t, dom.BindHandle().Update(false))
-	rows := tk.MustQuery("show global bindings").Sort().Rows()
-	require.Equal(t, 2, len(rows))
-	// Make sure this "enabled" binding is not overrided.
-	require.Equal(t, "SELECT /*+ USE_INDEX(`t` )*/ * FROM `test`.`t` WHERE `a` > 10", rows[0][1])
-	status := rows[0][3].(string)
-	require.True(t, status == bindinfo.Enabled)
-	require.Equal(t, "SELECT /*+ USE_INDEX(t,idx_a) */ * FROM test.t WHERE a > 10", rows[1][1])
-	status = rows[1][3].(string)
-	require.True(t, status == bindinfo.Enabled || status == bindinfo.Rejected)
-	_, sqlDigestWithDB := parser.NormalizeDigest("select * from test.t where a > 10") // test sqlDigest if exists after add columns to mysql.bind_info
-	require.Equal(t, rows[0][9], sqlDigestWithDB.String())
 }
 
 func TestSetBindingStatus(t *testing.T) {

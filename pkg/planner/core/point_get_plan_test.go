@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -171,22 +170,6 @@ func TestPointGetId(t *testing.T) {
 		// Test explain format = 'brief' result is useless, plan id will be reset when running `explain`.
 		require.Equal(t, 1, p.ID())
 	}
-}
-
-func TestUpdateWithTableReadLockWillFail(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableTableLock = true
-	})
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table tbllock(id int, c int);")
-	tk.MustExec("insert into tbllock values(1, 2), (2, 2);")
-	tk.MustExec("lock table tbllock read;")
-	_, err := tk.Exec("update tbllock set c = 3 where id = 2;")
-	require.Error(t, err)
-	require.Equal(t, "[schema:1099]Table 'tbllock' was locked with a READ lock and can't be updated", err.Error())
 }
 
 func TestIssue20692(t *testing.T) {
