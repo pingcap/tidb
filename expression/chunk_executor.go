@@ -15,12 +15,21 @@
 package expression
 
 import (
+<<<<<<< HEAD:expression/chunk_executor.go
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pkg/errors"
+=======
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+>>>>>>> 8d181ede017 (executor, codec: hash join build wrong hash key for ENUM/SET value (#49031)):pkg/expression/chunk_executor.go
 )
 
 // Vectorizable checks whether a list of expressions can employ vectorized execution.
