@@ -67,7 +67,7 @@ func checkChunk(t *testing.T, chk1, chk2 *Chunk) {
 }
 
 func TestDataInDiskByChunks(t *testing.T) {
-	numChk, numRow := 100, 1000
+	numChk, numRow := 100, 2000
 	chks, fields := initChunks(numChk, numRow)
 	addAuxDataForChunks(chks)
 	dataInDiskByChunks := NewDataInDiskByChunks(fields)
