@@ -33,13 +33,13 @@ type TaskTypeOption func(opts *taskTypeOptions)
 var (
 	// key is task type
 	taskTypes             = make(map[proto.TaskType]taskTypeOptions)
-	taskExecutorFactories = make(map[proto.TaskType]TaskExecutorFactoryFn)
+	taskExecutorFactories = make(map[proto.TaskType]taskExecutorFactoryFn)
 )
 
-type TaskExecutorFactoryFn func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) TaskExecutor
+type taskExecutorFactoryFn func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) TaskExecutor
 
 // RegisterTaskType registers the task type.
-func RegisterTaskType(taskType proto.TaskType, factory TaskExecutorFactoryFn, opts ...TaskTypeOption) {
+func RegisterTaskType(taskType proto.TaskType, factory taskExecutorFactoryFn, opts ...TaskTypeOption) {
 	var option taskTypeOptions
 	for _, opt := range opts {
 		opt(&option)
@@ -48,14 +48,15 @@ func RegisterTaskType(taskType proto.TaskType, factory TaskExecutorFactoryFn, op
 	taskExecutorFactories[taskType] = factory
 }
 
-func GetTaskExecutorFactory(taskType proto.TaskType) TaskExecutorFactoryFn {
+// GetTaskExecutorFactory gets schedulerFactory by task type.
+func GetTaskExecutorFactory(taskType proto.TaskType) taskExecutorFactoryFn {
 	return taskExecutorFactories[taskType]
 }
 
 // ClearTaskExecutors is only used in test
 func ClearTaskExecutors() {
 	taskTypes = make(map[proto.TaskType]taskTypeOptions)
-	taskExecutorFactories = make(map[proto.TaskType]TaskExecutorFactoryFn)
+	taskExecutorFactories = make(map[proto.TaskType]taskExecutorFactoryFn)
 }
 
 // WithSummary is the option of TaskExecutor to set the summary.
