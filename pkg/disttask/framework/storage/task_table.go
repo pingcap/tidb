@@ -655,8 +655,8 @@ func (stm *TaskManager) IsTaskExecutorCanceled(ctx context.Context, execID strin
 	return len(rs) == 0, nil
 }
 
-// UpdateSubtasksSchedulerIDs update subtasks' schedulerID.
-func (stm *TaskManager) UpdateSubtasksSchedulerIDs(ctx context.Context, taskID int64, subtasks []*proto.Subtask) error {
+// UpdateSubtasksExecIDs update subtasks' execID.
+func (stm *TaskManager) UpdateSubtasksExecIDs(ctx context.Context, taskID int64, subtasks []*proto.Subtask) error {
 	// skip the update process.
 	if len(subtasks) == 0 {
 		return nil

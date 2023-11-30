@@ -369,7 +369,7 @@ func (d *BaseDispatcher) BalanceSubtasks() error {
 	// 1. init TaskNodes if needed.
 	if len(d.TaskNodes) == 0 {
 		var err error
-		d.TaskNodes, err = d.taskMgr.GetSchedulerIDsByTaskIDAndStep(d.ctx, d.Task.ID, d.Task.Step)
+		d.TaskNodes, err = d.taskMgr.GetTaskExecutorIDsByTaskIDAndStep(d.ctx, d.Task.ID, d.Task.Step)
 		if err != nil {
 			return err
 		}
@@ -449,21 +449,21 @@ func (d *BaseDispatcher) ReDispatchSubtasks() error {
 		}
 		subtasks = append(subtasks, subtasksOnDeadNodes...)
 	}
-	// 3. group subtasks for each scheduler.
-	subtasksOnScheduler := make(map[string][]*proto.Subtask, len(d.LiveNodes)+len(deadNodes))
+	// 3. group subtasks for each task executor.
+	subtasksOnTaskExecutor := make(map[string][]*proto.Subtask, len(d.LiveNodes)+len(deadNodes))
 	for _, node := range d.LiveNodes {
 		execID := disttaskutil.GenerateExecID(node.IP, node.Port)
-		subtasksOnScheduler[execID] = make([]*proto.Subtask, 0)
+		subtasksOnTaskExecutor[execID] = make([]*proto.Subtask, 0)
 	}
 	for _, subtask := range subtasks {
-		subtasksOnScheduler[subtask.SchedulerID] = append(
-			subtasksOnScheduler[subtask.SchedulerID],
+		subtasksOnTaskExecutor[subtask.ExecID] = append(
+			subtasksOnTaskExecutor[subtask.ExecID],
 			subtask)
 	}
 	// 4. prepare subtasks that need to rebalance to other nodes.
 	averageSubtaskCnt := len(subtasks) / len(d.LiveNodes)
 	rebalanceSubtasks := make([]*proto.Subtask, 0)
-	for k, v := range subtasksOnScheduler {
+	for k, v := range subtasksOnTaskExecutor {
 		if ok := deadNodesMap[k]; ok {
 			rebalanceSubtasks = append(rebalanceSubtasks, v...)
 			continue
@@ -487,7 +487,7 @@ func (d *BaseDispatcher) ReDispatchSubtasks() error {
 	}
 	// 6.rebalance subtasks to other nodes.
 	rebalanceIdx := 0
-	for k, v := range subtasksOnScheduler {
+	for k, v := range subtasksOnTaskExecutor {
 		if ok := deadNodesMap[k]; !ok {
 			if len(v) < averageSubtaskCnt {
 				for i := 0; i < averageSubtaskCnt-len(v) && rebalanceIdx < len(rebalanceSubtasks); i++ {
@@ -507,7 +507,7 @@ func (d *BaseDispatcher) ReDispatchSubtasks() error {
 	}
 
 	// 8. update subtasks and do clean up logic.
-	if err = d.taskMgr.UpdateSubtasksSchedulerIDs(d.ctx, d.Task.ID, subtasks); err != nil {
+	if err = d.taskMgr.UpdateSubtasksExecIDs(d.ctx, d.Task.ID, subtasks); err != nil {
 		return err
 	}
 	logutil.Logger(d.logCtx).Info("rebalance subtasks",

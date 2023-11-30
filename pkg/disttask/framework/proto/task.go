@@ -168,7 +168,7 @@ type Subtask struct {
 
 func (t *Subtask) String() string {
 	return fmt.Sprintf("Subtask[ID=%d, Step=%d, Type=%s, TaskID=%d, State=%s, SchedulerID=%s]",
-		t.ID, t.Step, t.Type, t.TaskID, t.State, t.SchedulerID)
+		t.ID, t.Step, t.Type, t.TaskID, t.State, t.ExecID)
 }
 
 // IsFinished checks if the subtask is finished.
