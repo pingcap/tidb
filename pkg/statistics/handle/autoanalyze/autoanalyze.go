@@ -171,10 +171,8 @@ func HandleAutoAnalyze(
 		}
 	}()
 
-	dbs := is.AllSchemaNames()
 	parameters := getAutoAnalyzeParameters(sctx)
 	autoAnalyzeRatio := parseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
-
 	// Get the available time period for auto analyze and check if the current time is in the period.
 	start, end, err := parseAnalyzePeriod(
 		parameters[variable.TiDBAutoAnalyzeStartTime],
@@ -190,8 +188,34 @@ func HandleAutoAnalyze(
 	if !timeutil.WithinDayTimePeriod(start, end, time.Now()) {
 		return false
 	}
-
 	pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
+
+	return randomPickOneTableAndTryAutoAnalyze(
+		sctx,
+		statsHandle,
+		sysProcTracker,
+		is,
+		autoAnalyzeRatio,
+		start, end,
+		pruneMode,
+	)
+}
+
+// randomPickOneTableAndTryAutoAnalyze randomly picks one table and tries to analyze it.
+// 1. If the table is not analyzed, analyze it.
+// 2. If the table is analyzed, analyze it when "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio".
+// 3. If the table is analyzed, analyze its indices when the index is not analyzed.
+// 4. If the table is locked, skip it.
+func randomPickOneTableAndTryAutoAnalyze(
+	sctx sessionctx.Context,
+	statsHandle statstypes.StatsHandle,
+	sysProcTracker sessionctx.SysProcTracker,
+	is infoschema.InfoSchema,
+	autoAnalyzeRatio float64,
+	start, end time.Time,
+	pruneMode variable.PartitionPruneMode,
+) bool {
+	dbs := is.AllSchemaNames()
 	// Shuffle the database and table slice to randomize the order of analyzing tables.
 	rd := rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404
 	rd.Shuffle(len(dbs), func(i, j int) {
