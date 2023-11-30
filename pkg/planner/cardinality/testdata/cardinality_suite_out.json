@@ -230,8 +230,8 @@
       {
         "SQL": "explain format = 'brief' select * from t where a > 100 and a < 300",
         "Result": [
-          "TableReader 832.77 root  data:Selection",
-          "└─Selection 832.77 cop[tikv]  gt(test.t.a, 100), lt(test.t.a, 300)",
+          "TableReader 834.45 root  data:Selection",
+          "└─Selection 834.45 cop[tikv]  gt(test.t.a, 100), lt(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
