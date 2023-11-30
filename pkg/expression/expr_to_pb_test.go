@@ -1000,10 +1000,6 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	function, err = NewFunction(mock.NewContext(), ast.JSONDepth, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
-	require.NoError(t, err)
-	exprs = append(exprs, function)
-
 	// ExtractDatetimeFromString: can not be pushed
 	extractDatetimeFromStringUnitCol := new(Constant)
 	extractDatetimeFromStringUnitCol.Value = types.NewStringDatum("day_microsecond")
