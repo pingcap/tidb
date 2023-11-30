@@ -166,6 +166,11 @@ type Subtask struct {
 	Summary    string
 }
 
+func (t *Subtask) String() string {
+	return fmt.Sprintf("Subtask[ID=%d, Step=%d, Type=%s, TaskID=%d, State=%s, SchedulerID=%s]",
+		t.ID, t.Step, t.Type, t.TaskID, t.State, t.SchedulerID)
+}
+
 // IsFinished checks if the subtask is finished.
 func (t *Subtask) IsFinished() bool {
 	return t.State == TaskStateSucceed || t.State == TaskStateReverted || t.State == TaskStateCanceled ||
