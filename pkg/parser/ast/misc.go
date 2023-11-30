@@ -2356,8 +2356,6 @@ const (
 func DeniedByBDR(role BDRRole, action model.ActionType) bool {
 	ddlType, ok := model.ActionBDRMap[action]
 	switch role {
-	case BDRRoleNone, BDRRoleLocalOnly:
-		return false
 	case BDRRolePrimary:
 		if !ok {
 			return true
