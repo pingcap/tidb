@@ -48,7 +48,7 @@ type BindHandle struct {
 		sessionctx.Context
 	}
 
-	bindingCache atomic.Value
+	bindingCache atomic.Pointer[bindCache]
 
 	// lastUpdateTime records the last update time for the global sql bind cache.
 	// This value is used to avoid reload duplicated bindings from storage.
@@ -92,7 +92,7 @@ func NewBindHandle(ctx sessionctx.Context) *BindHandle {
 }
 
 func (h *BindHandle) getCache() *bindCache {
-	return h.bindingCache.Load().(*bindCache)
+	return h.bindingCache.Load()
 }
 
 func (h *BindHandle) setCache(c *bindCache) {
