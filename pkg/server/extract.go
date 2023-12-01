@@ -14,6 +14,8 @@
 
 package server
 
+import "github.com/pingcap/tidb/pkg/server/handler/extractorhandler"
+
 // newExtractServeHandler returns extractTaskServeHandler
 func (s *Server) newExtractServeHandler() *extractorhandler.ExtractTaskServeHandler {
 	esh := &extractorhandler.ExtractTaskServeHandler{}

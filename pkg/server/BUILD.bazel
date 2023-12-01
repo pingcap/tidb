@@ -47,6 +47,7 @@ go_library(
         "//pkg/privilege/privileges/ldap",
         "//pkg/server/err",
         "//pkg/server/handler",
+        "//pkg/server/handler/extractorhandler",
         "//pkg/server/handler/optimizor",
         "//pkg/server/handler/tikvhandler",
         "//pkg/server/handler/ttlhandler",
