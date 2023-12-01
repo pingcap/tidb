@@ -25,14 +25,14 @@ import (
 
 // TaskManager defines the interface to access task table.
 type TaskManager interface {
-	GetGlobalTasksInStates(ctx context.Context, states ...interface{}) (task []*proto.Task, err error)
-	GetGlobalTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
-	UpdateGlobalTaskAndAddSubTasks(ctx context.Context, gTask *proto.Task, subtasks []*proto.Subtask, prevState proto.TaskState) (bool, error)
+	GetTasksInStates(ctx context.Context, states ...interface{}) (task []*proto.Task, err error)
+	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
+	UpdateTaskAndAddSubTasks(ctx context.Context, task *proto.Task, subtasks []*proto.Subtask, prevState proto.TaskState) (bool, error)
 	GCSubtasks(ctx context.Context) error
 	GetAllNodes(ctx context.Context) ([]string, error)
 	CleanUpMeta(ctx context.Context, nodes []string) error
 	TransferTasks2History(ctx context.Context, tasks []*proto.Task) error
-	CancelGlobalTask(ctx context.Context, taskID int64) error
+	CancelTask(ctx context.Context, taskID int64) error
 	PauseTask(ctx context.Context, taskKey string) (bool, error)
 	GetSubtaskInStatesCnt(ctx context.Context, taskID int64, states ...interface{}) (int64, error)
 	ResumeSubtasks(ctx context.Context, taskID int64) error
@@ -60,7 +60,7 @@ type Extension interface {
 	OnTick(ctx context.Context, task *proto.Task)
 
 	// OnNextSubtasksBatch is used to generate batch of subtasks for next stage
-	// NOTE: don't change gTask.State inside, framework will manage it.
+	// NOTE: don't change task.State inside, framework will manage it.
 	// it's called when:
 	// 	1. task is pending and entering it's first step.
 	// 	2. subtasks dispatched has all finished with no error.
@@ -125,7 +125,8 @@ func ClearDispatcherFactory() {
 
 // CleanUpRoutine is used for the framework to do some clean up work if the task is finished.
 type CleanUpRoutine interface {
-	// CleanUp do the clean up work.
+	// CleanUp do the cleanup work.
+	// task.Meta can be updated here, such as redacting some sensitive info.
 	CleanUp(ctx context.Context, task *proto.Task) error
 }
 type cleanUpFactoryFn func() CleanUpRoutine

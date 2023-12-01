@@ -62,7 +62,7 @@ func (b *ManagerBuilder) setPoolFactory(poolFactory func(name string, size int32
 	b.newPool = poolFactory
 }
 
-// Manager monitors the global task table and manages the schedulers.
+// Manager monitors the task table and manages the schedulers.
 type Manager struct {
 	taskTable     TaskTable
 	schedulerPool Pool
@@ -138,7 +138,7 @@ func (m *Manager) Stop() {
 	m.wg.Wait()
 }
 
-// fetchAndHandleRunnableTasks fetches the runnable tasks from the global task table and handles them.
+// fetchAndHandleRunnableTasks fetches the runnable tasks from the task table and handles them.
 func (m *Manager) fetchAndHandleRunnableTasksLoop() {
 	defer tidbutil.Recover(metrics.LabelDomain, "fetchAndHandleRunnableTasksLoop", m.fetchAndHandleRunnableTasksLoop, false)
 	ticker := time.NewTicker(checkTime)
@@ -148,7 +148,7 @@ func (m *Manager) fetchAndHandleRunnableTasksLoop() {
 			logutil.Logger(m.logCtx).Info("fetchAndHandleRunnableTasksLoop done")
 			return
 		case <-ticker.C:
-			tasks, err := m.taskTable.GetGlobalTasksInStates(m.ctx, proto.TaskStateRunning, proto.TaskStateReverting)
+			tasks, err := m.taskTable.GetTasksInStates(m.ctx, proto.TaskStateRunning, proto.TaskStateReverting)
 			if err != nil {
 				m.logErr(err)
 				continue
@@ -158,7 +158,7 @@ func (m *Manager) fetchAndHandleRunnableTasksLoop() {
 	}
 }
 
-// fetchAndFastCancelTasks fetches the reverting/pausing tasks from the global task table and fast cancels them.
+// fetchAndFastCancelTasks fetches the reverting/pausing tasks from the task table and fast cancels them.
 func (m *Manager) fetchAndFastCancelTasksLoop() {
 	defer tidbutil.Recover(metrics.LabelDomain, "fetchAndFastCancelTasksLoop", m.fetchAndFastCancelTasksLoop, false)
 
@@ -170,7 +170,7 @@ func (m *Manager) fetchAndFastCancelTasksLoop() {
 			logutil.Logger(m.logCtx).Info("fetchAndFastCancelTasksLoop done")
 			return
 		case <-ticker.C:
-			tasks, err := m.taskTable.GetGlobalTasksInStates(m.ctx, proto.TaskStateReverting)
+			tasks, err := m.taskTable.GetTasksInStates(m.ctx, proto.TaskStateReverting)
 			if err != nil {
 				m.logErr(err)
 				continue
@@ -178,7 +178,7 @@ func (m *Manager) fetchAndFastCancelTasksLoop() {
 			m.onCanceledTasks(m.ctx, tasks)
 
 			// cancel pending/running subtasks, and mark them as paused.
-			pausingTasks, err := m.taskTable.GetGlobalTasksInStates(m.ctx, proto.TaskStatePausing)
+			pausingTasks, err := m.taskTable.GetTasksInStates(m.ctx, proto.TaskStatePausing)
 			if err != nil {
 				m.logErr(err)
 				continue
@@ -361,7 +361,7 @@ func (m *Manager) onRunnableTask(task *proto.Task) {
 				}
 			}()
 		})
-		task, err := m.taskTable.GetGlobalTaskByID(m.ctx, task.ID)
+		task, err := m.taskTable.GetTaskByID(m.ctx, task.ID)
 		if err != nil {
 			m.logErr(err)
 			return

@@ -33,7 +33,7 @@ func GetSubtasksFromHistoryForTest(ctx context.Context, stm *TaskManager) (int, 
 // GetSubtasksFromHistoryByTaskIDForTest gets subtasks by taskID from history table for test.
 func GetSubtasksFromHistoryByTaskIDForTest(ctx context.Context, stm *TaskManager, taskID int64) (int, error) {
 	rs, err := stm.executeSQLWithNewSession(ctx,
-		"select * from mysql.tidb_background_subtask_history where task_key = %?", taskID)
+		`select `+subtaskColumns+` from mysql.tidb_background_subtask_history where task_key = %?`, taskID)
 	if err != nil {
 		return 0, err
 	}
@@ -43,7 +43,7 @@ func GetSubtasksFromHistoryByTaskIDForTest(ctx context.Context, stm *TaskManager
 // GetSubtasksByTaskIDForTest gets subtasks by taskID for test.
 func GetSubtasksByTaskIDForTest(ctx context.Context, stm *TaskManager, taskID int64) ([]*proto.Subtask, error) {
 	rs, err := stm.executeSQLWithNewSession(ctx,
-		"select * from mysql.tidb_background_subtask where task_key = %?", taskID)
+		`select `+subtaskColumns+` from mysql.tidb_background_subtask where task_key = %?`, taskID)
 	if err != nil {
 		return nil, err
 	}
