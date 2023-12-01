@@ -345,25 +345,23 @@ func (h *ddlHandlerImpl) updateStatsWithCountDeltaAndModifyCountDelta(
 				tableID,
 			)
 			return err
-		} else {
-			// For count and modify_count, we should use GREATEST(0, x) to avoid negative values.
-			_, err = util.Exec(
-				sctx,
-				"INSERT INTO mysql.stats_meta "+
-					"(version, count, modify_count, table_id) "+
-					"VALUES (%?, GREATEST(0, %?), GREATEST(0, %?), %?) "+
-					"ON DUPLICATE KEY UPDATE "+
-					"version = VALUES(version), "+
-					"count = GREATEST(0, count + VALUES(count)), "+
-					"modify_count = GREATEST(0, modify_count + VALUES(modify_count))",
-				startTS,
-				countDelta,
-				modifyCountDelta,
-				tableID,
-			)
-			return err
 		}
-
+		// For count and modify_count, we should use GREATEST(0, x) to avoid negative values.
+		_, err = util.Exec(
+			sctx,
+			"INSERT INTO mysql.stats_meta "+
+				"(version, count, modify_count, table_id) "+
+				"VALUES (%?, GREATEST(0, %?), GREATEST(0, %?), %?) "+
+				"ON DUPLICATE KEY UPDATE "+
+				"version = VALUES(version), "+
+				"count = GREATEST(0, count + VALUES(count)), "+
+				"modify_count = GREATEST(0, modify_count + VALUES(modify_count))",
+			startTS,
+			countDelta,
+			modifyCountDelta,
+			tableID,
+		)
+		return err
 	}, util.FlagWrapTxn); err != nil {
 		return err
 	}
