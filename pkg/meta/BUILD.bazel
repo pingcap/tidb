@@ -18,7 +18,6 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/structure",
         "//pkg/util/dbterror",
-        "//pkg/util/intest",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",

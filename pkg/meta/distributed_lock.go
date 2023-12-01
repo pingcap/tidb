@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -97,7 +96,7 @@ func (b *DistributedLockBuilder) SetBackoff(backoff time.Duration) *DistributedL
 }
 
 // SetLease sets the lease time of the lock.
-// Default is 30 * time.Second.
+// Default is 30 * time.Second. 0 means no lease.
 func (b *DistributedLockBuilder) SetLease(lease time.Duration) *DistributedLockBuilder {
 	b.lease = lease
 	return b
@@ -129,7 +128,7 @@ func (d *DistributedLock) renewLockLoop(ctx context.Context) {
 		case <-ticker.C:
 			err := d.renew(ctx)
 			if err != nil {
-				logutil.BgLogger().Warn("renew lock failed", zap.Error(err))
+				logutil.Logger(d.outerCtx).Warn("renew lock failed", zap.Error(err))
 				return
 			}
 		}
@@ -158,7 +157,7 @@ func (d *DistributedLock) renew(ctx context.Context) error {
 		})
 }
 
-var lockHeldErr error = errors.Errorf("lock is held")
+var lockHeldErr = errors.Errorf("lock is held by another instance")
 
 // Lock locks the distributed lock.
 func (d *DistributedLock) Lock() error {
@@ -184,7 +183,7 @@ func (d *DistributedLock) Lock() error {
 	if err != nil {
 		return err
 	}
-	if !intest.InTest {
+	if d.lease > 0 {
 		var renewCtx context.Context
 		renewCtx, d.cancelRenewLoop = context.WithCancel(d.outerCtx)
 		go d.renewLockLoop(renewCtx)
@@ -193,7 +192,7 @@ func (d *DistributedLock) Lock() error {
 }
 
 func (d *DistributedLock) lockExpired(lc *lockContent, currentStartTS uint64) bool {
-	if intest.InTest {
+	if d.lease == 0 {
 		return false
 	}
 	lockStartTime := model.TSConvert2Time(lc.StartTS)
@@ -224,16 +223,16 @@ func (d *DistributedLock) Unlock() error {
 
 			// Lock is exist, remove it.
 			err := txn.Del(d.lockName)
-			if err != nil {
-				return errors.Trace(err), nil
-			}
-			return nil, nil
+			return errors.Trace(err), nil
 		})
 }
 
 func (d *DistributedLock) getLockInTxnWithRetry(ctx context.Context, fn lockHandleFunc) error {
 	retryCnt := 0
+	backoffTimer := time.NewTimer(d.backoff)
+	defer backoffTimer.Stop()
 	for {
+		backoffTimer.Reset(d.backoff)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -243,45 +242,42 @@ func (d *DistributedLock) getLockInTxnWithRetry(ctx context.Context, fn lockHand
 			if retryCnt >= 10 {
 				return d.outerCtx.Err()
 			}
-		default:
-		}
+		case <-backoffTimer.C:
+			var noRetry bool
+			err := runInTxn(ctx, d.store, func(txn DataTxn) error {
+				data, err := txn.Get(d.lockName)
+				if err != nil {
+					return errors.Trace(err)
+				}
 
-		var noRetry bool
-		err := runInTxn(ctx, d.store, func(txn DataTxn) error {
-			data, err := txn.Get(d.lockName)
+				lc, err := decodeLockContent(data)
+				if err != nil {
+					noRetry = true
+					return errors.Trace(err)
+				}
+
+				storeErr, otherErr := fn(lc, txn)
+				if otherErr != nil {
+					noRetry = true
+					return errors.Trace(otherErr)
+				}
+				return storeErr
+			})
+
 			if err != nil {
-				return errors.Trace(err)
-			}
-
-			lc, err := decodeLockContent(data)
-			if err != nil {
-				noRetry = true
-				return errors.Trace(err)
-			}
-
-			storeErr, otherErr := fn(lc, txn)
-			if otherErr != nil {
-				noRetry = true
-				return errors.Trace(otherErr)
-			}
-			return storeErr
-		})
-
-		if err != nil {
-			if err == lockHeldErr {
-				time.Sleep(d.backoff)
+				if err == lockHeldErr {
+					continue
+				}
+				logutil.Logger(d.outerCtx).Info("lock encounter error",
+					zap.Error(err), zap.Bool("retry", !noRetry))
+				if noRetry {
+					return err
+				}
+				retryCnt++
 				continue
 			}
-			logutil.Logger(d.outerCtx).Info("lock encounter error",
-				zap.Error(err), zap.Bool("retry", !noRetry))
-			if noRetry {
-				return err
-			}
-			retryCnt++
-			time.Sleep(d.backoff)
-			continue
+			return nil
 		}
-		return nil
 	}
 }
 

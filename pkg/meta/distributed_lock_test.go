@@ -31,6 +31,7 @@ func TestDistLockAcquisitionAndRelease(t *testing.T) {
 	ctx := context.Background()
 	lock := meta.NewDistributedLockBuilder().
 		SetBackoff(1*time.Microsecond).
+		SetLease(0).
 		Build(ctx, &mockDataStore{store}, "owner1", "testLock")
 
 	// Test basic lock and unlock functions.
@@ -72,8 +73,8 @@ func TestDistLockKeyAndOwner(t *testing.T) {
 	}
 
 	// Test different keys.
-	lock00 := meta.NewDistributedLockBuilder().SetBackoff(backoff).Build(ctx, mockStore, "owner-0", "000")
-	lock01 := meta.NewDistributedLockBuilder().SetBackoff(backoff).Build(ctx, mockStore, "owner-0", "111")
+	lock00 := meta.NewDistributedLockBuilder().SetBackoff(backoff).SetLease(0).Build(ctx, mockStore, "owner-0", "000")
+	lock01 := meta.NewDistributedLockBuilder().SetBackoff(backoff).SetLease(0).Build(ctx, mockStore, "owner-0", "111")
 	checkNotRelate(lock00, lock01)
 
 	checkMutualExclusive := func(lockA, lockB *meta.DistributedLock, cancelLockB context.CancelFunc) {
@@ -95,12 +96,12 @@ func TestDistLockKeyAndOwner(t *testing.T) {
 
 	// Test same keys.
 	ctx10, cancel10 := context.WithCancel(ctx)
-	lock10 := meta.NewDistributedLockBuilder().SetBackoff(backoff).Build(ctx10, mockStore, "owner-1", "000")
+	lock10 := meta.NewDistributedLockBuilder().SetBackoff(backoff).SetLease(0).Build(ctx10, mockStore, "owner-1", "000")
 	checkMutualExclusive(lock00, lock10, cancel10)
 
 	// Test same keys with same owner.
 	ctx00Fake, cancel00Fake := context.WithCancel(ctx)
-	lock00Fake := meta.NewDistributedLockBuilder().SetBackoff(backoff).Build(ctx00Fake, mockStore, "owner-0", "000")
+	lock00Fake := meta.NewDistributedLockBuilder().SetBackoff(backoff).SetLease(0).Build(ctx00Fake, mockStore, "owner-0", "000")
 	require.NoError(t, lock00.Lock())
 	require.NoError(t, lock00Fake.Unlock())
 	require.NoError(t, lock00Fake.Lock())
