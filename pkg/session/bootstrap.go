@@ -1036,7 +1036,7 @@ const (
 	// version 180
 	//   add priority/create_time/end_time to `mysql.tidb_global_task`/`mysql.tidb_global_task_history`
 	//   add concurrency/priority/create_time/end_time to `mysql.tidb_background_subtask`/`mysql.tidb_background_subtask_history`
-	//   add idx_exec_id(exec_id) on `mysql.tidb_background_subtask`
+	//   add idx_exec_id(exec_id) to `mysql.tidb_background_subtask`
 	version180 = 180
 )
 
