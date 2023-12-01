@@ -73,7 +73,7 @@ insert into table_to_be_dropped_or_truncated_2.t1_dropped values (1, 2, "123"), 
 insert into table_to_be_dropped_or_truncated_2.t0_truncated values (1, 2, "123"), (2, 3, "123");
 insert into table_to_be_dropped_or_truncated_2.t1_truncated values (1, 2, "123"), (2, 3, "123");
 
--- 3. Drop/Truncate Table Partition
+-- 3.1. Drop/Truncate Table Partition
 create database partition_to_be_dropped_or_truncated_2;
 create table partition_to_be_dropped_or_truncated_2.t0_dropped(id int primary key, c int, name char(20));
 create table partition_to_be_dropped_or_truncated_2.t1_dropped(id int primary key, c int, name char(20)) PARTITION BY RANGE(id) ( PARTITION p0 VALUES LESS THAN (0), PARTITION p1 VALUES LESS THAN (10), PARTITION p2 VALUES LESS THAN MAXVALUE );
@@ -97,6 +97,24 @@ insert into partition_to_be_dropped_or_truncated_2.t1_dropped values (1, 2, "123
 
 insert into partition_to_be_dropped_or_truncated_2.t0_truncated values (1, 2, "123"), (2, 3, "123");
 insert into partition_to_be_dropped_or_truncated_2.t1_truncated values (1, 2, "123"), (2, 3, "123");
+
+-- 3.2. Remove/Alter Table Partitioning
+create database partition_to_be_removed_or_altered_2;
+create table partition_to_be_removed_or_altered_2.t_removed(id int primary key, c int, name char(20)) PARTITION BY RANGE(id) ( PARTITION p0 VALUES LESS THAN (0), PARTITION p1 VALUES LESS THAN (10), PARTITION p2 VALUES LESS THAN MAXVALUE );
+create table partition_to_be_removed_or_altered_2.t_altered(id int primary key, c int, name char(20)) PARTITION BY RANGE(id) ( PARTITION p0 VALUES LESS THAN (0), PARTITION p1 VALUES LESS THAN (10), PARTITION p2 VALUES LESS THAN MAXVALUE );
+
+create index k1 on partition_to_be_removed_or_altered_2.t_removed (name);
+create index k2 on partition_to_be_removed_or_altered_2.t_removed (c);
+create index k3 on partition_to_be_removed_or_altered_2.t_removed (id, c);
+
+create index k1 on partition_to_be_removed_or_altered_2.t_altered (name);
+create index k2 on partition_to_be_removed_or_altered_2.t_altered (c);
+create index k3 on partition_to_be_removed_or_altered_2.t_altered (id, c);
+
+insert into partition_to_be_removed_or_altered_2.t_removed values (1, 2, "123"), (2, 3, "123");
+
+insert into partition_to_be_removed_or_altered_2.t_altered values (1, 2, "123"), (2, 3, "123");
+
 -- 4. Drop Table Index/PrimaryKey
 create database index_or_primarykey_to_be_dropped_2;
 create table index_or_primarykey_to_be_dropped_2.t0(id int primary key nonclustered, c int, name char(20));
