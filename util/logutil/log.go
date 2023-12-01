@@ -47,7 +47,7 @@ const (
 	// DefaultInefficientScanRatio is the ratio of iterated keys and processed keys when a scan is regarded as inefficient.
 	DefaultInefficientScanRatio = 100
 	// DefaultInefficientScanNum is the number of mvcc keys scanned when a scan is regarded as inefficient.
-	DefaultInefficientScanNum = 10000
+	DefaultInefficientScanNum = 100000
 )
 
 // EmptyFileLogConfig is an empty FileLogConfig.
