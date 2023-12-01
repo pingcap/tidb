@@ -975,6 +975,9 @@ func (b batchExtension) OnNextSubtasksBatch(ctx context.Context, h dispatcher.Ta
 		zap.String("curr-step", StepStr(task.Step)),
 		zap.String("next-step", StepStr(step)),
 	)
+	if step == proto.StepDone {
+		return nil, nil
+	}
 
 	var taskMeta batchJobMeta
 	if err = json.Unmarshal(task.Meta, &taskMeta); err != nil {
