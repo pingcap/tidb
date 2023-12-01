@@ -178,8 +178,8 @@ const (
 	RocksdbBlockReadByteStr = "Rocksdb_block_read_byte"
 	// RocksdbBlockReadTimeStr means the time spent on rocksdb block read.
 	RocksdbBlockReadTimeStr = "Rocksdb_block_read_time"
-	// ScanExpensiveRatio is the ratio of total iterated keys and processed keys.
-	ScanExpensiveRatio = "Scan_expensive_ratio"
+	// InEfficientScanRatio is the ratio of total iterated keys and processed keys.
+	InEfficientScanRatio = "Inefficient_scan_ratio"
 )
 
 // String implements the fmt.Stringer interface.
@@ -296,7 +296,7 @@ func (d ExecDetails) String() string {
 		}
 	}
 	if d.InEfficientScanRatio > 0 {
-		parts = append(parts, ScanExpensiveRatio+": "+strconv.FormatUint(d.InEfficientScanRatio, 10))
+		parts = append(parts, InEfficientScanRatio+": "+strconv.FormatUint(d.InEfficientScanRatio, 10))
 	}
 	return strings.Join(parts, " ")
 }
