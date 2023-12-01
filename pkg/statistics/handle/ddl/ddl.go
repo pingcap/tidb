@@ -235,8 +235,8 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 	// | Global    | 30           | 300   |
 	//
 	// The count difference is 200 - 100 = 100, which is also considered as the table's delta.
-	delta := tableCount - partCount
-	count := delta
+	countDelta := tableCount - partCount
+	modifyCountDelta := countDelta
 
 	// Adjust the delta to account for the modify count of the partition.
 	// For example, if the partition's modify_count is 10 and the count difference is 100,
@@ -250,10 +250,10 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 	// | Table     | 10                                       | 100   |
 	// | Global    | 120 (20 from other partitions + 10 + 90) | 400   |
 	// If we do not do this, the modify_count will be 30 (original) + 100 (delta) = 130, which is incorrect.
-	if delta > 0 {
-		delta -= partModifyCount
+	if modifyCountDelta > 0 {
+		modifyCountDelta -= partModifyCount
 	} else {
-		delta += partModifyCount
+		modifyCountDelta += partModifyCount
 	}
 	// Adjust the delta to account for the modify count of the table.
 	// For example, if the table's modify_count is 20 and the count difference is 100,
@@ -267,38 +267,37 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 	// | Table     | 10                                               | 100   |
 	// | Global    | 140 (20 from other partitions + 20 + 10 + 90)    | 400   |
 	// If we do not do this, the modify_count will be 20 (original) + 10 + 90 (delta) = 120, which is incorrect.
-	if delta > 0 {
-		delta += tableModifyCount
+	if modifyCountDelta > 0 {
+		modifyCountDelta += tableModifyCount
 	} else {
-		delta -= tableModifyCount
+		modifyCountDelta -= tableModifyCount
 	}
 	// Update the global stats.
-	if delta != 0 || count != 0 {
-		if err = util.CallWithSCtx(h.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-			// TODO: handle the lock and make this to be a API.
-			// lockedTables, err := h.statsHandler.GetLockedTables(globalTableInfo.ID)
-			// if err != nil {
-			// 	return errors.Trace(err)
-			// }
-			// isLocked := false
-			// if len(lockedTables) > 0 {
-			// 	isLocked = true
-			// }
-			startTS, err := util.GetStartTS(sctx)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			_, err = util.Exec(sctx, "update mysql.stats_meta set version = %?, modify_count = modify_count + %?, count = count + %? where table_id = %?",
-				startTS, delta, count, globalTableInfo.ID)
-			return err
-		}, util.FlagWrapTxn); err != nil {
+	if modifyCountDelta != 0 || countDelta != 0 {
+
+		if err := h.updateStatsWithCountDeltaAndModifyCountDelta(
+			globalTableInfo.ID, countDelta, modifyCountDelta,
+		); err != nil {
+			logutil.StatsLogger.Error(
+				"Update global stats after exchange partition failed",
+				zap.Error(err),
+				zap.Int64("tableID", globalTableInfo.ID),
+				zap.Int64("countDelta", countDelta),
+				zap.Int64("modifyCountDelta", modifyCountDelta),
+				zap.Int64("partitionID", originalPartInfo.Definitions[0].ID),
+				zap.String("partitionName", originalPartInfo.Definitions[0].Name.O),
+				zap.Int64("partitionCount", partCount),
+				zap.Int64("tableID", originalTableInfo.ID),
+				zap.String("tableName", originalTableInfo.Name.O),
+				zap.Int64("tableCount", tableCount),
+			)
 			return err
 		}
-
 		logutil.StatsLogger.Info(
 			"Update global stats after exchange partition",
 			zap.Int64("tableID", globalTableInfo.ID),
-			zap.Int64("delta", delta),
+			zap.Int64("countDelta", countDelta),
+			zap.Int64("modifyCountDelta", modifyCountDelta),
 			zap.Int64("partitionID", originalPartInfo.Definitions[0].ID),
 			zap.String("partitionName", originalPartInfo.Definitions[0].Name.O),
 			zap.Int64("partitionCount", partCount),
@@ -307,6 +306,71 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 			zap.Int64("tableCount", tableCount),
 		)
 	}
+	return nil
+}
+
+// updateStatsWithCountDeltaAndModifyCountDelta updates
+// the global stats with the given count delta and modify count delta.
+// Only used by some special DDLs, such as exchange partition.
+func (h *ddlHandlerImpl) updateStatsWithCountDeltaAndModifyCountDelta(
+	tableID int64,
+	countDelta, modifyCountDelta int64,
+) error {
+	if err := util.CallWithSCtx(h.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+		lockedTables, err := h.statsHandler.GetLockedTables(tableID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		isLocked := false
+		if len(lockedTables) > 0 {
+			isLocked = true
+		}
+		startTS, err := util.GetStartTS(sctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if isLocked {
+			// For locked tables, it is possible that the record gets deleted. So it can be negative.
+			_, err = util.Exec(
+				sctx,
+				"INSERT INTO mysql.stats_table_locked "+
+					"(version, count, modify_count, table_id) "+
+					"VALUES (%?, %?, %?, %?) "+
+					"ON DUPLICATE KEY UPDATE "+
+					"version = VALUES(version), "+
+					"count = count + VALUES(count), "+
+					"modify_count = modify_count + VALUES(modify_count)",
+				startTS,
+				countDelta,
+				modifyCountDelta,
+				tableID,
+			)
+			return err
+
+		} else {
+			// For count and modify_count, we should use GREATEST(0, x) to avoid negative values.
+			_, err = util.Exec(
+				sctx,
+				"INSERT INTO mysql.stats_meta "+
+					"(version, count, modify_count, table_id) "+
+					"VALUES (%?, GREATEST(0, %?), GREATEST(0, %?), %?) "+
+					"ON DUPLICATE KEY UPDATE "+
+					"version = VALUES(version), "+
+					"count = GREATEST(0, count + VALUES(count)), "+
+					"modify_count = GREATEST(0, modify_count + VALUES(modify_count))",
+				startTS,
+				countDelta,
+				modifyCountDelta,
+				tableID,
+			)
+			return err
+		}
+
+	}, util.FlagWrapTxn); err != nil {
+		return err
+	}
+
 	return nil
 }
 
