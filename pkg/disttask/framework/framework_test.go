@@ -308,7 +308,7 @@ func TestFrameworkCleanUpRoutine(t *testing.T) {
 	<-dispatcher.WaitCleanUpFinished
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
-	tasks, err := mgr.GetGlobalTaskByKeyWithHistory(ctx, "key1")
+	tasks, err := mgr.GetTaskByKeyWithHistory(ctx, "key1")
 	require.NoError(t, err)
 	require.NotEmpty(t, tasks)
 	distContext.Close()

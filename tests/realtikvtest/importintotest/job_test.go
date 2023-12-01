@@ -401,12 +401,12 @@ func (s *mockGCSSuite) TestCancelJob() {
 	s.ErrorIs(err, exeerrors.ErrLoadDataJobNotFound)
 
 	getTask := func(jobID int64) *proto.Task {
-		globalTaskManager, err := storage.GetTaskManager()
+		taskManager, err := storage.GetTaskManager()
 		s.NoError(err)
 		taskKey := importinto.TaskKey(jobID)
-		globalTask, err := globalTaskManager.GetGlobalTaskByKeyWithHistory(ctx, taskKey)
+		task, err := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 		s.NoError(err)
-		return globalTask
+		return task
 	}
 
 	// cancel a running job created by self
@@ -501,14 +501,14 @@ func (s *mockGCSSuite) TestCancelJob() {
 		ErrorMessage:   "cancelled by user",
 	}
 	s.compareJobInfoWithoutTime(jobInfo, rows2[0])
-	globalTaskManager, err := storage.GetTaskManager()
+	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
 	taskKey := importinto.TaskKey(int64(jobID2))
 	s.NoError(err)
 	s.Require().Eventually(func() bool {
-		globalTask, err2 := globalTaskManager.GetGlobalTaskByKeyWithHistory(ctx, taskKey)
+		task2, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 		s.NoError(err2)
-		subtasks, err2 := globalTaskManager.GetSubtasksForImportInto(ctx, globalTask.ID, importinto.StepPostProcess)
+		subtasks, err2 := taskManager.GetSubtasksForImportInto(ctx, task2.ID, importinto.StepPostProcess)
 		s.NoError(err2)
 		s.Len(subtasks, 2) // framework will generate a subtask when canceling
 		var cancelled bool
@@ -518,7 +518,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 				break
 			}
 		}
-		return globalTask.State == proto.TaskStateReverted && cancelled
+		return task2.State == proto.TaskStateReverted && cancelled
 	}, maxWaitTime, 1*time.Second)
 
 	// cancel a pending job created by test_cancel_job2 using root
@@ -644,13 +644,13 @@ func (s *mockGCSSuite) TestKillBeforeFinish() {
 	rows := s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID)).Rows()
 	s.Len(rows, 1)
 	s.Equal("cancelled", rows[0][5])
-	globalTaskManager, err := storage.GetTaskManager()
+	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
 	taskKey := importinto.TaskKey(jobID)
 	s.NoError(err)
 	s.Require().Eventually(func() bool {
-		globalTask, err2 := globalTaskManager.GetGlobalTaskByKeyWithHistory(ctx, taskKey)
+		task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 		s.NoError(err2)
-		return globalTask.State == proto.TaskStateReverted
+		return task.State == proto.TaskStateReverted
 	}, maxWaitTime, 1*time.Second)
 }

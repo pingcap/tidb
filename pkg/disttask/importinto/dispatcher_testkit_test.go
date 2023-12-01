@@ -85,7 +85,7 @@ func TestDispatcherExtLocalSort(t *testing.T) {
 	require.NoError(t, err)
 	taskMeta, err := json.Marshal(task)
 	require.NoError(t, err)
-	taskID, err := manager.AddNewGlobalTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, taskMeta)
+	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, taskMeta)
 	require.NoError(t, err)
 	task.ID = taskID
 
@@ -105,9 +105,9 @@ func TestDispatcherExtLocalSort(t *testing.T) {
 	// update task/subtask, and finish subtask, so we can go to next stage
 	subtasks := make([]*proto.Subtask, 0, len(subtaskMetas))
 	for _, m := range subtaskMetas {
-		subtasks = append(subtasks, proto.NewSubtask(task.Step, task.ID, task.Type, "", m))
+		subtasks = append(subtasks, proto.NewSubtask(task.Step, task.ID, task.Type, "", 1, m))
 	}
-	_, err = manager.UpdateGlobalTaskAndAddSubTasks(ctx, task, subtasks, proto.TaskStatePending)
+	_, err = manager.UpdateTaskAndAddSubTasks(ctx, task, subtasks, proto.TaskStatePending)
 	require.NoError(t, err)
 	gotSubtasks, err := manager.GetSubtasksForImportInto(ctx, taskID, importinto.StepImport)
 	require.NoError(t, err)
@@ -230,7 +230,7 @@ func TestDispatcherExtGlobalSort(t *testing.T) {
 	require.NoError(t, err)
 	taskMeta, err := json.Marshal(task)
 	require.NoError(t, err)
-	taskID, err := manager.AddNewGlobalTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, taskMeta)
+	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, taskMeta)
 	require.NoError(t, err)
 	task.ID = taskID
 
@@ -253,9 +253,9 @@ func TestDispatcherExtGlobalSort(t *testing.T) {
 	// update task/subtask, and finish subtask, so we can go to next stage
 	subtasks := make([]*proto.Subtask, 0, len(subtaskMetas))
 	for _, m := range subtaskMetas {
-		subtasks = append(subtasks, proto.NewSubtask(task.Step, task.ID, task.Type, "", m))
+		subtasks = append(subtasks, proto.NewSubtask(task.Step, task.ID, task.Type, "", 1, m))
 	}
-	_, err = manager.UpdateGlobalTaskAndAddSubTasks(ctx, task, subtasks, proto.TaskStatePending)
+	_, err = manager.UpdateTaskAndAddSubTasks(ctx, task, subtasks, proto.TaskStatePending)
 	require.NoError(t, err)
 	gotSubtasks, err := manager.GetSubtasksForImportInto(ctx, taskID, task.Step)
 	require.NoError(t, err)
@@ -310,9 +310,9 @@ func TestDispatcherExtGlobalSort(t *testing.T) {
 	// update task/subtask, and finish subtask, so we can go to next stage
 	subtasks = make([]*proto.Subtask, 0, len(subtaskMetas))
 	for _, m := range subtaskMetas {
-		subtasks = append(subtasks, proto.NewSubtask(task.Step, task.ID, task.Type, "", m))
+		subtasks = append(subtasks, proto.NewSubtask(task.Step, task.ID, task.Type, "", 1, m))
 	}
-	_, err = manager.UpdateGlobalTaskAndAddSubTasks(ctx, task, subtasks, proto.TaskStatePending)
+	_, err = manager.UpdateTaskAndAddSubTasks(ctx, task, subtasks, proto.TaskStatePending)
 	require.NoError(t, err)
 	gotSubtasks, err = manager.GetSubtasksForImportInto(ctx, taskID, task.Step)
 	require.NoError(t, err)

@@ -48,15 +48,15 @@ func GetMockBasicDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
 		},
 	).AnyTimes()
 	mockDispatcher.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
-			if gTask.Step == proto.StepInit {
+		func(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
+			if task.Step == proto.StepInit {
 				return [][]byte{
 					[]byte("task1"),
 					[]byte("task2"),
 					[]byte("task3"),
 				}, nil
 			}
-			if gTask.Step == proto.StepOne {
+			if task.Step == proto.StepOne {
 				return [][]byte{
 					[]byte("task4"),
 				}, nil
@@ -92,8 +92,8 @@ func GetMockHATestDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
 		},
 	).AnyTimes()
 	mockDispatcher.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
-			if gTask.Step == proto.StepInit {
+		func(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
+			if task.Step == proto.StepInit {
 				return [][]byte{
 					[]byte("task1"),
 					[]byte("task2"),
@@ -107,7 +107,7 @@ func GetMockHATestDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
 					[]byte("task10"),
 				}, nil
 			}
-			if gTask.Step == proto.StepOne {
+			if task.Step == proto.StepOne {
 				return [][]byte{
 					[]byte("task11"),
 					[]byte("task12"),
@@ -154,7 +154,7 @@ func GetPlanNotRetryableErrDispatcherExt(ctrl *gomock.Controller) dispatcher.Ext
 		},
 	).AnyTimes()
 	mockDispatcher.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
+		func(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
 			return nil, errors.New("not retryable err")
 		},
 	).AnyTimes()
@@ -186,8 +186,8 @@ func GetPlanErrDispatcherExt(ctrl *gomock.Controller, testContext *TestContext) 
 		},
 	).AnyTimes()
 	mockDispatcher.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
-			if gTask.Step == proto.StepInit {
+		func(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
+			if task.Step == proto.StepInit {
 				if testContext.CallTime == 0 {
 					testContext.CallTime++
 					return nil, errors.New("retryable err")
@@ -198,7 +198,7 @@ func GetPlanErrDispatcherExt(ctrl *gomock.Controller, testContext *TestContext) 
 					[]byte("task3"),
 				}, nil
 			}
-			if gTask.Step == proto.StepOne {
+			if task.Step == proto.StepOne {
 				return [][]byte{
 					[]byte("task4"),
 				}, nil
@@ -235,8 +235,8 @@ func GetMockRollbackDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension 
 		},
 	).AnyTimes()
 	mockDispatcher.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
-			if gTask.Step == proto.StepInit {
+		func(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
+			if task.Step == proto.StepInit {
 				return [][]byte{
 					[]byte("task1"),
 					[]byte("task2"),
@@ -274,8 +274,8 @@ func GetMockDynamicDispatchExt(ctrl *gomock.Controller) dispatcher.Extension {
 		},
 	).AnyTimes()
 	mockDispatcher.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
-			if gTask.Step == proto.StepInit {
+		func(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
+			if task.Step == proto.StepInit {
 				return [][]byte{
 					[]byte("task"),
 					[]byte("task"),
@@ -283,7 +283,7 @@ func GetMockDynamicDispatchExt(ctrl *gomock.Controller) dispatcher.Extension {
 			}
 
 			// step2
-			if gTask.Step == proto.StepOne {
+			if task.Step == proto.StepOne {
 				return [][]byte{
 					[]byte("task"),
 				}, nil

@@ -143,7 +143,7 @@ func (*BaseDispatcher) Close() {
 
 // refreshTask fetch task state from tidb_global_task table.
 func (d *BaseDispatcher) refreshTask() error {
-	newTask, err := d.taskMgr.GetGlobalTaskByID(d.ctx, d.Task.ID)
+	newTask, err := d.taskMgr.GetTaskByID(d.ctx, d.Task.ID)
 	if err != nil {
 		logutil.Logger(d.logCtx).Error("refresh task failed", zap.Error(err))
 		return err
@@ -171,7 +171,7 @@ func (d *BaseDispatcher) scheduleTask() {
 			}
 			failpoint.Inject("cancelTaskAfterRefreshTask", func(val failpoint.Value) {
 				if val.(bool) && d.Task.State == proto.TaskStateRunning {
-					err := d.taskMgr.CancelGlobalTask(d.ctx, d.Task.ID)
+					err := d.taskMgr.CancelTask(d.ctx, d.Task.ID)
 					if err != nil {
 						logutil.Logger(d.logCtx).Error("cancel task failed", zap.Error(err))
 					}
@@ -529,7 +529,7 @@ func (d *BaseDispatcher) updateTask(taskState proto.TaskState, newSubTasks []*pr
 	}
 
 	failpoint.Inject("cancelBeforeUpdate", func() {
-		err := d.taskMgr.CancelGlobalTask(d.ctx, d.Task.ID)
+		err := d.taskMgr.CancelTask(d.ctx, d.Task.ID)
 		if err != nil {
 			logutil.Logger(d.logCtx).Error("cancel task failed", zap.Error(err))
 		}
@@ -537,7 +537,7 @@ func (d *BaseDispatcher) updateTask(taskState proto.TaskState, newSubTasks []*pr
 
 	var retryable bool
 	for i := 0; i < retryTimes; i++ {
-		retryable, err = d.taskMgr.UpdateGlobalTaskAndAddSubTasks(d.ctx, d.Task, newSubTasks, prevState)
+		retryable, err = d.taskMgr.UpdateTaskAndAddSubTasks(d.ctx, d.Task, newSubTasks, prevState)
 		if err == nil || !retryable {
 			break
 		}
@@ -570,7 +570,7 @@ func (d *BaseDispatcher) onErrHandlingStage(receiveErrs []error) error {
 		subTasks = make([]*proto.Subtask, 0, len(instanceIDs))
 		for _, id := range instanceIDs {
 			// reverting subtasks belong to the same step as current active step.
-			subTasks = append(subTasks, proto.NewSubtask(d.Task.Step, d.Task.ID, d.Task.Type, id, []byte("{}")))
+			subTasks = append(subTasks, proto.NewSubtask(d.Task.Step, d.Task.ID, d.Task.Type, id, int(d.Task.Concurrency), []byte("{}")))
 		}
 	}
 	return d.updateTask(proto.TaskStateReverting, subTasks, RetrySQLTimes)
@@ -593,7 +593,7 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 		zap.Int64("current-step", int64(d.Task.Step)),
 		zap.Int64("next-step", int64(nextStep)))
 
-	// 1. Adjust the global task's concurrency.
+	// 1. Adjust the task's concurrency.
 	if d.Task.State == proto.TaskStatePending {
 		if d.Task.Concurrency == 0 {
 			d.Task.Concurrency = DefaultSubtaskConcurrency
@@ -698,7 +698,7 @@ func (d *BaseDispatcher) dispatchSubTask(
 		pos := i % len(serverNodes)
 		instanceID := disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port)
 		logutil.Logger(d.logCtx).Debug("create subtasks", zap.String("instanceID", instanceID))
-		subTasks = append(subTasks, proto.NewSubtask(subtaskStep, d.Task.ID, d.Task.Type, instanceID, meta))
+		subTasks = append(subTasks, proto.NewSubtask(subtaskStep, d.Task.ID, d.Task.Type, instanceID, int(d.Task.Concurrency), meta))
 	}
 	failpoint.Inject("cancelBeforeUpdateTask", func() {
 		_ = d.updateTask(proto.TaskStateCancelling, subTasks, RetrySQLTimes)

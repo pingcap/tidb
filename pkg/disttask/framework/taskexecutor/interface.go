@@ -23,8 +23,8 @@ import (
 
 // TaskTable defines the interface to access task table.
 type TaskTable interface {
-	GetGlobalTasksInStates(ctx context.Context, states ...interface{}) (task []*proto.Task, err error)
-	GetGlobalTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
+	GetTasksInStates(ctx context.Context, states ...interface{}) (task []*proto.Task, err error)
+	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
 
 	GetSubtasksInStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...interface{}) ([]*proto.Subtask, error)
 	GetFirstSubtaskInStates(ctx context.Context, instanceID string, taskID int64, step proto.Step, states ...interface{}) (*proto.Subtask, error)

@@ -138,18 +138,18 @@ func (m *MockTaskManager) EXPECT() *MockTaskManagerMockRecorder {
 	return m.recorder
 }
 
-// CancelGlobalTask mocks base method.
-func (m *MockTaskManager) CancelGlobalTask(arg0 context.Context, arg1 int64) error {
+// CancelTask mocks base method.
+func (m *MockTaskManager) CancelTask(arg0 context.Context, arg1 int64) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CancelGlobalTask", arg0, arg1)
+	ret := m.ctrl.Call(m, "CancelTask", arg0, arg1)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// CancelGlobalTask indicates an expected call of CancelGlobalTask.
-func (mr *MockTaskManagerMockRecorder) CancelGlobalTask(arg0, arg1 any) *gomock.Call {
+// CancelTask indicates an expected call of CancelTask.
+func (mr *MockTaskManagerMockRecorder) CancelTask(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CancelGlobalTask", reflect.TypeOf((*MockTaskManager)(nil).CancelGlobalTask), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CancelTask", reflect.TypeOf((*MockTaskManager)(nil).CancelTask), arg0, arg1)
 }
 
 // CleanUpMeta mocks base method.
@@ -208,41 +208,6 @@ func (m *MockTaskManager) GetAllNodes(arg0 context.Context) ([]string, error) {
 func (mr *MockTaskManagerMockRecorder) GetAllNodes(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllNodes", reflect.TypeOf((*MockTaskManager)(nil).GetAllNodes), arg0)
-}
-
-// GetGlobalTaskByID mocks base method.
-func (m *MockTaskManager) GetGlobalTaskByID(arg0 context.Context, arg1 int64) (*proto.Task, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetGlobalTaskByID", arg0, arg1)
-	ret0, _ := ret[0].(*proto.Task)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetGlobalTaskByID indicates an expected call of GetGlobalTaskByID.
-func (mr *MockTaskManagerMockRecorder) GetGlobalTaskByID(arg0, arg1 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetGlobalTaskByID", reflect.TypeOf((*MockTaskManager)(nil).GetGlobalTaskByID), arg0, arg1)
-}
-
-// GetGlobalTasksInStates mocks base method.
-func (m *MockTaskManager) GetGlobalTasksInStates(arg0 context.Context, arg1 ...any) ([]*proto.Task, error) {
-	m.ctrl.T.Helper()
-	varargs := []any{arg0}
-	for _, a := range arg1 {
-		varargs = append(varargs, a)
-	}
-	ret := m.ctrl.Call(m, "GetGlobalTasksInStates", varargs...)
-	ret0, _ := ret[0].([]*proto.Task)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetGlobalTasksInStates indicates an expected call of GetGlobalTasksInStates.
-func (mr *MockTaskManagerMockRecorder) GetGlobalTasksInStates(arg0 any, arg1 ...any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	varargs := append([]any{arg0}, arg1...)
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetGlobalTasksInStates", reflect.TypeOf((*MockTaskManager)(nil).GetGlobalTasksInStates), varargs...)
 }
 
 // GetNodesByRole mocks base method.
@@ -424,6 +389,21 @@ func (m *MockTaskManager) UpdateSubtasksExecIDs(arg0 context.Context, arg1 int64
 func (mr *MockTaskManagerMockRecorder) UpdateSubtasksExecIDs(arg0, arg1, arg2 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateSubtasksExecIDs", reflect.TypeOf((*MockTaskManager)(nil).UpdateSubtasksExecIDs), arg0, arg1, arg2)
+}
+
+// UpdateTaskAndAddSubTasks mocks base method.
+func (m *MockTaskManager) UpdateTaskAndAddSubTasks(arg0 context.Context, arg1 *proto.Task, arg2 []*proto.Subtask, arg3 proto.TaskState) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateTaskAndAddSubTasks", arg0, arg1, arg2, arg3)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// UpdateTaskAndAddSubTasks indicates an expected call of UpdateTaskAndAddSubTasks.
+func (mr *MockTaskManagerMockRecorder) UpdateTaskAndAddSubTasks(arg0, arg1, arg2, arg3 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateTaskAndAddSubTasks", reflect.TypeOf((*MockTaskManager)(nil).UpdateTaskAndAddSubTasks), arg0, arg1, arg2, arg3)
 }
 
 // WithNewSession mocks base method.

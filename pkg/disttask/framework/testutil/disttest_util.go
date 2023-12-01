@@ -117,7 +117,7 @@ func RegisterRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, mockDispatc
 func DispatchTask(ctx context.Context, t *testing.T, taskKey string) *proto.Task {
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
-	_, err = mgr.AddNewGlobalTask(ctx, taskKey, proto.TaskTypeExample, 8, nil)
+	_, err = mgr.CreateTask(ctx, taskKey, proto.TaskTypeExample, 8, nil)
 	require.NoError(t, err)
 	return WaitTaskExit(ctx, t, taskKey)
 }
@@ -134,7 +134,7 @@ func WaitTaskExit(ctx context.Context, t *testing.T, taskKey string) *proto.Task
 		}
 
 		time.Sleep(time.Second)
-		task, err = mgr.GetGlobalTaskByKeyWithHistory(ctx, taskKey)
+		task, err = mgr.GetTaskByKeyWithHistory(ctx, taskKey)
 		require.NoError(t, err)
 		require.NotNil(t, task)
 		if task.State != proto.TaskStatePending && task.State != proto.TaskStateRunning && task.State != proto.TaskStateCancelling && task.State != proto.TaskStateReverting && task.State != proto.TaskStatePausing {
@@ -194,7 +194,7 @@ func DispatchMultiTasksAndOneFail(ctx context.Context, t *testing.T, num int, te
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunErr", "1*return(true)"))
 
 	for i := 0; i < num; i++ {
-		_, err = mgr.AddNewGlobalTask(ctx, fmt.Sprintf("key%d", i), proto.TaskTypeExample, 8, nil)
+		_, err = mgr.CreateTask(ctx, fmt.Sprintf("key%d", i), proto.TaskTypeExample, 8, nil)
 		require.NoError(t, err)
 	}
 	for i := 0; i < num; i++ {

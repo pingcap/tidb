@@ -35,19 +35,19 @@ import (
 )
 
 func runOneTask(ctx context.Context, t *testing.T, mgr *storage.TaskManager, taskKey string, subtaskCnt int) {
-	taskID, err := mgr.AddNewGlobalTask(ctx, taskKey, proto.TaskTypeExample, 1, nil)
+	taskID, err := mgr.CreateTask(ctx, taskKey, proto.TaskTypeExample, 1, nil)
 	require.NoError(t, err)
-	task, err := mgr.GetGlobalTaskByID(ctx, taskID)
+	task, err := mgr.GetTaskByID(ctx, taskID)
 	require.NoError(t, err)
 	// 1. stepOne
 	task.Step = proto.StepOne
 	task.State = proto.TaskStateRunning
-	_, err = mgr.UpdateGlobalTaskAndAddSubTasks(ctx, task, nil, proto.TaskStatePending)
+	_, err = mgr.UpdateTaskAndAddSubTasks(ctx, task, nil, proto.TaskStatePending)
 	require.NoError(t, err)
 	for i := 0; i < subtaskCnt; i++ {
-		require.NoError(t, mgr.AddNewSubTask(ctx, taskID, proto.StepOne, "test", nil, proto.TaskTypeExample, false))
+		require.NoError(t, mgr.CreateSubTask(ctx, taskID, proto.StepOne, "test", nil, proto.TaskTypeExample, false))
 	}
-	task, err = mgr.GetGlobalTaskByID(ctx, taskID)
+	task, err = mgr.GetTaskByID(ctx, taskID)
 	require.NoError(t, err)
 	factory := taskexecutor.GetTaskExecutorFactory(task.Type)
 	require.NotNil(t, factory)
@@ -55,12 +55,12 @@ func runOneTask(ctx context.Context, t *testing.T, mgr *storage.TaskManager, tas
 	require.NoError(t, executor.Run(ctx, task))
 	// 2. stepTwo
 	task.Step = proto.StepTwo
-	_, err = mgr.UpdateGlobalTaskAndAddSubTasks(ctx, task, nil, proto.TaskStateRunning)
+	_, err = mgr.UpdateTaskAndAddSubTasks(ctx, task, nil, proto.TaskStateRunning)
 	require.NoError(t, err)
 	for i := 0; i < subtaskCnt; i++ {
-		require.NoError(t, mgr.AddNewSubTask(ctx, taskID, proto.StepTwo, "test", nil, proto.TaskTypeExample, false))
+		require.NoError(t, mgr.CreateSubTask(ctx, taskID, proto.StepTwo, "test", nil, proto.TaskTypeExample, false))
 	}
-	task, err = mgr.GetGlobalTaskByID(ctx, taskID)
+	task, err = mgr.GetTaskByID(ctx, taskID)
 	require.NoError(t, err)
 	require.NoError(t, executor.Run(ctx, task))
 }

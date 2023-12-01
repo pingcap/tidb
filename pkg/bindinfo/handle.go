@@ -22,7 +22,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -38,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 )
@@ -71,8 +69,11 @@ type BindHandle struct {
 	bindInfo struct {
 		sync.Mutex
 		atomic.Value
-		lastUpdateTime types.Time
 	}
+
+	// lastUpdateTime records the last update time for the global sql bind cache.
+	// This value is used to avoid reload duplicated bindings from storage.
+	lastUpdateTime types.Time
 
 	// invalidBindRecordMap indicates the invalid bind records found during querying.
 	// A record will be deleted from this map, after 2 bind-lease, after it is dropped from the kv.
@@ -128,21 +129,18 @@ func (h *BindHandle) Reset(ctx sessionctx.Context) {
 // Update updates the global sql bind cache.
 func (h *BindHandle) Update(fullLoad bool) (err error) {
 	h.bindInfo.Lock()
-	lastUpdateTime := h.bindInfo.lastUpdateTime
+	lastUpdateTime := h.lastUpdateTime
 	var timeCondition string
 	if !fullLoad {
 		timeCondition = fmt.Sprintf("WHERE update_time>'%s'", lastUpdateTime.String())
 	}
 
-	exec := h.sctx.Context.(sqlexec.RestrictedSQLExecutor)
-
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
 	// No need to acquire the session context lock for ExecRestrictedSQL, it
 	// uses another background session.
 	selectStmt := fmt.Sprintf(`SELECT original_sql, bind_sql, default_db, status, create_time,
        update_time, charset, collation, source, sql_digest, plan_digest FROM mysql.bind_info
        %s ORDER BY update_time, create_time`, timeCondition)
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, selectStmt)
+	rows, _, err := execRows(h.sctx.Context, selectStmt)
 
 	if err != nil {
 		h.bindInfo.Unlock()
@@ -151,7 +149,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 
 	newCache, memExceededErr := h.bindInfo.Value.Load().(*bindCache).Copy()
 	defer func() {
-		h.bindInfo.lastUpdateTime = lastUpdateTime
+		h.lastUpdateTime = lastUpdateTime
 		h.bindInfo.Value.Store(newCache)
 		h.bindInfo.Unlock()
 	}()
@@ -214,21 +212,14 @@ func (h *BindHandle) CreateGlobalBinding(sctx sessionctx.Context, record *BindRe
 		h.sctx.Unlock()
 		h.bindInfo.Unlock()
 	}()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
-	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
-	_, err = exec.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
+
+	_, err = exec(h.sctx.Context, "BEGIN PESSIMISTIC")
 	if err != nil {
 		return
 	}
 
 	defer func() {
-		if err != nil {
-			_, err1 := exec.ExecuteInternal(ctx, "ROLLBACK")
-			terror.Log(err1)
-			return
-		}
-
-		_, err = exec.ExecuteInternal(ctx, "COMMIT")
+		err = finishTransaction(h.sctx.Context, err)
 		if err != nil {
 			return
 		}
@@ -245,7 +236,7 @@ func (h *BindHandle) CreateGlobalBinding(sctx sessionctx.Context, record *BindRe
 	now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
 
 	updateTs := now.String()
-	_, err = exec.ExecuteInternal(ctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %?`,
+	_, err = exec(h.sctx.Context, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %?`,
 		deleted, updateTs, record.OriginalSQL, updateTs)
 	if err != nil {
 		return err
@@ -256,7 +247,7 @@ func (h *BindHandle) CreateGlobalBinding(sctx sessionctx.Context, record *BindRe
 		record.Bindings[i].UpdateTime = now
 
 		// Insert the BindRecord to the storage.
-		_, err = exec.ExecuteInternal(ctx, `INSERT INTO mysql.bind_info VALUES (%?,%?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
+		_, err = exec(h.sctx.Context, `INSERT INTO mysql.bind_info VALUES (%?,%?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
 			record.OriginalSQL,
 			record.Bindings[i].BindSQL,
 			record.Db,
@@ -304,21 +295,13 @@ func (h *BindHandle) AddGlobalBinding(sctx sessionctx.Context, record *BindRecor
 		h.sctx.Unlock()
 		h.bindInfo.Unlock()
 	}()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
-	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
-	_, err = exec.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
+	_, err = exec(h.sctx.Context, "BEGIN PESSIMISTIC")
 	if err != nil {
 		return
 	}
 
 	defer func() {
-		if err != nil {
-			_, err1 := exec.ExecuteInternal(ctx, "ROLLBACK")
-			terror.Log(err1)
-			return
-		}
-
-		_, err = exec.ExecuteInternal(ctx, "COMMIT")
+		err = finishTransaction(h.sctx.Context, err)
 		if err != nil {
 			return
 		}
@@ -331,7 +314,7 @@ func (h *BindHandle) AddGlobalBinding(sctx sessionctx.Context, record *BindRecor
 		return err
 	}
 	if duplicateBinding != nil {
-		_, err = exec.ExecuteInternal(ctx, `DELETE FROM mysql.bind_info WHERE original_sql = %? AND bind_sql = %?`, record.OriginalSQL, duplicateBinding.BindSQL)
+		_, err = exec(h.sctx.Context, `DELETE FROM mysql.bind_info WHERE original_sql = %? AND bind_sql = %?`, record.OriginalSQL, duplicateBinding.BindSQL)
 		if err != nil {
 			return err
 		}
@@ -357,7 +340,7 @@ func (h *BindHandle) AddGlobalBinding(sctx sessionctx.Context, record *BindRecor
 			record.Bindings[i].SQLDigest = sqlDigestWithDB.String()
 		}
 		// Insert the BindRecord to the storage.
-		_, err = exec.ExecuteInternal(ctx, `INSERT INTO mysql.bind_info VALUES (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
+		_, err = exec(h.sctx.Context, `INSERT INTO mysql.bind_info VALUES (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
 			record.OriginalSQL,
 			record.Bindings[i].BindSQL,
 			record.Db,
@@ -386,20 +369,12 @@ func (h *BindHandle) DropGlobalBinding(originalSQL, db string, binding *Binding)
 		h.sctx.Unlock()
 		h.bindInfo.Unlock()
 	}()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
-	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
-	_, err = exec.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
+	_, err = exec(h.sctx.Context, "BEGIN PESSIMISTIC")
 	if err != nil {
 		return 0, err
 	}
 	defer func() {
-		if err != nil {
-			_, err1 := exec.ExecuteInternal(ctx, "ROLLBACK")
-			terror.Log(err1)
-			return
-		}
-
-		_, err = exec.ExecuteInternal(ctx, "COMMIT")
+		err = finishTransaction(h.sctx.Context, err)
 		if err != nil || deletedRows == 0 {
 			return
 		}
@@ -419,10 +394,10 @@ func (h *BindHandle) DropGlobalBinding(originalSQL, db string, binding *Binding)
 	updateTs := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3).String()
 
 	if binding == nil {
-		_, err = exec.ExecuteInternal(ctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND status != %?`,
+		_, err = exec(h.sctx.Context, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND status != %?`,
 			deleted, updateTs, originalSQL, updateTs, deleted)
 	} else {
-		_, err = exec.ExecuteInternal(ctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %? and status != %?`,
+		_, err = exec(h.sctx.Context, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %? and status != %?`,
 			deleted, updateTs, originalSQL, updateTs, binding.BindSQL, deleted)
 	}
 	if err != nil {
@@ -449,9 +424,7 @@ func (h *BindHandle) SetGlobalBindingStatus(originalSQL string, binding *Binding
 		h.sctx.Unlock()
 		h.bindInfo.Unlock()
 	}()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
-	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
-	_, err = exec.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
+	_, err = exec(h.sctx.Context, "BEGIN PESSIMISTIC")
 	if err != nil {
 		return
 	}
@@ -471,17 +444,8 @@ func (h *BindHandle) SetGlobalBindingStatus(originalSQL string, binding *Binding
 		oldStatus1 = Disabled
 	}
 	defer func() {
-		if err != nil {
-			_, err1 := exec.ExecuteInternal(ctx, "ROLLBACK")
-			terror.Log(err1)
-			return
-		}
-
-		_, err = exec.ExecuteInternal(ctx, "COMMIT")
-		if err != nil {
-			return
-		}
-		if affectRows == 0 {
+		err = finishTransaction(h.sctx.Context, err)
+		if err != nil || affectRows == 0 {
 			return
 		}
 
@@ -518,10 +482,10 @@ func (h *BindHandle) SetGlobalBindingStatus(originalSQL string, binding *Binding
 	updateTsStr := updateTs.String()
 
 	if binding == nil {
-		_, err = exec.ExecuteInternal(ctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND status IN (%?, %?)`,
+		_, err = exec(h.sctx.Context, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND status IN (%?, %?)`,
 			newStatus, updateTsStr, originalSQL, updateTsStr, oldStatus0, oldStatus1)
 	} else {
-		_, err = exec.ExecuteInternal(ctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %? AND status IN (%?, %?)`,
+		_, err = exec(h.sctx.Context, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %? AND status IN (%?, %?)`,
 			newStatus, updateTsStr, originalSQL, updateTsStr, binding.BindSQL, oldStatus0, oldStatus1)
 	}
 	affectRows = int(h.sctx.Context.GetSessionVars().StmtCtx.AffectedRows())
@@ -545,23 +509,12 @@ func (h *BindHandle) GCGlobalBinding() (err error) {
 		h.sctx.Unlock()
 		h.bindInfo.Unlock()
 	}()
-	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
-	_, err = exec.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
+	_, err = exec(h.sctx.Context, "BEGIN PESSIMISTIC")
 	if err != nil {
 		return err
 	}
 	defer func() {
-		if err != nil {
-			_, err1 := exec.ExecuteInternal(ctx, "ROLLBACK")
-			terror.Log(err1)
-			return
-		}
-
-		_, err = exec.ExecuteInternal(ctx, "COMMIT")
-		if err != nil {
-			return
-		}
+		err = finishTransaction(h.sctx.Context, err)
 	}()
 
 	// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
@@ -573,7 +526,7 @@ func (h *BindHandle) GCGlobalBinding() (err error) {
 	// we only garbage collect those records with update_time before 10 leases.
 	updateTime := time.Now().Add(-(10 * Lease))
 	updateTimeStr := types.NewTime(types.FromGoTime(updateTime), mysql.TypeTimestamp, 3).String()
-	_, err = exec.ExecuteInternal(ctx, `DELETE FROM mysql.bind_info WHERE status = 'deleted' and update_time < %?`, updateTimeStr)
+	_, err = exec(h.sctx.Context, `DELETE FROM mysql.bind_info WHERE status = 'deleted' and update_time < %?`, updateTimeStr)
 	return err
 }
 
@@ -585,9 +538,7 @@ func (h *BindHandle) GCGlobalBinding() (err error) {
 // even if they come from different tidb instances.
 func (h *BindHandle) lockBindInfoTable() error {
 	// h.sctx already locked.
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
-	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
-	_, err := exec.ExecuteInternal(ctx, h.LockBindInfoSQL())
+	_, err := exec(h.sctx.Context, h.LockBindInfoSQL())
 	return err
 }
 
@@ -787,8 +738,7 @@ func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
 	// Usually passing a sprintf to ExecuteInternal is not recommended, but in this case
 	// it is safe because ExecuteInternal does not permit MultiStatement execution. Thus,
 	// the statement won't be able to "break out" from EXPLAIN.
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
-	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, fmt.Sprintf("EXPLAIN FORMAT='hint' %s", sql))
+	rs, err := exec(sctx, fmt.Sprintf("EXPLAIN FORMAT='hint' %s", sql))
 	sctx.GetSessionVars().UsePlanBaselines = origVals
 	if rs != nil {
 		defer func() {
@@ -897,7 +847,7 @@ func (*paramMarkerChecker) Leave(in ast.Node) (ast.Node, bool) {
 func (h *BindHandle) Clear() {
 	h.bindInfo.Lock()
 	h.bindInfo.Store(newBindCache())
-	h.bindInfo.lastUpdateTime = types.ZeroTimestamp
+	h.lastUpdateTime = types.ZeroTimestamp
 	h.bindInfo.Unlock()
 	h.invalidBindRecordMap.Store(make(map[string]*bindRecordUpdate))
 }
@@ -913,7 +863,7 @@ func (h *BindHandle) FlushGlobalBindings() error {
 func (h *BindHandle) ReloadGlobalBindings() error {
 	h.bindInfo.Lock()
 	h.bindInfo.Store(newBindCache())
-	h.bindInfo.lastUpdateTime = types.ZeroTimestamp
+	h.lastUpdateTime = types.ZeroTimestamp
 	h.bindInfo.Unlock()
 	return h.Update(true)
 }

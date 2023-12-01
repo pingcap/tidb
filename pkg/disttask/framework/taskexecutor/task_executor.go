@@ -233,9 +233,9 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 			failpoint.Inject("breakInTaskExecutorUT", func() {
 				failpoint.Break()
 			})
-			newTask, err := s.taskTable.GetGlobalTaskByID(runCtx, task.ID)
+			newTask, err := s.taskTable.GetTaskByID(runCtx, task.ID)
 			if err != nil {
-				logutil.Logger(s.logCtx).Warn("GetGlobalTaskByID meets error", zap.Error(err))
+				logutil.Logger(s.logCtx).Warn("GetTaskByID meets error", zap.Error(err))
 				continue
 			}
 			// When the task move to next step or task state changes, the TaskExecutor should exit.
@@ -349,9 +349,9 @@ func (s *BaseTaskExecutor) runSubtask(ctx context.Context, executor execute.Subt
 			if err != nil {
 				logutil.BgLogger().Error("get task manager failed", zap.Error(err))
 			} else {
-				err = mgr.CancelGlobalTask(ctx, int64(taskID))
+				err = mgr.CancelTask(ctx, int64(taskID))
 				if err != nil {
-					logutil.BgLogger().Error("cancel global task failed", zap.Error(err))
+					logutil.BgLogger().Error("cancel task failed", zap.Error(err))
 				}
 			}
 		}
