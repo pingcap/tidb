@@ -742,6 +742,7 @@ func (r *builder) newBuildFromPatternLike(
 		r.err = errors.Trace(err)
 		return getFullRange()
 	}
+	// non-exceptional return case 1: empty pattern
 	if pattern == "" {
 		startPoint := &point{value: types.NewStringDatum(""), start: true}
 		endPoint := &point{value: types.NewStringDatum("")}
@@ -794,9 +795,11 @@ func (r *builder) newBuildFromPatternLike(
 		}
 		lowValue = append(lowValue, pattern[i])
 	}
+	// non-exceptional return case 2: no characters before the wildcard
 	if len(lowValue) == 0 {
 		return []*point{{value: types.MinNotNullDatum(), start: true}, {value: types.MaxValueDatum()}}
 	}
+	// non-exceptional return case 3: pattern contains valid characters and doesn't contain the wildcard
 	if isExactMatch {
 		val := types.NewCollationStringDatum(string(lowValue), tpOfPattern.GetCollate())
 		startPoint := &point{value: val, start: true}
@@ -812,37 +815,51 @@ func (r *builder) newBuildFromPatternLike(
 		}
 		return res
 	}
+
+	// non-exceptional return case 4: pattern contains valid characters and contains the wildcard
+
+	// non-exceptional return case 4-1
+	// If it's not a _bin or binary collation, and we don't convert the value to the sort key, we can't build
+	// a range for the wildcard.
 	if !convertToSortKey &&
 		!collate.IsBinCollation(tpOfPattern.GetCollate()) {
 		return []*point{{value: types.MinNotNullDatum(), start: true}, {value: types.MaxValueDatum()}}
 	}
-	startPoint := &point{start: true, excl: exclude}
-	startPoint.value.SetBytesAsString(lowValue, tpOfPattern.GetCollate(), uint32(tpOfPattern.GetFlen()))
-	cutPrefixForPoints([]*point{startPoint}, prefixLen, tpOfPattern)
 
-	startPointCopy, err := pointConvertToSortKey(r.sctx, startPoint, newTp, false)
+	// non-exceptional return case 4-2: build a range for the wildcard
+	// the end_key is sortKey(start_value) + 1
+	originalStartPoint := &point{start: true, excl: exclude}
+	originalStartPoint.value.SetBytesAsString(lowValue, tpOfPattern.GetCollate(), uint32(tpOfPattern.GetFlen()))
+	cutPrefixForPoints([]*point{originalStartPoint}, prefixLen, tpOfPattern)
+
+	// If we don't trim the trailing spaces, which means using KeyWithoutTrimRightSpace() instead of Key(), we can build
+	// a smaller range for better performance, e.g., LIKE '  %'.
+	// However, if it's a PAD SPACE collation, we must trim the trailing spaces for the end point to ensure the correctness.
+	// Because the trailing spaces are trimmed in the stored index key. For example, for LIKE 'abc  %' on utf8mb4_bin
+	// column, the start key should be 'abd' instead of 'abc ', but the end key can be 'abc!'.
+	shouldTrimTrailingSpace := isPadSpaceCollation(collation)
+	startPoint, err := pointConvertToSortKey(r.sctx, originalStartPoint, newTp, shouldTrimTrailingSpace)
 	if err != nil {
 		r.err = errors.Trace(err)
 		return getFullRange()
 	}
-	startPoint, err = pointConvertToSortKey(r.sctx, startPoint, newTp, true)
+	sortKeyPointWithoutTrim, err := pointConvertToSortKey(r.sctx, originalStartPoint, newTp, false)
 	if err != nil {
 		r.err = errors.Trace(err)
 		return getFullRange()
 	}
-	highValueSortKey := make([]byte, len(startPointCopy.value.GetBytes()))
-	copy(highValueSortKey, startPointCopy.value.GetBytes())
+	sortKeyWithoutTrim := append([]byte{}, sortKeyPointWithoutTrim.value.GetBytes()...)
 	endPoint := &point{value: types.MaxValueDatum(), excl: true}
-	for i := len(highValueSortKey) - 1; i >= 0; i-- {
+	for i := len(sortKeyWithoutTrim) - 1; i >= 0; i-- {
 		// Make the end point value more than the start point value,
 		// and the length of the end point value is the same as the length of the start point value.
 		// e.g., the start point value is "abc", so the end point value is "abd".
-		highValueSortKey[i]++
-		if highValueSortKey[i] != 0 {
-			endPoint.value.SetBytes(highValueSortKey)
+		sortKeyWithoutTrim[i]++
+		if sortKeyWithoutTrim[i] != 0 {
+			endPoint.value.SetBytes(sortKeyWithoutTrim)
 			break
 		}
-		// If highValueSortKey[i] is 255 and highValueSortKey[i]++ is 0, then the end point value is max value.
+		// If sortKeyWithoutTrim[i] is 255 and sortKeyWithoutTrim[i]++ is 0, then the end point value is max value.
 		if i == 0 {
 			endPoint.value = types.MaxValueDatum()
 		}
