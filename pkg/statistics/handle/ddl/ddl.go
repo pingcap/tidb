@@ -274,7 +274,6 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 	}
 	// Update the global stats.
 	if modifyCountDelta != 0 || countDelta != 0 {
-
 		if err := h.updateStatsWithCountDeltaAndModifyCountDelta(
 			globalTableInfo.ID, countDelta, modifyCountDelta,
 		); err != nil {
@@ -329,7 +328,6 @@ func (h *ddlHandlerImpl) updateStatsWithCountDeltaAndModifyCountDelta(
 		if err != nil {
 			return errors.Trace(err)
 		}
-
 		if isLocked {
 			// For locked tables, it is possible that the record gets deleted. So it can be negative.
 			_, err = util.Exec(
@@ -347,7 +345,6 @@ func (h *ddlHandlerImpl) updateStatsWithCountDeltaAndModifyCountDelta(
 				tableID,
 			)
 			return err
-
 		} else {
 			// For count and modify_count, we should use GREATEST(0, x) to avoid negative values.
 			_, err = util.Exec(
