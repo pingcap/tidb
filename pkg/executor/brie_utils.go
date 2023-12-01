@@ -35,6 +35,7 @@ const (
 	defaultCapOfCreateDatabase = 64
 )
 
+// SplitBatchCreateTableForTest is only used for test.
 var SplitBatchCreateTableForTest = splitBatchCreateTable
 
 // showRestoredCreateDatabase shows the result of SHOW CREATE DATABASE from a dbInfo.
@@ -111,6 +112,7 @@ func BRIECreateTable(
 	return d.CreateTableWithInfo(sctx, dbName, table, append(cs, ddl.OnExistIgnore)...)
 }
 
+// BRIECreateTable creates the tables with OnExistIgnore option in batch
 func BRIECreateTables(
 	sctx sessionctx.Context,
 	tables map[string][]*model.TableInfo,
