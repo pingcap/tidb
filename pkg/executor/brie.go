@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -648,7 +647,7 @@ func (gs *tidbGlue) GetDomain(_ kv.Storage) (*domain.Domain, error) {
 func (gs *tidbGlue) CreateSession(_ kv.Storage) (glue.Session, error) {
 	newSCtx, err := CreateSession(gs.se)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return &tidbGlueSession{se: newSCtx}, nil
 }
@@ -695,7 +694,7 @@ func (gs *tidbGlue) UseOneShotSession(_ kv.Storage, _ bool, fn func(se glue.Sess
 	// but need to create an new session.
 	newSCtx, err := CreateSession(gs.se)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	glueSession := &tidbGlueSession{se: newSCtx}
 	defer func() {
@@ -729,42 +728,18 @@ func (gs *tidbGlueSession) ExecuteInternal(ctx context.Context, sql string, args
 
 // CreateDatabase implements glue.Session
 func (gs *tidbGlueSession) CreateDatabase(_ context.Context, schema *model.DBInfo) error {
-	d := domain.GetDomain(gs.se).DDL()
-	// 512 is defaultCapOfCreateTable.
-	result := bytes.NewBuffer(make([]byte, 0, 512))
-	if err := ConstructResultOfShowCreateDatabase(gs.se, schema, true, result); err != nil {
-		return err
-	}
-	gs.se.SetValue(sessionctx.QueryString, result.String())
-	schema = schema.Clone()
-	if len(schema.Charset) == 0 {
-		schema.Charset = mysql.DefaultCharset
-	}
-	return d.CreateSchemaWithInfo(gs.se, schema, ddl.OnExistIgnore)
+	return BRIECreateDatabase(gs.se, schema, "")
 }
 
 // CreateTable implements glue.Session
 func (gs *tidbGlueSession) CreateTable(_ context.Context, dbName model.CIStr, table *model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
-	d := domain.GetDomain(gs.se).DDL()
+	return BRIECreateTable(gs.se, dbName, table, "", cs...)
+}
 
-	// 512 is defaultCapOfCreateTable.
-	result := bytes.NewBuffer(make([]byte, 0, 512))
-	if err := ConstructResultOfShowCreateTable(gs.se, table, autoid.Allocators{}, result); err != nil {
-		return err
-	}
-	gs.se.SetValue(sessionctx.QueryString, result.String())
-	// Disable foreign key check when batch create tables.
-	gs.se.GetSessionVars().ForeignKeyChecks = false
-
-	// Clone() does not clone partitions yet :(
-	table = table.Clone()
-	if table.Partition != nil {
-		newPartition := *table.Partition
-		newPartition.Definitions = append([]model.PartitionDefinition{}, table.Partition.Definitions...)
-		table.Partition = &newPartition
-	}
-
-	return d.CreateTableWithInfo(gs.se, dbName, table, append(cs, ddl.OnExistIgnore)...)
+// CreateTables implements glue.BatchCreateTableSession.
+func (gs *tidbGlueSession) CreateTables(_ context.Context,
+	tables map[string][]*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+	return BRIECreateTables(gs.se, tables, "", cs...)
 }
 
 // CreatePlacementPolicy implements glue.Session
