@@ -1499,16 +1499,13 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	isExpensiveScan := false
 	if execDetail.ScanDetail != nil && sessVars.ConnectionID > 0 {
 		processedKeys := execDetail.ScanDetail.ProcessedKeys
-		if processedKeys == 0 {
-			if costTime > threshold {
-				isExpensiveScan = true
-			}
-		} else {
-			expensiveKeyNum := uint64(processedKeys) * expensiveRatio
-			if expensiveKeyNum < execDetail.ScanDetail.RocksdbKeySkippedCount {
-				isExpensiveScan = true
-				execDetail.ScanExpensiveRatio = execDetail.ScanDetail.RocksdbKeySkippedCount / uint64(processedKeys)
-			}
+		if processedKeys <= 0 {
+			processedKeys = 1
+		}
+		currentScanRatio := execDetail.ScanDetail.RocksdbKeySkippedCount / uint64(processedKeys)
+		if currentScanRatio > expensiveRatio {
+			isExpensiveScan = true
+			execDetail.ScanExpensiveRatio = currentScanRatio
 		}
 	}
 	// if the level is Debug, or trace is enabled, print slow logs anyway
