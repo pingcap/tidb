@@ -331,12 +331,6 @@ func (tk *TestKit) HasPlan4ExplainFor(result *Result, plan string) bool {
 	return false
 }
 
-func (tk *TestKit) ExecuteAndResultSetToResultWithCtx(sql string, args ...interface{}) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
-	rs, _ := tk.ExecWithContext(ctx, sql, args...)
-	session.ResultSetToStringSlice(ctx, tk.session, rs)
-}
-
 // Exec executes a sql statement using the prepared stmt API
 func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
