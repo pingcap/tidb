@@ -171,7 +171,7 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 		return s.getError()
 	}
 	defer cleanup()
-	executor, err := s.GetSubtaskExecutor(ctx, task, summary)
+	subtaskExecutor, err := s.GetSubtaskExecutor(ctx, task, summary)
 	if err != nil {
 		s.onError(err)
 		return s.getError()
@@ -180,7 +180,7 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 	failpoint.Inject("mockExecSubtaskInitEnvErr", func() {
 		failpoint.Return(errors.New("mockExecSubtaskInitEnvErr"))
 	})
-	if err := executor.Init(runCtx); err != nil {
+	if err := subtaskExecutor.Init(runCtx); err != nil {
 		s.onError(err)
 		return s.getError()
 	}
@@ -190,7 +190,7 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 	s.startCancelCheck(cancelCtx, &wg, runCancel)
 
 	defer func() {
-		err := executor.Cleanup(runCtx)
+		err := subtaskExecutor.Cleanup(runCtx)
 		if err != nil {
 			logutil.Logger(s.logCtx).Error("cleanup subtask exec env failed", zap.Error(err))
 		}
@@ -278,13 +278,13 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 			runCancel(nil)
 		})
 
-		s.runSubtask(runCtx, executor, subtask)
+		s.runSubtask(runCtx, subtaskExecutor, subtask)
 	}
 	return s.getError()
 }
 
-func (s *BaseTaskExecutor) runSubtask(ctx context.Context, executor execute.SubtaskExecutor, subtask *proto.Subtask) {
-	err := executor.RunSubtask(ctx, subtask)
+func (s *BaseTaskExecutor) runSubtask(ctx context.Context, subtaskExecutor execute.SubtaskExecutor, subtask *proto.Subtask) {
+	err := subtaskExecutor.RunSubtask(ctx, subtask)
 	failpoint.Inject("MockRunSubtaskCancel", func(val failpoint.Value) {
 		if val.(bool) {
 			err = ErrCancelSubtask
@@ -356,7 +356,7 @@ func (s *BaseTaskExecutor) runSubtask(ctx context.Context, executor execute.Subt
 			}
 		}
 	})
-	s.onSubtaskFinished(ctx, executor, subtask)
+	s.onSubtaskFinished(ctx, subtaskExecutor, subtask)
 }
 
 func (s *BaseTaskExecutor) onSubtaskFinished(ctx context.Context, executor execute.SubtaskExecutor, subtask *proto.Subtask) {
