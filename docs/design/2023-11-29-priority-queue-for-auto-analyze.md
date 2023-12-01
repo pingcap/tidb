@@ -173,18 +173,26 @@ You can configure automatic statistics collection on a per-table basis.
 
 #### Implementation Details
 
-1. Each server will create a refresher to refresh the stats periodically. [server_sql.go?L1126:2](https://sourcegraph.com/github.com/cockroachdb/cockroach@6d7d8415f112fc478779bf2868be2385237030da/-/blob/pkg/server/server_sql.go?L1126:2&popover=pinned)
-2. The refresher spawns a goroutine to try to trigger a refresh every minute. [automatic_stats.go?L438:11](https://sourcegraph.com/github.com/cockroachdb/cockroach@6d7d8415f112fc478779bf2868be2385237030da/-/blob/pkg/sql/stats/automatic_stats.go?L438:11&popover=pinned)
-3. Refreshers use a map to store all mutation counts and use it as affected rows to try to trigger a refresh. [automatic_stats.go?L518:10](https://sourcegraph.com/github.com/cockroachdb/cockroach@6d7d8415f112fc478779bf2868be2385237030da/-/blob/pkg/sql/stats/automatic_stats.go?L518:10&popover=pinned)
+1. Each server will create a refresher to refresh the stats periodically. [server_sql.go?L1126:2]
+2. The refresher spawns a goroutine to try to trigger a refresh every minute. [automatic_stats.go?L438:11]
+3. Refreshers use a map to store all mutation counts and use it as affected rows to try to trigger a refresh. [automatic_stats.go?L518:10]
 4. `maybeRefreshStats` implements core logic.
-      1. Use the average full refresh time to check if too much time has passed since the last refresh. [automatic_stats.go?L817:3](https://sourcegraph.com/github.com/cockroachdb/cockroach@6d7d8415f112fc478779bf2868be2385237030da/-/blob/pkg/sql/stats/automatic_stats.go?L817:3&popover=pinned)
-      2. Use `statsFractionStaleRows` and `statsMinStaleRows` to calculate target rows: `targetRows := int64(rowCount*statsFractionStaleRows) + statsMinStaleRows`
-      3. Generate a non-negative pseudo-random number in the half-open interval `[0,targetRows)` to check if it needs to trigger a refresh. [automatic_stats.go?L836:6](https://sourcegraph.com/github.com/cockroachdb/cockroach@6d7d8415f112fc478779bf2868be2385237030da/-/blob/pkg/sql/stats/automatic_stats.go?L836:6&popover=pinned)
-      4. Try to refresh the table. This function will execute SQL through the CRDB job framework: `CREATE STATISTICS %s FROM [%d] WITH OPTIONS THROTTLING %% AS OF SYSTEM TIME '-%s'` `automatic_stats.go?L843:14`
-      5. If it meets `ConcurrentCreateStatsError`
-         1. If it must be refreshed, then set the `rowsAffected` to 0, so that we don't force a refresh if another node has already done it.
-         2. If it is not a must-be-refreshed table, we ensure that the refresh is triggered during the next cycle by passing a very large number(`math.MaxInt32`) to the `rowsAffected`.
-5. Clean up old mutation counts. `automatic_stats.go?L540:7`
+   1. Use the average full refresh time to check if too much time has passed since the last refresh. [automatic_stats.go?L817:3]
+   2. Use `statsFractionStaleRows` and `statsMinStaleRows` to calculate target rows: `targetRows := int64(rowCount*statsFractionStaleRows) + statsMinStaleRows`
+   3. Generate a non-negative pseudo-random number in the half-open interval `[0,targetRows)` to check if it needs to trigger a refresh. [automatic_stats.go?L836:6]
+   4. Try to refresh the table. This function will execute SQL through the CRDB job framework: `CREATE STATISTICS %s FROM [%d] WITH OPTIONS THROTTLING %% AS OF SYSTEM TIME '-%s'` [automatic_stats.go?L843:14]
+   5. If it meets `ConcurrentCreateStatsError`
+      1. If it must be refreshed, then set the `rowsAffected` to 0, so that we don't force a refresh if another node has already done it.
+      2. If it is not a must-be-refreshed table, we ensure that the refresh is triggered during the next cycle by passing a very large number(`math.MaxInt32`) to the `rowsAffected`.
+5. Clean up old mutation counts. [automatic_stats.go?L540:7]
+
+[server_sql.go?L1126:2]: https://sourcegraph.com/github.com/cockroachdb/cockroach@6d7d8415f112fc478779bf2868be2385237030da/-/blob/pkg/server/server_sql.go?L1126:2&popover=pinned
+[automatic_stats.go?L438:11]: https://sourcegraph.com/github.com/cockroachdb/cockroach@6d7d8415f112fc478779bf2868be2385237030da/-/blob/pkg/sql/stats/automatic_stats.go?L438:11&popover=pinned
+[automatic_stats.go?L518:10]: https://sourcegraph.com/github.com/cockroachdb/cockroach@6d7d8415f112fc478779bf2868be2385237030da/-/blob/pkg/sql/stats/automatic_stats.go?L518:10&popover=pinned
+[automatic_stats.go?L817:3]: https://sourcegraph.com/github.com/cockroachdb/cockroach@6d7d8415f112fc478779bf2868be2385237030da/-/blob/pkg/sql/stats/automatic_stats.go?L817:3&popover=pinned
+[automatic_stats.go?L836:6]: https://sourcegraph.com/github.com/cockroachdb/cockroach@6d7d8415f112fc478779bf2868be2385237030da/-/blob/pkg/sql/stats/automatic_stats.go?L836:6&popover=pinned
+[automatic_stats.go?L843:14]: https://sourcegraph.com/github.com/cockroachdb/cockroach@6d7d8415f112fc478779bf2868be2385237030da/-/blob/pkg/sql/stats/automatic_stats.go?L843:14&popover=pinned
+[automatic_stats.go?L540:7]: https://sourcegraph.com/github.com/cockroachdb/cockroach@6d7d8415f112fc478779bf2868be2385237030da/-/blob/pkg/sql/stats/automatic_stats.go?L540:7&popover=pinned
 
 #### Frequently Asked Questions
 
@@ -213,16 +221,25 @@ The [innodb_stats_auto_recalc](https://dev.mysql.com/doc/refman/8.0/en/innodb-pa
 
 #### Implementation Details
 
-1. It uses a `recalc_pool` to store tables that need to be processed by background statistics gathering. [dict0stats_bg.cc?L87:23](https://sourcegraph.com/github.com/mysql/mysql-server@87307d4ddd88405117e3f1e51323836d57ab1f57/-/blob/storage/innobase/dict/dict0stats_bg.cc?L87:23&popover=pinned)
-2. Call `row_update_statistics_if_needed` when updating data. [row0mysql.cc?L1101:20](https://sourcegraph.com/github.com/mysql/mysql-server@87307d4ddd88405117e3f1e51323836d57ab1f57/-/blob/storage/innobase/row/row0mysql.cc?L1101:20&popover=pinned)
-      1. It uses `stat_modified_counter` to indicate how many rows have been modified since the last stats recalc. When a row is inserted, updated, or deleted, it adds to this number.
-      2. If `counter` > `n_rows` / 10 (10%), then it pushes the table into the `recalc_pool`. [row0mysql.cc?L1119:9](https://sourcegraph.com/github.com/mysql/mysql-server@87307d4ddd88405117e3f1e51323836d57ab1f57/-/blob/storage/innobase/row/row0mysql.cc?L1119:9&popover=pinned)
-      3. Call `dict_stats_recalc_pool_add` to add a table into `recalc_pool`. [dict0stats_bg.cc?L117:6](https://sourcegraph.com/github.com/mysql/mysql-server@87307d4ddd88405117e3f1e51323836d57ab1f57/-/blob/storage/innobase/dict/dict0stats_bg.cc?L117:6&popover=pinned)
-3. A thread named `dict_stats_thread` is created to collect statistics in the background. [dict0stats_bg.cc?L355:6](https://sourcegraph.com/github.com/mysql/mysql-server@87307d4ddd88405117e3f1e51323836d57ab1f57/-/blob/storage/innobase/dict/dict0stats_bg.cc?L355:6&popover=pinned)
-4. The stats thread is notified by `dict_stats_event`, it is set by `dict_stats_recalc_pool_add`. [dict0stats_bg.cc?L137:16](https://sourcegraph.com/github.com/mysql/mysql-server@87307d4ddd88405117e3f1e51323836d57ab1f57/-/blob/storage/innobase/dict/dict0stats_bg.cc?L137:16&popover=pinned)
-5. It also wakes up periodically even if not signaled. [dict0stats_bg.cc?L365:5](https://sourcegraph.com/github.com/mysql/mysql-server@87307d4ddd88405117e3f1e51323836d57ab1f57/-/blob/storage/innobase/dict/dict0stats_bg.cc?L365:5&popover=pinned)
-6. After it is notified, it calls `dict_stats_process_entry_from_recalc_pool` to get a table from the pool to recalculate the stats. [dict0stats_bg.cc?L261:13](https://sourcegraph.com/github.com/mysql/mysql-server@87307d4ddd88405117e3f1e51323836d57ab1f57/-/blob/storage/innobase/dict/dict0stats_bg.cc?L261:13&popover=pinned)
-      1. If there are a lot of small hot tables, it puts them back and picks another one in the next round.
+1. It uses a `recalc_pool` to store tables that need to be processed by background statistics gathering. [dict0stats_bg.cc?L87:23]
+2. Call `row_update_statistics_if_needed` when updating data. [row0mysql.cc?L1101:20]
+   1. It uses `stat_modified_counter` to indicate how many rows have been modified since the last stats recalc. When a row is inserted, updated, or deleted, it adds to this number.
+   2. If `counter` > `n_rows` / 10 (10%), then it pushes the table into the `recalc_pool`. [row0mysql.cc?L1119:9]
+   3. Call `dict_stats_recalc_pool_add` to add a table into `recalc_pool`. [dict0stats_bg.cc?L117:6]
+3. A thread named `dict_stats_thread` is created to collect statistics in the background. [dict0stats_bg.cc?L355:6]
+4. The stats thread is notified by `dict_stats_event`, it is set by `dict_stats_recalc_pool_add`. [dict0stats_bg.cc?L137:16]
+5. It also wakes up periodically even if not signaled. [dict0stats_bg.cc?L365:5]
+6. After it is notified, it calls `dict_stats_process_entry_from_recalc_pool` to get a table from the pool to recalculate the stats. [dict0stats_bg.cc?L261:13]
+   1. If there are a lot of small hot tables, it puts them back and picks another one in the next round.
+
+[dict0stats_bg.cc?L87:23]: https://sourcegraph.com/github.com/mysql/mysql-server@87307d4ddd88405117e3f1e51323836d57ab1f57/-/blob/storage/innobase/dict/dict0stats_bg.cc?L87:23&popover=pinned
+[row0mysql.cc?L1101:20]: https://sourcegraph.com/github.com/mysql/mysql-server@87307d4ddd88405117e3f1e51323836d57ab1f57/-/blob/storage/innobase/row/row0mysql.cc?L1101:20&popover=pinned
+[row0mysql.cc?L1119:9]: https://sourcegraph.com/github.com/mysql/mysql-server@87307d4ddd88405117e3f1e51323836d57ab1f57/-/blob/storage/innobase/row/row0mysql.cc?L1119:9&popover=pinned
+[dict0stats_bg.cc?L117:6]: https://sourcegraph.com/github.com/mysql/mysql-server@87307d4ddd88405117e3f1e51323836d57ab1f57/-/blob/storage/innobase/dict/dict0stats_bg.cc?L117:6&popover=pinned
+[dict0stats_bg.cc?L355:6]: https://sourcegraph.com/github.com/mysql/mysql-server@87307d4ddd88405117e3f1e51323836d57ab1f57/-/blob/storage/innobase/dict/dict0stats_bg.cc?L355:6&popover=pinned
+[dict0stats_bg.cc?L137:16]: https://sourcegraph.com/github.com/mysql/mysql-server@87307d4ddd88405117e3f1e51323836d57ab1f57/-/blob/storage/innobase/dict/dict0stats_bg.cc?L137:16&popover=pinned
+[dict0stats_bg.cc?L365:5]: https://sourcegraph.com/github.com/mysql/mysql-server@87307d4ddd88405117e3f1e51323836d57ab1f57/-/blob/storage/innobase/dict/dict0stats_bg.cc?L365:5&popover=pinned
+[dict0stats_bg.cc?L261:13]: https://sourcegraph.com/github.com/mysql/mysql-server@87307d4ddd88405117e3f1e51323836d57ab1f57/-/blob/storage/innobase/dict/dict0stats_bg.cc?L261:13&popover=pinned
 
 #### Frequently Asked Questions
 
