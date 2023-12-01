@@ -238,4 +238,4 @@ For example, if your table contains 2 million rows, then the calculation is the 
 
 ## Unresolved Questions
 
-What parts of the design are still to be determined?
+None
