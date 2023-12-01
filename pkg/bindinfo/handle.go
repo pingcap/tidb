@@ -103,6 +103,7 @@ func (h *BindHandle) setCache(c *bindCache) {
 // Reset is to reset the BindHandle and clean old info.
 func (h *BindHandle) Reset(ctx sessionctx.Context) {
 	h.sctx.Context = ctx
+	h.lastUpdateTime.Store(types.ZeroTimestamp)
 	h.invalidBindRecordMap.Value.Store(make(map[string]*bindRecordUpdate))
 	h.invalidBindRecordMap.flushFunc = func(record *BindRecord) error {
 		_, err := h.DropGlobalBinding(record.OriginalSQL, record.Db, &record.Bindings[0])
