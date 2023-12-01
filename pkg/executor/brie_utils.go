@@ -112,7 +112,7 @@ func BRIECreateTable(
 	return d.CreateTableWithInfo(sctx, dbName, table, append(cs, ddl.OnExistIgnore)...)
 }
 
-// BRIECreateTable creates the tables with OnExistIgnore option in batch
+// BRIECreateTables creates the tables with OnExistIgnore option in batch
 func BRIECreateTables(
 	sctx sessionctx.Context,
 	tables map[string][]*model.TableInfo,
