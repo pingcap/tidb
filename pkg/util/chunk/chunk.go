@@ -378,16 +378,6 @@ func (c *Chunk) GetRow(idx int) Row {
 	return Row{c: c, idx: idx}
 }
 
-// GetRowNoSel gets row without considering the sel
-func (c *Chunk) GetRowNoSel(idx int) Row {
-	return Row{c: c, idx: idx}
-}
-
-// GetRowWithSel gets the Row in the chunk with sel
-func (c *Chunk) GetRowWithSel(idx int) Row {
-	return Row{c: c, idx: c.sel[idx]}
-}
-
 // AppendRow appends a row to the chunk.
 func (c *Chunk) AppendRow(row Row) {
 	c.AppendPartialRow(0, row)

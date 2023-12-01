@@ -24,8 +24,6 @@ type StringSetWithMemoryUsage struct {
 	StringSet
 	bInMap int64
 
-	totalMemUsed int64
-
 	// For tracking large memory usage in time.
 	// If tracker is non-nil, memDelta will track immediately and reset to 0. Otherwise, memDelta will return and lazy track.
 	tracker *memory.Tracker
@@ -56,17 +54,7 @@ func (s *StringSetWithMemoryUsage) Insert(val string) (memDelta int64) {
 			memDelta = 0
 		}
 	}
-
-	s.totalMemUsed += memDelta
 	return memDelta
-}
-
-// Reset clears all data
-func (s *StringSetWithMemoryUsage) Reset(tracker *memory.Tracker) {
-	s.StringSet = make(StringSet, 0)
-	s.bInMap = 0
-	tracker.Consume(-s.totalMemUsed)
-	s.totalMemUsed = 0
 }
 
 // SetTracker sets memory tracker for StringSetWithMemoryUsage
