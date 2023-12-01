@@ -362,6 +362,7 @@ func (d *BaseDispatcher) onRunning() error {
 func (d *BaseDispatcher) onFinished() error {
 	metrics.UpdateMetricsForFinishTask(d.Task)
 	logutil.Logger(d.logCtx).Debug("schedule task, task is finished", zap.Stringer("state", d.Task.State))
+	TestSyncChan <- struct{}{}
 	return d.taskMgr.TransferSubTasks2History(d.ctx, d.Task.ID)
 }
 

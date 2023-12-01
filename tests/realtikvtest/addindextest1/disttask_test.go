@@ -127,6 +127,27 @@ func TestAddIndexDistCancel(t *testing.T) {
 	tk.MustExec(`set global tidb_enable_dist_task=0;`)
 }
 
+// ywq todo
+func TestBatch(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	if store.Name() != "TiKV" {
+		t.Skip("TiKV store only")
+	}
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists test;")
+	tk.MustExec("create database test;")
+	tk.MustExec("use test;")
+	tk.MustExec(`set global tidb_enable_dist_task=1;`)
+
+	tk.MustExec("create table t(a bigint primary key);")
+	tk.MustExec("insert into t values (1);")
+	tk.MustExec("create table t2(a bigint primary key);")
+	tk.MustExec("batch on t.a limit 1 async insert into t2 select * from t;")
+
+	<-dispatcher.TestSyncChan
+}
+
 func TestAddIndexDistPauseAndResume(t *testing.T) {
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	if store.Name() != "TiKV" {
