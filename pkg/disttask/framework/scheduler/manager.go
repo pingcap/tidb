@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/disttask/framework/alloctor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -45,7 +46,8 @@ var (
 
 // ManagerBuilder is used to build a Manager.
 type ManagerBuilder struct {
-	newPool func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error)
+	newPool      func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error)
+	slotAlloctor alloctor.Alloctor
 }
 
 // NewManagerBuilder creates a new ManagerBuilder.
@@ -73,12 +75,13 @@ type Manager struct {
 		handlingTasks map[int64]context.CancelCauseFunc
 	}
 	// id, it's the same as server id now, i.e. host:port.
-	id      string
-	wg      tidbutil.WaitGroupWrapper
-	ctx     context.Context
-	cancel  context.CancelFunc
-	logCtx  context.Context
-	newPool func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error)
+	id          string
+	wg          tidbutil.WaitGroupWrapper
+	ctx         context.Context
+	cancel      context.CancelFunc
+	logCtx      context.Context
+	newPool     func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error)
+	slotManager *slotManager
 }
 
 // BuildManager builds a Manager.
@@ -88,6 +91,10 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 		taskTable: taskTable,
 		logCtx:    logutil.WithFields(context.Background()),
 		newPool:   b.newPool,
+		slotManager: &slotManager{
+			schedulerSlotInfos: make([]slotInfo, 0),
+			slotAlloctor:       b.slotAlloctor,
+		},
 	}
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.mu.handlingTasks = make(map[int64]context.CancelCauseFunc)
@@ -118,10 +125,18 @@ func (m *Manager) initMeta() (err error) {
 	return err
 }
 
+func (m *Manager) initSlotManager() error {
+	return m.slotManager.init(m.ctx, m.taskTable)
+}
+
 // Start starts the Manager.
 func (m *Manager) Start() error {
 	logutil.Logger(m.logCtx).Debug("manager start")
 	if err := m.initMeta(); err != nil {
+		return err
+	}
+
+	if err := m.initSlotManager(); err != nil {
 		return err
 	}
 
@@ -198,6 +213,7 @@ func (m *Manager) onRunnableTasks(tasks []*proto.Task) {
 	}
 	tasks = m.filterAlreadyHandlingTasks(tasks)
 	for _, task := range tasks {
+		// TODO: check slot enough
 		exist, err := m.taskTable.HasSubtasksInStates(m.ctx, m.id, task.ID, task.Step,
 			proto.TaskStatePending, proto.TaskStateRevertPending,
 			// for the case that the tidb is restarted when the subtask is running.
@@ -211,6 +227,8 @@ func (m *Manager) onRunnableTasks(tasks []*proto.Task) {
 			continue
 		}
 		logutil.Logger(m.logCtx).Info("detect new subtask", zap.Int64("task-id", task.ID))
+
+		// TODO: update slot info(increase)
 		m.addHandlingTask(task.ID)
 		t := task
 		err = m.schedulerPool.Run(func() {
@@ -219,6 +237,7 @@ func (m *Manager) onRunnableTasks(tasks []*proto.Task) {
 		})
 		// pool closed.
 		if err != nil {
+			// TODO: updaete slot info(decrease)
 			m.removeHandlingTask(task.ID)
 			m.logErr(err)
 			return
