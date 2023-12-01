@@ -270,7 +270,7 @@ func (bc *litBackendCtx) ShouldSync(mode FlushMode) (shouldFlush bool, shouldImp
 		shouldFlush = true
 	} else {
 		interval := bc.updateInterval
-		failpoint.Inject("mockSyncInterval", func(val failpoint.Value) {
+		failpoint.Inject("mockSyncIntervalMs", func(val failpoint.Value) {
 			if v, ok := val.(int); ok {
 				interval = time.Duration(v) * time.Millisecond
 			}
