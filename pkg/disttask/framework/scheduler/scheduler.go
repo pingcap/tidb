@@ -233,9 +233,9 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) (resErr error
 			failpoint.Inject("breakInSchedulerUT", func() {
 				failpoint.Break()
 			})
-			newTask, err := s.taskTable.GetGlobalTaskByID(runCtx, task.ID)
+			newTask, err := s.taskTable.GetTaskByID(runCtx, task.ID)
 			if err != nil {
-				logutil.Logger(s.logCtx).Warn("GetGlobalTaskByID meets error", zap.Error(err))
+				logutil.Logger(s.logCtx).Warn("GetTaskByID meets error", zap.Error(err))
 				continue
 			}
 			// When the task move to next step or task state changes, the scheduler should exit.
@@ -349,9 +349,9 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, executor execute.Subtask
 			if err != nil {
 				logutil.BgLogger().Error("get task manager failed", zap.Error(err))
 			} else {
-				err = mgr.CancelGlobalTask(ctx, int64(taskID))
+				err = mgr.CancelTask(ctx, int64(taskID))
 				if err != nil {
-					logutil.BgLogger().Error("cancel global task failed", zap.Error(err))
+					logutil.BgLogger().Error("cancel task failed", zap.Error(err))
 				}
 			}
 		}
@@ -574,7 +574,7 @@ func (s *BaseScheduler) finishSubtask(ctx context.Context, subtask *proto.Subtas
 	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
 	err := handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
-			return true, s.taskTable.FinishSubtask(ctx, subtask.SchedulerID, subtask.ID, subtask.Meta)
+			return true, s.taskTable.FinishSubtask(ctx, subtask.ExecID, subtask.ID, subtask.Meta)
 		},
 	)
 	if err != nil {
@@ -585,7 +585,7 @@ func (s *BaseScheduler) finishSubtask(ctx context.Context, subtask *proto.Subtas
 func (s *BaseScheduler) updateSubtaskStateAndError(ctx context.Context, subtask *proto.Subtask, state proto.TaskState, subTaskErr error) {
 	metrics.DecDistTaskSubTaskCnt(subtask)
 	metrics.EndDistTaskSubTask(subtask)
-	s.updateSubtaskStateAndErrorImpl(ctx, subtask.SchedulerID, subtask.ID, state, subTaskErr)
+	s.updateSubtaskStateAndErrorImpl(ctx, subtask.ExecID, subtask.ID, state, subTaskErr)
 	subtask.State = state
 	metrics.IncDistTaskSubTaskCnt(subtask)
 	if !subtask.IsFinished() {
