@@ -1503,7 +1503,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 			processedKeys = 1
 		}
 		currentScanRatio := execDetail.ScanDetail.RocksdbKeySkippedCount / uint64(processedKeys)
-		if currentScanRatio > expensiveRatio {
+		if currentScanRatio >= expensiveRatio {
 			isExpensiveScan = true
 			execDetail.ScanExpensiveRatio = currentScanRatio
 		}
