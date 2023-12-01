@@ -2698,11 +2698,16 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 		PartitionName:    task.PartitionName,
 		SampleRateReason: sampleRateReason,
 	}
-
+	var concurrency int
+	if b.ctx.GetSessionVars().InRestrictedSQL {
+		concurrency = b.ctx.GetSessionVars().DistSQLScanConcurrency()
+	} else {
+		concurrency = b.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
+	}
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
-		concurrency: b.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency(),
+		concurrency: concurrency,
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeFullSampling,
 			Flags:          sc.PushDownFlags(),
@@ -2832,11 +2837,16 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(
 	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
 		startTS = uint64(val.(int))
 	})
-
+	var concurrency int
+	if b.ctx.GetSessionVars().InRestrictedSQL {
+		concurrency = b.ctx.GetSessionVars().DistSQLScanConcurrency()
+	} else {
+		concurrency = b.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
+	}
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
-		concurrency: b.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency(),
+		concurrency: concurrency,
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeColumn,
 			Flags:          sc.PushDownFlags(),
