@@ -54,21 +54,24 @@ type TaskExecutor interface {
 	Rollback(context.Context, *proto.Task) error
 	Pause(context.Context, *proto.Task) error
 	Close()
+	IsRetryableError(err error) bool
 }
 
 // Extension extends the TaskExecutor.
 // each task type should implement this interface.
 type Extension interface {
 	// IsIdempotent returns whether the subtask is idempotent.
-	// when tidb restart, the subtask might be left in the running state.
+	// When tidb restart, the subtask might be left in the running state.
 	// if it's idempotent, the Executor can rerun the subtask, else
 	// the Executor will mark the subtask as failed.
 	IsIdempotent(subtask *proto.Subtask) bool
 	// GetSubtaskExecutor returns the subtask executor for the subtask.
 	// Note: summary is the summary manager of all subtask of the same type now.
 	GetSubtaskExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary) (execute.SubtaskExecutor, error)
-
-	IsRetryableErr(err error) bool
+	// IsRetryableError returns whether the error is transient.
+	// When error is transient, the framework won't mark subtasks as failed,
+	// then the TaskExecutor can load the subtask again and redo it.
+	IsRetryableError(err error) bool
 }
 
 // EmptySubtaskExecutor is an empty Executor.

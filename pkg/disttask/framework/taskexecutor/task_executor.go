@@ -30,9 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/backoff"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -601,18 +599,6 @@ func (s *BaseTaskExecutor) finishSubtaskAndUpdateState(ctx context.Context, subt
 	metrics.IncDistTaskSubTaskCnt(subtask)
 }
 
-// TODO: abstract interface for each business to implement it.
-func isRetryableError(err error) bool {
-	originErr := errors.Cause(err)
-	if tErr, ok := originErr.(*terror.Error); ok {
-		sqlErr := terror.ToSQLError(tErr)
-		_, ok := dbterror.ReorgRetryableErrCodes[sqlErr.Code]
-		return ok
-	}
-	// can't retry Unknown err
-	return false
-}
-
 // markSubTaskCanceledOrFailed check the error type and decide the subtasks' state.
 // 1. Only cancel subtasks when meet ErrCancelSubtask.
 // 2. Only fail subtasks when meet non retryable error.
@@ -623,7 +609,7 @@ func (s *BaseTaskExecutor) markSubTaskCanceledOrFailed(ctx context.Context, subt
 		if ctx.Err() != nil && context.Cause(ctx) == ErrCancelSubtask {
 			logutil.Logger(s.logCtx).Warn("subtask canceled", zap.Error(err))
 			s.updateSubtaskStateAndError(s.ctx, subtask, proto.TaskStateCanceled, nil)
-		} else if s.IsRetryableErr(err) {
+		} else if s.IsRetryableError(err) {
 			logutil.Logger(s.logCtx).Warn("met retryable error", zap.Error(err))
 		} else if common.IsContextCanceledError(err) {
 			logutil.Logger(s.logCtx).Info("met context canceled for gracefully shutdown", zap.Error(err))
