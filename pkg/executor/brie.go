@@ -100,7 +100,7 @@ func (p *brieTaskProgress) Close() {
 	p.lock.Lock()
 	current := atomic.LoadInt64(&p.current)
 	if current < p.total {
-		p.cmd = fmt.Sprintf("%s Cacneled", p.cmd)
+		p.cmd = fmt.Sprintf("%s Cancelled", p.cmd)
 	}
 	atomic.StoreInt64(&p.current, p.total)
 	p.lock.Unlock()
@@ -744,6 +744,8 @@ func (gs *tidbGlueSession) CreateTables(_ context.Context,
 
 // CreatePlacementPolicy implements glue.Session
 func (gs *tidbGlueSession) CreatePlacementPolicy(_ context.Context, policy *model.PolicyInfo) error {
+	originQueryString := gs.se.Value(sessionctx.QueryString)
+	defer gs.se.SetValue(sessionctx.QueryString, originQueryString)
 	gs.se.SetValue(sessionctx.QueryString, ConstructResultOfShowCreatePlacementPolicy(policy))
 	d := domain.GetDomain(gs.se).DDL()
 	// the default behaviour is ignoring duplicated policy during restore.

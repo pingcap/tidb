@@ -16,6 +16,7 @@ package executor_test
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"testing"
 
@@ -24,6 +25,8 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -218,4 +221,102 @@ func TestSplitBatchCreateTableFailWithEntryTooLarge(t *testing.T) {
 	require.True(t, kv.ErrEntryTooLarge.Equal(err))
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/RestoreBatchCreateTableEntryTooLarge"))
+}
+
+func TestBRIECreateDatabase(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists db_1")
+	tk.MustExec("drop database if exists db_1")
+
+	d := dom.DDL()
+	require.NotNil(t, d)
+
+	sctx := tk.Session()
+	originQueryString := sctx.Value(sessionctx.QueryString)
+	schema1 := &model.DBInfo{
+		ID:      1230,
+		Name:    model.NewCIStr("db_1"),
+		Charset: "utf8mb4",
+		Collate: "utf8mb4_bin",
+		State:   model.StatePublic,
+	}
+	err := executor.BRIECreateDatabase(sctx, schema1, "/* from test */")
+	require.NoError(t, err)
+
+	schema2 := &model.DBInfo{
+		ID:      1240,
+		Name:    model.NewCIStr("db_2"),
+		Charset: "utf8mb4",
+		Collate: "utf8mb4_bin",
+		State:   model.StatePublic,
+	}
+	err = executor.BRIECreateDatabase(sctx, schema2, "")
+	require.NoError(t, err)
+	require.Equal(t, originQueryString, sctx.Value(sessionctx.QueryString))
+	tk.MustExec("use db_1")
+	tk.MustExec("use db_2")
+}
+
+func mockTableInfo(t *testing.T, sctx sessionctx.Context, createSQL string) *model.TableInfo {
+	node, err := parser.New().ParseOneStmt(createSQL, "", "")
+	require.NoError(t, err)
+	info, err := ddl.MockTableInfo(sctx, node.(*ast.CreateTableStmt), 1)
+	require.NoError(t, err)
+	info.State = model.StatePublic
+	return info
+}
+
+func TestBRIECreateTable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists table_1")
+	tk.MustExec("drop table if exists table_2")
+
+	d := dom.DDL()
+	require.NotNil(t, d)
+
+	sctx := tk.Session()
+	originQueryString := sctx.Value(sessionctx.QueryString)
+	dbName := model.NewCIStr("test")
+	tableInfo := mockTableInfo(t, sctx, "create table test.table_1 (a int primary key, b json, c varchar(20))")
+	tableInfo.ID = 1230
+	err := executor.BRIECreateTable(sctx, dbName, tableInfo, "/* from test */")
+	require.NoError(t, err)
+
+	tableInfo.ID = 1240
+	tableInfo.Name = model.NewCIStr("table_2")
+	err = executor.BRIECreateTable(sctx, dbName, tableInfo, "")
+	require.NoError(t, err)
+	require.Equal(t, originQueryString, sctx.Value(sessionctx.QueryString))
+	tk.MustExec("desc table_1")
+	tk.MustExec("desc table_2")
+}
+
+func TestBRIECreateTables(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tableInfos := make([]*model.TableInfo, 100)
+	for i := range tableInfos {
+		tk.MustExec(fmt.Sprintf("drop table if exists table_%d", i))
+	}
+
+	d := dom.DDL()
+	require.NotNil(t, d)
+
+	sctx := tk.Session()
+	originQueryString := sctx.Value(sessionctx.QueryString)
+	for i := range tableInfos {
+		tableInfos[i] = mockTableInfo(t, sctx, fmt.Sprintf("create table test.table_%d (a int primary key, b json, c varchar(20))", i))
+		tableInfos[i].ID = 1230 + int64(i)
+	}
+	err := executor.BRIECreateTables(sctx, map[string][]*model.TableInfo{"test": tableInfos}, "/* from test */")
+	require.NoError(t, err)
+
+	require.Equal(t, originQueryString, sctx.Value(sessionctx.QueryString))
+	for i := range tableInfos {
+		tk.MustExec(fmt.Sprintf("desc table_%d", i))
+	}
 }
