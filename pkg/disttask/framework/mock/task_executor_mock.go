@@ -439,3 +439,17 @@ func (mr *MockExtensionMockRecorder) IsIdempotent(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsIdempotent", reflect.TypeOf((*MockExtension)(nil).IsIdempotent), arg0)
 }
+
+// IsRetryableErr mocks base method.
+func (m *MockExtension) IsRetryableErr(arg0 error) bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsRetryableErr", arg0)
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// IsRetryableErr indicates an expected call of IsRetryableErr.
+func (mr *MockExtensionMockRecorder) IsRetryableErr(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsRetryableErr", reflect.TypeOf((*MockExtension)(nil).IsRetryableErr), arg0)
+}

@@ -67,6 +67,8 @@ type Extension interface {
 	// GetSubtaskExecutor returns the subtask executor for the subtask.
 	// Note: summary is the summary manager of all subtask of the same type now.
 	GetSubtaskExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary) (execute.SubtaskExecutor, error)
+
+	IsRetryableErr(err error) bool
 }
 
 // EmptySubtaskExecutor is an empty Executor.

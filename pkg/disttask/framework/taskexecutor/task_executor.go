@@ -623,7 +623,7 @@ func (s *BaseTaskExecutor) markSubTaskCanceledOrFailed(ctx context.Context, subt
 		if ctx.Err() != nil && context.Cause(ctx) == ErrCancelSubtask {
 			logutil.Logger(s.logCtx).Warn("subtask canceled", zap.Error(err))
 			s.updateSubtaskStateAndError(s.ctx, subtask, proto.TaskStateCanceled, nil)
-		} else if common.IsRetryableError(err) || isRetryableError(err) {
+		} else if s.IsRetryableErr(err) {
 			logutil.Logger(s.logCtx).Warn("met retryable error", zap.Error(err))
 		} else if common.IsContextCanceledError(err) {
 			logutil.Logger(s.logCtx).Info("met context canceled for gracefully shutdown", zap.Error(err))
