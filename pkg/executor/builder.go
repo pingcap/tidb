@@ -2700,6 +2700,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 	}
 	var concurrency int
 	if b.ctx.GetSessionVars().InRestrictedSQL {
+		// In restricted SQL, we use the default value of DistSQLScanConcurrency. it is copied from tidb_sysproc_scan_concurrency.
 		concurrency = b.ctx.GetSessionVars().DistSQLScanConcurrency()
 	} else {
 		concurrency = b.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
