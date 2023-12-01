@@ -207,9 +207,6 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 				}
 				r.durationReported = true
 			}
-			if r.ctx.GetSessionVars().ConnectionID > 0 {
-				return errors.Trace(errQueryInterrupted)
-			}
 			return nil
 		}
 		r.selectResp = new(tipb.SelectResponse)
