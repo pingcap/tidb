@@ -219,7 +219,7 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 			break
 		}
 		if runCtx.Err() != nil {
-			logutil.Logger(s.logCtx).Info("TaskExecutor runSubtask loop exit")
+			logutil.Logger(s.logCtx).Info("taskExecutor runSubtask loop exit")
 			break
 		}
 
@@ -396,7 +396,7 @@ func (s *BaseTaskExecutor) Rollback(ctx context.Context, task *proto.Task) error
 	s.registerCancelFunc(rollbackCancel)
 
 	s.resetError()
-	logutil.Logger(s.logCtx).Info("TaskExecutor rollback a step", zap.Any("step", task.Step))
+	logutil.Logger(s.logCtx).Info("taskExecutor rollback a step", zap.Any("step", task.Step))
 
 	// We should cancel all subtasks before rolling back
 	for {
@@ -429,7 +429,7 @@ func (s *BaseTaskExecutor) Rollback(ctx context.Context, task *proto.Task) error
 		return s.getError()
 	}
 	if subtask == nil {
-		logutil.BgLogger().Warn("TaskExecutor rollback a step, but no subtask in revert_pending state", zap.Any("step", task.Step))
+		logutil.BgLogger().Warn("taskExecutor rollback a step, but no subtask in revert_pending state", zap.Any("step", task.Step))
 		return nil
 	}
 	if subtask.State == proto.TaskStateRevertPending {
@@ -453,7 +453,7 @@ func (s *BaseTaskExecutor) Rollback(ctx context.Context, task *proto.Task) error
 
 // Pause pause the TaskExecutor's subtasks.
 func (s *BaseTaskExecutor) Pause(ctx context.Context, task *proto.Task) error {
-	logutil.Logger(s.logCtx).Info("TaskExecutor pause subtasks")
+	logutil.Logger(s.logCtx).Info("taskExecutor pause subtasks")
 	// pause all running subtasks.
 	if err := s.taskTable.PauseSubtasks(ctx, s.id, task.ID); err != nil {
 		s.onError(err)
@@ -477,7 +477,7 @@ func runSummaryCollectLoop(
 	}
 	opt, ok := taskTypes[task.Type]
 	if !ok {
-		return nil, func() {}, errors.Errorf("TaskExecutor option for type %s not found", task.Type)
+		return nil, func() {}, errors.Errorf("taskExecutor option for type %s not found", task.Type)
 	}
 	if opt.Summary != nil {
 		go opt.Summary.UpdateRowCountLoop(ctx, taskMgr)
@@ -505,7 +505,7 @@ func (s *BaseTaskExecutor) onError(err error) {
 
 	if s.mu.err == nil {
 		s.mu.err = err
-		logutil.Logger(s.logCtx).Error("TaskExecutor met first error", zap.Error(err))
+		logutil.Logger(s.logCtx).Error("taskExecutor met first error", zap.Error(err))
 	}
 
 	if s.mu.runtimeCancel != nil {
