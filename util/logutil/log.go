@@ -45,7 +45,7 @@ const (
 	// DefaultTiDBEnableSlowLog enables TiDB to log slow queries.
 	DefaultTiDBEnableSlowLog = true
 	// DefaultExpensiveScanRatio is the ratio of iterated keys and processed keys.
-	DefaultExpensiveScanRatio = 20
+	DefaultExpensiveScanRatio = 100
 )
 
 // EmptyFileLogConfig is an empty FileLogConfig.
