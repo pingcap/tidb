@@ -617,7 +617,7 @@ func job2Step(ctx context.Context, logger *zap.Logger, taskMeta *TaskMeta, step 
 		return err
 	}
 	// todo: use dispatcher.TaskHandle
-	// we might call this in scheduler later, there's no dispatcher.TaskHandle, so we use taskManager here.
+	// we might call this in taskExecutor later, there's no dispatcher.Extension, so we use taskManager here.
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
 	return handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
