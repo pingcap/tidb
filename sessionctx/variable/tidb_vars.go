@@ -258,11 +258,11 @@ const (
 	// TiDBUseAlloc indicates whether the last statement used chunk alloc
 	TiDBUseAlloc = "last_sql_use_alloc"
 
-	// TiDBInefficientScanRatio indicates whether to print the query as slow query if mvcc scanned versions/
+	// TiDBInefficientScanRatio indicates to print the query as slow query if mvcc scanned versions/
 	// processed version is larger than the ratio value.
 	TiDBInefficientScanRatio = "tidb_inefficient_scan_ratio"
 
-	// TiDBInefficientScanNum indicates whether to print the query as slow query if mvcc scanned versions
+	// TiDBInefficientScanNum indicates to print the query as slow query if mvcc scanned versions
 	// is larger than the threshold number.
 	TiDBInefficientScanNum = "tidb_inefficient_scan_num"
 )
