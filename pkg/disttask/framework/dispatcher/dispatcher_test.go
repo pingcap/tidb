@@ -271,8 +271,8 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	// test parallelism control
 	var originalConcurrency int
 	if taskCnt == 1 {
-		originalConcurrency = dispatcher.DefaultDispatchConcurrency
-		dispatcher.DefaultDispatchConcurrency = 1
+		originalConcurrency = proto.MaxConcurrentTask
+		proto.MaxConcurrentTask = 1
 	}
 
 	store := testkit.CreateMockStore(t)
@@ -293,7 +293,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 		dsp.Stop()
 		// make data race happy
 		if taskCnt == 1 {
-			dispatcher.DefaultDispatchConcurrency = originalConcurrency
+			proto.MaxConcurrentTask = originalConcurrency
 		}
 	}()
 

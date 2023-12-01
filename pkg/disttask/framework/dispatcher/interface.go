@@ -25,6 +25,19 @@ import (
 
 // TaskManager defines the interface to access task table.
 type TaskManager interface {
+	// GetTopUnfinishedTasks returns unfinished tasks, limited by MaxConcurrentTask.
+	// The returned tasks are sorted by task order, see proto.Task.
+	// The returned tasks only contains the following fields, other fields are
+	// not filled to save time:
+	// 	- ID
+	// 	- Key
+	// 	- Type
+	// 	- State
+	// 	- Step
+	// 	- Priority
+	// 	- Concurrency
+	// 	- CreateTime
+	GetTopUnfinishedTasks(ctx context.Context) ([]*proto.Task, error)
 	GetTasksInStates(ctx context.Context, states ...interface{}) (task []*proto.Task, err error)
 	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
 	UpdateTaskAndAddSubTasks(ctx context.Context, task *proto.Task, subtasks []*proto.Subtask, prevState proto.TaskState) (bool, error)
@@ -33,6 +46,8 @@ type TaskManager interface {
 	CleanUpMeta(ctx context.Context, nodes []string) error
 	TransferTasks2History(ctx context.Context, tasks []*proto.Task) error
 	CancelTask(ctx context.Context, taskID int64) error
+	// FailTask updates task state to Failed and updates task error.
+	FailTask(ctx context.Context, taskID int64, currentState proto.TaskState, taskErr error) error
 	PauseTask(ctx context.Context, taskKey string) (bool, error)
 	GetSubtaskInStatesCnt(ctx context.Context, taskID int64, states ...interface{}) (int64, error)
 	ResumeSubtasks(ctx context.Context, taskID int64) error

@@ -21,7 +21,9 @@ import (
 
 // task state machine
 //
-//		                ┌──────────────────────────────┐
+//		                            ┌────────┐
+//		                ┌───────────│resuming│◄────────┐
+//		                │           └────────┘         │
 //		                │           ┌───────┐       ┌──┴───┐
 //		                │ ┌────────►│pausing├──────►│paused│
 //		                │ │         └───────┘       └──────┘
@@ -125,6 +127,10 @@ const (
 	NormalPriority = 100
 )
 
+// MaxConcurrentTask is the max concurrency of task.
+// TODO: remove this limit later.
+var MaxConcurrentTask = 4
+
 // Task represents the task of distributed framework.
 // tasks are run in the order of: priority desc, create_time asc, id asc.
 type Task struct {
@@ -135,11 +141,14 @@ type Task struct {
 	Step  Step
 	// Priority is the priority of task, the larger value means the higher priority.
 	// valid range is [1, 1024], default is NormalPriority.
-	Priority int
+	Priority    int
+	Concurrency int
+	CreateTime  time.Time
+
+	// depends on query, below fields might not be filled.
+
 	// DispatcherID is not used now.
 	DispatcherID    string
-	Concurrency     uint64
-	CreateTime      time.Time
 	StartTime       time.Time
 	StateUpdateTime time.Time
 	Meta            []byte

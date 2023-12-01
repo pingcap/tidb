@@ -78,7 +78,7 @@ func TestTaskTable(t *testing.T) {
 	require.Equal(t, proto.TaskType("test"), task.Type)
 	require.Equal(t, proto.TaskStatePending, task.State)
 	require.Equal(t, proto.NormalPriority, task.Priority)
-	require.Equal(t, uint64(4), task.Concurrency)
+	require.Equal(t, 4, task.Concurrency)
 	require.Equal(t, proto.StepInit, task.Step)
 	require.Equal(t, []byte("test"), task.Meta)
 	require.GreaterOrEqual(t, task.CreateTime, timeBeforeCreate)

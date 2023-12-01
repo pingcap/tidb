@@ -41,9 +41,9 @@ import (
 const (
 	defaultSubtaskKeepDays = 14
 
-	taskColumns = `id, task_key, type, dispatcher_id, state, start_time, state_update_time,
-				meta, concurrency, step, error, priority, create_time`
-	subtaskColumns = `id, step, task_key, type, exec_id, state, concurrency, create_time,
+	basicTaskColumns = `id, task_key, type, state, step, priority, concurrency, create_time`
+	taskColumns      = basicTaskColumns + `, start_time, state_update_time, meta, dispatcher_id, error`
+	subtaskColumns   = `id, step, task_key, type, exec_id, state, concurrency, create_time,
 				start_time, state_update_time, meta, summary`
 	insertSubtaskBasic = `insert into mysql.tidb_background_subtask(
 				step, task_key, exec_id, meta, state, type, concurrency, create_time, checkpoint, summary) values `
@@ -111,21 +111,29 @@ func ExecSQL(ctx context.Context, se sessionctx.Context, sql string, args ...int
 	return nil, nil
 }
 
+func row2TaskBasic(r chunk.Row) *proto.Task {
+	task := &proto.Task{
+		ID:          r.GetInt64(0),
+		Key:         r.GetString(1),
+		Type:        proto.TaskType(r.GetString(2)),
+		State:       proto.TaskState(r.GetString(3)),
+		Step:        proto.Step(r.GetInt64(4)),
+		Priority:    int(r.GetInt64(5)),
+		Concurrency: int(r.GetInt64(6)),
+	}
+	task.CreateTime, _ = r.GetTime(7).GoTime(time.Local)
+	return task
+}
+
 // row2Task converts a row to a task.
 func row2Task(r chunk.Row) *proto.Task {
-	task := &proto.Task{
-		ID:           r.GetInt64(0),
-		Key:          r.GetString(1),
-		Type:         proto.TaskType(r.GetString(2)),
-		DispatcherID: r.GetString(3),
-		State:        proto.TaskState(r.GetString(4)),
-		Meta:         r.GetBytes(7),
-		Concurrency:  uint64(r.GetInt64(8)),
-		Step:         proto.Step(r.GetInt64(9)),
-		Priority:     int(r.GetInt64(11)),
-	}
-	if !r.IsNull(10) {
-		errBytes := r.GetBytes(10)
+	task := row2TaskBasic(r)
+	task.StartTime, _ = r.GetTime(8).GoTime(time.Local)
+	task.StateUpdateTime, _ = r.GetTime(9).GoTime(time.Local)
+	task.Meta = r.GetBytes(10)
+	task.DispatcherID = r.GetString(11)
+	if !r.IsNull(12) {
+		errBytes := r.GetBytes(12)
 		stdErr := errors.Normalize("")
 		err := stdErr.UnmarshalJSON(errBytes)
 		if err != nil {
@@ -135,9 +143,6 @@ func row2Task(r chunk.Row) *proto.Task {
 			task.Error = stdErr
 		}
 	}
-	task.CreateTime, _ = r.GetTime(12).GoTime(time.Local)
-	task.StartTime, _ = r.GetTime(5).GoTime(time.Local)
-	task.StateUpdateTime, _ = r.GetTime(6).GoTime(time.Local)
 	return task
 }
 
@@ -239,6 +244,31 @@ func (stm *TaskManager) GetOneTask(ctx context.Context) (task *proto.Task, err e
 	return row2Task(rs[0]), nil
 }
 
+// GetTopUnfinishedTasks implements the dispatcher.TaskManager interface.
+func (stm *TaskManager) GetTopUnfinishedTasks(ctx context.Context) (task []*proto.Task, err error) {
+	rs, err := stm.executeSQLWithNewSession(ctx,
+		`select `+basicTaskColumns+` from mysql.tidb_global_task
+		where state in (%?, %?, %?, %?, %?, %?)
+		order by priority desc, create_time asc, id asc
+		limit %?`,
+		proto.TaskStatePending,
+		proto.TaskStateRunning,
+		proto.TaskStateReverting,
+		proto.TaskStateCancelling,
+		proto.TaskStatePausing,
+		proto.TaskStateResuming,
+		proto.MaxConcurrentTask,
+	)
+	if err != nil {
+		return task, err
+	}
+
+	for _, r := range rs {
+		task = append(task, row2TaskBasic(r))
+	}
+	return task, nil
+}
+
 // GetTasksInStates gets the tasks in the states.
 func (stm *TaskManager) GetTasksInStates(ctx context.Context, states ...interface{}) (task []*proto.Task, err error) {
 	if len(states) == 0 {
@@ -325,6 +355,19 @@ func (stm *TaskManager) GetTaskByKeyWithHistory(ctx context.Context, key string)
 	}
 
 	return row2Task(rs[0]), nil
+}
+
+// FailTask implements the dispatcher.TaskManager interface.
+func (stm *TaskManager) FailTask(ctx context.Context, taskID int64, currentState proto.TaskState, taskErr error) error {
+	_, err := stm.executeSQLWithNewSession(ctx,
+		`update mysql.tidb_global_task
+			set state=%?,
+			    error = %?,
+			    state_update_time = CURRENT_TIMESTAMP()
+			where id=%? and state=%?`,
+		proto.TaskStateFailed, serializeErr(taskErr), taskID, currentState,
+	)
+	return err
 }
 
 // row2SubTask converts a row to a subtask.

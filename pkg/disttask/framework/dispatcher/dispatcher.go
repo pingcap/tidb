@@ -134,7 +134,7 @@ func (*BaseDispatcher) Init() error {
 // ExecuteTask implements the Dispatcher interface.
 func (d *BaseDispatcher) ExecuteTask() {
 	logutil.Logger(d.logCtx).Info("execute one task",
-		zap.Stringer("state", d.Task.State), zap.Uint64("concurrency", d.Task.Concurrency))
+		zap.Stringer("state", d.Task.State), zap.Int("concurrency", d.Task.Concurrency))
 	d.scheduleTask()
 }
 
@@ -571,7 +571,7 @@ func (d *BaseDispatcher) onErrHandlingStage(receiveErrs []error) error {
 		subTasks = make([]*proto.Subtask, 0, len(instanceIDs))
 		for _, id := range instanceIDs {
 			// reverting subtasks belong to the same step as current active step.
-			subTasks = append(subTasks, proto.NewSubtask(d.Task.Step, d.Task.ID, d.Task.Type, id, int(d.Task.Concurrency), []byte("{}")))
+			subTasks = append(subTasks, proto.NewSubtask(d.Task.Step, d.Task.ID, d.Task.Type, id, d.Task.Concurrency, []byte("{}")))
 		}
 	}
 	return d.updateTask(proto.TaskStateReverting, subTasks, RetrySQLTimes)
@@ -687,7 +687,11 @@ func (d *BaseDispatcher) dispatchSubTask(
 	subtaskStep proto.Step,
 	metas [][]byte,
 	serverNodes []*infosync.ServerInfo) error {
-	logutil.Logger(d.logCtx).Info("dispatch subtasks", zap.Stringer("state", d.Task.State), zap.Int64("step", int64(d.Task.Step)), zap.Uint64("concurrency", d.Task.Concurrency), zap.Int("subtasks", len(metas)))
+	logutil.Logger(d.logCtx).Info("dispatch subtasks",
+		zap.Stringer("state", d.Task.State),
+		zap.Int64("step", int64(d.Task.Step)),
+		zap.Int("concurrency", d.Task.Concurrency),
+		zap.Int("subtasks", len(metas)))
 	d.TaskNodes = make([]string, len(serverNodes))
 	for i := range serverNodes {
 		d.TaskNodes[i] = disttaskutil.GenerateExecID(serverNodes[i].IP, serverNodes[i].Port)
@@ -699,7 +703,7 @@ func (d *BaseDispatcher) dispatchSubTask(
 		pos := i % len(serverNodes)
 		instanceID := disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port)
 		logutil.Logger(d.logCtx).Debug("create subtasks", zap.String("instanceID", instanceID))
-		subTasks = append(subTasks, proto.NewSubtask(subtaskStep, d.Task.ID, d.Task.Type, instanceID, int(d.Task.Concurrency), meta))
+		subTasks = append(subTasks, proto.NewSubtask(subtaskStep, d.Task.ID, d.Task.Type, instanceID, d.Task.Concurrency, meta))
 	}
 	failpoint.Inject("cancelBeforeUpdateTask", func() {
 		_ = d.updateTask(proto.TaskStateCancelling, subTasks, RetrySQLTimes)
