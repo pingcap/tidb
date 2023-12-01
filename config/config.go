@@ -892,6 +892,7 @@ var defaultConf = Config{
 		EnableSlowLog:               *NewAtomicBool(logutil.DefaultTiDBEnableSlowLog),
 		SlowThreshold:               logutil.DefaultSlowThreshold,
 		InefficientScanRatio:        logutil.DefaultInefficientScanRatio,
+		InefficientScanNum:          logutil.DefaultInefficientScanNum,
 		RecordPlanInSlowLog:         logutil.DefaultRecordPlanInSlowLog,
 		CheckMb4ValueInUTF8:         *NewAtomicBool(true),
 		ForcePriority:               "NO_PRIORITY",
