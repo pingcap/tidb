@@ -44,8 +44,10 @@ const (
 	DefaultRecordPlanInSlowLog = 1
 	// DefaultTiDBEnableSlowLog enables TiDB to log slow queries.
 	DefaultTiDBEnableSlowLog = true
-	// DefaultExpensiveScanRatio is the ratio of iterated keys and processed keys.
-	DefaultExpensiveScanRatio = 100
+	// DefaultInefficientScanRatio is the ratio of iterated keys and processed keys when a scan is regarded as inefficient.
+	DefaultInefficientScanRatio = 100
+	// DefaultInefficientScanNum is the number of mvcc keys scanned when a scan is regarded as inefficient.
+	DefaultInefficientScanNum = 10000
 )
 
 // EmptyFileLogConfig is an empty FileLogConfig.

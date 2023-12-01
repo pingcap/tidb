@@ -35,14 +35,14 @@ import (
 // ExecDetails contains execution detail information.
 type ExecDetails struct {
 	DetailsNeedP90
-	CommitDetail       *util.CommitDetails
-	LockKeysDetail     *util.LockKeysDetails
-	ScanDetail         *util.ScanDetail
-	CopTime            time.Duration
-	BackoffTime        time.Duration
-	LockKeysDuration   time.Duration
-	RequestCount       int
-	ScanExpensiveRatio uint64
+	CommitDetail         *util.CommitDetails
+	LockKeysDetail       *util.LockKeysDetails
+	ScanDetail           *util.ScanDetail
+	CopTime              time.Duration
+	BackoffTime          time.Duration
+	LockKeysDuration     time.Duration
+	RequestCount         int
+	InEfficientScanRatio uint64
 }
 
 // DetailsNeedP90 contains execution detail information which need calculate P90.
@@ -295,8 +295,8 @@ func (d ExecDetails) String() string {
 			parts = append(parts, RocksdbBlockReadTimeStr+": "+strconv.FormatFloat(scanDetail.RocksdbBlockReadDuration.Seconds(), 'f', 3, 64))
 		}
 	}
-	if d.ScanExpensiveRatio > 0 {
-		parts = append(parts, ScanExpensiveRatio+": "+strconv.FormatUint(d.ScanExpensiveRatio, 10))
+	if d.InEfficientScanRatio > 0 {
+		parts = append(parts, ScanExpensiveRatio+": "+strconv.FormatUint(d.InEfficientScanRatio, 10))
 	}
 	return strings.Join(parts, " ")
 }

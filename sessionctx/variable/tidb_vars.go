@@ -258,9 +258,13 @@ const (
 	// TiDBUseAlloc indicates whether the last statement used chunk alloc
 	TiDBUseAlloc = "last_sql_use_alloc"
 
-	// TiDBExpensiveScanRatio indicates whether to print the query as slow query if mvcc scanned versions/
+	// TiDBInefficientScanRatio indicates whether to print the query as slow query if mvcc scanned versions/
 	// processed version is larger than the ratio value.
-	TiDBExpensiveScanRatio = "tidb_expensive_scan_ratio"
+	TiDBInefficientScanRatio = "tidb_inefficient_scan_ratio"
+
+	// TiDBInefficientScanNum indicates whether to print the query as slow query if mvcc scanned versions
+	// is larger than the threshold number.
+	TiDBInefficientScanNum = "tidb_inefficient_scan_num"
 )
 
 // TiDB system variable names that both in session and global scope.

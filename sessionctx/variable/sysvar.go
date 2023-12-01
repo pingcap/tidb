@@ -386,11 +386,17 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Instance.SlowThreshold), 10), nil
 	}},
-	{Scope: ScopeInstance, Name: TiDBExpensiveScanRatio, Value: strconv.Itoa(logutil.DefaultExpensiveScanRatio), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		atomic.StoreUint64(&config.GetGlobalConfig().Instance.ExpensiveScanRatio, uint64(TidbOptInt64(val, logutil.DefaultExpensiveScanRatio)))
+	{Scope: ScopeInstance, Name: TiDBInefficientScanRatio, Value: strconv.Itoa(logutil.DefaultInefficientScanRatio), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		atomic.StoreUint64(&config.GetGlobalConfig().Instance.InefficientScanRatio, uint64(TidbOptInt64(val, logutil.DefaultInefficientScanRatio)))
 		return nil
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Instance.ExpensiveQueryTimeThreshold), 10), nil
+		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Instance.InefficientScanRatio), 10), nil
+	}},
+	{Scope: ScopeInstance, Name: TiDBInefficientScanNum, Value: strconv.Itoa(logutil.DefaultInefficientScanNum), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		atomic.StoreUint64(&config.GetGlobalConfig().Instance.InefficientScanNum, uint64(TidbOptInt64(val, logutil.DefaultInefficientScanNum)))
+		return nil
+	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Instance.InefficientScanNum), 10), nil
 	}},
 	{Scope: ScopeInstance, Name: TiDBRecordPlanInSlowLog, Value: int32ToBoolStr(logutil.DefaultRecordPlanInSlowLog), Type: TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		atomic.StoreUint32(&config.GetGlobalConfig().Instance.RecordPlanInSlowLog, uint32(TidbOptInt64(val, logutil.DefaultRecordPlanInSlowLog)))
