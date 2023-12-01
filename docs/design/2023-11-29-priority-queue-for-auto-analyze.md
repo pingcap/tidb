@@ -209,7 +209,7 @@ You can configure automatic statistics collection on a per-table basis.
 
    Because CRDB has a scheduled job framework, it depends on the executor and scheduler.
 
-   For an auto-analysis job, it has an inline executor, it simply executes the job's SQL in a txn. Method [ExecuteJob (executor_impl.go?L40:38](https://sourcegraph.com/github.com/cockroachdb/cockroach@6d7d8415f112fc478779bf2868be2385237030da/-/blob/pkg/jobs/executor_impl.go?L40:38&popover=pinned)
+   For an auto-analysis job, it has an inline executor, it simply executes the job's SQL in a txn. Method [ExecuteJob (executor_impl.go?L40:38)](https://sourcegraph.com/github.com/cockroachdb/cockroach@6d7d8415f112fc478779bf2868be2385237030da/-/blob/pkg/jobs/executor_impl.go?L40:38&popover=pinned)
 
    The scheduler logic: In short, each node will start a scheduled job execution daemon to attempt to retrieve an executable task from the job queue for execution. Each node has a maximum number of runnable tasks.
 
