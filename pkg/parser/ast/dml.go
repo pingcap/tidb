@@ -2631,6 +2631,11 @@ const (
 	DryRunSplitDml
 )
 
+const (
+	Sync = iota
+	Async
+)
+
 type ShardableDMLStmt = interface {
 	StmtNode
 	WhereExpr() ExprNode
@@ -2646,6 +2651,7 @@ var _ ShardableDMLStmt = &InsertStmt{}
 type NonTransactionalDMLStmt struct {
 	dmlNode
 
+	Sync        int
 	DryRun      int         // 0: no dry run, 1: dry run the query, 2: dry run split DMLs
 	ShardColumn *ColumnName // if it's nil, the handle column is automatically chosen for it
 	Limit       uint64
@@ -2664,6 +2670,9 @@ func (n *NonTransactionalDMLStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WriteKeyWord("LIMIT ")
 	ctx.WritePlainf("%d ", n.Limit)
+	if n.Sync == Async {
+		ctx.WriteKeyWord("ASYNC ")
+	}
 	if n.DryRun == DryRunSplitDml {
 		ctx.WriteKeyWord("DRY RUN ")
 	}
