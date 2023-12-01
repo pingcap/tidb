@@ -25,6 +25,7 @@ go_test(
     ],
     flaky = True,
     deps = [
+        ":extractorhandler",
         "//pkg/config",
         "//pkg/metrics",
         "//pkg/server",
