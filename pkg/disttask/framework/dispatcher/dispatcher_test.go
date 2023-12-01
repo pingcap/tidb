@@ -212,6 +212,9 @@ func TestGetInstance(t *testing.T) {
 	}
 	err = mgr.CreateSubTask(ctx, task.ID, proto.StepInit, subtask.ExecID, nil, subtask.Type, true)
 	require.NoError(t, err)
+	instanceIDs, err = dsp.GetAllTaskExecutorIDs(ctx, task)
+	require.NoError(t, err)
+	require.Len(t, instanceIDs, len(serverIDs))
 	require.ElementsMatch(t, instanceIDs, serverIDs)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockTaskExecutorNodes"))
 }
