@@ -25,7 +25,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-<<<<<<< HEAD:executor/executor_failpoint_test.go
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/parser/terror"
@@ -34,18 +33,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/deadlockhistory"
-=======
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/store/copr"
-	"github.com/pingcap/tidb/pkg/store/helper"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
->>>>>>> 084717902b8 (*: handle region error for GetMvccByEncodedKey API (#47811)):pkg/executor/executor_failpoint_test.go
 	"github.com/stretchr/testify/require"
 )
 
@@ -568,101 +555,3 @@ func TestDeadlocksTable(t *testing.T) {
 			id2+"/2022-06-11 02:03:04.987654/1/203/<nil>/<nil>/<nil>/<nil>/201",
 		))
 }
-<<<<<<< HEAD:executor/executor_failpoint_test.go
-=======
-
-func TestTiKVClientReadTimeout(t *testing.T) {
-	if *testkit.WithTiKV != "" {
-		t.Skip("skip test since it's only work for unistore")
-	}
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int primary key, b int)")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCDeadlineExceeded", `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCDeadlineExceeded"))
-	}()
-	// Test for point_get request
-	rows := tk.MustQuery("explain analyze select /*+ set_var(tikv_client_read_timeout=1) */ * from t where a = 1").Rows()
-	require.Len(t, rows, 1)
-	explain := fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*Point_Get.* Get:{num_rpc:2, total_time:.*", explain)
-
-	// Test for batch_point_get request
-	rows = tk.MustQuery("explain analyze select /*+ set_var(tikv_client_read_timeout=1) */ * from t where a in (1,2)").Rows()
-	require.Len(t, rows, 1)
-	explain = fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*Batch_Point_Get.* BatchGet:{num_rpc:2, total_time:.*", explain)
-
-	// Test for cop request
-	rows = tk.MustQuery("explain analyze select /*+ set_var(tikv_client_read_timeout=1) */ * from t where b > 1").Rows()
-	require.Len(t, rows, 3)
-	explain = fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .* rpc_num: 2.*", explain)
-
-	// Test for stale read.
-	tk.MustExec("set @a=now(6);")
-	tk.MustExec("set @@tidb_replica_read='closest-replicas';")
-	rows = tk.MustQuery("explain analyze select /*+ set_var(tikv_client_read_timeout=1) */ * from t as of timestamp(@a) where b > 1").Rows()
-	require.Len(t, rows, 3)
-	explain = fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .* rpc_num: 2.*", explain)
-
-	// Test for tikv_client_read_timeout session variable.
-	tk.MustExec("set @@tikv_client_read_timeout=1;")
-	// Test for point_get request
-	rows = tk.MustQuery("explain analyze select * from t where a = 1").Rows()
-	require.Len(t, rows, 1)
-	explain = fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*Point_Get.* Get:{num_rpc:2, total_time:.*", explain)
-
-	// Test for batch_point_get request
-	rows = tk.MustQuery("explain analyze select * from t where a in (1,2)").Rows()
-	require.Len(t, rows, 1)
-	explain = fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*Batch_Point_Get.* BatchGet:{num_rpc:2, total_time:.*", explain)
-
-	// Test for cop request
-	rows = tk.MustQuery("explain analyze select * from t where b > 1").Rows()
-	require.Len(t, rows, 3)
-	explain = fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .* rpc_num: 2.*", explain)
-
-	// Test for stale read.
-	tk.MustExec("set @a=now(6);")
-	tk.MustExec("set @@tidb_replica_read='closest-replicas';")
-	rows = tk.MustQuery("explain analyze select * from t as of timestamp(@a) where b > 1").Rows()
-	require.Len(t, rows, 3)
-	explain = fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .* rpc_num: 2.*", explain)
-}
-
-func TestGetMvccByEncodedKeyRegionError(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	h := helper.NewHelper(store.(helper.Storage))
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMeta(txn)
-	schemaVersion := tk.Session().GetDomainInfoSchema().SchemaMetaVersion()
-	key := m.EncodeSchemaDiffKey(schemaVersion)
-
-	resp, err := h.GetMvccByEncodedKey(key)
-	require.NoError(t, err)
-	require.NotNil(t, resp.Info)
-	require.Equal(t, 1, len(resp.Info.Writes))
-	require.Less(t, uint64(0), resp.Info.Writes[0].CommitTs)
-	commitTs := resp.Info.Writes[0].CommitTs
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/epochNotMatch", "2*return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/epochNotMatch"))
-	}()
-	resp, err = h.GetMvccByEncodedKey(key)
-	require.NoError(t, err)
-	require.NotNil(t, resp.Info)
-	require.Equal(t, 1, len(resp.Info.Writes))
-	require.Equal(t, commitTs, resp.Info.Writes[0].CommitTs)
-}
->>>>>>> 084717902b8 (*: handle region error for GetMvccByEncodedKey API (#47811)):pkg/executor/executor_failpoint_test.go
