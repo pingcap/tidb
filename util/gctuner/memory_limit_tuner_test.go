@@ -59,26 +59,10 @@ func TestGlobalMemoryTuner(t *testing.T) {
 	GlobalMemoryLimitTuner.UpdateMemoryLimit()
 	require.True(t, GlobalMemoryLimitTuner.isValidValueSet.Load())
 	defer func() {
-<<<<<<< HEAD:util/gctuner/memory_limit_tuner_test.go
 		time.Sleep(1 * time.Second) // If test.count > 1, wait tuning finished.
 		require.True(t, GlobalMemoryLimitTuner.isTuning.Load())
 		require.False(t, GlobalMemoryLimitTuner.waitingReset.Load())
 		require.Equal(t, GlobalMemoryLimitTuner.nextGCTriggeredByMemoryLimit.Load(), false)
-=======
-		// If test.count > 1, wait tuning finished.
-		require.Eventually(t, func() bool {
-			//nolint: all_revive
-			return GlobalMemoryLimitTuner.isValidValueSet.Load()
-		}, 5*time.Second, 100*time.Millisecond)
-		require.Eventually(t, func() bool {
-			//nolint: all_revive
-			return !GlobalMemoryLimitTuner.adjustPercentageInProgress.Load()
-		}, 5*time.Second, 100*time.Millisecond)
-		require.Eventually(t, func() bool {
-			//nolint: all_revive
-			return !GlobalMemoryLimitTuner.nextGCTriggeredByMemoryLimit.Load()
-		}, 5*time.Second, 100*time.Millisecond)
->>>>>>> df623ac5961 (pkg/util: refine tidb_server_memory_limit to make the cpu usage more stable (#48927)):pkg/util/gctuner/memory_limit_tuner_test.go
 	}()
 
 	allocator := &mockAllocator{}
@@ -104,11 +88,6 @@ func TestGlobalMemoryTuner(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	require.True(t, GlobalMemoryLimitTuner.waitingReset.Load())
 	require.True(t, gcNum < getNowGCNum())
-=======
-	require.Eventually(t, func() bool {
-		return GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() && gcNum < getNowGCNum()
-	}, 5*time.Second, 100*time.Millisecond)
->>>>>>> df623ac5961 (pkg/util: refine tidb_server_memory_limit to make the cpu usage more stable (#48927)):pkg/util/gctuner/memory_limit_tuner_test.go
 	// Test waiting for reset
 	time.Sleep(500 * time.Millisecond)
 	require.Equal(t, GlobalMemoryLimitTuner.calcMemoryLimit(fallbackPercentage), debug.SetMemoryLimit(-1))

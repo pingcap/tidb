@@ -72,11 +72,6 @@ func (t *memoryLimitTuner) tuning() {
 				memory.MemoryLimitGCTotal.Add(1)
 				debug.SetMemoryLimit(t.calcMemoryLimit(fallbackPercentage))
 				resetInterval := 1 * time.Minute // Wait 1 minute and set back, to avoid frequent GC
-<<<<<<< HEAD:util/gctuner/memory_limit_tuner.go
-=======
-				if intest.InTest {
-					resetInterval = 3 * time.Second
-				}
 				failpoint.Inject("mockUpdateGlobalVarDuringAdjustPercentage", func(val failpoint.Value) {
 					if val, ok := val.(bool); val && ok {
 						resetInterval = 5 * time.Second
@@ -84,7 +79,6 @@ func (t *memoryLimitTuner) tuning() {
 						t.UpdateMemoryLimit()
 					}
 				})
->>>>>>> df623ac5961 (pkg/util: refine tidb_server_memory_limit to make the cpu usage more stable (#48927)):pkg/util/gctuner/memory_limit_tuner.go
 				failpoint.Inject("testMemoryLimitTuner", func(val failpoint.Value) {
 					if val, ok := val.(bool); val && ok {
 						resetInterval = 1 * time.Second
