@@ -60,8 +60,8 @@ func TestGlobalMemoryTuner(t *testing.T) {
 	require.True(t, GlobalMemoryLimitTuner.isValidValueSet.Load())
 	defer func() {
 		time.Sleep(1 * time.Second) // If test.count > 1, wait tuning finished.
-		require.True(t, GlobalMemoryLimitTuner.isTuning.Load())
-		require.False(t, GlobalMemoryLimitTuner.waitingReset.Load())
+		require.True(t, GlobalMemoryLimitTuner.isValidValueSet.Load())
+		require.False(t, GlobalMemoryLimitTuner.adjustPercentageInProgress.Load())
 		require.Equal(t, GlobalMemoryLimitTuner.nextGCTriggeredByMemoryLimit.Load(), false)
 	}()
 
@@ -84,9 +84,8 @@ func TestGlobalMemoryTuner(t *testing.T) {
 	gcNum := getNowGCNum()
 
 	memory210mb := allocator.alloc(210 << 20)
-<<<<<<< HEAD:util/gctuner/memory_limit_tuner_test.go
 	time.Sleep(100 * time.Millisecond)
-	require.True(t, GlobalMemoryLimitTuner.waitingReset.Load())
+	require.True(t, GlobalMemoryLimitTuner.adjustPercentageInProgress.Load())
 	require.True(t, gcNum < getNowGCNum())
 	// Test waiting for reset
 	time.Sleep(500 * time.Millisecond)
