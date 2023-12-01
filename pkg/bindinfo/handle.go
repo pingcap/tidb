@@ -48,29 +48,6 @@ type BindHandle struct {
 		sessionctx.Context
 	}
 
-	// bindInfo caches the sql bind info from storage.
-	//
-	// The Mutex protects that there is only one goroutine changes the content
-	// of atomic.Value.
-	//
-	// NOTE: Concurrent Value Write:
-	//
-	//    bindInfo.Lock()
-	//    newCache := bindInfo.Value.Load()
-	//    do the write operation on the newCache
-	//    bindInfo.Value.Store(newCache)
-	//    bindInfo.Unlock()
-	//
-	// NOTE: Concurrent Value Read:
-	//
-	//    cache := bindInfo.Load().
-	//    read the content
-	//
-	//bindInfo struct {
-	//	sync.Mutex
-	//	atomic.Value
-	//}
-
 	bindingCache atomic.Value
 
 	// lastUpdateTime records the last update time for the global sql bind cache.
