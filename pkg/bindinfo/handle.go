@@ -50,9 +50,9 @@ type BindHandle struct {
 
 	bindingCache atomic.Pointer[bindCache]
 
-	// lastUpdateTime records the last update time for the global sql bind cache.
+	// lastTaskTime records the last update time for the global sql bind cache.
 	// This value is used to avoid reload duplicated bindings from storage.
-	lastUpdateTime types.Time
+	lastUpdateTime atomic.Value
 
 	// invalidBindRecordMap indicates the invalid bind records found during querying.
 	// A record will be deleted from this map, after 2 bind-lease, after it is dropped from the kv.
@@ -112,9 +112,17 @@ func (h *BindHandle) Reset(ctx sessionctx.Context) {
 	variable.RegisterStatistics(h)
 }
 
+func (h *BindHandle) getLastUpdateTime() types.Time {
+	return h.lastUpdateTime.Load().(types.Time)
+}
+
+func (h *BindHandle) setLastUpdateTime(t types.Time) {
+	h.lastUpdateTime.Store(t)
+}
+
 // Update updates the global sql bind cache.
 func (h *BindHandle) Update(fullLoad bool) (err error) {
-	lastUpdateTime := h.lastUpdateTime
+	lastUpdateTime := h.getLastUpdateTime()
 	var timeCondition string
 	if !fullLoad {
 		timeCondition = fmt.Sprintf("WHERE update_time>'%s'", lastUpdateTime.String())
@@ -133,7 +141,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 
 	newCache, memExceededErr := h.getCache().Copy()
 	defer func() {
-		h.lastUpdateTime = lastUpdateTime
+		h.setLastUpdateTime(lastUpdateTime)
 		h.setCache(newCache) // TODO: update it in place
 	}()
 
@@ -819,7 +827,7 @@ func (*paramMarkerChecker) Leave(in ast.Node) (ast.Node, bool) {
 // Clear resets the bind handle. It is only used for test.
 func (h *BindHandle) Clear() {
 	h.setCache(newBindCache())
-	h.lastUpdateTime = types.ZeroTimestamp
+	h.setLastUpdateTime(types.ZeroTimestamp)
 	h.invalidBindRecordMap.Store(make(map[string]*bindRecordUpdate))
 }
 
@@ -833,6 +841,6 @@ func (h *BindHandle) FlushGlobalBindings() error {
 // It is used to maintain consistency between cache and mysql.bind_info if the table is deleted or truncated.
 func (h *BindHandle) ReloadGlobalBindings() error {
 	h.setCache(newBindCache())
-	h.lastUpdateTime = types.ZeroTimestamp
+	h.setLastUpdateTime(types.ZeroTimestamp)
 	return h.Update(true)
 }
