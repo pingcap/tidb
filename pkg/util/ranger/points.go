@@ -893,7 +893,7 @@ func (r *builder) buildFromNot(
 			isUnsignedIntCol bool
 			nonNegativePos   int
 		)
-		rangePoints, hasNull := r.buildFromIn(expr, newTp, types.UnspecifiedLength, false)
+		rangePoints, hasNull := r.buildFromIn(expr, newTp, prefixLen, convertToSortKey)
 		if hasNull {
 			return nil
 		}
@@ -919,15 +919,15 @@ func (r *builder) buildFromNot(
 		// Append the interval (last element, max value].
 		retRangePoints = append(retRangePoints, &point{value: previousValue, start: true, excl: true})
 		retRangePoints = append(retRangePoints, &point{value: types.MaxValueDatum()})
-		cutPrefixForPoints(retRangePoints, prefixLen, expr.GetArgs()[0].GetType())
-		if convertToSortKey {
-			var err error
-			retRangePoints, err = pointsConvertToSortKey(r.sctx, retRangePoints, newTp)
-			if err != nil {
-				r.err = err
-				return getFullRange()
-			}
-		}
+		//cutPrefixForPoints(retRangePoints, prefixLen, expr.GetArgs()[0].GetType())
+		//if convertToSortKey {
+		//	var err error
+		//	retRangePoints, err = pointsConvertToSortKey(r.sctx, retRangePoints, newTp)
+		//	if err != nil {
+		//		r.err = err
+		//		return getFullRange()
+		//	}
+		//}
 		return retRangePoints
 	case ast.Like:
 		// Pattern not like is not supported.
