@@ -78,7 +78,7 @@ func TestSchedulerRun(t *testing.T) {
 	// 3. run subtask failed
 	runSubtaskErr := errors.New("run subtask error")
 	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
-	mockSubtaskTable.EXPECT().GetSubtasksInStates(gomock.Any(), "id", taskID, proto.StepOne,
+	mockSubtaskTable.EXPECT().GetSubtasksByStepAndStates(gomock.Any(), "id", taskID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return([]*proto.Subtask{{
 		ID: 1, Type: tp, Step: proto.StepOne, State: proto.TaskStatePending, ExecID: "id"}}, nil)
 	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", taskID, proto.StepOne,
@@ -94,7 +94,7 @@ func TestSchedulerRun(t *testing.T) {
 
 	// 4. run subtask success
 	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
-	mockSubtaskTable.EXPECT().GetSubtasksInStates(gomock.Any(), "id", taskID, proto.StepOne,
+	mockSubtaskTable.EXPECT().GetSubtasksByStepAndStates(gomock.Any(), "id", taskID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return([]*proto.Subtask{{
 		ID: 1, Type: tp, Step: proto.StepOne, State: proto.TaskStatePending, ExecID: "id"}}, nil)
 	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", taskID, proto.StepOne,
@@ -113,7 +113,7 @@ func TestSchedulerRun(t *testing.T) {
 
 	// 5. run subtask one by one
 	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
-	mockSubtaskTable.EXPECT().GetSubtasksInStates(gomock.Any(), "id", taskID, proto.StepOne,
+	mockSubtaskTable.EXPECT().GetSubtasksByStepAndStates(gomock.Any(), "id", taskID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return(
 		[]*proto.Subtask{
 			{ID: 1, Type: tp, Step: proto.StepOne, State: proto.TaskStatePending, ExecID: "id"},
@@ -147,7 +147,7 @@ func TestSchedulerRun(t *testing.T) {
 	// idempotent, so fail it.
 	subtaskID := int64(2)
 	theSubtask := &proto.Subtask{ID: subtaskID, Type: tp, Step: proto.StepOne, State: proto.TaskStateRunning, ExecID: "id"}
-	mockSubtaskTable.EXPECT().GetSubtasksInStates(gomock.Any(), "id", taskID, proto.StepOne,
+	mockSubtaskTable.EXPECT().GetSubtasksByStepAndStates(gomock.Any(), "id", taskID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return([]*proto.Subtask{theSubtask}, nil)
 	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", taskID, proto.StepOne,
@@ -161,7 +161,7 @@ func TestSchedulerRun(t *testing.T) {
 	// run previous left subtask in running state again, but the subtask idempotent,
 	// run it again.
 	theSubtask = &proto.Subtask{ID: subtaskID, Type: tp, Step: proto.StepOne, State: proto.TaskStateRunning, ExecID: "id"}
-	mockSubtaskTable.EXPECT().GetSubtasksInStates(gomock.Any(), "id", taskID, proto.StepOne,
+	mockSubtaskTable.EXPECT().GetSubtasksByStepAndStates(gomock.Any(), "id", taskID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return([]*proto.Subtask{theSubtask}, nil)
 	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	// first round of the run loop
@@ -180,7 +180,7 @@ func TestSchedulerRun(t *testing.T) {
 	require.NoError(t, err)
 
 	// 6. cancel
-	mockSubtaskTable.EXPECT().GetSubtasksInStates(gomock.Any(), "id", taskID, proto.StepOne,
+	mockSubtaskTable.EXPECT().GetSubtasksByStepAndStates(gomock.Any(), "id", taskID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return([]*proto.Subtask{{
 		ID: 2, Type: tp, Step: proto.StepOne, State: proto.TaskStatePending, ExecID: "id"}}, nil)
 	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
@@ -195,7 +195,7 @@ func TestSchedulerRun(t *testing.T) {
 	require.EqualError(t, err, ErrCancelSubtask.Error())
 
 	// 7. RunSubtask return context.Canceled
-	mockSubtaskTable.EXPECT().GetSubtasksInStates(gomock.Any(), "id", taskID, proto.StepOne,
+	mockSubtaskTable.EXPECT().GetSubtasksByStepAndStates(gomock.Any(), "id", taskID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return([]*proto.Subtask{{
 		ID: 2, Type: tp, Step: proto.StepOne, State: proto.TaskStatePending, ExecID: "id"}}, nil)
 	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
@@ -209,7 +209,7 @@ func TestSchedulerRun(t *testing.T) {
 	require.EqualError(t, err, context.Canceled.Error())
 
 	// 8. grpc cancel
-	mockSubtaskTable.EXPECT().GetSubtasksInStates(gomock.Any(), "id", taskID, proto.StepOne,
+	mockSubtaskTable.EXPECT().GetSubtasksByStepAndStates(gomock.Any(), "id", taskID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return([]*proto.Subtask{{
 		ID: 2, Type: tp, Step: proto.StepOne, State: proto.TaskStatePending, ExecID: "id"}}, nil)
 	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
@@ -224,7 +224,7 @@ func TestSchedulerRun(t *testing.T) {
 	require.EqualError(t, err, grpcErr.Error())
 
 	// 9. annotate grpc cancel
-	mockSubtaskTable.EXPECT().GetSubtasksInStates(gomock.Any(), "id", taskID, proto.StepOne,
+	mockSubtaskTable.EXPECT().GetSubtasksByStepAndStates(gomock.Any(), "id", taskID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return([]*proto.Subtask{{
 		ID: 2, Type: tp, Step: proto.StepOne, State: proto.TaskStatePending, ExecID: "id"}}, nil)
 	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
@@ -375,7 +375,7 @@ func TestScheduler(t *testing.T) {
 	// 1. run failed.
 	runSubtaskErr := errors.New("run subtask error")
 	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
-	mockSubtaskTable.EXPECT().GetSubtasksInStates(gomock.Any(), "id", taskID, proto.StepOne,
+	mockSubtaskTable.EXPECT().GetSubtasksByStepAndStates(gomock.Any(), "id", taskID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return([]*proto.Subtask{{
 		ID: 1, Type: tp, Step: proto.StepOne, State: proto.TaskStatePending, ExecID: "id"}}, nil)
 	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", taskID, proto.StepOne,

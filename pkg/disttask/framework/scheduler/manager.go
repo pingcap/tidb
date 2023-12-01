@@ -92,7 +92,7 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 		logCtx:    logutil.WithFields(context.Background()),
 		newPool:   b.newPool,
 		slotManager: &slotManager{
-			schedulerSlotInfos: make([]slotInfo, 0),
+			schedulerSlotInfos: make(map[int]slotInfo, 0),
 			slotAlloctor:       b.slotAlloctor,
 		},
 	}

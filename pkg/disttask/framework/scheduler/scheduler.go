@@ -198,7 +198,7 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) (resErr error
 		wg.Wait()
 	}()
 
-	subtasks, err := s.taskTable.GetSubtasksInStates(runCtx, s.id, task.ID, task.Step,
+	subtasks, err := s.taskTable.GetSubtasksByStepAndStates(runCtx, s.id, task.ID, task.Step,
 		proto.TaskStatePending, proto.TaskStateRunning)
 	if err != nil {
 		s.onError(err)

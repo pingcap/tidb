@@ -380,8 +380,8 @@ func (stm *TaskManager) CreateSubTask(ctx context.Context, taskID int64, step pr
 	return nil
 }
 
-// GetSubtasksInStates gets all subtasks by given states.
-func (stm *TaskManager) GetSubtasksInStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...interface{}) ([]*proto.Subtask, error) {
+// GetSubtasksByStepAndStates gets all subtasks by given step and states.
+func (stm *TaskManager) GetSubtasksByStepAndStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...interface{}) ([]*proto.Subtask, error) {
 	args := []interface{}{tidbID, taskID, step}
 	args = append(args, states...)
 	rs, err := stm.executeSQLWithNewSession(ctx, `select `+subtaskColumns+` from mysql.tidb_background_subtask

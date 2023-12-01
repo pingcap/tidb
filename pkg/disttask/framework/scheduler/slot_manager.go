@@ -18,11 +18,11 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/alloctor"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 )
 
 type slotManager struct {
-	schedulerSlotInfos []slotInfo
+	// taskID -> slotInfo
+	schedulerSlotInfos map[int]slotInfo
 	slotAlloctor       alloctor.Alloctor
 }
 
@@ -33,17 +33,17 @@ type slotInfo struct {
 }
 
 func (sm *slotManager) init(ctx context.Context, taskTable TaskTable) error {
-	tasks, err := taskTable.GetGlobalTasksInStates(ctx, proto.TaskStateRunning, proto.TaskStatePending)
-	if err != nil {
-		return err
-	}
+	// subtasks, err := taskTable.GetSubtasksByStepAndStates(ctx, proto.TaskStateRunning, proto.TaskStatePending)
+	// if err != nil {
+	// 	return err
+	// }
 
-	for _, task := range tasks {
-		sm.schedulerSlotInfos = append(sm.schedulerSlotInfos, slotInfo{
-			taskID:    int(task.ID),
-			priority:  int(task.Priority),
-			slotCount: int(task.Slots),
-		})
-	}
+	// for _, subtask := range subtasks {
+	// 	sm.schedulerSlotInfos[int(subtask.TaskID)] = slotInfo{
+	// 		taskID: int(subtask.TaskID),
+	// 		// priority:  int(subtask.Priority),
+	// 		slotCount: int(subtask.Concurrency),
+	// 	}
+	// }
 	return nil
 }
