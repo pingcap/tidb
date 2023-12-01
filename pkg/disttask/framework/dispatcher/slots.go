@@ -15,6 +15,7 @@
 package dispatcher
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 
@@ -61,17 +62,24 @@ func NewSlotManager() *SlotManager {
 	}
 }
 
-// GetCapacity returns the capacity of the slots and stripes.
-func (sm *SlotManager) GetCapacity() int {
-	return sm.capacity
+// Update updates the used slots on each node.
+func (sm *SlotManager) Update(ctx context.Context, taskMgr TaskManager) error {
+	slotsOnNodes, err := taskMgr.GetUsedSlotsOnNodes(ctx)
+	if err != nil {
+		return err
+	}
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.usedSlots = slotsOnNodes
+	return nil
 }
 
-// TryReserve tries to reserve resources for a task.
+// CanReserve checks whether there are enough resources for a task.
 // If the resource is reserved by slots, it returns the execID of the task.
 // else if the resource is reserved by stripes, it returns "".
 // as usedSlots is updated asynchronously, it might return false even if there
 // are enough resources, or return true when some task dispatched subtasks.
-func (sm *SlotManager) TryReserve(taskConcurrency int) (execID string, ok bool) {
+func (sm *SlotManager) CanReserve(taskConcurrency int) (execID string, ok bool) {
 	if taskConcurrency+int(sm.reservedStripes.Load()) <= sm.capacity {
 		return "", true
 	}

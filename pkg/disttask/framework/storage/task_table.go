@@ -370,6 +370,32 @@ func (stm *TaskManager) FailTask(ctx context.Context, taskID int64, currentState
 	return err
 }
 
+func (stm *TaskManager) GetUsedSlotsOnNodes(ctx context.Context) (map[string]int, error) {
+	// concurrency of subtasks of some step is the same, we use max(concurrency)
+	// to make group by works.
+	rs, err := stm.executeSQLWithNewSession(ctx, `
+		select
+			exec_id, sum(concurrency)
+		from (
+			select exec_id, task_key, max(concurrency) concurrency
+			from tidb_background_subtask
+			where state in (%?, %?)
+			group by exec_id, task_key
+		) a
+		group by exec_id`,
+		proto.TaskStatePending, proto.TaskStateRunning,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	slots := make(map[string]int, len(rs))
+	for _, r := range rs {
+		slots[r.GetString(0)] = int(r.GetInt64(1))
+	}
+	return slots, nil
+}
+
 // row2SubTask converts a row to a subtask.
 func row2SubTask(r chunk.Row) *proto.Subtask {
 	// subtask defines start/update time as bigint, to ensure backward compatible,

@@ -27,16 +27,7 @@ import (
 type TaskManager interface {
 	// GetTopUnfinishedTasks returns unfinished tasks, limited by MaxConcurrentTask.
 	// The returned tasks are sorted by task order, see proto.Task.
-	// The returned tasks only contains the following fields, other fields are
-	// not filled to save time:
-	// 	- ID
-	// 	- Key
-	// 	- Type
-	// 	- State
-	// 	- Step
-	// 	- Priority
-	// 	- Concurrency
-	// 	- CreateTime
+	// The returned tasks only contains some fields, see row2TaskBasic.
 	GetTopUnfinishedTasks(ctx context.Context) ([]*proto.Task, error)
 	GetTasksInStates(ctx context.Context, states ...interface{}) (task []*proto.Task, err error)
 	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
@@ -49,6 +40,10 @@ type TaskManager interface {
 	// FailTask updates task state to Failed and updates task error.
 	FailTask(ctx context.Context, taskID int64, currentState proto.TaskState, taskErr error) error
 	PauseTask(ctx context.Context, taskKey string) (bool, error)
+	// GetUsedSlotsOnNodes returns the used slots on each node.
+	// we only consider pending/running subtasks, subtasks related to revert are
+	// not considered.
+	GetUsedSlotsOnNodes(ctx context.Context) (map[string]int, error)
 	GetSubtaskInStatesCnt(ctx context.Context, taskID int64, states ...interface{}) (int64, error)
 	ResumeSubtasks(ctx context.Context, taskID int64) error
 	CollectSubTaskError(ctx context.Context, taskID int64) ([]error, error)

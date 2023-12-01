@@ -154,7 +154,10 @@ func (dm *Manager) dispatchTaskLoop() {
 		case <-ticker.C:
 		}
 
-		if _, ok := dm.tryDispatch(1); !ok {
+		taskCnt := dm.getDispatcherCount()
+		if taskCnt >= proto.MaxConcurrentTask {
+			logutil.BgLogger().Info("dispatched tasks reached limit",
+				zap.Int("current", taskCnt), zap.Int("max", proto.MaxConcurrentTask))
 			continue
 		}
 
@@ -164,20 +167,11 @@ func (dm *Manager) dispatchTaskLoop() {
 			continue
 		}
 
-		// There are currently no tasks to work on.
-		if len(tasks) == 0 {
-			continue
-		}
+		dispatchableTasks := make([]*proto.Task, 0, len(tasks))
 		for _, task := range tasks {
 			if dm.hasDispatcher(task.ID) {
 				continue
 			}
-			reservedExecID, ok := dm.tryDispatch(task.Concurrency)
-			if !ok {
-				// task of lower priority might be able to be dispatched.
-				continue
-			}
-			metrics.DistTaskGauge.WithLabelValues(task.Type.String(), metrics.DispatchingStatus).Inc()
 			// we check it before start dispatcher, so no need to check it again.
 			// see startDispatcher.
 			// this should not happen normally, unless user modify system table
@@ -188,8 +182,27 @@ func (dm *Manager) dispatchTaskLoop() {
 				dm.failTask(task.ID, task.State, errors.New("unknown task type"))
 				continue
 			}
-			// if the task is not in pending state, owner might be changed or task
-			// is cancelled when status is pending.
+			dispatchableTasks = append(dispatchableTasks, task)
+		}
+		if len(dispatchableTasks) == 0 {
+			continue
+		}
+
+		if err = dm.slotMgr.Update(dm.ctx, dm.taskMgr); err != nil {
+			logutil.BgLogger().Warn("update used slot failed", zap.Error(err))
+			continue
+		}
+		for _, task := range dispatchableTasks {
+			taskCnt = dm.getDispatcherCount()
+			if taskCnt >= proto.MaxConcurrentTask {
+				break
+			}
+			reservedExecID, ok := dm.slotMgr.CanReserve(task.Concurrency)
+			if !ok {
+				// task of lower priority might be able to be dispatched.
+				continue
+			}
+			metrics.DistTaskGauge.WithLabelValues(task.Type.String(), metrics.DispatchingStatus).Inc()
 			metrics.UpdateMetricsForDispatchTask(task.ID, task.Type)
 			dm.startDispatcher(task.ID, reservedExecID)
 		}
@@ -230,17 +243,6 @@ func (dm *Manager) gcSubtaskHistoryTableLoop() {
 			}
 		}
 	}
-}
-
-func (dm *Manager) tryDispatch(taskConcurrency int) (execID string, ok bool) {
-	taskCnt := dm.getDispatcherCount()
-	if taskCnt >= proto.MaxConcurrentTask {
-		logutil.BgLogger().Info("running task cnt reached limit",
-			zap.Int("current", taskCnt), zap.Int("max", proto.MaxConcurrentTask))
-		return "", false
-	}
-
-	return dm.slotMgr.TryReserve(taskConcurrency)
 }
 
 func (dm *Manager) startDispatcher(taskID int64, reservedExecID string) {
