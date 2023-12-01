@@ -35,13 +35,14 @@ import (
 // ExecDetails contains execution detail information.
 type ExecDetails struct {
 	DetailsNeedP90
-	CommitDetail         *util.CommitDetails
-	LockKeysDetail       *util.LockKeysDetails
-	ScanDetail           *util.ScanDetail
-	CopTime              time.Duration
-	BackoffTime          time.Duration
-	LockKeysDuration     time.Duration
-	RequestCount         int
+	CommitDetail     *util.CommitDetails
+	LockKeysDetail   *util.LockKeysDetails
+	ScanDetail       *util.ScanDetail
+	CopTime          time.Duration
+	BackoffTime      time.Duration
+	LockKeysDuration time.Duration
+	RequestCount     int
+	// InEfficientScanRatio is initialized in `LogSlowQuery` function.
 	InEfficientScanRatio uint64
 }
 
