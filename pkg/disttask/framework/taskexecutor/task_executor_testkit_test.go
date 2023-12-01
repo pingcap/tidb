@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package scheduler_test
+package taskexecutor_test
 
 import (
 	"context"
@@ -23,8 +23,8 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -49,10 +49,10 @@ func runOneTask(ctx context.Context, t *testing.T, mgr *storage.TaskManager, tas
 	}
 	task, err = mgr.GetTaskByID(ctx, taskID)
 	require.NoError(t, err)
-	factory := scheduler.GetSchedulerFactory(task.Type)
+	factory := taskexecutor.GetTaskExecutorFactory(task.Type)
 	require.NotNil(t, factory)
-	scheduler := factory(ctx, "test", task, mgr)
-	require.NoError(t, scheduler.Run(ctx, task))
+	executor := factory(ctx, "test", task, mgr)
+	require.NoError(t, executor.Run(ctx, task))
 	// 2. stepTwo
 	task.Step = proto.StepTwo
 	_, err = mgr.UpdateTaskAndAddSubTasks(ctx, task, nil, proto.TaskStateRunning)
@@ -62,16 +62,16 @@ func runOneTask(ctx context.Context, t *testing.T, mgr *storage.TaskManager, tas
 	}
 	task, err = mgr.GetTaskByID(ctx, taskID)
 	require.NoError(t, err)
-	require.NoError(t, scheduler.Run(ctx, task))
+	require.NoError(t, executor.Run(ctx, task))
 }
 
-func TestSchedulerBasic(t *testing.T) {
+func TestTaskExecutorBasic(t *testing.T) {
 	// must disable disttask framework to ensure the test pure.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/breakInSchedulerUT", "return()"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/breakInTaskExecutorUT", "return()"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/breakInSchedulerUT"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/breakInTaskExecutorUT"))
 	}()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -85,7 +85,7 @@ func TestSchedulerBasic(t *testing.T) {
 	defer ctrl.Finish()
 	mgr := storage.NewTaskManager(pool)
 
-	testutil.InitScheduler(ctrl, func(ctx context.Context, subtask *proto.Subtask) error {
+	testutil.InitTaskExecutor(ctrl, func(ctx context.Context, subtask *proto.Subtask) error {
 		switch subtask.Step {
 		case proto.StepOne:
 			logutil.BgLogger().Info("run step one")

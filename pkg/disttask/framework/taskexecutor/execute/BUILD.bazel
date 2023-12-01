@@ -6,7 +6,7 @@ go_library(
         "interface.go",
         "summary.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/execute",
+    importpath = "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/disttask/framework/proto",

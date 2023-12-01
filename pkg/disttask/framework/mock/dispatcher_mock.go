@@ -225,36 +225,6 @@ func (mr *MockTaskManagerMockRecorder) GetNodesByRole(arg0, arg1 any) *gomock.Ca
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetNodesByRole", reflect.TypeOf((*MockTaskManager)(nil).GetNodesByRole), arg0, arg1)
 }
 
-// GetSchedulerIDsByTaskID mocks base method.
-func (m *MockTaskManager) GetSchedulerIDsByTaskID(arg0 context.Context, arg1 int64) ([]string, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetSchedulerIDsByTaskID", arg0, arg1)
-	ret0, _ := ret[0].([]string)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetSchedulerIDsByTaskID indicates an expected call of GetSchedulerIDsByTaskID.
-func (mr *MockTaskManagerMockRecorder) GetSchedulerIDsByTaskID(arg0, arg1 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSchedulerIDsByTaskID", reflect.TypeOf((*MockTaskManager)(nil).GetSchedulerIDsByTaskID), arg0, arg1)
-}
-
-// GetSchedulerIDsByTaskIDAndStep mocks base method.
-func (m *MockTaskManager) GetSchedulerIDsByTaskIDAndStep(arg0 context.Context, arg1 int64, arg2 proto.Step) ([]string, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetSchedulerIDsByTaskIDAndStep", arg0, arg1, arg2)
-	ret0, _ := ret[0].([]string)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetSchedulerIDsByTaskIDAndStep indicates an expected call of GetSchedulerIDsByTaskIDAndStep.
-func (mr *MockTaskManagerMockRecorder) GetSchedulerIDsByTaskIDAndStep(arg0, arg1, arg2 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSchedulerIDsByTaskIDAndStep", reflect.TypeOf((*MockTaskManager)(nil).GetSchedulerIDsByTaskIDAndStep), arg0, arg1, arg2)
-}
-
 // GetSubtaskInStatesCnt mocks base method.
 func (m *MockTaskManager) GetSubtaskInStatesCnt(arg0 context.Context, arg1 int64, arg2 ...any) (int64, error) {
 	m.ctrl.T.Helper()
@@ -318,6 +288,36 @@ func (m *MockTaskManager) GetTaskByID(arg0 context.Context, arg1 int64) (*proto.
 func (mr *MockTaskManagerMockRecorder) GetTaskByID(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTaskByID", reflect.TypeOf((*MockTaskManager)(nil).GetTaskByID), arg0, arg1)
+}
+
+// GetTaskExecutorIDsByTaskID mocks base method.
+func (m *MockTaskManager) GetTaskExecutorIDsByTaskID(arg0 context.Context, arg1 int64) ([]string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTaskExecutorIDsByTaskID", arg0, arg1)
+	ret0, _ := ret[0].([]string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTaskExecutorIDsByTaskID indicates an expected call of GetTaskExecutorIDsByTaskID.
+func (mr *MockTaskManagerMockRecorder) GetTaskExecutorIDsByTaskID(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTaskExecutorIDsByTaskID", reflect.TypeOf((*MockTaskManager)(nil).GetTaskExecutorIDsByTaskID), arg0, arg1)
+}
+
+// GetTaskExecutorIDsByTaskIDAndStep mocks base method.
+func (m *MockTaskManager) GetTaskExecutorIDsByTaskIDAndStep(arg0 context.Context, arg1 int64, arg2 proto.Step) ([]string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTaskExecutorIDsByTaskIDAndStep", arg0, arg1, arg2)
+	ret0, _ := ret[0].([]string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTaskExecutorIDsByTaskIDAndStep indicates an expected call of GetTaskExecutorIDsByTaskIDAndStep.
+func (mr *MockTaskManagerMockRecorder) GetTaskExecutorIDsByTaskIDAndStep(arg0, arg1, arg2 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTaskExecutorIDsByTaskIDAndStep", reflect.TypeOf((*MockTaskManager)(nil).GetTaskExecutorIDsByTaskIDAndStep), arg0, arg1, arg2)
 }
 
 // GetTasksInStates mocks base method.
@@ -397,18 +397,18 @@ func (mr *MockTaskManagerMockRecorder) TransferTasks2History(arg0, arg1 any) *go
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TransferTasks2History", reflect.TypeOf((*MockTaskManager)(nil).TransferTasks2History), arg0, arg1)
 }
 
-// UpdateSubtasksSchedulerIDs mocks base method.
-func (m *MockTaskManager) UpdateSubtasksSchedulerIDs(arg0 context.Context, arg1 int64, arg2 []*proto.Subtask) error {
+// UpdateSubtasksExecIDs mocks base method.
+func (m *MockTaskManager) UpdateSubtasksExecIDs(arg0 context.Context, arg1 int64, arg2 []*proto.Subtask) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateSubtasksSchedulerIDs", arg0, arg1, arg2)
+	ret := m.ctrl.Call(m, "UpdateSubtasksExecIDs", arg0, arg1, arg2)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// UpdateSubtasksSchedulerIDs indicates an expected call of UpdateSubtasksSchedulerIDs.
-func (mr *MockTaskManagerMockRecorder) UpdateSubtasksSchedulerIDs(arg0, arg1, arg2 any) *gomock.Call {
+// UpdateSubtasksExecIDs indicates an expected call of UpdateSubtasksExecIDs.
+func (mr *MockTaskManagerMockRecorder) UpdateSubtasksExecIDs(arg0, arg1, arg2 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateSubtasksSchedulerIDs", reflect.TypeOf((*MockTaskManager)(nil).UpdateSubtasksSchedulerIDs), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateSubtasksExecIDs", reflect.TypeOf((*MockTaskManager)(nil).UpdateSubtasksExecIDs), arg0, arg1, arg2)
 }
 
 // UpdateTaskAndAddSubTasks mocks base method.
