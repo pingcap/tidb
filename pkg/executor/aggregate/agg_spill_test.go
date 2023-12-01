@@ -241,29 +241,31 @@ func TestGetCorrectResult(t *testing.T) {
 	result := generateResult(col1, col2)
 	opt := getMockDataSourceParameters(ctx)
 	dataSource := buildMockDataSource(opt, col1, col2)
-	dataSource.PrepareChunks()
-	aggExec := buildHashAggExecutor(t, ctx, dataSource)
 
-	tmpCtx := context.Background()
-	chk := exec.NewFirstChunk(aggExec)
-	resContainer := resultsContainer{}
-	aggExec.Open(tmpCtx)
+	for i := 0; i < 5; i++ {
+		aggExec := buildHashAggExecutor(t, ctx, dataSource)
+		dataSource.PrepareChunks()
+		tmpCtx := context.Background()
+		chk := exec.NewFirstChunk(aggExec)
+		resContainer := resultsContainer{}
+		aggExec.Open(tmpCtx)
 
-	for {
-		aggExec.Next(tmpCtx, chk)
-		if chk.NumRows() == 0 {
-			break
+		for {
+			aggExec.Next(tmpCtx, chk)
+			if chk.NumRows() == 0 {
+				break
+			}
+			resContainer.add(chk)
+			chk.Reset()
 		}
-		resContainer.add(chk)
-		chk.Reset()
-	}
-	aggExec.Close()
+		aggExec.Close()
 
-	require.True(t, aggExec.IsSpillTriggeredForTest())
-	require.True(t, resContainer.check(result))
+		require.True(t, aggExec.IsSpillTriggeredForTest())
+		require.True(t, resContainer.check(result))
+	}
 }
 
-func TestRandomFail(t *testing.T) {
+func runRandomFailTest(t *testing.T) {
 	hardLimitBytesNum := int64(100000)
 
 	ctx := mock.NewContext()
@@ -282,7 +284,7 @@ func TestRandomFail(t *testing.T) {
 	dataSource := buildMockDataSource(opt, col1, col2)
 
 	// Test is successful when all sqls are not hung
-	for i := 0; i < 200; i++ {
+	for i := 0; i < 100; i++ {
 		dataSource.PrepareChunks()
 		aggExec := buildHashAggExecutor(t, ctx, dataSource)
 		tmpCtx := context.Background()
@@ -297,4 +299,26 @@ func TestRandomFail(t *testing.T) {
 		}
 		aggExec.Close()
 	}
+}
+
+// Running time of ut can't exceed 30s, and we have to put the
+// same case into many ut so that we can run many tests.
+func TestRandomFail1(t *testing.T) {
+	runRandomFailTest(t)
+}
+
+func TestRandomFail2(t *testing.T) {
+	runRandomFailTest(t)
+}
+
+func TestRandomFail3(t *testing.T) {
+	runRandomFailTest(t)
+}
+
+func TestRandomFail4(t *testing.T) {
+	runRandomFailTest(t)
+}
+
+func TestRandomFail5(t *testing.T) {
+	runRandomFailTest(t)
 }
