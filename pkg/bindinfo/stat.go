@@ -34,7 +34,7 @@ func (h *BindHandle) Stats(_ *variable.SessionVars) (map[string]interface{}, err
 		h.bindInfo.Unlock()
 	}()
 	m := make(map[string]interface{})
-	m[lastPlanBindingUpdateTime] = h.bindInfo.lastUpdateTime.String()
+	m[lastPlanBindingUpdateTime] = h.lastUpdateTime.String()
 
 	return m, nil
 }

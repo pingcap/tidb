@@ -575,8 +575,11 @@ const (
 		type VARCHAR(256) NOT NULL,
 		dispatcher_id VARCHAR(256),
 		state VARCHAR(64) NOT NULL,
+		priority INT NOT NULL,
+		create_time TIMESTAMP,
 		start_time TIMESTAMP,
 		state_update_time TIMESTAMP,
+		end_time TIMESTAMP,
 		meta LONGBLOB,
 		concurrency INT(11),
 		step INT(11),
@@ -592,8 +595,11 @@ const (
 		type VARCHAR(256) NOT NULL,
 		dispatcher_id VARCHAR(256),
 		state VARCHAR(64) NOT NULL,
+		priority INT NOT NULL,
+		create_time TIMESTAMP,
 		start_time TIMESTAMP,
 		state_update_time TIMESTAMP,
+		end_time TIMESTAMP,
 		meta LONGBLOB,
 		concurrency INT(11),
 		step INT(11),
@@ -1023,14 +1029,20 @@ const (
 	//   write mDDLTableVersion into `mysql.tidb` table
 	version178 = 178
 
-	// vresion 179
+	// version 179
 	//   enlarge `VARIABLE_VALUE` of `mysql.global_variables` from `varchar(1024)` to `varchar(16383)`.
 	version179 = 179
+
+	// version 180
+	//   add priority/create_time/end_time to `mysql.tidb_global_task`/`mysql.tidb_global_task_history`
+	//   add concurrency/priority/create_time/end_time to `mysql.tidb_background_subtask`/`mysql.tidb_background_subtask_history`
+	//   add idx_exec_id(exec_id) to `mysql.tidb_background_subtask`
+	version180 = 180
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version179
+var currentBootstrapVersion int64 = version180
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1185,6 +1197,7 @@ var (
 		upgradeToVer177,
 		upgradeToVer178,
 		upgradeToVer179,
+		upgradeToVer180,
 	}
 )
 
@@ -2897,6 +2910,27 @@ func upgradeToVer179(s sessiontypes.Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.global_variables MODIFY COLUMN `VARIABLE_VALUE` varchar(16383)")
+}
+
+func upgradeToVer180(s sessiontypes.Session, ver int64) {
+	if ver >= version180 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `priority` INT NOT NULL AFTER `state`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `create_time` TIMESTAMP AFTER `priority`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `end_time` TIMESTAMP AFTER `state_update_time`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN `priority` INT NOT NULL AFTER `state`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN `create_time` TIMESTAMP AFTER `priority`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN `end_time` TIMESTAMP AFTER `state_update_time`", infoschema.ErrColumnExists)
+
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `concurrency` INT AFTER `checkpoint`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `create_time` TIMESTAMP AFTER `concurrency`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `end_time` TIMESTAMP AFTER `state_update_time`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `concurrency` INT AFTER `checkpoint`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `create_time` TIMESTAMP AFTER `concurrency`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `end_time` TIMESTAMP AFTER `state_update_time`", infoschema.ErrColumnExists)
+
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD INDEX idx_exec_id(exec_id)", dbterror.ErrDupKeyName)
 }
 
 func writeOOMAction(s sessiontypes.Session) {
