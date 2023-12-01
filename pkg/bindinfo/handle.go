@@ -50,7 +50,7 @@ import (
 
 // BindHandle is used to handle all global sql bind operations.
 type BindHandle struct {
-	sctx struct {
+	sctx struct { // TODO: remove this singleton sctx later on, which is not thread-safe.
 		sync.Mutex
 		sessionctx.Context
 	}
