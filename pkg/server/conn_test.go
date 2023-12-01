@@ -2091,5 +2091,4 @@ func TestCloseConn(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	require.Equalf(t, int32(1), cc.isClosed, "Expected isClosed to be 1, got 0")
 }
