@@ -25,6 +25,7 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1805,3 +1806,157 @@ func TestProcessInfoForExecuteCommand(t *testing.T) {
 		0x0A, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}))
 	require.Equal(t, cc.ctx.Session.ShowProcess().Info, "select sum(col1) from t where col1 < ? and col1 > 100")
 }
+<<<<<<< HEAD:server/conn_test.go
+=======
+
+func TestLDAPAuthSwitch(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	cfg := serverutil.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	drv := NewTiDBDriver(store)
+	srv, err := NewServer(cfg, drv)
+	require.NoError(t, err)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE USER test_simple_ldap IDENTIFIED WITH authentication_ldap_simple AS 'uid=test_simple_ldap,dc=example,dc=com'")
+
+	cc := &clientConn{
+		connectionID: 1,
+		alloc:        arena.NewAllocator(1024),
+		chunkAlloc:   chunk.NewAllocator(),
+		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		server:       srv,
+		user:         "test_simple_ldap",
+	}
+	se, _ := session.CreateSession4Test(store)
+	tc := &TiDBContext{
+		Session: se,
+		stmts:   make(map[int]*TiDBStatement),
+	}
+	cc.SetCtx(tc)
+	cc.isUnixSocket = true
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/server/FakeAuthSwitch", "return(1)"))
+	respAuthSwitch, err := cc.checkAuthPlugin(context.Background(), &handshake.Response41{
+		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
+		User:       "test_simple_ldap",
+	})
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/FakeAuthSwitch"))
+	require.NoError(t, err)
+	require.Equal(t, []byte(mysql.AuthMySQLClearPassword), respAuthSwitch)
+}
+
+func TestEmptyOrgName(t *testing.T) {
+	inputs := []dispatchInput{
+		{
+			com: mysql.ComQuery,
+			in:  append([]byte("SELECT DATE_FORMAT(CONCAT('2023-07-0', a), '%Y')  AS 'YEAR' FROM test.t"), 0x0),
+			err: nil,
+			out: []byte{0x1, 0x0, 0x0, 0x0, 0x1, // 1 column
+				0x1a, 0x0, 0x0,
+				0x1, 0x3, 0x64, 0x65, 0x66, // catalog
+				0x0,                         // schema
+				0x0,                         // table name
+				0x0,                         // org table
+				0x4, 0x59, 0x45, 0x41, 0x52, // name 'YEAR'
+				0x0, // org name
+				0xc, 0x2e, 0x0, 0x2c, 0x0, 0x0, 0x0, 0xfd, 0x0, 0x0, 0x1f, 0x0, 0x0, 0x1, 0x0, 0x0, 0x2, 0xfe, 0x5, 0x0,
+				0x0, 0x3, 0x4, 0x32, 0x30, 0x32, 0x33, 0x1, 0x0, 0x0, 0x4, 0xfe},
+		},
+	}
+
+	testDispatch(t, inputs, 0)
+}
+
+func TestStats(t *testing.T) {
+	var outBuffer bytes.Buffer
+
+	store := testkit.CreateMockStore(t)
+	cfg := serverutil.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	drv := NewTiDBDriver(store)
+	server, err := NewServer(cfg, drv)
+	require.NoError(t, err)
+	tk := testkit.NewTestKit(t, store)
+
+	cc := &clientConn{
+		connectionID: 1,
+		salt: []byte{
+			0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A,
+			0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14,
+		},
+		server:     server,
+		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(&outBuffer)),
+		collation:  mysql.DefaultCollationID,
+		peerHost:   "localhost",
+		alloc:      arena.NewAllocator(512),
+		chunkAlloc: chunk.NewAllocator(),
+		capability: mysql.ClientProtocol41,
+	}
+
+	// No compression
+	vars := tk.Session().GetSessionVars()
+	m, err := cc.Stats(vars)
+	require.NoError(t, err)
+	require.Equal(t, "OFF", m["Compression"])
+	require.Equal(t, "", m["Compression_algorithm"])
+	require.Equal(t, 0, m["Compression_level"])
+
+	// zlib compression
+	vars.CompressionAlgorithm = mysql.CompressionZlib
+	m, err = cc.Stats(vars)
+	require.NoError(t, err)
+	require.Equal(t, "ON", m["Compression"])
+	require.Equal(t, "zlib", m["Compression_algorithm"])
+	require.Equal(t, mysql.ZlibCompressDefaultLevel, m["Compression_level"])
+
+	// zstd compression, with level 1
+	vars.CompressionAlgorithm = mysql.CompressionZstd
+	vars.CompressionLevel = 1
+	m, err = cc.Stats(vars)
+	require.NoError(t, err)
+	require.Equal(t, "ON", m["Compression"])
+	require.Equal(t, "zstd", m["Compression_algorithm"])
+	require.Equal(t, 1, m["Compression_level"])
+}
+
+func TestCloseConn(t *testing.T) {
+	var outBuffer bytes.Buffer
+
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	cfg := serverutil.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	drv := NewTiDBDriver(store)
+	server, err := NewServer(cfg, drv)
+	require.NoError(t, err)
+
+	cc := &clientConn{
+		connectionID: 0,
+		salt: []byte{
+			0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A,
+			0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14,
+		},
+		server:     server,
+		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(&outBuffer)),
+		collation:  mysql.DefaultCollationID,
+		peerHost:   "localhost",
+		alloc:      arena.NewAllocator(512),
+		chunkAlloc: chunk.NewAllocator(),
+		capability: mysql.ClientProtocol41,
+	}
+
+	var wg sync.WaitGroup
+	const numGoroutines = 10
+	wg.Add(numGoroutines)
+	for i := 0; i < numGoroutines; i++ {
+		go func() {
+			defer wg.Done()
+			err := closeConn(cc, 1)
+			require.NoError(t, err)
+		}()
+	}
+	wg.Wait()
+}
+>>>>>>> 43825796a66 (server: make `clientConn()` thread-safe (#49073)):pkg/server/conn_test.go

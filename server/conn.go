@@ -198,6 +198,7 @@ type clientConn struct {
 		sync.RWMutex
 		*TiDBContext // an interface to execute sql statements.
 	}
+<<<<<<< HEAD:server/conn.go
 	attrs         map[string]string // attributes parsed from client handshake response, not used for now.
 	serverHost    string            // server host
 	peerHost      string            // peer host
@@ -211,6 +212,22 @@ type clientConn struct {
 	rsEncoder     *resultEncoder    // rsEncoder is used to encode the string result to different charsets.
 	inputDecoder  *inputDecoder     // inputDecoder is used to decode the different charsets of incoming strings to utf-8.
 	socketCredUID uint32            // UID from the other end of the Unix Socket
+=======
+	attrs         map[string]string     // attributes parsed from client handshake response.
+	serverHost    string                // server host
+	peerHost      string                // peer host
+	peerPort      string                // peer port
+	status        int32                 // dispatching/reading/shutdown/waitshutdown
+	lastCode      uint16                // last error code
+	collation     uint8                 // collation used by client, may be different from the collation used by database.
+	lastActive    time.Time             // last active time
+	authPlugin    string                // default authentication plugin
+	isUnixSocket  bool                  // connection is Unix Socket file
+	closeOnce     sync.Once             // closeOnce is used to make sure clientConn closes only once
+	rsEncoder     *column.ResultEncoder // rsEncoder is used to encode the string result to different charsets
+	inputDecoder  *util2.InputDecoder   // inputDecoder is used to decode the different charsets of incoming strings to utf-8
+	socketCredUID uint32                // UID from the other end of the Unix Socket
+>>>>>>> 43825796a66 (server: make `clientConn()` thread-safe (#49073)):pkg/server/conn.go
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
 		sync.RWMutex
@@ -348,6 +365,7 @@ func (cc *clientConn) Close() error {
 	return closeConn(cc, connections)
 }
 
+<<<<<<< HEAD:server/conn.go
 func closeConn(cc *clientConn, connections int) error {
 	metrics.ConnGauge.Set(float64(connections))
 	if cc.bufReadConn != nil {
@@ -356,14 +374,33 @@ func closeConn(cc *clientConn, connections int) error {
 			// We need to expect connection might have already disconnected.
 			// This is because closeConn() might be called after a connection read-timeout.
 			logutil.Logger(context.Background()).Debug("could not close connection", zap.Error(err))
+=======
+// closeConn is idempotent and thread-safe.
+// It will be called on the same `clientConn` more than once to avoid connection leak.
+func closeConn(cc *clientConn, connections int) error {
+	var err error
+	cc.closeOnce.Do(func() {
+		metrics.ConnGauge.Set(float64(connections))
+		if cc.connectionID > 0 {
+			cc.server.dom.ReleaseConnID(cc.connectionID)
+			cc.connectionID = 0
+>>>>>>> 43825796a66 (server: make `clientConn()` thread-safe (#49073)):pkg/server/conn.go
 		}
-	}
-	// Close statements and session
-	// This will release advisory locks, row locks, etc.
-	if ctx := cc.getCtx(); ctx != nil {
-		return ctx.Close()
-	}
-	return nil
+		if cc.bufReadConn != nil {
+			err := cc.bufReadConn.Close()
+			if err != nil {
+				// We need to expect connection might have already disconnected.
+				// This is because closeConn() might be called after a connection read-timeout.
+				logutil.Logger(context.Background()).Debug("could not close connection", zap.Error(err))
+			}
+		}
+		// Close statements and session
+		// This will release advisory locks, row locks, etc.
+		if ctx := cc.getCtx(); ctx != nil {
+			err = ctx.Close()
+		}
+	})
+	return err
 }
 
 func (cc *clientConn) closeWithoutLock() error {
