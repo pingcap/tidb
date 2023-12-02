@@ -56,6 +56,7 @@ package parser
 type KeywordsType struct {
 	Word     string
 	Reserved bool
+	Section  string
 }
 
 var Keywords = []KeywordsType{
@@ -117,17 +118,17 @@ func main() {
 		case sectionReservedKeyword:
 			word := parseLine(line)
 			if len(word) > 0 {
-				fmt.Fprintf(keywordsFile, "\t{\"%s\", true},\n", word)
+				fmt.Fprintf(keywordsFile, "\t{\"%s\", true, \"reserved\"},\n", word)
 			}
 		case sectionTiDBKeyword:
 			word := parseLine(line)
 			if len(word) > 0 {
-				fmt.Fprintf(keywordsFile, "\t{\"%s\", false},\n", word)
+				fmt.Fprintf(keywordsFile, "\t{\"%s\", false, \"tidb\"},\n", word)
 			}
 		case sectionUnreservedKeyword:
 			word := parseLine(line)
 			if len(word) > 0 {
-				fmt.Fprintf(keywordsFile, "\t{\"%s\", false},\n", word)
+				fmt.Fprintf(keywordsFile, "\t{\"%s\", false, \"unreserved\"},\n", word)
 			}
 		}
 	}

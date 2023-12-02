@@ -49,7 +49,7 @@ func TestKeywordsLength(t *testing.T) {
 
 func TestKeywordsSorting(t *testing.T) {
 	for i, kw := range parser.Keywords {
-		if i > 1 && parser.Keywords[i-1].Word > kw.Word && parser.Keywords[i-1].Reserved == kw.Reserved {
+		if i > 1 && parser.Keywords[i-1].Word > kw.Word && parser.Keywords[i-1].Section == kw.Section {
 			t.Errorf("%s should come after %s, please update parser.y and re-generate keywords.go\n",
 				parser.Keywords[i-1].Word, kw.Word)
 		}
