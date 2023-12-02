@@ -22,17 +22,17 @@ import (
 )
 
 const (
-	ReservedKeywordStart   = "The following tokens belong to ReservedKeyword"
-	UnreservedkeywordStart = "The following tokens belong to UnReservedKeyword"
-	NotKeywordStart        = "The following tokens belong to NotKeywordToken"
-	TiDBKeywordStart       = "The following tokens belong to TiDBKeyword"
+	reservedKeywordStart   = "The following tokens belong to ReservedKeyword"
+	unreservedkeywordStart = "The following tokens belong to UnReservedKeyword"
+	notKeywordStart        = "The following tokens belong to NotKeywordToken"
+	tiDBKeywordStart       = "The following tokens belong to TiDBKeyword"
 )
 
 const (
-	SectionNone = iota
-	SectionReservedKeyword
-	SectionUnreservedKeyword
-	SectionTiDBKeyword
+	sectionNone = iota
+	sectionReservedKeyword
+	sectionUnreservedKeyword
+	sectionTiDBKeyword
 )
 
 const (
@@ -99,32 +99,32 @@ func main() {
 		log.Fatalf("Failed to write fileStart to keywords.go: %s", err)
 	}
 
-	section := SectionNone
+	section := sectionNone
 	for _, line := range strings.Split(string(parserData), "\n") {
 		if line == "" { // Empty line indicates section end
-			section = SectionNone
-		} else if strings.Contains(line, ReservedKeywordStart) {
-			section = SectionReservedKeyword
-		} else if strings.Contains(line, UnreservedkeywordStart) {
-			section = SectionUnreservedKeyword
-		} else if strings.Contains(line, TiDBKeywordStart) {
-			section = SectionTiDBKeyword
-		} else if strings.Contains(line, NotKeywordStart) {
-			section = SectionNone
+			section = sectionNone
+		} else if strings.Contains(line, reservedKeywordStart) {
+			section = sectionReservedKeyword
+		} else if strings.Contains(line, unreservedkeywordStart) {
+			section = sectionUnreservedKeyword
+		} else if strings.Contains(line, tiDBKeywordStart) {
+			section = sectionTiDBKeyword
+		} else if strings.Contains(line, notKeywordStart) {
+			section = sectionNone
 		}
 
 		switch section {
-		case SectionReservedKeyword:
+		case sectionReservedKeyword:
 			word := parseLine(line)
 			if len(word) > 0 {
 				fmt.Fprintf(keywordsFile, "\t{\"%s\", true},\n", word)
 			}
-		case SectionTiDBKeyword:
+		case sectionTiDBKeyword:
 			word := parseLine(line)
 			if len(word) > 0 {
 				fmt.Fprintf(keywordsFile, "\t{\"%s\", false},\n", word)
 			}
-		case SectionUnreservedKeyword:
+		case sectionUnreservedKeyword:
 			word := parseLine(line)
 			if len(word) > 0 {
 				fmt.Fprintf(keywordsFile, "\t{\"%s\", false},\n", word)
