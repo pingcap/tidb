@@ -1508,8 +1508,10 @@ func checkConstraintNamesNotExists(t *meta.Meta, schemaID int64, constraints []*
 
 	for _, tb := range tbInfos {
 		for _, constraint := range constraints {
-			if constraintInfo := tb.FindConstraintInfoByName(constraint.Name.L); constraintInfo != nil {
-				return infoschema.ErrCheckConstraintDupName.GenWithStackByArgs(constraint.Name.L)
+			if constraint.State != model.StateWriteOnly {
+				if constraintInfo := tb.FindConstraintInfoByName(constraint.Name.L); constraintInfo != nil {
+					return infoschema.ErrCheckConstraintDupName.GenWithStackByArgs(constraint.Name.L)
+				}
 			}
 		}
 	}
