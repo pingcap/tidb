@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -197,6 +198,13 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromRunawayWatches(sctx)
 		case infoschema.TableCheckConstraints:
 			err = e.setDataFromCheckConstraints(sctx, dbs)
+<<<<<<< HEAD
+=======
+		case infoschema.TableTiDBCheckConstraints:
+			err = e.setDataFromTiDBCheckConstraints(sctx, dbs)
+		case infoschema.TableKeywords:
+			err = e.setDataFromKeywords()
+>>>>>>> a92497bbdf7 (parser, infoschema, executor: Add information_schema.keywords (#48807))
 		}
 		if err != nil {
 			return nil, err
@@ -3385,6 +3393,16 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			)
 			rows = append(rows, row)
 		}
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromKeywords() error {
+	rows := make([][]types.Datum, 0, len(parser.Keywords))
+	for _, kw := range parser.Keywords {
+		row := types.MakeDatums(kw.Word, kw.Reserved)
+		rows = append(rows, row)
 	}
 	e.rows = rows
 	return nil

@@ -2097,9 +2097,15 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 			strings.ToLower(infoschema.ClusterTableMemoryUsageOpsHistory),
 			strings.ToLower(infoschema.TableResourceGroups),
 			strings.ToLower(infoschema.TableRunawayWatches),
+<<<<<<< HEAD
 			strings.ToLower(infoschema.TableCheckConstraints):
 			memTracker := memory.NewTracker(v.ID(), -1)
 			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
+=======
+			strings.ToLower(infoschema.TableCheckConstraints),
+			strings.ToLower(infoschema.TableTiDBCheckConstraints),
+			strings.ToLower(infoschema.TableKeywords):
+>>>>>>> a92497bbdf7 (parser, infoschema, executor: Add information_schema.keywords (#48807))
 			return &MemTableReaderExec{
 				BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,

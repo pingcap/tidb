@@ -1,11 +1,17 @@
 .PHONY: all parser clean
 
-all: fmt parser
+all: fmt parser generate
 
 test: fmt parser
 	sh test.sh
 
 parser: parser.go hintparser.go
+
+genkeyword: generate_keyword/genkeyword.go
+	go build -C generate_keyword -o ../genkeyword
+
+generate: genkeyword parser.y
+	go generate
 
 %arser.go: prefix = $(@:parser.go=)
 %arser.go: %arser.y bin/goyacc
