@@ -168,11 +168,20 @@ func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) (isA
 	if err != nil {
 		return false, true
 	}
+	likeFuncReserve := !c.isFullLengthColumn()
+
+	// Different from `=`, trailing spaces are always significant, and can't be ignored in `like`.
+	// In tidb's implementation, for PAD SPACE collations, the trailing spaces are removed in the index key. So we are
+	// unable to distinguish 'xxx' from 'xxx   ' by a single index range scan, and we may read more data than needed by
+	// the `like` function. Therefore, a Selection is needed to filter the data.
+	if isPadSpaceCollation(collation) {
+		likeFuncReserve = true
+	}
+
 	if len(patternStr) == 0 {
-		return true, !c.isFullLengthColumn()
+		return true, likeFuncReserve
 	}
 	escape := byte(scalar.GetArgs()[2].(*expression.Constant).Value.GetInt64())
-	likeFuncReserve := !c.isFullLengthColumn()
 	for i := 0; i < len(patternStr); i++ {
 		if patternStr[i] == escape {
 			i++

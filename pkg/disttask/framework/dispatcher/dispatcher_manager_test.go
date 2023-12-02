@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
-	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -40,31 +39,21 @@ func TestCleanUpRoutine(t *testing.T) {
 	defer ctrl.Finish()
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "dispatcher_manager")
-
-	dsp, mgr := MockDispatcherManager(t, pool)
 	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
+
+	dsp, mgr := MockDispatcherManager(t, ctrl, pool, getNumberExampleDispatcherExt(ctrl), mockCleanupRountine)
 	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
-		func(ctx context.Context, taskMgr dispatcher.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
-			mockDispatcher := dsp.MockDispatcher(task)
-			mockDispatcher.Extension = &numberExampleDispatcherExt{}
-			return mockDispatcher
-		})
-	dispatcher.RegisterDispatcherCleanUpFactory(proto.TaskTypeExample,
-		func() dispatcher.CleanUpRoutine {
-			return mockCleanupRountine
-		})
 	dsp.Start()
 	defer dsp.Stop()
 	require.NoError(t, mgr.StartManager(ctx, ":4000", "background"))
-	taskID, err := mgr.AddNewGlobalTask(ctx, "test", proto.TaskTypeExample, 1, nil)
+	taskID, err := mgr.CreateTask(ctx, "test", proto.TaskTypeExample, 1, nil)
 	require.NoError(t, err)
 
 	checkTaskRunningCnt := func() []*proto.Task {
 		var tasks []*proto.Task
 		require.Eventually(t, func() bool {
 			var err error
-			tasks, err = mgr.GetGlobalTasksInStates(ctx, proto.TaskStateRunning)
+			tasks, err = mgr.GetTasksInStates(ctx, proto.TaskStateRunning)
 			require.NoError(t, err)
 			return len(tasks) == 1
 		}, time.Second, 50*time.Millisecond)
@@ -87,7 +76,7 @@ func TestCleanUpRoutine(t *testing.T) {
 	}
 	dsp.DoCleanUpRoutine()
 	require.Eventually(t, func() bool {
-		tasks, err := mgr.GetGlobalTasksFromHistoryInStates(ctx, proto.TaskStateSucceed)
+		tasks, err := mgr.GetTasksFromHistoryInStates(ctx, proto.TaskStateSucceed)
 		require.NoError(t, err)
 		return len(tasks) != 0
 	}, time.Second*10, time.Millisecond*300)
@@ -104,17 +93,7 @@ func TestCleanUpMeta(t *testing.T) {
 	defer ctrl.Finish()
 	mockTaskMgr := mock.NewMockTaskManager(ctrl)
 	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
-	dspMgr := MockDispatcherManagerWithMockTaskMgr(t, pool, mockTaskMgr)
-	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
-		func(ctx context.Context, taskMgr dispatcher.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
-			mockDispatcher := dspMgr.MockDispatcher(task)
-			mockDispatcher.Extension = &numberExampleDispatcherExt{}
-			return mockDispatcher
-		})
-	dispatcher.RegisterDispatcherCleanUpFactory(proto.TaskTypeExample,
-		func() dispatcher.CleanUpRoutine {
-			return mockCleanupRountine
-		})
+	dspMgr := MockDispatcherManagerWithMockTaskMgr(t, ctrl, pool, mockTaskMgr, getNumberExampleDispatcherExt(ctrl), mockCleanupRountine)
 
 	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]string{":4000", ":4001"}, nil)
 	mockTaskMgr.EXPECT().CleanUpMeta(gomock.Any(), gomock.Any()).Return(nil)

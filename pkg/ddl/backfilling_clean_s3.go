@@ -40,15 +40,15 @@ func newBackfillCleanUpS3() dispatcher.CleanUpRoutine {
 
 // CleanUp implements the CleanUpRoutine.CleanUp interface.
 func (*BackfillCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
-	var gTaskMeta BackfillGlobalMeta
-	if err := json.Unmarshal(task.Meta, &gTaskMeta); err != nil {
+	var taskMeta BackfillGlobalMeta
+	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return err
 	}
 	// Not use cloud storage, no need to cleanUp.
-	if len(gTaskMeta.CloudStorageURI) == 0 {
+	if len(taskMeta.CloudStorageURI) == 0 {
 		return nil
 	}
-	backend, err := storage.ParseBackend(gTaskMeta.CloudStorageURI, nil)
+	backend, err := storage.ParseBackend(taskMeta.CloudStorageURI, nil)
 	if err != nil {
 		logutil.Logger(ctx).Warn("failed to parse cloud storage uri", zap.Error(err))
 		return err
@@ -58,19 +58,19 @@ func (*BackfillCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
 		logutil.Logger(ctx).Warn("failed to create cloud storage", zap.Error(err))
 		return err
 	}
-	prefix := strconv.Itoa(int(gTaskMeta.Job.ID))
+	prefix := strconv.Itoa(int(taskMeta.Job.ID))
 	err = external.CleanUpFiles(ctx, extStore, prefix)
 	if err != nil {
 		logutil.Logger(ctx).Warn("cannot cleanup cloud storage files", zap.Error(err))
 		return err
 	}
-	redactCloudStorageURI(ctx, task, &gTaskMeta)
+	redactCloudStorageURI(ctx, task, &taskMeta)
 	return nil
 }
 
 func redactCloudStorageURI(
 	ctx context.Context,
-	gTask *proto.Task,
+	task *proto.Task,
 	origin *BackfillGlobalMeta,
 ) {
 	origin.CloudStorageURI = ast.RedactURL(origin.CloudStorageURI)
@@ -79,5 +79,5 @@ func redactCloudStorageURI(
 		logutil.Logger(ctx).Warn("failed to marshal task meta", zap.Error(err))
 		return
 	}
-	gTask.Meta = metaBytes
+	task.Meta = metaBytes
 }

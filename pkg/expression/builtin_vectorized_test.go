@@ -775,11 +775,11 @@ func TestVectorizedCheck(t *testing.T) {
 
 	ctx := mock.NewContext()
 	vecF, _, _, _ := genMockRowDouble(ctx, types.ETInt, true)
-	sf := &ScalarFunction{Function: vecF, ctx: ctx}
+	sf := &ScalarFunction{Function: vecF}
 	require.True(t, sf.Vectorized())
 
 	rowF, _, _, _ := genMockRowDouble(ctx, types.ETInt, false)
-	sf = &ScalarFunction{Function: rowF, ctx: ctx}
+	sf = &ScalarFunction{Function: rowF}
 	require.False(t, sf.Vectorized())
 }
 

@@ -22,7 +22,6 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/ngaut/pools"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -62,17 +61,17 @@ func TestBackfillingDispatcherLocalMode(t *testing.T) {
 		"PARTITION p1 VALUES LESS THAN (100),\n" +
 		"PARTITION p2 VALUES LESS THAN (1000),\n" +
 		"PARTITION p3 VALUES LESS THAN MAXVALUE\n);")
-	gTask := createAddIndexGlobalTask(t, dom, "test", "tp1", proto.Backfill, false)
+	task := createAddIndexTask(t, dom, "test", "tp1", proto.Backfill, false)
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp1"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 
 	// 1.1 OnNextSubtasksBatch
-	gTask.Step = dsp.GetNextStep(gTask)
-	require.Equal(t, ddl.StepReadIndex, gTask.Step)
-	serverInfos, _, err := dsp.GetEligibleInstances(context.Background(), gTask)
+	task.Step = dsp.GetNextStep(task)
+	require.Equal(t, ddl.StepReadIndex, task.Step)
+	serverInfos, _, err := dsp.GetEligibleInstances(context.Background(), task)
 	require.NoError(t, err)
-	metas, err := dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, serverInfos, gTask.Step)
+	metas, err := dsp.OnNextSubtasksBatch(context.Background(), nil, task, serverInfos, task.Step)
 	require.NoError(t, err)
 	require.Equal(t, len(tblInfo.Partition.Definitions), len(metas))
 	for i, par := range tblInfo.Partition.Definitions {
@@ -82,27 +81,22 @@ func TestBackfillingDispatcherLocalMode(t *testing.T) {
 	}
 
 	// 1.2 test partition table OnNextSubtasksBatch after StepReadIndex
-	gTask.State = proto.TaskStateRunning
-	gTask.Step = dsp.GetNextStep(gTask)
-	require.Equal(t, proto.StepDone, gTask.Step)
-	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, serverInfos, gTask.Step)
+	task.State = proto.TaskStateRunning
+	task.Step = dsp.GetNextStep(task)
+	require.Equal(t, proto.StepDone, task.Step)
+	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, task, serverInfos, task.Step)
 	require.NoError(t, err)
 	require.Len(t, metas, 0)
 
-	// 1.3 test partition table OnErrStage.
-	errMeta, err := dsp.OnErrStage(context.Background(), nil, gTask, []error{errors.New("mockErr")})
+	// 1.3 test partition table OnDone.
+	err = dsp.OnDone(context.Background(), nil, task)
 	require.NoError(t, err)
-	require.Nil(t, errMeta)
-
-	errMeta, err = dsp.OnErrStage(context.Background(), nil, gTask, []error{errors.New("mockErr")})
-	require.NoError(t, err)
-	require.Nil(t, errMeta)
 
 	/// 2. test non partition table.
 	// 2.1 empty table
 	tk.MustExec("create table t1(id int primary key, v int)")
-	gTask = createAddIndexGlobalTask(t, dom, "test", "t1", proto.Backfill, false)
-	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, serverInfos, gTask.Step)
+	task = createAddIndexTask(t, dom, "test", "t1", proto.Backfill, false)
+	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, task, serverInfos, task.Step)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(metas))
 	// 2.2 non empty table.
@@ -111,18 +105,18 @@ func TestBackfillingDispatcherLocalMode(t *testing.T) {
 	tk.MustExec("insert into t2 values (), (), (), (), (), ()")
 	tk.MustExec("insert into t2 values (), (), (), (), (), ()")
 	tk.MustExec("insert into t2 values (), (), (), (), (), ()")
-	gTask = createAddIndexGlobalTask(t, dom, "test", "t2", proto.Backfill, false)
+	task = createAddIndexTask(t, dom, "test", "t2", proto.Backfill, false)
 	// 2.2.1 stepInit
-	gTask.Step = dsp.GetNextStep(gTask)
-	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, serverInfos, gTask.Step)
+	task.Step = dsp.GetNextStep(task)
+	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, task, serverInfos, task.Step)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(metas))
-	require.Equal(t, ddl.StepReadIndex, gTask.Step)
+	require.Equal(t, ddl.StepReadIndex, task.Step)
 	// 2.2.2 StepReadIndex
-	gTask.State = proto.TaskStateRunning
-	gTask.Step = dsp.GetNextStep(gTask)
-	require.Equal(t, proto.StepDone, gTask.Step)
-	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, serverInfos, gTask.Step)
+	task.State = proto.TaskStateRunning
+	task.Step = dsp.GetNextStep(task)
+	require.Equal(t, proto.StepDone, task.Step)
+	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, task, serverInfos, task.Step)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(metas))
 }
@@ -168,7 +162,7 @@ func TestBackfillingDispatcherGlobalSortMode(t *testing.T) {
 	tk.MustExec("insert into t1 values (), (), (), (), (), ()")
 	tk.MustExec("insert into t1 values (), (), (), (), (), ()")
 	tk.MustExec("insert into t1 values (), (), (), (), (), ()")
-	task := createAddIndexGlobalTask(t, dom, "test", "t1", proto.Backfill, true)
+	task := createAddIndexTask(t, dom, "test", "t1", proto.Backfill, true)
 
 	dsp := dspManager.MockDispatcher(task)
 	ext, err := ddl.NewBackfillingDispatcherExt(dom.DDL())
@@ -176,7 +170,7 @@ func TestBackfillingDispatcherGlobalSortMode(t *testing.T) {
 	ext.(*ddl.BackfillingDispatcherExt).GlobalSort = true
 	dsp.Extension = ext
 
-	taskID, err := mgr.AddNewGlobalTask(ctx, task.Key, proto.Backfill, 1, task.Meta)
+	taskID, err := mgr.CreateTask(ctx, task.Key, proto.Backfill, 1, task.Meta)
 	require.NoError(t, err)
 	task.ID = taskID
 	serverInfos, _, err := dsp.GetEligibleInstances(context.Background(), task)
@@ -191,9 +185,9 @@ func TestBackfillingDispatcherGlobalSortMode(t *testing.T) {
 	// update task/subtask, and finish subtask, so we can go to next stage
 	subtasks := make([]*proto.Subtask, 0, len(subtaskMetas))
 	for _, m := range subtaskMetas {
-		subtasks = append(subtasks, proto.NewSubtask(task.Step, task.ID, task.Type, "", m))
+		subtasks = append(subtasks, proto.NewSubtask(task.Step, task.ID, task.Type, "", 1, m))
 	}
-	_, err = mgr.UpdateGlobalTaskAndAddSubTasks(ctx, task, subtasks, proto.TaskStatePending)
+	_, err = mgr.UpdateTaskAndAddSubTasks(ctx, task, subtasks, proto.TaskStatePending)
 	require.NoError(t, err)
 	gotSubtasks, err := mgr.GetSubtasksForImportInto(ctx, taskID, ddl.StepReadIndex)
 	require.NoError(t, err)
@@ -216,7 +210,7 @@ func TestBackfillingDispatcherGlobalSortMode(t *testing.T) {
 	sortStepMetaBytes, err := json.Marshal(sortStepMeta)
 	require.NoError(t, err)
 	for _, s := range gotSubtasks {
-		require.NoError(t, mgr.FinishSubtask(ctx, s.SchedulerID, s.ID, sortStepMetaBytes))
+		require.NoError(t, mgr.FinishSubtask(ctx, s.ExecID, s.ID, sortStepMetaBytes))
 	}
 	// 2. to merge-sort stage.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort", `return()`))
@@ -232,9 +226,9 @@ func TestBackfillingDispatcherGlobalSortMode(t *testing.T) {
 	// update meta, same as import into.
 	subtasks = make([]*proto.Subtask, 0, len(subtaskMetas))
 	for _, m := range subtaskMetas {
-		subtasks = append(subtasks, proto.NewSubtask(task.Step, task.ID, task.Type, "", m))
+		subtasks = append(subtasks, proto.NewSubtask(task.Step, task.ID, task.Type, "", 1, m))
 	}
-	_, err = mgr.UpdateGlobalTaskAndAddSubTasks(ctx, task, subtasks, proto.TaskStatePending)
+	_, err = mgr.UpdateTaskAndAddSubTasks(ctx, task, subtasks, proto.TaskStatePending)
 	require.NoError(t, err)
 	gotSubtasks, err = mgr.GetSubtasksForImportInto(ctx, taskID, task.Step)
 	require.NoError(t, err)
@@ -255,7 +249,7 @@ func TestBackfillingDispatcherGlobalSortMode(t *testing.T) {
 	mergeSortStepMetaBytes, err := json.Marshal(mergeSortStepMeta)
 	require.NoError(t, err)
 	for _, s := range gotSubtasks {
-		require.NoError(t, mgr.FinishSubtask(ctx, s.SchedulerID, s.ID, mergeSortStepMetaBytes))
+		require.NoError(t, mgr.FinishSubtask(ctx, s.ExecID, s.ID, mergeSortStepMetaBytes))
 	}
 	// 3. to write&ingest stage.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockWriteIngest", "return(true)"))
@@ -295,7 +289,7 @@ func TestGetNextStep(t *testing.T) {
 	}
 }
 
-func createAddIndexGlobalTask(t *testing.T,
+func createAddIndexTask(t *testing.T,
 	dom *domain.Domain,
 	dbName,
 	tblName string,
@@ -328,18 +322,18 @@ func createAddIndexGlobalTask(t *testing.T,
 		taskMeta.CloudStorageURI = "gs://sort-bucket"
 	}
 
-	gTaskMetaBytes, err := json.Marshal(taskMeta)
+	taskMetaBytes, err := json.Marshal(taskMeta)
 	require.NoError(t, err)
 
-	gTask := &proto.Task{
+	task := &proto.Task{
 		ID:              time.Now().UnixMicro(),
 		Type:            taskType,
 		Step:            proto.StepInit,
 		State:           proto.TaskStatePending,
-		Meta:            gTaskMetaBytes,
+		Meta:            taskMetaBytes,
 		StartTime:       time.Now(),
 		StateUpdateTime: time.Now(),
 	}
 
-	return gTask
+	return task
 }

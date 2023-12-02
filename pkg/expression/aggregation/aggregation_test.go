@@ -59,7 +59,7 @@ func TestAvg(t *testing.T) {
 	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncAvg, []expression.Expression{col}, false)
 	require.NoError(t, err)
 	avgFunc := desc.GetAggFunc(ctx)
-	evalCtx := avgFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
+	evalCtx := avgFunc.CreateContext(s.ctx)
 
 	result := avgFunc.GetResult(evalCtx)
 	require.True(t, result.IsNull())
@@ -79,7 +79,7 @@ func TestAvg(t *testing.T) {
 	desc, err = NewAggFuncDesc(s.ctx, ast.AggFuncAvg, []expression.Expression{col}, true)
 	require.NoError(t, err)
 	distinctAvgFunc := desc.GetAggFunc(ctx)
-	evalCtx = distinctAvgFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
+	evalCtx = distinctAvgFunc.CreateContext(s.ctx)
 	for _, row := range s.rows {
 		err := distinctAvgFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
 		require.NoError(t, err)
@@ -112,7 +112,7 @@ func TestAvgFinalMode(t *testing.T) {
 	require.NoError(t, err)
 	aggFunc.Mode = FinalMode
 	avgFunc := aggFunc.GetAggFunc(ctx)
-	evalCtx := avgFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
+	evalCtx := avgFunc.CreateContext(s.ctx)
 
 	for _, row := range rows {
 		err := avgFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, chunk.MutRowFromDatums(row).ToRow())
@@ -133,7 +133,7 @@ func TestSum(t *testing.T) {
 	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncSum, []expression.Expression{col}, false)
 	require.NoError(t, err)
 	sumFunc := desc.GetAggFunc(ctx)
-	evalCtx := sumFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
+	evalCtx := sumFunc.CreateContext(s.ctx)
 
 	result := sumFunc.GetResult(evalCtx)
 	require.True(t, result.IsNull())
@@ -155,7 +155,7 @@ func TestSum(t *testing.T) {
 	desc, err = NewAggFuncDesc(s.ctx, ast.AggFuncSum, []expression.Expression{col}, true)
 	require.NoError(t, err)
 	distinctSumFunc := desc.GetAggFunc(ctx)
-	evalCtx = distinctSumFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
+	evalCtx = distinctSumFunc.CreateContext(s.ctx)
 	for _, row := range s.rows {
 		err := distinctSumFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
 		require.NoError(t, err)
@@ -175,7 +175,7 @@ func TestBitAnd(t *testing.T) {
 	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncBitAnd, []expression.Expression{col}, false)
 	require.NoError(t, err)
 	bitAndFunc := desc.GetAggFunc(ctx)
-	evalCtx := bitAndFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
+	evalCtx := bitAndFunc.CreateContext(s.ctx)
 
 	result := bitAndFunc.GetResult(evalCtx)
 	require.Equal(t, uint64(math.MaxUint64), result.GetUint64())
@@ -213,7 +213,7 @@ func TestBitAnd(t *testing.T) {
 
 	// test bit_and( decimal )
 	col.RetType = types.NewFieldType(mysql.TypeNewDecimal)
-	bitAndFunc.ResetContext(s.ctx.GetSessionVars().StmtCtx, evalCtx)
+	bitAndFunc.ResetContext(s.ctx, evalCtx)
 
 	result = bitAndFunc.GetResult(evalCtx)
 	require.Equal(t, uint64(math.MaxUint64), result.GetUint64())
@@ -254,7 +254,7 @@ func TestBitOr(t *testing.T) {
 	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncBitOr, []expression.Expression{col}, false)
 	require.NoError(t, err)
 	bitOrFunc := desc.GetAggFunc(ctx)
-	evalCtx := bitOrFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
+	evalCtx := bitOrFunc.CreateContext(s.ctx)
 
 	result := bitOrFunc.GetResult(evalCtx)
 	require.Equal(t, uint64(0), result.GetUint64())
@@ -292,7 +292,7 @@ func TestBitOr(t *testing.T) {
 
 	// test bit_or( decimal )
 	col.RetType = types.NewFieldType(mysql.TypeNewDecimal)
-	bitOrFunc.ResetContext(s.ctx.GetSessionVars().StmtCtx, evalCtx)
+	bitOrFunc.ResetContext(s.ctx, evalCtx)
 
 	result = bitOrFunc.GetResult(evalCtx)
 	require.Equal(t, uint64(0), result.GetUint64())
@@ -341,7 +341,7 @@ func TestBitXor(t *testing.T) {
 	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncBitXor, []expression.Expression{col}, false)
 	require.NoError(t, err)
 	bitXorFunc := desc.GetAggFunc(ctx)
-	evalCtx := bitXorFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
+	evalCtx := bitXorFunc.CreateContext(s.ctx)
 
 	result := bitXorFunc.GetResult(evalCtx)
 	require.Equal(t, uint64(0), result.GetUint64())
@@ -379,7 +379,7 @@ func TestBitXor(t *testing.T) {
 
 	// test bit_xor( decimal )
 	col.RetType = types.NewFieldType(mysql.TypeNewDecimal)
-	bitXorFunc.ResetContext(s.ctx.GetSessionVars().StmtCtx, evalCtx)
+	bitXorFunc.ResetContext(s.ctx, evalCtx)
 
 	result = bitXorFunc.GetResult(evalCtx)
 	require.Equal(t, uint64(0), result.GetUint64())
@@ -420,7 +420,7 @@ func TestCount(t *testing.T) {
 	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncCount, []expression.Expression{col}, false)
 	require.NoError(t, err)
 	countFunc := desc.GetAggFunc(ctx)
-	evalCtx := countFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
+	evalCtx := countFunc.CreateContext(s.ctx)
 
 	result := countFunc.GetResult(evalCtx)
 	require.Equal(t, int64(0), result.GetInt64())
@@ -441,7 +441,7 @@ func TestCount(t *testing.T) {
 	desc, err = NewAggFuncDesc(s.ctx, ast.AggFuncCount, []expression.Expression{col}, true)
 	require.NoError(t, err)
 	distinctCountFunc := desc.GetAggFunc(ctx)
-	evalCtx = distinctCountFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
+	evalCtx = distinctCountFunc.CreateContext(s.ctx)
 
 	for _, row := range s.rows {
 		err := distinctCountFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
@@ -465,7 +465,7 @@ func TestConcat(t *testing.T) {
 	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncGroupConcat, []expression.Expression{col, sep}, false)
 	require.NoError(t, err)
 	concatFunc := desc.GetAggFunc(ctx)
-	evalCtx := concatFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
+	evalCtx := concatFunc.CreateContext(s.ctx)
 
 	result := concatFunc.GetResult(evalCtx)
 	require.True(t, result.IsNull())
@@ -493,7 +493,7 @@ func TestConcat(t *testing.T) {
 	desc, err = NewAggFuncDesc(s.ctx, ast.AggFuncGroupConcat, []expression.Expression{col, sep}, true)
 	require.NoError(t, err)
 	distinctConcatFunc := desc.GetAggFunc(ctx)
-	evalCtx = distinctConcatFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
+	evalCtx = distinctConcatFunc.CreateContext(s.ctx)
 
 	row.SetDatum(0, types.NewIntDatum(1))
 	err = distinctConcatFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row.ToRow())
@@ -519,7 +519,7 @@ func TestFirstRow(t *testing.T) {
 	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
 	require.NoError(t, err)
 	firstRowFunc := desc.GetAggFunc(ctx)
-	evalCtx := firstRowFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
+	evalCtx := firstRowFunc.CreateContext(s.ctx)
 
 	row := chunk.MutRowFromDatums(types.MakeDatums(1)).ToRow()
 	err = firstRowFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
@@ -550,8 +550,8 @@ func TestMaxMin(t *testing.T) {
 	desc, err = NewAggFuncDesc(s.ctx, ast.AggFuncMin, []expression.Expression{col}, false)
 	require.NoError(t, err)
 	minFunc := desc.GetAggFunc(ctx)
-	maxEvalCtx := maxFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
-	minEvalCtx := minFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
+	maxEvalCtx := maxFunc.CreateContext(s.ctx)
+	minEvalCtx := minFunc.CreateContext(s.ctx)
 
 	result := maxFunc.GetResult(maxEvalCtx)
 	require.True(t, result.IsNull())
