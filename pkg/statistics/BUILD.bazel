@@ -62,6 +62,7 @@ go_test(
     name = "statistics_test",
     timeout = "short",
     srcs = [
+        "builder_test.go",
         "cmsketch_test.go",
         "fmsketch_test.go",
         "histogram_bench_test.go",
@@ -92,6 +93,7 @@ go_test(
         "//pkg/util/chunk",
         "//pkg/util/codec",
         "//pkg/util/collate",
+        "//pkg/util/memory",
         "//pkg/util/mock",
         "//pkg/util/ranger",
         "//pkg/util/sqlexec",
