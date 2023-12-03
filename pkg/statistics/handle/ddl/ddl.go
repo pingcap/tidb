@@ -339,25 +339,20 @@ func (h *ddlHandlerImpl) updateStatsWithCountDeltaAndModifyCountDelta(
 			return err
 		}
 		// Because count can not be negative, so we need to get the current and calculate the delta.
-		tableCount, _, err := h.statsWriter.StatsMetaCountAndModifyCount(
-			tableID,
-		)
-		if err != nil {
-			return err
-		}
-		countDelta = tableCount + countDelta
 		_, err = util.Exec(
 			sctx,
 			"INSERT INTO mysql.stats_meta "+
 				"(version, count, modify_count, table_id) "+
-				"VALUES (%?, %?, %?, %?) "+
+				"SELECT %?, GREATEST(0, count + %?), GREATEST(0, modify_count + %?), %? "+
+				"FROM mysql.stats_meta WHERE table_id = %? "+
 				"ON DUPLICATE KEY UPDATE "+
 				"version = VALUES(version), "+
 				"count = VALUES(count), "+
-				"modify_count = GREATEST(0, modify_count + VALUES(modify_count))",
+				"modify_count = VALUES(modify_count)",
 			startTS,
 			countDelta,
 			modifyCountDelta,
+			tableID,
 			tableID,
 		)
 		return err
