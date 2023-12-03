@@ -26,8 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	mockexecute "github.com/pingcap/tidb/pkg/disttask/framework/mock/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
@@ -59,11 +59,11 @@ func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, dispatcherHandle di
 	registerTaskMetaInner(t, proto.TaskTypeExample, mockExtension, mockCleanupRountine, dispatcherHandle)
 }
 
-func registerTaskMetaInner(t *testing.T, taskType proto.TaskType, mockExtension scheduler.Extension, mockCleanup dispatcher.CleanUpRoutine, dispatcherHandle dispatcher.Extension) {
+func registerTaskMetaInner(t *testing.T, taskType proto.TaskType, mockExtension taskexecutor.Extension, mockCleanup dispatcher.CleanUpRoutine, dispatcherHandle dispatcher.Extension) {
 	t.Cleanup(func() {
 		dispatcher.ClearDispatcherFactory()
 		dispatcher.ClearDispatcherCleanUpFactory()
-		scheduler.ClearSchedulers()
+		taskexecutor.ClearTaskExecutors()
 	})
 	dispatcher.RegisterDispatcherFactory(taskType,
 		func(ctx context.Context, taskMgr dispatcher.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
@@ -77,9 +77,9 @@ func registerTaskMetaInner(t *testing.T, taskType proto.TaskType, mockExtension 
 			return mockCleanup
 		})
 
-	scheduler.RegisterTaskType(taskType,
-		func(ctx context.Context, id string, task *proto.Task, taskTable scheduler.TaskTable) scheduler.Scheduler {
-			s := scheduler.NewBaseScheduler(ctx, id, task.ID, taskTable)
+	taskexecutor.RegisterTaskType(taskType,
+		func(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
+			s := taskexecutor.NewBaseTaskExecutor(ctx, id, task.ID, taskTable)
 			s.Extension = mockExtension
 			return s
 		},
@@ -163,9 +163,9 @@ func DispatchTaskAndCheckSuccess(ctx context.Context, t *testing.T, taskKey stri
 
 // DispatchAndCancelTask dispatch one task then cancel it.
 func DispatchAndCancelTask(ctx context.Context, t *testing.T, taskKey string, testContext *TestContext) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/MockExecutorRunCancel", "1*return(1)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunCancel", "1*return(1)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/MockExecutorRunCancel"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunCancel"))
 	}()
 	task := DispatchTask(ctx, t, taskKey)
 	require.Equal(t, proto.TaskStateReverted, task.State)
@@ -191,7 +191,7 @@ func DispatchMultiTasksAndOneFail(ctx context.Context, t *testing.T, num int, te
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
 	tasks := make([]*proto.Task, num)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/MockExecutorRunErr", "1*return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunErr", "1*return(true)"))
 
 	for i := 0; i < num; i++ {
 		_, err = mgr.CreateTask(ctx, fmt.Sprintf("key%d", i), proto.TaskTypeExample, 8, nil)
@@ -213,5 +213,5 @@ func DispatchMultiTasksAndOneFail(ctx context.Context, t *testing.T, num int, te
 		testContext.M.Delete(key)
 		return true
 	})
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/MockExecutorRunErr"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunErr"))
 }

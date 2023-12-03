@@ -62,7 +62,7 @@ type mockPDClient struct {
 	regionsSorted bool
 }
 
-func (c *mockPDClient) ScanRegions(_ context.Context, key, endKey []byte, limit int) ([]*pd.Region, error) {
+func (c *mockPDClient) ScanRegions(_ context.Context, key, endKey []byte, limit int, _ ...pd.GetRegionOption) ([]*pd.Region, error) {
 	if len(c.regions) == 0 {
 		return []*pd.Region{newMockRegion(1, []byte{}, []byte{0xFF, 0xFF})}, nil
 	}

@@ -84,6 +84,8 @@ func ParseCaptureTableFilter(tableFilter string) (f tablefilter.Filter, valid bo
 }
 
 func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
+	h.sctx.Lock()
+	defer h.sctx.Unlock()
 	filter = &captureFilter{
 		frequency: 1,
 		users:     make(map[string]struct{}),

@@ -29,12 +29,7 @@ func (*BindHandle) GetScope(_ string) variable.ScopeFlag {
 
 // Stats returns the server statistics.
 func (h *BindHandle) Stats(_ *variable.SessionVars) (map[string]interface{}, error) {
-	h.bindInfo.Lock()
-	defer func() {
-		h.bindInfo.Unlock()
-	}()
 	m := make(map[string]interface{})
-	m[lastPlanBindingUpdateTime] = h.lastUpdateTime.String()
-
+	m[lastPlanBindingUpdateTime] = h.getLastUpdateTime().String()
 	return m, nil
 }
