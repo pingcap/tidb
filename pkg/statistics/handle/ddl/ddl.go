@@ -274,38 +274,76 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 	}
 	// Update the global stats.
 	if modifyCountDelta != 0 || countDelta != 0 {
+		se, err := h.statsHandler.SPool().Get()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		sctx := se.(sessionctx.Context)
+		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+		schema, _ := is.SchemaByTable(globalTableInfo)
 		if err := h.updateStatsWithCountDeltaAndModifyCountDelta(
 			globalTableInfo.ID, countDelta, modifyCountDelta,
 		); err != nil {
+			fields := exchangePartitionLogFields(
+				schema.Name,
+				globalTableInfo,
+				originalPartInfo.Definitions[0],
+				originalTableInfo,
+				countDelta, modifyCountDelta,
+				partCount,
+				partModifyCount,
+				tableCount,
+				tableModifyCount,
+			)
+			fields = append(fields, zap.Error(err))
 			logutil.StatsLogger.Error(
 				"Update global stats after exchange partition failed",
-				zap.Error(err),
-				zap.Int64("tableID", globalTableInfo.ID),
-				zap.Int64("countDelta", countDelta),
-				zap.Int64("modifyCountDelta", modifyCountDelta),
-				zap.Int64("partitionID", originalPartInfo.Definitions[0].ID),
-				zap.String("partitionName", originalPartInfo.Definitions[0].Name.O),
-				zap.Int64("partitionCount", partCount),
-				zap.Int64("tableID", originalTableInfo.ID),
-				zap.String("tableName", originalTableInfo.Name.O),
-				zap.Int64("tableCount", tableCount),
+				fields...,
 			)
 			return err
 		}
 		logutil.StatsLogger.Info(
 			"Update global stats after exchange partition",
-			zap.Int64("tableID", globalTableInfo.ID),
-			zap.Int64("countDelta", countDelta),
-			zap.Int64("modifyCountDelta", modifyCountDelta),
-			zap.Int64("partitionID", originalPartInfo.Definitions[0].ID),
-			zap.String("partitionName", originalPartInfo.Definitions[0].Name.O),
-			zap.Int64("partitionCount", partCount),
-			zap.Int64("tableID", originalTableInfo.ID),
-			zap.String("tableName", originalTableInfo.Name.O),
-			zap.Int64("tableCount", tableCount),
+			exchangePartitionLogFields(
+				schema.Name,
+				globalTableInfo,
+				originalPartInfo.Definitions[0],
+				originalTableInfo,
+				countDelta, modifyCountDelta,
+				partCount,
+				partModifyCount,
+				tableCount,
+				tableModifyCount,
+			)...,
 		)
 	}
 	return nil
+}
+
+func exchangePartitionLogFields(
+	schemaName model.CIStr,
+	globalTableInfo *model.TableInfo,
+	originalPartInfo model.PartitionDefinition,
+	originalTableInfo *model.TableInfo,
+	countDelta, modifyCountDelta,
+	partCount, partModifyCount,
+	tableCount, tableModifyCount int64,
+) []zap.Field {
+	return []zap.Field{
+		zap.String("schema", schemaName.O),
+		zap.Int64("globalTableID", globalTableInfo.ID),
+		zap.String("globalTableName", globalTableInfo.Name.O),
+		zap.Int64("countDelta", countDelta),
+		zap.Int64("modifyCountDelta", modifyCountDelta),
+		zap.Int64("partitionID", originalPartInfo.ID),
+		zap.String("partitionName", originalPartInfo.Name.O),
+		zap.Int64("partitionCount", partCount),
+		zap.Int64("partitionModifyCount", partModifyCount),
+		zap.Int64("tableID", originalTableInfo.ID),
+		zap.String("tableName", originalTableInfo.Name.O),
+		zap.Int64("tableCount", tableCount),
+		zap.Int64("tableModifyCount", tableModifyCount),
+	}
 }
 
 // updateStatsWithCountDeltaAndModifyCountDelta updates
