@@ -995,3 +995,29 @@ Projection_6	250.00	root		planner__core__range_scan_for_like.t.a, planner__core_
 select * from t use index (ia) where a like ' 语言%%' order by a,_tidb_rowid;
 a	b
  语言	55555
+explain select * from t use index (ia) where a not in ('aabc','dd') order by a,_tidb_rowid;
+id	estRows	task	access object	operator info
+Projection_6	3583.33	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t.b
+└─Sort_7	3583.33	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
+  └─IndexLookUp_12	3583.33	root		
+    ├─IndexRangeScan_9(Build)	3583.33	cop[tikv]	table:t, index:ia(a)	range:(NULL,"\x00D\x00D"), ("\x00D\x00D",+inf], keep order:false, stats:pseudo
+    └─Selection_11(Probe)	3583.33	cop[tikv]		not(in(planner__core__range_scan_for_like.t.a, "aabc", "dd"))
+      └─TableRowIDScan_10	3583.33	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (ia) where a not in ('aabc','dd') order by a,_tidb_rowid;
+a	b
+	234
+ 	11111
+       	66666
+  语 言	3579
+ 语言	55555
+A	456
+Aa	456
+aab	456
+aabB	456
+aABBccdd	890
+你好	111
+测测试 	2468
+测测试    	99999
+测试	222
+测试     	543
+测试Abc	324

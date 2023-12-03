@@ -225,7 +225,8 @@ explain select * from t use index (ia) where a like '    %' order by a,_tidb_row
 select * from t use index (ia) where a like '    %' order by a,_tidb_rowid;
 explain select * from t use index (ia) where a like ' 语言%%' order by a,_tidb_rowid;
 select * from t use index (ia) where a like ' 语言%%' order by a,_tidb_rowid;
-
+explain select * from t use index (ia) where a not in ('aabc','dd') order by a,_tidb_rowid;
+select * from t use index (ia) where a not in ('aabc','dd') order by a,_tidb_rowid;
 
 
 
