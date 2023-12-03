@@ -217,61 +217,15 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 		return err
 	}
 
-	// Compute the difference between the partition and the table.
-	// For instance, consider the following scenario:
-	//
-	// | Entity    | modify_count                       | count |
-	// |-----------|------------------------------------|-------|
-	// | Partition | 10                                 | 100   |
-	// | Table     | 20                                 | 200   |
-	// | Global    | 30 (20 from other partitions + 10) | 300   |
-	//
-	// After the partition exchange, the partition becomes the table and vice versa:
-	//
-	// | Entity    | modify_count | count |
-	// |-----------|--------------|-------|
-	// | Partition | 20           | 200   |
-	// | Table     | 10           | 100   |
-	// | Global    | 30           | 300   |
-	//
-	// The count difference is 200 - 100 = 100, which is also considered as the table's delta.
 	countDelta := tableCount - partCount
-	modifyCountDelta := countDelta
+	// Initially, the sum of tableCount and partCount represents
+	// the operation of deleting the partition and adding the table.
+	// Therefore, they are considered as modifyCountDelta.
+	// Next, since the old partition no longer belongs to the table,
+	// the modify count of the partition should be subtracted.
+	// The modify count of the table should be added as we are adding the table as a partition.
+	modifyCountDelta := (tableCount + partCount) - (partModifyCount + tableModifyCount)
 
-	// Adjust the delta to account for the modify count of the partition.
-	// For example, if the partition's modify_count is 10 and the count difference is 100,
-	// the actual delta after the exchange is 100 - 10 = 90.
-	// When updating the global stats, the count increases by 100 and the modify_count increases by 90.
-	// The final modify_count becomes 30 (original) + 90 (delta) = 120, which is the correct value.
-	//
-	// | Entity    | modify_count                             | count |
-	// |-----------|------------------------------------------|-------|
-	// | Partition | 20                                       | 200   |
-	// | Table     | 10                                       | 100   |
-	// | Global    | 120 (20 from other partitions + 10 + 90) | 400   |
-	// If we do not do this, the modify_count will be 30 (original) + 100 (delta) = 130, which is incorrect.
-	if modifyCountDelta > 0 {
-		modifyCountDelta -= partModifyCount
-	} else {
-		modifyCountDelta += partModifyCount
-	}
-	// Adjust the delta to account for the modify count of the table.
-	// For example, if the table's modify_count is 20 and the count difference is 100,
-	// the actual delta after the exchange is 100 + 20 = 120.
-	// When updating the global stats, the count increases by 100 and the modify_count increases by 120.
-	// The final modify_count becomes 20 (original) + 120 (delta) = 140, which is the correct value.
-	//
-	// | Entity    | modify_count                                     | count |
-	// |-----------|--------------------------------------------------|-------|
-	// | Partition | 20                                               | 200   |
-	// | Table     | 10                                               | 100   |
-	// | Global    | 140 (20 from other partitions + 20 + 10 + 90)    | 400   |
-	// If we do not do this, the modify_count will be 20 (original) + 10 + 90 (delta) = 120, which is incorrect.
-	if modifyCountDelta > 0 {
-		modifyCountDelta += tableModifyCount
-	} else {
-		modifyCountDelta -= tableModifyCount
-	}
 	// Update the global stats.
 	if modifyCountDelta != 0 || countDelta != 0 {
 		se, err := h.statsHandler.SPool().Get()
@@ -384,15 +338,22 @@ func (h *ddlHandlerImpl) updateStatsWithCountDeltaAndModifyCountDelta(
 			)
 			return err
 		}
-		// For count and modify_count, we should use GREATEST(0, x) to avoid negative values.
+		// Because count can not be negative, so we need to get the current and calculate the delta.
+		tableCount, _, err := h.statsWriter.StatsMetaCountAndModifyCount(
+			tableID,
+		)
+		if err != nil {
+			return err
+		}
+		countDelta = tableCount + countDelta
 		_, err = util.Exec(
 			sctx,
 			"INSERT INTO mysql.stats_meta "+
 				"(version, count, modify_count, table_id) "+
-				"VALUES (%?, GREATEST(0, %?), GREATEST(0, %?), %?) "+
+				"VALUES (%?, %?, %?, %?) "+
 				"ON DUPLICATE KEY UPDATE "+
 				"version = VALUES(version), "+
-				"count = GREATEST(0, count + VALUES(count)), "+
+				"count = VALUES(count), "+
 				"modify_count = GREATEST(0, modify_count + VALUES(modify_count))",
 			startTS,
 			countDelta,

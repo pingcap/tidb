@@ -398,6 +398,13 @@ func TestExchangeAPartition(t *testing.T) {
 	statsTbl1 := h.GetTableStats(tableInfo1)
 	require.False(t, statsTbl1.Pseudo)
 
+	// Check the global stats meta before exchange partition.
+	testKit.MustQuery(
+		fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableInfo.ID),
+	).Check(
+		testkit.Rows("5 0"),
+	)
+
 	// Exchange partition p0 with table t1.
 	testKit.MustExec("alter table t exchange partition p0 with table t1")
 	// Find the exchange partition event.
@@ -405,11 +412,13 @@ func TestExchangeAPartition(t *testing.T) {
 	err = h.HandleDDLEvent(exchangePartitionEvent)
 	require.NoError(t, err)
 	// Check the global stats meta.
-	// Because we have exchanged a partition, the count should be 5 and the modify count should be 4.
+	// Because we have exchanged a partition, the count should be 5 and the modify count should be 5(table) + 2(partition).
+	// 5 -> Five rows are added to table 't' as 't1' is included as a new partition.
+	// 2 -> Two rows are removed from table 't' as partition 'p0' is no longer a part of it.
 	testKit.MustQuery(
 		fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableInfo.ID),
 	).Check(
-		testkit.Rows("8 3"),
+		testkit.Rows("8 7"),
 	)
 
 	// Create another normal table with no data to exchange partition.
@@ -434,7 +443,8 @@ func TestExchangeAPartition(t *testing.T) {
 	testKit.MustQuery(
 		fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableInfo.ID),
 	).Check(
-		testkit.Rows("12 7"),
+		// modify_count = 7 + 4 = 11
+		testkit.Rows("12 11"),
 	)
 
 	testKit.MustExec("alter table t exchange partition p1 with table t2")
@@ -443,11 +453,15 @@ func TestExchangeAPartition(t *testing.T) {
 	err = h.HandleDDLEvent(exchangePartitionEvent)
 	require.NoError(t, err)
 	// Check the global stats meta.
-	// Because we have exchanged a partition, the count should be 5 and the modify count should be 4.
 	testKit.MustQuery(
 		fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableInfo.ID),
 	).Check(
-		testkit.Rows("7 6"),
+		// count = 12 - 5(old partition) + 0(new table) = 7
+		// modify_count = 11 + 5(old partition) + 0(new table) - 4(old partition) = 12
+		// 5 -> Five rows are removed from table 't' as partition 'p1' is no longer a part of it.
+		// 0 -> No rows are added to table 't' as 't2' is added as a partition to it.
+		// 4 -> Four rows are subtracted from table 't' due to the insertion of four rows into partition 'p1'.
+		testkit.Rows("7 12"),
 	)
 }
 
