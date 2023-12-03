@@ -2594,7 +2594,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	// exchange table meta id
 	pt.ExchangePartitionInfo = nil
-	// Used below to update the partition table stats.
+	// Used below to update the partitioned table's stats meta.
 	orginalPartitionDef := partDef.Clone()
 	originalNt := nt.Clone()
 	partDef.ID, nt.ID = nt.ID, partDef.ID
