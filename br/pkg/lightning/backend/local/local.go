@@ -1189,13 +1189,7 @@ func (local *Backend) generateAndSendJob(
 	eg, egCtx := errgroup.WithContext(ctx)
 
 	dataAndRangeCh := make(chan common.DataAndRange)
-	conn := local.WorkerConcurrency
-	if _, ok := engine.(*external.Engine); ok {
-		// currently external engine will generate a large IngestData, se we lower the
-		// concurrency to pass backpressure to the LoadIngestData goroutine to avoid OOM
-		conn = 1
-	}
-	for i := 0; i < conn; i++ {
+	for i := 0; i < local.WorkerConcurrency; i++ {
 		eg.Go(func() error {
 			for {
 				select {

@@ -337,15 +337,15 @@ func TestGetAdjustedConcurrency(t *testing.T) {
 		workerConcurrency: 32,
 		dataFiles:         genFiles(100),
 	}
-	require.Equal(t, 8, e.getAdjustedConcurrency())
+	require.Equal(t, 16, e.getAdjustedConcurrency())
 	e.dataFiles = genFiles(8000)
 	require.Equal(t, 1, e.getAdjustedConcurrency())
 
 	e.checkHotspot = false
-	e.dataFiles = genFiles(10)
-	require.Equal(t, 32, e.getAdjustedConcurrency())
 	e.dataFiles = genFiles(100)
-	require.Equal(t, 10, e.getAdjustedConcurrency())
+	require.Equal(t, 32, e.getAdjustedConcurrency())
+	e.dataFiles = genFiles(1000)
+	require.Equal(t, 8, e.getAdjustedConcurrency())
 	e.dataFiles = genFiles(10000)
 	require.Equal(t, 1, e.getAdjustedConcurrency())
 }
