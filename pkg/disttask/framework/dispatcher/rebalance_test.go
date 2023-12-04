@@ -55,7 +55,7 @@ func scaleTest(t *testing.T,
 	mockTaskMgr.EXPECT().GetSubtasksByStepAndState(ctx, int64(id), proto.StepInit, proto.TaskStatePending).Return(
 		testCase.subtasks,
 		nil)
-	mockTaskMgr.EXPECT().UpdateSubtasksSchedulerIDs(ctx, int64(id), testCase.subtasks).Return(nil).AnyTimes()
+	mockTaskMgr.EXPECT().UpdateSubtasksExecIDs(ctx, int64(id), testCase.subtasks).Return(nil).AnyTimes()
 	mockTaskMgr.EXPECT().CleanUpMeta(ctx, testCase.cleanedNodes).Return(nil).AnyTimes()
 	if len(testCase.cleanedNodes) > 0 {
 		mockTaskMgr.EXPECT().GetSubtasksByExecIdsAndStepAndState(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
@@ -84,7 +84,7 @@ func balanceTest(t *testing.T,
 		nil)
 	mockTaskMgr.EXPECT().CleanUpMeta(ctx, gomock.Any()).Return(nil).AnyTimes()
 
-	mockTaskMgr.EXPECT().UpdateSubtasksSchedulerIDs(ctx, int64(id), testCase.subtasks).Return(nil).AnyTimes()
+	mockTaskMgr.EXPECT().UpdateSubtasksExecIDs(ctx, int64(id), testCase.subtasks).Return(nil).AnyTimes()
 	dsp := dispatcher.NewBaseDispatcher(ctx, mockTaskMgr, "server", &proto.Task{Step: proto.StepInit, ID: int64(id)})
 	dsp.LiveNodes = testCase.liveNodes
 	dsp.TaskNodes = testCase.taskNodes
