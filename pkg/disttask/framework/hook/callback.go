@@ -20,14 +20,20 @@ import (
 
 // Callback is used for task executor.
 type Callback interface {
+	// OnInitBefore called before taskExecutor.Init.
 	OnInitBefore(task *proto.Task) error
+	// OnSubtaskRunBefore called before task executor run one subtask.
 	OnSubtaskRunBefore(subtask *proto.Subtask) bool
+	// OnSubtaskRunAfter called after task executor run one subtask.
 	OnSubtaskRunAfter(subtask *proto.Subtask) error
+	// OnSubtaskFinishedBefore called before mark one subtask as finished.
 	OnSubtaskFinishedBefore(subtask *proto.Subtask) error
+	// OnSubtaskFinishedAfter called after mark one subtask as finished.
 	OnSubtaskFinishedAfter(subtask *proto.Subtask)
 }
 
 var _ Callback = (*BaseCallback)(nil)
+var _ Callback = (*TestCallback)(nil)
 
 // BaseCallback implements Callback interface.
 type BaseCallback struct {

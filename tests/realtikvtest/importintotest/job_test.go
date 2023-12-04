@@ -195,7 +195,6 @@ func (s *mockGCSSuite) TestShowJob() {
 
 			cnt++
 		}
-
 	}
 	taskexecutor.RegisterHook(proto.ImportInto, func() hook.Callback {
 		return hk
