@@ -523,3 +523,20 @@ func TestCTEDelSpillFile(t *testing.T) {
 	tk.MustExec("insert into t1 (c1, c2) with recursive cte1 as (select c1 from t2 union select cte1.c1 + 1 from cte1 where cte1.c1 < 100000) select cte1.c1, cte1.c1+1 from cte1;")
 	require.Nil(t, tk.Session().GetSessionVars().StmtCtx.CTEStorageMap)
 }
+
+func TestCTESmallChunkSize(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(c1 int);")
+	insertStr := "insert into t1 values (0)"
+	for i := 1; i < 300; i++ {
+		insertStr += fmt.Sprintf(", (%d)", i)
+	}
+	tk.MustExec(insertStr)
+	tk.MustExec("set @@tidb_max_chunk_size = 32;")
+	tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 1 offset 100) select * from cte1;").Check(testkit.Rows("100"))
+	tk.MustExec("set @@tidb_max_chunk_size = default;")
+}
