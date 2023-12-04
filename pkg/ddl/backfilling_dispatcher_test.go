@@ -303,7 +303,7 @@ func createAddIndexTask(t *testing.T,
 	defaultSQLMode, err := mysql.GetSQLMode(mysql.DefaultSQLMode)
 	require.NoError(t, err)
 
-	taskMeta := &ddl.BackfillGlobalMeta{
+	taskMeta := &ddl.BackfillTaskMeta{
 		Job: model.Job{
 			ID:       time.Now().UnixNano(),
 			SchemaID: db.ID,
