@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -197,7 +196,7 @@ func newMergeIter[
 	if sampleKeySize == 0 || sampleKeySize/sampleKeyCnt == 0 {
 		i.checkHotspotPeriod = 10000
 	} else {
-		sizeThreshold := int(32 * size.MB)
+		sizeThreshold := 32 * 1024 * 1024
 		i.checkHotspotPeriod = max(1000, sizeThreshold/(sampleKeySize/sampleKeyCnt))
 	}
 	heap.Init(&i.h)
