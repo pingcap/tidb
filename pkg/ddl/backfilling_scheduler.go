@@ -511,6 +511,8 @@ func expectedIngestWorkerCnt() (readerCnt, writerCnt int) {
 	readerCnt = min(workerCnt/2, maxBackfillWorkerSize)
 	readerCnt = max(readerCnt, 1)
 	writerCnt = min(workerCnt/2+2, maxBackfillWorkerSize)
+	writerCnt = writerCnt / 2
+	writerCnt = max(writerCnt, 1)
 	return readerCnt, writerCnt
 }
 
