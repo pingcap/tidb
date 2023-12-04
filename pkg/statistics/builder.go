@@ -16,6 +16,7 @@ package statistics
 
 import (
 	"math"
+	"sync"
 
 	"github.com/google/btree"
 	"github.com/pingcap/errors"
@@ -238,6 +239,12 @@ type sortItem struct {
 	Sample      []*SampleItem
 }
 
+var mapPool = sync.Pool{
+	New: func() interface{} {
+		return make(map[hack.MutableString]*sortItem, 200)
+	},
+}
+
 // BuildHistAndTopN build a histogram and TopN for a column or an index from samples.
 func BuildHistAndTopN(
 	ctx sessionctx.Context,
@@ -299,7 +306,7 @@ func BuildHistAndTopN(
 	sampleNum := int64(len(collector.Samples))
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
 	sampleFactor := float64(count) / float64(len(collector.Samples))
-	var sMap = make(map[hack.MutableString]*sortItem, ndv)
+	var sMap = mapPool.Get().(map[hack.MutableString]*sortItem)
 	var corrXYSum float64
 	for _, s := range samples {
 		sampleBytes, err := getComparedBytes(s.Value)
@@ -357,6 +364,7 @@ func BuildHistAndTopN(
 		}
 	}
 	maps.Clear(sMap)
+	mapPool.Put(sMap)
 	if isColumn {
 		// Calc the correlation of the column between the handle column.
 		idx := 0
