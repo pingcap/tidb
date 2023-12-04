@@ -369,18 +369,11 @@ func BuildHistAndTopN(
 		})
 		hg.Correlation = calcCorrelation(sampleNum, corrXYSum)
 	}
-	topNbtree.Ascend(func(i *sortItem) bool {
-		sampleTree.Delete(i)
-		return true
-	})
 	// Handle the counting for the last value. Basically equal to the case 2 above.
 	// now topn is empty: append the "current" count directly
-	topNList, pop, err := pruneTopNItem(topNbtree, ndv, nullCount, sampleNum, count)
+	topNList, err := pruneTopNItem(topNbtree, sampleTree, ndv, nullCount, sampleNum, count)
 	if err != nil {
 		return nil, nil, err
-	}
-	for _, p := range pop {
-		sampleTree.ReplaceOrInsert(p)
 	}
 	ss := make([]*SampleItem, 0, sampleTree.Len())
 	for sampleTree.Len() != 0 {
@@ -422,17 +415,18 @@ func toTopNMeta(topns *btree.BTreeG[*sortItem], n int) ([]TopNMeta, error) {
 // pruneTopNItem tries to prune the least common values in the top-n list if it is not significantly more common than the values not in the list.
 //
 //	We assume that the ones not in the top-n list's selectivity is 1/remained_ndv which is the internal implementation of EqualRowCount
-func pruneTopNItem(topns *btree.BTreeG[*sortItem], ndv, nullCount, sampleRows, totalRows int64) ([]TopNMeta, []*sortItem, error) {
+func pruneTopNItem(topns *btree.BTreeG[*sortItem], sampleTree *btree.BTreeG[*sortItem], ndv, nullCount, sampleRows, totalRows int64) ([]TopNMeta, error) {
 	// If the sampleRows holds all rows, or NDV of samples equals to actual NDV, we just return the TopN directly.
 	if sampleRows == totalRows || totalRows <= 1 || int64(topns.Len()) >= ndv {
 		result, err := toTopNMeta(topns, topns.Len())
-		return result, nil, err
+		return result, err
 	}
 	// Sum the occurrence except the least common one from the top-n list. To check whether the lest common one is worth
 	// storing later.
 	sumCount := uint64(0)
 	topnCountList := make([]uint64, 0, topns.Len())
 	topns.Descend(func(item *sortItem) bool {
+		sampleTree.Delete(item)
 		sumCount += uint64(len(item.Sample))
 		topnCountList = append(topnCountList, uint64(len(item.Sample)))
 		return true
@@ -476,14 +470,13 @@ func pruneTopNItem(topns *btree.BTreeG[*sortItem], ndv, nullCount, sampleRows, t
 		sumCount -= topnCountList[topNNum-1]
 	}
 	result := make([]TopNMeta, 0, topNNum)
-	for i := 0; i < topNNum; i++ {
-		m, _ := topns.DeleteMax()
-		result = append(result, TopNMeta{Count: uint64(len(m.Sample)), Encoded: m.SampleBytes})
-	}
-	popd := make([]*sortItem, 0, topns.Len())
-	for topns.Len() != 0 {
-		m, _ := topns.DeleteMax()
-		popd = append(popd, m)
-	}
-	return result, popd, nil
+	topns.Descend(func(item *sortItem) bool {
+		if len(result) < topNNum {
+			result = append(result, TopNMeta{Count: uint64(len(item.Sample)), Encoded: item.SampleBytes})
+		} else {
+			sampleTree.ReplaceOrInsert(item)
+		}
+		return true
+	})
+	return result, nil
 }
