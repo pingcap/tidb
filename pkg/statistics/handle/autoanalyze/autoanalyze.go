@@ -127,7 +127,8 @@ func CleanupCorruptedAnalyzeJobs(
 		needCleanUp := false
 		jobID := row.GetUint64(0)
 
-		// TODO: when it is null?
+		// The process ID is typically non-null for running or pending jobs.
+		// However, in rare cases(I don't which case), it may be null. Therefore, it's necessary to check its value.
 		if !row.IsNull(1) {
 			processID := row.GetUint64(1)
 			// If the process id is not in currentRunningProcessIDs, we need to clean up the job.
