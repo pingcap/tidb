@@ -1432,7 +1432,7 @@ const (
 	DefTiDBOptEnableHashJoin                          = true
 	DefTiDBOptObjective                               = OptObjectiveModerate
 	DefTiDBSchemaVersionCacheLimit                    = 16
-	DefTiDBKillIdleTransaction                     = 0
+	DefTiDBKillIdleTransaction                        = 0
 )
 
 // Process global variables.
