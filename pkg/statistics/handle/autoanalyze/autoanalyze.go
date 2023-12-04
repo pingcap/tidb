@@ -15,6 +15,7 @@
 package autoanalyze
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"math/rand"
@@ -81,54 +82,84 @@ func (sa *statsAnalyze) DeleteAnalyzeJobs(updateTime time.Time) error {
 // It cleans up both the job from current owner and the job from other nodes.
 func (sa *statsAnalyze) CleanupCorruptedAnalyzeJob(currentRunningProcessIDs map[uint64]struct{}) error {
 	return statsutil.CallWithSCtx(nil, func(sctx sessionctx.Context) error {
-		return cleanUpCorruptedAnalyzeJobsFromCurrentNode(sctx, currentRunningProcessIDs)
+		return cleanUpCorruptedAnalyzeJobs(sctx, currentRunningProcessIDs)
 	})
 }
 
-// cleanUpCorruptedAnalyzeJobsFromCurrentNode cleans up the potentially corrupted analyze job from current node.
-func cleanUpCorruptedAnalyzeJobsFromCurrentNode(
+// cleanUpCorruptedAnalyzeJobs cleans up the potentially corrupted analyze job from current node.
+func cleanUpCorruptedAnalyzeJobs(
 	sctx sessionctx.Context,
 	currentRunningProcessIDs map[uint64]struct{},
 ) error {
-	serverInfo, err := infosync.GetServerInfo()
+	// Get all the instances from etcd.
+	serverInfo, err := infosync.GetAllServerInfo(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
+	instances := make(map[string]struct{}, len(serverInfo))
+	for _, info := range serverInfo {
+		instances[fmt.Sprintf("%s:%d", info.IP, info.Port)] = struct{}{}
+	}
 
-	instance := fmt.Sprintf("%s:%d", serverInfo.IP, serverInfo.Port)
+	// Get all the analyze jobs whose state is `pending` or `running` and the update time is more than 10 minutes ago.
 	rows, _, err := statsutil.ExecRows(
 		sctx,
-		`SELECT id, process_id
+		`SELECT id, process_id, instance
 		FROM mysql.analyze_jobs
-		WHERE instance = %?
 		AND state IN ('pending', 'running')
 		AND TIMESTAMPDIFF(MINUTE, update_time, NOW()) > 10`,
-		instance,
 	)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+	jobIDs := make([]uint64, 0, len(rows))
 	for _, row := range rows {
+		needCleanUp := false
 		jobID := row.GetUint64(0)
-		if row.IsNull(1) {
-			continue
-		}
-		processID := row.GetUint64(1)
-		if _, ok := currentRunningProcessIDs[processID]; !ok {
-			_, _, err = statsutil.ExecRows(
-				sctx,
-				`UPDATE mysql.analyze_jobs
-				SET state = 'failed',
-				fail_reason = 'TiDB Server is down when running the analyze job',
-				process_id = NULL
-				WHERE id = %?`,
-				jobID,
-			)
-			if err != nil {
-				return errors.Trace(err)
+
+		// TODO: when it is null?
+		if !row.IsNull(1) {
+			processID := row.GetUint64(1)
+			// If the process id is not in currentRunningProcessIDs, we need to clean up the job.
+			// They don't belong to current node any more.
+			if _, ok := currentRunningProcessIDs[processID]; !ok {
+				needCleanUp = true
 			}
 		}
+
+		// If the instance is not in instances, we need to clean up the job.
+		// It means the instance is down or the instance is not in the cluster any more.
+		if !needCleanUp {
+			instance := row.GetString(2)
+			if _, ok := instances[instance]; !ok {
+				needCleanUp = true
+			}
+		}
+
+		if needCleanUp {
+			jobIDs = append(jobIDs, jobID)
+		}
+	}
+
+	// Do a batch update to clean up the jobs.
+	if len(jobIDs) > 0 {
+		_, _, err = statsutil.ExecRows(
+			sctx,
+			`UPDATE mysql.analyze_jobs
+            SET state = 'failed',
+            fail_reason = 'TiDB Server is down when running the analyze job',
+            process_id = NULL
+            WHERE id IN (%s)`,
+			jobIDs,
+		)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		statslogutil.StatsLogger.Info(
+			"clean up the potentially corrupted analyze jobs",
+			zap.Uint64s("job ids", jobIDs),
+		)
 	}
 
 	return nil
