@@ -268,7 +268,7 @@ function check_case_name() {
 
     IFS='/' read -ra parts <<< "$tests"
 
-    last_part="${parts[-1]}"
+    last_part="${parts[${#parts[@]}-1]}"
 
     if [[ $last_part == collation* || $tests == collation* ]]; then
         collation_opt=2
