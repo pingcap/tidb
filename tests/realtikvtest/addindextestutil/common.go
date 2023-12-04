@@ -35,6 +35,7 @@ const (
 	nonPartTabNum = 1
 )
 
+// SuiteContext wraps test context for add index.
 type SuiteContext struct {
 	ctx              context.Context
 	cancel           func()
@@ -82,6 +83,7 @@ func newSuiteContext(t *testing.T, tk *testkit.TestKit, store kv.Storage) *Suite
 	}
 }
 
+// InitTest inits SuiteContext for test.
 func InitTest(t *testing.T) *SuiteContext {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
@@ -360,6 +362,7 @@ func checkTableResult(ctx *SuiteContext, tableName string, tkID int) {
 	}
 }
 
+// TestOneColFrame test 1 col frame.
 func TestOneColFrame(ctx *SuiteContext, colIDs [][]int, f func(*SuiteContext, int, string, int) error) {
 	for tableID := 0; tableID < ctx.tableNum; tableID++ {
 		tableName := "addindex.t" + strconv.Itoa(tableID)
@@ -393,6 +396,7 @@ func TestOneColFrame(ctx *SuiteContext, colIDs [][]int, f func(*SuiteContext, in
 	}
 }
 
+// TestTwoColsFrame test 2 columns frame.
 func TestTwoColsFrame(ctx *SuiteContext, iIDs [][]int, jIDs [][]int, f func(*SuiteContext, int, string, int, int, int) error) {
 	for tableID := 0; tableID < ctx.tableNum; tableID++ {
 		tableName := "addindex.t" + strconv.Itoa(tableID)
@@ -427,6 +431,7 @@ func TestTwoColsFrame(ctx *SuiteContext, iIDs [][]int, jIDs [][]int, f func(*Sui
 	}
 }
 
+// TestOneIndexFrame test 1 index frame.
 func TestOneIndexFrame(ctx *SuiteContext, colID int, f func(*SuiteContext, int, string, int) error) {
 	for tableID := 0; tableID < ctx.tableNum; tableID++ {
 		tableName := "addindex.t" + strconv.Itoa(tableID)
@@ -458,6 +463,7 @@ func TestOneIndexFrame(ctx *SuiteContext, colID int, f func(*SuiteContext, int, 
 	}
 }
 
+// AddIndexNonUnique test add index with non-unique key.
 func AddIndexNonUnique(ctx *SuiteContext, tableID int, tableName string, indexID int) (err error) {
 	ctx.isPK = false
 	ctx.isUnique = false
@@ -465,6 +471,7 @@ func AddIndexNonUnique(ctx *SuiteContext, tableID int, tableName string, indexID
 	return err
 }
 
+// AddIndexUnique test add index with unique key.
 func AddIndexUnique(ctx *SuiteContext, tableID int, tableName string, indexID int) (err error) {
 	ctx.isPK = false
 	ctx.isUnique = true
@@ -488,6 +495,7 @@ func AddIndexUnique(ctx *SuiteContext, tableID int, tableName string, indexID in
 	return err
 }
 
+// AddIndexPK test add index with pk.
 func AddIndexPK(ctx *SuiteContext, tableID int, tableName string, colID int) (err error) {
 	ctx.isPK = true
 	ctx.isUnique = false
@@ -495,6 +503,7 @@ func AddIndexPK(ctx *SuiteContext, tableID int, tableName string, colID int) (er
 	return err
 }
 
+// AddIndexGenCol test add index with gen col.
 func AddIndexGenCol(ctx *SuiteContext, tableID int, tableName string, colID int) (err error) {
 	ctx.isPK = false
 	ctx.isUnique = false
@@ -502,6 +511,7 @@ func AddIndexGenCol(ctx *SuiteContext, tableID int, tableName string, colID int)
 	return err
 }
 
+// AddIndexMultiCols test add index with 2 columns.
 func AddIndexMultiCols(ctx *SuiteContext, tableID int, tableName string, indexID int, colID1 int, colID2 int) (err error) {
 	ctx.isPK = false
 	ctx.isUnique = false
@@ -541,6 +551,7 @@ func useFailpoints(ctx *SuiteContext, failpos int) {
 	logutil.BgLogger().Info("stack", zap.Stack("cur stack"), zap.Int("id:", failpos), zap.Bool("disable failpoints:", true))
 }
 
+// InitTestFailpoint inits SuiteContext for failpoint tests.
 func InitTestFailpoint(t *testing.T) *SuiteContext {
 	ctx := InitTest(t)
 	ctx.isFailpointsTest = true

@@ -52,6 +52,7 @@ type CompatibilityContext struct {
 	tType               testType
 }
 
+// InitCompCtx inits SuiteContext for compatibility tests.
 func InitCompCtx(t *testing.T) *SuiteContext {
 	ctx := InitTest(t)
 	InitCompCtxParams(ctx)
@@ -77,6 +78,7 @@ func newExecutor(tableID int) *executor {
 	return &er
 }
 
+// InitCompCtxParams inits params for compatibility tests.
 func InitCompCtxParams(ctx *SuiteContext) {
 	ctx.CompCtx = &compCtx
 	compCtx.IsConcurrentDDL = false
@@ -84,6 +86,7 @@ func InitCompCtxParams(ctx *SuiteContext) {
 	compCtx.IsPiTR = false
 }
 
+// InitConcurrentDDLTest inits params for compatibility tests with concurrent ddl.
 func InitConcurrentDDLTest(t *testing.T, colIIDs [][]int, colJIDs [][]int, tType testType) *SuiteContext {
 	ctx := InitCompCtx(t)
 	ctx.CompCtx.IsConcurrentDDL = true
@@ -93,6 +96,7 @@ func InitConcurrentDDLTest(t *testing.T, colIIDs [][]int, colJIDs [][]int, tType
 	return ctx
 }
 
+// Start start the compatibility tests.
 func (cCtx *CompatibilityContext) Start(ctx *SuiteContext) {
 	cCtx.executor = cCtx.executor[:0]
 	for i := 0; i < 3; i++ {
@@ -103,6 +107,7 @@ func (cCtx *CompatibilityContext) Start(ctx *SuiteContext) {
 	}
 }
 
+// Stop stop the compatibility tests.
 func (cCtx *CompatibilityContext) Stop(ctx *SuiteContext) error {
 	count := 3
 	for i := 0; i < 3; i++ {
@@ -130,15 +135,15 @@ func (e *executor) run(ctx *SuiteContext) {
 	)
 	switch ctx.CompCtx.tType {
 	case TestNonUnique:
-		err = TestOneColFramePara(ctx, e.id, ctx.CompCtx.colIIDs, AddIndexNonUnique)
+		err = testOneColFramePara(ctx, e.id, ctx.CompCtx.colIIDs, AddIndexNonUnique)
 	case TestUnique:
-		err = TestOneColFramePara(ctx, e.id, ctx.CompCtx.colIIDs, AddIndexUnique)
+		err = testOneColFramePara(ctx, e.id, ctx.CompCtx.colIIDs, AddIndexUnique)
 	case TestPK:
-		err = TestOneIndexFramePara(ctx, e.id, 0, AddIndexPK)
+		err = testOneIndexFramePara(ctx, e.id, 0, AddIndexPK)
 	case TestGenIndex:
-		err = TestOneIndexFramePara(ctx, e.id, 29, AddIndexGenCol)
+		err = testOneIndexFramePara(ctx, e.id, 29, AddIndexGenCol)
 	case TestMultiCols:
-		err = TestTwoColsFramePara(ctx, e.id, ctx.CompCtx.colIIDs, ctx.CompCtx.colJIDs, AddIndexMultiCols)
+		err = testTwoColsFramePara(ctx, e.id, ctx.CompCtx.colIIDs, ctx.CompCtx.colJIDs, AddIndexMultiCols)
 	default:
 	}
 	erChan.err = err
@@ -146,7 +151,7 @@ func (e *executor) run(ctx *SuiteContext) {
 	e.PDChan <- &erChan
 }
 
-func TestOneColFramePara(ctx *SuiteContext, tableID int, colIDs [][]int, f func(*SuiteContext, int, string, int) error) (err error) {
+func testOneColFramePara(ctx *SuiteContext, tableID int, colIDs [][]int, f func(*SuiteContext, int, string, int) error) (err error) {
 	tableName := "addindex.t" + strconv.Itoa(tableID)
 	for _, i := range colIDs[tableID] {
 		err = f(ctx, tableID, tableName, i)
@@ -165,7 +170,7 @@ func TestOneColFramePara(ctx *SuiteContext, tableID int, colIDs [][]int, f func(
 	return err
 }
 
-func TestTwoColsFramePara(ctx *SuiteContext, tableID int, iIDs [][]int, jIDs [][]int, f func(*SuiteContext, int, string, int, int, int) error) (err error) {
+func testTwoColsFramePara(ctx *SuiteContext, tableID int, iIDs [][]int, jIDs [][]int, f func(*SuiteContext, int, string, int, int, int) error) (err error) {
 	tableName := "addindex.t" + strconv.Itoa(tableID)
 	indexID := 0
 	for _, i := range iIDs[tableID] {
@@ -187,7 +192,7 @@ func TestTwoColsFramePara(ctx *SuiteContext, tableID int, iIDs [][]int, jIDs [][
 	return err
 }
 
-func TestOneIndexFramePara(ctx *SuiteContext, tableID int, colID int, f func(*SuiteContext, int, string, int) error) (err error) {
+func testOneIndexFramePara(ctx *SuiteContext, tableID int, colID int, f func(*SuiteContext, int, string, int) error) (err error) {
 	tableName := "addindex.t" + strconv.Itoa(tableID)
 	err = f(ctx, tableID, tableName, colID)
 	if err != nil {
