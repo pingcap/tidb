@@ -34,8 +34,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// BackfillGlobalMeta is the global task meta for backfilling index.
-type BackfillGlobalMeta struct {
+// BackfillTaskMeta is the dist task meta for backfilling index.
+type BackfillTaskMeta struct {
 	Job model.Job `json:"job"`
 	// EleIDs stands for the index/column IDs to backfill with distributed framework.
 	EleIDs []int64 `json:"ele_ids"`
@@ -62,7 +62,7 @@ type BackfillSubTaskMeta struct {
 // NewBackfillSubtaskExecutor creates a new backfill subtask executor.
 func NewBackfillSubtaskExecutor(_ context.Context, taskMeta []byte, d *ddl,
 	bc ingest.BackendCtx, stage proto.Step, summary *execute.Summary) (execute.SubtaskExecutor, error) {
-	bgm := &BackfillGlobalMeta{}
+	bgm := &BackfillTaskMeta{}
 	err := json.Unmarshal(taskMeta, bgm)
 	if err != nil {
 		return nil, err
@@ -130,7 +130,7 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 	}
 	d := s.d
 
-	bgm := &BackfillGlobalMeta{}
+	bgm := &BackfillTaskMeta{}
 	err = json.Unmarshal(s.task.Meta, bgm)
 	if err != nil {
 		return errors.Trace(err)

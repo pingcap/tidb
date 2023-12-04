@@ -2066,8 +2066,8 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 	}
 
 	// For resuming add index task.
-	// Need to fetch global task by taskKey in tidb_global_task and tidb_global_task_history tables.
-	// When pausing the related ddl job, it is possible that the global task with taskKey is succeed and in tidb_global_task_history.
+	// Need to fetch task by taskKey in tidb_global_task and tidb_global_task_history tables.
+	// When pausing the related ddl job, it is possible that the task with taskKey is succeed and in tidb_global_task_history.
 	// As a result, when resuming the related ddl job,
 	// it is necessary to check task exits in tidb_global_task and tidb_global_task_history tables.
 	taskManager, err := storage.GetTaskManager()
@@ -2083,7 +2083,7 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 		// When task in succeed state, we can skip the dist task execution/scheduing process.
 		if task.State == proto.TaskStateSucceed {
 			logutil.BgLogger().Info(
-				"global task succeed, start to resume the ddl job",
+				"task succeed, start to resume the ddl job",
 				zap.String("category", "ddl"),
 				zap.String("task-key", taskKey))
 			return nil
@@ -2115,7 +2115,7 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 		}
 
 		job := reorgInfo.Job
-		taskMeta := &BackfillGlobalMeta{
+		taskMeta := &BackfillTaskMeta{
 			Job:             *reorgInfo.Job.Clone(),
 			EleIDs:          elemIDs,
 			EleTypeKey:      reorgInfo.currElement.TypeKey,
@@ -2157,7 +2157,7 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 				if err = w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
 					if dbterror.ErrPausedDDLJob.Equal(err) {
 						if err = handle.PauseTask(w.ctx, taskKey); err != nil {
-							logutil.BgLogger().Error("pause global task error", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
+							logutil.BgLogger().Error("pause task error", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
 							continue
 						}
 						failpoint.Inject("syncDDLTaskPause", func() {
@@ -2169,8 +2169,8 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 						return errors.Trace(err)
 					}
 					if err = handle.CancelTask(w.ctx, taskKey); err != nil {
-						logutil.BgLogger().Error("cancel global task error", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
-						// continue to cancel global task.
+						logutil.BgLogger().Error("cancel task error", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
+						// continue to cancel task.
 						continue
 					}
 				}
@@ -2191,7 +2191,7 @@ func (w *worker) updateJobRowCount(taskKey string, jobID int64) {
 	}
 	task, err := taskMgr.GetTaskByKey(w.ctx, taskKey)
 	if err != nil || task == nil {
-		logutil.BgLogger().Warn("cannot get global task", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
+		logutil.BgLogger().Warn("cannot get task", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
 		return
 	}
 	rowCount, err := taskMgr.GetSubtaskRowCount(w.ctx, task.ID, proto.StepOne)
