@@ -11,8 +11,6 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/util/engine"
-	pd "github.com/tikv/pd/client"
-	"go.uber.org/zap"
 
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"

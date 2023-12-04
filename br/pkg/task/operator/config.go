@@ -16,6 +16,7 @@ type PauseGcConfig struct {
 	TTL       time.Duration `json:"ttl" yaml:"ttl"`
 
 	OnAllReady func() `json:"-" yaml:"-"`
+	OnExit     func() `json:"-" yaml:"-"`
 }
 
 func DefineFlagsForPrepareSnapBackup(f *pflag.FlagSet) {

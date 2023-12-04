@@ -8,11 +8,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	tmysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/multierr"
+	"go.uber.org/zap"
 )
 
 var retryableServerError = []string{
@@ -178,4 +181,38 @@ func (r *RetryWithBackoffer) RequestBackOff(ms int) {
 // Inner returns the reference to the inner `backoffer`.
 func (r *RetryWithBackoffer) Inner() *tikv.Backoffer {
 	return r.bo
+}
+
+type verboseBackoffer struct {
+	inner   Backoffer
+	logger  *zap.Logger
+	groupID uuid.UUID
+}
+
+func (v *verboseBackoffer) NextBackoff(err error) time.Duration {
+	nextBackoff := v.inner.NextBackoff(err)
+	v.logger.Warn("Encountered err, retrying.",
+		zap.Stringer("nextBackoff", nextBackoff),
+		zap.String("err", err.Error()),
+		zap.Stringer("gid", v.groupID))
+	return nextBackoff
+}
+
+// Attempt returns the remain attempt times
+func (v *verboseBackoffer) Attempt() int {
+	attempt := v.inner.Attempt()
+	v.logger.Info("Retry attempt hint.", zap.Int("attempt", attempt))
+	return attempt
+}
+
+func VerboseRetry(logger *zap.Logger, bo Backoffer) Backoffer {
+	if logger == nil {
+		logger = log.L()
+	}
+	vlog := &verboseBackoffer{
+		inner:   bo,
+		logger:  logger,
+		groupID: uuid.New(),
+	}
+	return vlog
 }
