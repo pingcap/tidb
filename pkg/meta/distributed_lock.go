@@ -157,7 +157,12 @@ func (d *DistributedLock) renew(ctx context.Context) error {
 		})
 }
 
-var lockHeldErr = errors.Errorf("lock is held by another instance")
+var (
+	// lockHeldErr is returned when the lock is held by another routine.
+	lockHeldErr = errors.Errorf("lock is held")
+	// lockHeldNonBlockingErr is used to indicate that the lock is held and the caller should not retry.
+	lockHeldNonBlockingErr = errors.Errorf("lock is held, non-blocking")
+)
 
 // Lock locks the distributed lock.
 func (d *DistributedLock) Lock() error {
@@ -183,12 +188,48 @@ func (d *DistributedLock) Lock() error {
 	if err != nil {
 		return err
 	}
+	d.runRenewLoop()
+	return nil
+}
+
+func (d *DistributedLock) TryLock() (bool, error) {
+	lockIsHeld := false
+	err := d.getLockInTxnWithRetry(d.outerCtx,
+		func(lc *lockContent, txn DataTxn) (storeErr, otherErr error) {
+			startTS := txn.StartTS()
+			// Lock is not exist or expired, create or overwrite it.
+			if lc == nil || d.lockExpired(lc, startTS) {
+				lc := newLockContent(startTS, d.instanceID)
+				data, err := lc.encode()
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				err = txn.Set(d.lockName, data)
+				if err != nil {
+					return errors.Trace(err), nil
+				}
+				return nil, nil
+			}
+			// Lock is valid, return without waiting.
+			lockIsHeld = true
+			return lockHeldNonBlockingErr, nil
+		})
+	if err != nil {
+		return false, err
+	}
+	if lockIsHeld {
+		return false, nil
+	}
+	d.runRenewLoop()
+	return true, nil
+}
+
+func (d *DistributedLock) runRenewLoop() {
 	if d.lease > 0 {
 		var renewCtx context.Context
 		renewCtx, d.cancelRenewLoop = context.WithCancel(d.outerCtx)
 		go d.renewLockLoop(renewCtx)
 	}
-	return nil
 }
 
 func (d *DistributedLock) lockExpired(lc *lockContent, currentStartTS uint64) bool {
@@ -266,6 +307,9 @@ func (d *DistributedLock) getLockInTxnWithRetry(ctx context.Context, fn lockHand
 			if err == lockHeldErr {
 				<-time.After(d.backoff)
 				continue
+			}
+			if err == lockHeldNonBlockingErr {
+				return nil
 			}
 			logutil.Logger(d.outerCtx).Info("lock encounter error",
 				zap.Error(err), zap.Bool("retry", !noRetry))

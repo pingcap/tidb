@@ -118,7 +118,10 @@ func TestDistributedLockExpire(t *testing.T) {
 		Build(ctx, &mockDataStore{store}, "owner1", "testLock")
 
 	require.NoError(t, lock.Lock())
-	require.Eventually(t, func())
+	require.Eventually(t, func() bool {
+		ok, _ := lock.TryLock()
+		return ok
+	}, 1*time.Second, 30*time.Millisecond)
 }
 
 type mockDataStore struct {
