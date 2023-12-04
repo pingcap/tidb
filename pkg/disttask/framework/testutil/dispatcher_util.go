@@ -34,7 +34,7 @@ func GetMockBasicDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
 			return generateTaskExecutorNodes4Test()
 		},
 	).AnyTimes()
-	mockDispatcher.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
+	mockDispatcher.EXPECT().IsRetryableError(gomock.Any()).Return(true).AnyTimes()
 	mockDispatcher.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
 		func(task *proto.Task) proto.Step {
 			switch task.Step {
@@ -78,7 +78,7 @@ func GetMockHATestDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
 			return generateTaskExecutorNodes4Test()
 		},
 	).AnyTimes()
-	mockDispatcher.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
+	mockDispatcher.EXPECT().IsRetryableError(gomock.Any()).Return(true).AnyTimes()
 	mockDispatcher.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
 		func(task *proto.Task) proto.Step {
 			switch task.Step {
@@ -147,7 +147,7 @@ func GetPlanNotRetryableErrDispatcherExt(ctrl *gomock.Controller) dispatcher.Ext
 			return generateTaskExecutorNodes4Test()
 		},
 	).AnyTimes()
-	mockDispatcher.EXPECT().IsRetryableErr(gomock.Any()).Return(false).AnyTimes()
+	mockDispatcher.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
 	mockDispatcher.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
 		func(task *proto.Task) proto.Step {
 			return proto.StepDone
@@ -172,7 +172,7 @@ func GetPlanErrDispatcherExt(ctrl *gomock.Controller, testContext *TestContext) 
 			return generateTaskExecutorNodes4Test()
 		},
 	).AnyTimes()
-	mockDispatcher.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
+	mockDispatcher.EXPECT().IsRetryableError(gomock.Any()).Return(true).AnyTimes()
 	mockDispatcher.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
 		func(task *proto.Task) proto.Step {
 			switch task.Step {
@@ -214,6 +214,48 @@ func GetPlanErrDispatcherExt(ctrl *gomock.Controller, testContext *TestContext) 
 	return mockDispatcher
 }
 
+// GetHasSubtasksOnDoneStepDispatcherExt returns mock dispatcher.Extension with subtasks on Done step.
+func GetHasSubtasksOnDoneStepDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
+	mockDispatcher := mockDispatch.NewMockExtension(ctrl)
+	mockDispatcher.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
+	mockDispatcher.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
+			return generateTaskExecutorNodes4Test()
+		},
+	).AnyTimes()
+	mockDispatcher.EXPECT().IsRetryableError(gomock.Any()).Return(true).AnyTimes()
+	mockDispatcher.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
+		func(task *proto.Task) proto.Step {
+			switch task.Step {
+			case proto.StepInit:
+				return proto.StepOne
+			default:
+				return proto.StepDone
+			}
+		},
+	).AnyTimes()
+	mockDispatcher.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, _ []*infosync.ServerInfo, nextStep proto.Step) (metas [][]byte, err error) {
+			if nextStep == proto.StepOne {
+				return [][]byte{
+					[]byte("task1"),
+					[]byte("task2"),
+					[]byte("task3"),
+				}, nil
+			}
+			if nextStep == proto.StepDone {
+				return [][]byte{
+					[]byte("task4"),
+				}, nil
+			}
+			return nil, nil
+		},
+	).AnyTimes()
+
+	mockDispatcher.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	return mockDispatcher
+}
+
 // GetMockRollbackDispatcherExt returns mock dispatcher.Extension which will generate rollback subtasks.
 func GetMockRollbackDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
 	mockDispatcher := mockDispatch.NewMockExtension(ctrl)
@@ -223,7 +265,7 @@ func GetMockRollbackDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension 
 			return generateTaskExecutorNodes4Test()
 		},
 	).AnyTimes()
-	mockDispatcher.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
+	mockDispatcher.EXPECT().IsRetryableError(gomock.Any()).Return(true).AnyTimes()
 	mockDispatcher.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
 		func(task *proto.Task) proto.Step {
 			switch task.Step {
@@ -260,7 +302,7 @@ func GetMockDynamicDispatchExt(ctrl *gomock.Controller) dispatcher.Extension {
 			return generateTaskExecutorNodes4Test()
 		},
 	).AnyTimes()
-	mockDispatcher.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
+	mockDispatcher.EXPECT().IsRetryableError(gomock.Any()).Return(true).AnyTimes()
 	mockDispatcher.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
 		func(task *proto.Task) proto.Step {
 			switch task.Step {

@@ -47,3 +47,11 @@ func TestPlanNotRetryableErr(t *testing.T) {
 	testutil.DispatchTaskAndCheckState(ctx, t, "key1", testContext, proto.TaskStateFailed)
 	distContext.Close()
 }
+
+func TestPlanHaveSubtasksInDoneStep(t *testing.T) {
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 2)
+	defer ctrl.Finish()
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetHasSubtasksOnDoneStepDispatcherExt(ctrl), testContext, nil)
+	testutil.DispatchTaskAndCheckState(ctx, t, "key1", testContext, proto.TaskStateFailed)
+	distContext.Close()
+}

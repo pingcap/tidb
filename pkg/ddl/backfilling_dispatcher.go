@@ -189,8 +189,8 @@ func (*BackfillingDispatcherExt) GetEligibleInstances(ctx context.Context, _ *pr
 	return serverInfos, true, nil
 }
 
-// IsRetryableErr implements dispatcher.Extension.IsRetryableErr interface.
-func (*BackfillingDispatcherExt) IsRetryableErr(error) bool {
+// IsRetryableError implements dispatcher.Extension.IsRetryableError interface.
+func (*BackfillingDispatcherExt) IsRetryableError(error) bool {
 	return true
 }
 

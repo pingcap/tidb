@@ -52,7 +52,7 @@ func getTestDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
 			return mockedAllServerInfos, true, nil
 		},
 	).AnyTimes()
-	mockDispatcher.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
+	mockDispatcher.EXPECT().IsRetryableError(gomock.Any()).Return(true).AnyTimes()
 	mockDispatcher.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
 		func(task *proto.Task) proto.Step {
 			return proto.StepDone
@@ -77,7 +77,7 @@ func getNumberExampleDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension
 			return serverInfo, true, err
 		},
 	).AnyTimes()
-	mockDispatcher.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
+	mockDispatcher.EXPECT().IsRetryableError(gomock.Any()).Return(true).AnyTimes()
 	mockDispatcher.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
 		func(task *proto.Task) proto.Step {
 			switch task.Step {

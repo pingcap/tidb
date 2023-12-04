@@ -5,15 +5,15 @@ go_test(
     timeout = "short",
     srcs = [
         "framework_dynamic_dispatch_test.go",
-        "framework_err_handling_test.go",
         "framework_ha_test.go",
         "framework_pause_and_resume_test.go",
+        "framework_plan_err_handling_test.go",
         "framework_rollback_test.go",
         "framework_test.go",
     ],
     flaky = True,
     race = "off",
-    shard_count = 32,
+    shard_count = 33,
     deps = [
         "//pkg/disttask/framework/dispatcher",
         "//pkg/disttask/framework/handle",

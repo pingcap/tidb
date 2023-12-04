@@ -55,6 +55,9 @@ var (
 	RetrySQLInterval = 3 * time.Second
 	// RetrySQLMaxInterval is the max interval between two SQL retries.
 	RetrySQLMaxInterval = 30 * time.Second
+	// ErrDoneStepHasSubtasks is the error when business implement wrong logic for dispatcher.Extension OnNextSubtasksBatch on Done step.
+	// Each Business shouldn't generate subtasks for Done step.
+	ErrDoneStepHasSubtasks = errors.New("shouldn't generate subtasks for Done step")
 )
 
 // TaskHandle provides the interface for operations needed by Dispatcher.
@@ -602,8 +605,14 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 			d.Task.Concurrency = MaxSubtaskConcurrency
 		}
 	}
+	// finishTask is used to check whether mark task as succeed or not on Done step.
+	finishTask := true
 	defer func() {
 		if err != nil {
+			return
+		}
+		// when dispatcher generate subtasks on Done step, we shouldn't mark task as succeed.
+		if !finishTask {
 			return
 		}
 		// invariant: task.Step always means the most recent step that all
@@ -660,6 +669,10 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 			logutil.Logger(d.logCtx).Warn("generate part of subtasks failed", zap.Error(err))
 			return d.handlePlanErr(err)
 		}
+		if nextStep == proto.StepDone && len(metas) != 0 {
+			finishTask = false
+			return d.handlePlanErr(ErrDoneStepHasSubtasks)
+		}
 
 		failpoint.Inject("mockDynamicDispatchErr1", func() {
 			failpoint.Return(errors.New("mockDynamicDispatchErr1"))
@@ -709,7 +722,7 @@ func (d *BaseDispatcher) dispatchSubTask(
 
 func (d *BaseDispatcher) handlePlanErr(err error) error {
 	logutil.Logger(d.logCtx).Warn("generate plan failed", zap.Error(err), zap.Stringer("state", d.Task.State))
-	if d.IsRetryableErr(err) {
+	if d.IsRetryableError(err) && err != ErrDoneStepHasSubtasks {
 		return err
 	}
 	d.Task.Error = err

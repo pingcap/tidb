@@ -78,8 +78,8 @@ type Extension interface {
 	// The bool return value indicates whether filter instances by role.
 	GetEligibleInstances(ctx context.Context, task *proto.Task) ([]*infosync.ServerInfo, bool, error)
 
-	// IsRetryableErr is used to check whether the error occurred in dispatcher is retryable.
-	IsRetryableErr(err error) bool
+	// IsRetryableError is used to check whether the error occurred in dispatcher is retryable.
+	IsRetryableError(err error) bool
 
 	// GetNextStep is used to get the next step for the task.
 	// if task runs successfully, it should go from StepInit to business steps,

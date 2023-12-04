@@ -344,8 +344,8 @@ func (*ImportDispatcherExt) GetEligibleInstances(ctx context.Context, task *prot
 	return serverInfo, true, err
 }
 
-// IsRetryableErr implements dispatcher.Extension interface.
-func (*ImportDispatcherExt) IsRetryableErr(error) bool {
+// IsRetryableError implements dispatcher.Extension interface.
+func (*ImportDispatcherExt) IsRetryableError(error) bool {
 	// TODO: check whether the error is retryable.
 	return false
 }
