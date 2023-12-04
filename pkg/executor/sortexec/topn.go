@@ -87,13 +87,6 @@ func (h *topNChunkHeap) Swap(i, j int) {
 	h.rowPtrs[i], h.rowPtrs[j] = h.rowPtrs[j], h.rowPtrs[i]
 }
 
-// keyColumnsLess is the less function for key columns.
-func (e *TopNExec) keyColumnsLess(i, j chunk.RowPtr) bool {
-	rowI := e.rowChunks.GetRow(i)
-	rowJ := e.rowChunks.GetRow(j)
-	return e.lessRow(rowI, rowJ)
-}
-
 func (e *TopNExec) keyColumnsCompare(i, j chunk.RowPtr) int {
 	rowI := e.rowChunks.GetRow(i)
 	rowJ := e.rowChunks.GetRow(j)
