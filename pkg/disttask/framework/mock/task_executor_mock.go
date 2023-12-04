@@ -13,6 +13,7 @@ import (
 	reflect "reflect"
 
 	proto "github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	taskexecutor "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	execute "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -400,6 +401,18 @@ func (m *MockTaskExecutor) Run(arg0 context.Context, arg1 *proto.Task) error {
 func (mr *MockTaskExecutorMockRecorder) Run(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Run", reflect.TypeOf((*MockTaskExecutor)(nil).Run), arg0, arg1)
+}
+
+// SetHook mocks base method.
+func (m *MockTaskExecutor) SetHook(arg0 taskexecutor.Callback) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "SetHook", arg0)
+}
+
+// SetHook indicates an expected call of SetHook.
+func (mr *MockTaskExecutorMockRecorder) SetHook(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetHook", reflect.TypeOf((*MockTaskExecutor)(nil).SetHook), arg0)
 }
 
 // MockExtension is a mock of Extension interface.
