@@ -233,8 +233,9 @@ func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *Sample
 }
 
 type sortItem struct {
-	Value  *types.Datum
-	Sample []*SampleItem
+	Value       *types.Datum
+	SampleBytes []byte
+	Sample      []*SampleItem
 }
 
 // BuildHistAndTopN build a histogram and TopN for a column or an index from samples.
@@ -310,8 +311,9 @@ func BuildHistAndTopN(
 			value.Sample = append(value.Sample, s)
 		} else {
 			sMap[key] = &sortItem{
-				Sample: []*SampleItem{s},
-				Value:  &s.Value,
+				SampleBytes: sampleBytes,
+				Sample:      []*SampleItem{s},
+				Value:       &s.Value,
 			}
 		}
 	}
@@ -373,7 +375,7 @@ func BuildHistAndTopN(
 	})
 	// Handle the counting for the last value. Basically equal to the case 2 above.
 	// now topn is empty: append the "current" count directly
-	topNList, pop, err := pruneTopNItem(topNbtree, ndv, nullCount, sampleNum, count, getComparedBytes)
+	topNList, pop, err := pruneTopNItem(topNbtree, ndv, nullCount, sampleNum, count)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -407,16 +409,11 @@ func BuildHistAndTopN(
 	return hg, topn, nil
 }
 
-func toTopNMeta(topns *btree.BTreeG[*sortItem], n int, getComparedBytes func(datum types.Datum) ([]byte, error)) ([]TopNMeta, error) {
+func toTopNMeta(topns *btree.BTreeG[*sortItem], n int) ([]TopNMeta, error) {
 	topNList := make([]TopNMeta, 0, n)
 	var err error
 	topns.Descend(func(i *sortItem) bool {
-		var encoded []byte
-		encoded, err = getComparedBytes(*i.Value)
-		if err != nil {
-			return false
-		}
-		topNList = append(topNList, TopNMeta{Count: uint64(len(i.Sample)), Encoded: encoded})
+		topNList = append(topNList, TopNMeta{Count: uint64(len(i.Sample)), Encoded: i.SampleBytes})
 		return len(topNList) != n
 	})
 	return topNList, err
@@ -425,10 +422,10 @@ func toTopNMeta(topns *btree.BTreeG[*sortItem], n int, getComparedBytes func(dat
 // pruneTopNItem tries to prune the least common values in the top-n list if it is not significantly more common than the values not in the list.
 //
 //	We assume that the ones not in the top-n list's selectivity is 1/remained_ndv which is the internal implementation of EqualRowCount
-func pruneTopNItem(topns *btree.BTreeG[*sortItem], ndv, nullCount, sampleRows, totalRows int64, getComparedBytes func(datum types.Datum) ([]byte, error)) ([]TopNMeta, []*sortItem, error) {
+func pruneTopNItem(topns *btree.BTreeG[*sortItem], ndv, nullCount, sampleRows, totalRows int64) ([]TopNMeta, []*sortItem, error) {
 	// If the sampleRows holds all rows, or NDV of samples equals to actual NDV, we just return the TopN directly.
 	if sampleRows == totalRows || totalRows <= 1 || int64(topns.Len()) >= ndv {
-		result, err := toTopNMeta(topns, topns.Len(), getComparedBytes)
+		result, err := toTopNMeta(topns, topns.Len())
 		return result, nil, err
 	}
 	// Sum the occurrence except the least common one from the top-n list. To check whether the lest common one is worth
@@ -481,11 +478,7 @@ func pruneTopNItem(topns *btree.BTreeG[*sortItem], ndv, nullCount, sampleRows, t
 	result := make([]TopNMeta, 0, topNNum)
 	for i := 0; i < topNNum; i++ {
 		m, _ := topns.DeleteMax()
-		encoded, err := getComparedBytes(*m.Value)
-		if err != nil {
-			return nil, nil, err
-		}
-		result = append(result, TopNMeta{Count: uint64(len(m.Sample)), Encoded: encoded})
+		result = append(result, TopNMeta{Count: uint64(len(m.Sample)), Encoded: m.SampleBytes})
 	}
 	popd := make([]*sortItem, 0, topns.Len())
 	for topns.Len() != 0 {
