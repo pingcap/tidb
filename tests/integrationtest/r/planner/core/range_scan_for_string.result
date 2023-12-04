@@ -1023,12 +1023,13 @@ aABBccdd	890
 测试Abc	324
 explain select * from t where a >= 'aabb' and a <= 'aabd' and b = 456 order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection_6	0.00	root		planner__core__range_scan_for_string.t.a, planner__core__range_scan_for_string.t.b
-└─Sort_7	0.00	root		planner__core__range_scan_for_string.t.a, planner__core__range_scan_for_string.t._tidb_rowid
-  └─IndexLookUp_15	0.00	root		
-    ├─IndexRangeScan_12(Build)	0.10	cop[tikv]	table:t, index:ia(a, b)	range:["\x00A\x00A\x00B" 456,"\x00A\x00A\x00B" 456], keep order:false, stats:pseudo
-    └─Selection_14(Probe)	0.00	cop[tikv]		eq(planner__core__range_scan_for_string.t.a, "aab")
-      └─TableRowIDScan_13	0.10	cop[tikv]	table:t	keep order:false, stats:pseudo
+Projection_6	0.01	root		planner__core__range_scan_for_string.t.a, planner__core__range_scan_for_string.t.b
+└─Sort_7	0.01	root		planner__core__range_scan_for_string.t.a, planner__core__range_scan_for_string.t._tidb_rowid
+  └─IndexLookUp_16	0.01	root		
+    ├─Selection_14(Build)	0.01	cop[tikv]		eq(planner__core__range_scan_for_string.t.b, 456)
+    │ └─IndexRangeScan_12	10.00	cop[tikv]	table:t, index:ia(a, b)	range:["\x00A\x00A\x00B","\x00A\x00A\x00B"], keep order:false, stats:pseudo
+    └─Selection_15(Probe)	0.01	cop[tikv]		ge(planner__core__range_scan_for_string.t.a, "aabb"), le(planner__core__range_scan_for_string.t.a, "aabd")
+      └─TableRowIDScan_13	0.01	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a >= 'aabb' and a <= 'aabd' and b = 456 order by a,_tidb_rowid;
 a	b
-aab	456
+aabB	456
