@@ -111,17 +111,25 @@ func TestDistLockKeyAndOwner(t *testing.T) {
 
 func TestDistributedLockExpire(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
 	lock := meta.NewDistributedLockBuilder().
 		SetBackoff(1*time.Microsecond).
 		SetLease(500*time.Millisecond).
 		Build(ctx, &mockDataStore{store}, "owner1", "testLock")
 
+	lock2 := meta.NewDistributedLockBuilder().
+		SetBackoff(1*time.Microsecond).
+		SetLease(500*time.Millisecond).
+		Build(context.Background(), &mockDataStore{store}, "owner2", "testLock")
+
 	require.NoError(t, lock.Lock())
+	cancel()
 	require.Eventually(t, func() bool {
-		ok, _ := lock.TryLock()
+		ok, _ := lock2.TryLock()
 		return ok
 	}, 1*time.Second, 30*time.Millisecond)
+	require.NoError(t, lock.Unlock()) // report a warning "lock is unexpectedly removed".
+	require.NoError(t, lock2.Unlock())
 }
 
 type mockDataStore struct {

@@ -239,6 +239,7 @@ func (d *DistributedLock) lockExpired(lc *lockContent, currentStartTS uint64) bo
 	lockStartTime := model.TSConvert2Time(lc.StartTS)
 	currentTime := model.TSConvert2Time(currentStartTS)
 	expired := currentTime.Sub(lockStartTime) > d.lease
+
 	if expired {
 		logutil.Logger(d.outerCtx).Warn("lock is expired",
 			zap.Time("lockStartTime", lockStartTime),
