@@ -142,16 +142,9 @@ func TestHAFailInDifferentStage(t *testing.T) {
 	})
 	// stage1 : server num from 6 to 3.
 	// stage2 : server num from 3 to 2.
-	// require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockCleanExecutor", "return()"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager", "6*return()"))
-	// require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown", "return(\":4000\")"))
-	// require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown2", "return()"))
-
 	testutil.DispatchTaskAndCheckSuccess(ctx, t, "😊", testContext, nil)
-	// require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown"))
-	// require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown2"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager"))
-	// require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockCleanExecutor"))
 	distContext.Close()
 }
 
@@ -198,7 +191,6 @@ func TestHAFailInDifferentStageManyNodes(t *testing.T) {
 	// stage1 : server num from 30 to 27.
 	// stage2 : server num from 27 to 26.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager", "30*return()"))
-
 	testutil.DispatchTaskAndCheckSuccess(ctx, t, "😊", testContext, nil)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager"))
 	distContext.Close()
