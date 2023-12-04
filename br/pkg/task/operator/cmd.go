@@ -15,6 +15,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/keepalive"
@@ -45,6 +46,13 @@ func (cx *AdaptEnvForSnapshotBackupContext) cleanUpWithErr(f func(ctx context.Co
 	ctx, cancel := context.WithTimeout(context.Background(), cx.cfg.TTL)
 	defer cancel()
 	return f(ctx)
+}
+
+func (cx *AdaptEnvForSnapshotBackupContext) cleanUpWithRetErr(err *error, f func(ctx context.Context) error) {
+	ctx, cancel := context.WithTimeout(context.Background(), cx.cfg.TTL)
+	defer cancel()
+	errF := f(ctx)
+	*err = multierr.Combine(*err, errF)
 }
 
 type AdaptEnvForSnapshotBackupContext struct {
@@ -116,36 +124,35 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 }
 
 func pauseImporting(cx *AdaptEnvForSnapshotBackupContext) error {
-	denyLightning := utils.NewSuspendImporting("prepare_for_snapshot_backup", cx.kvMgr)
+	suspendLightning := utils.NewSuspendImporting("prepare_for_snapshot_backup", cx.kvMgr)
 	bo := cx.GetBackOffer()
-	err := utils.WithRetry(cx, func() error {
-		_, e := denyLightning.DenyAllStores(cx, cx.cfg.TTL)
-		return e
-	}, bo)
+	_, err := utils.WithRetryV2(cx, bo, func(_ context.Context) (map[uint64]bool, error) {
+		return suspendLightning.DenyAllStores(cx, cx.cfg.TTL)
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}
 	cx.ReadyL("pause_lightning")
-	cx.runGrp.Go(func() error {
-		err := denyLightning.Keeper(cx, cx.cfg.TTL)
+	cx.runGrp.Go(func() (err error) {
+		defer cx.cleanUpWithRetErr(&err, func(ctx context.Context) error {
+			if ctx.Err() != nil {
+				return errors.Annotate(ctx.Err(), "cleaning up timed out")
+			}
+			res, err := utils.WithRetryV2(cx, bo, func(ctx context.Context) (map[uint64]bool, error) { return suspendLightning.AllowAllStores(ctx) })
+			if err != nil {
+				return errors.Annotatef(err, "failed to allow all stores")
+			}
+			return suspendLightning.ConsistentWithPrev(res)
+		})
+
+		err = suspendLightning.Keeper(cx, cx.cfg.TTL)
 		if errors.Cause(err) != context.Canceled {
 			logutil.CL(cx).Warn("keeper encounters error.", logutil.ShortError(err))
+			return err
 		}
-		return cx.cleanUpWithErr(func(ctx context.Context) error {
-			for {
-				if ctx.Err() != nil {
-					return errors.Annotate(ctx.Err(), "cleaning up timed out")
-				}
-				res, err := utils.WithRetryV2(cx, bo, func(ctx context.Context) (map[uint64]bool, error) {return denyLightning.AllowAllStores(ctx)})
-				if err != nil {
-					logutil.CL(ctx).Warn("Failed to restore lightning, will retry.", logutil.ShortError(err))
-					// Retry for 10 times.
-					time.Sleep(cx.cfg.TTL / 10)
-					continue
-				}
-				return denyLightning.ConsistentWithPrev(res)
-			}
-		})
+		// Clean up the canceled error.
+		err = nil
+		return
 	})
 	return nil
 }
