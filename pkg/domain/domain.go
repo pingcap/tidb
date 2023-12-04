@@ -2475,16 +2475,26 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 	}
 }
 
-// analyzeJobsCleanupWorker periodically removes outdated analyze jobs from the statistics handle.
-// It only performs this operation if the current instance is the owner.
-// The cleanup interval is set to one hour, and analyze jobs older than 7 days are removed.
+// analyzeJobsCleanupWorker is a background worker that periodically performs two main tasks:
+//  1. Garbage Collection: It removes outdated analyze jobs from the statistics handle.
+//     This operation is performed every hour and only if the current instance is the owner.
+//     Analyze jobs older than 7 days are considered outdated and are removed.
+//  2. Cleanup: It cleans up corrupted analyze jobs. This operation is performed every three stats leases.
+//     It first retrieves the list of current analyze processes, then removes any analyze job
+//     that is not associated with a current process.
+//     This operation is also performed only if the current instance is the owner.
 func (do *Domain) analyzeJobsCleanupWorker(owner owner.Manager) {
 	defer util.Recover(metrics.LabelDomain, "analyzeJobsCleanupWorker", nil, false)
+	// For GC.
 	const gcInterval = time.Hour
 	const DaysToKeep = 7
 	gcTicker := time.NewTicker(gcInterval)
+	// For clean up.
+	var cleanupInterval = do.statsLease * 3
+	cleanupTicker := time.NewTicker(cleanupInterval)
 	defer func() {
 		gcTicker.Stop()
+		cleanupTicker.Stop()
 		logutil.BgLogger().Info("analyzeJobsCleanupWorker exited.")
 	}()
 	statsHandle := do.StatsHandle()
@@ -2497,6 +2507,24 @@ func (do *Domain) analyzeJobsCleanupWorker(owner owner.Manager) {
 				err := statsHandle.DeleteAnalyzeJobs(updateTime)
 				if err != nil {
 					logutil.BgLogger().Warn("gc analyze history failed", zap.Error(err))
+				}
+			}
+		case <-cleanupTicker.C:
+			sm := do.InfoSyncer().GetSessionManager()
+			if sm == nil {
+				continue
+			}
+			analyzeProcessIDs := make(map[uint64]struct{}, 8)
+			for _, process := range sm.ShowProcessList() {
+				if strings.HasPrefix(strings.ToLower(process.Info), "analyze table") {
+					analyzeProcessIDs[process.ID] = struct{}{}
+				}
+			}
+			// Only the owner should perform this operation.
+			if owner.IsOwner() {
+				err := statsHandle.CleanupCorruptedAnalyzeJob(analyzeProcessIDs)
+				if err != nil {
+					logutil.BgLogger().Warn("cleanup analyze jobs failed", zap.Error(err))
 				}
 			}
 		case <-do.exit:

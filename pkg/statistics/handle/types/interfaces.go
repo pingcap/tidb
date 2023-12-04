@@ -115,6 +115,10 @@ type StatsAnalyze interface {
 	// DeleteAnalyzeJobs deletes the analyze jobs whose update time is earlier than updateTime.
 	DeleteAnalyzeJobs(updateTime time.Time) error
 
+	// CleanupCorruptedAnalyzeJob cleans up the corrupted analyze job.
+	// We use current running analyze jobs to check whether the analyze job is corrupted.
+	CleanupCorruptedAnalyzeJob(currentRunningProcessIDs map[uint64]struct{}) error
+
 	// HandleAutoAnalyze analyzes the newly created table or index.
 	HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool)
 
