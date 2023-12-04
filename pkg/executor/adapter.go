@@ -1542,6 +1542,11 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if tikvExecDetailRaw != nil {
 		tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
 	}
+	ruDetails := util.NewRUDetails()
+	if ruDetailsVal := a.GoCtx.Value(util.RUDetailsCtxKey); ruDetailsVal != nil {
+		ruDetails = ruDetailsVal.(*util.RUDetails)
+	}
+
 	execDetail := stmtCtx.GetExecDetails()
 	copTaskInfo := stmtCtx.CopTasksDetails()
 	memMax := sessVars.MemTracker.MaxConsumed()
@@ -1604,9 +1609,9 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		IsSyncStatsFailed: stmtCtx.IsSyncStatsFailed,
 		Warnings:          collectWarningsForSlowLog(stmtCtx),
 		ResourceGroupName: sessVars.ResourceGroupName,
-		RRU:               float64(atomic.LoadInt64(&tikvExecDetail.MilliRRU)) / 1000.0,
-		WRU:               float64(atomic.LoadInt64(&tikvExecDetail.MilliWRU)) / 1000.0,
-		WaitRUDuration:    time.Duration(atomic.LoadInt64(&tikvExecDetail.WaitRUDuration)),
+		RRU:               ruDetails.RRU(),
+		WRU:               ruDetails.WRU(),
+		WaitRUDuration:    ruDetails.RUWaitDuration(),
 	}
 	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
 		if val.(bool) {
@@ -1880,6 +1885,10 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	if tikvExecDetailRaw != nil {
 		tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
 	}
+	ruDetails := util.NewRUDetails()
+	if ruDetailsRaw := a.GoCtx.Value(util.RUDetailsCtxKey); ruDetailsRaw != nil {
+		ruDetails = ruDetailsRaw.(*util.RUDetails)
+	}
 
 	if stmtCtx.WaitLockLeaseTime > 0 {
 		if execDetail.BackoffSleep == nil {
@@ -1932,6 +1941,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		StmtExecDetails:     stmtDetail,
 		ResultRows:          resultRows,
 		TiKVExecDetails:     tikvExecDetail,
+		RUDetails:           ruDetails,
 		Prepared:            a.isPreparedStmt,
 		KeyspaceName:        keyspaceName,
 		KeyspaceID:          keyspaceID,
