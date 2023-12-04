@@ -207,6 +207,85 @@ func buildHist(sc *stmtctx.StatementContext, hg *Histogram, samples []*SampleIte
 	return corrXYSum, nil
 }
 
+// buildHistFromBtree builds histogram from samples and other information.
+// It stores the built histogram in hg and return corrXYSum used for calculating the correlation.
+func buildHistFromBtree(sc *stmtctx.StatementContext, hg *Histogram, samples *btree.BTreeG[*sortItem], count, ndv, numBuckets int64, memTracker *memory.Tracker) (corrXYSum float64, err error) {
+	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
+	sampleNum := 0
+	samples.Ascend(func(i *sortItem) bool {
+		sampleNum += len(i.Sample)
+		return true
+	})
+	sampleFactor := float64(count) / float64(sampleNum)
+	ndvFactor := float64(count) / float64(ndv)
+	if ndvFactor > sampleFactor {
+		ndvFactor = sampleFactor
+	}
+	// Since bucket count is increased by sampleFactor, so the actual max values per bucket is
+	// floor(valuesPerBucket/sampleFactor)*sampleFactor, which may less than valuesPerBucket,
+	// thus we need to add a sampleFactor to avoid building too many buckets.
+	valuesPerBucket := float64(count)/float64(numBuckets) + sampleFactor
+
+	bucketIdx := 0
+	var lastCount int64
+	corrXYSum = float64(0)
+	ss, ok := samples.Min()
+	if ok {
+		hg.AppendBucket(ss.Value, ss.Value, int64(sampleFactor), int64(ndvFactor))
+		ss.Sample = ss.Sample[1:]
+	}
+
+	bufferedMemSize := int64(0)
+	bufferedReleaseSize := int64(0)
+	defer func() {
+		if memTracker != nil {
+			memTracker.Consume(bufferedMemSize)
+			memTracker.Release(bufferedReleaseSize)
+		}
+	}()
+	totalidx := 1
+	var upper = new(types.Datum)
+	for samples.Len() != 0 {
+		samples, _ := samples.DeleteMin()
+		for _, s := range samples.Sample {
+			corrXYSum += float64(totalidx) * float64(s.Ordinal)
+			hg.UpperToDatum(bucketIdx, upper)
+			if memTracker != nil {
+				// tmp memory usage
+				deltaSize := upper.MemUsage()
+				memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
+				memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
+			}
+			cmp, err := upper.Compare(sc.TypeCtx(), &s.Value, collate.GetBinaryCollator())
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+			totalCount := float64(totalidx+1) * sampleFactor
+			if cmp == 0 {
+				// The new item has the same value as current bucket value, to ensure that
+				// a same value only stored in a single bucket, we do not increase bucketIdx even if it exceeds
+				// valuesPerBucket.
+				hg.Buckets[bucketIdx].Count = int64(totalCount)
+				if hg.Buckets[bucketIdx].Repeat == int64(ndvFactor) {
+					hg.Buckets[bucketIdx].Repeat = int64(2 * sampleFactor)
+				} else {
+					hg.Buckets[bucketIdx].Repeat += int64(sampleFactor)
+				}
+			} else if totalCount-float64(lastCount) <= valuesPerBucket {
+				// The bucket still have room to store a new item, update the bucket.
+				hg.updateLastBucket(&s.Value, int64(totalCount), int64(ndvFactor), false)
+			} else {
+				lastCount = hg.Buckets[bucketIdx].Count
+				// The bucket is full, store the item in the next bucket.
+				bucketIdx++
+				hg.AppendBucket(&s.Value, &s.Value, int64(totalCount), int64(ndvFactor))
+			}
+			totalidx++
+		}
+	}
+	return corrXYSum, nil
+}
+
 // calcCorrelation computes column order correlation with the handle.
 func calcCorrelation(sampleNum int64, corrXYSum float64) float64 {
 	if sampleNum == 1 {
@@ -383,11 +462,6 @@ func BuildHistAndTopN(
 	if err != nil {
 		return nil, nil, err
 	}
-	ss := make([]*SampleItem, 0, sampleTree.Len())
-	for sampleTree.Len() != 0 {
-		item, _ := sampleTree.DeleteMin()
-		ss = append(ss, item.Sample...)
-	}
 
 	for i := 0; i < len(topNList); i++ {
 		topNList[i].Count *= uint64(sampleFactor)
@@ -400,8 +474,8 @@ func BuildHistAndTopN(
 	}
 
 	// Step3: build histogram with the rest samples
-	if len(ss) > 0 {
-		_, err = buildHist(sc, hg, ss, count-int64(topn.TotalCount()), ndv-int64(len(topn.TopN)), int64(numBuckets), memTracker)
+	if sampleTree.Len() > 0 {
+		_, err = buildHistFromBtree(sc, hg, sampleTree, count-int64(topn.TotalCount()), ndv-int64(len(topn.TopN)), int64(numBuckets), memTracker)
 		if err != nil {
 			return nil, nil, err
 		}
