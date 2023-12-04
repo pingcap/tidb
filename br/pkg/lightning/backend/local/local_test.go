@@ -668,7 +668,7 @@ func (c *mockPdClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOpti
 	return c.stores, nil
 }
 
-func (c *mockPdClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*pd.Region, error) {
+func (c *mockPdClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int, opts ...pd.GetRegionOption) ([]*pd.Region, error) {
 	return c.regions, nil
 }
 

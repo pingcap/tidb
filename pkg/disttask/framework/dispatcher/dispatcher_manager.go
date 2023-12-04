@@ -332,9 +332,9 @@ func (dm *Manager) doCleanUpRoutine() {
 // CleanUpMeta clean up old node info in dist_framework_meta table.
 func (dm *Manager) CleanUpMeta() int {
 	// Safe to discard errors since this function can be called at regular intervals.
-	serverInfos, err := GenerateSchedulerNodes(dm.ctx)
+	serverInfos, err := GenerateTaskExecutorNodes(dm.ctx)
 	if err != nil {
-		logutil.BgLogger().Warn("generate scheduler nodes met error")
+		logutil.BgLogger().Warn("generate task executor nodes met error")
 		return 0
 	}
 

@@ -201,19 +201,19 @@ func (t *Subtask) IsFinished() bool {
 }
 
 // NewSubtask create a new subtask.
-func NewSubtask(step Step, taskID int64, tp TaskType, schedulerID string, concurrency int, meta []byte) *Subtask {
+func NewSubtask(step Step, taskID int64, tp TaskType, execID string, concurrency int, meta []byte) *Subtask {
 	return &Subtask{
 		Step:        step,
 		Type:        tp,
 		TaskID:      taskID,
-		ExecID:      schedulerID,
+		ExecID:      execID,
 		Concurrency: concurrency,
 		Meta:        meta,
 	}
 }
 
 // MinimalTask is the minimal task of distribute framework.
-// Each subtask is divided into multiple minimal tasks by scheduler.
+// Each subtask is divided into multiple minimal tasks by TaskExecutor.
 type MinimalTask interface {
 	// IsMinimalTask is a marker to check if it is a minimal task for compiler.
 	IsMinimalTask()
