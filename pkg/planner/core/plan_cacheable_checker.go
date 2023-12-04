@@ -660,7 +660,9 @@ func checkTableCacheable(ctx context.Context, sctx sessionctx.Context, schema in
 				return in, false // dynamic-mode for partition tables can use plan-cache
 			}
 		*/
-		return false, "query accesses partitioned tables is un-cacheable"
+		if sctx == nil || !sctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
+			return false, "query accesses partitioned tables is un-cacheable if tidb_partition_pruning_mode = 'static'"
+		}
 	}
 
 	if !enablePlanCacheForGeneratedCols(sctx) {

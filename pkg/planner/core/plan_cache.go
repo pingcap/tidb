@@ -483,12 +483,14 @@ func rebuildRange(p Plan) error {
 				}
 			}
 		}
-		// The code should never run here as long as we're not using point get for partition table.
-		// And if we change the logic one day, here work as defensive programming to cache the error.
-		if x.PartitionInfo != nil {
-			// TODO: relocate the partition after rebuilding range to make PlanCache support PointGet
-			return errors.New("point get for partition table can not use plan cache")
-		}
+		/*
+			// The code should never run here as long as we're not using point get for partition table.
+			// And if we change the logic one day, here work as defensive programming to cache the error.
+			if x.PartitionInfo != nil {
+				// TODO: relocate the partition after rebuilding range to make PlanCache support PointGet
+				return errors.New("point get for partition table can not use plan cache")
+			}
+		*/
 		if x.HandleConstant != nil {
 			dVal, err := convertConstant2Datum(sctx, x.HandleConstant, x.handleFieldType)
 			if err != nil {
@@ -554,6 +556,12 @@ func rebuildRange(p Plan) error {
 				}
 			}
 		}
+		// TODO: FIXME!!!
+		/*
+			if len(x.PartitionInfos) != 0 {
+				return errors.New("batch point get for partition table can not use plan cache")
+			}
+		*/
 		for i, param := range x.HandleParams {
 			if param != nil {
 				dVal, err := convertConstant2Datum(sctx, param, x.HandleType)
