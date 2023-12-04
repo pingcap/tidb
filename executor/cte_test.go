@@ -536,4 +536,3 @@ func TestCTESmallChunkSize(t *testing.T) {
 	tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 1 offset 100) select * from cte1;").Check(testkit.Rows("100"))
 	tk.MustExec("set @@tidb_max_chunk_size = default;")
 }
-
