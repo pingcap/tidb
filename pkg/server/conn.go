@@ -458,8 +458,8 @@ func (cc *clientConn) writePacket(data []byte) error {
 
 func (cc *clientConn) getWaitTimeout(ctx context.Context) uint64 {
 	sessVars := cc.ctx.GetSessionVars()
-	if sessVars.InTxn() && sessVars.KillIdleTransactionTimeout > 0 {
-		return uint64(sessVars.KillIdleTransactionTimeout)
+	if sessVars.InTxn() && sessVars.IdleTransactionTimeout > 0 {
+		return uint64(sessVars.IdleTransactionTimeout)
 	}
 	return cc.getSessionVarsWaitTimeout(ctx)
 }

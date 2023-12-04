@@ -2949,9 +2949,9 @@ var defaultSysVars = []*SysVar{
 			SchemaVersionCacheLimit.Store(TidbOptInt64(val, DefTiDBSchemaVersionCacheLimit))
 			return nil
 		}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBKillIdleTransaction, Value: strconv.Itoa(DefTiDBKillIdleTransaction), Type: TypeUnsigned, MinValue: 0, MaxValue: secondsPerYear,
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBIdleTransactionTimeout, Value: strconv.Itoa(DefTiDBIdleTransactionTimeout), Type: TypeUnsigned, MinValue: 0, MaxValue: secondsPerYear,
 		SetSession: func(s *SessionVars, val string) error {
-			s.KillIdleTransactionTimeout = tidbOptPositiveInt32(val, DefTiDBKillIdleTransaction)
+			s.IdleTransactionTimeout = tidbOptPositiveInt32(val, DefTiDBIdleTransactionTimeout)
 			return nil
 		}},
 }

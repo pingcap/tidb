@@ -1114,10 +1114,10 @@ const (
 	// TiDBEnableTiFlashPipelineMode means if we should use pipeline model to execute query or not in tiflash.
 	// It's deprecated and setting it will not have any effect.
 	TiDBEnableTiFlashPipelineMode = "tidb_enable_tiflash_pipeline_model"
-	// TiDBKillIdleTransaction indicates the maximum time duration a transaction could be idle, unit is second.
+	// TiDBIdleTransactionTimeout indicates the maximum time duration a transaction could be idle, unit is second.
 	// Any idle transaction will be killed after being idle for `tidb_idle_transaction_timeout` seconds.
 	// This is similar to https://docs.percona.com/percona-server/5.7/management/innodb_kill_idle_trx.html and https://mariadb.com/kb/en/transaction-timeouts/
-	TiDBKillIdleTransaction = "tidb_kill_idle_transaction"
+	TiDBIdleTransactionTimeout = "tidb_idle_transaction_timeout"
 )
 
 // TiDB intentional limits
@@ -1432,7 +1432,7 @@ const (
 	DefTiDBOptEnableHashJoin                          = true
 	DefTiDBOptObjective                               = OptObjectiveModerate
 	DefTiDBSchemaVersionCacheLimit                    = 16
-	DefTiDBKillIdleTransaction                        = 0
+	DefTiDBIdleTransactionTimeout                     = 0
 )
 
 // Process global variables.
