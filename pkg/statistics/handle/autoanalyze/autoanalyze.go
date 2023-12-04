@@ -87,10 +87,14 @@ func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobs(currentRunningProcessIDs map
 }
 
 // Exported for testing.
+// SelectAnalyzeJobsSQL is the SQL to select the analyze jobs whose
+// state is `pending` or `running` and the update time is more than 10 minutes ago.
 const SelectAnalyzeJobsSQL = `SELECT id, process_id, instance
 		FROM mysql.analyze_jobs
 		AND state IN ('pending', 'running')
 		AND TIMESTAMPDIFF(MINUTE, update_time, NOW()) > 10`
+
+// BatchUpdateAnalyzeJobSQL is the SQL to update the analyze jobs to `failed` state.
 const BatchUpdateAnalyzeJobSQL = `UPDATE mysql.analyze_jobs
             SET state = 'failed',
             fail_reason = 'TiDB Server is down when running the analyze job',
