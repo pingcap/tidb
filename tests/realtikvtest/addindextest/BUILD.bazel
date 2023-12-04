@@ -15,6 +15,7 @@ go_test(
         "//pkg/config",
         "//pkg/testkit",
         "//tests/realtikvtest",
+        "//tests/realtikvtest/addindextestutil",
         "@com_github_stretchr_testify//require",
     ],
 )
