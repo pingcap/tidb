@@ -48,7 +48,6 @@ func getPoolRunFn() (*sync.WaitGroup, func(f func()) error) {
 
 func NewTestManagerBuilder(ctrl *gomock.Controller) *ManagerBuilder {
 	b := NewManagerBuilder()
-	b.slotAlloctor = mock.NewMockAlloctor(ctrl)
 	return b
 }
 

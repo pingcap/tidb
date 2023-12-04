@@ -15,7 +15,9 @@
 package scheduler
 
 import (
+	"container/heap"
 	"context"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,7 +26,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/disttask/framework/alloctor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -46,8 +47,8 @@ var (
 
 // ManagerBuilder is used to build a Manager.
 type ManagerBuilder struct {
-	newPool      func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error)
-	slotAlloctor alloctor.Alloctor
+	newPool func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error)
+	// slotAlloctor alloctor.Alloctor
 }
 
 // NewManagerBuilder creates a new ManagerBuilder.
@@ -92,8 +93,8 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 		logCtx:    logutil.WithFields(context.Background()),
 		newPool:   b.newPool,
 		slotManager: &slotManager{
-			schedulerSlotInfos: make(map[int]slotInfo, 0),
-			slotAlloctor:       b.slotAlloctor,
+			schedulerSlotInfos: make(map[int64]*slotInfo, 0),
+			available:          runtime.NumCPU(),
 		},
 	}
 	m.ctx, m.cancel = context.WithCancel(ctx)
@@ -125,18 +126,10 @@ func (m *Manager) initMeta() (err error) {
 	return err
 }
 
-func (m *Manager) initSlotManager() error {
-	return m.slotManager.init(m.ctx, m.taskTable)
-}
-
 // Start starts the Manager.
 func (m *Manager) Start() error {
 	logutil.Logger(m.logCtx).Debug("manager start")
 	if err := m.initMeta(); err != nil {
-		return err
-	}
-
-	if err := m.initSlotManager(); err != nil {
 		return err
 	}
 
@@ -212,8 +205,14 @@ func (m *Manager) onRunnableTasks(tasks []*proto.Task) {
 		return
 	}
 	tasks = m.filterAlreadyHandlingTasks(tasks)
+
+	priorityQueue := make(proto.TaskPriorityQueue, 0)
+	heap.Init(&priorityQueue)
 	for _, task := range tasks {
-		// TODO: check slot enough
+		heap.Push(&priorityQueue, proto.WrapPriorityQueue(task))
+	}
+	for priorityQueue.Len() > 0 {
+		task := heap.Pop(&priorityQueue).(*proto.TaskWrapper).Task
 		exist, err := m.taskTable.HasSubtasksInStates(m.ctx, m.id, task.ID, task.Step,
 			proto.TaskStatePending, proto.TaskStateRevertPending,
 			// for the case that the tidb is restarted when the subtask is running.
@@ -228,16 +227,20 @@ func (m *Manager) onRunnableTasks(tasks []*proto.Task) {
 		}
 		logutil.Logger(m.logCtx).Info("detect new subtask", zap.Int64("task-id", task.ID))
 
-		// TODO: update slot info(increase)
+		if !m.slotManager.checkSlotAvailabilityForTask(task) {
+			continue
+		}
 		m.addHandlingTask(task.ID)
 		t := task
 		err = m.schedulerPool.Run(func() {
+			m.slotManager.addTask(t)
 			m.onRunnableTask(t)
 			m.removeHandlingTask(t.ID)
+			m.slotManager.removeTask(t)
 		})
 		// pool closed.
 		if err != nil {
-			// TODO: updaete slot info(decrease)
+			m.slotManager.removeTask(t)
 			m.removeHandlingTask(task.ID)
 			m.logErr(err)
 			return

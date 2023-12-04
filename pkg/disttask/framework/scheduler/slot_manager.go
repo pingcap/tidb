@@ -15,15 +15,20 @@
 package scheduler
 
 import (
-	"context"
+	"sync"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/alloctor"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 )
 
 type slotManager struct {
+	sync.Mutex
 	// taskID -> slotInfo
-	schedulerSlotInfos map[int]slotInfo
+	schedulerSlotInfos map[int64]*slotInfo
 	slotAlloctor       alloctor.Alloctor
+
+	// The number of slots that can be used by the scheduler.
+	available int
 }
 
 type slotInfo struct {
@@ -32,18 +37,29 @@ type slotInfo struct {
 	slotCount int
 }
 
-func (sm *slotManager) init(ctx context.Context, taskTable TaskTable) error {
-	// subtasks, err := taskTable.GetSubtasksByStepAndStates(ctx, proto.TaskStateRunning, proto.TaskStatePending)
-	// if err != nil {
-	// 	return err
-	// }
+func (sm *slotManager) addTask(task *proto.Task) error {
+	sm.Lock()
+	defer sm.Unlock()
+	sm.schedulerSlotInfos[task.ID] = &slotInfo{
+		taskID:    int(task.ID),
+		priority:  task.Priority,
+		slotCount: int(task.Concurrency),
+	}
 
-	// for _, subtask := range subtasks {
-	// 	sm.schedulerSlotInfos[int(subtask.TaskID)] = slotInfo{
-	// 		taskID: int(subtask.TaskID),
-	// 		// priority:  int(subtask.Priority),
-	// 		slotCount: int(subtask.Concurrency),
-	// 	}
-	// }
+	sm.available -= int(task.Concurrency)
 	return nil
+}
+
+func (sm *slotManager) removeTask(task *proto.Task) error {
+	sm.Lock()
+	defer sm.Unlock()
+
+	delete(sm.schedulerSlotInfos, task.ID)
+	sm.available += int(task.Concurrency)
+	return nil
+}
+
+func (sm *slotManager) checkSlotAvailabilityForTask(task *proto.Task) bool {
+	return sm.available >= int(task.Concurrency)
+
 }
