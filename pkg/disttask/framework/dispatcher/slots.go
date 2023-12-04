@@ -44,12 +44,17 @@ type SlotManager struct {
 	// this value might be larger than capacity
 	reservedStripes atomic.Int32
 
-	mu            sync.RWMutex
+	mu sync.RWMutex
+	// represents the number of slots reserved by task on each node, the execID
+	// is only used for reserve minimum resource when starting dispatcher, the
+	// subtasks may or may not be scheduled on this node.
 	reservedSlots map[string]int
 	// represents the number of slots taken by task on each node
 	// on some cases it might be larger than capacity:
 	// 	current step of higher priority task A has little subtasks, so we start
 	// 	to dispatch lower priority task, but next step of A has many subtasks.
+	// once initialized, the length of usedSlots should be equal to number of nodes
+	// managed by dist framework.
 	usedSlots map[string]int
 }
 
@@ -63,14 +68,23 @@ func NewSlotManager() *SlotManager {
 }
 
 // Update updates the used slots on each node.
+// TODO: on concurrent call, update once.
 func (sm *SlotManager) Update(ctx context.Context, taskMgr TaskManager) error {
+	nodes, err := taskMgr.GetManagedNodes(ctx)
+	if err != nil {
+		return err
+	}
 	slotsOnNodes, err := taskMgr.GetUsedSlotsOnNodes(ctx)
 	if err != nil {
 		return err
 	}
+	newUsedSlots := make(map[string]int, len(nodes))
+	for _, node := range nodes {
+		newUsedSlots[node] = slotsOnNodes[node]
+	}
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	sm.usedSlots = slotsOnNodes
+	sm.usedSlots = newUsedSlots
 	return nil
 }
 

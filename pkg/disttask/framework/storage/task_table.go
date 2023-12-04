@@ -370,6 +370,7 @@ func (stm *TaskManager) FailTask(ctx context.Context, taskID int64, currentState
 	return err
 }
 
+// GetUsedSlotsOnNodes implements the dispatcher.TaskManager interface.
 func (stm *TaskManager) GetUsedSlotsOnNodes(ctx context.Context) (map[string]int, error) {
 	// concurrency of subtasks of some step is the same, we use max(concurrency)
 	// to make group by works.
@@ -1084,18 +1085,25 @@ func (stm *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 	})
 }
 
-// GetNodesByRole gets nodes map from dist_framework_meta by role.
-func (stm *TaskManager) GetNodesByRole(ctx context.Context, role string) (map[string]bool, error) {
-	rs, err := stm.executeSQLWithNewSession(ctx,
-		"select host from mysql.dist_framework_meta where role = %?", role)
+// GetManagedNodes implements dispatcher.TaskManager interface.
+func (stm *TaskManager) GetManagedNodes(ctx context.Context) ([]string, error) {
+	rs, err := stm.executeSQLWithNewSession(ctx, `
+		select host, role
+		from mysql.dist_framework_meta
+		where role = 'background' or role = ''
+		order by host`)
 	if err != nil {
 		return nil, err
 	}
-	nodes := make(map[string]bool, len(rs))
+	nodes := make(map[string][]string, 2)
 	for _, r := range rs {
-		nodes[r.GetString(0)] = true
+		role := r.GetString(1)
+		nodes[role] = append(nodes[role], r.GetString(0))
 	}
-	return nodes, nil
+	if len(nodes["background"]) == 0 {
+		return nodes[""], nil
+	}
+	return nodes["background"], nil
 }
 
 // GetAllNodes gets nodes in dist_framework_meta.

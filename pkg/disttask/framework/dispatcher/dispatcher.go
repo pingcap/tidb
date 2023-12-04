@@ -754,22 +754,19 @@ func GenerateTaskExecutorNodes(ctx context.Context) (serverNodes []*infosync.Ser
 }
 
 func (d *BaseDispatcher) filterByRole(infos []*infosync.ServerInfo) ([]*infosync.ServerInfo, error) {
-	nodes, err := d.taskMgr.GetNodesByRole(d.ctx, "background")
+	nodes, err := d.taskMgr.GetManagedNodes(d.ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	if len(nodes) == 0 {
-		nodes, err = d.taskMgr.GetNodesByRole(d.ctx, "")
-	}
-
-	if err != nil {
-		return nil, err
+	nodeMap := make(map[string]struct{}, len(nodes))
+	for _, node := range nodes {
+		nodeMap[node] = struct{}{}
 	}
 
 	res := make([]*infosync.ServerInfo, 0, len(nodes))
 	for _, info := range infos {
-		_, ok := nodes[disttaskutil.GenerateExecID(info.IP, info.Port)]
+		_, ok := nodeMap[disttaskutil.GenerateExecID(info.IP, info.Port)]
 		if ok {
 			res = append(res, info)
 		}
