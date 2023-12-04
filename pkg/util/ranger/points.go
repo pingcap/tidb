@@ -893,8 +893,8 @@ func (r *builder) buildFromNot(
 			isUnsignedIntCol bool
 			nonNegativePos   int
 		)
-		// Note that we must handle the cutting prefix and converting to sort key cases here, because if we cut the prefix
-		// inside buildFromIn(), the inversion logic here would make an incomplete and wrong range.
+		// Note that we must handle the cutting prefix and converting to sort key in buildFromNot, because if we cut the
+		// prefix inside buildFromIn(), the inversion logic here would make an incomplete and wrong range.
 		// For example, for index col(1), col NOT IN ('aaa', 'bbb'), if we cut the prefix in buildFromIn(), we would get
 		// ['a', 'a'], ['b', 'b'] from there. Then after in this function we would get ['' 'a'), ('a', 'b'), ('b', +inf]
 		// as the result. This is wrong because data like 'ab' would be missed. Actually we are unable to build a range
