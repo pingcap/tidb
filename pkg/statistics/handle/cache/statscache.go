@@ -83,6 +83,10 @@ func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
 	}
 	tables := make([]*statistics.Table, 0, len(rows))
 	deletedTableIDs := make([]int64, 0, len(rows))
+	if len(rows) == 0 {
+		logutil.BgLogger().Warn("no nothing to update")
+		return nil
+	}
 	for _, row := range rows {
 		version := row.GetUint64(0)
 		physicalID := row.GetInt64(1)
