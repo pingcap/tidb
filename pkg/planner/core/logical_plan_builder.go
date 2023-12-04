@@ -4776,6 +4776,7 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	if pseudoStatsForUninitialized || pseudoStatsForOutdated {
 		tbl := *statsTbl
 		tbl.Pseudo = true
+		logutil.BgLogger().Warn("use pseudo statistics for debug")
 		statsTbl = &tbl
 		if pseudoStatsForUninitialized {
 			core_metrics.PseudoEstimationNotAvailable.Inc()
