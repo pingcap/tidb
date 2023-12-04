@@ -72,7 +72,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sys/linux"
 	"github.com/pingcap/tidb/util/timeutil"
-	uatomic "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -130,21 +129,18 @@ type Server struct {
 	driver            IDriver
 	listener          net.Listener
 	socket            net.Listener
+	rwlock            sync.RWMutex
 	concurrentLimiter *TokenLimiter
-
-	rwlock  sync.RWMutex
-	clients map[uint64]*clientConn
-
-	capability   uint32
-	dom          *domain.Domain
-	globalConnID util.GlobalConnID
+	clients           map[uint64]*clientConn
+	capability        uint32
+	dom               *domain.Domain
+	globalConnID      util.GlobalConnID
 
 	statusAddr     string
 	statusListener net.Listener
 	statusServer   *http.Server
 	grpcServer     *grpc.Server
-	inShutdownMode *uatomic.Bool
-	health         *uatomic.Bool
+	inShutdownMode bool
 
 	sessionMapMutex     sync.Mutex
 	internalSessions    map[interface{}]struct{}
@@ -213,8 +209,6 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		globalConnID:      util.NewGlobalConnID(0, true),
 		internalSessions:  make(map[interface{}]struct{}, 100),
 		printMDLLogTime:   time.Now(),
-		health:            uatomic.NewBool(true),
-		inShutdownMode:    uatomic.NewBool(false),
 	}
 	s.capability = defaultCapability
 	setTxnScope()
@@ -402,7 +396,7 @@ func (s *Server) Run() error {
 	}
 	// If error should be reported and exit the server it can be sent on this
 	// channel. Otherwise, end with sending a nil error to signal "done"
-	errChan := make(chan error, 2)
+	errChan := make(chan error)
 	go s.startNetworkListener(s.listener, false, errChan)
 	go s.startNetworkListener(s.socket, true, errChan)
 	err := <-errChan
@@ -422,7 +416,7 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 		if err != nil {
 			if opErr, ok := err.(*net.OpError); ok {
 				if opErr.Err.Error() == "use of closed network connection" {
-					if s.inShutdownMode.Load() {
+					if s.inShutdownMode {
 						errChan <- nil
 					} else {
 						errChan <- err
@@ -441,8 +435,6 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 			errChan <- err
 			return
 		}
-
-		logutil.BgLogger().Debug("accept new connection success")
 
 		clientConn := s.newConn(conn)
 		if isUnixSocket {
@@ -515,8 +507,10 @@ func (s *Server) checkAuditPlugin(clientConn *clientConn) error {
 }
 
 func (s *Server) startShutdown() {
+	s.rwlock.RLock()
 	logutil.BgLogger().Info("setting tidb-server to report unhealthy (shutting-down)")
-	s.health.Store(false)
+	s.inShutdownMode = true
+	s.rwlock.RUnlock()
 	// give the load balancer a chance to receive a few unhealthy health reports
 	// before acquiring the s.rwlock and blocking connections.
 	waitTime := time.Duration(s.cfg.GracefulWaitBeforeShutdown) * time.Second
@@ -526,7 +520,12 @@ func (s *Server) startShutdown() {
 	}
 }
 
-func (s *Server) closeListener() {
+// Close closes the server.
+func (s *Server) Close() {
+	s.startShutdown()
+	s.rwlock.Lock() // prevent new connections
+	defer s.rwlock.Unlock()
+
 	if s.listener != nil {
 		err := s.listener.Close()
 		terror.Log(errors.Trace(err))
@@ -554,34 +553,6 @@ func (s *Server) closeListener() {
 	}
 	s.wg.Wait()
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventClose).Inc()
-}
-
-var gracefulCloseConnectionsTimeout = 15 * time.Second
-
-// Close closes the server.
-func (s *Server) Close() {
-	s.startShutdown()
-	s.rwlock.Lock() // // prevent new connections
-	defer s.rwlock.Unlock()
-	s.inShutdownMode.Store(true)
-	s.closeListener()
-}
-
-func (s *Server) registerConn(conn *clientConn) bool {
-	s.rwlock.Lock()
-	defer s.rwlock.Unlock()
-	connections := len(s.clients)
-
-	logger := logutil.BgLogger()
-	if s.inShutdownMode.Load() {
-		logger.Info("close connection directly when shutting down")
-		terror.Log(closeConn(conn, connections))
-		return false
-	}
-	s.clients[conn.connectionID] = conn
-	connections = len(s.clients)
-	metrics.ConnGauge.Set(float64(connections))
-	return true
 }
 
 // onConn runs in its own goroutine, handles queries from this connection.
@@ -612,7 +583,6 @@ func (s *Server) onConn(conn *clientConn) {
 	}
 
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
-
 	if err := conn.handshake(ctx); err != nil {
 		conn.onExtensionConnEvent(extension.ConnHandshakeRejected, err)
 		if plugin.IsEnable(plugin.Audit) && conn.getCtx() != nil {
@@ -654,10 +624,11 @@ func (s *Server) onConn(conn *clientConn) {
 		terror.Log(conn.Close())
 		logutil.Logger(ctx).Debug("connection closed")
 	}()
-
-	if !s.registerConn(conn) {
-		return
-	}
+	s.rwlock.Lock()
+	s.clients[conn.connectionID] = conn
+	connections := len(s.clients)
+	s.rwlock.Unlock()
+	metrics.ConnGauge.Set(float64(connections))
 
 	sessionVars := conn.ctx.GetSessionVars()
 	sessionVars.ConnectionInfo = conn.connectInfo()
@@ -813,7 +784,7 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 		// this, it will end the dispatch loop and exit.
 		atomic.StoreInt32(&conn.status, connStatusWaitShutdown)
 	}
-	killQuery(conn)
+	killConn(conn)
 }
 
 // UpdateTLSConfig implements the SessionManager interface.
@@ -825,7 +796,7 @@ func (s *Server) getTLSConfig() *tls.Config {
 	return (*tls.Config)(atomic.LoadPointer(&s.tlsConfig))
 }
 
-func killQuery(conn *clientConn) {
+func killConn(conn *clientConn) {
 	sessVars := conn.ctx.GetSessionVars()
 	atomic.StoreUint32(&sessVars.Killed, 1)
 	conn.mu.RLock()
@@ -853,8 +824,7 @@ func (s *Server) KillSysProcesses() {
 	}
 }
 
-// KillAllConnections implements the SessionManager interface.
-// KillAllConnections kills all connections.
+// KillAllConnections kills all connections when server is not gracefully shutdown.
 func (s *Server) KillAllConnections() {
 	logutil.BgLogger().Info("[server] kill all connections.")
 
@@ -865,53 +835,73 @@ func (s *Server) KillAllConnections() {
 		if err := conn.closeWithoutLock(); err != nil {
 			terror.Log(err)
 		}
-		killQuery(conn)
+		killConn(conn)
 	}
 
 	s.KillSysProcesses()
 }
 
-// DrainClients drain all connections in drainWait.
-// After drainWait duration, we kill all connections still not quit explicitly and wait for cancelWait.
-func (s *Server) DrainClients(drainWait time.Duration, cancelWait time.Duration) {
-	logger := logutil.BgLogger()
-	logger.Info("start drain clients")
+var gracefulCloseConnectionsTimeout = 15 * time.Second
 
-	conns := make(map[uint64]*clientConn)
-
-	s.rwlock.Lock()
-	for k, v := range s.clients {
-		conns[k] = v
-	}
-	s.rwlock.Unlock()
-
-	allDone := make(chan struct{})
-	quitWaitingForConns := make(chan struct{})
-	defer close(quitWaitingForConns)
+// TryGracefulDown will try to gracefully close all connection first with timeout. if timeout, will close all connection directly.
+func (s *Server) TryGracefulDown() {
+	ctx, cancel := context.WithTimeout(context.Background(), gracefulCloseConnectionsTimeout)
+	defer cancel()
+	done := make(chan struct{})
 	go func() {
-		defer close(allDone)
-		for _, conn := range conns {
-			select {
-			case <-conn.quit:
-			case <-quitWaitingForConns:
-				return
-			}
-		}
+		s.GracefulDown(ctx, done)
 	}()
-
 	select {
-	case <-allDone:
-		logger.Info("all sessions quit in drain wait time")
-	case <-time.After(drainWait):
-		logger.Info("timeout waiting all sessions quit")
+	case <-ctx.Done():
+		s.KillAllConnections()
+	case <-done:
+		return
 	}
+}
 
-	s.KillAllConnections()
+// GracefulDown waits all clients to close.
+func (s *Server) GracefulDown(ctx context.Context, done chan struct{}) {
+	logutil.Logger(ctx).Info("[server] graceful shutdown.")
+	metrics.ServerEventCounter.WithLabelValues(metrics.EventGracefulDown).Inc()
 
-	select {
-	case <-allDone:
-	case <-time.After(cancelWait):
-		logger.Warn("some sessions do not quit in cancel wait time")
+	count := s.ConnectionCount()
+	for i := 0; count > 0; i++ {
+		s.kickIdleConnection()
+
+		count = s.ConnectionCount()
+		if count == 0 {
+			break
+		}
+		// Print information for every 30s.
+		if i%30 == 0 {
+			logutil.Logger(ctx).Info("graceful shutdown...", zap.Int("conn count", count))
+		}
+		ticker := time.After(time.Second)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker:
+		}
+	}
+	close(done)
+}
+
+func (s *Server) kickIdleConnection() {
+	var conns []*clientConn
+	s.rwlock.RLock()
+	for _, cc := range s.clients {
+		if cc.ShutdownOrNotify() {
+			// Shutdowned conn will be closed by us, and notified conn will exist themselves.
+			conns = append(conns, cc)
+		}
+	}
+	s.rwlock.RUnlock()
+
+	for _, cc := range conns {
+		err := cc.Close()
+		if err != nil {
+			logutil.BgLogger().Error("close connection", zap.Error(err))
+		}
 	}
 }
 
