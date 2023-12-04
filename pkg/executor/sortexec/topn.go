@@ -38,6 +38,7 @@ type TopNExec struct {
 	rowPtrs []chunk.RowPtr
 
 	chkHeap *topNChunkHeap
+	Idx     int
 }
 
 // topNChunkHeap implements heap.Interface.

@@ -199,7 +199,7 @@ func onePartitionAndAllDataInMemoryCase(t *testing.T, ctx *mock.Context, sortCas
 
 	require.Equal(t, exe.GetSortPartitionListLenForTest(), 1)
 	require.Equal(t, false, exe.IsSpillTriggeredInOnePartitionForTest(0))
-	require.Equal(t, 2048, exe.GetRowNumInOnePartitionForTest(0))
+	require.Equal(t, int64(2048), exe.GetRowNumInOnePartitionForTest(0))
 	err := exe.Close()
 	require.NoError(t, err)
 
@@ -219,13 +219,14 @@ func onePartitionAndAllDataInDiskCase(t *testing.T, ctx *mock.Context, sortCase 
 
 	require.Equal(t, exe.GetSortPartitionListLenForTest(), 1)
 	require.Equal(t, true, exe.IsSpillTriggeredInOnePartitionForTest(0))
-	require.Equal(t, 2048, exe.GetRowNumInOnePartitionForTest(0))
+	require.Equal(t, int64(2048), exe.GetRowNumInOnePartitionForTest(0))
 	err := exe.Close()
 	require.NoError(t, err)
 
 	require.True(t, checkCorrectness(schema, exe, dataSource, resultChunks))
 }
 
+// TODO Ensure all partitions are spilled
 func multiPartitionCase(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCase) {
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
@@ -244,6 +245,10 @@ func multiPartitionCase(t *testing.T, ctx *mock.Context, sortCase *testutil.Sort
 
 	require.True(t, checkCorrectness(schema, exe, dataSource, resultChunks))
 }
+
+// TODO add case that data are all in memory and some of then are fetched, then the spill is triggered
+// TODO add case that data are all in partition and spilled, then spill is triggered again
+// TODO add case that data are all in nulti partitions and spilled, then spill is triggered again
 
 func TestSortSpillDisk(t *testing.T) {
 	sortexec.SetSmallSpillChunkSizeForTest()
