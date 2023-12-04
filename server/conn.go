@@ -207,6 +207,7 @@ type clientConn struct {
 	lastActive    time.Time         // last active time
 	authPlugin    string            // default authentication plugin
 	isUnixSocket  bool              // connection is Unix Socket file
+	closeOnce     sync.Once         // closeOnce is used to make sure clientConn closes only once
 	rsEncoder     *resultEncoder    // rsEncoder is used to encode the string result to different charsets.
 	inputDecoder  *inputDecoder     // inputDecoder is used to decode the different charsets of incoming strings to utf-8.
 	socketCredUID uint32            // UID from the other end of the Unix Socket
@@ -346,21 +347,33 @@ func (cc *clientConn) Close() error {
 }
 
 func closeConn(cc *clientConn, connections int) error {
-	metrics.ConnGauge.Set(float64(connections))
-	if cc.bufReadConn != nil {
-		err := cc.bufReadConn.Close()
-		if err != nil {
-			// We need to expect connection might have already disconnected.
-			// This is because closeConn() might be called after a connection read-timeout.
-			logutil.Logger(context.Background()).Debug("could not close connection", zap.Error(err))
+	var err error
+	cc.closeOnce.Do(func() {
+		metrics.ConnGauge.Set(float64(connections))
+
+		if cc.bufReadConn != nil {
+			err = cc.bufReadConn.Close()
+			if err != nil {
+				// We need to expect connection might have already disconnected.
+				// This is because closeConn() might be called after a connection read-timeout.
+				logutil.Logger(context.Background()).Debug("could not close connection", zap.Error(err))
+			}
+			if cc.bufReadConn != nil {
+				err = cc.bufReadConn.Close()
+				if err != nil {
+					// We need to expect connection might have already disconnected.
+					// This is because closeConn() might be called after a connection read-timeout.
+					logutil.Logger(context.Background()).Debug("could not close connection", zap.Error(err))
+				}
+			}
+			// Close statements and session
+			// This will release advisory locks, row locks, etc.
+			if ctx := cc.getCtx(); ctx != nil {
+				err = ctx.Close()
+			}
 		}
-	}
-	// Close statements and session
-	// This will release advisory locks, row locks, etc.
-	if ctx := cc.getCtx(); ctx != nil {
-		return ctx.Close()
-	}
-	return nil
+	})
+	return err
 }
 
 func (cc *clientConn) closeWithoutLock() error {
