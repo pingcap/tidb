@@ -21,14 +21,17 @@ import (
 	"github.com/tikv/client-go/v2/util"
 )
 
+// CtxMatcher is a matcher for context.Context
 type CtxMatcher struct{}
 
+// Matches returns true if the context is internal_stats source.
 func (c *CtxMatcher) Matches(x interface{}) bool {
 	ctx := x.(context.Context)
 	s := util.RequestSourceFromCtx(ctx)
 	return s == util.InternalRequest+"_"+kv.InternalTxnStats
 }
 
+// String returns the description of CtxMatcher.
 func (c *CtxMatcher) String() string {
 	return "all txns should be internal_stats source"
 }
