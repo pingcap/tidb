@@ -83,7 +83,7 @@ type Manager struct {
 	taskMgr     TaskManager
 	wg          tidbutil.WaitGroupWrapper
 	gPool       *spool.Pool
-	slotMgr     *SlotManager
+	slotMgr     *slotManager
 	initialized bool
 	// serverID, it's value is ip:port now.
 	serverID string
@@ -101,7 +101,7 @@ func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) (*Man
 	dispatcherManager := &Manager{
 		taskMgr:  taskMgr,
 		serverID: serverID,
-		slotMgr:  NewSlotManager(),
+		slotMgr:  newSlotManager(),
 	}
 	gPool, err := spool.NewPool("dispatch_pool", int32(proto.MaxConcurrentTask), util.DistTask, spool.WithBlocking(true))
 	if err != nil {
@@ -188,7 +188,7 @@ func (dm *Manager) dispatchTaskLoop() {
 			continue
 		}
 
-		if err = dm.slotMgr.Update(dm.ctx, dm.taskMgr); err != nil {
+		if err = dm.slotMgr.update(dm.ctx, dm.taskMgr); err != nil {
 			logutil.BgLogger().Warn("update used slot failed", zap.Error(err))
 			continue
 		}
@@ -197,7 +197,7 @@ func (dm *Manager) dispatchTaskLoop() {
 			if taskCnt >= proto.MaxConcurrentTask {
 				break
 			}
-			reservedExecID, ok := dm.slotMgr.CanReserve(task.Concurrency)
+			reservedExecID, ok := dm.slotMgr.canReserve(task.Concurrency)
 			if !ok {
 				// task of lower priority might be able to be dispatched.
 				continue
@@ -260,13 +260,13 @@ func (dm *Manager) startDispatcher(taskID int64, reservedExecID string) {
 		return
 	}
 	dm.addDispatcher(task.ID, dispatcher)
-	dm.slotMgr.Reserve(task.Concurrency, reservedExecID)
+	dm.slotMgr.reserve(task.Concurrency, reservedExecID)
 	// Using the pool with block, so it wouldn't return an error.
 	_ = dm.gPool.Run(func() {
 		defer func() {
 			dispatcher.Close()
 			dm.delDispatcher(task.ID)
-			dm.slotMgr.UnReserve(task.Concurrency, reservedExecID)
+			dm.slotMgr.unReserve(task.Concurrency, reservedExecID)
 		}()
 		metrics.UpdateMetricsForRunTask(task)
 		dispatcher.ExecuteTask()

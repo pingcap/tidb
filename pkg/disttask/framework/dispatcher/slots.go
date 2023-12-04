@@ -22,26 +22,31 @@ import (
 	"github.com/pingcap/tidb/pkg/util/cpu"
 )
 
-// SlotManager is used to manage the resource slots and strips.
+// slotManager is used to manage the resource slots and strips.
 //
 // Slot is the resource unit of dist framework on each node, each slot represents
 // 1 cpu core, 1/total-core of memory, 1/total-core of disk, etc.
 //
 // Stripe is the resource unit of dist framework, regardless of the node, each
 // stripe means 1 slot on all nodes managed by dist framework.
-// Number of stripes is equal to number of slots on each node.As we assume that
+// Number of stripes is equal to number of slots on each node, as we assume that
 // all nodes managed by dist framework are isomorphic,
 // Stripes reserved for a task defines the maximum resource that a task can use
-// but the task might not use all the resources, to maximize the resource utilization,
+// but the task might not use all the resources. To maximize the resource utilization,
 // we will try to dispatch as many tasks as possible depends on the used slots
-// on each node.
+// on each node and the minimum resource required by the tasks.
 //
 // Dist framework will try to allocate resource by slots and stripes, and give
 // quota to subtask, but subtask can determine what to conform.
-type SlotManager struct {
+type slotManager struct {
 	// Capacity is the total number of slots and stripes.
+	// TODO: we assume that all nodes managed by dist framework are isomorphic,
+	// but dist owner might run on normal node where the capacity might not be
+	// able to run any task.
 	capacity int
-	// this value might be larger than capacity
+	// represents the number of stripes reserved by task, when we reserve by the
+	// minimum resource required by the task, we still increase this value, so it
+	// might be larger than capacity
 	reservedStripes atomic.Int32
 
 	mu sync.RWMutex
@@ -58,9 +63,9 @@ type SlotManager struct {
 	usedSlots map[string]int
 }
 
-// NewSlotManager creates a new SlotManager.
-func NewSlotManager() *SlotManager {
-	return &SlotManager{
+// newSlotManager creates a new slotManager.
+func newSlotManager() *slotManager {
+	return &slotManager{
 		capacity:      cpu.GetCPUCount(),
 		reservedSlots: make(map[string]int),
 		usedSlots:     make(map[string]int),
@@ -69,7 +74,7 @@ func NewSlotManager() *SlotManager {
 
 // Update updates the used slots on each node.
 // TODO: on concurrent call, update once.
-func (sm *SlotManager) Update(ctx context.Context, taskMgr TaskManager) error {
+func (sm *slotManager) update(ctx context.Context, taskMgr TaskManager) error {
 	nodes, err := taskMgr.GetManagedNodes(ctx)
 	if err != nil {
 		return err
@@ -92,15 +97,16 @@ func (sm *SlotManager) Update(ctx context.Context, taskMgr TaskManager) error {
 // If the resource is reserved by slots, it returns the execID of the task.
 // else if the resource is reserved by stripes, it returns "".
 // as usedSlots is updated asynchronously, it might return false even if there
-// are enough resources, or return true when some task dispatched subtasks.
-func (sm *SlotManager) CanReserve(taskConcurrency int) (execID string, ok bool) {
+// are enough resources, or return true on resource shortage when some task
+// dispatched subtasks.
+func (sm *slotManager) canReserve(taskConcurrency int) (execID string, ok bool) {
 	if taskConcurrency+int(sm.reservedStripes.Load()) <= sm.capacity {
 		return "", true
 	}
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	for id, count := range sm.usedSlots {
-		if count+sm.reservedSlots[id] <= sm.capacity {
+		if count+sm.reservedSlots[id]+taskConcurrency <= sm.capacity {
 			return id, true
 		}
 	}
@@ -109,7 +115,7 @@ func (sm *SlotManager) CanReserve(taskConcurrency int) (execID string, ok bool) 
 
 // Reserve reserves resources for a task.
 // Reserve and UnReserve should be called in pair with same parameters.
-func (sm *SlotManager) Reserve(taskConcurrency int, execID string) {
+func (sm *slotManager) reserve(taskConcurrency int, execID string) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	sm.reservedStripes.Add(int32(taskConcurrency))
@@ -119,11 +125,14 @@ func (sm *SlotManager) Reserve(taskConcurrency int, execID string) {
 }
 
 // UnReserve un-reserve resources for a task.
-func (sm *SlotManager) UnReserve(taskConcurrency int, execID string) {
+func (sm *slotManager) unReserve(taskConcurrency int, execID string) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	sm.reservedStripes.Add(-int32(taskConcurrency))
 	if execID != "" {
 		sm.reservedSlots[execID] -= taskConcurrency
+		if sm.reservedSlots[execID] == 0 {
+			delete(sm.reservedSlots, execID)
+		}
 	}
 }

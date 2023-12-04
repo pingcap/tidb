@@ -45,7 +45,7 @@ const (
 	taskColumns      = basicTaskColumns + `, start_time, state_update_time, meta, dispatcher_id, error`
 	subtaskColumns   = `id, step, task_key, type, exec_id, state, concurrency, create_time,
 				start_time, state_update_time, meta, summary`
-	insertSubtaskBasic = `insert into mysql.tidb_background_subtask(
+	InsertSubtaskBasic = `insert into mysql.tidb_background_subtask(
 				step, task_key, exec_id, meta, state, type, concurrency, create_time, checkpoint, summary) values `
 )
 
@@ -379,7 +379,7 @@ func (stm *TaskManager) GetUsedSlotsOnNodes(ctx context.Context) (map[string]int
 			exec_id, sum(concurrency)
 		from (
 			select exec_id, task_key, max(concurrency) concurrency
-			from tidb_background_subtask
+			from mysql.tidb_background_subtask
 			where state in (%?, %?)
 			group by exec_id, task_key
 		) a
@@ -392,7 +392,8 @@ func (stm *TaskManager) GetUsedSlotsOnNodes(ctx context.Context) (map[string]int
 
 	slots := make(map[string]int, len(rs))
 	for _, r := range rs {
-		slots[r.GetString(0)] = int(r.GetInt64(1))
+		val, _ := r.GetMyDecimal(1).ToInt()
+		slots[r.GetString(0)] = int(val)
 	}
 	return slots, nil
 }
@@ -431,23 +432,6 @@ func row2SubTask(r chunk.Row) *proto.Subtask {
 	}
 	subtask.TaskID = int64(tid)
 	return subtask
-}
-
-// CreateSubTask adds a new task to subtask table.
-// used for testing.
-func (stm *TaskManager) CreateSubTask(ctx context.Context, taskID int64, step proto.Step, execID string, meta []byte, tp proto.TaskType, isRevert bool) error {
-	state := proto.TaskStatePending
-	if isRevert {
-		state = proto.TaskStateRevertPending
-	}
-
-	_, err := stm.executeSQLWithNewSession(ctx, insertSubtaskBasic+`(%?, %?, %?, %?, %?, %?, 11, CURRENT_TIMESTAMP(), '{}', '{}')`,
-		step, taskID, execID, meta, state, proto.Type2Int(tp))
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 // GetSubtasksInStates gets all subtasks by given states.
@@ -847,7 +831,7 @@ func (stm *TaskManager) UpdateTaskAndAddSubTasks(ctx context.Context, task *prot
 			}
 
 			sql := new(strings.Builder)
-			if err := sqlescape.FormatSQL(sql, insertSubtaskBasic); err != nil {
+			if err := sqlescape.FormatSQL(sql, InsertSubtaskBasic); err != nil {
 				return err
 			}
 			for i, subtask := range subtasks {
