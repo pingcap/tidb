@@ -61,7 +61,7 @@ type TaskExecutor interface {
 // each task type should implement this interface.
 type Extension interface {
 	// IsIdempotent returns whether the subtask is idempotent.
-	// When tidb restart, the subtask might be left in the running state.
+	// when tidb restart, the subtask might be left in the running state.
 	// if it's idempotent, the Executor can rerun the subtask, else
 	// the Executor will mark the subtask as failed.
 	IsIdempotent(subtask *proto.Subtask) bool
