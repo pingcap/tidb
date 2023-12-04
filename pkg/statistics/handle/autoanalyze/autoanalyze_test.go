@@ -15,17 +15,31 @@
 package autoanalyze_test
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	mockctx "github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/sqlexec/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/util"
+	"go.uber.org/mock/gomock"
 )
 
 func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
@@ -296,4 +310,102 @@ func TestAutoAnalyzeOutOfSpecifiedTime(t *testing.T) {
 	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
 	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
 	require.True(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
+}
+
+// TODO: move to util package.
+type ctxMatcher struct{}
+
+func (c *ctxMatcher) Matches(x interface{}) bool {
+	ctx := x.(context.Context)
+	s := util.RequestSourceFromCtx(ctx)
+	return s == util.InternalRequest+"_"+kv.InternalTxnStats
+}
+
+func (c *ctxMatcher) String() string {
+	return "all txns should be internal_stats source"
+}
+
+func wrapAsSCtx(exec *mock.MockRestrictedSQLExecutor) sessionctx.Context {
+	sctx := mockctx.NewContext()
+	sctx.SetValue(mock.RestrictedSQLExecutorKey{}, exec)
+	return sctx
+}
+func TestCleanupCorruptedAnalyzeJobs(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	exec := mock.NewMockRestrictedSQLExecutor(ctrl)
+
+	makeFailpointRes := func(v interface{}) string {
+		bytes, err := json.Marshal(v)
+		require.NoError(t, err)
+		return fmt.Sprintf("return(`%s`)", string(bytes))
+	}
+	mockedAllServerInfos := map[string]*infosync.ServerInfo{
+		"s1": {
+			ID:   "s1",
+			IP:   "127.0.0.1",
+			Port: 4000,
+		},
+		"s2": {
+			ID:   "s2",
+			IP:   "127.0.0.2",
+			Port: 4000,
+		},
+	}
+	require.NoError(
+		t,
+		failpoint.Enable(
+			"github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo",
+			makeFailpointRes(mockedAllServerInfos),
+		),
+	)
+	// Create a new chunk with capacity for three fields
+	c := chunk.NewChunkWithCapacity([]*types.FieldType{
+		types.NewFieldType(mysql.TypeLonglong), // id
+		types.NewFieldType(mysql.TypeLonglong), // process_id
+		types.NewFieldType(mysql.TypeVarchar),  // instance
+	}, 3)
+
+	// Append values for each field
+	c.AppendInt64(0, int64(1))          // id
+	c.AppendInt64(1, int64(1))          // process_id
+	c.AppendString(2, "127.0.0.1:4000") // instance
+
+	c.AppendInt64(0, int64(2))         // id
+	c.AppendNull(1)                    // process_id
+	c.AppendString(2, "10.0.0.1:4000") // unknown instance
+
+	c.AppendInt64(0, int64(3))          // id
+	c.AppendInt64(1, int64(3))          // process_id
+	c.AppendString(2, "127.0.0.1:4000") // valid instance
+
+	// Create a row from the chunk
+	rows := []chunk.Row{c.GetRow(0), c.GetRow(1), c.GetRow(2)}
+	// Set up the mock function to return the row
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		statsutil.UseCurrentSessionOpt,
+		autoanalyze.SelectAnalyzeJobsSQL,
+	).Return(rows, nil, nil)
+
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		statsutil.UseCurrentSessionOpt,
+		autoanalyze.BatchUpdateAnalyzeJobSQL,
+		[]interface{}{
+			[]uint64{
+				uint64(1),
+				uint64(2),
+			},
+		},
+	).Return(nil, nil, nil)
+
+	err := autoanalyze.CleanupCorruptedAnalyzeJobs(
+		wrapAsSCtx(exec),
+		map[uint64]struct{}{
+			3: {},
+			4: {},
+		},
+	)
+	require.NoError(t, err)
 }

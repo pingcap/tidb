@@ -82,12 +82,24 @@ func (sa *statsAnalyze) DeleteAnalyzeJobs(updateTime time.Time) error {
 // It cleans up both the job from current owner and the job from other nodes.
 func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobs(currentRunningProcessIDs map[uint64]struct{}) error {
 	return statsutil.CallWithSCtx(nil, func(sctx sessionctx.Context) error {
-		return cleanupCorruptedAnalyzeJobs(sctx, currentRunningProcessIDs)
+		return CleanupCorruptedAnalyzeJobs(sctx, currentRunningProcessIDs)
 	})
 }
 
-// cleanupCorruptedAnalyzeJobs cleans up the potentially corrupted analyze job from current node.
-func cleanupCorruptedAnalyzeJobs(
+// Exported for testing.
+const SelectAnalyzeJobsSQL = `SELECT id, process_id, instance
+		FROM mysql.analyze_jobs
+		AND state IN ('pending', 'running')
+		AND TIMESTAMPDIFF(MINUTE, update_time, NOW()) > 10`
+const BatchUpdateAnalyzeJobSQL = `UPDATE mysql.analyze_jobs
+            SET state = 'failed',
+            fail_reason = 'TiDB Server is down when running the analyze job',
+            process_id = NULL
+            WHERE id IN (%?)`
+
+// CleanupCorruptedAnalyzeJobs cleans up the potentially corrupted analyze job from current node.
+// Exported for testing.
+func CleanupCorruptedAnalyzeJobs(
 	sctx sessionctx.Context,
 	currentRunningProcessIDs map[uint64]struct{},
 ) error {
@@ -104,10 +116,7 @@ func cleanupCorruptedAnalyzeJobs(
 	// Get all the analyze jobs whose state is `pending` or `running` and the update time is more than 10 minutes ago.
 	rows, _, err := statsutil.ExecRows(
 		sctx,
-		`SELECT id, process_id, instance
-		FROM mysql.analyze_jobs
-		AND state IN ('pending', 'running')
-		AND TIMESTAMPDIFF(MINUTE, update_time, NOW()) > 10`,
+		SelectAnalyzeJobsSQL,
 	)
 	if err != nil {
 		return errors.Trace(err)
@@ -146,11 +155,7 @@ func cleanupCorruptedAnalyzeJobs(
 	if len(jobIDs) > 0 {
 		_, _, err = statsutil.ExecRows(
 			sctx,
-			`UPDATE mysql.analyze_jobs
-            SET state = 'failed',
-            fail_reason = 'TiDB Server is down when running the analyze job',
-            process_id = NULL
-            WHERE id IN (%s)`,
+			BatchUpdateAnalyzeJobSQL,
 			jobIDs,
 		)
 		if err != nil {
