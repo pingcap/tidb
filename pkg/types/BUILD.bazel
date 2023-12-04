@@ -63,6 +63,9 @@ go_library(
         "//pkg/util/stringutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
+        "@com_github_twpayne_go_geom//:go_default_library",
+        "@com_github_twpayne_go_geom//encoding/wkb:go_default_library",
+        "@com_github_twpayne_go_geom//encoding/wkbcommon:go_default_library",
         "@org_uber_go_zap//:zap",
     ],
 )

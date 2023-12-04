@@ -94,4 +94,6 @@ var (
 	ErrPartitionColumnStatsMissing = dbterror.ClassTypes.NewStd(mysql.ErrPartitionColumnStatsMissing)
 	// ErrIncorrectDatetimeValue is returned when the input value is in wrong format for datetime.
 	ErrIncorrectDatetimeValue = dbterror.ClassTypes.NewStd(mysql.ErrIncorrectDatetimeValue)
+	// ErrCantCreateGeometryObject is returned when the input value can't be converted to geometry.
+	ErrCantCreateGeometryObject = dbterror.ClassTypes.NewStd(mysql.ErrCantCreateGeometryObject)
 )

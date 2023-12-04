@@ -395,6 +395,7 @@ var tokenMap = map[string]int{
 	"GC_TTL":                   gcTTL,
 	"GENERAL":                  general,
 	"GENERATED":                generated,
+	"GEOMETRY":                 geometryType,
 	"GET_FORMAT":               getFormat,
 	"GLOBAL":                   global,
 	"GRANT":                    grant,

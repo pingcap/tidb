@@ -121,7 +121,9 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 			return d, err
 		}
 		d.SetFloat64(fVal)
-	case mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+	case mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeString, mysql.TypeBlob,
+		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
+		mysql.TypeGeometry:
 		d.SetString(string(colData), col.Ft.GetCollate())
 	case mysql.TypeNewDecimal:
 		_, dec, precision, frac, err := codec.DecodeDecimal(colData)
@@ -298,7 +300,8 @@ func (decoder *ChunkDecoder) decodeColToChunk(colIdx int, col *ColInfo, colData 
 		}
 		chk.AppendFloat64(colIdx, fVal)
 	case mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeString,
-		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
+		mysql.TypeGeometry:
 		chk.AppendBytes(colIdx, colData)
 	case mysql.TypeNewDecimal:
 		_, dec, _, frac, err := codec.DecodeDecimal(colData)
@@ -501,7 +504,7 @@ func fieldType2Flag(tp byte, signed bool) (flag byte) {
 	case mysql.TypeFloat, mysql.TypeDouble:
 		flag = FloatFlag
 	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
-		mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString:
+		mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeGeometry:
 		flag = BytesFlag
 	case mysql.TypeDatetime, mysql.TypeDate, mysql.TypeTimestamp:
 		flag = UintFlag
