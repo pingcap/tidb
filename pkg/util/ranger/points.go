@@ -834,9 +834,10 @@ func (r *builder) newBuildFromPatternLike(
 
 	// If we don't trim the trailing spaces, which means using KeyWithoutTrimRightSpace() instead of Key(), we can build
 	// a smaller range for better performance, e.g., LIKE '  %'.
-	// However, if it's a PAD SPACE collation, we must trim the trailing spaces for the end point to ensure the correctness.
+	// However, if it's a PAD SPACE collation, we must trim the trailing spaces for the start point to ensure the correctness.
 	// Because the trailing spaces are trimmed in the stored index key. For example, for LIKE 'abc  %' on utf8mb4_bin
-	// column, the start key should be 'abd' instead of 'abc ', but the end key can be 'abc!'.
+	// column, the start key should be 'abd' instead of 'abc ', but the end key can be 'abc!'. ( ' ' is 32 and '!' is 33
+	// in ASCII)
 	shouldTrimTrailingSpace := isPadSpaceCollation(collation)
 	startPoint, err := pointConvertToSortKey(r.sctx, originalStartPoint, newTp, shouldTrimTrailingSpace)
 	if err != nil {
