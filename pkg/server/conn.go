@@ -1531,7 +1531,7 @@ func (cc *clientConn) writeReq(ctx context.Context, filePath string) error {
 
 // handleLoadData does the additional work after processing the 'load data' query.
 // It sends client a file path, then reads the file content from client, inserts data into database.
-func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *executor.LoadDataWorker) error {
+func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *executor.LoadDataWorker) (err error) {
 	// If the server handles the load data request, the client has to set the ClientLocalFiles capability.
 	if cc.capability&mysql.ClientLocalFiles == 0 {
 		return servererr.ErrNotAllowedCommand
@@ -1540,7 +1540,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *execut
 		return errors.New("load data info is empty")
 	}
 	infile := loadDataWorker.GetInfilePath()
-	err := cc.writeReq(ctx, infile)
+	err = cc.writeReq(ctx, infile)
 	if err != nil {
 		return err
 	}
@@ -1585,6 +1585,17 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *execut
 	}()
 
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalLoadData)
+	// if is autocommit and not in txn, begin a new transaction
+	if cc.ctx.GetSessionVars().IsAutocommit() && !cc.ctx.GetSessionVars().InTxn() {
+		defer func() {
+			if err == nil {
+				err = cc.ctx.TiDBContext.Session.CommitTxn(ctx)
+			} else {
+				cc.ctx.TiDBContext.Session.RollbackTxn(ctx)
+			}
+		}()
+		sessiontxn.NewTxn(ctx, cc.ctx)
+	}
 	err = loadDataWorker.LoadLocal(ctx, r)
 	_ = r.Close()
 	wg.Wait()
@@ -1611,13 +1622,6 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *execut
 				logutil.Logger(ctx).Info("draining finished for error", zap.Error(err))
 				break
 			}
-		}
-	}
-	// if current session is auto-commit and not in a transaction, commit it here
-	if cc.ctx.GetSessionVars().IsAutocommit() && !cc.ctx.GetSessionVars().InTxn() {
-		err = cc.ctx.CommitTxn(ctx)
-		if err != nil {
-			return err
 		}
 	}
 	return err

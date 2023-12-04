@@ -1008,6 +1008,80 @@ func columnsAsExpected(t *testing.T, columns []*sql.NullString, expected []strin
 	}
 }
 
+func (cli *TestServerClient) RunTestLoadDataInTransaction(t *testing.T, server *server.Server) {
+	fp, err := os.CreateTemp("", "load_data_test.csv")
+	require.NoError(t, err)
+	path := fp.Name()
+
+	require.NotNil(t, fp)
+	defer func() {
+		err = fp.Close()
+		require.NoError(t, err)
+		err = os.Remove(path)
+		require.NoError(t, err)
+	}()
+
+	_, err = fp.WriteString("1")
+	require.NoError(t, err)
+
+	// load file in transaction can be rolled back
+	cli.RunTestsOnNewDB(
+		t, func(config *mysql.Config) {
+			config.AllowAllFiles = true
+			config.Params["sql_mode"] = "''"
+		}, "LoadDataInTransaction", func(dbt *testkit.DBTestKit) {
+			dbt.MustExec("create table t (a int)")
+			txn, err := dbt.GetDB().Begin()
+			require.NoError(t, err)
+			_, err = txn.Exec(fmt.Sprintf("load data local infile %q into table t", path))
+			require.NoError(t, err)
+			rows, err := txn.Query("select * from t")
+			require.NoError(t, err)
+			cli.CheckRows(t, rows, "1")
+			err = txn.Rollback()
+			require.NoError(t, err)
+			rows = dbt.MustQuery("select * from t")
+			cli.CheckRows(t, rows)
+		},
+	)
+
+	// load file in transaction doesn't commit until the transaction is committed
+	cli.RunTestsOnNewDB(
+		t, func(config *mysql.Config) {
+			config.AllowAllFiles = true
+			config.Params["sql_mode"] = "''"
+		}, "LoadDataInTransaction", func(dbt *testkit.DBTestKit) {
+			dbt.MustExec("create table t (a int)")
+			txn, err := dbt.GetDB().Begin()
+			require.NoError(t, err)
+			_, err = txn.Exec(fmt.Sprintf("load data local infile %q into table t", path))
+			require.NoError(t, err)
+			rows, err := txn.Query("select * from t")
+			require.NoError(t, err)
+			cli.CheckRows(t, rows, "1")
+			err = txn.Commit()
+			require.NoError(t, err)
+			rows = dbt.MustQuery("select * from t")
+			cli.CheckRows(t, rows, "1")
+		},
+	)
+
+	// load file in auto commit mode should succeed
+	cli.RunTestsOnNewDB(
+		t, func(config *mysql.Config) {
+			config.AllowAllFiles = true
+			config.Params["sql_mode"] = "''"
+		}, "LoadDataInAutoCommit", func(dbt *testkit.DBTestKit) {
+			dbt.MustExec("create table t (a int)")
+			dbt.MustExec(fmt.Sprintf("load data local infile %q into table t", path))
+			txn, err := dbt.GetDB().Begin()
+			require.NoError(t, err)
+			rows, _ := txn.Query("select * from t")
+			cli.CheckRows(t, rows, "1")
+		},
+	)
+}
+
 func (cli *TestServerClient) RunTestLoadData(t *testing.T, server *server.Server) {
 	fp, err := os.CreateTemp("", "load_data_test.csv")
 	require.NoError(t, err)
