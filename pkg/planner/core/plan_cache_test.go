@@ -1221,3 +1221,33 @@ func BenchmarkNonPreparedPlanCacheDML(b *testing.B) {
 		tk.MustExec("delete from t where a = 2")
 	}
 }
+
+func TestPreparedPlanCachePartitions(b *testing.T) {
+	store := testkit.CreateMockStore(b)
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("use test")
+	//tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+	//tk.MustExec(`create table t (a int primary key)`)
+	tk.MustExec(`create table t (a int primary key, b varchar(255)) partition by hash(a) partitions 3`)
+	tk.MustExec(`insert into t values (1,"a"),(2,"b"),(3,"c"),(4,"d"),(5,"e"),(6,"f")`)
+	tk.MustExec(`prepare stmt from 'select a,b from t where a = ?;'`)
+	tk.MustExec(`set @a=1`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("1 a"))
+	/*
+		// Same partition works, due to pruning is not affected
+		tk.MustExec(`set @a=4`)
+		tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("4 d"))
+		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	*/
+	// Different partition needs code changes
+	tk.MustExec(`set @a=2`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("2 b"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`prepare stmt from 'select b,a from t where a = ?;'`)
+	tk.MustExec(`set @a=1`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("a 1"))
+	tk.MustExec(`set @a=3`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("c 3"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}

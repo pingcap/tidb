@@ -388,7 +388,7 @@ func updateRange(p PhysicalPlan, ranges ranger.Ranges, rangeInfo string) {
 //     ranges from x.AccessConditions. The only difference between the last ranges and new ranges is the change of parameter
 //     values, which doesn't cause much change on the mem usage of complete ranges.
 //  2. Different parameter values can change the mem usage of complete ranges. If we set range mem limit here, range fallback
-//     may heppen and cause correctness problem. For example, a in (?, ?, ?) is the access condition. When the plan is firstly
+//     may happen and cause correctness problem. For example, a in (?, ?, ?) is the access condition. When the plan is firstly
 //     generated, its complete ranges are ['a','a'], ['b','b'], ['c','c'], whose mem usage is under range mem limit 100B.
 //     When the cached plan is hit, the complete ranges may become ['aaa','aaa'], ['bbb','bbb'], ['ccc','ccc'], whose mem
 //     usage exceeds range mem limit 100B, and range fallback happens and tidb may fetch more rows than users expect.
@@ -492,9 +492,28 @@ func rebuildRange(p Plan) error {
 			}
 		*/
 		if x.HandleConstant != nil {
+			// Integer PK <=> Handle
 			dVal, err := convertConstant2Datum(sctx, x.HandleConstant, x.handleFieldType)
 			if err != nil {
 				return err
+			}
+			// TODO: Also check non-clustered partitioned tables?
+			if x.PointPartitionInfo != nil {
+				// Single column PK <=> Must be the partitioning columns!
+				if !x.TblInfo.PKIsHandle {
+					return errors.New("point get for partition table can not use plan cache, PK is not handle!")
+				}
+				// Re-calculate the pruning!
+				// TODO: Check how expressions are handled...
+				pointPartitionInfo, _, _, isTableDual := getPartitionInfo(sctx, x.TblInfo, []nameValuePair{{x.TblInfo.Columns[x.partitionColumnPos].Name.L, &x.TblInfo.Columns[x.partitionColumnPos].FieldType, *dVal, x.HandleConstant}})
+				// TODO: Support isTableDual?
+				if isTableDual {
+					return errors.New("point get for partition table can not use plan cache, could not prune")
+				}
+				if pointPartitionInfo == nil {
+					return errors.New("point get for partition table can not use plan cache, could not prune")
+				}
+				x.PointPartitionInfo = pointPartitionInfo
 			}
 			iv, err := dVal.ToInt64(sc.TypeCtx())
 			if err != nil {
@@ -505,6 +524,7 @@ func rebuildRange(p Plan) error {
 		}
 		for i, param := range x.IndexConstants {
 			if param != nil {
+				// TODO: Can this happen with partitioned tables?
 				dVal, err := convertConstant2Datum(sctx, param, x.ColsFieldType[i])
 				if err != nil {
 					return err

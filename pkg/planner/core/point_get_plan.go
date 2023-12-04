@@ -68,7 +68,7 @@ type PointGetPlan struct {
 	schema             *expression.Schema
 	TblInfo            *model.TableInfo
 	IndexInfo          *model.IndexInfo
-	PartitionInfo      *model.PartitionDefinition
+	PointPartitionInfo *model.PartitionDefinition
 	Handle             kv.Handle
 	HandleConstant     *expression.Constant
 	handleFieldType    *types.FieldType
@@ -269,8 +269,8 @@ func (p *PointGetPlan) MemoryUsage() (sum int64) {
 	if p.schema != nil {
 		sum += p.schema.MemoryUsage()
 	}
-	if p.PartitionInfo != nil {
-		sum += p.PartitionInfo.MemoryUsage()
+	if p.PointPartitionInfo != nil {
+		sum += p.PointPartitionInfo.MemoryUsage()
 	}
 	if p.HandleConstant != nil {
 		sum += p.HandleConstant.MemoryUsage()
@@ -1064,6 +1064,8 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 	if pi != nil {
 		partitionInfo, pos, _, isTableDual = getPartitionInfo(ctx, tbl, pairs)
 		if isTableDual {
+			// TODO: if plan cached, allow recalculation later!!!
+			// OR also block plan cache here!
 			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
 			p.IsTableDual = true
 			return p
@@ -1094,7 +1096,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		p.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.GetFlag())
 		p.handleFieldType = fieldType
 		p.HandleConstant = handlePair.con
-		p.PartitionInfo = partitionInfo
+		p.PointPartitionInfo = partitionInfo
 		return p
 	} else if handlePair.value.Kind() != types.KindNull {
 		return nil
@@ -1148,8 +1150,8 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		p.IndexValues = idxValues
 		p.IndexConstants = idxConstant
 		p.ColsFieldType = colsFieldType
-		p.PartitionInfo = partitionInfo
-		if p.PartitionInfo != nil {
+		p.PointPartitionInfo = partitionInfo
+		if p.PointPartitionInfo != nil {
 			p.partitionColumnPos = findPartitionIdx(idxInfo, pos, pairs)
 		}
 		return p
@@ -1841,11 +1843,13 @@ func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []name
 		return nil, 0, 0, false
 	}
 
+	// TODO: Can we replace this with the generic partition pruner?
 	switch pi.Type {
 	case model.PartitionTypeHash:
 		expr := partitionExpr.OrigExpr
 		col, ok := expr.(*ast.ColumnNameExpr)
 		if !ok {
+			// TODO: Allow expressions!
 			return nil, 0, 0, false
 		}
 
@@ -1863,6 +1867,7 @@ func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []name
 		}
 	case model.PartitionTypeKey:
 		// The key partition table supports FastPlan when it contains only one partition column
+		// TODO: add support for FastPlan for multi column key partitioning
 		if len(pi.Columns) == 1 {
 			for i, pair := range pairs {
 				if pi.Columns[0].L == pair.colName {
@@ -1876,7 +1881,9 @@ func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []name
 		}
 	case model.PartitionTypeRange:
 		// left range columns partition for future development
+		// TODO: Add support for RANGE COLUMNS partitioning
 		if len(pi.Columns) == 0 {
+			// TODO: Add support for expressions (not only a column)
 			if col, ok := partitionExpr.Expr.(*expression.Column); ok {
 				colInfo := findColNameByColID(tbl.Columns, col)
 				for i, pair := range pairs {
@@ -1898,6 +1905,7 @@ func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []name
 		}
 	case model.PartitionTypeList:
 		// left list columns partition for future development
+		// TODO: Add support for LIST COLUMNS partitioning
 		if partitionExpr.ForListPruning.ColPrunes == nil {
 			locateExpr := partitionExpr.ForListPruning.LocateExpr
 			if locateExpr, ok := locateExpr.(*expression.Column); ok {
