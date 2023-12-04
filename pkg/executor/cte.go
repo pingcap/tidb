@@ -113,14 +113,17 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 
 // Close implements the Executor interface.
 func (e *CTEExec) Close() (err error) {
-	e.producer.resTbl.Lock()
-	if !e.producer.closed {
-		// closeProducer() only close seedExec and recursiveExec, will not touch resTbl.
-		// It means you can still read resTbl after call closeProducer().
-		// You can even call all three functions(openProducer/produce/closeProducer) in CTEExec.Next().
-		// Separating these three function calls is only to follow the abstraction of the volcano model.
-		err = e.producer.closeProducer()
-	}
+	func() {
+		e.producer.resTbl.Lock()
+		defer e.producer.resTbl.Unlock()
+		if !e.producer.closed {
+			// closeProducer() only close seedExec and recursiveExec, will not touch resTbl.
+			// It means you can still read resTbl after call closeProducer().
+			// You can even call all three functions(openProducer/produce/closeProducer) in CTEExec.Next().
+			// Separating these three function calls is only to follow the abstraction of the volcano model.
+			err = e.producer.closeProducer()
+		}
+	}()
 	e.producer.resTbl.Unlock()
 	if err != nil {
 		return err
