@@ -81,7 +81,8 @@ The above process is the current auto analyze process. We can see that the curre
 Since we perform analysis tasks synchronously on a single point for each table, we need to carry out weighted sorting on the tables that need analysis.
 
    1. We still use tidb_auto_analyze_ratio to determine if the table needs to be analyzed. The default value is 0.5. It means that auto-analyze is triggered when greater than 50% of the rows in a table have been modified.
-   2. If a table is added to the auto-analysis queue, a weight must be assigned to it to determine the execution order.
+   2. For special events, it is necessary to put the table into the priority queue. For example, the table has a new index but it hasn't been analyzed yet.
+   3. If a table is added to the auto-analysis queue, a weight must be assigned to it to determine the execution order.
 
 Weight table:
 | Name                 | Meaning                                                                 | Weight                                                                                                                                                                                                                                                                                                                                                            |
