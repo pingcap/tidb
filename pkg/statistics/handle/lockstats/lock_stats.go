@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
@@ -41,14 +42,14 @@ type statsLockImpl struct {
 }
 
 // NewStatsLock creates a new StatsLock.
-func NewStatsLock(pool util.SessionPool) util.StatsLock {
+func NewStatsLock(pool util.SessionPool) types.StatsLock {
 	return &statsLockImpl{pool: pool}
 }
 
 // LockTables add locked tables id to store.
 // - tables: tables that will be locked.
 // Return the message of skipped tables and error.
-func (sl *statsLockImpl) LockTables(tables map[int64]*util.StatsLockTable) (skipped string, err error) {
+func (sl *statsLockImpl) LockTables(tables map[int64]*types.StatsLockTable) (skipped string, err error) {
 	err = util.CallWithSCtx(sl.pool, func(sctx sessionctx.Context) error {
 		skipped, err = AddLockedTables(sctx, tables)
 		return err
@@ -78,7 +79,7 @@ func (sl *statsLockImpl) LockPartitions(
 // RemoveLockedTables remove tables from table locked records.
 // - tables: tables of which will be unlocked.
 // Return the message of skipped tables and error.
-func (sl *statsLockImpl) RemoveLockedTables(tables map[int64]*util.StatsLockTable) (skipped string, err error) {
+func (sl *statsLockImpl) RemoveLockedTables(tables map[int64]*types.StatsLockTable) (skipped string, err error) {
 	err = util.CallWithSCtx(sl.pool, func(sctx sessionctx.Context) error {
 		skipped, err = RemoveLockedTables(sctx, tables)
 		return err
@@ -139,7 +140,7 @@ var (
 // Return the message of skipped tables and error.
 func AddLockedTables(
 	sctx sessionctx.Context,
-	tables map[int64]*util.StatsLockTable,
+	tables map[int64]*types.StatsLockTable,
 ) (string, error) {
 	// Load tables to check duplicate before insert.
 	lockedTables, err := QueryLockedTables(sctx)

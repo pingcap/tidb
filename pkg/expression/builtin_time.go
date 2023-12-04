@@ -297,7 +297,7 @@ func (c *dateLiteralFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if !ok {
 		panic("Unexpected parameter for date literal")
 	}
-	dt, err := con.Eval(chunk.Row{})
+	dt, err := con.Eval(ctx, chunk.Row{})
 	if err != nil {
 		return nil, err
 	}
@@ -2288,7 +2288,7 @@ func (c *timeLiteralFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if !ok {
 		panic("Unexpected parameter for time literal")
 	}
-	dt, err := con.Eval(chunk.Row{})
+	dt, err := con.Eval(ctx, chunk.Row{})
 	if err != nil {
 		return nil, err
 	}
@@ -2770,7 +2770,7 @@ func (du *baseDateArithmetical) getDateFromString(ctx sessionctx.Context, args [
 	}
 
 	sc := ctx.GetSessionVars().StmtCtx
-	date, err := types.ParseTime(sc.TypeCtx(), dateStr, dateTp, types.MaxFsp, nil)
+	date, err := types.ParseTime(sc.TypeCtx(), dateStr, dateTp, types.MaxFsp)
 	if err != nil {
 		err = handleInvalidTimeError(ctx, err)
 		if err != nil {
@@ -3180,7 +3180,7 @@ func (du *baseDateArithmetical) vecGetDateFromString(b *baseBuiltinFunc, ctx ses
 			dateTp = mysql.TypeDatetime
 		}
 
-		date, err := types.ParseTime(sc.TypeCtx(), dateStr, dateTp, types.MaxFsp, nil)
+		date, err := types.ParseTime(sc.TypeCtx(), dateStr, dateTp, types.MaxFsp)
 		if err != nil {
 			err = handleInvalidTimeError(ctx, err)
 			if err != nil {
@@ -4349,7 +4349,7 @@ func (b *builtinTimestamp1ArgSig) evalTime(ctx sessionctx.Context, row chunk.Row
 	if b.isFloat {
 		tm, err = types.ParseTimeFromFloatString(sc.TypeCtx(), s, mysql.TypeDatetime, types.GetFsp(s))
 	} else {
-		tm, err = types.ParseTime(sc.TypeCtx(), s, mysql.TypeDatetime, types.GetFsp(s), nil)
+		tm, err = types.ParseTime(sc.TypeCtx(), s, mysql.TypeDatetime, types.GetFsp(s))
 	}
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
@@ -4381,7 +4381,7 @@ func (b *builtinTimestamp2ArgsSig) evalTime(ctx sessionctx.Context, row chunk.Ro
 	if b.isFloat {
 		tm, err = types.ParseTimeFromFloatString(sc.TypeCtx(), arg0, mysql.TypeDatetime, types.GetFsp(arg0))
 	} else {
-		tm, err = types.ParseTime(sc.TypeCtx(), arg0, mysql.TypeDatetime, types.GetFsp(arg0), nil)
+		tm, err = types.ParseTime(sc.TypeCtx(), arg0, mysql.TypeDatetime, types.GetFsp(arg0))
 	}
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
@@ -4421,7 +4421,7 @@ func (c *timestampLiteralFunctionClass) getFunction(ctx sessionctx.Context, args
 	if !ok {
 		panic("Unexpected parameter for timestamp literal")
 	}
-	dt, err := con.Eval(chunk.Row{})
+	dt, err := con.Eval(ctx, chunk.Row{})
 	if err != nil {
 		return nil, err
 	}
@@ -4432,7 +4432,7 @@ func (c *timestampLiteralFunctionClass) getFunction(ctx sessionctx.Context, args
 	if !timestampPattern.MatchString(str) {
 		return nil, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, str)
 	}
-	tm, err := types.ParseTime(ctx.GetSessionVars().StmtCtx.TypeCtx(), str, mysql.TypeDatetime, types.GetFsp(str), nil)
+	tm, err := types.ParseTime(ctx.GetSessionVars().StmtCtx.TypeCtx(), str, mysql.TypeDatetime, types.GetFsp(str))
 	if err != nil {
 		return nil, err
 	}
@@ -4540,7 +4540,7 @@ func isDuration(str string) bool {
 
 // strDatetimeAddDuration adds duration to datetime string, returns a string value.
 func strDatetimeAddDuration(sc *stmtctx.StatementContext, d string, arg1 types.Duration) (result string, isNull bool, err error) {
-	arg0, err := types.ParseTime(sc.TypeCtx(), d, mysql.TypeDatetime, types.MaxFsp, nil)
+	arg0, err := types.ParseTime(sc.TypeCtx(), d, mysql.TypeDatetime, types.MaxFsp)
 	if err != nil {
 		// Return a warning regardless of the sql_mode, this is compatible with MySQL.
 		sc.AppendWarning(err)
@@ -4577,7 +4577,7 @@ func strDurationAddDuration(sc *stmtctx.StatementContext, d string, arg1 types.D
 
 // strDatetimeSubDuration subtracts duration from datetime string, returns a string value.
 func strDatetimeSubDuration(sc *stmtctx.StatementContext, d string, arg1 types.Duration) (result string, isNull bool, err error) {
-	arg0, err := types.ParseTime(sc.TypeCtx(), d, mysql.TypeDatetime, types.MaxFsp, nil)
+	arg0, err := types.ParseTime(sc.TypeCtx(), d, mysql.TypeDatetime, types.MaxFsp)
 	if err != nil {
 		// Return a warning regardless of the sql_mode, this is compatible with MySQL.
 		sc.AppendWarning(err)

@@ -795,6 +795,7 @@ workLoop:
 				// 8 is size of reference, 8 is the size of "b := make([]byte, 0, 8)"
 				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize + 8)
 				e.memTracker.Consume(collectorMemSize)
+				errCtx := e.ctx.GetSessionVars().StmtCtx.ErrCtx()
 			indexSampleCollectLoop:
 				for _, row := range task.rootRowCollector.Base().Samples {
 					if len(idx.Columns) == 1 && row.Columns[idx.Columns[0].Offset].IsNull() {
@@ -809,14 +810,16 @@ workLoop:
 						if col.Length != types.UnspecifiedLength {
 							row.Columns[col.Offset].Copy(&tmpDatum)
 							ranger.CutDatumByPrefixLen(&tmpDatum, col.Length, &e.colsInfo[col.Offset].FieldType)
-							b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, b, tmpDatum)
+							b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), b, tmpDatum)
+							err = errCtx.HandleError(err)
 							if err != nil {
 								resultCh <- err
 								continue workLoop
 							}
 							continue
 						}
-						b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, b, row.Columns[col.Offset])
+						b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), b, row.Columns[col.Offset])
+						err = errCtx.HandleError(err)
 						if err != nil {
 							resultCh <- err
 							continue workLoop
@@ -847,7 +850,7 @@ workLoop:
 					e.memTracker.Release(collector.MemSize)
 				}
 			}
-			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), task.id, collector, task.tp, task.isColumn, e.memTracker)
+			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), task.id, collector, task.tp, task.isColumn, e.memTracker, e.ctx.GetSessionVars().EnableExtendedStats)
 			if err != nil {
 				resultCh <- err
 				releaseCollectorMemory()

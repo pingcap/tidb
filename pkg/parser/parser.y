@@ -55,6 +55,7 @@ import (
 	identifier           "identifier"
 	asof                 "AS OF"
 	toTimestamp          "TO TIMESTAMP"
+	toTSO                "TO TSO"
 	memberof             "MEMBER OF"
 	optionallyEnclosedBy "OPTIONALLY ENCLOSED BY"
 
@@ -94,8 +95,8 @@ import (
 	cascade           "CASCADE"
 	caseKwd           "CASE"
 	change            "CHANGE"
-	character         "CHARACTER"
 	charType          "CHAR"
+	character         "CHARACTER"
 	check             "CHECK"
 	collate           "COLLATE"
 	column            "COLUMN"
@@ -106,10 +107,10 @@ import (
 	cross             "CROSS"
 	cumeDist          "CUME_DIST"
 	currentDate       "CURRENT_DATE"
+	currentRole       "CURRENT_ROLE"
 	currentTime       "CURRENT_TIME"
 	currentTs         "CURRENT_TIMESTAMP"
 	currentUser       "CURRENT_USER"
-	currentRole       "CURRENT_ROLE"
 	cursor            "CURSOR"
 	database          "DATABASE"
 	databases         "DATABASES"
@@ -130,14 +131,14 @@ import (
 	doubleType        "DOUBLE"
 	drop              "DROP"
 	dual              "DUAL"
-	elseIfKwd         "ELSEIF"
 	elseKwd           "ELSE"
+	elseIfKwd         "ELSEIF"
 	enclosed          "ENCLOSED"
 	escaped           "ESCAPED"
+	except            "EXCEPT"
 	exists            "EXISTS"
 	exit              "EXIT"
 	explain           "EXPLAIN"
-	except            "EXCEPT"
 	falseKwd          "FALSE"
 	fetch             "FETCH"
 	firstValue        "FIRST_VALUE"
@@ -160,17 +161,12 @@ import (
 	hourSecond        "HOUR_SECOND"
 	ifKwd             "IF"
 	ignore            "IGNORE"
+	ilike             "ILIKE"
 	in                "IN"
 	index             "INDEX"
 	infile            "INFILE"
 	inner             "INNER"
 	inout             "INOUT"
-	integerType       "INTEGER"
-	intersect         "INTERSECT"
-	interval          "INTERVAL"
-	into              "INTO"
-	outfile           "OUTFILE"
-	is                "IS"
 	insert            "INSERT"
 	intType           "INT"
 	int1Type          "INT1"
@@ -178,6 +174,11 @@ import (
 	int3Type          "INT3"
 	int4Type          "INT4"
 	int8Type          "INT8"
+	integerType       "INTEGER"
+	intersect         "INTERSECT"
+	interval          "INTERVAL"
+	into              "INTO"
+	is                "IS"
 	iterate           "ITERATE"
 	join              "JOIN"
 	key               "KEY"
@@ -190,14 +191,14 @@ import (
 	leave             "LEAVE"
 	left              "LEFT"
 	like              "LIKE"
-	ilike             "ILIKE"
 	limit             "LIMIT"
-	lines             "LINES"
 	linear            "LINEAR"
+	lines             "LINES"
 	load              "LOAD"
 	localTime         "LOCALTIME"
 	localTs           "LOCALTIMESTAMP"
 	lock              "LOCK"
+	long              "LONG"
 	longblobType      "LONGBLOB"
 	longtextType      "LONGTEXT"
 	lowPriority       "LOW_PRIORITY"
@@ -210,6 +211,7 @@ import (
 	minuteMicrosecond "MINUTE_MICROSECOND"
 	minuteSecond      "MINUTE_SECOND"
 	mod               "MOD"
+	natural           "NATURAL"
 	not               "NOT"
 	noWriteToBinLog   "NO_WRITE_TO_BINLOG"
 	nthValue          "NTH_VALUE"
@@ -225,6 +227,7 @@ import (
 	order             "ORDER"
 	out               "OUT"
 	outer             "OUTER"
+	outfile           "OUTFILE"
 	over              "OVER"
 	partition         "PARTITION"
 	percentRank       "PERCENT_RANK"
@@ -257,20 +260,19 @@ import (
 	smallIntType      "SMALLINT"
 	spatial           "SPATIAL"
 	sql               "SQL"
-	sqlBigResult      "SQL_BIG_RESULT"
-	sqlCalcFoundRows  "SQL_CALC_FOUND_ROWS"
-	sqlSmallResult    "SQL_SMALL_RESULT"
 	sqlexception      "SQLEXCEPTION"
 	sqlstate          "SQLSTATE"
 	sqlwarning        "SQLWARNING"
+	sqlBigResult      "SQL_BIG_RESULT"
+	sqlCalcFoundRows  "SQL_CALC_FOUND_ROWS"
+	sqlSmallResult    "SQL_SMALL_RESULT"
 	ssl               "SSL"
 	starting          "STARTING"
 	statsExtended     "STATS_EXTENDED"
+	stored            "STORED"
 	straightJoin      "STRAIGHT_JOIN"
-	tidbCurrentTSO    "TiDB_CURRENT_TSO"
 	tableKwd          "TABLE"
 	tableSample       "TABLESAMPLE"
-	stored            "STORED"
 	terminated        "TERMINATED"
 	then              "THEN"
 	tinyblobType      "TINYBLOB"
@@ -280,8 +282,9 @@ import (
 	trailing          "TRAILING"
 	trigger           "TRIGGER"
 	trueKwd           "TRUE"
-	unique            "UNIQUE"
+	tidbCurrentTSO    "TiDB_CURRENT_TSO"
 	union             "UNION"
+	unique            "UNIQUE"
 	unlock            "UNLOCK"
 	unsigned          "UNSIGNED"
 	until             "UNTIL"
@@ -290,25 +293,23 @@ import (
 	use               "USE"
 	using             "USING"
 	utcDate           "UTC_DATE"
-	utcTimestamp      "UTC_TIMESTAMP"
 	utcTime           "UTC_TIME"
+	utcTimestamp      "UTC_TIMESTAMP"
 	values            "VALUES"
-	long              "LONG"
+	varbinaryType     "VARBINARY"
 	varcharType       "VARCHAR"
 	varcharacter      "VARCHARACTER"
-	varbinaryType     "VARBINARY"
 	varying           "VARYING"
 	virtual           "VIRTUAL"
 	when              "WHEN"
 	where             "WHERE"
 	while             "WHILE"
-	write             "WRITE"
 	window            "WINDOW"
 	with              "WITH"
+	write             "WRITE"
 	xor               "XOR"
 	yearMonth         "YEAR_MONTH"
 	zerofill          "ZEROFILL"
-	natural           "NATURAL"
 
 	/* The following tokens belong to UnReservedKeyword. Notice: make sure these tokens are contained in UnReservedKeyword. */
 	account               "ACCOUNT"
@@ -323,10 +324,6 @@ import (
 	ascii                 "ASCII"
 	attribute             "ATTRIBUTE"
 	attributes            "ATTRIBUTES"
-	statsOptions          "STATS_OPTIONS"
-	statsSampleRate       "STATS_SAMPLE_RATE"
-	statsColChoice        "STATS_COL_CHOICE"
-	statsColList          "STATS_COL_LIST"
 	autoIdCache           "AUTO_ID_CACHE"
 	autoIncrement         "AUTO_INCREMENT"
 	autoRandom            "AUTO_RANDOM"
@@ -336,16 +333,17 @@ import (
 	backend               "BACKEND"
 	backup                "BACKUP"
 	backups               "BACKUPS"
+	bdr                   "BDR"
 	begin                 "BEGIN"
 	bernoulli             "BERNOULLI"
 	binding               "BINDING"
-	bindingCache          "BINDING_CACHE"
 	bindings              "BINDINGS"
+	bindingCache          "BINDING_CACHE"
 	binlog                "BINLOG"
 	bitType               "BIT"
 	block                 "BLOCK"
-	booleanType           "BOOLEAN"
 	boolType              "BOOL"
+	booleanType           "BOOLEAN"
 	btree                 "BTREE"
 	byteType              "BYTE"
 	cache                 "CACHE"
@@ -361,11 +359,13 @@ import (
 	cleanup               "CLEANUP"
 	client                "CLIENT"
 	clientErrorsSummary   "CLIENT_ERRORS_SUMMARY"
+	close                 "CLOSE"
+	cluster               "CLUSTER"
+	clustered             "CLUSTERED"
 	coalesce              "COALESCE"
 	collation             "COLLATION"
-	columnFormat          "COLUMN_FORMAT"
 	columns               "COLUMNS"
-	config                "CONFIG"
+	columnFormat          "COLUMN_FORMAT"
 	comment               "COMMENT"
 	commit                "COMMIT"
 	committed             "COMMITTED"
@@ -373,6 +373,7 @@ import (
 	compressed            "COMPRESSED"
 	compression           "COMPRESSION"
 	concurrency           "CONCURRENCY"
+	config                "CONFIG"
 	connection            "CONNECTION"
 	consistency           "CONSISTENCY"
 	consistent            "CONSISTENT"
@@ -386,13 +387,10 @@ import (
 	csvSeparator          "CSV_SEPARATOR"
 	csvTrimLastSeparators "CSV_TRIM_LAST_SEPARATORS"
 	current               "CURRENT"
-	close                 "CLOSE"
-	cluster               "CLUSTER"
-	clustered             "CLUSTERED"
 	cycle                 "CYCLE"
 	data                  "DATA"
-	datetimeType          "DATETIME"
 	dateType              "DATE"
+	datetimeType          "DATETIME"
 	day                   "DAY"
 	deallocate            "DEALLOCATE"
 	declare               "DECLARE"
@@ -416,6 +414,7 @@ import (
 	engines               "ENGINES"
 	enum                  "ENUM"
 	errorKwd              "ERROR"
+	identSQLErrors        "ERRORS"
 	escape                "ESCAPE"
 	event                 "EVENT"
 	events                "EVENTS"
@@ -426,15 +425,16 @@ import (
 	expansion             "EXPANSION"
 	expire                "EXPIRE"
 	extended              "EXTENDED"
+	failedLoginAttempts   "FAILED_LOGIN_ATTEMPTS"
 	faultsSym             "FAULTS"
 	fields                "FIELDS"
 	file                  "FILE"
 	first                 "FIRST"
 	fixed                 "FIXED"
 	flush                 "FLUSH"
-	found                 "FOUND"
 	following             "FOLLOWING"
 	format                "FORMAT"
+	found                 "FOUND"
 	full                  "FULL"
 	function              "FUNCTION"
 	general               "GENERAL"
@@ -447,8 +447,8 @@ import (
 	history               "HISTORY"
 	hosts                 "HOSTS"
 	hour                  "HOUR"
+	hypo                  "HYPO"
 	identified            "IDENTIFIED"
-	identSQLErrors        "ERRORS"
 	importKwd             "IMPORT"
 	imports               "IMPORTS"
 	increment             "INCREMENT"
@@ -467,19 +467,20 @@ import (
 	labels                "LABELS"
 	language              "LANGUAGE"
 	last                  "LAST"
-	lastBackup            "LAST_BACKUP"
 	lastval               "LASTVAL"
+	lastBackup            "LAST_BACKUP"
 	less                  "LESS"
 	level                 "LEVEL"
 	list                  "LIST"
 	local                 "LOCAL"
-	locked                "LOCKED"
+	local_only            "LOCAL_ONLY"
 	location              "LOCATION"
+	locked                "LOCKED"
 	logs                  "LOGS"
 	master                "MASTER"
+	maxConnectionsPerHour "MAX_CONNECTIONS_PER_HOUR"
 	max_idxnum            "MAX_IDXNUM"
 	max_minutes           "MAX_MINUTES"
-	maxConnectionsPerHour "MAX_CONNECTIONS_PER_HOUR"
 	maxQueriesPerHour     "MAX_QUERIES_PER_HOUR"
 	maxRows               "MAX_ROWS"
 	maxUpdatesPerHour     "MAX_UPDATES_PER_HOUR"
@@ -489,9 +490,9 @@ import (
 	memory                "MEMORY"
 	merge                 "MERGE"
 	microsecond           "MICROSECOND"
-	minRows               "MIN_ROWS"
 	minute                "MINUTE"
 	minValue              "MINVALUE"
+	minRows               "MIN_ROWS"
 	mode                  "MODE"
 	modify                "MODIFY"
 	month                 "MONTH"
@@ -510,17 +511,16 @@ import (
 	nonclustered          "NONCLUSTERED"
 	none                  "NONE"
 	nowait                "NOWAIT"
-	nvarcharType          "NVARCHAR"
 	nulls                 "NULLS"
+	nvarcharType          "NVARCHAR"
 	off                   "OFF"
 	offset                "OFFSET"
 	oltpReadOnly          "OLTP_READ_ONLY"
 	oltpReadWrite         "OLTP_READ_WRITE"
 	oltpWriteOnly         "OLTP_WRITE_ONLY"
-	tpch10                "TPCH_10"
-	onDuplicate           "ON_DUPLICATE"
 	online                "ONLINE"
 	only                  "ONLY"
+	onDuplicate           "ON_DUPLICATE"
 	open                  "OPEN"
 	optional              "OPTIONAL"
 	packKeys              "PACK_KEYS"
@@ -530,6 +530,7 @@ import (
 	partitioning          "PARTITIONING"
 	partitions            "PARTITIONS"
 	password              "PASSWORD"
+	passwordLockTime      "PASSWORD_LOCK_TIME"
 	pause                 "PAUSE"
 	percent               "PERCENT"
 	per_db                "PER_DB"
@@ -538,10 +539,10 @@ import (
 	plugins               "PLUGINS"
 	point                 "POINT"
 	policy                "POLICY"
-	preSplitRegions       "PRE_SPLIT_REGIONS"
 	preceding             "PRECEDING"
 	prepare               "PREPARE"
 	preserve              "PRESERVE"
+	preSplitRegions       "PRE_SPLIT_REGIONS"
 	privileges            "PRIVILEGES"
 	process               "PROCESS"
 	processlist           "PROCESSLIST"
@@ -581,10 +582,10 @@ import (
 	rowCount              "ROW_COUNT"
 	rowFormat             "ROW_FORMAT"
 	rtree                 "RTREE"
-	hypo                  "HYPO"
 	san                   "SAN"
 	savepoint             "SAVEPOINT"
 	second                "SECOND"
+	secondary             "SECONDARY"
 	secondaryEngine       "SECONDARY_ENGINE"
 	secondaryLoad         "SECONDARY_LOAD"
 	secondaryUnload       "SECONDARY_UNLOAD"
@@ -622,8 +623,12 @@ import (
 	sqlTsiYear            "SQL_TSI_YEAR"
 	start                 "START"
 	statsAutoRecalc       "STATS_AUTO_RECALC"
+	statsColChoice        "STATS_COL_CHOICE"
+	statsColList          "STATS_COL_LIST"
+	statsOptions          "STATS_OPTIONS"
 	statsPersistent       "STATS_PERSISTENT"
 	statsSamplePages      "STATS_SAMPLE_PAGES"
+	statsSampleRate       "STATS_SAMPLE_RATE"
 	status                "STATUS"
 	storage               "STORAGE"
 	strictFormat          "STRICT_FORMAT"
@@ -635,27 +640,29 @@ import (
 	switchesSym           "SWITCHES"
 	system                "SYSTEM"
 	systemTime            "SYSTEM_TIME"
-	tableChecksum         "TABLE_CHECKSUM"
 	tables                "TABLES"
 	tablespace            "TABLESPACE"
+	tableChecksum         "TABLE_CHECKSUM"
 	temporary             "TEMPORARY"
 	temptable             "TEMPTABLE"
 	textType              "TEXT"
 	than                  "THAN"
 	tikvImporter          "TIKV_IMPORTER"
-	timestampType         "TIMESTAMP"
 	timeType              "TIME"
+	timestampType         "TIMESTAMP"
 	tokenIssuer           "TOKEN_ISSUER"
-	tp                    "TYPE"
 	tpcc                  "TPCC"
+	tpch10                "TPCH_10"
 	trace                 "TRACE"
 	traditional           "TRADITIONAL"
 	transaction           "TRANSACTION"
 	triggers              "TRIGGERS"
 	truncate              "TRUNCATE"
+	tsoType               "TSO"
 	ttl                   "TTL"
 	ttlEnable             "TTL_ENABLE"
 	ttlJobInterval        "TTL_JOB_INTERVAL"
+	tp                    "TYPE"
 	unbounded             "UNBOUNDED"
 	uncommitted           "UNCOMMITTED"
 	undefined             "UNDEFINED"
@@ -667,6 +674,7 @@ import (
 	variables             "VARIABLES"
 	view                  "VIEW"
 	visible               "VISIBLE"
+	wait                  "WAIT"
 	warnings              "WARNINGS"
 	week                  "WEEK"
 	weightString          "WEIGHT_STRING"
@@ -674,14 +682,12 @@ import (
 	workload              "WORKLOAD"
 	x509                  "X509"
 	yearType              "YEAR"
-	wait                  "WAIT"
-	failedLoginAttempts   "FAILED_LOGIN_ATTEMPTS"
-	passwordLockTime      "PASSWORD_LOCK_TIME"
 
 	/* The following tokens belong to NotKeywordToken. Notice: make sure these tokens are contained in NotKeywordToken. */
 	addDate               "ADDDATE"
 	approxCountDistinct   "APPROX_COUNT_DISTINCT"
 	approxPercentile      "APPROX_PERCENTILE"
+	background            "BACKGROUND"
 	bitAnd                "BIT_AND"
 	bitOr                 "BIT_OR"
 	bitXor                "BIT_XOR"
@@ -690,18 +696,20 @@ import (
 	briefType             "BRIEF"
 	burstable             "BURSTABLE"
 	cast                  "CAST"
-	copyKwd               "COPY"
 	constraints           "CONSTRAINTS"
-	curTime               "CURTIME"
+	cooldown              "COOLDOWN"
+	copyKwd               "COPY"
 	curDate               "CURDATE"
+	curTime               "CURTIME"
 	dateAdd               "DATE_ADD"
 	dateSub               "DATE_SUB"
 	defined               "DEFINED"
 	dotType               "DOT"
+	dryRun                "DRYRUN"
 	dump                  "DUMP"
-	timeDuration          "DURATION"
 	endTime               "END_TIME"
 	exact                 "EXACT"
+	execElapsed           "EXEC_ELAPSED"
 	exprPushdownBlacklist "EXPR_PUSHDOWN_BLACKLIST"
 	extract               "EXTRACT"
 	flashback             "FLASHBACK"
@@ -709,13 +717,15 @@ import (
 	followerConstraints   "FOLLOWER_CONSTRAINTS"
 	followers             "FOLLOWERS"
 	fullBackupStorage     "FULL_BACKUP_STORAGE"
-	getFormat             "GET_FORMAT"
 	gcTTL                 "GC_TTL"
+	getFormat             "GET_FORMAT"
 	groupConcat           "GROUP_CONCAT"
-	next_row_id           "NEXT_ROW_ID"
+	high                  "HIGH"
 	inplace               "INPLACE"
 	instant               "INSTANT"
 	internal              "INTERNAL"
+	ioReadBandwidth       "IO_READ_BANDWIDTH"
+	ioWriteBandwidth      "IO_WRITE_BANDWIDTH"
 	jsonArrayagg          "JSON_ARRAYAGG"
 	jsonObjectAgg         "JSON_OBJECTAGG"
 	leader                "LEADER"
@@ -723,40 +733,49 @@ import (
 	learner               "LEARNER"
 	learnerConstraints    "LEARNER_CONSTRAINTS"
 	learners              "LEARNERS"
-	min                   "MIN"
+	log                   "LOG"
+	low                   "LOW"
 	max                   "MAX"
+	medium                "MEDIUM"
 	metadata              "METADATA"
+	min                   "MIN"
+	next_row_id           "NEXT_ROW_ID"
 	now                   "NOW"
 	optRuleBlacklist      "OPT_RULE_BLACKLIST"
 	placement             "PLACEMENT"
-	plan                  "PLAN"
 	planCache             "PLAN_CACHE"
+	plan                  "PLAN"
 	position              "POSITION"
 	predicate             "PREDICATE"
 	primaryRegion         "PRIMARY_REGION"
+	priority              "PRIORITY"
+	queryLimit            "QUERY_LIMIT"
 	recent                "RECENT"
 	replayer              "REPLAYER"
 	restoredTS            "RESTORED_TS"
 	running               "RUNNING"
+	ruRate                "RU_PER_SEC"
 	s3                    "S3"
 	schedule              "SCHEDULE"
+	similar               "SIMILAR"
 	staleness             "STALENESS"
 	startTime             "START_TIME"
 	startTS               "START_TS"
-	std                   "STD"
 	stddev                "STDDEV"
 	stddevPop             "STDDEV_POP"
 	stddevSamp            "STDDEV_SAMP"
+	std                   "STD"
 	stop                  "STOP"
 	strict                "STRICT"
 	strong                "STRONG"
 	subDate               "SUBDATE"
-	sum                   "SUM"
 	substring             "SUBSTRING"
+	sum                   "SUM"
 	survivalPreferences   "SURVIVAL_PREFERENCES"
 	target                "TARGET"
 	taskTypes             "TASK_TYPES"
 	tidbJson              "TIDB_JSON"
+	timeDuration          "DURATION"
 	timestampAdd          "TIMESTAMPADD"
 	timestampDiff         "TIMESTAMPDIFF"
 	tls                   "TLS"
@@ -764,90 +783,36 @@ import (
 	tokudbFast            "TOKUDB_FAST"
 	tokudbLzma            "TOKUDB_LZMA"
 	tokudbQuickLZ         "TOKUDB_QUICKLZ"
-	tokudbSnappy          "TOKUDB_SNAPPY"
 	tokudbSmall           "TOKUDB_SMALL"
+	tokudbSnappy          "TOKUDB_SNAPPY"
 	tokudbUncompressed    "TOKUDB_UNCOMPRESSED"
 	tokudbZlib            "TOKUDB_ZLIB"
 	tokudbZstd            "TOKUDB_ZSTD"
 	top                   "TOP"
 	trim                  "TRIM"
+	trueCardCost          "TRUE_CARD_COST"
+	unlimited             "UNLIMITED"
 	untilTS               "UNTIL_TS"
 	variance              "VARIANCE"
 	varPop                "VAR_POP"
 	varSamp               "VAR_SAMP"
 	verboseType           "VERBOSE"
-	trueCardCost          "TRUE_CARD_COST"
-	voter                 "VOTER"
 	voterConstraints      "VOTER_CONSTRAINTS"
 	voters                "VOTERS"
-	ruRate                "RU_PER_SEC"
-	priority              "PRIORITY"
-	high                  "HIGH"
-	medium                "MEDIUM"
-	low                   "LOW"
-	ioReadBandwidth       "IO_READ_BANDWIDTH"
-	ioWriteBandwidth      "IO_WRITE_BANDWIDTH"
-	execElapsed           "EXEC_ELAPSED"
-	dryRun                "DRYRUN"
-	cooldown              "COOLDOWN"
+	voter                 "VOTER"
 	watch                 "WATCH"
-	similar               "SIMILAR"
-	queryLimit            "QUERY_LIMIT"
-	background            "BACKGROUND"
-	unlimited             "UNLIMITED"
 
 	/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */
 	admin                      "ADMIN"
 	batch                      "BATCH"
 	buckets                    "BUCKETS"
-	builtins                   "BUILTINS"
-	cancel                     "CANCEL"
-	cardinality                "CARDINALITY"
-	cmSketch                   "CMSKETCH"
-	columnStatsUsage           "COLUMN_STATS_USAGE"
-	correlation                "CORRELATION"
-	ddl                        "DDL"
-	dependency                 "DEPENDENCY"
-	depth                      "DEPTH"
-	drainer                    "DRAINER"
-	dry                        "DRY"
-	jobs                       "JOBS"
-	job                        "JOB"
-	nodeID                     "NODE_ID"
-	nodeState                  "NODE_STATE"
-	optimistic                 "OPTIMISTIC"
-	pessimistic                "PESSIMISTIC"
-	pump                       "PUMP"
-	run                        "RUN"
-	samples                    "SAMPLES"
-	sampleRate                 "SAMPLERATE"
-	sessionStates              "SESSION_STATES"
-	statistics                 "STATISTICS"
-	stats                      "STATS"
-	statsMeta                  "STATS_META"
-	statsHistograms            "STATS_HISTOGRAMS"
-	statsBuckets               "STATS_BUCKETS"
-	statsHealthy               "STATS_HEALTHY"
-	statsTopN                  "STATS_TOPN"
-	statsLocked                "STATS_LOCKED"
-	histogramsInFlight         "HISTOGRAMS_IN_FLIGHT"
-	telemetry                  "TELEMETRY"
-	telemetryID                "TELEMETRY_ID"
-	tidb                       "TIDB"
-	tiFlash                    "TIFLASH"
-	topn                       "TOPN"
-	split                      "SPLIT"
-	width                      "WIDTH"
-	reset                      "RESET"
-	regions                    "REGIONS"
-	region                     "REGION"
+	builtinApproxCountDistinct
+	builtinApproxPercentile
 	builtinBitAnd
 	builtinBitOr
 	builtinBitXor
 	builtinCast
 	builtinCount
-	builtinApproxCountDistinct
-	builtinApproxPercentile
 	builtinCurDate
 	builtinCurTime
 	builtinDateAdd
@@ -858,16 +823,57 @@ import (
 	builtinMin
 	builtinNow
 	builtinPosition
+	builtins                   "BUILTINS"
+	builtinStddevPop
+	builtinStddevSamp
 	builtinSubstring
 	builtinSum
 	builtinSysDate
-	builtinStddevPop
-	builtinStddevSamp
 	builtinTranslate
 	builtinTrim
 	builtinUser
 	builtinVarPop
 	builtinVarSamp
+	cancel                     "CANCEL"
+	cardinality                "CARDINALITY"
+	cmSketch                   "CMSKETCH"
+	columnStatsUsage           "COLUMN_STATS_USAGE"
+	correlation                "CORRELATION"
+	ddl                        "DDL"
+	dependency                 "DEPENDENCY"
+	depth                      "DEPTH"
+	drainer                    "DRAINER"
+	dry                        "DRY"
+	histogramsInFlight         "HISTOGRAMS_IN_FLIGHT"
+	job                        "JOB"
+	jobs                       "JOBS"
+	nodeID                     "NODE_ID"
+	nodeState                  "NODE_STATE"
+	optimistic                 "OPTIMISTIC"
+	pessimistic                "PESSIMISTIC"
+	pump                       "PUMP"
+	region                     "REGION"
+	regions                    "REGIONS"
+	reset                      "RESET"
+	run                        "RUN"
+	sampleRate                 "SAMPLERATE"
+	samples                    "SAMPLES"
+	sessionStates              "SESSION_STATES"
+	split                      "SPLIT"
+	statistics                 "STATISTICS"
+	stats                      "STATS"
+	statsBuckets               "STATS_BUCKETS"
+	statsHealthy               "STATS_HEALTHY"
+	statsHistograms            "STATS_HISTOGRAMS"
+	statsLocked                "STATS_LOCKED"
+	statsMeta                  "STATS_META"
+	statsTopN                  "STATS_TOPN"
+	telemetry                  "TELEMETRY"
+	telemetryID                "TELEMETRY_ID"
+	tidb                       "TIDB"
+	tiFlash                    "TIFLASH"
+	topn                       "TOPN"
+	width                      "WIDTH"
 
 %token	<item>
 
@@ -1092,6 +1098,7 @@ import (
 	AuthOption                             "User auth option"
 	AutoRandomOpt                          "Auto random option"
 	Boolean                                "Boolean (0, 1, false, true)"
+	BDRRole                                "BDR role (none, primary, secondary, local_only)"
 	OptionalBraces                         "optional braces"
 	CastType                               "Cast function target type"
 	CharsetOpt                             "CHARACTER SET option in LOAD DATA"
@@ -2975,21 +2982,59 @@ FlashbackToTimestampStmt:
 	"FLASHBACK" "CLUSTER" toTimestamp stringLit
 	{
 		$$ = &ast.FlashBackToTimestampStmt{
-			FlashbackTS: ast.NewValueExpr($4, "", ""),
+			FlashbackTS:  ast.NewValueExpr($4, "", ""),
+			FlashbackTSO: 0,
 		}
 	}
 |	"FLASHBACK" "TABLE" TableNameList toTimestamp stringLit
 	{
 		$$ = &ast.FlashBackToTimestampStmt{
-			Tables:      $3.([]*ast.TableName),
-			FlashbackTS: ast.NewValueExpr($5, "", ""),
+			Tables:       $3.([]*ast.TableName),
+			FlashbackTS:  ast.NewValueExpr($5, "", ""),
+			FlashbackTSO: 0,
 		}
 	}
 |	"FLASHBACK" DatabaseSym DBName toTimestamp stringLit
 	{
 		$$ = &ast.FlashBackToTimestampStmt{
-			DBName:      model.NewCIStr($3),
-			FlashbackTS: ast.NewValueExpr($5, "", ""),
+			DBName:       model.NewCIStr($3),
+			FlashbackTS:  ast.NewValueExpr($5, "", ""),
+			FlashbackTSO: 0,
+		}
+	}
+|	"FLASHBACK" "CLUSTER" toTSO LengthNum
+	{
+		if tsoValue, ok := $4.(uint64); ok && tsoValue > 0 {
+			$$ = &ast.FlashBackToTimestampStmt{
+				FlashbackTSO: tsoValue,
+			}
+		} else {
+			yylex.AppendError(yylex.Errorf("Invalid TSO value provided: %d", $4))
+			return 1
+		}
+	}
+|	"FLASHBACK" "TABLE" TableNameList toTSO LengthNum
+	{
+		if tsoValue, ok := $5.(uint64); ok && tsoValue > 0 {
+			$$ = &ast.FlashBackToTimestampStmt{
+				Tables:       $3.([]*ast.TableName),
+				FlashbackTSO: tsoValue,
+			}
+		} else {
+			yylex.AppendError(yylex.Errorf("Invalid TSO value provided: %d", $5))
+			return 1
+		}
+	}
+|	"FLASHBACK" DatabaseSym DBName toTSO LengthNum
+	{
+		if tsoValue, ok := $5.(uint64); ok && tsoValue > 0 {
+			$$ = &ast.FlashBackToTimestampStmt{
+				DBName:       model.NewCIStr($3),
+				FlashbackTSO: tsoValue,
+			}
+		} else {
+			yylex.AppendError(yylex.Errorf("Invalid TSO value provided: %d", $5))
+			return 1
 		}
 	}
 
@@ -6525,6 +6570,7 @@ UnReservedKeyword:
 |	"AFTER"
 |	"ALWAYS"
 |	"AVG"
+|	"BDR"
 |	"BEGIN"
 |	"BIT"
 |	"BOOL"
@@ -6582,6 +6628,7 @@ UnReservedKeyword:
 |	"INSERT_METHOD"
 |	"LESS"
 |	"LOCAL"
+|	"LOCAL_ONLY"
 |	"LAST"
 |	"NAMES"
 |	"NVARCHAR"
@@ -6621,6 +6668,7 @@ UnReservedKeyword:
 |	"TRACE"
 |	"TRANSACTION"
 |	"TRUNCATE"
+|	"TSO"
 |	"UNBOUNDED"
 |	"UNKNOWN"
 |	"VALUE" %prec lowerThanValueKeyword
@@ -6759,6 +6807,7 @@ UnReservedKeyword:
 |	"STORAGE"
 |	"DISK"
 |	"STATS_SAMPLE_PAGES"
+|	"SECONDARY"
 |	"SECONDARY_ENGINE"
 |	"SECONDARY_LOAD"
 |	"SECONDARY_UNLOAD"
@@ -6947,6 +6996,7 @@ NotKeywordToken:
 |	"INPLACE"
 |	"INSTANT"
 |	"INTERNAL"
+|	"LOG"
 |	"MIN"
 |	"MAX"
 |	"NOW"
@@ -7818,6 +7868,7 @@ FunctionNameConflict:
 |	"HOUR"
 |	"IF"
 |	"INTERVAL"
+|	"LOG"
 |	"FORMAT"
 |	"LEFT"
 |	"MICROSECOND"
@@ -10874,6 +10925,24 @@ AdminStmtLimitOpt:
 		$$ = &ast.LimitSimple{Offset: $4.(uint64), Count: $2.(uint64)}
 	}
 
+BDRRole:
+	"PRIMARY"
+	{
+		$$ = ast.BDRRolePrimary
+	}
+|	"SECONDARY"
+	{
+		$$ = ast.BDRRoleSecondary
+	}
+|	"LOCAL_ONLY"
+	{
+		$$ = ast.BDRRoleLocalOnly
+	}
+|	"NONE"
+	{
+		$$ = ast.BDRRoleNone
+	}
+
 AdminStmt:
 	"ADMIN" "SHOW" "DDL"
 	{
@@ -11090,6 +11159,19 @@ AdminStmt:
 			StatementScope: $3.(ast.StatementScope),
 		}
 	}
+|	"ADMIN" "SET" "BDR" "ROLE" BDRRole
+	{
+		$$ = &ast.AdminStmt{
+			Tp:      ast.AdminSetBDRRole,
+			BDRRole: $5.(ast.BDRRole),
+		}
+	}
+|	"ADMIN" "SHOW" "BDR" "ROLE"
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminShowBDRRole,
+		}
+	}
 
 AdminShowSlow:
 	"RECENT" NUM
@@ -11270,9 +11352,16 @@ ShowStmt:
 		}
 	}
 |	"SHOW" "MASTER" "STATUS"
+	// "SHOW MASTER STATUS" was deprecated in MySQL 8.2.0 in favor of "SHOW BINARY LOG STATUS"
 	{
 		$$ = &ast.ShowStmt{
 			Tp: ast.ShowMasterStatus,
+		}
+	}
+|	"SHOW" "BINARY" "LOG" "STATUS"
+	{
+		$$ = &ast.ShowStmt{
+			Tp: ast.ShowBinlogStatus,
 		}
 	}
 |	"SHOW" OptFull "PROCESSLIST"
@@ -13726,6 +13815,20 @@ CreateBindingStmt:
 
 		x := &ast.CreateBindingStmt{
 			OriginNode:  originStmt,
+			HintedNode:  hintedStmt,
+			GlobalScope: $2.(bool),
+		}
+
+		$$ = x
+	}
+|	"CREATE" GlobalScope "BINDING" "USING" BindableStmt
+	{
+		startOffset := parser.startOffset(&yyS[yypt])
+		hintedStmt := $5
+		hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+
+		x := &ast.CreateBindingStmt{
+			OriginNode:  hintedStmt,
 			HintedNode:  hintedStmt,
 			GlobalScope: $2.(bool),
 		}

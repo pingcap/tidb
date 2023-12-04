@@ -18,7 +18,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"math/rand"
 	"net/url"
 	"strings"
 	"sync"
@@ -57,7 +56,6 @@ var mc storeCache
 
 func init() {
 	mc.cache = make(map[string]*tikvStore)
-	rand.Seed(time.Now().UnixNano())
 
 	// Setup the Hooks to dynamic control global resource controller.
 	variable.EnableGlobalResourceControlFunc = tikv.EnableResourceControl

@@ -188,7 +188,7 @@ func (b extensionFnContext) EvalArgs(row chunk.Row) ([]types.Datum, error) {
 
 	result := make([]types.Datum, 0, len(b.sig.args))
 	for _, arg := range b.sig.args {
-		val, err := arg.Eval(row)
+		val, err := arg.Eval(b.ctx, row)
 		if err != nil {
 			return nil, err
 		}

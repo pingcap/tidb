@@ -17,6 +17,7 @@ go_library(
         "//pkg/parser/terror",
         "//pkg/privilege",
         "//pkg/session",
+        "//pkg/session/types",
         "//pkg/sessionctx/variable",
         "//pkg/tablecodec",
         "//pkg/util/codec",

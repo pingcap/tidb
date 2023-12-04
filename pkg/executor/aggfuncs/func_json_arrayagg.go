@@ -62,10 +62,10 @@ func (e *jsonArrayagg) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialR
 	return nil
 }
 
-func (e *jsonArrayagg) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *jsonArrayagg) UpdatePartialResult(ctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4JsonArrayagg)(pr)
 	for _, row := range rowsInGroup {
-		item, err := e.args[0].Eval(row)
+		item, err := e.args[0].Eval(ctx, row)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -90,4 +90,24 @@ func (*jsonArrayagg) MergePartialResult(_ sessionctx.Context, src, dst PartialRe
 	p1, p2 := (*partialResult4JsonArrayagg)(src), (*partialResult4JsonArrayagg)(dst)
 	p2.entries = append(p2.entries, p1.entries...)
 	return 0, nil
+}
+
+func (e *jsonArrayagg) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4JsonArrayagg)(partialResult)
+	resBuf := spillHelper.serializePartialResult4JsonArrayagg(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *jsonArrayagg) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *jsonArrayagg) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4JsonArrayagg)(pr)
+	success := helper.deserializePartialResult4JsonArrayagg(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
 }

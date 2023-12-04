@@ -90,7 +90,7 @@ func (col *CorrelatedColumn) Traverse(action TraverseAction) Expression {
 }
 
 // Eval implements Expression interface.
-func (col *CorrelatedColumn) Eval(row chunk.Row) (types.Datum, error) {
+func (col *CorrelatedColumn) Eval(_ sessionctx.Context, _ chunk.Row) (types.Datum, error) {
 	return *col.Data, nil
 }
 
@@ -156,9 +156,14 @@ func (col *CorrelatedColumn) EvalJSON(ctx sessionctx.Context, row chunk.Row) (ty
 }
 
 // Equal implements Expression interface.
-func (col *CorrelatedColumn) Equal(ctx sessionctx.Context, expr Expression) bool {
+func (col *CorrelatedColumn) Equal(_ sessionctx.Context, expr Expression) bool {
+	return col.EqualColumn(expr)
+}
+
+// EqualColumn returns whether two colum is equal
+func (col *CorrelatedColumn) EqualColumn(expr Expression) bool {
 	if cc, ok := expr.(*CorrelatedColumn); ok {
-		return col.Column.Equal(ctx, &cc.Column)
+		return col.Column.EqualColumn(&cc.Column)
 	}
 	return false
 }
@@ -191,11 +196,11 @@ func (col *CorrelatedColumn) resolveIndices(_ *Schema) error {
 }
 
 // ResolveIndicesByVirtualExpr implements Expression interface.
-func (col *CorrelatedColumn) ResolveIndicesByVirtualExpr(_ *Schema) (Expression, bool) {
+func (col *CorrelatedColumn) ResolveIndicesByVirtualExpr(_ sessionctx.Context, _ *Schema) (Expression, bool) {
 	return col, true
 }
 
-func (col *CorrelatedColumn) resolveIndicesByVirtualExpr(_ *Schema) bool {
+func (col *CorrelatedColumn) resolveIndicesByVirtualExpr(_ sessionctx.Context, _ *Schema) bool {
 	return true
 }
 
@@ -262,6 +267,11 @@ type Column struct {
 
 // Equal implements Expression interface.
 func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
+	return col.EqualColumn(expr)
+}
+
+// EqualColumn returns whether two colum is equal
+func (col *Column) EqualColumn(expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
 		return newCol.UniqueID == col.UniqueID
 	}
@@ -269,10 +279,10 @@ func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
 }
 
 // EqualByExprAndID extends Equal by comparing virual expression
-func (col *Column) EqualByExprAndID(_ sessionctx.Context, expr Expression) bool {
+func (col *Column) EqualByExprAndID(ctx sessionctx.Context, expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
 		expr, isOk := col.VirtualExpr.(*ScalarFunction)
-		isVirExprMatched := isOk && expr.Equal(nil, newCol.VirtualExpr) && col.RetType.Equal(newCol.RetType)
+		isVirExprMatched := isOk && expr.Equal(ctx, newCol.VirtualExpr) && col.RetType.Equal(newCol.RetType)
 		return (newCol.UniqueID == col.UniqueID) || isVirExprMatched
 	}
 	return false
@@ -410,7 +420,7 @@ func (col *Column) Traverse(action TraverseAction) Expression {
 }
 
 // Eval implements Expression interface.
-func (col *Column) Eval(row chunk.Row) (types.Datum, error) {
+func (col *Column) Eval(_ sessionctx.Context, row chunk.Row) (types.Datum, error) {
 	return row.GetDatum(col.Index, col.RetType), nil
 }
 
@@ -517,7 +527,7 @@ func (col *Column) Decorrelate(_ *Schema) Expression {
 }
 
 // HashCode implements Expression interface.
-func (col *Column) HashCode(_ *stmtctx.StatementContext) []byte {
+func (col *Column) HashCode() []byte {
 	if len(col.hashcode) != 0 {
 		return col.hashcode
 	}
@@ -525,6 +535,11 @@ func (col *Column) HashCode(_ *stmtctx.StatementContext) []byte {
 	col.hashcode = append(col.hashcode, columnFlag)
 	col.hashcode = codec.EncodeInt(col.hashcode, col.UniqueID)
 	return col.hashcode
+}
+
+// CanonicalHashCode implements Expression interface.
+func (col *Column) CanonicalHashCode() []byte {
+	return col.HashCode()
 }
 
 // CleanHashCode will clean the hashcode you may be cached before. It's used especially in schema-cloned & reallocated-uniqueID's cases.
@@ -548,15 +563,15 @@ func (col *Column) resolveIndices(schema *Schema) error {
 }
 
 // ResolveIndicesByVirtualExpr implements Expression interface.
-func (col *Column) ResolveIndicesByVirtualExpr(schema *Schema) (Expression, bool) {
+func (col *Column) ResolveIndicesByVirtualExpr(ctx sessionctx.Context, schema *Schema) (Expression, bool) {
 	newCol := col.Clone()
-	isOk := newCol.resolveIndicesByVirtualExpr(schema)
+	isOk := newCol.resolveIndicesByVirtualExpr(ctx, schema)
 	return newCol, isOk
 }
 
-func (col *Column) resolveIndicesByVirtualExpr(schema *Schema) bool {
+func (col *Column) resolveIndicesByVirtualExpr(ctx sessionctx.Context, schema *Schema) bool {
 	for i, c := range schema.Columns {
-		if c.EqualByExprAndID(nil, col) {
+		if c.EqualByExprAndID(ctx, col) {
 			col.Index = i
 			return true
 		}
@@ -687,8 +702,8 @@ idLoop:
 }
 
 // EvalVirtualColumn evals the virtual column
-func (col *Column) EvalVirtualColumn(row chunk.Row) (types.Datum, error) {
-	return col.VirtualExpr.Eval(row)
+func (col *Column) EvalVirtualColumn(ctx sessionctx.Context, row chunk.Row) (types.Datum, error) {
+	return col.VirtualExpr.Eval(ctx, row)
 }
 
 // SupportReverseEval checks whether the builtinFunc support reverse evaluation.
@@ -745,7 +760,7 @@ func SortColumns(cols []*Column) []*Column {
 // InColumnArray check whether the col is in the cols array
 func (col *Column) InColumnArray(cols []*Column) bool {
 	for _, c := range cols {
-		if col.Equal(nil, c) {
+		if col.EqualColumn(c) {
 			return true
 		}
 	}

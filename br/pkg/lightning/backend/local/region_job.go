@@ -318,14 +318,13 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		clients = append(clients, wstream)
 		allPeers = append(allPeers, peer)
 	}
+	dataCommitTS := j.ingestData.GetTS()
 	req.Chunk = &sst.WriteRequest_Batch{
 		Batch: &sst.WriteBatch{
-			CommitTs: j.ingestData.GetTS(),
+			CommitTs: dataCommitTS,
 		},
 	}
 
-	bytesBuf := bufferPool.NewBuffer()
-	defer bytesBuf.Destroy()
 	pairs := make([]*sst.Pair, 0, defaultKVBatchCount)
 	count := 0
 	size := int64(0)
@@ -366,21 +365,22 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		return nil
 	}
 
-	iter := j.ingestData.NewIter(ctx, j.keyRange.Start, j.keyRange.End)
+	iter := j.ingestData.NewIter(ctx, j.keyRange.Start, j.keyRange.End, bufferPool)
 	//nolint: errcheck
 	defer iter.Close()
 
 	var remainingStartKey []byte
 	for iter.First(); iter.Valid(); iter.Next() {
-		kvSize := int64(len(iter.Key()) + len(iter.Value()))
+		k, v := iter.Key(), iter.Value()
+		kvSize := int64(len(k) + len(v))
 		// here we reuse the `*sst.Pair`s to optimize object allocation
 		if count < len(pairs) {
-			pairs[count].Key = bytesBuf.AddBytes(iter.Key())
-			pairs[count].Value = bytesBuf.AddBytes(iter.Value())
+			pairs[count].Key = k
+			pairs[count].Value = v
 		} else {
 			pair := &sst.Pair{
-				Key:   bytesBuf.AddBytes(iter.Key()),
-				Value: bytesBuf.AddBytes(iter.Value()),
+				Key:   k,
+				Value: v,
 			}
 			pairs = append(pairs, pair)
 		}
@@ -395,7 +395,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 			}
 			count = 0
 			size = 0
-			bytesBuf.Reset()
+			iter.ReleaseBuf()
 		}
 		if totalSize >= regionMaxSize || totalCount >= j.regionSplitKeys {
 			// we will shrink the key range of this job to real written range
@@ -408,7 +408,8 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 					logutil.Key("endKey", j.keyRange.End),
 					logutil.Key("remainStart", remainingStartKey),
 					logutil.Region(region),
-					logutil.Leader(j.region.Leader))
+					logutil.Leader(j.region.Leader),
+					zap.Uint64("commitTS", dataCommitTS))
 			}
 			break
 		}
@@ -424,7 +425,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		}
 		count = 0
 		size = 0
-		bytesBuf.Reset()
+		iter.ReleaseBuf()
 	}
 
 	var leaderPeerMetas []*sst.SSTMeta
@@ -461,7 +462,6 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	log.FromContext(ctx).Debug("write to kv", zap.Reflect("region", j.region), zap.Uint64("leader", leaderID),
 		zap.Reflect("meta", meta), zap.Reflect("return metas", leaderPeerMetas),
 		zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", totalSize),
-		zap.Int64("buf_size", bytesBuf.TotalSize()),
 		zap.Stringer("takeTime", takeTime))
 	if m, ok := metric.FromContext(ctx); ok {
 		m.SSTSecondsHistogram.WithLabelValues(metric.SSTProcessWrite).Observe(takeTime.Seconds())

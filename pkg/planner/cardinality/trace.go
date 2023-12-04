@@ -37,7 +37,7 @@ import (
 
 // ceTraceExpr appends an expression and related information into CE trace
 func ceTraceExpr(sctx sessionctx.Context, tableID int64, tp string, expr expression.Expression, rowCount float64) {
-	exprStr, err := exprToString(expr)
+	exprStr, err := exprToString(sctx, expr)
 	if err != nil {
 		logutil.BgLogger().Debug("Failed to trace CE of an expression", zap.String("category", "OptimizerTrace"),
 			zap.Any("expression", expr))
@@ -64,7 +64,7 @@ func ceTraceExpr(sctx sessionctx.Context, tableID int64, tp string, expr express
 // It may be more appropriate to put this in expression package. But currently we only use it for CE trace,
 //
 //	and it may not be general enough to handle all possible expressions. So we put it here for now.
-func exprToString(e expression.Expression) (string, error) {
+func exprToString(ctx sessionctx.Context, e expression.Expression) (string, error) {
 	switch expr := e.(type) {
 	case *expression.ScalarFunction:
 		var buffer bytes.Buffer
@@ -72,7 +72,7 @@ func exprToString(e expression.Expression) (string, error) {
 		switch expr.FuncName.L {
 		case ast.Cast:
 			for _, arg := range expr.GetArgs() {
-				argStr, err := exprToString(arg)
+				argStr, err := exprToString(ctx, arg)
 				if err != nil {
 					return "", err
 				}
@@ -82,7 +82,7 @@ func exprToString(e expression.Expression) (string, error) {
 			}
 		default:
 			for i, arg := range expr.GetArgs() {
-				argStr, err := exprToString(arg)
+				argStr, err := exprToString(ctx, arg)
 				if err != nil {
 					return "", err
 				}
@@ -99,7 +99,7 @@ func exprToString(e expression.Expression) (string, error) {
 	case *expression.CorrelatedColumn:
 		return "", errors.New("tracing for correlated columns not supported now")
 	case *expression.Constant:
-		value, err := expr.Eval(chunk.Row{})
+		value, err := expr.Eval(ctx, chunk.Row{})
 		if err != nil {
 			return "", err
 		}

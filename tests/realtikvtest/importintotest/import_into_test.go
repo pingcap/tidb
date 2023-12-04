@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/mock/mocklocal"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -47,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
@@ -764,28 +766,32 @@ func (s *mockGCSSuite) TestColumnsAndUserVars() {
 		return s.tk.Session(), nil
 	}, 1, 1, time.Second)
 	defer pool.Close()
-	taskManager := storage.NewTaskManager(context.Background(), pool)
-	subtasks, err := taskManager.GetSucceedSubtasksByStep(storage.TestLastTaskID.Load(), importinto.StepImport)
+	taskManager := storage.NewTaskManager(pool)
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
+	subtasks, err := taskManager.GetSubtasksByStepAndState(ctx, storage.TestLastTaskID.Load(), importinto.StepImport, proto.TaskStateSucceed)
 	s.NoError(err)
 	s.Len(subtasks, 1)
 	serverInfo, err := infosync.GetServerInfo()
 	s.NoError(err)
 	for _, st := range subtasks {
-		s.Equal(net.JoinHostPort(serverInfo.IP, strconv.Itoa(int(serverInfo.Port))), st.SchedulerID)
+		s.Equal(net.JoinHostPort(serverInfo.IP, strconv.Itoa(int(serverInfo.Port))), st.ExecID)
 	}
 }
 
 func (s *mockGCSSuite) checkTaskMetaRedacted(jobID int64) {
-	globalTaskManager, err := storage.GetTaskManager()
+	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
 	taskKey := importinto.TaskKey(jobID)
 	s.NoError(err)
-	globalTask, err2 := globalTaskManager.GetGlobalTaskByKeyWithHistory(taskKey)
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
+	task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 	s.NoError(err2)
-	s.Regexp(`[?&]access-key=xxxxxx`, string(globalTask.Meta))
-	s.Contains(string(globalTask.Meta), "secret-access-key=xxxxxx")
-	s.NotContains(string(globalTask.Meta), "aaaaaa")
-	s.NotContains(string(globalTask.Meta), "bbbbbb")
+	s.Regexp(`[?&]access-key=xxxxxx`, string(task.Meta))
+	s.Contains(string(task.Meta), "secret-access-key=xxxxxx")
+	s.NotContains(string(task.Meta), "aaaaaa")
+	s.NotContains(string(task.Meta), "bbbbbb")
 }
 
 func (s *mockGCSSuite) TestImportMode() {

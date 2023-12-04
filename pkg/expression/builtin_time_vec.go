@@ -2652,7 +2652,7 @@ func (b *builtinTimestamp1ArgSig) vecEvalTime(ctx sessionctx.Context, input *chu
 		if b.isFloat {
 			tm, err = types.ParseTimeFromFloatString(sc.TypeCtx(), s, mysql.TypeDatetime, types.GetFsp(s))
 		} else {
-			tm, err = types.ParseTime(sc.TypeCtx(), s, mysql.TypeDatetime, types.GetFsp(s), nil)
+			tm, err = types.ParseTime(sc.TypeCtx(), s, mysql.TypeDatetime, types.GetFsp(s))
 		}
 		if err != nil {
 			if err = handleInvalidTimeError(ctx, err); err != nil {
@@ -2705,7 +2705,7 @@ func (b *builtinTimestamp2ArgsSig) vecEvalTime(ctx sessionctx.Context, input *ch
 		if b.isFloat {
 			tm, err = types.ParseTimeFromFloatString(sc.TypeCtx(), arg0, mysql.TypeDatetime, types.GetFsp(arg0))
 		} else {
-			tm, err = types.ParseTime(sc.TypeCtx(), arg0, mysql.TypeDatetime, types.GetFsp(arg0), nil)
+			tm, err = types.ParseTime(sc.TypeCtx(), arg0, mysql.TypeDatetime, types.GetFsp(arg0))
 		}
 		if err != nil {
 			if err = handleInvalidTimeError(ctx, err); err != nil {

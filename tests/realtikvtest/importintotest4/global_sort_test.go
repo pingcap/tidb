@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/util"
 )
 
 func urlEqual(t *testing.T, expected, actual string) {
@@ -45,6 +46,8 @@ func urlEqual(t *testing.T, expected, actual string) {
 }
 
 func (s *mockGCSSuite) TestGlobalSortBasic() {
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-basic", Name: "t.1.csv"},
 		Content:     []byte("1,foo1,bar1,123\n2,foo2,bar2,456\n3,foo3,bar3,789\n"),
@@ -84,13 +87,13 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	redactedSortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=xxxxxx&secret-access-key=xxxxxx", gcsEndpoint)
 	urlEqual(s.T(), redactedSortStorageURI, jobInfo.Parameters.Options["cloud_storage_uri"].(string))
 	s.Equal(uint64(6), jobInfo.Summary.ImportedRows)
-	globalTaskManager, err := storage.GetTaskManager()
+	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
 	taskKey := importinto.TaskKey(int64(jobID))
-	globalTask, err2 := globalTaskManager.GetGlobalTaskByKeyWithHistory(taskKey)
+	task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 	s.NoError(err2)
 	taskMeta := importinto.TaskMeta{}
-	s.NoError(json.Unmarshal(globalTask.Meta, &taskMeta))
+	s.NoError(json.Unmarshal(task.Meta, &taskMeta))
 	urlEqual(s.T(), redactedSortStorageURI, taskMeta.Plan.CloudStorageURI)
 
 	// merge-sort data kv
@@ -112,9 +115,9 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	jobID, err = strconv.Atoi(result[0][0].(string))
 	s.NoError(err)
 	s.Eventually(func() bool {
-		globalTask, err2 = globalTaskManager.GetGlobalTaskByKeyWithHistory(importinto.TaskKey(int64(jobID)))
+		task, err2 = taskManager.GetTaskByKeyWithHistory(ctx, importinto.TaskKey(int64(jobID)))
 		s.NoError(err2)
-		return globalTask.State == "failed"
+		return task.State == "failed"
 	}, 30*time.Second, 300*time.Millisecond)
 	// check all sorted data cleaned up
 	<-dispatcher.WaitCleanUpFinished

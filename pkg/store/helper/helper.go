@@ -20,12 +20,8 @@ import (
 	"cmp"
 	"context"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
-	"io"
 	"math"
-	"net/http"
-	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -34,7 +30,6 @@ import (
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -42,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -97,9 +91,13 @@ func NewHelper(store Storage) *Helper {
 	}
 }
 
-// PDHTTPClient returns the PD HTTP client.
-func (h *Helper) PDHTTPClient() pd.Client {
-	return h.Store.GetPDHTTPClient()
+// TryGetPDHTTPClient tries to get a PD HTTP client if it's available.
+func (h *Helper) TryGetPDHTTPClient() (pd.Client, error) {
+	cli := h.Store.GetPDHTTPClient()
+	if cli == nil {
+		return nil, errors.New("pd http client unavailable")
+	}
+	return cli, nil
 }
 
 // MaxBackoffTimeoutForMvccGet is a derived value from previous implementation possible experiencing value 5000ms.
@@ -306,15 +304,16 @@ func (h *Helper) ScrapeHotInfo(ctx context.Context, rw string, allSchemas []*mod
 
 // FetchHotRegion fetches the hot region information from PD's http api.
 func (h *Helper) FetchHotRegion(ctx context.Context, rw string) (map[uint64]RegionMetric, error) {
-	var (
-		regionResp *pd.StoreHotPeersInfos
-		err        error
-	)
+	pdCli, err := h.TryGetPDHTTPClient()
+	if err != nil {
+		return nil, err
+	}
+	var regionResp *pd.StoreHotPeersInfos
 	switch rw {
 	case HotRead:
-		regionResp, err = h.PDHTTPClient().GetHotReadRegions(ctx)
+		regionResp, err = pdCli.GetHotReadRegions(ctx)
 	case HotWrite:
-		regionResp, err = h.PDHTTPClient().GetHotWriteRegions(ctx)
+		regionResp, err = pdCli.GetHotWriteRegions(ctx)
 	}
 	if err != nil {
 		return nil, err
@@ -789,21 +788,11 @@ func (h *Helper) GetPDAddr() ([]string, error) {
 	return pdAddrs, nil
 }
 
-// PDRegionStats is the json response from PD.
-type PDRegionStats struct {
-	Count            int            `json:"count"`
-	EmptyCount       int            `json:"empty_count"`
-	StorageSize      int64          `json:"storage_size"`
-	StorageKeys      int64          `json:"storage_keys"`
-	StoreLeaderCount map[uint64]int `json:"store_leader_count"`
-	StorePeerCount   map[uint64]int `json:"store_peer_count"`
-}
-
-// GetPDRegionStats get the RegionStats by tableID.
-func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats, noIndexStats bool) error {
-	pdAddrs, err := h.GetPDAddr()
+// GetPDRegionStats get the RegionStats by tableID from PD by HTTP API.
+func (h *Helper) GetPDRegionStats(ctx context.Context, tableID int64, noIndexStats bool) (*pd.RegionStats, error) {
+	pdCli, err := h.TryGetPDHTTPClient()
 	if err != nil {
-		return errors.Trace(err)
+		return nil, err
 	}
 
 	var startKey, endKey []byte
@@ -817,176 +806,7 @@ func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats, noIndexSt
 	startKey = codec.EncodeBytes([]byte{}, startKey)
 	endKey = codec.EncodeBytes([]byte{}, endKey)
 
-	statURL := fmt.Sprintf("%s://%s%s",
-		util.InternalHTTPSchema(),
-		pdAddrs[0],
-		pdapi.RegionStatsByStartEndKey(
-			url.QueryEscape(string(startKey)),
-			url.QueryEscape(string(endKey)),
-		))
-
-	resp, err := util.InternalHTTPClient().Get(statURL)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		if err = resp.Body.Close(); err != nil {
-			logutil.BgLogger().Error("err", zap.Error(err))
-		}
-	}()
-	if resp.StatusCode != http.StatusOK {
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return errors.Errorf("GetPDRegionStats %d: %s", resp.StatusCode, err)
-		}
-		return errors.Errorf("GetPDRegionStats %d: %s", resp.StatusCode, string(body))
-	}
-	dec := json.NewDecoder(resp.Body)
-
-	return dec.Decode(stats)
-}
-
-// DeletePlacementRule is to delete placement rule for certain group.
-func (h *Helper) DeletePlacementRule(group string, ruleID string) error {
-	pdAddrs, err := h.GetPDAddr()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	deleteURL := fmt.Sprintf("%s://%s%s/%v/%v",
-		util.InternalHTTPSchema(),
-		pdAddrs[0],
-		pdapi.PlacementRule,
-		group,
-		ruleID,
-	)
-
-	req, err := http.NewRequest("DELETE", deleteURL, nil)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	resp, err := util.InternalHTTPClient().Do(req)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		if err = resp.Body.Close(); err != nil {
-			logutil.BgLogger().Error("err", zap.Error(err))
-		}
-	}()
-	if resp.StatusCode != http.StatusOK {
-		return errors.New("DeletePlacementRule returns error")
-	}
-	return nil
-}
-
-// SetPlacementRule is a helper function to set placement rule.
-func (h *Helper) SetPlacementRule(rule placement.Rule) error {
-	pdAddrs, err := h.GetPDAddr()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	m, _ := json.Marshal(rule)
-
-	postURL := fmt.Sprintf("%s://%s%s",
-		util.InternalHTTPSchema(),
-		pdAddrs[0],
-		pdapi.PlacementRule,
-	)
-	buf := bytes.NewBuffer(m)
-	resp, err := util.InternalHTTPClient().Post(postURL, "application/json", buf)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		if err = resp.Body.Close(); err != nil {
-			logutil.BgLogger().Error("err", zap.Error(err))
-		}
-	}()
-	if resp.StatusCode != http.StatusOK {
-		return errors.New("SetPlacementRule returns error")
-	}
-	return nil
-}
-
-// GetGroupRules to get all placement rule in a certain group.
-func (h *Helper) GetGroupRules(group string) ([]placement.Rule, error) {
-	pdAddrs, err := h.GetPDAddr()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	getURL := fmt.Sprintf("%s://%s%s/%s",
-		util.InternalHTTPSchema(),
-		pdAddrs[0],
-		pdapi.PlacementRulesGroup,
-		group,
-	)
-
-	resp, err := util.InternalHTTPClient().Get(getURL)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	defer func() {
-		if err = resp.Body.Close(); err != nil {
-			logutil.BgLogger().Error("err", zap.Error(err))
-		}
-	}()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, errors.New("GetGroupRules returns error")
-	}
-
-	buf := new(bytes.Buffer)
-	_, err = buf.ReadFrom(resp.Body)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	var rules []placement.Rule
-	err = json.Unmarshal(buf.Bytes(), &rules)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	return rules, nil
-}
-
-// PostAccelerateSchedule sends `regions/accelerate-schedule` request.
-func (h *Helper) PostAccelerateSchedule(tableID int64) error {
-	pdAddrs, err := h.GetPDAddr()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	startKey := tablecodec.GenTableRecordPrefix(tableID)
-	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
-	startKey = codec.EncodeBytes([]byte{}, startKey)
-	endKey = codec.EncodeBytes([]byte{}, endKey)
-
-	postURL := fmt.Sprintf("%s://%s%s",
-		util.InternalHTTPSchema(),
-		pdAddrs[0],
-		pdapi.AccelerateSchedule)
-
-	input := map[string]string{
-		"start_key": url.QueryEscape(string(startKey)),
-		"end_key":   url.QueryEscape(string(endKey)),
-	}
-	v, err := json.Marshal(input)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	resp, err := util.InternalHTTPClient().Post(postURL, "application/json", bytes.NewBuffer(v))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		if err = resp.Body.Close(); err != nil {
-			logutil.BgLogger().Error("err", zap.Error(err))
-		}
-	}()
-	return nil
+	return pdCli.GetRegionStatusByKeyRange(ctx, pd.NewKeyRange(startKey, endKey), false)
 }
 
 // GetTiFlashTableIDFromEndKey computes tableID from pd rule's endKey.

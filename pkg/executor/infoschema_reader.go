@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -195,6 +196,10 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromRunawayWatches(sctx)
 		case infoschema.TableCheckConstraints:
 			err = e.setDataFromCheckConstraints(sctx, dbs)
+		case infoschema.TableTiDBCheckConstraints:
+			err = e.setDataFromTiDBCheckConstraints(sctx, dbs)
+		case infoschema.TableKeywords:
+			err = e.setDataFromKeywords()
 		}
 		if err != nil {
 			return nil, err
@@ -628,6 +633,8 @@ func (e *memtableRetriever) setDataFromTables(sctx sessionctx.Context, schemas [
 	return nil
 }
 
+// Data for inforation_schema.CHECK_CONSTRAINTS
+// This is standards (ISO/IEC 9075-11) compliant and is compatible with the implementation in MySQL as well.
 func (e *memtableRetriever) setDataFromCheckConstraints(sctx sessionctx.Context, schemas []*model.DBInfo) error {
 	var rows [][]types.Datum
 	checker := privilege.GetPrivilegeManager(sctx)
@@ -646,6 +653,38 @@ func (e *memtableRetriever) setDataFromCheckConstraints(sctx sessionctx.Context,
 						schema.Name.O,         // CONSTRAINT_SCHEMA
 						constraint.Name.O,     // CONSTRAINT_NAME
 						fmt.Sprintf("(%s)", constraint.ExprString), // CHECK_CLAUSE
+					)
+					rows = append(rows, record)
+				}
+			}
+		}
+	}
+	e.rows = rows
+	return nil
+}
+
+// Data for inforation_schema.TIDB_CHECK_CONSTRAINTS
+// This has non-standard TiDB specific extensions.
+func (e *memtableRetriever) setDataFromTiDBCheckConstraints(sctx sessionctx.Context, schemas []*model.DBInfo) error {
+	var rows [][]types.Datum
+	checker := privilege.GetPrivilegeManager(sctx)
+	for _, schema := range schemas {
+		for _, table := range schema.Tables {
+			if len(table.Constraints) > 0 {
+				if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.SelectPriv) {
+					continue
+				}
+				for _, constraint := range table.Constraints {
+					if constraint.State != model.StatePublic {
+						continue
+					}
+					record := types.MakeDatums(
+						infoschema.CatalogVal, // CONSTRAINT_CATALOG
+						schema.Name.O,         // CONSTRAINT_SCHEMA
+						constraint.Name.O,     // CONSTRAINT_NAME
+						fmt.Sprintf("(%s)", constraint.ExprString), // CHECK_CLAUSE
+						table.Name.O, // TABLE_NAME
+						table.ID,     // TABLE_ID
 					)
 					rows = append(rows, record)
 				}
@@ -1181,7 +1220,11 @@ func (e *memtableRetriever) dataForTiKVStoreStatus(ctx context.Context, sctx ses
 		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
 	}
-	storesStat, err := tikvHelper.PDHTTPClient().GetStores(ctx)
+	pdCli, err := tikvHelper.TryGetPDHTTPClient()
+	if err != nil {
+		return err
+	}
+	storesStat, err := pdCli.GetStores(ctx)
 	if err != nil {
 		return err
 	}
@@ -1380,11 +1423,11 @@ func (e *memtableRetriever) dataForTiDBClusterInfo(ctx sessionctx.Context) error
 	}
 	rows := make([][]types.Datum, 0, len(servers))
 	for _, server := range servers {
-		startTimeStr := ""
 		upTimeStr := ""
+		startTimeNative := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 0)
 		if server.StartTimestamp > 0 {
 			startTime := time.Unix(server.StartTimestamp, 0)
-			startTimeStr = startTime.Format(time.RFC3339)
+			startTimeNative = types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, 0)
 			upTimeStr = time.Since(startTime).String()
 		}
 		serverType := server.ServerType
@@ -1397,7 +1440,7 @@ func (e *memtableRetriever) dataForTiDBClusterInfo(ctx sessionctx.Context) error
 			server.StatusAddr,
 			server.Version,
 			server.GitHash,
-			startTimeStr,
+			startTimeNative,
 			upTimeStr,
 			server.ServerID,
 		)
@@ -1612,7 +1655,11 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 		}
 	}
 	if !requestByTableRange {
-		allRegionsInfo, err = tikvHelper.PDHTTPClient().GetRegions(ctx)
+		pdCli, err := tikvHelper.TryGetPDHTTPClient()
+		if err != nil {
+			return err
+		}
+		allRegionsInfo, err = pdCli.GetRegions(ctx)
 		if err != nil {
 			return err
 		}
@@ -1665,12 +1712,16 @@ func (e *memtableRetriever) getRegionsInfoForTable(ctx context.Context, h *helpe
 }
 
 func (*memtableRetriever) getRegionsInfoForSingleTable(ctx context.Context, helper *helper.Helper, tableID int64) (*pd.RegionsInfo, error) {
-	sk, ek := tablecodec.GetTableHandleKeyRange(tableID)
-	sRegion, err := helper.PDHTTPClient().GetRegionByKey(ctx, codec.EncodeBytes(nil, sk))
+	pdCli, err := helper.TryGetPDHTTPClient()
 	if err != nil {
 		return nil, err
 	}
-	eRegion, err := helper.PDHTTPClient().GetRegionByKey(ctx, codec.EncodeBytes(nil, ek))
+	sk, ek := tablecodec.GetTableHandleKeyRange(tableID)
+	sRegion, err := pdCli.GetRegionByKey(ctx, codec.EncodeBytes(nil, sk))
+	if err != nil {
+		return nil, err
+	}
+	eRegion, err := pdCli.GetRegionByKey(ctx, codec.EncodeBytes(nil, ek))
 	if err != nil {
 		return nil, err
 	}
@@ -1682,7 +1733,7 @@ func (*memtableRetriever) getRegionsInfoForSingleTable(ctx context.Context, help
 	if err != nil {
 		return nil, err
 	}
-	return helper.PDHTTPClient().GetRegionsByKey(ctx, sk, ek, -1)
+	return pdCli.GetRegionsByKeyRange(ctx, pd.NewKeyRange(sk, ek), -1)
 }
 
 func (e *memtableRetriever) setNewTiKVRegionStatusCol(region *pd.RegionInfo, table *helper.TableInfo) {
@@ -1855,10 +1906,10 @@ type tableStorageStatsRetriever struct {
 	initialTables []*initialTable
 	curTable      int
 	helper        *helper.Helper
-	stats         helper.PDRegionStats
+	stats         *pd.RegionStats
 }
 
-func (e *tableStorageStatsRetriever) retrieve(_ context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *tableStorageStatsRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.retrieved {
 		return nil, nil
 	}
@@ -1873,7 +1924,7 @@ func (e *tableStorageStatsRetriever) retrieve(_ context.Context, sctx sessionctx
 		return nil, nil
 	}
 
-	rows, err := e.setDataForTableStorageStats()
+	rows, err := e.setDataForTableStorageStats(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1961,7 +2012,7 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 	return nil
 }
 
-func (e *tableStorageStatsRetriever) setDataForTableStorageStats() ([][]types.Datum, error) {
+func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx context.Context) ([][]types.Datum, error) {
 	rows := make([][]types.Datum, 0, 1024)
 	count := 0
 	for e.curTable < len(e.initialTables) && count < 1024 {
@@ -1973,9 +2024,9 @@ func (e *tableStorageStatsRetriever) setDataForTableStorageStats() ([][]types.Da
 				tblIDs = append(tblIDs, partDef.ID)
 			}
 		}
-
+		var err error
 		for _, tableID := range tblIDs {
-			err := e.helper.GetPDRegionStats(tableID, &e.stats, false)
+			e.stats, err = e.helper.GetPDRegionStats(ctx, tableID, false)
 			if err != nil {
 				return nil, err
 			}
@@ -2051,7 +2102,7 @@ func dataForAnalyzeStatusHelper(ctx context.Context, sctx sessionctx.Context) (r
 		}
 
 		var remainDurationStr, progressDouble, estimatedRowCntStr interface{}
-		if state == statistics.AnalyzeRunning {
+		if state == statistics.AnalyzeRunning && !strings.HasPrefix(jobInfo, "merge global stats") {
 			startTime, ok := startTime.(types.Time)
 			if !ok {
 				return nil, errors.New("invalid start time")
@@ -2131,7 +2182,7 @@ func getRemainDurationForAnalyzeStatusHelper(
 			}
 		}
 		if tid > 0 && totalCnt == 0 {
-			totalCnt, _ = pdhelper.GlobalPDHelper.GetApproximateTableCountFromStorage(sctx, tid, dbName, tableName, partitionName)
+			totalCnt, _ = pdhelper.GlobalPDHelper.GetApproximateTableCountFromStorage(ctx, sctx, tid, dbName, tableName, partitionName)
 		}
 		remainingDuration, percentage = calRemainInfoForAnalyzeStatus(ctx, int64(totalCnt), processedRows, duration)
 	}
@@ -3152,7 +3203,7 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context, is info
 		rules = []*label.Rule{
 			{
 				ID:       "schema/test/test_label",
-				Labels:   []label.Label{{Key: "merge_option", Value: "allow"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
+				Labels:   []pd.RegionLabel{{Key: "merge_option", Value: "allow"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
 				RuleType: "key-range",
 				Data: convert(map[string]interface{}{
 					"start_key": "7480000000000000ff395f720000000000fa",
@@ -3161,7 +3212,7 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context, is info
 			},
 			{
 				ID:       "invalidIDtest",
-				Labels:   []label.Label{{Key: "merge_option", Value: "allow"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
+				Labels:   []pd.RegionLabel{{Key: "merge_option", Value: "allow"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
 				RuleType: "key-range",
 				Data: convert(map[string]interface{}{
 					"start_key": "7480000000000000ff395f720000000000fa",
@@ -3170,7 +3221,7 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context, is info
 			},
 			{
 				ID:       "schema/test/test_label",
-				Labels:   []label.Label{{Key: "merge_option", Value: "allow"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
+				Labels:   []pd.RegionLabel{{Key: "merge_option", Value: "allow"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
 				RuleType: "key-range",
 				Data: convert(map[string]interface{}{
 					"start_key": "aaaaa",
@@ -3211,9 +3262,9 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context, is info
 			continue
 		}
 
-		labels := rule.Labels.Restore()
+		labels := label.RestoreRegionLabels(&rule.Labels)
 		var ranges []string
-		for _, data := range rule.Data {
+		for _, data := range rule.Data.([]interface{}) {
 			if kv, ok := data.(map[string]interface{}); ok {
 				startKey := kv["start_key"]
 				endKey := kv["end_key"]
@@ -3387,6 +3438,16 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 	return nil
 }
 
+func (e *memtableRetriever) setDataFromKeywords() error {
+	rows := make([][]types.Datum, 0, len(parser.Keywords))
+	for _, kw := range parser.Keywords {
+		row := types.MakeDatums(kw.Word, kw.Reserved)
+		rows = append(rows, row)
+	}
+	e.rows = rows
+	return nil
+}
+
 func checkRule(rule *label.Rule) (dbName, tableName string, partitionName string, err error) {
 	s := strings.Split(rule.ID, "/")
 	if len(s) < 3 {
@@ -3414,11 +3475,12 @@ func checkRule(rule *label.Rule) (dbName, tableName string, partitionName string
 }
 
 func decodeTableIDFromRule(rule *label.Rule) (tableID int64, err error) {
-	if len(rule.Data) == 0 {
+	datas := rule.Data.([]interface{})
+	if len(datas) == 0 {
 		err = fmt.Errorf("there is no data in rule %s", rule.ID)
 		return
 	}
-	data := rule.Data[0]
+	data := datas[0]
 	dataMap, ok := data.(map[string]interface{})
 	if !ok {
 		err = fmt.Errorf("get the label rules %s failed", rule.ID)

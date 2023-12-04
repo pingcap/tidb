@@ -686,6 +686,7 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{Scope: ScopeGlobal, Name: ValidatePasswordDictionary, Value: "", Type: TypeStr},
+	{Scope: ScopeGlobal, Name: DefaultPasswordLifetime, Value: "0", Type: TypeInt, MinValue: 0, MaxValue: math.MaxUint16},
 	{Scope: ScopeGlobal, Name: DisconnectOnExpiredPassword, Value: On, Type: TypeBool, ReadOnly: true, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(!IsSandBoxModeEnabled.Load()), nil
 	}},
@@ -918,7 +919,7 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal, Name: TiDBAutoAnalyzePartitionBatchSize,
 		Value: strconv.Itoa(DefTiDBAutoAnalyzePartitionBatchSize),
-		Type:  TypeUnsigned, MinValue: 1, MaxValue: 1024,
+		Type:  TypeUnsigned, MinValue: 1, MaxValue: mysql.PartitionCountLimit,
 		SetGlobal: func(_ context.Context, vars *SessionVars, s string) error {
 			var val int64
 			val, err := strconv.ParseInt(s, 10, 64)
@@ -2050,6 +2051,10 @@ var defaultSysVars = []*SysVar{
 		return normalizedValue, nil
 	}, SetSession: func(s *SessionVars, val string) error {
 		s.EnableClusteredIndex = TiDBOptEnableClustered(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableGlobalIndex, Type: TypeBool, Value: BoolToOnOff(DefTiDBEnableGlobalIndex), SetSession: func(s *SessionVars, val string) error {
+		s.EnableGlobalIndex = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPartitionPruneMode, Value: DefTiDBPartitionPruneMode, Type: TypeEnum, PossibleValues: []string{"static", "dynamic", "static-only", "dynamic-only"}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {

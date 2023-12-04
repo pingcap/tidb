@@ -252,7 +252,9 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, kvRanges []kv.K
 		if err != nil {
 			return nil, err
 		}
-		return tablecodec.EncodeValue(us.Ctx().GetSessionVars().StmtCtx, nil, d)
+		sctx := us.Ctx().GetSessionVars().StmtCtx
+		buf, err := tablecodec.EncodeValue(sctx.TimeZone(), nil, d)
+		return buf, sctx.HandleError(err)
 	}
 	cd := NewRowDecoder(us.Ctx(), us.Schema(), us.table.Meta())
 	rd := rowcodec.NewByteDecoder(colInfo, pkColIDs, defVal, us.Ctx().GetSessionVars().Location())
@@ -502,7 +504,8 @@ func (m *memTableReader) getRowData(handle kv.Handle, value []byte) ([][]byte, e
 			} else {
 				handleDatum = types.NewIntDatum(handle.IntValue())
 			}
-			handleData, err1 := codec.EncodeValue(ctx, buffer.handleBytes, handleDatum)
+			handleData, err1 := codec.EncodeValue(ctx.TimeZone(), buffer.handleBytes, handleDatum)
+			err1 = ctx.HandleError(err1)
 			if err1 != nil {
 				return nil, errors.Trace(err1)
 			}
@@ -623,7 +626,8 @@ func (m *memIndexReader) getMemRowsHandle() ([]kv.Handle, error) {
 		// For https://github.com/pingcap/tidb/issues/41827,
 		// When handle type is year, tablecodec.DecodeIndexHandle will convert it to IntHandle instead of CommonHandle
 		if m.table.IsCommonHandle && handle.IsInt() {
-			b, err := codec.EncodeKey(m.ctx.GetSessionVars().StmtCtx, nil, types.NewDatum(handle.IntValue()))
+			b, err := codec.EncodeKey(m.ctx.GetSessionVars().StmtCtx.TimeZone(), nil, types.NewDatum(handle.IntValue()))
+			err = m.ctx.GetSessionVars().StmtCtx.HandleError(err)
 			if err != nil {
 				return err
 			}
@@ -1162,7 +1166,8 @@ func getColIDAndPkColIDs(ctx sessionctx.Context, tbl table.Table, columns []*mod
 		if err != nil {
 			return nil, err
 		}
-		return tablecodec.EncodeValue(ctx.GetSessionVars().StmtCtx, nil, d)
+		buf, err := tablecodec.EncodeValue(ctx.GetSessionVars().StmtCtx.TimeZone(), nil, d)
+		return buf, ctx.GetSessionVars().StmtCtx.HandleError(err)
 	}
 	rd := rowcodec.NewByteDecoder(colInfos, pkColIDs, defVal, ctx.GetSessionVars().Location())
 	return colIDs, pkColIDs, rd

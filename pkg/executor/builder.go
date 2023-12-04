@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/pdhelper"
 	"github.com/pingcap/tidb/pkg/executor/internal/querywatch"
+	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/internal/vecgroupchecker"
 	"github.com/pingcap/tidb/pkg/executor/lockstats"
 	executor_metrics "github.com/pingcap/tidb/pkg/executor/metrics"
@@ -133,13 +134,6 @@ func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *Te
 		txnScope:         txnManager.GetTxnScope(),
 		readReplicaScope: txnManager.GetReadReplicaScope(),
 	}
-}
-
-// MockPhysicalPlan is used to return a specified executor in when build.
-// It is mainly used for testing.
-type MockPhysicalPlan interface {
-	plannercore.PhysicalPlan
-	GetExecutor() exec.Executor
 }
 
 // MockExecutorBuilder is a wrapper for executorBuilder.
@@ -317,8 +311,10 @@ func (b *executorBuilder) build(p plannercore.Plan) exec.Executor {
 		return b.buildCTETableReader(v)
 	case *plannercore.CompactTable:
 		return b.buildCompactTable(v)
+	case *plannercore.AdminShowBDRRole:
+		return b.buildAdminShowBDRRole(v)
 	default:
-		if mp, ok := p.(MockPhysicalPlan); ok {
+		if mp, ok := p.(testutil.MockPhysicalPlan); ok {
 			return mp.GetExecutor()
 		}
 
@@ -879,7 +875,7 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) exec.Executor {
 		Extractor:             v.Extractor,
 		ImportJobID:           v.ImportJobID,
 	}
-	if e.Tp == ast.ShowMasterStatus {
+	if e.Tp == ast.ShowMasterStatus || e.Tp == ast.ShowBinlogStatus {
 		// show master status need start ts.
 		if _, err := e.Ctx().Txn(true); err != nil {
 			b.err = err
@@ -2123,7 +2119,9 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 			strings.ToLower(infoschema.ClusterTableMemoryUsageOpsHistory),
 			strings.ToLower(infoschema.TableResourceGroups),
 			strings.ToLower(infoschema.TableRunawayWatches),
-			strings.ToLower(infoschema.TableCheckConstraints):
+			strings.ToLower(infoschema.TableCheckConstraints),
+			strings.ToLower(infoschema.TableTiDBCheckConstraints),
+			strings.ToLower(infoschema.TableKeywords):
 			return &MemTableReaderExec{
 				BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
@@ -2799,7 +2797,7 @@ func (b *executorBuilder) getAdjustedSampleRate(task plannercore.AnalyzeColumnsT
 }
 
 func (b *executorBuilder) getApproximateTableCountFromStorage(tid int64, task plannercore.AnalyzeColumnsTask) (float64, bool) {
-	return pdhelper.GlobalPDHelper.GetApproximateTableCountFromStorage(b.ctx, tid, task.DBName, task.TableName, task.PartitionName)
+	return pdhelper.GlobalPDHelper.GetApproximateTableCountFromStorage(context.Background(), b.ctx, tid, task.DBName, task.TableName, task.PartitionName)
 }
 
 func (b *executorBuilder) buildAnalyzeColumnsPushdown(
@@ -4370,7 +4368,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetFromInfoSchema(e.Ctx().GetInfoSchema()).
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx(), &reqBuilderWithRange.Request, e.netDataSize)).
 		SetPaging(e.paging).
-		SetConnID(e.Ctx().GetSessionVars().ConnectionID).
+		SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias).
 		Build()
 	if err != nil {
 		return nil, err
@@ -5487,4 +5485,8 @@ func (b *executorBuilder) buildCompactTable(v *plannercore.CompactTable) exec.Ex
 		partitionIDs: partitionIDs,
 		tikvStore:    tikvStore,
 	}
+}
+
+func (b *executorBuilder) buildAdminShowBDRRole(v *plannercore.AdminShowBDRRole) exec.Executor {
+	return &AdminShowBDRRoleExec{BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID())}
 }

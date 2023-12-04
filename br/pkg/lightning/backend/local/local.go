@@ -1189,7 +1189,13 @@ func (local *Backend) generateAndSendJob(
 	eg, egCtx := errgroup.WithContext(ctx)
 
 	dataAndRangeCh := make(chan common.DataAndRange)
-	for i := 0; i < local.WorkerConcurrency; i++ {
+	conn := local.WorkerConcurrency
+	if _, ok := engine.(*external.Engine); ok {
+		// currently external engine will generate a large IngestData, se we lower the
+		// concurrency to pass backpressure to the LoadIngestData goroutine to avoid OOM
+		conn = 1
+	}
+	for i := 0; i < conn; i++ {
 		eg.Go(func() error {
 			for {
 				select {
@@ -1734,6 +1740,11 @@ func (local *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) err
 	// the only way to reset the engine + reclaim the space is to delete and reopen it 🤷
 	localEngine := local.lockEngine(engineUUID, importMutexStateClose)
 	if localEngine == nil {
+		if engineI, ok := local.externalEngine[engineUUID]; ok {
+			extEngine := engineI.(*external.Engine)
+			return extEngine.Reset()
+		}
+
 		log.FromContext(ctx).Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
 		return nil
 	}
@@ -1756,6 +1767,12 @@ func (local *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) err
 		if err = local.allocateTSIfNotExists(ctx, localEngine); err != nil {
 			return errors.Trace(err)
 		}
+		failpoint.Inject("mockAllocateTSErr", func() {
+			// mock generate timestamp error when reset engine.
+			localEngine.TS = 0
+			mockGRPCErr, _ := status.FromError(errors.Errorf("mock generate timestamp error"))
+			failpoint.Return(errors.Trace(mockGRPCErr.Err()))
+		})
 	}
 	localEngine.pendingFileSize.Store(0)
 
@@ -1767,6 +1784,11 @@ func (local *Backend) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) e
 	localEngine := local.lockEngine(engineUUID, importMutexStateClose)
 	// release this engine after import success
 	if localEngine == nil {
+		if extEngine, ok := local.externalEngine[engineUUID]; ok {
+			retErr := extEngine.Close()
+			delete(local.externalEngine, engineUUID)
+			return retErr
+		}
 		log.FromContext(ctx).Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
 		return nil
 	}

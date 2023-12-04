@@ -1481,7 +1481,7 @@ func (b *builtinCastStringAsTimeSig) evalTime(ctx sessionctx.Context, row chunk.
 		return res, isNull, err
 	}
 	sc := ctx.GetSessionVars().StmtCtx
-	res, err = types.ParseTime(sc.TypeCtx(), val, b.tp.GetType(), b.tp.GetDecimal(), nil)
+	res, err = types.ParseTime(sc.TypeCtx(), val, b.tp.GetType(), b.tp.GetDecimal())
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 	}
@@ -1691,11 +1691,17 @@ func (b *builtinCastDurationAsIntSig) evalInt(ctx sessionctx.Context, row chunk.
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	dur, err := val.RoundFrac(types.DefaultFsp, ctx.GetSessionVars().Location())
-	if err != nil {
-		return res, false, err
+
+	if b.tp.GetType() == mysql.TypeYear {
+		res, err = val.ConvertToYear(ctx.GetSessionVars().StmtCtx.TypeCtx())
+	} else {
+		var dur types.Duration
+		dur, err = val.RoundFrac(types.DefaultFsp, ctx.GetSessionVars().Location())
+		if err != nil {
+			return res, false, err
+		}
+		res, err = dur.ToNumber().ToInt()
 	}
-	res, err = dur.ToNumber().ToInt()
 	return res, false, err
 }
 
@@ -1960,7 +1966,7 @@ func (b *builtinCastJSONAsTimeSig) evalTime(ctx sessionctx.Context, row chunk.Ro
 			return res, false, err
 		}
 		sc := ctx.GetSessionVars().StmtCtx
-		res, err = types.ParseTime(sc.TypeCtx(), s, b.tp.GetType(), b.tp.GetDecimal(), nil)
+		res, err = types.ParseTime(sc.TypeCtx(), s, b.tp.GetType(), b.tp.GetDecimal())
 		if err != nil {
 			return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 		}
@@ -2141,13 +2147,12 @@ func BuildCastFunctionWithCheck(ctx sessionctx.Context, expr Expression, tp *typ
 		FuncName: model.NewCIStr(ast.Cast),
 		RetType:  tp,
 		Function: f,
-		ctx:      ctx,
 	}
 	// We do not fold CAST if the eval type of this scalar function is ETJson
 	// since we may reset the flag of the field type of CastAsJson later which
 	// would affect the evaluation of it.
 	if tp.EvalType() != types.ETJson && err == nil {
-		res = FoldConstant(res)
+		res = FoldConstant(ctx, res)
 	}
 	return res, err
 }
@@ -2388,7 +2393,7 @@ func TryPushCastIntoControlFunctionForHybridType(ctx sessionctx.Context, expr Ex
 			if err != nil {
 				return expr
 			}
-			sf.RetType, sf.Function, sf.ctx = f.getRetTp(), f, ctx
+			sf.RetType, sf.Function = f.getRetTp(), f
 			return sf
 		}
 	case ast.Case:
@@ -2413,7 +2418,7 @@ func TryPushCastIntoControlFunctionForHybridType(ctx sessionctx.Context, expr Ex
 		if err != nil {
 			return expr
 		}
-		sf.RetType, sf.Function, sf.ctx = f.getRetTp(), f, ctx
+		sf.RetType, sf.Function = f.getRetTp(), f
 		return sf
 	case ast.Elt:
 		hasHybrid := false
@@ -2431,7 +2436,7 @@ func TryPushCastIntoControlFunctionForHybridType(ctx sessionctx.Context, expr Ex
 		if err != nil {
 			return expr
 		}
-		sf.RetType, sf.Function, sf.ctx = f.getRetTp(), f, ctx
+		sf.RetType, sf.Function = f.getRetTp(), f
 		return sf
 	default:
 		return expr
