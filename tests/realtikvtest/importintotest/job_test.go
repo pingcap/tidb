@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/disttask/framework/hook"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
@@ -185,8 +186,8 @@ func (s *mockGCSSuite) TestShowJob() {
 
 	// show running jobs with 2 subtasks
 	cnt := 0
-	hook := &taskexecutor.TestCallBack{}
-	hook.OnSubtaskFinishedAfterExported = func(subtask *proto.Subtask) {
+	hk := &hook.TestCallback{}
+	hk.OnSubtaskFinishedAfterExported = func(subtask *proto.Subtask) {
 		if cnt < 2 {
 			taskexecutor.TestSyncChan <- struct{}{}
 			<-taskexecutor.TestSyncChan
@@ -197,7 +198,7 @@ func (s *mockGCSSuite) TestShowJob() {
 
 	}
 	taskexecutor.RegisterHook(proto.ImportInto, func() hook.Callback {
-		return hook
+		return hk
 	})
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-show-job", Name: "t2.csv"},
