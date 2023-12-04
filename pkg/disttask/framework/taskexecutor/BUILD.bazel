@@ -6,6 +6,7 @@ go_library(
         "interface.go",
         "manager.go",
         "register.go",
+        "slot_manager.go",
         "task_executor.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor",
@@ -40,12 +41,13 @@ go_test(
     srcs = [
         "manager_test.go",
         "register_test.go",
+        "slot_manager_test.go",
         "task_executor_test.go",
         "task_executor_testkit_test.go",
     ],
     embed = [":taskexecutor"],
     flaky = True,
-    shard_count = 9,
+    shard_count = 10,
     deps = [
         "//pkg/disttask/framework/mock",
         "//pkg/disttask/framework/mock/execute",
