@@ -519,3 +519,21 @@ func TestCTEShareCorColumn(t *testing.T) {
 	tk.MustExec("insert into t1 values(1), (2);")
 	tk.MustQuery("SELECT * FROM t1 dt WHERE EXISTS( WITH RECURSIVE qn AS (SELECT a AS b UNION ALL SELECT b+1 FROM qn WHERE b=0 or b = 1) SELECT * FROM qn dtqn1 where exists (select /*+ NO_DECORRELATE() */ b from qn where dtqn1.b+1));").Check(testkit.Rows("1", "2"))
 }
+
+func TestCTESmallChunkSize(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(c1 int);")
+	insertStr := "insert into t1 values (0)"
+	for i := 1; i < 300; i++ {
+		insertStr += fmt.Sprintf(", (%d)", i)
+	}
+	tk.MustExec(insertStr)
+	tk.MustExec("set @@tidb_max_chunk_size = 32;")
+	tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 1 offset 100) select * from cte1;").Check(testkit.Rows("100"))
+	tk.MustExec("set @@tidb_max_chunk_size = default;")
+}
+
