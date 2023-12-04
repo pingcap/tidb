@@ -234,13 +234,13 @@ func (m *Manager) onRunnableTasks(tasks []*proto.Task) {
 		t := task
 		err = m.schedulerPool.Run(func() {
 			m.slotManager.addTask(t)
+			defer m.slotManager.removeTask(t.ID)
 			m.onRunnableTask(t)
 			m.removeHandlingTask(t.ID)
-			m.slotManager.removeTask(t)
 		})
 		// pool closed.
 		if err != nil {
-			m.slotManager.removeTask(t)
+			m.slotManager.removeTask(t.ID)
 			m.removeHandlingTask(task.ID)
 			m.logErr(err)
 			return

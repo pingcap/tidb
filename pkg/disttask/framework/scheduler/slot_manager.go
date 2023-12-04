@@ -17,15 +17,13 @@ package scheduler
 import (
 	"sync"
 
-	"github.com/pingcap/tidb/pkg/disttask/framework/alloctor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 )
 
 type slotManager struct {
-	sync.Mutex
+	sync.RWMutex
 	// taskID -> slotInfo
 	schedulerSlotInfos map[int64]*slotInfo
-	slotAlloctor       alloctor.Alloctor
 
 	// The number of slots that can be used by the scheduler.
 	available int
@@ -37,7 +35,7 @@ type slotInfo struct {
 	slotCount int
 }
 
-func (sm *slotManager) addTask(task *proto.Task) error {
+func (sm *slotManager) addTask(task *proto.Task) {
 	sm.Lock()
 	defer sm.Unlock()
 	sm.schedulerSlotInfos[task.ID] = &slotInfo{
@@ -47,19 +45,19 @@ func (sm *slotManager) addTask(task *proto.Task) error {
 	}
 
 	sm.available -= int(task.Concurrency)
-	return nil
 }
 
-func (sm *slotManager) removeTask(task *proto.Task) error {
+func (sm *slotManager) removeTask(taskID int64) {
 	sm.Lock()
 	defer sm.Unlock()
 
-	delete(sm.schedulerSlotInfos, task.ID)
-	sm.available += int(task.Concurrency)
-	return nil
+	slotInfo, ok := sm.schedulerSlotInfos[taskID]
+	if ok {
+		delete(sm.schedulerSlotInfos, taskID)
+		sm.available += int(slotInfo.slotCount)
+	}
 }
 
 func (sm *slotManager) checkSlotAvailabilityForTask(task *proto.Task) bool {
 	return sm.available >= int(task.Concurrency)
-
 }
