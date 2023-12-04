@@ -16,9 +16,13 @@ package framework_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/stretchr/testify/require"
 )
 
@@ -27,13 +31,35 @@ func TestHABasic(t *testing.T) {
 	defer ctrl.Finish()
 
 	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestDispatcherExt(ctrl), testContext, nil)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockCleanExecutor", "return()"))
+	// init hook.
+	hook := &taskexecutor.TestCallBack{}
+	hook.OnSubtaskFinishedBeforeExported = func(subtask *proto.Subtask) error {
+		if subtask.ExecID == ":4000" || subtask.ExecID == ":4001" || subtask.ExecID == ":4002" {
+			v, ok := taskexecutor.TestContexts.Load(subtask.ExecID)
+			if ok {
+				v.(*taskexecutor.TestContext).TestSyncSubtaskRun <- struct{}{}
+				v.(*taskexecutor.TestContext).MockDown.Store(true)
+				time.Sleep(2 * time.Second)
+				return nil
+			}
+		}
+		return nil
+	}
+	hook.OnSubtaskRunBeforeExported = func(subtask *proto.Subtask) bool {
+		v, ok := taskexecutor.TestContexts.Load(subtask.ExecID)
+		if ok {
+			if v.(*taskexecutor.TestContext).MockDown.Load() {
+				return true
+			}
+		}
+		return false
+	}
+	taskexecutor.RegisterHook(proto.TaskTypeExample, func() taskexecutor.Callback {
+		return hook
+	})
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager", "4*return()"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown", "return(\":4000\")"))
 	testutil.DispatchTaskAndCheckSuccess(ctx, t, "😊", testContext, nil)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockCleanExecutor"))
 	distContext.Close()
 }
 
@@ -42,13 +68,35 @@ func TestHAManyNodes(t *testing.T) {
 	defer ctrl.Finish()
 
 	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestDispatcherExt(ctrl), testContext, nil)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockCleanExecutor", "return()"))
+	// init hook.
+	hook := &taskexecutor.TestCallBack{}
+	hook.OnSubtaskFinishedBeforeExported = func(subtask *proto.Subtask) error {
+		if subtask.ExecID == ":4000" || subtask.ExecID == ":4001" || subtask.ExecID == ":4002" {
+			v, ok := taskexecutor.TestContexts.Load(subtask.ExecID)
+			if ok {
+				v.(*taskexecutor.TestContext).TestSyncSubtaskRun <- struct{}{}
+				v.(*taskexecutor.TestContext).MockDown.Store(true)
+				time.Sleep(2 * time.Second)
+				return nil
+			}
+		}
+		return nil
+	}
+	hook.OnSubtaskRunBeforeExported = func(subtask *proto.Subtask) bool {
+		v, ok := taskexecutor.TestContexts.Load(subtask.ExecID)
+		if ok {
+			if v.(*taskexecutor.TestContext).MockDown.Load() {
+				return true
+			}
+		}
+		return false
+	}
+	taskexecutor.RegisterHook(proto.TaskTypeExample, func() taskexecutor.Callback {
+		return hook
+	})
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager", "30*return()"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown", "return(\":4000\")"))
 	testutil.DispatchTaskAndCheckSuccess(ctx, t, "😊", testContext, nil)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockCleanExecutor"))
 	distContext.Close()
 }
 
@@ -57,18 +105,53 @@ func TestHAFailInDifferentStage(t *testing.T) {
 	defer ctrl.Finish()
 
 	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestDispatcherExt(ctrl), testContext, nil)
+	// init hook.
+	hook := &taskexecutor.TestCallBack{}
+	hook.OnSubtaskFinishedBeforeExported = func(subtask *proto.Subtask) error {
+		if subtask.ExecID == ":4000" || subtask.ExecID == ":4001" || subtask.ExecID == ":4002" {
+			v, ok := taskexecutor.TestContexts.Load(subtask.ExecID)
+			if ok {
+				v.(*taskexecutor.TestContext).TestSyncSubtaskRun <- struct{}{}
+				v.(*taskexecutor.TestContext).MockDown.Store(true)
+				time.Sleep(2 * time.Second)
+				return nil
+			}
+		}
+		if subtask.ExecID == ":4003" && subtask.Step == proto.StepTwo {
+			v, ok := taskexecutor.TestContexts.Load(subtask.ExecID)
+			if ok {
+				v.(*taskexecutor.TestContext).TestSyncSubtaskRun <- struct{}{}
+				v.(*taskexecutor.TestContext).MockDown.Store(true)
+				time.Sleep(2 * time.Second)
+				return nil
+			}
+		}
+		return nil
+	}
+	hook.OnSubtaskRunBeforeExported = func(subtask *proto.Subtask) bool {
+		v, ok := taskexecutor.TestContexts.Load(subtask.ExecID)
+		if ok {
+			if v.(*taskexecutor.TestContext).MockDown.Load() {
+				return true
+			}
+		}
+		return false
+	}
+	taskexecutor.RegisterHook(proto.TaskTypeExample, func() taskexecutor.Callback {
+		return hook
+	})
 	// stage1 : server num from 6 to 3.
 	// stage2 : server num from 3 to 2.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockCleanExecutor", "return()"))
+	// require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockCleanExecutor", "return()"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager", "6*return()"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown", "return(\":4000\")"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown2", "return()"))
+	// require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown", "return(\":4000\")"))
+	// require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown2", "return()"))
 
 	testutil.DispatchTaskAndCheckSuccess(ctx, t, "😊", testContext, nil)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown2"))
+	// require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown"))
+	// require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown2"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockCleanExecutor"))
+	// require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockCleanExecutor"))
 	distContext.Close()
 }
 
@@ -77,18 +160,47 @@ func TestHAFailInDifferentStageManyNodes(t *testing.T) {
 	defer ctrl.Finish()
 
 	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestDispatcherExt(ctrl), testContext, nil)
+	// init hook.
+	hook := &taskexecutor.TestCallBack{}
+	hook.OnSubtaskFinishedBeforeExported = func(subtask *proto.Subtask) error {
+		if subtask.ExecID == ":4000" || subtask.ExecID == ":4001" || subtask.ExecID == ":4002" {
+			v, ok := taskexecutor.TestContexts.Load(subtask.ExecID)
+			if ok {
+				v.(*taskexecutor.TestContext).TestSyncSubtaskRun <- struct{}{}
+				v.(*taskexecutor.TestContext).MockDown.Store(true)
+				time.Sleep(2 * time.Second)
+				return nil
+			}
+		}
+		if subtask.ExecID == ":4003" && subtask.Step == proto.StepTwo {
+			v, ok := taskexecutor.TestContexts.Load(subtask.ExecID)
+			if ok {
+				v.(*taskexecutor.TestContext).TestSyncSubtaskRun <- struct{}{}
+				v.(*taskexecutor.TestContext).MockDown.Store(true)
+				time.Sleep(2 * time.Second)
+				return nil
+			}
+		}
+		return nil
+	}
+	hook.OnSubtaskRunBeforeExported = func(subtask *proto.Subtask) bool {
+		v, ok := taskexecutor.TestContexts.Load(subtask.ExecID)
+		if ok {
+			if v.(*taskexecutor.TestContext).MockDown.Load() {
+				return true
+			}
+		}
+		return false
+	}
+	taskexecutor.RegisterHook(proto.TaskTypeExample, func() taskexecutor.Callback {
+		return hook
+	})
 	// stage1 : server num from 30 to 27.
 	// stage2 : server num from 27 to 26.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockCleanExecutor", "return()"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager", "30*return()"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown", "return(\":4000\")"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown2", "return()"))
 
 	testutil.DispatchTaskAndCheckSuccess(ctx, t, "😊", testContext, nil)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown2"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockCleanExecutor"))
 	distContext.Close()
 }
 
@@ -97,9 +209,19 @@ func TestHAReplacedButRunning(t *testing.T) {
 	defer ctrl.Finish()
 
 	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestDispatcherExt(ctrl), testContext, nil)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBPartitionThenResume", "10*return(true)"))
+	// init hook.
+	hook := &taskexecutor.TestCallBack{}
+	hook.OnSubtaskFinishedBeforeExported = func(subtask *proto.Subtask) error {
+		if subtask.ExecID == ":4000" || subtask.ExecID == ":4001" || subtask.ExecID == ":4002" {
+			_ = infosync.MockGlobalServerInfoManagerEntry.DeleteByID(subtask.ExecID)
+			time.Sleep(20 * time.Second)
+		}
+		return nil
+	}
+	taskexecutor.RegisterHook(proto.TaskTypeExample, func() taskexecutor.Callback {
+		return hook
+	})
 	testutil.DispatchTaskAndCheckSuccess(ctx, t, "😊", testContext, nil)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBPartitionThenResume"))
 	distContext.Close()
 }
 
@@ -108,8 +230,18 @@ func TestHAReplacedButRunningManyNodes(t *testing.T) {
 	defer ctrl.Finish()
 
 	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestDispatcherExt(ctrl), testContext, nil)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBPartitionThenResume", "30*return(true)"))
+	// init hook.
+	hook := &taskexecutor.TestCallBack{}
+	hook.OnSubtaskFinishedBeforeExported = func(subtask *proto.Subtask) error {
+		if subtask.ExecID == ":4000" || subtask.ExecID == ":4001" || subtask.ExecID == ":4002" {
+			_ = infosync.MockGlobalServerInfoManagerEntry.DeleteByID(subtask.ExecID)
+			time.Sleep(20 * time.Second)
+		}
+		return nil
+	}
+	taskexecutor.RegisterHook(proto.TaskTypeExample, func() taskexecutor.Callback {
+		return hook
+	})
 	testutil.DispatchTaskAndCheckSuccess(ctx, t, "😊", testContext, nil)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBPartitionThenResume"))
 	distContext.Close()
 }

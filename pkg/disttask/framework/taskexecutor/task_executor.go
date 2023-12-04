@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
@@ -28,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
@@ -175,10 +173,10 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 		s.onError(err)
 		return s.getError()
 	}
-
-	failpoint.Inject("mockExecSubtaskInitEnvErr", func() {
-		failpoint.Return(errors.New("mockExecSubtaskInitEnvErr"))
-	})
+	err = s.onInitBefore(task)
+	if err != nil {
+		return err
+	}
 	if err := subtaskExecutor.Init(runCtx); err != nil {
 		s.onError(err)
 		return s.getError()
@@ -229,9 +227,9 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 			continue
 		}
 		if subtask == nil {
-			failpoint.Inject("breakInTaskExecutorUT", func() {
-				failpoint.Break()
-			})
+			//if _, _err_ := failpoint.Eval(_curpkg_("breakInTaskExecutorUT")); _err_ == nil {
+			//	break
+			//}
 			newTask, err := s.taskTable.GetTaskByID(runCtx, task.ID)
 			if err != nil {
 				logutil.Logger(s.logCtx).Warn("GetTaskByID meets error", zap.Error(err))
@@ -264,19 +262,9 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 			}
 		}
 
-		failpoint.Inject("mockCleanExecutor", func() {
-			v, ok := testContexts.Load(s.id)
-			if ok {
-				if v.(*TestContext).mockDown.Load() {
-					failpoint.Break()
-				}
-			}
-		})
-
-		failpoint.Inject("cancelBeforeRunSubtask", func() {
-			runCancel(nil)
-		})
-
+		if shouldBreak := s.onSubtaskRunBefore(subtask); shouldBreak {
+			break
+		}
 		s.runSubtask(runCtx, subtaskExecutor, subtask)
 	}
 	return s.getError()
@@ -284,17 +272,11 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 
 func (s *BaseTaskExecutor) runSubtask(ctx context.Context, subtaskExecutor execute.SubtaskExecutor, subtask *proto.Subtask) {
 	err := subtaskExecutor.RunSubtask(ctx, subtask)
-	failpoint.Inject("MockRunSubtaskCancel", func(val failpoint.Value) {
-		if val.(bool) {
-			err = ErrCancelSubtask
-		}
-	})
+	if err != nil {
+		s.onError(err)
+	}
 
-	failpoint.Inject("MockRunSubtaskContextCanceled", func(val failpoint.Value) {
-		if val.(bool) {
-			err = context.Canceled
-		}
-	})
+	err = s.onSubtaskRunAfter(subtask)
 
 	if err != nil {
 		s.onError(err)
@@ -304,62 +286,9 @@ func (s *BaseTaskExecutor) runSubtask(ctx context.Context, subtaskExecutor execu
 	if finished {
 		return
 	}
-
-	failpoint.Inject("mockTiDBDown", func(val failpoint.Value) {
-		logutil.Logger(s.logCtx).Info("trigger mockTiDBDown")
-		if s.id == val.(string) || s.id == ":4001" || s.id == ":4002" {
-			v, ok := testContexts.Load(s.id)
-			if ok {
-				v.(*TestContext).TestSyncSubtaskRun <- struct{}{}
-				v.(*TestContext).mockDown.Store(true)
-				logutil.Logger(s.logCtx).Info("mockTiDBDown")
-				time.Sleep(2 * time.Second)
-				failpoint.Return()
-			}
-		}
-	})
-	failpoint.Inject("mockTiDBDown2", func() {
-		if s.id == ":4003" && subtask.Step == proto.StepTwo {
-			v, ok := testContexts.Load(s.id)
-			if ok {
-				v.(*TestContext).TestSyncSubtaskRun <- struct{}{}
-				v.(*TestContext).mockDown.Store(true)
-				time.Sleep(2 * time.Second)
-				return
-			}
-		}
-	})
-
-	failpoint.Inject("mockTiDBPartitionThenResume", func(val failpoint.Value) {
-		if val.(bool) && (s.id == ":4000" || s.id == ":4001" || s.id == ":4002") {
-			_ = infosync.MockGlobalServerInfoManagerEntry.DeleteByID(s.id)
-			time.Sleep(20 * time.Second)
-		}
-	})
-
-	failpoint.Inject("MockExecutorRunErr", func(val failpoint.Value) {
-		if val.(bool) {
-			s.onError(errors.New("MockExecutorRunErr"))
-		}
-	})
-	failpoint.Inject("MockExecutorRunCancel", func(val failpoint.Value) {
-		if taskID, ok := val.(int); ok {
-			mgr, err := storage.GetTaskManager()
-			if err != nil {
-				logutil.BgLogger().Error("get task manager failed", zap.Error(err))
-			} else {
-				err = mgr.CancelTask(ctx, int64(taskID))
-				if err != nil {
-					logutil.BgLogger().Error("cancel task failed", zap.Error(err))
-				}
-			}
-		}
-	})
-	failpoint.Inject("MockSubtaskFinishedCancel", func(val failpoint.Value) {
-		if val.(bool) {
-			s.onError(ErrCancelSubtask)
-		}
-	})
+	if err = s.onSubtaskFinishedBefore(subtask); err != nil {
+		s.onError(err)
+	}
 	s.onSubtaskFinished(ctx, subtaskExecutor, subtask)
 }
 
@@ -382,10 +311,7 @@ func (s *BaseTaskExecutor) onSubtaskFinished(ctx context.Context, executor execu
 		return
 	}
 
-	failpoint.Inject("syncAfterSubtaskFinish", func() {
-		TestSyncChan <- struct{}{}
-		<-TestSyncChan
-	})
+	s.onSubtaskFinishedAfter(subtask)
 }
 
 // Rollback rollbacks the subtask.
@@ -463,6 +389,13 @@ func (s *BaseTaskExecutor) Pause(ctx context.Context, task *proto.Task) error {
 
 // Close closes the TaskExecutor when all the subtasks are complete.
 func (*BaseTaskExecutor) Close() {
+}
+
+// SetHook set hook for executor.
+func (s *BaseTaskExecutor) SetHook(hook Callback) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mu.hook = hook
 }
 
 func runSummaryCollectLoop(
@@ -636,4 +569,41 @@ func (s *BaseTaskExecutor) updateErrorToSubtask(ctx context.Context, taskID int6
 		logger.Warn("update error to subtask success", zap.Error(err))
 	}
 	return err1
+}
+
+// ****************************** hook for TaskExecutor ****************************************
+
+func (s *BaseTaskExecutor) onInitBefore(task *proto.Task) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.mu.hook.OnInitBefore(task)
+}
+
+func (s *BaseTaskExecutor) onSubtaskRunBefore(subtask *proto.Subtask) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.mu.hook.OnSubtaskRunBefore(subtask)
+}
+
+func (s *BaseTaskExecutor) onSubtaskRunAfter(subtask *proto.Subtask) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.mu.hook.OnSubtaskRunAfter(subtask)
+}
+
+func (s *BaseTaskExecutor) onSubtaskFinishedBefore(subtask *proto.Subtask) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.mu.hook.OnSubtaskFinishedBefore(subtask)
+}
+
+func (s *BaseTaskExecutor) onSubtaskFinishedAfter(subtask *proto.Subtask) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.mu.hook.OnSubtaskFinishedAfter(subtask)
 }

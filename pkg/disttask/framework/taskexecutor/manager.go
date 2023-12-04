@@ -316,10 +316,10 @@ func (m *Manager) filterAlreadyHandlingTasks(tasks []*proto.Task) []*proto.Task 
 // TestContext only used in tests.
 type TestContext struct {
 	TestSyncSubtaskRun chan struct{}
-	mockDown           atomic.Bool
+	MockDown           atomic.Bool
 }
 
-var testContexts sync.Map
+var TestContexts sync.Map
 
 // onRunnableTask handles a runnable task.
 func (m *Manager) onRunnableTask(task *proto.Task) {
@@ -332,6 +332,16 @@ func (m *Manager) onRunnableTask(task *proto.Task) {
 		return
 	}
 	executor := factory(m.ctx, m.id, task, m.taskTable)
+
+	hookFactory := GetHookFactory(task.Type)
+	if hookFactory == nil {
+		err := errors.Errorf("task type %s not found", task.Type)
+		m.logErrAndPersist(err, task.ID, nil)
+		return
+	}
+
+	executor.SetHook(hookFactory())
+
 	taskCtx, taskCancel := context.WithCancelCause(m.ctx)
 	m.registerCancelFunc(task.ID, taskCancel)
 	defer taskCancel(nil)
@@ -350,9 +360,9 @@ func (m *Manager) onRunnableTask(task *proto.Task) {
 		case <-time.After(checkTime):
 		}
 		failpoint.Inject("mockStopManager", func() {
-			testContexts.Store(m.id, &TestContext{make(chan struct{}), atomic.Bool{}})
+			TestContexts.Store(m.id, &TestContext{make(chan struct{}), atomic.Bool{}})
 			go func() {
-				v, ok := testContexts.Load(m.id)
+				v, ok := TestContexts.Load(m.id)
 				if ok {
 					<-v.(*TestContext).TestSyncSubtaskRun
 					_ = infosync.MockGlobalServerInfoManagerEntry.DeleteByID(m.id)

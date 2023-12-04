@@ -34,9 +34,11 @@ var (
 	// key is task type
 	taskTypes             = make(map[proto.TaskType]taskTypeOptions)
 	taskExecutorFactories = make(map[proto.TaskType]taskExecutorFactoryFn)
+	taskHookFactories     = make(map[proto.TaskType]taskHookFactoryFn)
 )
 
 type taskExecutorFactoryFn func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) TaskExecutor
+type taskHookFactoryFn func() Callback
 
 // RegisterTaskType registers the task type.
 func RegisterTaskType(taskType proto.TaskType, factory taskExecutorFactoryFn, opts ...TaskTypeOption) {
@@ -46,11 +48,23 @@ func RegisterTaskType(taskType proto.TaskType, factory taskExecutorFactoryFn, op
 	}
 	taskTypes[taskType] = option
 	taskExecutorFactories[taskType] = factory
+	// register default callback.
+	taskHookFactories[taskType] = func() Callback {
+		return &BaseCallback{}
+	}
 }
 
 // GetTaskExecutorFactory gets taskExecutorFactory by task type.
 func GetTaskExecutorFactory(taskType proto.TaskType) taskExecutorFactoryFn {
 	return taskExecutorFactories[taskType]
+}
+
+func RegisterHook(taskType proto.TaskType, factory taskHookFactoryFn) {
+	taskHookFactories[taskType] = factory
+}
+
+func GetHookFactory(taskType proto.TaskType) taskHookFactoryFn {
+	return taskHookFactories[taskType]
 }
 
 // ClearTaskExecutors is only used in test

@@ -15,6 +15,7 @@
 package addindextest
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -71,11 +73,24 @@ func TestAddIndexDistBasic(t *testing.T) {
 	tk.MustExec("alter table t1 add index idx(a);")
 	tk.MustExec("admin check index t1 idx;")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockRunSubtaskContextCanceled", "1*return(true)"))
+	hook := &taskexecutor.TestCallBack{}
+	cnt := 0
+	hook.OnSubtaskRunAfterExported = func(subtask *proto.Subtask) error {
+		if cnt == 0 {
+			cnt++
+			return context.Canceled
+		}
+		return nil
+	}
+	taskexecutor.RegisterHook(proto.Backfill, func() taskexecutor.Callback {
+		return hook
+	})
 	tk.MustExec("alter table t1 add index idx1(a);")
 	tk.MustExec("admin check index t1 idx1;")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockRunSubtaskContextCanceled"))
-
+	hook.OnSubtaskFinishedBeforeExported = nil
+	taskexecutor.RegisterHook(proto.Backfill, func() taskexecutor.Callback {
+		return hook
+	})
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectPanicForTableScan", "return()"))
 	tk.MustExecToErr("alter table t1 add index idx2(a);")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectPanicForTableScan"))

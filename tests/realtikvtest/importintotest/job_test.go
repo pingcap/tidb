@@ -184,7 +184,22 @@ func (s *mockGCSSuite) TestShowJob() {
 	checkJobsMatch(rows)
 
 	// show running jobs with 2 subtasks
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/syncAfterSubtaskFinish", `return(true)`)
+	// ywq todo fix the test
+	cnt := 0
+	hook := &taskexecutor.TestCallBack{}
+	hook.OnSubtaskFinishedAfterExported = func(subtask *proto.Subtask) {
+		if cnt == 0 {
+			taskexecutor.TestSyncChan <- struct{}{}
+			<-taskexecutor.TestSyncChan
+			// resume the taskexecutor, use cnt to disable the channel, otherwise the post-process subtask will be blocked
+
+			cnt++
+		}
+
+	}
+	taskexecutor.RegisterHook(proto.ImportInto, func() taskexecutor.Callback {
+		return hook
+	})
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-show-job", Name: "t2.csv"},
 		Content:     []byte("3\n4"),
@@ -243,8 +258,6 @@ func (s *mockGCSSuite) TestShowJob() {
 		s.Len(rows, 1)
 		jobInfo.Summary.ImportedRows = 4
 		s.compareJobInfoWithoutTime(jobInfo, rows[0])
-		// resume the taskexecutor, need disable failpoint first, otherwise the post-process subtask will be blocked
-		s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/syncAfterSubtaskFinish"))
 		taskexecutor.TestSyncChan <- struct{}{}
 	}()
 	s.tk.MustQuery(fmt.Sprintf(`import into t3 FROM 'gs://test-show-job/t*.csv?access-key=aaaaaa&secret-access-key=bbbbbb&endpoint=%s' with thread=1, __max_engine_size='1'`, gcsEndpoint))

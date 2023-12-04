@@ -55,6 +55,7 @@ type TaskExecutor interface {
 	Pause(context.Context, *proto.Task) error
 	Close()
 	IsRetryableError(err error) bool
+	SetHook(hook Callback)
 }
 
 // Extension extends the TaskExecutor.

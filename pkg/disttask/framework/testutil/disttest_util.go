@@ -16,20 +16,22 @@ package testutil
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	mockexecute "github.com/pingcap/tidb/pkg/disttask/framework/mock/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+	"go.uber.org/zap"
 )
 
 // RegisterTaskMeta initialize mock components for dist task.
@@ -165,10 +167,25 @@ func DispatchTaskAndCheckSuccess(ctx context.Context, t *testing.T, taskKey stri
 
 // DispatchAndCancelTask dispatch one task then cancel it.
 func DispatchAndCancelTask(ctx context.Context, t *testing.T, taskKey string, testContext *TestContext) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunCancel", "1*return(1)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunCancel"))
-	}()
+	// init hook.
+	hook := &taskexecutor.TestCallBack{}
+	hook.OnSubtaskFinishedBeforeExported = func(subtask *proto.Subtask) error {
+		mgr, err := storage.GetTaskManager()
+		if err != nil {
+			logutil.BgLogger().Error("get task manager failed", zap.Error(err))
+			return err
+		} else {
+			err = mgr.CancelTask(ctx, int64(subtask.TaskID))
+			if err != nil {
+				logutil.BgLogger().Error("cancel task failed", zap.Error(err))
+				return err
+			}
+		}
+		return nil
+	}
+	taskexecutor.RegisterHook(proto.TaskTypeExample, func() taskexecutor.Callback {
+		return hook
+	})
 	task := DispatchTask(ctx, t, taskKey)
 	require.Equal(t, proto.TaskStateReverted, task.State)
 	testContext.M.Range(func(key, value interface{}) bool {
@@ -193,7 +210,19 @@ func DispatchMultiTasksAndOneFail(ctx context.Context, t *testing.T, num int, te
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
 	tasks := make([]*proto.Task, num)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunErr", "1*return(true)"))
+	// init hook.
+	cnt := 0
+	hook := &taskexecutor.TestCallBack{}
+	hook.OnSubtaskFinishedBeforeExported = func(_ *proto.Subtask) error {
+		if cnt == 0 {
+			cnt++
+			return errors.New("MockExecutorRunErr")
+		}
+		return nil
+	}
+	taskexecutor.RegisterHook(proto.TaskTypeExample, func() taskexecutor.Callback {
+		return hook
+	})
 
 	for i := 0; i < num; i++ {
 		_, err = mgr.CreateTask(ctx, fmt.Sprintf("key%d", i), proto.TaskTypeExample, 8, nil)
@@ -215,5 +244,4 @@ func DispatchMultiTasksAndOneFail(ctx context.Context, t *testing.T, num int, te
 		testContext.M.Delete(key)
 		return true
 	})
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunErr"))
 }

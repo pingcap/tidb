@@ -20,26 +20,89 @@ import (
 
 // Callback is used for task executor.
 type Callback interface {
-	OnInitBefore(task *proto.Task)
-	OnSubtaskRunBefore(subtask *proto.Subtask)
-	OnSubtaskRunAfter(subtask *proto.Subtask)
-	OnSubtaskFinishedBefore(subtask *proto.Subtask)
+	OnInitBefore(task *proto.Task) error
+	OnSubtaskRunBefore(subtask *proto.Subtask) bool
+	OnSubtaskRunAfter(subtask *proto.Subtask) error
+	OnSubtaskFinishedBefore(subtask *proto.Subtask) error
 	OnSubtaskFinishedAfter(subtask *proto.Subtask)
-	//		// OnChanged is called after a ddl statement is finished.
-	//		OnChanged(err error) error
-	//		// OnSchemaStateChanged is called after a schema state is changed.
-	//		OnSchemaStateChanged(schemaVer int64)
-	//		// OnJobRunBefore is called before running job.
-	//		OnJobRunBefore(job *model.Job)
-	//		// OnJobRunAfter is called after running job.
-	//		OnJobRunAfter(job *model.Job)
-	//		// OnJobUpdated is called after the running job is updated.
-	//		OnJobUpdated(job *model.Job)
-	//		// OnWatched is called after watching owner is completed.
-	//		OnWatched(ctx context.Context)
-	//		// OnGetJobBefore is called before getting job.
-	//		OnGetJobBefore(jobType string)
-	//		// OnGetJobAfter is called after getting job.
-	//		OnGetJobAfter(jobType string, job *model.Job)
-	//	}
+}
+
+var _ Callback = (*BaseCallback)(nil)
+
+// BaseCallback implements Callback interface.
+type BaseCallback struct {
+}
+
+// OnInitBefore implements Callback interface.
+func (*BaseCallback) OnInitBefore(_ *proto.Task) error {
+	return nil
+}
+
+// OnSubtaskRunBefore implements Callback interface.
+func (*BaseCallback) OnSubtaskRunBefore(_ *proto.Subtask) bool {
+	return false
+}
+
+// OnSubtaskRunAfter implements Callback interface.
+func (*BaseCallback) OnSubtaskRunAfter(_ *proto.Subtask) error {
+	return nil
+}
+
+// OnSubtaskFinishedBefore implements Callback interface.
+func (*BaseCallback) OnSubtaskFinishedBefore(_ *proto.Subtask) error {
+	return nil
+}
+
+// OnSubtaskFinishedAfter implements Callback interface.
+func (*BaseCallback) OnSubtaskFinishedAfter(_ *proto.Subtask) {
+
+}
+
+// TestCallBack is used to customize callback for testing.
+type TestCallBack struct {
+	*BaseCallback
+	OnInitBeforeExported            func(task *proto.Task) error
+	OnSubtaskRunBeforeExported      func(subtask *proto.Subtask) bool
+	OnSubtaskRunAfterExported       func(subtask *proto.Subtask) error
+	OnSubtaskFinishedBeforeExported func(subtask *proto.Subtask) error
+	OnSubtaskFinishedAfterExported  func(subtask *proto.Subtask)
+}
+
+// OnInitBefore overrides Callback interface.
+func (tc *TestCallBack) OnInitBefore(task *proto.Task) error {
+	if tc.OnInitBeforeExported != nil {
+		return tc.OnInitBeforeExported(task)
+	}
+	return nil
+}
+
+// OnSubtaskRunBefore overrides Callback interface.
+func (tc *TestCallBack) OnSubtaskRunBefore(subtask *proto.Subtask) bool {
+	if tc.OnSubtaskRunBeforeExported != nil {
+		return tc.OnSubtaskRunBeforeExported(subtask)
+	}
+	return false
+}
+
+// OnSubtaskRunAfter overrides Callback interface.
+func (tc *TestCallBack) OnSubtaskRunAfter(subtask *proto.Subtask) error {
+	if tc.OnSubtaskRunAfterExported != nil {
+		return tc.OnSubtaskRunAfterExported(subtask)
+	}
+	return nil
+}
+
+// OnSubtaskFinishedBefore overrides Callback interface.
+func (tc *TestCallBack) OnSubtaskFinishedBefore(subtask *proto.Subtask) error {
+	if tc.OnSubtaskFinishedBeforeExported != nil {
+		return tc.OnSubtaskFinishedBeforeExported(subtask)
+	}
+	return nil
+}
+
+// OnSubtaskFinishedAfter overrides Callback interface.
+func (tc *TestCallBack) OnSubtaskFinishedAfter(subtask *proto.Subtask) {
+	if tc.OnSubtaskFinishedAfterExported != nil {
+		tc.OnSubtaskFinishedAfterExported(subtask)
+	}
 }
