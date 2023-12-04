@@ -418,6 +418,10 @@ func toTopNMeta(topns *btree.BTreeG[*sortItem], n int) ([]TopNMeta, error) {
 func pruneTopNItem(topns *btree.BTreeG[*sortItem], sampleTree *btree.BTreeG[*sortItem], ndv, nullCount, sampleRows, totalRows int64) ([]TopNMeta, error) {
 	// If the sampleRows holds all rows, or NDV of samples equals to actual NDV, we just return the TopN directly.
 	if sampleRows == totalRows || totalRows <= 1 || int64(topns.Len()) >= ndv {
+		topns.Descend(func(item *sortItem) bool {
+			sampleTree.Delete(item)
+			return true
+		})
 		result, err := toTopNMeta(topns, topns.Len())
 		return result, err
 	}
