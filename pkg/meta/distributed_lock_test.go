@@ -109,6 +109,18 @@ func TestDistLockKeyAndOwner(t *testing.T) {
 	checkMutualExclusive(lock00, lock00Fake, cancel00Fake)
 }
 
+func TestDistributedLockExpire(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	ctx := context.Background()
+	lock := meta.NewDistributedLockBuilder().
+		SetBackoff(1*time.Microsecond).
+		SetLease(500*time.Millisecond).
+		Build(ctx, &mockDataStore{store}, "owner1", "testLock")
+
+	require.NoError(t, lock.Lock())
+	require.Eventually(t, func())
+}
+
 type mockDataStore struct {
 	store kv.Storage
 }

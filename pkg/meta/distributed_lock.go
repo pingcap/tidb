@@ -264,7 +264,7 @@ func (d *DistributedLock) getLockInTxnWithRetry(ctx context.Context, fn lockHand
 
 		if err != nil {
 			if err == lockHeldErr {
-				sleep(d.backoff)
+				<-time.After(d.backoff)
 				continue
 			}
 			logutil.Logger(d.outerCtx).Info("lock encounter error",
@@ -273,7 +273,7 @@ func (d *DistributedLock) getLockInTxnWithRetry(ctx context.Context, fn lockHand
 				return err
 			}
 			retryCnt++
-			sleep(d.backoff)
+			<-time.After(d.backoff)
 			continue
 		}
 		return nil
@@ -286,12 +286,6 @@ func contextIsDone(ctx context.Context) bool {
 		return true
 	default:
 		return false
-	}
-}
-
-func sleep(d time.Duration) {
-	select {
-	case <-time.After(d):
 	}
 }
 
