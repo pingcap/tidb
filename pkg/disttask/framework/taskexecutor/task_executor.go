@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
@@ -227,9 +228,9 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 			continue
 		}
 		if subtask == nil {
-			//if _, _err_ := failpoint.Eval(_curpkg_("breakInTaskExecutorUT")); _err_ == nil {
-			//	break
-			//}
+			failpoint.Inject("breakInTaskExecutorUT", func() {
+				failpoint.Break()
+			})
 			newTask, err := s.taskTable.GetTaskByID(runCtx, task.ID)
 			if err != nil {
 				logutil.Logger(s.logCtx).Warn("GetTaskByID meets error", zap.Error(err))
@@ -310,7 +311,6 @@ func (s *BaseTaskExecutor) onSubtaskFinished(ctx context.Context, executor execu
 	if finished {
 		return
 	}
-
 	s.onSubtaskFinishedAfter(subtask)
 }
 

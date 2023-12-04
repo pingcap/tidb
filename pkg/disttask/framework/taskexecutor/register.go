@@ -59,10 +59,12 @@ func GetTaskExecutorFactory(taskType proto.TaskType) taskExecutorFactoryFn {
 	return taskExecutorFactories[taskType]
 }
 
+// RegisterHook registers the task type's hook.
 func RegisterHook(taskType proto.TaskType, factory taskHookFactoryFn) {
 	taskHookFactories[taskType] = factory
 }
 
+// GetHookFactory gets taskHookFactoryFn by task type.
 func GetHookFactory(taskType proto.TaskType) taskHookFactoryFn {
 	return taskHookFactories[taskType]
 }

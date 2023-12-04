@@ -184,11 +184,10 @@ func (s *mockGCSSuite) TestShowJob() {
 	checkJobsMatch(rows)
 
 	// show running jobs with 2 subtasks
-	// ywq todo fix the test
 	cnt := 0
 	hook := &taskexecutor.TestCallBack{}
 	hook.OnSubtaskFinishedAfterExported = func(subtask *proto.Subtask) {
-		if cnt == 0 {
+		if cnt < 2 {
 			taskexecutor.TestSyncChan <- struct{}{}
 			<-taskexecutor.TestSyncChan
 			// resume the taskexecutor, use cnt to disable the channel, otherwise the post-process subtask will be blocked

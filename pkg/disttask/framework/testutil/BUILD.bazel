@@ -20,9 +20,10 @@ go_library(
         "//pkg/disttask/framework/taskexecutor",
         "//pkg/domain/infosync",
         "//pkg/testkit",
-        "@com_github_pingcap_failpoint//:failpoint",
+        "//pkg/util/logutil",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_mock//gomock",
+        "@org_uber_go_zap//:zap",
     ],
 )
