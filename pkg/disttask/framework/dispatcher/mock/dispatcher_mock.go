@@ -71,7 +71,7 @@ func (mr *MockExtensionMockRecorder) GetNextStep(arg0 any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetNextStep", reflect.TypeOf((*MockExtension)(nil).GetNextStep), arg0)
 }
 
-// IsRetryableErroror mocks base method.
+// IsRetryableError mocks base method.
 func (m *MockExtension) IsRetryableError(arg0 error) bool {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "IsRetryableError", arg0)
