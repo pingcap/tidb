@@ -2522,7 +2522,7 @@ func (do *Domain) analyzeJobsCleanupWorker(owner owner.Manager) {
 			}
 			// Only the owner should perform this operation.
 			if owner.IsOwner() {
-				err := statsHandle.CleanupCorruptedAnalyzeJob(analyzeProcessIDs)
+				err := statsHandle.CleanupCorruptedAnalyzeJobs(analyzeProcessIDs)
 				if err != nil {
 					logutil.BgLogger().Warn("cleanup analyze jobs failed", zap.Error(err))
 				}
