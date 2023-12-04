@@ -26,15 +26,17 @@ func TestTaskPriorityQueue(t *testing.T) {
 	priorityQueue := make(TaskPriorityQueue, 0)
 	heap.Init(&priorityQueue)
 
-	task1 := &TaskWrapper{Task: &Task{ID: 1, Priority: 3, CreateTime: time.Now()}}
-	task2 := &TaskWrapper{Task: &Task{ID: 2, Priority: 1, CreateTime: time.Now().Add(time.Second)}}
-	task3 := &TaskWrapper{Task: &Task{ID: 3, Priority: 2, CreateTime: time.Now().Add(2 * time.Second)}}
+	task1 := &TaskWrapper{Task: &Task{ID: 1, Priority: 1, CreateTime: time.Now()}}
+	task2 := &TaskWrapper{Task: &Task{ID: 2, Priority: 1, CreateTime: time.Now()}}
+	task3 := &TaskWrapper{Task: &Task{ID: 3, Priority: 1, CreateTime: time.Now().Add(-2 * time.Second)}}
+	task4 := &TaskWrapper{Task: &Task{ID: 4, Priority: 2, CreateTime: time.Now().Add(2 * time.Second)}}
 
 	heap.Push(&priorityQueue, task1)
 	heap.Push(&priorityQueue, task2)
 	heap.Push(&priorityQueue, task3)
+	heap.Push(&priorityQueue, task4)
 
-	expected := []int64{2, 3, 1}
+	expected := []int64{4, 3, 1, 2}
 
 	i := 0
 	// Pop tasks in priority order

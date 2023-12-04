@@ -29,7 +29,7 @@ func (pq TaskPriorityQueue) Len() int { return len(pq) }
 // Less returns true if the task at index i has higher priority than the task at index j.
 func (pq TaskPriorityQueue) Less(i, j int) bool {
 	// We want Pop to give us the highest priority, so we use greater than here.
-	return pq[i].Priority < pq[j].Priority ||
+	return pq[i].Priority > pq[j].Priority ||
 		(pq[i].Priority == pq[j].Priority && pq[i].CreateTime.Before(pq[j].CreateTime)) ||
 		(pq[i].Priority == pq[j].Priority && pq[i].CreateTime.Equal(pq[j].CreateTime) && pq[i].ID < pq[j].ID)
 }
