@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -80,8 +81,57 @@ func (sa *statsAnalyze) DeleteAnalyzeJobs(updateTime time.Time) error {
 // It cleans up both the job from current owner and the job from other nodes.
 func (sa *statsAnalyze) CleanupCorruptedAnalyzeJob(currentRunningProcessIDs map[uint64]struct{}) error {
 	return statsutil.CallWithSCtx(nil, func(sctx sessionctx.Context) error {
-		return nil
+		return cleanUpCorruptedAnalyzeJobsFromCurrentNode(sctx, currentRunningProcessIDs)
 	})
+}
+
+// cleanUpCorruptedAnalyzeJobsFromCurrentNode cleans up the potentially corrupted analyze job from current node.
+func cleanUpCorruptedAnalyzeJobsFromCurrentNode(
+	sctx sessionctx.Context,
+	currentRunningProcessIDs map[uint64]struct{},
+) error {
+	serverInfo, err := infosync.GetServerInfo()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	instance := fmt.Sprintf("%s:%d", serverInfo.IP, serverInfo.Port)
+	rows, _, err := statsutil.ExecRows(
+		sctx,
+		`SELECT id, process_id
+		FROM mysql.analyze_jobs
+		WHERE instance = %?
+		AND state IN ('pending', 'running')
+		AND TIMESTAMPDIFF(MINUTE, update_time, NOW()) > 10`,
+		instance,
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, row := range rows {
+		jobID := row.GetUint64(0)
+		if row.IsNull(1) {
+			continue
+		}
+		processID := row.GetUint64(1)
+		if _, ok := currentRunningProcessIDs[processID]; !ok {
+			_, _, err = statsutil.ExecRows(
+				sctx,
+				`UPDATE mysql.analyze_jobs
+				SET state = 'failed',
+				fail_reason = 'TiDB Server is down when running the analyze job',
+				process_id = NULL
+				WHERE id = %?`,
+				jobID,
+			)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+
+	return nil
 }
 
 // HandleAutoAnalyze analyzes the newly created table or index.
