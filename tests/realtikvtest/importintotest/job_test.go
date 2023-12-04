@@ -196,7 +196,7 @@ func (s *mockGCSSuite) TestShowJob() {
 		}
 
 	}
-	taskexecutor.RegisterHook(proto.ImportInto, func() taskexecutor.Callback {
+	taskexecutor.RegisterHook(proto.ImportInto, func() hook.Callback {
 		return hook
 	})
 	s.server.CreateObject(fakestorage.Object{

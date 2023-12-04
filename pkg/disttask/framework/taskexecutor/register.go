@@ -17,6 +17,7 @@ package taskexecutor
 import (
 	"context"
 
+	"github.com/pingcap/tidb/pkg/disttask/framework/hook"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 )
@@ -38,7 +39,7 @@ var (
 )
 
 type taskExecutorFactoryFn func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) TaskExecutor
-type taskHookFactoryFn func() Callback
+type taskHookFactoryFn func() hook.Callback
 
 // RegisterTaskType registers the task type.
 func RegisterTaskType(taskType proto.TaskType, factory taskExecutorFactoryFn, opts ...TaskTypeOption) {
@@ -49,8 +50,8 @@ func RegisterTaskType(taskType proto.TaskType, factory taskExecutorFactoryFn, op
 	taskTypes[taskType] = option
 	taskExecutorFactories[taskType] = factory
 	// register default callback.
-	taskHookFactories[taskType] = func() Callback {
-		return &BaseCallback{}
+	taskHookFactories[taskType] = func() hook.Callback {
+		return &hook.BaseCallback{}
 	}
 }
 

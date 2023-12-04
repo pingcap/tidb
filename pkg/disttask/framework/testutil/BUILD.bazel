@@ -13,6 +13,7 @@ go_library(
     deps = [
         "//pkg/disttask/framework/dispatcher",
         "//pkg/disttask/framework/dispatcher/mock",
+        "//pkg/disttask/framework/hook",
         "//pkg/disttask/framework/mock",
         "//pkg/disttask/framework/mock/execute",
         "//pkg/disttask/framework/proto",

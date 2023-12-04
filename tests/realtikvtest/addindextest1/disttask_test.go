@@ -82,13 +82,13 @@ func TestAddIndexDistBasic(t *testing.T) {
 		}
 		return nil
 	}
-	taskexecutor.RegisterHook(proto.Backfill, func() taskexecutor.Callback {
+	taskexecutor.RegisterHook(proto.Backfill, func() hook.Callback {
 		return hook
 	})
 	tk.MustExec("alter table t1 add index idx1(a);")
 	tk.MustExec("admin check index t1 idx1;")
 	hook.OnSubtaskFinishedBeforeExported = nil
-	taskexecutor.RegisterHook(proto.Backfill, func() taskexecutor.Callback {
+	taskexecutor.RegisterHook(proto.Backfill, func() hook.Callback {
 		return hook
 	})
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectPanicForTableScan", "return()"))

@@ -25,6 +25,8 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
+
+	"github.com/pingcap/tidb/pkg/disttask/framework/hook"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -124,16 +126,16 @@ func TestFrameworkSubTaskFailed(t *testing.T) {
 	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), testContext, nil)
 	// init hook.
 	cnt := 0
-	hook := &taskexecutor.TestCallBack{}
-	hook.OnSubtaskFinishedBeforeExported = func(_ *proto.Subtask) error {
+	hk := &hook.TestCallback{}
+	hk.OnSubtaskFinishedBeforeExported = func(_ *proto.Subtask) error {
 		if cnt == 0 {
 			cnt++
 			return errors.New("MockExecutorRunErr")
 		}
 		return nil
 	}
-	taskexecutor.RegisterHook(proto.TaskTypeExample, func() taskexecutor.Callback {
-		return hook
+	taskexecutor.RegisterHook(proto.TaskTypeExample, func() hook.Callback {
+		return hk
 	})
 	testutil.DispatchTaskAndCheckState(ctx, t, "key1", testContext, proto.TaskStateReverted)
 	distContext.Close()
@@ -145,12 +147,12 @@ func TestFrameworkSubTaskInitEnvFailed(t *testing.T) {
 
 	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), testContext, nil)
 	// init hook.
-	hook := &taskexecutor.TestCallBack{}
-	hook.OnInitBeforeExported = func(_ *proto.Task) error {
+	hk := &hook.TestCallback{}
+	hk.OnInitBeforeExported = func(_ *proto.Task) error {
 		return errors.New("mockExecSubtaskInitEnvErr")
 	}
-	taskexecutor.RegisterHook(proto.TaskTypeExample, func() taskexecutor.Callback {
-		return hook
+	taskexecutor.RegisterHook(proto.TaskTypeExample, func() hook.Callback {
+		return hk
 	})
 
 	testutil.DispatchTaskAndCheckState(ctx, t, "key1", testContext, proto.TaskStateReverted)
@@ -190,8 +192,8 @@ func TestTaskExecutorDownBasic(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager", "4*return(\":4000\")"))
 
 	// init hook.
-	hook := &taskexecutor.TestCallBack{}
-	hook.OnSubtaskFinishedBeforeExported = func(subtask *proto.Subtask) error {
+	hk := &hook.TestCallback{}
+	hk.OnSubtaskFinishedBeforeExported = func(subtask *proto.Subtask) error {
 		if subtask.ExecID == ":4000" || subtask.ExecID == ":4001" || subtask.ExecID == ":4002" {
 			v, ok := taskexecutor.TestContexts.Load(subtask.ExecID)
 			if ok {
@@ -203,7 +205,7 @@ func TestTaskExecutorDownBasic(t *testing.T) {
 		}
 		return nil
 	}
-	hook.OnSubtaskRunBeforeExported = func(subtask *proto.Subtask) bool {
+	hk.OnSubtaskRunBeforeExported = func(subtask *proto.Subtask) bool {
 		v, ok := taskexecutor.TestContexts.Load(subtask.ExecID)
 		if ok {
 			if v.(*taskexecutor.TestContext).MockDown.Load() {
@@ -212,8 +214,8 @@ func TestTaskExecutorDownBasic(t *testing.T) {
 		}
 		return false
 	}
-	taskexecutor.RegisterHook(proto.TaskTypeExample, func() taskexecutor.Callback {
-		return hook
+	taskexecutor.RegisterHook(proto.TaskTypeExample, func() hook.Callback {
+		return hk
 	})
 	testutil.DispatchTaskAndCheckSuccess(ctx, t, "😊", testContext, nil)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager"))
@@ -225,8 +227,8 @@ func TestTaskExecutorDownManyNodes(t *testing.T) {
 	defer ctrl.Finish()
 	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), testContext, nil)
 	// init hook.
-	hook := &taskexecutor.TestCallBack{}
-	hook.OnSubtaskFinishedBeforeExported = func(subtask *proto.Subtask) error {
+	hk := &hook.TestCallback{}
+	hk.OnSubtaskFinishedBeforeExported = func(subtask *proto.Subtask) error {
 		if subtask.ExecID == ":4000" || subtask.ExecID == ":4001" || subtask.ExecID == ":4002" {
 			v, ok := taskexecutor.TestContexts.Load(subtask.ExecID)
 			if ok {
@@ -238,7 +240,7 @@ func TestTaskExecutorDownManyNodes(t *testing.T) {
 		}
 		return nil
 	}
-	hook.OnSubtaskRunBeforeExported = func(subtask *proto.Subtask) bool {
+	hk.OnSubtaskRunBeforeExported = func(subtask *proto.Subtask) bool {
 		v, ok := taskexecutor.TestContexts.Load(subtask.ExecID)
 		if ok {
 			if v.(*taskexecutor.TestContext).MockDown.Load() {
@@ -247,8 +249,8 @@ func TestTaskExecutorDownManyNodes(t *testing.T) {
 		}
 		return false
 	}
-	taskexecutor.RegisterHook(proto.TaskTypeExample, func() taskexecutor.Callback {
-		return hook
+	taskexecutor.RegisterHook(proto.TaskTypeExample, func() hook.Callback {
+		return hk
 	})
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager", "30*return(\":4000\")"))
 	testutil.DispatchTaskAndCheckSuccess(ctx, t, "😊", testContext, nil)
@@ -343,12 +345,12 @@ func TestFrameworkSubtaskFinishedCancel(t *testing.T) {
 
 	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), testContext, nil)
 	// init hook.
-	hook := &taskexecutor.TestCallBack{}
-	hook.OnSubtaskFinishedBeforeExported = func(subtask *proto.Subtask) error {
+	hk := &hook.TestCallback{}
+	hk.OnSubtaskFinishedBeforeExported = func(subtask *proto.Subtask) error {
 		return taskexecutor.ErrCancelSubtask
 	}
-	taskexecutor.RegisterHook(proto.TaskTypeExample, func() taskexecutor.Callback {
-		return hook
+	taskexecutor.RegisterHook(proto.TaskTypeExample, func() hook.Callback {
+		return hk
 	})
 	testutil.DispatchTaskAndCheckState(ctx, t, "key1", testContext, proto.TaskStateReverted)
 	distContext.Close()
@@ -360,12 +362,12 @@ func TestFrameworkRunSubtaskCancel(t *testing.T) {
 
 	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicDispatcherExt(ctrl), testContext, nil)
 	// init hook.
-	hook := &taskexecutor.TestCallBack{}
-	hook.OnSubtaskRunAfterExported = func(_ *proto.Subtask) error {
+	hk := &hook.TestCallback{}
+	hk.OnSubtaskRunAfterExported = func(_ *proto.Subtask) error {
 		return taskexecutor.ErrCancelSubtask
 	}
-	taskexecutor.RegisterHook(proto.TaskTypeExample, func() taskexecutor.Callback {
-		return hook
+	taskexecutor.RegisterHook(proto.TaskTypeExample, func() hook.Callback {
+		return hk
 	})
 	testutil.DispatchTaskAndCheckState(ctx, t, "key1", testContext, proto.TaskStateReverted)
 	distContext.Close()

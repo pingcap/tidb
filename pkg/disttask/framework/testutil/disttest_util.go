@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
+	"github.com/pingcap/tidb/pkg/disttask/framework/hook"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	mockexecute "github.com/pingcap/tidb/pkg/disttask/framework/mock/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -168,8 +169,8 @@ func DispatchTaskAndCheckSuccess(ctx context.Context, t *testing.T, taskKey stri
 // DispatchAndCancelTask dispatch one task then cancel it.
 func DispatchAndCancelTask(ctx context.Context, t *testing.T, taskKey string, testContext *TestContext) {
 	// init hook.
-	hook := &taskexecutor.TestCallBack{}
-	hook.OnSubtaskFinishedBeforeExported = func(subtask *proto.Subtask) error {
+	hk := &hook.TestCallback{}
+	hk.OnSubtaskFinishedBeforeExported = func(subtask *proto.Subtask) error {
 		mgr, err := storage.GetTaskManager()
 		if err != nil {
 			logutil.BgLogger().Error("get task manager failed", zap.Error(err))
@@ -183,8 +184,8 @@ func DispatchAndCancelTask(ctx context.Context, t *testing.T, taskKey string, te
 		}
 		return nil
 	}
-	taskexecutor.RegisterHook(proto.TaskTypeExample, func() taskexecutor.Callback {
-		return hook
+	taskexecutor.RegisterHook(proto.TaskTypeExample, func() hook.Callback {
+		return hk
 	})
 	task := DispatchTask(ctx, t, taskKey)
 	require.Equal(t, proto.TaskStateReverted, task.State)
@@ -212,16 +213,16 @@ func DispatchMultiTasksAndOneFail(ctx context.Context, t *testing.T, num int, te
 	tasks := make([]*proto.Task, num)
 	// init hook.
 	cnt := 0
-	hook := &taskexecutor.TestCallBack{}
-	hook.OnSubtaskFinishedBeforeExported = func(_ *proto.Subtask) error {
+	hk := &hook.TestCallback{}
+	hk.OnSubtaskFinishedBeforeExported = func(_ *proto.Subtask) error {
 		if cnt == 0 {
 			cnt++
 			return errors.New("MockExecutorRunErr")
 		}
 		return nil
 	}
-	taskexecutor.RegisterHook(proto.TaskTypeExample, func() taskexecutor.Callback {
-		return hook
+	taskexecutor.RegisterHook(proto.TaskTypeExample, func() hook.Callback {
+		return hk
 	})
 
 	for i := 0; i < num; i++ {

@@ -1,0 +1,9 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "hook",
+    srcs = ["callback.go"],
+    importpath = "github.com/pingcap/tidb/pkg/disttask/framework/hook",
+    visibility = ["//visibility:public"],
+    deps = ["//pkg/disttask/framework/proto"],
+)

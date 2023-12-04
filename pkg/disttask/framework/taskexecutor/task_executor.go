@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
+	"github.com/pingcap/tidb/pkg/disttask/framework/hook"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
@@ -71,7 +72,7 @@ type BaseTaskExecutor struct {
 		handled bool
 		// runtimeCancel is used to cancel the Run/Rollback when error occurs.
 		runtimeCancel context.CancelCauseFunc
-		hook          Callback
+		hook          hook.Callback
 	}
 }
 
@@ -392,10 +393,10 @@ func (*BaseTaskExecutor) Close() {
 }
 
 // SetHook set hook for executor.
-func (s *BaseTaskExecutor) SetHook(hook Callback) {
+func (s *BaseTaskExecutor) SetHook(hk hook.Callback) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.mu.hook = hook
+	s.mu.hook = hk
 }
 
 func runSummaryCollectLoop(

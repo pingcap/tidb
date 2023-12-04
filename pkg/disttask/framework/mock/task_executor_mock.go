@@ -12,8 +12,8 @@ import (
 	context "context"
 	reflect "reflect"
 
+	hook "github.com/pingcap/tidb/pkg/disttask/framework/hook"
 	proto "github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	taskexecutor "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	execute "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -404,7 +404,7 @@ func (mr *MockTaskExecutorMockRecorder) Run(arg0, arg1 any) *gomock.Call {
 }
 
 // SetHook mocks base method.
-func (m *MockTaskExecutor) SetHook(arg0 taskexecutor.Callback) {
+func (m *MockTaskExecutor) SetHook(arg0 hook.Callback) {
 	m.ctrl.T.Helper()
 	m.ctrl.Call(m, "SetHook", arg0)
 }

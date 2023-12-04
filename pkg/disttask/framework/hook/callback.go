@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package taskexecutor
+package hook
 
 import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -58,8 +58,8 @@ func (*BaseCallback) OnSubtaskFinishedAfter(_ *proto.Subtask) {
 
 }
 
-// TestCallBack is used to customize callback for testing.
-type TestCallBack struct {
+// TestCallback is used to customize callback for testing.
+type TestCallback struct {
 	*BaseCallback
 	OnInitBeforeExported            func(task *proto.Task) error
 	OnSubtaskRunBeforeExported      func(subtask *proto.Subtask) bool
@@ -69,7 +69,7 @@ type TestCallBack struct {
 }
 
 // OnInitBefore overrides Callback interface.
-func (tc *TestCallBack) OnInitBefore(task *proto.Task) error {
+func (tc *TestCallback) OnInitBefore(task *proto.Task) error {
 	if tc.OnInitBeforeExported != nil {
 		return tc.OnInitBeforeExported(task)
 	}
@@ -77,7 +77,7 @@ func (tc *TestCallBack) OnInitBefore(task *proto.Task) error {
 }
 
 // OnSubtaskRunBefore overrides Callback interface.
-func (tc *TestCallBack) OnSubtaskRunBefore(subtask *proto.Subtask) bool {
+func (tc *TestCallback) OnSubtaskRunBefore(subtask *proto.Subtask) bool {
 	if tc.OnSubtaskRunBeforeExported != nil {
 		return tc.OnSubtaskRunBeforeExported(subtask)
 	}
@@ -85,7 +85,7 @@ func (tc *TestCallBack) OnSubtaskRunBefore(subtask *proto.Subtask) bool {
 }
 
 // OnSubtaskRunAfter overrides Callback interface.
-func (tc *TestCallBack) OnSubtaskRunAfter(subtask *proto.Subtask) error {
+func (tc *TestCallback) OnSubtaskRunAfter(subtask *proto.Subtask) error {
 	if tc.OnSubtaskRunAfterExported != nil {
 		return tc.OnSubtaskRunAfterExported(subtask)
 	}
@@ -93,7 +93,7 @@ func (tc *TestCallBack) OnSubtaskRunAfter(subtask *proto.Subtask) error {
 }
 
 // OnSubtaskFinishedBefore overrides Callback interface.
-func (tc *TestCallBack) OnSubtaskFinishedBefore(subtask *proto.Subtask) error {
+func (tc *TestCallback) OnSubtaskFinishedBefore(subtask *proto.Subtask) error {
 	if tc.OnSubtaskFinishedBeforeExported != nil {
 		return tc.OnSubtaskFinishedBeforeExported(subtask)
 	}
@@ -101,7 +101,7 @@ func (tc *TestCallBack) OnSubtaskFinishedBefore(subtask *proto.Subtask) error {
 }
 
 // OnSubtaskFinishedAfter overrides Callback interface.
-func (tc *TestCallBack) OnSubtaskFinishedAfter(subtask *proto.Subtask) {
+func (tc *TestCallback) OnSubtaskFinishedAfter(subtask *proto.Subtask) {
 	if tc.OnSubtaskFinishedAfterExported != nil {
 		tc.OnSubtaskFinishedAfterExported(subtask)
 	}

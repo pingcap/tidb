@@ -17,6 +17,7 @@ package taskexecutor
 import (
 	"context"
 
+	"github.com/pingcap/tidb/pkg/disttask/framework/hook"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 )
@@ -55,7 +56,7 @@ type TaskExecutor interface {
 	Pause(context.Context, *proto.Task) error
 	Close()
 	IsRetryableError(err error) bool
-	SetHook(hook Callback)
+	SetHook(hook hook.Callback)
 }
 
 // Extension extends the TaskExecutor.
