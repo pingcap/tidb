@@ -229,55 +229,69 @@ func (d *DistributedLock) Unlock() error {
 
 func (d *DistributedLock) getLockInTxnWithRetry(ctx context.Context, fn lockHandleFunc) error {
 	retryCnt := 0
-	backoffTimer := time.NewTimer(d.backoff)
-	defer backoffTimer.Stop()
 	for {
-		backoffTimer.Reset(d.backoff)
-		select {
-		case <-ctx.Done():
+		if contextIsDone(ctx) {
 			return ctx.Err()
-		case <-d.outerCtx.Done():
+		}
+		if contextIsDone(d.outerCtx) {
 			// We only check the outer context error after retry 10 times,
 			// so that the lock can be released even if the outer context is canceled.
 			if retryCnt >= 10 {
 				return d.outerCtx.Err()
 			}
-		case <-backoffTimer.C:
-			var noRetry bool
-			err := runInTxn(ctx, d.store, func(txn DataTxn) error {
-				data, err := txn.Get(d.lockName)
-				if err != nil {
-					return errors.Trace(err)
-				}
+		}
 
-				lc, err := decodeLockContent(data)
-				if err != nil {
-					noRetry = true
-					return errors.Trace(err)
-				}
-
-				storeErr, otherErr := fn(lc, txn)
-				if otherErr != nil {
-					noRetry = true
-					return errors.Trace(otherErr)
-				}
-				return storeErr
-			})
-
+		var noRetry bool
+		err := runInTxn(ctx, d.store, func(txn DataTxn) error {
+			data, err := txn.Get(d.lockName)
 			if err != nil {
-				if err == lockHeldErr {
-					continue
-				}
-				logutil.Logger(d.outerCtx).Info("lock encounter error",
-					zap.Error(err), zap.Bool("retry", !noRetry))
-				if noRetry {
-					return err
-				}
-				retryCnt++
+				return errors.Trace(err)
+			}
+
+			lc, err := decodeLockContent(data)
+			if err != nil {
+				noRetry = true
+				return errors.Trace(err)
+			}
+
+			storeErr, otherErr := fn(lc, txn)
+			if otherErr != nil {
+				noRetry = true
+				return errors.Trace(otherErr)
+			}
+			return storeErr
+		})
+
+		if err != nil {
+			if err == lockHeldErr {
+				sleep(d.backoff)
 				continue
 			}
-			return nil
+			logutil.Logger(d.outerCtx).Info("lock encounter error",
+				zap.Error(err), zap.Bool("retry", !noRetry))
+			if noRetry {
+				return err
+			}
+			retryCnt++
+			sleep(d.backoff)
+			continue
 		}
+		return nil
+	}
+}
+
+func contextIsDone(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return true
+	default:
+		return false
+	}
+}
+
+func sleep(d time.Duration) {
+	select {
+	case <-time.After(d):
 	}
 }
 
