@@ -17,7 +17,6 @@ package ranger
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -175,9 +174,7 @@ func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) (isA
 	// In tidb's implementation, for PAD SPACE collations, the trailing spaces are removed in the index key. So we are
 	// unable to distinguish 'xxx' from 'xxx   ' by a single index range scan, and we may read more data than needed by
 	// the `like` function. Therefore, a Selection is needed to filter the data.
-	// Since all collations, except for binary, implemented in tidb are PAD SPACE collations for now, we use a simple
-	// collation != binary check here.
-	if collation != charset.CollationBin {
+	if isPadSpaceCollation(collation) {
 		likeFuncReserve = true
 	}
 

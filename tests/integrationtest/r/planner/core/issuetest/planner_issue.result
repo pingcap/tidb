@@ -260,7 +260,7 @@ a
 set @@tidb_max_chunk_size = default;
 drop table if exists t1, t2;
 create table t1(a varchar(20) collate utf8mb4_bin, index ia(a));
-insert into t1 value('测试'),('测试  ');
+insert into t1 value('测试'),('测试  '),('xxx ');
 explain format = brief select *,length(a) from t1 where a like '测试 %';
 id	estRows	task	access object	operator info
 Projection	250.00	root		planner__core__issuetest__planner_issue.t1.a, length(planner__core__issuetest__planner_issue.t1.a)->Column#3
@@ -281,6 +281,16 @@ a	length(a)
 select *,length(a) from t1 where a like '测试';
 a	length(a)
 测试	6
+explain format = brief select * from t1 use index (ia) where a like 'xxx_';
+id	estRows	task	access object	operator info
+Projection	250.00	root		planner__core__issuetest__planner_issue.t1.a
+└─UnionScan	250.00	root		like(planner__core__issuetest__planner_issue.t1.a, "xxx_", 92)
+  └─IndexReader	250.00	root		index:Selection
+    └─Selection	250.00	cop[tikv]		like(planner__core__issuetest__planner_issue.t1.a, "xxx_", 92)
+      └─IndexRangeScan	250.00	cop[tikv]	table:t1, index:ia(a)	range:["xxx","xxy"), keep order:false, stats:pseudo
+select * from t1 use index (ia) where a like 'xxx_';
+a
+xxx 
 create table t2(a varchar(20) collate gbk_chinese_ci, index ia(a));
 insert into t2 value('测试'),('测试  ');
 explain format = brief select *,length(a) from t2 where a like '测试 %';
