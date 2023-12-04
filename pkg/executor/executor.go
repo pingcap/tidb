@@ -2116,8 +2116,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		// but should not make DupKeyAsWarning.
 		sc.DupKeyAsWarning = stmt.IgnoreErr
 		sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
-		// see https://dev.mysql.com/doc/refman/8.0/en/out-of-range-and-overflow.html
-		sc.OverflowAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.IgnoreNoPartition = stmt.IgnoreErr
 		sc.ErrAutoincReadFailedAsWarning = stmt.IgnoreErr
 		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
@@ -2144,12 +2142,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	case *ast.SelectStmt:
 		sc.InSelectStmt = true
 
-		// see https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html#sql-mode-strict
-		// said "For statements such as SELECT that do not change data, invalid values
-		// generate a warning in strict mode, not an error."
-		// and https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
-		sc.OverflowAsWarning = true
-
 		// Return warning for truncate error in selection.
 		sc.SetTypeFlags(sc.TypeFlags().
 			WithTruncateAsWarning(true).
@@ -2162,7 +2154,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.WeakConsistency = isWeakConsistencyRead(ctx, stmt)
 	case *ast.SetOprStmt:
 		sc.InSelectStmt = true
-		sc.OverflowAsWarning = true
 		sc.SetTypeFlags(sc.TypeFlags().
 			WithTruncateAsWarning(true).
 			WithIgnoreZeroInDate(true).
