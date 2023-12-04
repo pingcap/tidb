@@ -74,6 +74,7 @@ type BaseTaskExecutor struct {
 		handled bool
 		// runtimeCancel is used to cancel the Run/Rollback when error occurs.
 		runtimeCancel context.CancelCauseFunc
+		hook          Callback
 	}
 }
 
@@ -356,6 +357,11 @@ func (s *BaseTaskExecutor) runSubtask(ctx context.Context, subtaskExecutor execu
 			}
 		}
 	})
+	failpoint.Inject("MockSubtaskFinishedCancel", func(val failpoint.Value) {
+		if val.(bool) {
+			s.onError(ErrCancelSubtask)
+		}
+	})
 	s.onSubtaskFinished(ctx, subtaskExecutor, subtask)
 }
 
@@ -365,11 +371,6 @@ func (s *BaseTaskExecutor) onSubtaskFinished(ctx context.Context, executor execu
 			s.onError(err)
 		}
 	}
-	failpoint.Inject("MockSubtaskFinishedCancel", func(val failpoint.Value) {
-		if val.(bool) {
-			s.onError(ErrCancelSubtask)
-		}
-	})
 
 	finished := s.markSubTaskCanceledOrFailed(ctx, subtask)
 	if finished {
