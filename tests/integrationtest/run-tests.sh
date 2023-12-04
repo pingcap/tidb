@@ -277,7 +277,6 @@ function check_case_name() {
     fi
 }
 
-enabled_new_collation=""
 check_case_name
 if [[ $collation_opt = 0 || $collation_opt = 2 ]]; then
     enabled_new_collation=0
