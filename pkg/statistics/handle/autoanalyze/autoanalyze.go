@@ -81,7 +81,7 @@ func (sa *statsAnalyze) DeleteAnalyzeJobs(updateTime time.Time) error {
 // CleanupCorruptedAnalyzeJobs cleans up the potentially corrupted analyze job.
 // It cleans up both the job from current owner and the job from other nodes.
 func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobs(currentRunningProcessIDs map[uint64]struct{}) error {
-	return statsutil.CallWithSCtx(nil, func(sctx sessionctx.Context) error {
+	return statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		return CleanupCorruptedAnalyzeJobs(sctx, currentRunningProcessIDs)
 	})
 }
