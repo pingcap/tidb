@@ -2490,7 +2490,9 @@ func (do *Domain) analyzeJobsCleanupWorker(owner owner.Manager) {
 	const DaysToKeep = 7
 	gcTicker := time.NewTicker(gcInterval)
 	// For clean up.
-	var cleanupInterval = do.statsLease * 3
+	// Default stats lease is 3 * time.Second.
+	// So cleanupInterval is 100 * 3 * time.Second = 5 * time.Minute.
+	var cleanupInterval = do.statsLease * 100
 	cleanupTicker := time.NewTicker(cleanupInterval)
 	defer func() {
 		gcTicker.Stop()
