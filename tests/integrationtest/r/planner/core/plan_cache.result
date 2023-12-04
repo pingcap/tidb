@@ -990,7 +990,7 @@ select * from t_p;
 a
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 select * from t_t;
 a
 select * from t_t;

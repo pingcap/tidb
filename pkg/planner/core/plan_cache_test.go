@@ -983,8 +983,10 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"skip non-prepared plan-cache: queries that have hints, having-clause, window-function are not supported",
 		"skip non-prepared plan-cache: queries that have hints, having-clause, window-function are not supported",
 		"skip non-prepared plan-cache: queries that have sub-queries are not supported",
-		"skip non-prepared plan-cache: query accesses partitioned tables is un-cacheable",
-		"skip non-prepared plan-cache: query accesses partitioned tables is un-cacheable",
+		//"skip non-prepared plan-cache: query accesses partitioned tables is un-cacheable",
+		"skip non-prepared plan-cache: query has some unsupported Node",
+		//"skip non-prepared plan-cache: query accesses partitioned tables is un-cacheable",
+		"skip non-prepared plan-cache: query has some unsupported Node",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
@@ -1035,7 +1037,7 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 	for idx, q := range unsupported {
 		tk.MustExec("explain format = 'plan_cache'" + q)
 		warn := tk.MustQuery("show warnings").Rows()[0]
-		require.Equal(t, reasons[idx], warn[2])
+		require.Equal(t, reasons[idx], warn[2], "idx: %d", idx)
 	}
 }
 
