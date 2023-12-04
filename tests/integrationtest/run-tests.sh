@@ -23,7 +23,6 @@ portgenerator=""
 mysql_tester_log="./integration-test.out"
 tests=""
 record=0
-record_case=""
 stats="s"
 collation_opt=2
 
@@ -40,7 +39,7 @@ function help_message()
 
     -d <y|Y|n|N|b|B>: \"y\" or \"Y\" for only enabling the new collation during test.
                       \"n\" or \"N\" for only disabling the new collation during test.
-                      \"b\" or \"B\" for both tests [default].
+                      \"b\" or \"B\" for tests the prefix is `collation`, enabling and disabling new collation during test, and for other tests, only enabling the new collation [default].
                       Enable/Disable the new collation during the integration test.
 
     -s <tidb-server-path>: Use tidb-server in <tidb-server-path> for testing.
@@ -109,7 +108,7 @@ while getopts "t:s:r:b:d:c:i:h:p" opt; do
             ;;
         r)
             record=1
-            record_case="$OPTARG"
+            tests="$OPTARG"
             ;;
         b)
             case $OPTARG in
@@ -120,7 +119,7 @@ while getopts "t:s:r:b:d:c:i:h:p" opt; do
                     build=0
                     ;;
                 *)
-                    help_messge 1>&2
+                    help_message 1>&2
                     exit 1
                     ;;
             esac
@@ -133,8 +132,11 @@ while getopts "t:s:r:b:d:c:i:h:p" opt; do
                 n|N)
                     collation_opt=0
                     ;;
+                b|B)
+                    collation_opt=2
+                    ;;
                 *)
-                    help_messge 1>&2
+                    help_message 1>&2
                     exit 1
                     ;;
             esac
@@ -230,12 +232,12 @@ function run_mysql_tester()
         coll_msg="disabled new collation"
     fi
     if [ $record -eq 1 ]; then
-      if [ "$record_case" = 'all' ]; then
+      if [ "$tests" = 'all' ]; then
           echo "record all cases"
           $mysql_tester -port "$port" --collation-disable=$coll_disabled --record
       else
-          echo "record result for case: \"$record_case\""
-          $mysql_tester -port "$port" --collation-disable=$coll_disabled --record $record_case
+          echo "record result for case: \"$tests\""
+          $mysql_tester -port "$port" --collation-disable=$coll_disabled --record $tests
       fi
     else
       if [ -z "$tests" ]; then
@@ -259,8 +261,24 @@ function check_data_race() {
     fi
 }
 
-enabled_new_collation=""
+function check_case_name() {
+    if [[ "$tests" = 'all' || $collation_opt != 2 ]]; then
+        return
+    fi
 
+    IFS='/' read -ra parts <<< "$tests"
+
+    last_part="${parts[-1]}"
+
+    if [[ $last_part == collation* || $tests == collation* ]]; then
+        collation_opt=2
+    else
+        collation_opt=1
+    fi
+}
+
+enabled_new_collation=""
+check_case_name
 if [[ $collation_opt = 0 || $collation_opt = 2 ]]; then
     enabled_new_collation=0
     start_tidb_server
