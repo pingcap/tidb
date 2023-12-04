@@ -86,7 +86,6 @@ func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobs(currentRunningProcessIDs map
 	})
 }
 
-// Exported for testing.
 // SelectAnalyzeJobsSQL is the SQL to select the analyze jobs whose
 // state is `pending` or `running` and the update time is more than 10 minutes ago.
 const SelectAnalyzeJobsSQL = `SELECT id, process_id, instance
