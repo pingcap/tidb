@@ -1459,7 +1459,7 @@ func (cwc *ColWithCmpFuncManager) CompareRow(lhs, rhs chunk.Row) int {
 func (cwc *ColWithCmpFuncManager) BuildRangesByRow(ctx sessionctx.Context, row chunk.Row) ([]*ranger.Range, error) {
 	exprs := make([]expression.Expression, len(cwc.OpType))
 	for i, opType := range cwc.OpType {
-		constantArg, err := cwc.opArg[i].Eval(row)
+		constantArg, err := cwc.opArg[i].Eval(ctx, row)
 		if err != nil {
 			return nil, err
 		}
@@ -2360,16 +2360,17 @@ func canExprsInJoinPushdown(p *LogicalJoin, storeType kv.StoreType) bool {
 		}
 		equalExprs = append(equalExprs, eqCondition)
 	}
-	if !expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, equalExprs, p.SCtx().GetClient(), storeType) {
+	ctx := p.SCtx()
+	if !expression.CanExprsPushDown(ctx, equalExprs, p.SCtx().GetClient(), storeType) {
 		return false
 	}
-	if !expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, p.LeftConditions, p.SCtx().GetClient(), storeType) {
+	if !expression.CanExprsPushDown(ctx, p.LeftConditions, p.SCtx().GetClient(), storeType) {
 		return false
 	}
-	if !expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, p.RightConditions, p.SCtx().GetClient(), storeType) {
+	if !expression.CanExprsPushDown(ctx, p.RightConditions, p.SCtx().GetClient(), storeType) {
 		return false
 	}
-	if !expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, p.OtherConditions, p.SCtx().GetClient(), storeType) {
+	if !expression.CanExprsPushDown(ctx, p.OtherConditions, p.SCtx().GetClient(), storeType) {
 		return false
 	}
 	return true
@@ -2632,14 +2633,15 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 	}
 	newProps := []*property.PhysicalProperty{newProp}
 	// generate a mpp task candidate if mpp mode is allowed
-	if newProp.TaskTp != property.MppTaskType && p.SCtx().GetSessionVars().IsMPPAllowed() && p.canPushToCop(kv.TiFlash) &&
-		expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, p.Exprs, p.SCtx().GetClient(), kv.TiFlash) {
+	ctx := p.SCtx()
+	if newProp.TaskTp != property.MppTaskType && ctx.GetSessionVars().IsMPPAllowed() && p.canPushToCop(kv.TiFlash) &&
+		expression.CanExprsPushDown(ctx, p.Exprs, ctx.GetClient(), kv.TiFlash) {
 		mppProp := newProp.CloneEssentialFields()
 		mppProp.TaskTp = property.MppTaskType
 		newProps = append(newProps, mppProp)
 	}
-	if newProp.TaskTp != property.CopSingleReadTaskType && p.SCtx().GetSessionVars().AllowProjectionPushDown && p.canPushToCop(kv.TiKV) &&
-		expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, p.Exprs, p.SCtx().GetClient(), kv.TiKV) && !expression.ContainVirtualColumn(p.Exprs) {
+	if newProp.TaskTp != property.CopSingleReadTaskType && ctx.GetSessionVars().AllowProjectionPushDown && p.canPushToCop(kv.TiKV) &&
+		expression.CanExprsPushDown(ctx, p.Exprs, ctx.GetClient(), kv.TiKV) && !expression.ContainVirtualColumn(p.Exprs) {
 		copProp := newProp.CloneEssentialFields()
 		copProp.TaskTp = property.CopSingleReadTaskType
 		newProps = append(newProps, copProp)
@@ -2868,12 +2870,13 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []P
 		}
 
 		if lw.Frame != nil && lw.Frame.Type == ast.Ranges {
-			if _, err := expression.ExpressionsToPBList(lw.SCtx().GetSessionVars().StmtCtx, lw.Frame.Start.CalcFuncs, lw.SCtx().GetClient()); err != nil {
+			ctx := lw.SCtx()
+			if _, err := expression.ExpressionsToPBList(ctx, lw.Frame.Start.CalcFuncs, lw.SCtx().GetClient()); err != nil {
 				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 					"MPP mode may be blocked because window function frame can't be pushed down, because " + err.Error())
 				return nil
 			}
-			if _, err := expression.ExpressionsToPBList(lw.SCtx().GetSessionVars().StmtCtx, lw.Frame.End.CalcFuncs, lw.SCtx().GetClient()); err != nil {
+			if _, err := expression.ExpressionsToPBList(ctx, lw.Frame.End.CalcFuncs, lw.SCtx().GetClient()); err != nil {
 				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 					"MPP mode may be blocked because window function frame can't be pushed down, because " + err.Error())
 				return nil
@@ -3244,7 +3247,9 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 	finalAggAdjust := func(aggFuncs []*aggregation.AggFuncDesc) {
 		for i, agg := range aggFuncs {
 			if agg.Mode == aggregation.FinalMode && agg.Name == ast.AggFuncCount {
+				oldFT := agg.RetTp
 				aggFuncs[i], _ = aggregation.NewAggFuncDesc(la.SCtx(), ast.AggFuncSum, agg.Args, false)
+				aggFuncs[i].TypeInfer4FinalCount(oldFT)
 			}
 		}
 	}
@@ -3486,7 +3491,7 @@ func (p *LogicalSelection) canPushDown(storeTp kv.StoreType) bool {
 	return !expression.ContainVirtualColumn(p.Conditions) &&
 		p.canPushToCop(storeTp) &&
 		expression.CanExprsPushDown(
-			p.SCtx().GetSessionVars().StmtCtx,
+			p.SCtx(),
 			p.Conditions,
 			p.SCtx().GetClient(),
 			storeTp)

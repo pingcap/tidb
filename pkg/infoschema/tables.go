@@ -211,6 +211,8 @@ const (
 	TableCheckConstraints = "CHECK_CONSTRAINTS"
 	// TableTiDBCheckConstraints is the list of CHECK constraints, with non-standard TiDB extensions.
 	TableTiDBCheckConstraints = "TIDB_CHECK_CONSTRAINTS"
+	// TableKeywords is the list of keywords.
+	TableKeywords = "KEYWORDS"
 )
 
 const (
@@ -321,6 +323,7 @@ var tableIDMap = map[string]int64{
 	TableRunawayWatches:                  autoid.InformationSchemaDBID + 89,
 	TableCheckConstraints:                autoid.InformationSchemaDBID + 90,
 	TableTiDBCheckConstraints:            autoid.InformationSchemaDBID + 91,
+	TableKeywords:                        autoid.InformationSchemaDBID + 92,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -462,7 +465,7 @@ var columnsCols = []columnInfo{
 	{name: "COLLATION_NAME", tp: mysql.TypeVarchar, size: 32},
 	{name: "COLUMN_TYPE", tp: mysql.TypeBlob, size: 196606},
 	{name: "COLUMN_KEY", tp: mysql.TypeVarchar, size: 3},
-	{name: "EXTRA", tp: mysql.TypeVarchar, size: 30},
+	{name: "EXTRA", tp: mysql.TypeVarchar, size: 45},
 	{name: "PRIVILEGES", tp: mysql.TypeVarchar, size: 80},
 	{name: "COLUMN_COMMENT", tp: mysql.TypeVarchar, size: 1024},
 	{name: "GENERATION_EXPRESSION", tp: mysql.TypeBlob, size: 589779, flag: mysql.NotNullFlag},
@@ -1160,7 +1163,7 @@ var tableClusterInfoCols = []columnInfo{
 	{name: "STATUS_ADDRESS", tp: mysql.TypeVarchar, size: 64},
 	{name: "VERSION", tp: mysql.TypeVarchar, size: 64},
 	{name: "GIT_HASH", tp: mysql.TypeVarchar, size: 64},
-	{name: "START_TIME", tp: mysql.TypeVarchar, size: 32},
+	{name: "START_TIME", tp: mysql.TypeDatetime, size: 19},
 	{name: "UPTIME", tp: mysql.TypeVarchar, size: 32},
 	{name: "SERVER_ID", tp: mysql.TypeLonglong, size: 21, comment: "invalid if the configuration item `enable-global-kill` is set to FALSE"},
 }
@@ -1649,6 +1652,11 @@ var tableTiDBCheckConstraintsCols = []columnInfo{
 	{name: "CHECK_CLAUSE", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
 	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
+}
+
+var tableKeywords = []columnInfo{
+	{name: "WORD", tp: mysql.TypeVarchar, size: 128},
+	{name: "RESERVED", tp: mysql.TypeLong, size: 11},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
@@ -2190,6 +2198,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableRunawayWatches:                     tableRunawayWatchListCols,
 	TableCheckConstraints:                   tableCheckConstraintsCols,
 	TableTiDBCheckConstraints:               tableTiDBCheckConstraintsCols,
+	TableKeywords:                           tableKeywords,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {

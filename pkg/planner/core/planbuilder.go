@@ -3896,7 +3896,7 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 
 		originalVal := b.allowBuildCastArray
 		b.allowBuildCastArray = true
-		expr, _, err := b.rewrite(ctx, column.GeneratedExpr, mockPlan, nil, true)
+		expr, _, err := b.rewrite(ctx, column.GeneratedExpr.Clone(), mockPlan, nil, true)
 		b.allowBuildCastArray = originalVal
 		if err != nil {
 			return igc, err
@@ -4602,8 +4602,13 @@ func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) 
 
 func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (Plan, error) {
 	tblInfo := node.Table.TableInfo
+	if node.IndexName.L == strings.ToLower(mysql.PrimaryKeyName) &&
+		(tblInfo.IsCommonHandle || tblInfo.PKIsHandle) {
+		return nil, ErrKeyDoesNotExist.FastGen("unable to split clustered index, please split table instead.")
+	}
+
 	indexInfo := tblInfo.FindIndexByName(node.IndexName.L)
-	if indexInfo == nil || indexInfo.Primary && tblInfo.IsCommonHandle {
+	if indexInfo == nil {
 		return nil, ErrKeyDoesNotExist.GenWithStackByArgs(node.IndexName, tblInfo.Name)
 	}
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
@@ -4700,7 +4705,7 @@ func (b *PlanBuilder) convertValue(valueItem ast.ExprNode, mockTablePlan Logical
 	if !ok {
 		return d, errors.New("Expect constant values")
 	}
-	value, err := constant.Eval(chunk.Row{})
+	value, err := constant.Eval(b.ctx, chunk.Row{})
 	if err != nil {
 		return d, err
 	}

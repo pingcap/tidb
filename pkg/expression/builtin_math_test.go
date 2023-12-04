@@ -100,7 +100,7 @@ func TestCeil(t *testing.T) {
 			f, err := newFunctionForTest(ctx, funcName, primitiveValsToConstants(ctx, []interface{}{test.arg})...)
 			require.NoError(t, err)
 
-			result, err := f.Eval(chunk.Row{})
+			result, err := f.Eval(ctx, chunk.Row{})
 			if test.getErr {
 				require.Error(t, err)
 			} else {
@@ -151,7 +151,7 @@ func TestExp(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Exp, primitiveValsToConstants(ctx, []interface{}{test.args})...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(chunk.Row{})
+		result, err := f.Eval(ctx, chunk.Row{})
 		if test.getWarning {
 			if test.errMsg != "" {
 				require.Error(t, err)
@@ -216,7 +216,7 @@ func TestFloor(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Floor, primitiveValsToConstants(ctx, []interface{}{test.arg})...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(chunk.Row{})
+		result, err := f.Eval(ctx, chunk.Row{})
 		if test.getErr {
 			require.Error(t, err)
 		} else {
@@ -271,7 +271,7 @@ func TestLog(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Log, primitiveValsToConstants(ctx, test.args)...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(chunk.Row{})
+		result, err := f.Eval(ctx, chunk.Row{})
 		require.NoError(t, err)
 		if test.warningCount > 0 {
 			require.Equal(t, preWarningCnt+test.warningCount, ctx.GetSessionVars().StmtCtx.WarningCount())
@@ -309,7 +309,7 @@ func TestLog2(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Log2, primitiveValsToConstants(ctx, []interface{}{test.args})...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(chunk.Row{})
+		result, err := f.Eval(ctx, chunk.Row{})
 		require.NoError(t, err)
 		if test.warningCount > 0 {
 			require.Equal(t, preWarningCnt+test.warningCount, ctx.GetSessionVars().StmtCtx.WarningCount())
@@ -347,7 +347,7 @@ func TestLog10(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Log10, primitiveValsToConstants(ctx, []interface{}{test.args})...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(chunk.Row{})
+		result, err := f.Eval(ctx, chunk.Row{})
 		require.NoError(t, err)
 		if test.warningCount > 0 {
 			require.Equal(t, preWarningCnt+test.warningCount, ctx.GetSessionVars().StmtCtx.WarningCount())
@@ -554,7 +554,7 @@ func TestCRC32(t *testing.T) {
 		require.NoError(t, err)
 		f, err := newFunctionForTest(ctx, ast.CRC32, primitiveValsToConstants(ctx, c.input)...)
 		require.NoError(t, err)
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		require.NoError(t, err)
 		if c.isNull {
 			require.True(t, d.IsNull())
@@ -597,7 +597,7 @@ func TestConv(t *testing.T) {
 		require.Equal(t, charset.CollationUTF8MB4, tp.GetCollate())
 		require.Equal(t, uint(0), tp.GetFlag())
 
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -694,7 +694,7 @@ func TestDegrees(t *testing.T) {
 		preWarningCnt := ctx.GetSessionVars().StmtCtx.WarningCount()
 		f, err := newFunctionForTest(ctx, ast.Degrees, primitiveValsToConstants(ctx, []interface{}{c.args})...)
 		require.NoError(t, err)
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getWarning {
 			require.NoError(t, err)
 			require.Equal(t, preWarningCnt+1, ctx.GetSessionVars().StmtCtx.WarningCount())
@@ -804,7 +804,7 @@ func TestSin(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Sin, primitiveValsToConstants(ctx, []interface{}{c.args})...)
 		require.NoError(t, err)
 
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getWarning {
 			require.NoError(t, err)
 			require.Equal(t, preWarningCnt+1, ctx.GetSessionVars().StmtCtx.WarningCount())
@@ -845,7 +845,7 @@ func TestCos(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Cos, primitiveValsToConstants(ctx, []interface{}{c.args})...)
 		require.NoError(t, err)
 
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getWarning {
 			require.NoError(t, err)
 			require.Equal(t, preWarningCnt+1, ctx.GetSessionVars().StmtCtx.WarningCount())
@@ -884,7 +884,7 @@ func TestAcos(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Acos, primitiveValsToConstants(ctx, []interface{}{test.args})...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(chunk.Row{})
+		result, err := f.Eval(ctx, chunk.Row{})
 		if test.getWarning {
 			require.NoError(t, err)
 			require.Equal(t, preWarningCnt+1, ctx.GetSessionVars().StmtCtx.WarningCount())
@@ -923,7 +923,7 @@ func TestAsin(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Asin, primitiveValsToConstants(ctx, []interface{}{test.args})...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(chunk.Row{})
+		result, err := f.Eval(ctx, chunk.Row{})
 		if test.getWarning {
 			require.NoError(t, err)
 			require.Equal(t, preWarningCnt+1, ctx.GetSessionVars().StmtCtx.WarningCount())
@@ -962,7 +962,7 @@ func TestAtan(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Atan, primitiveValsToConstants(ctx, test.args)...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(chunk.Row{})
+		result, err := f.Eval(ctx, chunk.Row{})
 		if test.getWarning {
 			require.NoError(t, err)
 			require.Equal(t, preWarningCnt+1, ctx.GetSessionVars().StmtCtx.WarningCount())
@@ -1002,7 +1002,7 @@ func TestTan(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Tan, primitiveValsToConstants(ctx, []interface{}{c.args})...)
 		require.NoError(t, err)
 
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getWarning {
 			require.NoError(t, err)
 			require.Equal(t, preWarningCnt+1, ctx.GetSessionVars().StmtCtx.WarningCount())
@@ -1043,7 +1043,7 @@ func TestCot(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Cot, primitiveValsToConstants(ctx, []interface{}{test.args})...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(chunk.Row{})
+		result, err := f.Eval(ctx, chunk.Row{})
 		if test.getErr {
 			require.Error(t, err)
 			if test.errMsg != "" {

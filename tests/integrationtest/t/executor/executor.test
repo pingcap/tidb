@@ -2671,3 +2671,243 @@ set @@tidb_enable_collect_execution_info=0;
 select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by a;
 set @@tidb_enable_collect_execution_info=default;
 
+# TestIndexLookupRuntimeStats
+drop table if exists t1;
+create table t1 (a int, b int, index(a));
+insert into t1 values (1,2),(2,3),(3,4);
+--replace_regex /.*time:.*loops:.*index_task:.*table_task: {total_time.*num.*concurrency.*}.*/.*time:.*loops:.*index_task:.*table_task: {total_time.*num.*concurrency.*}.*/ /.*time:.*loops:.*cop_task:.*/.*time:.*loops:.*cop_task:.*/ /[.0-9]+ KB/<num> KB/ /[0-9]+ Bytes/<num> Bytes/
+explain analyze select * from t1 use index(a) where a > 1;
+
+# TestHashAggRuntimeStats
+drop table if exists t1;
+create table t1 (a int, b int);
+insert into t1 values (1,2),(2,3),(3,4);
+--replace_regex /.*time:.*loops:.*partial_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*final_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*/.*time:.*loops:.*partial_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*final_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*/ /time:.*loops:.*cop_task.*/time.*loops.*cop_task.*/ /tikv_task:.*/tikv_task:.*/ /[.0-9]+ KB/<num> KB/ /[.0-9]+ Bytes/<num> Bytes/
+explain analyze SELECT /*+ HASH_AGG() */ count(*) FROM t1 WHERE a < 10;
+
+# TestSelectForUpdate
+set global tidb_txn_mode='';
+drop table if exists t, t1;
+create table t (c1 int, c2 int, c3 int);
+insert t values (11, 2, 3);
+insert t values (12, 2, 3);
+insert t values (13, 2, 3);
+create table t1 (c1 int);
+insert t1 values (11);
+
+connect (conn1, localhost, root,, executor__executor);
+begin;
+select * from t where c1=11 for update;
+
+connect (conn2, localhost, root,, executor__executor);
+begin;
+update t set c2=211 where c1=11;
+commit;
+
+connection conn1;
+--replace_regex /txnStartTS.*reason/<detail> reason/
+--error 9007
+commit;
+
+begin;
+select * from t where exists(select null from t1 where t1.c1=t.c1) for update;
+
+connection conn2;
+begin;
+update t set c2=211 where c1=12;
+commit;
+
+connection conn1;
+commit;
+
+begin;
+select * from t where c1=11 for update;
+
+connection conn2;
+begin;
+update t set c2=22 where c1=12;
+commit;
+
+connection conn1;
+commit;
+
+set @@autocommit=1;
+select * from t where c1=11 for update;
+
+connection conn2;
+begin;
+update t set c2=211 where c1=11;
+commit;
+
+connection conn1;
+commit;
+
+begin;
+--sorted_result
+select * from (select * from t for update) t join t1 for update;
+
+connection conn2;
+begin;
+update t1 set c1 = 13;
+commit;
+
+connection conn1;
+--replace_regex /txnStartTS.*reason/<detail> reason/
+--error 9007
+commit;
+
+disconnect conn1;
+disconnect conn2;
+set global tidb_txn_mode=pessimistic;
+
+# TestSelectForUpdateOf
+drop table if exists t, t1;
+create table t (i int);
+create table t1 (i int);
+insert t values (1);
+insert t1 values (1);
+begin pessimistic;
+select * from t, t1 where t.i = t1.i for update of t;
+
+connect (conn1, localhost, root,, executor__executor);
+begin pessimistic;
+select * from t1 for update;
+--error 3572
+select * from t for update nowait;
+
+connection default;
+rollback;
+
+connection conn1;
+select * from t for update nowait;
+rollback;
+disconnect conn1;
+
+# TestForSelectScopeInUnion
+set session tidb_txn_mode='';
+# A union B for update, the "for update" option belongs to union statement, so
+# it should works on both A and B.
+drop table if exists t;
+create table t(a int);
+insert into t values (1);
+begin;
+select 1 as a union select a from t for update;
+
+connect (conn1, localhost, root,, executor__executor);
+set session tidb_txn_mode='';
+update t set a = a + 1;
+
+connection default;
+## As tk1 use select 'for update', it should detect conflict and fail.
+--replace_regex /txnStartTS.*reason/<detail> reason/
+--error 9007
+commit;
+
+begin;
+--sorted_result
+select 1 as a union select a from t limit 5 for update;
+select 1 as a union select a from t order by a for update;
+
+connection conn1;
+update t set a = a + 1;
+
+connection default;
+--replace_regex /txnStartTS.*reason/<detail> reason/
+--error 9007
+commit;
+
+disconnect conn1;
+set session tidb_txn_mode=pessimistic;
+
+# TestAdminShowDDLJobsRowCount
+# https://github.com/pingcap/tidb/issues/25968
+drop table if exists t;
+create table t (id bigint key,b int);
+split table t by (10),(20),(30);
+insert into t values (0,0),(10,10),(20,20),(30,30);
+alter table t add index idx1(b);
+--replace_column 1 <job_id> 4 <type> 6 <schema_id> 7 <table_id> 9 <create_time> 10 <start_time> 11 <end_time>
+admin show ddl jobs 1;
+
+insert into t values (1,0),(2,10),(3,20),(4,30);
+alter table t add index idx2(b);
+--replace_column 1 <job_id> 4 <type> 6 <schema_id> 7 <table_id> 9 <create_time> 10 <start_time> 11 <end_time>
+admin show ddl jobs 1;
+
+# TestSummaryFailedUpdate
+drop table if exists t;
+create table t(a int, b int as(-a));
+insert into t(a) values(1), (3), (7);
+SET GLOBAL tidb_mem_oom_action='CANCEL';
+set @@tidb_mem_quota_query=1;
+--replace_regex /conn=[0-9]+/conn=<connID>/
+--error 8175
+update t set t.a = t.a - 1 where t.a in (select a from t where a < 4);
+set @@tidb_mem_quota_query=1000000000;
+select stmt_type from information_schema.statements_summary where digest_text = 'update `t` set `t` . `a` = `t` . `a` - ? where `t` . `a` in ( select `a` from `t` where `a` < ? )';
+
+set @@tidb_mem_quota_query=default;
+set global tidb_mem_oom_action=default;
+
+
+# TestTableLockPrivilege
+drop table if exists t;
+drop user if exists 'testuser'@'localhost';
+create table t(a int);
+create user 'testuser'@'localhost';
+
+connect (conn1, localhost, testuser,,);
+--error 1044
+LOCK TABLE executor__executor.t WRITE;
+
+connection default;
+GRANT LOCK TABLES ON executor__executor.* to 'testuser'@'localhost';
+
+connection conn1;
+--error 1142
+LOCK TABLE executor__executor.t WRITE;
+
+connection default;
+REVOKE ALL ON executor__executor.* FROM 'testuser'@'localhost';
+GRANT SELECT ON executor__executor.* to 'testuser'@'localhost';
+
+connection conn1;
+--error 1044
+LOCK TABLE executor__executor.t WRITE;
+
+connection default;
+GRANT LOCK TABLES ON executor__executor.* to 'testuser'@'localhost';
+
+connection conn1;
+LOCK TABLE executor__executor.t WRITE;
+
+connection default;
+drop database if exists test2;
+create database test2;
+create table test2.t2(a int);
+
+connection conn1;
+--error 1044
+LOCK TABLE executor__executor.t WRITE, test2.t2 WRITE;
+
+connection default;
+GRANT LOCK TABLES ON test2.* to 'testuser'@'localhost';
+
+connection conn1;
+--error 1142
+LOCK TABLE executor__executor.t WRITE, test2.t2 WRITE;
+
+connection default;
+GRANT SELECT ON test2.* to 'testuser'@'localhost';
+
+connection conn1;
+LOCK TABLE executor__executor.t WRITE, test2.t2 WRITE;
+
+connection default;
+--replace_regex /server: .*session: .*/server: <server> session: <session>/
+--error 8020
+LOCK TABLE executor__executor.t WRITE, test2.t2 WRITE;
+
+disconnect conn1;
+unlock tables;
+drop user 'testuser'@'localhost';

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -492,7 +493,7 @@ func LoadHistogram(sctx sessionctx.Context, tableID int64, isIndex int, histID i
 }
 
 // LoadNeededHistograms will load histograms for those needed columns/indices.
-func LoadNeededHistograms(sctx sessionctx.Context, statsCache util.StatsCache, loadFMSketch bool) (err error) {
+func LoadNeededHistograms(sctx sessionctx.Context, statsCache statstypes.StatsCache, loadFMSketch bool) (err error) {
 	items := statistics.HistogramNeededItems.AllItems()
 	for _, item := range items {
 		if !item.IsIndex {
@@ -507,7 +508,7 @@ func LoadNeededHistograms(sctx sessionctx.Context, statsCache util.StatsCache, l
 	return nil
 }
 
-func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache util.StatsCache, col model.TableItemID, loadFMSketch bool) (err error) {
+func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.StatsCache, col model.TableItemID, loadFMSketch bool) (err error) {
 	tbl, ok := statsCache.Get(col.TableID)
 	if !ok {
 		return nil
@@ -567,7 +568,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache util.StatsCa
 	return nil
 }
 
-func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache util.StatsCache, idx model.TableItemID, loadFMSketch bool) (err error) {
+func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache statstypes.StatsCache, idx model.TableItemID, loadFMSketch bool) (err error) {
 	tbl, ok := statsCache.Get(idx.TableID)
 	if !ok {
 		return nil

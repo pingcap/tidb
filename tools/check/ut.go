@@ -29,6 +29,7 @@ import (
 	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -97,6 +98,7 @@ func (t *task) String() string {
 }
 
 var p int
+var buildParallel int
 var workDir string
 
 func cmdList(args ...string) bool {
@@ -309,7 +311,7 @@ func cmdRun(args ...string) bool {
 		tasks = tmp
 	}
 
-	fmt.Printf("building task finish, maxproc=%d, count=%d, takes=%v\n", p, len(tasks), time.Since(start))
+	fmt.Printf("building task finish, parallelism=%d, count=%d, takes=%v\n", buildParallel, len(tasks), time.Since(start))
 
 	taskCh := make(chan task, 100)
 	works := make([]numa, p)
@@ -448,6 +450,8 @@ func main() {
 
 	// Get the correct count of CPU if it's in docker.
 	p = runtime.GOMAXPROCS(0)
+	// We use 2 * p for `go build` to make it faster.
+	buildParallel = p * 2
 	var err error
 	workDir, err = os.Getwd()
 	if err != nil {
@@ -870,7 +874,7 @@ func buildTestBinaryMulti(pkgs []string) error {
 	}
 
 	var cmd *exec.Cmd
-	cmd = exec.Command("go", "test", "--tags=intest", "--exec", xprogPath, "-vet", "off", "-count", "0")
+	cmd = exec.Command("go", "test", "--tags=intest", "-p", strconv.Itoa(buildParallel), "--exec", xprogPath, "-vet", "off", "-count", "0")
 	if coverprofile != "" {
 		cmd.Args = append(cmd.Args, "-cover")
 	}

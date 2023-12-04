@@ -806,7 +806,7 @@ func (h *Helper) GetPDRegionStats(ctx context.Context, tableID int64, noIndexSta
 	startKey = codec.EncodeBytes([]byte{}, startKey)
 	endKey = codec.EncodeBytes([]byte{}, endKey)
 
-	return pdCli.GetRegionStatusByKeyRange(ctx, startKey, endKey)
+	return pdCli.GetRegionStatusByKeyRange(ctx, pd.NewKeyRange(startKey, endKey), false)
 }
 
 // GetTiFlashTableIDFromEndKey computes tableID from pd rule's endKey.

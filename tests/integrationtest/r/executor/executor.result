@@ -4405,3 +4405,176 @@ id	a	b	c	d
 1	1	1	1	1
 5	5	5	5	5
 set @@tidb_enable_collect_execution_info=default;
+drop table if exists t1;
+create table t1 (a int, b int, index(a));
+insert into t1 values (1,2),(2,3),(3,4);
+explain analyze select * from t1 use index(a) where a > 1;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+IndexLookUp_7	3333.33	2	root	NULL	.*time:.*loops:.*index_task:.*table_task: {total_time.*num.*concurrency.*}.*	NULL	<num> KB	N/A
+├─IndexRangeScan_5(Build)	3333.33	2	cop[tikv]	table:t1, index:a(a)	.*time:.*loops:.*cop_task:.*	range:(1,+inf], keep order:false, stats:pseudo	N/A	N/A
+└─TableRowIDScan_6(Probe)	3333.33	2	cop[tikv]	table:t1	.*time:.*loops:.*cop_task:.*	keep order:false, stats:pseudo	N/A	N/A
+drop table if exists t1;
+create table t1 (a int, b int);
+insert into t1 values (1,2),(2,3),(3,4);
+explain analyze SELECT /*+ HASH_AGG() */ count(*) FROM t1 WHERE a < 10;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+HashAgg_11	1.00	1	root	NULL	.*time:.*loops:.*partial_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*final_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*	funcs:count(Column#5)->Column#4	<num> KB	N/A
+└─TableReader_12	1.00	1	root	NULL	time.*loops.*cop_task.*	data:HashAgg_6	<num> Bytes	N/A
+  └─HashAgg_6	1.00	1	cop[tikv]	NULL	tikv_task:.*	funcs:count(1)->Column#5	N/A	N/A
+    └─Selection_10	3323.33	3	cop[tikv]	NULL	tikv_task:.*	lt(executor__executor.t1.a, 10)	N/A	N/A
+      └─TableFullScan_9	10000.00	3	cop[tikv]	table:t1	tikv_task:.*	keep order:false, stats:pseudo	N/A	N/A
+set global tidb_txn_mode='';
+drop table if exists t, t1;
+create table t (c1 int, c2 int, c3 int);
+insert t values (11, 2, 3);
+insert t values (12, 2, 3);
+insert t values (13, 2, 3);
+create table t1 (c1 int);
+insert t1 values (11);
+begin;
+select * from t where c1=11 for update;
+c1	c2	c3
+11	2	3
+begin;
+update t set c2=211 where c1=11;
+commit;
+commit;
+Error 9007 (HY000): Write conflict, <detail> reason=Optimistic [try again later]
+begin;
+select * from t where exists(select null from t1 where t1.c1=t.c1) for update;
+c1	c2	c3
+11	211	3
+begin;
+update t set c2=211 where c1=12;
+commit;
+commit;
+begin;
+select * from t where c1=11 for update;
+c1	c2	c3
+11	211	3
+begin;
+update t set c2=22 where c1=12;
+commit;
+commit;
+set @@autocommit=1;
+select * from t where c1=11 for update;
+c1	c2	c3
+11	211	3
+begin;
+update t set c2=211 where c1=11;
+commit;
+commit;
+begin;
+select * from (select * from t for update) t join t1 for update;
+c1	c2	c3	c1
+11	211	3	11
+12	22	3	11
+13	2	3	11
+begin;
+update t1 set c1 = 13;
+commit;
+commit;
+Error 9007 (HY000): Write conflict, <detail> reason=Optimistic [try again later]
+set global tidb_txn_mode=pessimistic;
+drop table if exists t, t1;
+create table t (i int);
+create table t1 (i int);
+insert t values (1);
+insert t1 values (1);
+begin pessimistic;
+select * from t, t1 where t.i = t1.i for update of t;
+i	i
+1	1
+begin pessimistic;
+select * from t1 for update;
+i
+1
+select * from t for update nowait;
+Error 3572 (HY000): Statement aborted because lock(s) could not be acquired immediately and NOWAIT is set.
+rollback;
+select * from t for update nowait;
+i
+1
+rollback;
+set session tidb_txn_mode='';
+drop table if exists t;
+create table t(a int);
+insert into t values (1);
+begin;
+select 1 as a union select a from t for update;
+a
+1
+set session tidb_txn_mode='';
+update t set a = a + 1;
+commit;
+Error 9007 (HY000): Write conflict, <detail> reason=Optimistic [try again later]
+begin;
+select 1 as a union select a from t limit 5 for update;
+a
+1
+2
+select 1 as a union select a from t order by a for update;
+a
+1
+2
+update t set a = a + 1;
+commit;
+Error 9007 (HY000): Write conflict, <detail> reason=Optimistic [try again later]
+set session tidb_txn_mode=pessimistic;
+drop table if exists t;
+create table t (id bigint key,b int);
+split table t by (10),(20),(30);
+TOTAL_SPLIT_REGION	SCATTER_FINISH_RATIO
+3	1
+insert into t values (0,0),(10,10),(20,20),(30,30);
+alter table t add index idx1(b);
+admin show ddl jobs 1;
+JOB_ID	DB_NAME	TABLE_NAME	JOB_TYPE	SCHEMA_STATE	SCHEMA_ID	TABLE_ID	ROW_COUNT	CREATE_TIME	START_TIME	END_TIME	STATE
+<job_id>	executor__executor	t	<type>	public	<schema_id>	<table_id>	4	<create_time>	<start_time>	<end_time>	synced
+insert into t values (1,0),(2,10),(3,20),(4,30);
+alter table t add index idx2(b);
+admin show ddl jobs 1;
+JOB_ID	DB_NAME	TABLE_NAME	JOB_TYPE	SCHEMA_STATE	SCHEMA_ID	TABLE_ID	ROW_COUNT	CREATE_TIME	START_TIME	END_TIME	STATE
+<job_id>	executor__executor	t	<type>	public	<schema_id>	<table_id>	8	<create_time>	<start_time>	<end_time>	synced
+drop table if exists t;
+create table t(a int, b int as(-a));
+insert into t(a) values(1), (3), (7);
+SET GLOBAL tidb_mem_oom_action='CANCEL';
+set @@tidb_mem_quota_query=1;
+update t set t.a = t.a - 1 where t.a in (select a from t where a < 4);
+Error 8175 (HY000): Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=<connID>]
+set @@tidb_mem_quota_query=1000000000;
+select stmt_type from information_schema.statements_summary where digest_text = 'update `t` set `t` . `a` = `t` . `a` - ? where `t` . `a` in ( select `a` from `t` where `a` < ? )';
+stmt_type
+Update
+set @@tidb_mem_quota_query=default;
+set global tidb_mem_oom_action=default;
+drop table if exists t;
+drop user if exists 'testuser'@'localhost';
+create table t(a int);
+create user 'testuser'@'localhost';
+LOCK TABLE executor__executor.t WRITE;
+Error 1044 (42000): Access denied for user 'testuser'@'localhost' to database 'executor__executor'
+GRANT LOCK TABLES ON executor__executor.* to 'testuser'@'localhost';
+LOCK TABLE executor__executor.t WRITE;
+Error 1142 (42000): SELECT command denied to user 'testuser'@'localhost' for table 't'
+REVOKE ALL ON executor__executor.* FROM 'testuser'@'localhost';
+GRANT SELECT ON executor__executor.* to 'testuser'@'localhost';
+LOCK TABLE executor__executor.t WRITE;
+Error 1044 (42000): Access denied for user 'testuser'@'localhost' to database 'executor__executor'
+GRANT LOCK TABLES ON executor__executor.* to 'testuser'@'localhost';
+LOCK TABLE executor__executor.t WRITE;
+drop database if exists test2;
+create database test2;
+create table test2.t2(a int);
+LOCK TABLE executor__executor.t WRITE, test2.t2 WRITE;
+Error 1044 (42000): Access denied for user 'testuser'@'localhost' to database 'test2'
+GRANT LOCK TABLES ON test2.* to 'testuser'@'localhost';
+LOCK TABLE executor__executor.t WRITE, test2.t2 WRITE;
+Error 1142 (42000): SELECT command denied to user 'testuser'@'localhost' for table 't2'
+GRANT SELECT ON test2.* to 'testuser'@'localhost';
+LOCK TABLE executor__executor.t WRITE, test2.t2 WRITE;
+LOCK TABLE executor__executor.t WRITE, test2.t2 WRITE;
+Error 8020 (HY000): Table 't' was locked in WRITE by server: <server> session: <session>
+unlock tables;
+drop user 'testuser'@'localhost';

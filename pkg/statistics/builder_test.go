@@ -15,6 +15,7 @@
 package statistics
 
 import (
+	"math/rand"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -26,11 +27,13 @@ import (
 
 // BenchmarkBuildHistAndTopN is used to benchmark the performance of BuildHistAndTopN.
 // go test -benchmem -run=^$ -bench ^BenchmarkBuildHistAndTopN$ github.com/pingcap/tidb/pkg/statistics
+// * The NDV is 1000000
 func BenchmarkBuildHistAndTopN(b *testing.B) {
 	ctx := mock.NewContext()
-	sketch := NewFMSketch(1000)
+	const cnt = 1000_000
+	sketch := NewFMSketch(cnt)
 	data := make([]*SampleItem, 0, 8)
-	for i := 1; i <= 1000; i++ {
+	for i := 1; i <= cnt; i++ {
 		d := types.NewIntDatum(int64(i))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(b, err)
@@ -68,9 +71,62 @@ func BenchmarkBuildHistAndTopN(b *testing.B) {
 		TotalSize: int64(len(data)) * 8,
 	}
 	filedType := types.NewFieldType(mysql.TypeLong)
-	memoryTracker := memory.NewTracker(10, 10)
+	memoryTracker := memory.NewTracker(10, 1024*1024*1024)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _, _ = BuildHistAndTopN(ctx, 0, 0, 0, collector, filedType, true, memoryTracker)
+		_, _, _ = BuildHistAndTopN(ctx, 256, 500, 0, collector, filedType, true, memoryTracker, false)
+	}
+}
+
+// BenchmarkBuildHistAndTopNWithLowNDV is used to benchmark the performance of BuildHistAndTopN with low NDV.
+// go test -benchmem -run=^$ -bench ^BenchmarkBuildHistAndTopNWithLowNDV github.com/pingcap/tidb/pkg/statistics
+// * NDV is 102
+func BenchmarkBuildHistAndTopNWithLowNDV(b *testing.B) {
+	ctx := mock.NewContext()
+	const cnt = 1000_000
+	sketch := NewFMSketch(cnt)
+	data := make([]*SampleItem, 0, 8)
+	total := 0
+	for i := 1; i <= 1_000; i++ {
+		total++
+		d := types.NewIntDatum(int64(1000))
+		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
+		require.NoError(b, err)
+		data = append(data, &SampleItem{Value: d})
+	}
+	for i := 1; i <= 1_000; i++ {
+		total++
+		d := types.NewIntDatum(int64(2000))
+		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
+		require.NoError(b, err)
+		data = append(data, &SampleItem{Value: d})
+	}
+	end := total / 2
+	for i := 0; i < end; i++ {
+		total++
+		d := types.NewIntDatum(rand.Int63n(50))
+		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
+		require.NoError(b, err)
+		data = append(data, &SampleItem{Value: d})
+	}
+	end = cnt - total
+	for i := 0; i < end; i++ {
+		d := types.NewIntDatum(rand.Int63n(100))
+		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
+		require.NoError(b, err)
+		data = append(data, &SampleItem{Value: d})
+	}
+	collector := &SampleCollector{
+		Samples:   data,
+		NullCount: 0,
+		Count:     int64(len(data)),
+		FMSketch:  sketch,
+		TotalSize: int64(len(data)) * 8,
+	}
+	filedType := types.NewFieldType(mysql.TypeLong)
+	memoryTracker := memory.NewTracker(10, 1024*1024*1024)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _, _ = BuildHistAndTopN(ctx, 256, 500, 0, collector, filedType, true, memoryTracker, false)
 	}
 }

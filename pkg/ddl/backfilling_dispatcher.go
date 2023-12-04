@@ -69,18 +69,18 @@ func (*BackfillingDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 	ctx context.Context,
 	taskHandle dispatcher.TaskHandle,
-	gTask *proto.Task,
+	task *proto.Task,
 	serverInfo []*infosync.ServerInfo,
 	nextStep proto.Step,
 ) (taskMeta [][]byte, err error) {
 	logger := logutil.BgLogger().With(
-		zap.Stringer("type", gTask.Type),
-		zap.Int64("task-id", gTask.ID),
-		zap.String("curr-step", StepStr(gTask.Step)),
+		zap.Stringer("type", task.Type),
+		zap.Int64("task-id", task.ID),
+		zap.String("curr-step", StepStr(task.Step)),
 		zap.String("next-step", StepStr(nextStep)),
 	)
 	var backfillMeta BackfillGlobalMeta
-	if err := json.Unmarshal(gTask.Meta, &backfillMeta); err != nil {
+	if err := json.Unmarshal(task.Meta, &backfillMeta); err != nil {
 		return nil, err
 	}
 	job := &backfillMeta.Job
@@ -98,13 +98,13 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 		}
 		return generateNonPartitionPlan(dsp.d, tblInfo, job, dsp.GlobalSort, len(serverInfo))
 	case StepMergeSort:
-		res, err := generateMergePlan(taskHandle, gTask, logger)
+		res, err := generateMergePlan(taskHandle, task, logger)
 		if err != nil {
 			return nil, err
 		}
 		if len(res) > 0 {
 			backfillMeta.UseMergeSort = true
-			if err := updateMeta(gTask, &backfillMeta); err != nil {
+			if err := updateMeta(task, &backfillMeta); err != nil {
 				return nil, err
 			}
 		}
@@ -128,7 +128,7 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 			return generateGlobalSortIngestPlan(
 				ctx,
 				taskHandle,
-				gTask,
+				task,
 				job.ID,
 				backfillMeta.CloudStorageURI,
 				prevStep,
@@ -140,12 +140,12 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 	}
 }
 
-func updateMeta(gTask *proto.Task, taskMeta *BackfillGlobalMeta) error {
+func updateMeta(task *proto.Task, taskMeta *BackfillGlobalMeta) error {
 	bs, err := json.Marshal(taskMeta)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	gTask.Meta = bs
+	task.Meta = bs
 	return nil
 }
 
@@ -175,24 +175,14 @@ func skipMergeSort(stats []external.MultipleFilesStat) bool {
 	return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
 }
 
-// OnErrStage generate error handling stage's plan.
-func (*BackfillingDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, receiveErrs []error) (meta []byte, err error) {
-	// We do not need extra meta info when rolling back
-	logger := logutil.BgLogger().With(
-		zap.Stringer("type", task.Type),
-		zap.Int64("task-id", task.ID),
-		zap.String("step", StepStr(task.Step)),
-	)
-	logger.Info("on error stage", zap.Errors("errors", receiveErrs))
-	firstErr := receiveErrs[0]
-	task.Error = firstErr
-
-	return nil, nil
+// OnDone implements dispatcher.Extension interface.
+func (*BackfillingDispatcherExt) OnDone(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task) error {
+	return nil
 }
 
 // GetEligibleInstances implements dispatcher.Extension interface.
 func (*BackfillingDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
-	serverInfos, err := dispatcher.GenerateSchedulerNodes(ctx)
+	serverInfos, err := dispatcher.GenerateTaskExecutorNodes(ctx)
 	if err != nil {
 		return nil, true, err
 	}
@@ -272,7 +262,11 @@ func generatePartitionPlan(tblInfo *model.TableInfo) (metas [][]byte, err error)
 }
 
 func generateNonPartitionPlan(
-	d *ddl, tblInfo *model.TableInfo, job *model.Job, useCloud bool, instanceCnt int) (metas [][]byte, err error) {
+	d *ddl,
+	tblInfo *model.TableInfo,
+	job *model.Job,
+	useCloud bool,
+	instanceCnt int) (metas [][]byte, err error) {
 	tbl, err := getTable((*asAutoIDRequirement)(d.ddlCtx), job.SchemaID, tblInfo)
 	if err != nil {
 		return nil, err
@@ -281,6 +275,7 @@ func generateNonPartitionPlan(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	startKey, endKey, err := getTableRange(d.jobContext(job.ID, job.ReorgMeta), d.ddlCtx, tbl.(table.PhysicalTable), ver.Ver, job.Priority)
 	if startKey == nil && endKey == nil {
 		// Empty table.
@@ -294,7 +289,6 @@ func generateNonPartitionPlan(
 	if err != nil {
 		return nil, err
 	}
-
 	regionBatch := calculateRegionBatch(len(recordRegionMetas), instanceCnt, !useCloud)
 
 	subTaskMetas := make([][]byte, 0, 4)
@@ -355,7 +349,7 @@ func generateGlobalSortIngestPlan(
 	if err != nil {
 		return nil, err
 	}
-	instanceIDs, err := dispatcher.GenerateSchedulerNodes(ctx)
+	instanceIDs, err := dispatcher.GenerateTaskExecutorNodes(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -387,6 +381,7 @@ func generateGlobalSortIngestPlan(
 		logger.Info("split subtask range",
 			zap.String("startKey", hex.EncodeToString(startKey)),
 			zap.String("endKey", hex.EncodeToString(endKey)))
+
 		if startKey.Cmp(endKey) >= 0 {
 			return nil, errors.Errorf("invalid range, startKey: %s, endKey: %s",
 				hex.EncodeToString(startKey), hex.EncodeToString(endKey))
