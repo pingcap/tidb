@@ -590,7 +590,7 @@ func (rm *MockRegionManager) saveRegions(regions []*regionCtx) error {
 // Limit limits the maximum number of regions returned.
 // If a region has no leader, corresponding leader will be placed by a peer
 // with empty value (PeerID is 0).
-func (rm *MockRegionManager) ScanRegions(startKey, endKey []byte, limit int) []*pdclient.Region {
+func (rm *MockRegionManager) ScanRegions(startKey, endKey []byte, limit int, _ ...pdclient.GetRegionOption) []*pdclient.Region {
 	rm.mu.RLock()
 	defer rm.mu.RUnlock()
 
@@ -855,7 +855,7 @@ func (pd *MockPD) GetAllStores(ctx context.Context, opts ...pdclient.GetStoreOpt
 // If a region has no leader, corresponding leader will be placed by a peer
 // with empty value (PeerID is 0).
 func (pd *MockPD) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int, opts ...pdclient.GetRegionOption) ([]*pdclient.Region, error) {
-	regions := pd.rm.ScanRegions(startKey, endKey, limit)
+	regions := pd.rm.ScanRegions(startKey, endKey, limit, opts...)
 	return regions, nil
 }
 

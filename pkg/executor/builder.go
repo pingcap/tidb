@@ -2103,7 +2103,8 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 			strings.ToLower(infoschema.TableResourceGroups),
 			strings.ToLower(infoschema.TableRunawayWatches),
 			strings.ToLower(infoschema.TableCheckConstraints),
-			strings.ToLower(infoschema.TableTiDBCheckConstraints):
+			strings.ToLower(infoschema.TableTiDBCheckConstraints),
+			strings.ToLower(infoschema.TableKeywords):
 			return &MemTableReaderExec{
 				BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,

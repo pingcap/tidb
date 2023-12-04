@@ -58,6 +58,7 @@ func TestInfo(t *testing.T) {
 		t.Skip("ETCD use ip:port as unix socket address, skip when it is unavailable.")
 	}
 
+	// NOTICE: this failpoint has been REMOVED, be aware of this if you want to reopen this test.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/FailPlacement", `return(true)`))
 
 	s, err := mockstore.NewMockStore()

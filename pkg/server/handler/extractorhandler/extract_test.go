@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package extactorhandler_test
+package extractorhandler_test
 
 import (
 	"database/sql"
@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	server2 "github.com/pingcap/tidb/pkg/server"
-	"github.com/pingcap/tidb/pkg/server/handler/extactorhandler"
+	"github.com/pingcap/tidb/pkg/server/handler/extractorhandler"
 	"github.com/pingcap/tidb/pkg/server/internal/testserverclient"
 	"github.com/pingcap/tidb/pkg/server/internal/testutil"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
@@ -71,7 +71,7 @@ func TestExtractHandler(t *testing.T) {
 	prepareData4ExtractPlanTask(t, client)
 	time.Sleep(time.Second)
 	endTime := time.Now()
-	eh := &extactorhandler.ExtractTaskServeHandler{ExtractHandler: dom.GetExtractHandle()}
+	eh := &extractorhandler.ExtractTaskServeHandler{ExtractHandler: dom.GetExtractHandle()}
 	router := mux.NewRouter()
 	router.Handle("/extract_task/dump", eh)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/server/extractTaskServeHandler", `return(true)`))

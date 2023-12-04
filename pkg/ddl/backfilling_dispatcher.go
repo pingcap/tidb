@@ -69,18 +69,18 @@ func (*BackfillingDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 	ctx context.Context,
 	taskHandle dispatcher.TaskHandle,
-	gTask *proto.Task,
+	task *proto.Task,
 	serverInfo []*infosync.ServerInfo,
 	nextStep proto.Step,
 ) (taskMeta [][]byte, err error) {
 	logger := logutil.BgLogger().With(
-		zap.Stringer("type", gTask.Type),
-		zap.Int64("task-id", gTask.ID),
-		zap.String("curr-step", StepStr(gTask.Step)),
+		zap.Stringer("type", task.Type),
+		zap.Int64("task-id", task.ID),
+		zap.String("curr-step", StepStr(task.Step)),
 		zap.String("next-step", StepStr(nextStep)),
 	)
-	var backfillMeta BackfillGlobalMeta
-	if err := json.Unmarshal(gTask.Meta, &backfillMeta); err != nil {
+	var backfillMeta BackfillTaskMeta
+	if err := json.Unmarshal(task.Meta, &backfillMeta); err != nil {
 		return nil, err
 	}
 	job := &backfillMeta.Job
@@ -98,13 +98,13 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 		}
 		return generateNonPartitionPlan(dsp.d, tblInfo, job, dsp.GlobalSort, len(serverInfo))
 	case StepMergeSort:
-		res, err := generateMergePlan(taskHandle, gTask, logger)
+		res, err := generateMergePlan(taskHandle, task, logger)
 		if err != nil {
 			return nil, err
 		}
 		if len(res) > 0 {
 			backfillMeta.UseMergeSort = true
-			if err := updateMeta(gTask, &backfillMeta); err != nil {
+			if err := updateMeta(task, &backfillMeta); err != nil {
 				return nil, err
 			}
 		}
@@ -128,7 +128,7 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 			return generateGlobalSortIngestPlan(
 				ctx,
 				taskHandle,
-				gTask,
+				task,
 				job.ID,
 				backfillMeta.CloudStorageURI,
 				prevStep,
@@ -140,12 +140,12 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 	}
 }
 
-func updateMeta(gTask *proto.Task, taskMeta *BackfillGlobalMeta) error {
+func updateMeta(task *proto.Task, taskMeta *BackfillTaskMeta) error {
 	bs, err := json.Marshal(taskMeta)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	gTask.Meta = bs
+	task.Meta = bs
 	return nil
 }
 
@@ -182,7 +182,7 @@ func (*BackfillingDispatcherExt) OnDone(_ context.Context, _ dispatcher.TaskHand
 
 // GetEligibleInstances implements dispatcher.Extension interface.
 func (*BackfillingDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
-	serverInfos, err := dispatcher.GenerateSchedulerNodes(ctx)
+	serverInfos, err := dispatcher.GenerateTaskExecutorNodes(ctx)
 	if err != nil {
 		return nil, true, err
 	}
@@ -211,7 +211,7 @@ func newLitBackfillDispatcher(ctx context.Context, d *ddl, taskMgr dispatcher.Ta
 
 // Init implements BaseDispatcher interface.
 func (dsp *LitBackfillDispatcher) Init() (err error) {
-	taskMeta := &BackfillGlobalMeta{}
+	taskMeta := &BackfillTaskMeta{}
 	if err = json.Unmarshal(dsp.BaseDispatcher.Task.Meta, taskMeta); err != nil {
 		return errors.Annotate(err, "unmarshal task meta failed")
 	}
@@ -349,7 +349,7 @@ func generateGlobalSortIngestPlan(
 	if err != nil {
 		return nil, err
 	}
-	instanceIDs, err := dispatcher.GenerateSchedulerNodes(ctx)
+	instanceIDs, err := dispatcher.GenerateTaskExecutorNodes(ctx)
 	if err != nil {
 		return nil, err
 	}

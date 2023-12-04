@@ -32,8 +32,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler/execute"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/executor/asyncloaddata"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -132,7 +132,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		}
 		// Unlike in Lightning, we start an index engine for each subtask,
 		// whereas previously there was only a single index engine globally.
-		// This is because the scheduler currently does not have a post-processing mechanism.
+		// This is because the executor currently does not have a post-processing mechanism.
 		// If we import the index in `cleanupSubtaskEnv`, the dispatcher will not wait for the import to complete.
 		// Multiple index engines may suffer performance degradation due to range overlap.
 		// These issues will be alleviated after we integrate s3 sorter.
@@ -258,7 +258,7 @@ func (s *importStepExecutor) Rollback(context.Context) error {
 }
 
 type mergeSortStepExecutor struct {
-	scheduler.EmptySubtaskExecutor
+	taskexecutor.EmptySubtaskExecutor
 	taskID     int64
 	taskMeta   *TaskMeta
 	logger     *zap.Logger
@@ -418,7 +418,7 @@ func (e *writeAndIngestStepExecutor) Rollback(context.Context) error {
 }
 
 type postProcessStepExecutor struct {
-	scheduler.EmptySubtaskExecutor
+	taskexecutor.EmptySubtaskExecutor
 	taskID   int64
 	taskMeta *TaskMeta
 	logger   *zap.Logger
@@ -452,32 +452,36 @@ func (p *postProcessStepExecutor) RunSubtask(ctx context.Context, subtask *proto
 	return postProcess(ctx, p.taskMeta, &stepMeta, logger)
 }
 
-type importScheduler struct {
-	*scheduler.BaseScheduler
+type importExecutor struct {
+	*taskexecutor.BaseTaskExecutor
 }
 
-func newImportScheduler(ctx context.Context, id string, task *proto.Task, taskTable scheduler.TaskTable) scheduler.Scheduler {
-	s := &importScheduler{
-		BaseScheduler: scheduler.NewBaseScheduler(ctx, id, task.ID, taskTable),
+func newImportExecutor(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
+	s := &importExecutor{
+		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(ctx, id, task.ID, taskTable),
 	}
-	s.BaseScheduler.Extension = s
+	s.BaseTaskExecutor.Extension = s
 	return s
 }
 
-func (s *importScheduler) Run(ctx context.Context, task *proto.Task) error {
+func (s *importExecutor) Run(ctx context.Context, task *proto.Task) error {
 	metrics := metricsManager.getOrCreateMetrics(task.ID)
 	defer metricsManager.unregister(task.ID)
 	subCtx := metric.WithCommonMetric(ctx, metrics)
-	return s.BaseScheduler.Run(subCtx, task)
+	return s.BaseTaskExecutor.Run(subCtx, task)
 }
 
-func (*importScheduler) IsIdempotent(*proto.Subtask) bool {
+func (*importExecutor) IsIdempotent(*proto.Subtask) bool {
 	// import don't have conflict detection and resolution now, so it's ok
 	// to import data twice.
 	return true
 }
 
-func (*importScheduler) GetSubtaskExecutor(_ context.Context, task *proto.Task, _ *execute.Summary) (execute.SubtaskExecutor, error) {
+func (*importExecutor) IsRetryableError(err error) bool {
+	return common.IsRetryableError(err)
+}
+
+func (*importExecutor) GetSubtaskExecutor(_ context.Context, task *proto.Task, _ *execute.Summary) (execute.SubtaskExecutor, error) {
 	taskMeta := TaskMeta{}
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, errors.Trace(err)
@@ -487,7 +491,7 @@ func (*importScheduler) GetSubtaskExecutor(_ context.Context, task *proto.Task, 
 		zap.Int64("task-id", task.ID),
 		zap.String("step", stepStr(task.Step)),
 	)
-	logger.Info("create step scheduler")
+	logger.Info("create step executor")
 
 	switch task.Step {
 	case StepImport, StepEncodeAndSort:
@@ -516,5 +520,5 @@ func (*importScheduler) GetSubtaskExecutor(_ context.Context, task *proto.Task, 
 }
 
 func init() {
-	scheduler.RegisterTaskType(proto.ImportInto, newImportScheduler)
+	taskexecutor.RegisterTaskType(proto.ImportInto, newImportExecutor)
 }
