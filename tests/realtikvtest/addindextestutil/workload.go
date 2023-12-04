@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package addindextest
+package addindextestutil
 
 import (
 	"context"
@@ -33,7 +33,7 @@ var (
 	wCtx             = workload{}
 )
 
-func initWorkloadParams(ctx *suiteContext) {
+func initWorkloadParams(ctx *SuiteContext) {
 	ctx.ctx, ctx.cancel = context.WithCancel(context.Background())
 	ctx.workload = &wCtx
 	ctx.tkPool = &sync.Pool{New: func() interface{} {
@@ -87,7 +87,7 @@ func newWorker(wID int, ty int) *worker {
 	return &wr
 }
 
-func (w *worker) run(ctx *suiteContext, wl *workload) {
+func (w *worker) run(ctx *SuiteContext, wl *workload) {
 	var err error
 	tk := ctx.getTestKit()
 	tk.MustExec("use addindex")
@@ -116,7 +116,7 @@ func (w *worker) run(ctx *suiteContext, wl *workload) {
 	w.wChan <- &wchan
 }
 
-func (w *workload) start(ctx *suiteContext, colIDs ...int) {
+func (w *workload) start(ctx *SuiteContext, colIDs ...int) {
 	initWorkLoadContext(w, colIDs...)
 	w.wr = w.wr[:0]
 	for i := 0; i < 3; i++ {
@@ -126,7 +126,7 @@ func (w *workload) start(ctx *suiteContext, colIDs ...int) {
 	}
 }
 
-func (w *workload) stop(ctx *suiteContext, tableID int) (err error) {
+func (w *workload) stop(ctx *SuiteContext, tableID int) (err error) {
 	ctx.cancel()
 	count := 3
 	for i := 0; i < 3; i++ {
@@ -145,7 +145,7 @@ func (w *workload) stop(ctx *suiteContext, tableID int) (err error) {
 	return err
 }
 
-func isSkippedError(err error, ctx *suiteContext) bool {
+func isSkippedError(err error, ctx *SuiteContext) bool {
 	if err == nil {
 		return true
 	}
@@ -170,7 +170,7 @@ func insertStr(tableName string, id int, date string) string {
 	return insStr
 }
 
-func insertWorker(ctx *suiteContext, tk *testkit.TestKit) error {
+func insertWorker(ctx *SuiteContext, tk *testkit.TestKit) error {
 	insStr := insertStr(wCtx.tableName, wCtx.insertID, wCtx.date)
 	rs, err := tk.Exec(insStr)
 	if !isSkippedError(err, ctx) {
@@ -188,7 +188,7 @@ func insertWorker(ctx *suiteContext, tk *testkit.TestKit) error {
 	return nil
 }
 
-func updateStr(ctx *suiteContext, tableName string, colID []int) (uStr string) {
+func updateStr(ctx *SuiteContext, tableName string, colID []int) (uStr string) {
 	var updateStr string
 	id := rand.Intn(ctx.rowNum + 1)
 	for i := 0; i < len(colID); i++ {
@@ -206,7 +206,7 @@ func updateStr(ctx *suiteContext, tableName string, colID []int) (uStr string) {
 	return updateStr
 }
 
-func updateWorker(ctx *suiteContext, tk *testkit.TestKit) error {
+func updateWorker(ctx *SuiteContext, tk *testkit.TestKit) error {
 	upStr := updateStr(ctx, wCtx.tableName, wCtx.colID)
 	rs, err := tk.Exec(upStr)
 
@@ -228,7 +228,7 @@ func deleteStr(tableName string, id int) string {
 	return delStr
 }
 
-func deleteWorker(ctx *suiteContext, wl *workload, tk *testkit.TestKit) error {
+func deleteWorker(ctx *SuiteContext, wl *workload, tk *testkit.TestKit) error {
 	id := rand.Intn(ctx.rowNum + 1)
 	delStr := deleteStr(wl.tableName, id)
 	rs, err := tk.Exec(delStr)

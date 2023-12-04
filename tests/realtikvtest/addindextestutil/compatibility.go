@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package addindextest
+package addindextestutil
 
 import (
 	"strconv"
+	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -42,13 +43,19 @@ const (
 
 // CompatibilityContext is context of compatibility test.
 type CompatibilityContext struct {
-	isMultiSchemaChange bool
-	isConcurrentDDL     bool
-	isPiTR              bool
+	IsMultiSchemaChange bool
+	IsConcurrentDDL     bool
+	IsPiTR              bool
 	executor            []*executor
 	colIIDs             [][]int
 	colJIDs             [][]int
 	tType               testType
+}
+
+func InitCompCtx(t *testing.T) *SuiteContext {
+	ctx := InitTest(t)
+	InitCompCtxParams(ctx)
+	return ctx
 }
 
 type paraDDLChan struct {
@@ -70,14 +77,23 @@ func newExecutor(tableID int) *executor {
 	return &er
 }
 
-func initCompCtxParams(ctx *suiteContext) {
+func InitCompCtxParams(ctx *SuiteContext) {
 	ctx.CompCtx = &compCtx
-	compCtx.isConcurrentDDL = false
-	compCtx.isMultiSchemaChange = false
-	compCtx.isPiTR = false
+	compCtx.IsConcurrentDDL = false
+	compCtx.IsMultiSchemaChange = false
+	compCtx.IsPiTR = false
 }
 
-func (cCtx *CompatibilityContext) start(ctx *suiteContext) {
+func InitConcurrentDDLTest(t *testing.T, colIIDs [][]int, colJIDs [][]int, tType testType) *SuiteContext {
+	ctx := InitCompCtx(t)
+	ctx.CompCtx.IsConcurrentDDL = true
+	ctx.CompCtx.tType = tType
+	ctx.CompCtx.colIIDs = colIIDs
+	ctx.CompCtx.colJIDs = colJIDs
+	return ctx
+}
+
+func (cCtx *CompatibilityContext) Start(ctx *SuiteContext) {
 	cCtx.executor = cCtx.executor[:0]
 	for i := 0; i < 3; i++ {
 		er := newExecutor(i)
@@ -87,7 +103,7 @@ func (cCtx *CompatibilityContext) start(ctx *suiteContext) {
 	}
 }
 
-func (cCtx *CompatibilityContext) stop(ctx *suiteContext) error {
+func (cCtx *CompatibilityContext) Stop(ctx *SuiteContext) error {
 	count := 3
 	for i := 0; i < 3; i++ {
 		pdChan := <-cCtx.executor[i].PDChan
@@ -107,22 +123,22 @@ func (cCtx *CompatibilityContext) stop(ctx *suiteContext) error {
 	return nil
 }
 
-func (e *executor) run(ctx *suiteContext) {
+func (e *executor) run(ctx *SuiteContext) {
 	var (
 		err    error
 		erChan paraDDLChan
 	)
 	switch ctx.CompCtx.tType {
 	case TestNonUnique:
-		err = testOneColFramePara(ctx, e.id, ctx.CompCtx.colIIDs, addIndexNonUnique)
+		err = TestOneColFramePara(ctx, e.id, ctx.CompCtx.colIIDs, AddIndexNonUnique)
 	case TestUnique:
-		err = testOneColFramePara(ctx, e.id, ctx.CompCtx.colIIDs, addIndexUnique)
+		err = TestOneColFramePara(ctx, e.id, ctx.CompCtx.colIIDs, AddIndexUnique)
 	case TestPK:
-		err = testOneIndexFramePara(ctx, e.id, 0, addIndexPK)
+		err = TestOneIndexFramePara(ctx, e.id, 0, AddIndexPK)
 	case TestGenIndex:
-		err = testOneIndexFramePara(ctx, e.id, 29, addIndexGenCol)
+		err = TestOneIndexFramePara(ctx, e.id, 29, AddIndexGenCol)
 	case TestMultiCols:
-		err = testTwoColsFramePara(ctx, e.id, ctx.CompCtx.colIIDs, ctx.CompCtx.colJIDs, addIndexMultiCols)
+		err = TestTwoColsFramePara(ctx, e.id, ctx.CompCtx.colIIDs, ctx.CompCtx.colJIDs, AddIndexMultiCols)
 	default:
 	}
 	erChan.err = err
@@ -130,7 +146,7 @@ func (e *executor) run(ctx *suiteContext) {
 	e.PDChan <- &erChan
 }
 
-func testOneColFramePara(ctx *suiteContext, tableID int, colIDs [][]int, f func(*suiteContext, int, string, int) error) (err error) {
+func TestOneColFramePara(ctx *SuiteContext, tableID int, colIDs [][]int, f func(*SuiteContext, int, string, int) error) (err error) {
 	tableName := "addindex.t" + strconv.Itoa(tableID)
 	for _, i := range colIDs[tableID] {
 		err = f(ctx, tableID, tableName, i)
@@ -149,7 +165,7 @@ func testOneColFramePara(ctx *suiteContext, tableID int, colIDs [][]int, f func(
 	return err
 }
 
-func testTwoColsFramePara(ctx *suiteContext, tableID int, iIDs [][]int, jIDs [][]int, f func(*suiteContext, int, string, int, int, int) error) (err error) {
+func TestTwoColsFramePara(ctx *SuiteContext, tableID int, iIDs [][]int, jIDs [][]int, f func(*SuiteContext, int, string, int, int, int) error) (err error) {
 	tableName := "addindex.t" + strconv.Itoa(tableID)
 	indexID := 0
 	for _, i := range iIDs[tableID] {
@@ -171,7 +187,7 @@ func testTwoColsFramePara(ctx *suiteContext, tableID int, iIDs [][]int, jIDs [][
 	return err
 }
 
-func testOneIndexFramePara(ctx *suiteContext, tableID int, colID int, f func(*suiteContext, int, string, int) error) (err error) {
+func TestOneIndexFramePara(ctx *SuiteContext, tableID int, colID int, f func(*SuiteContext, int, string, int) error) (err error) {
 	tableName := "addindex.t" + strconv.Itoa(tableID)
 	err = f(ctx, tableID, tableName, colID)
 	if err != nil {
