@@ -179,6 +179,9 @@ func (b *Buffer) Destroy() {
 		b.pool.release(buf)
 	}
 	b.blocks = nil
+	b.curBlock = nil
+	b.curBlockIdx = -1
+	b.curIdx = 0
 }
 
 // TotalSize represents the total memory size of this Buffer.
@@ -235,7 +238,7 @@ func (b *Buffer) AllocBytesWithSliceLocation(n int) ([]byte, SliceLocation) {
 	}
 
 	if b.curIdx+n > len(b.curBlock) {
-		if b.blockCntLimit >= 0 && len(b.blocks) >= b.blockCntLimit {
+		if b.blockCntLimit >= 0 && b.curBlockIdx+1 >= b.blockCntLimit {
 			return nil, SliceLocation{}
 		}
 		b.addBuf()

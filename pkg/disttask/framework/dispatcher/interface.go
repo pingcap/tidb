@@ -25,24 +25,25 @@ import (
 
 // TaskManager defines the interface to access task table.
 type TaskManager interface {
-	GetGlobalTasksInStates(ctx context.Context, states ...interface{}) (task []*proto.Task, err error)
-	GetGlobalTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
-	UpdateGlobalTaskAndAddSubTasks(ctx context.Context, gTask *proto.Task, subtasks []*proto.Subtask, prevState proto.TaskState) (bool, error)
+	GetTasksInStates(ctx context.Context, states ...interface{}) (task []*proto.Task, err error)
+	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
+	UpdateTaskAndAddSubTasks(ctx context.Context, task *proto.Task, subtasks []*proto.Subtask, prevState proto.TaskState) (bool, error)
 	GCSubtasks(ctx context.Context) error
 	GetAllNodes(ctx context.Context) ([]string, error)
 	CleanUpMeta(ctx context.Context, nodes []string) error
 	TransferTasks2History(ctx context.Context, tasks []*proto.Task) error
-	CancelGlobalTask(ctx context.Context, taskID int64) error
+	CancelTask(ctx context.Context, taskID int64) error
 	PauseTask(ctx context.Context, taskKey string) (bool, error)
 	GetSubtaskInStatesCnt(ctx context.Context, taskID int64, states ...interface{}) (int64, error)
 	ResumeSubtasks(ctx context.Context, taskID int64) error
 	CollectSubTaskError(ctx context.Context, taskID int64) ([]error, error)
 	TransferSubTasks2History(ctx context.Context, taskID int64) error
-	UpdateFailedSchedulerIDs(ctx context.Context, taskID int64, replaceNodes map[string]string) error
+	UpdateSubtasksExecIDs(ctx context.Context, taskID int64, subtasks []*proto.Subtask) error
 	GetNodesByRole(ctx context.Context, role string) (map[string]bool, error)
-	GetSchedulerIDsByTaskID(ctx context.Context, taskID int64) ([]string, error)
-	GetSucceedSubtasksByStep(ctx context.Context, taskID int64, step proto.Step) ([]*proto.Subtask, error)
-	GetSchedulerIDsByTaskIDAndStep(ctx context.Context, taskID int64, step proto.Step) ([]string, error)
+	GetTaskExecutorIDsByTaskID(ctx context.Context, taskID int64) ([]string, error)
+	GetSubtasksByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.TaskState) ([]*proto.Subtask, error)
+	GetSubtasksByExecIdsAndStepAndState(ctx context.Context, tidbIDs []string, taskID int64, step proto.Step, state proto.TaskState) ([]*proto.Subtask, error)
+	GetTaskExecutorIDsByTaskIDAndStep(ctx context.Context, taskID int64, step proto.Step) ([]string, error)
 
 	WithNewSession(fn func(se sessionctx.Context) error) error
 	WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error
@@ -59,17 +60,18 @@ type Extension interface {
 	OnTick(ctx context.Context, task *proto.Task)
 
 	// OnNextSubtasksBatch is used to generate batch of subtasks for next stage
-	// NOTE: don't change gTask.State inside, framework will manage it.
+	// NOTE: don't change task.State inside, framework will manage it.
 	// it's called when:
 	// 	1. task is pending and entering it's first step.
 	// 	2. subtasks dispatched has all finished with no error.
 	// when next step is StepDone, it should return nil, nil.
 	OnNextSubtasksBatch(ctx context.Context, h TaskHandle, task *proto.Task, serverInfo []*infosync.ServerInfo, step proto.Step) (subtaskMetas [][]byte, err error)
 
-	// OnErrStage is called when:
-	// 	1. subtask is finished with error.
-	// 	2. task is cancelled after we have dispatched some subtasks.
-	OnErrStage(ctx context.Context, h TaskHandle, task *proto.Task, receiveErrs []error) (subtaskMeta []byte, err error)
+	// OnDone is called when task is done, either finished successfully or failed
+	// with error.
+	// if the task is failed when initializing dispatcher, or it's an unknown task,
+	// we don't call this function.
+	OnDone(ctx context.Context, h TaskHandle, task *proto.Task) error
 
 	// GetEligibleInstances is used to get the eligible instances for the task.
 	// on certain condition we may want to use some instances to do the task, such as instances with more disk.
@@ -123,7 +125,8 @@ func ClearDispatcherFactory() {
 
 // CleanUpRoutine is used for the framework to do some clean up work if the task is finished.
 type CleanUpRoutine interface {
-	// CleanUp do the clean up work.
+	// CleanUp do the cleanup work.
+	// task.Meta can be updated here, such as redacting some sensitive info.
 	CleanUp(ctx context.Context, task *proto.Task) error
 }
 type cleanUpFactoryFn func() CleanUpRoutine
