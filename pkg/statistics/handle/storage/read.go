@@ -476,13 +476,10 @@ func TablePredicateStatsFromStorage(sctx sessionctx.Context, tableID int64, step
 	table := &statistics.TablePredicateItem{}
 	table.TableID = tableID
 	table.StepHash = stepHash
-	for _, row := range rows {
-		table.Count = row.GetInt64(0)
-		table.PredicateSelectivity = row.GetFloat32(1)
-		table.Version = row.GetUint64(2)
-		return table, nil
-	}
-	return nil, nil
+	table.Count = rows[0].GetInt64(0)
+	table.PredicateSelectivity = rows[0].GetFloat32(1)
+	table.Version = rows[0].GetUint64(2)
+	return table, nil
 }
 
 // LoadHistogram will load histogram from storage.
