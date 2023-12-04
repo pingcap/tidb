@@ -2481,17 +2481,18 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 func (do *Domain) analyzeJobsCleanupWorker(owner owner.Manager) {
 	defer util.Recover(metrics.LabelDomain, "analyzeJobsCleanupWorker", nil, false)
 	const gcInterval = time.Hour
-	statsHandle := do.StatsHandle()
+	const DaysToKeep = 7
 	gcTicker := time.NewTicker(gcInterval)
 	defer func() {
 		gcTicker.Stop()
 		logutil.BgLogger().Info("analyzeJobsCleanupWorker exited.")
 	}()
+	statsHandle := do.StatsHandle()
 	for {
 		select {
 		case <-gcTicker.C:
+			// Only the owner should perform this operation.
 			if owner.IsOwner() {
-				const DaysToKeep = 7
 				updateTime := time.Now().AddDate(0, 0, -DaysToKeep)
 				err := statsHandle.DeleteAnalyzeJobs(updateTime)
 				if err != nil {
