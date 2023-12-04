@@ -191,9 +191,9 @@ func TestIssue48741(t *testing.T) {
 		allocator.free(memory810mb)
 	}
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/gctuner/mockUpdateGlobalVarDuringAdjustPercentage", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/gctuner/mockUpdateGlobalVarDuringAdjustPercentage", "return(true)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/gctuner/mockUpdateGlobalVarDuringAdjustPercentage"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/gctuner/mockUpdateGlobalVarDuringAdjustPercentage"))
 	}()
 
 	memory.ServerMemoryLimit.Store(1 << 30)   // 1GB
