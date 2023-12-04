@@ -217,6 +217,9 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 		return err
 	}
 
+	// The count of the partition should be added to the table.
+	// The formula is: total_count = original_table_count - original_partition_count + new_table_count.
+	// So the delta is : new_table_count - original_partition_count.
 	countDelta := tableCount - partCount
 	// Initially, the sum of tableCount and partCount represents
 	// the operation of deleting the partition and adding the table.
