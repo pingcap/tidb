@@ -158,7 +158,7 @@ explain select * from t use index (primary) where a like ' %' and b like '123%' 
 select * from t use index (primary) where a like ' %' and b like '123%' order by a,b;
 drop table t;
 # Suite 5: utf8mb4_general_ci + prefix index
-create table t(a varchar(20) collate utf8mb4_general_ci, b bigint, index ia(a(3)));
+create table t(a varchar(20) collate utf8mb4_general_ci, b bigint, index ia(a(3),b));
 insert into t value
 ('测试',222),
 ('测试Abc',324),
@@ -227,18 +227,5 @@ explain select * from t use index (ia) where a like ' 语言%%' order by a,_tidb
 select * from t use index (ia) where a like ' 语言%%' order by a,_tidb_rowid;
 explain select * from t use index (ia) where a not in ('aabc','dd') order by a,_tidb_rowid;
 select * from t use index (ia) where a not in ('aabc','dd') order by a,_tidb_rowid;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+explain select * from t where a >= 'aabb' and a <= 'aabd' and b = 456 order by a,_tidb_rowid;
+select * from t where a >= 'aabb' and a <= 'aabd' and b = 456 order by a,_tidb_rowid;
