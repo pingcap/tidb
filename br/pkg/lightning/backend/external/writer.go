@@ -185,7 +185,10 @@ func (b *WriterBuilder) Build(
 	if b.keyDupeEncoding {
 		keyAdapter = common.DupDetectKeyAdapter{}
 	}
-	p := membuf.NewPool(membuf.WithBlockNum(0), membuf.WithBlockSize(b.blockSize))
+	p := membuf.NewPool(
+		membuf.WithBlockNum(0),
+		membuf.WithBlockSize(b.blockSize),
+	)
 	ret := &Writer{
 		memSizeLimit:   b.memSizeLimit,
 		store:          store,
