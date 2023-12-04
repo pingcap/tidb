@@ -139,6 +139,7 @@ func (s *LFU) onReject(item *ristretto.Item) {
 			logutil.BgLogger().Warn("panic in onReject", zap.Any("error", r), zap.Stack("stack"))
 		}
 	}()
+	logutil.BgLogger().Warn("reject item", zap.Uint64("key", item.Key))
 	s.dropMemory(item)
 	metrics.RejectCounter.Inc()
 }
@@ -149,6 +150,7 @@ func (s *LFU) onEvict(item *ristretto.Item) {
 			logutil.BgLogger().Warn("panic in onEvict", zap.Any("error", r), zap.Stack("stack"))
 		}
 	}()
+	logutil.BgLogger().Warn("evict item", zap.Uint64("key", item.Key))
 	s.dropMemory(item)
 	metrics.EvictCounter.Inc()
 }
