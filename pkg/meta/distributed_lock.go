@@ -192,6 +192,7 @@ func (d *DistributedLock) Lock() error {
 	return nil
 }
 
+// TryLock tries to lock the distributed lock without blocking.
 func (d *DistributedLock) TryLock() (bool, error) {
 	lockIsHeld := false
 	err := d.getLockInTxnWithRetry(d.outerCtx,
