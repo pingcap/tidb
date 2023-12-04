@@ -2258,7 +2258,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	do.SetStatsUpdating(true)
 	do.wg.Run(func() { do.updateStatsWorker(ctx, owner) }, "updateStatsWorker")
 	do.wg.Run(func() { do.autoAnalyzeWorker(owner) }, "autoAnalyzeWorker")
-	do.wg.Run(func() { do.gcAnalyzeHistory(owner) }, "gcAnalyzeHistory")
+	do.wg.Run(func() { do.analyzeJobsCleanupWorker(owner) }, "analyzeJobsCleanupWorker")
 	return nil
 }
 
@@ -2475,14 +2475,17 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 	}
 }
 
-func (do *Domain) gcAnalyzeHistory(owner owner.Manager) {
-	defer util.Recover(metrics.LabelDomain, "gcAnalyzeHistory", nil, false)
+// analyzeJobsCleanupWorker periodically removes outdated analyze jobs from the statistics handle.
+// It only performs this operation if the current instance is the owner.
+// The cleanup interval is set to one hour, and analyze jobs older than 7 days are removed.
+func (do *Domain) analyzeJobsCleanupWorker(owner owner.Manager) {
+	defer util.Recover(metrics.LabelDomain, "analyzeJobsCleanupWorker", nil, false)
 	const gcInterval = time.Hour
 	statsHandle := do.StatsHandle()
 	gcTicker := time.NewTicker(gcInterval)
 	defer func() {
 		gcTicker.Stop()
-		logutil.BgLogger().Info("gcAnalyzeHistory exited.")
+		logutil.BgLogger().Info("analyzeJobsCleanupWorker exited.")
 	}()
 	for {
 		select {
