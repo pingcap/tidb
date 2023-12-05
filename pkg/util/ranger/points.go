@@ -722,9 +722,6 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []*po
 	return []*point{startPoint, endPoint}
 }
 
-<<<<<<< HEAD
-func (r *builder) buildFromNot(expr *expression.ScalarFunction) []*point {
-=======
 // isPadSpaceCollation returns whether the collation is a PAD SPACE collation.
 // Since all collations, except for binary, implemented in tidb are PAD SPACE collations for now, we use a simple
 // collation != binary check here. We may also move it to collation related packages when NO PAD collations are
@@ -733,8 +730,7 @@ func isPadSpaceCollation(collation string) bool {
 	return collation != charset.CollationBin
 }
 
-func (r *builder) buildFromNot(expr *expression.ScalarFunction, prefixLen int) []*point {
->>>>>>> 39df07d44b5 (util/ranger: don't exclude start key for range from `_` in `like` function (#48984))
+func (r *builder) buildFromNot(expr *expression.ScalarFunction) []*point {
 	switch n := expr.FuncName.L; n {
 	case ast.IsTruthWithoutNull:
 		return r.buildFromIsTrue(expr, 1, false)
