@@ -29,8 +29,8 @@ const (
 
 func TestSlotManager(t *testing.T) {
 	sm := slotManager{
-		schedulerSlotInfos: make(map[int64]*slotInfo),
-		available:          10,
+		executorSlotInfos: make(map[int64]*slotInfo),
+		available:         10,
 	}
 
 	task := &proto.Task{
@@ -40,8 +40,8 @@ func TestSlotManager(t *testing.T) {
 	}
 	require.True(t, sm.checkSlotAvailabilityForTask(task))
 	sm.addTask(task)
-	require.Equal(t, 1, sm.schedulerSlotInfos[taskID].priority)
-	require.Equal(t, 1, sm.schedulerSlotInfos[taskID].slotCount)
+	require.Equal(t, 1, sm.executorSlotInfos[taskID].priority)
+	require.Equal(t, 1, sm.executorSlotInfos[taskID].slotCount)
 	require.Equal(t, 9, sm.available)
 
 	require.False(t, sm.checkSlotAvailabilityForTask(&proto.Task{
@@ -51,5 +51,5 @@ func TestSlotManager(t *testing.T) {
 	}))
 
 	sm.removeTask(taskID)
-	require.Nil(t, sm.schedulerSlotInfos[taskID])
+	require.Nil(t, sm.executorSlotInfos[taskID])
 }

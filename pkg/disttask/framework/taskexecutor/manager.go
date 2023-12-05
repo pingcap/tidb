@@ -95,8 +95,8 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 		logCtx:    logutil.WithFields(context.Background()),
 		newPool:   b.newPool,
 		slotManager: &slotManager{
-			schedulerSlotInfos: make(map[int64]*slotInfo, 0),
-			available:          runtime.NumCPU(),
+			executorSlotInfos: make(map[int64]*slotInfo, 0),
+			available:         runtime.NumCPU(),
 		},
 	}
 	m.ctx, m.cancel = context.WithCancel(ctx)

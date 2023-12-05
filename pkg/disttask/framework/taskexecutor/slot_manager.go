@@ -20,12 +20,14 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 )
 
+// slotManager is used to manage the slots of the executor.
 type slotManager struct {
 	sync.RWMutex
 	// taskID -> slotInfo
-	schedulerSlotInfos map[int64]*slotInfo
+	executorSlotInfos map[int64]*slotInfo
 
-	// The number of slots that can be used by the scheduler.
+	// The number of slots that can be used by the executor.
+	// It is always equal to CPU cores of the instance.
 	available int
 }
 
@@ -39,7 +41,7 @@ type slotInfo struct {
 func (sm *slotManager) addTask(task *proto.Task) {
 	sm.Lock()
 	defer sm.Unlock()
-	sm.schedulerSlotInfos[task.ID] = &slotInfo{
+	sm.executorSlotInfos[task.ID] = &slotInfo{
 		taskID:    int(task.ID),
 		priority:  task.Priority,
 		slotCount: int(task.Concurrency),
@@ -52,13 +54,14 @@ func (sm *slotManager) removeTask(taskID int64) {
 	sm.Lock()
 	defer sm.Unlock()
 
-	slotInfo, ok := sm.schedulerSlotInfos[taskID]
+	slotInfo, ok := sm.executorSlotInfos[taskID]
 	if ok {
-		delete(sm.schedulerSlotInfos, taskID)
+		delete(sm.executorSlotInfos, taskID)
 		sm.available += int(slotInfo.slotCount)
 	}
 }
 
+// checkSlotAvailabilityForTask is used to check whether the instance has enough slots to run the task.
 func (sm *slotManager) checkSlotAvailabilityForTask(task *proto.Task) bool {
 	return sm.available >= int(task.Concurrency)
 }
