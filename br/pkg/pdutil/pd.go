@@ -440,9 +440,11 @@ func (p *PdController) doPauseSchedulers(ctx context.Context,
 	removedSchedulers := make([]string, 0, len(schedulers))
 	for _, scheduler := range schedulers {
 		for _, addr := range p.getAllPDAddrs() {
-			_, err = post(ctx, addr, pdhttp.SchedulerByName(scheduler), p.cli, http.MethodPost, body)
+			var resp []byte
+			resp, err = post(ctx, addr, pdhttp.SchedulerByName(scheduler), p.cli, http.MethodPost, body)
 			if err == nil {
 				removedSchedulers = append(removedSchedulers, scheduler)
+				log.Info("Paused scheduler.", zap.String("response", string(resp)), zap.String("on", addr))
 				break
 			}
 		}

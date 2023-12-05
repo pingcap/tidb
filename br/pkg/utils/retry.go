@@ -201,7 +201,11 @@ func (v *verboseBackoffer) NextBackoff(err error) time.Duration {
 // Attempt returns the remain attempt times
 func (v *verboseBackoffer) Attempt() int {
 	attempt := v.inner.Attempt()
-	v.logger.Info("Retry attempt hint.", zap.Int("attempt", attempt))
+	if attempt > 0 {
+		v.logger.Debug("Retry attempt hint.", zap.Int("attempt", attempt), zap.Stringer("gid", v.groupID))
+	} else {
+		v.logger.Warn("Retry limit exceeded.", zap.Stringer("gid", v.groupID))
+	}
 	return attempt
 }
 
