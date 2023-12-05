@@ -40,7 +40,7 @@ function help_message()
 
     -d <y|Y|n|N|b|B>: \"y\" or \"Y\" for only enabling the new collation during test.
                       \"n\" or \"N\" for only disabling the new collation during test.
-                      \"b\" or \"B\" for both tests [default].
+                      \"b\" or \"B\" for tests the prefix is `collation`, enabling and disabling new collation during test, and for other tests, only enabling the new collation [default].
                       Enable/Disable the new collation during the integration test.
 
     -s <tidb-server-path>: Use tidb-server in <tidb-server-path> for testing.
@@ -120,7 +120,7 @@ while getopts "t:s:r:b:d:c:i:h:p" opt; do
                     build=0
                     ;;
                 *)
-                    help_messge 1>&2
+                    help_message 1>&2
                     exit 1
                     ;;
             esac
@@ -133,8 +133,11 @@ while getopts "t:s:r:b:d:c:i:h:p" opt; do
                 n|N)
                     collation_opt=0
                     ;;
+                b|B)
+                    collation_opt=2
+                    ;;
                 *)
-                    help_messge 1>&2
+                    help_message 1>&2
                     exit 1
                     ;;
             esac
@@ -260,7 +263,39 @@ function check_data_race() {
 }
 
 enabled_new_collation=""
+function check_case_name() {
+    if [ $collation_opt != 2 ]; then
+        return
+    fi
 
+    case=""
+
+    if [ $record -eq 0 ]; then
+        if [ -z "$tests" ]; then
+            return
+        fi
+        case=$tests
+    fi
+
+    if [ $record -eq 1 ]; then
+        if [ "$record_case" = 'all' ]; then
+            return
+        fi
+        case=$record_case
+    fi
+
+    IFS='/' read -ra parts <<< "$case"
+
+    last_part="${parts[${#parts[@]}-1]}"
+
+    if [[ $last_part == collation* || $tests == collation* ]]; then
+        collation_opt=2
+    else
+        collation_opt=1
+    fi
+}
+
+check_case_name
 if [[ $collation_opt = 0 || $collation_opt = 2 ]]; then
     enabled_new_collation=0
     start_tidb_server
