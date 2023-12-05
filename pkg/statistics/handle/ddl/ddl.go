@@ -237,17 +237,22 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 		}
 		sctx := se.(sessionctx.Context)
 		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-		schema, ok := is.SchemaByTable(globalTableInfo)
+		golbalTableSchema, ok := is.SchemaByTable(globalTableInfo)
 		if !ok {
 			return errors.Errorf("schema not found for table %s", globalTableInfo.Name.O)
+		}
+		tableSchema, ok := is.SchemaByTable(originalTableInfo)
+		if !ok {
+			return errors.Errorf("schema not found for table %s", originalTableInfo.Name.O)
 		}
 		if err := h.updateStatsWithCountDeltaAndModifyCountDelta(
 			globalTableInfo.ID, countDelta, modifyCountDelta,
 		); err != nil {
 			fields := exchangePartitionLogFields(
-				schema.Name,
+				golbalTableSchema.Name.O,
 				globalTableInfo,
 				originalPartInfo.Definitions[0],
+				tableSchema.Name.O,
 				originalTableInfo,
 				countDelta, modifyCountDelta,
 				partCount,
@@ -265,9 +270,10 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 		logutil.StatsLogger.Info(
 			"Update global stats after exchange partition",
 			exchangePartitionLogFields(
-				schema.Name,
+				golbalTableSchema.Name.O,
 				globalTableInfo,
 				originalPartInfo.Definitions[0],
+				tableSchema.Name.O,
 				originalTableInfo,
 				countDelta, modifyCountDelta,
 				partCount,
@@ -281,16 +287,17 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 }
 
 func exchangePartitionLogFields(
-	schemaName model.CIStr,
+	globalTableSchemaName string,
 	globalTableInfo *model.TableInfo,
 	originalPartInfo model.PartitionDefinition,
+	tableSchemaName string,
 	originalTableInfo *model.TableInfo,
 	countDelta, modifyCountDelta,
 	partCount, partModifyCount,
 	tableCount, tableModifyCount int64,
 ) []zap.Field {
 	return []zap.Field{
-		zap.String("schema", schemaName.O),
+		zap.String("globalTableSchema", globalTableSchemaName),
 		zap.Int64("globalTableID", globalTableInfo.ID),
 		zap.String("globalTableName", globalTableInfo.Name.O),
 		zap.Int64("countDelta", countDelta),
@@ -299,6 +306,7 @@ func exchangePartitionLogFields(
 		zap.String("partitionName", originalPartInfo.Name.O),
 		zap.Int64("partitionCount", partCount),
 		zap.Int64("partitionModifyCount", partModifyCount),
+		zap.String("tableSchema", tableSchemaName),
 		zap.Int64("tableID", originalTableInfo.ID),
 		zap.String("tableName", originalTableInfo.Name.O),
 		zap.Int64("tableCount", tableCount),
