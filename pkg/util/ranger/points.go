@@ -137,6 +137,10 @@ func rangePointEqualValueLess(a, b *point) bool {
 }
 
 func pointsConvertToSortKey(sctx sessionctx.Context, inputPs []*point, newTp *types.FieldType) ([]*point, error) {
+	// Only handle normal string type here.
+	// Currently, set won't be pushed down and it shouldn't reach here in theory.
+	// For enum, we have separate logic for it, like handleEnumFromBinOp(). For now, it only supports point range,
+	// intervals are not supported. So we also don't need to handle enum here.
 	if newTp.EvalType() != types.ETString ||
 		newTp.GetType() == mysql.TypeEnum ||
 		newTp.GetType() == mysql.TypeSet {
@@ -163,17 +167,16 @@ func pointConvertToSortKey(
 	if err != nil {
 		return nil, err
 	}
-	if p.value.Kind() != types.KindString || newTp.GetCollate() == charset.CollationBin {
+	if p.value.Kind() != types.KindString || newTp.GetCollate() == charset.CollationBin || !collate.NewCollationEnabled() {
 		return p, nil
 	}
 	sortKey := p.value.GetBytes()
-	if collate.NewCollationEnabled() {
-		if !trimTrailingSpace {
-			sortKey = collate.GetCollator(newTp.GetCollate()).KeyWithoutTrimRightSpace(string(hack.String(sortKey)))
-		} else {
-			sortKey = collate.GetCollator(newTp.GetCollate()).Key(string(hack.String(sortKey)))
-		}
+	if !trimTrailingSpace {
+		sortKey = collate.GetCollator(newTp.GetCollate()).KeyWithoutTrimRightSpace(string(hack.String(sortKey)))
+	} else {
+		sortKey = collate.GetCollator(newTp.GetCollate()).Key(string(hack.String(sortKey)))
 	}
+
 	return &point{value: types.NewBytesDatum(sortKey), excl: p.excl, start: p.start}, nil
 }
 
