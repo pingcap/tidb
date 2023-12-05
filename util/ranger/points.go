@@ -16,7 +16,6 @@ package ranger
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/parser/charset"
 	"math"
 	"sort"
 
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
