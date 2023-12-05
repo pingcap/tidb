@@ -122,7 +122,7 @@ var (
 
 // newClientConn creates a *clientConn object.
 func newClientConn(s *Server) *clientConn {
-	cc := &clientConn{
+	return &clientConn{
 		server:       s,
 		connectionID: s.dom.NextConnID(),
 		collation:    mysql.DefaultCollationID,
@@ -134,8 +134,6 @@ func newClientConn(s *Server) *clientConn {
 		quit:         make(chan struct{}),
 		ppEnabled:    s.cfg.ProxyProtocol.Networks != "",
 	}
-	variable.RegisterStatistics(cc)
-	return cc
 }
 
 // clientConn represents a connection between server and client, it maintains connection specific state,
@@ -2606,8 +2604,10 @@ func (cc *clientConn) Flush(ctx context.Context) error {
 	return cc.flush(ctx)
 }
 
+type compressionStats struct{}
+
 // Stats returns the connection statistics.
-func (*clientConn) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
+func (*compressionStats) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
 	m := make(map[string]interface{}, 3)
 
 	switch vars.CompressionAlgorithm {
@@ -2637,6 +2637,10 @@ func (*clientConn) Stats(vars *variable.SessionVars) (map[string]interface{}, er
 }
 
 // GetScope gets the status variables scope.
-func (*clientConn) GetScope(_ string) variable.ScopeFlag {
+func (*compressionStats) GetScope(_ string) variable.ScopeFlag {
 	return variable.ScopeSession
+}
+
+func init() {
+	variable.RegisterStatistics(&compressionStats{})
 }
