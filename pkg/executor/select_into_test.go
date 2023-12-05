@@ -290,3 +290,27 @@ func TestYearType(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("select * from t into outfile '%v' fields terminated by ',' optionally enclosed by '\"' lines terminated by '\\n';", outfile))
 	cmpAndRm("2010\n2011\n2012\n2030\n", outfile, t)
 }
+
+func TestPrepareSelectIntoOutfile(t *testing.T) {
+	outfile := randomSelectFilePath("TestPrepareSelectInto")
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (
+		a int,
+		b double,
+		c varchar(10),
+		d blob,
+		e json,
+		f set('1', '2', '3'),
+		g enum('1', '2', '3'))`)
+	tk.MustExec(`insert into t values (1, 1, "1", "1", '{"key": 1}', "1", "1")`)
+
+	tk.MustExec(fmt.Sprintf("prepare stmt from \"select * from t into outfile '%v' fields terminated by ',' escaped by '1'\"", outfile))
+	tk.MustExec("execute stmt")
+	cmpAndRm(`1,1,11,11,{"key": 11},11,11
+`, outfile, t)
+	tk.MustExec("execute stmt")
+	cmpAndRm(`1,1,11,11,{"key": 11},11,11
+`, outfile, t)
+}
