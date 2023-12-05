@@ -211,7 +211,7 @@ func TestGetTopUnfinishedTasks(t *testing.T) {
 	tasks, err := gm.GetTopUnfinishedTasks(ctx)
 	require.NoError(t, err)
 	require.Len(t, tasks, 8)
-	var taskKeys []string
+	taskKeys := make([]string, 0, len(tasks))
 	for _, task := range tasks {
 		taskKeys = append(taskKeys, task.Key)
 		// not filled
