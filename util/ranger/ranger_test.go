@@ -1424,7 +1424,7 @@ create table t(
 			exprStr:     "a LIKE 'abc_'",
 			accessConds: "[like(test.t.a, abc_, 92)]",
 			filterConds: "[like(test.t.a, abc_, 92)]",
-			resultStr:   "[(\"abc\",\"abd\")]",
+			resultStr:   "[[\"abc\",\"abd\")]",
 		},
 		{
 			indexPos:    0,
