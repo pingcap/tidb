@@ -240,7 +240,7 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 		// Update the global stats.
 		if modifyCountDelta != 0 || countDelta != 0 {
 			is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-			golbalTableSchema, ok := is.SchemaByTable(globalTableInfo)
+			globalTableSchema, ok := is.SchemaByTable(globalTableInfo)
 			if !ok {
 				return errors.Errorf("schema not found for table %s", globalTableInfo.Name.O)
 			}
@@ -249,7 +249,7 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 				globalTableInfo.ID, countDelta, modifyCountDelta,
 			); err != nil {
 				fields := exchangePartitionLogFields(
-					golbalTableSchema.Name.O,
+					globalTableSchema.Name.O,
 					globalTableInfo,
 					originalPartInfo.Definitions[0],
 					originalTableInfo,
@@ -269,7 +269,7 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 			logutil.StatsLogger.Info(
 				"Update global stats after exchange partition",
 				exchangePartitionLogFields(
-					golbalTableSchema.Name.O,
+					globalTableSchema.Name.O,
 					globalTableInfo,
 					originalPartInfo.Definitions[0],
 					originalTableInfo,
