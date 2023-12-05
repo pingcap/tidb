@@ -114,6 +114,7 @@ func TestOnRunnableTasks(t *testing.T) {
 
 	m, err := b.BuildManager(ctx, id, mockTaskTable)
 	require.NoError(t, err)
+	mockInternalExecutor.EXPECT().SetHook(gomock.Any()).AnyTimes()
 
 	// no task
 	m.onRunnableTasks(nil)
@@ -191,6 +192,7 @@ func TestManager(t *testing.T) {
 
 	m, err := b.BuildManager(context.Background(), id, mockTaskTable)
 	require.NoError(t, err)
+	mockInternalExecutor.EXPECT().SetHook(gomock.Any()).AnyTimes()
 
 	taskID1 := int64(1)
 	taskID2 := int64(2)
