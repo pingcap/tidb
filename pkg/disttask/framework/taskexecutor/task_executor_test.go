@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/disttask/framework/hook"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	mockexecute "github.com/pingcap/tidb/pkg/disttask/framework/mock/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -57,6 +58,7 @@ func TestTaskExecutorRun(t *testing.T) {
 	taskExecutorRegisterErr := errors.Errorf("constructor of taskExecutor for key not found")
 	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, taskExecutorRegisterErr).Times(2)
 	taskExecutor := NewBaseTaskExecutor(ctx, "id", 1, mockSubtaskTable)
+	taskExecutor.SetHook(&hook.BaseCallback{})
 	taskExecutor.Extension = mockExtension
 	err := taskExecutor.run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp})
 	require.EqualError(t, err, taskExecutorRegisterErr.Error())
@@ -263,6 +265,7 @@ func TestTaskExecutorRollback(t *testing.T) {
 	taskExecutorRegisterErr := errors.Errorf("constructor of taskExecutor for key not found")
 	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, taskExecutorRegisterErr)
 	taskExecutor := NewBaseTaskExecutor(ctx, "id", 1, mockSubtaskTable)
+	taskExecutor.SetHook(&hook.BaseCallback{})
 	taskExecutor.Extension = mockExtension
 	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(runCtx, "id", int64(1), proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return(nil, nil)
@@ -342,6 +345,7 @@ func TestTaskExecutorPause(t *testing.T) {
 
 	// pause success.
 	taskExecutor := NewBaseTaskExecutor(ctx, "id", 1, mockSubtaskTable)
+	taskExecutor.SetHook(&hook.BaseCallback{})
 	taskExecutor.Extension = mockExtension
 	mockSubtaskTable.EXPECT().PauseSubtasks(runCtx, "id", int64(1)).Return(nil)
 	require.NoError(t, taskExecutor.Pause(runCtx, &proto.Task{Step: proto.StepOne, ID: 1, Type: tp}))
@@ -372,6 +376,7 @@ func TestTaskExecutor(t *testing.T) {
 	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
 
 	taskExecutor := NewBaseTaskExecutor(ctx, "id", 1, mockSubtaskTable)
+	taskExecutor.SetHook(&hook.BaseCallback{})
 	taskExecutor.Extension = mockExtension
 
 	// 1. run failed.
