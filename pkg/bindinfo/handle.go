@@ -128,12 +128,9 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 	if !fullLoad {
 		timeCondition = fmt.Sprintf("WHERE update_time>'%s'", lastUpdateTime.String())
 	}
-
 	h.sctx.Lock()
 	defer h.sctx.Unlock()
 
-	// No need to acquire the session context lock for ExecRestrictedSQL, it
-	// uses another background session.
 	selectStmt := fmt.Sprintf(`SELECT original_sql, bind_sql, default_db, status, create_time,
        update_time, charset, collation, source, sql_digest, plan_digest FROM mysql.bind_info
        %s ORDER BY update_time, create_time`, timeCondition)
@@ -657,8 +654,6 @@ func (h *BindHandle) newBindRecord(row chunk.Row) (string, *BindRecord, error) {
 		Bindings:    []Binding{hint},
 	}
 	sqlDigest := parser.DigestNormalized(bindRecord.OriginalSQL)
-	h.sctx.Lock()
-	defer h.sctx.Unlock()
 	h.sctx.GetSessionVars().CurrentDB = bindRecord.Db
 	err := bindRecord.prepareHints(h.sctx.Context)
 	return sqlDigest.String(), bindRecord, err
