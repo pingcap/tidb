@@ -23,6 +23,7 @@ portgenerator=""
 mysql_tester_log="./integration-test.out"
 tests=""
 record=0
+record_case=""
 stats="s"
 collation_opt=2
 
@@ -108,7 +109,7 @@ while getopts "t:s:r:b:d:c:i:h:p" opt; do
             ;;
         r)
             record=1
-            tests="$OPTARG"
+            record_case="$OPTARG"
             ;;
         b)
             case $OPTARG in
@@ -232,12 +233,12 @@ function run_mysql_tester()
         coll_msg="disabled new collation"
     fi
     if [ $record -eq 1 ]; then
-      if [ "$tests" = 'all' ]; then
+      if [ "$record_case" = 'all' ]; then
           echo "record all cases"
           $mysql_tester -port "$port" --collation-disable=$coll_disabled --record
       else
-          echo "record result for case: \"$tests\""
-          $mysql_tester -port "$port" --collation-disable=$coll_disabled --record $tests
+          echo "record result for case: \"$record_case\""
+          $mysql_tester -port "$port" --collation-disable=$coll_disabled --record $record_case
       fi
     else
       if [ -z "$tests" ]; then
@@ -261,12 +262,29 @@ function check_data_race() {
     fi
 }
 
+enabled_new_collation=""
 function check_case_name() {
-    if [[ "$tests" = 'all' || $collation_opt != 2 ]]; then
+    if [ $collation_opt != 2 ]; then
         return
     fi
 
-    IFS='/' read -ra parts <<< "$tests"
+    case=""
+
+    if [ $record -eq 0 ]; then
+        if [ -z "$tests" ]; then
+            return
+        fi
+        case=$tests
+    fi
+
+    if [ $record -eq 1 ]; then
+        if [ "$record_case" = 'all' ]; then
+            return
+        fi
+        case=$record_case
+    fi
+
+    IFS='/' read -ra parts <<< "$case"
 
     last_part="${parts[${#parts[@]}-1]}"
 
