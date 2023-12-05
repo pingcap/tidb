@@ -54,33 +54,33 @@ func TestHandleErrorPb(t *testing.T) {
 	ec := utils.NewErrorContext("test", 3)
 	// Test case 1: Error is nil
 	result := ec.HandleErrorPb(nil, 123, false)
-	require.Equal(t, utils.ErrorResult{utils.Retry, "unreachable code"}, result)
+	require.Equal(t, utils.ErrorResult{utils.RetryStrategy, "unreachable code"}, result)
 
 	// Test case 2: Error is KvError and can be ignored
 	kvError := &backuppb.Error_KvError{}
 	result = ec.HandleErrorPb(&backuppb.Error{Detail: kvError}, 123, true)
-	require.Equal(t, utils.ErrorResult{utils.Retry, "retry outside because the error can be ignored"}, result)
+	require.Equal(t, utils.ErrorResult{utils.RetryStrategy, "retry outside because the error can be ignored"}, result)
 
 	// Test case 3: Error is KvError and cannot be ignored
 	result = ec.HandleErrorPb(&backuppb.Error{Detail: kvError}, 123, false)
-	require.Equal(t, utils.ErrorResult{utils.GiveUp, "unknown kv error"}, result)
+	require.Equal(t, utils.ErrorResult{utils.GiveUpStrategy, "unknown kv error"}, result)
 
 	// Test case 4: Error is RegionError and can be ignored
 	regionError := &backuppb.Error_RegionError{
 		RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{RegionId: 1}}}
 	result = ec.HandleErrorPb(&backuppb.Error{Detail: regionError}, 123, true)
-	require.Equal(t, utils.ErrorResult{utils.Retry, "retry outside because the error can be ignored"}, result)
+	require.Equal(t, utils.ErrorResult{utils.RetryStrategy, "retry outside because the error can be ignored"}, result)
 
 	// Test case 5: Error is RegionError and cannot be ignored
 	regionError = &backuppb.Error_RegionError{
 		RegionError: &errorpb.Error{DiskFull: &errorpb.DiskFull{}}}
 	result = ec.HandleErrorPb(&backuppb.Error{Detail: regionError}, 123, false)
-	require.Equal(t, utils.ErrorResult{utils.GiveUp, "unknown kv error"}, result)
+	require.Equal(t, utils.ErrorResult{utils.GiveUpStrategy, "unknown kv error"}, result)
 
 	// Test case 6: Error is ClusterIdError
 	clusterIdError := &backuppb.Error_ClusterIdError{}
 	result = ec.HandleErrorPb(&backuppb.Error{Detail: clusterIdError}, 123, false)
-	require.Equal(t, utils.ErrorResult{utils.GiveUp, "cluster ID mismatch"}, result)
+	require.Equal(t, utils.ErrorResult{utils.GiveUpStrategy, "cluster ID mismatch"}, result)
 }
 
 func TestHandleErrorMsg(t *testing.T) {
@@ -90,33 +90,33 @@ func TestHandleErrorMsg(t *testing.T) {
 	msg := "IO: files Notfound error"
 	uuid := uint64(456)
 	expectedReason := "File or directory not found on TiKV Node (store id: 456). work around:please ensure br and tikv nodes share a same storage and the user of br and tikv has same uid."
-	expectedResult := utils.ErrorResult{utils.GiveUp, expectedReason}
+	expectedResult := utils.ErrorResult{utils.GiveUpStrategy, expectedReason}
 	actualResult := ec.HandleErrorMsg(msg, uuid)
 	require.Equal(t, expectedResult, actualResult)
 
 	// Test messageIsPermissionDeniedStorageError
 	msg = "I/O permissiondenied error occurs on TiKV Node(store id: 456)."
 	expectedReason = "I/O permission denied error occurs on TiKV Node(store id: 456). work around:please ensure tikv has permission to read from & write to the storage."
-	expectedResult = utils.ErrorResult{utils.GiveUp, expectedReason}
+	expectedResult = utils.ErrorResult{utils.GiveUpStrategy, expectedReason}
 	actualResult = ec.HandleErrorMsg(msg, uuid)
 	require.Equal(t, expectedResult, actualResult)
 
 	// Test MessageIsRetryableStorageError
 	msg = "server closed"
-	expectedResult = utils.ErrorResult{utils.Retry, "retrable error"}
+	expectedResult = utils.ErrorResult{utils.RetryStrategy, "retrable error"}
 	actualResult = ec.HandleErrorMsg(msg, uuid)
 	require.Equal(t, expectedResult, actualResult)
 
 	// Test unknown error
 	msg = "unknown error"
-	expectedResult = utils.ErrorResult{utils.Retry, "unknown error, retry it for few times"}
+	expectedResult = utils.ErrorResult{utils.RetryStrategy, "unknown error, retry it for few times"}
 	actualResult = ec.HandleErrorMsg(msg, uuid)
 	require.Equal(t, expectedResult, actualResult)
 
 	// Test retry too many times
 	actualResult = ec.HandleErrorMsg(msg, uuid)
 	actualResult = ec.HandleErrorMsg(msg, uuid)
-	expectedResult = utils.ErrorResult{utils.GiveUp, "unknown error and retry too many times, give up"}
+	expectedResult = utils.ErrorResult{utils.GiveUpStrategy, "unknown error and retry too many times, give up"}
 	actualResult = ec.HandleErrorMsg(msg, uuid)
 	require.Equal(t, expectedResult, actualResult)
 }

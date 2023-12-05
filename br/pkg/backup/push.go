@@ -185,7 +185,7 @@ func (push *pushDown) pushBackup(
 				errPb := resp.GetError()
 				res := errContext.HandleError(errPb, store.GetId(), true)
 				switch res.Strategy {
-				case utils.GiveUp:
+				case utils.GiveUpStrategy:
 					errMsg := res.Reason
 					if len(errMsg) <= 0 {
 						errMsg = errPb.Msg

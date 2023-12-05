@@ -147,7 +147,7 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 	log.Warn("retry to import ssts", zap.Int("attempt", bo.attempt), zap.Error(err))
 	// we don't care storeID here.
 	res := bo.errContext.HandleErrorMsg(err.Error(), 0)
-	if res.Strategy == Retry {
+	if res.Strategy == RetryStrategy {
 		bo.delayTime = 2 * bo.delayTime
 		bo.attempt--
 	} else {

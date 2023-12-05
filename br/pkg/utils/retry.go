@@ -45,13 +45,13 @@ type ErrorStrategy int
 
 const (
 	// This type can be retry but consume the backoffer attempts.
-	Retry ErrorStrategy = iota
+	RetryStrategy ErrorStrategy = iota
 	// This type means un-recover error and the whole progress should exits
 	// for example:
 	// 1. permission not valid.
 	// 2. data has not found.
 	// 3. retry too many times
-	GiveUp
+	GiveUpStrategy
 )
 
 type ErrorContext struct {
@@ -96,45 +96,45 @@ func (ec *ErrorContext) HandleErrorMsg(msg string, uuid uint64) ErrorResult {
 		reason := fmt.Sprintf("File or directory not found on TiKV Node (store id: %v). "+
 			"work around:please ensure br and tikv nodes share a same storage and the user of br and tikv has same uid.",
 			uuid)
-		return ErrorResult{GiveUp, reason}
+		return ErrorResult{GiveUpStrategy, reason}
 	}
 	if messageIsPermissionDeniedStorageError(msg) {
 		reason := fmt.Sprintf("I/O permission denied error occurs on TiKV Node(store id: %v). "+
 			"work around:please ensure tikv has permission to read from & write to the storage.",
 			uuid)
-		return ErrorResult{GiveUp, reason}
+		return ErrorResult{GiveUpStrategy, reason}
 	}
 
 	if MessageIsRetryableStorageError(msg) {
 		logger.Warn("occur storage error", zap.String("error", msg))
-		return ErrorResult{Retry, "retrable error"}
+		return ErrorResult{RetryStrategy, "retrable error"}
 	}
 	// retry enough on same store
 	mu.Lock()
 	defer mu.Unlock()
 	ec.encounterTimes[uuid]++
 	if ec.encounterTimes[uuid] <= ec.encounterTimesLimitation {
-		return ErrorResult{Retry, "unknown error, retry it for few times"}
+		return ErrorResult{RetryStrategy, "unknown error, retry it for few times"}
 	}
-	return ErrorResult{GiveUp, "unknown error and retry too many times, give up"}
+	return ErrorResult{GiveUpStrategy, "unknown error and retry too many times, give up"}
 }
 
 func (ec *ErrorContext) HandleErrorPb(e *backuppb.Error, uuid uint64, canIgnore bool) ErrorResult {
 	if e == nil {
-		return ErrorResult{Retry, "unreachable code"}
+		return ErrorResult{RetryStrategy, "unreachable code"}
 	}
 	logger := log.L().With(zap.String("scenario", ec.scenario))
 	switch v := e.Detail.(type) {
 	case *backuppb.Error_KvError:
 		if canIgnore {
-			return ErrorResult{Retry, "retry outside because the error can be ignored"}
+			return ErrorResult{RetryStrategy, "retry outside because the error can be ignored"}
 		}
 		// should not meet error other than KeyLocked.
-		return ErrorResult{GiveUp, "unknown kv error"}
+		return ErrorResult{GiveUpStrategy, "unknown kv error"}
 
 	case *backuppb.Error_RegionError:
 		if canIgnore {
-			return ErrorResult{Retry, "retry outside because the error can be ignored"}
+			return ErrorResult{RetryStrategy, "retry outside because the error can be ignored"}
 		}
 		regionErr := v.RegionError
 		// Ignore following errors.
@@ -147,18 +147,18 @@ func (ec *ErrorContext) HandleErrorPb(e *backuppb.Error, uuid uint64, canIgnore 
 			regionErr.ReadIndexNotReady != nil ||
 			regionErr.ProposalInMergingMode != nil) {
 			logger.Error("unexpect region error", zap.Reflect("RegionError", regionErr))
-			return ErrorResult{GiveUp, "unknown kv error"}
+			return ErrorResult{GiveUpStrategy, "unknown kv error"}
 		}
 		logger.Warn("occur region error",
 			zap.Reflect("RegionError", regionErr),
 			zap.Uint64("uuid", uuid))
-		return ErrorResult{Retry, "retrable error"}
+		return ErrorResult{RetryStrategy, "retrable error"}
 
 	case *backuppb.Error_ClusterIdError:
 		logger.Error("occur cluster ID error", zap.Reflect("error", v), zap.Uint64("uuid", uuid))
-		return ErrorResult{GiveUp, "cluster ID mismatch"}
+		return ErrorResult{GiveUpStrategy, "cluster ID mismatch"}
 	}
-	return ErrorResult{GiveUp, "unreachable code"}
+	return ErrorResult{GiveUpStrategy, "unreachable code"}
 }
 
 // RetryableFunc presents a retryable operation.

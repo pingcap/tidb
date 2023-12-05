@@ -1210,9 +1210,9 @@ func OnBackupResponse(
 	default:
 		res := errContext.HandleError(resp.Error, storeID, false)
 		switch res.Strategy {
-		case utils.GiveUp:
+		case utils.GiveUpStrategy:
 			return nil, 0, errors.Annotatef(berrors.ErrKVUnknown, "storeID: %d OnBackupResponse error %s", storeID, res.Reason)
-		case utils.Retry:
+		case utils.RetryStrategy:
 			return nil, 3000, nil
 		}
 	}
