@@ -129,6 +129,9 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 		timeCondition = fmt.Sprintf("WHERE update_time>'%s'", lastUpdateTime.String())
 	}
 
+	h.sctx.Lock()
+	defer h.sctx.Unlock()
+
 	// No need to acquire the session context lock for ExecRestrictedSQL, it
 	// uses another background session.
 	selectStmt := fmt.Sprintf(`SELECT original_sql, bind_sql, default_db, status, create_time,
