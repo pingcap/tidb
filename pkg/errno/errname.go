@@ -14,7 +14,7 @@
 
 package errno
 
-import "github.com/pingcap/tidb/pkg/parser/mysql"
+import "github.com/pingcap/tidb/parser/mysql"
 
 // MySQLErrName maps error code to MySQL error messages.
 // Note: all ErrMessage to be added should be considered about the log redaction
@@ -666,7 +666,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrMessageAndStatement:                                   mysql.Message("%s Statement: %s", nil),
 	ErrInsideTransactionPreventsSwitchBinlogFormat:           mysql.Message("Cannot modify @@session.binlogFormat inside a transaction", nil),
 	ErrPathLength:                                            mysql.Message("The path specified for %.64s is too long.", nil),
-	ErrWarnDeprecatedSyntaxNoReplacement:                     mysql.Message("%s is deprecated and will be removed in a future release.%s", nil),
+	ErrWarnDeprecatedSyntaxNoReplacement:                     mysql.Message("'%s' is deprecated and will be removed in a future release.", nil),
 	ErrWrongNativeTableStructure:                             mysql.Message("Native table '%-.64s'.'%-.64s' has the wrong structure", nil),
 	ErrWrongPerfSchemaUsage:                                  mysql.Message("Invalid performanceSchema usage.", nil),
 	ErrWarnISSkippedTable:                                    mysql.Message("Table '%s'.'%s' was skipped since its definition is being modified by concurrent DDL statement", nil),
@@ -890,9 +890,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrRoleNotGranted:                                        mysql.Message("%s is not granted to %s", nil),
 	ErrMaxExecTimeExceeded:                                   mysql.Message("Query execution was interrupted, maximum statement execution time exceeded", nil),
 	ErrLockAcquireFailAndNoWaitSet:                           mysql.Message("Statement aborted because lock(s) could not be acquired immediately and NOWAIT is set.", nil),
-	ErrNotHintUpdatable:                                      mysql.Message("Variable '%s' might not be affected by SET_VAR hint.", nil),
+	ErrNotHintUpdatable:                                      mysql.Message("Variable '%s' cannot be set using SET_VAR hint.", nil),
 	ErrExistsInHistoryPassword:                               mysql.Message("Cannot use these credentials for '%s@%s' because they contradict the password history policy.", nil),
-	ErrInvalidDefaultUTF8MB4Collation:                        mysql.Message("Invalid default collation %s: utf8mb4_0900_ai_ci or utf8mb4_general_ci or utf8mb4_bin expected", nil),
 	ErrForeignKeyCannotDropParent:                            mysql.Message("Cannot drop table '%s' referenced by a foreign key constraint '%s' on table '%s'.", nil),
 	ErrForeignKeyCannotUseVirtualColumn:                      mysql.Message("Foreign key '%s' uses virtual column '%s' which is not supported.", nil),
 	ErrForeignKeyNoColumnInParent:                            mysql.Message("Failed to add the foreign key constraint. Missing column '%s' for constraint '%s' in the referenced table '%s'", nil),
@@ -979,7 +978,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrInfoSchemaExpired:                mysql.Message("Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV", nil),
 	ErrInfoSchemaChanged:                mysql.Message("Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`", nil),
 	ErrBadNumber:                        mysql.Message("Bad Number", nil),
-	ErrCastAsSignedOverflow:             mysql.Message("Cast to signed converted positive out-of-range integer to its negative complement", nil),
+	ErrCastAsSignedOverflow:             mysql.Message("Cast to signed converted positive out-of-range integer to it's negative complement", nil),
 	ErrCastNegIntAsUnsigned:             mysql.Message("Cast to unsigned converted negative integer to it's positive complement", nil),
 	ErrInvalidYearFormat:                mysql.Message("invalid year format", nil),
 	ErrInvalidYear:                      mysql.Message("invalid year", nil),
@@ -1059,8 +1058,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrLoadParquetFromLocal:             mysql.Message("Do not support loading parquet files from local. Please try to load the parquet files from the cloud storage", nil),
 	ErrLoadDataEmptyPath:                mysql.Message("The value of INFILE must not be empty when LOAD DATA from LOCAL", nil),
 	ErrLoadDataUnsupportedFormat:        mysql.Message("The FORMAT '%s' is not supported", nil),
-	ErrLoadDataInvalidURI:               mysql.Message("The URI of %s is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access_key_id={your_access_key_id ID}&secret_access_key={your_secret_access_key}&session_token={your_session_token}'", nil),
-	ErrLoadDataCantAccess:               mysql.Message("Access to the %s has been denied. Reason: %s. Please check the URI, access key and secret access key are correct", nil),
+	ErrLoadDataInvalidURI:               mysql.Message("The URI of file location is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access_key_id={your_access_key_id ID}&secret_access_key={your_secret_access_key}&session_token={your_session_token}'", nil),
+	ErrLoadDataCantAccess:               mysql.Message("Access to the source file has been denied. Reason: %s. Please check the URI, access key and secret access key are correct", nil),
 	ErrLoadDataCantRead:                 mysql.Message("Failed to read source files. Reason: %s. %s", nil),
 	ErrLoadDataWrongFormatConfig:        mysql.Message("", nil),
 	ErrUnknownOption:                    mysql.Message("Unknown option %s", nil),
@@ -1071,8 +1070,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrLoadDataInvalidOperation:         mysql.Message("The current job status cannot perform the operation. %s", nil),
 	ErrLoadDataLocalUnsupportedOption:   mysql.Message("Unsupported option for LOAD DATA LOCAL INFILE: %s", nil),
 	ErrLoadDataPreCheckFailed:           mysql.Message("PreCheck failed: %s", nil),
-	ErrMemoryExceedForQuery:             mysql.Message("Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=%d]", nil),
-	ErrMemoryExceedForInstance:          mysql.Message("Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again.[conn=%d]", nil),
+	ErrCtxProviderNotSet:                mysql.Message("Context provider not set", nil),
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
 	ErrWarnOptimizerHintUnsupportedHint: mysql.Message("Optimizer hint %s is not supported by TiDB and is ignored", nil),
