@@ -131,7 +131,6 @@ func (e *CTEExec) Close() (err error) {
 			err = e.producer.closeProducer()
 		}
 	}()
-	e.producer.resTbl.Unlock()
 	if err != nil {
 		return err
 	}
