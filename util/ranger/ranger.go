@@ -410,11 +410,20 @@ func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types
 // The second return value is the conditions used to build ranges and the third return value is the remained conditions.
 func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.Context, tp *types.FieldType, tableRange bool,
 	colLen int, rangeMaxSize int64) (Ranges, []expression.Expression, []expression.Expression, error) {
+<<<<<<< HEAD:util/ranger/ranger.go
 	rb := builder{sc: sctx.GetSessionVars().StmtCtx}
 	rangePoints := getFullRange()
 	for _, cond := range accessConditions {
 		collator := collate.GetCollator(tp.GetCollate())
 		rangePoints = rb.intersection(rangePoints, rb.build(cond, collator), collator)
+=======
+	rb := builder{sctx: sctx}
+	newTp := newFieldType(tp)
+	rangePoints := getFullRange()
+	for _, cond := range accessConditions {
+		collator := collate.GetCollator(charset.CollationBin)
+		rangePoints = rb.intersection(rangePoints, rb.build(cond, newTp, colLen, true), collator)
+>>>>>>> e053c27f068 (util/ranger: support use `like` to build range for new collation columns (#48522)):pkg/util/ranger/ranger.go
 		if rb.err != nil {
 			return nil, nil, nil, errors.Trace(rb.err)
 		}
@@ -424,7 +433,7 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 		rangeFallback bool
 		err           error
 	)
-	newTp := newFieldType(tp)
+	newTp = convertStringFTToBinaryCollate(newTp)
 	if tableRange {
 		ranges, rangeFallback, err = points2TableRanges(sctx, rangePoints, newTp, rangeMaxSize)
 	} else {
@@ -492,14 +501,19 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 	)
 	for i := 0; i < eqAndInCount; i++ {
 		// Build ranges for equal or in access conditions.
+<<<<<<< HEAD:util/ranger/ranger.go
 		point := rb.build(accessConds[i], collate.GetCollator(newTp[i].GetCollate()))
+=======
+		point := rb.build(accessConds[i], newTp[i], d.lengths[i], d.convertToSortKey)
+>>>>>>> e053c27f068 (util/ranger: support use `like` to build range for new collation columns (#48522)):pkg/util/ranger/ranger.go
 		if rb.err != nil {
 			return nil, nil, nil, errors.Trace(rb.err)
 		}
+		tmpNewTp := convertStringFTToBinaryCollate(newTp[i])
 		if i == 0 {
-			ranges, rangeFallback, err = points2Ranges(d.sctx, point, newTp[i], d.rangeMaxSize)
+			ranges, rangeFallback, err = points2Ranges(d.sctx, point, tmpNewTp, d.rangeMaxSize)
 		} else {
-			ranges, rangeFallback, err = appendPoints2Ranges(d.sctx, ranges, point, newTp[i], d.rangeMaxSize)
+			ranges, rangeFallback, err = appendPoints2Ranges(d.sctx, ranges, point, tmpNewTp, d.rangeMaxSize)
 		}
 		if err != nil {
 			return nil, nil, nil, errors.Trace(err)
@@ -513,15 +527,30 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 	// Build rangePoints for non-equal access conditions.
 	for i := eqAndInCount; i < len(accessConds); i++ {
 		collator := collate.GetCollator(newTp[eqAndInCount].GetCollate())
+<<<<<<< HEAD:util/ranger/ranger.go
 		rangePoints = rb.intersection(rangePoints, rb.build(accessConds[i], collator), collator)
+=======
+		if d.convertToSortKey {
+			collator = collate.GetCollator(charset.CollationBin)
+		}
+		rangePoints = rb.intersection(rangePoints, rb.build(accessConds[i], newTp[eqAndInCount], d.lengths[eqAndInCount], d.convertToSortKey), collator)
+>>>>>>> e053c27f068 (util/ranger: support use `like` to build range for new collation columns (#48522)):pkg/util/ranger/ranger.go
 		if rb.err != nil {
 			return nil, nil, nil, errors.Trace(rb.err)
 		}
 	}
+	var tmpNewTp *types.FieldType
+	if eqAndInCount == 0 || eqAndInCount < len(accessConds) {
+		if d.convertToSortKey {
+			tmpNewTp = convertStringFTToBinaryCollate(newTp[eqAndInCount])
+		} else {
+			tmpNewTp = newTp[eqAndInCount]
+		}
+	}
 	if eqAndInCount == 0 {
-		ranges, rangeFallback, err = points2Ranges(d.sctx, rangePoints, newTp[0], d.rangeMaxSize)
+		ranges, rangeFallback, err = points2Ranges(d.sctx, rangePoints, tmpNewTp, d.rangeMaxSize)
 	} else if eqAndInCount < len(accessConds) {
-		ranges, rangeFallback, err = appendPoints2Ranges(d.sctx, ranges, rangePoints, newTp[eqAndInCount], d.rangeMaxSize)
+		ranges, rangeFallback, err = appendPoints2Ranges(d.sctx, ranges, rangePoints, tmpNewTp, d.rangeMaxSize)
 	}
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
@@ -531,6 +560,18 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 		return ranges, accessConds[:eqAndInCount], accessConds[eqAndInCount:], nil
 	}
 	return ranges, accessConds, nil, nil
+}
+
+func convertStringFTToBinaryCollate(ft *types.FieldType) *types.FieldType {
+	if ft.EvalType() != types.ETString ||
+		ft.GetType() == mysql.TypeEnum ||
+		ft.GetType() == mysql.TypeSet {
+		return ft
+	}
+	newTp := ft.Clone()
+	newTp.SetCharset(charset.CharsetBin)
+	newTp.SetCollate(charset.CollationBin)
+	return newTp
 }
 
 // buildCNFIndexRange builds the range for index where the top layer is CNF.
