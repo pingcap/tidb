@@ -15,20 +15,11 @@
 package ranger
 
 import (
-<<<<<<< HEAD:util/ranger/checker.go
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
-=======
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/collate"
->>>>>>> 39df07d44b5 (util/ranger: don't exclude start key for range from `_` in `like` function (#48984)):pkg/util/ranger/checker.go
 )
 
 // conditionChecker checks if this condition can be pushed to index planner.
@@ -149,19 +140,6 @@ func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) bool
 	if err != nil {
 		return false
 	}
-<<<<<<< HEAD:util/ranger/checker.go
-=======
-	likeFuncReserve := !c.isFullLengthColumn()
-
-	// Different from `=`, trailing spaces are always significant, and can't be ignored in `like`.
-	// In tidb's implementation, for PAD SPACE collations, the trailing spaces are removed in the index key. So we are
-	// unable to distinguish 'xxx' from 'xxx   ' by a single index range scan, and we may read more data than needed by
-	// the `like` function. Therefore, a Selection is needed to filter the data.
-	if isPadSpaceCollation(collation) {
-		likeFuncReserve = true
-	}
-
->>>>>>> 39df07d44b5 (util/ranger: don't exclude start key for range from `_` in `like` function (#48984)):pkg/util/ranger/checker.go
 	if len(patternStr) == 0 {
 		return true
 	}
