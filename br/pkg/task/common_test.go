@@ -13,7 +13,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
 	filter "github.com/pingcap/tidb/util/table-filter"
-
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 )
