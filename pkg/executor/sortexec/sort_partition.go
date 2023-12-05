@@ -17,7 +17,6 @@ package sortexec
 import (
 	"fmt"
 	"sort"
-	"sync"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -67,8 +66,6 @@ type sortPartition struct {
 	// the outside signal periodically.
 	timesOfRowCompare uint
 
-	syncLock *sync.Mutex
-
 	spillTriggered bool
 
 	// It's index that points to the data need to be read next time.
@@ -77,7 +74,7 @@ type sortPartition struct {
 
 // Creates a new SortPartition in memory.
 func newSortPartition(fieldTypes []*types.FieldType, chunkSize int, byItemsDesc []bool,
-	keyColumns []int, keyCmpFuncs []chunk.CompareFunc, spillLimit int64, syncLock *sync.Mutex) *sortPartition {
+	keyColumns []int, keyCmpFuncs []chunk.CompareFunc, spillLimit int64) *sortPartition {
 	retVal := &sortPartition{
 		fieldTypes:     fieldTypes,
 		inMemory:       chunk.NewList(fieldTypes, chunkSize, chunkSize),
@@ -89,7 +86,6 @@ func newSortPartition(fieldTypes []*types.FieldType, chunkSize int, byItemsDesc 
 		byItemsDesc:    byItemsDesc,
 		keyColumns:     keyColumns,
 		keyCmpFuncs:    keyCmpFuncs,
-		syncLock:       syncLock,
 		spillTriggered: false,
 		idx:            0,
 	}
@@ -213,12 +209,12 @@ func (s *sortPartition) spillToDisk() error {
 	return s.spillToDiskImpl()
 }
 
-func (s *sortPartition) actionSpill(spillError *error) *sortPartitionSpillDiskAction {
+func (s *sortPartition) actionSpill(helper *spillHelper) *sortPartitionSpillDiskAction {
 	if s.spillAction == nil {
 		s.spillAction = &sortPartitionSpillDiskAction{
 			partition:  s,
 			isSpilling: false,
-			spillError: spillError,
+			helper:     helper,
 		}
 	}
 	return s.spillAction
