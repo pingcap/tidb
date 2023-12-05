@@ -103,7 +103,7 @@ type baseResourceCost struct {
 	// represents the average ratio of TiDB CPU time to TiKV CPU time, this is used to calculate whether tikv cpu
 	// or tidb cpu is the performance bottle neck.
 	tidbToKVCPURatio float64
-	// the kv CPU time for calculate RU, it's smaller than the actual cpu usage. The unit is seconds.
+	// the kv CPU time for calcula[te R]U, it's smaller than the actual cpu usage. The unit is seconds.
 	kvCPU float64
 	// the read bytes rate per 1 tikv cpu.
 	readBytes uint64
@@ -676,7 +676,7 @@ func fetchStoreMetrics(serversInfo []infoschema.ServerInfo, serverType string, o
 				data, _ := base64.StdEncoding.DecodeString(val.(string))
 				resp = &http.Response{
 					StatusCode: http.StatusOK,
-					Body: dummyReaderCloser{
+					Body: noopCloserWrapper{
 						Reader: strings.NewReader(string(data)),
 					},
 				}
@@ -703,10 +703,10 @@ func fetchStoreMetrics(serversInfo []infoschema.ServerInfo, serverType string, o
 	return firstErr
 }
 
-type dummyReaderCloser struct {
+type noopCloserWrapper struct {
 	io.Reader
 }
 
-func (r dummyReaderCloser) Close() error {
+func (r noopCloserWrapper) Close() error {
 	return nil
 }
