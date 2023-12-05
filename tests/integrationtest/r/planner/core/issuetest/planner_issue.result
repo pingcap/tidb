@@ -181,33 +181,32 @@ id	id
 1	1
 1	1
 drop table if exists t1, t2;
+set autocommit=ON;
 create table t1(a varchar(20) collate utf8mb4_bin, index ia(a));
 insert into t1 value('测试'),('测试  '),('xxx ');
 explain format = brief select *,length(a) from t1 where a like '测试 %';
 id	estRows	task	access object	operator info
 Projection	250.00	root		planner__core__issuetest__planner_issue.t1.a, length(planner__core__issuetest__planner_issue.t1.a)->Column#3
-└─UnionScan	250.00	root		like(planner__core__issuetest__planner_issue.t1.a, "测试 %", 92)
-  └─IndexReader	250.00	root		index:IndexRangeScan
-    └─IndexRangeScan	250.00	cop[tikv]	table:t1, index:ia(a)	range:["测试 ","测试!"), keep order:false, stats:pseudo
+└─IndexReader	250.00	root		index:IndexRangeScan
+  └─IndexRangeScan	250.00	cop[tikv]	table:t1, index:ia(a)	range:["测试 ","测试!"), keep order:false, stats:pseudo
 explain format = brief select *,length(a) from t1 where a like '测试';
 id	estRows	task	access object	operator info
 Projection	10.00	root		planner__core__issuetest__planner_issue.t1.a, length(planner__core__issuetest__planner_issue.t1.a)->Column#3
-└─UnionScan	10.00	root		like(planner__core__issuetest__planner_issue.t1.a, "测试", 92)
-  └─IndexReader	10.00	root		index:IndexRangeScan
-    └─IndexRangeScan	10.00	cop[tikv]	table:t1, index:ia(a)	range:["测试","测试"], keep order:false, stats:pseudo
+└─IndexReader	10.00	root		index:IndexRangeScan
+  └─IndexRangeScan	10.00	cop[tikv]	table:t1, index:ia(a)	range:["测试","测试"], keep order:false, stats:pseudo
 select *,length(a) from t1 where a like '测试 %';
 a	length(a)
+测试	6
 测试  	8
 select *,length(a) from t1 where a like '测试';
 a	length(a)
 测试	6
+测试  	8
 explain format = brief select * from t1 use index (ia) where a like 'xxx_';
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__issuetest__planner_issue.t1.a
-└─UnionScan	250.00	root		like(planner__core__issuetest__planner_issue.t1.a, "xxx_", 92)
-  └─IndexReader	250.00	root		index:Selection
-    └─Selection	250.00	cop[tikv]		like(planner__core__issuetest__planner_issue.t1.a, "xxx_", 92)
-      └─IndexRangeScan	250.00	cop[tikv]	table:t1, index:ia(a)	range:["xxx","xxy"), keep order:false, stats:pseudo
+IndexReader	250.00	root		index:Selection
+└─Selection	250.00	cop[tikv]		like(planner__core__issuetest__planner_issue.t1.a, "xxx_", 92)
+  └─IndexRangeScan	250.00	cop[tikv]	table:t1, index:ia(a)	range:["xxx","xxy"), keep order:false, stats:pseudo
 select * from t1 use index (ia) where a like 'xxx_';
 a
 xxx 
