@@ -501,7 +501,7 @@ func rebuildRange(p Plan) error {
 			if x.PointPartitionInfo != nil {
 				// Single column PK <=> Must be the partitioning columns!
 				if !x.TblInfo.PKIsHandle {
-					return errors.New("point get for partition table can not use plan cache, PK is not handle!")
+					return errors.New("point get for partition table can not use plan cache, PK is not handle")
 				}
 				// Re-calculate the pruning!
 				// TODO: Check how expressions are handled...

@@ -1244,10 +1244,10 @@ func TestPreparedPlanCachePartitions(b *testing.T) {
 	tk.MustExec(`set @a=2`)
 	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("2 b"))
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
-	tk.MustExec(`prepare stmt from 'select b,a from t where a = ?;'`)
+	tk.MustExec(`prepare stmt2 from 'select b,a from t where a = ?;'`)
 	tk.MustExec(`set @a=1`)
-	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("a 1"))
+	tk.MustQuery(`execute stmt2 using @a`).Check(testkit.Rows("a 1"))
 	tk.MustExec(`set @a=3`)
-	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("c 3"))
+	tk.MustQuery(`execute stmt2 using @a`).Check(testkit.Rows("c 3"))
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
