@@ -74,11 +74,18 @@ func NewErrorContext(scenario string, limitation int) *ErrorContext {
 	}
 }
 
+func NewDefaultContext() *ErrorContext {
+	return &ErrorContext{
+		encounterTimes:           make(map[uint64]int),
+		encounterTimesLimitation: 1,
+	}
+}
+
 func (ec *ErrorContext) HandleError(err *backuppb.Error, uuid uint64, canIgnore bool) ErrorResult {
 	if len(err.Msg) != 0 {
 		return ec.HandleErrorMsg(err.Msg, uuid)
 	}
-	return ec.handleErrorPb(err, uuid, canIgnore)
+	return ec.HandleErrorPb(err, uuid, canIgnore)
 }
 
 func (ec *ErrorContext) HandleErrorMsg(msg string, uuid uint64) ErrorResult {
@@ -111,7 +118,7 @@ func (ec *ErrorContext) HandleErrorMsg(msg string, uuid uint64) ErrorResult {
 	return ErrorResult{GiveUp, "unknown error and retry too many times, give up"}
 }
 
-func (ec *ErrorContext) handleErrorPb(e *backuppb.Error, uuid uint64, canIgnore bool) ErrorResult {
+func (ec *ErrorContext) HandleErrorPb(e *backuppb.Error, uuid uint64, canIgnore bool) ErrorResult {
 	if e == nil {
 		return ErrorResult{Retry, "unreachable code"}
 	}
@@ -143,11 +150,11 @@ func (ec *ErrorContext) handleErrorPb(e *backuppb.Error, uuid uint64, canIgnore 
 		}
 		logger.Warn("occur region error",
 			zap.Reflect("RegionError", regionErr),
-			zap.Uint64("storeID", storeID))
+			zap.Uint64("uuid", uuid))
 		return ErrorResult{Retry, "retrable error"}
 
 	case *backuppb.Error_ClusterIdError:
-		logger.Error("occur cluster ID error", zap.Reflect("error", v), zap.Uint64("storeID", storeID))
+		logger.Error("occur cluster ID error", zap.Reflect("error", v), zap.Uint64("uuid", uuid))
 		return ErrorResult{GiveUp, "cluster ID mismatch"}
 	}
 	return ErrorResult{GiveUp, "unreachable code"}

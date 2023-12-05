@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
@@ -46,4 +48,37 @@ func TestRetryAdapter(t *testing.T) {
 	req.ErrorContains(bo.BackOff(), "everything is alright", "total = %d / %d", bo.TotalSleepInMS(), bo.MaxSleepInMS())
 
 	req.Greater(time.Since(begin), 200*time.Millisecond)
+}
+
+func TestHandleErrorPb(t *testing.T) {
+	ec := utils.NewErrorContext("test", 3)
+	// Test case 1: Error is nil
+	result := ec.HandleErrorPb(nil, 123, false)
+	require.Equal(t, utils.ErrorResult{utils.Retry, "unreachable code"}, result)
+
+	// Test case 2: Error is KvError and can be ignored
+	kvError := &backuppb.Error_KvError{}
+	result = ec.HandleErrorPb(&backuppb.Error{Detail: kvError}, 123, true)
+	require.Equal(t, utils.ErrorResult{utils.Retry, "retry outside because the error can be ignored"}, result)
+
+	// Test case 3: Error is KvError and cannot be ignored
+	result = ec.HandleErrorPb(&backuppb.Error{Detail: kvError}, 123, false)
+	require.Equal(t, utils.ErrorResult{utils.GiveUp, "unknown kv error"}, result)
+
+	// Test case 4: Error is RegionError and can be ignored
+	regionError := &backuppb.Error_RegionError{
+		RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{RegionId: 1}}}
+	result = ec.HandleErrorPb(&backuppb.Error{Detail: regionError}, 123, true)
+	require.Equal(t, utils.ErrorResult{utils.Retry, "retry outside because the error can be ignored"}, result)
+
+	// Test case 5: Error is RegionError and cannot be ignored
+	regionError = &backuppb.Error_RegionError{
+		RegionError: &errorpb.Error{DiskFull: &errorpb.DiskFull{}}}
+	result = ec.HandleErrorPb(&backuppb.Error{Detail: regionError}, 123, false)
+	require.Equal(t, utils.ErrorResult{utils.GiveUp, "unknown kv error"}, result)
+
+	// Test case 6: Error is ClusterIdError
+	clusterIdError := &backuppb.Error_ClusterIdError{}
+	result = ec.HandleErrorPb(&backuppb.Error{Detail: clusterIdError}, 123, false)
+	require.Equal(t, utils.ErrorResult{utils.GiveUp, "cluster ID mismatch"}, result)
 }

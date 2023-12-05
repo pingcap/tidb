@@ -18,7 +18,7 @@ import (
 
 func TestBackoffWithSuccess(t *testing.T) {
 	var counter int
-	backoffer := utils.NewBackoffer(10, time.Nanosecond, time.Nanosecond)
+	backoffer := utils.NewBackoffer(10, time.Nanosecond, time.Nanosecond, utils.NewDefaultContext())
 	err := utils.WithRetry(context.Background(), func() error {
 		defer func() { counter++ }()
 		switch counter {
@@ -37,7 +37,7 @@ func TestBackoffWithSuccess(t *testing.T) {
 
 func TestBackoffWithFatalError(t *testing.T) {
 	var counter int
-	backoffer := utils.NewBackoffer(10, time.Nanosecond, time.Nanosecond)
+	backoffer := utils.NewBackoffer(10, time.Nanosecond, time.Nanosecond, utils.NewDefaultContext())
 	gRPCError := status.Error(codes.Unavailable, "transport is closing")
 	err := utils.WithRetry(context.Background(), func() error {
 		defer func() { counter++ }()
@@ -65,7 +65,7 @@ func TestBackoffWithFatalError(t *testing.T) {
 func TestBackoffWithFatalRawGRPCError(t *testing.T) {
 	var counter int
 	canceledError := status.Error(codes.Canceled, "context canceled")
-	backoffer := utils.NewBackoffer(10, time.Nanosecond, time.Nanosecond)
+	backoffer := utils.NewBackoffer(10, time.Nanosecond, time.Nanosecond, utils.NewDefaultContext())
 	err := utils.WithRetry(context.Background(), func() error {
 		defer func() { counter++ }()
 		return canceledError // nolint:wrapcheck
@@ -76,7 +76,7 @@ func TestBackoffWithFatalRawGRPCError(t *testing.T) {
 
 func TestBackoffWithRetryableError(t *testing.T) {
 	var counter int
-	backoffer := utils.NewBackoffer(10, time.Nanosecond, time.Nanosecond)
+	backoffer := utils.NewBackoffer(10, time.Nanosecond, time.Nanosecond, utils.NewDefaultContext())
 	err := utils.WithRetry(context.Background(), func() error {
 		defer func() { counter++ }()
 		return berrors.ErrKVEpochNotMatch
