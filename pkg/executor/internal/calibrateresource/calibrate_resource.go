@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/duration"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
@@ -691,9 +690,7 @@ func fetchStoreMetrics(serversInfo []infoschema.ServerInfo, serverType string, o
 				firstErr = err1
 				continue
 			}
-			defer func() {
-				terror.Log(resp.Body.Close())
-			}()
+			defer resp.Body.Close()
 		}
 
 		if resp.StatusCode != http.StatusOK {
