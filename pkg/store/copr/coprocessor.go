@@ -1375,16 +1375,19 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	if ver := resp.pbResp.GetLatestBucketsVersion(); task.bucketsVer < ver {
 		worker.store.GetRegionCache().UpdateBucketsIfNeeded(task.region, ver)
 	}
-	if regionErr := resp.pbResp.GetRegionError(); regionErr != nil {
-		if rpcCtx != nil && task.storeType == kv.TiDB {
-			resp.err = errors.Errorf("error: %v", regionErr)
-			worker.sendToRespCh(resp, ch, true)
-			return nil, nil
-		}
-		errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
-			task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, regionErr.String())
-		if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
-			return nil, errors.Trace(err)
+	isExceedingDeadlineErr := task.tikvClientReadTimeout > 0 && resp.pbResp.GetOtherError() == "Coprocessor task terminated due to exceeding the deadline"
+	if regionErr := resp.pbResp.GetRegionError(); regionErr != nil || isExceedingDeadlineErr {
+		if regionErr != nil {
+			if rpcCtx != nil && task.storeType == kv.TiDB {
+				resp.err = errors.Errorf("error: %v", regionErr)
+				worker.sendToRespCh(resp, ch, true)
+				return nil, nil
+			}
+			errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
+				task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, regionErr.String())
+			if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
 		remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
@@ -1407,19 +1410,6 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		return worker.handleBatchRemainsOnErr(bo, rpcCtx, []*copTask{task}, resp.pbResp, task, ch)
 	}
 	if otherErr := resp.pbResp.GetOtherError(); otherErr != "" {
-		if task.tikvClientReadTimeout > 0 && otherErr == "Coprocessor task terminated due to exceeding the deadline" {
-			remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
-				req:                         worker.req,
-				cache:                       worker.store.GetRegionCache(),
-				respChan:                    false,
-				eventCb:                     task.eventCb,
-				ignoreTiKVClientReadTimeout: true,
-			})
-			if err != nil {
-				return remains, err
-			}
-			return worker.handleBatchRemainsOnErr(bo, rpcCtx, remains, resp.pbResp, task, ch)
-		}
 		err := errors.Errorf("other error: %s", otherErr)
 
 		firstRangeStartKey := task.ranges.At(0).StartKey
