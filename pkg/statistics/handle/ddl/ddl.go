@@ -227,7 +227,7 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 	// Next, since the old partition no longer belongs to the table,
 	// the modify count of the partition should be subtracted.
 	// The modify count of the table should be added as we are adding the table as a partition.
-	modifyCountDelta := (tableCount + partCount) - (partModifyCount + tableModifyCount)
+	modifyCountDelta := (tableCount + partCount) - partModifyCount + tableModifyCount
 
 	// Update the global stats.
 	if modifyCountDelta != 0 || countDelta != 0 {
