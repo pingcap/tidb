@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/spool"
@@ -255,4 +256,134 @@ func TestManager(t *testing.T) {
 	require.NoError(t, m.Start())
 	time.Sleep(5 * time.Second)
 	m.Stop()
+}
+
+func TestSlotManagerInManager(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockTaskTable := mock.NewMockTaskTable(ctrl)
+	mockInternalExecutor := mock.NewMockTaskExecutor(ctrl)
+	mockPool := mock.NewMockPool(ctrl)
+	b := NewTestManagerBuilder(ctrl)
+	b.setPoolFactory(func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error) {
+		return mockPool, nil
+	})
+	RegisterTaskType("type",
+		func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) TaskExecutor {
+			return mockInternalExecutor
+		})
+	id := "test"
+
+	m, err := b.BuildManager(context.Background(), id, mockTaskTable)
+	require.NoError(t, err)
+	m.slotManager.available = 10
+
+	taskID1 := int64(1)
+	taskID2 := int64(2)
+
+	now := time.Now()
+
+	task1 := &proto.Task{
+		ID:          taskID1,
+		State:       proto.TaskStateRunning,
+		CreateTime:  now,
+		Concurrency: 10,
+		Step:        proto.StepOne,
+		Type:        "type",
+	}
+	task2 := &proto.Task{
+		ID:          taskID2,
+		State:       proto.TaskStateRunning,
+		CreateTime:  now,
+		Concurrency: 1,
+		Step:        proto.StepOne,
+		Type:        "type",
+	}
+
+	wg, runFn := getPoolRunFn()
+
+	// task1 is prior to task2
+	{
+		// mock in manager
+		mockTaskTable.EXPECT().GetTasksInStates(m.ctx, proto.TaskStateRunning, proto.TaskStateReverting).
+			Return([]*proto.Task{task2, task1}, nil)
+		mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID1, proto.StepOne,
+			unfinishedSubtaskStates...).
+			Return(true, nil)
+		mockPool.EXPECT().Run(gomock.Any()).DoAndReturn(runFn)
+	}
+	{
+		// mock inside onRunnableTask
+		mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
+		mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID1).Return(task1, nil)
+		mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID1, proto.StepOne,
+			unfinishedSubtaskStates...).
+			Return(true, nil)
+		// task1 start running
+		mockInternalExecutor.EXPECT().Run(gomock.Any(), task1).Return(nil)
+	}
+
+	failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/taskTick", "return()")
+	defer func() {
+		failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/taskTick")
+	}()
+	go m.fetchAndHandleRunnableTasksLoop()
+
+	{
+		// mock inside onRunnableTask
+		time.Sleep(2 * time.Second)
+		// task2 has been blocked by slot manager
+		require.Equal(t, 0, m.slotManager.available)
+
+		{
+			// mock in manager, task2 has been rejected by slot manager
+			mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID2, proto.StepOne,
+				unfinishedSubtaskStates...).
+				Return(true, nil)
+			onRunnableTasksTick <- struct{}{}
+			time.Sleep(time.Second)
+		}
+
+		// task1 succeed
+		task1.State = proto.TaskStateSucceed
+		mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID1).Return(task1, nil)
+		mockInternalExecutor.EXPECT().Close()
+		onRunnableTaskTick <- struct{}{}
+		time.Sleep(time.Second)
+		require.Equal(t, 10, m.slotManager.available)
+	}
+
+	// task2 is after task1
+	{
+		// mock in manager
+		mockTaskTable.EXPECT().GetTasksInStates(m.ctx, proto.TaskStateRunning, proto.TaskStateReverting).
+			Return([]*proto.Task{task2}, nil)
+		mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID2, proto.StepOne,
+			unfinishedSubtaskStates...).
+			Return(true, nil)
+		mockPool.EXPECT().Run(gomock.Any()).DoAndReturn(runFn)
+	}
+	{
+		// mock inside onRunnableTask
+		mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
+		mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID2).Return(task2, nil)
+		mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID2, proto.StepOne,
+			unfinishedSubtaskStates...).
+			Return(true, nil)
+		// task2 start running
+		mockInternalExecutor.EXPECT().Run(gomock.Any(), task2).Return(nil)
+	}
+	onRunnableTasksTick <- struct{}{}
+	time.Sleep(2 * time.Second)
+
+	require.Equal(t, 9, m.slotManager.available)
+	// task2 succeed
+	task2.State = proto.TaskStateSucceed
+	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID2).Return(task2, nil)
+	mockInternalExecutor.EXPECT().Close()
+	onRunnableTaskTick <- struct{}{}
+	time.Sleep(time.Second)
+
+	require.Equal(t, 10, m.slotManager.available)
+	wg.Wait()
 }
