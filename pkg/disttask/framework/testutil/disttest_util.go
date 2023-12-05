@@ -177,7 +177,7 @@ func DispatchAndCancelTask(ctx context.Context, t *testing.T, taskKey string, te
 			return err
 		}
 
-		err = mgr.CancelTask(ctx, int64(subtask.TaskID))
+		err = mgr.CancelTask(ctx, subtask.TaskID)
 		if err != nil {
 			logutil.BgLogger().Error("cancel task failed", zap.Error(err))
 			return err
