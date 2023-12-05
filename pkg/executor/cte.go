@@ -17,7 +17,6 @@ package executor
 import (
 	"bytes"
 	"context"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -117,6 +116,13 @@ func (e *CTEExec) Close() (err error) {
 		e.producer.resTbl.Lock()
 		defer e.producer.resTbl.Unlock()
 		if !e.producer.closed {
+			failpoint.Inject("mock_cte_exec_panic_avoid_deadlock", func(v failpoint.Value) {
+				ok := v.(bool)
+				if ok {
+					// mock an oom panic, returning ErrMemoryExceedForQuery for error identification in recovery work.
+					panic(exeerrors.ErrMemoryExceedForQuery)
+				}
+			})
 			// closeProducer() only close seedExec and recursiveExec, will not touch resTbl.
 			// It means you can still read resTbl after call closeProducer().
 			// You can even call all three functions(openProducer/produce/closeProducer) in CTEExec.Next().
