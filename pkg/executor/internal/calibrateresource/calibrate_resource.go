@@ -260,7 +260,7 @@ func (e *Executor) Next(ctx context.Context, req *chunk.Chunk) error {
 	if len(e.OptionList) > 0 {
 		return e.dynamicCalibrate(ctx, req)
 	}
-	return e.staticCalibrate(ctx, req)
+	return e.staticCalibrate(req)
 }
 
 var (
@@ -297,11 +297,11 @@ func (e *Executor) getTiDBQuota(
 	startTime := startTs.In(e.Ctx().GetSessionVars().Location()).Format(time.DateTime)
 	endTime := endTs.In(e.Ctx().GetSessionVars().Location()).Format(time.DateTime)
 
-	totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, serverInfos)
+	totalKVCPUQuota, err := getTiKVTotalCPUQuota(serverInfos)
 	if err != nil {
 		return 0, errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
-	totalTiDBCPU, err := getTiDBTotalCPUQuota(ctx, serverInfos)
+	totalTiDBCPU, err := getTiDBTotalCPUQuota(serverInfos)
 	if err != nil {
 		return 0, errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
@@ -408,7 +408,7 @@ func (e *Executor) getTiFlashQuota(
 	endTime := endTs.In(e.Ctx().GetSessionVars().Location()).Format(time.DateTime)
 
 	quotas := make([]float64, 0)
-	totalTiFlashLogicalCores, err := getTiFlashLogicalCores(ctx, serverInfos)
+	totalTiFlashLogicalCores, err := getTiFlashLogicalCores(serverInfos)
 	if err != nil {
 		return 0, errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
@@ -442,7 +442,7 @@ func (e *Executor) getTiFlashQuota(
 	return setupQuotas(quotas)
 }
 
-func (e *Executor) staticCalibrate(ctx context.Context, req *chunk.Chunk) error {
+func (e *Executor) staticCalibrate(req *chunk.Chunk) error {
 	resourceGroupCtl := domain.GetDomain(e.Ctx()).ResourceGroupsController()
 	// first fetch the ru settings config.
 	if resourceGroupCtl == nil {
@@ -454,14 +454,14 @@ func (e *Executor) staticCalibrate(ctx context.Context, req *chunk.Chunk) error 
 	}
 	ruCfg := resourceGroupCtl.GetConfig()
 	if e.WorkloadType == ast.TPCH10 {
-		return staticCalibrateTpch10(ctx, req, clusterInfo, ruCfg)
+		return staticCalibrateTpch10(req, clusterInfo, ruCfg)
 	}
 
-	totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, clusterInfo)
+	totalKVCPUQuota, err := getTiKVTotalCPUQuota(clusterInfo)
 	if err != nil {
 		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
-	totalTiDBCPUQuota, err := getTiDBTotalCPUQuota(ctx, clusterInfo)
+	totalTiDBCPUQuota, err := getTiDBTotalCPUQuota(clusterInfo)
 	if err != nil {
 		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
@@ -488,14 +488,14 @@ func (e *Executor) staticCalibrate(ctx context.Context, req *chunk.Chunk) error 
 	return nil
 }
 
-func staticCalibrateTpch10(ctx context.Context, req *chunk.Chunk, clusterInfo []infoschema.ServerInfo, ruCfg *resourceControlClient.RUConfig) error {
+func staticCalibrateTpch10(req *chunk.Chunk, clusterInfo []infoschema.ServerInfo, ruCfg *resourceControlClient.RUConfig) error {
 	// TPCH10 only considers the resource usage of the TiFlash including cpu and read bytes. Others are ignored.
 	// cpu usage: 105494.666484 / 20 / 20 = 263.74
 	// read bytes: 401799161689.0 / 20 / 20 = 1004497904.22
 	const cpuTimePerCPUPerSec float64 = 263.74
 	const readBytesPerCPUPerSec float64 = 1004497904.22
 	ruPerCPU := float64(ruCfg.CPUMsCost)*cpuTimePerCPUPerSec + float64(ruCfg.ReadBytesCost)*readBytesPerCPUPerSec
-	totalTiFlashLogicalCores, err := getTiFlashLogicalCores(ctx, clusterInfo)
+	totalTiFlashLogicalCores, err := getTiFlashLogicalCores(clusterInfo)
 	if err != nil {
 		return err
 	}
@@ -504,7 +504,7 @@ func staticCalibrateTpch10(ctx context.Context, req *chunk.Chunk, clusterInfo []
 	return nil
 }
 
-func getTiDBTotalCPUQuota(ctx context.Context, clusterInfo []infoschema.ServerInfo) (float64, error) {
+func getTiDBTotalCPUQuota(clusterInfo []infoschema.ServerInfo) (float64, error) {
 	cpuQuota := float64(runtime.GOMAXPROCS(0))
 	failpoint.Inject("mockGOMAXPROCS", func(val failpoint.Value) {
 		if val != nil {
@@ -515,7 +515,7 @@ func getTiDBTotalCPUQuota(ctx context.Context, clusterInfo []infoschema.ServerIn
 	return cpuQuota * float64(instanceNum), nil
 }
 
-func getTiKVTotalCPUQuota(ctx context.Context, clusterInfo []infoschema.ServerInfo) (float64, error) {
+func getTiKVTotalCPUQuota(clusterInfo []infoschema.ServerInfo) (float64, error) {
 	instanceNum := count(clusterInfo, serverTypeTiKV)
 	if instanceNum == 0 {
 		return 0.0, errors.New("no server with type 'tikv' is found")
@@ -527,7 +527,7 @@ func getTiKVTotalCPUQuota(ctx context.Context, clusterInfo []infoschema.ServerIn
 	return cpuQuota * float64(instanceNum), nil
 }
 
-func getTiFlashLogicalCores(ctx context.Context, clusterInfo []infoschema.ServerInfo) (float64, error) {
+func getTiFlashLogicalCores(clusterInfo []infoschema.ServerInfo) (float64, error) {
 	instanceNum := count(clusterInfo, serverTypeTiFlash)
 	if instanceNum == 0 {
 		return 0.0, nil
@@ -637,8 +637,11 @@ func count(clusterInfo []infoschema.ServerInfo, ty string) int {
 
 func fetchServerCPUQuota(serverInfos []infoschema.ServerInfo, serverType string, metricName string) (float64, error) {
 	var cpuQuota float64
-	err := fetchStoreMetrics(serverInfos, serverType, func(addr string, reader io.Reader) error {
-		scanner := bufio.NewScanner(reader)
+	err := fetchStoreMetrics(serverInfos, serverType, func(addr string, resp *http.Response) error {
+		if resp.StatusCode != http.StatusOK {
+			return errors.Errorf("request %s failed: %s", addr, resp.Status)
+		}
+		scanner := bufio.NewScanner(resp.Body)
 		for scanner.Scan() {
 			line := scanner.Text()
 			if !strings.HasPrefix(line, metricName) {
@@ -657,7 +660,7 @@ func fetchServerCPUQuota(serverInfos []infoschema.ServerInfo, serverType string,
 	return cpuQuota, err
 }
 
-func fetchStoreMetrics(serversInfo []infoschema.ServerInfo, serverType string, onResp func(string, io.Reader) error) error {
+func fetchStoreMetrics(serversInfo []infoschema.ServerInfo, serverType string, onResp func(string, *http.Response) error) error {
 	var firstErr error
 	for _, srv := range serversInfo {
 		if srv.ServerType != serverType {
@@ -686,17 +689,15 @@ func fetchStoreMetrics(serversInfo []infoschema.ServerInfo, serverType string, o
 		if resp == nil {
 			var err1 error
 			resp, err1 = util.InternalHTTPClient().Do(req)
-			if err1 != nil {
+			if err1 != nil && firstErr == nil {
 				firstErr = err1
 				continue
 			}
-			defer resp.Body.Close()
 		}
+		err = onResp(srv.Address, resp)
+		resp.Body.Close()
+		return err
 
-		if resp.StatusCode != http.StatusOK {
-			return errors.Errorf("request %s failed: %s", url, resp.Status)
-		}
-		return onResp(srv.Address, resp.Body)
 	}
 	if firstErr == nil {
 		firstErr = errors.Errorf("no server with type '%s' is found", serverType)
@@ -708,6 +709,6 @@ type noopCloserWrapper struct {
 	io.Reader
 }
 
-func (r noopCloserWrapper) Close() error {
+func (noopCloserWrapper) Close() error {
 	return nil
 }
