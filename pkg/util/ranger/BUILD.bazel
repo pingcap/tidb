@@ -30,7 +30,11 @@ go_library(
         "//pkg/util/codec",
         "//pkg/util/collate",
         "//pkg/util/dbterror",
+<<<<<<< HEAD
         "//pkg/util/mathutil",
+=======
+        "//pkg/util/hack",
+>>>>>>> e053c27f068 (util/ranger: support use `like` to build range for new collation columns (#48522))
         "@com_github_pingcap_errors//:errors",
     ],
 )

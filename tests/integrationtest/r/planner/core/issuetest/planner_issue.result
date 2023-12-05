@@ -187,8 +187,15 @@ insert into t1 value('测试'),('测试  '),('xxx ');
 explain format = brief select *,length(a) from t1 where a like '测试 %';
 id	estRows	task	access object	operator info
 Projection	250.00	root		planner__core__issuetest__planner_issue.t1.a, length(planner__core__issuetest__planner_issue.t1.a)->Column#3
+<<<<<<< HEAD
 └─IndexReader	250.00	root		index:IndexRangeScan
   └─IndexRangeScan	250.00	cop[tikv]	table:t1, index:ia(a)	range:["测试 ","测试!"), keep order:false, stats:pseudo
+=======
+└─UnionScan	250.00	root		like(planner__core__issuetest__planner_issue.t1.a, "测试 %", 92)
+  └─IndexReader	250.00	root		index:Selection
+    └─Selection	250.00	cop[tikv]		like(planner__core__issuetest__planner_issue.t1.a, "测试 %", 92)
+      └─IndexRangeScan	250.00	cop[tikv]	table:t1, index:ia(a)	range:["测试","测试!"), keep order:false, stats:pseudo
+>>>>>>> e053c27f068 (util/ranger: support use `like` to build range for new collation columns (#48522))
 explain format = brief select *,length(a) from t1 where a like '测试';
 id	estRows	task	access object	operator info
 Projection	10.00	root		planner__core__issuetest__planner_issue.t1.a, length(planner__core__issuetest__planner_issue.t1.a)->Column#3
@@ -210,3 +217,28 @@ IndexReader	250.00	root		index:Selection
 select * from t1 use index (ia) where a like 'xxx_';
 a
 xxx 
+<<<<<<< HEAD
+=======
+create table t2(a varchar(20) collate gbk_chinese_ci, index ia(a));
+insert into t2 value('测试'),('测试  ');
+explain format = brief select *,length(a) from t2 where a like '测试 %';
+id	estRows	task	access object	operator info
+Projection	250.00	root		planner__core__issuetest__planner_issue.t2.a, length(to_binary(planner__core__issuetest__planner_issue.t2.a))->Column#3
+└─UnionScan	250.00	root		like(planner__core__issuetest__planner_issue.t2.a, "测试 %", 92)
+  └─IndexReader	250.00	root		index:Selection
+    └─Selection	250.00	cop[tikv]		like(planner__core__issuetest__planner_issue.t2.a, "测试 %", 92)
+      └─IndexRangeScan	250.00	cop[tikv]	table:t2, index:ia(a)	range:["\x89\a\xba%","\x89\a\xba%!"), keep order:false, stats:pseudo
+explain format = brief select *,length(a) from t2 where a like '测试';
+id	estRows	task	access object	operator info
+Projection	10.00	root		planner__core__issuetest__planner_issue.t2.a, length(to_binary(planner__core__issuetest__planner_issue.t2.a))->Column#3
+└─UnionScan	10.00	root		like(planner__core__issuetest__planner_issue.t2.a, "测试", 92)
+  └─IndexReader	10.00	root		index:Selection
+    └─Selection	10.00	cop[tikv]		like(planner__core__issuetest__planner_issue.t2.a, "测试", 92)
+      └─IndexRangeScan	10.00	cop[tikv]	table:t2, index:ia(a)	range:["\x89\a\xba%","\x89\a\xba%"], keep order:false, stats:pseudo
+select *,length(a) from t2 where a like '测试 %';
+a	length(a)
+测试  	6
+select *,length(a) from t2 where a like '测试';
+a	length(a)
+测试	4
+>>>>>>> e053c27f068 (util/ranger: support use `like` to build range for new collation columns (#48522))
