@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"go.uber.org/zap"
@@ -200,89 +201,100 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 }
 
 func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
-	globalTableInfo, originalPartInfo, originalTableInfo := t.GetExchangePartitionInfo()
-	// Get the count of the partition.
-	partCount, partModifyCount, err := h.statsWriter.StatsMetaCountAndModifyCount(
-		// You only can exchange one partition at a time.
-		originalPartInfo.Definitions[0].ID,
-	)
-	if err != nil {
-		return err
-	}
-	// Get the count of the table.
-	tableCount, tableModifyCount, err := h.statsWriter.StatsMetaCountAndModifyCount(
-		originalTableInfo.ID,
-	)
-	if err != nil {
-		return err
-	}
-
-	// The count of the partition should be added to the table.
-	// The formula is: total_count = original_table_count - original_partition_count + new_table_count.
-	// So the delta is : new_table_count - original_partition_count.
-	countDelta := tableCount - partCount
-	// Initially, the sum of tableCount and partCount represents
-	// the operation of deleting the partition and adding the table.
-	// Therefore, they are considered as modifyCountDelta.
-	// Next, since the old partition no longer belongs to the table,
-	// the modify count of the partition should be subtracted.
-	// The modify count of the table should be added as we are adding the table as a partition.
-	modifyCountDelta := (tableCount + partCount) - partModifyCount + tableModifyCount
-
-	// Update the global stats.
-	if modifyCountDelta != 0 || countDelta != 0 {
-		se, err := h.statsHandler.SPool().Get()
+	globalTableInfo, originalPartInfo,
+		originalTableInfo := t.GetExchangePartitionInfo()
+	if err := util.CallWithSCtx(h.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+		// Get the count of the partition.
+		partCount, partModifyCount, _, err := storage.StatsMetaCountAndModifyCount(
+			sctx,
+			// You only can exchange one partition at a time.
+			originalPartInfo.Definitions[0].ID,
+		)
 		if err != nil {
-			return errors.Trace(err)
-		}
-		sctx := se.(sessionctx.Context)
-		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-		golbalTableSchema, ok := is.SchemaByTable(globalTableInfo)
-		if !ok {
-			return errors.Errorf("schema not found for table %s", globalTableInfo.Name.O)
-		}
-		tableSchema, ok := is.SchemaByTable(originalTableInfo)
-		if !ok {
-			return errors.Errorf("schema not found for table %s", originalTableInfo.Name.O)
-		}
-		if err := h.updateStatsWithCountDeltaAndModifyCountDelta(
-			globalTableInfo.ID, countDelta, modifyCountDelta,
-		); err != nil {
-			fields := exchangePartitionLogFields(
-				golbalTableSchema.Name.O,
-				globalTableInfo,
-				originalPartInfo.Definitions[0],
-				tableSchema.Name.O,
-				originalTableInfo,
-				countDelta, modifyCountDelta,
-				partCount,
-				partModifyCount,
-				tableCount,
-				tableModifyCount,
-			)
-			fields = append(fields, zap.Error(err))
-			logutil.StatsLogger.Error(
-				"Update global stats after exchange partition failed",
-				fields...,
-			)
 			return err
 		}
-		logutil.StatsLogger.Info(
-			"Update global stats after exchange partition",
-			exchangePartitionLogFields(
-				golbalTableSchema.Name.O,
-				globalTableInfo,
-				originalPartInfo.Definitions[0],
-				tableSchema.Name.O,
-				originalTableInfo,
-				countDelta, modifyCountDelta,
-				partCount,
-				partModifyCount,
-				tableCount,
-				tableModifyCount,
-			)...,
+
+		// Get the count of the table.
+		tableCount, tableModifyCount, _, err := storage.StatsMetaCountAndModifyCount(
+			sctx,
+			originalTableInfo.ID,
 		)
+		if err != nil {
+			return err
+		}
+
+		// The count of the partition should be added to the table.
+		// The formula is: total_count = original_table_count - original_partition_count + new_table_count.
+		// So the delta is : new_table_count - original_partition_count.
+		countDelta := tableCount - partCount
+		// Initially, the sum of tableCount and partCount represents
+		// the operation of deleting the partition and adding the table.
+		// Therefore, they are considered as modifyCountDelta.
+		// Next, since the old partition no longer belongs to the table,
+		// the modify count of the partition should be subtracted.
+		// The modify count of the table should be added as we are adding the table as a partition.
+		modifyCountDelta := (tableCount + partCount) - partModifyCount + tableModifyCount
+
+		// Update the global stats.
+		if modifyCountDelta != 0 || countDelta != 0 {
+			se, err := h.statsHandler.SPool().Get()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			sctx := se.(sessionctx.Context)
+			is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+			golbalTableSchema, ok := is.SchemaByTable(globalTableInfo)
+			if !ok {
+				return errors.Errorf("schema not found for table %s", globalTableInfo.Name.O)
+			}
+			tableSchema, ok := is.SchemaByTable(originalTableInfo)
+			if !ok {
+				return errors.Errorf("schema not found for table %s", originalTableInfo.Name.O)
+			}
+			if err := h.updateStatsWithCountDeltaAndModifyCountDelta(
+				sctx,
+				globalTableInfo.ID, countDelta, modifyCountDelta,
+			); err != nil {
+				fields := exchangePartitionLogFields(
+					golbalTableSchema.Name.O,
+					globalTableInfo,
+					originalPartInfo.Definitions[0],
+					tableSchema.Name.O,
+					originalTableInfo,
+					countDelta, modifyCountDelta,
+					partCount,
+					partModifyCount,
+					tableCount,
+					tableModifyCount,
+				)
+				fields = append(fields, zap.Error(err))
+				logutil.StatsLogger.Error(
+					"Update global stats after exchange partition failed",
+					fields...,
+				)
+				return err
+			}
+			logutil.StatsLogger.Info(
+				"Update global stats after exchange partition",
+				exchangePartitionLogFields(
+					golbalTableSchema.Name.O,
+					globalTableInfo,
+					originalPartInfo.Definitions[0],
+					tableSchema.Name.O,
+					originalTableInfo,
+					countDelta, modifyCountDelta,
+					partCount,
+					partModifyCount,
+					tableCount,
+					tableModifyCount,
+				)...,
+			)
+		}
+		return nil
+	}, util.FlagWrapTxn); err != nil {
+		return err
 	}
+
 	return nil
 }
 
@@ -318,63 +330,58 @@ func exchangePartitionLogFields(
 // the global stats with the given count delta and modify count delta.
 // Only used by some special DDLs, such as exchange partition.
 func (h *ddlHandlerImpl) updateStatsWithCountDeltaAndModifyCountDelta(
+	sctx sessionctx.Context,
 	tableID int64,
 	countDelta, modifyCountDelta int64,
 ) error {
-	if err := util.CallWithSCtx(h.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		lockedTables, err := h.statsHandler.GetLockedTables(tableID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		isLocked := false
-		if len(lockedTables) > 0 {
-			isLocked = true
-		}
-		startTS, err := util.GetStartTS(sctx)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isLocked {
-			// For locked tables, it is possible that the record gets deleted. So it can be negative.
-			_, err = util.Exec(
-				sctx,
-				"INSERT INTO mysql.stats_table_locked "+
-					"(version, count, modify_count, table_id) "+
-					"VALUES (%?, %?, %?, %?) "+
-					"ON DUPLICATE KEY UPDATE "+
-					"version = VALUES(version), "+
-					"count = count + VALUES(count), "+
-					"modify_count = modify_count + VALUES(modify_count)",
-				startTS,
-				countDelta,
-				modifyCountDelta,
-				tableID,
-			)
-			return err
-		}
-		// Because count can not be negative, so we need to get the current and calculate the delta.
+	lockedTables, err := h.statsHandler.GetLockedTables(tableID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	isLocked := false
+	if len(lockedTables) > 0 {
+		isLocked = true
+	}
+	startTS, err := util.GetStartTS(sctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if isLocked {
+		// For locked tables, it is possible that the record gets deleted. So it can be negative.
 		_, err = util.Exec(
 			sctx,
-			"INSERT INTO mysql.stats_meta "+
+			"INSERT INTO mysql.stats_table_locked "+
 				"(version, count, modify_count, table_id) "+
-				"SELECT %?, GREATEST(0, count + %?), GREATEST(0, modify_count + %?), %? "+
-				"FROM mysql.stats_meta WHERE table_id = %? "+
+				"VALUES (%?, %?, %?, %?) "+
 				"ON DUPLICATE KEY UPDATE "+
 				"version = VALUES(version), "+
-				"count = VALUES(count), "+
-				"modify_count = VALUES(modify_count)",
+				"count = count + VALUES(count), "+
+				"modify_count = modify_count + VALUES(modify_count)",
 			startTS,
 			countDelta,
 			modifyCountDelta,
 			tableID,
-			tableID,
 		)
 		return err
-	}, util.FlagWrapTxn); err != nil {
-		return err
 	}
-
-	return nil
+	// Because count can not be negative, so we need to get the current and calculate the delta.
+	_, err = util.Exec(
+		sctx,
+		"INSERT INTO mysql.stats_meta "+
+			"(version, count, modify_count, table_id) "+
+			"SELECT %?, GREATEST(0, count + %?), GREATEST(0, modify_count + %?), %? "+
+			"FROM mysql.stats_meta WHERE table_id = %? "+
+			"ON DUPLICATE KEY UPDATE "+
+			"version = VALUES(version), "+
+			"count = VALUES(count), "+
+			"modify_count = VALUES(modify_count)",
+		startTS,
+		countDelta,
+		modifyCountDelta,
+		tableID,
+		tableID,
+	)
+	return err
 }
 
 func (h *ddlHandlerImpl) getInitStateTableIDs(tblInfo *model.TableInfo) (ids []int64, err error) {

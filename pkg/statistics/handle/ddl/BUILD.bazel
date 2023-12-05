@@ -11,6 +11,7 @@ go_library(
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/statistics/handle/logutil",
+        "//pkg/statistics/handle/storage",
         "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/util",
         "@com_github_pingcap_errors//:errors",
