@@ -237,7 +237,10 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 		}
 		sctx := se.(sessionctx.Context)
 		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-		schema, _ := is.SchemaByTable(globalTableInfo)
+		schema, ok := is.SchemaByTable(globalTableInfo)
+		if !ok {
+			return errors.Errorf("schema not found for table %s", globalTableInfo.Name.O)
+		}
 		if err := h.updateStatsWithCountDeltaAndModifyCountDelta(
 			globalTableInfo.ID, countDelta, modifyCountDelta,
 		); err != nil {
