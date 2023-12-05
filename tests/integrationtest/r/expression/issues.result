@@ -2094,9 +2094,9 @@ create table t(a char(4) collate utf8_general_ci primary key /*T![clustered_inde
 insert into t values('`?');
 explain format='brief' select * from t where a like '`%';
 id	estRows	task	access object	operator info
-TableReader	8000.00	root		data:Selection
-└─Selection	8000.00	cop[tikv]		like(expression__issues.t.a, "`%", 92)
-  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader	250.00	root		data:Selection
+└─Selection	250.00	cop[tikv]		like(expression__issues.t.a, "`%", 92)
+  └─TableRangeScan	250.00	cop[tikv]	table:t	range:["\x00`","\x00a"), keep order:false, stats:pseudo
 select * from t where a like '`%';
 a
 `?
