@@ -42,6 +42,8 @@ type ExecDetails struct {
 	BackoffTime      time.Duration
 	LockKeysDuration time.Duration
 	RequestCount     int
+	// InEfficientScanRatio is initialized in `LogSlowQuery` function.
+	InEfficientScanRatio uint64
 }
 
 // DetailsNeedP90 contains execution detail information which need calculate P90.
@@ -177,6 +179,8 @@ const (
 	RocksdbBlockReadByteStr = "Rocksdb_block_read_byte"
 	// RocksdbBlockReadTimeStr means the time spent on rocksdb block read.
 	RocksdbBlockReadTimeStr = "Rocksdb_block_read_time"
+	// InEfficientScanRatio is the ratio of total iterated keys and processed keys.
+	InEfficientScanRatio = "Inefficient_scan_ratio"
 )
 
 // String implements the fmt.Stringer interface.
@@ -291,6 +295,9 @@ func (d ExecDetails) String() string {
 		if scanDetail.RocksdbBlockReadDuration > 0 {
 			parts = append(parts, RocksdbBlockReadTimeStr+": "+strconv.FormatFloat(scanDetail.RocksdbBlockReadDuration.Seconds(), 'f', 3, 64))
 		}
+	}
+	if d.InEfficientScanRatio > 0 {
+		parts = append(parts, InEfficientScanRatio+": "+strconv.FormatUint(d.InEfficientScanRatio, 10))
 	}
 	return strings.Join(parts, " ")
 }

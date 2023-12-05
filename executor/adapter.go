@@ -1485,10 +1485,29 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
 	threshold := time.Duration(atomic.LoadUint64(&cfg.Instance.SlowThreshold)) * time.Millisecond
+	inEfficientScanRatio := atomic.LoadUint64(&cfg.Instance.InefficientScanRatio)
+	inEfficientScanNum := atomic.LoadUint64(&cfg.Instance.InefficientScanNum)
 	enable := cfg.Instance.EnableSlowLog.Load()
+
+	// Check if it's an expensive mvcc scan. It's regarded as expensive if
+	// 1. The rocksdb_delete_skipped_count > processed_keys * inEfficientScanRatio.
+	// 2. The iterated key number > inEfficientScanNum.
+	execDetail := stmtCtx.GetExecDetails()
+	isInefficientScan := false
+	if execDetail.ScanDetail != nil && sessVars.ConnectionID > 0 {
+		processedKeys := execDetail.ScanDetail.ProcessedKeys
+		if processedKeys <= 0 {
+			processedKeys = 1
+		}
+		currentScanRatio := execDetail.ScanDetail.RocksdbKeySkippedCount / uint64(processedKeys)
+		if currentScanRatio >= inEfficientScanRatio && execDetail.ScanDetail.RocksdbKeySkippedCount >= inEfficientScanNum {
+			isInefficientScan = true
+			execDetail.InEfficientScanRatio = currentScanRatio
+		}
+	}
 	// if the level is Debug, or trace is enabled, print slow logs anyway
 	force := level <= zapcore.DebugLevel || trace.IsEnabled()
-	if (!enable || costTime < threshold) && !force {
+	if (!enable || costTime < threshold) && !force && !isInefficientScan {
 		return
 	}
 	sql := FormatSQL(a.GetTextToLog())
@@ -1525,7 +1544,6 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if tikvExecDetailRaw != nil {
 		tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
 	}
-	execDetail := stmtCtx.GetExecDetails()
 	copTaskInfo := stmtCtx.CopTasksDetails()
 	statsInfos := plannercore.GetStatsInfoFromFlatPlan(flat)
 	memMax := sessVars.MemTracker.MaxConsumed()
@@ -1595,7 +1613,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		trace.Log(a.GoCtx, "details", slowLog)
 	}
 	logutil.SlowQueryLogger.Warn(slowLog)
-	if costTime >= threshold {
+	if costTime >= threshold || isInefficientScan {
 		if sessVars.InRestrictedSQL {
 			totalQueryProcHistogramInternal.Observe(costTime.Seconds())
 			totalCopProcHistogramInternal.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
