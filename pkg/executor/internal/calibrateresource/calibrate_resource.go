@@ -689,8 +689,10 @@ func fetchStoreMetrics(serversInfo []infoschema.ServerInfo, serverType string, o
 		if resp == nil {
 			var err1 error
 			resp, err1 = util.InternalHTTPClient().Do(req)
-			if err1 != nil && firstErr == nil {
-				firstErr = err1
+			if err1 != nil {
+				if firstErr == nil {
+					firstErr = err1
+				}
 				continue
 			}
 		}
