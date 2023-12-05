@@ -2399,7 +2399,9 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
 	logutil.BgLogger().Info("updateStatsWorker started.")
 	lease := do.statsLease
-	deltaUpdateTicker := time.NewTicker(20 * lease)
+	// We need to have different nodes trigger tasks at different times to avoid the herd effect.
+	randDuration := time.Duration(rand.Int63n(int64(time.Minute)))
+	deltaUpdateTicker := time.NewTicker(20*lease + randDuration)
 	gcStatsTicker := time.NewTicker(100 * lease)
 	dumpColStatsUsageTicker := time.NewTicker(100 * lease)
 	readMemTricker := time.NewTicker(memory.ReadMemInterval)
