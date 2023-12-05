@@ -244,11 +244,6 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 			if !ok {
 				return errors.Errorf("schema not found for table %s", globalTableInfo.Name.O)
 			}
-			// Note: It is OK to exchange one table from different schemas.
-			tableSchema, ok := is.SchemaByTable(originalTableInfo)
-			if !ok {
-				return errors.Errorf("schema not found for table %s", originalTableInfo.Name.O)
-			}
 			if err := updateStatsWithCountDeltaAndModifyCountDelta(
 				sctx,
 				globalTableInfo.ID, countDelta, modifyCountDelta,
@@ -257,7 +252,6 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 					golbalTableSchema.Name.O,
 					globalTableInfo,
 					originalPartInfo.Definitions[0],
-					tableSchema.Name.O,
 					originalTableInfo,
 					countDelta, modifyCountDelta,
 					partCount,
@@ -278,7 +272,6 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 					golbalTableSchema.Name.O,
 					globalTableInfo,
 					originalPartInfo.Definitions[0],
-					tableSchema.Name.O,
 					originalTableInfo,
 					countDelta, modifyCountDelta,
 					partCount,
@@ -300,7 +293,6 @@ func exchangePartitionLogFields(
 	globalTableSchemaName string,
 	globalTableInfo *model.TableInfo,
 	originalPartInfo model.PartitionDefinition,
-	tableSchemaName string,
 	originalTableInfo *model.TableInfo,
 	countDelta, modifyCountDelta,
 	partCount, partModifyCount,
@@ -316,7 +308,6 @@ func exchangePartitionLogFields(
 		zap.String("partitionName", originalPartInfo.Name.O),
 		zap.Int64("partitionCount", partCount),
 		zap.Int64("partitionModifyCount", partModifyCount),
-		zap.String("tableSchema", tableSchemaName),
 		zap.Int64("tableID", originalTableInfo.ID),
 		zap.String("tableName", originalTableInfo.Name.O),
 		zap.Int64("tableCount", tableCount),
