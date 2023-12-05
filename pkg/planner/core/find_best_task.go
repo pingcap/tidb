@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -1523,7 +1522,6 @@ func setIndexMergeTableScanHandleCols(ds *DataSource, ts *PhysicalTableScan) (er
 // Filters that cannot be pushed to TiKV are also returned, and an extra Selection above IndexMergeReader will be constructed later.
 func (ds *DataSource) buildIndexMergeTableScan(tableFilters []expression.Expression,
 	totalRowCount float64, matchProp bool) (PhysicalPlan, []expression.Expression, bool, error) {
-	sessVars := ds.SCtx().GetSessionVars()
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
 		Columns:         slices.Clone(ds.Columns),
@@ -1550,7 +1548,7 @@ func (ds *DataSource) buildIndexMergeTableScan(tableFilters []expression.Express
 	}
 	var currentTopPlan PhysicalPlan = ts
 	if len(tableFilters) > 0 {
-		pushedFilters, remainingFilters := extractFiltersForIndexMerge(sessVars.StmtCtx, ds.SCtx().GetClient(), tableFilters)
+		pushedFilters, remainingFilters := extractFiltersForIndexMerge(ds.SCtx(), ds.SCtx().GetClient(), tableFilters)
 		pushedFilters1, remainingFilters1 := SplitSelCondsWithVirtualColumn(pushedFilters)
 		pushedFilters = pushedFilters1
 		remainingFilters = append(remainingFilters, remainingFilters1...)
@@ -1616,13 +1614,13 @@ func (ds *DataSource) buildIndexMergeTableScan(tableFilters []expression.Express
 //
 //	But the new Selection should exclude the exprs that can NOT be pushed to ALL the storage engines.
 //	Because these exprs have already been put in another Selection(check rule_predicate_push_down).
-func extractFiltersForIndexMerge(sc *stmtctx.StatementContext, client kv.Client, filters []expression.Expression) (pushed []expression.Expression, remaining []expression.Expression) {
+func extractFiltersForIndexMerge(ctx sessionctx.Context, client kv.Client, filters []expression.Expression) (pushed []expression.Expression, remaining []expression.Expression) {
 	for _, expr := range filters {
-		if expression.CanExprsPushDown(sc, []expression.Expression{expr}, client, kv.TiKV) {
+		if expression.CanExprsPushDown(ctx, []expression.Expression{expr}, client, kv.TiKV) {
 			pushed = append(pushed, expr)
 			continue
 		}
-		if expression.CanExprsPushDown(sc, []expression.Expression{expr}, client, kv.UnSpecified) {
+		if expression.CanExprsPushDown(ctx, []expression.Expression{expr}, client, kv.UnSpecified) {
 			remaining = append(remaining, expr)
 		}
 	}
@@ -1944,10 +1942,10 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	tableConds, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(tableConds)
 
 	var newRootConds []expression.Expression
-	indexConds, newRootConds = expression.PushDownExprs(is.SCtx().GetSessionVars().StmtCtx, indexConds, is.SCtx().GetClient(), kv.TiKV)
+	indexConds, newRootConds = expression.PushDownExprs(is.SCtx(), indexConds, is.SCtx().GetClient(), kv.TiKV)
 	copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
 
-	tableConds, newRootConds = expression.PushDownExprs(is.SCtx().GetSessionVars().StmtCtx, tableConds, is.SCtx().GetClient(), kv.TiKV)
+	tableConds, newRootConds = expression.PushDownExprs(is.SCtx(), tableConds, is.SCtx().GetClient(), kv.TiKV)
 	copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
 
 	if indexConds != nil {
@@ -2446,7 +2444,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 func (ts *PhysicalTableScan) addPushedDownSelectionToMppTask(mpp *mppTask, stats *property.StatsInfo) *mppTask {
 	filterCondition, rootTaskConds := SplitSelCondsWithVirtualColumn(ts.filterCondition)
 	var newRootConds []expression.Expression
-	filterCondition, newRootConds = expression.PushDownExprs(ts.SCtx().GetSessionVars().StmtCtx, filterCondition, ts.SCtx().GetClient(), ts.StoreType)
+	filterCondition, newRootConds = expression.PushDownExprs(ts.SCtx(), filterCondition, ts.SCtx().GetClient(), ts.StoreType)
 	mpp.rootTaskConds = append(rootTaskConds, newRootConds...)
 
 	ts.filterCondition = filterCondition
@@ -2462,7 +2460,7 @@ func (ts *PhysicalTableScan) addPushedDownSelectionToMppTask(mpp *mppTask, stats
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {
 	ts.filterCondition, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(ts.filterCondition)
 	var newRootConds []expression.Expression
-	ts.filterCondition, newRootConds = expression.PushDownExprs(ts.SCtx().GetSessionVars().StmtCtx, ts.filterCondition, ts.SCtx().GetClient(), ts.StoreType)
+	ts.filterCondition, newRootConds = expression.PushDownExprs(ts.SCtx(), ts.filterCondition, ts.SCtx().GetClient(), ts.StoreType)
 	copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
 
 	// Add filter condition to table plan now.

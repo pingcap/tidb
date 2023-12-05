@@ -5,14 +5,14 @@ go_library(
     srcs = [
         "dispatcher_mock.go",
         "plan_mock.go",
-        "scheduler_mock.go",
+        "task_executor_mock.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/disttask/framework/mock",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/disttask/framework/planner",
         "//pkg/disttask/framework/proto",
-        "//pkg/disttask/framework/scheduler/execute",
+        "//pkg/disttask/framework/taskexecutor/execute",
         "//pkg/sessionctx",
         "@org_uber_go_mock//gomock",
     ],

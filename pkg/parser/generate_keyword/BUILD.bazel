@@ -1,0 +1,23 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "generate_keyword_lib",
+    srcs = ["genkeyword.go"],
+    importpath = "github.com/pingcap/tidb/pkg/parser/generate_keyword",
+    visibility = ["//visibility:private"],
+)
+
+go_binary(
+    name = "generate_keyword",
+    embed = [":generate_keyword_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "generate_keyword_test",
+    timeout = "short",
+    srcs = ["genkeyword_test.go"],
+    embed = [":generate_keyword_lib"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
+)

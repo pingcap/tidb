@@ -220,7 +220,6 @@ go_test(
         "preprocess_test.go",
         "rule_generate_column_substitute_test.go",
         "rule_join_reorder_dp_test.go",
-        "rule_join_reorder_test.go",
         "runtime_filter_generator_test.go",
         "stringer_test.go",
     ],
@@ -231,7 +230,6 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/domain",
-        "//pkg/errno",
         "//pkg/expression",
         "//pkg/expression/aggregation",
         "//pkg/infoschema",
