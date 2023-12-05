@@ -91,6 +91,7 @@ func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobs(currentRunningProcessIDs map
 // state is `pending` or `running` and the update time is more than 10 minutes ago.
 const SelectAnalyzeJobsSQL = `SELECT id, process_id, instance
 		FROM mysql.analyze_jobs
+		WHERE job_info LIKE '%auto analyze%'
 		AND state IN ('pending', 'running')
 		AND TIMESTAMPDIFF(MINUTE, update_time, NOW()) > 10`
 
