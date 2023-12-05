@@ -568,9 +568,6 @@ func TestTiKVClientReadTimeout(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int primary key, b int)")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCDeadlineExceeded", `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCDeadlineExceeded"))
-	}()
 	// Test for point_get request
 	rows := tk.MustQuery("explain analyze select /*+ set_var(tikv_client_read_timeout=1) */ * from t where a = 1").Rows()
 	require.Len(t, rows, 1)
@@ -624,21 +621,11 @@ func TestTiKVClientReadTimeout(t *testing.T) {
 	require.Len(t, rows, 3)
 	explain = fmt.Sprintf("%v", rows[0])
 	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .* rpc_num: 2.*", explain)
-}
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCDeadlineExceeded"))
 
-func TestTiKVClientReadTimeout2(t *testing.T) {
-	if *testkit.WithTiKV != "" {
-		t.Skip("skip test since it's only work for unistore")
-	}
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int primary key, b int)")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreCopRPCDeadlineExceeded", `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreCopRPCDeadlineExceeded"))
-	}()
 	tk.MustQuery("select /*+ set_var(tikv_client_read_timeout=1) */ count(*) from t").Check(testkit.Rows("0"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreCopRPCDeadlineExceeded"))
 }
 
 func TestGetMvccByEncodedKeyRegionError(t *testing.T) {
