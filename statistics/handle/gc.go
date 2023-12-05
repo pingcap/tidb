@@ -73,6 +73,9 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err 
 			if err := h.gcHistoryStatsFromKV(row.GetInt64(0)); err != nil {
 				return errors.Trace(err)
 			}
+			if err := h.gcPredicateStatsFromKV(row.GetInt64(0)); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	if err := h.ClearOutdatedHistoryStats(); err != nil {
@@ -245,6 +248,17 @@ func (h *Handle) gcHistoryStatsFromKV(physicalID int64) error {
 		return errors.Trace(err)
 	}
 	sql = "delete from mysql.stats_meta_history where table_id = %?"
+	_, err = exec.ExecuteInternal(ctx, sql, physicalID)
+	return err
+}
+
+// gcPredicateStatsFromKV delete predicate stats from kv.
+func (h *Handle) gcPredicateStatsFromKV(physicalID int64) (err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	sql := "delete from mysql.predicate_stats where table_id = %?"
 	_, err = exec.ExecuteInternal(ctx, sql, physicalID)
 	return err
 }

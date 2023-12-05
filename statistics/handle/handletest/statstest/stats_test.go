@@ -23,9 +23,12 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner/cardinality"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/internal"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -386,4 +389,42 @@ func TestLoadStats(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/mockGetStatsReaderPanic"))
 	err = h.LoadNeededHistograms()
 	require.NoError(t, err)
+}
+
+func TestReadPredicateStats(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	h := dom.StatsHandle()
+	testKit := testkit.NewTestKit(t, store)
+	newReader, err := statistics.GetStatsReader(0, testKit.Session().(sqlexec.RestrictedSQLExecutor))
+	require.Nil(t, err)
+	// no record
+	item, err := statistics.TablePredicateStatsFromStorage(newReader, 1, 123)
+	require.Nil(t, err)
+	require.Nil(t, item)
+	// tblID: 1, stepHash: 1234
+	rTbl := variable.ReadTableDelta{TableID: 1, Count: 10, StepHash: 1234, PredicateSelectivity: 0.01}
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	ver := txn.StartTS()
+	err = h.UpdatePredicateStatsMeta(ver, rTbl)
+	require.Nil(t, err)
+	testKit = testkit.NewTestKit(t, store)
+	testKit.MustQuery("select count(*) from mysql.predicate_stats").Check(testkit.Rows("1"))
+	newReader, err = statistics.GetStatsReader(0, testKit.Session().(sqlexec.RestrictedSQLExecutor))
+	require.Nil(t, err)
+	item, err = statistics.TablePredicateStatsFromStorage(newReader, rTbl.TableID, rTbl.StepHash)
+	require.Nil(t, err)
+	require.Equal(t, rTbl, item.ReadTableDelta)
+	require.Equal(t, ver, item.Version)
+	// tblID: 1, stepHash: 1234
+	// tblID: 1, stepHash: 12345
+	rTbl1 := variable.ReadTableDelta{TableID: 1, Count: 10, StepHash: 12345, PredicateSelectivity: 0.02}
+	err = h.UpdatePredicateStatsMeta(ver, rTbl1)
+	require.Nil(t, err)
+	newReader, err = statistics.GetStatsReader(0, testKit.Session().(sqlexec.RestrictedSQLExecutor))
+	require.Nil(t, err)
+	item, err = statistics.TablePredicateStatsFromStorage(newReader, rTbl1.TableID, rTbl1.StepHash)
+	require.Nil(t, err)
+	require.Equal(t, rTbl1, item.ReadTableDelta)
+	require.Equal(t, ver, item.Version)
 }
