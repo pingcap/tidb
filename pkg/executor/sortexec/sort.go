@@ -19,7 +19,9 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -155,6 +157,9 @@ func (e *SortExec) initExternalSorting() error {
 }
 
 func (e *SortExec) nonExternalSorting(req *chunk.Chunk) (err error) {
+	e.syncLock.Lock()
+	defer e.syncLock.Unlock()
+
 	if e.sortPartitions[0].isSpillTriggeredNoLock() {
 		if len(e.cursors) == 0 {
 			e.initCursors()
@@ -183,9 +188,6 @@ func (e *SortExec) nonExternalSorting(req *chunk.Chunk) (err error) {
 			req.AppendRow(*row)
 		}
 	} else {
-		e.syncLock.Lock()
-		defer e.syncLock.Unlock()
-
 		// Spill is not triggered and all data are in memory.
 		rowNum := e.sortPartitions[0].numRowInMemory()
 		for !req.IsFull() && e.sortPartitions[0].getIdxNoLock() < rowNum {
@@ -250,11 +252,11 @@ func (e *SortExec) switchToNewSortPartition(fields []*types.FieldType, byItemsDe
 func (e *SortExec) storeChunk(chk *chunk.Chunk, fields []*types.FieldType, byItemsDesc []bool) error {
 	e.syncLock.Lock()
 	defer e.syncLock.Unlock()
-	err := e.partition.add(chk)
+	err := e.partition.addNoLock(chk)
 	if err != nil {
 		if errors.Is(err, errSpillIsTriggered) {
 			e.switchToNewSortPartition(fields, byItemsDesc)
-			err = e.partition.add(chk)
+			err = e.partition.addNoLock(chk)
 		}
 		if err != nil {
 			return err
@@ -322,6 +324,13 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
+	failpoint.Inject("waitForSpill", func(val failpoint.Value) {
+		if val.(bool) {
+			// Ensure that spill is triggered before returning data.
+			time.Sleep(100 * time.Millisecond)
+		}
+	})
 
 	e.sortPartitions = append(e.sortPartitions, e.partition)
 	e.partition = nil

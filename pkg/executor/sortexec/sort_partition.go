@@ -106,7 +106,7 @@ func (s *sortPartition) close() error {
 }
 
 // Appends a chunk into the SortPartition.
-func (s *sortPartition) add(chk *chunk.Chunk) error {
+func (s *sortPartition) addNoLock(chk *chunk.Chunk) error {
 	if s.isSpillTriggeredNoLock() {
 		return errSpillIsTriggered
 	}

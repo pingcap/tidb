@@ -19,6 +19,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
@@ -215,7 +216,10 @@ func onePartitionAndAllDataInDiskCase(t *testing.T, ctx *mock.Context, sortCase 
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(ctx, sortCase, schema)
 	exe := buildSortExec(ctx, sortCase, dataSource)
+
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/waitForSpill", `return(true)`)
 	resultChunks := executeSortExecutor(t, exe)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/waitForSpill", `return(false)`)
 
 	require.Equal(t, exe.GetSortPartitionListLenForTest(), 1)
 	require.Equal(t, true, exe.IsSpillTriggeredInOnePartitionForTest(0))
@@ -226,7 +230,6 @@ func onePartitionAndAllDataInDiskCase(t *testing.T, ctx *mock.Context, sortCase 
 	require.True(t, checkCorrectness(schema, exe, dataSource, resultChunks))
 }
 
-// TODO Ensure all partitions are spilled
 func multiPartitionCase(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCase) {
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
@@ -238,17 +241,64 @@ func multiPartitionCase(t *testing.T, ctx *mock.Context, sortCase *testutil.Sort
 	exe := buildSortExec(ctx, sortCase, dataSource)
 	resultChunks := executeSortExecutor(t, exe)
 
-	require.Greater(t, exe.GetSortPartitionListLenForTest(), 1)
-	require.Equal(t, true, exe.IsSpillTriggeredInOnePartitionForTest(0))
+	sortPartitionNum := exe.GetSortPartitionListLenForTest()
+	require.Greater(t, sortPartitionNum, 1)
+
+	// Ensure all partitions are spilled
+	for i := 0; i < sortPartitionNum; i++ {
+		require.Equal(t, true, exe.IsSpillTriggeredInOnePartitionForTest(i))
+	}
 	err := exe.Close()
 	require.NoError(t, err)
 
 	require.True(t, checkCorrectness(schema, exe, dataSource, resultChunks))
 }
 
-// TODO add case that data are all in memory and some of then are fetched, then the spill is triggered
+// Data are all in memory and some of then are fetched, then the spill is triggered
+func inMemoryThenSpillCase(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCase) {
+	hardLimit := int64(100000)
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+	schema := expression.NewSchema(sortCase.Columns()...)
+	dataSource := buildDataSource(ctx, sortCase, schema)
+	exe := buildSortExec(ctx, sortCase, dataSource)
+
+	tmpCtx := context.Background()
+	err := exe.Open(tmpCtx)
+	require.NoError(t, err)
+
+	resultChunks := make([]*chunk.Chunk, 0)
+	chk := exec.NewFirstChunk(exe)
+	for i := 0; i >= 0; i++ {
+		err = exe.Next(tmpCtx, chk)
+		require.NoError(t, err)
+
+		if i == 10 {
+			// Trigger the spill
+			ctx.GetSessionVars().StmtCtx.MemTracker.Consume(hardLimit)
+		}
+
+		if chk.NumRows() == 0 {
+			break
+		}
+		resultChunks = append(resultChunks, chk.CopyConstruct())
+	}
+
+	require.Equal(t, exe.GetSortPartitionListLenForTest(), 1)
+	require.Equal(t, true, exe.IsSpillTriggeredInOnePartitionForTest(0))
+	require.Greater(t, int64(2048), exe.GetRowNumInOnePartitionForTest(0))
+	err = exe.Close()
+	require.NoError(t, err)
+
+	require.True(t, checkCorrectness(schema, exe, dataSource, resultChunks))
+}
+
 // TODO add case that data are all in partition and spilled, then spill is triggered again
 // TODO add case that data are all in nulti partitions and spilled, then spill is triggered again
+// TODO add some random fail tests
 
 func TestSortSpillDisk(t *testing.T) {
 	sortexec.SetSmallSpillChunkSizeForTest()
@@ -258,4 +308,5 @@ func TestSortSpillDisk(t *testing.T) {
 	onePartitionAndAllDataInMemoryCase(t, ctx, sortCase)
 	onePartitionAndAllDataInDiskCase(t, ctx, sortCase)
 	multiPartitionCase(t, ctx, sortCase)
+	inMemoryThenSpillCase(t, ctx, sortCase)
 }
