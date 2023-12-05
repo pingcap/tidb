@@ -181,6 +181,30 @@ func executeSortExecutor(t *testing.T, exe *sortexec.SortExec) []*chunk.Chunk {
 	return resultChunks
 }
 
+func executeSortExecutorAndManullyTriggerSpill(t *testing.T, exe *sortexec.SortExec, hardLimit int64, tracker *memory.Tracker) []*chunk.Chunk {
+	tmpCtx := context.Background()
+	err := exe.Open(tmpCtx)
+	require.NoError(t, err)
+
+	resultChunks := make([]*chunk.Chunk, 0)
+	chk := exec.NewFirstChunk(exe)
+	for i := 0; i >= 0; i++ {
+		err = exe.Next(tmpCtx, chk)
+		require.NoError(t, err)
+
+		if i == 10 {
+			// Trigger the spill
+			tracker.Consume(hardLimit)
+		}
+
+		if chk.NumRows() == 0 {
+			break
+		}
+		resultChunks = append(resultChunks, chk.CopyConstruct())
+	}
+	return resultChunks
+}
+
 func checkCorrectness(schema *expression.Schema, exe *sortexec.SortExec, dataSource *testutil.MockDataSource, resultChunks []*chunk.Chunk) bool {
 	keyColumns, keyCmpFuncs, byItemsDesc := exe.GetSortMetaForTest()
 	checker := newResultChecker(schema, keyColumns, keyCmpFuncs, byItemsDesc, dataSource.SavedChunks)
@@ -265,40 +289,16 @@ func inMemoryThenSpillCase(t *testing.T, ctx *mock.Context, sortCase *testutil.S
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(ctx, sortCase, schema)
 	exe := buildSortExec(ctx, sortCase, dataSource)
-
-	tmpCtx := context.Background()
-	err := exe.Open(tmpCtx)
-	require.NoError(t, err)
-
-	resultChunks := make([]*chunk.Chunk, 0)
-	chk := exec.NewFirstChunk(exe)
-	for i := 0; i >= 0; i++ {
-		err = exe.Next(tmpCtx, chk)
-		require.NoError(t, err)
-
-		if i == 10 {
-			// Trigger the spill
-			ctx.GetSessionVars().StmtCtx.MemTracker.Consume(hardLimit)
-		}
-
-		if chk.NumRows() == 0 {
-			break
-		}
-		resultChunks = append(resultChunks, chk.CopyConstruct())
-	}
+	resultChunks := executeSortExecutorAndManullyTriggerSpill(t, exe, hardLimit, ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	require.Equal(t, exe.GetSortPartitionListLenForTest(), 1)
 	require.Equal(t, true, exe.IsSpillTriggeredInOnePartitionForTest(0))
 	require.Greater(t, int64(2048), exe.GetRowNumInOnePartitionForTest(0))
-	err = exe.Close()
+	err := exe.Close()
 	require.NoError(t, err)
 
 	require.True(t, checkCorrectness(schema, exe, dataSource, resultChunks))
 }
-
-// TODO add case that data are all in partition and spilled, then spill is triggered again
-// TODO add case that data are all in nulti partitions and spilled, then spill is triggered again
-// TODO add some random fail tests
 
 func TestSortSpillDisk(t *testing.T) {
 	sortexec.SetSmallSpillChunkSizeForTest()

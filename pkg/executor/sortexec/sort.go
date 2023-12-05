@@ -64,6 +64,10 @@ type SortExec struct {
 	spillAction *sortPartitionSpillDiskAction
 
 	syncLock sync.Mutex
+
+	// spill error will be stored here.
+	// It should be protected by syncLock.
+	spillError error
 }
 
 // Close implements the Executor Close interface.
@@ -160,6 +164,10 @@ func (e *SortExec) nonExternalSorting(req *chunk.Chunk) (err error) {
 	e.syncLock.Lock()
 	defer e.syncLock.Unlock()
 
+	if e.spillError != nil {
+		return e.spillError
+	}
+
 	if e.sortPartitions[0].isSpillTriggeredNoLock() {
 		if len(e.cursors) == 0 {
 			e.initCursors()
@@ -206,7 +214,6 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 		}
 	}
 
-	// TODO memory consumed by resoted chunks should be tracked
 	for !req.IsFull() && e.multiWayMerge.Len() > 0 {
 		// Get and insert data
 		element := e.multiWayMerge.elements[0]
@@ -241,7 +248,7 @@ func (e *SortExec) switchToNewSortPartition(fields []*types.FieldType, byItemsDe
 	e.sortPartitions = append(e.sortPartitions, e.partition)
 
 	e.partition = newSortPartition(fields, e.MaxChunkSize(), byItemsDesc, e.keyColumns, e.keyCmpFuncs, e.spillLimit, &e.syncLock)
-	e.spillAction = e.partition.actionSpill()
+	e.spillAction = e.partition.actionSpill(&e.spillError)
 	e.partition.getMemTracker().AttachTo(e.memTracker)
 	e.partition.getMemTracker().SetLabel(memory.LabelForRowChunks)
 	e.partition.getDiskTracker().AttachTo(e.diskTracker)
@@ -252,6 +259,11 @@ func (e *SortExec) switchToNewSortPartition(fields []*types.FieldType, byItemsDe
 func (e *SortExec) storeChunk(chk *chunk.Chunk, fields []*types.FieldType, byItemsDesc []bool) error {
 	e.syncLock.Lock()
 	defer e.syncLock.Unlock()
+
+	if e.spillError != nil {
+		return e.spillError
+	}
+
 	err := e.partition.addNoLock(chk)
 	if err != nil {
 		if errors.Is(err, errSpillIsTriggered) {
@@ -268,6 +280,11 @@ func (e *SortExec) storeChunk(chk *chunk.Chunk, fields []*types.FieldType, byIte
 func (e *SortExec) handleCurrentPartitionBeforeExit() error {
 	e.syncLock.Lock()
 	defer e.syncLock.Unlock()
+
+	if e.spillError != nil {
+		return e.spillError
+	}
+
 	if e.isSpillTriggeredNoLock() {
 		// If e.partition haven't trigger the spill. We need to manually trigger it.
 		// As all data should be in disk when spill is triggered.
@@ -294,7 +311,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	}
 
 	e.partition = newSortPartition(fields, e.MaxChunkSize(), byItemsDesc, e.keyColumns, e.keyCmpFuncs, e.spillLimit, &e.syncLock)
-	e.spillAction = e.partition.actionSpill()
+	e.spillAction = e.partition.actionSpill(&e.spillError)
 	e.partition.getMemTracker().AttachTo(e.memTracker)
 	e.partition.getMemTracker().SetLabel(memory.LabelForRowChunks)
 

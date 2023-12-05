@@ -213,11 +213,12 @@ func (s *sortPartition) spillToDisk() error {
 	return s.spillToDiskImpl()
 }
 
-func (s *sortPartition) actionSpill() *sortPartitionSpillDiskAction {
+func (s *sortPartition) actionSpill(spillError *error) *sortPartitionSpillDiskAction {
 	if s.spillAction == nil {
 		s.spillAction = &sortPartitionSpillDiskAction{
 			partition:  s,
 			isSpilling: false,
+			spillError: spillError,
 		}
 	}
 	return s.spillAction

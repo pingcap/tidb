@@ -31,6 +31,7 @@ type sortPartitionSpillDiskAction struct {
 	partition  *sortPartition
 	lock       sync.Mutex
 	isSpilling bool
+	spillError *error
 }
 
 // GetPriority get the priority of the Action.
@@ -49,7 +50,10 @@ func (s *sortPartitionSpillDiskAction) Action(t *memory.Tracker) {
 			if !s.partition.isSpillTriggeredNoLock() && s.partition.hasEnoughDataToSpill() {
 				logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
 					zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
-				s.partition.spillToDisk()
+				err := s.partition.spillToDisk()
+				if err != nil {
+					*s.spillError = err
+				}
 			}
 
 			s.lock.Lock()
