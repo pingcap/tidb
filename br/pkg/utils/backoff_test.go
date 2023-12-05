@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/stretchr/testify/require"
@@ -28,6 +29,23 @@ func TestBackoffWithSuccess(t *testing.T) {
 			return berrors.ErrKVEpochNotMatch
 		case 2:
 			return nil
+		}
+		return nil
+	}, backoffer)
+	require.Equal(t, 3, counter)
+	require.NoError(t, err)
+}
+
+func TestBackoffWithUnknowneErrorSuccess(t *testing.T) {
+	var counter int
+	backoffer := utils.NewBackoffer(10, time.Nanosecond, time.Nanosecond, utils.NewDefaultContext())
+	err := utils.WithRetry(context.Background(), func() error {
+		defer func() { counter++ }()
+		switch counter {
+		case 0:
+			return errors.New("unknown error: not in the allow list")
+		case 1:
+			return berrors.ErrKVEpochNotMatch
 		}
 		return nil
 	}, backoffer)

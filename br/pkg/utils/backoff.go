@@ -157,7 +157,7 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 			bo.delayTime = 2 * bo.delayTime
 			bo.attempt--
 		case berrors.ErrKVRangeIsEmpty, berrors.ErrKVRewriteRuleNotFound:
-			// Excepted error, finish the operation
+			// Expected error, finish the operation
 			bo.delayTime = 0
 			bo.attempt = 0
 		default:
@@ -166,10 +166,10 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 				bo.delayTime = 2 * bo.delayTime
 				bo.attempt--
 			default:
-				// Unexcepted error
+				// Unexpected error
 				bo.delayTime = 0
 				bo.attempt = 0
-				log.Warn("unexcepted error, stop to retry", zap.Error(err))
+				log.Warn("unexpected error, stop retrying", zap.Error(err))
 			}
 		}
 	}

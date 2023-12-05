@@ -76,6 +76,7 @@ func NewErrorContext(scenario string, limitation int) *ErrorContext {
 
 func NewDefaultContext() *ErrorContext {
 	return &ErrorContext{
+		scenario:                 "default",
 		encounterTimes:           make(map[uint64]int),
 		encounterTimesLimitation: 1,
 	}
@@ -112,7 +113,7 @@ func (ec *ErrorContext) HandleErrorMsg(msg string, uuid uint64) ErrorResult {
 	mu.Lock()
 	defer mu.Unlock()
 	ec.encounterTimes[uuid]++
-	if ec.encounterTimes[uuid] < ec.encounterTimesLimitation {
+	if ec.encounterTimes[uuid] <= ec.encounterTimesLimitation {
 		return ErrorResult{Retry, "unknown error, retry it for few times"}
 	}
 	return ErrorResult{GiveUp, "unknown error and retry too many times, give up"}
