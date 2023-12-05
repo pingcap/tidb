@@ -41,14 +41,15 @@ import (
 const (
 	defaultSubtaskKeepDays = 14
 
-	basicTaskColumns  = `id, task_key, type, state, step, priority, concurrency, create_time`
-	taskColumns       = basicTaskColumns + `, start_time, state_update_time, meta, dispatcher_id, error`
+	basicTaskColumns = `id, task_key, type, state, step, priority, concurrency, create_time`
+	taskColumns      = basicTaskColumns + `, start_time, state_update_time, meta, dispatcher_id, error`
+	// InsertTaskColumns is the columns used in insert task.
 	InsertTaskColumns = `task_key, type, state, priority, concurrency, step, meta, create_time, start_time, state_update_time`
 
 	subtaskColumns = `id, step, task_key, type, exec_id, state, concurrency, create_time,
 				start_time, state_update_time, meta, summary`
-	InsertSubtaskBasic = `insert into mysql.tidb_background_subtask(
-				step, task_key, exec_id, meta, state, type, concurrency, create_time, checkpoint, summary) values `
+	// InsertSubtaskColumns is the columns used in insert subtask.
+	InsertSubtaskColumns = `step, task_key, exec_id, meta, state, type, concurrency, create_time, checkpoint, summary`
 )
 
 // SessionExecutor defines the interface for executing SQLs in a session.
@@ -833,7 +834,7 @@ func (stm *TaskManager) UpdateTaskAndAddSubTasks(ctx context.Context, task *prot
 			}
 
 			sql := new(strings.Builder)
-			if err := sqlescape.FormatSQL(sql, InsertSubtaskBasic); err != nil {
+			if err := sqlescape.FormatSQL(sql, `insert into mysql.tidb_background_subtask(`+InsertSubtaskColumns+`) values`); err != nil {
 				return err
 			}
 			for i, subtask := range subtasks {

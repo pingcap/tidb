@@ -35,11 +35,13 @@ func CreateSubTask(t *testing.T, gm *storage.TaskManager, taskID int64, step pro
 	InsertSubtask(t, gm, taskID, step, execID, meta, state, tp, concurrency)
 }
 
+// InsertSubtask adds a new subtask of any state to subtask table.
 func InsertSubtask(t *testing.T, gm *storage.TaskManager, taskID int64, step proto.Step, execID string, meta []byte, state proto.TaskState, tp proto.TaskType, concurrency int) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "table_test")
 	require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
-		_, err := storage.ExecSQL(ctx, se, storage.InsertSubtaskBasic+
+		_, err := storage.ExecSQL(ctx, se, `
+			insert into mysql.tidb_background_subtask(`+storage.InsertSubtaskColumns+`) values`+
 			`(%?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), '{}', '{}')`,
 			step, taskID, execID, meta, state, proto.Type2Int(tp), concurrency)
 		return err
