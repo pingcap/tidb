@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -253,7 +254,7 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 			if !ok {
 				return errors.Errorf("schema not found for table %s", originalTableInfo.Name.O)
 			}
-			if err := h.updateStatsWithCountDeltaAndModifyCountDelta(
+			if err := updateStatsWithCountDeltaAndModifyCountDelta(
 				sctx,
 				globalTableInfo.ID, countDelta, modifyCountDelta,
 			); err != nil {
@@ -331,17 +332,17 @@ func exchangePartitionLogFields(
 // updateStatsWithCountDeltaAndModifyCountDelta updates
 // the global stats with the given count delta and modify count delta.
 // Only used by some special DDLs, such as exchange partition.
-func (h *ddlHandlerImpl) updateStatsWithCountDeltaAndModifyCountDelta(
+func updateStatsWithCountDeltaAndModifyCountDelta(
 	sctx sessionctx.Context,
 	tableID int64,
 	countDelta, modifyCountDelta int64,
 ) error {
-	lockedTables, err := h.statsHandler.GetLockedTables(tableID)
+	lockedTables, err := lockstats.QueryLockedTables(sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	isLocked := false
-	if len(lockedTables) > 0 {
+	if _, ok := lockedTables[tableID]; ok {
 		isLocked = true
 	}
 	startTS, err := util.GetStartTS(sctx)
