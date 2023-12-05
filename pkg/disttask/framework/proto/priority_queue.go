@@ -14,6 +14,7 @@
 
 package proto
 
+// TaskWrapper wraps a task and adds some extra information for the priority queue.
 type TaskWrapper struct {
 	*Task
 
@@ -58,6 +59,7 @@ func (pq *TaskPriorityQueue) Pop() interface{} {
 	return task
 }
 
+// WrapPriorityQueue wraps a task into a TaskWrapper.
 func WrapPriorityQueue(task *Task) *TaskWrapper {
 	return &TaskWrapper{
 		Task: task,
