@@ -2512,6 +2512,10 @@ func (do *Domain) analyzeJobsCleanupWorker(owner owner.Manager) {
 				}
 			}
 		case <-cleanupTicker.C:
+			// Only the owner should perform this operation.
+			if !owner.IsOwner() {
+				continue
+			}
 			sm := do.InfoSyncer().GetSessionManager()
 			if sm == nil {
 				continue
@@ -2522,12 +2526,10 @@ func (do *Domain) analyzeJobsCleanupWorker(owner owner.Manager) {
 					analyzeProcessIDs[process.ID] = struct{}{}
 				}
 			}
-			// Only the owner should perform this operation.
-			if owner.IsOwner() {
-				err := statsHandle.CleanupCorruptedAnalyzeJobs(analyzeProcessIDs)
-				if err != nil {
-					logutil.BgLogger().Warn("cleanup analyze jobs failed", zap.Error(err))
-				}
+
+			err := statsHandle.CleanupCorruptedAnalyzeJobs(analyzeProcessIDs)
+			if err != nil {
+				logutil.BgLogger().Warn("cleanup analyze jobs failed", zap.Error(err))
 			}
 		case <-do.exit:
 			return
