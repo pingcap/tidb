@@ -1250,4 +1250,16 @@ func TestPreparedPlanCachePartitions(b *testing.T) {
 	tk.MustExec(`set @a=3`)
 	tk.MustQuery(`execute stmt2 using @a`).Check(testkit.Rows("c 3"))
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`drop table t`)
+
+	tk.MustExec(`create table t (a int primary key, b varchar(255), c varchar(255), key (b)) partition by range (a) (partition pNeg values less than (0), partition p0 values less than (1000000), partition p1M values less than (2000000))`)
+	tk.MustExec(`insert into t values (-10, -10, -10), (0, 0, 0), (-1, NULL, NULL), (1000, 1000, 1000), (1000000, 1000000, 1000000), (1500000, 1500000, 1500000), (1999999, 1999999, 1999999)`)
+	tk.MustExec(`prepare stmt3 from 'select a,c,b from t where a = ?'`)
+	tk.MustExec(`set @a=2000000`)
+	// This should use TableDual
+	tk.MustQuery(`execute stmt3 using @a`).Check(testkit.Rows())
+	// How does it cache it? (verify that it still allows PointPartitionInfo to be updated)
+	tk.MustExec(`set @a=1999999`)
+	tk.MustQuery(`execute stmt3 using @a`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
