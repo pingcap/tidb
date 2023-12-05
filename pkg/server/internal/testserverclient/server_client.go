@@ -28,6 +28,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1077,6 +1078,65 @@ func (cli *TestServerClient) RunTestLoadDataInTransaction(t *testing.T, server *
 			txn, err := dbt.GetDB().Begin()
 			require.NoError(t, err)
 			rows, _ := txn.Query("select * from t")
+			cli.CheckRows(t, rows, "1")
+		},
+	)
+
+	// load file in a pessimistic transaction,
+	// should acquire locks when after its execution and before it commits.
+	// The lock should be observed by another transaction that is attempting to acquire the same
+	// lock.
+	dbName := "LoadDataInPessimisticTransaction"
+	cli.RunTestsOnNewDB(
+		t, func(config *mysql.Config) {
+			config.AllowAllFiles = true
+			config.Params["sql_mode"] = "''"
+		}, dbName, func(dbt *testkit.DBTestKit) {
+			dbt.MustExec("set @@global.tidb_general_log = 1")
+			dbt.MustExec("create table t (a int primary key)")
+			txn, err := dbt.GetDB().Begin()
+			require.NoError(t, err)
+			_, err = txn.Exec(fmt.Sprintf("USE `%s`;", dbName))
+			require.NoError(t, err)
+			_, err = txn.Exec(fmt.Sprintf("load data local infile %q into table t", path))
+			require.NoError(t, err)
+			rows, err := txn.Query("select * from t")
+			require.NoError(t, err)
+			cli.CheckRows(t, rows, "1")
+
+			var wg sync.WaitGroup
+			wg.Add(1)
+			txn2Locked := make(chan struct{}, 1)
+			failed := make(chan struct{}, 1)
+			go func() {
+				time.Sleep(2 * time.Second)
+				select {
+				case <-txn2Locked:
+					failed <- struct{}{}
+				default:
+				}
+
+				err2 := txn.Commit()
+				require.NoError(t, err2)
+				wg.Done()
+			}()
+			txn2, err := dbt.GetDB().Begin()
+			require.NoError(t, err)
+			_, err = txn2.Exec(fmt.Sprintf("USE `%s`;", dbName))
+			require.NoError(t, err)
+			_, err = txn2.Exec("select * from t where a = 1 for update")
+			require.NoError(t, err)
+			txn2Locked <- struct{}{}
+			wg.Wait()
+			txn2.Rollback()
+			select {
+			case <-failed:
+				require.Fail(t, "txn2 should not be able to acquire the lock")
+			default:
+			}
+
+			require.NoError(t, err)
+			rows = dbt.MustQuery("select * from t")
 			cli.CheckRows(t, rows, "1")
 		},
 	)

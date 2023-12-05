@@ -20,6 +20,7 @@ import (
 	"io"
 	"math"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -50,9 +51,29 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// LoadDataVarKey is a variable key for load data.
+const LoadDataVarKey loadDataVarKeyType = 0
+
+// LoadDataReaderBuilderKey stores the reader channel that reads from the connection.
+const LoadDataReaderBuilderKey loadDataVarKeyType = 1
+
+// LoadDataReaderCloseKey stores the close function of the reader
+const LoadDataReaderCloseKey loadDataVarKeyType = 2
+
 var (
 	taskQueueSize = 16 // the maximum number of pending tasks to commit in queue
 )
+
+// LoadDataReaderBuilder is a function type that builds a reader from a file path.
+type LoadDataReaderBuilder func(filepath string) (
+	r io.ReadCloser, drained *bool, wg *sync.WaitGroup, err error,
+)
+
+// LoadDataReaderCloser is a function type that closes a reader.
+type LoadDataReaderCloser func(
+	r io.ReadCloser, drained *bool,
+	wg *sync.WaitGroup, err error,
+) error
 
 // LoadDataExec represents a load data executor.
 type LoadDataExec struct {
@@ -60,6 +81,40 @@ type LoadDataExec struct {
 
 	FileLocRef     ast.FileLocRefTp
 	loadDataWorker *LoadDataWorker
+
+	// fields for loading local file
+	infileReader io.ReadCloser
+	drained      *bool
+	wg           *sync.WaitGroup
+	readerCloser LoadDataReaderCloser
+}
+
+// Open implements the Executor Next interface.
+func (e *LoadDataExec) Open(_ context.Context) error {
+	if rb, ok := e.Ctx().Value(LoadDataReaderBuilderKey).(LoadDataReaderBuilder); ok {
+		e.readerCloser = e.Ctx().Value(LoadDataReaderCloseKey).(LoadDataReaderCloser)
+		var err error
+		e.infileReader, e.drained, e.wg, err = rb(e.loadDataWorker.GetInfilePath())
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Close implements the Executor Next interface.
+func (e *LoadDataExec) Close() error {
+	return e.closeLocalReader(nil)
+}
+
+func (e *LoadDataExec) closeLocalReader(originalErr error) error {
+	var err error
+	if e.readerCloser != nil {
+		err = e.readerCloser(e.infileReader, e.drained, e.wg, originalErr)
+	}
+	// don't close it twice
+	e.readerCloser = nil
+	return err
 }
 
 // Next implements the Executor Next interface.
@@ -68,14 +123,12 @@ func (e *LoadDataExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	case ast.FileLocServerOrRemote:
 		return e.loadDataWorker.loadRemote(ctx)
 	case ast.FileLocClient:
-		// let caller use handleFileTransInConn to read data in this connection
-		sctx := e.loadDataWorker.UserSctx
-		val := sctx.Value(LoadDataVarKey)
-		if val != nil {
-			sctx.SetValue(LoadDataVarKey, nil)
-			return errors.New("previous load data option wasn't closed normally")
+		err = e.loadDataWorker.loadLocal(ctx, e.infileReader)
+		if err != nil {
+			logutil.Logger(ctx).Error("load local data failed", zap.Error(err))
+			err = e.closeLocalReader(err)
+			return err
 		}
-		sctx.SetValue(LoadDataVarKey, e.loadDataWorker)
 	}
 	return nil
 }
@@ -146,7 +199,11 @@ func (e *LoadDataWorker) loadRemote(ctx context.Context) error {
 }
 
 // LoadLocal reads from client connection and do load data job.
-func (e *LoadDataWorker) LoadLocal(ctx context.Context, r io.ReadCloser) error {
+func (e *LoadDataWorker) loadLocal(ctx context.Context, r io.ReadCloser) error {
+	if r == nil {
+		return errors.New("load local data, reader is nil")
+	}
+
 	compressTp := mydump.ParseCompressionOnFileExtension(e.GetInfilePath())
 	compressTp2, err := mydump.ToStorageCompressType(compressTp)
 	if err != nil {
@@ -173,11 +230,6 @@ func (e *LoadDataWorker) load(ctx context.Context, readerInfos []importer.LoadDa
 	// processOneStream goroutines -> commitTaskCh -> commitWork goroutines
 	commitTaskCh := make(chan commitTask, taskQueueSize)
 	// commitWork goroutines -> done -> UpdateJobProgress goroutine
-
-	// TODO: support explicit transaction and non-autocommit
-	// if err = sessiontxn.NewTxn(groupCtx, e.UserSctx); err != nil {
-	// 	return err
-	// }
 
 	// processOneStream goroutines.
 	group.Go(func() error {
@@ -532,7 +584,8 @@ func (w *commitWorker) commitWork(ctx context.Context, inCh <-chan commitTask) (
 				zap.Stack("stack"))
 			err = util.GetRecoverError(r)
 		}
-		w.Ctx().StmtCommit(ctx)
+		// Why call it here?
+		// w.Ctx().StmtCommit(ctx)
 	}()
 
 	var (
@@ -571,8 +624,6 @@ func (w *commitWorker) commitOneTask(ctx context.Context, task commitTask) error
 	failpoint.Inject("commitOneTaskErr", func() {
 		failpoint.Return(errors.New("mock commit one task error"))
 	})
-	// NOTE: this is not the end of a statement. Should not call StmtCommit here
-	// w.Ctx().StmtCommit(ctx)
 	return nil
 }
 
@@ -729,14 +780,12 @@ func (loadDataVarKeyType) String() string {
 	return "load_data_var"
 }
 
-// LoadDataVarKey is a variable key for load data.
-const LoadDataVarKey loadDataVarKeyType = 0
-
 var (
 	_ exec.Executor = (*LoadDataActionExec)(nil)
 )
 
 // LoadDataActionExec executes LoadDataActionStmt.
+// TODO: LoadDataActionExec and its corresponding syntax is not in use and should be deleted.
 type LoadDataActionExec struct {
 	exec.BaseExecutor
 
