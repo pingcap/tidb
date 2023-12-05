@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -113,7 +114,8 @@ func CleanupCorruptedAnalyzeJobs(
 	}
 	instances := make(map[string]struct{}, len(serverInfo))
 	for _, info := range serverInfo {
-		instances[fmt.Sprintf("%s:%d", info.IP, info.Port)] = struct{}{}
+		instance := net.JoinHostPort(info.IP, strconv.Itoa(int(info.Port)))
+		instances[instance] = struct{}{}
 	}
 
 	// Get all the analyze jobs whose state is `pending` or `running` and the update time is more than 10 minutes ago.
