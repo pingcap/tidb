@@ -239,11 +239,6 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 
 		// Update the global stats.
 		if modifyCountDelta != 0 || countDelta != 0 {
-			se, err := h.statsHandler.SPool().Get()
-			if err != nil {
-				return errors.Trace(err)
-			}
-			sctx := se.(sessionctx.Context)
 			is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 			golbalTableSchema, ok := is.SchemaByTable(globalTableInfo)
 			if !ok {
