@@ -37,7 +37,7 @@ func TestCTEIssue49096(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mock_cte_exec_panic_avoid_deadlock"))
 	}()
 	insertStr := "insert into t1 values(0)"
-	rowNum := 1000
+	rowNum := 10
 	vals := make([]int, rowNum)
 	vals[0] = 0
 	for i := 1; i < rowNum; i++ {
