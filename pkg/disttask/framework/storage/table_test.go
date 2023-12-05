@@ -179,6 +179,24 @@ func TestGetTopUnfinishedTasks(t *testing.T) {
 			return err
 		}))
 	}
+	// adjust task order
+	require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
+		_, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, `
+				update mysql.tidb_global_task set create_time = current_timestamp`)
+		return err
+	}))
+	require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
+		_, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, `
+				update mysql.tidb_global_task
+				set create_time = timestampadd(minute, -10, current_timestamp)
+				where task_key = 'key/5'`)
+		return err
+	}))
+	require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
+		_, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, `
+				update mysql.tidb_global_task set priority = 1000 where task_key = 'key/6'`)
+		return err
+	}))
 	require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
 		rs, err := storage.ExecSQL(ctx, se, `
 				select count(1) from mysql.tidb_global_task`)
@@ -200,7 +218,7 @@ func TestGetTopUnfinishedTasks(t *testing.T) {
 		// not filled
 		require.Empty(t, task.Meta)
 	}
-	require.Equal(t, []string{"key/1", "key/2", "key/3", "key/4", "key/5", "key/6"}, taskKeys)
+	require.Equal(t, []string{"key/6", "key/5", "key/1", "key/2", "key/3", "key/4"}, taskKeys)
 }
 
 func TestGetUsedSlotsOnNodes(t *testing.T) {
