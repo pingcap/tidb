@@ -9,14 +9,11 @@ import (
 
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/config"
-=======
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/config"
-	filter "github.com/pingcap/tidb/pkg/util/table-filter"
->>>>>>> 632cd843b0e (executor/brie: use the default value from flags (#48025))
+	"github.com/pingcap/tidb/config"
+	filter "github.com/pingcap/tidb/util/table-filter"
+
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 )
