@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -198,8 +199,7 @@ func TestGetInstance(t *testing.T) {
 		TaskID: task.ID,
 		ExecID: serverIDs[1],
 	}
-	err = mgr.CreateSubTask(ctx, task.ID, proto.StepInit, subtask.ExecID, nil, subtask.Type, true)
-	require.NoError(t, err)
+	testutil.CreateSubTask(t, mgr, task.ID, proto.StepInit, subtask.ExecID, nil, subtask.Type, 11, true)
 	instanceIDs, err = dsp.GetAllTaskExecutorIDs(ctx, task)
 	require.NoError(t, err)
 	require.Equal(t, []string{serverIDs[1]}, instanceIDs)
@@ -210,8 +210,7 @@ func TestGetInstance(t *testing.T) {
 		TaskID: task.ID,
 		ExecID: serverIDs[0],
 	}
-	err = mgr.CreateSubTask(ctx, task.ID, proto.StepInit, subtask.ExecID, nil, subtask.Type, true)
-	require.NoError(t, err)
+	testutil.CreateSubTask(t, mgr, task.ID, proto.StepInit, subtask.ExecID, nil, subtask.Type, 11, true)
 	instanceIDs, err = dsp.GetAllTaskExecutorIDs(ctx, task)
 	require.NoError(t, err)
 	require.Len(t, instanceIDs, len(serverIDs))
