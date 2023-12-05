@@ -203,6 +203,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 	globalTableInfo, originalPartInfo,
 		originalTableInfo := t.GetExchangePartitionInfo()
+	// Note: Put all the operations in a transaction.
 	if err := util.CallWithSCtx(h.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		// Get the count of the partition.
 		partCount, partModifyCount, _, err := storage.StatsMetaCountAndModifyCount(
@@ -247,6 +248,7 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 			if !ok {
 				return errors.Errorf("schema not found for table %s", globalTableInfo.Name.O)
 			}
+			// Note: It is OK to exchange one table from different schemas.
 			tableSchema, ok := is.SchemaByTable(originalTableInfo)
 			if !ok {
 				return errors.Errorf("schema not found for table %s", originalTableInfo.Name.O)
