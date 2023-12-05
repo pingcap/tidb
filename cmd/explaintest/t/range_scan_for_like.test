@@ -15,6 +15,7 @@ select *,length(a) from t2 use index (ia) where a like '测试 %';
 select *,length(a) from t2 use index (ia) where a like '测试';
 
 # Suite 1: utf8mb4_general_ci + normal index
+drop table if exists t;
 create table t(a varchar(20) collate utf8mb4_general_ci, index ia(a));
 insert into t value('测试'),('测试Abc'),('测试     '),('你好'),('aABBccdd'),('Aa'),(''),(' '),('  '),(' 语言'),('  语 言 '),('测测试 '),('测测试    '),(NULL);
 # test cases for the pattern string cover:
