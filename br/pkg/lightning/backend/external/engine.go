@@ -187,6 +187,9 @@ func getFilesReadConcurrency(ctx context.Context, storage storage.ExternalStorag
 		} else {
 			logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
 				zap.String("filename", statsFiles[i]),
+				zap.Uint64("startOffset", startOffs[i]),
+				zap.Uint64("endOffset", endOffs[i]),
+				zap.Uint64("concurrency", result[i]),
 			)
 		}
 	}
@@ -399,9 +402,9 @@ func (e *Engine) LoadIngestData(
 	regionRanges []common.Range,
 	outCh chan<- common.DataAndRange,
 ) error {
-	// currently we assume the region size is 96MB and will download 96MB*40 = 3.8GB
-	// data at once
-	regionBatchSize := 40
+	// currently we assume the region size is 96MB and will download 96MB*32 = 3GB
+	// data at once. 32 is the concurrency of ingest workers.
+	regionBatchSize := 32
 	failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
 		regionBatchSize = val.(int)
 	})
