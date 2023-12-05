@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
@@ -1189,6 +1190,9 @@ func newbucket4MergingForRecycle() *bucket4Merging {
 
 func releasebucket4MergingForRecycle(b *bucket4Merging) {
 	b.disjointNDV = 0
+	b.Repeat = 0
+	b.NDV = 0
+	b.Count = 0
 	bucket4MergingPool.Put(b)
 }
 
@@ -1376,6 +1380,9 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 	right := buckets[len(buckets)-1].Clone()
 
 	totNDV := int64(0)
+	intest.Assert(res.Count == 0, "Count in the new bucket4Merging should be 0")
+	intest.Assert(res.Repeat == 0, "Repeat in the new bucket4Merging should be 0")
+	intest.Assert(res.NDV == 0, "NDV in the new bucket4Merging bucket4Merging should be 0")
 	for i := len(buckets) - 1; i >= 0; i-- {
 		totNDV += buckets[i].NDV
 		res.Count += buckets[i].Count
