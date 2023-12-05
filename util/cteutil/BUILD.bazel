@@ -6,10 +6,18 @@ go_library(
     importpath = "github.com/pingcap/tidb/util/cteutil",
     visibility = ["//visibility:public"],
     deps = [
+<<<<<<< HEAD:util/cteutil/BUILD.bazel
         "//types",
         "//util/chunk",
         "//util/disk",
         "//util/memory",
+=======
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "//pkg/util/disk",
+        "//pkg/util/memory",
+        "//pkg/util/syncutil",
+>>>>>>> 0c7659c1907 (executor: fix deadlock in dml statement with cte when oom panic action was triggered (#49192)):pkg/util/cteutil/BUILD.bazel
         "@com_github_pingcap_errors//:errors",
     ],
 )
