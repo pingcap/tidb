@@ -626,6 +626,21 @@ func TestTiKVClientReadTimeout(t *testing.T) {
 	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .* rpc_num: 2.*", explain)
 }
 
+func TestTiKVClientReadTimeout2(t *testing.T) {
+	if *testkit.WithTiKV != "" {
+		t.Skip("skip test since it's only work for unistore")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int primary key, b int)")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreCopRPCDeadlineExceeded", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreCopRPCDeadlineExceeded"))
+	}()
+	tk.MustQuery("select /*+ set_var(tikv_client_read_timeout=1) */ count(*) from t").Check(testkit.Rows("0"))
+}
+
 func TestGetMvccByEncodedKeyRegionError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

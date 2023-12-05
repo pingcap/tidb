@@ -1407,6 +1407,19 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		return worker.handleBatchRemainsOnErr(bo, rpcCtx, []*copTask{task}, resp.pbResp, task, ch)
 	}
 	if otherErr := resp.pbResp.GetOtherError(); otherErr != "" {
+		if task.tikvClientReadTimeout > 0 && otherErr == "Coprocessor task terminated due to exceeding the deadline" {
+			remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
+				req:                         worker.req,
+				cache:                       worker.store.GetRegionCache(),
+				respChan:                    false,
+				eventCb:                     task.eventCb,
+				ignoreTiKVClientReadTimeout: true,
+			})
+			if err != nil {
+				return remains, err
+			}
+			return worker.handleBatchRemainsOnErr(bo, rpcCtx, remains, resp.pbResp, task, ch)
+		}
 		err := errors.Errorf("other error: %s", otherErr)
 
 		firstRangeStartKey := task.ranges.At(0).StartKey

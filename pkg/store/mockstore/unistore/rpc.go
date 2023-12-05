@@ -92,6 +92,11 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			failpoint.Return(tikvrpc.GenRegionErrorResp(req, &errorpb.Error{Message: "Deadline is exceeded"}))
 		}
 	})
+	failpoint.Inject("unistoreCopRPCDeadlineExceeded", func(val failpoint.Value) {
+		if val.(bool) && timeout < time.Second {
+			failpoint.Return(&tikvrpc.Response{Resp: &coprocessor.Response{OtherError: "Coprocessor task terminated due to exceeding the deadline"}}, nil)
+		}
+	})
 
 	select {
 	case <-ctx.Done():
