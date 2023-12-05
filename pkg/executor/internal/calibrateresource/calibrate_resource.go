@@ -698,7 +698,6 @@ func fetchStoreMetrics(serversInfo []infoschema.ServerInfo, serverType string, o
 		err = onResp(srv.Address, resp)
 		resp.Body.Close()
 		return err
-
 	}
 	if firstErr == nil {
 		firstErr = errors.Errorf("no server with type '%s' is found", serverType)
