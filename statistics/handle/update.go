@@ -507,7 +507,6 @@ func (h *Handle) UpdatePredicateStatsMeta(
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	_, _, err = h.execRestrictedSQL(ctx, "replace into mysql.predicate_stats (table_id, count, step_hash, predicate_selectivity, version) values (%?, %?, %?, %?, %?)",
 		delta.TableID, delta.Count, delta.StepHash, delta.PredicateSelectivity, startTS)
-	logutil.BgLogger().Warn("xxxxxx--------------------------------------- replace", zap.Error(err))
 	return err
 }
 
