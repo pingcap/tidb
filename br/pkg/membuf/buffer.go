@@ -14,6 +14,8 @@
 
 package membuf
 
+import "go.uber.org/atomic"
+
 const (
 	defaultPoolSize            = 1024
 	defaultBlockSize           = 1 << 20 // 1M
@@ -34,7 +36,38 @@ func (stdAllocator) Alloc(n int) []byte {
 
 func (stdAllocator) Free(_ []byte) {}
 
-// Pool is like `sync.Pool`, which manages memory for all bytes buffers.
+// MemoryLimitAllocator is an allocator that limits the total memory size. It
+// will trace the memory size allocated by the inner allocator, and if the size
+// exceeds the limit, it will keep blocking when Alloc.
+type MemoryLimitAllocator struct {
+	inner Allocator
+	limit int64
+	curr  atomic.Int64
+}
+
+// NewMemoryLimitAllocator creates a MemoryLimitAllocator.
+func NewMemoryLimitAllocator(inner Allocator, limit int64) *MemoryLimitAllocator {
+	return &MemoryLimitAllocator{
+		inner: inner,
+		limit: limit,
+	}
+}
+
+// Alloc implements Allocator.Alloc interface.
+func (m *MemoryLimitAllocator) Alloc(n int) []byte {
+
+}
+
+// Free implements Allocator.Free interface.
+func (m *MemoryLimitAllocator) Free(b []byte) {
+	
+}
+
+// Pool is like `sync.Pool`, which manages memory for all bytes buffers. You can
+// use Pool.NewBuffer to create a new buffer, and use Buffer.Destroy to release
+// its memory to the pool.
+// By default, allocation size larger than 64K will not be tracked by the pool,
+// And the threshold can be changed by WithLargeAllocThreshold.
 //
 // NOTE: we don't used a `sync.Pool` because when will sync.Pool release is depending on the
 // garbage collector which always release the memory so late. Use a fixed size chan to reuse
@@ -118,12 +151,12 @@ func (p *Pool) Destroy() {
 	}
 }
 
-// TotalSize is the total memory size of this Pool.
+// TotalSize is the total memory size of this Pool, not considering its Buffer.
 func (p *Pool) TotalSize() int64 {
 	return int64(len(p.blockCache) * p.blockSize)
 }
 
-// Buffer represents the reuse buffer.
+// Buffer represents a buffer that can allocate []byte from its memory.
 type Buffer struct {
 	pool          *Pool
 	blocks        [][]byte
@@ -139,7 +172,6 @@ type BufferOption func(*Buffer)
 // WithMemoryLimit approximately limits the maximum memory size of this Buffer.
 // Due to it use blocks to allocate memory, the actual memory size is
 // blockSize*ceil(limit/blockSize).
-// In order to keep compatibility, it will only restrict AllocBytesWithSliceLocation.
 func WithMemoryLimit(limit uint64) BufferOption {
 	return func(b *Buffer) {
 		blockCntLimit := int(limit+uint64(b.pool.blockSize)-1) / b.pool.blockSize
@@ -148,7 +180,8 @@ func WithMemoryLimit(limit uint64) BufferOption {
 	}
 }
 
-// NewBuffer creates a new buffer in current pool.
+// NewBuffer creates a new buffer in current pool. The buffer can gradually
+// acquire memory from the pool and release all memory once it's not used.
 func (p *Pool) NewBuffer(opts ...BufferOption) *Buffer {
 	b := &Buffer{
 		pool:          p,
@@ -164,7 +197,7 @@ func (p *Pool) NewBuffer(opts ...BufferOption) *Buffer {
 	return b
 }
 
-// Reset resets the buffer.
+// Reset resets the buffer, the memory is still retained in this buffer.
 func (b *Buffer) Reset() {
 	if len(b.blocks) > 0 {
 		b.curBlock = b.blocks[0]
@@ -173,7 +206,7 @@ func (b *Buffer) Reset() {
 	}
 }
 
-// Destroy frees all buffers.
+// Destroy releases all buffers to the pool.
 func (b *Buffer) Destroy() {
 	for _, buf := range b.blocks {
 		b.pool.release(buf)
@@ -194,27 +227,8 @@ func (b *Buffer) AllocBytes(n int) []byte {
 	if n > b.pool.largeAllocThreshold {
 		return make([]byte, n)
 	}
-	if b.curIdx+n > len(b.curBlock) {
-		b.addBuf()
-	}
-	idx := b.curIdx
-	b.curIdx += n
-	return b.curBlock[idx:b.curIdx:b.curIdx]
-}
-
-// addBuf adds buffer to Buffer.
-func (b *Buffer) addBuf() {
-	if b.curBlockIdx < len(b.blocks)-1 {
-		b.curBlockIdx++
-		b.curBlock = b.blocks[b.curBlockIdx]
-	} else {
-		buf := b.pool.acquire()
-		b.blocks = append(b.blocks, buf)
-		b.curBlock = buf
-		b.curBlockIdx = len(b.blocks) - 1
-	}
-
-	b.curIdx = 0
+	bs, _ := b.AllocBytesWithSliceLocation(n)
+	return bs
 }
 
 // SliceLocation is like a reflect.SliceHeader, but it's associated with a
@@ -226,12 +240,12 @@ type SliceLocation struct {
 	length int32
 }
 
-// AllocBytesWithSliceLocation is like AllocBytes, but it also returns a
-// SliceLocation. The expected usage is after writing data into returned slice we
-// do not store the slice itself, but only the SliceLocation. Later we can use
-// the SliceLocation to get the slice again. When we have a large number of
-// slices in memory this can improve performance.
-// nil returned slice means allocation failed.
+// AllocBytesWithSliceLocation is like AllocBytes, but it ignores the pool's
+// WithLargeAllocThreshold, and also returns a SliceLocation. The expected usage
+// is after writing data into returned slice we do not store the slice itself,
+// but only the SliceLocation. Later we can use the SliceLocation to get the
+// slice again. When we have a large number of slices in memory this can improve
+// performance. nil returned slice means allocation failed.
 func (b *Buffer) AllocBytesWithSliceLocation(n int) ([]byte, SliceLocation) {
 	if n > b.pool.blockSize {
 		return nil, SliceLocation{}
@@ -241,7 +255,7 @@ func (b *Buffer) AllocBytesWithSliceLocation(n int) ([]byte, SliceLocation) {
 		if b.blockCntLimit >= 0 && b.curBlockIdx+1 >= b.blockCntLimit {
 			return nil, SliceLocation{}
 		}
-		b.addBuf()
+		b.addBlock()
 	}
 	blockIdx := int32(b.curBlockIdx)
 	offset := int32(b.curIdx)
@@ -252,11 +266,25 @@ func (b *Buffer) AllocBytesWithSliceLocation(n int) ([]byte, SliceLocation) {
 	return b.curBlock[idx:b.curIdx:b.curIdx], loc
 }
 
+func (b *Buffer) addBlock() {
+	if b.curBlockIdx < len(b.blocks)-1 {
+		b.curBlockIdx++
+		b.curBlock = b.blocks[b.curBlockIdx]
+	} else {
+		block := b.pool.acquire()
+		b.blocks = append(b.blocks, block)
+		b.curBlock = block
+		b.curBlockIdx = len(b.blocks) - 1
+	}
+
+	b.curIdx = 0
+}
+
 func (b *Buffer) GetSlice(loc SliceLocation) []byte {
 	return b.blocks[loc.bufIdx][loc.offset : loc.offset+loc.length]
 }
 
-// AddBytes adds the bytes into this Buffer.
+// AddBytes adds the bytes into this Buffer's managed memory and return it.
 func (b *Buffer) AddBytes(bytes []byte) []byte {
 	buf := b.AllocBytes(len(bytes))
 	copy(buf, bytes)
