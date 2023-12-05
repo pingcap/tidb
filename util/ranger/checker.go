@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 )
@@ -222,7 +223,7 @@ func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) (isA
 func (c *conditionChecker) matchColumn(expr expression.Expression) bool {
 	// Check if virtual expression column matched
 	if c.checkerCol != nil {
-		return c.checkerCol.EqualByExprAndID(c.ctx, expr)
+		return c.checkerCol.EqualByExprAndID(nil, expr)
 	}
 	return false
 }

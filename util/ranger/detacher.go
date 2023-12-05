@@ -371,6 +371,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		return res, nil
 	}
 	checker := &conditionChecker{
+		ctx:                      d.sctx,
 		checkerCol:               d.cols[eqOrInCount],
 		length:                   d.lengths[eqOrInCount],
 		optPrefixIndexSingleScan: d.sctx.GetSessionVars().OptPrefixIndexSingleScan,
@@ -714,6 +715,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 // We will detach the conditions of every DNF items, then compose them to a DNF.
 func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression.ScalarFunction, newTpSlice []*types.FieldType) (Ranges, []expression.Expression, []*valueInfo, bool, error) {
 	firstColumnChecker := &conditionChecker{
+		ctx:                      d.sctx,
 		checkerCol:               d.cols[0],
 		length:                   d.lengths[0],
 		optPrefixIndexSingleScan: d.sctx.GetSessionVars().OptPrefixIndexSingleScan,
@@ -986,6 +988,7 @@ func AppendConditionsIfNotExist(conditions, condsToAppend []expression.Expressio
 // we don't need to return the remained filter conditions, it is much simpler than DetachCondsForColumn.
 func ExtractAccessConditionsForColumn(ctx sessionctx.Context, conds []expression.Expression, col *expression.Column) []expression.Expression {
 	checker := conditionChecker{
+		ctx:                      ctx,
 		checkerCol:               col,
 		length:                   types.UnspecifiedLength,
 		optPrefixIndexSingleScan: ctx.GetSessionVars().OptPrefixIndexSingleScan,
@@ -1001,6 +1004,7 @@ func ExtractAccessConditionsForColumn(ctx sessionctx.Context, conds []expression
 // DetachCondsForColumn detaches access conditions for specified column from other filter conditions.
 func DetachCondsForColumn(sctx sessionctx.Context, conds []expression.Expression, col *expression.Column) (accessConditions, otherConditions []expression.Expression) {
 	checker := &conditionChecker{
+		ctx:                      sctx,
 		checkerCol:               col,
 		length:                   types.UnspecifiedLength,
 		optPrefixIndexSingleScan: sctx.GetSessionVars().OptPrefixIndexSingleScan,
@@ -1024,6 +1028,7 @@ func MergeDNFItems4Col(ctx sessionctx.Context, dnfItems []expression.Expression)
 
 		uniqueID := cols[0].UniqueID
 		checker := &conditionChecker{
+			ctx:                      ctx,
 			checkerCol:               cols[0],
 			length:                   types.UnspecifiedLength,
 			optPrefixIndexSingleScan: ctx.GetSessionVars().OptPrefixIndexSingleScan,

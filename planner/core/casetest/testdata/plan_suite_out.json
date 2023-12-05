@@ -2787,11 +2787,11 @@
       },
       {
         "SQL": "select a from t where c_str like ''",
-        "Best": "IndexReader(Index(t.c_d_e_str)[[\"\",\"\"]])->Projection"
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"\",\"\"]]->Sel([like(test.t.c_str, , 92)]))->Projection"
       },
       {
         "SQL": "select a from t where c_str like 'abc'",
-        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc\",\"abc\"]])->Projection"
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc\",\"abc\"]]->Sel([like(test.t.c_str, abc, 92)]))->Projection"
       },
       {
         "SQL": "select a from t where c_str not like 'abc'",
@@ -2807,7 +2807,7 @@
       },
       {
         "SQL": "select a from t where c_str like 'abc%'",
-        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc\",\"abd\")])->Projection"
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc\",\"abd\")]->Sel([like(test.t.c_str, abc%, 92)]))->Projection"
       },
       {
         "SQL": "select a from t where c_str like 'abc_'",
@@ -2819,23 +2819,23 @@
       },
       {
         "SQL": "select a from t where c_str like 'abc\\_' escape ''",
-        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc_\",\"abc_\"]])->Projection"
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc_\",\"abc_\"]]->Sel([like(test.t.c_str, abc\\_, 92)]))->Projection"
       },
       {
         "SQL": "select a from t where c_str like 'abc\\_'",
-        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc_\",\"abc_\"]])->Projection"
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc_\",\"abc_\"]]->Sel([like(test.t.c_str, abc\\_, 92)]))->Projection"
       },
       {
         "SQL": "select a from t where c_str like 'abc\\\\_'",
-        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc_\",\"abc_\"]])->Projection"
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc_\",\"abc_\"]]->Sel([like(test.t.c_str, abc\\_, 92)]))->Projection"
       },
       {
         "SQL": "select a from t where c_str like 'abc\\_%'",
-        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc_\",\"abc`\")])->Projection"
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc_\",\"abc`\")]->Sel([like(test.t.c_str, abc\\_%, 92)]))->Projection"
       },
       {
         "SQL": "select a from t where c_str like 'abc=_%' escape '='",
-        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc_\",\"abc`\")])->Projection"
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc_\",\"abc`\")]->Sel([like(test.t.c_str, abc=_%, 61)]))->Projection"
       },
       {
         "SQL": "select a from t where c_str like 'abc\\__'",
@@ -2843,7 +2843,7 @@
       },
       {
         "SQL": "select a from t where c_str like 123",
-        "Best": "IndexReader(Index(t.c_d_e_str)[[\"123\",\"123\"]])->Projection"
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"123\",\"123\"]]->Sel([like(test.t.c_str, 123, 92)]))->Projection"
       },
       {
         "SQL": "select a from t where c = 1.9 and d > 3",
@@ -8006,21 +8006,21 @@
           "  │     └─StreamAgg 249.75 root  funcs:max(test.tc.id)->Column#14",
           "  │       └─TopN 62.38 root  test.tc.id:desc, offset:0, count:1",
           "  │         └─IndexLookUp 62.38 root  ",
-          "  │           ├─Selection(Build) 62.44 cop[tikv]  eq(test.ta.name, test.tc.name)",
+          "  │           ├─Selection(Build) 62.38 cop[tikv]  eq(test.ta.name, test.tc.name), like(test.tc.name, \"chad99%\", 92)",
           "  │           │ └─IndexRangeScan 62437.50 cop[tikv] table:tc, index:idx_tc_name(name) range:[\"chad99\",\"chad9:\"), keep order:false, stats:pseudo",
           "  │           └─TopN(Probe) 62.38 cop[tikv]  test.tc.id:desc, offset:0, count:1",
           "  │             └─Selection 62.38 cop[tikv]  not(isnull(test.tc.id))",
-          "  │               └─TableRowIDScan 62.44 cop[tikv] table:tc keep order:false, stats:pseudo",
+          "  │               └─TableRowIDScan 62.38 cop[tikv] table:tc keep order:false, stats:pseudo",
           "  └─Selection(Probe) 199.80 root  gt(Column#19, 100)",
           "    └─MaxOneRow 249.75 root  ",
           "      └─StreamAgg 249.75 root  funcs:max(test.td.id)->Column#19",
-          "        └─Limit 62.38 root  offset:0, count:1",
-          "          └─Projection 62.38 root  test.td.id, test.td.name",
-          "            └─IndexLookUp 62.38 root  ",
-          "              ├─Selection(Build) 2495.00 cop[tikv]  eq(test.ta.id, test.td.id)",
-          "              │ └─IndexFullScan 2495002.50 cop[tikv] table:td, index:idx_tc_id(id) keep order:true, desc, stats:pseudo",
-          "              └─Selection(Probe) 62.38 cop[tikv]  like(test.td.name, \"chad999%\", 92)",
-          "                └─TableRowIDScan 2495.00 cop[tikv] table:td keep order:false, stats:pseudo"
+          "        └─TopN 62.38 root  test.td.id:desc, offset:0, count:1",
+          "          └─IndexLookUp 62.38 root  ",
+          "            ├─Selection(Build) 1560.94 cop[tikv]  like(test.td.name, \"chad999%\", 92)",
+          "            │ └─IndexRangeScan 62437.50 cop[tikv] table:td, index:idx_tc_name(name) range:[\"chad999\",\"chad99:\"), keep order:false, stats:pseudo",
+          "            └─TopN(Probe) 62.38 cop[tikv]  test.td.id:desc, offset:0, count:1",
+          "              └─Selection 62.38 cop[tikv]  eq(test.ta.id, test.td.id), not(isnull(test.td.id))",
+          "                └─TableRowIDScan 1560.94 cop[tikv] table:td keep order:false, stats:pseudo"
         ],
         "Result": null,
         "Warning": null
@@ -8034,29 +8034,31 @@
           "  │ ├─Apply(Build) 10000.00 root  CARTESIAN semi join",
           "  │ │ ├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "  │ │ │ └─TableFullScan 10000.00 cop[tikv] table:ta keep order:false, stats:pseudo",
-          "  │ │ └─TableReader(Probe) 2500.00 root  data:Selection",
-          "  │ │   └─Selection 2500.00 cop[tikv]  eq(test.ta.code, test.tb.code), like(test.tb.name, \"chad9%\", 92)",
-          "  │ │     └─TableFullScan 100000000.00 cop[tikv] table:tb keep order:false, stats:pseudo",
+          "  │ │ └─IndexLookUp(Probe) 2500.00 root  ",
+          "  │ │   ├─Selection(Build) 62500.00 cop[tikv]  like(test.tb.name, \"chad9%\", 92)",
+          "  │ │   │ └─IndexRangeScan 2500000.00 cop[tikv] table:tb, index:idx_tb_name(name) range:[\"chad9\",\"chad:\"), keep order:false, stats:pseudo",
+          "  │ │   └─Selection(Probe) 2500.00 cop[tikv]  eq(test.ta.code, test.tb.code)",
+          "  │ │     └─TableRowIDScan 62500.00 cop[tikv] table:tb keep order:false, stats:pseudo",
           "  │ └─Selection(Probe) 8000.00 root  gt(Column#14, 100)",
           "  │   └─MaxOneRow 10000.00 root  ",
           "  │     └─StreamAgg 10000.00 root  funcs:max(test.tc.id)->Column#14",
           "  │       └─TopN 2497.50 root  test.tc.id:desc, offset:0, count:1",
           "  │         └─IndexLookUp 2497.50 root  ",
-          "  │           ├─Selection(Build) 2500.00 cop[tikv]  eq(test.ta.name, test.tc.name)",
+          "  │           ├─Selection(Build) 2497.50 cop[tikv]  eq(test.ta.name, test.tc.name), like(test.tc.name, \"chad99%\", 92)",
           "  │           │ └─IndexRangeScan 2500000.00 cop[tikv] table:tc, index:idx_tc_name(name) range:[\"chad99\",\"chad9:\"), keep order:false, stats:pseudo",
           "  │           └─TopN(Probe) 2497.50 cop[tikv]  test.tc.id:desc, offset:0, count:1",
           "  │             └─Selection 2497.50 cop[tikv]  not(isnull(test.tc.id))",
-          "  │               └─TableRowIDScan 2500.00 cop[tikv] table:tc keep order:false, stats:pseudo",
+          "  │               └─TableRowIDScan 2497.50 cop[tikv] table:tc keep order:false, stats:pseudo",
           "  └─Selection(Probe) 8000.00 root  gt(Column#19, 100)",
           "    └─MaxOneRow 10000.00 root  ",
           "      └─StreamAgg 10000.00 root  funcs:max(test.td.id)->Column#19",
-          "        └─Limit 2497.50 root  offset:0, count:1",
-          "          └─Projection 2497.50 root  test.td.id, test.td.name",
-          "            └─IndexLookUp 2497.50 root  ",
-          "              ├─Selection(Build) 99900.00 cop[tikv]  eq(test.ta.id, test.td.id)",
-          "              │ └─IndexFullScan 99900000.00 cop[tikv] table:td, index:idx_tc_id(id) keep order:true, desc, stats:pseudo",
-          "              └─Selection(Probe) 2497.50 cop[tikv]  like(test.td.name, \"chad999%\", 92)",
-          "                └─TableRowIDScan 99900.00 cop[tikv] table:td keep order:false, stats:pseudo"
+          "        └─TopN 2497.50 root  test.td.id:desc, offset:0, count:1",
+          "          └─IndexLookUp 2497.50 root  ",
+          "            ├─Selection(Build) 62500.00 cop[tikv]  like(test.td.name, \"chad999%\", 92)",
+          "            │ └─IndexRangeScan 2500000.00 cop[tikv] table:td, index:idx_tc_name(name) range:[\"chad999\",\"chad99:\"), keep order:false, stats:pseudo",
+          "            └─TopN(Probe) 2497.50 cop[tikv]  test.td.id:desc, offset:0, count:1",
+          "              └─Selection 2497.50 cop[tikv]  eq(test.ta.id, test.td.id), not(isnull(test.td.id))",
+          "                └─TableRowIDScan 62500.00 cop[tikv] table:td keep order:false, stats:pseudo"
         ],
         "Result": null,
         "Warning": null
