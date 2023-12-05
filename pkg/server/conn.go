@@ -460,6 +460,14 @@ func (cc *clientConn) writePacket(data []byte) error {
 	return cc.pkt.WritePacket(data)
 }
 
+func (cc *clientConn) getWaitTimeout(ctx context.Context) uint64 {
+	sessVars := cc.ctx.GetSessionVars()
+	if sessVars.InTxn() && sessVars.IdleTransactionTimeout > 0 {
+		return uint64(sessVars.IdleTransactionTimeout)
+	}
+	return cc.getSessionVarsWaitTimeout(ctx)
+}
+
 // getSessionVarsWaitTimeout get session variable wait_timeout
 func (cc *clientConn) getSessionVarsWaitTimeout(ctx context.Context) uint64 {
 	valStr, exists := cc.ctx.GetSessionVars().GetSystemVar(variable.WaitTimeout)
@@ -1033,7 +1041,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		cc.alloc.Reset()
 		// close connection when idle time is more than wait_timeout
 		// default 28800(8h), FIXME: should not block at here when we kill the connection.
-		waitTimeout := cc.getSessionVarsWaitTimeout(ctx)
+		waitTimeout := cc.getWaitTimeout(ctx)
 		cc.pkt.SetReadTimeout(time.Duration(waitTimeout) * time.Second)
 		start := time.Now()
 		data, err := cc.readPacket()
