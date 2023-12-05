@@ -5287,6 +5287,7 @@ func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) 
 	}
 	selectIntoInfo := sel.SelectIntoOpt
 	sel.SelectIntoOpt = nil
+	defer func() { sel.SelectIntoOpt = selectIntoInfo }()
 	targetPlan, _, err := OptimizeAstNode(ctx, b.ctx, sel, b.is)
 	if err != nil {
 		return nil, err
