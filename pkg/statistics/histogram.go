@@ -39,11 +39,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/util/logutil"
-=======
 	"github.com/pingcap/tidb/pkg/util/intest"
->>>>>>> ca9f4d3fe5f (statistics: fix old bucket4Merging to merge new data (#49169))
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
