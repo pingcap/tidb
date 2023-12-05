@@ -85,6 +85,58 @@ func TestRemovedSysVars(t *testing.T) {
 	tk.MustContainErrMsg("SELECT @@GLOBAL.bogus_var", "[variable:1193]Unknown system variable 'bogus_var'")
 }
 
+func TestTiKVSystemVars(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	result := tk.MustQuery("SHOW GLOBAL VARIABLES LIKE 'tidb_gc_enable'") // default is on from the sysvar
+	result.Check(testkit.Rows("tidb_gc_enable ON"))
+	result = tk.MustQuery("SELECT variable_value FROM mysql.tidb WHERE variable_name = 'tikv_gc_enable'")
+	result.Check(testkit.Rows()) // but no value in the table (yet) because the value has not been set and the GC has never been run
+
+	// update will set a value in the table
+	tk.MustExec("SET GLOBAL tidb_gc_enable = 1")
+	result = tk.MustQuery("SELECT variable_value FROM mysql.tidb WHERE variable_name = 'tikv_gc_enable'")
+	result.Check(testkit.Rows("true"))
+
+	tk.MustExec("UPDATE mysql.tidb SET variable_value = 'false' WHERE variable_name='tikv_gc_enable'")
+	result = tk.MustQuery("SELECT @@tidb_gc_enable;")
+	result.Check(testkit.Rows("0")) // reads from mysql.tidb value and changes to false
+
+	tk.MustExec("SET GLOBAL tidb_gc_concurrency = -1") // sets auto concurrency and concurrency
+	result = tk.MustQuery("SELECT variable_value FROM mysql.tidb WHERE variable_name = 'tikv_gc_auto_concurrency'")
+	result.Check(testkit.Rows("true"))
+	result = tk.MustQuery("SELECT variable_value FROM mysql.tidb WHERE variable_name = 'tikv_gc_concurrency'")
+	result.Check(testkit.Rows("-1"))
+
+	tk.MustExec("SET GLOBAL tidb_gc_concurrency = 5") // sets auto concurrency and concurrency
+	result = tk.MustQuery("SELECT variable_value FROM mysql.tidb WHERE variable_name = 'tikv_gc_auto_concurrency'")
+	result.Check(testkit.Rows("false"))
+	result = tk.MustQuery("SELECT variable_value FROM mysql.tidb WHERE variable_name = 'tikv_gc_concurrency'")
+	result.Check(testkit.Rows("5"))
+
+	tk.MustExec("UPDATE mysql.tidb SET variable_value = 'true' WHERE variable_name='tikv_gc_auto_concurrency'")
+	result = tk.MustQuery("SELECT @@tidb_gc_concurrency;")
+	result.Check(testkit.Rows("-1")) // because auto_concurrency is turned on it takes precedence
+
+	tk.MustExec("REPLACE INTO mysql.tidb (variable_value, variable_name) VALUES ('15m', 'tikv_gc_run_interval')")
+	result = tk.MustQuery("SELECT @@GLOBAL.tidb_gc_run_interval;")
+	result.Check(testkit.Rows("15m0s"))
+	result = tk.MustQuery("SHOW GLOBAL VARIABLES LIKE 'tidb_gc_run_interval'")
+	result.Check(testkit.Rows("tidb_gc_run_interval 15m0s"))
+
+	tk.MustExec("SET GLOBAL tidb_gc_run_interval = '9m'") // too small
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_gc_run_interval value: '9m'"))
+	result = tk.MustQuery("SHOW GLOBAL VARIABLES LIKE 'tidb_gc_run_interval'")
+	result.Check(testkit.Rows("tidb_gc_run_interval 10m0s"))
+
+	tk.MustExec("SET GLOBAL tidb_gc_run_interval = '700000000000ns'") // specified in ns, also valid
+
+	_, err := tk.Exec("SET GLOBAL tidb_gc_run_interval = '11mins'")
+	require.Equal(t, "[variable:1232]Incorrect argument type to variable 'tidb_gc_run_interval'", err.Error())
+}
+
 func TestUpgradeSysvars(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

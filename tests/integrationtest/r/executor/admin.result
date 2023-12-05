@@ -41,11 +41,8 @@ create table cache_admin_test (c1 int, c2 int, c3 int default 1, index (c1), uni
 insert cache_admin_test (c1, c2) values (1, 1), (2, 2), (5, 5), (10, 10), (11, 11);
 alter table cache_admin_test cache;
 admin check table cache_admin_test;
-
 admin check index cache_admin_test c1;
-
 admin check index cache_admin_test c2;
-
 alter table cache_admin_test nocache;
 drop table if exists cache_admin_test;
 drop table if exists check_index_test;
@@ -69,11 +66,7 @@ create table cache_admin_table_without_index_test (id int, count int, PRIMARY KE
 alter table cache_admin_table_with_index_test cache;
 alter table cache_admin_table_without_index_test cache;
 admin checksum table cache_admin_table_with_index_test;
-Db_name	Table_name	Checksum_crc64_xor	Total_kvs	Total_bytes
-executor__admin	cache_admin_table_with_index_test	0	2	2
 admin checksum table cache_admin_table_without_index_test;
-Db_name	Table_name	Checksum_crc64_xor	Total_kvs	Total_bytes
-executor__admin	cache_admin_table_without_index_test	1	1	1
 alter table cache_admin_table_with_index_test nocache;
 alter table cache_admin_table_without_index_test nocache;
 drop table if exists cache_admin_table_with_index_test,cache_admin_table_without_index_test;
