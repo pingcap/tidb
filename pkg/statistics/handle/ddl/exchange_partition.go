@@ -103,7 +103,10 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 	return nil
 }
 
-func getCountsAndModifyCounts(sctx sessionctx.Context, partitionID, tableID int64) (partCount, partModifyCount, tableCount, tableModifyCount int64, err error) {
+func getCountsAndModifyCounts(
+	sctx sessionctx.Context,
+	partitionID, tableID int64,
+) (partCount, partModifyCount, tableCount, tableModifyCount int64, err error) {
 	partCount, partModifyCount, _, err = storage.StatsMetaCountAndModifyCount(sctx, partitionID)
 	if err != nil {
 		return
