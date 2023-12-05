@@ -47,8 +47,8 @@ const (
 
 // Only used in the BR unit test. Once these const variables modified, please make sure compatible with BR.
 const (
-	BRInsertDelteRangeSQLPrefix = insertDeleteRangeSQLPrefix
-	BRInsertDelteRangeSQLValue  = insertDeleteRangeSQLValue
+	BRInsertDeleteRangeSQLPrefix = insertDeleteRangeSQLPrefix
+	BRInsertDeleteRangeSQLValue  = insertDeleteRangeSQLValue
 )
 
 var (

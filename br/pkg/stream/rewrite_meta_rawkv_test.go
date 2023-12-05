@@ -999,6 +999,6 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 }
 
 func TestCompatibleAlert(t *testing.T) {
-	require.Equal(t, ddl.BRInsertDelteRangeSQLPrefix, `INSERT IGNORE INTO mysql.gc_delete_range VALUES `)
-	require.Equal(t, ddl.BRInsertDelteRangeSQLValue, `(%?, %?, %?, %?, %?)`)
+	require.Equal(t, ddl.BRInsertDeleteRangeSQLPrefix, `INSERT IGNORE INTO mysql.gc_delete_range VALUES `)
+	require.Equal(t, ddl.BRInsertDeleteRangeSQLValue, `(%?, %?, %?, %?, %?)`)
 }

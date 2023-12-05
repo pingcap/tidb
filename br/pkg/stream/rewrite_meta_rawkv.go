@@ -676,17 +676,16 @@ func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, err
 	return nil, nil
 }
 
-func (sr *SchemasReplace) tryRecordIngestIndex(job *model.Job, isSubJob bool) error {
-	switch job.Type {
-	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		return sr.ingestRecorder.TryAddJob(job, isSubJob)
-	case model.ActionMultiSchemaChange:
-		for i, sub := range job.MultiSchemaInfo.SubJobs {
-			proxyJob := sub.ToProxyJob(job, i)
-			// ASSERT: the proxyJob can not be MultiSchemaInfo anymore
-			if err := sr.ingestRecorder.TryAddJob(&proxyJob, true); err != nil {
-				return err
-			}
+func (sr *SchemasReplace) tryRecordIngestIndex(job *model.Job) error {
+	if job.Type != model.ActionMultiSchemaChange {
+		return sr.ingestRecorder.TryAddJob(job, false)
+	}
+
+	for i, sub := range job.MultiSchemaInfo.SubJobs {
+		proxyJob := sub.ToProxyJob(job, i)
+		// ASSERT: the proxyJob can not be MultiSchemaInfo anymore
+		if err := sr.ingestRecorder.TryAddJob(&proxyJob, true); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -699,7 +698,7 @@ func (sr *SchemasReplace) restoreFromHistory(job *model.Job) error {
 		}
 	}
 
-	return sr.tryRecordIngestIndex(job, false)
+	return sr.tryRecordIngestIndex(job)
 }
 
 type DelRangeParams struct {
