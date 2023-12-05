@@ -23,7 +23,7 @@ var (
 	schedulersPrefix         = "pd/api/v1/schedulers"
 )
 
-func getJson(url string, response any) error {
+func getJSON(url string, response any) error {
 	resp, err := http.Get(url)
 	if err != nil {
 		return err
@@ -46,7 +46,7 @@ type GcSafePoints struct {
 
 func verifyGCStopped(t *require.Assertions, cfg operator.PauseGcConfig) {
 	var result GcSafePoints
-	t.NoError(getJson(pdAPI(cfg, serviceGCSafepointPrefix), &result))
+	t.NoError(getJSON(pdAPI(cfg, serviceGCSafepointPrefix), &result))
 	for _, sp := range result.SPs {
 		if sp.ServiceID != "gc_worker" {
 			t.Equal(int64(cfg.SafePoint)-1, sp.SafePoint, result.SPs)
@@ -56,7 +56,7 @@ func verifyGCStopped(t *require.Assertions, cfg operator.PauseGcConfig) {
 
 func verifyGCNotStopped(t *require.Assertions, cfg operator.PauseGcConfig) {
 	var result GcSafePoints
-	t.NoError(getJson(pdAPI(cfg, serviceGCSafepointPrefix), &result))
+	t.NoError(getJSON(pdAPI(cfg, serviceGCSafepointPrefix), &result))
 	for _, sp := range result.SPs {
 		if sp.ServiceID != "gc_worker" {
 			t.FailNowf("the service gc safepoint exists", "it is %#v", sp)
@@ -86,12 +86,12 @@ func verifySchedulersStopped(t *require.Assertions, cfg operator.PauseGcConfig) 
 		target           = pdAPI(cfg, schedulersPrefix)
 	)
 
-	t.NoError(getJson(target, &schedulers))
+	t.NoError(getJSON(target, &schedulers))
 	enabledSchedulers := map[string]struct{}{}
 	for _, sched := range schedulers {
 		enabledSchedulers[sched] = struct{}{}
 	}
-	t.NoError(getJson(target+"?status=paused", &pausedSchedulers))
+	t.NoError(getJSON(target+"?status=paused", &pausedSchedulers))
 	for _, scheduler := range pausedSchedulers {
 		t.Contains(enabledSchedulers, scheduler)
 	}
@@ -104,12 +104,12 @@ func verifySchedulerNotStopped(t *require.Assertions, cfg operator.PauseGcConfig
 		target           = pdAPI(cfg, schedulersPrefix)
 	)
 
-	t.NoError(getJson(target, &schedulers))
+	t.NoError(getJSON(target, &schedulers))
 	enabledSchedulers := map[string]struct{}{}
 	for _, sched := range schedulers {
 		enabledSchedulers[sched] = struct{}{}
 	}
-	t.NoError(getJson(target+"?status=paused", &pausedSchedulers))
+	t.NoError(getJSON(target+"?status=paused", &pausedSchedulers))
 	for _, scheduler := range pausedSchedulers {
 		t.NotContains(enabledSchedulers, scheduler)
 	}
