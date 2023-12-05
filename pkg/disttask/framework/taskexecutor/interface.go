@@ -54,6 +54,7 @@ type TaskExecutor interface {
 	Rollback(context.Context, *proto.Task) error
 	Pause(context.Context, *proto.Task) error
 	Close()
+	IsRetryableError(err error) bool
 }
 
 // Extension extends the TaskExecutor.
@@ -67,6 +68,10 @@ type Extension interface {
 	// GetSubtaskExecutor returns the subtask executor for the subtask.
 	// Note: summary is the summary manager of all subtask of the same type now.
 	GetSubtaskExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary) (execute.SubtaskExecutor, error)
+	// IsRetryableError returns whether the error is transient.
+	// When error is transient, the framework won't mark subtasks as failed,
+	// then the TaskExecutor can load the subtask again and redo it.
+	IsRetryableError(err error) bool
 }
 
 // EmptySubtaskExecutor is an empty Executor.

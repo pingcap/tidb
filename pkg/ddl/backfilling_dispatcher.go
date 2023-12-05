@@ -79,7 +79,7 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 		zap.String("curr-step", StepStr(task.Step)),
 		zap.String("next-step", StepStr(nextStep)),
 	)
-	var backfillMeta BackfillGlobalMeta
+	var backfillMeta BackfillTaskMeta
 	if err := json.Unmarshal(task.Meta, &backfillMeta); err != nil {
 		return nil, err
 	}
@@ -140,7 +140,7 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 	}
 }
 
-func updateMeta(task *proto.Task, taskMeta *BackfillGlobalMeta) error {
+func updateMeta(task *proto.Task, taskMeta *BackfillTaskMeta) error {
 	bs, err := json.Marshal(taskMeta)
 	if err != nil {
 		return errors.Trace(err)
@@ -211,7 +211,7 @@ func newLitBackfillDispatcher(ctx context.Context, d *ddl, taskMgr dispatcher.Ta
 
 // Init implements BaseDispatcher interface.
 func (dsp *LitBackfillDispatcher) Init() (err error) {
-	taskMeta := &BackfillGlobalMeta{}
+	taskMeta := &BackfillTaskMeta{}
 	if err = json.Unmarshal(dsp.BaseDispatcher.Task.Meta, taskMeta); err != nil {
 		return errors.Annotate(err, "unmarshal task meta failed")
 	}
