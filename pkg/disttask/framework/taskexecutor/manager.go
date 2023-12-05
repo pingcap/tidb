@@ -51,7 +51,6 @@ var (
 // ManagerBuilder is used to build a Manager.
 type ManagerBuilder struct {
 	newPool func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error)
-	// slotAlloctor alloctor.Alloctor
 }
 
 // NewManagerBuilder creates a new ManagerBuilder.

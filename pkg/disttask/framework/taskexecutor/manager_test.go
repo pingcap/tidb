@@ -47,16 +47,11 @@ func getPoolRunFn() (*sync.WaitGroup, func(f func()) error) {
 	}
 }
 
-func NewTestManagerBuilder(ctrl *gomock.Controller) *ManagerBuilder {
-	b := NewManagerBuilder()
-	return b
-}
-
 func TestManageTask(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	b := NewTestManagerBuilder(ctrl)
+	b := NewManagerBuilder()
 	mockTaskTable := mock.NewMockTaskTable(ctrl)
 	m, err := b.BuildManager(context.Background(), "test", mockTaskTable)
 	require.NoError(t, err)
@@ -111,7 +106,7 @@ func TestOnRunnableTasks(t *testing.T) {
 	mockPool := mock.NewMockPool(ctrl)
 	ctx := context.Background()
 
-	b := NewTestManagerBuilder(ctrl)
+	b := NewManagerBuilder()
 	b.setPoolFactory(func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error) {
 		return mockPool, nil
 	})
@@ -186,7 +181,7 @@ func TestManager(t *testing.T) {
 	mockTaskTable := mock.NewMockTaskTable(ctrl)
 	mockInternalExecutor := mock.NewMockTaskExecutor(ctrl)
 	mockPool := mock.NewMockPool(ctrl)
-	b := NewTestManagerBuilder(ctrl)
+	b := NewManagerBuilder()
 	b.setPoolFactory(func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error) {
 		return mockPool, nil
 	})
@@ -264,7 +259,7 @@ func TestSlotManagerInManager(t *testing.T) {
 	mockTaskTable := mock.NewMockTaskTable(ctrl)
 	mockInternalExecutor := mock.NewMockTaskExecutor(ctrl)
 	mockPool := mock.NewMockPool(ctrl)
-	b := NewTestManagerBuilder(ctrl)
+	b := NewManagerBuilder()
 	b.setPoolFactory(func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error) {
 		return mockPool, nil
 	})
