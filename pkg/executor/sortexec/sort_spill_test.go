@@ -18,6 +18,7 @@ import (
 	"context"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -195,6 +196,8 @@ func executeSortExecutorAndManullyTriggerSpill(t *testing.T, exe *sortexec.SortE
 		if i == 10 {
 			// Trigger the spill
 			tracker.Consume(hardLimit)
+			// Wait for spill
+			time.Sleep(5 * time.Millisecond)
 		}
 
 		if chk.NumRows() == 0 {
@@ -263,7 +266,10 @@ func multiPartitionCase(t *testing.T, ctx *mock.Context, sortCase *testutil.Sort
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(ctx, sortCase, schema)
 	exe := buildSortExec(ctx, sortCase, dataSource)
+
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/unholdSyncLock", `return(true)`)
 	resultChunks := executeSortExecutor(t, exe)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/unholdSyncLock", `return(false)`)
 
 	sortPartitionNum := exe.GetSortPartitionListLenForTest()
 	require.Greater(t, sortPartitionNum, 1)
@@ -305,8 +311,10 @@ func TestSortSpillDisk(t *testing.T) {
 	ctx := mock.NewContext()
 	sortCase := &testutil.SortCase{Rows: 2048, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
 
-	onePartitionAndAllDataInMemoryCase(t, ctx, sortCase)
-	onePartitionAndAllDataInDiskCase(t, ctx, sortCase)
-	multiPartitionCase(t, ctx, sortCase)
-	inMemoryThenSpillCase(t, ctx, sortCase)
+	for i := 0; i < 50; i++ {
+		onePartitionAndAllDataInMemoryCase(t, ctx, sortCase)
+		onePartitionAndAllDataInDiskCase(t, ctx, sortCase)
+		multiPartitionCase(t, ctx, sortCase)
+		inMemoryThenSpillCase(t, ctx, sortCase)
+	}
 }
