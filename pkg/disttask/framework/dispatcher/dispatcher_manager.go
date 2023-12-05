@@ -197,14 +197,14 @@ func (dm *Manager) dispatchTaskLoop() {
 			if taskCnt >= proto.MaxConcurrentTask {
 				break
 			}
-			reservedExecID, ok := dm.slotMgr.canReserve(task.Concurrency)
+			reservedExecID, ok := dm.slotMgr.canReserve(task)
 			if !ok {
 				// task of lower priority might be able to be dispatched.
 				continue
 			}
 			metrics.DistTaskGauge.WithLabelValues(task.Type.String(), metrics.DispatchingStatus).Inc()
 			metrics.UpdateMetricsForDispatchTask(task.ID, task.Type)
-			dm.startDispatcher(task.ID, reservedExecID)
+			dm.startDispatcher(task, reservedExecID)
 		}
 	}
 }
@@ -245,8 +245,8 @@ func (dm *Manager) gcSubtaskHistoryTableLoop() {
 	}
 }
 
-func (dm *Manager) startDispatcher(taskID int64, reservedExecID string) {
-	task, err := dm.taskMgr.GetTaskByID(dm.ctx, taskID)
+func (dm *Manager) startDispatcher(basicTask *proto.Task, reservedExecID string) {
+	task, err := dm.taskMgr.GetTaskByID(dm.ctx, basicTask.ID)
 	if err != nil {
 		logutil.BgLogger().Error("get task failed", zap.Error(err))
 		return
@@ -260,13 +260,13 @@ func (dm *Manager) startDispatcher(taskID int64, reservedExecID string) {
 		return
 	}
 	dm.addDispatcher(task.ID, dispatcher)
-	dm.slotMgr.reserve(task.Concurrency, reservedExecID)
+	dm.slotMgr.reserve(basicTask, reservedExecID)
 	// Using the pool with block, so it wouldn't return an error.
 	_ = dm.gPool.Run(func() {
 		defer func() {
 			dispatcher.Close()
 			dm.delDispatcher(task.ID)
-			dm.slotMgr.unReserve(task.Concurrency, reservedExecID)
+			dm.slotMgr.unReserve(basicTask, reservedExecID)
 		}()
 		metrics.UpdateMetricsForRunTask(task)
 		dispatcher.ExecuteTask()

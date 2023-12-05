@@ -17,42 +17,163 @@ package dispatcher
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
 
-func TestSlotManagerCanReserve(t *testing.T) {
+func TestSlotManagerReserve(t *testing.T) {
 	sm := newSlotManager()
 	sm.capacity = 16
-	cases := []struct {
-		concurrency    int
-		expectedExecID string
-		canReserve     bool
-	}{
-		{1, "", true},
-		{8, "", true},
-		{16, "", true},
-		{17, "", false},
+	// no node
+	_, ok := sm.canReserve(&proto.Task{Concurrency: 1})
+	require.False(t, ok)
+
+	// reserve by stripes
+	sm.usedSlots = map[string]int{
+		"tidb-1": 16,
 	}
-	for _, c := range cases {
-		execID, ok := sm.canReserve(c.concurrency)
-		require.Equal(t, c.expectedExecID, execID)
-		require.Equal(t, c.canReserve, ok)
+	task := proto.Task{
+		Priority:    proto.NormalPriority,
+		Concurrency: 16,
+		CreateTime:  time.Now(),
 	}
-	sm.reservedStripes.Store(12)
+	task10 := task
+	task10.ID = 10
+	task10.Concurrency = 4
+	execID10, ok := sm.canReserve(&task10)
+	require.Equal(t, "", execID10)
+	require.True(t, ok)
+	sm.reserve(&task10, execID10)
+
+	task20 := task
+	task20.ID = 20
+	task20.Concurrency = 8
+	execID20, ok := sm.canReserve(&task20)
+	require.Equal(t, "", execID20)
+	require.True(t, ok)
+	sm.reserve(&task20, execID20)
+
+	task30 := task
+	task30.ID = 30
+	task30.Concurrency = 8
+	execID30, ok := sm.canReserve(&task30)
+	require.Equal(t, "", execID30)
+	require.False(t, ok)
+	require.Len(t, sm.reservedStripes, 2)
+	require.Equal(t, 4, sm.reservedStripes[0].stripes)
+	require.Equal(t, 8, sm.reservedStripes[1].stripes)
+	require.Equal(t, map[int64]int{10: 0, 20: 1}, sm.task2Index)
+	require.Empty(t, sm.reservedSlots)
+	// higher priority task can preempt lower priority task
+	task9 := task
+	task9.ID = 9
+	task9.Concurrency = 16
+	_, ok = sm.canReserve(&task9)
+	require.True(t, ok)
+	// 4 slots are reserved for high priority tasks, so cannot reserve.
+	task11 := task
+	task11.ID = 11
+	_, ok = sm.canReserve(&task11)
+	require.False(t, ok)
+	// lower concurrency
+	task11.Concurrency = 12
+	_, ok = sm.canReserve(&task11)
+	require.True(t, ok)
+
+	// reserve by slots
 	sm.usedSlots = map[string]int{
 		"tidb-1": 12,
 		"tidb-2": 8,
 	}
-	execID, ok := sm.canReserve(8)
-	require.Equal(t, "tidb-2", execID)
-	require.True(t, ok)
-	execID, ok = sm.canReserve(16)
-	require.Equal(t, "", execID)
+	task40 := task
+	task40.ID = 40
+	task40.Concurrency = 16
+	execID40, ok := sm.canReserve(&task40)
+	require.Equal(t, "", execID40)
 	require.False(t, ok)
+	task40.Concurrency = 8
+	execID40, ok = sm.canReserve(&task40)
+	require.Equal(t, "tidb-2", execID40)
+	require.True(t, ok)
+	sm.reserve(&task40, execID40)
+	require.Len(t, sm.reservedStripes, 3)
+	require.Equal(t, 4, sm.reservedStripes[0].stripes)
+	require.Equal(t, 8, sm.reservedStripes[1].stripes)
+	require.Equal(t, 8, sm.reservedStripes[2].stripes)
+	require.Equal(t, map[int64]int{10: 0, 20: 1, 40: 2}, sm.task2Index)
+	require.Equal(t, map[string]int{"tidb-2": 8}, sm.reservedSlots)
+	// higher priority task stop task 15 to run
+	task15 := task
+	task15.ID = 15
+	task15.Concurrency = 16
+	execID15, ok := sm.canReserve(&task15)
+	require.Equal(t, "", execID15)
+	require.False(t, ok)
+	// finish task of id 10
+	sm.unReserve(&task10, execID10)
+	require.Len(t, sm.reservedStripes, 2)
+	require.Equal(t, 8, sm.reservedStripes[0].stripes)
+	require.Equal(t, 8, sm.reservedStripes[1].stripes)
+	require.Equal(t, map[int64]int{20: 0, 40: 1}, sm.task2Index)
+	require.Equal(t, map[string]int{"tidb-2": 8}, sm.reservedSlots)
+	// now task 15 can run
+	execID15, ok = sm.canReserve(&task15)
+	require.Equal(t, "", execID15)
+	require.True(t, ok)
+	sm.reserve(&task15, execID15)
+	require.Len(t, sm.reservedStripes, 3)
+	require.Equal(t, 16, sm.reservedStripes[0].stripes)
+	require.Equal(t, 8, sm.reservedStripes[1].stripes)
+	require.Equal(t, 8, sm.reservedStripes[2].stripes)
+	require.Equal(t, map[int64]int{15: 0, 20: 1, 40: 2}, sm.task2Index)
+	require.Equal(t, map[string]int{"tidb-2": 8}, sm.reservedSlots)
+	// task 50 cannot run
+	task50 := task
+	task50.ID = 50
+	task50.Concurrency = 8
+	_, ok = sm.canReserve(&task50)
+	require.False(t, ok)
+	// finish task 40
+	sm.unReserve(&task40, execID40)
+	require.Len(t, sm.reservedStripes, 2)
+	require.Equal(t, 16, sm.reservedStripes[0].stripes)
+	require.Equal(t, 8, sm.reservedStripes[1].stripes)
+	require.Equal(t, map[int64]int{15: 0, 20: 1}, sm.task2Index)
+	require.Empty(t, sm.reservedSlots)
+	// now task 50 can run
+	execID50, ok := sm.canReserve(&task50)
+	require.Equal(t, "tidb-2", execID50)
+	require.True(t, ok)
+	sm.reserve(&task50, execID50)
+	// task 60 can run too
+	task60 := task
+	task60.ID = 60
+	task60.Concurrency = 4
+	execID60, ok := sm.canReserve(&task60)
+	require.Equal(t, "tidb-1", execID60)
+	require.True(t, ok)
+	sm.reserve(&task60, execID60)
+	require.Len(t, sm.reservedStripes, 4)
+	require.Equal(t, 16, sm.reservedStripes[0].stripes)
+	require.Equal(t, 8, sm.reservedStripes[1].stripes)
+	require.Equal(t, 8, sm.reservedStripes[2].stripes)
+	require.Equal(t, 4, sm.reservedStripes[3].stripes)
+	require.Equal(t, map[int64]int{15: 0, 20: 1, 50: 2, 60: 3}, sm.task2Index)
+	require.Equal(t, map[string]int{"tidb-1": 4, "tidb-2": 8}, sm.reservedSlots)
+
+	// un-reserve all tasks
+	sm.unReserve(&task15, execID15)
+	sm.unReserve(&task20, execID20)
+	sm.unReserve(&task50, execID50)
+	sm.unReserve(&task60, execID60)
+	require.Empty(t, sm.reservedStripes)
+	require.Empty(t, sm.task2Index)
+	require.Empty(t, sm.reservedSlots)
 }
 
 func TestSlotManagerUpdate(t *testing.T) {
@@ -101,54 +222,4 @@ func TestSlotManagerUpdate(t *testing.T) {
 	require.Equal(t, map[string]int{
 		"tidb-1": 12,
 	}, sm.usedSlots)
-}
-
-func TestSlotManagerReserveUnReserve(t *testing.T) {
-	sm := newSlotManager()
-	sm.capacity = 16
-	// reserve 2 tasks of 4/8 concurrency
-	execID, ok := sm.canReserve(4)
-	require.True(t, ok)
-	sm.reserve(4, execID)
-	require.Equal(t, int32(4), sm.reservedStripes.Load())
-	require.Empty(t, sm.reservedSlots)
-	execID, ok = sm.canReserve(4)
-	require.True(t, ok)
-	sm.reserve(8, execID)
-	require.Equal(t, int32(12), sm.reservedStripes.Load())
-	require.Empty(t, sm.reservedSlots)
-	// cannot reserve another 8
-	execID, ok = sm.canReserve(8)
-	require.False(t, ok)
-
-	sm.usedSlots = map[string]int{
-		"tidb-1": 12,
-		"tidb-2": 8,
-	}
-	// can reserve 8 on tidb-2
-	execID, ok = sm.canReserve(8)
-	require.True(t, ok)
-	sm.reserve(8, execID)
-	require.Equal(t, int32(20), sm.reservedStripes.Load())
-	require.Equal(t, map[string]int{
-		"tidb-2": 8,
-	}, sm.reservedSlots)
-	// cannot reserve another 8
-	execID, ok = sm.canReserve(8)
-	require.False(t, ok)
-
-	// un-reverse second task of 8, we still cannot reserve another 8
-	sm.unReserve(8, "")
-	require.Equal(t, int32(12), sm.reservedStripes.Load())
-	require.Equal(t, map[string]int{
-		"tidb-2": 8,
-	}, sm.reservedSlots)
-	execID, ok = sm.canReserve(8)
-	require.False(t, ok)
-	// un-reverse third task, now we can reserve another 8
-	sm.unReserve(8, "tidb-2")
-	require.Equal(t, int32(4), sm.reservedStripes.Load())
-	require.Empty(t, sm.reservedSlots)
-	_, ok = sm.canReserve(8)
-	require.True(t, ok)
 }

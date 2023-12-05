@@ -41,9 +41,11 @@ import (
 const (
 	defaultSubtaskKeepDays = 14
 
-	basicTaskColumns = `id, task_key, type, state, step, priority, concurrency, create_time`
-	taskColumns      = basicTaskColumns + `, start_time, state_update_time, meta, dispatcher_id, error`
-	subtaskColumns   = `id, step, task_key, type, exec_id, state, concurrency, create_time,
+	basicTaskColumns  = `id, task_key, type, state, step, priority, concurrency, create_time`
+	taskColumns       = basicTaskColumns + `, start_time, state_update_time, meta, dispatcher_id, error`
+	InsertTaskColumns = `task_key, type, state, priority, concurrency, step, meta, create_time, start_time, state_update_time`
+
+	subtaskColumns = `id, step, task_key, type, exec_id, state, concurrency, create_time,
 				start_time, state_update_time, meta, summary`
 	InsertSubtaskBasic = `insert into mysql.tidb_background_subtask(
 				step, task_key, exec_id, meta, state, type, concurrency, create_time, checkpoint, summary) values `
@@ -211,8 +213,8 @@ func (stm *TaskManager) CreateTask(ctx context.Context, key string, tp proto.Tas
 
 // CreateTaskWithSession adds a new task to task table with session.
 func (*TaskManager) CreateTaskWithSession(ctx context.Context, se sessionctx.Context, key string, tp proto.TaskType, concurrency int, meta []byte) (taskID int64, err error) {
-	_, err = ExecSQL(ctx, se, `insert into mysql.tidb_global_task(
-			task_key, type, state, priority, concurrency, step, meta, create_time, start_time, state_update_time)
+	_, err = ExecSQL(ctx, se, `
+			insert into mysql.tidb_global_task(`+InsertTaskColumns+`)
 			values (%?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())`,
 		key, tp, proto.TaskStatePending, proto.NormalPriority, concurrency, proto.StepInit, meta)
 	if err != nil {
@@ -249,7 +251,7 @@ func (stm *TaskManager) GetTopUnfinishedTasks(ctx context.Context) (task []*prot
 	rs, err := stm.executeSQLWithNewSession(ctx,
 		`select `+basicTaskColumns+` from mysql.tidb_global_task
 		where state in (%?, %?, %?, %?, %?, %?)
-		order by priority desc, create_time asc, id asc
+		order by priority asc, create_time asc, id asc
 		limit %?`,
 		proto.TaskStatePending,
 		proto.TaskStateRunning,
@@ -257,7 +259,7 @@ func (stm *TaskManager) GetTopUnfinishedTasks(ctx context.Context) (task []*prot
 		proto.TaskStateCancelling,
 		proto.TaskStatePausing,
 		proto.TaskStateResuming,
-		proto.MaxConcurrentTask,
+		proto.MaxConcurrentTask*2,
 	)
 	if err != nil {
 		return task, err

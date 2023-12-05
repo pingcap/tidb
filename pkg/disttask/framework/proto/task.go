@@ -124,7 +124,7 @@ const (
 	// TaskIDLabelName is the label name of task id.
 	TaskIDLabelName = "task_id"
 	// NormalPriority represents the normal priority of task.
-	NormalPriority = 100
+	NormalPriority = 512
 )
 
 // MaxConcurrentTask is the max concurrency of task.
@@ -132,14 +132,14 @@ const (
 var MaxConcurrentTask = 4
 
 // Task represents the task of distributed framework.
-// tasks are run in the order of: priority desc, create_time asc, id asc.
+// tasks are run in the order of: priority asc, create_time asc, id asc.
 type Task struct {
 	ID    int64
 	Key   string
 	Type  TaskType
 	State TaskState
 	Step  Step
-	// Priority is the priority of task, the larger value means the higher priority.
+	// Priority is the priority of task, the smaller value means the higher priority.
 	// valid range is [1, 1024], default is NormalPriority.
 	Priority    int
 	Concurrency int
@@ -159,6 +159,20 @@ type Task struct {
 func (t *Task) IsDone() bool {
 	return t.State == TaskStateSucceed || t.State == TaskStateReverted ||
 		t.State == TaskStateFailed
+}
+
+// Compare compares two tasks by task order.
+func (t *Task) Compare(other *Task) int {
+	if t.Priority != other.Priority {
+		return t.Priority - other.Priority
+	}
+	if t.CreateTime != other.CreateTime {
+		if t.CreateTime.Before(other.CreateTime) {
+			return -1
+		}
+		return 1
+	}
+	return int(t.ID - other.ID)
 }
 
 // Subtask represents the subtask of distribute framework.

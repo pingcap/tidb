@@ -167,6 +167,10 @@ func TestGetTopUnfinishedTasks(t *testing.T) {
 		proto.TaskStatePausing,
 		proto.TaskStateResuming,
 		proto.TaskStateFailed,
+		proto.TaskStatePending,
+		proto.TaskStatePending,
+		proto.TaskStatePending,
+		proto.TaskStatePending,
 	}
 	for i, state := range taskStates {
 		taskKey := fmt.Sprintf("key/%d", i)
@@ -194,31 +198,26 @@ func TestGetTopUnfinishedTasks(t *testing.T) {
 	}))
 	require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
 		_, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, `
-				update mysql.tidb_global_task set priority = 1000 where task_key = 'key/6'`)
+				update mysql.tidb_global_task set priority = 100 where task_key = 'key/6'`)
 		return err
 	}))
 	require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
 		rs, err := storage.ExecSQL(ctx, se, `
 				select count(1) from mysql.tidb_global_task`)
 		require.Len(t, rs, 1)
-		require.Equal(t, int64(len(taskStates)), rs[0].GetInt64(0))
+		require.Equal(t, int64(12), rs[0].GetInt64(0))
 		return err
 	}))
-	bak := proto.MaxConcurrentTask
-	proto.MaxConcurrentTask = 10
-	defer func() {
-		proto.MaxConcurrentTask = bak
-	}()
 	tasks, err := gm.GetTopUnfinishedTasks(ctx)
 	require.NoError(t, err)
-	require.Len(t, tasks, 6)
+	require.Len(t, tasks, 8)
 	var taskKeys []string
 	for _, task := range tasks {
 		taskKeys = append(taskKeys, task.Key)
 		// not filled
 		require.Empty(t, task.Meta)
 	}
-	require.Equal(t, []string{"key/6", "key/5", "key/1", "key/2", "key/3", "key/4"}, taskKeys)
+	require.Equal(t, []string{"key/6", "key/5", "key/1", "key/2", "key/3", "key/4", "key/8", "key/9"}, taskKeys)
 }
 
 func TestGetUsedSlotsOnNodes(t *testing.T) {

@@ -25,9 +25,10 @@ import (
 
 // TaskManager defines the interface to access task table.
 type TaskManager interface {
-	// GetTopUnfinishedTasks returns unfinished tasks, limited by MaxConcurrentTask.
-	// The returned tasks are sorted by task order, see proto.Task.
-	// The returned tasks only contains some fields, see row2TaskBasic.
+	// GetTopUnfinishedTasks returns unfinished tasks, limited by MaxConcurrentTask*2,
+	// to make sure lower priority tasks can be scheduled if resource is enough.
+	// The returned tasks are sorted by task order, see proto.Task, and only contains
+	// some fields, see row2TaskBasic.
 	GetTopUnfinishedTasks(ctx context.Context) ([]*proto.Task, error)
 	GetTasksInStates(ctx context.Context, states ...interface{}) (task []*proto.Task, err error)
 	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
@@ -41,6 +42,8 @@ type TaskManager interface {
 	FailTask(ctx context.Context, taskID int64, currentState proto.TaskState, taskErr error) error
 	PauseTask(ctx context.Context, taskKey string) (bool, error)
 	// GetUsedSlotsOnNodes returns the used slots on nodes that have subtask scheduled.
+	// subtasks of each task on one node is only accounted once as we don't support
+	// running them concurrently.
 	// we only consider pending/running subtasks, subtasks related to revert are
 	// not considered.
 	GetUsedSlotsOnNodes(ctx context.Context) (map[string]int, error)

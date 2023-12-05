@@ -16,11 +16,17 @@ package dispatcher
 
 import (
 	"context"
+	"slices"
 	"sync"
-	"sync/atomic"
 
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 )
+
+type taskStripes struct {
+	task    *proto.Task
+	stripes int
+}
 
 // slotManager is used to manage the resource slots and strips.
 //
@@ -34,7 +40,8 @@ import (
 // Stripes reserved for a task defines the maximum resource that a task can use
 // but the task might not use all the resources. To maximize the resource utilization,
 // we will try to dispatch as many tasks as possible depends on the used slots
-// on each node and the minimum resource required by the tasks.
+// on each node and the minimum resource required by the tasks, and in this case,
+// we don't consider task order.
 //
 // Dist framework will try to allocate resource by slots and stripes, and give
 // quota to subtask, but subtask can determine what to conform.
@@ -44,12 +51,15 @@ type slotManager struct {
 	// but dist owner might run on normal node where the capacity might not be
 	// able to run any task.
 	capacity int
-	// represents the number of stripes reserved by task, when we reserve by the
-	// minimum resource required by the task, we still increase this value, so it
-	// might be larger than capacity
-	reservedStripes atomic.Int32
 
 	mu sync.RWMutex
+	// represents the number of stripes reserved by task, when we reserve by the
+	// minimum resource required by the task, we still append into it, so it summed
+	// value might be larger than capacity
+	// this slice is in task order.
+	reservedStripes []taskStripes
+	// map of reservedStripes for fast delete
+	task2Index map[int64]int
 	// represents the number of slots reserved by task on each node, the execID
 	// is only used for reserve minimum resource when starting dispatcher, the
 	// subtasks may or may not be scheduled on this node.
@@ -67,6 +77,7 @@ type slotManager struct {
 func newSlotManager() *slotManager {
 	return &slotManager{
 		capacity:      cpu.GetCPUCount(),
+		task2Index:    make(map[int64]int),
 		reservedSlots: make(map[string]int),
 		usedSlots:     make(map[string]int),
 	}
@@ -99,14 +110,27 @@ func (sm *slotManager) update(ctx context.Context, taskMgr TaskManager) error {
 // as usedSlots is updated asynchronously, it might return false even if there
 // are enough resources, or return true on resource shortage when some task
 // dispatched subtasks.
-func (sm *slotManager) canReserve(taskConcurrency int) (execID string, ok bool) {
-	if taskConcurrency+int(sm.reservedStripes.Load()) <= sm.capacity {
-		return "", true
-	}
+func (sm *slotManager) canReserve(task *proto.Task) (execID string, ok bool) {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
+	if len(sm.usedSlots) == 0 {
+		// no node managed by dist framework
+		return "", false
+	}
+
+	reservedForHigherPriority := 0
+	for _, s := range sm.reservedStripes {
+		if s.task.Compare(task) >= 0 {
+			break
+		}
+		reservedForHigherPriority += s.stripes
+	}
+	if task.Concurrency+reservedForHigherPriority <= sm.capacity {
+		return "", true
+	}
+
 	for id, count := range sm.usedSlots {
-		if count+sm.reservedSlots[id]+taskConcurrency <= sm.capacity {
+		if count+sm.reservedSlots[id]+task.Concurrency <= sm.capacity {
 			return id, true
 		}
 	}
@@ -115,22 +139,40 @@ func (sm *slotManager) canReserve(taskConcurrency int) (execID string, ok bool) 
 
 // Reserve reserves resources for a task.
 // Reserve and UnReserve should be called in pair with same parameters.
-func (sm *slotManager) reserve(taskConcurrency int, execID string) {
+func (sm *slotManager) reserve(task *proto.Task, execID string) {
+	taskClone := *task
+
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	sm.reservedStripes.Add(int32(taskConcurrency))
+	sm.reservedStripes = append(sm.reservedStripes, taskStripes{&taskClone, taskClone.Concurrency})
+	slices.SortFunc(sm.reservedStripes, func(a, b taskStripes) int {
+		return a.task.Compare(b.task)
+	})
+	for i, s := range sm.reservedStripes {
+		sm.task2Index[s.task.ID] = i
+	}
+
 	if execID != "" {
-		sm.reservedSlots[execID] += taskConcurrency
+		sm.reservedSlots[execID] += taskClone.Concurrency
 	}
 }
 
 // UnReserve un-reserve resources for a task.
-func (sm *slotManager) unReserve(taskConcurrency int, execID string) {
+func (sm *slotManager) unReserve(task *proto.Task, execID string) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	sm.reservedStripes.Add(-int32(taskConcurrency))
+	idx, ok := sm.task2Index[task.ID]
+	if !ok {
+		return
+	}
+	sm.reservedStripes = append(sm.reservedStripes[:idx], sm.reservedStripes[idx+1:]...)
+	delete(sm.task2Index, task.ID)
+	for i, s := range sm.reservedStripes {
+		sm.task2Index[s.task.ID] = i
+	}
+
 	if execID != "" {
-		sm.reservedSlots[execID] -= taskConcurrency
+		sm.reservedSlots[execID] -= task.Concurrency
 		if sm.reservedSlots[execID] == 0 {
 			delete(sm.reservedSlots, execID)
 		}
