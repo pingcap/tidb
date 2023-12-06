@@ -165,7 +165,7 @@ func CleanupCorruptedAnalyzeJobsOnCurrentInstance(
 		if err != nil {
 			return errors.Trace(err)
 		}
-		statslogutil.StatsLogger.Info(
+		statslogutil.StatsLogger().Info(
 			"clean up the potentially corrupted analyze jobs from current instance",
 			zap.Uint64s("jobIDs", jobIDs),
 		)
@@ -221,7 +221,7 @@ func CleanupCorruptedAnalyzeJobsOnDeadInstances(
 		if err != nil {
 			return errors.Trace(err)
 		}
-		statslogutil.StatsLogger.Info(
+		statslogutil.StatsLogger().Info(
 			"clean up the potentially corrupted analyze jobs from dead instances",
 			zap.Uint64s("jobIDs", jobIDs),
 		)
