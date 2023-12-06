@@ -14732,12 +14732,10 @@ OptionalShardColumn:
 OptimizeTableStmt:
 	"OPTIMIZE" NoWriteToBinLogAliasOpt TableOrTables TableNameList
 	{
-		x := &ast.OptimizeTableStmt{
+		$$ = &ast.OptimizeTableStmt{
 			Tables:          $4.([]*ast.TableName),
 			NoWriteToBinLog: $2.(bool),
 		}
-
-		$$ = x
 	}
 
 /********************************************************************
