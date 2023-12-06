@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"sort"
 	"sync"
@@ -370,9 +371,13 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 	readRateHist.Observe(float64(size) / 1024.0 / 1024.0 / readSecond)
 	sortRateHist.Observe(float64(size) / 1024.0 / 1024.0 / sortSecond)
 
-	newBuf := make([]*membuf.Buffer, 0, len(e.memKVsAndBuffers.memKVBuffers))
-	copy(newBuf, e.memKVsAndBuffers.memKVBuffers)
-	data := e.buildIngestData(e.memKVsAndBuffers.keys, e.memKVsAndBuffers.values, newBuf)
+	KeysMustAscending(e.memKVsAndBuffers.keys)
+
+	data := e.buildIngestData(
+		e.memKVsAndBuffers.keys,
+		e.memKVsAndBuffers.values,
+		e.memKVsAndBuffers.memKVBuffers,
+	)
 
 	// release the reference of e.memKVsAndBuffers
 	e.memKVsAndBuffers.keys = nil
@@ -433,6 +438,7 @@ func (e *Engine) buildIngestData(keys, values [][]byte, buf []*membuf.Buffer) *M
 		refCnt:             atomic.NewInt64(0),
 		importedKVSize:     e.importedKVSize,
 		importedKVCount:    e.importedKVCount,
+		id:                 fmt.Sprintf("id-%d", time.Now().UnixNano()),
 	}
 }
 
@@ -554,6 +560,8 @@ type MemoryIngestData struct {
 	refCnt          *atomic.Int64
 	importedKVSize  *atomic.Int64
 	importedKVCount *atomic.Int64
+
+	id string
 }
 
 var _ common.IngestData = (*MemoryIngestData)(nil)
@@ -752,12 +760,15 @@ func (m *MemoryIngestData) GetTS() uint64 {
 
 // IncRef implements IngestData.IncRef.
 func (m *MemoryIngestData) IncRef() {
-	m.refCnt.Inc()
+	cur := m.refCnt.Inc()
+	log.FromContext(context.Background()).Info("IncRef", zap.String("id", m.id), zap.Int64("refCnt", cur))
 }
 
 // DecRef implements IngestData.DecRef.
 func (m *MemoryIngestData) DecRef() {
-	if m.refCnt.Dec() == 0 {
+	cur := m.refCnt.Dec()
+	log.FromContext(context.Background()).Info("DecRef", zap.String("id", m.id), zap.Int64("refCnt", cur))
+	if cur == 0 {
 		for _, b := range m.memBuf {
 			b.Destroy()
 		}
