@@ -30,11 +30,12 @@ type ResultSet interface {
 	Columns() []*column.Info
 	NewChunk(chunk.Allocator) *chunk.Chunk
 	Next(context.Context, *chunk.Chunk) error
-	Close() error
+	Close()
 	// IsClosed checks whether the result set is closed.
 	IsClosed() bool
 	FieldTypes() []*types.FieldType
 	SetPreparedStmt(stmt *core.PlanCacheStmt)
+	Finish() error
 }
 
 var _ ResultSet = &tidbResultSet{}
@@ -62,13 +63,20 @@ func (trs *tidbResultSet) Next(ctx context.Context, req *chunk.Chunk) error {
 	return trs.recordSet.Next(ctx, req)
 }
 
-func (trs *tidbResultSet) Close() error {
-	if !atomic.CompareAndSwapInt32(&trs.closed, 0, 1) {
-		return nil
+func (trs *tidbResultSet) Finish() error {
+	if x, ok := trs.recordSet.(interface{ Finish() error }); ok {
+		return x.Finish()
 	}
-	err := trs.recordSet.Close()
+	return nil
+}
+
+func (trs *tidbResultSet) Close() {
+	if !atomic.CompareAndSwapInt32(&trs.closed, 0, 1) {
+		return
+	}
+	trs.recordSet.Close()
 	trs.recordSet = nil
-	return err
+	return
 }
 
 // IsClosed implements ResultSet.IsClosed interface.
