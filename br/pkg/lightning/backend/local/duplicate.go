@@ -727,7 +727,6 @@ func (m *DupeDetector) CollectDuplicateRowsFromDupDB(ctx context.Context, dupDB 
 			} else {
 				err = m.RecordIndexConflictError(gCtx, stream, task.tableID, task.indexInfo)
 			}
-			return errors.Trace(err)
 			if err != nil {
 				return errors.Trace(err)
 			}
