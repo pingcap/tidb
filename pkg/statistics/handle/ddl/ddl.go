@@ -135,7 +135,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 				sctx := se.(sessionctx.Context)
 				is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 				schema, _ := is.SchemaByTable(globalTableInfo)
-				logutil.StatsLogger.Warn(
+				logutil.StatsLogger().Warn(
 					"drop partition with pseudo stats, "+
 						"usually it won't happen because we always load stats when initializing the handle",
 					zap.String("schema", schema.Name.O),
