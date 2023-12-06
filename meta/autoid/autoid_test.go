@@ -35,21 +35,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-<<<<<<< HEAD:meta/autoid/autoid_test.go
-=======
-type mockRequirement struct {
-	kv.Storage
-}
-
-func (r mockRequirement) Store() kv.Storage {
-	return r.Storage
-}
-
-func (r mockRequirement) AutoIDClient() *autoid.ClientDiscover {
-	return nil
-}
-
->>>>>>> 8eb191303ac (*: fix grpc client leak bug for AUTO_ID_CACHE=1 tables (#48870)):pkg/meta/autoid/autoid_test.go
 func TestSignedAutoid(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`))
 	defer func() {

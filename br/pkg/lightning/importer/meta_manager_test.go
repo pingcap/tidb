@@ -325,7 +325,7 @@ func (s *metaMgrSuite) prepareMockInner(rowsVal [][]driver.Value, nextRowID *int
 		WillReturnRows(rows)
 
 	if nextRowID != nil {
-		allocs := autoid.NewAllocatorsFromTblInfo(s.mgr.tr.kvStore, s.mgr.tr.dbInfo.ID, s.mgr.tr.tableInfo.Core)
+		allocs := autoid.NewAllocatorsFromTblInfo(s.mgr.tr, s.mgr.tr.dbInfo.ID, s.mgr.tr.tableInfo.Core)
 		alloc := allocs.Get(autoid.RowIDAllocType)
 		alloc.ForceRebase(*nextRowID - 1)
 	}
