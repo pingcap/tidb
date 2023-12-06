@@ -29,7 +29,7 @@ func TestExternalFileWriter(t *testing.T) {
 		storage, err := Create(ctx, backend, true)
 		require.NoError(t, err)
 		fileName := strings.ReplaceAll(test.name, " ", "-") + ".txt"
-		writer, err := storage.Create(ctx, fileName)
+		writer, err := storage.Create(ctx, fileName, nil)
 		require.NoError(t, err)
 		for _, str := range test.content {
 			p := []byte(str)
@@ -105,7 +105,7 @@ func TestCompressReaderWriter(t *testing.T) {
 		storage = WithCompression(storage, test.compressType)
 		suffix := createSuffixString(test.compressType)
 		fileName := strings.ReplaceAll(test.name, " ", "-") + suffix
-		writer, err := storage.Create(ctx, fileName)
+		writer, err := storage.Create(ctx, fileName, nil)
 		require.NoError(t, err)
 		for _, str := range test.content {
 			p := []byte(str)

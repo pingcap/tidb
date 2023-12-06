@@ -3390,7 +3390,7 @@
           "    └─CTETable 1.00 root  Scan on CTE_0"
         ],
         "Warning": [
-          "[planner:1815]Recursive CTE can not be inlined."
+          "[planner:1815]Recursive CTE cte1 can not be inlined by merge() or tidb_opt_force_inline_cte."
         ]
       },
       {
@@ -3639,7 +3639,9 @@
           "  └─Selection 0.80 root  lt(Column#3, 100)",
           "    └─CTETable 1.00 root  Scan on CTE_0"
         ],
-        "Warning": null
+        "Warning": [
+          "[planner:1815]Recursive CTE cte1 can not be inlined by merge() or tidb_opt_force_inline_cte."
+        ]
       },
       {
         "SQL": "with cte1 as (with cte2 as (select * from t) select * from cte2) select * from cte1; -- non-recursive 'cte2' definition inside another non-recursive 'cte1'",
@@ -3660,7 +3662,9 @@
           "  └─Selection 8000.00 root  lt(test.t.a, 100)",
           "    └─CTETable 10000.00 root  Scan on CTE_0"
         ],
-        "Warning": null
+        "Warning": [
+          "[planner:1815]Recursive CTE cte2 can not be inlined by merge() or tidb_opt_force_inline_cte."
+        ]
       },
       {
         "SQL": "with cte1 as (with recursive cte2(c1) as (select 1 union select c1 + 1 c1 from cte2 where c1 < 100) select * from cte2) select * from cte1; -- recursive 'cte2' inside non-recursive 'cte1'",
@@ -3673,7 +3677,10 @@
           "  └─Selection 0.80 root  lt(Column#10, 100)",
           "    └─CTETable 1.00 root  Scan on CTE_2"
         ],
-        "Warning": null
+        "Warning": [
+          "[planner:1815]Recursive CTE cte2 can not be inlined by merge() or tidb_opt_force_inline_cte.",
+          "[planner:1815]Recursive CTE cte2 can not be inlined by merge() or tidb_opt_force_inline_cte."
+        ]
       },
       {
         "SQL": "set tidb_opt_force_inline_cte=0; -- disable force inline CTE",
@@ -3708,7 +3715,7 @@
           "    └─CTETable 1.00 root  Scan on CTE_0"
         ],
         "Warning": [
-          "[planner:1815]Recursive CTE can not be inlined."
+          "[planner:1815]Recursive CTE cte1 can not be inlined by merge() or tidb_opt_force_inline_cte."
         ]
       },
       {
@@ -3750,6 +3757,55 @@
   {
     "Name": "TestSingleConsumerCTE",
     "Cases": [
+      {
+        "SQL": "with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 1) select * from cte1; -- non-recursive limit, inline cte1",
+        "Plan": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─HashAgg 1.00 root  group by:Column#18, funcs:firstrow(Column#18)->Column#18",
+          "  └─Union 20000.00 root  ",
+          "    ├─TableReader 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─IndexReader 10000.00 root  index:IndexFullScan",
+          "      └─IndexFullScan 10000.00 cop[tikv] table:t2, index:c1(c1) keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 100 offset 100) select * from cte1; -- non-recursive limit, inline cte1",
+        "Plan": [
+          "Limit 100.00 root  offset:100, count:100",
+          "└─HashAgg 200.00 root  group by:Column#18, funcs:firstrow(Column#18)->Column#18",
+          "  └─Union 20000.00 root  ",
+          "    ├─TableReader 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─IndexReader 10000.00 root  index:IndexFullScan",
+          "      └─IndexFullScan 10000.00 cop[tikv] table:t2, index:c1(c1) keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 0 offset 0) select * from cte1; -- non-recursive limit, inline cte1",
+        "Plan": [
+          "TableDual 0.00 root  rows:0"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with cte1 as (select 1), cte2 as (select 2) select * from cte1 union (with cte2 as (select 3) select * from cte2 union all select * from cte2) -- inline cte1, not inline cte2",
+        "Plan": [
+          "HashAgg 3.00 root  group by:Column#9, funcs:firstrow(Column#9)->Column#9",
+          "└─Union 3.00 root  ",
+          "  ├─Projection 1.00 root  1->Column#9",
+          "  │ └─TableDual 1.00 root  rows:1",
+          "  └─Union 2.00 root  ",
+          "    ├─CTEFullScan 1.00 root CTE:cte2 data:CTE_2",
+          "    └─CTEFullScan 1.00 root CTE:cte2 data:CTE_2",
+          "CTE_2 1.00 root  Non-Recursive CTE",
+          "└─Projection(Seed Part) 1.00 root  3->Column#5",
+          "  └─TableDual 1.00 root  rows:1"
+        ],
+        "Warning": null
+      },
       {
         "SQL": "with base1 as (WITH RECURSIVE cte(a) AS (with tmp as (select 1 as a) SELECT a from tmp UNION SELECT a+1 FROM cte) SELECT * FROM cte) select * from base1; -- issue #43318",
         "Plan": [
@@ -3901,6 +3957,63 @@
           "CTE_0 1.00 root  Non-Recursive CTE",
           "└─Projection(Seed Part) 1.00 root  1->Column#1",
           "  └─TableDual 1.00 root  rows:1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with a as (select 8 as id from dual),maxa as (select max(id) as max_id from a),b as (with recursive temp as (select 1 as lvl from dual union all select lvl+1 from temp, maxa where lvl < max_id)select * from temp) select * from b; -- issue #47711, maxa cannot be inlined because it contains agg and in the recursive part of cte temp",
+        "Plan": [
+          "CTEFullScan 1.64 root CTE:temp data:CTE_4",
+          "CTE_4 1.64 root  Recursive CTE",
+          "├─Projection(Seed Part) 1.00 root  1->Column#14",
+          "│ └─TableDual 1.00 root  rows:1",
+          "└─Projection(Recursive Part) 0.64 root  cast(plus(Column#15, 1), bigint(1) BINARY)->Column#18",
+          "  └─HashJoin 0.64 root  CARTESIAN inner join, other cond:lt(Column#15, Column#16)",
+          "    ├─Selection(Build) 0.80 root  not(isnull(Column#16))",
+          "    │ └─CTEFullScan 1.00 root CTE:maxa data:CTE_1",
+          "    └─Selection(Probe) 0.80 root  not(isnull(Column#15))",
+          "      └─CTETable 1.00 root  Scan on CTE_4",
+          "CTE_1 1.00 root  Non-Recursive CTE",
+          "└─StreamAgg(Seed Part) 1.00 root  funcs:max(Column#3)->Column#4",
+          "  └─Projection 1.00 root  8->Column#3",
+          "    └─TableDual 1.00 root  rows:1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with a as (select count(*) from t1), b as (select 2 as bb from a), c as (with recursive tmp as (select 1 as res from t1 union all select res+1 from tmp,b where res+1 < bb) select * from tmp) select * from c; -- inline a, cannot be inline b because b indirectly contains agg and in the recursive part of cte tmp",
+        "Plan": [
+          "CTEFullScan 20000.00 root CTE:tmp data:CTE_4",
+          "CTE_4 20000.00 root  Recursive CTE",
+          "├─Projection(Seed Part) 10000.00 root  1->Column#26",
+          "│ └─TableReader 10000.00 root  data:TableFullScan",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─Projection(Recursive Part) 10000.00 root  cast(plus(Column#27, 1), bigint(1) BINARY)->Column#30",
+          "  └─HashJoin 10000.00 root  CARTESIAN inner join, other cond:lt(plus(Column#27, 1), Column#28)",
+          "    ├─CTEFullScan(Build) 1.00 root CTE:b data:CTE_1",
+          "    └─CTETable(Probe) 10000.00 root  Scan on CTE_4",
+          "CTE_1 1.00 root  Non-Recursive CTE",
+          "└─Projection(Seed Part) 1.00 root  2->Column#8",
+          "  └─HashAgg 1.00 root  funcs:count(Column#37)->Column#35",
+          "    └─TableReader 1.00 root  data:HashAgg",
+          "      └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#37",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "with a as (select count(*) from t1), b as (select 2 as bb from a), c as (with recursive tmp as (select bb as res from b union all select res+1 from tmp where res +1 < 10) select * from tmp) select * from c; -- inline a, b, cannot be inline tmp, c",
+        "Plan": [
+          "CTEFullScan 1.80 root CTE:tmp data:CTE_4",
+          "CTE_4 1.80 root  Recursive CTE",
+          "├─Projection(Seed Part) 1.00 root  2->Column#37",
+          "│ └─HashAgg 1.00 root  funcs:count(Column#46)->Column#44",
+          "│   └─TableReader 1.00 root  data:HashAgg",
+          "│     └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#46",
+          "│       └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─Projection(Recursive Part) 0.80 root  cast(plus(Column#38, 1), bigint(1) BINARY)->Column#40",
+          "  └─Selection 0.80 root  lt(plus(Column#38, 1), 10)",
+          "    └─CTETable 1.00 root  Scan on CTE_4"
         ],
         "Warning": null
       }
