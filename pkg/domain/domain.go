@@ -2482,7 +2482,7 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 //  2. Cleanup: It cleans up corrupted analyze jobs. This operation is performed every three stats leases.
 //     It first retrieves the list of current analyze processes, then removes any analyze job
 //     that is not associated with a current process. Additionally, if the current instance is the owner,
-//     it also cleans up corrupted analyze jobs on dead nodes.
+//     it also cleans up corrupted analyze jobs on dead instances.
 func (do *Domain) analyzeJobsCleanupWorker(owner owner.Manager) {
 	defer util.Recover(metrics.LabelDomain, "analyzeJobsCleanupWorker", nil, false)
 	// For GC.
@@ -2528,13 +2528,13 @@ func (do *Domain) analyzeJobsCleanupWorker(owner owner.Manager) {
 
 			err := statsHandle.CleanupCorruptedAnalyzeJobsOnCurrentInstance(analyzeProcessIDs)
 			if err != nil {
-				logutil.BgLogger().Warn("cleanup analyze jobs on current node failed", zap.Error(err))
+				logutil.BgLogger().Warn("cleanup analyze jobs on current instance failed", zap.Error(err))
 			}
 
 			if owner.IsOwner() {
 				err = statsHandle.CleanupCorruptedAnalyzeJobsOnDeadInstances()
 				if err != nil {
-					logutil.BgLogger().Warn("cleanup analyze jobs on dead nodes failed", zap.Error(err))
+					logutil.BgLogger().Warn("cleanup analyze jobs on dead instances failed", zap.Error(err))
 				}
 			}
 		case <-do.exit:

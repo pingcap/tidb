@@ -80,7 +80,7 @@ func (sa *statsAnalyze) DeleteAnalyzeJobs(updateTime time.Time) error {
 }
 
 // CleanupCorruptedAnalyzeJobsOnCurrentInstance cleans up the potentially corrupted analyze job.
-// It only cleans up the jobs that are associated with the current node.
+// It only cleans up the jobs that are associated with the current instance.
 func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobsOnCurrentInstance(currentRunningProcessIDs map[uint64]struct{}) error {
 	return statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		return CleanupCorruptedAnalyzeJobsOnCurrentInstance(sctx, currentRunningProcessIDs)
@@ -118,7 +118,7 @@ const BatchUpdateAnalyzeJobSQL = `UPDATE mysql.analyze_jobs
             process_id = NULL
             WHERE id IN (%?)`
 
-// CleanupCorruptedAnalyzeJobsOnCurrentInstance cleans up the potentially corrupted analyze job from current node.
+// CleanupCorruptedAnalyzeJobsOnCurrentInstance cleans up the potentially corrupted analyze job from current instance.
 // Exported for testing.
 func CleanupCorruptedAnalyzeJobsOnCurrentInstance(
 	sctx sessionctx.Context,
@@ -151,7 +151,7 @@ func CleanupCorruptedAnalyzeJobsOnCurrentInstance(
 		if !row.IsNull(1) {
 			processID := row.GetUint64(1)
 			// If the process id is not in currentRunningProcessIDs, we need to clean up the job.
-			// They don't belong to current node any more.
+			// They don't belong to current instance any more.
 			if _, ok := currentRunningProcessIDs[processID]; !ok {
 				jobID := row.GetUint64(0)
 				jobIDs = append(jobIDs, jobID)
@@ -170,7 +170,7 @@ func CleanupCorruptedAnalyzeJobsOnCurrentInstance(
 			return errors.Trace(err)
 		}
 		statslogutil.StatsLogger.Info(
-			"clean up the potentially corrupted analyze jobs from current node",
+			"clean up the potentially corrupted analyze jobs from current instance",
 			zap.Uint64s("jobIDs", jobIDs),
 		)
 	}
@@ -178,7 +178,7 @@ func CleanupCorruptedAnalyzeJobsOnCurrentInstance(
 	return nil
 }
 
-// CleanupCorruptedAnalyzeJobsOnDeadInstances cleans up the potentially corrupted analyze job from dead nodes.
+// CleanupCorruptedAnalyzeJobsOnDeadInstances cleans up the potentially corrupted analyze job from dead instances.
 func CleanupCorruptedAnalyzeJobsOnDeadInstances(
 	sctx sessionctx.Context,
 ) error {
@@ -226,7 +226,7 @@ func CleanupCorruptedAnalyzeJobsOnDeadInstances(
 			return errors.Trace(err)
 		}
 		statslogutil.StatsLogger.Info(
-			"clean up the potentially corrupted analyze jobs from dead nodes",
+			"clean up the potentially corrupted analyze jobs from dead instances",
 			zap.Uint64s("jobIDs", jobIDs),
 		)
 	}
