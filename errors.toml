@@ -1733,7 +1733,11 @@ The FORMAT '%s' is not supported
 
 ["executor:8158"]
 error = '''
+<<<<<<< HEAD
 The URI of INFILE is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access_key_id={your_access_key_id ID}&secret_access_key={your_secret_access_key}&session_token={your_session_token}'
+=======
+The URI of %s is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access-key={your_access_key_id ID}&secret-access-key={your_secret_access_key}&session-token={your_session_token}'
+>>>>>>> d932d907f80 (errmsg: fix example s3 url in error msg (#49207))
 '''
 
 ["executor:8159"]

@@ -54,7 +54,11 @@ func (s *mockGCSSuite) TestErrorMessage() {
 	checkClientErrorMessage(s.T(), err, "ERROR 1054 (42S22): Unknown column 'wrong' in 'field list'")
 	err = s.tk.ExecToErr("LOAD DATA INFILE 'abc://1' INTO TABLE t;")
 	checkClientErrorMessage(s.T(), err,
+<<<<<<< HEAD:executor/loadremotetest/error_test.go
 		"ERROR 8158 (HY000): The URI of INFILE is invalid. Reason: storage abc not support yet. Please provide a valid URI, such as 's3://import/test.csv?access_key_id={your_access_key_id ID}&secret_access_key={your_secret_access_key}&session_token={your_session_token}'")
+=======
+		"ERROR 8158 (HY000): The URI of data source is invalid. Reason: storage abc not support yet. Please provide a valid URI, such as")
+>>>>>>> d932d907f80 (errmsg: fix example s3 url in error msg (#49207)):pkg/executor/test/loadremotetest/error_test.go
 	err = s.tk.ExecToErr("LOAD DATA INFILE 's3://no-network' INTO TABLE t;")
 	checkClientErrorMessage(s.T(), err,
 		"ERROR 8159 (HY000): Access to the source file has been denied. Reason: failed to get region of bucket no-network. Please check the URI, access key and secret access key are correct")
