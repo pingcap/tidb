@@ -174,7 +174,7 @@ func (e *ShuffleExec) Close() error {
 			}
 		}
 		// close child executor of each worker
-		if err := w.childExec.Close(); err != nil && firstErr == nil {
+		if err := exec.Close(w.childExec); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -191,7 +191,7 @@ func (e *ShuffleExec) Close() error {
 
 	// close dataSources
 	for _, dataSource := range e.dataSources {
-		if err := dataSource.Close(); err != nil && firstErr == nil {
+		if err := exec.Close(dataSource); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}

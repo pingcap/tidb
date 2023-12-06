@@ -218,11 +218,11 @@ func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err e
 }
 
 func (p *cteProducer) closeProducer() (err error) {
-	if err = p.seedExec.Close(); err != nil {
+	if err = exec.Close(p.seedExec); err != nil {
 		return err
 	}
 	if p.recursiveExec != nil {
-		if err = p.recursiveExec.Close(); err != nil {
+		if err = exec.Close(p.recursiveExec); err != nil {
 			return err
 		}
 		// `iterInTbl` and `resTbl` are shared by multiple operators,
@@ -414,7 +414,7 @@ func (p *cteProducer) computeRecursivePart(ctx context.Context) (err error) {
 			}
 			// Make sure iterInTbl is setup before Close/Open,
 			// because some executors will read iterInTbl in Open() (like IndexLookupJoin).
-			if err = p.recursiveExec.Close(); err != nil {
+			if err = exec.Close(p.recursiveExec); err != nil {
 				return
 			}
 			if err = exec.Open(ctx, p.recursiveExec); err != nil {
