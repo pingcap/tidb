@@ -119,7 +119,7 @@ func (e *CTEExec) Close() (err error) {
 				ok := v.(bool)
 				if ok {
 					// mock an oom panic, returning ErrMemoryExceedForQuery for error identification in recovery work.
-					panic(exeerrors.ErrMemoryExceedForQuery)
+					panic(memory.PanicMemoryExceedWarnMsg)
 				}
 			})
 			// closeProducer() only close seedExec and recursiveExec, will not touch resTbl.
