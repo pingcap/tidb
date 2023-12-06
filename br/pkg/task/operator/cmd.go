@@ -66,9 +66,11 @@ type AdaptEnvForSnapshotBackupContext struct {
 	runGrp *errgroup.Group
 }
 
-func (cx *AdaptEnvForSnapshotBackupContext) GetBackOffer() utils.Backoffer {
+func (cx *AdaptEnvForSnapshotBackupContext) GetBackOffer(operation string) utils.Backoffer {
 	state := utils.InitialRetryState(64, 1*time.Second, 10*time.Second)
-	return &state
+	bo := utils.VerboseRetry(logutil.CL(cx).With(zap.String("operation", operation)), &state)
+
+	return bo
 }
 
 func (cx *AdaptEnvForSnapshotBackupContext) ReadyL(name string, notes ...zap.Field) {
@@ -133,10 +135,11 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 
 func pauseImporting(cx *AdaptEnvForSnapshotBackupContext) error {
 	suspendLightning := utils.NewSuspendImporting("prepare_for_snapshot_backup", cx.kvMgr)
-	bo := utils.VerboseRetry(logutil.CL(cx).With(zap.String("operation", "pause_lightning")), cx.GetBackOffer())
-	_, err := utils.WithRetryV2(cx, bo, func(_ context.Context) (map[uint64]bool, error) {
-		return suspendLightning.DenyAllStores(cx, cx.cfg.TTL)
+	limitedCx, cancel := context.WithTimeout(cx, cx.cfg.TTL)
+	_, err := utils.WithRetryV2(limitedCx, cx.GetBackOffer("suspend_lightning"), func(_ context.Context) (map[uint64]bool, error) {
+		return suspendLightning.DenyAllStores(limitedCx, cx.cfg.TTL)
 	})
+	cancel()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -146,7 +149,8 @@ func pauseImporting(cx *AdaptEnvForSnapshotBackupContext) error {
 			if ctx.Err() != nil {
 				return errors.Annotate(ctx.Err(), "cleaning up timed out")
 			}
-			res, err := utils.WithRetryV2(ctx, bo, func(ctx context.Context) (map[uint64]bool, error) { return suspendLightning.AllowAllStores(ctx) })
+			res, err := utils.WithRetryV2(ctx, cx.GetBackOffer("restore_lightning"),
+				func(ctx context.Context) (map[uint64]bool, error) { return suspendLightning.AllowAllStores(ctx) })
 			if err != nil {
 				return errors.Annotatef(err, "failed to allow all stores")
 			}
