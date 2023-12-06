@@ -31,13 +31,16 @@ import (
 // with only one file for data and stat.
 type OneFileWriter struct {
 	// storage related.
-	store    storage.ExternalStorage
-	kvStore  *KeyValueStore
-	kvBuffer *membuf.Buffer
+	store        storage.ExternalStorage
+	kvStore      *KeyValueStore
+	kvBuffer     *membuf.Buffer
+	memSizeLimit uint64
 
 	// Statistic information per writer.
 	totalSize uint64
-	rc        *rangePropertiesCollector
+	curSize   uint64
+
+	rc *rangePropertiesCollector
 
 	// file information.
 	writerID       string
@@ -88,7 +91,20 @@ func (w *OneFileWriter) DirectWrite(ctx context.Context, buf []byte) error {
 	if err != nil {
 		return err
 	}
+	w.curSize += uint64(len(buf))
+
+	if w.curSize > w.memSizeLimit {
+		w.curSize = 0
+		w.kvStore.Close()
+		encodedStat := w.rc.encode()
+		_, err := w.statWriter.Write(ctx, encodedStat)
+		if err != nil {
+			return err
+		}
+		w.rc.reset()
+	}
 	w.totalSize += uint64(len(buf) - lengthBytes*2)
+
 	return nil
 }
 

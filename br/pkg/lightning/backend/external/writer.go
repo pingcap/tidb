@@ -245,6 +245,7 @@ func (b *WriterBuilder) BuildOneFile(
 			propKeysDist: b.propKeysDist,
 		},
 		kvBuffer:       p.NewBuffer(membuf.WithMemoryLimit(b.memSizeLimit)),
+		memSizeLimit:   b.memSizeLimit,
 		store:          store,
 		filenamePrefix: filenamePrefix,
 		writerID:       writerID,
