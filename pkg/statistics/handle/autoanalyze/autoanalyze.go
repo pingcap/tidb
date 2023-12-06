@@ -178,6 +178,7 @@ func CleanupCorruptedAnalyzeJobsOnCurrentNode(
 	return nil
 }
 
+// CleanupCorruptedAnalyzeJobsOnDeadNodes cleans up the potentially corrupted analyze job from dead nodes.
 func CleanupCorruptedAnalyzeJobsOnDeadNodes(
 	sctx sessionctx.Context,
 ) error {
