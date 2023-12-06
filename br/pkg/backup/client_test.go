@@ -379,6 +379,7 @@ func TestFindTargetPeer(t *testing.T) {
 	storeIDMap := make(map[uint64]struct{})
 	storeIDMap[42] = struct{}{}
 	leader, err = s.backupClient.FindTargetPeer(ctx, []byte("m"), false, storeIDMap)
+	require.NoError(t, err)
 	// check passed keys with target peer
 	require.Equal(t, 43, int(leader.GetId()))
 
