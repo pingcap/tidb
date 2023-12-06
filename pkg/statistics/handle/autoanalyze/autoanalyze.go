@@ -124,6 +124,10 @@ func CleanupCorruptedAnalyzeJobsOnCurrentNode(
 	sctx sessionctx.Context,
 	currentRunningProcessIDs map[uint64]struct{},
 ) error {
+	if len(currentRunningProcessIDs) == 0 {
+		return nil
+	}
+
 	serverInfo, err := infosync.GetServerInfo()
 	if err != nil {
 		return errors.Trace(err)

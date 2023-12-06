@@ -2522,6 +2522,9 @@ func (do *Domain) analyzeJobsCleanupWorker(owner owner.Manager) {
 					analyzeProcessIDs[process.ID] = struct{}{}
 				}
 			}
+			if len(analyzeProcessIDs) == 0 {
+				continue
+			}
 
 			err := statsHandle.CleanupCorruptedAnalyzeJobsOnCurrentNode(analyzeProcessIDs)
 			if err != nil {
