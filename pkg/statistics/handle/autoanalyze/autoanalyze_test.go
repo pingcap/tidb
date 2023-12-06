@@ -359,7 +359,7 @@ func TestCleanupCorruptedAnalyzeJobsOnCurrentInstance(t *testing.T) {
 	c.AppendInt64(0, int64(3)) // id
 	c.AppendInt64(1, int64(3)) // process_id
 	// Create a row from the chunk
-	rows := []chunk.Row{c.GetRow(0) /* id */, c.GetRow(1) /* process id */}
+	rows := []chunk.Row{c.GetRow(0), c.GetRow(1), c.GetRow(2)}
 
 	// Set up the mock function to return the row
 	exec.EXPECT().ExecRestrictedSQL(
@@ -386,6 +386,33 @@ func TestCleanupCorruptedAnalyzeJobsOnCurrentInstance(t *testing.T) {
 			3: {},
 			4: {},
 		},
+	)
+	require.NoError(t, err)
+
+	// Set up the mock function to return the row
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&test.CtxMatcher{}),
+		statsutil.UseCurrentSessionOpt,
+		autoanalyze.SelectAnalyzeJobsOnCurrentInstanceSQL,
+		"127.0.0.1:4000",
+	).Return(rows, nil, nil)
+
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&test.CtxMatcher{}),
+		statsutil.UseCurrentSessionOpt,
+		autoanalyze.BatchUpdateAnalyzeJobSQL,
+		[]interface{}{
+			[]uint64{
+				uint64(1),
+				uint64(3),
+			},
+		},
+	).Return(nil, nil, nil)
+
+	// No running analyze jobs on current instance.
+	err = autoanalyze.CleanupCorruptedAnalyzeJobsOnCurrentInstance(
+		mock.WrapAsSCtx(exec),
+		map[uint64]struct{}{},
 	)
 	require.NoError(t, err)
 }
@@ -418,7 +445,7 @@ func TestCleanupCorruptedAnalyzeJobsOnDeadInstances(t *testing.T) {
 	c.AppendInt64(0, int64(3))          // id
 	c.AppendString(1, "127.0.0.1:4000") // valid instance
 	// Create a row from the chunk
-	rows := []chunk.Row{c.GetRow(0) /* id */, c.GetRow(1) /* instance id */}
+	rows := []chunk.Row{c.GetRow(0), c.GetRow(1), c.GetRow(2)}
 	// Set up the mock function to return the row
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&test.CtxMatcher{}),
