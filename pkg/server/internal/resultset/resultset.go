@@ -77,7 +77,6 @@ func (trs *tidbResultSet) Close() {
 	}
 	terror.Call(trs.recordSet.Close)
 	trs.recordSet = nil
-	return
 }
 
 // IsClosed implements ResultSet.IsClosed interface.
