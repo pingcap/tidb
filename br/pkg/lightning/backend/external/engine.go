@@ -369,6 +369,7 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 	// release the reference of e.memKVsAndBuffers
 	e.memKVsAndBuffers.keys = nil
 	e.memKVsAndBuffers.values = nil
+	e.memKVsAndBuffers.memKVBuffers = nil
 
 	sendFn := func(dr common.DataAndRange) error {
 		select {

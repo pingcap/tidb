@@ -22,9 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 	"golang.org/x/exp/rand"
 )
 
@@ -140,11 +138,9 @@ func TestKVReadWrite(t *testing.T) {
 	rand.Seed(uint64(seed))
 	t.Logf("seed: %d", seed)
 	ctx := context.Background()
-
 	memStore := storage.NewMemStorage()
 	writer, err := memStore.Create(ctx, "/test", nil)
 	require.NoError(t, err)
-
 	rc := &rangePropertiesCollector{
 		propSizeDist: 100,
 		propKeysDist: 2,
@@ -153,18 +149,15 @@ func TestKVReadWrite(t *testing.T) {
 	kvStore, err := NewKeyValueStore(ctx, writer, rc)
 	require.NoError(t, err)
 
-	kvCnt := rand.Intn(10) + 11
+	kvCnt := rand.Intn(10) + 10
 	keys := make([][]byte, kvCnt)
 	values := make([][]byte, kvCnt)
 	for i := 0; i < kvCnt; i++ {
 		randLen := rand.Intn(10) + 1
 		keys[i] = make([]byte, randLen)
-		logutil.BgLogger().Info("key len", zap.Any("len", randLen))
 		rand.Read(keys[i])
 		randLen = rand.Intn(10) + 1
 		values[i] = make([]byte, randLen)
-		logutil.BgLogger().Info("val len", zap.Any("len", randLen))
-
 		rand.Read(values[i])
 		err = kvStore.addEncodedData(getEncodedData(keys[i], values[i]))
 		require.NoError(t, err)
