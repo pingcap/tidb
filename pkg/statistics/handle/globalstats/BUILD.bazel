@@ -35,7 +35,12 @@ go_test(
     name = "globalstats_test",
     timeout = "short",
     srcs = [
+<<<<<<< HEAD
         "globalstats_test.go",
+=======
+        "global_stats_internal_test.go",
+        "global_stats_test.go",
+>>>>>>> 6dcb0742538 (statistics: fix wrong file names (#49028))
         "main_test.go",
         "topn_bench_test.go",
         "topn_test.go",
