@@ -98,7 +98,7 @@ func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobsOnDeadNodes() error {
 // SelectAnalyzeJobsOnCurrentInstanceSQL is the SQL to select the analyze jobs whose
 // state is `pending` or `running` and the update time is more than 10 minutes ago
 // and the instance is current instance.
-const SelectAnalyzeJobsOnCurrentInstanceSQL = `SELECT id, process_id, instance
+const SelectAnalyzeJobsOnCurrentInstanceSQL = `SELECT id, process_id
 		FROM mysql.analyze_jobs
 		WHERE instance = %?
 		AND state IN ('pending', 'running')
@@ -106,7 +106,7 @@ const SelectAnalyzeJobsOnCurrentInstanceSQL = `SELECT id, process_id, instance
 
 // SelectAnalyzeJobsSQL is the SQL to select the analyze jobs whose
 // state is `pending` or `running` and the update time is more than 10 minutes ago.
-const SelectAnalyzeJobsSQL = `SELECT id, process_id, instance
+const SelectAnalyzeJobsSQL = `SELECT id, instance
 		FROM mysql.analyze_jobs
 		WHERE state IN ('pending', 'running')
 		AND TIMESTAMPDIFF(MINUTE, update_time, NOW()) > 10`
@@ -207,7 +207,7 @@ func CleanupCorruptedAnalyzeJobsOnDeadNodes(
 	for _, row := range rows {
 		// If the instance is not in instances, we need to clean up the job.
 		// It means the instance is down or the instance is not in the cluster any more.
-		instance := row.GetString(2)
+		instance := row.GetString(1)
 		if _, ok := instances[instance]; !ok {
 			jobID := row.GetUint64(0)
 			jobIDs = append(jobIDs, jobID)

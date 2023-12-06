@@ -330,33 +330,6 @@ func getMockedServerInfo() map[string]*infosync.ServerInfo {
 	return mockedAllServerInfos
 }
 
-func createJobs() []chunk.Row {
-	// Create a new chunk with capacity for three fields
-	c := chunk.NewChunkWithCapacity([]*types.FieldType{
-		types.NewFieldType(mysql.TypeLonglong), // id
-		types.NewFieldType(mysql.TypeLonglong), // process_id
-		types.NewFieldType(mysql.TypeVarchar),  // instance
-	}, 3)
-
-	// Append values for each field
-	c.AppendInt64(0, int64(1))          // id
-	c.AppendInt64(1, int64(1))          // process_id
-	c.AppendString(2, "127.0.0.1:4000") // instance
-
-	c.AppendInt64(0, int64(2))         // id
-	c.AppendNull(1)                    // process_id
-	c.AppendString(2, "10.0.0.1:4000") // unknown instance
-
-	c.AppendInt64(0, int64(3))          // id
-	c.AppendInt64(1, int64(3))          // process_id
-	c.AppendString(2, "127.0.0.1:4000") // valid instance
-
-	// Create a row from the chunk
-	rows := []chunk.Row{c.GetRow(0), c.GetRow(1), c.GetRow(2)}
-
-	return rows
-}
-
 func TestCleanupCorruptedAnalyzeJobsOnCurrentNode(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -369,13 +342,32 @@ func TestCleanupCorruptedAnalyzeJobsOnCurrentNode(t *testing.T) {
 		),
 	)
 
+	// Create a new chunk with capacity for three fields
+	c := chunk.NewChunkWithCapacity([]*types.FieldType{
+		types.NewFieldType(mysql.TypeLonglong), // id
+		types.NewFieldType(mysql.TypeLonglong), // process_id
+		types.NewFieldType(mysql.TypeVarchar),  // instance
+	}, 3)
+
+	// Append values for each field
+	c.AppendInt64(0, int64(1)) // id
+	c.AppendInt64(1, int64(1)) // process_id
+
+	c.AppendInt64(0, int64(2)) // id
+	c.AppendNull(1)            // process_id
+
+	c.AppendInt64(0, int64(3)) // id
+	c.AppendInt64(1, int64(3)) // process_id
+	// Create a row from the chunk
+	rows := []chunk.Row{c.GetRow(0) /* id */, c.GetRow(1) /* process id */}
+
 	// Set up the mock function to return the row
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&test.CtxMatcher{}),
 		statsutil.UseCurrentSessionOpt,
 		autoanalyze.SelectAnalyzeJobsOnCurrentInstanceSQL,
 		"127.0.0.1:4000",
-	).Return(createJobs(), nil, nil)
+	).Return(rows, nil, nil)
 
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&test.CtxMatcher{}),
@@ -410,13 +402,29 @@ func TestCleanupCorruptedAnalyzeJobsOnDeadNodes(t *testing.T) {
 			makeFailpointRes(t, getMockedServerInfo()),
 		),
 	)
+	// Create a new chunk with capacity for three fields
+	c := chunk.NewChunkWithCapacity([]*types.FieldType{
+		types.NewFieldType(mysql.TypeLonglong), // id
+		types.NewFieldType(mysql.TypeVarchar),  // instance
+	}, 3)
 
+	// Append values for each field
+	c.AppendInt64(0, int64(1))          // id
+	c.AppendString(1, "127.0.0.1:4000") // instance
+
+	c.AppendInt64(0, int64(2))         // id
+	c.AppendString(1, "10.0.0.1:4000") // unknown instance
+
+	c.AppendInt64(0, int64(3))          // id
+	c.AppendString(1, "127.0.0.1:4000") // valid instance
+	// Create a row from the chunk
+	rows := []chunk.Row{c.GetRow(0) /* id */, c.GetRow(1) /* instance id */}
 	// Set up the mock function to return the row
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&test.CtxMatcher{}),
 		statsutil.UseCurrentSessionOpt,
 		autoanalyze.SelectAnalyzeJobsSQL,
-	).Return(createJobs(), nil, nil)
+	).Return(rows, nil, nil)
 
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&test.CtxMatcher{}),
