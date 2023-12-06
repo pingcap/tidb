@@ -116,8 +116,8 @@ func MergeOverlappingFiles(
 		logutil.Logger(ctx).Info("sorting in MergeOverlappingFiles",
 			zap.Duration("cost time", time.Since(now)))
 
-		for _, buf := range loaded.kvs {
-			err = writer.DirectWrite(ctx, buf)
+		for i, key := range loaded.keys {
+			err = writer.WriteRow(ctx, key, loaded.values[i])
 			if err != nil {
 				return err
 			}

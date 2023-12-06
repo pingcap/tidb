@@ -75,6 +75,7 @@ func (r *kvReader) nextKVBytes() (kv []byte, err error) {
 	}
 	keyLen := int(binary.BigEndian.Uint64(keyLenBytes))
 	valLenBytes, err := r.byteReader.readNBytes(8)
+	keyLenBytes = append(keyLenBytes, valLenBytes...)
 	if err != nil {
 		return nil, noEOF(err)
 	}
@@ -83,7 +84,7 @@ func (r *kvReader) nextKVBytes() (kv []byte, err error) {
 	if err != nil {
 		return nil, noEOF(err)
 	}
-	return append(append(keyLenBytes, valLenBytes...), keyAndValue...), nil
+	return append(keyLenBytes, keyAndValue...), nil
 }
 
 // noEOF converts the EOF error to io.ErrUnexpectedEOF.

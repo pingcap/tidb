@@ -113,15 +113,10 @@ func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) err
 	// 1. encode data and write to kvStore.
 	keyLen := len(idxKey)
 	length := len(idxKey) + len(idxVal) + lengthBytes*2
-	buf, _ := w.kvBuffer.AllocBytesWithSliceLocation(length)
-	if buf == nil {
-		w.kvBuffer.Reset()
-		buf, _ = w.kvBuffer.AllocBytesWithSliceLocation(length)
-		// we now don't support KV larger than blockSize
-		if buf == nil {
-			return errors.Errorf("failed to allocate kv buffer: %d", length)
-		}
-		// 2. write statistics if one kvBuffer is used.
+	w.curSize += uint64(length)
+
+	if w.curSize > w.memSizeLimit {
+		w.curSize = 0
 		w.kvStore.Close()
 		encodedStat := w.rc.encode()
 		_, err := w.statWriter.Write(ctx, encodedStat)
@@ -130,11 +125,13 @@ func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) err
 		}
 		w.rc.reset()
 	}
-	binary.BigEndian.AppendUint64(buf[:0], uint64(keyLen))
-	binary.BigEndian.AppendUint64(buf[lengthBytes:lengthBytes], uint64(len(idxVal)))
-	copy(buf[lengthBytes*2:], idxKey)
-	copy(buf[lengthBytes*2+keyLen:], idxVal)
-	err := w.kvStore.addEncodedData(buf[:length])
+	data := make([]byte, length)
+
+	binary.BigEndian.AppendUint64(data[:0], uint64(keyLen))
+	binary.BigEndian.AppendUint64(data[lengthBytes:lengthBytes], uint64(len(idxVal)))
+	copy(data[lengthBytes*2:], idxKey)
+	copy(data[lengthBytes*2+keyLen:], idxVal)
+	err := w.kvStore.addEncodedData(data[:length])
 	if err != nil {
 		return err
 	}

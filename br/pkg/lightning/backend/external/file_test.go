@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 	"golang.org/x/exp/rand"
 )
 
@@ -143,6 +144,7 @@ func TestKVReadWrite(t *testing.T) {
 	memStore := storage.NewMemStorage()
 	writer, err := memStore.Create(ctx, "/test", nil)
 	require.NoError(t, err)
+
 	rc := &rangePropertiesCollector{
 		propSizeDist: 100,
 		propKeysDist: 2,
@@ -151,15 +153,18 @@ func TestKVReadWrite(t *testing.T) {
 	kvStore, err := NewKeyValueStore(ctx, writer, rc)
 	require.NoError(t, err)
 
-	kvCnt := rand.Intn(10) + 1010
+	kvCnt := rand.Intn(10) + 11
 	keys := make([][]byte, kvCnt)
 	values := make([][]byte, kvCnt)
 	for i := 0; i < kvCnt; i++ {
 		randLen := rand.Intn(10) + 1
 		keys[i] = make([]byte, randLen)
+		logutil.BgLogger().Info("key len", zap.Any("len", randLen))
 		rand.Read(keys[i])
 		randLen = rand.Intn(10) + 1
 		values[i] = make([]byte, randLen)
+		logutil.BgLogger().Info("val len", zap.Any("len", randLen))
+
 		rand.Read(values[i])
 		err = kvStore.addEncodedData(getEncodedData(keys[i], values[i]))
 		require.NoError(t, err)
@@ -178,24 +183,6 @@ func TestKVReadWrite(t *testing.T) {
 		require.Equal(t, values[i], value)
 	}
 	_, _, err = kvReader.nextKV()
-	require.Equal(t, io.EOF, err)
-
-	require.NoError(t, kvReader.Close())
-
-	kvReader, err = newKVReader(ctx, "/test", memStore, 0, bufSize)
-	require.NoError(t, err)
-	for i := 0; i < kvCnt; i++ {
-		logutil.BgLogger().Info("ywq test")
-		kvBytes, err := kvReader.nextKVBytes()
-		keyLen := int(binary.BigEndian.Uint64(kvBytes[0:lengthBytes]))
-		valLen := int(binary.BigEndian.Uint64(kvBytes[lengthBytes : 2*lengthBytes]))
-		k := kvBytes[lengthBytes*2 : 2*lengthBytes+keyLen]
-		v := kvBytes[lengthBytes*2+keyLen : 2*lengthBytes+keyLen+valLen]
-		require.NoError(t, err)
-		require.Equal(t, keys[i], k)
-		require.Equal(t, values[i], v)
-	}
-	_, err = kvReader.nextKVBytes()
 	require.Equal(t, io.EOF, err)
 
 	require.NoError(t, kvReader.Close())

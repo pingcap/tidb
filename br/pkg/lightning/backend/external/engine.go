@@ -17,7 +17,6 @@ package external
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"encoding/hex"
 	"io"
 	"sort"
@@ -52,11 +51,11 @@ import (
 const maxCloudStorageConnections = 1000
 
 type memKVsAndBuffers struct {
-	mu     sync.Mutex
-	keys   [][]byte
-	values [][]byte
-	kvs    [][]byte
-	size   int
+	mu           sync.Mutex
+	keys         [][]byte
+	values       [][]byte
+	memKVBuffers []*membuf.Buffer
+	size         int
 }
 
 // Engine stored sorted key/value pairs in an external storage.
@@ -227,17 +226,14 @@ func readOneFile(
 		}
 	}
 
+	// this buffer is associated with data slices and will return to caller
+	memBuf := bufPool.NewBuffer()
 	keys := make([][]byte, 0, 1024)
 	values := make([][]byte, 0, 1024)
-	kvs := make([][]byte, 0, 1024)
 	size := 0
 
 	for {
-		kvBytes, err := rd.nextKVBytes()
-		keyLen := int(binary.BigEndian.Uint64(kvBytes[0:lengthBytes]))
-		valLen := int(binary.BigEndian.Uint64(kvBytes[lengthBytes : 2*lengthBytes]))
-		k := kvBytes[2*lengthBytes : 2*lengthBytes+keyLen]
-		v := kvBytes[2*lengthBytes+keyLen : 2*lengthBytes+keyLen+valLen]
+		k, v, err := rd.nextKV()
 		if err != nil {
 			if err == io.EOF {
 				break
@@ -250,16 +246,15 @@ func readOneFile(
 		if bytes.Compare(k, endKey) >= 0 {
 			break
 		}
-		keys = append(keys, k)
-		values = append(values, v)
-		kvs = append(kvs, kvBytes)
+		keys = append(keys, memBuf.AddBytes(k))
+		values = append(values, memBuf.AddBytes(v))
 		size += len(k) + len(v)
 	}
 	readAndSortDurHist.Observe(time.Since(ts).Seconds())
 	output.mu.Lock()
 	output.keys = append(output.keys, keys...)
 	output.values = append(output.values, values...)
-	output.kvs = append(output.kvs, kvs...)
+	output.memKVBuffers = append(output.memKVBuffers, memBuf)
 	output.size += size
 	output.mu.Unlock()
 	return nil
@@ -367,7 +362,7 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 	readRateHist.Observe(float64(size) / 1024.0 / 1024.0 / readSecond)
 	sortRateHist.Observe(float64(size) / 1024.0 / 1024.0 / sortSecond)
 
-	data := e.buildIngestData(e.memKVsAndBuffers.keys, e.memKVsAndBuffers.values)
+	data := e.buildIngestData(e.memKVsAndBuffers.keys, e.memKVsAndBuffers.values, e.memKVsAndBuffers.memKVBuffers)
 
 	// release the reference of e.memKVsAndBuffers
 	e.memKVsAndBuffers.keys = nil
@@ -414,7 +409,7 @@ func (e *Engine) LoadIngestData(
 	return nil
 }
 
-func (e *Engine) buildIngestData(keys, values [][]byte) *MemoryIngestData {
+func (e *Engine) buildIngestData(keys, values [][]byte, buf []*membuf.Buffer) *MemoryIngestData {
 	return &MemoryIngestData{
 		keyAdapter:         e.keyAdapter,
 		duplicateDetection: e.duplicateDetection,
@@ -423,6 +418,7 @@ func (e *Engine) buildIngestData(keys, values [][]byte) *MemoryIngestData {
 		keys:               keys,
 		values:             values,
 		ts:                 e.ts,
+		memBuf:             buf,
 		refCnt:             atomic.NewInt64(0),
 		importedKVSize:     e.importedKVSize,
 		importedKVCount:    e.importedKVCount,
