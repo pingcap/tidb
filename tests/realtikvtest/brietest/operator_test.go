@@ -166,4 +166,5 @@ func TestOperator(t *testing.T) {
 	}, 10*time.Second, time.Second)
 
 	verifySchedulerNotStopped(req, cfg)
+	verifyGCNotStopped(req, cfg)
 }
