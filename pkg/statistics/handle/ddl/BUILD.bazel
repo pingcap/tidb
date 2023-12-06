@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "ddl",
+    srcs = ["ddl.go"],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/ddl",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/infoschema",
+        "//pkg/parser/model",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/statistics/handle/logutil",
+        "//pkg/statistics/handle/util",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
+    ],
+)
