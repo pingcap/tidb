@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -2754,7 +2755,7 @@ type baseDateArithmetical struct {
 
 func newDateArithmeticalUtil() baseDateArithmetical {
 	return baseDateArithmetical{
-		intervalRegexp: regexp.MustCompile(`-?[\d]+`),
+		intervalRegexp: regexp.MustCompile(`^[+-]?[\d]+`),
 	}
 }
 
@@ -2864,17 +2865,55 @@ func (du *baseDateArithmetical) getIntervalFromString(ctx sessionctx.Context, ar
 	if isNull || err != nil {
 		return "", true, err
 	}
-	// unit "DAY" and "HOUR" has to be specially handled.
-	if toLower := strings.ToLower(unit); toLower == "day" || toLower == "hour" {
-		if strings.ToLower(interval) == "true" {
-			interval = "1"
-		} else if strings.ToLower(interval) == "false" {
+
+	interval, err = du.intervalReformatString(ctx.GetSessionVars().StmtCtx.ErrCtx(), interval, unit)
+	return interval, false, err
+}
+
+func (du *baseDateArithmetical) intervalReformatString(ec errctx.Context, str string, unit string) (interval string, err error) {
+	switch strings.ToUpper(unit) {
+	case "MICROSECOND", "MINUTE", "HOUR", "DAY", "WEEK", "MONTH", "QUARTER", "YEAR":
+		str = strings.TrimSpace(str)
+		// a single unit value has to be specially handled.
+		interval = du.intervalRegexp.FindString(str)
+		if interval == "" {
 			interval = "0"
-		} else {
-			interval = du.intervalRegexp.FindString(interval)
+		}
+
+		if interval != str {
+			err = ec.HandleError(types.ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", str))
+		}
+	case "SECOND":
+		// The unit SECOND is specially handled, for example:
+		// date + INTERVAL "1e2" SECOND = date + INTERVAL 100 second
+		// date + INTERVAL "1.6" SECOND = date + INTERVAL 1.6 second
+		// But:
+		// date + INTERVAL "1e2" MINUTE = date + INTERVAL 1 MINUTE
+		// date + INTERVAL "1.6" MINUTE = date + INTERVAL 1 MINUTE
+		var dec types.MyDecimal
+		err = ec.HandleError(dec.FromString([]byte(str)))
+		interval = string(dec.ToString())
+	default:
+		interval = str
+	}
+	return interval, err
+}
+
+func (du *baseDateArithmetical) intervalDecimalToString(tc types.Context, dec *types.MyDecimal) (string, error) {
+	var rounded types.MyDecimal
+	err := dec.Round(&rounded, 0, types.ModeHalfUp)
+	if err != nil {
+		return "", err
+	}
+
+	intVal, err := rounded.ToInt()
+	if err != nil {
+		if err = tc.HandleTruncate(types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", dec.String())); err != nil {
+			return "", err
 		}
 	}
-	return interval, false, nil
+
+	return strconv.FormatInt(intVal, 10), nil
 }
 
 func (du *baseDateArithmetical) getIntervalFromDecimal(ctx sessionctx.Context, args []Expression, row chunk.Row, unit string) (string, bool, error) {
@@ -2921,9 +2960,8 @@ func (du *baseDateArithmetical) getIntervalFromDecimal(ctx sessionctx.Context, a
 		// interval is already like the %f format.
 	default:
 		// YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE, MICROSECOND
-		castExpr := WrapWithCastAsString(ctx, WrapWithCastAsInt(ctx, args[1]))
-		interval, isNull, err = castExpr.EvalString(ctx, row)
-		if isNull || err != nil {
+		interval, err = du.intervalDecimalToString(ctx.GetSessionVars().StmtCtx.TypeCtx(), decimal)
+		if err != nil {
 			return "", true, err
 		}
 	}
@@ -2936,6 +2974,11 @@ func (du *baseDateArithmetical) getIntervalFromInt(ctx sessionctx.Context, args 
 	if isNull || err != nil {
 		return "", true, err
 	}
+
+	if mysql.HasUnsignedFlag(args[1].GetType().GetFlag()) {
+		return strconv.FormatUint(uint64(interval), 10), false, nil
+	}
+
 	return strconv.FormatInt(interval, 10), false, nil
 }
 
@@ -2962,7 +3005,10 @@ func (du *baseDateArithmetical) addDate(ctx sessionctx.Context, date types.Time,
 	}
 
 	goTime = goTime.Add(time.Duration(nano))
-	goTime = types.AddDate(year, month, day, goTime)
+	goTime, err = types.AddDate(year, month, day, goTime)
+	if err != nil {
+		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
+	}
 
 	// Adjust fsp as required by outer - always respect type inference.
 	date.SetFsp(resultFsp)
@@ -2972,10 +3018,6 @@ func (du *baseDateArithmetical) addDate(ctx sessionctx.Context, date types.Time,
 		hour, minute, second := goTime.Clock()
 		date.SetCoreTime(types.FromDate(0, 0, 0, hour, minute, second, goTime.Nanosecond()/1000))
 		return date, false, nil
-	}
-
-	if goTime.Year() < 0 || goTime.Year() > 9999 {
-		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
 	}
 
 	date.SetCoreTime(types.FromGoTime(goTime))
@@ -3236,20 +3278,7 @@ func (du *baseDateArithmetical) vecGetIntervalFromString(b *baseBuiltinFunc, ctx
 		return err
 	}
 
-	amendInterval := func(val string) string {
-		return val
-	}
-	if unitLower := strings.ToLower(unit); unitLower == "day" || unitLower == "hour" {
-		amendInterval = func(val string) string {
-			if intervalLower := strings.ToLower(val); intervalLower == "true" {
-				return "1"
-			} else if intervalLower == "false" {
-				return "0"
-			}
-			return du.intervalRegexp.FindString(val)
-		}
-	}
-
+	ec := ctx.GetSessionVars().StmtCtx.ErrCtx()
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
@@ -3257,7 +3286,11 @@ func (du *baseDateArithmetical) vecGetIntervalFromString(b *baseBuiltinFunc, ctx
 			continue
 		}
 
-		result.AppendString(amendInterval(buf.GetString(i)))
+		interval, err := du.intervalReformatString(ec, buf.GetString(i), unit)
+		if err != nil {
+			return err
+		}
+		result.AppendString(interval)
 	}
 	return nil
 }
@@ -3325,10 +3358,18 @@ func (du *baseDateArithmetical) vecGetIntervalFromDecimal(b *baseBuiltinFunc, ct
 		/* keep interval as original decimal */
 	default:
 		// YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE, MICROSECOND
-		castExpr := WrapWithCastAsString(ctx, WrapWithCastAsInt(ctx, b.args[1]))
 		amendInterval = func(_ string, row *chunk.Row) (string, bool, error) {
-			interval, isNull, err := castExpr.EvalString(ctx, *row)
-			return interval, isNull || err != nil, err
+			dec, isNull, err := b.args[1].EvalDecimal(ctx, *row)
+			if isNull || err != nil {
+				return "", true, err
+			}
+
+			str, err := du.intervalDecimalToString(ctx.GetSessionVars().StmtCtx.TypeCtx(), dec)
+			if err != nil {
+				return "", true, err
+			}
+
+			return str, false, nil
 		}
 	}
 
