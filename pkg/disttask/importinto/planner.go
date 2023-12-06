@@ -309,6 +309,7 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx) ([]planner.PipelineSpec, er
 			continue
 		}
 		dataFiles := kvMeta.GetDataFiles()
+		statFiles := kvMeta.GetStatFiles()
 		length := len(dataFiles)
 		for start := 0; start < length; start += step {
 			end := start + step
@@ -319,6 +320,7 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx) ([]planner.PipelineSpec, er
 				MergeSortStepMeta: &MergeSortStepMeta{
 					KVGroup:   kvGroup,
 					DataFiles: dataFiles[start:end],
+					StatFiles: statFiles[start:end],
 				},
 			})
 		}

@@ -99,8 +99,10 @@ const (
 // MergeSortStepMeta is the meta of merge sort step.
 type MergeSortStepMeta struct {
 	// KVGroup is the group name of the sorted kv, either dataKVGroup or index-id.
-	KVGroup               string   `json:"kv-group"`
-	DataFiles             []string `json:"data-files"`
+	KVGroup   string   `json:"kv-group"`
+	DataFiles []string `json:"data-files"`
+	StatFiles []string `json:"stat-files"`
+
 	external.SortedKVMeta `json:"sorted-kv-meta"`
 }
 

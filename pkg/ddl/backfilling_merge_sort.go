@@ -107,16 +107,19 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	return external.MergeOverlappingFiles(
 		ctx,
 		sm.DataFiles,
+		sm.StatFiles,
 		store,
+		sm.StartKey,
+		sm.EndKey,
 		int64(partSize),
-		64*1024,
 		prefix,
 		external.DefaultBlockSize,
 		8*1024,
 		1*size.MB,
 		8*1024,
 		onClose,
-		int(variable.GetDDLReorgWorkerCounter()), true)
+		int(variable.GetDDLReorgWorkerCounter()),
+		true)
 }
 
 func (*mergeSortExecutor) Cleanup(ctx context.Context) error {
