@@ -2421,3 +2421,57 @@ func TestGetDDLStatus(t *testing.T) {
 	require.Equal(t, model.JobStateRunning, status.state)
 	require.Equal(t, int64(123)+int64(456), status.rowCount)
 }
+
+func TestGetChunkCompressedSizeForParquet(t *testing.T) {
+	// Write some sample Parquet dump
+	fakeDataDir := t.TempDir()
+	store, err := storage.NewLocalStorage(fakeDataDir)
+	require.NoError(t, err)
+
+	fakeDataFiles := make([]mydump.FileInfo, 0)
+
+	csvName := "db.table.1.parquet"
+	//file, err := os.Create(filepath.Join(fakeDataDir, csvName))
+	//require.NoError(t, err)
+	//gzWriter := gzip.NewWriter(file)
+
+	var totalBytes int64
+	//for i := 0; i < 300; i += 3 {
+	//	n, err := gzWriter.Write([]byte(fmt.Sprintf("%d,%d,%d\r\n", i, i+1, i+2)))
+	//	require.NoError(t, err)
+	//	totalBytes += int64(n)
+	//}
+	//
+	//err = gzWriter.Close()
+	//require.NoError(t, err)
+	//err = file.Close()
+	//require.NoError(t, err)
+
+	fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{
+		TableName: filter.Table{Schema: "db", Name: "table"},
+		FileMeta: mydump.SourceFileMeta{
+			Path:        csvName,
+			Type:        mydump.SourceTypeCSV,
+			Compression: mydump.CompressionGZ,
+			SortKey:     "99",
+			FileSize:    totalBytes,
+		},
+	})
+
+	chunk := checkpoints.ChunkCheckpoint{
+		Key:      checkpoints.ChunkCheckpointKey{Path: fakeDataFiles[0].FileMeta.Path, Offset: 0},
+		FileMeta: fakeDataFiles[0].FileMeta,
+		Chunk: mydump.Chunk{
+			Offset:       0,
+			EndOffset:    totalBytes,
+			PrevRowIDMax: 0,
+			RowIDMax:     100,
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	compressedSize, err := getChunkCompressedSizeForParquet(ctx, &chunk, store)
+	require.NoError(t, err)
+	require.Equal(t, compressedSize, 0)
+}
