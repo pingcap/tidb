@@ -116,6 +116,7 @@ func MergeOverlappingFiles(
 		logutil.Logger(ctx).Info("sorting in MergeOverlappingFiles",
 			zap.Duration("cost time", time.Since(now)))
 
+		// ywq todo write buf directly
 		for i, key := range loaded.keys {
 			err = writer.WriteRow(ctx, key, loaded.values[i])
 			if err != nil {
