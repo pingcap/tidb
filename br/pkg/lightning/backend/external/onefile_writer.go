@@ -83,6 +83,15 @@ func (w *OneFileWriter) Init(ctx context.Context, partSize int64) (err error) {
 	return err
 }
 
+func (w *OneFileWriter) DirectWrite(ctx context.Context, buf []byte) error {
+	err := w.kvStore.addEncodedData(buf[:])
+	if err != nil {
+		return err
+	}
+	w.totalSize += uint64(len(buf) - lengthBytes*2)
+	return nil
+}
+
 // WriteRow implements ingest.Writer.
 func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) error {
 	// 1. encode data and write to kvStore.

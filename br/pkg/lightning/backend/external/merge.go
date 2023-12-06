@@ -116,9 +116,8 @@ func MergeOverlappingFiles(
 		logutil.Logger(ctx).Info("sorting in MergeOverlappingFiles",
 			zap.Duration("cost time", time.Since(now)))
 
-		// ywq todo write buf directly
-		for i, key := range loaded.keys {
-			err = writer.WriteRow(ctx, key, loaded.values[i])
+		for _, buf := range loaded.kvs {
+			err = writer.DirectWrite(ctx, buf)
 			if err != nil {
 				return err
 			}
@@ -127,12 +126,6 @@ func MergeOverlappingFiles(
 		err = writer.Close(ctx)
 		if err != nil {
 			return err
-		}
-
-		// only need to release buffers, because readAllData will do other
-		// cleanup work.
-		for _, buf := range loaded.memKVBuffers {
-			buf.Destroy()
 		}
 
 		curStart = curEnd

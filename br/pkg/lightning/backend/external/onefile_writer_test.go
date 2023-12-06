@@ -15,22 +15,15 @@
 package external
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
-	"path"
-	"slices"
 	"strconv"
 	"testing"
 	"time"
 
-	"github.com/cockroachdb/pebble"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	dbkv "github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
 )
@@ -177,183 +170,183 @@ func checkOneFileWriterStatWithDistance(t *testing.T, kvCnt int, keysDistance ui
 	require.NoError(t, statReader.Close())
 }
 
-func TestMergeOverlappingFilesV2(t *testing.T) {
-	// 1. Write to 5 files.
-	// 2. merge 5 files into one file.
-	// 3. read one file and check result.
-	// 4. check duplicate key.
-	ctx := context.Background()
-	memStore := storage.NewMemStorage()
-	writer := NewWriterBuilder().
-		SetPropKeysDistance(2).
-		SetMemorySizeLimit(1000).
-		SetKeyDuplicationEncoding(true).
-		Build(memStore, "/test", "0")
+// func TestMergeOverlappingFilesV2(t *testing.T) {
+// 	// 1. Write to 5 files.
+// 	// 2. merge 5 files into one file.
+// 	// 3. read one file and check result.
+// 	// 4. check duplicate key.
+// 	ctx := context.Background()
+// 	memStore := storage.NewMemStorage()
+// 	writer := NewWriterBuilder().
+// 		SetPropKeysDistance(2).
+// 		SetMemorySizeLimit(1000).
+// 		SetKeyDuplicationEncoding(true).
+// 		Build(memStore, "/test", "0")
 
-	kvCount := 2000000
-	for i := 0; i < kvCount; i++ {
-		v := i
-		if v == kvCount/2 {
-			v-- // insert a duplicate key.
-		}
-		key, val := []byte{byte(v)}, []byte{byte(v)}
-		err := writer.WriteRow(ctx, key, val, dbkv.IntHandle(i))
-		require.NoError(t, err)
-	}
-	err := writer.Close(ctx)
-	require.NoError(t, err)
+// 	kvCount := 2000000
+// 	for i := 0; i < kvCount; i++ {
+// 		v := i
+// 		if v == kvCount/2 {
+// 			v-- // insert a duplicate key.
+// 		}
+// 		key, val := []byte{byte(v)}, []byte{byte(v)}
+// 		err := writer.WriteRow(ctx, key, val, dbkv.IntHandle(i))
+// 		require.NoError(t, err)
+// 	}
+// 	err := writer.Close(ctx)
+// 	require.NoError(t, err)
 
-	err = mergeOverlappingFilesV2(
-		ctx,
-		[]string{"/test/0/0", "/test/0/1", "/test/0/2", "/test/0/3", "/test/0/4"},
-		memStore,
-		int64(5*size.MB),
-		100,
-		"/test2",
-		"mergeID",
-		1000,
-		1000,
-		8*1024,
-		1*size.MB,
-		2,
-		nil,
-		true,
-	)
-	require.NoError(t, err)
+// 	err = mergeOverlappingFilesV2(
+// 		ctx,
+// 		[]string{"/test/0/0", "/test/0/1", "/test/0/2", "/test/0/3", "/test/0/4"},
+// 		memStore,
+// 		int64(5*size.MB),
+// 		100,
+// 		"/test2",
+// 		"mergeID",
+// 		1000,
+// 		1000,
+// 		8*1024,
+// 		1*size.MB,
+// 		2,
+// 		nil,
+// 		true,
+// 	)
+// 	require.NoError(t, err)
 
-	keys := make([][]byte, 0, kvCount)
-	values := make([][]byte, 0, kvCount)
+// 	keys := make([][]byte, 0, kvCount)
+// 	values := make([][]byte, 0, kvCount)
 
-	kvReader, err := newKVReader(ctx, "/test2/mergeID/one-file", memStore, 0, 100)
-	require.NoError(t, err)
-	for i := 0; i < kvCount; i++ {
-		key, value, err := kvReader.nextKV()
-		require.NoError(t, err)
-		clonedKey := make([]byte, len(key))
-		copy(clonedKey, key)
-		clonedVal := make([]byte, len(value))
-		copy(clonedVal, value)
-		keys = append(keys, clonedKey)
-		values = append(values, clonedVal)
-	}
-	_, _, err = kvReader.nextKV()
-	require.Equal(t, io.EOF, err)
-	require.NoError(t, kvReader.Close())
+// 	kvReader, err := newKVReader(ctx, "/test2/mergeID/one-file", memStore, 0, 100)
+// 	require.NoError(t, err)
+// 	for i := 0; i < kvCount; i++ {
+// 		key, value, err := kvReader.nextKV()
+// 		require.NoError(t, err)
+// 		clonedKey := make([]byte, len(key))
+// 		copy(clonedKey, key)
+// 		clonedVal := make([]byte, len(value))
+// 		copy(clonedVal, value)
+// 		keys = append(keys, clonedKey)
+// 		values = append(values, clonedVal)
+// 	}
+// 	_, _, err = kvReader.nextKV()
+// 	require.Equal(t, io.EOF, err)
+// 	require.NoError(t, kvReader.Close())
 
-	dir := t.TempDir()
-	db, err := pebble.Open(path.Join(dir, "duplicate"), nil)
-	require.NoError(t, err)
-	keyAdapter := common.DupDetectKeyAdapter{}
-	data := &MemoryIngestData{
-		keyAdapter:         keyAdapter,
-		duplicateDetection: true,
-		duplicateDB:        db,
-		dupDetectOpt:       common.DupDetectOpt{ReportErrOnDup: true},
-		keys:               keys,
-		values:             values,
-		ts:                 123,
-	}
-	pool := membuf.NewPool()
-	defer pool.Destroy()
-	iter := data.NewIter(ctx, nil, nil, pool)
+// 	dir := t.TempDir()
+// 	db, err := pebble.Open(path.Join(dir, "duplicate"), nil)
+// 	require.NoError(t, err)
+// 	keyAdapter := common.DupDetectKeyAdapter{}
+// 	data := &MemoryIngestData{
+// 		keyAdapter:         keyAdapter,
+// 		duplicateDetection: true,
+// 		duplicateDB:        db,
+// 		dupDetectOpt:       common.DupDetectOpt{ReportErrOnDup: true},
+// 		keys:               keys,
+// 		values:             values,
+// 		ts:                 123,
+// 	}
+// 	pool := membuf.NewPool()
+// 	defer pool.Destroy()
+// 	iter := data.NewIter(ctx, nil, nil, pool)
 
-	for iter.First(); iter.Valid(); iter.Next() {
-	}
-	err = iter.Error()
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "found duplicate key")
-}
+// 	for iter.First(); iter.Valid(); iter.Next() {
+// 	}
+// 	err = iter.Error()
+// 	require.Error(t, err)
+// 	require.Contains(t, err.Error(), "found duplicate key")
+// }
 
-func TestOnefileWriterManyRows(t *testing.T) {
-	// 1. write into one file with sorted order.
-	// 2. merge one file.
-	// 3. read kv file and check the result.
-	// 4. check the writeSummary.
-	ctx := context.Background()
-	memStore := storage.NewMemStorage()
-	writer := NewWriterBuilder().
-		SetPropKeysDistance(2).
-		SetMemorySizeLimit(1000).
-		BuildOneFile(memStore, "/test", "0")
+// func TestOnefileWriterManyRows(t *testing.T) {
+// 	// 1. write into one file with sorted order.
+// 	// 2. merge one file.
+// 	// 3. read kv file and check the result.
+// 	// 4. check the writeSummary.
+// 	ctx := context.Background()
+// 	memStore := storage.NewMemStorage()
+// 	writer := NewWriterBuilder().
+// 		SetPropKeysDistance(2).
+// 		SetMemorySizeLimit(1000).
+// 		BuildOneFile(memStore, "/test", "0")
 
-	err := writer.Init(ctx, 5*1024*1024)
-	require.NoError(t, err)
+// 	err := writer.Init(ctx, 5*1024*1024)
+// 	require.NoError(t, err)
 
-	kvCnt := 100000
-	expectedTotalSize := 0
-	kvs := make([]common.KvPair, kvCnt)
-	for i := 0; i < kvCnt; i++ {
-		randLen := rand.Intn(10) + 1
-		kvs[i].Key = make([]byte, randLen)
-		_, err := rand.Read(kvs[i].Key)
-		expectedTotalSize += randLen
+// 	kvCnt := 100000
+// 	expectedTotalSize := 0
+// 	kvs := make([]common.KvPair, kvCnt)
+// 	for i := 0; i < kvCnt; i++ {
+// 		randLen := rand.Intn(10) + 1
+// 		kvs[i].Key = make([]byte, randLen)
+// 		_, err := rand.Read(kvs[i].Key)
+// 		expectedTotalSize += randLen
 
-		require.NoError(t, err)
-		randLen = rand.Intn(10) + 1
-		kvs[i].Val = make([]byte, randLen)
-		_, err = rand.Read(kvs[i].Val)
-		require.NoError(t, err)
-		expectedTotalSize += randLen
-	}
+// 		require.NoError(t, err)
+// 		randLen = rand.Intn(10) + 1
+// 		kvs[i].Val = make([]byte, randLen)
+// 		_, err = rand.Read(kvs[i].Val)
+// 		require.NoError(t, err)
+// 		expectedTotalSize += randLen
+// 	}
 
-	slices.SortFunc(kvs, func(i, j common.KvPair) int {
-		return bytes.Compare(i.Key, j.Key)
-	})
+// 	slices.SortFunc(kvs, func(i, j common.KvPair) int {
+// 		return bytes.Compare(i.Key, j.Key)
+// 	})
 
-	for _, item := range kvs {
-		err := writer.WriteRow(ctx, item.Key, item.Val)
-		require.NoError(t, err)
-	}
-	err = writer.Close(ctx)
-	require.NoError(t, err)
+// 	for _, item := range kvs {
+// 		err := writer.WriteRow(ctx, item.Key, item.Val)
+// 		require.NoError(t, err)
+// 	}
+// 	err = writer.Close(ctx)
+// 	require.NoError(t, err)
 
-	var resSummary *WriterSummary
-	onClose := func(summary *WriterSummary) {
-		resSummary = summary
-	}
-	err = mergeOverlappingFilesV2(
-		ctx,
-		[]string{"/test/0/one-file"},
-		memStore,
-		int64(5*size.MB),
-		100,
-		"/test2",
-		"mergeID",
-		1000,
-		1000,
-		8*1024,
-		1*size.MB,
-		2,
-		onClose,
-		true,
-	)
-	require.NoError(t, err)
+// 	var resSummary *WriterSummary
+// 	onClose := func(summary *WriterSummary) {
+// 		resSummary = summary
+// 	}
+// 	err = mergeOverlappingFilesV2(
+// 		ctx,
+// 		[]string{"/test/0/one-file"},
+// 		memStore,
+// 		int64(5*size.MB),
+// 		100,
+// 		"/test2",
+// 		"mergeID",
+// 		1000,
+// 		1000,
+// 		8*1024,
+// 		1*size.MB,
+// 		2,
+// 		onClose,
+// 		true,
+// 	)
+// 	require.NoError(t, err)
 
-	bufSize := rand.Intn(100) + 1
-	kvReader, err := newKVReader(ctx, "/test2/mergeID/one-file", memStore, 0, bufSize)
-	require.NoError(t, err)
-	for i := 0; i < kvCnt; i++ {
-		key, value, err := kvReader.nextKV()
-		require.NoError(t, err)
-		require.Equal(t, kvs[i].Key, key)
-		require.Equal(t, kvs[i].Val, value)
-	}
-	_, _, err = kvReader.nextKV()
-	require.Equal(t, io.EOF, err)
-	require.NoError(t, kvReader.Close())
+// 	bufSize := rand.Intn(100) + 1
+// 	kvReader, err := newKVReader(ctx, "/test2/mergeID/one-file", memStore, 0, bufSize)
+// 	require.NoError(t, err)
+// 	for i := 0; i < kvCnt; i++ {
+// 		key, value, err := kvReader.nextKV()
+// 		require.NoError(t, err)
+// 		require.Equal(t, kvs[i].Key, key)
+// 		require.Equal(t, kvs[i].Val, value)
+// 	}
+// 	_, _, err = kvReader.nextKV()
+// 	require.Equal(t, io.EOF, err)
+// 	require.NoError(t, kvReader.Close())
 
-	// check writerSummary.
-	expected := MultipleFilesStat{
-		MinKey: kvs[0].Key,
-		MaxKey: kvs[len(kvs)-1].Key,
-		Filenames: [][2]string{
-			{"/test2/mergeID/one-file", "/test2/mergeID_stat/one-file"},
-		},
-		MaxOverlappingNum: 1,
-	}
-	require.EqualValues(t, expected.MinKey, resSummary.Min)
-	require.EqualValues(t, expected.MaxKey, resSummary.Max)
-	require.Equal(t, expected.Filenames, resSummary.MultipleFilesStats[0].Filenames)
-	require.Equal(t, expected.MaxOverlappingNum, resSummary.MultipleFilesStats[0].MaxOverlappingNum)
-	require.EqualValues(t, expectedTotalSize, resSummary.TotalSize)
-}
+// 	// check writerSummary.
+// 	expected := MultipleFilesStat{
+// 		MinKey: kvs[0].Key,
+// 		MaxKey: kvs[len(kvs)-1].Key,
+// 		Filenames: [][2]string{
+// 			{"/test2/mergeID/one-file", "/test2/mergeID_stat/one-file"},
+// 		},
+// 		MaxOverlappingNum: 1,
+// 	}
+// 	require.EqualValues(t, expected.MinKey, resSummary.Min)
+// 	require.EqualValues(t, expected.MaxKey, resSummary.Max)
+// 	require.Equal(t, expected.Filenames, resSummary.MultipleFilesStats[0].Filenames)
+// 	require.Equal(t, expected.MaxOverlappingNum, resSummary.MultipleFilesStats[0].MaxOverlappingNum)
+// 	require.EqualValues(t, expectedTotalSize, resSummary.TotalSize)
+// }

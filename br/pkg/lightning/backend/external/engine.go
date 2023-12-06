@@ -17,6 +17,7 @@ package external
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/hex"
 	"io"
 	"sort"
@@ -51,11 +52,11 @@ import (
 const maxCloudStorageConnections = 1000
 
 type memKVsAndBuffers struct {
-	mu           sync.Mutex
-	keys         [][]byte
-	values       [][]byte
-	memKVBuffers []*membuf.Buffer
-	size         int
+	mu     sync.Mutex
+	keys   [][]byte
+	values [][]byte
+	kvs    [][]byte
+	size   int
 }
 
 // Engine stored sorted key/value pairs in an external storage.
@@ -226,14 +227,16 @@ func readOneFile(
 		}
 	}
 
-	// this buffer is associated with data slices and will return to caller
-	memBuf := bufPool.NewBuffer()
 	keys := make([][]byte, 0, 1024)
 	values := make([][]byte, 0, 1024)
+	kvs := make([][]byte, 0, 1024)
 	size := 0
 
 	for {
-		k, v, err := rd.nextKV()
+		kvBytes, err := rd.nextKVBytes()
+		keyLen := int(binary.BigEndian.Uint64(kvBytes[0:lengthBytes]))
+		k := kvBytes[2*lengthBytes : 2*lengthBytes+keyLen]
+		v := kvBytes[2*lengthBytes+keyLen:]
 		if err != nil {
 			if err == io.EOF {
 				break
@@ -246,17 +249,16 @@ func readOneFile(
 		if bytes.Compare(k, endKey) >= 0 {
 			break
 		}
-		// TODO(lance6716): we are copying every KV from rd's buffer to memBuf, can we
-		// directly read into memBuf?
-		keys = append(keys, memBuf.AddBytes(k))
-		values = append(values, memBuf.AddBytes(v))
+		keys = append(keys, k)
+		values = append(values, v)
+		kvs = append(kvs, kvBytes)
 		size += len(k) + len(v)
 	}
 	readAndSortDurHist.Observe(time.Since(ts).Seconds())
 	output.mu.Lock()
 	output.keys = append(output.keys, keys...)
 	output.values = append(output.values, values...)
-	output.memKVBuffers = append(output.memKVBuffers, memBuf)
+	output.kvs = append(output.kvs, kvs...)
 	output.size += size
 	output.mu.Unlock()
 	return nil
@@ -364,14 +366,11 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 	readRateHist.Observe(float64(size) / 1024.0 / 1024.0 / readSecond)
 	sortRateHist.Observe(float64(size) / 1024.0 / 1024.0 / sortSecond)
 
-	newBuf := make([]*membuf.Buffer, 0, len(e.memKVsAndBuffers.memKVBuffers))
-	copy(newBuf, e.memKVsAndBuffers.memKVBuffers)
-	data := e.buildIngestData(e.memKVsAndBuffers.keys, e.memKVsAndBuffers.values, newBuf)
+	data := e.buildIngestData(e.memKVsAndBuffers.keys, e.memKVsAndBuffers.values)
 
 	// release the reference of e.memKVsAndBuffers
 	e.memKVsAndBuffers.keys = nil
 	e.memKVsAndBuffers.values = nil
-	e.memKVsAndBuffers.memKVBuffers = nil
 
 	sendFn := func(dr common.DataAndRange) error {
 		select {
@@ -414,7 +413,7 @@ func (e *Engine) LoadIngestData(
 	return nil
 }
 
-func (e *Engine) buildIngestData(keys, values [][]byte, buf []*membuf.Buffer) *MemoryIngestData {
+func (e *Engine) buildIngestData(keys, values [][]byte) *MemoryIngestData {
 	return &MemoryIngestData{
 		keyAdapter:         e.keyAdapter,
 		duplicateDetection: e.duplicateDetection,
@@ -423,7 +422,6 @@ func (e *Engine) buildIngestData(keys, values [][]byte, buf []*membuf.Buffer) *M
 		keys:               keys,
 		values:             values,
 		ts:                 e.ts,
-		memBuf:             buf,
 		refCnt:             atomic.NewInt64(0),
 		importedKVSize:     e.importedKVSize,
 		importedKVCount:    e.importedKVCount,

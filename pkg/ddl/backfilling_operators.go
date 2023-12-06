@@ -126,7 +126,7 @@ func getWriterMemSize(idxNum int) (uint64, error) {
 		return 0, err
 	}
 	memAvailable := memTotal - memUsed
-	memSize := (memAvailable / 2) / uint64(writerCnt) / uint64(idxNum)
+	memSize := (memAvailable / 2) / uint64(writerCnt) / uint64(idxNum) // ywq todo。。
 	logutil.BgLogger().Info("build operators that write index to cloud storage", zap.Uint64("memory total", memTotal), zap.Uint64("memory used", memUsed), zap.Uint64("memory size", memSize))
 	return memSize, nil
 }
