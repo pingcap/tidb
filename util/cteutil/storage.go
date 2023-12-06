@@ -15,19 +15,13 @@
 package cteutil
 
 import (
+	"sync"
+
 	"github.com/pingcap/errors"
-<<<<<<< HEAD:util/cteutil/storage.go
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
-=======
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/disk"
-	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/syncutil"
->>>>>>> 0c7659c1907 (executor: fix deadlock in dml statement with cte when oom panic action was triggered (#49192)):pkg/util/cteutil/storage.go
 )
 
 var _ Storage = &StorageRC{}
@@ -105,7 +99,7 @@ type StorageRC struct {
 	refCnt  int
 	chkSize int
 	iter    int
-	mu      syncutil.Mutex
+	mu      sync.Mutex
 	done    bool
 }
 
