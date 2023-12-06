@@ -153,7 +153,7 @@ func addDDLJobs(sess sessiontypes.Session, txn kv.Transaction, job *model.Job) e
 	if err != nil {
 		return err
 	}
-	_, err = sess.Execute(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), fmt.Sprintf("insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing, bdr_role) values (%d, %t, %s, %s, %s, %d, %t, %s)",
+	_, err = sess.Execute(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), fmt.Sprintf("insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing, bdr_role) values (%d, %t, %s, %s, %s, %d, %t, '%s')",
 		job.ID, job.MayNeedReorg(), strconv.Quote(strconv.FormatInt(job.SchemaID, 10)), strconv.Quote(strconv.FormatInt(job.TableID, 10)), util.WrapKey2String(b), job.Type, false, job.BDRRole))
 	return err
 }
