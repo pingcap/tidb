@@ -48,14 +48,12 @@ type MockDataSourceParameters struct {
 
 // MockDataSource mocks data source
 type MockDataSource struct {
-	P       MockDataSourceParameters
-	GenData []*chunk.Chunk
-	Chunks  []*chunk.Chunk
+	GenData     []*chunk.Chunk
+	Chunks      []*chunk.Chunk
+	SavedChunks []*chunk.Chunk
+	P           MockDataSourceParameters
 	exec.BaseExecutor
 	ChunkPtr int
-
-	// It's useful only when `SaveChunks` field in MockDataSourceParameters is set to true
-	SavedChunks []*chunk.Chunk
 }
 
 // GenColDatums get column datums
