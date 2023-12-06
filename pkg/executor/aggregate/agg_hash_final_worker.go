@@ -214,7 +214,7 @@ func (w *HashAggFinalWorker) receiveFinalResultHolder() (*chunk.Chunk, bool) {
 	}
 }
 
-func (w *HashAggFinalWorker) restoreFromOneSpillFile(ctx sessionctx.Context, restoreadData *aggfuncs.AggPartialResultMapper, diskIO *chunk.DataInDiskByChunks) (int64, error) {
+func (w *HashAggFinalWorker) restoreFromOneSpillFile(ctx sessionctx.Context, restoreadData *aggfuncs.AggPartialResultMapper, diskIO *chunk.DataInDiskByChunks, bInMap *int) (int64, error) {
 	totalMemDelta := int64(0)
 	chunkNum := diskIO.NumChunks()
 	keyColPos := len(w.aggFuncsForRestoring)
@@ -250,9 +250,14 @@ func (w *HashAggFinalWorker) restoreFromOneSpillFile(ctx sessionctx.Context, res
 			} else {
 				totalMemDelta += int64(len(key))
 
+				if len(*restoreadData)+1 > (1<<*bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+					w.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << *bInMap))
+					(*bInMap)++
+				}
+
 				results := make([]aggfuncs.PartialResult, aggFuncNum)
 				(*restoreadData)[key] = results
-				// TODO add memory usage for the map
+
 				for aggPos := 0; aggPos < aggFuncNum; aggPos++ {
 					results[aggPos] = partialResultsRestored[aggPos][rowPos]
 				}
@@ -264,6 +269,7 @@ func (w *HashAggFinalWorker) restoreFromOneSpillFile(ctx sessionctx.Context, res
 
 func (w *HashAggFinalWorker) restoreOnePartition(ctx sessionctx.Context) (bool, error) {
 	restoredData := make(aggfuncs.AggPartialResultMapper)
+	bInMap := 0
 
 	restoredPartitionIdx, isSuccess := w.spillHelper.getNextPartition()
 	if !isSuccess {
@@ -272,7 +278,7 @@ func (w *HashAggFinalWorker) restoreOnePartition(ctx sessionctx.Context) (bool, 
 
 	spilledFilesIO := w.spillHelper.getListInDisks(restoredPartitionIdx)
 	for _, spilledFile := range spilledFilesIO {
-		memDelta, err := w.restoreFromOneSpillFile(ctx, &restoredData, spilledFile)
+		memDelta, err := w.restoreFromOneSpillFile(ctx, &restoredData, spilledFile, &bInMap)
 		if err != nil {
 			return false, err
 		}
