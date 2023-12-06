@@ -363,6 +363,7 @@ func (em *ErrorManager) RecordDataConflictError(
 		DB:           em.db,
 		Logger:       logger,
 		HideQueryLog: redact.NeedRedact(),
+		RetryCount:   10,
 	}
 	if err := exec.Transact(ctx, "insert data conflict error record", func(c context.Context, txn *sql.Tx) error {
 		sb := &strings.Builder{}

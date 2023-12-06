@@ -169,14 +169,19 @@ type SQLWithRetry struct {
 	DB           utils.DBExecutor
 	Logger       log.Logger
 	HideQueryLog bool
+	RetryCount   int
 }
 
-func (SQLWithRetry) perform(_ context.Context, parentLogger log.Logger, purpose string, action func() error) error {
-	return Retry(purpose, parentLogger, action)
+func (s SQLWithRetry) perform(_ context.Context, parentLogger log.Logger, purpose string, action func() error) error {
+	return retryWithCount(purpose, parentLogger, action, s.RetryCount)
 }
 
 // Retry is shared by SQLWithRetry.perform, implementation of GlueCheckpointsDB and TiDB's glue implementation
 func Retry(purpose string, parentLogger log.Logger, action func() error) error {
+	return retryWithCount(purpose, parentLogger, action, 0)
+}
+
+func retryWithCount(purpose string, parentLogger log.Logger, action func() error, retryCount int) error {
 	var err error
 outside:
 	for i := 0; i < defaultMaxRetry; i++ {
