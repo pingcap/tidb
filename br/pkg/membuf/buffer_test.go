@@ -78,7 +78,7 @@ func TestBufferPool(t *testing.T) {
 }
 
 func TestPoolMemLimit(t *testing.T) {
-	limiter := NewLimiter(1024)
+	limiter := NewLimiter(1024 + 2*sizeOfSlice)
 	// only allow to allocate one block
 	pool := NewPool(
 		WithBlockSize(1024),
@@ -87,8 +87,8 @@ func TestPoolMemLimit(t *testing.T) {
 	)
 	defer pool.Destroy()
 	buf := pool.NewBuffer()
-	buf.AllocBytes(512)
-	buf.AllocBytes(512)
+	buf.AllocBytes(512 - sizeOfSlice)
+	buf.AllocBytes(512 - sizeOfSlice)
 
 	buf2 := pool.NewBuffer()
 	done := make(chan struct{}, 1)
@@ -103,8 +103,8 @@ func TestPoolMemLimit(t *testing.T) {
 	require.Len(t, done, 0)
 	// reset will not release memory to pool
 	buf.Reset()
-	buf.AllocBytes(512)
-	buf.AllocBytes(512)
+	buf.AllocBytes(512 - sizeOfSlice)
+	buf.AllocBytes(512 - sizeOfSlice)
 	require.Len(t, done, 0)
 	// destroy will release memory to pool
 	buf.Destroy()
@@ -113,7 +113,7 @@ func TestPoolMemLimit(t *testing.T) {
 		return len(done) > 0
 	}, time.Second, 10*time.Millisecond)
 	// after buf2 is finished, still can allocate memory from pool
-	buf.AllocBytes(1024)
+	buf.AllocBytes(1024 - sizeOfSlice)
 	buf.Destroy()
 }
 

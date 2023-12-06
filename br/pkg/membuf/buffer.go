@@ -195,6 +195,11 @@ func (b *Buffer) Reset() {
 		b.curBlockIdx = 0
 		b.curIdx = 0
 	}
+	if b.pool.limiter != nil {
+		// but the caller may still hold the slice, it's a little risky to release
+		b.pool.limiter.Release(b.smallObjOverhead)
+		b.smallObjOverhead = 0
+	}
 }
 
 // Destroy releases all buffers to the pool.
@@ -204,6 +209,7 @@ func (b *Buffer) Destroy() {
 	}
 	if b.pool.limiter != nil {
 		b.pool.limiter.Release(b.smallObjOverhead)
+		b.smallObjOverhead = 0
 	}
 	b.blocks = nil
 	b.curBlock = nil
@@ -223,12 +229,12 @@ func (b *Buffer) AllocBytes(n int) []byte {
 	if n > b.pool.largeAllocThreshold {
 		return make([]byte, n)
 	}
-	if b.pool.limiter != nil {
+
+	bs, _ := b.allocBytesWithSliceLocation(n)
+	if bs != nil && b.pool.limiter != nil {
 		b.pool.limiter.Acquire(sizeOfSlice)
 		b.smallObjOverhead += sizeOfSlice
 	}
-
-	bs, _ := b.allocBytesWithSliceLocation(n)
 	return bs
 }
 
@@ -265,7 +271,7 @@ var sizeOfSliceLocation = int(unsafe.Sizeof(SliceLocation{}))
 
 // AllocBytesWithSliceLocation is like AllocBytes, but it ignores the pool's
 // WithLargeAllocThreshold, and also returns a SliceLocation. The expected usage
-// is after writing data into returned slice we do not store the slice itself,
+// is after writing data into returned slice **we do not store the slice**,
 // but only the SliceLocation. Later we can use the SliceLocation to get the
 // slice again. When we have a large number of slices in memory this can improve
 // performance. nil returned slice means allocation failed.

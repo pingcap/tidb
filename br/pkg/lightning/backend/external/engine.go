@@ -94,6 +94,8 @@ type Engine struct {
 	importedKVCount *atomic.Int64
 }
 
+const memLimit = 12 * 1024 * 1024 * 1024
+
 // NewExternalEngine creates an (external) engine.
 func NewExternalEngine(
 	storage storage.ExternalStorage,
@@ -113,8 +115,6 @@ func NewExternalEngine(
 	totalKVCount int64,
 	checkHotspot bool,
 ) common.Engine {
-	// TODO(lance6716): test the performance
-	memLimit := 12 * 1024 * 1024 * 1024
 	memLimiter := membuf.NewLimiter(memLimit)
 	return &Engine{
 		storage:         storage,
@@ -530,7 +530,11 @@ func (e *Engine) Close() error {
 func (e *Engine) Reset() error {
 	if e.bufPool != nil {
 		e.bufPool.Destroy()
-		e.bufPool = membuf.NewPool()
+		memLimiter := membuf.NewLimiter(memLimit)
+		e.bufPool = membuf.NewPool(
+			membuf.WithLargeAllocThreshold(memLimit),
+			membuf.WithPoolMemoryLimiter(memLimiter),
+		)
 	}
 	return nil
 }
