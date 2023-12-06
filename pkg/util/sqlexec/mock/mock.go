@@ -18,6 +18,6 @@ package mock
 type RestrictedSQLExecutorKey struct{}
 
 // String implements the string.Stringer interface.
-func (k RestrictedSQLExecutorKey) String() string {
+func (RestrictedSQLExecutorKey) String() string {
 	return "__MockRestrictedSQLExecutor"
 }
