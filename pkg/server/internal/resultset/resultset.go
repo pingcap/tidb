@@ -18,6 +18,7 @@ import (
 	"context"
 	"sync/atomic"
 
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
 	"github.com/pingcap/tidb/pkg/types"
@@ -74,7 +75,7 @@ func (trs *tidbResultSet) Close() {
 	if !atomic.CompareAndSwapInt32(&trs.closed, 0, 1) {
 		return
 	}
-	trs.recordSet.Close()
+	terror.Call(trs.recordSet.Close)
 	trs.recordSet = nil
 	return
 }

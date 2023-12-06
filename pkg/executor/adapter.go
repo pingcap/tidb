@@ -1470,10 +1470,9 @@ func (a *ExecStmt) checkPlanReplayerCapture(txnTS uint64) {
 
 // CloseRecordSet will finish the execution of current statement and do some record work
 func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
-	a.FinishExecuteStmt(txnStartTS, nil, false)
+	a.FinishExecuteStmt(txnStartTS, lastErr, false)
 	a.logAudit()
 	a.Ctx.GetSessionVars().StmtCtx.DetachMemDiskTracker()
-	return
 }
 
 // Clean CTE storage shared by different CTEFullScan executor within a SQL stmt.
