@@ -55,85 +55,18 @@ func (*testDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.Ta
 	return nil, nil
 }
 
-func (*testDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
-	return nil, nil
+func (*testDispatcherExt) OnDone(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task) error {
+	return nil
 }
 
 var mockedAllServerInfos = []*infosync.ServerInfo{}
 
-<<<<<<< HEAD
 func (*testDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
 	return mockedAllServerInfos, true, nil
 }
 
 func (*testDispatcherExt) IsRetryableErr(error) bool {
 	return true
-=======
-func getTestDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
-	mockDispatcher := mockDispatch.NewMockExtension(ctrl)
-	mockDispatcher.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
-	mockDispatcher.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
-			return mockedAllServerInfos, true, nil
-		},
-	).AnyTimes()
-	mockDispatcher.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
-	mockDispatcher.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
-		func(task *proto.Task) proto.Step {
-			return proto.StepDone
-		},
-	).AnyTimes()
-	mockDispatcher.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
-			return nil, nil
-		},
-	).AnyTimes()
-
-	mockDispatcher.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	return mockDispatcher
-}
-
-func getNumberExampleDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
-	mockDispatcher := mockDispatch.NewMockExtension(ctrl)
-	mockDispatcher.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
-	mockDispatcher.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
-			serverInfo, err := dispatcher.GenerateSchedulerNodes(ctx)
-			return serverInfo, true, err
-		},
-	).AnyTimes()
-	mockDispatcher.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
-	mockDispatcher.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
-		func(task *proto.Task) proto.Step {
-			switch task.Step {
-			case proto.StepInit:
-				return proto.StepOne
-			default:
-				return proto.StepDone
-			}
-		},
-	).AnyTimes()
-	mockDispatcher.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
-			switch task.Step {
-			case proto.StepInit:
-				for i := 0; i < subtaskCnt; i++ {
-					metas = append(metas, []byte{'1'})
-				}
-				logutil.BgLogger().Info("progress step init")
-			case proto.StepOne:
-				logutil.BgLogger().Info("progress step one")
-				return nil, nil
-			default:
-				return nil, errors.New("unknown step")
-			}
-			return metas, nil
-		},
-	).AnyTimes()
-
-	mockDispatcher.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	return mockDispatcher
->>>>>>> 86df166bd32 (importinto: make cancel wait task done and some fixes (#48928))
 }
 
 func (*testDispatcherExt) GetNextStep(*proto.Task) proto.Step {
@@ -161,9 +94,9 @@ func (n *numberExampleDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ di
 	return metas, nil
 }
 
-func (n *numberExampleDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
+func (n *numberExampleDispatcherExt) OnDone(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task) error {
 	// Don't handle not.
-	return nil, nil
+	return nil
 }
 
 func (*numberExampleDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {

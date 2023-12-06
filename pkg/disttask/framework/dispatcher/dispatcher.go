@@ -476,23 +476,6 @@ func (d *BaseDispatcher) onErrHandlingStage(receiveErrs []error) error {
 	// we only store the first error.
 	d.Task.Error = receiveErrs[0]
 
-<<<<<<< HEAD
-	// 2. dispatch revert dist-plan to EligibleInstances.
-	return d.dispatchSubTask4Revert(meta)
-}
-
-func (d *BaseDispatcher) dispatchSubTask4Revert(meta []byte) error {
-	instanceIDs, err := d.GetAllSchedulerIDs(d.ctx, d.Task)
-	if err != nil {
-		logutil.Logger(d.logCtx).Warn("get task's all instances failed", zap.Error(err))
-		return err
-	}
-
-	subTasks := make([]*proto.Subtask, 0, len(instanceIDs))
-	for _, id := range instanceIDs {
-		// reverting subtasks belong to the same step as current active step.
-		subTasks = append(subTasks, proto.NewSubtask(d.Task.Step, d.Task.ID, d.Task.Type, id, meta))
-=======
 	var subTasks []*proto.Subtask
 	// when step of task is `StepInit`, no need to do revert
 	if d.Task.Step != proto.StepInit {
@@ -507,7 +490,6 @@ func (d *BaseDispatcher) dispatchSubTask4Revert(meta []byte) error {
 			// reverting subtasks belong to the same step as current active step.
 			subTasks = append(subTasks, proto.NewSubtask(d.Task.Step, d.Task.ID, d.Task.Type, id, []byte("{}")))
 		}
->>>>>>> 86df166bd32 (importinto: make cancel wait task done and some fixes (#48928))
 	}
 	return d.updateTask(proto.TaskStateReverting, subTasks, RetrySQLTimes)
 }

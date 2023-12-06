@@ -63,8 +63,8 @@ func (dsp *testDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatche
 	return nil, nil
 }
 
-func (*testDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
-	return nil, nil
+func (*testDispatcherExt) OnDone(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task) error {
+	return nil
 }
 
 func (dsp *testDispatcherExt) GetNextStep(task *proto.Task) proto.Step {
@@ -129,52 +129,6 @@ func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, m *sync.Map, dispat
 	registerTaskMetaInner(t, proto.TaskTypeExample, mockExtension, mockCleanupRountine, dispatcherHandle)
 }
 
-<<<<<<< HEAD
-=======
-func getMockBasicDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
-	mockDispatcher := mockDispatch.NewMockExtension(ctrl)
-	mockDispatcher.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
-	mockDispatcher.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
-			return generateSchedulerNodes4Test()
-		},
-	).AnyTimes()
-	mockDispatcher.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
-	mockDispatcher.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
-		func(task *proto.Task) proto.Step {
-			switch task.Step {
-			case proto.StepInit:
-				return proto.StepOne
-			case proto.StepOne:
-				return proto.StepTwo
-			default:
-				return proto.StepDone
-			}
-		},
-	).AnyTimes()
-	mockDispatcher.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
-			if gTask.Step == proto.StepInit {
-				return [][]byte{
-					[]byte("task1"),
-					[]byte("task2"),
-					[]byte("task3"),
-				}, nil
-			}
-			if gTask.Step == proto.StepOne {
-				return [][]byte{
-					[]byte("task4"),
-				}, nil
-			}
-			return nil, nil
-		},
-	).AnyTimes()
-
-	mockDispatcher.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	return mockDispatcher
-}
-
->>>>>>> 86df166bd32 (importinto: make cancel wait task done and some fixes (#48928))
 func registerTaskMetaInner(t *testing.T, taskType proto.TaskType, mockExtension scheduler.Extension, mockCleanup dispatcher.CleanUpRoutine, dispatcherHandle dispatcher.Extension) {
 	t.Cleanup(func() {
 		dispatcher.ClearDispatcherFactory()

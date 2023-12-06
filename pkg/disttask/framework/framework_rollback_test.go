@@ -32,47 +32,8 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-<<<<<<< HEAD
 type rollbackDispatcherExt struct {
 	cnt int
-=======
-var rollbackCnt atomic.Int32
-
-func getMockRollbackDispatcherExt(ctrl *gomock.Controller) dispatcher.Extension {
-	mockDispatcher := mockDispatch.NewMockExtension(ctrl)
-	mockDispatcher.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
-	mockDispatcher.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
-			return generateSchedulerNodes4Test()
-		},
-	).AnyTimes()
-	mockDispatcher.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
-	mockDispatcher.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
-		func(task *proto.Task) proto.Step {
-			switch task.Step {
-			case proto.StepInit:
-				return proto.StepOne
-			default:
-				return proto.StepDone
-			}
-		},
-	).AnyTimes()
-	mockDispatcher.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
-			if gTask.Step == proto.StepInit {
-				return [][]byte{
-					[]byte("task1"),
-					[]byte("task2"),
-					[]byte("task3"),
-				}, nil
-			}
-			return nil, nil
-		},
-	).AnyTimes()
-
-	mockDispatcher.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	return mockDispatcher
->>>>>>> 86df166bd32 (importinto: make cancel wait task done and some fixes (#48928))
 }
 
 var _ dispatcher.Extension = (*rollbackDispatcherExt)(nil)
@@ -93,8 +54,8 @@ func (dsp *rollbackDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispa
 	return nil, nil
 }
 
-func (*rollbackDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
-	return []byte("rollbacktask1"), nil
+func (*rollbackDispatcherExt) OnDone(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task) error {
+	return nil
 }
 
 func (*rollbackDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
