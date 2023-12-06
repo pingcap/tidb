@@ -1323,7 +1323,7 @@ func (b *executorBuilder) buildExplain(v *plannercore.Explain) exec.Executor {
 		resourceGroupName := b.ctx.GetSessionVars().ResourceGroupName
 		// Try to register the RU runtime stats for analyze executor.
 		if store, ok := b.ctx.GetStore().(interface {
-			CreateRURuntimeStats(uint64) *clientutil.RURuntimeStats
+			CreateRURuntimeStats(uint64) *clientutil.RUDetails
 		}); len(resourceGroupName) > 0 && ok {
 			// StartTS will be used to identify this SQL, so that the runtime stats could
 			// aggregate the RU stats beneath the KV storage client.

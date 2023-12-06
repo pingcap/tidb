@@ -69,6 +69,13 @@ func (do *Domain) setPDClientDynamicOption(name, sVal string) {
 			break
 		}
 		variable.EnableTSOFollowerProxy.Store(val)
+	case variable.TiDBEnablePDFollowerHandle:
+		val := variable.TiDBOptOn(sVal)
+		err := do.updatePDClient(pd.EnableFollowerHandle, val)
+		if err != nil {
+			break
+		}
+		variable.EnablePDFollowerHandle.Store(val)
 	}
 }
 
