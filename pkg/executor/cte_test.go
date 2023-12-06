@@ -27,7 +27,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-<<<<<<< HEAD
 func TestBasicCTE(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -347,7 +346,8 @@ func TestCTEWithLimit(t *testing.T) {
 	rows.Check(testkit.Rows("3", "4", "3"))
 	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union all select c1 + 1 from cte1 limit 4 offset 4) select * from cte1;")
 	rows.Check(testkit.Rows("3", "4", "3", "4"))
-=======
+}
+
 func TestCTEIssue49096(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -376,8 +376,7 @@ func TestCTEIssue49096(t *testing.T) {
 		"select c1 from cte1 natural join (select * from cte1 where c1 > 0) cte2 order by c1;"
 	err := tk.ExecToErr(sql)
 	require.NotNil(t, err)
-	require.Equal(t, "[executor:8175]Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=%d]", err.Error())
->>>>>>> 0c7659c1907 (executor: fix deadlock in dml statement with cte when oom panic action was triggered (#49192))
+	require.Equal(t, "Your query has been cancelled due to exceeding the allowed memory limit", err.Error())
 }
 
 func TestSpillToDisk(t *testing.T) {
