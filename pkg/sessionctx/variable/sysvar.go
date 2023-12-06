@@ -1885,6 +1885,13 @@ var defaultSysVars = []*SysVar{
 		s.KVVars.BackOffWeight = tidbOptPositiveInt32(val, tikvstore.DefBackOffWeight)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTxnEntrySizeLimit, Value: strconv.Itoa(DefTiDBTxnEntrySizeLimit), Type: TypeUnsigned, MinValue: 0, MaxValue: config.MaxTxnEntrySizeLimit, SetSession: func(s *SessionVars, val string) error {
+		s.TxnEntrySizeLimit = TidbOptUint64(val, DefTiDBTxnEntrySizeLimit)
+		return nil
+	}, SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
+		TxnEntrySizeLimit.Store(TidbOptUint64(val, DefTiDBTxnEntrySizeLimit))
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRetryLimit, Value: strconv.Itoa(DefTiDBRetryLimit), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
 		s.RetryLimit = TidbOptInt64(val, DefTiDBRetryLimit)
 		return nil

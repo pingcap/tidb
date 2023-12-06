@@ -758,7 +758,7 @@ func setGlobalVars() {
 	if cfg.Performance.TxnEntrySizeLimit > config.MaxTxnEntrySizeLimit {
 		log.Fatal("cannot set txn entry size limit larger than 120M")
 	}
-	kv.TxnEntrySizeLimit = cfg.Performance.TxnEntrySizeLimit
+	kv.TxnEntrySizeLimit.Store(cfg.Performance.TxnEntrySizeLimit)
 
 	priority := mysql.Str2Priority(cfg.Instance.ForcePriority)
 	variable.ForcePriority = int32(priority)

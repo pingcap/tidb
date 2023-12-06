@@ -171,6 +171,15 @@ func newBackfillCtx(ctx *ddlCtx, id int, sessCtx sessionctx.Context,
 	}
 }
 
+func updateTxnEntrySizeLimitIfNeeded(txn kv.Transaction) {
+	if entrySizeLimit := variable.TxnEntrySizeLimit.Load(); entrySizeLimit > 0 {
+		txn.SetOption(kv.SizeLimits, kv.TxnSizeLimits{
+			Entry: entrySizeLimit,
+			Total: kv.TxnTotalSizeLimit.Load(),
+		})
+	}
+}
+
 type backfiller interface {
 	BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, err error)
 	AddMetricInfo(float64)

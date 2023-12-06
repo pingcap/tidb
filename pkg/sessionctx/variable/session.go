@@ -1565,6 +1565,10 @@ type SessionVars struct {
 
 	CompressionAlgorithm int
 	CompressionLevel     int
+
+	// TxnEntrySizeLimit indicates indicates the max size of a entry in membuf. The default limit (from config) will be
+	// overwritten if this value is not 0.
+	TxnEntrySizeLimit uint64
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.

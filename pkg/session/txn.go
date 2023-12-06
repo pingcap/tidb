@@ -308,6 +308,13 @@ func (txn *LazyTxn) changePendingToValid(ctx context.Context, sctx sessionctx.Co
 
 	// set resource group name for kv request such as lock pessimistic keys.
 	kv.SetTxnResourceGroup(txn, sctx.GetSessionVars().ResourceGroupName)
+	// overwrite entry size limit by sys var.
+	if entrySizeLimit := sctx.GetSessionVars().TxnEntrySizeLimit; entrySizeLimit > 0 {
+		txn.SetOption(kv.SizeLimits, kv.TxnSizeLimits{
+			Entry: entrySizeLimit,
+			Total: kv.TxnTotalSizeLimit.Load(),
+		})
+	}
 
 	return nil
 }
