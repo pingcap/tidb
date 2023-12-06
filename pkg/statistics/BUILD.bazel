@@ -42,6 +42,7 @@ go_library(
         "//pkg/util/dbterror",
         "//pkg/util/fastrand",
         "//pkg/util/hack",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/mathutil",
         "//pkg/util/memory",
