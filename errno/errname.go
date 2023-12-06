@@ -1044,13 +1044,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrLoadParquetFromLocal:             mysql.Message("Do not support loading parquet files from local. Please try to load the parquet files from the cloud storage", nil),
 	ErrLoadDataEmptyPath:                mysql.Message("The value of INFILE must not be empty when LOAD DATA from LOCAL", nil),
 	ErrLoadDataUnsupportedFormat:        mysql.Message("The FORMAT '%s' is not supported", nil),
-<<<<<<< HEAD:errno/errname.go
-	ErrLoadDataInvalidURI:               mysql.Message("The URI of INFILE is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access_key_id={your_access_key_id ID}&secret_access_key={your_secret_access_key}&session_token={your_session_token}'", nil),
+	ErrLoadDataInvalidURI:               mysql.Message("The URI of INFILE is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access-key={your_access_key_id ID}&secret-access-key={your_secret_access_key}&session-token={your_session_token}'", nil),
 	ErrLoadDataCantAccess:               mysql.Message("Access to the source file has been denied. Reason: %s. Please check the URI, access key and secret access key are correct", nil),
-=======
-	ErrLoadDataInvalidURI:               mysql.Message("The URI of %s is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access-key={your_access_key_id ID}&secret-access-key={your_secret_access_key}&session-token={your_session_token}'", nil),
-	ErrLoadDataCantAccess:               mysql.Message("Access to the %s has been denied. Reason: %s. Please check the URI, access key and secret access key are correct", nil),
->>>>>>> d932d907f80 (errmsg: fix example s3 url in error msg (#49207)):pkg/errno/errname.go
 	ErrLoadDataCantRead:                 mysql.Message("Failed to read source files. Reason: %s. %s", nil),
 	ErrLoadDataWrongFormatConfig:        mysql.Message("", nil),
 	ErrUnknownOption:                    mysql.Message("Unknown option %s", nil),
