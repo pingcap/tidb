@@ -93,9 +93,9 @@ var (
 const (
 	// serverTypeTiDB is tidb's instance type name
 	serverTypeTiDB = "tidb"
-	// serverTypeTiDB is tikv's instance type name
+	// serverTypeTiKV is tikv's instance type name
 	serverTypeTiKV = "tikv"
-	// serverTypeTiDB is tiflash's instance type name
+	// serverTypeTiFlash is tiflash's instance type name
 	serverTypeTiFlash = "tiflash"
 )
 
@@ -104,7 +104,7 @@ type baseResourceCost struct {
 	// represents the average ratio of TiDB CPU time to TiKV CPU time, this is used to calculate whether tikv cpu
 	// or tidb cpu is the performance bottle neck.
 	tidbToKVCPURatio float64
-	// the kv CPU time for calcula[te R]U, it's smaller than the actual cpu usage. The unit is seconds.
+	// the kv CPU time for calculate RU, it's smaller than the actual cpu usage. The unit is seconds.
 	kvCPU float64
 	// the read bytes rate per 1 tikv cpu.
 	readBytes uint64
