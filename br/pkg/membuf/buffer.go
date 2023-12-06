@@ -14,8 +14,6 @@
 
 package membuf
 
-import "go.uber.org/atomic"
-
 const (
 	defaultPoolSize            = 1024
 	defaultBlockSize           = 1 << 20 // 1M
@@ -35,33 +33,6 @@ func (stdAllocator) Alloc(n int) []byte {
 }
 
 func (stdAllocator) Free(_ []byte) {}
-
-// MemoryLimitAllocator is an allocator that limits the total memory size. It
-// will trace the memory size allocated by the inner allocator, and if the size
-// exceeds the limit, it will keep blocking when Alloc.
-type MemoryLimitAllocator struct {
-	inner Allocator
-	limit int64
-	curr  atomic.Int64
-}
-
-// NewMemoryLimitAllocator creates a MemoryLimitAllocator.
-func NewMemoryLimitAllocator(inner Allocator, limit int64) *MemoryLimitAllocator {
-	return &MemoryLimitAllocator{
-		inner: inner,
-		limit: limit,
-	}
-}
-
-// Alloc implements Allocator.Alloc interface.
-func (m *MemoryLimitAllocator) Alloc(n int) []byte {
-
-}
-
-// Free implements Allocator.Free interface.
-func (m *MemoryLimitAllocator) Free(b []byte) {
-	
-}
 
 // Pool is like `sync.Pool`, which manages memory for all bytes buffers. You can
 // use Pool.NewBuffer to create a new buffer, and use Buffer.Destroy to release
