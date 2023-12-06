@@ -330,7 +330,7 @@ func getMockedServerInfo() map[string]*infosync.ServerInfo {
 	return mockedAllServerInfos
 }
 
-func TestCleanupCorruptedAnalyzeJobsOnCurrentNode(t *testing.T) {
+func TestCleanupCorruptedAnalyzeJobsOnCurrentInstance(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	exec := mock.NewMockRestrictedSQLExecutor(ctrl)
@@ -380,7 +380,7 @@ func TestCleanupCorruptedAnalyzeJobsOnCurrentNode(t *testing.T) {
 		},
 	).Return(nil, nil, nil)
 
-	err := autoanalyze.CleanupCorruptedAnalyzeJobsOnCurrentNode(
+	err := autoanalyze.CleanupCorruptedAnalyzeJobsOnCurrentInstance(
 		mock.WrapAsSCtx(exec),
 		map[uint64]struct{}{
 			3: {},
@@ -390,7 +390,7 @@ func TestCleanupCorruptedAnalyzeJobsOnCurrentNode(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestCleanupCorruptedAnalyzeJobsOnDeadNodes(t *testing.T) {
+func TestCleanupCorruptedAnalyzeJobsOnDeadInstances(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	exec := mock.NewMockRestrictedSQLExecutor(ctrl)
@@ -437,7 +437,7 @@ func TestCleanupCorruptedAnalyzeJobsOnDeadNodes(t *testing.T) {
 		},
 	).Return(nil, nil, nil)
 
-	err := autoanalyze.CleanupCorruptedAnalyzeJobsOnDeadNodes(
+	err := autoanalyze.CleanupCorruptedAnalyzeJobsOnDeadInstances(
 		mock.WrapAsSCtx(exec),
 	)
 	require.NoError(t, err)

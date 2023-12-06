@@ -2526,13 +2526,13 @@ func (do *Domain) analyzeJobsCleanupWorker(owner owner.Manager) {
 				continue
 			}
 
-			err := statsHandle.CleanupCorruptedAnalyzeJobsOnCurrentNode(analyzeProcessIDs)
+			err := statsHandle.CleanupCorruptedAnalyzeJobsOnCurrentInstance(analyzeProcessIDs)
 			if err != nil {
 				logutil.BgLogger().Warn("cleanup analyze jobs on current node failed", zap.Error(err))
 			}
 
 			if owner.IsOwner() {
-				err = statsHandle.CleanupCorruptedAnalyzeJobsOnDeadNodes()
+				err = statsHandle.CleanupCorruptedAnalyzeJobsOnDeadInstances()
 				if err != nil {
 					logutil.BgLogger().Warn("cleanup analyze jobs on dead nodes failed", zap.Error(err))
 				}

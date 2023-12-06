@@ -115,14 +115,14 @@ type StatsAnalyze interface {
 	// DeleteAnalyzeJobs deletes the analyze jobs whose update time is earlier than updateTime.
 	DeleteAnalyzeJobs(updateTime time.Time) error
 
-	// CleanupCorruptedAnalyzeJobsOnCurrentNode cleans up the corrupted analyze job.
+	// CleanupCorruptedAnalyzeJobsOnCurrentInstance cleans up the corrupted analyze job.
 	// We use current running analyze jobs to check whether the analyze job is corrupted.
-	CleanupCorruptedAnalyzeJobsOnCurrentNode(currentRunningProcessIDs map[uint64]struct{}) error
+	CleanupCorruptedAnalyzeJobsOnCurrentInstance(currentRunningProcessIDs map[uint64]struct{}) error
 
-	// CleanupCorruptedAnalyzeJobsOnDeadNodes purges analyze jobs that are associated with non-existent instances.
+	// CleanupCorruptedAnalyzeJobsOnDeadInstances purges analyze jobs that are associated with non-existent instances.
 	// This function is specifically designed to handle jobs that have become corrupted due to
 	// their associated instances being removed from the current cluster.
-	CleanupCorruptedAnalyzeJobsOnDeadNodes() error
+	CleanupCorruptedAnalyzeJobsOnDeadInstances() error
 
 	// HandleAutoAnalyze analyzes the newly created table or index.
 	HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool)

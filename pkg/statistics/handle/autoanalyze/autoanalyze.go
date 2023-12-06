@@ -79,19 +79,19 @@ func (sa *statsAnalyze) DeleteAnalyzeJobs(updateTime time.Time) error {
 	})
 }
 
-// CleanupCorruptedAnalyzeJobsOnCurrentNode cleans up the potentially corrupted analyze job.
+// CleanupCorruptedAnalyzeJobsOnCurrentInstance cleans up the potentially corrupted analyze job.
 // It only cleans up the jobs that are associated with the current node.
-func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobsOnCurrentNode(currentRunningProcessIDs map[uint64]struct{}) error {
+func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobsOnCurrentInstance(currentRunningProcessIDs map[uint64]struct{}) error {
 	return statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		return CleanupCorruptedAnalyzeJobsOnCurrentNode(sctx, currentRunningProcessIDs)
+		return CleanupCorruptedAnalyzeJobsOnCurrentInstance(sctx, currentRunningProcessIDs)
 	})
 }
 
-// CleanupCorruptedAnalyzeJobsOnDeadNodes removes analyze jobs that may have been corrupted.
+// CleanupCorruptedAnalyzeJobsOnDeadInstances removes analyze jobs that may have been corrupted.
 // Specifically, it removes jobs associated with instances that no longer exist in the cluster.
-func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobsOnDeadNodes() error {
+func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobsOnDeadInstances() error {
 	return statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		return CleanupCorruptedAnalyzeJobsOnDeadNodes(sctx)
+		return CleanupCorruptedAnalyzeJobsOnDeadInstances(sctx)
 	})
 }
 
@@ -118,9 +118,9 @@ const BatchUpdateAnalyzeJobSQL = `UPDATE mysql.analyze_jobs
             process_id = NULL
             WHERE id IN (%?)`
 
-// CleanupCorruptedAnalyzeJobsOnCurrentNode cleans up the potentially corrupted analyze job from current node.
+// CleanupCorruptedAnalyzeJobsOnCurrentInstance cleans up the potentially corrupted analyze job from current node.
 // Exported for testing.
-func CleanupCorruptedAnalyzeJobsOnCurrentNode(
+func CleanupCorruptedAnalyzeJobsOnCurrentInstance(
 	sctx sessionctx.Context,
 	currentRunningProcessIDs map[uint64]struct{},
 ) error {
@@ -178,8 +178,8 @@ func CleanupCorruptedAnalyzeJobsOnCurrentNode(
 	return nil
 }
 
-// CleanupCorruptedAnalyzeJobsOnDeadNodes cleans up the potentially corrupted analyze job from dead nodes.
-func CleanupCorruptedAnalyzeJobsOnDeadNodes(
+// CleanupCorruptedAnalyzeJobsOnDeadInstances cleans up the potentially corrupted analyze job from dead nodes.
+func CleanupCorruptedAnalyzeJobsOnDeadInstances(
 	sctx sessionctx.Context,
 ) error {
 	rows, _, err := statsutil.ExecRows(
