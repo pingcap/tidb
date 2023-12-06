@@ -5,55 +5,53 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
-	"io/ioutil"
+	"gopkg.in/resty.v1"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/jonboulle/clockwork"
+	"cloud.google.com/go/storage"
 	"github.com/pingcap/log"
-	"golang.org/x/oauth2"
 )
 
 const (
-	httpClientTimeout = 5 * time.Second
-	uploadPartTimeout = 5 * time.Second
-	uploadPartTryCnt  = 3 // if uploading a part fails, we should try 3 times in total.
+	uploadPartTryCnt   = 3 // if uploading a part fails, we should try 3 times in total.
+	MPUInitiateQuery   = "uploads"
+	MPUPartNumberQuery = "partNumber"
+	MPUUploadIDQuery   = "uploadId"
+
+	defaultChunkSize       = 5 * 1024 * 1024 // 5 MB
+	defaultRetry           = 3               // 建议默认3~5次，不要太大，否则将可能会导致成为僵尸任务。
+	defaultSignedURLExpiry = 15 * time.Minute
 )
 
-var (
-	newHTTPClient = func(timeout time.Duration, trans *http.Transport) httpClient {
-		c := &http.Client{Timeout: timeout}
-		if trans != nil {
-			c.Transport = trans
-		}
-		return c
-	}
-
-	clock = clockwork.NewRealClock()
-)
-
-type authToken interface {
-	SetAuthHeader(r *http.Request)
+type XMLMPU struct {
+	cli             *storage.Client
+	bucket          string
+	uri             string
+	retry           int
+	signedURLExpiry time.Duration
+	uploadID        string
 }
 
-type httpClient interface {
-	Do(req *http.Request) (*http.Response, error)
+type InitiateMultipartUploadResult struct {
+	XMLName  xml.Name `xml:"InitiateMultipartUploadResult"`
+	Text     string   `xml:",chardata"`
+	Xmlns    string   `xml:"xmlns,attr"`
+	Bucket   string   `xml:"Bucket"`
+	Key      string   `xml:"Key"`
+	UploadId string   `xml:"UploadId"`
 }
 
 // GCSWriter is GCSWriter following GCS multipart upload protocol.
 type GCSWriter struct {
 	ctx context.Context
 
-	token      authToken
-	httpClient httpClient
-
-	objURI       string
-	bucketName   string
-	objName      string
-	uploadID     string
-	bucketRegion string
+	objURI     string
+	bucketName string
+	uploadID   string
 
 	partSize          int   // in bytes
 	parallelCnt       int   // number of workers
@@ -63,56 +61,73 @@ type GCSWriter struct {
 	currentWorker *uploadWorker // the worker who is buffering the data. Once the buffer is full,
 	// the data will be uploaded as a part.
 	idleWorkers chan *uploadWorker
+	m           *XMLMPU
+}
+
+func (m *XMLMPU) InitiateXMLMPU() error {
+	opts := &storage.SignedURLOptions{
+		Scheme:          storage.SigningSchemeV4,
+		Method:          "POST",
+		Expires:         time.Now().Add(m.signedURLExpiry),
+		QueryParameters: url.Values{MPUInitiateQuery: []string{""}},
+	}
+	u, err := m.cli.Bucket(m.bucket).SignedURL(m.uri, opts)
+	if err != nil {
+		return fmt.Errorf("Bucket(%q).SignedURL: %s", m.bucket, err)
+	}
+
+	client := resty.New()
+	resp, err := client.R().Post(u)
+	if err != nil {
+		return fmt.Errorf("POST request failed: %s", err)
+	}
+
+	if resp.StatusCode() != http.StatusOK {
+		return fmt.Errorf("POST request returned non-OK status: %d", resp.StatusCode())
+	}
+	body := resp.Body()
+
+	result := InitiateMultipartUploadResult{}
+	err = xml.Unmarshal(body, &result)
+	if err != nil {
+		return fmt.Errorf("failed to unmarshal response body: %s", err)
+	}
+
+	uploadID := result.UploadId
+	m.uploadID = uploadID
+	return nil
 }
 
 // NewGCSWriter returns a GCSWriter which uses GCS multipart upload API behind the scene.
-func NewGCSWriter(ctx context.Context, uri string, partSize int, parallelCnt int, bucketName string, bucketRegion string) (*GCSWriter, error) {
+func NewGCSWriter(ctx context.Context, cli *storage.Client, uri string, partSize int, parallelCnt int, bucketName string) (*GCSWriter, error) {
 	// multipart upload protocol: go/gcs-pb-multipart-upload#performing-a-multipart-upload
-
-	u, err := url.Parse(uri)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse GCS URI: '%v', err: %w", uri, err)
+	m := XMLMPU{
+		cli:             cli,
+		retry:           defaultRetry,
+		uri:             uri,
+		signedURLExpiry: defaultSignedURLExpiry,
+		bucket:          bucketName,
 	}
-
-	objName := strings.TrimLeft(u.Path, "/")
-
-	token := &oauth2.Token{}
-
-	httpClient := newHTTPClient(httpClientTimeout, nil)
-
-	uploadID, err := initMultipartUpload(httpClient, token, bucketName, objName, bucketRegion)
+	err := m.InitiateXMLMPU()
 	if err != nil {
-		return nil, fmt.Errorf("failed to init multipart upload, err: %w", err)
+		err = fmt.Errorf("Failed to initiate XMLMPU: %s", err)
+		return nil, err
 	}
 
 	w := &GCSWriter{
 		ctx:           ctx,
-		token:         token,
-		httpClient:    httpClient,
 		objURI:        uri,
 		bucketName:    bucketName,
-		objName:       objName,
-		bucketRegion:  bucketRegion,
 		partSize:      partSize,
 		parallelCnt:   parallelCnt,
 		workers:       make([]*uploadWorker, parallelCnt),
 		currentWorker: nil,
 		idleWorkers:   make(chan *uploadWorker, parallelCnt),
-		uploadID:      uploadID,
+		m:             &m,
 	}
 
 	for i := 0; i < parallelCnt; i++ {
-		// Needs to use dedicated Transport for each worker, otherwise the combined throughput is throttled somehow.
-		trans := &http.Transport{
-			Proxy:                 http.ProxyFromEnvironment,
-			MaxConnsPerHost:       100,
-			ForceAttemptHTTP2:     true,
-			MaxIdleConns:          100,
-			IdleConnTimeout:       10 * time.Second,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
-		}
-		w.workers[i] = newUploadWorker(token, bucketName, objName, uploadID, bucketRegion, i, partSize, w.idleWorkers, trans)
+		w.workers[i] = newUploadWorker(cli, uri, bucketName, m.uploadID, i, partSize, w.idleWorkers)
 		w.idleWorkers <- w.workers[i]
 	}
 
@@ -176,27 +191,33 @@ func (w *GCSWriter) completeMultipartUpload(parts map[int]objectPart) error {
 	if err != nil {
 		return fmt.Errorf("failed to build complete multipart upload XML for %v, err: %w", w.objURI, err)
 	}
-	completeURL := fmt.Sprintf("https://%s.storage.googleapis.com/%s?uploadId=%s", w.bucketName, w.objName, w.uploadID)
-	if strings.HasPrefix(w.bucketRegion, "us") {
-		completeURL = fmt.Sprintf("https://%s.%s-storage.googleapis.com/%s?uploadId=%s", w.bucketName, w.bucketRegion, w.objName, w.uploadID)
+
+	values := url.Values{}
+	values.Add(MPUUploadIDQuery, w.m.uploadID)
+	opts := &storage.SignedURLOptions{
+		Scheme:  storage.SigningSchemeV4,
+		Method:  "POST",
+		Expires: time.Now().Add(defaultSignedURLExpiry),
+		//ContentType:     "application/xml",
+		QueryParameters: values,
+	}
+	u, err := w.m.cli.Bucket(w.m.bucket).SignedURL(w.objURI, opts)
+	if err != nil {
+		err = fmt.Errorf("Bucket(%q).SignedURL: %s", w.m.bucket, err)
+		return err
 	}
 
-	req, err := http.NewRequest("POST", completeURL, strings.NewReader(bodyXML))
+	client := resty.New()
+	resp, err := client.R().SetBody(bodyXML).Post(u)
 	if err != nil {
+		err = fmt.Errorf("POST request failed: %s", err)
 		return err
 	}
-	req.Header.Add("Content-Length", fmt.Sprintf("%v", len(bodyXML)))
-	req.Header.Add("Date", clock.Now().Format(http.TimeFormat))
-	req.Header.Add("Content-Type", "application/xml")
-	w.token.SetAuthHeader(req)
-	resp, err := w.httpClient.Do(req)
-	if err != nil {
+
+	if resp.StatusCode() != http.StatusOK {
+		err = fmt.Errorf("POST request returned non-OK status: %d", resp.StatusCode())
 		return err
 	}
-	if err := checkResponse(resp); err != nil {
-		return err
-	}
-	resp.Body.Close()
 
 	return nil
 }
@@ -227,76 +248,17 @@ func buildCompleteMultipartUploadXML(parts map[int]objectPart) (string, error) {
 	return xmlStr.String(), nil
 }
 
-func initMultipartUpload(httpClient httpClient, token authToken, bucketName, objName, bucketRegion string) (string, error) {
-	initialPostURL := fmt.Sprintf("https://%s.storage.googleapis.com/%s?uploads", bucketName, objName)
-	if strings.HasPrefix(bucketRegion, "us") {
-		initialPostURL = fmt.Sprintf("https://%s.%s-storage.googleapis.com/%s?uploads", bucketName, bucketRegion, objName)
-	}
-	req, err := http.NewRequest("POST", initialPostURL, nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to create request, err: %w", err)
-	}
-	req.Header.Add("Content-Length", "0")
-	req.Header.Add("Date", clock.Now().Format(http.TimeFormat))
-	req.Header.Add("Content-Type", "application/octet-stream")
-	token.SetAuthHeader(req)
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to init multipart upload, err: %w", err)
-	}
-	if err := checkResponse(resp); err != nil {
-		return "", fmt.Errorf("multipart upload failed, err: %w", err)
-	}
-	defer resp.Body.Close()
-	// Extract the uploadID of the multipart upload
-	parsedResult := &struct {
-		UploadID string `xml:"UploadId"`
-	}{}
-
-	xml := xml.NewDecoder(resp.Body)
-	if err := xml.Decode(parsedResult); err != nil {
-		return "", fmt.Errorf("failed to decode multipart upload result, err: %w", err)
-	}
-
-	return parsedResult.UploadID, nil
-}
-
-func checkResponse(resp *http.Response) error {
-	if resp.StatusCode == 200 {
-		return nil
-	}
-
-	// Fetch the scotty upload ID.
-	debugID := resp.Header.Get("x-guploader-uploadid")
-
-	// Default to a basic message if there is no body.
-	errStr := http.StatusText(resp.StatusCode)
-	if resp.Body != nil {
-		body, readErr := ioutil.ReadAll(resp.Body)
-		if readErr != nil {
-			return fmt.Errorf("%w (failed to read response body); %s; x-guploader-uploadid=%s", readErr, errStr, debugID)
-		}
-		if bodyStr := string(body); bodyStr != "" {
-			errStr = bodyStr
-		}
-	}
-
-	return fmt.Errorf("%s; x-guploader-uploadid=%s", errStr, debugID)
-}
-
 type objectPart struct {
 	PartNumber int    `xml:"PartNumber"`
 	ETag       string `xml:"ETag"`
 }
 
 type uploadWorker struct {
+	cli   *storage.Client
+	uri   string
 	index int // the index of the worker
 
-	token      authToken
-	httpClient httpClient
-
-	bucketName, objName, uploadID, bucketRegion string
+	bucketName, uploadID string
 
 	buffer            []byte // buffer capacity is equal to partSize
 	offset            int
@@ -310,18 +272,16 @@ type uploadWorker struct {
 	tryCnt int
 }
 
-func newUploadWorker(token authToken, bucketName, objName, uploadID, bucketRegion string, index, partSize int, idleWorkerPool chan *uploadWorker, trans *http.Transport) *uploadWorker {
+func newUploadWorker(cli *storage.Client, uri string, bucketName, uploadID string, index, partSize int, idleWorkerPool chan *uploadWorker) *uploadWorker {
 	return &uploadWorker{
+		uri:            uri,
+		cli:            cli,
 		index:          index,
-		token:          token,
 		bucketName:     bucketName,
-		objName:        objName,
 		uploadID:       uploadID,
-		bucketRegion:   bucketRegion,
 		buffer:         make([]byte, partSize),
 		partSize:       partSize,
 		parts:          make(map[int]objectPart),
-		httpClient:     newHTTPClient(uploadPartTimeout, trans),
 		idleWorkerPool: idleWorkerPool,
 	}
 }
@@ -346,7 +306,7 @@ func (uw *uploadWorker) uploadPartAsync() error {
 		if err != nil {
 			uw.err = err
 			uw.tryCnt++
-			log.Error(fmt.Sprintf("upload worker %v failed to upload part %v for object %v, tryCnt: %v, err: %v", uw.index, uw.currentPartNumber, uw.objName, uw.tryCnt, err))
+			log.Error(fmt.Sprintf("upload worker %v failed to upload part %v for object %v, tryCnt: %v, err: %v", uw.index, uw.currentPartNumber, uw.uri, uw.tryCnt, err))
 		} else {
 			// Upload succeeded. Reset
 			uw.offset = 0
@@ -365,40 +325,33 @@ func (uw *uploadWorker) uploadPart(partNumber int, data []byte) error {
 		return fmt.Errorf("Invalid partNumber: %v", partNumber)
 	}
 
-	url := uw.uploadPartURL(partNumber)
-	req, err := http.NewRequest("PUT", url, bytes.NewReader(data))
-	if err != nil {
-		return err
+	opts := &storage.SignedURLOptions{
+		Scheme:  storage.SigningSchemeV4,
+		Method:  "PUT",
+		Expires: time.Now().Add(defaultSignedURLExpiry),
+		QueryParameters: url.Values{
+			MPUUploadIDQuery:   []string{uw.uploadID},
+			MPUPartNumberQuery: []string{strconv.Itoa(partNumber)},
+		},
 	}
-	req.Header.Add("Content-Length", fmt.Sprintf("%d", len(data)))
-	req.Header.Add("Date", clock.Now().Format(http.TimeFormat))
-	uw.token.SetAuthHeader(req)
-	resp, err := uw.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	if err := checkResponse(resp); err != nil {
-		return err
-	}
-	defer resp.Body.Close()
 
-	etag := resp.Header.Get("ETag")
-	if etag == "" {
-		respStr := &strings.Builder{}
-		resp.Write(respStr)
-		return fmt.Errorf("uploadPart did not return in the expected format. Unable to get the ETag for part %v. Resp: %v", partNumber, respStr.String())
+	u, err := uw.cli.Bucket(uw.bucketName).SignedURL(uw.uri, opts)
+	if err != nil {
+		return fmt.Errorf("Bucket(%q).SignedURL: %s", uw.bucketName, err)
 	}
+
+	client := resty.New()
+	resp, err := client.R().SetBody(bytes.NewReader(data)).Put(u) // Set payload as request body
+	if err != nil {
+		return fmt.Errorf("PUT request failed: %s", err)
+	}
+
+	etag := resp.Header().Get("ETag")
+
+	if resp.StatusCode() != http.StatusOK {
+		return fmt.Errorf("PUT request returned non-OK status: %d", resp.StatusCode())
+	}
+
 	uw.parts[partNumber] = objectPart{PartNumber: partNumber, ETag: etag}
 	return nil
-}
-
-func (uw *uploadWorker) uploadPartURL(partNumber int) string {
-	if strings.HasPrefix(uw.bucketRegion, "us-") {
-		return fmt.Sprintf(
-			"https://%s.%s-storage.googleapis.com/%s?uploadId=%s&partNumber=%v",
-			uw.bucketName, uw.bucketRegion, uw.objName, uw.uploadID, partNumber)
-	}
-	return fmt.Sprintf(
-		"https://%s.storage.googleapis.com/%s?uploadId=%s&partNumber=%v",
-		uw.bucketName, uw.objName, uw.uploadID, partNumber)
 }

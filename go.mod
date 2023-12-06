@@ -134,6 +134,7 @@ require (
 	golang.org/x/tools v0.15.0
 	google.golang.org/api v0.149.0
 	google.golang.org/grpc v1.59.0
+	gopkg.in/resty.v1 v1.12.0
 	gopkg.in/yaml.v2 v2.4.0
 	honnef.co/go/tools v0.4.6
 	k8s.io/api v0.27.2
