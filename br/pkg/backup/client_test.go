@@ -243,7 +243,7 @@ func TestOnBackupRegionErrorResponse(t *testing.T) {
 	}
 	for _, cs := range cases {
 		t.Log(cs)
-		_, backoffMs, err := backup.OnBackupResponse(cs.storeID, cs.bo, cs.backupTS, cs.lockResolver, cs.resp)
+		_, backoffMs, err := backup.OnBackupResponse(cs.storeID, cs.bo, cs.backupTS, cs.lockResolver, cs.resp, nil)
 		require.Equal(t, cs.exceptedBackoffMs, backoffMs)
 		if cs.exceptedErr {
 			require.Error(t, err)
