@@ -15,11 +15,8 @@
 package aggregate
 
 import (
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
@@ -49,39 +46,6 @@ func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggF
 		partialResultsMem: 0,
 	}
 	return baseWorker
-}
-
-func (w *baseHashAggWorker) getPartialResult(_ *stmtctx.StatementContext, groupKey [][]byte, mapper aggfuncs.AggPartialResultMapper) [][]aggfuncs.PartialResult {
-	n := len(groupKey)
-	partialResults := make([][]aggfuncs.PartialResult, n)
-	allMemDelta := int64(0)
-	partialResultSize := w.getPartialResultSliceLenConsiderByteAlign()
-	for i := 0; i < n; i++ {
-		var ok bool
-		if partialResults[i], ok = mapper[string(groupKey[i])]; ok {
-			continue
-		}
-		partialResults[i] = make([]aggfuncs.PartialResult, partialResultSize)
-		for j, aggFunc := range w.aggFuncs {
-			partialResult, memDelta := aggFunc.AllocPartialResult()
-			partialResults[i][j] = partialResult
-			allMemDelta += memDelta // the memory usage of PartialResult
-		}
-		allMemDelta += int64(partialResultSize * 8)
-		// Map will expand when count > bucketNum * loadFactor. The memory usage will double.
-		if len(mapper)+1 > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
-			mem := int64(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMap))
-			w.memTracker.Consume(mem)
-			w.partialResultsMem += mem
-			w.BInMap++
-		}
-		mapper[string(groupKey[i])] = partialResults[i]
-		allMemDelta += int64(len(groupKey[i]))
-	}
-	failpoint.Inject("ConsumeRandomPanic", nil)
-	w.memTracker.Consume(allMemDelta)
-	w.partialResultsMem += allMemDelta
-	return partialResults
 }
 
 func (w *baseHashAggWorker) getPartialResultSliceLenConsiderByteAlign() int {
