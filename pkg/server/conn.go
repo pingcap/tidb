@@ -1937,10 +1937,12 @@ func (cc *clientConn) handleStmt(
 
 	// if stmt is load data stmt, store the channel that reads from the conn
 	// into the ctx for executor to use
-	if _, ok := stmt.(*ast.LoadDataStmt); ok {
-		err := cc.handleLoadData(ctx)
-		if err != nil {
-			return false, err
+	if s, ok := stmt.(*ast.LoadDataStmt); ok {
+		if s.FileLocRef == ast.FileLocClient {
+			err := cc.preprocessLoadDataLocal(ctx)
+			if err != nil {
+				return false, err
+			}
 		}
 	}
 
@@ -1953,6 +1955,12 @@ func (cc *clientConn) handleStmt(
 	if rs != nil {
 		defer terror.Call(rs.Close)
 	}
+	if s, ok := stmt.(*ast.LoadDataStmt); ok {
+		if s.FileLocRef == ast.FileLocClient {
+			cc.postprocessLoadDataLocal()
+		}
+	}
+
 	if err != nil {
 		// If error is returned during the planner phase or the executor.Open
 		// phase, the rs will be nil, and StmtCtx.MemTracker StmtCtx.DiskTracker
@@ -1990,7 +1998,10 @@ func (cc *clientConn) handleStmt(
 	return false, err
 }
 
-func (cc *clientConn) handleLoadData(ctx context.Context) error {
+// Preprocess LOAD DATA. Load data from a local file requires reading from the connection.
+// The function pass a builder to build the connection reader to the context,
+// which will be used in LoadDataExec.
+func (cc *clientConn) preprocessLoadDataLocal(ctx context.Context) error {
 	if cc.capability&mysql.ClientLocalFiles == 0 {
 		return servererr.ErrNotAllowedCommand
 	}
@@ -2094,10 +2105,14 @@ func (cc *clientConn) handleLoadData(ctx context.Context) error {
 		}
 		return err
 	}
-	// set these functions in the context
 	cc.ctx.SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
 	cc.ctx.SetValue(executor.LoadDataReaderCloseKey, readerCloser)
 	return nil
+}
+
+func (cc *clientConn) postprocessLoadDataLocal() {
+	cc.ctx.ClearValue(executor.LoadDataReaderBuilderKey)
+	cc.ctx.ClearValue(executor.LoadDataReaderCloseKey)
 }
 
 func (cc *clientConn) handleFileTransInConn(ctx context.Context, status uint16) (bool, error) {

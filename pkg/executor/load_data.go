@@ -89,7 +89,7 @@ type LoadDataExec struct {
 	readerCloser LoadDataReaderCloser
 }
 
-// Open implements the Executor Next interface.
+// Open implements the Executor interface.
 func (e *LoadDataExec) Open(_ context.Context) error {
 	if rb, ok := e.Ctx().Value(LoadDataReaderBuilderKey).(LoadDataReaderBuilder); ok {
 		e.readerCloser = e.Ctx().Value(LoadDataReaderCloseKey).(LoadDataReaderCloser)
@@ -102,7 +102,7 @@ func (e *LoadDataExec) Open(_ context.Context) error {
 	return nil
 }
 
-// Close implements the Executor Next interface.
+// Close implements the Executor interface.
 func (e *LoadDataExec) Close() error {
 	return e.closeLocalReader(nil)
 }
@@ -123,7 +123,12 @@ func (e *LoadDataExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	case ast.FileLocServerOrRemote:
 		return e.loadDataWorker.loadRemote(ctx)
 	case ast.FileLocClient:
-		err = e.loadDataWorker.loadLocal(ctx, e.infileReader)
+		// This is for legacy test only
+		// TODO: adjust tests to remove LoadDataVarKey
+		sctx := e.loadDataWorker.UserSctx
+		sctx.SetValue(LoadDataVarKey, e.loadDataWorker)
+
+		err = e.loadDataWorker.LoadLocal(ctx, e.infileReader)
 		if err != nil {
 			logutil.Logger(ctx).Error("load local data failed", zap.Error(err))
 			err = e.closeLocalReader(err)
@@ -199,7 +204,7 @@ func (e *LoadDataWorker) loadRemote(ctx context.Context) error {
 }
 
 // LoadLocal reads from client connection and do load data job.
-func (e *LoadDataWorker) loadLocal(ctx context.Context, r io.ReadCloser) error {
+func (e *LoadDataWorker) LoadLocal(ctx context.Context, r io.ReadCloser) error {
 	if r == nil {
 		return errors.New("load local data, reader is nil")
 	}
@@ -584,8 +589,6 @@ func (w *commitWorker) commitWork(ctx context.Context, inCh <-chan commitTask) (
 				zap.Stack("stack"))
 			err = util.GetRecoverError(r)
 		}
-		// Why call it here?
-		// w.Ctx().StmtCommit(ctx)
 	}()
 
 	var (

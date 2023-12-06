@@ -73,7 +73,7 @@ func TestLoadData1(t *testing.T) {
 func TestLoadDataInTransaction(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
-	ts.RunTestLoadDataInTransaction(t, ts.server)
+	ts.RunTestLoadDataInTransaction(t)
 }
 
 func TestConfigDefaultValue(t *testing.T) {

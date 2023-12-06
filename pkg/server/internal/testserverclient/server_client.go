@@ -1009,7 +1009,7 @@ func columnsAsExpected(t *testing.T, columns []*sql.NullString, expected []strin
 	}
 }
 
-func (cli *TestServerClient) RunTestLoadDataInTransaction(t *testing.T, server *server.Server) {
+func (cli *TestServerClient) RunTestLoadDataInTransaction(t *testing.T) {
 	fp, err := os.CreateTemp("", "load_data_test.csv")
 	require.NoError(t, err)
 	path := fp.Name()
@@ -1092,7 +1092,6 @@ func (cli *TestServerClient) RunTestLoadDataInTransaction(t *testing.T, server *
 			config.AllowAllFiles = true
 			config.Params["sql_mode"] = "''"
 		}, dbName, func(dbt *testkit.DBTestKit) {
-			dbt.MustExec("set @@global.tidb_general_log = 1")
 			dbt.MustExec("create table t (a int primary key)")
 			txn, err := dbt.GetDB().Begin()
 			require.NoError(t, err)
@@ -1137,6 +1136,40 @@ func (cli *TestServerClient) RunTestLoadDataInTransaction(t *testing.T, server *
 
 			require.NoError(t, err)
 			rows = dbt.MustQuery("select * from t")
+			cli.CheckRows(t, rows, "1")
+		},
+	)
+
+	cli.RunTestsOnNewDB(
+		t, func(config *mysql.Config) {
+			config.AllowAllFiles = true
+			config.Params["sql_mode"] = "''"
+		}, "LoadDataFromServerFile", func(dbt *testkit.DBTestKit) {
+			dbt.MustExec("create table t (a int)")
+			_, err = dbt.GetDB().Exec(fmt.Sprintf("load data infile %q into table t", path))
+			require.ErrorContains(t, err, "Don't support load data from tidb-server's disk.")
+		},
+	)
+
+	// The test is intended to test if the load data statement correctly cleans up its
+	//  resources after execution, and does not affect following statements.
+	// For example, the 1st load data builds the reader and finishes.
+	// The 2nd load data should not be able to access the reader, especially when it should fail
+	cli.RunTestsOnNewDB(
+		t, func(config *mysql.Config) {
+			config.AllowAllFiles = true
+			config.Params["sql_mode"] = "''"
+		}, "LoadDataCleanup", func(dbt *testkit.DBTestKit) {
+			dbt.MustExec("create table t (a int)")
+			txn, err := dbt.GetDB().Begin()
+			require.NoError(t, err)
+			_, err = txn.Exec(fmt.Sprintf("load data local infile %q into table t", path))
+			require.NoError(t, err)
+			_, err = txn.Exec("load data local infile '/tmp/does_not_exist' into table t")
+			require.ErrorContains(t, err, "no such file or directory")
+			err = txn.Commit()
+			require.NoError(t, err)
+			rows := dbt.MustQuery("select * from t")
 			cli.CheckRows(t, rows, "1")
 		},
 	)
