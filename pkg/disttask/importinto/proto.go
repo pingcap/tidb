@@ -167,7 +167,7 @@ func (sv *SharedVars) mergeIndexSummary(indexID int64, summary *external.WriterS
 }
 
 // importStepMinimalTask is the minimal task of IMPORT INTO.
-// Scheduler will split the subtask into minimal tasks(Chunks -> Chunk)
+// TaskExecutor will split the subtask into minimal tasks(Chunks -> Chunk)
 type importStepMinimalTask struct {
 	Plan       importer.Plan
 	Chunk      Chunk

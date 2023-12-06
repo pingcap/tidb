@@ -41,8 +41,8 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/domain/globalconfigsync"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
@@ -1477,7 +1477,7 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 		errMsg := fmt.Sprintf("TiDB node ID( = %s ) not found in available TiDB nodes list", do.ddl.GetID())
 		return errors.New(errMsg)
 	}
-	schedulerManager, err := scheduler.NewManagerBuilder().BuildManager(ctx, serverID, taskManager)
+	executorManager, err := taskexecutor.NewManagerBuilder().BuildManager(ctx, serverID, taskManager)
 	if err != nil {
 		return err
 	}
@@ -1487,22 +1487,22 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 		defer func() {
 			storage.SetTaskManager(nil)
 		}()
-		do.distTaskFrameworkLoop(ctx, taskManager, schedulerManager, serverID)
+		do.distTaskFrameworkLoop(ctx, taskManager, executorManager, serverID)
 	}, "distTaskFrameworkLoop")
 	return nil
 }
 
-func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, schedulerManager *scheduler.Manager, serverID string) {
-	err := schedulerManager.Start()
+func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, executorManager *taskexecutor.Manager, serverID string) {
+	err := executorManager.Start()
 	if err != nil {
-		logutil.BgLogger().Error("dist task scheduler manager start failed", zap.Error(err))
+		logutil.BgLogger().Error("dist task executor manager start failed", zap.Error(err))
 		return
 	}
-	logutil.BgLogger().Info("dist task scheduler manager started")
+	logutil.BgLogger().Info("dist task executor manager started")
 	defer func() {
-		logutil.BgLogger().Info("stopping dist task scheduler manager")
-		schedulerManager.Stop()
-		logutil.BgLogger().Info("dist task scheduler manager stopped")
+		logutil.BgLogger().Info("stopping dist task executor manager")
+		executorManager.Stop()
+		logutil.BgLogger().Info("dist task executor manager stopped")
 	}()
 
 	var dispatcherManager *dispatcher.Manager
@@ -2371,7 +2371,7 @@ func (do *Domain) syncIndexUsageWorker(owner owner.Manager) {
 				continue
 			}
 			if err := handle.GCIndexUsage(); err != nil {
-				statslogutil.StatsLogger.Error("gc index usage failed", zap.Error(err))
+				statslogutil.StatsLogger().Error("gc index usage failed", zap.Error(err))
 			}
 		}
 	}

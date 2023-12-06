@@ -105,6 +105,7 @@ type InfoSyncer struct {
 	// It must be used when the etcd path isn't needed to separate by keyspace.
 	// See keyspace RFC: https://github.com/pingcap/tidb/pull/39685
 	unprefixedEtcdCli *clientv3.Client
+	pdHTTPCli         pdhttp.Client
 	info              *ServerInfo
 	serverInfoPath    string
 	minStartTS        uint64
@@ -198,9 +199,13 @@ func GlobalInfoSyncerInit(
 	codec tikv.Codec,
 	skipRegisterToDashBoard bool,
 ) (*InfoSyncer, error) {
+	if pdHTTPCli != nil {
+		pdHTTPCli = pdHTTPCli.WithRespHandler(pdResponseHandler)
+	}
 	is := &InfoSyncer{
 		etcdCli:           etcdCli,
 		unprefixedEtcdCli: unprefixedEtcdCli,
+		pdHTTPCli:         pdHTTPCli,
 		info:              getServerInfo(id, serverIDGetter),
 		serverInfoPath:    fmt.Sprintf("%s/%s", ServerInformationPath, id),
 		minStartTSPath:    fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
@@ -209,14 +214,11 @@ func GlobalInfoSyncerInit(
 	if err != nil {
 		return nil, err
 	}
-	if pdHTTPCli != nil {
-		pdHTTPCli = pdHTTPCli.WithRespHandler(pdResponseHandler)
-	}
-	is.labelRuleManager = initLabelRuleManager(pdHTTPCli)
-	is.placementManager = initPlacementManager(pdHTTPCli)
-	is.scheduleManager = initScheduleManager(etcdCli)
-	is.tiflashReplicaManager = initTiFlashReplicaManager(etcdCli, codec)
-	is.resourceManagerClient = initResourceManagerClient(pdCli)
+	is.initLabelRuleManager()
+	is.initPlacementManager()
+	is.initScheduleManager()
+	is.initTiFlashReplicaManager(codec)
+	is.initResourceManagerClient(pdCli)
 	setGlobalInfoSyncer(is)
 	return is, nil
 }
@@ -247,22 +249,24 @@ func (is *InfoSyncer) GetSessionManager() util2.SessionManager {
 	return is.managerMu.SessionManager
 }
 
-func initLabelRuleManager(pdHTTPCli pdhttp.Client) LabelRuleManager {
-	if pdHTTPCli == nil {
-		return &mockLabelManager{labelRules: map[string][]byte{}}
+func (is *InfoSyncer) initLabelRuleManager() {
+	if is.pdHTTPCli == nil {
+		is.labelRuleManager = &mockLabelManager{labelRules: map[string][]byte{}}
+		return
 	}
-	return &PDLabelManager{pdHTTPCli}
+	is.labelRuleManager = &PDLabelManager{is.pdHTTPCli}
 }
 
-func initPlacementManager(pdHTTPCli pdhttp.Client) PlacementManager {
-	if pdHTTPCli == nil {
-		return &mockPlacementManager{}
+func (is *InfoSyncer) initPlacementManager() {
+	if is.pdHTTPCli == nil {
+		is.placementManager = &mockPlacementManager{}
+		return
 	}
-	return &PDPlacementManager{pdHTTPCli}
+	is.placementManager = &PDPlacementManager{is.pdHTTPCli}
 }
 
-func initResourceManagerClient(pdCli pd.Client) (cli pd.ResourceManagerClient) {
-	cli = pdCli
+func (is *InfoSyncer) initResourceManagerClient(pdCli pd.Client) {
+	var cli pd.ResourceManagerClient = pdCli
 	if pdCli == nil {
 		cli = NewMockResourceManagerClient()
 	}
@@ -296,23 +300,24 @@ func initResourceManagerClient(pdCli pd.Client) (cli pd.ResourceManagerClient) {
 			}
 		}
 	})
-	return
+	is.resourceManagerClient = cli
 }
 
-func initTiFlashReplicaManager(etcdCli *clientv3.Client, codec tikv.Codec) TiFlashReplicaManager {
-	if etcdCli == nil {
-		m := mockTiFlashReplicaManagerCtx{tiflashProgressCache: make(map[int64]float64)}
-		return &m
+func (is *InfoSyncer) initTiFlashReplicaManager(codec tikv.Codec) {
+	if is.pdHTTPCli == nil {
+		is.tiflashReplicaManager = &mockTiFlashReplicaManagerCtx{tiflashProgressCache: make(map[int64]float64)}
+		return
 	}
-	logutil.BgLogger().Warn("init TiFlashReplicaManager", zap.Strings("pd addrs", etcdCli.Endpoints()))
-	return &TiFlashReplicaManagerCtx{etcdCli: etcdCli, tiflashProgressCache: make(map[int64]float64), codec: codec}
+	logutil.BgLogger().Warn("init TiFlashReplicaManager")
+	is.tiflashReplicaManager = &TiFlashReplicaManagerCtx{pdHTTPCli: is.pdHTTPCli, tiflashProgressCache: make(map[int64]float64), codec: codec}
 }
 
-func initScheduleManager(etcdCli *clientv3.Client) ScheduleManager {
-	if etcdCli == nil {
-		return &mockScheduleManager{}
+func (is *InfoSyncer) initScheduleManager() {
+	if is.pdHTTPCli == nil {
+		is.scheduleManager = &mockScheduleManager{}
+		return
 	}
-	return &PDScheduleManager{etcdCli: etcdCli}
+	is.scheduleManager = &PDScheduleManager{is.pdHTTPCli}
 }
 
 // GetMockTiFlash can only be used in tests to get MockTiFlash
@@ -450,7 +455,7 @@ func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *m
 }
 
 // pdResponseHandler will be injected into the PD HTTP client to handle the response,
-// this is to maintain consistency with the logic in the `doRequest`.
+// this is to maintain consistency with the original logic without the PD HTTP client.
 func pdResponseHandler(resp *http.Response, res interface{}) error {
 	defer func() { terror.Log(resp.Body.Close()) }()
 	bodyBytes, err := io.ReadAll(resp.Body)
@@ -473,77 +478,6 @@ func pdResponseHandler(resp *http.Response, res interface{}) error {
 		return ErrHTTPServiceError.FastGen("%s", bodyBytes)
 	}
 	return nil
-}
-
-// TODO: replace with the unified PD HTTP client.
-func doRequest(ctx context.Context, apiName string, addrs []string, route, method string, body io.Reader) ([]byte, error) {
-	var (
-		err error
-		req *http.Request
-		res *http.Response
-	)
-	for idx, addr := range addrs {
-		url := util2.ComposeURL(addr, route)
-		req, err = http.NewRequestWithContext(ctx, method, url, body)
-		if err != nil {
-			return nil, err
-		}
-		if body != nil {
-			req.Header.Set("Content-Type", "application/json")
-		}
-		start := time.Now()
-		res, err = doRequestWithFailpoint(req)
-		if err == nil {
-			metrics.PDAPIExecutionHistogram.WithLabelValues(apiName).Observe(time.Since(start).Seconds())
-			metrics.PDAPIRequestCounter.WithLabelValues(apiName, res.Status).Inc()
-			bodyBytes, err := io.ReadAll(res.Body)
-			if err != nil {
-				terror.Log(res.Body.Close())
-				return nil, err
-			}
-			if res.StatusCode != http.StatusOK {
-				logutil.BgLogger().Warn("response not 200",
-					zap.String("method", method),
-					zap.String("hosts", addr),
-					zap.String("url", url),
-					zap.Int("http status", res.StatusCode),
-					zap.Int("address order", idx),
-				)
-				err = ErrHTTPServiceError.FastGen("%s", bodyBytes)
-				if res.StatusCode == http.StatusNotFound || res.StatusCode == http.StatusPreconditionFailed {
-					err = nil
-					bodyBytes = nil
-				}
-			}
-			terror.Log(res.Body.Close())
-			return bodyBytes, err
-		}
-		metrics.PDAPIRequestCounter.WithLabelValues(apiName, "network error").Inc()
-		logutil.BgLogger().Warn("fail to doRequest",
-			zap.Error(err),
-			zap.Bool("retry next address", idx == len(addrs)-1),
-			zap.String("method", method),
-			zap.String("hosts", addr),
-			zap.String("url", url),
-			zap.Int("address order", idx),
-		)
-	}
-	return nil, err
-}
-
-func doRequestWithFailpoint(req *http.Request) (resp *http.Response, err error) {
-	fpEnabled := false
-	failpoint.Inject("FailPlacement", func(val failpoint.Value) {
-		if val.(bool) {
-			fpEnabled = true
-			resp = &http.Response{StatusCode: http.StatusNotFound, Body: http.NoBody}
-			err = nil
-		}
-	})
-	if fpEnabled {
-		return
-	}
-	return util2.InternalHTTPClient().Do(req)
 }
 
 // GetAllRuleBundles is used to get all rule bundles from PD It is used to load full rules from PD while fullload infoschema.
@@ -1177,13 +1111,13 @@ func SetTiFlashGroupConfig(ctx context.Context) error {
 // SetTiFlashPlacementRule is a helper function to set placement rule.
 // It is discouraged to use SetTiFlashPlacementRule directly,
 // use `ConfigureTiFlashPDForTable`/`ConfigureTiFlashPDForPartitions` instead.
-func SetTiFlashPlacementRule(ctx context.Context, rule placement.TiFlashRule) error {
+func SetTiFlashPlacementRule(ctx context.Context, rule pdhttp.Rule) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	logutil.BgLogger().Info("SetTiFlashPlacementRule", zap.String("ruleID", rule.ID))
-	return is.tiflashReplicaManager.SetPlacementRule(ctx, rule)
+	return is.tiflashReplicaManager.SetPlacementRule(ctx, &rule)
 }
 
 // DeleteTiFlashPlacementRule is to delete placement rule for certain group.
@@ -1197,7 +1131,7 @@ func DeleteTiFlashPlacementRule(ctx context.Context, group string, ruleID string
 }
 
 // GetTiFlashGroupRules to get all placement rule in a certain group.
-func GetTiFlashGroupRules(ctx context.Context, group string) ([]placement.TiFlashRule, error) {
+func GetTiFlashGroupRules(ctx context.Context, group string) ([]*pdhttp.Rule, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1241,7 +1175,7 @@ func ConfigureTiFlashPDForTable(id int64, count uint64, locationLabels *[]string
 	ctx := context.Background()
 	logutil.BgLogger().Info("ConfigureTiFlashPDForTable", zap.Int64("tableID", id), zap.Uint64("count", count))
 	ruleNew := MakeNewRule(id, count, *locationLabels)
-	if e := is.tiflashReplicaManager.SetPlacementRule(ctx, ruleNew); e != nil {
+	if e := is.tiflashReplicaManager.SetPlacementRule(ctx, &ruleNew); e != nil {
 		return errors.Trace(e)
 	}
 	return nil
@@ -1254,12 +1188,12 @@ func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionD
 		return errors.Trace(err)
 	}
 	ctx := context.Background()
-	rules := make([]placement.TiFlashRule, 0, len(*definitions))
+	rules := make([]*pdhttp.Rule, 0, len(*definitions))
 	pids := make([]int64, 0, len(*definitions))
 	for _, p := range *definitions {
 		logutil.BgLogger().Info("ConfigureTiFlashPDForPartitions", zap.Int64("tableID", tableID), zap.Int64("partID", p.ID), zap.Bool("accel", accel), zap.Uint64("count", count))
 		ruleNew := MakeNewRule(p.ID, count, *locationLabels)
-		rules = append(rules, ruleNew)
+		rules = append(rules, &ruleNew)
 		pids = append(pids, p.ID)
 	}
 	if e := is.tiflashReplicaManager.SetPlacementRuleBatch(ctx, rules); e != nil {
@@ -1325,7 +1259,7 @@ func GetPDScheduleConfig(ctx context.Context) (map[string]interface{}, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return is.scheduleManager.GetPDScheduleConfig(ctx)
+	return is.scheduleManager.GetScheduleConfig(ctx)
 }
 
 // SetPDScheduleConfig sets the schedule information for pd
@@ -1334,7 +1268,7 @@ func SetPDScheduleConfig(ctx context.Context, config map[string]interface{}) err
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return is.scheduleManager.SetPDScheduleConfig(ctx, config)
+	return is.scheduleManager.SetScheduleConfig(ctx, config)
 }
 
 // TiProxyServerInfo is the server info for TiProxy.

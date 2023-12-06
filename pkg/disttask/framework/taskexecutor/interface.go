@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package scheduler
+package taskexecutor
 
 import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler/execute"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 )
 
 // TaskTable defines the interface to access task table.
@@ -35,7 +35,7 @@ type TaskTable interface {
 
 	HasSubtasksInStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...interface{}) (bool, error)
 	UpdateErrorToSubtask(ctx context.Context, tidbID string, taskID int64, err error) error
-	IsSchedulerCanceled(ctx context.Context, tidbID string, taskID int64) (bool, error)
+	IsTaskExecutorCanceled(ctx context.Context, tidbID string, taskID int64) (bool, error)
 	PauseSubtasks(ctx context.Context, tidbID string, taskID int64) error
 }
 
@@ -46,30 +46,35 @@ type Pool interface {
 	ReleaseAndWait()
 }
 
-// Scheduler is the subtask scheduler for a task.
+// TaskExecutor is the subtask executor for a task.
 // Each task type should implement this interface.
-type Scheduler interface {
+type TaskExecutor interface {
 	Init(context.Context) error
 	Run(context.Context, *proto.Task) error
 	Rollback(context.Context, *proto.Task) error
 	Pause(context.Context, *proto.Task) error
 	Close()
+	IsRetryableError(err error) bool
 }
 
-// Extension extends the scheduler.
+// Extension extends the TaskExecutor.
 // each task type should implement this interface.
 type Extension interface {
 	// IsIdempotent returns whether the subtask is idempotent.
 	// when tidb restart, the subtask might be left in the running state.
-	// if it's idempotent, the scheduler can rerun the subtask, else
-	// the scheduler will mark the subtask as failed.
+	// if it's idempotent, the Executor can rerun the subtask, else
+	// the Executor will mark the subtask as failed.
 	IsIdempotent(subtask *proto.Subtask) bool
 	// GetSubtaskExecutor returns the subtask executor for the subtask.
 	// Note: summary is the summary manager of all subtask of the same type now.
 	GetSubtaskExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary) (execute.SubtaskExecutor, error)
+	// IsRetryableError returns whether the error is transient.
+	// When error is transient, the framework won't mark subtasks as failed,
+	// then the TaskExecutor can load the subtask again and redo it.
+	IsRetryableError(err error) bool
 }
 
-// EmptySubtaskExecutor is an empty scheduler.
+// EmptySubtaskExecutor is an empty Executor.
 // it can be used for the task that does not need to split into subtasks.
 type EmptySubtaskExecutor struct {
 }

@@ -22,19 +22,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestImportScheduler(t *testing.T) {
+func TestImportTaskExecutor(t *testing.T) {
 	ctx := context.Background()
-	scheduler := newImportScheduler(
+	executor := newImportExecutor(
 		ctx,
 		":4000",
 		&proto.Task{
 			ID: 1,
 		},
 		nil,
-	).(*importScheduler)
+	).(*importExecutor)
 
-	require.NotNil(t, scheduler.BaseScheduler.Extension)
-	require.True(t, scheduler.IsIdempotent(&proto.Subtask{}))
+	require.NotNil(t, executor.BaseTaskExecutor.Extension)
+	require.True(t, executor.IsIdempotent(&proto.Subtask{}))
 
 	for _, step := range []proto.Step{
 		StepImport,
@@ -43,12 +43,12 @@ func TestImportScheduler(t *testing.T) {
 		StepWriteAndIngest,
 		StepPostProcess,
 	} {
-		exe, err := scheduler.GetSubtaskExecutor(ctx, &proto.Task{Step: step, Meta: []byte("{}")}, nil)
+		exe, err := executor.GetSubtaskExecutor(ctx, &proto.Task{Step: step, Meta: []byte("{}")}, nil)
 		require.NoError(t, err)
 		require.NotNil(t, exe)
 	}
-	_, err := scheduler.GetSubtaskExecutor(ctx, &proto.Task{Step: proto.StepInit, Meta: []byte("{}")}, nil)
+	_, err := executor.GetSubtaskExecutor(ctx, &proto.Task{Step: proto.StepInit, Meta: []byte("{}")}, nil)
 	require.Error(t, err)
-	_, err = scheduler.GetSubtaskExecutor(ctx, &proto.Task{Step: StepImport, Meta: []byte("")}, nil)
+	_, err = executor.GetSubtaskExecutor(ctx, &proto.Task{Step: StepImport, Meta: []byte("")}, nil)
 	require.Error(t, err)
 }

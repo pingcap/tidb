@@ -1,9 +1,9 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "extactorhandler",
-    srcs = ["extactor.go"],
-    importpath = "github.com/pingcap/tidb/pkg/server/handler/extactorhandler",
+    name = "extractorhandler",
+    srcs = ["extractor.go"],
+    importpath = "github.com/pingcap/tidb/pkg/server/handler/extractorhandler",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/domain",
@@ -17,7 +17,7 @@ go_library(
 )
 
 go_test(
-    name = "extactorhandler_test",
+    name = "extractorhandler_test",
     timeout = "short",
     srcs = [
         "extract_test.go",
@@ -25,8 +25,9 @@ go_test(
     ],
     flaky = True,
     deps = [
-        ":extactorhandler",
+        ":extractorhandler",
         "//pkg/config",
+        "//pkg/domain",
         "//pkg/metrics",
         "//pkg/server",
         "//pkg/server/internal/testserverclient",

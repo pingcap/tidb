@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	mockexecute "github.com/pingcap/tidb/pkg/disttask/framework/mock/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"go.uber.org/mock/gomock"
 )
 
@@ -34,26 +34,27 @@ func GetMockSubtaskExecutor(ctrl *gomock.Controller) *mockexecute.MockSubtaskExe
 	return executor
 }
 
-// GetMockSchedulerExtension returns one mock SchedulerExtension.
-func GetMockSchedulerExtension(ctrl *gomock.Controller, mockSubtaskExecutor *mockexecute.MockSubtaskExecutor) *mock.MockExtension {
+// GetMockTaskExecutorExtension returns one mock TaskExecutorExtension.
+func GetMockTaskExecutorExtension(ctrl *gomock.Controller, mockSubtaskExecutor *mockexecute.MockSubtaskExecutor) *mock.MockExtension {
 	mockExtension := mock.NewMockExtension(ctrl)
 	mockExtension.EXPECT().
 		GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(mockSubtaskExecutor, nil).AnyTimes()
+	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
 	return mockExtension
 }
 
-// InitScheduler inits all mock components for scheduler.
-func InitScheduler(ctrl *gomock.Controller, runSubtaskFn func(ctx context.Context, subtask *proto.Subtask) error) {
+// InitTaskExecutor inits all mock components for TaskExecutor.
+func InitTaskExecutor(ctrl *gomock.Controller, runSubtaskFn func(ctx context.Context, subtask *proto.Subtask) error) {
 	mockSubtaskExecutor := GetMockSubtaskExecutor(ctrl)
 	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
 		runSubtaskFn,
 	).AnyTimes()
 
-	mockExtension := GetMockSchedulerExtension(ctrl, mockSubtaskExecutor)
-	scheduler.RegisterTaskType(proto.TaskTypeExample,
-		func(ctx context.Context, id string, task *proto.Task, taskTable scheduler.TaskTable) scheduler.Scheduler {
-			s := scheduler.NewBaseScheduler(ctx, id, task.ID, taskTable)
+	mockExtension := GetMockTaskExecutorExtension(ctrl, mockSubtaskExecutor)
+	taskexecutor.RegisterTaskType(proto.TaskTypeExample,
+		func(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
+			s := taskexecutor.NewBaseTaskExecutor(ctx, id, task.ID, taskTable)
 			s.Extension = mockExtension
 			return s
 		},

@@ -29,8 +29,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -184,7 +184,7 @@ func (s *mockGCSSuite) TestShowJob() {
 	checkJobsMatch(rows)
 
 	// show running jobs with 2 subtasks
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncAfterSubtaskFinish", `return(true)`)
+	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/syncAfterSubtaskFinish", `return(true)`)
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-show-job", Name: "t2.csv"},
 		Content:     []byte("3\n4"),
@@ -194,7 +194,7 @@ func (s *mockGCSSuite) TestShowJob() {
 	go func() {
 		defer wg.Done()
 		// wait first subtask finish
-		<-scheduler.TestSyncChan
+		<-taskexecutor.TestSyncChan
 
 		jobInfo = &importer.JobInfo{
 			ID:          importer.TestLastImportJobID.Load(),
@@ -236,16 +236,16 @@ func (s *mockGCSSuite) TestShowJob() {
 		s.True(got)
 
 		// resume the scheduler
-		scheduler.TestSyncChan <- struct{}{}
+		taskexecutor.TestSyncChan <- struct{}{}
 		// wait second subtask finish
-		<-scheduler.TestSyncChan
+		<-taskexecutor.TestSyncChan
 		rows = tk2.MustQuery(fmt.Sprintf("show import job %d", importer.TestLastImportJobID.Load())).Rows()
 		s.Len(rows, 1)
 		jobInfo.Summary.ImportedRows = 4
 		s.compareJobInfoWithoutTime(jobInfo, rows[0])
-		// resume the scheduler, need disable failpoint first, otherwise the post-process subtask will be blocked
-		s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncAfterSubtaskFinish"))
-		scheduler.TestSyncChan <- struct{}{}
+		// resume the taskexecutor, need disable failpoint first, otherwise the post-process subtask will be blocked
+		s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/syncAfterSubtaskFinish"))
+		taskexecutor.TestSyncChan <- struct{}{}
 	}()
 	s.tk.MustQuery(fmt.Sprintf(`import into t3 FROM 'gs://test-show-job/t*.csv?access-key=aaaaaa&secret-access-key=bbbbbb&endpoint=%s' with thread=1, __max_engine_size='1'`, gcsEndpoint))
 	wg.Wait()
