@@ -170,7 +170,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "performance_schema_max_file_classes", Value: "50"},
 	{Scope: ScopeGlobal, Name: "expire_logs_days", Value: "0"},
 	{Scope: ScopeGlobal | ScopeSession, Name: BinlogRowQueryLogEvents, Value: Off, Type: TypeBool},
-	{Scope: ScopeGlobal, Name: DefaultPasswordLifetime, Value: "0", Type: TypeInt, MinValue: 0, MaxValue: math.MaxUint16},
 	{Scope: ScopeNone, Name: "pid_file", Value: "/usr/local/mysql/data/localhost.pid"},
 	{Scope: ScopeNone, Name: "innodb_undo_tablespaces", Value: "0"},
 	{Scope: ScopeGlobal, Name: InnodbStatusOutputLocks, Value: Off, Type: TypeBool, AutoConvertNegativeBool: true},

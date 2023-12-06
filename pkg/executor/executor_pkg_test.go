@@ -22,7 +22,6 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
-	"github.com/pingcap/tidb/pkg/executor/aggregate"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -213,7 +212,7 @@ func TestAggPartialResultMapperB(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		aggMap := make(aggregate.AggPartialResultMapper)
+		aggMap := make(aggfuncs.AggPartialResultMapper)
 		tempSlice := make([]aggfuncs.PartialResult, 10)
 		for num := 0; num < tc.rowNum; num++ {
 			aggMap[strconv.Itoa(num)] = tempSlice
@@ -240,13 +239,13 @@ type hmap struct {
 	nevacuate  uintptr        // nolint:unused // progress counter for evacuation (buckets less than this have been evacuated)
 }
 
-func getB(m aggregate.AggPartialResultMapper) int {
+func getB(m aggfuncs.AggPartialResultMapper) int {
 	point := (**hmap)(unsafe.Pointer(&m))
 	value := *point
 	return int(value.B)
 }
 
-func getGrowing(m aggregate.AggPartialResultMapper) bool {
+func getGrowing(m aggfuncs.AggPartialResultMapper) bool {
 	point := (**hmap)(unsafe.Pointer(&m))
 	value := *point
 	return value.oldbuckets != nil

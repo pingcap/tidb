@@ -125,7 +125,7 @@ func (s *WindowFuncDesc) Clone() *WindowFuncDesc {
 
 // WindowFuncToPBExpr converts aggregate function to pb.
 func WindowFuncToPBExpr(sctx sessionctx.Context, client kv.Client, desc *WindowFuncDesc) *tipb.Expr {
-	pc := expression.NewPBConverter(client, sctx.GetSessionVars().StmtCtx)
+	pc := expression.NewPBConverter(client, sctx)
 	tp := desc.GetTiPBExpr(true)
 	if !client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
 		return nil
@@ -145,7 +145,7 @@ func WindowFuncToPBExpr(sctx sessionctx.Context, client kv.Client, desc *WindowF
 // CanPushDownToTiFlash control whether a window function desc can be push down to tiflash.
 func (s *WindowFuncDesc) CanPushDownToTiFlash(ctx sessionctx.Context) bool {
 	// args
-	if !expression.CanExprsPushDown(ctx.GetSessionVars().StmtCtx, s.Args, ctx.GetClient(), kv.TiFlash) {
+	if !expression.CanExprsPushDown(ctx, s.Args, ctx.GetClient(), kv.TiFlash) {
 		return false
 	}
 	// window functions

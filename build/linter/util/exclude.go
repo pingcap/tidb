@@ -29,7 +29,7 @@ func shouldRun(passName string, fileName string) bool {
 	}
 
 	if config.OnlyFiles != nil {
-		for _, f := range config.OnlyFiles {
+		for f := range config.OnlyFiles {
 			matched, err := regexp.MatchString(f, fileName)
 			if err != nil {
 				panic(fmt.Sprintf("regex is wrong: %s", f))

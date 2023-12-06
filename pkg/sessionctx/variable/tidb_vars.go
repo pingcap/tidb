@@ -298,6 +298,9 @@ const (
 	// If the query has a LIMIT clause, high concurrency makes the system do much more work than needed.
 	TiDBDistSQLScanConcurrency = "tidb_distsql_scan_concurrency"
 
+	// TiDBAnalyzeDistSQLScanConcurrency is used to set the concurrency of a distsql scan task for analyze statement.
+	TiDBAnalyzeDistSQLScanConcurrency = "tidb_analyze_distsql_scan_concurrency"
+
 	// TiDBOptInSubqToJoinAndAgg is used to enable/disable the optimizer rule of rewriting IN subquery.
 	TiDBOptInSubqToJoinAndAgg = "tidb_opt_insubq_to_join_and_agg"
 
@@ -629,6 +632,9 @@ const (
 
 	// TiDBEnableClusteredIndex indicates if clustered index feature is enabled.
 	TiDBEnableClusteredIndex = "tidb_enable_clustered_index"
+
+	// TiDBEnableGlobalIndex means if we could create an global index on a partition table or not.
+	TiDBEnableGlobalIndex = "tidb_enable_global_index"
 
 	// TiDBPartitionPruneMode indicates the partition prune mode used.
 	TiDBPartitionPruneMode = "tidb_partition_prune_mode"
@@ -1114,6 +1120,10 @@ const (
 	// TiDBEnableTiFlashPipelineMode means if we should use pipeline model to execute query or not in tiflash.
 	// It's deprecated and setting it will not have any effect.
 	TiDBEnableTiFlashPipelineMode = "tidb_enable_tiflash_pipeline_model"
+	// TiDBIdleTransactionTimeout indicates the maximum time duration a transaction could be idle, unit is second.
+	// Any idle transaction will be killed after being idle for `tidb_idle_transaction_timeout` seconds.
+	// This is similar to https://docs.percona.com/percona-server/5.7/management/innodb_kill_idle_trx.html and https://mariadb.com/kb/en/transaction-timeouts/
+	TiDBIdleTransactionTimeout = "tidb_idle_transaction_timeout"
 )
 
 // TiDB intentional limits
@@ -1134,6 +1144,7 @@ const (
 	DefIndexJoinBatchSize                          = 25000
 	DefIndexLookupSize                             = 20000
 	DefDistSQLScanConcurrency                      = 15
+	DefAnalyzeDistSQLScanConcurrency               = 4
 	DefBuildStatsConcurrency                       = 2
 	DefBuildSamplingStatsConcurrency               = 2
 	DefAutoAnalyzeRatio                            = 0.5
@@ -1252,6 +1263,7 @@ const (
 	DefTiDBEnableCollectExecutionInfo              = true
 	DefTiDBAllowAutoRandExplicitInsert             = false
 	DefTiDBEnableClusteredIndex                    = ClusteredIndexDefModeOn
+	DefTiDBEnableGlobalIndex                       = false
 	DefTiDBRedactLog                               = false
 	DefTiDBRestrictedReadOnly                      = false
 	DefTiDBSuperReadOnly                           = false
@@ -1428,6 +1440,7 @@ const (
 	DefTiDBOptEnableHashJoin                          = true
 	DefTiDBOptObjective                               = OptObjectiveModerate
 	DefTiDBSchemaVersionCacheLimit                    = 16
+	DefTiDBIdleTransactionTimeout                     = 0
 )
 
 // Process global variables.

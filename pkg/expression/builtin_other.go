@@ -913,7 +913,6 @@ func BuildGetVarFunction(ctx sessionctx.Context, expr Expression, retType *types
 		FuncName: model.NewCIStr(ast.GetVar),
 		RetType:  retType,
 		Function: f,
-		ctx:      ctx,
 	}, nil
 }
 
