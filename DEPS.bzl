@@ -772,6 +772,19 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_cakturk_go_netstat",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/cakturk/go-netstat",
+        sha256 = "c8c3a7b894b4522d56bef918d1299b848ea78c566e19d3e35afa7ce0a207b5ab",
+        strip_prefix = "github.com/cakturk/go-netstat@v0.0.0-20200220111822-e5b49efee7a5",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/cakturk/go-netstat/com_github_cakturk_go_netstat-v0.0.0-20200220111822-e5b49efee7a5.zip",
+            "http://ats.apps.svc/gomod/github.com/cakturk/go-netstat/com_github_cakturk_go_netstat-v0.0.0-20200220111822-e5b49efee7a5.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/cakturk/go-netstat/com_github_cakturk_go_netstat-v0.0.0-20200220111822-e5b49efee7a5.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/cakturk/go-netstat/com_github_cakturk_go_netstat-v0.0.0-20200220111822-e5b49efee7a5.zip",
+        ],
+    )
+    go_repository(
         name = "com_github_carlmjohnson_flagext",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/carlmjohnson/flagext",
@@ -7006,26 +7019,26 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sha256 = "c6c5bfe8a84d0b680266035d1ac87af6beca4cc552693d6753d4a9f18610c30d",
-        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20231201024404-0ff16620f6c0",
+        sha256 = "0f7e8eee799eeed4e9dead2a4e5a332defa969c2c1743890123df4e30c098168",
+        strip_prefix = "github.com/CabinfeverB/client-go/v2@v2.0.0-20231206131523-261b2d06a3b5",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20231201024404-0ff16620f6c0.zip",
-            "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20231201024404-0ff16620f6c0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20231201024404-0ff16620f6c0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20231201024404-0ff16620f6c0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/CabinfeverB/client-go/v2/com_github_cabinfeverb_client_go_v2-v2.0.0-20231206131523-261b2d06a3b5.zip",
+            "http://ats.apps.svc/gomod/github.com/CabinfeverB/client-go/v2/com_github_cabinfeverb_client_go_v2-v2.0.0-20231206131523-261b2d06a3b5.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/CabinfeverB/client-go/v2/com_github_cabinfeverb_client_go_v2-v2.0.0-20231206131523-261b2d06a3b5.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/CabinfeverB/client-go/v2/com_github_cabinfeverb_client_go_v2-v2.0.0-20231206131523-261b2d06a3b5.zip",
         ],
     )
     go_repository(
         name = "com_github_tikv_pd_client",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
-        sha256 = "a6dcccfd436232d847d2ba2669d67d9708d7bc97f7571a4e57da18fdefeed852",
-        strip_prefix = "github.com/tikv/pd/client@v0.0.0-20231130081618-862eee18738e",
+        sha256 = "97af289eec8a2799b0095ff95092a9255a4b77bf83630af727bf7be33bb6dd35",
+        strip_prefix = "github.com/CabinfeverB/pd/client@v0.0.0-20231206020402-01a983b1833b",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20231130081618-862eee18738e.zip",
-            "http://ats.apps.svc/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20231130081618-862eee18738e.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20231130081618-862eee18738e.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20231130081618-862eee18738e.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/CabinfeverB/pd/client/com_github_cabinfeverb_pd_client-v0.0.0-20231206020402-01a983b1833b.zip",
+            "http://ats.apps.svc/gomod/github.com/CabinfeverB/pd/client/com_github_cabinfeverb_pd_client-v0.0.0-20231206020402-01a983b1833b.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/CabinfeverB/pd/client/com_github_cabinfeverb_pd_client-v0.0.0-20231206020402-01a983b1833b.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/CabinfeverB/pd/client/com_github_cabinfeverb_pd_client-v0.0.0-20231206020402-01a983b1833b.zip",
         ],
     )
     go_repository(
@@ -10059,6 +10072,19 @@ def go_deps():
             "http://ats.apps.svc/gomod/google.golang.org/grpc/org_golang_google_grpc-v1.59.0.zip",
             "https://cache.hawkingrei.com/gomod/google.golang.org/grpc/org_golang_google_grpc-v1.59.0.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/google.golang.org/grpc/org_golang_google_grpc-v1.59.0.zip",
+        ],
+    )
+    go_repository(
+        name = "org_golang_google_grpc_examples",
+        build_file_proto_mode = "disable_global",
+        importpath = "google.golang.org/grpc/examples",
+        sha256 = "27a1e8c1e0e746fcd4d0de5a9f64a1fe1b74f917d2df19ab16f6e68669720d60",
+        strip_prefix = "google.golang.org/grpc/examples@v0.0.0-20230419000256-16651f60ddc5",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/google.golang.org/grpc/examples/org_golang_google_grpc_examples-v0.0.0-20230419000256-16651f60ddc5.zip",
+            "http://ats.apps.svc/gomod/google.golang.org/grpc/examples/org_golang_google_grpc_examples-v0.0.0-20230419000256-16651f60ddc5.zip",
+            "https://cache.hawkingrei.com/gomod/google.golang.org/grpc/examples/org_golang_google_grpc_examples-v0.0.0-20230419000256-16651f60ddc5.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/google.golang.org/grpc/examples/org_golang_google_grpc_examples-v0.0.0-20230419000256-16651f60ddc5.zip",
         ],
     )
     go_repository(
