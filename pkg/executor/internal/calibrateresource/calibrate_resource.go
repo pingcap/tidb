@@ -688,6 +688,8 @@ func fetchStoreMetrics(serversInfo []infoschema.ServerInfo, serverType string, o
 		})
 		if resp == nil {
 			var err1 error
+			// ignore false positive go line, can't use defer here because it's in a loop.
+			//nolint:bodyclose
 			resp, err1 = util.InternalHTTPClient().Do(req)
 			if err1 != nil {
 				if firstErr == nil {
