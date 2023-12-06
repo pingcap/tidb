@@ -1192,6 +1192,7 @@ func getChunkCompressedSizeForParquet(
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	//nolint: errcheck
 	defer parser.Close()
 	err = parser.Reader.ReadFooter()
 	if err != nil {
