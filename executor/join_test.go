@@ -118,3 +118,4 @@ func TestIssue48991(t *testing.T) {
 
 	res := tk.MustQuery("SELECT `col_14` FROM `test`.`tbl_3` WHERE ((`tbl_3`.`col_15` < 'dV') AND `tbl_3`.`col_12` IN (SELECT `col_12` FROM `test`.`tbl_3` WHERE NOT (ISNULL(`tbl_3`.`col_12`)))) ORDER BY IF(ISNULL(`col_14`),0,1),`col_14`;")
 	res.Check(testkit.Rows("1984-06-10 00:00:00", "1984-07-31 00:00:00", "2017-06-07 00:00:00"))
+}
