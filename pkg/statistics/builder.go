@@ -370,10 +370,58 @@ func BuildHistAndTopN(
 	topNList = pruneTopNItem(topNList, ndv, nullCount, sampleNum, count)
 
 	// Step2: exclude topn from samples
+<<<<<<< HEAD
 	for i := int64(0); i < int64(len(samples)); i++ {
 		sampleBytes, err := getComparedBytes(samples[i].Value)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
+=======
+	if numTopN != 0 {
+		for i := int64(0); i < int64(len(samples)); i++ {
+			sampleBytes, err := getComparedBytes(samples[i].Value)
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
+			// For debugging invalid sample data.
+			var (
+				foundTwice      bool
+				firstTimeSample types.Datum
+			)
+			for j := 0; j < len(topNList); j++ {
+				if bytes.Equal(sampleBytes, topNList[j].Encoded) {
+					// This should never happen, but we met this panic before, so we add this check here.
+					// See: https://github.com/pingcap/tidb/issues/35948
+					if foundTwice {
+						datumString, err := firstTimeSample.ToString()
+						if err != nil {
+							statslogutil.StatsLogger().Error("try to convert datum to string failed", zap.Error(err))
+						}
+
+						statslogutil.StatsLogger().Warn(
+							"invalid sample data",
+							zap.Bool("isColumn", isColumn),
+							zap.Int64("columnID", id),
+							zap.String("datum", datumString),
+							zap.Binary("sampleBytes", sampleBytes),
+							zap.Binary("topNBytes", topNList[j].Encoded),
+						)
+						// NOTE: if we don't return here, we may meet panic in the following code.
+						// The i may decrease to a negative value.
+						// We haven't fix the issue here, because we don't know how to
+						// remove the invalid sample data from the samples.
+						break
+					}
+					// First time to find the same value in topN: need to record the sample data for debugging.
+					firstTimeSample = samples[i].Value
+					// Found the same value in topn: need to skip over this value in samples.
+					copy(samples[i:], samples[uint64(i)+topNList[j].Count:])
+					samples = samples[:uint64(len(samples))-topNList[j].Count]
+					i--
+					foundTwice = true
+					continue
+				}
+			}
+>>>>>>> 373608fe9df (*: fix log for statistics (#49215))
 		}
 		// For debugging invalid sample data.
 		var (

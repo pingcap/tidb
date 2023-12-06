@@ -196,7 +196,11 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 		if modifyCnt < 0 {
 			modifyCnt = 0
 		}
+<<<<<<< HEAD
 		logutil.BgLogger().Info("incrementally update modifyCount", zap.String("category", "stats"),
+=======
+		statslogutil.StatsLogger().Info("incrementally update modifyCount",
+>>>>>>> 373608fe9df (*: fix log for statistics (#49215))
 			zap.Int64("tableID", tableID),
 			zap.Int64("curModifyCnt", curModifyCnt),
 			zap.Int64("results.BaseModifyCnt", results.BaseModifyCnt),
@@ -207,7 +211,11 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 			if cnt < 0 {
 				cnt = 0
 			}
+<<<<<<< HEAD
 			logutil.BgLogger().Info("incrementally update count", zap.String("category", "stats"),
+=======
+			statslogutil.StatsLogger().Info("incrementally update count",
+>>>>>>> 373608fe9df (*: fix log for statistics (#49215))
 				zap.Int64("tableID", tableID),
 				zap.Int64("curCnt", curCnt),
 				zap.Int64("results.Count", results.Count),
@@ -218,7 +226,11 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 			if cnt < 0 {
 				cnt = 0
 			}
+<<<<<<< HEAD
 			logutil.BgLogger().Info("directly update count", zap.String("category", "stats"),
+=======
+			statslogutil.StatsLogger().Info("directly update count",
+>>>>>>> 373608fe9df (*: fix log for statistics (#49215))
 				zap.Int64("tableID", tableID),
 				zap.Int64("results.Count", results.Count),
 				zap.Int64("count", cnt))

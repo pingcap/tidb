@@ -1263,7 +1263,11 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 	// illegal order.
 	if upperCompare < 0 {
 		err := errors.Errorf("illegal bucket order")
+<<<<<<< HEAD
 		logutil.BgLogger().Warn("fail to mergeBucketNDV", zap.String("category", "stats"), zap.Error(err))
+=======
+		statslogutil.StatsLogger().Warn("fail to mergeBucketNDV", zap.Error(err))
+>>>>>>> 373608fe9df (*: fix log for statistics (#49215))
 		return nil, err
 	}
 	//  ___right_|
@@ -1279,7 +1283,11 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 		// illegal order.
 		if lowerCompare < 0 {
 			err := errors.Errorf("illegal bucket order")
+<<<<<<< HEAD
 			logutil.BgLogger().Warn("fail to mergeBucketNDV", zap.String("category", "stats"), zap.Error(err))
+=======
+			statslogutil.StatsLogger().Warn("fail to mergeBucketNDV", zap.Error(err))
+>>>>>>> 373608fe9df (*: fix log for statistics (#49215))
 			return nil, err
 		}
 		// |___right___|

@@ -12,4 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+<<<<<<< HEAD:pkg/executor/test/partitiontest/main_test.go
 package partitiontest
+=======
+package logutil
+
+import (
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
+)
+
+// StatsLogger with category "stats" is used to log statistic related messages.
+func StatsLogger() *zap.Logger {
+	return logutil.BgLogger().With(zap.String("category", "stats"))
+}
+>>>>>>> 373608fe9df (*: fix log for statistics (#49215)):pkg/statistics/handle/logutil/logutil.go

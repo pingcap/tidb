@@ -157,7 +157,11 @@ func AddLockedTables(
 			ids = append(ids, pid)
 		}
 	}
+<<<<<<< HEAD
 	statsLogger.Info("lock table",
+=======
+	logutil.StatsLogger().Info("lock table",
+>>>>>>> 373608fe9df (*: fix log for statistics (#49215))
 		zap.Any("tables", tables),
 	)
 
@@ -211,7 +215,11 @@ func AddLockedPartitions(
 		pNames = append(pNames, pName)
 	}
 
+<<<<<<< HEAD
 	statsLogger.Info("lock partitions",
+=======
+	logutil.StatsLogger().Info("lock partitions",
+>>>>>>> 373608fe9df (*: fix log for statistics (#49215))
 		zap.Int64("tableID", tid),
 		zap.String("tableName", tableName),
 		zap.Int64s("partitionIDs", pids),
@@ -292,7 +300,11 @@ func generateStableSkippedPartitionsMessage(ids []int64, tableName string, skipp
 func insertIntoStatsTableLocked(sctx sessionctx.Context, tid int64) error {
 	_, _, err := util.ExecRows(sctx, insertSQL, tid, tid)
 	if err != nil {
+<<<<<<< HEAD
 		logutil.BgLogger().Error("error occurred when insert mysql.stats_table_locked", zap.String("category", "stats"), zap.Error(err))
+=======
+		logutil.StatsLogger().Error("error occurred when insert mysql.stats_table_locked", zap.Error(err))
+>>>>>>> 373608fe9df (*: fix log for statistics (#49215))
 		return err
 	}
 	return nil
