@@ -46,12 +46,14 @@ type ErrorStrategy int
 const (
 	// This type can be retry but consume the backoffer attempts.
 	RetryStrategy ErrorStrategy = iota
-	// This type means un-recover error and the whole progress should exits
+	// This type means unrecoverable error and the whole progress should exits
 	// for example:
 	// 1. permission not valid.
 	// 2. data has not found.
 	// 3. retry too many times
 	GiveUpStrategy
+	// This type represents Unknown error
+	UnknownStrategy
 )
 
 type ErrorContext struct {
@@ -82,11 +84,28 @@ func NewDefaultContext() *ErrorContext {
 	}
 }
 
-func (ec *ErrorContext) HandleError(err *backuppb.Error, uuid uint64, canIgnore bool) ErrorResult {
-	if len(err.Msg) != 0 {
+func (ec *ErrorContext) HandleError(err *backuppb.Error, uuid uint64) ErrorResult {
+	if err == nil {
+		return ErrorResult{RetryStrategy, "unreachable retry"}
+	}
+	res := ec.handleErrorPb(err, uuid)
+	// try the best effort to save progress from error here
+	if res.Strategy == UnknownStrategy && len(err.Msg) != 0 {
 		return ec.HandleErrorMsg(err.Msg, uuid)
 	}
-	return ec.HandleErrorPb(err, uuid, canIgnore)
+	return res
+}
+
+func (ec *ErrorContext) HandleIgnorableError(err *backuppb.Error, uuid uint64) ErrorResult {
+	if err == nil {
+		return ErrorResult{RetryStrategy, "unreachable retry"}
+	}
+	res := ec.handleIgnorableErrorPb(err, uuid)
+	// try the best effort to save progress from error here
+	if res.Strategy == UnknownStrategy && len(err.Msg) != 0 {
+		return ec.HandleErrorMsg(err.Msg, uuid)
+	}
+	return res
 }
 
 func (ec *ErrorContext) HandleErrorMsg(msg string, uuid uint64) ErrorResult {
@@ -119,23 +138,26 @@ func (ec *ErrorContext) HandleErrorMsg(msg string, uuid uint64) ErrorResult {
 	return ErrorResult{GiveUpStrategy, "unknown error and retry too many times, give up"}
 }
 
-func (ec *ErrorContext) HandleErrorPb(e *backuppb.Error, uuid uint64, canIgnore bool) ErrorResult {
-	if e == nil {
-		return ErrorResult{RetryStrategy, "unreachable code"}
+func (ec *ErrorContext) handleIgnorableErrorPb(e *backuppb.Error, uuid uint64) ErrorResult {
+	switch e.Detail.(type) {
+	case *backuppb.Error_KvError:
+		return ErrorResult{RetryStrategy, "retry outside because the error can be ignored"}
+	case *backuppb.Error_RegionError:
+		return ErrorResult{RetryStrategy, "retry outside because the error can be ignored"}
+	case *backuppb.Error_ClusterIdError:
+		return ErrorResult{GiveUpStrategy, "cluster ID mismatch"}
 	}
+	return ErrorResult{UnknownStrategy, "unreachable code"}
+}
+
+func (ec *ErrorContext) handleErrorPb(e *backuppb.Error, uuid uint64) ErrorResult {
 	logger := log.L().With(zap.String("scenario", ec.scenario))
 	switch v := e.Detail.(type) {
 	case *backuppb.Error_KvError:
-		if canIgnore {
-			return ErrorResult{RetryStrategy, "retry outside because the error can be ignored"}
-		}
 		// should not meet error other than KeyLocked.
 		return ErrorResult{GiveUpStrategy, "unknown kv error"}
 
 	case *backuppb.Error_RegionError:
-		if canIgnore {
-			return ErrorResult{RetryStrategy, "retry outside because the error can be ignored"}
-		}
 		regionErr := v.RegionError
 		// Ignore following errors.
 		if !(regionErr.EpochNotMatch != nil ||
@@ -158,7 +180,7 @@ func (ec *ErrorContext) HandleErrorPb(e *backuppb.Error, uuid uint64, canIgnore 
 		logger.Error("occur cluster ID error", zap.Reflect("error", v), zap.Uint64("uuid", uuid))
 		return ErrorResult{GiveUpStrategy, "cluster ID mismatch"}
 	}
-	return ErrorResult{GiveUpStrategy, "unreachable code"}
+	return ErrorResult{UnknownStrategy, "unreachable code"}
 }
 
 // RetryableFunc presents a retryable operation.

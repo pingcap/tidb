@@ -50,36 +50,36 @@ func TestRetryAdapter(t *testing.T) {
 	req.Greater(time.Since(begin), 200*time.Millisecond)
 }
 
-func TestHandleErrorPb(t *testing.T) {
+func TestHandleError(t *testing.T) {
 	ec := utils.NewErrorContext("test", 3)
 	// Test case 1: Error is nil
-	result := ec.HandleErrorPb(nil, 123, false)
-	require.Equal(t, utils.ErrorResult{utils.RetryStrategy, "unreachable code"}, result)
+	result := ec.HandleError(nil, 123)
+	require.Equal(t, utils.ErrorResult{utils.RetryStrategy, "unreachable retry"}, result)
 
 	// Test case 2: Error is KvError and can be ignored
 	kvError := &backuppb.Error_KvError{}
-	result = ec.HandleErrorPb(&backuppb.Error{Detail: kvError}, 123, true)
+	result = ec.HandleIgnorableError(&backuppb.Error{Detail: kvError}, 123)
 	require.Equal(t, utils.ErrorResult{utils.RetryStrategy, "retry outside because the error can be ignored"}, result)
 
 	// Test case 3: Error is KvError and cannot be ignored
-	result = ec.HandleErrorPb(&backuppb.Error{Detail: kvError}, 123, false)
+	result = ec.HandleError(&backuppb.Error{Detail: kvError}, 123)
 	require.Equal(t, utils.ErrorResult{utils.GiveUpStrategy, "unknown kv error"}, result)
 
 	// Test case 4: Error is RegionError and can be ignored
 	regionError := &backuppb.Error_RegionError{
 		RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{RegionId: 1}}}
-	result = ec.HandleErrorPb(&backuppb.Error{Detail: regionError}, 123, true)
+	result = ec.HandleIgnorableError(&backuppb.Error{Detail: regionError}, 123)
 	require.Equal(t, utils.ErrorResult{utils.RetryStrategy, "retry outside because the error can be ignored"}, result)
 
 	// Test case 5: Error is RegionError and cannot be ignored
 	regionError = &backuppb.Error_RegionError{
 		RegionError: &errorpb.Error{DiskFull: &errorpb.DiskFull{}}}
-	result = ec.HandleErrorPb(&backuppb.Error{Detail: regionError}, 123, false)
+	result = ec.HandleError(&backuppb.Error{Detail: regionError}, 123)
 	require.Equal(t, utils.ErrorResult{utils.GiveUpStrategy, "unknown kv error"}, result)
 
 	// Test case 6: Error is ClusterIdError
 	clusterIdError := &backuppb.Error_ClusterIdError{}
-	result = ec.HandleErrorPb(&backuppb.Error{Detail: clusterIdError}, 123, false)
+	result = ec.HandleError(&backuppb.Error{Detail: clusterIdError}, 123)
 	require.Equal(t, utils.ErrorResult{utils.GiveUpStrategy, "cluster ID mismatch"}, result)
 }
 
