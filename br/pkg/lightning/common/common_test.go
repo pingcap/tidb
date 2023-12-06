@@ -134,11 +134,11 @@ func TestAllocGlobalAutoID(t *testing.T) {
 	ctx := context.Background()
 	for _, c := range cases {
 		ti := newTableInfo(t, 1, c.tableID, c.createTableSQL, kvStore)
-		allocators, err := common.GetGlobalAutoIDAlloc(kvStore, 1, ti)
+		allocators, err := common.GetGlobalAutoIDAlloc(mockRequirement{kvStore}, 1, ti)
 		if c.expectErrStr == "" {
 			require.NoError(t, err, c.tableID)
-			require.NoError(t, common.RebaseGlobalAutoID(ctx, 123, kvStore, 1, ti))
-			base, idMax, err := common.AllocGlobalAutoID(ctx, 100, kvStore, 1, ti)
+			require.NoError(t, common.RebaseGlobalAutoID(ctx, 123, mockRequirement{kvStore}, 1, ti))
+			base, idMax, err := common.AllocGlobalAutoID(ctx, 100, mockRequirement{kvStore}, 1, ti)
 			require.NoError(t, err, c.tableID)
 			require.Equal(t, int64(123), base, c.tableID)
 			require.Equal(t, int64(223), idMax, c.tableID)
