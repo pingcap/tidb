@@ -67,7 +67,7 @@ type HashAggPartialWorker struct {
 	spillSerializeHelpers *aggfuncs.SerializeHelper
 	getNewTmpChunkFunc    func() *chunk.Chunk
 	spillChunkFieldTypes  []*types.FieldType
-	spilledChunksIO       []*chunk.DataInDiskByRows
+	spilledChunksIO       []*chunk.DataInDiskByChunks
 }
 
 func (w *HashAggPartialWorker) getChildInput() bool {
@@ -304,10 +304,10 @@ func (w *HashAggPartialWorker) prepareForSpill() {
 	if !w.isSpillPrepared {
 		w.isSpillPrepared = true
 		w.tmpChksForSpill = make([]*chunk.Chunk, spilledPartitionNum)
-		w.spilledChunksIO = make([]*chunk.DataInDiskByRows, spilledPartitionNum)
+		w.spilledChunksIO = make([]*chunk.DataInDiskByChunks, spilledPartitionNum)
 		for i := 0; i < spilledPartitionNum; i++ {
 			w.tmpChksForSpill[i] = w.getNewTmpChunkFunc()
-			w.spilledChunksIO[i] = chunk.NewDataInDiskByRows(w.spillChunkFieldTypes)
+			w.spilledChunksIO[i] = chunk.NewDataInDiskByChunks(w.spillChunkFieldTypes)
 			if w.spillHelper.diskTracker != nil {
 				w.spilledChunksIO[i].GetDiskTracker().AttachTo(w.spillHelper.diskTracker)
 			}
@@ -362,7 +362,7 @@ func (w *HashAggPartialWorker) spillDataToDisk() error {
 	}
 
 	// Trigger the spill of remaining data
-	err := w.spillRemainingDataToDisk(w.ctx)
+	err := w.spillRemainingDataToDisk()
 	if err != nil {
 		return err
 	}
@@ -370,7 +370,7 @@ func (w *HashAggPartialWorker) spillDataToDisk() error {
 }
 
 // Some tmp chunks may no be full, so we need to manually trigger the spill action.
-func (w *HashAggPartialWorker) spillRemainingDataToDisk(ctx sessionctx.Context) error {
+func (w *HashAggPartialWorker) spillRemainingDataToDisk() error {
 	for i := 0; i < spilledPartitionNum; i++ {
 		if w.tmpChksForSpill[i].NumRows() > 0 {
 			err := w.spilledChunksIO[i].Add(w.tmpChksForSpill[i])

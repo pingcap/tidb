@@ -370,7 +370,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	e.finalWorkers = make([]HashAggFinalWorker, finalConcurrency)
 	e.initRuntimeStats()
 
-	e.spillHelper = newSpillHelper(partialConcurrency)
+	e.spillHelper = newSpillHelper()
 	e.initPartialWorkers(partialConcurrency, finalConcurrency, ctx)
 	e.initFinalWorkers(finalConcurrency)
 
@@ -748,6 +748,7 @@ func (e *HashAggExec) initRuntimeStats() {
 	}
 }
 
+// IsSpillTriggeredForTest is for test.
 func (e *HashAggExec) IsSpillTriggeredForTest() bool {
 	return e.spillHelper.isSpillTriggered()
 }

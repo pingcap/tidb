@@ -44,7 +44,7 @@ type parallelHashAggSpillHelper struct {
 	lock struct {
 		sync.Mutex
 		nextPartitionIdx           int
-		spilledChunksIO            [][]*chunk.DataInDiskByRows
+		spilledChunksIO            [][]*chunk.DataInDiskByChunks
 		spillTriggered             int32
 		isSpilling                 int32
 		isAllPartialWorkerFinished bool
@@ -61,23 +61,22 @@ type parallelHashAggSpillHelper struct {
 	syncLock sync.RWMutex
 }
 
-func newSpillHelper(partialConcurrency int) *parallelHashAggSpillHelper {
+func newSpillHelper() *parallelHashAggSpillHelper {
 	return &parallelHashAggSpillHelper{
 		lock: struct {
 			sync.Mutex
 			nextPartitionIdx           int
-			spilledChunksIO            [][]*chunk.DataInDiskByRows
+			spilledChunksIO            [][]*chunk.DataInDiskByChunks
 			spillTriggered             int32
 			isSpilling                 int32
 			isAllPartialWorkerFinished bool
 		}{
-			spilledChunksIO:            make([][]*chunk.DataInDiskByRows, spilledPartitionNum),
+			spilledChunksIO:            make([][]*chunk.DataInDiskByChunks, spilledPartitionNum),
 			spillTriggered:             0,
 			isSpilling:                 0,
 			nextPartitionIdx:           spilledPartitionNum - 1,
 			isAllPartialWorkerFinished: false,
 		},
-		// partitionNeedRestore: spilledPartitionNum - 1,
 		isPartialStage: partialStageFlag,
 		hasError:       0,
 	}
@@ -103,7 +102,7 @@ func (p *parallelHashAggSpillHelper) getNextPartition() (int, bool) {
 	return partitionIdx, true
 }
 
-func (p *parallelHashAggSpillHelper) addListInDisks(dataInDisk []*chunk.DataInDiskByRows) {
+func (p *parallelHashAggSpillHelper) addListInDisks(dataInDisk []*chunk.DataInDiskByChunks) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 	for i, data := range dataInDisk {
@@ -111,7 +110,7 @@ func (p *parallelHashAggSpillHelper) addListInDisks(dataInDisk []*chunk.DataInDi
 	}
 }
 
-func (p *parallelHashAggSpillHelper) getListInDisks(partitionNum int) []*chunk.DataInDiskByRows {
+func (p *parallelHashAggSpillHelper) getListInDisks(partitionNum int) []*chunk.DataInDiskByChunks {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 	return p.lock.spilledChunksIO[partitionNum]

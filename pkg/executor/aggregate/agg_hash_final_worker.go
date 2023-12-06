@@ -96,7 +96,7 @@ func (w *HashAggFinalWorker) initBInMap() {
 	}
 }
 
-func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err error, spillContinue bool) {
+func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (spillContinue bool, err error) {
 	defer func() { w.isFirstInput = true }()
 	var input *aggfuncs.AggPartialResultMapper
 	var ok bool
@@ -110,7 +110,7 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 			var spillContinue bool
 			input, ok, spillContinue = w.getInputFromDisk()
 			if !spillContinue {
-				return nil, false
+				return false, nil
 			}
 		} else {
 			input, ok = w.getPartialInput()
@@ -120,7 +120,7 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 			w.stats.WaitTime += int64(time.Since(waitStart))
 		}
 		if !ok {
-			return nil, false
+			return false, nil
 		}
 
 		// As the w.partialResultMap is empty when we get the first input.
@@ -151,7 +151,7 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 			for j, af := range w.aggFuncs {
 				memDelta, err := af.MergePartialResult(sctx, value[j], dstVal[j])
 				if err != nil {
-					return err, false
+					return false, err
 				}
 				allMemDelta += memDelta
 			}
@@ -163,7 +163,7 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 			w.stats.TaskNum++
 		}
 	}
-	return nil, true
+	return true, nil
 }
 
 func (w *HashAggFinalWorker) loadFinalResult(sctx sessionctx.Context) {
@@ -214,7 +214,7 @@ func (w *HashAggFinalWorker) receiveFinalResultHolder() (*chunk.Chunk, bool) {
 	}
 }
 
-func (w *HashAggFinalWorker) restoreFromOneSpillFile(ctx sessionctx.Context, restoreadData *aggfuncs.AggPartialResultMapper, diskIO *chunk.DataInDiskByRows) (int64, error) {
+func (w *HashAggFinalWorker) restoreFromOneSpillFile(ctx sessionctx.Context, restoreadData *aggfuncs.AggPartialResultMapper, diskIO *chunk.DataInDiskByChunks) (int64, error) {
 	totalMemDelta := int64(0)
 	chunkNum := diskIO.NumChunks()
 	keyColPos := len(w.aggFuncsForRestoring)
@@ -283,15 +283,15 @@ func (w *HashAggFinalWorker) restoreOnePartition(ctx sessionctx.Context) (bool, 
 	return true, nil
 }
 
-func (w *HashAggFinalWorker) mergeResultsAndSend(ctx sessionctx.Context) (error, bool) {
-	err, spillContinue := w.consumeIntermData(ctx)
+func (w *HashAggFinalWorker) mergeResultsAndSend(ctx sessionctx.Context) (bool, error) {
+	spillContinue, err := w.consumeIntermData(ctx)
 	if err != nil {
 		w.outputCh <- &AfFinalResult{err: err}
-		return err, false
+		return false, err
 	}
 
 	w.loadFinalResult(ctx)
-	return nil, spillContinue
+	return spillContinue, nil
 }
 
 func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup) {
@@ -356,12 +356,15 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 			}
 
 			var spillContinue bool
-			err, spillContinue = w.mergeResultsAndSend(ctx)
+			spillContinue, err = w.mergeResultsAndSend(ctx)
 			if err != nil || !spillContinue {
 				return
 			}
 		}
 	} else {
-		w.mergeResultsAndSend(ctx)
+		_, err := w.mergeResultsAndSend(ctx)
+		if err != nil {
+			return
+		}
 	}
 }
