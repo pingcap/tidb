@@ -114,8 +114,8 @@ func TestHandleErrorMsg(t *testing.T) {
 	require.Equal(t, expectedResult, actualResult)
 
 	// Test retry too many times
-	actualResult = ec.HandleErrorMsg(msg, uuid)
-	actualResult = ec.HandleErrorMsg(msg, uuid)
+	_ = ec.HandleErrorMsg(msg, uuid)
+	_ = ec.HandleErrorMsg(msg, uuid)
 	expectedResult = utils.ErrorResult{utils.GiveUpStrategy, "unknown error and retry too many times, give up"}
 	actualResult = ec.HandleErrorMsg(msg, uuid)
 	require.Equal(t, expectedResult, actualResult)
