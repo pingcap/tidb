@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/telemetry"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
@@ -2368,11 +2369,7 @@ func (do *Domain) syncIndexUsageWorker(owner owner.Manager) {
 				continue
 			}
 			if err := handle.GCIndexUsage(); err != nil {
-<<<<<<< HEAD
-				logutil.BgLogger().Error("gc index usage failed", zap.String("category", "stats"), zap.Error(err))
-=======
 				statslogutil.StatsLogger().Error("gc index usage failed", zap.Error(err))
->>>>>>> 373608fe9df (*: fix log for statistics (#49215))
 			}
 		}
 	}

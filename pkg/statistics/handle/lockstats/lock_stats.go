@@ -20,8 +20,8 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -129,8 +129,6 @@ func (sl *statsLockImpl) GetTableLockedAndClearForTest() (map[int64]struct{}, er
 }
 
 var (
-	// Stats logger.
-	statsLogger = logutil.BgLogger().With(zap.String("category", "stats"))
 	// useCurrentSession to make sure the sql is executed in current session.
 	useCurrentSession = []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}
 )
@@ -157,11 +155,7 @@ func AddLockedTables(
 			ids = append(ids, pid)
 		}
 	}
-<<<<<<< HEAD
-	statsLogger.Info("lock table",
-=======
-	logutil.StatsLogger().Info("lock table",
->>>>>>> 373608fe9df (*: fix log for statistics (#49215))
+	statslogutil.StatsLogger().Info("lock table",
 		zap.Any("tables", tables),
 	)
 
@@ -215,11 +209,7 @@ func AddLockedPartitions(
 		pNames = append(pNames, pName)
 	}
 
-<<<<<<< HEAD
-	statsLogger.Info("lock partitions",
-=======
-	logutil.StatsLogger().Info("lock partitions",
->>>>>>> 373608fe9df (*: fix log for statistics (#49215))
+	statslogutil.StatsLogger().Info("lock partitions",
 		zap.Int64("tableID", tid),
 		zap.String("tableName", tableName),
 		zap.Int64s("partitionIDs", pids),
@@ -300,11 +290,7 @@ func generateStableSkippedPartitionsMessage(ids []int64, tableName string, skipp
 func insertIntoStatsTableLocked(sctx sessionctx.Context, tid int64) error {
 	_, _, err := util.ExecRows(sctx, insertSQL, tid, tid)
 	if err != nil {
-<<<<<<< HEAD
-		logutil.BgLogger().Error("error occurred when insert mysql.stats_table_locked", zap.String("category", "stats"), zap.Error(err))
-=======
-		logutil.StatsLogger().Error("error occurred when insert mysql.stats_table_locked", zap.Error(err))
->>>>>>> 373608fe9df (*: fix log for statistics (#49215))
+		statslogutil.StatsLogger().Error("error occurred when insert mysql.stats_table_locked", zap.Error(err))
 		return err
 	}
 	return nil
