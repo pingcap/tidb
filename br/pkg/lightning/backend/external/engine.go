@@ -194,6 +194,9 @@ func getFilesReadConcurrency(ctx context.Context, storage storage.ExternalStorag
 		} else {
 			logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
 				zap.String("filename", statsFiles[i]),
+				zap.Uint64("startOffset", startOffs[i]),
+				zap.Uint64("endOffset", endOffs[i]),
+				zap.Uint64("concurrency", result[i]),
 			)
 		}
 	}
