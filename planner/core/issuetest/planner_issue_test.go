@@ -15,6 +15,8 @@
 package issuetest
 
 import (
+	"slices"
+	"strconv"
 	"testing"
 
 	"github.com/pingcap/tidb/testkit"
@@ -114,4 +116,27 @@ func TestIssue46083(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TEMPORARY TABLE v0(v1 int)")
 	tk.MustExec("INSERT INTO v0 WITH ta2 AS (TABLE v0) TABLE ta2 FOR UPDATE OF ta2;")
+}
+
+func TestIssue48755(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_max_chunk_size=32")
+	tk.MustExec("create table t(a int, b int);")
+	tk.MustExec("insert into t values(1, 1);")
+	tk.MustExec("insert into t select a+1, a+1 from t;")
+	tk.MustExec("insert into t select a+2, a+2 from t;")
+	tk.MustExec("insert into t select a+4, a+4 from t;")
+	tk.MustExec("insert into t select a+8, a+8 from t;")
+	tk.MustExec("insert into t select a+16, a+16 from t;")
+	tk.MustExec("insert into t select a+32, a+32 from t;")
+	rs := tk.MustQuery("select a from (select 100 as a, 100 as b union all select * from t) t where b != 0;")
+	expectedResult := make([]string, 0, 65)
+	for i := 1; i < 65; i++ {
+		expectedResult = append(expectedResult, strconv.FormatInt(int64(i), 10))
+	}
+	expectedResult = append(expectedResult, "100")
+	slices.Sort(expectedResult)
+	rs.Sort().Check(testkit.Rows(expectedResult...))
 }
