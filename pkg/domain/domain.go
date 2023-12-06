@@ -2481,8 +2481,8 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 //     Analyze jobs older than 7 days are considered outdated and are removed.
 //  2. Cleanup: It cleans up corrupted analyze jobs. This operation is performed every three stats leases.
 //     It first retrieves the list of current analyze processes, then removes any analyze job
-//     that is not associated with a current process.
-//     This operation is also performed only if the current instance is the owner.
+//     that is not associated with a current process. Additionally, if the current instance is the owner,
+//     it also cleans up corrupted analyze jobs on dead nodes.
 func (do *Domain) analyzeJobsCleanupWorker(owner owner.Manager) {
 	defer util.Recover(metrics.LabelDomain, "analyzeJobsCleanupWorker", nil, false)
 	// For GC.
@@ -2512,10 +2512,6 @@ func (do *Domain) analyzeJobsCleanupWorker(owner owner.Manager) {
 				}
 			}
 		case <-cleanupTicker.C:
-			// Only the owner should perform this operation.
-			if !owner.IsOwner() {
-				continue
-			}
 			sm := do.InfoSyncer().GetSessionManager()
 			if sm == nil {
 				continue
@@ -2527,9 +2523,16 @@ func (do *Domain) analyzeJobsCleanupWorker(owner owner.Manager) {
 				}
 			}
 
-			err := statsHandle.CleanupCorruptedAnalyzeJobs(analyzeProcessIDs)
+			err := statsHandle.CleanupCorruptedAnalyzeJobsOnCurrentNode(analyzeProcessIDs)
 			if err != nil {
-				logutil.BgLogger().Warn("cleanup analyze jobs failed", zap.Error(err))
+				logutil.BgLogger().Warn("cleanup analyze jobs on current node failed", zap.Error(err))
+			}
+
+			if owner.IsOwner() {
+				err = statsHandle.CleanupCorruptedAnalyzeJobsOnDeadNodes()
+				if err != nil {
+					logutil.BgLogger().Warn("cleanup analyze jobs on dead nodes failed", zap.Error(err))
+				}
 			}
 		case <-do.exit:
 			return

@@ -308,16 +308,13 @@ func TestAutoAnalyzeOutOfSpecifiedTime(t *testing.T) {
 	require.True(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
 }
 
-func TestCleanupCorruptedAnalyzeJobs(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-	exec := mock.NewMockRestrictedSQLExecutor(ctrl)
+func makeFailpointRes(t *testing.T, v interface{}) string {
+	bytes, err := json.Marshal(v)
+	require.NoError(t, err)
+	return fmt.Sprintf("return(`%s`)", string(bytes))
+}
 
-	makeFailpointRes := func(v interface{}) string {
-		bytes, err := json.Marshal(v)
-		require.NoError(t, err)
-		return fmt.Sprintf("return(`%s`)", string(bytes))
-	}
+func getMockedServerInfo() map[string]*infosync.ServerInfo {
 	mockedAllServerInfos := map[string]*infosync.ServerInfo{
 		"s1": {
 			ID:   "s1",
@@ -330,13 +327,10 @@ func TestCleanupCorruptedAnalyzeJobs(t *testing.T) {
 			Port: 4000,
 		},
 	}
-	require.NoError(
-		t,
-		failpoint.Enable(
-			"github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo",
-			makeFailpointRes(mockedAllServerInfos),
-		),
-	)
+	return mockedAllServerInfos
+}
+
+func createJobs() []chunk.Row {
 	// Create a new chunk with capacity for three fields
 	c := chunk.NewChunkWithCapacity([]*types.FieldType{
 		types.NewFieldType(mysql.TypeLonglong), // id
@@ -359,12 +353,29 @@ func TestCleanupCorruptedAnalyzeJobs(t *testing.T) {
 
 	// Create a row from the chunk
 	rows := []chunk.Row{c.GetRow(0), c.GetRow(1), c.GetRow(2)}
+
+	return rows
+}
+
+func TestCleanupCorruptedAnalyzeJobsOnCurrentNode(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	exec := mock.NewMockRestrictedSQLExecutor(ctrl)
+
+	require.NoError(t,
+		failpoint.Enable(
+			"github.com/pingcap/tidb/pkg/domain/infosync/mockGetServerInfo",
+			makeFailpointRes(t, getMockedServerInfo()["s1"]),
+		),
+	)
+
 	// Set up the mock function to return the row
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&test.CtxMatcher{}),
 		statsutil.UseCurrentSessionOpt,
-		autoanalyze.SelectAnalyzeJobsSQL,
-	).Return(rows, nil, nil)
+		autoanalyze.SelectAnalyzeJobsOnCurrentInstanceSQL,
+		"127.0.0.1:4000",
+	).Return(createJobs(), nil, nil)
 
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&test.CtxMatcher{}),
@@ -373,17 +384,53 @@ func TestCleanupCorruptedAnalyzeJobs(t *testing.T) {
 		[]interface{}{
 			[]uint64{
 				uint64(1),
-				uint64(2),
 			},
 		},
 	).Return(nil, nil, nil)
 
-	err := autoanalyze.CleanupCorruptedAnalyzeJobs(
+	err := autoanalyze.CleanupCorruptedAnalyzeJobsOnCurrentNode(
 		mock.WrapAsSCtx(exec),
 		map[uint64]struct{}{
 			3: {},
 			4: {},
 		},
+	)
+	require.NoError(t, err)
+}
+
+func TestCleanupCorruptedAnalyzeJobsOnDeadNodes(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	exec := mock.NewMockRestrictedSQLExecutor(ctrl)
+
+	require.NoError(
+		t,
+		failpoint.Enable(
+			"github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo",
+			makeFailpointRes(t, getMockedServerInfo()),
+		),
+	)
+
+	// Set up the mock function to return the row
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&test.CtxMatcher{}),
+		statsutil.UseCurrentSessionOpt,
+		autoanalyze.SelectAnalyzeJobsSQL,
+	).Return(createJobs(), nil, nil)
+
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&test.CtxMatcher{}),
+		statsutil.UseCurrentSessionOpt,
+		autoanalyze.BatchUpdateAnalyzeJobSQL,
+		[]interface{}{
+			[]uint64{
+				uint64(2),
+			},
+		},
+	).Return(nil, nil, nil)
+
+	err := autoanalyze.CleanupCorruptedAnalyzeJobsOnDeadNodes(
+		mock.WrapAsSCtx(exec),
 	)
 	require.NoError(t, err)
 }

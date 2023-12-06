@@ -79,20 +79,36 @@ func (sa *statsAnalyze) DeleteAnalyzeJobs(updateTime time.Time) error {
 	})
 }
 
-// CleanupCorruptedAnalyzeJobs cleans up the potentially corrupted analyze job.
-// It cleans up both the job from current owner and the job from other nodes.
-func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobs(currentRunningProcessIDs map[uint64]struct{}) error {
+// CleanupCorruptedAnalyzeJobsOnCurrentNode cleans up the potentially corrupted analyze job.
+// It only cleans up the jobs that are associated with the current node.
+func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobsOnCurrentNode(currentRunningProcessIDs map[uint64]struct{}) error {
 	return statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		return CleanupCorruptedAnalyzeJobs(sctx, currentRunningProcessIDs)
+		return CleanupCorruptedAnalyzeJobsOnCurrentNode(sctx, currentRunningProcessIDs)
 	})
 }
+
+// CleanupCorruptedAnalyzeJobsOnDeadNodes removes analyze jobs that may have been corrupted.
+// Specifically, it removes jobs associated with instances that no longer exist in the cluster.
+func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobsOnDeadNodes() error {
+	return statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		return CleanupCorruptedAnalyzeJobsOnDeadNodes(sctx)
+	})
+}
+
+// SelectAnalyzeJobsOnCurrentInstanceSQL is the SQL to select the analyze jobs whose
+// state is `pending` or `running` and the update time is more than 10 minutes ago
+// and the instance is current instance.
+const SelectAnalyzeJobsOnCurrentInstanceSQL = `SELECT id, process_id, instance
+		FROM mysql.analyze_jobs
+		WHERE instance = %?
+		AND state IN ('pending', 'running')
+		AND TIMESTAMPDIFF(MINUTE, update_time, NOW()) > 10`
 
 // SelectAnalyzeJobsSQL is the SQL to select the analyze jobs whose
 // state is `pending` or `running` and the update time is more than 10 minutes ago.
 const SelectAnalyzeJobsSQL = `SELECT id, process_id, instance
 		FROM mysql.analyze_jobs
-		WHERE job_info LIKE '%auto analyze%'
-		AND state IN ('pending', 'running')
+		WHERE state IN ('pending', 'running')
 		AND TIMESTAMPDIFF(MINUTE, update_time, NOW()) > 10`
 
 // BatchUpdateAnalyzeJobSQL is the SQL to update the analyze jobs to `failed` state.
@@ -102,12 +118,76 @@ const BatchUpdateAnalyzeJobSQL = `UPDATE mysql.analyze_jobs
             process_id = NULL
             WHERE id IN (%?)`
 
-// CleanupCorruptedAnalyzeJobs cleans up the potentially corrupted analyze job from current node.
+// CleanupCorruptedAnalyzeJobsOnCurrentNode cleans up the potentially corrupted analyze job from current node.
 // Exported for testing.
-func CleanupCorruptedAnalyzeJobs(
+func CleanupCorruptedAnalyzeJobsOnCurrentNode(
 	sctx sessionctx.Context,
 	currentRunningProcessIDs map[uint64]struct{},
 ) error {
+	serverInfo, err := infosync.GetServerInfo()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	instance := net.JoinHostPort(serverInfo.IP, strconv.Itoa(int(serverInfo.Port)))
+	// Get all the analyze jobs whose state is `pending` or `running` and the update time is more than 10 minutes ago
+	// and the instance is current instance.
+	rows, _, err := statsutil.ExecRows(
+		sctx,
+		SelectAnalyzeJobsOnCurrentInstanceSQL,
+		instance,
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	jobIDs := make([]uint64, 0, len(rows))
+	for _, row := range rows {
+		// The process ID is typically non-null for running or pending jobs.
+		// However, in rare cases(I don't which case), it may be null. Therefore, it's necessary to check its value.
+		if !row.IsNull(1) {
+			processID := row.GetUint64(1)
+			// If the process id is not in currentRunningProcessIDs, we need to clean up the job.
+			// They don't belong to current node any more.
+			if _, ok := currentRunningProcessIDs[processID]; !ok {
+				jobID := row.GetUint64(0)
+				jobIDs = append(jobIDs, jobID)
+			}
+		}
+	}
+
+	// Do a batch update to clean up the jobs.
+	if len(jobIDs) > 0 {
+		_, _, err = statsutil.ExecRows(
+			sctx,
+			BatchUpdateAnalyzeJobSQL,
+			jobIDs,
+		)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		statslogutil.StatsLogger.Info(
+			"clean up the potentially corrupted analyze jobs from current node",
+			zap.Uint64s("jobIDs", jobIDs),
+		)
+	}
+
+	return nil
+}
+
+func CleanupCorruptedAnalyzeJobsOnDeadNodes(
+	sctx sessionctx.Context,
+) error {
+	rows, _, err := statsutil.ExecRows(
+		sctx,
+		SelectAnalyzeJobsSQL,
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+
 	// Get all the instances from etcd.
 	serverInfo, err := infosync.GetAllServerInfo(context.Background())
 	if err != nil {
@@ -119,41 +199,13 @@ func CleanupCorruptedAnalyzeJobs(
 		instances[instance] = struct{}{}
 	}
 
-	// Get all the analyze jobs whose state is `pending` or `running` and the update time is more than 10 minutes ago.
-	rows, _, err := statsutil.ExecRows(
-		sctx,
-		SelectAnalyzeJobsSQL,
-	)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	jobIDs := make([]uint64, 0, len(rows))
 	for _, row := range rows {
-		needCleanUp := false
-		jobID := row.GetUint64(0)
-
-		// The process ID is typically non-null for running or pending jobs.
-		// However, in rare cases(I don't which case), it may be null. Therefore, it's necessary to check its value.
-		if !row.IsNull(1) {
-			processID := row.GetUint64(1)
-			// If the process id is not in currentRunningProcessIDs, we need to clean up the job.
-			// They don't belong to current node any more.
-			if _, ok := currentRunningProcessIDs[processID]; !ok {
-				needCleanUp = true
-			}
-		}
-
 		// If the instance is not in instances, we need to clean up the job.
 		// It means the instance is down or the instance is not in the cluster any more.
-		if !needCleanUp {
-			instance := row.GetString(2)
-			if _, ok := instances[instance]; !ok {
-				needCleanUp = true
-			}
-		}
-
-		if needCleanUp {
+		instance := row.GetString(2)
+		if _, ok := instances[instance]; !ok {
+			jobID := row.GetUint64(0)
 			jobIDs = append(jobIDs, jobID)
 		}
 	}
@@ -169,8 +221,8 @@ func CleanupCorruptedAnalyzeJobs(
 			return errors.Trace(err)
 		}
 		statslogutil.StatsLogger.Info(
-			"clean up the potentially corrupted analyze jobs",
-			zap.Uint64s("job ids", jobIDs),
+			"clean up the potentially corrupted analyze jobs from dead nodes",
+			zap.Uint64s("jobIDs", jobIDs),
 		)
 	}
 
