@@ -913,16 +913,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			prop.CanAddEnforcer = true
 		}
 		ds.storeTask(prop, t)
-<<<<<<< HEAD:planner/core/find_best_task.go
-		if ds.SampleInfo != nil && !t.invalid() {
-			if _, ok := t.plan().(*PhysicalTableSample); !ok {
-				warning := expression.ErrInvalidTableSample.GenWithStackByArgs("plan not supported")
-				ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
-			}
-		}
-=======
 		err = validateTableSamplePlan(ds, t, err)
->>>>>>> 83e39bc83ab (planner/core: keep sort operator when ordered by tablesample (#48315)):pkg/planner/core/find_best_task.go
 	}()
 
 	t, err = ds.tryToGetDualTask()
