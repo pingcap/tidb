@@ -265,14 +265,14 @@ func (w *HashAggFinalWorker) restoreFromOneSpillFile(ctx sessionctx.Context, res
 func (w *HashAggFinalWorker) restoreOnePartition(ctx sessionctx.Context) (bool, error) {
 	restoredData := make(aggfuncs.AggPartialResultMapper)
 
-	restoredPartitionNum := w.spillHelper.getRestoredPartitionNum()
-	if restoredPartitionNum == spillTasksDoneFlag {
+	restoredPartitionIdx, isSuccess := w.spillHelper.getNextPartition()
+	if !isSuccess {
 		return false, nil
 	}
 
-	spilledFilesIO := w.spillHelper.getListInDisks(restoredPartitionNum)
-	for _, diskIO := range spilledFilesIO {
-		memDelta, err := w.restoreFromOneSpillFile(ctx, &restoredData, diskIO)
+	spilledFilesIO := w.spillHelper.getListInDisks(restoredPartitionIdx)
+	for _, spilledFile := range spilledFilesIO {
+		memDelta, err := w.restoreFromOneSpillFile(ctx, &restoredData, spilledFile)
 		if err != nil {
 			return false, err
 		}

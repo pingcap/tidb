@@ -265,7 +265,7 @@ func TestGetCorrectResult(t *testing.T) {
 	}
 }
 
-func runRandomFailTest(t *testing.T) {
+func TestRandomFail1(t *testing.T) {
 	hardLimitBytesNum := int64(100000)
 
 	ctx := mock.NewContext()
@@ -299,26 +299,4 @@ func runRandomFailTest(t *testing.T) {
 		}
 		aggExec.Close()
 	}
-}
-
-// Running time of ut can't exceed 30s, and we have to put the
-// same case into many ut so that we can run many tests.
-func TestRandomFail1(t *testing.T) {
-	runRandomFailTest(t)
-}
-
-func TestRandomFail2(t *testing.T) {
-	runRandomFailTest(t)
-}
-
-func TestRandomFail3(t *testing.T) {
-	runRandomFailTest(t)
-}
-
-func TestRandomFail4(t *testing.T) {
-	runRandomFailTest(t)
-}
-
-func TestRandomFail5(t *testing.T) {
-	runRandomFailTest(t)
 }

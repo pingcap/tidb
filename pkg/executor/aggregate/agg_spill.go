@@ -29,88 +29,104 @@ import (
 	"go.uber.org/zap"
 )
 
-// maxSpillTimes indicates how many times the data can spill at most.
-const maxSpillTimes = 10
-
-const spillFlag = 1
-const isSpillingFlag = 2
-const hasErrorFlag = 3
-const partialStageFlag = 4
-const spilledPartitionNum = 256
-const spillTasksDoneFlag = -1
+const (
+	// maxSpillTimes indicates how many times the data can spill at most.
+	maxSpillTimes       = 10
+	spillFlag           = 1
+	isSpillingFlag      = 2
+	hasErrorFlag        = 3
+	partialStageFlag    = 4
+	spilledPartitionNum = 256
+	spillTasksDoneFlag  = -1
+)
 
 type parallelHashAggSpillHelper struct {
-	lock                        sync.Mutex
-	diskTracker                 *disk.Tracker
-	isTrackerEnabled            bool
-	spilledChunksIO             [][]*chunk.DataInDiskByRows
-	spillTriggered              int32
-	isSpilling                  int32
-	isPartialStage              int32
-	hasError                    int32
-	areAllPartialWorkerFinished bool
+	lock struct {
+		sync.Mutex
+		nextPartitionIdx           int
+		spilledChunksIO            [][]*chunk.DataInDiskByRows
+		spillTriggered             int32
+		isSpilling                 int32
+		isAllPartialWorkerFinished bool
+	}
+
+	// partitionNeedRestore int
+
+	diskTracker    *disk.Tracker
+	isPartialStage int32
+	hasError       int32
 
 	// When spill is triggered, all partial workers should stop
 	// and we can ensure this when the spill action gets write lock.
 	syncLock sync.RWMutex
+}
 
-	// Final worker will decrease this var after reading it.
-	partitionNeedRestore int
+func newSpillHelper(partialConcurrency int) *parallelHashAggSpillHelper {
+	return &parallelHashAggSpillHelper{
+		lock: struct {
+			sync.Mutex
+			nextPartitionIdx           int
+			spilledChunksIO            [][]*chunk.DataInDiskByRows
+			spillTriggered             int32
+			isSpilling                 int32
+			isAllPartialWorkerFinished bool
+		}{
+			spilledChunksIO:            make([][]*chunk.DataInDiskByRows, spilledPartitionNum),
+			spillTriggered:             0,
+			isSpilling:                 0,
+			nextPartitionIdx:           spilledPartitionNum - 1,
+			isAllPartialWorkerFinished: false,
+		},
+		// partitionNeedRestore: spilledPartitionNum - 1,
+		isPartialStage: partialStageFlag,
+		hasError:       0,
+	}
 }
 
 func (p *parallelHashAggSpillHelper) close() {
-	for _, ios := range p.spilledChunksIO {
+	for _, ios := range p.lock.spilledChunksIO {
 		for _, io := range ios {
 			io.Close()
 		}
 	}
 }
 
-func (p *parallelHashAggSpillHelper) getRestoredPartitionNum() int {
+func (p *parallelHashAggSpillHelper) getNextPartition() (int, bool) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-	if p.partitionNeedRestore == spillTasksDoneFlag {
-		return spillTasksDoneFlag
+	partitionIdx := p.lock.nextPartitionIdx
+	if partitionIdx < 0 {
+		return -1, false
 	}
 
-	tmp := p.partitionNeedRestore
-	p.partitionNeedRestore--
-	if p.partitionNeedRestore < 0 {
-		p.partitionNeedRestore = spillTasksDoneFlag
-	}
-	return tmp
+	p.lock.nextPartitionIdx--
+	return partitionIdx, true
 }
 
 func (p *parallelHashAggSpillHelper) addListInDisks(dataInDisk []*chunk.DataInDiskByRows) {
-	num := len(dataInDisk)
-
 	p.lock.Lock()
 	defer p.lock.Unlock()
-	for i := 0; i < num; i++ {
-		p.spilledChunksIO[i] = append(p.spilledChunksIO[i], dataInDisk[i])
+	for i, data := range dataInDisk {
+		p.lock.spilledChunksIO[i] = append(p.lock.spilledChunksIO[i], data)
 	}
 }
 
 func (p *parallelHashAggSpillHelper) getListInDisks(partitionNum int) []*chunk.DataInDiskByRows {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-	if len(p.spilledChunksIO[partitionNum]) == 0 {
-		return make([]*chunk.DataInDiskByRows, 0)
-	}
-
-	return p.spilledChunksIO[partitionNum]
+	return p.lock.spilledChunksIO[partitionNum]
 }
 
 func (p *parallelHashAggSpillHelper) isSpillTriggered() bool {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-	return p.spillTriggered == spillFlag
+	return p.lock.spillTriggered == spillFlag
 }
 
 func (p *parallelHashAggSpillHelper) setSpillTriggered() {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-	p.spillTriggered = spillFlag
+	p.lock.spillTriggered = spillFlag
 }
 
 func (p *parallelHashAggSpillHelper) isInPartialStage() bool {
@@ -120,33 +136,33 @@ func (p *parallelHashAggSpillHelper) isInPartialStage() bool {
 func (p *parallelHashAggSpillHelper) isInSpilling() bool {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-	return p.isSpilling == isSpillingFlag
+	return p.lock.isSpilling == isSpillingFlag
 }
 
 func (p *parallelHashAggSpillHelper) isInSpillingNoLock() bool {
-	return p.isSpilling == isSpillingFlag
+	return p.lock.isSpilling == isSpillingFlag
 }
 
 func (p *parallelHashAggSpillHelper) setIsSpillingNoLock() {
-	p.isSpilling = isSpillingFlag
+	p.lock.isSpilling = isSpillingFlag
 }
 
 func (p *parallelHashAggSpillHelper) resetIsSpilling() {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-	p.isSpilling = isSpillingFlag + 1
+	p.lock.isSpilling = isSpillingFlag + 1
 }
 
 func (p *parallelHashAggSpillHelper) setAllPartialWorkersFinished() {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-	p.areAllPartialWorkerFinished = true
+	p.lock.isAllPartialWorkerFinished = true
 }
 
 func (p *parallelHashAggSpillHelper) checkAllPartialWorkersFinished() bool {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-	return p.areAllPartialWorkerFinished
+	return p.lock.isAllPartialWorkerFinished
 }
 
 // We need to check error with atmoic as multi partial workers may access it.

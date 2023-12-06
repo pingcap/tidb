@@ -255,19 +255,6 @@ func (e *HashAggExec) initForUnparallelExec() {
 	}
 }
 
-func (e *HashAggExec) initSpillHelper(partialConcurrency int) *parallelHashAggSpillHelper {
-	return &parallelHashAggSpillHelper{
-		spilledChunksIO:             make([][]*chunk.DataInDiskByRows, spilledPartitionNum),
-		spillTriggered:              0,
-		isSpilling:                  0,
-		isPartialStage:              partialStageFlag,
-		hasError:                    0,
-		syncLock:                    sync.RWMutex{},
-		partitionNeedRestore:        spilledPartitionNum - 1,
-		areAllPartialWorkerFinished: false,
-	}
-}
-
 func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrency int, ctx sessionctx.Context) {
 	baseRetTypeNum := len(e.Base().RetFieldTypes())
 	spillChunkFieldTypes := make([]*types.FieldType, baseRetTypeNum+1)
@@ -383,13 +370,13 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	e.finalWorkers = make([]HashAggFinalWorker, finalConcurrency)
 	e.initRuntimeStats()
 
-	e.spillHelper = e.initSpillHelper(partialConcurrency)
+	e.spillHelper = newSpillHelper(partialConcurrency)
 	e.initPartialWorkers(partialConcurrency, finalConcurrency, ctx)
 	e.initFinalWorkers(finalConcurrency)
 
 	vars := e.Ctx().GetSessionVars()
-	e.spillHelper.isTrackerEnabled = e.Ctx().GetSessionVars().TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load()
-	if e.spillHelper.isTrackerEnabled {
+	isTrackerEnabled := e.Ctx().GetSessionVars().TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load()
+	if isTrackerEnabled {
 		e.diskTracker = disk.NewTracker(e.ID(), -1)
 		e.diskTracker.AttachTo(vars.StmtCtx.DiskTracker)
 		e.spillHelper.diskTracker = e.diskTracker

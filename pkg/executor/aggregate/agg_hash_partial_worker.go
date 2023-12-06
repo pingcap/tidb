@@ -67,7 +67,7 @@ type HashAggPartialWorker struct {
 	spillSerializeHelpers *aggfuncs.SerializeHelper
 	getNewTmpChunkFunc    func() *chunk.Chunk
 	spillChunkFieldTypes  []*types.FieldType
-	spilledChunksIO       []*chunk.DataInDiskByRows // TODO replace it with DataInDiskByChunks
+	spilledChunksIO       []*chunk.DataInDiskByRows
 }
 
 func (w *HashAggPartialWorker) getChildInput() bool {
@@ -308,7 +308,7 @@ func (w *HashAggPartialWorker) prepareForSpill() {
 		for i := 0; i < spilledPartitionNum; i++ {
 			w.tmpChksForSpill[i] = w.getNewTmpChunkFunc()
 			w.spilledChunksIO[i] = chunk.NewDataInDiskByRows(w.spillChunkFieldTypes)
-			if w.spillHelper.isTrackerEnabled {
+			if w.spillHelper.diskTracker != nil {
 				w.spilledChunksIO[i].GetDiskTracker().AttachTo(w.spillHelper.diskTracker)
 			}
 		}
