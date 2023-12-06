@@ -153,7 +153,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 			if row.GetString(0) == BuiltinPseudoSQL4BindLock {
 				continue
 			}
-			sqlDigest, meta, err := h.newBindRecord(sctx, row)
+			sqlDigest, meta, err := newBindRecord(sctx, row)
 
 			// Update lastUpdateTime to the newest one.
 			// Even if this one is an invalid bind.
@@ -587,7 +587,7 @@ func (h *BindHandle) GetMemCapacity() (memCapacity int64) {
 }
 
 // newBindRecord builds BindRecord from a tuple in storage.
-func (h *BindHandle) newBindRecord(sctx sessionctx.Context, row chunk.Row) (string, *BindRecord, error) {
+func newBindRecord(sctx sessionctx.Context, row chunk.Row) (string, *BindRecord, error) {
 	status := row.GetString(3)
 	// For compatibility, the 'Using' status binding will be converted to the 'Enabled' status binding.
 	if status == Using {
