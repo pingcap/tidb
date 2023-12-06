@@ -157,10 +157,15 @@ func CleanupCorruptedAnalyzeJobsOnCurrentInstance(
 
 	// Do a batch update to clean up the jobs.
 	if len(jobIDs) > 0 {
+		// Jobs ID to string list.
+		var jobIDStrs []string
+		for _, jobID := range jobIDs {
+			jobIDStrs = append(jobIDStrs, strconv.FormatUint(jobID, 10))
+		}
 		_, _, err = statsutil.ExecRows(
 			sctx,
 			BatchUpdateAnalyzeJobSQL,
-			jobIDs,
+			strings.Join(jobIDStrs, ","),
 		)
 		if err != nil {
 			return errors.Trace(err)
@@ -213,10 +218,15 @@ func CleanupCorruptedAnalyzeJobsOnDeadInstances(
 
 	// Do a batch update to clean up the jobs.
 	if len(jobIDs) > 0 {
+		// Jobs ID to string list.
+		var jobIDStrs []string
+		for _, jobID := range jobIDs {
+			jobIDStrs = append(jobIDStrs, strconv.FormatUint(jobID, 10))
+		}
 		_, _, err = statsutil.ExecRows(
 			sctx,
 			BatchUpdateAnalyzeJobSQL,
-			jobIDs,
+			strings.Join(jobIDStrs, ","),
 		)
 		if err != nil {
 			return errors.Trace(err)

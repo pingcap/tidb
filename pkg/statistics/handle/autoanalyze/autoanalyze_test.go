@@ -374,9 +374,7 @@ func TestCleanupCorruptedAnalyzeJobsOnCurrentInstance(t *testing.T) {
 		statsutil.UseCurrentSessionOpt,
 		autoanalyze.BatchUpdateAnalyzeJobSQL,
 		[]interface{}{
-			[]uint64{
-				uint64(1),
-			},
+			"1",
 		},
 	).Return(nil, nil, nil)
 
@@ -402,10 +400,7 @@ func TestCleanupCorruptedAnalyzeJobsOnCurrentInstance(t *testing.T) {
 		statsutil.UseCurrentSessionOpt,
 		autoanalyze.BatchUpdateAnalyzeJobSQL,
 		[]interface{}{
-			[]uint64{
-				uint64(1),
-				uint64(3),
-			},
+			"1,3",
 		},
 	).Return(nil, nil, nil)
 
@@ -458,9 +453,7 @@ func TestCleanupCorruptedAnalyzeJobsOnDeadInstances(t *testing.T) {
 		statsutil.UseCurrentSessionOpt,
 		autoanalyze.BatchUpdateAnalyzeJobSQL,
 		[]interface{}{
-			[]uint64{
-				uint64(2),
-			},
+			"2",
 		},
 	).Return(nil, nil, nil)
 
