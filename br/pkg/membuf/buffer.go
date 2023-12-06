@@ -48,6 +48,7 @@ type Pool struct {
 	blockSize           int
 	blockCache          chan []byte
 	largeAllocThreshold int
+	limiter             *Limiter
 }
 
 // Option configures a pool.
@@ -83,6 +84,15 @@ func WithLargeAllocThreshold(threshold int) Option {
 	}
 }
 
+// WithPoolMemoryLimiter controls the maximum memory returned to buffer. Note
+// that WithLargeAllocThreshold will affect if the acquired memory is counted by
+// the limiter.
+func WithPoolMemoryLimiter(limiter *Limiter) Option {
+	return func(p *Pool) {
+		p.limiter = limiter
+	}
+}
+
 // NewPool creates a new pool.
 func NewPool(opts ...Option) *Pool {
 	p := &Pool{
@@ -98,6 +108,9 @@ func NewPool(opts ...Option) *Pool {
 }
 
 func (p *Pool) acquire() []byte {
+	if p.limiter != nil {
+		p.limiter.Acquire(p.blockSize)
+	}
 	select {
 	case b := <-p.blockCache:
 		return b
@@ -111,6 +124,9 @@ func (p *Pool) release(b []byte) {
 	case p.blockCache <- b:
 	default:
 		p.allocator.Free(b)
+	}
+	if p.limiter != nil {
+		p.limiter.Release(p.blockSize)
 	}
 }
 
@@ -140,10 +156,10 @@ type Buffer struct {
 // BufferOption configures a buffer.
 type BufferOption func(*Buffer)
 
-// WithMemoryLimit approximately limits the maximum memory size of this Buffer.
-// Due to it use blocks to allocate memory, the actual memory size is
+// WithBufferMemoryLimit approximately limits the maximum memory size of this
+// Buffer. Due to it use blocks to allocate memory, the actual memory size is
 // blockSize*ceil(limit/blockSize).
-func WithMemoryLimit(limit uint64) BufferOption {
+func WithBufferMemoryLimit(limit uint64) BufferOption {
 	return func(b *Buffer) {
 		blockCntLimit := int(limit+uint64(b.pool.blockSize)-1) / b.pool.blockSize
 		b.blockCntLimit = blockCntLimit
