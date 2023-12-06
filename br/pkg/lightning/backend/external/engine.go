@@ -113,15 +113,21 @@ func NewExternalEngine(
 	totalKVCount int64,
 	checkHotspot bool,
 ) common.Engine {
+	// TODO(lance6716): test the performance
+	memLimit := 12 * 1024 * 1024 * 1024
+	memLimiter := membuf.NewLimiter(memLimit)
 	return &Engine{
-		storage:            storage,
-		dataFiles:          dataFiles,
-		statsFiles:         statsFiles,
-		startKey:           startKey,
-		endKey:             endKey,
-		splitKeys:          splitKeys,
-		regionSplitSize:    regionSplitSize,
-		bufPool:            membuf.NewPool(),
+		storage:         storage,
+		dataFiles:       dataFiles,
+		statsFiles:      statsFiles,
+		startKey:        startKey,
+		endKey:          endKey,
+		splitKeys:       splitKeys,
+		regionSplitSize: regionSplitSize,
+		bufPool: membuf.NewPool(
+			membuf.WithLargeAllocThreshold(memLimit),
+			membuf.WithPoolMemoryLimiter(memLimiter),
+		),
 		checkHotspot:       checkHotspot,
 		keyAdapter:         keyAdapter,
 		duplicateDetection: duplicateDetection,

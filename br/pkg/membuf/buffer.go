@@ -14,6 +14,8 @@
 
 package membuf
 
+import "unsafe"
+
 const (
 	defaultPoolSize            = 1024
 	defaultBlockSize           = 1 << 20 // 1M
@@ -151,6 +153,8 @@ type Buffer struct {
 	curBlock      []byte
 	curBlockIdx   int
 	curIdx        int
+
+	smallObjOverhead int
 }
 
 // BufferOption configures a buffer.
@@ -198,6 +202,9 @@ func (b *Buffer) Destroy() {
 	for _, buf := range b.blocks {
 		b.pool.release(buf)
 	}
+	if b.pool.limiter != nil {
+		b.pool.limiter.Release(b.smallObjOverhead)
+	}
 	b.blocks = nil
 	b.curBlock = nil
 	b.curBlockIdx = -1
@@ -209,12 +216,19 @@ func (b *Buffer) TotalSize() int64 {
 	return int64(len(b.blocks) * b.pool.blockSize)
 }
 
+var sizeOfSlice = int(unsafe.Sizeof([]byte{}))
+
 // AllocBytes allocates bytes with the given length.
 func (b *Buffer) AllocBytes(n int) []byte {
 	if n > b.pool.largeAllocThreshold {
 		return make([]byte, n)
 	}
-	bs, _ := b.AllocBytesWithSliceLocation(n)
+	if b.pool.limiter != nil {
+		b.pool.limiter.Acquire(sizeOfSlice)
+		b.smallObjOverhead += sizeOfSlice
+	}
+
+	bs, _ := b.allocBytesWithSliceLocation(n)
 	return bs
 }
 
@@ -227,13 +241,7 @@ type SliceLocation struct {
 	length int32
 }
 
-// AllocBytesWithSliceLocation is like AllocBytes, but it ignores the pool's
-// WithLargeAllocThreshold, and also returns a SliceLocation. The expected usage
-// is after writing data into returned slice we do not store the slice itself,
-// but only the SliceLocation. Later we can use the SliceLocation to get the
-// slice again. When we have a large number of slices in memory this can improve
-// performance. nil returned slice means allocation failed.
-func (b *Buffer) AllocBytesWithSliceLocation(n int) ([]byte, SliceLocation) {
+func (b *Buffer) allocBytesWithSliceLocation(n int) ([]byte, SliceLocation) {
 	if n > b.pool.blockSize {
 		return nil, SliceLocation{}
 	}
@@ -251,6 +259,22 @@ func (b *Buffer) AllocBytesWithSliceLocation(n int) ([]byte, SliceLocation) {
 	idx := b.curIdx
 	b.curIdx += n
 	return b.curBlock[idx:b.curIdx:b.curIdx], loc
+}
+
+var sizeOfSliceLocation = int(unsafe.Sizeof(SliceLocation{}))
+
+// AllocBytesWithSliceLocation is like AllocBytes, but it ignores the pool's
+// WithLargeAllocThreshold, and also returns a SliceLocation. The expected usage
+// is after writing data into returned slice we do not store the slice itself,
+// but only the SliceLocation. Later we can use the SliceLocation to get the
+// slice again. When we have a large number of slices in memory this can improve
+// performance. nil returned slice means allocation failed.
+func (b *Buffer) AllocBytesWithSliceLocation(n int) ([]byte, SliceLocation) {
+	if b.pool.limiter != nil {
+		b.pool.limiter.Acquire(sizeOfSliceLocation)
+		b.smallObjOverhead += sizeOfSliceLocation
+	}
+	return b.allocBytesWithSliceLocation(n)
 }
 
 func (b *Buffer) addBlock() {
