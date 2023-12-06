@@ -158,14 +158,10 @@ func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node 
 	if err != nil {
 		return nil, nil, err
 	}
-<<<<<<< HEAD:planner/core/optimizer.go
-	return p, p.OutputNames(), err
-=======
 	if logic, ok := p.(LogicalPlan); ok {
 		RecheckCTE(logic)
 	}
-	return p, err
->>>>>>> cbdf4364fbf (planner: fixing wrong result after applying predicate push down for CTEs (#47891)):pkg/planner/core/optimizer.go
+	return p, p.OutputNames(), err
 }
 
 // CheckPrivilege checks the privilege for a user.
