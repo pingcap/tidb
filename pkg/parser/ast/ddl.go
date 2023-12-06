@@ -1326,16 +1326,14 @@ func (n *DropResourceGroupStmt) Accept(v Visitor) (Node, bool) {
 type OptimizeTableStmt struct {
 	ddlNode
 
-	NoWriteToBinlog, Local bool
-	Tables                 []*TableName
+	NoWriteToBinLog bool
+	Tables          []*TableName
 }
 
 func (n *OptimizeTableStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("OPTIMIZE ")
-	if n.NoWriteToBinlog {
+	if n.NoWriteToBinLog {
 		ctx.WriteKeyWord("NO_WRITE_TO_BINLOG ")
-	} else if n.Local {
-		ctx.WriteKeyWord("LOCAL ")
 	}
 	ctx.WriteKeyWord("TABLE ")
 

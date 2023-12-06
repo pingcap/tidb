@@ -597,10 +597,11 @@ func TestAdminRepairTableRestore(t *testing.T) {
 func TestAdminOptimizeTableRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"OPTIMIZE TABLE t", "OPTIMIZE TABLE `t`"},
-		{"OPTIMIZE LOCAL TABLE t", "OPTIMIZE LOCAL TABLE `t`"},
+		{"OPTIMIZE LOCAL TABLE t", "OPTIMIZE NO_WRITE_TO_BINLOG TABLE `t`"},
 		{"OPTIMIZE NO_WRITE_TO_BINLOG TABLE t", "OPTIMIZE NO_WRITE_TO_BINLOG TABLE `t`"},
 		{"OPTIMIZE TABLE t1, t2", "OPTIMIZE TABLE `t1`, `t2`"},
 		{"optimize table t1,t2", "OPTIMIZE TABLE `t1`, `t2`"},
+		{"optimize tables t1, t2", "OPTIMIZE TABLE `t1`, `t2`"},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node

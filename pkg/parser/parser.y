@@ -1218,7 +1218,6 @@ import (
 	MaxValPartOpt                          "MAXVALUE partition option"
 	NullPartOpt                            "NULL Partition option"
 	NumLiteral                             "Num/Int/Float/Decimal Literal"
-	NoWriteToBinLogOpt                     "NO_WRITE_TO_BINLOG option"
 	NoWriteToBinLogAliasOpt                "NO_WRITE_TO_BINLOG alias LOCAL or empty"
 	ObjectType                             "Grant statement object type"
 	OnDuplicateKeyUpdate                   "ON DUPLICATE KEY UPDATE value list"
@@ -11933,16 +11932,6 @@ LogTypeOpt:
 		$$ = ast.LogTypeSlow
 	}
 
-NoWriteToBinLogOpt:
-	%prec lowerThanLocal
-	{
-		$$ = false
-	}
-|	"NO_WRITE_TO_BINLOG"
-	{
-		$$ = true
-	}
-
 NoWriteToBinLogAliasOpt:
 	%prec lowerThanLocal
 	{
@@ -14741,15 +14730,11 @@ OptionalShardColumn:
  *     TABLE tbl_name [, tbl_name] ...
  *******************************************************************/
 OptimizeTableStmt:
-	"OPTIMIZE" NoWriteToBinLogOpt LocalOpt "TABLE" TableNameList
+	"OPTIMIZE" NoWriteToBinLogAliasOpt TableOrTables TableNameList
 	{
 		x := &ast.OptimizeTableStmt{
-			Tables:          $5.([]*ast.TableName),
-			NoWriteToBinlog: $2.(bool),
-		}
-
-		if $3 != nil {
-			x.Local = true
+			Tables:          $4.([]*ast.TableName),
+			NoWriteToBinLog: $2.(bool),
 		}
 
 		$$ = x
