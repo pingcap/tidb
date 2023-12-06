@@ -182,9 +182,12 @@ func Retry(purpose string, parentLogger log.Logger, action func() error) error {
 }
 
 func retryWithCount(purpose string, parentLogger log.Logger, action func() error, retryCount int) error {
+	if retryCount == 0 {
+		retryCount = defaultMaxRetry
+	}
 	var err error
 outside:
-	for i := 0; i < defaultMaxRetry; i++ {
+	for i := 0; i < retryCount; i++ {
 		logger := parentLogger.With(zap.Int("retryCnt", i))
 
 		if i > 0 {
