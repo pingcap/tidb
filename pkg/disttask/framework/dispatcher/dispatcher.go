@@ -618,6 +618,10 @@ func (d *BaseDispatcher) dispatchSubTask(
 		logutil.Logger(d.logCtx).Debug("create subtasks", zap.String("instanceID", instanceID))
 		subTasks = append(subTasks, proto.NewSubtask(subtaskStep, d.Task.ID, d.Task.Type, instanceID, meta))
 	}
+	failpoint.Inject("cancelBeforeUpdateTask", func() {
+		_ = d.updateTask(proto.TaskStateCancelling, subTasks, RetrySQLTimes)
+	})
+
 	return d.updateTask(d.Task.State, subTasks, RetrySQLTimes)
 }
 

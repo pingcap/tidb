@@ -728,3 +728,18 @@ func TestFrameworkCleanUpRoutine(t *testing.T) {
 	require.NotEmpty(t, tasks)
 	distContext.Close()
 }
+
+func TestTaskCancelledBeforeUpdateTask(t *testing.T) {
+	var m sync.Map
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
+	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
+	distContext := testkit.NewDistExecutionContext(t, 1)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/cancelBeforeUpdateTask", "1*return(true)"))
+	DispatchTaskAndCheckState(ctx, "key1", t, &m, proto.TaskStateReverted)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/cancelBeforeUpdateTask"))
+	distContext.Close()
+}
