@@ -163,7 +163,7 @@ func HandleAutoAnalyze(
 ) (analyzed bool) {
 	defer func() {
 		if r := recover(); r != nil {
-			statslogutil.StatsLogger.Error(
+			statslogutil.StatsLogger().Error(
 				"HandleAutoAnalyze panicked",
 				zap.Any("recover", r),
 				zap.Stack("stack"),
@@ -171,17 +171,15 @@ func HandleAutoAnalyze(
 		}
 	}()
 
-	dbs := is.AllSchemaNames()
 	parameters := getAutoAnalyzeParameters(sctx)
 	autoAnalyzeRatio := parseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
-
 	// Get the available time period for auto analyze and check if the current time is in the period.
 	start, end, err := parseAnalyzePeriod(
 		parameters[variable.TiDBAutoAnalyzeStartTime],
 		parameters[variable.TiDBAutoAnalyzeEndTime],
 	)
 	if err != nil {
-		statslogutil.StatsLogger.Error(
+		statslogutil.StatsLogger().Error(
 			"parse auto analyze period failed",
 			zap.Error(err),
 		)
@@ -190,8 +188,32 @@ func HandleAutoAnalyze(
 	if !timeutil.WithinDayTimePeriod(start, end, time.Now()) {
 		return false
 	}
-
 	pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
+
+	return randomPickOneTableAndTryAutoAnalyze(
+		sctx,
+		statsHandle,
+		sysProcTracker,
+		is,
+		autoAnalyzeRatio,
+		pruneMode,
+	)
+}
+
+// randomPickOneTableAndTryAutoAnalyze randomly picks one table and tries to analyze it.
+// 1. If the table is not analyzed, analyze it.
+// 2. If the table is analyzed, analyze it when "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio".
+// 3. If the table is analyzed, analyze its indices when the index is not analyzed.
+// 4. If the table is locked, skip it.
+func randomPickOneTableAndTryAutoAnalyze(
+	sctx sessionctx.Context,
+	statsHandle statstypes.StatsHandle,
+	sysProcTracker sessionctx.SysProcTracker,
+	is infoschema.InfoSchema,
+	autoAnalyzeRatio float64,
+	pruneMode variable.PartitionPruneMode,
+) bool {
+	dbs := is.AllSchemaNames()
 	// Shuffle the database and table slice to randomize the order of analyzing tables.
 	rd := rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404
 	rd.Shuffle(len(dbs), func(i, j int) {
@@ -215,7 +237,7 @@ func HandleAutoAnalyze(
 		tidsAndPids := getAllTidsAndPids(tbls)
 		lockedTables, err := statsHandle.GetLockedTables(tidsAndPids...)
 		if err != nil {
-			statslogutil.StatsLogger.Error(
+			statslogutil.StatsLogger().Error(
 				"check table lock failed",
 				zap.Error(err),
 			)
@@ -307,7 +329,7 @@ func tryAutoAnalyzeTable(
 		if err != nil {
 			return false
 		}
-		statslogutil.StatsLogger.Info(
+		statslogutil.StatsLogger().Info(
 			"auto analyze triggered",
 			zap.String("sql", escaped),
 			zap.String("reason", reason),
@@ -330,7 +352,7 @@ func tryAutoAnalyzeTable(
 				return false
 			}
 
-			statslogutil.StatsLogger.Info(
+			statslogutil.StatsLogger().Info(
 				"auto analyze for unanalyzed indexes",
 				zap.String("sql", escaped),
 			)
@@ -412,7 +434,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 			ratio,
 		); needAnalyze {
 			needAnalyzePartitionNames = append(needAnalyzePartitionNames, def.Name.O)
-			statslogutil.StatsLogger.Info(
+			statslogutil.StatsLogger().Info(
 				"need to auto analyze",
 				zap.String("database", db),
 				zap.String("table", tblInfo.Name.String()),
@@ -437,7 +459,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 	}
 
 	if len(needAnalyzePartitionNames) > 0 {
-		statslogutil.StatsLogger.Info("start to auto analyze",
+		statslogutil.StatsLogger().Info("start to auto analyze",
 			zap.String("database", db),
 			zap.String("table", tblInfo.Name.String()),
 			zap.Any("partitions", needAnalyzePartitionNames),
@@ -457,7 +479,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 			sql := getSQL("analyze table %n.%n partition", "", end-start)
 			params := append([]interface{}{db, tblInfo.Name.O}, needAnalyzePartitionNames[start:end]...)
 
-			statslogutil.StatsLogger.Info(
+			statslogutil.StatsLogger().Info(
 				"auto analyze triggered",
 				zap.String("database", db),
 				zap.String("table", tblInfo.Name.String()),
@@ -495,7 +517,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 				sql := getSQL("analyze table %n.%n partition", " index %n", end-start)
 				params := append([]interface{}{db, tblInfo.Name.O}, needAnalyzePartitionNames[start:end]...)
 				params = append(params, idx.Name.O)
-				statslogutil.StatsLogger.Info("auto analyze for unanalyzed",
+				statslogutil.StatsLogger().Info("auto analyze for unanalyzed",
 					zap.String("database", db),
 					zap.String("table", tblInfo.Name.String()),
 					zap.String("index", idx.Name.String()),
@@ -534,7 +556,7 @@ func execAutoAnalyze(
 		if err1 != nil {
 			escaped = ""
 		}
-		statslogutil.StatsLogger.Error(
+		statslogutil.StatsLogger().Error(
 			"auto analyze failed",
 			zap.String("sql", escaped),
 			zap.Duration("cost_time", dur),

@@ -2309,14 +2309,14 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 		hasSuperPriv = pm.RequestVerification(e.Ctx().GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv)
 	}
 	// we use sessionCtx from GetTaskManager, user ctx might not have system table privileges.
-	globalTaskManager, err := fstorage.GetTaskManager()
+	taskManager, err := fstorage.GetTaskManager()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err != nil {
 		return err
 	}
 	if e.ImportJobID != nil {
 		var info *importer.JobInfo
-		if err = globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
+		if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
 			exec := se.(sqlexec.SQLExecutor)
 			var err2 error
 			info, err2 = importer.GetJob(ctx, exec, *e.ImportJobID, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)
@@ -2327,7 +2327,7 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 		return handleImportJobInfo(ctx, info, e.result)
 	}
 	var infos []*importer.JobInfo
-	if err = globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
+	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.(sqlexec.SQLExecutor)
 		var err2 error
 		infos, err2 = importer.GetAllViewableJobs(ctx, exec, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)

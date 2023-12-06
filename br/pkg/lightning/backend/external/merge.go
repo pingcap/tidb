@@ -2,10 +2,8 @@ package external
 
 import (
 	"context"
-	"errors"
 
 	"github.com/google/uuid"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
@@ -17,9 +15,21 @@ import (
 
 // MergeOverlappingFiles reads from given files whose key range may overlap
 // and writes to new sorted, nonoverlapping files.
-func MergeOverlappingFiles(ctx context.Context, paths []string, store storage.ExternalStorage, partSize int64, readBufferSize int,
-	newFilePrefix string, blockSize int, writeBatchCount uint64, propSizeDist uint64, propKeysDist uint64,
-	onClose OnCloseFunc, concurrency int, checkHotspot bool) error {
+func MergeOverlappingFiles(
+	ctx context.Context,
+	paths []string,
+	store storage.ExternalStorage,
+	partSize int64,
+	readBufferSize int,
+	newFilePrefix string,
+	blockSize int,
+	writeBatchCount uint64,
+	propSizeDist uint64,
+	propKeysDist uint64,
+	onClose OnCloseFunc,
+	concurrency int,
+	checkHotspot bool,
+) error {
 	var dataFilesSlice [][]string
 	batchCount := 1
 	if len(paths) > concurrency {
@@ -43,7 +53,7 @@ func MergeOverlappingFiles(ctx context.Context, paths []string, store storage.Ex
 	for _, files := range dataFilesSlice {
 		files := files
 		eg.Go(func() error {
-			return MergeOverlappingFilesV2(
+			return mergeOverlappingFilesV2(
 				egCtx,
 				files,
 				store,
@@ -123,9 +133,9 @@ func mergeOverlappingFilesImpl(ctx context.Context,
 	return writer.Close(ctx)
 }
 
-// MergeOverlappingFilesV2 reads from given files whose key range may overlap
+// mergeOverlappingFilesV2 reads from given files whose key range may overlap
 // and writes to one new sorted, nonoverlapping files.
-func MergeOverlappingFilesV2(
+func mergeOverlappingFilesV2(
 	ctx context.Context,
 	paths []string,
 	store storage.ExternalStorage,
@@ -148,17 +158,6 @@ func MergeOverlappingFilesV2(
 	defer func() {
 		task.End(zap.ErrorLevel, err)
 	}()
-
-	failpoint.Inject("mergeOverlappingFilesImpl", func(val failpoint.Value) {
-		if val.(string) == paths[0] {
-			failpoint.Return(errors.New("injected error"))
-		} else {
-			select {
-			case <-ctx.Done():
-				failpoint.Return(ctx.Err())
-			}
-		}
-	})
 
 	zeroOffsets := make([]uint64, len(paths))
 	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, readBufferSize, checkHotspot, 0)

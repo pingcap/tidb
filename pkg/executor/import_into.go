@@ -177,14 +177,14 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 
 func (e *ImportIntoExec) fillJobInfo(ctx context.Context, jobID int64, req *chunk.Chunk) error {
 	e.dataFilled = true
-	// we use globalTaskManager to get job, user might not have the privilege to system tables.
-	globalTaskManager, err := fstorage.GetTaskManager()
+	// we use taskManager to get job, user might not have the privilege to system tables.
+	taskManager, err := fstorage.GetTaskManager()
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err != nil {
 		return err
 	}
 	var info *importer.JobInfo
-	if err = globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
+	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
 		sqlExec := se.(sqlexec.SQLExecutor)
 		var err2 error
 		info, err2 = importer.GetJob(ctx, sqlExec, jobID, e.Ctx().GetSessionVars().User.String(), false)
@@ -224,12 +224,12 @@ func (e *ImportIntoExec) doImport(ctx context.Context, se sessionctx.Context, di
 	err := group.Wait()
 	// when user KILL the connection, the ctx will be canceled, we need to cancel the import job.
 	if errors.Cause(err) == context.Canceled {
-		globalTaskManager, err2 := fstorage.GetTaskManager()
+		taskManager, err2 := fstorage.GetTaskManager()
 		if err2 != nil {
 			return err2
 		}
 		// use background, since ctx is canceled already.
-		return cancelAndWaitImportJob(context.Background(), globalTaskManager, distImporter.JobID())
+		return cancelAndWaitImportJob(context.Background(), taskManager, distImporter.JobID())
 	}
 	if err2 := flushStats(ctx, se, e.importPlan.TableInfo.ID, distImporter.Result(ctx)); err2 != nil {
 		logutil.Logger(ctx).Error("flush stats failed", zap.Error(err2))
@@ -257,12 +257,12 @@ func (e *ImportIntoActionExec) Next(ctx context.Context, _ *chunk.Chunk) (err er
 		hasSuperPriv = pm.RequestVerification(e.Ctx().GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv)
 	}
 	// we use sessionCtx from GetTaskManager, user ctx might not have enough privileges.
-	globalTaskManager, err := fstorage.GetTaskManager()
+	taskManager, err := fstorage.GetTaskManager()
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err != nil {
 		return err
 	}
-	if err = e.checkPrivilegeAndStatus(ctx, globalTaskManager, hasSuperPriv); err != nil {
+	if err = e.checkPrivilegeAndStatus(ctx, taskManager, hasSuperPriv); err != nil {
 		return err
 	}
 
@@ -271,7 +271,7 @@ func (e *ImportIntoActionExec) Next(ctx context.Context, _ *chunk.Chunk) (err er
 	defer func() {
 		task.End(zap.ErrorLevel, err)
 	}()
-	return cancelAndWaitImportJob(ctx, globalTaskManager, e.jobID)
+	return cancelAndWaitImportJob(ctx, taskManager, e.jobID)
 }
 
 func (e *ImportIntoActionExec) checkPrivilegeAndStatus(ctx context.Context, manager *fstorage.TaskManager, hasSuperPriv bool) error {
@@ -306,7 +306,7 @@ func flushStats(ctx context.Context, se sessionctx.Context, tableID int64, resul
 func cancelAndWaitImportJob(ctx context.Context, manager *fstorage.TaskManager, jobID int64) error {
 	if err := manager.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
-		return manager.CancelGlobalTaskByKeySession(ctx, se, importinto.TaskKey(jobID))
+		return manager.CancelTaskByKeySession(ctx, se, importinto.TaskKey(jobID))
 	}); err != nil {
 		return err
 	}
