@@ -1,3 +1,4 @@
+// Copyright 2023 PingCAP, Inc. Licensed under Apache-2.0.
 package utils
 
 import (
@@ -11,7 +12,6 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/util/engine"
-
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
