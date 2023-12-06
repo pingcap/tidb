@@ -235,8 +235,9 @@ func readOneFile(
 	for {
 		kvBytes, err := rd.nextKVBytes()
 		keyLen := int(binary.BigEndian.Uint64(kvBytes[0:lengthBytes]))
+		valLen := int(binary.BigEndian.Uint64(kvBytes[lengthBytes : 2*lengthBytes]))
 		k := kvBytes[2*lengthBytes : 2*lengthBytes+keyLen]
-		v := kvBytes[2*lengthBytes+keyLen:]
+		v := kvBytes[2*lengthBytes+keyLen : 2*lengthBytes+keyLen+valLen]
 		if err != nil {
 			if err == io.EOF {
 				break
