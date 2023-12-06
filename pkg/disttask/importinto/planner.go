@@ -311,6 +311,7 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx) ([]planner.PipelineSpec, er
 		dataFiles := kvMeta.GetDataFiles()
 		statFiles := kvMeta.GetStatFiles()
 		length := len(dataFiles)
+		// ywq todo change
 		for start := 0; start < length; start += step {
 			end := start + step
 			if end > length {

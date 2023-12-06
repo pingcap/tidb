@@ -753,5 +753,4 @@ func (m *MemoryIngestData) DecRef() {
 func (m *MemoryIngestData) Finish(totalBytes, totalCount int64) {
 	m.importedKVSize.Add(totalBytes)
 	m.importedKVCount.Add(totalCount)
-
 }
