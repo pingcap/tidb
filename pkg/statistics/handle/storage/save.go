@@ -197,7 +197,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 		if modifyCnt < 0 {
 			modifyCnt = 0
 		}
-		statslogutil.StatsLogger.Info("incrementally update modifyCount",
+		statslogutil.StatsLogger().Info("incrementally update modifyCount",
 			zap.Int64("tableID", tableID),
 			zap.Int64("curModifyCnt", curModifyCnt),
 			zap.Int64("results.BaseModifyCnt", results.BaseModifyCnt),
@@ -208,7 +208,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 			if cnt < 0 {
 				cnt = 0
 			}
-			statslogutil.StatsLogger.Info("incrementally update count",
+			statslogutil.StatsLogger().Info("incrementally update count",
 				zap.Int64("tableID", tableID),
 				zap.Int64("curCnt", curCnt),
 				zap.Int64("results.Count", results.Count),
@@ -219,7 +219,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 			if cnt < 0 {
 				cnt = 0
 			}
-			statslogutil.StatsLogger.Info("directly update count",
+			statslogutil.StatsLogger().Info("directly update count",
 				zap.Int64("tableID", tableID),
 				zap.Int64("results.Count", results.Count),
 				zap.Int64("count", cnt))
