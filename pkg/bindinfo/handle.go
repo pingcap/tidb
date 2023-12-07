@@ -44,9 +44,7 @@ import (
 
 // BindHandle is used to handle all global sql bind operations.
 type BindHandle struct {
-	// TODO: use a session pool instead of a single session.
-	sctx     sessionctx.Context // used to run SQLs
-	sctxLock sync.Mutex         // protect the sctx
+	sPool SessionPool
 
 	bindingCache atomic.Pointer[bindCache]
 
@@ -85,9 +83,9 @@ type bindRecordUpdate struct {
 }
 
 // NewBindHandle creates a new BindHandle.
-func NewBindHandle(ctx sessionctx.Context) *BindHandle {
-	handle := &BindHandle{}
-	handle.Reset(ctx)
+func NewBindHandle(sPool SessionPool) *BindHandle {
+	handle := &BindHandle{sPool: sPool}
+	handle.Reset()
 	return handle
 }
 
@@ -101,8 +99,7 @@ func (h *BindHandle) setCache(c *bindCache) {
 }
 
 // Reset is to reset the BindHandle and clean old info.
-func (h *BindHandle) Reset(ctx sessionctx.Context) {
-	h.sctx = ctx
+func (h *BindHandle) Reset() {
 	h.lastUpdateTime.Store(types.ZeroTimestamp)
 	h.invalidBindRecordMap.Value.Store(make(map[string]*bindRecordUpdate))
 	h.invalidBindRecordMap.flushFunc = func(record *BindRecord) error {
@@ -226,85 +223,6 @@ func (h *BindHandle) CreateGlobalBinding(sctx sessionctx.Context, record *BindRe
 
 			// Insert the BindRecord to the storage.
 			_, err = exec(sctx, `INSERT INTO mysql.bind_info VALUES (%?,%?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
-				record.OriginalSQL,
-				record.Bindings[i].BindSQL,
-				record.Db,
-				record.Bindings[i].Status,
-				record.Bindings[i].CreateTime.String(),
-				record.Bindings[i].UpdateTime.String(),
-				record.Bindings[i].Charset,
-				record.Bindings[i].Collation,
-				record.Bindings[i].Source,
-				record.Bindings[i].SQLDigest,
-				record.Bindings[i].PlanDigest,
-			)
-			if err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-}
-
-// AddGlobalBinding adds a BindRecord to the storage and BindRecord to the cache.
-func (h *BindHandle) AddGlobalBinding(sctx sessionctx.Context, record *BindRecord) (err error) {
-	err = record.prepareHints(sctx)
-	if err != nil {
-		return err
-	}
-
-	record.Db = strings.ToLower(record.Db)
-	oldRecord := h.GetGlobalBinding(parser.DigestNormalized(record.OriginalSQL).String(), record.OriginalSQL, record.Db)
-	var duplicateBinding *Binding
-	if oldRecord != nil {
-		binding := oldRecord.FindBinding(record.Bindings[0].ID)
-		if binding != nil {
-			// There is already a binding with status `Enabled`, `Disabled`, `PendingVerify` or `Rejected`, we could directly cancel the job.
-			if record.Bindings[0].Status == PendingVerify {
-				return nil
-			}
-			// Otherwise, we need to remove it before insert.
-			duplicateBinding = binding
-		}
-	}
-
-	return h.callWithSCtx(true, func(sctx sessionctx.Context) error {
-		defer func() {
-			h.appendGlobalCacheBinding(parser.DigestNormalized(record.OriginalSQL).String(), record)
-		}()
-
-		// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
-		if err = h.lockBindInfoTable(sctx); err != nil {
-			return err
-		}
-		if duplicateBinding != nil {
-			_, err = exec(sctx, `DELETE FROM mysql.bind_info WHERE original_sql = %? AND bind_sql = %?`, record.OriginalSQL, duplicateBinding.BindSQL)
-			if err != nil {
-				return err
-			}
-		}
-
-		now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
-		for i := range record.Bindings {
-			if duplicateBinding != nil {
-				record.Bindings[i].CreateTime = duplicateBinding.CreateTime
-			} else {
-				record.Bindings[i].CreateTime = now
-			}
-			record.Bindings[i].UpdateTime = now
-
-			if record.Bindings[i].SQLDigest == "" {
-				parser4binding := parser.New()
-				var originNode ast.StmtNode
-				originNode, err = parser4binding.ParseOneStmt(record.OriginalSQL, record.Bindings[i].Charset, record.Bindings[i].Collation)
-				if err != nil {
-					return err
-				}
-				_, sqlDigestWithDB := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(originNode, record.Db, record.OriginalSQL))
-				record.Bindings[i].SQLDigest = sqlDigestWithDB.String()
-			}
-			// Insert the BindRecord to the storage.
-			_, err = exec(sctx, `INSERT INTO mysql.bind_info VALUES (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
 				record.OriginalSQL,
 				record.Bindings[i].BindSQL,
 				record.Db,
@@ -593,7 +511,7 @@ func newBindRecord(sctx sessionctx.Context, row chunk.Row) (string, *BindRecord,
 	if status == Using {
 		status = Enabled
 	}
-	hint := Binding{
+	binding := Binding{
 		BindSQL:    row.GetString(1),
 		Status:     status,
 		CreateTime: row.GetTime(4),
@@ -607,7 +525,7 @@ func newBindRecord(sctx sessionctx.Context, row chunk.Row) (string, *BindRecord,
 	bindRecord := &BindRecord{
 		OriginalSQL: row.GetString(0),
 		Db:          strings.ToLower(row.GetString(2)),
-		Bindings:    []Binding{hint},
+		Bindings:    []Binding{binding},
 	}
 	sqlDigest := parser.DigestNormalized(bindRecord.OriginalSQL)
 	sctx.GetSessionVars().CurrentDB = bindRecord.Db
@@ -629,24 +547,6 @@ func (h *BindHandle) setGlobalCacheBinding(sqlDigest string, meta *BindRecord) {
 	}
 	h.setCache(newCache) // TODO: update it in place
 	updateMetrics(metrics.ScopeGlobal, oldRecord, meta, false)
-}
-
-// appendGlobalCacheBinding adds the BindRecord to the cache, all the stale BindRecords are
-// removed from the cache after this operation.
-func (h *BindHandle) appendGlobalCacheBinding(sqlDigest string, meta *BindRecord) {
-	newCache, err0 := h.getCache().Copy()
-	if err0 != nil {
-		logutil.BgLogger().Warn("BindHandle.appendBindRecord", zap.String("category", "sql-bind"), zap.Error(err0))
-	}
-	oldRecord := newCache.GetBinding(sqlDigest, meta.OriginalSQL, meta.Db)
-	newRecord := merge(oldRecord, meta)
-	err1 := newCache.SetBinding(sqlDigest, newRecord)
-	if err1 != nil && err0 == nil {
-		// Only need to handle the error once.
-		logutil.BgLogger().Warn("BindHandle.appendBindRecord", zap.String("category", "sql-bind"), zap.Error(err1))
-	}
-	h.setCache(newCache) // TODO: update it in place
-	updateMetrics(metrics.ScopeGlobal, oldRecord, newRecord, false)
 }
 
 // removeGlobalCacheBinding removes the BindRecord from the cache.
@@ -801,11 +701,17 @@ func (h *BindHandle) ReloadGlobalBindings() error {
 }
 
 func (h *BindHandle) callWithSCtx(wrapTxn bool, f func(sctx sessionctx.Context) error) (err error) {
-	h.sctxLock.Lock()
-	defer h.sctxLock.Unlock()
+	resource, err := h.sPool.Get()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err == nil { // only recycle when no error
+			h.sPool.Put(resource)
+		}
+	}()
 
-	sctx := h.sctx
-	// TODO: how to clean the sctx if meet any error?
+	sctx := resource.(sessionctx.Context)
 	if wrapTxn {
 		if _, err = exec(sctx, "BEGIN PESSIMISTIC"); err != nil {
 			return
@@ -822,4 +728,20 @@ func (h *BindHandle) callWithSCtx(wrapTxn bool, f func(sctx sessionctx.Context) 
 
 	err = f(sctx)
 	return
+}
+
+var (
+	lastPlanBindingUpdateTime = "last_plan_binding_update_time"
+)
+
+// GetScope gets the status variables scope.
+func (*BindHandle) GetScope(_ string) variable.ScopeFlag {
+	return variable.ScopeSession
+}
+
+// Stats returns the server statistics.
+func (h *BindHandle) Stats(_ *variable.SessionVars) (map[string]interface{}, error) {
+	m := make(map[string]interface{})
+	m[lastPlanBindingUpdateTime] = h.getLastUpdateTime().String()
+	return m, nil
 }
