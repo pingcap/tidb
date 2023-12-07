@@ -247,10 +247,10 @@ func (s *CheckpointManager) Reset(newPhysicalID int64, start, end kv.Key) {
 		s.minKeySyncLocal = nil
 		s.minKeySyncGlobal = nil
 		s.minTaskIDSynced = 0
-		s.pidLocal = newPhysicalID
 		s.startLocal = start
 		s.endLocal = end
 	}
+	s.pidLocal = newPhysicalID
 }
 
 // JobReorgMeta is the metadata for a reorg job.
