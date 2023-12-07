@@ -203,6 +203,17 @@ func getFilesReadConcurrency(ctx context.Context, storage storage.ExternalStorag
 	return result, startOffs, nil
 }
 
+const BadKey = "7480000000000000665F69800000000000000A00012020202020202020FF2020202020202020FF2020202020202020FF2020202020202020FF2020202020202020FF2800000000000000F8"
+
+func must(b []byte, err error) []byte {
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+var BadKeyBytes = must(hex.DecodeString(BadKey))
+
 func readOneFile(
 	ctx context.Context,
 	storage storage.ExternalStorage,
@@ -258,6 +269,13 @@ func readOneFile(
 		}
 		// TODO(lance6716): we are copying every KV from rd's buffer to memBuf, can we
 		// directly read into memBuf?
+		if bytes.Compare(k, BadKeyBytes) == 0 {
+			logutil.Logger(ctx).Info("lance test bad key found in readOneFile",
+				zap.String("filename", dataFile),
+				zap.Any("size", size),
+				zap.String("value", hex.EncodeToString(v)),
+			)
+		}
 		keys = append(keys, memBuf.AddBytes(k))
 		values = append(values, memBuf.AddBytes(v))
 		size += len(k) + len(v)

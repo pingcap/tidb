@@ -15,7 +15,9 @@
 package importer
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"time"
 
@@ -182,7 +184,16 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-
+			for _, kv := range kvs.Pairs {
+				if bytes.Compare(kv.Key, external.BadKeyBytes) == 0 {
+					p.logger.Info("lance test found bad key",
+						zap.String("value", fmt.Sprintf("%X", kv.Val)),
+						zap.Any("RowID", fmt.Sprintf("%X", kv.RowID)),
+						zap.String("file", p.chunkInfo.FileMeta.Path),
+						zap.String("fil2", p.chunkInfo.Key.Path),
+					)
+				}
+			}
 			rowBatch = append(rowBatch, deliveredRow{kvs: kvs, offset: currOffset})
 			kvSize += kvs.Size()
 			rowCount++
