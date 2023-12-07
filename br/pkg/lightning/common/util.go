@@ -172,7 +172,7 @@ type SQLWithRetry struct {
 	RetryCount   int
 }
 
-func (s SQLWithRetry) perform(_ context.Context, parentLogger log.Logger, purpose string, action func() error) error {
+func (t SQLWithRetry) perform(_ context.Context, parentLogger log.Logger, purpose string, action func() error) error {
 	return retryWithCount(purpose, parentLogger, action, s.RetryCount)
 }
 
