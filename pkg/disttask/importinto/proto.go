@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/asyncloaddata"
 	"github.com/pingcap/tidb/pkg/executor/importer"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 )
 
@@ -103,8 +102,6 @@ type MergeSortStepMeta struct {
 	KVGroup   string   `json:"kv-group"`
 	DataFiles []string `json:"data-files"`
 	StatFiles []string `json:"stat-files"`
-	StartKey  kv.Key   `json:"start-key"`
-	EndKey    kv.Key   `json:"end-key"`
 
 	external.SortedKVMeta `json:"sorted-kv-meta"`
 }

@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
@@ -52,9 +51,7 @@ type BackfillTaskMeta struct {
 
 // BackfillSubTaskMeta is the sub-task meta for backfilling index.
 type BackfillSubTaskMeta struct {
-	PhysicalTableID int64  `json:"physical_table_id"`
-	StartKey        kv.Key `json:"start-key"`
-	EndKey          kv.Key `json:"end-key"`
+	PhysicalTableID int64 `json:"physical_table_id"`
 
 	RangeSplitKeys        [][]byte `json:"range_split_keys"`
 	DataFiles             []string `json:"data-files"`

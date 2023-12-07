@@ -434,15 +434,22 @@ func generateMergePlan(
 	}
 	metaArr := make([][]byte, 0, 16)
 
-	startKeys, endKeys, dataFiles, err := getStartEndKeyAndFilesForOneBatch(taskHandle, task.ID, StepReadIndex)
+	startKeys, endKeys, dataFiles, statFiles, err := getStartEndKeyAndFilesForOneBatch(multiStats, StepReadIndex)
+	//logger.BgLogger().Info("ywq test datafiles", zap.Any("data", dataFiles))
 	if err != nil {
 		return nil, err
 	}
+
 	for i, startKey := range startKeys {
+		logger.Info("merge info", zap.String("startkey", hex.EncodeToString(startKey)), zap.String("endkey", hex.EncodeToString(endKeys[i])))
 		m := &BackfillSubTaskMeta{
 			DataFiles: dataFiles[i],
-			StartKey:  startKey,
-			EndKey:    endKeys[i],
+			StatFiles: statFiles[i],
+			// ywq todo add new meta...
+			SortedKVMeta: external.SortedKVMeta{
+				StartKey: startKey,
+				EndKey:   endKeys[i],
+			},
 		}
 		metaBytes, err := json.Marshal(m)
 		if err != nil {
@@ -451,33 +458,6 @@ func generateMergePlan(
 		metaArr = append(metaArr, metaBytes)
 	}
 	return metaArr, nil
-
-	// // generate merge sort plan.
-	// _, _, _, dataFiles, _, err := getSummaryFromLastStep(taskHandle, task.ID, StepReadIndex)
-	// if err != nil {
-	// 	return nil, err
-	// }
-
-	// start := 0
-	// step := external.MergeSortFileCountStep
-	// metaArr := make([][]byte, 0, 16)
-	// for start < len(dataFiles) {
-	// 	end := start + step
-	// 	if end > len(dataFiles) {
-	// 		end = len(dataFiles)
-	// 	}
-	// 	m := &BackfillSubTaskMeta{
-	// 		DataFiles: dataFiles[start:end],
-	// 	}
-	// 	metaBytes, err := json.Marshal(m)
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-	// 	metaArr = append(metaArr, metaBytes)
-
-	// 	start = end
-	// }
-	// return metaArr, nil
 }
 
 func getRangeSplitter(
@@ -521,31 +501,25 @@ func getRangeSplitter(
 }
 
 func getStartEndKeyAndFilesForOneBatch(
-	taskHandle dispatcher.TaskHandle,
-	taskID int64,
+	multiStat []external.MultipleFilesStat,
 	step proto.Step,
-) (startKeys, endKeys []kv.Key, dataFiles [][]string, err error) {
-	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(taskID, step)
-	if err != nil {
-		return nil, nil, nil, errors.Trace(err)
-	}
-	dataFilesGroup := make([][]string, 16)
-	for _, subtaskMeta := range subTaskMetas {
-		var subtask BackfillSubTaskMeta
-		err := json.Unmarshal(subtaskMeta, &subtask)
-		if err != nil {
-			return nil, nil, nil, errors.Trace(err)
+) (startKeys, endKeys []kv.Key, dataFiles [][]string, statFiles [][]string, err error) {
+	dataFilesGroup := make([][]string, 0, 16)
+	statFilesGroup := make([][]string, 0, 16)
+
+	for _, stat := range multiStat {
+		startKeys = append(startKeys, stat.MinKey)
+		endKeys = append(endKeys, stat.MaxKey)
+		curData := make([]string, 0, 1000)
+		curStat := make([]string, 0, 16)
+		for _, file := range stat.Filenames {
+			curData = append(curData, file[0])
+			curStat = append(curStat, file[1])
 		}
-		// Skip empty subtask.StartKey/EndKey because it means
-		// no records need to be written in this subtask.
-		if subtask.StartKey == nil || subtask.EndKey == nil {
-			continue
-		}
-		startKeys = append(startKeys, subtask.StartKey)
-		endKeys = append(endKeys, subtask.StartKey)
-		dataFilesGroup = append(dataFilesGroup, subtask.DataFiles)
+		dataFilesGroup = append(dataFilesGroup, curData)
+		statFilesGroup = append(statFilesGroup, curStat)
 	}
-	return startKeys, endKeys, dataFilesGroup, nil
+	return startKeys, endKeys, dataFilesGroup, statFilesGroup, nil
 }
 
 func getSummaryFromLastStep(

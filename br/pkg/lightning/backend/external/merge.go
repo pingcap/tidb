@@ -74,6 +74,7 @@ func MergeOverlappingFiles(
 	bufPool := membuf.NewPool()
 	loaded := &memKVsAndBuffers{}
 	curStart := startKey
+	var totalSize uint64
 
 	for {
 		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, err := splitter.SplitOneRangesGroup()
@@ -113,15 +114,14 @@ func MergeOverlappingFiles(
 			}
 			return false
 		})
-		logutil.Logger(ctx).Info("sorting in MergeOverlappingFiles",
-			zap.Duration("cost time", time.Since(now)))
-
+		logutil.Logger(ctx).Info("sorting in MergeOverlappingFiles", zap.Duration("cost time", time.Since(now)))
 		for i, key := range loaded.keys {
 			err = writer.WriteRow(ctx, key, loaded.values[i])
 			if err != nil {
 				return err
 			}
 		}
+		totalSize += writer.totalSize
 
 		err = writer.Close(ctx)
 		if err != nil {
@@ -138,13 +138,14 @@ func MergeOverlappingFiles(
 	stat.Filenames = append(stat.Filenames,
 		[2]string{writer.dataFile, writer.statFile})
 	stat.build([]tidbkv.Key{startKey}, []tidbkv.Key{endKey})
+	logutil.BgLogger().Info("stat", zap.Any("stat", stat))
 	if onClose != nil {
 		onClose(&WriterSummary{
 			WriterID:           writer.writerID,
 			Seq:                0,
 			Min:                startKey,
 			Max:                endKey,
-			TotalSize:          writer.totalSize,
+			TotalSize:          totalSize,
 			MultipleFilesStats: []MultipleFilesStat{stat},
 		})
 	}
