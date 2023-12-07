@@ -164,7 +164,8 @@ func DumpTextRow(buffer []byte, columns []*Info, row chunk.Row, d *ResultEncoder
 		case mysql.TypeNewDecimal:
 			buffer = dump.LengthEncodedString(buffer, hack.Slice(row.GetMyDecimal(i).String()))
 		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
-			mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
+			mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob,
+			mysql.TypeGeometry:
 			d.UpdateDataEncoding(col.Charset)
 			buffer = dump.LengthEncodedString(buffer, d.EncodeData(row.GetBytes(i)))
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:

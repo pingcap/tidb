@@ -106,6 +106,7 @@ require (
 	github.com/tikv/pd/client v0.0.0-20231130081618-862eee18738e
 	github.com/timakin/bodyclose v0.0.0-20230421092635-574207250966
 	github.com/twmb/murmur3 v1.1.6
+	github.com/twpayne/go-geom v1.5.3
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/vbauerster/mpb/v7 v7.5.3
 	github.com/wangjohn/quickselect v0.0.0-20161129230411-ed8402a42d5f

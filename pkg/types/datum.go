@@ -16,6 +16,7 @@ package types
 
 import (
 	"cmp"
+	"encoding/binary"
 	gjson "encoding/json"
 	"fmt"
 	"math"
@@ -35,6 +36,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	geom "github.com/twpayne/go-geom"
+	"github.com/twpayne/go-geom/encoding/wkb"
+	"github.com/twpayne/go-geom/encoding/wkbcommon"
 	"go.uber.org/zap"
 )
 
@@ -919,6 +923,8 @@ func (d *Datum) ConvertTo(ctx Context, target *FieldType) (Datum, error) {
 	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
 		mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString:
 		return d.convertToString(ctx, target)
+	case mysql.TypeGeometry:
+		return d.convertToMysqlGeometry(ctx, target)
 	case mysql.TypeTimestamp:
 		return d.convertToMysqlTimestamp(ctx, target)
 	case mysql.TypeDatetime, mysql.TypeDate:
@@ -1736,6 +1742,61 @@ func (d *Datum) convertToMysqlJSON(_ *FieldType) (ret Datum, err error) {
 			ret.SetMysqlJSON(CreateBinaryJSON(s))
 		}
 	}
+	return ret, errors.Trace(err)
+}
+
+func (d *Datum) convertToMysqlGeometry(ctx Context, target *FieldType) (ret Datum, err error) {
+	ret.k = KindBytes
+	var s string
+
+	// Restrict the number of geometry elements to guard against DoS
+	// https://github.com/twpayne/go-geom#protection-against-malicious-or-malformed-inputs
+	wkbcommon.MaxGeometryElements = [4]int{
+		0,   // Unused
+		100, // LineString, LinearRing, and MultiPoint
+		100, // MultiLineString and Polygon
+		100, // MultiPolygon
+	}
+
+	switch d.k {
+	case KindString, KindBytes:
+		fromBinary := d.Collation() == charset.CollationBin
+		toBinary := target.GetCharset() == charset.CharsetBin
+		if fromBinary && toBinary {
+			s = d.GetString()
+		} else if fromBinary {
+			s, err = d.GetBinaryStringDecoded(ctx.Flags(), target.GetCharset())
+		} else if toBinary {
+			s = d.GetBinaryStringEncoded()
+		} else {
+			s, err = d.GetStringWithCheck(ctx.Flags(), target.GetCharset())
+		}
+	case KindBinaryLiteral:
+		s, err = d.GetBinaryStringDecoded(ctx.Flags(), target.GetCharset())
+	default:
+		return invalidConv(d, target.GetType())
+	}
+	if err == nil {
+		s, err = ProduceStrWithSpecifiedTp(s, target, ctx, true)
+	}
+
+	if len(s) < 4 {
+		err = errors.Wrap(ErrCantCreateGeometryObject, "convert to MySQL Geometry failed: input too short")
+		return ret, errors.Trace(err)
+	}
+
+	// (E)WKB: <srid[4],geom>
+	srid := int(binary.LittleEndian.Uint32([]byte(s[:4])))
+	g, err := wkb.Unmarshal([]byte(s[4:]))
+	if err != nil {
+		err = errors.Wrap(ErrCantCreateGeometryObject, "convert to MySQL Geometry failed: "+err.Error())
+	}
+	g, err = geom.SetSRID(g, srid)
+	if err != nil {
+		err = errors.Wrap(ErrCantCreateGeometryObject, "convert to MySQL Geometry failed: "+err.Error())
+	}
+	logutil.BgLogger().Info("geometry type", zap.String("geom", fmt.Sprintf("%#v", g)))
+	ret.SetString(s, target.GetCollate())
 	return ret, errors.Trace(err)
 }
 

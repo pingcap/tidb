@@ -151,6 +151,7 @@ import (
 	from              "FROM"
 	fulltext          "FULLTEXT"
 	generated         "GENERATED"
+	geometryType      "GEOMETRY"
 	grant             "GRANT"
 	group             "GROUP"
 	groups            "GROUPS"
@@ -8779,6 +8780,14 @@ CastType:
 		tp.SetCollate(charset.CollationBin)
 		$$ = tp
 	}
+|      "GEOMETRY"
+       {
+               tp := types.NewFieldType(mysql.TypeGeometry)
+               tp.AddFlag(mysql.BinaryFlag)
+               tp.SetCharset(charset.CharsetBin)
+               tp.SetCollate(charset.CollationBin)
+               $$ = tp
+       }
 
 Priority:
 	"LOW_PRIORITY"
@@ -12921,6 +12930,14 @@ StringType:
 		}
 		$$ = tp
 	}
+|      "GEOMETRY"
+       {
+               tp := types.NewFieldType(mysql.TypeGeometry)
+               tp.AddFlag(mysql.BinaryFlag)
+               tp.SetCharset(charset.CharsetBin)
+               tp.SetCollate(charset.CollationBin)
+               $$ = tp
+       }
 
 Char:
 	"CHARACTER"
