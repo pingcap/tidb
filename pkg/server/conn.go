@@ -1940,6 +1940,7 @@ func (cc *clientConn) handleStmt(
 	if s, ok := stmt.(*ast.LoadDataStmt); ok {
 		if s.FileLocRef == ast.FileLocClient {
 			err := cc.preprocessLoadDataLocal(ctx)
+			defer cc.postprocessLoadDataLocal()
 			if err != nil {
 				return false, err
 			}
@@ -1954,11 +1955,6 @@ func (cc *clientConn) handleStmt(
 	//   the `handleNoDelay`.
 	if rs != nil {
 		defer terror.Call(rs.Close)
-	}
-	if s, ok := stmt.(*ast.LoadDataStmt); ok {
-		if s.FileLocRef == ast.FileLocClient {
-			cc.postprocessLoadDataLocal()
-		}
 	}
 
 	if err != nil {
