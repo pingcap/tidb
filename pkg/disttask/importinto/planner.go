@@ -325,7 +325,7 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx) ([]planner.PipelineSpec, er
 		}
 		if i == len(kvMeta.MultipleFilesStats)-1 {
 			startKeys = append(startKeys, kvMeta.MultipleFilesStats[i].MinKey)
-			endKeys = append(endKeys, kvMeta.MultipleFilesStats[i].MinKey)
+			endKeys = append(endKeys, kvMeta.MultipleFilesStats[i].MaxKey)
 		}
 
 		length := len(dataFiles)

@@ -449,7 +449,7 @@ func generateMergePlan(
 	}
 	if i == len(multiStats)-1 {
 		startKeys = append(startKeys, multiStats[i].MinKey)
-		endKeys = append(endKeys, multiStats[i].MinKey)
+		endKeys = append(endKeys, multiStats[i].MaxKey)
 	}
 
 	start := 0
