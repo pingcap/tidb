@@ -1261,7 +1261,7 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 	// illegal order.
 	if upperCompare < 0 {
 		err := errors.Errorf("illegal bucket order")
-		statslogutil.StatsLogger().Warn("fail to mergeBucketNDV", zap.Error(err))
+		statslogutil.StatsLogger().Warn("fail to mergeBucketNDV", zap.Any("left", left), zap.Any("right", right), zap.Error(err))
 		return nil, err
 	}
 	//  ___right_|
@@ -1277,7 +1277,7 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 		// illegal order.
 		if lowerCompare < 0 {
 			err := errors.Errorf("illegal bucket order")
-			statslogutil.StatsLogger().Warn("fail to mergeBucketNDV", zap.Error(err))
+			statslogutil.StatsLogger().Warn("fail to mergeBucketNDV", zap.Any("left", left), zap.Any("right", right), zap.Error(err))
 			return nil, err
 		}
 		// |___right___|
@@ -1385,6 +1385,10 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 		if i != len(buckets)-1 {
 			tmp, err := mergeBucketNDV(sc, buckets[i], &right)
 			if err != nil {
+				statslogutil.StatsLogger().Warn("mergePartitionBuckets",
+					zap.Any("buckets", buckets),
+					zap.Error(err),
+				)
 				return nil, err
 			}
 			right = *tmp
