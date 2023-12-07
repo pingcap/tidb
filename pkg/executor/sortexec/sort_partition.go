@@ -212,10 +212,10 @@ func (s *sortPartition) spillToDisk() error {
 func (s *sortPartition) actionSpill(helper *spillHelper) *sortPartitionSpillDiskAction {
 	if s.spillAction == nil {
 		s.spillAction = &sortPartitionSpillDiskAction{
-			partition:  s,
-			isSpilling: false,
-			helper:     helper,
+			partition: s,
+			helper:    helper,
 		}
+		s.spillAction.isSpilling.Store(false)
 	}
 	return s.spillAction
 }

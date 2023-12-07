@@ -243,7 +243,8 @@ func BuildMockDataSource(opt MockDataSourceParameters) *MockDataSource {
 		P:            opt,
 		GenData:      nil,
 		Chunks:       nil,
-		SavedChunks:  nil}
+		SavedChunks:  nil,
+	}
 	rTypes := exec.RetTypes(m)
 	colData := make([][]interface{}, len(rTypes))
 	for i := 0; i < len(rTypes); i++ {

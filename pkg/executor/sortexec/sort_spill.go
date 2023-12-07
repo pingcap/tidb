@@ -16,6 +16,7 @@ package sortexec
 
 import (
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -34,8 +35,7 @@ type spillHelper struct {
 type sortPartitionSpillDiskAction struct {
 	memory.BaseOOMAction
 	partition  *sortPartition
-	lock       sync.Mutex
-	isSpilling bool
+	isSpilling atomic.Bool
 	helper     *spillHelper
 }
 
@@ -45,10 +45,7 @@ func (*sortPartitionSpillDiskAction) GetPriority() int64 {
 }
 
 func (s *sortPartitionSpillDiskAction) Action(t *memory.Tracker) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-	if !s.isSpilling {
-		s.isSpilling = true
+	if s.isSpilling.CompareAndSwap(false, true) {
 		go func() {
 			s.helper.syncLock.Lock()
 			defer s.helper.syncLock.Unlock()
@@ -61,9 +58,7 @@ func (s *sortPartitionSpillDiskAction) Action(t *memory.Tracker) {
 				}
 			}
 
-			s.lock.Lock()
-			defer s.lock.Unlock()
-			s.isSpilling = false
+			s.isSpilling.CompareAndSwap(true, false)
 		}()
 	}
 }
