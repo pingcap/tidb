@@ -40,10 +40,11 @@ type singlePointAlloc struct {
 	tblID         int64
 	lastAllocated int64
 	isUnsigned    bool
-	clientDiscover
+	*ClientDiscover
 }
 
-type clientDiscover struct {
+// ClientDiscover is used to get the AutoIDAllocClient, it creates the grpc connection with autoid service leader.
+type ClientDiscover struct {
 	// This the etcd client for service discover
 	etcdCli *clientv3.Client
 	// This is the real client for the AutoIDAlloc service
@@ -60,7 +61,15 @@ const (
 	autoIDLeaderPath = "tidb/autoid/leader"
 )
 
-func (d *clientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClient, error) {
+// NewClientDiscover creates a ClientDiscover object.
+func NewClientDiscover(etcdCli *clientv3.Client) *ClientDiscover {
+	return &ClientDiscover{
+		etcdCli: etcdCli,
+	}
+}
+
+// GetClient gets the AutoIDAllocClient.
+func (d *ClientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClient, error) {
 	d.mu.RLock()
 	cli := d.mu.AutoIDAllocClient
 	if cli != nil {
@@ -138,7 +147,7 @@ retry:
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
 			time.Sleep(backoffDuration)
-			sp.resetConn(err)
+			sp.ResetConn(err)
 			goto retry
 		}
 		return 0, 0, errors.Trace(err)
@@ -155,15 +164,19 @@ retry:
 
 const backoffDuration = 200 * time.Millisecond
 
-func (sp *singlePointAlloc) resetConn(reason error) {
-	logutil.BgLogger().Info("[autoid client] reset grpc connection",
-		zap.String("reason", reason.Error()))
+// ResetConn reset the AutoIDAllocClient and underlying grpc connection.
+// The next GetClient() call will recreate the client connecting to the correct leader by querying etcd.
+func (d *ClientDiscover) ResetConn(reason error) {
+	if reason != nil {
+		logutil.BgLogger().Info("reset grpc connection", zap.String("category", "autoid client"),
+			zap.String("reason", reason.Error()))
+	}
 	var grpcConn *grpc.ClientConn
-	sp.mu.Lock()
-	grpcConn = sp.mu.ClientConn
-	sp.mu.AutoIDAllocClient = nil
-	sp.mu.ClientConn = nil
-	sp.mu.Unlock()
+	d.mu.Lock()
+	grpcConn = d.mu.ClientConn
+	d.mu.AutoIDAllocClient = nil
+	d.mu.ClientConn = nil
+	d.mu.Unlock()
 	// Close grpc.ClientConn to release resource.
 	if grpcConn != nil {
 		err := grpcConn.Close()
@@ -210,7 +223,7 @@ retry:
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
 			time.Sleep(backoffDuration)
-			sp.resetConn(err)
+			sp.ResetConn(err)
 			goto retry
 		}
 		return errors.Trace(err)
