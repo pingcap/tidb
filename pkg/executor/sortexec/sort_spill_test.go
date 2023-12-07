@@ -51,9 +51,11 @@ func TestSortSpillDisk(t *testing.T) {
 	}
 	dataSource := testutil.BuildMockDataSource(opt)
 	exe := &sortexec.SortExec{
-		BaseExecutor: exec.NewBaseExecutor(cas.Ctx, dataSource.Schema(), 0, dataSource),
-		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.OrderByIdx)),
-		ExecSchema:   dataSource.Schema(),
+		SortBase: sortexec.SortBase{
+			BaseExecutor: exec.NewBaseExecutor(cas.Ctx, dataSource.Schema(), 0, dataSource),
+			ByItems:      make([]*plannerutil.ByItems, 0, len(cas.OrderByIdx)),
+			ExecSchema:   dataSource.Schema(),
+		},
 	}
 	for _, idx := range cas.OrderByIdx {
 		exe.ByItems = append(exe.ByItems, &plannerutil.ByItems{Expr: cas.Columns()[idx]})
@@ -146,9 +148,11 @@ func TestSortSpillDisk(t *testing.T) {
 	}
 	dataSource = testutil.BuildMockDataSource(opt)
 	exe = &sortexec.SortExec{
-		BaseExecutor: exec.NewBaseExecutor(cas.Ctx, dataSource.Schema(), 0, dataSource),
-		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.OrderByIdx)),
-		ExecSchema:   dataSource.Schema(),
+		SortBase: sortexec.SortBase{
+			BaseExecutor: exec.NewBaseExecutor(cas.Ctx, dataSource.Schema(), 0, dataSource),
+			ByItems:      make([]*plannerutil.ByItems, 0, len(cas.OrderByIdx)),
+			ExecSchema:   dataSource.Schema(),
+		},
 	}
 	for _, idx := range cas.OrderByIdx {
 		exe.ByItems = append(exe.ByItems, &plannerutil.ByItems{Expr: cas.Columns()[idx]})

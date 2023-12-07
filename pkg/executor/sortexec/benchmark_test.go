@@ -36,9 +36,11 @@ func benchmarkSortExec(b *testing.B, cas *testutil.SortCase) {
 	}
 	dataSource := testutil.BuildMockDataSource(opt)
 	executor := &sortexec.SortExec{
-		BaseExecutor: exec.NewBaseExecutor(cas.Ctx, dataSource.Schema(), 4, dataSource),
-		ByItems:      make([]*util.ByItems, 0, len(cas.OrderByIdx)),
-		ExecSchema:   dataSource.Schema(),
+		SortBase: sortexec.SortBase{
+			BaseExecutor: exec.NewBaseExecutor(cas.Ctx, dataSource.Schema(), 4, dataSource),
+			ByItems:      make([]*util.ByItems, 0, len(cas.OrderByIdx)),
+			ExecSchema:   dataSource.Schema(),
+		},
 	}
 	for _, idx := range cas.OrderByIdx {
 		executor.ByItems = append(executor.ByItems, &util.ByItems{Expr: cas.Columns()[idx]})

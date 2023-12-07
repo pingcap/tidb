@@ -21,40 +21,24 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 )
 
 // SortExec represents sorting executor.
 type SortExec struct {
-	exec.BaseExecutor
+	SortBase
 
-	ByItems    []*util.ByItems
-	Idx        int
-	fetched    bool
-	ExecSchema *expression.Schema
+	Idx int
 
-	// keyColumns is the column index of the by items.
-	keyColumns []int
-	// keyCmpFuncs is used to compare each ByItem.
-	keyCmpFuncs []chunk.CompareFunc
 	// rowChunks is the chunks to store row values.
 	rowChunks *chunk.SortedRowContainer
-
-	memTracker  *memory.Tracker
-	diskTracker *disk.Tracker
 
 	// PartitionList is the chunks to store row values for partitions. Every partition is a sorted list.
 	PartitionList []*chunk.SortedRowContainer
 
-	// multiWayMerge uses multi-way merge for spill disk.
-	// The multi-way merge algorithm can refer to https://en.wikipedia.org/wiki/K-way_merge_algorithm
-	multiWayMerge *multiWayMerge
 	// spillAction save the Action for spill disk.
 	spillAction *chunk.SortAndSpillDiskAction
 }
@@ -73,9 +57,8 @@ func (e *SortExec) Close() error {
 		e.memTracker.Consume(-e.rowChunks.GetMemTracker().BytesConsumed())
 		e.rowChunks = nil
 	}
-	e.memTracker = nil
-	e.diskTracker = nil
-	e.multiWayMerge = nil
+
+	e.closeBase()
 	if e.spillAction != nil {
 		e.spillAction.SetFinished()
 	}
@@ -85,16 +68,8 @@ func (e *SortExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *SortExec) Open(ctx context.Context) error {
-	e.fetched = false
+	e.openBase()
 	e.Idx = 0
-
-	// To avoid duplicated initialization for TopNExec.
-	if e.memTracker == nil {
-		e.memTracker = memory.NewTracker(e.ID(), -1)
-		e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
-		e.diskTracker = memory.NewTracker(e.ID(), -1)
-		e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
-	}
 	e.PartitionList = e.PartitionList[:0]
 	return exec.Open(ctx, e.Children(0))
 }
@@ -245,84 +220,4 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	return nil
 }
 
-func (e *SortExec) initCompareFuncs() {
-	e.keyCmpFuncs = make([]chunk.CompareFunc, len(e.ByItems))
-	for i := range e.ByItems {
-		keyType := e.ByItems[i].Expr.GetType()
-		e.keyCmpFuncs[i] = chunk.GetCompareFunc(keyType)
-	}
-}
 
-func (e *SortExec) buildKeyColumns() {
-	e.keyColumns = make([]int, 0, len(e.ByItems))
-	for _, by := range e.ByItems {
-		col := by.Expr.(*expression.Column)
-		e.keyColumns = append(e.keyColumns, col.Index)
-	}
-}
-
-func (e *SortExec) lessRow(rowI, rowJ chunk.Row) bool {
-	for i, colIdx := range e.keyColumns {
-		cmpFunc := e.keyCmpFuncs[i]
-		cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
-		if e.ByItems[i].Desc {
-			cmp = -cmp
-		}
-		if cmp < 0 {
-			return true
-		} else if cmp > 0 {
-			return false
-		}
-	}
-	return false
-}
-
-func (e *SortExec) compressRow(rowI, rowJ chunk.Row) int {
-	for i, colIdx := range e.keyColumns {
-		cmpFunc := e.keyCmpFuncs[i]
-		cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
-		if e.ByItems[i].Desc {
-			cmp = -cmp
-		}
-		if cmp != 0 {
-			return cmp
-		}
-	}
-	return 0
-}
-
-type partitionPointer struct {
-	chk         *chunk.Chunk
-	row         chunk.Row
-	partitionID int
-	consumed    int
-}
-
-type multiWayMerge struct {
-	lessRowFunction     func(rowI chunk.Row, rowJ chunk.Row) bool
-	compressRowFunction func(rowI chunk.Row, rowJ chunk.Row) int
-	elements            []partitionPointer
-}
-
-func (h *multiWayMerge) Less(i, j int) bool {
-	rowI := h.elements[i].row
-	rowJ := h.elements[j].row
-	return h.lessRowFunction(rowI, rowJ)
-}
-
-func (h *multiWayMerge) Len() int {
-	return len(h.elements)
-}
-
-func (*multiWayMerge) Push(interface{}) {
-	// Should never be called.
-}
-
-func (h *multiWayMerge) Pop() interface{} {
-	h.elements = h.elements[:len(h.elements)-1]
-	return nil
-}
-
-func (h *multiWayMerge) Swap(i, j int) {
-	h.elements[i], h.elements[j] = h.elements[j], h.elements[i]
-}
