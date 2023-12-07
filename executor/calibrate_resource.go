@@ -15,14 +15,22 @@
 package executor
 
 import (
+	"bufio"
 	"context"
+	"encoding/base64"
 	"fmt"
+	"io"
 	"math"
+	"net/http"
+	"runtime"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+<<<<<<< HEAD:executor/calibrate_resource.go
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -33,6 +41,22 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+=======
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/duration"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
+>>>>>>> 5db7c6aab54 (resource_control: fetch cpu quota metrics from store instead of prometheus (#49176)):pkg/executor/internal/calibrateresource/calibrate_resource.go
 	"github.com/tikv/client-go/v2/oracle"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
@@ -81,6 +105,7 @@ var (
 	resourceGroupCtl *rmclient.ResourceGroupsController
 )
 
+<<<<<<< HEAD:executor/calibrate_resource.go
 // SetResourceGroupController set a inited ResourceGroupsController for calibrate usage.
 func SetResourceGroupController(rc *rmclient.ResourceGroupsController) {
 	resourceGroupCtl = rc
@@ -90,6 +115,16 @@ func SetResourceGroupController(rc *rmclient.ResourceGroupsController) {
 func GetResourceGroupController() *rmclient.ResourceGroupsController {
 	return resourceGroupCtl
 }
+=======
+const (
+	// serverTypeTiDB is tidb's instance type name
+	serverTypeTiDB = "tidb"
+	// serverTypeTiKV is tikv's instance type name
+	serverTypeTiKV = "tikv"
+	// serverTypeTiFlash is tiflash's instance type name
+	serverTypeTiFlash = "tiflash"
+)
+>>>>>>> 5db7c6aab54 (resource_control: fetch cpu quota metrics from store instead of prometheus (#49176)):pkg/executor/internal/calibrateresource/calibrate_resource.go
 
 // the resource cost rate of a specified workload per 1 tikv cpu.
 type baseResourceCost struct {
@@ -187,13 +222,22 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 		return nil
 	}
 	e.done = true
+<<<<<<< HEAD:executor/calibrate_resource.go
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	if len(e.optionList) > 0 {
 		return e.dynamicCalibrate(ctx, req, exec)
+=======
+	if !variable.EnableResourceControl.Load() {
+		return infoschema.ErrResourceGroupSupportDisabled
 	}
-	return e.staticCalibrate(ctx, req, exec)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	if len(e.OptionList) > 0 {
+		return e.dynamicCalibrate(ctx, req)
+>>>>>>> 5db7c6aab54 (resource_control: fetch cpu quota metrics from store instead of prometheus (#49176)):pkg/executor/internal/calibrateresource/calibrate_resource.go
+	}
+	return e.staticCalibrate(req)
 }
 
 var (
@@ -201,19 +245,49 @@ var (
 	errNoCPUQuotaMetrics = errors.Normalize("There is no CPU quota metrics, %v")
 )
 
+<<<<<<< HEAD:executor/calibrate_resource.go
 func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor) error {
+=======
+func (e *Executor) dynamicCalibrate(ctx context.Context, req *chunk.Chunk) error {
+	exec := e.Ctx().(sqlexec.RestrictedSQLExecutor)
+>>>>>>> 5db7c6aab54 (resource_control: fetch cpu quota metrics from store instead of prometheus (#49176)):pkg/executor/internal/calibrateresource/calibrate_resource.go
 	startTs, endTs, err := e.parseCalibrateDuration(ctx)
 	if err != nil {
 		return err
 	}
+<<<<<<< HEAD:executor/calibrate_resource.go
 	startTime := startTs.In(e.ctx.GetSessionVars().Location()).Format("2006-01-02 15:04:05")
 	endTime := endTs.In(e.ctx.GetSessionVars().Location()).Format("2006-01-02 15:04:05")
+=======
+	clusterInfo, err := infoschema.GetClusterServerInfo(e.Ctx())
+	if err != nil {
+		return err
+	}
+	tidbQuota, err1 := e.getTiDBQuota(ctx, exec, clusterInfo, startTs, endTs)
+	tiflashQuota, err2 := e.getTiFlashQuota(ctx, exec, clusterInfo, startTs, endTs)
+	if err1 != nil && err2 != nil {
+		return err1
+	}
 
-	totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
+	req.AppendUint64(0, uint64(tidbQuota+tiflashQuota))
+	return nil
+}
+
+func (e *Executor) getTiDBQuota(
+	ctx context.Context,
+	exec sqlexec.RestrictedSQLExecutor,
+	serverInfos []infoschema.ServerInfo,
+	startTs, endTs time.Time,
+) (float64, error) {
+	startTime := startTs.In(e.Ctx().GetSessionVars().Location()).Format(time.DateTime)
+	endTime := endTs.In(e.Ctx().GetSessionVars().Location()).Format(time.DateTime)
+>>>>>>> 5db7c6aab54 (resource_control: fetch cpu quota metrics from store instead of prometheus (#49176)):pkg/executor/internal/calibrateresource/calibrate_resource.go
+
+	totalKVCPUQuota, err := getTiKVTotalCPUQuota(serverInfos)
 	if err != nil {
 		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
-	totalTiDBCPU, err := getTiDBTotalCPUQuota(ctx, exec)
+	totalTiDBCPU, err := getTiDBTotalCPUQuota(serverInfos)
 	if err != nil {
 		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
@@ -277,20 +351,80 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 	return nil
 }
 
+<<<<<<< HEAD:executor/calibrate_resource.go
 func (e *calibrateResourceExec) staticCalibrate(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor) error {
 	if !variable.EnableResourceControl.Load() {
 		return infoschema.ErrResourceGroupSupportDisabled
 	}
+=======
+func (e *Executor) getTiFlashQuota(
+	ctx context.Context,
+	exec sqlexec.RestrictedSQLExecutor,
+	serverInfos []infoschema.ServerInfo,
+	startTs, endTs time.Time,
+) (float64, error) {
+	startTime := startTs.In(e.Ctx().GetSessionVars().Location()).Format(time.DateTime)
+	endTime := endTs.In(e.Ctx().GetSessionVars().Location()).Format(time.DateTime)
+
+	quotas := make([]float64, 0)
+	totalTiFlashLogicalCores, err := getTiFlashLogicalCores(serverInfos)
+	if err != nil {
+		return 0, errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
+	}
+	tiflashCPUs, err := getTiFlashCPUUsagePerSec(ctx, e.Ctx(), exec, startTime, endTime)
+	if err != nil {
+		return 0, err
+	}
+	tiflashRUs, err := getTiFlashRUPerSec(ctx, e.Ctx(), exec, startTime, endTime)
+	if err != nil {
+		return 0, err
+	}
+	for {
+		if tiflashRUs.isEnd() || tiflashCPUs.isEnd() {
+			break
+		}
+		// make time point match
+		maxTime := tiflashRUs.getTime()
+		if tiflashCPUs.getTime().After(maxTime) {
+			maxTime = tiflashCPUs.getTime()
+		}
+		if !tiflashRUs.advance(maxTime) || !tiflashCPUs.advance(maxTime) {
+			continue
+		}
+		tiflashQuota := tiflashCPUs.getValue() / totalTiFlashLogicalCores
+		if tiflashQuota > lowUsageThreshold {
+			quotas = append(quotas, tiflashRUs.getValue()/tiflashQuota)
+		}
+		tiflashRUs.next()
+		tiflashCPUs.next()
+	}
+	return setupQuotas(quotas)
+}
+
+func (e *Executor) staticCalibrate(req *chunk.Chunk) error {
+	resourceGroupCtl := domain.GetDomain(e.Ctx()).ResourceGroupsController()
+>>>>>>> 5db7c6aab54 (resource_control: fetch cpu quota metrics from store instead of prometheus (#49176)):pkg/executor/internal/calibrateresource/calibrate_resource.go
 	// first fetch the ru settings config.
 	if resourceGroupCtl == nil {
 		return errors.New("resource group controller is not initialized")
 	}
+<<<<<<< HEAD:executor/calibrate_resource.go
+=======
+	clusterInfo, err := infoschema.GetClusterServerInfo(e.Ctx())
+	if err != nil {
+		return err
+	}
+	ruCfg := resourceGroupCtl.GetConfig()
+	if e.WorkloadType == ast.TPCH10 {
+		return staticCalibrateTpch10(req, clusterInfo, ruCfg)
+	}
+>>>>>>> 5db7c6aab54 (resource_control: fetch cpu quota metrics from store instead of prometheus (#49176)):pkg/executor/internal/calibrateresource/calibrate_resource.go
 
-	totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
+	totalKVCPUQuota, err := getTiKVTotalCPUQuota(clusterInfo)
 	if err != nil {
 		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
-	totalTiDBCPU, err := getTiDBTotalCPUQuota(ctx, exec)
+	totalTiDBCPUQuota, err := getTiDBTotalCPUQuota(clusterInfo)
 	if err != nil {
 		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
@@ -304,8 +438,8 @@ func (e *calibrateResourceExec) staticCalibrate(ctx context.Context, req *chunk.
 		return errors.Errorf("unknown workload '%T'", e.workloadType)
 	}
 
-	if totalTiDBCPU/baseCost.tidbToKVCPURatio < totalKVCPUQuota {
-		totalKVCPUQuota = totalTiDBCPU / baseCost.tidbToKVCPURatio
+	if totalTiDBCPUQuota/baseCost.tidbToKVCPURatio < totalKVCPUQuota {
+		totalKVCPUQuota = totalTiDBCPUQuota / baseCost.tidbToKVCPURatio
 	}
 	ruCfg := resourceGroupCtl.GetConfig()
 	ruPerKVCPU := float64(ruCfg.ReadBaseCost)*float64(baseCost.readReqCount) +
@@ -318,16 +452,76 @@ func (e *calibrateResourceExec) staticCalibrate(ctx context.Context, req *chunk.
 	return nil
 }
 
+<<<<<<< HEAD:executor/calibrate_resource.go
 func getTiKVTotalCPUQuota(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) (float64, error) {
 	query := "SELECT SUM(value) FROM METRICS_SCHEMA.tikv_cpu_quota GROUP BY time ORDER BY time desc limit 1"
 	return getNumberFromMetrics(ctx, exec, query, "tikv_cpu_quota")
+=======
+func staticCalibrateTpch10(req *chunk.Chunk, clusterInfo []infoschema.ServerInfo, ruCfg *resourceControlClient.RUConfig) error {
+	// TPCH10 only considers the resource usage of the TiFlash including cpu and read bytes. Others are ignored.
+	// cpu usage: 105494.666484 / 20 / 20 = 263.74
+	// read bytes: 401799161689.0 / 20 / 20 = 1004497904.22
+	const cpuTimePerCPUPerSec float64 = 263.74
+	const readBytesPerCPUPerSec float64 = 1004497904.22
+	ruPerCPU := float64(ruCfg.CPUMsCost)*cpuTimePerCPUPerSec + float64(ruCfg.ReadBytesCost)*readBytesPerCPUPerSec
+	totalTiFlashLogicalCores, err := getTiFlashLogicalCores(clusterInfo)
+	if err != nil {
+		return err
+	}
+	quota := totalTiFlashLogicalCores * ruPerCPU
+	req.AppendUint64(0, uint64(quota))
+	return nil
 }
 
-func getTiDBTotalCPUQuota(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) (float64, error) {
-	query := "SELECT SUM(value) FROM METRICS_SCHEMA.tidb_server_maxprocs GROUP BY time ORDER BY time desc limit 1"
-	return getNumberFromMetrics(ctx, exec, query, "tidb_server_maxprocs")
+func getTiDBTotalCPUQuota(clusterInfo []infoschema.ServerInfo) (float64, error) {
+	cpuQuota := float64(runtime.GOMAXPROCS(0))
+	failpoint.Inject("mockGOMAXPROCS", func(val failpoint.Value) {
+		if val != nil {
+			cpuQuota = float64(val.(int))
+		}
+	})
+	instanceNum := count(clusterInfo, serverTypeTiDB)
+	return cpuQuota * float64(instanceNum), nil
+>>>>>>> 5db7c6aab54 (resource_control: fetch cpu quota metrics from store instead of prometheus (#49176)):pkg/executor/internal/calibrateresource/calibrate_resource.go
 }
 
+func getTiKVTotalCPUQuota(clusterInfo []infoschema.ServerInfo) (float64, error) {
+	instanceNum := count(clusterInfo, serverTypeTiKV)
+	if instanceNum == 0 {
+		return 0.0, errors.New("no server with type 'tikv' is found")
+	}
+	cpuQuota, err := fetchServerCPUQuota(clusterInfo, serverTypeTiKV, "tikv_server_cpu_cores_quota")
+	if err != nil {
+		return 0.0, err
+	}
+	return cpuQuota * float64(instanceNum), nil
+}
+
+<<<<<<< HEAD:executor/calibrate_resource.go
+=======
+func getTiFlashLogicalCores(clusterInfo []infoschema.ServerInfo) (float64, error) {
+	instanceNum := count(clusterInfo, serverTypeTiFlash)
+	if instanceNum == 0 {
+		return 0.0, nil
+	}
+	cpuQuota, err := fetchServerCPUQuota(clusterInfo, serverTypeTiFlash, "tiflash_proxy_tikv_server_cpu_cores_quota")
+	if err != nil {
+		return 0.0, err
+	}
+	return cpuQuota * float64(instanceNum), nil
+}
+
+func getTiFlashRUPerSec(ctx context.Context, sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor, startTime, endTime string) (*timeSeriesValues, error) {
+	query := fmt.Sprintf("SELECT time, value FROM METRICS_SCHEMA.tiflash_resource_manager_resource_unit where time >= '%s' and time <= '%s' ORDER BY time asc", startTime, endTime)
+	return getValuesFromMetrics(ctx, sctx, exec, query)
+}
+
+func getTiFlashCPUUsagePerSec(ctx context.Context, sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor, startTime, endTime string) (*timeSeriesValues, error) {
+	query := fmt.Sprintf("SELECT time, sum(value) FROM METRICS_SCHEMA.tiflash_process_cpu_usage where time >= '%s' and time <= '%s' and job = 'tiflash' GROUP BY time ORDER BY time asc", startTime, endTime)
+	return getValuesFromMetrics(ctx, sctx, exec, query)
+}
+
+>>>>>>> 5db7c6aab54 (resource_control: fetch cpu quota metrics from store instead of prometheus (#49176)):pkg/executor/internal/calibrateresource/calibrate_resource.go
 type timePointValue struct {
 	tp  time.Time
 	val float64
@@ -402,4 +596,95 @@ func getValuesFromMetrics(ctx context.Context, sctx sessionctx.Context, exec sql
 		}
 	}
 	return &timeSeriesValues{idx: 0, vals: ret}, nil
+}
+
+func count(clusterInfo []infoschema.ServerInfo, ty string) int {
+	num := 0
+	for _, e := range clusterInfo {
+		if e.ServerType == ty {
+			num++
+		}
+	}
+	return num
+}
+
+func fetchServerCPUQuota(serverInfos []infoschema.ServerInfo, serverType string, metricName string) (float64, error) {
+	var cpuQuota float64
+	err := fetchStoreMetrics(serverInfos, serverType, func(addr string, resp *http.Response) error {
+		if resp.StatusCode != http.StatusOK {
+			return errors.Errorf("request %s failed: %s", addr, resp.Status)
+		}
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if !strings.HasPrefix(line, metricName) {
+				continue
+			}
+			// the metrics format is like following:
+			// tikv_server_cpu_cores_quota 8
+			quota, err := strconv.ParseFloat(line[len(metricName)+1:], 64)
+			if err == nil {
+				cpuQuota = quota
+			}
+			return errors.Trace(err)
+		}
+		return errors.Errorf("metrics '%s' not found from server '%s'", metricName, addr)
+	})
+	return cpuQuota, err
+}
+
+func fetchStoreMetrics(serversInfo []infoschema.ServerInfo, serverType string, onResp func(string, *http.Response) error) error {
+	var firstErr error
+	for _, srv := range serversInfo {
+		if srv.ServerType != serverType {
+			continue
+		}
+		if len(srv.StatusAddr) == 0 {
+			continue
+		}
+		url := fmt.Sprintf("%s://%s/metrics", util.InternalHTTPSchema(), srv.StatusAddr)
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			return err
+		}
+		var resp *http.Response
+		failpoint.Inject("mockMetricsResponse", func(val failpoint.Value) {
+			if val != nil {
+				data, _ := base64.StdEncoding.DecodeString(val.(string))
+				resp = &http.Response{
+					StatusCode: http.StatusOK,
+					Body: noopCloserWrapper{
+						Reader: strings.NewReader(string(data)),
+					},
+				}
+			}
+		})
+		if resp == nil {
+			var err1 error
+			// ignore false positive go line, can't use defer here because it's in a loop.
+			//nolint:bodyclose
+			resp, err1 = util.InternalHTTPClient().Do(req)
+			if err1 != nil {
+				if firstErr == nil {
+					firstErr = err1
+				}
+				continue
+			}
+		}
+		err = onResp(srv.Address, resp)
+		resp.Body.Close()
+		return err
+	}
+	if firstErr == nil {
+		firstErr = errors.Errorf("no server with type '%s' is found", serverType)
+	}
+	return firstErr
+}
+
+type noopCloserWrapper struct {
+	io.Reader
+}
+
+func (noopCloserWrapper) Close() error {
+	return nil
 }
