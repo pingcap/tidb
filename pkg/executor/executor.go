@@ -2359,6 +2359,20 @@ func getCheckSum(ctx context.Context, se sessionctx.Context, sql string) ([]grou
 	return checksums, nil
 }
 
+func (w *checkIndexWorker) initSessCtx(ctx context.Context, se sessionctx.Context) (restore func()) {
+	sessVars := se.GetSessionVars()
+	originOptUseInvisibleIdx := sessVars.OptimizerUseInvisibleIndexes
+	originMemQuotaQuery := sessVars.MemQuotaQuery
+
+	sessVars.OptimizerUseInvisibleIndexes = true
+	sessVars.MemQuotaQuery = w.sctx.GetSessionVars().MemQuotaQuery
+	return func() {
+		sessVars.OptimizerUseInvisibleIndexes = originOptUseInvisibleIdx
+		sessVars.MemQuotaQuery = originMemQuotaQuery
+		w.e.Base().ReleaseSysSession(ctx, se)
+	}
+}
+
 // HandleTask implements the Worker interface.
 func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.None)) {
 	defer w.e.wg.Done()
@@ -2376,11 +2390,8 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		trySaveErr(err)
 		return
 	}
-	se.GetSessionVars().OptimizerUseInvisibleIndexes = true
-	defer func() {
-		se.GetSessionVars().OptimizerUseInvisibleIndexes = false
-		w.e.Base().ReleaseSysSession(ctx, se)
-	}()
+	restoreCtx := w.initSessCtx(ctx, se)
+	defer restoreCtx()
 
 	var pkCols []string
 	var pkTypes []*types.FieldType
