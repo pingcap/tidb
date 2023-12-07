@@ -2955,3 +2955,9 @@ func TestDefaultCollationForUTF8MB4(t *testing.T) {
 	tk.MustQuery("show create database dby").Check(testkit.Rows(
 		"dby CREATE DATABASE `dby` /*!40100 DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci */"))
 }
+
+func TestOptimizeTable(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+	tk := testkit.NewTestKit(t, store)
+	tk.MustGetErrMsg("optimize table t", "[ddl:8200]OPTIMIZE TABLE is not supported")
+}
