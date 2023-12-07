@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
-	"fmt"
 	"io"
 	"sort"
 	"sync"
@@ -203,17 +202,6 @@ func getFilesReadConcurrency(ctx context.Context, storage storage.ExternalStorag
 	return result, startOffs, nil
 }
 
-const BadKey = "7480000000000000665F69800000000000000A00012020202020202020FF2020202020202020FF2020202020202020FF2020202020202020FF2020202020202020FF2800000000000000F8"
-
-func must(b []byte, err error) []byte {
-	if err != nil {
-		panic(err)
-	}
-	return b
-}
-
-var BadKeyBytes = must(hex.DecodeString(BadKey))
-
 func readOneFile(
 	ctx context.Context,
 	storage storage.ExternalStorage,
@@ -269,13 +257,6 @@ func readOneFile(
 		}
 		// TODO(lance6716): we are copying every KV from rd's buffer to memBuf, can we
 		// directly read into memBuf?
-		if bytes.Compare(k, BadKeyBytes) == 0 {
-			logutil.Logger(ctx).Info("lance test bad key found in readOneFile",
-				zap.String("filename", dataFile),
-				zap.Any("size", size),
-				zap.String("value", hex.EncodeToString(v)),
-			)
-		}
 		keys = append(keys, memBuf.AddBytes(k))
 		values = append(values, memBuf.AddBytes(v))
 		size += len(k) + len(v)
@@ -392,8 +373,6 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 	readRateHist.Observe(float64(size) / 1024.0 / 1024.0 / readSecond)
 	sortRateHist.Observe(float64(size) / 1024.0 / 1024.0 / sortSecond)
 
-	KeysMustAscending(e.memKVsAndBuffers.keys)
-
 	data := e.buildIngestData(
 		e.memKVsAndBuffers.keys,
 		e.memKVsAndBuffers.values,
@@ -459,7 +438,6 @@ func (e *Engine) buildIngestData(keys, values [][]byte, buf []*membuf.Buffer) *M
 		refCnt:             atomic.NewInt64(0),
 		importedKVSize:     e.importedKVSize,
 		importedKVCount:    e.importedKVCount,
-		id:                 fmt.Sprintf("id-%d", time.Now().UnixNano()),
 	}
 }
 
@@ -581,8 +559,6 @@ type MemoryIngestData struct {
 	refCnt          *atomic.Int64
 	importedKVSize  *atomic.Int64
 	importedKVCount *atomic.Int64
-
-	id string
 }
 
 var _ common.IngestData = (*MemoryIngestData)(nil)
@@ -781,15 +757,12 @@ func (m *MemoryIngestData) GetTS() uint64 {
 
 // IncRef implements IngestData.IncRef.
 func (m *MemoryIngestData) IncRef() {
-	cur := m.refCnt.Inc()
-	log.FromContext(context.Background()).Info("IncRef", zap.String("id", m.id), zap.Int64("refCnt", cur))
+	m.refCnt.Inc()
 }
 
 // DecRef implements IngestData.DecRef.
 func (m *MemoryIngestData) DecRef() {
-	cur := m.refCnt.Dec()
-	log.FromContext(context.Background()).Info("DecRef", zap.String("id", m.id), zap.Int64("refCnt", cur))
-	if cur == 0 {
+	if m.refCnt.Dec() == 0 {
 		for _, b := range m.memBuf {
 			b.Destroy()
 		}

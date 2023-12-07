@@ -305,11 +305,3 @@ func getSpeed(n uint64, dur float64, isBytes bool) string {
 	}
 	return strconv.FormatFloat(float64(n)/dur, 'f', 4, 64)
 }
-
-func KeysMustAscending(keys [][]byte) {
-	for i := 1; i < len(keys); i++ {
-		if bytes.Compare(keys[i-1], keys[i]) >= 0 {
-			panic(fmt.Sprintf("keys not ascending: %X, %X", keys[i-1], keys[i]))
-		}
-	}
-}

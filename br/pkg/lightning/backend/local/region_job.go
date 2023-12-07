@@ -15,7 +15,6 @@
 package local
 
 import (
-	"bytes"
 	"container/heap"
 	"context"
 	"fmt"
@@ -370,14 +369,9 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	//nolint: errcheck
 	defer iter.Close()
 
-	var lastCheckKey []byte
 	var remainingStartKey []byte
 	for iter.First(); iter.Valid(); iter.Next() {
 		k, v := iter.Key(), iter.Value()
-		if lastCheckKey != nil && bytes.Compare(k, lastCheckKey) <= 0 {
-			panic(fmt.Sprintf("key not in order, prev: %X, current: %X", lastCheckKey, k))
-		}
-		lastCheckKey = append(lastCheckKey[:0], k...)
 		kvSize := int64(len(k) + len(v))
 		// here we reuse the `*sst.Pair`s to optimize object allocation
 		if count < len(pairs) {
