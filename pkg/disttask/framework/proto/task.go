@@ -15,6 +15,9 @@
 package proto
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"time"
 )
@@ -152,6 +155,11 @@ func (t *Task) IsDone() bool {
 		t.State == TaskStateFailed
 }
 
+var (
+	// EmptyMeta is the empty meta of subtask.
+	EmptyMeta = []byte("{}")
+)
+
 // Subtask represents the subtask of distribute framework.
 // Each task is divided into multiple subtasks by dispatcher.
 type Subtask struct {
@@ -176,8 +184,11 @@ type Subtask struct {
 	// it can be used as subtask end time if the subtask is finished.
 	// it's 0 if it hasn't started yet.
 	UpdateTime time.Time
-	Meta       []byte
-	Summary    string
+	// Meta is the metadata of subtask, should not be nil.
+	// meta of different subtasks of same step must be different too.
+	Meta    []byte
+	Summary string
+	Digest  []byte
 }
 
 func (t *Subtask) String() string {
@@ -191,9 +202,20 @@ func (t *Subtask) IsFinished() bool {
 		t.State == TaskStateFailed || t.State == TaskStateRevertFailed
 }
 
+func (t *Subtask) calDigest() {
+	if bytes.Equal(t.Meta, EmptyMeta) {
+		// reverting subtasks has same empty meta, leave their digest null.
+		return
+	}
+	sha := sha256.New()
+	sha.Write([]byte(fmt.Sprintf("%d/%d/", t.TaskID, t.Step)))
+	sha.Write(t.Meta)
+	t.Digest = []byte(base64.StdEncoding.EncodeToString(sha.Sum(nil)))
+}
+
 // NewSubtask create a new subtask.
 func NewSubtask(step Step, taskID int64, tp TaskType, execID string, concurrency int, meta []byte) *Subtask {
-	return &Subtask{
+	s := &Subtask{
 		Step:        step,
 		Type:        tp,
 		TaskID:      taskID,
@@ -201,6 +223,8 @@ func NewSubtask(step Step, taskID int64, tp TaskType, execID string, concurrency
 		Concurrency: concurrency,
 		Meta:        meta,
 	}
+	s.calDigest()
+	return s
 }
 
 // MinimalTask is the minimal task of distribute framework.

@@ -43,6 +43,10 @@ func (dm *Manager) DoCleanUpRoutine() {
 	dm.doCleanUpRoutine()
 }
 
+func (d *BaseDispatcher) OnNextStage() (err error) {
+	return d.onNextStage()
+}
+
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 

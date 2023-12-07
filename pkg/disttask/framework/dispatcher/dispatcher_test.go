@@ -24,6 +24,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	mockDispatch "github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
@@ -512,4 +513,103 @@ func TestIsCancelledErr(t *testing.T) {
 	require.False(t, dispatcher.IsCancelledErr(errors.New("some err")))
 	require.False(t, dispatcher.IsCancelledErr(context.Canceled))
 	require.True(t, dispatcher.IsCancelledErr(errors.New("cancelled by user")))
+}
+
+func TestDispatcherOnNextStage(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	taskMgr := mock.NewMockTaskManager(ctrl)
+	dspExt := mockDispatch.NewMockExtension(ctrl)
+
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+	task := proto.Task{
+		ID:    1,
+		State: proto.TaskStatePending,
+		Step:  proto.StepInit,
+	}
+	cloneTask := task
+	dsp := dispatcher.NewBaseDispatcher(ctx, taskMgr, ":4000", &cloneTask)
+	dsp.Extension = dspExt
+
+	// test next step is done
+	dspExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepDone)
+	dspExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("done err"))
+	require.ErrorContains(t, dsp.OnNextStage(), "done err")
+	require.True(t, ctrl.Satisfied())
+	// we update task step before OnDone
+	require.Equal(t, proto.StepDone, dsp.Task.Step)
+	*dsp.Task = task
+	dspExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepDone)
+	dspExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	taskMgr.EXPECT().SucceedTask(gomock.Any(), gomock.Any()).Return(nil)
+	require.NoError(t, dsp.OnNextStage())
+	require.True(t, ctrl.Satisfied())
+
+	// GetEligibleInstances err
+	dspExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepOne)
+	dspExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, false, errors.New("GetEligibleInstances err"))
+	require.ErrorContains(t, dsp.OnNextStage(), "GetEligibleInstances err")
+	require.True(t, ctrl.Satisfied())
+	// GetEligibleInstances no instance
+	dspExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepOne)
+	dspExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, false, nil)
+	require.ErrorContains(t, dsp.OnNextStage(), "no available TiDB node to dispatch subtasks")
+	require.True(t, ctrl.Satisfied())
+
+	serverNodes := []*infosync.ServerInfo{
+		{IP: "", Port: 4000},
+	}
+	// OnNextSubtasksBatch err
+	dspExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepOne)
+	dspExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(serverNodes, false, nil)
+	dspExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("OnNextSubtasksBatch err"))
+	dspExt.EXPECT().IsRetryableErr(gomock.Any()).Return(true)
+	require.ErrorContains(t, dsp.OnNextStage(), "OnNextSubtasksBatch err")
+	require.True(t, ctrl.Satisfied())
+
+	bak := kv.TxnTotalSizeLimit.Load()
+	t.Cleanup(func() {
+		kv.TxnTotalSizeLimit.Store(bak)
+	})
+
+	// dispatch in batch
+	subtaskMetas := [][]byte{
+		[]byte(`{"xx": "1"}`),
+		[]byte(`{"xx": "2"}`),
+	}
+	dspExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepOne)
+	dspExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(serverNodes, false, nil)
+	dspExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(subtaskMetas, nil)
+	taskMgr.EXPECT().SwitchTaskStepInBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	kv.TxnTotalSizeLimit.Store(1)
+	require.NoError(t, dsp.OnNextStage())
+	require.True(t, ctrl.Satisfied())
+	// met unstable subtasks
+	dspExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepOne)
+	dspExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(serverNodes, false, nil)
+	dspExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(subtaskMetas, nil)
+	taskMgr.EXPECT().SwitchTaskStepInBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(errors.Annotatef(storage.UnstableSubtasks, "expected %d, got %d",
+			2, 100))
+	kv.TxnTotalSizeLimit.Store(1)
+	startTime := time.Now()
+	err := dsp.OnNextStage()
+	require.ErrorIs(t, err, storage.UnstableSubtasks)
+	require.ErrorContains(t, err, "expected 2, got 100")
+	require.WithinDuration(t, startTime, time.Now(), 10*time.Second)
+	require.True(t, ctrl.Satisfied())
+
+	// dispatch in one txn
+	dspExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepOne)
+	dspExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(serverNodes, false, nil)
+	dspExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(subtaskMetas, nil)
+	taskMgr.EXPECT().SwitchTaskStep(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	kv.TxnTotalSizeLimit.Store(config.DefTxnTotalSizeLimit)
+	require.NoError(t, dsp.OnNextStage())
+	require.True(t, ctrl.Satisfied())
 }

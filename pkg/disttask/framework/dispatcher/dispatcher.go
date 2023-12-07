@@ -22,11 +22,14 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util/backoff"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -570,28 +573,26 @@ func (d *BaseDispatcher) onErrHandlingStage(receiveErrs []error) error {
 		subTasks = make([]*proto.Subtask, 0, len(instanceIDs))
 		for _, id := range instanceIDs {
 			// reverting subtasks belong to the same step as current active step.
-			subTasks = append(subTasks, proto.NewSubtask(d.Task.Step, d.Task.ID, d.Task.Type, id, int(d.Task.Concurrency), []byte("{}")))
+			subTasks = append(subTasks, proto.NewSubtask(d.Task.Step, d.Task.ID, d.Task.Type, id, int(d.Task.Concurrency), proto.EmptyMeta))
 		}
 	}
 	return d.updateTask(proto.TaskStateReverting, subTasks, RetrySQLTimes)
 }
 
-func (*BaseDispatcher) nextStepSubtaskDispatched(*proto.Task) bool {
-	// TODO: will implement it when we we support dispatch subtask by batch.
-	// since subtask meta might be too large to save in one transaction.
-	return true
-}
-
 func (d *BaseDispatcher) onNextStage() (err error) {
-	/// dynamic dispatch subtasks.
-	failpoint.Inject("mockDynamicDispatchErr", func() {
-		failpoint.Return(errors.New("mockDynamicDispatchErr"))
-	})
-
 	nextStep := d.GetNextStep(d.Task)
 	logutil.Logger(d.logCtx).Info("onNextStage",
 		zap.Int64("current-step", int64(d.Task.Step)),
 		zap.Int64("next-step", int64(nextStep)))
+
+	if nextStep == proto.StepDone {
+		d.Task.Step = nextStep
+		d.Task.StateUpdateTime = time.Now().UTC()
+		if err = d.OnDone(d.ctx, d, d.Task); err != nil {
+			return errors.Trace(err)
+		}
+		return d.taskMgr.SucceedTask(d.ctx, d.Task.ID)
+	}
 
 	// 1. Adjust the task's concurrency.
 	if d.Task.State == proto.TaskStatePending {
@@ -602,84 +603,30 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 			d.Task.Concurrency = MaxSubtaskConcurrency
 		}
 	}
-	defer func() {
-		if err != nil {
-			return
-		}
-		// invariant: task.Step always means the most recent step that all
-		// corresponding subtasks have been saved to system table.
-		//
-		// when all subtasks of task.Step is finished, we call OnNextSubtasksBatch
-		// to generate subtasks of next step. after all subtasks of next step are
-		// saved to system table, we will update task.Step to next step, so the
-		// invariant hold.
-		// see nextStepSubtaskDispatched for why we don't update task and subtasks
-		// in a single transaction.
-		if d.nextStepSubtaskDispatched(d.Task) {
-			currStep := d.Task.Step
-			d.Task.Step = nextStep
-			// When all subtasks dispatched and processed, mark task as succeed.
-			taskState := proto.TaskStateRunning
-			if d.Task.Step == proto.StepDone {
-				taskState = proto.TaskStateSucceed
-				if err = d.OnDone(d.ctx, d, d.Task); err != nil {
-					err = errors.Trace(err)
-					return
-				}
-			} else {
-				logutil.Logger(d.logCtx).Info("move to next stage",
-					zap.Int64("from", int64(currStep)), zap.Int64("to", int64(d.Task.Step)))
-			}
-			d.Task.StateUpdateTime = time.Now().UTC()
-			err = d.updateTask(taskState, nil, RetrySQLTimes)
-		}
-	}()
 
-	for {
-		// 3. generate a batch of subtasks.
-		/// select all available TiDB nodes for task.
-		serverNodes, filter, err := d.GetEligibleInstances(d.ctx, d.Task)
-		logutil.Logger(d.logCtx).Debug("eligible instances", zap.Int("num", len(serverNodes)))
-
-		if err != nil {
-			return err
-		}
-		if filter {
-			serverNodes, err = d.filterByRole(serverNodes)
-			if err != nil {
-				return err
-			}
-		}
-		logutil.Logger(d.logCtx).Info("eligible instances", zap.Int("num", len(serverNodes)))
-		if len(serverNodes) == 0 {
-			return errors.New("no available TiDB node to dispatch subtasks")
-		}
-
-		metas, err := d.OnNextSubtasksBatch(d.ctx, d, d.Task, serverNodes, nextStep)
-		if err != nil {
-			logutil.Logger(d.logCtx).Warn("generate part of subtasks failed", zap.Error(err))
-			return d.handlePlanErr(err)
-		}
-
-		failpoint.Inject("mockDynamicDispatchErr1", func() {
-			failpoint.Return(errors.New("mockDynamicDispatchErr1"))
-		})
-
-		// 4. dispatch batch of subtasks to EligibleInstances.
-		err = d.dispatchSubTask(nextStep, metas, serverNodes)
-		if err != nil {
-			return err
-		}
-
-		if d.nextStepSubtaskDispatched(d.Task) {
-			break
-		}
-
-		failpoint.Inject("mockDynamicDispatchErr2", func() {
-			failpoint.Return(errors.New("mockDynamicDispatchErr2"))
-		})
+	serverNodes, filter, err := d.GetEligibleInstances(d.ctx, d.Task)
+	if err != nil {
+		return err
 	}
-	return nil
+	logutil.Logger(d.logCtx).Debug("eligible instances", zap.Int("num", len(serverNodes)))
+	if filter {
+		serverNodes, err = d.filterByRole(serverNodes)
+		if err != nil {
+			return err
+		}
+	}
+	logutil.Logger(d.logCtx).Info("eligible instances", zap.Int("num", len(serverNodes)))
+	if len(serverNodes) == 0 {
+		return errors.New("no available TiDB node to dispatch subtasks")
+	}
+
+	metas, err := d.OnNextSubtasksBatch(d.ctx, d, d.Task, serverNodes, nextStep)
+	if err != nil {
+		logutil.Logger(d.logCtx).Warn("generate part of subtasks failed", zap.Error(err))
+		return d.handlePlanErr(err)
+	}
+
+	return d.dispatchSubTask(nextStep, metas, serverNodes)
 }
 
 func (d *BaseDispatcher) dispatchSubTask(
@@ -691,6 +638,7 @@ func (d *BaseDispatcher) dispatchSubTask(
 	for i := range serverNodes {
 		d.TaskNodes[i] = disttaskutil.GenerateExecID(serverNodes[i].IP, serverNodes[i].Port)
 	}
+	var size uint64
 	subTasks := make([]*proto.Subtask, 0, len(metas))
 	for i, meta := range metas {
 		// we assign the subtask to the instance in a round-robin way.
@@ -699,12 +647,33 @@ func (d *BaseDispatcher) dispatchSubTask(
 		instanceID := disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port)
 		logutil.Logger(d.logCtx).Debug("create subtasks", zap.String("instanceID", instanceID))
 		subTasks = append(subTasks, proto.NewSubtask(subtaskStep, d.Task.ID, d.Task.Type, instanceID, int(d.Task.Concurrency), meta))
+
+		size += uint64(len(meta))
 	}
 	failpoint.Inject("cancelBeforeUpdateTask", func() {
 		_ = d.updateTask(proto.TaskStateCancelling, subTasks, RetrySQLTimes)
 	})
 
-	return d.updateTask(d.Task.State, subTasks, RetrySQLTimes)
+	// as other fields and generated key and index KV takes space too, we limit
+	// the size of subtasks to 80% of the transaction limit.
+	limit := max(uint64(float64(kv.TxnTotalSizeLimit.Load())*0.8), 1)
+	fn := d.taskMgr.SwitchTaskStep
+	if size >= limit {
+		logutil.Logger(d.logCtx).Info("subtasks size exceed limit, will insert in batch",
+			zap.Uint64("size", size), zap.Uint64("limit", limit))
+		fn = d.taskMgr.SwitchTaskStepInBatch
+	}
+
+	backoffer := backoff.NewExponential(RetrySQLInterval, 2, RetrySQLMaxInterval)
+	return handle.RunWithRetry(d.ctx, RetrySQLTimes, backoffer, logutil.Logger(d.logCtx),
+		func(ctx context.Context) (bool, error) {
+			err := fn(d.ctx, d.Task, proto.TaskStateRunning, subtaskStep, subTasks)
+			if errors.Cause(err) == storage.UnstableSubtasks {
+				return false, err
+			}
+			return true, err
+		},
+	)
 }
 
 func (d *BaseDispatcher) handlePlanErr(err error) error {
