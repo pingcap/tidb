@@ -117,7 +117,7 @@ func (e *TopNExec) Open(ctx context.Context) error {
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 
 	e.fetched = false
-	e.Idx = 0
+	e.Unparallel.Idx = 0
 
 	return exec.Open(ctx, e.Children(0))
 }
@@ -127,7 +127,7 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if !e.fetched {
 		e.totalLimit = e.Limit.Offset + e.Limit.Count
-		e.Idx = int(e.Limit.Offset)
+		e.Unparallel.Idx = int(e.Limit.Offset)
 		err := e.loadChunksUntilTotalLimit(ctx)
 		if err != nil {
 			return err
@@ -138,15 +138,15 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		e.fetched = true
 	}
-	if e.Idx >= len(e.rowPtrs) {
+	if e.Unparallel.Idx >= len(e.rowPtrs) {
 		return nil
 	}
 	if !req.IsFull() {
-		numToAppend := min(len(e.rowPtrs)-e.Idx, req.RequiredRows()-req.NumRows())
+		numToAppend := min(len(e.rowPtrs)-e.Unparallel.Idx, req.RequiredRows()-req.NumRows())
 		rows := make([]chunk.Row, numToAppend)
 		for index := 0; index < numToAppend; index++ {
-			rows[index] = e.rowChunks.GetRow(e.rowPtrs[e.Idx])
-			e.Idx++
+			rows[index] = e.rowChunks.GetRow(e.rowPtrs[e.Unparallel.Idx])
+			e.Unparallel.Idx++
 		}
 		req.AppendRows(rows)
 	}

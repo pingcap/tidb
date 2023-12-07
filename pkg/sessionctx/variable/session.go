@@ -1565,6 +1565,9 @@ type SessionVars struct {
 
 	CompressionAlgorithm int
 	CompressionLevel     int
+
+	// EnableParallelSort indicates whether use parallel sort. Default is false.
+	EnableParallelSort bool
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.

@@ -3,12 +3,9 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "sortexec",
     srcs = [
-        "final_worker.go",
-        "parallel_sort.go",
-        "partial_worker.go",
+        "parallel_sort_worker.go",
         "sort.go",
         "sort.util.go",
-        "sort_base.go",
         "topn.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/executor/sortexec",
