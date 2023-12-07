@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/session/internal"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
 )
@@ -64,11 +65,11 @@ func TestKeysNeedLock(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		need := session.KeyNeedToLock(test.key, test.val, 0)
+		need := internal.KeyNeedToLock(test.key, test.val, 0)
 		require.Equal(t, test.need, need)
 
 		flag := kv.KeyFlags(1)
-		need = session.KeyNeedToLock(test.key, test.val, flag)
+		need = internal.KeyNeedToLock(test.key, test.val, flag)
 		require.True(t, flag.HasPresumeKeyNotExists())
 		require.True(t, need)
 	}
