@@ -45,6 +45,7 @@ import (
 	"io"
 	"net"
 	"os/user"
+	"runtime"
 	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
@@ -98,6 +99,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
@@ -120,9 +122,14 @@ var (
 	statusCompressionLevel     = "Compression_level"
 )
 
+var (
+	// ConnectionInMemCounterForTest is a variable to count live connection object
+	ConnectionInMemCounterForTest = atomic.Int64{}
+)
+
 // newClientConn creates a *clientConn object.
 func newClientConn(s *Server) *clientConn {
-	return &clientConn{
+	cc := &clientConn{
 		server:       s,
 		connectionID: s.dom.NextConnID(),
 		collation:    mysql.DefaultCollationID,
@@ -134,6 +141,14 @@ func newClientConn(s *Server) *clientConn {
 		quit:         make(chan struct{}),
 		ppEnabled:    s.cfg.ProxyProtocol.Networks != "",
 	}
+
+	if intest.InTest {
+		ConnectionInMemCounterForTest.Add(1)
+		runtime.SetFinalizer(cc, func(*clientConn) {
+			ConnectionInMemCounterForTest.Add(-1)
+		})
+	}
+	return cc
 }
 
 // clientConn represents a connection between server and client, it maintains connection specific state,
