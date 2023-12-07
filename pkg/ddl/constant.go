@@ -63,10 +63,12 @@ const (
 		state_update_time bigint,
 		end_time TIMESTAMP,
 		meta longblob,
+		digest varchar(64),
 		error BLOB,
 		summary json,
 		key idx_task_key(task_key),
-		key idx_exec_id(exec_id)
+		key idx_exec_id(exec_id),
+		unique uk_digest(digest)
 	)`
 	// BackgroundSubtaskHistoryTableSQL is the CREATE TABLE SQL of `tidb_background_subtask_history`.
 	BackgroundSubtaskHistoryTableSQL = `create table tidb_background_subtask_history (
@@ -86,6 +88,7 @@ const (
 		state_update_time bigint,
 		end_time TIMESTAMP,
 		meta longblob,
+		digest varchar(64),
 		error BLOB,
 		summary json,
 		key idx_task_key(task_key),
