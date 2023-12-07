@@ -94,9 +94,9 @@ func TestCalibrateResource(t *testing.T) {
 		"tikv,127.0.0.1:30162,30182,mock-version,mock-githash,0",
 	}
 	fpExpr := `return("` + strings.Join(instances, ";") + `")`
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockClusterInfo", fpExpr))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockClusterInfo", fpExpr))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/mockClusterInfo"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/infoschema/mockClusterInfo"))
 	}()
 
 	// Mock for metric table data.
@@ -118,21 +118,15 @@ process_cpu_seconds_total 49943
 # HELP tikv_server_cpu_cores_quota Total CPU cores quota for TiKV server
 # TYPE tikv_server_cpu_cores_quota gauge
 tikv_server_cpu_cores_quota 8
-# HELP tiflash_proxy_tikv_scheduler_write_flow The write flow passed through at scheduler level.
-# TYPE tiflash_proxy_tikv_scheduler_write_flow gauge
-tiflash_proxy_tikv_scheduler_write_flow 0
-# HELP tiflash_proxy_tikv_server_cpu_cores_quota Total CPU cores quota for TiKV server
-# TYPE tiflash_proxy_tikv_server_cpu_cores_quota gauge
-tiflash_proxy_tikv_server_cpu_cores_quota 20
 `
 	// failpoint doesn't support string contains whitespaces and newline
 	encodedData := base64.StdEncoding.EncodeToString([]byte(metricsData))
 	fpExpr = `return("` + encodedData + `")`
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/internal/calibrateresource/mockMetricsResponse", fpExpr))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/internal/calibrateresource/mockGOMAXPROCS", "return(40)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockMetricsResponse", fpExpr))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockGOMAXPROCS", "return(40)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/internal/calibrateresource/mockGOMAXPROCS"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/internal/calibrateresource/mockMetricsResponse"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockGOMAXPROCS"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockMetricsResponse"))
 	}()
 	mockData := make(map[string][][]types.Datum)
 	ctx := context.WithValue(context.Background(), "__mockMetricsTableData", mockData)
@@ -147,7 +141,7 @@ tiflash_proxy_tikv_server_cpu_cores_quota 20
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE WORKLOAD OLTP_WRITE_ONLY").Check(testkit.Rows("109776"))
 
 	// change total tidb cpu to less than tikv_cpu_quota
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/internal/calibrateresource/mockGOMAXPROCS", "return(8)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockGOMAXPROCS", "return(8)"))
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE").Check(testkit.Rows("38760"))
 
 	// construct data for dynamic calibrate
@@ -572,104 +566,6 @@ tiflash_proxy_tikv_server_cpu_cores_quota 20
 	}
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME '2020-02-12 10:35:00' END_TIME '2020-02-12 10:45:00'").Check(testkit.Rows("5492"))
 
-<<<<<<< HEAD:executor/calibrate_resource_test.go
-=======
-	// tiflash
-	mockData["resource_manager_resource_unit"] = [][]types.Datum{
-		types.MakeDatums(datetime("2023-09-19 19:50:39.322000"), 465919.8102127319),
-		types.MakeDatums(datetime("2023-09-19 19:51:39.322000"), 819764.9742611333),
-		types.MakeDatums(datetime("2023-09-19 19:52:39.322000"), 520180.7089147462),
-		types.MakeDatums(datetime("2023-09-19 19:53:39.322000"), 790496.4071700446),
-		types.MakeDatums(datetime("2023-09-19 19:54:39.322000"), 545216.2174551424),
-		types.MakeDatums(datetime("2023-09-19 19:55:39.322000"), 714332.5760632281),
-		types.MakeDatums(datetime("2023-09-19 19:56:39.322000"), 577119.1037253677),
-		types.MakeDatums(datetime("2023-09-19 19:57:39.322000"), 678005.0740038564),
-		types.MakeDatums(datetime("2023-09-19 19:58:39.322000"), 592239.6784597588),
-		types.MakeDatums(datetime("2023-09-19 19:59:39.322000"), 666552.6950822703),
-		types.MakeDatums(datetime("2023-09-19 20:00:39.322000"), 689703.5663975218),
-	}
-
-	mockData["process_cpu_usage"] = [][]types.Datum{
-		types.MakeDatums(datetime("2023-09-19 19:50:39.324000"), "127.0.0.1:10080", "tidb", 0.10511111111111152),
-		types.MakeDatums(datetime("2023-09-19 19:51:39.324000"), "127.0.0.1:10080", "tidb", 0.1293333333333332),
-		types.MakeDatums(datetime("2023-09-19 19:52:39.324000"), "127.0.0.1:10080", "tidb", 0.11088888888888908),
-		types.MakeDatums(datetime("2023-09-19 19:53:39.324000"), "127.0.0.1:10080", "tidb", 0.12333333333333357),
-		types.MakeDatums(datetime("2023-09-19 19:54:39.324000"), "127.0.0.1:10080", "tidb", 0.1160000000000006),
-		types.MakeDatums(datetime("2023-09-19 19:55:39.324000"), "127.0.0.1:10080", "tidb", 0.11888888888888813),
-		types.MakeDatums(datetime("2023-09-19 19:56:39.324000"), "127.0.0.1:10080", "tidb", 0.1106666666666658),
-		types.MakeDatums(datetime("2023-09-19 19:57:39.324000"), "127.0.0.1:10080", "tidb", 0.11311111111111055),
-		types.MakeDatums(datetime("2023-09-19 19:58:39.324000"), "127.0.0.1:10080", "tidb", 0.11222222222222247),
-		types.MakeDatums(datetime("2023-09-19 19:59:39.324000"), "127.0.0.1:10080", "tidb", 0.11488888888888923),
-		types.MakeDatums(datetime("2023-09-19 20:00:39.324000"), "127.0.0.1:10080", "tidb", 0.12733333333333371),
-		types.MakeDatums(datetime("2023-09-19 19:50:39.325000"), "127.0.0.1:20180", "tikv", 0.04444444444444444),
-		types.MakeDatums(datetime("2023-09-19 19:51:39.325000"), "127.0.0.1:20180", "tikv", 0.02222222222222222),
-		types.MakeDatums(datetime("2023-09-19 19:52:39.325000"), "127.0.0.1:20180", "tikv", 0.04444444444444444),
-		types.MakeDatums(datetime("2023-09-19 19:53:39.325000"), "127.0.0.1:20180", "tikv", 0.04444444444444444),
-		types.MakeDatums(datetime("2023-09-19 19:54:39.325000"), "127.0.0.1:20180", "tikv", 0.08888888888888888),
-		types.MakeDatums(datetime("2023-09-19 19:55:39.325000"), "127.0.0.1:20180", "tikv", 0.04444444444444444),
-		types.MakeDatums(datetime("2023-09-19 19:56:39.325000"), "127.0.0.1:20180", "tikv", 0.04444444444444444),
-		types.MakeDatums(datetime("2023-09-19 19:57:39.325000"), "127.0.0.1:20180", "tikv", 0.04444444444444444),
-		types.MakeDatums(datetime("2023-09-19 19:58:39.325000"), "127.0.0.1:20180", "tikv", 0.04444444444444444),
-		types.MakeDatums(datetime("2023-09-19 19:59:39.325000"), "127.0.0.1:20180", "tikv", 0.04444444444444444),
-		types.MakeDatums(datetime("2023-09-19 20:00:39.325000"), "127.0.0.1:20180", "tikv", 0.04444444444444444),
-	}
-
-	mockData["tidb_server_maxprocs"] = [][]types.Datum{
-		types.MakeDatums(datetime("2023-09-19 19:50:39.329000"), "127.0.0.1:10080", 20.0),
-		types.MakeDatums(datetime("2023-09-19 19:51:39.329000"), "127.0.0.1:10080", 20.0),
-		types.MakeDatums(datetime("2023-09-19 19:52:39.329000"), "127.0.0.1:10080", 20.0),
-		types.MakeDatums(datetime("2023-09-19 19:53:39.329000"), "127.0.0.1:10080", 20.0),
-		types.MakeDatums(datetime("2022-09-19 19:54:39.329000"), "127.0.0.1:10080", 20.0),
-		types.MakeDatums(datetime("2023-09-19 19:55:39.329000"), "127.0.0.1:10080", 20.0),
-		types.MakeDatums(datetime("2023-09-19 19:56:39.329000"), "127.0.0.1:10080", 20.0),
-		types.MakeDatums(datetime("2023-09-19 19:57:39.329000"), "127.0.0.1:10080", 20.0),
-		types.MakeDatums(datetime("2023-09-19 19:58:39.329000"), "127.0.0.1:10080", 20.0),
-		types.MakeDatums(datetime("2023-09-19 19:59:39.329000"), "127.0.0.1:10080", 20.0),
-		types.MakeDatums(datetime("2023-09-19 20:00:39.329000"), "127.0.0.1:10080", 20.0),
-	}
-
-	// change mock for cluster info, add tiflash
-	instances = append(instances, "tiflash,127.0.0.1:3930,33940,mock-version,mock-githash,0")
-	fpExpr = `return("` + strings.Join(instances, ";") + `")`
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockClusterInfo", fpExpr))
-
-	rs, err = tk.Exec("CALIBRATE RESOURCE START_TIME '2023-09-19 19:50:39' DURATION '10m'")
-	require.NoError(t, err)
-	require.NotNil(t, rs)
-	err = rs.Next(ctx, rs.NewChunk(nil))
-	require.ErrorContains(t, err, "The workload in selected time window is too low")
-
-	mockData["tiflash_process_cpu_usage"] = [][]types.Datum{
-		types.MakeDatums(datetime("2023-09-19 19:50:39.327000"), "127.0.0.1:20292", "tiflash", 18.577777777777776),
-		types.MakeDatums(datetime("2023-09-19 19:51:39.327000"), "127.0.0.1:20292", "tiflash", 17.666666666666668),
-		types.MakeDatums(datetime("2023-09-19 19:52:39.327000"), "127.0.0.1:20292", "tiflash", 18.339038812074868),
-		types.MakeDatums(datetime("2023-09-19 19:53:39.327000"), "127.0.0.1:20292", "tiflash", 17.82222222222222),
-		types.MakeDatums(datetime("2023-09-19 19:54:39.327000"), "127.0.0.1:20292", "tiflash", 18.177777777777774),
-		types.MakeDatums(datetime("2023-09-19 19:55:39.327000"), "127.0.0.1:20292", "tiflash", 17.911111111111108),
-		types.MakeDatums(datetime("2023-09-19 19:56:39.327000"), "127.0.0.1:20292", "tiflash", 17.177777777777774),
-		types.MakeDatums(datetime("2023-09-19 19:57:39.327000"), "127.0.0.1:20292", "tiflash", 16.17957550838982),
-		types.MakeDatums(datetime("2023-09-19 19:58:39.327000"), "127.0.0.1:20292", "tiflash", 16.844444444444445),
-		types.MakeDatums(datetime("2023-09-19 19:59:39.327000"), "127.0.0.1:20292", "tiflash", 17.71111111111111),
-		types.MakeDatums(datetime("2023-09-19 20:00:39.327000"), "127.0.0.1:20292", "tiflash", 18.066666666666666),
-	}
-
-	mockData["tiflash_resource_manager_resource_unit"] = [][]types.Datum{
-		types.MakeDatums(datetime("2023-09-19 19:50:39.318000"), 487049.3164728853),
-		types.MakeDatums(datetime("2023-09-19 19:51:39.318000"), 821600.8181867122),
-		types.MakeDatums(datetime("2023-09-19 19:52:39.318000"), 507566.26041673025),
-		types.MakeDatums(datetime("2023-09-19 19:53:39.318000"), 771038.8122556474),
-		types.MakeDatums(datetime("2023-09-19 19:54:39.318000"), 529128.4530634031),
-		types.MakeDatums(datetime("2023-09-19 19:55:39.318000"), 777912.9275530444),
-		types.MakeDatums(datetime("2023-09-19 19:56:39.318000"), 557595.6206041124),
-		types.MakeDatums(datetime("2023-09-19 19:57:39.318000"), 688658.1706168016),
-		types.MakeDatums(datetime("2023-09-19 19:58:39.318000"), 556400.2766714202),
-		types.MakeDatums(datetime("2023-09-19 19:59:39.318000"), 712467.4348424983),
-		types.MakeDatums(datetime("2023-09-19 20:00:39.318000"), 659167.0340155548),
-	}
-
-	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME '2023-09-19 19:50:39' DURATION '10m'").Check(testkit.Rows("729439"))
-
->>>>>>> 5db7c6aab54 (resource_control: fetch cpu quota metrics from store instead of prometheus (#49176)):pkg/executor/internal/calibrateresource/calibrate_resource_test.go
 	delete(mockData, "process_cpu_usage")
 	rs, err = tk.Exec("CALIBRATE RESOURCE START_TIME '2020-02-12 10:35:00' END_TIME '2020-02-12 10:45:00'")
 	require.NoError(t, err)
