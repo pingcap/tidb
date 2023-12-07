@@ -76,6 +76,7 @@ func (d *ddl) RemoveReorgCtx(id int64) {
 	d.removeReorgCtx(id)
 }
 
+<<<<<<< HEAD:ddl/ddl_test.go
 // JobNeedGCForTest is only used for test.
 var JobNeedGCForTest = jobNeedGC
 
@@ -84,6 +85,8 @@ func GetMaxRowID(store kv.Storage, priority int, t table.Table, startHandle, end
 	return getRangeEndKey(NewJobContext(), store, priority, t.RecordPrefix(), startHandle, endHandle)
 }
 
+=======
+>>>>>>> be62f754fb4 (ddl: wrap the sessionctx to public delete range logic to BR (#48050)):pkg/ddl/ddl_test.go
 func createMockStore(t *testing.T) kv.Storage {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
