@@ -496,7 +496,9 @@ func handleOneResult(result *backfillResult, scheduler backfillScheduler, consum
 	}
 	if !consumer.distribute {
 		reorgCtx := consumer.dc.getReorgCtx(reorgInfo.Job.ID)
-		reorgCtx.setRowCount(*totalAddedCount)
+		if reorgCtx != nil {
+			reorgCtx.setRowCount(*totalAddedCount)
+		}
 	}
 	keeper.updateNextKey(result.taskID, result.nextKey)
 	if taskSeq%(scheduler.currentWorkerSize()*4) == 0 {

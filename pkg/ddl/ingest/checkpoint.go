@@ -243,7 +243,7 @@ func (s *CheckpointManager) Reset(newPhysicalID int64, start, end kv.Key) {
 	logutil.BgLogger().Info("reset checkpoint manager", zap.String("category", "ddl-ingest"),
 		zap.Int64("newPhysicalID", newPhysicalID), zap.Int64("oldPhysicalID", s.pidLocal),
 		zap.Int64("indexID", s.indexID), zap.Int64("jobID", s.jobID), zap.Int("localCnt", s.localCnt))
-	if s.pidLocal != newPhysicalID {
+	if s.pidLocal != 0 && s.pidLocal != newPhysicalID {
 		s.minKeySyncLocal = nil
 		s.minKeySyncGlobal = nil
 		s.minTaskIDSynced = 0
