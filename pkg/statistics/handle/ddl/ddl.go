@@ -246,7 +246,6 @@ func updateStatsWithCountDeltaAndModifyCountDelta(
 		return err
 	}
 	if isNull {
-		// Insert
 		_, err = util.Exec(
 			sctx,
 			"INSERT INTO mysql.stats_meta "+
@@ -258,7 +257,6 @@ func updateStatsWithCountDeltaAndModifyCountDelta(
 			tableID,
 		)
 	} else {
-		// Update
 		_, err = util.Exec(
 			sctx,
 			"UPDATE mysql.stats_meta SET "+
