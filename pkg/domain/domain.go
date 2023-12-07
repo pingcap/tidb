@@ -2476,10 +2476,15 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 }
 
 // analyzeJobsCleanupWorker is a background worker that periodically performs two main tasks:
+//
 //  1. Garbage Collection: It removes outdated analyze jobs from the statistics handle.
 //     This operation is performed every hour and only if the current instance is the owner.
 //     Analyze jobs older than 7 days are considered outdated and are removed.
-//  2. Cleanup: It cleans up corrupted analyze jobs. This operation is performed every three stats leases.
+//
+//  2. Cleanup: It cleans up corrupted analyze jobs.
+//     A corrupted analyze job is one that is in a 'pending' or 'running' state,
+//     but is associated with a TiDB instance that is either not currently running or has been restarted.
+//     This operation is performed every three stats leases.
 //     It first retrieves the list of current analyze processes, then removes any analyze job
 //     that is not associated with a current process. Additionally, if the current instance is the owner,
 //     it also cleans up corrupted analyze jobs on dead instances.

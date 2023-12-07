@@ -116,6 +116,8 @@ type StatsAnalyze interface {
 	DeleteAnalyzeJobs(updateTime time.Time) error
 
 	// CleanupCorruptedAnalyzeJobsOnCurrentInstance cleans up the corrupted analyze job.
+	// A corrupted analyze job is one that is in a 'pending' or 'running' state,
+	// but is associated with a TiDB instance that is either not currently running or has been restarted.
 	// We use current running analyze jobs to check whether the analyze job is corrupted.
 	CleanupCorruptedAnalyzeJobsOnCurrentInstance(currentRunningProcessIDs map[uint64]struct{}) error
 
