@@ -71,7 +71,7 @@ type Mgr struct {
 }
 
 func GetAllTiKVStoresWithRetry(ctx context.Context,
-	pdClient pd.Client,
+	pdClient util.StoreMeta,
 	storeBehavior util.StoreBehavior,
 ) ([]*metapb.Store, error) {
 	stores := make([]*metapb.Store, 0)
@@ -243,6 +243,11 @@ func (mgr *Mgr) GetStorage() kv.Storage {
 // GetTLSConfig returns the tls config.
 func (mgr *Mgr) GetTLSConfig() *tls.Config {
 	return mgr.StoreManager.TLSConfig()
+}
+
+// GetStore gets the tikvStore.
+func (mgr *Mgr) GetStore() tikv.Storage {
+	return mgr.tikvStore
 }
 
 // GetLockResolver gets the LockResolver.

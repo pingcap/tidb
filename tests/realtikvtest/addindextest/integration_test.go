@@ -477,9 +477,9 @@ func TestAddIndexBackfillLostUpdate(t *testing.T) {
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
-	callback := newTestCallBack(t, dom)
+	hook := newTestCallBack(t, dom)
 	var runDML bool
-	callback.OnJobRunAfterExported = func(job *model.Job) {
+	hook.OnJobRunAfterExported = func(job *model.Job) {
 		if t.Failed() || runDML {
 			return
 		}
@@ -514,10 +514,44 @@ func TestAddIndexBackfillLostUpdate(t *testing.T) {
 		_, err = tk1.Exec("commit;")
 		assert.NoError(t, err)
 	}
-	d.SetHook(callback)
+	d.SetHook(hook)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDMLExecutionStateBeforeImport", "1*return"))
 	tk.MustExec("alter table t add unique index idx(b);")
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 1"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockDMLExecutionStateBeforeImport"))
+}
+
+func TestAddIndexPreCheckFailed(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+
+	tk.MustExec("create table t(id int primary key, b int, k int);")
+	tk.MustExec("insert into t values (1, 1, 1);")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/ingest/mockIngestCheckEnvFailed", "return"))
+	tk.MustGetErrMsg("alter table t add index idx(b);", "[ddl:8256]Check ingest environment failed: mock error")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/ingest/mockIngestCheckEnvFailed"))
+}
+
+func TestAddIndexRemoteDuplicateCheck(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("set global tidb_ddl_reorg_worker_cnt=1;")
+
+	tk.MustExec("create table t(id int primary key, b int, k int);")
+	tk.MustQuery("split table t by (30000);").Check(testkit.Rows("1 1"))
+	tk.MustExec("insert into t values(1, 1, 1);")
+	tk.MustExec("insert into t values(100000, 1, 1);")
+
+	ingest.ForceSyncFlagForTest = true
+	tk.MustGetErrCode("alter table t add unique index idx(b);", errno.ErrDupEntry)
+	ingest.ForceSyncFlagForTest = false
 }

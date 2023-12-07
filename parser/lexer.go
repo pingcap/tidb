@@ -101,6 +101,7 @@ func (s *Scanner) reset(sql string) {
 	s.stmtStartPos = 0
 	s.inBangComment = false
 	s.lastKeyword = 0
+	s.identifierDot = false
 }
 
 func (s *Scanner) stmtText() string {

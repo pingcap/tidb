@@ -403,13 +403,18 @@ type StatementContext struct {
 	useChunkAlloc bool
 	// Check if TiFlash read engine is removed due to strict sql mode.
 	TiFlashEngineRemovedDueToStrictSQLMode bool
+	// StaleTSOProvider is used to provide stale timestamp oracle for read-only transactions.
+	StaleTSOProvider struct {
+		sync.Mutex
+		value *uint64
+		eval  func() (uint64, error)
+	}
 }
 
 // StmtHints are SessionVars related sql hints.
 type StmtHints struct {
 	// Hint Information
 	MemQuotaQuery           int64
-	ApplyCacheCapacity      int64
 	MaxExecutionTime        uint64
 	ReplicaRead             byte
 	AllowInSubqToJoinAndAgg bool
@@ -438,6 +443,43 @@ type StmtHints struct {
 // TaskMapNeedBackUp indicates that whether we need to back up taskMap during physical optimizing.
 func (sh *StmtHints) TaskMapNeedBackUp() bool {
 	return sh.ForceNthPlan != -1
+}
+
+// Clone the StmtHints struct and returns the pointer of the new one.
+func (sh *StmtHints) Clone() *StmtHints {
+	var (
+		vars       map[string]string
+		tableHints []*ast.TableOptimizerHint
+	)
+	if len(sh.SetVars) > 0 {
+		vars = make(map[string]string, len(sh.SetVars))
+		for k, v := range sh.SetVars {
+			vars[k] = v
+		}
+	}
+	if len(sh.OriginalTableHints) > 0 {
+		tableHints = make([]*ast.TableOptimizerHint, len(sh.OriginalTableHints))
+		copy(tableHints, sh.OriginalTableHints)
+	}
+	return &StmtHints{
+		MemQuotaQuery:                  sh.MemQuotaQuery,
+		MaxExecutionTime:               sh.MaxExecutionTime,
+		ReplicaRead:                    sh.ReplicaRead,
+		AllowInSubqToJoinAndAgg:        sh.AllowInSubqToJoinAndAgg,
+		NoIndexMergeHint:               sh.NoIndexMergeHint,
+		StraightJoinOrder:              sh.StraightJoinOrder,
+		EnableCascadesPlanner:          sh.EnableCascadesPlanner,
+		ForceNthPlan:                   sh.ForceNthPlan,
+		ResourceGroup:                  sh.ResourceGroup,
+		HasAllowInSubqToJoinAndAggHint: sh.HasAllowInSubqToJoinAndAggHint,
+		HasMemQuotaHint:                sh.HasMemQuotaHint,
+		HasReplicaReadHint:             sh.HasReplicaReadHint,
+		HasMaxExecutionTime:            sh.HasMaxExecutionTime,
+		HasEnableCascadesPlannerHint:   sh.HasEnableCascadesPlannerHint,
+		HasResourceGroup:               sh.HasResourceGroup,
+		SetVars:                        vars,
+		OriginalTableHints:             tableHints,
+	}
 }
 
 // StmtCacheKey represents the key type in the StmtCache.
@@ -1194,6 +1236,32 @@ func (sc *StatementContext) DetachMemDiskTracker() {
 	if sc.DiskTracker != nil {
 		sc.DiskTracker.Detach()
 	}
+}
+
+// SetStaleTSOProvider sets the stale TSO provider.
+func (sc *StatementContext) SetStaleTSOProvider(eval func() (uint64, error)) {
+	sc.StaleTSOProvider.Lock()
+	defer sc.StaleTSOProvider.Unlock()
+	sc.StaleTSOProvider.value = nil
+	sc.StaleTSOProvider.eval = eval
+}
+
+// GetStaleTSO returns the TSO for stale-read usage which calculate from PD's last response.
+func (sc *StatementContext) GetStaleTSO() (uint64, error) {
+	sc.StaleTSOProvider.Lock()
+	defer sc.StaleTSOProvider.Unlock()
+	if sc.StaleTSOProvider.value != nil {
+		return *sc.StaleTSOProvider.value, nil
+	}
+	if sc.StaleTSOProvider.eval == nil {
+		return 0, nil
+	}
+	tso, err := sc.StaleTSOProvider.eval()
+	if err != nil {
+		return 0, err
+	}
+	sc.StaleTSOProvider.value = &tso
+	return tso, nil
 }
 
 // CopTasksDetails collects some useful information of cop-tasks during execution.

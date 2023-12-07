@@ -107,3 +107,11 @@ func TestIssue45036(t *testing.T) {
 		"    └─TableReader_9 10000.00 root partition:all data:TableRangeScan_8",
 		"      └─TableRangeScan_8 10000.00 cop[tikv] table:s range:[1,100000], keep order:false, stats:pseudo"))
 }
+
+func TestIssue46083(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TEMPORARY TABLE v0(v1 int)")
+	tk.MustExec("INSERT INTO v0 WITH ta2 AS (TABLE v0) TABLE ta2 FOR UPDATE OF ta2;")
+}

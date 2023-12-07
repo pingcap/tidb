@@ -3420,8 +3420,8 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sum = "h1:iAIjJVgrPuXjpAiMDcJvz4Y4Qf4KypiCsqy3UVzU6FQ=",
-        version = "v0.0.0-20230523065550-8b641fa69bf3",
+        sum = "h1:so6ffMPEx9HYGOOi9T0ezTZlI7LvpYBUQyWWyz8kND8=",
+        version = "v0.0.0-20231011074246-fa00d2b03372",
     )
     go_repository(
         name = "com_github_pingcap_log",
@@ -3518,6 +3518,14 @@ def go_deps():
         sum = "h1:0LFwY6Q3gMACTjAbMZBjXAqTOzOwFaj2Ld6cjeQ7Rig=",
         version = "v0.0.0-20221212215047-62379fc7944b",
     )
+    go_repository(
+        name = "com_github_prashantv_gostub",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/prashantv/gostub",
+        sum = "h1:BTyx3RfQjRHnUWaGF9oQos79AlQ5k8WNktv7VGvVH4g=",
+        version = "v1.1.0",
+    )
+
     go_repository(
         name = "com_github_prometheus_client_golang",
         build_file_proto_mode = "disable_global",
@@ -4171,8 +4179,8 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:Ldvdc89v7GE6N7KpsgLEwKhWkE25pXM+hEI9ikZ914c=",
-        version = "v2.0.8-0.20230713054852-a3875bcbc94f",
+        sum = "h1:l7AxmVOCLt2Etb4kgbccLDeqjiANMBkAnfRFe91IHvc=",
+        version = "v2.0.8-0.20231018094816-44449c0526f2",
     )
     go_repository(
         name = "com_github_tikv_pd",
@@ -4186,8 +4194,8 @@ def go_deps():
         name = "com_github_tikv_pd_client",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
-        sum = "h1:dO0YtekJ9IKiO9dXMZz0rNHPBiGCo+c37RUsnshoLwo=",
-        version = "v0.0.0-20230519121736-d15a686a670e",
+        sum = "h1:pKIvLrqEmTMw+J8wwdv4r2QTp+cjW9giiOIyaRy9mLM=",
+        version = "v0.0.0-20230905092614-113cdedbebb6",
     )
     go_repository(
         name = "com_github_timakin_bodyclose",

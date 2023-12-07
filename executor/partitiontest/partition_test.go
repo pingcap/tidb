@@ -503,3 +503,14 @@ func TestPartitionOnMissing(t *testing.T) {
 		"  └─TableReader(Probe) 4.00 root partition:all data:TableRangeScan",
 		"    └─TableRangeScan 4.00 cop[tikv] table:tt1 range: decided by [onmissing.tt2.listid], keep order:false"))
 }
+
+func TestIssue45757(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id bigint, datecode bigint, c int, index idx(id, datecode)) partition by range(datecode) (partition p0 values less than (20230501), partition p1 values less than (20230601), partition p2 values less than (20230701))")
+	tk.MustExec("insert into t values (111111111111111, 20230403, 0), (111111111111111, 20230503, 1), (111111111111111, 20230603, 2)")
+	tk.MustExec("set tidb_partition_prune_mode='static'")
+	tk.MustQuery("select * from t use index (idx) where id = 111111111111111 and datecode between 20230420 and 20230620 order by datecode limit 2").Check(testkit.Rows("111111111111111 20230503 1", "111111111111111 20230603 2"))
+}

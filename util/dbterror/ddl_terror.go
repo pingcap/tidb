@@ -401,6 +401,8 @@ var (
 	ErrDDLSetting = ClassDDL.NewStd(mysql.ErrDDLSetting)
 	// ErrIngestFailed returns when the DDL ingest job is failed.
 	ErrIngestFailed = ClassDDL.NewStd(mysql.ErrIngestFailed)
+	// ErrIngestCheckEnvFailed returns when the DDL ingest env is failed to init.
+	ErrIngestCheckEnvFailed = ClassDDL.NewStd(mysql.ErrIngestCheckEnvFailed)
 
 	// ErrColumnInChange indicates there is modification on the column in parallel.
 	ErrColumnInChange = ClassDDL.NewStd(mysql.ErrColumnInChange)

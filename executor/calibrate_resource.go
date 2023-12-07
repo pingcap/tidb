@@ -115,14 +115,12 @@ const (
 	// lowUsageThreshold is the threshold used to determine whether the CPU is too low.
 	// When the CPU utilization of tikv or tidb is lower than lowUsageThreshold, but neither is higher than valuableUsageThreshold, the sampling point is unavailable
 	lowUsageThreshold = 0.1
-	// calibration is performed only when the available time point exceeds the percentOfPass
-	percentOfPass = 0.9
 	// For quotas computed at each point in time, the maximum and minimum portions are discarded, and discardRate is the percentage discarded
 	discardRate = 0.1
 
 	// duration Indicates the supported calibration duration
 	maxDuration = time.Hour * 24
-	minDuration = time.Minute * 10
+	minDuration = time.Minute
 )
 
 type calibrateResourceExec struct {
@@ -132,19 +130,19 @@ type calibrateResourceExec struct {
 	done         bool
 }
 
-func (e *calibrateResourceExec) parseCalibrateDuration() (startTime time.Time, endTime time.Time, err error) {
+func (e *calibrateResourceExec) parseCalibrateDuration(ctx context.Context) (startTime time.Time, endTime time.Time, err error) {
 	var dur time.Duration
 	var ts uint64
 	for _, op := range e.optionList {
 		switch op.Tp {
 		case ast.CalibrateStartTime:
-			ts, err = staleread.CalculateAsOfTsExpr(e.ctx, op.Ts)
+			ts, err = staleread.CalculateAsOfTsExpr(ctx, e.ctx, op.Ts)
 			if err != nil {
 				return
 			}
 			startTime = oracle.GetTimeFromTS(ts)
 		case ast.CalibrateEndTime:
-			ts, err = staleread.CalculateAsOfTsExpr(e.ctx, op.Ts)
+			ts, err = staleread.CalculateAsOfTsExpr(ctx, e.ctx, op.Ts)
 			if err != nil {
 				return
 			}
@@ -202,7 +200,7 @@ var (
 )
 
 func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor) error {
-	startTs, endTs, err := e.parseCalibrateDuration()
+	startTs, endTs, err := e.parseCalibrateDuration(ctx)
 	if err != nil {
 		return err
 	}
@@ -260,10 +258,7 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 		tidbCPUs.next()
 		tikvCPUs.next()
 	}
-	if len(quotas) < 5 {
-		return errLowUsage
-	}
-	if float64(len(quotas))/float64(len(quotas)+lowCount) <= percentOfPass {
+	if len(quotas) < 2 {
 		return errLowUsage
 	}
 	sort.Slice(quotas, func(i, j int) bool {

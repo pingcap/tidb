@@ -2180,7 +2180,16 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		}
 	})
 
-	stmtLabel := ast.GetStmtLabel(stmtNode)
+	var stmtLabel string
+	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
+		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, s.sessionVars)
+		if err == nil && prepareStmt.PreparedAst != nil {
+			stmtLabel = ast.GetStmtLabel(prepareStmt.PreparedAst.Stmt)
+		}
+	}
+	if stmtLabel == "" {
+		stmtLabel = ast.GetStmtLabel(stmtNode)
+	}
 	s.setRequestSource(ctx, stmtLabel, stmtNode)
 
 	// Backup the original resource group name since sql hint might change it during optimization
@@ -3111,7 +3120,7 @@ func splitAndScatterTable(store kv.Storage, tableIDs []int64) {
 		ctxWithTimeout, cancel := context.WithTimeout(context.Background(), variable.DefWaitSplitRegionTimeout*time.Second)
 		var regionIDs []uint64
 		for _, id := range tableIDs {
-			regionIDs = append(regionIDs, ddl.SplitRecordRegion(ctxWithTimeout, s, id, variable.DefTiDBScatterRegion))
+			regionIDs = append(regionIDs, ddl.SplitRecordRegion(ctxWithTimeout, s, id, id, variable.DefTiDBScatterRegion))
 		}
 		if variable.DefTiDBScatterRegion {
 			ddl.WaitScatterRegionFinish(ctxWithTimeout, s, regionIDs...)
@@ -3584,8 +3593,10 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 // attachStatsCollector attaches the stats collector in the dom for the session
 func attachStatsCollector(s *session, dom *domain.Domain) *session {
 	if dom.StatsHandle() != nil && dom.StatsUpdating() {
-		s.statsCollector = dom.StatsHandle().NewSessionStatsCollector()
-		if GetIndexUsageSyncLease() > 0 {
+		if s.statsCollector == nil {
+			s.statsCollector = dom.StatsHandle().NewSessionStatsCollector()
+		}
+		if s.idxUsageCollector == nil && GetIndexUsageSyncLease() > 0 {
 			s.idxUsageCollector = dom.StatsHandle().NewSessionIndexUsageCollector()
 		}
 	}
@@ -3595,9 +3606,14 @@ func attachStatsCollector(s *session, dom *domain.Domain) *session {
 
 // detachStatsCollector removes the stats collector in the session
 func detachStatsCollector(s *session) *session {
-	s.statsCollector = nil
-	s.idxUsageCollector = nil
-
+	if s.statsCollector != nil {
+		s.statsCollector.Delete()
+		s.statsCollector = nil
+	}
+	if s.idxUsageCollector != nil {
+		s.idxUsageCollector.Delete()
+		s.idxUsageCollector = nil
+	}
 	return s
 }
 
@@ -3656,7 +3672,8 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 		storeBootstrapped[store.UUID()] = true
 	}
 
-	return modifyBootstrapVersionForTest(store, ver)
+	modifyBootstrapVersionForTest(ver)
+	return ver
 }
 
 func finishBootstrap(store kv.Storage) {
@@ -4272,9 +4289,8 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 	if !s.isInternal() {
 		if txn, _ := s.Txn(false); txn != nil && txn.Valid() {
 			txn.SetOption(kv.RequestSourceType, stmtLabel)
-		} else {
-			s.sessionVars.RequestSourceType = stmtLabel
 		}
+		s.sessionVars.RequestSourceType = stmtLabel
 		return
 	}
 	if source := ctx.Value(kv.RequestSourceKey); source != nil {

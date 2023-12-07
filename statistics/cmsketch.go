@@ -799,17 +799,7 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 	if checkEmptyTopNs(topNs) {
 		return nil, nil, hists, nil
 	}
-
 	partNum := len(topNs)
-	topNsNum := make([]int, partNum)
-	removeVals := make([][]TopNMeta, partNum)
-	for i, topN := range topNs {
-		if topN == nil {
-			topNsNum[i] = 0
-			continue
-		}
-		topNsNum[i] = len(topN.TopN)
-	}
 	// Different TopN structures may hold the same value, we have to merge them.
 	counter := make(map[hack.MutableString]float64)
 	// datumMap is used to store the mapping from the string type to datum type.
@@ -834,6 +824,9 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 			// 1. Check the topN first.
 			// 2. If the topN doesn't contain the value corresponding to encodedVal. We should check the histogram.
 			for j := 0; j < partNum; j++ {
+				if atomic.LoadUint32(kiiled) == 1 {
+					return nil, nil, nil, errors.Trace(ErrQueryInterrupted)
+				}
 				if (j == i && version >= 2) || topNs[j].findTopN(val.Encoded) != -1 {
 					continue
 				}
@@ -868,20 +861,9 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 				if count != 0 {
 					counter[encodedVal] += count
 					// Remove the value corresponding to encodedVal from the histogram.
-					removeVals[j] = append(removeVals[j], TopNMeta{Encoded: datum.GetBytes(), Count: uint64(count)})
+					hists[j].BinarySearchRemoveVal(TopNMeta{Encoded: datum.GetBytes(), Count: uint64(count)})
 				}
 			}
-		}
-	}
-	// Remove the value from the Hists.
-	for i := 0; i < partNum; i++ {
-		if len(removeVals[i]) > 0 {
-			tmp := removeVals[i]
-			slices.SortFunc(tmp, func(i, j TopNMeta) bool {
-				cmpResult := bytes.Compare(i.Encoded, j.Encoded)
-				return cmpResult < 0
-			})
-			hists[i].RemoveVals(tmp)
 		}
 	}
 	numTop := len(counter)

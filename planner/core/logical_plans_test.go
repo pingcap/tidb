@@ -45,6 +45,26 @@ type plannerSuite struct {
 	ctx sessionctx.Context
 }
 
+func (p *plannerSuite) GetParser() *parser.Parser {
+	return p.p
+}
+
+func (p *plannerSuite) GetIS() infoschema.InfoSchema {
+	return p.is
+}
+
+func (p *plannerSuite) GetCtx() sessionctx.Context {
+	return p.ctx
+}
+
+func CreatePlannerSuite(sctx sessionctx.Context, is infoschema.InfoSchema) (s *plannerSuite) {
+	s = new(plannerSuite)
+	s.is = is
+	s.p = parser.New()
+	s.ctx = sctx
+	return s
+}
+
 func createPlannerSuite() (s *plannerSuite) {
 	s = new(plannerSuite)
 	tblInfos := []*model.TableInfo{

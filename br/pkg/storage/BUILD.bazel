@@ -67,11 +67,12 @@ go_test(
         "memstore_test.go",
         "parse_test.go",
         "s3_test.go",
+        "storage_test.go",
         "writer_test.go",
     ],
     embed = [":storage"],
     flaky = True,
-    shard_count = 43,
+    shard_count = 45,
     deps = [
         "//br/pkg/mock",
         "@com_github_aws_aws_sdk_go//aws",

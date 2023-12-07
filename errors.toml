@@ -146,6 +146,11 @@ error = '''
 storage is not tikv
 '''
 
+["BR:KV:ErrPossibleInconsistency"]
+error = '''
+the cluster state might be inconsistent
+'''
+
 ["BR:PD:ErrPDBatchScanRegion"]
 error = '''
 batch scan region
@@ -404,6 +409,11 @@ ingest tikv failed
 ["Lightning:KV:ErrKVRaftProposalDropped"]
 error = '''
 raft proposal dropped
+'''
+
+["Lightning:KV:ErrNoLeader"]
+error = '''
+write to tikv with no leader returned, region '%d', leader: %d
 '''
 
 ["Lightning:KV:NotLeader"]
@@ -1404,6 +1414,11 @@ Error happened when %s DDL: %s
 ["ddl:8247"]
 error = '''
 Ingest failed: %s
+'''
+
+["ddl:8256"]
+error = '''
+Check ingest environment failed: %s
 '''
 
 ["ddl:8260"]

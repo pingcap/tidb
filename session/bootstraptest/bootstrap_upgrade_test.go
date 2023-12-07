@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
@@ -255,9 +256,12 @@ func TestUpgradeVersionMockLatest(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion-1, ver)
 	dom.Close()
+	startUpgrade(store)
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
+
+	finishUpgrade(store)
 
 	seLatestV := session.CreateSessionAndSetID(t, store)
 	ver, err = session.GetBootstrapVersion(seLatestV)
@@ -292,6 +296,103 @@ func TestUpgradeVersionMockLatest(t *testing.T) {
 			" PARTITION `p2` VALUES LESS THAN (3072),\n" +
 			" PARTITION `p3` VALUES LESS THAN (4096),\n" +
 			" PARTITION `p4` VALUES LESS THAN (7096))"))
+}
+
+const supportUpgradeHTTPOpVer = int64(146)
+
+// TestUpgradeVersionWithUpgradeHTTPOp tests supportUpgradeHTTPOpVer upgrade supportUpgradeHTTPOpVer++ with HTTP op.
+func TestUpgradeVersionWithUpgradeHTTPOp(t *testing.T) {
+	*session.WithMockUpgrade = true
+	session.MockUpgradeToVerLatestKind = session.MockSimpleUpgradeToVerLatest
+
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	seV := session.CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(supportUpgradeHTTPOpVer)
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	session.MustExec(t, seV, fmt.Sprintf("update mysql.tidb set variable_value='%d' where variable_name='tidb_server_version'", supportUpgradeHTTPOpVer))
+	session.UnsetStoreBootstrapped(store.UUID())
+	ver, err := session.GetBootstrapVersion(seV)
+	require.NoError(t, err)
+	require.Equal(t, supportUpgradeHTTPOpVer, ver)
+	dom.Close()
+
+	// Start the upgrade test.
+	// Current cluster state is normal.
+	isUpgrading, err := session.IsUpgradingClusterState(seV)
+	require.NoError(t, err)
+	require.Equal(t, false, isUpgrading)
+	upgradeHandler := server.NewClusterUpgradeHandler(store)
+	upgradeHandler.StartUpgrade()
+	domLatestV, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer domLatestV.Close()
+	seLatestV := session.CreateSessionAndSetID(t, store)
+	ver, err = session.GetBootstrapVersion(seLatestV)
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion+1, ver)
+	// Current cluster state is upgrading.
+	isUpgrading, err = session.IsUpgradingClusterState(seLatestV)
+	require.NoError(t, err)
+	require.Equal(t, true, isUpgrading)
+	upgradeHandler.FinishUpgrade()
+	// Upgrading is finished and current cluster state is normal.
+	isUpgrading, err = session.IsUpgradingClusterState(seV)
+	require.NoError(t, err)
+	require.Equal(t, false, isUpgrading)
+}
+
+// TestUpgradeVersionWithoutUpgradeHTTPOp tests supportUpgradeHTTPOpVer upgrade supportUpgradeHTTPOpVer++ without HTTP op.
+func TestUpgradeVersionWithoutUpgradeHTTPOp(t *testing.T) {
+	*session.WithMockUpgrade = true
+	session.MockUpgradeToVerLatestKind = session.MockSimpleUpgradeToVerLatest
+
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	seV := session.CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(supportUpgradeHTTPOpVer)
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	session.MustExec(t, seV, fmt.Sprintf("update mysql.tidb set variable_value='%d' where variable_name='tidb_server_version'", supportUpgradeHTTPOpVer))
+	session.UnsetStoreBootstrapped(store.UUID())
+	ver, err := session.GetBootstrapVersion(seV)
+	require.NoError(t, err)
+	require.Equal(t, supportUpgradeHTTPOpVer, ver)
+	dom.Close()
+
+	// Start the upgrade test.
+	// Current cluster state is normal.
+	isUpgrading, err := session.IsUpgradingClusterState(seV)
+	require.NoError(t, err)
+	require.Equal(t, false, isUpgrading)
+	domLatestV, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer domLatestV.Close()
+	seLatestV := session.CreateSessionAndSetID(t, store)
+	ver, err = session.GetBootstrapVersion(seLatestV)
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion+1, ver)
+	// Current cluster state is upgrading.
+	isUpgrading, err = session.IsUpgradingClusterState(seLatestV)
+	require.NoError(t, err)
+	require.Equal(t, false, isUpgrading)
+	upgradeHandler := server.NewClusterUpgradeHandler(store)
+	upgradeHandler.FinishUpgrade()
+	// Upgrading is finished and current cluster state is normal.
+	isUpgrading, err = session.IsUpgradingClusterState(seV)
+	require.NoError(t, err)
+	require.Equal(t, false, isUpgrading)
 }
 
 func TestUpgradeVersionForPausedJob(t *testing.T) {
@@ -333,6 +434,7 @@ func TestUpgradeVersionForPausedJob(t *testing.T) {
 	<-ch
 	dom.Close()
 	// Make sure upgrade is successful.
+	startUpgrade(store)
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
@@ -340,6 +442,8 @@ func TestUpgradeVersionForPausedJob(t *testing.T) {
 	ver, err = session.GetBootstrapVersion(seLatestV)
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion, ver)
+
+	finishUpgrade(store)
 
 	// Resume the DDL job, then add index operation can be executed successfully.
 	session.MustExec(t, seLatestV, fmt.Sprintf("admin resume ddl jobs %d", jobID))
@@ -434,6 +538,7 @@ func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 	<-ch
 	dom.Close()
 	// Make sure upgrade is successful.
+	startUpgrade(store)
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
@@ -441,6 +546,8 @@ func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 	ver, err = session.GetBootstrapVersion(seLatestV)
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion+1, ver)
+
+	finishUpgrade(store)
 
 	checkDDLJobExecSucc(t, seLatestV, jobID)
 }
@@ -463,8 +570,21 @@ func execute(ctx context.Context, s sessionctx.Context, query string) ([]chunk.R
 	return rows, nil
 }
 
+func startUpgrade(store kv.Storage) {
+	upgradeHandler := server.NewClusterUpgradeHandler(store)
+	upgradeHandler.StartUpgrade()
+}
+
+func finishUpgrade(store kv.Storage) {
+	upgradeHandler := server.NewClusterUpgradeHandler(store)
+	upgradeHandler.FinishUpgrade()
+}
+
+// TestUpgradeWithPauseDDL adds a user and a system DB's DDL operations, before every test bootstrap(DDL operation). It tests:
+//
+//	1.Before and after each test bootstrap, the DDL of the user DB is paused, but the DDL of the system DB is not paused.
+//	2.Check user DDLs are handled after system DDLs.
 func TestUpgradeWithPauseDDL(t *testing.T) {
-	session.SupportUpgradeStateVer--
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -472,6 +592,12 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	_, err = execute(context.Background(), se, "create table test.pause_user_ddl_t(a int, b int)")
+	require.NoError(t, err)
+	_, err = execute(context.Background(), se, "create table mysql.pause_user_ddl_t(a int, b int)")
+	require.NoError(t, err)
+	_, err = execute(context.Background(), se, "create table test.pause_user_ddl_t1(a int, b int)")
+	require.NoError(t, err)
+	_, err = execute(context.Background(), se, "create table mysql.pause_user_ddl_t1(a int, b int)")
 	require.NoError(t, err)
 
 	tc := session.TestCallback{Cnt: atomicutil.NewInt32(0)}
@@ -483,16 +609,7 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 	}
 
 	wg := sync.WaitGroup{}
-	tc.OnBootstrapExported = func(s session.Session) {
-		var query string
-		switch tc.Cnt.Load() % 2 {
-		case 0:
-			query = fmt.Sprintf("alter table test.pause_user_ddl_t add index idx_%d(a)", tc.Cnt.Load())
-		case 1:
-			query = fmt.Sprintf("alter table test.pause_user_ddl_t add column c_%d int", tc.Cnt.Load())
-		}
-		tc.Cnt.Add(1)
-
+	asyncExecDDL := func(query string) {
 		ch := make(chan struct{})
 		wg.Add(1)
 		go func() {
@@ -507,6 +624,22 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 			}
 		}()
 		<-ch
+	}
+	// Before every test bootstrap(DDL operation), we add a user and a system DB's DDL operations.
+	tc.OnBootstrapExported = func(s session.Session) {
+		var query1, query2 string
+		switch tc.Cnt.Load() % 2 {
+		case 0:
+			query1 = fmt.Sprintf("alter table mysql.pause_user_ddl_t add index idx_%d(a)", tc.Cnt.Load())
+			query2 = fmt.Sprintf("alter table test.pause_user_ddl_t add column c_%d int", tc.Cnt.Load())
+		case 1:
+			// Make sure case0 and case1 use different table ID. Then case1's table won't be filtered because they use the same table ID.
+			query1 = fmt.Sprintf("alter table test.pause_user_ddl_t1 add index idx_%d(a)", tc.Cnt.Load())
+			query2 = fmt.Sprintf("alter table mysql.pause_user_ddl_t1 add column c_%d int", tc.Cnt.Load())
+		}
+		tc.Cnt.Add(1)
+		asyncExecDDL(query1)
+		asyncExecDDL(query2)
 
 		rows, err := execute(context.Background(), s, sql)
 		require.NoError(t, err)
@@ -557,6 +690,7 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion-1, ver)
 	dom.Close()
+	startUpgrade(store)
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
@@ -567,6 +701,7 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 	require.Equal(t, session.CurrentBootstrapVersion+1, ver)
 
 	wg.Wait()
+	finishUpgrade(store)
 
 	tk := testkit.NewTestKit(t, store)
 	var rows []chunk.Row

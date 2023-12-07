@@ -275,7 +275,7 @@ func (d *ddl) startDispatchLoop() {
 		}
 		if !d.isOwner() {
 			isOnce = true
-			d.once.Store(true)
+			d.onceMap = make(map[int64]struct{}, jobOnceCapacity)
 			time.Sleep(dispatchLoopWaitingDuration)
 			continue
 		}
@@ -382,7 +382,7 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 		}()
 		// check if this ddl job is synced to all servers.
-		if !d.isSynced(job) || d.once.Load() {
+		if !job.NotStarted() && (!d.isSynced(job) || !d.maybeAlreadyRunOnce(job.ID)) {
 			if variable.EnableMDL.Load() {
 				exist, version, err := checkMDLInfo(job.ID, d.sessPool)
 				if err != nil {
@@ -397,7 +397,7 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 					if err != nil {
 						return
 					}
-					d.once.Store(false)
+					d.setAlreadyRunOnce(job.ID)
 					cleanMDLInfo(d.sessPool, job.ID, d.etcdCli)
 					// Don't have a worker now.
 					return
@@ -411,7 +411,7 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 					pool.put(wk)
 					return
 				}
-				d.once.Store(false)
+				d.setAlreadyRunOnce(job.ID)
 			}
 		}
 
@@ -430,9 +430,14 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 			})
 
 			// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
-			// If the job is done or still running or rolling back, we will wait 2 * lease time to guarantee other servers to update
+			// If the job is done or still running or rolling back, we will wait 2 * lease time or util MDL synced to guarantee other servers to update
 			// the newest schema.
-			waitSchemaChanged(d.ddlCtx, d.lease*2, schemaVer, job)
+			err := waitSchemaChanged(d.ddlCtx, d.lease*2, schemaVer, job)
+			if err != nil {
+				// May be caused by server closing, shouldn't clean the MDL info.
+				logutil.BgLogger().Info("wait latest schema version error", zap.String("category", "ddl"), zap.Error(err))
+				return
+			}
 			cleanMDLInfo(d.sessPool, job.ID, d.etcdCli)
 			d.synced(job)
 

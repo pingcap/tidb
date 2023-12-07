@@ -15,6 +15,7 @@
 package statistics
 
 import (
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -44,6 +45,8 @@ type topnStatsMergeWorker struct {
 	respCh chan<- *TopnStatsMergeResponse
 	// the stats in the wrapper should only be read during the worker
 	statsWrapper *StatsWrapper
+	// shardMutex is used to protect `statsWrapper.AllHg`
+	shardMutex []sync.Mutex
 }
 
 // NewTopnStatsMergeWorker returns topn merge worker
@@ -57,6 +60,7 @@ func NewTopnStatsMergeWorker(
 		respCh: respCh,
 	}
 	worker.statsWrapper = wrapper
+	worker.shardMutex = make([]sync.Mutex, len(wrapper.AllHg))
 	worker.killed = killed
 	return worker
 }
@@ -77,10 +81,9 @@ func NewTopnStatsMergeTask(start, end int) *TopnStatsMergeTask {
 
 // TopnStatsMergeResponse indicates topn merge worker response
 type TopnStatsMergeResponse struct {
-	TopN       *TopN
-	PopedTopn  []TopNMeta
-	RemoveVals [][]TopNMeta
-	Err        error
+	Err       error
+	TopN      *TopN
+	PopedTopn []TopNMeta
 }
 
 // Run runs topn merge like statistics.MergePartTopN2GlobalTopN
@@ -99,16 +102,6 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 			return
 		}
 		partNum := len(allTopNs)
-		checkNum := len(checkTopNs)
-		topNsNum := make([]int, checkNum)
-		removeVals := make([][]TopNMeta, partNum)
-		for i, topN := range checkTopNs {
-			if topN == nil {
-				topNsNum[i] = 0
-				continue
-			}
-			topNsNum[i] = len(topN.TopN)
-		}
 		// Different TopN structures may hold the same value, we have to merge them.
 		counter := make(map[hack.MutableString]float64)
 		// datumMap is used to store the mapping from the string type to datum type.
@@ -136,6 +129,11 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 				// 1. Check the topN first.
 				// 2. If the topN doesn't contain the value corresponding to encodedVal. We should check the histogram.
 				for j := 0; j < partNum; j++ {
+					if atomic.LoadUint32(worker.killed) == 1 {
+						resp.Err = errors.Trace(ErrQueryInterrupted)
+						worker.respCh <- resp
+						return
+					}
 					if (j == i && version >= 2) || allTopNs[j].findTopN(val.Encoded) != -1 {
 						continue
 					}
@@ -172,13 +170,13 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 					if count != 0 {
 						counter[encodedVal] += count
 						// Remove the value corresponding to encodedVal from the histogram.
-						removeVals[j] = append(removeVals[j], TopNMeta{Encoded: datum.GetBytes(), Count: uint64(count)})
+						worker.shardMutex[j].Lock()
+						worker.statsWrapper.AllHg[j].BinarySearchRemoveVal(TopNMeta{Encoded: datum.GetBytes(), Count: uint64(count)})
+						worker.shardMutex[j].Unlock()
 					}
 				}
 			}
 		}
-		// record remove values
-		resp.RemoveVals = removeVals
 
 		numTop := len(counter)
 		if numTop == 0 {

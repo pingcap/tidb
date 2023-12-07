@@ -996,8 +996,14 @@ var hintTokenMap = map[string]int{
 	"MPP_2PHASE_AGG":          hintMpp2PhaseAgg,
 	"IGNORE_INDEX":            hintIgnoreIndex,
 	"INL_HASH_JOIN":           hintInlHashJoin,
+	"INDEX_HASH_JOIN":         hintIndexHashJoin,
+	"NO_INDEX_HASH_JOIN":      hintNoIndexHashJoin,
 	"INL_JOIN":                hintInlJoin,
+	"INDEX_JOIN":              hintIndexJoin,
+	"NO_INDEX_JOIN":           hintNoIndexJoin,
 	"INL_MERGE_JOIN":          hintInlMergeJoin,
+	"INDEX_MERGE_JOIN":        hintIndexMergeJoin,
+	"NO_INDEX_MERGE_JOIN":     hintNoIndexMergeJoin,
 	"MEMORY_QUOTA":            hintMemoryQuota,
 	"NO_SWAP_JOIN_INPUTS":     hintNoSwapJoinInputs,
 	"QUERY_TYPE":              hintQueryType,
@@ -1006,6 +1012,7 @@ var hintTokenMap = map[string]int{
 	"BROADCAST_JOIN":          hintBCJoin,
 	"SHUFFLE_JOIN":            hintShuffleJoin,
 	"MERGE_JOIN":              hintSMJoin,
+	"NO_MERGE_JOIN":           hintNoSMJoin,
 	"STREAM_AGG":              hintStreamAgg,
 	"SWAP_JOIN_INPUTS":        hintSwapJoinInputs,
 	"USE_INDEX_MERGE":         hintUseIndexMerge,
@@ -1047,8 +1054,18 @@ var hintTokenMap = map[string]int{
 func (s *Scanner) isTokenIdentifier(lit string, offset int) int {
 	// An identifier before or after '.' means it is part of a qualified identifier.
 	// We do not parse it as keyword.
-	if s.r.peek() == '.' || (offset > 0 && s.r.s[offset-1] == '.') {
+	if s.r.peek() == '.' {
 		return 0
+	}
+
+	for idx := offset - 1; idx >= 0; idx-- {
+		if s.r.s[idx] == ' ' {
+			continue
+		} else if s.r.s[idx] == '.' {
+			return 0
+		} else {
+			break
+		}
 	}
 
 	buf := &s.buf

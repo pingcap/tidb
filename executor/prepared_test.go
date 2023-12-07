@@ -96,6 +96,11 @@ func TestPreparedStmtWithHint(t *testing.T) {
 	go dom.ExpensiveQueryHandle().SetSessionManager(sv).Run()
 	tk.MustExec("prepare stmt from \"select /*+ max_execution_time(100) */ sleep(10)\"")
 	tk.MustQuery("execute stmt").Check(testkit.Rows("1"))
+
+	// see https://github.com/pingcap/tidb/issues/46817
+	tk.MustExec("use test")
+	tk.MustExec("create table if not exists t (i int)")
+	tk.MustExec("prepare stmt from 'with a as (select /*+ qb_name(qb1) */ * from t)  select /*+ leading(@qb1)*/ * from a;'")
 }
 
 func TestPreparedNullParam(t *testing.T) {

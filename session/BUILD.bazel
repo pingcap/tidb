@@ -8,6 +8,7 @@ go_library(
         "mock_bootstrap.go",
         "nontransactional.go",
         "session.go",
+        "sync_upgrade.go",
         "testutil.go",  #keep
         "tidb.go",
         "txn.go",

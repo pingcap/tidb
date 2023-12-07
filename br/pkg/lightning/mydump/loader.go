@@ -529,12 +529,30 @@ func (s *mdLoaderSetup) route() error {
 		}
 	}
 	for _, info := range s.tableSchemas {
+		if _, ok := knownDBNames[info.TableName.Schema]; !ok {
+			knownDBNames[info.TableName.Schema] = &dbInfo{
+				fileMeta: info.FileMeta,
+				count:    1,
+			}
+		}
 		knownDBNames[info.TableName.Schema].count++
 	}
 	for _, info := range s.viewSchemas {
+		if _, ok := knownDBNames[info.TableName.Schema]; !ok {
+			knownDBNames[info.TableName.Schema] = &dbInfo{
+				fileMeta: info.FileMeta,
+				count:    1,
+			}
+		}
 		knownDBNames[info.TableName.Schema].count++
 	}
 	for _, info := range s.tableDatas {
+		if _, ok := knownDBNames[info.TableName.Schema]; !ok {
+			knownDBNames[info.TableName.Schema] = &dbInfo{
+				fileMeta: info.FileMeta,
+				count:    1,
+			}
+		}
 		knownDBNames[info.TableName.Schema].count++
 	}
 
