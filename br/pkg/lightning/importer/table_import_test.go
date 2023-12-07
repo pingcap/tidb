@@ -2423,7 +2423,7 @@ func TestGetDDLStatus(t *testing.T) {
 }
 
 func TestGetChunkCompressedSizeForParquet(t *testing.T) {
-	dir := "./parquet/"
+	dir := "./testdata/"
 	fileName := "000000_0.parquet"
 	store, err := storage.NewLocalStorage(dir)
 	require.NoError(t, err)
