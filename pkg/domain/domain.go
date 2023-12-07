@@ -1841,8 +1841,8 @@ func (do *Domain) BindHandle() *bindinfo.BindHandle {
 func (do *Domain) LoadBindInfoLoop(ctxForHandle sessionctx.Context, ctxForEvolve sessionctx.Context) error {
 	ctxForHandle.GetSessionVars().InRestrictedSQL = true
 	ctxForEvolve.GetSessionVars().InRestrictedSQL = true
-	if !do.bindHandle.CompareAndSwap(nil, bindinfo.NewBindHandle(ctxForHandle)) {
-		do.bindHandle.Load().Reset(ctxForHandle)
+	if !do.bindHandle.CompareAndSwap(nil, bindinfo.NewBindHandle(do.sysSessionPool)) {
+		do.bindHandle.Load().Reset()
 	}
 
 	err := do.bindHandle.Load().Update(true)
@@ -2371,7 +2371,7 @@ func (do *Domain) syncIndexUsageWorker(owner owner.Manager) {
 				continue
 			}
 			if err := handle.GCIndexUsage(); err != nil {
-				statslogutil.StatsLogger.Error("gc index usage failed", zap.Error(err))
+				statslogutil.StatsLogger().Error("gc index usage failed", zap.Error(err))
 			}
 		}
 	}
