@@ -1397,7 +1397,9 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 			tmp, err := mergeBucketNDV(sc, buckets[i], &right)
 			if err != nil {
 				statslogutil.StatsLogger().Warn("mergePartitionBuckets",
-					zap.Any("buckets", buckets),
+					zap.Any("res", res),
+					zap.Stack("stack"),
+					zap.String("res.upper", res.upper.GetBinaryStringEncoded()),
 					zap.Error(err),
 				)
 				return nil, err
