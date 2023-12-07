@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"go.uber.org/zap"
@@ -238,23 +239,40 @@ func updateStatsWithCountDeltaAndModifyCountDelta(
 		)
 		return err
 	}
+
 	// Because count can not be negative, so we need to get the current and calculate the delta.
-	_, err = util.Exec(
-		sctx,
-		"INSERT INTO mysql.stats_meta "+
-			"(version, count, modify_count, table_id) "+
-			"SELECT %?, GREATEST(0, count + %?), GREATEST(0, modify_count + %?), %? "+
-			"FROM mysql.stats_meta WHERE table_id = %? "+
-			"ON DUPLICATE KEY UPDATE "+
-			"version = VALUES(version), "+
-			"count = VALUES(count), "+
-			"modify_count = VALUES(modify_count)",
-		startTS,
-		countDelta,
-		modifyCountDelta,
-		tableID,
-		tableID,
-	)
+	count, modifyCount, isNull, err := storage.StatsMetaCountAndModifyCount(sctx, tableID)
+	if err != nil {
+		return err
+	}
+	if isNull {
+		// Insert
+		_, err = util.Exec(
+			sctx,
+			"INSERT INTO mysql.stats_meta "+
+				"(version, count, modify_count, table_id) "+
+				"VALUES (%?, GREATEST(0, %?), GREATEST(0, %?), %?)",
+			startTS,
+			countDelta,
+			modifyCountDelta,
+			tableID,
+		)
+	} else {
+		// Update
+		_, err = util.Exec(
+			sctx,
+			"UPDATE mysql.stats_meta SET "+
+				"version = %?, "+
+				"count = GREATEST(0, %?), "+
+				"modify_count = GREATEST(0, %?) "+
+				"WHERE table_id = %?",
+			startTS,
+			count+countDelta,
+			modifyCount+modifyCountDelta,
+			tableID,
+		)
+	}
+
 	return err
 }
 

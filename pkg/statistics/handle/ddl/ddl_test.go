@@ -463,6 +463,37 @@ func TestExchangeAPartition(t *testing.T) {
 		// 4 -> Four rows are subtracted from table 't' due to the insertion of four rows into partition 'p1'.
 		testkit.Rows("7 12"),
 	)
+
+	// Test if the global stats is accidentally dropped.
+	// Create another normal table with no data to exchange partition.
+	testKit.MustExec("drop table if exists t3")
+	testKit.MustExec("create table t3 (a int, b int, primary key(a), index idx(b))")
+	testKit.MustExec("analyze table t3")
+	is = do.InfoSchema()
+	tbl3, err := is.TableByName(
+		model.NewCIStr("test"), model.NewCIStr("t3"),
+	)
+	require.NoError(t, err)
+	tableInfo3 := tbl3.Meta()
+	statsTbl3 := h.GetTableStats(tableInfo3)
+	require.False(t, statsTbl3.Pseudo)
+	err = h.Update(do.InfoSchema())
+	require.NoError(t, err)
+
+	testKit.MustExec("alter table t exchange partition p2 with table t3")
+	// Drop the global stats.
+	testKit.MustExec(fmt.Sprintf("delete from mysql.stats_meta where table_id = %d", tableInfo.ID))
+	// Find the exchange partition event.
+	exchangePartitionEvent = findEvent(h.DDLEventCh(), model.ActionExchangeTablePartition)
+	err = h.HandleDDLEvent(exchangePartitionEvent)
+	require.NoError(t, err)
+	// Check the global stats meta.
+	testKit.MustQuery(
+		fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableInfo.ID),
+	).Check(
+		// Insert the global stats back.
+		testkit.Rows("0 1"),
+	)
 }
 
 func findEvent(eventCh <-chan *util.DDLEvent, eventType model.ActionType) *util.DDLEvent {
