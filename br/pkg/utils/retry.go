@@ -133,8 +133,8 @@ func (ec *ErrorContext) HandleErrorMsg(msg string, uuid uint64) ErrorResult {
 		return ErrorResult{RetryStrategy, "retrable error"}
 	}
 	// retry enough on same store
-	mu.Lock()
-	defer mu.Unlock()
+	ec.mu.Lock()
+	defer ec.mu.Unlock()
 	ec.encounterTimes[uuid]++
 	if ec.encounterTimes[uuid] <= ec.encounterTimesLimitation {
 		return ErrorResult{RetryStrategy, "unknown error, retry it for few times"}
