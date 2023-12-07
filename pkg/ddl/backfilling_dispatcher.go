@@ -349,6 +349,8 @@ func generateGlobalSortIngestPlan(
 	if err != nil {
 		return nil, err
 	}
+	logutil.BgLogger().Info("ywq test from last step", zap.Binary("startkey", startKeyFromSumm), zap.Binary("endkey", endKeyFromSumm),
+		zap.Any("startkey", startKeyFromSumm), zap.Any("endkey", endKeyFromSumm))
 	instanceIDs, err := dispatcher.GenerateTaskExecutorNodes(ctx)
 	if err != nil {
 		return nil, err
@@ -379,8 +381,8 @@ func generateGlobalSortIngestPlan(
 			endKey = kv.Key(endKeyOfGroup).Clone()
 		}
 		logger.Info("split subtask range",
-			zap.String("startKey", hex.EncodeToString(startKey)),
-			zap.String("endKey", hex.EncodeToString(endKey)))
+			zap.Binary("startKey", (startKey)),
+			zap.Binary("endKey", (endKey)))
 
 		if startKey.Cmp(endKey) >= 0 {
 			return nil, errors.Errorf("invalid range, startKey: %s, endKey: %s",
@@ -441,7 +443,7 @@ func generateMergePlan(
 	}
 
 	for i, startKey := range startKeys {
-		logger.Info("merge info", zap.String("startkey", hex.EncodeToString(startKey)), zap.String("endkey", hex.EncodeToString(endKeys[i])))
+		logger.Info("merge info", zap.Binary("startkey", startKey), zap.Binary("endkey", endKeys[i]))
 		m := &BackfillSubTaskMeta{
 			DataFiles: dataFiles[i],
 			StatFiles: statFiles[i],
