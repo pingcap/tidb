@@ -6,7 +6,7 @@ go_library(
         "bind_cache.go",
         "bind_record.go",
         "capture.go",
-        "handle.go",
+        "global_handle.go",
         "session_handle.go",
         "util.go",
     ],
@@ -51,7 +51,7 @@ go_test(
     srcs = [
         "bind_cache_test.go",
         "capture_test.go",
-        "handle_test.go",
+        "global_handle_test.go",
         "main_test.go",
         "optimize_test.go",
         "session_handle_test.go",
