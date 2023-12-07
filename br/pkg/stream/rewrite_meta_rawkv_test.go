@@ -4,9 +4,11 @@ package stream
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -24,8 +26,10 @@ func mockGenGenGlobalID(ctx context.Context) (int64, error) {
 	return increaseID, nil
 }
 
-func MockEmptySchemasReplace(midr *mockInsertDeleteRange) *SchemasReplace {
-	dbMap := make(map[UpstreamID]*DBReplace)
+func MockEmptySchemasReplace(midr *mockInsertDeleteRange, dbMap map[UpstreamID]*DBReplace) *SchemasReplace {
+	if dbMap == nil {
+		dbMap = make(map[UpstreamID]*DBReplace)
+	}
 	if midr == nil {
 		midr = newMockInsertDeleteRange()
 	}
@@ -37,8 +41,7 @@ func MockEmptySchemasReplace(midr *mockInsertDeleteRange) *SchemasReplace {
 		filter.All(),
 		mockGenGenGlobalID,
 		nil,
-		midr.mockInsertDeleteRangeForTable,
-		midr.mockInsertDeleteRangeForIndex,
+		midr.mockRecordDeleteRange,
 	)
 }
 
@@ -80,7 +83,7 @@ func TestTidySchemaMaps(t *testing.T) {
 	drs[oldDBID] = dr
 
 	// create schemas replace and test TidySchemaMaps().
-	sr := NewSchemasReplace(drs, true, nil, 0, filter.All(), nil, nil, nil, nil)
+	sr := NewSchemasReplace(drs, true, nil, 0, filter.All(), nil, nil, nil)
 	globalTableIdMap := sr.globalTableIdMap
 	require.Equal(t, len(globalTableIdMap), 3)
 	require.Equal(t, globalTableIdMap[oldTblID], newTblID)
@@ -127,7 +130,7 @@ func TestRewriteKeyForDB(t *testing.T) {
 	encodedKey := encodeTxnMetaKey(mDbs, meta.DBkey(dbID), ts)
 
 	// create schemasReplace.
-	sr := MockEmptySchemasReplace(nil)
+	sr := MockEmptySchemasReplace(nil, nil)
 
 	// preConstruct Map information.
 	sr.SetPreConstructMapStatus()
@@ -170,7 +173,7 @@ func TestRewriteDBInfo(t *testing.T) {
 	require.Nil(t, err)
 
 	// create schemasReplace.
-	sr := MockEmptySchemasReplace(nil)
+	sr := MockEmptySchemasReplace(nil, nil)
 
 	// rewrite it directly without preConstruct Map, it will get failed result.
 	sr.SetRestoreKVStatus()
@@ -238,7 +241,7 @@ func TestRewriteKeyForTable(t *testing.T) {
 	for _, ca := range cases {
 		encodedKey := encodeTxnMetaKey(meta.DBkey(dbID), ca.encodeTableFn(tableID), ts)
 		// create schemasReplace.
-		sr := MockEmptySchemasReplace(nil)
+		sr := MockEmptySchemasReplace(nil, nil)
 
 		// set preConstruct status and construct map information.
 		sr.SetPreConstructMapStatus()
@@ -293,7 +296,7 @@ func TestRewriteTableInfo(t *testing.T) {
 	require.Nil(t, err)
 
 	// create schemasReplace.
-	sr := MockEmptySchemasReplace(nil)
+	sr := MockEmptySchemasReplace(nil, nil)
 	tableCount := 0
 	sr.AfterTableRewritten = func(deleted bool, tableInfo *model.TableInfo) {
 		tableCount++
@@ -371,7 +374,7 @@ func TestRewriteTableInfoForPartitionTable(t *testing.T) {
 	require.Nil(t, err)
 
 	// create schemasReplace, and preConstructMap.
-	sr := MockEmptySchemasReplace(nil)
+	sr := MockEmptySchemasReplace(nil, nil)
 	sr.SetPreConstructMapStatus()
 	newValue, err := sr.rewriteTableInfo(value, dbId)
 	require.Nil(t, err)
@@ -497,7 +500,6 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 		mockGenGenGlobalID,
 		nil,
 		nil,
-		nil,
 	)
 	sr.SetRestoreKVStatus()
 	//exchange partition, t1 parition0 with the t2
@@ -558,7 +560,7 @@ func TestRewriteTableInfoForTTLTable(t *testing.T) {
 	require.Nil(t, err)
 
 	// create empty schemasReplace
-	sr := MockEmptySchemasReplace(nil)
+	sr := MockEmptySchemasReplace(nil, nil)
 
 	// preConsutruct Map information.
 	sr.SetPreConstructMapStatus()
@@ -584,7 +586,7 @@ func TestRewriteTableInfoForTTLTable(t *testing.T) {
 
 func TestIsPreConsturctMapStatus(t *testing.T) {
 	// create empty schemasReplace
-	sr := MockEmptySchemasReplace(nil)
+	sr := MockEmptySchemasReplace(nil, nil)
 	sr.SetPreConstructMapStatus()
 	require.True(t, sr.IsPreConsturctMapStatus())
 	require.False(t, sr.IsRestoreKVStatus())
@@ -627,14 +629,45 @@ var (
 		mDDLJobPartition2NewID: {},
 		mDDLJobTable1NewID:     {},
 	}
+	mDDLJobALLNewTableKeySet = map[string]struct{}{
+		encodeTableKey(mDDLJobTable0NewID):     {},
+		encodeTableKey(mDDLJobPartition0NewID): {},
+		encodeTableKey(mDDLJobPartition1NewID): {},
+		encodeTableKey(mDDLJobPartition2NewID): {},
+		encodeTableKey(mDDLJobTable1NewID):     {},
+	}
 	mDDLJobALLNewPartitionIDSet = map[int64]struct{}{
 		mDDLJobPartition0NewID: {},
 		mDDLJobPartition1NewID: {},
 		mDDLJobPartition2NewID: {},
 	}
+	mDDLJobALLNewPartitionKeySet = map[string]struct{}{
+		encodeTableKey(mDDLJobPartition0NewID): {},
+		encodeTableKey(mDDLJobPartition1NewID): {},
+		encodeTableKey(mDDLJobPartition2NewID): {},
+	}
+	mDDLJobALLNewPartitionIndex2KeySet = map[string]struct{}{
+		encodeTableIndexKey(mDDLJobPartition0NewID, 2): {},
+		encodeTableIndexKey(mDDLJobPartition1NewID, 2): {},
+		encodeTableIndexKey(mDDLJobPartition2NewID, 2): {},
+	}
+	mDDLJobALLNewPartitionIndex3KeySet = map[string]struct{}{
+		encodeTableIndexKey(mDDLJobPartition0NewID, 3): {},
+		encodeTableIndexKey(mDDLJobPartition1NewID, 3): {},
+		encodeTableIndexKey(mDDLJobPartition2NewID, 3): {},
+	}
+	tempIndex2                             = tablecodec.TempIndexPrefix | int64(2)
+	mDDLJobALLNewPartitionTempIndex2KeySet = map[string]struct{}{
+		encodeTableIndexKey(mDDLJobPartition0NewID, tempIndex2): {},
+		encodeTableIndexKey(mDDLJobPartition1NewID, tempIndex2): {},
+		encodeTableIndexKey(mDDLJobPartition2NewID, tempIndex2): {},
+	}
 	mDDLJobALLIndexesIDSet = map[int64]struct{}{
 		2: {},
 		3: {},
+	}
+	mDDLJobAllIndexesKeySet = []map[string]struct{}{
+		mDDLJobALLNewPartitionIndex2KeySet, mDDLJobALLNewPartitionIndex3KeySet,
 	}
 )
 
@@ -664,11 +697,11 @@ var (
 			SubJobs: []*model.SubJob{
 				{
 					Type:    model.ActionDropIndex,
-					RawArgs: json.RawMessage(`[{"O":"k1","L":"k1"},false,1,[72,73,74]]`),
+					RawArgs: json.RawMessage(`[{"O":"k1","L":"k1"},false,2,[72,73,74]]`),
 				},
 				{
 					Type:    model.ActionDropIndex,
-					RawArgs: json.RawMessage(`[{"O":"k2","L":"k2"},false,2,[72,73,74]]`),
+					RawArgs: json.RawMessage(`[{"O":"k2","L":"k2"},false,3,[72,73,74]]`),
 				},
 			},
 		},
@@ -681,55 +714,44 @@ var (
 			SubJobs: []*model.SubJob{
 				{
 					Type:    model.ActionDropIndex,
-					RawArgs: json.RawMessage(`[{"O":"k1","L":"k1"},false,1,[]]`),
+					RawArgs: json.RawMessage(`[{"O":"k1","L":"k1"},false,2,[]]`),
 				},
 				{
 					Type:    model.ActionDropIndex,
-					RawArgs: json.RawMessage(`[{"O":"k2","L":"k2"},false,2,[]]`),
+					RawArgs: json.RawMessage(`[{"O":"k2","L":"k2"},false,3,[]]`),
 				},
 			},
 		},
 	}
 )
 
-type TableDeletQueryArgs struct {
-	tableIDs []int64
-}
-
-type IndexDeleteQueryArgs struct {
-	tableID  int64
-	indexIDs []int64
-}
-
 type mockInsertDeleteRange struct {
-	tableCh chan TableDeletQueryArgs
-	indexCh chan IndexDeleteQueryArgs
+	queryCh chan *PreDelRangeQuery
 }
 
 func newMockInsertDeleteRange() *mockInsertDeleteRange {
 	// Since there is only single thread, we need to set the channel buf large enough.
 	return &mockInsertDeleteRange{
-		tableCh: make(chan TableDeletQueryArgs, 10),
-		indexCh: make(chan IndexDeleteQueryArgs, 10),
+		queryCh: make(chan *PreDelRangeQuery, 10),
 	}
 }
 
-func (midr *mockInsertDeleteRange) mockInsertDeleteRangeForTable(jobID int64, tableIDs []int64) {
-	midr.tableCh <- TableDeletQueryArgs{
-		tableIDs: tableIDs,
-	}
+func (midr *mockInsertDeleteRange) mockRecordDeleteRange(query *PreDelRangeQuery) {
+	midr.queryCh <- query
 }
 
-func (midr *mockInsertDeleteRange) mockInsertDeleteRangeForIndex(jobID int64, elementID *int64, tableID int64, indexIDs []int64) {
-	midr.indexCh <- IndexDeleteQueryArgs{
-		tableID:  tableID,
-		indexIDs: indexIDs,
-	}
+func encodeTableKey(tableID int64) string {
+	key := tablecodec.EncodeTablePrefix(tableID)
+	return hex.EncodeToString(key)
+}
+
+func encodeTableIndexKey(tableID, indexID int64) string {
+	key := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
+	return hex.EncodeToString(key)
 }
 
 func TestDeleteRangeForMDDLJob(t *testing.T) {
 	midr := newMockInsertDeleteRange()
-	schemaReplace := MockEmptySchemasReplace(midr)
 	partitionMap := map[int64]int64{
 		mDDLJobPartition0OldID: mDDLJobPartition0NewID,
 		mDDLJobPartition1OldID: mDDLJobPartition1NewID,
@@ -750,24 +772,25 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 		DbID:     mDDLJobDBNewID,
 		TableMap: tableMap,
 	}
-	schemaReplace.DbMap[mDDLJobDBOldID] = dbReplace
+	schemaReplace := MockEmptySchemasReplace(midr, map[int64]*DBReplace{
+		mDDLJobDBOldID: dbReplace,
+	})
 
-	var targs TableDeletQueryArgs
-	var iargs IndexDeleteQueryArgs
-	var err error
+	var qargs *PreDelRangeQuery
 	// drop schema
-	err = schemaReplace.deleteRange(dropSchemaJob)
+	err := schemaReplace.restoreFromHistory(dropSchemaJob)
 	require.NoError(t, err)
-	targs = <-midr.tableCh
-	require.Equal(t, len(targs.tableIDs), len(mDDLJobALLNewTableIDSet))
-	for _, tableID := range targs.tableIDs {
-		_, exist := mDDLJobALLNewTableIDSet[tableID]
+	qargs = <-midr.queryCh
+	require.Equal(t, len(qargs.ParamsList), len(mDDLJobALLNewTableIDSet))
+	for _, params := range qargs.ParamsList {
+		_, exist := mDDLJobALLNewTableKeySet[params.StartKey]
 		require.True(t, exist)
 	}
 
 	// drop table0
-	err = schemaReplace.deleteRange(dropTable0Job)
+	err = schemaReplace.restoreFromHistory(dropTable0Job)
 	require.NoError(t, err)
+<<<<<<< HEAD
 	targs = <-midr.tableCh
 	require.Equal(t, len(targs.tableIDs), len(mDDLJobALLNewPartitionIDSet)+1)
 	for _, tableID := range targs.tableIDs {
@@ -775,22 +798,52 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 		if !exist {
 			exist = tableID == mDDLJobTable0NewID
 		}
+=======
+	qargs = <-midr.queryCh
+	require.Equal(t, len(qargs.ParamsList), len(mDDLJobALLNewPartitionIDSet))
+	for _, params := range qargs.ParamsList {
+		_, exist := mDDLJobALLNewPartitionKeySet[params.StartKey]
+>>>>>>> be62f754fb4 (ddl: wrap the sessionctx to public delete range logic to BR (#48050))
 		require.True(t, exist)
 	}
+	qargs = <-midr.queryCh
+	require.Equal(t, len(qargs.ParamsList), 1)
+	require.Equal(t, qargs.ParamsList[0].StartKey, encodeTableKey(mDDLJobTable0NewID))
 
 	// drop table1
-	err = schemaReplace.deleteRange(dropTable1Job)
+	err = schemaReplace.restoreFromHistory(dropTable1Job)
 	require.NoError(t, err)
-	targs = <-midr.tableCh
-	require.Equal(t, len(targs.tableIDs), 1)
-	require.Equal(t, targs.tableIDs[0], mDDLJobTable1NewID)
+	qargs = <-midr.queryCh
+	require.Equal(t, len(qargs.ParamsList), 1)
+	require.Equal(t, qargs.ParamsList[0].StartKey, encodeTableKey(mDDLJobTable1NewID))
 
 	// drop table partition1
-	err = schemaReplace.deleteRange(dropTable0Partition1Job)
+	err = schemaReplace.restoreFromHistory(dropTable0Partition1Job)
 	require.NoError(t, err)
-	targs = <-midr.tableCh
-	require.Equal(t, len(targs.tableIDs), 1)
-	require.Equal(t, targs.tableIDs[0], mDDLJobPartition1NewID)
+	qargs = <-midr.queryCh
+	require.Equal(t, len(qargs.ParamsList), 1)
+	require.Equal(t, qargs.ParamsList[0].StartKey, encodeTableKey(mDDLJobPartition1NewID))
+
+	// reorganize table partition1
+	err = schemaReplace.restoreFromHistory(reorganizeTable0Partition1Job)
+	require.NoError(t, err)
+	qargs = <-midr.queryCh
+	require.Equal(t, len(qargs.ParamsList), 1)
+	require.Equal(t, encodeTableKey(mDDLJobPartition1NewID), qargs.ParamsList[0].StartKey)
+
+	// remove table partition1
+	err = schemaReplace.restoreFromHistory(removeTable0Partition1Job)
+	require.NoError(t, err)
+	qargs = <-midr.queryCh
+	require.Equal(t, len(qargs.ParamsList), 1)
+	require.Equal(t, encodeTableKey(mDDLJobPartition1NewID), qargs.ParamsList[0].StartKey)
+
+	// alter table partition1
+	err = schemaReplace.restoreFromHistory(alterTable0Partition1Job)
+	require.NoError(t, err)
+	qargs = <-midr.queryCh
+	require.Equal(t, len(qargs.ParamsList), 1)
+	require.Equal(t, encodeTableKey(mDDLJobPartition1NewID), qargs.ParamsList[0].StartKey)
 
 	// reorganize table partition1
 	err = schemaReplace.deleteRange(reorganizeTable0Partition1Job)
@@ -814,6 +867,7 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	require.Equal(t, targs.tableIDs[0], mDDLJobPartition1NewID)
 
 	// roll back add index for table0
+<<<<<<< HEAD
 	err = schemaReplace.restoreFromHistory(rollBackTable0IndexJob, false)
 	require.NoError(t, err)
 	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
@@ -836,11 +890,27 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 
 	// add index for table 0
 	err = schemaReplace.restoreFromHistory(addTable0IndexJob, false)
+=======
+	err = schemaReplace.restoreFromHistory(rollBackTable0IndexJob)
+>>>>>>> be62f754fb4 (ddl: wrap the sessionctx to public delete range logic to BR (#48050))
 	require.NoError(t, err)
+	oldPartitionIDMap := make(map[string]struct{})
 	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
-		iargs = <-midr.indexCh
-		_, exist := mDDLJobALLNewPartitionIDSet[iargs.tableID]
+		qargs = <-midr.queryCh
+		require.Equal(t, len(qargs.ParamsList), 2)
+		for _, params := range qargs.ParamsList {
+			_, exist := oldPartitionIDMap[params.StartKey]
+			require.False(t, exist)
+			oldPartitionIDMap[params.StartKey] = struct{}{}
+		}
+
+		// index ID
+		_, exist := mDDLJobALLNewPartitionIndex2KeySet[qargs.ParamsList[0].StartKey]
 		require.True(t, exist)
+		// temp index ID
+		_, exist = mDDLJobALLNewPartitionTempIndex2KeySet[qargs.ParamsList[1].StartKey]
+		require.True(t, exist)
+<<<<<<< HEAD
 		require.Equal(t, len(iargs.indexIDs), 1)
 		require.Equal(t, iargs.indexIDs[0], int64(tablecodec.TempIndexPrefix|2))
 	}
@@ -852,52 +922,98 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	require.Equal(t, iargs.tableID, mDDLJobTable1NewID)
 	require.Equal(t, len(iargs.indexIDs), 1)
 	require.Equal(t, iargs.indexIDs[0], int64(tablecodec.TempIndexPrefix|2))
+=======
+	}
+
+	// roll back add index for table1
+	err = schemaReplace.restoreFromHistory(rollBackTable1IndexJob)
+	require.NoError(t, err)
+	qargs = <-midr.queryCh
+	require.Equal(t, len(qargs.ParamsList), 2)
+	// index ID
+	require.Equal(t, encodeTableIndexKey(mDDLJobTable1NewID, int64(2)), qargs.ParamsList[0].StartKey)
+	// temp index ID
+	require.Equal(t, encodeTableIndexKey(mDDLJobTable1NewID, int64(tablecodec.TempIndexPrefix|2)), qargs.ParamsList[1].StartKey)
+>>>>>>> be62f754fb4 (ddl: wrap the sessionctx to public delete range logic to BR (#48050))
 
 	// drop index for table0
-	err = schemaReplace.deleteRange(dropTable0IndexJob)
+	err = schemaReplace.restoreFromHistory(dropTable0IndexJob)
 	require.NoError(t, err)
+	oldPartitionIDMap = make(map[string]struct{})
 	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
-		iargs = <-midr.indexCh
-		_, exist := mDDLJobALLNewPartitionIDSet[iargs.tableID]
+		qargs = <-midr.queryCh
+		require.Equal(t, len(qargs.ParamsList), 1)
+		_, exist := oldPartitionIDMap[qargs.ParamsList[0].StartKey]
+		require.False(t, exist)
+		oldPartitionIDMap[qargs.ParamsList[0].StartKey] = struct{}{}
+		_, exist = mDDLJobALLNewPartitionIndex2KeySet[qargs.ParamsList[0].StartKey]
 		require.True(t, exist)
-		require.Equal(t, len(iargs.indexIDs), 1)
-		require.Equal(t, iargs.indexIDs[0], int64(2))
 	}
 
 	// drop index for table1
-	err = schemaReplace.deleteRange(dropTable1IndexJob)
+	err = schemaReplace.restoreFromHistory(dropTable1IndexJob)
 	require.NoError(t, err)
-	iargs = <-midr.indexCh
-	require.Equal(t, iargs.tableID, mDDLJobTable1NewID)
-	require.Equal(t, len(iargs.indexIDs), 1)
-	require.Equal(t, iargs.indexIDs[0], int64(2))
+	qargs = <-midr.queryCh
+	require.Equal(t, len(qargs.ParamsList), 1)
+	require.Equal(t, encodeTableIndexKey(mDDLJobTable1NewID, int64(2)), qargs.ParamsList[0].StartKey)
 
-	// drop column for table0
-	err = schemaReplace.deleteRange(dropTable0ColumnJob)
+<<<<<<< HEAD
+=======
+	// add index for table 0
+	err = schemaReplace.restoreFromHistory(addTable0IndexJob)
 	require.NoError(t, err)
+	oldPartitionIDMap = make(map[string]struct{})
 	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
-		iargs = <-midr.indexCh
-		_, exist := mDDLJobALLNewPartitionIDSet[iargs.tableID]
+		qargs = <-midr.queryCh
+		require.Equal(t, len(qargs.ParamsList), 1)
+		_, exist := oldPartitionIDMap[qargs.ParamsList[0].StartKey]
+		require.False(t, exist)
+		oldPartitionIDMap[qargs.ParamsList[0].StartKey] = struct{}{}
+		_, exist = mDDLJobALLNewPartitionTempIndex2KeySet[qargs.ParamsList[0].StartKey]
 		require.True(t, exist)
-		require.Equal(t, len(iargs.indexIDs), len(mDDLJobALLIndexesIDSet))
-		for _, indexID := range iargs.indexIDs {
-			_, exist := mDDLJobALLIndexesIDSet[indexID]
-			require.True(t, exist)
+	}
+
+	// add index for table 1
+	err = schemaReplace.restoreFromHistory(addTable1IndexJob)
+	require.NoError(t, err)
+	qargs = <-midr.queryCh
+	require.Equal(t, len(qargs.ParamsList), 1)
+	require.Equal(t, encodeTableIndexKey(mDDLJobTable1NewID, tempIndex2), qargs.ParamsList[0].StartKey)
+
+>>>>>>> be62f754fb4 (ddl: wrap the sessionctx to public delete range logic to BR (#48050))
+	// drop column for table0
+	err = schemaReplace.restoreFromHistory(dropTable0ColumnJob)
+	require.NoError(t, err)
+	oldPartitionIDMap = make(map[string]struct{})
+	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
+		qargs = <-midr.queryCh
+		require.Equal(t, len(qargs.ParamsList), 2)
+		for _, params := range qargs.ParamsList {
+			_, exist := oldPartitionIDMap[params.StartKey]
+			require.False(t, exist)
+			oldPartitionIDMap[params.StartKey] = struct{}{}
 		}
+
+		// index ID 2
+		_, exist := mDDLJobALLNewPartitionIndex2KeySet[qargs.ParamsList[0].StartKey]
+		require.True(t, exist)
+		// index ID 3
+		_, exist = mDDLJobALLNewPartitionIndex3KeySet[qargs.ParamsList[1].StartKey]
+		require.True(t, exist)
 	}
 
 	// drop column for table1
-	err = schemaReplace.deleteRange(dropTable1ColumnJob)
+	err = schemaReplace.restoreFromHistory(dropTable1ColumnJob)
 	require.NoError(t, err)
-	iargs = <-midr.indexCh
-	require.Equal(t, iargs.tableID, mDDLJobTable1NewID)
-	require.Equal(t, len(iargs.indexIDs), len(mDDLJobALLIndexesIDSet))
-	for _, indexID := range iargs.indexIDs {
-		_, exist := mDDLJobALLIndexesIDSet[indexID]
-		require.True(t, exist)
-	}
+	qargs = <-midr.queryCh
+	require.Equal(t, len(qargs.ParamsList), len(mDDLJobALLIndexesIDSet))
+	// index ID 2
+	require.Equal(t, encodeTableIndexKey(mDDLJobTable1NewID, int64(2)), qargs.ParamsList[0].StartKey)
+	// index ID 3
+	require.Equal(t, encodeTableIndexKey(mDDLJobTable1NewID, int64(3)), qargs.ParamsList[1].StartKey)
 
 	// modify column for table0
+<<<<<<< HEAD
 	err = schemaReplace.deleteRange(modifyTable0ColumnJob)
 	require.NoError(t, err)
 	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
@@ -921,27 +1037,67 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 		_, exist := mDDLJobALLIndexesIDSet[indexID]
 		require.True(t, exist)
 	}
+=======
+	err = schemaReplace.restoreFromHistory(modifyTable0ColumnJob)
+	require.NoError(t, err)
+	oldPartitionIDMap = make(map[string]struct{})
+	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
+		qargs = <-midr.queryCh
+		require.Equal(t, len(qargs.ParamsList), 2)
+		for _, params := range qargs.ParamsList {
+			_, exist := oldPartitionIDMap[params.StartKey]
+			require.False(t, exist)
+			oldPartitionIDMap[params.StartKey] = struct{}{}
+		}
+
+		// index ID 2
+		_, exist := mDDLJobALLNewPartitionIndex2KeySet[qargs.ParamsList[0].StartKey]
+		require.True(t, exist)
+		// index ID 3
+		_, exist = mDDLJobALLNewPartitionIndex3KeySet[qargs.ParamsList[1].StartKey]
+		require.True(t, exist)
+	}
+
+	// modify column for table1
+	err = schemaReplace.restoreFromHistory(modifyTable1ColumnJob)
+	require.NoError(t, err)
+	qargs = <-midr.queryCh
+	require.Equal(t, len(qargs.ParamsList), len(mDDLJobALLIndexesIDSet))
+	// index ID 2
+	require.Equal(t, encodeTableIndexKey(mDDLJobTable1NewID, int64(2)), qargs.ParamsList[0].StartKey)
+	// index ID 3
+	require.Equal(t, encodeTableIndexKey(mDDLJobTable1NewID, int64(3)), qargs.ParamsList[1].StartKey)
+>>>>>>> be62f754fb4 (ddl: wrap the sessionctx to public delete range logic to BR (#48050))
 
 	// drop indexes(multi-schema-change) for table0
-	err = schemaReplace.restoreFromHistory(multiSchemaChangeJob0, false)
+	err = schemaReplace.restoreFromHistory(multiSchemaChangeJob0)
 	require.NoError(t, err)
+	oldPartitionIDMap = make(map[string]struct{})
 	for l := 0; l < 2; l++ {
 		for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
-			iargs = <-midr.indexCh
-			_, exist := mDDLJobALLNewPartitionIDSet[iargs.tableID]
+			qargs = <-midr.queryCh
+			require.Equal(t, len(qargs.ParamsList), 1)
+			_, exist := oldPartitionIDMap[qargs.ParamsList[0].StartKey]
+			require.False(t, exist)
+			oldPartitionIDMap[qargs.ParamsList[0].StartKey] = struct{}{}
+			_, exist = mDDLJobAllIndexesKeySet[l][qargs.ParamsList[0].StartKey]
 			require.True(t, exist)
-			require.Equal(t, len(iargs.indexIDs), 1)
-			require.Equal(t, iargs.indexIDs[0], int64(l+1))
 		}
 	}
 
 	// drop indexes(multi-schema-change) for table1
-	err = schemaReplace.restoreFromHistory(multiSchemaChangeJob1, false)
+	err = schemaReplace.restoreFromHistory(multiSchemaChangeJob1)
 	require.NoError(t, err)
-	for l := 0; l < 2; l++ {
-		iargs = <-midr.indexCh
-		require.Equal(t, iargs.tableID, mDDLJobTable1NewID)
-		require.Equal(t, len(iargs.indexIDs), 1)
-		require.Equal(t, iargs.indexIDs[0], int64(l+1))
-	}
+	qargs = <-midr.queryCh
+	require.Equal(t, len(qargs.ParamsList), 1)
+	require.Equal(t, encodeTableIndexKey(mDDLJobTable1NewID, int64(2)), qargs.ParamsList[0].StartKey)
+
+	qargs = <-midr.queryCh
+	require.Equal(t, len(qargs.ParamsList), 1)
+	require.Equal(t, encodeTableIndexKey(mDDLJobTable1NewID, int64(3)), qargs.ParamsList[0].StartKey)
+}
+
+func TestCompatibleAlert(t *testing.T) {
+	require.Equal(t, ddl.BRInsertDeleteRangeSQLPrefix, `INSERT IGNORE INTO mysql.gc_delete_range VALUES `)
+	require.Equal(t, ddl.BRInsertDeleteRangeSQLValue, `(%?, %?, %?, %?, %?)`)
 }
