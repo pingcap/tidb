@@ -160,8 +160,8 @@ type Client struct {
 	// this feature is controlled by flag with-sys-table
 	fullClusterRestore bool
 	// the query to insert rows into table `gc_delete_range`, lack of ts.
-	deleteRangeQuery          []string
-	deleteRangeQueryCh        chan string
+	deleteRangeQuery          []*stream.PreDelRangeQuery
+	deleteRangeQueryCh        chan *stream.PreDelRangeQuery
 	deleteRangeQueryWaitGroup sync.WaitGroup
 
 	// see RestoreCommonConfig.WithSysTable
@@ -184,8 +184,8 @@ func NewRestoreClient(
 		tlsConf:            tlsConf,
 		keepaliveConf:      keepaliveConf,
 		switchCh:           make(chan struct{}),
-		deleteRangeQuery:   make([]string, 0),
-		deleteRangeQueryCh: make(chan string, 10),
+		deleteRangeQuery:   make([]*stream.PreDelRangeQuery, 0),
+		deleteRangeQueryCh: make(chan *stream.PreDelRangeQuery, 10),
 	}
 }
 
@@ -2247,7 +2247,68 @@ func (rc *Client) InitSchemasReplaceForDDL(
 		}
 	}
 
+<<<<<<< HEAD
 	for oldDBID, dbReplace := range dbMap {
+=======
+	// a new task, but without full snapshot restore, tries to load
+	// schemas map whose `restore-ts`` is the task's `start-ts`.
+	if len(dbMaps) <= 0 && !cfg.HasFullRestore {
+		log.Info("try to load pitr id maps of the previous task", zap.Uint64("start-ts", rc.startTS))
+		needConstructIdMap = true
+		dbMaps, err = rc.initSchemasMap(ctx, rc.GetClusterID(ctx), rc.startTS)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	if len(dbMaps) <= 0 {
+		log.Info("no id maps, build the table replaces from cluster and full backup schemas")
+		needConstructIdMap = true
+		s, err := storage.New(ctx, cfg.FullBackupStorage.Backend, cfg.FullBackupStorage.Opts)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		fullBackupTables, err := initFullBackupTables(ctx, s, cfg.TableFilter)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for _, t := range fullBackupTables {
+			dbName, _ := utils.GetSysDBCIStrName(t.DB.Name)
+			newDBInfo, exist := rc.GetDBSchema(rc.GetDomain(), dbName)
+			if !exist {
+				log.Info("db not existed", zap.String("dbname", dbName.String()))
+				continue
+			}
+
+			dbReplace, exist := dbReplaces[t.DB.ID]
+			if !exist {
+				dbReplace = stream.NewDBReplace(t.DB.Name.O, newDBInfo.ID)
+				dbReplaces[t.DB.ID] = dbReplace
+			}
+
+			if t.Info == nil {
+				// If the db is empty, skip it.
+				continue
+			}
+			newTableInfo, err := rc.GetTableSchema(rc.GetDomain(), dbName, t.Info.Name)
+			if err != nil {
+				log.Info("table not existed", zap.String("tablename", dbName.String()+"."+t.Info.Name.String()))
+				continue
+			}
+
+			dbReplace.TableMap[t.Info.ID] = &stream.TableReplace{
+				Name:         newTableInfo.Name.O,
+				TableID:      newTableInfo.ID,
+				PartitionMap: getPartitionIDMap(newTableInfo, t.Info),
+				IndexMap:     getIndexIDMap(newTableInfo, t.Info),
+			}
+		}
+	} else {
+		dbReplaces = stream.FromSchemaMaps(dbMaps)
+	}
+
+	for oldDBID, dbReplace := range dbReplaces {
+>>>>>>> be62f754fb4 (ddl: wrap the sessionctx to public delete range logic to BR (#48050))
 		log.Info("replace info", func() []zapcore.Field {
 			fields := make([]zapcore.Field, 0, (len(dbReplace.TableMap)+1)*3)
 			fields = append(fields,
@@ -2264,7 +2325,13 @@ func (rc *Client) InitSchemasReplaceForDDL(
 		}()...)
 	}
 
+<<<<<<< HEAD
 	rp := stream.NewSchemasReplace(dbMap, rc.currentTS, tableFilter, rc.GenGlobalID, rc.GenGlobalIDs, rc.InsertDeleteRangeForTable, rc.InsertDeleteRangeForIndex)
+=======
+	rp := stream.NewSchemasReplace(
+		dbReplaces, needConstructIdMap, cfg.TiFlashRecorder, rc.currentTS, cfg.TableFilter, rc.GenGlobalID, rc.GenGlobalIDs,
+		rc.RecordDeleteRange)
+>>>>>>> be62f754fb4 (ddl: wrap the sessionctx to public delete range logic to BR (#48050))
 	return rp, nil
 }
 
@@ -2618,6 +2685,7 @@ func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
 }
 
 const (
+<<<<<<< HEAD
 	insertDeleteRangeSQLPrefix = `INSERT IGNORE INTO mysql.gc_delete_range VALUES `
 	insertDeleteRangeSQLValue  = "(%d, %d, '%s', '%s', %%[1]d)"
 
@@ -2677,6 +2745,185 @@ func (rc *Client) InsertDeleteRangeForIndex(jobID int64, elementID *int64, table
 		}
 		rc.deleteRangeQueryCh <- buf.String()
 	}
+=======
+	alterTableDropIndexSQL         = "ALTER TABLE %n.%n DROP INDEX %n"
+	alterTableAddIndexFormat       = "ALTER TABLE %%n.%%n ADD INDEX %%n(%s)"
+	alterTableAddUniqueIndexFormat = "ALTER TABLE %%n.%%n ADD UNIQUE KEY %%n(%s)"
+	alterTableAddPrimaryFormat     = "ALTER TABLE %%n.%%n ADD PRIMARY KEY (%s) NONCLUSTERED"
+)
+
+func (rc *Client) generateRepairIngestIndexSQLs(
+	ctx context.Context,
+	ingestRecorder *ingestrec.IngestRecorder,
+	allSchema []*model.DBInfo,
+	taskName string,
+) ([]checkpoint.CheckpointIngestIndexRepairSQL, bool, error) {
+	var sqls []checkpoint.CheckpointIngestIndexRepairSQL
+	if rc.useCheckpoint {
+		exists, err := checkpoint.ExistsCheckpointIngestIndexRepairSQLs(ctx, rc.storage, taskName)
+		if err != nil {
+			return sqls, false, errors.Trace(err)
+		}
+		if exists {
+			checkpointSQLs, err := checkpoint.LoadCheckpointIngestIndexRepairSQLs(ctx, rc.storage, taskName)
+			if err != nil {
+				return sqls, false, errors.Trace(err)
+			}
+			sqls = checkpointSQLs.SQLs
+			log.Info("load ingest index repair sqls from checkpoint", zap.String("category", "ingest"), zap.Reflect("sqls", sqls))
+			return sqls, true, nil
+		}
+	}
+
+	ingestRecorder.UpdateIndexInfo(allSchema)
+	if err := ingestRecorder.Iterate(func(_, indexID int64, info *ingestrec.IngestIndexInfo) error {
+		var (
+			addSQL  strings.Builder
+			addArgs []interface{} = make([]interface{}, 0, 5+len(info.ColumnArgs))
+		)
+		if info.IsPrimary {
+			addSQL.WriteString(fmt.Sprintf(alterTableAddPrimaryFormat, info.ColumnList))
+			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O)
+			addArgs = append(addArgs, info.ColumnArgs...)
+		} else if info.IndexInfo.Unique {
+			addSQL.WriteString(fmt.Sprintf(alterTableAddUniqueIndexFormat, info.ColumnList))
+			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O, info.IndexInfo.Name.O)
+			addArgs = append(addArgs, info.ColumnArgs...)
+		} else {
+			addSQL.WriteString(fmt.Sprintf(alterTableAddIndexFormat, info.ColumnList))
+			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O, info.IndexInfo.Name.O)
+			addArgs = append(addArgs, info.ColumnArgs...)
+		}
+		// USING BTREE/HASH/RTREE
+		indexTypeStr := info.IndexInfo.Tp.String()
+		if len(indexTypeStr) > 0 {
+			addSQL.WriteString(" USING ")
+			addSQL.WriteString(indexTypeStr)
+		}
+
+		// COMMENT [...]
+		if len(info.IndexInfo.Comment) > 0 {
+			addSQL.WriteString(" COMMENT %?")
+			addArgs = append(addArgs, info.IndexInfo.Comment)
+		}
+
+		if info.IndexInfo.Invisible {
+			addSQL.WriteString(" INVISIBLE")
+		} else {
+			addSQL.WriteString(" VISIBLE")
+		}
+
+		sqls = append(sqls, checkpoint.CheckpointIngestIndexRepairSQL{
+			IndexID:    indexID,
+			SchemaName: info.SchemaName,
+			TableName:  info.TableName,
+			IndexName:  info.IndexInfo.Name.O,
+			AddSQL:     addSQL.String(),
+			AddArgs:    addArgs,
+		})
+
+		return nil
+	}); err != nil {
+		return sqls, false, errors.Trace(err)
+	}
+
+	if rc.useCheckpoint && len(sqls) > 0 {
+		if err := checkpoint.SaveCheckpointIngestIndexRepairSQLs(ctx, rc.storage, &checkpoint.CheckpointIngestIndexRepairSQLs{
+			SQLs: sqls,
+		}, taskName); err != nil {
+			return sqls, false, errors.Trace(err)
+		}
+	}
+	return sqls, false, nil
+}
+
+// RepairIngestIndex drops the indexes from IngestRecorder and re-add them.
+func (rc *Client) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestrec.IngestRecorder, g glue.Glue, storage kv.Storage, taskName string) error {
+	dom, err := g.GetDomain(storage)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	info := dom.InfoSchema()
+
+	sqls, fromCheckpoint, err := rc.generateRepairIngestIndexSQLs(ctx, ingestRecorder, info.AllSchemas(), taskName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	console := glue.GetConsole(g)
+NEXTSQL:
+	for _, sql := range sqls {
+		progressTitle := fmt.Sprintf("repair ingest index %s for table %s.%s", sql.IndexName, sql.SchemaName, sql.TableName)
+
+		tableInfo, err := info.TableByName(sql.SchemaName, sql.TableName)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		oldIndexIDFound := false
+		if fromCheckpoint {
+			for _, idx := range tableInfo.Indices() {
+				indexInfo := idx.Meta()
+				if indexInfo.ID == sql.IndexID {
+					// the original index id is not dropped
+					oldIndexIDFound = true
+					break
+				}
+				// what if index's state is not public?
+				if indexInfo.Name.O == sql.IndexName {
+					// find the same name index, but not the same index id,
+					// which means the repaired index id is created
+					if _, err := fmt.Fprintf(console.Out(), "%s ... %s\n", progressTitle, color.HiGreenString("SKIPPED DUE TO CHECKPOINT MODE")); err != nil {
+						return errors.Trace(err)
+					}
+					continue NEXTSQL
+				}
+			}
+		}
+
+		if err := func(sql checkpoint.CheckpointIngestIndexRepairSQL) error {
+			w := console.StartProgressBar(progressTitle, glue.OnlyOneTask)
+			defer w.Close()
+
+			// TODO: When the TiDB supports the DROP and CREATE the same name index in one SQL,
+			//   the checkpoint for ingest recorder can be removed and directly use the SQL:
+			//      ALTER TABLE db.tbl DROP INDEX `i_1`, ADD IDNEX `i_1` ...
+			//
+			// This SQL is compatible with checkpoint: If one ingest index has been recreated by
+			// the SQL, the index's id would be another one. In the next retry execution, BR can
+			// not find the ingest index's dropped id so that BR regards it as a dropped index by
+			// restored metakv and then skips repairing it.
+
+			// only when first execution or old index id is not dropped
+			if !fromCheckpoint || oldIndexIDFound {
+				if err := rc.db.se.ExecuteInternal(ctx, alterTableDropIndexSQL, sql.SchemaName.O, sql.TableName.O, sql.IndexName); err != nil {
+					return errors.Trace(err)
+				}
+			}
+			failpoint.Inject("failed-before-create-ingest-index", func(v failpoint.Value) {
+				if v != nil && v.(bool) {
+					failpoint.Return(errors.New("failed before create ingest index"))
+				}
+			})
+			// create the repaired index when first execution or not found it
+			if err := rc.db.se.ExecuteInternal(ctx, sql.AddSQL, sql.AddArgs...); err != nil {
+				return errors.Trace(err)
+			}
+			w.Inc()
+			if err := w.Wait(ctx); err != nil {
+				return errors.Trace(err)
+			}
+			return nil
+		}(sql); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return nil
+}
+
+func (rc *Client) RecordDeleteRange(sql *stream.PreDelRangeQuery) {
+	rc.deleteRangeQueryCh <- sql
+>>>>>>> be62f754fb4 (ddl: wrap the sessionctx to public delete range logic to BR (#48050))
 }
 
 // use channel to save the delete-range query to make it thread-safety.
@@ -2707,8 +2954,28 @@ func (rc *Client) InsertGCRows(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	jobIDMap := make(map[int64]int64)
 	for _, query := range rc.deleteRangeQuery {
-		if err := rc.db.se.ExecuteInternal(ctx, fmt.Sprintf(query, ts)); err != nil {
+		paramsList := make([]interface{}, 0, len(query.ParamsList)*5)
+		for _, params := range query.ParamsList {
+			newJobID, exists := jobIDMap[params.JobID]
+			if !exists {
+				newJobID, err = rc.GenGlobalID(ctx)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				jobIDMap[params.JobID] = newJobID
+			}
+			log.Info("insert into the delete range",
+				zap.Int64("jobID", newJobID),
+				zap.Int64("elemID", params.ElemID),
+				zap.String("startKey", params.StartKey),
+				zap.String("endKey", params.EndKey),
+				zap.Uint64("ts", ts))
+			// (job_id, elem_id, start_key, end_key, ts)
+			paramsList = append(paramsList, newJobID, params.ElemID, params.StartKey, params.EndKey, ts)
+		}
+		if err := rc.db.se.ExecuteInternal(ctx, query.Sql, paramsList...); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -2716,7 +2983,7 @@ func (rc *Client) InsertGCRows(ctx context.Context) error {
 }
 
 // only for unit test
-func (rc *Client) GetGCRows() []string {
+func (rc *Client) GetGCRows() []*stream.PreDelRangeQuery {
 	close(rc.deleteRangeQueryCh)
 	rc.deleteRangeQueryWaitGroup.Wait()
 	return rc.deleteRangeQuery

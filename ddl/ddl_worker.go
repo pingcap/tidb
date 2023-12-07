@@ -576,6 +576,7 @@ func needUpdateRawArgs(job *model.Job, meetErr bool) bool {
 	return true
 }
 
+<<<<<<< HEAD:ddl/ddl_worker.go
 func (w *worker) deleteRange(ctx context.Context, job *model.Job) error {
 	var err error
 	if job.Version <= currentVersion {
@@ -587,6 +588,13 @@ func (w *worker) deleteRange(ctx context.Context, job *model.Job) error {
 }
 
 func jobNeedGC(job *model.Job) bool {
+=======
+// JobNeedGC is called to determine whether delete-ranges need to be generated for the provided job.
+//
+// NOTICE: BR also uses jobNeedGC to determine whether delete-ranges need to be generated for the provided job.
+// Therefore, please make sure any modification is compatible with BR.
+func JobNeedGC(job *model.Job) bool {
+>>>>>>> be62f754fb4 (ddl: wrap the sessionctx to public delete range logic to BR (#48050)):pkg/ddl/ddl_worker.go
 	if !job.IsCancelled() {
 		if job.Warning != nil && dbterror.ErrCantDropFieldOrKey.Equal(job.Warning) {
 			// For the field/key not exists warnings, there is no need to
@@ -599,9 +607,15 @@ func jobNeedGC(job *model.Job) bool {
 			model.ActionAddIndex, model.ActionAddPrimaryKey:
 			return true
 		case model.ActionMultiSchemaChange:
+<<<<<<< HEAD:ddl/ddl_worker.go
 			for _, sub := range job.MultiSchemaInfo.SubJobs {
 				proxyJob := sub.ToProxyJob(job)
 				needGC := jobNeedGC(&proxyJob)
+=======
+			for i, sub := range job.MultiSchemaInfo.SubJobs {
+				proxyJob := sub.ToProxyJob(job, i)
+				needGC := JobNeedGC(&proxyJob)
+>>>>>>> be62f754fb4 (ddl: wrap the sessionctx to public delete range logic to BR (#48050)):pkg/ddl/ddl_worker.go
 				if needGC {
 					return true
 				}
@@ -620,8 +634,13 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 
+<<<<<<< HEAD:ddl/ddl_worker.go
 	if jobNeedGC(job) {
 		err = w.deleteRange(w.ctx, job)
+=======
+	if JobNeedGC(job) {
+		err = w.delRangeManager.addDelRangeJob(w.ctx, job)
+>>>>>>> be62f754fb4 (ddl: wrap the sessionctx to public delete range logic to BR (#48050)):pkg/ddl/ddl_worker.go
 		if err != nil {
 			return errors.Trace(err)
 		}

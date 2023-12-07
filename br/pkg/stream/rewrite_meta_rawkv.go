@@ -21,12 +21,23 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/tablecodec"
 	filter "github.com/pingcap/tidb/util/table-filter"
+=======
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
+	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	filter "github.com/pingcap/tidb/pkg/util/table-filter"
+>>>>>>> be62f754fb4 (ddl: wrap the sessionctx to public delete range logic to BR (#48050))
 	"go.uber.org/zap"
 )
 
@@ -55,6 +66,7 @@ type DBReplace struct {
 }
 
 type SchemasReplace struct {
+<<<<<<< HEAD
 	DbMap                     map[OldID]*DBReplace
 	globalTableIdMap          map[OldID]NewID
 	RewriteTS                 uint64        // used to rewrite commit ts in meta kv.
@@ -63,6 +75,21 @@ type SchemasReplace struct {
 	genGenGlobalIDs           func(ctx context.Context, n int) ([]int64, error)
 	insertDeleteRangeForTable func(jobID int64, tableIDs []int64)
 	insertDeleteRangeForIndex func(jobID int64, elementID *int64, tableID int64, indexIDs []int64)
+=======
+	status             RewriteStatus
+	DbMap              map[UpstreamID]*DBReplace
+	globalTableIdMap   map[UpstreamID]DownstreamID
+	needConstructIdMap bool
+
+	delRangeRecorder *brDelRangeExecWrapper
+	ingestRecorder   *ingestrec.IngestRecorder
+	TiflashRecorder  *tiflashrec.TiFlashRecorder
+	RewriteTS        uint64        // used to rewrite commit ts in meta kv.
+	TableFilter      filter.Filter // used to filter schema/table
+
+	genGenGlobalID  func(ctx context.Context) (int64, error)
+	genGenGlobalIDs func(ctx context.Context, n int) ([]int64, error)
+>>>>>>> be62f754fb4 (ddl: wrap the sessionctx to public delete range logic to BR (#48050))
 
 	AfterTableRewritten func(deleted bool, tableInfo *model.TableInfo)
 }
@@ -93,8 +120,7 @@ func NewSchemasReplace(
 	tableFilter filter.Filter,
 	genID func(ctx context.Context) (int64, error),
 	genIDs func(ctx context.Context, n int) ([]int64, error),
-	insertDeleteRangeForTable func(jobID int64, tableIDs []int64),
-	insertDeleteRangeForIndex func(jobID int64, elementID *int64, tableID int64, indexIDs []int64),
+	recordDeleteRange func(*PreDelRangeQuery),
 ) *SchemasReplace {
 	globalTableIdMap := make(map[OldID]NewID)
 	for _, dr := range dbMap {
@@ -107,6 +133,7 @@ func NewSchemasReplace(
 	}
 
 	return &SchemasReplace{
+<<<<<<< HEAD
 		DbMap:                     dbMap,
 		globalTableIdMap:          globalTableIdMap,
 		RewriteTS:                 restoreTS,
@@ -115,6 +142,18 @@ func NewSchemasReplace(
 		genGenGlobalIDs:           genIDs,
 		insertDeleteRangeForTable: insertDeleteRangeForTable,
 		insertDeleteRangeForIndex: insertDeleteRangeForIndex,
+=======
+		DbMap:              dbMap,
+		globalTableIdMap:   globalTableIdMap,
+		needConstructIdMap: needConstructIdMap,
+		delRangeRecorder:   newDelRangeExecWrapper(globalTableIdMap, recordDeleteRange),
+		ingestRecorder:     ingestrec.New(),
+		TiflashRecorder:    tiflashRecorder,
+		RewriteTS:          restoreTS,
+		TableFilter:        tableFilter,
+		genGenGlobalID:     genID,
+		genGenGlobalIDs:    genIDs,
+>>>>>>> be62f754fb4 (ddl: wrap the sessionctx to public delete range logic to BR (#48050))
 	}
 }
 
@@ -534,7 +573,11 @@ func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, err
 				return nil, nil
 			}
 
+<<<<<<< HEAD
 			return nil, sr.tryToGCJob(job)
+=======
+			return nil, sr.restoreFromHistory(job)
+>>>>>>> be62f754fb4 (ddl: wrap the sessionctx to public delete range logic to BR (#48050))
 		}
 		return nil, nil
 	}
@@ -565,6 +608,7 @@ func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, err
 	}
 }
 
+<<<<<<< HEAD
 func (sr *SchemasReplace) tryToGCJob(job *model.Job) error {
 	if !job.IsCancelled() {
 		switch job.Type {
@@ -579,11 +623,24 @@ func (sr *SchemasReplace) tryToGCJob(job *model.Job) error {
 					return err
 				}
 			}
+=======
+func (sr *SchemasReplace) tryRecordIngestIndex(job *model.Job) error {
+	if job.Type != model.ActionMultiSchemaChange {
+		return sr.ingestRecorder.TryAddJob(job, false)
+	}
+
+	for i, sub := range job.MultiSchemaInfo.SubJobs {
+		proxyJob := sub.ToProxyJob(job, i)
+		// ASSERT: the proxyJob can not be MultiSchemaInfo anymore
+		if err := sr.ingestRecorder.TryAddJob(&proxyJob, true); err != nil {
+			return err
+>>>>>>> be62f754fb4 (ddl: wrap the sessionctx to public delete range logic to BR (#48050))
 		}
 	}
 	return nil
 }
 
+<<<<<<< HEAD
 func (sr *SchemasReplace) deleteRange(job *model.Job) error {
 	lctx := logutil.ContextWithField(context.Background(), logutil.RedactAny("category", "ddl: rewrite delete range"))
 	dbReplace, exist := sr.DbMap[job.SchemaID]
@@ -904,7 +961,77 @@ func (sr *SchemasReplace) deleteRange(job *model.Job) error {
 			}
 		} else {
 			sr.insertDeleteRangeForIndex(newJobID, &elementID, tableReplace.NewTableID, indexIDs)
+=======
+func (sr *SchemasReplace) restoreFromHistory(job *model.Job) error {
+	if ddl.JobNeedGC(job) {
+		if err := ddl.AddDelRangeJobInternal(context.TODO(), sr.delRangeRecorder, job); err != nil {
+			return err
+>>>>>>> be62f754fb4 (ddl: wrap the sessionctx to public delete range logic to BR (#48050))
 		}
 	}
+
+	return sr.tryRecordIngestIndex(job)
+}
+
+type DelRangeParams struct {
+	JobID    int64
+	ElemID   int64
+	StartKey string
+	EndKey   string
+}
+
+type PreDelRangeQuery struct {
+	Sql        string
+	ParamsList []DelRangeParams
+}
+
+type brDelRangeExecWrapper struct {
+	globalTableIdMap map[UpstreamID]DownstreamID
+
+	recordDeleteRange func(*PreDelRangeQuery)
+
+	// temporary values
+	query *PreDelRangeQuery
+}
+
+func newDelRangeExecWrapper(
+	globalTableIdMap map[UpstreamID]DownstreamID,
+	recordDeleteRange func(*PreDelRangeQuery),
+) *brDelRangeExecWrapper {
+	return &brDelRangeExecWrapper{
+		globalTableIdMap:  globalTableIdMap,
+		recordDeleteRange: recordDeleteRange,
+
+		query: nil,
+	}
+}
+
+// UpdateTSOForJob just does nothing. BR would generate ts after log restore done.
+func (bdr *brDelRangeExecWrapper) UpdateTSOForJob() error {
+	return nil
+}
+
+func (bdr *brDelRangeExecWrapper) PrepareParamsList(sz int) {
+	bdr.query = &PreDelRangeQuery{
+		ParamsList: make([]DelRangeParams, 0, sz),
+	}
+}
+
+func (bdr *brDelRangeExecWrapper) RewriteTableID(tableID int64) (int64, bool) {
+	tableID, exists := bdr.globalTableIdMap[tableID]
+	if !exists {
+		log.Warn("failed to find the downstream id when rewrite delete range", zap.Int64("tableID", tableID))
+	}
+	return tableID, exists
+}
+
+func (bdr *brDelRangeExecWrapper) AppendParamsList(jobID, elemID int64, startKey, endKey string) {
+	bdr.query.ParamsList = append(bdr.query.ParamsList, DelRangeParams{jobID, elemID, startKey, endKey})
+}
+
+func (bdr *brDelRangeExecWrapper) ConsumeDeleteRange(ctx context.Context, sql string) error {
+	bdr.query.Sql = sql
+	bdr.recordDeleteRange(bdr.query)
+	bdr.query = nil
 	return nil
 }

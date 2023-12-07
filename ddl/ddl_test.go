@@ -53,6 +53,7 @@ func (d *ddl) SetInterceptor(i Interceptor) {
 	d.mu.interceptor = i
 }
 
+<<<<<<< HEAD:ddl/ddl_test.go
 // JobNeedGCForTest is only used for test.
 var JobNeedGCForTest = jobNeedGC
 
@@ -69,6 +70,26 @@ func testNewDDLAndStart(ctx context.Context, options ...Option) (*ddl, error) {
 	d := newDDL(ctx, options...)
 	err := d.Start(nil)
 	return d, err
+=======
+// IsReorgCanceled exports for testing.
+func (rc *reorgCtx) IsReorgCanceled() bool {
+	return rc.isReorgCanceled()
+}
+
+// NewReorgCtx exports for testing.
+func (d *ddl) NewReorgCtx(jobID int64, rowCount int64) *reorgCtx {
+	return d.newReorgCtx(jobID, rowCount)
+}
+
+// GetReorgCtx exports for testing.
+func (d *ddl) GetReorgCtx(jobID int64) *reorgCtx {
+	return d.getReorgCtx(jobID)
+}
+
+// RemoveReorgCtx exports for testing.
+func (d *ddl) RemoveReorgCtx(id int64) {
+	d.removeReorgCtx(id)
+>>>>>>> be62f754fb4 (ddl: wrap the sessionctx to public delete range logic to BR (#48050)):pkg/ddl/ddl_test.go
 }
 
 func createMockStore(t *testing.T) kv.Storage {

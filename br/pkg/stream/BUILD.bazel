@@ -20,6 +20,7 @@ go_library(
         "//br/pkg/storage",
         "//br/pkg/streamhelper",
         "//br/pkg/utils",
+<<<<<<< HEAD
         "//kv",
         "//meta",
         "//parser/model",
@@ -27,6 +28,16 @@ go_library(
         "//util",
         "//util/codec",
         "//util/table-filter",
+=======
+        "//pkg/ddl",
+        "//pkg/kv",
+        "//pkg/meta",
+        "//pkg/parser/model",
+        "//pkg/tablecodec",
+        "//pkg/util",
+        "//pkg/util/codec",
+        "//pkg/util/table-filter",
+>>>>>>> be62f754fb4 (ddl: wrap the sessionctx to public delete range logic to BR (#48050))
         "@com_github_fatih_color//:color",
         "@com_github_klauspost_compress//zstd",
         "@com_github_pingcap_errors//:errors",
@@ -52,6 +63,7 @@ go_test(
     ],
     embed = [":stream"],
     flaky = True,
+<<<<<<< HEAD
     deps = [
         "//br/pkg/storage",
         "//br/pkg/streamhelper",
@@ -60,6 +72,21 @@ go_test(
         "//tablecodec",
         "//util/codec",
         "//util/table-filter",
+=======
+    shard_count = 25,
+    deps = [
+        "//br/pkg/storage",
+        "//br/pkg/streamhelper",
+        "//pkg/ddl",
+        "//pkg/meta",
+        "//pkg/parser/ast",
+        "//pkg/parser/model",
+        "//pkg/parser/mysql",
+        "//pkg/tablecodec",
+        "//pkg/types",
+        "//pkg/util/codec",
+        "//pkg/util/table-filter",
+>>>>>>> be62f754fb4 (ddl: wrap the sessionctx to public delete range logic to BR (#48050))
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//oracle",
