@@ -2359,7 +2359,7 @@ func getCheckSum(ctx context.Context, se sessionctx.Context, sql string) ([]grou
 	return checksums, nil
 }
 
-func (w *checkIndexWorker) initSessCtx(ctx context.Context, se sessionctx.Context) (restore func()) {
+func (w *checkIndexWorker) initSessCtx(se sessionctx.Context) (restore func()) {
 	sessVars := se.GetSessionVars()
 	originOptUseInvisibleIdx := sessVars.OptimizerUseInvisibleIndexes
 	originMemQuotaQuery := sessVars.MemQuotaQuery
@@ -2389,7 +2389,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		trySaveErr(err)
 		return
 	}
-	restoreCtx := w.initSessCtx(ctx, se)
+	restoreCtx := w.initSessCtx(se)
 	defer func() {
 		restoreCtx()
 		w.e.Base().ReleaseSysSession(ctx, se)
