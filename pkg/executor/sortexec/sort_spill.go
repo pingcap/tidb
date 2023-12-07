@@ -45,6 +45,8 @@ func (*sortPartitionSpillDiskAction) GetPriority() int64 {
 }
 
 func (s *sortPartitionSpillDiskAction) Action(t *memory.Tracker) {
+	// TODO wait until spill done if spill is in execution.
+	// TODO set fallback, we should kill sql if memory is out of quota after spill is triggered.
 	if s.isSpilling.CompareAndSwap(false, true) {
 		go func() {
 			s.helper.syncLock.Lock()
