@@ -169,10 +169,7 @@ func (dsp *BackfillingDispatcherExt) GetNextStep(task *proto.Task) proto.Step {
 }
 
 func skipMergeSort(stats []external.MultipleFilesStat) bool {
-	failpoint.Inject("forceMergeSort", func() {
-		failpoint.Return(false)
-	})
-	return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
+	return false
 }
 
 // OnDone implements dispatcher.Extension interface.
@@ -422,6 +419,8 @@ func generateMergePlan(
 		return nil, err
 	}
 	multiStats := make([]external.MultipleFilesStat, 0, 100)
+	dataFiles := make([]string, 0, 100)
+	statFiles := make([]string, 0, 100)
 	for _, bs := range subTaskMetas {
 		var subtask BackfillSubTaskMeta
 		err = json.Unmarshal(bs, &subtask)
@@ -429,27 +428,44 @@ func generateMergePlan(
 			return nil, err
 		}
 		multiStats = append(multiStats, subtask.MultipleFilesStats...)
+		dataFiles = append(dataFiles, subtask.DataFiles...)
+		statFiles = append(statFiles, subtask.StatFiles...)
 	}
 	if skipMergeSort(multiStats) {
 		logger.Info("skip merge sort")
 		return nil, nil
 	}
-	metaArr := make([][]byte, 0, 16)
 
-	startKeys, endKeys, dataFiles, statFiles, err := getStartEndKeyAndFilesForOneBatch(multiStats, StepReadIndex)
-	//logger.BgLogger().Info("ywq test datafiles", zap.Any("data", dataFiles))
-	if err != nil {
-		return nil, err
+	startKeys := make([]kv.Key, 0, 10)
+	endKeys := make([]kv.Key, 0, 10)
+
+	i := 0
+	for ; i < len(multiStats)-1; i += 2 {
+		startKey := external.BytesMin(multiStats[i].MinKey, multiStats[i+1].MinKey)
+		endKey := external.BytesMax(multiStats[i].MaxKey, multiStats[i+1].MaxKey)
+		endKey = kv.Key(endKey).Next()
+		startKeys = append(startKeys, startKey)
+		endKeys = append(endKeys, endKey)
+	}
+	if i == len(multiStats)-1 {
+		startKeys = append(startKeys, multiStats[i].MinKey)
+		endKeys = append(endKeys, multiStats[i].MinKey)
 	}
 
-	for i, startKey := range startKeys {
-		logger.Info("merge info", zap.Binary("startkey", startKey), zap.Binary("endkey", endKeys[i]))
+	start := 0
+	step := external.MergeSortFileCountStep
+	metaArr := make([][]byte, 0, 16)
+	i = 0
+	for start < len(dataFiles) {
+		end := start + step
+		if end > len(dataFiles) {
+			end = len(dataFiles)
+		}
 		m := &BackfillSubTaskMeta{
-			DataFiles: dataFiles[i],
-			StatFiles: statFiles[i],
-			// ywq todo add new meta...
+			DataFiles: dataFiles[start:end],
+			StatFiles: statFiles[start:end],
 			SortedKVMeta: external.SortedKVMeta{
-				StartKey: startKey,
+				StartKey: startKeys[i],
 				EndKey:   endKeys[i],
 			},
 		}
@@ -458,6 +474,9 @@ func generateMergePlan(
 			return nil, err
 		}
 		metaArr = append(metaArr, metaBytes)
+
+		start = end
+		i++
 	}
 	return metaArr, nil
 }
