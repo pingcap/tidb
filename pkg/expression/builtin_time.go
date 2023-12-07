@@ -2899,7 +2899,7 @@ func (du *baseDateArithmetical) intervalReformatString(ec errctx.Context, str st
 	return interval, err
 }
 
-func (du *baseDateArithmetical) intervalDecimalToString(tc types.Context, dec *types.MyDecimal) (string, error) {
+func (du *baseDateArithmetical) intervalDecimalToString(ec errctx.Context, dec *types.MyDecimal) (string, error) {
 	var rounded types.MyDecimal
 	err := dec.Round(&rounded, 0, types.ModeHalfUp)
 	if err != nil {
@@ -2908,7 +2908,7 @@ func (du *baseDateArithmetical) intervalDecimalToString(tc types.Context, dec *t
 
 	intVal, err := rounded.ToInt()
 	if err != nil {
-		if err = tc.HandleTruncate(types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", dec.String())); err != nil {
+		if err = ec.HandleError(types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", dec.String())); err != nil {
 			return "", err
 		}
 	}
@@ -2960,7 +2960,7 @@ func (du *baseDateArithmetical) getIntervalFromDecimal(ctx sessionctx.Context, a
 		// interval is already like the %f format.
 	default:
 		// YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE, MICROSECOND
-		interval, err = du.intervalDecimalToString(ctx.GetSessionVars().StmtCtx.TypeCtx(), decimal)
+		interval, err = du.intervalDecimalToString(ctx.GetSessionVars().StmtCtx.ErrCtx(), decimal)
 		if err != nil {
 			return "", true, err
 		}
@@ -3364,7 +3364,7 @@ func (du *baseDateArithmetical) vecGetIntervalFromDecimal(b *baseBuiltinFunc, ct
 				return "", true, err
 			}
 
-			str, err := du.intervalDecimalToString(ctx.GetSessionVars().StmtCtx.TypeCtx(), dec)
+			str, err := du.intervalDecimalToString(ctx.GetSessionVars().StmtCtx.ErrCtx(), dec)
 			if err != nil {
 				return "", true, err
 			}
