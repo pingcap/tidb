@@ -367,6 +367,7 @@ func TestCleanupCorruptedAnalyzeJobsOnCurrentInstance(t *testing.T) {
 		statsutil.UseCurrentSessionOpt,
 		autoanalyze.SelectAnalyzeJobsOnCurrentInstanceSQL,
 		"127.0.0.1:4000",
+		gomock.Any(),
 	).Return(rows, nil, nil)
 
 	exec.EXPECT().ExecRestrictedSQL(
@@ -446,6 +447,7 @@ func TestCleanupCorruptedAnalyzeJobsOnDeadInstances(t *testing.T) {
 		gomock.All(&test.CtxMatcher{}),
 		statsutil.UseCurrentSessionOpt,
 		autoanalyze.SelectAnalyzeJobsSQL,
+		gomock.Any(),
 	).Return(rows, nil, nil)
 
 	exec.EXPECT().ExecRestrictedSQL(

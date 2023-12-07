@@ -102,14 +102,14 @@ const SelectAnalyzeJobsOnCurrentInstanceSQL = `SELECT id, process_id
 		FROM mysql.analyze_jobs
 		WHERE instance = %?
 		AND state IN ('pending', 'running')
-		AND TIMESTAMPDIFF(MINUTE, update_time, NOW()) > 10`
+		AND update_time < CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)`
 
 // SelectAnalyzeJobsSQL is the SQL to select the analyze jobs whose
 // state is `pending` or `running` and the update time is more than 10 minutes ago.
 const SelectAnalyzeJobsSQL = `SELECT id, instance
 		FROM mysql.analyze_jobs
 		WHERE state IN ('pending', 'running')
-		AND TIMESTAMPDIFF(MINUTE, update_time, NOW()) > 10`
+		AND update_time < CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)`
 
 // BatchUpdateAnalyzeJobSQL is the SQL to update the analyze jobs to `failed` state.
 const BatchUpdateAnalyzeJobSQL = `UPDATE mysql.analyze_jobs
@@ -117,6 +117,10 @@ const BatchUpdateAnalyzeJobSQL = `UPDATE mysql.analyze_jobs
             fail_reason = 'TiDB Server is down when running the analyze job',
             process_id = NULL
             WHERE id IN (%?)`
+
+func tenMinutesAgo() string {
+	return time.Now().Add(-10 * time.Minute).UTC().Format(types.TimeFormat)
+}
 
 // CleanupCorruptedAnalyzeJobsOnCurrentInstance cleans up the potentially corrupted analyze job from current instance.
 // Exported for testing.
@@ -135,6 +139,7 @@ func CleanupCorruptedAnalyzeJobsOnCurrentInstance(
 		sctx,
 		SelectAnalyzeJobsOnCurrentInstanceSQL,
 		instance,
+		tenMinutesAgo(),
 	)
 	if err != nil {
 		return errors.Trace(err)
@@ -181,6 +186,7 @@ func CleanupCorruptedAnalyzeJobsOnDeadInstances(
 	rows, _, err := statsutil.ExecRows(
 		sctx,
 		SelectAnalyzeJobsSQL,
+		tenMinutesAgo(),
 	)
 	if err != nil {
 		return errors.Trace(err)
