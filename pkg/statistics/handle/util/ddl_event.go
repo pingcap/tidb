@@ -167,7 +167,7 @@ func NewExchangePartitionEvent(
 			allIDs = append(allIDs, def.ID)
 			allNames = append(allNames, def.Name.O)
 		}
-		logutil.StatsLogger.Error("Exchange partition should only have one partition to exchange",
+		logutil.StatsLogger().Error("Exchange partition should only have one partition to exchange",
 			zap.Int64("globalTableID", globalTableInfo.ID),
 			zap.String("globalTableName", globalTableInfo.Name.O),
 			zap.Int64("tableID", originalTableInfo.ID),

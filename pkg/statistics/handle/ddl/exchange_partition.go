@@ -74,13 +74,13 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 					tableModifyCount,
 				)
 				fields = append(fields, zap.Error(err))
-				logutil.StatsLogger.Error(
+				logutil.StatsLogger().Error(
 					"Update global stats after exchange partition failed",
 					fields...,
 				)
 				return err
 			}
-			logutil.StatsLogger.Info(
+			logutil.StatsLogger().Info(
 				"Update global stats after exchange partition",
 				exchangePartitionLogFields(
 					globalTableSchema.Name.O,
