@@ -619,7 +619,6 @@ create table t(a int);
 insert into t values(1), (2), (3);
 -- error 3819
 alter table t add constraint check(a < 2);
--- error 3819
 alter table t add constraint check(a < 2) not enforced;
 
 # TestAlterTableDropCheckConstraints
@@ -666,12 +665,12 @@ CREATE TABLE `t` (`a` int(11) DEFAULT NULL);
 show create table t;
 insert t values(1);
 select * from t;
--- error 3940
+-- error 3819
 alter table t ADD CONSTRAINT chk CHECK (a > 1) ENFORCED;
--- error 3940
+-- error 3819
 alter table t ADD CONSTRAINT chk CHECK (a > 1) ENFORCED;
 alter table t ADD CONSTRAINT chk CHECK (a > 1) NOT ENFORCED;
--- error 3940
+-- error 3819
 ALTER TABLE t ALTER CONSTRAINT chk ENFORCED;
 show create table t;
 alter table t drop CONSTRAINT chk;

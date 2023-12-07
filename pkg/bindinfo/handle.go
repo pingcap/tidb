@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -43,10 +44,7 @@ import (
 
 // BindHandle is used to handle all global sql bind operations.
 type BindHandle struct {
-	sctx struct { // TODO: remove this singleton sctx later on, which is not thread-safe.
-		sync.Mutex
-		sessionctx.Context
-	}
+	sPool SessionPool
 
 	bindingCache atomic.Pointer[bindCache]
 
@@ -85,9 +83,9 @@ type bindRecordUpdate struct {
 }
 
 // NewBindHandle creates a new BindHandle.
-func NewBindHandle(ctx sessionctx.Context) *BindHandle {
-	handle := &BindHandle{}
-	handle.Reset(ctx)
+func NewBindHandle(sPool SessionPool) *BindHandle {
+	handle := &BindHandle{sPool: sPool}
+	handle.Reset()
 	return handle
 }
 
@@ -101,8 +99,7 @@ func (h *BindHandle) setCache(c *bindCache) {
 }
 
 // Reset is to reset the BindHandle and clean old info.
-func (h *BindHandle) Reset(ctx sessionctx.Context) {
-	h.sctx.Context = ctx
+func (h *BindHandle) Reset() {
 	h.lastUpdateTime.Store(types.ZeroTimestamp)
 	h.invalidBindRecordMap.Value.Store(make(map[string]*bindRecordUpdate))
 	h.invalidBindRecordMap.flushFunc = func(record *BindRecord) error {
@@ -128,65 +125,64 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 	if !fullLoad {
 		timeCondition = fmt.Sprintf("WHERE update_time>'%s'", lastUpdateTime.String())
 	}
-	h.sctx.Lock()
-	defer h.sctx.Unlock()
-
 	selectStmt := fmt.Sprintf(`SELECT original_sql, bind_sql, default_db, status, create_time,
        update_time, charset, collation, source, sql_digest, plan_digest FROM mysql.bind_info
        %s ORDER BY update_time, create_time`, timeCondition)
-	rows, _, err := execRows(h.sctx.Context, selectStmt)
 
-	if err != nil {
-		return err
-	}
-
-	newCache, memExceededErr := h.getCache().Copy()
-	defer func() {
-		h.setLastUpdateTime(lastUpdateTime)
-		h.setCache(newCache) // TODO: update it in place
-	}()
-
-	for _, row := range rows {
-		// If the memory usage of the binding_cache exceeds its capacity, we will break and do not handle.
-		if memExceededErr != nil {
-			break
-		}
-		// Skip the builtin record which is designed for binding synchronization.
-		if row.GetString(0) == BuiltinPseudoSQL4BindLock {
-			continue
-		}
-		sqlDigest, meta, err := h.newBindRecord(row)
-
-		// Update lastUpdateTime to the newest one.
-		// Even if this one is an invalid bind.
-		if meta.Bindings[0].UpdateTime.Compare(lastUpdateTime) > 0 {
-			lastUpdateTime = meta.Bindings[0].UpdateTime
-		}
-
+	return h.callWithSCtx(false, func(sctx sessionctx.Context) error {
+		rows, _, err := execRows(sctx, selectStmt)
 		if err != nil {
-			logutil.BgLogger().Debug("failed to generate bind record from data row", zap.String("category", "sql-bind"), zap.Error(err))
-			continue
+			return err
 		}
 
-		oldRecord := newCache.GetBinding(sqlDigest, meta.OriginalSQL, meta.Db)
-		newRecord := merge(oldRecord, meta).removeDeletedBindings()
-		if len(newRecord.Bindings) > 0 {
-			err = newCache.SetBinding(sqlDigest, newRecord)
-			if err != nil {
-				memExceededErr = err
+		newCache, memExceededErr := h.getCache().Copy()
+		defer func() {
+			h.setLastUpdateTime(lastUpdateTime)
+			h.setCache(newCache) // TODO: update it in place
+		}()
+
+		for _, row := range rows {
+			// If the memory usage of the binding_cache exceeds its capacity, we will break and do not handle.
+			if memExceededErr != nil {
+				break
 			}
-		} else {
-			newCache.RemoveBinding(sqlDigest, newRecord)
+			// Skip the builtin record which is designed for binding synchronization.
+			if row.GetString(0) == BuiltinPseudoSQL4BindLock {
+				continue
+			}
+			sqlDigest, meta, err := newBindRecord(sctx, row)
+
+			// Update lastUpdateTime to the newest one.
+			// Even if this one is an invalid bind.
+			if meta.Bindings[0].UpdateTime.Compare(lastUpdateTime) > 0 {
+				lastUpdateTime = meta.Bindings[0].UpdateTime
+			}
+
+			if err != nil {
+				logutil.BgLogger().Debug("failed to generate bind record from data row", zap.String("category", "sql-bind"), zap.Error(err))
+				continue
+			}
+
+			oldRecord := newCache.GetBinding(sqlDigest, meta.OriginalSQL, meta.Db)
+			newRecord := merge(oldRecord, meta).removeDeletedBindings()
+			if len(newRecord.Bindings) > 0 {
+				err = newCache.SetBinding(sqlDigest, newRecord)
+				if err != nil {
+					memExceededErr = err
+				}
+			} else {
+				newCache.RemoveBinding(sqlDigest, newRecord)
+			}
+			updateMetrics(metrics.ScopeGlobal, oldRecord, newCache.GetBinding(sqlDigest, meta.OriginalSQL, meta.Db), true)
 		}
-		updateMetrics(metrics.ScopeGlobal, oldRecord, newCache.GetBinding(sqlDigest, meta.OriginalSQL, meta.Db), true)
-	}
-	if memExceededErr != nil {
-		// When the memory capacity of bing_cache is not enough,
-		// there will be some memory-related errors in multiple places.
-		// Only needs to be handled once.
-		logutil.BgLogger().Warn("BindHandle.Update", zap.String("category", "sql-bind"), zap.Error(memExceededErr))
-	}
-	return nil
+		if memExceededErr != nil {
+			// When the memory capacity of bing_cache is not enough,
+			// there will be some memory-related errors in multiple places.
+			// Only needs to be handled once.
+			logutil.BgLogger().Warn("BindHandle.Update", zap.String("category", "sql-bind"), zap.Error(memExceededErr))
+		}
+		return nil
+	})
 }
 
 // CreateGlobalBinding creates a BindRecord to the storage and the cache.
@@ -198,199 +194,92 @@ func (h *BindHandle) CreateGlobalBinding(sctx sessionctx.Context, record *BindRe
 	}
 
 	record.Db = strings.ToLower(record.Db)
-	h.sctx.Lock()
-	defer func() {
-		h.sctx.Unlock()
-	}()
-
-	_, err = exec(h.sctx.Context, "BEGIN PESSIMISTIC")
-	if err != nil {
-		return
-	}
-
-	defer func() {
-		err = finishTransaction(h.sctx.Context, err)
-		if err != nil {
-			return
-		}
-
-		sqlDigest := parser.DigestNormalized(record.OriginalSQL)
-		h.setGlobalCacheBinding(sqlDigest.String(), record)
-	}()
-
-	// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
-	if err = h.lockBindInfoTable(); err != nil {
-		return err
-	}
-
-	now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
-
-	updateTs := now.String()
-	_, err = exec(h.sctx.Context, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %?`,
-		deleted, updateTs, record.OriginalSQL, updateTs)
-	if err != nil {
-		return err
-	}
-
-	for i := range record.Bindings {
-		record.Bindings[i].CreateTime = now
-		record.Bindings[i].UpdateTime = now
-
-		// Insert the BindRecord to the storage.
-		_, err = exec(h.sctx.Context, `INSERT INTO mysql.bind_info VALUES (%?,%?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
-			record.OriginalSQL,
-			record.Bindings[i].BindSQL,
-			record.Db,
-			record.Bindings[i].Status,
-			record.Bindings[i].CreateTime.String(),
-			record.Bindings[i].UpdateTime.String(),
-			record.Bindings[i].Charset,
-			record.Bindings[i].Collation,
-			record.Bindings[i].Source,
-			record.Bindings[i].SQLDigest,
-			record.Bindings[i].PlanDigest,
-		)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// AddGlobalBinding adds a BindRecord to the storage and BindRecord to the cache.
-func (h *BindHandle) AddGlobalBinding(sctx sessionctx.Context, record *BindRecord) (err error) {
-	err = record.prepareHints(sctx)
-	if err != nil {
-		return err
-	}
-
-	record.Db = strings.ToLower(record.Db)
-	oldRecord := h.GetGlobalBinding(parser.DigestNormalized(record.OriginalSQL).String(), record.OriginalSQL, record.Db)
-	var duplicateBinding *Binding
-	if oldRecord != nil {
-		binding := oldRecord.FindBinding(record.Bindings[0].ID)
-		if binding != nil {
-			// There is already a binding with status `Enabled`, `Disabled`, `PendingVerify` or `Rejected`, we could directly cancel the job.
-			if record.Bindings[0].Status == PendingVerify {
-				return nil
+	return h.callWithSCtx(true, func(sctx sessionctx.Context) error {
+		defer func() {
+			if err != nil {
+				return
 			}
-			// Otherwise, we need to remove it before insert.
-			duplicateBinding = binding
-		}
-	}
+			sqlDigest := parser.DigestNormalized(record.OriginalSQL)
+			h.setGlobalCacheBinding(sqlDigest.String(), record)
+		}()
 
-	h.sctx.Lock()
-	defer func() {
-		h.sctx.Unlock()
-	}()
-	_, err = exec(h.sctx.Context, "BEGIN PESSIMISTIC")
-	if err != nil {
-		return
-	}
-
-	defer func() {
-		err = finishTransaction(h.sctx.Context, err)
-		if err != nil {
-			return
+		// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
+		if err = h.lockBindInfoTable(sctx); err != nil {
+			return err
 		}
 
-		h.appendGlobalCacheBinding(parser.DigestNormalized(record.OriginalSQL).String(), record)
-	}()
+		now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
 
-	// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
-	if err = h.lockBindInfoTable(); err != nil {
-		return err
-	}
-	if duplicateBinding != nil {
-		_, err = exec(h.sctx.Context, `DELETE FROM mysql.bind_info WHERE original_sql = %? AND bind_sql = %?`, record.OriginalSQL, duplicateBinding.BindSQL)
+		updateTs := now.String()
+		_, err = exec(sctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %?`,
+			deleted, updateTs, record.OriginalSQL, updateTs)
 		if err != nil {
 			return err
 		}
-	}
 
-	now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
-	for i := range record.Bindings {
-		if duplicateBinding != nil {
-			record.Bindings[i].CreateTime = duplicateBinding.CreateTime
-		} else {
+		for i := range record.Bindings {
 			record.Bindings[i].CreateTime = now
-		}
-		record.Bindings[i].UpdateTime = now
+			record.Bindings[i].UpdateTime = now
 
-		if record.Bindings[i].SQLDigest == "" {
-			parser4binding := parser.New()
-			var originNode ast.StmtNode
-			originNode, err = parser4binding.ParseOneStmt(record.OriginalSQL, record.Bindings[i].Charset, record.Bindings[i].Collation)
+			// Insert the BindRecord to the storage.
+			_, err = exec(sctx, `INSERT INTO mysql.bind_info VALUES (%?,%?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
+				record.OriginalSQL,
+				record.Bindings[i].BindSQL,
+				record.Db,
+				record.Bindings[i].Status,
+				record.Bindings[i].CreateTime.String(),
+				record.Bindings[i].UpdateTime.String(),
+				record.Bindings[i].Charset,
+				record.Bindings[i].Collation,
+				record.Bindings[i].Source,
+				record.Bindings[i].SQLDigest,
+				record.Bindings[i].PlanDigest,
+			)
 			if err != nil {
 				return err
 			}
-			_, sqlDigestWithDB := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(originNode, record.Db, record.OriginalSQL))
-			record.Bindings[i].SQLDigest = sqlDigestWithDB.String()
 		}
-		// Insert the BindRecord to the storage.
-		_, err = exec(h.sctx.Context, `INSERT INTO mysql.bind_info VALUES (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
-			record.OriginalSQL,
-			record.Bindings[i].BindSQL,
-			record.Db,
-			record.Bindings[i].Status,
-			record.Bindings[i].CreateTime.String(),
-			record.Bindings[i].UpdateTime.String(),
-			record.Bindings[i].Charset,
-			record.Bindings[i].Collation,
-			record.Bindings[i].Source,
-			record.Bindings[i].SQLDigest,
-			record.Bindings[i].PlanDigest,
-		)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // DropGlobalBinding drops a BindRecord to the storage and BindRecord int the cache.
 func (h *BindHandle) DropGlobalBinding(originalSQL, db string, binding *Binding) (deletedRows uint64, err error) {
-	db = strings.ToLower(db)
-	h.sctx.Lock()
-	defer func() {
-		h.sctx.Unlock()
-	}()
-	_, err = exec(h.sctx.Context, "BEGIN PESSIMISTIC")
-	if err != nil {
-		return 0, err
-	}
-	defer func() {
-		err = finishTransaction(h.sctx.Context, err)
-		if err != nil || deletedRows == 0 {
-			return
+	err = h.callWithSCtx(false, func(sctx sessionctx.Context) error {
+		db = strings.ToLower(db)
+		defer func() {
+			if err != nil || deletedRows == 0 {
+				return
+			}
+
+			record := &BindRecord{OriginalSQL: originalSQL, Db: db}
+			if binding != nil {
+				record.Bindings = append(record.Bindings, *binding)
+			}
+			h.removeGlobalCacheBinding(parser.DigestNormalized(originalSQL).String(), record)
+		}()
+
+		// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
+		if err = h.lockBindInfoTable(sctx); err != nil {
+			return err
 		}
 
-		record := &BindRecord{OriginalSQL: originalSQL, Db: db}
-		if binding != nil {
-			record.Bindings = append(record.Bindings, *binding)
+		updateTs := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3).String()
+
+		if binding == nil {
+			_, err = exec(sctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND status != %?`,
+				deleted, updateTs, originalSQL, updateTs, deleted)
+		} else {
+			_, err = exec(sctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %? and status != %?`,
+				deleted, updateTs, originalSQL, updateTs, binding.BindSQL, deleted)
 		}
-		h.removeGlobalCacheBinding(parser.DigestNormalized(originalSQL).String(), record)
-	}()
-
-	// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
-	if err = h.lockBindInfoTable(); err != nil {
-		return 0, err
-	}
-
-	updateTs := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3).String()
-
-	if binding == nil {
-		_, err = exec(h.sctx.Context, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND status != %?`,
-			deleted, updateTs, originalSQL, updateTs, deleted)
-	} else {
-		_, err = exec(h.sctx.Context, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %? and status != %?`,
-			deleted, updateTs, originalSQL, updateTs, binding.BindSQL, deleted)
-	}
-	if err != nil {
-		return 0, err
-	}
-
-	return h.sctx.Context.GetSessionVars().StmtCtx.AffectedRows(), nil
+		if err != nil {
+			return err
+		}
+		deletedRows = sctx.GetSessionVars().StmtCtx.AffectedRows()
+		return nil
+	})
+	return
 }
 
 // DropGlobalBindingByDigest drop BindRecord to the storage and BindRecord int the cache.
@@ -404,14 +293,6 @@ func (h *BindHandle) DropGlobalBindingByDigest(sqlDigest string) (deletedRows ui
 
 // SetGlobalBindingStatus set a BindRecord's status to the storage and bind cache.
 func (h *BindHandle) SetGlobalBindingStatus(originalSQL string, binding *Binding, newStatus string) (ok bool, err error) {
-	h.sctx.Lock()
-	defer func() {
-		h.sctx.Unlock()
-	}()
-	_, err = exec(h.sctx.Context, "BEGIN PESSIMISTIC")
-	if err != nil {
-		return
-	}
 	var (
 		updateTs               types.Time
 		oldStatus0, oldStatus1 string
@@ -427,52 +308,55 @@ func (h *BindHandle) SetGlobalBindingStatus(originalSQL string, binding *Binding
 		oldStatus0 = Disabled
 		oldStatus1 = Disabled
 	}
-	defer func() {
-		err = finishTransaction(h.sctx.Context, err)
-		if err != nil || affectRows == 0 {
-			return
-		}
 
-		// The set binding status operation is success.
-		ok = true
-		record := &BindRecord{OriginalSQL: originalSQL}
-		sqlDigest := parser.DigestNormalized(record.OriginalSQL)
-		oldRecord := h.GetGlobalBinding(sqlDigest.String(), originalSQL, "")
-		setBindingStatusInCacheSucc := false
-		if oldRecord != nil && len(oldRecord.Bindings) > 0 {
-			record.Bindings = make([]Binding, len(oldRecord.Bindings))
-			copy(record.Bindings, oldRecord.Bindings)
-			for ind, oldBinding := range record.Bindings {
-				if oldBinding.Status == oldStatus0 || oldBinding.Status == oldStatus1 {
-					if binding == nil || (binding != nil && oldBinding.isSame(binding)) {
-						setBindingStatusInCacheSucc = true
-						record.Bindings[ind].Status = newStatus
-						record.Bindings[ind].UpdateTime = updateTs
+	err = h.callWithSCtx(true, func(sctx sessionctx.Context) error {
+		defer func() {
+			if err != nil || affectRows == 0 {
+				return
+			}
+
+			// The set binding status operation is success.
+			ok = true
+			record := &BindRecord{OriginalSQL: originalSQL}
+			sqlDigest := parser.DigestNormalized(record.OriginalSQL)
+			oldRecord := h.GetGlobalBinding(sqlDigest.String(), originalSQL, "")
+			setBindingStatusInCacheSucc := false
+			if oldRecord != nil && len(oldRecord.Bindings) > 0 {
+				record.Bindings = make([]Binding, len(oldRecord.Bindings))
+				copy(record.Bindings, oldRecord.Bindings)
+				for ind, oldBinding := range record.Bindings {
+					if oldBinding.Status == oldStatus0 || oldBinding.Status == oldStatus1 {
+						if binding == nil || (binding != nil && oldBinding.isSame(binding)) {
+							setBindingStatusInCacheSucc = true
+							record.Bindings[ind].Status = newStatus
+							record.Bindings[ind].UpdateTime = updateTs
+						}
 					}
 				}
 			}
+			if setBindingStatusInCacheSucc {
+				h.setGlobalCacheBinding(sqlDigest.String(), record)
+			}
+		}()
+
+		// Lock mysql.bind_info to synchronize with SetBindingStatus on other tidb instances.
+		if err = h.lockBindInfoTable(sctx); err != nil {
+			return err
 		}
-		if setBindingStatusInCacheSucc {
-			h.setGlobalCacheBinding(sqlDigest.String(), record)
+
+		updateTs = types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
+		updateTsStr := updateTs.String()
+
+		if binding == nil {
+			_, err = exec(sctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND status IN (%?, %?)`,
+				newStatus, updateTsStr, originalSQL, updateTsStr, oldStatus0, oldStatus1)
+		} else {
+			_, err = exec(sctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %? AND status IN (%?, %?)`,
+				newStatus, updateTsStr, originalSQL, updateTsStr, binding.BindSQL, oldStatus0, oldStatus1)
 		}
-	}()
-
-	// Lock mysql.bind_info to synchronize with SetBindingStatus on other tidb instances.
-	if err = h.lockBindInfoTable(); err != nil {
-		return
-	}
-
-	updateTs = types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
-	updateTsStr := updateTs.String()
-
-	if binding == nil {
-		_, err = exec(h.sctx.Context, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND status IN (%?, %?)`,
-			newStatus, updateTsStr, originalSQL, updateTsStr, oldStatus0, oldStatus1)
-	} else {
-		_, err = exec(h.sctx.Context, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %? AND status IN (%?, %?)`,
-			newStatus, updateTsStr, originalSQL, updateTsStr, binding.BindSQL, oldStatus0, oldStatus1)
-	}
-	affectRows = int(h.sctx.Context.GetSessionVars().StmtCtx.AffectedRows())
+		affectRows = int(sctx.GetSessionVars().StmtCtx.AffectedRows())
+		return nil
+	})
 	return
 }
 
@@ -487,29 +371,19 @@ func (h *BindHandle) SetGlobalBindingStatusByDigest(newStatus, sqlDigest string)
 
 // GCGlobalBinding physically removes the deleted bind records in mysql.bind_info.
 func (h *BindHandle) GCGlobalBinding() (err error) {
-	h.sctx.Lock()
-	defer func() {
-		h.sctx.Unlock()
-	}()
-	_, err = exec(h.sctx.Context, "BEGIN PESSIMISTIC")
-	if err != nil {
-		return err
-	}
-	defer func() {
-		err = finishTransaction(h.sctx.Context, err)
-	}()
+	return h.callWithSCtx(true, func(sctx sessionctx.Context) error {
+		// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
+		if err = h.lockBindInfoTable(sctx); err != nil {
+			return err
+		}
 
-	// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
-	if err = h.lockBindInfoTable(); err != nil {
+		// To make sure that all the deleted bind records have been acknowledged to all tidb,
+		// we only garbage collect those records with update_time before 10 leases.
+		updateTime := time.Now().Add(-(10 * Lease))
+		updateTimeStr := types.NewTime(types.FromGoTime(updateTime), mysql.TypeTimestamp, 3).String()
+		_, err = exec(sctx, `DELETE FROM mysql.bind_info WHERE status = 'deleted' and update_time < %?`, updateTimeStr)
 		return err
-	}
-
-	// To make sure that all the deleted bind records have been acknowledged to all tidb,
-	// we only garbage collect those records with update_time before 10 leases.
-	updateTime := time.Now().Add(-(10 * Lease))
-	updateTimeStr := types.NewTime(types.FromGoTime(updateTime), mysql.TypeTimestamp, 3).String()
-	_, err = exec(h.sctx.Context, `DELETE FROM mysql.bind_info WHERE status = 'deleted' and update_time < %?`, updateTimeStr)
-	return err
+	})
 }
 
 // lockBindInfoTable simulates `LOCK TABLE mysql.bind_info WRITE` by acquiring a pessimistic lock on a
@@ -518,9 +392,9 @@ func (h *BindHandle) GCGlobalBinding() (err error) {
 // generally available later.
 // This lock would enforce the CREATE / DROP GLOBAL BINDING statements to be executed sequentially,
 // even if they come from different tidb instances.
-func (h *BindHandle) lockBindInfoTable() error {
+func (h *BindHandle) lockBindInfoTable(sctx sessionctx.Context) error {
 	// h.sctx already locked.
-	_, err := exec(h.sctx.Context, h.LockBindInfoSQL())
+	_, err := exec(sctx, h.LockBindInfoSQL())
 	return err
 }
 
@@ -631,13 +505,13 @@ func (h *BindHandle) GetMemCapacity() (memCapacity int64) {
 }
 
 // newBindRecord builds BindRecord from a tuple in storage.
-func (h *BindHandle) newBindRecord(row chunk.Row) (string, *BindRecord, error) {
+func newBindRecord(sctx sessionctx.Context, row chunk.Row) (string, *BindRecord, error) {
 	status := row.GetString(3)
 	// For compatibility, the 'Using' status binding will be converted to the 'Enabled' status binding.
 	if status == Using {
 		status = Enabled
 	}
-	hint := Binding{
+	binding := Binding{
 		BindSQL:    row.GetString(1),
 		Status:     status,
 		CreateTime: row.GetTime(4),
@@ -651,11 +525,11 @@ func (h *BindHandle) newBindRecord(row chunk.Row) (string, *BindRecord, error) {
 	bindRecord := &BindRecord{
 		OriginalSQL: row.GetString(0),
 		Db:          strings.ToLower(row.GetString(2)),
-		Bindings:    []Binding{hint},
+		Bindings:    []Binding{binding},
 	}
 	sqlDigest := parser.DigestNormalized(bindRecord.OriginalSQL)
-	h.sctx.GetSessionVars().CurrentDB = bindRecord.Db
-	err := bindRecord.prepareHints(h.sctx.Context)
+	sctx.GetSessionVars().CurrentDB = bindRecord.Db
+	err := bindRecord.prepareHints(sctx)
 	return sqlDigest.String(), bindRecord, err
 }
 
@@ -673,24 +547,6 @@ func (h *BindHandle) setGlobalCacheBinding(sqlDigest string, meta *BindRecord) {
 	}
 	h.setCache(newCache) // TODO: update it in place
 	updateMetrics(metrics.ScopeGlobal, oldRecord, meta, false)
-}
-
-// appendGlobalCacheBinding adds the BindRecord to the cache, all the stale BindRecords are
-// removed from the cache after this operation.
-func (h *BindHandle) appendGlobalCacheBinding(sqlDigest string, meta *BindRecord) {
-	newCache, err0 := h.getCache().Copy()
-	if err0 != nil {
-		logutil.BgLogger().Warn("BindHandle.appendBindRecord", zap.String("category", "sql-bind"), zap.Error(err0))
-	}
-	oldRecord := newCache.GetBinding(sqlDigest, meta.OriginalSQL, meta.Db)
-	newRecord := merge(oldRecord, meta)
-	err1 := newCache.SetBinding(sqlDigest, newRecord)
-	if err1 != nil && err0 == nil {
-		// Only need to handle the error once.
-		logutil.BgLogger().Warn("BindHandle.appendBindRecord", zap.String("category", "sql-bind"), zap.Error(err1))
-	}
-	h.setCache(newCache) // TODO: update it in place
-	updateMetrics(metrics.ScopeGlobal, oldRecord, newRecord, false)
 }
 
 // removeGlobalCacheBinding removes the BindRecord from the cache.
@@ -842,4 +698,50 @@ func (h *BindHandle) ReloadGlobalBindings() error {
 	h.setCache(newBindCache())
 	h.setLastUpdateTime(types.ZeroTimestamp)
 	return h.Update(true)
+}
+
+func (h *BindHandle) callWithSCtx(wrapTxn bool, f func(sctx sessionctx.Context) error) (err error) {
+	resource, err := h.sPool.Get()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err == nil { // only recycle when no error
+			h.sPool.Put(resource)
+		}
+	}()
+
+	sctx := resource.(sessionctx.Context)
+	if wrapTxn {
+		if _, err = exec(sctx, "BEGIN PESSIMISTIC"); err != nil {
+			return
+		}
+		defer func() {
+			if err == nil {
+				_, err = exec(sctx, "COMMIT")
+			} else {
+				_, err1 := exec(sctx, "ROLLBACK")
+				terror.Log(errors.Trace(err1))
+			}
+		}()
+	}
+
+	err = f(sctx)
+	return
+}
+
+var (
+	lastPlanBindingUpdateTime = "last_plan_binding_update_time"
+)
+
+// GetScope gets the status variables scope.
+func (*BindHandle) GetScope(_ string) variable.ScopeFlag {
+	return variable.ScopeSession
+}
+
+// Stats returns the server statistics.
+func (h *BindHandle) Stats(_ *variable.SessionVars) (map[string]interface{}, error) {
+	m := make(map[string]interface{})
+	m[lastPlanBindingUpdateTime] = h.getLastUpdateTime().String()
+	return m, nil
 }

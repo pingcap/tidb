@@ -235,10 +235,10 @@ function run_mysql_tester()
     if [ $record -eq 1 ]; then
       if [ "$record_case" = 'all' ]; then
           echo "record all cases"
-          $mysql_tester -port "$port" --collation-disable=$coll_disabled --record
+          $mysql_tester -port "$port" --check-error=true --collation-disable=$coll_disabled --record
       else
           echo "record result for case: \"$record_case\""
-          $mysql_tester -port "$port" --collation-disable=$coll_disabled --record $record_case
+          $mysql_tester -port "$port" --check-error=true --collation-disable=$coll_disabled --record $record_case
       fi
     else
       if [ -z "$tests" ]; then
@@ -246,7 +246,7 @@ function run_mysql_tester()
       else
           echo "run integration test cases($coll_msg): $tests"
       fi
-      $mysql_tester -port "$port" --collation-disable=$coll_disabled $tests
+      $mysql_tester -port "$port" --check-error=true --collation-disable=$coll_disabled $tests
     fi
 }
 
