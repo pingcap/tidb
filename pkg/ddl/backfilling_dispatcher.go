@@ -521,28 +521,6 @@ func getRangeSplitter(
 		rangeGroupSize, rangeGroupKeys, maxSizePerRange, maxKeysPerRange, true)
 }
 
-func getStartEndKeyAndFilesForOneBatch(
-	multiStat []external.MultipleFilesStat,
-	step proto.Step,
-) (startKeys, endKeys []kv.Key, dataFiles [][]string, statFiles [][]string, err error) {
-	dataFilesGroup := make([][]string, 0, 16)
-	statFilesGroup := make([][]string, 0, 16)
-
-	for _, stat := range multiStat {
-		startKeys = append(startKeys, stat.MinKey)
-		endKeys = append(endKeys, stat.MaxKey)
-		curData := make([]string, 0, 1000)
-		curStat := make([]string, 0, 16)
-		for _, file := range stat.Filenames {
-			curData = append(curData, file[0])
-			curStat = append(curStat, file[1])
-		}
-		dataFilesGroup = append(dataFilesGroup, curData)
-		statFilesGroup = append(statFilesGroup, curStat)
-	}
-	return startKeys, endKeys, dataFilesGroup, statFilesGroup, nil
-}
-
 func getSummaryFromLastStep(
 	taskHandle dispatcher.TaskHandle,
 	gTaskID int64,
