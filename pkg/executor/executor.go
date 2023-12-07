@@ -2369,7 +2369,6 @@ func (w *checkIndexWorker) initSessCtx(ctx context.Context, se sessionctx.Contex
 	return func() {
 		sessVars.OptimizerUseInvisibleIndexes = originOptUseInvisibleIdx
 		sessVars.MemQuotaQuery = originMemQuotaQuery
-		w.e.Base().ReleaseSysSession(ctx, se)
 	}
 }
 
@@ -2391,7 +2390,10 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		return
 	}
 	restoreCtx := w.initSessCtx(ctx, se)
-	defer restoreCtx()
+	defer func() {
+		restoreCtx()
+		w.e.Base().ReleaseSysSession(ctx, se)
+	}()
 
 	var pkCols []string
 	var pkTypes []*types.FieldType
