@@ -65,6 +65,15 @@ func createTable(d *ddlCtx, t *meta.Meta, job *model.Job, fkCheck bool) (*model.
 		}
 		return tbInfo, errors.Trace(err)
 	}
+
+	err = checkConstraintNamesNotExists(t, schemaID, tbInfo.Constraints)
+	if err != nil {
+		if infoschema.ErrCheckConstraintDupName.Equal(err) {
+			job.State = model.JobStateCancelled
+		}
+		return tbInfo, errors.Trace(err)
+	}
+
 	retryable, err := checkTableForeignKeyValidInOwner(d, t, job, tbInfo, fkCheck)
 	if err != nil {
 		if !retryable {
@@ -1486,6 +1495,28 @@ func checkTableNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, tableName stri
 	}
 
 	return checkTableNotExistsFromStore(t, schemaID, tableName)
+}
+
+func checkConstraintNamesNotExists(t *meta.Meta, schemaID int64, constraints []*model.ConstraintInfo) error {
+	if len(constraints) == 0 {
+		return nil
+	}
+	tbInfos, err := t.ListTables(schemaID)
+	if err != nil {
+		return err
+	}
+
+	for _, tb := range tbInfos {
+		for _, constraint := range constraints {
+			if constraint.State != model.StateWriteOnly {
+				if constraintInfo := tb.FindConstraintInfoByName(constraint.Name.L); constraintInfo != nil {
+					return infoschema.ErrCheckConstraintDupName.GenWithStackByArgs(constraint.Name.L)
+				}
+			}
+		}
+	}
+
+	return nil
 }
 
 func checkTableIDNotExists(t *meta.Meta, schemaID, tableID int64) error {
