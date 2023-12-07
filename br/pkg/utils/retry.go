@@ -123,6 +123,10 @@ func (ec *ErrorContext) HandleErrorMsg(msg string, uuid uint64) ErrorResult {
 			uuid)
 		return ErrorResult{GiveUpStrategy, reason}
 	}
+	msgLower := strings.ToLower(msg)
+	if strings.Contains(msgLower, "context canceled") {
+		return ErrorResult{GiveUpStrategy, "context canceled, give up"}
+	}
 
 	if MessageIsRetryableStorageError(msg) {
 		logger.Warn("occur storage error", zap.String("error", msg))
