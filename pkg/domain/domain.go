@@ -131,7 +131,7 @@ type Domain struct {
 	store           kv.Storage
 	infoCache       *infoschema.InfoCache
 	privHandle      *privileges.Handle
-	bindHandle      atomic.Pointer[bindinfo.BindHandle]
+	bindHandle      atomic.Value
 	statsHandle     atomic.Pointer[handle.Handle]
 	statsLease      time.Duration
 	ddl             ddl.DDL
@@ -1040,7 +1040,7 @@ func (do *Domain) Close() {
 	}
 	do.wg.Wait()
 	do.sysSessionPool.Close()
-	variable.UnregisterStatistics(do.bindHandle.Load())
+	variable.UnregisterStatistics(do.BindHandle())
 	if do.onClose != nil {
 		do.onClose()
 	}
@@ -1832,8 +1832,8 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 }
 
 // BindHandle returns domain's bindHandle.
-func (do *Domain) BindHandle() *bindinfo.BindHandle {
-	return do.bindHandle.Load()
+func (do *Domain) BindHandle() bindinfo.GlobalBindingHandle {
+	return do.bindHandle.Load().(bindinfo.GlobalBindingHandle)
 }
 
 // LoadBindInfoLoop create a goroutine loads BindInfo in a loop, it should
@@ -1841,11 +1841,11 @@ func (do *Domain) BindHandle() *bindinfo.BindHandle {
 func (do *Domain) LoadBindInfoLoop(ctxForHandle sessionctx.Context, ctxForEvolve sessionctx.Context) error {
 	ctxForHandle.GetSessionVars().InRestrictedSQL = true
 	ctxForEvolve.GetSessionVars().InRestrictedSQL = true
-	if !do.bindHandle.CompareAndSwap(nil, bindinfo.NewBindHandle(do.sysSessionPool)) {
-		do.bindHandle.Load().Reset()
+	if !do.bindHandle.CompareAndSwap(nil, bindinfo.NewGlobalBindingHandle(do.sysSessionPool)) {
+		do.BindHandle().Reset()
 	}
 
-	err := do.bindHandle.Load().Update(true)
+	err := do.BindHandle().Update(true)
 	if err != nil || bindinfo.Lease == 0 {
 		return err
 	}
@@ -1874,7 +1874,7 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				owner.Cancel()
 				return
 			case <-bindWorkerTicker.C:
-				bindHandle := do.bindHandle.Load()
+				bindHandle := do.BindHandle()
 				err := bindHandle.Update(false)
 				if err != nil {
 					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
@@ -1889,7 +1889,7 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				if !owner.IsOwner() {
 					continue
 				}
-				err := do.bindHandle.Load().GCGlobalBinding()
+				err := do.BindHandle().GCGlobalBinding()
 				if err != nil {
 					logutil.BgLogger().Error("GC bind record failed", zap.Error(err))
 				}
