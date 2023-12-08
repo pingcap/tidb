@@ -34,6 +34,14 @@ const (
 	DefaultMPMCQueueLimitNum = 100
 )
 
+// ChunkWithMemoryUsage contains chunk and memory usage.
+// However, some of memory usage may also come from other place,
+// not only the chunk's memory usage.
+type ChunkWithMemoryUsage struct {
+	Chk         *Chunk
+	MemoryUsage int64
+}
+
 // MPMCQueue means multi producer and multi consumer.
 type MPMCQueue struct {
 	lock  *sync.Mutex
@@ -74,7 +82,7 @@ func (m *MPMCQueue) checkStatusNoLock() Result {
 }
 
 // Push pushes a chunk into queue with thread safety.
-func (m *MPMCQueue) Push(chk *Chunk) Result {
+func (m *MPMCQueue) Push(chk *ChunkWithMemoryUsage) Result {
 	m.lock.Lock()
 	defer m.lock.Lock()
 	res := m.checkStatusNoLock()
@@ -94,7 +102,7 @@ func (m *MPMCQueue) Push(chk *Chunk) Result {
 }
 
 // Pop pops a chunk from queue with thread safety.
-func (m *MPMCQueue) Pop() (Result, *Chunk) {
+func (m *MPMCQueue) Pop() (*ChunkWithMemoryUsage, Result) {
 	m.lock.Lock()
 	defer m.lock.Lock()
 	res := m.checkStatusNoLock()
@@ -105,16 +113,16 @@ func (m *MPMCQueue) Pop() (Result, *Chunk) {
 	}
 
 	if res != Open {
-		return res, nil
+		return nil, res
 	}
 
 	elem := m.queue.Front()
-	chk, ok := elem.Value.(*Chunk)
+	chk, ok := elem.Value.(*ChunkWithMemoryUsage)
 	if !ok {
 		panic("Data type in MPMCQueue is not *Chunk")
 	}
 	m.cond.Broadcast()
-	return OK, chk
+	return chk, OK
 }
 
 // ForceClose closes the queue.

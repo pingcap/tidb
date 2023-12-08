@@ -21,11 +21,8 @@ import (
 )
 
 type parallelSortWorker struct {
-	self struct {
-		lock sync.Mutex
-		// It's used by itself.
-		queue []sortedRows
-	}
+	queue            []sortedRows
+	sharedSortedData *mergeSortedDataContainer
 
 	lock        *sync.Mutex
 	cond        *sync.Cond
@@ -35,26 +32,66 @@ type parallelSortWorker struct {
 	result    *sortedRows
 
 	mpmcQueue    *chunk.MPMCQueue
+	checkError   func() error
 	processError func(error)
+
+	totalMemoryUsage int64
 }
 
 func newParallelSortWorker(
+	sharedSortedData *mergeSortedDataContainer,
 	lock *sync.Mutex,
 	cond *sync.Cond,
 	publicQueue *[]sortedRows,
 	waitGroup *sync.WaitGroup,
 	result *sortedRows,
 	mpmcQueue *chunk.MPMCQueue,
+	checkError func() error,
 	processError func(error)) *parallelSortWorker {
 	return &parallelSortWorker{
-		lock:         lock,
-		cond:         cond,
-		publicQueue:  publicQueue,
-		waitGroup:    waitGroup,
-		result:       result,
-		mpmcQueue:    mpmcQueue,
-		processError: processError,
+		sharedSortedData: sharedSortedData,
+		lock:             lock,
+		cond:             cond,
+		publicQueue:      publicQueue,
+		waitGroup:        waitGroup,
+		result:           result,
+		mpmcQueue:        mpmcQueue,
+		checkError:       checkError,
+		processError:     processError,
+		totalMemoryUsage: 0,
 	}
+}
+
+// After fetching a chunk from MPMCQueue, we will sort it.
+// Return false if there is some error.
+func (p *parallelSortWorker) fetchFromMPMCQueueAndSort() bool {
+	for {
+		err := p.checkError()
+		if err != nil {
+			return false
+		}
+
+		// Memory usage of the chunk has been tracked from the producer side.
+		chk, res := p.mpmcQueue.Pop()
+		if res != chunk.OK {
+			// Check if the queue is closed by an error.
+			err := p.checkError()
+			return err == nil
+		}
+
+		p.totalMemoryUsage += chk.MemoryUsage
+
+	}
+}
+
+// Sort data that received by itself.
+// Return false if there is some error.
+func (p *parallelSortWorker) mergeSortLocalData() bool {
+	return true
+}
+
+func (p *parallelSortWorker) mergeSortGlobalData() bool {
+	return true
 }
 
 func (p *parallelSortWorker) run() {
@@ -65,7 +102,15 @@ func (p *parallelSortWorker) run() {
 		p.waitGroup.Done()
 	}()
 
-	for {
-		
+	ok := p.fetchFromMPMCQueueAndSort()
+	if !ok {
+		return
 	}
+
+	ok = p.mergeSortLocalData()
+	if !ok {
+		return
+	}
+
+	p.mergeSortGlobalData()
 }

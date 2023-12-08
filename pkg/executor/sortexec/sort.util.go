@@ -15,15 +15,32 @@
 package sortexec
 
 import (
+	"sync"
+
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
-type chunkWithMemoryUsage struct {
-	chk        *chunk.Chunk
-	memorySize int64
+type mergeSortedDataContainer struct {
+	lock               sync.Mutex
+	sortedData         []sortedRows
+	remainingWorkerNum int
+}
+
+func newMergeSortedDataContainer(workerNum int) *mergeSortedDataContainer {
+	return &mergeSortedDataContainer{
+		remainingWorkerNum: workerNum,
+	}
+}
+
+// Return the number of remaining worker after decreased
+func (m *mergeSortedDataContainer) decreaseWorker() int {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	m.remainingWorkerNum--
+	return m.remainingWorkerNum
 }
 
 type partitionPointer struct {

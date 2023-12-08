@@ -70,6 +70,7 @@ type SortExec struct {
 
 	Parallel struct {
 		result sortedRows
+		rowNum int64
 		idx    int64
 
 		mpmcQueue *chunk.MPMCQueue
@@ -302,20 +303,24 @@ func (e *SortExec) fetchChunksUnparallel(ctx context.Context) error {
 }
 
 func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
+	workerNum := len(e.Parallel.workers)
+	sharedSortedData := &mergeSortedDataContainer{
+		remainingWorkerNum: workerNum,
+	}
 	lock := sync.Mutex{}
 	cond := sync.NewCond(&lock)
 	publicQueue := make([]sortedRows, 0)
 	waitGroup := sync.WaitGroup{}
 
 	// Add in advance to avoid that the counter in waitGroup is minus to negative.
-	waitGroup.Add(len(e.Parallel.workers) + 1)
+	waitGroup.Add(workerNum + 1)
 
 	// Fetch chunks from child and put chunks into MPMCQueue
 	go e.fetchChunksFromChild(ctx, e.Parallel.mpmcQueue, &waitGroup)
 
 	// Create workers
 	for i := range e.Parallel.workers {
-		e.Parallel.workers[i] = newParallelSortWorker(&lock, cond, &publicQueue, &waitGroup, &e.Parallel.result, e.Parallel.mpmcQueue, e.processErrorForParallel)
+		e.Parallel.workers[i] = newParallelSortWorker(sharedSortedData, &lock, cond, &publicQueue, &waitGroup, &e.Parallel.result, e.Parallel.mpmcQueue, e.checkErrorForParallel, e.processErrorForParallel)
 	}
 
 	// Run workers
@@ -325,6 +330,8 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 
 	// Wait for the finish of all goroutines
 	waitGroup.Wait()
+
+	e.getResult(sharedSortedData)
 
 	return nil
 }
@@ -344,19 +351,33 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context, mpmcQueue *chunk.MP
 			e.processErrorForParallel(err)
 			return
 		}
+
 		rowCount := chk.NumRows()
 		if rowCount == 0 {
 			break
 		}
 
-		err = e.checkError()
+		chkWithMemoryUsage := &chunk.ChunkWithMemoryUsage{
+			Chk:         chk,
+			MemoryUsage: chk.MemoryUsage() + chunk.RowSize*int64(rowCount),
+		}
+
+		e.memTracker.Consume(chkWithMemoryUsage.MemoryUsage)
+
+		// Push chunk into mpmcQueue.
+		res := e.Parallel.mpmcQueue.Push(chkWithMemoryUsage)
+		if res != chunk.OK {
+			return
+		}
+
+		err = e.checkErrorForParallel()
 		if err != nil {
 			return
 		}
 	}
 }
 
-func (e *SortExec) checkError() error {
+func (e *SortExec) checkErrorForParallel() error {
 	e.Parallel.errRWLock.RLock()
 	defer e.Parallel.errRWLock.RUnlock()
 	return e.Parallel.err
@@ -369,27 +390,41 @@ func (e *SortExec) processErrorForParallel(err error) {
 	e.Parallel.mpmcQueue.Close()
 }
 
-func (s *SortExec) initCompareFuncs() {
-	s.keyCmpFuncs = make([]chunk.CompareFunc, len(s.ByItems))
-	for i := range s.ByItems {
-		keyType := s.ByItems[i].Expr.GetType()
-		s.keyCmpFuncs[i] = chunk.GetCompareFunc(keyType)
+func (e *SortExec) getResult(sharedSortedData *mergeSortedDataContainer) {
+	partitionNum := len(sharedSortedData.sortedData)
+	if partitionNum > 1 {
+		panic("Sort is not completed.")
+	}
+
+	if partitionNum == 0 {
+		e.Parallel.rowNum = 0
+		return
+	}
+	e.Parallel.rowNum = int64(len(sharedSortedData.sortedData[0]))
+	e.Parallel.result = sharedSortedData.sortedData[0]
+}
+
+func (e *SortExec) initCompareFuncs() {
+	e.keyCmpFuncs = make([]chunk.CompareFunc, len(e.ByItems))
+	for i := range e.ByItems {
+		keyType := e.ByItems[i].Expr.GetType()
+		e.keyCmpFuncs[i] = chunk.GetCompareFunc(keyType)
 	}
 }
 
-func (s *SortExec) buildKeyColumns() {
-	s.keyColumns = make([]int, 0, len(s.ByItems))
-	for _, by := range s.ByItems {
+func (e *SortExec) buildKeyColumns() {
+	e.keyColumns = make([]int, 0, len(e.ByItems))
+	for _, by := range e.ByItems {
 		col := by.Expr.(*expression.Column)
-		s.keyColumns = append(s.keyColumns, col.Index)
+		e.keyColumns = append(e.keyColumns, col.Index)
 	}
 }
 
-func (s *SortExec) lessRow(rowI, rowJ chunk.Row) bool {
-	for i, colIdx := range s.keyColumns {
-		cmpFunc := s.keyCmpFuncs[i]
+func (e *SortExec) lessRow(rowI, rowJ chunk.Row) bool {
+	for i, colIdx := range e.keyColumns {
+		cmpFunc := e.keyCmpFuncs[i]
 		cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
-		if s.ByItems[i].Desc {
+		if e.ByItems[i].Desc {
 			cmp = -cmp
 		}
 		if cmp < 0 {
@@ -401,11 +436,11 @@ func (s *SortExec) lessRow(rowI, rowJ chunk.Row) bool {
 	return false
 }
 
-func (s *SortExec) compressRow(rowI, rowJ chunk.Row) int {
-	for i, colIdx := range s.keyColumns {
-		cmpFunc := s.keyCmpFuncs[i]
+func (e *SortExec) compressRow(rowI, rowJ chunk.Row) int {
+	for i, colIdx := range e.keyColumns {
+		cmpFunc := e.keyCmpFuncs[i]
 		cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
-		if s.ByItems[i].Desc {
+		if e.ByItems[i].Desc {
 			cmp = -cmp
 		}
 		if cmp != 0 {
