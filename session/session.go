@@ -2446,16 +2446,46 @@ const ExecStmtVarKey ExecStmtVarKeyType = 0
 // RecordSet, so this struct exists and RecordSet.Close() is overrided handle that.
 type execStmtResult struct {
 	sqlexec.RecordSet
+<<<<<<< HEAD:session/session.go
 	se  *session
 	sql sqlexec.Statement
+=======
+	se     *session
+	sql    sqlexec.Statement
+	once   sync.Once
+	closed bool
+>>>>>>> d23e1c379a5 (server,executor: split ResultSet Close() to Finish() and Close() (#49224)):pkg/session/session.go
+}
+
+func (rs *execStmtResult) Finish() error {
+	var err error
+	rs.once.Do(func() {
+		var err1 error
+		if f, ok := rs.RecordSet.(interface{ Finish() error }); ok {
+			err1 = f.Finish()
+		}
+		err2 := finishStmt(context.Background(), rs.se, err, rs.sql)
+		err = stderrs.Join(err1, err2)
+	})
+	return err
 }
 
 func (rs *execStmtResult) Close() error {
+<<<<<<< HEAD:session/session.go
 	se := rs.se
 	if err := rs.RecordSet.Close(); err != nil {
 		return finishStmt(context.Background(), se, err, rs.sql)
 	}
 	return finishStmt(context.Background(), se, nil, rs.sql)
+=======
+	if rs.closed {
+		return nil
+	}
+	err1 := rs.Finish()
+	err2 := rs.RecordSet.Close()
+	rs.closed = true
+	return stderrs.Join(err1, err2)
+>>>>>>> d23e1c379a5 (server,executor: split ResultSet Close() to Finish() and Close() (#49224)):pkg/session/session.go
 }
 
 // rollbackOnError makes sure the next statement starts a new transaction with the latest InfoSchema.
