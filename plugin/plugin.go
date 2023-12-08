@@ -246,27 +246,6 @@ type flushWatcher struct {
 	plugin   *Plugin
 }
 
-<<<<<<< HEAD:plugin/plugin.go
-=======
-func (w *flushWatcher) refreshPluginState() error {
-	disabled, err := w.getPluginDisabledFlag()
-	if err != nil {
-		logutil.BgLogger().Error("get plugin disabled flag failure", zap.String("plugin", w.manifest.Name), zap.Error(err))
-		return err
-	}
-	if disabled {
-		atomic.StoreUint32(&w.manifest.flushWatcher.plugin.Disabled, 1)
-	} else {
-		atomic.StoreUint32(&w.manifest.flushWatcher.plugin.Disabled, 0)
-	}
-	err = w.manifest.OnFlush(w.ctx, w.manifest)
-	if err != nil {
-		logutil.BgLogger().Error("plugin flush event failed", zap.String("plugin", w.manifest.Name), zap.Error(err))
-		return err
-	}
-	return nil
-}
->>>>>>> 169617d22dc (plugin: fix bug that watch loop will refresh frequently when channel closed (#49275)):pkg/plugin/plugin.go
 func (w *flushWatcher) watchLoop() {
 	const reWatchInterval = time.Second * 5
 	logutil.BgLogger().Info("plugin flushWatcher loop started", zap.String("plugin", w.manifest.Name))
@@ -287,9 +266,12 @@ func (w *flushWatcher) watchLoopWithChan(ch clientv3.WatchChan) (exit bool) {
 	for {
 		select {
 		case <-w.ctx.Done():
-<<<<<<< HEAD:plugin/plugin.go
-			return
-		case <-watchChan:
+			return true
+		case _, ok := <-ch:
+			if !ok {
+				return false
+			}
+			logutil.BgLogger().Info("plugin flushWatcher detected event to reload plugin config", zap.String("plugin", w.manifest.Name))
 			disabled, err := w.getPluginDisabledFlag()
 			if err != nil {
 				logutil.BgLogger().Error("get plugin disabled flag failure", zap.String("plugin", w.manifest.Name), zap.Error(err))
@@ -303,15 +285,6 @@ func (w *flushWatcher) watchLoopWithChan(ch clientv3.WatchChan) (exit bool) {
 			if err != nil {
 				logutil.BgLogger().Error("notify plugin flush event failed", zap.String("plugin", w.manifest.Name), zap.Error(err))
 			}
-=======
-			return true
-		case _, ok := <-ch:
-			if !ok {
-				return false
-			}
-			logutil.BgLogger().Info("plugin flushWatcher detected event to reload plugin config", zap.String("plugin", w.manifest.Name))
-			_ = w.refreshPluginState()
->>>>>>> 169617d22dc (plugin: fix bug that watch loop will refresh frequently when channel closed (#49275)):pkg/plugin/plugin.go
 		}
 	}
 }
