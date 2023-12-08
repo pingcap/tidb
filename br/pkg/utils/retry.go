@@ -11,15 +11,10 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-<<<<<<< HEAD
-	tmysql "github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/parser/terror"
-=======
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
-	tmysql "github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/parser/terror"
->>>>>>> 6c30c6e6aa7 (br: refactor error handle mechanism to tolerant unexpect kv errors. (#48646))
+	tmysql "github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
