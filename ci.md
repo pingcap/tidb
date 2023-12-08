@@ -2,7 +2,7 @@
 
 ## Guide
 
-The CI pipeline will automatically trigger when you submit a PR or push new commits. There are also some CI pipelines that support manual triggering, usually for integration testing, which will give you more confidence in the quality of PR.You can obtain the trigger command for all supported CI pipelines by commenting `/test ?` in a PR.
+The CI pipeline will automatically trigger when you submit a PR or push new commits. There are also some CI pipelines that support manual triggering, usually for integration testing, which will give you more confidence in the quality of PR. You can obtain the trigger command for all supported CI pipelines by commenting `/test ?` in a PR.
 
 ## Commands
 
