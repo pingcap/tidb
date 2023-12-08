@@ -15,10 +15,10 @@
 package issuetest
 
 import (
+	"sort"
 	"strconv"
 	"testing"
 
-	"exp/slices"
 	"github.com/pingcap/tidb/testkit"
 )
 
@@ -137,7 +137,9 @@ func TestIssue48755(t *testing.T) {
 		expectedResult = append(expectedResult, strconv.FormatInt(int64(i), 10))
 	}
 	expectedResult = append(expectedResult, "100")
-	slices.Sort(expectedResult)
+	sort.Slice(expectedResult, func(i, j int) bool {
+		return expectedResult[i] < expectedResult[j]
+	})
 	rs.Sort().Check(testkit.Rows(expectedResult...))
 }
 
