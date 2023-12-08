@@ -17,6 +17,7 @@ package local
 import (
 	"container/heap"
 	"context"
+	goerrors "errors"
 	"strings"
 	"sync"
 	"time"
@@ -159,7 +160,7 @@ func (j *regionJob) convertStageTo(stage jobStageTp) {
 // we don't need to do cleanup for the pairs written to tikv if encounters an error,
 // tikv will take the responsibility to do so.
 // TODO: let client-go provide a high-level write interface.
-func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
+func (local *Backend) writeToTiKV(pCtx context.Context, j *regionJob) (errRet error) {
 	if j.stage != regionScanned {
 		return nil
 	}
@@ -174,6 +175,19 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		}
 		failpoint.Return(err)
 	})
+
+	ctx, cancel := context.WithTimeout(pCtx, 15*time.Minute)
+	defer cancel()
+	defer func() {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			// should not happen
+			return
+		}
+		if goerrors.Is(errRet, context.DeadlineExceeded) && time.Now().After(deadline) {
+			errRet = common.ErrWriteTooSlow
+		}
+	}()
 
 	apiVersion := local.tikvCodec.GetAPIVersion()
 	clientFactory := local.importClientFactory
