@@ -127,7 +127,7 @@ func NewExternalEngine(
 		bufPool: membuf.NewPool(
 			membuf.WithBlockNum(0),
 			membuf.WithPoolMemoryLimiter(memLimiter),
-			membuf.WithBlockSize(4*1024*1024),
+			membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
 		),
 		checkHotspot:       checkHotspot,
 		keyAdapter:         keyAdapter,
@@ -316,17 +316,17 @@ func readAllData(
 		startKey,
 		endKey,
 	)
-	// TODO(lance6716): refine concurrency
-	for i := range concurrences {
-		concurrences[i] = 1
+	// TODO(lance6716): refine adjust concurrency
+	for i, c := range concurrences {
+		if c < readAllDataConcThreshold {
+			concurrences[i] = 1
+		}
 	}
 
 	if err != nil {
 		return err
 	}
 	var eg errgroup.Group
-	// TODO(lance6716): check memory usage
-	eg.SetLimit(64)
 	for i := range dataFiles {
 		i := i
 		eg.Go(func() error {
