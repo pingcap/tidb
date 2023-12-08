@@ -14,134 +14,58 @@
 package explain
 
 import (
-	"fmt"
-	"strconv"
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/testkit"
-	"github.com/stretchr/testify/require"
 )
 
-func TestLockUnchangedUniqueKeys(t *testing.T) {
+func TestIssue47331(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-
-	tk1 := testkit.NewTestKit(t, store)
-	tk2 := testkit.NewTestKit(t, store)
-	tk1.MustExec("use test")
-	tk2.MustExec("use test")
-
-	for _, shouldLock := range []bool{true, false} {
-		for _, tt := range []struct {
-			name          string
-			create        string
-			insert        string
-			update        string
-			isClusteredPK bool
-		}{
-			{
-				// ref https://github.com/pingcap/tidb/issues/36438
-				"Issue36438",
-				"create table t (i varchar(10), unique key(i))",
-				"insert into t values ('a')",
-				"update t set i = 'a'",
-				false,
-			},
-			{
-				"ClusteredAndRowUnchanged",
-				"create table t (k int, v int, primary key(k) clustered, key sk(k))",
-				"insert into t values (1, 10)",
-				"update t force index(sk) set v = 10 where k = 1",
-				true,
-			},
-			{
-				"ClusteredAndRowUnchangedAndParted",
-				"create table t (k int, v int, primary key(k) clustered, key sk(k)) partition by hash(k) partitions 4",
-				"insert into t values (1, 10)",
-				"update t force index(sk) set v = 10 where k = 1",
-				true,
-			},
-			{
-				"ClusteredAndRowChanged",
-				"create table t (k int, v int, primary key(k) clustered, key sk(k))",
-				"insert into t values (1, 10)",
-				"update t force index(sk) set v = 11 where k = 1",
-				true,
-			},
-			{
-				"NonClusteredAndRowUnchanged",
-				"create table t (k int, v int, primary key(k) nonclustered, key sk(k))",
-				"insert into t values (1, 10)",
-				"update t force index(sk) set v = 10 where k = 1",
-				false,
-			},
-			{
-				"NonClusteredAndRowUnchangedAndParted",
-				"create table t (k int, v int, primary key(k) nonclustered, key sk(k)) partition by hash(k) partitions 4",
-				"insert into t values (1, 10)",
-				"update t force index(sk) set v = 10 where k = 1",
-				false,
-			},
-			{
-				"NonClusteredAndRowChanged",
-				"create table t (k int, v int, primary key(k) nonclustered, key sk(k))",
-				"insert into t values (1, 10)",
-				"update t force index(sk) set v = 11 where k = 1",
-				false,
-			},
-			{
-				"UniqueAndRowUnchanged",
-				"create table t (k int, v int, unique key uk(k), key sk(k))",
-				"insert into t values (1, 10)",
-				"update t force index(sk) set v = 10 where k = 1",
-				false,
-			},
-			{
-				"UniqueAndRowUnchangedAndParted",
-				"create table t (k int, v int, unique key uk(k), key sk(k)) partition by hash(k) partitions 4",
-				"insert into t values (1, 10)",
-				"update t force index(sk) set v = 10 where k = 1",
-				false,
-			},
-			{
-				"UniqueAndRowChanged",
-				"create table t (k int, v int, unique key uk(k), key sk(k))",
-				"insert into t values (1, 10)",
-				"update t force index(sk) set v = 11 where k = 1",
-				false,
-			},
-		} {
-			t.Run(
-				tt.name+"-"+strconv.FormatBool(shouldLock), func(t *testing.T) {
-					tk1.MustExec(fmt.Sprintf("set @@tidb_lock_unchanged_keys = %v", shouldLock))
-					tk1.MustExec("drop table if exists t")
-					tk1.MustExec(tt.create)
-					tk1.MustExec(tt.insert)
-					tk1.MustExec("begin pessimistic")
-
-					tk1.MustExec(tt.update)
-
-					errCh := make(chan error, 1)
-					go func() {
-						_, err := tk2.Exec(tt.insert)
-						errCh <- err
-					}()
-
-					select {
-					case <-time.After(100 * time.Millisecond):
-						if !shouldLock && !tt.isClusteredPK {
-							require.Fail(t, "insert is blocked by update")
-						}
-						tk1.MustExec("rollback")
-						require.Error(t, <-errCh)
-					case err := <-errCh:
-						require.Error(t, err)
-						if shouldLock {
-							require.Fail(t, "insert is not blocked by update")
-						}
-					}
-				},
-			)
-		}
-	}
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec(`create table t1(
+		id1 varchar(2) DEFAULT '00',
+		id2 varchar(30) NOT NULL,
+		id3 datetime DEFAULT NULL,
+		id4 varchar(100) NOT NULL DEFAULT 'ecifdata',
+		id5 datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		id6 int(11) DEFAULT NULL,
+		id7 int(11) DEFAULT NULL,
+		UNIQUE KEY UI_id2 (id2),
+		KEY ix_id1 (id1)
+	)`)
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec(`create table t2(
+		id10 varchar(40) NOT NULL,
+		id2 varchar(30) NOT NULL,
+		KEY IX_id2 (id2),
+		PRIMARY KEY (id10)
+	)`)
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec(`create table t3(
+		id20 varchar(40) DEFAULT NULL,
+		UNIQUE KEY IX_id20 (id20)
+	)`)
+	tk.MustExec(`
+		explain
+		UPDATE t1 a
+		SET a.id1 = '04',
+			a.id3 = CURRENT_TIMESTAMP,
+			a.id4 = SUBSTRING_INDEX(USER(), '@', 1),
+			a.id5 = CURRENT_TIMESTAMP
+		WHERE a.id1 = '03'
+			AND a.id6 - IFNULL(a.id7, 0) =
+				(
+					SELECT COUNT(1)
+					FROM t2 b, t3 c
+					WHERE b.id10 = c.id20
+						AND b.id2 = a.id2
+						AND b.id2 in (
+							SELECT rn.id2
+							FROM t1 rn
+							WHERE rn.id1 = '03'
+						)
+				);
+	`)
 }
