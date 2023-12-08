@@ -127,35 +127,6 @@ func TestWalkDirWithSoftLinkFile(t *testing.T) {
 	})
 	require.NoError(t, err)
 }
-<<<<<<< HEAD
-=======
-
-func TestWalkDirSkipSubDir(t *testing.T) {
-	tempDir := t.TempDir()
-	require.NoError(t, os.WriteFile(path.Join(tempDir, "test1.txt"), []byte("test1"), 0o644))
-	require.NoError(t, os.MkdirAll(path.Join(tempDir, "sub"), 0o755))
-	require.NoError(t, os.WriteFile(path.Join(tempDir, "sub", "test2.txt"), []byte("test2"), 0o644))
-
-	sb, err := ParseBackend(tempDir, &BackendOptions{})
-	require.NoError(t, err)
-	store, err := Create(context.TODO(), sb, true)
-	require.NoError(t, err)
-	names := []string{"sub/test2.txt", "test1.txt"}
-	i := 0
-	require.NoError(t, store.WalkDir(context.Background(), &WalkOption{}, func(path string, size int64) error {
-		require.Equal(t, names[i], path)
-		i++
-		return nil
-	}))
-
-	names = []string{"test1.txt"}
-	i = 0
-	require.NoError(t, store.WalkDir(context.Background(), &WalkOption{SkipSubDir: true}, func(path string, size int64) error {
-		require.Equal(t, names[i], path)
-		i++
-		return nil
-	}))
-}
 
 func TestLocalURI(t *testing.T) {
 	ctx := context.Background()
@@ -170,71 +141,3 @@ func TestLocalURI(t *testing.T) {
 	obtained := store.URI()
 	require.Equal(t, url, obtained)
 }
-
-func TestLocalFileReadRange(t *testing.T) {
-	ctx := context.Background()
-	dir := t.TempDir()
-	sb, err := ParseBackend("file://"+filepath.ToSlash(dir), &BackendOptions{})
-	require.NoError(t, err)
-	store, err := Create(ctx, sb, true)
-	require.NoError(t, err)
-
-	name := "test_read_range"
-
-	w, err := store.Create(ctx, name, nil)
-	require.NoError(t, err)
-	_, err = w.Write(ctx, []byte("0123456789"))
-	require.NoError(t, err)
-	require.NoError(t, w.Close(ctx))
-
-	checkContent := func(r ExternalFileReader, expected string) {
-		buf := make([]byte, 10)
-		n, _ := r.Read(buf)
-		require.Equal(t, expected, string(buf[:n]))
-		n, err = r.Read(buf)
-		require.Equal(t, 0, n)
-		require.ErrorIs(t, err, io.EOF)
-	}
-
-	// [2, 6]
-	start, end := int64(2), int64(6)
-	r, err := store.Open(ctx, name, &ReaderOption{
-		StartOffset: &start,
-		EndOffset:   &end,
-	})
-	require.NoError(t, err)
-	checkContent(r, "2345")
-
-	// full range
-	r, err = store.Open(ctx, name, nil)
-	require.NoError(t, err)
-	checkContent(r, "0123456789")
-
-	// [5, ...)
-	start = 5
-	r, err = store.Open(ctx, name, &ReaderOption{
-		StartOffset: &start,
-	})
-	require.NoError(t, err)
-	checkContent(r, "56789")
-
-	// [..., 5)
-	end = 5
-	r, err = store.Open(ctx, name, &ReaderOption{
-		EndOffset: &end,
-	})
-	require.NoError(t, err)
-	checkContent(r, "01234")
-
-	// test read into smaller buffer
-	smallBuf := make([]byte, 2)
-	start, end = int64(2), int64(6)
-	r, err = store.Open(ctx, name, &ReaderOption{
-		StartOffset: &start,
-		EndOffset:   &end,
-	})
-	require.NoError(t, err)
-	n, _ := r.Read(smallBuf)
-	require.Equal(t, "23", string(smallBuf[:n]))
-}
->>>>>>> 49d1b66787a (br: fix incorrect uri for the file storage (#48453))
