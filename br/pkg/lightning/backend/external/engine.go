@@ -125,6 +125,7 @@ func NewExternalEngine(
 		splitKeys:       splitKeys,
 		regionSplitSize: regionSplitSize,
 		bufPool: membuf.NewPool(
+			membuf.WithBlockNum(0),
 			membuf.WithPoolMemoryLimiter(memLimiter),
 			membuf.WithBlockSize(4*1024*1024),
 		),

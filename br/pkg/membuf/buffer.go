@@ -17,9 +17,8 @@ package membuf
 import "unsafe"
 
 const (
-	defaultPoolSize            = 1024
-	defaultBlockSize           = 1 << 20 // 1M
-	defaultLargeAllocThreshold = 1 << 16 // 64K
+	defaultPoolSize  = 1024
+	defaultBlockSize = 1 << 20 // 1M
 )
 
 // Allocator is the abstract interface for allocating and freeing memory.
@@ -182,11 +181,11 @@ func (b *Buffer) Reset() {
 		b.curBlockIdx = 0
 		b.curIdx = 0
 	}
-	if b.pool.limiter != nil {
-		// but the caller may still hold the slice, it's a little risky to release
-		b.pool.limiter.Release(b.smallObjOverhead)
-		b.smallObjOverhead = 0
-	}
+	//if b.pool.limiter != nil {
+	//	// but the caller may still hold the slice, it's a little risky to release
+	//	b.pool.limiter.Release(b.smallObjOverhead)
+	//	b.smallObjOverhead = 0
+	//}
 }
 
 // Destroy releases all buffers to the pool.
@@ -194,10 +193,10 @@ func (b *Buffer) Destroy() {
 	for _, buf := range b.blocks {
 		b.pool.release(buf)
 	}
-	if b.pool.limiter != nil {
-		b.pool.limiter.Release(b.smallObjOverhead)
-		b.smallObjOverhead = 0
-	}
+	//if b.pool.limiter != nil {
+	//	b.pool.limiter.Release(b.smallObjOverhead)
+	//	b.smallObjOverhead = 0
+	//}
 	b.blocks = nil
 	b.curBlock = nil
 	b.curBlockIdx = -1
@@ -218,10 +217,10 @@ func (b *Buffer) AllocBytes(n int) []byte {
 	}
 
 	bs, _ := b.allocBytesWithSliceLocation(n)
-	if bs != nil && b.pool.limiter != nil {
-		b.pool.limiter.Acquire(sizeOfSlice)
-		b.smallObjOverhead += sizeOfSlice
-	}
+	//if bs != nil && b.pool.limiter != nil {
+	//	b.pool.limiter.Acquire(sizeOfSlice)
+	//	b.smallObjOverhead += sizeOfSlice
+	//}
 	return bs
 }
 
@@ -263,10 +262,10 @@ var sizeOfSliceLocation = int(unsafe.Sizeof(SliceLocation{}))
 // slice again. When we have a large number of slices in memory this can improve
 // performance. nil returned slice means allocation failed.
 func (b *Buffer) AllocBytesWithSliceLocation(n int) ([]byte, SliceLocation) {
-	if b.pool.limiter != nil {
-		b.pool.limiter.Acquire(sizeOfSliceLocation)
-		b.smallObjOverhead += sizeOfSliceLocation
-	}
+	//if b.pool.limiter != nil {
+	//	b.pool.limiter.Acquire(sizeOfSliceLocation)
+	//	b.smallObjOverhead += sizeOfSliceLocation
+	//}
 	return b.allocBytesWithSliceLocation(n)
 }
 
