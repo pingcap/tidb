@@ -259,6 +259,7 @@ func (w *flushWatcher) watchLoop() {
 			"plugin flushWatcher old chan closed, restart loop later",
 			zap.String("plugin", w.manifest.Name),
 			zap.Duration("after", reWatchInterval))
+		time.Sleep(reWatchInterval)
 	}
 }
 
