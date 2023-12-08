@@ -5294,7 +5294,7 @@ func TestIssue46177(t *testing.T) {
 	// cannot choose the best plan with RangeScan.
 	tk.MustExec(`set @@tidb_opt_fix_control = '46177:off'`)
 	tk.MustQuery(`explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a`).Check(testkit.Rows(
-		`Projection 10.00 root  Column#6->Column#7`,
+		`Projection 10.00 root  Column#6`,
 		`└─Window 10.00 root  row_number()->Column#6 over(order by test.sbtest.k rows between current row and current row)`,
 		`  └─IndexReader 10.00 root  index:Selection`,
 		`    └─Selection 10.00 cop[tikv]  lt(test.sbtest.id, 10)`,
@@ -5302,7 +5302,7 @@ func TestIssue46177(t *testing.T) {
 
 	tk.MustExec(`set @@tidb_opt_fix_control = '46177:on'`)
 	tk.MustQuery(`explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a`).Check(testkit.Rows(
-		`Projection 10.00 root  Column#6->Column#7`,
+		`Projection 10.00 root  Column#6`,
 		`└─Window 10.00 root  row_number()->Column#6 over(order by test.sbtest.k rows between current row and current row)`,
 		`  └─Sort 10.00 root  test.sbtest.k`,
 		`    └─TableReader 10.00 root  data:TableRangeScan`,
