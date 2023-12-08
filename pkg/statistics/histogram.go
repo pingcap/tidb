@@ -1283,6 +1283,8 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 		if lowerCompare < 0 {
 			err := errors.Errorf("illegal bucket order")
 			statslogutil.StatsLogger().Warn("fail to mergeBucketNDV",
+				zap.Int("left.Kind", int(left.upper.Kind())),
+				zap.Int("right.Kind", int(right.upper.Kind())),
 				zap.String("left.upper", left.upper.GetBinaryStringEncoded()),
 				zap.String("right.upper", right.upper.GetBinaryStringEncoded()),
 				zap.Any("left", left), zap.Any("right", right), zap.Error(err))
