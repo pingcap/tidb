@@ -126,7 +126,7 @@ func NewExternalEngine(
 		regionSplitSize: regionSplitSize,
 		bufPool: membuf.NewPool(
 			membuf.WithPoolMemoryLimiter(memLimiter),
-			membuf.WithBlockSize(int(readAllDataConcLimit)*ConcurrentReaderBufferSizePerConc),
+			membuf.WithBlockSize(4*1024*1024),
 		),
 		checkHotspot:       checkHotspot,
 		keyAdapter:         keyAdapter,
@@ -188,19 +188,14 @@ func getFilesReadConcurrency(ctx context.Context, storage storage.ExternalStorag
 	}
 	for i := range statsFiles {
 		result[i] = (endOffs[i] - startOffs[i]) / uint64(ConcurrentReaderBufferSizePerConc)
-		if result[i] < readAllDataConcLimit {
-			result[i] = 1
-		} else {
-			if result[i] > readAllDataConcLimit {
-				result[i] = readAllDataConcLimit
-			}
-			logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
-				zap.String("filename", statsFiles[i]),
-				zap.Uint64("startOffset", startOffs[i]),
-				zap.Uint64("endOffset", endOffs[i]),
-				zap.Uint64("concurrency", result[i]),
-			)
-		}
+		logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
+			zap.String("filename", statsFiles[i]),
+			zap.Uint64("startOffset", startOffs[i]),
+			zap.Uint64("endOffset", endOffs[i]),
+			zap.Uint64("expected concurrency", result[i]),
+		)
+		// TODO(lance6716):
+		result[i] = 1
 	}
 	return result, startOffs, nil
 }
@@ -305,7 +300,7 @@ func readAllData(
 	}
 	var eg errgroup.Group
 	// TODO(lance6716): check memory usage
-	eg.SetLimit(30)
+	eg.SetLimit(64)
 	for i := range dataFiles {
 		i := i
 		eg.Go(func() error {
