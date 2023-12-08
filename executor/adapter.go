@@ -22,6 +22,7 @@ import (
 	"runtime/trace"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -90,6 +91,7 @@ type recordSet struct {
 	stmt       *ExecStmt
 	lastErr    error
 	txnStartTS uint64
+	once       sync.Once
 }
 
 func (a *recordSet) Fields() []*ast.ResultField {
@@ -176,13 +178,31 @@ func (a *recordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 	return alloc.Alloc(base.retFieldTypes, base.initCap, base.maxChunkSize)
 }
 
-func (a *recordSet) Close() error {
-	err := a.executor.Close()
-	err1 := a.stmt.CloseRecordSet(a.txnStartTS, a.lastErr)
+func (a *recordSet) Finish() error {
+	var err error
+	a.once.Do(func() {
+		err = a.executor.Close()
+		cteErr := resetCTEStorageMap(a.stmt.Ctx)
+		if cteErr != nil {
+			logutil.BgLogger().Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
+		}
+		if err == nil {
+			err = cteErr
+		}
+	})
 	if err != nil {
-		return err
+		a.lastErr = err
 	}
-	return err1
+	return err
+}
+
+func (a *recordSet) Close() error {
+	err := a.Finish()
+	if err != nil {
+		logutil.BgLogger().Error("close recordSet error", zap.Error(err))
+	}
+	a.stmt.CloseRecordSet(a.txnStartTS, a.lastErr)
+	return err
 }
 
 // OnFetchReturned implements commandLifeCycle#OnFetchReturned
@@ -847,7 +867,8 @@ func (c *chunkRowRecordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 }
 
 func (c *chunkRowRecordSet) Close() error {
-	return c.execStmt.CloseRecordSet(c.execStmt.Ctx.GetSessionVars().TxnCtx.StartTS, nil)
+	c.execStmt.CloseRecordSet(c.execStmt.Ctx.GetSessionVars().TxnCtx.StartTS, nil)
+	return nil
 }
 
 func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e Executor) (_ sqlexec.RecordSet, retErr error) {
@@ -1423,19 +1444,10 @@ func (a *ExecStmt) checkPlanReplayerCapture(txnTS uint64) {
 }
 
 // CloseRecordSet will finish the execution of current statement and do some record work
-func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) error {
-	cteErr := resetCTEStorageMap(a.Ctx)
-	if cteErr != nil {
-		logutil.BgLogger().Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
-	}
-	if lastErr == nil {
-		// Only overwrite err when it's nil.
-		lastErr = cteErr
-	}
+func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 	a.FinishExecuteStmt(txnStartTS, lastErr, false)
 	a.logAudit()
 	a.Ctx.GetSessionVars().StmtCtx.DetachMemDiskTracker()
-	return cteErr
 }
 
 // Clean CTE storage shared by different CTEFullScan executor within a SQL stmt.
