@@ -867,7 +867,14 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 		return ver, errors.Trace(err)
 	}
 
+<<<<<<< HEAD:ddl/table.go
 	tblInfo := &model.TableInfo{}
+=======
+	if job.SchemaState == model.StatePublic {
+		return finishJobRenameTables(d, t, job, tableNames, tableIDs, newSchemaIDs)
+	}
+
+>>>>>>> a3e2ddb5864 (*: Keep the auto id allocator for single table renames (#47892)):pkg/ddl/table.go
 	var err error
 	for i, oldSchemaID := range oldSchemaIDs {
 		job.TableID = tableIDs[i]
@@ -875,6 +882,17 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+<<<<<<< HEAD:ddl/table.go
+=======
+		ver, err := checkAndRenameTables(t, job, tblInfo, oldSchemaID, newSchemaIDs[i], oldSchemaNames[i], tableNames[i])
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		err = adjustForeignKeyChildTableInfoAfterRenameTable(d, t, job, &fkh, tblInfo, *oldSchemaNames[i], *oldTableNames[i], *tableNames[i], newSchemaIDs[i])
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+>>>>>>> a3e2ddb5864 (*: Keep the auto id allocator for single table renames (#47892)):pkg/ddl/table.go
 	}
 
 	ver, err = updateSchemaVersion(t, job)
@@ -913,6 +931,18 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, oldSchemaID, newSchemaID
 		return ver, tblInfo, errors.Wrapf(err, "failed to get old label rules from PD")
 	}
 
+	if tblInfo.AutoIDSchemaID == 0 && newSchemaID != oldSchemaID {
+		// The auto id is referenced by a schema id + table id
+		// Table ID is not changed between renames, but schema id can change.
+		// To allow concurrent use of the auto id during rename, keep the auto id
+		// by always reference it with the schema id it was originally created in.
+		tblInfo.AutoIDSchemaID = oldSchemaID
+	}
+	if newSchemaID == tblInfo.AutoIDSchemaID {
+		// Back to the original schema id, no longer needed.
+		tblInfo.AutoIDSchemaID = 0
+	}
+
 	tblInfo.Name = *tableName
 	err = t.CreateTableOrView(newSchemaID, tblInfo)
 	if err != nil {
@@ -920,6 +950,7 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, oldSchemaID, newSchemaID
 		return ver, tblInfo, errors.Trace(err)
 	}
 
+<<<<<<< HEAD:ddl/table.go
 	if newSchemaID != oldSchemaID {
 		oldDBID := tblInfo.GetDBID(oldSchemaID)
 		err := meta.BackupAndRestoreAutoIDs(t, oldDBID, tblInfo.ID, newSchemaID, tblInfo.ID)
@@ -932,6 +963,8 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, oldSchemaID, newSchemaID
 		tblInfo.OldSchemaID = 0
 	}
 
+=======
+>>>>>>> a3e2ddb5864 (*: Keep the auto id allocator for single table renames (#47892)):pkg/ddl/table.go
 	err = updateLabelRules(job, tblInfo, oldRules, tableRuleID, partRuleIDs, oldRuleIDs, tblInfo.ID)
 	if err != nil {
 		job.State = model.JobStateCancelled
