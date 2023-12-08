@@ -428,8 +428,12 @@ func generateMergePlan(
 			return nil, err
 		}
 		multiStats = append(multiStats, subtask.MultipleFilesStats...)
-		dataFiles = append(dataFiles, subtask.DataFiles...)
-		statFiles = append(statFiles, subtask.StatFiles...)
+		for _, stat := range subtask.MultipleFilesStats {
+			for _, files := range stat.Filenames {
+				dataFiles = append(dataFiles, files[0])
+				statFiles = append(statFiles, files[1])
+			}
+		}
 	}
 	if skipMergeSort(multiStats) {
 		logger.Info("skip merge sort")
@@ -449,7 +453,7 @@ func generateMergePlan(
 	}
 	if i == len(multiStats)-1 {
 		startKeys = append(startKeys, multiStats[i].MinKey)
-		endKeys = append(endKeys, multiStats[i].MaxKey)
+		endKeys = append(endKeys, kv.Key(multiStats[i].MaxKey).Next())
 	}
 
 	start := 0
