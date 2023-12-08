@@ -4311,57 +4311,33 @@ func (b *PlanBuilder) buildSelectWithCalcFoundRows(ctx context.Context, sel *ast
 
 	sel.SelectStmtOpts.CalcFoundRows = false
 
-	// Step 1. Build a new SELECT, which takes the current select (without limit) as a sub-query.
+	// Step 1. Build the SELECT clause without LIMIT into a logical plan, then add a COUNT aggregation over it.
+	//
+	// We do not actually rewrite AST and build it as a subquery, because subquery has strict
+	// column name requirements, for example,
+	// `select 1,1` is valid but `select count(*) from (select 1,1) as t` is not valid.
 	originalLimit := sel.Limit
 	sel.Limit = nil
 
-	// Rewrite original projections to assign unique names. Otherwise there may be name
-	// conflicts when used as a subquery.
-	// For example, `select 1,1`` is valid but `select count(*) from (select 1,1) as t` is not valid.
-	originalNames := make([]model.CIStr, 0, len(sel.Fields.Fields))
-	for _, field := range sel.Fields.Fields {
-		originalNames = append(originalNames, field.AsName)
-	}
-	for i, field := range sel.Fields.Fields {
-		if field.WildCard != nil {
-			continue
-		}
-		field.AsName = model.NewCIStr(fmt.Sprintf("__TIDB_INTERNAL_COL_%d__", i))
-	}
-
-	newSel := &ast.SelectStmt{
-		SelectStmtOpts: &ast.SelectStmtOpts{},
-		Distinct:       false,
-		Fields: &ast.FieldList{
-			Fields: []*ast.SelectField{
-				{
-					Expr: &ast.AggregateFuncExpr{
-						F:    ast.AggFuncCount,
-						Args: []ast.ExprNode{ast.NewValueExpr(1, "", "")},
-					},
-				},
-			},
-		},
-		Kind: ast.SelectStmtKindSelect,
-		From: &ast.TableRefsClause{
-			TableRefs: &ast.Join{
-				Left: &ast.TableSource{
-					Source: sel,
-					AsName: model.NewCIStr(fmt.Sprintf("TEMP_TABLE_%d", sel.QueryBlockOffset)),
-				},
-				Right: nil,
-			},
-		},
-	}
-	// As we are building new AST nodes, we need to manually update the flag for it.
-	ast.SetFlag(newSel)
-
-	// Step 2. Execute this new SELECT to get the desired number of rows.
-	logicalPlan, err := b.buildSelect(ctx, newSel)
+	innerPlan, err := b.buildSelect(ctx, sel)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	physicalPlan, _, err := DoOptimize(ctx, b.ctx, b.optFlag, logicalPlan)
+	innerPlan, _, err = b.buildAggregation(
+		ctx,
+		innerPlan,
+		[]*ast.AggregateFuncExpr{
+			{
+				F:    ast.AggFuncCount,
+				Args: []ast.ExprNode{ast.NewValueExpr(1, "", "")},
+			},
+		},
+		[]expression.Expression{},
+		map[*ast.AggregateFuncExpr]int{},
+	)
+
+	// Step 2. Execute this new SELECT to get the desired number of rows.
+	physicalPlan, _, err := DoOptimize(ctx, b.ctx, b.optFlag, innerPlan)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -4375,9 +4351,6 @@ func (b *PlanBuilder) buildSelectWithCalcFoundRows(ctx context.Context, sel *ast
 
 	// Step 3. Rollback to the SQL without SQL_CALC_FOUND_ROWS.
 	sel.Limit = originalLimit
-	for i, field := range sel.Fields.Fields {
-		field.AsName = originalNames[i]
-	}
 
 	return b.buildSelect(ctx, sel)
 }
@@ -4392,7 +4365,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}()
 
 	if sel.SelectStmtOpts != nil && sel.SelectStmtOpts.CalcFoundRows {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(variable.ErrWarnDeprecatedSyntaxSimpleMsg.GenWithStackByArgs("SQL_CALC_FOUND_ROWS"))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrWarnDeprecatedSyntax.FastGenByArgs("SQL_CALC_FOUND_ROWS", "two separate queries"))
 		return b.buildSelectWithCalcFoundRows(ctx, sel)
 	}
 

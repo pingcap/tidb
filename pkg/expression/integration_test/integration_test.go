@@ -198,6 +198,93 @@ func TestGetLock(t *testing.T) {
 	tk.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("0"))
 }
 
+func TestFoundRows(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// without SQL_CALC_FOUND_ROWS
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustQuery("select * from t") // Test XSelectTableExec
+	result := tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("1")) // Last query is found_rows(), it returns 1 row with value 0
+	tk.MustExec("insert t values (1),(2),(2)")
+	tk.MustQuery("select * from t")
+	result = tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("3"))
+	tk.MustQuery("select * from t where a = 0")
+	result = tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("0"))
+	tk.MustQuery("select * from t where a = 1")
+	result = tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t where a like '2'") // Test SelectionExec
+	result = tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("2"))
+	tk.MustQuery("show tables like 't'")
+	result = tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from t") // Test ProjectionExec
+	result = tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("1"))
+
+	// with SQL_CALC_FOUND_ROWS
+	tk.MustQuery("select SQL_CALC_FOUND_ROWS * FROM t ORDER BY a LIMIT 1").Check(testkit.Rows("1"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("3"))
+	tk.MustQuery("select SQL_CALC_FOUND_ROWS * FROM t ORDER BY a LIMIT 3").Check(testkit.Rows("1", "2", "2"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("3"))
+	tk.MustQuery("select SQL_CALC_FOUND_ROWS * FROM t ORDER BY a LIMIT 100").Check(testkit.Rows("1", "2", "2"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("3"))
+	tk.MustQuery("select SQL_CALC_FOUND_ROWS * FROM t ORDER BY a LIMIT 9999999").Check(testkit.Rows("1", "2", "2"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("3"))
+	tk.MustQuery("select SQL_CALC_FOUND_ROWS * FROM t ORDER BY a LIMIT 1,2").Check(testkit.Rows("2", "2"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("3"))
+	tk.MustQuery("select sql_calc_found_rows * from t where a = 1 LIMIT 2").Check(testkit.Rows("1"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+	tk.MustQuery("select sql_calc_found_rows * from t where a = 1 LIMIT 999999").Check(testkit.Rows("1"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+	tk.MustQuery("select sql_calc_found_rows * from t where a = 1 LIMIT 999999,1").Check(testkit.Rows())
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t where a = 1 LIMIT 999999,1").Check(testkit.Rows())
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("0"))
+
+	// test for warning
+	tk.MustQuery("select sql_calc_found_rows * from t where a = 1 LIMIT 999999,1")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1287 'SQL_CALC_FOUND_ROWS' is deprecated and will be removed in a future release. Please use two separate queries instead"))
+
+	tk.MustExec("drop table if exists foo")
+	tk.MustExec("create table foo(a int, b int)")
+	tk.MustExec("insert into foo values (1, null), (2, null), (3, null), (2, 1)")
+	tk.MustQuery("select SQL_CALC_FOUND_ROWS * from foo limit 2").Check(testkit.Rows("1 <nil>", "2 <nil>"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("4"))
+	tk.MustQuery("select SQL_CALC_FOUND_ROWS count(*) from foo limit 2").Check(testkit.Rows("4"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+	tk.MustQuery("select SQL_CALC_FOUND_ROWS count(*) from foo group by a limit 2")
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("3"))
+	tk.MustQuery("select SQL_CALC_FOUND_ROWS *, a from foo limit 2").Check(testkit.Rows("1 <nil> 1", "2 <nil> 2"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("4"))
+	tk.MustQuery("select SQL_CALC_FOUND_ROWS a from foo limit 2").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("4"))
+	tk.MustQuery("select SQL_CALC_FOUND_ROWS count(*) as count from foo group by a having count >= 2").Check(testkit.Rows("2"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(a int, b int)")
+	tk.MustExec("insert into t2 values (1, 1), (2, 2)")
+	tk.MustQuery("select SQL_CALC_FOUND_ROWS b,count(*) as c from t2 group by b order by c limit 1")
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("2"))
+	tk.MustQuery("select b,count(*) as c from t2 group by b order by c limit 1")
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+
+	// test expressions without a FROM
+	tk.MustQuery("select SQL_CALC_FOUND_ROWS 1, 1").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+}
+
 func TestInfoBuiltin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -221,34 +308,6 @@ func TestInfoBuiltin(t *testing.T) {
 	result.Check(testkit.Rows("5"))
 	result = tk.MustQuery("select last_insert_id();")
 	result.Check(testkit.Rows("5"))
-
-	// for found_rows
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int)")
-	tk.MustQuery("select * from t") // Test XSelectTableExec
-	result = tk.MustQuery("select found_rows()")
-	result.Check(testkit.Rows("0"))
-	result = tk.MustQuery("select found_rows()")
-	result.Check(testkit.Rows("1")) // Last query is found_rows(), it returns 1 row with value 0
-	tk.MustExec("insert t values (1),(2),(2)")
-	tk.MustQuery("select * from t")
-	result = tk.MustQuery("select found_rows()")
-	result.Check(testkit.Rows("3"))
-	tk.MustQuery("select * from t where a = 0")
-	result = tk.MustQuery("select found_rows()")
-	result.Check(testkit.Rows("0"))
-	tk.MustQuery("select * from t where a = 1")
-	result = tk.MustQuery("select found_rows()")
-	result.Check(testkit.Rows("1"))
-	tk.MustQuery("select * from t where a like '2'") // Test SelectionExec
-	result = tk.MustQuery("select found_rows()")
-	result.Check(testkit.Rows("2"))
-	tk.MustQuery("show tables like 't'")
-	result = tk.MustQuery("select found_rows()")
-	result.Check(testkit.Rows("1"))
-	tk.MustQuery("select count(*) from t") // Test ProjectionExec
-	result = tk.MustQuery("select found_rows()")
-	result.Check(testkit.Rows("1"))
 
 	// for database
 	result = tk.MustQuery("select database()")
@@ -2737,7 +2796,6 @@ func TestNoopFunctions(t *testing.T) {
 
 	message := `.* has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions`
 	stmts := []string{
-		"SELECT SQL_CALC_FOUND_ROWS * FROM t1 LIMIT 1",
 		"SELECT * FROM t1 LOCK IN SHARE MODE",
 		"SELECT * FROM t1 GROUP BY a DESC",
 		"SELECT * FROM t1 GROUP BY a ASC",
@@ -2968,4 +3026,71 @@ func TestTiDBRowChecksumBuiltin(t *testing.T) {
 	// other plans
 	tk.MustGetDBError("select tidb_row_checksum() from t", expression.ErrNotSupportedYet)
 	tk.MustGetDBError("select tidb_row_checksum() from t where id > 0", expression.ErrNotSupportedYet)
+}
+
+// This tests the use case of wordpress
+// Roughly copied from https://github.com/pingcap/tidb/issues/20133
+// But changed to be deterministic.
+func TestWordpressPaginationUseCase(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("SET sql_mode='';")
+	defer tk.MustExec("SET sql_mode=DEFAULT;")
+
+	tk.MustExec("DROP TABLE IF EXISTS posts")
+	tk.MustExec(`CREATE TABLE posts (
+	  ID bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+	  post_author bigint(20) unsigned NOT NULL DEFAULT 0,
+	  post_date datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+	  post_date_gmt datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+	  post_content longtext NOT NULL,
+	  post_title text NOT NULL,
+	  post_excerpt text NOT NULL,
+	  post_status varchar(20) NOT NULL DEFAULT 'publish',
+	  comment_status varchar(20) NOT NULL DEFAULT 'open',
+	  ping_status varchar(20) NOT NULL DEFAULT 'open',
+	  post_password varchar(255) NOT NULL DEFAULT '',
+	  post_name varchar(200) NOT NULL DEFAULT '',
+	  to_ping text NOT NULL,
+	  pinged text NOT NULL,
+	  post_modified datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+	  post_modified_gmt datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+	  post_content_filtered longtext NOT NULL,
+	  post_parent bigint(20) unsigned NOT NULL DEFAULT 0,
+	  guid varchar(255) NOT NULL DEFAULT '',
+	  menu_order int(11) NOT NULL DEFAULT 0,
+	  post_type varchar(20) NOT NULL DEFAULT 'post',
+	  post_mime_type varchar(100) NOT NULL DEFAULT '',
+	  comment_count bigint(20) NOT NULL DEFAULT 0,
+	  PRIMARY KEY (ID),
+	  KEY post_name (post_name(191)),
+	  KEY type_status_date (post_type,post_status,post_date,ID),
+	  KEY post_parent (post_parent),
+	  KEY post_author (post_author)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 AUTO_INCREMENT=124960;`)
+
+	tk.MustExec("INSERT INTO posts (post_type, post_status, post_date) SELECT 'post', 'something', NOW() FROM dual;")
+	tk.MustExec("INSERT INTO posts (post_type, post_status, post_date) SELECT 'post', 'something', NOW() FROM posts a JOIN posts b JOIN posts c;")
+	tk.MustExec("INSERT INTO posts (post_type, post_status, post_date) SELECT 'post', 'something', NOW() FROM posts a JOIN posts b JOIN posts c;")
+	tk.MustExec("INSERT INTO posts (post_type, post_status, post_date) SELECT 'post', 'something', NOW() FROM posts a JOIN posts b JOIN posts c LIMIT 100;")
+	tk.MustExec("UPDATE posts SET post_status='future' WHERE ID % 3 = 1;")
+
+	result := tk.MustQuery("SELECT SQL_CALC_FOUND_ROWS DISTINCT posts.ID FROM posts WHERE 1=1 AND posts.post_type = 'post' AND ((posts.post_status = 'future')) ORDER BY posts.post_date DESC LIMIT 0, 10;")
+	require.Equal(t, 10, len(result.Rows()))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("37"))
+
+	result = tk.MustQuery("SELECT SQL_CALC_FOUND_ROWS DISTINCT posts.ID FROM posts WHERE 1=1 AND posts.post_type = 'post' AND ((posts.post_status = 'future')) ORDER BY posts.post_date DESC LIMIT 10, 10;")
+	require.Equal(t, 10, len(result.Rows()))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("37"))
+
+	result = tk.MustQuery("SELECT SQL_CALC_FOUND_ROWS DISTINCT posts.ID FROM posts WHERE 1=1 AND posts.post_type = 'post' AND ((posts.post_status = 'future')) ORDER BY posts.post_date DESC LIMIT 20, 10;")
+	require.Equal(t, 10, len(result.Rows()))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("37"))
+
+	result = tk.MustQuery("SELECT SQL_CALC_FOUND_ROWS DISTINCT posts.ID FROM posts WHERE 1=1 AND posts.post_type = 'post' AND ((posts.post_status = 'future')) ORDER BY posts.post_date DESC LIMIT 30, 10;")
+	require.Equal(t, 7, len(result.Rows()))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("37"))
 }

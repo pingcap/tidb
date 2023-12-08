@@ -119,4 +119,6 @@ var (
 	ErrPrepareDDL       = dbterror.ClassExecutor.NewStd(mysql.ErrPrepareDDL)
 	ErrRowIsReferenced2 = dbterror.ClassOptimizer.NewStd(mysql.ErrRowIsReferenced2)
 	ErrNoReferencedRow2 = dbterror.ClassOptimizer.NewStd(mysql.ErrNoReferencedRow2)
+
+	ErrWarnDeprecatedSyntax = dbterror.ClassOptimizer.NewStd(mysql.ErrWarnDeprecatedSyntax)
 )
