@@ -45,7 +45,7 @@ SHOW WARNINGS;
 delete from delete_test;
 --disable_info
 create view v as select * from delete_test;
--- error 1356
+-- error 1105
 delete from v where name = 'aaa';
 drop view v;
 create sequence seq;

@@ -612,3 +612,10 @@ id	val
 6	6
 rollback;
 set @@session.autocommit = default;
+drop table if exists tbllock;
+create table tbllock(id int, c int);
+insert into tbllock values(1, 2), (2, 2);
+lock table tbllock read;
+update tbllock set c = 3 where id = 2;
+Error 1099 (HY000): Table 'tbllock' was locked with a READ lock and can't be updated
+unlock tables;
