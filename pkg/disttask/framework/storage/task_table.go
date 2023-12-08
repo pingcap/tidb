@@ -830,7 +830,7 @@ func (*TaskManager) insertSubtasks(ctx context.Context, se sessionctx.Context, s
 	})
 	var (
 		sb         strings.Builder
-		markerList []string
+		markerList = make([]string, 0, len(subtasks))
 		args       = make([]interface{}, 0, len(subtasks)*7)
 	)
 	sb.WriteString(insertSubtaskBasic)
@@ -877,8 +877,8 @@ func (stm *TaskManager) SwitchTaskStepInBatch(
 
 func (*TaskManager) splitSubtasks(subtasks []*proto.Subtask) [][]*proto.Subtask {
 	var (
-		res       [][]*proto.Subtask
-		currBatch []*proto.Subtask
+		res       = make([][]*proto.Subtask, 0, 10)
+		currBatch = make([]*proto.Subtask, 0, 10)
 		size      int
 	)
 	maxSize := int(min(kv.TxnTotalSizeLimit.Load(), uint64(maxSubtaskBatchSize)))
