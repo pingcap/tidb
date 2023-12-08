@@ -84,7 +84,7 @@ func ParseCaptureTableFilter(tableFilter string) (f tablefilter.Filter, valid bo
 	return f, true
 }
 
-func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
+func (h *globalBindingHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
 	filter = &captureFilter{
 		frequency: 1,
 		users:     make(map[string]struct{}),
@@ -134,7 +134,7 @@ func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
 }
 
 // CaptureBaselines is used to automatically capture plan baselines.
-func (h *BindHandle) CaptureBaselines() {
+func (h *globalBindingHandle) CaptureBaselines() {
 	parser4Capture := parser.New()
 	captureFilter := h.extractCaptureFilterFromStorage()
 	emptyCaptureFilter := captureFilter.isEmpty()
