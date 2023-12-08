@@ -29,21 +29,9 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
-	"go.uber.org/goleak"
 )
-
-func TestMain(m *testing.M) {
-	testsetup.SetupForCommonTest()
-	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
-		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
-		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
-	}
-	goleak.VerifyTestMain(m, opts...)
-}
 
 func GetResourcePool(t *testing.T) *pools.ResourcePool {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)"))
@@ -219,9 +207,11 @@ func TestSwitchTaskStep(t *testing.T) {
 			":4000", 11, []byte(fmt.Sprintf("%d", i)), i+1)
 	}
 	startTime := time.Unix(time.Now().Unix(), 0)
+	task.Meta = []byte("changed meta")
 	require.NoError(t, tm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, subtasksStepOne))
 	task, err = tm.GetTaskByID(ctx, taskID)
 	require.NoError(t, err)
+	require.Equal(t, []byte("changed meta"), task.Meta)
 	checkAfterSwitchStep(t, startTime, task, subtasksStepOne, proto.StepOne)
 	// switch step again, no effect
 	require.NoError(t, tm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, subtasksStepOne))

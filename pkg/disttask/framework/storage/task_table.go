@@ -807,13 +807,16 @@ func (*TaskManager) updateTaskStateStep(ctx context.Context, se sessionctx.Conte
 	if task.State == proto.TaskStatePending {
 		extraUpdateStr = `start_time = CURRENT_TIMESTAMP(),`
 	}
+	// TODO: during generating subtask, task meta might change, maybe move meta
+	// update to another place.
 	_, err := ExecSQL(ctx, se, `
 		update mysql.tidb_global_task
 		set state = %?,
 			step = %?, `+extraUpdateStr+`
-			state_update_time = CURRENT_TIMESTAMP()
+			state_update_time = CURRENT_TIMESTAMP(),
+			meta = %?
 		where id = %? and state = %? and step = %?`,
-		nextState, nextStep, task.ID, task.State, task.Step)
+		nextState, nextStep, task.Meta, task.ID, task.State, task.Step)
 	return err
 }
 
@@ -898,6 +901,7 @@ func (*TaskManager) splitSubtasks(subtasks []*proto.Subtask) [][]*proto.Subtask 
 }
 
 // UpdateTaskAndAddSubTasks update the task and add new subtasks
+// TODO: remove this when we remove reverting subtasks.
 func (stm *TaskManager) UpdateTaskAndAddSubTasks(ctx context.Context, task *proto.Task, subtasks []*proto.Subtask, prevState proto.TaskState) (bool, error) {
 	retryable := true
 	err := stm.WithNewTxn(ctx, func(se sessionctx.Context) error {
