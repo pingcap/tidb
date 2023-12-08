@@ -10,7 +10,7 @@ The CI pipeline will automatically trigger when you submit a PR or push new comm
 | ------------------------------- | --------------------------------------- | ------------------------------------------------------------ |
 | pull-br-integration-test        | `/test pull-br-integration-test`        | All br integration test in `br/tests`                        |
 | pull-lightning-integration-test | `/test pull-lightning-integration-test` | All lightning integration tests in `br/tests`                |
-| pull-common-test                | `/test pull-common-test`                | Some orm tests performed through the unistore.               |
+| pull-common-test                | `/test pull-common-test`                | Some ORM tests performed through the unistore.               |
 | pull-e2e-test                   | `/test pull-e2e-test`                   | E2e tests in `tests/globalkilltest` and `tests/graceshutdown` |
 | pull-integration-common-test    | `/test pull-integration-common-test`    | Some orm tests performed through the tikv                    |
 | pull-integration-copr-test      | `/test pull-integration-copr-test`      | Coprocessor Tests in [tikv/copr-test](https://github.com/tikv/copr-test) |
