@@ -72,8 +72,38 @@ type SortExec struct {
 		result sortedRows
 		idx    int64
 
-		workers []*parallelSortWorker
+		mpmcQueue *chunk.MPMCQueue
+		workers   []*parallelSortWorker
+
+		errRWLock sync.RWMutex
+		err       error
 	}
+}
+
+// Open implements the Executor Open interface.
+func (e *SortExec) Open(ctx context.Context) error {
+	e.fetched = false
+
+	// To avoid duplicated initialization for TopNExec.
+	if e.memTracker == nil {
+		e.memTracker = memory.NewTracker(e.ID(), -1)
+		e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
+		e.diskTracker = memory.NewTracker(e.ID(), -1)
+		e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
+	}
+
+	e.IsUnparallel = !e.Ctx().GetSessionVars().EnableParallelSort
+	if e.IsUnparallel {
+		e.Unparallel.Idx = 0
+		e.Unparallel.PartitionList = e.Unparallel.PartitionList[:0]
+	} else {
+		e.Parallel.idx = 0
+		e.Parallel.workers = make([]*parallelSortWorker, e.Ctx().GetSessionVars().ExecutorConcurrency)
+		e.Parallel.mpmcQueue = chunk.NewMPMCQueue(chunk.DefaultMPMCQueueLimitNum)
+		e.Parallel.err = nil
+	}
+
+	return exec.Open(ctx, e.Children(0))
 }
 
 // Close implements the Executor Close interface.
@@ -104,30 +134,6 @@ func (e *SortExec) Close() error {
 	return e.Children(0).Close()
 }
 
-// Open implements the Executor Open interface.
-func (e *SortExec) Open(ctx context.Context) error {
-	e.fetched = false
-
-	// To avoid duplicated initialization for TopNExec.
-	if e.memTracker == nil {
-		e.memTracker = memory.NewTracker(e.ID(), -1)
-		e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
-		e.diskTracker = memory.NewTracker(e.ID(), -1)
-		e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
-	}
-
-	e.IsUnparallel = !e.Ctx().GetSessionVars().EnableParallelSort
-	if e.IsUnparallel {
-		e.Unparallel.Idx = 0
-		e.Unparallel.PartitionList = e.Unparallel.PartitionList[:0]
-	} else {
-		e.Parallel.workers = make([]*parallelSortWorker, e.Ctx().GetSessionVars().ExecutorConcurrency)
-		e.Parallel.idx = 0
-	}
-
-	return exec.Open(ctx, e.Children(0))
-}
-
 // Next implements the Executor Next interface.
 // Sort constructs the result following these step in unparallel mode:
 //  1. Read as mush as rows into memory.
@@ -143,7 +149,7 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if !e.fetched {
 		e.initCompareFuncs()
 		e.buildKeyColumns()
-		err := e.fetchRowChunks(ctx)
+		err := e.fetchChunks(ctx)
 		if err != nil {
 			return err
 		}
@@ -217,14 +223,14 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 	return nil
 }
 
-func (e *SortExec) fetchRowChunks(ctx context.Context) error {
+func (e *SortExec) fetchChunks(ctx context.Context) error {
 	if e.IsUnparallel {
-		return e.fetchRowChunksUnparallel(ctx)
+		return e.fetchChunksUnparallel(ctx)
 	}
-	return e.fetchRowChunksParallel(ctx)
+	return e.fetchChunksParallel(ctx)
 }
 
-func (e *SortExec) fetchRowChunksUnparallel(ctx context.Context) error {
+func (e *SortExec) fetchChunksUnparallel(ctx context.Context) error {
 	fields := exec.RetTypes(e)
 	byItemsDesc := make([]bool, len(e.ByItems))
 	for i, byItem := range e.ByItems {
@@ -295,28 +301,72 @@ func (e *SortExec) fetchRowChunksUnparallel(ctx context.Context) error {
 	return nil
 }
 
-func (e *SortExec) fetchRowChunksParallel(ctx context.Context) error {
+func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 	lock := sync.Mutex{}
 	cond := sync.NewCond(&lock)
 	publicQueue := make([]sortedRows, 0)
 	waitGroup := sync.WaitGroup{}
 
+	// Add in advance to avoid that the counter in waitGroup is minus to negative.
+	waitGroup.Add(len(e.Parallel.workers) + 1)
+
+	// Fetch chunks from child and put chunks into MPMCQueue
+	go e.fetchChunksFromChild(ctx, e.Parallel.mpmcQueue, &waitGroup)
+
 	// Create workers
 	for i := range e.Parallel.workers {
-		e.Parallel.workers[i] = newParallelSortWorker(&lock, cond, &publicQueue, &waitGroup, &e.Parallel.result)
+		e.Parallel.workers[i] = newParallelSortWorker(&lock, cond, &publicQueue, &waitGroup, &e.Parallel.result, e.Parallel.mpmcQueue, e.processErrorForParallel)
 	}
-
-	waitGroup.Add(len(e.Parallel.workers))
 
 	// Run workers
 	for _, worker := range e.Parallel.workers {
 		go worker.run()
 	}
 
-	// Wait for the finish of workers
+	// Wait for the finish of all goroutines
 	waitGroup.Wait()
 
 	return nil
+}
+
+func (e *SortExec) fetchChunksFromChild(ctx context.Context, mpmcQueue *chunk.MPMCQueue, waitGroup *sync.WaitGroup) {
+	defer func() {
+		if r := recover(); r != nil {
+			processErrorAndLog(e.processErrorForParallel, r)
+		}
+		waitGroup.Done()
+	}()
+
+	for {
+		chk := exec.TryNewCacheChunk(e.Children(0))
+		err := exec.Next(ctx, e.Children(0), chk)
+		if err != nil {
+			e.processErrorForParallel(err)
+			return
+		}
+		rowCount := chk.NumRows()
+		if rowCount == 0 {
+			break
+		}
+
+		err = e.checkError()
+		if err != nil {
+			return
+		}
+	}
+}
+
+func (e *SortExec) checkError() error {
+	e.Parallel.errRWLock.RLock()
+	defer e.Parallel.errRWLock.RUnlock()
+	return e.Parallel.err
+}
+
+func (e *SortExec) processErrorForParallel(err error) {
+	e.Parallel.errRWLock.Lock()
+	defer e.Parallel.errRWLock.Unlock()
+	e.Parallel.err = err
+	e.Parallel.mpmcQueue.Close()
 }
 
 func (s *SortExec) initCompareFuncs() {

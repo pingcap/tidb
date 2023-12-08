@@ -14,7 +14,17 @@
 
 package sortexec
 
-import "github.com/pingcap/tidb/pkg/util/chunk"
+import (
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
+)
+
+type chunkWithMemoryUsage struct {
+	chk        *chunk.Chunk
+	memorySize int64
+}
 
 type partitionPointer struct {
 	chk         *chunk.Chunk
@@ -50,4 +60,10 @@ func (h *multiWayMerge) Pop() interface{} {
 
 func (h *multiWayMerge) Swap(i, j int) {
 	h.elements[i], h.elements[j] = h.elements[j], h.elements[i]
+}
+
+func processErrorAndLog(processError func(error), r interface{}) {
+	err := util.GetRecoverError(r)
+	processError(err)
+	logutil.BgLogger().Error("parallel sort panicked", zap.Error(err), zap.Stack("stack"))
 }

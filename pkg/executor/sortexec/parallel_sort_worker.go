@@ -14,7 +14,11 @@
 
 package sortexec
 
-import "sync"
+import (
+	"sync"
+
+	"github.com/pingcap/tidb/pkg/util/chunk"
+)
 
 type parallelSortWorker struct {
 	self struct {
@@ -29,6 +33,9 @@ type parallelSortWorker struct {
 
 	waitGroup *sync.WaitGroup
 	result    *sortedRows
+
+	mpmcQueue    *chunk.MPMCQueue
+	processError func(error)
 }
 
 func newParallelSortWorker(
@@ -36,17 +43,29 @@ func newParallelSortWorker(
 	cond *sync.Cond,
 	publicQueue *[]sortedRows,
 	waitGroup *sync.WaitGroup,
-	result *sortedRows) *parallelSortWorker {
+	result *sortedRows,
+	mpmcQueue *chunk.MPMCQueue,
+	processError func(error)) *parallelSortWorker {
 	return &parallelSortWorker{
-		lock:        lock,
-		cond:        cond,
-		publicQueue: publicQueue,
-		waitGroup:   waitGroup,
-		result:      result,
+		lock:         lock,
+		cond:         cond,
+		publicQueue:  publicQueue,
+		waitGroup:    waitGroup,
+		result:       result,
+		mpmcQueue:    mpmcQueue,
+		processError: processError,
 	}
 }
 
 func (p *parallelSortWorker) run() {
+	defer func() {
+		if r := recover(); r != nil {
+			processErrorAndLog(p.processError, r)
+		}
+		p.waitGroup.Done()
+	}()
 
-	p.waitGroup.Done()
+	for {
+		
+	}
 }
