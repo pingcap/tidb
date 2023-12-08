@@ -425,7 +425,7 @@ func (c *mockInfoPdClient) GetAllStores(context.Context, ...pd.GetStoreOption) (
 	return c.stores, c.err
 }
 
-func TestRemovePrefixComment(t *testing.T) {
+func TestIsAnalyzeTableSQL(t *testing.T) {
 	tests := []struct {
 		name string
 		sql  string
