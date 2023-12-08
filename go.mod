@@ -41,6 +41,7 @@ require (
 	github.com/fatih/color v1.15.0
 	github.com/fsouza/fake-gcs-server v1.44.0
 	github.com/go-ldap/ldap/v3 v3.4.4
+	github.com/go-resty/resty/v2 v2.7.0
 	github.com/go-sql-driver/mysql v1.7.1
 	github.com/gogo/protobuf v1.3.2
 	github.com/golang/protobuf v1.5.3
@@ -134,7 +135,6 @@ require (
 	golang.org/x/tools v0.16.0
 	google.golang.org/api v0.149.0
 	google.golang.org/grpc v1.59.0
-	gopkg.in/resty.v1 v1.12.0
 	gopkg.in/yaml.v2 v2.4.0
 	honnef.co/go/tools v0.4.6
 	k8s.io/api v0.28.2
