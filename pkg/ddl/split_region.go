@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -51,6 +52,7 @@ func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore,
 }
 
 func splitTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *model.TableInfo, scatter bool) {
+	st := time.Now()
 	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
 	ctxWithTimeout = kv.WithInternalSourceType(ctxWithTimeout, kv.InternalTxnDDL)
@@ -62,6 +64,11 @@ func splitTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *
 	}
 	if scatter {
 		WaitScatterRegionFinish(ctxWithTimeout, store, regionIDs...)
+	}
+	tt := time.Since(st)
+	if tt > 1*time.Second {
+		logutil.BgLogger().Warn("xxx--- split table", zap.String("category", "ddl"), zap.String("table name", tbInfo.Name.L),
+			zap.Duration("total take time", tt))
 	}
 }
 

@@ -57,6 +57,7 @@ func createTable(d *ddlCtx, t *meta.Meta, job *model.Job, fkCheck bool) (*model.
 	schemaID := job.SchemaID
 	tbInfo := job.Args[0].(*model.TableInfo)
 
+	st0 := time.Now()
 	tbInfo.State = model.StateNone
 	err := checkTableNotExists(d, t, schemaID, tbInfo.Name.L)
 	if err != nil {
@@ -82,6 +83,7 @@ func createTable(d *ddlCtx, t *meta.Meta, job *model.Job, fkCheck bool) (*model.
 		// none -> public
 		tbInfo.State = model.StatePublic
 		tbInfo.UpdateTS = t.StartTS
+		st1 := time.Now()
 		err = createTableOrViewWithCheck(t, job, schemaID, tbInfo)
 		if err != nil {
 			return tbInfo, errors.Trace(err)
@@ -132,7 +134,11 @@ func createTable(d *ddlCtx, t *meta.Meta, job *model.Job, fkCheck bool) (*model.
 			job.State = model.JobStateCancelled
 			return tbInfo, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
-
+		tt := time.Since(st0)
+		if tt > 1*time.Second {
+			logutil.BgLogger().Warn("xxx--- create table", zap.String("category", "ddl"), zap.String("table name", tbInfo.Name.L),
+				zap.Duration("total take time", tt), zap.Duration("take time", time.Since(st1)))
+		}
 		return tbInfo, nil
 	default:
 		return tbInfo, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
@@ -1515,6 +1521,7 @@ func checkTableNotExistsFromInfoSchema(is infoschema.InfoSchema, schemaID int64,
 }
 
 func checkTableNotExistsFromStore(t *meta.Meta, schemaID int64, tableName string) error {
+	st := time.Now()
 	// Check this table's database.
 	tbls, err := t.ListTables(schemaID)
 	if err != nil {
@@ -1530,7 +1537,10 @@ func checkTableNotExistsFromStore(t *meta.Meta, schemaID int64, tableName string
 			return infoschema.ErrTableExists.GenWithStackByArgs(tbl.Name)
 		}
 	}
-
+	tt := time.Since(st)
+	if tt > 500*time.Millisecond {
+		logutil.BgLogger().Warn("xxx---- check table", zap.String("category", "ddl"), zap.String("table name", tableName), zap.Duration("take time", tt))
+	}
 	return nil
 }
 
