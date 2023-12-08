@@ -46,7 +46,6 @@ func TestBufferPool(t *testing.T) {
 		WithBlockNum(2),
 		WithAllocator(allocator),
 		WithBlockSize(1024),
-		WithLargeAllocThreshold(512),
 	)
 	defer pool.Destroy()
 
@@ -82,7 +81,6 @@ func TestPoolMemLimit(t *testing.T) {
 	// only allow to allocate one block
 	pool := NewPool(
 		WithBlockSize(1024),
-		WithLargeAllocThreshold(1<<30),
 		WithPoolMemoryLimiter(limiter),
 	)
 	defer pool.Destroy()

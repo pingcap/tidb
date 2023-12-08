@@ -125,8 +125,8 @@ func NewExternalEngine(
 		splitKeys:       splitKeys,
 		regionSplitSize: regionSplitSize,
 		bufPool: membuf.NewPool(
-			//membuf.WithLargeAllocThreshold(memLimit),
 			membuf.WithPoolMemoryLimiter(memLimiter),
+			membuf.WithBlockSize(int(readAllDataConcLimit)*ConcurrentReaderBufferSizePerConc),
 		),
 		checkHotspot:       checkHotspot,
 		keyAdapter:         keyAdapter,
@@ -191,6 +191,9 @@ func getFilesReadConcurrency(ctx context.Context, storage storage.ExternalStorag
 		if result[i] < 16 {
 			result[i] = 1
 		} else {
+			if result[i] > readAllDataConcLimit {
+				result[i] = readAllDataConcLimit
+			}
 			logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
 				zap.String("filename", statsFiles[i]),
 				zap.Uint64("startOffset", startOffs[i]),
@@ -225,7 +228,7 @@ func readOneFile(
 		rd.byteReader.enableConcurrentRead(
 			storage,
 			dataFile,
-			int(concurrency)*2,
+			int(concurrency),
 			ConcurrentReaderBufferSizePerConc,
 			bufPool.NewBuffer(),
 		)

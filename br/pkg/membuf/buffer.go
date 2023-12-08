@@ -39,18 +39,16 @@ func (stdAllocator) Free(_ []byte) {}
 // Pool is like `sync.Pool`, which manages memory for all bytes buffers. You can
 // use Pool.NewBuffer to create a new buffer, and use Buffer.Destroy to release
 // its memory to the pool.
-// By default, allocation size larger than 64K will not be tracked by the pool,
-// And the threshold can be changed by WithLargeAllocThreshold.
+// TODO: need update
 //
 // NOTE: we don't used a `sync.Pool` because when will sync.Pool release is depending on the
 // garbage collector which always release the memory so late. Use a fixed size chan to reuse
 // can decrease the memory usage to 1/3 compare with sync.Pool.
 type Pool struct {
-	allocator           Allocator
-	blockSize           int
-	blockCache          chan []byte
-	largeAllocThreshold int
-	limiter             *Limiter
+	allocator  Allocator
+	blockSize  int
+	blockCache chan []byte
+	limiter    *Limiter
 }
 
 // Option configures a pool.
@@ -77,15 +75,6 @@ func WithAllocator(allocator Allocator) Option {
 	}
 }
 
-// WithLargeAllocThreshold configures the threshold for large allocation of a Buffer.
-// If allocate size is larger than this threshold, bytes will be allocated directly
-// by the make built-in function and won't be tracked by the pool.
-func WithLargeAllocThreshold(threshold int) Option {
-	return func(p *Pool) {
-		p.largeAllocThreshold = threshold
-	}
-}
-
 // WithPoolMemoryLimiter controls the maximum memory returned to buffer. Note
 // that WithLargeAllocThreshold will affect if the acquired memory is counted by
 // the limiter.
@@ -98,10 +87,9 @@ func WithPoolMemoryLimiter(limiter *Limiter) Option {
 // NewPool creates a new pool.
 func NewPool(opts ...Option) *Pool {
 	p := &Pool{
-		allocator:           stdAllocator{},
-		blockSize:           defaultBlockSize,
-		blockCache:          make(chan []byte, defaultPoolSize),
-		largeAllocThreshold: defaultLargeAllocThreshold,
+		allocator:  stdAllocator{},
+		blockSize:  defaultBlockSize,
+		blockCache: make(chan []byte, defaultPoolSize),
 	}
 	for _, opt := range opts {
 		opt(p)
@@ -226,7 +214,7 @@ var sizeOfSlice = int(unsafe.Sizeof([]byte{}))
 
 // AllocBytes allocates bytes with the given length.
 func (b *Buffer) AllocBytes(n int) []byte {
-	if n > b.pool.largeAllocThreshold {
+	if n > b.pool.blockSize {
 		return make([]byte, n)
 	}
 
