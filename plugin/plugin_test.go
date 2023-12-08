@@ -20,11 +20,7 @@ import (
 	"strconv"
 	"sync/atomic"
 	"testing"
-<<<<<<< HEAD:plugin/plugin_test.go
-=======
 	"time"
-	"unsafe"
->>>>>>> 169617d22dc (plugin: fix bug that watch loop will refresh frequently when channel closed (#49275)):pkg/plugin/plugin_test.go
 
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/stretchr/testify/require"
