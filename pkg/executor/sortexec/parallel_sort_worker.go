@@ -48,4 +48,5 @@ func newParallelSortWorker(
 
 func (p *parallelSortWorker) run() {
 
+	p.waitGroup.Done()
 }
