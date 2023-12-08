@@ -19,6 +19,6 @@ The CI pipeline will automatically trigger when you submit a PR or push new comm
 | pull-integration-mysql-test     | `/test pull-integration-mysql-test`     | All mysql tests in PingCAP-QE/tidb-test performed through the tikv |
 | pull-integration-nodejs-test    | `/test pull-integration-nodejs-test`    | Node.js orm tests in PingCAP-QE/tidb-test                    |
 | pull-mysql-client-test          | `/test pull-mysql-client-test`          | MySQL client tests in PingCAP-QE/tidb-test                   |
-| pull-sqllogic-test              | `/test pull-sqllogic-test`              | SQL Logic tests in PingCAP-QE/tidb-test                      |
+| pull-sqllogic-test              | `/test pull-sqllogic-test`              | SQL logic tests in PingCAP-QE/tidb-test                      |
 | pull-tiflash-test               | `/test pull-tiflash-test`               | TiFlash tests in pingcap/tiflash `tests/docker/`             |
 
