@@ -103,7 +103,7 @@ func TestCopClientSend(t *testing.T) {
 
 	// Split one region.
 	key := tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(500))
-	region, _, _ := cluster.GetRegionByKey(key)
+	region, _, _, _ := cluster.GetRegionByKey(key)
 	peerID := cluster.AllocID()
 	cluster.Split(region.GetId(), cluster.AllocID(), key, []uint64{peerID}, peerID)
 
@@ -568,4 +568,26 @@ func TestCoprocessorBatchByStore(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestCoprCacheWithoutExecutionInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk1 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int)")
+	tk.MustExec("insert into t values(1), (2), (3)")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler/mockCopCacheInUnistore", `return(123)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler/mockCopCacheInUnistore"))
+	}()
+
+	defer tk.MustExec("set @@tidb_enable_collect_execution_info=1")
+	ctx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(_ *kv.Request) {
+		tk1.MustExec("set @@tidb_enable_collect_execution_info=0")
+	})
+	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows("1", "2", "3"))
 }

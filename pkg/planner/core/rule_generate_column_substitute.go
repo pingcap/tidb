@@ -60,6 +60,12 @@ func collectGenerateColumn(lp LogicalPlan, exprToColumn ExprColumnMap) {
 	if !ok {
 		return
 	}
+	// detect the read_from_storage(tiflash) hints, since virtual column will
+	// block the mpp task spreading (only supporting MPP table scan), causing
+	// mpp plan fail the cost comparison with tikv index plan.
+	if ds.preferStoreType&preferTiFlash != 0 {
+		return
+	}
 	for _, p := range ds.possibleAccessPaths {
 		if p.IsTablePath() {
 			continue
@@ -111,7 +117,6 @@ func substituteExpression(cond expression.Expression, lp LogicalPlan, exprToColu
 	if !ok {
 		return false
 	}
-	sctx := lp.SCtx().GetSessionVars().StmtCtx
 	changed := false
 	collectChanged := func(partial bool) {
 		if partial && !changed {
@@ -121,7 +126,7 @@ func substituteExpression(cond expression.Expression, lp LogicalPlan, exprToColu
 	defer func() {
 		// If the argument is not changed, hash code doesn't need to recount again.
 		if changed {
-			expression.ReHashCode(sf, sctx)
+			expression.ReHashCode(sf)
 		}
 	}()
 	var expr *expression.Expression

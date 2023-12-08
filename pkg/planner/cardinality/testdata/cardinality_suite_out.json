@@ -198,40 +198,40 @@
       {
         "SQL": "explain format = 'brief' select * from t where a > 800 and a < 1000",
         "Result": [
-          "TableReader 793.13 root  data:Selection",
-          "└─Selection 793.13 cop[tikv]  gt(test.t.a, 800), lt(test.t.a, 1000)",
+          "TableReader 793.20 root  data:Selection",
+          "└─Selection 793.20 cop[tikv]  gt(test.t.a, 800), lt(test.t.a, 1000)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 900 and a < 1000",
         "Result": [
-          "TableReader 458.12 root  data:Selection",
-          "└─Selection 458.12 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1000)",
+          "TableReader 458.19 root  data:Selection",
+          "└─Selection 458.19 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1000)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 900 and a < 1100",
         "Result": [
-          "TableReader 832.49 root  data:Selection",
-          "└─Selection 832.49 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1100)",
+          "TableReader 832.77 root  data:Selection",
+          "└─Selection 832.77 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1100)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 200 and a < 300",
         "Result": [
-          "TableReader 458.12 root  data:Selection",
-          "└─Selection 458.12 cop[tikv]  gt(test.t.a, 200), lt(test.t.a, 300)",
+          "TableReader 459.03 root  data:Selection",
+          "└─Selection 459.03 cop[tikv]  gt(test.t.a, 200), lt(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 100 and a < 300",
         "Result": [
-          "TableReader 832.49 root  data:Selection",
-          "└─Selection 832.49 cop[tikv]  gt(test.t.a, 100), lt(test.t.a, 300)",
+          "TableReader 834.45 root  data:Selection",
+          "└─Selection 834.45 cop[tikv]  gt(test.t.a, 100), lt(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
@@ -1188,14 +1188,14 @@
           },
           {
             "table_name": "t",
-            "type": "Index Stats-Point",
-            "expr": "((a = 1))",
+            "type": "Column Stats-Range",
+            "expr": "((a > 0 and a < 2))",
             "row_count": 4
           },
           {
             "table_name": "t",
-            "type": "Column Stats-Range",
-            "expr": "((a > 0 and a < 2))",
+            "type": "Index Stats-Point",
+            "expr": "((a = 1))",
             "row_count": 4
           },
           {
@@ -1211,13 +1211,13 @@
         "Trace": [
           {
             "table_name": "t",
-            "type": "Index Stats-Range",
+            "type": "Column Stats-Range",
             "expr": "((a >= 1 and a < 10))",
             "row_count": 6
           },
           {
             "table_name": "t",
-            "type": "Column Stats-Range",
+            "type": "Index Stats-Range",
             "expr": "((a >= 1 and a < 10))",
             "row_count": 6
           },
@@ -1235,25 +1235,13 @@
           {
             "table_name": "t",
             "type": "Column Stats-Range",
-            "expr": "((b < 4))",
-            "row_count": 6
-          },
-          {
-            "table_name": "t",
-            "type": "Table Stats-Expression-CNF",
-            "expr": "`lt`(test.t.b, 4)",
-            "row_count": 6
-          },
-          {
-            "table_name": "t",
-            "type": "Table Stats-Expression-DNF",
-            "expr": "`or`(`lt`(test.t.a, 3), `lt`(test.t.b, 4))",
+            "expr": "((a < 3))",
             "row_count": 6
           },
           {
             "table_name": "t",
             "type": "Column Stats-Range",
-            "expr": "((a < 3))",
+            "expr": "((b < 4))",
             "row_count": 6
           },
           {
@@ -1271,6 +1259,18 @@
           {
             "table_name": "t",
             "type": "Table Stats-Expression-CNF",
+            "expr": "`lt`(test.t.b, 4)",
+            "row_count": 6
+          },
+          {
+            "table_name": "t",
+            "type": "Table Stats-Expression-CNF",
+            "expr": "`or`(`lt`(test.t.a, 3), `lt`(test.t.b, 4))",
+            "row_count": 6
+          },
+          {
+            "table_name": "t",
+            "type": "Table Stats-Expression-DNF",
             "expr": "`or`(`lt`(test.t.a, 3), `lt`(test.t.b, 4))",
             "row_count": 6
           }
@@ -1279,12 +1279,6 @@
       {
         "Expr": "a = 1 and b = 2",
         "Trace": [
-          {
-            "table_name": "t",
-            "type": "Index Stats-Point",
-            "expr": "((a = 1) and (b = 2))",
-            "row_count": 2
-          },
           {
             "table_name": "t",
             "type": "Column Stats-Point",
@@ -1299,6 +1293,12 @@
           },
           {
             "table_name": "t",
+            "type": "Index Stats-Point",
+            "expr": "((a = 1) and (b = 2))",
+            "row_count": 2
+          },
+          {
+            "table_name": "t",
             "type": "Table Stats-Expression-CNF",
             "expr": "`and`(`eq`(test.t.a, 1), `eq`(test.t.b, 2))",
             "row_count": 2
@@ -1310,13 +1310,13 @@
         "Trace": [
           {
             "table_name": "t",
-            "type": "Index Stats-Range",
+            "type": "Column Stats-Range",
             "expr": "((a < 5)) or ((a > 10 and true))",
             "row_count": 6
           },
           {
             "table_name": "t",
-            "type": "Column Stats-Range",
+            "type": "Index Stats-Range",
             "expr": "((a < 5)) or ((a > 10 and true))",
             "row_count": 6
           },

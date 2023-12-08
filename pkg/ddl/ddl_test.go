@@ -73,9 +73,6 @@ func (d *ddl) RemoveReorgCtx(id int64) {
 	d.removeReorgCtx(id)
 }
 
-// JobNeedGCForTest is only used for test.
-var JobNeedGCForTest = jobNeedGC
-
 func createMockStore(t *testing.T) kv.Storage {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
@@ -284,4 +281,26 @@ func TestError(t *testing.T) {
 		require.NotEqual(t, mysql.ErrUnknown, code)
 		require.Equal(t, uint16(err.Code()), code)
 	}
+}
+
+func TestCheckDuplicateConstraint(t *testing.T) {
+	constrNames := map[string]bool{}
+
+	// Foreign Key
+	err := checkDuplicateConstraint(constrNames, "f1", ast.ConstraintForeignKey)
+	require.NoError(t, err)
+	err = checkDuplicateConstraint(constrNames, "f1", ast.ConstraintForeignKey)
+	require.EqualError(t, err, "[ddl:1826]Duplicate foreign key constraint name 'f1'")
+
+	// Check constraint
+	err = checkDuplicateConstraint(constrNames, "c1", ast.ConstraintCheck)
+	require.NoError(t, err)
+	err = checkDuplicateConstraint(constrNames, "c1", ast.ConstraintCheck)
+	require.EqualError(t, err, "[ddl:3822]Duplicate check constraint name 'c1'.")
+
+	// Unique contraints etc
+	err = checkDuplicateConstraint(constrNames, "u1", ast.ConstraintUniq)
+	require.NoError(t, err)
+	err = checkDuplicateConstraint(constrNames, "u1", ast.ConstraintUniq)
+	require.EqualError(t, err, "[ddl:1061]Duplicate key name 'u1'")
 }

@@ -29,12 +29,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	typectx "github.com/pingcap/tidb/pkg/types/context"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -156,7 +157,10 @@ type StatementContext struct {
 	_ constructor.Constructor `ctor:"NewStmtCtx,NewStmtCtxWithTimeZone,Reset"`
 
 	// 	typeCtx is used to indicate how to make the type conversation.
-	typeCtx typectx.Context
+	typeCtx types.Context
+
+	// errCtx is used to indicate how to handle the errors
+	errCtx errctx.Context
 
 	// Set the following variables before execution
 	StmtHints
@@ -176,8 +180,6 @@ type StatementContext struct {
 	InCreateOrAlterStmt           bool
 	InSetSessionStatesStmt        bool
 	InPreparedPlanBuilding        bool
-	IgnoreZeroInDate              bool
-	NoZeroDate                    bool
 	DupKeyAsWarning               bool
 	BadNullAsWarning              bool
 	DividedByZeroAsWarning        bool
@@ -188,7 +190,6 @@ type StatementContext struct {
 	CacheType                     PlanCacheType
 	BatchCheck                    bool
 	InNullRejectCheck             bool
-	AllowInvalidDate              bool
 	IgnoreNoPartition             bool
 	IgnoreExplainIDSuffix         bool
 	MultiSchemaInfo               *model.MultiSchemaInfo
@@ -415,8 +416,6 @@ type StatementContext struct {
 	useChunkAlloc bool
 	// Check if TiFlash read engine is removed due to strict sql mode.
 	TiFlashEngineRemovedDueToStrictSQLMode bool
-	// CanonicalHashCode try to get the canonical hash code from expression.
-	CanonicalHashCode bool
 	// StaleTSOProvider is used to provide stale timestamp oracle for read-only transactions.
 	StaleTSOProvider struct {
 		sync.Mutex
@@ -428,54 +427,87 @@ type StatementContext struct {
 // NewStmtCtx creates a new statement context
 func NewStmtCtx() *StatementContext {
 	sc := &StatementContext{}
-	sc.typeCtx = typectx.NewContext(typectx.StrictFlags, time.UTC, sc.AppendWarning)
+	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc.AppendWarning)
 	return sc
 }
 
 // NewStmtCtxWithTimeZone creates a new StatementContext with the given timezone
 func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
-	intest.Assert(tz)
+	intest.AssertNotNil(tz)
 	sc := &StatementContext{}
-	sc.typeCtx = typectx.NewContext(typectx.StrictFlags, tz, sc.AppendWarning)
+	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc.AppendWarning)
 	return sc
 }
 
 // Reset resets a statement context
 func (sc *StatementContext) Reset() {
 	*sc = StatementContext{
-		typeCtx: typectx.NewContext(typectx.StrictFlags, time.UTC, sc.AppendWarning),
+		typeCtx: types.NewContext(types.DefaultStmtFlags, time.UTC, sc.AppendWarning),
 	}
 }
 
 // TimeZone returns the timezone of the type context
 func (sc *StatementContext) TimeZone() *time.Location {
+	intest.AssertNotNil(sc)
+	if sc == nil {
+		return time.UTC
+	}
+
 	return sc.typeCtx.Location()
 }
 
 // SetTimeZone sets the timezone
 func (sc *StatementContext) SetTimeZone(tz *time.Location) {
-	intest.Assert(tz)
+	intest.AssertNotNil(tz)
 	sc.typeCtx = sc.typeCtx.WithLocation(tz)
 }
 
 // TypeCtx returns the type context
-func (sc *StatementContext) TypeCtx() typectx.Context {
+func (sc *StatementContext) TypeCtx() types.Context {
 	return sc.typeCtx
 }
 
+// ErrCtx returns the error context
+// TODO: add a cache to the `ErrCtx` if needed, though it's not a big burden to generate `ErrCtx` everytime.
+func (sc *StatementContext) ErrCtx() errctx.Context {
+	ctx := errctx.NewContext(sc.AppendWarning)
+
+	if sc.TypeFlags().IgnoreTruncateErr() {
+		ctx = ctx.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
+	} else if sc.TypeFlags().TruncateAsWarning() {
+		ctx = ctx.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
+	}
+
+	if sc.OverflowAsWarning {
+		ctx = ctx.WithErrGroupLevel(errctx.ErrGroupOverflow, errctx.LevelWarn)
+	}
+	return ctx
+}
+
 // TypeFlags returns the type flags
-func (sc *StatementContext) TypeFlags() typectx.Flags {
+func (sc *StatementContext) TypeFlags() types.Flags {
 	return sc.typeCtx.Flags()
 }
 
 // SetTypeFlags sets the type flags
-func (sc *StatementContext) SetTypeFlags(flags typectx.Flags) {
+func (sc *StatementContext) SetTypeFlags(flags types.Flags) {
 	sc.typeCtx = sc.typeCtx.WithFlags(flags)
 }
 
 // HandleTruncate ignores or returns the error based on the TypeContext inside.
+// TODO: replace this function with `HandleError`, for `TruncatedError` they should have the same effect.
 func (sc *StatementContext) HandleTruncate(err error) error {
 	return sc.typeCtx.HandleTruncate(err)
+}
+
+// HandleError handles the error based on `ErrCtx()`
+func (sc *StatementContext) HandleError(err error) error {
+	intest.AssertNotNil(sc)
+	if sc == nil {
+		return err
+	}
+	errCtx := sc.ErrCtx()
+	return errCtx.HandleError(err)
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -1127,16 +1159,6 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 	return details
 }
 
-// ShouldIgnoreOverflowError indicates whether we should ignore the error when type conversion overflows,
-// so we can leave it for further processing like clipping values less than 0 to 0 for unsigned integer types.
-func (sc *StatementContext) ShouldIgnoreOverflowError() bool {
-	// TODO: move this function into `/types` pkg
-	if (sc.InInsertStmt && sc.TypeFlags().TruncateAsWarning()) || sc.InLoadDataStmt {
-		return true
-	}
-	return false
-}
-
 // PushDownFlags converts StatementContext to tipb.SelectRequest.Flags.
 func (sc *StatementContext) PushDownFlags() uint64 {
 	var flags uint64
@@ -1155,7 +1177,7 @@ func (sc *StatementContext) PushDownFlags() uint64 {
 	if sc.OverflowAsWarning {
 		flags |= model.FlagOverflowAsWarning
 	}
-	if sc.IgnoreZeroInDate {
+	if sc.TypeFlags().IgnoreZeroInDate() {
 		flags |= model.FlagIgnoreZeroInDate
 	}
 	if sc.DividedByZeroAsWarning {
@@ -1220,14 +1242,13 @@ func (sc *StatementContext) InitFromPBFlagAndTz(flags uint64, tz *time.Location)
 	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
 	sc.InDeleteStmt = (flags & model.FlagInUpdateOrDeleteStmt) > 0
 	sc.OverflowAsWarning = (flags & model.FlagOverflowAsWarning) > 0
-	sc.IgnoreZeroInDate = (flags & model.FlagIgnoreZeroInDate) > 0
 	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
 	sc.SetTimeZone(tz)
-	sc.SetTypeFlags(typectx.StrictFlags.
+	sc.SetTypeFlags(types.DefaultStmtFlags.
 		WithIgnoreTruncateErr((flags & model.FlagIgnoreTruncate) > 0).
 		WithTruncateAsWarning((flags & model.FlagTruncateAsWarning) > 0).
-		WithClipNegativeToZero(sc.InInsertStmt),
-	)
+		WithIgnoreZeroInDate((flags & model.FlagIgnoreZeroInDate) > 0).
+		WithAllowNegativeToUnsigned(!sc.InInsertStmt))
 }
 
 // GetLockWaitStartTime returns the statement pessimistic lock wait start time
@@ -1370,12 +1391,12 @@ func (sc *StatementContext) RecordedStatsLoadStatusCnt() (cnt int) {
 // If the statement context is nil, it'll return a newly created default type context.
 // **don't** use this function if you can make sure the `sc` is not nil. We should limit the usage of this function as
 // little as possible.
-func (sc *StatementContext) TypeCtxOrDefault() typectx.Context {
+func (sc *StatementContext) TypeCtxOrDefault() types.Context {
 	if sc != nil {
 		return sc.typeCtx
 	}
 
-	return typectx.DefaultNoWarningContext
+	return types.DefaultStmtNoWarningContext
 }
 
 // UsedStatsInfoForTable records stats that are used during query and their information.

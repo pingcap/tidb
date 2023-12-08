@@ -227,7 +227,7 @@ func (bq *brieQueue) clearTask(sc *stmtctx.StatementContext) {
 
 	bq.tasks.Range(func(key, value interface{}) bool {
 		item := value.(*brieQueueItem)
-		if d := currTime.Sub(sc, &item.info.finishTime); d.Compare(outdatedDuration) > 0 {
+		if d := currTime.Sub(sc.TypeCtx(), &item.info.finishTime); d.Compare(outdatedDuration) > 0 {
 			bq.tasks.Delete(key)
 		}
 		return true
@@ -236,7 +236,7 @@ func (bq *brieQueue) clearTask(sc *stmtctx.StatementContext) {
 
 func (b *executorBuilder) parseTSString(ts string) (uint64, error) {
 	sc := stmtctx.NewStmtCtxWithTimeZone(b.ctx.GetSessionVars().Location())
-	t, err := types.ParseTime(sc, ts, mysql.TypeTimestamp, types.MaxFsp, nil)
+	t, err := types.ParseTime(sc.TypeCtx(), ts, mysql.TypeTimestamp, types.MaxFsp)
 	if err != nil {
 		return 0, err
 	}
@@ -277,21 +277,15 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	}
 
 	tidbCfg := config.GetGlobalConfig()
-	cfg := task.Config{
-		TLS: task.TLSConfig{
-			CA:   tidbCfg.Security.ClusterSSLCA,
-			Cert: tidbCfg.Security.ClusterSSLCert,
-			Key:  tidbCfg.Security.ClusterSSLKey,
-		},
-		PD:          strings.Split(tidbCfg.Path, ","),
-		Concurrency: 4,
-		Checksum:    true,
-		SendCreds:   true,
-		LogProgress: true,
-		CipherInfo: backuppb.CipherInfo{
-			CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
-		},
+	tlsCfg := task.TLSConfig{
+		CA:   tidbCfg.Security.ClusterSSLCA,
+		Cert: tidbCfg.Security.ClusterSSLCert,
+		Key:  tidbCfg.Security.ClusterSSLKey,
 	}
+	pds := strings.Split(tidbCfg.Path, ",")
+	cfg := task.DefaultConfig()
+	cfg.PD = pds
+	cfg.TLS = tlsCfg
 
 	storageURL, err := storage.ParseRawURL(s.Storage)
 	if err != nil {
@@ -364,7 +358,9 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 
 	switch s.Kind {
 	case ast.BRIEKindBackup:
-		e.backupCfg = &task.BackupConfig{Config: cfg}
+		bcfg := task.DefaultBackupConfig()
+		bcfg.Config = cfg
+		e.backupCfg = &bcfg
 
 		for _, opt := range s.Options {
 			switch opt.Tp {
@@ -392,7 +388,9 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		}
 
 	case ast.BRIEKindRestore:
-		e.restoreCfg = &task.RestoreConfig{Config: cfg}
+		rcfg := task.DefaultRestoreConfig()
+		rcfg.Config = cfg
+		e.restoreCfg = &rcfg
 		for _, opt := range s.Options {
 			if opt.Tp == ast.BRIEOptionOnline {
 				e.restoreCfg.Online = opt.UintValue != 0
@@ -549,7 +547,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		for {
 			select {
 			case <-ticker.C:
-				if atomic.LoadUint32(&e.Ctx().GetSessionVars().Killed) == 1 {
+				if e.Ctx().GetSessionVars().SQLKiller.HandleSignal() == exeerrors.ErrQueryInterrupted {
 					bq.cancelTask(taskID)
 					return
 				}

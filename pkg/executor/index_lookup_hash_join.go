@@ -87,7 +87,6 @@ type indexHashJoinOuterWorker struct {
 
 type indexHashJoinInnerWorker struct {
 	innerWorker
-	matchedOuterPtrs  []chunk.RowPtr
 	joiner            joiner
 	joinChkResourceCh chan *chunk.Chunk
 	// resultCh is valid only when indexNestedLoopHashJoin do not need to keep
@@ -125,7 +124,7 @@ type indexHashJoinTask struct {
 
 // Open implements the IndexNestedLoopHashJoin Executor interface.
 func (e *IndexNestedLoopHashJoin) Open(ctx context.Context) error {
-	err := e.Children(0).Open(ctx)
+	err := exec.Open(ctx, e.Children(0))
 	if err != nil {
 		return err
 	}
@@ -189,6 +188,9 @@ func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r interface{}) {
 	if r != nil {
 		e.IndexLookUpJoin.finished.Store(true)
 		err := fmt.Errorf("%v", r)
+		if recoverdErr, ok := r.(error); ok {
+			err = recoverdErr
+		}
 		if !e.keepOuterOrder {
 			e.resultCh <- &indexHashJoinResult{err: err}
 		} else {
@@ -436,7 +438,6 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask,
 		joiner:            e.joiners[workerID],
 		joinChkResourceCh: e.joinChkResourceCh[workerID],
 		resultCh:          e.resultCh,
-		matchedOuterPtrs:  make([]chunk.RowPtr, 0, e.MaxChunkSize()),
 		joinKeyBuf:        make([]byte, 1),
 		outerRowStatus:    make([]outerRowStatusFlag, 0, e.MaxChunkSize()),
 		rowIter:           chunk.NewIterator4Slice([]chunk.Row{}).(*chunk.Iterator4Slice),
@@ -580,7 +581,7 @@ func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(task *indexHash
 				}
 			}
 			h.Reset()
-			err := codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx, h, row, iw.outerCtx.hashTypes, hashColIdx, buf)
+			err := codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx.TypeCtx(), h, row, iw.outerCtx.hashTypes, hashColIdx, buf)
 			failpoint.Inject("testIndexHashJoinBuildErr", func() {
 				err = errors.New("mockIndexHashJoinBuildErr")
 			})
@@ -708,21 +709,20 @@ func (iw *indexHashJoinInnerWorker) doJoinUnordered(ctx context.Context, task *i
 
 func (iw *indexHashJoinInnerWorker) getMatchedOuterRows(innerRow chunk.Row, task *indexHashJoinTask, h hash.Hash64, buf []byte) (matchedRows []chunk.Row, matchedRowPtr []chunk.RowPtr, err error) {
 	h.Reset()
-	err = codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx, h, innerRow, iw.hashTypes, iw.hashCols, buf)
+	err = codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx.TypeCtx(), h, innerRow, iw.hashTypes, iw.hashCols, buf)
 	if err != nil {
 		return nil, nil, err
 	}
-	iw.matchedOuterPtrs = task.lookupMap.Get(h.Sum64())
-	if len(iw.matchedOuterPtrs) == 0 {
+	matchedOuterEntry := task.lookupMap.Get(h.Sum64())
+	if matchedOuterEntry == nil {
 		return nil, nil, nil
 	}
 	joinType := JoinerType(iw.joiner)
 	isSemiJoin := joinType == plannercore.SemiJoin || joinType == plannercore.LeftOuterSemiJoin
-	matchedRows = make([]chunk.Row, 0, len(iw.matchedOuterPtrs))
-	matchedRowPtr = make([]chunk.RowPtr, 0, len(iw.matchedOuterPtrs))
-	for _, ptr := range iw.matchedOuterPtrs {
+	for ; matchedOuterEntry != nil; matchedOuterEntry = matchedOuterEntry.next {
+		ptr := matchedOuterEntry.ptr
 		outerRow := task.outerResult.GetRow(ptr)
-		ok, err := codec.EqualChunkRow(iw.ctx.GetSessionVars().StmtCtx, innerRow, iw.hashTypes, iw.hashCols, outerRow, iw.outerCtx.hashTypes, iw.outerCtx.hashCols)
+		ok, err := codec.EqualChunkRow(iw.ctx.GetSessionVars().StmtCtx.TypeCtx(), innerRow, iw.hashTypes, iw.hashCols, outerRow, iw.outerCtx.hashTypes, iw.outerCtx.hashCols)
 		if err != nil {
 			return nil, nil, err
 		}

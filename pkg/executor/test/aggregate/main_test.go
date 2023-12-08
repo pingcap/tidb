@@ -18,18 +18,12 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"go.uber.org/goleak"
 )
 
-var aggMergeSuiteData testdata.TestData
-var testDataMap = make(testdata.BookKeeper)
-
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
-	testDataMap.LoadTestSuiteData("testdata", "agg_suite")
-	aggMergeSuiteData = testDataMap["agg_suite"]
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0

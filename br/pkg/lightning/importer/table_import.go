@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/extsort"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
@@ -69,6 +70,8 @@ type TableImporter struct {
 	alloc     autoid.Allocators
 	logger    log.Logger
 	kvStore   tidbkv.Storage
+	etcdCli   *clientv3.Client
+	autoidCli *autoid.ClientDiscover
 
 	// dupIgnoreRows tracks the rowIDs of rows that are duplicated and should be ignored.
 	dupIgnoreRows extsort.ExternalSorter
@@ -85,6 +88,7 @@ func NewTableImporter(
 	cp *checkpoints.TableCheckpoint,
 	ignoreColumns map[string]struct{},
 	kvStore tidbkv.Storage,
+	etcdCli *clientv3.Client,
 	logger log.Logger,
 ) (*TableImporter, error) {
 	idAlloc := kv.NewPanickingAllocators(cp.AllocBase)
@@ -92,6 +96,7 @@ func NewTableImporter(
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", tableName)
 	}
+	autoidCli := autoid.NewClientDiscover(etcdCli)
 
 	return &TableImporter{
 		tableName:     tableName,
@@ -101,6 +106,8 @@ func NewTableImporter(
 		encTable:      tbl,
 		alloc:         idAlloc,
 		kvStore:       kvStore,
+		etcdCli:       etcdCli,
+		autoidCli:     autoidCli,
 		logger:        logger.With(zap.String("table", tableName)),
 		ignoreColumns: ignoreColumns,
 	}, nil
@@ -314,6 +321,19 @@ func (tr *TableImporter) populateChunks(ctx context.Context, rc *Controller, cp 
 		zap.Int("filesCnt", len(tableRegions)),
 	)
 	return err
+}
+
+// AutoIDRequirement implements autoid.Requirement.
+var _ autoid.Requirement = &TableImporter{}
+
+// Store implements the autoid.Requirement interface.
+func (tr *TableImporter) Store() tidbkv.Storage {
+	return tr.kvStore
+}
+
+// AutoIDClient implements the autoid.Requirement interface.
+func (tr *TableImporter) AutoIDClient() *autoid.ClientDiscover {
+	return tr.autoidCli
 }
 
 // RebaseChunkRowIDs rebase the row id of the chunks.
@@ -944,7 +964,7 @@ func (tr *TableImporter) postProcess(
 				// And in this case, ALTER TABLE xxx AUTO_INCREMENT = xxx only works on the allocator of auto_increment column,
 				// not for allocator of _tidb_rowid.
 				// So we need to rebase IDs for those 2 allocators explicitly.
-				err = common.RebaseGlobalAutoID(ctx, adjustIDBase(newBase), tr.kvStore, tr.dbInfo.ID, tr.tableInfo.Core)
+				err = common.RebaseGlobalAutoID(ctx, adjustIDBase(newBase), tr, tr.dbInfo.ID, tr.tableInfo.Core)
 			}
 		}
 		rc.alterTableLock.Unlock()
@@ -970,6 +990,7 @@ func (tr *TableImporter) postProcess(
 	defer rc.checksumWorks.Recycle(w)
 
 	shouldSkipAnalyze := false
+	estimatedModifyCnt := 100_000_000
 	if cp.Status < checkpoints.CheckpointStatusChecksumSkipped {
 		// 4. do table checksum
 		var localChecksum verify.KVChecksum
@@ -978,6 +999,11 @@ func (tr *TableImporter) postProcess(
 				localChecksum.Add(&chunk.Checksum)
 			}
 		}
+		indexNum := len(tr.tableInfo.Core.Indices)
+		if common.TableHasAutoRowID(tr.tableInfo.Core) {
+			indexNum++
+		}
+		estimatedModifyCnt = int(localChecksum.SumKVS()) / (1 + indexNum)
 		tr.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
 
 		// 4.5. do duplicate detection.
@@ -1118,6 +1144,9 @@ func (tr *TableImporter) postProcess(
 	if cp.Status < checkpoints.CheckpointStatusAnalyzeSkipped {
 		switch {
 		case shouldSkipAnalyze || rc.cfg.PostRestore.Analyze == config.OpLevelOff:
+			if !shouldSkipAnalyze {
+				updateStatsMeta(ctx, rc.db, tr.tableInfo.ID, estimatedModifyCnt)
+			}
 			tr.logger.Info("skip analyze")
 			if err := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, nil, checkpoints.CheckpointStatusAnalyzeSkipped); err != nil {
 				return false, errors.Trace(err)
@@ -1141,6 +1170,36 @@ func (tr *TableImporter) postProcess(
 	}
 
 	return true, nil
+}
+
+func updateStatsMeta(ctx context.Context, db *sql.DB, tableID int64, count int) {
+	s := common.SQLWithRetry{
+		DB:     db,
+		Logger: log.FromContext(ctx).With(zap.Int64("tableID", tableID)),
+	}
+	err := s.Transact(ctx, "update stats_meta", func(ctx context.Context, tx *sql.Tx) error {
+		rs, err := tx.ExecContext(ctx, `
+update mysql.stats_meta
+	set modify_count = ?,
+		count = ?,
+		version = @@tidb_current_ts
+	where table_id = ?;
+`, count, count, tableID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		affected, err := rs.RowsAffected()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if affected == 0 {
+			return errors.Errorf("record with table_id %d not found", tableID)
+		}
+		return nil
+	})
+	if err != nil {
+		s.Logger.Warn("failed to update stats_meta", zap.Error(err))
+	}
 }
 
 func parseColumnPermutations(

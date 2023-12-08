@@ -81,217 +81,6 @@ func TestInspectionTables(t *testing.T) {
 	tk.Session().GetSessionVars().InspectionTableCache = nil
 }
 
-func TestProfiling(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustQuery("select * from information_schema.profiling").Check(testkit.Rows())
-	tk.MustExec("set @@profiling=1")
-	tk.MustQuery("select * from information_schema.profiling").Check(testkit.Rows("0 0  0 0 0 0 0 0 0 0 0 0 0 0   0"))
-}
-
-func TestSchemataTables(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustQuery("select * from information_schema.SCHEMATA where schema_name='mysql';").Check(
-		testkit.Rows("def mysql utf8mb4 utf8mb4_bin <nil> <nil>"))
-
-	// Test the privilege of new user for information_schema.schemata.
-	tk.MustExec("create user schemata_tester")
-	schemataTester := testkit.NewTestKit(t, store)
-	schemataTester.MustExec("use information_schema")
-	require.NoError(t, schemataTester.Session().Auth(&auth.UserIdentity{
-		Username: "schemata_tester",
-		Hostname: "127.0.0.1",
-	}, nil, nil, nil))
-	schemataTester.MustQuery("select count(*) from information_schema.SCHEMATA;").Check(testkit.Rows("1"))
-	schemataTester.MustQuery("select * from information_schema.SCHEMATA where schema_name='mysql';").Check(
-		[][]interface{}{})
-	schemataTester.MustQuery("select * from information_schema.SCHEMATA where schema_name='INFORMATION_SCHEMA';").Check(
-		testkit.Rows("def INFORMATION_SCHEMA utf8mb4 utf8mb4_bin <nil> <nil>"))
-
-	// Test the privilege of user with privilege of mysql for information_schema.schemata.
-	tk.MustExec("CREATE ROLE r_mysql_priv;")
-	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.* TO r_mysql_priv;")
-	tk.MustExec("GRANT r_mysql_priv TO schemata_tester;")
-	schemataTester.MustExec("set role r_mysql_priv")
-	schemataTester.MustQuery("select count(*) from information_schema.SCHEMATA;").Check(testkit.Rows("2"))
-	schemataTester.MustQuery("select * from information_schema.SCHEMATA;").Check(
-		testkit.Rows("def INFORMATION_SCHEMA utf8mb4 utf8mb4_bin <nil> <nil>", "def mysql utf8mb4 utf8mb4_bin <nil> <nil>"))
-}
-
-func TestTableIDAndIndexID(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("drop table if exists test.t")
-	tk.MustExec("create table test.t (a int, b int, primary key(a), key k1(b))")
-	tk.MustQuery("select index_id from information_schema.tidb_indexes where table_schema = 'test' and table_name = 't'").Check(testkit.Rows("0", "1"))
-	tblID, err := strconv.Atoi(tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 't'").Rows()[0][0].(string))
-	require.NoError(t, err)
-	require.Greater(t, tblID, 0)
-}
-
-func TestSchemataCharacterSet(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("CREATE DATABASE `foo` DEFAULT CHARACTER SET = 'utf8mb4'")
-	tk.MustQuery("select default_character_set_name, default_collation_name FROM information_schema.SCHEMATA  WHERE schema_name = 'foo'").Check(
-		testkit.Rows("utf8mb4 utf8mb4_bin"))
-	tk.MustExec("drop database `foo`")
-}
-
-func TestViews(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("CREATE DEFINER='root'@'localhost' VIEW test.v1 AS SELECT 1")
-	tk.MustQuery("select TABLE_COLLATION is null from INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='VIEW'").Check(testkit.Rows("1", "1"))
-	tk.MustQuery("SELECT * FROM information_schema.views WHERE table_schema='test' AND table_name='v1'").Check(testkit.Rows("def test v1 SELECT 1 AS `1` CASCADED NO root@localhost DEFINER utf8mb4 utf8mb4_bin"))
-	tk.MustQuery("SELECT table_catalog, table_schema, table_name, table_type, engine, version, row_format, table_rows, avg_row_length, data_length, max_data_length, index_length, data_free, auto_increment, update_time, check_time, table_collation, checksum, create_options, table_comment FROM information_schema.tables WHERE table_schema='test' AND table_name='v1'").Check(testkit.Rows("def test v1 VIEW <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> VIEW"))
-}
-
-func TestColumnsTables(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (bit bit(10) DEFAULT b'100')")
-	tk.MustQuery("SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 't'").Check(testkit.Rows(
-		"def test t bit 1 b'100' YES bit <nil> <nil> 10 0 <nil> <nil> <nil> bit(10)   select,insert,update,references  "))
-	tk.MustExec("drop table if exists t")
-
-	tk.MustExec("set time_zone='+08:00'")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (b timestamp(3) NOT NULL DEFAULT '1970-01-01 08:00:01.000')")
-	tk.MustQuery("select column_default from information_schema.columns where TABLE_NAME='t' and TABLE_SCHEMA='test';").Check(testkit.Rows("1970-01-01 08:00:01.000"))
-	tk.MustExec("set time_zone='+04:00'")
-	tk.MustQuery("select column_default from information_schema.columns where TABLE_NAME='t' and TABLE_SCHEMA='test';").Check(testkit.Rows("1970-01-01 04:00:01.000"))
-	tk.MustExec("set time_zone=default")
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a bit DEFAULT (rand()))")
-	tk.MustQuery("select column_default from information_schema.columns where TABLE_NAME='t' and TABLE_SCHEMA='test';").Check(testkit.Rows("rand()"))
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("CREATE TABLE t (`COL3` bit(1) NOT NULL,b year) ;")
-	tk.MustQuery("select column_type from  information_schema.columns where TABLE_SCHEMA = 'test' and TABLE_NAME = 't';").
-		Check(testkit.Rows("bit(1)", "year(4)"))
-
-	// For issue: https://github.com/pingcap/tidb/issues/43379
-	tk.MustQuery("select ordinal_position from information_schema.columns where table_schema=database() and table_name='t' and column_name='b'").
-		Check(testkit.Rows("2"))
-}
-
-func TestEngines(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustQuery("select * from information_schema.ENGINES;").Check(testkit.Rows("InnoDB DEFAULT Supports transactions, row-level locking, and foreign keys YES YES YES"))
-}
-
-// https://github.com/pingcap/tidb/issues/25467.
-func TestDataTypesMaxLengthAndOctLength(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("drop database if exists test_oct_length;")
-	tk.MustExec("create database test_oct_length;")
-	tk.MustExec("use test_oct_length;")
-
-	testCases := []struct {
-		colTp  string
-		maxLen int
-		octLen int
-	}{
-		{"varchar(255) collate ascii_bin", 255, 255},
-		{"varchar(255) collate utf8mb4_bin", 255, 255 * 4},
-		{"varchar(255) collate utf8_bin", 255, 255 * 3},
-		{"char(10) collate ascii_bin", 10, 10},
-		{"char(10) collate utf8mb4_bin", 10, 10 * 4},
-		{"set('a', 'b', 'cccc') collate ascii_bin", 8, 8},
-		{"set('a', 'b', 'cccc') collate utf8mb4_bin", 8, 8 * 4},
-		{"enum('a', 'b', 'cccc') collate ascii_bin", 4, 4},
-		{"enum('a', 'b', 'cccc') collate utf8mb4_bin", 4, 4 * 4},
-	}
-	for _, tc := range testCases {
-		createSQL := fmt.Sprintf("create table t (a %s);", tc.colTp)
-		tk.MustExec(createSQL)
-		result := tk.MustQuery("select character_maximum_length, character_octet_length " +
-			"from information_schema.columns " +
-			"where table_schema=(select database()) and table_name='t';")
-		expectedRows := testkit.Rows(fmt.Sprintf("%d %d", tc.maxLen, tc.octLen))
-		result.Check(expectedRows)
-		tk.MustExec("drop table t;")
-	}
-}
-
-func TestDDLJobs(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database if not exists test_ddl_jobs")
-	tk.MustQuery("select db_name, job_type from information_schema.DDL_JOBS limit 1").Check(
-		testkit.Rows("test_ddl_jobs create schema"))
-
-	tk.MustExec("use test_ddl_jobs")
-	tk.MustExec("create table t (a int);")
-	tk.MustQuery("select db_name, table_name, job_type from information_schema.DDL_JOBS where table_name = 't'").Check(
-		testkit.Rows("test_ddl_jobs t create table"))
-
-	tk.MustQuery("select job_type from information_schema.DDL_JOBS group by job_type having job_type = 'create table'").Check(
-		testkit.Rows("create table"))
-
-	// Test the START_TIME and END_TIME field.
-	tk.MustQuery("select distinct job_type from information_schema.DDL_JOBS where job_type = 'create table' and start_time > str_to_date('20190101','%Y%m%d%H%i%s')").Check(
-		testkit.Rows("create table"))
-
-	// Test the privilege of new user for information_schema.DDL_JOBS.
-	tk.MustExec("create user DDL_JOBS_tester")
-	DDLJobsTester := testkit.NewTestKit(t, store)
-	DDLJobsTester.MustExec("use information_schema")
-	require.NoError(t, DDLJobsTester.Session().Auth(&auth.UserIdentity{
-		Username: "DDL_JOBS_tester",
-		Hostname: "127.0.0.1",
-	}, nil, nil, nil))
-
-	// Test the privilege of user for information_schema.ddl_jobs.
-	DDLJobsTester.MustQuery("select DB_NAME, TABLE_NAME from information_schema.DDL_JOBS where DB_NAME = 'test_ddl_jobs' and TABLE_NAME = 't';").Check(
-		[][]interface{}{})
-	tk.MustExec("CREATE ROLE r_priv;")
-	tk.MustExec("GRANT ALL PRIVILEGES ON test_ddl_jobs.* TO r_priv;")
-	tk.MustExec("GRANT r_priv TO DDL_JOBS_tester;")
-	DDLJobsTester.MustExec("set role r_priv")
-	DDLJobsTester.MustQuery("select DB_NAME, TABLE_NAME from information_schema.DDL_JOBS where DB_NAME = 'test_ddl_jobs' and TABLE_NAME = 't';").Check(
-		testkit.Rows("test_ddl_jobs t"))
-
-	tk.MustExec("create table tt (a int);")
-	tk.MustExec("alter table tt add index t(a), add column b int")
-	tk.MustQuery("select db_name, table_name, job_type from information_schema.DDL_JOBS limit 3").Check(
-		testkit.Rows("test_ddl_jobs tt alter table multi-schema change", "test_ddl_jobs tt add column /* subjob */", "test_ddl_jobs tt add index /* subjob */ /* txn-merge */"))
-}
-
-func TestKeyColumnUsage(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustQuery("select * from information_schema.KEY_COLUMN_USAGE where TABLE_NAME='stats_meta' and COLUMN_NAME='table_id';").Check(
-		testkit.Rows("def mysql tbl def mysql stats_meta table_id 1 <nil> <nil> <nil> <nil>"))
-
-	// test the privilege of new user for information_schema.table_constraints
-	tk.MustExec("create user key_column_tester")
-	keyColumnTester := testkit.NewTestKit(t, store)
-	keyColumnTester.MustExec("use information_schema")
-	require.NoError(t, keyColumnTester.Session().Auth(&auth.UserIdentity{
-		Username: "key_column_tester",
-		Hostname: "127.0.0.1",
-	}, nil, nil, nil))
-	keyColumnTester.MustQuery("select * from information_schema.KEY_COLUMN_USAGE where TABLE_NAME != 'CLUSTER_SLOW_QUERY';").Check([][]interface{}{})
-
-	// test the privilege of user with privilege of mysql.gc_delete_range for information_schema.table_constraints
-	tk.MustExec("CREATE ROLE r_stats_meta ;")
-	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.stats_meta TO r_stats_meta;")
-	tk.MustExec("GRANT r_stats_meta TO key_column_tester;")
-	keyColumnTester.MustExec("set role r_stats_meta")
-	rows := keyColumnTester.MustQuery("select * from information_schema.KEY_COLUMN_USAGE where TABLE_NAME='stats_meta';").Rows()
-	require.Greater(t, len(rows), 0)
-}
-
 func TestUserPrivileges(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -357,29 +146,6 @@ func TestUserPrivileges(t *testing.T) {
 	require.Greater(t, len(rows), 0)
 	rows = tk3.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='tables_priv' and COLUMN_NAME='Host';").Rows()
 	require.Greater(t, len(rows), 0)
-}
-
-func TestUserPrivilegesTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk1 := testkit.NewTestKit(t, store)
-
-	// test the privilege of new user for information_schema.user_privileges
-	tk.MustExec("create user usageuser")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
-		Username: "usageuser",
-		Hostname: "127.0.0.1",
-	}, nil, nil, nil))
-	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'"`).Check(testkit.Rows("'usageuser'@'%' def USAGE NO"))
-	// the usage row disappears when there is a non-dynamic privilege added
-	tk1.MustExec("GRANT SELECT ON *.* to usageuser")
-	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'"`).Check(testkit.Rows("'usageuser'@'%' def SELECT NO"))
-	// test grant privilege
-	tk1.MustExec("GRANT SELECT ON *.* to usageuser WITH GRANT OPTION")
-	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'"`).Check(testkit.Rows("'usageuser'@'%' def SELECT YES"))
-	// test DYNAMIC privs
-	tk1.MustExec("GRANT BACKUP_ADMIN ON *.* to usageuser")
-	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'" ORDER BY privilege_type`).Check(testkit.Rows("'usageuser'@'%' def BACKUP_ADMIN NO", "'usageuser'@'%' def SELECT YES"))
 }
 
 func TestDataForTableStatsField(t *testing.T) {
@@ -504,52 +270,6 @@ func TestPartitionsTable(t *testing.T) {
 	tk.MustExec("drop table test_partitions")
 }
 
-// https://github.com/pingcap/tidb/issues/32693.
-func TestPartitionTablesStatsCache(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec(`
-CREATE TABLE e ( id INT NOT NULL, fname VARCHAR(30), lname VARCHAR(30)) PARTITION BY RANGE (id) (
-        PARTITION p0 VALUES LESS THAN (50),
-        PARTITION p1 VALUES LESS THAN (100),
-        PARTITION p2 VALUES LESS THAN (150),
-        PARTITION p3 VALUES LESS THAN (MAXVALUE));`)
-	tk.MustExec(`CREATE TABLE e2 ( id INT NOT NULL, fname VARCHAR(30), lname VARCHAR(30));`)
-	// Load the stats cache.
-	tk.MustQuery(`SELECT PARTITION_NAME, TABLE_ROWS FROM INFORMATION_SCHEMA.PARTITIONS WHERE TABLE_NAME = 'e';`)
-	// p0: 1 row, p3: 3 rows
-	tk.MustExec(`INSERT INTO e VALUES (1669, "Jim", "Smith"), (337, "Mary", "Jones"), (16, "Frank", "White"), (2005, "Linda", "Black");`)
-	tk.MustExec(`set tidb_enable_exchange_partition='on';`)
-	tk.MustExec(`ALTER TABLE e EXCHANGE PARTITION p0 WITH TABLE e2;`)
-	// p0: 1 rows, p3: 3 rows
-	tk.MustExec(`INSERT INTO e VALUES (41, "Michael", "Green");`)
-	tk.MustExec(`analyze table e;`) // The stats_meta should be effective immediately.
-	tk.MustQuery(`SELECT PARTITION_NAME, TABLE_ROWS FROM INFORMATION_SCHEMA.PARTITIONS WHERE TABLE_NAME = 'e';`).
-		Check(testkit.Rows("p0 1", "p1 0", "p2 0", "p3 3"))
-}
-
-func TestMetricTables(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use information_schema")
-	tk.MustQuery("select count(*) > 0 from `METRICS_TABLES`").Check(testkit.Rows("1"))
-	tk.MustQuery("select * from `METRICS_TABLES` where table_name='tidb_qps'").
-		Check(testkit.RowsWithSep("|", "tidb_qps|sum(rate(tidb_server_query_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (result,type,instance)|instance,type,result|0|TiDB query processing numbers per second"))
-}
-
-func TestTableConstraintsTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustQuery("select * from information_schema.TABLE_CONSTRAINTS where TABLE_NAME='gc_delete_range';").Check(testkit.Rows("def mysql delete_range_index mysql gc_delete_range UNIQUE"))
-}
-
-func TestTableSessionVar(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustQuery("select * from information_schema.SESSION_VARIABLES where VARIABLE_NAME='tidb_retry_limit';").Check(testkit.Rows("tidb_retry_limit 10"))
-}
-
 func TestForAnalyzeStatus(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -638,19 +358,6 @@ func TestForServersInfo(t *testing.T) {
 	require.Equal(t, info.GitHash, rows[0][6])
 	require.Equal(t, info.BinlogStatus, rows[0][7])
 	require.Equal(t, stringutil.BuildStringFromLabels(info.Labels), rows[0][8])
-}
-
-func TestSequences(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("CREATE SEQUENCE test.seq maxvalue 10000000")
-	tk.MustQuery("SELECT * FROM information_schema.sequences WHERE sequence_schema='test' AND sequence_name='seq'").Check(testkit.Rows("def test seq 1 1000 0 1 10000000 1 1 "))
-	tk.MustExec("DROP SEQUENCE test.seq")
-	tk.MustExec("CREATE SEQUENCE test.seq start = -1 minvalue -1 maxvalue 10 increment 1 cache 10")
-	tk.MustQuery("SELECT * FROM information_schema.sequences WHERE sequence_schema='test' AND sequence_name='seq'").Check(testkit.Rows("def test seq 1 10 0 1 10 -1 -1 "))
-	tk.MustExec("CREATE SEQUENCE test.seq2 start = -9 minvalue -10 maxvalue 10 increment -1 cache 15")
-	tk.MustQuery("SELECT * FROM information_schema.sequences WHERE sequence_schema='test' AND sequence_name='seq2'").Check(testkit.Rows("def test seq2 1 15 0 -1 10 -10 -9 "))
-	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME , TABLE_TYPE, ENGINE, TABLE_ROWS FROM information_schema.tables WHERE TABLE_TYPE='SEQUENCE' AND TABLE_NAME='seq2'").Check(testkit.Rows("def test seq2 SEQUENCE InnoDB 1"))
 }
 
 func TestTiFlashSystemTableWithTiFlashV620(t *testing.T) {
@@ -770,21 +477,6 @@ func TestTiFlashSystemTableWithTiFlashV640(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 }
 
-func TestTablesPKType(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t_int (a int primary key, b int)")
-	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'test' and table_name = 't_int'").Check(testkit.Rows("CLUSTERED"))
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
-	tk.MustExec("create table t_implicit (a varchar(64) primary key, b int)")
-	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'test' and table_name = 't_implicit'").Check(testkit.Rows("NONCLUSTERED"))
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
-	tk.MustExec("create table t_common (a varchar(64) primary key, b int)")
-	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'test' and table_name = 't_common'").Check(testkit.Rows("CLUSTERED"))
-	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'INFORMATION_SCHEMA' and table_name = 'TABLES'").Check(testkit.Rows("NONCLUSTERED"))
-}
-
 // https://github.com/pingcap/tidb/issues/32459.
 func TestJoinSystemTableContainsView(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -858,16 +550,6 @@ func TestShowColumnsWithSubQueryView(t *testing.T) {
 		"name text YES  <nil> ",
 		"some_date timestamp YES  <nil> "))
 	require.NoError(t, failpoint.Disable("tikvclient/tikvStoreSendReqResult"))
-}
-
-func TestNullColumns(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("CREATE TABLE t ( id int DEFAULT NULL);")
-	tk.MustExec("CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`1.1.1.1` SQL SECURITY DEFINER VIEW `v_test` (`type`) AS SELECT NULL AS `type` FROM `t` AS `f`;")
-	tk.MustQuery("select * from  information_schema.columns where TABLE_SCHEMA = 'test' and TABLE_NAME = 'v_test';").
-		Check(testkit.Rows("def test v_test type 1 <nil> YES binary 0 0 <nil> <nil> <nil> <nil> <nil> binary(0)   select,insert,update,references  "))
 }
 
 // Code below are helper utilities for the test cases.

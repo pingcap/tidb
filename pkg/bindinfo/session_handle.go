@@ -31,32 +31,58 @@ import (
 	"go.uber.org/zap"
 )
 
-// SessionHandle is used to handle all session sql bind operations.
-type SessionHandle struct {
+// SessionBindingHandle is used to handle all session sql bind operations.
+type SessionBindingHandle interface {
+	// CreateSessionBinding creates a binding to the cache.
+	CreateSessionBinding(sctx sessionctx.Context, record *BindRecord) (err error)
+
+	// DropSessionBinding drops a binding in the cache.
+	DropSessionBinding(originalSQL, db string, binding *Binding) error
+
+	// DropSessionBindingByDigest drops a binding by the sql digest.
+	DropSessionBindingByDigest(sqlDigest string) error
+
+	// GetSessionBinding return the binding which can match the digest.
+	GetSessionBinding(sqlDigest, normdOrigSQL, db string) *BindRecord
+
+	// GetSessionBindingBySQLDigest return all bindings which can match the digest.
+	GetSessionBindingBySQLDigest(sqlDigest string) (*BindRecord, error)
+
+	// GetAllSessionBindings return all bindings.
+	GetAllSessionBindings() (bindRecords []*BindRecord)
+
+	// Close closes the SessionBindingHandle.
+	Close()
+
+	sessionctx.SessionStatesHandler
+}
+
+// sessionBindingHandle is used to handle all session sql bind operations.
+type sessionBindingHandle struct {
 	ch *bindCache
 }
 
-// NewSessionBindHandle creates a new SessionBindHandle.
-func NewSessionBindHandle() *SessionHandle {
-	sessionHandle := &SessionHandle{}
+// NewSessionBindingHandle creates a new SessionBindingHandle.
+func NewSessionBindingHandle() SessionBindingHandle {
+	sessionHandle := &sessionBindingHandle{}
 	sessionHandle.ch = newBindCache()
 	return sessionHandle
 }
 
-// appendBindRecord adds the BindRecord to the cache, all the stale bindMetas are
+// appendSessionBinding adds the BindRecord to the cache, all the stale bindMetas are
 // removed from the cache after this operation.
-func (h *SessionHandle) appendBindRecord(hash string, meta *BindRecord) {
-	oldRecord := h.ch.GetBindRecord(hash, meta.OriginalSQL, meta.Db)
-	err := h.ch.SetBindRecord(hash, meta)
+func (h *sessionBindingHandle) appendSessionBinding(sqlDigest string, meta *BindRecord) {
+	oldRecord := h.ch.GetBinding(sqlDigest, meta.OriginalSQL, meta.Db)
+	err := h.ch.SetBinding(sqlDigest, meta)
 	if err != nil {
 		logutil.BgLogger().Warn("SessionHandle.appendBindRecord", zap.String("category", "sql-bind"), zap.Error(err))
 	}
 	updateMetrics(metrics.ScopeSession, oldRecord, meta, false)
 }
 
-// CreateBindRecord creates a BindRecord to the cache.
+// CreateSessionBinding creates a BindRecord to the cache.
 // It replaces all the exists bindings for the same normalized SQL.
-func (h *SessionHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecord) (err error) {
+func (h *sessionBindingHandle) CreateSessionBinding(sctx sessionctx.Context, record *BindRecord) (err error) {
 	err = record.prepareHints(sctx)
 	if err != nil {
 		return err
@@ -69,15 +95,15 @@ func (h *SessionHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRe
 	}
 
 	// update the BindMeta to the cache.
-	h.appendBindRecord(parser.DigestNormalized(record.OriginalSQL).String(), record)
+	h.appendSessionBinding(parser.DigestNormalized(record.OriginalSQL).String(), record)
 	return nil
 }
 
-// DropBindRecord drops a BindRecord in the cache.
-func (h *SessionHandle) DropBindRecord(originalSQL, db string, binding *Binding) error {
+// DropSessionBinding drops a BindRecord in the cache.
+func (h *sessionBindingHandle) DropSessionBinding(originalSQL, db string, binding *Binding) error {
 	db = strings.ToLower(db)
-	hash := parser.DigestNormalized(originalSQL).String()
-	oldRecord := h.GetBindRecord(hash, originalSQL, db)
+	sqlDigest := parser.DigestNormalized(originalSQL).String()
+	oldRecord := h.GetSessionBinding(sqlDigest, originalSQL, db)
 	var newRecord *BindRecord
 	record := &BindRecord{OriginalSQL: originalSQL, Db: db}
 	if binding != nil {
@@ -88,7 +114,7 @@ func (h *SessionHandle) DropBindRecord(originalSQL, db string, binding *Binding)
 	} else {
 		newRecord = record
 	}
-	err := h.ch.SetBindRecord(hash, newRecord)
+	err := h.ch.SetBinding(sqlDigest, newRecord)
 	if err != nil {
 		// Should never reach here, just return an error for safety
 		return err
@@ -97,33 +123,33 @@ func (h *SessionHandle) DropBindRecord(originalSQL, db string, binding *Binding)
 	return nil
 }
 
-// DropBindRecordByDigest drop BindRecord in the cache.
-func (h *SessionHandle) DropBindRecordByDigest(sqlDigest string) error {
-	oldRecord, err := h.GetBindRecordBySQLDigest(sqlDigest)
+// DropSessionBindingByDigest drop BindRecord in the cache.
+func (h *sessionBindingHandle) DropSessionBindingByDigest(sqlDigest string) error {
+	oldRecord, err := h.GetSessionBindingBySQLDigest(sqlDigest)
 	if err != nil {
 		return err
 	}
-	return h.DropBindRecord(oldRecord.OriginalSQL, strings.ToLower(oldRecord.Db), nil)
+	return h.DropSessionBinding(oldRecord.OriginalSQL, strings.ToLower(oldRecord.Db), nil)
 }
 
-// GetBindRecord return the BindMeta of the (normdOrigSQL,db) if BindMeta exist.
-func (h *SessionHandle) GetBindRecord(hash, normdOrigSQL, db string) *BindRecord {
-	return h.ch.GetBindRecord(hash, normdOrigSQL, db)
+// GetSessionBinding return the BindMeta of the (normdOrigSQL,db) if BindMeta exist.
+func (h *sessionBindingHandle) GetSessionBinding(sqlDigest, normdOrigSQL, db string) *BindRecord {
+	return h.ch.GetBinding(sqlDigest, normdOrigSQL, db)
 }
 
-// GetBindRecordBySQLDigest return all BindMeta corresponding to sqlDigest.
-func (h *SessionHandle) GetBindRecordBySQLDigest(sqlDigest string) (*BindRecord, error) {
-	return h.ch.GetBindRecordBySQLDigest(sqlDigest)
+// GetSessionBindingBySQLDigest return all BindMeta corresponding to sqlDigest.
+func (h *sessionBindingHandle) GetSessionBindingBySQLDigest(sqlDigest string) (*BindRecord, error) {
+	return h.ch.GetBindingBySQLDigest(sqlDigest)
 }
 
-// GetAllBindRecord return all session bind info.
-func (h *SessionHandle) GetAllBindRecord() (bindRecords []*BindRecord) {
-	return h.ch.GetAllBindRecords()
+// GetAllSessionBindings return all session bind info.
+func (h *sessionBindingHandle) GetAllSessionBindings() (bindRecords []*BindRecord) {
+	return h.ch.GetAllBindings()
 }
 
 // EncodeSessionStates implements SessionStatesHandler.EncodeSessionStates interface.
-func (h *SessionHandle) EncodeSessionStates(_ context.Context, _ sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
-	bindRecords := h.ch.GetAllBindRecords()
+func (h *sessionBindingHandle) EncodeSessionStates(_ context.Context, _ sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
+	bindRecords := h.ch.GetAllBindings()
 	if len(bindRecords) == 0 {
 		return nil
 	}
@@ -136,7 +162,7 @@ func (h *SessionHandle) EncodeSessionStates(_ context.Context, _ sessionctx.Cont
 }
 
 // DecodeSessionStates implements SessionStatesHandler.DecodeSessionStates interface.
-func (h *SessionHandle) DecodeSessionStates(_ context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
+func (h *sessionBindingHandle) DecodeSessionStates(_ context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
 	if len(sessionStates.Bindings) == 0 {
 		return nil
 	}
@@ -149,14 +175,14 @@ func (h *SessionHandle) DecodeSessionStates(_ context.Context, sctx sessionctx.C
 		if err := record.prepareHints(sctx); err != nil {
 			return err
 		}
-		h.appendBindRecord(parser.DigestNormalized(record.OriginalSQL).String(), record)
+		h.appendSessionBinding(parser.DigestNormalized(record.OriginalSQL).String(), record)
 	}
 	return nil
 }
 
 // Close closes the session handle.
-func (h *SessionHandle) Close() {
-	for _, bindRecord := range h.ch.GetAllBindRecords() {
+func (h *sessionBindingHandle) Close() {
+	for _, bindRecord := range h.ch.GetAllBindings() {
 		updateMetrics(metrics.ScopeSession, bindRecord, nil, false)
 	}
 }

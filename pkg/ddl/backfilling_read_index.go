@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler/execute"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -56,8 +56,6 @@ type readIndexSummary struct {
 	minKey    []byte
 	maxKey    []byte
 	totalSize uint64
-	dataFiles []string
-	statFiles []string
 	stats     []external.MultipleFilesStat
 	mu        sync.Mutex
 }
@@ -175,16 +173,18 @@ func (r *readIndexExecutor) OnFinished(ctx context.Context, subtask *proto.Subta
 	}
 	sum, _ := r.subtaskSummary.LoadAndDelete(subtask.ID)
 	s := sum.(*readIndexSummary)
-	subtaskMeta.MinKey = s.minKey
-	subtaskMeta.MaxKey = s.maxKey
+	subtaskMeta.StartKey = s.minKey
+	subtaskMeta.EndKey = kv.Key(s.maxKey).Next()
 	subtaskMeta.TotalKVSize = s.totalSize
-	subtaskMeta.DataFiles = s.dataFiles
-	subtaskMeta.StatFiles = s.statFiles
 	subtaskMeta.MultipleFilesStats = s.stats
+	fileCnt := 0
+	for _, stat := range s.stats {
+		fileCnt += len(stat.Filenames)
+	}
 	logutil.Logger(ctx).Info("get key boundary on subtask finished",
 		zap.String("min", hex.EncodeToString(s.minKey)),
 		zap.String("max", hex.EncodeToString(s.maxKey)),
-		zap.Int("fileCount", len(s.dataFiles)),
+		zap.Int("fileCount", fileCnt),
 		zap.Uint64("totalSize", s.totalSize))
 	meta, err := json.Marshal(subtaskMeta)
 	if err != nil {
@@ -244,7 +244,7 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 	counter := metrics.BackfillTotalCounter.WithLabelValues(
 		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
 	return NewAddIndexIngestPipeline(
-		opCtx, d.store, d.sessPool, r.bc, engines, sessCtx, tbl, r.indexes, start, end, totalRowCount, counter)
+		opCtx, d.store, d.sessPool, r.bc, engines, sessCtx, tbl, r.indexes, start, end, totalRowCount, counter, r.job.ReorgMeta)
 }
 
 func (r *readIndexExecutor) buildExternalStorePipeline(
@@ -268,17 +268,24 @@ func (r *readIndexExecutor) buildExternalStorePipeline(
 		}
 		s.totalSize += summary.TotalSize
 		s.stats = append(s.stats, summary.MultipleFilesStats...)
-		for _, f := range summary.MultipleFilesStats {
-			for _, filename := range f.Filenames {
-				s.dataFiles = append(s.dataFiles, filename[0])
-				s.statFiles = append(s.statFiles, filename[1])
-			}
-		}
 		s.mu.Unlock()
 	}
 	counter := metrics.BackfillTotalCounter.WithLabelValues(
 		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
 	return NewWriteIndexToExternalStoragePipeline(
-		opCtx, d.store, r.cloudStorageURI, r.d.sessPool, sessCtx, r.job.ID, subtaskID,
-		tbl, r.indexes, start, end, totalRowCount, counter, onClose, r.bc)
+		opCtx,
+		d.store,
+		r.cloudStorageURI,
+		r.d.sessPool,
+		sessCtx,
+		r.job.ID,
+		subtaskID,
+		tbl,
+		r.indexes,
+		start,
+		end,
+		totalRowCount,
+		counter,
+		onClose,
+		r.job.ReorgMeta)
 }

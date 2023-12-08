@@ -5,11 +5,14 @@ SELECT index_comment,char_length(index_comment),COLUMN_NAME FROM information_sch
 
 # TestIssue42440
 show create table information_schema.ddl_jobs;
+
+## NO ERROR
 -- replace_column 1 x
-select count(length(query)) from information_schema.ddl_jobs; # NO ERROR
+select count(length(query)) from information_schema.ddl_jobs;
 
 # TestInfoSchemaRenameTable
 drop table if EXISTS t1;
+drop table if EXISTS mysql.t1, mysql.t2, mysql.t3;
 create table infoschema__infoschema.t1 (id int primary key, a text);
 insert infoschema__infoschema.t1 values(1,'334'),(4,'3443435'),(5,'fdf43t536653');
 rename table infoschema__infoschema.t1 to mysql.t1;

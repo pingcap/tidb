@@ -109,7 +109,7 @@ func (c *extensionFuncClass) getFunction(ctx sessionctx.Context, args []Expressi
 		return nil, err
 	}
 	bf.tp.SetFlen(c.flen)
-	sig := &extensionFuncSig{context.TODO(), bf, c.funcDef}
+	sig := &extensionFuncSig{bf, c.funcDef}
 	return sig, nil
 }
 
@@ -141,10 +141,9 @@ func (c *extensionFuncClass) checkPrivileges(ctx sessionctx.Context) error {
 	return nil
 }
 
-var _ extension.FunctionContext = &extensionFuncSig{}
+var _ extension.FunctionContext = extensionFnContext{}
 
 type extensionFuncSig struct {
-	context.Context
 	baseBuiltinFunc
 	extension.FunctionDef
 }
@@ -156,28 +155,40 @@ func (b *extensionFuncSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *extensionFuncSig) evalString(row chunk.Row) (string, bool, error) {
+func (b *extensionFuncSig) evalString(ctx sessionctx.Context, row chunk.Row) (string, bool, error) {
 	if b.EvalTp == types.ETString {
-		return b.EvalStringFunc(b, row)
+		fnCtx := newExtensionFnContext(ctx, b)
+		return b.EvalStringFunc(fnCtx, row)
 	}
-	return b.baseBuiltinFunc.evalString(row)
+	return b.baseBuiltinFunc.evalString(ctx, row)
 }
 
-func (b *extensionFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
+func (b *extensionFuncSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
 	if b.EvalTp == types.ETInt {
-		return b.EvalIntFunc(b, row)
+		fnCtx := newExtensionFnContext(ctx, b)
+		return b.EvalIntFunc(fnCtx, row)
 	}
-	return b.baseBuiltinFunc.evalInt(row)
+	return b.baseBuiltinFunc.evalInt(ctx, row)
 }
 
-func (b *extensionFuncSig) EvalArgs(row chunk.Row) ([]types.Datum, error) {
-	if len(b.args) == 0 {
+type extensionFnContext struct {
+	context.Context
+	ctx sessionctx.Context
+	sig *extensionFuncSig
+}
+
+func newExtensionFnContext(ctx sessionctx.Context, sig *extensionFuncSig) extensionFnContext {
+	return extensionFnContext{Context: context.TODO(), ctx: ctx, sig: sig}
+}
+
+func (b extensionFnContext) EvalArgs(row chunk.Row) ([]types.Datum, error) {
+	if len(b.sig.args) == 0 {
 		return nil, nil
 	}
 
-	result := make([]types.Datum, 0, len(b.args))
-	for _, arg := range b.args {
-		val, err := arg.Eval(row)
+	result := make([]types.Datum, 0, len(b.sig.args))
+	for _, arg := range b.sig.args {
+		val, err := arg.Eval(b.ctx, row)
 		if err != nil {
 			return nil, err
 		}
@@ -187,19 +198,19 @@ func (b *extensionFuncSig) EvalArgs(row chunk.Row) ([]types.Datum, error) {
 	return result, nil
 }
 
-func (b *extensionFuncSig) ConnectionInfo() *variable.ConnectionInfo {
+func (b extensionFnContext) ConnectionInfo() *variable.ConnectionInfo {
 	return b.ctx.GetSessionVars().ConnectionInfo
 }
 
-func (b *extensionFuncSig) User() *auth.UserIdentity {
+func (b extensionFnContext) User() *auth.UserIdentity {
 	return b.ctx.GetSessionVars().User
 }
 
-func (b *extensionFuncSig) ActiveRoles() []*auth.RoleIdentity {
+func (b extensionFnContext) ActiveRoles() []*auth.RoleIdentity {
 	return b.ctx.GetSessionVars().ActiveRoles
 }
 
-func (b *extensionFuncSig) CurrentDB() string {
+func (b extensionFnContext) CurrentDB() string {
 	return b.ctx.GetSessionVars().CurrentDB
 }
 

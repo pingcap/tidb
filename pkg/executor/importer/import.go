@@ -136,6 +136,13 @@ var (
 
 	// LoadDataReadBlockSize is exposed for test.
 	LoadDataReadBlockSize = int64(config.ReadBlockSize)
+
+	supportedSuffixForServerDisk = []string{
+		".csv", ".sql", ".parquet",
+		".gz", ".gzip",
+		".zstd", ".zst",
+		".snappy",
+	}
 )
 
 // GetKVStore returns a kv.Storage.
@@ -257,6 +264,8 @@ type LoadDataController struct {
 	dataFiles []*mydump.SourceFileMeta
 	// GlobalSortStore is used to store sorted data when using global sort.
 	GlobalSortStore storage.ExternalStorage
+	// ExecuteNodesCnt is the count of execute nodes.
+	ExecuteNodesCnt int
 }
 
 func getImportantSysVars(sctx sessionctx.Context) map[string]string {
@@ -445,10 +454,11 @@ func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs) (*Load
 	fullTableName := tbl.Meta().Name.String()
 	logger := log.L().With(zap.String("table", fullTableName))
 	c := &LoadDataController{
-		Plan:    plan,
-		ASTArgs: astArgs,
-		Table:   tbl,
-		logger:  logger,
+		Plan:            plan,
+		ASTArgs:         astArgs,
+		Table:           tbl,
+		logger:          logger,
+		ExecuteNodesCnt: 1,
 	}
 	if err := c.checkFieldParams(); err != nil {
 		return nil, err
@@ -656,7 +666,6 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		p.MaxRecordedErrors = vInt
-		// todo: set a max value for this param?
 	}
 	if _, ok := specifiedOptions[detachedOption]; ok {
 		p.Detached = true
@@ -969,7 +978,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 		// we add this check for security, we don't want user import any sensitive system files,
 		// most of which is readable text file and don't have a suffix, such as /etc/passwd
-		if !slices.Contains([]string{".csv", ".sql", ".parquet"}, strings.ToLower(filepath.Ext(e.Path))) {
+		if !slices.Contains(supportedSuffixForServerDisk, strings.ToLower(filepath.Ext(e.Path))) {
 			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
 				"the file suffix is not supported when import from server disk")
 		}
@@ -1242,13 +1251,26 @@ func (e *LoadDataController) CreateColAssignExprs(sctx sessionctx.Context) ([]ex
 	return res, allWarnings, nil
 }
 
+func (e *LoadDataController) getBackendWorkerConcurrency() int {
+	// when using global sort, write&ingest step buffers KV data in memory,
+	// suppose cpu:mem ratio 1:2(true in most case), and we assign 1G per concurrency,
+	// so we can use 2 * threadCnt as concurrency. write&ingest step is mostly
+	// IO intensive, so CPU usage is below ThreadCnt in our tests.
+	// The real concurrency used is adjusted in external engine later.
+	// when using local sort, use the default value as lightning.
+	if e.IsGlobalSort() {
+		return int(e.ThreadCnt) * 2
+	}
+	return config.DefaultRangeConcurrency * 2
+}
+
 func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.BackendConfig {
 	backendConfig := local.BackendConfig{
 		PDAddr:                 pdAddr,
 		LocalStoreDir:          dataDir,
 		MaxConnPerStore:        config.DefaultRangeConcurrency,
 		ConnCompressType:       config.CompressionNone,
-		WorkerConcurrency:      config.DefaultRangeConcurrency * 2,
+		WorkerConcurrency:      e.getBackendWorkerConcurrency(),
 		KVWriteBatchSize:       config.KVWriteBatchSize,
 		RegionSplitBatchSize:   config.DefaultRegionSplitBatchSize,
 		RegionSplitConcurrency: runtime.GOMAXPROCS(0),

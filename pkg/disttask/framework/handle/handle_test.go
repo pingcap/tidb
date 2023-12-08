@@ -35,20 +35,22 @@ import (
 
 func TestHandle(t *testing.T) {
 	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "handle_test")
+
 	store := testkit.CreateMockStore(t)
 	gtk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
 		return gtk.Session(), nil
 	}, 1, 1, time.Second)
 	defer pool.Close()
-	mgr := storage.NewTaskManager(util.WithInternalSourceType(ctx, "taskManager"), pool)
+	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
 
 	// no dispatcher registered
-	err := handle.SubmitAndRunGlobalTask(ctx, "1", proto.TaskTypeExample, 2, []byte("byte"))
+	err := handle.SubmitAndWaitTask(ctx, "1", proto.TaskTypeExample, 2, []byte("byte"))
 	require.Error(t, err)
 
-	task, err := mgr.GetGlobalTaskByID(1)
+	task, err := mgr.GetTaskByID(ctx, 1)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), task.ID)
 	require.Equal(t, "1", task.Key)
@@ -59,12 +61,12 @@ func TestHandle(t *testing.T) {
 	require.Equal(t, uint64(2), task.Concurrency)
 	require.Equal(t, []byte("byte"), task.Meta)
 
-	require.NoError(t, handle.CancelGlobalTask("1"))
+	require.NoError(t, handle.CancelTask(ctx, "1"))
 
-	task, err = handle.SubmitGlobalTask("2", proto.TaskTypeExample, 2, []byte("byte"))
+	task, err = handle.SubmitTask(ctx, "2", proto.TaskTypeExample, 2, []byte("byte"))
 	require.NoError(t, err)
-	require.NoError(t, handle.PauseTask("2"))
-	require.NoError(t, handle.ResumeTask("2"))
+	require.NoError(t, handle.PauseTask(ctx, "2"))
+	require.NoError(t, handle.ResumeTask(ctx, "2"))
 }
 
 func TestRunWithRetry(t *testing.T) {

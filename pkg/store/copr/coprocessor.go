@@ -45,9 +45,9 @@ import (
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/store/driver/options"
+	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -376,7 +376,7 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 			pagingSize = req.Paging.MinPagingSize
 		}
 		for i := 0; i < rLen; {
-			nextI := mathutil.Min(i+rangesPerTaskLimit, rLen)
+			nextI := min(i+rangesPerTaskLimit, rLen)
 			hint := -1
 			// calculate the row count hint
 			if hints != nil {
@@ -1117,7 +1117,7 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 			logutil.BgLogger().Error("copIteratorWork meet panic",
 				zap.Any("r", r),
 				zap.Stack("stack trace"))
-			resp := &copResponse{err: errors.Errorf("%v", r)}
+			resp := &copResponse{err: util2.GetRecoverError(r)}
 			// if panic has happened, set checkOOM to false to avoid another panic.
 			worker.sendToRespCh(resp, respCh, false)
 		}
@@ -1158,13 +1158,15 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	}
 
 	copReq := coprocessor.Request{
-		Tp:         worker.req.Tp,
-		StartTs:    worker.req.StartTs,
-		Data:       worker.req.Data,
-		Ranges:     task.ranges.ToPBRanges(),
-		SchemaVer:  worker.req.SchemaVar,
-		PagingSize: task.pagingSize,
-		Tasks:      task.ToPBBatchTasks(),
+		Tp:              worker.req.Tp,
+		StartTs:         worker.req.StartTs,
+		Data:            worker.req.Data,
+		Ranges:          task.ranges.ToPBRanges(),
+		SchemaVer:       worker.req.SchemaVar,
+		PagingSize:      task.pagingSize,
+		Tasks:           task.ToPBBatchTasks(),
+		ConnectionId:    worker.req.ConnID,
+		ConnectionAlias: worker.req.ConnAlias,
 	}
 
 	cacheKey, cacheValue := worker.buildCacheKey(task, &copReq)
@@ -1685,7 +1687,14 @@ func (worker *copIteratorWorker) handleCopCache(task *copTask, resp *copResponse
 				resp.pbResp.Range = nil
 			}
 		}
-		resp.detail.CoprCacheHit = true
+		// `worker.enableCollectExecutionInfo` is loaded from the instance's config. Because it's not related to the request,
+		// the cache key can be same when `worker.enableCollectExecutionInfo` is true or false.
+		// When `worker.enableCollectExecutionInfo` is false, the `resp.detail` is nil, and hit cache is still possible.
+		// Check `resp.detail` to avoid panic.
+		// Details: https://github.com/pingcap/tidb/issues/48212
+		if resp.detail != nil {
+			resp.detail.CoprCacheHit = true
+		}
 		return nil
 	}
 	copr_metrics.CoprCacheCounterMiss.Add(1)

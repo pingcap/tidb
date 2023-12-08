@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util"
@@ -400,6 +401,15 @@ func TestMeta(t *testing.T) {
 	readDiff, err := m.GetSchemaDiff(schemaDiff.Version)
 	require.NoError(t, err)
 	require.Equal(t, schemaDiff, readDiff)
+
+	// Test for BDR role
+	role, err := m.GetBDRRole()
+	require.NoError(t, err)
+	require.Len(t, role, 0)
+	require.NoError(t, m.SetBDRRole(string(ast.BDRRolePrimary)))
+	role, err = m.GetBDRRole()
+	require.NoError(t, err)
+	require.Equal(t, string(ast.BDRRolePrimary), role)
 
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)

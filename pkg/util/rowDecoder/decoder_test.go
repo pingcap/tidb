@@ -77,11 +77,11 @@ func TestRowDecoder(t *testing.T) {
 		Duration: time.Hour + time.Second,
 	})
 
-	time2, err := time1.Add(sc, d1.GetMysqlDuration())
+	time2, err := time1.Add(sc.TypeCtx(), d1.GetMysqlDuration())
 	require.Nil(t, err)
 	t2 := types.NewTimeDatum(time2)
 
-	time3, err := time1.Add(sc, types.Duration{Duration: time.Hour*2 + time.Second*2})
+	time3, err := time1.Add(sc.TypeCtx(), types.Duration{Duration: time.Hour*2 + time.Second*2})
 	require.Nil(t, err)
 	t3 := types.NewTimeDatum(time3)
 
@@ -112,7 +112,7 @@ func TestRowDecoder(t *testing.T) {
 		if i > 0 {
 			c7.AddFlag(mysql.UnsignedFlag)
 		}
-		bs, err := tablecodec.EncodeRow(sc, row.input, row.cols, nil, nil, &rd)
+		bs, err := tablecodec.EncodeRow(sc.TimeZone(), row.input, row.cols, nil, nil, &rd)
 		require.NoError(t, err)
 		require.NotNil(t, bs)
 
@@ -125,7 +125,7 @@ func TestRowDecoder(t *testing.T) {
 		for i, col := range cols[:len(cols)-1] {
 			v, ok := r[col.ID]
 			if ok {
-				equal, err1 := v.Compare(sc, &row.output[i], collate.GetBinaryCollator())
+				equal, err1 := v.Compare(sc.TypeCtx(), &row.output[i], collate.GetBinaryCollator())
 				require.Nil(t, err1)
 				require.Equal(t, 0, equal)
 			} else {
@@ -139,7 +139,7 @@ func TestRowDecoder(t *testing.T) {
 		for k, v := range r2 {
 			v1, ok := r[k]
 			require.True(t, ok)
-			equal, err1 := v.Compare(sc, &v1, collate.GetBinaryCollator())
+			equal, err1 := v.Compare(sc.TypeCtx(), &v1, collate.GetBinaryCollator())
 			require.Nil(t, err1)
 			require.Equal(t, 0, equal)
 		}
@@ -187,7 +187,7 @@ func TestClusterIndexRowDecoder(t *testing.T) {
 	}
 	rd := rowcodec.Encoder{Enable: true}
 	for _, row := range testRows {
-		bs, err := tablecodec.EncodeRow(sc, row.input, row.cols, nil, nil, &rd)
+		bs, err := tablecodec.EncodeRow(sc.TimeZone(), row.input, row.cols, nil, nil, &rd)
 		require.NoError(t, err)
 		require.NotNil(t, bs)
 
@@ -197,7 +197,7 @@ func TestClusterIndexRowDecoder(t *testing.T) {
 		for i, col := range cols {
 			v, ok := r[col.ID]
 			require.True(t, ok)
-			equal, err1 := v.Compare(sc, &row.output[i], collate.GetBinaryCollator())
+			equal, err1 := v.Compare(sc.TypeCtx(), &row.output[i], collate.GetBinaryCollator())
 			require.Nil(t, err1)
 			require.Equal(t, 0, equal)
 		}

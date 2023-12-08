@@ -47,7 +47,7 @@ func (p *LogicalProjection) HashCode() []byte {
 	result = encodeIntAsUint32(result, p.SelectBlockOffset())
 	result = encodeIntAsUint32(result, len(p.Exprs))
 	for _, expr := range p.Exprs {
-		exprHashCode := expr.HashCode(p.SCtx().GetSessionVars().StmtCtx)
+		exprHashCode := expr.HashCode()
 		result = encodeIntAsUint32(result, len(exprHashCode))
 		result = append(result, exprHashCode...)
 	}
@@ -76,7 +76,7 @@ func (p *LogicalSelection) HashCode() []byte {
 
 	condHashCodes := make([][]byte, len(p.Conditions))
 	for i, expr := range p.Conditions {
-		condHashCodes[i] = expr.HashCode(p.SCtx().GetSessionVars().StmtCtx)
+		condHashCodes[i] = expr.HashCode()
 	}
 	// Sort the conditions, so `a > 1 and a < 100` can equal to `a < 100 and a > 1`.
 	slices.SortFunc(condHashCodes, func(i, j []byte) int { return bytes.Compare(i, j) })

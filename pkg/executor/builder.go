@@ -44,9 +44,11 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/pdhelper"
 	"github.com/pingcap/tidb/pkg/executor/internal/querywatch"
+	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/internal/vecgroupchecker"
 	"github.com/pingcap/tidb/pkg/executor/lockstats"
 	executor_metrics "github.com/pingcap/tidb/pkg/executor/metrics"
+	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -132,13 +134,6 @@ func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *Te
 		txnScope:         txnManager.GetTxnScope(),
 		readReplicaScope: txnManager.GetReadReplicaScope(),
 	}
-}
-
-// MockPhysicalPlan is used to return a specified executor in when build.
-// It is mainly used for testing.
-type MockPhysicalPlan interface {
-	plannercore.PhysicalPlan
-	GetExecutor() exec.Executor
 }
 
 // MockExecutorBuilder is a wrapper for executorBuilder.
@@ -316,8 +311,10 @@ func (b *executorBuilder) build(p plannercore.Plan) exec.Executor {
 		return b.buildCTETableReader(v)
 	case *plannercore.CompactTable:
 		return b.buildCompactTable(v)
+	case *plannercore.AdminShowBDRRole:
+		return b.buildAdminShowBDRRole(v)
 	default:
-		if mp, ok := p.(MockPhysicalPlan); ok {
+		if mp, ok := p.(testutil.MockPhysicalPlan); ok {
 			return mp.GetExecutor()
 		}
 
@@ -562,7 +559,9 @@ func buildIdxColsConcatHandleCols(tblInfo *model.TableInfo, indexInfo *model.Ind
 
 	if tblInfo.IsCommonHandle {
 		for _, c := range pkCols {
-			columns = append(columns, tblInfo.Columns[c.Offset])
+			if model.FindColumnInfo(columns, c.Name.L) == nil {
+				columns = append(columns, tblInfo.Columns[c.Offset])
+			}
 		}
 		return columns
 	}
@@ -610,12 +609,12 @@ func (b *executorBuilder) buildRecoverIndex(v *plannercore.RecoverIndex) exec.Ex
 		physicalID:       t.Meta().ID,
 	}
 	sessCtx := e.Ctx().GetSessionVars().StmtCtx
-	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, index.Meta(), e.columns)
+	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, e.columns)
 	return e
 }
 
 func buildHandleColsForExec(sctx *stmtctx.StatementContext, tblInfo *model.TableInfo,
-	idxInfo *model.IndexInfo, allColInfo []*model.ColumnInfo) plannercore.HandleCols {
+	allColInfo []*model.ColumnInfo) plannercore.HandleCols {
 	if !tblInfo.IsCommonHandle {
 		extraColPos := len(allColInfo) - 1
 		intCol := &expression.Column{
@@ -633,8 +632,12 @@ func buildHandleColsForExec(sctx *stmtctx.StatementContext, tblInfo *model.Table
 		}
 	}
 	pkIdx := tables.FindPrimaryIndex(tblInfo)
-	for i, c := range pkIdx.Columns {
-		tblCols[c.Offset].Index = len(idxInfo.Columns) + i
+	for _, c := range pkIdx.Columns {
+		for j, colInfo := range allColInfo {
+			if colInfo.Name.L == c.Name.L {
+				tblCols[c.Offset].Index = j
+			}
+		}
 	}
 	return plannercore.NewCommonHandleCols(sctx, tblInfo, pkIdx, tblCols)
 }
@@ -671,7 +674,7 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) exec.Ex
 		batchSize:    20000,
 	}
 	sessCtx := e.Ctx().GetSessionVars().StmtCtx
-	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, index.Meta(), e.columns)
+	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, e.columns)
 	return e
 }
 
@@ -872,7 +875,7 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) exec.Executor {
 		Extractor:             v.Extractor,
 		ImportJobID:           v.ImportJobID,
 	}
-	if e.Tp == ast.ShowMasterStatus {
+	if e.Tp == ast.ShowMasterStatus || e.Tp == ast.ShowBinlogStatus {
 		// show master status need start ts.
 		if _, err := e.Ctx().Txn(true); err != nil {
 			b.err = err
@@ -1291,7 +1294,7 @@ func (b *executorBuilder) buildTrace(v *plannercore.Trace) exec.Executor {
 		optimizerTraceTarget: v.OptimizerTraceTarget,
 	}
 	if t.format == plannercore.TraceFormatLog && !t.optimizerTrace {
-		return &SortExec{
+		return &sortexec.SortExec{
 			BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), t),
 			ByItems: []*plannerutil.ByItems{
 				{Expr: &expression.Column{
@@ -1299,7 +1302,7 @@ func (b *executorBuilder) buildTrace(v *plannercore.Trace) exec.Executor {
 					RetType: types.NewFieldType(mysql.TypeTimestamp),
 				}},
 			},
-			schema: v.Schema(),
+			ExecSchema: v.Schema(),
 		}
 	}
 	return t
@@ -2116,7 +2119,9 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 			strings.ToLower(infoschema.ClusterTableMemoryUsageOpsHistory),
 			strings.ToLower(infoschema.TableResourceGroups),
 			strings.ToLower(infoschema.TableRunawayWatches),
-			strings.ToLower(infoschema.TableCheckConstraints):
+			strings.ToLower(infoschema.TableCheckConstraints),
+			strings.ToLower(infoschema.TableTiDBCheckConstraints),
+			strings.ToLower(infoschema.TableKeywords):
 			return &MemTableReaderExec{
 				BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
@@ -2239,10 +2244,10 @@ func (b *executorBuilder) buildSort(v *plannercore.PhysicalSort) exec.Executor {
 	if b.err != nil {
 		return nil
 	}
-	sortExec := SortExec{
+	sortExec := sortexec.SortExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
 		ByItems:      v.ByItems,
-		schema:       v.Schema(),
+		ExecSchema:   v.Schema(),
 	}
 	executor_metrics.ExecutorCounterSortExec.Inc()
 	return &sortExec
@@ -2253,15 +2258,15 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) exec.Executor {
 	if b.err != nil {
 		return nil
 	}
-	sortExec := SortExec{
+	sortExec := sortexec.SortExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
 		ByItems:      v.ByItems,
-		schema:       v.Schema(),
+		ExecSchema:   v.Schema(),
 	}
 	executor_metrics.ExecutorCounterTopNExec.Inc()
-	return &TopNExec{
+	return &sortexec.TopNExec{
 		SortExec: sortExec,
-		limit:    &plannercore.PhysicalLimit{Count: v.Count, Offset: v.Offset},
+		Limit:    &plannercore.PhysicalLimit{Count: v.Count, Offset: v.Offset},
 	}
 }
 
@@ -2694,11 +2699,17 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 		PartitionName:    task.PartitionName,
 		SampleRateReason: sampleRateReason,
 	}
-
+	var concurrency int
+	if b.ctx.GetSessionVars().InRestrictedSQL {
+		// In restricted SQL, we use the default value of DistSQLScanConcurrency. it is copied from tidb_sysproc_scan_concurrency.
+		concurrency = b.ctx.GetSessionVars().DistSQLScanConcurrency()
+	} else {
+		concurrency = b.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
+	}
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
-		concurrency: b.ctx.GetSessionVars().DistSQLScanConcurrency(),
+		concurrency: concurrency,
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeFullSampling,
 			Flags:          sc.PushDownFlags(),
@@ -2792,7 +2803,7 @@ func (b *executorBuilder) getAdjustedSampleRate(task plannercore.AnalyzeColumnsT
 }
 
 func (b *executorBuilder) getApproximateTableCountFromStorage(tid int64, task plannercore.AnalyzeColumnsTask) (float64, bool) {
-	return pdhelper.GlobalPDHelper.GetApproximateTableCountFromStorage(b.ctx, tid, task.DBName, task.TableName, task.PartitionName)
+	return pdhelper.GlobalPDHelper.GetApproximateTableCountFromStorage(context.Background(), b.ctx, tid, task.DBName, task.TableName, task.PartitionName)
 }
 
 func (b *executorBuilder) buildAnalyzeColumnsPushdown(
@@ -2828,11 +2839,17 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(
 	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
 		startTS = uint64(val.(int))
 	})
-
+	var concurrency int
+	if b.ctx.GetSessionVars().InRestrictedSQL {
+		// In restricted SQL, we use the default value of DistSQLScanConcurrency. it is copied from tidb_sysproc_scan_concurrency.
+		concurrency = b.ctx.GetSessionVars().DistSQLScanConcurrency()
+	} else {
+		concurrency = b.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
+	}
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
-		concurrency: b.ctx.GetSessionVars().DistSQLScanConcurrency(),
+		concurrency: concurrency,
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeColumn,
 			Flags:          sc.PushDownFlags(),
@@ -2889,11 +2906,15 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(
 }
 
 func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
+	gp := domain.GetDomain(b.ctx).StatsHandle().GPool()
 	e := &AnalyzeExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		tasks:        make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),
 		opts:         v.Opts,
 		OptionsMap:   v.OptionsMap,
+		wg:           util.NewWaitGroupPool(gp),
+		gp:           gp,
+		errExitCh:    make(chan struct{}),
 	}
 	autoAnalyze := ""
 	if b.ctx.GetSessionVars().InRestrictedSQL {
@@ -4359,7 +4380,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetFromInfoSchema(e.Ctx().GetInfoSchema()).
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx(), &reqBuilderWithRange.Request, e.netDataSize)).
 		SetPaging(e.paging).
-		SetConnID(e.Ctx().GetSessionVars().ConnectionID).
+		SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias).
 		Build()
 	if err != nil {
 		return nil, err
@@ -4433,7 +4454,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 		if e.ranges, err = buildRangesForIndexJoin(e.Ctx(), lookUpContents, indexRanges, keyOff2IdxOff, cwc); err != nil {
 			return nil, err
 		}
-		if err := e.Open(ctx); err != nil {
+		if err := exec.Open(ctx, e); err != nil {
 			return nil, err
 		}
 		return e, nil
@@ -4459,13 +4480,13 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 				return nil, err
 			}
 		}
-		if err := e.Open(ctx); err != nil {
+		if err := exec.Open(ctx, e); err != nil {
 			return nil, err
 		}
 		return e, nil
 	}
 	ret := &TableDualExec{BaseExecutor: *e.Base()}
-	err = ret.Open(ctx)
+	err = exec.Open(ctx, ret)
 	return ret, err
 }
 
@@ -4508,7 +4529,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 		if err != nil {
 			return nil, err
 		}
-		if err := e.Open(ctx); err != nil {
+		if err := exec.Open(ctx, e); err != nil {
 			return nil, err
 		}
 		return e, err
@@ -4536,13 +4557,13 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 			}
 		}
 		e.partitionTableMode = true
-		if err := e.Open(ctx); err != nil {
+		if err := exec.Open(ctx, e); err != nil {
 			return nil, err
 		}
 		return e, err
 	}
 	ret := &TableDualExec{BaseExecutor: *e.Base()}
-	err = ret.Open(ctx)
+	err = exec.Open(ctx, ret)
 	return ret, err
 }
 
@@ -4677,7 +4698,7 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 		memTracker.Consume(int64(2 * cap(kvRanges[0].StartKey) * len(kvRanges)))
 	}
 	if len(tmpDatumRanges) != 0 && memTracker != nil {
-		memTracker.Consume(2 * int64(len(tmpDatumRanges)) * types.EstimatedMemUsage(tmpDatumRanges[0].LowVal, len(tmpDatumRanges)))
+		memTracker.Consume(2 * types.EstimatedMemUsage(tmpDatumRanges[0].LowVal, len(tmpDatumRanges)))
 	}
 	if cwc == nil {
 		slices.SortFunc(kvRanges, func(i, j kv.KeyRange) int {
@@ -5424,10 +5445,9 @@ func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64
 		return cacheData
 	} else if loading {
 		return nil
-	} else {
-		if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.inDeleteStmt && !b.inUpdateStmt {
-			tbl.(table.CachedTable).UpdateLockForRead(context.Background(), b.ctx.GetStore(), startTS, leaseDuration)
-		}
+	}
+	if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.inDeleteStmt && !b.inUpdateStmt {
+		tbl.(table.CachedTable).UpdateLockForRead(context.Background(), b.ctx.GetStore(), startTS, leaseDuration)
 	}
 	return nil
 }
@@ -5477,4 +5497,8 @@ func (b *executorBuilder) buildCompactTable(v *plannercore.CompactTable) exec.Ex
 		partitionIDs: partitionIDs,
 		tikvStore:    tikvStore,
 	}
+}
+
+func (b *executorBuilder) buildAdminShowBDRRole(v *plannercore.AdminShowBDRRole) exec.Executor {
+	return &AdminShowBDRRoleExec{BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID())}
 }

@@ -173,6 +173,26 @@ func (e *groupConcat) MergePartialResult(sctx sessionctx.Context, src, dst Parti
 	return memDelta, e.truncatePartialResultIfNeed(sctx, p2.buffer)
 }
 
+func (e *groupConcat) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4GroupConcat)(partialResult)
+	resBuf := spillHelper.serializePartialResult4GroupConcat(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *groupConcat) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *groupConcat) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4GroupConcat)(pr)
+	success := helper.deserializePartialResult4GroupConcat(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
+}
+
 // SetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
 func (e *groupConcat) SetTruncated(t *int32) {
 	e.truncated = t
@@ -304,7 +324,7 @@ func (h topNRows) Len() int {
 func (h topNRows) Less(i, j int) bool {
 	n := len(h.rows[i].byItems)
 	for k := 0; k < n; k++ {
-		ret, err := h.rows[i].byItems[k].Compare(h.sctx.GetSessionVars().StmtCtx, h.rows[j].byItems[k], h.collators[k])
+		ret, err := h.rows[i].byItems[k].Compare(h.sctx.GetSessionVars().StmtCtx.TypeCtx(), h.rows[j].byItems[k], h.collators[k])
 		if err != nil {
 			h.err = err
 			return false
@@ -461,7 +481,7 @@ func (e *groupConcatOrder) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 			byItems: make([]*types.Datum, 0, len(e.byItems)),
 		}
 		for _, byItem := range e.byItems {
-			d, err := byItem.Expr.Eval(row)
+			d, err := byItem.Expr.Eval(sctx, row)
 			if err != nil {
 				return memDelta, err
 			}
@@ -585,7 +605,7 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 			byItems: make([]*types.Datum, 0, len(e.byItems)),
 		}
 		for _, byItem := range e.byItems {
-			d, err := byItem.Expr.Eval(row)
+			d, err := byItem.Expr.Eval(sctx, row)
 			if err != nil {
 				return memDelta, err
 			}

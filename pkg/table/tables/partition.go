@@ -1091,7 +1091,7 @@ func (lp *ForListColumnPruning) genConstExprKey(ctx sessionctx.Context, sc *stmt
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	v, err := expr.Eval(chunk.Row{})
+	v, err := expr.Eval(ctx, chunk.Row{})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1103,11 +1103,12 @@ func (lp *ForListColumnPruning) genConstExprKey(ctx sessionctx.Context, sc *stmt
 }
 
 func (lp *ForListColumnPruning) genKey(sc *stmtctx.StatementContext, v types.Datum) ([]byte, error) {
-	v, err := v.ConvertTo(sc, lp.valueTp)
+	v, err := v.ConvertTo(sc.TypeCtx(), lp.valueTp)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	valByte, err := codec.EncodeKey(sc, nil, v)
+	valByte, err := codec.EncodeKey(sc.TimeZone(), nil, v)
+	err = sc.HandleError(err)
 	return valByte, err
 }
 
@@ -1206,7 +1207,7 @@ func generateHashPartitionExpr(ctx sessionctx.Context, exprStr string,
 			}
 		}
 	}
-	exprs.HashCode(ctx.GetSessionVars().StmtCtx)
+	exprs.HashCode()
 	return &PartitionExpr{
 		Expr:         exprs,
 		OrigExpr:     origExpr,
@@ -1456,7 +1457,7 @@ func (t *partitionedTable) locateHashPartition(ctx sessionctx.Context, partExpr 
 			data = r[col.Index]
 		default:
 			var err error
-			data, err = r[col.Index].ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeLong))
+			data, err = r[col.Index].ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), types.NewFieldType(mysql.TypeLong))
 			if err != nil {
 				return 0, err
 			}

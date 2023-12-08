@@ -22,9 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -38,136 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
-
-func TestSplitTableRegion(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a varchar(100),b int, index idx1(b,a))")
-	tk.MustExec(`split table t index idx1 by (10000,"abcd"),(10000000);`)
-	tk.MustGetErrCode(`split table t index idx1 by ("abcd");`, mysql.WarnDataTruncated)
-
-	// Test for split index region.
-	// Check min value is more than max value.
-	tk.MustExec(`split table t index idx1 between (0) and (1000000000) regions 10`)
-	tk.MustGetErrCode(`split table t index idx1 between (2,'a') and (1,'c') regions 10`, errno.ErrInvalidSplitRegionRanges)
-
-	// Check min value is invalid.
-	tk.MustGetErrMsg(`split table t index idx1 between () and (1) regions 10`, "Split index `idx1` region lower value count should more than 0")
-
-	// Check max value is invalid.
-	tk.MustGetErrMsg(`split table t index idx1 between (1) and () regions 10`, "Split index `idx1` region upper value count should more than 0")
-
-	// Check pre-split region num is too large.
-	tk.MustGetErrMsg(`split table t index idx1 between (0) and (1000000000) regions 10000`, "Split index region num exceeded the limit 1000")
-
-	// Check pre-split region num 0 is invalid.
-	tk.MustGetErrMsg(`split table t index idx1 between (0) and (1000000000) regions 0`, "Split index region num should more than 0")
-
-	// Test truncate error msg.
-	tk.MustGetErrMsg(`split table t index idx1 between ("aa") and (1000000000) regions 0`, "[types:1265]Incorrect value: 'aa' for column 'b'")
-
-	// Test for split table region.
-	tk.MustExec(`split table t between (0) and (1000000000) regions 10`)
-	// Check the lower value is more than the upper value.
-	tk.MustGetErrCode(`split table t between (2) and (1) regions 10`, errno.ErrInvalidSplitRegionRanges)
-
-	// Check the lower value is invalid.
-	tk.MustGetErrMsg(`split table t between () and (1) regions 10`, "Split table region lower value count should be 1")
-
-	// Check upper value is invalid.
-	tk.MustGetErrMsg(`split table t between (1) and () regions 10`, "Split table region upper value count should be 1")
-
-	// Check pre-split region num is too large.
-	tk.MustGetErrMsg(`split table t between (0) and (1000000000) regions 10000`, "Split table region num exceeded the limit 1000")
-
-	// Check pre-split region num 0 is invalid.
-	tk.MustGetErrMsg(`split table t between (0) and (1000000000) regions 0`, "Split table region num should more than 0")
-
-	// Test truncate error msg.
-	tk.MustGetErrMsg(`split table t between ("aa") and (1000000000) regions 10`, "[types:1265]Incorrect value: 'aa' for column '_tidb_rowid'")
-
-	// Test split table region step is too small.
-	tk.MustGetErrCode(`split table t between (0) and (100) regions 10`, errno.ErrInvalidSplitRegionRanges)
-
-	// Test split region by syntax.
-	tk.MustExec(`split table t by (0),(1000),(1000000)`)
-
-	// Test split region twice to test for multiple batch split region requests.
-	tk.MustExec("create table t1(a int, b int)")
-	tk.MustQuery("split table t1 between(0) and (10000) regions 10;").Check(testkit.Rows("9 1"))
-	tk.MustQuery("split table t1 between(10) and (10010) regions 5;").Check(testkit.Rows("4 1"))
-
-	// Test split region for partition table.
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int,b int) partition by hash(a) partitions 5;")
-	tk.MustQuery("split table t between (0) and (1000000) regions 5;").Check(testkit.Rows("20 1"))
-	// Test for `split for region` syntax.
-	tk.MustQuery("split region for partition table t between (1000000) and (100000000) regions 10;").Check(testkit.Rows("45 1"))
-
-	// Test split region for partition table with specified partition.
-	tk.MustQuery("split table t partition (p1,p2) between (100000000) and (1000000000) regions 5;").Check(testkit.Rows("8 1"))
-	// Test for `split for region` syntax.
-	tk.MustQuery("split region for partition table t partition (p3,p4) between (100000000) and (1000000000) regions 5;").Check(testkit.Rows("8 1"))
-}
-
-func TestClusterIndexSplitTableIntegration(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("drop database if exists test_cluster_index_index_split_table_integration;")
-	tk.MustExec("create database test_cluster_index_index_split_table_integration;")
-	tk.MustExec("use test_cluster_index_index_split_table_integration;")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
-
-	tk.MustExec("create table t (a varchar(255), b double, c int, primary key (a, b));")
-
-	// Value list length not match.
-	lowerMsg := "Split table region lower value count should be 2"
-	upperMsg := "Split table region upper value count should be 2"
-	tk.MustGetErrMsg("split table t between ('aaa') and ('aaa', 100.0) regions 10;", lowerMsg)
-	tk.MustGetErrMsg("split table t between ('aaa', 1.0) and ('aaa', 100.0, 11) regions 10;", upperMsg)
-
-	// Value type not match.
-	errMsg := "[types:1265]Incorrect value: 'aaa' for column 'b'"
-	tk.MustGetErrMsg("split table t between ('aaa', 0.0) and (100.0, 'aaa') regions 10;", errMsg)
-
-	// lower bound >= upper bound.
-	errMsg = "[executor:8212]Failed to split region ranges: Split table `t` region lower value (aaa,0) should less than the upper value (aaa,0)"
-	tk.MustGetErrMsg("split table t between ('aaa', 0.0) and ('aaa', 0.0) regions 10;", errMsg)
-	errMsg = "[executor:8212]Failed to split region ranges: Split table `t` region lower value (bbb,0) should less than the upper value (aaa,0)"
-	tk.MustGetErrMsg("split table t between ('bbb', 0.0) and ('aaa', 0.0) regions 10;", errMsg)
-
-	// Exceed limit 1000.
-	errMsg = "Split table region num exceeded the limit 1000"
-	tk.MustGetErrMsg("split table t between ('aaa', 0.0) and ('aaa', 0.1) regions 100000;", errMsg)
-
-	// Split on null values.
-	errMsg = "[planner:1048]Column 'a' cannot be null"
-	tk.MustGetErrMsg("split table t between (null, null) and (null, null) regions 1000;", errMsg)
-	tk.MustGetErrMsg("split table t by (null, null);", errMsg)
-
-	// Success.
-	tk.MustExec("split table t between ('aaa', 0.0) and ('aaa', 100.0) regions 10;")
-	tk.MustExec("split table t by ('aaa', 0.0), ('aaa', 20.0), ('aaa', 100.0);")
-	tk.MustExec("split table t by ('aaa', 100.0), ('qqq', 20.0), ('zzz', 100.0), ('zzz', 1000.0);")
-
-	tk.MustExec("drop table t;")
-	tk.MustExec("create table t (a int, b int, c int, d int, primary key(a, c, d));")
-	tk.MustQuery("split table t between (0, 0, 0) and (0, 0, 1) regions 1000;").Check(testkit.Rows("999 1"))
-
-	tk.MustExec("drop table t;")
-	tk.MustExec("create table t (a int, b int, c int, d int, primary key(d, a, c));")
-	tk.MustQuery("split table t by (0, 0, 0), (1, 2, 3), (65535, 65535, 65535);").Check(testkit.Rows("3 1"))
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a varchar(255), b decimal, c int, primary key (a, b));")
-	errMsg = "[types:1265]Incorrect value: '' for column 'b'"
-	tk.MustGetErrMsg("split table t by ('aaa', '')", errMsg)
-
-	tk.MustExec("drop table t;")
-	tk.MustExec("CREATE TABLE t (`id` varchar(10) NOT NULL, primary key (`id`) CLUSTERED);")
-	tk.MustGetErrCode("split table t index `primary` between (0) and (1000) regions 2;", errno.ErrKeyDoesNotExist)
-}
 
 func TestClusterIndexShowTableRegion(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -195,6 +63,11 @@ func TestClusterIndexShowTableRegion(t *testing.T) {
 	// Check the region start key is int64.
 	require.Regexp(t, fmt.Sprintf("t_%d_", tbl.Meta().ID), rows[0][1])
 	require.Regexp(t, fmt.Sprintf("t_%d_r_50000", tbl.Meta().ID), rows[1][1])
+
+	// test split regions boundary, it's too slow in TiKV env, move it here.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int, d int, primary key(a, c, d));")
+	tk.MustQuery("split table t between (0, 0, 0) and (0, 0, 1) regions 1000;").Check(testkit.Rows("999 1"))
 }
 
 func TestShowTableRegion(t *testing.T) {
@@ -630,7 +503,6 @@ func TestShowTableRegion(t *testing.T) {
 	rows = re.Rows()
 	require.Len(t, rows, 3)
 	require.Len(t, rows[0], 13)
-	tbl = external.GetTableByName(t, tk, "test", "t2_scheduling")
 	require.Equal(t, "LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\"", rows[0][11])
 	require.Equal(t, "PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"", rows[1][11])
 	require.Equal(t, "PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"", rows[2][11])

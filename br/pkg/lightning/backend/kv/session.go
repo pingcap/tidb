@@ -288,11 +288,12 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 	vars.StmtCtx.BatchCheck = true
 	vars.StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
 	vars.StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
-	vars.StmtCtx.AllowInvalidDate = sqlMode.HasAllowInvalidDatesMode()
-	vars.StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
 	vars.SQLMode = sqlMode
 
-	typeFlags := vars.StmtCtx.TypeFlags().WithTruncateAsWarning(!sqlMode.HasStrictMode())
+	typeFlags := vars.StmtCtx.TypeFlags().
+		WithTruncateAsWarning(!sqlMode.HasStrictMode()).
+		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
+		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode())
 	vars.StmtCtx.SetTypeFlags(typeFlags)
 	if options.SysVars != nil {
 		for k, v := range options.SysVars {
@@ -314,9 +315,7 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 		}
 	}
 	vars.StmtCtx.SetTimeZone(vars.Location())
-	vars.StmtCtx.SetTypeFlags(types.StrictFlags.
-		WithClipNegativeToZero(true),
-	)
+	vars.StmtCtx.SetTypeFlags(types.StrictFlags)
 	if err := vars.SetSystemVar("timestamp", strconv.FormatInt(options.Timestamp, 10)); err != nil {
 		logger.Warn("new session: failed to set timestamp",
 			log.ShortError(err))

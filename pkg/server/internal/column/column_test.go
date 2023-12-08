@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -181,13 +180,11 @@ func TestDumpTextValue(t *testing.T) {
 
 	var d types.Datum
 
-	sc := mock.NewContext().GetSessionVars().StmtCtx
-	sc.IgnoreZeroInDate = true
 	losAngelesTz, err := time.LoadLocation("America/Los_Angeles")
 	require.NoError(t, err)
-	sc.SetTimeZone(losAngelesTz)
+	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), losAngelesTz, func(err error) {})
 
-	time, err := types.ParseTime(sc, "2017-01-05 23:59:59.575601", mysql.TypeDatetime, 0, nil)
+	time, err := types.ParseTime(typeCtx, "2017-01-05 23:59:59.575601", mysql.TypeDatetime, 0)
 	require.NoError(t, err)
 	d.SetMysqlTime(time)
 	columns[0].Type = mysql.TypeDatetime
@@ -195,7 +192,7 @@ func TestDumpTextValue(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "2017-01-06 00:00:00", mustDecodeStr(t, bs))
 
-	duration, _, err := types.ParseDuration(sc, "11:30:45", 0)
+	duration, _, err := types.ParseDuration(typeCtx, "11:30:45", 0)
 	require.NoError(t, err)
 	d.SetMysqlDuration(duration)
 	columns[0].Type = mysql.TypeDuration

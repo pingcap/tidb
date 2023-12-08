@@ -484,6 +484,12 @@ var (
 			" Use the LPAD function to zero-pad numbers, or store the formatted numbers in a CHAR column.",
 		), nil),
 	)
+	// ErrCheckConstraintDupName is for duplicate check constraint names
+	ErrCheckConstraintDupName = ClassDDL.NewStd(mysql.ErrCheckConstraintDupName)
+	// ErrUnsupportedDistTask is for `tidb_enable_dist_task enabled` but `tidb_ddl_enable_fast_reorg` disabled.
+	ErrUnsupportedDistTask = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation,
+		parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw,
+			"tidb_enable_dist_task setting. To utilize distributed task execution, please enable tidb_ddl_enable_fast_reorg first."), nil))
 )
 
 // ReorgRetryableErrCodes is the error codes that are retryable for reorganization.

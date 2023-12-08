@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -851,71 +852,77 @@ func TestIndexMergeUpgradeFrom300To540(t *testing.T) {
 	require.Equal(t, int64(0), row.GetInt64(0))
 }
 
-func TestIndexMergeUpgradeFrom400To540(t *testing.T) {
-	for i := 0; i < 2; i++ {
-		func() {
-			ctx := context.Background()
-			store, dom := CreateStoreAndBootstrap(t)
-			defer func() { require.NoError(t, store.Close()) }()
+// We set tidb_enable_index_merge as on.
+// And after upgrade to 5.x, tidb_enable_index_merge should remains to be on.
+func TestIndexMergeUpgradeFrom400To540Enable(t *testing.T) {
+	testIndexMergeUpgradeFrom400To540(t, true)
+}
 
-			// upgrade from 4.0.0 to 5.4+.
-			ver400 := 46
-			seV4 := CreateSessionAndSetID(t, store)
-			txn, err := store.Begin()
-			require.NoError(t, err)
-			m := meta.NewMeta(txn)
-			err = m.FinishBootstrap(int64(ver400))
-			require.NoError(t, err)
-			err = txn.Commit(context.Background())
-			require.NoError(t, err)
-			MustExec(t, seV4, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver400))
-			MustExec(t, seV4, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", variable.Off, variable.TiDBEnableIndexMerge))
-			MustExec(t, seV4, "commit")
-			unsetStoreBootstrapped(store.UUID())
-			ver, err := getBootstrapVersion(seV4)
-			require.NoError(t, err)
-			require.Equal(t, int64(ver400), ver)
+func TestIndexMergeUpgradeFrom400To540Disable(t *testing.T) {
+	testIndexMergeUpgradeFrom400To540(t, false)
+}
 
-			// We are now in 4.0.0, tidb_enable_index_merge is off.
-			res := MustExecToRecodeSet(t, seV4, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableIndexMerge))
-			chk := res.NewChunk(nil)
-			err = res.Next(ctx, chk)
-			require.NoError(t, err)
-			require.Equal(t, 1, chk.NumRows())
-			row := chk.GetRow(0)
-			require.Equal(t, 2, row.Len())
-			require.Equal(t, variable.Off, row.GetString(1))
+func testIndexMergeUpgradeFrom400To540(t *testing.T, enable bool) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
 
-			if i == 0 {
-				// For the first time, We set tidb_enable_index_merge as on.
-				// And after upgrade to 5.x, tidb_enable_index_merge should remains to be on.
-				// For the second it should be off.
-				MustExec(t, seV4, "set global tidb_enable_index_merge = on")
-			}
-			dom.Close()
-			// Upgrade to 5.x.
-			domCurVer, err := BootstrapSession(store)
-			require.NoError(t, err)
-			defer domCurVer.Close()
-			seCurVer := CreateSessionAndSetID(t, store)
-			ver, err = getBootstrapVersion(seCurVer)
-			require.NoError(t, err)
-			require.Equal(t, currentBootstrapVersion, ver)
+	// upgrade from 4.0.0 to 5.4+.
+	ver400 := 46
+	seV4 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(ver400))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	MustExec(t, seV4, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver400))
+	MustExec(t, seV4, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", variable.Off, variable.TiDBEnableIndexMerge))
+	MustExec(t, seV4, "commit")
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV4)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver400), ver)
 
-			// We are now in 5.x, tidb_enable_index_merge should be on because we enable it in 4.0.0.
-			res = MustExecToRecodeSet(t, seCurVer, "select @@tidb_enable_index_merge")
-			chk = res.NewChunk(nil)
-			err = res.Next(ctx, chk)
-			require.NoError(t, err)
-			require.Equal(t, 1, chk.NumRows())
-			row = chk.GetRow(0)
-			require.Equal(t, 1, row.Len())
-			if i == 0 {
-				require.Equal(t, int64(1), row.GetInt64(0))
-			} else {
-				require.Equal(t, int64(0), row.GetInt64(0))
-			}
-		}()
+	// We are now in 4.0.0, tidb_enable_index_merge is off.
+	res := MustExecToRecodeSet(t, seV4, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableIndexMerge))
+	chk := res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	row := chk.GetRow(0)
+	require.Equal(t, 2, row.Len())
+	require.Equal(t, variable.Off, row.GetString(1))
+
+	if enable {
+		// For the first time, We set tidb_enable_index_merge as on.
+		// And after upgrade to 5.x, tidb_enable_index_merge should remains to be on.
+		// For the second it should be off.
+		MustExec(t, seV4, "set global tidb_enable_index_merge = on")
+	}
+	dom.Close()
+	// Upgrade to 5.x.
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err = getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// We are now in 5.x, tidb_enable_index_merge should be on because we enable it in 4.0.0.
+	res = MustExecToRecodeSet(t, seCurVer, "select @@tidb_enable_index_merge")
+	chk = res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	row = chk.GetRow(0)
+	require.Equal(t, 1, row.Len())
+	if enable {
+		require.Equal(t, int64(1), row.GetInt64(0))
+	} else {
+		require.Equal(t, int64(0), row.GetInt64(0))
 	}
 }
 
@@ -1590,7 +1597,7 @@ func TestTiDBUpgradeToVer140(t *testing.T) {
 	}()
 
 	ver139 := version139
-	resetTo139 := func(s Session) {
+	resetTo139 := func(s sessiontypes.Session) {
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		m := meta.NewMeta(txn)
@@ -2004,7 +2011,7 @@ func TestTiDBBindingInListToVer175(t *testing.T) {
 	MustExec(t, seV174, "insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ? )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1)', 'test', 'enabled', '2023-09-13 14:41:38.319', '2023-09-13 14:41:36.319', 'utf8', 'utf8_general_ci', 'manual', '', '')")
 	MustExec(t, seV174, "insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ? ) and `b` in ( ... )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3)', 'test', 'enabled', '2023-09-13 14:41:37.319', '2023-09-13 14:41:38.319', 'utf8', 'utf8_general_ci', 'manual', '', '')")
 
-	showBindings := func(s Session) (records []string) {
+	showBindings := func(s sessiontypes.Session) (records []string) {
 		MustExec(t, s, "admin reload bindings")
 		res := MustExecToRecodeSet(t, s, "show global bindings")
 		chk := res.NewChunk(nil)
@@ -2043,7 +2050,7 @@ func TestTiDBBindingInListToVer175(t *testing.T) {
 	require.Equal(t, []string{"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3):select * from `test` . `t` where `a` in ( ... ) and `b` in ( ... )",
 		"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1):select * from `test` . `t` where `a` in ( ... )"}, bindings)
 
-	planFromBinding := func(s Session, q string) {
+	planFromBinding := func(s sessiontypes.Session, q string) {
 		MustExec(t, s, q)
 		res := MustExecToRecodeSet(t, s, "select @@last_plan_from_binding")
 		chk := res.NewChunk(nil)
@@ -2116,5 +2123,112 @@ func TestTiDBUpgradeToVer177(t *testing.T) {
 	require.NoError(t, err)
 	require.Less(t, int64(ver176), ver)
 	MustExec(t, seV176, "SELECT * from mysql.dist_framework_meta")
+	dom.Close()
+}
+
+func TestWriteDDLTableVersionToMySQLTiDB(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	ddlTableVer, err := m.CheckDDLTableVersion()
+	require.NoError(t, err)
+
+	// Verify that 'ddl_table_version' has been set to the correct value
+	se := CreateSessionAndSetID(t, store)
+	r := MustExecToRecodeSet(t, se, fmt.Sprintf(`SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME='%s'`, tidbDDLTableVersion))
+	req := r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	require.Equal(t, []byte(fmt.Sprintf("%d", ddlTableVer)), req.GetRow(0).GetBytes(0))
+	require.NoError(t, r.Close())
+	dom.Close()
+}
+
+func TestWriteDDLTableVersionToMySQLTiDBWhenUpgradingTo178(t *testing.T) {
+	ctx := context.Background()
+	store, _ := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	ddlTableVer, err := m.CheckDDLTableVersion()
+	require.NoError(t, err)
+
+	// bootstrap as version177
+	ver177 := version177
+	seV177 := CreateSessionAndSetID(t, store)
+	err = m.FinishBootstrap(int64(ver177))
+	require.NoError(t, err)
+	MustExec(t, seV177, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver177))
+	// remove the ddl_table_version entry from mysql.tidb table
+	MustExec(t, seV177, fmt.Sprintf("delete from mysql.tidb where VARIABLE_NAME='%s'", tidbDDLTableVersion))
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV177)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver177), ver)
+
+	// upgrade to current version
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err = getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// check if the DDLTableVersion has been set in the `mysql.tidb` table during upgrade
+	r := MustExecToRecodeSet(t, seCurVer, fmt.Sprintf(`SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME='%s'`, tidbDDLTableVersion))
+	req := r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	require.Equal(t, []byte(fmt.Sprintf("%d", ddlTableVer)), req.GetRow(0).GetBytes(0))
+	require.NoError(t, r.Close())
+}
+
+func TestTiDBUpgradeToVer179(t *testing.T) {
+	ctx := context.Background()
+	store, _ := CreateStoreAndBootstrap(t)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+	ver178 := version178
+	seV178 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(ver178))
+	require.NoError(t, err)
+	MustExec(t, seV178, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver178))
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV178)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver178), ver)
+
+	dom, err := BootstrapSession(store)
+	require.NoError(t, err)
+	ver, err = getBootstrapVersion(seV178)
+	require.NoError(t, err)
+	require.Less(t, int64(ver178), ver)
+
+	r := MustExecToRecodeSet(t, seV178, "desc mysql.global_variables")
+	req := r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 2, req.NumRows())
+	require.Equal(t, []byte("varchar(16383)"), req.GetRow(1).GetBytes(1))
+	require.NoError(t, r.Close())
+
 	dom.Close()
 }

@@ -5,5 +5,4 @@ go_library(
     srcs = ["testenv.go"],
     importpath = "github.com/pingcap/tidb/pkg/testkit/testenv",
     visibility = ["//visibility:public"],
-    deps = ["//pkg/util/mathutil"],
 )

@@ -21,10 +21,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"go.uber.org/multierr"
 )
 
 // Encoder is used to encode a row.
@@ -37,16 +36,16 @@ type Encoder struct {
 }
 
 // Encode encodes a row from a datums slice.
-func (encoder *Encoder) Encode(sc *stmtctx.StatementContext, colIDs []int64, values []types.Datum, buf []byte, checksums ...uint32) ([]byte, error) {
+// `buf` is not truncated before encoding.
+// This function may return both a valid encoded bytes and an error (actually `"pingcap/errors".ErrorGroup`). If the caller
+// expects to handle these errors according to `SQL_MODE` or other configuration, please refer to `pkg/errctx`.
+func (encoder *Encoder) Encode(loc *time.Location, colIDs []int64, values []types.Datum, buf []byte, checksums ...uint32) ([]byte, error) {
 	encoder.reset()
 	encoder.appendColVals(colIDs, values)
 	numCols, notNullIdx := encoder.reformatCols()
-	err := encoder.encodeRowCols(sc, numCols, notNullIdx)
-	if err != nil {
-		return nil, err
-	}
+	err := encoder.encodeRowCols(loc, numCols, notNullIdx)
 	encoder.setChecksums(checksums...)
-	return encoder.row.toBytes(buf[:0]), nil
+	return encoder.row.toBytes(buf), err
 }
 
 func (encoder *Encoder) reset() {
@@ -130,14 +129,15 @@ func (encoder *Encoder) reformatCols() (numCols, notNullIdx int) {
 	return
 }
 
-func (encoder *Encoder) encodeRowCols(sc *stmtctx.StatementContext, numCols, notNullIdx int) error {
+func (encoder *Encoder) encodeRowCols(loc *time.Location, numCols, notNullIdx int) error {
 	r := &encoder.row
+	var errs error
 	for i := 0; i < notNullIdx; i++ {
 		d := encoder.values[i]
 		var err error
-		r.data, err = encodeValueDatum(sc, d, r.data)
+		r.data, err = encodeValueDatum(loc, d, r.data)
 		if err != nil {
-			return err
+			errs = multierr.Append(errs, err)
 		}
 		// handle convert to large
 		if len(r.data) > math.MaxUint16 && !r.large() {
@@ -157,12 +157,12 @@ func (encoder *Encoder) encodeRowCols(sc *stmtctx.StatementContext, numCols, not
 			r.offsets[i] = uint16(len(r.data))
 		}
 	}
-	return nil
+	return errs
 }
 
 // encodeValueDatum encodes one row datum entry into bytes.
 // due to encode as value, this method will flatten value type like tablecodec.flatten
-func encodeValueDatum(sc *stmtctx.StatementContext, d *types.Datum, buffer []byte) (nBuffer []byte, err error) {
+func encodeValueDatum(loc *time.Location, d *types.Datum, buffer []byte) (nBuffer []byte, err error) {
 	switch d.Kind() {
 	case types.KindInt64:
 		buffer = encodeInt(buffer, d.GetInt64())
@@ -173,8 +173,8 @@ func encodeValueDatum(sc *stmtctx.StatementContext, d *types.Datum, buffer []byt
 	case types.KindMysqlTime:
 		// for mysql datetime, timestamp and date type
 		t := d.GetMysqlTime()
-		if t.Type() == mysql.TypeTimestamp && sc != nil && sc.TimeZone() != time.UTC {
-			err = t.ConvertTimeZone(sc.TimeZone(), time.UTC)
+		if t.Type() == mysql.TypeTimestamp && loc != nil && loc != time.UTC {
+			err = t.ConvertTimeZone(loc, time.UTC)
 			if err != nil {
 				return
 			}
@@ -194,7 +194,7 @@ func encodeValueDatum(sc *stmtctx.StatementContext, d *types.Datum, buffer []byt
 	case types.KindBinaryLiteral, types.KindMysqlBit:
 		// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
 		var val uint64
-		val, err = d.GetBinaryLiteral().ToInt(sc.TypeCtxOrDefault())
+		val, err = d.GetBinaryLiteral().ToInt(types.StrictContext)
 		if err != nil {
 			return
 		}
@@ -203,13 +203,6 @@ func encodeValueDatum(sc *stmtctx.StatementContext, d *types.Datum, buffer []byt
 		buffer = codec.EncodeFloat(buffer, d.GetFloat64())
 	case types.KindMysqlDecimal:
 		buffer, err = codec.EncodeDecimal(buffer, d.GetMysqlDecimal(), d.Length(), d.Frac())
-		if err != nil && sc != nil {
-			if terror.ErrorEqual(err, types.ErrTruncated) {
-				err = sc.HandleTruncate(err)
-			} else if terror.ErrorEqual(err, types.ErrOverflow) {
-				err = sc.HandleOverflow(err, err)
-			}
-		}
 	case types.KindMysqlJSON:
 		j := d.GetMysqlJSON()
 		buffer = append(buffer, j.TypeCode)

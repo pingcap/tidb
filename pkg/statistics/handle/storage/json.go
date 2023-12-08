@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	compressutil "github.com/pingcap/tidb/pkg/util/compress"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
 )
 
@@ -88,7 +89,10 @@ func dumpJSONCol(hist *statistics.Histogram, cmsketch *statistics.CMSketch, topn
 }
 
 // GenJSONTableFromStats generate jsonTable from tableInfo and stats
-func GenJSONTableFromStats(dbName string, tableInfo *model.TableInfo, tbl *statistics.Table) (*util.JSONTable, error) {
+func GenJSONTableFromStats(sctx sessionctx.Context, dbName string, tableInfo *model.TableInfo, tbl *statistics.Table) (*util.JSONTable, error) {
+	tracker := memory.NewTracker(memory.LabelForAnalyzeMemory, -1)
+	tracker.AttachTo(sctx.GetSessionVars().MemTracker)
+	defer tracker.Detach()
 	jsonTbl := &util.JSONTable{
 		DatabaseName: dbName,
 		TableName:    tableInfo.Name.L,
@@ -104,11 +108,21 @@ func GenJSONTableFromStats(dbName string, tableInfo *model.TableInfo, tbl *stati
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		jsonTbl.Columns[col.Info.Name.L] = dumpJSONCol(hist, col.CMSketch, col.TopN, col.FMSketch, &col.StatsVer)
+		proto := dumpJSONCol(hist, col.CMSketch, col.TopN, col.FMSketch, &col.StatsVer)
+		tracker.Consume(proto.TotalMemoryUsage())
+		if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+			return nil, err
+		}
+		jsonTbl.Columns[col.Info.Name.L] = proto
+		col.FMSketch.DestroyAndPutToPool()
 	}
-
 	for _, idx := range tbl.Indices {
-		jsonTbl.Indices[idx.Info.Name.L] = dumpJSONCol(&idx.Histogram, idx.CMSketch, idx.TopN, nil, &idx.StatsVer)
+		proto := dumpJSONCol(&idx.Histogram, idx.CMSketch, idx.TopN, nil, &idx.StatsVer)
+		tracker.Consume(proto.TotalMemoryUsage())
+		if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+			return nil, err
+		}
+		jsonTbl.Indices[idx.Info.Name.L] = proto
 	}
 	jsonTbl.ExtStats = dumpJSONExtendedStats(tbl.ExtendedStats)
 	return jsonTbl, nil
@@ -270,13 +284,6 @@ func BlocksToJSONTable(blocks [][]byte) (*util.JSONTable, error) {
 
 // TableHistoricalStatsToJSON converts the historical stats of a table to JSONTable.
 func TableHistoricalStatsToJSON(sctx sessionctx.Context, physicalID int64, snapshot uint64) (jt *util.JSONTable, exist bool, err error) {
-	if _, err := util.Exec(sctx, "begin"); err != nil {
-		return nil, false, err
-	}
-	defer func() {
-		err = util.FinishTransaction(sctx, err)
-	}()
-
 	// get meta version
 	rows, _, err := util.ExecRows(sctx, "select distinct version from mysql.stats_meta_history where table_id = %? and version <= %? order by version desc limit 1", physicalID, snapshot)
 	if err != nil {

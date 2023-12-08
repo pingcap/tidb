@@ -672,7 +672,7 @@ func newBatchPointGetPlan(
 				if err != nil {
 					return nil
 				}
-				d, err = con.Eval(chunk.Row{})
+				d, err = con.Eval(ctx, chunk.Row{})
 				if err != nil {
 					return nil
 				}
@@ -818,7 +818,7 @@ func newBatchPointGetPlan(
 					if err != nil {
 						return nil
 					}
-					d, err := con.Eval(chunk.Row{})
+					d, err := con.Eval(ctx, chunk.Row{})
 					if err != nil {
 						return nil
 					}
@@ -857,7 +857,7 @@ func newBatchPointGetPlan(
 			if err != nil {
 				return nil
 			}
-			d, err := con.Eval(chunk.Row{})
+			d, err := con.Eval(ctx, chunk.Row{})
 			if err != nil {
 				return nil
 			}
@@ -1403,7 +1403,7 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 				if err != nil {
 					return nil, false
 				}
-				d, err = con.Eval(chunk.Row{})
+				d, err = con.Eval(ctx, chunk.Row{})
 				if err != nil {
 					return nil, false
 				}
@@ -1417,7 +1417,7 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 				if err != nil {
 					return nil, false
 				}
-				d, err = con.Eval(chunk.Row{})
+				d, err = con.Eval(ctx, chunk.Row{})
 				if err != nil {
 					return nil, false
 				}
@@ -1438,13 +1438,21 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 		col := model.FindColumnInfo(tbl.Cols(), colName.Name.Name.L)
 		if col == nil { // Handling the case when the column is _tidb_rowid.
 			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: types.NewFieldType(mysql.TypeLonglong), value: d, con: con}), false
-		} else if col.GetType() == mysql.TypeString && col.GetCollate() == charset.CollationBin { // This type we needn't to pad `\0` in here.
+		}
+
+		// As in buildFromBinOp in util/ranger, when we build key from the expression to do range scan or point get on
+		// a string column, we should set the collation of the string datum to collation of the column.
+		if col.FieldType.EvalType() == types.ETString && (d.Kind() == types.KindString || d.Kind() == types.KindBinaryLiteral) {
+			d.SetString(d.GetString(), col.FieldType.GetCollate())
+		}
+
+		if col.GetType() == mysql.TypeString && col.GetCollate() == charset.CollationBin { // This type we needn't to pad `\0` in here.
 			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: &col.FieldType, value: d, con: con}), false
 		}
 		if !checkCanConvertInPointGet(col, d) {
 			return nil, false
 		}
-		dVal, err := d.ConvertTo(stmtCtx, &col.FieldType)
+		dVal, err := d.ConvertTo(stmtCtx.TypeCtx(), &col.FieldType)
 		if err != nil {
 			if terror.ErrorEqual(types.ErrOverflow, err) {
 				return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: &col.FieldType, value: d, con: con}), true
@@ -1455,7 +1463,7 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 			}
 		}
 		// The converted result must be same as original datum.
-		cmp, err := dVal.Compare(stmtCtx, &d, collate.GetCollator(col.GetCollate()))
+		cmp, err := dVal.Compare(stmtCtx.TypeCtx(), &d, collate.GetCollator(col.GetCollate()))
 		if err != nil || cmp != 0 {
 			return nil, false
 		}
@@ -1468,12 +1476,17 @@ func getPointGetValue(stmtCtx *stmtctx.StatementContext, col *model.ColumnInfo, 
 	if !checkCanConvertInPointGet(col, *d) {
 		return nil
 	}
-	dVal, err := d.ConvertTo(stmtCtx, &col.FieldType)
+	// As in buildFromBinOp in util/ranger, when we build key from the expression to do range scan or point get on
+	// a string column, we should set the collation of the string datum to collation of the column.
+	if col.FieldType.EvalType() == types.ETString && (d.Kind() == types.KindString || d.Kind() == types.KindBinaryLiteral) {
+		d.SetString(d.GetString(), col.FieldType.GetCollate())
+	}
+	dVal, err := d.ConvertTo(stmtCtx.TypeCtx(), &col.FieldType)
 	if err != nil {
 		return nil
 	}
 	// The converted result must be same as original datum.
-	cmp, err := dVal.Compare(stmtCtx, d, collate.GetCollator(col.GetCollate()))
+	cmp, err := dVal.Compare(stmtCtx.TypeCtx(), d, collate.GetCollator(col.GetCollate()))
 	if err != nil || cmp != 0 {
 		return nil
 	}

@@ -22,17 +22,23 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/tiancaiamao/gp"
 )
 
 func mergeGlobalStatsTopN(gp *gp.Pool, sc sessionctx.Context, wrapper *StatsWrapper,
 	timeZone *time.Location, version int, n uint32, isIndex bool) (*statistics.TopN,
 	[]statistics.TopNMeta, []*statistics.Histogram, error) {
+	if statistics.CheckEmptyTopNs(wrapper.AllTopN) {
+		return nil, nil, wrapper.AllHg, nil
+	}
 	mergeConcurrency := sc.GetSessionVars().AnalyzePartitionMergeConcurrency
-	killed := &sc.GetSessionVars().Killed
+	killer := &sc.GetSessionVars().SQLKiller
+
 	// use original method if concurrency equals 1 or for version1
 	if mergeConcurrency < 2 {
-		return statistics.MergePartTopN2GlobalTopN(timeZone, version, wrapper.AllTopN, n, wrapper.AllHg, isIndex, killed)
+		return MergePartTopN2GlobalTopN(timeZone, version, wrapper.AllTopN, n, wrapper.AllHg, isIndex, killer)
 	}
 	batchSize := len(wrapper.AllTopN) / mergeConcurrency
 	if batchSize < 1 {
@@ -40,15 +46,24 @@ func mergeGlobalStatsTopN(gp *gp.Pool, sc sessionctx.Context, wrapper *StatsWrap
 	} else if batchSize > MaxPartitionMergeBatchSize {
 		batchSize = MaxPartitionMergeBatchSize
 	}
-	return MergeGlobalStatsTopNByConcurrency(gp, mergeConcurrency, batchSize, wrapper, timeZone, version, n, isIndex, killed)
+	return MergeGlobalStatsTopNByConcurrency(gp, mergeConcurrency, batchSize, wrapper, timeZone, version, n, isIndex, killer)
 }
 
-// MergeGlobalStatsTopNByConcurrency merge partition topN by concurrency
-// To merge global stats topn by concurrency, we will separate the partition topn in concurrency part and deal it with different worker.
-// mergeConcurrency is used to control the total concurrency of the running worker, and mergeBatchSize is sued to control
-// the partition size for each worker to solve it
-func MergeGlobalStatsTopNByConcurrency(gp *gp.Pool, mergeConcurrency, mergeBatchSize int, wrapper *StatsWrapper,
-	timeZone *time.Location, version int, n uint32, isIndex bool, killed *uint32) (*statistics.TopN,
+// MergeGlobalStatsTopNByConcurrency merge partition topN by concurrency.
+// To merge global stats topN by concurrency,
+// we will separate the partition topN in concurrency part and deal it with different worker.
+// mergeConcurrency is used to control the total concurrency of the running worker,
+// and mergeBatchSize is sued to control the partition size for each worker to solve it
+func MergeGlobalStatsTopNByConcurrency(
+	gp *gp.Pool,
+	mergeConcurrency, mergeBatchSize int,
+	wrapper *StatsWrapper,
+	timeZone *time.Location,
+	version int,
+	n uint32,
+	isIndex bool,
+	killer *sqlkiller.SQLKiller,
+) (*statistics.TopN,
 	[]statistics.TopNMeta, []*statistics.Histogram, error) {
 	if len(wrapper.AllTopN) < mergeConcurrency {
 		mergeConcurrency = len(wrapper.AllTopN)
@@ -67,12 +82,12 @@ func MergeGlobalStatsTopNByConcurrency(gp *gp.Pool, mergeConcurrency, mergeBatch
 	taskNum := len(tasks)
 	taskCh := make(chan *TopnStatsMergeTask, taskNum)
 	respCh := make(chan *TopnStatsMergeResponse, taskNum)
+	worker := NewTopnStatsMergeWorker(taskCh, respCh, wrapper, killer)
 	for i := 0; i < mergeConcurrency; i++ {
-		worker := NewTopnStatsMergeWorker(taskCh, respCh, wrapper, killed)
 		wg.Add(1)
 		gp.Go(func() {
 			defer wg.Done()
-			worker.Run(timeZone, isIndex, n, version)
+			worker.Run(timeZone, isIndex, version)
 		})
 	}
 	for _, task := range tasks {
@@ -81,8 +96,6 @@ func MergeGlobalStatsTopNByConcurrency(gp *gp.Pool, mergeConcurrency, mergeBatch
 	close(taskCh)
 	wg.Wait()
 	close(respCh)
-	resps := make([]*TopnStatsMergeResponse, 0)
-
 	// handle Error
 	hasErr := false
 	errMsg := make([]string, 0)
@@ -91,25 +104,111 @@ func MergeGlobalStatsTopNByConcurrency(gp *gp.Pool, mergeConcurrency, mergeBatch
 			hasErr = true
 			errMsg = append(errMsg, resp.Err.Error())
 		}
-		resps = append(resps, resp)
 	}
 	if hasErr {
 		return nil, nil, nil, errors.New(strings.Join(errMsg, ","))
 	}
 
 	// fetch the response from each worker and merge them into global topn stats
-	sorted := make([]statistics.TopNMeta, 0, mergeConcurrency)
-	leftTopn := make([]statistics.TopNMeta, 0)
-	for _, resp := range resps {
-		if resp.TopN != nil {
-			sorted = append(sorted, resp.TopN.TopN...)
+	counter := worker.Result()
+	numTop := len(counter)
+	sorted := make([]statistics.TopNMeta, 0, numTop)
+	for value, cnt := range counter {
+		data := hack.Slice(string(value))
+		sorted = append(sorted, statistics.TopNMeta{Encoded: data, Count: uint64(cnt)})
+	}
+	globalTopN, popedTopn := statistics.GetMergedTopNFromSortedSlice(sorted, n)
+	return globalTopN, popedTopn, wrapper.AllHg, nil
+}
+
+// MergePartTopN2GlobalTopN is used to merge the partition-level topN to global-level topN.
+// The input parameters:
+//  1. `topNs` are the partition-level topNs to be merged.
+//  2. `n` is the size of the global-level topN.
+//     Notice: This value can be 0 and has no default value, we must explicitly specify this value.
+//  3. `hists` are the partition-level histograms.
+//     Some values not in topN may be placed in the histogram.
+//     We need it here to make the value in the global-level TopN more accurate.
+//
+// The output parameters:
+//  1. `*TopN` is the final global-level topN.
+//  2. `[]TopNMeta` is the left topN value from the partition-level TopNs,
+//     but is not placed to global-level TopN. We should put them back to histogram latter.
+//  3. `[]*Histogram` are the partition-level histograms which
+//     just delete some values when we merge the global-level topN.
+func MergePartTopN2GlobalTopN(
+	loc *time.Location,
+	version int,
+	topNs []*statistics.TopN,
+	n uint32,
+	hists []*statistics.Histogram,
+	isIndex bool,
+	killer *sqlkiller.SQLKiller,
+) (*statistics.TopN, []statistics.TopNMeta, []*statistics.Histogram, error) {
+	partNum := len(topNs)
+	// Different TopN structures may hold the same value, we have to merge them.
+	counter := make(map[hack.MutableString]float64)
+	// datumMap is used to store the mapping from the string type to datum type.
+	// The datum is used to find the value in the histogram.
+	datumMap := statistics.NewDatumMapCache()
+	for i, topN := range topNs {
+		if err := killer.HandleSignal(); err != nil {
+			return nil, nil, nil, err
 		}
-		leftTopn = append(leftTopn, resp.PopedTopn...)
+		// Ignore the empty topN.
+		if topN.TotalCount() == 0 {
+			continue
+		}
+
+		for _, val := range topN.TopN {
+			encodedVal := hack.String(val.Encoded)
+			_, exists := counter[encodedVal]
+			counter[encodedVal] += float64(val.Count)
+			if exists {
+				// We have already calculated the encodedVal from the histogram, so just continue to next topN value.
+				continue
+			}
+
+			// We need to check whether the value corresponding to encodedVal is contained in other partition-level stats.
+			// 1. Check the topN first.
+			// 2. If the topN doesn't contain the value corresponding to encodedVal. We should check the histogram.
+			for j := 0; j < partNum; j++ {
+				if err := killer.HandleSignal(); err != nil {
+					return nil, nil, nil, err
+				}
+
+				if (j == i && version >= 2) || topNs[j].FindTopN(val.Encoded) != -1 {
+					continue
+				}
+				// Get the encodedVal from the hists[j]
+				datum, exists := datumMap.Get(encodedVal)
+				if !exists {
+					d, err := datumMap.Put(val, encodedVal, hists[0].Tp.GetType(), isIndex, loc)
+					if err != nil {
+						return nil, nil, nil, err
+					}
+					datum = d
+				}
+				// Get the row count which the value is equal to the encodedVal from histogram.
+				count, _ := hists[j].EqualRowCount(nil, datum, isIndex)
+				if count != 0 {
+					counter[encodedVal] += count
+					// Remove the value corresponding to encodedVal from the histogram.
+					hists[j].BinarySearchRemoveVal(statistics.TopNMeta{Encoded: datum.GetBytes(), Count: uint64(count)})
+				}
+			}
+		}
 	}
 
-	globalTopN, popedTopn := statistics.GetMergedTopNFromSortedSlice(sorted, n)
-
-	result := append(leftTopn, popedTopn...)
-	statistics.SortTopnMeta(result)
-	return globalTopN, result, wrapper.AllHg, nil
+	numTop := len(counter)
+	if numTop == 0 {
+		return nil, nil, hists, nil
+	}
+	sorted := make([]statistics.TopNMeta, 0, numTop)
+	for value, cnt := range counter {
+		data := hack.Slice(string(value))
+		sorted = append(sorted, statistics.TopNMeta{Encoded: data, Count: uint64(cnt)})
+	}
+	globalTopN, leftTopN := statistics.GetMergedTopNFromSortedSlice(sorted, n)
+	return globalTopN, leftTopN, hists, nil
 }

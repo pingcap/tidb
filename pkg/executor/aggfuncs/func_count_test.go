@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -158,7 +157,7 @@ func TestMemCount(t *testing.T) {
 }
 
 func TestWriteTime(t *testing.T) {
-	tt, err := types.ParseDate(stmtctx.NewStmtCtx(), "2020-11-11")
+	tt, err := types.ParseDate(types.DefaultStmtNoWarningContext, "2020-11-11")
 	require.NoError(t, err)
 
 	buf := make([]byte, 16)

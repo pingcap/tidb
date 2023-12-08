@@ -17,6 +17,7 @@ package statistics
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -37,7 +38,7 @@ func TestTruncateHistogram(t *testing.T) {
 }
 
 func TestValueToString4InvalidKey(t *testing.T) {
-	bytes, err := codec.EncodeKey(nil, nil, types.NewDatum(1), types.NewDatum(0.5))
+	bytes, err := codec.EncodeKey(time.UTC, nil, types.NewDatum(1), types.NewDatum(0.5))
 	require.NoError(t, err)
 	// Append invalid flag.
 	bytes = append(bytes, 20)
@@ -63,9 +64,9 @@ type topN4Test struct {
 func genHist4Test(t *testing.T, buckets []*bucket4Test, totColSize int64) *Histogram {
 	h := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), len(buckets), totColSize)
 	for _, bucket := range buckets {
-		lower, err := codec.EncodeKey(nil, nil, types.NewIntDatum(bucket.lower))
+		lower, err := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(bucket.lower))
 		require.NoError(t, err)
-		upper, err := codec.EncodeKey(nil, nil, types.NewIntDatum(bucket.upper))
+		upper, err := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(bucket.upper))
 		require.NoError(t, err)
 		di, du := types.NewBytesDatum(lower), types.NewBytesDatum(upper)
 		h.AppendBucketWithNDV(&di, &du, bucket.count, bucket.repeat, bucket.ndv)
@@ -288,7 +289,7 @@ func TestMergePartitionLevelHist(t *testing.T) {
 		sc := ctx.GetSessionVars().StmtCtx
 		poped := make([]TopNMeta, 0, len(tt.popedTopN))
 		for _, top := range tt.popedTopN {
-			b, err := codec.EncodeKey(sc, nil, types.NewIntDatum(top.data))
+			b, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(top.data))
 			require.NoError(t, err)
 			tmp := TopNMeta{
 				Encoded: b,
@@ -375,9 +376,9 @@ func TestIndexQueryBytes(t *testing.T) {
 	sc := ctx.GetSessionVars().StmtCtx
 	idx := &Index{Info: &model.IndexInfo{Columns: []*model.IndexColumn{{Name: model.NewCIStr("a"), Offset: 0}}}}
 	idx.Histogram = *NewHistogram(0, 15, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)
-	low, err1 := codec.EncodeKey(sc, nil, types.NewBytesDatum([]byte("0")))
+	low, err1 := codec.EncodeKey(sc.TimeZone(), nil, types.NewBytesDatum([]byte("0")))
 	require.NoError(t, err1)
-	high, err2 := codec.EncodeKey(sc, nil, types.NewBytesDatum([]byte("3")))
+	high, err2 := codec.EncodeKey(sc.TimeZone(), nil, types.NewBytesDatum([]byte("3")))
 	require.NoError(t, err2)
 	idx.Bounds.AppendBytes(0, low)
 	idx.Bounds.AppendBytes(0, high)
@@ -464,19 +465,19 @@ func TestStandardizeForV2AnalyzeIndex(t *testing.T) {
 	// 2. prepare the actual Histogram input
 	ctx := mock.NewContext()
 	sc := ctx.GetSessionVars().StmtCtx
-	val0, err := codec.EncodeKey(sc, nil, types.NewIntDatum(111))
+	val0, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(111))
 	require.NoError(t, err)
-	val1, err := codec.EncodeKey(sc, nil, types.NewIntDatum(123))
+	val1, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(123))
 	require.NoError(t, err)
-	val2, err := codec.EncodeKey(sc, nil, types.NewIntDatum(34567))
+	val2, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(34567))
 	require.NoError(t, err)
-	val3, err := codec.EncodeKey(sc, nil, types.NewIntDatum(5))
+	val3, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(5))
 	require.NoError(t, err)
-	val4, err := codec.EncodeKey(sc, nil, types.NewIntDatum(876))
+	val4, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(876))
 	require.NoError(t, err)
-	val5, err := codec.EncodeKey(sc, nil, types.NewIntDatum(990))
+	val5, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(990))
 	require.NoError(t, err)
-	val6, err := codec.EncodeKey(sc, nil, types.NewIntDatum(95))
+	val6, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(95))
 	require.NoError(t, err)
 	val0Bytes := types.NewBytesDatum(val0)
 	val1Bytes := types.NewBytesDatum(val1)
@@ -531,4 +532,38 @@ func TestStandardizeForV2AnalyzeIndex(t *testing.T) {
 		require.Equal(t, test.outputHistToStr, test.inputHist.ToString(1),
 			fmt.Sprintf("testData[%d].inputHist:%s", i, test.inputHistToStr))
 	}
+}
+
+func generateData(t *testing.T) *Histogram {
+	var data []*bucket4Test
+	sumCount := int64(0)
+	for n := 100; n < 10000; n = n + 100 {
+		sumCount += 100
+		data = append(data, &bucket4Test{
+			lower:  int64(n),
+			upper:  int64(n + 100),
+			count:  sumCount,
+			repeat: 10,
+			ndv:    10,
+		})
+	}
+	return genHist4Test(t, data, 0)
+}
+
+func TestVerifyHistsBinarySearchRemoveValAndRemoveVals(t *testing.T) {
+	data1 := generateData(t)
+	data2 := generateData(t)
+
+	require.Equal(t, data1, data2)
+	ctx := mock.NewContext()
+	sc := ctx.GetSessionVars().StmtCtx
+	b, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(150))
+	require.NoError(t, err)
+	tmp := TopNMeta{
+		Encoded: b,
+		Count:   2,
+	}
+	data1.RemoveVals([]TopNMeta{tmp})
+	data2.BinarySearchRemoveVal(tmp)
+	require.Equal(t, data1, data2)
 }
