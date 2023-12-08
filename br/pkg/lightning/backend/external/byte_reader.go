@@ -184,7 +184,11 @@ func (r *byteReader) switchToConcurrentReader() error {
 	}
 
 	totalSize := readerFields.concurrency * readerFields.bufSizePerConc
+	r.logger.Info("alloc large buffer", zap.Int("size", totalSize))
 	readerFields.largeBuf = readerFields.largeBufferPool.AllocBytes(totalSize)
+	if readerFields.largeBuf == nil {
+		return errors.Errorf("alloc large buffer failed, size %d", totalSize)
+	}
 	r.curBuf = readerFields.largeBuf
 	r.curBufOffset = 0
 	readerFields.now = true

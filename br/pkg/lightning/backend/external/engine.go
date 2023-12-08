@@ -125,7 +125,7 @@ func NewExternalEngine(
 		splitKeys:       splitKeys,
 		regionSplitSize: regionSplitSize,
 		bufPool: membuf.NewPool(
-			membuf.WithLargeAllocThreshold(memLimit),
+			//membuf.WithLargeAllocThreshold(memLimit),
 			membuf.WithPoolMemoryLimiter(memLimiter),
 		),
 		checkHotspot:       checkHotspot,
@@ -537,7 +537,7 @@ func (e *Engine) Reset() error {
 		e.bufPool.Destroy()
 		memLimiter := membuf.NewLimiter(memLimit)
 		e.bufPool = membuf.NewPool(
-			membuf.WithLargeAllocThreshold(memLimit),
+			//membuf.WithLargeAllocThreshold(memLimit),
 			membuf.WithPoolMemoryLimiter(memLimiter),
 		)
 	}
