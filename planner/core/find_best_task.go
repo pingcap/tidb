@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"math"
 	"strings"
 
@@ -845,7 +846,8 @@ func (ds *DataSource) isPointGetConvertableSchema() bool {
 // See #46177 for more information.
 func (ds *DataSource) exploreEnforcedPlan() bool {
 	// default value is false to keep it compatible with previous versions.
-	return fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix46177, false)
+	fixValue, ok := ds.ctx.GetSessionVars().GetOptimizerFixControlValue(variable.TiDBOptFixControl46177)
+	return ok && variable.TiDBOptOn(fixValue)
 }
 
 // findBestTask implements the PhysicalPlan interface.
