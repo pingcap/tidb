@@ -38,6 +38,10 @@ go_test(
     ],
     embed = [":plugin"],
     flaky = True,
+<<<<<<< HEAD:plugin/BUILD.bazel
+=======
+    shard_count = 12,
+>>>>>>> 169617d22dc (plugin: fix bug that watch loop will refresh frequently when channel closed (#49275)):pkg/plugin/BUILD.bazel
     deps = [
         "//kv",
         "//parser/mysql",
@@ -47,6 +51,7 @@ go_test(
         "//testkit",
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",
+        "@io_etcd_go_etcd_client_v3//:client",
         "@org_uber_go_goleak//:goleak",
     ],
 )
