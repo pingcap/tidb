@@ -150,6 +150,9 @@ func GetPlanNotRetryableErrDispatcherExt(ctrl *gomock.Controller) dispatcher.Ext
 	mockDispatcher.EXPECT().IsRetryableErr(gomock.Any()).Return(false).AnyTimes()
 	mockDispatcher.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
 		func(task *proto.Task) proto.Step {
+			if task.Step == proto.StepInit {
+				return proto.StepOne
+			}
 			return proto.StepDone
 		},
 	).AnyTimes()

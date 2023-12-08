@@ -531,13 +531,6 @@ func (d *BaseDispatcher) updateTask(taskState proto.TaskState, newSubTasks []*pr
 		return errors.Errorf("invalid task state transform, from %s to %s", prevState, taskState)
 	}
 
-	failpoint.Inject("cancelBeforeUpdate", func() {
-		err := d.taskMgr.CancelTask(d.ctx, d.Task.ID)
-		if err != nil {
-			logutil.Logger(d.logCtx).Error("cancel task failed", zap.Error(err))
-		}
-	})
-
 	var retryable bool
 	for i := 0; i < retryTimes; i++ {
 		retryable, err = d.taskMgr.UpdateTaskAndAddSubTasks(d.ctx, d.Task, newSubTasks, prevState)
@@ -654,7 +647,7 @@ func (d *BaseDispatcher) dispatchSubTask(
 		size += uint64(len(meta))
 	}
 	failpoint.Inject("cancelBeforeUpdateTask", func() {
-		_ = d.updateTask(proto.TaskStateCancelling, nil, RetrySQLTimes)
+		_ = d.taskMgr.CancelTask(d.ctx, d.Task.ID)
 	})
 
 	// as other fields and generated key and index KV takes space too, we limit
