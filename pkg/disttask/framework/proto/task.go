@@ -15,9 +15,6 @@
 package proto
 
 import (
-	"bytes"
-	"crypto/sha256"
-	"encoding/base64"
 	"fmt"
 	"time"
 )
@@ -188,7 +185,9 @@ type Subtask struct {
 	// meta of different subtasks of same step must be different too.
 	Meta    []byte
 	Summary string
-	Digest  []byte
+	// Ordinal is the ordinal of subtask, should be unique for some task and step.
+	// starts from 1, for reverting subtask, it's NULL in database.
+	Ordinal int
 }
 
 func (t *Subtask) String() string {
@@ -202,19 +201,8 @@ func (t *Subtask) IsFinished() bool {
 		t.State == TaskStateFailed || t.State == TaskStateRevertFailed
 }
 
-func (t *Subtask) calDigest() {
-	if bytes.Equal(t.Meta, EmptyMeta) {
-		// reverting subtasks has same empty meta, leave their digest null.
-		return
-	}
-	sha := sha256.New()
-	sha.Write([]byte(fmt.Sprintf("%d/%d/", t.TaskID, t.Step)))
-	sha.Write(t.Meta)
-	t.Digest = []byte(base64.StdEncoding.EncodeToString(sha.Sum(nil)))
-}
-
 // NewSubtask create a new subtask.
-func NewSubtask(step Step, taskID int64, tp TaskType, execID string, concurrency int, meta []byte) *Subtask {
+func NewSubtask(step Step, taskID int64, tp TaskType, execID string, concurrency int, meta []byte, ordinal int) *Subtask {
 	s := &Subtask{
 		Step:        step,
 		Type:        tp,
@@ -222,8 +210,8 @@ func NewSubtask(step Step, taskID int64, tp TaskType, execID string, concurrency
 		ExecID:      execID,
 		Concurrency: concurrency,
 		Meta:        meta,
+		Ordinal:     ordinal,
 	}
-	s.calDigest()
 	return s
 }
 

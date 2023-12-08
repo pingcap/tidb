@@ -573,7 +573,9 @@ func (d *BaseDispatcher) onErrHandlingStage(receiveErrs []error) error {
 		subTasks = make([]*proto.Subtask, 0, len(instanceIDs))
 		for _, id := range instanceIDs {
 			// reverting subtasks belong to the same step as current active step.
-			subTasks = append(subTasks, proto.NewSubtask(d.Task.Step, d.Task.ID, d.Task.Type, id, int(d.Task.Concurrency), proto.EmptyMeta))
+			subTasks = append(subTasks, proto.NewSubtask(
+				d.Task.Step, d.Task.ID, d.Task.Type, id,
+				int(d.Task.Concurrency), proto.EmptyMeta, 0))
 		}
 	}
 	return d.updateTask(proto.TaskStateReverting, subTasks, RetrySQLTimes)
@@ -646,12 +648,13 @@ func (d *BaseDispatcher) dispatchSubTask(
 		pos := i % len(serverNodes)
 		instanceID := disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port)
 		logutil.Logger(d.logCtx).Debug("create subtasks", zap.String("instanceID", instanceID))
-		subTasks = append(subTasks, proto.NewSubtask(subtaskStep, d.Task.ID, d.Task.Type, instanceID, int(d.Task.Concurrency), meta))
+		subTasks = append(subTasks, proto.NewSubtask(
+			subtaskStep, d.Task.ID, d.Task.Type, instanceID, int(d.Task.Concurrency), meta, i+1))
 
 		size += uint64(len(meta))
 	}
 	failpoint.Inject("cancelBeforeUpdateTask", func() {
-		_ = d.updateTask(proto.TaskStateCancelling, subTasks, RetrySQLTimes)
+		_ = d.updateTask(proto.TaskStateCancelling, nil, RetrySQLTimes)
 	})
 
 	// as other fields and generated key and index KV takes space too, we limit
@@ -659,6 +662,9 @@ func (d *BaseDispatcher) dispatchSubTask(
 	limit := max(uint64(float64(kv.TxnTotalSizeLimit.Load())*0.8), 1)
 	fn := d.taskMgr.SwitchTaskStep
 	if size >= limit {
+		// On default, transaction size limit is controlled by tidb_mem_quota_query
+		// which is 1G on default, so it's unlikely to reach this limit, but in
+		// case user set txn-total-size-limit explicitly, we insert in batch.
 		logutil.Logger(d.logCtx).Info("subtasks size exceed limit, will insert in batch",
 			zap.Uint64("size", size), zap.Uint64("limit", limit))
 		fn = d.taskMgr.SwitchTaskStepInBatch

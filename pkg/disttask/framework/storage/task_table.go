@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -47,7 +48,7 @@ const (
 	subtaskColumns = `id, step, task_key, type, exec_id, state, concurrency, create_time,
 				start_time, state_update_time, meta, summary`
 	insertSubtaskBasic = `insert into mysql.tidb_background_subtask(
-				step, task_key, exec_id, meta, state, type, concurrency, create_time, digest, checkpoint, summary) values `
+				step, task_key, exec_id, meta, state, type, concurrency, ordinal, create_time, checkpoint, summary) values `
 )
 
 var (
@@ -397,7 +398,7 @@ func (stm *TaskManager) CreateSubTask(ctx context.Context, taskID int64, step pr
 		state = proto.TaskStateRevertPending
 	}
 
-	_, err := stm.executeSQLWithNewSession(ctx, insertSubtaskBasic+`(%?, %?, %?, %?, %?, %?, 11, CURRENT_TIMESTAMP(), '{}', '{}')`,
+	_, err := stm.executeSQLWithNewSession(ctx, insertSubtaskBasic+`(%?, %?, %?, %?, %?, %?, 11, NULL, CURRENT_TIMESTAMP(), '{}', '{}')`,
 		step, taskID, execID, meta, state, proto.Type2Int(tp))
 	if err != nil {
 		return err
@@ -762,11 +763,22 @@ func (stm *TaskManager) SwitchTaskStep(
 	subtasks []*proto.Subtask,
 ) error {
 	return stm.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		vars := se.GetSessionVars()
+		if vars.MemQuotaQuery < variable.DefTiDBMemQuotaQuery {
+			bak := vars.MemQuotaQuery
+			if err := vars.SetSystemVar(variable.TiDBMemQuotaQuery,
+				strconv.Itoa(variable.DefTiDBMemQuotaQuery)); err != nil {
+				return err
+			}
+			defer func() {
+				_ = vars.SetSystemVar(variable.TiDBMemQuotaQuery, strconv.Itoa(int(bak)))
+			}()
+		}
 		err := stm.updateTaskStateStep(ctx, se, task, nextState, nextStep)
 		if err != nil {
 			return err
 		}
-		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
+		if vars.StmtCtx.AffectedRows() == 0 {
 			// on network partition or owner change, there might be multiple
 			// dispatchers for the same task, if other dispatcher has switched
 			// the task to next step, skip the update process.
@@ -797,7 +809,7 @@ func (*TaskManager) insertSubtasks(ctx context.Context, se sessionctx.Context, s
 	for _, subtask := range subtasks {
 		markerList = append(markerList, "(%?, %?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), '{}', '{}')")
 		args = append(args, subtask.Step, subtask.TaskID, subtask.ExecID, subtask.Meta,
-			proto.TaskStatePending, proto.Type2Int(subtask.Type), subtask.Concurrency, subtask.Digest)
+			proto.TaskStatePending, proto.Type2Int(subtask.Type), subtask.Concurrency, subtask.Ordinal)
 	}
 	_, err := ExecSQL(ctx, se, sb.String(), args...)
 	return err
@@ -915,7 +927,7 @@ func (stm *TaskManager) UpdateTaskAndAddSubTasks(ctx context.Context, task *prot
 						return err
 					}
 				}
-				if err := sqlescape.FormatSQL(sql, "(%?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), '{}', '{}')",
+				if err := sqlescape.FormatSQL(sql, "(%?, %?, %?, %?, %?, %?, %?, NULL, CURRENT_TIMESTAMP(), '{}', '{}')",
 					subtask.Step, task.ID, subtask.ExecID, subtask.Meta, subtaskState, proto.Type2Int(subtask.Type), subtask.Concurrency); err != nil {
 					return err
 				}
