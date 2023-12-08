@@ -242,7 +242,6 @@ func (rc *Client) Init(g glue.Glue, store kv.Storage) error {
 		db, _, err := NewDB(g, store, rc.policyMode)
 		return db, err
 	})
-
 	if err != nil {
 		log.Warn("create session pool failed, we will send DDLs only by created sessions",
 			zap.Error(err),

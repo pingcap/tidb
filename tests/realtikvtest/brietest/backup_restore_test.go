@@ -15,6 +15,7 @@
 package brietest
 
 import (
+	"fmt"
 	"os"
 	"path"
 	"testing"
@@ -68,5 +69,34 @@ func TestBackupAndRestore(t *testing.T) {
 	tk.MustQuery("restore database * from 'local://" + tmpDir + "'")
 	tk.MustExec("use br")
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("3"))
+	tk.MustExec("drop database br")
+}
+
+func TestRestoreMultiTables(t *testing.T) {
+	tk := initTestKit(t)
+	tk.MustExec("create database if not exists br")
+	tk.MustExec("use br")
+
+	tableNum := 100
+	for i := 0; i < tableNum; i += 1 {
+		tk.MustExec(fmt.Sprintf("create table table_%d (a int primary key, b json, c varchar(20))", i))
+		tk.MustExec(fmt.Sprintf("insert into table_%d values (1, '{a: 1, b: 2}', '123')", i))
+		tk.MustQuery(fmt.Sprintf("select count(*) from table_%d", i)).Check(testkit.Rows("1"))
+	}
+
+	tmpDir := path.Join(os.TempDir(), "bk1")
+	require.NoError(t, os.RemoveAll(tmpDir))
+	// backup database to tmp dir
+	tk.MustQuery("backup database br to 'local://" + tmpDir + "'")
+
+	// remove database for recovery
+	tk.MustExec("drop database br")
+
+	// restore database with backup data
+	tk.MustQuery("restore database * from 'local://" + tmpDir + "'")
+	tk.MustExec("use br")
+	for i := 0; i < tableNum; i += 1 {
+		tk.MustQuery(fmt.Sprintf("select count(*) from table_%d", i)).Check(testkit.Rows("1"))
+	}
 	tk.MustExec("drop database br")
 }
