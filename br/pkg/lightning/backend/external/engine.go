@@ -194,14 +194,13 @@ func getFilesReadConcurrency(
 	}
 	for i := range statsFiles {
 		result[i] = (endOffs[i] - startOffs[i]) / uint64(ConcurrentReaderBufferSizePerConc)
+		result[i] = max(result[i], 1)
 		logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
 			zap.String("filename", statsFiles[i]),
 			zap.Uint64("startOffset", startOffs[i]),
 			zap.Uint64("endOffset", endOffs[i]),
 			zap.Uint64("expected concurrency", result[i]),
 		)
-		// TODO(lance6716):
-		result[i] = 1
 	}
 	return result, startOffs, nil
 }
@@ -317,6 +316,11 @@ func readAllData(
 		startKey,
 		endKey,
 	)
+	// TODO(lance6716): refine concurrency
+	for i := range concurrences {
+		concurrences[i] = 1
+	}
+
 	if err != nil {
 		return err
 	}
