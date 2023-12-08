@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -2523,7 +2524,7 @@ func (do *Domain) analyzeJobsCleanupWorker(owner owner.Manager) {
 			}
 			analyzeProcessIDs := make(map[uint64]struct{}, 8)
 			for _, process := range sm.ShowProcessList() {
-				if strings.HasPrefix(strings.ToLower(process.Info), "analyze table") {
+				if isAnalyzeTableSQL(process.Info) {
 					analyzeProcessIDs[process.ID] = struct{}{}
 				}
 			}
@@ -2543,6 +2544,12 @@ func (do *Domain) analyzeJobsCleanupWorker(owner owner.Manager) {
 			return
 		}
 	}
+}
+
+func isAnalyzeTableSQL(sql string) bool {
+	// Get rid of the comments.
+	normalizedSql := parser.Normalize(sql)
+	return strings.HasPrefix(normalizedSql, "analyze table")
 }
 
 // ExpensiveQueryHandle returns the expensive query handle.
