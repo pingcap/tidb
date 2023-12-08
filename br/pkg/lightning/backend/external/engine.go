@@ -94,7 +94,7 @@ type Engine struct {
 	importedKVCount *atomic.Int64
 }
 
-const memLimit = 12 * 1024 * 1024 * 1024
+const memLimit = 16 * 1024 * 1024 * 1024
 
 // NewExternalEngine creates an (external) engine.
 func NewExternalEngine(
@@ -304,6 +304,8 @@ func readAllData(
 		return err
 	}
 	var eg errgroup.Group
+	// TODO(lance6716): check memory usage
+	eg.SetLimit(50)
 	for i := range dataFiles {
 		i := i
 		eg.Go(func() error {
