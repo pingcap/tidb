@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-<<<<<<< HEAD:table/column.go
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -40,23 +39,6 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/timeutil"
-=======
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	field_types "github.com/pingcap/tidb/pkg/parser/types"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/hack"
-	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/timeutil"
->>>>>>> d3f399f25d8 (*: fix data race of Column.GeneratedExpr (#48888)):pkg/table/column.go
 	"go.uber.org/zap"
 )
 
@@ -85,7 +67,6 @@ func NewClonableExprNode(ctor func() ast.ExprNode, internal ast.ExprNode) *Clona
 
 // Clone makes a "copy" of internal ast.ExprNode by reconstructing it.
 func (n *ClonableExprNode) Clone() ast.ExprNode {
-	intest.AssertNotNil(n.ctor)
 	if n.ctor == nil {
 		return n.internal
 	}
