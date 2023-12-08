@@ -2548,8 +2548,8 @@ func (do *Domain) analyzeJobsCleanupWorker(owner owner.Manager) {
 
 func isAnalyzeTableSQL(sql string) bool {
 	// Get rid of the comments.
-	normalizedSql := parser.Normalize(sql)
-	return strings.HasPrefix(normalizedSql, "analyze table")
+	normalizedSQL := parser.Normalize(sql)
+	return strings.HasPrefix(normalizedSQL, "analyze table")
 }
 
 // ExpensiveQueryHandle returns the expensive query handle.
