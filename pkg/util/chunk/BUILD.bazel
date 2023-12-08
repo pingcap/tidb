@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "alloc.go",
         "chunk.go",
+        "chunk_in_disk.go",
         "chunk_util.go",
         "codec.go",
         "column.go",
@@ -43,6 +44,7 @@ go_test(
     timeout = "short",
     srcs = [
         "alloc_test.go",
+        "chunk_in_disk_test.go",
         "chunk_test.go",
         "chunk_util_test.go",
         "codec_test.go",

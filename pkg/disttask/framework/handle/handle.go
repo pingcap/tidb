@@ -31,93 +31,127 @@ var (
 	checkTaskFinishInterval = 300 * time.Millisecond
 )
 
-// SubmitGlobalTask submits a global task.
-func SubmitGlobalTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, taskMeta []byte) (*proto.Task, error) {
-	globalTaskManager, err := storage.GetTaskManager()
+// SubmitTask submits a task.
+func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, taskMeta []byte) (*proto.Task, error) {
+	taskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return nil, err
 	}
-	globalTask, err := globalTaskManager.GetGlobalTaskByKey(ctx, taskKey)
+	task, err := taskManager.GetTaskByKey(ctx, taskKey)
 	if err != nil {
 		return nil, err
 	}
 
-	if globalTask == nil {
-		taskID, err := globalTaskManager.AddNewGlobalTask(ctx, taskKey, taskType, concurrency, taskMeta)
+	if task == nil {
+		taskID, err := taskManager.CreateTask(ctx, taskKey, taskType, concurrency, taskMeta)
 		if err != nil {
 			return nil, err
 		}
 
-		globalTask, err = globalTaskManager.GetGlobalTaskByID(ctx, taskID)
+		task, err = taskManager.GetTaskByID(ctx, taskID)
 		if err != nil {
 			return nil, err
 		}
 
-		if globalTask == nil {
-			return nil, errors.Errorf("cannot find global task with ID %d", taskID)
+		if task == nil {
+			return nil, errors.Errorf("cannot find task with ID %d", taskID)
 		}
-		metrics.UpdateMetricsForAddTask(globalTask)
+		metrics.UpdateMetricsForAddTask(task)
 	}
-	return globalTask, nil
+	return task, nil
 }
 
-// WaitGlobalTask waits for a global task to finish.
-func WaitGlobalTask(ctx context.Context, globalTask *proto.Task) error {
-	globalTaskManager, err := storage.GetTaskManager()
+// WaitTask waits for a task done or paused.
+// this API returns error if task failed or cancelled.
+func WaitTask(ctx context.Context, id int64) error {
+	logger := logutil.Logger(ctx).With(zap.Int64("task-id", id))
+	found, err := waitTask(ctx, id, func(t *proto.Task) bool {
+		return t.IsDone() || t.State == proto.TaskStatePaused
+	})
 	if err != nil {
 		return err
 	}
-	ticker := time.NewTicker(checkTaskFinishInterval)
-	defer ticker.Stop()
 
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-			found, err := globalTaskManager.GetTaskByIDWithHistory(ctx, globalTask.ID)
-			if err != nil {
-				logutil.Logger(ctx).Error("cannot get global task during waiting",
-					zap.Int64("task-id", globalTask.ID),
-					zap.Error(err))
-				continue
-			}
-			if found == nil {
-				return errors.Errorf("cannot find global task with ID %d", globalTask.ID)
-			}
-
-			switch found.State {
-			case proto.TaskStateSucceed:
-				return nil
-			case proto.TaskStateReverted:
-				logutil.BgLogger().Error("global task reverted", zap.Int64("task-id", globalTask.ID), zap.Error(found.Error))
-				return found.Error
-			case proto.TaskStatePaused:
-				logutil.BgLogger().Error("global task paused", zap.Int64("task-id", globalTask.ID))
-				return nil
-			case proto.TaskStateFailed, proto.TaskStateCanceled:
-				return errors.Errorf("task stopped with state %s, err %v", found.State, found.Error)
-			}
-		}
+	switch found.State {
+	case proto.TaskStateSucceed:
+		return nil
+	case proto.TaskStateReverted:
+		logger.Error("task reverted", zap.Error(found.Error))
+		return found.Error
+	case proto.TaskStatePaused:
+		logger.Error("task paused")
+		return nil
+	case proto.TaskStateFailed:
+		return errors.Errorf("task stopped with state %s, err %v", found.State, found.Error)
 	}
+	return nil
 }
 
-// SubmitAndRunGlobalTask submits a global task and wait for it to finish.
-func SubmitAndRunGlobalTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, taskMeta []byte) error {
-	globalTask, err := SubmitGlobalTask(ctx, taskKey, taskType, concurrency, taskMeta)
-	if err != nil {
-		return err
-	}
-	return WaitGlobalTask(ctx, globalTask)
-}
-
-// CancelGlobalTask cancels a global task.
-func CancelGlobalTask(ctx context.Context, taskKey string) error {
+// WaitTaskDoneByKey waits for a task done by task key.
+func WaitTaskDoneByKey(ctx context.Context, taskKey string) error {
 	taskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return err
 	}
-	task, err := taskManager.GetGlobalTaskByKey(ctx, taskKey)
+	task, err := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
+	if err != nil {
+		return err
+	}
+	if task == nil {
+		return errors.Errorf("cannot find task with key %s", taskKey)
+	}
+	_, err = waitTask(ctx, task.ID, func(t *proto.Task) bool {
+		return t.IsDone()
+	})
+	return err
+}
+
+func waitTask(ctx context.Context, id int64, matchFn func(*proto.Task) bool) (*proto.Task, error) {
+	taskManager, err := storage.GetTaskManager()
+	if err != nil {
+		return nil, err
+	}
+	ticker := time.NewTicker(checkTaskFinishInterval)
+	defer ticker.Stop()
+
+	logger := logutil.Logger(ctx).With(zap.Int64("task-id", id))
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			found, err := taskManager.GetTaskByIDWithHistory(ctx, id)
+			if err != nil {
+				logger.Error("cannot get task during waiting", zap.Error(err))
+				continue
+			}
+			if found == nil {
+				return nil, errors.Errorf("cannot find task with ID %d", id)
+			}
+
+			if matchFn(found) {
+				return found, nil
+			}
+		}
+	}
+}
+
+// SubmitAndWaitTask submits a task and wait for it to finish.
+func SubmitAndWaitTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, taskMeta []byte) error {
+	task, err := SubmitTask(ctx, taskKey, taskType, concurrency, taskMeta)
+	if err != nil {
+		return err
+	}
+	return WaitTask(ctx, task.ID)
+}
+
+// CancelTask cancels a task.
+func CancelTask(ctx context.Context, taskKey string) error {
+	taskManager, err := storage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+	task, err := taskManager.GetTaskByKey(ctx, taskKey)
 	if err != nil {
 		return err
 	}
@@ -126,7 +160,7 @@ func CancelGlobalTask(ctx context.Context, taskKey string) error {
 
 		return nil
 	}
-	return taskManager.CancelGlobalTask(ctx, task.ID)
+	return taskManager.CancelTask(ctx, task.ID)
 }
 
 // PauseTask pauses a task.

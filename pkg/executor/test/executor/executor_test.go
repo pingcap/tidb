@@ -18,6 +18,7 @@ import (
 	"archive/zip"
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -41,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -109,6 +109,7 @@ func TestPlanReplayer(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, index idx_a(a))")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tk.MustQuery("plan replayer dump explain select * from t where a=10")
+	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
 	tk.MustQuery("plan replayer dump explain select /*+ read_from_storage(tiflash[t]) */ * from t")
 
 	tk.MustExec("create table t1 (a int)")
@@ -140,6 +141,7 @@ func TestPlanReplayerCaptureSEM(t *testing.T) {
 	tk.MustExec("plan replayer capture '123' '123';")
 	tk.MustExec("create table t(id int)")
 	tk.MustQuery("plan replayer dump explain select * from t")
+	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
 	tk.MustQuery("select count(*) from mysql.plan_replayer_status").Check(testkit.Rows("1"))
 }
 
@@ -203,6 +205,7 @@ func TestPlanReplayerDumpSingle(t *testing.T) {
 	tk.MustExec("drop table if exists t_dump_single")
 	tk.MustExec("create table t_dump_single(a int)")
 	res := tk.MustQuery("plan replayer dump explain select * from t_dump_single")
+	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
 	path := testdata.ConvertRowsToStrings(res.Rows())
 
 	reader, err := zip.OpenReader(filepath.Join(replayer.GetPlanReplayerDirName(), path[0]))
@@ -2574,33 +2577,6 @@ func TestIsFastPlan(t *testing.T) {
 		ok = executor.IsFastPlan(p)
 		require.Equal(t, ca.isFastPlan, ok)
 	}
-}
-
-func TestTableLockPrivilege(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk2 := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("create user 'testuser'@'localhost'")
-	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "testuser", Hostname: "localhost"}, nil, nil, nil))
-	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE", "[planner:1044]Access denied for user 'testuser'@'localhost' to database 'test'")
-	tk.MustExec("GRANT LOCK TABLES ON test.* to 'testuser'@'localhost'")
-	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE", "[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 't'")
-	tk.MustExec("REVOKE ALL ON test.* FROM 'testuser'@'localhost'")
-	tk.MustExec("GRANT SELECT ON test.* to 'testuser'@'localhost'")
-	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE", "[planner:1044]Access denied for user 'testuser'@'localhost' to database 'test'")
-	tk.MustExec("GRANT LOCK TABLES ON test.* to 'testuser'@'localhost'")
-	tk2.MustExec("LOCK TABLE test.t WRITE")
-
-	tk.MustExec("create database test2")
-	tk.MustExec("create table test2.t2(a int)")
-	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE, test2.t2 WRITE", "[planner:1044]Access denied for user 'testuser'@'localhost' to database 'test2'")
-	tk.MustExec("GRANT LOCK TABLES ON test2.* to 'testuser'@'localhost'")
-	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE, test2.t2 WRITE", "[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 't2'")
-	tk.MustExec("GRANT SELECT ON test2.* to 'testuser'@'localhost'")
-	tk2.MustExec("LOCK TABLE test.t WRITE, test2.t2 WRITE")
-	tk.MustExec("LOCK TABLE test.t WRITE, test2.t2 WRITE")
 }
 
 func TestGlobalMemoryControl2(t *testing.T) {

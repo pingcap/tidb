@@ -31,6 +31,10 @@ echo "prepare the data"
 run_sql_file $CUR/prepare_data/delete_range.sql
 # ...
 
+# check something after prepare the data
+prepare_delete_range_count=$(run_sql "select count(*) DELETE_RANGE_CNT from (select * from mysql.gc_delete_range union all select * from mysql.gc_delete_range_done) del_range;" | tail -n 1 | awk '{print $2}')
+echo "prepare_delete_range_count: $prepare_delete_range_count"
+
 # start the log backup task
 echo "start log task"
 run_br --pd $PD_ADDR log start --task-name integration_test -s "local://$TEST_DIR/$PREFIX/log"
@@ -43,6 +47,10 @@ run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$PREFIX/full"
 echo "load the incremental data"
 run_sql_file $CUR/incremental_data/delete_range.sql
 # ...
+
+# check something after load the incremental data
+incremental_delete_range_count=$(run_sql "select count(*) DELETE_RANGE_CNT from (select * from mysql.gc_delete_range union all select * from mysql.gc_delete_range_done) del_range;" | tail -n 1 | awk '{print $2}')
+echo "incremental_delete_range_count: $incremental_delete_range_count"
 
 # wait checkpoint advance
 echo "wait checkpoint advance"
@@ -93,8 +101,9 @@ run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-bac
 # check something in downstream cluster
 echo "check br log"
 check_contains "restore log success summary"
-# check_not_contains "rewrite delete range"
+check_not_contains "rewrite delete range"
 echo "" > $res_file
 echo "check sql result"
-run_sql "select count(*) DELETE_RANGE_CNT from mysql.gc_delete_range group by ts order by DELETE_RANGE_CNT desc limit 1;"
-check_contains "DELETE_RANGE_CNT: 46"
+run_sql "select count(*) DELETE_RANGE_CNT from (select * from mysql.gc_delete_range union all select * from mysql.gc_delete_range_done) del_range group by ts order by DELETE_RANGE_CNT desc limit 1;"
+expect_delete_range=$(($incremental_delete_range_count-$prepare_delete_range_count))
+check_contains "DELETE_RANGE_CNT: $expect_delete_range"

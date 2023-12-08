@@ -3421,13 +3421,13 @@ abc
 drop table if exists t;
 drop table if exists tbl_29711;
 CREATE TABLE `tbl_29711` (`col_250` text COLLATE utf8_unicode_ci NOT NULL,`col_251` enum('Alice','Bob','Charlie','David') COLLATE utf8_unicode_ci NOT NULL DEFAULT 'Charlie',PRIMARY KEY (`col_251`,`col_250`(1)) NONCLUSTERED);
-explain format=brief select col_250,col_251 from tbl_29711 where col_251 between 'Bob' and 'David' order by col_250,col_251 limit 6;
+explain format=brief select col_250,col_251 from tbl_29711 use index (primary) where col_251 between 'Bob' and 'David' order by col_250,col_251 limit 6;
 id	estRows	task	access object	operator info
 TopN	6.00	root		planner__core__integration.tbl_29711.col_250, planner__core__integration.tbl_29711.col_251, offset:0, count:6
 └─IndexLookUp	6.00	root		
-  ├─IndexRangeScan(Build)	30.00	cop[tikv]	table:tbl_29711, index:PRIMARY(col_251, col_250)	range:["Bob","Bob"], ["Charlie","Charlie"], ["David","David"], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	250.00	cop[tikv]	table:tbl_29711, index:PRIMARY(col_251, col_250)	range:["Bob","David"], keep order:false, stats:pseudo
   └─TopN(Probe)	6.00	cop[tikv]		planner__core__integration.tbl_29711.col_250, planner__core__integration.tbl_29711.col_251, offset:0, count:6
-    └─TableRowIDScan	30.00	cop[tikv]	table:tbl_29711	keep order:false, stats:pseudo
+    └─TableRowIDScan	250.00	cop[tikv]	table:tbl_29711	keep order:false, stats:pseudo
 drop table if exists t29711;
 CREATE TABLE `t29711` (`a` varchar(10) DEFAULT NULL,`b` int(11) DEFAULT NULL,`c` int(11) DEFAULT NULL,KEY `ia` (`a`(2)));
 explain format=brief select * from t29711 use index (ia) order by a limit 10;

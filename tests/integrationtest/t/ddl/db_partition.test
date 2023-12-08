@@ -307,7 +307,7 @@ explain format = 'brief' select * from t where a is null;
 explain format = 'brief' select * from t where a = 3;
 # TODO: check ranges with 1,2 and 3 matching values, including 'holes' matching DEFAULT
 # DEFAULT partition will not be used in reorganize partition if not included in the source/destination
--- error 8112
+-- error 1526
 alter table t reorganize partition p0 into (partition p0 values in (0));
 drop table t;
 CREATE TABLE t (a VARCHAR(100),b INT) PARTITION BY LIST COLUMNS (a) (PARTITION p1 VALUES IN ('a', 'b', 'DEFAULT'),PARTITION pDef DEFAULT);
@@ -369,7 +369,7 @@ explain format = 'brief' select * from t where a >= "3" and a <= "4";
 --sorted_result
 select * from t where a >= "3" and a <= "4";
 # DEFAULT partition will not be used in reorganize partition if not included in the source/destination
--- error 8112
+-- error 1526
 alter table t reorganize partition p0 into (partition p0 values in (0));
 set @@tidb_partition_prune_mode = default;
 
@@ -2213,3 +2213,226 @@ partition by range(unix_timestamp(time_recorded)) (
 	partition p1 values less than (1559192604)
 );
 set @@session.tidb_enable_table_partition = default;
+
+
+# TestExchangePartitionExpressIndex
+set @@tidb_enable_exchange_partition=1;
+drop table if exists pt1;
+create table pt1(a int, b int, c int) PARTITION BY hash (a) partitions 1;
+alter table pt1 add index idx((a+c));
+
+drop table if exists nt1;
+create table nt1(a int, b int, c int);
+--error 1736
+alter table pt1 exchange partition p0 with table nt1;
+
+alter table nt1 add column (`_V$_idx_0` bigint(20) generated always as (a+b) virtual);
+--error 1736
+alter table pt1 exchange partition p0 with table nt1;
+
+## test different expression index when expression returns same field type
+alter table nt1 drop column `_V$_idx_0`;
+alter table nt1 add index idx((b-c));
+--error 1736
+alter table pt1 exchange partition p0 with table nt1;
+
+## test different expression index when expression returns different field type
+alter table nt1 drop index idx;
+alter table nt1 add index idx((concat(a, b)));
+--error 1736
+alter table pt1 exchange partition p0 with table nt1;
+
+drop table if exists nt2;
+create table nt2 (a int, b int, c int);
+alter table nt2 add index idx((a+c));
+alter table pt1 exchange partition p0 with table nt2;
+
+
+# TestExchangePartitionTableCompatiable
+set tidb_enable_global_index=true;
+
+drop database if exists partition_exchange;
+create database partition_exchange;
+use partition_exchange;
+
+create table pt (id int not null) partition by hash (id) partitions 4;
+create table nt (id int(1) not null);
+alter table pt exchange partition p0 with table nt;
+
+create table pt1 (id int not null, fname varchar(3)) partition by hash (id) partitions 4;
+create table nt1 (id int not null, fname varchar(4));
+-- error 1736
+alter table pt1 exchange partition p0 with table nt1;
+
+create table pt2 (id int not null, salary decimal) partition by hash(id) partitions 4;
+create table nt2 (id int not null, salary decimal(3,2));
+-- error 1736
+alter table pt2 exchange partition p0 with table nt2;
+
+create table pt3 (id int not null, salary decimal) partition by hash(id) partitions 1;
+create table nt3 (id int not null, salary decimal(10, 1));
+-- error 1736
+alter table pt3 exchange partition p0 with table nt3;
+
+create table pt4 (id int not null) partition by hash(id) partitions 1;
+create table nt4 (id1 int not null);
+-- error 1736
+alter table pt4 exchange partition p0 with table nt4;
+
+create table pt5 (id int not null, primary key (id)) partition by hash(id) partitions 1;
+create table nt5 (id int not null);
+-- error 1736
+alter table pt5 exchange partition p0 with table nt5;
+
+create table pt6 (id int not null, salary decimal, index idx (id, salary)) partition by hash(id) partitions 1;
+create table nt6 (id int not null, salary decimal, index idx (salary, id));
+-- error 1736
+alter table pt6 exchange partition p0 with table nt6;
+
+create table pt7 (id int not null, index idx (id) invisible) partition by hash(id) partitions 1;
+create table nt7 (id int not null, index idx (id));
+alter table pt7 exchange partition p0 with table nt7;
+
+create table pt8 (id int not null, index idx (id)) partition by hash(id) partitions 1;
+create table nt8 (id int not null, index id_idx (id));
+-- error 1736
+alter table pt8 exchange partition p0 with table nt8;
+
+--echo ## Generated column (virtual)
+create table pt10 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname,' ')) virtual) partition by hash(id) partitions 1;
+create table nt10 (id int not null, lname varchar(30), fname varchar(100));
+-- error 3106
+alter table pt10 exchange partition p0 with table nt10;
+
+create table pt11 (id int not null, lname varchar(30), fname varchar(100)) partition by hash(id) partitions 1;
+create table nt11 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) virtual);
+-- error 3106
+alter table pt11 exchange partition p0 with table nt11;
+
+create table pt12 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname,' ')) stored) partition by hash(id) partitions 1;
+create table nt12 (id int not null, lname varchar(30), fname varchar(100));
+-- error 1736
+alter table pt12 exchange partition p0 with table nt12;
+
+create table pt13 (id int not null, lname varchar(30), fname varchar(100)) partition by hash(id) partitions 1;
+create table nt13 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) stored);
+-- error 1736
+alter table pt13 exchange partition p0 with table nt13;
+
+create table pt14 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) virtual) partition by hash(id) partitions 1;
+create table nt14 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) virtual);
+alter table pt14 exchange partition p0 with table nt14;
+
+--echo ## unique index
+create table pt15 (id int not null, unique index uk_id (id)) partition by hash(id) partitions 1;
+create table nt15 (id int not null, index uk_id (id));
+-- error 1736
+alter table pt15 exchange partition p0 with table nt15;
+
+--echo ## auto_increment
+create table pt16 (id int not null primary key auto_increment) partition by hash(id) partitions 1;
+create table nt16 (id int not null primary key);
+-- error 1736
+alter table pt16 exchange partition p0 with table nt16;
+
+--echo ## default
+create table pt17 (id int not null default 1) partition by hash(id) partitions 1;
+create table nt17 (id int not null);
+alter table pt17 exchange partition p0 with table nt17;
+
+--echo ## view test
+create table pt18 (id int not null) partition by hash(id) partitions 1;
+create view nt18 as select id from nt17;
+-- error 1177
+alter table pt18 exchange partition p0 with table nt18;
+
+create table pt19 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) stored) partition by hash(id) partitions 1;
+create table nt19 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) virtual);
+-- error 3106
+alter table pt19 exchange partition p0 with table nt19;
+
+create table pt20 (id int not null) partition by hash(id) partitions 1;
+create table nt20 (id int default null);
+-- error 1736
+alter table pt20 exchange partition p0 with table nt20;
+
+--echo ## unsigned
+create table pt21 (id int unsigned) partition by hash(id) partitions 1;
+create table nt21 (id int);
+-- error 1736
+alter table pt21 exchange partition p0 with table nt21;
+
+--echo ## zerofill
+create table pt22 (id int) partition by hash(id) partitions 1;
+create table nt22 (id int zerofill);
+-- error 1736
+alter table pt22 exchange partition p0 with table nt22;
+
+create table pt23 (id int, lname varchar(10) charset binary) partition by hash(id) partitions 1;
+create table nt23 (id int, lname varchar(10));
+-- error 1736
+alter table pt23 exchange partition p0 with table nt23;
+
+create table pt25 (id int, a datetime on update current_timestamp) partition by hash(id) partitions 1;
+create table nt25 (id int, a datetime);
+alter table pt25 exchange partition p0 with table nt25;
+
+create table pt26 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) virtual) partition by hash(id) partitions 1;
+create table nt26 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(id, ' ')) virtual);
+-- error 1736
+alter table pt26 exchange partition p0 with table nt26;
+
+create table pt27 (a int key, b int, index(a)) partition by hash(a) partitions 1;
+create table nt27 (a int not null, b int, index(a));
+-- error 1736
+alter table pt27 exchange partition p0 with table nt27;
+
+create table pt28 (a int primary key, b int, index(a)) partition by hash(a) partitions 1;
+create table nt28 (a int not null, b int, index(a));
+-- error 1736
+alter table pt28 exchange partition p0 with table nt28;
+
+create table pt29 (a int primary key, b int) partition by hash(a) partitions 1;
+create table nt29 (a int not null, b int, index(a));
+-- error 1736
+alter table pt29 exchange partition p0 with table nt29;
+
+create table pt30 (a int primary key, b int) partition by hash(a) partitions 1;
+create table nt30 (a int, b int, unique index(a));
+-- error 1736
+alter table pt30 exchange partition p0 with table nt30;
+
+--echo ## auto_increment
+create table pt31 (id bigint not null primary key auto_increment) partition by hash(id) partitions 1;
+create table nt31 (id bigint not null primary key);
+-- error 1736
+alter table pt31 exchange partition p0 with table nt31;
+
+--echo ## auto_random
+create table pt32 (id bigint not null primary key AUTO_RANDOM) partition by hash(id) partitions 1;
+create table nt32 (id bigint not null primary key);
+-- error 1736
+alter table pt32 exchange partition p0 with table nt32;
+
+--echo ## global temporary table
+create table pt33 (id int) partition by hash(id) partitions 1;
+create global temporary table nt33 (id int) on commit delete rows;
+-- error 1733
+alter table pt33 exchange partition p0 with table nt33;
+
+--echo ## local temporary table
+create table pt34 (id int) partition by hash(id) partitions 1;
+create temporary table nt34 (id int);
+-- error 1733
+alter table pt34 exchange partition p0 with table nt34;
+
+--echo ## global index
+create table pt35 (a int, b int, unique index(b)) partition by hash(a) partitions 1;
+create table nt35 (a int, b int, unique index(b));
+-- error 1731
+alter table pt35 exchange partition p0 with table nt35;
+
+drop database partition_exchange;
+use ddl__db_partition;
+set tidb_enable_global_index=default;
+

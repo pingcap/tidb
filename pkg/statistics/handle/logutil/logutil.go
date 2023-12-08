@@ -19,7 +19,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var (
-	// StatsLogger with category "stats" is used to log statistic related messages.
-	StatsLogger = logutil.BgLogger().With(zap.String("category", "stats"))
-)
+// StatsLogger with category "stats" is used to log statistic related messages.
+func StatsLogger() *zap.Logger {
+	return logutil.BgLogger().With(zap.String("category", "stats"))
+}

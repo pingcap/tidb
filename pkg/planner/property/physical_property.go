@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -95,7 +94,7 @@ type MPPPartitionColumn struct {
 	CollateID int32
 }
 
-func (partitionCol *MPPPartitionColumn) hashCode(ctx *stmtctx.StatementContext) []byte {
+func (partitionCol *MPPPartitionColumn) hashCode() []byte {
 	hashcode := partitionCol.Col.HashCode()
 	if partitionCol.CollateID < 0 {
 		// collateId < 0 means new collation is not enabled
@@ -341,7 +340,7 @@ func (p *PhysicalProperty) HashCode() []byte {
 	if p.TaskTp == MppTaskType {
 		p.hashcode = codec.EncodeInt(p.hashcode, int64(p.MPPPartitionTp))
 		for _, col := range p.MPPPartitionCols {
-			p.hashcode = append(p.hashcode, col.hashCode(nil)...)
+			p.hashcode = append(p.hashcode, col.hashCode()...)
 		}
 	}
 	p.hashcode = append(p.hashcode, codec.EncodeInt(nil, int64(p.CTEProducerStatus))...)

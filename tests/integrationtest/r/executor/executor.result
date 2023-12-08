@@ -3933,8 +3933,8 @@ a
 1
 2
 3
-SELECT `s`.`count(a)` FROM (SELECT COUNT(`a`) FROM `test`.`t`) AS `s`;
-Error 1146 (42S02): Table 'test.t' doesn't exist
+SELECT `s`.`count(a)` FROM (SELECT COUNT(`a`) FROM `executor__executor`.`t`) AS `s`;
+Error 1054 (42S22): Unknown column 's.count(a)' in 'field list'
 drop view v;
 create definer='root'@'localhost' view v as select * from (select count(a) from t) s;
 select * from v;
@@ -4549,3 +4549,32 @@ stmt_type
 Update
 set @@tidb_mem_quota_query=default;
 set global tidb_mem_oom_action=default;
+drop table if exists t;
+drop user if exists 'testuser'@'localhost';
+create table t(a int);
+create user 'testuser'@'localhost';
+LOCK TABLE executor__executor.t WRITE;
+Error 1044 (42000): Access denied for user 'testuser'@'localhost' to database 'executor__executor'
+GRANT LOCK TABLES ON executor__executor.* to 'testuser'@'localhost';
+LOCK TABLE executor__executor.t WRITE;
+Error 1142 (42000): SELECT command denied to user 'testuser'@'localhost' for table 't'
+REVOKE ALL ON executor__executor.* FROM 'testuser'@'localhost';
+GRANT SELECT ON executor__executor.* to 'testuser'@'localhost';
+LOCK TABLE executor__executor.t WRITE;
+Error 1044 (42000): Access denied for user 'testuser'@'localhost' to database 'executor__executor'
+GRANT LOCK TABLES ON executor__executor.* to 'testuser'@'localhost';
+LOCK TABLE executor__executor.t WRITE;
+drop database if exists test2;
+create database test2;
+create table test2.t2(a int);
+LOCK TABLE executor__executor.t WRITE, test2.t2 WRITE;
+Error 1044 (42000): Access denied for user 'testuser'@'localhost' to database 'test2'
+GRANT LOCK TABLES ON test2.* to 'testuser'@'localhost';
+LOCK TABLE executor__executor.t WRITE, test2.t2 WRITE;
+Error 1142 (42000): SELECT command denied to user 'testuser'@'localhost' for table 't2'
+GRANT SELECT ON test2.* to 'testuser'@'localhost';
+LOCK TABLE executor__executor.t WRITE, test2.t2 WRITE;
+LOCK TABLE executor__executor.t WRITE, test2.t2 WRITE;
+Error 8020 (HY000): Table 't' was locked in WRITE by server: <server> session: <session>
+unlock tables;
+drop user 'testuser'@'localhost';
