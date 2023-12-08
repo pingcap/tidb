@@ -159,7 +159,12 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	numRows := req.NumRows()
 	if numRows == 0 {
 		if a.stmt != nil {
-			a.stmt.Ctx.GetSessionVars().LastFoundRows = a.stmt.Ctx.GetSessionVars().StmtCtx.FoundRows()
+			stmtCtx := a.stmt.Ctx.GetSessionVars().StmtCtx
+			if stmtCtx.OverrideFoundRows != nil {
+				a.stmt.Ctx.GetSessionVars().LastFoundRows = uint64(*stmtCtx.OverrideFoundRows)
+			} else {
+				a.stmt.Ctx.GetSessionVars().LastFoundRows = stmtCtx.FoundRows()
+			}
 		}
 		return nil
 	}

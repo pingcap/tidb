@@ -4303,6 +4303,85 @@ func (b *PlanBuilder) TableHints() *tableHintInfo {
 	return &(b.tableHintInfo[len(b.tableHintInfo)-1])
 }
 
+func (b *PlanBuilder) buildSelectWithCalcFoundRows(ctx context.Context, sel *ast.SelectStmt) (p LogicalPlan, err error) {
+	// Example of executing     `SELECT SQL_CALC_FOUND_ROWS *, a     FROM x WHERE ... LIMIT ...`:
+	// First, execute           `SELECT COUNT(*) FROM
+	//                                              (SELECT *, a     FROM x WHERE ... ) AS ...`
+	// Then, execute and return `SELECT                     *, a     FROM x WHERE ... LIMIT ...`.
+
+	sel.SelectStmtOpts.CalcFoundRows = false
+
+	// Step 1. Build a new SELECT, which takes the current select (without limit) as a sub-query.
+	originalLimit := sel.Limit
+	sel.Limit = nil
+
+	// Rewrite original projections to assign unique names. Otherwise there may be name
+	// conflicts when used as a subquery.
+	// For example, `select 1,1`` is valid but `select count(*) from (select 1,1) as t` is not valid.
+	originalNames := make([]model.CIStr, 0, len(sel.Fields.Fields))
+	for _, field := range sel.Fields.Fields {
+		originalNames = append(originalNames, field.AsName)
+	}
+	for i, field := range sel.Fields.Fields {
+		if field.WildCard != nil {
+			continue
+		}
+		field.AsName = model.NewCIStr(fmt.Sprintf("__TIDB_INTERNAL_COL_%d__", i))
+	}
+
+	newSel := &ast.SelectStmt{
+		SelectStmtOpts: &ast.SelectStmtOpts{},
+		Distinct:       false,
+		Fields: &ast.FieldList{
+			Fields: []*ast.SelectField{
+				{
+					Expr: &ast.AggregateFuncExpr{
+						F:    ast.AggFuncCount,
+						Args: []ast.ExprNode{ast.NewValueExpr(1, "", "")},
+					},
+				},
+			},
+		},
+		Kind: ast.SelectStmtKindSelect,
+		From: &ast.TableRefsClause{
+			TableRefs: &ast.Join{
+				Left: &ast.TableSource{
+					Source: sel,
+					AsName: model.NewCIStr(fmt.Sprintf("TEMP_TABLE_%d", sel.QueryBlockOffset)),
+				},
+				Right: nil,
+			},
+		},
+	}
+	// As we are building new AST nodes, we need to manually update the flag for it.
+	ast.SetFlag(newSel)
+
+	// Step 2. Execute this new SELECT to get the desired number of rows.
+	logicalPlan, err := b.buildSelect(ctx, newSel)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	physicalPlan, _, err := DoOptimize(ctx, b.ctx, b.optFlag, logicalPlan)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	row, err := EvalSubqueryFirstRow(ctx, physicalPlan, b.is, b.ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	foundRows := int(row[0].GetInt64())
+	b.ctx.GetSessionVars().StmtCtx.OverrideFoundRows = &foundRows
+
+	// Step 3. Rollback to the SQL without SQL_CALC_FOUND_ROWS.
+	sel.Limit = originalLimit
+	for i, field := range sel.Fields.Fields {
+		field.AsName = originalNames[i]
+	}
+
+	return b.buildSelect(ctx, sel)
+}
+
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p LogicalPlan, err error) {
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, sel.QueryBlockOffset)
@@ -4311,6 +4390,12 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		// table hints are only visible in the current SELECT statement.
 		b.popTableHints()
 	}()
+
+	if sel.SelectStmtOpts != nil && sel.SelectStmtOpts.CalcFoundRows {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(variable.ErrWarnDeprecatedSyntaxSimpleMsg.GenWithStackByArgs("SQL_CALC_FOUND_ROWS"))
+		return b.buildSelectWithCalcFoundRows(ctx, sel)
+	}
+
 	if b.buildingRecursivePartForCTE {
 		if sel.Distinct || sel.OrderBy != nil || sel.Limit != nil {
 			return nil, ErrNotSupportedYet.GenWithStackByArgs("ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression")
@@ -4321,14 +4406,6 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}
 	noopFuncsMode := b.ctx.GetSessionVars().NoopFuncsMode
 	if sel.SelectStmtOpts != nil {
-		if sel.SelectStmtOpts.CalcFoundRows && noopFuncsMode != variable.OnInt {
-			err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")
-			if noopFuncsMode == variable.OffInt {
-				return nil, err
-			}
-			// NoopFuncsMode is Warn, append an error
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-		}
 		origin := b.inStraightJoin
 		b.inStraightJoin = sel.SelectStmtOpts.StraightJoin
 		defer func() { b.inStraightJoin = origin }()

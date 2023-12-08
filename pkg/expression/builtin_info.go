@@ -151,7 +151,6 @@ func (b *builtinFoundRowsSig) Clone() builtinFunc {
 
 // evalInt evals a builtinFoundRowsSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_found-rows
-// TODO: SQL_CALC_FOUND_ROWS and LIMIT not support for now, We will finish in another PR.
 func (b *builtinFoundRowsSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
 	data := ctx.GetSessionVars()
 	if data == nil {

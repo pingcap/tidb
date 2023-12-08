@@ -395,6 +395,11 @@ type StatementContext struct {
 	// InHandleForeignKeyTrigger indicates currently are handling foreign key trigger.
 	InHandleForeignKeyTrigger bool
 
+	// OverrideFoundRows indicates found_rows should be overrided by the specified value, instead of
+	// calculated based on resultSet. This is set when SQL_CALC_FOUND_ROWS is specified.
+	// Accessing this variable does not need lock, as it will not be modified during execution.
+	OverrideFoundRows *int
+
 	// ForeignKeyTriggerCtx is the contain information for foreign key cascade execution.
 	ForeignKeyTriggerCtx struct {
 		// The SavepointName is use to do rollback when handle foreign key cascade failed.
