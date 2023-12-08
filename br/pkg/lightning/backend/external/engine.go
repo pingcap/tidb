@@ -188,7 +188,7 @@ func getFilesReadConcurrency(ctx context.Context, storage storage.ExternalStorag
 	}
 	for i := range statsFiles {
 		result[i] = (endOffs[i] - startOffs[i]) / uint64(ConcurrentReaderBufferSizePerConc)
-		if result[i] < 16 {
+		if result[i] < readAllDataConcLimit {
 			result[i] = 1
 		} else {
 			if result[i] > readAllDataConcLimit {
@@ -305,7 +305,7 @@ func readAllData(
 	}
 	var eg errgroup.Group
 	// TODO(lance6716): check memory usage
-	eg.SetLimit(50)
+	eg.SetLimit(30)
 	for i := range dataFiles {
 		i := i
 		eg.Go(func() error {
