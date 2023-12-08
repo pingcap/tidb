@@ -1393,6 +1393,7 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 			res.Repeat += buckets[i].Repeat
 		}
 		if compare > 0 {
+			panic("fff")
 			statslogutil.StatsLogger().Warn("wwz warn big",
 				zap.String("upper", res.upper.GetBinaryStringEncoded()),
 				zap.String("buckets[i].upper", buckets[i].upper.GetBinaryStringEncoded()))
