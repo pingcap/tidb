@@ -1498,6 +1498,8 @@ var (
 	// TiDBOptFixControl44855 controls whether to use a more accurate upper bound when estimating row count of index
 	// range scan under inner side of index join.
 	TiDBOptFixControl44855 uint64 = 44855
+	// TiDBOptFixControl46177 controls whether to explore enforced plans for DataSource if it has already found an unenforced plan.
+	TiDBOptFixControl46177 uint64 = 46177
 )
 
 // GetOptimizerFixControlValue returns the specified value of the optimizer fix control.
