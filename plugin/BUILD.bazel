@@ -38,11 +38,7 @@ go_test(
     ],
     embed = [":plugin"],
     flaky = True,
-<<<<<<< HEAD:plugin/BUILD.bazel
-    shard_count = 10,
-=======
-    shard_count = 12,
->>>>>>> 169617d22dc (plugin: fix bug that watch loop will refresh frequently when channel closed (#49275)):pkg/plugin/BUILD.bazel
+    shard_count = 11,
     deps = [
         "//kv",
         "//parser/mysql",
