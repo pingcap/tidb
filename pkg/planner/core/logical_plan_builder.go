@@ -4335,6 +4335,9 @@ func (b *PlanBuilder) buildSelectWithCalcFoundRows(ctx context.Context, sel *ast
 		[]expression.Expression{},
 		map[*ast.AggregateFuncExpr]int{},
 	)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	// Step 2. Execute this new SELECT to get the desired number of rows.
 	physicalPlan, _, err := DoOptimize(ctx, b.ctx, b.optFlag, innerPlan)
