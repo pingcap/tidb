@@ -1037,9 +1037,7 @@ func (cc *clientConn) initConnect(ctx context.Context) error {
 					break
 				}
 			}
-			if err := rs.Close(); err != nil {
-				return err
-			}
+			rs.Close()
 		}
 	}
 	logutil.Logger(ctx).Debug("init_connect complete")
@@ -2024,7 +2022,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	// The session tracker detachment from global tracker is solved in the `rs.Close` in most cases.
 	// If the rs is nil, the detachment will be done in the `handleNoDelay`.
 	if rs != nil {
-		defer terror.Call(rs.Close)
+		defer rs.Close()
 	}
 	if err != nil {
 		return true, err
@@ -2250,7 +2248,23 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			stmtDetail.WriteSQLRespDuration += time.Since(start)
 		}
 	}
+<<<<<<< HEAD:server/conn.go
 	return false, cc.writeEOF(serverStatus)
+=======
+	if err := rs.Finish(); err != nil {
+		return false, err
+	}
+
+	if stmtDetail != nil {
+		start = time.Now()
+	}
+
+	err := cc.writeEOF(ctx, serverStatus)
+	if stmtDetail != nil {
+		stmtDetail.WriteSQLRespDuration += time.Since(start)
+	}
+	return false, err
+>>>>>>> d23e1c379a5 (server,executor: split ResultSet Close() to Finish() and Close() (#49224)):pkg/server/conn.go
 }
 
 // writeChunksWithFetchSize writes data from a Chunk, which filled data by a ResultSet, into a connection.
