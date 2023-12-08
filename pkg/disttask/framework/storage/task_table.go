@@ -54,10 +54,10 @@ const (
 var (
 	maxSubtaskBatchSize = 16 * units.MiB
 
-	// UnstableSubtasks is the error when we detected that the subtasks are
+	// ErrUnstableSubtasks is the error when we detected that the subtasks are
 	// unstable, i.e. count, order and content of the subtasks are changed on
 	// different call.
-	UnstableSubtasks = errors.New("unstable subtasks")
+	ErrUnstableSubtasks = errors.New("unstable subtasks")
 )
 
 // SessionExecutor defines the interface for executing SQLs in a session.
@@ -862,7 +862,7 @@ func (stm *TaskManager) SwitchTaskStepInBatch(
 		}
 		existingTaskCnt := int(rs[0].GetInt64(0))
 		if existingTaskCnt > len(subtasks) {
-			return errors.Annotatef(UnstableSubtasks, "expected %d, got %d",
+			return errors.Annotatef(ErrUnstableSubtasks, "expected %d, got %d",
 				len(subtasks), existingTaskCnt)
 		}
 		subtaskBatches := stm.splitSubtasks(subtasks[existingTaskCnt:])

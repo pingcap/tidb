@@ -593,12 +593,12 @@ func TestDispatcherOnNextStage(t *testing.T) {
 	dspExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(subtaskMetas, nil)
 	taskMgr.EXPECT().SwitchTaskStepInBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(errors.Annotatef(storage.UnstableSubtasks, "expected %d, got %d",
+		Return(errors.Annotatef(storage.ErrUnstableSubtasks, "expected %d, got %d",
 			2, 100))
 	kv.TxnTotalSizeLimit.Store(1)
 	startTime := time.Now()
 	err := dsp.OnNextStage()
-	require.ErrorIs(t, err, storage.UnstableSubtasks)
+	require.ErrorIs(t, err, storage.ErrUnstableSubtasks)
 	require.ErrorContains(t, err, "expected 2, got 100")
 	require.WithinDuration(t, startTime, time.Now(), 10*time.Second)
 	require.True(t, ctrl.Satisfied())

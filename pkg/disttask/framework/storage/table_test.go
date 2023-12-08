@@ -330,7 +330,7 @@ func TestSwitchTaskStepInBatch(t *testing.T) {
 		require.NoError(t, err)
 	}
 	err = tm.SwitchTaskStepInBatch(ctx, task3, proto.TaskStateRunning, proto.StepOne, subtasks3[:1])
-	require.ErrorIs(t, err, storage.UnstableSubtasks)
+	require.ErrorIs(t, err, storage.ErrUnstableSubtasks)
 	require.ErrorContains(t, err, "expected 1, got 2")
 }
 

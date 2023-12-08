@@ -674,7 +674,7 @@ func (d *BaseDispatcher) dispatchSubTask(
 	return handle.RunWithRetry(d.ctx, RetrySQLTimes, backoffer, logutil.Logger(d.logCtx),
 		func(ctx context.Context) (bool, error) {
 			err := fn(d.ctx, d.Task, proto.TaskStateRunning, subtaskStep, subTasks)
-			if errors.Cause(err) == storage.UnstableSubtasks {
+			if errors.Cause(err) == storage.ErrUnstableSubtasks {
 				return false, err
 			}
 			return true, err
