@@ -983,9 +983,7 @@ func (cc *clientConn) initConnect(ctx context.Context) error {
 					break
 				}
 			}
-			if err := rs.Close(); err != nil {
-				return err
-			}
+			rs.Close()
 		}
 	}
 	logutil.Logger(ctx).Debug("init_connect complete")
@@ -2050,7 +2048,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	// - If the rs is nil and err is not nil, the detachment will be done in
 	//   the `handleNoDelay`.
 	if rs != nil {
-		defer terror.Call(rs.Close)
+		defer rs.Close()
 	}
 	if err != nil {
 		// If error is returned during the planner phase or the executor.Open
@@ -2318,7 +2316,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 			stmtDetail.WriteSQLRespDuration += time.Since(start)
 		}
 	}
-	if err := rs.Close(); err != nil {
+	if err := rs.Finish(); err != nil {
 		return false, err
 	}
 
