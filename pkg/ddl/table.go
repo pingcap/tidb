@@ -1072,7 +1072,6 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 		return finishJobRenameTables(d, t, job, tableNames, tableIDs, newSchemaIDs)
 	}
 
-	var tblInfos = make([]*model.TableInfo, 0, len(tableNames))
 	var err error
 	fkh := newForeignKeyHelper()
 	for i, oldSchemaID := range oldSchemaIDs {
@@ -1090,7 +1089,6 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		tblInfos = append(tblInfos, tblInfo)
 	}
 
 	ver, err = updateSchemaVersion(d, t, job, fkh.getLoadedTables()...)
@@ -1124,23 +1122,23 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo
 		return ver, errors.Wrapf(err, "failed to get old label rules from PD")
 	}
 
+	if tblInfo.AutoIDSchemaID == 0 && newSchemaID != oldSchemaID {
+		// The auto id is referenced by a schema id + table id
+		// Table ID is not changed between renames, but schema id can change.
+		// To allow concurrent use of the auto id during rename, keep the auto id
+		// by always reference it with the schema id it was originally created in.
+		tblInfo.AutoIDSchemaID = oldSchemaID
+	}
+	if newSchemaID == tblInfo.AutoIDSchemaID {
+		// Back to the original schema id, no longer needed.
+		tblInfo.AutoIDSchemaID = 0
+	}
+
 	tblInfo.Name = *tableName
 	err = t.CreateTableOrView(newSchemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
-	}
-
-	if newSchemaID != oldSchemaID {
-		oldDBID := tblInfo.GetDBID(oldSchemaID)
-		err := meta.BackupAndRestoreAutoIDs(t, oldDBID, tblInfo.ID, newSchemaID, tblInfo.ID)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
-		// It's compatible with old version.
-		// TODO: Remove it.
-		tblInfo.OldSchemaID = 0
 	}
 
 	err = updateLabelRules(job, tblInfo, oldRules, tableRuleID, partRuleIDs, oldRuleIDs, tblInfo.ID)
