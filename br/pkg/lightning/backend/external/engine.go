@@ -182,22 +182,17 @@ func getFilesReadConcurrency(
 	storage storage.ExternalStorage,
 	statsFiles []string,
 	startKey, endKey []byte,
-) ([]uint64, []uint64, []bool, error) {
+) ([]uint64, []uint64, error) {
 	result := make([]uint64, len(statsFiles))
-	skip := make([]bool, len(statsFiles))
 	startOffs, err := seekPropsOffsets(ctx, startKey, statsFiles, storage, false)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	endOffs, err := seekPropsOffsets(ctx, endKey, statsFiles, storage, false)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	for i := range statsFiles {
-		if endOffs[i] == startOffs[i] {
-			skip[i] = true
-			continue
-		}
 		result[i] = (endOffs[i] - startOffs[i]) / uint64(ConcurrentReaderBufferSizePerConc)
 		logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
 			zap.String("filename", statsFiles[i]),
@@ -208,7 +203,7 @@ func getFilesReadConcurrency(
 		// TODO(lance6716):
 		result[i] = 1
 	}
-	return result, startOffs, skip, nil
+	return result, startOffs, nil
 }
 
 // readOneFile will acquire memory from given bufPool for:
@@ -315,7 +310,7 @@ func readAllData(
 		task.End(zap.ErrorLevel, err)
 	}()
 
-	concurrences, startOffsets, skip, err := getFilesReadConcurrency(
+	concurrences, startOffsets, err := getFilesReadConcurrency(
 		ctx,
 		storage,
 		statsFiles,
@@ -329,9 +324,6 @@ func readAllData(
 	// TODO(lance6716): check memory usage
 	eg.SetLimit(64)
 	for i := range dataFiles {
-		if skip[i] {
-			continue
-		}
 		i := i
 		eg.Go(func() error {
 			return readOneFile(
@@ -567,7 +559,6 @@ func (e *Engine) Reset() error {
 		e.bufPool.Destroy()
 		memLimiter := membuf.NewLimiter(memLimit)
 		e.bufPool = membuf.NewPool(
-			//membuf.WithLargeAllocThreshold(memLimit),
 			membuf.WithPoolMemoryLimiter(memLimiter),
 		)
 	}

@@ -255,12 +255,12 @@ func (b *Buffer) allocBytesWithSliceLocation(n int) ([]byte, SliceLocation) {
 
 var sizeOfSliceLocation = int(unsafe.Sizeof(SliceLocation{}))
 
-// AllocBytesWithSliceLocation is like AllocBytes, but it ignores the pool's
-// WithLargeAllocThreshold, and also returns a SliceLocation. The expected usage
-// is after writing data into returned slice **we do not store the slice**,
-// but only the SliceLocation. Later we can use the SliceLocation to get the
-// slice again. When we have a large number of slices in memory this can improve
-// performance. nil returned slice means allocation failed.
+// AllocBytesWithSliceLocation is like AllocBytes, but it must allocate the
+// buffer in the pool rather team from go's runtime. The expected usage is after
+// writing data into returned slice **we do not store the slice**, but only the
+// SliceLocation. Later we can use the SliceLocation to get the slice again. When
+// we have a large number of slices in memory this can improve performance. nil
+// returned slice means allocation failed.
 func (b *Buffer) AllocBytesWithSliceLocation(n int) ([]byte, SliceLocation) {
 	if b.pool.limiter != nil {
 		b.pool.limiter.Acquire(sizeOfSliceLocation)
