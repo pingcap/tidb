@@ -245,7 +245,27 @@ type flushWatcher struct {
 }
 
 func (w *flushWatcher) watchLoop() {
+<<<<<<< HEAD:plugin/plugin.go
 	watchChan := w.etcd.Watch(w.ctx, w.path)
+=======
+	const reWatchInterval = time.Second * 5
+	logutil.BgLogger().Info("plugin flushWatcher loop started", zap.String("plugin", w.manifest.Name))
+	for w.ctx.Err() == nil {
+		ch := w.etcd.Watch(w.ctx, w.path)
+		if exit := w.watchLoopWithChan(ch); exit {
+			break
+		}
+
+		logutil.BgLogger().Info(
+			"plugin flushWatcher old chan closed, restart loop later",
+			zap.String("plugin", w.manifest.Name),
+			zap.Duration("after", reWatchInterval))
+		time.Sleep(reWatchInterval)
+	}
+}
+
+func (w *flushWatcher) watchLoopWithChan(ch clientv3.WatchChan) (exit bool) {
+>>>>>>> 899dfe8a741 (plugin: add lost rewatch sleep in plugin loop (#49292)):pkg/plugin/plugin.go
 	for {
 		select {
 		case <-w.ctx.Done():
