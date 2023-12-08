@@ -49,12 +49,6 @@ const (
 	ddlPrompt            = "ddl-syncer"
 )
 
-var (
-	// CheckVersFirstWaitTime is a waitting time before the owner checks all the servers of the schema version,
-	// and it's an exported variable for testing.
-	CheckVersFirstWaitTime = 50 * time.Millisecond
-)
-
 // Watcher is responsible for watching the etcd path related operations.
 type Watcher interface {
 	// WatchChan returns the chan for watching etcd path.
@@ -275,7 +269,6 @@ func (s *schemaVersionSyncer) removeSelfVersionPath() error {
 // OwnerCheckAllVersions implements SchemaSyncer.OwnerCheckAllVersions interface.
 func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID int64, latestVer int64) error {
 	startTime := time.Now()
-	time.Sleep(CheckVersFirstWaitTime)
 	notMatchVerCnt := 0
 	intervalCnt := int(time.Second / checkVersInterval)
 

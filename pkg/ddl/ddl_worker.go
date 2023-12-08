@@ -1212,6 +1212,13 @@ func waitSchemaChanged(d *ddlCtx, waitTime time.Duration, latestSchemaVersion in
 		return nil
 	}
 
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		d.schemaSyncer.UpdateSelfVersion(d.ctx, job.ID, latestSchemaVersion)
+		wg.Done()
+	}()
+
 	err = d.schemaSyncer.OwnerUpdateGlobalVersion(d.ctx, latestSchemaVersion)
 	if err != nil {
 		logutil.Logger(d.ctx).Info("update latest schema version failed", zap.String("category", "ddl"), zap.Int64("ver", latestSchemaVersion), zap.Error(err))
@@ -1224,6 +1231,10 @@ func waitSchemaChanged(d *ddlCtx, waitTime time.Duration, latestSchemaVersion in
 			return nil
 		}
 	}
+
+	wg.Wait()
+
+	logutil.Logger(d.ctx).Info("wait schema version change stage", zap.Duration("take time", time.Since(timeStart)))
 
 	// OwnerCheckAllVersions returns only when all TiDB schemas are synced(exclude the isolated TiDB).
 	err = d.schemaSyncer.OwnerCheckAllVersions(d.ctx, job.ID, latestSchemaVersion)
