@@ -180,13 +180,15 @@ func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) err
 					logutil.ShortError(err),
 					zap.Stringer("table", tableName),
 				)
-				return errors.Trace(err)
+				return errors.Annotatef(err, "error during merging temporary tables into system tables, table: %s", tableName)
 			}
 			tablesRestored = append(tablesRestored, tableName.L)
 		}
 	}
-	err := rc.afterSystemTablesReplaced(ctx, tablesRestored)
-	return errors.Trace(err)
+	if err := rc.afterSystemTablesReplaced(ctx, tablesRestored); err != nil {
+		return errors.Annotate(err, "error during extra works after system tables replaced")
+	}
+	return nil
 }
 
 // database is a record of a database.
