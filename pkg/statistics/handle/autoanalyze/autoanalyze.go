@@ -84,7 +84,7 @@ func (sa *statsAnalyze) DeleteAnalyzeJobs(updateTime time.Time) error {
 func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobsOnCurrentInstance(currentRunningProcessIDs map[uint64]struct{}) error {
 	return statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		return CleanupCorruptedAnalyzeJobsOnCurrentInstance(sctx, currentRunningProcessIDs)
-	})
+	}, statsutil.FlagWrapTxn)
 }
 
 // CleanupCorruptedAnalyzeJobsOnDeadInstances removes analyze jobs that may have been corrupted.
@@ -92,7 +92,7 @@ func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobsOnCurrentInstance(currentRunn
 func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobsOnDeadInstances() error {
 	return statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		return CleanupCorruptedAnalyzeJobsOnDeadInstances(sctx)
-	})
+	}, statsutil.FlagWrapTxn)
 }
 
 // SelectAnalyzeJobsOnCurrentInstanceSQL is the SQL to select the analyze jobs whose
