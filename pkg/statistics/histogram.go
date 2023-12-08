@@ -1093,17 +1093,6 @@ func (hg *Histogram) Copy() *Histogram {
 	return &newHist
 }
 
-// RemoveUpperBound removes the upper bound from histogram.
-// It is used when merge stats for incremental analyze.
-func (hg *Histogram) RemoveUpperBound() *Histogram {
-	hg.Buckets[hg.Len()-1].Count -= hg.Buckets[hg.Len()-1].Repeat
-	hg.Buckets[hg.Len()-1].Repeat = 0
-	if hg.NDV > 0 {
-		hg.NDV--
-	}
-	return hg
-}
-
 // TruncateHistogram truncates the histogram to `numBkt` buckets.
 func (hg *Histogram) TruncateHistogram(numBkt int) *Histogram {
 	hist := hg.Copy()
