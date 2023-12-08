@@ -59,8 +59,8 @@ func TestBufferPool(t *testing.T) {
 	bytesBuf.AllocBytes(767)
 	require.Equal(t, 2, allocator.allocs)
 
-	largeBytes := bytesBuf.AllocBytes(513)
-	require.Equal(t, 513, len(largeBytes))
+	largeBytes := bytesBuf.AllocBytes(1025)
+	require.Equal(t, 1025, len(largeBytes))
 	require.Equal(t, 2, allocator.allocs)
 
 	require.Equal(t, 0, allocator.frees)

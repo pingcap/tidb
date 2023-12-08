@@ -38,8 +38,7 @@ func (stdAllocator) Free(_ []byte) {}
 
 // Pool is like `sync.Pool`, which manages memory for all bytes buffers. You can
 // use Pool.NewBuffer to create a new buffer, and use Buffer.Destroy to release
-// its memory to the pool.
-// TODO: need update
+// its memory to the pool. Pool can provide fixed size []byte blocks to Buffer.
 //
 // NOTE: we don't used a `sync.Pool` because when will sync.Pool release is depending on the
 // garbage collector which always release the memory so late. Use a fixed size chan to reuse
@@ -76,8 +75,8 @@ func WithAllocator(allocator Allocator) Option {
 }
 
 // WithPoolMemoryLimiter controls the maximum memory returned to buffer. Note
-// that WithLargeAllocThreshold will affect if the acquired memory is counted by
-// the limiter.
+// that when call AllocBytes with size larger than blockSize, the memory is not
+// controlled by this limiter.
 func WithPoolMemoryLimiter(limiter *Limiter) Option {
 	return func(p *Pool) {
 		p.limiter = limiter
