@@ -13,7 +13,7 @@ The CI pipeline will automatically trigger when you submit a PR or push new comm
 | pull-common-test                | `/test pull-common-test`                | Some ORM tests performed through the unistore.               |
 | pull-e2e-test                   | `/test pull-e2e-test`                   | E2e tests in `tests/globalkilltest` and `tests/graceshutdown` |
 | pull-integration-common-test    | `/test pull-integration-common-test`    | Some orm tests performed through the tikv                    |
-| pull-integration-copr-test      | `/test pull-integration-copr-test`      | Coprocessor Tests in [tikv/copr-test](https://github.com/tikv/copr-test) |
+| pull-integration-copr-test      | `/test pull-integration-copr-test`      | Coprocessor tests in [tikv/copr-test](https://github.com/tikv/copr-test) |
 | pull-integration-ddl-test       | `/test pull-integration-ddl-test`       | All ddl tests in PingCAP-QE/tidb-test `ddl_test`             |
 | pull-integration-jdbc-test      | `/test pull-integration-jdbc-test`      | All JDBC tests in PingCAP-QE/tidb-test                       |
 | pull-integration-mysql-test     | `/test pull-integration-mysql-test`     | All mysql tests in PingCAP-QE/tidb-test performed through the tikv |
