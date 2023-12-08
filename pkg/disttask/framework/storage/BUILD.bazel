@@ -31,12 +31,16 @@ go_library(
 go_test(
     name = "storage_test",
     timeout = "short",
-    srcs = ["table_test.go"],
+    srcs = [
+        "table_test.go",
+        "task_table_test.go",
+    ],
+    embed = [":storage"],
     flaky = True,
     race = "on",
-    shard_count = 10,
+    shard_count = 11,
     deps = [
-        ":storage",
+        "//pkg/config",
         "//pkg/disttask/framework/proto",
         "//pkg/kv",
         "//pkg/sessionctx/variable",
