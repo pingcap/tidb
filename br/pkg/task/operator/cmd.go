@@ -11,6 +11,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/task"
@@ -39,20 +40,16 @@ func dialPD(ctx context.Context, cfg *task.Config) (*pdutil.PdController, error)
 }
 
 func (cx *AdaptEnvForSnapshotBackupContext) cleanUpWith(f func(ctx context.Context)) {
-	_ = cx.cleanUpWithErr(func(ctx context.Context) error { f(ctx); return nil })
+	cx.cleanUpWithRetErr(nil, func(ctx context.Context) error { f(ctx); return nil })
 }
 
-func (cx *AdaptEnvForSnapshotBackupContext) cleanUpWithErr(f func(ctx context.Context) error) error {
+func (cx *AdaptEnvForSnapshotBackupContext) cleanUpWithRetErr(errOut *error, f func(ctx context.Context) error) {
 	ctx, cancel := context.WithTimeout(context.Background(), cx.cfg.TTL)
 	defer cancel()
-	return f(ctx)
-}
-
-func (cx *AdaptEnvForSnapshotBackupContext) cleanUpWithRetErr(err *error, f func(ctx context.Context) error) {
-	ctx, cancel := context.WithTimeout(context.Background(), cx.cfg.TTL)
-	defer cancel()
-	errF := f(ctx)
-	*err = multierr.Combine(*err, errF)
+	err := f(ctx)
+	if errOut != nil {
+		*errOut = multierr.Combine(*errOut, err)
+	}
 }
 
 type AdaptEnvForSnapshotBackupContext struct {
@@ -68,8 +65,8 @@ type AdaptEnvForSnapshotBackupContext struct {
 
 func (cx *AdaptEnvForSnapshotBackupContext) GetBackOffer(operation string) utils.Backoffer {
 	state := utils.InitialRetryState(64, 1*time.Second, 10*time.Second)
-	bo := utils.VerboseRetry(logutil.CL(cx).With(zap.String("operation", operation)), &state)
-
+	bo := utils.GiveUpRetryOn(&state, berrors.ErrPossibleInconsistency)
+	bo = utils.VerboseRetry(bo, logutil.CL(cx).With(zap.String("operation", operation)))
 	return bo
 }
 

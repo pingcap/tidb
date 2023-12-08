@@ -4,6 +4,7 @@ package utils
 
 import (
 	"context"
+	stderrs "errors"
 	"strings"
 	"sync"
 	"time"
@@ -209,7 +210,7 @@ func (v *verboseBackoffer) Attempt() int {
 	return attempt
 }
 
-func VerboseRetry(logger *zap.Logger, bo Backoffer) Backoffer {
+func VerboseRetry(bo Backoffer, logger *zap.Logger) Backoffer {
 	if logger == nil {
 		logger = log.L()
 	}
@@ -219,4 +220,40 @@ func VerboseRetry(logger *zap.Logger, bo Backoffer) Backoffer {
 		groupID: uuid.New(),
 	}
 	return vlog
+}
+
+type failedOnErr struct {
+	inner    Backoffer
+	failed   bool
+	failedOn []error
+}
+
+// NextBackoff returns a duration to wait before retrying again
+func (f *failedOnErr) NextBackoff(err error) time.Duration {
+	for _, fatalErr := range f.failedOn {
+		if stderrs.Is(errors.Cause(err), fatalErr) {
+			f.failed = true
+			return 0
+		}
+	}
+	if !f.failed {
+		return f.inner.NextBackoff(err)
+	}
+	return 0
+}
+
+// Attempt returns the remain attempt times
+func (f *failedOnErr) Attempt() int {
+	if f.failed {
+		return 0
+	}
+	return f.inner.Attempt()
+}
+
+func GiveUpRetryOn(bo Backoffer, errs ...error) Backoffer {
+	return &failedOnErr{
+		inner:    bo,
+		failed:   false,
+		failedOn: errs,
+	}
 }
