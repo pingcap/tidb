@@ -32,6 +32,10 @@ go_test(
     ],
     embed = [":meta"],
     flaky = True,
+<<<<<<< HEAD:meta/BUILD.bazel
+=======
+    shard_count = 11,
+>>>>>>> a3e2ddb5864 (*: Keep the auto id allocator for single table renames (#47892)):pkg/meta/BUILD.bazel
     deps = [
         "//ddl",
         "//kv",
