@@ -15,10 +15,10 @@
 package issuetest
 
 import (
-	"slices"
 	"strconv"
 	"testing"
 
+	"exp/slices"
 	"github.com/pingcap/tidb/testkit"
 )
 
