@@ -177,17 +177,27 @@ func (e *Engine) getAdjustedConcurrency() int {
 	return max(adjusted, 1)
 }
 
-func getFilesReadConcurrency(ctx context.Context, storage storage.ExternalStorage, statsFiles []string, startKey, endKey []byte) ([]uint64, []uint64, error) {
+func getFilesReadConcurrency(
+	ctx context.Context,
+	storage storage.ExternalStorage,
+	statsFiles []string,
+	startKey, endKey []byte,
+) ([]uint64, []uint64, []bool, error) {
 	result := make([]uint64, len(statsFiles))
+	skip := make([]bool, len(statsFiles))
 	startOffs, err := seekPropsOffsets(ctx, startKey, statsFiles, storage, false)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	endOffs, err := seekPropsOffsets(ctx, endKey, statsFiles, storage, false)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	for i := range statsFiles {
+		if endOffs[i] == startOffs[i] {
+			skip[i] = true
+			continue
+		}
 		result[i] = (endOffs[i] - startOffs[i]) / uint64(ConcurrentReaderBufferSizePerConc)
 		logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
 			zap.String("filename", statsFiles[i]),
@@ -198,9 +208,25 @@ func getFilesReadConcurrency(ctx context.Context, storage storage.ExternalStorag
 		// TODO(lance6716):
 		result[i] = 1
 	}
-	return result, startOffs, nil
+	return result, startOffs, skip, nil
 }
 
+// readOneFile will acquire memory from given bufPool for:
+//   - if `concurrency` > 1, it will acquire one `concurrency`*ConcurrentReaderBufferSizePerConc
+//     memory block. This part will be release when exit this function.
+//   - all data in the given range will be read into `output` saved in memory block,
+//     and will be released when `output` is in caller. Note that if memory block
+//     is large, it has a large overhead.
+//
+// In conclusion, the peak memory usage of this function is:
+//
+//	blockSize must be larger than `concurrency`*ConcurrentReaderBufferSizePerConc
+//	peakMemoryUsage = blockSize * (1 + ceil(dataSize / blockSize))
+//
+// the memory usage after the function returns is:
+//
+//	blockSize must be larger than `concurrency`*ConcurrentReaderBufferSizePerConc
+//	memoryUsage = blockSize * ceil(dataSize / blockSize)
 func readOneFile(
 	ctx context.Context,
 	storage storage.ExternalStorage,
@@ -289,7 +315,7 @@ func readAllData(
 		task.End(zap.ErrorLevel, err)
 	}()
 
-	concurrences, startOffsets, err := getFilesReadConcurrency(
+	concurrences, startOffsets, skip, err := getFilesReadConcurrency(
 		ctx,
 		storage,
 		statsFiles,
@@ -303,6 +329,9 @@ func readAllData(
 	// TODO(lance6716): check memory usage
 	eg.SetLimit(64)
 	for i := range dataFiles {
+		if skip[i] {
+			continue
+		}
 		i := i
 		eg.Go(func() error {
 			return readOneFile(
