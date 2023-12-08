@@ -175,7 +175,7 @@ func (local *Backend) writeToTiKV(pCtx context.Context, j *regionJob) (errRet er
 		}
 		failpoint.Return(err)
 	})
-	
+
 	ctx, cancel := context.WithTimeout(pCtx, 15*time.Minute)
 	defer cancel()
 	defer func() {
