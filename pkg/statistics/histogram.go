@@ -1501,9 +1501,9 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			tail++
 		}
 	}
-	for n := tail; n < len(buckets); n++ {
-		releasebucket4MergingForRecycle(buckets[n])
-	}
+	//for n := tail; n < len(buckets); n++ {
+	//	releasebucket4MergingForRecycle(buckets[n])
+	//}
 	buckets = buckets[:tail]
 
 	var sortError error
@@ -1574,9 +1574,9 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		}
 		globalBuckets = append(globalBuckets, merged)
 	}
-	for i := 0; i < len(buckets); i++ {
-		releasebucket4MergingForRecycle(buckets[i])
-	}
+	//for i := 0; i < len(buckets); i++ {
+	//releasebucket4MergingForRecycle(buckets[i])
+	//}
 	// Because we merge backwards, we need to flip the slices.
 	for i, j := 0, len(globalBuckets)-1; i < j; i, j = i+1, j-1 {
 		globalBuckets[i], globalBuckets[j] = globalBuckets[j], globalBuckets[i]
