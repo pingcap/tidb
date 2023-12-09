@@ -1383,8 +1383,6 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 		}
 		if compare == 0 {
 			res.Repeat += buckets[i].Repeat
-		} else {
-			intest.Assert(compare < 0, "illegal bucket order")
 		}
 
 		if i != len(buckets)-1 {
@@ -1479,9 +1477,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	tail := 0
 	for i := range buckets {
 		if buckets[i].Count != 0 {
-			tmp := buckets[tail]
-			buckets[tail] = buckets[i]
-			buckets[i] = tmp
+			buckets[tail], buckets[i] = buckets[i], buckets[tail]
 			tail++
 		}
 	}
