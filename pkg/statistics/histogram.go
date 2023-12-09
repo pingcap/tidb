@@ -1376,8 +1376,9 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 	}
 	res := newbucket4MergingForRecycle()
 	buckets[len(buckets)-1].upper.Copy(res.upper)
-	right := buckets[len(buckets)-1].Clone()
-
+	var right *bucket4Merging
+	tmp := buckets[len(buckets)-1].Clone()
+	right = &tmp
 	totNDV := int64(0)
 	intest.Assert(res.Count == 0, "Count in the new bucket4Merging should be 0")
 	intest.Assert(res.Repeat == 0, "Repeat in the new bucket4Merging should be 0")
@@ -1399,7 +1400,7 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 			panic("fff")
 		}
 		if i != len(buckets)-1 {
-			tmp, err := mergeBucketNDV(sc, buckets[i], &right)
+			tmp, err := mergeBucketNDV(sc, buckets[i], right)
 			if err != nil {
 				statslogutil.StatsLogger().Warn("mergePartitionBuckets",
 					zap.Any("res", res),
@@ -1409,7 +1410,7 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 				)
 				return nil, err
 			}
-			right = *tmp
+			right = tmp
 		}
 	}
 	res.NDV = right.NDV + right.disjointNDV
