@@ -892,6 +892,8 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) exec.Executor {
 		return b.buildRevoke(s)
 	case *ast.BRIEStmt:
 		return b.buildBRIE(s, v.Schema())
+	case *ast.HelpStmt:
+		return b.buildHelp(s, v.Schema())
 	case *ast.CreateUserStmt, *ast.AlterUserStmt:
 		var lockOptions []*ast.PasswordOrLockOption
 		if b.Ti.AccountLockTelemetry == nil {
@@ -5501,4 +5503,8 @@ func (b *executorBuilder) buildCompactTable(v *plannercore.CompactTable) exec.Ex
 
 func (b *executorBuilder) buildAdminShowBDRRole(v *plannercore.AdminShowBDRRole) exec.Executor {
 	return &AdminShowBDRRoleExec{BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID())}
+}
+
+func (b *executorBuilder) buildHelp(help *ast.HelpStmt, schema *expression.Schema) exec.Executor {
+	return &HelpExec{BaseExecutor: exec.NewBaseExecutor(b.ctx, schema, 0), topic: help.Topic}
 }

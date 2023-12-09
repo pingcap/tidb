@@ -17,9 +17,11 @@ package executor
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	stderrors "errors"
 	"fmt"
 	"math"
+	"os"
 	"runtime/pprof"
 	"slices"
 	"strconv"
@@ -86,6 +88,7 @@ import (
 	tikvutil "github.com/tikv/client-go/v2/util"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
+	"gopkg.in/resty.v1"
 )
 
 var (
@@ -2796,4 +2799,62 @@ func (e *AdminShowBDRRoleExec) Next(ctx context.Context, req *chunk.Chunk) error
 		e.done = true
 		return nil
 	})
+}
+
+// HelpExec represents a server side help executor.
+type HelpExec struct {
+	exec.BaseExecutor
+
+	topic string
+	done  bool
+}
+
+// Next implements the Executor Next interface.
+func (e *HelpExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.GrowAndReset(e.MaxChunkSize())
+	if e.done {
+		return nil
+	}
+
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	apiEndpoint := "https://api.openai.com/v1/chat/completions"
+	reqBody := map[string]interface{}{
+		"model": "gpt-3.5-turbo",
+		"messages": []interface{}{map[string]interface{}{
+			"role":    "system",
+			"content": "Please give me a short description with an example about how to use " + e.topic + " in TiDB SQL."}},
+		"max_tokens": 250,
+	}
+	client := resty.New()
+	response, err := client.R().
+		SetAuthToken(apiKey).
+		SetHeader("Conent-Type", "application/json").
+		SetBody(reqBody).
+		Post(apiEndpoint)
+	if err != nil {
+		return fmt.Errorf("failed to request help information: %v", err)
+	}
+	if response.StatusCode() != 200 {
+		return fmt.Errorf("help request got status code %d", response.StatusCode())
+	}
+	body := response.Body()
+
+	var data map[string]interface{}
+	err = json.Unmarshal(body, &data)
+	if err != nil {
+		return fmt.Errorf("error while decoding JSON response: %v", err)
+	}
+
+	if _, ok := data["choices"]; !ok {
+		return errors.New("JSON response doesn't contain choices")
+	}
+
+	content := data["choices"].([]interface{})[0].(map[string]interface{})["message"].(map[string]interface{})["content"].(string)
+
+	req.AppendString(0, e.topic) // Topic name
+	req.AppendString(1, content) // Content
+	req.AppendString(2, "")      // Example
+
+	e.done = true
+	return nil
 }
