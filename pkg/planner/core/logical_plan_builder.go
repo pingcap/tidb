@@ -4304,12 +4304,27 @@ func (b *PlanBuilder) TableHints() *tableHintInfo {
 }
 
 func (b *PlanBuilder) buildSelectWithCalcFoundRows(ctx context.Context, sel *ast.SelectStmt) (p LogicalPlan, err error) {
+	// Note: This function modifies the AST when building the plan. However, after plan is built,
+	// the modification will be reverted. If AST is not reverted, there will be problems when the
+	// AST is later used by other functions, for example, the AST may be stored as a prepared statement.
+
+	// It's meaningless to calculate the found_rows() if it's in preparing stage
+	// (e.g. in a PREPARE ... statement).
+	// Let's simply build a plan as if there is no SQL_CALC_FOUND_ROWS.
+	// However, after building the plan we still need to redo the change to the AST.
+	if b.ctx.GetSessionVars().StmtCtx.InPrepareStmt {
+		sel.SelectStmtOpts.CalcFoundRows = false
+		defer func() { sel.SelectStmtOpts.CalcFoundRows = true }()
+		return b.buildSelect(ctx, sel)
+	}
+
 	// Example of executing     `SELECT SQL_CALC_FOUND_ROWS *, a     FROM x WHERE ... LIMIT ...`:
 	// First, execute           `SELECT COUNT(*) FROM
 	//                                              (SELECT *, a     FROM x WHERE ... ) AS ...`
 	// Then, execute and return `SELECT                     *, a     FROM x WHERE ... LIMIT ...`.
 
 	sel.SelectStmtOpts.CalcFoundRows = false
+	defer func() { sel.SelectStmtOpts.CalcFoundRows = true }()
 
 	// Step 1. Build the SELECT clause without LIMIT into a logical plan, then add a COUNT aggregation over it.
 	//

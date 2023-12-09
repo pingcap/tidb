@@ -283,6 +283,24 @@ func TestFoundRows(t *testing.T) {
 	// test expressions without a FROM
 	tk.MustQuery("select SQL_CALC_FOUND_ROWS 1, 1").Check(testkit.Rows("1 1"))
 	tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+
+	// test prepared statement
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values (1), (2), (2), (NULL)")
+	tk.MustExec(`prepare st from 'select SQL_CALC_FOUND_ROWS * from t LIMIT 1'`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(
+		`Warning 1105 skip prepared plan-cache: cannot cache SQL_CALC_FOUND_ROWS`,
+		`Warning 1287 'SQL_CALC_FOUND_ROWS' is deprecated and will be removed in a future release. Please use two separate queries instead`,
+	))
+	tk.MustQuery(`execute st`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+	tk.MustQuery(`execute st`)
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("4"))
+	tk.MustExec("insert into t values (4), (5), (6)")
+	tk.MustQuery(`execute st`)
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("7"))
 }
 
 func TestInfoBuiltin(t *testing.T) {

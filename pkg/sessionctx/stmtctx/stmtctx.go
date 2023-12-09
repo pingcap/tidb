@@ -180,6 +180,7 @@ type StatementContext struct {
 	InCreateOrAlterStmt           bool
 	InSetSessionStatesStmt        bool
 	InPreparedPlanBuilding        bool
+	InPrepareStmt                 bool
 	DupKeyAsWarning               bool
 	BadNullAsWarning              bool
 	DividedByZeroAsWarning        bool

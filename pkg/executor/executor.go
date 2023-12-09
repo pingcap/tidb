@@ -1985,6 +1985,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.IsStaleness = false
 	sc.LockTableIDs = make(map[int64]struct{})
 	sc.EnableOptimizeTrace = false
+	sc.OverrideFoundRows = nil
 	sc.OptimizeTracer = nil
 	sc.OptimizerCETrace = nil
 	sc.IsSyncStatsFailed = false
