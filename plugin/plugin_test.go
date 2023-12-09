@@ -256,15 +256,15 @@ func TestPluginWatcherLoop(t *testing.T) {
 		},
 	}
 	ch := make(chan clientv3.WatchResponse)
-	var cancelled atomic.Bool
+	var cancelled int32
 	go func() {
 		time.Sleep(10 * time.Millisecond)
-		cancelled.Store(true)
+		atomic.StoreInt32(&cancelled, 1)
 		cancel()
 	}()
 	exit := watcher.watchLoopWithChan(ch)
 	require.True(t, exit)
-	require.True(t, cancelled.Load())
+	require.Equal(t, int32(1), atomic.LoadInt32(&cancelled))
 
 	// exit when ch closed
 	watcher = &flushWatcher{
@@ -274,14 +274,14 @@ func TestPluginWatcherLoop(t *testing.T) {
 		},
 	}
 
-	var closed atomic.Bool
+	var closed int32
 	ch = make(chan clientv3.WatchResponse)
 	go func() {
 		time.Sleep(10 * time.Millisecond)
-		closed.Store(true)
+		atomic.StoreInt32(&closed, 1)
 		close(ch)
 	}()
 	exit = watcher.watchLoopWithChan(ch)
 	require.False(t, exit)
-	require.True(t, cancelled.Load())
+	require.Equal(t, int32(1), atomic.LoadInt32(&closed))
 }
