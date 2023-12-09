@@ -2820,9 +2820,13 @@ func (e *HelpExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	apiEndpoint := "https://api.openai.com/v1/chat/completions"
 	reqBody := map[string]interface{}{
 		"model": "gpt-3.5-turbo",
-		"messages": []interface{}{map[string]interface{}{
-			"role":    "system",
-			"content": "Please give me a short description with an example about how to use " + e.topic + " in TiDB SQL."}},
+		"messages": []interface{}{
+			map[string]interface{}{
+				"role":    "system",
+				"content": "You will be provide with text. Your task is to give a short description with an example about how to use it in TiDB SQL."},
+			map[string]interface{}{
+				"role":    "user",
+				"content": e.topic}},
 		"max_tokens": 250,
 	}
 	client := resty.New()
