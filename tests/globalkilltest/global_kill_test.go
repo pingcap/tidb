@@ -58,8 +58,9 @@ var (
 )
 
 const (
-	waitToStartup   = 500 * time.Millisecond
-	msgErrConnectPD = "connect PD err: %v. Establish a cluster with PD & TiKV, and provide PD client path by `--pd=<ip:port>[,<ip:port>]"
+	waitToStartup    = 500 * time.Millisecond
+	msgErrConnectPD  = "connect PD err: %v. Establish a cluster with PD & TiKV, and provide PD client path by `--pd=<ip:port>[,<ip:port>]"
+	timeoutConnectDB = 20 * time.Second
 )
 
 // GlobalKillSuite is used for automated test of "Global Kill" feature.

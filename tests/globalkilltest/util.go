@@ -31,7 +31,6 @@ const (
 	timeoutCheckPDStatus   = 10 * time.Second
 	timeoutCheckTiKVStatus = 30 * time.Second
 	timeoutCheckTiDBStatus = 60 * time.Second // First start up of TiDB would take a long time.
-	timeoutConnectDB       = 20 * time.Second
 
 	retryInterval = 500 * time.Millisecond
 )
