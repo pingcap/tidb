@@ -16,9 +16,8 @@ package asyncloaddata
 
 import (
 	"encoding/json"
-	"sync"
-
 	"maps"
+	"sync"
 
 	"go.uber.org/atomic"
 )
