@@ -17,9 +17,8 @@ package temptable
 import (
 	"bytes"
 	"context"
-	"math"
-
 	"maps"
+	"math"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
