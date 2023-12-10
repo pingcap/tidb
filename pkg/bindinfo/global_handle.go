@@ -17,6 +17,7 @@ package bindinfo
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -39,7 +40,6 @@ import (
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
 )
 
 // GlobalBindingHandle is used to handle all global sql bind operations.

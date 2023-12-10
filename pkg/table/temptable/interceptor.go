@@ -19,6 +19,8 @@ import (
 	"context"
 	"math"
 
+	"maps"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -26,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/tablecodec"
-	"golang.org/x/exp/maps"
 )
 
 var (

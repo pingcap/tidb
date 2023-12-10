@@ -105,7 +105,6 @@ go_library(
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//backoff",
         "@org_golang_google_grpc//keepalive",
-        "@org_golang_x_exp//maps",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],

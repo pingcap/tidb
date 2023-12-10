@@ -18,8 +18,9 @@ import (
 	"encoding/json"
 	"sync"
 
+	"maps"
+
 	"go.uber.org/atomic"
-	"golang.org/x/exp/maps"
 )
 
 // LogicalImportProgress is the progress info of the logical import mode.
