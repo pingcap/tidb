@@ -40,6 +40,3 @@ bazel-tidb
 *.log.json
 genkeyword
 test_coverage
-**/capture_replayer_*.zip
-**/capture_normal_replayer_*.zip
-**/replayer_*.zip
