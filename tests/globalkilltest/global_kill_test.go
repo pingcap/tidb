@@ -170,7 +170,7 @@ func (s *GlobalKillSuite) startTiKV(dataDir string) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(CheckTiKVStatus())
+	return errors.Trace(checkTiKVStatus())
 }
 
 func (s *GlobalKillSuite) startPD(dataDir string) (err error) {
@@ -184,7 +184,7 @@ func (s *GlobalKillSuite) startPD(dataDir string) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(CheckPDHealth(*pdClientPath))
+	return errors.Trace(checkPDHealth(*pdClientPath))
 }
 
 func (s *GlobalKillSuite) startCluster() (err error) {
@@ -263,7 +263,7 @@ func (s *GlobalKillSuite) startTiDBWithoutPD(port int, statusPort int) (cmd *exe
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return cmd, errors.Trace(CheckTiDBStatus(statusPort))
+	return cmd, errors.Trace(checkTiDBStatus(statusPort))
 }
 
 func (s *GlobalKillSuite) startTiDBWithPD(port int, statusPort int, pdPath string) (cmd *exec.Cmd, err error) {
@@ -281,7 +281,7 @@ func (s *GlobalKillSuite) startTiDBWithPD(port int, statusPort int, pdPath strin
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return cmd, errors.Trace(CheckTiDBStatus(statusPort))
+	return cmd, errors.Trace(checkTiDBStatus(statusPort))
 }
 
 func (s *GlobalKillSuite) mustStartTiDBWithPD(t *testing.T, port int, statusPort int, pdPath string) *exec.Cmd {

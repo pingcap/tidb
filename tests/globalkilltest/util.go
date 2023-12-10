@@ -30,13 +30,13 @@ import (
 const (
 	timeoutCheckPDStatus   = 10 * time.Second
 	timeoutCheckTiKVStatus = 30 * time.Second
-	timeoutCheckTiDBStatus = 30 * time.Second
+	timeoutCheckTiDBStatus = 60 * time.Second // First start up of TiDB would take a long time.
 	timeoutConnectDB       = 20 * time.Second
 
 	retryInterval = 500 * time.Millisecond
 )
 
-func WithRetry[T any](fn func() (T, error), timeout time.Duration) (resp T, err error) {
+func withRetry[T any](fn func() (T, error), timeout time.Duration) (resp T, err error) {
 	startTime := time.Now()
 	retry := 0
 	for time.Since(startTime) < timeout {
@@ -51,7 +51,7 @@ func WithRetry[T any](fn func() (T, error), timeout time.Duration) (resp T, err 
 	return resp, errors.Trace(err)
 }
 
-func CheckPDHealth(host string) error {
+func checkPDHealth(host string) error {
 	url := util.ComposeURL(host, "/health")
 
 	request := func() (interface{}, error) {
@@ -80,11 +80,11 @@ func CheckPDHealth(host string) error {
 		return nil, nil
 	}
 
-	_, err := WithRetry(request, timeoutCheckPDStatus)
+	_, err := withRetry(request, timeoutCheckPDStatus)
 	return errors.Trace(err)
 }
 
-func CheckTiKVStatus() error {
+func checkTiKVStatus() error {
 	url := util.ComposeURL("127.0.0.1:20180", "/status")
 
 	request := func() (interface{}, error) {
@@ -101,11 +101,11 @@ func CheckTiKVStatus() error {
 		return nil, nil
 	}
 
-	_, err := WithRetry(request, timeoutCheckTiKVStatus)
+	_, err := withRetry(request, timeoutCheckTiKVStatus)
 	return errors.Trace(err)
 }
 
-func CheckTiDBStatus(statusPort int) error {
+func checkTiDBStatus(statusPort int) error {
 	host := fmt.Sprintf("127.0.0.1:%d", statusPort)
 	url := util.ComposeURL(host, "/status")
 
@@ -130,6 +130,6 @@ func CheckTiDBStatus(statusPort int) error {
 		return nil, nil
 	}
 
-	_, err := WithRetry(request, timeoutCheckTiDBStatus)
+	_, err := withRetry(request, timeoutCheckTiDBStatus)
 	return errors.Trace(err)
 }
