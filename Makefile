@@ -95,7 +95,6 @@ clean_tmp_test_data:
 	find . -name 'capture_replayer_*.zip'| xargs rm
 	find . -name 'capture_normal_replayer_*.zip'| xargs rm
 	find . -name 'replayer_*.zip'| xargs rm
-	rm -rf pkg/domain/extract
 
 # Split tests for CI to run `make test` in parallel.
 test: test_part_1 test_part_2
