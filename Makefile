@@ -87,8 +87,15 @@ check-parallel:
 		xargs -0 grep -F -n "t.Parallel()" || \
 		! echo "Error: all the go tests should be run in serial."
 
-clean: failpoint-disable
+clean: failpoint-disable clean_tmp_test_data
 	$(GO) clean -i ./...
+	
+clean_tmp_test_data:
+	rm -rf $(TEST_COVERAGE_DIR)
+	find . -name 'capture_replayer_*.zip'| xargs rm
+	find . -name 'capture_normal_replayer_*.zip'| xargs rm
+	find . -name 'replayer_*.zip'| xargs rm
+	rm -rf pkg/domain/extract
 
 # Split tests for CI to run `make test` in parallel.
 test: test_part_1 test_part_2
