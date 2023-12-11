@@ -142,8 +142,15 @@ func row2TaskBasic(r chunk.Row) *proto.Task {
 // row2Task converts a row to a task.
 func row2Task(r chunk.Row) *proto.Task {
 	task := row2TaskBasic(r)
-	task.StartTime, _ = r.GetTime(8).GoTime(time.Local)
-	task.StateUpdateTime, _ = r.GetTime(9).GoTime(time.Local)
+	var startTime, updateTime time.Time
+	if !r.IsNull(8) {
+		startTime, _ = r.GetTime(8).GoTime(time.Local)
+	}
+	if !r.IsNull(9) {
+		updateTime, _ = r.GetTime(9).GoTime(time.Local)
+	}
+	task.StartTime = startTime
+	task.StateUpdateTime = updateTime
 	task.Meta = r.GetBytes(10)
 	task.DispatcherID = r.GetString(11)
 	if !r.IsNull(12) {
@@ -157,16 +164,6 @@ func row2Task(r chunk.Row) *proto.Task {
 			task.Error = stdErr
 		}
 	}
-	var startTime, updateTime time.Time
-	if !r.IsNull(5) {
-		startTime, _ = r.GetTime(5).GoTime(time.Local)
-	}
-	if !r.IsNull(6) {
-		updateTime, _ = r.GetTime(6).GoTime(time.Local)
-	}
-	task.CreateTime, _ = r.GetTime(12).GoTime(time.Local)
-	task.StartTime = startTime
-	task.StateUpdateTime = updateTime
 	return task
 }
 
