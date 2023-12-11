@@ -39,11 +39,15 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/keyspace"
 	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/etcd"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
@@ -369,11 +373,34 @@ func (ti *TableImporter) PopulateChunks(ctx context.Context) (map[int32]*checkpo
 	}
 
 	if common.TableHasAutoID(ti.tableInfo.Core) {
-		// todo: the new base should be the max row id of the last Node if we support distributed import.
-		if err = common.RebaseGlobalAutoID(ctx, 0, ti.kvStore, ti.dbID, ti.tableInfo.Core); err != nil {
+		tidbCfg := tidb.GetGlobalConfig()
+		clusterSecurity := tidbCfg.Security.ClusterSecurity()
+		tlsConfig, err := clusterSecurity.ToTLSConfig()
+		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		newMinRowID, _, err := common.AllocGlobalAutoID(ctx, maxRowID, ti.kvStore, ti.dbID, ti.tableInfo.Core)
+		etcdCli, err := clientv3.New(clientv3.Config{
+			Endpoints:        []string{tidbCfg.Path},
+			AutoSyncInterval: 30 * time.Second,
+			TLS:              tlsConfig,
+		})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		etcd.SetEtcdCliByNamespace(etcdCli, keyspace.MakeKeyspaceEtcdNamespace(ti.kvStore.GetCodec()))
+		defer func() {
+			if err := etcdCli.Close(); err != nil {
+				ti.logger.Error("close etcd client error", zap.Error(err))
+			}
+		}()
+		autoidCli := autoid.NewClientDiscover(etcdCli)
+
+		r := &asAutoIDRequirement{ti.kvStore, autoidCli}
+		// todo: the new base should be the max row id of the last Node if we support distributed import.
+		if err = common.RebaseGlobalAutoID(ctx, 0, r, ti.dbID, ti.tableInfo.Core); err != nil {
+			return nil, errors.Trace(err)
+		}
+		newMinRowID, _, err := common.AllocGlobalAutoID(ctx, maxRowID, r, ti.dbID, ti.tableInfo.Core)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -383,6 +410,21 @@ func (ti *TableImporter) PopulateChunks(ctx context.Context) (map[int32]*checkpo
 	// Add index engine checkpoint
 	ti.tableCp.Engines[common.IndexEngineID] = &checkpoints.EngineCheckpoint{Status: checkpoints.CheckpointStatusLoaded}
 	return ti.tableCp.Engines, nil
+}
+
+type asAutoIDRequirement struct {
+	kvStore   tidbkv.Storage
+	autoidCli *autoid.ClientDiscover
+}
+
+var _ autoid.Requirement = &asAutoIDRequirement{}
+
+func (r *asAutoIDRequirement) Store() tidbkv.Storage {
+	return r.kvStore
+}
+
+func (r *asAutoIDRequirement) AutoIDClient() *autoid.ClientDiscover {
+	return r.autoidCli
 }
 
 func (ti *TableImporter) rebaseChunkRowID(rowIDBase int64) {

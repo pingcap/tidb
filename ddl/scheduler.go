@@ -93,7 +93,7 @@ func NewBackfillSchedulerHandle(taskMeta []byte, d *ddl, stepForImport bool) (sc
 	jobMeta := &bgm.Job
 	bh.job = jobMeta
 
-	db, tbl, err := d.getTableByTxn(d.store, jobMeta.SchemaID, jobMeta.TableID)
+	db, tbl, err := d.getTableByTxn((*asAutoIDRequirement)(d.ddlCtx), jobMeta.SchemaID, jobMeta.TableID)
 	if err != nil {
 		return nil, err
 	}
