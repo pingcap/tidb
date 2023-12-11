@@ -32,8 +32,6 @@ import (
 )
 
 var (
-	// DefaultDispatchConcurrency is the default concurrency for dispatching task.
-	DefaultDispatchConcurrency = 4
 	// checkTaskRunningInterval is the interval for loading tasks.
 	checkTaskRunningInterval = 3 * time.Second
 	// defaultHistorySubtaskTableGcInterval is the interval of gc history subtask table.
@@ -45,63 +43,55 @@ var (
 // WaitTaskFinished is used to sync the test.
 var WaitTaskFinished = make(chan struct{})
 
-func (dm *Manager) getRunningTaskCnt() int {
-	dm.runningTasks.RLock()
-	defer dm.runningTasks.RUnlock()
-	return len(dm.runningTasks.taskIDs)
+func (dm *Manager) getDispatcherCount() int {
+	dm.mu.RLock()
+	defer dm.mu.RUnlock()
+	return len(dm.mu.dispatchers)
 }
 
-func (dm *Manager) setRunningTask(task *proto.Task, dispatcher Dispatcher) {
-	dm.runningTasks.Lock()
-	defer dm.runningTasks.Unlock()
-	dm.runningTasks.taskIDs[task.ID] = struct{}{}
-	dm.runningTasks.dispatchers[task.ID] = dispatcher
-	metrics.UpdateMetricsForRunTask(task)
+func (dm *Manager) addDispatcher(taskID int64, dispatcher Dispatcher) {
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
+	dm.mu.dispatchers[taskID] = dispatcher
 }
 
-func (dm *Manager) isRunningTask(taskID int64) bool {
-	dm.runningTasks.Lock()
-	defer dm.runningTasks.Unlock()
-	_, ok := dm.runningTasks.taskIDs[taskID]
+func (dm *Manager) hasDispatcher(taskID int64) bool {
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
+	_, ok := dm.mu.dispatchers[taskID]
 	return ok
 }
 
-func (dm *Manager) delRunningTask(taskID int64) {
-	dm.runningTasks.Lock()
-	defer dm.runningTasks.Unlock()
-	delete(dm.runningTasks.taskIDs, taskID)
-	delete(dm.runningTasks.dispatchers, taskID)
+func (dm *Manager) delDispatcher(taskID int64) {
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
+	delete(dm.mu.dispatchers, taskID)
 }
 
-func (dm *Manager) clearRunningTasks() {
-	dm.runningTasks.Lock()
-	defer dm.runningTasks.Unlock()
-	for id := range dm.runningTasks.dispatchers {
-		delete(dm.runningTasks.dispatchers, id)
-	}
-	for id := range dm.runningTasks.taskIDs {
-		delete(dm.runningTasks.taskIDs, id)
-	}
+func (dm *Manager) clearDispatchers() {
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
+	dm.mu.dispatchers = make(map[int64]Dispatcher)
 }
 
 // Manager manage a bunch of dispatchers.
 // Dispatcher schedule and monitor tasks.
 // The scheduling task number is limited by size of gPool.
 type Manager struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
-	taskMgr TaskManager
-	wg      tidbutil.WaitGroupWrapper
-	gPool   *spool.Pool
-	inited  bool
+	ctx         context.Context
+	cancel      context.CancelFunc
+	taskMgr     TaskManager
+	wg          tidbutil.WaitGroupWrapper
+	gPool       *spool.Pool
+	slotMgr     *slotManager
+	initialized bool
 	// serverID, it's value is ip:port now.
 	serverID string
 
 	finishCh chan struct{}
 
-	runningTasks struct {
+	mu struct {
 		syncutil.RWMutex
-		taskIDs     map[int64]struct{}
 		dispatchers map[int64]Dispatcher
 	}
 }
@@ -111,16 +101,16 @@ func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) (*Man
 	dispatcherManager := &Manager{
 		taskMgr:  taskMgr,
 		serverID: serverID,
+		slotMgr:  newSlotManager(),
 	}
-	gPool, err := spool.NewPool("dispatch_pool", int32(DefaultDispatchConcurrency), util.DistTask, spool.WithBlocking(true))
+	gPool, err := spool.NewPool("dispatch_pool", int32(proto.MaxConcurrentTask), util.DistTask, spool.WithBlocking(true))
 	if err != nil {
 		return nil, err
 	}
 	dispatcherManager.gPool = gPool
 	dispatcherManager.ctx, dispatcherManager.cancel = context.WithCancel(ctx)
-	dispatcherManager.runningTasks.taskIDs = make(map[int64]struct{})
-	dispatcherManager.runningTasks.dispatchers = make(map[int64]Dispatcher)
-	dispatcherManager.finishCh = make(chan struct{}, DefaultDispatchConcurrency)
+	dispatcherManager.mu.dispatchers = make(map[int64]Dispatcher)
+	dispatcherManager.finishCh = make(chan struct{}, proto.MaxConcurrentTask)
 
 	return dispatcherManager, nil
 }
@@ -133,7 +123,7 @@ func (dm *Manager) Start() {
 	dm.wg.Run(dm.dispatchTaskLoop)
 	dm.wg.Run(dm.gcSubtaskHistoryTableLoop)
 	dm.wg.Run(dm.cleanUpLoop)
-	dm.inited = true
+	dm.initialized = true
 }
 
 // Stop the dispatcherManager.
@@ -141,14 +131,14 @@ func (dm *Manager) Stop() {
 	dm.cancel()
 	dm.gPool.ReleaseAndWait()
 	dm.wg.Wait()
-	dm.clearRunningTasks()
-	dm.inited = false
+	dm.clearDispatchers()
+	dm.initialized = false
 	close(dm.finishCh)
 }
 
-// Inited check the manager inited.
-func (dm *Manager) Inited() bool {
-	return dm.inited
+// Initialized check the manager initialized.
+func (dm *Manager) Initialized() bool {
+	return dm.initialized
 }
 
 // dispatchTaskLoop dispatches the tasks.
@@ -162,71 +152,67 @@ func (dm *Manager) dispatchTaskLoop() {
 			logutil.BgLogger().Info("dispatch task loop exits", zap.Error(dm.ctx.Err()), zap.Int64("interval", int64(checkTaskRunningInterval)/1000000))
 			return
 		case <-ticker.C:
-			cnt := dm.getRunningTaskCnt()
-			if dm.checkConcurrencyOverflow(cnt) {
-				break
-			}
+		}
 
-			// TODO: Consider getting these tasks, in addition to the task being worked on..
-			tasks, err := dm.taskMgr.GetTasksInStates(
-				dm.ctx,
-				proto.TaskStatePending,
-				proto.TaskStateRunning,
-				proto.TaskStateReverting,
-				proto.TaskStateCancelling,
-				proto.TaskStateResuming,
-			)
-			if err != nil {
-				logutil.BgLogger().Warn("get unfinished(pending, running, reverting, cancelling, resuming) tasks failed", zap.Error(err))
-				break
-			}
+		taskCnt := dm.getDispatcherCount()
+		if taskCnt >= proto.MaxConcurrentTask {
+			logutil.BgLogger().Info("dispatched tasks reached limit",
+				zap.Int("current", taskCnt), zap.Int("max", proto.MaxConcurrentTask))
+			continue
+		}
 
-			// There are currently no tasks to work on.
-			if len(tasks) == 0 {
+		tasks, err := dm.taskMgr.GetTopUnfinishedTasks(dm.ctx)
+		if err != nil {
+			logutil.BgLogger().Warn("get unfinished tasks failed", zap.Error(err))
+			continue
+		}
+
+		dispatchableTasks := make([]*proto.Task, 0, len(tasks))
+		for _, task := range tasks {
+			if dm.hasDispatcher(task.ID) {
+				continue
+			}
+			// we check it before start dispatcher, so no need to check it again.
+			// see startDispatcher.
+			// this should not happen normally, unless user modify system table
+			// directly.
+			if getDispatcherFactory(task.Type) == nil {
+				logutil.BgLogger().Warn("unknown task type", zap.Int64("task-id", task.ID),
+					zap.Stringer("task-type", task.Type))
+				dm.failTask(task.ID, task.State, errors.New("unknown task type"))
+				continue
+			}
+			dispatchableTasks = append(dispatchableTasks, task)
+		}
+		if len(dispatchableTasks) == 0 {
+			continue
+		}
+
+		if err = dm.slotMgr.update(dm.ctx, dm.taskMgr); err != nil {
+			logutil.BgLogger().Warn("update used slot failed", zap.Error(err))
+			continue
+		}
+		for _, task := range dispatchableTasks {
+			taskCnt = dm.getDispatcherCount()
+			if taskCnt >= proto.MaxConcurrentTask {
 				break
 			}
-			for _, task := range tasks {
-				// This task is running, so no need to reprocess it.
-				if dm.isRunningTask(task.ID) {
-					continue
-				}
-				metrics.DistTaskGauge.WithLabelValues(task.Type.String(), metrics.DispatchingStatus).Inc()
-				// we check it before start dispatcher, so no need to check it again.
-				// see startDispatcher.
-				// this should not happen normally, unless user modify system table
-				// directly.
-				if getDispatcherFactory(task.Type) == nil {
-					logutil.BgLogger().Warn("unknown task type", zap.Int64("task-id", task.ID),
-						zap.Stringer("task-type", task.Type))
-					dm.failTask(task, errors.New("unknown task type"))
-					continue
-				}
-				// the task is not in runningTasks set when:
-				// owner changed or task is cancelled when status is pending.
-				if task.State == proto.TaskStateRunning || task.State == proto.TaskStateReverting || task.State == proto.TaskStateCancelling {
-					metrics.UpdateMetricsForDispatchTask(task)
-					dm.startDispatcher(task)
-					cnt++
-					continue
-				}
-				if dm.checkConcurrencyOverflow(cnt) {
-					break
-				}
-				metrics.UpdateMetricsForDispatchTask(task)
-				dm.startDispatcher(task)
-				cnt++
+			reservedExecID, ok := dm.slotMgr.canReserve(task)
+			if !ok {
+				// task of lower priority might be able to be dispatched.
+				continue
 			}
+			metrics.DistTaskGauge.WithLabelValues(task.Type.String(), metrics.DispatchingStatus).Inc()
+			metrics.UpdateMetricsForDispatchTask(task.ID, task.Type)
+			dm.startDispatcher(task, reservedExecID)
 		}
 	}
 }
 
-func (dm *Manager) failTask(task *proto.Task, err error) {
-	prevState := task.State
-	task.State = proto.TaskStateFailed
-	task.Error = err
-	if _, err2 := dm.taskMgr.UpdateTaskAndAddSubTasks(dm.ctx, task, nil, prevState); err2 != nil {
+func (dm *Manager) failTask(id int64, currState proto.TaskState, err error) {
+	if err2 := dm.taskMgr.FailTask(dm.ctx, id, currState, err); err2 != nil {
 		logutil.BgLogger().Warn("failed to update task state to failed",
-			zap.Int64("task-id", task.ID), zap.Error(err2))
+			zap.Int64("task-id", id), zap.Error(err2))
 	}
 }
 
@@ -259,30 +245,30 @@ func (dm *Manager) gcSubtaskHistoryTableLoop() {
 	}
 }
 
-func (*Manager) checkConcurrencyOverflow(cnt int) bool {
-	if cnt >= DefaultDispatchConcurrency {
-		logutil.BgLogger().Info("dispatch task loop, running task cnt is more than concurrency limitation",
-			zap.Int("running cnt", cnt), zap.Int("concurrency", DefaultDispatchConcurrency))
-		return true
+func (dm *Manager) startDispatcher(basicTask *proto.Task, reservedExecID string) {
+	task, err := dm.taskMgr.GetTaskByID(dm.ctx, basicTask.ID)
+	if err != nil {
+		logutil.BgLogger().Error("get task failed", zap.Error(err))
+		return
 	}
-	return false
-}
 
-func (dm *Manager) startDispatcher(task *proto.Task) {
+	dispatcherFactory := getDispatcherFactory(task.Type)
+	dispatcher := dispatcherFactory(dm.ctx, dm.taskMgr, dm.serverID, task)
+	if err = dispatcher.Init(); err != nil {
+		logutil.BgLogger().Error("init dispatcher failed", zap.Error(err))
+		dm.failTask(task.ID, task.State, err)
+		return
+	}
+	dm.addDispatcher(task.ID, dispatcher)
+	dm.slotMgr.reserve(basicTask, reservedExecID)
 	// Using the pool with block, so it wouldn't return an error.
 	_ = dm.gPool.Run(func() {
-		dispatcherFactory := getDispatcherFactory(task.Type)
-		dispatcher := dispatcherFactory(dm.ctx, dm.taskMgr, dm.serverID, task)
-		if err := dispatcher.Init(); err != nil {
-			logutil.BgLogger().Error("init dispatcher failed", zap.Error(err))
-			dm.failTask(task, err)
-			return
-		}
 		defer func() {
 			dispatcher.Close()
-			dm.delRunningTask(task.ID)
+			dm.delDispatcher(task.ID)
+			dm.slotMgr.unReserve(basicTask, reservedExecID)
 		}()
-		dm.setRunningTask(task, dispatcher)
+		metrics.UpdateMetricsForRunTask(task)
 		dispatcher.ExecuteTask()
 		logutil.BgLogger().Info("task finished", zap.Int64("task-id", task.ID))
 		dm.finishCh <- struct{}{}

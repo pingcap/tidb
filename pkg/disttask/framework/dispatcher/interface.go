@@ -25,6 +25,11 @@ import (
 
 // TaskManager defines the interface to access task table.
 type TaskManager interface {
+	// GetTopUnfinishedTasks returns unfinished tasks, limited by MaxConcurrentTask*2,
+	// to make sure lower priority tasks can be scheduled if resource is enough.
+	// The returned tasks are sorted by task order, see proto.Task, and only contains
+	// some fields, see row2TaskBasic.
+	GetTopUnfinishedTasks(ctx context.Context) ([]*proto.Task, error)
 	GetTasksInStates(ctx context.Context, states ...interface{}) (task []*proto.Task, err error)
 	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
 	UpdateTaskAndAddSubTasks(ctx context.Context, task *proto.Task, subtasks []*proto.Subtask, prevState proto.TaskState) (bool, error)
@@ -33,13 +38,25 @@ type TaskManager interface {
 	CleanUpMeta(ctx context.Context, nodes []string) error
 	TransferTasks2History(ctx context.Context, tasks []*proto.Task) error
 	CancelTask(ctx context.Context, taskID int64) error
+	// FailTask updates task state to Failed and updates task error.
+	FailTask(ctx context.Context, taskID int64, currentState proto.TaskState, taskErr error) error
 	PauseTask(ctx context.Context, taskKey string) (bool, error)
+	// GetUsedSlotsOnNodes returns the used slots on nodes that have subtask scheduled.
+	// subtasks of each task on one node is only accounted once as we don't support
+	// running them concurrently.
+	// we only consider pending/running subtasks, subtasks related to revert are
+	// not considered.
+	GetUsedSlotsOnNodes(ctx context.Context) (map[string]int, error)
 	GetSubtaskInStatesCnt(ctx context.Context, taskID int64, states ...interface{}) (int64, error)
 	ResumeSubtasks(ctx context.Context, taskID int64) error
 	CollectSubTaskError(ctx context.Context, taskID int64) ([]error, error)
 	TransferSubTasks2History(ctx context.Context, taskID int64) error
 	UpdateSubtasksExecIDs(ctx context.Context, taskID int64, subtasks []*proto.Subtask) error
-	GetNodesByRole(ctx context.Context, role string) (map[string]bool, error)
+	// GetManagedNodes returns the nodes managed by dist framework and can be used
+	// to execute tasks. If there are any nodes with background role, we use them,
+	// else we use nodes without role.
+	// returned nodes are sorted by node id(host:port).
+	GetManagedNodes(ctx context.Context) ([]string, error)
 	GetTaskExecutorIDsByTaskID(ctx context.Context, taskID int64) ([]string, error)
 	GetSubtasksByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.TaskState) ([]*proto.Subtask, error)
 	GetSubtasksByExecIdsAndStepAndState(ctx context.Context, tidbIDs []string, taskID int64, step proto.Step, state proto.TaskState) ([]*proto.Subtask, error)

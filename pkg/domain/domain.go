@@ -1508,7 +1508,7 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 
 	var dispatcherManager *dispatcher.Manager
 	startDispatchIfNeeded := func() {
-		if dispatcherManager != nil && dispatcherManager.Inited() {
+		if dispatcherManager != nil && dispatcherManager.Initialized() {
 			return
 		}
 		var err error
@@ -1520,7 +1520,7 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 		dispatcherManager.Start()
 	}
 	stopDispatchIfNeeded := func() {
-		if dispatcherManager != nil && dispatcherManager.Inited() {
+		if dispatcherManager != nil && dispatcherManager.Initialized() {
 			logutil.BgLogger().Info("stopping dist task dispatcher manager because the current node is not DDL owner anymore", zap.String("id", do.ddl.GetID()))
 			dispatcherManager.Stop()
 			logutil.BgLogger().Info("dist task dispatcher manager stopped", zap.String("id", do.ddl.GetID()))

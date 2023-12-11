@@ -41,12 +41,15 @@ import (
 const (
 	defaultSubtaskKeepDays = 14
 
-	taskColumns = `id, task_key, type, dispatcher_id, state, start_time, state_update_time,
-				meta, concurrency, step, error, priority, create_time`
+	basicTaskColumns = `id, task_key, type, state, step, priority, concurrency, create_time`
+	taskColumns      = basicTaskColumns + `, start_time, state_update_time, meta, dispatcher_id, error`
+	// InsertTaskColumns is the columns used in insert task.
+	InsertTaskColumns = `task_key, type, state, priority, concurrency, step, meta, create_time, start_time, state_update_time`
+
 	subtaskColumns = `id, step, task_key, type, exec_id, state, concurrency, create_time,
 				start_time, state_update_time, meta, summary`
-	insertSubtaskBasic = `insert into mysql.tidb_background_subtask(
-				step, task_key, exec_id, meta, state, type, concurrency, create_time, checkpoint, summary) values `
+	// InsertSubtaskColumns is the columns used in insert subtask.
+	InsertSubtaskColumns = `step, task_key, exec_id, meta, state, type, concurrency, create_time, checkpoint, summary`
 )
 
 // SessionExecutor defines the interface for executing SQLs in a session.
@@ -111,21 +114,29 @@ func ExecSQL(ctx context.Context, se sessionctx.Context, sql string, args ...int
 	return nil, nil
 }
 
+func row2TaskBasic(r chunk.Row) *proto.Task {
+	task := &proto.Task{
+		ID:          r.GetInt64(0),
+		Key:         r.GetString(1),
+		Type:        proto.TaskType(r.GetString(2)),
+		State:       proto.TaskState(r.GetString(3)),
+		Step:        proto.Step(r.GetInt64(4)),
+		Priority:    int(r.GetInt64(5)),
+		Concurrency: int(r.GetInt64(6)),
+	}
+	task.CreateTime, _ = r.GetTime(7).GoTime(time.Local)
+	return task
+}
+
 // row2Task converts a row to a task.
 func row2Task(r chunk.Row) *proto.Task {
-	task := &proto.Task{
-		ID:           r.GetInt64(0),
-		Key:          r.GetString(1),
-		Type:         proto.TaskType(r.GetString(2)),
-		DispatcherID: r.GetString(3),
-		State:        proto.TaskState(r.GetString(4)),
-		Meta:         r.GetBytes(7),
-		Concurrency:  uint64(r.GetInt64(8)),
-		Step:         proto.Step(r.GetInt64(9)),
-		Priority:     int(r.GetInt64(11)),
-	}
-	if !r.IsNull(10) {
-		errBytes := r.GetBytes(10)
+	task := row2TaskBasic(r)
+	task.StartTime, _ = r.GetTime(8).GoTime(time.Local)
+	task.StateUpdateTime, _ = r.GetTime(9).GoTime(time.Local)
+	task.Meta = r.GetBytes(10)
+	task.DispatcherID = r.GetString(11)
+	if !r.IsNull(12) {
+		errBytes := r.GetBytes(12)
 		stdErr := errors.Normalize("")
 		err := stdErr.UnmarshalJSON(errBytes)
 		if err != nil {
@@ -135,9 +146,6 @@ func row2Task(r chunk.Row) *proto.Task {
 			task.Error = stdErr
 		}
 	}
-	task.CreateTime, _ = r.GetTime(12).GoTime(time.Local)
-	task.StartTime, _ = r.GetTime(5).GoTime(time.Local)
-	task.StateUpdateTime, _ = r.GetTime(6).GoTime(time.Local)
 	return task
 }
 
@@ -206,8 +214,8 @@ func (stm *TaskManager) CreateTask(ctx context.Context, key string, tp proto.Tas
 
 // CreateTaskWithSession adds a new task to task table with session.
 func (*TaskManager) CreateTaskWithSession(ctx context.Context, se sessionctx.Context, key string, tp proto.TaskType, concurrency int, meta []byte) (taskID int64, err error) {
-	_, err = ExecSQL(ctx, se, `insert into mysql.tidb_global_task(
-			task_key, type, state, priority, concurrency, step, meta, create_time, start_time, state_update_time)
+	_, err = ExecSQL(ctx, se, `
+			insert into mysql.tidb_global_task(`+InsertTaskColumns+`)
 			values (%?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())`,
 		key, tp, proto.TaskStatePending, proto.NormalPriority, concurrency, proto.StepInit, meta)
 	if err != nil {
@@ -237,6 +245,31 @@ func (stm *TaskManager) GetOneTask(ctx context.Context) (task *proto.Task, err e
 	}
 
 	return row2Task(rs[0]), nil
+}
+
+// GetTopUnfinishedTasks implements the dispatcher.TaskManager interface.
+func (stm *TaskManager) GetTopUnfinishedTasks(ctx context.Context) (task []*proto.Task, err error) {
+	rs, err := stm.executeSQLWithNewSession(ctx,
+		`select `+basicTaskColumns+` from mysql.tidb_global_task
+		where state in (%?, %?, %?, %?, %?, %?)
+		order by priority asc, create_time asc, id asc
+		limit %?`,
+		proto.TaskStatePending,
+		proto.TaskStateRunning,
+		proto.TaskStateReverting,
+		proto.TaskStateCancelling,
+		proto.TaskStatePausing,
+		proto.TaskStateResuming,
+		proto.MaxConcurrentTask*2,
+	)
+	if err != nil {
+		return task, err
+	}
+
+	for _, r := range rs {
+		task = append(task, row2TaskBasic(r))
+	}
+	return task, nil
 }
 
 // GetTasksInStates gets the tasks in the states.
@@ -327,6 +360,47 @@ func (stm *TaskManager) GetTaskByKeyWithHistory(ctx context.Context, key string)
 	return row2Task(rs[0]), nil
 }
 
+// FailTask implements the dispatcher.TaskManager interface.
+func (stm *TaskManager) FailTask(ctx context.Context, taskID int64, currentState proto.TaskState, taskErr error) error {
+	_, err := stm.executeSQLWithNewSession(ctx,
+		`update mysql.tidb_global_task
+			set state=%?,
+			    error = %?,
+			    state_update_time = CURRENT_TIMESTAMP()
+			where id=%? and state=%?`,
+		proto.TaskStateFailed, serializeErr(taskErr), taskID, currentState,
+	)
+	return err
+}
+
+// GetUsedSlotsOnNodes implements the dispatcher.TaskManager interface.
+func (stm *TaskManager) GetUsedSlotsOnNodes(ctx context.Context) (map[string]int, error) {
+	// concurrency of subtasks of some step is the same, we use max(concurrency)
+	// to make group by works.
+	rs, err := stm.executeSQLWithNewSession(ctx, `
+		select
+			exec_id, sum(concurrency)
+		from (
+			select exec_id, task_key, max(concurrency) concurrency
+			from mysql.tidb_background_subtask
+			where state in (%?, %?)
+			group by exec_id, task_key
+		) a
+		group by exec_id`,
+		proto.TaskStatePending, proto.TaskStateRunning,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	slots := make(map[string]int, len(rs))
+	for _, r := range rs {
+		val, _ := r.GetMyDecimal(1).ToInt()
+		slots[r.GetString(0)] = int(val)
+	}
+	return slots, nil
+}
+
 // row2SubTask converts a row to a subtask.
 func row2SubTask(r chunk.Row) *proto.Subtask {
 	// subtask defines start/update time as bigint, to ensure backward compatible,
@@ -361,23 +435,6 @@ func row2SubTask(r chunk.Row) *proto.Subtask {
 	}
 	subtask.TaskID = int64(tid)
 	return subtask
-}
-
-// CreateSubTask adds a new task to subtask table.
-// used for testing.
-func (stm *TaskManager) CreateSubTask(ctx context.Context, taskID int64, step proto.Step, execID string, meta []byte, tp proto.TaskType, isRevert bool) error {
-	state := proto.TaskStatePending
-	if isRevert {
-		state = proto.TaskStateRevertPending
-	}
-
-	_, err := stm.executeSQLWithNewSession(ctx, insertSubtaskBasic+`(%?, %?, %?, %?, %?, %?, 11, CURRENT_TIMESTAMP(), '{}', '{}')`,
-		step, taskID, execID, meta, state, proto.Type2Int(tp))
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 // GetSubtasksInStates gets all subtasks by given states.
@@ -777,7 +834,7 @@ func (stm *TaskManager) UpdateTaskAndAddSubTasks(ctx context.Context, task *prot
 			}
 
 			sql := new(strings.Builder)
-			if err := sqlescape.FormatSQL(sql, insertSubtaskBasic); err != nil {
+			if err := sqlescape.FormatSQL(sql, `insert into mysql.tidb_background_subtask(`+InsertSubtaskColumns+`) values`); err != nil {
 				return err
 			}
 			for i, subtask := range subtasks {
@@ -1015,18 +1072,25 @@ func (stm *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 	})
 }
 
-// GetNodesByRole gets nodes map from dist_framework_meta by role.
-func (stm *TaskManager) GetNodesByRole(ctx context.Context, role string) (map[string]bool, error) {
-	rs, err := stm.executeSQLWithNewSession(ctx,
-		"select host from mysql.dist_framework_meta where role = %?", role)
+// GetManagedNodes implements dispatcher.TaskManager interface.
+func (stm *TaskManager) GetManagedNodes(ctx context.Context) ([]string, error) {
+	rs, err := stm.executeSQLWithNewSession(ctx, `
+		select host, role
+		from mysql.dist_framework_meta
+		where role = 'background' or role = ''
+		order by host`)
 	if err != nil {
 		return nil, err
 	}
-	nodes := make(map[string]bool, len(rs))
+	nodes := make(map[string][]string, 2)
 	for _, r := range rs {
-		nodes[r.GetString(0)] = true
+		role := r.GetString(1)
+		nodes[role] = append(nodes[role], r.GetString(0))
 	}
-	return nodes, nil
+	if len(nodes["background"]) == 0 {
+		return nodes[""], nil
+	}
+	return nodes["background"], nil
 }
 
 // GetAllNodes gets nodes in dist_framework_meta.

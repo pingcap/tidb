@@ -17,7 +17,9 @@ package dispatcher_test
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,9 +31,12 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
+	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -198,8 +203,7 @@ func TestGetInstance(t *testing.T) {
 		TaskID: task.ID,
 		ExecID: serverIDs[1],
 	}
-	err = mgr.CreateSubTask(ctx, task.ID, proto.StepInit, subtask.ExecID, nil, subtask.Type, true)
-	require.NoError(t, err)
+	testutil.CreateSubTask(t, mgr, task.ID, proto.StepInit, subtask.ExecID, nil, subtask.Type, 11, true)
 	instanceIDs, err = dsp.GetAllTaskExecutorIDs(ctx, task)
 	require.NoError(t, err)
 	require.Equal(t, []string{serverIDs[1]}, instanceIDs)
@@ -210,8 +214,7 @@ func TestGetInstance(t *testing.T) {
 		TaskID: task.ID,
 		ExecID: serverIDs[0],
 	}
-	err = mgr.CreateSubTask(ctx, task.ID, proto.StepInit, subtask.ExecID, nil, subtask.Type, true)
-	require.NoError(t, err)
+	testutil.CreateSubTask(t, mgr, task.ID, proto.StepInit, subtask.ExecID, nil, subtask.Type, 11, true)
 	instanceIDs, err = dsp.GetAllTaskExecutorIDs(ctx, task)
 	require.NoError(t, err)
 	require.Len(t, instanceIDs, len(serverIDs))
@@ -271,8 +274,8 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	// test parallelism control
 	var originalConcurrency int
 	if taskCnt == 1 {
-		originalConcurrency = dispatcher.DefaultDispatchConcurrency
-		dispatcher.DefaultDispatchConcurrency = 1
+		originalConcurrency = proto.MaxConcurrentTask
+		proto.MaxConcurrentTask = 1
 	}
 
 	store := testkit.CreateMockStore(t)
@@ -293,7 +296,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 		dsp.Stop()
 		// make data race happy
 		if taskCnt == 1 {
-			dispatcher.DefaultDispatchConcurrency = originalConcurrency
+			proto.MaxConcurrentTask = originalConcurrency
 		}
 	}()
 
@@ -512,4 +515,109 @@ func TestIsCancelledErr(t *testing.T) {
 	require.False(t, dispatcher.IsCancelledErr(errors.New("some err")))
 	require.False(t, dispatcher.IsCancelledErr(context.Canceled))
 	require.True(t, dispatcher.IsCancelledErr(errors.New("cancelled by user")))
+}
+
+func TestManagerDispatchLoop(t *testing.T) {
+	// Mock 16 cpu node.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
+	})
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockDispatcher := mock.NewMockDispatcher(ctrl)
+
+	_ = testkit.CreateMockStore(t)
+	require.Eventually(t, func() bool {
+		taskMgr, err := storage.GetTaskManager()
+		return err == nil && taskMgr != nil
+	}, 10*time.Second, 100*time.Millisecond)
+
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+	taskMgr, err := storage.GetTaskManager()
+	require.NoError(t, err)
+	require.NotNil(t, taskMgr)
+
+	// in this test, we only test dispatcher manager, so we add a subtask takes 16
+	// slots to avoid reserve by slots, and make sure below test cases works.
+	serverInfos, err := infosync.GetAllServerInfo(ctx)
+	require.NoError(t, err)
+	for _, s := range serverInfos {
+		execID := disttaskutil.GenerateExecID(s.IP, s.Port)
+		testutil.InsertSubtask(t, taskMgr, 1000000, proto.StepOne, execID, []byte(""), proto.TaskStatePending, proto.TaskTypeExample, 16)
+	}
+	concurrencies := []int{4, 6, 16, 2, 4, 4}
+	waitChannels := make([]chan struct{}, len(concurrencies))
+	for i := range waitChannels {
+		waitChannels[i] = make(chan struct{})
+	}
+	var counter atomic.Int32
+	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
+		func(ctx context.Context, taskMgr dispatcher.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
+			idx := counter.Load()
+			mockDispatcher = mock.NewMockDispatcher(ctrl)
+			mockDispatcher.EXPECT().Init().Return(nil)
+			mockDispatcher.EXPECT().ExecuteTask().Do(func() {
+				require.NoError(t, taskMgr.WithNewSession(func(se sessionctx.Context) error {
+					_, err := storage.ExecSQL(ctx, se, "update mysql.tidb_global_task set state=%?, step=%? where id=%?",
+						proto.TaskStateRunning, proto.StepOne, task.ID)
+					return err
+				}))
+				<-waitChannels[idx]
+				require.NoError(t, taskMgr.WithNewSession(func(se sessionctx.Context) error {
+					_, err := storage.ExecSQL(ctx, se, "update mysql.tidb_global_task set state=%?, step=%? where id=%?",
+						proto.TaskStateSucceed, proto.StepDone, task.ID)
+					return err
+				}))
+			})
+			mockDispatcher.EXPECT().Close()
+			counter.Add(1)
+			return mockDispatcher
+		},
+	)
+	for i := 0; i < len(concurrencies); i++ {
+		_, err := taskMgr.CreateTask(ctx, fmt.Sprintf("key/%d", i), proto.TaskTypeExample, concurrencies[i], []byte("{}"))
+		require.NoError(t, err)
+	}
+	getRunningTaskKeys := func() []string {
+		tasks, err := taskMgr.GetTasksInStates(ctx, proto.TaskStateRunning)
+		require.NoError(t, err)
+		taskKeys := make([]string, len(tasks))
+		for i, task := range tasks {
+			taskKeys[i] = task.Key
+		}
+		slices.Sort(taskKeys)
+		return taskKeys
+	}
+	require.Eventually(t, func() bool {
+		taskKeys := getRunningTaskKeys()
+		return err == nil && len(taskKeys) == 4 &&
+			taskKeys[0] == "key/0" && taskKeys[1] == "key/1" &&
+			taskKeys[2] == "key/3" && taskKeys[3] == "key/4"
+	}, time.Second*10, time.Millisecond*100)
+	// finish the first task
+	close(waitChannels[0])
+	require.Eventually(t, func() bool {
+		taskKeys := getRunningTaskKeys()
+		return err == nil && len(taskKeys) == 4 &&
+			taskKeys[0] == "key/1" && taskKeys[1] == "key/3" &&
+			taskKeys[2] == "key/4" && taskKeys[3] == "key/5"
+	}, time.Second*10, time.Millisecond*100)
+	// finish the second task
+	close(waitChannels[1])
+	require.Eventually(t, func() bool {
+		taskKeys := getRunningTaskKeys()
+		return err == nil && len(taskKeys) == 4 &&
+			taskKeys[0] == "key/2" && taskKeys[1] == "key/3" &&
+			taskKeys[2] == "key/4" && taskKeys[3] == "key/5"
+	}, time.Second*10, time.Millisecond*100)
+	// close others
+	for i := 2; i < len(concurrencies); i++ {
+		close(waitChannels[i])
+	}
+	require.Eventually(t, func() bool {
+		taskKeys := getRunningTaskKeys()
+		return err == nil && len(taskKeys) == 0
+	}, time.Second*10, time.Millisecond*100)
 }
