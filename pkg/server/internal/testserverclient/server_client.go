@@ -1034,11 +1034,12 @@ func (cli *TestServerClient) RunTestLoadDataInTransaction(t *testing.T) {
 			dbt.MustExec("create table t (a int)")
 			txn, err := dbt.GetDB().Begin()
 			require.NoError(t, err)
+			txn.Exec("insert into t values (100)") // `load data` doesn't commit current txn
 			_, err = txn.Exec(fmt.Sprintf("load data local infile %q into table t", path))
 			require.NoError(t, err)
 			rows, err := txn.Query("select * from t")
 			require.NoError(t, err)
-			cli.CheckRows(t, rows, "1")
+			cli.CheckRows(t, rows, "100\n1")
 			err = txn.Rollback()
 			require.NoError(t, err)
 			rows = dbt.MustQuery("select * from t")
