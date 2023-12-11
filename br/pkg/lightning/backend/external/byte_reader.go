@@ -238,7 +238,7 @@ func (r *byteReader) reload() error {
 	now := r.concurrentReader.now
 	// in read only false -> true is possible
 	if !now && to {
-		r.logger.Info("switch reader mode", zap.Bool("use concurrent mode", true))
+		// r.logger.Info("switch reader mode", zap.Bool("use concurrent mode", true))
 		err := r.switchToConcurrentReader()
 		if err != nil {
 			return err
@@ -275,10 +275,10 @@ func (r *byteReader) reload() error {
 }
 
 func (r *byteReader) closeConcurrentReader() (reloadCnt, offsetInOldBuffer int) {
-	r.logger.Info("drop data in closeConcurrentReader",
-		zap.Int("reloadCnt", r.concurrentReader.reloadCnt),
-		zap.Int("dropBytes", len(r.curBuf)-r.curBufOffset),
-	)
+	// r.logger.Info("drop data in closeConcurrentReader",
+	// 	zap.Int("reloadCnt", r.concurrentReader.reloadCnt),
+	// 	zap.Int("dropBytes", len(r.curBuf)-r.curBufOffset),
+	// )
 	r.concurrentReader.largeBufferPool.Destroy()
 	r.concurrentReader.largeBuf = nil
 	r.concurrentReader.now = false

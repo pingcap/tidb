@@ -21,6 +21,7 @@ import (
 	"io"
 	"math"
 	"math/rand"
+	"net/http"
 	"os"
 	"runtime"
 	"runtime/pprof"
@@ -363,7 +364,7 @@ func writeExternalOneFile(s *writeTestSuite) {
 	}
 	writer := builder.BuildOneFile(
 		s.store, filePath, "writerID")
-	_ = writer.Init(ctx, 20*1024*1024)
+	_ = writer.Init(ctx, 20*1024*1024, 20)
 	key, val, _ := s.source.next()
 	for key != nil {
 		err := writer.WriteRow(ctx, key, val)
@@ -1036,6 +1037,7 @@ func TestMergeCompare(t *testing.T) {
 	fileSize := 50 * 1024 * 1024
 	fileCnt := 50
 	subDir := "ascending"
+	http.DefaultTransport.(*http.Transport).DisableKeepAlives = true
 	store, _, minKey, maxKey := createAscendingFiles(t, fileSize, fileCnt, subDir)
 	datas, stats, err := GetAllFileNames(ctx, store, "/"+subDir)
 	mergeOutput := "merge_output"
@@ -1078,7 +1080,7 @@ func TestMergeCompare(t *testing.T) {
 		ctx,
 		datas,
 		store,
-		16*1024*1024, // TODO(lance6716): why need so large?
+		16*1024*1024,
 		64*1024,
 		mergeOutput,
 		DefaultBlockSize,
@@ -1098,7 +1100,7 @@ func TestMergeCompare(t *testing.T) {
 		ctx,
 		datas,
 		store,
-		16*1024*1024, // TODO(lance6716): why need so large?
+		16*1024*1024,
 		64*1024,
 		mergeOutput,
 		DefaultBlockSize,
@@ -1113,7 +1115,3 @@ func TestMergeCompare(t *testing.T) {
 	t.Logf("merge prev implementation with 8 concurrency %d bytes in %s, speed: %.2f MB/s",
 		fileSize*fileCnt, elapsed, float64(fileSize*fileCnt)/elapsed.Seconds()/1024/1024)
 }
-
-// 1. bench_test.go:1068: merge speed for 2621440000 bytes in 22.584229553s, speed: 110.70 MB/s
-// 2. bench_test.go:1093: merge prev implementation with 1 concurrency 2621440000 bytes in 33.568169921s, speed: 74.48 MB/s
-// 3. bench_test.go:1112: merge prev implementation with 8 concurrency 2621440000 bytes in 14.412007755s, speed: 52.73 MB/s

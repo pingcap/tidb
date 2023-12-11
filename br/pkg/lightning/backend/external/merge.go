@@ -74,7 +74,7 @@ func MergeOverlappingFiles(
 			store,
 			newFilePrefix,
 			writerID)
-	err = writer.Init(ctx, partSize)
+	err = writer.Init(ctx, partSize, 40)
 	if err != nil {
 		return nil
 	}
@@ -270,7 +270,7 @@ func mergeOverlappingFilesV2(
 		SetPropSizeDistance(propSizeDist).
 		SetOnCloseFunc(onClose).
 		BuildOneFile(store, newFilePrefix, writerID)
-	err = writer.Init(ctx, partSize)
+	err = writer.Init(ctx, partSize, 20)
 	if err != nil {
 		return nil
 	}

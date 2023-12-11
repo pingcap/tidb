@@ -57,16 +57,16 @@ type OneFileWriter struct {
 }
 
 // initWriter inits the underlying dataFile/statFile path, dataWriter/statWriter for OneFileWriter.
-func (w *OneFileWriter) initWriter(ctx context.Context, partSize int64) (
+func (w *OneFileWriter) initWriter(ctx context.Context, partSize int64, concurrency int) (
 	err error,
 ) {
 	w.dataFile = filepath.Join(w.filenamePrefix, "one-file")
-	w.dataWriter, err = w.store.Create(ctx, w.dataFile, &storage.WriterOption{Concurrency: 20, PartSize: partSize})
+	w.dataWriter, err = w.store.Create(ctx, w.dataFile, &storage.WriterOption{Concurrency: concurrency, PartSize: partSize})
 	if err != nil {
 		return err
 	}
 	w.statFile = filepath.Join(w.filenamePrefix+statSuffix, "one-file")
-	w.statWriter, err = w.store.Create(ctx, w.statFile, &storage.WriterOption{Concurrency: 20, PartSize: int64(5 * size.MB)})
+	w.statWriter, err = w.store.Create(ctx, w.statFile, &storage.WriterOption{Concurrency: concurrency, PartSize: int64(5 * size.MB)})
 	if err != nil {
 		_ = w.dataWriter.Close(ctx)
 		return err
@@ -76,9 +76,9 @@ func (w *OneFileWriter) initWriter(ctx context.Context, partSize int64) (
 }
 
 // Init inits the OneFileWriter and its underlying KeyValueStore.
-func (w *OneFileWriter) Init(ctx context.Context, partSize int64) (err error) {
+func (w *OneFileWriter) Init(ctx context.Context, partSize int64, concurrency int) (err error) {
 	w.logger = logutil.Logger(ctx)
-	err = w.initWriter(ctx, partSize)
+	err = w.initWriter(ctx, partSize, concurrency)
 	if err != nil {
 		return err
 	}
