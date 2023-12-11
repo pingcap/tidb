@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/mpp"
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
+	"github.com/pingcap/tidb/pkg/executor/mpperr"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -31,7 +32,9 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"go.uber.org/zap"
 )
 
 func useMPPExecution(ctx sessionctx.Context, tr *plannercore.PhysicalTableReader) bool {
@@ -76,6 +79,8 @@ type MPPGather struct {
 	table    table.Table
 	kvRanges []kv.KeyRange
 	dummy    bool
+
+	mppErrRecovery *mpperr.MPPErrRecovery
 }
 
 func collectPlanIDS(plan plannercore.PhysicalPlan, ids []int) []int {
@@ -84,6 +89,40 @@ func collectPlanIDS(plan plannercore.PhysicalPlan, ids []int) []int {
 		ids = collectPlanIDS(child, ids)
 	}
 	return ids
+}
+
+func (e *MPPGather) setupRespIter(ctx context.Context, isRecoverying bool) error {
+	if isRecoverying {
+		// If we are trying to recovery from MPP error, needs to cleanup some resources.
+
+		// Sanity check.
+		if e.dummy {
+			return errors.New("should not reset mpp resp iter for dummy table")
+		}
+		if e.respIter == nil {
+			return errors.New("mpp resp iter should already be setup")
+		}
+
+		if err := e.respIter.Close(); err != nil {
+			return err
+		}
+		mppcoordmanager.InstanceMPPCoordinatorManager.Unregister(mppcoordmanager.CoordinatorUniqueID{MPPQueryID: e.mppQueryID, GatherID: e.gatherID})
+	}
+
+	planIDs := collectPlanIDS(e.originalPlan, nil)
+	e.gatherID = allocMPPGatherID(e.Ctx())
+	coord := e.buildCoordinator(planIDs)
+	err := mppcoordmanager.InstanceMPPCoordinatorManager.Register(mppcoordmanager.CoordinatorUniqueID{MPPQueryID: e.mppQueryID, GatherID: e.gatherID}, coord)
+	if err != nil {
+		return err
+	}
+	var resp kv.Response
+	resp, e.kvRanges, err = coord.Execute(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.respIter = distsql.GenSelectResultFromResponse(e.Ctx(), e.RetFieldTypes(), planIDs, e.ID(), resp)
+	return nil
 }
 
 // allocMPPGatherID allocates mpp gather id for mpp gathers. It will reset the gather id when the query finished.
@@ -104,19 +143,10 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 		_, e.kvRanges, err = plannercore.GenerateRootMPPTasks(e.Ctx(), e.startTS, e.gatherID, e.mppQueryID, sender, e.is)
 		return err
 	}
-	planIDs := collectPlanIDS(e.originalPlan, nil)
-	e.gatherID = allocMPPGatherID(e.Ctx())
-	coord := e.buildCoordinator(planIDs)
-	err = mppcoordmanager.InstanceMPPCoordinatorManager.Register(mppcoordmanager.CoordinatorUniqueID{MPPQueryID: e.mppQueryID, GatherID: e.gatherID}, coord)
+	err = e.setupRespIter(ctx, false)
 	if err != nil {
 		return err
 	}
-	var resp kv.Response
-	resp, e.kvRanges, err = coord.Execute(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	e.respIter = distsql.GenSelectResultFromResponse(e.Ctx(), e.RetFieldTypes(), planIDs, e.ID(), resp)
 	return nil
 }
 
@@ -132,11 +162,49 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.dummy {
 		return nil
 	}
-	err := e.respIter.Next(ctx, chk)
-	if err != nil {
+
+	for e.mppErrRecovery.CanHoldResult() {
+		// todo: if use chk allocator, how to return chk back to allocator.
+		tmpChk := exec.NewFirstChunk(e)
+
+		if mppErr := e.respIter.Next(ctx, tmpChk); mppErr != nil {
+			canRecovery, err := e.mppErrRecovery.Recovery(mppErr)
+			if err != nil {
+				logutil.BgLogger().Info("try recovery mpp error failed", zap.Any("mppErr", mppErr),
+					zap.Any("recoveryErr", err))
+				return mppErr
+			}
+			if !canRecovery {
+				break
+			}
+
+			// mppErr recovery succeed, start to dispatch MPPTask again.
+			e.setupRespIter(ctx, true)
+			e.mppErrRecovery.Reset()
+			continue
+		}
+
+		if tmpChk.NumRows() == 0 {
+			break
+		}
+
+		if !e.mppErrRecovery.HoldResult(tmpChk) {
+			return errors.New("hold mpp result failed")
+		}
+	}
+
+	if e.mppErrRecovery.NumHoldChk() != 0 {
+		if tmpChk := e.mppErrRecovery.PopFrontChk(); tmpChk == nil {
+			return errors.New("cannot get chunk from mpp result holder")
+		} else {
+			// todo swap because the requested chk may be from allocator.
+			chk.SwapColumns(tmpChk)
+		}
+	} else if err := e.respIter.Next(ctx, chk); err != nil {
 		return err
 	}
-	err = table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.Schema().Columns, e.columns, e.Ctx(), chk)
+
+	err := table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.Schema().Columns, e.columns, e.Ctx(), chk)
 	if err != nil {
 		return err
 	}

@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -61,6 +62,10 @@ const (
 	InvalidASType
 )
 
+var topoFetcherHttpCli = &http.Client{
+	Timeout: time.Second * 40,
+}
+
 const (
 	// DefAWSAutoScalerAddr is the default address for AWS AutoScaler.
 	DefAWSAutoScalerAddr = "tiflash-autoscale-lb.tiflash-autoscale.svc.cluster.local:8081"
@@ -75,6 +80,22 @@ const (
 
 var errTopoFetcher = dbterror.ClassUtil.NewStd(errno.ErrInternal)
 
+type RecoveryType uint32
+
+const (
+	RecoveryTypeNull = iota
+	RecoveryTypeMemLimit
+)
+
+func (r *RecoveryType) ToString() (string, error) {
+	if *r == RecoveryTypeNull {
+		return "Null", nil
+	} else if *r == RecoveryTypeMemLimit {
+		return "MemLimit", nil
+	}
+	return "", errors.New("unsupported recovery type for topo_fetcher")
+}
+
 // TopoFetcher is interface for fetching topo from AutoScaler.
 // We support the following kinds of AutoScaler for now:
 //  1. MockAutoScaler: Normally for test, can run in local environment.
@@ -88,7 +109,7 @@ type TopoFetcher interface {
 
 	// Always fetch topo from AutoScaler, then return topo.
 	// If topo is empty, will not return error. You can call AssureAndGetTopo() to make sure topo is not empty.
-	FetchAndGetTopo() ([]string, error)
+	FetchAndGetTopo(recovery RecoveryType) ([]string, error)
 }
 
 // IsValidAutoScalerConfig return true if user config of autoscaler type is valid.
@@ -184,7 +205,10 @@ func (f *MockTopoFetcher) AssureAndGetTopo() ([]string, error) {
 }
 
 // FetchAndGetTopo implements TopoFetcher interface.
-func (f *MockTopoFetcher) FetchAndGetTopo() ([]string, error) {
+func (f *MockTopoFetcher) FetchAndGetTopo(recovery RecoveryType) ([]string, error) {
+	if recovery != RecoveryTypeNull {
+		return nil, errors.New("MockTopoFetcher doesn't support recovery error")
+	}
 	err := f.fetchTopo()
 	if err != nil {
 		return nil, err
@@ -248,7 +272,7 @@ func (f *MockTopoFetcher) fetchTopo() error {
 }
 
 func httpGetAndParseResp(url string) ([]byte, error) {
-	resp, err := http.Get(url)
+	resp, err := topoFetcherHttpCli.Get(url)
 	if err != nil {
 		logutil.BgLogger().Error(err.Error())
 		return nil, errTopoFetcher.GenWithStackByArgs(httpGetFailedErrMsg)
@@ -326,10 +350,14 @@ func (*AWSTopoFetcher) AssureAndGetTopo() ([]string, error) {
 }
 
 // FetchAndGetTopo implements TopoFetcher interface.
-func (f *AWSTopoFetcher) FetchAndGetTopo() (curTopo []string, err error) {
+func (f *AWSTopoFetcher) FetchAndGetTopo(recovery RecoveryType) (curTopo []string, err error) {
 	defer func() {
 		logutil.BgLogger().Info("AWSTopoFetcher FetchAndGetTopo done", zap.Any("curTopo", curTopo))
 	}()
+
+	if recovery != RecoveryTypeNull && recovery != RecoveryTypeMemLimit {
+		return nil, errors.Errorf("topo_fetcher cannot handle error: %v", recovery)
+	}
 
 	if f.isFixedPool {
 		// todo: delete this when AssureAndGetTopo() is done.
@@ -345,7 +373,7 @@ func (f *AWSTopoFetcher) FetchAndGetTopo() (curTopo []string, err error) {
 		return curTopo, nil
 	}
 
-	if err = f.fetchTopo(); err != nil {
+	if err = f.fetchTopo(recovery); err != nil {
 		return nil, err
 	}
 
@@ -418,9 +446,18 @@ func (f *AWSTopoFetcher) fetchFixedPoolTopo() error {
 	return nil
 }
 
-func (f *AWSTopoFetcher) fetchTopo() error {
+func (f *AWSTopoFetcher) fetchTopo(recovery RecoveryType) error {
 	para := url.Values{}
 	para.Add("tidbclusterid", f.clusterID)
+
+	if recovery == RecoveryTypeMemLimit {
+		msg, err := recovery.ToString()
+		if err != nil {
+			return err
+		}
+		para.Add("recovery", msg)
+	}
+
 	u := url.URL{
 		Scheme:   "http",
 		Host:     f.addr,
@@ -462,6 +499,6 @@ func (*TestTopoFetcher) AssureAndGetTopo() ([]string, error) {
 }
 
 // FetchAndGetTopo implements TopoFetcher interface.
-func (*TestTopoFetcher) FetchAndGetTopo() ([]string, error) {
+func (*TestTopoFetcher) FetchAndGetTopo(recovery RecoveryType) ([]string, error) {
 	return []string{}, nil
 }

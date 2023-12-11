@@ -522,6 +522,7 @@ func (c *localMppCoordinator) receiveResults(req *kv.MPPDispatchRequest, taskMet
 				return
 			}
 
+			// todo why backoff here?
 			if err1 := bo.Backoff(tikv.BoTiKVRPC(), errors.Errorf("recv stream response error: %v", err)); err1 != nil {
 				if errors.Cause(err) == context.Canceled {
 					logutil.BgLogger().Info("stream recv timeout", zap.Error(err), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId), zap.Int64("mpp-version", taskMeta.MppVersion))
