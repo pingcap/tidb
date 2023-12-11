@@ -171,15 +171,30 @@ func (s *statsReadWriter) ResetTableStats2KVForDrop(physicalID int64) (err error
 	}()
 
 	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		startTS, err := util.GetStartTS(sctx)
+		startTS, err := ResetTableStats2KVForDrop(sctx, physicalID)
 		if err != nil {
-			return errors.Trace(err)
-		}
-		if _, err := util.Exec(sctx, "update mysql.stats_meta set version=%? where table_id =%?", startTS, physicalID); err != nil {
 			return err
 		}
+		statsVer = startTS
 		return nil
 	}, util.FlagWrapTxn)
+}
+
+// ResetTableStats2KVForDrop update the version of mysql.stats_meta.
+// Then GC worker will delete the old version of stats.
+// Exported for scenarios where it's necessary to encapsulate operations within a single transaction.
+func ResetTableStats2KVForDrop(
+	sctx sessionctx.Context,
+	physicalID int64,
+) (uint64, error) {
+	startTS, err := util.GetStartTS(sctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if _, err := util.Exec(sctx, "update mysql.stats_meta set version=%? where table_id =%?", startTS, physicalID); err != nil {
+		return 0, err
+	}
+	return startTS, nil
 }
 
 // UpdateStatsVersion will set statistics version to the newest TS,
