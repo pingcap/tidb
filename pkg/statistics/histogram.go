@@ -1475,7 +1475,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	// Remove empty buckets
 	tail := 0
 	for i := range buckets {
-		if buckets[i].Count != 0 && i != tail {
+		if buckets[i].Count != 0 {
 			buckets[tail], buckets[i] = buckets[i], buckets[tail]
 			tail++
 		}
