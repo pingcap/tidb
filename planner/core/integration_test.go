@@ -5278,6 +5278,53 @@ func TestVirtualExprPushDown(t *testing.T) {
 	tk.MustQuery("explain select * from t where c2 > 1;").CheckAt([]int{0, 2, 4}, rows)
 }
 
+func TestIssue46177(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(` CREATE TABLE sbtest (
+  id int(10) unsigned NOT NULL AUTO_INCREMENT,
+  k int(10) unsigned NOT NULL DEFAULT '0',
+  c char(120) NOT NULL DEFAULT '',
+  pad char(60) NOT NULL DEFAULT '',
+  PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,
+  KEY k (k)
+)`)
+
+	// cannot choose the best plan with RangeScan.
+	tk.MustExec(`set @@tidb_opt_fix_control = '46177:off'`)
+	tk.MustQuery(`explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a`).Check(testkit.Rows(
+		`Projection 10.00 root  Column#6`,
+		`└─Window 10.00 root  row_number()->Column#6 over(order by test.sbtest.k rows between current row and current row)`,
+		`  └─IndexReader 10.00 root  index:Selection`,
+		`    └─Selection 10.00 cop[tikv]  lt(test.sbtest.id, 10)`,
+		`      └─IndexFullScan 10000.00 cop[tikv] table:sbtest, index:k(k) keep order:true, stats:pseudo`))
+
+	tk.MustExec(`set @@tidb_opt_fix_control = '46177:on'`)
+	tk.MustQuery(`explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a`).Check(testkit.Rows(
+		`Projection 10.00 root  Column#6`,
+		`└─Window 10.00 root  row_number()->Column#6 over(order by test.sbtest.k rows between current row and current row)`,
+		`  └─Sort 10.00 root  test.sbtest.k`,
+		`    └─TableReader 10.00 root  data:TableRangeScan`,
+		`      └─TableRangeScan 10.00 cop[tikv] table:sbtest range:[0,10), keep order:false, stats:pseudo`))
+
+	// cannot choose the range scan plan.
+	tk.MustExec(`set @@tidb_opt_fix_control = '46177:off'`)
+	tk.MustQuery(`explain format='brief' select /*+ stream_agg() */ count(1) from sbtest where id<1 group by k`).Check(testkit.Rows(
+		`StreamAgg 1.00 root  group by:test.sbtest.k, funcs:count(Column#6)->Column#5`,
+		`└─IndexReader 1.00 root  index:StreamAgg`,
+		`  └─StreamAgg 1.00 cop[tikv]  group by:test.sbtest.k, funcs:count(1)->Column#6`,
+		`    └─Selection 1.00 cop[tikv]  lt(test.sbtest.id, 1)`,
+		`      └─IndexFullScan 10000.00 cop[tikv] table:sbtest, index:k(k) keep order:true, stats:pseudo`))
+
+	tk.MustExec(`set @@tidb_opt_fix_control = '46177:on'`)
+	tk.MustQuery(`explain format='brief' select /*+ stream_agg() */ count(1) from sbtest where id<1 group by k`).Check(testkit.Rows(
+		`StreamAgg 1.00 root  group by:test.sbtest.k, funcs:count(1)->Column#5`,
+		`└─Sort 1.00 root  test.sbtest.k`,
+		`  └─TableReader 1.00 root  data:TableRangeScan`,
+		`    └─TableRangeScan 1.00 cop[tikv] table:sbtest range:[0,1), keep order:false, stats:pseudo`))
+}
+
 // https://github.com/pingcap/tidb/issues/41458
 func TestIssue41458(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -5329,6 +5376,26 @@ func TestIssue43116(t *testing.T) {
 		"└─Selection 8000.00 cop[tikv]  in(test.sbtest1.id, 1, 1, 1, 1, 1), in(test.sbtest1.pad, \"1\", \"1\", \"1\", \"1\", \"1\")",
 		"  └─TableFullScan 10000.00 cop[tikv] table:a keep order:false, stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 111 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
+}
+
+func TestIssue48643(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, tp")
+	tk.MustExec("create table t\n(pk1 varchar(128),\n pk2 varchar(128),\n pk3 varchar(128),\n data varchar(128),\n primary key (pk1, pk2, pk3))")
+	tk.MustExec("insert into t values (UUID(), UUID(), uuid(), uuid()), (uuid(), uuid(), uuid(), uuid())")
+	tk.MustExec("insert into t select uuid(), uuid(), uuid(), uuid() from t, t t2, t t3, t t4")
+	tk.MustExec("insert into t select t.pk1, uuid(), uuid(), uuid() from t, t t2, t t3, t t4")
+	tk.MustQuery("select count(*) from t;").Check(testkit.Rows("104994"))
+	tk.MustQuery("select count(distinct pk1) from t;").Check(testkit.Rows("18"))
+	res1 := tk.MustQuery("select pk1, count(*) from t group by pk1 order by count(*), pk1 limit 10;").Sort()
+
+	tk.MustExec("create table tp\n(pk1 varchar(128),\n pk2 varchar(128),\n pk3 varchar(128),\n data varchar(128),\n primary key (pk1, pk2, pk3))\npartition by key(pk1) partitions 128;")
+	tk.MustExec("insert into tp select * from t;")
+	tk.MustQuery("select count(*) from tp;").Check(testkit.Rows("104994"))
+	tk.MustQuery("select count(distinct pk1) from tp;").Check(testkit.Rows("18"))
+	tk.MustQuery("select pk1, count(*) from tp group by pk1 order by count(*), pk1 limit 10;").Sort().Check(res1.Rows())
 }
 
 func TestIssue45033(t *testing.T) {

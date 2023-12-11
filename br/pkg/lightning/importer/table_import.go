@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mathutil"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -69,6 +70,8 @@ type TableImporter struct {
 	alloc     autoid.Allocators
 	logger    log.Logger
 	kvStore   tidbkv.Storage
+	etcdCli   *clientv3.Client
+	autoidCli *autoid.ClientDiscover
 
 	ignoreColumns map[string]struct{}
 }
@@ -82,6 +85,7 @@ func NewTableImporter(
 	cp *checkpoints.TableCheckpoint,
 	ignoreColumns map[string]struct{},
 	kvStore tidbkv.Storage,
+	etcdCli *clientv3.Client,
 	logger log.Logger,
 ) (*TableImporter, error) {
 	idAlloc := kv.NewPanickingAllocators(cp.AllocBase)
@@ -89,6 +93,7 @@ func NewTableImporter(
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", tableName)
 	}
+	autoidCli := autoid.NewClientDiscover(etcdCli)
 
 	return &TableImporter{
 		tableName:     tableName,
@@ -98,6 +103,8 @@ func NewTableImporter(
 		encTable:      tbl,
 		alloc:         idAlloc,
 		kvStore:       kvStore,
+		etcdCli:       etcdCli,
+		autoidCli:     autoidCli,
 		logger:        logger.With(zap.String("table", tableName)),
 		ignoreColumns: ignoreColumns,
 	}, nil
@@ -266,6 +273,19 @@ func (tr *TableImporter) populateChunks(ctx context.Context, rc *Controller, cp 
 		zap.Int("filesCnt", len(tableRegions)),
 	)
 	return err
+}
+
+// AutoIDRequirement implements autoid.Requirement.
+var _ autoid.Requirement = &TableImporter{}
+
+// Store implements the autoid.Requirement interface.
+func (tr *TableImporter) Store() tidbkv.Storage {
+	return tr.kvStore
+}
+
+// AutoIDClient implements the autoid.Requirement interface.
+func (tr *TableImporter) AutoIDClient() *autoid.ClientDiscover {
+	return tr.autoidCli
 }
 
 // RebaseChunkRowIDs rebase the row id of the chunks.
@@ -898,7 +918,7 @@ func (tr *TableImporter) postProcess(
 				// And in this case, ALTER TABLE xxx AUTO_INCREMENT = xxx only works on the allocator of auto_increment column,
 				// not for allocator of _tidb_rowid.
 				// So we need to rebase IDs for those 2 allocators explicitly.
-				err = common.RebaseGlobalAutoID(ctx, adjustIDBase(newBase), tr.kvStore, tr.dbInfo.ID, tr.tableInfo.Core)
+				err = common.RebaseGlobalAutoID(ctx, adjustIDBase(newBase), tr, tr.dbInfo.ID, tr.tableInfo.Core)
 			}
 		}
 		rc.alterTableLock.Unlock()

@@ -288,6 +288,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 					if _, ok = b.correlatedAggMapper[aggFuncList[j]]; !ok {
 						b.correlatedAggMapper[aggFuncList[j]] = &expression.CorrelatedColumn{
 							Column: *schema4Agg.Columns[aggIndexMap[j]],
+							Data:   new(types.Datum),
 						}
 					}
 					b.correlatedAggMapper[aggFunc] = b.correlatedAggMapper[aggFuncList[j]]
@@ -309,6 +310,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 			if _, ok := correlatedAggMap[aggFunc]; ok {
 				b.correlatedAggMapper[aggFunc] = &expression.CorrelatedColumn{
 					Column: column,
+					Data:   new(types.Datum),
 				}
 			}
 		}
@@ -415,7 +417,11 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			}
 		}
 		// `TableName` is not a select block, so we do not need to handle it.
-		if plannerSelectBlockAsName := *(b.ctx.GetSessionVars().PlannerSelectBlockAsName.Load()); len(plannerSelectBlockAsName) > 0 && !isTableName {
+		var plannerSelectBlockAsName []ast.HintTable
+		if p := b.ctx.GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
+			plannerSelectBlockAsName = *p
+		}
+		if len(plannerSelectBlockAsName) > 0 && !isTableName {
 			plannerSelectBlockAsName[p.SelectBlockOffset()] = ast.HintTable{DBName: p.OutputNames()[0].DBName, TableName: p.OutputNames()[0].TblName}
 		}
 		// Duplicate column name in one table is not allowed.
@@ -587,7 +593,10 @@ func extractTableAlias(p Plan, parentOffset int) *hintTableInfo {
 			}
 		}
 		blockOffset := p.SelectBlockOffset()
-		blockAsNames := *(p.SCtx().GetSessionVars().PlannerSelectBlockAsName.Load())
+		var blockAsNames []ast.HintTable
+		if p := p.SCtx().GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
+			blockAsNames = *p
+		}
 		// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
 		if blockOffset != parentOffset && blockAsNames != nil && blockAsNames[blockOffset].TableName.L != "" {
 			blockOffset = parentOffset
@@ -4482,13 +4491,21 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			}
 
 			if cte.cteClass == nil {
-				cte.cteClass = &CTEClass{IsDistinct: cte.isDistinct, seedPartLogicalPlan: cte.seedLP,
-					recursivePartLogicalPlan: cte.recurLP, IDForStorage: cte.storageID,
-					optFlag: cte.optFlag, HasLimit: hasLimit, LimitBeg: limitBeg,
-					LimitEnd: limitEnd, pushDownPredicates: make([]expression.Expression, 0), ColumnMap: make(map[string]*expression.Column)}
+				cte.cteClass = &CTEClass{
+					IsDistinct:               cte.isDistinct,
+					seedPartLogicalPlan:      cte.seedLP,
+					recursivePartLogicalPlan: cte.recurLP,
+					IDForStorage:             cte.storageID,
+					optFlag:                  cte.optFlag,
+					HasLimit:                 hasLimit,
+					LimitBeg:                 limitBeg,
+					LimitEnd:                 limitEnd,
+					pushDownPredicates:       make([]expression.Expression, 0),
+					ColumnMap:                make(map[string]*expression.Column),
+				}
 			}
 			var p LogicalPlan
-			lp := LogicalCTE{cteAsName: tn.Name, cteName: tn.Name, cte: cte.cteClass, seedStat: cte.seedStat, isOuterMostCTE: !b.buildingCTE}.Init(b.ctx, b.getSelectOffset())
+			lp := LogicalCTE{cteAsName: tn.Name, cteName: tn.Name, cte: cte.cteClass, seedStat: cte.seedStat}.Init(b.ctx, b.getSelectOffset())
 			prevSchema := cte.seedLP.Schema().Clone()
 			lp.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 
@@ -4913,7 +4930,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				var err error
 				originVal := b.allowBuildCastArray
 				b.allowBuildCastArray = true
-				expr, _, err = b.rewrite(ctx, columns[i].GeneratedExpr, ds, nil, true)
+				expr, _, err = b.rewrite(ctx, columns[i].GeneratedExpr.Clone(), ds, nil, true)
 				b.allowBuildCastArray = originVal
 				if err != nil {
 					return nil, err
@@ -5882,7 +5899,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			}
 			virtualAssignments = append(virtualAssignments, &ast.Assignment{
 				Column: &ast.ColumnName{Schema: tn.Schema, Table: tn.Name, Name: colInfo.Name},
-				Expr:   tableVal.Cols()[i].GeneratedExpr,
+				Expr:   tableVal.Cols()[i].GeneratedExpr.Clone(),
 			})
 		}
 	}

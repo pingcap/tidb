@@ -15,6 +15,8 @@
 package issuetest
 
 import (
+	"sort"
+	"strconv"
 	"testing"
 
 	"github.com/pingcap/tidb/testkit"
@@ -114,4 +116,91 @@ func TestIssue46083(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TEMPORARY TABLE v0(v1 int)")
 	tk.MustExec("INSERT INTO v0 WITH ta2 AS (TABLE v0) TABLE ta2 FOR UPDATE OF ta2;")
+}
+
+func TestIssue48755(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_max_chunk_size=32")
+	tk.MustExec("create table t(a int, b int);")
+	tk.MustExec("insert into t values(1, 1);")
+	tk.MustExec("insert into t select a+1, a+1 from t;")
+	tk.MustExec("insert into t select a+2, a+2 from t;")
+	tk.MustExec("insert into t select a+4, a+4 from t;")
+	tk.MustExec("insert into t select a+8, a+8 from t;")
+	tk.MustExec("insert into t select a+16, a+16 from t;")
+	tk.MustExec("insert into t select a+32, a+32 from t;")
+	rs := tk.MustQuery("select a from (select 100 as a, 100 as b union all select * from t) t where b != 0;")
+	expectedResult := make([]string, 0, 65)
+	for i := 1; i < 65; i++ {
+		expectedResult = append(expectedResult, strconv.FormatInt(int64(i), 10))
+	}
+	expectedResult = append(expectedResult, "100")
+	sort.Slice(expectedResult, func(i, j int) bool {
+		return expectedResult[i] < expectedResult[j]
+	})
+	rs.Sort().Check(testkit.Rows(expectedResult...))
+}
+
+func TestIssue47881(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int,name varchar(10));")
+	tk.MustExec("insert into t values(1,'tt');")
+	tk.MustExec("create table t1(id int,name varchar(10),name1 varchar(10),name2 varchar(10));")
+	tk.MustExec("insert into t1 values(1,'tt','ttt','tttt'),(2,'dd','ddd','dddd');")
+	tk.MustExec("create table t2(id int,name varchar(10),name1 varchar(10),name2 varchar(10),`date1` date);")
+	tk.MustExec("insert into t2 values(1,'tt','ttt','tttt','2099-12-31'),(2,'dd','ddd','dddd','2099-12-31');")
+	rs := tk.MustQuery(`WITH bzzs AS (
+		SELECT 
+		  count(1) AS bzn 
+		FROM 
+		  t c
+	      ), 
+	      tmp1 AS (
+		SELECT 
+		  t1.* 
+		FROM 
+		  t1 
+		  LEFT JOIN bzzs ON 1 = 1 
+		WHERE 
+		  name IN ('tt') 
+		  AND bzn <> 1
+	      ), 
+	      tmp2 AS (
+		SELECT 
+		  tmp1.*, 
+		  date('2099-12-31') AS endate 
+		FROM 
+		  tmp1
+	      ), 
+	      tmp3 AS (
+		SELECT 
+		  * 
+		FROM 
+		  tmp2 
+		WHERE 
+		  endate > CURRENT_DATE 
+		UNION ALL 
+		SELECT 
+		  '1' AS id, 
+		  'ss' AS name, 
+		  'sss' AS name1, 
+		  'ssss' AS name2, 
+		  date('2099-12-31') AS endate 
+		FROM 
+		  bzzs t1 
+		WHERE 
+		  bzn = 1
+	      ) 
+	      SELECT 
+		c2.id, 
+		c3.id 
+	      FROM 
+		t2 db 
+		LEFT JOIN tmp3 c2 ON c2.id = '1' 
+		LEFT JOIN tmp3 c3 ON c3.id = '1';`)
+	rs.Check(testkit.Rows("1 1", "1 1"))
 }

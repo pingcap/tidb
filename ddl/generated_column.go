@@ -253,7 +253,7 @@ func checkModifyGeneratedColumn(sctx sessionctx.Context, schemaName model.CIStr,
 
 	if newCol.IsGenerated() {
 		// rule 3.
-		if err := checkIllegalFn4Generated(newCol.Name.L, typeColumn, newCol.GeneratedExpr); err != nil {
+		if err := checkIllegalFn4Generated(newCol.Name.L, typeColumn, newCol.GeneratedExpr.Internal()); err != nil {
 			return errors.Trace(err)
 		}
 
