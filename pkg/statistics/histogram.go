@@ -1384,7 +1384,6 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 		if compare == 0 {
 			res.Repeat += buckets[i].Repeat
 		}
-
 		if i != len(buckets)-1 {
 			tmp, err := mergeBucketNDV(sc, buckets[i], &right)
 			if err != nil {
