@@ -1152,12 +1152,25 @@ func (w *GCWorker) checkUsePhysicalScanLock() (bool, error) {
 }
 
 func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64, concurrency int, usePhysical bool) (bool, error) {
+	now, err := w.getOracleTime()
+	if err != nil {
+		logutil.Logger(ctx).Error("get Oracle time failed", zap.String("category", "gc worker"),
+			zap.String("uuid", w.uuid),
+			zap.Uint64("safePoint", safePoint),
+			zap.Error(err))
+	}
+	w.checkGCInterval()
+	resolveLockPoint := oracle.ComposeTS(now.Add(-gcDefaultRunInterval).Unix()*1000, 0)
+	if safePoint > resolveLockPoint {
+		resolveLockPoint = safePoint
+	}
+
 	if !usePhysical {
-		return false, w.legacyResolveLocks(ctx, safePoint, concurrency)
+		return false, w.legacyResolveLocks(ctx, resolveLockPoint, concurrency)
 	}
 
 	// First try resolve locks with physical scan
-	err := w.resolveLocksPhysical(ctx, safePoint)
+	err = w.resolveLocksPhysical(ctx, resolveLockPoint)
 	if err == nil {
 		return true, nil
 	}
@@ -1165,9 +1178,10 @@ func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64, concurren
 	logutil.Logger(ctx).Error("resolve locks with physical scan failed, trying fallback to legacy resolve lock", zap.String("category", "gc worker"),
 		zap.String("uuid", w.uuid),
 		zap.Uint64("safePoint", safePoint),
+		zap.Uint64("resolveLockPoint", resolveLockPoint),
 		zap.Error(err))
 
-	return false, w.legacyResolveLocks(ctx, safePoint, concurrency)
+	return false, w.legacyResolveLocks(ctx, resolveLockPoint, concurrency)
 }
 
 func (w *GCWorker) legacyResolveLocks(
