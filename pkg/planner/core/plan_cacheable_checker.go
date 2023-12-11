@@ -92,7 +92,7 @@ type cacheableChecker struct {
 func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.SelectStmt:
-		if node.SelectStmtOpts.CalcFoundRows {
+		if node.SelectStmtOpts != nil && node.SelectStmtOpts.CalcFoundRows {
 			checker.cacheable = false
 			checker.reason = "cannot cache SQL_CALC_FOUND_ROWS"
 			return in, true
