@@ -84,7 +84,7 @@ func (m *MPMCQueue) checkStatusNoLock() Result {
 // Push pushes a chunk into queue with thread safety.
 func (m *MPMCQueue) Push(chk *ChunkWithMemoryUsage) Result {
 	m.lock.Lock()
-	defer m.lock.Lock()
+	defer m.lock.Unlock()
 	res := m.checkStatusNoLock()
 
 	for m.queue.Len() >= m.limitNum && res == Open {
@@ -104,7 +104,7 @@ func (m *MPMCQueue) Push(chk *ChunkWithMemoryUsage) Result {
 // Pop pops a chunk from queue with thread safety.
 func (m *MPMCQueue) Pop() (*ChunkWithMemoryUsage, Result) {
 	m.lock.Lock()
-	defer m.lock.Lock()
+	defer m.lock.Unlock()
 	res := m.checkStatusNoLock()
 
 	for m.queue.Len() == 0 && res == Open {
@@ -121,6 +121,7 @@ func (m *MPMCQueue) Pop() (*ChunkWithMemoryUsage, Result) {
 	if !ok {
 		panic("Data type in MPMCQueue is not *Chunk")
 	}
+	m.queue.Remove(elem)
 	m.cond.Broadcast()
 	return chk, OK
 }
