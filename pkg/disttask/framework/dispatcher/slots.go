@@ -36,7 +36,7 @@ type taskStripes struct {
 // Stripe is the resource unit of dist framework, regardless of the node, each
 // stripe means 1 slot on all nodes managed by dist framework.
 // Number of stripes is equal to number of slots on each node, as we assume that
-// all nodes managed by dist framework are isomorphic,
+// all nodes managed by dist framework are isomorphic.
 // Stripes reserved for a task defines the maximum resource that a task can use
 // but the task might not use all the resources. To maximize the resource utilization,
 // we will try to dispatch as many tasks as possible depends on the used slots
