@@ -18,10 +18,13 @@ import (
 	"context"
 	"io"
 	"strconv"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/stretchr/testify/require"
+	"go.etcd.io/etcd/clientv3"
 )
 
 func TestLoadPluginSuccess(t *testing.T) {
@@ -241,4 +244,44 @@ func TestPluginsClone(t *testing.T) {
 	require.Len(t, cps.versions, 1)
 	require.Equal(t, uint16(1), cps.versions["whitelist"])
 	require.Len(t, cps.dyingPlugins, 1)
+}
+
+func TestPluginWatcherLoop(t *testing.T) {
+	// exit when ctx done
+	ctx, cancel := context.WithCancel(context.Background())
+	watcher := &flushWatcher{
+		ctx: ctx,
+		manifest: &Manifest{
+			Name: "test",
+		},
+	}
+	ch := make(chan clientv3.WatchResponse)
+	var cancelled int32
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		atomic.StoreInt32(&cancelled, 1)
+		cancel()
+	}()
+	exit := watcher.watchLoopWithChan(ch)
+	require.True(t, exit)
+	require.Equal(t, int32(1), atomic.LoadInt32(&cancelled))
+
+	// exit when ch closed
+	watcher = &flushWatcher{
+		ctx: context.Background(),
+		manifest: &Manifest{
+			Name: "test",
+		},
+	}
+
+	var closed int32
+	ch = make(chan clientv3.WatchResponse)
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		atomic.StoreInt32(&closed, 1)
+		close(ch)
+	}()
+	exit = watcher.watchLoopWithChan(ch)
+	require.False(t, exit)
+	require.Equal(t, int32(1), atomic.LoadInt32(&closed))
 }
