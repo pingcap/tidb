@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 	"golang.org/x/sync/errgroup"
 )
@@ -44,7 +45,7 @@ func openTestingStorage(t *testing.T) storage.ExternalStorage {
 		t.Skip("testingStorageURI is not set")
 	}
 	s, err := storage.NewFromURL(context.Background(), *testingStorageURI, nil)
-	intest.AssertNoError(err)
+	require.NoError(t, err)
 	return s
 }
 

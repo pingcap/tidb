@@ -331,12 +331,12 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 		transport, _ := CloneDefaultHttpTransport()
 		transport.DisableKeepAlives = true
 		httpClient = &http.Client{Transport: transport}
-	}
-	// see https://github.com/pingcap/tidb/issues/47022#issuecomment-1722913455
-	var err error
-	httpClient.Transport, err = htransport.NewTransport(ctx, httpClient.Transport)
-	if err != nil {
-		return nil, errors.Trace(err)
+		// see https://github.com/pingcap/tidb/issues/47022#issuecomment-1722913455
+		var err error
+		httpClient.Transport, err = htransport.NewTransport(ctx, httpClient.Transport, clientOps...)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	clientOps = append(clientOps, option.WithHTTPClient(httpClient))
 
