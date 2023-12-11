@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/breakpoint"
 	"github.com/pingcap/tidb/util/chunk"
@@ -1378,7 +1379,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 
 	/// Triage for historical stats
 	if succ {
-		a.RecordHistoryStats()
+		a.RecordHistoryStats(txnTS)
 	}
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
@@ -1504,28 +1505,34 @@ func resetCTEStorageMap(se sessionctx.Context) error {
 
 // RecordHistoryStats is used to record history stats that is more accurate than estimation
 // Currently, only support "Selection + TableScan" pattern
-func (a *ExecStmt) RecordHistoryStats() {
+func (a *ExecStmt) RecordHistoryStats(startTS uint64) {
 	sessVars := a.Ctx.GetSessionVars()
 	if !sessVars.EnableOptimizerHistoryStats || sessVars.InRestrictedSQL || !sessVars.StmtCtx.InSelectStmt {
 		return
 	}
 
-	sql := FormatSQL(a.GetTextToLog(true))()
 	stmtCtx := sessVars.StmtCtx
 	flat := getFlatPlan(stmtCtx)
 	if flat == nil || len(flat.Main) == 0 {
 		return
 	}
 
-	mayEaryExit := traverseFlatPlanForHistoryStats(stmtCtx, flat.Main, sql)
-	if mayEaryExit {
+	statsHandle := domain.GetDomain(a.Ctx).StatsHandle()
+	succ := traverseFlatPlanForHistoryStats(stmtCtx, statsHandle, startTS, flat.Main)
+	if !succ {
 		return
 	}
 	for _, flatCTEPlanTree := range flat.CTEs {
-		traverseFlatPlanForHistoryStats(stmtCtx, flatCTEPlanTree, sql)
+		succ = traverseFlatPlanForHistoryStats(stmtCtx, statsHandle, startTS, flatCTEPlanTree)
+		if !succ {
+			return
+		}
 	}
 	for _, flatSubQueryPlanTree := range flat.ScalarSubQueries {
-		traverseFlatPlanForHistoryStats(stmtCtx, flatSubQueryPlanTree, sql)
+		succ = traverseFlatPlanForHistoryStats(stmtCtx, statsHandle, startTS, flatSubQueryPlanTree)
+		if !succ {
+			return
+		}
 	}
 }
 
@@ -1533,9 +1540,10 @@ func isTableFullScanWithoutFilters(tableScan *plannercore.PhysicalTableScan) boo
 	return tableScan.HasRFFilters() || len(tableScan.AccessCondition) > 0 || tableScan.HasLateMaterializationFilterCondition()
 }
 
-// traverseFlatPlanForHistoryStats returns true when it contains limit operator, because limit operator may lead to early
-// exit, and make stats info inaccurate.
-func traverseFlatPlanForHistoryStats(stmtCtx *stmtctx.StatementContext, flatPlanTree plannercore.FlatPlanTree, sql string) bool {
+// traverseFlatPlanForHistoryStats returns false when
+// 1. Plan contains limit operator, because limit operator may lead to early exit
+// 2. Fails to update history stats
+func traverseFlatPlanForHistoryStats(stmtCtx *stmtctx.StatementContext, statsHandle *handle.Handle, startTS uint64, flatPlanTree plannercore.FlatPlanTree) bool {
 	for _, flatOp := range flatPlanTree {
 		pp, isPhysicalPlan := flatOp.Origin.(plannercore.PhysicalPlan)
 		if !isPhysicalPlan {
@@ -1543,45 +1551,51 @@ func traverseFlatPlanForHistoryStats(stmtCtx *stmtctx.StatementContext, flatPlan
 		}
 		switch x := pp.(type) {
 		case *plannercore.PhysicalLimit:
-			return true
+			return false
 		case *plannercore.PhysicalSelection:
 			if tableScan, ok := x.Children()[0].(*plannercore.PhysicalTableScan); ok {
 				if isTableFullScanWithoutFilters(tableScan) {
 					break
 				}
-				needRecord, estRows, actualRows := needRecordHistoryStats(stmtCtx, x)
+				needRecord, _, actualRows := needRecordHistoryStats(stmtCtx, x)
 				if !needRecord {
 					break
 				}
+				hasCopStats, totalTableRows := GetResultRowsCountForCopStats(stmtCtx, tableScan.ID())
+				if !hasCopStats {
+					break
+				}
+				totalTableRowsFloat := float64(totalTableRows)
 				succ, hashCode := genHistoryStatsHashCodeForSelection(stmtCtx, x)
 				if !succ {
 					break
 				}
-				recordHistoryStats(sql, tableScan.Table.ID, x.ID(), false, hashCode, estRows, actualRows)
+				err := recordHistoryStats(statsHandle, startTS, tableScan.Table.ID, hashCode, actualRows, totalTableRowsFloat)
+				if err != nil {
+					logutil.BgLogger().Warn(err.Error())
+					return false
+				}
 			}
-		case *plannercore.PhysicalTableScan:
-			if isTableFullScanWithoutFilters(x) {
-				break
-			}
-			needRecord, estRows, actualRows := needRecordHistoryStats(stmtCtx, x)
-			if !needRecord {
-				break
-			}
-			recordHistoryStats(sql, x.Table.ID, x.ID(), true, 0, estRows, actualRows)
 		}
 	}
-	return false
+	return true
 }
 
-func recordHistoryStats(sql string, tableID int64, planID int, nullHashCode bool, hashCode uint64, estRows float64, actualRows int64) {
+func recordHistoryStats(statsHandle *handle.Handle, startTS uint64, tableID int64, hashCode uint64, actualRows int64, totalTableRows float64) error {
+	var selectivity float32 = 0.0
+	if totalTableRows != 0.0 {
+		selectivity = float32(float64(actualRows) / totalTableRows)
+	}
+	rTbl := variable.ReadTableDelta{TableID: tableID, Count: actualRows, StepHash: hashCode, PredicateSelectivity: selectivity}
+	err := statsHandle.UpdatePredicateStatsMeta(startTS, rTbl)
 	logutil.BgLogger().Info(
-		sql,
+		"recordHistoryStats",
+		zap.Uint64("StartTS", startTS),
 		zap.Int64("TableID", tableID),
-		zap.Int("PlanID", planID),
-		zap.Bool("NullHashCode", nullHashCode),
 		zap.Uint64("FinalHash", hashCode),
-		zap.Float64("EstRows", estRows),
-		zap.Int64("ActRows", actualRows))
+		zap.Int64("ActRows", actualRows),
+		zap.Float32("Selectivity", selectivity))
+	return err
 }
 
 func genHistoryStatsHashCodeForSelection(stmtCtx *stmtctx.StatementContext, x *plannercore.PhysicalSelection) (bool, uint64) {
