@@ -392,10 +392,11 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 	var job *model.Job
 	var err error
 	var tblInfo *model.TableInfo
-	if s.JobID != 0 {
-		job, tblInfo, err = e.getRecoverTableByJobID(s, dom)
-	} else {
+	// Let check table first. Related isssue #46296.
+	if s.Table != nil {
 		job, tblInfo, err = e.getRecoverTableByTableName(s.Table)
+	} else {
+		job, tblInfo, err = e.getRecoverTableByJobID(s, dom)
 	}
 	if err != nil {
 		return err
