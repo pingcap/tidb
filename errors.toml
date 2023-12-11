@@ -2281,6 +2281,11 @@ error = '''
 Table '%s' from one of the %ss cannot be used in %s
 '''
 
+["planner:1287"]
+error = '''
+'%s' is deprecated and will be removed in a future release. Please use %s instead
+'''
+
 ["planner:1288"]
 error = '''
 The target table %-.100s of the %s is not updatable
