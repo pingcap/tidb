@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -113,6 +114,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		sm.EndKey,
 		int64(partSize),
 		prefix,
+		uuid.New().String(),
 		external.DefaultBlockSize,
 		8*1024,
 		1*size.MB,

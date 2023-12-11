@@ -6,7 +6,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 
@@ -27,6 +26,7 @@ func MergeOverlappingFiles(
 	endKey []byte,
 	partSize int64,
 	newFilePrefix string,
+	writerID string,
 	blockSize int,
 	writeBatchCount uint64,
 	propSizeDist uint64,
@@ -66,7 +66,10 @@ func MergeOverlappingFiles(
 		SetPropKeysDistance(propKeysDist).
 		SetPropSizeDistance(propSizeDist).
 		SetOnCloseFunc(onClose).
-		BuildOneFile(store, newFilePrefix, uuid.New().String())
+		BuildOneFile(
+			store,
+			newFilePrefix,
+			writerID)
 	err = writer.Init(ctx, partSize)
 	if err != nil {
 		return nil

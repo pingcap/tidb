@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/docker/go-units"
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
@@ -319,6 +320,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		sm.EndKey,
 		m.partSize,
 		prefix,
+		uuid.New().String(),
 		getKVGroupBlockSize(sm.KVGroup),
 		8*1024,
 		1*size.MB,

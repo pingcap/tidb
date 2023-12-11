@@ -88,11 +88,9 @@ func (w *OneFileWriter) Init(ctx context.Context, partSize int64) (err error) {
 
 // WriteRow implements ingest.Writer.
 func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) error {
-	// 1. encode data and write to kvStore.
 	keyLen := len(idxKey)
 	length := len(idxKey) + len(idxVal) + lengthBytes*2
 	w.curSize += uint64(length)
-
 	if w.curSize > w.memSizeLimit {
 		w.curSize = 0
 		w.kvStore.Close()
@@ -126,8 +124,7 @@ func (w *OneFileWriter) Close(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	w.logger.Info("close one file writer",
-		zap.String("writerID", w.writerID))
+	w.logger.Info("close one file writer", zap.String("writerID", w.writerID))
 
 	w.totalSize = 0
 	w.closed = true

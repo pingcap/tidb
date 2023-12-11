@@ -246,6 +246,8 @@ func readOneFile(
 		if bytes.Compare(k, endKey) >= 0 {
 			break
 		}
+		// TODO(lance6716): we are copying every KV from rd's buffer to memBuf, can we
+		// directly read into memBuf?
 		keys = append(keys, memBuf.AddBytes(k))
 		values = append(values, memBuf.AddBytes(v))
 		size += len(k) + len(v)
