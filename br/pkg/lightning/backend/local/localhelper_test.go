@@ -477,15 +477,10 @@ func doTestBatchSplitRegionByRanges(ctx context.Context, t *testing.T, hook clie
 		start = end
 	}
 
-<<<<<<< HEAD
-	err = local.SplitAndScatterRegionByRanges(ctx, ranges, nil, true, 1000)
+	err = local.SplitAndScatterRegionByRanges(ctx, ranges, true)
 	if len(errPat) == 0 {
 		require.NoError(t, err)
 	} else {
-=======
-	err = local.SplitAndScatterRegionByRanges(ctx, ranges, true)
-	if len(errPat) != 0 {
->>>>>>> f15ba117bc2 (pkg/lightning : remove get_regions call in physical backend (#46202))
 		require.Error(t, err)
 		require.Regexp(t, errPat, err.Error())
 		return
