@@ -139,8 +139,6 @@ type Buffer struct {
 	curBlock      []byte
 	curBlockIdx   int
 	curIdx        int
-
-	smallObjOverhead int
 }
 
 // BufferOption configures a buffer.
@@ -181,11 +179,6 @@ func (b *Buffer) Reset() {
 		b.curBlockIdx = 0
 		b.curIdx = 0
 	}
-	//if b.pool.limiter != nil {
-	//	// but the caller may still hold the slice, it's a little risky to release
-	//	b.pool.limiter.Release(b.smallObjOverhead)
-	//	b.smallObjOverhead = 0
-	//}
 }
 
 // Destroy releases all buffers to the pool.
@@ -193,10 +186,6 @@ func (b *Buffer) Destroy() {
 	for _, buf := range b.blocks {
 		b.pool.release(buf)
 	}
-	//if b.pool.limiter != nil {
-	//	b.pool.limiter.Release(b.smallObjOverhead)
-	//	b.smallObjOverhead = 0
-	//}
 	b.blocks = nil
 	b.curBlock = nil
 	b.curBlockIdx = -1
@@ -217,10 +206,6 @@ func (b *Buffer) AllocBytes(n int) []byte {
 	}
 
 	bs, _ := b.allocBytesWithSliceLocation(n)
-	//if bs != nil && b.pool.limiter != nil {
-	//	b.pool.limiter.Acquire(sizeOfSlice)
-	//	b.smallObjOverhead += sizeOfSlice
-	//}
 	return bs
 }
 
@@ -253,19 +238,13 @@ func (b *Buffer) allocBytesWithSliceLocation(n int) ([]byte, SliceLocation) {
 	return b.curBlock[idx:b.curIdx:b.curIdx], loc
 }
 
-var sizeOfSliceLocation = int(unsafe.Sizeof(SliceLocation{}))
-
 // AllocBytesWithSliceLocation is like AllocBytes, but it must allocate the
-// buffer in the pool rather team from go's runtime. The expected usage is after
+// buffer in the pool rather from go's runtime. The expected usage is after
 // writing data into returned slice **we do not store the slice**, but only the
 // SliceLocation. Later we can use the SliceLocation to get the slice again. When
-// we have a large number of slices in memory this can improve performance. nil
-// returned slice means allocation failed.
+// we have a large number of slices in memory this can reduce memory occupation.
+// nil returned slice means allocation failed.
 func (b *Buffer) AllocBytesWithSliceLocation(n int) ([]byte, SliceLocation) {
-	//if b.pool.limiter != nil {
-	//	b.pool.limiter.Acquire(sizeOfSliceLocation)
-	//	b.smallObjOverhead += sizeOfSliceLocation
-	//}
 	return b.allocBytesWithSliceLocation(n)
 }
 

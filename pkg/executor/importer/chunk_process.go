@@ -182,6 +182,7 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
+
 			rowBatch = append(rowBatch, deliveredRow{kvs: kvs, offset: currOffset})
 			kvSize += kvs.Size()
 			rowCount++
