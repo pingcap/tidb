@@ -1190,6 +1190,7 @@ func getChunkCompressedSizeForParquet(
 	}
 	parser, err := mydump.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path)
 	if err != nil {
+		_ = parser.Close()
 		return 0, errors.Trace(err)
 	}
 	//nolint: errcheck
