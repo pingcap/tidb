@@ -390,7 +390,9 @@ func (p *PdController) getRegionCountWith(
 	}
 	var err error
 	for _, addr := range p.getAllPDAddrs() {
-		v, e := get(ctx, addr, pdhttp.RegionStatsByKeyRange(pdhttp.NewKeyRange(start, end)), p.cli, http.MethodGet, nil)
+		v, e := get(ctx, addr,
+			pdhttp.RegionStatsByKeyRange(pdhttp.NewKeyRange(start, end), false),
+			p.cli, http.MethodGet, nil)
 		if e != nil {
 			err = e
 			continue

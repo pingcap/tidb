@@ -427,7 +427,7 @@ type StatementContext struct {
 // NewStmtCtx creates a new statement context
 func NewStmtCtx() *StatementContext {
 	sc := &StatementContext{}
-	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc.AppendWarning)
+	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc)
 	return sc
 }
 
@@ -435,14 +435,14 @@ func NewStmtCtx() *StatementContext {
 func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 	intest.AssertNotNil(tz)
 	sc := &StatementContext{}
-	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc.AppendWarning)
+	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc)
 	return sc
 }
 
 // Reset resets a statement context
 func (sc *StatementContext) Reset() {
 	*sc = StatementContext{
-		typeCtx: types.NewContext(types.DefaultStmtFlags, time.UTC, sc.AppendWarning),
+		typeCtx: types.NewContext(types.DefaultStmtFlags, time.UTC, sc),
 	}
 }
 
@@ -470,7 +470,7 @@ func (sc *StatementContext) TypeCtx() types.Context {
 // ErrCtx returns the error context
 // TODO: add a cache to the `ErrCtx` if needed, though it's not a big burden to generate `ErrCtx` everytime.
 func (sc *StatementContext) ErrCtx() errctx.Context {
-	ctx := errctx.NewContext(sc.AppendWarning)
+	ctx := errctx.NewContext(sc)
 
 	if sc.TypeFlags().IgnoreTruncateErr() {
 		ctx = ctx.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)

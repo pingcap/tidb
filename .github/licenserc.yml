@@ -28,6 +28,7 @@ header:
     - "**/*.example"
     - "**/*.patch"
     - "**/*.bzl"
+    - "**/.git/**"
     - ".codecov.yml"
     - "Jenkinsfile"
     - ".editorconfig"
