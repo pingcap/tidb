@@ -106,7 +106,7 @@ func TrySetupGlobalResourceController(ctx context.Context, serverID uint64, s kv
 		return errors.New("cannot setup up resource controller, should use tikv storage")
 	}
 
-	control, err := rmclient.NewResourceGroupController(ctx, serverID, store.GetPDClient(), nil, rmclient.WithMaxWaitDuration(time.Second*30))
+	control, err := rmclient.NewResourceGroupController(ctx, serverID, store.GetPDClient(), nil)
 	if err != nil {
 		return err
 	}

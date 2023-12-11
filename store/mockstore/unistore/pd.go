@@ -263,6 +263,10 @@ func (c *pdClient) WatchResourceGroup(ctx context.Context, revision int64) (chan
 	return nil, nil
 }
 
+func (c *pdClient) LoadResourceGroups(ctx context.Context) ([]*rmpb.ResourceGroup, int64, error) {
+	return nil, 0, nil
+}
+
 func (c *pdClient) AcquireTokenBuckets(ctx context.Context, request *rmpb.TokenBucketsRequest) ([]*rmpb.TokenBucketResponse, error) {
 	return nil, nil
 }
