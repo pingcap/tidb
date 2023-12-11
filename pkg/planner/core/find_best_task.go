@@ -1126,6 +1126,9 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			}
 		}
 	}()
+	if strings.HasPrefix(ds.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "explain select /*+ read_from_storage(tiflash[t3]) */ * from t3 where sala='a' and id =") {
+		fmt.Println(1)
+	}
 
 	cntPlan = 0
 	for _, candidate := range candidates {
