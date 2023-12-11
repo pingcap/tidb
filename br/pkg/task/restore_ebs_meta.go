@@ -241,10 +241,11 @@ func (h *restoreEBSMetaHelper) restoreVolumes(progress glue.Progress) (map[strin
 			log.Error("failed to create all volumes, cleaning up created volume")
 			ec2Session.DeleteVolumes(volumeIDMap)
 		}
-
 		if h.cfg.UseFSR {
 			err = ec2Session.DisableDataFSR(snapshotsIDsMap)
-			log.Error("disable fsr failed", zap.Error(err))
+			if err != nil {
+				log.Error("disable fsr failed", zap.Error(err))
+			}
 		}
 	}()
 
