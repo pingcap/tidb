@@ -2623,7 +2623,6 @@ func TestStatsLockForDelta(t *testing.T) {
 	require.Equal(t, int64(30), stats1.Count)
 }
 
-<<<<<<< HEAD
 func TestAutoAnalyzePartitionTableAfterAddingIndex(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -2657,7 +2656,8 @@ func TestAutoAnalyzePartitionTableAfterAddingIndex(t *testing.T) {
 	require.Nil(t, h.GetTableStats(tblInfo).Indices[idxInfo.ID])
 	require.True(t, h.HandleAutoAnalyze(dom.InfoSchema()))
 	require.NotNil(t, h.GetTableStats(tblInfo).Indices[idxInfo.ID])
-=======
+}
+
 func TestFillMissingStatsMeta(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -2707,5 +2707,4 @@ func TestFillMissingStatsMeta(t *testing.T) {
 	checkStatsMeta(p1ID, "1", "1")
 	globalVer2 := checkStatsMeta(tbl2ID, "3", "3")
 	require.Greater(t, globalVer2, globalVer1)
->>>>>>> 6e56bf717c1 (ddl, statistics: fix stats meta missing when creating many tables at once (#38301))
 }
