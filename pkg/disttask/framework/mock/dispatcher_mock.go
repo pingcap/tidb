@@ -181,6 +181,20 @@ func (mr *MockTaskManagerMockRecorder) CollectSubTaskError(arg0, arg1 any) *gomo
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CollectSubTaskError", reflect.TypeOf((*MockTaskManager)(nil).CollectSubTaskError), arg0, arg1)
 }
 
+// FailTask mocks base method.
+func (m *MockTaskManager) FailTask(arg0 context.Context, arg1 int64, arg2 proto.TaskState, arg3 error) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FailTask", arg0, arg1, arg2, arg3)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// FailTask indicates an expected call of FailTask.
+func (mr *MockTaskManagerMockRecorder) FailTask(arg0, arg1, arg2, arg3 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FailTask", reflect.TypeOf((*MockTaskManager)(nil).FailTask), arg0, arg1, arg2, arg3)
+}
+
 // GCSubtasks mocks base method.
 func (m *MockTaskManager) GCSubtasks(arg0 context.Context) error {
 	m.ctrl.T.Helper()
@@ -210,19 +224,19 @@ func (mr *MockTaskManagerMockRecorder) GetAllNodes(arg0 any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllNodes", reflect.TypeOf((*MockTaskManager)(nil).GetAllNodes), arg0)
 }
 
-// GetNodesByRole mocks base method.
-func (m *MockTaskManager) GetNodesByRole(arg0 context.Context, arg1 string) (map[string]bool, error) {
+// GetManagedNodes mocks base method.
+func (m *MockTaskManager) GetManagedNodes(arg0 context.Context) ([]string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetNodesByRole", arg0, arg1)
-	ret0, _ := ret[0].(map[string]bool)
+	ret := m.ctrl.Call(m, "GetManagedNodes", arg0)
+	ret0, _ := ret[0].([]string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetNodesByRole indicates an expected call of GetNodesByRole.
-func (mr *MockTaskManagerMockRecorder) GetNodesByRole(arg0, arg1 any) *gomock.Call {
+// GetManagedNodes indicates an expected call of GetManagedNodes.
+func (mr *MockTaskManagerMockRecorder) GetManagedNodes(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetNodesByRole", reflect.TypeOf((*MockTaskManager)(nil).GetNodesByRole), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetManagedNodes", reflect.TypeOf((*MockTaskManager)(nil).GetManagedNodes), arg0)
 }
 
 // GetSubtaskInStatesCnt mocks base method.
@@ -338,6 +352,36 @@ func (mr *MockTaskManagerMockRecorder) GetTasksInStates(arg0 any, arg1 ...any) *
 	mr.mock.ctrl.T.Helper()
 	varargs := append([]any{arg0}, arg1...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTasksInStates", reflect.TypeOf((*MockTaskManager)(nil).GetTasksInStates), varargs...)
+}
+
+// GetTopUnfinishedTasks mocks base method.
+func (m *MockTaskManager) GetTopUnfinishedTasks(arg0 context.Context) ([]*proto.Task, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTopUnfinishedTasks", arg0)
+	ret0, _ := ret[0].([]*proto.Task)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTopUnfinishedTasks indicates an expected call of GetTopUnfinishedTasks.
+func (mr *MockTaskManagerMockRecorder) GetTopUnfinishedTasks(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTopUnfinishedTasks", reflect.TypeOf((*MockTaskManager)(nil).GetTopUnfinishedTasks), arg0)
+}
+
+// GetUsedSlotsOnNodes mocks base method.
+func (m *MockTaskManager) GetUsedSlotsOnNodes(arg0 context.Context) (map[string]int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetUsedSlotsOnNodes", arg0)
+	ret0, _ := ret[0].(map[string]int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetUsedSlotsOnNodes indicates an expected call of GetUsedSlotsOnNodes.
+func (mr *MockTaskManagerMockRecorder) GetUsedSlotsOnNodes(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUsedSlotsOnNodes", reflect.TypeOf((*MockTaskManager)(nil).GetUsedSlotsOnNodes), arg0)
 }
 
 // PauseTask mocks base method.

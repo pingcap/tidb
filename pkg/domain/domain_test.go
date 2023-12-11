@@ -424,3 +424,46 @@ type mockInfoPdClient struct {
 func (c *mockInfoPdClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]*metapb.Store, error) {
 	return c.stores, c.err
 }
+
+func TestIsAnalyzeTableSQL(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+	}{
+		{
+			name: "normal sql",
+			sql:  "analyze table test.t",
+		},
+		{
+			name: "normal sql with extra space",
+			sql:  " analyze table test.t ",
+		},
+		{
+			name: "normal capital sql with extra space",
+			sql:  " ANALYZE TABLE test.t ",
+		},
+		{
+			name: "single line comment",
+			sql:  "/* axxxx */ analyze table test.t",
+		},
+		{
+			name: "multi-line comment",
+			sql: `/*
+		/*> this is a
+		/*> multiple-line comment
+		/*> */ analyze table test.t`,
+		},
+		{
+			name: "hint comment",
+			sql:  "/*+ hint */ analyze table test.t",
+		},
+		{
+			name: "no space",
+			sql:  "/*+ hint */analyze table test.t",
+		},
+	}
+
+	for _, tt := range tests {
+		require.True(t, isAnalyzeTableSQL(tt.sql))
+	}
+}

@@ -177,9 +177,14 @@ func (s *statsReadWriter) ResetTableStats2KVForDrop(physicalID int64) (err error
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if _, err := util.Exec(sctx, "update mysql.stats_meta set version=%? where table_id =%?", startTS, physicalID); err != nil {
+		if _, err := util.Exec(
+			sctx,
+			"update mysql.stats_meta set version=%? where table_id =%?",
+			startTS, physicalID,
+		); err != nil {
 			return err
 		}
+		statsVer = startTS
 		return nil
 	}, util.FlagWrapTxn)
 }

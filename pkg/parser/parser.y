@@ -1010,6 +1010,7 @@ import (
 	UnlockStatsStmt            "Unlock statistic statement"
 	LockTablesStmt             "Lock tables statement"
 	NonTransactionalDMLStmt    "Non-transactional DML statement"
+	OptimizeTableStmt          "OPTIMIZE statement"
 	PlanReplayerStmt           "Plan replayer statement"
 	PreparedStmt               "PreparedStmt"
 	ProcedureProcStmt          "The entrance of procedure statements which contains all kinds of statements in procedure"
@@ -12080,6 +12081,7 @@ Statement:
 |	RestartStmt
 |	HelpStmt
 |	NonTransactionalDMLStmt
+|	OptimizeTableStmt
 |	PauseLoadDataStmt
 |	ResumeLoadDataStmt
 |	CancelImportStmt
@@ -14719,6 +14721,21 @@ OptionalShardColumn:
 |	"ON" ColumnName
 	{
 		$$ = $2.(*ast.ColumnName)
+	}
+
+/********************************************************************
+ * OptimizeTableStmt
+ *
+ * OPTIMIZE [NO_WRITE_TO_BINLOG | LOCAL]
+ *     TABLE tbl_name [, tbl_name] ...
+ *******************************************************************/
+OptimizeTableStmt:
+	"OPTIMIZE" NoWriteToBinLogAliasOpt TableOrTables TableNameList
+	{
+		$$ = &ast.OptimizeTableStmt{
+			Tables:          $4.([]*ast.TableName),
+			NoWriteToBinLog: $2.(bool),
+		}
 	}
 
 /********************************************************************

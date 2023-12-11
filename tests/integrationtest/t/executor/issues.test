@@ -198,7 +198,7 @@ SELECT * FROM t2;
 update t1 as a, t2 as t1 set a.c1 = 1, t1.c2 = 2;
 SELECT * FROM t1;
 SELECT * FROM t2;
--- error
+--error 1054
 update t1 as a, t2 set t1.c1 = 10;
 
 # TestIssue5055

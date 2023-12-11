@@ -2012,8 +2012,8 @@ replace replace_test_1 select id, c1 from replace_test;
 affected rows: 4
 info: Records: 4  Duplicates: 0  Warnings: 0
 begin;
-replace replace_test_0 select c1 from replace_test;
-Error 1146 (42S02): Table 'executor__write.replace_test_0' doesn't exist
+replace replace_test_1 select c1 from replace_test;
+Error 1136 (21S01): Column count doesn't match value count at row 1
 rollback;
 create table replace_test_2 (id int, c1 int);
 replace replace_test_1 select id, c1 from replace_test union select id * 10, c1 * 10 from replace_test;

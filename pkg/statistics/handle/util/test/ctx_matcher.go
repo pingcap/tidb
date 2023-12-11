@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,24 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package bindinfo
+package test
 
 import (
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"context"
+
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/tikv/client-go/v2/util"
 )
 
-var (
-	lastPlanBindingUpdateTime = "last_plan_binding_update_time"
-)
+// CtxMatcher is a matcher for context.Context
+type CtxMatcher struct{}
 
-// GetScope gets the status variables scope.
-func (*BindHandle) GetScope(_ string) variable.ScopeFlag {
-	return variable.ScopeSession
+// Matches returns true if the context is internal_stats source.
+func (*CtxMatcher) Matches(x interface{}) bool {
+	ctx := x.(context.Context)
+	s := util.RequestSourceFromCtx(ctx)
+	return s == util.InternalRequest+"_"+kv.InternalTxnStats
 }
 
-// Stats returns the server statistics.
-func (h *BindHandle) Stats(_ *variable.SessionVars) (map[string]interface{}, error) {
-	m := make(map[string]interface{})
-	m[lastPlanBindingUpdateTime] = h.getLastUpdateTime().String()
-	return m, nil
+// String returns the description of CtxMatcher.
+func (*CtxMatcher) String() string {
+	return "all txns should be internal_stats source"
 }

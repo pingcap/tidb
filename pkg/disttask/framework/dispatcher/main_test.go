@@ -30,12 +30,12 @@ type DispatcherManagerForTest interface {
 
 // GetRunningGTaskCnt implements Dispatcher.GetRunningGTaskCnt interface.
 func (dm *Manager) GetRunningTaskCnt() int {
-	return dm.getRunningTaskCnt()
+	return dm.getDispatcherCount()
 }
 
 // DelRunningGTask implements Dispatcher.DelRunningGTask interface.
 func (dm *Manager) DelRunningTask(id int64) {
-	dm.delRunningTask(id)
+	dm.delDispatcher(id)
 }
 
 // DoCleanUpRoutine implements Dispatcher.DoCleanUpRoutine interface.
