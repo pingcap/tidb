@@ -386,3 +386,11 @@ func TestResetStmtCtx(t *testing.T) {
 	require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
 	require.Equal(t, "err2", warnings[0].Err.Error())
 }
+
+func BenchmarkErrCtx(b *testing.B) {
+	sc := stmtctx.NewStmtCtx()
+
+	for i := 0; i < b.N; i++ {
+		sc.ErrCtx()
+	}
+}
