@@ -304,15 +304,10 @@ func (e *SortExec) fetchChunksUnparallel(ctx context.Context) error {
 
 func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 	workerNum := len(e.Parallel.workers)
-	sharedSortedData := &mergeSortedDataContainer{
-		remainingWorkerNum: workerNum,
-	}
-	lock := sync.Mutex{}
-	cond := sync.NewCond(&lock)
-	publicQueue := make([]sortedRows, 0)
+	publicSpace := publicMergeSpace{}
 	waitGroup := sync.WaitGroup{}
 
-	// Add in advance to avoid that the counter in waitGroup is minus to negative.
+	// Add before the start of goroutine to avoid that the counter in waitGroup is minus to negative.
 	waitGroup.Add(workerNum + 1)
 
 	// Fetch chunks from child and put chunks into MPMCQueue
@@ -320,7 +315,7 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 
 	// Create workers
 	for i := range e.Parallel.workers {
-		e.Parallel.workers[i] = newParallelSortWorker(sharedSortedData, &lock, cond, &publicQueue, &waitGroup, &e.Parallel.result, e.Parallel.mpmcQueue, e.checkErrorForParallel, e.processErrorForParallel)
+		e.Parallel.workers[i] = newParallelSortWorker(&publicSpace, &waitGroup, &e.Parallel.result, e.Parallel.mpmcQueue, e.checkErrorForParallel, e.processErrorForParallel, e.memTracker)
 	}
 
 	// Run workers

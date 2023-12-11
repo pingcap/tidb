@@ -15,6 +15,7 @@
 package sortexec
 
 import (
+	"container/list"
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/util"
@@ -23,24 +24,26 @@ import (
 	"go.uber.org/zap"
 )
 
-type mergeSortedDataContainer struct {
-	lock               sync.Mutex
-	sortedData         []sortedRows
-	remainingWorkerNum int
+type publicMergeSpace struct {
+	lock        *sync.Mutex
+	publicQueue list.List // Type is sortedRows
 }
 
-func newMergeSortedDataContainer(workerNum int) *mergeSortedDataContainer {
-	return &mergeSortedDataContainer{
-		remainingWorkerNum: workerNum,
+func (p *publicMergeSpace) length() int {
+	return p.publicQueue.Len()
+}
+
+// If there is sortedRows in the queue, fetch them, or we should put the rows into queue.
+func (p *publicMergeSpace) fetchOrPutSortedRows(rows sortedRows) sortedRows {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	if p.publicQueue.Len() > 0 {
+		return popFromList(&p.publicQueue)
+	} else {
+		p.publicQueue.PushBack(rows)
+		return nil
 	}
-}
-
-// Return the number of remaining worker after decreased
-func (m *mergeSortedDataContainer) decreaseWorker() int {
-	m.lock.Lock()
-	defer m.lock.Unlock()
-	m.remainingWorkerNum--
-	return m.remainingWorkerNum
 }
 
 type partitionPointer struct {
@@ -83,4 +86,12 @@ func processErrorAndLog(processError func(error), r interface{}) {
 	err := util.GetRecoverError(r)
 	processError(err)
 	logutil.BgLogger().Error("parallel sort panicked", zap.Error(err), zap.Stack("stack"))
+}
+
+// The type of Element.Value should always be `sortedRows`.
+func popFromList(l *list.List) sortedRows {
+	elem := l.Front()
+	res, _ := elem.Value.(sortedRows) // Should always success
+	l.Remove(elem)
+	return res
 }

@@ -15,18 +15,23 @@
 package sortexec
 
 import (
+	"container/list"
+	"sort"
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
-type parallelSortWorker struct {
-	queue            []sortedRows
-	sharedSortedData *mergeSortedDataContainer
+// SignalCheckpointForSort indicates the times of row comparation that a signal detection will be triggered.
+const SignalCheckpointForSort uint = 20000
 
-	lock        *sync.Mutex
-	cond        *sync.Cond
-	publicQueue *[]sortedRows
+type parallelSortWorker struct {
+	sortedRowsQueue list.List // Type is sortedRows
+
+	lessRowFunc func(chunk.Row, chunk.Row) bool
+
+	publicSpace *publicMergeSpace
 
 	waitGroup *sync.WaitGroup
 	result    *sortedRows
@@ -35,34 +40,38 @@ type parallelSortWorker struct {
 	checkError   func() error
 	processError func(error)
 
-	totalMemoryUsage int64
+	totalMemoryUsage  int64
+	timesOfRowCompare uint
+
+	memTracker *memory.Tracker
+
+	// Temporarily store rows that will be sorted.
+	rowBuffer []chunk.Row
 }
 
 func newParallelSortWorker(
-	sharedSortedData *mergeSortedDataContainer,
-	lock *sync.Mutex,
-	cond *sync.Cond,
-	publicQueue *[]sortedRows,
+	publicSpace *publicMergeSpace,
 	waitGroup *sync.WaitGroup,
 	result *sortedRows,
 	mpmcQueue *chunk.MPMCQueue,
 	checkError func() error,
-	processError func(error)) *parallelSortWorker {
+	processError func(error),
+	memTracker *memory.Tracker) *parallelSortWorker {
 	return &parallelSortWorker{
-		sharedSortedData: sharedSortedData,
-		lock:             lock,
-		cond:             cond,
-		publicQueue:      publicQueue,
-		waitGroup:        waitGroup,
-		result:           result,
-		mpmcQueue:        mpmcQueue,
-		checkError:       checkError,
-		processError:     processError,
-		totalMemoryUsage: 0,
+		publicSpace:       publicSpace,
+		waitGroup:         waitGroup,
+		result:            result,
+		mpmcQueue:         mpmcQueue,
+		checkError:        checkError,
+		processError:      processError,
+		totalMemoryUsage:  0,
+		timesOfRowCompare: 0,
+		memTracker:        memTracker,
 	}
 }
 
-// After fetching a chunk from MPMCQueue, we will sort it.
+// Fetching chunks from MPMCQueue and sort them.
+// Rows are sorted only inside a chunk.
 // Return false if there is some error.
 func (p *parallelSortWorker) fetchFromMPMCQueueAndSort() bool {
 	for {
@@ -71,7 +80,7 @@ func (p *parallelSortWorker) fetchFromMPMCQueueAndSort() bool {
 			return false
 		}
 
-		// Memory usage of the chunk has been tracked from the producer side.
+		// Memory usage of the chunk has been tracked at the producer side.
 		chk, res := p.mpmcQueue.Pop()
 		if res != chunk.OK {
 			// Check if the queue is closed by an error.
@@ -81,17 +90,114 @@ func (p *parallelSortWorker) fetchFromMPMCQueueAndSort() bool {
 
 		p.totalMemoryUsage += chk.MemoryUsage
 
+		sortedRows := p.sortChunkAndGetSortedRows(chk.Chk)
+		p.sortedRowsQueue.PushBack(sortedRows)
 	}
 }
 
-// Sort data that received by itself.
+func (p *parallelSortWorker) keyColumnsLess(i, j int) bool {
+	if p.timesOfRowCompare >= SignalCheckpointForSort {
+		// Trigger Consume for checking the NeedKill signal
+		p.memTracker.Consume(1)
+		p.timesOfRowCompare = 0
+	}
+	// TODO add test with this failpoint
+	// failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
+	// 	if val.(bool) {
+	// 		c.timesOfRowCompare += 1024
+	// 	}
+	// })
+	p.timesOfRowCompare++
+
+	return p.lessRowFunc(p.rowBuffer[i], p.rowBuffer[j])
+}
+
+func (p *parallelSortWorker) sortChunkAndGetSortedRows(chk *chunk.Chunk) []chunk.Row {
+	rowNum := chk.NumRows()
+	p.rowBuffer = make([]chunk.Row, rowNum)
+	for i := 0; i < rowNum; i++ {
+		p.rowBuffer[i] = chk.GetRow(i)
+	}
+	sort.Slice(p.rowBuffer, p.keyColumnsLess)
+	return nil
+}
+
+// Sort data that received by itself. At last, length of sortedRowsQueue should not be greater than 1.
 // Return false if there is some error.
 func (p *parallelSortWorker) mergeSortLocalData() bool {
+	for p.sortedRowsQueue.Len() > 1 {
+		err := p.checkError()
+		if err != nil {
+			return false
+		}
+
+		sortedRows1 := popFromList(&p.sortedRowsQueue)
+		sortedRows2 := popFromList(&p.sortedRowsQueue)
+		mergedSortedRows := p.mergeTwoSortedRows(sortedRows1, sortedRows2)
+		p.sortedRowsQueue.PushBack(mergedSortedRows)
+	}
 	return true
 }
 
-func (p *parallelSortWorker) mergeSortGlobalData() bool {
-	return true
+// The worker will check the length of sharedSortedRows. If length > 0, it will fetch a sortedRows and merge it
+// with worker's own sorted rows. If length == 0, worker will put it's row into sharedSortedRows and leave.
+func (p *parallelSortWorker) mergeSortPublicData() {
+	for {
+		err := p.checkError()
+		if err != nil {
+			return
+		}
+
+		localSortedRows := popFromList(&p.sortedRowsQueue)
+		fetchedSortedRows := p.publicSpace.fetchOrPutSortedRows(localSortedRows)
+		if fetchedSortedRows == nil {
+			break
+		}
+
+		mergedSortedRows := p.mergeTwoSortedRows(localSortedRows, fetchedSortedRows)
+		p.sortedRowsQueue.PushBack(mergedSortedRows)
+	}
+}
+
+func (p *parallelSortWorker) mergeTwoSortedRows(sortedRows1 sortedRows, sortedRows2 sortedRows) sortedRows {
+	sortedRows1Len := len(sortedRows1)
+	sortedRows2Len := len(sortedRows2)
+	mergedSortedRows := make(sortedRows, 0, sortedRows1Len+sortedRows2Len)
+	cursor1 := 0 // Point to sortedRows1
+	cursor2 := 0 // Point to sortedRows2
+
+	// Merge
+	for cursor1 < sortedRows1Len && cursor2 < sortedRows2Len {
+		if p.timesOfRowCompare >= SignalCheckpointForSort {
+			// Trigger Consume for checking the NeedKill signal
+			p.memTracker.Consume(1)
+			p.timesOfRowCompare = 0
+		}
+
+		p.timesOfRowCompare++
+
+		if p.lessRowFunc(sortedRows1[cursor1], sortedRows2[cursor2]) {
+			mergedSortedRows = append(mergedSortedRows, sortedRows1[cursor1])
+			cursor1++
+		} else {
+			mergedSortedRows = append(mergedSortedRows, sortedRows2[cursor2])
+			cursor2++
+		}
+	}
+
+	// Append the remaining rows
+	for cursor1 < sortedRows1Len {
+		mergedSortedRows = append(mergedSortedRows, sortedRows1[cursor1])
+		cursor1++
+	}
+
+	// Append the remaining rows
+	for cursor2 < sortedRows2Len {
+		mergedSortedRows = append(mergedSortedRows, sortedRows2[cursor2])
+		cursor2++
+	}
+
+	return mergedSortedRows
 }
 
 func (p *parallelSortWorker) run() {
@@ -112,5 +218,5 @@ func (p *parallelSortWorker) run() {
 		return
 	}
 
-	p.mergeSortGlobalData()
+	p.mergeSortPublicData()
 }
