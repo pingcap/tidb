@@ -440,7 +440,7 @@
           "      └─TableReader 1.11 root  data:TopN",
           "        └─TopN 1.11 cop[tikv]  partition by test.customer.primary_key, test.customer.secondary_key order by test.customer.c_timestamp, offset:0, count:10",
           "          └─Selection 1.11 cop[tikv]  ge(test.customer.c_timestamp, 1661883508511000000)",
-          "            └─TableRangeScan 33.33 cop[tikv] table:customer range:[0x0002 0x0001,0x0002 +inf], keep order:false, stats:pseudo"
+          "            └─TableRangeScan 33.33 cop[tikv] table:customer range:[\"\\x00\\x02\" \"\\x00\\x01\",\"\\x00\\x02\" +inf], keep order:false, stats:pseudo"
         ],
         "Res": null
       },

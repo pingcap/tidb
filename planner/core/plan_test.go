@@ -605,8 +605,9 @@ func TestIssue25729(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		tk.MustQuery("explain format='brief' select * from t1  where concat(a, b) like \"aadwa\" and a = \"a\";").Check(testkit.Rows(
 			"Projection 0.10 root  test.t1.a, test.t1.b",
-			"└─IndexReader 0.10 root  index:IndexRangeScan",
-			"  └─IndexRangeScan 0.10 cop[tikv] table:t1, index:idx2(a, concat(`a`, `b`), b) range:[\"a\" \"aadwa\",\"a\" \"aadwa\"], keep order:false, stats:pseudo"))
+			"└─IndexReader 0.10 root  index:Selection",
+			"  └─Selection 0.10 cop[tikv]  like(concat(test.t1.a, test.t1.b), \"aadwa\", 92)",
+			"    └─IndexRangeScan 0.10 cop[tikv] table:t1, index:idx2(a, concat(`a`, `b`), b) range:[\"a\" \"aadwa\",\"a\" \"aadwa\"], keep order:false, stats:pseudo"))
 
 		tk.MustQuery("explain format='brief' select b from t1 where concat(a, b) >= \"aa\" and a = \"b\";").Check(testkit.Rows(
 			"Projection 33.33 root  test.t1.b",
