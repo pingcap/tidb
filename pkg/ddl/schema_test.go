@@ -355,7 +355,7 @@ func TestRenameTableAutoIDs(t *testing.T) {
 	tk1.MustExec(`create schema ` + dbName)
 	tk1.MustExec(`create schema ` + dbName + "2")
 	tk1.MustExec(`use ` + dbName)
-	tk1.MustExec(`CREATE TABLE t (a int auto_increment primary key nonclustered, b varchar(255), key (b))`)
+	tk1.MustExec(`CREATE TABLE t (a int auto_increment primary key nonclustered, b varchar(255), key (b)) AUTO_ID_CACHE 100`)
 	tk1.MustExec(`insert into t values (11,11),(2,2),(null,12)`)
 	tk1.MustExec(`insert into t values (null,18)`)
 	tk1.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows("13 11 11", "14 2 2", "15 12 12", "17 16 18"))
@@ -373,6 +373,8 @@ func TestRenameTableAutoIDs(t *testing.T) {
 			if len(res) == 1 && res[0][col] == s {
 				break
 			}
+			logutil.BgLogger().Info("Could not find match", zap.String("tableName", tableName), zap.String("s", s), zap.Int("colNum", col))
+
 			for i := range res {
 				strs := make([]string, 0, len(res[i]))
 				for j := range res[i] {
@@ -393,41 +395,57 @@ func TestRenameTableAutoIDs(t *testing.T) {
 	waitFor(11, "t", "running")
 	waitFor(4, "t", "public")
 	tk3.MustExec(`BEGIN`)
+	tk3.MustExec(`insert into ` + dbName + `2.t2 values (50, 5)`)
+
+	tk2.MustExec(`insert into t values (null, 6)`)
 	tk3.MustExec(`insert into ` + dbName + `2.t2 values (20, 5)`)
 
-	// TODO: Fix https://github.com/pingcap/tidb/issues/46904
-	tk2.MustContainErrMsg(`insert into t values (null, 6)`, "[tikv:1205]Lock wait timeout exceeded; try restarting transaction")
-	tk2.MustExec(`rollback`)
-	tk3.MustExec(`rollback`)
-	/*
-		tk3.MustExec(`insert into ` + dbName + `2.t2 values (null, 7)`)
-		tk2.MustExec(`COMMIT`)
+	// Done: Fix https://github.com/pingcap/tidb/issues/46904
+	//tk2.MustContainErrMsg(`insert into t values (null, 6)`, "[tikv:1205]Lock wait timeout exceeded; try restarting transaction")
+	tk2.MustExec(`insert into t values (null, 6)`)
+	tk3.MustExec(`insert into ` + dbName + `2.t2 values (null, 7)`)
+	tk2.MustExec(`COMMIT`)
 
-		waitFor(11, "t", "done")
-		tk2.MustExec(`BEGIN`)
-		tk2.MustExec(`insert into ` + dbName + `2.t2 values (null, 8)`)
+	waitFor(11, "t", "done")
+	tk2.MustExec(`BEGIN`)
+	tk2.MustExec(`insert into ` + dbName + `2.t2 values (null, 8)`)
 
-		tk3.MustExec(`insert into ` + dbName + `2.t2 values (null, 9)`)
-		tk2.MustExec(`insert into ` + dbName + `2.t2 values (null, 10)`)
-		tk3.MustExec(`COMMIT`)
+	tk3.MustExec(`insert into ` + dbName + `2.t2 values (null, 9)`)
+	tk2.MustExec(`insert into ` + dbName + `2.t2 values (null, 10)`)
+	tk3.MustExec(`COMMIT`)
 
-		waitFor(11, "t", "synced")
-		tk2.MustExec(`COMMIT`)
-		tk3.MustQuery(`select _tidb_rowid, a, b from ` + dbName + `2.t2`).Sort().Check(testkit.Rows(""+
-			"13 11 11",
-			"14 2 2",
-			"15 12 12",
-			"17 16 18",
-			"19 18 4",
-			"21 20 6",
-			"5013 5012 5",
-			"5015 5014 7",
-		))
+	waitFor(11, "t", "synced")
+	tk2.MustExec(`COMMIT`)
+	tk3.MustQuery(`select _tidb_rowid, a, b from ` + dbName + `2.t2`).Sort().Check(testkit.Rows(""+
+		"13 11 11",
+		"14 2 2",
+		"15 12 12",
+		"17 16 18",
+		"19 18 4",
+		"51 50 5",
+		"53 52 6",
+		"54 20 5",
+		"56 55 6",
+		"58 57 7",
+		"60 59 8",
+		"62 61 9",
+		"64 63 10",
+	))
 
-		require.NoError(t, <-alterChan)
-		tk2.MustQuery(`select _tidb_rowid, a, b from ` + dbName + `2.t2`).Sort().Check(testkit.Rows(
-			"13 11 11", "14 2 2", "15 12 12", "17 16 18",
-			"19 18 4", "21 20 6", "5013 5012 5", "5015 5014 7"))
-	*/
 	require.NoError(t, <-alterChan)
+	tk2.MustQuery(`select _tidb_rowid, a, b from ` + dbName + `2.t2`).Sort().Check(testkit.Rows(""+
+		"13 11 11",
+		"14 2 2",
+		"15 12 12",
+		"17 16 18",
+		"19 18 4",
+		"51 50 5",
+		"53 52 6",
+		"54 20 5",
+		"56 55 6",
+		"58 57 7",
+		"60 59 8",
+		"62 61 9",
+		"64 63 10",
+	))
 }

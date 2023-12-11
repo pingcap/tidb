@@ -51,7 +51,7 @@ func TestBindingCache(t *testing.T) {
 
 	tk.MustExec("drop global binding for select * from t;")
 	require.Nil(t, dom.BindHandle().Update(false))
-	require.Equal(t, 1, len(dom.BindHandle().GetAllGlobalBinding()))
+	require.Equal(t, 1, len(dom.BindHandle().GetAllGlobalBindings()))
 }
 
 func TestBindingLastUpdateTime(t *testing.T) {
@@ -65,7 +65,7 @@ func TestBindingLastUpdateTime(t *testing.T) {
 	tk.MustExec("create global binding for select * from t0 using select * from t0 use index(a);")
 	tk.MustExec("admin reload bindings;")
 
-	bindHandle := bindinfo.NewBindHandle(&mockSessionPool{tk.Session()})
+	bindHandle := bindinfo.NewGlobalBindingHandle(&mockSessionPool{tk.Session()})
 	err := bindHandle.Update(true)
 	require.NoError(t, err)
 	sql, sqlDigest := parser.NormalizeDigest("select * from test . t0")
@@ -128,7 +128,7 @@ func TestBindParse(t *testing.T) {
 	sql := fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation,source, sql_digest, plan_digest) VALUES ('%s', '%s', '%s', '%s', NOW(), NOW(),'%s', '%s', '%s', '%s', '%s')`,
 		originSQL, bindSQL, defaultDb, status, charset, collation, source, mockDigest, mockDigest)
 	tk.MustExec(sql)
-	bindHandle := bindinfo.NewBindHandle(&mockSessionPool{tk.Session()})
+	bindHandle := bindinfo.NewGlobalBindingHandle(&mockSessionPool{tk.Session()})
 	err := bindHandle.Update(true)
 	require.NoError(t, err)
 	require.Equal(t, 1, bindHandle.Size())
@@ -477,7 +477,7 @@ func TestGlobalBinding(t *testing.T) {
 		require.NotNil(t, row.GetString(6))
 		require.NotNil(t, row.GetString(7))
 
-		bindHandle := bindinfo.NewBindHandle(&mockSessionPool{tk.Session()})
+		bindHandle := bindinfo.NewGlobalBindingHandle(&mockSessionPool{tk.Session()})
 		err = bindHandle.Update(true)
 		require.NoError(t, err)
 		require.Equal(t, 1, bindHandle.Size())
@@ -508,7 +508,7 @@ func TestGlobalBinding(t *testing.T) {
 		// From newly created global bind handle.
 		require.Equal(t, testSQL.memoryUsage, pb.GetGauge().GetValue())
 
-		bindHandle = bindinfo.NewBindHandle(&mockSessionPool{tk.Session()})
+		bindHandle = bindinfo.NewGlobalBindingHandle(&mockSessionPool{tk.Session()})
 		err = bindHandle.Update(true)
 		require.NoError(t, err)
 		require.Equal(t, 0, bindHandle.Size())

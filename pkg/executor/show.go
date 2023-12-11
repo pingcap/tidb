@@ -323,10 +323,10 @@ func (*visibleChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
 func (e *ShowExec) fetchShowBind() error {
 	var tmp []*bindinfo.BindRecord
 	if !e.GlobalScope {
-		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-		tmp = handle.GetAllSessionBindRecord()
+		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
+		tmp = handle.GetAllSessionBindings()
 	} else {
-		tmp = domain.GetDomain(e.Ctx()).BindHandle().GetAllGlobalBinding()
+		tmp = domain.GetDomain(e.Ctx()).BindHandle().GetAllGlobalBindings()
 	}
 	bindRecords := make([]*bindinfo.BindRecord, 0)
 	for _, bindRecord := range tmp {
@@ -408,7 +408,7 @@ func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
 
 	handle := domain.GetDomain(e.Ctx()).BindHandle()
 
-	bindRecords := handle.GetAllGlobalBinding()
+	bindRecords := handle.GetAllGlobalBindings()
 	numBindings := 0
 	for _, bindRecord := range bindRecords {
 		for _, binding := range bindRecord.Bindings {

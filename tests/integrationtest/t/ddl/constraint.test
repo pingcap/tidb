@@ -469,7 +469,7 @@ select * from s;
 
 # TestCheckConstraintOnInsert
 drop table if exists t1, t2;
-CREATE TABLE t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive CHECK (c2 > 0));
+CREATE TABLE t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t1 CHECK (c2 > 0));
 -- error 3819
 insert into t1 values (2, 2);
 -- error 3819
@@ -486,14 +486,14 @@ insert into t1 values (13, null);
 insert into t1 values (null, null);
 insert into t1(c1) values (null);
 insert into t1(c2) values (null);
-CREATE TABLE t2 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive CHECK (c2 > 0), c3 int as (c1 + c2) check(c3 > 15));
+CREATE TABLE t2 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t2 CHECK (c2 > 0), c3 int as (c1 + c2) check(c3 > 15));
 -- error 3819
 insert into t2(c1, c2) values (11, 1);
 insert into t2(c1, c2) values (12, 7);
 
 # TestCheckConstraintOnUpdate
 drop table if exists t1, t2;
-CREATE TABLE t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive CHECK (c2 > 0));
+CREATE TABLE t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t1 CHECK (c2 > 0));
 insert into t1 values (11, 12), (12, 13), (13, 14), (14, 15), (15, 16);
 -- error 3819
 update t1 set c2 = -c2;
@@ -503,7 +503,7 @@ update t1 set c2 = c1;
 update t1 set c1 = c1 - 10;
 -- error 3819
 update t1 set c2 = -10 where c2 = 12;
-CREATE TABLE t2 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive CHECK (c2 > 0), c3 int as (c1 + c2) check(c3 > 15));
+CREATE TABLE t2 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t2 CHECK (c2 > 0), c3 int as (c1 + c2) check(c3 > 15));
 insert into t2(c1, c2) values (11, 12), (12, 13), (13, 14), (14, 15), (15, 16);
 -- error 3819
 update t2 set c2 = c2 - 10;
@@ -511,7 +511,7 @@ update t2 set c2 = c2 - 5;
 
 # TestCheckConstraintOnUpdateWithPartition
 drop table if exists t1, t2;
-CREATE TABLE t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive CHECK (c2 > 0)) partition by hash(c2) partitions 5;
+CREATE TABLE t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t1 CHECK (c2 > 0)) partition by hash(c2) partitions 5;
 insert into t1 values (11, 12), (12, 13), (13, 14), (14, 15), (15, 16);
 -- error 3819
 update t1 set c2 = -c2;
@@ -521,7 +521,7 @@ update t1 set c2 = c1;
 update t1 set c1 = c1 - 10;
 -- error 3819
 update t1 set c2 = -10 where c2 = 12;
-CREATE TABLE t2 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive CHECK (c2 > 0), c3 int as (c1 + c2) check(c3 > 15)) partition by hash(c2) partitions 5;
+CREATE TABLE t2 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t2 CHECK (c2 > 0), c3 int as (c1 + c2) check(c3 > 15)) partition by hash(c2) partitions 5;
 insert into t2(c1, c2) values (11, 12), (12, 13), (13, 14), (14, 15), (15, 16);
 -- error 3819
 update t2 set c2 = c2 - 10;
