@@ -23,7 +23,7 @@ func NewMPPErrRecovery(useAutoScaler bool, holderCap uint64, enable bool) *MPPEr
 }
 
 func (m *MPPErrRecovery) CanHoldResult() bool {
-	return m.enable && !m.holder.holdFailed
+	return m.enable && m.holder.capacity > 0 && !m.holder.holdFailed
 }
 
 // HoldResult tries to hold mpp result.

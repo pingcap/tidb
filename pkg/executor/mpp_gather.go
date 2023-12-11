@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/config"
 	"go.uber.org/zap"
 )
 
@@ -147,6 +148,8 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
+	// todo: sys var: hold_row_num, enable_hold_mpp_res
+	e.mppErrRecovery = mpperr.NewMPPErrRecovery(config.GetGlobalConfig().UseAutoScaler, 2048, e.dummy)
 	return nil
 }
 
