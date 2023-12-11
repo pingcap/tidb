@@ -17,7 +17,7 @@ func errLeaseExpired() error {
 }
 
 func unsupported() error {
-	return errors.New("the lease has expired")
+	return errors.New("unsupported operation")
 }
 
 func retryLimitExceeded() error {

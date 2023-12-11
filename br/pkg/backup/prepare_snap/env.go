@@ -2,18 +2,22 @@ package preparesnap
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/errors"
 	brpb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/tikv/client-go/v2/tikv"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
 
 type Env interface {
 	ConnectToStore(ctx context.Context, storeID uint64) (PrepareClient, error)
-	LoadRegionsInKeyRange(bo *tikv.Backoffer, startKey, endKey []byte) (regions []Region, err error)
+	LoadRegionsInKeyRange(ctx context.Context, startKey, endKey []byte) (regions []Region, err error)
 }
 
 type PrepareClient interface {
@@ -45,7 +49,8 @@ func (c CliEnv) ConnectToStore(ctx context.Context, storeID uint64) (PrepareClie
 	return cli, nil
 }
 
-func (c CliEnv) LoadRegionsInKeyRange(bo *tikv.Backoffer, startKey []byte, endKey []byte) (regions []Region, err error) {
+func (c CliEnv) LoadRegionsInKeyRange(ctx context.Context, startKey []byte, endKey []byte) (regions []Region, err error) {
+	bo := tikv.NewBackoffer(ctx, regionCacheMaxBackoffMs)
 	if len(endKey) == 0 {
 		// This is encoded [0xff; 8].
 		// Workaround for https://github.com/tikv/client-go/issues/1051.
@@ -60,4 +65,25 @@ func (c CliEnv) LoadRegionsInKeyRange(bo *tikv.Backoffer, startKey []byte, endKe
 		rrs = append(rrs, r)
 	}
 	return rrs, nil
+}
+
+type RetryEnv struct {
+	Env
+	GetBackoffer func() utils.Backoffer
+}
+
+func (r RetryEnv) ConnectToStore(ctx context.Context, storeID uint64) (PrepareClient, error) {
+	rs := utils.InitialRetryState(50, 10*time.Second, 10*time.Second)
+	bo := utils.Backoffer(&rs)
+	if r.GetBackoffer != nil {
+		bo = r.GetBackoffer()
+	}
+	return utils.WithRetryV2(ctx, bo, func(ctx context.Context) (PrepareClient, error) {
+		cli, err := r.Env.ConnectToStore(ctx, storeID)
+		if err != nil {
+			log.Warn("Failed to connect to store, will retry.", zap.Uint64("store", storeID), logutil.ShortError(err))
+			return nil, err
+		}
+		return cli, nil
+	})
 }

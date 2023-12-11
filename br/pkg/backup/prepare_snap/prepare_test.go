@@ -22,6 +22,7 @@ import (
 	"go.uber.org/zap/zapcore"
 
 	. "github.com/pingcap/tidb/br/pkg/backup/prepare_snap"
+	"github.com/pingcap/tidb/br/pkg/utils"
 )
 
 type mockStore struct {
@@ -93,9 +94,10 @@ func (s *mockStore) Recv() (*brpb.PrepareSnapshotBackupResponse, error) {
 }
 
 type mockStores struct {
-	mu            sync.Mutex
-	stores        map[uint64]*mockStore
-	onCreateStore func(*mockStore)
+	mu               sync.Mutex
+	stores           map[uint64]*mockStore
+	onCreateStore    func(*mockStore)
+	onConnectToStore func(uint64) error
 
 	pdc *tikv.RegionCache
 }
@@ -114,6 +116,13 @@ func (m *mockStores) ConnectToStore(ctx context.Context, storeID uint64) (Prepar
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if m.onConnectToStore != nil {
+		err := m.onConnectToStore(storeID)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	_, ok := m.stores[storeID]
 	if !ok {
 		m.stores[storeID] = &mockStore{
@@ -131,13 +140,13 @@ func (m *mockStores) ConnectToStore(ctx context.Context, storeID uint64) (Prepar
 	return m.stores[storeID], nil
 }
 
-func (m *mockStores) LoadRegionsInKeyRange(bo *tikv.Backoffer, startKey []byte, endKey []byte) (regions []Region, err error) {
+func (m *mockStores) LoadRegionsInKeyRange(ctx context.Context, startKey []byte, endKey []byte) (regions []Region, err error) {
 	if len(endKey) == 0 {
 		// This is encoded [0xff; 8].
 		// Workaround for https://github.com/tikv/client-go/issues/1051.
 		endKey = []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 	}
-	rs, err := m.pdc.LoadRegionsInKeyRange(bo, startKey, endKey)
+	rs, err := m.pdc.LoadRegionsInKeyRange(tikv.NewBackoffer(ctx, 100), startKey, endKey)
 	if err != nil {
 		return nil, err
 	}
@@ -335,4 +344,31 @@ func TestLeaseTimeoutWhileTakingSnapshot(t *testing.T) {
 			break
 		}
 	}
+}
+
+func TestRetryEnv(t *testing.T) {
+	log.SetLevel(zapcore.DebugLevel)
+	req := require.New(t)
+	pdc := fakeCluster(t, 3, dummyRegions(100)...)
+	tms := newTestEnv(pdc)
+	failed := new(sync.Once)
+	tms.onConnectToStore = func(u uint64) error {
+		shouldFail := false
+		failed.Do(func() {
+			shouldFail = true
+		})
+		if shouldFail {
+			return errors.New("nya?")
+		}
+		return nil
+	}
+	ms := RetryEnv{Env: tms}
+	ms.GetBackoffer = func() utils.Backoffer {
+		o := utils.InitialRetryState(2, 0, 0)
+		return &o
+	}
+	prep := New(ms)
+	ctx := context.Background()
+	req.NoError(prep.DriveLoopAndWaitPrepare(ctx))
+	req.NoError(prep.Finalize(ctx))
 }

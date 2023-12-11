@@ -11,7 +11,6 @@ import (
 	brpb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -95,10 +94,11 @@ func New(env Env) *Preparer {
 // DriveLoopAndWaitPrepare drives the state machine and block the
 // current goroutine until we are safe to start taking snapshot.
 //
-// After this invoked, you shouldn't share this `Preparer“ with any other goroutine.
+// After this invoked, you shouldn't share this `Preparer` with any other goroutines.
 //
-// After this involed, the cluster will enter the land between normal and taking snapshot.
-// Spliting, ingesting and conf changing may all be blocked until `Finalize` invoked.
+// After this the cluster will enter the land between normal and taking snapshot.
+// This state will continue even this function returns, until `Finalize` invoked.
+// Splitting, ingesting and conf changing will all be blocked.
 func (p *Preparer) DriveLoopAndWaitPrepare(ctx context.Context) error {
 	p.retryTime = 0
 	if err := p.MaybeFinish(ctx); err != nil {
@@ -149,7 +149,7 @@ func (p *Preparer) WaitAndHandleNextEvent(ctx context.Context) error {
 			return errors.Annotatef(err, "failed to handle event %v", evt)
 		}
 		return p.MaybeFinish(ctx)
-	case <-p.retryC():
+	case <-p.retryChan():
 		return p.workOnPendingRanges(ctx)
 	}
 }
@@ -190,6 +190,9 @@ func (p *Preparer) onEvent(ctx context.Context, e event) error {
 			if p.nextRetry != nil {
 				p.nextRetry.Stop()
 			}
+			// Reset the timer so we can collect more regions.
+			// Note: perhaps it is better to make a deadline heap or something
+			// so every region backoffs the same time.
 			p.nextRetry = time.NewTimer(p.RetryBackoff)
 			return nil
 		}
@@ -206,7 +209,7 @@ func (p *Preparer) onEvent(ctx context.Context, e event) error {
 	return nil
 }
 
-func (p *Preparer) retryC() <-chan time.Time {
+func (p *Preparer) retryChan() <-chan time.Time {
 	if p.nextRetry == nil {
 		return nil
 	}
@@ -270,10 +273,9 @@ func (p *Preparer) workOnPendingRanges(ctx context.Context) error {
 	}
 
 	logutil.CL(ctx).Info("retrying some ranges incomplete.", zap.Int("ranges", len(p.failedRegions)))
-	bo := tikv.NewBackoffer(ctx, regionCacheMaxBackoffMs)
 	preqs := pendingRequests{}
 	for _, r := range p.failedRegions {
-		rs, err := p.env.LoadRegionsInKeyRange(bo, r.startKey, r.endKey)
+		rs, err := p.env.LoadRegionsInKeyRange(ctx, r.startKey, r.endKey)
 		if err != nil {
 			return errors.Annotatef(err, "retrying range of %s: get region", logutil.StringifyRangeOf(r.startKey, r.endKey))
 		}
