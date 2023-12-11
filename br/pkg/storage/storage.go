@@ -163,7 +163,7 @@ type ExternalStorageOptions struct {
 	// HTTPClient to use. The created storage may ignore this field if it is not
 	// directly using HTTP (e.g. the local storage) or use self-design HTTP client
 	// with credential (e.g. the gcs).
-	// NOTICE: the HTTPClient is only used by s3 storage and azure blob storage.
+	// NOTICE: the HTTPClient is only used by s3/azure/gcs.
 	HTTPClient *http.Client
 
 	// CheckPermissions check the given permission in New() function.
@@ -247,9 +247,6 @@ func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalSt
 		if backend.Gcs == nil {
 			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "GCS config not found")
 		}
-		// the HTTPClient should has credential, currently the HTTPClient only has the http.Transport.
-		// Issue: https: //github.com/pingcap/tidb/issues/47022
-		opts.HTTPClient = nil
 		return NewGCSStorage(ctx, backend.Gcs, opts)
 	case *backuppb.StorageBackend_AzureBlobStorage:
 		return newAzureBlobStorage(ctx, backend.AzureBlobStorage, opts)
