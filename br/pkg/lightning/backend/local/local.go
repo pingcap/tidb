@@ -113,7 +113,7 @@ var (
 	tiFlashMinVersion   = *semver.New("4.0.5")
 
 	errorEngineClosed     = errors.New("engine is closed")
-	maxRetryBackoffSecond = 30
+	maxRetryBackoffSecond = 300
 )
 
 // ImportClientFactory is factory to create new import client for specific store.
@@ -1655,7 +1655,7 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 				if sleepSecond > float64(maxRetryBackoffSecond) {
 					sleepSecond = float64(maxRetryBackoffSecond)
 				}
-				job.waitUntil = time.Now().Add(time.Second * time.Duration(sleepSecond))
+				job.waitUntil = time.Now().Add(100 * time.Millisecond * time.Duration(sleepSecond))
 				log.FromContext(ctx).Info("put job back to jobCh to retry later",
 					logutil.Key("startKey", job.keyRange.Start),
 					logutil.Key("endKey", job.keyRange.End),
