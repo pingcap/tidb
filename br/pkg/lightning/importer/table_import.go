@@ -1125,14 +1125,12 @@ func (tr *TableImporter) postProcess(
 	return true, nil
 }
 
-<<<<<<< HEAD
-=======
 func getChunkCompressedSizeForParquet(
 	ctx context.Context,
 	chunk *checkpoints.ChunkCheckpoint,
 	store storage.ExternalStorage,
 ) (int64, error) {
-	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store, storage.DecompressConfig{})
+	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -1161,37 +1159,6 @@ func getChunkCompressedSizeForParquet(
 	return maxRowGroupSize, nil
 }
 
-func updateStatsMeta(ctx context.Context, db *sql.DB, tableID int64, count int) {
-	s := common.SQLWithRetry{
-		DB:     db,
-		Logger: log.FromContext(ctx).With(zap.Int64("tableID", tableID)),
-	}
-	err := s.Transact(ctx, "update stats_meta", func(ctx context.Context, tx *sql.Tx) error {
-		rs, err := tx.ExecContext(ctx, `
-update mysql.stats_meta
-	set modify_count = ?,
-		count = ?,
-		version = @@tidb_current_ts
-	where table_id = ?;
-`, count, count, tableID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		affected, err := rs.RowsAffected()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if affected == 0 {
-			return errors.Errorf("record with table_id %d not found", tableID)
-		}
-		return nil
-	})
-	if err != nil {
-		s.Logger.Warn("failed to update stats_meta", zap.Error(err))
-	}
-}
-
->>>>>>> 7aba5245f1f (lightning: add function `getChunkCompressedSizeForParquet` for solving parquet oom issue (#49021))
 func parseColumnPermutations(
 	tableInfo *model.TableInfo,
 	columns []string,
