@@ -96,6 +96,7 @@ func (options *GCSBackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
 type GCSStorage struct {
 	gcs    *backuppb.GCS
 	bucket *storage.BucketHandle
+	cli    *storage.Client
 }
 
 // GetBucketHandle gets the handle to the GCS API on the bucket.
@@ -269,12 +270,15 @@ func (s *GCSStorage) URI() string {
 }
 
 // Create implements ExternalStorage interface.
-func (s *GCSStorage) Create(ctx context.Context, name string, _ *WriterOption) (ExternalFileWriter, error) {
-	object := s.objectName(name)
-	wc := s.bucket.Object(object).NewWriter(ctx)
-	wc.StorageClass = s.gcs.StorageClass
-	wc.PredefinedACL = s.gcs.PredefinedAcl
-	return newFlushStorageWriter(wc, &emptyFlusher{}, wc), nil
+func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) (ExternalFileWriter, error) {
+	uri := s.objectName(name)
+	w, err := NewGCSWriter(ctx, s.cli, uri, 5*1024*1024, wo.Concurrency, s.gcs.Bucket)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	fw := newFlushStorageWriter(w, &emptyFlusher{}, w)
+	bw := newBufferedWriter(fw, 5*1024*1024, NoCompression)
+	return bw, nil
 }
 
 // Rename file name from oldFileName to newFileName.
@@ -348,7 +352,7 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 		// so we need find sst in slash directory
 		gcs.Prefix += "//"
 	}
-	return &GCSStorage{gcs: gcs, bucket: bucket}, nil
+	return &GCSStorage{gcs: gcs, bucket: bucket, cli: client}, nil
 }
 
 func hasSSTFiles(ctx context.Context, bucket *storage.BucketHandle, prefix string) bool {

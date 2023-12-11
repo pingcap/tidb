@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -1029,3 +1030,90 @@ func TestPrepareLargeData(t *testing.T) {
 	t.Logf("total %d data files, first file size: %.2f MB, last file size: %.2f MB",
 		len(dataFiles), float64(firstFileSize)/1024/1024, float64(lastFileSize)/1024/1024)
 }
+
+func TestMergeCompare(t *testing.T) {
+	ctx := context.Background()
+	fileSize := 50 * 1024 * 1024
+	fileCnt := 50
+	subDir := "ascending"
+	store, _, minKey, maxKey := createAscendingFiles(t, fileSize, fileCnt, subDir)
+	datas, stats, err := GetAllFileNames(ctx, store, "/"+subDir)
+	mergeOutput := "merge_output"
+	totalSize := atomic.NewUint64(0)
+	onClose := func(s *WriterSummary) {
+		totalSize.Add(s.TotalSize)
+	}
+
+	now := time.Now()
+	err = MergeOverlappingFiles(
+		ctx,
+		datas,
+		stats,
+		store,
+		minKey, kv.Key(maxKey).Next(),
+		int64(5*size.MB),
+		mergeOutput,
+		"mergeID",
+		DefaultBlockSize,
+		8*1024,
+		1*size.MB,
+		8*1024,
+		onClose,
+		8,
+		true,
+	)
+
+	intest.AssertNoError(err)
+	elapsed := time.Since(now)
+	t.Logf(
+		"merge speed for %d bytes in %s, speed: %.2f MB/s",
+		fileSize*fileCnt,
+		elapsed,
+		float64(fileSize*fileCnt)/elapsed.Seconds()/1024/1024,
+	)
+
+	now = time.Now()
+
+	err = MergeOverlappingFilesV2(
+		ctx,
+		datas,
+		store,
+		16*1024*1024, // TODO(lance6716): why need so large?
+		64*1024,
+		mergeOutput,
+		DefaultBlockSize,
+		8*1024,
+		1024*1024,
+		8*1024,
+		onClose,
+		1,
+		true)
+	intest.AssertNoError(err)
+	elapsed = time.Since(now)
+	t.Logf("merge prev implementation with 1 concurrency %d bytes in %s, speed: %.2f MB/s",
+		fileSize*fileCnt, elapsed, float64(fileSize*fileCnt)/elapsed.Seconds()/1024/1024)
+
+	now = time.Now()
+	err = MergeOverlappingFilesV2(
+		ctx,
+		datas,
+		store,
+		16*1024*1024, // TODO(lance6716): why need so large?
+		64*1024,
+		mergeOutput,
+		DefaultBlockSize,
+		8*1024,
+		1024*1024,
+		8*1024,
+		onClose,
+		8,
+		true)
+	intest.AssertNoError(err)
+	elapsed = time.Since(now)
+	t.Logf("merge prev implementation with 8 concurrency %d bytes in %s, speed: %.2f MB/s",
+		fileSize*fileCnt, elapsed, float64(fileSize*fileCnt)/elapsed.Seconds()/1024/1024)
+}
+
+// 1. bench_test.go:1068: merge speed for 2621440000 bytes in 22.584229553s, speed: 110.70 MB/s
+// 2. bench_test.go:1093: merge prev implementation with 1 concurrency 2621440000 bytes in 33.568169921s, speed: 74.48 MB/s
+// 3. bench_test.go:1112: merge prev implementation with 8 concurrency 2621440000 bytes in 14.412007755s, speed: 52.73 MB/s
