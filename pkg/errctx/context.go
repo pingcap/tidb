@@ -17,6 +17,7 @@ package errctx
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errno"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
@@ -34,14 +35,14 @@ const (
 
 // Context defines how to handle an error
 type Context struct {
-	levelMap        [errGroupCount]Level
-	appendWarningFn func(err error)
+	levelMap    [errGroupCount]Level
+	warnHandler contextutil.WarnHandler
 }
 
 // WithStrictErrGroupLevel makes the context to return the error directly for any kinds of errors.
 func (ctx *Context) WithStrictErrGroupLevel() Context {
 	newCtx := Context{
-		appendWarningFn: ctx.appendWarningFn,
+		warnHandler: ctx.warnHandler,
 	}
 
 	return newCtx
@@ -50,24 +51,24 @@ func (ctx *Context) WithStrictErrGroupLevel() Context {
 // WithErrGroupLevel sets a `Level` for an `ErrGroup`
 func (ctx *Context) WithErrGroupLevel(eg ErrGroup, l Level) Context {
 	newCtx := Context{
-		levelMap:        ctx.levelMap,
-		appendWarningFn: ctx.appendWarningFn,
+		levelMap:    ctx.levelMap,
+		warnHandler: ctx.warnHandler,
 	}
 	newCtx.levelMap[eg] = l
 
 	return newCtx
 }
 
-// appendWarning appends the error to warning. If the inner `appendWarningFn` is nil, do nothing.
+// appendWarning appends the error to warning. If the inner `warnHandler` is nil, do nothing.
 func (ctx *Context) appendWarning(err error) {
-	intest.Assert(ctx.appendWarningFn != nil)
-	if fn := ctx.appendWarningFn; fn != nil {
-		// appendWarningFn should always not be nil, check fn != nil here to just make code safe.
-		fn(err)
+	intest.Assert(ctx.warnHandler != nil)
+	if w := ctx.warnHandler; w != nil {
+		// warnHandler should always not be nil, check fn != nil here to just make code safe.
+		w.AppendWarning(err)
 	}
 }
 
-// HandleError handles the error according to the context. See the comment of `HandleErrorWithAlias` for detailed logic.
+// HandleError handles the error according to the contextutil. See the comment of `HandleErrorWithAlias` for detailed logic.
 //
 // It also allows using `errors.ErrorGroup`, in this case, it'll handle each error in order, and return the first error
 // it founds.
@@ -92,7 +93,7 @@ func (ctx *Context) HandleError(err error) error {
 	return ctx.HandleErrorWithAlias(err, err, err)
 }
 
-// HandleErrorWithAlias handles the error according to the context.
+// HandleErrorWithAlias handles the error according to the contextutil.
 //  1. If the `internalErr` is not `"pingcap/errors".Error`, or the error code is not defined in the `errGroupMap`, or the error
 //     level is set to `LevelError`(0), the `err` will be returned directly.
 //  2. If the error level is set to `LevelWarn`, the `warnErr` will be appended as a warning.
@@ -134,17 +135,15 @@ func (ctx *Context) HandleErrorWithAlias(internalErr error, err error, warnErr e
 }
 
 // NewContext creates an error context to handle the errors and warnings
-func NewContext(appendWarningFn func(err error)) Context {
-	intest.Assert(appendWarningFn != nil)
+func NewContext(handler contextutil.WarnHandler) Context {
+	intest.Assert(handler != nil)
 	return Context{
-		appendWarningFn: appendWarningFn,
+		warnHandler: handler,
 	}
 }
 
 // StrictNoWarningContext returns all errors directly, and ignore all errors
-var StrictNoWarningContext = NewContext(func(_ error) {
-	// the error is ignored
-})
+var StrictNoWarningContext = NewContext(contextutil.IgnoreWarn)
 
 var errGroupMap = make(map[errors.ErrCode]ErrGroup)
 

@@ -40,7 +40,7 @@ func newBackfillCleanUpS3() dispatcher.CleanUpRoutine {
 
 // CleanUp implements the CleanUpRoutine.CleanUp interface.
 func (*BackfillCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
-	var taskMeta BackfillGlobalMeta
+	var taskMeta BackfillTaskMeta
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return err
 	}
@@ -71,7 +71,7 @@ func (*BackfillCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
 func redactCloudStorageURI(
 	ctx context.Context,
 	task *proto.Task,
-	origin *BackfillGlobalMeta,
+	origin *BackfillTaskMeta,
 ) {
 	origin.CloudStorageURI = ast.RedactURL(origin.CloudStorageURI)
 	metaBytes, err := json.Marshal(origin)

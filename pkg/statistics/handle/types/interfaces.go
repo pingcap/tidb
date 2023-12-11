@@ -115,6 +115,17 @@ type StatsAnalyze interface {
 	// DeleteAnalyzeJobs deletes the analyze jobs whose update time is earlier than updateTime.
 	DeleteAnalyzeJobs(updateTime time.Time) error
 
+	// CleanupCorruptedAnalyzeJobsOnCurrentInstance cleans up the corrupted analyze job.
+	// A corrupted analyze job is one that is in a 'pending' or 'running' state,
+	// but is associated with a TiDB instance that is either not currently running or has been restarted.
+	// We use current running analyze jobs to check whether the analyze job is corrupted.
+	CleanupCorruptedAnalyzeJobsOnCurrentInstance(currentRunningProcessIDs map[uint64]struct{}) error
+
+	// CleanupCorruptedAnalyzeJobsOnDeadInstances purges analyze jobs that are associated with non-existent instances.
+	// This function is specifically designed to handle jobs that have become corrupted due to
+	// their associated instances being removed from the current cluster.
+	CleanupCorruptedAnalyzeJobsOnDeadInstances() error
+
 	// HandleAutoAnalyze analyzes the newly created table or index.
 	HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool)
 

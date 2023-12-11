@@ -349,9 +349,9 @@ create database list_partition_temp_table;
 use list_partition_temp_table;
 drop table if exists tlist;
 set tidb_enable_list_partition = 1;
---error 1526
+--error 1562
 create global temporary table t(a int, b int) partition by list(a) (partition p0 values in (0)) on commit delete rows;
---error 1526
+--error 1562
 create global temporary table t(a int, b int) partition by list columns (a) (partition p0 values in (0)) on commit delete rows;
 
 
