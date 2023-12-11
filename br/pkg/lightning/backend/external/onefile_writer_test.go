@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
-	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
@@ -203,7 +202,7 @@ func TestMergeOverlappingFiles(t *testing.T) {
 			v-- // insert a duplicate key.
 		}
 		key, val := []byte{byte(v)}, []byte{byte(v)}
-		err := writer.WriteRow(ctx, key, val, dbkv.IntHandle(i))
+		err := writer.WriteRow(ctx, key, val, kv.IntHandle(i))
 		require.NoError(t, err)
 	}
 	err := writer.Close(ctx)
@@ -214,7 +213,7 @@ func TestMergeOverlappingFiles(t *testing.T) {
 		[]string{"/test/0/0", "/test/0/1", "/test/0/2", "/test/0/3", "/test/0/4"},
 		[]string{"/test/0_stat/0", "/test/0_stat/1", "/test/0_stat/2", "/test/0_stat/3", "/test/0_stat/4"},
 		memStore,
-		startKey, kv.Key(endKey).Next(),
+		startKey, kv.Key(endKey),
 		int64(5*size.MB),
 		"/test2",
 		"mergeID",
@@ -271,7 +270,6 @@ func TestMergeOverlappingFiles(t *testing.T) {
 	require.Contains(t, err.Error(), "found duplicate key")
 }
 
-// with bug for now
 func TestOnefileWriterManyRows(t *testing.T) {
 	// 1. write into one file with sorted order.
 	// 2. merge one file.
@@ -325,7 +323,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 		[]string{"/test/0/one-file"},
 		[]string{"/test/0_stat/one-file"},
 		memStore,
-		kvs[0].Key, kv.Key(kvs[len(kvs)-1].Key),
+		kvs[0].Key, kv.Key(kvs[len(kvs)-1].Key).Next(),
 		int64(5*size.MB),
 		"/test2",
 		"mergeID",
@@ -362,7 +360,6 @@ func TestOnefileWriterManyRows(t *testing.T) {
 		},
 		MaxOverlappingNum: 1,
 	}
-	// ywq todo
 	require.EqualValues(t, expected.MinKey, resSummary.Min)
 	require.EqualValues(t, expected.MaxKey, resSummary.Max)
 	require.Equal(t, expected.Filenames, resSummary.MultipleFilesStats[0].Filenames)

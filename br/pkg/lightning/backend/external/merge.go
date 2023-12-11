@@ -141,13 +141,13 @@ func MergeOverlappingFiles(
 	var stat MultipleFilesStat
 	stat.Filenames = append(stat.Filenames,
 		[2]string{writer.dataFile, writer.statFile})
-	stat.build([]tidbkv.Key{startKey}, []tidbkv.Key{endKey})
+	stat.build([]tidbkv.Key{startKey}, []tidbkv.Key{loaded.keys[len(loaded.keys)-1]})
 	if onClose != nil {
 		onClose(&WriterSummary{
 			WriterID:           writer.writerID,
 			Seq:                0,
 			Min:                startKey,
-			Max:                endKey,
+			Max:                loaded.keys[len(loaded.keys)-1],
 			TotalSize:          totalSize,
 			MultipleFilesStats: []MultipleFilesStat{stat},
 		})
