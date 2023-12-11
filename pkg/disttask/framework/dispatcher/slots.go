@@ -28,7 +28,7 @@ type taskStripes struct {
 	stripes int
 }
 
-// slotManager is used to manage the resource slots and strips.
+// slotManager is used to manage the resource slots and stripes.
 //
 // Slot is the resource unit of dist framework on each node, each slot represents
 // 1 cpu core, 1/total-core of memory, 1/total-core of disk, etc.
