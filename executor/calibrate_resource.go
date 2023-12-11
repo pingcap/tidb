@@ -15,14 +15,22 @@
 package executor
 
 import (
+	"bufio"
 	"context"
+	"encoding/base64"
 	"fmt"
+	"io"
 	"math"
+	"net/http"
+	"runtime"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -30,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -121,6 +130,13 @@ const (
 	// duration Indicates the supported calibration duration
 	maxDuration = time.Hour * 24
 	minDuration = time.Minute
+
+	// serverTypeTiDB is tidb's instance type name
+	serverTypeTiDB = "tidb"
+	// serverTypeTiKV is tikv's instance type name
+	serverTypeTiKV = "tikv"
+	// serverTypeTiFlash is tiflash's instance type name
+	serverTypeTiFlash = "tiflash"
 )
 
 type calibrateResourceExec struct {
@@ -168,10 +184,12 @@ func (e *calibrateResourceExec) parseCalibrateDuration(ctx context.Context) (sta
 	}
 	// check the duration
 	dur = endTime.Sub(startTime)
-	if dur > maxDuration {
+	// add the buffer duration
+	if dur > maxDuration+time.Minute {
 		err = errors.Errorf("the duration of calibration is too long, which could lead to inaccurate output. Please make the duration between %s and %s", minDuration.String(), maxDuration.String())
 		return
 	}
+	// We only need to consider the case where the duration is slightly enlarged.
 	if dur < minDuration {
 		err = errors.Errorf("the duration of calibration is too short, which could lead to inaccurate output. Please make the duration between %s and %s", minDuration.String(), maxDuration.String())
 	}
@@ -185,13 +203,14 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 		return nil
 	}
 	e.done = true
-
-	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+	if !variable.EnableResourceControl.Load() {
+		return infoschema.ErrResourceGroupSupportDisabled
+	}
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	if len(e.optionList) > 0 {
-		return e.dynamicCalibrate(ctx, req, exec)
+		return e.dynamicCalibrate(ctx, req)
 	}
-	return e.staticCalibrate(ctx, req, exec)
+	return e.staticCalibrate(req)
 }
 
 var (
@@ -199,19 +218,24 @@ var (
 	errNoCPUQuotaMetrics = errors.Normalize("There is no CPU quota metrics, %v")
 )
 
-func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor) error {
+func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk.Chunk) error {
+	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 	startTs, endTs, err := e.parseCalibrateDuration(ctx)
+	if err != nil {
+		return err
+	}
+	serverInfos, err := infoschema.GetClusterServerInfo(e.ctx)
 	if err != nil {
 		return err
 	}
 	startTime := startTs.In(e.ctx.GetSessionVars().Location()).Format("2006-01-02 15:04:05")
 	endTime := endTs.In(e.ctx.GetSessionVars().Location()).Format("2006-01-02 15:04:05")
 
-	totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
+	totalKVCPUQuota, err := getTiKVTotalCPUQuota(serverInfos)
 	if err != nil {
 		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
-	totalTiDBCPU, err := getTiDBTotalCPUQuota(ctx, exec)
+	totalTiDBCPU, err := getTiDBTotalCPUQuota(serverInfos)
 	if err != nil {
 		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
@@ -275,20 +299,21 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 	return nil
 }
 
-func (e *calibrateResourceExec) staticCalibrate(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor) error {
-	if !variable.EnableResourceControl.Load() {
-		return infoschema.ErrResourceGroupSupportDisabled
-	}
+func (e *calibrateResourceExec) staticCalibrate(req *chunk.Chunk) error {
 	// first fetch the ru settings config.
 	if resourceGroupCtl == nil {
 		return errors.New("resource group controller is not initialized")
 	}
+	clusterInfo, err := infoschema.GetClusterServerInfo(e.ctx)
+	if err != nil {
+		return err
+	}
 
-	totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
+	totalKVCPUQuota, err := getTiKVTotalCPUQuota(clusterInfo)
 	if err != nil {
 		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
-	totalTiDBCPU, err := getTiDBTotalCPUQuota(ctx, exec)
+	totalTiDBCPUQuota, err := getTiDBTotalCPUQuota(clusterInfo)
 	if err != nil {
 		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
@@ -302,8 +327,8 @@ func (e *calibrateResourceExec) staticCalibrate(ctx context.Context, req *chunk.
 		return errors.Errorf("unknown workload '%T'", e.workloadType)
 	}
 
-	if totalTiDBCPU/baseCost.tidbToKVCPURatio < totalKVCPUQuota {
-		totalKVCPUQuota = totalTiDBCPU / baseCost.tidbToKVCPURatio
+	if totalTiDBCPUQuota/baseCost.tidbToKVCPURatio < totalKVCPUQuota {
+		totalKVCPUQuota = totalTiDBCPUQuota / baseCost.tidbToKVCPURatio
 	}
 	ruCfg := resourceGroupCtl.GetConfig()
 	ruPerKVCPU := float64(ruCfg.ReadBaseCost)*float64(baseCost.readReqCount) +
@@ -316,14 +341,27 @@ func (e *calibrateResourceExec) staticCalibrate(ctx context.Context, req *chunk.
 	return nil
 }
 
-func getTiKVTotalCPUQuota(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) (float64, error) {
-	query := "SELECT SUM(value) FROM METRICS_SCHEMA.tikv_cpu_quota GROUP BY time ORDER BY time desc limit 1"
-	return getNumberFromMetrics(ctx, exec, query, "tikv_cpu_quota")
+func getTiDBTotalCPUQuota(clusterInfo []infoschema.ServerInfo) (float64, error) {
+	cpuQuota := float64(runtime.GOMAXPROCS(0))
+	failpoint.Inject("mockGOMAXPROCS", func(val failpoint.Value) {
+		if val != nil {
+			cpuQuota = float64(val.(int))
+		}
+	})
+	instanceNum := count(clusterInfo, serverTypeTiDB)
+	return cpuQuota * float64(instanceNum), nil
 }
 
-func getTiDBTotalCPUQuota(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) (float64, error) {
-	query := "SELECT SUM(value) FROM METRICS_SCHEMA.tidb_server_maxprocs GROUP BY time ORDER BY time desc limit 1"
-	return getNumberFromMetrics(ctx, exec, query, "tidb_server_maxprocs")
+func getTiKVTotalCPUQuota(clusterInfo []infoschema.ServerInfo) (float64, error) {
+	instanceNum := count(clusterInfo, serverTypeTiKV)
+	if instanceNum == 0 {
+		return 0.0, errors.New("no server with type 'tikv' is found")
+	}
+	cpuQuota, err := fetchServerCPUQuota(clusterInfo, serverTypeTiKV, "tikv_server_cpu_cores_quota")
+	if err != nil {
+		return 0.0, err
+	}
+	return cpuQuota * float64(instanceNum), nil
 }
 
 type timePointValue struct {
@@ -400,4 +438,95 @@ func getValuesFromMetrics(ctx context.Context, sctx sessionctx.Context, exec sql
 		}
 	}
 	return &timeSeriesValues{idx: 0, vals: ret}, nil
+}
+
+func count(clusterInfo []infoschema.ServerInfo, ty string) int {
+	num := 0
+	for _, e := range clusterInfo {
+		if e.ServerType == ty {
+			num++
+		}
+	}
+	return num
+}
+
+func fetchServerCPUQuota(serverInfos []infoschema.ServerInfo, serverType string, metricName string) (float64, error) {
+	var cpuQuota float64
+	err := fetchStoreMetrics(serverInfos, serverType, func(addr string, resp *http.Response) error {
+		if resp.StatusCode != http.StatusOK {
+			return errors.Errorf("request %s failed: %s", addr, resp.Status)
+		}
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if !strings.HasPrefix(line, metricName) {
+				continue
+			}
+			// the metrics format is like following:
+			// tikv_server_cpu_cores_quota 8
+			quota, err := strconv.ParseFloat(line[len(metricName)+1:], 64)
+			if err == nil {
+				cpuQuota = quota
+			}
+			return errors.Trace(err)
+		}
+		return errors.Errorf("metrics '%s' not found from server '%s'", metricName, addr)
+	})
+	return cpuQuota, err
+}
+
+func fetchStoreMetrics(serversInfo []infoschema.ServerInfo, serverType string, onResp func(string, *http.Response) error) error {
+	var firstErr error
+	for _, srv := range serversInfo {
+		if srv.ServerType != serverType {
+			continue
+		}
+		if len(srv.StatusAddr) == 0 {
+			continue
+		}
+		url := fmt.Sprintf("%s://%s/metrics", util.InternalHTTPSchema(), srv.StatusAddr)
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			return err
+		}
+		var resp *http.Response
+		failpoint.Inject("mockMetricsResponse", func(val failpoint.Value) {
+			if val != nil {
+				data, _ := base64.StdEncoding.DecodeString(val.(string))
+				resp = &http.Response{
+					StatusCode: http.StatusOK,
+					Body: noopCloserWrapper{
+						Reader: strings.NewReader(string(data)),
+					},
+				}
+			}
+		})
+		if resp == nil {
+			var err1 error
+			// ignore false positive go line, can't use defer here because it's in a loop.
+			//nolint:bodyclose
+			resp, err1 = util.InternalHTTPClient().Do(req)
+			if err1 != nil {
+				if firstErr == nil {
+					firstErr = err1
+				}
+				continue
+			}
+		}
+		err = onResp(srv.Address, resp)
+		resp.Body.Close()
+		return err
+	}
+	if firstErr == nil {
+		firstErr = errors.Errorf("no server with type '%s' is found", serverType)
+	}
+	return firstErr
+}
+
+type noopCloserWrapper struct {
+	io.Reader
+}
+
+func (noopCloserWrapper) Close() error {
+	return nil
 }

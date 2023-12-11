@@ -504,6 +504,8 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		return p, names, 0, nil
 	}
 
+	core.RecheckCTE(logic)
+
 	// Handle the logical plan statement, use cascades planner if enabled.
 	if sessVars.GetEnableCascadesPlanner() {
 		finalPlan, cost, err := cascades.DefaultOptimizer.FindBestPlan(sctx, logic)
