@@ -946,7 +946,7 @@ set @@sql_mode=@old_sql_mode;
 insert into t2 values('1',  "1000-01-01 00:00:00" + INTERVAL  "+1" YEAR);
 insert into t2 values('-1',  "1000-01-01 00:00:00" + INTERVAL  "-1" YEAR);
 insert into t2 values('0',  "1000-01-01 00:00:00" + INTERVAL  "XXX" YEAR);
-Error 1292 (22007): Truncated incorrect INTEGER value: 'XXX'
+Error 1292 (22007): Truncated incorrect DECIMAL value: 'XXX'
 insert into t2 values('99999',  "1000-01-01 00:00:00" + INTERVAL  99999 YEAR);
 Error 1441 (22008): Datetime function: datetime field overflow
 insert into t2 values('116777216',  "1000-01-01 00:00:00" + INTERVAL  116777216 YEAR);

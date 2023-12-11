@@ -2881,7 +2881,7 @@ func (du *baseDateArithmetical) intervalReformatString(ec errctx.Context, str st
 		}
 
 		if interval != str {
-			err = ec.HandleError(types.ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", str))
+			err = ec.HandleError(types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", str))
 		}
 	case "SECOND":
 		// The unit SECOND is specially handled, for example:
@@ -2891,7 +2891,10 @@ func (du *baseDateArithmetical) intervalReformatString(ec errctx.Context, str st
 		// date + INTERVAL "1e2" MINUTE = date + INTERVAL 1 MINUTE
 		// date + INTERVAL "1.6" MINUTE = date + INTERVAL 1 MINUTE
 		var dec types.MyDecimal
-		err = ec.HandleError(dec.FromString([]byte(str)))
+		if err = dec.FromString([]byte(str)); err != nil {
+			truncatedErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", str)
+			err = ec.HandleErrorWithAlias(err, truncatedErr, truncatedErr)
+		}
 		interval = string(dec.ToString())
 	default:
 		interval = str
