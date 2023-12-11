@@ -334,8 +334,7 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 	}
 	// see https://github.com/pingcap/tidb/issues/47022#issuecomment-1722913455
 	var err error
-	httpClient.Transport, err = htransport.NewTransport(ctx, httpClient.Transport,
-		append(clientOps, option.WithScopes(storage.ScopeFullControl, "https://www.googleapis.com/auth/cloud-platform"))...)
+	httpClient.Transport, err = htransport.NewTransport(ctx, httpClient.Transport)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

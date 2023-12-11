@@ -272,7 +272,7 @@ func TestNewGCSStorage(t *testing.T) {
 			Prefix:          "a/b/",
 			StorageClass:    "NEARLINE",
 			PredefinedAcl:   "private",
-			CredentialsBlob: "FakeCredentials",
+			CredentialsBlob: `{"type": "service_account"}`,
 		}
 		_, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
 			SendCredentials:  true,
@@ -280,7 +280,7 @@ func TestNewGCSStorage(t *testing.T) {
 			HTTPClient:       server.HTTPClient(),
 		})
 		require.NoError(t, err)
-		require.Equal(t, "FakeCredentials", gcs.CredentialsBlob)
+		require.Equal(t, `{"type": "service_account"}`, gcs.CredentialsBlob)
 	}
 
 	{
@@ -289,7 +289,7 @@ func TestNewGCSStorage(t *testing.T) {
 			Prefix:          "a/b/",
 			StorageClass:    "NEARLINE",
 			PredefinedAcl:   "private",
-			CredentialsBlob: "FakeCredentials",
+			CredentialsBlob: `{"type": "service_account"}`,
 		}
 		_, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
 			SendCredentials:  false,
@@ -386,7 +386,7 @@ func TestNewGCSStorage(t *testing.T) {
 			Prefix:          "a/b",
 			StorageClass:    "NEARLINE",
 			PredefinedAcl:   "private",
-			CredentialsBlob: "FakeCredentials",
+			CredentialsBlob: `{"type": "service_account"}`,
 		}
 		s, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
 			SendCredentials:  false,
