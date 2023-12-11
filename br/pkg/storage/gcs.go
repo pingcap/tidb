@@ -324,7 +324,7 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 
 	httpClient := opts.HTTPClient
 	if httpClient == nil {
-		// http2 will to reuse the connection to read multiple files, which is
+		// http2 will reuse the connection to read multiple files, which is
 		// very slow, the speed is about the same speed as reading a single file.
 		// So we disable keepalive here to use multiple connections to read files.
 		// open a new connection takes about 20~50ms, which is acceptable.

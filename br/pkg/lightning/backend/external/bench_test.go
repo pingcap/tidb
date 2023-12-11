@@ -634,7 +634,7 @@ func readMergeIter(t *testing.T, s *readTestSuite) {
 				s.beforeReaderClose()
 			}
 		}
-		totalSize += len(iter.Key()) + len(iter.Value())
+		totalSize += len(iter.Key()) + len(iter.Value()) + lengthBytes*2
 	}
 	intest.Assert(kvCnt == s.totalKVCnt)
 	err = iter.Close()
