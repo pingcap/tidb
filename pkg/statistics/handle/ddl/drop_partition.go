@@ -26,7 +26,7 @@ import (
 func (h *ddlHandlerImpl) onDropPartitions(t *util.DDLEvent) error {
 	globalTableInfo, droppedPartitionInfo := t.GetDropPartitionInfo()
 	// Note: Put all the operations in a transaction.
-	return util.CallWithSCtx(h.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+	if err := util.CallWithSCtx(h.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		count := int64(0)
 		for _, def := range droppedPartitionInfo.Definitions {
 			// Get the count and modify count of the partition.
@@ -35,11 +35,6 @@ func (h *ddlHandlerImpl) onDropPartitions(t *util.DDLEvent) error {
 				return err
 			}
 			count += tableCount
-			// Always reset the partition stats.
-			// TODO: Technically, we should not reset it in different transactions.
-			if err := h.statsWriter.ResetTableStats2KVForDrop(def.ID); err != nil {
-				return err
-			}
 		}
 		if count != 0 {
 			lockedTables, err := lockstats.QueryLockedTables(sctx)
@@ -68,5 +63,17 @@ func (h *ddlHandlerImpl) onDropPartitions(t *util.DDLEvent) error {
 		}
 
 		return nil
-	}, util.FlagWrapTxn)
+	}, util.FlagWrapTxn); err != nil {
+		return err
+	}
+
+	// Reset the partition stats.
+	// It's OK to put those operations in different transactions. Because it will not affect the correctness.
+	for _, def := range droppedPartitionInfo.Definitions {
+		if err := h.statsWriter.ResetTableStats2KVForDrop(def.ID); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
