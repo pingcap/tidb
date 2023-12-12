@@ -774,7 +774,7 @@ func deal(sumCount uint64, ndv, nullCount, sampleRows, totalRows int64, topNNum 
 	}
 	otherNDV := float64(ndv) - (float64(*topNNum) - 1)
 	if otherNDV > 1 {
-		*selectivity /= otherNDV
+		selectivity /= otherNDV
 	}
 	totalRowsN := float64(totalRows)
 	n := float64(sampleRows)
