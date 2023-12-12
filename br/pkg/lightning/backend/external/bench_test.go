@@ -30,15 +30,12 @@ import (
 	"testing"
 	"time"
 
-	gcs "cloud.google.com/go/storage"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/atomic"
-	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -827,136 +824,6 @@ func TestCompareReaderAscendingContent(t *testing.T) {
 		fileSize*fileCnt,
 		float64(fileSize*fileCnt)/elapsed.Seconds()/1024/1024,
 	)
-
-	downLoadAllFiles(suite)
-	t.Logf(
-		"download speed for %d bytes: %.2f MB/s",
-		fileSize*fileCnt,
-		float64(fileSize*fileCnt)/elapsed.Seconds()/1024/1024,
-	)
-
-	downLoadAllFilesBuf(suite)
-	t.Logf(
-		"download with buf speed for %d bytes: %.2f MB/s",
-		fileSize*fileCnt,
-		float64(fileSize*fileCnt)/elapsed.Seconds()/1024/1024,
-	)
-
-}
-func downLoadAllFiles(s *readTestSuite) {
-	ctx := context.Background()
-	datas, _, err := GetAllFileNames(ctx, s.store, "/"+s.subDir)
-	intest.AssertNoError(err)
-	if s.beforeCreateReader != nil {
-		s.beforeCreateReader()
-	}
-	var eg errgroup.Group
-	conc := min(s.concurrency, len(datas))
-
-	eg.SetLimit(conc)
-	if s.beforeCreateReader != nil {
-		s.beforeCreateReader()
-	}
-	logutil.BgLogger().Info("start read")
-	for _, file := range datas {
-		file := file
-		eg.Go(func() error {
-			_, err := downloadFileIntoMemory(file)
-			return err
-		})
-	}
-	err = eg.Wait()
-	logutil.BgLogger().Info("stop read")
-	intest.AssertNoError(err)
-	if s.afterReaderClose != nil {
-		s.afterReaderClose()
-	}
-}
-
-func downLoadAllFilesBuf(s *readTestSuite) {
-	ctx := context.Background()
-	datas, _, err := GetAllFileNames(ctx, s.store, "/"+s.subDir)
-	intest.AssertNoError(err)
-	if s.beforeCreateReader != nil {
-		s.beforeCreateReader()
-	}
-	var eg errgroup.Group
-	conc := min(s.concurrency, len(datas))
-
-	eg.SetLimit(conc)
-	if s.beforeCreateReader != nil {
-		s.beforeCreateReader()
-	}
-	logutil.BgLogger().Info("start read")
-	for _, file := range datas {
-		file := file
-		eg.Go(func() error {
-			buf := make([]byte, s.memoryLimit/conc)
-			_, err := downloadFilewithBuf(buf, file)
-			return err
-		})
-	}
-	err = eg.Wait()
-	logutil.BgLogger().Info("stop read")
-	intest.AssertNoError(err)
-	if s.afterReaderClose != nil {
-		s.afterReaderClose()
-	}
-}
-
-// downloadFileIntoMemory downloads an object.
-func downloadFileIntoMemory(path string) ([]byte, error) {
-	bucket := "qa-workload-datasets/global-sort/weiqi/test"
-	// qa-workload-datasets/global-sort/weiqi/test
-	ctx := context.Background()
-	client, err := gcs.NewClient(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("storage.NewClient: %w", err)
-	}
-	defer client.Close()
-
-	ctx, cancel := context.WithTimeout(ctx, time.Second*50)
-	defer cancel()
-
-	rc, err := client.Bucket(bucket).Object(path).NewReader(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("Object(%q).NewReader: %w", path, err)
-	}
-	defer rc.Close()
-
-	data, err := io.ReadAll(rc)
-	if err != nil {
-		return nil, fmt.Errorf("io.ReadAll: %w", err)
-	}
-	logutil.BgLogger().Info("len of data", zap.Any("len", len(data)))
-	return data, nil
-}
-
-func downloadFilewithBuf(buf []byte, path string) (int, error) {
-	bucket := "qa-workload-datasets/global-sort/weiqi/test"
-	// qa-workload-datasets/global-sort/weiqi/test
-	ctx := context.Background()
-	client, err := gcs.NewClient(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("storage.NewClient: %w", err)
-	}
-	defer client.Close()
-
-	ctx, cancel := context.WithTimeout(ctx, time.Second*50)
-	defer cancel()
-
-	rc, err := client.Bucket(bucket).Object(path).NewReader(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("Object(%q).NewReader: %w", path, err)
-	}
-	defer rc.Close()
-
-	n, err := rc.Read(buf)
-	for err == nil {
-		_, err = rc.Read(buf)
-	}
-	intest.Assert(err == io.EOF)
-	return n, nil
 }
 
 const largeAscendingDataPath = "large_ascending_data"
