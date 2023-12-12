@@ -119,10 +119,6 @@ type StmtRecord struct {
 	SumBackoffTimes      int64               `json:"sum_backoff_times"`
 	BackoffTypes         map[string]int      `json:"backoff_types"`
 	AuthUsers            map[string]struct{} `json:"auth_users"`
-	// RU
-	WRU            float64       `json:"wru"`
-	RRU            float64       `json:"rru"`
-	RUWaitDuration time.Duration `json:"ru_wait_time"`
 	// Other
 	SumMem               int64         `json:"sum_mem"`
 	MaxMem               int64         `json:"max_mem"`
