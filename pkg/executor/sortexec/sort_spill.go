@@ -16,7 +16,6 @@ package sortexec
 
 import (
 	"sync"
-	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -27,6 +26,34 @@ import (
 type spillHelper struct {
 	syncLock   sync.Mutex
 	spillError error
+
+	lock       *sync.Mutex
+	cond       sync.Cond
+	isSpilling bool
+}
+
+func newSpillHelper() *spillHelper {
+	lock := new(sync.Mutex)
+	return &spillHelper{
+		spillError: nil,
+		lock:       lock,
+		cond:       *sync.NewCond(lock),
+		isSpilling: false,
+	}
+}
+
+func (s *spillHelper) setErrorNoLock(err error) {
+	s.spillError = err
+}
+
+func (s *spillHelper) checkError() error {
+	s.syncLock.Lock()
+	defer s.syncLock.Unlock()
+	return s.spillError
+}
+
+func (s *spillHelper) checkErrorNoLock() error {
+	return s.spillError
 }
 
 // sortPartitionSpillDiskAction implements memory.ActionOnExceed for chunk.List. If
@@ -34,9 +61,9 @@ type spillHelper struct {
 // triggered.
 type sortPartitionSpillDiskAction struct {
 	memory.BaseOOMAction
-	partition  *sortPartition
-	isSpilling atomic.Bool
-	helper     *spillHelper
+	once      sync.Once
+	partition *sortPartition
+	helper    *spillHelper
 }
 
 // GetPriority get the priority of the Action.
@@ -45,23 +72,41 @@ func (*sortPartitionSpillDiskAction) GetPriority() int64 {
 }
 
 func (s *sortPartitionSpillDiskAction) Action(t *memory.Tracker) {
-	// TODO wait until spill done if spill is in execution.
-	// TODO set fallback, we should kill sql if memory is out of quota after spill is triggered.
-	if s.isSpilling.CompareAndSwap(false, true) {
-		go func() {
-			s.helper.syncLock.Lock()
-			defer s.helper.syncLock.Unlock()
-			if !s.partition.isSpillTriggeredNoLock() && s.partition.hasEnoughDataToSpill() {
+	s.helper.syncLock.Lock()
+	defer s.helper.syncLock.Unlock()
+
+	needCheckExceed := true
+	if !s.partition.isSpillTriggered() && s.partition.hasEnoughDataToSpill() {
+		s.once.Do(func() {
+			needCheckExceed = false
+			go func() {
+				s.helper.syncLock.Lock()
+				defer s.helper.syncLock.Unlock()
 				logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
 					zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
+				s.helper.isSpilling = true
 				err := s.partition.spillToDisk()
 				if err != nil {
-					s.helper.spillError = err
+					s.helper.setErrorNoLock(err)
 				}
-			}
+				s.helper.isSpilling = false
+				s.helper.cond.Broadcast()
+			}()
+		})
+	}
 
-			s.isSpilling.CompareAndSwap(true, false)
-		}()
+	s.helper.lock.Lock()
+	for s.helper.isSpilling {
+		s.helper.cond.Wait()
+	}
+	s.helper.lock.Unlock()
+
+	if !needCheckExceed || !t.CheckExceed() {
+		return
+	}
+
+	if fallback := s.GetFallback(); fallback != nil {
+		fallback.Action(t)
 	}
 }
 
