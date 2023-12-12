@@ -2015,8 +2015,8 @@ func TestColumnName(t *testing.T) {
 	require.Equal(t, "1+1", fields[0].ColumnAsName.L)
 	require.Equal(t, "num", fields[1].Column.Name.L)
 	require.Equal(t, "num", fields[1].ColumnAsName.L)
-	tk.MustExec("set @@tidb_enable_window_function = 0")
 	require.Nil(t, rs.Close())
+	tk.MustExec("set @@tidb_enable_window_function = 0")
 
 	rs, err = tk.Exec("select if(1,c,c) from t;")
 	require.NoError(t, err)
