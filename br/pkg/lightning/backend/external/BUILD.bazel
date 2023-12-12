@@ -12,6 +12,7 @@ go_library(
         "kv_reader.go",
         "merge.go",
         "onefile_writer.go",
+        "reader.go",
         "split.go",
         "stat_reader.go",
         "util.go",
