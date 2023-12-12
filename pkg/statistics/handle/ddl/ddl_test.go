@@ -318,6 +318,17 @@ func TestTruncateAPartition(t *testing.T) {
 	version := rows[0][0].(string)
 
 	testKit.MustExec("alter table t truncate partition p0")
+	// Find the truncate partition event.
+	var truncatePartitionEvent *util.DDLEvent
+	for {
+		event := <-h.DDLEventCh()
+		if event.GetType() == model.ActionTruncateTablePartition {
+			truncatePartitionEvent = event
+			break
+		}
+	}
+	err = h.HandleDDLEvent(truncatePartitionEvent)
+	require.NoError(t, err)
 	// Check global stats meta.
 	// FIXME: we should update the global stats meta after truncating a partition.
 	testKit.MustQuery(
