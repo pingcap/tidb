@@ -12,7 +12,7 @@ go_test(
         "//pkg/config",
         "//pkg/ddl",
         "//pkg/ddl/util/callback",
-        "//pkg/disttask/framework/dispatcher",
+        "//pkg/disttask/framework/scheduler",
         "//pkg/disttask/framework/proto",
         "//pkg/errno",
         "//pkg/kv",

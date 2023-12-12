@@ -4,7 +4,7 @@ go_library(
     name = "testutil",
     srcs = [
         "context.go",
-        "dispatcher_util.go",
+        "scheduler_util.go",
         "disttest_util.go",
         "executor_util.go",
         "task_util.go",
@@ -12,8 +12,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/disttask/framework/testutil",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/disttask/framework/dispatcher",
-        "//pkg/disttask/framework/dispatcher/mock",
+        "//pkg/disttask/framework/scheduler",
+        "//pkg/disttask/framework/scheduler/mock",
         "//pkg/disttask/framework/mock",
         "//pkg/disttask/framework/mock/execute",
         "//pkg/disttask/framework/proto",

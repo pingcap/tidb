@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -37,7 +37,7 @@ import (
 	"github.com/tikv/client-go/v2/util"
 )
 
-func TestDispatcherExtLocalSort(t *testing.T) {
+func TestSchedulerExtLocalSort(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
@@ -48,7 +48,7 @@ func TestDispatcherExtLocalSort(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
-	dsp, err := dispatcher.NewManager(util.WithInternalSourceType(ctx, "dispatcher"), mgr, "host:port")
+	dsp, err := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port")
 	require.NoError(t, err)
 
 	// create job
@@ -90,8 +90,8 @@ func TestDispatcherExtLocalSort(t *testing.T) {
 	task.ID = taskID
 
 	// to import stage, job should be running
-	d := dsp.MockDispatcher(task)
-	ext := importinto.ImportDispatcherExt{}
+	d := dsp.MockScheduler(task)
+	ext := importinto.ImportSchedulerExt{}
 	serverInfos, _, err := ext.GetEligibleInstances(context.Background(), task)
 	require.NoError(t, err)
 	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, serverInfos, ext.GetNextStep(task))
@@ -168,12 +168,12 @@ func TestDispatcherExtLocalSort(t *testing.T) {
 	require.Equal(t, "cancelled", gotJobInfo.Status)
 }
 
-func TestDispatcherExtGlobalSort(t *testing.T) {
-	// Domain start dispatcher manager automatically, we need to disable it as
+func TestSchedulerExtGlobalSort(t *testing.T) {
+	// Domain start scheduler manager automatically, we need to disable it as
 	// we test import task management in this case.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/disableDispatcherManager", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/disableSchedulerManager", "return(true)"))
 	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/disableDispatcherManager"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/disableSchedulerManager"))
 	})
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -185,7 +185,7 @@ func TestDispatcherExtGlobalSort(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
-	dsp, err := dispatcher.NewManager(util.WithInternalSourceType(ctx, "dispatcher"), mgr, "host:port")
+	dsp, err := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port")
 	require.NoError(t, err)
 
 	// create job
@@ -235,8 +235,8 @@ func TestDispatcherExtGlobalSort(t *testing.T) {
 	task.ID = taskID
 
 	// to encode-sort stage, job should be running
-	d := dsp.MockDispatcher(task)
-	ext := importinto.ImportDispatcherExt{
+	d := dsp.MockScheduler(task)
+	ext := importinto.ImportSchedulerExt{
 		GlobalSort: true,
 	}
 	serverInfos, _, err := ext.GetEligibleInstances(context.Background(), task)

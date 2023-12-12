@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package dispatcher_test
+package scheduler_test
 
 import (
 	"context"
@@ -38,10 +38,10 @@ func TestCleanUpRoutine(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "dispatcher_manager")
+	ctx = util.WithInternalSourceType(ctx, "scheduler_manager")
 	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
 
-	dsp, mgr := MockDispatcherManager(t, ctrl, pool, getNumberExampleDispatcherExt(ctrl), mockCleanupRountine)
+	dsp, mgr := MockSchedulerManager(t, ctrl, pool, getNumberExampleSchedulerExt(ctrl), mockCleanupRountine)
 	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	dsp.Start()
 	defer dsp.Stop()
@@ -93,7 +93,7 @@ func TestCleanUpMeta(t *testing.T) {
 	defer ctrl.Finish()
 	mockTaskMgr := mock.NewMockTaskManager(ctrl)
 	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
-	dspMgr := MockDispatcherManagerWithMockTaskMgr(t, ctrl, pool, mockTaskMgr, getNumberExampleDispatcherExt(ctrl), mockCleanupRountine)
+	dspMgr := MockSchedulerManagerWithMockTaskMgr(t, ctrl, pool, mockTaskMgr, getNumberExampleSchedulerExt(ctrl), mockCleanupRountine)
 
 	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]string{":4000", ":4001"}, nil)
 	mockTaskMgr.EXPECT().CleanUpMeta(gomock.Any(), gomock.Any()).Return(nil)

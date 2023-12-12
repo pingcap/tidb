@@ -133,7 +133,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		// Unlike in Lightning, we start an index engine for each subtask,
 		// whereas previously there was only a single index engine globally.
 		// This is because the executor currently does not have a post-processing mechanism.
-		// If we import the index in `cleanupSubtaskEnv`, the dispatcher will not wait for the import to complete.
+		// If we import the index in `cleanupSubtaskEnv`, the scheduler will not wait for the import to complete.
 		// Multiple index engines may suffer performance degradation due to range overlap.
 		// These issues will be alleviated after we integrate s3 sorter.
 		// engineID = -1, -2, -3, ...

@@ -30,10 +30,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -120,8 +120,8 @@ func (t *taskInfo) close(ctx context.Context) {
 	}
 }
 
-// ImportDispatcherExt is an extension of ImportDispatcher, exported for test.
-type ImportDispatcherExt struct {
+// ImportSchedulerExt is an extension of ImportScheduler, exported for test.
+type ImportSchedulerExt struct {
 	GlobalSort bool
 	mu         sync.RWMutex
 	// NOTE: there's no need to sync for below 2 fields actually, since we add a restriction that only one
@@ -138,10 +138,10 @@ type ImportDispatcherExt struct {
 	disableTiKVImportMode atomic.Bool
 }
 
-var _ dispatcher.Extension = (*ImportDispatcherExt)(nil)
+var _ scheduler.Extension = (*ImportSchedulerExt)(nil)
 
-// OnTick implements dispatcher.Extension interface.
-func (dsp *ImportDispatcherExt) OnTick(ctx context.Context, task *proto.Task) {
+// OnTick implements scheduler.Extension interface.
+func (dsp *ImportSchedulerExt) OnTick(ctx context.Context, task *proto.Task) {
 	// only switch TiKV mode or register task when task is running
 	if task.State != proto.TaskStateRunning {
 		return
@@ -150,11 +150,11 @@ func (dsp *ImportDispatcherExt) OnTick(ctx context.Context, task *proto.Task) {
 	dsp.registerTask(ctx, task)
 }
 
-func (*ImportDispatcherExt) isImporting2TiKV(task *proto.Task) bool {
+func (*ImportSchedulerExt) isImporting2TiKV(task *proto.Task) bool {
 	return task.Step == StepImport || task.Step == StepWriteAndIngest
 }
 
-func (dsp *ImportDispatcherExt) switchTiKVMode(ctx context.Context, task *proto.Task) {
+func (dsp *ImportSchedulerExt) switchTiKVMode(ctx context.Context, task *proto.Task) {
 	dsp.updateCurrentTask(task)
 	// only import step need to switch to IMPORT mode,
 	// If TiKV is in IMPORT mode during checksum, coprocessor will time out.
@@ -183,13 +183,13 @@ func (dsp *ImportDispatcherExt) switchTiKVMode(ctx context.Context, task *proto.
 	dsp.lastSwitchTime.Store(time.Now())
 }
 
-func (dsp *ImportDispatcherExt) registerTask(ctx context.Context, task *proto.Task) {
+func (dsp *ImportSchedulerExt) registerTask(ctx context.Context, task *proto.Task) {
 	val, _ := dsp.taskInfoMap.LoadOrStore(task.ID, &taskInfo{taskID: task.ID})
 	info := val.(*taskInfo)
 	info.register(ctx)
 }
 
-func (dsp *ImportDispatcherExt) unregisterTask(ctx context.Context, task *proto.Task) {
+func (dsp *ImportSchedulerExt) unregisterTask(ctx context.Context, task *proto.Task) {
 	if val, loaded := dsp.taskInfoMap.LoadAndDelete(task.ID); loaded {
 		info := val.(*taskInfo)
 		info.close(ctx)
@@ -197,9 +197,9 @@ func (dsp *ImportDispatcherExt) unregisterTask(ctx context.Context, task *proto.
 }
 
 // OnNextSubtasksBatch generate batch of next stage's plan.
-func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
+func (dsp *ImportSchedulerExt) OnNextSubtasksBatch(
 	ctx context.Context,
-	taskHandle dispatcher.TaskHandle,
+	taskHandle scheduler.TaskHandle,
 	task *proto.Task,
 	serverInfos []*infosync.ServerInfo,
 	nextStep proto.Step,
@@ -308,8 +308,8 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 	return metaBytes, nil
 }
 
-// OnDone implements dispatcher.Extension interface.
-func (dsp *ImportDispatcherExt) OnDone(ctx context.Context, handle dispatcher.TaskHandle, task *proto.Task) error {
+// OnDone implements scheduler.Extension interface.
+func (dsp *ImportSchedulerExt) OnDone(ctx context.Context, handle scheduler.TaskHandle, task *proto.Task) error {
 	logger := logutil.BgLogger().With(
 		zap.Stringer("type", task.Type),
 		zap.Int64("task-id", task.ID),
@@ -324,14 +324,14 @@ func (dsp *ImportDispatcherExt) OnDone(ctx context.Context, handle dispatcher.Ta
 	if task.Error == nil {
 		return dsp.finishJob(ctx, logger, handle, task, taskMeta)
 	}
-	if dispatcher.IsCancelledErr(task.Error) {
+	if scheduler.IsCancelledErr(task.Error) {
 		return dsp.cancelJob(ctx, handle, task, taskMeta, logger)
 	}
 	return dsp.failJob(ctx, handle, task, taskMeta, logger, task.Error.Error())
 }
 
-// GetEligibleInstances implements dispatcher.Extension interface.
-func (*ImportDispatcherExt) GetEligibleInstances(ctx context.Context, task *proto.Task) ([]*infosync.ServerInfo, bool, error) {
+// GetEligibleInstances implements scheduler.Extension interface.
+func (*ImportSchedulerExt) GetEligibleInstances(ctx context.Context, task *proto.Task) ([]*infosync.ServerInfo, bool, error) {
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(task.Meta, taskMeta)
 	if err != nil {
@@ -340,18 +340,18 @@ func (*ImportDispatcherExt) GetEligibleInstances(ctx context.Context, task *prot
 	if len(taskMeta.EligibleInstances) > 0 {
 		return taskMeta.EligibleInstances, false, nil
 	}
-	serverInfo, err := dispatcher.GenerateTaskExecutorNodes(ctx)
+	serverInfo, err := scheduler.GenerateTaskExecutorNodes(ctx)
 	return serverInfo, true, err
 }
 
-// IsRetryableErr implements dispatcher.Extension interface.
-func (*ImportDispatcherExt) IsRetryableErr(error) bool {
+// IsRetryableErr implements scheduler.Extension interface.
+func (*ImportSchedulerExt) IsRetryableErr(error) bool {
 	// TODO: check whether the error is retryable.
 	return false
 }
 
-// GetNextStep implements dispatcher.Extension interface.
-func (dsp *ImportDispatcherExt) GetNextStep(task *proto.Task) proto.Step {
+// GetNextStep implements scheduler.Extension interface.
+func (dsp *ImportSchedulerExt) GetNextStep(task *proto.Task) proto.Step {
 	switch task.Step {
 	case proto.StepInit:
 		if dsp.GlobalSort {
@@ -370,7 +370,7 @@ func (dsp *ImportDispatcherExt) GetNextStep(task *proto.Task) proto.Step {
 	}
 }
 
-func (dsp *ImportDispatcherExt) switchTiKV2NormalMode(ctx context.Context, task *proto.Task, logger *zap.Logger) {
+func (dsp *ImportSchedulerExt) switchTiKV2NormalMode(ctx context.Context, task *proto.Task, logger *zap.Logger) {
 	dsp.updateCurrentTask(task)
 	if dsp.disableTiKVImportMode.Load() {
 		return
@@ -391,7 +391,7 @@ func (dsp *ImportDispatcherExt) switchTiKV2NormalMode(ctx context.Context, task 
 	dsp.lastSwitchTime.Store(time.Time{})
 }
 
-func (dsp *ImportDispatcherExt) updateCurrentTask(task *proto.Task) {
+func (dsp *ImportSchedulerExt) updateCurrentTask(task *proto.Task) {
 	if dsp.currTaskID.Swap(task.ID) != task.ID {
 		taskMeta := &TaskMeta{}
 		if err := json.Unmarshal(task.Meta, taskMeta); err == nil {
@@ -401,21 +401,21 @@ func (dsp *ImportDispatcherExt) updateCurrentTask(task *proto.Task) {
 	}
 }
 
-type importDispatcher struct {
-	*dispatcher.BaseDispatcher
+type importScheduler struct {
+	*scheduler.BaseScheduler
 }
 
-func newImportDispatcher(ctx context.Context, taskMgr dispatcher.TaskManager,
-	serverID string, task *proto.Task) dispatcher.Dispatcher {
+func newImportScheduler(ctx context.Context, taskMgr scheduler.TaskManager,
+	serverID string, task *proto.Task) scheduler.Scheduler {
 	metrics := metricsManager.getOrCreateMetrics(task.ID)
 	subCtx := metric.WithCommonMetric(ctx, metrics)
-	dsp := importDispatcher{
-		BaseDispatcher: dispatcher.NewBaseDispatcher(subCtx, taskMgr, serverID, task),
+	dsp := importScheduler{
+		BaseScheduler: scheduler.NewBaseScheduler(subCtx, taskMgr, serverID, task),
 	}
 	return &dsp
 }
 
-func (dsp *importDispatcher) Init() (err error) {
+func (dsp *importScheduler) Init() (err error) {
 	defer func() {
 		if err != nil {
 			// if init failed, close is not called, so we need to unregister here.
@@ -423,23 +423,23 @@ func (dsp *importDispatcher) Init() (err error) {
 		}
 	}()
 	taskMeta := &TaskMeta{}
-	if err = json.Unmarshal(dsp.BaseDispatcher.Task.Meta, taskMeta); err != nil {
+	if err = json.Unmarshal(dsp.BaseScheduler.Task.Meta, taskMeta); err != nil {
 		return errors.Annotate(err, "unmarshal task meta failed")
 	}
 
-	dsp.BaseDispatcher.Extension = &ImportDispatcherExt{
+	dsp.BaseScheduler.Extension = &ImportSchedulerExt{
 		GlobalSort: taskMeta.Plan.CloudStorageURI != "",
 	}
-	return dsp.BaseDispatcher.Init()
+	return dsp.BaseScheduler.Init()
 }
 
-func (dsp *importDispatcher) Close() {
+func (dsp *importScheduler) Close() {
 	metricsManager.unregister(dsp.Task.ID)
-	dsp.BaseDispatcher.Close()
+	dsp.BaseScheduler.Close()
 }
 
 // nolint:deadcode
-func dropTableIndexes(ctx context.Context, handle dispatcher.TaskHandle, taskMeta *TaskMeta, logger *zap.Logger) error {
+func dropTableIndexes(ctx context.Context, handle scheduler.TaskHandle, taskMeta *TaskMeta, logger *zap.Logger) error {
 	tblInfo := taskMeta.Plan.TableInfo
 	tableName := common.UniqueTable(taskMeta.Plan.DBName, tblInfo.Name.L)
 
@@ -536,7 +536,7 @@ func getStepOfEncode(globalSort bool) proto.Step {
 }
 
 // we will update taskMeta in place and make task.Meta point to the new taskMeta.
-func updateResult(handle dispatcher.TaskHandle, task *proto.Task, taskMeta *TaskMeta, globalSort bool) error {
+func updateResult(handle scheduler.TaskHandle, task *proto.Task, taskMeta *TaskMeta, globalSort bool) error {
 	stepOfEncode := getStepOfEncode(globalSort)
 	metas, err := handle.GetPreviousSubtaskMetas(task.ID, stepOfEncode)
 	if err != nil {
@@ -570,7 +570,7 @@ func updateResult(handle dispatcher.TaskHandle, task *proto.Task, taskMeta *Task
 	return updateMeta(task, taskMeta)
 }
 
-func getLoadedRowCountOnGlobalSort(handle dispatcher.TaskHandle, task *proto.Task) (uint64, error) {
+func getLoadedRowCountOnGlobalSort(handle scheduler.TaskHandle, task *proto.Task) (uint64, error) {
 	metas, err := handle.GetPreviousSubtaskMetas(task.ID, StepWriteAndIngest)
 	if err != nil {
 		return 0, err
@@ -587,7 +587,7 @@ func getLoadedRowCountOnGlobalSort(handle dispatcher.TaskHandle, task *proto.Tas
 	return loadedRowCount, nil
 }
 
-func startJob(ctx context.Context, logger *zap.Logger, taskHandle dispatcher.TaskHandle, taskMeta *TaskMeta, jobStep string) error {
+func startJob(ctx context.Context, logger *zap.Logger, taskHandle scheduler.TaskHandle, taskMeta *TaskMeta, jobStep string) error {
 	failpoint.Inject("syncBeforeJobStarted", func() {
 		TestSyncChan <- struct{}{}
 		<-TestSyncChan
@@ -596,8 +596,8 @@ func startJob(ctx context.Context, logger *zap.Logger, taskHandle dispatcher.Tas
 	// we consider all errors as retryable errors, except context done.
 	// the errors include errors happened when communicate with PD and TiKV.
 	// we didn't consider system corrupt cases like system table dropped/altered.
-	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
-	err := handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
+	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
+	err := handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
 			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
 				exec := se.(sqlexec.SQLExecutor)
@@ -616,11 +616,11 @@ func job2Step(ctx context.Context, logger *zap.Logger, taskMeta *TaskMeta, step 
 	if err != nil {
 		return err
 	}
-	// todo: use dispatcher.TaskHandle
-	// we might call this in taskExecutor later, there's no dispatcher.Extension, so we use taskManager here.
+	// todo: use scheduler.TaskHandle
+	// we might call this in taskExecutor later, there's no scheduler.Extension, so we use taskManager here.
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
-	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
-	return handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
+	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
+	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
 			return true, taskManager.WithNewSession(func(se sessionctx.Context) error {
 				exec := se.(sqlexec.SQLExecutor)
@@ -630,14 +630,14 @@ func job2Step(ctx context.Context, logger *zap.Logger, taskMeta *TaskMeta, step 
 	)
 }
 
-func (dsp *ImportDispatcherExt) finishJob(ctx context.Context, logger *zap.Logger,
-	taskHandle dispatcher.TaskHandle, task *proto.Task, taskMeta *TaskMeta) error {
+func (dsp *ImportSchedulerExt) finishJob(ctx context.Context, logger *zap.Logger,
+	taskHandle scheduler.TaskHandle, task *proto.Task, taskMeta *TaskMeta) error {
 	// we have already switch import-mode when switch to post-process step.
 	dsp.unregisterTask(ctx, task)
 	summary := &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt}
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
-	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
-	return handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
+	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
+	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
 			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
 				exec := se.(sqlexec.SQLExecutor)
@@ -647,13 +647,13 @@ func (dsp *ImportDispatcherExt) finishJob(ctx context.Context, logger *zap.Logge
 	)
 }
 
-func (dsp *ImportDispatcherExt) failJob(ctx context.Context, taskHandle dispatcher.TaskHandle, task *proto.Task,
+func (dsp *ImportSchedulerExt) failJob(ctx context.Context, taskHandle scheduler.TaskHandle, task *proto.Task,
 	taskMeta *TaskMeta, logger *zap.Logger, errorMsg string) error {
 	dsp.switchTiKV2NormalMode(ctx, task, logger)
 	dsp.unregisterTask(ctx, task)
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
-	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
-	return handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
+	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
+	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
 			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
 				exec := se.(sqlexec.SQLExecutor)
@@ -663,13 +663,13 @@ func (dsp *ImportDispatcherExt) failJob(ctx context.Context, taskHandle dispatch
 	)
 }
 
-func (dsp *ImportDispatcherExt) cancelJob(ctx context.Context, taskHandle dispatcher.TaskHandle, task *proto.Task,
+func (dsp *ImportSchedulerExt) cancelJob(ctx context.Context, taskHandle scheduler.TaskHandle, task *proto.Task,
 	meta *TaskMeta, logger *zap.Logger) error {
 	dsp.switchTiKV2NormalMode(ctx, task, logger)
 	dsp.unregisterTask(ctx, task)
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
-	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
-	return handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
+	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
+	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
 			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
 				exec := se.(sqlexec.SQLExecutor)
@@ -713,5 +713,5 @@ func stepStr(step proto.Step) string {
 }
 
 func init() {
-	dispatcher.RegisterDispatcherFactory(proto.ImportInto, newImportDispatcher)
+	scheduler.RegisterSchedulerFactory(proto.ImportInto, newImportScheduler)
 }

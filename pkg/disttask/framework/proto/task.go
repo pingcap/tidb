@@ -147,8 +147,8 @@ type Task struct {
 
 	// depends on query, below fields might not be filled.
 
-	// DispatcherID is not used now.
-	DispatcherID    string
+	// SchedulerID is not used now.
+	SchedulerID     string
 	StartTime       time.Time
 	StateUpdateTime time.Time
 	Meta            []byte
@@ -176,7 +176,7 @@ func (t *Task) Compare(other *Task) int {
 }
 
 // Subtask represents the subtask of distribute framework.
-// Each task is divided into multiple subtasks by dispatcher.
+// Each task is divided into multiple subtasks by scheduler.
 type Subtask struct {
 	ID   int64
 	Step Step

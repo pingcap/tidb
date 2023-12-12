@@ -25,8 +25,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -38,7 +38,7 @@ import (
 	"github.com/tikv/client-go/v2/util"
 )
 
-func TestBackfillingDispatcherLocalMode(t *testing.T) {
+func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	/// test str
 	require.Equal(t, "init", ddl.StepStr(proto.StepInit))
 	require.Equal(t, "read-index", ddl.StepStr(ddl.StepReadIndex))
@@ -48,7 +48,7 @@ func TestBackfillingDispatcherLocalMode(t *testing.T) {
 	require.Equal(t, "unknown", ddl.StepStr(111))
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	dsp, err := ddl.NewBackfillingDispatcherExt(dom.DDL())
+	dsp, err := ddl.NewBackfillingSchedulerExt(dom.DDL())
 	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -141,7 +141,7 @@ func TestCalculateRegionBatch(t *testing.T) {
 	require.Equal(t, 2, batchCnt)
 }
 
-func TestBackfillingDispatcherGlobalSortMode(t *testing.T) {
+func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	// init test env.
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -153,7 +153,7 @@ func TestBackfillingDispatcherGlobalSortMode(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "handle")
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
-	dspManager, err := dispatcher.NewManager(util.WithInternalSourceType(ctx, "dispatcher"), mgr, "host:port")
+	dspManager, err := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port")
 	require.NoError(t, err)
 
 	tk.MustExec("use test")
@@ -164,10 +164,10 @@ func TestBackfillingDispatcherGlobalSortMode(t *testing.T) {
 	tk.MustExec("insert into t1 values (), (), (), (), (), ()")
 	task := createAddIndexTask(t, dom, "test", "t1", proto.Backfill, true)
 
-	dsp := dspManager.MockDispatcher(task)
-	ext, err := ddl.NewBackfillingDispatcherExt(dom.DDL())
+	dsp := dspManager.MockScheduler(task)
+	ext, err := ddl.NewBackfillingSchedulerExt(dom.DDL())
 	require.NoError(t, err)
-	ext.(*ddl.BackfillingDispatcherExt).GlobalSort = true
+	ext.(*ddl.BackfillingSchedulerExt).GlobalSort = true
 	dsp.Extension = ext
 
 	taskID, err := mgr.CreateTask(ctx, task.Key, proto.Backfill, 1, task.Meta)
@@ -273,7 +273,7 @@ func TestGetNextStep(t *testing.T) {
 	task := &proto.Task{
 		Step: proto.StepInit,
 	}
-	ext := &ddl.BackfillingDispatcherExt{}
+	ext := &ddl.BackfillingSchedulerExt{}
 
 	// 1. local mode
 	for _, nextStep := range []proto.Step{ddl.StepReadIndex, proto.StepDone} {
@@ -281,7 +281,7 @@ func TestGetNextStep(t *testing.T) {
 		task.Step = nextStep
 	}
 	// 2. global sort mode
-	ext = &ddl.BackfillingDispatcherExt{GlobalSort: true}
+	ext = &ddl.BackfillingSchedulerExt{GlobalSort: true}
 	task.Step = proto.StepInit
 	for _, nextStep := range []proto.Step{ddl.StepReadIndex, ddl.StepMergeSort, ddl.StepWriteAndIngest} {
 		require.Equal(t, nextStep, ext.GetNextStep(task))

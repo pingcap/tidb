@@ -21,8 +21,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/stretchr/testify/require"
@@ -44,7 +44,7 @@ func (s *importIntoSuite) enableFailPoint(path, term string) {
 	})
 }
 
-func (s *importIntoSuite) TestDispatcherGetEligibleInstances() {
+func (s *importIntoSuite) TestSchedulerGetEligibleInstances() {
 	makeFailpointRes := func(v interface{}) string {
 		bytes, err := json.Marshal(v)
 		s.NoError(err)
@@ -61,7 +61,7 @@ func (s *importIntoSuite) TestDispatcherGetEligibleInstances() {
 	}
 	mockedAllServerInfos := makeFailpointRes(serverInfoMap)
 
-	dsp := ImportDispatcherExt{}
+	dsp := ImportSchedulerExt{}
 	task := &proto.Task{Meta: []byte("{}")}
 	ctx := context.WithValue(context.Background(), "etcd", true)
 	s.enableFailPoint("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", mockedAllServerInfos)
@@ -89,7 +89,7 @@ func (s *importIntoSuite) TestUpdateCurrentTask() {
 	bs, err := json.Marshal(taskMeta)
 	require.NoError(s.T(), err)
 
-	dsp := ImportDispatcherExt{}
+	dsp := ImportSchedulerExt{}
 	require.Equal(s.T(), int64(0), dsp.currTaskID.Load())
 	require.False(s.T(), dsp.disableTiKVImportMode.Load())
 
@@ -108,7 +108,7 @@ func (s *importIntoSuite) TestUpdateCurrentTask() {
 	require.True(s.T(), dsp.disableTiKVImportMode.Load())
 }
 
-func (s *importIntoSuite) TestDispatcherInit() {
+func (s *importIntoSuite) TestSchedulerInit() {
 	meta := TaskMeta{
 		Plan: importer.Plan{
 			CloudStorageURI: "",
@@ -116,42 +116,42 @@ func (s *importIntoSuite) TestDispatcherInit() {
 	}
 	bytes, err := json.Marshal(meta)
 	s.NoError(err)
-	dsp := importDispatcher{
-		BaseDispatcher: &dispatcher.BaseDispatcher{
+	dsp := importScheduler{
+		BaseScheduler: &scheduler.BaseScheduler{
 			Task: &proto.Task{
 				Meta: bytes,
 			},
 		},
 	}
 	s.NoError(dsp.Init())
-	s.False(dsp.Extension.(*ImportDispatcherExt).GlobalSort)
+	s.False(dsp.Extension.(*ImportSchedulerExt).GlobalSort)
 
 	meta.Plan.CloudStorageURI = "s3://test"
 	bytes, err = json.Marshal(meta)
 	s.NoError(err)
-	dsp = importDispatcher{
-		BaseDispatcher: &dispatcher.BaseDispatcher{
+	dsp = importScheduler{
+		BaseScheduler: &scheduler.BaseScheduler{
 			Task: &proto.Task{
 				Meta: bytes,
 			},
 		},
 	}
 	s.NoError(dsp.Init())
-	s.True(dsp.Extension.(*ImportDispatcherExt).GlobalSort)
+	s.True(dsp.Extension.(*ImportSchedulerExt).GlobalSort)
 }
 
 func (s *importIntoSuite) TestGetNextStep() {
 	task := &proto.Task{
 		Step: proto.StepInit,
 	}
-	ext := &ImportDispatcherExt{}
+	ext := &ImportSchedulerExt{}
 	for _, nextStep := range []proto.Step{StepImport, StepPostProcess, proto.StepDone} {
 		s.Equal(nextStep, ext.GetNextStep(task))
 		task.Step = nextStep
 	}
 
 	task.Step = proto.StepInit
-	ext = &ImportDispatcherExt{GlobalSort: true}
+	ext = &ImportSchedulerExt{GlobalSort: true}
 	for _, nextStep := range []proto.Step{StepEncodeAndSort, StepMergeSort,
 		StepWriteAndIngest, StepPostProcess, proto.StepDone} {
 		s.Equal(nextStep, ext.GetNextStep(task))
@@ -176,7 +176,7 @@ func (s *importIntoSuite) TestGetStepOfEncode() {
 }
 
 func TestIsImporting2TiKV(t *testing.T) {
-	ext := &ImportDispatcherExt{}
+	ext := &ImportSchedulerExt{}
 	require.False(t, ext.isImporting2TiKV(&proto.Task{Step: StepEncodeAndSort}))
 	require.False(t, ext.isImporting2TiKV(&proto.Task{Step: StepMergeSort}))
 	require.False(t, ext.isImporting2TiKV(&proto.Task{Step: StepPostProcess}))
