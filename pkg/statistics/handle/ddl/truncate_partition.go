@@ -60,6 +60,13 @@ func (h *ddlHandlerImpl) onTruncatePartitions(t *util.DDLEvent) error {
 			}
 
 			// Because we drop the partition, we should subtract the count from the global stats.
+			// Note: We don't need to subtract the modify count from the global stats.
+			// For example:
+			// 1. The partition has 100 rows.
+			// 2. We deleted 100 rows from the partition.
+			// 3. The global stats has `count - 100 rows` and 100 modify count.
+			// 4. We drop the partition.
+			// 5. The global stats should not be `count` and 0 modify count. We need to keep the modify count.
 			delta := -count
 			err = storage.UpdateStatsMeta(
 				sctx,
