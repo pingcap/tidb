@@ -4,6 +4,7 @@ go_library(
     name = "ddl",
     srcs = [
         "ddl.go",
+        "drop_partition.go",
         "exchange_partition.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/ddl",

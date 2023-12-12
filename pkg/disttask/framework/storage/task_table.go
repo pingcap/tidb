@@ -645,7 +645,9 @@ func (stm *TaskManager) StartSubtask(ctx context.Context, subtaskID int64) error
 
 // StartManager insert the manager information into dist_framework_meta.
 func (stm *TaskManager) StartManager(ctx context.Context, tidbID string, role string) error {
-	_, err := stm.executeSQLWithNewSession(ctx, `replace into mysql.dist_framework_meta values(%?, %?, DEFAULT)`, tidbID, role)
+	_, err := stm.executeSQLWithNewSession(ctx, `insert into mysql.dist_framework_meta(host, role, keyspace_id)
+	SELECT %?, %?,-1
+    WHERE NOT EXISTS (SELECT 1 FROM mysql.dist_framework_meta WHERE host = %?)`, tidbID, role, tidbID)
 	return err
 }
 

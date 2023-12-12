@@ -11,10 +11,12 @@ import (
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 )
 
 func TestGCS(t *testing.T) {
+	require.True(t, intest.InTest)
 	ctx := context.Background()
 
 	opts := fakestorage.Options{
@@ -255,6 +257,7 @@ func TestGCS(t *testing.T) {
 }
 
 func TestNewGCSStorage(t *testing.T) {
+	require.True(t, intest.InTest)
 	ctx := context.Background()
 
 	opts := fakestorage.Options{
@@ -416,6 +419,7 @@ func TestNewGCSStorage(t *testing.T) {
 }
 
 func TestReadRange(t *testing.T) {
+	require.True(t, intest.InTest)
 	ctx := context.Background()
 
 	opts := fakestorage.Options{
