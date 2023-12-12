@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "ddl.go",
         "exchange_partition.go",
+        "truncate_partition.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/ddl",
     visibility = ["//visibility:public"],
