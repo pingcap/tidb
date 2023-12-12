@@ -89,7 +89,7 @@ type BaseScheduler struct {
 	logCtx  context.Context
 	// serverID, it's value is ip:port now.
 	serverID string
-	// when RegisterSchedulerFactory, the factory MUST initialize this fiels.
+	// when RegisterSchedulerFactory, the factory MUST initialize this fields.
 	Extension
 
 	// For subtasks rebalance.
@@ -618,7 +618,7 @@ func (s *BaseScheduler) onNextStage() (err error) {
 		if s.nextStepSubtaskScheduled(s.Task) {
 			currStep := s.Task.Step
 			s.Task.Step = nextStep
-			// When all subtasks scheduled and processed, mark task as succees.
+			// When all subtasks scheduled and processed, mark task as succeeds.
 			taskState := proto.TaskStateRunning
 			if s.Task.Step == proto.StepDone {
 				taskState = proto.TaskStateSucceed
