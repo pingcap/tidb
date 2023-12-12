@@ -589,7 +589,7 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 		return d.taskMgr.SucceedTask(d.ctx, d.Task.ID)
 	}
 
-	// 1. Adjust the task's concurrency.
+	// Adjust the task's concurrency.
 	if d.Task.State == proto.TaskStatePending {
 		if d.Task.Concurrency == 0 {
 			d.Task.Concurrency = DefaultSubtaskConcurrency
