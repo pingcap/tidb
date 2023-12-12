@@ -42,7 +42,8 @@ const (
 	defaultSubtaskKeepDays = 14
 
 	basicTaskColumns = `id, task_key, type, state, step, priority, concurrency, create_time`
-	taskColumns      = basicTaskColumns + `, start_time, state_update_time, meta, scheduler_id, error`
+	// TODO: dispatcher_id will update to scheduler_id later
+	taskColumns = basicTaskColumns + `, start_time, state_update_time, meta, dispatcher_id, error`
 	// InsertTaskColumns is the columns used in insert task.
 	InsertTaskColumns = `task_key, type, state, priority, concurrency, step, meta, create_time, start_time, state_update_time`
 
@@ -791,7 +792,7 @@ func (stm *TaskManager) UpdateTaskAndAddSubTasks(ctx context.Context, task *prot
 	retryable := true
 	err := stm.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		_, err := ExecSQL(ctx, se, "update mysql.tidb_global_task "+
-			"set state = %?, scheduler_id = %?, step = %?, concurrency = %?, meta = %?, error = %?, state_update_time = CURRENT_TIMESTAMP()"+
+			"set state = %?, dispatcher_id = %?, step = %?, concurrency = %?, meta = %?, error = %?, state_update_time = CURRENT_TIMESTAMP()"+
 			"where id = %? and state = %?",
 			task.State, task.SchedulerID, task.Step, task.Concurrency, task.Meta, serializeErr(task.Error), task.ID, prevState)
 		if err != nil {
@@ -1034,7 +1035,7 @@ func (stm *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 	return stm.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		insertSQL := new(strings.Builder)
 		if err := sqlescape.FormatSQL(insertSQL, "replace into mysql.tidb_global_task_history"+
-			"(id, task_key, type, scheduler_id, state, priority, start_time, state_update_time,"+
+			"(id, task_key, type, dispatcher_id, state, priority, start_time, state_update_time,"+
 			"meta, concurrency, step, error) values"); err != nil {
 			return err
 		}
