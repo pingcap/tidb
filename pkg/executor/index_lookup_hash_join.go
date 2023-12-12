@@ -248,7 +248,7 @@ func (e *IndexNestedLoopHashJoin) runInOrder(ctx context.Context, req *chunk.Chu
 			e.curTask = nil
 			continue
 		}
-		return e.handleResult(ctx, req, result)
+		return e.handleResult(req, result)
 	}
 }
 
@@ -257,7 +257,7 @@ func (e *IndexNestedLoopHashJoin) runUnordered(ctx context.Context, req *chunk.C
 	if err != nil {
 		return err
 	}
-	return e.handleResult(ctx, req, result)
+	return e.handleResult(req, result)
 }
 
 // isDryUpTasks indicates whether all the tasks have been processed.
@@ -300,7 +300,7 @@ func (e *IndexNestedLoopHashJoin) getResultFromChannel(ctx context.Context, resu
 	return result, nil
 }
 
-func (*IndexNestedLoopHashJoin) handleResult(ctx context.Context, req *chunk.Chunk, result *indexHashJoinResult) error {
+func (*IndexNestedLoopHashJoin) handleResult(req *chunk.Chunk, result *indexHashJoinResult) error {
 	if result == nil {
 		return nil
 	}
