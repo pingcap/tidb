@@ -540,6 +540,10 @@ type PlanBuilder struct {
 
 	curClause clauseCode
 
+	// calcFoundRowsHandlerDepth is used for handling with SQL_CALC_FOUND_ROWS.
+	// It means how many times we entered a SELECT or UNION
+	calcFoundRowsHandlerDepth int
+
 	// rewriterPool stores the expressionRewriter we have created to reuse it if it has been released.
 	// rewriterCounter counts how many rewriter is being used.
 	rewriterPool    []*expressionRewriter

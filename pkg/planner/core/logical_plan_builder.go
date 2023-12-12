@@ -2050,6 +2050,14 @@ func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *LogicalUnionAl
 }
 
 func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (LogicalPlan, error) {
+	b.calcFoundRowsHandlerDepth++ // Depth means how many times we entered a SELECT or UNION
+	defer func() {
+		b.calcFoundRowsHandlerDepth--
+	}()
+	if err := b.handlePossibleCalcFoundRows(ctx, setOpr); err != nil {
+		return nil, err
+	}
+
 	if setOpr.With != nil {
 		l := len(b.outerCTEs)
 		defer func() {
@@ -4373,6 +4381,84 @@ func (b *PlanBuilder) buildSelectWithCalcFoundRows(ctx context.Context, sel *ast
 	return b.buildSelect(ctx, sel)
 }
 
+func (b *PlanBuilder) handlePossibleCalcFoundRows(ctx context.Context, selectOrUnion ast.Node) error {
+	// SQL_CALC_FOUND_ROWS are only handled at the top-most SELECT / UNION. If currently
+	// we are dealing with a nested SELECT / UNION, just skip.
+	if b.calcFoundRowsHandlerDepth > 1 {
+		return nil
+	}
+
+	hasCalcFoundRows, hasInvalidPlacement := checkCalcFoundRows(selectOrUnion)
+	if !hasCalcFoundRows {
+		return nil
+	}
+	if hasInvalidPlacement {
+		return ErrCantUseOptionHere.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")
+	}
+	b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrWarnDeprecatedSyntax.FastGenByArgs("SQL_CALC_FOUND_ROWS", "two separate queries"))
+
+	// It's meaningless to calculate the found_rows() if it's in preparing stage
+	// (e.g. in a PREPARE ... statement).
+	// However, a warning is still produced, following MySQL's behavior.
+	if b.ctx.GetSessionVars().StmtCtx.InPrepareStmt {
+		return nil
+	}
+
+	// Here is how we deal with SQL_CALC_FOUND_ROWS:
+	// 1. Build a plan for the SELECT / UNION as if there is no GLOBAL LIMIT
+	var innerPlan LogicalPlan
+	var err error
+	switch stmt := selectOrUnion.(type) {
+	case *ast.SelectStmt:
+		limit := stmt.Limit
+		stmt.Limit = nil
+		defer func() { stmt.Limit = limit }()
+		innerPlan, err = b.buildSelect(ctx, stmt)
+	case *ast.SetOprStmt:
+		limit := stmt.Limit
+		stmt.Limit = nil
+		defer func() { stmt.Limit = limit }()
+		innerPlan, err = b.buildSetOpr(ctx, stmt)
+	}
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// 2. Execute and retrieve its result rows.
+	//
+	// We do this by wrapping with a COUNT(*) aggregator.
+	// Optimizer will help us deal with its push down.
+	innerPlan, _, err = b.buildAggregation(
+		ctx,
+		innerPlan,
+		[]*ast.AggregateFuncExpr{
+			{
+				F:    ast.AggFuncCount,
+				Args: []ast.ExprNode{ast.NewValueExpr(1, "", "")},
+			},
+		},
+		[]expression.Expression{},
+		map[*ast.AggregateFuncExpr]int{},
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	physicalPlan, _, err := DoOptimize(ctx, b.ctx, b.optFlag, innerPlan)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	row, err := EvalSubqueryFirstRow(ctx, physicalPlan, b.is, b.ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// 3. Record in the session, will be used as the result of FOUND_ROWS().
+	foundRows := int(row[0].GetInt64())
+	b.ctx.GetSessionVars().StmtCtx.OverrideFoundRows = &foundRows
+
+	return nil
+}
+
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p LogicalPlan, err error) {
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, sel.QueryBlockOffset)
@@ -4382,9 +4468,12 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		b.popTableHints()
 	}()
 
-	if sel.SelectStmtOpts != nil && sel.SelectStmtOpts.CalcFoundRows {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrWarnDeprecatedSyntax.FastGenByArgs("SQL_CALC_FOUND_ROWS", "two separate queries"))
-		return b.buildSelectWithCalcFoundRows(ctx, sel)
+	b.calcFoundRowsHandlerDepth++ // Depth means how many times we entered a SELECT or UNION
+	defer func() {
+		b.calcFoundRowsHandlerDepth--
+	}()
+	if err := b.handlePossibleCalcFoundRows(ctx, sel); err != nil {
+		return nil, err
 	}
 
 	if b.buildingRecursivePartForCTE {

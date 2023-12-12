@@ -301,6 +301,102 @@ func TestFoundRows(t *testing.T) {
 	tk.MustExec("insert into t values (4), (5), (6)")
 	tk.MustQuery(`execute st`)
 	tk.MustQuery("select found_rows()").Check(testkit.Rows("7"))
+
+	// test join
+	tk.MustExec("drop table if exists employee")
+	tk.MustExec("drop table if exists employee_dept")
+	tk.MustExec("create table employee (employee_id int, name varchar(20))")
+	tk.MustExec("create table employee_dept (dept_id int, employee_id int)")
+	tk.MustExec("insert into employee values (1, 'Furina'), (2, 'Klee'), (3, 'Eula'), (4, 'Diluc'), (5, 'Tartaglia')")
+	tk.MustExec("insert into employee_dept values (1, 1), (1, 2), (1, 3), (2, 5)")
+	tk.MustQuery("select SQL_CALC_FOUND_ROWS * from employee inner join employee_dept using (employee_id) order by employee_id limit 1").Check(testkit.Rows("1 Furina 1"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("4"))
+	tk.MustQuery("select SQL_CALC_FOUND_ROWS * from employee left join employee_dept using (employee_id) order by employee_id limit 1").Check(testkit.Rows("1 Furina 1"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("5"))
+
+	// test incorrect SQL_CALC_FOUND_ROWS placement
+	err := tk.ExecToErr(`
+		select SQL_CALC_FOUND_ROWS 1
+		union
+		select SQL_CALC_FOUND_ROWS 1
+	`)
+	require.Error(t, err)
+	require.ErrorContains(t, err, `[planner:1234]Incorrect usage/placement of 'SQL_CALC_FOUND_ROWS'`)
+	err = tk.ExecToErr(`
+		select 1
+		union
+		select SQL_CALC_FOUND_ROWS 1
+	`)
+	require.Error(t, err)
+	require.ErrorContains(t, err, `[planner:1234]Incorrect usage/placement of 'SQL_CALC_FOUND_ROWS'`)
+
+	// test union
+	// When SQL_CALC_FOUND_ROWS occurs, its effect is to count without the GLOBAL LIMIT.
+	tk.MustExec("drop table if exists employee")
+	tk.MustExec("create table employee (employee_id int, name varchar(20), dept_id int)")
+	tk.MustExec("insert into employee values (1, 'Furina', 1), (2, 'Klee', 1), (3, 'Eula', 1), (4, 'Diluc', 2), (5, 'Tartaglia', 2)")
+	tk.MustQuery(`
+		select SQL_CALC_FOUND_ROWS * from employee where dept_id = 1
+		union all
+		select * from employee where dept_id = 2
+		order by employee_id limit 1
+	`).Check(testkit.Rows("1 Furina 1"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("5"))
+	tk.MustQuery(`
+		(select SQL_CALC_FOUND_ROWS * from employee where dept_id = 1 order by employee_id limit 1)
+		union
+		(select * from employee where dept_id = 2 order by employee_id limit 1)
+		order by employee_id
+	`).Check(testkit.Rows("1 Furina 1", "4 Diluc 2"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("2"))
+	tk.MustQuery(`
+		(select SQL_CALC_FOUND_ROWS * from employee where dept_id = 1 order by employee_id)
+		union
+		(select * from employee where dept_id = 2 order by employee_id limit 1)
+		order by employee_id
+	`).Check(testkit.Rows("1 Furina 1", "2 Klee 1", "3 Eula 1", "4 Diluc 2"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("4"))
+	tk.MustQuery(`
+		(select SQL_CALC_FOUND_ROWS * from employee where dept_id = 1 order by employee_id)
+		union
+		(select * from employee where dept_id = 2 order by employee_id)
+		order by employee_id
+	`).Check(testkit.Rows("1 Furina 1", "2 Klee 1", "3 Eula 1", "4 Diluc 2", "5 Tartaglia 2"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("5"))
+	tk.MustQuery(`
+		(select SQL_CALC_FOUND_ROWS * from employee where dept_id = 1 order by employee_id)
+		union
+		(select * from employee where dept_id = 2 order by employee_id)
+		order by employee_id
+		limit 1
+	`).Check(testkit.Rows("1 Furina 1"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("5"))
+	// The following test cases fail due to https://github.com/pingcap/tidb/issues/49377:
+	// tk.MustQuery(`
+	// 	select SQL_CALC_FOUND_ROWS * from employee where dept_id = 1
+	// 		union all
+	// 			(select * from employee where dept_id = 1 order by employee_id)
+	// 		union all
+	// 			(
+	// 				select * from employee where dept_id = 1
+	// 					union all
+	// 				(select * from employee where dept_id = 1 order by employee_id) limit 1
+	// 			)
+	// `)
+	// tk.MustQuery("select found_rows()").Check(testkit.Rows("7"))
+	// tk.MustQuery(`
+	// 	select SQL_CALC_FOUND_ROWS * from employee where dept_id = 1
+	// 		union all
+	// 			(select * from employee where dept_id = 1 order by employee_id)
+	// 		union all
+	// 			(
+	// 				select * from employee where dept_id = 1
+	// 					union all
+	// 				(select * from employee where dept_id = 1 order by employee_id) limit 1
+	// 			)
+	// 		limit 1
+	// `)
+	// tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
 }
 
 func TestInfoBuiltin(t *testing.T) {
