@@ -30,6 +30,15 @@ type memFile struct {
 	Data atomic.Pointer[[]byte]
 }
 
+// GetData gets the underlying byte slice of the atomic pointer
+func (f *memFile) GetData() []byte {
+	var fileData []byte
+	if p := f.Data.Load(); p != nil {
+		fileData = *p
+	}
+	return fileData
+}
+
 // MemStorage represents a in-memory storage.
 type MemStorage struct {
 	rwm       sync.RWMutex
@@ -125,7 +134,7 @@ func (s *MemStorage) ReadFile(ctx context.Context, name string) ([]byte, error) 
 	if !ok {
 		return nil, errors.Errorf("cannot find the file: %s", name)
 	}
-	fileData := *theFile.Data.Load()
+	fileData := theFile.GetData()
 	return append([]byte{}, fileData...), nil
 }
 
@@ -158,7 +167,7 @@ func (s *MemStorage) Open(ctx context.Context, filePath string, o *ReaderOption)
 	if !ok {
 		return nil, errors.Errorf("cannot find the file: %s", filePath)
 	}
-	data := *theFile.Data.Load()
+	data := theFile.GetData()
 	// just for simplicity, different from other implementation, MemStorage can't
 	// seek beyond [o.StartOffset, o.EndOffset)
 	start, end := 0, len(data)
@@ -215,7 +224,7 @@ func (s *MemStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 		if !ok {
 			continue
 		}
-		fileSize := len(*theFile.Data.Load())
+		fileSize := len(theFile.GetData())
 		if err := fn(fileName, int64(fileSize)); err != nil {
 			return err
 		}
