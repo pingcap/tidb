@@ -3483,6 +3483,7 @@ func (rc *Client) InsertGCRows(ctx context.Context) error {
 		}
 		if len(paramsList) > 0 {
 			// trim the ',' behind the query.Sql if exists
+			// that's when the rewrite rule of the last table id is not exist
 			sql := strings.TrimSuffix(query.Sql, ",")
 			if err := rc.db.se.ExecuteInternal(ctx, sql, paramsList...); err != nil {
 				return errors.Trace(err)
