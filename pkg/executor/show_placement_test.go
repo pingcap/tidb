@@ -15,9 +15,11 @@
 package executor_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -469,5 +471,92 @@ func TestShowPlacementForTableAndPartitionPrivilege(t *testing.T) {
 			"POLICY p1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" NULL",
 			"POLICY p2 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=4 FOLLOWER_CONSTRAINTS=\"[+region=sh]\" NULL",
 		))
+	}
+}
+
+func TestShowPlacementByFormat(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop placement policy if exists follower3")
+	tk.MustExec("drop placement policy if exists follower5")
+
+	// prepare policies
+	tk.MustExec("CREATE PLACEMENT POLICY follower3 FOLLOWERS=3;")
+	tk.MustExec("CREATE PLACEMENT POLICY follower5 FOLLOWERS=5;")
+	tk.MustExec("CREATE TABLE t1 ( country VARCHAR(10) NOT NULL, userdata VARCHAR(100) NOT NULL ) " +
+		"PLACEMENT POLICY=follower3 PARTITION BY LIST COLUMNS (country) " +
+		"( PARTITION A VALUES IN ('DE', 'FR', 'GB') " +
+		"PLACEMENT POLICY=follower5, PARTITION B VALUES IN ('M') );")
+
+	type Output struct {
+		SQL    string
+		Result []struct {
+			Target    string
+			State     string
+			Placement struct {
+				Policy   string
+				ID       string
+				Index    int
+				Override bool
+				Rules    []struct {
+					Policy      string
+					GroupID     string
+					ID          string
+					Index       int
+					StartKey    string
+					EndKey      string
+					Role        string
+					Count       int
+					Constraints []struct {
+						Key    string
+						Op     string
+						Values []string
+					}
+					LocationLabels []string
+					Override       bool
+				}
+			}
+		}
+	}
+	var input []string
+	var output []Output
+	placementRuleRawData.LoadTestCases(t, &input, &output)
+	for _, tt := range input {
+		tk.MustExec(tt)
+		for i, test := range input {
+			resJSON := tk.MustQuery(test).Rows()
+			for p, _ := range resJSON {
+				require.Equal(t, output[i].Result[p].Target, resJSON[p][0].(string))
+				require.Equal(t, output[i].Result[p].State, resJSON[p][2].(string))
+
+				bundle := output[i].Result[p].Placement
+				if bundle.Policy != "" {
+					//require.NoError(t, json.Unmarshal([]byte(resJSON[p][1].(string)), &res.policy))
+					require.Equal(t, bundle.Policy, resJSON[p][1].(string))
+					continue
+				}
+
+				var resBundle placement.Bundle
+				require.NoError(t, json.Unmarshal([]byte(resJSON[p][1].(string)), &resBundle))
+				require.Equal(t, bundle.ID, resBundle.ID)
+				require.Equal(t, bundle.Index, resBundle.Index)
+				require.Equal(t, bundle.Override, resBundle.Override)
+				require.Equal(t, len(bundle.Rules), len(resBundle.Rules))
+				for j := range bundle.Rules {
+					require.Equal(t, bundle.Rules[j].GroupID, resBundle.Rules[j].GroupID)
+					require.Equal(t, bundle.Rules[j].ID, resBundle.Rules[j].ID)
+					require.Equal(t, bundle.Rules[j].Index, resBundle.Rules[j].Index)
+					require.Equal(t, bundle.Rules[j].Override, resBundle.Rules[j].Override)
+					require.Equal(t, bundle.Rules[j].StartKey, resBundle.Rules[j].StartKeyHex)
+					require.Equal(t, bundle.Rules[j].EndKey, resBundle.Rules[j].EndKeyHex)
+					require.Equal(t, bundle.Rules[j].Role, string(resBundle.Rules[j].Role))
+					require.Equal(t, bundle.Rules[j].Count, resBundle.Rules[j].Count)
+					require.Equal(t, len(bundle.Rules[j].Constraints), len(resBundle.Rules[j].Constraints))
+					require.Equal(t, len(bundle.Rules[j].LocationLabels), len(resBundle.Rules[j].LocationLabels))
+				}
+			}
+		}
 	}
 }
