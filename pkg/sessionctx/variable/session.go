@@ -3388,7 +3388,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 		writeSlowLogItem(&buf, SlowLogWRU, strconv.FormatFloat(logItems.WRU, 'f', -1, 64))
 	}
 	if logItems.WaitRUDuration > time.Duration(0) {
-		writeSlowLogItem(&buf, SlowLogWaitRUDuration, strconv.FormatFloat(logItems.KVTotal.Seconds(), 'f', -1, 64))
+		writeSlowLogItem(&buf, SlowLogWaitRUDuration, strconv.FormatFloat(logItems.WaitRUDuration.Seconds(), 'f', -1, 64))
 	}
 
 	if logItems.PrevStmt != "" {

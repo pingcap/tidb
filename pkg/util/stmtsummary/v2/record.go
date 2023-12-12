@@ -409,11 +409,6 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	r.SumPDTotal += time.Duration(atomic.LoadInt64(&info.TiKVExecDetails.WaitPDRespDuration))
 	r.SumBackoffTotal += time.Duration(atomic.LoadInt64(&info.TiKVExecDetails.BackoffDuration))
 	r.SumWriteSQLRespTotal += info.StmtExecDetails.WriteSQLRespDuration
-	if info.RUDetails != nil {
-		r.WRU += info.RUDetails.WRU()
-		r.RRU += info.RUDetails.RRU()
-		r.RUWaitDuration += info.RUDetails.RUWaitDuration()
-	}
 }
 
 // Merge merges the statistics of another StmtRecord to this StmtRecord.

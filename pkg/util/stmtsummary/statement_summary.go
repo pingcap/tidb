@@ -246,7 +246,6 @@ type StmtExecInfo struct {
 	execdetails.StmtExecDetails
 	ResultRows      int64
 	TiKVExecDetails util.ExecDetails
-	RUDetails       *util.RUDetails
 	Prepared        bool
 	KeyspaceName    string
 	KeyspaceID      uint32

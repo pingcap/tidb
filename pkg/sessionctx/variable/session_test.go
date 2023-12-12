@@ -262,7 +262,7 @@ func TestSlowLogFormat(t *testing.T) {
 # Resource_group: rg1
 # Request_unit_read: 50
 # Request_unit_write: 100.56
-# Time_queued_by_rc: 10`
+# Time_queued_by_rc: 0.134`
 	sql := "select * from t;"
 	_, digest := parser.NormalizeDigest(sql)
 	logItems := &variable.SlowQueryLogItems{
@@ -304,7 +304,7 @@ func TestSlowLogFormat(t *testing.T) {
 		ResourceGroupName: "rg1",
 		RRU:               50.0,
 		WRU:               100.56,
-		WaitRUDuration:    5 * time.Millisecond,
+		WaitRUDuration:    134 * time.Millisecond,
 	}
 	logString := seVar.SlowLogFormat(logItems)
 	require.Equal(t, resultFields+"\n"+sql, logString)
