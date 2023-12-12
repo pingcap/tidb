@@ -57,7 +57,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/filter"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	kvconfig "github.com/tikv/client-go/v2/config"
@@ -942,11 +941,7 @@ func (*LoadDataController) initExternalStore(ctx context.Context, u *url.URL, ta
 		return nil, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, GetMsgFromBRError(err2))
 	}
 
-	opt := &storage.ExternalStorageOptions{}
-	if intest.InTest {
-		opt.NoCredentials = true
-	}
-	s, err := storage.New(ctx, b, opt)
+	s, err := storage.NewWithDefaultOpt(ctx, b)
 	if err != nil {
 		return nil, exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(target, GetMsgFromBRError(err))
 	}
