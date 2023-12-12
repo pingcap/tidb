@@ -594,7 +594,7 @@ func (s *statsReadWriter) LoadStatsFromJSONNoUpdate(ctx context.Context, is info
 		close(taskCh)
 		var wg sync.WaitGroup
 		e := new(atomic.Pointer[error])
-		for i := 0; i < int(concurrencyForPartition); i++ {
+		for i := 0; i < concurrencyForPartition; i++ {
 			wg.Add(1)
 			s.statsHandler.GPool().Go(func() {
 				defer func() {
