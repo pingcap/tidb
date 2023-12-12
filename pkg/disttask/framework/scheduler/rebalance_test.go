@@ -60,17 +60,17 @@ func scaleTest(t *testing.T,
 	if len(testCase.cleanedNodes) > 0 {
 		mockTaskMgr.EXPECT().GetSubtasksByExecIdsAndStepAndState(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
 	}
-	dsp := scheduler.NewBaseScheduler(ctx, mockTaskMgr, "server", &proto.Task{Step: proto.StepInit, ID: int64(id)})
-	dsp.LiveNodes = testCase.liveNodes
-	dsp.TaskNodes = testCase.taskNodes
-	require.NoError(t, dsp.ReDispatchSubtasks())
-	slices.SortFunc(dsp.TaskNodes, func(i, j string) int {
+	sch := scheduler.NewBaseScheduler(ctx, mockTaskMgr, "server", &proto.Task{Step: proto.StepInit, ID: int64(id)})
+	sch.LiveNodes = testCase.liveNodes
+	sch.TaskNodes = testCase.taskNodes
+	require.NoError(t, sch.ReDispatchSubtasks())
+	slices.SortFunc(sch.TaskNodes, func(i, j string) int {
 		return strings.Compare(i, j)
 	})
 	slices.SortFunc(testCase.subtasks, func(i, j *proto.Subtask) int {
 		return strings.Compare(i.ExecID, j.ExecID)
 	})
-	require.Equal(t, testCase.expectedTaskNodes, dsp.TaskNodes)
+	require.Equal(t, testCase.expectedTaskNodes, sch.TaskNodes)
 	require.Equal(t, testCase.expectedSubtasks, testCase.subtasks)
 }
 
@@ -85,11 +85,11 @@ func balanceTest(t *testing.T,
 	mockTaskMgr.EXPECT().CleanUpMeta(ctx, gomock.Any()).Return(nil).AnyTimes()
 
 	mockTaskMgr.EXPECT().UpdateSubtasksExecIDs(ctx, int64(id), testCase.subtasks).Return(nil).AnyTimes()
-	dsp := scheduler.NewBaseScheduler(ctx, mockTaskMgr, "server", &proto.Task{Step: proto.StepInit, ID: int64(id)})
-	dsp.LiveNodes = testCase.liveNodes
-	dsp.TaskNodes = testCase.taskNodes
-	require.NoError(t, dsp.ReDispatchSubtasks())
-	slices.SortFunc(dsp.TaskNodes, func(i, j string) int {
+	sch := scheduler.NewBaseScheduler(ctx, mockTaskMgr, "server", &proto.Task{Step: proto.StepInit, ID: int64(id)})
+	sch.LiveNodes = testCase.liveNodes
+	sch.TaskNodes = testCase.taskNodes
+	require.NoError(t, sch.ReDispatchSubtasks())
+	slices.SortFunc(sch.TaskNodes, func(i, j string) int {
 		return strings.Compare(i, j)
 	})
 	slices.SortFunc(testCase.subtasks, func(i, j *proto.Subtask) int {

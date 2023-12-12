@@ -48,7 +48,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
-	dsp, err := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port")
+	sch, err := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port")
 	require.NoError(t, err)
 
 	// create job
@@ -90,7 +90,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	task.ID = taskID
 
 	// to import stage, job should be running
-	d := dsp.MockScheduler(task)
+	d := sch.MockScheduler(task)
 	ext := importinto.ImportSchedulerExt{}
 	serverInfos, _, err := ext.GetEligibleInstances(context.Background(), task)
 	require.NoError(t, err)
@@ -185,7 +185,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
-	dsp, err := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port")
+	sch, err := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port")
 	require.NoError(t, err)
 
 	// create job
@@ -235,7 +235,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	task.ID = taskID
 
 	// to encode-sort stage, job should be running
-	d := dsp.MockScheduler(task)
+	d := sch.MockScheduler(task)
 	ext := importinto.ImportSchedulerExt{
 		GlobalSort: true,
 	}

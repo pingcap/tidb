@@ -41,10 +41,10 @@ func TestCleanUpRoutine(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "scheduler_manager")
 	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
 
-	dsp, mgr := MockSchedulerManager(t, ctrl, pool, getNumberExampleSchedulerExt(ctrl), mockCleanupRountine)
+	sch, mgr := MockSchedulerManager(t, ctrl, pool, getNumberExampleSchedulerExt(ctrl), mockCleanupRountine)
 	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	dsp.Start()
-	defer dsp.Stop()
+	sch.Start()
+	defer sch.Stop()
 	require.NoError(t, mgr.StartManager(ctx, ":4000", "background"))
 	taskID, err := mgr.CreateTask(ctx, "test", proto.TaskTypeExample, 1, nil)
 	require.NoError(t, err)
@@ -74,7 +74,7 @@ func TestCleanUpRoutine(t *testing.T) {
 		err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.TaskStateSucceed, nil)
 		require.NoError(t, err)
 	}
-	dsp.DoCleanUpRoutine()
+	sch.DoCleanUpRoutine()
 	require.Eventually(t, func() bool {
 		tasks, err := mgr.GetTasksFromHistoryInStates(ctx, proto.TaskStateSucceed)
 		require.NoError(t, err)
@@ -93,19 +93,19 @@ func TestCleanUpMeta(t *testing.T) {
 	defer ctrl.Finish()
 	mockTaskMgr := mock.NewMockTaskManager(ctrl)
 	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
-	dspMgr := MockSchedulerManagerWithMockTaskMgr(t, ctrl, pool, mockTaskMgr, getNumberExampleSchedulerExt(ctrl), mockCleanupRountine)
+	schMgr := MockSchedulerManagerWithMockTaskMgr(t, ctrl, pool, mockTaskMgr, getNumberExampleSchedulerExt(ctrl), mockCleanupRountine)
 
 	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]string{":4000", ":4001"}, nil)
 	mockTaskMgr.EXPECT().CleanUpMeta(gomock.Any(), gomock.Any()).Return(nil)
 	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	require.Equal(t, 1, dspMgr.CleanUpMeta())
+	require.Equal(t, 1, schMgr.CleanUpMeta())
 
 	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]string{":4000"}, nil)
 	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	require.Equal(t, 0, dspMgr.CleanUpMeta())
+	require.Equal(t, 0, schMgr.CleanUpMeta())
 
 	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]string{":4000", ":4001", ":4003"}, nil)
 	mockTaskMgr.EXPECT().CleanUpMeta(gomock.Any(), gomock.Any()).Return(nil)
 	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	require.Equal(t, 2, dspMgr.CleanUpMeta())
+	require.Equal(t, 2, schMgr.CleanUpMeta())
 }

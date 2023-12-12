@@ -61,11 +61,11 @@ func (s *importIntoSuite) TestSchedulerGetEligibleInstances() {
 	}
 	mockedAllServerInfos := makeFailpointRes(serverInfoMap)
 
-	dsp := ImportSchedulerExt{}
+	sch := ImportSchedulerExt{}
 	task := &proto.Task{Meta: []byte("{}")}
 	ctx := context.WithValue(context.Background(), "etcd", true)
 	s.enableFailPoint("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", mockedAllServerInfos)
-	eligibleInstances, _, err := dsp.GetEligibleInstances(ctx, task)
+	eligibleInstances, _, err := sch.GetEligibleInstances(ctx, task)
 	s.NoError(err)
 	// order of slice is not stable, change to map
 	resultMap := map[string]*infosync.ServerInfo{}
@@ -75,7 +75,7 @@ func (s *importIntoSuite) TestSchedulerGetEligibleInstances() {
 	s.Equal(serverInfoMap, resultMap)
 
 	task.Meta = []byte(`{"EligibleInstances":[{"ip": "1.1.1.1", "listening_port": 4000}]}`)
-	eligibleInstances, _, err = dsp.GetEligibleInstances(ctx, task)
+	eligibleInstances, _, err = sch.GetEligibleInstances(ctx, task)
 	s.NoError(err)
 	s.Equal([]*infosync.ServerInfo{{IP: "1.1.1.1", Port: 4000}}, eligibleInstances)
 }
@@ -89,23 +89,23 @@ func (s *importIntoSuite) TestUpdateCurrentTask() {
 	bs, err := json.Marshal(taskMeta)
 	require.NoError(s.T(), err)
 
-	dsp := ImportSchedulerExt{}
-	require.Equal(s.T(), int64(0), dsp.currTaskID.Load())
-	require.False(s.T(), dsp.disableTiKVImportMode.Load())
+	sch := ImportSchedulerExt{}
+	require.Equal(s.T(), int64(0), sch.currTaskID.Load())
+	require.False(s.T(), sch.disableTiKVImportMode.Load())
 
-	dsp.updateCurrentTask(&proto.Task{
+	sch.updateCurrentTask(&proto.Task{
 		ID:   1,
 		Meta: bs,
 	})
-	require.Equal(s.T(), int64(1), dsp.currTaskID.Load())
-	require.True(s.T(), dsp.disableTiKVImportMode.Load())
+	require.Equal(s.T(), int64(1), sch.currTaskID.Load())
+	require.True(s.T(), sch.disableTiKVImportMode.Load())
 
-	dsp.updateCurrentTask(&proto.Task{
+	sch.updateCurrentTask(&proto.Task{
 		ID:   1,
 		Meta: bs,
 	})
-	require.Equal(s.T(), int64(1), dsp.currTaskID.Load())
-	require.True(s.T(), dsp.disableTiKVImportMode.Load())
+	require.Equal(s.T(), int64(1), sch.currTaskID.Load())
+	require.True(s.T(), sch.disableTiKVImportMode.Load())
 }
 
 func (s *importIntoSuite) TestSchedulerInit() {
@@ -116,28 +116,28 @@ func (s *importIntoSuite) TestSchedulerInit() {
 	}
 	bytes, err := json.Marshal(meta)
 	s.NoError(err)
-	dsp := importScheduler{
+	sch := importScheduler{
 		BaseScheduler: &scheduler.BaseScheduler{
 			Task: &proto.Task{
 				Meta: bytes,
 			},
 		},
 	}
-	s.NoError(dsp.Init())
-	s.False(dsp.Extension.(*ImportSchedulerExt).GlobalSort)
+	s.NoError(sch.Init())
+	s.False(sch.Extension.(*ImportSchedulerExt).GlobalSort)
 
 	meta.Plan.CloudStorageURI = "s3://test"
 	bytes, err = json.Marshal(meta)
 	s.NoError(err)
-	dsp = importScheduler{
+	sch = importScheduler{
 		BaseScheduler: &scheduler.BaseScheduler{
 			Task: &proto.Task{
 				Meta: bytes,
 			},
 		},
 	}
-	s.NoError(dsp.Init())
-	s.True(dsp.Extension.(*ImportSchedulerExt).GlobalSort)
+	s.NoError(sch.Init())
+	s.True(sch.Extension.(*ImportSchedulerExt).GlobalSort)
 }
 
 func (s *importIntoSuite) TestGetNextStep() {

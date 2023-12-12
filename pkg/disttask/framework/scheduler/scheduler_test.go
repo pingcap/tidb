@@ -119,24 +119,24 @@ func MockSchedulerManager(t *testing.T, ctrl *gomock.Controller, pool *pools.Res
 	ctx := context.WithValue(context.Background(), "etcd", true)
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
-	dsp, err := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port")
+	sch, err := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port")
 	require.NoError(t, err)
 	scheduler.RegisterSchedulerFactory(proto.TaskTypeExample,
 		func(ctx context.Context, taskMgr scheduler.TaskManager, serverID string, task *proto.Task) scheduler.Scheduler {
-			mockScheduler := dsp.MockScheduler(task)
+			mockScheduler := sch.MockScheduler(task)
 			mockScheduler.Extension = ext
 			return mockScheduler
 		})
-	return dsp, mgr
+	return sch, mgr
 }
 
 func MockSchedulerManagerWithMockTaskMgr(t *testing.T, ctrl *gomock.Controller, pool *pools.ResourcePool, taskMgr *mock.MockTaskManager, ext scheduler.Extension, cleanUp scheduler.CleanUpRoutine) *scheduler.Manager {
 	ctx := context.WithValue(context.Background(), "etcd", true)
-	dsp, err := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), taskMgr, "host:port")
+	sch, err := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), taskMgr, "host:port")
 	require.NoError(t, err)
 	scheduler.RegisterSchedulerFactory(proto.TaskTypeExample,
 		func(ctx context.Context, taskMgr scheduler.TaskManager, serverID string, task *proto.Task) scheduler.Scheduler {
-			mockScheduler := dsp.MockScheduler(task)
+			mockScheduler := sch.MockScheduler(task)
 			mockScheduler.Extension = ext
 			return mockScheduler
 		})
@@ -144,7 +144,7 @@ func MockSchedulerManagerWithMockTaskMgr(t *testing.T, ctrl *gomock.Controller, 
 		func() scheduler.CleanUpRoutine {
 			return cleanUp
 		})
-	return dsp
+	return sch
 }
 
 func deleteTasks(t *testing.T, store kv.Storage, taskID int64) {
@@ -165,12 +165,12 @@ func TestGetInstance(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTaskExecutorNodes", "return()"))
-	dspManager, mgr := MockSchedulerManager(t, ctrl, pool, getTestSchedulerExt(ctrl), nil)
+	schManager, mgr := MockSchedulerManager(t, ctrl, pool, getTestSchedulerExt(ctrl), nil)
 	// test no server
 	task := &proto.Task{ID: 1, Type: proto.TaskTypeExample}
-	dsp := dspManager.MockScheduler(task)
-	dsp.Extension = getTestSchedulerExt(ctrl)
-	instanceIDs, err := dsp.GetAllTaskExecutorIDs(ctx, task)
+	sch := schManager.MockScheduler(task)
+	sch.Extension = getTestSchedulerExt(ctrl)
+	instanceIDs, err := sch.GetAllTaskExecutorIDs(ctx, task)
 	require.Lenf(t, instanceIDs, 0, "GetAllTaskExecutorIDs when there's no subtask")
 	require.NoError(t, err)
 
@@ -192,7 +192,7 @@ func TestGetInstance(t *testing.T) {
 			Port: 65535,
 		},
 	}
-	instanceIDs, err = dsp.GetAllTaskExecutorIDs(ctx, task)
+	instanceIDs, err = sch.GetAllTaskExecutorIDs(ctx, task)
 	require.Lenf(t, instanceIDs, 0, "GetAllTaskExecutorIDs")
 	require.NoError(t, err)
 
@@ -204,7 +204,7 @@ func TestGetInstance(t *testing.T) {
 		ExecID: serverIDs[1],
 	}
 	testutil.CreateSubTask(t, mgr, task.ID, proto.StepInit, subtask.ExecID, nil, subtask.Type, 11, true)
-	instanceIDs, err = dsp.GetAllTaskExecutorIDs(ctx, task)
+	instanceIDs, err = sch.GetAllTaskExecutorIDs(ctx, task)
 	require.NoError(t, err)
 	require.Equal(t, []string{serverIDs[1]}, instanceIDs)
 	// server ids: uuid0, uuid1
@@ -215,7 +215,7 @@ func TestGetInstance(t *testing.T) {
 		ExecID: serverIDs[0],
 	}
 	testutil.CreateSubTask(t, mgr, task.ID, proto.StepInit, subtask.ExecID, nil, subtask.Type, 11, true)
-	instanceIDs, err = dsp.GetAllTaskExecutorIDs(ctx, task)
+	instanceIDs, err = sch.GetAllTaskExecutorIDs(ctx, task)
 	require.NoError(t, err)
 	require.Len(t, instanceIDs, len(serverIDs))
 	require.ElementsMatch(t, instanceIDs, serverIDs)
@@ -236,13 +236,13 @@ func TestTaskFailInManager(t *testing.T) {
 
 	mockScheduler := mock.NewMockScheduler(ctrl)
 	mockScheduler.EXPECT().Init().Return(errors.New("mock scheduler init error"))
-	dspManager, mgr := MockSchedulerManager(t, ctrl, pool, getTestSchedulerExt(ctrl), nil)
+	schManager, mgr := MockSchedulerManager(t, ctrl, pool, getTestSchedulerExt(ctrl), nil)
 	scheduler.RegisterSchedulerFactory(proto.TaskTypeExample,
 		func(ctx context.Context, taskMgr scheduler.TaskManager, serverID string, task *proto.Task) scheduler.Scheduler {
 			return mockScheduler
 		})
-	dspManager.Start()
-	defer dspManager.Stop()
+	schManager.Start()
+	defer schManager.Stop()
 
 	// unknown task type
 	taskID, err := mgr.CreateTask(ctx, "test", "test-type", 1, nil)
@@ -290,10 +290,10 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "scheduler")
 
-	dsp, mgr := MockSchedulerManager(t, ctrl, pool, getNumberExampleSchedulerExt(ctrl), nil)
-	dsp.Start()
+	sch, mgr := MockSchedulerManager(t, ctrl, pool, getNumberExampleSchedulerExt(ctrl), nil)
+	sch.Start()
 	defer func() {
-		dsp.Stop()
+		sch.Stop()
 		// make data race happy
 		if taskCnt == 1 {
 			proto.MaxConcurrentTask = originalConcurrency
@@ -306,7 +306,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	cnt := 60
 	checkGetRunningTaskCnt := func(expected int) {
 		require.Eventually(t, func() bool {
-			return dsp.GetRunningTaskCnt() == expected
+			return sch.GetRunningTaskCnt() == expected
 		}, time.Second, 50*time.Millisecond)
 	}
 
@@ -350,7 +350,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 		checkGetRunningTaskCnt(taskCnt)
 		// Clean the task.
 		deleteTasks(t, store, taskID)
-		dsp.DelRunningTask(taskID)
+		sch.DelRunningTask(taskID)
 	}
 
 	// test DetectTaskLoop

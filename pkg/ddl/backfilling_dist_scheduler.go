@@ -66,7 +66,7 @@ func (*BackfillingSchedulerExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
 // OnNextSubtasksBatch generate batch of next step's plan.
-func (dsp *BackfillingSchedulerExt) OnNextSubtasksBatch(
+func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 	ctx context.Context,
 	taskHandle scheduler.TaskHandle,
 	task *proto.Task,
@@ -84,7 +84,7 @@ func (dsp *BackfillingSchedulerExt) OnNextSubtasksBatch(
 		return nil, err
 	}
 	job := &backfillMeta.Job
-	tblInfo, err := getTblInfo(dsp.d, job)
+	tblInfo, err := getTblInfo(sch.d, job)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +96,7 @@ func (dsp *BackfillingSchedulerExt) OnNextSubtasksBatch(
 		if tblInfo.Partition != nil {
 			return generatePartitionPlan(tblInfo)
 		}
-		return generateNonPartitionPlan(dsp.d, tblInfo, job, dsp.GlobalSort, len(serverInfo))
+		return generateNonPartitionPlan(sch.d, tblInfo, job, sch.GlobalSort, len(serverInfo))
 	case StepMergeSort:
 		res, err := generateMergePlan(taskHandle, task, logger)
 		if err != nil {
@@ -110,7 +110,7 @@ func (dsp *BackfillingSchedulerExt) OnNextSubtasksBatch(
 		}
 		return res, nil
 	case StepWriteAndIngest:
-		if dsp.GlobalSort {
+		if sch.GlobalSort {
 			prevStep := StepReadIndex
 			if backfillMeta.UseMergeSort {
 				prevStep = StepMergeSort
@@ -150,12 +150,12 @@ func updateMeta(task *proto.Task, taskMeta *BackfillTaskMeta) error {
 }
 
 // GetNextStep implements scheduler.Extension interface.
-func (dsp *BackfillingSchedulerExt) GetNextStep(task *proto.Task) proto.Step {
+func (sch *BackfillingSchedulerExt) GetNextStep(task *proto.Task) proto.Step {
 	switch task.Step {
 	case proto.StepInit:
 		return StepReadIndex
 	case StepReadIndex:
-		if dsp.GlobalSort {
+		if sch.GlobalSort {
 			return StepMergeSort
 		}
 		return proto.StepDone
@@ -202,28 +202,28 @@ type LitBackfillScheduler struct {
 
 func newLitBackfillScheduler(ctx context.Context, d *ddl, taskMgr scheduler.TaskManager,
 	serverID string, task *proto.Task) scheduler.Scheduler {
-	dsp := LitBackfillScheduler{
+	sch := LitBackfillScheduler{
 		d:             d,
 		BaseScheduler: scheduler.NewBaseScheduler(ctx, taskMgr, serverID, task),
 	}
-	return &dsp
+	return &sch
 }
 
 // Init implements BaseScheduler interface.
-func (dsp *LitBackfillScheduler) Init() (err error) {
+func (sch *LitBackfillScheduler) Init() (err error) {
 	taskMeta := &BackfillTaskMeta{}
-	if err = json.Unmarshal(dsp.BaseScheduler.Task.Meta, taskMeta); err != nil {
+	if err = json.Unmarshal(sch.BaseScheduler.Task.Meta, taskMeta); err != nil {
 		return errors.Annotate(err, "unmarshal task meta failed")
 	}
-	dsp.BaseScheduler.Extension = &BackfillingSchedulerExt{
-		d:          dsp.d,
+	sch.BaseScheduler.Extension = &BackfillingSchedulerExt{
+		d:          sch.d,
 		GlobalSort: len(taskMeta.CloudStorageURI) > 0}
-	return dsp.BaseScheduler.Init()
+	return sch.BaseScheduler.Init()
 }
 
 // Close implements BaseScheduler interface.
-func (dsp *LitBackfillScheduler) Close() {
-	dsp.BaseScheduler.Close()
+func (sch *LitBackfillScheduler) Close() {
+	sch.BaseScheduler.Close()
 }
 
 func getTblInfo(d *ddl, job *model.Job) (tblInfo *model.TableInfo, err error) {
