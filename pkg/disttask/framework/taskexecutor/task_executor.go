@@ -154,7 +154,7 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 	s.resetError()
 	stepLogger := log.BeginTask(logutil.Logger(s.logCtx).With(
 		zap.Any("step", task.Step),
-		zap.Uint64("concurrency", task.Concurrency),
+		zap.Int("concurrency", task.Concurrency),
 		zap.Float64("mem-limit-percent", gctuner.GlobalMemoryLimitTuner.GetPercentage()),
 		zap.String("server-mem-limit", memory.ServerMemoryLimitOriginText.Load()),
 	), "schedule step")

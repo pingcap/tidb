@@ -66,6 +66,7 @@ go_library(
         "@com_google_cloud_go_storage//:storage",
         "@org_golang_google_api//iterator",
         "@org_golang_google_api//option",
+        "@org_golang_google_api//transport/http",
         "@org_golang_x_oauth2//google",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",

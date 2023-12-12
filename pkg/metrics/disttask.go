@@ -129,10 +129,10 @@ func UpdateMetricsForAddTask(task *proto.Task) {
 }
 
 // UpdateMetricsForDispatchTask update metrics when a task is added
-func UpdateMetricsForDispatchTask(task *proto.Task) {
-	DistTaskGauge.WithLabelValues(task.Type.String(), WaitingStatus).Dec()
-	DistTaskStarttimeGauge.DeleteLabelValues(task.Type.String(), WaitingStatus, fmt.Sprint(task.ID))
-	DistTaskStarttimeGauge.WithLabelValues(task.Type.String(), DispatchingStatus, fmt.Sprint(task.ID)).SetToCurrentTime()
+func UpdateMetricsForDispatchTask(id int64, taskType proto.TaskType) {
+	DistTaskGauge.WithLabelValues(taskType.String(), WaitingStatus).Dec()
+	DistTaskStarttimeGauge.DeleteLabelValues(taskType.String(), WaitingStatus, fmt.Sprint(id))
+	DistTaskStarttimeGauge.WithLabelValues(taskType.String(), DispatchingStatus, fmt.Sprint(id)).SetToCurrentTime()
 }
 
 // UpdateMetricsForRunTask update metrics when a task starts running

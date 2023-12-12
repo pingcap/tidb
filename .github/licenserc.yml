@@ -16,6 +16,8 @@ header:
     - "**/BUILD.bazel"
     - "WORKSPACE"
     - "WORKSPACE.patchgo"
+    - "MODULE.bazel"
+    - "MODULE.bazel.lock"
     - ".bazelrc"
     - "**/*.key"
     - "**/*.md"
