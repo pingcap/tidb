@@ -424,7 +424,7 @@ func TestDistFrameworkMeta(t *testing.T) {
 	defer pool.Close()
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "table_test")
-
+	require.NoError(t, sm.StartManager(ctx, ":4000", "background"))
 	require.NoError(t, sm.StartManager(ctx, ":4001", ""))
 	require.NoError(t, sm.StartManager(ctx, ":4002", ""))
 	require.NoError(t, sm.StartManager(ctx, ":4003", "background"))
