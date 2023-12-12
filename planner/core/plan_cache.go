@@ -448,7 +448,7 @@ func rebuildRange(p Plan) error {
 				if err != nil {
 					return err
 				}
-				if !isSafeRange(x.AccessConditions, ranges, false, nil) {
+				if len(ranges.Ranges) != 1 || !isSafeRange(x.AccessConditions, ranges, false, nil) {
 					return errors.New("rebuild to get an unsafe range")
 				}
 				for i := range x.IndexValues {
@@ -470,7 +470,7 @@ func rebuildRange(p Plan) error {
 					if err != nil {
 						return err
 					}
-					if !isSafeRange(x.AccessConditions, &ranger.DetachRangeResult{
+					if len(ranges) != 1 || !isSafeRange(x.AccessConditions, &ranger.DetachRangeResult{
 						Ranges:        ranges,
 						AccessConds:   accessConds,
 						RemainedConds: remainingConds,
@@ -539,7 +539,7 @@ func rebuildRange(p Plan) error {
 					if err != nil {
 						return err
 					}
-					if len(ranges) != len(x.Handles) && !isSafeRange(x.AccessConditions, &ranger.DetachRangeResult{
+					if len(ranges) != len(x.Handles) || !isSafeRange(x.AccessConditions, &ranger.DetachRangeResult{
 						Ranges:        ranges,
 						AccessConds:   accessConds,
 						RemainedConds: remainingConds,
