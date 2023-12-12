@@ -1523,7 +1523,7 @@ func checkTableNotExistsFromInfoSchema(is infoschema.InfoSchema, schemaID int64,
 func checkTableNotExistsFromStore(t *meta.Meta, schemaID int64, tableName string) error {
 	st := time.Now()
 	// Check this table's database.
-	tbls, err := t.ListTables(schemaID)
+	tbls, err := t.ListSimpleTables(schemaID)
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
 			return infoschema.ErrDatabaseNotExists.GenWithStackByArgs("")

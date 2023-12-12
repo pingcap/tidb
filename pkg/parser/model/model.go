@@ -543,6 +543,12 @@ type TableInfo struct {
 	TTLInfo *TTLInfo `json:"ttl_info"`
 }
 
+// TableSimpleInfo provides meta data describing a DB simple table.
+type TableSimpleInfo struct {
+	ID   int64 `json:"id"`
+	Name CIStr `json:"name"`
+}
+
 // SepAutoInc decides whether _rowid and auto_increment id use separate allocator.
 func (t *TableInfo) SepAutoInc() bool {
 	return t.Version >= TableInfoVersion5 && t.AutoIdCache == 1
