@@ -299,10 +299,10 @@ type StatsReadWriter interface {
 
 	// LoadStatsFromJSON will load statistic from JSONTable, and save it to the storage.
 	// In final, it will also udpate the stats cache.
-	LoadStatsFromJSON(ctx context.Context, is infoschema.InfoSchema, jsonTbl *statsutil.JSONTable, concurrencyForPartition uint8) error
+	LoadStatsFromJSON(ctx context.Context, is infoschema.InfoSchema, jsonTbl *statsutil.JSONTable, concurrencyForPartition int) error
 
 	// LoadStatsFromJSONNoUpdate will load statistic from JSONTable, and save it to the storage.
-	LoadStatsFromJSONNoUpdate(ctx context.Context, is infoschema.InfoSchema, jsonTbl *statsutil.JSONTable, concurrencyForPartition uint8) error
+	LoadStatsFromJSONNoUpdate(ctx context.Context, is infoschema.InfoSchema, jsonTbl *statsutil.JSONTable, concurrencyForPartition int) error
 
 	// Methods for extended stast.
 
