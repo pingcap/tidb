@@ -54,17 +54,16 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
-	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
 	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"golang.org/x/sync/errgroup"
@@ -171,8 +170,8 @@ type Client struct {
 	// this feature is controlled by flag with-sys-table
 	fullClusterRestore bool
 	// the query to insert rows into table `gc_delete_range`, lack of ts.
-	deleteRangeQuery          []string
-	deleteRangeQueryCh        chan string
+	deleteRangeQuery          []*stream.PreDelRangeQuery
+	deleteRangeQueryCh        chan *stream.PreDelRangeQuery
 	deleteRangeQueryWaitGroup sync.WaitGroup
 
 	// see RestoreCommonConfig.WithSysTable
@@ -205,8 +204,8 @@ func NewRestoreClient(
 		tlsConf:            tlsConf,
 		keepaliveConf:      keepaliveConf,
 		switchCh:           make(chan struct{}),
-		deleteRangeQuery:   make([]string, 0),
-		deleteRangeQueryCh: make(chan string, 10),
+		deleteRangeQuery:   make([]*stream.PreDelRangeQuery, 0),
+		deleteRangeQueryCh: make(chan *stream.PreDelRangeQuery, 10),
 	}
 }
 
@@ -1031,7 +1030,7 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 	numOfTables := len(tables)
 
 	for lastSent := 0; lastSent < numOfTables; lastSent += int(rc.batchDdlSize) {
-		end := mathutil.Min(lastSent+int(rc.batchDdlSize), len(tables))
+		end := min(lastSent+int(rc.batchDdlSize), len(tables))
 		log.Info("create tables", zap.Int("table start", lastSent), zap.Int("table end", end))
 
 		tableSlice := tables[lastSent:end]
@@ -1812,7 +1811,7 @@ func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh <-chan *CreatedTa
 	if err != nil {
 		errCh <- err
 	}
-	tiFlashStores := make(map[int64]helper.StoreStat)
+	tiFlashStores := make(map[int64]pdhttp.StoreInfo)
 	for _, store := range tikvStats.Stores {
 		for _, l := range store.Store.Labels {
 			if l.Key == "engine" && l.Value == "tiflash" {
@@ -1828,49 +1827,48 @@ func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh <-chan *CreatedTa
 			updateCh.Inc()
 			return nil
 		}
-		if rc.dom != nil {
-			log.Info("table has tiflash replica, start sync..",
-				zap.Stringer("table", tbl.OldTable.Info.Name),
-				zap.Stringer("db", tbl.OldTable.DB.Name))
-			for {
-				var progress float64
-				if pi := tbl.Table.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
-					for _, p := range pi.Definitions {
-						progressOfPartition, err := infosync.MustGetTiFlashProgress(p.ID, tbl.Table.TiFlashReplica.Count, &tiFlashStores)
-						if err != nil {
-							log.Warn("failed to get progress for tiflash partition replica, retry it",
-								zap.Int64("tableID", tbl.Table.ID), zap.Int64("partitionID", p.ID), zap.Error(err))
-							time.Sleep(time.Second)
-							continue
-						}
-						progress += progressOfPartition
-					}
-					progress = progress / float64(len(pi.Definitions))
-				} else {
-					var err error
-					progress, err = infosync.MustGetTiFlashProgress(tbl.Table.ID, tbl.Table.TiFlashReplica.Count, &tiFlashStores)
+		if rc.dom == nil {
+			// unreachable, current we have initial domain in mgr.
+			log.Fatal("unreachable, domain is nil")
+		}
+		log.Info("table has tiflash replica, start sync..",
+			zap.Stringer("table", tbl.OldTable.Info.Name),
+			zap.Stringer("db", tbl.OldTable.DB.Name))
+		for {
+			var progress float64
+			if pi := tbl.Table.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
+				for _, p := range pi.Definitions {
+					progressOfPartition, err := infosync.MustGetTiFlashProgress(p.ID, tbl.Table.TiFlashReplica.Count, &tiFlashStores)
 					if err != nil {
-						log.Warn("failed to get progress for tiflash replica, retry it",
-							zap.Int64("tableID", tbl.Table.ID), zap.Error(err))
+						log.Warn("failed to get progress for tiflash partition replica, retry it",
+							zap.Int64("tableID", tbl.Table.ID), zap.Int64("partitionID", p.ID), zap.Error(err))
 						time.Sleep(time.Second)
 						continue
 					}
+					progress += progressOfPartition
 				}
-				// check until progress is 1
-				if progress == 1 {
-					log.Info("tiflash replica synced",
-						zap.Stringer("table", tbl.OldTable.Info.Name),
-						zap.Stringer("db", tbl.OldTable.DB.Name))
-					break
+				progress = progress / float64(len(pi.Definitions))
+			} else {
+				var err error
+				progress, err = infosync.MustGetTiFlashProgress(tbl.Table.ID, tbl.Table.TiFlashReplica.Count, &tiFlashStores)
+				if err != nil {
+					log.Warn("failed to get progress for tiflash replica, retry it",
+						zap.Int64("tableID", tbl.Table.ID), zap.Error(err))
+					time.Sleep(time.Second)
+					continue
 				}
-				// just wait for next check
-				// tiflash check the progress every 2s
-				// we can wait 2.5x times
-				time.Sleep(5 * time.Second)
 			}
-		} else {
-			// unreachable, current we have initial domain in mgr.
-			log.Fatal("unreachable, domain is nil")
+			// check until progress is 1
+			if progress == 1 {
+				log.Info("tiflash replica synced",
+					zap.Stringer("table", tbl.OldTable.Info.Name),
+					zap.Stringer("db", tbl.OldTable.DB.Name))
+				break
+			}
+			// just wait for next check
+			// tiflash check the progress every 2s
+			// we can wait 2.5x times
+			time.Sleep(5 * time.Second)
 		}
 		updateCh.Inc()
 		return nil
@@ -2799,7 +2797,7 @@ func (rc *Client) InitSchemasReplaceForDDL(
 			dbReplace.TableMap[t.Info.ID] = &stream.TableReplace{
 				Name:         newTableInfo.Name.O,
 				TableID:      newTableInfo.ID,
-				PartitionMap: getTableIDMap(newTableInfo, t.Info),
+				PartitionMap: getPartitionIDMap(newTableInfo, t.Info),
 				IndexMap:     getIndexIDMap(newTableInfo, t.Info),
 			}
 		}
@@ -2826,7 +2824,7 @@ func (rc *Client) InitSchemasReplaceForDDL(
 
 	rp := stream.NewSchemasReplace(
 		dbReplaces, needConstructIdMap, cfg.TiFlashRecorder, rc.currentTS, cfg.TableFilter, rc.GenGlobalID, rc.GenGlobalIDs,
-		rc.InsertDeleteRangeForTable, rc.InsertDeleteRangeForIndex)
+		rc.RecordDeleteRange)
 	return rp, nil
 }
 
@@ -3003,8 +3001,8 @@ func (rc *Client) RestoreMetaKVFilesWithBatchMethod(
 			batchSize = f.Length
 		} else {
 			if f.MinTs <= rangeMax && batchSize+f.Length <= MetaKVBatchSize {
-				rangeMin = mathutil.Min(rangeMin, f.MinTs)
-				rangeMax = mathutil.Max(rangeMax, f.MaxTs)
+				rangeMin = min(rangeMin, f.MinTs)
+				rangeMax = max(rangeMax, f.MaxTs)
 				batchSize += f.Length
 			} else {
 				// Either f.MinTS > rangeMax or f.MinTs is the filterTs we need.
@@ -3430,66 +3428,8 @@ NEXTSQL:
 	return nil
 }
 
-const (
-	insertDeleteRangeSQLPrefix = `INSERT IGNORE INTO mysql.gc_delete_range VALUES `
-	insertDeleteRangeSQLValue  = "(%d, %d, '%s', '%s', %%[1]d)"
-
-	batchInsertDeleteRangeSize = 256
-)
-
-// InsertDeleteRangeForTable generates query to insert table delete job into table `gc_delete_range`.
-func (rc *Client) InsertDeleteRangeForTable(jobID int64, tableIDs []int64) {
-	var elementID int64 = 1
-	var tableID int64
-	for i := 0; i < len(tableIDs); i += batchInsertDeleteRangeSize {
-		batchEnd := len(tableIDs)
-		if batchEnd > i+batchInsertDeleteRangeSize {
-			batchEnd = i + batchInsertDeleteRangeSize
-		}
-
-		var buf strings.Builder
-		buf.WriteString(insertDeleteRangeSQLPrefix)
-		for j := i; j < batchEnd; j++ {
-			tableID = tableIDs[j]
-			startKey := tablecodec.EncodeTablePrefix(tableID)
-			endKey := tablecodec.EncodeTablePrefix(tableID + 1)
-			startKeyEncoded := hex.EncodeToString(startKey)
-			endKeyEncoded := hex.EncodeToString(endKey)
-			buf.WriteString(fmt.Sprintf(insertDeleteRangeSQLValue, jobID, elementID, startKeyEncoded, endKeyEncoded))
-			if j != batchEnd-1 {
-				buf.WriteString(",")
-			}
-			elementID += 1
-		}
-		rc.deleteRangeQueryCh <- buf.String()
-	}
-}
-
-// InsertDeleteRangeForIndex generates query to insert index delete job into table `gc_delete_range`.
-func (rc *Client) InsertDeleteRangeForIndex(jobID int64, elementID *int64, tableID int64, indexIDs []int64) {
-	var indexID int64
-	for i := 0; i < len(indexIDs); i += batchInsertDeleteRangeSize {
-		batchEnd := len(indexIDs)
-		if batchEnd > i+batchInsertDeleteRangeSize {
-			batchEnd = i + batchInsertDeleteRangeSize
-		}
-
-		var buf strings.Builder
-		buf.WriteString(insertDeleteRangeSQLPrefix)
-		for j := i; j < batchEnd; j++ {
-			indexID = indexIDs[j]
-			startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
-			endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
-			startKeyEncoded := hex.EncodeToString(startKey)
-			endKeyEncoded := hex.EncodeToString(endKey)
-			buf.WriteString(fmt.Sprintf(insertDeleteRangeSQLValue, jobID, *elementID, startKeyEncoded, endKeyEncoded))
-			if j != batchEnd-1 {
-				buf.WriteString(",")
-			}
-			*elementID += 1
-		}
-		rc.deleteRangeQueryCh <- buf.String()
-	}
+func (rc *Client) RecordDeleteRange(sql *stream.PreDelRangeQuery) {
+	rc.deleteRangeQueryCh <- sql
 }
 
 // use channel to save the delete-range query to make it thread-safety.
@@ -3520,8 +3460,28 @@ func (rc *Client) InsertGCRows(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	jobIDMap := make(map[int64]int64)
 	for _, query := range rc.deleteRangeQuery {
-		if err := rc.db.se.ExecuteInternal(ctx, fmt.Sprintf(query, ts)); err != nil {
+		paramsList := make([]interface{}, 0, len(query.ParamsList)*5)
+		for _, params := range query.ParamsList {
+			newJobID, exists := jobIDMap[params.JobID]
+			if !exists {
+				newJobID, err = rc.GenGlobalID(ctx)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				jobIDMap[params.JobID] = newJobID
+			}
+			log.Info("insert into the delete range",
+				zap.Int64("jobID", newJobID),
+				zap.Int64("elemID", params.ElemID),
+				zap.String("startKey", params.StartKey),
+				zap.String("endKey", params.EndKey),
+				zap.Uint64("ts", ts))
+			// (job_id, elem_id, start_key, end_key, ts)
+			paramsList = append(paramsList, newJobID, params.ElemID, params.StartKey, params.EndKey, ts)
+		}
+		if err := rc.db.se.ExecuteInternal(ctx, query.Sql, paramsList...); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -3529,7 +3489,7 @@ func (rc *Client) InsertGCRows(ctx context.Context) error {
 }
 
 // only for unit test
-func (rc *Client) GetGCRows() []string {
+func (rc *Client) GetGCRows() []*stream.PreDelRangeQuery {
 	close(rc.deleteRangeQueryCh)
 	rc.deleteRangeQueryWaitGroup.Wait()
 	return rc.deleteRangeQuery
@@ -3606,7 +3566,7 @@ func (rc *Client) ResetTiFlashReplicas(ctx context.Context, g glue.Glue, storage
 	for _, s := range allSchema {
 		for _, t := range s.Tables {
 			if t.TiFlashReplica != nil {
-				expectTiFlashStoreCount = mathutil.Max(expectTiFlashStoreCount, t.TiFlashReplica.Count)
+				expectTiFlashStoreCount = max(expectTiFlashStoreCount, t.TiFlashReplica.Count)
 				recorder.AddTable(t.ID, *t.TiFlashReplica)
 				needTiFlash = true
 			}

@@ -984,7 +984,7 @@ func (passwordLocking *PasswordLocking) ParseJSON(passwordLockingJSON types.Bina
 	if err != nil {
 		return err
 	}
-	passwordLocking.FailedLoginAttempts = mathutil.Min(passwordLocking.FailedLoginAttempts, math.MaxInt16)
+	passwordLocking.FailedLoginAttempts = min(passwordLocking.FailedLoginAttempts, math.MaxInt16)
 	passwordLocking.FailedLoginAttempts = mathutil.Max(passwordLocking.FailedLoginAttempts, 0)
 
 	passwordLocking.PasswordLockTimeDays, err =
@@ -992,7 +992,7 @@ func (passwordLocking *PasswordLocking) ParseJSON(passwordLockingJSON types.Bina
 	if err != nil {
 		return err
 	}
-	passwordLocking.PasswordLockTimeDays = mathutil.Min(passwordLocking.PasswordLockTimeDays, math.MaxInt16)
+	passwordLocking.PasswordLockTimeDays = min(passwordLocking.PasswordLockTimeDays, math.MaxInt16)
 	passwordLocking.PasswordLockTimeDays = mathutil.Max(passwordLocking.PasswordLockTimeDays, -1)
 
 	passwordLocking.FailedLoginCount, err =

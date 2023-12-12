@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
@@ -147,7 +146,7 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Physi
 	if ndv <= 1 {
 		return nil
 	}
-	concurrency = mathutil.Min(concurrency, int(ndv))
+	concurrency = min(concurrency, int(ndv))
 
 	byItems := make([]expression.Expression, 0, len(pp.PartitionBy))
 	for _, item := range pp.PartitionBy {
@@ -188,7 +187,7 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 	if ndv <= 1 {
 		return nil
 	}
-	concurrency = mathutil.Min(concurrency, int(ndv))
+	concurrency = min(concurrency, int(ndv))
 
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	shuffle := PhysicalShuffle{
@@ -255,7 +254,7 @@ type LogicalPlan interface {
 	PredicatePushDown([]expression.Expression, *logicalOptimizeOp) ([]expression.Expression, LogicalPlan)
 
 	// PruneColumns prunes the unused columns.
-	PruneColumns([]*expression.Column, *logicalOptimizeOp) error
+	PruneColumns([]*expression.Column, *logicalOptimizeOp, LogicalPlan) error
 
 	// findBestTask converts the logical plan to the physical plan. It's a new interface.
 	// It is called recursively from the parent to the children to create the result physical plan.
@@ -757,11 +756,11 @@ func (*baseLogicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
+func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp, _ LogicalPlan) error {
 	if len(p.children) == 0 {
 		return nil
 	}
-	return p.children[0].PruneColumns(parentUsedCols, opt)
+	return p.children[0].PruneColumns(parentUsedCols, opt, p)
 }
 
 // Schema implements Plan Schema interface.

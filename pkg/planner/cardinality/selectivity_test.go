@@ -88,7 +88,7 @@ func BenchmarkSelectivity(b *testing.B) {
 	ret := &plannercore.PreprocessorReturn{}
 	err = plannercore.Preprocess(context.Background(), sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 	require.NoErrorf(b, err, "for %s", exprs)
-	p, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), sctx, stmts[0], ret.InfoSchema)
+	p, err := plannercore.BuildLogicalPlanForTest(context.Background(), sctx, stmts[0], ret.InfoSchema)
 	require.NoErrorf(b, err, "error %v, for building plan, expr %s", err, exprs)
 
 	file, err := os.Create("cpu.profile")
@@ -446,7 +446,7 @@ func TestSelectivity(t *testing.T) {
 		ret := &plannercore.PreprocessorReturn{}
 		err = plannercore.Preprocess(context.Background(), sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 		require.NoErrorf(t, err, "for expr %s", tt.exprs)
-		p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
+		p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 		require.NoErrorf(t, err, "for building plan, expr %s", err, tt.exprs)
 
 		sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
@@ -504,7 +504,7 @@ func TestDNFCondSelectivity(t *testing.T) {
 		ret := &plannercore.PreprocessorReturn{}
 		err = plannercore.Preprocess(context.Background(), sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 		require.NoErrorf(t, err, "error %v, for sql %s", err, tt)
-		p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
+		p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 		require.NoErrorf(t, err, "error %v, for building plan, sql %s", err, tt)
 
 		sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
@@ -642,7 +642,7 @@ func generateIntDatum(dimension, num int) ([]types.Datum, error) {
 				data[dimension-k-1].SetInt64(int64(j % num))
 				j = j / num
 			}
-			bytes, err := codec.EncodeKey(sc, nil, data...)
+			bytes, err := codec.EncodeKey(sc.TimeZone(), nil, data...)
 			if err != nil {
 				return nil, err
 			}
@@ -1035,7 +1035,7 @@ func TestOrderingIdxSelectivityThreshold(t *testing.T) {
 	require.NoError(t, err)
 	idxValues := make([]types.Datum, 0)
 	for _, val := range colValues {
-		b, err := codec.EncodeKey(sc, nil, val)
+		b, err := codec.EncodeKey(sc.TimeZone(), nil, val)
 		require.NoError(t, err)
 		idxValues = append(idxValues, types.NewBytesDatum(b))
 	}

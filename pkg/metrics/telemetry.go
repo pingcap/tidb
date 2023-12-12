@@ -15,7 +15,6 @@
 package metrics
 
 import (
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 )
@@ -402,7 +401,7 @@ func (c TablePartitionUsageCounter) Cal(rhs TablePartitionUsageCounter) TablePar
 		TablePartitionRangeColumnsGt2Cnt:          c.TablePartitionRangeColumnsGt2Cnt - rhs.TablePartitionRangeColumnsGt2Cnt,
 		TablePartitionRangeColumnsGt3Cnt:          c.TablePartitionRangeColumnsGt3Cnt - rhs.TablePartitionRangeColumnsGt3Cnt,
 		TablePartitionListColumnsCnt:              c.TablePartitionListColumnsCnt - rhs.TablePartitionListColumnsCnt,
-		TablePartitionMaxPartitionsCnt:            mathutil.Max(c.TablePartitionMaxPartitionsCnt-rhs.TablePartitionMaxPartitionsCnt, rhs.TablePartitionMaxPartitionsCnt),
+		TablePartitionMaxPartitionsCnt:            max(c.TablePartitionMaxPartitionsCnt-rhs.TablePartitionMaxPartitionsCnt, rhs.TablePartitionMaxPartitionsCnt),
 		TablePartitionCreateIntervalPartitionsCnt: c.TablePartitionCreateIntervalPartitionsCnt - rhs.TablePartitionCreateIntervalPartitionsCnt,
 		TablePartitionAddIntervalPartitionsCnt:    c.TablePartitionAddIntervalPartitionsCnt - rhs.TablePartitionAddIntervalPartitionsCnt,
 		TablePartitionDropIntervalPartitionsCnt:   c.TablePartitionDropIntervalPartitionsCnt - rhs.TablePartitionDropIntervalPartitionsCnt,
@@ -423,7 +422,7 @@ func ResetTablePartitionCounter(pre TablePartitionUsageCounter) TablePartitionUs
 		TablePartitionRangeColumnsGt2Cnt:     readCounter(TelemetryTablePartitionRangeColumnsGt2Cnt),
 		TablePartitionRangeColumnsGt3Cnt:     readCounter(TelemetryTablePartitionRangeColumnsGt3Cnt),
 		TablePartitionListColumnsCnt:         readCounter(TelemetryTablePartitionListColumnsCnt),
-		TablePartitionMaxPartitionsCnt:       mathutil.Max(readCounter(TelemetryTablePartitionMaxPartitionsCnt)-pre.TablePartitionMaxPartitionsCnt, pre.TablePartitionMaxPartitionsCnt),
+		TablePartitionMaxPartitionsCnt:       max(readCounter(TelemetryTablePartitionMaxPartitionsCnt)-pre.TablePartitionMaxPartitionsCnt, pre.TablePartitionMaxPartitionsCnt),
 		TablePartitionReorganizePartitionCnt: readCounter(TelemetryReorganizePartitionCnt),
 	}
 }

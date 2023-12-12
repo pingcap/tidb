@@ -21,7 +21,9 @@ import (
 
 // task state machine
 //
-//		                ┌──────────────────────────────┐
+//		                            ┌────────┐
+//		                ┌───────────│resuming│◄────────┐
+//		                │           └────────┘         │
 //		                │           ┌───────┐       ┌──┴───┐
 //		                │ ┌────────►│pausing├──────►│paused│
 //		                │ │         └───────┘       └──────┘
@@ -43,6 +45,8 @@ import (
 //	 2. failed:			pending -> running -> reverting -> reverted/revert_failed, pending -> failed
 //	 3. canceled:		pending -> running -> cancelling -> reverting -> reverted/revert_failed
 //	 3. pause/resume:	pending -> running -> pausing -> paused -> running
+//
+// TODO: we don't have revert_failed task for now.
 //
 // subtask state machine for normal subtask:
 //
@@ -116,28 +120,59 @@ const (
 	StepThree Step = 3
 )
 
-// TaskIDLabelName is the label name of task id.
-const TaskIDLabelName = "task_id"
+const (
+	// TaskIDLabelName is the label name of task id.
+	TaskIDLabelName = "task_id"
+	// NormalPriority represents the normal priority of task.
+	NormalPriority = 512
+)
+
+// MaxConcurrentTask is the max concurrency of task.
+// TODO: remove this limit later.
+var MaxConcurrentTask = 4
 
 // Task represents the task of distributed framework.
+// tasks are run in the order of: priority asc, create_time asc, id asc.
 type Task struct {
 	ID    int64
 	Key   string
 	Type  TaskType
 	State TaskState
 	Step  Step
+	// Priority is the priority of task, the smaller value means the higher priority.
+	// valid range is [1, 1024], default is NormalPriority.
+	Priority    int
+	Concurrency int
+	CreateTime  time.Time
+
+	// depends on query, below fields might not be filled.
+
 	// DispatcherID is not used now.
 	DispatcherID    string
-	Concurrency     uint64
 	StartTime       time.Time
 	StateUpdateTime time.Time
 	Meta            []byte
 	Error           error
 }
 
-// IsFinished checks if the task is finished.
-func (t *Task) IsFinished() bool {
-	return t.State == TaskStateSucceed || t.State == TaskStateReverted
+// IsDone checks if the task is done.
+func (t *Task) IsDone() bool {
+	return t.State == TaskStateSucceed || t.State == TaskStateReverted ||
+		t.State == TaskStateFailed
+}
+
+// Compare compares two tasks by task order.
+func (t *Task) Compare(other *Task) int {
+	if t.Priority != other.Priority {
+		return t.Priority - other.Priority
+	}
+	if t.CreateTime != other.CreateTime {
+		if t.CreateTime.Before(other.CreateTime) {
+			return -1
+		}
+		return 1
+	}
+	return int(t.ID - other.ID)
 }
 
 // Subtask represents the subtask of distribute framework.
@@ -149,9 +184,14 @@ type Subtask struct {
 	// taken from task_key of the subtask table
 	TaskID int64
 	State  TaskState
-	// SchedulerID is the ID of scheduler, right now it's the same as instance_id, exec_id.
+	// Concurrency is the concurrency of the subtask, should <= task's concurrency.
+	// some subtasks like post-process of import into, don't consume too many resources,
+	// can lower this value.
+	Concurrency int
+	// ExecID is the ID of target executor, right now it's the same as instance_id,
 	// its value is IP:PORT, see GenerateExecID
-	SchedulerID string
+	ExecID     string
+	CreateTime time.Time
 	// StartTime is the time when the subtask is started.
 	// it's 0 if it hasn't started yet.
 	StartTime time.Time
@@ -163,6 +203,11 @@ type Subtask struct {
 	Summary    string
 }
 
+func (t *Subtask) String() string {
+	return fmt.Sprintf("Subtask[ID=%d, Step=%d, Type=%s, TaskID=%d, State=%s, ExecID=%s]",
+		t.ID, t.Step, t.Type, t.TaskID, t.State, t.ExecID)
+}
+
 // IsFinished checks if the subtask is finished.
 func (t *Subtask) IsFinished() bool {
 	return t.State == TaskStateSucceed || t.State == TaskStateReverted || t.State == TaskStateCanceled ||
@@ -170,18 +215,19 @@ func (t *Subtask) IsFinished() bool {
 }
 
 // NewSubtask create a new subtask.
-func NewSubtask(step Step, taskID int64, tp TaskType, schedulerID string, meta []byte) *Subtask {
+func NewSubtask(step Step, taskID int64, tp TaskType, execID string, concurrency int, meta []byte) *Subtask {
 	return &Subtask{
 		Step:        step,
 		Type:        tp,
 		TaskID:      taskID,
-		SchedulerID: schedulerID,
+		ExecID:      execID,
+		Concurrency: concurrency,
 		Meta:        meta,
 	}
 }
 
 // MinimalTask is the minimal task of distribute framework.
-// Each subtask is divided into multiple minimal tasks by scheduler.
+// Each subtask is divided into multiple minimal tasks by TaskExecutor.
 type MinimalTask interface {
 	// IsMinimalTask is a marker to check if it is a minimal task for compiler.
 	IsMinimalTask()

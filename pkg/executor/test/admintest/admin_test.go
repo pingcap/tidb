@@ -45,53 +45,6 @@ import (
 	"go.uber.org/zap"
 )
 
-func TestAdminCheckIndexRange(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`drop table if exists check_index_test;`)
-	tk.MustExec(`create table check_index_test (a int, b varchar(10), index a_b (a, b), index b (b))`)
-	tk.MustExec(`insert check_index_test values (3, "ab"),(2, "cd"),(1, "ef"),(-1, "hi")`)
-	result := tk.MustQuery("admin check index check_index_test a_b (2, 4);")
-	result.Check(testkit.Rows("1 ef 3", "2 cd 2"))
-
-	result = tk.MustQuery("admin check index check_index_test a_b (3, 5);")
-	result.Check(testkit.Rows("-1 hi 4", "1 ef 3"))
-
-	tk.MustExec("use mysql")
-	result = tk.MustQuery("admin check index test.check_index_test a_b (2, 3), (4, 5);")
-	result.Check(testkit.Rows("-1 hi 4", "2 cd 2"))
-}
-
-func TestAdminCheckIndex(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	check := func() {
-		tk.MustExec("insert admin_test (c1, c2) values (1, 1), (2, 2), (5, 5), (10, 10), (11, 11), (NULL, NULL)")
-		tk.MustExec("admin check index admin_test c1")
-		tk.MustExec("admin check index admin_test c2")
-	}
-	tk.MustExec("drop table if exists admin_test")
-	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, index (c1), unique key(c2))")
-	check()
-
-	// Test for hash partition table.
-	tk.MustExec("drop table if exists admin_test")
-	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, index (c1), unique key(c2)) partition by hash(c2) partitions 5;")
-	check()
-
-	// Test for range partition table.
-	tk.MustExec("drop table if exists admin_test")
-	tk.MustExec(`create table admin_test (c1 int, c2 int, c3 int default 1, index (c1), unique key(c2)) PARTITION BY RANGE ( c2 ) (
-		PARTITION p0 VALUES LESS THAN (5),
-		PARTITION p1 VALUES LESS THAN (10),
-		PARTITION p2 VALUES LESS THAN (MAXVALUE))`)
-	check()
-}
-
 func TestAdminRecoverIndex(t *testing.T) {
 	store, domain := testkit.CreateMockStoreAndDomain(t)
 
@@ -345,7 +298,7 @@ func TestClusteredIndexAdminRecoverIndex(t *testing.T) {
 	tblName := model.NewCIStr("t")
 
 	// Test no corruption case.
-	tk.MustExec("create table t (a varchar(255), b int, c char(10), primary key(a, c), index idx(b));")
+	tk.MustExec("create table t (a varchar(255), b int, c char(10), primary key(a, c), index idx(b), index idx1(c));")
 	tk.MustExec("insert into t values ('1', 2, '3'), ('1', 2, '4'), ('1', 2, '5');")
 	tk.MustQuery("admin recover index t `primary`;").Check(testkit.Rows("0 0"))
 	tk.MustQuery("admin recover index t `idx`;").Check(testkit.Rows("0 3"))
@@ -362,6 +315,7 @@ func TestClusteredIndexAdminRecoverIndex(t *testing.T) {
 	sc := ctx.GetSessionVars().StmtCtx
 
 	// Some index entries are missed.
+	// Recover an index don't covered by clustered index.
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	cHandle := testutil.MustNewCommonHandle(t, "1", "3")
@@ -375,6 +329,23 @@ func TestClusteredIndexAdminRecoverIndex(t *testing.T) {
 	tk.MustQuery("SELECT COUNT(*) FROM t USE INDEX(idx)").Check(testkit.Rows("2"))
 	tk.MustQuery("admin recover index t idx").Check(testkit.Rows("1 3"))
 	tk.MustQuery("SELECT COUNT(*) FROM t USE INDEX(idx)").Check(testkit.Rows("3"))
+	tk.MustExec("admin check table t;")
+
+	// Recover an index covered by clustered index.
+	idx1Info := tblInfo.FindIndexByName("idx1")
+	indexOpr1 := tables.NewIndex(tblInfo.ID, tblInfo, idx1Info)
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	err = indexOpr1.Delete(sc, txn, types.MakeDatums("3"), cHandle)
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	tk.MustGetErrCode("admin check table t", mysql.ErrDataInconsistent)
+	tk.MustGetErrCode("admin check index t idx1", mysql.ErrDataInconsistent)
+
+	tk.MustQuery("SELECT COUNT(*) FROM t USE INDEX(idx1)").Check(testkit.Rows("2"))
+	tk.MustQuery("admin recover index t idx1").Check(testkit.Rows("1 3"))
+	tk.MustQuery("SELECT COUNT(*) FROM t USE INDEX(idx1)").Check(testkit.Rows("3"))
 	tk.MustExec("admin check table t;")
 }
 
@@ -1272,7 +1243,7 @@ func TestCheckFailReport(t *testing.T) {
 
 		txn, err := store.Begin()
 		require.NoError(t, err)
-		encoded, err := codec.EncodeKey(stmtctx.NewStmtCtx(), nil, types.NewBytesDatum([]byte{1, 0, 1, 0, 0, 1, 1}))
+		encoded, err := codec.EncodeKey(time.UTC, nil, types.NewBytesDatum([]byte{1, 0, 1, 0, 0, 1, 1}))
 		require.NoError(t, err)
 		hd, err := kv.NewCommonHandle(encoded)
 		require.NoError(t, err)
@@ -1664,7 +1635,7 @@ func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
 	r := regexp.MustCompile(pattern)
 
 	getCommonHandle := func(randomRow int) *kv.CommonHandle {
-		h, err := codec.EncodeKey(sc, nil, types.MakeDatums(randomRow)...)
+		h, err := codec.EncodeKey(sc.TimeZone(), nil, types.MakeDatums(randomRow)...)
 		require.NoError(t, err)
 		ch, err := kv.NewCommonHandle(h)
 		require.NoError(t, err)
@@ -1769,17 +1740,4 @@ func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
 		err = txn.Commit(context.Background())
 		tk.MustExec("admin check table admin_test")
 	}
-}
-
-func TestAdminCheckTableErrorLocateBigTable(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists admin_test")
-	tk.MustExec("create table admin_test (c1 int, c2 int, primary key(c1), key(c2))")
-	tk.MustExec("set cte_max_recursion_depth=100000;")
-	tk.MustExec("insert into admin_test with recursive cte(a, b) as (select 1, 1 union select a+1, b+1 from cte where cte.a< 100000) select * from cte;")
-	tk.MustQuery("select /*+ read_from_storage(tikv[`test`.`admin_test`]) */ bit_xor(crc32(md5(concat_ws(0x2, `c1`, `c2`)))), ((cast(crc32(md5(concat_ws(0x2, `c1`))) as signed) - 9223372036854775807) div 1 % 1024), count(*) from `test`.`admin_test` use index() where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `c1`))) as signed) - 9223372036854775807) div 1 % 1024)")
-	tk.MustQuery("select bit_xor(crc32(md5(concat_ws(0x2, `c1`, `c2`)))), ((cast(crc32(md5(concat_ws(0x2, `c1`))) as signed) - 9223372036854775807) div 1 % 1024), count(*) from `test`.`admin_test` use index(`c2`) where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `c1`))) as signed) - 9223372036854775807) div 1 % 1024)")
 }

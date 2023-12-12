@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
@@ -341,7 +340,7 @@ func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storag
 
 	regionsPerRange := len(regionIDs) / splitCnt
 	oversizeCnt := len(regionIDs) % splitCnt
-	ranges := make([]kv.KeyRange, 0, mathutil.Min(len(regionIDs), splitCnt))
+	ranges := make([]kv.KeyRange, 0, min(len(regionIDs), splitCnt))
 	for len(regionIDs) > 0 {
 		startRegion, err := regionCache.LocateRegionByID(tikv.NewBackofferWithVars(ctx, 20000, nil),
 			regionIDs[0])
@@ -380,7 +379,7 @@ func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storag
 var emptyBytesHandleKey kv.Key
 
 func init() {
-	key, err := codec.EncodeKey(nil, nil, types.NewBytesDatum(nil))
+	key, err := codec.EncodeKey(time.UTC, nil, types.NewBytesDatum(nil))
 	terror.MustNil(err)
 	emptyBytesHandleKey = key
 }

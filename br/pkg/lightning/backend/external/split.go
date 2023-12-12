@@ -95,8 +95,9 @@ func NewRangeSplitter(
 	externalStorage storage.ExternalStorage,
 	rangesGroupSize, rangesGroupKeys int64,
 	maxRangeSize, maxRangeKeys int64,
+	checkHotSpot bool,
 ) (*RangeSplitter, error) {
-	propIter, err := NewMergePropIter(ctx, statFiles, externalStorage)
+	propIter, err := NewMergePropIter(ctx, statFiles, externalStorage, checkHotSpot)
 	if err != nil {
 		return nil, err
 	}

@@ -136,6 +136,8 @@ insert into tt values ("B", "B", "B", JSON_OBJECT("B", "B"));
 insert into tt values ("c", "c", "c", JSON_OBJECT("c", "c"));
 insert into tt values ("C", "C", "C", JSON_OBJECT("C", "C"));
 split table tt by (0), (1), (2), (3), (4), (5);
+TOTAL_SPLIT_REGION	SCATTER_FINISH_RATIO
+6	1
 desc format='brief' select min(a) from tt;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:min(collation_agg_func.tt.a)->Column#6

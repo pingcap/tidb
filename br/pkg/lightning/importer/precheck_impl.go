@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/engine"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/set"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -280,8 +279,8 @@ func (ci *emptyRegionCheckItem) Check(ctx context.Context) (*precheck.CheckResul
 		}
 		tableCount += len(info.Tables)
 	}
-	errorThrehold := mathutil.Max(errorEmptyRegionCntPerStore, tableCount*3)
-	warnThrehold := mathutil.Max(warnEmptyRegionCntPerStore, tableCount)
+	errorThrehold := max(errorEmptyRegionCntPerStore, tableCount*3)
+	warnThrehold := max(warnEmptyRegionCntPerStore, tableCount)
 	var (
 		errStores  []string
 		warnStores []string
@@ -380,7 +379,7 @@ func (ci *regionDistributionCheckItem) Check(ctx context.Context) (*precheck.Che
 		}
 		tableCount += len(info.Tables)
 	}
-	threhold := mathutil.Max(checkRegionCntRatioThreshold, tableCount)
+	threhold := max(checkRegionCntRatioThreshold, tableCount)
 	if maxStore.Status.RegionCount <= threhold {
 		return theResult, nil
 	}
@@ -464,7 +463,7 @@ func (ci *largeFileCheckItem) Check(_ context.Context) (*precheck.CheckResult, e
 		Item:     ci.GetCheckItemID(),
 		Severity: precheck.Warn,
 		Passed:   true,
-		Message:  "Source csv files size is proper",
+		Message:  "Source data files size is proper",
 	}
 
 	if !ci.cfg.Mydumper.StrictFormat {
@@ -472,14 +471,14 @@ func (ci *largeFileCheckItem) Check(_ context.Context) (*precheck.CheckResult, e
 			for _, t := range db.Tables {
 				for _, f := range t.DataFiles {
 					if f.FileMeta.RealSize > defaultCSVSize {
-						theResult.Message = fmt.Sprintf("large csv: %s file exists and it will slow down import performance", f.FileMeta.Path)
+						theResult.Message = fmt.Sprintf("large data file: %s file exists and it will slow down import performance", f.FileMeta.Path)
 						theResult.Passed = false
 					}
 				}
 			}
 		}
 	} else {
-		theResult.Message = "Skip the csv size check, because config.StrictFormat is true"
+		theResult.Message = "Skip the data file size check, because config.StrictFormat is true"
 	}
 	return theResult, nil
 }
@@ -1350,7 +1349,7 @@ func (ci *tableEmptyCheckItem) Check(ctx context.Context) (*precheck.CheckResult
 
 	var lock sync.Mutex
 	tableNames := make([]string, 0)
-	concurrency := mathutil.Min(tableCount, ci.cfg.App.RegionConcurrency)
+	concurrency := min(tableCount, ci.cfg.App.RegionConcurrency)
 	type tableNameComponents struct {
 		DBName    string
 		TableName string

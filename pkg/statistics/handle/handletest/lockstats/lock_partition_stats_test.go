@@ -263,7 +263,7 @@ func TestUnlockTheUnlockedTableWouldGenerateWarning(t *testing.T) {
 }
 
 func TestSkipLockALotOfPartitions(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_analyze_version = 1")
 	tk.MustExec("use test")

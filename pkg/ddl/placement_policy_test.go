@@ -844,7 +844,7 @@ func TestCreateSchemaWithInfoPlacement(t *testing.T) {
 }
 
 func TestAlterRangePlacementPolicy(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create placement policy fiveReplicas followers=4")
 	tk.MustExec("alter range global placement policy fiveReplicas")

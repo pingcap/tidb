@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"go.uber.org/zap"
@@ -46,9 +47,38 @@ import (
 type Column struct {
 	*model.ColumnInfo
 	// If this column is a generated column, the expression will be stored here.
-	GeneratedExpr ast.ExprNode
+	GeneratedExpr *ClonableExprNode
 	// If this column has default expr value, this expression will be stored here.
 	DefaultExpr ast.ExprNode
+}
+
+// ClonableExprNode is a wrapper for ast.ExprNode.
+type ClonableExprNode struct {
+	ctor     func() ast.ExprNode
+	internal ast.ExprNode
+}
+
+// NewClonableExprNode creates a ClonableExprNode.
+func NewClonableExprNode(ctor func() ast.ExprNode, internal ast.ExprNode) *ClonableExprNode {
+	return &ClonableExprNode{
+		ctor:     ctor,
+		internal: internal,
+	}
+}
+
+// Clone makes a "copy" of internal ast.ExprNode by reconstructing it.
+func (n *ClonableExprNode) Clone() ast.ExprNode {
+	intest.AssertNotNil(n.ctor)
+	if n.ctor == nil {
+		return n.internal
+	}
+	return n.ctor()
+}
+
+// Internal returns the reference of the internal ast.ExprNode.
+// Note: only use this method when you are sure that the internal ast.ExprNode is not modified concurrently.
+func (n *ClonableExprNode) Internal() ast.ExprNode {
+	return n.internal
 }
 
 // String implements fmt.Stringer interface.
@@ -295,7 +325,7 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 // TODO: change the third arg to TypeField. Not pass ColumnInfo.
 func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
-	casted, err = val.ConvertTo(sc, &col.FieldType)
+	casted, err = val.ConvertTo(sc.TypeCtx(), &col.FieldType)
 	// TODO: make sure all truncate errors are handled by ConvertTo.
 	if returnErr && err != nil {
 		return casted, err
@@ -701,7 +731,7 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 	iter := chunk.NewIterator4Chunk(req)
 	for i, idx := range virtualColumnIndex {
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			datum, err := expCols[idx].EvalVirtualColumn(row)
+			datum, err := expCols[idx].EvalVirtualColumn(sctx, row)
 			if err != nil {
 				return err
 			}
@@ -713,7 +743,7 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 			}
 
 			// Clip to zero if get negative value after cast to unsigned.
-			if mysql.HasUnsignedFlag(colInfos[idx].FieldType.GetFlag()) && !castDatum.IsNull() && !sctx.GetSessionVars().StmtCtx.ShouldClipToZero() {
+			if mysql.HasUnsignedFlag(colInfos[idx].FieldType.GetFlag()) && !castDatum.IsNull() && sctx.GetSessionVars().StmtCtx.TypeFlags().AllowNegativeToUnsigned() {
 				switch datum.Kind() {
 				case types.KindInt64:
 					if datum.GetInt64() < 0 {

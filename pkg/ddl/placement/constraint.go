@@ -17,45 +17,24 @@ package placement
 import (
 	"fmt"
 	"strings"
+
+	pd "github.com/tikv/pd/client/http"
 )
-
-// ConstraintOp defines how a Constraint matches a store.
-type ConstraintOp string
-
-const (
-	// In restricts the store label value should in the value list.
-	// If label does not exist, `in` is always false.
-	In ConstraintOp = "in"
-	// NotIn restricts the store label value should not in the value list.
-	// If label does not exist, `notIn` is always true.
-	NotIn ConstraintOp = "notIn"
-	// Exists restricts the store should have the label.
-	Exists ConstraintOp = "exists"
-	// NotExists restricts the store should not have the label.
-	NotExists ConstraintOp = "notExists"
-)
-
-// Constraint is used to filter store when trying to place peer of a region.
-type Constraint struct {
-	Key    string       `json:"key,omitempty"`
-	Op     ConstraintOp `json:"op,omitempty"`
-	Values []string     `json:"values,omitempty"`
-}
 
 // NewConstraint will create a Constraint from a string.
-func NewConstraint(label string) (Constraint, error) {
-	r := Constraint{}
+func NewConstraint(label string) (pd.LabelConstraint, error) {
+	r := pd.LabelConstraint{}
 
 	if len(label) < 4 {
 		return r, fmt.Errorf("%w: %s", ErrInvalidConstraintFormat, label)
 	}
 
-	var op ConstraintOp
+	var op pd.LabelConstraintOp
 	switch label[0] {
 	case '+':
-		op = In
+		op = pd.In
 	case '-':
-		op = NotIn
+		op = pd.NotIn
 	default:
 		return r, fmt.Errorf("%w: %s", ErrInvalidConstraintFormat, label)
 	}
@@ -75,7 +54,7 @@ func NewConstraint(label string) (Constraint, error) {
 		return r, fmt.Errorf("%w: %s", ErrInvalidConstraintFormat, label)
 	}
 
-	if op == In && key == EngineLabelKey && strings.ToLower(val) == EngineLabelTiFlash {
+	if op == pd.In && key == EngineLabelKey && strings.ToLower(val) == EngineLabelTiFlash {
 		return r, fmt.Errorf("%w: %s", ErrUnsupportedConstraint, label)
 	}
 
@@ -86,24 +65,24 @@ func NewConstraint(label string) (Constraint, error) {
 }
 
 // NewConstraintDirect will create a Constraint from argument directly.
-func NewConstraintDirect(key string, op ConstraintOp, val ...string) Constraint {
-	return Constraint{
+func NewConstraintDirect(key string, op pd.LabelConstraintOp, val ...string) pd.LabelConstraint {
+	return pd.LabelConstraint{
 		Key:    key,
 		Op:     op,
 		Values: val,
 	}
 }
 
-// Restore converts a Constraint to a string.
-func (c *Constraint) Restore() (string, error) {
+// RestoreConstraint converts a Constraint to a string.
+func RestoreConstraint(c *pd.LabelConstraint) (string, error) {
 	var sb strings.Builder
 	if len(c.Values) != 1 {
 		return "", fmt.Errorf("%w: constraint should have exactly one label value, got %v", ErrInvalidConstraintFormat, c.Values)
 	}
 	switch c.Op {
-	case In:
+	case pd.In:
 		sb.WriteString("+")
-	case NotIn:
+	case pd.NotIn:
 		sb.WriteString("-")
 	default:
 		return "", fmt.Errorf("%w: disallowed operation '%s'", ErrInvalidConstraintFormat, c.Op)
@@ -126,9 +105,9 @@ const (
 	ConstraintDuplicated
 )
 
-// CompatibleWith will check if two constraints are compatible.
+// ConstraintCompatibleWith will check if two constraints are compatible.
 // Return (compatible, duplicated).
-func (c *Constraint) CompatibleWith(o *Constraint) ConstraintCompatibility {
+func ConstraintCompatibleWith(c *pd.LabelConstraint, o *pd.LabelConstraint) ConstraintCompatibility {
 	sameKey := c.Key == o.Key
 	if !sameKey {
 		return ConstraintCompatible
@@ -148,7 +127,7 @@ func (c *Constraint) CompatibleWith(o *Constraint) ConstraintCompatibility {
 	// 3. can not match multiple instances: +dc=sh, +dc=bj
 	if sameOp && sameVal {
 		return ConstraintDuplicated
-	} else if (!sameOp && sameVal) || (sameOp && !sameVal && c.Op == In) {
+	} else if (!sameOp && sameVal) || (sameOp && !sameVal && c.Op == pd.In) {
 		return ConstraintIncompatible
 	}
 

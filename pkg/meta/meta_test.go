@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util"
@@ -147,53 +148,6 @@ func TestResourceGroup(t *testing.T) {
 	m.DropResourceGroup(groupID)
 	_, err = m.GetResourceGroup(groupID)
 	require.Error(t, err)
-}
-
-func TestBackupAndRestoreAutoIDs(t *testing.T) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	defer func() {
-		err := store.Close()
-		require.NoError(t, err)
-	}()
-
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMeta(txn)
-	acc := m.GetAutoIDAccessors(1, 1)
-	require.NoError(t, acc.RowID().Put(100))
-	require.NoError(t, acc.RandomID().Put(101))
-	require.NoError(t, meta.BackupAndRestoreAutoIDs(m, 1, 1, 2, 2))
-	require.NoError(t, txn.Commit(context.Background()))
-
-	mustGet := func(acc meta.AutoIDAccessor) int {
-		v, err := acc.Get()
-		require.NoError(t, err)
-		return int(v)
-	}
-	txn, err = store.Begin()
-	require.NoError(t, err)
-	m = meta.NewMeta(txn)
-	acc = m.GetAutoIDAccessors(1, 1)
-	// Test old auto IDs are cleaned.
-	require.Equal(t, mustGet(acc.RowID()), 0)
-	require.Equal(t, mustGet(acc.RandomID()), 0)
-
-	// Test new auto IDs are restored.
-	acc2 := m.GetAutoIDAccessors(2, 2)
-	require.Equal(t, mustGet(acc2.RowID()), 100)
-	require.Equal(t, mustGet(acc2.RandomID()), 101)
-	// Backup & restore with the same database & table ID.
-	require.NoError(t, meta.BackupAndRestoreAutoIDs(m, 2, 2, 2, 2))
-	require.NoError(t, txn.Commit(context.Background()))
-
-	txn, err = store.Begin()
-	require.NoError(t, err)
-	m = meta.NewMeta(txn)
-	// Test auto IDs are unchanged.
-	acc2 = m.GetAutoIDAccessors(2, 2)
-	require.Equal(t, mustGet(acc2.RowID()), 100)
-	require.Equal(t, mustGet(acc2.RandomID()), 101)
 }
 
 func TestMeta(t *testing.T) {
@@ -377,18 +331,20 @@ func TestMeta(t *testing.T) {
 	n, err = m.GetAutoIDAccessors(currentDBID, tid).RowID().Inc(10)
 	require.NoError(t, err)
 	require.Equal(t, int64(10), n)
-	// Fail to update auto ID.
+	// Test to update non-existing auto ID.
 	// The table ID doesn't exist.
+	// We can no longer test for non-existing ids.
 	nonExistentID := int64(1234)
 	_, err = m.GetAutoIDAccessors(currentDBID, nonExistentID).RowID().Inc(10)
-	require.NotNil(t, err)
-	require.True(t, meta.ErrTableNotExists.Equal(err))
-	// Fail to update auto ID.
+	require.NoError(t, err)
+	//require.True(t, meta.ErrTableNotExists.Equal(err))
+	// Test to update non-existing auto ID.
 	// The current database ID doesn't exist.
+	// We can no longer test for non-existing ids.
 	currentDBID = nonExistentID
 	_, err = m.GetAutoIDAccessors(currentDBID, tid).RowID().Inc(10)
-	require.NotNil(t, err)
-	require.True(t, meta.ErrDBNotExists.Equal(err))
+	require.NoError(t, err)
+	//require.True(t, meta.ErrDBNotExists.Equal(err))
 	// Test case for CreateTableAndSetAutoID.
 	tbInfo3 := &model.TableInfo{
 		ID:   3,
@@ -445,6 +401,15 @@ func TestMeta(t *testing.T) {
 	readDiff, err := m.GetSchemaDiff(schemaDiff.Version)
 	require.NoError(t, err)
 	require.Equal(t, schemaDiff, readDiff)
+
+	// Test for BDR role
+	role, err := m.GetBDRRole()
+	require.NoError(t, err)
+	require.Len(t, role, 0)
+	require.NoError(t, m.SetBDRRole(string(ast.BDRRolePrimary)))
+	role, err = m.GetBDRRole()
+	require.NoError(t, err)
+	require.Equal(t, string(ast.BDRRolePrimary), role)
 
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)

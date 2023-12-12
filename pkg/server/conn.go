@@ -45,6 +45,7 @@ import (
 	"io"
 	"net"
 	"os/user"
+	"runtime"
 	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
@@ -54,6 +55,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
@@ -97,8 +99,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/memory"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -114,9 +116,20 @@ const (
 	connStatusWaitShutdown = 3                           // Notified by server to close.
 )
 
+var (
+	statusCompression          = "Compression"
+	statusCompressionAlgorithm = "Compression_algorithm"
+	statusCompressionLevel     = "Compression_level"
+)
+
+var (
+	// ConnectionInMemCounterForTest is a variable to count live connection object
+	ConnectionInMemCounterForTest = atomic.Int64{}
+)
+
 // newClientConn creates a *clientConn object.
 func newClientConn(s *Server) *clientConn {
-	return &clientConn{
+	cc := &clientConn{
 		server:       s,
 		connectionID: s.dom.NextConnID(),
 		collation:    mysql.DefaultCollationID,
@@ -128,6 +141,14 @@ func newClientConn(s *Server) *clientConn {
 		quit:         make(chan struct{}),
 		ppEnabled:    s.cfg.ProxyProtocol.Networks != "",
 	}
+
+	if intest.InTest {
+		ConnectionInMemCounterForTest.Add(1)
+		runtime.SetFinalizer(cc, func(*clientConn) {
+			ConnectionInMemCounterForTest.Add(-1)
+		})
+	}
+	return cc
 }
 
 // clientConn represents a connection between server and client, it maintains connection specific state,
@@ -161,8 +182,9 @@ type clientConn struct {
 	lastActive    time.Time             // last active time
 	authPlugin    string                // default authentication plugin
 	isUnixSocket  bool                  // connection is Unix Socket file
-	rsEncoder     *column.ResultEncoder // rsEncoder is used to encode the string result to different charsets.
-	inputDecoder  *util2.InputDecoder   // inputDecoder is used to decode the different charsets of incoming strings to utf-8.
+	closeOnce     sync.Once             // closeOnce is used to make sure clientConn closes only once
+	rsEncoder     *column.ResultEncoder // rsEncoder is used to encode the string result to different charsets
+	inputDecoder  *util2.InputDecoder   // inputDecoder is used to decode the different charsets of incoming strings to utf-8
 	socketCredUID uint32                // UID from the other end of the Unix Socket
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
@@ -324,8 +346,10 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 	// With mysql --compression-algorithms=zlib,zstd both flags are set, the result is Zlib
 	if cc.capability&mysql.ClientCompress > 0 {
 		cc.pkt.SetCompressionAlgorithm(mysql.CompressionZlib)
+		cc.ctx.SetCompressionAlgorithm(mysql.CompressionZlib)
 	} else if cc.capability&mysql.ClientZstdCompressionAlgorithm > 0 {
 		cc.pkt.SetCompressionAlgorithm(mysql.CompressionZstd)
+		cc.ctx.SetCompressionAlgorithm(mysql.CompressionZstd)
 	}
 
 	return err
@@ -339,28 +363,31 @@ func (cc *clientConn) Close() error {
 	return closeConn(cc, connections)
 }
 
-// closeConn should be idempotent.
+// closeConn is idempotent and thread-safe.
 // It will be called on the same `clientConn` more than once to avoid connection leak.
 func closeConn(cc *clientConn, connections int) error {
-	metrics.ConnGauge.Set(float64(connections))
-	if cc.connectionID > 0 {
-		cc.server.dom.ReleaseConnID(cc.connectionID)
-		cc.connectionID = 0
-	}
-	if cc.bufReadConn != nil {
-		err := cc.bufReadConn.Close()
-		if err != nil {
-			// We need to expect connection might have already disconnected.
-			// This is because closeConn() might be called after a connection read-timeout.
-			logutil.Logger(context.Background()).Debug("could not close connection", zap.Error(err))
+	var err error
+	cc.closeOnce.Do(func() {
+		metrics.ConnGauge.Set(float64(connections))
+		if cc.connectionID > 0 {
+			cc.server.dom.ReleaseConnID(cc.connectionID)
+			cc.connectionID = 0
 		}
-	}
-	// Close statements and session
-	// This will release advisory locks, row locks, etc.
-	if ctx := cc.getCtx(); ctx != nil {
-		return ctx.Close()
-	}
-	return nil
+		if cc.bufReadConn != nil {
+			err := cc.bufReadConn.Close()
+			if err != nil {
+				// We need to expect connection might have already disconnected.
+				// This is because closeConn() might be called after a connection read-timeout.
+				logutil.Logger(context.Background()).Debug("could not close connection", zap.Error(err))
+			}
+		}
+		// Close statements and session
+		// This will release advisory locks, row locks, etc.
+		if ctx := cc.getCtx(); ctx != nil {
+			err = ctx.Close()
+		}
+	})
+	return err
 }
 
 func (cc *clientConn) closeWithoutLock() error {
@@ -444,6 +471,14 @@ func (cc *clientConn) writePacket(data []byte) error {
 		}
 	})
 	return cc.pkt.WritePacket(data)
+}
+
+func (cc *clientConn) getWaitTimeout(ctx context.Context) uint64 {
+	sessVars := cc.ctx.GetSessionVars()
+	if sessVars.InTxn() && sessVars.IdleTransactionTimeout > 0 {
+		return uint64(sessVars.IdleTransactionTimeout)
+	}
+	return cc.getSessionVarsWaitTimeout(ctx)
 }
 
 // getSessionVarsWaitTimeout get session variable wait_timeout
@@ -547,7 +582,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	cc.dbname = resp.DBName
 	cc.collation = resp.Collation
 	cc.attrs = resp.Attrs
-	cc.pkt.SetZstdLevel(resp.ZstdLevel)
+	cc.pkt.SetZstdLevel(zstd.EncoderLevelFromZstd(resp.ZstdLevel))
 
 	err = cc.handleAuthPlugin(ctx, &resp)
 	if err != nil {
@@ -576,7 +611,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 		return errors.New("Unknown auth plugin")
 	}
 
-	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin)
+	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin, resp.ZstdLevel)
 	if err != nil {
 		logutil.Logger(ctx).Warn("open new session or authentication failure", zap.Error(err))
 	}
@@ -717,7 +752,7 @@ func (cc *clientConn) openSession() error {
 	return nil
 }
 
-func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) error {
+func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string, zstdLevel int) error {
 	// Open a context unless this was done before.
 	if ctx := cc.getCtx(); ctx == nil {
 		err := cc.openSession()
@@ -745,6 +780,7 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) e
 		return err
 	}
 	cc.ctx.SetPort(port)
+	cc.ctx.SetCompressionLevel(zstdLevel)
 	if cc.dbname != "" {
 		_, err = cc.useDB(context.Background(), cc.dbname)
 		if err != nil {
@@ -947,9 +983,7 @@ func (cc *clientConn) initConnect(ctx context.Context) error {
 					break
 				}
 			}
-			if err := rs.Close(); err != nil {
-				return err
-			}
+			rs.Close()
 		}
 	}
 	logutil.Logger(ctx).Debug("init_connect complete")
@@ -1018,7 +1052,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		cc.alloc.Reset()
 		// close connection when idle time is more than wait_timeout
 		// default 28800(8h), FIXME: should not block at here when we kill the connection.
-		waitTimeout := cc.getSessionVarsWaitTimeout(ctx)
+		waitTimeout := cc.getWaitTimeout(ctx)
 		cc.pkt.SetReadTimeout(time.Duration(waitTimeout) * time.Second)
 		start := time.Now()
 		data, err := cc.readPacket()
@@ -1187,7 +1221,7 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	defer func() {
 		// reset killed for each request
-		atomic.StoreUint32(&cc.ctx.GetSessionVars().Killed, 0)
+		cc.ctx.GetSessionVars().SQLKiller.Reset()
 	}()
 	t := time.Now()
 	if (cc.ctx.Status() & mysql.ServerStatusInTrans) > 0 {
@@ -1252,7 +1286,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 
 	vars := cc.ctx.GetSessionVars()
 	// reset killed for each request
-	atomic.StoreUint32(&vars.Killed, 0)
+	vars.SQLKiller.Reset()
 	if cmd < mysql.ComEnd {
 		cc.ctx.SetCommandValue(cmd)
 	}
@@ -1586,7 +1620,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *execut
 		// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_local_infile_request.html
 		for !drained {
 			// check kill flag again, let the draining loop could quit if empty packet could not be received
-			if atomic.CompareAndSwapUint32(&loadDataWorker.UserSctx.GetSessionVars().Killed, 1, 0) {
+			if atomic.CompareAndSwapUint32(&loadDataWorker.UserSctx.GetSessionVars().SQLKiller.Signal, 1, 0) {
 				logutil.Logger(ctx).Warn("receiving kill, stop draining data, connection may be reset")
 				return exeerrors.ErrQueryInterrupted
 			}
@@ -2014,7 +2048,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	// - If the rs is nil and err is not nil, the detachment will be done in
 	//   the `handleNoDelay`.
 	if rs != nil {
-		defer terror.Call(rs.Close)
+		defer rs.Close()
 	}
 	if err != nil {
 		// If error is returned during the planner phase or the executor.Open
@@ -2050,11 +2084,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 			execStmt.(*executor.ExecStmt).FinishExecuteStmt(0, err, false)
 		}
 	}
-	if err != nil {
-		return false, err
-	}
-
-	return false, nil
+	return false, err
 }
 
 func (cc *clientConn) handleFileTransInConn(ctx context.Context, status uint16) (bool, error) {
@@ -2149,11 +2179,15 @@ func (cc *clientConn) writeResultSet(ctx context.Context, rs resultset.ResultSet
 		if r == nil {
 			return
 		}
-		if str, ok := r.(string); !ok || !strings.HasPrefix(str, memory.PanicMemoryExceedWarnMsg) {
+		recoverdErr, ok := r.(error)
+		if !ok || !(exeerrors.ErrMemoryExceedForQuery.Equal(recoverdErr) ||
+			exeerrors.ErrMemoryExceedForInstance.Equal(recoverdErr) ||
+			exeerrors.ErrQueryInterrupted.Equal(recoverdErr) ||
+			exeerrors.ErrMaxExecTimeExceeded.Equal(recoverdErr)) {
 			panic(r)
 		}
+		runErr = recoverdErr
 		// TODO(jianzhang.zj: add metrics here)
-		runErr = errors.Errorf("%v", r)
 		logutil.Logger(ctx).Error("write query result panic", zap.Stringer("lastSQL", getLastStmtInConn{cc}), zap.Stack("stack"), zap.Any("recover", r))
 	}()
 	cc.initResultEncoder(ctx)
@@ -2281,6 +2315,9 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 		if stmtDetail != nil {
 			stmtDetail.WriteSQLRespDuration += time.Since(start)
 		}
+	}
+	if err := rs.Finish(); err != nil {
+		return false, err
 	}
 
 	if stmtDetail != nil {
@@ -2432,7 +2469,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 			fakeResp.Auth = newpass
 		}
 	}
-	if err := cc.openSessionAndDoAuth(fakeResp.Auth, fakeResp.AuthPlugin); err != nil {
+	if err := cc.openSessionAndDoAuth(fakeResp.Auth, fakeResp.AuthPlugin, fakeResp.ZstdLevel); err != nil {
 		return err
 	}
 	return cc.handleCommonConnectionReset(ctx)
@@ -2578,4 +2615,45 @@ func (cc *clientConn) ReadPacket() ([]byte, error) {
 // Flush implements `conn.AuthConn` interface
 func (cc *clientConn) Flush(ctx context.Context) error {
 	return cc.flush(ctx)
+}
+
+type compressionStats struct{}
+
+// Stats returns the connection statistics.
+func (*compressionStats) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
+	m := make(map[string]interface{}, 3)
+
+	switch vars.CompressionAlgorithm {
+	case mysql.CompressionNone:
+		m[statusCompression] = "OFF"
+		m[statusCompressionAlgorithm] = ""
+		m[statusCompressionLevel] = 0
+	case mysql.CompressionZlib:
+		m[statusCompression] = "ON"
+		m[statusCompressionAlgorithm] = "zlib"
+		m[statusCompressionLevel] = mysql.ZlibCompressDefaultLevel
+	case mysql.CompressionZstd:
+		m[statusCompression] = "ON"
+		m[statusCompressionAlgorithm] = "zstd"
+		m[statusCompressionLevel] = vars.CompressionLevel
+	default:
+		logutil.BgLogger().Debug(
+			"unexpected compression algorithm value",
+			zap.Int("algorithm", vars.CompressionAlgorithm),
+		)
+		m[statusCompression] = "OFF"
+		m[statusCompressionAlgorithm] = ""
+		m[statusCompressionLevel] = 0
+	}
+
+	return m, nil
+}
+
+// GetScope gets the status variables scope.
+func (*compressionStats) GetScope(_ string) variable.ScopeFlag {
+	return variable.ScopeSession
+}
+
+func init() {
+	variable.RegisterStatistics(&compressionStats{})
 }

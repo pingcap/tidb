@@ -90,8 +90,8 @@ func (b *builtinInternalToBinarySig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinInternalToBinarySig) evalString(row chunk.Row) (res string, isNull bool, err error) {
-	val, isNull, err := b.args[0].EvalString(b.ctx, row)
+func (b *builtinInternalToBinarySig) evalString(ctx sessionctx.Context, row chunk.Row) (res string, isNull bool, err error) {
+	val, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
 	}
@@ -105,14 +105,14 @@ func (b *builtinInternalToBinarySig) vectorized() bool {
 	return true
 }
 
-func (b *builtinInternalToBinarySig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinInternalToBinarySig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
 	enc := charset.FindEncoding(b.args[0].GetType().GetCharset())
@@ -169,8 +169,8 @@ func (b *builtinInternalFromBinarySig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinInternalFromBinarySig) evalString(row chunk.Row) (res string, isNull bool, err error) {
-	val, isNull, err := b.args[0].EvalString(b.ctx, row)
+func (b *builtinInternalFromBinarySig) evalString(ctx sessionctx.Context, row chunk.Row) (res string, isNull bool, err error) {
+	val, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return val, isNull, err
 	}
@@ -188,14 +188,14 @@ func (b *builtinInternalFromBinarySig) vectorized() bool {
 	return true
 }
 
-func (b *builtinInternalFromBinarySig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinInternalFromBinarySig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
 	enc := charset.FindEncoding(b.tp.GetCharset())
@@ -229,7 +229,7 @@ func BuildToBinaryFunction(ctx sessionctx.Context, expr Expression) (res Express
 		RetType:  f.getRetTp(),
 		Function: f,
 	}
-	return FoldConstant(res)
+	return FoldConstant(ctx, res)
 }
 
 // BuildFromBinaryFunction builds from_binary function.
@@ -244,7 +244,7 @@ func BuildFromBinaryFunction(ctx sessionctx.Context, expr Expression, tp *types.
 		RetType:  tp,
 		Function: f,
 	}
-	return FoldConstant(res)
+	return FoldConstant(ctx, res)
 }
 
 type funcProp int8

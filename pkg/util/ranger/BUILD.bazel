@@ -30,7 +30,7 @@ go_library(
         "//pkg/util/codec",
         "//pkg/util/collate",
         "//pkg/util/dbterror",
-        "//pkg/util/mathutil",
+        "//pkg/util/hack",
         "@com_github_pingcap_errors//:errors",
     ],
 )

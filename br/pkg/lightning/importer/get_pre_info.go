@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	pd "github.com/tikv/pd/client"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 )
@@ -236,7 +237,7 @@ func (g *TargetInfoGetterImpl) GetTargetSysVariablesForImport(ctx context.Contex
 // It uses the PD interface through TLS to get the information.
 func (g *TargetInfoGetterImpl) GetReplicationConfig(ctx context.Context) (*pdtypes.ReplicationConfig, error) {
 	result := new(pdtypes.ReplicationConfig)
-	if err := g.tls.WithHost(g.pdCli.GetLeaderAddr()).GetJSON(ctx, pdReplicate, &result); err != nil {
+	if err := g.tls.WithHost(g.pdCli.GetLeaderAddr()).GetJSON(ctx, pdhttp.ReplicateConfig, &result); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return result, nil
@@ -247,7 +248,7 @@ func (g *TargetInfoGetterImpl) GetReplicationConfig(ctx context.Context) (*pdtyp
 // It uses the PD interface through TLS to get the information.
 func (g *TargetInfoGetterImpl) GetStorageInfo(ctx context.Context) (*pdtypes.StoresInfo, error) {
 	result := new(pdtypes.StoresInfo)
-	if err := g.tls.WithHost(g.pdCli.GetLeaderAddr()).GetJSON(ctx, pdStores, result); err != nil {
+	if err := g.tls.WithHost(g.pdCli.GetLeaderAddr()).GetJSON(ctx, pdhttp.Stores, result); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return result, nil
@@ -258,7 +259,7 @@ func (g *TargetInfoGetterImpl) GetStorageInfo(ctx context.Context) (*pdtypes.Sto
 // It uses the PD interface through TLS to get the information.
 func (g *TargetInfoGetterImpl) GetEmptyRegionsInfo(ctx context.Context) (*pdtypes.RegionsInfo, error) {
 	result := new(pdtypes.RegionsInfo)
-	if err := g.tls.WithHost(g.pdCli.GetLeaderAddr()).GetJSON(ctx, pdEmptyRegions, &result); err != nil {
+	if err := g.tls.WithHost(g.pdCli.GetLeaderAddr()).GetJSON(ctx, pdhttp.EmptyRegions, &result); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return result, nil

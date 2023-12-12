@@ -54,12 +54,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
@@ -457,7 +458,7 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resour
 }
 
 func (c *BackendConfig) adjust() {
-	c.MaxOpenFiles = mathutil.Max(c.MaxOpenFiles, openFilesLowerThreshold)
+	c.MaxOpenFiles = max(c.MaxOpenFiles, openFilesLowerThreshold)
 }
 
 // Backend is a local backend.
@@ -961,17 +962,19 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 			store,
 			externalCfg.DataFiles,
 			externalCfg.StatFiles,
-			externalCfg.MinKey,
-			externalCfg.MaxKey,
+			externalCfg.StartKey,
+			externalCfg.EndKey,
 			externalCfg.SplitKeys,
 			externalCfg.RegionSplitSize,
 			local.keyAdapter,
 			local.DupeDetectEnabled,
 			local.duplicateDB,
 			local.DuplicateDetectOpt,
+			local.WorkerConcurrency,
 			ts,
 			externalCfg.TotalFileSize,
 			externalCfg.TotalKVCount,
+			externalCfg.CheckHotspot,
 		)
 		local.externalEngine[engineUUID] = externalEngine
 		return nil
@@ -1073,28 +1076,26 @@ func readAndSplitIntoRange(
 	sizeLimit int64,
 	keysLimit int64,
 ) ([]common.Range, error) {
-	firstKey, lastKey, err := engine.GetKeyRange()
+	startKey, endKey, err := engine.GetKeyRange()
 	if err != nil {
 		return nil, err
 	}
-	if firstKey == nil {
+	if startKey == nil {
 		return nil, errors.New("could not find first pair")
 	}
-
-	endKey := nextKey(lastKey)
 
 	engineFileTotalSize, engineFileLength := engine.KVStatistics()
 
 	if engineFileTotalSize <= sizeLimit && engineFileLength <= keysLimit {
-		ranges := []common.Range{{Start: firstKey, End: endKey}}
+		ranges := []common.Range{{Start: startKey, End: endKey}}
 		return ranges, nil
 	}
 
 	logger := log.FromContext(ctx).With(zap.String("engine", engine.ID()))
-	ranges, err := engine.SplitRanges(firstKey, endKey, sizeLimit, keysLimit, logger)
+	ranges, err := engine.SplitRanges(startKey, endKey, sizeLimit, keysLimit, logger)
 	logger.Info("split engine key ranges",
 		zap.Int64("totalSize", engineFileTotalSize), zap.Int64("totalCount", engineFileLength),
-		logutil.Key("firstKey", firstKey), logutil.Key("lastKey", lastKey),
+		logutil.Key("startKey", startKey), logutil.Key("endKey", endKey),
 		zap.Int("ranges", len(ranges)), zap.Error(err))
 	return ranges, err
 }
@@ -1186,10 +1187,16 @@ func (local *Backend) generateAndSendJob(
 
 	logger.Debug("the ranges length write to tikv", zap.Int("length", len(jobRanges)))
 
-	eg, egCtx := errgroup.WithContext(ctx)
+	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 
 	dataAndRangeCh := make(chan common.DataAndRange)
-	for i := 0; i < local.WorkerConcurrency; i++ {
+	conn := local.WorkerConcurrency
+	if _, ok := engine.(*external.Engine); ok {
+		// currently external engine will generate a large IngestData, se we lower the
+		// concurrency to pass backpressure to the LoadIngestData goroutine to avoid OOM
+		conn = 1
+	}
+	for i := 0; i < conn; i++ {
 		eg.Go(func() error {
 			for {
 				select {
@@ -1201,6 +1208,12 @@ func (local *Backend) generateAndSendJob(
 					}
 
 					failpoint.Inject("beforeGenerateJob", nil)
+					failpoint.Inject("sendDummyJob", func(_ failpoint.Value) {
+						// this is used to trigger worker failure, used together
+						// with WriteToTiKVNotEnoughDiskSpace
+						jobToWorkerCh <- &regionJob{}
+						time.Sleep(5 * time.Second)
+					})
 					jobs, err := local.generateJobForRange(egCtx, p.Data, p.Range, regionSplitSize, regionSplitKeys)
 					if err != nil {
 						if common.IsContextCanceledError(err) {
@@ -1322,6 +1335,7 @@ func (local *Backend) startWorker(
 	jobInCh, jobOutCh chan *regionJob,
 	jobWg *sync.WaitGroup,
 ) error {
+	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Set(0)
 	for {
 		select {
 		case <-ctx.Done():
@@ -1333,7 +1347,9 @@ func (local *Backend) startWorker(
 				return nil
 			}
 
+			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Inc()
 			err := local.executeJob(ctx, job)
+			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Dec()
 			switch job.stage {
 			case regionScanned, wrote, ingested:
 				jobOutCh <- job
@@ -1431,7 +1447,6 @@ func (local *Backend) executeJob(
 			// if it's retryable error, we retry from scanning region
 			log.FromContext(ctx).Warn("meet retryable error when writing to TiKV",
 				log.ShortError(err), zap.Stringer("job stage", job.stage))
-			job.convertStageTo(needRescan)
 			job.lastRetryableErr = err
 			return nil
 		}
@@ -1570,11 +1585,6 @@ func (local *Backend) GetRegionSplitSizeKeys(ctx context.Context) (finalSize int
 	return GetRegionSplitSizeKeys(ctx, local.pdCtl.GetPDClient(), local.tls)
 }
 
-// GetMutex returns the mutex of the backend.
-func (local *Backend) GetMutex() *sync.Mutex {
-	return &local.mu
-}
-
 // expose these variables to unit test.
 var (
 	testJobToWorkerCh = make(chan *regionJob)
@@ -1595,7 +1605,7 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 		ctx2, workerCancel = context.WithCancel(ctx)
 		// workerCtx.Done() means workflow is canceled by error. It may be caused
 		// by calling workerCancel() or workers in workGroup meets error.
-		workGroup, workerCtx = errgroup.WithContext(ctx2)
+		workGroup, workerCtx = util.NewErrorGroupWithRecoverWithCtx(ctx2)
 		firstErr             common.OnceError
 		// jobToWorkerCh and jobFromWorkerCh are unbuffered so jobs will not be
 		// owned by them.
@@ -1677,26 +1687,30 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 
 	failpoint.Label("afterStartWorker")
 
-	err := local.prepareAndSendJob(
-		workerCtx,
-		engine,
-		regionRanges,
-		regionSplitSize,
-		regionSplitKeys,
-		jobToWorkerCh,
-		&jobWg,
-	)
-	if err != nil {
-		firstErr.Set(err)
-		workerCancel()
-		_ = workGroup.Wait()
-		return firstErr.Get()
-	}
+	workGroup.Go(func() error {
+		err := local.prepareAndSendJob(
+			workerCtx,
+			engine,
+			regionRanges,
+			regionSplitSize,
+			regionSplitKeys,
+			jobToWorkerCh,
+			&jobWg,
+		)
+		if err != nil {
+			return err
+		}
 
-	jobWg.Wait()
-	workerCancel()
-	firstErr.Set(workGroup.Wait())
-	firstErr.Set(ctx.Err())
+		jobWg.Wait()
+		workerCancel()
+		return nil
+	})
+	if err := workGroup.Wait(); err != nil {
+		if !common.IsContextCanceledError(err) {
+			log.FromContext(ctx).Error("do import meets error", zap.Error(err))
+		}
+		firstErr.Set(err)
+	}
 	return firstErr.Get()
 }
 
@@ -1727,6 +1741,11 @@ func (local *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) err
 	// the only way to reset the engine + reclaim the space is to delete and reopen it 🤷
 	localEngine := local.lockEngine(engineUUID, importMutexStateClose)
 	if localEngine == nil {
+		if engineI, ok := local.externalEngine[engineUUID]; ok {
+			extEngine := engineI.(*external.Engine)
+			return extEngine.Reset()
+		}
+
 		log.FromContext(ctx).Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
 		return nil
 	}
@@ -1749,6 +1768,12 @@ func (local *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) err
 		if err = local.allocateTSIfNotExists(ctx, localEngine); err != nil {
 			return errors.Trace(err)
 		}
+		failpoint.Inject("mockAllocateTSErr", func() {
+			// mock generate timestamp error when reset engine.
+			localEngine.TS = 0
+			mockGRPCErr, _ := status.FromError(errors.Errorf("mock generate timestamp error"))
+			failpoint.Return(errors.Trace(mockGRPCErr.Err()))
+		})
 	}
 	localEngine.pendingFileSize.Store(0)
 
@@ -1760,6 +1785,11 @@ func (local *Backend) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) e
 	localEngine := local.lockEngine(engineUUID, importMutexStateClose)
 	// release this engine after import success
 	if localEngine == nil {
+		if extEngine, ok := local.externalEngine[engineUUID]; ok {
+			retErr := extEngine.Close()
+			delete(local.externalEngine, engineUUID)
+			return retErr
+		}
 		log.FromContext(ctx).Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
 		return nil
 	}

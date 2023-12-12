@@ -26,7 +26,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/stretchr/testify/assert"
@@ -56,9 +55,8 @@ func TestDatum(t *testing.T) {
 func testDatumToBool(t *testing.T, in interface{}, res int) {
 	datum := NewDatum(in)
 	res64 := int64(res)
-	sc := stmtctx.NewStmtCtx()
-	sc.IgnoreTruncate.Store(true)
-	b, err := datum.ToBool(sc)
+	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(true))
+	b, err := datum.ToBool(ctx)
 	require.NoError(t, err)
 	require.Equal(t, res64, b)
 }
@@ -94,11 +92,11 @@ func TestToBool(t *testing.T) {
 	testDatumToBool(t, CreateBinaryJSON(true), 1)
 	testDatumToBool(t, CreateBinaryJSON(false), 1)
 	testDatumToBool(t, CreateBinaryJSON(""), 1)
-	t1, err := ParseTime(stmtctx.NewStmtCtxWithTimeZone(time.UTC), "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6, nil)
+	t1, err := ParseTime(DefaultStmtNoWarningContext, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
 	require.NoError(t, err)
 	testDatumToBool(t, t1, 1)
 
-	td, _, err := ParseDuration(nil, "11:11:11.999999", 6)
+	td, _, err := ParseDuration(DefaultStmtNoWarningContext, "11:11:11.999999", 6)
 	require.NoError(t, err)
 	testDatumToBool(t, td, 1)
 
@@ -108,17 +106,17 @@ func TestToBool(t *testing.T) {
 	require.NoError(t, err)
 	testDatumToBool(t, v, 1)
 	d := NewDatum(&invalidMockType{})
-	sc := stmtctx.NewStmtCtx()
-	sc.IgnoreTruncate.Store(true)
-	_, err = d.ToBool(sc)
+	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(true))
+	_, err = d.ToBool(ctx)
 	require.Error(t, err)
 }
 
 func testDatumToInt64(t *testing.T, val interface{}, expect int64) {
 	d := NewDatum(val)
-	sc := stmtctx.NewStmtCtx()
-	sc.IgnoreTruncate.Store(true)
-	b, err := d.ToInt64(sc)
+
+	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(true))
+
+	b, err := d.ToInt64(ctx)
 	require.NoError(t, err)
 	require.Equal(t, expect, b)
 }
@@ -135,11 +133,11 @@ func TestToInt64(t *testing.T) {
 	testDatumToInt64(t, Set{Name: "a", Value: 1}, int64(1))
 	testDatumToInt64(t, CreateBinaryJSON(int64(3)), int64(3))
 
-	t1, err := ParseTime(stmtctx.NewStmtCtxWithTimeZone(time.UTC), "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 0, nil)
+	t1, err := ParseTime(DefaultStmtNoWarningContext, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 0)
 	require.NoError(t, err)
 	testDatumToInt64(t, t1, int64(20111110111112))
 
-	td, _, err := ParseDuration(nil, "11:11:11.999999", 6)
+	td, _, err := ParseDuration(DefaultStmtNoWarningContext, "11:11:11.999999", 6)
 	require.NoError(t, err)
 	testDatumToInt64(t, td, int64(111112))
 
@@ -152,12 +150,11 @@ func TestToInt64(t *testing.T) {
 
 func testDatumToUInt32(t *testing.T, val interface{}, expect uint32, hasError bool) {
 	d := NewDatum(val)
-	sc := stmtctx.NewStmtCtx()
-	sc.IgnoreTruncate.Store(true)
+	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(true))
 
 	ft := NewFieldType(mysql.TypeLong)
 	ft.AddFlag(mysql.UnsignedFlag)
-	converted, err := d.ConvertTo(sc, ft)
+	converted, err := d.ConvertTo(ctx, ft)
 
 	if hasError {
 		require.Error(t, err)
@@ -204,10 +201,9 @@ func TestConvertToFloat(t *testing.T) {
 		{NewDatum("281.37"), mysql.TypeFloat, "", 281.37, 281.37},
 	}
 
-	sc := stmtctx.NewStmtCtx()
-	sc.IgnoreTruncate.Store(true)
+	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(true))
 	for _, testCase := range testCases {
-		converted, err := testCase.d.ConvertTo(sc, NewFieldType(testCase.tp))
+		converted, err := testCase.d.ConvertTo(ctx, NewFieldType(testCase.tp))
 		if testCase.errMsg == "" {
 			require.NoError(t, err)
 		} else {
@@ -225,7 +221,7 @@ func TestConvertToFloat(t *testing.T) {
 }
 
 func mustParseTime(s string, tp byte, fsp int) Time {
-	t, err := ParseTime(stmtctx.NewStmtCtxWithTimeZone(time.UTC), s, tp, fsp, nil)
+	t, err := ParseTime(DefaultStmtNoWarningContext, s, tp, fsp)
 	if err != nil {
 		panic("ParseTime fail")
 	}
@@ -241,7 +237,6 @@ func mustParseTimeIntoDatum(s string, tp byte, fsp int) (d Datum) {
 
 func TestToJSON(t *testing.T) {
 	ft := NewFieldType(mysql.TypeJSON)
-	sc := stmtctx.NewStmtCtx()
 	tests := []struct {
 		datum    Datum
 		expected interface{}
@@ -260,14 +255,14 @@ func TestToJSON(t *testing.T) {
 		{NewStringDatum("hello, 世界"), "", false},
 	}
 	for _, tt := range tests {
-		obtain, err := tt.datum.ConvertTo(sc, ft)
+		obtain, err := tt.datum.ConvertTo(DefaultStmtNoWarningContext, ft)
 		if tt.success {
 			require.NoError(t, err)
 
 			expected := NewJSONDatum(CreateBinaryJSON(tt.expected))
 
 			var cmp int
-			cmp, err = obtain.Compare(sc, &expected, collate.GetBinaryCollator())
+			cmp, err = obtain.Compare(DefaultStmtNoWarningContext, &expected, collate.GetBinaryCollator())
 			require.NoError(t, err)
 			require.Equal(t, 0, cmp)
 		} else {
@@ -309,8 +304,6 @@ func TestToBytes(t *testing.T) {
 		{NewStringDatum("abc"), []byte("abc")},
 		{Datum{}, []byte{}},
 	}
-	sc := stmtctx.NewStmtCtx()
-	sc.IgnoreTruncate.Store(true)
 	for _, tt := range tests {
 		bin, err := tt.a.ToBytes()
 		require.NoError(t, err)
@@ -319,7 +312,6 @@ func TestToBytes(t *testing.T) {
 }
 
 func TestComputePlusAndMinus(t *testing.T) {
-	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 	tests := []struct {
 		a      Datum
 		b      Datum
@@ -340,7 +332,7 @@ func TestComputePlusAndMinus(t *testing.T) {
 	for ith, tt := range tests {
 		got, err := ComputePlus(tt.a, tt.b)
 		require.Equal(t, tt.hasErr, err != nil)
-		v, err := got.Compare(sc, &tt.plus, collate.GetBinaryCollator())
+		v, err := got.Compare(DefaultStmtNoWarningContext, &tt.plus, collate.GetBinaryCollator())
 		require.NoError(t, err)
 		require.Equalf(t, 0, v, "%dth got:%#v, %#v, expect:%#v, %#v", ith, got, got.x, tt.plus, tt.plus.x)
 	}
@@ -358,11 +350,11 @@ func TestCloneDatum(t *testing.T) {
 		raw,
 	}
 
-	sc := stmtctx.NewStmtCtx()
-	sc.IgnoreTruncate.Store(true)
+	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(true))
+
 	for _, tt := range tests {
 		tt1 := *tt.Clone()
-		res, err := tt.Compare(sc, &tt1, collate.GetBinaryCollator())
+		res, err := tt.Compare(ctx, &tt1, collate.GetBinaryCollator())
 		require.NoError(t, err)
 		require.Equal(t, 0, res)
 		if tt.b != nil {
@@ -412,9 +404,7 @@ func TestEstimatedMemUsage(t *testing.T) {
 }
 
 func TestChangeReverseResultByUpperLowerBound(t *testing.T) {
-	sc := stmtctx.NewStmtCtx()
-	sc.IgnoreTruncate.Store(true)
-	sc.OverflowAsWarning = true
+	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(true))
 	// TODO: add more reserve convert tests for each pair of convert type.
 	testData := []struct {
 		a         Datum
@@ -499,10 +489,10 @@ func TestChangeReverseResultByUpperLowerBound(t *testing.T) {
 		},
 	}
 	for ith, test := range testData {
-		reverseRes, err := ChangeReverseResultByUpperLowerBound(sc, test.retType, test.a, test.roundType)
+		reverseRes, err := ChangeReverseResultByUpperLowerBound(ctx, test.retType, test.a, test.roundType)
 		require.NoError(t, err)
 		var cmp int
-		cmp, err = reverseRes.Compare(sc, &test.res, collate.GetBinaryCollator())
+		cmp, err = reverseRes.Compare(ctx, &test.res, collate.GetBinaryCollator())
 		require.NoError(t, err)
 		require.Equalf(t, 0, cmp, "%dth got:%#v, expect:%#v", ith, reverseRes, test.res)
 	}
@@ -537,12 +527,10 @@ func TestStringToMysqlBit(t *testing.T) {
 		{NewStringDatum("b'1'"), []byte{1}},
 		{NewStringDatum("b'0'"), []byte{0}},
 	}
-	sc := stmtctx.NewStmtCtx()
-	sc.IgnoreTruncate.Store(true)
 	tp := NewFieldType(mysql.TypeBit)
 	tp.SetFlen(1)
 	for _, tt := range tests {
-		bin, err := tt.a.convertToMysqlBit(nil, tp)
+		bin, err := tt.a.convertToMysqlBit(DefaultStmtNoWarningContext, tp)
 		require.NoError(t, err)
 		require.Equal(t, tt.out, bin.b)
 	}
@@ -603,11 +591,10 @@ func TestMarshalDatum(t *testing.T) {
 
 func BenchmarkCompareDatum(b *testing.B) {
 	vals, vals1 := prepareCompareDatums()
-	sc := stmtctx.NewStmtCtx()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for j, v := range vals {
-			_, err := v.Compare(sc, &vals1[j], collate.GetBinaryCollator())
+			_, err := v.Compare(DefaultStmtNoWarningContext, &vals1[j], collate.GetBinaryCollator())
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -650,11 +637,12 @@ func TestProduceDecWithSpecifiedTp(t *testing.T) {
 		{"99.9999", 6, 3, "100.000", false, true},
 		{"-99.9999", 6, 3, "-100.000", false, true},
 	}
-	sc := stmtctx.NewStmtCtx()
+	warnings := &warnStore{}
+	ctx := NewContext(DefaultStmtFlags, time.UTC, warnings)
 	for _, tt := range tests {
 		tp := NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlen(tt.flen).SetDecimal(tt.frac).BuildP()
 		dec := NewDecFromStringForTest(tt.dec)
-		newDec, err := ProduceDecWithSpecifiedTp(dec, tp, sc)
+		newDec, err := ProduceDecWithSpecifiedTp(ctx, dec, tp)
 		if tt.isOverflow {
 			if !ErrOverflow.Equal(err) {
 				assert.FailNow(t, "Error is not overflow", "err: %v before: %v after: %v", err, tt.dec, dec)
@@ -663,9 +651,10 @@ func TestProduceDecWithSpecifiedTp(t *testing.T) {
 			require.NoError(t, err, tt)
 		}
 		require.Equal(t, tt.newDec, newDec.String())
-		warn := sc.TruncateWarnings(0)
+		warn := warnings.GetWarnings()
+		warnings.Reset()
 		if tt.isTruncated {
-			if len(warn) != 1 || !ErrTruncatedWrongVal.Equal(warn[0].Err) {
+			if len(warn) != 1 || !ErrTruncatedWrongVal.Equal(warn[0]) {
 				assert.FailNow(t, "Warn is not truncated", "warn: %v before: %v after: %v", warn, tt.dec, dec)
 			}
 		} else {
@@ -696,9 +685,8 @@ func TestNULLNotEqualWithOthers(t *testing.T) {
 		MaxValueDatum(),
 	}
 	nullDatum := NewDatum(nil)
-	sc := stmtctx.NewStmtCtx()
 	for _, d := range datums {
-		result, err := d.Compare(sc, &nullDatum, collate.GetBinaryCollator())
+		result, err := d.Compare(DefaultStmtNoWarningContext, &nullDatum, collate.GetBinaryCollator())
 		require.NoError(t, err)
 		require.NotEqual(t, 0, result)
 	}

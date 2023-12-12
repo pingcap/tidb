@@ -25,24 +25,42 @@ import (
 
 // TaskManager defines the interface to access task table.
 type TaskManager interface {
-	GetGlobalTasksInStates(states ...interface{}) (task []*proto.Task, err error)
-	GetGlobalTaskByID(taskID int64) (task *proto.Task, err error)
-	UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtasks []*proto.Subtask, prevState proto.TaskState) (bool, error)
-	GCSubtasks() error
-	GetAllNodes() ([]string, error)
-	CleanUpMeta(nodes []string) error
-	TransferTasks2History(tasks []*proto.Task) error
-	CancelGlobalTask(taskID int64) error
-	PauseTask(taskKey string) (bool, error)
-	GetSubtaskInStatesCnt(taskID int64, states ...interface{}) (int64, error)
-	ResumeSubtasks(taskID int64) error
-	CollectSubTaskError(taskID int64) ([]error, error)
-	TransferSubTasks2History(taskID int64) error
-	UpdateFailedSchedulerIDs(taskID int64, replaceNodes map[string]string) error
-	GetNodesByRole(role string) (map[string]bool, error)
-	GetSchedulerIDsByTaskID(taskID int64) ([]string, error)
-	GetSucceedSubtasksByStep(taskID int64, step proto.Step) ([]*proto.Subtask, error)
-	GetSchedulerIDsByTaskIDAndStep(taskID int64, step proto.Step) ([]string, error)
+	// GetTopUnfinishedTasks returns unfinished tasks, limited by MaxConcurrentTask*2,
+	// to make sure lower priority tasks can be scheduled if resource is enough.
+	// The returned tasks are sorted by task order, see proto.Task, and only contains
+	// some fields, see row2TaskBasic.
+	GetTopUnfinishedTasks(ctx context.Context) ([]*proto.Task, error)
+	GetTasksInStates(ctx context.Context, states ...interface{}) (task []*proto.Task, err error)
+	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
+	UpdateTaskAndAddSubTasks(ctx context.Context, task *proto.Task, subtasks []*proto.Subtask, prevState proto.TaskState) (bool, error)
+	GCSubtasks(ctx context.Context) error
+	GetAllNodes(ctx context.Context) ([]string, error)
+	CleanUpMeta(ctx context.Context, nodes []string) error
+	TransferTasks2History(ctx context.Context, tasks []*proto.Task) error
+	CancelTask(ctx context.Context, taskID int64) error
+	// FailTask updates task state to Failed and updates task error.
+	FailTask(ctx context.Context, taskID int64, currentState proto.TaskState, taskErr error) error
+	PauseTask(ctx context.Context, taskKey string) (bool, error)
+	// GetUsedSlotsOnNodes returns the used slots on nodes that have subtask scheduled.
+	// subtasks of each task on one node is only accounted once as we don't support
+	// running them concurrently.
+	// we only consider pending/running subtasks, subtasks related to revert are
+	// not considered.
+	GetUsedSlotsOnNodes(ctx context.Context) (map[string]int, error)
+	GetSubtaskInStatesCnt(ctx context.Context, taskID int64, states ...interface{}) (int64, error)
+	ResumeSubtasks(ctx context.Context, taskID int64) error
+	CollectSubTaskError(ctx context.Context, taskID int64) ([]error, error)
+	TransferSubTasks2History(ctx context.Context, taskID int64) error
+	UpdateSubtasksExecIDs(ctx context.Context, taskID int64, subtasks []*proto.Subtask) error
+	// GetManagedNodes returns the nodes managed by dist framework and can be used
+	// to execute tasks. If there are any nodes with background role, we use them,
+	// else we use nodes without role.
+	// returned nodes are sorted by node id(host:port).
+	GetManagedNodes(ctx context.Context) ([]string, error)
+	GetTaskExecutorIDsByTaskID(ctx context.Context, taskID int64) ([]string, error)
+	GetSubtasksByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.TaskState) ([]*proto.Subtask, error)
+	GetSubtasksByExecIdsAndStepAndState(ctx context.Context, tidbIDs []string, taskID int64, step proto.Step, state proto.TaskState) ([]*proto.Subtask, error)
+	GetTaskExecutorIDsByTaskIDAndStep(ctx context.Context, taskID int64, step proto.Step) ([]string, error)
 
 	WithNewSession(fn func(se sessionctx.Context) error) error
 	WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error
@@ -59,21 +77,23 @@ type Extension interface {
 	OnTick(ctx context.Context, task *proto.Task)
 
 	// OnNextSubtasksBatch is used to generate batch of subtasks for next stage
-	// NOTE: don't change gTask.State inside, framework will manage it.
+	// NOTE: don't change task.State inside, framework will manage it.
 	// it's called when:
 	// 	1. task is pending and entering it's first step.
 	// 	2. subtasks dispatched has all finished with no error.
 	// when next step is StepDone, it should return nil, nil.
-	OnNextSubtasksBatch(ctx context.Context, h TaskHandle, task *proto.Task, step proto.Step) (subtaskMetas [][]byte, err error)
+	OnNextSubtasksBatch(ctx context.Context, h TaskHandle, task *proto.Task, serverInfo []*infosync.ServerInfo, step proto.Step) (subtaskMetas [][]byte, err error)
 
-	// OnErrStage is called when:
-	// 	1. subtask is finished with error.
-	// 	2. task is cancelled after we have dispatched some subtasks.
-	OnErrStage(ctx context.Context, h TaskHandle, task *proto.Task, receiveErr []error) (subtaskMeta []byte, err error)
+	// OnDone is called when task is done, either finished successfully or failed
+	// with error.
+	// if the task is failed when initializing dispatcher, or it's an unknown task,
+	// we don't call this function.
+	OnDone(ctx context.Context, h TaskHandle, task *proto.Task) error
 
 	// GetEligibleInstances is used to get the eligible instances for the task.
 	// on certain condition we may want to use some instances to do the task, such as instances with more disk.
-	GetEligibleInstances(ctx context.Context, task *proto.Task) ([]*infosync.ServerInfo, error)
+	// The bool return value indicates whether filter instances by role.
+	GetEligibleInstances(ctx context.Context, task *proto.Task) ([]*infosync.ServerInfo, bool, error)
 
 	// IsRetryableErr is used to check whether the error occurred in dispatcher is retryable.
 	IsRetryableErr(err error) bool
@@ -81,7 +101,7 @@ type Extension interface {
 	// GetNextStep is used to get the next step for the task.
 	// if task runs successfully, it should go from StepInit to business steps,
 	// then to StepDone, then dispatcher will mark it as finished.
-	GetNextStep(h TaskHandle, task *proto.Task) proto.Step
+	GetNextStep(task *proto.Task) proto.Step
 }
 
 // dispatcherFactoryFn is used to create a dispatcher.
@@ -122,7 +142,8 @@ func ClearDispatcherFactory() {
 
 // CleanUpRoutine is used for the framework to do some clean up work if the task is finished.
 type CleanUpRoutine interface {
-	// CleanUp do the clean up work.
+	// CleanUp do the cleanup work.
+	// task.Meta can be updated here, such as redacting some sensitive info.
 	CleanUp(ctx context.Context, task *proto.Task) error
 }
 type cleanUpFactoryFn func() CleanUpRoutine

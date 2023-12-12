@@ -389,8 +389,8 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 			return dbterror.ClassTiKV.Synthesize(terror.ErrCode(err.Code), err.Msg)
 		}
 		sessVars := r.ctx.GetSessionVars()
-		if atomic.LoadUint32(&sessVars.Killed) == 1 {
-			return errors.Trace(errQueryInterrupted)
+		if err = sessVars.SQLKiller.HandleSignal(); err != nil {
+			return err
 		}
 		sc := sessVars.StmtCtx
 		for _, warning := range r.selectResp.Warnings {

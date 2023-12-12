@@ -51,45 +51,6 @@ func TestInitLRUWithSystemVar(t *testing.T) {
 	require.NotNil(t, lru)
 }
 
-func TestIssue45086(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
-
-	tk.MustExec(`CREATE TABLE t (a int(11) DEFAULT NULL, b date DEFAULT NULL)`)
-	tk.MustExec(`INSERT INTO t VALUES (1, current_date())`)
-
-	tk.MustExec(`PREPARE stmt FROM 'SELECT * FROM t WHERE b=current_date()'`)
-	require.Equal(t, len(tk.MustQuery(`EXECUTE stmt`).Rows()), 1)
-}
-
-func TestPlanCacheSizeSwitch(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	// default value = 100
-	tk.MustQuery(`select @@tidb_prepared_plan_cache_size`).Check(testkit.Rows("100"))
-	tk.MustQuery(`select @@tidb_session_plan_cache_size`).Check(testkit.Rows("100"))
-
-	// keep the same value when updating any one of them
-	tk.MustExec(`set @@tidb_prepared_plan_cache_size = 200`)
-	tk.MustQuery(`select @@tidb_prepared_plan_cache_size`).Check(testkit.Rows("200"))
-	tk.MustQuery(`select @@tidb_session_plan_cache_size`).Check(testkit.Rows("200"))
-	tk.MustExec(`set @@tidb_session_plan_cache_size = 300`)
-	tk.MustQuery(`select @@tidb_prepared_plan_cache_size`).Check(testkit.Rows("300"))
-	tk.MustQuery(`select @@tidb_session_plan_cache_size`).Check(testkit.Rows("300"))
-
-	tk.MustExec(`set global tidb_prepared_plan_cache_size = 400`)
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustQuery(`select @@tidb_prepared_plan_cache_size`).Check(testkit.Rows("400"))
-	tk1.MustQuery(`select @@tidb_session_plan_cache_size`).Check(testkit.Rows("400"))
-
-	tk.MustExec(`set global tidb_session_plan_cache_size = 500`)
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustQuery(`select @@tidb_prepared_plan_cache_size`).Check(testkit.Rows("500"))
-	tk2.MustQuery(`select @@tidb_session_plan_cache_size`).Check(testkit.Rows("500"))
-}
-
 func TestNonPreparedPlanCachePlanString(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -117,34 +78,6 @@ func TestNonPreparedPlanCachePlanString(t *testing.T) {
 	require.Equal(t, planString("select * from t where b < 1"), "TableReader(Table(t)->Sel([lt(test.t.b, 1)]))")
 	require.Equal(t, planString("select * from t where b < 10"), "TableReader(Table(t)->Sel([lt(test.t.b, 10)]))") // filter 1 -> 10
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
-}
-
-func TestNonPreparedPlanCacheWithExplain(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
-	tk.MustExec("select * from t where a=1") // cache this plan
-
-	tk.MustQuery("explain select * from t where a=2").Check(testkit.Rows(
-		`TableReader_7 10.00 root  data:Selection_6`,
-		`└─Selection_6 10.00 cop[tikv]  eq(test.t.a, 2)`,
-		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-
-	tk.MustQuery("explain format=verbose select * from t where a=2").Check(testkit.Rows(
-		`TableReader_7 10.00 168975.57 root  data:Selection_6`,
-		`└─Selection_6 10.00 2534000.00 cop[tikv]  eq(test.t.a, 2)`,
-		`  └─TableFullScan_5 10000.00 2035000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-
-	tk.MustQuery("explain analyze select * from t where a=2").CheckAt([]int{0, 1, 2, 3}, [][]interface{}{
-		{"TableReader_7", "10.00", "0", "root"},
-		{"└─Selection_6", "10.00", "0", "cop[tikv]"},
-		{"  └─TableFullScan_5", "10000.00", "0", "cop[tikv]"},
-	})
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
 func TestNonPreparedPlanCacheInformationSchema(t *testing.T) {
@@ -422,25 +355,6 @@ func TestIssue38205(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
-func TestPlanCacheExprBlacklistCompatibility(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int)")
-
-	tk.MustExec("prepare st from 'select * from t where mod(a, 2)=1'")
-	tk.MustExec("execute st")
-	tk.MustExec("execute st")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-
-	tk.MustExec("insert into mysql.expr_pushdown_blacklist(name) values('mod')")
-	tk.MustExec(`admin reload expr_pushdown_blacklist`)
-	tk.MustExec("execute st")                                              // no `mod can not be pushed-down` error
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // expr blacklist is updated
-	tk.MustExec("execute st")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-}
-
 func TestIssue40224(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -666,9 +580,8 @@ func planCachePointGetQueries(isNonPrep bool) []string {
 			return fmt.Sprintf("%v %v (%v, %v, %v)", col, op, v(), v(), v())
 		} else if op == "is null" {
 			return fmt.Sprintf("%v %v", col, op)
-		} else {
-			return fmt.Sprintf("%v %v %v", col, op, v())
 		}
+		return fmt.Sprintf("%v %v %v", col, op, v())
 	}
 	var queries []string
 	for i := 0; i < 50; i++ {
@@ -960,41 +873,6 @@ func TestPlanCacheSubquerySPMEffective(t *testing.T) {
 		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	}
-}
-
-func TestNonPreparedPlanCacheFieldNames(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
-	tk.MustExec("create table t(a int, index(a))")
-	tk.MustExec("create table tt(a varchar(10))")
-	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
-
-	checkFieldName := func(sql, hit string, fields ...string) {
-		rs, err := tk.Exec(sql)
-		require.NoError(t, err)
-		for i, f := range rs.Fields() {
-			require.Equal(t, f.Column.Name.L, fields[i])
-		}
-		require.NoError(t, rs.Close())
-		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows(hit))
-	}
-
-	checkFieldName(`select a+1 from t where a<10`, `0`, `a+1`)
-	checkFieldName(`select a+1 from t where a<20`, `1`, `a+1`)
-	checkFieldName(`select a+2 from t where a<30`, `0`, `a+2`) // can not hit since field names changed
-	checkFieldName(`select a+2 from t where a<40`, `1`, `a+2`)
-	checkFieldName(`select a,a+1 from t where a<30`, `0`, `a`, `a+1`) // can not hit since field names changed
-	checkFieldName(`select a,a+1 from t where a<40`, `1`, `a`, `a+1`)
-	checkFieldName(`select a+'123' from tt where a='1'`, `0`, `a+'123'`)
-	checkFieldName(`select a+'123' from tt where a='2'`, `1`, `a+'123'`)
-
-	checkFieldName(`select 1 from t where a<10`, `0`, `1`)
-	checkFieldName(`select 1 from t where a<20`, `1`, `1`)
-	checkFieldName(`select 2 from t where a<10`, `0`, `2`)
-	checkFieldName(`select 2 from t where a<20`, `1`, `2`)
-	checkFieldName(`select 1,2 from t where a<10`, `0`, `1`, `2`)
-	checkFieldName(`select 1,2 from t where a<20`, `1`, `1`, `2`)
 }
 
 func TestIssue42125(t *testing.T) {
@@ -1311,41 +1189,6 @@ func TestBuiltinFuncFlen(t *testing.T) {
 			r2 := tk.MustQuery(q)
 			r1.Sort().Check(r2.Sort().Rows())
 		}
-	}
-}
-
-func TestNonPreparedPlanCacheBuiltinFuncs(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
-	tk.MustExec(`create table t (a int, b varchar(32), c datetime, key(a))`)
-
-	// normal builtin functions can be supported
-	supportedCases := []string{
-		`select * from t where mod(a, 5) < 2`,
-		`select * from t where c < now()`,
-		`select date_format(c, '%Y-%m-%d') from t where a < 10`,
-		`select str_to_date(b, '%Y-%m-%d') from t where a < 10`,
-		`select * from t where a-2 < 20`,
-		`select * from t where a+b > 100`,
-	}
-	for _, sql := range supportedCases {
-		tk.MustExec(sql)
-		tk.MustExec(sql)
-		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
-	}
-
-	// unsupported cases
-	unsupportedCases := []string{
-		`select * from t where -a > 10`,                  // '-' cannot support
-		`select * from t where a < 1 and b like '%abc%'`, // LIKE
-		`select database() from t`,
-	}
-	for _, sql := range unsupportedCases {
-		tk.MustExec(sql)
-		tk.MustExec(sql)
-		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 	}
 }
 

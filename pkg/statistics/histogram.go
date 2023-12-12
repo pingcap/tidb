@@ -34,14 +34,17 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
+	"go.uber.org/zap"
 )
 
 // Histogram represents statistics for a column or index.
@@ -202,7 +205,7 @@ func (hg *Histogram) ConvertTo(sc *stmtctx.StatementContext, tp *types.FieldType
 	iter := chunk.NewIterator4Chunk(hg.Bounds)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		d := row.GetDatum(0, hg.Tp)
-		d, err := d.ConvertTo(sc, tp)
+		d, err := d.ConvertTo(sc.TypeCtx(), tp)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -296,16 +299,18 @@ func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
 			return
 		}
 	}
+	var midIdx = 0
+	var found bool
 	for lowIdx <= highIdx {
-		midIdx := (lowIdx + highIdx) / 2
+		midIdx = (lowIdx + highIdx) / 2
 		cmpResult := bytes.Compare(hg.Bounds.Column(0).GetRaw(midIdx*2), valCntPairs.Encoded)
 		if cmpResult > 0 {
-			lowIdx = midIdx + 1
+			highIdx = midIdx - 1
 			continue
 		}
 		cmpResult = bytes.Compare(hg.Bounds.Column(0).GetRaw(midIdx*2+1), valCntPairs.Encoded)
 		if cmpResult < 0 {
-			highIdx = midIdx - 1
+			lowIdx = midIdx + 1
 			continue
 		}
 		if hg.Buckets[midIdx].NDV > 0 {
@@ -318,7 +323,16 @@ func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
 		if hg.Buckets[midIdx].Count < 0 {
 			hg.Buckets[midIdx].Count = 0
 		}
+		found = true
 		break
+	}
+	if found {
+		for midIdx++; midIdx <= hg.Len()-1; midIdx++ {
+			hg.Buckets[midIdx].Count -= int64(valCntPairs.Count)
+			if hg.Buckets[midIdx].Count < 0 {
+				hg.Buckets[midIdx].Count = 0
+			}
+		}
 	}
 }
 
@@ -637,11 +651,13 @@ func validRange(sc *stmtctx.StatementContext, ran *ranger.Range, encoded bool) b
 		low, high = ran.LowVal[0].GetBytes(), ran.HighVal[0].GetBytes()
 	} else {
 		var err error
-		low, err = codec.EncodeKey(sc, nil, ran.LowVal[0])
+		low, err = codec.EncodeKey(sc.TimeZone(), nil, ran.LowVal[0])
+		err = sc.HandleError(err)
 		if err != nil {
 			return false
 		}
-		high, err = codec.EncodeKey(sc, nil, ran.HighVal[0])
+		high, err = codec.EncodeKey(sc.TimeZone(), nil, ran.HighVal[0])
+		err = sc.HandleError(err)
 		if err != nil {
 			return false
 		}
@@ -821,7 +837,7 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 	}
 	lh.NDV += rh.NDV
 	lLen := lh.Len()
-	cmp, err := lh.GetUpper(lLen-1).Compare(sc, rh.GetLower(0), collate.GetBinaryCollator())
+	cmp, err := lh.GetUpper(lLen-1).Compare(sc.TypeCtx(), rh.GetLower(0), collate.GetBinaryCollator())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -908,7 +924,14 @@ func (hg *Histogram) OutOfRange(val types.Datum) bool {
          │   │
     lDatum  rDatum
 */
-func (hg *Histogram) OutOfRangeRowCount(sctx sessionctx.Context, lDatum, rDatum *types.Datum, modifyCount, histNDV int64) (result float64) {
+// The percentage of shaded area on the left side calculation formula is:
+// leftPercent = (math.Pow(actualR-boundL, 2) - math.Pow(actualL-boundL, 2)) / math.Pow(histWidth, 2)
+// You can find more details at https://github.com/pingcap/tidb/pull/47966#issuecomment-1778866876
+func (hg *Histogram) OutOfRangeRowCount(
+	sctx sessionctx.Context,
+	lDatum, rDatum *types.Datum,
+	modifyCount, histNDV int64,
+) (result float64) {
 	debugTrace := sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace
 	if debugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -1070,17 +1093,6 @@ func (hg *Histogram) Copy() *Histogram {
 	return &newHist
 }
 
-// RemoveUpperBound removes the upper bound from histogram.
-// It is used when merge stats for incremental analyze.
-func (hg *Histogram) RemoveUpperBound() *Histogram {
-	hg.Buckets[hg.Len()-1].Count -= hg.Buckets[hg.Len()-1].Repeat
-	hg.Buckets[hg.Len()-1].Repeat = 0
-	if hg.NDV > 0 {
-		hg.NDV--
-	}
-	return hg
-}
-
 // TruncateHistogram truncates the histogram to `numBkt` buckets.
 func (hg *Histogram) TruncateHistogram(numBkt int) *Histogram {
 	hist := hg.Copy()
@@ -1166,6 +1178,10 @@ func newbucket4MergingForRecycle() *bucket4Merging {
 }
 
 func releasebucket4MergingForRecycle(b *bucket4Merging) {
+	b.disjointNDV = 0
+	b.Repeat = 0
+	b.NDV = 0
+	b.Count = 0
 	bucket4MergingPool.Put(b)
 }
 
@@ -1236,7 +1252,7 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 		res.NDV = left.NDV
 		return &res, nil
 	}
-	upperCompare, err := right.upper.Compare(sc, left.upper, collate.GetBinaryCollator())
+	upperCompare, err := right.upper.Compare(sc.TypeCtx(), left.upper, collate.GetBinaryCollator())
 	if err != nil {
 		return nil, err
 	}
@@ -1244,13 +1260,15 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 	// _______left____|
 	// illegal order.
 	if upperCompare < 0 {
-		return nil, errors.Errorf("illegal bucket order")
+		err := errors.Errorf("illegal bucket order")
+		statslogutil.StatsLogger().Warn("fail to mergeBucketNDV", zap.Error(err))
+		return nil, err
 	}
 	//  ___right_|
 	//  ___left__|
 	// They have the same upper.
 	if upperCompare == 0 {
-		lowerCompare, err := right.lower.Compare(sc, left.lower, collate.GetBinaryCollator())
+		lowerCompare, err := right.lower.Compare(sc.TypeCtx(), left.lower, collate.GetBinaryCollator())
 		if err != nil {
 			return nil, err
 		}
@@ -1258,7 +1276,9 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 		//         |__left____|
 		// illegal order.
 		if lowerCompare < 0 {
-			return nil, errors.Errorf("illegal bucket order")
+			err := errors.Errorf("illegal bucket order")
+			statslogutil.StatsLogger().Warn("fail to mergeBucketNDV", zap.Error(err))
+			return nil, err
 		}
 		// |___right___|
 		// |____left___|
@@ -1281,7 +1301,7 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 	// ____right___|
 	// ____left__|
 	// right.upper > left.upper
-	lowerCompareUpper, err := right.lower.Compare(sc, left.upper, collate.GetBinaryCollator())
+	lowerCompareUpper, err := right.lower.Compare(sc.TypeCtx(), left.upper, collate.GetBinaryCollator())
 	if err != nil {
 		return nil, err
 	}
@@ -1298,7 +1318,7 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 		return &res, nil
 	}
 	upperRatio := calcFraction4Datums(right.lower, right.upper, left.upper)
-	lowerCompare, err := right.lower.Compare(sc, left.lower, collate.GetBinaryCollator())
+	lowerCompare, err := right.lower.Compare(sc.TypeCtx(), left.lower, collate.GetBinaryCollator())
 	if err != nil {
 		return nil, err
 	}
@@ -1349,10 +1369,13 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 	right := buckets[len(buckets)-1].Clone()
 
 	totNDV := int64(0)
+	intest.Assert(res.Count == 0, "Count in the new bucket4Merging should be 0")
+	intest.Assert(res.Repeat == 0, "Repeat in the new bucket4Merging should be 0")
+	intest.Assert(res.NDV == 0, "NDV in the new bucket4Merging bucket4Merging should be 0")
 	for i := len(buckets) - 1; i >= 0; i-- {
 		totNDV += buckets[i].NDV
 		res.Count += buckets[i].Count
-		compare, err := buckets[i].upper.Compare(sc, res.upper, collate.GetBinaryCollator())
+		compare, err := buckets[i].upper.Compare(sc.TypeCtx(), res.upper, collate.GetBinaryCollator())
 		if err != nil {
 			return nil, err
 		}
@@ -1408,7 +1431,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 				continue
 			}
 			tmpValue := hist.GetLower(0)
-			res, err := tmpValue.Compare(sc, minValue, collate.GetBinaryCollator())
+			res, err := tmpValue.Compare(sc.TypeCtx(), minValue, collate.GetBinaryCollator())
 			if err != nil {
 				return nil, err
 			}
@@ -1437,7 +1460,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			minValue = d.Clone()
 			continue
 		}
-		res, err := d.Compare(sc, minValue, collate.GetBinaryCollator())
+		res, err := d.Compare(sc.TypeCtx(), minValue, collate.GetBinaryCollator())
 		if err != nil {
 			return nil, err
 		}
@@ -1451,7 +1474,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	tail := 0
 	for i := range buckets {
 		if buckets[i].Count != 0 {
-			buckets[tail] = buckets[i]
+			buckets[tail], buckets[i] = buckets[i], buckets[tail]
 			tail++
 		}
 	}
@@ -1462,14 +1485,14 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 
 	var sortError error
 	slices.SortFunc(buckets, func(i, j *bucket4Merging) int {
-		res, err := i.upper.Compare(sc, j.upper, collate.GetBinaryCollator())
+		res, err := i.upper.Compare(sc.TypeCtx(), j.upper, collate.GetBinaryCollator())
 		if err != nil {
 			sortError = err
 		}
 		if res != 0 {
 			return res
 		}
-		res, err = i.lower.Compare(sc, j.lower, collate.GetBinaryCollator())
+		res, err = i.lower.Compare(sc.TypeCtx(), j.lower, collate.GetBinaryCollator())
 		if err != nil {
 			sortError = err
 		}
@@ -1489,7 +1512,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		bucketNDV += buckets[i].NDV
 		if sum >= totCount*bucketCount/expBucketNumber && sum-prevSum >= gBucketCountThreshold {
 			for ; i > 0; i-- { // if the buckets have the same upper, we merge them into the same new buckets.
-				res, err := buckets[i-1].upper.Compare(sc, buckets[i].upper, collate.GetBinaryCollator())
+				res, err := buckets[i-1].upper.Compare(sc.TypeCtx(), buckets[i].upper, collate.GetBinaryCollator())
 				if err != nil {
 					return nil, err
 				}

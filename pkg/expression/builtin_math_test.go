@@ -52,7 +52,7 @@ func TestAbs(t *testing.T) {
 		fc := funcs[ast.Abs]
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
 		require.NoError(t, err)
-		v, err := evalBuiltinFunc(f, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
@@ -61,11 +61,11 @@ func TestAbs(t *testing.T) {
 func TestCeil(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	tmpIT := sc.IgnoreTruncate.Load()
-	sc.IgnoreTruncate.Store(true)
+	oldTypeFlags := sc.TypeFlags()
 	defer func() {
-		sc.IgnoreTruncate.Store(tmpIT)
+		sc.SetTypeFlags(oldTypeFlags)
 	}()
+	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
 
 	type testCase struct {
 		arg    interface{}
@@ -100,7 +100,7 @@ func TestCeil(t *testing.T) {
 			f, err := newFunctionForTest(ctx, funcName, primitiveValsToConstants(ctx, []interface{}{test.arg})...)
 			require.NoError(t, err)
 
-			result, err := f.Eval(chunk.Row{})
+			result, err := f.Eval(ctx, chunk.Row{})
 			if test.getErr {
 				require.Error(t, err)
 			} else {
@@ -151,7 +151,7 @@ func TestExp(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Exp, primitiveValsToConstants(ctx, []interface{}{test.args})...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(chunk.Row{})
+		result, err := f.Eval(ctx, chunk.Row{})
 		if test.getWarning {
 			if test.errMsg != "" {
 				require.Error(t, err)
@@ -177,11 +177,11 @@ func TestExp(t *testing.T) {
 func TestFloor(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	tmpIT := sc.IgnoreTruncate.Load()
-	sc.IgnoreTruncate.Store(true)
+	oldTypeFlags := sc.TypeFlags()
 	defer func() {
-		sc.IgnoreTruncate.Store(tmpIT)
+		sc.SetTypeFlags(oldTypeFlags)
 	}()
+	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
 
 	genDuration := func(h, m, s int64) types.Duration {
 		duration := time.Duration(h)*time.Hour +
@@ -216,7 +216,7 @@ func TestFloor(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Floor, primitiveValsToConstants(ctx, []interface{}{test.arg})...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(chunk.Row{})
+		result, err := f.Eval(ctx, chunk.Row{})
 		if test.getErr {
 			require.Error(t, err)
 		} else {
@@ -271,7 +271,7 @@ func TestLog(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Log, primitiveValsToConstants(ctx, test.args)...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(chunk.Row{})
+		result, err := f.Eval(ctx, chunk.Row{})
 		require.NoError(t, err)
 		if test.warningCount > 0 {
 			require.Equal(t, preWarningCnt+test.warningCount, ctx.GetSessionVars().StmtCtx.WarningCount())
@@ -309,7 +309,7 @@ func TestLog2(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Log2, primitiveValsToConstants(ctx, []interface{}{test.args})...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(chunk.Row{})
+		result, err := f.Eval(ctx, chunk.Row{})
 		require.NoError(t, err)
 		if test.warningCount > 0 {
 			require.Equal(t, preWarningCnt+test.warningCount, ctx.GetSessionVars().StmtCtx.WarningCount())
@@ -347,7 +347,7 @@ func TestLog10(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Log10, primitiveValsToConstants(ctx, []interface{}{test.args})...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(chunk.Row{})
+		result, err := f.Eval(ctx, chunk.Row{})
 		require.NoError(t, err)
 		if test.warningCount > 0 {
 			require.Equal(t, preWarningCnt+test.warningCount, ctx.GetSessionVars().StmtCtx.WarningCount())
@@ -368,7 +368,7 @@ func TestRand(t *testing.T) {
 	fc := funcs[ast.Rand]
 	f, err := fc.getFunction(ctx, nil)
 	require.NoError(t, err)
-	v, err := evalBuiltinFunc(f, chunk.Row{})
+	v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Less(t, v.GetFloat64(), float64(1))
 	require.GreaterOrEqual(t, v.GetFloat64(), float64(0))
@@ -378,7 +378,7 @@ func TestRand(t *testing.T) {
 	require.NoError(t, err)
 	randGen := mathutil.NewWithSeed(20160101)
 	for i := 0; i < 3; i++ {
-		v, err = evalBuiltinFunc(f2, chunk.Row{})
+		v, err = evalBuiltinFunc(f2, ctx, chunk.Row{})
 		require.NoError(t, err)
 		require.Equal(t, randGen.Gen(), v.GetFloat64())
 	}
@@ -402,7 +402,7 @@ func TestPow(t *testing.T) {
 		fc := funcs[ast.Pow]
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
 		require.NoError(t, err)
-		v, err := evalBuiltinFunc(f, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
@@ -420,7 +420,7 @@ func TestPow(t *testing.T) {
 		fc := funcs[ast.Pow]
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
 		require.NoError(t, err)
-		_, err = evalBuiltinFunc(f, chunk.Row{})
+		_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 		if i == 2 {
 			require.Error(t, err)
 			require.Equal(t, "[types:1690]DOUBLE value is out of range in 'pow(10, 700)'", err.Error())
@@ -479,7 +479,7 @@ func TestRound(t *testing.T) {
 		case *builtinRoundRealSig:
 			require.Equal(t, tipb.ScalarFuncSig_RoundReal, f.PbCode())
 		}
-		v, err := evalBuiltinFunc(f, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
@@ -523,7 +523,7 @@ func TestTruncate(t *testing.T) {
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
 		require.NoError(t, err)
 		require.NotNil(t, f)
-		v, err := evalBuiltinFunc(f, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
@@ -554,7 +554,7 @@ func TestCRC32(t *testing.T) {
 		require.NoError(t, err)
 		f, err := newFunctionForTest(ctx, ast.CRC32, primitiveValsToConstants(ctx, c.input)...)
 		require.NoError(t, err)
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		require.NoError(t, err)
 		if c.isNull {
 			require.True(t, d.IsNull())
@@ -597,7 +597,7 @@ func TestConv(t *testing.T) {
 		require.Equal(t, charset.CollationUTF8MB4, tp.GetCollate())
 		require.Equal(t, uint(0), tp.GetFlag())
 
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -631,11 +631,11 @@ func TestConv(t *testing.T) {
 func TestSign(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	tmpIT := sc.IgnoreTruncate.Load()
-	sc.IgnoreTruncate.Store(true)
+	oldTypeFlags := sc.TypeFlags()
 	defer func() {
-		sc.IgnoreTruncate.Store(tmpIT)
+		sc.SetTypeFlags(oldTypeFlags)
 	}()
+	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
 
 	for _, tt := range []struct {
 		num []interface{}
@@ -657,7 +657,7 @@ func TestSign(t *testing.T) {
 		fc := funcs[ast.Sign]
 		f, err := fc.getFunction(ctx, primitiveValsToConstants(ctx, tt.num))
 		require.NoError(t, err)
-		v, err := evalBuiltinFunc(f, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(tt.ret), v)
 	}
@@ -666,7 +666,12 @@ func TestSign(t *testing.T) {
 func TestDegrees(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	sc.IgnoreTruncate.Store(false)
+	oldTypeFlags := sc.TypeFlags()
+	defer func() {
+		sc.SetTypeFlags(oldTypeFlags)
+	}()
+	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(false))
+
 	cases := []struct {
 		args       interface{}
 		expected   float64
@@ -689,7 +694,7 @@ func TestDegrees(t *testing.T) {
 		preWarningCnt := ctx.GetSessionVars().StmtCtx.WarningCount()
 		f, err := newFunctionForTest(ctx, ast.Degrees, primitiveValsToConstants(ctx, []interface{}{c.args})...)
 		require.NoError(t, err)
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getWarning {
 			require.NoError(t, err)
 			require.Equal(t, preWarningCnt+1, ctx.GetSessionVars().StmtCtx.WarningCount())
@@ -724,7 +729,7 @@ func TestSqrt(t *testing.T) {
 		fc := funcs[ast.Sqrt]
 		f, err := fc.getFunction(ctx, primitiveValsToConstants(ctx, tt.Arg))
 		require.NoError(t, err)
-		v, err := evalBuiltinFunc(f, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(tt.Ret), v)
 	}
@@ -735,7 +740,7 @@ func TestPi(t *testing.T) {
 	f, err := funcs[ast.PI].getFunction(ctx, nil)
 	require.NoError(t, err)
 
-	pi, err := evalBuiltinFunc(f, chunk.Row{})
+	pi, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	testutil.DatumEqual(t, types.NewDatum(math.Pi), pi)
 }
@@ -759,7 +764,7 @@ func TestRadians(t *testing.T) {
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
 		require.NoError(t, err)
 		require.NotNil(t, f)
-		v, err := evalBuiltinFunc(f, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
@@ -768,7 +773,7 @@ func TestRadians(t *testing.T) {
 	fc := funcs[ast.Radians]
 	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewDatum(invalidArg)}))
 	require.NoError(t, err)
-	_, err = evalBuiltinFunc(f, chunk.Row{})
+	_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, 1, int(ctx.GetSessionVars().StmtCtx.WarningCount()))
 }
@@ -799,7 +804,7 @@ func TestSin(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Sin, primitiveValsToConstants(ctx, []interface{}{c.args})...)
 		require.NoError(t, err)
 
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getWarning {
 			require.NoError(t, err)
 			require.Equal(t, preWarningCnt+1, ctx.GetSessionVars().StmtCtx.WarningCount())
@@ -840,7 +845,7 @@ func TestCos(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Cos, primitiveValsToConstants(ctx, []interface{}{c.args})...)
 		require.NoError(t, err)
 
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getWarning {
 			require.NoError(t, err)
 			require.Equal(t, preWarningCnt+1, ctx.GetSessionVars().StmtCtx.WarningCount())
@@ -879,7 +884,7 @@ func TestAcos(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Acos, primitiveValsToConstants(ctx, []interface{}{test.args})...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(chunk.Row{})
+		result, err := f.Eval(ctx, chunk.Row{})
 		if test.getWarning {
 			require.NoError(t, err)
 			require.Equal(t, preWarningCnt+1, ctx.GetSessionVars().StmtCtx.WarningCount())
@@ -918,7 +923,7 @@ func TestAsin(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Asin, primitiveValsToConstants(ctx, []interface{}{test.args})...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(chunk.Row{})
+		result, err := f.Eval(ctx, chunk.Row{})
 		if test.getWarning {
 			require.NoError(t, err)
 			require.Equal(t, preWarningCnt+1, ctx.GetSessionVars().StmtCtx.WarningCount())
@@ -957,7 +962,7 @@ func TestAtan(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Atan, primitiveValsToConstants(ctx, test.args)...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(chunk.Row{})
+		result, err := f.Eval(ctx, chunk.Row{})
 		if test.getWarning {
 			require.NoError(t, err)
 			require.Equal(t, preWarningCnt+1, ctx.GetSessionVars().StmtCtx.WarningCount())
@@ -997,7 +1002,7 @@ func TestTan(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Tan, primitiveValsToConstants(ctx, []interface{}{c.args})...)
 		require.NoError(t, err)
 
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getWarning {
 			require.NoError(t, err)
 			require.Equal(t, preWarningCnt+1, ctx.GetSessionVars().StmtCtx.WarningCount())
@@ -1038,7 +1043,7 @@ func TestCot(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Cot, primitiveValsToConstants(ctx, []interface{}{test.args})...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(chunk.Row{})
+		result, err := f.Eval(ctx, chunk.Row{})
 		if test.getErr {
 			require.Error(t, err)
 			if test.errMsg != "" {

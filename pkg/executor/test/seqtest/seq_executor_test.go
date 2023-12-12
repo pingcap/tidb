@@ -808,9 +808,11 @@ func HelperTestAdminShowNextID(t *testing.T, store kv.Storage, str string) {
 	tk.MustExec("use test1")
 	r = tk.MustQuery(str + " tt next_row_id")
 	r.Check(testkit.Rows("test1 tt id 31 _TIDB_ROWID", "test1 tt id 1 AUTO_INCREMENT"))
+	tk.MustQuery(`select * from tt`).Sort().Check(testkit.Rows("20 1"))
 	tk.MustExec("insert test1.tt values ()")
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test1 tt id 41 _TIDB_ROWID", "test1 tt id 1 AUTO_INCREMENT"))
+	r.Check(testkit.Rows("test1 tt id 31 _TIDB_ROWID", "test1 tt id 1 AUTO_INCREMENT"))
+	tk.MustQuery(`select * from tt`).Sort().Check(testkit.Rows("20 1", "21 <nil>"))
 	tk.MustExec("drop table tt")
 
 	tk.MustExec("drop table if exists t;")
@@ -1188,72 +1190,6 @@ func TestCoprocessorPriority(t *testing.T) {
 	cli.mu.Unlock()
 }
 
-func TestShowForNewCollations(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	expectRows := testkit.Rows(
-		"ascii_bin ascii 65 Yes Yes 1",
-		"binary binary 63 Yes Yes 1",
-		"gbk_bin gbk 87  Yes 1",
-		"gbk_chinese_ci gbk 28 Yes Yes 1",
-		"latin1_bin latin1 47 Yes Yes 1",
-		"utf8_bin utf8 83 Yes Yes 1",
-		"utf8_general_ci utf8 33  Yes 1",
-		"utf8_unicode_ci utf8 192  Yes 1",
-		"utf8mb4_0900_ai_ci utf8mb4 255  Yes 1",
-		"utf8mb4_0900_bin utf8mb4 309  Yes 1",
-		"utf8mb4_bin utf8mb4 46 Yes Yes 1",
-		"utf8mb4_general_ci utf8mb4 45  Yes 1",
-		"utf8mb4_unicode_ci utf8mb4 224  Yes 1",
-	)
-	tk.MustQuery("show collation").Check(expectRows)
-	tk.MustQuery("select * from information_schema.COLLATIONS").Check(expectRows)
-	tk.MustQuery("show character set like '%utf8mb4%'").Check(testkit.Rows("utf8mb4 UTF-8 Unicode utf8mb4_bin 4"))
-	tk.MustQuery("select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER_SET_NAME='utf8mb4'").Check(testkit.Rows("utf8mb4_bin utf8mb4 46 Yes Yes 1"))
-	// update default_collation_for_utf8mb4
-	tk.MustExec("set @@session.default_collation_for_utf8mb4='utf8mb4_0900_ai_ci';")
-	tk.MustQuery("show variables like 'default_collation_for_utf8mb4';").Check(testkit.Rows("default_collation_for_utf8mb4 utf8mb4_0900_ai_ci"))
-	expectRows1 := testkit.Rows(
-		"ascii_bin ascii 65 Yes Yes 1",
-		"binary binary 63 Yes Yes 1",
-		"gbk_bin gbk 87  Yes 1",
-		"gbk_chinese_ci gbk 28 Yes Yes 1",
-		"latin1_bin latin1 47 Yes Yes 1",
-		"utf8_bin utf8 83 Yes Yes 1",
-		"utf8_general_ci utf8 33  Yes 1",
-		"utf8_unicode_ci utf8 192  Yes 1",
-		"utf8mb4_0900_ai_ci utf8mb4 255 Yes Yes 1",
-		"utf8mb4_0900_bin utf8mb4 309  Yes 1",
-		"utf8mb4_bin utf8mb4 46  Yes 1",
-		"utf8mb4_general_ci utf8mb4 45  Yes 1",
-		"utf8mb4_unicode_ci utf8mb4 224  Yes 1",
-	)
-	tk.MustQuery("show collation").Check(expectRows1)
-	tk.MustQuery("select * from information_schema.COLLATIONS").Check(expectRows)
-	tk.MustQuery("show character set like '%utf8mb4%'").Check(testkit.Rows("utf8mb4 UTF-8 Unicode utf8mb4_0900_ai_ci 4"))
-	tk.MustQuery("select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER_SET_NAME='utf8mb4'").Check(testkit.Rows("utf8mb4_bin utf8mb4 46 Yes Yes 1"))
-}
-
-func TestForbidUnsupportedCollations(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	mustGetUnsupportedCollation := func(sql string, coll string) {
-		tk.MustGetErrMsg(sql, fmt.Sprintf("[ddl:1273]Unsupported collation when new collation is enabled: '%s'", coll))
-	}
-
-	mustGetUnsupportedCollation("select 'a' collate utf8_roman_ci", "utf8_roman_ci")
-	mustGetUnsupportedCollation("select cast('a' as char) collate utf8_roman_ci", "utf8_roman_ci")
-	mustGetUnsupportedCollation("set names utf8 collate utf8_roman_ci", "utf8_roman_ci")
-	mustGetUnsupportedCollation("set session collation_server = 'utf8_roman_ci'", "utf8_roman_ci")
-	mustGetUnsupportedCollation("set session collation_database = 'utf8_roman_ci'", "utf8_roman_ci")
-	mustGetUnsupportedCollation("set session collation_connection = 'utf8_roman_ci'", "utf8_roman_ci")
-	mustGetUnsupportedCollation("set global collation_server = 'utf8_roman_ci'", "utf8_roman_ci")
-	mustGetUnsupportedCollation("set global collation_database = 'utf8_roman_ci'", "utf8_roman_ci")
-	mustGetUnsupportedCollation("set global collation_connection = 'utf8_roman_ci'", "utf8_roman_ci")
-}
-
 func TestAutoIncIDInRetry(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -1463,33 +1399,6 @@ func TestAutoRandRecoverTable(t *testing.T) {
 	require.Equal(t, []int64{1, 2, 3, autoRandIDStep + 1, autoRandIDStep + 2, autoRandIDStep + 3}, ordered)
 }
 
-func TestMaxDeltaSchemaCount(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	require.Equal(t, int64(variable.DefTiDBMaxDeltaSchemaCount), variable.GetMaxDeltaSchemaCount())
-
-	tk.MustExec("set @@global.tidb_max_delta_schema_count= -1")
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_max_delta_schema_count value: '-1'"))
-	// Make sure a new session will load global variables.
-	tk.RefreshSession()
-	tk.MustExec("use test")
-	require.Equal(t, int64(100), variable.GetMaxDeltaSchemaCount())
-	tk.MustExec(fmt.Sprintf("set @@global.tidb_max_delta_schema_count= %v", uint64(math.MaxInt64)))
-	tk.MustQuery("show warnings;").Check(testkit.Rows(fmt.Sprintf("Warning 1292 Truncated incorrect tidb_max_delta_schema_count value: '%d'", uint64(math.MaxInt64))))
-	tk.RefreshSession()
-	tk.MustExec("use test")
-	require.Equal(t, int64(16384), variable.GetMaxDeltaSchemaCount())
-	tk.MustGetErrCode("set @@global.tidb_max_delta_schema_count= invalid_val", errno.ErrWrongTypeForVar)
-
-	tk.MustExec("set @@global.tidb_max_delta_schema_count= 2048")
-	tk.RefreshSession()
-	tk.MustExec("use test")
-	require.Equal(t, int64(2048), variable.GetMaxDeltaSchemaCount())
-	tk.MustQuery("select @@global.tidb_max_delta_schema_count").Check(testkit.Rows("2048"))
-}
-
 func TestOOMPanicInHashJoinWhenFetchBuildRows(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -1554,30 +1463,6 @@ func TestIssue18744(t *testing.T) {
 	}()
 	err := tk.QueryToErr(`select /*+ inl_hash_join(t2) */ t1.id, t2.id from t1 join t t2 on t1.a = t2.a order by t1.a ASC limit 1;`)
 	require.EqualError(t, err, "mockIndexHashJoinOuterWorkerErr")
-}
-
-func TestIssue19410(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t, t1, t2, t3;")
-	tk.MustExec("create table t(a int, b enum('A', 'B'));")
-	tk.MustExec("create table t1(a1 int, b1 enum('B', 'A') NOT NULL, UNIQUE KEY (b1));")
-	tk.MustExec("insert into t values (1, 'A');")
-	tk.MustExec("insert into t1 values (1, 'A');")
-	tk.MustQuery("select /*+ INL_HASH_JOIN(t1) */ * from t join t1 on t.b = t1.b1;").Check(testkit.Rows("1 A 1 A"))
-	tk.MustQuery("select /*+ INL_JOIN(t1) */ * from t join t1 on t.b = t1.b1;").Check(testkit.Rows("1 A 1 A"))
-
-	tk.MustExec("create table t2(a1 int, b1 enum('C', 'D') NOT NULL, UNIQUE KEY (b1));")
-	tk.MustExec("insert into t2 values (1, 'C');")
-	tk.MustQuery("select /*+ INL_HASH_JOIN(t2) */ * from t join t2 on t.b = t2.b1;").Check(testkit.Rows())
-	tk.MustQuery("select /*+ INL_JOIN(t2) */ * from t join t2 on t.b = t2.b1;").Check(testkit.Rows())
-
-	tk.MustExec("create table t3(a1 int, b1 enum('A', 'B') NOT NULL, UNIQUE KEY (b1));")
-	tk.MustExec("insert into t3 values (1, 'A');")
-	tk.MustQuery("select /*+ INL_HASH_JOIN(t3) */ * from t join t3 on t.b = t3.b1;").Check(testkit.Rows("1 A 1 A"))
-	tk.MustQuery("select /*+ INL_JOIN(t3) */ * from t join t3 on t.b = t3.b1;").Check(testkit.Rows("1 A 1 A"))
 }
 
 func TestAnalyzeNextRawErrorNoLeak(t *testing.T) {

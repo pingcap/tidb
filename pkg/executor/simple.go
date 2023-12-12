@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -60,9 +61,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/globalconn"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	pwdValidator "github.com/pingcap/tidb/pkg/util/password-validation"
 	"github.com/pingcap/tidb/pkg/util/sem"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tidb/pkg/util/tls"
@@ -219,7 +220,7 @@ func (e *SimpleExec) setDefaultRoleNone(s *ast.SetDefaultRoleStmt) error {
 			u.Hostname = "%"
 		}
 		sql.Reset()
-		sqlexec.MustFormatSQL(sql, "DELETE IGNORE FROM mysql.default_roles WHERE USER=%? AND HOST=%?;", u.Username, u.Hostname)
+		sqlescape.MustFormatSQL(sql, "DELETE IGNORE FROM mysql.default_roles WHERE USER=%? AND HOST=%?;", u.Username, u.Hostname)
 		if _, err := sqlExecutor.ExecuteInternal(ctx, sql.String()); err != nil {
 			logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
 			if _, rollbackErr := sqlExecutor.ExecuteInternal(ctx, "rollback"); rollbackErr != nil {
@@ -270,7 +271,7 @@ func (e *SimpleExec) setDefaultRoleRegular(ctx context.Context, s *ast.SetDefaul
 			user.Hostname = "%"
 		}
 		sql.Reset()
-		sqlexec.MustFormatSQL(sql, "DELETE IGNORE FROM mysql.default_roles WHERE USER=%? AND HOST=%?;", user.Username, user.Hostname)
+		sqlescape.MustFormatSQL(sql, "DELETE IGNORE FROM mysql.default_roles WHERE USER=%? AND HOST=%?;", user.Username, user.Hostname)
 		if _, err := sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
 			logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
 			if _, rollbackErr := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); rollbackErr != nil {
@@ -288,7 +289,7 @@ func (e *SimpleExec) setDefaultRoleRegular(ctx context.Context, s *ast.SetDefaul
 				return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(role.String(), user.String())
 			}
 			sql.Reset()
-			sqlexec.MustFormatSQL(sql, "INSERT IGNORE INTO mysql.default_roles values(%?, %?, %?, %?);", user.Hostname, user.Username, role.Hostname, role.Username)
+			sqlescape.MustFormatSQL(sql, "INSERT IGNORE INTO mysql.default_roles values(%?, %?, %?, %?);", user.Hostname, user.Username, role.Hostname, role.Username)
 			if _, err := sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
 				logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
 				if _, rollbackErr := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); rollbackErr != nil {
@@ -330,7 +331,7 @@ func (e *SimpleExec) setDefaultRoleAll(ctx context.Context, s *ast.SetDefaultRol
 			user.Hostname = "%"
 		}
 		sql.Reset()
-		sqlexec.MustFormatSQL(sql, "DELETE IGNORE FROM mysql.default_roles WHERE USER=%? AND HOST=%?;", user.Username, user.Hostname)
+		sqlescape.MustFormatSQL(sql, "DELETE IGNORE FROM mysql.default_roles WHERE USER=%? AND HOST=%?;", user.Username, user.Hostname)
 		if _, err := sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
 			logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
 			if _, rollbackErr := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); rollbackErr != nil {
@@ -339,7 +340,7 @@ func (e *SimpleExec) setDefaultRoleAll(ctx context.Context, s *ast.SetDefaultRol
 			return err
 		}
 		sql.Reset()
-		sqlexec.MustFormatSQL(sql, "INSERT IGNORE INTO mysql.default_roles(HOST,USER,DEFAULT_ROLE_HOST,DEFAULT_ROLE_USER) SELECT TO_HOST,TO_USER,FROM_HOST,FROM_USER FROM mysql.role_edges WHERE TO_HOST=%? AND TO_USER=%?;", user.Hostname, user.Username)
+		sqlescape.MustFormatSQL(sql, "INSERT IGNORE INTO mysql.default_roles(HOST,USER,DEFAULT_ROLE_HOST,DEFAULT_ROLE_USER) SELECT TO_HOST,TO_USER,FROM_HOST,FROM_USER FROM mysql.role_edges WHERE TO_HOST=%? AND TO_USER=%?;", user.Hostname, user.Username)
 		if _, err := sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
 			logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
 			if _, rollbackErr := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); rollbackErr != nil {
@@ -373,7 +374,7 @@ func (e *SimpleExec) setDefaultRoleForCurrentUser(s *ast.SetDefaultRoleStmt) (er
 	}
 
 	sql := new(strings.Builder)
-	sqlexec.MustFormatSQL(sql, "DELETE IGNORE FROM mysql.default_roles WHERE USER=%? AND HOST=%?;", user.Username, user.Hostname)
+	sqlescape.MustFormatSQL(sql, "DELETE IGNORE FROM mysql.default_roles WHERE USER=%? AND HOST=%?;", user.Username, user.Hostname)
 	if _, err := sqlExecutor.ExecuteInternal(ctx, sql.String()); err != nil {
 		logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
 		if _, rollbackErr := sqlExecutor.ExecuteInternal(ctx, "rollback"); rollbackErr != nil {
@@ -385,20 +386,20 @@ func (e *SimpleExec) setDefaultRoleForCurrentUser(s *ast.SetDefaultRoleStmt) (er
 	sql.Reset()
 	switch s.SetRoleOpt {
 	case ast.SetRoleNone:
-		sqlexec.MustFormatSQL(sql, "DELETE IGNORE FROM mysql.default_roles WHERE USER=%? AND HOST=%?;", user.Username, user.Hostname)
+		sqlescape.MustFormatSQL(sql, "DELETE IGNORE FROM mysql.default_roles WHERE USER=%? AND HOST=%?;", user.Username, user.Hostname)
 	case ast.SetRoleAll:
-		sqlexec.MustFormatSQL(sql, "INSERT IGNORE INTO mysql.default_roles(HOST,USER,DEFAULT_ROLE_HOST,DEFAULT_ROLE_USER) SELECT TO_HOST,TO_USER,FROM_HOST,FROM_USER FROM mysql.role_edges WHERE TO_HOST=%? AND TO_USER=%?;", user.Hostname, user.Username)
+		sqlescape.MustFormatSQL(sql, "INSERT IGNORE INTO mysql.default_roles(HOST,USER,DEFAULT_ROLE_HOST,DEFAULT_ROLE_USER) SELECT TO_HOST,TO_USER,FROM_HOST,FROM_USER FROM mysql.role_edges WHERE TO_HOST=%? AND TO_USER=%?;", user.Hostname, user.Username)
 	case ast.SetRoleRegular:
-		sqlexec.MustFormatSQL(sql, "INSERT IGNORE INTO mysql.default_roles values")
+		sqlescape.MustFormatSQL(sql, "INSERT IGNORE INTO mysql.default_roles values")
 		for i, role := range s.RoleList {
 			if i > 0 {
-				sqlexec.MustFormatSQL(sql, ",")
+				sqlescape.MustFormatSQL(sql, ",")
 			}
 			ok := checker.FindEdge(e.Ctx(), role, user)
 			if !ok {
 				return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(role.String(), user.String())
 			}
-			sqlexec.MustFormatSQL(sql, "(%?, %?, %?, %?)", user.Hostname, user.Username, role.Hostname, role.Username)
+			sqlescape.MustFormatSQL(sql, "(%?, %?, %?, %?)", user.Hostname, user.Username, role.Hostname, role.Username)
 		}
 	}
 
@@ -728,7 +729,7 @@ func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStm
 				role.Hostname = "%"
 			}
 			sql.Reset()
-			sqlexec.MustFormatSQL(sql, `DELETE IGNORE FROM %n.%n WHERE FROM_HOST=%? and FROM_USER=%? and TO_HOST=%? and TO_USER=%?`, mysql.SystemDB, mysql.RoleEdgeTable, role.Hostname, role.Username, user.Hostname, user.Username)
+			sqlescape.MustFormatSQL(sql, `DELETE IGNORE FROM %n.%n WHERE FROM_HOST=%? and FROM_USER=%? and TO_HOST=%? and TO_USER=%?`, mysql.SystemDB, mysql.RoleEdgeTable, role.Hostname, role.Username, user.Hostname, user.Username)
 			if _, err := sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
 				if _, err := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); err != nil {
 					return errors.Trace(err)
@@ -737,7 +738,7 @@ func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStm
 			}
 
 			sql.Reset()
-			sqlexec.MustFormatSQL(sql, `DELETE IGNORE FROM %n.%n WHERE DEFAULT_ROLE_HOST=%? and DEFAULT_ROLE_USER=%? and HOST=%? and USER=%?`, mysql.SystemDB, mysql.DefaultRoleTable, role.Hostname, role.Username, user.Hostname, user.Username)
+			sqlescape.MustFormatSQL(sql, `DELETE IGNORE FROM %n.%n WHERE DEFAULT_ROLE_HOST=%? and DEFAULT_ROLE_USER=%? and HOST=%? and USER=%?`, mysql.SystemDB, mysql.DefaultRoleTable, role.Hostname, role.Username, user.Hostname, user.Username)
 			if _, err := sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
 				if _, err := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); err != nil {
 					return errors.Trace(err)
@@ -873,22 +874,22 @@ func (info *passwordOrLockOptionsInfo) loadOptions(plOption []*ast.PasswordOrLoc
 		case ast.Unlock:
 			info.lockAccount = "N"
 		case ast.FailedLoginAttempts:
-			info.failedLoginAttempts = mathutil.Min(option.Count, math.MaxInt16)
+			info.failedLoginAttempts = min(option.Count, math.MaxInt16)
 			info.failedLoginAttemptsChange = true
 		case ast.PasswordLockTime:
-			info.passwordLockTime = mathutil.Min(option.Count, math.MaxInt16)
+			info.passwordLockTime = min(option.Count, math.MaxInt16)
 			info.passwordLockTimeChange = true
 		case ast.PasswordLockTimeUnbounded:
 			info.passwordLockTime = -1
 			info.passwordLockTimeChange = true
 		case ast.PasswordHistory:
-			info.passwordHistory = mathutil.Min(option.Count, math.MaxUint16)
+			info.passwordHistory = min(option.Count, math.MaxUint16)
 			info.passwordHistoryChange = true
 		case ast.PasswordHistoryDefault:
 			info.passwordHistory = notSpecified
 			info.passwordHistoryChange = true
 		case ast.PasswordReuseInterval:
-			info.passwordReuseInterval = mathutil.Min(option.Count, math.MaxUint16)
+			info.passwordReuseInterval = min(option.Count, math.MaxUint16)
 			info.passwordReuseIntervalChange = true
 		case ast.PasswordReuseDefault:
 			info.passwordReuseInterval = notSpecified
@@ -936,7 +937,7 @@ func readPasswordLockingInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecuto
 		containsNoOthers:               false,
 	}
 	sql := new(strings.Builder)
-	sqlexec.MustFormatSQL(sql, `SELECT JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.failed_login_attempts')),
+	sqlescape.MustFormatSQL(sql, `SELECT JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.failed_login_attempts')),
         JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.password_lock_time_days')),
 	    JSON_LENGTH(JSON_REMOVE(user_attributes, '$.Password_locking')) FROM %n.%n WHERE User=%? AND Host=%?;`,
 		mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
@@ -963,8 +964,8 @@ func readPasswordLockingInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecuto
 		if err != nil {
 			return nil, err
 		}
-		alterUserInfo.failedLoginAttempts = mathutil.Max(alterUserInfo.failedLoginAttempts, 0)
-		alterUserInfo.failedLoginAttempts = mathutil.Min(alterUserInfo.failedLoginAttempts, math.MaxInt16)
+		alterUserInfo.failedLoginAttempts = max(alterUserInfo.failedLoginAttempts, 0)
+		alterUserInfo.failedLoginAttempts = min(alterUserInfo.failedLoginAttempts, math.MaxInt16)
 	} else {
 		alterUserInfo.failedLoginAttemptsNotFound = true
 	}
@@ -977,8 +978,8 @@ func readPasswordLockingInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecuto
 		if err != nil {
 			return nil, err
 		}
-		alterUserInfo.passwordLockTime = mathutil.Max(alterUserInfo.passwordLockTime, -1)
-		alterUserInfo.passwordLockTime = mathutil.Min(alterUserInfo.passwordLockTime, math.MaxInt16)
+		alterUserInfo.passwordLockTime = max(alterUserInfo.passwordLockTime, -1)
+		alterUserInfo.passwordLockTime = min(alterUserInfo.passwordLockTime, math.MaxInt16)
 	} else {
 		alterUserInfo.passwordLockTimeChangeNotFound = true
 	}
@@ -1000,11 +1001,11 @@ func deletePasswordLockingAttribute(ctx context.Context, sqlExecutor sqlexec.SQL
 	sql := new(strings.Builder)
 	if alterUser.containsNoOthers {
 		// If we use JSON_REMOVE(user_attributes, '$.Password_locking') directly here, the result is not compatible with MySQL.
-		sqlexec.MustFormatSQL(sql, `UPDATE %n.%n SET user_attributes=NULL`, mysql.SystemDB, mysql.UserTable)
+		sqlescape.MustFormatSQL(sql, `UPDATE %n.%n SET user_attributes=NULL`, mysql.SystemDB, mysql.UserTable)
 	} else {
-		sqlexec.MustFormatSQL(sql, `UPDATE %n.%n SET user_attributes=JSON_REMOVE(user_attributes, '$.Password_locking') `, mysql.SystemDB, mysql.UserTable)
+		sqlescape.MustFormatSQL(sql, `UPDATE %n.%n SET user_attributes=JSON_REMOVE(user_attributes, '$.Password_locking') `, mysql.SystemDB, mysql.UserTable)
 	}
-	sqlexec.MustFormatSQL(sql, " WHERE Host=%? and User=%?;", host, name)
+	sqlescape.MustFormatSQL(sql, " WHERE Host=%? and User=%?;", host, name)
 	_, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 	return err
 }
@@ -1112,9 +1113,9 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime,  Password_reuse_time, Password_reuse_history) VALUES "
 	valueTemplate := "(%?, %?, %?, %?, %?, %?, %?, %?, %?"
 
-	sqlexec.MustFormatSQL(sql, sqlTemplate, mysql.SystemDB, mysql.UserTable)
+	sqlescape.MustFormatSQL(sql, sqlTemplate, mysql.SystemDB, mysql.UserTable)
 	if savePasswdHistory {
-		sqlexec.MustFormatSQL(sqlPasswordHistory, `INSERT INTO %n.%n (Host, User, Password) VALUES `, mysql.SystemDB, mysql.PasswordHistoryTable)
+		sqlescape.MustFormatSQL(sqlPasswordHistory, `INSERT INTO %n.%n (Host, User, Password) VALUES `, mysql.SystemDB, mysql.PasswordHistoryTable)
 	}
 
 	users := make([]*auth.UserIdentity, 0, len(s.Specs))
@@ -1129,7 +1130,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			return exeerrors.ErrWrongStringLength.GenWithStackByArgs(spec.User.Hostname, "host name", auth.HostNameMaxLength)
 		}
 		if len(users) > 0 {
-			sqlexec.MustFormatSQL(sql, ",")
+			sqlescape.MustFormatSQL(sql, ",")
 		}
 		exists, err1 := userExists(ctx, e.Ctx(), spec.User.Username, spec.User.Hostname)
 		if err1 != nil {
@@ -1184,30 +1185,30 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 
 		hostName := strings.ToLower(spec.User.Hostname)
-		sqlexec.MustFormatSQL(sql, valueTemplate, hostName, spec.User.Username, pwd, authPlugin, userAttributesStr, plOptions.lockAccount, recordTokenIssuer, plOptions.passwordExpired, plOptions.passwordLifetime)
+		sqlescape.MustFormatSQL(sql, valueTemplate, hostName, spec.User.Username, pwd, authPlugin, userAttributesStr, plOptions.lockAccount, recordTokenIssuer, plOptions.passwordExpired, plOptions.passwordLifetime)
 		// add Password_reuse_time value.
 		if plOptions.passwordReuseIntervalChange && (plOptions.passwordReuseInterval != notSpecified) {
-			sqlexec.MustFormatSQL(sql, `, %?`, plOptions.passwordReuseInterval)
+			sqlescape.MustFormatSQL(sql, `, %?`, plOptions.passwordReuseInterval)
 		} else {
-			sqlexec.MustFormatSQL(sql, `, %?`, nil)
+			sqlescape.MustFormatSQL(sql, `, %?`, nil)
 		}
 		// add Password_reuse_history value.
 		if plOptions.passwordHistoryChange && (plOptions.passwordHistory != notSpecified) {
-			sqlexec.MustFormatSQL(sql, `, %?`, plOptions.passwordHistory)
+			sqlescape.MustFormatSQL(sql, `, %?`, plOptions.passwordHistory)
 		} else {
-			sqlexec.MustFormatSQL(sql, `, %?`, nil)
+			sqlescape.MustFormatSQL(sql, `, %?`, nil)
 		}
-		sqlexec.MustFormatSQL(sql, `)`)
+		sqlescape.MustFormatSQL(sql, `)`)
 		// The empty password does not count in the password history and is subject to reuse at any time.
 		// AuthTiDBAuthToken is the token login method on the cloud,
 		// and the Password Reuse Policy does not take effect.
 		if savePasswdHistory && len(pwd) != 0 && !strings.EqualFold(authPlugin, mysql.AuthTiDBAuthToken) {
 			if !passwordInit {
-				sqlexec.MustFormatSQL(sqlPasswordHistory, ",")
+				sqlescape.MustFormatSQL(sqlPasswordHistory, ",")
 			} else {
 				passwordInit = false
 			}
-			sqlexec.MustFormatSQL(sqlPasswordHistory, `( %?, %?, %?)`, hostName, spec.User.Username, pwd)
+			sqlescape.MustFormatSQL(sqlPasswordHistory, `( %?, %?, %?)`, hostName, spec.User.Username, pwd)
 		}
 		users = append(users, spec.User)
 	}
@@ -1246,12 +1247,12 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 
 	if len(privData) != 0 {
 		sql.Reset()
-		sqlexec.MustFormatSQL(sql, "INSERT IGNORE INTO %n.%n (Host, User, Priv) VALUES ", mysql.SystemDB, mysql.GlobalPrivTable)
+		sqlescape.MustFormatSQL(sql, "INSERT IGNORE INTO %n.%n (Host, User, Priv) VALUES ", mysql.SystemDB, mysql.GlobalPrivTable)
 		for i, user := range users {
 			if i > 0 {
-				sqlexec.MustFormatSQL(sql, ",")
+				sqlescape.MustFormatSQL(sql, ",")
 			}
-			sqlexec.MustFormatSQL(sql, `(%?, %?, %?)`, user.Hostname, user.Username, string(hack.String(privData)))
+			sqlescape.MustFormatSQL(sql, `(%?, %?, %?)`, user.Hostname, user.Username, string(hack.String(privData)))
 		}
 		_, err = sqlExecutor.ExecuteInternal(internalCtx, sql.String())
 		if err != nil {
@@ -1270,7 +1271,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, plOptions *passwordOrLockOptionsInfo) (pRI *passwordReuseInfo, err error) {
 	res := &passwordReuseInfo{notSpecified, notSpecified}
 	sql := new(strings.Builder)
-	sqlexec.MustFormatSQL(sql, `SELECT Password_reuse_history,Password_reuse_time FROM %n.%n WHERE User=%? AND Host=%?;`,
+	sqlescape.MustFormatSQL(sql, `SELECT Password_reuse_history,Password_reuse_time FROM %n.%n WHERE User=%? AND Host=%?;`,
 		mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
 	// Query the specified user password reuse rules.
 	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
@@ -1342,7 +1343,7 @@ func deleteHistoricalData(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 	if passwordReuse.passwordReuseInterval == 0 {
 		deleteTemplate := `DELETE from %n.%n WHERE User= %? AND Host= %? order by Password_timestamp ASC LIMIT `
 		deleteTemplate = deleteTemplate + strconv.FormatInt(maxDelRows, 10)
-		sqlexec.MustFormatSQL(sql, deleteTemplate, mysql.SystemDB, mysql.PasswordHistoryTable,
+		sqlescape.MustFormatSQL(sql, deleteTemplate, mysql.SystemDB, mysql.PasswordHistoryTable,
 			userDetail.user, strings.ToLower(userDetail.host))
 		_, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 		if err != nil {
@@ -1354,7 +1355,7 @@ func deleteHistoricalData(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 		deleteTemplate := `DELETE from %n.%n WHERE User= %? AND Host= %? AND Password_timestamp < %? order by Password_timestamp ASC LIMIT `
 		deleteTemplate = deleteTemplate + strconv.FormatInt(maxDelRows, 10)
 		sql.Reset()
-		sqlexec.MustFormatSQL(sql, deleteTemplate, mysql.SystemDB, mysql.PasswordHistoryTable,
+		sqlescape.MustFormatSQL(sql, deleteTemplate, mysql.SystemDB, mysql.PasswordHistoryTable,
 			userDetail.user, strings.ToLower(userDetail.host), beforeDate)
 		_, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 		if err != nil {
@@ -1369,7 +1370,7 @@ func addHistoricalData(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, use
 		return nil
 	}
 	sql := new(strings.Builder)
-	sqlexec.MustFormatSQL(sql, `INSERT INTO %n.%n (Host, User, Password) VALUES (%?, %?, %?) `, mysql.SystemDB, mysql.PasswordHistoryTable, strings.ToLower(userDetail.host), userDetail.user, userDetail.pwd)
+	sqlescape.MustFormatSQL(sql, `INSERT INTO %n.%n (Host, User, Password) VALUES (%?, %?, %?) `, mysql.SystemDB, mysql.PasswordHistoryTable, strings.ToLower(userDetail.host), userDetail.user, userDetail.pwd)
 	_, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
 		return errors.Trace(err)
@@ -1397,7 +1398,7 @@ func checkPasswordsMatch(rows []chunk.Row, oldPwd, authPlugin string) (bool, err
 
 func getUserPasswordNum(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo) (deleteNum int64, err error) {
 	sql := new(strings.Builder)
-	sqlexec.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host))
+	sqlescape.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host))
 	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
 		return 0, err
@@ -1423,7 +1424,7 @@ func fullRecordCheck(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userD
 	switch authPlugin {
 	case mysql.AuthNativePassword, "":
 		sql := new(strings.Builder)
-		sqlexec.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User= %? AND Host= %? AND Password = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host), userDetail.pwd)
+		sqlescape.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User= %? AND Host= %? AND Password = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host), userDetail.pwd)
 		recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 		if err != nil {
 			return false, err
@@ -1443,7 +1444,7 @@ func fullRecordCheck(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userD
 		return false, nil
 	case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
 		sql := new(strings.Builder)
-		sqlexec.MustFormatSQL(sql, `SELECT Password FROM %n.%n WHERE User= %? AND Host= %? ;`, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host))
+		sqlescape.MustFormatSQL(sql, `SELECT Password FROM %n.%n WHERE User= %? AND Host= %? ;`, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host))
 		recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 		if err != nil {
 			return false, err
@@ -1471,7 +1472,7 @@ func checkPasswordHistoryRule(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 		checkRows := `SELECT count(*) FROM (SELECT Password FROM %n.%n WHERE User=%? AND Host=%? ORDER BY Password_timestamp DESC LIMIT `
 		checkRows = checkRows + strconv.FormatInt(passwordReuse.passwordHistory, 10)
 		checkRows = checkRows + ` ) as t where t.Password = %? `
-		sqlexec.MustFormatSQL(sql, checkRows, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host), userDetail.pwd)
+		sqlescape.MustFormatSQL(sql, checkRows, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host), userDetail.pwd)
 		recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 		if err != nil {
 			return false, err
@@ -1493,7 +1494,7 @@ func checkPasswordHistoryRule(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 		sql := new(strings.Builder)
 		checkRows := `SELECT Password FROM %n.%n WHERE User=%? AND Host=%? ORDER BY Password_timestamp DESC LIMIT `
 		checkRows = checkRows + strconv.FormatInt(passwordReuse.passwordHistory, 10)
-		sqlexec.MustFormatSQL(sql, checkRows, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host))
+		sqlescape.MustFormatSQL(sql, checkRows, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host))
 		recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 		if err != nil {
 			return false, err
@@ -1519,7 +1520,7 @@ func checkPasswordTimeRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor,
 	switch authPlugin {
 	case mysql.AuthNativePassword, "":
 		sql := new(strings.Builder)
-		sqlexec.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User=%? AND Host=%? AND Password = %? AND Password_timestamp >= %?;`,
+		sqlescape.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User=%? AND Host=%? AND Password = %? AND Password_timestamp >= %?;`,
 			mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host), userDetail.pwd, beforeDate)
 		recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 		if err != nil {
@@ -1539,7 +1540,7 @@ func checkPasswordTimeRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor,
 		}
 	case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
 		sql := new(strings.Builder)
-		sqlexec.MustFormatSQL(sql, `SELECT Password FROM %n.%n WHERE User=%? AND Host=%? AND Password_timestamp >= %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host), beforeDate)
+		sqlescape.MustFormatSQL(sql, `SELECT Password FROM %n.%n WHERE User=%? AND Host=%? AND Password_timestamp >= %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host), beforeDate)
 		recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 		if err != nil {
 			return false, err
@@ -1798,7 +1799,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			if spec.AuthOpt.AuthPlugin != currentAuthPlugin {
 				// delete password history from mysql.password_history.
 				sql := new(strings.Builder)
-				sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, spec.User.Hostname, spec.User.Username)
+				sqlescape.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, spec.User.Hostname, spec.User.Username)
 				if _, err := sqlExecutor.ExecuteInternal(ctx, sql.String()); err != nil {
 					failedUsers = append(failedUsers, spec.User.String())
 					needRollback = true
@@ -1937,14 +1938,14 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 
 		if len(fields) > 0 {
 			sql := new(strings.Builder)
-			sqlexec.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.UserTable)
+			sqlescape.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.UserTable)
 			for i, f := range fields {
-				sqlexec.MustFormatSQL(sql, f.expr, f.value)
+				sqlescape.MustFormatSQL(sql, f.expr, f.value)
 				if i < len(fields)-1 {
-					sqlexec.MustFormatSQL(sql, ",")
+					sqlescape.MustFormatSQL(sql, ",")
 				}
 			}
-			sqlexec.MustFormatSQL(sql, " WHERE Host=%? and User=%?;", spec.User.Hostname, spec.User.Username)
+			sqlescape.MustFormatSQL(sql, " WHERE Host=%? and User=%?;", spec.User.Hostname, spec.User.Username)
 			_, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 			if err != nil {
 				failedUsers = append(failedUsers, spec.User.String())
@@ -1963,7 +1964,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 
 		if len(privData) > 0 {
 			sql := new(strings.Builder)
-			sqlexec.MustFormatSQL(sql, "INSERT INTO %n.%n (Host, User, Priv) VALUES (%?,%?,%?) ON DUPLICATE KEY UPDATE Priv = values(Priv)", mysql.SystemDB, mysql.GlobalPrivTable, spec.User.Hostname, spec.User.Username, string(hack.String(privData)))
+			sqlescape.MustFormatSQL(sql, "INSERT INTO %n.%n (Host, User, Priv) VALUES (%?,%?,%?) ON DUPLICATE KEY UPDATE Priv = values(Priv)", mysql.SystemDB, mysql.GlobalPrivTable, spec.User.Hostname, spec.User.Username, string(hack.String(privData)))
 			_, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 			if err != nil {
 				failedUsers = append(failedUsers, spec.User.String())
@@ -2047,7 +2048,7 @@ func (e *SimpleExec) executeGrantRole(ctx context.Context, s *ast.GrantRoleStmt)
 	for _, user := range s.Users {
 		for _, role := range s.Roles {
 			sql.Reset()
-			sqlexec.MustFormatSQL(sql, `INSERT IGNORE INTO %n.%n (FROM_HOST, FROM_USER, TO_HOST, TO_USER) VALUES (%?,%?,%?,%?)`, mysql.SystemDB, mysql.RoleEdgeTable, role.Hostname, role.Username, user.Hostname, user.Username)
+			sqlescape.MustFormatSQL(sql, `INSERT IGNORE INTO %n.%n (FROM_HOST, FROM_USER, TO_HOST, TO_USER) VALUES (%?,%?,%?,%?)`, mysql.SystemDB, mysql.RoleEdgeTable, role.Hostname, role.Username, user.Hostname, user.Username)
 			if _, err := sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
 				logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
 				if _, err := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); err != nil {
@@ -2181,7 +2182,7 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 func renameUserHostInSystemTable(sqlExecutor sqlexec.SQLExecutor, tableName, usernameColumn, hostColumn string, users *ast.UserToUser) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	sql := new(strings.Builder)
-	sqlexec.MustFormatSQL(sql, `UPDATE %n.%n SET %n = %?, %n = %? WHERE %n = %? and %n = %?;`,
+	sqlescape.MustFormatSQL(sql, `UPDATE %n.%n SET %n = %?, %n = %? WHERE %n = %? and %n = %?;`,
 		mysql.SystemDB, tableName,
 		usernameColumn, users.NewUser.Username, hostColumn, strings.ToLower(users.NewUser.Hostname),
 		usernameColumn, users.OldUser.Username, hostColumn, strings.ToLower(users.OldUser.Hostname))
@@ -2255,7 +2256,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 
 		// begin a transaction to delete a user.
 		sql.Reset()
-		sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.UserTable, strings.ToLower(user.Hostname), user.Username)
+		sqlescape.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.UserTable, strings.ToLower(user.Hostname), user.Username)
 		if _, err = sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
 			failedUsers = append(failedUsers, user.String())
 			break
@@ -2263,7 +2264,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 
 		// delete password history from mysql.password_history.
 		sql.Reset()
-		sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, strings.ToLower(user.Hostname), user.Username)
+		sqlescape.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, strings.ToLower(user.Hostname), user.Username)
 		if _, err = sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
 			failedUsers = append(failedUsers, user.String())
 			break
@@ -2271,7 +2272,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 
 		// delete privileges from mysql.global_priv
 		sql.Reset()
-		sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.GlobalPrivTable, user.Hostname, user.Username)
+		sqlescape.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.GlobalPrivTable, user.Hostname, user.Username)
 		if _, err := sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
 			failedUsers = append(failedUsers, user.String())
 			if _, err := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); err != nil {
@@ -2282,7 +2283,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 
 		// delete privileges from mysql.db
 		sql.Reset()
-		sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.DBTable, user.Hostname, user.Username)
+		sqlescape.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.DBTable, user.Hostname, user.Username)
 		if _, err = sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
 			failedUsers = append(failedUsers, user.String())
 			break
@@ -2290,7 +2291,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 
 		// delete privileges from mysql.tables_priv
 		sql.Reset()
-		sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.TablePrivTable, user.Hostname, user.Username)
+		sqlescape.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.TablePrivTable, user.Hostname, user.Username)
 		if _, err = sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
 			failedUsers = append(failedUsers, user.String())
 			break
@@ -2298,7 +2299,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 
 		// delete privileges from mysql.columns_priv
 		sql.Reset()
-		sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.ColumnPrivTable, user.Hostname, user.Username)
+		sqlescape.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.ColumnPrivTable, user.Hostname, user.Username)
 		if _, err = sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
 			failedUsers = append(failedUsers, user.String())
 			break
@@ -2306,14 +2307,14 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 
 		// delete relationship from mysql.role_edges
 		sql.Reset()
-		sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE TO_HOST = %? and TO_USER = %?;`, mysql.SystemDB, mysql.RoleEdgeTable, user.Hostname, user.Username)
+		sqlescape.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE TO_HOST = %? and TO_USER = %?;`, mysql.SystemDB, mysql.RoleEdgeTable, user.Hostname, user.Username)
 		if _, err = sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
 			failedUsers = append(failedUsers, user.String())
 			break
 		}
 
 		sql.Reset()
-		sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE FROM_HOST = %? and FROM_USER = %?;`, mysql.SystemDB, mysql.RoleEdgeTable, user.Hostname, user.Username)
+		sqlescape.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE FROM_HOST = %? and FROM_USER = %?;`, mysql.SystemDB, mysql.RoleEdgeTable, user.Hostname, user.Username)
 		if _, err = sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
 			failedUsers = append(failedUsers, user.String())
 			break
@@ -2321,14 +2322,14 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 
 		// delete relationship from mysql.default_roles
 		sql.Reset()
-		sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE DEFAULT_ROLE_HOST = %? and DEFAULT_ROLE_USER = %?;`, mysql.SystemDB, mysql.DefaultRoleTable, user.Hostname, user.Username)
+		sqlescape.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE DEFAULT_ROLE_HOST = %? and DEFAULT_ROLE_USER = %?;`, mysql.SystemDB, mysql.DefaultRoleTable, user.Hostname, user.Username)
 		if _, err = sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
 			failedUsers = append(failedUsers, user.String())
 			break
 		}
 
 		sql.Reset()
-		sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE HOST = %? and USER = %?;`, mysql.SystemDB, mysql.DefaultRoleTable, user.Hostname, user.Username)
+		sqlescape.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE HOST = %? and USER = %?;`, mysql.SystemDB, mysql.DefaultRoleTable, user.Hostname, user.Username)
 		if _, err = sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
 			failedUsers = append(failedUsers, user.String())
 			break
@@ -2336,7 +2337,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 
 		// delete relationship from mysql.global_grants
 		sql.Reset()
-		sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, "global_grants", user.Hostname, user.Username)
+		sqlescape.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, "global_grants", user.Hostname, user.Username)
 		if _, err = sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
 			failedUsers = append(failedUsers, user.String())
 			break
@@ -2388,7 +2389,7 @@ func userExists(ctx context.Context, sctx sessionctx.Context, name string, host 
 // use the same internal executor to read within the same transaction, otherwise same as userExists
 func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string) (bool, error) {
 	sql := new(strings.Builder)
-	sqlexec.MustFormatSQL(sql, `SELECT * FROM %n.%n WHERE User=%? AND Host=%? FOR UPDATE;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
+	sqlescape.MustFormatSQL(sql, `SELECT * FROM %n.%n WHERE User=%? AND Host=%? FOR UPDATE;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
 	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
 		return false, err
@@ -2504,7 +2505,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	}
 	// update mysql.user
 	sql := new(strings.Builder)
-	sqlexec.MustFormatSQL(sql, `UPDATE %n.%n SET authentication_string=%?,password_expired='N',password_last_changed=current_timestamp() WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, pwd, u, strings.ToLower(h))
+	sqlescape.MustFormatSQL(sql, `UPDATE %n.%n SET authentication_string=%?,password_expired='N',password_last_changed=current_timestamp() WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, pwd, u, strings.ToLower(h))
 	_, err = sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
 		return err
@@ -2786,6 +2787,8 @@ func (e *SimpleExec) executeAdmin(s *ast.AdminStmt) error {
 		return e.executeAdminReloadStatistics(s)
 	case ast.AdminFlushPlanCache:
 		return e.executeAdminFlushPlanCache(s)
+	case ast.AdminSetBDRRole:
+		return e.executeAdminSetBDRRole(s)
 	}
 	return nil
 }
@@ -2820,6 +2823,16 @@ func (e *SimpleExec) executeAdminFlushPlanCache(s *ast.AdminStmt) error {
 		domain.GetDomain(e.Ctx()).SetExpiredTimeStamp4PC(now)
 	}
 	return nil
+}
+
+func (e *SimpleExec) executeAdminSetBDRRole(s *ast.AdminStmt) error {
+	if s.Tp != ast.AdminSetBDRRole {
+		return errors.New("This AdminStmt is not ADMIN SET BDR_ROLE")
+	}
+
+	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnAdmin), e.Ctx().GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+		return errors.Trace(meta.NewMeta(txn).SetBDRRole(string(s.BDRRole)))
+	})
 }
 
 func (e *SimpleExec) executeSetResourceGroupName(s *ast.SetResourceGroupStmt) error {

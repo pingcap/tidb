@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -284,7 +283,7 @@ func TestChunkSizeControl(t *testing.T) {
 	chk.Reset()
 	for i := 1; i < maxChunkSize*2; i++ {
 		chk.SetRequiredRows(i, maxChunkSize)
-		require.Equal(t, mathutil.Min(maxChunkSize, i), chk.RequiredRows())
+		require.Equal(t, min(maxChunkSize, i), chk.RequiredRows())
 	}
 
 	chk.SetRequiredRows(1, maxChunkSize).
@@ -546,7 +545,7 @@ func TestGetDecimalDatum(t *testing.T) {
 	decType.SetFlen(4)
 	decType.SetDecimal(2)
 	sc := stmtctx.NewStmtCtx()
-	decDatum, err := datum.ConvertTo(sc, decType)
+	decDatum, err := datum.ConvertTo(sc.TypeCtx(), decType)
 	require.NoError(t, err)
 
 	chk := NewChunkWithCapacity([]*types.FieldType{decType}, 32)

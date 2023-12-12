@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client/http"
 )
 
 func TestScheduler(t *testing.T) {
@@ -30,7 +31,7 @@ func TestScheduler(t *testing.T) {
 	defer cancel()
 
 	scheduler := "balance-leader-scheduler"
-	mock := func(context.Context, string, string, *http.Client, string, io.Reader) ([]byte, error) {
+	mock := func(context.Context, string, string, *http.Client, string, []byte) ([]byte, error) {
 		return nil, errors.New("failed")
 	}
 	schedulerPauseCh := make(chan struct{})
@@ -65,7 +66,7 @@ func TestScheduler(t *testing.T) {
 	_, err = pdController.listSchedulersWith(ctx, mock)
 	require.EqualError(t, err, "failed")
 
-	mock = func(context.Context, string, string, *http.Client, string, io.Reader) ([]byte, error) {
+	mock = func(context.Context, string, string, *http.Client, string, []byte) ([]byte, error) {
 		return []byte(`["` + scheduler + `"]`), nil
 	}
 
@@ -85,7 +86,7 @@ func TestScheduler(t *testing.T) {
 func TestGetClusterVersion(t *testing.T) {
 	pdController := &PdController{addrs: []string{"", ""}} // two endpoints
 	counter := 0
-	mock := func(context.Context, string, string, *http.Client, string, io.Reader) ([]byte, error) {
+	mock := func(context.Context, string, string, *http.Client, string, []byte) ([]byte, error) {
 		counter++
 		if counter <= 1 {
 			return nil, errors.New("mock error")
@@ -98,7 +99,7 @@ func TestGetClusterVersion(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "test", respString)
 
-	mock = func(context.Context, string, string, *http.Client, string, io.Reader) ([]byte, error) {
+	mock = func(context.Context, string, string, *http.Client, string, []byte) ([]byte, error) {
 		return nil, errors.New("mock error")
 	}
 	_, err = pdController.getClusterVersionWith(ctx, mock)
@@ -128,7 +129,7 @@ func TestRegionCount(t *testing.T) {
 	require.Equal(t, 3, len(regions.Regions))
 
 	mock := func(
-		_ context.Context, addr string, prefix string, _ *http.Client, _ string, _ io.Reader,
+		_ context.Context, addr string, prefix string, _ *http.Client, _ string, _ []byte,
 	) ([]byte, error) {
 		query := fmt.Sprintf("%s/%s", addr, prefix)
 		u, e := url.Parse(query)
@@ -179,6 +180,9 @@ func TestPDRequestRetry(t *testing.T) {
 	count := 0
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		count++
+		bytes, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.Equal(t, "test", string(bytes))
 		if count <= pdRequestRetryTime-1 {
 			w.WriteHeader(http.StatusGatewayTimeout)
 			return
@@ -186,8 +190,15 @@ func TestPDRequestRetry(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	cli := http.DefaultClient
+	cli.Transport = http.DefaultTransport.(*http.Transport).Clone()
+	// although the real code doesn't disable keep alive, we need to disable it
+	// in test to avoid the connection being reused and #47930 can't appear. The
+	// real code will only meet #47930 when go's internal http client just dropped
+	// all idle connections.
+	cli.Transport.(*http.Transport).DisableKeepAlives = true
+
 	taddr := ts.URL
-	_, reqErr := pdRequest(ctx, taddr, "", cli, http.MethodGet, nil)
+	_, reqErr := pdRequest(ctx, taddr, "", cli, http.MethodPost, []byte("test"))
 	require.NoError(t, reqErr)
 	ts.Close()
 	count = 0
@@ -259,10 +270,11 @@ func TestStoreInfo(t *testing.T) {
 		},
 	}
 	mock := func(
-		_ context.Context, addr string, prefix string, _ *http.Client, _ string, _ io.Reader,
+		_ context.Context, addr string, prefix string, _ *http.Client, _ string, _ []byte,
 	) ([]byte, error) {
-		query := fmt.Sprintf("%s/%s", addr, prefix)
-		require.Equal(t, "http://mock/pd/api/v1/store/1", query)
+		require.Equal(t,
+			fmt.Sprintf("http://mock%s", pd.StoreByID(1)),
+			fmt.Sprintf("%s%s", addr, prefix))
 		ret, err := json.Marshal(storeInfo)
 		require.NoError(t, err)
 		return ret, nil
@@ -295,7 +307,7 @@ func TestPauseSchedulersByKeyRange(t *testing.T) {
 			return
 		}
 		if r.Method == http.MethodDelete {
-			ruleID := strings.TrimPrefix(r.URL.Path, "/"+regionLabelPrefix+"/")
+			ruleID := strings.TrimPrefix(r.URL.Path, pd.RegionLabelRule+"/")
 			delete(labelExpires, ruleID)
 			deleted = true
 			return

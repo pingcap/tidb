@@ -57,7 +57,7 @@ func SetParameterValuesIntoSCtx(sctx sessionctx.Context, isNonPrep bool, markers
 	vars := sctx.GetSessionVars()
 	vars.PlanCacheParams.Reset()
 	for i, usingParam := range params {
-		val, err := usingParam.Eval(chunk.Row{})
+		val, err := usingParam.Eval(sctx, chunk.Row{})
 		if err != nil {
 			return err
 		}
@@ -490,11 +490,11 @@ func rebuildRange(p Plan) error {
 			return errors.New("point get for partition table can not use plan cache")
 		}
 		if x.HandleConstant != nil {
-			dVal, err := convertConstant2Datum(sc, x.HandleConstant, x.handleFieldType)
+			dVal, err := convertConstant2Datum(sctx, x.HandleConstant, x.handleFieldType)
 			if err != nil {
 				return err
 			}
-			iv, err := dVal.ToInt64(sc)
+			iv, err := dVal.ToInt64(sc.TypeCtx())
 			if err != nil {
 				return err
 			}
@@ -503,7 +503,7 @@ func rebuildRange(p Plan) error {
 		}
 		for i, param := range x.IndexConstants {
 			if param != nil {
-				dVal, err := convertConstant2Datum(sc, param, x.ColsFieldType[i])
+				dVal, err := convertConstant2Datum(sctx, param, x.ColsFieldType[i])
 				if err != nil {
 					return err
 				}
@@ -556,11 +556,11 @@ func rebuildRange(p Plan) error {
 		}
 		for i, param := range x.HandleParams {
 			if param != nil {
-				dVal, err := convertConstant2Datum(sc, param, x.HandleType)
+				dVal, err := convertConstant2Datum(sctx, param, x.HandleType)
 				if err != nil {
 					return err
 				}
-				iv, err := dVal.ToInt64(sc)
+				iv, err := dVal.ToInt64(sc.TypeCtx())
 				if err != nil {
 					return err
 				}
@@ -573,7 +573,7 @@ func rebuildRange(p Plan) error {
 			}
 			for j, param := range params {
 				if param != nil {
-					dVal, err := convertConstant2Datum(sc, param, x.IndexColTypes[j])
+					dVal, err := convertConstant2Datum(sctx, param, x.IndexColTypes[j])
 					if err != nil {
 						return err
 					}
@@ -614,17 +614,18 @@ func rebuildRange(p Plan) error {
 	return nil
 }
 
-func convertConstant2Datum(sc *stmtctx.StatementContext, con *expression.Constant, target *types.FieldType) (*types.Datum, error) {
-	val, err := con.Eval(chunk.Row{})
+func convertConstant2Datum(ctx sessionctx.Context, con *expression.Constant, target *types.FieldType) (*types.Datum, error) {
+	val, err := con.Eval(ctx, chunk.Row{})
 	if err != nil {
 		return nil, err
 	}
-	dVal, err := val.ConvertTo(sc, target)
+	tc := ctx.GetSessionVars().StmtCtx.TypeCtx()
+	dVal, err := val.ConvertTo(tc, target)
 	if err != nil {
 		return nil, err
 	}
 	// The converted result must be same as original datum.
-	cmp, err := dVal.Compare(sc, &val, collate.GetCollator(target.GetCollate()))
+	cmp, err := dVal.Compare(tc, &val, collate.GetCollator(target.GetCollate()))
 	if err != nil || cmp != 0 {
 		return nil, errors.New("Convert constant to datum is failed, because the constant has changed after the covert")
 	}
@@ -795,8 +796,8 @@ func GetBindSQL4PlanCache(sctx sessionctx.Context, stmt *PlanCacheStmt) (string,
 	if sctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
 		return "", ignore
 	}
-	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	bindRecord := sessionHandle.GetBindRecord(stmt.SQLDigest4PC, stmt.NormalizedSQL4PC, "")
+	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
+	bindRecord := sessionHandle.GetSessionBinding(stmt.SQLDigest4PC, stmt.NormalizedSQL4PC, "")
 	if bindRecord != nil {
 		enabledBinding := bindRecord.FindEnabledBinding()
 		if enabledBinding != nil {
@@ -808,7 +809,7 @@ func GetBindSQL4PlanCache(sctx sessionctx.Context, stmt *PlanCacheStmt) (string,
 	if globalHandle == nil {
 		return "", ignore
 	}
-	bindRecord = globalHandle.GetBindRecord(stmt.SQLDigest4PC, stmt.NormalizedSQL4PC, "")
+	bindRecord = globalHandle.GetGlobalBinding(stmt.SQLDigest4PC, stmt.NormalizedSQL4PC, "")
 	if bindRecord != nil {
 		enabledBinding := bindRecord.FindEnabledBinding()
 		if enabledBinding != nil {
@@ -819,10 +820,10 @@ func GetBindSQL4PlanCache(sctx sessionctx.Context, stmt *PlanCacheStmt) (string,
 	return "", ignore
 }
 
-// IsPointPlanShortPathOK check if we can execute using plan cached in prepared structure
+// IsPointGetPlanShortPathOK check if we can execute using plan cached in prepared structure
 // Be careful with the short path, current precondition is ths cached plan satisfying
 // IsPointGetWithPKOrUniqueKeyByAutoCommit
-func IsPointPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt) (bool, error) {
+func IsPointGetPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt) (bool, error) {
 	stmtAst := stmt.PreparedAst
 	if stmtAst.CachedPlan == nil || staleread.IsStmtStaleness(sctx) {
 		return false, nil

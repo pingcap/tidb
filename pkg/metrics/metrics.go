@@ -93,6 +93,8 @@ func InitMetrics() {
 	InitTopSQLMetrics()
 	InitTTLMetrics()
 	InitDistTaskMetrics()
+	InitResourceGroupMetrics()
+	InitGlobalSortMetrics()
 	timermetrics.InitTimerMetrics()
 
 	PanicCounter = NewCounterVec(
@@ -157,6 +159,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(JobsGauge)
 	prometheus.MustRegister(LoadPrivilegeCounter)
 	prometheus.MustRegister(InfoCacheCounters)
+	prometheus.MustRegister(LeaseExpireTime)
 	prometheus.MustRegister(LoadSchemaCounter)
 	prometheus.MustRegister(LoadSchemaDuration)
 	prometheus.MustRegister(MetaHistogram)
@@ -228,6 +231,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(LoadTableCacheDurationHistogram)
 	prometheus.MustRegister(NonTransactionalDMLCount)
 	prometheus.MustRegister(PessimisticDMLDurationByAttempt)
+	prometheus.MustRegister(ResetAutoIDConnCounter)
 	prometheus.MustRegister(ResourceGroupQueryTotalCounter)
 	prometheus.MustRegister(MemoryUsage)
 	prometheus.MustRegister(StatsCacheCounter)
@@ -268,6 +272,14 @@ func RegisterMetrics() {
 	prometheus.MustRegister(DistTaskStarttimeGauge)
 	prometheus.MustRegister(DistTaskSubTaskCntGauge)
 	prometheus.MustRegister(DistTaskSubTaskStartTimeGauge)
+
+	prometheus.MustRegister(RunawayCheckerCounter)
+	prometheus.MustRegister(GlobalSortWriteToCloudStorageDuration)
+	prometheus.MustRegister(GlobalSortWriteToCloudStorageRate)
+	prometheus.MustRegister(GlobalSortReadFromCloudStorageDuration)
+	prometheus.MustRegister(GlobalSortReadFromCloudStorageRate)
+	prometheus.MustRegister(GlobalSortIngestWorkerCnt)
+	prometheus.MustRegister(AddIndexScanRate)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()

@@ -325,7 +325,10 @@ func (rs *KS3Storage) DeleteFiles(_ context.Context, files []string) error {
 				Quiet:   boolP(false),
 			},
 		}
-		_ = rs.svc.DeleteObjects(input)
+		_, err := rs.svc.DeleteObjects(input)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		files = files[len(batch):]
 	}
 	return nil
@@ -662,27 +665,34 @@ func (rs *KS3Storage) Create(ctx context.Context, name string, option *WriterOpt
 	} else {
 		up := s3manager.NewUploader(&s3manager.UploadOptions{
 			Parallel: option.Concurrency,
+			S3:       rs.svc,
 		})
 		rd, wd := io.Pipe()
 		upParams := &s3manager.UploadInput{
 			Bucket: aws.String(rs.options.Bucket),
 			Key:    aws.String(rs.options.Prefix + name),
 			Body:   rd,
+			Size:   1024 * 1024 * 5, // ks3 SDK need to set this value to non-zero.
 		}
 		s3Writer := &s3ObjectWriter{wd: wd, wg: &sync.WaitGroup{}}
 		s3Writer.wg.Add(1)
 		go func() {
 			_, err := up.Upload(upParams)
-			err1 := rd.Close()
+			// like a channel we only let sender close the pipe in happy path
 			if err != nil {
-				log.Warn("upload to s3 failed", zap.String("filename", name), zap.Error(err), zap.Error(err1))
+				log.Warn("upload to ks3 failed", zap.String("filename", name), zap.Error(err))
+				_ = rd.CloseWithError(err)
 			}
 			s3Writer.err = err
 			s3Writer.wg.Done()
 		}()
 		uploader = s3Writer
 	}
-	uploaderWriter := newBufferedWriter(uploader, WriteBufferSize, NoCompression)
+	bufSize := WriteBufferSize
+	if option != nil && option.PartSize > 0 {
+		bufSize = int(option.PartSize)
+	}
+	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression)
 	return uploaderWriter, nil
 }
 

@@ -59,10 +59,17 @@ func FetchChunk4Test(copCtx copr.CopContext, tbl table.PhysicalTable, startKey, 
 }
 
 func ConvertRowToHandleAndIndexDatum(
+	handleDataBuf, idxDataBuf []types.Datum,
 	row chunk.Row, copCtx copr.CopContext, idxID int64) (kv.Handle, []types.Datum, error) {
 	c := copCtx.GetBase()
-	idxData := extractDatumByOffsets(row, copCtx.IndexColumnOutputOffsets(idxID), c.ExprColumnInfos, nil)
-	handleData := extractDatumByOffsets(row, c.HandleOutputOffsets, c.ExprColumnInfos, nil)
+	idxData := extractDatumByOffsets(row, copCtx.IndexColumnOutputOffsets(idxID), c.ExprColumnInfos, idxDataBuf)
+	handleData := extractDatumByOffsets(row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
 	handle, err := buildHandle(handleData, c.TableInfo, c.PrimaryKeyInfo, stmtctx.NewStmtCtxWithTimeZone(time.Local))
 	return handle, idxData, err
 }
+
+// ExtractDatumByOffsetsForTest is used for test.
+var ExtractDatumByOffsetsForTest = extractDatumByOffsets
+
+// CalculateRegionBatchForTest is used for test.
+var CalculateRegionBatchForTest = calculateRegionBatch

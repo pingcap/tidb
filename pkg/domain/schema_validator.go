@@ -138,6 +138,7 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 	leaseGrantTime := oracle.GetTimeFromTS(leaseGrantTS)
 	leaseExpire := leaseGrantTime.Add(s.lease - time.Millisecond)
 	s.latestSchemaExpire = leaseExpire
+	metrics.LeaseExpireTime.Set(float64(leaseExpire.Unix()))
 
 	// Update the schema deltaItem information.
 	if currVer != oldVer {

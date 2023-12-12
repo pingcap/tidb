@@ -192,7 +192,7 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		// due to we only care about distinct key.
 		iter := v.GenIndexKVIter(ctx.GetSessionVars().StmtCtx, colVals, kv.IntHandle(0), nil)
 		for iter.Valid() {
-			key, _, distinct, err1 := iter.Next(nil)
+			key, _, distinct, err1 := iter.Next(nil, nil)
 			if err1 != nil {
 				return nil, err1
 			}
@@ -234,7 +234,8 @@ func buildHandleFromDatumRow(sctx *stmtctx.StatementContext, row []types.Datum, 
 		}
 		pkDts = append(pkDts, d)
 	}
-	handleBytes, err := codec.EncodeKey(sctx, nil, pkDts...)
+	handleBytes, err := codec.EncodeKey(sctx.TimeZone(), nil, pkDts...)
+	err = sctx.HandleError(err)
 	if err != nil {
 		return nil, err
 	}
@@ -287,7 +288,7 @@ func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction,
 			// only the virtual column needs fill back.
 			// Insert doesn't fill the generated columns at non-public state.
 			if !col.GeneratedStored {
-				val, err := genExprs[gIdx].Eval(chunk.MutRowFromDatums(oldRow).ToRow())
+				val, err := genExprs[gIdx].Eval(sctx, chunk.MutRowFromDatums(oldRow).ToRow())
 				if err != nil {
 					return nil, err
 				}

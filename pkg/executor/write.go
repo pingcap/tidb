@@ -90,7 +90,7 @@ func updateRecord(
 	// Compare datum, then handle some flags.
 	for i, col := range t.Cols() {
 		// We should use binary collation to compare datum, otherwise the result will be incorrect.
-		cmp, err := newData[i].Compare(sc, &oldData[i], collate.GetBinaryCollator())
+		cmp, err := newData[i].Compare(sc.TypeCtx(), &oldData[i], collate.GetBinaryCollator())
 		if err != nil {
 			return false, err
 		}
@@ -268,7 +268,7 @@ func addUnchangedKeysForLockByRow(
 				return count, err
 			}
 			unchangedUniqueKey, _, err := tablecodec.GenIndexKey(
-				stmtCtx,
+				stmtCtx.TimeZone(),
 				idx.TableMeta(),
 				meta,
 				physicalID,
@@ -276,6 +276,7 @@ func addUnchangedKeysForLockByRow(
 				h,
 				nil,
 			)
+			err = stmtCtx.HandleError(err)
 			if err != nil {
 				return count, err
 			}

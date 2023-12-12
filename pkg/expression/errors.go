@@ -104,7 +104,7 @@ func handleAllowedPacketOverflowed(ctx sessionctx.Context, exprName string, maxA
 	sc := ctx.GetSessionVars().StmtCtx
 
 	// insert|update|delete ignore ...
-	if sc.TruncateAsWarning {
+	if sc.TypeFlags().TruncateAsWarning() {
 		sc.AppendWarning(err)
 		return nil
 	}

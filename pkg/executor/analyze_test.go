@@ -16,9 +16,7 @@ package executor_test
 
 import (
 	"fmt"
-	"os"
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -39,7 +37,7 @@ import (
 func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (bool, error) {
 	for i := 0; i < len(hg.Buckets); i++ {
 		lower, upper := hg.GetLower(i), hg.GetUpper(i)
-		cmp, err := upper.Compare(sc, lower, collate.GetBinaryCollator())
+		cmp, err := upper.Compare(sc.TypeCtx(), lower, collate.GetBinaryCollator())
 		if cmp < 0 || err != nil {
 			return false, err
 		}
@@ -47,7 +45,7 @@ func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (boo
 			continue
 		}
 		previousUpper := hg.GetUpper(i - 1)
-		cmp, err = lower.Compare(sc, previousUpper, collate.GetBinaryCollator())
+		cmp, err = lower.Compare(sc.TypeCtx(), previousUpper, collate.GetBinaryCollator())
 		if cmp <= 0 || err != nil {
 			return false, err
 		}
@@ -87,10 +85,10 @@ func TestAnalyzeIndexExtractTopN(t *testing.T) {
 	// Construct TopN, should be (1, 1) -> 2 and (1, 2) -> 2
 	topn := statistics.NewTopN(2)
 	{
-		key1, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, nil, types.NewIntDatum(1), types.NewIntDatum(1))
+		key1, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(), nil, types.NewIntDatum(1), types.NewIntDatum(1))
 		require.NoError(t, err)
 		topn.AppendTopN(key1, 2)
-		key2, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, nil, types.NewIntDatum(1), types.NewIntDatum(2))
+		key2, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(), nil, types.NewIntDatum(1), types.NewIntDatum(2))
 		require.NoError(t, err)
 		topn.AppendTopN(key2, 2)
 	}
@@ -100,25 +98,6 @@ func TestAnalyzeIndexExtractTopN(t *testing.T) {
 		require.True(t, ok)
 		require.True(t, idx.TopN.Equal(topn))
 	}
-}
-
-func TestAnalyzePartitionTableForFloat(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	tk.MustExec("use test")
-	tk.MustExec("CREATE TABLE t1 ( id bigint(20) unsigned NOT NULL AUTO_INCREMENT, num float(9,8) DEFAULT NULL, PRIMARY KEY (id)  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH (id) PARTITIONS 128;")
-	// To reproduce the error we meet in https://github.com/pingcap/tidb/issues/35910, we should use the data provided in this issue
-	b, err := os.ReadFile("testdata/analyze_test_data.sql")
-	require.NoError(t, err)
-	sqls := strings.Split(string(b), ";")
-	for _, sql := range sqls {
-		if len(sql) < 1 {
-			continue
-		}
-		tk.MustExec(sql)
-	}
-	tk.MustExec("analyze table t1")
 }
 
 func TestAnalyzePartitionTableByConcurrencyInDynamic(t *testing.T) {
@@ -197,47 +176,4 @@ func TestAnalyzePartitionTableByConcurrencyInDynamic(t *testing.T) {
 		tk.MustExec("analyze table t")
 		tk.MustQuery("show stats_topn where partition_name = 'global' and table_name = 't'").CheckAt([]int{5, 6}, expected)
 	}
-}
-
-func TestMergeGlobalStatsWithUnAnalyzedPartition(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_partition_prune_mode=dynamic;")
-	tk.MustExec("CREATE TABLE `t` (   `id` int(11) DEFAULT NULL,   `a` int(11) DEFAULT NULL, `b` int(11) DEFAULT NULL, `c` int(11) DEFAULT NULL ) PARTITION BY RANGE (`id`) (PARTITION `p0` VALUES LESS THAN (3),  PARTITION `p1` VALUES LESS THAN (7),  PARTITION `p2` VALUES LESS THAN (11));")
-	tk.MustExec("insert into t values (1,1,1,1),(2,2,2,2),(4,4,4,4),(5,5,5,5),(6,6,6,6),(8,8,8,8),(9,9,9,9);")
-	tk.MustExec("create index idxa on t (a);")
-	tk.MustExec("create index idxb on t (b);")
-	tk.MustExec("create index idxc on t (c);")
-	tk.MustExec("analyze table t partition p0 index idxa;")
-	tk.MustExec("analyze table t partition p1 index idxb;")
-	tk.MustExec("analyze table t partition p2 index idxc;")
-	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
-		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p2, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\""))
-	tk.MustExec("analyze table t partition p0;")
-	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0, reason to use this rate is \"use min(1, 110000/2) as the sample-rate=1\""))
-}
-
-func TestSetFastAnalyzeSystemVariable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
-	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 the fast analyze feature has already been removed in TiDB v7.5.0, so this will have no effect"))
-}
-
-func TestIncrementalAnalyze(t *testing.T) {
-	msg := "the incremental analyze feature has already been removed in TiDB v7.5.0, so this will have no effect"
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, primary key(a), index idx(b))")
-	tk.MustMatchErrMsg("analyze incremental table t index", msg)
-	// Create a partition table.
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, primary key(a), index idx(b)) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
-	tk.MustMatchErrMsg("analyze incremental table t partition p0 index idx", msg)
 }

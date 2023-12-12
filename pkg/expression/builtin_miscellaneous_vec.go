@@ -21,23 +21,23 @@ import (
 	"math"
 	"net"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/vitess"
 )
 
-func (b *builtinInetNtoaSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinInetNtoaSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalInt(ctx, input, buf); err != nil {
 		return err
 	}
 
@@ -66,14 +66,14 @@ func (b *builtinInetNtoaSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinIsIPv4Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinIsIPv4Sig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
 	result.ResizeInt64(n, false)
@@ -99,38 +99,38 @@ func (b *builtinJSONAnyValueSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinJSONAnyValueSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	return b.args[0].VecEvalJSON(b.ctx, input, result)
+func (b *builtinJSONAnyValueSig) vecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return b.args[0].VecEvalJSON(ctx, input, result)
 }
 
 func (b *builtinRealAnyValueSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinRealAnyValueSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
-	return b.args[0].VecEvalReal(b.ctx, input, result)
+func (b *builtinRealAnyValueSig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return b.args[0].VecEvalReal(ctx, input, result)
 }
 
 func (b *builtinStringAnyValueSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinStringAnyValueSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return b.args[0].VecEvalString(b.ctx, input, result)
+func (b *builtinStringAnyValueSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return b.args[0].VecEvalString(ctx, input, result)
 }
 
 func (b *builtinIsIPv6Sig) vectorized() bool {
 	return true
 }
 
-func (b *builtinIsIPv6Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinIsIPv6Sig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
 	result.ResizeInt64(n, false)
@@ -158,14 +158,14 @@ func (b *builtinIsUUIDSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinIsUUIDSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinIsUUIDSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
 	result.ResizeInt64(n, false)
@@ -188,23 +188,23 @@ func (b *builtinNameConstStringSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinNameConstStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return b.args[1].VecEvalString(b.ctx, input, result)
+func (b *builtinNameConstStringSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return b.args[1].VecEvalString(ctx, input, result)
 }
 
 func (b *builtinDecimalAnyValueSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinDecimalAnyValueSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return b.args[0].VecEvalDecimal(b.ctx, input, result)
+func (b *builtinDecimalAnyValueSig) vecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return b.args[0].VecEvalDecimal(ctx, input, result)
 }
 
 func (b *builtinUUIDSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinUUIDSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinUUIDSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ReserveString(n)
 	var id uuid.UUID
@@ -223,38 +223,38 @@ func (b *builtinNameConstDurationSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinNameConstDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return b.args[1].VecEvalDuration(b.ctx, input, result)
+func (b *builtinNameConstDurationSig) vecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return b.args[1].VecEvalDuration(ctx, input, result)
 }
 
 func (b *builtinDurationAnyValueSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinDurationAnyValueSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return b.args[0].VecEvalDuration(b.ctx, input, result)
+func (b *builtinDurationAnyValueSig) vecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return b.args[0].VecEvalDuration(ctx, input, result)
 }
 
 func (b *builtinIntAnyValueSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinIntAnyValueSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return b.args[0].VecEvalInt(b.ctx, input, result)
+func (b *builtinIntAnyValueSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return b.args[0].VecEvalInt(ctx, input, result)
 }
 
 func (b *builtinIsIPv4CompatSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinIsIPv4CompatSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinIsIPv4CompatSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
 	result.ResizeInt64(n, false)
@@ -284,16 +284,16 @@ func (b *builtinNameConstIntSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinNameConstIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return b.args[1].VecEvalInt(b.ctx, input, result)
+func (b *builtinNameConstIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return b.args[1].VecEvalInt(ctx, input, result)
 }
 
 func (b *builtinNameConstTimeSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinNameConstTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return b.args[1].VecEvalTime(b.ctx, input, result)
+func (b *builtinNameConstTimeSig) vecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return b.args[1].VecEvalTime(ctx, input, result)
 }
 
 func (b *builtinSleepSig) vectorized() bool {
@@ -302,7 +302,7 @@ func (b *builtinSleepSig) vectorized() bool {
 
 // vecEvalInt evals a builtinSleepSig in a vectorized manner.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_sleep
-func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinSleepSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -310,7 +310,7 @@ func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	}
 	defer b.bufAllocator.put(buf)
 
-	err = b.args[0].VecEvalReal(b.ctx, input, buf)
+	err = b.args[0].VecEvalReal(ctx, input, buf)
 	if err != nil {
 		return err
 	}
@@ -322,7 +322,7 @@ func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 		isNull := buf.IsNull(i)
 		val := buf.GetFloat64(i)
 
-		sessVars := b.ctx.GetSessionVars()
+		sessVars := ctx.GetSessionVars()
 		if isNull || val < 0 {
 			// for insert ignore stmt, the StrictSQLMode and ignoreErr should both be considered.
 			if !sessVars.StmtCtx.BadNullAsWarning {
@@ -360,18 +360,13 @@ func doSleep(secs float64, sessVars *variable.SessionVars) (isKilled bool) {
 		select {
 		case <-ticker.C:
 			// MySQL 8.0 sleep: https://dev.mysql.com/doc/refman/8.0/en/miscellaneous-functions.html#function_sleep
-			if len(sessVars.StmtCtx.TableIDs) == 0 {
-				// Regular kill or Killed because of max execution time
-				if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) || atomic.CompareAndSwapUint32(&sessVars.Killed, 2, 0) {
-					timer.Stop()
-					return true
+			// Regular kill or Killed because of max execution time
+			if err := sessVars.SQLKiller.HandleSignal(); err != nil {
+				if len(sessVars.StmtCtx.TableIDs) == 0 {
+					sessVars.SQLKiller.Reset()
 				}
-			} else {
-				// Regular kill or Killed because of max execution time.
-				if atomic.LoadUint32(&sessVars.Killed) == 1 || atomic.LoadUint32(&sessVars.Killed) == 2 {
-					timer.Stop()
-					return true
-				}
+				timer.Stop()
+				return true
 			}
 		case <-timer.C:
 			return false
@@ -383,14 +378,14 @@ func (b *builtinIsIPv4MappedSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinIsIPv4MappedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinIsIPv4MappedSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
 	result.ResizeInt64(n, false)
@@ -420,16 +415,16 @@ func (b *builtinNameConstDecimalSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinNameConstDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return b.args[1].VecEvalDecimal(b.ctx, input, result)
+func (b *builtinNameConstDecimalSig) vecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return b.args[1].VecEvalDecimal(ctx, input, result)
 }
 
 func (b *builtinNameConstJSONSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinNameConstJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	return b.args[1].VecEvalJSON(b.ctx, input, result)
+func (b *builtinNameConstJSONSig) vecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return b.args[1].VecEvalJSON(ctx, input, result)
 }
 
 func (b *builtinInet6AtonSig) vectorized() bool {
@@ -438,14 +433,14 @@ func (b *builtinInet6AtonSig) vectorized() bool {
 
 // vecEvalString evals a builtinInet6AtonSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet6-aton
-func (b *builtinInet6AtonSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinInet6AtonSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
 
@@ -507,22 +502,22 @@ func (b *builtinTimeAnyValueSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinTimeAnyValueSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return b.args[0].VecEvalTime(b.ctx, input, result)
+func (b *builtinTimeAnyValueSig) vecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return b.args[0].VecEvalTime(ctx, input, result)
 }
 
 func (b *builtinInetAtonSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinInetAtonSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinInetAtonSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
 	var (
@@ -588,14 +583,14 @@ func (b *builtinInet6NtoaSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinInet6NtoaSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinInet6NtoaSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	val, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(val)
-	if err := b.args[0].VecEvalString(b.ctx, input, val); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, val); err != nil {
 		return err
 	}
 	result.ReserveString(n)
@@ -622,15 +617,15 @@ func (b *builtinNameConstRealSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinNameConstRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
-	return b.args[1].VecEvalReal(b.ctx, input, result)
+func (b *builtinNameConstRealSig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return b.args[1].VecEvalReal(ctx, input, result)
 }
 
 func (b *builtinVitessHashSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinVitessHashSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinVitessHashSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	column, err := b.bufAllocator.get()
 	if err != nil {
@@ -638,7 +633,7 @@ func (b *builtinVitessHashSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 	}
 	defer b.bufAllocator.put(column)
 
-	if err := b.args[0].VecEvalInt(b.ctx, input, column); err != nil {
+	if err := b.args[0].VecEvalInt(ctx, input, column); err != nil {
 		return err
 	}
 
@@ -667,14 +662,14 @@ func (b *builtinUUIDToBinSig) vectorized() bool {
 
 // evalString evals UUID_TO_BIN(string_uuid, swap_flag).
 // See https://dev.mysql.com/doc/refman/8.0/en/miscellaneous-functions.html#function_uuid-to-bin
-func (b *builtinUUIDToBinSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinUUIDToBinSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	valBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(valBuf)
-	if err := b.args[0].VecEvalString(b.ctx, input, valBuf); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, valBuf); err != nil {
 		return err
 	}
 
@@ -686,7 +681,7 @@ func (b *builtinUUIDToBinSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 			return err
 		}
 		defer b.bufAllocator.put(flagBuf)
-		if err := b.args[1].VecEvalInt(b.ctx, input, flagBuf); err != nil {
+		if err := b.args[1].VecEvalInt(ctx, input, flagBuf); err != nil {
 			return err
 		}
 		i64s = flagBuf.Int64s()
@@ -725,14 +720,14 @@ func (b *builtinBinToUUIDSig) vectorized() bool {
 
 // evalString evals BIN_TO_UUID(binary_uuid, swap_flag).
 // See https://dev.mysql.com/doc/refman/8.0/en/miscellaneous-functions.html#function_bin-to-uuid
-func (b *builtinBinToUUIDSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinBinToUUIDSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	valBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(valBuf)
-	if err := b.args[0].VecEvalString(b.ctx, input, valBuf); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, valBuf); err != nil {
 		return err
 	}
 
@@ -744,7 +739,7 @@ func (b *builtinBinToUUIDSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 			return err
 		}
 		defer b.bufAllocator.put(flagBuf)
-		if err := b.args[1].VecEvalInt(b.ctx, input, flagBuf); err != nil {
+		if err := b.args[1].VecEvalInt(ctx, input, flagBuf); err != nil {
 			return err
 		}
 		i64s = flagBuf.Int64s()

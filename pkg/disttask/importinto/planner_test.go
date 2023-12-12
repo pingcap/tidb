@@ -127,11 +127,9 @@ func genEncodeStepMetas(t *testing.T, cnt int) [][]byte {
 		idxPrefix := fmt.Sprintf("i1_%d_", i)
 		meta := &ImportStepMeta{
 			SortedDataMeta: &external.SortedKVMeta{
-				MinKey:      []byte(prefix + "a"),
-				MaxKey:      []byte(prefix + "c"),
+				StartKey:    []byte(prefix + "a"),
+				EndKey:      []byte(prefix + "c"),
 				TotalKVSize: 12,
-				DataFiles:   []string{prefix + "/1"},
-				StatFiles:   []string{prefix + "/1.stat"},
 				MultipleFilesStats: []external.MultipleFilesStat{
 					{
 						Filenames: [][2]string{
@@ -142,11 +140,9 @@ func genEncodeStepMetas(t *testing.T, cnt int) [][]byte {
 			},
 			SortedIndexMetas: map[int64]*external.SortedKVMeta{
 				1: {
-					MinKey:      []byte(idxPrefix + "a"),
-					MaxKey:      []byte(idxPrefix + "c"),
+					StartKey:    []byte(idxPrefix + "a"),
+					EndKey:      []byte(idxPrefix + "c"),
 					TotalKVSize: 12,
-					DataFiles:   []string{idxPrefix + "/1"},
-					StatFiles:   []string{idxPrefix + "/1.stat"},
 					MultipleFilesStats: []external.MultipleFilesStat{
 						{
 							Filenames: [][2]string{
@@ -202,11 +198,9 @@ func genMergeStepMetas(t *testing.T, cnt int) [][]byte {
 		meta := &MergeSortStepMeta{
 			KVGroup: "data",
 			SortedKVMeta: external.SortedKVMeta{
-				MinKey:      []byte(prefix + "a"),
-				MaxKey:      []byte(prefix + "c"),
+				StartKey:    []byte(prefix + "a"),
+				EndKey:      []byte(prefix + "c"),
 				TotalKVSize: 12,
-				DataFiles:   []string{prefix + "/1"},
-				StatFiles:   []string{prefix + "/1.stat"},
 				MultipleFilesStats: []external.MultipleFilesStat{
 					{
 						Filenames: [][2]string{
@@ -231,17 +225,17 @@ func TestGetSortedKVMetas(t *testing.T) {
 	require.Contains(t, kvMetas, "data")
 	require.Contains(t, kvMetas, "1")
 	// just check meta is merged, won't check all fields
-	require.Equal(t, []byte("d_0_a"), kvMetas["data"].MinKey)
-	require.Equal(t, []byte("d_2_c"), kvMetas["data"].MaxKey)
-	require.Equal(t, []byte("i1_0_a"), kvMetas["1"].MinKey)
-	require.Equal(t, []byte("i1_2_c"), kvMetas["1"].MaxKey)
+	require.Equal(t, []byte("d_0_a"), kvMetas["data"].StartKey)
+	require.Equal(t, []byte("d_2_c"), kvMetas["data"].EndKey)
+	require.Equal(t, []byte("i1_0_a"), kvMetas["1"].StartKey)
+	require.Equal(t, []byte("i1_2_c"), kvMetas["1"].EndKey)
 
 	mergeStepMetas := genMergeStepMetas(t, 3)
 	kvMetas2, err := getSortedKVMetasOfMergeStep(mergeStepMetas)
 	require.NoError(t, err)
 	require.Len(t, kvMetas2, 1)
-	require.Equal(t, []byte("x_0_a"), kvMetas2["data"].MinKey)
-	require.Equal(t, []byte("x_2_c"), kvMetas2["data"].MaxKey)
+	require.Equal(t, []byte("x_0_a"), kvMetas2["data"].StartKey)
+	require.Equal(t, []byte("x_2_c"), kvMetas2["data"].EndKey)
 
 	// force merge sort for data kv
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort", `return("data")`))
@@ -256,8 +250,8 @@ func TestGetSortedKVMetas(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, allKVMetas, 2)
-	require.Equal(t, []byte("x_0_a"), allKVMetas["data"].MinKey)
-	require.Equal(t, []byte("x_2_c"), allKVMetas["data"].MaxKey)
-	require.Equal(t, []byte("i1_0_a"), allKVMetas["1"].MinKey)
-	require.Equal(t, []byte("i1_2_c"), allKVMetas["1"].MaxKey)
+	require.Equal(t, []byte("x_0_a"), allKVMetas["data"].StartKey)
+	require.Equal(t, []byte("x_2_c"), allKVMetas["data"].EndKey)
+	require.Equal(t, []byte("i1_0_a"), allKVMetas["1"].StartKey)
+	require.Equal(t, []byte("i1_2_c"), allKVMetas["1"].EndKey)
 }

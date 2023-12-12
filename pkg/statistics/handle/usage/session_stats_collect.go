@@ -30,7 +30,7 @@ import (
 	utilstats "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 )
 
 var (
@@ -120,7 +120,7 @@ func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physic
 	statsVersion := uint64(0)
 	defer func() {
 		if err == nil && statsVersion != 0 {
-			s.statsHandle.RecordHistoricalStatsMeta(physicalTableID, statsVersion, "flush stats")
+			s.statsHandle.RecordHistoricalStatsMeta(physicalTableID, statsVersion, "flush stats", false)
 		}
 	}()
 	if delta.Count == 0 {
@@ -234,16 +234,16 @@ func (s *statsUsageImpl) DumpColStatsUsageToKV() error {
 			end = len(pairs)
 		}
 		sql := new(strings.Builder)
-		sqlexec.MustFormatSQL(sql, "INSERT INTO mysql.column_stats_usage (table_id, column_id, last_used_at) VALUES ")
+		sqlescape.MustFormatSQL(sql, "INSERT INTO mysql.column_stats_usage (table_id, column_id, last_used_at) VALUES ")
 		for j := i; j < end; j++ {
 			// Since we will use some session from session pool to execute the insert statement, we pass in UTC time here and covert it
 			// to the session's time zone when executing the insert statement. In this way we can make the stored time right.
-			sqlexec.MustFormatSQL(sql, "(%?, %?, CONVERT_TZ(%?, '+00:00', @@TIME_ZONE))", pairs[j].tblColID.TableID, pairs[j].tblColID.ID, pairs[j].lastUsedAt)
+			sqlescape.MustFormatSQL(sql, "(%?, %?, CONVERT_TZ(%?, '+00:00', @@TIME_ZONE))", pairs[j].tblColID.TableID, pairs[j].tblColID.ID, pairs[j].lastUsedAt)
 			if j < end-1 {
-				sqlexec.MustFormatSQL(sql, ",")
+				sqlescape.MustFormatSQL(sql, ",")
 			}
 		}
-		sqlexec.MustFormatSQL(sql, " ON DUPLICATE KEY UPDATE last_used_at = CASE WHEN last_used_at IS NULL THEN VALUES(last_used_at) ELSE GREATEST(last_used_at, VALUES(last_used_at)) END")
+		sqlescape.MustFormatSQL(sql, " ON DUPLICATE KEY UPDATE last_used_at = CASE WHEN last_used_at IS NULL THEN VALUES(last_used_at) ELSE GREATEST(last_used_at, VALUES(last_used_at)) END")
 		if err := utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 			_, _, err := utilstats.ExecRows(sctx, sql.String())
 			return err

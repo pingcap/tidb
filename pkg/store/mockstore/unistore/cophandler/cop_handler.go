@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/client"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/lockstore"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -143,15 +145,16 @@ func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemSt
 
 	exec, chunks, lastRange, counts, ndvs, err := buildAndRunMPPExecutor(dagCtx, dagReq, req.PagingSize)
 
+	sc := dagCtx.sctx.GetSessionVars().StmtCtx
 	if err != nil {
 		errMsg := err.Error()
 		if strings.HasPrefix(errMsg, ErrExecutorNotSupportedMsg) {
 			resp.OtherError = err.Error()
 			return resp
 		}
-		return genRespWithMPPExec(nil, lastRange, nil, nil, exec, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
+		return genRespWithMPPExec(nil, lastRange, nil, nil, exec, dagReq, err, sc.GetWarnings(), time.Since(startTime))
 	}
-	return genRespWithMPPExec(chunks, lastRange, counts, ndvs, exec, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
+	return genRespWithMPPExec(chunks, lastRange, counts, ndvs, exec, dagReq, err, sc.GetWarnings(), time.Since(startTime))
 }
 
 func buildAndRunMPPExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest, pagingSize uint64) (mppExec, []tipb.Chunk, *coprocessor.KeyRange, []int64, []int64, error) {
@@ -167,7 +170,7 @@ func buildAndRunMPPExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest, pagingS
 		ndvs = make([]int64, len(dagCtx.keyRanges))
 	}
 	builder := &mppExecBuilder{
-		sc:       dagCtx.sc,
+		sctx:     dagCtx.sctx,
 		dbReader: dagCtx.dbReader,
 		dagReq:   dagReq,
 		dagCtx:   dagCtx,
@@ -240,6 +243,8 @@ func useDefaultEncoding(chk *chunk.Chunk, dagCtx *dagContext, dagReq *tipb.DAGRe
 	var datums []types.Datum
 	var err error
 	numRows := chk.NumRows()
+	sc := dagCtx.sctx.GetSessionVars().StmtCtx
+	errCtx := sc.ErrCtx()
 	for i := 0; i < numRows; i++ {
 		datums = datums[:0]
 		if dagReq.OutputOffsets != nil {
@@ -251,7 +256,8 @@ func useDefaultEncoding(chk *chunk.Chunk, dagCtx *dagContext, dagReq *tipb.DAGRe
 				datums = append(datums, chk.GetRow(i).GetDatum(j, ft))
 			}
 		}
-		buf, err = codec.EncodeValue(dagCtx.sc, buf[:0], datums...)
+		buf, err = codec.EncodeValue(sc.TimeZone(), buf[:0], datums...)
+		err = errCtx.HandleError(err)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -294,21 +300,21 @@ func buildDAG(reader *dbreader.DBReader, lockStore *lockstore.MemStore, req *cop
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	sc := flagsToStatementContext(dagReq.Flags)
+	var tz *time.Location
 	switch dagReq.TimeZoneName {
 	case "":
-		sc.SetTimeZone(time.FixedZone("UTC", int(dagReq.TimeZoneOffset)))
+		tz = time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
 	case "System":
-		sc.SetTimeZone(time.Local)
+		tz = time.Local
 	default:
-		tz, err := time.LoadLocation(dagReq.TimeZoneName)
+		tz, err = time.LoadLocation(dagReq.TimeZoneName)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		sc.SetTimeZone(tz)
 	}
+	sctx := flagsAndTzToSessionContext(dagReq.Flags, tz)
 	ctx := &dagContext{
-		evalContext:   &evalContext{sc: sc},
+		evalContext:   &evalContext{sctx: sctx},
 		dbReader:      reader,
 		lockStore:     lockStore,
 		dagReq:        dagReq,
@@ -325,13 +331,13 @@ func getAggInfo(ctx *dagContext, pbAgg *tipb.Aggregation) ([]aggregation.Aggrega
 	var err error
 	for _, expr := range pbAgg.AggFunc {
 		var aggExpr aggregation.Aggregation
-		aggExpr, err = aggregation.NewDistAggFunc(expr, ctx.fieldTps, ctx.sc)
+		aggExpr, err = aggregation.NewDistAggFunc(expr, ctx.fieldTps, ctx.sctx)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
 		aggs = append(aggs, aggExpr)
 	}
-	groupBys, err := convertToExprs(ctx.sc, ctx.fieldTps, pbAgg.GetGroupBy())
+	groupBys, err := convertToExprs(ctx.sctx, ctx.fieldTps, pbAgg.GetGroupBy())
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -348,10 +354,10 @@ func getTopNInfo(ctx *evalContext, topN *tipb.TopN) (heap *topNHeap, conds []exp
 		totalCount: int(topN.Limit),
 		topNSorter: topNSorter{
 			orderByItems: topN.OrderBy,
-			sc:           ctx.sc,
+			sc:           ctx.sctx.GetSessionVars().StmtCtx,
 		},
 	}
-	if conds, err = convertToExprs(ctx.sc, ctx.fieldTps, pbConds); err != nil {
+	if conds, err = convertToExprs(ctx.sctx, ctx.fieldTps, pbConds); err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 
@@ -362,7 +368,7 @@ type evalContext struct {
 	columnInfos []*tipb.ColumnInfo
 	fieldTps    []*types.FieldType
 	primaryCols []int64
-	sc          *stmtctx.StatementContext
+	sctx        sessionctx.Context
 }
 
 func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
@@ -421,18 +427,13 @@ func newRowDecoder(columnInfos []*tipb.ColumnInfo, fieldTps []*types.FieldType, 
 	return rowcodec.NewChunkDecoder(cols, pkCols, def, timeZone), nil
 }
 
-// flagsToStatementContext creates a StatementContext from a `tipb.SelectRequest.Flags`.
-func flagsToStatementContext(flags uint64) *stmtctx.StatementContext {
+// flagsAndTzToSessionContext creates a sessionctx.Context from a `tipb.SelectRequest.Flags`.
+func flagsAndTzToSessionContext(flags uint64, tz *time.Location) sessionctx.Context {
 	sc := stmtctx.NewStmtCtx()
-	sc.IgnoreTruncate.Store((flags & model.FlagIgnoreTruncate) > 0)
-	sc.TruncateAsWarning = (flags & model.FlagTruncateAsWarning) > 0
-	sc.InInsertStmt = (flags & model.FlagInInsertStmt) > 0
-	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
-	sc.InDeleteStmt = (flags & model.FlagInUpdateOrDeleteStmt) > 0
-	sc.OverflowAsWarning = (flags & model.FlagOverflowAsWarning) > 0
-	sc.IgnoreZeroInDate = (flags & model.FlagIgnoreZeroInDate) > 0
-	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
-	return sc
+	sc.InitFromPBFlagAndTz(flags, tz)
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().StmtCtx = sc
+	return sctx
 }
 
 // ErrLocked is returned when trying to Read/Write on a locked key. Client should

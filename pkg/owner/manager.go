@@ -76,18 +76,23 @@ type OpType byte
 
 // List operation of types.
 const (
-	OpNone              OpType = 0
-	OpGetUpgradingState OpType = 1
+	OpNone               OpType = 0
+	OpSyncUpgradingState OpType = 1
 )
 
 // String implements fmt.Stringer interface.
 func (ot OpType) String() string {
 	switch ot {
-	case OpGetUpgradingState:
-		return "get upgrading state"
+	case OpSyncUpgradingState:
+		return "sync upgrading state"
 	default:
 		return "none"
 	}
+}
+
+// IsSyncedUpgradingState represents whether the upgrading state is synchronized.
+func (ot OpType) IsSyncedUpgradingState() bool {
+	return ot == OpSyncUpgradingState
 }
 
 // DDLOwnerChecker is used to check whether tidb is owner.

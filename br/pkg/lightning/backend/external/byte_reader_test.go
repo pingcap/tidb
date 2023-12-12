@@ -63,11 +63,6 @@ func (s *mockExtStore) GetFileSize() (int64, error) {
 }
 
 func TestByteReader(t *testing.T) {
-	testByteReaderNormal(t, false)
-	testByteReaderNormal(t, true)
-}
-
-func testByteReaderNormal(t *testing.T, useConcurrency bool) {
 	st, clean := NewS3WithBucketAndPrefix(t, "test", "testprefix")
 	defer clean()
 
@@ -84,21 +79,19 @@ func testByteReaderNormal(t *testing.T, useConcurrency bool) {
 	// Test basic next() usage.
 	br, err := newByteReader(context.Background(), newRsc(), 3)
 	require.NoError(t, err)
-	x := br.next(1)
-	require.Equal(t, 1, len(x))
-	require.Equal(t, byte('a'), x[0])
-	x = br.next(2)
-	require.Equal(t, 2, len(x))
-	require.Equal(t, byte('b'), x[0])
-	require.Equal(t, byte('c'), x[1])
+	n, bs := br.next(1)
+	require.Equal(t, 1, n)
+	require.Equal(t, [][]byte{{'a'}}, bs)
+	n, bs = br.next(2)
+	require.Equal(t, 2, n)
+	require.Equal(t, [][]byte{{'b', 'c'}}, bs)
 	require.NoError(t, br.Close())
 
 	// Test basic readNBytes() usage.
 	br, err = newByteReader(context.Background(), newRsc(), 3)
 	require.NoError(t, err)
-	y, err := br.readNBytes(2)
+	x, err := br.readNBytes(2)
 	require.NoError(t, err)
-	x = *y
 	require.Equal(t, 2, len(x))
 	require.Equal(t, byte('a'), x[0])
 	require.Equal(t, byte('b'), x[1])
@@ -106,17 +99,18 @@ func testByteReaderNormal(t *testing.T, useConcurrency bool) {
 
 	br, err = newByteReader(context.Background(), newRsc(), 3)
 	require.NoError(t, err)
-	y, err = br.readNBytes(5) // Read all the data.
+	x, err = br.readNBytes(5) // Read all the data.
 	require.NoError(t, err)
-	x = *y
 	require.Equal(t, 5, len(x))
 	require.Equal(t, byte('e'), x[4])
+	_, err = br.readNBytes(1) // EOF
+	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, br.Close())
 
 	br, err = newByteReader(context.Background(), newRsc(), 3)
 	require.NoError(t, err)
 	_, err = br.readNBytes(7) // EOF
-	require.Error(t, err)
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
 
 	err = st.WriteFile(context.Background(), "testfile", []byte("abcdef"))
 	require.NoError(t, err)
@@ -124,11 +118,10 @@ func testByteReaderNormal(t *testing.T, useConcurrency bool) {
 	ms := &mockExtStore{src: []byte("abcdef")}
 	br, err = newByteReader(context.Background(), ms, 2)
 	require.NoError(t, err)
-	y, err = br.readNBytes(3)
+	x, err = br.readNBytes(3)
 	require.NoError(t, err)
 	// Pollute mockExtStore to verify if the slice is not affected.
-	copy(ms.src, []byte("xyz"))
-	x = *y
+	copy(ms.src, "xyz")
 	require.Equal(t, 3, len(x))
 	require.Equal(t, byte('c'), x[2])
 	require.NoError(t, br.Close())
@@ -136,57 +129,12 @@ func testByteReaderNormal(t *testing.T, useConcurrency bool) {
 	ms = &mockExtStore{src: []byte("abcdef")}
 	br, err = newByteReader(context.Background(), ms, 2)
 	require.NoError(t, err)
-	y, err = br.readNBytes(2)
+	x, err = br.readNBytes(2)
 	require.NoError(t, err)
 	// Pollute mockExtStore to verify if the slice is not affected.
-	copy(ms.src, []byte("xyz"))
-	x = *y
+	copy(ms.src, "xyz")
 	require.Equal(t, 2, len(x))
 	require.Equal(t, byte('b'), x[1])
-	br.reset()
-	require.NoError(t, br.Close())
-}
-
-func TestByteReaderClone(t *testing.T) {
-	ms := &mockExtStore{src: []byte("0123456789")}
-	br, err := newByteReader(context.Background(), ms, 4)
-	require.NoError(t, err)
-	y1, err := br.readNBytes(2)
-	require.NoError(t, err)
-	y2, err := br.readNBytes(1)
-	require.NoError(t, err)
-	x1, x2 := *y1, *y2
-	require.Len(t, x1, 2)
-	require.Len(t, x2, 1)
-	require.Equal(t, byte('0'), x1[0])
-	require.Equal(t, byte('2'), x2[0])
-	require.NoError(t, br.reload()) // Perform a read to overwrite buffer.
-	x1, x2 = *y1, *y2
-	require.Len(t, x1, 2)
-	require.Len(t, x2, 1)
-	require.Equal(t, byte('4'), x1[0]) // Verify if the buffer is overwritten.
-	require.Equal(t, byte('6'), x2[0])
-	require.NoError(t, br.Close())
-
-	ms = &mockExtStore{src: []byte("0123456789")}
-	br, err = newByteReader(context.Background(), ms, 4)
-	require.NoError(t, err)
-	y1, err = br.readNBytes(2)
-	require.NoError(t, err)
-	y2, err = br.readNBytes(1)
-	require.NoError(t, err)
-	x1, x2 = *y1, *y2
-	require.Len(t, x1, 2)
-	require.Len(t, x2, 1)
-	require.Equal(t, byte('0'), x1[0])
-	require.Equal(t, byte('2'), x2[0])
-	br.cloneSlices()
-	require.NoError(t, br.reload()) // Perform a read to overwrite buffer.
-	x1, x2 = *y1, *y2
-	require.Len(t, x1, 2)
-	require.Len(t, x2, 1)
-	require.Equal(t, byte('0'), x1[0]) // Verify if the buffer is NOT overwritten.
-	require.Equal(t, byte('2'), x2[0])
 	require.NoError(t, br.Close())
 }
 
@@ -196,78 +144,17 @@ func TestByteReaderAuxBuf(t *testing.T) {
 	require.NoError(t, err)
 	y1, err := br.readNBytes(1)
 	require.NoError(t, err)
+	require.Equal(t, []byte("0"), y1)
 	y2, err := br.readNBytes(2)
 	require.NoError(t, err)
-	require.Equal(t, []byte("0"), *y1)
-	require.Equal(t, []byte("12"), *y2)
+	require.Equal(t, []byte("12"), y2)
 
 	y3, err := br.readNBytes(1)
 	require.NoError(t, err)
+	require.Equal(t, []byte("3"), y3)
 	y4, err := br.readNBytes(2)
 	require.NoError(t, err)
-	require.Equal(t, []byte("3"), *y3)
-	require.Equal(t, []byte("45"), *y4)
-	require.Equal(t, []byte("0"), *y1)
-	require.Equal(t, []byte("12"), *y2)
-}
-
-func TestReset(t *testing.T) {
-	testReset(t, false)
-	testReset(t, true)
-}
-
-func testReset(t *testing.T, useConcurrency bool) {
-	st, clean := NewS3WithBucketAndPrefix(t, "test", "testprefix")
-	defer func() {
-		clean()
-	}()
-
-	seed := time.Now().Unix()
-	rand.Seed(uint64(seed))
-	t.Logf("seed: %d", seed)
-	src := make([]byte, 256)
-	for i := range src {
-		src[i] = byte(i)
-	}
-	// Prepare
-	err := st.WriteFile(context.Background(), "testfile", src)
-	require.NoError(t, err)
-
-	newRsc := func() storage.ExternalFileReader {
-		rsc, err := st.Open(context.Background(), "testfile", nil)
-		require.NoError(t, err)
-		return rsc
-	}
-	bufSize := rand.Intn(256)
-	br, err := newByteReader(context.Background(), newRsc(), bufSize)
-	require.NoError(t, err)
-	end := 0
-	toCheck := make([]*[]byte, 0, 10)
-	for end < len(src) {
-		n := rand.Intn(len(src) - end)
-		if n == 0 {
-			n = 1
-		}
-		y, err := br.readNBytes(n)
-		require.NoError(t, err)
-		toCheck = append(toCheck, y)
-		end += n
-
-		l := end
-		r := end
-		for i := len(toCheck) - 1; i >= 0; i-- {
-			l -= len(*toCheck[i])
-			require.Equal(t, src[l:r], *toCheck[i])
-			r = l
-		}
-
-		if rand.Intn(2) == 0 {
-			br.reset()
-			toCheck = toCheck[:0]
-		}
-	}
-	_, err = br.readNBytes(1)
-	require.Equal(t, io.EOF, err)
+	require.Equal(t, []byte("45"), y4)
 }
 
 func TestUnexpectedEOF(t *testing.T) {
@@ -366,7 +253,7 @@ func TestSwitchMode(t *testing.T) {
 			break
 		}
 		require.NoError(t, err)
-		totalCnt += len(*y)
+		totalCnt += len(y)
 	}
 	require.Equal(t, fileSize, totalCnt)
 

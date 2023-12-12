@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
+	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	"github.com/pingcap/tidb/pkg/types"
@@ -53,7 +54,7 @@ type TestKit struct {
 	assert  *assert.Assertions
 	t       testing.TB
 	store   kv.Storage
-	session session.Session
+	session sessiontypes.Session
 	alloc   chunk.Allocator
 }
 
@@ -77,7 +78,7 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 		if ok {
 			mockSm.mu.Lock()
 			if mockSm.Conn == nil {
-				mockSm.Conn = make(map[uint64]session.Session)
+				mockSm.Conn = make(map[uint64]sessiontypes.Session)
 			}
 			mockSm.Conn[tk.session.GetSessionVars().ConnectionID] = tk.session
 			mockSm.mu.Unlock()
@@ -89,7 +90,7 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 }
 
 // NewTestKitWithSession returns a new *TestKit.
-func NewTestKitWithSession(t testing.TB, store kv.Storage, se session.Session) *TestKit {
+func NewTestKitWithSession(t testing.TB, store kv.Storage, se sessiontypes.Session) *TestKit {
 	return &TestKit{
 		require: require.New(t),
 		assert:  assert.New(t),
@@ -108,14 +109,14 @@ func (tk *TestKit) RefreshSession() {
 }
 
 // SetSession set the session of testkit
-func (tk *TestKit) SetSession(session session.Session) {
+func (tk *TestKit) SetSession(session sessiontypes.Session) {
 	tk.session = session
 	// enforce sysvar cache loading, ref loadCommonGlobalVariableIfNeeded
 	tk.MustExec("select 3")
 }
 
 // Session return the session associated with the testkit
-func (tk *TestKit) Session() session.Session {
+func (tk *TestKit) Session() sessiontypes.Session {
 	return tk.session
 }
 
@@ -422,7 +423,7 @@ func (tk *TestKit) MustExecToErr(sql string, args ...interface{}) {
 	tk.require.Error(err)
 }
 
-func newSession(t testing.TB, store kv.Storage) session.Session {
+func newSession(t testing.TB, store kv.Storage) sessiontypes.Session {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	se.SetConnectionID(testKitIDGenerator.Inc())

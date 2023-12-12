@@ -139,7 +139,7 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt 
 	// TODO: remove it to the place building logical plan
 	predicates = ds.AddPrefix4ShardIndexes(ds.SCtx(), predicates)
 	ds.allConds = predicates
-	ds.pushedDownConds, predicates = expression.PushDownExprs(ds.SCtx().GetSessionVars().StmtCtx, predicates, ds.SCtx().GetClient(), kv.UnSpecified)
+	ds.pushedDownConds, predicates = expression.PushDownExprs(ds.SCtx(), predicates, ds.SCtx().GetClient(), kv.UnSpecified)
 	appendDataSourcePredicatePushDownTraceStep(ds, opt)
 	return predicates, ds
 }
@@ -234,8 +234,8 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		rightCond = append(p.RightConditions, rightPushCond...)
 		p.RightConditions = nil
 	}
-	leftCond = expression.RemoveDupExprs(p.SCtx(), leftCond)
-	rightCond = expression.RemoveDupExprs(p.SCtx(), rightCond)
+	leftCond = expression.RemoveDupExprs(leftCond)
+	rightCond = expression.RemoveDupExprs(rightCond)
 	leftRet, lCh := p.children[0].PredicatePushDown(leftCond, opt)
 	rightRet, rCh := p.children[1].PredicatePushDown(rightCond, opt)
 	addSelection(p, lCh, leftRet, 0, opt)
@@ -350,7 +350,7 @@ func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.C
 	if col, ok := expr.(*expression.Column); ok {
 		return col
 	}
-	expr = expression.ColumnSubstitute(expr, p.schema, p.Exprs)
+	expr = expression.ColumnSubstitute(p.SCtx(), expr, p.schema, p.Exprs)
 	p.Exprs = append(p.Exprs, expr)
 
 	col := &expression.Column{
@@ -447,7 +447,7 @@ func isNullRejected(ctx sessionctx.Context, schema *expression.Schema, expr expr
 		}
 		if x.Value.IsNull() {
 			return true
-		} else if isTrue, err := x.Value.ToBool(sc); err == nil && isTrue == 0 {
+		} else if isTrue, err := x.Value.ToBool(sc.TypeCtxOrDefault()); err == nil && isTrue == 0 {
 			return true
 		}
 	}
@@ -481,8 +481,9 @@ func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression
 			return predicates, p
 		}
 	}
+	ctx := p.SCtx()
 	for _, cond := range predicates {
-		substituted, hasFailed, newFilter := expression.ColumnSubstituteImpl(cond, p.Schema(), p.Exprs, true)
+		substituted, hasFailed, newFilter := expression.ColumnSubstituteImpl(ctx, cond, p.Schema(), p.Exprs, true)
 		if substituted && !hasFailed && !expression.HasGetSetVarFunc(newFilter) {
 			canBePushed = append(canBePushed, newFilter)
 		} else {
@@ -525,7 +526,7 @@ func (la *LogicalAggregation) pushDownPredicatesForAggregation(cond expression.E
 			}
 		}
 		if ok {
-			newFunc := expression.ColumnSubstitute(cond, la.Schema(), exprsOriginal)
+			newFunc := expression.ColumnSubstitute(la.SCtx(), cond, la.Schema(), exprsOriginal)
 			condsToPush = append(condsToPush, newFunc)
 		} else {
 			ret = append(ret, cond)
@@ -635,19 +636,20 @@ func DeriveOtherConditions(
 	deriveLeft bool, deriveRight bool) (
 	leftCond []expression.Expression, rightCond []expression.Expression) {
 	isOuterSemi := (p.JoinType == LeftOuterSemiJoin) || (p.JoinType == AntiLeftOuterSemiJoin)
+	ctx := p.SCtx()
 	for _, expr := range p.OtherConditions {
 		if deriveLeft {
-			leftRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(expr, leftSchema)
+			leftRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(ctx, expr, leftSchema)
 			if leftRelaxedCond != nil {
 				leftCond = append(leftCond, leftRelaxedCond)
 			}
-			notNullExpr := deriveNotNullExpr(expr, leftSchema)
+			notNullExpr := deriveNotNullExpr(ctx, expr, leftSchema)
 			if notNullExpr != nil {
 				leftCond = append(leftCond, notNullExpr)
 			}
 		}
 		if deriveRight {
-			rightRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(expr, rightSchema)
+			rightRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(ctx, expr, rightSchema)
 			if rightRelaxedCond != nil {
 				rightCond = append(rightCond, rightRelaxedCond)
 			}
@@ -661,7 +663,7 @@ func DeriveOtherConditions(
 			if isOuterSemi {
 				continue
 			}
-			notNullExpr := deriveNotNullExpr(expr, rightSchema)
+			notNullExpr := deriveNotNullExpr(ctx, expr, rightSchema)
 			if notNullExpr != nil {
 				rightCond = append(rightCond, notNullExpr)
 			}
@@ -673,12 +675,11 @@ func DeriveOtherConditions(
 // deriveNotNullExpr generates a new expression `not(isnull(col))` given `col1 op col2`,
 // in which `col` is in specified schema. Caller guarantees that only one of `col1` or
 // `col2` is in schema.
-func deriveNotNullExpr(expr expression.Expression, schema *expression.Schema) expression.Expression {
+func deriveNotNullExpr(ctx sessionctx.Context, expr expression.Expression, schema *expression.Schema) expression.Expression {
 	binop, ok := expr.(*expression.ScalarFunction)
 	if !ok || len(binop.GetArgs()) != 2 {
 		return nil
 	}
-	ctx := binop.GetCtx()
 	arg0, lOK := binop.GetArgs()[0].(*expression.Column)
 	arg1, rOK := binop.GetArgs()[1].(*expression.Column)
 	if !lOK || !rOK {
@@ -707,7 +708,7 @@ func Conds2TableDual(p LogicalPlan, conds []expression.Expression) LogicalPlan {
 	if expression.MaybeOverOptimized4PlanCache(p.SCtx(), []expression.Expression{con}) {
 		return nil
 	}
-	if isTrue, err := con.Value.ToBool(sc); (err == nil && isTrue == 0) || con.Value.IsNull() {
+	if isTrue, err := con.Value.ToBool(sc.TypeCtxOrDefault()); (err == nil && isTrue == 0) || con.Value.IsNull() {
 		dual := LogicalTableDual{}.Init(p.SCtx(), p.SelectBlockOffset())
 		dual.SetSchema(p.Schema())
 		return dual
@@ -729,7 +730,7 @@ func DeleteTrueExprs(p LogicalPlan, conds []expression.Expression) []expression.
 			continue
 		}
 		sc := p.SCtx().GetSessionVars().StmtCtx
-		if isTrue, err := con.Value.ToBool(sc); err == nil && isTrue == 1 {
+		if isTrue, err := con.Value.ToBool(sc.TypeCtx()); err == nil && isTrue == 1 {
 			continue
 		}
 		newConds = append(newConds, cond)
@@ -998,7 +999,7 @@ func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, _ *lo
 		// Doesn't support recursive CTE yet.
 		return predicates, p.self
 	}
-	if !p.isOuterMostCTE {
+	if !p.cte.isOuterMostCTE {
 		return predicates, p.self
 	}
 	pushedPredicates := make([]expression.Expression, len(predicates))

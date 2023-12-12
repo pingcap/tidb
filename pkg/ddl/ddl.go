@@ -42,11 +42,12 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -58,10 +59,12 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
@@ -348,15 +351,14 @@ type ddlCtx struct {
 	schemaSyncer syncer.SchemaSyncer
 	stateSyncer  syncer.StateSyncer
 	ddlJobDoneCh chan struct{}
-	ddlEventCh   chan<- *util.Event
+	ddlEventCh   chan<- *statsutil.DDLEvent
 	lease        time.Duration        // lease is schema lease.
 	binlogCli    *pumpcli.PumpsClient // binlogCli is used for Binlog.
 	infoCache    *infoschema.InfoCache
 	statsHandle  *handle.Handle
 	tableLockCkr util.DeadTableLockChecker
 	etcdCli      *clientv3.Client
-	// backfillJobCh gets notification if any backfill jobs coming.
-	backfillJobCh chan struct{}
+	autoidCli    *autoid.ClientDiscover
 
 	*waitSchemaSyncedController
 	*schemaVersionManager
@@ -499,23 +501,6 @@ func (dc *ddlCtx) jobContext(jobID int64, reorgMeta *model.DDLReorgMeta) *JobCon
 	return ctx
 }
 
-func (dc *ddlCtx) removeBackfillCtxJobCtx(jobID int64) {
-	dc.backfillCtx.Lock()
-	delete(dc.backfillCtx.jobCtxMap, jobID)
-	dc.backfillCtx.Unlock()
-}
-
-func (dc *ddlCtx) backfillCtxJobIDs() []int64 {
-	dc.backfillCtx.Lock()
-	defer dc.backfillCtx.Unlock()
-
-	runningJobIDs := make([]int64, 0, len(dc.backfillCtx.jobCtxMap))
-	for id := range dc.backfillCtx.jobCtxMap {
-		runningJobIDs = append(runningJobIDs, id)
-	}
-	return runningJobIDs
-}
-
 type reorgContexts struct {
 	sync.RWMutex
 	// reorgCtxMap maps job ID to reorg context.
@@ -598,7 +583,7 @@ func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 
 // asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
 // give up notify and log it.
-func asyncNotifyEvent(d *ddlCtx, e *util.Event) {
+func asyncNotifyEvent(d *ddlCtx, e *statsutil.DDLEvent) {
 	if d.ddlEventCh != nil {
 		if d.lease == 0 {
 			// If lease is 0, it's always used in test.
@@ -672,6 +657,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		infoCache:                  opt.InfoCache,
 		tableLockCkr:               deadLockCkr,
 		etcdCli:                    opt.EtcdCli,
+		autoidCli:                  opt.AutoIDClient,
 		schemaVersionManager:       newSchemaVersionManager(),
 		waitSchemaSyncedController: newWaitSchemaSyncedController(),
 		runningJobIDs:              make([]string, 0, jobRecordCapacity),
@@ -691,23 +677,17 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		ddlJobCh:          make(chan struct{}, 100),
 	}
 
-	scheduler.RegisterTaskType(proto.Backfill,
-		func(ctx context.Context, id string, task *proto.Task, taskTable scheduler.TaskTable) scheduler.Scheduler {
-			return newBackfillDistScheduler(ctx, id, task, taskTable, d)
-		}, scheduler.WithSummary,
+	taskexecutor.RegisterTaskType(proto.Backfill,
+		func(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
+			return newBackfillDistExecutor(ctx, id, task, taskTable, d)
+		}, taskexecutor.WithSummary,
 	)
 
-	backFillDsp, err := NewBackfillingDispatcherExt(d)
-	if err != nil {
-		logutil.BgLogger().Warn("NewBackfillingDispatcherExt failed", zap.String("category", "ddl"), zap.Error(err))
-	} else {
-		dispatcher.RegisterDispatcherFactory(proto.Backfill,
-			func(ctx context.Context, taskMgr dispatcher.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
-				return newLitBackfillDispatcher(ctx, taskMgr, serverID, task, backFillDsp)
-			})
-		dispatcher.RegisterDispatcherCleanUpFactory(proto.Backfill, newBackfillCleanUpS3)
-	}
-
+	dispatcher.RegisterDispatcherFactory(proto.Backfill,
+		func(ctx context.Context, taskMgr dispatcher.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
+			return newLitBackfillDispatcher(ctx, d, taskMgr, serverID, task)
+		})
+	dispatcher.RegisterDispatcherCleanUpFactory(proto.Backfill, newBackfillCleanUpS3)
 	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.
 	variable.EnableDDL = d.EnableDDL
 	variable.DisableDDL = d.DisableDDL
@@ -816,7 +796,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	}
 	defer d.sessPool.Put(ctx)
 
-	ingest.InitGlobalLightningEnv(d.ctx, ctx)
+	ingest.InitGlobalLightningEnv()
 
 	return nil
 }
@@ -1124,7 +1104,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		}
 
 		// If the connection being killed, we need to CANCEL the DDL job.
-		if atomic.LoadUint32(&sessVars.Killed) == 1 {
+		if sessVars.SQLKiller.HandleSignal() == exeerrors.ErrQueryInterrupted {
 			if atomic.LoadInt32(&sessVars.ConnectionStatus) == variable.ConnStatusShutdown {
 				logutil.BgLogger().Info("DoDDLJob will quit because context done", zap.String("category", "ddl"))
 				return context.Canceled
@@ -1407,7 +1387,7 @@ func GetDDLInfoWithNewTxn(s sessionctx.Context) (*Info, error) {
 	return info, err
 }
 
-// GetDDLInfo returns DDL information.
+// GetDDLInfo returns DDL information and only uses for testing.
 func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 	var err error
 	info := &Info{}

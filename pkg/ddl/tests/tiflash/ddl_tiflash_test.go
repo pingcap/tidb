@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"math"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -47,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
@@ -920,7 +920,7 @@ func TestTiFlashBatchKill(t *testing.T) {
 	wg.Run(func() {
 		time.Sleep(time.Millisecond * 100)
 		sessVars := tk.Session().GetSessionVars()
-		atomic.StoreUint32(&sessVars.Killed, 1)
+		sessVars.SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 	})
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/FastFailCheckTiFlashPendingTables", `return(2)`))

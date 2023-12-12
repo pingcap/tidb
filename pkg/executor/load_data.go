@@ -20,7 +20,6 @@ import (
 	"io"
 	"math"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -41,10 +40,12 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -99,8 +100,9 @@ func setNonRestrictiveFlags(stmtCtx *stmtctx.StatementContext) {
 	// TODO: DupKeyAsWarning represents too many "ignore error" paths, the
 	// meaning of this flag is not clear. I can only reuse it here.
 	stmtCtx.DupKeyAsWarning = true
-	stmtCtx.TruncateAsWarning = true
 	stmtCtx.BadNullAsWarning = true
+
+	stmtCtx.SetTypeFlags(stmtCtx.TypeFlags().WithTruncateAsWarning(true))
 }
 
 // NewLoadDataWorker creates a new LoadDataWorker that is ready to work.
@@ -245,7 +247,7 @@ func initEncodeCommitWorkers(e *LoadDataWorker) (*encodeWorker, *commitWorker, e
 		controller:     e.controller,
 		colAssignExprs: colAssignExprs,
 		exprWarnings:   exprWarnings,
-		killed:         &e.UserSctx.GetSessionVars().Killed,
+		killer:         &e.UserSctx.GetSessionVars().SQLKiller,
 	}
 	enc.resetBatch()
 	com := &commitWorker{
@@ -293,7 +295,7 @@ type encodeWorker struct {
 	// sessionCtx generate warnings when rewrite AST node into expression.
 	// we should generate such warnings for each row encoded.
 	exprWarnings []stmtctx.SQLWarn
-	killed       *uint32
+	killer       *sqlkiller.SQLKiller
 	rows         [][]types.Datum
 }
 
@@ -347,7 +349,7 @@ func (w *encodeWorker) processOneStream(
 			logutil.Logger(ctx).Error("process routine panicked",
 				zap.Any("r", r),
 				zap.Stack("stack"))
-			err = errors.Errorf("%v", r)
+			err = util.GetRecoverError(r)
 		}
 	}()
 
@@ -368,9 +370,9 @@ func (w *encodeWorker) processOneStream(
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-checkKilled.C:
-			if atomic.CompareAndSwapUint32(w.killed, 1, 0) {
+			if err := w.killer.HandleSignal(); err != nil {
 				logutil.Logger(ctx).Info("load data query interrupted quit data processing")
-				return exeerrors.ErrQueryInterrupted
+				return err
 			}
 			goto TrySendTask
 		case outCh <- commitTask{
@@ -488,7 +490,7 @@ func (w *encodeWorker) parserData2TableData(
 	}
 	for i := 0; i < len(w.colAssignExprs); i++ {
 		// eval expression of `SET` clause
-		d, err := w.colAssignExprs[i].Eval(chunk.Row{})
+		d, err := w.colAssignExprs[i].Eval(w.Ctx(), chunk.Row{})
 		if err != nil {
 			if w.controller.Restrictive {
 				return nil, err
@@ -528,7 +530,7 @@ func (w *commitWorker) commitWork(ctx context.Context, inCh <-chan commitTask) (
 			logutil.Logger(ctx).Error("commitWork panicked",
 				zap.Any("r", r),
 				zap.Stack("stack"))
-			err = errors.Errorf("%v", r)
+			err = util.GetRecoverError(r)
 		}
 
 		if err != nil {

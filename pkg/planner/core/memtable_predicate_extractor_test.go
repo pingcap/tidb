@@ -25,13 +25,13 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
+	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -39,7 +39,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func getLogicalMemTable(t *testing.T, dom *domain.Domain, se session.Session, parser *parser.Parser, sql string) *plannercore.LogicalMemTable {
+func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Session, parser *parser.Parser, sql string) *plannercore.LogicalMemTable {
 	stmt, err := parser.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 
@@ -1650,63 +1650,6 @@ func TestColumns(t *testing.T) {
 	}
 }
 
-func TestPredicateQuery(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(id int, abctime int,DATETIME_PRECISION int);")
-	tk.MustExec("create table abclmn(a int);")
-	tk.MustQuery("select TABLE_NAME from information_schema.columns where table_schema = 'test' and column_name like 'i%'").Check(testkit.Rows("t"))
-	tk.MustQuery("select TABLE_NAME from information_schema.columns where table_schema = 'TEST' and column_name like 'I%'").Check(testkit.Rows("t"))
-	tk.MustQuery("select TABLE_NAME from information_schema.columns where table_schema = 'TEST' and column_name like 'ID'").Check(testkit.Rows("t"))
-	tk.MustQuery("select TABLE_NAME from information_schema.columns where table_schema = 'TEST' and column_name like 'id'").Check(testkit.Rows("t"))
-	tk.MustQuery("select column_name from information_schema.columns where table_schema = 'TEST' and (column_name like 'i%' or column_name like '%d')").Check(testkit.Rows("id"))
-	tk.MustQuery("select column_name from information_schema.columns where table_schema = 'TEST' and (column_name like 'abc%' and column_name like '%time')").Check(testkit.Rows("abctime"))
-	result := tk.MustQuery("select TABLE_NAME, column_name from information_schema.columns where table_schema = 'TEST' and column_name like '%time';")
-	require.Len(t, result.Rows(), 1)
-	tk.MustQuery("describe t").Check(testkit.Rows("id int(11) YES  <nil> ", "abctime int(11) YES  <nil> ", "DATETIME_PRECISION int(11) YES  <nil> "))
-	tk.MustQuery("describe t id").Check(testkit.Rows("id int(11) YES  <nil> "))
-	tk.MustQuery("describe t ID").Check(testkit.Rows("id int(11) YES  <nil> "))
-	tk.MustGetErrCode("describe t 'I%'", errno.ErrParse)
-	tk.MustGetErrCode("describe t I%", errno.ErrParse)
-
-	tk.MustQuery("show columns from t like 'abctime'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
-	tk.MustQuery("show columns from t like 'ABCTIME'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
-	tk.MustQuery("show columns from t like 'abc%'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
-	tk.MustQuery("show columns from t like 'ABC%'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
-	tk.MustQuery("show columns from t like '%ime'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
-	tk.MustQuery("show columns from t like '%IME'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
-	tk.MustQuery("show columns in t like '%ime'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
-	tk.MustQuery("show columns in t like '%IME'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
-	tk.MustQuery("show fields in t like '%ime'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
-	tk.MustQuery("show fields in t like '%IME'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
-
-	tk.MustQuery("show columns from t where field like '%time'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
-	tk.MustQuery("show columns from t where field = 'abctime'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
-	tk.MustQuery("show columns in t where field = 'abctime'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
-	tk.MustQuery("show fields from t where field = 'abctime'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
-	tk.MustQuery("show fields in t where field = 'abctime'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
-	tk.MustQuery("explain t").Check(testkit.Rows("id int(11) YES  <nil> ", "abctime int(11) YES  <nil> ", "DATETIME_PRECISION int(11) YES  <nil> "))
-
-	tk.MustGetErrCode("show columns from t like id", errno.ErrBadField)
-	tk.MustGetErrCode("show columns from t like `id`", errno.ErrBadField)
-
-	tk.MustQuery("show tables like 't'").Check(testkit.Rows("t"))
-	tk.MustQuery("show tables like 'T'").Check(testkit.Rows("t"))
-	tk.MustQuery("show tables like 'ABCLMN'").Check(testkit.Rows("abclmn"))
-	tk.MustQuery("show tables like 'ABC%'").Check(testkit.Rows("abclmn"))
-	tk.MustQuery("show tables like '%lmn'").Check(testkit.Rows("abclmn"))
-	tk.MustQuery("show full tables like '%lmn'").Check(testkit.Rows("abclmn BASE TABLE"))
-	tk.MustGetErrCode("show tables like T", errno.ErrBadField)
-	tk.MustGetErrCode("show tables like `T`", errno.ErrBadField)
-
-	// For issue46618
-	tk.MustExec("create table _bar (id int);")
-	tk.MustExec("create table bar (id int);")
-	require.Len(t, tk.MustQuery(`show tables like '\_%'`).Rows(), 1)
-}
-
 func TestTikvRegionStatusExtractor(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
@@ -1815,7 +1758,7 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 			prepared: "select * from information_schema.tidb_hot_regions_history where update_time>=?",
 			userVars: []interface{}{"cast('2019-10-10 10:10:10' as datetime)"},
 			params: []interface{}{func() types.Time {
-				tt, err := types.ParseTimestamp(tk.Session().GetSessionVars().StmtCtx, "2019-10-10 10:10:10")
+				tt, err := types.ParseTimestamp(tk.Session().GetSessionVars().StmtCtx.TypeCtx(), "2019-10-10 10:10:10")
 				require.NoError(t, err)
 				return tt
 			}()},

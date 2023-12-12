@@ -19,9 +19,8 @@ import (
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -178,7 +177,7 @@ func (gss GroupingSets) TargetOne(normalAggArgs []Expression) int {
 		return 0
 	}
 	// for other normal agg args like: count(a), count(a+b), count(not(a is null)) and so on.
-	normalAggArgsIDSet := fd.NewFastIntSet()
+	normalAggArgsIDSet := intset.NewFastIntSet()
 	for _, one := range columnInNormalAggArgs {
 		normalAggArgsIDSet.Insert(int(one.UniqueID))
 	}
@@ -202,7 +201,7 @@ func (gss GroupingSets) TargetOne(normalAggArgs []Expression) int {
 func (gss GroupingSets) NeedCloneColumn() bool {
 	// for grouping sets like: {<a,c>},{<c>} / {<a,c>},{<b,c>}
 	// the column c should be copied one more time here, otherwise it will be filled with null values and not visible for the other grouping set again.
-	setIDs := make([]*fd.FastIntSet, 0, len(gss))
+	setIDs := make([]*intset.FastIntSet, 0, len(gss))
 	for _, groupingSet := range gss {
 		setIDs = append(setIDs, groupingSet.AllColIDs())
 	}
@@ -231,8 +230,8 @@ func (gs GroupingSet) IsEmpty() bool {
 }
 
 // AllColIDs collect all the grouping col's uniqueID. (here assuming that all the grouping expressions are single col)
-func (gs GroupingSet) AllColIDs() *fd.FastIntSet {
-	res := fd.NewFastIntSet()
+func (gs GroupingSet) AllColIDs() *intset.FastIntSet {
+	res := intset.NewFastIntSet()
 	for _, groupingExprs := range gs {
 		// on the condition that every grouping expression is single column.
 		// eg: group by a, b, c
@@ -287,10 +286,10 @@ func (gs GroupingSet) MemoryUsage() int64 {
 }
 
 // ToPB is used to convert current grouping set to pb constructor.
-func (gs GroupingSet) ToPB(sc *stmtctx.StatementContext, client kv.Client) (*tipb.GroupingSet, error) {
+func (gs GroupingSet) ToPB(ctx sessionctx.Context, client kv.Client) (*tipb.GroupingSet, error) {
 	res := &tipb.GroupingSet{}
 	for _, gExprs := range gs {
-		gExprsPB, err := ExpressionsToPBList(sc, gExprs, client)
+		gExprsPB, err := ExpressionsToPBList(ctx, gExprs, client)
 		if err != nil {
 			return nil, err
 		}
@@ -313,8 +312,8 @@ func (gss GroupingSets) IsEmpty() bool {
 }
 
 // AllSetsColIDs is used to collect all the column id inside into a fast int set.
-func (gss GroupingSets) AllSetsColIDs() *fd.FastIntSet {
-	res := fd.NewFastIntSet()
+func (gss GroupingSets) AllSetsColIDs() *intset.FastIntSet {
+	res := intset.NewFastIntSet()
 	for _, groupingSet := range gss {
 		res.UnionWith(*groupingSet.AllColIDs())
 	}
@@ -336,10 +335,10 @@ func (gss GroupingSets) String() string {
 }
 
 // ToPB is used to convert current grouping sets to pb constructor.
-func (gss GroupingSets) ToPB(sc *stmtctx.StatementContext, client kv.Client) ([]*tipb.GroupingSet, error) {
+func (gss GroupingSets) ToPB(ctx sessionctx.Context, client kv.Client) ([]*tipb.GroupingSet, error) {
 	res := make([]*tipb.GroupingSet, 0, len(gss))
 	for _, gs := range gss {
-		one, err := gs.ToPB(sc, client)
+		one, err := gs.ToPB(ctx, client)
 		if err != nil {
 			return nil, err
 		}
@@ -361,8 +360,8 @@ func (g GroupingExprs) IsEmpty() bool {
 
 // SubSetOf is used to do the logical computation of subset between two grouping expressions.
 func (g GroupingExprs) SubSetOf(other GroupingExprs) bool {
-	oldOne := fd.NewFastIntSet()
-	newOne := fd.NewFastIntSet()
+	oldOne := intset.NewFastIntSet()
+	newOne := intset.NewFastIntSet()
 	for _, one := range g {
 		oldOne.Insert(int(one.(*Column).UniqueID))
 	}
@@ -373,8 +372,8 @@ func (g GroupingExprs) SubSetOf(other GroupingExprs) bool {
 }
 
 // IDSet is used to collect column ids inside grouping expressions into a fast int set.
-func (g GroupingExprs) IDSet() *fd.FastIntSet {
-	res := fd.NewFastIntSet()
+func (g GroupingExprs) IDSet() *intset.FastIntSet {
+	res := intset.NewFastIntSet()
 	for _, one := range g {
 		res.Insert(int(one.(*Column).UniqueID))
 	}
@@ -493,7 +492,7 @@ func AdjustNullabilityFromGroupingSets(gss GroupingSets, schema *Schema) {
 	// set, so it won't be filled with null value at any time, the nullable change is unnecessary.
 	groupingIDs := gss.AllSetsColIDs()
 	// cache the grouping ids set to avoid fetch them multi times below.
-	groupingIDsSlice := make([]*fd.FastIntSet, 0, len(gss))
+	groupingIDsSlice := make([]*intset.FastIntSet, 0, len(gss))
 	for _, oneGroupingSet := range gss {
 		groupingIDsSlice = append(groupingIDsSlice, oneGroupingSet.AllColIDs())
 	}
@@ -515,23 +514,18 @@ func AdjustNullabilityFromGroupingSets(gss GroupingSets, schema *Schema) {
 // eg: group by a+b, b+a, b with rollup.
 // the 1st and 2nd expression is semantically equivalent, so we only need to keep the distinct expression: [a+b, b]
 // down, and output another position slice out, the [0, 0, 1] for the case above.
-func DeduplicateGbyExpression(ctx sessionctx.Context, exprs []Expression) ([]Expression, []int) {
+func DeduplicateGbyExpression(exprs []Expression) ([]Expression, []int) {
 	distinctExprs := make([]Expression, 0, len(exprs))
-	sc := ctx.GetSessionVars().StmtCtx
-	sc.CanonicalHashCode = true
-	defer func() {
-		sc.CanonicalHashCode = false
-	}()
 	distinctMap := make(map[string]int, len(exprs))
 	for _, expr := range exprs {
 		// -1 means pos is not assigned yet.
-		distinctMap[string(expr.HashCode(sc))] = -1
+		distinctMap[string(expr.CanonicalHashCode())] = -1
 	}
 	// pos is from 0 to len(distinctMap)-1
 	pos := 0
 	posSlice := make([]int, 0, len(exprs))
 	for _, one := range exprs {
-		key := string(one.HashCode(sc))
+		key := string(one.CanonicalHashCode())
 		if val, ok := distinctMap[key]; ok {
 			if val == -1 {
 				// means a new distinct expr.
@@ -570,7 +564,7 @@ func (gss GroupingSets) DistinctSize() (int, []uint64, map[int]map[uint64]struct
 func (gss GroupingSets) DistinctSizeWithThreshold(N int) (int, []uint64, map[int]map[uint64]struct{}) {
 	// all the group by item are col, deduplicate from id-set.
 	distinctGroupingIDsPos := make([]int, 0, len(gss))
-	originGroupingIDsSlice := make([]*fd.FastIntSet, 0, len(gss))
+	originGroupingIDsSlice := make([]*intset.FastIntSet, 0, len(gss))
 
 	for _, oneGroupingSet := range gss {
 		curIDs := oneGroupingSet.AllColIDs()

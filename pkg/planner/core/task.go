@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -308,7 +307,7 @@ func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 // RowSize for cost model ver2 is simplified, always use this function to calculate row size.
 func getAvgRowSize(stats *property.StatsInfo, cols []*expression.Column) (size float64) {
 	if stats.HistColl != nil {
-		size = cardinality.GetAvgRowSizeListInDisk(stats.HistColl, cols)
+		size = cardinality.GetAvgRowSizeDataInDiskByRows(stats.HistColl, cols)
 	} else {
 		// Estimate using just the type info.
 		for _, col := range cols {
@@ -377,7 +376,7 @@ func negotiateCommonType(lType, rType *types.FieldType) (*types.FieldType, bool,
 			cDec = lType.GetDecimal()
 		}
 		lLen, rLen := lType.GetFlen()+lExtend, rType.GetFlen()+rExtend
-		cLen := mathutil.Max(lLen, rLen)
+		cLen := max(lLen, rLen)
 		commonType.SetDecimalUnderLimit(cDec)
 		commonType.SetFlenUnderLimit(cLen)
 	} else if needConvert(lType, commonType) || needConvert(rType, commonType) {
@@ -913,7 +912,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 					sunk = p.sinkIntoIndexMerge(t)
 				}
 			} else {
-				// otherwise, suspend the limit out of index merge reader.
+				// Otherwise, suspend the limit out of index merge reader.
 				t = cop.convertToRootTask(p.SCtx())
 				sunk = p.sinkIntoIndexMerge(t)
 			}
@@ -1028,7 +1027,7 @@ func (p *PhysicalLimit) sinkIntoIndexMerge(t task) bool {
 	needProj := p.schema.Len() != root.p.Schema().Len()
 	if !needProj {
 		for i := 0; i < p.schema.Len(); i++ {
-			if !p.schema.Columns[i].Equal(nil, root.p.Schema().Columns[i]) {
+			if !p.schema.Columns[i].EqualColumn(root.p.Schema().Columns[i]) {
 				needProj = true
 				break
 			}
@@ -1112,7 +1111,7 @@ func (p *PhysicalTopN) canExpressionConvertedToPB(storeTp kv.StoreType) bool {
 	for _, item := range p.ByItems {
 		exprs = append(exprs, item.Expr)
 	}
-	return expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, exprs, p.SCtx().GetClient(), storeTp)
+	return expression.CanExprsPushDown(p.SCtx(), exprs, p.SCtx().GetClient(), storeTp)
 }
 
 // containVirtualColumn checks whether TopN.ByItems contains virtual generated columns.
@@ -1213,12 +1212,12 @@ func (p *PhysicalExpand) attach2Task(tasks ...task) task {
 func (p *PhysicalProjection) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	if cop, ok := t.(*copTask); ok {
-		if (len(cop.rootTaskConds) == 0 && len(cop.idxMergePartPlans) == 0) && expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, p.Exprs, p.SCtx().GetClient(), cop.getStoreType()) {
+		if (len(cop.rootTaskConds) == 0 && len(cop.idxMergePartPlans) == 0) && expression.CanExprsPushDown(p.SCtx(), p.Exprs, p.SCtx().GetClient(), cop.getStoreType()) {
 			copTask := attachPlan2Task(p, cop)
 			return copTask
 		}
 	} else if mpp, ok := t.(*mppTask); ok {
-		if expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, p.Exprs, p.SCtx().GetClient(), kv.TiFlash) {
+		if expression.CanExprsPushDown(p.SCtx(), p.Exprs, p.SCtx().GetClient(), kv.TiFlash) {
 			p.SetChildren(mpp.p)
 			mpp.p = p
 			return mpp
@@ -1275,8 +1274,7 @@ func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
 
 func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 	if mppTask, _ := tasks[0].(*mppTask); mppTask != nil { // always push to mpp task.
-		sc := sel.SCtx().GetSessionVars().StmtCtx
-		if expression.CanExprsPushDown(sc, sel.Conditions, sel.SCtx().GetClient(), kv.TiFlash) {
+		if expression.CanExprsPushDown(sel.SCtx(), sel.Conditions, sel.SCtx().GetClient(), kv.TiFlash) {
 			return attachPlan2Task(sel, mppTask.copy())
 		}
 	}
@@ -1303,7 +1301,7 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 			ret = false
 			break
 		}
-		if !expression.CanExprsPushDownWithExtraInfo(sc, aggFunc.Args, client, storeType, aggFunc.Name == ast.AggFuncSum) {
+		if !expression.CanExprsPushDownWithExtraInfo(sctx, aggFunc.Args, client, storeType, aggFunc.Name == ast.AggFuncSum) {
 			reason = "arguments of AggFunc `" + aggFunc.Name + "` contains unsupported exprs"
 			ret = false
 			break
@@ -1314,7 +1312,7 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 			for _, item := range aggFunc.OrderByItems {
 				exprs = append(exprs, item.Expr)
 			}
-			if !expression.CanExprsPushDownWithExtraInfo(sc, exprs, client, storeType, false) {
+			if !expression.CanExprsPushDownWithExtraInfo(sctx, exprs, client, storeType, false) {
 				reason = "arguments of AggFunc `" + aggFunc.Name + "` contains unsupported exprs in order-by clause"
 				ret = false
 				break
@@ -1331,7 +1329,7 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 		reason = "groupByItems contain virtual columns, which is not supported now"
 		ret = false
 	}
-	if ret && !expression.CanExprsPushDown(sc, groupByItems, client, storeType) {
+	if ret && !expression.CanExprsPushDown(sctx, groupByItems, client, storeType) {
 		reason = "groupByItems contain unsupported exprs"
 		ret = false
 	}

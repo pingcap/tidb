@@ -14,13 +14,13 @@
 
 package server
 
-import "github.com/pingcap/tidb/pkg/server/handler/extactorhandler"
+import "github.com/pingcap/tidb/pkg/server/handler/extractorhandler"
 
 // newExtractServeHandler returns extractTaskServeHandler
-func (s *Server) newExtractServeHandler() *extactorhandler.ExtractTaskServeHandler {
-	esh := &extactorhandler.ExtractTaskServeHandler{}
+func (s *Server) newExtractServeHandler() *extractorhandler.ExtractTaskServeHandler {
+	esh := &extractorhandler.ExtractTaskServeHandler{}
 	if s.dom != nil {
-		esh = extactorhandler.NewExtractTaskServeHandler(s.dom.GetExtractHandle())
+		esh = extractorhandler.NewExtractTaskServeHandler(s.dom.GetExtractHandle())
 	}
 	return esh
 }

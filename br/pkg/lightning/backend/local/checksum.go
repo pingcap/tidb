@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
@@ -332,7 +331,7 @@ func (e *TiKVChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpo
 			break
 		}
 		if distSQLScanConcurrency > MinDistSQLScanConcurrency {
-			distSQLScanConcurrency = mathutil.Max(distSQLScanConcurrency/2, MinDistSQLScanConcurrency)
+			distSQLScanConcurrency = max(distSQLScanConcurrency/2, MinDistSQLScanConcurrency)
 		}
 	}
 

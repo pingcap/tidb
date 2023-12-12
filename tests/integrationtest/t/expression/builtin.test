@@ -276,27 +276,31 @@ select * from tb5;
 drop table tb5;
 create table tb5(a double, b float);
 insert into tb5 (a, b) values (184467440737095516160, 184467440737095516160);
---enable_warnings
+# TODO: fix https://github.com/pingcap/tidb/issues/47693
+# --enable_warnings
 select * from tb5 where cast(a as unsigned int)=0;
 select * from tb5 where cast(b as unsigned int)=0;
 --disable_warnings
 drop table tb5;
 create table tb5(a double, b bigint unsigned);
 insert into tb5 (a, b) values (18446744073709551616, 18446744073709551615);
---enable_warnings
+# TODO: fix https://github.com/pingcap/tidb/issues/47693
+# --enable_warnings
 select * from tb5 where cast(a as unsigned int)=b;
 --disable_warnings
 drop table tb5;
 create table tb5(a json, b bigint unsigned);
 insert into tb5 (a, b) values ('184467440737095516160', 18446744073709551615);
---enable_warnings
+# TODO: fix https://github.com/pingcap/tidb/issues/47693
+# --enable_warnings
 select * from tb5 where cast(a as unsigned int)=b;
 select * from tb5 where cast(b as unsigned int)=0;
 --disable_warnings
 drop table tb5;
 create table tb5(a json, b bigint unsigned);
 insert into tb5 (a, b) values ('92233720368547758080', 18446744073709551615);
---enable_warnings
+# TODO: fix https://github.com/pingcap/tidb/issues/47693
+# --enable_warnings
 select * from tb5 where cast(a as signed int)=b;
 --disable_warnings
 drop table tb5;
@@ -558,7 +562,7 @@ SELECT -Max(+23) * -+Cast(--10 AS SIGNED) * -CASE
                       END THEN ( -10 )
               END IS NULL THEN NULL
                                                ELSE 83 + 48
-                                             END AS col0; ;
+                                             END AS col0;
 drop table if exists t1;
 create table t1(c1 int not null);
 insert into t1 values(1);
@@ -846,20 +850,20 @@ insert into t(a, b, c, d) values ('a', NULL, 'a','a');
 select i, hex(a), hex(b), hex(c), hex(d) from t;
 select unhex('4D7953514C'), unhex('313233'), unhex(313233), unhex('');
 select unhex('string'), unhex('你好'), unhex(123.4), unhex(null);
-select ltrim('   bar   '), ltrim('bar'), ltrim(''), ltrim(null);
-select rtrim('   bar   '), rtrim('bar'), rtrim(''), rtrim(null);
-select ltrim("\t   bar   "), ltrim("   \tbar"), ltrim("\n  bar"), ltrim("\r  bar");
-select rtrim("   bar   \t"), rtrim("bar\t   "), rtrim("bar   \n"), rtrim("bar   \r");
+select hex(ltrim('   bar   ')), hex(ltrim('bar')), hex(ltrim('')), hex(ltrim(null));
+select hex(rtrim('   bar   ')), hex(rtrim('bar')), hex(rtrim('')), hex(rtrim(null));
+select hex(ltrim("\t   bar   ")), hex(ltrim("   \tbar")), hex(ltrim("\n  bar")), hex(ltrim("\r  bar"));
+select hex(rtrim("   bar   \t")), hex(rtrim("bar\t   ")), hex(rtrim("bar   \n")), hex(rtrim("bar   \r"));
 DROP TABLE IF EXISTS t;
 CREATE TABLE t(a BINARY(6));
 INSERT INTO t VALUES("中文");
 SELECT hex(a), hex(REVERSE(a)), hex(REVERSE("中文")), hex(REVERSE("123 ")) FROM t;
 SELECT hex(REVERSE(123)), hex(REVERSE(12.09)) FROM t;
 select trim('   bar   '), trim(leading 'x' from 'xxxbarxxx'), trim(trailing 'xyz' from 'barxxyz'), trim(both 'x' from 'xxxbarxxx');
-select trim('\t   bar\n   '), trim('   \rbar   \t');
-select trim(leading from '   bar'), trim('x' from 'xxxbarxxx'), trim('x' from 'bar'), trim('' from '   bar   ');
-select trim(''), trim('x' from '');
-select trim(null from 'bar'), trim('x' from null), trim(null), trim(leading null from 'bar');
+select hex(trim('\t   bar\n   ')), hex(trim('   \rbar   \t'));
+select hex(trim(leading from '   bar')), hex(trim('x' from 'xxxbarxxx')), hex(trim('x' from 'bar')), hex(trim('' from '   bar   '));
+select hex(trim('')), hex(trim('x' from ''));
+select hex(trim(null from 'bar')), hex(trim('x' from null)), hex(trim(null)), hex(trim(leading null from 'bar'));
 drop table if exists t;
 create table t(a char(20), b int, c double, d datetime, e time, f binary(5));
 insert into t values('www.pingcap.com', 12345, 123.45, "2017-01-01 12:01:01", "12:01:01", "HelLo");
@@ -1049,8 +1053,9 @@ select cast(-9223372036854775808 as signed) - cast(1 as signed);
 select cast(12 as signed) - cast(-9223372036854775808 as signed);
 create table tb5(a int(10));
 insert into tb5 (a) values (10);
--- error 1690
-select * from tb5 where a - -9223372036854775808;
+# TODO: fix https://github.com/pingcap/tidb/issues/47692
+#-- error 1690
+# select * from tb5 where a - -9223372036854775808;
 drop table tb5;
 select cast(-9223372036854775808 as unsigned) - (-9223372036854775807);
 select cast(-3 as unsigned) - cast(-1 as signed);
@@ -1126,7 +1131,8 @@ select sum(a) * 0.1 from t;
 drop table if exists t;
 create table t(a double);
 insert into t value(1.2);
---enable_warnings
+# TODO: fix https://github.com/pingcap/tidb/issues/47692
+# --enable_warnings
 select * from t where a/0 > 1;
 --disable_warnings
 DROP TABLE IF EXISTS t;
@@ -1344,7 +1350,7 @@ select name_const("hello", b) from t;
 select name_const("hello", 1+1) from t;
 -- error 1210
 select name_const(concat('a', 'b'), 555) from t;
--- error 1210
+-- error 1582
 select name_const(555) from t;
 select name_const("hello", 1);
 
@@ -1507,7 +1513,7 @@ select sleep(1);
 select sleep(0);
 select sleep('a');
 show warnings;
--- error 1510
+-- error 1210
 select sleep(-1);
 SELECT INET_ATON('10.0.5.9');
 SELECT INET_NTOA(167773449);

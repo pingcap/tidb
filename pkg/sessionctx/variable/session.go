@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
@@ -1080,8 +1081,8 @@ type SessionVars struct {
 	// See https://github.com/pingcap/tidb/blob/7105505a78fc886c33258caa5813baf197b15247/docs/design/2023-06-30-configurable-kv-timeout.md?plain=1#L14-L15
 	TiKVClientReadTimeout uint64
 
-	// Killed is a flag to indicate that this query is killed.
-	Killed uint32
+	// SQLKiller is a flag to indicate that this query is killed.
+	SQLKiller sqlkiller.SQLKiller
 
 	// ConnectionStatus indicates current connection status.
 	ConnectionStatus int32
@@ -1201,6 +1202,9 @@ type SessionVars struct {
 
 	// EnableClusteredIndex indicates whether to enable clustered index when creating a new table.
 	EnableClusteredIndex ClusteredIndexDefMode
+
+	// EnableGlobalIndex indicates whether we could create an global index on a partition table or not.
+	EnableGlobalIndex bool
 
 	// PresumeKeyNotExists indicates lazy existence checking is enabled.
 	PresumeKeyNotExists bool
@@ -1434,6 +1438,9 @@ type SessionVars struct {
 	// AnalyzePartitionMergeConcurrency indicates concurrency for merging partition stats
 	AnalyzePartitionMergeConcurrency int
 
+	// EnableAsyncMergeGlobalStats indicates whether to enable async merge global stats
+	EnableAsyncMergeGlobalStats bool
+
 	// EnableExternalTSRead indicates whether to enable read through external ts
 	EnableExternalTSRead bool
 
@@ -1555,6 +1562,9 @@ type SessionVars struct {
 	// OptObjectiveModerate: The default value. The optimizer considers the real-time stats (real-time row count, modify count).
 	// OptObjectiveDeterminate: The optimizer doesn't consider the real-time stats.
 	OptObjective string
+
+	CompressionAlgorithm int
+	CompressionLevel     int
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
@@ -2019,7 +2029,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
 		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
 	}
-	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
+	vars.KVVars = tikvstore.NewVariables(&vars.SQLKiller.Signal)
 	vars.Concurrency = Concurrency{
 		indexLookupConcurrency:            DefIndexLookupConcurrency,
 		indexSerialScanConcurrency:        DefIndexSerialScanConcurrency,
@@ -2027,6 +2037,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		hashJoinConcurrency:               DefTiDBHashJoinConcurrency,
 		projectionConcurrency:             DefTiDBProjectionConcurrency,
 		distSQLScanConcurrency:            DefDistSQLScanConcurrency,
+		analyzeDistSQLScanConcurrency:     DefAnalyzeDistSQLScanConcurrency,
 		hashAggPartialConcurrency:         DefTiDBHashAggPartialConcurrency,
 		hashAggFinalConcurrency:           DefTiDBHashAggFinalConcurrency,
 		windowConcurrency:                 DefTiDBWindowConcurrency,
@@ -2062,6 +2073,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
 	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)
 	vars.MemTracker.IsRootTrackerOfSess = true
+	vars.MemTracker.Killer = &vars.SQLKiller
 
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
 		switch engine {
@@ -2729,6 +2741,9 @@ type Concurrency struct {
 	// distSQLScanConcurrency is the number of concurrent dist SQL scan worker.
 	distSQLScanConcurrency int
 
+	// analyzeDistSQLScanConcurrency is the number of concurrent dist SQL scan worker when to analyze.
+	analyzeDistSQLScanConcurrency int
+
 	// hashJoinConcurrency is the number of concurrent hash join outer worker.
 	// hashJoinConcurrency is deprecated, use ExecutorConcurrency instead.
 	hashJoinConcurrency int
@@ -2768,6 +2783,9 @@ type Concurrency struct {
 
 	// SourceAddr is the source address of request. Available in coprocessor ONLY.
 	SourceAddr net.TCPAddr
+
+	// IdleTransactionTimeout indicates the maximum time duration a transaction could be idle, unit is second.
+	IdleTransactionTimeout int
 }
 
 // SetIndexLookupConcurrency set the number of concurrent index lookup worker.
@@ -2783,6 +2801,11 @@ func (c *Concurrency) SetIndexLookupJoinConcurrency(n int) {
 // SetDistSQLScanConcurrency set the number of concurrent dist SQL scan worker.
 func (c *Concurrency) SetDistSQLScanConcurrency(n int) {
 	c.distSQLScanConcurrency = n
+}
+
+// SetAnalyzeDistSQLScanConcurrency set the number of concurrent dist SQL scan worker when to analyze.
+func (c *Concurrency) SetAnalyzeDistSQLScanConcurrency(n int) {
+	c.analyzeDistSQLScanConcurrency = n
 }
 
 // SetHashJoinConcurrency set the number of concurrent hash join outer worker.
@@ -2849,6 +2872,11 @@ func (c *Concurrency) IndexLookupJoinConcurrency() int {
 // DistSQLScanConcurrency return the number of concurrent dist SQL scan worker.
 func (c *Concurrency) DistSQLScanConcurrency() int {
 	return c.distSQLScanConcurrency
+}
+
+// AnalyzeDistSQLScanConcurrency return the number of concurrent dist SQL scan worker when to analyze.
+func (c *Concurrency) AnalyzeDistSQLScanConcurrency() int {
+	return c.analyzeDistSQLScanConcurrency
 }
 
 // HashJoinConcurrency return the number of concurrent hash join outer worker.

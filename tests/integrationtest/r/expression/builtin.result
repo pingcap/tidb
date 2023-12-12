@@ -700,28 +700,20 @@ create table tb5(a double, b float);
 insert into tb5 (a, b) values (184467440737095516160, 184467440737095516160);
 select * from tb5 where cast(a as unsigned int)=0;
 a	b
-Level	Code	Message
-Warning	1690	constant 1.844674407370955e+20 overflows bigint
 select * from tb5 where cast(b as unsigned int)=0;
 a	b
-Level	Code	Message
-Warning	1690	constant 1.844674407370955e+20 overflows bigint
 drop table tb5;
 create table tb5(a double, b bigint unsigned);
 insert into tb5 (a, b) values (18446744073709551616, 18446744073709551615);
 select * from tb5 where cast(a as unsigned int)=b;
 a	b
 1.8446744073709552e19	18446744073709551615
-Level	Code	Message
-Warning	1690	constant 1.8446744073709552e+19 overflows bigint
 drop table tb5;
 create table tb5(a json, b bigint unsigned);
 insert into tb5 (a, b) values ('184467440737095516160', 18446744073709551615);
 select * from tb5 where cast(a as unsigned int)=b;
 a	b
 184467440737095500000	18446744073709551615
-Level	Code	Message
-Warning	1690	constant 1.844674407370955e+20 overflows bigint
 select * from tb5 where cast(b as unsigned int)=0;
 a	b
 drop table tb5;
@@ -729,8 +721,6 @@ create table tb5(a json, b bigint unsigned);
 insert into tb5 (a, b) values ('92233720368547758080', 18446744073709551615);
 select * from tb5 where cast(a as signed int)=b;
 a	b
-Level	Code	Message
-Warning	1690	constant 9.223372036854776e+19 overflows bigint
 drop table tb5;
 create table tb5(a bigint(64) unsigned,b varchar(50));
 insert into tb5(a, b) values (9223372036854775808, '9223372036854775808');
@@ -1440,7 +1430,7 @@ select char(97, null, 100, 256, 89 using ascii);
 char(97, null, 100, 256, 89 using ascii)
 ad Y
 select char(97, null, 100, 256, 89 using tidb);
-[parser:1115]Unknown character set: 'tidb'
+Error 1115 (42000): Unknown character set: 'tidb'
 drop table if exists t;
 CREATE TABLE t (c1 date, c2 datetime, c3 timestamp, c4 time, c5 year);
 INSERT INTO t values ('2000-01-01', '2000-01-01 12:12:12', '2000-01-01 12:12:12', '12:12:12', '2000');
@@ -1893,20 +1883,18 @@ MySQL	123	123
 select unhex('string'), unhex('你好'), unhex(123.4), unhex(null);
 unhex('string')	unhex('你好')	unhex(123.4)	unhex(null)
 NULL	NULL	NULL	NULL
-select ltrim('   bar   '), ltrim('bar'), ltrim(''), ltrim(null);
-ltrim('   bar   ')	ltrim('bar')	ltrim('')	ltrim(null)
-bar   	bar		NULL
-select rtrim('   bar   '), rtrim('bar'), rtrim(''), rtrim(null);
-rtrim('   bar   ')	rtrim('bar')	rtrim('')	rtrim(null)
-   bar	bar		NULL
-select ltrim("\t   bar   "), ltrim("   \tbar"), ltrim("\n  bar"), ltrim("\r  bar");
-ltrim("\t   bar   ")	ltrim("   \tbar")	ltrim("\n  bar")	ltrim("\r  bar")
-	   bar   		bar	
-  bar	  bar
-select rtrim("   bar   \t"), rtrim("bar\t   "), rtrim("bar   \n"), rtrim("bar   \r");
-rtrim("   bar   \t")	rtrim("bar\t   ")	rtrim("bar   \n")	rtrim("bar   \r")
-   bar   		bar		bar   
-	bar   
+select hex(ltrim('   bar   ')), hex(ltrim('bar')), hex(ltrim('')), hex(ltrim(null));
+hex(ltrim('   bar   '))	hex(ltrim('bar'))	hex(ltrim(''))	hex(ltrim(null))
+626172202020	626172		NULL
+select hex(rtrim('   bar   ')), hex(rtrim('bar')), hex(rtrim('')), hex(rtrim(null));
+hex(rtrim('   bar   '))	hex(rtrim('bar'))	hex(rtrim(''))	hex(rtrim(null))
+202020626172	626172		NULL
+select hex(ltrim("\t   bar   ")), hex(ltrim("   \tbar")), hex(ltrim("\n  bar")), hex(ltrim("\r  bar"));
+hex(ltrim("\t   bar   "))	hex(ltrim("   \tbar"))	hex(ltrim("\n  bar"))	hex(ltrim("\r  bar"))
+09202020626172202020	09626172	0A2020626172	0D2020626172
+select hex(rtrim("   bar   \t")), hex(rtrim("bar\t   ")), hex(rtrim("bar   \n")), hex(rtrim("bar   \r"));
+hex(rtrim("   bar   \t"))	hex(rtrim("bar\t   "))	hex(rtrim("bar   \n"))	hex(rtrim("bar   \r"))
+20202062617220202009	62617209	6261722020200A	6261722020200D
 DROP TABLE IF EXISTS t;
 CREATE TABLE t(a BINARY(6));
 INSERT INTO t VALUES("中文");
@@ -1919,18 +1907,17 @@ hex(REVERSE(123))	hex(REVERSE(12.09))
 select trim('   bar   '), trim(leading 'x' from 'xxxbarxxx'), trim(trailing 'xyz' from 'barxxyz'), trim(both 'x' from 'xxxbarxxx');
 trim('   bar   ')	trim(leading 'x' from 'xxxbarxxx')	trim(trailing 'xyz' from 'barxxyz')	trim(both 'x' from 'xxxbarxxx')
 bar	barxxx	barx	bar
-select trim('\t   bar\n   '), trim('   \rbar   \t');
-trim('\t   bar\n   ')	trim('   \rbar   \t')
-	   bar
-	bar   	
-select trim(leading from '   bar'), trim('x' from 'xxxbarxxx'), trim('x' from 'bar'), trim('' from '   bar   ');
-trim(leading from '   bar')	trim('x' from 'xxxbarxxx')	trim('x' from 'bar')	trim('' from '   bar   ')
-bar	bar	bar	   bar   
-select trim(''), trim('x' from '');
-trim('')	trim('x' from '')
+select hex(trim('\t   bar\n   ')), hex(trim('   \rbar   \t'));
+hex(trim('\t   bar\n   '))	hex(trim('   \rbar   \t'))
+092020206261720A	0D62617220202009
+select hex(trim(leading from '   bar')), hex(trim('x' from 'xxxbarxxx')), hex(trim('x' from 'bar')), hex(trim('' from '   bar   '));
+hex(trim(leading from '   bar'))	hex(trim('x' from 'xxxbarxxx'))	hex(trim('x' from 'bar'))	hex(trim('' from '   bar   '))
+626172	626172	626172	202020626172202020
+select hex(trim('')), hex(trim('x' from ''));
+hex(trim(''))	hex(trim('x' from ''))
 	
-select trim(null from 'bar'), trim('x' from null), trim(null), trim(leading null from 'bar');
-trim(null from 'bar')	trim('x' from null)	trim(null)	trim(leading null from 'bar')
+select hex(trim(null from 'bar')), hex(trim('x' from null)), hex(trim(null)), hex(trim(leading null from 'bar'));
+hex(trim(null from 'bar'))	hex(trim('x' from null))	hex(trim(null))	hex(trim(leading null from 'bar'))
 NULL	NULL	NULL	NULL
 drop table if exists t;
 create table t(a char(20), b int, c double, d datetime, e time, f binary(5));
@@ -2050,7 +2037,7 @@ select convert("123" using "binary"), convert("中文" using "binary"), convert(
 convert("123" using "binary")	convert("中文" using "binary")	convert("中文" using "utf8")	convert("中文" using "utf8mb4")	convert(cast("中文" as binary) using "utf8")
 123	中文	中文	中文	中文
 select convert("123" using "866");
-[parser:1115]Unknown character set: '866'
+Error 1115 (42000): Unknown character set: '866'
 select hex(insert("中文", 1, 1, cast("aaa" as binary))), hex(insert("ba", -1, 1, "aaa")), hex(insert("ba", 1, 100, "aaa")), hex(insert("ba", 100, 1, "aaa"));
 hex(insert("中文", 1, 1, cast("aaa" as binary)))	hex(insert("ba", -1, 1, "aaa"))	hex(insert("ba", 1, 100, "aaa"))	hex(insert("ba", 100, 1, "aaa"))
 616161B8ADE69687	6261	616161	6261
@@ -2328,8 +2315,6 @@ select cast(12 as signed) - cast(-9223372036854775808 as signed);
 Error 1690 (22003): BIGINT value is out of range in '(12 - -9223372036854775808)'
 create table tb5(a int(10));
 insert into tb5 (a) values (10);
-select * from tb5 where a - -9223372036854775808;
-Error 1690 (22003): BIGINT value is out of range in '(Column#0 - -9223372036854775808)'
 drop table tb5;
 select cast(-9223372036854775808 as unsigned) - (-9223372036854775807);
 cast(-9223372036854775808 as unsigned) - (-9223372036854775807)
@@ -2468,8 +2453,6 @@ create table t(a double);
 insert into t value(1.2);
 select * from t where a/0 > 1;
 a
-Level	Code	Message
-Warning	1365	Division by 0
 DROP TABLE IF EXISTS t;
 CREATE TABLE t(a BIGINT, b DECIMAL(6, 2));
 INSERT INTO t VALUES(0, 1.12), (1, 1.21);

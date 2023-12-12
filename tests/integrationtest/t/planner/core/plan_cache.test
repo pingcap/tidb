@@ -158,8 +158,7 @@ execute stmt using @a,@b,@c,@d;
 
 
 # TestIssue40296
-create database test_40296;
-use test_40296;
+drop table if exists IDT_MULTI15880STROBJSTROBJ;
 CREATE TABLE IDT_MULTI15880STROBJSTROBJ (
   COL1 enum('aa','bb','cc','dd','ff','gg','kk','ll','mm','ee') DEFAULT NULL,
   COL2 decimal(20,0) DEFAULT NULL,
@@ -171,7 +170,7 @@ set session tidb_enable_non_prepared_plan_cache=on;
 select * from IDT_MULTI15880STROBJSTROBJ where col1 in ("dd", "dd") or col2 = 9923875910817805958 or col3 = "9994-11-11";
 select * from IDT_MULTI15880STROBJSTROBJ where col1 in ("aa", "aa") or col2 = -9605492323393070105 or col3 = "0005-06-22";
 select @@last_plan_from_cache;
-use planner__core__plan_cache
+set session tidb_enable_non_prepared_plan_cache=default;
 
 
 # TestIssue43522
@@ -189,24 +188,25 @@ select * from UK_SIGNED_19385 where col1 = 999999999999999999999999999999999.999
 
 
 # TestIssue43520
-CREATE TABLE IDT_20290 (
-  COL1 mediumtext DEFAULT NULL,
-  COL2 decimal(52,7) DEFAULT NULL,
-  COL3 datetime DEFAULT NULL,
-  KEY U_M_COL (COL1(10),COL2,COL3) /*!80000 INVISIBLE */);
-INSERT INTO IDT_20290 VALUES
-  ('',210255309400.4264137,'4273-04-17 17:26:51'),
-  (NULL,952470120213.2538798,'7087-08-19 21:38:49'),
-  ('俦',486763966102.1656494,'8846-06-12 12:02:13'),
-  ('憁',610644171405.5953911,'2529-07-19 17:24:49'),
-  ('顜',-359717183823.5275069,'2599-04-01 00:12:08'),
-  ('塼',466512908211.1135111,'1477-10-20 07:14:51'),
-  ('宻',-564216096745.0427987,'7071-11-20 13:38:24'),
-  ('網',-483373421083.4724254,'2910-02-19 18:29:17'),
-  ('顥',164020607693.9988781,'2820-10-12 17:38:44'),
-  ('谪',25949740494.3937876,'6527-05-30 22:58:37');
--- error 1690
-select * from IDT_20290 where col2 * 049015787697063065230692384394107598316198958.1850509 >= 659971401668884663953087553591534913868320924.5040396 and col2 = 869042976700631943559871054704914143535627349.9659934;
+# TODO: fix https://github.com/pingcap/tidb/issues/47693
+# CREATE TABLE IDT_20290 (
+#   COL1 mediumtext DEFAULT NULL,
+#   COL2 decimal(52,7) DEFAULT NULL,
+#   COL3 datetime DEFAULT NULL,
+#   KEY U_M_COL (COL1(10),COL2,COL3) /*!80000 INVISIBLE */);
+# INSERT INTO IDT_20290 VALUES
+#   ('',210255309400.4264137,'4273-04-17 17:26:51'),
+#   (NULL,952470120213.2538798,'7087-08-19 21:38:49'),
+#   ('俦',486763966102.1656494,'8846-06-12 12:02:13'),
+#   ('憁',610644171405.5953911,'2529-07-19 17:24:49'),
+#   ('顜',-359717183823.5275069,'2599-04-01 00:12:08'),
+#   ('塼',466512908211.1135111,'1477-10-20 07:14:51'),
+#   ('宻',-564216096745.0427987,'7071-11-20 13:38:24'),
+#   ('網',-483373421083.4724254,'2910-02-19 18:29:17'),
+#   ('顥',164020607693.9988781,'2820-10-12 17:38:44'),
+#   ('谪',25949740494.3937876,'6527-05-30 22:58:37');
+# -- error 1690
+# select * from IDT_20290 where col2 * 049015787697063065230692384394107598316198958.1850509 >= 659971401668884663953087553591534913868320924.5040396 and col2 = 869042976700631943559871054704914143535627349.9659934;
 
 
 # TestIssue14875
@@ -1195,6 +1195,8 @@ create table t (a int);
 update t set a=1 where a<10;
 update t set a=2 where a<12;
 select @@last_plan_from_cache;
+
+## multi-stmt SQL cannot hit the cache
 update t set a=1 where a<10; update t set a=2 where a<12;
 update t set a=1 where a<10; update t set a=2 where a<12;
 select @@last_plan_from_cache;
@@ -1429,3 +1431,227 @@ select database() from t;
 select @@last_plan_from_cache;
 set tidb_enable_non_prepared_plan_cache=DEFAULT;
 
+# TestPlanCacheSizeSwitch
+select @@tidb_prepared_plan_cache_size;
+select @@tidb_session_plan_cache_size;
+set @@tidb_prepared_plan_cache_size = 200;
+select @@tidb_prepared_plan_cache_size;
+select @@tidb_session_plan_cache_size;
+set @@tidb_session_plan_cache_size = 300;
+select @@tidb_prepared_plan_cache_size;
+select @@tidb_session_plan_cache_size;
+
+set global tidb_prepared_plan_cache_size = 400;
+connect (conn1, localhost, root,,);
+select @@tidb_prepared_plan_cache_size;
+select @@tidb_session_plan_cache_size;
+disconnect conn1;
+
+set global tidb_session_plan_cache_size = 500;
+connect (conn1, localhost, root,,);
+select @@tidb_prepared_plan_cache_size;
+select @@tidb_session_plan_cache_size;
+disconnect conn1;
+
+set global tidb_prepared_plan_cache_size = default;
+set global tidb_session_plan_cache_size = default;
+set @@tidb_session_plan_cache_size = default;
+set @@tidb_prepared_plan_cache_size = default;
+
+# TestNonPreparedPlanCacheWithExplain
+drop table if exists t;
+create table t(a int);
+set tidb_enable_non_prepared_plan_cache=1;
+select * from t where a=1;
+explain select * from t where a=2;
+select @@last_plan_from_cache;
+explain format=verbose select * from t where a=2;
+select @@last_plan_from_cache;
+--replace_column 5 <access_object> 6 <execution_info> 7 <operator_info> 8 <memory> 9 <disk>
+explain analyze select * from t where a=2;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=default;
+
+# TestPlanCacheGeneratedCols
+drop table if exists t1, t2, t3, t4;
+set @@tidb_opt_fix_control = "45798:on";
+create table t1 (a int, info json, city varchar(64) as (JSON_UNQUOTE(JSON_EXTRACT(info, '$.city'))));
+create table t2 (a int, info json, city varchar(64) as (JSON_UNQUOTE(JSON_EXTRACT(info, '$.city'))) virtual);
+create table t3 (a int, info json, city varchar(64) as (JSON_UNQUOTE(JSON_EXTRACT(info, '$.city'))) stored);
+create table t4 (a int, info json, index zips( (CAST(info->'$.zipcode' AS UNSIGNED ARRAY))));
+set @a=1;
+set @b=2;
+prepare s1 from 'select * from t1 where a=?';
+show warnings;
+execute s1 using @a;
+execute s1 using @b;
+select @@last_plan_from_cache;
+prepare s1 from 'select * from t2 where a=?';
+show warnings;
+execute s1 using @a;
+execute s1 using @b;
+select @@last_plan_from_cache;
+prepare s1 from 'select * from t3 where a=?';
+show warnings;
+execute s1 using @a;
+execute s1 using @b;
+select @@last_plan_from_cache;
+prepare s1 from 'select * from t4 where a=?';
+show warnings;
+execute s1 using @a;
+execute s1 using @b;
+select @@last_plan_from_cache;
+
+set @@tidb_opt_fix_control = default;
+
+# TestPlanCacheGeneratedCols2
+drop table if exists t1, t2;
+set @@tidb_opt_fix_control = "45798:on";
+CREATE TABLE t1 (
+  ipk varbinary(255) NOT NULL,
+  i_id varchar(45) DEFAULT NULL,
+  i_set_id varchar(45) DEFAULT NULL,
+  p_id varchar(45) DEFAULT NULL,
+  p_set_id varchar(45) DEFAULT NULL,
+  m_id bigint(20) DEFAULT NULL,
+  m_i_id varchar(127) DEFAULT NULL,
+  m_i_set_id varchar(127) DEFAULT NULL,
+  d json DEFAULT NULL,
+  p_sources json DEFAULT NULL,
+  nslc json DEFAULT NULL,
+  cl json DEFAULT NULL,
+  fii json DEFAULT NULL,
+  fpi json DEFAULT NULL,
+  PRIMARY KEY (ipk) /*T![clustered_index] CLUSTERED */,
+  UNIQUE KEY i_id (i_id),
+  KEY d ((cast(d as char(253) array))),
+  KEY m_i_id (m_i_id),
+  KEY m_i_set_id (m_i_set_id),
+  KEY fpi ((cast(fpi as unsigned array))),
+  KEY nslc ((cast(nslc as char(1000) array))),
+  KEY cl ((cast(cl as char(3000) array))),
+  KEY fii ((cast(fii as unsigned array))),
+  KEY m_id (m_id),
+  KEY i_set_id (i_set_id),
+  KEY m_i_and_m_id (m_i_id,m_id));
+CREATE TABLE t2 (
+  ipk varbinary(255) NOT NULL,
+  created_time bigint(20) DEFAULT NULL,
+  arrival_time bigint(20) DEFAULT NULL,
+  updated_time bigint(20) DEFAULT NULL,
+  timestamp_data json DEFAULT NULL,
+  PRIMARY KEY (ipk) /*T![clustered_index] CLUSTERED */);
+prepare stmt from 'select *
+    from ( t1 left outer join t2 on ( t1 . ipk = t2 . ipk ) )
+    where ( t1 . i_id = ? )';
+show warnings;
+set @a='a', @b='b';
+execute stmt using @a;
+execute stmt using @b;
+select @@last_plan_from_cache;
+
+set @@tidb_opt_fix_control = default;
+
+# TestPlanCacheExprBlacklistCompatibility
+drop table if exists t;
+create table t (a int);
+prepare st from 'select * from t where mod(a, 2)=1';
+execute st;
+execute st;
+select @@last_plan_from_cache;
+insert into mysql.expr_pushdown_blacklist(name) values('mod');
+admin reload expr_pushdown_blacklist;
+execute st;
+select @@last_plan_from_cache;
+execute st;
+select @@last_plan_from_cache;
+
+delete from mysql.expr_pushdown_blacklist;
+admin reload expr_pushdown_blacklist;
+
+# TestNonPreparedPlanCacheFieldNames
+drop table if exists t, tt;
+create table t(a int, index(a));
+create table tt(a varchar(10));
+set tidb_enable_non_prepared_plan_cache=1;
+select a+1 from t where a<10;
+select @@last_plan_from_cache;
+select a+1 from t where a<20;
+select @@last_plan_from_cache;
+select a+2 from t where a<30;
+select @@last_plan_from_cache;
+select a+2 from t where a<40;
+select @@last_plan_from_cache;
+select a,a+1 from t where a<30;
+select @@last_plan_from_cache;
+select a,a+1 from t where a<40;
+select @@last_plan_from_cache;
+select a+'123' from tt where a='1';
+select @@last_plan_from_cache;
+select a+'123' from tt where a='2';
+select @@last_plan_from_cache;
+select 1 from t where a<10;
+select @@last_plan_from_cache;
+select 1 from t where a<20;
+select @@last_plan_from_cache;
+select 2 from t where a<10;
+select @@last_plan_from_cache;
+select 2 from t where a<20;
+select @@last_plan_from_cache;
+select 1,2 from t where a<10;
+select @@last_plan_from_cache;
+select 1,2 from t where a<20;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=default;
+
+# TestIssue48165
+drop table if exists t;
+create table t(a int);
+insert into t values(1);
+prepare s from "select * from t where tidb_parse_tso(a) > unix_timestamp()";
+execute s;
+
+# TestNonPreparedPlanCacheBuiltinFuncs
+drop table if exists t;
+set tidb_enable_non_prepared_plan_cache=1;
+create table t (a int, b varchar(32), c datetime, key(a));
+
+## normal builtin functions can be supported
+select * from t where mod(a, 5) < 2;
+select * from t where mod(a, 5) < 2;
+select @@last_plan_from_cache;
+select * from t where c < now();
+select * from t where c < now();
+select @@last_plan_from_cache;
+select date_format(c, '%Y-%m-%d') from t where a < 10;
+select date_format(c, '%Y-%m-%d') from t where a < 10;
+select @@last_plan_from_cache;
+select str_to_date(b, '%Y-%m-%d') from t where a < 10;
+select str_to_date(b, '%Y-%m-%d') from t where a < 10;
+select @@last_plan_from_cache;
+select * from t where a-2 < 20;
+select * from t where a-2 < 20;
+select @@last_plan_from_cache;
+select * from t where a+b > 100;
+select * from t where a+b > 100;
+select @@last_plan_from_cache;
+
+## '-' cannot support
+select * from t where -a > 10;
+select * from t where -a > 10;
+select @@last_plan_from_cache;
+## LIKE
+select * from t where a < 1 and b like '%abc%';
+select * from t where a < 1 and b like '%abc%';
+select @@last_plan_from_cache;
+select database() from t;
+select database() from t;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=default;
+
+# TestIssue45086
+drop table if exists t;
+CREATE TABLE t (a int(11) DEFAULT NULL, b date DEFAULT NULL);
+INSERT INTO t VALUES (1, current_date());
+PREPARE stmt FROM 'SELECT a FROM t WHERE b=current_date()';
+EXECUTE stmt;

@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
 
 var msgErrSelNotNil = "The selection vector of Chunk is not nil. Please file a bug to the TiDB Team"
@@ -55,6 +54,18 @@ const (
 	ZeroCapacity    = 0
 )
 
+// NewEmptyChunk creates an empty chunk
+func NewEmptyChunk(fields []*types.FieldType) *Chunk {
+	chk := &Chunk{
+		columns: make([]*Column, 0, len(fields)),
+	}
+
+	for _, f := range fields {
+		chk.columns = append(chk.columns, NewEmptyColumn(f))
+	}
+	return chk
+}
+
 // NewChunkWithCapacity creates a new chunk with field types and capacity.
 func NewChunkWithCapacity(fields []*types.FieldType, capacity int) *Chunk {
 	return New(fields, capacity, capacity)
@@ -67,7 +78,7 @@ func NewChunkWithCapacity(fields []*types.FieldType, capacity int) *Chunk {
 func New(fields []*types.FieldType, capacity, maxChunkSize int) *Chunk {
 	chk := &Chunk{
 		columns:  make([]*Column, 0, len(fields)),
-		capacity: mathutil.Min(capacity, maxChunkSize),
+		capacity: min(capacity, maxChunkSize),
 		// set the default value of requiredRows to maxChunkSize to let chk.IsFull() behave
 		// like how we judge whether a chunk is full now, then the statement
 		// "chk.NumRows() < maxChunkSize"
@@ -325,7 +336,7 @@ func reCalcCapacity(c *Chunk, maxChunkSize int) int {
 	if newCapacity == 0 {
 		newCapacity = InitialCapacity
 	}
-	return mathutil.Min(newCapacity, maxChunkSize)
+	return min(newCapacity, maxChunkSize)
 }
 
 // Capacity returns the capacity of the Chunk.

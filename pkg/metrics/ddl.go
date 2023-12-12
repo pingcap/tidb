@@ -60,6 +60,7 @@ var (
 	BackfillProgressGauge *prometheus.GaugeVec
 	DDLJobTableDuration   *prometheus.HistogramVec
 	DDLRunningJobCount    *prometheus.GaugeVec
+	AddIndexScanRate      *prometheus.HistogramVec
 )
 
 // InitDDLMetrics initializes defines DDL metrics.
@@ -165,6 +166,14 @@ func InitDDLMetrics() {
 			Name:      "running_job_count",
 			Help:      "Running DDL jobs count",
 		}, []string{LblType})
+
+	AddIndexScanRate = NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "tidb",
+		Subsystem: "ddl",
+		Name:      "scan_rate",
+		Help:      "scan rate",
+		Buckets:   prometheus.ExponentialBuckets(0.05, 2, 20),
+	}, []string{LblType})
 }
 
 // Label constants.

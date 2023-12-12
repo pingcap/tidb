@@ -114,7 +114,7 @@ type Expression interface {
 	Traverse(TraverseAction) Expression
 
 	// Eval evaluates an expression through a row.
-	Eval(row chunk.Row) (types.Datum, error)
+	Eval(ctx sessionctx.Context, row chunk.Row) (types.Datum, error)
 
 	// EvalInt returns the int64 representation of expression.
 	EvalInt(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error)
@@ -169,26 +169,34 @@ type Expression interface {
 	resolveIndices(schema *Schema) error
 
 	// ResolveIndicesByVirtualExpr resolves indices by the given schema in terms of virual expression. It will copy the original expression and return the copied one.
-	ResolveIndicesByVirtualExpr(schema *Schema) (Expression, bool)
+	ResolveIndicesByVirtualExpr(ctx sessionctx.Context, schema *Schema) (Expression, bool)
 
 	// resolveIndicesByVirtualExpr is called inside the `ResolveIndicesByVirtualExpr` It will perform on the expression itself.
-	resolveIndicesByVirtualExpr(schema *Schema) bool
+	resolveIndicesByVirtualExpr(ctx sessionctx.Context, schema *Schema) bool
 
 	// RemapColumn remaps columns with provided mapping and returns new expression
 	RemapColumn(map[int64]*Column) (Expression, error)
 
 	// ExplainInfo returns operator information to be explained.
-	ExplainInfo() string
+	ExplainInfo(ctx sessionctx.Context) string
 
 	// ExplainNormalizedInfo returns operator normalized information for generating digest.
 	ExplainNormalizedInfo() string
+
+	// ExplainNormalizedInfo4InList returns operator normalized information for plan digest.
+	ExplainNormalizedInfo4InList() string
 
 	// HashCode creates the hashcode for expression which can be used to identify itself from other expression.
 	// It generated as the following:
 	// Constant: ConstantFlag+encoded value
 	// Column: ColumnFlag+encoded value
 	// ScalarFunction: SFFlag+encoded function name + encoded arg_1 + encoded arg_2 + ...
-	HashCode(sc *stmtctx.StatementContext) []byte
+	HashCode() []byte
+
+	// CanonicalHashCode creates the canonical hashcode for expression.
+	// Different with `HashCode`, this method will produce the same hashcode for expressions with the same semantic.
+	// For example, `a + b` and `b + a` have the same return value of this method.
+	CanonicalHashCode() []byte
 
 	// MemoryUsage return the memory usage of Expression
 	MemoryUsage() int64
@@ -257,7 +265,7 @@ func HandleOverflowOnSelection(sc *stmtctx.StatementContext, val int64, err erro
 func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, bool, error) {
 	hasNull := false
 	for _, expr := range exprList {
-		data, err := expr.Eval(row)
+		data, err := expr.Eval(ctx, row)
 		if err != nil {
 			return false, false, err
 		}
@@ -274,7 +282,7 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, b
 			continue
 		}
 
-		i, err := data.ToBool(ctx.GetSessionVars().StmtCtx)
+		i, err := data.ToBool(ctx.GetSessionVars().StmtCtx.TypeCtx())
 		if err != nil {
 			i, err = HandleOverflowOnSelection(ctx.GetSessionVars().StmtCtx, i, err)
 			if err != nil {
@@ -494,14 +502,14 @@ func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalT
 						}
 					case mysql.TypeBit:
 						var bl types.BinaryLiteral = buf.GetBytes(i)
-						iVal, err := bl.ToInt(sc)
+						iVal, err := bl.ToInt(sc.TypeCtx())
 						if err != nil {
 							return err
 						}
 						fVal = float64(iVal)
 					}
 				} else {
-					fVal, err = types.StrToFloat(sc, sVal, false)
+					fVal, err = types.StrToFloat(sc.TypeCtx(), sVal, false)
 					if err != nil {
 						return err
 					}
@@ -844,7 +852,7 @@ func evaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}
 	case *Constant:
 		if x.DeferredExpr != nil {
-			return FoldConstant(x)
+			return FoldConstant(ctx, x)
 		}
 	}
 	return expr
@@ -909,7 +917,7 @@ func evaluateExprWithNullInNullRejectCheck(ctx sessionctx.Context, schema *Schem
 		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}, true
 	case *Constant:
 		if x.DeferredExpr != nil {
-			return FoldConstant(x), false
+			return FoldConstant(ctx, x), false
 		}
 	}
 	return expr, false
@@ -963,6 +971,8 @@ func TableInfo2SchemaAndNames(ctx sessionctx.Context, dbName model.CIStr, tbl *m
 }
 
 // ColumnInfos2ColumnsAndNames converts the ColumnInfo to the *Column and NameSlice.
+// This function is **unsafe** to be called concurrently, unless the `IgnoreTruncate` has been set to `true`. The only
+// known case which will call this function concurrently is `CheckTableExec`. Ref #18408 and #42341.
 func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice, error) {
 	columns := make([]*Column, 0, len(colInfos))
 	names := make([]*types.FieldName, 0, len(colInfos))
@@ -987,11 +997,14 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 	// Resolve virtual generated column.
 	mockSchema := NewSchema(columns...)
 	// Ignore redundant warning here.
-	save := ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Load()
-	defer func() {
-		ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Store(save)
-	}()
-	ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Store(true)
+	flags := ctx.GetSessionVars().StmtCtx.TypeFlags()
+	if !flags.IgnoreTruncateErr() {
+		defer func() {
+			ctx.GetSessionVars().StmtCtx.SetTypeFlags(flags)
+		}()
+		ctx.GetSessionVars().StmtCtx.SetTypeFlags(flags.WithIgnoreTruncateErr(true))
+	}
+
 	for i, col := range colInfos {
 		if col.IsVirtualGenerated() {
 			expr, err := generatedexpr.ParseExpression(col.GeneratedExprString)
@@ -1154,7 +1167,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 
 		ast.Sqrt, ast.Log, ast.Log2, ast.Log10, ast.Ln, ast.Exp, ast.Pow, ast.Sign,
 		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
-		ast.JSONLength, ast.JSONExtract, ast.JSONUnquote, ast.Repeat,
+		ast.JSONLength, ast.JSONDepth, ast.JSONExtract, ast.JSONUnquote, ast.JSONArray, ast.Repeat,
 		ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton,
 		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position, ast.Format, ast.Elt,
 		ast.LTrim, ast.RTrim, ast.Lpad, ast.Rpad,
@@ -1166,12 +1179,6 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			tipb.ScalarFuncSig_IfNullDuration,
 			tipb.ScalarFuncSig_IfDuration,
 			tipb.ScalarFuncSig_CaseWhenDuration:
-			return false
-		case tipb.ScalarFuncSig_JsonUnquoteSig:
-			// TiFlash json_unquote now only supports json string generated by cast(json as string)
-			if childFunc, ok := function.GetArgs()[0].(*ScalarFunction); ok {
-				return childFunc.Function.PbCode() == tipb.ScalarFuncSig_CastJsonAsString
-			}
 			return false
 		}
 		return true
@@ -1218,6 +1225,9 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			return function.GetArgs()[0].GetType().GetType() != mysql.TypeYear
 		case tipb.ScalarFuncSig_CastTimeAsDuration:
 			return retType.GetType() == mysql.TypeDuration
+		case tipb.ScalarFuncSig_CastIntAsJson, tipb.ScalarFuncSig_CastRealAsJson, tipb.ScalarFuncSig_CastDecimalAsJson, tipb.ScalarFuncSig_CastStringAsJson,
+			tipb.ScalarFuncSig_CastTimeAsJson, tipb.ScalarFuncSig_CastDurationAsJson, tipb.ScalarFuncSig_CastJsonAsJson:
+			return true
 		}
 	case ast.DateAdd, ast.AddDate:
 		switch function.Function.PbCode() {
@@ -1376,10 +1386,11 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 			storageName = "storage layer"
 		}
 		warnErr := errors.New("Scalar function '" + scalarFunc.FuncName.L + "'(signature: " + scalarFunc.Function.PbCode().String() + ", return type: " + scalarFunc.RetType.CompactStr() + ") is not supported to push down to " + storageName + " now.")
-		if pc.sc.InExplainStmt {
-			pc.sc.AppendWarning(warnErr)
+		sc := pc.ctx.GetSessionVars().StmtCtx
+		if sc.InExplainStmt {
+			sc.AppendWarning(warnErr)
 		} else {
-			pc.sc.AppendExtraWarning(warnErr)
+			sc.AppendExtraWarning(warnErr)
 		}
 		return false
 	}
@@ -1404,25 +1415,26 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 
 func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, canEnumPush bool) bool {
 	if storeType == kv.TiFlash {
+		sc := pc.ctx.GetSessionVars().StmtCtx
 		switch expr.GetType().GetType() {
 		case mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
 			if expr.GetType().GetType() == mysql.TypeEnum && canEnumPush {
 				break
 			}
 			warnErr := errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType().GetType()) + "'.")
-			if pc.sc.InExplainStmt {
-				pc.sc.AppendWarning(warnErr)
+			if sc.InExplainStmt {
+				sc.AppendWarning(warnErr)
 			} else {
-				pc.sc.AppendExtraWarning(warnErr)
+				sc.AppendExtraWarning(warnErr)
 			}
 			return false
 		case mysql.TypeNewDecimal:
 			if !expr.GetType().IsDecimalValid() {
 				warnErr := errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(expr.GetType().GetFlen()) + "','" + strconv.Itoa(expr.GetType().GetDecimal()) + "').")
-				if pc.sc.InExplainStmt {
-					pc.sc.AppendWarning(warnErr)
+				if sc.InExplainStmt {
+					sc.AppendWarning(warnErr)
 				} else {
-					pc.sc.AppendExtraWarning(warnErr)
+					sc.AppendExtraWarning(warnErr)
 				}
 				return false
 			}
@@ -1442,8 +1454,8 @@ func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, ca
 }
 
 // PushDownExprsWithExtraInfo split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
-func PushDownExprsWithExtraInfo(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType, canEnumPush bool) (pushed []Expression, remained []Expression) {
-	pc := PbConverter{sc: sc, client: client}
+func PushDownExprsWithExtraInfo(ctx sessionctx.Context, exprs []Expression, client kv.Client, storeType kv.StoreType, canEnumPush bool) (pushed []Expression, remained []Expression) {
+	pc := PbConverter{ctx: ctx, client: client}
 	for _, expr := range exprs {
 		if canExprPushDown(expr, pc, storeType, canEnumPush) {
 			pushed = append(pushed, expr)
@@ -1455,19 +1467,19 @@ func PushDownExprsWithExtraInfo(sc *stmtctx.StatementContext, exprs []Expression
 }
 
 // PushDownExprs split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
-func PushDownExprs(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType) (pushed []Expression, remained []Expression) {
-	return PushDownExprsWithExtraInfo(sc, exprs, client, storeType, false)
+func PushDownExprs(ctx sessionctx.Context, exprs []Expression, client kv.Client, storeType kv.StoreType) (pushed []Expression, remained []Expression) {
+	return PushDownExprsWithExtraInfo(ctx, exprs, client, storeType, false)
 }
 
 // CanExprsPushDownWithExtraInfo return true if all the expr in exprs can be pushed down
-func CanExprsPushDownWithExtraInfo(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType, canEnumPush bool) bool {
-	_, remained := PushDownExprsWithExtraInfo(sc, exprs, client, storeType, canEnumPush)
+func CanExprsPushDownWithExtraInfo(ctx sessionctx.Context, exprs []Expression, client kv.Client, storeType kv.StoreType, canEnumPush bool) bool {
+	_, remained := PushDownExprsWithExtraInfo(ctx, exprs, client, storeType, canEnumPush)
 	return len(remained) == 0
 }
 
 // CanExprsPushDown return true if all the expr in exprs can be pushed down
-func CanExprsPushDown(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType) bool {
-	return CanExprsPushDownWithExtraInfo(sc, exprs, client, storeType, false)
+func CanExprsPushDown(ctx sessionctx.Context, exprs []Expression, client kv.Client, storeType kv.StoreType) bool {
+	return CanExprsPushDownWithExtraInfo(ctx, exprs, client, storeType, false)
 }
 
 // wrapWithIsTrue wraps `arg` with istrue function if the return type of expr is not
@@ -1506,7 +1518,7 @@ func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression, wrapF
 	if keepNull {
 		sf.FuncName = model.NewCIStr(ast.IsTruthWithNull)
 	}
-	return FoldConstant(sf), nil
+	return FoldConstant(ctx, sf), nil
 }
 
 // PropagateType propagates the type information to the `expr`.

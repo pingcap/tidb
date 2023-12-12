@@ -19,10 +19,8 @@ import (
 	"fmt"
 	"math"
 	"strings"
-	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -36,10 +34,10 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tiancaiamao/gp"
 )
 
 // AnalyzeColumnsExec represents Analyze columns push down executor.
@@ -64,9 +62,9 @@ type AnalyzeColumnsExec struct {
 	memTracker *memory.Tracker
 }
 
-func analyzeColumnsPushDownEntry(e *AnalyzeColumnsExec) *statistics.AnalyzeResults {
+func analyzeColumnsPushDownEntry(gp *gp.Pool, e *AnalyzeColumnsExec) *statistics.AnalyzeResults {
 	if e.AnalyzeInfo.StatsVersion >= statistics.Version2 {
-		return e.toV2().analyzeColumnsPushDownWithRetryV2()
+		return e.toV2().analyzeColumnsPushDownWithRetryV2(gp)
 	}
 	return e.toV1().analyzeColumnsPushDownV1()
 }
@@ -179,8 +177,8 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 			dom := domain.GetDomain(e.ctx)
 			dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
 		})
-		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
-			return nil, nil, nil, nil, nil, errors.Trace(exeerrors.ErrQueryInterrupted)
+		if err := e.ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+			return nil, nil, nil, nil, nil, err
 		}
 		failpoint.Inject("mockSlowAnalyzeV1", func() {
 			time.Sleep(1000 * time.Second)
@@ -268,7 +266,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		if e.StatsVersion < 2 {
 			hg, err = statistics.BuildColumn(e.ctx, int64(e.opts[ast.AnalyzeOptNumBuckets]), col.ID, collectors[i], &col.FieldType)
 		} else {
-			hg, topn, err = statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), col.ID, collectors[i], &col.FieldType, true, nil)
+			hg, topn, err = statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), col.ID, collectors[i], &col.FieldType, true, nil, true)
 			topNs = append(topNs, topn)
 		}
 		if err != nil {
@@ -280,8 +278,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		fms = append(fms, collectors[i].FMSketch)
 	}
 	if needExtStats {
-		statsHandle := domain.GetDomain(e.ctx).StatsHandle()
-		extStats, err = statsHandle.BuildExtendedStats(e.TableID.GetStatisticsID(), e.colsInfo, collectors)
+		extStats, err = statistics.BuildExtendedStats(e.ctx, e.TableID.GetStatisticsID(), e.colsInfo, collectors)
 		if err != nil {
 			return nil, nil, nil, nil, nil, err
 		}

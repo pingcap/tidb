@@ -131,14 +131,13 @@ approx_count_distinct(value collate utf8mb4_bin, value1)
 create table tt(a char(10), b enum('a', 'B', 'c'), c set('a', 'B', 'c'), d json) collate utf8mb4_general_ci;
 insert into tt values ("a", "a", "a", JSON_OBJECT("a", "a"));
 insert into tt values ("A", "A", "A", JSON_OBJECT("A", "A"));
-Error 1265 (01000): Data truncated for column 'b' at row 1
 insert into tt values ("b", "b", "b", JSON_OBJECT("b", "b"));
-Error 1265 (01000): Data truncated for column 'b' at row 1
 insert into tt values ("B", "B", "B", JSON_OBJECT("B", "B"));
 insert into tt values ("c", "c", "c", JSON_OBJECT("c", "c"));
 insert into tt values ("C", "C", "C", JSON_OBJECT("C", "C"));
-Error 1265 (01000): Data truncated for column 'b' at row 1
 split table tt by (0), (1), (2), (3), (4), (5);
+TOTAL_SPLIT_REGION	SCATTER_FINISH_RATIO
+6	1
 desc format='brief' select min(a) from tt;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:min(collation_agg_func.tt.a)->Column#6

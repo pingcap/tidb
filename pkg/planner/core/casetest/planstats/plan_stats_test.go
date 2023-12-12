@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle"
+	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -166,13 +166,13 @@ func TestPlanStatsLoad(t *testing.T) {
 		{ // CTE
 			sql: "with cte(x, y) as (select d + 1, b from t where c > 1) select * from cte where x < 3",
 			check: func(p plannercore.Plan, tableInfo *model.TableInfo) {
-				ps, ok := p.(*plannercore.PhysicalSelection)
+				ps, ok := p.(*plannercore.PhysicalProjection)
 				require.True(t, ok)
-				pc, ok := ps.Children()[0].(*plannercore.PhysicalCTE)
+				pc, ok := ps.Children()[0].(*plannercore.PhysicalTableReader)
 				require.True(t, ok)
-				pp, ok := pc.SeedPlan.(*plannercore.PhysicalProjection)
+				pp, ok := pc.GetTablePlan().(*plannercore.PhysicalSelection)
 				require.True(t, ok)
-				reader, ok := pp.Children()[0].(*plannercore.PhysicalTableReader)
+				reader, ok := pp.Children()[0].(*plannercore.PhysicalTableScan)
 				require.True(t, ok)
 				require.Greater(t, countFullStats(reader.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
 			},
@@ -268,7 +268,7 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	neededColumn := model.TableItemID{TableID: tableInfo.ID, ID: tableInfo.Columns[0].ID, IsIndex: false}
 	resultCh := make(chan stmtctx.StatsLoadResult, 1)
 	timeout := time.Duration(1<<63 - 1)
-	task := &handle.NeededItemTask{
+	task := &types.NeededItemTask{
 		TableItemID: neededColumn,
 		ResultCh:    resultCh,
 		ToTimeout:   time.Now().Local().Add(timeout),

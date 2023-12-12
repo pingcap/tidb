@@ -30,6 +30,7 @@ import (
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -110,7 +111,8 @@ func TestWriterFlushMultiFileNames(t *testing.T) {
 
 	writer := NewWriterBuilder().
 		SetPropKeysDistance(2).
-		SetMemorySizeLimit(60).
+		SetMemorySizeLimit(3*(lengthBytes*2+20)).
+		SetBlockSize(3*(lengthBytes*2+20)).
 		Build(memStore, "/test", "0")
 
 	// 200 bytes key values.
@@ -173,7 +175,7 @@ func TestWriterDuplicateDetect(t *testing.T) {
 	require.NoError(t, err)
 
 	// test MergeOverlappingFiles will not change duplicate detection functionality.
-	err = MergeOverlappingFiles(
+	err = mergeOverlappingFilesImpl(
 		ctx,
 		[]string{"/test/0/0"},
 		memStore,
@@ -181,10 +183,12 @@ func TestWriterDuplicateDetect(t *testing.T) {
 		"/test2",
 		"mergeID",
 		1000,
+		1000,
 		8*1024,
 		1*size.MB,
 		2,
 		nil,
+		false,
 	)
 	require.NoError(t, err)
 
@@ -220,7 +224,9 @@ func TestWriterDuplicateDetect(t *testing.T) {
 		values:             values,
 		ts:                 123,
 	}
-	iter := data.NewIter(ctx, nil, nil)
+	pool := membuf.NewPool()
+	defer pool.Destroy()
+	iter := data.NewIter(ctx, nil, nil, pool)
 
 	for iter.First(); iter.Valid(); iter.Next() {
 	}
@@ -269,7 +275,8 @@ func TestWriterMultiFileStat(t *testing.T) {
 
 	writer := NewWriterBuilder().
 		SetPropKeysDistance(2).
-		SetMemorySizeLimit(20). // 2 KV pair will trigger flush
+		SetMemorySizeLimit(52).
+		SetBlockSize(52). // 2 KV pair will trigger flush
 		SetOnCloseFunc(closeFn).
 		Build(memStore, "/test", "0")
 
@@ -368,18 +375,20 @@ func TestWriterMultiFileStat(t *testing.T) {
 		allDataFiles[i] = fmt.Sprintf("/test/0/%d", i)
 	}
 
-	err = MergeOverlappingFiles(
+	err = mergeOverlappingFilesImpl(
 		ctx,
 		allDataFiles,
 		memStore,
 		100,
 		"/test2",
 		"mergeID",
-		20,
+		52,
+		52,
 		8*1024,
 		1*size.MB,
 		2,
 		closeFn,
+		true,
 	)
 	require.NoError(t, err)
 	require.Equal(t, 3, len(summary.MultipleFilesStats))

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -462,7 +463,7 @@ func (w *projectionWorker) run(ctx context.Context) {
 
 func recoveryProjection(output *projectionOutput, r interface{}) {
 	if output != nil {
-		output.done <- errors.Errorf("%v", r)
+		output.done <- util.GetRecoverError(r)
 	}
 	logutil.BgLogger().Error("projection executor panicked", zap.String("error", fmt.Sprintf("%v", r)), zap.Stack("stack"))
 }

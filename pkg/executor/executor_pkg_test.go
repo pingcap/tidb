@@ -15,20 +15,14 @@
 package executor
 
 import (
-	"context"
 	"runtime"
 	"strconv"
 	"testing"
 	"time"
 	"unsafe"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
-	"github.com/pingcap/tidb/pkg/executor/aggregate"
-	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -73,6 +67,63 @@ func TestBuildKvRangesForIndexJoinWithoutCwc(t *testing.T) {
 			require.True(t, kvRange.StartKey.Cmp(kvRanges[i-1].EndKey) >= 0)
 		}
 	}
+}
+
+func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
+	indexRanges := make([]*ranger.Range, 0, 6)
+	indexRanges = append(indexRanges, generateIndexRange(1, 1, 1, 1, 1))
+	indexRanges = append(indexRanges, generateIndexRange(1, 1, 2, 1, 1))
+	indexRanges = append(indexRanges, generateIndexRange(1, 1, 2, 1, 2))
+	indexRanges = append(indexRanges, generateIndexRange(1, 1, 3, 1, 1))
+	indexRanges = append(indexRanges, generateIndexRange(2, 1, 1, 1, 1))
+	indexRanges = append(indexRanges, generateIndexRange(2, 1, 2, 1, 1))
+
+	bytesConsumed1 := int64(0)
+	{
+		joinKeyRows := make([]*indexJoinLookUpContent, 0, 10)
+		for i := int64(0); i < 10; i++ {
+			joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(1, i)})
+		}
+
+		keyOff2IdxOff := []int{1, 3}
+		ctx := mock.NewContext()
+		memTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
+		kvRanges, err := buildKvRangesForIndexJoin(ctx, 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil)
+		require.NoError(t, err)
+		// Check the kvRanges is in order.
+		for i, kvRange := range kvRanges {
+			require.True(t, kvRange.StartKey.Cmp(kvRange.EndKey) < 0)
+			if i > 0 {
+				require.True(t, kvRange.StartKey.Cmp(kvRanges[i-1].EndKey) >= 0)
+			}
+		}
+		bytesConsumed1 = memTracker.BytesConsumed()
+	}
+
+	bytesConsumed2 := int64(0)
+	{
+		joinKeyRows := make([]*indexJoinLookUpContent, 0, 20)
+		for i := int64(0); i < 20; i++ {
+			joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(1, i)})
+		}
+
+		keyOff2IdxOff := []int{1, 3}
+		ctx := mock.NewContext()
+		memTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
+		kvRanges, err := buildKvRangesForIndexJoin(ctx, 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil)
+		require.NoError(t, err)
+		// Check the kvRanges is in order.
+		for i, kvRange := range kvRanges {
+			require.True(t, kvRange.StartKey.Cmp(kvRange.EndKey) < 0)
+			if i > 0 {
+				require.True(t, kvRange.StartKey.Cmp(kvRanges[i-1].EndKey) >= 0)
+			}
+		}
+		bytesConsumed2 = memTracker.BytesConsumed()
+	}
+
+	require.Equal(t, 2*bytesConsumed1, bytesConsumed2)
+	require.Equal(t, int64(20760), bytesConsumed1)
 }
 
 func generateIndexRange(vals ...int64) *ranger.Range {
@@ -161,7 +212,7 @@ func TestAggPartialResultMapperB(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		aggMap := make(aggregate.AggPartialResultMapper)
+		aggMap := make(aggfuncs.AggPartialResultMapper)
 		tempSlice := make([]aggfuncs.PartialResult, 10)
 		for num := 0; num < tc.rowNum; num++ {
 			aggMap[strconv.Itoa(num)] = tempSlice
@@ -188,13 +239,13 @@ type hmap struct {
 	nevacuate  uintptr        // nolint:unused // progress counter for evacuation (buckets less than this have been evacuated)
 }
 
-func getB(m aggregate.AggPartialResultMapper) int {
+func getB(m aggfuncs.AggPartialResultMapper) int {
 	point := (**hmap)(unsafe.Pointer(&m))
 	value := *point
 	return int(value.B)
 }
 
-func getGrowing(m aggregate.AggPartialResultMapper) bool {
+func getGrowing(m aggfuncs.AggPartialResultMapper) bool {
 	point := (**hmap)(unsafe.Pointer(&m))
 	value := *point
 	return value.oldbuckets != nil
@@ -211,145 +262,4 @@ func TestFilterTemporaryTableKeys(t *testing.T) {
 
 	res := filterTemporaryTableKeys(vars, []kv.Key{tablecodec.EncodeTablePrefix(tableID), tablecodec.EncodeTablePrefix(42)})
 	require.Len(t, res, 1)
-}
-
-func TestSortSpillDisk(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testSortedRowContainerSpill", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/testSortedRowContainerSpill"))
-	}()
-	ctx := mock.NewContext()
-	ctx.GetSessionVars().MemQuota.MemQuotaQuery = 1
-	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, -1)
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
-	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	cas := &sortCase{rows: 2048, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
-	opt := mockDataSourceParameters{
-		schema: expression.NewSchema(cas.columns()...),
-		rows:   cas.rows,
-		ctx:    cas.ctx,
-		ndvs:   cas.ndvs,
-	}
-	dataSource := buildMockDataSource(opt)
-	exe := &SortExec{
-		BaseExecutor: exec.NewBaseExecutor(cas.ctx, dataSource.Schema(), 0, dataSource),
-		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
-		schema:       dataSource.Schema(),
-	}
-	for _, idx := range cas.orderByIdx {
-		exe.ByItems = append(exe.ByItems, &plannerutil.ByItems{Expr: cas.columns()[idx]})
-	}
-	tmpCtx := context.Background()
-	chk := exec.NewFirstChunk(exe)
-	dataSource.prepareChunks()
-	err := exe.Open(tmpCtx)
-	require.NoError(t, err)
-	for {
-		err = exe.Next(tmpCtx, chk)
-		require.NoError(t, err)
-		if chk.NumRows() == 0 {
-			break
-		}
-	}
-	// Test only 1 partition and all data in memory.
-	require.Len(t, exe.partitionList, 1)
-	require.Equal(t, false, exe.partitionList[0].AlreadySpilledSafeForTest())
-	require.Equal(t, 2048, exe.partitionList[0].NumRow())
-	err = exe.Close()
-	require.NoError(t, err)
-
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, 1)
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
-	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	dataSource.prepareChunks()
-	err = exe.Open(tmpCtx)
-	require.NoError(t, err)
-	for {
-		err = exe.Next(tmpCtx, chk)
-		require.NoError(t, err)
-		if chk.NumRows() == 0 {
-			break
-		}
-	}
-	// Test 2 partitions and all data in disk.
-	// Now spilling is in parallel.
-	// Maybe the second add() will called before spilling, depends on
-	// Golang goroutine scheduling. So the result has two possibilities.
-	if len(exe.partitionList) == 2 {
-		require.Len(t, exe.partitionList, 2)
-		require.Equal(t, true, exe.partitionList[0].AlreadySpilledSafeForTest())
-		require.Equal(t, true, exe.partitionList[1].AlreadySpilledSafeForTest())
-		require.Equal(t, 1024, exe.partitionList[0].NumRow())
-		require.Equal(t, 1024, exe.partitionList[1].NumRow())
-	} else {
-		require.Len(t, exe.partitionList, 1)
-		require.Equal(t, true, exe.partitionList[0].AlreadySpilledSafeForTest())
-		require.Equal(t, 2048, exe.partitionList[0].NumRow())
-	}
-
-	err = exe.Close()
-	require.NoError(t, err)
-
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, 28000)
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
-	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	dataSource.prepareChunks()
-	err = exe.Open(tmpCtx)
-	require.NoError(t, err)
-	for {
-		err = exe.Next(tmpCtx, chk)
-		require.NoError(t, err)
-		if chk.NumRows() == 0 {
-			break
-		}
-	}
-	// Test only 1 partition but spill disk.
-	require.Len(t, exe.partitionList, 1)
-	require.Equal(t, true, exe.partitionList[0].AlreadySpilledSafeForTest())
-	require.Equal(t, 2048, exe.partitionList[0].NumRow())
-	err = exe.Close()
-	require.NoError(t, err)
-
-	// Test partition nums.
-	ctx = mock.NewContext()
-	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, 16864*50)
-	ctx.GetSessionVars().MemTracker.Consume(16864 * 45)
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
-	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	cas = &sortCase{rows: 20480, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
-	opt = mockDataSourceParameters{
-		schema: expression.NewSchema(cas.columns()...),
-		rows:   cas.rows,
-		ctx:    cas.ctx,
-		ndvs:   cas.ndvs,
-	}
-	dataSource = buildMockDataSource(opt)
-	exe = &SortExec{
-		BaseExecutor: exec.NewBaseExecutor(cas.ctx, dataSource.Schema(), 0, dataSource),
-		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
-		schema:       dataSource.Schema(),
-	}
-	for _, idx := range cas.orderByIdx {
-		exe.ByItems = append(exe.ByItems, &plannerutil.ByItems{Expr: cas.columns()[idx]})
-	}
-	tmpCtx = context.Background()
-	chk = exec.NewFirstChunk(exe)
-	dataSource.prepareChunks()
-	err = exe.Open(tmpCtx)
-	require.NoError(t, err)
-	for {
-		err = exe.Next(tmpCtx, chk)
-		require.NoError(t, err)
-		if chk.NumRows() == 0 {
-			break
-		}
-	}
-	// Don't spill too many partitions.
-	require.True(t, len(exe.partitionList) <= 4)
-	err = exe.Close()
-	require.NoError(t, err)
 }

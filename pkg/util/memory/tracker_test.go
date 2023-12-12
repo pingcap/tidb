@@ -27,7 +27,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -401,7 +400,7 @@ func TestMaxConsumed(t *testing.T) {
 		}
 		consumed += b
 		tracker.Consume(b)
-		maxConsumed = mathutil.Max(maxConsumed, consumed)
+		maxConsumed = max(maxConsumed, consumed)
 
 		require.Equal(t, consumed, r.BytesConsumed())
 		require.Equal(t, maxConsumed, r.MaxConsumed())

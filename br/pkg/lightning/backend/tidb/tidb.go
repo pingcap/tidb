@@ -455,7 +455,7 @@ func (enc *tidbEncoder) appendSQL(sb *strings.Builder, datum *types.Datum, _ *ta
 
 	case types.KindMysqlBit:
 		var buffer [20]byte
-		intValue, err := datum.GetBinaryLiteral().ToInt(nil)
+		intValue, err := datum.GetBinaryLiteral().ToInt(types.DefaultStmtNoWarningContext)
 		if err != nil {
 			return err
 		}

@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -82,7 +81,7 @@ func findMaxPrefixLen(candidates [][]*expression.Column, keys []*expression.Colu
 	for _, candidateKeys := range candidates {
 		matchedLen := 0
 		for i := range keys {
-			if !(i < len(candidateKeys) && keys[i].Equal(nil, candidateKeys[i])) {
+			if !(i < len(candidateKeys) && keys[i].EqualColumn(candidateKeys[i])) {
 				break
 			}
 			matchedLen++
@@ -670,7 +669,7 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 		outerCompareFuncs := make([]expression.CompareFunc, 0, len(join.OuterJoinKeys))
 
 		for i := range join.KeyOff2IdxOff {
-			if isOuterKeysPrefix && !prop.SortItems[i].Col.Equal(nil, join.OuterJoinKeys[keyOff2KeyOffOrderByIdx[i]]) {
+			if isOuterKeysPrefix && !prop.SortItems[i].Col.EqualColumn(join.OuterJoinKeys[keyOff2KeyOffOrderByIdx[i]]) {
 				isOuterKeysPrefix = false
 			}
 			compareFuncs = append(compareFuncs, expression.GetCmpFunction(p.SCtx(), join.OuterJoinKeys[i], join.InnerJoinKeys[i]))
@@ -679,7 +678,7 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 		// canKeepOuterOrder means whether the prop items are the prefix of the outer join keys.
 		canKeepOuterOrder := len(prop.SortItems) <= len(join.OuterJoinKeys)
 		for i := 0; canKeepOuterOrder && i < len(prop.SortItems); i++ {
-			if !prop.SortItems[i].Col.Equal(nil, join.OuterJoinKeys[keyOff2KeyOffOrderByIdx[i]]) {
+			if !prop.SortItems[i].Col.EqualColumn(join.OuterJoinKeys[keyOff2KeyOffOrderByIdx[i]]) {
 				canKeepOuterOrder = false
 			}
 		}
@@ -897,7 +896,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 			return nil
 		}
 		for i, key := range innerJoinKeys {
-			if !key.Equal(nil, pkCol) {
+			if !key.EqualColumn(pkCol) {
 				keyOff2IdxOff[i] = -1
 				continue
 			}
@@ -1222,7 +1221,7 @@ func getColsNDVLowerBoundFromHistColl(colUIDs []int64, histColl *statistics.Hist
 		if colStats == nil || !colStats.IsStatsInitialized() {
 			continue
 		}
-		maxNDV = mathutil.Max(maxNDV, colStats.NDV)
+		maxNDV = max(maxNDV, colStats.NDV)
 	}
 	return maxNDV
 }
@@ -1460,7 +1459,7 @@ func (cwc *ColWithCmpFuncManager) CompareRow(lhs, rhs chunk.Row) int {
 func (cwc *ColWithCmpFuncManager) BuildRangesByRow(ctx sessionctx.Context, row chunk.Row) ([]*ranger.Range, error) {
 	exprs := make([]expression.Expression, len(cwc.OpType))
 	for i, opType := range cwc.OpType {
-		constantArg, err := cwc.opArg[i].Eval(row)
+		constantArg, err := cwc.opArg[i].Eval(ctx, row)
 		if err != nil {
 			return nil, err
 		}
@@ -1583,10 +1582,10 @@ loopOtherConds:
 		}
 		var funcName string
 		var anotherArg expression.Expression
-		if lCol, ok := sf.GetArgs()[0].(*expression.Column); ok && lCol.Equal(nil, nextCol) {
+		if lCol, ok := sf.GetArgs()[0].(*expression.Column); ok && lCol.EqualColumn(nextCol) {
 			anotherArg = sf.GetArgs()[1]
 			funcName = sf.FuncName.L
-		} else if rCol, ok := sf.GetArgs()[1].(*expression.Column); ok && rCol.Equal(nil, nextCol) {
+		} else if rCol, ok := sf.GetArgs()[1].(*expression.Column); ok && rCol.EqualColumn(nextCol) {
 			anotherArg = sf.GetArgs()[0]
 			// The column manager always build expression in the form of col op arg1.
 			// So we need use the symmetric one of the current function.
@@ -1623,7 +1622,7 @@ func (ijHelper *indexJoinBuildHelper) removeUselessEqAndInFunc(idxCols []*expres
 			ijHelper.curPossibleUsedKeys = append(ijHelper.curPossibleUsedKeys, idxCols[idxColPos])
 			continue
 		}
-		if notKeyColPos < len(notKeyEqAndIn) && ijHelper.curNotUsedIndexCols[notKeyColPos].Equal(nil, idxCols[idxColPos]) {
+		if notKeyColPos < len(notKeyEqAndIn) && ijHelper.curNotUsedIndexCols[notKeyColPos].EqualColumn(idxCols[idxColPos]) {
 			notKeyColPos++
 			continue
 		}
@@ -2361,16 +2360,17 @@ func canExprsInJoinPushdown(p *LogicalJoin, storeType kv.StoreType) bool {
 		}
 		equalExprs = append(equalExprs, eqCondition)
 	}
-	if !expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, equalExprs, p.SCtx().GetClient(), storeType) {
+	ctx := p.SCtx()
+	if !expression.CanExprsPushDown(ctx, equalExprs, p.SCtx().GetClient(), storeType) {
 		return false
 	}
-	if !expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, p.LeftConditions, p.SCtx().GetClient(), storeType) {
+	if !expression.CanExprsPushDown(ctx, p.LeftConditions, p.SCtx().GetClient(), storeType) {
 		return false
 	}
-	if !expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, p.RightConditions, p.SCtx().GetClient(), storeType) {
+	if !expression.CanExprsPushDown(ctx, p.RightConditions, p.SCtx().GetClient(), storeType) {
 		return false
 	}
-	if !expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, p.OtherConditions, p.SCtx().GetClient(), storeType) {
+	if !expression.CanExprsPushDown(ctx, p.OtherConditions, p.SCtx().GetClient(), storeType) {
 		return false
 	}
 	return true
@@ -2633,14 +2633,15 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 	}
 	newProps := []*property.PhysicalProperty{newProp}
 	// generate a mpp task candidate if mpp mode is allowed
-	if newProp.TaskTp != property.MppTaskType && p.SCtx().GetSessionVars().IsMPPAllowed() && p.canPushToCop(kv.TiFlash) &&
-		expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, p.Exprs, p.SCtx().GetClient(), kv.TiFlash) {
+	ctx := p.SCtx()
+	if newProp.TaskTp != property.MppTaskType && ctx.GetSessionVars().IsMPPAllowed() && p.canPushToCop(kv.TiFlash) &&
+		expression.CanExprsPushDown(ctx, p.Exprs, ctx.GetClient(), kv.TiFlash) {
 		mppProp := newProp.CloneEssentialFields()
 		mppProp.TaskTp = property.MppTaskType
 		newProps = append(newProps, mppProp)
 	}
-	if newProp.TaskTp != property.CopSingleReadTaskType && p.SCtx().GetSessionVars().AllowProjectionPushDown && p.canPushToCop(kv.TiKV) &&
-		expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, p.Exprs, p.SCtx().GetClient(), kv.TiKV) && !expression.ContainVirtualColumn(p.Exprs) {
+	if newProp.TaskTp != property.CopSingleReadTaskType && ctx.GetSessionVars().AllowProjectionPushDown && p.canPushToCop(kv.TiKV) &&
+		expression.CanExprsPushDown(ctx, p.Exprs, ctx.GetClient(), kv.TiKV) && !expression.ContainVirtualColumn(p.Exprs) {
 		copProp := newProp.CloneEssentialFields()
 		copProp.TaskTp = property.CopSingleReadTaskType
 		newProps = append(newProps, copProp)
@@ -2741,7 +2742,7 @@ func MatchItems(p *property.PhysicalProperty, items []*util.ByItems) bool {
 	}
 	for i, col := range p.SortItems {
 		sortItem := items[i]
-		if sortItem.Desc != col.Desc || !sortItem.Expr.Equal(nil, col.Col) {
+		if sortItem.Desc != col.Desc || !col.Col.EqualColumn(sortItem.Expr) {
 			return false
 		}
 	}
@@ -2869,12 +2870,13 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []P
 		}
 
 		if lw.Frame != nil && lw.Frame.Type == ast.Ranges {
-			if _, err := expression.ExpressionsToPBList(lw.SCtx().GetSessionVars().StmtCtx, lw.Frame.Start.CalcFuncs, lw.SCtx().GetClient()); err != nil {
+			ctx := lw.SCtx()
+			if _, err := expression.ExpressionsToPBList(ctx, lw.Frame.Start.CalcFuncs, lw.SCtx().GetClient()); err != nil {
 				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 					"MPP mode may be blocked because window function frame can't be pushed down, because " + err.Error())
 				return nil
 			}
-			if _, err := expression.ExpressionsToPBList(lw.SCtx().GetSessionVars().StmtCtx, lw.Frame.End.CalcFuncs, lw.SCtx().GetClient()); err != nil {
+			if _, err := expression.ExpressionsToPBList(ctx, lw.Frame.End.CalcFuncs, lw.SCtx().GetClient()); err != nil {
 				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 					"MPP mode may be blocked because window function frame can't be pushed down, because " + err.Error())
 				return nil
@@ -3245,7 +3247,9 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 	finalAggAdjust := func(aggFuncs []*aggregation.AggFuncDesc) {
 		for i, agg := range aggFuncs {
 			if agg.Mode == aggregation.FinalMode && agg.Name == ast.AggFuncCount {
+				oldFT := agg.RetTp
 				aggFuncs[i], _ = aggregation.NewAggFuncDesc(la.SCtx(), ast.AggFuncSum, agg.Args, false)
+				aggFuncs[i].TypeInfer4FinalCount(oldFT)
 			}
 		}
 	}
@@ -3487,7 +3491,7 @@ func (p *LogicalSelection) canPushDown(storeTp kv.StoreType) bool {
 	return !expression.ContainVirtualColumn(p.Conditions) &&
 		p.canPushToCop(storeTp) &&
 		expression.CanExprsPushDown(
-			p.SCtx().GetSessionVars().StmtCtx,
+			p.SCtx(),
 			p.Conditions,
 			p.SCtx().GetClient(),
 			storeTp)

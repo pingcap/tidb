@@ -18,12 +18,12 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
 
 // https://github.com/pingcap/tidb/issues/45690
 func TestGetAnalyzePanicErr(t *testing.T) {
-	errMsg := fmt.Sprintf("%s", getAnalyzePanicErr(memory.PanicMemoryExceedWarnMsg))
+	errMsg := fmt.Sprintf("%s", getAnalyzePanicErr(exeerrors.ErrMemoryExceedForQuery.GenWithStackByArgs(123)))
 	require.NotContains(t, errMsg, `%!(EXTRA`)
 }

@@ -153,8 +153,9 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		mutableRow.SetDatums(row...)
 
+		sctx := us.Ctx()
 		for _, idx := range us.virtualColumnIndex {
-			datum, err := us.Schema().Columns[idx].EvalVirtualColumn(mutableRow.ToRow())
+			datum, err := us.Schema().Columns[idx].EvalVirtualColumn(sctx, mutableRow.ToRow())
 			if err != nil {
 				return err
 			}
@@ -298,7 +299,7 @@ func (ce compareExec) compare(sctx *stmtctx.StatementContext, a, b []types.Datum
 	for _, colOff := range ce.usedIndex {
 		aColumn := a[colOff]
 		bColumn := b[colOff]
-		cmp, err = aColumn.Compare(sctx, &bColumn, ce.collators[colOff])
+		cmp, err = aColumn.Compare(sctx.TypeCtx(), &bColumn, ce.collators[colOff])
 		if err != nil {
 			return 0, err
 		}

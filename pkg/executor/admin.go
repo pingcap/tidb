@@ -128,7 +128,7 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 		SetKeepOrder(true).
 		SetFromSessionVars(e.Ctx().GetSessionVars()).
 		SetFromInfoSchema(e.Ctx().GetInfoSchema()).
-		SetConnID(e.Ctx().GetSessionVars().ConnectionID).
+		SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias).
 		Build()
 	if err != nil {
 		return err
@@ -216,7 +216,7 @@ func (e *RecoverIndexExec) columnsTypes() []*types.FieldType {
 
 // Open implements the Executor Open interface.
 func (e *RecoverIndexExec) Open(ctx context.Context) error {
-	if err := e.BaseExecutor.Open(ctx); err != nil {
+	if err := exec.Open(ctx, e.BaseExecutor.Base()); err != nil {
 		return err
 	}
 
@@ -280,7 +280,7 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 		SetKeepOrder(true).
 		SetFromSessionVars(e.Ctx().GetSessionVars()).
 		SetFromInfoSchema(e.Ctx().GetInfoSchema()).
-		SetConnID(e.Ctx().GetSessionVars().ConnectionID).
+		SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias).
 		Build()
 	if err != nil {
 		return nil, err
@@ -416,9 +416,10 @@ func (e *RecoverIndexExec) buildIndexedValues(row chunk.Row, idxVals []types.Dat
 		idxVals = idxVals[:idxValLen]
 	}
 
+	sctx := e.Ctx()
 	for i, col := range e.index.Meta().Columns {
 		if e.table.Meta().Columns[col.Offset].IsGenerated() {
-			val, err := e.cols[col.Offset].EvalVirtualColumn(row)
+			val, err := e.cols[col.Offset].EvalVirtualColumn(sctx, row)
 			if err != nil {
 				return nil, err
 			}
@@ -447,7 +448,7 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 			if cnt < len(e.idxKeyBufs) {
 				buf = e.idxKeyBufs[cnt]
 			}
-			key, _, distinct, err := iter.Next(buf)
+			key, _, distinct, err := iter.Next(buf, nil)
 			if err != nil {
 				return err
 			}
@@ -809,7 +810,7 @@ func (e *CleanupIndexExec) buildIndexScan(ctx context.Context, txn kv.Transactio
 		SetKeepOrder(true).
 		SetFromSessionVars(e.Ctx().GetSessionVars()).
 		SetFromInfoSchema(e.Ctx().GetInfoSchema()).
-		SetConnID(e.Ctx().GetSessionVars().ConnectionID).
+		SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias).
 		Build()
 	if err != nil {
 		return nil, err

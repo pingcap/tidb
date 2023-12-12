@@ -22,6 +22,7 @@ import (
 	"runtime/trace"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -53,14 +54,13 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/types"
+	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/breakpoint"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
-	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -91,6 +91,7 @@ type recordSet struct {
 	stmt       *ExecStmt
 	lastErr    error
 	txnStartTS uint64
+	once       sync.Once
 }
 
 func (a *recordSet) Fields() []*ast.ResultField {
@@ -148,7 +149,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		if r == nil {
 			return
 		}
-		err = errors.Errorf("%v", r)
+		err = util2.GetRecoverError(r)
 		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.stmt.GetTextToLog(false)), zap.Stack("stack"))
 	}()
 
@@ -180,13 +181,31 @@ func (a *recordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 	return alloc.Alloc(base.RetFieldTypes(), base.InitCap(), base.MaxChunkSize())
 }
 
-func (a *recordSet) Close() error {
-	err := a.executor.Close()
-	err1 := a.stmt.CloseRecordSet(a.txnStartTS, a.lastErr)
+func (a *recordSet) Finish() error {
+	var err error
+	a.once.Do(func() {
+		err = a.executor.Close()
+		cteErr := resetCTEStorageMap(a.stmt.Ctx)
+		if cteErr != nil {
+			logutil.BgLogger().Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
+		}
+		if err == nil {
+			err = cteErr
+		}
+	})
 	if err != nil {
-		return err
+		a.lastErr = err
 	}
-	return err1
+	return err
+}
+
+func (a *recordSet) Close() error {
+	err := a.Finish()
+	if err != nil {
+		logutil.BgLogger().Error("close recordSet error", zap.Error(err))
+	}
+	a.stmt.CloseRecordSet(a.txnStartTS, a.lastErr)
+	return err
 }
 
 // OnFetchReturned implements commandLifeCycle#OnFetchReturned
@@ -333,7 +352,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 		}
 	}
 
-	if err = pointExecutor.Open(ctx); err != nil {
+	if err = exec.Open(ctx, pointExecutor); err != nil {
 		terror.Call(pointExecutor.Close)
 		return nil, err
 	}
@@ -463,10 +482,14 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			}
 			return
 		}
-		if str, ok := r.(string); !ok || !strings.Contains(str, memory.PanicMemoryExceedWarnMsg) {
+		recoverdErr, ok := r.(error)
+		if !ok || !(exeerrors.ErrMemoryExceedForQuery.Equal(recoverdErr) ||
+			exeerrors.ErrMemoryExceedForInstance.Equal(recoverdErr) ||
+			exeerrors.ErrQueryInterrupted.Equal(recoverdErr) ||
+			exeerrors.ErrMaxExecTimeExceeded.Equal(recoverdErr)) {
 			panic(r)
 		}
-		err = errors.Errorf("%v", r)
+		err = recoverdErr
 		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.GetTextToLog(false)), zap.Stack("stack"))
 	}()
 
@@ -690,7 +713,7 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 		if err != nil || e == nil {
 			return err
 		}
-		if err := e.Open(ctx); err != nil {
+		if err := exec.Open(ctx, e); err != nil {
 			terror.Call(e.Close)
 			return err
 		}
@@ -851,7 +874,7 @@ func (c *chunkRowRecordSet) Fields() []*ast.ResultField {
 func (c *chunkRowRecordSet) Next(_ context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !chk.IsFull() && c.idx < len(c.rows) {
-		numToAppend := mathutil.Min(len(c.rows)-c.idx, chk.RequiredRows()-chk.NumRows())
+		numToAppend := min(len(c.rows)-c.idx, chk.RequiredRows()-chk.NumRows())
 		chk.AppendRows(c.rows[c.idx : c.idx+numToAppend])
 		c.idx += numToAppend
 	}
@@ -868,7 +891,8 @@ func (c *chunkRowRecordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 }
 
 func (c *chunkRowRecordSet) Close() error {
-	return c.execStmt.CloseRecordSet(c.execStmt.Ctx.GetSessionVars().TxnCtx.StartTS, nil)
+	c.execStmt.CloseRecordSet(c.execStmt.Ctx.GetSessionVars().TxnCtx.StartTS, nil)
+	return nil
 }
 
 func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e exec.Executor) (_ sqlexec.RecordSet, retErr error) {
@@ -1209,11 +1233,11 @@ func (a *ExecStmt) buildExecutor() (exec.Executor, error) {
 func (a *ExecStmt) openExecutor(ctx context.Context, e exec.Executor) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = errors.New(fmt.Sprint(r))
+			err = util2.GetRecoverError(r)
 		}
 	}()
 	start := time.Now()
-	err = e.Open(ctx)
+	err = exec.Open(ctx, e)
 	a.phaseOpenDurations[0] += time.Since(start)
 	return err
 }
@@ -1445,19 +1469,10 @@ func (a *ExecStmt) checkPlanReplayerCapture(txnTS uint64) {
 }
 
 // CloseRecordSet will finish the execution of current statement and do some record work
-func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) error {
-	cteErr := resetCTEStorageMap(a.Ctx)
-	if cteErr != nil {
-		logutil.BgLogger().Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
-	}
-	if lastErr == nil {
-		// Only overwrite err when it's nil.
-		lastErr = cteErr
-	}
+func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 	a.FinishExecuteStmt(txnStartTS, lastErr, false)
 	a.logAudit()
 	a.Ctx.GetSessionVars().StmtCtx.DetachMemDiskTracker()
-	return cteErr
 }
 
 // Clean CTE storage shared by different CTEFullScan executor within a SQL stmt.
@@ -2091,12 +2106,12 @@ func checkPlanReplayerContinuesCapture(sctx sessionctx.Context, stmtNode ast.Stm
 func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.Context, stmtNode ast.StmtNode,
 	startTS uint64, isContinuesCapture bool) {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
-	handle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+	handle := sctx.Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
 	dumpTask := &domain.PlanReplayerDumpTask{
 		PlanReplayerTaskKey: key,
 		StartTS:             startTS,
 		TblStats:            stmtCtx.TableStats,
-		SessionBindings:     handle.GetAllBindRecord(),
+		SessionBindings:     handle.GetAllSessionBindings(),
 		SessionVars:         sctx.GetSessionVars(),
 		ExecStmts:           []ast.StmtNode{stmtNode},
 		DebugTrace:          []interface{}{stmtCtx.OptimizerDebugTrace},

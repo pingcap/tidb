@@ -48,24 +48,24 @@ func TestCaseWhen(t *testing.T) {
 	for _, tt := range tbl {
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.Arg...)))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, chunk.Row{})
+		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(tt.Ret), d)
 	}
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(errors.New("can't convert string to bool"), 1, true)))
 	require.NoError(t, err)
-	_, err = evalBuiltinFunc(f, chunk.Row{})
+	_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.Error(t, err)
 }
 
 func TestIf(t *testing.T) {
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	origin := stmtCtx.IgnoreTruncate.Load()
-	stmtCtx.IgnoreTruncate.Store(true)
+	oldTypeFlags := stmtCtx.TypeFlags()
 	defer func() {
-		stmtCtx.IgnoreTruncate.Store(origin)
+		stmtCtx.SetTypeFlags(oldTypeFlags)
 	}()
+	stmtCtx.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
 	tbl := []struct {
 		Arg1 interface{}
 		Arg2 interface{}
@@ -94,13 +94,13 @@ func TestIf(t *testing.T) {
 	for _, tt := range tbl {
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.Arg1, tt.Arg2, tt.Arg3)))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, chunk.Row{})
+		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(tt.Ret), d)
 	}
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(errors.New("must error"), 1, 2)))
 	require.NoError(t, err)
-	_, err = evalBuiltinFunc(f, chunk.Row{})
+	_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.Error(t, err)
 	_, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(1, 2)))
 	require.Error(t, err)
@@ -131,7 +131,7 @@ func TestIfNull(t *testing.T) {
 	for _, tt := range tbl {
 		f, err := newFunctionForTest(ctx, ast.Ifnull, primitiveValsToConstants(ctx, []interface{}{tt.arg1, tt.arg2})...)
 		require.NoError(t, err)
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if tt.getErr {
 			require.Error(t, err)
 		} else {

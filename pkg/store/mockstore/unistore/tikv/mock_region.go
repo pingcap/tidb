@@ -243,7 +243,7 @@ func (rm *MockRegionManager) GetRegion(id uint64) *metapb.Region {
 }
 
 // GetRegionByKey gets a region by the key.
-func (rm *MockRegionManager) GetRegionByKey(key []byte) (region *metapb.Region, peer *metapb.Peer, buckets *metapb.Buckets) {
+func (rm *MockRegionManager) GetRegionByKey(key []byte) (region *metapb.Region, peer *metapb.Peer, buckets *metapb.Buckets, downPeers []*metapb.Peer) {
 	rm.mu.RLock()
 	defer rm.mu.RUnlock()
 	rm.sortedRegions.AscendGreaterOrEqual(newBtreeSearchItem(key), func(item btree.Item) bool {
@@ -255,9 +255,9 @@ func (rm *MockRegionManager) GetRegionByKey(key []byte) (region *metapb.Region, 
 		return false
 	})
 	if region == nil || !rm.regionContainsKey(region, key) {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
-	return proto.Clone(region).(*metapb.Region), proto.Clone(region.Peers[0]).(*metapb.Peer), nil
+	return proto.Clone(region).(*metapb.Region), proto.Clone(region.Peers[0]).(*metapb.Peer), nil, nil
 }
 
 // GetRegionByEndKey gets a region by the end key.
@@ -590,7 +590,7 @@ func (rm *MockRegionManager) saveRegions(regions []*regionCtx) error {
 // Limit limits the maximum number of regions returned.
 // If a region has no leader, corresponding leader will be placed by a peer
 // with empty value (PeerID is 0).
-func (rm *MockRegionManager) ScanRegions(startKey, endKey []byte, limit int) []*pdclient.Region {
+func (rm *MockRegionManager) ScanRegions(startKey, endKey []byte, limit int, _ ...pdclient.GetRegionOption) []*pdclient.Region {
 	rm.mu.RLock()
 	defer rm.mu.RUnlock()
 
@@ -722,8 +722,8 @@ func (pd *MockPD) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, 
 
 // GetRegion implements gRPC PDServer.
 func (pd *MockPD) GetRegion(ctx context.Context, key []byte, opts ...pdclient.GetRegionOption) (*pdclient.Region, error) {
-	r, p, b := pd.rm.GetRegionByKey(key)
-	return &pdclient.Region{Meta: r, Leader: p, Buckets: b}, nil
+	r, p, b, d := pd.rm.GetRegionByKey(key)
+	return &pdclient.Region{Meta: r, Leader: p, Buckets: b, DownPeers: d}, nil
 }
 
 // GetRegionByID implements gRPC PDServer.
@@ -854,8 +854,8 @@ func (pd *MockPD) GetAllStores(ctx context.Context, opts ...pdclient.GetStoreOpt
 // Limit limits the maximum number of regions returned.
 // If a region has no leader, corresponding leader will be placed by a peer
 // with empty value (PeerID is 0).
-func (pd *MockPD) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int) ([]*pdclient.Region, error) {
-	regions := pd.rm.ScanRegions(startKey, endKey, limit)
+func (pd *MockPD) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int, opts ...pdclient.GetRegionOption) ([]*pdclient.Region, error) {
+	regions := pd.rm.ScanRegions(startKey, endKey, limit, opts...)
 	return regions, nil
 }
 

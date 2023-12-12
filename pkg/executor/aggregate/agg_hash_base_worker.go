@@ -23,9 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
-// AggPartialResultMapper contains aggregate function results
-type AggPartialResultMapper map[string][]aggfuncs.PartialResult
-
 // baseHashAggWorker stores the common attributes of HashAggFinalWorker and HashAggPartialWorker.
 // nolint:structcheck
 type baseHashAggWorker struct {
@@ -52,7 +49,7 @@ func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggF
 	return baseWorker
 }
 
-func (w *baseHashAggWorker) getPartialResult(_ *stmtctx.StatementContext, groupKey [][]byte, mapper AggPartialResultMapper) [][]aggfuncs.PartialResult {
+func (w *baseHashAggWorker) getPartialResult(_ *stmtctx.StatementContext, groupKey [][]byte, mapper aggfuncs.AggPartialResultMapper) [][]aggfuncs.PartialResult {
 	n := len(groupKey)
 	partialResults := make([][]aggfuncs.PartialResult, n)
 	allMemDelta := int64(0)
@@ -84,7 +81,7 @@ func (w *baseHashAggWorker) getPartialResult(_ *stmtctx.StatementContext, groupK
 
 func (w *baseHashAggWorker) getPartialResultSliceLenConsiderByteAlign() int {
 	length := len(w.aggFuncs)
-	if len(w.aggFuncs) == 1 {
+	if length == 1 {
 		return 1
 	}
 	return length + length&1

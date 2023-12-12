@@ -21,11 +21,11 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/handle/globalstats"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
 )
 
 type globalStatsKey struct {
@@ -47,17 +47,15 @@ type globalStatsInfo struct {
 type globalStatsMap map[globalStatsKey]globalStatsInfo
 
 func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, globalStatsMap globalStatsMap) error {
-	globalStatsTableIDs := make(map[int64]int, len(globalStatsMap))
+	globalStatsTableIDs := make(map[int64]struct{}, len(globalStatsMap))
 	for globalStatsID := range globalStatsMap {
-		globalStatsTableIDs[globalStatsID.tableID]++
+		globalStatsTableIDs[globalStatsID.tableID] = struct{}{}
 	}
 
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	tableIDs := make(map[int64]struct{}, len(globalStatsTableIDs))
-	tableAllPartitionStats := make(map[int64]*statistics.Table)
-	for tableID, count := range globalStatsTableIDs {
+	for tableID := range globalStatsTableIDs {
 		tableIDs[tableID] = struct{}{}
-		maps.Clear(tableAllPartitionStats)
 		for globalStatsID, info := range globalStatsMap {
 			if globalStatsID.tableID != tableID {
 				continue
@@ -77,20 +75,12 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, globalStatsMap glob
 						globalOpts = v2Options.FilledOpts
 					}
 				}
-				var cache map[int64]*statistics.Table
-				if count > 1 {
-					cache = tableAllPartitionStats
-				} else {
-					cache = nil
-				}
-
-				globalStats, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(
+				globalStatsI, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(
 					e.Ctx(),
 					globalOpts, e.Ctx().GetInfoSchema().(infoschema.InfoSchema),
 					globalStatsID.tableID,
 					info.isIndex == 1,
 					info.histIDs,
-					cache,
 				)
 				if err != nil {
 					logutil.BgLogger().Warn("merge global stats failed",
@@ -101,6 +91,7 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, globalStatsMap glob
 					}
 					return err
 				}
+				globalStats := globalStatsI.(*globalstats.GlobalStats)
 				// Dump global-level stats to kv.
 				for i := 0; i < globalStats.Num; i++ {
 					hg, cms, topN := globalStats.Hg[i], globalStats.Cms[i], globalStats.TopN[i]
@@ -129,9 +120,6 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, globalStatsMap glob
 				return err
 			}()
 			FinishAnalyzeMergeJob(e.Ctx(), job, mergeStatsErr)
-		}
-		for _, value := range tableAllPartitionStats {
-			value.ReleaseAndPutToPool()
 		}
 	}
 

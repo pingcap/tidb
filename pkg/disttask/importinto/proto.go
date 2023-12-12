@@ -109,6 +109,8 @@ type MergeSortStepMeta struct {
 type WriteIngestStepMeta struct {
 	KVGroup               string `json:"kv-group"`
 	external.SortedKVMeta `json:"sorted-kv-meta"`
+	DataFiles             []string `json:"data-files"`
+	StatFiles             []string `json:"stat-files"`
 	RangeSplitKeys        [][]byte `json:"range-split-keys"`
 	RangeSplitSize        int64    `json:"range-split-size"`
 
@@ -160,7 +162,7 @@ func (sv *SharedVars) mergeIndexSummary(indexID int64, summary *external.WriterS
 }
 
 // importStepMinimalTask is the minimal task of IMPORT INTO.
-// Scheduler will split the subtask into minimal tasks(Chunks -> Chunk)
+// TaskExecutor will split the subtask into minimal tasks(Chunks -> Chunk)
 type importStepMinimalTask struct {
 	Plan       importer.Plan
 	Chunk      Chunk

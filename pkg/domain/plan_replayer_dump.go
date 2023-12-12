@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/printer"
@@ -773,7 +773,7 @@ func extractTableNames(ctx context.Context, sctx sessionctx.Context,
 	return tableExtractor.getTablesAndViews(), nil
 }
 
-func getStatsForTable(do *Domain, pair tableNamePair, historyStatsTS uint64) (*storage.JSONTable, []string, error) {
+func getStatsForTable(do *Domain, pair tableNamePair, historyStatsTS uint64) (*util.JSONTable, []string, error) {
 	is := do.InfoSchema()
 	h := do.StatsHandle()
 	tbl, err := is.TableByName(model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))

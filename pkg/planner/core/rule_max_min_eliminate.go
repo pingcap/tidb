@@ -73,7 +73,7 @@ func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression
 				// Since table path can contain accessConds of at most one column,
 				// we only need to check if all of the conditions can be pushed down as accessConds
 				// and `col` is the handle column.
-				if p.handleCols != nil && col.Equal(nil, p.handleCols.GetCol(0)) {
+				if p.handleCols != nil && col.EqualColumn(p.handleCols.GetCol(0)) {
 					if _, filterConds := ranger.DetachCondsForColumn(p.SCtx(), conditions, col); len(filterConds) != 0 {
 						return false
 					}
@@ -91,7 +91,7 @@ func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression
 					continue
 				}
 				for i := 0; i <= result.EqCondCount; i++ {
-					if i < len(indexCols) && col.Equal(nil, indexCols[i]) {
+					if i < len(indexCols) && col.EqualColumn(indexCols[i]) {
 						return true
 					}
 				}
@@ -155,7 +155,8 @@ func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation, 
 		newAgg := LogicalAggregation{AggFuncs: []*aggregation.AggFuncDesc{f}}.Init(agg.SCtx(), agg.SelectBlockOffset())
 		newAgg.SetChildren(a.cloneSubPlans(agg.children[0]))
 		newAgg.schema = expression.NewSchema(agg.schema.Columns[i])
-		if err := newAgg.PruneColumns([]*expression.Column{newAgg.schema.Columns[0]}, opt); err != nil {
+		// Since LogicalAggregation doesn’t use the parent LogicalPlan, passing an incorrect parameter here won’t affect subsequent optimizations.
+		if err := newAgg.PruneColumns([]*expression.Column{newAgg.schema.Columns[0]}, opt, newAgg); err != nil {
 			return nil, false
 		}
 		aggs = append(aggs, newAgg)

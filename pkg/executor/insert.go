@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -340,7 +341,7 @@ func (e *InsertExec) Open(ctx context.Context) error {
 		e.initEvalBuffer4Dup()
 	}
 	if e.SelectExec != nil {
-		return e.SelectExec.Open(ctx)
+		return exec.Open(ctx, e.SelectExec)
 	}
 	if !e.allAssignmentsAreConstant {
 		e.initEvalBuffer()
@@ -397,19 +398,20 @@ func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle kv.Handle, oldRo
 
 	// Update old row when the key is duplicated.
 	e.evalBuffer4Dup.SetDatums(e.row4Update...)
-	sc := e.Ctx().GetSessionVars().StmtCtx
+	sctx := e.Ctx()
+	sc := sctx.GetSessionVars().StmtCtx
 	warnCnt := int(sc.WarningCount())
 	for _, col := range cols {
 		if col.LazyErr != nil {
 			return col.LazyErr
 		}
-		val, err1 := col.Expr.Eval(e.evalBuffer4Dup.ToRow())
+		val, err1 := col.Expr.Eval(sctx, e.evalBuffer4Dup.ToRow())
 		if err1 != nil {
 			return err1
 		}
 		c := col.Col.ToInfo()
 		c.Name = col.ColName
-		e.row4Update[col.Col.Index], err1 = table.CastValue(e.Ctx(), val, c, false, false)
+		e.row4Update[col.Col.Index], err1 = table.CastValue(sctx, val, c, false, false)
 		if err1 != nil {
 			return err1
 		}

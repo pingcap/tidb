@@ -981,7 +981,7 @@ type ParamMarkerExpr interface {
 	SetOrder(int)
 }
 
-// ParenthesesExpr is the parentheses expression.
+// ParenthesesExpr is the parentheses' expression.
 type ParenthesesExpr struct {
 	exprNode
 	// Expr is the expression in parentheses.

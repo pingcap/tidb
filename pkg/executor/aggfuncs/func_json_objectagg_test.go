@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -205,7 +206,7 @@ func TestMemJsonObjectagg(t *testing.T) {
 	}
 }
 
-func jsonMultiArgsMemDeltaGens(srcChk *chunk.Chunk, dataTypes []*types.FieldType, byItems []*util.ByItems) (memDeltas []int64, err error) {
+func jsonMultiArgsMemDeltaGens(_ sessionctx.Context, srcChk *chunk.Chunk, dataTypes []*types.FieldType, byItems []*util.ByItems) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
 	m := make(map[string]bool)
 	for i := 0; i < srcChk.NumRows(); i++ {

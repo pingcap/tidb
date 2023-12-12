@@ -27,7 +27,6 @@ import (
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
-	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -38,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -65,6 +65,15 @@ func createTable(d *ddlCtx, t *meta.Meta, job *model.Job, fkCheck bool) (*model.
 		}
 		return tbInfo, errors.Trace(err)
 	}
+
+	err = checkConstraintNamesNotExists(t, schemaID, tbInfo.Constraints)
+	if err != nil {
+		if infoschema.ErrCheckConstraintDupName.Equal(err) {
+			job.State = model.JobStateCancelled
+		}
+		return tbInfo, errors.Trace(err)
+	}
+
 	retryable, err := checkTableForeignKeyValidInOwner(d, t, job, tbInfo, fkCheck)
 	if err != nil {
 		if !retryable {
@@ -171,7 +180,10 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
-	asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})
+	createTableEvent := statsutil.NewCreateTableEvent(
+		tbInfo,
+	)
+	asyncNotifyEvent(d, createTableEvent)
 	return ver, errors.Trace(err)
 }
 
@@ -242,7 +254,10 @@ func onCreateTables(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
 	job.BinlogInfo.SetTableInfos(ver, args)
 
 	for i := range args {
-		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateTable, TableInfo: args[i]})
+		createTableEvent := statsutil.NewCreateTableEvent(
+			args[i],
+		)
+		asyncNotifyEvent(d, createTableEvent)
 	}
 
 	return ver, errors.Trace(err)
@@ -318,7 +333,6 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
-		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateView, TableInfo: tbInfo})
 		return ver, nil
 	default:
 		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
@@ -388,10 +402,11 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		startKey := tablecodec.EncodeTablePrefix(job.TableID)
 		job.Args = append(job.Args, startKey, oldIDs, ruleIDs)
-		if tblInfo.IsSequence() {
-			asyncNotifyEvent(d, &util.Event{Tp: model.ActionDropSequence, TableInfo: tblInfo})
-		} else if !tblInfo.IsView() {
-			asyncNotifyEvent(d, &util.Event{Tp: model.ActionDropTable, TableInfo: tblInfo})
+		if !tblInfo.IsSequence() && !tblInfo.IsView() {
+			dropTableEvent := statsutil.NewDropTableEvent(
+				tblInfo,
+			)
+			asyncNotifyEvent(d, dropTableEvent)
 		}
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State))
@@ -625,8 +640,8 @@ func checkSafePoint(w *worker, snapshotTS uint64) error {
 	return gcutil.ValidateSnapshot(ctx, snapshotTS)
 }
 
-func getTable(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
-	allocs := autoid.NewAllocatorsFromTblInfo(store, schemaID, tblInfo)
+func getTable(r autoid.Requirement, schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
+	allocs := autoid.NewAllocatorsFromTblInfo(r, schemaID, tblInfo)
 	tbl, err := table.TableFromMeta(allocs, tblInfo)
 	return tbl, errors.Trace(err)
 }
@@ -706,6 +721,8 @@ func (w *worker) onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrTableNotExists.GenWithStackByArgs(job.SchemaName, tblInfo.Name.O)
 	}
+	// Copy the old tableInfo for later usage.
+	oldTblInfo := tblInfo.Clone()
 	err = checkTruncateTableHasForeignKeyReferredInOwner(d, t, job, tblInfo, fkCheck)
 	if err != nil {
 		return ver, err
@@ -830,7 +847,11 @@ func (w *worker) onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 		return ver, errors.Trace(err)
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-	asyncNotifyEvent(d, &util.Event{Tp: model.ActionTruncateTable, TableInfo: tblInfo})
+	truncateTableEvent := statsutil.NewTruncateTableEvent(
+		tblInfo,
+		oldTblInfo,
+	)
+	asyncNotifyEvent(d, truncateTableEvent)
 	startKey := tablecodec.EncodeTablePrefix(tableID)
 	job.Args = []interface{}{startKey, oldPartitionIDs}
 	return ver, nil
@@ -844,7 +865,7 @@ func onRebaseAutoRandomType(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64,
 	return onRebaseAutoID(d, d.store, t, job, autoid.AutoRandomType)
 }
 
-func onRebaseAutoID(d *ddlCtx, store kv.Storage, t *meta.Meta, job *model.Job, tp autoid.AllocatorType) (ver int64, _ error) {
+func onRebaseAutoID(d *ddlCtx, _ kv.Storage, t *meta.Meta, job *model.Job, tp autoid.AllocatorType) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	var (
 		newBase int64
@@ -867,7 +888,7 @@ func onRebaseAutoID(d *ddlCtx, store kv.Storage, t *meta.Meta, job *model.Job, t
 		return ver, errors.Trace(err)
 	}
 
-	tbl, err := getTable(store, schemaID, tblInfo)
+	tbl, err := getTable((*asAutoIDRequirement)(d), schemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -949,7 +970,7 @@ func (w *worker) onShardRowID(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int6
 	if shardRowIDBits < tblInfo.ShardRowIDBits {
 		tblInfo.ShardRowIDBits = shardRowIDBits
 	} else {
-		tbl, err := getTable(d.store, job.SchemaID, tblInfo)
+		tbl, err := getTable((*asAutoIDRequirement)(d), job.SchemaID, tblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -1051,7 +1072,6 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 		return finishJobRenameTables(d, t, job, tableNames, tableIDs, newSchemaIDs)
 	}
 
-	var tblInfos = make([]*model.TableInfo, 0, len(tableNames))
 	var err error
 	fkh := newForeignKeyHelper()
 	for i, oldSchemaID := range oldSchemaIDs {
@@ -1069,7 +1089,6 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		tblInfos = append(tblInfos, tblInfo)
 	}
 
 	ver, err = updateSchemaVersion(d, t, job, fkh.getLoadedTables()...)
@@ -1103,23 +1122,23 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo
 		return ver, errors.Wrapf(err, "failed to get old label rules from PD")
 	}
 
+	if tblInfo.AutoIDSchemaID == 0 && newSchemaID != oldSchemaID {
+		// The auto id is referenced by a schema id + table id
+		// Table ID is not changed between renames, but schema id can change.
+		// To allow concurrent use of the auto id during rename, keep the auto id
+		// by always reference it with the schema id it was originally created in.
+		tblInfo.AutoIDSchemaID = oldSchemaID
+	}
+	if newSchemaID == tblInfo.AutoIDSchemaID {
+		// Back to the original schema id, no longer needed.
+		tblInfo.AutoIDSchemaID = 0
+	}
+
 	tblInfo.Name = *tableName
 	err = t.CreateTableOrView(newSchemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
-	}
-
-	if newSchemaID != oldSchemaID {
-		oldDBID := tblInfo.GetDBID(oldSchemaID)
-		err := meta.BackupAndRestoreAutoIDs(t, oldDBID, tblInfo.ID, newSchemaID, tblInfo.ID)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
-		// It's compatible with old version.
-		// TODO: Remove it.
-		tblInfo.OldSchemaID = 0
 	}
 
 	err = updateLabelRules(job, tblInfo, oldRules, tableRuleID, partRuleIDs, oldRuleIDs, tblInfo.ID)
@@ -1476,6 +1495,28 @@ func checkTableNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, tableName stri
 	return checkTableNotExistsFromStore(t, schemaID, tableName)
 }
 
+func checkConstraintNamesNotExists(t *meta.Meta, schemaID int64, constraints []*model.ConstraintInfo) error {
+	if len(constraints) == 0 {
+		return nil
+	}
+	tbInfos, err := t.ListTables(schemaID)
+	if err != nil {
+		return err
+	}
+
+	for _, tb := range tbInfos {
+		for _, constraint := range constraints {
+			if constraint.State != model.StateWriteOnly {
+				if constraintInfo := tb.FindConstraintInfoByName(constraint.Name.L); constraintInfo != nil {
+					return infoschema.ErrCheckConstraintDupName.GenWithStackByArgs(constraint.Name.L)
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
 func checkTableIDNotExists(t *meta.Meta, schemaID, tableID int64) error {
 	tbl, err := t.GetTable(schemaID, tableID)
 	if err != nil {
@@ -1623,7 +1664,6 @@ func onRepairTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		asyncNotifyEvent(d, &util.Event{Tp: model.ActionRepairTable, TableInfo: tblInfo})
 		return ver, nil
 	default:
 		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State)

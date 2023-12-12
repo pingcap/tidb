@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	utilhint "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
@@ -173,15 +172,18 @@ type logicalOptRule interface {
 }
 
 // BuildLogicalPlanForTest builds a logical plan for testing purpose from ast.Node.
-func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node ast.Node, infoSchema infoschema.InfoSchema) (Plan, types.NameSlice, error) {
+func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node ast.Node, infoSchema infoschema.InfoSchema) (Plan, error) {
 	sctx.GetSessionVars().PlanID.Store(0)
 	sctx.GetSessionVars().PlanColumnID.Store(0)
 	builder, _ := NewPlanBuilder().Init(sctx, infoSchema, &utilhint.BlockHintProcessor{})
 	p, err := builder.Build(ctx, node)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return p, p.OutputNames(), err
+	if logic, ok := p.(LogicalPlan); ok {
+		RecheckCTE(logic)
+	}
+	return p, err
 }
 
 // CheckPrivilege checks the privilege for a user.
@@ -300,8 +302,15 @@ func checkStableResultMode(sctx sessionctx.Context) bool {
 	return s.EnableStableResultMode && (!st.InInsertStmt && !st.InUpdateStmt && !st.InDeleteStmt && !st.InLoadDataStmt)
 }
 
-// DoOptimizeAndLogicAsRet optimizes a logical plan to a physical plan and return the optimized logical plan.
-func DoOptimizeAndLogicAsRet(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (LogicalPlan, PhysicalPlan, float64, error) {
+// doOptimize optimizes a logical plan into a physical plan,
+// while also returning the optimized logical plan, the final physical plan, and the cost of the final plan.
+// The returned logical plan is necessary for generating plans for Common Table Expressions (CTEs).
+func doOptimize(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	flag uint64,
+	logic LogicalPlan,
+) (LogicalPlan, PhysicalPlan, float64, error) {
 	sessVars := sctx.GetSessionVars()
 	// if there is something after flagPrunColumns, do flagPrunColumnsAgain
 	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
@@ -347,13 +356,18 @@ func DoOptimizeAndLogicAsRet(ctx context.Context, sctx sessionctx.Context, flag 
 }
 
 // DoOptimize optimizes a logical plan to a physical plan.
-func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (PhysicalPlan, float64, error) {
+func DoOptimize(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	flag uint64,
+	logic LogicalPlan,
+) (PhysicalPlan, float64, error) {
 	sessVars := sctx.GetSessionVars()
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer debugtrace.LeaveContextCommon(sctx)
 	}
-	_, finalPlan, cost, err := DoOptimizeAndLogicAsRet(ctx, sctx, flag, logic)
+	_, finalPlan, cost, err := doOptimize(ctx, sctx, flag, logic)
 	return finalPlan, cost, err
 }
 
@@ -504,12 +518,12 @@ func (p *PhysicalHashJoin) extractUsedCols(parentUsedCols []*expression.Column) 
 
 func prunePhysicalColumnForHashJoinChild(sctx sessionctx.Context, hashJoin *PhysicalHashJoin, joinUsedCols []*expression.Column, sender *PhysicalExchangeSender) error {
 	var err error
-	joinUsed := expression.GetUsedList(joinUsedCols, sender.Schema())
+	joinUsed := expression.GetUsedList(sctx, joinUsedCols, sender.Schema())
 	hashCols := make([]*expression.Column, len(sender.HashCols))
 	for i, mppCol := range sender.HashCols {
 		hashCols[i] = mppCol.Col
 	}
-	hashUsed := expression.GetUsedList(hashCols, sender.Schema())
+	hashUsed := expression.GetUsedList(sctx, hashCols, sender.Schema())
 
 	needPrune := false
 	usedExprs := make([]expression.Expression, len(sender.Schema().Columns))
@@ -825,7 +839,7 @@ func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx s
 		if row[4].GetString() == "cpu-logical-cores" {
 			logicalCpus, err := strconv.Atoi(row[5].GetString())
 			if err == nil && logicalCpus > 0 {
-				minLogicalCores = mathutil.Min(minLogicalCores, uint64(logicalCpus))
+				minLogicalCores = min(minLogicalCores, uint64(logicalCpus))
 			}
 		}
 	}

@@ -15,7 +15,6 @@ package model
 
 import (
 	"bytes"
-	"cmp"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -494,9 +493,9 @@ type TableInfo struct {
 	// Because auto increment ID has schemaID as prefix,
 	// We need to save original schemaID to keep autoID unchanged
 	// while renaming a table from one database to another.
-	// TODO: Remove it.
-	// Now it only uses for compatibility with the old version that already uses this field.
-	OldSchemaID int64 `json:"old_schema_id,omitempty"`
+	// Only set if table has been renamed across schemas
+	// Old name 'old_schema_id' is kept for backwards compatibility
+	AutoIDSchemaID int64 `json:"old_schema_id,omitempty"`
 
 	// ShardRowIDBits specify if the implicit row ID is sharded.
 	ShardRowIDBits uint64
@@ -719,11 +718,10 @@ func (t *TableInfo) GetUpdateTime() time.Time {
 	return TSConvert2Time(t.UpdateTS)
 }
 
-// GetDBID returns the schema ID that is used to create an allocator.
-// TODO: Remove it after removing OldSchemaID.
-func (t *TableInfo) GetDBID(dbID int64) int64 {
-	if t.OldSchemaID != 0 {
-		return t.OldSchemaID
+// GetAutoIDSchemaID returns the schema ID that was used to create an allocator.
+func (t *TableInfo) GetAutoIDSchemaID(dbID int64) int64 {
+	if t.AutoIDSchemaID != 0 {
+		return t.AutoIDSchemaID
 	}
 	return dbID
 }
@@ -1710,7 +1708,7 @@ func (db *DBInfo) Copy() *DBInfo {
 
 // LessDBInfo is used for sorting DBInfo by DBInfo.Name.
 func LessDBInfo(a *DBInfo, b *DBInfo) int {
-	return cmp.Compare(a.Name.L, b.Name.L)
+	return strings.Compare(a.Name.L, b.Name.L)
 }
 
 // CIStr is case insensitive string.
@@ -2079,8 +2077,8 @@ func (p *ResourceGroupSettings) String() string {
 
 // Adjust adjusts the resource group settings.
 func (p *ResourceGroupSettings) Adjust() {
-	// Curretly we only support ru_per_sec sytanx, so BurstLimit(capicity) is always same as ru_per_sec.
-	if p.BurstLimit == 0 {
+	// Curretly we only support ru_per_sec sytanx, so BurstLimit(capicity) is always same as ru_per_sec except burstable.
+	if p.BurstLimit >= 0 {
 		p.BurstLimit = int64(p.RURate)
 	}
 }
