@@ -1,3 +1,17 @@
+// Copyright 2023 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package storage
 
 import (
@@ -13,29 +27,20 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/go-resty/resty/v2"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 )
 
 const (
 	uploadPartTryCnt   = 3 // if uploading a part fails, we should try 3 times in total.
-	MPUInitiateQuery   = "uploads"
-	MPUPartNumberQuery = "partNumber"
-	MPUUploadIDQuery   = "uploadId"
+	mpuInitiateQuery   = "uploads"
+	mpuPartNumberQuery = "partNumber"
+	mpuUploadIDQuery   = "uploadId"
 
-	defaultChunkSize       = 5 * 1024 * 1024 // 5 MB
-	defaultRetry           = 3               // 建议默认3~5次，不要太大，否则将可能会导致成为僵尸任务。
 	defaultSignedURLExpiry = 15 * time.Minute
 )
 
-type XMLMPU struct {
-	cli             *storage.Client
-	bucket          string
-	uri             string
-	retry           int
-	signedURLExpiry time.Duration
-	uploadID        string
-}
-
+// InitiateMultipartUploadResult is the result of initiating a multipart upload.
 type InitiateMultipartUploadResult struct {
 	XMLName  xml.Name `xml:"InitiateMultipartUploadResult"`
 	Text     string   `xml:",chardata"`
@@ -61,57 +66,46 @@ type GCSWriter struct {
 	currentWorker *uploadWorker // the worker who is buffering the data. Once the buffer is full,
 	// the data will be uploaded as a part.
 	idleWorkers chan *uploadWorker
-	m           *XMLMPU
+	cli         *storage.Client
 }
 
-func (m *XMLMPU) InitiateXMLMPU() error {
+func InitAndGetUploadID(cli *storage.Client, bucket, uri string) (string, error) {
 	opts := &storage.SignedURLOptions{
 		Scheme:          storage.SigningSchemeV4,
 		Method:          "POST",
-		Expires:         time.Now().Add(m.signedURLExpiry),
-		QueryParameters: url.Values{MPUInitiateQuery: []string{""}},
+		Expires:         time.Now().Add(defaultSignedURLExpiry),
+		QueryParameters: url.Values{mpuInitiateQuery: []string{""}},
 	}
-	u, err := m.cli.Bucket(m.bucket).SignedURL(m.uri, opts)
+	u, err := cli.Bucket(bucket).SignedURL(uri, opts)
 	if err != nil {
-		return fmt.Errorf("Bucket(%q).SignedURL: %s", m.bucket, err)
+		return "", errors.Errorf("Bucket(%q).SignedURL: %s", bucket, err)
 	}
 
 	client := resty.New()
 	resp, err := client.R().Post(u)
 	if err != nil {
-		return fmt.Errorf("POST request failed: %s", err)
+		return "", errors.Errorf("POST request failed: %s", err)
 	}
 
 	if resp.StatusCode() != http.StatusOK {
-		return fmt.Errorf("POST request returned non-OK status: %d", resp.StatusCode())
+		return "", errors.Errorf("POST request returned non-OK status: %d", resp.StatusCode())
 	}
 	body := resp.Body()
 
 	result := InitiateMultipartUploadResult{}
 	err = xml.Unmarshal(body, &result)
 	if err != nil {
-		return fmt.Errorf("failed to unmarshal response body: %s", err)
+		return "", errors.Errorf("failed to unmarshal response body: %s", err)
 	}
 
-	uploadID := result.UploadId
-	m.uploadID = uploadID
-	return nil
+	return result.UploadId, nil
 }
 
 // NewGCSWriter returns a GCSWriter which uses GCS multipart upload API behind the scene.
 func NewGCSWriter(ctx context.Context, cli *storage.Client, uri string, partSize int, parallelCnt int, bucketName string) (*GCSWriter, error) {
-	// multipart upload protocol: go/gcs-pb-multipart-upload#performing-a-multipart-upload
-	m := XMLMPU{
-		cli:             cli,
-		retry:           defaultRetry,
-		uri:             uri,
-		signedURLExpiry: defaultSignedURLExpiry,
-		bucket:          bucketName,
-	}
-	err := m.InitiateXMLMPU()
+	uploadID, err := InitAndGetUploadID(cli, bucketName, uri)
 	if err != nil {
-		err = fmt.Errorf("Failed to initiate XMLMPU: %s", err)
-		return nil, err
+		return nil, errors.Errorf("Failed to initiate and get upload ID: %s", err)
 	}
 
 	w := &GCSWriter{
@@ -123,11 +117,12 @@ func NewGCSWriter(ctx context.Context, cli *storage.Client, uri string, partSize
 		workers:       make([]*uploadWorker, parallelCnt),
 		currentWorker: nil,
 		idleWorkers:   make(chan *uploadWorker, parallelCnt),
-		m:             &m,
+		uploadID:      uploadID,
+		cli:           cli,
 	}
 
 	for i := 0; i < parallelCnt; i++ {
-		w.workers[i] = newUploadWorker(cli, uri, bucketName, m.uploadID, i, partSize, w.idleWorkers)
+		w.workers[i] = newUploadWorker(cli, uri, bucketName, w.uploadID, i, partSize, w.idleWorkers)
 		w.idleWorkers <- w.workers[i]
 	}
 
@@ -163,7 +158,10 @@ func (w *GCSWriter) Write(p []byte) (n int, err error) {
 func (w *GCSWriter) Close() error {
 	if w.currentWorker != nil {
 		// uploads the last part, which is not a full part
-		w.currentWorker.uploadPartAsync()
+		err := w.currentWorker.uploadPartAsync()
+		if err != nil {
+			return err
+		}
 	}
 
 	for i := 0; i < w.parallelCnt; i++ {
@@ -189,11 +187,11 @@ func (w *GCSWriter) partNum() int {
 func (w *GCSWriter) completeMultipartUpload(parts map[int]objectPart) error {
 	bodyXML, err := buildCompleteMultipartUploadXML(parts)
 	if err != nil {
-		return fmt.Errorf("failed to build complete multipart upload XML for %v, err: %w", w.objURI, err)
+		return errors.Errorf("failed to build complete multipart upload XML for %v, err: %w", w.objURI, err)
 	}
 
 	values := url.Values{}
-	values.Add(MPUUploadIDQuery, w.m.uploadID)
+	values.Add(mpuUploadIDQuery, w.uploadID)
 	opts := &storage.SignedURLOptions{
 		Scheme:  storage.SigningSchemeV4,
 		Method:  "POST",
@@ -201,22 +199,19 @@ func (w *GCSWriter) completeMultipartUpload(parts map[int]objectPart) error {
 		//ContentType:     "application/xml",
 		QueryParameters: values,
 	}
-	u, err := w.m.cli.Bucket(w.m.bucket).SignedURL(w.objURI, opts)
+	u, err := w.cli.Bucket(w.bucketName).SignedURL(w.objURI, opts)
 	if err != nil {
-		err = fmt.Errorf("Bucket(%q).SignedURL: %s", w.m.bucket, err)
-		return err
+		return errors.Errorf("Bucket(%q).SignedURL: %s", w.bucketName, err)
 	}
 
 	client := resty.New()
 	resp, err := client.R().SetBody(bodyXML).Post(u)
 	if err != nil {
-		err = fmt.Errorf("POST request failed: %s", err)
-		return err
+		return errors.Errorf("POST request failed: %s", err)
 	}
 
 	if resp.StatusCode() != http.StatusOK {
-		err = fmt.Errorf("POST request returned non-OK status: %d", resp.StatusCode())
-		return err
+		return errors.Errorf("POST request returned non-OK status: %d", resp.StatusCode())
 	}
 
 	return nil
@@ -238,7 +233,7 @@ func buildCompleteMultipartUploadXML(parts map[int]objectPart) (string, error) {
 		if ok {
 			upload.Parts = append(upload.Parts, part)
 		} else {
-			return "", fmt.Errorf("part %v not contained in parts", partNum)
+			return "", errors.Errorf("part %v not contained in parts", partNum)
 		}
 	}
 
@@ -299,14 +294,14 @@ func (uw *uploadWorker) full() bool {
 
 func (uw *uploadWorker) uploadPartAsync() error {
 	if uw.err != nil && uw.tryCnt >= uploadPartTryCnt {
-		return fmt.Errorf("failed to upload part %v too many times, err: %w", uw.index, uw.err)
+		return errors.Errorf("failed to upload part %v too many times, err: %w", uw.index, uw.err)
 	}
 	go func() {
 		err := uw.uploadPart(uw.currentPartNumber, uw.buffer[:uw.offset]) // timeout in few seconds
 		if err != nil {
 			uw.err = err
 			uw.tryCnt++
-			log.Error(fmt.Sprintf("upload worker %v failed to upload part %v for object %v, tryCnt: %v, err: %v", uw.index, uw.currentPartNumber, uw.uri, uw.tryCnt, err))
+			log.Warn(fmt.Sprintf("upload worker %v failed to upload part %v for object %v, tryCnt: %v, err: %v", uw.index, uw.currentPartNumber, uw.uri, uw.tryCnt, err))
 		} else {
 			// Upload succeeded. Reset
 			uw.offset = 0
@@ -330,26 +325,26 @@ func (uw *uploadWorker) uploadPart(partNumber int, data []byte) error {
 		Method:  "PUT",
 		Expires: time.Now().Add(defaultSignedURLExpiry),
 		QueryParameters: url.Values{
-			MPUUploadIDQuery:   []string{uw.uploadID},
-			MPUPartNumberQuery: []string{strconv.Itoa(partNumber)},
+			mpuUploadIDQuery:   []string{uw.uploadID},
+			mpuPartNumberQuery: []string{strconv.Itoa(partNumber)},
 		},
 	}
 
 	u, err := uw.cli.Bucket(uw.bucketName).SignedURL(uw.uri, opts)
 	if err != nil {
-		return fmt.Errorf("Bucket(%q).SignedURL: %s", uw.bucketName, err)
+		return errors.Errorf("Bucket(%q).SignedURL: %s", uw.bucketName, err)
 	}
 
 	client := resty.New()
 	resp, err := client.R().SetBody(bytes.NewReader(data)).Put(u) // Set payload as request body
 	if err != nil {
-		return fmt.Errorf("PUT request failed: %s", err)
+		return errors.Errorf("PUT request failed: %s", err)
 	}
 
 	etag := resp.Header().Get("ETag")
 
 	if resp.StatusCode() != http.StatusOK {
-		return fmt.Errorf("PUT request returned non-OK status: %d", resp.StatusCode())
+		return errors.Errorf("PUT request returned non-OK status: %d", resp.StatusCode())
 	}
 
 	uw.parts[partNumber] = objectPart{PartNumber: partNumber, ETag: etag}
