@@ -346,6 +346,84 @@ func TestTruncateAPartition(t *testing.T) {
 	require.NotEqual(t, version, rows[0][0].(string))
 }
 
+func TestTruncatePartitions(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := do.StatsHandle()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec(`
+		create table t (
+			a int,
+			b int,
+			primary key(a),
+			index idx(b)
+		)
+		partition by range (a) (
+			partition p0 values less than (6),
+			partition p1 values less than (11),
+			partition p2 values less than (16),
+			partition p3 values less than (21)
+		)
+	`)
+	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
+	testKit.MustExec("analyze table t")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(
+		model.NewCIStr("test"), model.NewCIStr("t"),
+	)
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	pi := tableInfo.GetPartitionInfo()
+	for _, def := range pi.Definitions {
+		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		require.False(t, statsTbl.Pseudo)
+	}
+	err = h.Update(is)
+	require.NoError(t, err)
+
+	// Get partition p0 and p1's stats update version.
+	partitionP0ID := pi.Definitions[0].ID
+	partitionP1ID := pi.Definitions[1].ID
+	// Get it from stats_meat first.
+	rows := testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id in (?, ?)", partitionP0ID, partitionP1ID,
+	).Rows()
+	require.Len(t, rows, 2)
+	versionP0 := rows[0][0].(string)
+	versionP1 := rows[1][0].(string)
+
+	// Truncate two partitions.
+	testKit.MustExec("alter table t truncate partition p0, p1")
+	// Find the truncate partition event.
+	var truncatePartitionEvent *util.DDLEvent
+	for {
+		event := <-h.DDLEventCh()
+		if event.GetType() == model.ActionTruncateTablePartition {
+			truncatePartitionEvent = event
+			break
+		}
+	}
+	err = h.HandleDDLEvent(truncatePartitionEvent)
+	require.NoError(t, err)
+	// Check global stats meta.
+	// Because we have truncated a partition, the count should be 5 - 2 - 1  = 2 and the modify count should be 3.
+	testKit.MustQuery(
+		"select count, modify_count from mysql.stats_meta where table_id = ?", tableInfo.ID,
+	).Check(
+		testkit.Rows("2 3"),
+	)
+
+	// Check the version again.
+	rows = testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id in (?, ?)", partitionP0ID, partitionP1ID,
+	).Rows()
+	require.Len(t, rows, 2)
+	// Version gets updated after truncate the partition.
+	require.NotEqual(t, versionP0, rows[0][0].(string))
+	require.NotEqual(t, versionP1, rows[1][0].(string))
+}
+
 func TestDropAPartition(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
