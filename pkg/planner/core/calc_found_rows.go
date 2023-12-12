@@ -22,8 +22,7 @@ type calcFoundRowsPlacementChecker struct {
 }
 
 func (checker *calcFoundRowsPlacementChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	switch node := in.(type) {
-	case *ast.SelectStmt:
+	if node, ok := in.(*ast.SelectStmt); ok {
 		checker.currentSelectOffset++
 		if node.SelectStmtOpts != nil && node.SelectStmtOpts.CalcFoundRows {
 			checker.hasCalcFoundRows = true
