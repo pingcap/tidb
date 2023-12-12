@@ -1154,7 +1154,7 @@ func getChunkCompressedSizeForParquet(
 			columnChunkSize := columnChunk.MetaData.GetTotalCompressedSize()
 			rowGroupSize += columnChunkSize
 		}
-		maxRowGroupSize = max(maxRowGroupSize, rowGroupSize)
+		maxRowGroupSize = mathutil.Max(maxRowGroupSize, rowGroupSize)
 	}
 	return maxRowGroupSize, nil
 }
