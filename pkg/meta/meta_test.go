@@ -269,6 +269,9 @@ func TestMeta(t *testing.T) {
 	err = m.CreateTableOrView(1, tbInfo2)
 	require.NoError(t, err)
 
+	tableNames, err := m.ListSimpleTables(1)
+	require.NoError(t, err)
+	require.Equal(t, []*model.TableNameInfo{{tbInfo.ID, tbInfo.Name}, {tbInfo2.ID, tbInfo2.Name}}, tableNames)
 	tables, err := m.ListTables(1)
 	require.NoError(t, err)
 	require.Equal(t, []*model.TableInfo{tbInfo, tbInfo2}, tables)
@@ -304,6 +307,9 @@ func TestMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(0), n)
 
+	tableNames, err = m.ListSimpleTables(1)
+	require.NoError(t, err)
+	require.Equal(t, []*model.TableNameInfo{{tbInfo.ID, tbInfo.Name}}, tableNames)
 	tables, err = m.ListTables(1)
 	require.NoError(t, err)
 	require.Equal(t, []*model.TableInfo{tbInfo}, tables)
