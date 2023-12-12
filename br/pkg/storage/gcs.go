@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"net/http"
 	"os"
 	"path"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
+	htransport "google.golang.org/api/transport/http"
 )
 
 const (
@@ -323,12 +325,25 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 	if gcs.Endpoint != "" {
 		clientOps = append(clientOps, option.WithEndpoint(gcs.Endpoint))
 	}
-	// the HTTPClient should has credential, currently the HTTPClient only has the http.Transport.
-	// So we remove the HTTPClient in the storage.New().
-	// Issue: https: //github.com/pingcap/tidb/issues/47022
-	if opts.HTTPClient != nil {
-		clientOps = append(clientOps, option.WithHTTPClient(opts.HTTPClient))
+
+	httpClient := opts.HTTPClient
+	if httpClient == nil {
+		// http2 will reuse the connection to read multiple files, which is
+		// very slow, the speed is about the same speed as reading a single file.
+		// So we disable keepalive here to use multiple connections to read files.
+		// open a new connection takes about 20~50ms, which is acceptable.
+		transport, _ := CloneDefaultHttpTransport()
+		transport.DisableKeepAlives = true
+		httpClient = &http.Client{Transport: transport}
+		// see https://github.com/pingcap/tidb/issues/47022#issuecomment-1722913455
+		var err error
+		httpClient.Transport, err = htransport.NewTransport(ctx, httpClient.Transport, clientOps...)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
+	clientOps = append(clientOps, option.WithHTTPClient(httpClient))
+
 	client, err := storage.NewClient(ctx, clientOps...)
 	if err != nil {
 		return nil, errors.Trace(err)

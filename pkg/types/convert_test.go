@@ -864,7 +864,7 @@ func TestGetValidInt(t *testing.T) {
 		{"123de", "123", true, true},
 	}
 	warnings := &warnStore{}
-	ctx := NewContext(DefaultStmtFlags.WithTruncateAsWarning(true), time.UTC, warnings.AppendWarning)
+	ctx := NewContext(DefaultStmtFlags.WithTruncateAsWarning(true), time.UTC, warnings)
 	warningCount := 0
 	for i, tt := range tests {
 		prefix, err := getValidIntPrefix(ctx, tt.origin, false)

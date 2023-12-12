@@ -638,7 +638,7 @@ func TestProduceDecWithSpecifiedTp(t *testing.T) {
 		{"-99.9999", 6, 3, "-100.000", false, true},
 	}
 	warnings := &warnStore{}
-	ctx := NewContext(DefaultStmtFlags, time.UTC, warnings.AppendWarning)
+	ctx := NewContext(DefaultStmtFlags, time.UTC, warnings)
 	for _, tt := range tests {
 		tp := NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlen(tt.flen).SetDecimal(tt.frac).BuildP()
 		dec := NewDecFromStringForTest(tt.dec)

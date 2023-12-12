@@ -94,6 +94,8 @@ type Engine struct {
 	importedKVCount *atomic.Int64
 }
 
+const memLimit = 16 * 1024 * 1024 * 1024
+
 // NewExternalEngine creates an (external) engine.
 func NewExternalEngine(
 	storage storage.ExternalStorage,
@@ -113,15 +115,20 @@ func NewExternalEngine(
 	totalKVCount int64,
 	checkHotspot bool,
 ) common.Engine {
+	memLimiter := membuf.NewLimiter(memLimit)
 	return &Engine{
-		storage:            storage,
-		dataFiles:          dataFiles,
-		statsFiles:         statsFiles,
-		startKey:           startKey,
-		endKey:             endKey,
-		splitKeys:          splitKeys,
-		regionSplitSize:    regionSplitSize,
-		bufPool:            membuf.NewPool(),
+		storage:         storage,
+		dataFiles:       dataFiles,
+		statsFiles:      statsFiles,
+		startKey:        startKey,
+		endKey:          endKey,
+		splitKeys:       splitKeys,
+		regionSplitSize: regionSplitSize,
+		bufPool: membuf.NewPool(
+			membuf.WithBlockNum(0),
+			membuf.WithPoolMemoryLimiter(memLimiter),
+			membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
+		),
 		checkHotspot:       checkHotspot,
 		keyAdapter:         keyAdapter,
 		duplicateDetection: duplicateDetection,
@@ -170,7 +177,12 @@ func (e *Engine) getAdjustedConcurrency() int {
 	return max(adjusted, 1)
 }
 
-func getFilesReadConcurrency(ctx context.Context, storage storage.ExternalStorage, statsFiles []string, startKey, endKey []byte) ([]uint64, []uint64, error) {
+func getFilesReadConcurrency(
+	ctx context.Context,
+	storage storage.ExternalStorage,
+	statsFiles []string,
+	startKey, endKey []byte,
+) ([]uint64, []uint64, error) {
 	result := make([]uint64, len(statsFiles))
 	startOffs, err := seekPropsOffsets(ctx, startKey, statsFiles, storage, false)
 	if err != nil {
@@ -182,17 +194,33 @@ func getFilesReadConcurrency(ctx context.Context, storage storage.ExternalStorag
 	}
 	for i := range statsFiles {
 		result[i] = (endOffs[i] - startOffs[i]) / uint64(ConcurrentReaderBufferSizePerConc)
-		if result[i] < 16 {
-			result[i] = 1
-		} else {
-			logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
-				zap.String("filename", statsFiles[i]),
-			)
-		}
+		result[i] = max(result[i], 1)
+		logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
+			zap.String("filename", statsFiles[i]),
+			zap.Uint64("startOffset", startOffs[i]),
+			zap.Uint64("endOffset", endOffs[i]),
+			zap.Uint64("expected concurrency", result[i]),
+		)
 	}
 	return result, startOffs, nil
 }
 
+// readOneFile will acquire memory from given bufPool for:
+//   - if `concurrency` > 1, it will acquire one `concurrency`*ConcurrentReaderBufferSizePerConc
+//     memory block. This part will be release when exit this function.
+//   - all data in the given range will be read into `output` saved in memory block,
+//     and will be released when `output` is in caller. Note that if memory block
+//     is large, it has a large overhead.
+//
+// In conclusion, the peak memory usage of this function is:
+//
+//	blockSize must be larger than `concurrency`*ConcurrentReaderBufferSizePerConc
+//	peakMemoryUsage = blockSize * (1 + ceil(dataSize / blockSize))
+//
+// the memory usage after the function returns is:
+//
+//	blockSize must be larger than `concurrency`*ConcurrentReaderBufferSizePerConc
+//	memoryUsage = blockSize * ceil(dataSize / blockSize)
 func readOneFile(
 	ctx context.Context,
 	storage storage.ExternalStorage,
@@ -216,7 +244,7 @@ func readOneFile(
 		rd.byteReader.enableConcurrentRead(
 			storage,
 			dataFile,
-			int(concurrency)*2,
+			int(concurrency),
 			ConcurrentReaderBufferSizePerConc,
 			bufPool.NewBuffer(),
 		)
@@ -288,6 +316,13 @@ func readAllData(
 		startKey,
 		endKey,
 	)
+	// TODO(lance6716): refine adjust concurrency
+	for i, c := range concurrences {
+		if c < readAllDataConcThreshold {
+			concurrences[i] = 1
+		}
+	}
+
 	if err != nil {
 		return err
 	}
@@ -364,9 +399,11 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 	readRateHist.Observe(float64(size) / 1024.0 / 1024.0 / readSecond)
 	sortRateHist.Observe(float64(size) / 1024.0 / 1024.0 / sortSecond)
 
-	newBuf := make([]*membuf.Buffer, 0, len(e.memKVsAndBuffers.memKVBuffers))
-	copy(newBuf, e.memKVsAndBuffers.memKVBuffers)
-	data := e.buildIngestData(e.memKVsAndBuffers.keys, e.memKVsAndBuffers.values, newBuf)
+	data := e.buildIngestData(
+		e.memKVsAndBuffers.keys,
+		e.memKVsAndBuffers.values,
+		e.memKVsAndBuffers.memKVBuffers,
+	)
 
 	// release the reference of e.memKVsAndBuffers
 	e.memKVsAndBuffers.keys = nil
@@ -524,7 +561,10 @@ func (e *Engine) Close() error {
 func (e *Engine) Reset() error {
 	if e.bufPool != nil {
 		e.bufPool.Destroy()
-		e.bufPool = membuf.NewPool()
+		memLimiter := membuf.NewLimiter(memLimit)
+		e.bufPool = membuf.NewPool(
+			membuf.WithPoolMemoryLimiter(memLimiter),
+		)
 	}
 	return nil
 }
