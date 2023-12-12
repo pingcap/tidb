@@ -3,9 +3,9 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "scheduler",
     srcs = [
+        "interface.go",
         "scheduler.go",
         "scheduler_manager.go",
-        "interface.go",
         "slots.go",
         "state_transform.go",
     ],
@@ -35,10 +35,10 @@ go_test(
     name = "scheduler_test",
     timeout = "short",
     srcs = [
-        "scheduler_manager_test.go",
-        "scheduler_test.go",
         "main_test.go",
         "rebalance_test.go",
+        "scheduler_manager_test.go",
+        "scheduler_test.go",
         "slots_test.go",
     ],
     embed = [":scheduler"],
@@ -46,9 +46,9 @@ go_test(
     race = "off",
     shard_count = 22,
     deps = [
-        "//pkg/disttask/framework/scheduler/mock",
         "//pkg/disttask/framework/mock",
         "//pkg/disttask/framework/proto",
+        "//pkg/disttask/framework/scheduler/mock",
         "//pkg/disttask/framework/storage",
         "//pkg/disttask/framework/testutil",
         "//pkg/domain/infosync",
