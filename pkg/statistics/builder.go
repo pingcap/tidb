@@ -753,41 +753,50 @@ func pruneTopNItem(topns []TopNMeta, ndv, nullCount, sampleRows, totalRows int64
 	}
 	topNNum := len(topns)
 	for topNNum > 0 {
-		// Selectivity for the ones not in the top-n list.
-		// (1 - things in top-n list - null) / remained ndv.
-		selectivity := 1.0 - float64(sumCount)/float64(sampleRows) - float64(nullCount)/float64(totalRows)
-		if selectivity < 0.0 {
-			selectivity = 0
-		}
-		if selectivity > 1 {
-			selectivity = 1
-		}
-		otherNDV := float64(ndv) - (float64(topNNum) - 1)
-		if otherNDV > 1 {
-			selectivity /= otherNDV
-		}
-		totalRowsN := float64(totalRows)
-		n := float64(sampleRows)
-		k := totalRowsN * float64(topns[topNNum-1].Count) / n
-		// Since we are sampling without replacement. The distribution would be a hypergeometric distribution.
-		// Thus the variance is the following formula.
-		variance := n * k * (totalRowsN - k) * (totalRowsN - n) / (totalRowsN * totalRowsN * (totalRowsN - 1))
-		stddev := math.Sqrt(variance)
-		// We choose the bound that plus two stddev of the sample frequency, plus an additional 0.5 for the continuity correction.
-		//   Note:
-		//  	The mean + 2 * stddev is known as Wald confidence interval, plus 0.5 would be continuity-corrected Wald interval
-		if float64(topns[topNNum-1].Count) > selectivity*n+2*stddev+0.5 {
-			// Estimated selectivity of this item in the TopN is significantly higher than values not in TopN.
-			// So this value, and all other values in the TopN (selectivity of which is higher than this value) are
-			// worth being remained in the TopN list, and we stop pruning now.
+		var brk bool
+		sumCount, brk = deal(sumCount, ndv, nullCount, sampleRows, totalRows, &topNNum, &topns[topNNum-1])
+		if brk {
 			break
 		}
-		// Current one is not worth storing, remove it and subtract it from sumCount, go to next one.
-		topNNum--
-		if topNNum == 0 {
-			break
-		}
-		sumCount -= topns[topNNum-1].Count
 	}
 	return topns[:topNNum]
+}
+
+func deal(sumCount uint64, ndv, nullCount, sampleRows, totalRows int64, topNNum *int, topn *TopNMeta) (result uint64, brk bool) {
+	// Selectivity for the ones not in the top-n list.
+	// (1 - things in top-n list - null) / remained ndv.
+	selectivity := 1.0 - float64(sumCount)/float64(sampleRows) - float64(nullCount)/float64(totalRows)
+	if selectivity < 0.0 {
+		selectivity = 0
+	}
+	if selectivity > 1 {
+		selectivity = 1
+	}
+	otherNDV := float64(ndv) - (float64(*topNNum) - 1)
+	if otherNDV > 1 {
+		*selectivity /= otherNDV
+	}
+	totalRowsN := float64(totalRows)
+	n := float64(sampleRows)
+	k := totalRowsN * float64(topn.Count) / n
+	// Since we are sampling without replacement. The distribution would be a hypergeometric distribution.
+	// Thus the variance is the following formula.
+	variance := n * k * (totalRowsN - k) * (totalRowsN - n) / (totalRowsN * totalRowsN * (totalRowsN - 1))
+	stddev := math.Sqrt(variance)
+	// We choose the bound that plus two stddev of the sample frequency, plus an additional 0.5 for the continuity correction.
+	//   Note:
+	//  	The mean + 2 * stddev is known as Wald confidence interval, plus 0.5 would be continuity-corrected Wald interval
+	if float64(topn.Count) > selectivity*n+2*stddev+0.5 {
+		// Estimated selectivity of this item in the TopN is significantly higher than values not in TopN.
+		// So this value, and all other values in the TopN (selectivity of which is higher than this value) are
+		// worth being remained in the TopN list, and we stop pruning now.
+		return sumCount, true
+	}
+	// Current one is not worth storing, remove it and subtract it from sumCount, go to next one.
+	(*topNNum)--
+	if (*topNNum) == 0 {
+		return sumCount, true
+	}
+	sumCount -= topn.Count
+	return sumCount, false
 }
