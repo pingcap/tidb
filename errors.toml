@@ -2256,6 +2256,11 @@ error = '''
 Access denied; you need (at least one of) the %-.128s privilege(s) for this operation
 '''
 
+["planner:1234"]
+error = '''
+Incorrect usage/placement of '%s'
+'''
+
 ["planner:1235"]
 error = '''
 This version of TiDB doesn't yet support '%s'
