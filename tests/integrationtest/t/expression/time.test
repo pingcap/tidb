@@ -283,11 +283,17 @@ set @@tidb_enable_vectorized_expression=0;
 select a, "1000-01-01 00:00:00" + INTERVAL a YEAR from t1 order by a ASC;
 select a, "1000-01-01 00:00:00" + INTERVAL a MINUTE from t1 order by a ASC;
 select a, "1000-01-01 00:00:00" + INTERVAL a MICROSECOND from t1 order by a ASC;
+select a, "1000-01-01 00:00:00" + INTERVAL cast(a as char) DAY from t1 order by a ASC;
+select a, "1000-01-01 00:00:00" + INTERVAL cast(a as signed) DAY from t1 order by a ASC;
+select a, "1000-01-01 00:00:00" + INTERVAL cast(a as unsigned) DAY from t1 order by a ASC;
 
 set @@tidb_enable_vectorized_expression=1;
 select a, "1000-01-01 00:00:00" + INTERVAL a YEAR from t1 order by a ASC;
 select a, "1000-01-01 00:00:00" + INTERVAL a MINUTE from t1 order by a ASC;
 select a, "1000-01-01 00:00:00" + INTERVAL a MICROSECOND from t1 order by a ASC;
+select a, "1000-01-01 00:00:00" + INTERVAL cast(a as char) DAY from t1 order by a ASC;
+select a, "1000-01-01 00:00:00" + INTERVAL cast(a as signed) DAY from t1 order by a ASC;
+select a, "1000-01-01 00:00:00" + INTERVAL cast(a as unsigned) DAY from t1 order by a ASC;
 
 create table t2(a decimal(65, 2), d datetime);
 set @old_sql_mode=@@sql_mode;

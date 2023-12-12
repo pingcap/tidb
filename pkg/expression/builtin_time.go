@@ -3420,9 +3420,12 @@ func (du *baseDateArithmetical) vecGetIntervalFromInt(b *baseBuiltinFunc, ctx se
 
 	result.ReserveString(n)
 	i64s := buf.Int64s()
+	unsigned := mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag())
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
+		} else if unsigned {
+			result.AppendString(strconv.FormatUint(uint64(i64s[i]), 10))
 		} else {
 			result.AppendString(strconv.FormatInt(i64s[i], 10))
 		}
