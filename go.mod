@@ -37,6 +37,7 @@ require (
 	github.com/docker/go-units v0.5.0
 	github.com/dolthub/swiss v0.2.1
 	github.com/emirpasic/gods v1.18.1
+    github.com/go-resty/resty/v2 v2.7.0
 	github.com/fatanugraha/noloopclosure v0.1.1
 	github.com/fatih/color v1.15.0
 	github.com/fsouza/fake-gcs-server v1.44.0
