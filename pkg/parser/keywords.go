@@ -613,6 +613,7 @@ var Keywords = []KeywordsType{
 	{"UNICODE", false, "unreserved"},
 	{"UNKNOWN", false, "unreserved"},
 	{"USER", false, "unreserved"},
+	{"UNIVERSAL", false, "unreserved"},
 	{"VALIDATION", false, "unreserved"},
 	{"VALUE", false, "unreserved"},
 	{"VARIABLES", false, "unreserved"},
