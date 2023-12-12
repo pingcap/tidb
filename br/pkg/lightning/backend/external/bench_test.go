@@ -30,12 +30,15 @@ import (
 	"time"
 
 	"github.com/docker/go-units"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -471,6 +474,8 @@ type readTestSuite struct {
 	concurrency        int
 	memoryLimit        int
 	mergeIterHotspot   bool
+	minKey             kv.Key
+	maxKey             kv.Key
 	beforeCreateReader func()
 	beforeReaderClose  func()
 	afterReaderClose   func()
@@ -572,6 +577,74 @@ func readFileConcurrently(t *testing.T, s *readTestSuite) {
 		units.BytesSize(float64(totalFileSize.Load())),
 		len(files),
 		units.BytesSize(float64(totalFileSize.Load())/totalDur.Seconds()), totalDur,
+	)
+}
+
+func readAllDataTest(t *testing.T, s *readTestSuite) {
+	ctx := context.Background()
+	datas, stats, err := GetAllFileNames(ctx, s.store, "/"+s.subDir)
+	intest.AssertNoError(err)
+	splitter, err := NewRangeSplitter(
+		ctx,
+		datas,
+		stats,
+		s.store,
+		4*1024*1024*1024,
+		math.MaxInt64,
+		4*1024*1024*1024,
+		math.MaxInt64,
+		s.mergeIterHotspot,
+	)
+	intest.AssertNoError(err)
+
+	if s.beforeCreateReader != nil {
+		s.beforeCreateReader()
+	}
+	var totalFileSize atomic.Int64
+	startTime := time.Now()
+	bufPool := membuf.NewPool()
+	loaded := &memKVsAndBuffers{}
+	curStart := s.minKey
+
+	for {
+		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, err := splitter.SplitOneRangesGroup()
+		intest.AssertNoError(err)
+
+		curEnd := endKeyOfGroup
+		if len(endKeyOfGroup) == 0 {
+			curEnd = s.maxKey.Next()
+		}
+		now := time.Now()
+		err = readAllData(
+			ctx,
+			s.store,
+			dataFilesOfGroup,
+			statFilesOfGroup,
+			curStart,
+			curEnd,
+			bufPool,
+			loaded,
+		)
+		intest.AssertNoError(err)
+		logutil.Logger(ctx).Info("reading external storage in MergeOverlappingFiles",
+			zap.Duration("cost time", time.Since(now)))
+
+		curStart = curEnd
+		if s.beforeReaderClose != nil {
+			s.beforeReaderClose()
+		}
+		if len(endKeyOfGroup) == 0 {
+			break
+		}
+	}
+	if s.afterReaderClose != nil {
+		s.afterReaderClose()
+	}
+	t.Logf(
+		"readAllData speed for %s bytes(%d files): %s/s",
+		units.BytesSize(float64(totalFileSize.Load())),
+		len(datas),
+		units.BytesSize(float64(totalFileSize.Load())/time.Since(startTime).Seconds()),
 	)
 }
 
@@ -788,6 +861,10 @@ func TestReadMergeIterCheckHotspot(t *testing.T) {
 	})
 }
 
+func TestReadAllData(t *testing.T) {
+	testCompareReaderAscendingContent(t, readAllDataTest)
+}
+
 func TestReadMergeIterWithoutCheckHotspot(t *testing.T) {
 	testCompareReaderAscendingContent(t, readMergeIter)
 }
@@ -795,8 +872,9 @@ func TestReadMergeIterWithoutCheckHotspot(t *testing.T) {
 func testCompareReaderAscendingContent(t *testing.T, fn func(t *testing.T, suite *readTestSuite)) {
 	store := openTestingStorage(t)
 	kvCnt := 0
+	var minKey, maxKey kv.Key
 	if !*skipCreate {
-		kvCnt, _, _ = createAscendingFiles(store, *fileSize, *fileCount, *objectPrefix)
+		kvCnt, minKey, maxKey = createAscendingFiles(store, *fileSize, *fileCount, *objectPrefix)
 	}
 	fileIdx := 0
 	var (
@@ -831,6 +909,8 @@ func testCompareReaderAscendingContent(t *testing.T, fn func(t *testing.T, suite
 		afterReaderClose:   afterClose,
 		subDir:             *objectPrefix,
 	}
+	suite.minKey = minKey
+	suite.maxKey = maxKey
 
 	fn(t, suite)
 }
