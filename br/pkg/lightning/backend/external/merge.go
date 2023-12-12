@@ -83,7 +83,6 @@ func MergeOverlappingFiles(
 	bufPool := membuf.NewPool()
 	loaded := &memKVsAndBuffers{}
 	curStart := startKey
-	var totalSize uint64
 
 	for {
 		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, err := splitter.SplitOneRangesGroup()
@@ -135,16 +134,10 @@ func MergeOverlappingFiles(
 		logutil.Logger(ctx).Info("writing in MergeOverlappingFiles",
 			zap.Duration("cost time", time.Since(now)),
 			zap.Any("key len", len(loaded.keys)))
-		totalSize += writer.totalSize
 		curStart = curEnd
 		if len(endKeyOfGroup) == 0 {
 			break
 		}
-	}
-
-	err = writer.Close(ctx)
-	if err != nil {
-		return err
 	}
 
 	var stat MultipleFilesStat
@@ -157,9 +150,13 @@ func MergeOverlappingFiles(
 			Seq:                0,
 			Min:                startKey,
 			Max:                loaded.keys[len(loaded.keys)-1],
-			TotalSize:          totalSize,
+			TotalSize:          writer.totalSize,
 			MultipleFilesStats: []MultipleFilesStat{stat},
 		})
+	}
+	err = writer.Close(ctx)
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -217,7 +214,7 @@ func MergeOverlappingFilesOpt(
 	concurrency int,
 	checkHotspot bool,
 ) error {
-	logutil.Logger(ctx).Info("enter MergeOverlappingFiles",
+	logutil.Logger(ctx).Info("enter MergeOverlappingFiles opt",
 		zap.Int("data-file-count", len(dataFiles)),
 		zap.Int("stat-file-count", len(statFiles)),
 		zap.Binary("start-key", startKey),
@@ -245,6 +242,7 @@ func MergeOverlappingFilesOpt(
 	if err != nil {
 		return err
 	}
+	logutil.Logger(ctx).Info("get groups", zap.Int("len", len(groups)))
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(concurrency)
 	partSize = max(int64(5*size.MB), partSize+int64(1*size.MB))
@@ -269,8 +267,9 @@ func runInternal(
 	propSizeDist uint64,
 	propKeysDist uint64,
 	onClose OnCloseFunc) error {
+	logutil.BgLogger().Info("data files", zap.Int("len", len(rdGroup.dataFiles)))
 	writer := NewWriterBuilder().
-		SetMemorySizeLimit(DefaultMemSizeLimit).
+		SetMemorySizeLimit(DefaultMemSizeLimit*2).
 		SetBlockSize(blockSize).
 		SetPropKeysDistance(propKeysDist).
 		SetPropSizeDistance(propSizeDist).
@@ -284,7 +283,6 @@ func runInternal(
 
 	bufPool := membuf.NewPool()
 	loaded := &memKVsAndBuffers{}
-	var totalSize uint64
 	now := time.Now()
 	err = readAllData(
 		ctx,
@@ -327,11 +325,6 @@ func runInternal(
 		zap.Duration("cost time", time.Since(now)),
 		zap.Any("key len", len(loaded.keys)))
 
-	err = writer.Close(ctx)
-	if err != nil {
-		return err
-	}
-
 	var stat MultipleFilesStat
 	stat.Filenames = append(stat.Filenames,
 		[2]string{writer.dataFile, writer.statFile})
@@ -345,6 +338,10 @@ func runInternal(
 			TotalSize:          writer.totalSize,
 			MultipleFilesStats: []MultipleFilesStat{stat},
 		})
+	}
+	err = writer.Close(ctx)
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -383,6 +380,7 @@ func MergeOverlappingFilesV2(
 		zap.Int("file-count", len(paths)),
 		zap.Int("file-groups", len(dataFilesSlice)),
 		zap.Int("concurrency", concurrency))
+
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(concurrency)
 	partSize = max(int64(5*size.MB), partSize+int64(1*size.MB))

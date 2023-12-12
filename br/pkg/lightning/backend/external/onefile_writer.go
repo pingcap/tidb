@@ -20,7 +20,6 @@ import (
 	"path/filepath"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -33,7 +32,6 @@ type OneFileWriter struct {
 	// storage related.
 	store        storage.ExternalStorage
 	kvStore      *KeyValueStore
-	kvBuffer     *membuf.Buffer
 	memSizeLimit uint64
 
 	// Statistic information per writer.

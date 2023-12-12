@@ -217,7 +217,6 @@ func (b *WriterBuilder) BuildOneFile(
 	writerID string,
 ) *OneFileWriter {
 	filenamePrefix := filepath.Join(prefix, writerID)
-	p := membuf.NewPool(membuf.WithBlockNum(0), membuf.WithBlockSize(b.blockSize))
 
 	ret := &OneFileWriter{
 		rc: &rangePropertiesCollector{
@@ -226,7 +225,6 @@ func (b *WriterBuilder) BuildOneFile(
 			propSizeDist: b.propSizeDist,
 			propKeysDist: b.propKeysDist,
 		},
-		kvBuffer:       p.NewBuffer(membuf.WithBufferMemoryLimit(b.memSizeLimit)),
 		store:          store,
 		filenamePrefix: filenamePrefix,
 		writerID:       writerID,
