@@ -78,13 +78,13 @@ func InitAndGetUploadID(cli *storage.Client, bucket, uri string) (string, error)
 	}
 	u, err := cli.Bucket(bucket).SignedURL(uri, opts)
 	if err != nil {
-		return "", errors.Errorf("Bucket(%q).SignedURL: %s", bucket, err)
+		return "", errors.Errorf("Bucket(%q).SignedURL: %s", bucket, err.Error())
 	}
 
 	client := resty.New()
 	resp, err := client.R().Post(u)
 	if err != nil {
-		return "", errors.Errorf("POST request failed: %s", err)
+		return "", errors.Errorf("POST request failed: %s", err.Error())
 	}
 
 	if resp.StatusCode() != http.StatusOK {
@@ -95,7 +95,7 @@ func InitAndGetUploadID(cli *storage.Client, bucket, uri string) (string, error)
 	result := InitiateMultipartUploadResult{}
 	err = xml.Unmarshal(body, &result)
 	if err != nil {
-		return "", errors.Errorf("failed to unmarshal response body: %s", err)
+		return "", errors.Errorf("failed to unmarshal response body: %s", err.Error())
 	}
 
 	return result.UploadId, nil
@@ -105,7 +105,7 @@ func InitAndGetUploadID(cli *storage.Client, bucket, uri string) (string, error)
 func NewGCSWriter(ctx context.Context, cli *storage.Client, uri string, partSize int, parallelCnt int, bucketName string) (*GCSWriter, error) {
 	uploadID, err := InitAndGetUploadID(cli, bucketName, uri)
 	if err != nil {
-		return nil, errors.Errorf("Failed to initiate and get upload ID: %s", err)
+		return nil, errors.Errorf("Failed to initiate and get upload ID: %s", err.Error())
 	}
 
 	w := &GCSWriter{
@@ -187,7 +187,7 @@ func (w *GCSWriter) partNum() int {
 func (w *GCSWriter) completeMultipartUpload(parts map[int]objectPart) error {
 	bodyXML, err := buildCompleteMultipartUploadXML(parts)
 	if err != nil {
-		return errors.Errorf("failed to build complete multipart upload XML for %v, err: %w", w.objURI, err)
+		return errors.Errorf("failed to build complete multipart upload XML for %v, err: %s", w.objURI, err.Error())
 	}
 
 	values := url.Values{}
@@ -201,7 +201,7 @@ func (w *GCSWriter) completeMultipartUpload(parts map[int]objectPart) error {
 	}
 	u, err := w.cli.Bucket(w.bucketName).SignedURL(w.objURI, opts)
 	if err != nil {
-		return errors.Errorf("Bucket(%q).SignedURL: %s", w.bucketName, err)
+		return errors.Errorf("Bucket(%q).SignedURL: %s", w.bucketName, err.Error())
 	}
 
 	client := resty.New()
@@ -294,14 +294,14 @@ func (uw *uploadWorker) full() bool {
 
 func (uw *uploadWorker) uploadPartAsync() error {
 	if uw.err != nil && uw.tryCnt >= uploadPartTryCnt {
-		return errors.Errorf("failed to upload part %v too many times, err: %w", uw.index, uw.err)
+		return errors.Errorf("failed to upload part %v too many times, err: %s", uw.index, uw.err.Error())
 	}
 	go func() {
 		err := uw.uploadPart(uw.currentPartNumber, uw.buffer[:uw.offset]) // timeout in few seconds
 		if err != nil {
 			uw.err = err
 			uw.tryCnt++
-			log.Warn(fmt.Sprintf("upload worker %v failed to upload part %v for object %v, tryCnt: %v, err: %v", uw.index, uw.currentPartNumber, uw.uri, uw.tryCnt, err))
+			log.Warn(fmt.Sprintf("upload worker %v failed to upload part %v for object %v, tryCnt: %v, err: %s", uw.index, uw.currentPartNumber, uw.uri, uw.tryCnt, err.Error()))
 		} else {
 			// Upload succeeded. Reset
 			uw.offset = 0
@@ -332,13 +332,13 @@ func (uw *uploadWorker) uploadPart(partNumber int, data []byte) error {
 
 	u, err := uw.cli.Bucket(uw.bucketName).SignedURL(uw.uri, opts)
 	if err != nil {
-		return errors.Errorf("Bucket(%q).SignedURL: %s", uw.bucketName, err)
+		return errors.Errorf("Bucket(%q).SignedURL: %s", uw.bucketName, err.Error())
 	}
 
 	client := resty.New()
 	resp, err := client.R().SetBody(bytes.NewReader(data)).Put(u) // Set payload as request body
 	if err != nil {
-		return errors.Errorf("PUT request failed: %s", err)
+		return errors.Errorf("PUT request failed: %s", err.Error())
 	}
 
 	etag := resp.Header().Get("ETag")
