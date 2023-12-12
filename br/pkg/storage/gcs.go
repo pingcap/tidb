@@ -332,8 +332,11 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 		transport.DisableKeepAlives = true
 		httpClient = &http.Client{Transport: transport}
 		// see https://github.com/pingcap/tidb/issues/47022#issuecomment-1722913455
+		// https://www.googleapis.com/auth/cloud-platform must be set to use service_account
+		// type of credential-file.
 		var err error
-		httpClient.Transport, err = htransport.NewTransport(ctx, httpClient.Transport, clientOps...)
+		httpClient.Transport, err = htransport.NewTransport(ctx, httpClient.Transport,
+			append(clientOps, option.WithScopes(storage.ScopeFullControl, "https://www.googleapis.com/auth/cloud-platform"))...)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
