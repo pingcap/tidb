@@ -230,11 +230,10 @@ func buildCompleteMultipartUploadXML(parts map[int]objectPart) (string, error) {
 	upload.Parts = make([]objectPart, 0, len(parts))
 	for partNum := 1; partNum <= len(parts); partNum++ {
 		part, ok := parts[partNum]
-		if ok {
-			upload.Parts = append(upload.Parts, part)
-		} else {
+		if !ok {
 			return "", errors.Errorf("part %v not contained in parts", partNum)
 		}
+		upload.Parts = append(upload.Parts, part)
 	}
 
 	if err := encoder.Encode(upload); err != nil {
