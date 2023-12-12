@@ -40,8 +40,8 @@ func (h *ddlHandlerImpl) onTruncatePartitions(t *util.DDLEvent) error {
 	// Do not forget to put those operations in one transaction.
 	if err := util.CallWithSCtx(h.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		count := int64(0)
-		var partitionIDs []int64
-		var partitionNames []string
+		partitionIDs := make([]int64, 0, len(droppedPartInfo.Definitions))
+		partitionNames := make([]string, 0, len(droppedPartInfo.Definitions))
 		for _, def := range droppedPartInfo.Definitions {
 			// Get the count and modify count of the partition.
 			tableCount, _, _, err := storage.StatsMetaCountAndModifyCount(sctx, def.ID)
