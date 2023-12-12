@@ -687,8 +687,8 @@ func pruneTopNItemWithLowNDV(topns *btree.BTreeG[*sortItem], sampleTree *btree.B
 		return true
 	})
 	topNNum := topns.Len()
+	var brk bool
 	for topNNum > 0 {
-		var brk bool
 		sumCount, brk = dealSumCount(sumCount, ndv, nullCount, sampleRows, totalRows, &topNNum, topnCountList[topNNum-1])
 		if brk {
 			break
@@ -721,8 +721,8 @@ func pruneTopNItem(topns []TopNMeta, ndv, nullCount, sampleRows, totalRows int64
 		sumCount += topns[i].Count
 	}
 	topNNum := len(topns)
+	var brk bool
 	for topNNum > 0 {
-		var brk bool
 		sumCount, brk = dealSumCount(sumCount, ndv, nullCount, sampleRows, totalRows, &topNNum, topns[topNNum-1].Count)
 		if brk {
 			break
