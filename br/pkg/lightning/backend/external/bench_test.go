@@ -976,7 +976,6 @@ func testCompareMergeWithContent(
 		err  error
 	)
 	beforeTest := func() {
-		fileIdx++
 		file, err = os.Create(fmt.Sprintf("cpu-profile-%d.prof", fileIdx))
 		intest.AssertNoError(err)
 		err = pprof.StartCPUProfile(file)
