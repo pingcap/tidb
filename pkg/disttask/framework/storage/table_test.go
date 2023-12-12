@@ -599,31 +599,31 @@ func TestDistFrameworkMeta(t *testing.T) {
 	defer pool.Close()
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "table_test")
-
 	require.NoError(t, sm.StartManager(ctx, ":4000", "background"))
 	require.NoError(t, sm.StartManager(ctx, ":4001", ""))
-	// will be replaced by below one
 	require.NoError(t, sm.StartManager(ctx, ":4002", "background"))
+	// won't be replaced by below one
 	require.NoError(t, sm.StartManager(ctx, ":4002", ""))
 	require.NoError(t, sm.StartManager(ctx, ":4003", "background"))
 
-	allNodes, err := sm.GetAllNodes(ctx)
+	nodes, err := sm.GetAllNodes(ctx)
 	require.NoError(t, err)
-	require.Equal(t, []string{":4000", ":4001", ":4002", ":4003"}, allNodes)
-
-	nodes, err := sm.GetManagedNodes(ctx)
-	require.NoError(t, err)
-	require.Equal(t, []string{":4000", ":4003"}, nodes)
+	require.Equal(t, []string{":4000", ":4001", ":4002", ":4003"}, nodes)
 
 	require.NoError(t, sm.CleanUpMeta(ctx, []string{":4000"}))
 	nodes, err = sm.GetManagedNodes(ctx)
 	require.NoError(t, err)
-	require.Equal(t, []string{":4003"}, nodes)
+	require.Equal(t, []string{":4002", ":4003"}, nodes)
 
 	require.NoError(t, sm.CleanUpMeta(ctx, []string{":4003"}))
 	nodes, err = sm.GetManagedNodes(ctx)
 	require.NoError(t, err)
-	require.Equal(t, []string{":4001", ":4002"}, nodes)
+	require.Equal(t, []string{":4002"}, nodes)
+
+	require.NoError(t, sm.CleanUpMeta(ctx, []string{":4002"}))
+	nodes, err = sm.GetManagedNodes(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []string{":4001"}, nodes)
 }
 
 func TestSubtaskHistoryTable(t *testing.T) {
