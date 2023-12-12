@@ -1003,7 +1003,7 @@ func testCompareMergeWithContent(
 	fn(t, suite)
 }
 
-func TestMerge(t *testing.T) {
+func TestMergeBench(t *testing.T) {
 	testCompareMergeWithContent(t, createAscendingFiles, mergeStep)
 	testCompareMergeWithContent(t, createEvenlyDistributedFiles, mergeStep)
 }
