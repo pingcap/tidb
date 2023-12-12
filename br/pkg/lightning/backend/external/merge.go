@@ -326,7 +326,6 @@ func runInternal(
 	logutil.Logger(ctx).Info("writing in MergeOverlappingFiles",
 		zap.Duration("cost time", time.Since(now)),
 		zap.Any("key len", len(loaded.keys)))
-	totalSize += writer.totalSize
 
 	err = writer.Close(ctx)
 	if err != nil {
@@ -343,7 +342,7 @@ func runInternal(
 			Seq:                0,
 			Min:                rdGroup.startKey,
 			Max:                loaded.keys[len(loaded.keys)-1],
-			TotalSize:          totalSize,
+			TotalSize:          writer.totalSize,
 			MultipleFilesStats: []MultipleFilesStat{stat},
 		})
 	}

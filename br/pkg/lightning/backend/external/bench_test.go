@@ -1028,7 +1028,6 @@ func oldMergeStep(t *testing.T, s *mergeTestSuite) {
 		totalSize.Add(s.TotalSize)
 	}
 	now := time.Now()
-
 	err = MergeOverlappingFilesV2(
 		ctx,
 		datas,
