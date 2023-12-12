@@ -7,6 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/util/dbterror/exeerrors",
+        "//pkg/util/generic",
         "//pkg/util/logutil",
         "@com_github_jellydator_ttlcache_v3//:ttlcache",
         "@com_github_pingcap_kvproto//pkg/resource_manager",

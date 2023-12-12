@@ -24,6 +24,7 @@ import (
 	"github.com/jellydator/ttlcache/v3"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -189,6 +190,10 @@ type RunawayManager struct {
 	// activeGroup is used to manage the active runaway watches of resource group
 	activeGroup map[string]int64
 	activeLock  sync.RWMutex
+<<<<<<< HEAD
+=======
+	metricsMap  generic.SyncMap[string, prometheus.Counter]
+>>>>>>> 0b39f99e389 (domain: fix data race in runaway DeriveChecker (#49354))
 
 	resourceGroupCtl   *rmclient.ResourceGroupsController
 	serverID           string
@@ -222,6 +227,10 @@ func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController, serv
 		quarantineChan:        make(chan *QuarantineRecord, maxWatchRecordChannelSize),
 		staleQuarantineRecord: staleQuarantineChan,
 		activeGroup:           make(map[string]int64),
+<<<<<<< HEAD
+=======
+		metricsMap:            generic.NewSyncMap[string, prometheus.Counter](8),
+>>>>>>> 0b39f99e389 (domain: fix data race in runaway DeriveChecker (#49354))
 	}
 	m.insertionCancel = watchList.OnInsertion(func(ctx context.Context, i *ttlcache.Item[string, *QuarantineRecord]) {
 		m.activeLock.Lock()
@@ -252,6 +261,15 @@ func (rm *RunawayManager) DeriveChecker(resourceGroupName, originalSQL, sqlDiges
 	if group.RunawaySettings == nil && rm.activeGroup[resourceGroupName] == 0 {
 		return nil
 	}
+<<<<<<< HEAD
+=======
+	counter, ok := rm.metricsMap.Load(resourceGroupName)
+	if !ok {
+		counter = metrics.RunawayCheckerCounter.WithLabelValues(resourceGroupName, "hit", "")
+		rm.metricsMap.Store(resourceGroupName, counter)
+	}
+	counter.Inc()
+>>>>>>> 0b39f99e389 (domain: fix data race in runaway DeriveChecker (#49354))
 	return newRunawayChecker(rm, resourceGroupName, group.RunawaySettings, originalSQL, sqlDigest, planDigest)
 }
 
