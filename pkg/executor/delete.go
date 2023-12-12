@@ -276,7 +276,7 @@ func onRemoveRowForFK(ctx sessionctx.Context, data []types.Datum, fkChecks []*FK
 // Close implements the Executor Close interface.
 func (e *DeleteExec) Close() error {
 	defer e.memTracker.ReplaceBytesUsed(0)
-	return e.Children(0).Close()
+	return exec.Close(e.Children(0))
 }
 
 // Open implements the Executor Open interface.
