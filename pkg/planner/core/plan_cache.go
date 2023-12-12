@@ -157,7 +157,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	cacheEnabled := false
 	if isNonPrepared {
 		stmtCtx.CacheType = stmtctx.SessionNonPrepared
-		cacheEnabled = sctx.GetSessionVars().EnablePreparedPlanCache
+		cacheEnabled = sctx.GetSessionVars().EnablePreparedPlanCache // plan-cache might be disabled after prepare.
 	} else {
 		stmtCtx.CacheType = stmtctx.SessionPrepared
 		cacheEnabled = sctx.GetSessionVars().EnableNonPreparedPlanCache
