@@ -203,6 +203,7 @@ func TestFoundRows(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	// without SQL_CALC_FOUND_ROWS
 	tk.MustExec("drop table if exists t")
@@ -288,19 +289,32 @@ func TestFoundRows(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("insert into t values (1), (2), (2), (NULL)")
-	tk.MustExec(`prepare st from 'select SQL_CALC_FOUND_ROWS * from t LIMIT 1'`)
+	tk.MustExec(`prepare st from 'SELECT SQL_CALC_FOUND_ROWS * FROM t ORDER BY a DESC LIMIT 1'`)
 	tk.MustQuery(`show warnings`).Check(testkit.Rows(
 		`Warning 1105 skip prepared plan-cache: cannot cache SQL_CALC_FOUND_ROWS`,
 		`Warning 1287 'SQL_CALC_FOUND_ROWS' is deprecated and will be removed in a future release. Please use two separate queries instead`,
 	))
-	tk.MustQuery(`execute st`)
+	tk.MustQuery(`execute st`).Check(testkit.Rows("2"))
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 	tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
-	tk.MustQuery(`execute st`)
+	tk.MustQuery(`execute st`).Check(testkit.Rows("2"))
 	tk.MustQuery("select found_rows()").Check(testkit.Rows("4"))
 	tk.MustExec("insert into t values (4), (5), (6)")
-	tk.MustQuery(`execute st`)
+	tk.MustQuery(`execute st`).Check(testkit.Rows("6"))
 	tk.MustQuery("select found_rows()").Check(testkit.Rows("7"))
+
+	// test prepared statement via protocol
+	stmtID, _, _, err := tk.Session().PrepareStmt("SELECT SQL_CALC_FOUND_ROWS * FROM t ORDER BY a DESC LIMIT 1")
+	require.Nil(t, err)
+	rs, err := tk.Session().ExecutePreparedStmt(context.Background(), stmtID, []expression.Expression{})
+	require.Nil(t, err)
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("6"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("7"))
+	tk.MustExec("insert into t values (7), (1), (2)")
+	rs, err = tk.Session().ExecutePreparedStmt(context.Background(), stmtID, []expression.Expression{})
+	require.Nil(t, err)
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("7"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("10"))
 
 	// test join
 	tk.MustExec("drop table if exists employee")
@@ -315,7 +329,7 @@ func TestFoundRows(t *testing.T) {
 	tk.MustQuery("select found_rows()").Check(testkit.Rows("5"))
 
 	// test incorrect SQL_CALC_FOUND_ROWS placement
-	err := tk.ExecToErr(`
+	err = tk.ExecToErr(`
 		select SQL_CALC_FOUND_ROWS 1
 		union
 		select SQL_CALC_FOUND_ROWS 1
@@ -326,6 +340,13 @@ func TestFoundRows(t *testing.T) {
 		select 1
 		union
 		select SQL_CALC_FOUND_ROWS 1
+	`)
+	require.Error(t, err)
+	require.ErrorContains(t, err, `[planner:1234]Incorrect usage/placement of 'SQL_CALC_FOUND_ROWS'`)
+	err = tk.ExecToErr(`
+		select * from (
+			select SQL_CALC_FOUND_ROWS 1
+		) as t
 	`)
 	require.Error(t, err)
 	require.ErrorContains(t, err, `[planner:1234]Incorrect usage/placement of 'SQL_CALC_FOUND_ROWS'`)
@@ -397,6 +418,29 @@ func TestFoundRows(t *testing.T) {
 	// 		limit 1
 	// `)
 	// tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+
+	// test subquery
+	tk.MustQuery(`
+		select SQL_CALC_FOUND_ROWS * from (
+			select 1
+		) as t
+	`).Check(testkit.Rows("1"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+	tk.MustQuery(`
+		select SQL_CALC_FOUND_ROWS * from (
+			select count(*), dept_id from employee group by dept_id order by dept_id
+			limit 1
+		) as t
+	`).Check(testkit.Rows("3 1"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+	tk.MustQuery(`
+		select SQL_CALC_FOUND_ROWS * from (
+			select count(*), dept_id from employee group by dept_id
+		) as t
+		order by dept_id
+		limit 1
+	`).Check(testkit.Rows("3 1"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("2"))
 }
 
 func TestInfoBuiltin(t *testing.T) {
