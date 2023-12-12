@@ -3481,8 +3481,12 @@ func (rc *Client) InsertGCRows(ctx context.Context) error {
 			// (job_id, elem_id, start_key, end_key, ts)
 			paramsList = append(paramsList, newJobID, params.ElemID, params.StartKey, params.EndKey, ts)
 		}
-		if err := rc.db.se.ExecuteInternal(ctx, query.Sql, paramsList...); err != nil {
-			return errors.Trace(err)
+		if len(paramsList) > 0 {
+			// trim the ',' behind the query.Sql if exists
+			sql := strings.TrimSuffix(query.Sql, ",")
+			if err := rc.db.se.ExecuteInternal(ctx, sql, paramsList...); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	return nil

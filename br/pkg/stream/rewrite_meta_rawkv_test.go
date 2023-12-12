@@ -998,6 +998,62 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	require.Equal(t, encodeTableIndexKey(mDDLJobTable1NewID, int64(3)), qargs.ParamsList[0].StartKey)
 }
 
+func TestDeleteRangeForMDDLJob2(t *testing.T) {
+	midr := newMockInsertDeleteRange()
+	partitionMap := map[int64]int64{
+		mDDLJobPartition0OldID: mDDLJobPartition0NewID,
+		mDDLJobPartition1OldID: mDDLJobPartition1NewID,
+		mDDLJobPartition2OldID: mDDLJobPartition2NewID,
+	}
+	tableReplace0 := &TableReplace{
+		TableID:      mDDLJobTable0NewID,
+		PartitionMap: partitionMap,
+	}
+	tableReplace1 := &TableReplace{
+		TableID: mDDLJobTable1NewID,
+	}
+	tableMap := map[int64]*TableReplace{
+		mDDLJobTable0OldID: tableReplace0,
+		mDDLJobTable1OldID: tableReplace1,
+	}
+	dbReplace := &DBReplace{
+		DbID:     mDDLJobDBNewID,
+		TableMap: tableMap,
+	}
+	schemaReplace := MockEmptySchemasReplace(midr, map[int64]*DBReplace{
+		mDDLJobDBOldID: dbReplace,
+	})
+	var qargs *PreDelRangeQuery
+	// drop schema
+	err := schemaReplace.restoreFromHistory(dropSchemaJob)
+	require.NoError(t, err)
+	qargs = <-midr.queryCh
+	require.Equal(t, len(qargs.ParamsList), len(mDDLJobALLNewTableIDSet))
+	for _, params := range qargs.ParamsList {
+		_, exist := mDDLJobALLNewTableKeySet[params.StartKey]
+		require.True(t, exist)
+	}
+	require.Equal(t, "INSERT IGNORE INTO mysql.gc_delete_range VALUES (%?, %?, %?, %?, %?),(%?, %?, %?, %?, %?),(%?, %?, %?, %?, %?),(%?, %?, %?, %?, %?),(%?, %?, %?, %?, %?)", qargs.Sql)
+
+	// drop schema - lose rewrite rule of table 1
+	tableMap_incomplete := map[int64]*TableReplace{
+		mDDLJobTable0OldID: tableReplace0,
+	}
+	dbReplace.TableMap = tableMap_incomplete
+	schemaReplace = MockEmptySchemasReplace(midr, map[int64]*DBReplace{
+		mDDLJobDBOldID: dbReplace,
+	})
+	err = schemaReplace.restoreFromHistory(dropSchemaJob)
+	require.NoError(t, err)
+	qargs = <-midr.queryCh
+	require.Equal(t, len(qargs.ParamsList), len(mDDLJobALLNewPartitionIDSet)+1)
+	for _, params := range qargs.ParamsList {
+		_, exist := mDDLJobALLNewTableKeySet[params.StartKey]
+		require.True(t, exist)
+	}
+	require.Equal(t, "INSERT IGNORE INTO mysql.gc_delete_range VALUES (%?, %?, %?, %?, %?),(%?, %?, %?, %?, %?),(%?, %?, %?, %?, %?),(%?, %?, %?, %?, %?),", qargs.Sql)
+}
+
 func TestCompatibleAlert(t *testing.T) {
 	require.Equal(t, ddl.BRInsertDeleteRangeSQLPrefix, `INSERT IGNORE INTO mysql.gc_delete_range VALUES `)
 	require.Equal(t, ddl.BRInsertDeleteRangeSQLValue, `(%?, %?, %?, %?, %?)`)
