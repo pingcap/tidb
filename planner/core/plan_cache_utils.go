@@ -75,9 +75,18 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		return nil, nil, 0, ErrPrepareDDL
 	}
 
+<<<<<<< HEAD:planner/core/plan_cache_utils.go
 	switch stmt.(type) {
 	case *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt, *ast.NonTransactionalDMLStmt:
+=======
+	switch stmt := paramStmt.(type) {
+	case *ast.ImportIntoStmt, *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt, *ast.NonTransactionalDMLStmt:
+>>>>>>> cf23666766d (planner: return an error when using prepared protocol with select-into statement (#49357)):pkg/planner/core/plan_cache_utils.go
 		return nil, nil, 0, ErrUnsupportedPs
+	case *ast.SelectStmt:
+		if stmt.SelectIntoOpt != nil {
+			return nil, nil, 0, ErrUnsupportedPs
+		}
 	}
 
 	// Prepare parameters should NOT over 2 bytes(MaxUint16)
