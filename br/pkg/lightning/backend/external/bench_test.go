@@ -723,7 +723,7 @@ func createAscendingFiles(
 	store storage.ExternalStorage,
 	fileSize, fileCount int,
 	subDir string,
-) int {
+) (int, kv.Key, kv.Key) {
 	ctx := context.Background()
 
 	cleanOldFiles(ctx, store, "/"+subDir)
@@ -761,7 +761,7 @@ func createAscendingFiles(
 		err := writer.Close(ctx)
 		intest.AssertNoError(err)
 	}
-	return kvCnt
+	return kvCnt, minKey, maxKey
 }
 
 var (
@@ -796,7 +796,7 @@ func testCompareReaderAscendingContent(t *testing.T, fn func(t *testing.T, suite
 	store := openTestingStorage(t)
 	kvCnt := 0
 	if !*skipCreate {
-		kvCnt = createAscendingFiles(store, *fileSize, *fileCount, *objectPrefix)
+		kvCnt, _, _ = createAscendingFiles(store, *fileSize, *fileCount, *objectPrefix)
 	}
 	fileIdx := 0
 	var (
@@ -908,19 +908,31 @@ func TestPrepareLargeData(t *testing.T) {
 		len(dataFiles), float64(firstFileSize)/1024/1024, float64(lastFileSize)/1024/1024)
 }
 
-func TestMergeCompare(t *testing.T) {
+type mergeTestSuite struct {
+	store            storage.ExternalStorage
+	subDir           string
+	totalKVCnt       int
+	concurrency      int
+	memoryLimit      int
+	mergeIterHotspot bool
+	minKey           kv.Key
+	maxKey           kv.Key
+	beforeMerge      func()
+	afterMerge       func()
+}
+
+func newMergeStep(t *testing.T, s *mergeTestSuite) {
 	ctx := context.Background()
-	fileCnt := 50
-	subDir := "ascending"
-	store := openTestingStorage(t)
-	if !*skipCreate {
-		kvCnt = createAscendingFiles(store, *fileSize, *fileCount, *objectPrefix)
-	}
-	datas, stats, err := GetAllFileNames(ctx, store, "/"+subDir)
+	datas, stats, err := GetAllFileNames(ctx, s.store, "/"+s.subDir)
+	intest.AssertNoError(err)
+
 	mergeOutput := "merge_output"
 	totalSize := atomic.NewUint64(0)
 	onClose := func(s *WriterSummary) {
 		totalSize.Add(s.TotalSize)
+	}
+	if s.beforeMerge != nil {
+		s.beforeMerge()
 	}
 
 	now := time.Now()
@@ -928,8 +940,8 @@ func TestMergeCompare(t *testing.T) {
 		ctx,
 		datas,
 		stats,
-		store,
-		minKey, kv.Key(maxKey).Next(),
+		s.store,
+		s.minKey, kv.Key(s.maxKey).Next(),
 		int64(5*size.MB),
 		mergeOutput,
 		"mergeID",
@@ -938,67 +950,44 @@ func TestMergeCompare(t *testing.T) {
 		1*size.MB,
 		8*1024,
 		onClose,
-		8,
-		true,
+		s.concurrency,
+		s.mergeIterHotspot,
 	)
 
 	intest.AssertNoError(err)
+	if s.afterMerge != nil {
+		s.afterMerge()
+	}
 	elapsed := time.Since(now)
 	t.Logf(
 		"merge speed for %d bytes in %s, speed: %.2f MB/s",
-		fileSize*fileCnt,
+		totalSize.Load(),
 		elapsed,
-		float64(fileSize*fileCnt)/elapsed.Seconds()/1024/1024,
+		float64(totalSize.Load())/elapsed.Seconds()/1024/1024,
 	)
+}
 
-	now = time.Now()
-
-	err = MergeOverlappingFilesV2(
-		ctx,
-		datas,
-		store,
-		16*1024*1024,
-		64*1024,
-		mergeOutput,
-		DefaultBlockSize,
-		8*1024,
-		1024*1024,
-		8*1024,
-		onClose,
-		1,
-		true)
+func newMergeStepOpt(t *testing.T, s *mergeTestSuite) {
+	ctx := context.Background()
+	datas, stats, err := GetAllFileNames(ctx, s.store, "/"+s.subDir)
 	intest.AssertNoError(err)
-	elapsed = time.Since(now)
-	t.Logf("merge prev implementation with 1 concurrency %d bytes in %s, speed: %.2f MB/s",
-		fileSize*fileCnt, elapsed, float64(fileSize*fileCnt)/elapsed.Seconds()/1024/1024)
 
-	now = time.Now()
-	err = MergeOverlappingFilesV2(
-		ctx,
-		datas,
-		store,
-		16*1024*1024,
-		64*1024,
-		mergeOutput,
-		DefaultBlockSize,
-		8*1024,
-		1024*1024,
-		8*1024,
-		onClose,
-		8,
-		true)
-	intest.AssertNoError(err)
-	elapsed = time.Since(now)
-	t.Logf("merge prev implementation with 8 concurrency %d bytes in %s, speed: %.2f MB/s",
-		fileSize*fileCnt, elapsed, float64(fileSize*fileCnt)/elapsed.Seconds()/1024/1024)
+	mergeOutput := "merge_output"
+	totalSize := atomic.NewUint64(0)
+	onClose := func(s *WriterSummary) {
+		totalSize.Add(s.TotalSize)
+	}
+	if s.beforeMerge != nil {
+		s.beforeMerge()
+	}
 
-	now = time.Now()
+	now := time.Now()
 	err = MergeOverlappingFilesOpt(
 		ctx,
 		datas,
 		stats,
-		store,
-		minKey, kv.Key(maxKey).Next(),
+		s.store,
+		s.minKey, kv.Key(s.maxKey).Next(),
 		int64(5*size.MB),
 		mergeOutput,
 		"mergeID",
@@ -1007,34 +996,112 @@ func TestMergeCompare(t *testing.T) {
 		1*size.MB,
 		8*1024,
 		onClose,
-		2,
-		true,
+		s.concurrency,
+		s.mergeIterHotspot,
 	)
-	intest.AssertNoError(err)
-	elapsed = time.Since(now)
-	t.Logf("new merge  with 2 concurrency %d bytes in %s, speed: %.2f MB/s",
-		fileSize*fileCnt, elapsed, float64(fileSize*fileCnt)/elapsed.Seconds()/1024/1024)
 
-	now = time.Now()
-	err = MergeOverlappingFilesOpt(
+	intest.AssertNoError(err)
+	if s.afterMerge != nil {
+		s.afterMerge()
+	}
+	elapsed := time.Since(now)
+	t.Logf(
+		"merge speed with %d concurrency for %d bytes in %s, speed: %.2f MB/s",
+		s.concurrency,
+		totalSize.Load(),
+		elapsed,
+		float64(totalSize.Load())/elapsed.Seconds()/1024/1024,
+	)
+}
+
+func oldMergeStep(t *testing.T, s *mergeTestSuite) {
+	ctx := context.Background()
+	datas, _, err := GetAllFileNames(ctx, s.store, "/"+s.subDir)
+	intest.AssertNoError(err)
+
+	if s.beforeMerge != nil {
+		s.beforeMerge()
+	}
+	mergeOutput := "merge_output"
+	totalSize := atomic.NewUint64(0)
+	onClose := func(s *WriterSummary) {
+		totalSize.Add(s.TotalSize)
+	}
+	now := time.Now()
+
+	err = MergeOverlappingFilesV2(
 		ctx,
 		datas,
-		stats,
-		store,
-		minKey, kv.Key(maxKey).Next(),
-		int64(5*size.MB),
+		s.store,
+		16*1024*1024,
+		64*1024,
 		mergeOutput,
-		"mergeID",
 		DefaultBlockSize,
 		8*1024,
-		1*size.MB,
+		1024*1024,
 		8*1024,
 		onClose,
-		4,
-		true,
-	)
+		s.concurrency,
+		s.mergeIterHotspot)
 	intest.AssertNoError(err)
-	elapsed = time.Since(now)
-	t.Logf("new merge  with 4 concurrency %d bytes in %s, speed: %.2f MB/s",
-		fileSize*fileCnt, elapsed, float64(fileSize*fileCnt)/elapsed.Seconds()/1024/1024)
+
+	if s.afterMerge != nil {
+		s.afterMerge()
+	}
+	elapsed := time.Since(now)
+	t.Logf("merge prev implementation with %d concurrency %d bytes in %s, speed: %.2f MB/s",
+		s.concurrency, totalSize.Load(), elapsed, float64(totalSize.Load())/elapsed.Seconds()/1024/1024)
+}
+
+func testCompareMergeAscendingContent(t *testing.T, fn func(t *testing.T, suite *mergeTestSuite)) {
+	store := openTestingStorage(t)
+	kvCnt := 0
+	var minKey, maxKey kv.Key
+	if !*skipCreate {
+		kvCnt, minKey, maxKey = createAscendingFiles(store, *fileSize, *fileCount, *objectPrefix)
+	}
+
+	fileIdx := 0
+	var (
+		file *os.File
+		err  error
+	)
+	beforeTest := func() {
+		fileIdx++
+		file, err = os.Create(fmt.Sprintf("cpu-profile-%d.prof", fileIdx))
+		intest.AssertNoError(err)
+		err = pprof.StartCPUProfile(file)
+		intest.AssertNoError(err)
+	}
+
+	afterTest := func() {
+		pprof.StopCPUProfile()
+	}
+
+	suite := &mergeTestSuite{
+		store:            store,
+		totalKVCnt:       kvCnt,
+		concurrency:      *concurrency,
+		memoryLimit:      *memoryLimit,
+		beforeMerge:      beforeTest,
+		afterMerge:       afterTest,
+		subDir:           *objectPrefix,
+		minKey:           minKey,
+		maxKey:           maxKey,
+		mergeIterHotspot: true,
+	}
+
+	fn(t, suite)
+}
+
+func TestNewMerge(t *testing.T) {
+	testCompareMergeAscendingContent(t, newMergeStep)
+}
+
+func TestOldMerge(t *testing.T) {
+	testCompareMergeAscendingContent(t, oldMergeStep)
+}
+
+func TestNewMergeOpt(t *testing.T) {
+	testCompareMergeAscendingContent(t, newMergeStepOpt)
 }
