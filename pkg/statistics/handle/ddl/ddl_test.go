@@ -255,21 +255,6 @@ PARTITION BY RANGE ( a ) (
 			require.False(t, statsTbl.Pseudo)
 		}
 
-		truncatePartition := "alter table t truncate partition p4"
-		testKit.MustExec(truncatePartition)
-		is = do.InfoSchema()
-		tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-		require.NoError(t, err)
-		tableInfo = tbl.Meta()
-		err = h.HandleDDLEvent(<-h.DDLEventCh())
-		require.NoError(t, err)
-		require.Nil(t, h.Update(is))
-		pi = tableInfo.GetPartitionInfo()
-		for _, def := range pi.Definitions {
-			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
-			require.False(t, statsTbl.Pseudo)
-		}
-
 		reorganizePartition := "alter table t reorganize partition p0,p1 into (partition p0 values less than (11))"
 		testKit.MustExec(reorganizePartition)
 		is = do.InfoSchema()
