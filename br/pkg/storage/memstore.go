@@ -27,17 +27,7 @@ import (
 )
 
 type memFile struct {
-	Data atomic.Value // the atomic value is a byte slice, which can only be get/set atomically
-}
-
-// GetData gets the underlying byte slice of the atomic value
-func (f *memFile) GetData() []byte {
-	var fileData []byte
-	fileDataVal := f.Data.Load()
-	if fileDataVal != nil {
-		fileData = fileDataVal.([]byte)
-	}
-	return fileData
+	Data atomic.Pointer[[]byte]
 }
 
 // MemStorage represents a in-memory storage.
@@ -110,10 +100,10 @@ func (s *MemStorage) WriteFile(ctx context.Context, name string, data []byte) er
 	defer s.rwm.Unlock()
 	theFile, ok := s.dataStore[name]
 	if ok {
-		theFile.Data.Store(fileData)
+		theFile.Data.Store(&fileData)
 	} else {
 		theFile := new(memFile)
-		theFile.Data.Store(fileData)
+		theFile.Data.Store(&fileData)
 		s.dataStore[name] = theFile
 	}
 	return nil
@@ -135,7 +125,7 @@ func (s *MemStorage) ReadFile(ctx context.Context, name string) ([]byte, error) 
 	if !ok {
 		return nil, errors.Errorf("cannot find the file: %s", name)
 	}
-	fileData := theFile.GetData()
+	fileData := *theFile.Data.Load()
 	return append([]byte{}, fileData...), nil
 }
 
@@ -168,7 +158,7 @@ func (s *MemStorage) Open(ctx context.Context, filePath string, o *ReaderOption)
 	if !ok {
 		return nil, errors.Errorf("cannot find the file: %s", filePath)
 	}
-	data := theFile.GetData()
+	data := *theFile.Data.Load()
 	// just for simplicity, different from other implementation, MemStorage can't
 	// seek beyond [o.StartOffset, o.EndOffset)
 	start, end := 0, len(data)
@@ -225,7 +215,7 @@ func (s *MemStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 		if !ok {
 			continue
 		}
-		fileSize := len(theFile.GetData())
+		fileSize := len(*theFile.Data.Load())
 		if err := fn(fileName, int64(fileSize)); err != nil {
 			return err
 		}
@@ -352,7 +342,7 @@ func (w *memFileWriter) Close(ctx context.Context) error {
 		// continue on
 	}
 	fileData := append([]byte{}, w.buf.Bytes()...)
-	w.file.Data.Store(fileData)
+	w.file.Data.Store(&fileData)
 	w.isClosed.Store(true)
 	return nil
 }

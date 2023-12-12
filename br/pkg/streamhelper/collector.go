@@ -38,7 +38,7 @@ type storeCollector struct {
 
 	input chan RegionWithLeader
 	// the oneshot error reporter.
-	err *atomic.Value
+	err *atomic.Pointer[error]
 	// whether the recv and send loop has exited.
 	doneMessenger chan struct{}
 	onSuccess     onSuccessHook
@@ -58,7 +58,7 @@ func newStoreCollector(storeID uint64, srv LogBackupService) *storeCollector {
 		batchSize:     defaultBatchSize,
 		service:       srv,
 		input:         make(chan RegionWithLeader, defaultBatchSize),
-		err:           new(atomic.Value),
+		err:           new(atomic.Pointer[error]),
 		doneMessenger: make(chan struct{}),
 		regionMap:     make(map[uint64]kv.KeyRange),
 	}
@@ -69,15 +69,11 @@ func (c *storeCollector) reportErr(err error) {
 		log.Warn("reporting error twice, ignoring", logutil.AShortError("old", err), logutil.AShortError("new", oldErr))
 		return
 	}
-	c.err.Store(err)
+	c.err.Store(&err)
 }
 
 func (c *storeCollector) Err() error {
-	err, ok := c.err.Load().(error)
-	if !ok {
-		return nil
-	}
-	return err
+	return *c.err.Load()
 }
 
 func (c *storeCollector) setOnSuccessHook(hook onSuccessHook) {
