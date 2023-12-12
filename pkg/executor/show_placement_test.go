@@ -527,34 +527,33 @@ func TestShowPlacementByFormat(t *testing.T) {
 		tk.MustExec(tt)
 		for i, test := range input {
 			resJSON := tk.MustQuery(test).Rows()
-			for p, _ := range resJSON {
-				require.Equal(t, output[i].Result[p].Target, resJSON[p][0].(string))
-				require.Equal(t, output[i].Result[p].State, resJSON[p][2].(string))
+			for j := range resJSON {
+				require.Equal(t, output[i].Result[j].Target, resJSON[j][0].(string))
+				require.Equal(t, output[i].Result[j].State, resJSON[j][2].(string))
 
-				bundle := output[i].Result[p].Placement
+				bundle := output[i].Result[j].Placement
 				if bundle.Policy != "" {
-					//require.NoError(t, json.Unmarshal([]byte(resJSON[p][1].(string)), &res.policy))
-					require.Equal(t, bundle.Policy, resJSON[p][1].(string))
+					require.Equal(t, bundle.Policy, resJSON[j][1].(string))
 					continue
 				}
 
 				var resBundle placement.Bundle
-				require.NoError(t, json.Unmarshal([]byte(resJSON[p][1].(string)), &resBundle))
+				require.NoError(t, json.Unmarshal([]byte(resJSON[j][1].(string)), &resBundle))
 				require.Equal(t, bundle.ID, resBundle.ID)
 				require.Equal(t, bundle.Index, resBundle.Index)
 				require.Equal(t, bundle.Override, resBundle.Override)
 				require.Equal(t, len(bundle.Rules), len(resBundle.Rules))
-				for j := range bundle.Rules {
-					require.Equal(t, bundle.Rules[j].GroupID, resBundle.Rules[j].GroupID)
-					require.Equal(t, bundle.Rules[j].ID, resBundle.Rules[j].ID)
-					require.Equal(t, bundle.Rules[j].Index, resBundle.Rules[j].Index)
-					require.Equal(t, bundle.Rules[j].Override, resBundle.Rules[j].Override)
-					require.Equal(t, bundle.Rules[j].StartKey, resBundle.Rules[j].StartKeyHex)
-					require.Equal(t, bundle.Rules[j].EndKey, resBundle.Rules[j].EndKeyHex)
-					require.Equal(t, bundle.Rules[j].Role, string(resBundle.Rules[j].Role))
-					require.Equal(t, bundle.Rules[j].Count, resBundle.Rules[j].Count)
-					require.Equal(t, len(bundle.Rules[j].Constraints), len(resBundle.Rules[j].Constraints))
-					require.Equal(t, len(bundle.Rules[j].LocationLabels), len(resBundle.Rules[j].LocationLabels))
+				for k := range bundle.Rules {
+					require.Equal(t, bundle.Rules[k].GroupID, resBundle.Rules[k].GroupID)
+					require.Equal(t, bundle.Rules[k].ID, resBundle.Rules[k].ID)
+					require.Equal(t, bundle.Rules[k].Index, resBundle.Rules[k].Index)
+					require.Equal(t, bundle.Rules[k].Override, resBundle.Rules[k].Override)
+					require.Equal(t, bundle.Rules[k].StartKey, resBundle.Rules[k].StartKeyHex)
+					require.Equal(t, bundle.Rules[k].EndKey, resBundle.Rules[k].EndKeyHex)
+					require.Equal(t, bundle.Rules[k].Role, string(resBundle.Rules[k].Role))
+					require.Equal(t, bundle.Rules[k].Count, resBundle.Rules[k].Count)
+					require.Equal(t, len(bundle.Rules[k].Constraints), len(resBundle.Rules[k].LabelConstraints))
+					require.Equal(t, len(bundle.Rules[k].LocationLabels), len(resBundle.Rules[k].LocationLabels))
 				}
 			}
 		}
