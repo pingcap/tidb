@@ -17,7 +17,6 @@ package core
 import (
 	"cmp"
 	"context"
-	"fmt"
 	"math"
 	"slices"
 	"strconv"
@@ -148,7 +147,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 			cacheable = true // it is already checked here
 		}
 		if !cacheable {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(fmt.Sprintf("skip prepared plan-cache: " + reason)))
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("skip prepared plan-cache: " + reason))
 		}
 		selectStmtNode, normalizedSQL4PC, digest4PC, err = ExtractSelectAndNormalizeDigest(paramStmt, vars.CurrentDB, false)
 		if err != nil || selectStmtNode == nil {

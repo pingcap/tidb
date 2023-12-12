@@ -331,12 +331,12 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			sessVars.StmtCtx.BindSQL = chosenBinding.BindSQL
 			sessVars.FoundInBinding = true
 			if sessVars.StmtCtx.InVerboseExplain {
-				sessVars.StmtCtx.AppendNote(errors.NewNoStackError(fmt.Sprintf("Using the bindSQL: %v", chosenBinding.BindSQL)))
+				sessVars.StmtCtx.AppendNote(errors.NewNoStackErrorf("Using the bindSQL: %v", chosenBinding.BindSQL))
 			} else {
-				sessVars.StmtCtx.AppendExtraNote(errors.NewNoStackError(fmt.Sprintf("Using the bindSQL: %v", chosenBinding.BindSQL)))
+				sessVars.StmtCtx.AppendExtraNote(errors.NewNoStackErrorf("Using the bindSQL: %v", chosenBinding.BindSQL))
 			}
 			if len(tableHints) > 0 {
-				sessVars.StmtCtx.AppendWarning(errors.NewNoStackError(fmt.Sprintf("The system ignores the hints in the current query and uses the hints specified in the bindSQL: %v", chosenBinding.BindSQL)))
+				sessVars.StmtCtx.AppendWarning(errors.NewNoStackErrorf("The system ignores the hints in the current query and uses the hints specified in the bindSQL: %v", chosenBinding.BindSQL))
 			}
 		}
 		// Restore the hint to avoid changing the stmt node.
