@@ -12,6 +12,7 @@ go_library(
         "kv_reader.go",
         "merge.go",
         "onefile_writer.go",
+        "reader.go",
         "split.go",
         "stat_reader.go",
         "util.go",
@@ -58,6 +59,7 @@ go_test(
         "file_test.go",
         "iter_test.go",
         "onefile_writer_test.go",
+        "reader_test.go",
         "split_test.go",
         "util_test.go",
         "writer_test.go",
@@ -90,5 +92,6 @@ go_test(
         "@org_golang_x_exp//rand",
         "@org_golang_x_sync//errgroup",
         "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
     ],
 )
