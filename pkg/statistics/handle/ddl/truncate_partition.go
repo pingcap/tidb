@@ -34,7 +34,7 @@ func (h *ddlHandlerImpl) onTruncatePartitions(t *util.DDLEvent) error {
 
 	// Second, clean up the old stats meta from global stats meta for the dropped partitions.
 	// Do not forget to put those operations in one transaction.
-	return util.CallWithSCtx(h.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+	if err := util.CallWithSCtx(h.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		count := int64(0)
 		for _, def := range droppedPartInfo.Definitions {
 			// Get the count and modify count of the partition.
@@ -72,5 +72,17 @@ func (h *ddlHandlerImpl) onTruncatePartitions(t *util.DDLEvent) error {
 		}
 
 		return nil
-	}, util.FlagWrapTxn)
+	}, util.FlagWrapTxn); err != nil {
+		return err
+	}
+
+	// Third, clean up the old stats meta from partition stats meta for the dropped partitions.
+	// It's OK to put those operations in different transactions. Because it will not affect the correctness.
+	for _, def := range droppedPartInfo.Definitions {
+		if err := h.statsWriter.ResetTableStats2KVForDrop(def.ID); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

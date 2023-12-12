@@ -342,8 +342,8 @@ func TestTruncateAPartition(t *testing.T) {
 		"select version from mysql.stats_meta where table_id = ?", partitionID,
 	).Rows()
 	require.Len(t, rows, 1)
-	// FIXME: we should update the version after truncating a partition.
-	require.Equal(t, version, rows[0][0].(string))
+	// Version gets updated after truncate the partition.
+	require.NotEqual(t, version, rows[0][0].(string))
 }
 
 func TestDropAPartition(t *testing.T) {
