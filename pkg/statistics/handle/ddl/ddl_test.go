@@ -407,7 +407,7 @@ func TestTruncatePartitions(t *testing.T) {
 	err = h.HandleDDLEvent(truncatePartitionEvent)
 	require.NoError(t, err)
 	// Check global stats meta.
-	// Because we have truncated a partition, the count should be 5 - 2 - 1  = 2 and the modify count should be 3.
+	// Because we have truncated two partitions, the count should be 5 - 2 - 1  = 2 and the modify count should be 3.
 	testKit.MustQuery(
 		"select count, modify_count from mysql.stats_meta where table_id = ?", tableInfo.ID,
 	).Check(
