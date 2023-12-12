@@ -16,11 +16,15 @@ package ddl
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
+	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"go.uber.org/zap"
 )
 
 func (h *ddlHandlerImpl) onTruncatePartitions(t *util.DDLEvent) error {
@@ -36,6 +40,8 @@ func (h *ddlHandlerImpl) onTruncatePartitions(t *util.DDLEvent) error {
 	// Do not forget to put those operations in one transaction.
 	if err := util.CallWithSCtx(h.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		count := int64(0)
+		var partitionIDs []int64
+		var partitionNames []string
 		for _, def := range droppedPartInfo.Definitions {
 			// Get the count and modify count of the partition.
 			tableCount, _, _, err := storage.StatsMetaCountAndModifyCount(sctx, def.ID)
@@ -43,9 +49,16 @@ func (h *ddlHandlerImpl) onTruncatePartitions(t *util.DDLEvent) error {
 				return err
 			}
 			count += tableCount
+			partitionIDs = append(partitionIDs, def.ID)
+			partitionNames = append(partitionNames, def.Name.O)
 		}
 
 		if count != 0 {
+			is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+			globalTableSchema, ok := is.SchemaByTable(globalTableInfo)
+			if !ok {
+				return errors.Errorf("schema not found for table %s", globalTableInfo.Name.O)
+			}
 			lockedTables, err := lockstats.QueryLockedTables(sctx)
 			if err != nil {
 				return errors.Trace(err)
@@ -75,7 +88,37 @@ func (h *ddlHandlerImpl) onTruncatePartitions(t *util.DDLEvent) error {
 				globalTableInfo.ID,
 				isLocked,
 			)
-			return err
+			if err != nil {
+				fields := truncatePartitionsLogFields(
+					globalTableSchema,
+					globalTableInfo,
+					partitionIDs,
+					partitionNames,
+					count,
+					delta,
+					startTS,
+					isLocked,
+				)
+				fields = append(fields, zap.Error(err))
+				logutil.StatsLogger().Error("Update global stats after truncate partition failed",
+					fields...,
+				)
+				return err
+			}
+
+			logutil.StatsLogger().Info("Update global stats after truncate partition",
+				truncatePartitionsLogFields(
+					globalTableSchema,
+					globalTableInfo,
+					partitionIDs,
+					partitionNames,
+					count,
+					delta,
+					startTS,
+					isLocked,
+				)...,
+			)
+			return nil
 		}
 
 		return nil
@@ -92,4 +135,27 @@ func (h *ddlHandlerImpl) onTruncatePartitions(t *util.DDLEvent) error {
 	}
 
 	return nil
+}
+
+func truncatePartitionsLogFields(
+	globalTableSchema *model.DBInfo,
+	globalTableInfo *model.TableInfo,
+	partitionIDs []int64,
+	partitionNames []string,
+	count int64,
+	delta int64,
+	startTS uint64,
+	isLocked bool,
+) []zap.Field {
+	return []zap.Field{
+		zap.String("schema", globalTableSchema.Name.O),
+		zap.Int64("tableID", globalTableInfo.ID),
+		zap.String("tableName", globalTableInfo.Name.O),
+		zap.Int64s("partitionIDs", partitionIDs),
+		zap.Strings("partitionNames", partitionNames),
+		zap.Int64("count", count),
+		zap.Int64("delta", delta),
+		zap.Uint64("startTS", startTS),
+		zap.Bool("isLocked", isLocked),
+	}
 }
