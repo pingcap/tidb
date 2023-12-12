@@ -300,7 +300,7 @@ func (e *IndexNestedLoopHashJoin) getResultFromChannel(ctx context.Context, resu
 	return result, nil
 }
 
-func (e *IndexNestedLoopHashJoin) handleResult(ctx context.Context, req *chunk.Chunk, result *indexHashJoinResult) error {
+func (*IndexNestedLoopHashJoin) handleResult(ctx context.Context, req *chunk.Chunk, result *indexHashJoinResult) error {
 	if result == nil {
 		return nil
 	}
