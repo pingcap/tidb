@@ -309,10 +309,10 @@ func TestTruncateAPartition(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get partition p0's stats update version.
-	partitionId := pi.Definitions[0].ID
+	partitionID := pi.Definitions[0].ID
 	// Get it from stats_meat first.
 	rows := testKit.MustQuery(
-		fmt.Sprintf("select version from mysql.stats_meta where table_id = %d", partitionId),
+		"select version from mysql.stats_meta where table_id = ?", partitionID,
 	).Rows()
 	require.Len(t, rows, 1)
 	version := rows[0][0].(string)
@@ -332,14 +332,14 @@ func TestTruncateAPartition(t *testing.T) {
 	// Check global stats meta.
 	// Because we have truncated a partition, the count should be 5 - 2 = 3 and the modify count should be 2.
 	testKit.MustQuery(
-		fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableInfo.ID),
+		"select count, modify_count from mysql.stats_meta where table_id = ?", tableInfo.ID,
 	).Check(
 		testkit.Rows("3 2"),
 	)
 
 	// Check the version again.
 	rows = testKit.MustQuery(
-		fmt.Sprintf("select version from mysql.stats_meta where table_id = %d", partitionId),
+		"select version from mysql.stats_meta where table_id = ?", partitionID,
 	).Rows()
 	require.Len(t, rows, 1)
 	// FIXME: we should update the version after truncating a partition.
