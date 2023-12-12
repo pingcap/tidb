@@ -45,7 +45,7 @@ func openTestingStorage(t *testing.T) storage.ExternalStorage {
 	if *testingStorageURI == "" {
 		t.Skip("testingStorageURI is not set")
 	}
-	s, err := storage.NewFromURL(context.Background(), *testingStorageURI, nil)
+	s, err := storage.NewFromURL(context.Background(), *testingStorageURI)
 	require.NoError(t, err)
 	return s
 }

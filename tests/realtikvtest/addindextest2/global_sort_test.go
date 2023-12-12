@@ -57,8 +57,7 @@ func genStorageURI(t *testing.T) (host string, port uint16, uri string) {
 func checkFileCleaned(t *testing.T, jobID int64, sortStorageURI string) {
 	storeBackend, err := storage.ParseBackend(sortStorageURI, nil)
 	require.NoError(t, err)
-	opts := &storage.ExternalStorageOptions{NoCredentials: true}
-	extStore, err := storage.New(context.Background(), storeBackend, opts)
+	extStore, err := storage.NewWithDefaultOpt(context.Background(), storeBackend)
 	require.NoError(t, err)
 	prefix := strconv.Itoa(int(jobID))
 	dataFiles, statFiles, err := external.GetAllFileNames(context.Background(), extStore, prefix)
