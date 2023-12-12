@@ -1114,4 +1114,50 @@ func TestMergeCompare(t *testing.T) {
 	elapsed = time.Since(now)
 	t.Logf("merge prev implementation with 8 concurrency %d bytes in %s, speed: %.2f MB/s",
 		fileSize*fileCnt, elapsed, float64(fileSize*fileCnt)/elapsed.Seconds()/1024/1024)
+
+	now = time.Now()
+	err = MergeOverlappingFilesOpt(
+		ctx,
+		datas,
+		stats,
+		store,
+		minKey, kv.Key(maxKey).Next(),
+		int64(5*size.MB),
+		mergeOutput,
+		"mergeID",
+		DefaultBlockSize,
+		8*1024,
+		1*size.MB,
+		8*1024,
+		onClose,
+		2,
+		true,
+	)
+	intest.AssertNoError(err)
+	elapsed = time.Since(now)
+	t.Logf("new merge  with 2 concurrency %d bytes in %s, speed: %.2f MB/s",
+		fileSize*fileCnt, elapsed, float64(fileSize*fileCnt)/elapsed.Seconds()/1024/1024)
+
+	now = time.Now()
+	err = MergeOverlappingFilesOpt(
+		ctx,
+		datas,
+		stats,
+		store,
+		minKey, kv.Key(maxKey).Next(),
+		int64(5*size.MB),
+		mergeOutput,
+		"mergeID",
+		DefaultBlockSize,
+		8*1024,
+		1*size.MB,
+		8*1024,
+		onClose,
+		4,
+		true,
+	)
+	intest.AssertNoError(err)
+	elapsed = time.Since(now)
+	t.Logf("new merge  with 4 concurrency %d bytes in %s, speed: %.2f MB/s",
+		fileSize*fileCnt, elapsed, float64(fileSize*fileCnt)/elapsed.Seconds()/1024/1024)
 }
