@@ -1558,19 +1558,21 @@ func traverseFlatPlanForHistoryStats(stmtCtx *stmtctx.StatementContext, statsHan
 					break
 				}
 				needRecord, _, actualRows := needRecordHistoryStats(stmtCtx, x)
+				failpoint.Inject("fakeHistoryStatsNeedRecord", func(val failpoint.Value) {
+					needRecord = val.(bool)
+				})
 				if !needRecord {
 					break
 				}
 				hasCopStats, totalTableRows := GetResultRowsCountForCopStats(stmtCtx, tableScan.ID())
-				if !hasCopStats {
+				if !hasCopStats || totalTableRows == 0 {
 					break
 				}
-				totalTableRowsFloat := float64(totalTableRows)
 				succ, hashCode := genHistoryStatsHashCodeForSelection(stmtCtx, x)
 				if !succ {
 					break
 				}
-				err := recordHistoryStats(statsHandle, startTS, tableScan.Table.ID, hashCode, actualRows, totalTableRowsFloat)
+				err := recordHistoryStats(statsHandle, startTS, tableScan.Table.ID, hashCode, actualRows, float64(totalTableRows))
 				if err != nil {
 					logutil.BgLogger().Warn(err.Error())
 					return false
@@ -1582,10 +1584,7 @@ func traverseFlatPlanForHistoryStats(stmtCtx *stmtctx.StatementContext, statsHan
 }
 
 func recordHistoryStats(statsHandle *handle.Handle, startTS uint64, tableID int64, hashCode uint64, actualRows int64, totalTableRows float64) error {
-	var selectivity float32 = 0.0
-	if totalTableRows != 0.0 {
-		selectivity = float32(float64(actualRows) / totalTableRows)
-	}
+	selectivity := float32(float64(actualRows) / totalTableRows)
 	rTbl := variable.ReadTableDelta{TableID: tableID, Count: actualRows, StepHash: hashCode, PredicateSelectivity: selectivity}
 	err := statsHandle.UpdatePredicateStatsMeta(startTS, rTbl)
 	logutil.BgLogger().Info(
