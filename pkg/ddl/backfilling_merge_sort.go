@@ -105,7 +105,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		return err
 	}
 
-	return external.MergeOverlappingFiles(
+	return external.MergeOverlappingFilesOpt(
 		ctx,
 		sm.DataFiles,
 		sm.StatFiles,
@@ -120,7 +120,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		1*size.MB,
 		8*1024,
 		onClose,
-		int(variable.GetDDLReorgWorkerCounter()),
+		int(variable.GetDDLReorgWorkerCounter()/2),
 		true)
 }
 

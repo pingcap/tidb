@@ -273,14 +273,11 @@ func (s *GCSStorage) URI() string {
 
 // Create implements ExternalStorage interface.
 func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) (ExternalFileWriter, error) {
-	uri := s.objectName(name)
-	w, err := NewGCSWriter(ctx, s.cli, uri, 5*1024*1024, wo.Concurrency, s.gcs.Bucket)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	fw := newFlushStorageWriter(w, &emptyFlusher{}, w)
-	bw := newBufferedWriter(fw, 5*1024*1024, NoCompression)
-	return bw, nil
+	object := s.objectName(name)
+	wc := s.bucket.Object(object).NewWriter(ctx)
+	wc.StorageClass = s.gcs.StorageClass
+	wc.PredefinedACL = s.gcs.PredefinedAcl
+	return newFlushStorageWriter(wc, &emptyFlusher{}, wc), nil
 }
 
 // Rename file name from oldFileName to newFileName.

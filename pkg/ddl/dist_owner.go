@@ -26,5 +26,5 @@ var (
 )
 
 const (
-	distPhysicalTableConcurrency = 16
+	distPhysicalTableConcurrency = 2
 )

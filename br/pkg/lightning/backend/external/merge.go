@@ -250,13 +250,13 @@ func MergeOverlappingFilesOpt(
 		group := group
 		i := i
 		eg.Go(func() error {
-			return runInternal(egCtx, store, group, partSize, newFilePrefix, fmt.Sprintf("%s%d", writerID, i), blockSize, propSizeDist, propKeysDist, onClose)
+			return runOneGroup(egCtx, store, group, partSize, newFilePrefix, fmt.Sprintf("%s%d", writerID, i), blockSize, propSizeDist, propKeysDist, onClose)
 		})
 	}
 	return eg.Wait()
 }
 
-func runInternal(
+func runOneGroup(
 	ctx context.Context,
 	store storage.ExternalStorage,
 	rdGroup readerGroup,
