@@ -219,7 +219,7 @@ func TestBaselineDBLowerCase(t *testing.T) {
 
 	// Simulate existing bindings with upper case default_db.
 	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t`', 'select * from `spm` . `t`', 'SPM', 'enabled', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.Manual + "', '', '')")
+		bindinfo.Manual + "', '', '', '')")
 	tk.MustQuery("select original_sql, default_db from mysql.bind_info where original_sql = 'select * from `spm` . `t`'").Check(testkit.Rows(
 		"select * from `spm` . `t` SPM",
 	))
@@ -237,7 +237,7 @@ func TestBaselineDBLowerCase(t *testing.T) {
 	internal.UtilCleanBindingEnv(tk, dom)
 	// Simulate existing bindings with upper case default_db.
 	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t`', 'select * from `spm` . `t`', 'SPM', 'enabled', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.Manual + "', '', '')")
+		bindinfo.Manual + "', '', '', '')")
 	tk.MustQuery("select original_sql, default_db from mysql.bind_info where original_sql = 'select * from `spm` . `t`'").Check(testkit.Rows(
 		"select * from `spm` . `t` SPM",
 	))
