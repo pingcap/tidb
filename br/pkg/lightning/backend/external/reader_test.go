@@ -17,6 +17,7 @@ package external
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"slices"
 	"testing"
@@ -29,9 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 	"golang.org/x/exp/rand"
 )
 
@@ -40,28 +39,24 @@ func TestReadAllDataBasic(t *testing.T) {
 	rand.Seed(uint64(seed))
 	t.Logf("seed: %d", seed)
 	ctx := context.Background()
-
 	memStore := storage.NewMemStorage()
+	memSizeLimit := (rand.Intn(10) + 1) * 400
 
 	w := NewWriterBuilder().
 		SetPropSizeDistance(100).
 		SetPropKeysDistance(2).
+		SetMemorySizeLimit(uint64(memSizeLimit)).
+		SetBlockSize(memSizeLimit).
 		Build(memStore, "/test", "0")
 
 	writer := NewEngineWriter(w)
-
 	kvCnt := rand.Intn(10) + 10000
-	logutil.BgLogger().Info("ywq test kvcnt", zap.Any("cnt", kvCnt))
 	kvs := make([]common.KvPair, kvCnt)
 	for i := 0; i < kvCnt; i++ {
-		randLen := rand.Intn(10) + 1
-		kvs[i].Key = make([]byte, randLen)
-		_, err := rand.Read(kvs[i].Key)
-		require.NoError(t, err)
-		randLen = rand.Intn(10) + 1
-		kvs[i].Val = make([]byte, randLen)
-		_, err = rand.Read(kvs[i].Val)
-		require.NoError(t, err)
+		kvs[i] = common.KvPair{
+			Key: []byte(fmt.Sprintf("key%05d", i)),
+			Val: []byte("56789"),
+		}
 	}
 
 	require.NoError(t, writer.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvs)))
@@ -75,14 +70,12 @@ func TestReadAllDataBasic(t *testing.T) {
 	datas, stats, err := GetAllFileNames(ctx, memStore, "")
 	intest.AssertNoError(err)
 
-	logutil.BgLogger().Info("files", zap.Any("datas", datas), zap.Any("stats", stats))
-
 	splitter, err := NewRangeSplitter(
 		ctx,
 		datas,
 		stats,
 		memStore,
-		4*1024*1024*1024,
+		int64(memSizeLimit), // make the group small for testing
 		math.MaxInt64,
 		4*1024*1024*1024,
 		math.MaxInt64,
@@ -103,12 +96,6 @@ func TestReadAllDataBasic(t *testing.T) {
 			curEnd = dbkv.Key(kvs[len(kvs)-1].Key).Next()
 		}
 
-		logutil.BgLogger().Info("cur start, end",
-			zap.Any("cur start", curStart),
-			zap.Any("cur end", curEnd),
-			zap.Any("kvs[0]", kvs[0].Key),
-			zap.Any("kvs[len-1]", kvs[len(kvs)-1].Key))
-
 		err = readAllData(
 			ctx,
 			memStore,
@@ -121,10 +108,7 @@ func TestReadAllDataBasic(t *testing.T) {
 		)
 
 		intest.AssertNoError(err)
-		logutil.Logger(ctx).Info("reading external storage in MergeOverlappingFiles", zap.Int("kv-num", len(loaded.keys)))
 		// check kvs sorted
-		curStart = curEnd
-		// sort
 		sorty.MaxGor = uint64(8)
 		sorty.Sort(len(loaded.keys), func(i, k, r, s int) bool {
 			if bytes.Compare(loaded.keys[i], loaded.keys[k]) < 0 { // strict comparator like < or >
@@ -137,11 +121,17 @@ func TestReadAllDataBasic(t *testing.T) {
 			return false
 		})
 		for i, key := range loaded.keys {
-			logutil.BgLogger().Info("ywq test i", zap.Any("i", i))
-			require.EqualValues(t, key, kvs[kvIdx].Key)
-			require.EqualValues(t, loaded.values[i], kvs[kvIdx].Val)
+			require.EqualValues(t, kvs[kvIdx].Key, key)
+			require.EqualValues(t, kvs[kvIdx].Val, loaded.values[i])
 			kvIdx++
 		}
+		curStart = curEnd
+
+		// release
+		loaded.keys = nil
+		loaded.values = nil
+		loaded.memKVBuffers = nil
+
 		if len(endKeyOfGroup) == 0 {
 			break
 		}
