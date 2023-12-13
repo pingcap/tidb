@@ -10260,8 +10260,8 @@ SetOprStmtWoutLimitOrderBy:
 			setOprList2 = []ast.Node{x}
 			with2 = x.With
 		case *ast.SetOprStmt:
-		    // child setOprStmt's limit and order was lost!!!
-		    // we should separate it out from SetOprSelectList.
+		    // child setOprStmt's limit and order should also make sense
+		    // we should separate it out from other normal SetOprSelectList.
 			setOprList2 = x.SelectList.Selects
 			with2 = x.With
 			limit2 = x.Limit
