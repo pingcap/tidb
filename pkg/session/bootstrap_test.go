@@ -560,6 +560,7 @@ func TestUpdateBindInfo(t *testing.T) {
 
 	MustExec(t, se, "alter table mysql.bind_info drop column if exists plan_digest")
 	MustExec(t, se, "alter table mysql.bind_info drop column if exists sql_digest")
+	MustExec(t, se, "alter table mysql.bind_info drop column if exists type")
 	for _, bindCase := range bindCases {
 		sql := fmt.Sprintf("insert into mysql.bind_info values('%s', '%s', '%s', 'enabled', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')",
 			bindCase.originText,
@@ -600,6 +601,7 @@ func TestUpdateDuplicateBindInfo(t *testing.T) {
 	se := CreateSessionAndSetID(t, store)
 	MustExec(t, se, "alter table mysql.bind_info drop column if exists plan_digest")
 	MustExec(t, se, "alter table mysql.bind_info drop column if exists sql_digest")
+	MustExec(t, se, "alter table mysql.bind_info drop column if exists type")
 
 	MustExec(t, se, `insert into mysql.bind_info values('select * from t', 'select /*+ use_index(t, idx_a)*/ * from t', 'test', 'enabled', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
 	// The latest one.
@@ -934,6 +936,7 @@ func TestUpgradeToVer85(t *testing.T) {
 	se := CreateSessionAndSetID(t, store)
 	MustExec(t, se, "alter table mysql.bind_info drop column if exists plan_digest")
 	MustExec(t, se, "alter table mysql.bind_info drop column if exists sql_digest")
+	MustExec(t, se, "alter table mysql.bind_info drop column if exists type")
 
 	MustExec(t, se, `insert into mysql.bind_info values('select * from t', 'select /*+ use_index(t, idx_a)*/ * from t', 'test', 'using', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
 	MustExec(t, se, `insert into mysql.bind_info values('select * from t1', 'select /*+ use_index(t1, idx_a)*/ * from t1', 'test', 'enabled', '2021-01-05 14:50:58.257', '2021-01-05 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
