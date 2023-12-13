@@ -588,8 +588,9 @@ func (tr *TableRestore) restoreEngine(
 
 		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
 			// TODO: use the compressed size of the chunk to conduct memory control
-			_, err = getChunkCompressedSizeForParquet(ctx, chunk, rc.store)
-			return nil, errors.Trace(err)
+			if _, err = getChunkCompressedSizeForParquet(ctx, chunk, rc.store); err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 
 		restoreWorker := rc.regionWorkers.Apply()
