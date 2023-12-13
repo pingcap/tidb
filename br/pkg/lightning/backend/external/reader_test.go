@@ -70,7 +70,7 @@ func testReadAndCompare(
 
 		err = readAllData(
 			ctx,
-			memStore,
+			store,
 			dataFilesOfGroup,
 			statFilesOfGroup,
 			curStart,
@@ -143,4 +143,5 @@ func TestReadAllDataBasic(t *testing.T) {
 		return bytes.Compare(i.Key, j.Key)
 	})
 
+	testReadAndCompare(t, ctx, kvs, memStore, memSizeLimit)
 }
