@@ -337,4 +337,4 @@ func TestOptimizeHintOnPartitionTable(t *testing.T) {
 	tk.MustQuery("SELECT /*+ MAX_EXECUTION_TIME(10)  */ SLEEP(5)").Check(testkit.Rows("0"))
 	tk.MustQuery("SELECT /*+ MAX_EXECUTION_TIME(10), dtc(name=tt)  */ SLEEP(5)").Check(testkit.Rows("0"))
 	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
-}
+
