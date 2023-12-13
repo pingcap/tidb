@@ -85,22 +85,6 @@ func readAllData(
 	return eg.Wait()
 }
 
-// readOneFile will acquire memory from given bufPool for:
-//   - if `concurrency` > 1, it will acquire one `concurrency`*ConcurrentReaderBufferSizePerConc
-//     memory block. This part will be release when exit this function.
-//   - all data in the given range will be read into `output` saved in memory block,
-//     and will be released when `output` is in caller. Note that if memory block
-//     is large, it has a large overhead.
-//
-// In conclusion, the peak memory usage of this function is:
-//
-//	blockSize must be larger than `concurrency`*ConcurrentReaderBufferSizePerConc
-//	peakMemoryUsage = blockSize * (1 + ceil(dataSize / blockSize))
-//
-// the memory usage after the function returns is:
-//
-//	blockSize must be larger than `concurrency`*ConcurrentReaderBufferSizePerConc
-//	memoryUsage = blockSize * ceil(dataSize / blockSize)
 func readOneFile(
 	ctx context.Context,
 	storage storage.ExternalStorage,

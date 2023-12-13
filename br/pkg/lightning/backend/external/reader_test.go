@@ -29,10 +29,86 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
 )
+
+func testReadAndCompare(
+	t *testing.T,
+	ctx context.Context,
+	kvs []common.KvPair,
+	store storage.ExternalStorage,
+	memSizeLimit int) {
+	datas, stats, err := GetAllFileNames(ctx, store, "")
+	require.NoError(t, err)
+
+	splitter, err := NewRangeSplitter(
+		ctx,
+		datas,
+		stats,
+		store,
+		int64(memSizeLimit), // make the group small for testing
+		math.MaxInt64,
+		4*1024*1024*1024,
+		math.MaxInt64,
+		true,
+	)
+	require.NoError(t, err)
+
+	bufPool := membuf.NewPool()
+	loaded := &memKVsAndBuffers{}
+	curStart := kvs[0].Key
+	kvIdx := 0
+
+	for {
+		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, err := splitter.SplitOneRangesGroup()
+		require.NoError(t, err)
+		curEnd := endKeyOfGroup
+		if len(endKeyOfGroup) == 0 {
+			curEnd = dbkv.Key(kvs[len(kvs)-1].Key).Next()
+		}
+
+		err = readAllData(
+			ctx,
+			memStore,
+			dataFilesOfGroup,
+			statFilesOfGroup,
+			curStart,
+			curEnd,
+			bufPool,
+			loaded,
+		)
+
+		require.NoError(t, err)
+		// check kvs sorted
+		sorty.MaxGor = uint64(8)
+		sorty.Sort(len(loaded.keys), func(i, k, r, s int) bool {
+			if bytes.Compare(loaded.keys[i], loaded.keys[k]) < 0 { // strict comparator like < or >
+				if r != s {
+					loaded.keys[r], loaded.keys[s] = loaded.keys[s], loaded.keys[r]
+					loaded.values[r], loaded.values[s] = loaded.values[s], loaded.values[r]
+				}
+				return true
+			}
+			return false
+		})
+		for i, key := range loaded.keys {
+			require.EqualValues(t, kvs[kvIdx].Key, key)
+			require.EqualValues(t, kvs[kvIdx].Val, loaded.values[i])
+			kvIdx++
+		}
+		curStart = curEnd
+
+		// release
+		loaded.keys = nil
+		loaded.values = nil
+		loaded.memKVBuffers = nil
+
+		if len(endKeyOfGroup) == 0 {
+			break
+		}
+	}
+}
 
 func TestReadAllDataBasic(t *testing.T) {
 	seed := time.Now().Unix()
@@ -67,73 +143,4 @@ func TestReadAllDataBasic(t *testing.T) {
 		return bytes.Compare(i.Key, j.Key)
 	})
 
-	datas, stats, err := GetAllFileNames(ctx, memStore, "")
-	intest.AssertNoError(err)
-
-	splitter, err := NewRangeSplitter(
-		ctx,
-		datas,
-		stats,
-		memStore,
-		int64(memSizeLimit), // make the group small for testing
-		math.MaxInt64,
-		4*1024*1024*1024,
-		math.MaxInt64,
-		true,
-	)
-	intest.AssertNoError(err)
-
-	bufPool := membuf.NewPool()
-	loaded := &memKVsAndBuffers{}
-	curStart := kvs[0].Key
-	kvIdx := 0
-
-	for {
-		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, err := splitter.SplitOneRangesGroup()
-		intest.AssertNoError(err)
-		curEnd := endKeyOfGroup
-		if len(endKeyOfGroup) == 0 {
-			curEnd = dbkv.Key(kvs[len(kvs)-1].Key).Next()
-		}
-
-		err = readAllData(
-			ctx,
-			memStore,
-			dataFilesOfGroup,
-			statFilesOfGroup,
-			curStart,
-			curEnd,
-			bufPool,
-			loaded,
-		)
-
-		intest.AssertNoError(err)
-		// check kvs sorted
-		sorty.MaxGor = uint64(8)
-		sorty.Sort(len(loaded.keys), func(i, k, r, s int) bool {
-			if bytes.Compare(loaded.keys[i], loaded.keys[k]) < 0 { // strict comparator like < or >
-				if r != s {
-					loaded.keys[r], loaded.keys[s] = loaded.keys[s], loaded.keys[r]
-					loaded.values[r], loaded.values[s] = loaded.values[s], loaded.values[r]
-				}
-				return true
-			}
-			return false
-		})
-		for i, key := range loaded.keys {
-			require.EqualValues(t, kvs[kvIdx].Key, key)
-			require.EqualValues(t, kvs[kvIdx].Val, loaded.values[i])
-			kvIdx++
-		}
-		curStart = curEnd
-
-		// release
-		loaded.keys = nil
-		loaded.values = nil
-		loaded.memKVBuffers = nil
-
-		if len(endKeyOfGroup) == 0 {
-			break
-		}
-	}
 }
