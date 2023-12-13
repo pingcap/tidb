@@ -31,9 +31,11 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	"go.uber.org/goleak"
 )
 
 func GetResourcePool(t *testing.T) *pools.ResourcePool {
@@ -63,12 +65,18 @@ func checkTaskStateStep(t *testing.T, task *proto.Task, state proto.TaskState, s
 	require.Equal(t, step, task.Step)
 }
 
+func TestMain(m *testing.M) {
+	testsetup.SetupForCommonTest()
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
+	}
+	goleak.VerifyTestMain(m, opts...)
+}
+
 func TestTaskTable(t *testing.T) {
-	pool := GetResourcePool(t)
-	gm := GetTaskManager(t, pool)
-	defer pool.Close()
-	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "table_test")
+	gm, ctx := testutil.InitTableTest(t)
 
 	timeBeforeCreate := time.Unix(time.Now().Unix(), 0)
 	id, err := gm.CreateTask(ctx, "key1", "test", 4, []byte("test"))
@@ -342,11 +350,7 @@ func TestSwitchTaskStepInBatch(t *testing.T) {
 }
 
 func TestGetTopUnfinishedTasks(t *testing.T) {
-	pool := GetResourcePool(t)
-	gm := GetTaskManager(t, pool)
-	defer pool.Close()
-	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "table_test")
+	gm, ctx := testutil.InitTableTest(t)
 
 	taskStates := []proto.TaskState{
 		proto.TaskStateSucceed,
@@ -411,11 +415,7 @@ func TestGetTopUnfinishedTasks(t *testing.T) {
 }
 
 func TestGetUsedSlotsOnNodes(t *testing.T) {
-	pool := GetResourcePool(t)
-	sm := GetTaskManager(t, pool)
-	defer pool.Close()
-	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "table_test")
+	sm, ctx := testutil.InitTableTest(t)
 
 	testutil.InsertSubtask(t, sm, 1, proto.StepOne, "tidb-1", []byte(""), proto.TaskStateRunning, "test", 12)
 	testutil.InsertSubtask(t, sm, 1, proto.StepOne, "tidb-2", []byte(""), proto.TaskStatePending, "test", 12)
@@ -432,12 +432,7 @@ func TestGetUsedSlotsOnNodes(t *testing.T) {
 }
 
 func TestSubTaskTable(t *testing.T) {
-	pool := GetResourcePool(t)
-	sm := GetTaskManager(t, pool)
-	defer pool.Close()
-	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "table_test")
-
+	sm, ctx := testutil.InitTableTest(t)
 	timeBeforeCreate := time.Unix(time.Now().Unix(), 0)
 	id, err := sm.CreateTask(ctx, "key1", "test", 4, []byte("test"))
 	require.NoError(t, err)
@@ -661,12 +656,7 @@ func TestSubTaskTable(t *testing.T) {
 }
 
 func TestBothTaskAndSubTaskTable(t *testing.T) {
-	pool := GetResourcePool(t)
-	sm := GetTaskManager(t, pool)
-	defer pool.Close()
-	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "table_test")
-
+	sm, ctx := testutil.InitTableTest(t)
 	id, err := sm.CreateTask(ctx, "key1", "test", 4, []byte("test"))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), id)
@@ -779,49 +769,42 @@ func TestBothTaskAndSubTaskTable(t *testing.T) {
 }
 
 func TestDistFrameworkMeta(t *testing.T) {
-	// to avoid inserted nodes be cleaned by dispatcher
+	// to avoid inserted nodes be cleaned by scheduler
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask"))
 	}()
-	pool := GetResourcePool(t)
-	sm := GetTaskManager(t, pool)
-	defer pool.Close()
-	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "table_test")
+	sm, ctx := testutil.InitTableTest(t)
 
 	require.NoError(t, sm.StartManager(ctx, ":4000", "background"))
 	require.NoError(t, sm.StartManager(ctx, ":4001", ""))
-	// will be replaced by below one
 	require.NoError(t, sm.StartManager(ctx, ":4002", "background"))
+	// won't be replaced by below one
 	require.NoError(t, sm.StartManager(ctx, ":4002", ""))
 	require.NoError(t, sm.StartManager(ctx, ":4003", "background"))
 
-	allNodes, err := sm.GetAllNodes(ctx)
+	nodes, err := sm.GetAllNodes(ctx)
 	require.NoError(t, err)
-	require.Equal(t, []string{":4000", ":4001", ":4002", ":4003"}, allNodes)
-
-	nodes, err := sm.GetManagedNodes(ctx)
-	require.NoError(t, err)
-	require.Equal(t, []string{":4000", ":4003"}, nodes)
+	require.Equal(t, []string{":4000", ":4001", ":4002", ":4003"}, nodes)
 
 	require.NoError(t, sm.CleanUpMeta(ctx, []string{":4000"}))
 	nodes, err = sm.GetManagedNodes(ctx)
 	require.NoError(t, err)
-	require.Equal(t, []string{":4003"}, nodes)
+	require.Equal(t, []string{":4002", ":4003"}, nodes)
 
 	require.NoError(t, sm.CleanUpMeta(ctx, []string{":4003"}))
 	nodes, err = sm.GetManagedNodes(ctx)
 	require.NoError(t, err)
-	require.Equal(t, []string{":4001", ":4002"}, nodes)
+	require.Equal(t, []string{":4002"}, nodes)
+
+	require.NoError(t, sm.CleanUpMeta(ctx, []string{":4002"}))
+	nodes, err = sm.GetManagedNodes(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []string{":4001"}, nodes)
 }
 
 func TestSubtaskHistoryTable(t *testing.T) {
-	pool := GetResourcePool(t)
-	sm := GetTaskManager(t, pool)
-	defer pool.Close()
-	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "table_test")
+	sm, ctx := testutil.InitTableTest(t)
 
 	const (
 		taskID       = 1
@@ -886,11 +869,7 @@ func TestSubtaskHistoryTable(t *testing.T) {
 }
 
 func TestTaskHistoryTable(t *testing.T) {
-	pool := GetResourcePool(t)
-	gm := GetTaskManager(t, pool)
-	defer pool.Close()
-	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "table_test")
+	gm, ctx := testutil.InitTableTest(t)
 
 	_, err := gm.CreateTask(ctx, "1", proto.TaskTypeExample, 1, nil)
 	require.NoError(t, err)
@@ -932,11 +911,7 @@ func TestTaskHistoryTable(t *testing.T) {
 }
 
 func TestPauseAndResume(t *testing.T) {
-	pool := GetResourcePool(t)
-	sm := GetTaskManager(t, pool)
-	defer pool.Close()
-	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "table_test")
+	sm, ctx := testutil.InitTableTest(t)
 
 	testutil.CreateSubTask(t, sm, 1, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, 11, false)
 	testutil.CreateSubTask(t, sm, 1, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, 11, false)
@@ -966,11 +941,7 @@ func TestPauseAndResume(t *testing.T) {
 }
 
 func TestCancelAndExecIdChanged(t *testing.T) {
-	pool := GetResourcePool(t)
-	sm := GetTaskManager(t, pool)
-	defer pool.Close()
-	ctx, cancel := context.WithCancel(context.Background())
-	ctx = util.WithInternalSourceType(ctx, "table_test")
+	sm, ctx, cancel := testutil.InitTableTestWithCancel(t)
 
 	testutil.CreateSubTask(t, sm, 1, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, 11, false)
 	subtask, err := sm.GetFirstSubtaskInStates(ctx, "tidb1", 1, proto.StepInit, proto.TaskStatePending)

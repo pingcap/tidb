@@ -1331,7 +1331,9 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 	}
 
 	if ret {
-		ret = IsPushDownEnabled(sf.FuncName.L, storeType)
+		funcFullName := fmt.Sprintf("%s.%s", sf.FuncName.L, strings.ToLower(sf.Function.PbCode().String()))
+		// Aside from checking function name, also check the pb name in case only the specific push down is disabled.
+		ret = IsPushDownEnabled(sf.FuncName.L, storeType) && IsPushDownEnabled(funcFullName, storeType)
 	}
 	return ret
 }

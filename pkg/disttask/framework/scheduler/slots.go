@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package dispatcher
+package scheduler
 
 import (
 	"context"
@@ -39,7 +39,7 @@ type taskStripes struct {
 // all nodes managed by dist framework are isomorphic.
 // Stripes reserved for a task defines the maximum resource that a task can use
 // but the task might not use all the resources. To maximize the resource utilization,
-// we will try to dispatch as many tasks as possible depends on the used slots
+// we will try to schedule as many tasks as possible depends on the used slots
 // on each node and the minimum resource required by the tasks, and in this case,
 // we don't consider task order.
 //
@@ -61,13 +61,13 @@ type slotManager struct {
 	// map of reservedStripes for fast delete
 	task2Index map[int64]int
 	// represents the number of slots reserved by task on each node, the execID
-	// is only used for reserve minimum resource when starting dispatcher, the
+	// is only used for reserve minimum resource when starting scheduler, the
 	// subtasks may or may not be scheduled on this node.
 	reservedSlots map[string]int
 	// represents the number of slots taken by task on each node
 	// on some cases it might be larger than capacity:
 	// 	current step of higher priority task A has little subtasks, so we start
-	// 	to dispatch lower priority task, but next step of A has many subtasks.
+	// 	to schedule lower priority task, but next step of A has many subtasks.
 	// once initialized, the length of usedSlots should be equal to number of nodes
 	// managed by dist framework.
 	usedSlots map[string]int
@@ -109,7 +109,7 @@ func (sm *slotManager) update(ctx context.Context, taskMgr TaskManager) error {
 // else if the resource is reserved by stripes, it returns "".
 // as usedSlots is updated asynchronously, it might return false even if there
 // are enough resources, or return true on resource shortage when some task
-// dispatched subtasks.
+// scheduled subtasks.
 func (sm *slotManager) canReserve(task *proto.Task) (execID string, ok bool) {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()

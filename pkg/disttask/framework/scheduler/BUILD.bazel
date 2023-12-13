@@ -1,15 +1,15 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "dispatcher",
+    name = "scheduler",
     srcs = [
-        "dispatcher.go",
-        "dispatcher_manager.go",
         "interface.go",
+        "scheduler.go",
+        "scheduler_manager.go",
         "slots.go",
         "state_transform.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/disttask/framework/dispatcher",
+    importpath = "github.com/pingcap/tidb/pkg/disttask/framework/scheduler",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/disttask/framework/handle",
@@ -35,16 +35,16 @@ go_library(
 )
 
 go_test(
-    name = "dispatcher_test",
+    name = "scheduler_test",
     timeout = "short",
     srcs = [
-        "dispatcher_manager_test.go",
-        "dispatcher_test.go",
         "main_test.go",
         "rebalance_test.go",
+        "scheduler_manager_test.go",
+        "scheduler_test.go",
         "slots_test.go",
     ],
-    embed = [":dispatcher"],
+    embed = [":scheduler"],
     flaky = True,
     race = "off",
     shard_count = 23,
@@ -53,6 +53,7 @@ go_test(
         "//pkg/disttask/framework/dispatcher/mock",
         "//pkg/disttask/framework/mock",
         "//pkg/disttask/framework/proto",
+        "//pkg/disttask/framework/scheduler/mock",
         "//pkg/disttask/framework/storage",
         "//pkg/disttask/framework/testutil",
         "//pkg/domain/infosync",

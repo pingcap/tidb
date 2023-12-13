@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package dispatcher
+package scheduler
 
 import (
 	"context"
@@ -80,8 +80,8 @@ type TaskManager interface {
 }
 
 // Extension is used to control the process operations for each task.
-// it's used to extend functions of BaseDispatcher.
-// as golang doesn't support inheritance, we embed this interface in Dispatcher
+// it's used to extend functions of BaseScheduler.
+// as golang doesn't support inheritance, we embed this interface in Scheduler
 // to simulate abstract method as in other OO languages.
 type Extension interface {
 	// OnTick is used to handle the ticker event, if business impl need to do some periodical work, you can
@@ -93,13 +93,13 @@ type Extension interface {
 	// NOTE: don't change task.State inside, framework will manage it.
 	// it's called when:
 	// 	1. task is pending and entering it's first step.
-	// 	2. subtasks dispatched has all finished with no error.
+	// 	2. subtasks scheduled has all finished with no error.
 	// when next step is StepDone, it should return nil, nil.
 	OnNextSubtasksBatch(ctx context.Context, h TaskHandle, task *proto.Task, serverInfo []*infosync.ServerInfo, step proto.Step) (subtaskMetas [][]byte, err error)
 
 	// OnDone is called when task is done, either finished successfully or failed
 	// with error.
-	// if the task is failed when initializing dispatcher, or it's an unknown task,
+	// if the task is failed when initializing scheduler, or it's an unknown task,
 	// we don't call this function.
 	OnDone(ctx context.Context, h TaskHandle, task *proto.Task) error
 
@@ -108,49 +108,49 @@ type Extension interface {
 	// The bool return value indicates whether filter instances by role.
 	GetEligibleInstances(ctx context.Context, task *proto.Task) ([]*infosync.ServerInfo, bool, error)
 
-	// IsRetryableErr is used to check whether the error occurred in dispatcher is retryable.
+	// IsRetryableErr is used to check whether the error occurred in scheduler is retryable.
 	IsRetryableErr(err error) bool
 
 	// GetNextStep is used to get the next step for the task.
 	// if task runs successfully, it should go from StepInit to business steps,
-	// then to StepDone, then dispatcher will mark it as finished.
+	// then to StepDone, then scheduler will mark it as finished.
 	GetNextStep(task *proto.Task) proto.Step
 }
 
-// dispatcherFactoryFn is used to create a dispatcher.
-type dispatcherFactoryFn func(ctx context.Context, taskMgr TaskManager, serverID string, task *proto.Task) Dispatcher
+// schedulerFactoryFn is used to create a scheduler.
+type schedulerFactoryFn func(ctx context.Context, taskMgr TaskManager, serverID string, task *proto.Task) Scheduler
 
-var dispatcherFactoryMap = struct {
+var schedulerFactoryMap = struct {
 	syncutil.RWMutex
-	m map[proto.TaskType]dispatcherFactoryFn
+	m map[proto.TaskType]schedulerFactoryFn
 }{
-	m: make(map[proto.TaskType]dispatcherFactoryFn),
+	m: make(map[proto.TaskType]schedulerFactoryFn),
 }
 
-// RegisterDispatcherFactory is used to register the dispatcher factory.
-// normally dispatcher ctor should be registered before the server start.
+// RegisterSchedulerFactory is used to register the scheduler factory.
+// normally scheduler ctor should be registered before the server start.
 // and should be called in a single routine, such as in init().
 // after the server start, there's should be no write to the map.
 // but for index backfill, the register call stack is so deep, not sure
 // if it's safe to do so, so we use a lock here.
-func RegisterDispatcherFactory(taskType proto.TaskType, ctor dispatcherFactoryFn) {
-	dispatcherFactoryMap.Lock()
-	defer dispatcherFactoryMap.Unlock()
-	dispatcherFactoryMap.m[taskType] = ctor
+func RegisterSchedulerFactory(taskType proto.TaskType, ctor schedulerFactoryFn) {
+	schedulerFactoryMap.Lock()
+	defer schedulerFactoryMap.Unlock()
+	schedulerFactoryMap.m[taskType] = ctor
 }
 
-// getDispatcherFactory is used to get the dispatcher factory.
-func getDispatcherFactory(taskType proto.TaskType) dispatcherFactoryFn {
-	dispatcherFactoryMap.RLock()
-	defer dispatcherFactoryMap.RUnlock()
-	return dispatcherFactoryMap.m[taskType]
+// getSchedulerFactory is used to get the scheduler factory.
+func getSchedulerFactory(taskType proto.TaskType) schedulerFactoryFn {
+	schedulerFactoryMap.RLock()
+	defer schedulerFactoryMap.RUnlock()
+	return schedulerFactoryMap.m[taskType]
 }
 
-// ClearDispatcherFactory is only used in test.
-func ClearDispatcherFactory() {
-	dispatcherFactoryMap.Lock()
-	defer dispatcherFactoryMap.Unlock()
-	dispatcherFactoryMap.m = make(map[proto.TaskType]dispatcherFactoryFn)
+// ClearSchedulerFactory is only used in test.
+func ClearSchedulerFactory() {
+	schedulerFactoryMap.Lock()
+	defer schedulerFactoryMap.Unlock()
+	schedulerFactoryMap.m = make(map[proto.TaskType]schedulerFactoryFn)
 }
 
 // CleanUpRoutine is used for the framework to do some clean up work if the task is finished.
@@ -168,24 +168,24 @@ var cleanUpFactoryMap = struct {
 	m: make(map[proto.TaskType]cleanUpFactoryFn),
 }
 
-// RegisterDispatcherCleanUpFactory is used to register the dispatcher clean up factory.
-// normally dispatcher cleanup is used in the dispatcher_manager gcTaskLoop to do clean up
+// RegisterSchedulerCleanUpFactory is used to register the scheduler clean up factory.
+// normally scheduler cleanup is used in the scheduler_manager gcTaskLoop to do clean up
 // works when tasks are finished.
-func RegisterDispatcherCleanUpFactory(taskType proto.TaskType, ctor cleanUpFactoryFn) {
+func RegisterSchedulerCleanUpFactory(taskType proto.TaskType, ctor cleanUpFactoryFn) {
 	cleanUpFactoryMap.Lock()
 	defer cleanUpFactoryMap.Unlock()
 	cleanUpFactoryMap.m[taskType] = ctor
 }
 
-// getDispatcherCleanUpFactory is used to get the dispatcher factory.
-func getDispatcherCleanUpFactory(taskType proto.TaskType) cleanUpFactoryFn {
+// getSchedulerCleanUpFactory is used to get the scheduler factory.
+func getSchedulerCleanUpFactory(taskType proto.TaskType) cleanUpFactoryFn {
 	cleanUpFactoryMap.RLock()
 	defer cleanUpFactoryMap.RUnlock()
 	return cleanUpFactoryMap.m[taskType]
 }
 
-// ClearDispatcherCleanUpFactory is only used in test.
-func ClearDispatcherCleanUpFactory() {
+// ClearSchedulerCleanUpFactory is only used in test.
+func ClearSchedulerCleanUpFactory() {
 	cleanUpFactoryMap.Lock()
 	defer cleanUpFactoryMap.Unlock()
 	cleanUpFactoryMap.m = make(map[proto.TaskType]cleanUpFactoryFn)

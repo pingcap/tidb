@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package dispatcher
+package scheduler
 
 import (
 	"testing"
@@ -21,30 +21,30 @@ import (
 	"go.uber.org/goleak"
 )
 
-// DispatcherForTest exports for testing.
-type DispatcherManagerForTest interface {
+// SchedulerForTest exports for testing.
+type SchedulerManagerForTest interface {
 	GetRunningTaskCnt() int
 	DelRunningTask(id int64)
 	DoCleanUpRoutine()
 }
 
-// GetRunningGTaskCnt implements Dispatcher.GetRunningGTaskCnt interface.
+// GetRunningGTaskCnt implements Scheduler.GetRunningGTaskCnt interface.
 func (dm *Manager) GetRunningTaskCnt() int {
-	return dm.getDispatcherCount()
+	return dm.getSchedulerCount()
 }
 
-// DelRunningGTask implements Dispatcher.DelRunningGTask interface.
+// DelRunningGTask implements Scheduler.DelRunningGTask interface.
 func (dm *Manager) DelRunningTask(id int64) {
-	dm.delDispatcher(id)
+	dm.delScheduler(id)
 }
 
-// DoCleanUpRoutine implements Dispatcher.DoCleanUpRoutine interface.
+// DoCleanUpRoutine implements Scheduler.DoCleanUpRoutine interface.
 func (dm *Manager) DoCleanUpRoutine() {
 	dm.doCleanUpRoutine()
 }
 
-func (d *BaseDispatcher) OnNextStage() (err error) {
-	return d.onNextStage()
+func (s *BaseScheduler) OnNextStage() (err error) {
+	return s.onNextStage()
 }
 
 func TestMain(m *testing.M) {

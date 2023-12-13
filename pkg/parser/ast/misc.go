@@ -1972,6 +1972,7 @@ type CreateBindingStmt struct {
 	stmtNode
 
 	GlobalScope bool
+	IsUniversal bool
 	OriginNode  StmtNode
 	HintedNode  StmtNode
 	PlanDigest  string
@@ -1983,6 +1984,9 @@ func (n *CreateBindingStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("GLOBAL ")
 	} else {
 		ctx.WriteKeyWord("SESSION ")
+	}
+	if n.IsUniversal {
+		ctx.WriteKeyWord("UNIVERSAL ")
 	}
 	if n.OriginNode == nil {
 		ctx.WriteKeyWord("BINDING FROM HISTORY USING PLAN DIGEST ")
