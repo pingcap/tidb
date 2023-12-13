@@ -40,7 +40,7 @@ func InitTestContext(t *testing.T, nodeNum int) (context.Context, *gomock.Contro
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+	ctx = util.WithInternalSourceType(ctx, "scheduler")
 
 	return ctx, ctrl, &TestContext{}, testkit.NewDistExecutionContext(t, nodeNum)
 }

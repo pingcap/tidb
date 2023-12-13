@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -194,6 +195,7 @@ func TestPlanReplayerContinuesCapture(t *testing.T) {
 	require.NotNil(t, task)
 	worker := prHandle.GetWorker()
 	success := worker.HandleTask(task)
+	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
 	require.True(t, success)
 	tk.MustQuery("select count(*) from mysql.plan_replayer_status").Check(testkit.Rows("1"))
 }
@@ -844,6 +846,49 @@ func TestUnreasonablyClose(t *testing.T) {
 		}
 	}
 	require.Equal(t, opsNeedsCoveredMask, opsAlreadyCoveredMask, fmt.Sprintf("these operators are not covered %s", commentBuf.String()))
+}
+
+func TestTwiceCloseUnionExec(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable(), plannercore.MockUnsignedTable()})
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
+	// To enable the shuffleExec operator.
+	tk.MustExec("set @@tidb_merge_join_concurrency=4")
+
+	p := parser.New()
+	for i, tc := range []string{
+		"select /*+ stream_agg()*/ sum(a+1) from (select /*+ stream_agg()*/ sum(a+1) as a from t t1 union all select a from t t2) t1 union all select a from t t2",
+	} {
+		comment := fmt.Sprintf("case:%v sql:%s", i, tc)
+		stmt, err := p.ParseOneStmt(tc, "", "")
+		require.NoError(t, err, comment)
+		err = sessiontxn.NewTxn(context.Background(), tk.Session())
+		require.NoError(t, err, comment)
+
+		err = sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), stmt)
+		require.NoError(t, err, comment)
+
+		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil)
+		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		e := executorBuilder.Build(p)
+		chk := exec.NewFirstChunk(e)
+		require.NoError(t, exec.Open(context.Background(), e), comment)
+		require.NoError(t, e.Next(context.Background(), chk), comment)
+		require.NoError(t, exec.Close(e), comment)
+		chk.Reset()
+
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/mockStreamAggExecBaseExecutorOpenReturnedError", `return(true)`))
+		require.NoError(t, exec.Open(context.Background(), e), comment)
+		err = e.Next(context.Background(), chk)
+		require.EqualError(t, err, "mock StreamAggExec.baseExecutor.Open returned error")
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/aggregate/mockStreamAggExecBaseExecutorOpenReturnedError"))
+
+		exec.Close(e)
+		// No leak.
+	}
 }
 
 func TestPointGetPreparedPlan(t *testing.T) {
@@ -2014,8 +2059,8 @@ func TestColumnName(t *testing.T) {
 	require.Equal(t, "1+1", fields[0].ColumnAsName.L)
 	require.Equal(t, "num", fields[1].Column.Name.L)
 	require.Equal(t, "num", fields[1].ColumnAsName.L)
-	tk.MustExec("set @@tidb_enable_window_function = 0")
 	require.Nil(t, rs.Close())
+	tk.MustExec("set @@tidb_enable_window_function = 0")
 
 	rs, err = tk.Exec("select if(1,c,c) from t;")
 	require.NoError(t, err)

@@ -176,7 +176,7 @@ func (e *BaseExecutor) Open(ctx context.Context) error {
 func (e *BaseExecutor) Close() error {
 	var firstErr error
 	for _, src := range e.children {
-		if err := src.Close(); err != nil && firstErr == nil {
+		if err := Close(src); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -293,6 +293,16 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	}
 	// recheck whether the session/query is killed during the Next()
 	return sessVars.SQLKiller.HandleSignal()
+}
+
+// Close is a wrapper function on e.Close(), it handles some common codes.
+func Close(e Executor) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = util.GetRecoverError(r)
+		}
+	}()
+	return e.Close()
 }
 
 // RegisterSQLAndPlanInExecForTopSQL register the sql and plan information if it doesn't register before execution.

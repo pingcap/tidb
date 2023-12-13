@@ -188,7 +188,7 @@ func (us *UnionScanExec) Close() error {
 	us.cursor4AddRows = nil
 	us.cursor4SnapshotRows = 0
 	us.snapshotRows = us.snapshotRows[:0]
-	return us.Children(0).Close()
+	return exec.Close(us.Children(0))
 }
 
 // getOneRow gets one result row from dirty table or child.
