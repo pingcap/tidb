@@ -346,6 +346,20 @@ func (mr *MockTaskExecutorMockRecorder) Init(arg0 any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Init", reflect.TypeOf((*MockTaskExecutor)(nil).Init), arg0)
 }
 
+// IsRetryableError mocks base method.
+func (m *MockTaskExecutor) IsRetryableError(arg0 error) bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsRetryableError", arg0)
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// IsRetryableError indicates an expected call of IsRetryableError.
+func (mr *MockTaskExecutorMockRecorder) IsRetryableError(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsRetryableError", reflect.TypeOf((*MockTaskExecutor)(nil).IsRetryableError), arg0)
+}
+
 // Pause mocks base method.
 func (m *MockTaskExecutor) Pause(arg0 context.Context, arg1 *proto.Task) error {
 	m.ctrl.T.Helper()
@@ -438,4 +452,18 @@ func (m *MockExtension) IsIdempotent(arg0 *proto.Subtask) bool {
 func (mr *MockExtensionMockRecorder) IsIdempotent(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsIdempotent", reflect.TypeOf((*MockExtension)(nil).IsIdempotent), arg0)
+}
+
+// IsRetryableError mocks base method.
+func (m *MockExtension) IsRetryableError(arg0 error) bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsRetryableError", arg0)
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// IsRetryableError indicates an expected call of IsRetryableError.
+func (mr *MockExtensionMockRecorder) IsRetryableError(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsRetryableError", reflect.TypeOf((*MockExtension)(nil).IsRetryableError), arg0)
 }

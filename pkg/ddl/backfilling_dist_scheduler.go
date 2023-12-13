@@ -28,8 +28,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -42,33 +42,33 @@ import (
 	"go.uber.org/zap"
 )
 
-// BackfillingDispatcherExt is an extension of litBackfillDispatcher, exported for test.
-type BackfillingDispatcherExt struct {
+// BackfillingSchedulerExt is an extension of litBackfillScheduler, exported for test.
+type BackfillingSchedulerExt struct {
 	d          *ddl
 	GlobalSort bool
 }
 
-// NewBackfillingDispatcherExt creates a new backfillingDispatcherExt, only used for test now.
-func NewBackfillingDispatcherExt(d DDL) (dispatcher.Extension, error) {
+// NewBackfillingSchedulerExt creates a new backfillingSchedulerExt, only used for test now.
+func NewBackfillingSchedulerExt(d DDL) (scheduler.Extension, error) {
 	ddl, ok := d.(*ddl)
 	if !ok {
 		return nil, errors.New("The getDDL result should be the type of *ddl")
 	}
-	return &BackfillingDispatcherExt{
+	return &BackfillingSchedulerExt{
 		d: ddl,
 	}, nil
 }
 
-var _ dispatcher.Extension = (*BackfillingDispatcherExt)(nil)
+var _ scheduler.Extension = (*BackfillingSchedulerExt)(nil)
 
-// OnTick implements dispatcher.Extension interface.
-func (*BackfillingDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
+// OnTick implements scheduler.Extension interface.
+func (*BackfillingSchedulerExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
 // OnNextSubtasksBatch generate batch of next step's plan.
-func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
+func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 	ctx context.Context,
-	taskHandle dispatcher.TaskHandle,
+	taskHandle scheduler.TaskHandle,
 	task *proto.Task,
 	serverInfo []*infosync.ServerInfo,
 	nextStep proto.Step,
@@ -79,12 +79,12 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 		zap.String("curr-step", StepStr(task.Step)),
 		zap.String("next-step", StepStr(nextStep)),
 	)
-	var backfillMeta BackfillGlobalMeta
+	var backfillMeta BackfillTaskMeta
 	if err := json.Unmarshal(task.Meta, &backfillMeta); err != nil {
 		return nil, err
 	}
 	job := &backfillMeta.Job
-	tblInfo, err := getTblInfo(dsp.d, job)
+	tblInfo, err := getTblInfo(sch.d, job)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +96,7 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 		if tblInfo.Partition != nil {
 			return generatePartitionPlan(tblInfo)
 		}
-		return generateNonPartitionPlan(dsp.d, tblInfo, job, dsp.GlobalSort, len(serverInfo))
+		return generateNonPartitionPlan(sch.d, tblInfo, job, sch.GlobalSort, len(serverInfo))
 	case StepMergeSort:
 		res, err := generateMergePlan(taskHandle, task, logger)
 		if err != nil {
@@ -110,7 +110,7 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 		}
 		return res, nil
 	case StepWriteAndIngest:
-		if dsp.GlobalSort {
+		if sch.GlobalSort {
 			prevStep := StepReadIndex
 			if backfillMeta.UseMergeSort {
 				prevStep = StepMergeSort
@@ -140,7 +140,7 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 	}
 }
 
-func updateMeta(task *proto.Task, taskMeta *BackfillGlobalMeta) error {
+func updateMeta(task *proto.Task, taskMeta *BackfillTaskMeta) error {
 	bs, err := json.Marshal(taskMeta)
 	if err != nil {
 		return errors.Trace(err)
@@ -149,13 +149,13 @@ func updateMeta(task *proto.Task, taskMeta *BackfillGlobalMeta) error {
 	return nil
 }
 
-// GetNextStep implements dispatcher.Extension interface.
-func (dsp *BackfillingDispatcherExt) GetNextStep(task *proto.Task) proto.Step {
+// GetNextStep implements scheduler.Extension interface.
+func (sch *BackfillingSchedulerExt) GetNextStep(task *proto.Task) proto.Step {
 	switch task.Step {
 	case proto.StepInit:
 		return StepReadIndex
 	case StepReadIndex:
-		if dsp.GlobalSort {
+		if sch.GlobalSort {
 			return StepMergeSort
 		}
 		return proto.StepDone
@@ -175,55 +175,55 @@ func skipMergeSort(stats []external.MultipleFilesStat) bool {
 	return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
 }
 
-// OnDone implements dispatcher.Extension interface.
-func (*BackfillingDispatcherExt) OnDone(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task) error {
+// OnDone implements scheduler.Extension interface.
+func (*BackfillingSchedulerExt) OnDone(_ context.Context, _ scheduler.TaskHandle, _ *proto.Task) error {
 	return nil
 }
 
-// GetEligibleInstances implements dispatcher.Extension interface.
-func (*BackfillingDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
-	serverInfos, err := dispatcher.GenerateTaskExecutorNodes(ctx)
+// GetEligibleInstances implements scheduler.Extension interface.
+func (*BackfillingSchedulerExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
+	serverInfos, err := scheduler.GenerateTaskExecutorNodes(ctx)
 	if err != nil {
 		return nil, true, err
 	}
 	return serverInfos, true, nil
 }
 
-// IsRetryableErr implements dispatcher.Extension.IsRetryableErr interface.
-func (*BackfillingDispatcherExt) IsRetryableErr(error) bool {
+// IsRetryableErr implements scheduler.Extension.IsRetryableErr interface.
+func (*BackfillingSchedulerExt) IsRetryableErr(error) bool {
 	return true
 }
 
-// LitBackfillDispatcher wraps BaseDispatcher.
-type LitBackfillDispatcher struct {
-	*dispatcher.BaseDispatcher
+// LitBackfillScheduler wraps BaseScheduler.
+type LitBackfillScheduler struct {
+	*scheduler.BaseScheduler
 	d *ddl
 }
 
-func newLitBackfillDispatcher(ctx context.Context, d *ddl, taskMgr dispatcher.TaskManager,
-	serverID string, task *proto.Task) dispatcher.Dispatcher {
-	dsp := LitBackfillDispatcher{
-		d:              d,
-		BaseDispatcher: dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task),
+func newLitBackfillScheduler(ctx context.Context, d *ddl, taskMgr scheduler.TaskManager,
+	serverID string, task *proto.Task) scheduler.Scheduler {
+	sch := LitBackfillScheduler{
+		d:             d,
+		BaseScheduler: scheduler.NewBaseScheduler(ctx, taskMgr, serverID, task),
 	}
-	return &dsp
+	return &sch
 }
 
-// Init implements BaseDispatcher interface.
-func (dsp *LitBackfillDispatcher) Init() (err error) {
-	taskMeta := &BackfillGlobalMeta{}
-	if err = json.Unmarshal(dsp.BaseDispatcher.Task.Meta, taskMeta); err != nil {
+// Init implements BaseScheduler interface.
+func (sch *LitBackfillScheduler) Init() (err error) {
+	taskMeta := &BackfillTaskMeta{}
+	if err = json.Unmarshal(sch.BaseScheduler.Task.Meta, taskMeta); err != nil {
 		return errors.Annotate(err, "unmarshal task meta failed")
 	}
-	dsp.BaseDispatcher.Extension = &BackfillingDispatcherExt{
-		d:          dsp.d,
+	sch.BaseScheduler.Extension = &BackfillingSchedulerExt{
+		d:          sch.d,
 		GlobalSort: len(taskMeta.CloudStorageURI) > 0}
-	return dsp.BaseDispatcher.Init()
+	return sch.BaseScheduler.Init()
 }
 
-// Close implements BaseDispatcher interface.
-func (dsp *LitBackfillDispatcher) Close() {
-	dsp.BaseDispatcher.Close()
+// Close implements BaseScheduler interface.
+func (sch *LitBackfillScheduler) Close() {
+	sch.BaseScheduler.Close()
 }
 
 func getTblInfo(d *ddl, job *model.Job) (tblInfo *model.TableInfo, err error) {
@@ -338,7 +338,7 @@ func calculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool
 
 func generateGlobalSortIngestPlan(
 	ctx context.Context,
-	taskHandle dispatcher.TaskHandle,
+	taskHandle scheduler.TaskHandle,
 	task *proto.Task,
 	jobID int64,
 	cloudStorageURI string,
@@ -349,7 +349,7 @@ func generateGlobalSortIngestPlan(
 	if err != nil {
 		return nil, err
 	}
-	instanceIDs, err := dispatcher.GenerateTaskExecutorNodes(ctx)
+	instanceIDs, err := scheduler.GenerateTaskExecutorNodes(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -409,7 +409,7 @@ func generateGlobalSortIngestPlan(
 }
 
 func generateMergePlan(
-	taskHandle dispatcher.TaskHandle,
+	taskHandle scheduler.TaskHandle,
 	task *proto.Task,
 	logger *zap.Logger,
 ) ([][]byte, error) {
@@ -502,7 +502,7 @@ func getRangeSplitter(
 }
 
 func getSummaryFromLastStep(
-	taskHandle dispatcher.TaskHandle,
+	taskHandle scheduler.TaskHandle,
 	gTaskID int64,
 	step proto.Step,
 ) (startKey, endKey kv.Key, totalKVSize uint64, dataFiles, statFiles []string, err error) {

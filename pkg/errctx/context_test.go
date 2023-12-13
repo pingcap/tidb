@@ -20,15 +20,16 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/types"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/multierr"
 )
 
 func TestContext(t *testing.T) {
 	var warn error
-	ctx := errctx.NewContext(func(err error) {
+	ctx := errctx.NewContext(contextutil.NewFuncWarnHandlerForTest(func(err error) {
 		warn = err
-	})
+	}))
 
 	testInternalErr := types.ErrOverflow
 	testErr := errors.New("error")

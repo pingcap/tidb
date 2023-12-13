@@ -1350,7 +1350,7 @@ select name_const("hello", b) from t;
 select name_const("hello", 1+1) from t;
 -- error 1210
 select name_const(concat('a', 'b'), 555) from t;
--- error 1210
+-- error 1582
 select name_const(555) from t;
 select name_const("hello", 1);
 
@@ -1513,7 +1513,7 @@ select sleep(1);
 select sleep(0);
 select sleep('a');
 show warnings;
--- error 1510
+-- error 1210
 select sleep(-1);
 SELECT INET_ATON('10.0.5.9');
 SELECT INET_NTOA(167773449);

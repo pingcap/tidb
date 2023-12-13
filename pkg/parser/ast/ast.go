@@ -253,6 +253,8 @@ func GetStmtLabel(stmtNode StmtNode) string {
 		return "Shutdown"
 	case *SavepointStmt:
 		return "Savepoint"
+	case *OptimizeTableStmt:
+		return "Optimize"
 	}
 	return "other"
 }

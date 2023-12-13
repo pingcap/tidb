@@ -344,7 +344,7 @@ func TestReadAfterCloseConnReader(t *testing.T) {
 		curBufOffset:  8,
 		logger:        logutil.Logger(ctx),
 	}
-	reader.curBuf = reader.smallBuf
+	reader.curBuf = [][]byte{reader.smallBuf}
 	pool := membuf.NewPool()
 	reader.concurrentReader.largeBufferPool = pool.NewBuffer()
 	reader.concurrentReader.store = storage.NewMemStorage()

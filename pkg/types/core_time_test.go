@@ -263,16 +263,33 @@ func TestAddDate(t *testing.T) {
 		month int
 		day   int
 		ot    time.Time
+		err   bool
 	}{
-		{01, 1, 0, time.Date(2000, 1, 01, 0, 0, 0, 0, time.UTC)},
-		{02, 1, 12, time.Date(2000, 1, 01, 0, 0, 0, 0, time.UTC)},
-		{03, 1, 12, time.Date(2000, 1, 01, 0, 0, 0, 0, time.UTC)},
-		{04, 2, 24, time.Date(2000, 2, 10, 0, 0, 0, 0, time.UTC)},
-		{01, 04, 05, time.Date(2019, 04, 01, 1, 2, 3, 4, time.UTC)},
+		{01, 1, 0, time.Date(2000, 1, 01, 0, 0, 0, 0, time.UTC), false},
+		{02, 1, 12, time.Date(2000, 1, 01, 0, 0, 0, 0, time.UTC), false},
+		{03, 1, 12, time.Date(2000, 1, 01, 0, 0, 0, 0, time.UTC), false},
+		{04, 2, 24, time.Date(2000, 2, 10, 0, 0, 0, 0, time.UTC), false},
+		{01, 04, 05, time.Date(2019, 04, 01, 1, 2, 3, 4, time.UTC), false},
+		{7999, 1, 1, time.Date(2000, 1, 01, 0, 0, 0, 0, time.UTC), false},
+		{-2000, 1, 1, time.Date(2000, 1, 01, 0, 0, 0, 0, time.UTC), false},
+		{8000, 1, 1, time.Date(2000, 1, 01, 0, 0, 0, 0, time.UTC), true},
+		{10001 * 365, 1, 1, time.Date(2000, 1, 01, 0, 0, 0, 0, time.UTC), true},
+		{01, 10001 * 36, 1, time.Date(2000, 1, 01, 0, 0, 0, 0, time.UTC), true},
+		{01, 1, 10001 * 365, time.Date(2000, 1, 01, 0, 0, 0, 0, time.UTC), true},
+		{-2001, 1, 1, time.Date(2000, 1, 01, 0, 0, 0, 0, time.UTC), true},
+		{-10001 * 365, 1, 1, time.Date(2000, 1, 01, 0, 0, 0, 0, time.UTC), true},
+		{01, -10001 * 36, 1, time.Date(2000, 1, 01, 0, 0, 0, 0, time.UTC), true},
+		{01, 1, -10001 * 365, time.Date(2000, 1, 01, 0, 0, 0, 0, time.UTC), true},
 	}
 
 	for _, tt := range tests {
-		res := AddDate(int64(tt.year), int64(tt.month), int64(tt.day), tt.ot)
+		res, err := AddDate(int64(tt.year), int64(tt.month), int64(tt.day), tt.ot)
+		if tt.err {
+			require.EqualError(t, err, ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime").Error())
+			require.True(t, ErrDatetimeFunctionOverflow.Equal(err))
+			continue
+		}
+		require.NoError(t, err)
 		require.Equal(t, tt.year+tt.ot.Year(), res.Year())
 	}
 }

@@ -21,26 +21,26 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
-var _ dispatcher.CleanUpRoutine = (*BackfillCleanUpS3)(nil)
+var _ scheduler.CleanUpRoutine = (*BackfillCleanUpS3)(nil)
 
-// BackfillCleanUpS3 implements dispatcher.CleanUpRoutine.
+// BackfillCleanUpS3 implements scheduler.CleanUpRoutine.
 type BackfillCleanUpS3 struct {
 }
 
-func newBackfillCleanUpS3() dispatcher.CleanUpRoutine {
+func newBackfillCleanUpS3() scheduler.CleanUpRoutine {
 	return &BackfillCleanUpS3{}
 }
 
 // CleanUp implements the CleanUpRoutine.CleanUp interface.
 func (*BackfillCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
-	var taskMeta BackfillGlobalMeta
+	var taskMeta BackfillTaskMeta
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return err
 	}
@@ -71,7 +71,7 @@ func (*BackfillCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
 func redactCloudStorageURI(
 	ctx context.Context,
 	task *proto.Task,
-	origin *BackfillGlobalMeta,
+	origin *BackfillTaskMeta,
 ) {
 	origin.CloudStorageURI = ast.RedactURL(origin.CloudStorageURI)
 	metaBytes, err := json.Marshal(origin)

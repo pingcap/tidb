@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -36,7 +35,7 @@ import (
 
 var (
 	executorPoolSize int32 = 4
-	// same as dispatcher
+	// same as scheduler
 	checkTime           = 300 * time.Millisecond
 	recoverMetaInterval = 90 * time.Second
 	retrySQLTimes       = 30
@@ -265,7 +264,7 @@ func (m *Manager) onPausingTasks(tasks []*proto.Task) error {
 
 // recoverMetaLoop inits and recovers dist_framework_meta for the tidb node running the taskExecutor manager.
 // This is necessary when the TiDB node experiences a prolonged network partition
-// and the dispatcher deletes `dist_framework_meta`.
+// and the scheduler deletes `dist_framework_meta`.
 // When the TiDB node recovers from the network partition,
 // we need to re-insert the metadata.
 func (m *Manager) recoverMetaLoop() {
@@ -329,7 +328,7 @@ func (m *Manager) onRunnableTask(task *proto.Task) {
 	factory := GetTaskExecutorFactory(task.Type)
 	if factory == nil {
 		err := errors.Errorf("task type %s not found", task.Type)
-		m.logErrAndPersist(err, task.ID)
+		m.logErrAndPersist(err, task.ID, nil)
 		return
 	}
 	executor := factory(m.ctx, m.id, task, m.taskTable)
@@ -339,7 +338,7 @@ func (m *Manager) onRunnableTask(task *proto.Task) {
 	// executor should init before run()/pause()/rollback().
 	err := executor.Init(taskCtx)
 	if err != nil {
-		m.logErrAndPersist(err, task.ID)
+		m.logErrAndPersist(err, task.ID, executor)
 		return
 	}
 	defer executor.Close()
@@ -427,10 +426,10 @@ func (m *Manager) logErr(err error) {
 	logutil.Logger(m.logCtx).Error("task manager met error", zap.Error(err), zap.Stack("stack"))
 }
 
-func (m *Manager) logErrAndPersist(err error, taskID int64) {
+func (m *Manager) logErrAndPersist(err error, taskID int64, taskExecutor TaskExecutor) {
 	m.logErr(err)
-	// TODO: use interface if each business to retry
-	if common.IsRetryableError(err) || isRetryableError(err) {
+	if taskExecutor.IsRetryableError(err) {
+		logutil.Logger(m.logCtx).Error("met retryable err", zap.Error(err), zap.Stack("stack"))
 		return
 	}
 	err1 := m.taskTable.UpdateErrorToSubtask(m.ctx, m.id, taskID, err)
