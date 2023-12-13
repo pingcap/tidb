@@ -76,8 +76,6 @@ go_library(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/import_sstpb",
         "@com_github_pingcap_kvproto//pkg/metapb",
-        "@com_github_pingcap_tidb_pkg_parser//model:go_default_library",
-        "@com_github_pingcap_tidb_pkg_parser//mysql:go_default_library",
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_tikv_client_go_v2//config",
         "@com_github_tikv_client_go_v2//oracle",

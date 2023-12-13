@@ -35,12 +35,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	tidbkv "github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/table/tables"
+	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/util/mathutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -990,7 +991,7 @@ func getChunkCompressedSizeForParquet(
 			columnChunkSize := columnChunk.MetaData.GetTotalCompressedSize()
 			rowGroupSize += columnChunkSize
 		}
-		maxRowGroupSize = max(maxRowGroupSize, rowGroupSize)
+		maxRowGroupSize = mathutil.Max(maxRowGroupSize, rowGroupSize)
 	}
 	return maxRowGroupSize, nil
 }
