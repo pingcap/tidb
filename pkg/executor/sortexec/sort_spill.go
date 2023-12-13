@@ -96,6 +96,13 @@ func (*sortPartitionSpillDiskAction) GetPriority() int64 {
 }
 
 func (s *sortPartitionSpillDiskAction) Action(t *memory.Tracker) {
+	fallBack := s.executeAction(t)
+	if fallBack != nil {
+		fallBack.Action(t)
+	}
+}
+
+func (s *sortPartitionSpillDiskAction) executeAction(t *memory.Tracker) memory.ActionOnExceed {
 	s.helper.lock.Lock()
 	defer s.helper.lock.Unlock()
 
@@ -119,7 +126,7 @@ func (s *sortPartitionSpillDiskAction) Action(t *memory.Tracker) {
 		// However, out of some reasons, we have to directly return the goroutine before the finish of
 		// sort operation which is executed in `s.partition.spillToDisk()` as sort will retrigger the action
 		// and lead to dead lock.
-		return
+		return nil
 	}
 
 	for s.helper.isSpilling {
@@ -127,12 +134,10 @@ func (s *sortPartitionSpillDiskAction) Action(t *memory.Tracker) {
 	}
 
 	if !t.CheckExceed() {
-		return
+		return nil
 	}
 
-	if fallback := s.GetFallback(); fallback != nil {
-		fallback.Action(t)
-	}
+	return s.GetFallback()
 }
 
 // It's used only when spill is triggered

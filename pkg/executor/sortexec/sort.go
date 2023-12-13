@@ -51,8 +51,6 @@ type SortExec struct {
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
 
-	memTrackerOriginAction memory.ActionOnExceed
-
 	// sortPartitions is the chunks to store row values for partitions. Every partition is a sorted list.
 	sortPartitions []*sortPartition
 	cursors        []*dataCursor
@@ -250,7 +248,6 @@ func (e *SortExec) switchToNewSortPartition(fields []*types.FieldType, byItemsDe
 	e.partition.getDiskTracker().AttachTo(e.diskTracker)
 	e.partition.getDiskTracker().SetLabel(memory.LabelForRowChunks)
 	e.spillAction = e.partition.actionSpill(e.helper)
-	e.Ctx().GetSessionVars().MemTracker.SetActionOnExceed(e.memTrackerOriginAction)
 	e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
 }
 
@@ -303,7 +300,6 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		byItemsDesc[i] = byItem.Desc
 	}
 
-	e.memTrackerOriginAction = e.Ctx().GetSessionVars().MemTracker.GetHardLimitActionOnExceed()
 	e.partition = newSortPartition(fields, e.MaxChunkSize(), byItemsDesc, e.keyColumns, e.keyCmpFuncs, e.helper, e.spillLimit)
 	e.partition.getMemTracker().AttachTo(e.memTracker)
 	e.partition.getMemTracker().SetLabel(memory.LabelForRowChunks)

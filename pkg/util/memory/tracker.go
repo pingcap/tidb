@@ -216,13 +216,6 @@ func (t *Tracker) FallbackOldAndSetNewAction(a ActionOnExceed) {
 	t.actionMuForHardLimit.actionOnExceed = reArrangeFallback(a, t.actionMuForHardLimit.actionOnExceed)
 }
 
-// GetHardLimitActionOnExceed returns the ActionOnExceed of hard limit.
-func (t *Tracker) GetHardLimitActionOnExceed() ActionOnExceed {
-	t.actionMuForHardLimit.Lock()
-	defer t.actionMuForHardLimit.Unlock()
-	return t.actionMuForHardLimit.actionOnExceed
-}
-
 // FallbackOldAndSetNewActionForSoftLimit sets the action when memory usage exceeds bytesSoftLimit
 // and set the original action as its fallback.
 func (t *Tracker) FallbackOldAndSetNewActionForSoftLimit(a ActionOnExceed) {
