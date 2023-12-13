@@ -41,7 +41,6 @@ func TestFrameworkBasic(t *testing.T) {
 	distContext.SetOwner(1)
 	time.Sleep(2 * time.Second) // make sure owner changed
 	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key5", testContext, nil)
-
 	distContext.Close()
 }
 
