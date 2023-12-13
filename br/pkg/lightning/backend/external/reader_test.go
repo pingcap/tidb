@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
 )
@@ -143,5 +144,41 @@ func TestReadAllDataBasic(t *testing.T) {
 		return bytes.Compare(i.Key, j.Key)
 	})
 
+	testReadAndCompare(t, ctx, kvs, memStore, memSizeLimit)
+}
+
+func TestReadAllOneFile(t *testing.T) {
+	seed := time.Now().Unix()
+	rand.Seed(uint64(seed))
+	t.Logf("seed: %d", seed)
+	ctx := context.Background()
+	memStore := storage.NewMemStorage()
+	memSizeLimit := (rand.Intn(10) + 1) * 400
+
+	w := NewWriterBuilder().
+		SetPropSizeDistance(100).
+		SetPropKeysDistance(2).
+		SetMemorySizeLimit(uint64(memSizeLimit)).
+		BuildOneFile(memStore, "/test", "0")
+
+	require.NoError(t, w.Init(ctx, int64(5*size.MB)))
+
+	kvCnt := rand.Intn(10) + 10000
+	kvs := make([]common.KvPair, kvCnt)
+	for i := 0; i < kvCnt; i++ {
+		kvs[i] = common.KvPair{
+			Key: []byte(fmt.Sprintf("key%05d", i)),
+			Val: []byte("56789"),
+		}
+		require.NoError(t, w.WriteRow(ctx, kvs[i].Key, kvs[i].Val))
+	}
+
+	err := w.Close(ctx)
+	require.NoError(t, err)
+
+	slices.SortFunc(kvs, func(i, j common.KvPair) int {
+		return bytes.Compare(i.Key, j.Key)
+	})
+	// failed, need to figure out why.
 	testReadAndCompare(t, ctx, kvs, memStore, memSizeLimit)
 }
