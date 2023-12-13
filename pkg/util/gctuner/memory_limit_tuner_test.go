@@ -136,7 +136,7 @@ func TestIssue48741(t *testing.T) {
 
 	waitingTunningFinishFn := func() {
 		for GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() {
-			time.Sleep(time.Millisecond)
+			time.Sleep(10*time.Millisecond)
 		}
 	}
 
@@ -161,7 +161,7 @@ func TestIssue48741(t *testing.T) {
 		gcNumAfterMemory810mb := getNowGCNum()
 		require.Equal(t, debug.SetMemoryLimit(-1), int64(1500<<20*80/100))
 
-		memory100mb := allocator.alloc(100 << 20)
+		memory200mb := allocator.alloc(200 << 20)
 		time.Sleep(2 * time.Second)
 		// The heapInUse is less than 1.5GB * 80% = 1.2GB, so the gc will not be triggered.
 		require.Equal(t, gcNumAfterMemory810mb, getNowGCNum())
@@ -179,7 +179,7 @@ func TestIssue48741(t *testing.T) {
 		require.True(t, GlobalMemoryLimitTuner.adjustPercentageInProgress.Load())
 
 		allocator.free(memory810mb)
-		allocator.free(memory100mb)
+		allocator.free(memory200mb)
 		allocator.free(memory300mb)
 	}
 
