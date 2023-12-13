@@ -2,9 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "proto",
-    srcs = [
-        "task.go",
-    ],
+    srcs = ["task.go"],
     importpath = "github.com/pingcap/tidb/pkg/disttask/framework/proto",
     visibility = ["//visibility:public"],
 )
@@ -12,9 +10,7 @@ go_library(
 go_test(
     name = "proto_test",
     timeout = "short",
-    srcs = [
-        "task_test.go",
-    ],
+    srcs = ["task_test.go"],
     embed = [":proto"],
     flaky = True,
     shard_count = 3,
