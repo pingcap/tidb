@@ -90,7 +90,7 @@ func (s *chunkRestoreSuite) SetupTest() {
 }
 
 func (s *chunkRestoreSuite) TearDownTest() {
-	s.cr.close(0)
+	s.cr.close(-1)
 }
 
 func (s *chunkRestoreSuite) TestDeliverLoopCancel() {

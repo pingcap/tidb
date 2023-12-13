@@ -774,6 +774,8 @@ func (*chunkProcessor) maybeSaveCheckpoint(
 }
 
 func (cr *chunkProcessor) close(n int) {
-	cr.memLimiter.Release(n)
+	if n >= 0 {
+		cr.memLimiter.Release(n)
+	}
 	_ = cr.parser.Close()
 }
