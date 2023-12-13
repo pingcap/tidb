@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package addindextest
+package addindextestutil
 
 import (
 	"context"
@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -34,7 +35,8 @@ const (
 	nonPartTabNum = 1
 )
 
-type suiteContext struct {
+// SuiteContext wraps test context for add index.
+type SuiteContext struct {
 	ctx              context.Context
 	cancel           func()
 	store            kv.Storage
@@ -52,15 +54,15 @@ type suiteContext struct {
 	CompCtx          *CompatibilityContext
 }
 
-func (s *suiteContext) getTestKit() *testkit.TestKit {
+func (s *SuiteContext) getTestKit() *testkit.TestKit {
 	return s.tkPool.Get().(*testkit.TestKit)
 }
 
-func (s *suiteContext) putTestKit(tk *testkit.TestKit) {
+func (s *SuiteContext) putTestKit(tk *testkit.TestKit) {
 	s.tkPool.Put(tk)
 }
 
-func (s *suiteContext) done() bool {
+func (s *SuiteContext) done() bool {
 	select {
 	case <-s.ctx.Done():
 		return true
@@ -69,8 +71,8 @@ func (s *suiteContext) done() bool {
 	}
 }
 
-func newSuiteContext(t *testing.T, tk *testkit.TestKit, store kv.Storage) *suiteContext {
-	return &suiteContext{
+func newSuiteContext(t *testing.T, tk *testkit.TestKit, store kv.Storage) *SuiteContext {
+	return &SuiteContext{
 		store:            store,
 		t:                t,
 		tk:               tk,
@@ -79,6 +81,22 @@ func newSuiteContext(t *testing.T, tk *testkit.TestKit, store kv.Storage) *suite
 		rowNum:           64,
 		isFailpointsTest: false,
 	}
+}
+
+// InitTest inits SuiteContext for test.
+func InitTest(t *testing.T) *SuiteContext {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindex;")
+	tk.MustExec("create database addindex;")
+	tk.MustExec("use addindex;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+
+	ctx := newSuiteContext(t, tk, store)
+	createTable(tk)
+	insertRows(tk)
+	initWorkloadParams(ctx)
+	return ctx
 }
 
 func genTableStr(tableName string) string {
@@ -213,7 +231,7 @@ func insertRows(tk *testkit.TestKit) {
 	}
 }
 
-func createIndexOneCol(ctx *suiteContext, tableID int, colID int) (err error) {
+func createIndexOneCol(ctx *SuiteContext, tableID int, colID int) (err error) {
 	addIndexStr := " add index idx"
 	var ddlStr string
 	if ctx.isPK {
@@ -238,12 +256,12 @@ func createIndexOneCol(ctx *suiteContext, tableID int, colID int) (err error) {
 			ddlStr = "alter table addindex.t" + strconv.Itoa(tableID) + addIndexStr + strconv.Itoa(colID) + "(c0, c" + strconv.Itoa(colID) + ")"
 		}
 	}
-	if ctx.CompCtx != nil && ctx.CompCtx.isMultiSchemaChange {
+	if ctx.CompCtx != nil && ctx.CompCtx.IsMultiSchemaChange {
 		colID += 60
 		ddlStr += " , add column c" + strconv.Itoa(colID) + " int;"
 	}
 	logutil.BgLogger().Info("createIndexOneCol", zap.String("category", "add index test"), zap.String("sql", ddlStr))
-	if ctx.CompCtx != nil && ctx.CompCtx.isConcurrentDDL {
+	if ctx.CompCtx != nil && ctx.CompCtx.IsConcurrentDDL {
 		_, err = ctx.CompCtx.executor[tableID].tk.Exec(ddlStr)
 	} else {
 		_, err = ctx.tk.Exec(ddlStr)
@@ -258,7 +276,7 @@ func createIndexOneCol(ctx *suiteContext, tableID int, colID int) (err error) {
 	return err
 }
 
-func createIndexTwoCols(ctx *suiteContext, tableID int, indexID int, colID1 int, colID2 int) (err error) {
+func createIndexTwoCols(ctx *SuiteContext, tableID int, indexID int, colID1 int, colID2 int) (err error) {
 	var colID1Str, colID2Str string
 	addIndexStr := " add index idx"
 	if ctx.isPK {
@@ -277,12 +295,12 @@ func createIndexTwoCols(ctx *suiteContext, tableID int, indexID int, colID1 int,
 		colID2Str = strconv.Itoa(colID2)
 	}
 	ddlStr := "alter table addindex.t" + strconv.Itoa(tableID) + addIndexStr + strconv.Itoa(indexID) + "(c" + colID1Str + ", c" + colID2Str + ")"
-	if ctx.CompCtx != nil && ctx.CompCtx.isMultiSchemaChange {
+	if ctx.CompCtx != nil && ctx.CompCtx.IsMultiSchemaChange {
 		colID1 += 60
 		ddlStr += " , add column c" + strconv.Itoa(colID1) + " varchar(10);"
 	}
 	logutil.BgLogger().Info("createIndexTwoCols", zap.String("category", "add index test"), zap.String("sql", ddlStr))
-	if ctx.CompCtx != nil && ctx.CompCtx.isConcurrentDDL {
+	if ctx.CompCtx != nil && ctx.CompCtx.IsConcurrentDDL {
 		_, err = ctx.CompCtx.executor[tableID].tk.Exec(ddlStr)
 	} else {
 		_, err = ctx.tk.Exec(ddlStr)
@@ -295,10 +313,10 @@ func createIndexTwoCols(ctx *suiteContext, tableID int, indexID int, colID1 int,
 	return err
 }
 
-func checkResult(ctx *suiteContext, tableName string, indexID int, tkID int) {
+func checkResult(ctx *SuiteContext, tableName string, indexID int, tkID int) {
 	var err error
 	adminCheckSQL := "admin check index " + tableName + " idx" + strconv.Itoa(indexID)
-	if ctx.CompCtx != nil && ctx.CompCtx.isConcurrentDDL {
+	if ctx.CompCtx != nil && ctx.CompCtx.IsConcurrentDDL {
 		_, err = ctx.CompCtx.executor[tkID].tk.Exec(adminCheckSQL)
 	} else {
 		_, err = ctx.tk.Exec(adminCheckSQL)
@@ -309,7 +327,7 @@ func checkResult(ctx *suiteContext, tableName string, indexID int, tkID int) {
 	}
 	require.NoError(ctx.t, err)
 
-	if ctx.CompCtx != nil && ctx.CompCtx.isConcurrentDDL {
+	if ctx.CompCtx != nil && ctx.CompCtx.IsConcurrentDDL {
 		require.Equal(ctx.t, uint64(0), ctx.CompCtx.executor[tkID].tk.Session().AffectedRows())
 		_, err = ctx.CompCtx.executor[tkID].tk.Exec("alter table " + tableName + " drop index idx" + strconv.Itoa(indexID))
 	} else {
@@ -324,10 +342,10 @@ func checkResult(ctx *suiteContext, tableName string, indexID int, tkID int) {
 	require.NoError(ctx.t, err)
 }
 
-func checkTableResult(ctx *suiteContext, tableName string, tkID int) {
+func checkTableResult(ctx *SuiteContext, tableName string, tkID int) {
 	var err error
 	adminCheckSQL := "admin check table " + tableName
-	if ctx.CompCtx != nil && ctx.CompCtx.isConcurrentDDL {
+	if ctx.CompCtx != nil && ctx.CompCtx.IsConcurrentDDL {
 		_, err = ctx.CompCtx.executor[tkID].tk.Exec(adminCheckSQL)
 	} else {
 		_, err = ctx.tk.Exec(adminCheckSQL)
@@ -337,14 +355,15 @@ func checkTableResult(ctx *suiteContext, tableName string, tkID int) {
 			zap.String("sql", adminCheckSQL), zap.Error(err))
 	}
 	require.NoError(ctx.t, err)
-	if ctx.CompCtx != nil && ctx.CompCtx.isConcurrentDDL {
+	if ctx.CompCtx != nil && ctx.CompCtx.IsConcurrentDDL {
 		require.Equal(ctx.t, uint64(0), ctx.CompCtx.executor[tkID].tk.Session().AffectedRows())
 	} else {
 		require.Equal(ctx.t, uint64(0), ctx.tk.Session().AffectedRows())
 	}
 }
 
-func testOneColFrame(ctx *suiteContext, colIDs [][]int, f func(*suiteContext, int, string, int) error) {
+// TestOneColFrame test 1 col frame.
+func TestOneColFrame(ctx *SuiteContext, colIDs [][]int, f func(*SuiteContext, int, string, int) error) {
 	for tableID := 0; tableID < ctx.tableNum; tableID++ {
 		tableName := "addindex.t" + strconv.Itoa(tableID)
 		for _, i := range colIDs[tableID] {
@@ -377,7 +396,8 @@ func testOneColFrame(ctx *suiteContext, colIDs [][]int, f func(*suiteContext, in
 	}
 }
 
-func testTwoColsFrame(ctx *suiteContext, iIDs [][]int, jIDs [][]int, f func(*suiteContext, int, string, int, int, int) error) {
+// TestTwoColsFrame test 2 columns frame.
+func TestTwoColsFrame(ctx *SuiteContext, iIDs [][]int, jIDs [][]int, f func(*SuiteContext, int, string, int, int, int) error) {
 	for tableID := 0; tableID < ctx.tableNum; tableID++ {
 		tableName := "addindex.t" + strconv.Itoa(tableID)
 		indexID := 0
@@ -411,7 +431,8 @@ func testTwoColsFrame(ctx *suiteContext, iIDs [][]int, jIDs [][]int, f func(*sui
 	}
 }
 
-func testOneIndexFrame(ctx *suiteContext, colID int, f func(*suiteContext, int, string, int) error) {
+// TestOneIndexFrame test 1 index frame.
+func TestOneIndexFrame(ctx *SuiteContext, colID int, f func(*SuiteContext, int, string, int) error) {
 	for tableID := 0; tableID < ctx.tableNum; tableID++ {
 		tableName := "addindex.t" + strconv.Itoa(tableID)
 		if ctx.workload != nil {
@@ -442,14 +463,16 @@ func testOneIndexFrame(ctx *suiteContext, colID int, f func(*suiteContext, int, 
 	}
 }
 
-func addIndexNonUnique(ctx *suiteContext, tableID int, tableName string, indexID int) (err error) {
+// AddIndexNonUnique test add index with non-unique key.
+func AddIndexNonUnique(ctx *SuiteContext, tableID int, tableName string, indexID int) (err error) {
 	ctx.isPK = false
 	ctx.isUnique = false
 	err = createIndexOneCol(ctx, tableID, indexID)
 	return err
 }
 
-func addIndexUnique(ctx *suiteContext, tableID int, tableName string, indexID int) (err error) {
+// AddIndexUnique test add index with unique key.
+func AddIndexUnique(ctx *SuiteContext, tableID int, tableName string, indexID int) (err error) {
 	ctx.isPK = false
 	ctx.isUnique = true
 	if indexID == 0 || indexID == 6 || indexID == 11 || indexID == 19 || tableID > 0 {
@@ -472,21 +495,24 @@ func addIndexUnique(ctx *suiteContext, tableID int, tableName string, indexID in
 	return err
 }
 
-func addIndexPK(ctx *suiteContext, tableID int, tableName string, colID int) (err error) {
+// AddIndexPK test add index with pk.
+func AddIndexPK(ctx *SuiteContext, tableID int, tableName string, colID int) (err error) {
 	ctx.isPK = true
 	ctx.isUnique = false
 	err = createIndexOneCol(ctx, tableID, 0)
 	return err
 }
 
-func addIndexGenCol(ctx *suiteContext, tableID int, tableName string, colID int) (err error) {
+// AddIndexGenCol test add index with gen col.
+func AddIndexGenCol(ctx *SuiteContext, tableID int, tableName string, colID int) (err error) {
 	ctx.isPK = false
 	ctx.isUnique = false
 	err = createIndexOneCol(ctx, tableID, 29)
 	return err
 }
 
-func addIndexMultiCols(ctx *suiteContext, tableID int, tableName string, indexID int, colID1 int, colID2 int) (err error) {
+// AddIndexMultiCols test add index with 2 columns.
+func AddIndexMultiCols(ctx *SuiteContext, tableID int, tableName string, indexID int, colID1 int, colID2 int) (err error) {
 	ctx.isPK = false
 	ctx.isUnique = false
 	if colID1 != colID2 {
@@ -514,7 +540,7 @@ var failpoints = []failpointsPath{
 	{"github.com/pingcap/tidb/pkg/ddl/mockMergeSlow", "return"},
 }
 
-func useFailpoints(ctx *suiteContext, failpos int) {
+func useFailpoints(ctx *SuiteContext, failpos int) {
 	defer ctx.failSync.Done()
 	logutil.BgLogger().Info("stack", zap.Stack("cur stack"), zap.Int("id:", failpos))
 	failpos %= 7
@@ -523,4 +549,11 @@ func useFailpoints(ctx *suiteContext, failpos int) {
 	time.Sleep(10 * time.Second)
 	require.NoError(ctx.t, failpoint.Disable(failpoints[failpos].failpath))
 	logutil.BgLogger().Info("stack", zap.Stack("cur stack"), zap.Int("id:", failpos), zap.Bool("disable failpoints:", true))
+}
+
+// InitTestFailpoint inits SuiteContext for failpoint tests.
+func InitTestFailpoint(t *testing.T) *SuiteContext {
+	ctx := InitTest(t)
+	ctx.isFailpointsTest = true
+	return ctx
 }

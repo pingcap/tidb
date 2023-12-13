@@ -2037,6 +2037,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		hashJoinConcurrency:               DefTiDBHashJoinConcurrency,
 		projectionConcurrency:             DefTiDBProjectionConcurrency,
 		distSQLScanConcurrency:            DefDistSQLScanConcurrency,
+		analyzeDistSQLScanConcurrency:     DefAnalyzeDistSQLScanConcurrency,
 		hashAggPartialConcurrency:         DefTiDBHashAggPartialConcurrency,
 		hashAggFinalConcurrency:           DefTiDBHashAggFinalConcurrency,
 		windowConcurrency:                 DefTiDBWindowConcurrency,
@@ -2740,6 +2741,9 @@ type Concurrency struct {
 	// distSQLScanConcurrency is the number of concurrent dist SQL scan worker.
 	distSQLScanConcurrency int
 
+	// analyzeDistSQLScanConcurrency is the number of concurrent dist SQL scan worker when to analyze.
+	analyzeDistSQLScanConcurrency int
+
 	// hashJoinConcurrency is the number of concurrent hash join outer worker.
 	// hashJoinConcurrency is deprecated, use ExecutorConcurrency instead.
 	hashJoinConcurrency int
@@ -2779,6 +2783,9 @@ type Concurrency struct {
 
 	// SourceAddr is the source address of request. Available in coprocessor ONLY.
 	SourceAddr net.TCPAddr
+
+	// IdleTransactionTimeout indicates the maximum time duration a transaction could be idle, unit is second.
+	IdleTransactionTimeout int
 }
 
 // SetIndexLookupConcurrency set the number of concurrent index lookup worker.
@@ -2794,6 +2801,11 @@ func (c *Concurrency) SetIndexLookupJoinConcurrency(n int) {
 // SetDistSQLScanConcurrency set the number of concurrent dist SQL scan worker.
 func (c *Concurrency) SetDistSQLScanConcurrency(n int) {
 	c.distSQLScanConcurrency = n
+}
+
+// SetAnalyzeDistSQLScanConcurrency set the number of concurrent dist SQL scan worker when to analyze.
+func (c *Concurrency) SetAnalyzeDistSQLScanConcurrency(n int) {
+	c.analyzeDistSQLScanConcurrency = n
 }
 
 // SetHashJoinConcurrency set the number of concurrent hash join outer worker.
@@ -2860,6 +2872,11 @@ func (c *Concurrency) IndexLookupJoinConcurrency() int {
 // DistSQLScanConcurrency return the number of concurrent dist SQL scan worker.
 func (c *Concurrency) DistSQLScanConcurrency() int {
 	return c.distSQLScanConcurrency
+}
+
+// AnalyzeDistSQLScanConcurrency return the number of concurrent dist SQL scan worker when to analyze.
+func (c *Concurrency) AnalyzeDistSQLScanConcurrency() int {
+	return c.analyzeDistSQLScanConcurrency
 }
 
 // HashJoinConcurrency return the number of concurrent hash join outer worker.

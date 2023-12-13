@@ -109,6 +109,7 @@ go_test(
         "//pkg/disttask/framework/planner",
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/storage",
+        "//pkg/disttask/framework/testutil",
         "//pkg/disttask/importinto/mock",
         "//pkg/disttask/operator",
         "//pkg/domain/infosync",

@@ -65,7 +65,7 @@ func (e *ExplainExec) Close() error {
 	e.rows = nil
 	if e.analyzeExec != nil && !e.executed {
 		// Open(), but Next() is not called.
-		return e.analyzeExec.Close()
+		return exec.Close(e.analyzeExec)
 	}
 	return nil
 }
@@ -98,7 +98,7 @@ func (e *ExplainExec) Next(ctx context.Context, req *chunk.Chunk) error {
 func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 	if e.analyzeExec != nil && !e.executed {
 		defer func() {
-			err1 := e.analyzeExec.Close()
+			err1 := exec.Close(e.analyzeExec)
 			if err1 != nil {
 				if err != nil {
 					err = errors.New(err.Error() + ", " + err1.Error())

@@ -48,6 +48,7 @@ func TestTaskExecutorRun(t *testing.T) {
 	mockSubtaskTable := mock.NewMockTaskTable(ctrl)
 	mockSubtaskExecutor := mockexecute.NewMockSubtaskExecutor(ctrl)
 	mockExtension := mock.NewMockExtension(ctrl)
+	mockExtension.EXPECT().IsRetryableError(gomock.Any()).AnyTimes()
 
 	// we don't test cancelCheck here, but in case the test is slow and trigger it.
 	mockSubtaskTable.EXPECT().IsTaskExecutorCanceled(ctx, gomock.Any(), gomock.Any()).Return(false, nil).AnyTimes()
@@ -72,7 +73,7 @@ func TestTaskExecutorRun(t *testing.T) {
 	require.EqualError(t, err, initErr.Error())
 
 	var taskID int64 = 1
-	var concurrency uint64 = 10
+	var concurrency = 10
 	task := &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency}
 
 	// 3. run subtask failed
@@ -355,7 +356,7 @@ func TestTaskExecutorPause(t *testing.T) {
 func TestTaskExecutor(t *testing.T) {
 	var tp proto.TaskType = "test_task_executor"
 	var taskID int64 = 1
-	var concurrency uint64 = 10
+	var concurrency = 10
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	runCtx, runCancel := context.WithCancel(ctx)
@@ -368,6 +369,7 @@ func TestTaskExecutor(t *testing.T) {
 	mockSubtaskTable.EXPECT().IsTaskExecutorCanceled(gomock.Any(), gomock.Any(), gomock.Any()).Return(false, nil).AnyTimes()
 	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(gomock.Any(), "id", taskID, proto.TaskStateFailed, gomock.Any()).Return(nil)
 	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()
+	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
 
 	taskExecutor := NewBaseTaskExecutor(ctx, "id", 1, mockSubtaskTable)
 	taskExecutor.Extension = mockExtension

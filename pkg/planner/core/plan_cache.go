@@ -154,13 +154,16 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	stmtAst := stmt.PreparedAst
-	stmtCtx.UseCache = stmt.StmtCacheable
+	cacheEnabled := false
 	if isNonPrepared {
 		stmtCtx.CacheType = stmtctx.SessionNonPrepared
+		cacheEnabled = sctx.GetSessionVars().EnableNonPreparedPlanCache // plan-cache might be disabled after prepare.
 	} else {
 		stmtCtx.CacheType = stmtctx.SessionPrepared
+		cacheEnabled = sctx.GetSessionVars().EnablePreparedPlanCache
 	}
-	if !stmt.StmtCacheable {
+	stmtCtx.UseCache = stmt.StmtCacheable && cacheEnabled
+	if !stmt.StmtCacheable && stmt.UncacheableReason != "" {
 		stmtCtx.SetSkipPlanCache(errors.New(stmt.UncacheableReason))
 	}
 
@@ -796,7 +799,7 @@ func GetBindSQL4PlanCache(sctx sessionctx.Context, stmt *PlanCacheStmt) (string,
 	if sctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
 		return "", ignore
 	}
-	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
 	bindRecord := sessionHandle.GetSessionBinding(stmt.SQLDigest4PC, stmt.NormalizedSQL4PC, "")
 	if bindRecord != nil {
 		enabledBinding := bindRecord.FindEnabledBinding()

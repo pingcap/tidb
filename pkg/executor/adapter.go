@@ -22,6 +22,7 @@ import (
 	"runtime/trace"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -90,6 +91,7 @@ type recordSet struct {
 	stmt       *ExecStmt
 	lastErr    error
 	txnStartTS uint64
+	once       sync.Once
 }
 
 func (a *recordSet) Fields() []*ast.ResultField {
@@ -179,13 +181,31 @@ func (a *recordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 	return alloc.Alloc(base.RetFieldTypes(), base.InitCap(), base.MaxChunkSize())
 }
 
-func (a *recordSet) Close() error {
-	err := a.executor.Close()
-	err1 := a.stmt.CloseRecordSet(a.txnStartTS, a.lastErr)
+func (a *recordSet) Finish() error {
+	var err error
+	a.once.Do(func() {
+		err = exec.Close(a.executor)
+		cteErr := resetCTEStorageMap(a.stmt.Ctx)
+		if cteErr != nil {
+			logutil.BgLogger().Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
+		}
+		if err == nil {
+			err = cteErr
+		}
+	})
 	if err != nil {
-		return err
+		a.lastErr = err
 	}
-	return err1
+	return err
+}
+
+func (a *recordSet) Close() error {
+	err := a.Finish()
+	if err != nil {
+		logutil.BgLogger().Error("close recordSet error", zap.Error(err))
+	}
+	a.stmt.CloseRecordSet(a.txnStartTS, a.lastErr)
+	return err
 }
 
 // OnFetchReturned implements commandLifeCycle#OnFetchReturned
@@ -333,7 +353,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	}
 
 	if err = exec.Open(ctx, pointExecutor); err != nil {
-		terror.Call(pointExecutor.Close)
+		terror.Log(exec.Close(pointExecutor))
 		return nil, err
 	}
 
@@ -545,7 +565,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 
 	breakpoint.Inject(a.Ctx, sessiontxn.BreakPointBeforeExecutorFirstRun)
 	if err = a.openExecutor(ctx, e); err != nil {
-		terror.Call(e.Close)
+		terror.Log(exec.Close(e))
 		return nil, err
 	}
 
@@ -694,14 +714,14 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 			return err
 		}
 		if err := exec.Open(ctx, e); err != nil {
-			terror.Call(e.Close)
+			terror.Log(exec.Close(e))
 			return err
 		}
 		err = exec.Next(ctx, e, exec.NewFirstChunk(e))
 		if err != nil {
 			return err
 		}
-		err = e.Close()
+		err = exec.Close(e)
 		if err != nil {
 			return err
 		}
@@ -871,12 +891,13 @@ func (c *chunkRowRecordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 }
 
 func (c *chunkRowRecordSet) Close() error {
-	return c.execStmt.CloseRecordSet(c.execStmt.Ctx.GetSessionVars().TxnCtx.StartTS, nil)
+	c.execStmt.CloseRecordSet(c.execStmt.Ctx.GetSessionVars().TxnCtx.StartTS, nil)
+	return nil
 }
 
 func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e exec.Executor) (_ sqlexec.RecordSet, retErr error) {
 	if snapshotTS := a.Ctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
-		terror.Log(e.Close())
+		terror.Log(exec.Close(e))
 		return nil, errors.New("can not execute write statement when 'tidb_snapshot' is set")
 	}
 
@@ -920,7 +941,7 @@ func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e exec.
 
 func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e exec.Executor) (sqlexec.RecordSet, error) {
 	defer func() {
-		terror.Log(e.Close())
+		terror.Log(exec.Close(e))
 	}()
 	var rows []chunk.Row
 	var err error
@@ -950,7 +971,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e exec.Executor) (
 
 	var err error
 	defer func() {
-		terror.Log(e.Close())
+		terror.Log(exec.Close(e))
 		a.logAudit()
 	}()
 
@@ -1448,19 +1469,10 @@ func (a *ExecStmt) checkPlanReplayerCapture(txnTS uint64) {
 }
 
 // CloseRecordSet will finish the execution of current statement and do some record work
-func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) error {
-	cteErr := resetCTEStorageMap(a.Ctx)
-	if cteErr != nil {
-		logutil.BgLogger().Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
-	}
-	if lastErr == nil {
-		// Only overwrite err when it's nil.
-		lastErr = cteErr
-	}
+func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 	a.FinishExecuteStmt(txnStartTS, lastErr, false)
 	a.logAudit()
 	a.Ctx.GetSessionVars().StmtCtx.DetachMemDiskTracker()
-	return cteErr
 }
 
 // Clean CTE storage shared by different CTEFullScan executor within a SQL stmt.
@@ -2094,12 +2106,12 @@ func checkPlanReplayerContinuesCapture(sctx sessionctx.Context, stmtNode ast.Stm
 func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.Context, stmtNode ast.StmtNode,
 	startTS uint64, isContinuesCapture bool) {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
-	handle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+	handle := sctx.Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
 	dumpTask := &domain.PlanReplayerDumpTask{
 		PlanReplayerTaskKey: key,
 		StartTS:             startTS,
 		TblStats:            stmtCtx.TableStats,
-		SessionBindings:     handle.GetAllSessionBindRecord(),
+		SessionBindings:     handle.GetAllSessionBindings(),
 		SessionVars:         sctx.GetSessionVars(),
 		ExecStmts:           []ast.StmtNode{stmtNode},
 		DebugTrace:          []interface{}{stmtCtx.OptimizerDebugTrace},

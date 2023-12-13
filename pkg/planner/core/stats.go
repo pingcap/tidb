@@ -307,6 +307,22 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 		selected, uniqueBest, refinedBest *util.AccessPath
 		isRefinedPath                     bool
 	)
+	// step1: if user prefer tiFlash store type, tiFlash path should always be built anyway ahead.
+	var tiflashPath *util.AccessPath
+	if ds.preferStoreType&preferTiFlash != 0 {
+		for _, path := range ds.possibleAccessPaths {
+			if path.StoreType == kv.TiFlash {
+				err := ds.deriveTablePathStats(path, ds.pushedDownConds, false)
+				if err != nil {
+					return err
+				}
+				path.IsSingleScan = true
+				tiflashPath = path
+				break
+			}
+		}
+	}
+	// step2: kv path should follow the heuristic rules.
 	for _, path := range ds.possibleAccessPaths {
 		if path.IsTablePath() {
 			err := ds.deriveTablePathStats(path, ds.pushedDownConds, false)
@@ -318,7 +334,9 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 			ds.deriveIndexPathStats(path, ds.pushedDownConds, false)
 			path.IsSingleScan = ds.isSingleScan(path.FullIdxCols, path.FullIdxColLens)
 		}
+		// step: 3
 		// Try some heuristic rules to select access path.
+		// tiFlash path also have table-range-scan (range point like here) to be heuristic treated.
 		if len(path.Ranges) == 0 {
 			selected = path
 			break
@@ -381,13 +399,15 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 	// heuristic rule pruning other path should consider hint prefer.
 	// If no hints and some path matches a heuristic rule, just remove other possible paths.
 	if selected != nil {
-		// if user wanna tiFlash read, while current heuristic choose a TiKV path. so we shouldn't prune other paths.
-		keep := ds.preferStoreType&preferTiFlash != 0 && selected.StoreType != kv.TiFlash
-		if keep {
-			return nil
-		}
 		ds.possibleAccessPaths[0] = selected
 		ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
+		// if user wanna tiFlash read, while current heuristic choose a TiKV path. so we shouldn't prune tiFlash path.
+		keep := ds.preferStoreType&preferTiFlash != 0 && selected.StoreType != kv.TiFlash
+		if keep {
+			// also keep tiflash path as well.
+			ds.possibleAccessPaths = append(ds.possibleAccessPaths, tiflashPath)
+			return nil
+		}
 		var tableName string
 		if ds.TableAsName.O == "" {
 			tableName = ds.tableInfo.Name.O
