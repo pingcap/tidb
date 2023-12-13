@@ -1185,20 +1185,25 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 		return
 	}
 
+	vars := cc.getCtx().GetSessionVars()
+	resource_group := vars.ResourceGroupName
 	var counter prometheus.Counter
-	if err != nil && int(cmd) < len(server_metrics.QueryTotalCountErr) {
-		counter = server_metrics.QueryTotalCountErr[cmd]
-	} else if err == nil && int(cmd) < len(server_metrics.QueryTotalCountOk) {
-		counter = server_metrics.QueryTotalCountOk[cmd]
+	if len(resource_group) == 0 {
+		if err != nil && int(cmd) < len(server_metrics.QueryTotalCountErr) {
+			counter = server_metrics.QueryTotalCountErr[cmd]
+		} else if err == nil && int(cmd) < len(server_metrics.QueryTotalCountOk) {
+			counter = server_metrics.QueryTotalCountOk[cmd]
+		}
 	}
+
 	if counter != nil {
 		counter.Inc()
 	} else {
 		label := strconv.Itoa(int(cmd))
 		if err != nil {
-			metrics.QueryTotalCounter.WithLabelValues(label, "Error").Inc()
+			metrics.QueryTotalCounter.WithLabelValues(label, "Error", resource_group).Inc()
 		} else {
-			metrics.QueryTotalCounter.WithLabelValues(label, "OK").Inc()
+			metrics.QueryTotalCounter.WithLabelValues(label, "OK", resource_group).Inc()
 		}
 	}
 
@@ -1224,7 +1229,6 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 		server_metrics.AffectedRowsCounterUpdate.Add(float64(affectedRows))
 	}
 
-	vars := cc.getCtx().GetSessionVars()
 	for _, dbName := range session.GetDBNames(vars) {
 		metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName, vars.ResourceGroupName).Observe(cost.Seconds())
 	}

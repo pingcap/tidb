@@ -58,7 +58,7 @@ func InitExecutorMetrics() {
 			Subsystem: "executor",
 			Name:      "statement_total",
 			Help:      "Counter of StmtNode.",
-		}, []string{LblType, LblDb})
+		}, []string{LblType, LblDb, LblResourceGroup})
 
 	DbStmtNodeCounter = NewCounterVec(
 		prometheus.CounterOpts{

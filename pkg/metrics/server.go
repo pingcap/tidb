@@ -97,7 +97,7 @@ func InitServerMetrics() {
 			Subsystem: "server",
 			Name:      "query_total",
 			Help:      "Counter of queries.",
-		}, []string{LblType, LblResult})
+		}, []string{LblType, LblResult, LblResourceGroup})
 
 	AffectedRowsCounter = NewCounterVec(
 		prometheus.CounterOpts{
