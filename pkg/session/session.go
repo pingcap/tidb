@@ -2171,18 +2171,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 	compiler := executor.Compiler{Ctx: s}
 	stmt, err := compiler.Compile(ctx, stmtNode)
-	// verify the hint resource group is valid
-	if sessVars.StmtCtx.ResourceGroupName != sessVars.ResourceGroupName {
-		// if target resource group doesn't exist, fallback to the origin resource group.
-		if _, ok := domain.GetDomain(s).InfoSchema().ResourceGroupByName(model.NewCIStr(sessVars.ResourceGroupName)); !ok {
-			logutil.Logger(ctx).Warn("Unknown resource group from hint", zap.String("name", sessVars.ResourceGroupName))
-			sessVars.StmtCtx.ResourceGroupName = sessVars.ResourceGroupName
-			// if we are in a txn, should also reset the txn resource group.
-			if txn, err := s.Txn(false); err == nil && txn != nil && txn.Valid() {
-				kv.SetTxnResourceGroup(txn, sessVars.ResourceGroupName)
-			}
-		}
-	}
 	if err != nil {
 		s.rollbackOnError(ctx)
 
@@ -2199,6 +2187,24 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 			}
 		}
 		return nil, err
+	}
+	// update statement resource group name if hint is set
+	// NOTE: we can't do this in planner.Optimize because we can't call infoschema.ResourceGroupByName there.
+	if sessVars.StmtCtx.HasResourceGroup && sessVars.StmtCtx.ResourceGroup != sessVars.ResourceGroupName {
+		if !variable.EnableResourceControl.Load() {
+			err := infoschema.ErrResourceGroupSupportDisabled
+			sessVars.StmtCtx.AppendWarning(err)
+		} else if _, ok := domain.GetDomain(s).InfoSchema().ResourceGroupByName(model.NewCIStr(sessVars.ResourceGroupName)); !ok {
+			// if target resource group doesn't exist, fallback to the origin resource group.
+			logutil.Logger(ctx).Warn("Unknown resource group from hint", zap.String("name", sessVars.ResourceGroupName))
+		} else {
+			sessVars.StmtCtx.ResourceGroupName = sessVars.StmtCtx.StmtHints.ResourceGroup
+			// if we are in a txn, should update the txn resource name to let the txn
+			// commit with the hint resource group.
+			if txn, err := s.Txn(false); err == nil && txn != nil && txn.Valid() {
+				kv.SetTxnResourceGroup(txn, sessVars.StmtCtx.ResourceGroupName)
+			}
+		}
 	}
 
 	durCompile := time.Since(s.sessionVars.StartTime)
