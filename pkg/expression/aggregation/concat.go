@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -46,7 +45,7 @@ func (*concatFunction) writeValue(evalCtx *AggEvaluateContext, val types.Datum) 
 	}
 }
 
-func (cf *concatFunction) initSeparator(ctx sessionctx.Context, row chunk.Row) error {
+func (cf *concatFunction) initSeparator(ctx expression.EvalContext, row chunk.Row) error {
 	sepArg := cf.Args[len(cf.Args)-1]
 	sepDatum, err := sepArg.Eval(ctx, row)
 	if err != nil {
@@ -122,7 +121,7 @@ func (cf *concatFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum)
 	return d
 }
 
-func (cf *concatFunction) ResetContext(ctx sessionctx.Context, evalCtx *AggEvaluateContext) {
+func (cf *concatFunction) ResetContext(ctx expression.EvalContext, evalCtx *AggEvaluateContext) {
 	if cf.HasDistinct {
 		evalCtx.DistinctChecker = createDistinctChecker(ctx.GetSessionVars().StmtCtx)
 	}

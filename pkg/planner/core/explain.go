@@ -467,7 +467,7 @@ func (p *basePhysicalAgg) ExplainInfo() string {
 func (p *basePhysicalAgg) explainInfo(normalized bool) string {
 	sortedExplainExpressionList := expression.SortedExplainExpressionList
 	if normalized {
-		sortedExplainExpressionList = func(_ sessionctx.Context, exprs []expression.Expression) []byte {
+		sortedExplainExpressionList = func(_ expression.EvalContext, exprs []expression.Expression) []byte {
 			return expression.SortedExplainNormalizedExpressionList(exprs)
 		}
 	}
@@ -517,7 +517,7 @@ func (p *PhysicalIndexMergeJoin) ExplainInfo() string {
 func (p *PhysicalIndexJoin) explainInfo(normalized bool, isIndexMergeJoin bool) string {
 	sortedExplainExpressionList := expression.SortedExplainExpressionList
 	if normalized {
-		sortedExplainExpressionList = func(_ sessionctx.Context, exprs []expression.Expression) []byte {
+		sortedExplainExpressionList = func(_ expression.EvalContext, exprs []expression.Expression) []byte {
 			return expression.SortedExplainNormalizedExpressionList(exprs)
 		}
 	}
@@ -588,7 +588,7 @@ func (p *PhysicalHashJoin) ExplainNormalizedInfo() string {
 func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 	sortedExplainExpressionList := expression.SortedExplainExpressionList
 	if normalized {
-		sortedExplainExpressionList = func(_ sessionctx.Context, exprs []expression.Expression) []byte {
+		sortedExplainExpressionList = func(_ expression.EvalContext, exprs []expression.Expression) []byte {
 			return expression.SortedExplainNormalizedExpressionList(exprs)
 		}
 	}
@@ -683,7 +683,7 @@ func (p *PhysicalMergeJoin) ExplainInfo() string {
 func (p *PhysicalMergeJoin) explainInfo(normalized bool) string {
 	sortedExplainExpressionList := expression.SortedExplainExpressionList
 	if normalized {
-		sortedExplainExpressionList = func(_ sessionctx.Context, exprs []expression.Expression) []byte {
+		sortedExplainExpressionList = func(_ expression.EvalContext, exprs []expression.Expression) []byte {
 			return expression.SortedExplainNormalizedExpressionList(exprs)
 		}
 	}
