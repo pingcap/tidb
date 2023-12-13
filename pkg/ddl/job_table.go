@@ -268,7 +268,7 @@ func (d *ddl) getReorgJob(sess *sess.Session) (*model.Job, error) {
 func (d *ddl) startDispatchLoop() {
 	sessCtx, err := d.sessPool.Get()
 	if err != nil {
-		logutil.BgLogger().Fatal("schedule loop get session failed, it should not happen, please try restart TiDB", zap.Error(err))
+		logutil.BgLogger().Fatal("dispatch loop get session failed, it should not happen, please try restart TiDB", zap.Error(err))
 	}
 	defer d.sessPool.Put(sessCtx)
 	se := sess.NewSession(sessCtx)
@@ -277,7 +277,7 @@ func (d *ddl) startDispatchLoop() {
 		notifyDDLJobByEtcdCh = d.etcdCli.Watch(d.ctx, addingDDLJobConcurrent)
 	}
 	if err := d.checkAndUpdateClusterState(true); err != nil {
-		logutil.BgLogger().Fatal("schedule loop get cluster state failed, it should not happen, please try restart TiDB", zap.Error(err))
+		logutil.BgLogger().Fatal("dispatch loop get cluster state failed, it should not happen, please try restart TiDB", zap.Error(err))
 	}
 	ticker := time.NewTicker(dispatchLoopWaitingDuration)
 	defer ticker.Stop()
