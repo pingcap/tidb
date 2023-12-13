@@ -15,6 +15,7 @@
 package framework_test
 
 import (
+	"runtime"
 	"testing"
 	"time"
 
@@ -41,6 +42,13 @@ func TestFrameworkBasic(t *testing.T) {
 	distContext.SetOwner(1)
 	time.Sleep(2 * time.Second) // make sure owner changed
 	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key5", testContext, nil)
+
+	val := runtime.GOMAXPROCS(1)
+	defer func() {
+		runtime.GOMAXPROCS(val)
+	}()
+
+	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key6", testContext, nil)
 	distContext.Close()
 }
 
