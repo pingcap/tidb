@@ -55,7 +55,7 @@ func (b *builtinGreatestDecimalSig) vecEvalDecimal(ctx sessionctx.Context, input
 	return nil
 }
 
-func (b *builtinGreatestDecimalSig) vectorized() bool {
+func (*builtinGreatestDecimalSig) vectorized() bool {
 	return true
 }
 
@@ -90,7 +90,7 @@ func (b *builtinLeastDecimalSig) vecEvalDecimal(ctx sessionctx.Context, input *c
 	return nil
 }
 
-func (b *builtinLeastDecimalSig) vectorized() bool {
+func (*builtinLeastDecimalSig) vectorized() bool {
 	return true
 }
 
@@ -125,7 +125,7 @@ func (b *builtinLeastIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chu
 	return nil
 }
 
-func (b *builtinLeastIntSig) vectorized() bool {
+func (*builtinLeastIntSig) vectorized() bool {
 	return true
 }
 
@@ -160,11 +160,11 @@ func (b *builtinGreatestIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.
 	return nil
 }
 
-func (b *builtinGreatestIntSig) vectorized() bool {
+func (*builtinGreatestIntSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinGEIntSig) vectorized() bool {
+func (*builtinGEIntSig) vectorized() bool {
 	return true
 }
 
@@ -196,7 +196,7 @@ func (b *builtinGEIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk,
 	return nil
 }
 
-func (b *builtinLeastRealSig) vectorized() bool {
+func (*builtinLeastRealSig) vectorized() bool {
 	return true
 }
 
@@ -231,7 +231,7 @@ func (b *builtinLeastRealSig) vecEvalReal(ctx sessionctx.Context, input *chunk.C
 	return nil
 }
 
-func (b *builtinLeastStringSig) vectorized() bool {
+func (*builtinLeastStringSig) vectorized() bool {
 	return true
 }
 
@@ -284,7 +284,7 @@ func (b *builtinLeastStringSig) vecEvalString(ctx sessionctx.Context, input *chu
 	return nil
 }
 
-func (b *builtinEQIntSig) vectorized() bool {
+func (*builtinEQIntSig) vectorized() bool {
 	return true
 }
 
@@ -316,7 +316,7 @@ func (b *builtinEQIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk,
 	return nil
 }
 
-func (b *builtinNEIntSig) vectorized() bool {
+func (*builtinNEIntSig) vectorized() bool {
 	return true
 }
 
@@ -348,7 +348,7 @@ func (b *builtinNEIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk,
 	return nil
 }
 
-func (b *builtinGTIntSig) vectorized() bool {
+func (*builtinGTIntSig) vectorized() bool {
 	return true
 }
 
@@ -380,7 +380,7 @@ func (b *builtinGTIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk,
 	return nil
 }
 
-func (b *builtinNullEQIntSig) vectorized() bool {
+func (*builtinNullEQIntSig) vectorized() bool {
 	return true
 }
 
@@ -419,7 +419,7 @@ func (b *builtinNullEQIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Ch
 	return nil
 }
 
-func (b *builtinIntervalIntSig) vectorized() bool {
+func (*builtinIntervalIntSig) vectorized() bool {
 	return true
 }
 
@@ -449,7 +449,7 @@ func (b *builtinIntervalIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.
 	return nil
 }
 
-func (b *builtinIntervalRealSig) vectorized() bool {
+func (*builtinIntervalRealSig) vectorized() bool {
 	return true
 }
 
@@ -486,7 +486,7 @@ func (b *builtinIntervalRealSig) vecEvalInt(ctx sessionctx.Context, input *chunk
 	return nil
 }
 
-func (b *builtinLEIntSig) vectorized() bool {
+func (*builtinLEIntSig) vectorized() bool {
 	return true
 }
 
@@ -518,7 +518,7 @@ func (b *builtinLEIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk,
 	return nil
 }
 
-func (b *builtinLTIntSig) vectorized() bool {
+func (*builtinLTIntSig) vectorized() bool {
 	return true
 }
 
@@ -630,7 +630,7 @@ func vecCompareInt(isUnsigned0, isUnsigned1 bool, largs, rargs, result *chunk.Co
 	}
 }
 
-func (b *builtinGreatestCmpStringAsTimeSig) vectorized() bool {
+func (*builtinGreatestCmpStringAsTimeSig) vectorized() bool {
 	return true
 }
 
@@ -676,7 +676,7 @@ func (b *builtinGreatestCmpStringAsTimeSig) vecEvalString(ctx sessionctx.Context
 	return nil
 }
 
-func (b *builtinGreatestRealSig) vectorized() bool {
+func (*builtinGreatestRealSig) vectorized() bool {
 	return true
 }
 
@@ -711,7 +711,7 @@ func (b *builtinGreatestRealSig) vecEvalReal(ctx sessionctx.Context, input *chun
 	return nil
 }
 
-func (b *builtinLeastCmpStringAsTimeSig) vectorized() bool {
+func (*builtinLeastCmpStringAsTimeSig) vectorized() bool {
 	return true
 }
 
@@ -757,7 +757,7 @@ func (b *builtinLeastCmpStringAsTimeSig) vecEvalString(ctx sessionctx.Context, i
 	return nil
 }
 
-func (b *builtinGreatestStringSig) vectorized() bool {
+func (*builtinGreatestStringSig) vectorized() bool {
 	return true
 }
 
@@ -809,7 +809,7 @@ func (b *builtinGreatestStringSig) vecEvalString(ctx sessionctx.Context, input *
 	return nil
 }
 
-func (b *builtinGreatestTimeSig) vectorized() bool {
+func (*builtinGreatestTimeSig) vectorized() bool {
 	return true
 }
 
@@ -850,7 +850,7 @@ func (b *builtinGreatestTimeSig) vecEvalTime(ctx sessionctx.Context, input *chun
 	return nil
 }
 
-func (b *builtinLeastTimeSig) vectorized() bool {
+func (*builtinLeastTimeSig) vectorized() bool {
 	return true
 }
 
@@ -891,7 +891,7 @@ func (b *builtinLeastTimeSig) vecEvalTime(ctx sessionctx.Context, input *chunk.C
 	return nil
 }
 
-func (b *builtinGreatestDurationSig) vectorized() bool {
+func (*builtinGreatestDurationSig) vectorized() bool {
 	return true
 }
 
@@ -923,7 +923,7 @@ func (b *builtinGreatestDurationSig) vecEvalDuration(ctx sessionctx.Context, inp
 	return nil
 }
 
-func (b *builtinLeastDurationSig) vectorized() bool {
+func (*builtinLeastDurationSig) vectorized() bool {
 	return true
 }
 
