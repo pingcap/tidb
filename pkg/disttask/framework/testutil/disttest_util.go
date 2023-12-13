@@ -194,6 +194,7 @@ func DispatchMultiTasksAndOneFail(ctx context.Context, t *testing.T, num int, te
 	require.NoError(t, err)
 	tasks := make([]*proto.Task, num)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunErr", "1*return(true)"))
+
 	for i := 0; i < num; i++ {
 		_, err = mgr.CreateTask(ctx, fmt.Sprintf("key%d", i), proto.TaskTypeExample, 8, nil)
 		require.NoError(t, err)
