@@ -65,14 +65,14 @@ type TaskMeta struct {
 	// running on the instance that initiate the IMPORT INTO.
 	EligibleInstances []*infosync.ServerInfo
 	// the file chunks to import, when import from server file, we need to pass those
-	// files to the framework dispatcher which might run on another instance.
+	// files to the framework scheduler which might run on another instance.
 	// we use a map from engine ID to chunks since we need support split_file for CSV,
-	// so need to split them into engines before passing to dispatcher.
+	// so need to split them into engines before passing to scheduler.
 	ChunkMap map[int32][]Chunk
 }
 
 // ImportStepMeta is the meta of import step.
-// Dispatcher will split the task into subtasks(FileInfos -> Chunks)
+// Scheduler will split the task into subtasks(FileInfos -> Chunks)
 // All the field should be serializable.
 type ImportStepMeta struct {
 	// this is the engine ID, not the id in tidb_background_subtask table.

@@ -184,7 +184,7 @@ func (a *recordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 func (a *recordSet) Finish() error {
 	var err error
 	a.once.Do(func() {
-		err = a.executor.Close()
+		err = exec.Close(a.executor)
 		cteErr := resetCTEStorageMap(a.stmt.Ctx)
 		if cteErr != nil {
 			logutil.BgLogger().Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
@@ -353,7 +353,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	}
 
 	if err = exec.Open(ctx, pointExecutor); err != nil {
-		terror.Call(pointExecutor.Close)
+		terror.Log(exec.Close(pointExecutor))
 		return nil, err
 	}
 
@@ -565,7 +565,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 
 	breakpoint.Inject(a.Ctx, sessiontxn.BreakPointBeforeExecutorFirstRun)
 	if err = a.openExecutor(ctx, e); err != nil {
-		terror.Call(e.Close)
+		terror.Log(exec.Close(e))
 		return nil, err
 	}
 
@@ -714,14 +714,14 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 			return err
 		}
 		if err := exec.Open(ctx, e); err != nil {
-			terror.Call(e.Close)
+			terror.Log(exec.Close(e))
 			return err
 		}
 		err = exec.Next(ctx, e, exec.NewFirstChunk(e))
 		if err != nil {
 			return err
 		}
-		err = e.Close()
+		err = exec.Close(e)
 		if err != nil {
 			return err
 		}
@@ -897,7 +897,7 @@ func (c *chunkRowRecordSet) Close() error {
 
 func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e exec.Executor) (_ sqlexec.RecordSet, retErr error) {
 	if snapshotTS := a.Ctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
-		terror.Log(e.Close())
+		terror.Log(exec.Close(e))
 		return nil, errors.New("can not execute write statement when 'tidb_snapshot' is set")
 	}
 
@@ -941,7 +941,7 @@ func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e exec.
 
 func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e exec.Executor) (sqlexec.RecordSet, error) {
 	defer func() {
-		terror.Log(e.Close())
+		terror.Log(exec.Close(e))
 	}()
 	var rows []chunk.Row
 	var err error
@@ -971,7 +971,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e exec.Executor) (
 
 	var err error
 	defer func() {
-		terror.Log(e.Close())
+		terror.Log(exec.Close(e))
 		a.logAudit()
 	}()
 
