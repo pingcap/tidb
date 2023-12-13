@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
@@ -2115,6 +2116,11 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 		}
 
 		job := reorgInfo.Job
+		workerCntLimit := int(variable.GetDDLReorgWorkerCounter())
+		concurrency := min(workerCntLimit, cpu.GetCPUCount())
+		logutil.BgLogger().Info("adjusted add-index task concurrency",
+			zap.Int("worker-cnt", workerCntLimit), zap.Int("task-concurrency", concurrency),
+			zap.String("task-key", taskKey))
 		taskMeta := &BackfillTaskMeta{
 			Job:             *reorgInfo.Job.Clone(),
 			EleIDs:          elemIDs,
@@ -2129,7 +2135,7 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 
 		g.Go(func() error {
 			defer close(done)
-			err := handle.SubmitAndWaitTask(ctx, taskKey, taskType, distPhysicalTableConcurrency, metaData)
+			err := handle.SubmitAndWaitTask(ctx, taskKey, taskType, concurrency, metaData)
 			failpoint.Inject("pauseAfterDistTaskFinished", func() {
 				MockDMLExecutionOnTaskFinished()
 			})

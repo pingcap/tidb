@@ -14,9 +14,11 @@ go_test(
         "//pkg/ddl/util/callback",
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/scheduler",
+        "//pkg/disttask/framework/storage",
         "//pkg/errno",
         "//pkg/kv",
         "//pkg/parser/model",
+        "//pkg/sessionctx/variable",
         "//pkg/store/helper",
         "//pkg/tablecodec",
         "//pkg/testkit",
@@ -24,5 +26,6 @@ go_test(
         "//tests/realtikvtest",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//util",
     ],
 )
