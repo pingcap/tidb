@@ -1467,10 +1467,10 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		task.memTracker = w.memTracker
 		memUsage := int64(cap(task.handles))*size.SizeOfInterface + tableReader.memUsage()
 		if task.indexOrder != nil {
-			memUsage += task.indexOrder.MemUsage
+			memUsage += task.indexOrder.MemUsage()
 		}
 		if task.duplicatedIndexOrder != nil {
-			memUsage += task.duplicatedIndexOrder.MemUsage
+			memUsage += task.duplicatedIndexOrder.MemUsage()
 		}
 		task.memUsage = memUsage
 		task.memTracker.Consume(memUsage)

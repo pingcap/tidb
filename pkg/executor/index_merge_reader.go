@@ -783,7 +783,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 	}
 }
 
-func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tbl table.Table, handles []kv.Handle) (_ exec.Executor, err error) {
+func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tbl table.Table, handles []kv.Handle) (_ *TableReaderExecutor, err error) {
 	tableReaderExec := &TableReaderExecutor{
 		BaseExecutor:     exec.NewBaseExecutor(e.Ctx(), e.Schema(), e.getTablePlanRootID()),
 		table:            tbl,
@@ -1903,15 +1903,15 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *index
 	defer terror.Call(tableReader.Close)
 	{
 		task.memTracker = w.memTracker
-		memUsage := int64(cap(task.handles)) * size.SizeOfInterface
+		memUsage := int64(cap(task.handles))*size.SizeOfInterface + tableReader.memUsage()
 		for _, h := range task.handles {
 			memUsage += int64(h.MemUsage())
 		}
 		if task.indexOrder != nil {
-			memUsage += task.indexOrder.MemUsage
+			memUsage += task.indexOrder.MemUsage()
 		}
 		if task.duplicatedIndexOrder != nil {
-			memUsage += task.duplicatedIndexOrder.MemUsage
+			memUsage += task.duplicatedIndexOrder.MemUsage()
 		}
 		task.memUsage = memUsage
 		task.memTracker.Consume(memUsage)
