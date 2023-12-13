@@ -216,11 +216,15 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	}
 	if p.ctx.GetSessionVars().EnableLateMaterialization && len(p.filterCondition) > 0 && p.StoreType == kv.TiFlash {
 		buffer.WriteString("pushed down filter:")
-		if len(p.lateMaterializationFilterCondition) > 0 {
+		if len(p.LateMaterializationFilterCondition) > 0 {
 			if normalized {
-				buffer.Write(expression.SortedExplainNormalizedExpressionList(p.lateMaterializationFilterCondition))
+				buffer.Write(expression.SortedExplainNormalizedExpressionList(p.LateMaterializationFilterCondition))
 			} else {
+<<<<<<< HEAD:planner/core/explain.go
 				buffer.Write(expression.SortedExplainExpressionList(p.lateMaterializationFilterCondition))
+=======
+				buffer.Write(expression.SortedExplainExpressionList(p.SCtx(), p.LateMaterializationFilterCondition))
+>>>>>>> 3fb6b98d1d0 (executor: fill correlated column value in late materialization filter conditions (#49244)):pkg/planner/core/explain.go
 			}
 		} else {
 			buffer.WriteString("empty")
