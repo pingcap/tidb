@@ -12,9 +12,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
+	tmysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/tikv/client-go/v2/tikv"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
 
