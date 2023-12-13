@@ -35,8 +35,8 @@ import (
 )
 
 func testReadAndCompare(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	kvs []common.KvPair,
 	store storage.ExternalStorage,
 	memSizeLimit int) {
@@ -144,7 +144,7 @@ func TestReadAllDataBasic(t *testing.T) {
 		return bytes.Compare(i.Key, j.Key)
 	})
 
-	testReadAndCompare(t, ctx, kvs, memStore, memSizeLimit)
+	testReadAndCompare(ctx, t, kvs, memStore, memSizeLimit)
 }
 
 func TestReadAllOneFile(t *testing.T) {
@@ -179,5 +179,5 @@ func TestReadAllOneFile(t *testing.T) {
 	slices.SortFunc(kvs, func(i, j common.KvPair) int {
 		return bytes.Compare(i.Key, j.Key)
 	})
-	testReadAndCompare(t, ctx, kvs, memStore, memSizeLimit)
+	testReadAndCompare(ctx, t, kvs, memStore, memSizeLimit)
 }
