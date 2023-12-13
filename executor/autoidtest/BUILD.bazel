@@ -8,7 +8,11 @@ go_test(
     ],
     flaky = True,
     race = "on",
+<<<<<<< HEAD:executor/autoidtest/BUILD.bazel
     shard_count = 30,
+=======
+    shard_count = 8,
+>>>>>>> 9f612e3762a (pkg/executor: fix the hang issue in indexHashJoin (#49218)):pkg/executor/test/jointest/BUILD.bazel
     deps = [
         "//autoid_service",
         "//config",
