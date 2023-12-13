@@ -30,7 +30,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func evalBuiltinFuncConcurrent(f builtinFunc, ctx sessionctx.Context, row chunk.Row) (d types.Datum, err error) {
+func evalBuiltinFuncConcurrent(f builtinFunc, ctx EvalContext, row chunk.Row) (d types.Datum, err error) {
 	var wg util.WaitGroupWrapper
 	concurrency := 10
 	var lock sync.Mutex
@@ -49,7 +49,7 @@ func evalBuiltinFuncConcurrent(f builtinFunc, ctx sessionctx.Context, row chunk.
 	return
 }
 
-func evalBuiltinFunc(f builtinFunc, ctx sessionctx.Context, row chunk.Row) (d types.Datum, err error) {
+func evalBuiltinFunc(f builtinFunc, ctx EvalContext, row chunk.Row) (d types.Datum, err error) {
 	var (
 		res    interface{}
 		isNull bool

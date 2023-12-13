@@ -47,43 +47,43 @@ type ScalarFunction struct {
 }
 
 // VecEvalInt evaluates this expression in a vectorized manner.
-func (sf *ScalarFunction) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (sf *ScalarFunction) VecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	intest.Assert(ctx != nil)
 	return sf.Function.vecEvalInt(ctx, input, result)
 }
 
 // VecEvalReal evaluates this expression in a vectorized manner.
-func (sf *ScalarFunction) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (sf *ScalarFunction) VecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	intest.Assert(ctx != nil)
 	return sf.Function.vecEvalReal(ctx, input, result)
 }
 
 // VecEvalString evaluates this expression in a vectorized manner.
-func (sf *ScalarFunction) VecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (sf *ScalarFunction) VecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	intest.Assert(ctx != nil)
 	return sf.Function.vecEvalString(ctx, input, result)
 }
 
 // VecEvalDecimal evaluates this expression in a vectorized manner.
-func (sf *ScalarFunction) VecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (sf *ScalarFunction) VecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	intest.Assert(ctx != nil)
 	return sf.Function.vecEvalDecimal(ctx, input, result)
 }
 
 // VecEvalTime evaluates this expression in a vectorized manner.
-func (sf *ScalarFunction) VecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (sf *ScalarFunction) VecEvalTime(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	intest.Assert(ctx != nil)
 	return sf.Function.vecEvalTime(ctx, input, result)
 }
 
 // VecEvalDuration evaluates this expression in a vectorized manner.
-func (sf *ScalarFunction) VecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (sf *ScalarFunction) VecEvalDuration(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	intest.Assert(ctx != nil)
 	return sf.Function.vecEvalDuration(ctx, input, result)
 }
 
 // VecEvalJSON evaluates this expression in a vectorized manner.
-func (sf *ScalarFunction) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (sf *ScalarFunction) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	intest.Assert(ctx != nil)
 	return sf.Function.vecEvalJSON(ctx, input, result)
 }
@@ -342,7 +342,7 @@ func (sf *ScalarFunction) GetType() *types.FieldType {
 }
 
 // Equal implements Expression interface.
-func (sf *ScalarFunction) Equal(ctx sessionctx.Context, e Expression) bool {
+func (sf *ScalarFunction) Equal(ctx EvalContext, e Expression) bool {
 	intest.Assert(ctx != nil)
 	fun, ok := e.(*ScalarFunction)
 	if !ok {
@@ -392,7 +392,7 @@ func (sf *ScalarFunction) Traverse(action TraverseAction) Expression {
 }
 
 // Eval implements Expression interface.
-func (sf *ScalarFunction) Eval(ctx sessionctx.Context, row chunk.Row) (d types.Datum, err error) {
+func (sf *ScalarFunction) Eval(ctx EvalContext, row chunk.Row) (d types.Datum, err error) {
 	var (
 		res    interface{}
 		isNull bool
@@ -439,43 +439,43 @@ func (sf *ScalarFunction) Eval(ctx sessionctx.Context, row chunk.Row) (d types.D
 }
 
 // EvalInt implements Expression interface.
-func (sf *ScalarFunction) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (sf *ScalarFunction) EvalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	intest.Assert(ctx != nil)
 	return sf.Function.evalInt(ctx, row)
 }
 
 // EvalReal implements Expression interface.
-func (sf *ScalarFunction) EvalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (sf *ScalarFunction) EvalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	intest.Assert(ctx != nil)
 	return sf.Function.evalReal(ctx, row)
 }
 
 // EvalDecimal implements Expression interface.
-func (sf *ScalarFunction) EvalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.MyDecimal, bool, error) {
+func (sf *ScalarFunction) EvalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecimal, bool, error) {
 	intest.Assert(ctx != nil)
 	return sf.Function.evalDecimal(ctx, row)
 }
 
 // EvalString implements Expression interface.
-func (sf *ScalarFunction) EvalString(ctx sessionctx.Context, row chunk.Row) (string, bool, error) {
+func (sf *ScalarFunction) EvalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
 	intest.Assert(ctx != nil)
 	return sf.Function.evalString(ctx, row)
 }
 
 // EvalTime implements Expression interface.
-func (sf *ScalarFunction) EvalTime(ctx sessionctx.Context, row chunk.Row) (types.Time, bool, error) {
+func (sf *ScalarFunction) EvalTime(ctx EvalContext, row chunk.Row) (types.Time, bool, error) {
 	intest.Assert(ctx != nil)
 	return sf.Function.evalTime(ctx, row)
 }
 
 // EvalDuration implements Expression interface.
-func (sf *ScalarFunction) EvalDuration(ctx sessionctx.Context, row chunk.Row) (types.Duration, bool, error) {
+func (sf *ScalarFunction) EvalDuration(ctx EvalContext, row chunk.Row) (types.Duration, bool, error) {
 	intest.Assert(ctx != nil)
 	return sf.Function.evalDuration(ctx, row)
 }
 
 // EvalJSON implements Expression interface.
-func (sf *ScalarFunction) EvalJSON(ctx sessionctx.Context, row chunk.Row) (types.BinaryJSON, bool, error) {
+func (sf *ScalarFunction) EvalJSON(ctx EvalContext, row chunk.Row) (types.BinaryJSON, bool, error) {
 	intest.Assert(ctx != nil)
 	return sf.Function.evalJSON(ctx, row)
 }
@@ -636,13 +636,13 @@ func (sf *ScalarFunction) resolveIndices(schema *Schema) error {
 }
 
 // ResolveIndicesByVirtualExpr implements Expression interface.
-func (sf *ScalarFunction) ResolveIndicesByVirtualExpr(ctx sessionctx.Context, schema *Schema) (Expression, bool) {
+func (sf *ScalarFunction) ResolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) (Expression, bool) {
 	newSf := sf.Clone()
 	isOK := newSf.resolveIndicesByVirtualExpr(ctx, schema)
 	return newSf, isOK
 }
 
-func (sf *ScalarFunction) resolveIndicesByVirtualExpr(ctx sessionctx.Context, schema *Schema) bool {
+func (sf *ScalarFunction) resolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) bool {
 	for _, arg := range sf.GetArgs() {
 		isOk := arg.resolveIndicesByVirtualExpr(ctx, schema)
 		if !isOk {

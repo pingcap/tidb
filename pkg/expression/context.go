@@ -16,10 +16,13 @@ package expression
 
 import (
 	"fmt"
+
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 )
 
+// EvalContext is used to evaluate an expression
 type EvalContext interface {
 	// GetSessionVars gets the session variables.
 	GetSessionVars() *variable.SessionVars
@@ -37,4 +40,8 @@ type EvalContext interface {
 	ReleaseAllAdvisoryLocks() int
 	// GetStore returns the store of session.
 	GetStore() kv.Storage
+	// GetInfoSchema returns the current infoschema
+	GetInfoSchema() sessionctx.InfoschemaMetaVersion
+	// GetDomainInfoSchema returns the latest information schema in domain
+	GetDomainInfoSchema() sessionctx.InfoschemaMetaVersion
 }
