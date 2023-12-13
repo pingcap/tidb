@@ -336,6 +336,22 @@ func TestDropAPartition(t *testing.T) {
 	).Check(
 		testkit.Rows("3 2"),
 	)
+
+	// Get partition p0's stats update version.
+	partitionID := pi.Definitions[0].ID
+	// Get it from stats_meat first.
+	rows := testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id = ?", partitionID,
+	).Rows()
+	require.Len(t, rows, 1)
+	version := rows[0][0].(string)
+
+	// Check the update version is changed.
+	rows = testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id = ?", tableInfo.ID,
+	).Rows()
+	require.Len(t, rows, 1)
+	require.NotEqual(t, version, rows[0][0].(string))
 }
 
 func TestExchangeAPartition(t *testing.T) {
