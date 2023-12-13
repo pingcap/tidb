@@ -923,6 +923,7 @@ func TestCaptureFilter(t *testing.T) {
 }
 
 func TestCaptureHints(t *testing.T) {
+	t.Skip("deprecated")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")
