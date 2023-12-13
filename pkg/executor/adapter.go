@@ -1657,7 +1657,11 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		UsedStats:         stmtCtx.GetUsedStatsInfo(false),
 		IsSyncStatsFailed: stmtCtx.IsSyncStatsFailed,
 		Warnings:          collectWarningsForSlowLog(stmtCtx),
+<<<<<<< HEAD
 		ResourceGroupName: sessVars.StmtCtx.ResourceGroupName,
+=======
+		ResourceGroupName: sessVars.ResourceGroupName,
+>>>>>>> 161107a7127 (executor: add ru details in slow log and INFORMATION_SCHEMA.SLOW_QUERY (#49067))
 		RRU:               ruDetails.RRU(),
 		WRU:               ruDetails.WRU(),
 		WaitRUDuration:    ruDetails.RUWaitDuration(),
