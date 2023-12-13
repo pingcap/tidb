@@ -5,6 +5,9 @@ package operator
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
+	"math/rand"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -130,8 +133,16 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 	return eg.Wait()
 }
 
+func getCallerName() string {
+	name, err := os.Hostname()
+	if err != nil {
+		name = fmt.Sprintf("UNKNOWN-%d", rand.Int63())
+	}
+	return fmt.Sprintf("prepare_for_snapshot_backup@%s", name)
+}
+
 func pauseImporting(cx *AdaptEnvForSnapshotBackupContext) error {
-	suspendLightning := utils.NewSuspendImporting("prepare_for_snapshot_backup", cx.kvMgr)
+	suspendLightning := utils.NewSuspendImporting(getCallerName(), cx.kvMgr)
 	limitedCx, cancel := context.WithTimeout(cx, cx.cfg.TTL)
 	_, err := utils.WithRetryV2(limitedCx, cx.GetBackOffer("suspend_lightning"), func(_ context.Context) (map[uint64]bool, error) {
 		return suspendLightning.DenyAllStores(limitedCx, cx.cfg.TTL)
