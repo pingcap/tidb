@@ -46,7 +46,7 @@ func TestHandle(t *testing.T) {
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
 
-	// no dispatcher registered
+	// no scheduler registered
 	err := handle.SubmitAndWaitTask(ctx, "1", proto.TaskTypeExample, 2, []byte("byte"))
 	require.Error(t, err)
 
@@ -55,7 +55,7 @@ func TestHandle(t *testing.T) {
 	require.Equal(t, int64(1), task.ID)
 	require.Equal(t, "1", task.Key)
 	require.Equal(t, proto.TaskTypeExample, task.Type)
-	// no dispatcher registered
+	// no scheduler registered
 	require.Equal(t, proto.TaskStateFailed, task.State)
 	require.Equal(t, proto.StepInit, task.Step)
 	require.Equal(t, 2, task.Concurrency)

@@ -162,6 +162,7 @@ go_test(
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util/codec",
+        "//pkg/util/intest",
         "//pkg/util/table-filter",
         "@com_github_fsouza_fake_gcs_server//fakestorage",
         "@com_github_golang_protobuf//proto",

@@ -42,7 +42,8 @@ const (
 	defaultSubtaskKeepDays = 14
 
 	basicTaskColumns = `id, task_key, type, state, step, priority, concurrency, create_time`
-	taskColumns      = basicTaskColumns + `, start_time, state_update_time, meta, dispatcher_id, error`
+	// TODO: dispatcher_id will update to scheduler_id later
+	taskColumns = basicTaskColumns + `, start_time, state_update_time, meta, dispatcher_id, error`
 	// InsertTaskColumns is the columns used in insert task.
 	InsertTaskColumns = `task_key, type, state, priority, concurrency, step, meta, create_time, start_time, state_update_time`
 
@@ -134,7 +135,7 @@ func row2Task(r chunk.Row) *proto.Task {
 	task.StartTime, _ = r.GetTime(8).GoTime(time.Local)
 	task.StateUpdateTime, _ = r.GetTime(9).GoTime(time.Local)
 	task.Meta = r.GetBytes(10)
-	task.DispatcherID = r.GetString(11)
+	task.SchedulerID = r.GetString(11)
 	if !r.IsNull(12) {
 		errBytes := r.GetBytes(12)
 		stdErr := errors.Normalize("")
@@ -233,7 +234,7 @@ func (*TaskManager) CreateTaskWithSession(ctx context.Context, se sessionctx.Con
 	return taskID, nil
 }
 
-// GetOneTask get a task from task table, it's used by dispatcher only.
+// GetOneTask get a task from task table, it's used by scheduler only.
 func (stm *TaskManager) GetOneTask(ctx context.Context) (task *proto.Task, err error) {
 	rs, err := stm.executeSQLWithNewSession(ctx, "select "+taskColumns+" from mysql.tidb_global_task where state = %? limit 1", proto.TaskStatePending)
 	if err != nil {
@@ -247,7 +248,7 @@ func (stm *TaskManager) GetOneTask(ctx context.Context) (task *proto.Task, err e
 	return row2Task(rs[0]), nil
 }
 
-// GetTopUnfinishedTasks implements the dispatcher.TaskManager interface.
+// GetTopUnfinishedTasks implements the scheduler.TaskManager interface.
 func (stm *TaskManager) GetTopUnfinishedTasks(ctx context.Context) (task []*proto.Task, err error) {
 	rs, err := stm.executeSQLWithNewSession(ctx,
 		`select `+basicTaskColumns+` from mysql.tidb_global_task
@@ -360,7 +361,7 @@ func (stm *TaskManager) GetTaskByKeyWithHistory(ctx context.Context, key string)
 	return row2Task(rs[0]), nil
 }
 
-// FailTask implements the dispatcher.TaskManager interface.
+// FailTask implements the scheduler.TaskManager interface.
 func (stm *TaskManager) FailTask(ctx context.Context, taskID int64, currentState proto.TaskState, taskErr error) error {
 	_, err := stm.executeSQLWithNewSession(ctx,
 		`update mysql.tidb_global_task
@@ -373,7 +374,7 @@ func (stm *TaskManager) FailTask(ctx context.Context, taskID int64, currentState
 	return err
 }
 
-// GetUsedSlotsOnNodes implements the dispatcher.TaskManager interface.
+// GetUsedSlotsOnNodes implements the scheduler.TaskManager interface.
 func (stm *TaskManager) GetUsedSlotsOnNodes(ctx context.Context) (map[string]int, error) {
 	// concurrency of subtasks of some step is the same, we use max(concurrency)
 	// to make group by works.
@@ -793,11 +794,11 @@ func (stm *TaskManager) UpdateTaskAndAddSubTasks(ctx context.Context, task *prot
 		_, err := ExecSQL(ctx, se, "update mysql.tidb_global_task "+
 			"set state = %?, dispatcher_id = %?, step = %?, concurrency = %?, meta = %?, error = %?, state_update_time = CURRENT_TIMESTAMP()"+
 			"where id = %? and state = %?",
-			task.State, task.DispatcherID, task.Step, task.Concurrency, task.Meta, serializeErr(task.Error), task.ID, prevState)
+			task.State, task.SchedulerID, task.Step, task.Concurrency, task.Meta, serializeErr(task.Error), task.ID, prevState)
 		if err != nil {
 			return err
 		}
-		// When AffectedRows == 0, means other admin command have changed the task state, it's illegal to dispatch subtasks.
+		// When AffectedRows == 0, means other admin command have changed the task state, it's illegal to schedule subtasks.
 		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
 			if !intest.InTest {
 				// task state have changed by other admin command
@@ -806,7 +807,7 @@ func (stm *TaskManager) UpdateTaskAndAddSubTasks(ctx context.Context, task *prot
 			}
 			// TODO: remove it, when OnNextSubtasksBatch returns subtasks, just insert subtasks without updating tidb_global_task.
 			// Currently the business running on distributed task framework will update proto.Task in OnNextSubtasksBatch.
-			// So when dispatching subtasks, framework needs to update task and insert subtasks in one Txn.
+			// So when scheduling subtasks, framework needs to update task and insert subtasks in one Txn.
 			//
 			// In future, it's needed to restrict changes of task in OnNextSubtasksBatch.
 			// If OnNextSubtasksBatch won't update any fields in proto.Task, we can insert subtasks only.
@@ -1046,7 +1047,7 @@ func (stm *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 				}
 			}
 			if err := sqlescape.FormatSQL(insertSQL, "(%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)",
-				task.ID, task.Key, task.Type, task.DispatcherID,
+				task.ID, task.Key, task.Type, task.SchedulerID,
 				task.State, task.Priority, task.StartTime, task.StateUpdateTime,
 				task.Meta, task.Concurrency, task.Step, serializeErr(task.Error)); err != nil {
 				return err
@@ -1074,7 +1075,7 @@ func (stm *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 	})
 }
 
-// GetManagedNodes implements dispatcher.TaskManager interface.
+// GetManagedNodes implements scheduler.TaskManager interface.
 func (stm *TaskManager) GetManagedNodes(ctx context.Context) ([]string, error) {
 	rs, err := stm.executeSQLWithNewSession(ctx, `
 		select host, role
