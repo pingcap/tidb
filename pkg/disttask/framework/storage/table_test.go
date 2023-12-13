@@ -31,26 +31,10 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
-	"go.uber.org/goleak"
 )
-
-func GetResourcePool(t *testing.T) *pools.ResourcePool {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask"))
-	}()
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	pool := pools.NewResourcePool(func() (pools.Resource, error) {
-		return tk.Session(), nil
-	}, 1, 1, time.Second)
-	return pool
-}
 
 func GetTaskManager(t *testing.T, pool *pools.ResourcePool) *storage.TaskManager {
 	manager := storage.NewTaskManager(pool)
@@ -63,16 +47,6 @@ func GetTaskManager(t *testing.T, pool *pools.ResourcePool) *storage.TaskManager
 func checkTaskStateStep(t *testing.T, task *proto.Task, state proto.TaskState, step proto.Step) {
 	require.Equal(t, state, task.State)
 	require.Equal(t, step, task.Step)
-}
-
-func TestMain(m *testing.M) {
-	testsetup.SetupForCommonTest()
-	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
-		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
-		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
-	}
-	goleak.VerifyTestMain(m, opts...)
 }
 
 func TestTaskTable(t *testing.T) {
