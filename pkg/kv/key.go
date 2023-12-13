@@ -495,8 +495,7 @@ func (m *HandleMap) Set(h Handle, val interface{}) {
 	if h.IsInt() {
 		ints[h.IntValue()] = val
 	} else {
-		key := string(h.Encoded())
-		strs[key] = strHandleVal{
+		strs[string(h.Encoded())] = strHandleVal{
 			h:   h,
 			val: val,
 		}
@@ -516,11 +515,8 @@ func (m *HandleMap) Delete(h Handle) {
 	}
 	if h.IsInt() {
 		delete(ints, h.IntValue())
-
 	} else {
-		key := string(h.Encoded())
-		delete(strs, key)
-
+		delete(strs, string(h.Encoded()))
 	}
 }
 
