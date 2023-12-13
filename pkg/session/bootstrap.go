@@ -1039,11 +1039,15 @@ const (
 	//   add concurrency/priority/create_time/end_time to `mysql.tidb_background_subtask`/`mysql.tidb_background_subtask_history`
 	//   add idx_exec_id(exec_id) to `mysql.tidb_background_subtask`
 	version180 = 180
+
+	// version 181
+	//   add a new `type` column on mysql.bind_info, which is for universal binding #48875.
+	version181
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version180
+var currentBootstrapVersion int64 = version181
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1199,6 +1203,7 @@ var (
 		upgradeToVer178,
 		upgradeToVer179,
 		upgradeToVer180,
+		upgradeToVer181,
 	}
 )
 
@@ -2932,6 +2937,13 @@ func upgradeToVer180(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `end_time` TIMESTAMP AFTER `state_update_time`", infoschema.ErrColumnExists)
 
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD INDEX idx_exec_id(exec_id)", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer181(s sessiontypes.Session, ver int64) {
+	if ver >= version181 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN `type` VARCHAR(64) NOT NULL DEFAULT ''", infoschema.ErrColumnExists)
 }
 
 func writeOOMAction(s sessiontypes.Session) {
