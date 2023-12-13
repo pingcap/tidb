@@ -37,7 +37,7 @@ import (
 
 var (
 	executorPoolSize int32 = 4
-	// same as dispatcher
+	// same as scheduler
 	checkTime           = 300 * time.Millisecond
 	recoverMetaInterval = 90 * time.Second
 	retrySQLTimes       = 30
@@ -298,7 +298,7 @@ func (m *Manager) onPausingTasks(tasks []*proto.Task) error {
 
 // recoverMetaLoop inits and recovers dist_framework_meta for the tidb node running the taskExecutor manager.
 // This is necessary when the TiDB node experiences a prolonged network partition
-// and the dispatcher deletes `dist_framework_meta`.
+// and the scheduler deletes `dist_framework_meta`.
 // When the TiDB node recovers from the network partition,
 // we need to re-insert the metadata.
 func (m *Manager) recoverMetaLoop() {

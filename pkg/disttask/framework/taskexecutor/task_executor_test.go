@@ -73,7 +73,7 @@ func TestTaskExecutorRun(t *testing.T) {
 	require.EqualError(t, err, initErr.Error())
 
 	var taskID int64 = 1
-	var concurrency uint64 = 10
+	var concurrency = 10
 	task := &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency}
 
 	// 3. run subtask failed
@@ -356,7 +356,7 @@ func TestTaskExecutorPause(t *testing.T) {
 func TestTaskExecutor(t *testing.T) {
 	var tp proto.TaskType = "test_task_executor"
 	var taskID int64 = 1
-	var concurrency uint64 = 10
+	var concurrency = 10
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	runCtx, runCancel := context.WithCancel(ctx)

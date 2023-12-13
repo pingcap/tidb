@@ -11,10 +11,12 @@ import (
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 )
 
 func TestGCS(t *testing.T) {
+	require.True(t, intest.InTest)
 	ctx := context.Background()
 
 	opts := fakestorage.Options{
@@ -255,6 +257,7 @@ func TestGCS(t *testing.T) {
 }
 
 func TestNewGCSStorage(t *testing.T) {
+	require.True(t, intest.InTest)
 	ctx := context.Background()
 
 	opts := fakestorage.Options{
@@ -397,9 +400,26 @@ func TestNewGCSStorage(t *testing.T) {
 		require.Equal(t, "", gcs.CredentialsBlob)
 		require.Equal(t, "a/b/x", s.objectName("x"))
 	}
+
+	// without http client
+	{
+		gcs := &backuppb.GCS{
+			Bucket:          bucketName,
+			Prefix:          "a/b",
+			StorageClass:    "NEARLINE",
+			PredefinedAcl:   "private",
+			CredentialsBlob: `{"type": "service_account"}`,
+		}
+		_, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
+			SendCredentials:  false,
+			CheckPermissions: []Permission{AccessBuckets},
+		})
+		require.NoError(t, err)
+	}
 }
 
 func TestReadRange(t *testing.T) {
+	require.True(t, intest.InTest)
 	ctx := context.Background()
 
 	opts := fakestorage.Options{
