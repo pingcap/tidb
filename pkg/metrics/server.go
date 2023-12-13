@@ -70,8 +70,6 @@ var (
 	CPUProfileCounter               prometheus.Counter
 	LoadTableCacheDurationHistogram prometheus.Histogram
 	RCCheckTSWriteConfilictCounter  *prometheus.CounterVec
-
-	// ResourceGroupQueryTotalCounter *prometheus.CounterVec
 )
 
 // InitServerMetrics initializes server metrics.
@@ -100,14 +98,6 @@ func InitServerMetrics() {
 			Name:      "query_total",
 			Help:      "Counter of queries.",
 		}, []string{LblType, LblResult})
-
-	// ResourceGroupQueryTotalCounter = NewCounterVec(
-	// 	prometheus.CounterOpts{
-	// 		Namespace: "tidb",
-	// 		Subsystem: "server",
-	// 		Name:      "resource_group_query_total",
-	// 		Help:      "Counter of queries by resource group .",
-	// 	}, []string{LblResourceGroup, LblResult})
 
 	AffectedRowsCounter = NewCounterVec(
 		prometheus.CounterOpts{
