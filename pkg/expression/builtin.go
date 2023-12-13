@@ -286,10 +286,7 @@ func newBaseBuiltinFuncWithFieldTypes(ctx sessionctx.Context, funcName string, a
 
 // newBaseBuiltinFuncWithFieldType create BaseBuiltinFunc with FieldType charset and collation.
 // do not check and compute collation.
-func newBaseBuiltinFuncWithFieldType(ctx sessionctx.Context, tp *types.FieldType, args []Expression) (baseBuiltinFunc, error) {
-	if ctx == nil {
-		return baseBuiltinFunc{}, errors.New("unexpected nil session ctx")
-	}
+func newBaseBuiltinFuncWithFieldType(tp *types.FieldType, args []Expression) (baseBuiltinFunc, error) {
 	bf := baseBuiltinFunc{
 		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
