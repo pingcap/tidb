@@ -526,7 +526,7 @@ func (b *builtinPeriodDiffSig) vecEvalInt(ctx sessionctx.Context, input *chunk.C
 	return nil
 }
 
-func (b *builtinNowWithArgSig) vectorized() bool {
+func (*builtinNowWithArgSig) vectorized() bool {
 	return true
 }
 
@@ -571,7 +571,7 @@ func (b *builtinNowWithArgSig) vecEvalTime(ctx sessionctx.Context, input *chunk.
 	return nil
 }
 
-func (b *builtinGetFormatSig) vectorized() bool {
+func (*builtinGetFormatSig) vectorized() bool {
 	return true
 }
 
@@ -656,7 +656,7 @@ func (b *builtinGetFormatSig) getFormat(format, location string) string {
 	return res
 }
 
-func (b *builtinLastDaySig) vectorized() bool {
+func (*builtinLastDaySig) vectorized() bool {
 	return true
 }
 
@@ -685,7 +685,7 @@ func (b *builtinLastDaySig) vecEvalTime(ctx sessionctx.Context, input *chunk.Chu
 	return nil
 }
 
-func (b *builtinStrToDateDateSig) vectorized() bool {
+func (*builtinStrToDateDateSig) vectorized() bool {
 	return true
 }
 
@@ -740,7 +740,7 @@ func (b *builtinStrToDateDateSig) vecEvalTime(ctx sessionctx.Context, input *chu
 	return nil
 }
 
-func (b *builtinSysDateWithFspSig) vectorized() bool {
+func (*builtinSysDateWithFspSig) vectorized() bool {
 	return true
 }
 
@@ -776,7 +776,7 @@ func (b *builtinSysDateWithFspSig) vecEvalTime(ctx sessionctx.Context, input *ch
 	return nil
 }
 
-func (b *builtinTidbParseTsoSig) vectorized() bool {
+func (*builtinTidbParseTsoSig) vectorized() bool {
 	return true
 }
 
@@ -812,7 +812,7 @@ func (b *builtinTidbParseTsoSig) vecEvalTime(ctx sessionctx.Context, input *chun
 	return nil
 }
 
-func (b *builtinTiDBBoundedStalenessSig) vectorized() bool {
+func (*builtinTiDBBoundedStalenessSig) vectorized() bool {
 	return true
 }
 
@@ -876,7 +876,7 @@ func (b *builtinTiDBBoundedStalenessSig) vecEvalTime(ctx sessionctx.Context, inp
 	return nil
 }
 
-func (b *builtinFromDaysSig) vectorized() bool {
+func (*builtinFromDaysSig) vectorized() bool {
 	return true
 }
 
@@ -904,7 +904,7 @@ func (b *builtinFromDaysSig) vecEvalTime(ctx sessionctx.Context, input *chunk.Ch
 	return nil
 }
 
-func (b *builtinMicroSecondSig) vectorized() bool {
+func (*builtinMicroSecondSig) vectorized() bool {
 	return true
 }
 
@@ -931,7 +931,7 @@ func (b *builtinMicroSecondSig) vecEvalInt(ctx sessionctx.Context, input *chunk.
 	return nil
 }
 
-func (b *builtinQuarterSig) vectorized() bool {
+func (*builtinQuarterSig) vectorized() bool {
 	return true
 }
 
@@ -962,7 +962,7 @@ func (b *builtinQuarterSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chun
 	return nil
 }
 
-func (b *builtinWeekWithModeSig) vectorized() bool {
+func (*builtinWeekWithModeSig) vectorized() bool {
 	return true
 }
 
@@ -1014,7 +1014,7 @@ func (b *builtinWeekWithModeSig) vecEvalInt(ctx sessionctx.Context, input *chunk
 	return nil
 }
 
-func (b *builtinExtractDatetimeSig) vectorized() bool {
+func (*builtinExtractDatetimeSig) vectorized() bool {
 	return true
 }
 
@@ -1055,7 +1055,7 @@ func (b *builtinExtractDatetimeSig) vecEvalInt(ctx sessionctx.Context, input *ch
 	return nil
 }
 
-func (b *builtinExtractDurationSig) vectorized() bool {
+func (*builtinExtractDurationSig) vectorized() bool {
 	return true
 }
 
@@ -1097,7 +1097,7 @@ func (b *builtinExtractDurationSig) vecEvalInt(ctx sessionctx.Context, input *ch
 	return nil
 }
 
-func (b *builtinStrToDateDurationSig) vectorized() bool {
+func (*builtinStrToDateDurationSig) vectorized() bool {
 	return true
 }
 
@@ -1148,7 +1148,7 @@ func (b *builtinStrToDateDurationSig) vecEvalDuration(ctx sessionctx.Context, in
 	return nil
 }
 
-func (b *builtinToSecondsSig) vectorized() bool {
+func (*builtinToSecondsSig) vectorized() bool {
 	return true
 }
 
@@ -1187,7 +1187,7 @@ func (b *builtinToSecondsSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Ch
 	return nil
 }
 
-func (b *builtinMinuteSig) vectorized() bool {
+func (*builtinMinuteSig) vectorized() bool {
 	return true
 }
 
@@ -1214,7 +1214,7 @@ func (b *builtinMinuteSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk
 	return nil
 }
 
-func (b *builtinSecondSig) vectorized() bool {
+func (*builtinSecondSig) vectorized() bool {
 	return true
 }
 
@@ -1241,7 +1241,7 @@ func (b *builtinSecondSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk
 	return nil
 }
 
-func (b *builtinNowWithoutArgSig) vectorized() bool {
+func (*builtinNowWithoutArgSig) vectorized() bool {
 	return true
 }
 
@@ -1263,7 +1263,7 @@ func (b *builtinNowWithoutArgSig) vecEvalTime(ctx sessionctx.Context, input *chu
 	return nil
 }
 
-func (b *builtinTimestampLiteralSig) vectorized() bool {
+func (*builtinTimestampLiteralSig) vectorized() bool {
 	return true
 }
 
@@ -1277,7 +1277,7 @@ func (b *builtinTimestampLiteralSig) vecEvalTime(ctx sessionctx.Context, input *
 	return nil
 }
 
-func (b *builtinMakeDateSig) vectorized() bool {
+func (*builtinMakeDateSig) vectorized() bool {
 	return true
 }
 
@@ -1340,7 +1340,7 @@ func (b *builtinMakeDateSig) vecEvalTime(ctx sessionctx.Context, input *chunk.Ch
 	return nil
 }
 
-func (b *builtinWeekOfYearSig) vectorized() bool {
+func (*builtinWeekOfYearSig) vectorized() bool {
 	return true
 }
 
@@ -1375,7 +1375,7 @@ func (b *builtinWeekOfYearSig) vecEvalInt(ctx sessionctx.Context, input *chunk.C
 	return nil
 }
 
-func (b *builtinUTCTimestampWithArgSig) vectorized() bool {
+func (*builtinUTCTimestampWithArgSig) vectorized() bool {
 	return true
 }
 
@@ -1419,7 +1419,7 @@ func (b *builtinUTCTimestampWithArgSig) vecEvalTime(ctx sessionctx.Context, inpu
 	return nil
 }
 
-func (b *builtinTimeToSecSig) vectorized() bool {
+func (*builtinTimeToSecSig) vectorized() bool {
 	return true
 }
 
@@ -1456,7 +1456,7 @@ func (b *builtinTimeToSecSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Ch
 	return nil
 }
 
-func (b *builtinStrToDateDatetimeSig) vectorized() bool {
+func (*builtinStrToDateDatetimeSig) vectorized() bool {
 	return true
 }
 
@@ -1514,7 +1514,7 @@ func (b *builtinStrToDateDatetimeSig) vecEvalTime(ctx sessionctx.Context, input 
 	return nil
 }
 
-func (b *builtinUTCDateSig) vectorized() bool {
+func (*builtinUTCDateSig) vectorized() bool {
 	return true
 }
 
