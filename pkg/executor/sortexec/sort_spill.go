@@ -24,22 +24,46 @@ import (
 )
 
 type spillHelper struct {
-	syncLock   sync.Mutex
-	spillError error
+	syncLock sync.Mutex
 
-	lock       *sync.Mutex
-	cond       sync.Cond
-	isSpilling bool
+	lock            *sync.Mutex
+	cond            sync.Cond
+	spillError      error
+	isSpilling      bool
+	isSpillTrigered bool
 }
 
 func newSpillHelper() *spillHelper {
 	lock := new(sync.Mutex)
 	return &spillHelper{
-		spillError: nil,
-		lock:       lock,
-		cond:       *sync.NewCond(lock),
-		isSpilling: false,
+		lock:            lock,
+		cond:            *sync.NewCond(lock),
+		spillError:      nil,
+		isSpilling:      false,
+		isSpillTrigered: false,
 	}
+}
+
+func (s *spillHelper) reset() {
+	s.isSpilling = false
+	s.isSpillTrigered = false
+}
+
+func (s *spillHelper) setIsSpilling(isSpilling bool) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	if isSpilling {
+		s.setSpillTriggeredNoLock()
+	}
+	s.isSpilling = isSpilling
+}
+
+func (s *spillHelper) setSpillTriggeredNoLock() {
+	s.isSpillTrigered = true
+}
+
+func (s *spillHelper) isSpillTriggeredNoLock() bool {
+	return s.isSpillTrigered
 }
 
 func (s *spillHelper) setErrorNoLock(err error) {
@@ -72,36 +96,37 @@ func (*sortPartitionSpillDiskAction) GetPriority() int64 {
 }
 
 func (s *sortPartitionSpillDiskAction) Action(t *memory.Tracker) {
-	s.helper.syncLock.Lock()
-	defer s.helper.syncLock.Unlock()
+	s.helper.lock.Lock()
+	defer s.helper.lock.Unlock()
 
-	needCheckExceed := true
-	if !s.partition.isSpillTriggered() && s.partition.hasEnoughDataToSpill() {
+	if !s.helper.isSpillTriggeredNoLock() && s.partition.hasEnoughDataToSpill() {
 		s.once.Do(func() {
-			needCheckExceed = false
 			go func() {
 				s.helper.syncLock.Lock()
 				defer s.helper.syncLock.Unlock()
 				logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
 					zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
-				s.helper.isSpilling = true
+
 				err := s.partition.spillToDisk()
 				if err != nil {
 					s.helper.setErrorNoLock(err)
 				}
-				s.helper.isSpilling = false
-				s.helper.cond.Broadcast()
 			}()
 		})
+
+		// Ideally, all goroutines entering this action should wait for the finish of spill once
+		// spill is triggered(we consider spill is triggered when the spill goroutine gets the syncLock).
+		// However, out of some reasons, we have to directly return the goroutine before the finish of
+		// sort operation which is executed in `s.partition.spillToDisk()` as sort will retrigger the action
+		// and lead to dead lock.
+		return
 	}
 
-	s.helper.lock.Lock()
 	for s.helper.isSpilling {
 		s.helper.cond.Wait()
 	}
-	s.helper.lock.Unlock()
 
-	if !needCheckExceed || !t.CheckExceed() {
+	if !t.CheckExceed() {
 		return
 	}
 

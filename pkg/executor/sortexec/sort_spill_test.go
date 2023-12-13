@@ -306,6 +306,7 @@ func inMemoryThenSpillCase(t *testing.T, ctx *mock.Context, sortCase *testutil.S
 	require.True(t, checkCorrectness(schema, exe, dataSource, resultChunks))
 }
 
+// TODO a very big chunk, trigger spill and re-try to add, we should  avoid the infinity creation of partition.
 // TODO trigger spill from outside of the sort executor.
 func TestSortSpillDisk(t *testing.T) {
 	sortexec.SetSmallSpillChunkSizeForTest()

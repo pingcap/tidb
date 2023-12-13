@@ -204,8 +204,8 @@ func (t *Tracker) CheckExceed() bool {
 // SetActionOnExceed sets the action when memory usage exceeds bytesHardLimit.
 func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {
 	t.actionMuForHardLimit.Lock()
+	defer t.actionMuForHardLimit.Unlock()
 	t.actionMuForHardLimit.actionOnExceed = a
-	t.actionMuForHardLimit.Unlock()
 }
 
 // FallbackOldAndSetNewAction sets the action when memory usage exceeds bytesHardLimit
@@ -214,6 +214,13 @@ func (t *Tracker) FallbackOldAndSetNewAction(a ActionOnExceed) {
 	t.actionMuForHardLimit.Lock()
 	defer t.actionMuForHardLimit.Unlock()
 	t.actionMuForHardLimit.actionOnExceed = reArrangeFallback(a, t.actionMuForHardLimit.actionOnExceed)
+}
+
+// GetHardLimitActionOnExceed returns the ActionOnExceed of hard limit.
+func (t *Tracker) GetHardLimitActionOnExceed() ActionOnExceed {
+	t.actionMuForHardLimit.Lock()
+	defer t.actionMuForHardLimit.Unlock()
+	return t.actionMuForHardLimit.actionOnExceed
 }
 
 // FallbackOldAndSetNewActionForSoftLimit sets the action when memory usage exceeds bytesSoftLimit

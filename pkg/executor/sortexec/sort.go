@@ -51,6 +51,8 @@ type SortExec struct {
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
 
+	memTrackerOriginAction memory.ActionOnExceed
+
 	// sortPartitions is the chunks to store row values for partitions. Every partition is a sorted list.
 	sortPartitions []*sortPartition
 	cursors        []*dataCursor
@@ -61,7 +63,7 @@ type SortExec struct {
 	// spillAction save the Action for spill disk.
 	spillAction *sortPartitionSpillDiskAction
 
-	helper spillHelper
+	helper *spillHelper
 }
 
 // Close implements the Executor Close interface.
@@ -81,12 +83,14 @@ func (e *SortExec) Close() error {
 		e.spillAction.SetFinished()
 	}
 	e.spillAction = nil
+	e.helper = nil
 	return e.Children(0).Close()
 }
 
 // Open implements the Executor Open interface.
 func (e *SortExec) Open(ctx context.Context) error {
 	e.fetched = false
+	e.helper = newSpillHelper()
 
 	// To avoid duplicated initialization for TopNExec.
 	if e.memTracker == nil {
@@ -240,12 +244,13 @@ func (e *SortExec) switchToNewSortPartition(fields []*types.FieldType, byItemsDe
 	// Put the full partition into list
 	e.sortPartitions = append(e.sortPartitions, e.partition)
 
-	e.partition = newSortPartition(fields, e.MaxChunkSize(), byItemsDesc, e.keyColumns, e.keyCmpFuncs, e.spillLimit)
-	e.spillAction = e.partition.actionSpill(&e.helper)
+	e.partition = newSortPartition(fields, e.MaxChunkSize(), byItemsDesc, e.keyColumns, e.keyCmpFuncs, e.helper, e.spillLimit)
 	e.partition.getMemTracker().AttachTo(e.memTracker)
 	e.partition.getMemTracker().SetLabel(memory.LabelForRowChunks)
 	e.partition.getDiskTracker().AttachTo(e.diskTracker)
 	e.partition.getDiskTracker().SetLabel(memory.LabelForRowChunks)
+	e.spillAction = e.partition.actionSpill(e.helper)
+	e.Ctx().GetSessionVars().MemTracker.SetActionOnExceed(e.memTrackerOriginAction)
 	e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
 }
 
@@ -255,8 +260,11 @@ func (e *SortExec) storeChunk(chk *chunk.Chunk, fields []*types.FieldType, byIte
 		return err
 	}
 
-	for !e.partition.add(chk) {
+	if !e.partition.add(chk) {
 		e.switchToNewSortPartition(fields, byItemsDesc)
+		if !e.partition.add(chk) {
+			return errFailToAddChunk
+		}
 	}
 	return nil
 }
@@ -295,10 +303,11 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		byItemsDesc[i] = byItem.Desc
 	}
 
-	e.partition = newSortPartition(fields, e.MaxChunkSize(), byItemsDesc, e.keyColumns, e.keyCmpFuncs, e.spillLimit)
-	e.spillAction = e.partition.actionSpill(&e.helper)
+	e.memTrackerOriginAction = e.Ctx().GetSessionVars().MemTracker.GetHardLimitActionOnExceed()
+	e.partition = newSortPartition(fields, e.MaxChunkSize(), byItemsDesc, e.keyColumns, e.keyCmpFuncs, e.helper, e.spillLimit)
 	e.partition.getMemTracker().AttachTo(e.memTracker)
 	e.partition.getMemTracker().SetLabel(memory.LabelForRowChunks)
+	e.spillAction = e.partition.actionSpill(e.helper)
 
 	if variable.EnableTmpStorageOnOOM.Load() {
 		e.partition.getDiskTracker().AttachTo(e.diskTracker)

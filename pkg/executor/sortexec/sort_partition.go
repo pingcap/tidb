@@ -17,7 +17,6 @@ package sortexec
 import (
 	"fmt"
 	"sort"
-	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -27,10 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
-var errSpillIsTriggered = errors.New("can not add because spill has been triggered")
 var errSpillEmptyChunk = errors.New("can not spill empty chunk to disk")
-
-const rowPtrSize = int(unsafe.Sizeof(chunk.RowPtr{}))
+var errFailToAddChunk = errors.New("fail to add chunk")
 
 // It should be const, but we need to modify it for test.
 var spillChunkSize int = 4096
@@ -51,6 +48,7 @@ type sortPartition struct {
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
 	spillAction *sortPartitionSpillDiskAction
+	helper      *spillHelper
 
 	// We can't spill if size of data is lower than the limit
 	spillLimit int64
@@ -73,7 +71,8 @@ type sortPartition struct {
 
 // Creates a new SortPartition in memory.
 func newSortPartition(fieldTypes []*types.FieldType, chunkSize int, byItemsDesc []bool,
-	keyColumns []int, keyCmpFuncs []chunk.CompareFunc, spillLimit int64) *sortPartition {
+	keyColumns []int, keyCmpFuncs []chunk.CompareFunc, helper *spillHelper, spillLimit int64) *sortPartition {
+	helper.reset()
 	retVal := &sortPartition{
 		fieldTypes:         fieldTypes,
 		savedRows:          make([]chunk.Row, 0),
@@ -83,6 +82,7 @@ func newSortPartition(fieldTypes []*types.FieldType, chunkSize int, byItemsDesc 
 		memTracker:         memory.NewTracker(memory.LabelForSortPartition, -1),
 		diskTracker:        disk.NewTracker(memory.LabelForSortPartition, -1),
 		spillAction:        nil, // It's set in `actionSpill` function
+		helper:             helper,
 		spillLimit:         spillLimit,
 		byItemsDesc:        byItemsDesc,
 		keyColumns:         keyColumns,
@@ -111,19 +111,18 @@ func (s *sortPartition) add(chk *chunk.Chunk) bool {
 	rowNum := chk.NumRows()
 	consumedBytesNum := chunk.RowSize*int64(rowNum) + chk.MemoryUsage()
 
-	// Track memory out of lock protection scope to avoid dead lock.
-	s.getMemTracker().Consume(consumedBytesNum)
-
 	s.spillAction.helper.syncLock.Lock()
 	defer s.spillAction.helper.syncLock.Unlock()
 	if s.isSpillTriggered() {
 		return false
 	}
 
+	// Convert chunk to rows
 	for i := 0; i < rowNum; i++ {
 		s.savedRows = append(s.savedRows, chk.GetRow(i))
 	}
 
+	s.getMemTracker().Consume(consumedBytesNum)
 	s.totalTrackedMemNum += consumedBytesNum
 	return true
 }
@@ -192,15 +191,22 @@ func (s *sortPartition) spillToDiskImpl() error {
 	return nil
 }
 
-// This function is not protected by lock.
+// We can only call this function under the protection of `syncLock`.
 func (s *sortPartition) spillToDisk() error {
-	s.setSpillTriggered()
 	err := s.sort()
 	if err != nil {
 		return err
 	}
 
-	return s.spillToDiskImpl()
+	// We should consider spill has been triggered once goroutine get `syncLock`.
+	// However, `s.sort()` will retrigger the spill and lead to dead lock
+	// so we have to set spill flag at here.
+	s.setSpillTriggered()
+	s.helper.setIsSpilling(true)
+	err = s.spillToDiskImpl()
+	s.helper.setIsSpilling(false)
+	s.helper.cond.Broadcast()
+	return err
 }
 
 func (s *sortPartition) actionSpill(helper *spillHelper) *sortPartitionSpillDiskAction {
