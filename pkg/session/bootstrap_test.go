@@ -2007,9 +2007,9 @@ func TestTiDBBindingInListToVer175(t *testing.T) {
 	// create some bindings at version174
 	MustExec(t, seV174, "use test")
 	MustExec(t, seV174, "create table t (a int, b int, c int, key(c))")
-	MustExec(t, seV174, "insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ... )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1,2,3)', 'test', 'enabled', '2023-09-13 14:41:38.319', '2023-09-13 14:41:35.319', 'utf8', 'utf8_general_ci', 'manual', '', '')")
-	MustExec(t, seV174, "insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ? )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1)', 'test', 'enabled', '2023-09-13 14:41:38.319', '2023-09-13 14:41:36.319', 'utf8', 'utf8_general_ci', 'manual', '', '')")
-	MustExec(t, seV174, "insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ? ) and `b` in ( ... )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3)', 'test', 'enabled', '2023-09-13 14:41:37.319', '2023-09-13 14:41:38.319', 'utf8', 'utf8_general_ci', 'manual', '', '')")
+	MustExec(t, seV174, "insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ... )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1,2,3)', 'test', 'enabled', '2023-09-13 14:41:38.319', '2023-09-13 14:41:35.319', 'utf8', 'utf8_general_ci', 'manual', '', '', '')")
+	MustExec(t, seV174, "insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ? )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1)', 'test', 'enabled', '2023-09-13 14:41:38.319', '2023-09-13 14:41:36.319', 'utf8', 'utf8_general_ci', 'manual', '', '', '')")
+	MustExec(t, seV174, "insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ? ) and `b` in ( ... )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3)', 'test', 'enabled', '2023-09-13 14:41:37.319', '2023-09-13 14:41:38.319', 'utf8', 'utf8_general_ci', 'manual', '', '', '')")
 
 	showBindings := func(s sessiontypes.Session) (records []string) {
 		MustExec(t, s, "admin reload bindings")
