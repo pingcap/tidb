@@ -50,7 +50,6 @@ go_test(
     shard_count = 23,
     deps = [
         "//pkg/config",
-        "//pkg/disttask/framework/dispatcher/mock",
         "//pkg/disttask/framework/mock",
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/scheduler/mock",
