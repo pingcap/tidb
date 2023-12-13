@@ -380,7 +380,7 @@ func TestTruncatePartitions(t *testing.T) {
 	partitionP1ID := pi.Definitions[1].ID
 	// Get it from stats_meat first.
 	rows := testKit.MustQuery(
-		"select version from mysql.stats_meta where table_id in (?, ?)", partitionP0ID, partitionP1ID,
+		"select version from mysql.stats_meta where table_id in (?, ?) order by table_id", partitionP0ID, partitionP1ID,
 	).Rows()
 	require.Len(t, rows, 2)
 	versionP0 := rows[0][0].(string)
@@ -402,7 +402,7 @@ func TestTruncatePartitions(t *testing.T) {
 
 	// Check the version again.
 	rows = testKit.MustQuery(
-		"select version from mysql.stats_meta where table_id in (?, ?)", partitionP0ID, partitionP1ID,
+		"select version from mysql.stats_meta where table_id in (?, ?) order by table_id", partitionP0ID, partitionP1ID,
 	).Rows()
 	require.Len(t, rows, 2)
 	// Version gets updated after truncate the partition.
