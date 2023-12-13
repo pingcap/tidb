@@ -103,6 +103,7 @@ func (s *sortPartition) close() error {
 	s.spillAction = nil
 	s.memTracker = nil
 	s.diskTracker = nil
+	s.helper = nil
 	return nil
 }
 
