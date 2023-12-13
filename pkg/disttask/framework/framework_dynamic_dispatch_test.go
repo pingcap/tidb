@@ -15,6 +15,7 @@
 package framework_test
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -34,6 +35,10 @@ func TestFrameworkDynamicBasic(t *testing.T) {
 func TestFrameworkDynamicHA(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
 	defer ctrl.Finish()
+	val := runtime.GOMAXPROCS(1)
+	defer func() {
+		runtime.GOMAXPROCS(val)
+	}()
 
 	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockDynamicDispatchExt(ctrl), testContext, nil)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDynamicDispatchErr", "5*return()"))
