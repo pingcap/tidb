@@ -63,8 +63,6 @@ var (
 // TaskHandle provides the interface for operations needed by Scheduler.
 // Then we can use scheduler's function in Scheduler interface.
 type TaskHandle interface {
-	// GetPreviousTaskExecutorIDs gets previous task executor IDs.
-	GetPreviousTaskExecutorIDs(_ context.Context, taskID int64, step proto.Step) ([]string, error)
 	// GetPreviousSubtaskMetas gets previous subtask metas.
 	GetPreviousSubtaskMetas(taskID int64, step proto.Step) ([][]byte, error)
 	storage.SessionExecutor
@@ -422,7 +420,7 @@ func (s *BaseScheduler) BalanceSubtasks() error {
 func (s *BaseScheduler) replaceTaskNodes() {
 	s.TaskNodes = s.TaskNodes[:0]
 	for _, serverInfo := range s.LiveNodes {
-		s.TaskNodes = append(s.TaskNodes, disttaskutil.GenerateExecID(serverInfo.IP, serverInfo.Port))
+		s.TaskNodes = append(s.TaskNodes, disttaskutil.GenerateExecID(serverInfo))
 	}
 }
 
@@ -455,7 +453,7 @@ func (s *BaseScheduler) ReDispatchSubtasks() error {
 	// 3. group subtasks for each task executor.
 	subtasksOnTaskExecutor := make(map[string][]*proto.Subtask, len(s.LiveNodes)+len(deadNodes))
 	for _, node := range s.LiveNodes {
-		execID := disttaskutil.GenerateExecID(node.IP, node.Port)
+		execID := disttaskutil.GenerateExecID(node)
 		subtasksOnTaskExecutor[execID] = make([]*proto.Subtask, 0)
 	}
 	for _, subtask := range subtasks {
@@ -504,7 +502,7 @@ func (s *BaseScheduler) ReDispatchSubtasks() error {
 	liveNodeIdx := 0
 	for rebalanceIdx < len(rebalanceSubtasks) {
 		node := s.LiveNodes[liveNodeIdx]
-		rebalanceSubtasks[rebalanceIdx].ExecID = disttaskutil.GenerateExecID(node.IP, node.Port)
+		rebalanceSubtasks[rebalanceIdx].ExecID = disttaskutil.GenerateExecID(node)
 		rebalanceIdx++
 		liveNodeIdx++
 	}
@@ -515,9 +513,6 @@ func (s *BaseScheduler) ReDispatchSubtasks() error {
 	}
 	logutil.Logger(s.logCtx).Info("rebalance subtasks",
 		zap.Stringers("subtasks-rebalanced", subtasks))
-	if err = s.taskMgr.CleanUpMeta(s.ctx, deadNodes); err != nil {
-		return err
-	}
 	s.replaceTaskNodes()
 	return nil
 }
@@ -635,7 +630,7 @@ func (s *BaseScheduler) scheduleSubTask(
 		zap.Int("subtasks", len(metas)))
 	s.TaskNodes = make([]string, len(serverNodes))
 	for i := range serverNodes {
-		s.TaskNodes[i] = disttaskutil.GenerateExecID(serverNodes[i].IP, serverNodes[i].Port)
+		s.TaskNodes[i] = disttaskutil.GenerateExecID(serverNodes[i])
 	}
 	var size uint64
 	subTasks := make([]*proto.Subtask, 0, len(metas))
@@ -643,7 +638,7 @@ func (s *BaseScheduler) scheduleSubTask(
 		// we assign the subtask to the instance in a round-robin way.
 		// TODO: assign the subtask to the instance according to the system load of each nodes
 		pos := i % len(serverNodes)
-		instanceID := disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port)
+		instanceID := disttaskutil.GenerateExecID(serverNodes[pos])
 		logutil.Logger(s.logCtx).Debug("create subtasks", zap.String("instanceID", instanceID))
 		subTasks = append(subTasks, proto.NewSubtask(
 			subtaskStep, s.Task.ID, s.Task.Type, instanceID, s.Task.Concurrency, meta, i+1))
@@ -734,7 +729,7 @@ func (s *BaseScheduler) filterByRole(infos []*infosync.ServerInfo) ([]*infosync.
 
 	res := make([]*infosync.ServerInfo, 0, len(nodes))
 	for _, info := range infos {
-		_, ok := nodeMap[disttaskutil.GenerateExecID(info.IP, info.Port)]
+		_, ok := nodeMap[disttaskutil.GenerateExecID(info)]
 		if ok {
 			res = append(res, info)
 		}
@@ -779,11 +774,6 @@ func (s *BaseScheduler) GetPreviousSubtaskMetas(taskID int64, step proto.Step) (
 		previousSubtaskMetas = append(previousSubtaskMetas, subtask.Meta)
 	}
 	return previousSubtaskMetas, nil
-}
-
-// GetPreviousTaskExecutorIDs gets task executor IDs that run previous step.
-func (s *BaseScheduler) GetPreviousTaskExecutorIDs(_ context.Context, taskID int64, step proto.Step) ([]string, error) {
-	return s.taskMgr.GetTaskExecutorIDsByTaskIDAndStep(s.ctx, taskID, step)
 }
 
 // WithNewSession executes the function with a new session.

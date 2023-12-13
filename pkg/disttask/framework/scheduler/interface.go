@@ -35,7 +35,7 @@ type TaskManager interface {
 	UpdateTaskAndAddSubTasks(ctx context.Context, task *proto.Task, subtasks []*proto.Subtask, prevState proto.TaskState) (bool, error)
 	GCSubtasks(ctx context.Context) error
 	GetAllNodes(ctx context.Context) ([]string, error)
-	CleanUpMeta(ctx context.Context, nodes []string) error
+	DeleteDeadNodes(ctx context.Context, nodes []string) error
 	TransferTasks2History(ctx context.Context, tasks []*proto.Task) error
 	CancelTask(ctx context.Context, taskID int64) error
 	// FailTask updates task state to Failed and updates task error.

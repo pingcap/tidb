@@ -799,8 +799,8 @@ func (stm *TaskManager) UpdateSubtasksExecIDs(ctx context.Context, taskID int64,
 	return err
 }
 
-// CleanUpMeta cleanup the outdated row in dist_framework_meta when some tidb down.
-func (stm *TaskManager) CleanUpMeta(ctx context.Context, nodes []string) error {
+// DeleteDeadNodes deletes the dead nodes from mysql.dist_framework_meta.
+func (stm *TaskManager) DeleteDeadNodes(ctx context.Context, nodes []string) error {
 	if len(nodes) == 0 {
 		return nil
 	}

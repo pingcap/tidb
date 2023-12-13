@@ -94,6 +94,8 @@ type Manager struct {
 		syncutil.RWMutex
 		schedulers map[int64]Scheduler
 	}
+	// prevLiveNodes is used to record the live nodes in last checking.
+	prevLiveNodes map[string]struct{}
 }
 
 // NewManager creates a scheduler struct.
@@ -122,7 +124,8 @@ func (sm *Manager) Start() {
 	})
 	sm.wg.Run(sm.scheduleTaskLoop)
 	sm.wg.Run(sm.gcSubtaskHistoryTableLoop)
-	sm.wg.Run(sm.cleanUpLoop)
+	sm.wg.Run(sm.cleanupTaskLoop)
+	sm.wg.Run(sm.manageLiveNodesLoop)
 	sm.initialized = true
 }
 
@@ -167,7 +170,7 @@ func (sm *Manager) scheduleTaskLoop() {
 			continue
 		}
 
-		scheduleableTasks := make([]*proto.Task, 0, len(tasks))
+		schedulableTasks := make([]*proto.Task, 0, len(tasks))
 		for _, task := range tasks {
 			if sm.hasScheduler(task.ID) {
 				continue
@@ -182,9 +185,9 @@ func (sm *Manager) scheduleTaskLoop() {
 				sm.failTask(task.ID, task.State, errors.New("unknown task type"))
 				continue
 			}
-			scheduleableTasks = append(scheduleableTasks, task)
+			schedulableTasks = append(schedulableTasks, task)
 		}
-		if len(scheduleableTasks) == 0 {
+		if len(schedulableTasks) == 0 {
 			continue
 		}
 
@@ -192,7 +195,7 @@ func (sm *Manager) scheduleTaskLoop() {
 			logutil.BgLogger().Warn("update used slot failed", zap.Error(err))
 			continue
 		}
-		for _, task := range scheduleableTasks {
+		for _, task := range schedulableTasks {
 			taskCnt = sm.getSchedulerCount()
 			if taskCnt >= proto.MaxConcurrentTask {
 				break
@@ -275,7 +278,7 @@ func (sm *Manager) startScheduler(basicTask *proto.Task, reservedExecID string) 
 	})
 }
 
-func (sm *Manager) cleanUpLoop() {
+func (sm *Manager) cleanupTaskLoop() {
 	logutil.Logger(sm.ctx).Info("cleanUp loop start")
 	ticker := time.NewTicker(defaultCleanUpInterval)
 	defer ticker.Stop()
@@ -285,9 +288,22 @@ func (sm *Manager) cleanUpLoop() {
 			logutil.BgLogger().Info("cleanUp loop exits", zap.Error(sm.ctx.Err()))
 			return
 		case <-sm.finishCh:
-			sm.doCleanUpRoutine()
+			sm.doCleanupTask()
 		case <-ticker.C:
-			sm.doCleanUpRoutine()
+			sm.doCleanupTask()
+		}
+	}
+}
+
+func (sm *Manager) manageLiveNodesLoop() {
+	ticker := time.NewTicker(2 * checkTaskFinishedInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-sm.ctx.Done():
+			return
+		case <-ticker.C:
+			sm.manageLiveNodes()
 		}
 	}
 }
@@ -295,15 +311,11 @@ func (sm *Manager) cleanUpLoop() {
 // WaitCleanUpFinished is used to sync the test.
 var WaitCleanUpFinished = make(chan struct{})
 
-// doCleanUpRoutine processes clean up routine defined by each type of tasks and cleanUpMeta.
+// doCleanupTask processes clean up routine defined by each type of tasks and cleanUpMeta.
 // For example:
 //
 //	tasks with global sort should clean up tmp files stored on S3.
-func (sm *Manager) doCleanUpRoutine() {
-	cnt := sm.CleanUpMeta()
-	if cnt != 0 {
-		logutil.BgLogger().Info("clean up nodes in framework meta since nodes shutdown", zap.Int("cnt", cnt))
-	}
+func (sm *Manager) doCleanupTask() {
 	tasks, err := sm.taskMgr.GetTasksInStates(
 		sm.ctx,
 		proto.TaskStateFailed,
@@ -329,12 +341,26 @@ func (sm *Manager) doCleanUpRoutine() {
 	logutil.Logger(sm.ctx).Info("cleanUp routine success")
 }
 
-// CleanUpMeta clean up old node info in dist_framework_meta table.
-func (sm *Manager) CleanUpMeta() int {
+// manageLiveNodes manages live node info in dist_framework_meta table, and return
+// number of nodes that's removed from it.
+// see recoverMetaLoop in task executor for when node is insert into dist_framework_meta.
+func (sm *Manager) manageLiveNodes() int {
 	// Safe to discard errors since this function can be called at regular intervals.
 	serverInfos, err := GenerateTaskExecutorNodes(sm.ctx)
 	if err != nil {
 		logutil.BgLogger().Warn("generate task executor nodes met error")
+		return 0
+	}
+	nodeChanged := len(serverInfos) != len(sm.prevLiveNodes)
+	currLiveNodes := make(map[string]struct{}, len(serverInfos))
+	for _, info := range serverInfos {
+		execID := disttaskutil.GenerateExecID(info)
+		if _, ok := sm.prevLiveNodes[execID]; !ok {
+			nodeChanged = true
+		}
+		currLiveNodes[execID] = struct{}{}
+	}
+	if !nodeChanged {
 		return 0
 	}
 
@@ -344,22 +370,25 @@ func (sm *Manager) CleanUpMeta() int {
 		return 0
 	}
 
-	cleanNodes := make([]string, 0)
+	deadNodes := make([]string, 0)
 	for _, nodeID := range oldNodes {
-		if ok := disttaskutil.MatchServerInfo(serverInfos, nodeID); !ok {
-			cleanNodes = append(cleanNodes, nodeID)
+		if _, ok := currLiveNodes[nodeID]; !ok {
+			deadNodes = append(deadNodes, nodeID)
 		}
 	}
-	if len(cleanNodes) == 0 {
+	if len(deadNodes) == 0 {
+		sm.prevLiveNodes = currLiveNodes
 		return 0
 	}
-	logutil.BgLogger().Info("start to clean up dist_framework_meta")
-	err = sm.taskMgr.CleanUpMeta(sm.ctx, cleanNodes)
+	logutil.BgLogger().Info("delete dead nodes from dist_framework_meta",
+		zap.Int("dead-nodes", len(deadNodes)))
+	err = sm.taskMgr.DeleteDeadNodes(sm.ctx, deadNodes)
 	if err != nil {
-		logutil.BgLogger().Warn("clean up dist_framework_meta met error")
+		logutil.BgLogger().Warn("delete dead nodes from dist_framework_meta failed")
 		return 0
 	}
-	return len(cleanNodes)
+	sm.prevLiveNodes = currLiveNodes
+	return len(deadNodes)
 }
 
 func (sm *Manager) cleanUpFinishedTasks(tasks []*proto.Task) error {

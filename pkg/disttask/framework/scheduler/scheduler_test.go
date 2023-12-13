@@ -131,23 +131,6 @@ func MockSchedulerManager(t *testing.T, ctrl *gomock.Controller, pool *pools.Res
 	return sch, mgr
 }
 
-func MockSchedulerManagerWithMockTaskMgr(t *testing.T, ctrl *gomock.Controller, pool *pools.ResourcePool, taskMgr *mock.MockTaskManager, ext scheduler.Extension, cleanUp scheduler.CleanUpRoutine) *scheduler.Manager {
-	ctx := context.WithValue(context.Background(), "etcd", true)
-	sch, err := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), taskMgr, "host:port")
-	require.NoError(t, err)
-	scheduler.RegisterSchedulerFactory(proto.TaskTypeExample,
-		func(ctx context.Context, taskMgr scheduler.TaskManager, serverID string, task *proto.Task) scheduler.Scheduler {
-			mockScheduler := sch.MockScheduler(task)
-			mockScheduler.Extension = ext
-			return mockScheduler
-		})
-	scheduler.RegisterSchedulerCleanUpFactory(proto.TaskTypeExample,
-		func() scheduler.CleanUpRoutine {
-			return cleanUp
-		})
-	return sch
-}
-
 func deleteTasks(t *testing.T, store kv.Storage, taskID int64) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(fmt.Sprintf("delete from mysql.tidb_global_task where id = %d", taskID))
@@ -644,7 +627,7 @@ func TestManagerDispatchLoop(t *testing.T) {
 	serverInfos, err := infosync.GetAllServerInfo(ctx)
 	require.NoError(t, err)
 	for _, s := range serverInfos {
-		execID := disttaskutil.GenerateExecID(s.IP, s.Port)
+		execID := disttaskutil.GenerateExecID(s)
 		testutil.InsertSubtask(t, taskMgr, 1000000, proto.StepOne, execID, []byte(""), proto.TaskStatePending, proto.TaskTypeExample, 16)
 	}
 	concurrencies := []int{4, 6, 16, 2, 4, 4}
