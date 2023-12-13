@@ -104,8 +104,6 @@ type KeyRange struct {
 	XXXsizecache        int32
 }
 
-const SizeofKeyRange = int64(unsafe.Sizeof(*(*KeyRange)(nil)))
-
 // IsPoint checks if the key range represents a point.
 func (r *KeyRange) IsPoint() bool {
 	if len(r.StartKey) != len(r.EndKey) {

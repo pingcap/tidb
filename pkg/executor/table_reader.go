@@ -148,7 +148,7 @@ func (e *TableReaderExecutor) memUsage() int64 {
 	for _, v := range e.ranges {
 		res += v.MemUsage()
 	}
-	res += kv.SizeofKeyRange * int64(cap(e.kvRanges))
+	res += int64(unsafe.Sizeof(*(*kv.KeyRange)(nil))) * int64(cap(e.kvRanges))
 	for _, m := range e.kvRanges {
 		res += int64(cap(m.StartKey)) + int64(cap(m.EndKey)) + int64(cap(m.XXXunrecognized))
 	}
