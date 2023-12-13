@@ -455,6 +455,7 @@ func calcIntsMemUsage(ints map[int64]interface{}) int64 {
 	return int64(len(ints)) * (size.SizeOfInt64 + size.SizeOfInterface)
 }
 
+// MemUsage gets the memory usage.
 func (m *HandleMap) MemUsage() int64 {
 
 	res := sizeofHandleMap
