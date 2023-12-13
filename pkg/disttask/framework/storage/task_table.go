@@ -282,7 +282,7 @@ func (stm *TaskManager) GetTasksInStates(ctx context.Context, states ...interfac
 	rs, err := stm.executeSQLWithNewSession(ctx,
 		"select "+taskColumns+" from mysql.tidb_global_task "+
 			"where state in ("+strings.Repeat("%?,", len(states)-1)+"%?)"+
-			"order by priority asc, create_time acs, id asc", states...)
+			" order by priority asc, create_time asc, id asc", states...)
 	if err != nil {
 		return task, err
 	}
