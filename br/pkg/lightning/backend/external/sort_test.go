@@ -17,11 +17,12 @@ package external
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"math"
+	"slices"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -33,7 +34,7 @@ import (
 	"golang.org/x/exp/rand"
 )
 
-// like scheduler code in add index and import into.
+// like scheduler code for merge sort step in add index and import into.
 func splitDataAndStatFiles(datas []string, stats []string) ([][]string, [][]string) {
 	dataGroup := make([][]string, 0, 10)
 	statGroup := make([][]string, 0, 10)
@@ -92,10 +93,13 @@ func TestGlobalSortLocalBasic(t *testing.T) {
 	kvs := make([]common.KvPair, kvCnt)
 	for i := 0; i < kvCnt; i++ {
 		kvs[i] = common.KvPair{
-			Key: []byte(fmt.Sprintf("key%05d", i)),
+			Key: []byte(uuid.New().String()),
 			Val: []byte("56789"),
 		}
 	}
+	slices.SortFunc(kvs, func(i, j common.KvPair) int {
+		return bytes.Compare(i.Key, j.Key)
+	})
 
 	require.NoError(t, writer.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvs)))
 	_, err := writer.Close(ctx)
@@ -122,9 +126,9 @@ func TestGlobalSortLocalBasic(t *testing.T) {
 	for {
 		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, err := splitter.SplitOneRangesGroup()
 		require.NoError(t, err)
-		curEnd := endKeyOfGroup
+		curEnd := dbkv.Key(endKeyOfGroup).Clone()
 		if len(endKeyOfGroup) == 0 {
-			curEnd = dbkv.Key(kvs[len(kvs)-1].Key).Next()
+			curEnd = dbkv.Key(kvs[len(kvs)-1].Key).Next().Clone()
 		}
 
 		err = readAllData(
@@ -161,7 +165,7 @@ func TestGlobalSortLocalBasic(t *testing.T) {
 		loaded.keys = nil
 		loaded.values = nil
 		loaded.memKVBuffers = nil
-		copy(startKey, curEnd)
+		startKey = curEnd.Clone()
 
 		if len(endKeyOfGroup) == 0 {
 			break
@@ -193,16 +197,20 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	kvs := make([]common.KvPair, kvCnt)
 	for i := 0; i < kvCnt; i++ {
 		kvs[i] = common.KvPair{
-			Key: []byte(fmt.Sprintf("key%05d", i)),
+			Key: []byte(uuid.New().String()),
 			Val: []byte("56789"),
 		}
 	}
 
+	slices.SortFunc(kvs, func(i, j common.KvPair) int {
+		return bytes.Compare(i.Key, j.Key)
+	})
+
 	require.NoError(t, writer.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvs)))
 	_, err := writer.Close(ctx)
 	require.NoError(t, err)
-	// 2. merge step
 
+	// 2. merge step
 	datas, stats, err := GetAllFileNames(ctx, memStore, "")
 	require.NoError(t, err)
 
@@ -236,7 +244,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 			int64(5*size.MB),
 			100,
 			"/test2",
-			52,
+			100,
 			8*1024,
 			100,
 			2,
@@ -249,8 +257,8 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	// 3. read and sort step
 	splitter, err := NewRangeSplitter(
 		ctx,
-		datas,
-		stats,
+		lastStepDatas,
+		lastStepStats,
 		memStore,
 		int64(memSizeLimit), // make the group small for testing
 		math.MaxInt64,
@@ -267,9 +275,9 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	for {
 		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, err := splitter.SplitOneRangesGroup()
 		require.NoError(t, err)
-		curEnd := endKeyOfGroup
+		curEnd := dbkv.Key(endKeyOfGroup).Clone()
 		if len(endKeyOfGroup) == 0 {
-			curEnd = dbkv.Key(kvs[len(kvs)-1].Key).Next()
+			curEnd = dbkv.Key(kvs[len(kvs)-1].Key).Next().Clone()
 		}
 
 		err = readAllData(
@@ -306,7 +314,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 		loaded.keys = nil
 		loaded.values = nil
 		loaded.memKVBuffers = nil
-		copy(startKey, curEnd)
+		startKey = curEnd.Clone()
 
 		if len(endKeyOfGroup) == 0 {
 			break
