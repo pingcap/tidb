@@ -1871,21 +1871,7 @@ func (do *Domain) newOwnerManager(prompt, ownerKey string) owner.Manager {
 	return statsOwner
 }
 
-<<<<<<< HEAD
-func (do *Domain) loadStatsWorker() {
-	defer util.Recover(metrics.LabelDomain, "loadStatsWorker", nil, false)
-	lease := do.statsLease
-	if lease == 0 {
-		lease = 3 * time.Second
-	}
-	loadTicker := time.NewTicker(lease)
-	defer func() {
-		loadTicker.Stop()
-		logutil.BgLogger().Info("loadStatsWorker exited.")
-	}()
-=======
 func (do *Domain) initStats() {
->>>>>>> 50dd8b40f1c (*: provide a option to wait for init stats to finish before providing service during startup (#43381))
 	statsHandle := do.StatsHandle()
 	defer func() {
 		close(statsHandle.InitStatsDone)
