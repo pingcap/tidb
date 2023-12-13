@@ -1926,7 +1926,7 @@ func (b *executorBuilder) getSnapshot() (kv.Snapshot, error) {
 	snapshot.SetOption(kv.ReadReplicaScope, b.readReplicaScope)
 	snapshot.SetOption(kv.TaskID, sessVars.StmtCtx.TaskID)
 	snapshot.SetOption(kv.TiKVClientReadTimeout, sessVars.GetTiKVClientReadTimeout())
-	snapshot.SetOption(kv.ResourceGroupName, sessVars.ResourceGroupName)
+	snapshot.SetOption(kv.ResourceGroupName, sessVars.StmtCtx.ResourceGroupName)
 	snapshot.SetOption(kv.ExplicitRequestSourceType, sessVars.ExplicitRequestSourceType)
 
 	if replicaReadType.IsClosestRead() && b.readReplicaScope != kv.GlobalTxnScope {

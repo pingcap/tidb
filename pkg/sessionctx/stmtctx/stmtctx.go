@@ -250,18 +250,21 @@ type StatementContext struct {
 	MaxRowID  int64
 
 	// Copied from SessionVars.TimeZone.
-	Priority         mysql.PriorityEnum
-	NotFillCache     bool
-	MemTracker       *memory.Tracker
-	DiskTracker      *disk.Tracker
-	RunawayChecker   *resourcegroup.RunawayChecker
-	IsTiFlash        atomic2.Bool
-	RuntimeStatsColl *execdetails.RuntimeStatsColl
-	TableIDs         []int64
-	IndexNames       []string
-	StmtType         string
-	OriginalSQL      string
-	digestMemo       struct {
+	Priority     mysql.PriorityEnum
+	NotFillCache bool
+	MemTracker   *memory.Tracker
+	DiskTracker  *disk.Tracker
+	// per statement resource group name
+	// hint /* +ResourceGroup(name) */ can change the statement group name
+	ResourceGroupName string
+	RunawayChecker    *resourcegroup.RunawayChecker
+	IsTiFlash         atomic2.Bool
+	RuntimeStatsColl  *execdetails.RuntimeStatsColl
+	TableIDs          []int64
+	IndexNames        []string
+	StmtType          string
+	OriginalSQL       string
+	digestMemo        struct {
 		sync.Once
 		normalized string
 		digest     *parser.Digest

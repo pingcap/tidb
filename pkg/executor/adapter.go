@@ -557,7 +557,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		stmtCtx := sctx.GetSessionVars().StmtCtx
 		_, planDigest := GetPlanDigest(stmtCtx)
 		_, digest := stmtCtx.SQLDigest()
-		stmtCtx.RunawayChecker = domain.GetDomain(sctx).RunawayManager().DeriveChecker(sctx.GetSessionVars().ResourceGroupName, stmtCtx.OriginalSQL, digest.String(), planDigest.String())
+		stmtCtx.RunawayChecker = domain.GetDomain(sctx).RunawayManager().DeriveChecker(sctx.GetSessionVars().StmtCtx.ResourceGroupName, stmtCtx.OriginalSQL, digest.String(), planDigest.String())
 		if err := stmtCtx.RunawayChecker.BeforeExecutor(); err != nil {
 			return nil, err
 		}
@@ -1620,7 +1620,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		UsedStats:         stmtCtx.GetUsedStatsInfo(false),
 		IsSyncStatsFailed: stmtCtx.IsSyncStatsFailed,
 		Warnings:          collectWarningsForSlowLog(stmtCtx),
-		ResourceGroupName: sessVars.ResourceGroupName,
+		ResourceGroupName: sessVars.StmtCtx.ResourceGroupName,
 		RRU:               ruDetails.RRU(),
 		WRU:               ruDetails.WRU(),
 		WaitRUDuration:    ruDetails.RUWaitDuration(),

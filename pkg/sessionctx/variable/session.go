@@ -1485,6 +1485,7 @@ type SessionVars struct {
 	shardRand *rand.Rand
 
 	// Resource group name
+	// NOTE: all statement relate opeartion should use StmtCtx.ResourceGroupName instead.
 	ResourceGroupName string
 
 	// PessimisticTransactionFairLocking controls whether fair locking for pessimistic transaction

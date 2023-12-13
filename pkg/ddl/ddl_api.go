@@ -9031,7 +9031,7 @@ func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 		Warnings:          make(map[errors.ErrorID]*terror.Error),
 		WarningsCount:     make(map[errors.ErrorID]int64),
 		Location:          &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
-		ResourceGroupName: ctx.GetSessionVars().ResourceGroupName,
+		ResourceGroupName: ctx.GetSessionVars().StmtCtx.ResourceGroupName,
 		Version:           model.CurrentReorgMetaVersion,
 	}
 }
