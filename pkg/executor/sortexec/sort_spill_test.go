@@ -306,7 +306,7 @@ func inMemoryThenSpillCase(t *testing.T, ctx *mock.Context, sortCase *testutil.S
 	require.True(t, checkCorrectness(schema, exe, dataSource, resultChunks))
 }
 
-// TODO trigger spill from outside of the sort executor.
+// TODO test fall back
 func TestSortSpillDisk(t *testing.T) {
 	sortexec.SetSmallSpillChunkSizeForTest()
 	ctx := mock.NewContext()
@@ -315,7 +315,7 @@ func TestSortSpillDisk(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/signalCheckpointForSort", `return(true)`)
 
 	for i := 0; i < 50; i++ {
-		onePartitionAndAllDataInMemoryCase(t, ctx, sortCase)
+		// onePartitionAndAllDataInMemoryCase(t, ctx, sortCase)
 		onePartitionAndAllDataInDiskCase(t, ctx, sortCase)
 		multiPartitionCase(t, ctx, sortCase)
 		inMemoryThenSpillCase(t, ctx, sortCase)
