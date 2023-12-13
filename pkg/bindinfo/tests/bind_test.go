@@ -707,13 +707,13 @@ func TestBindSQLDigest(t *testing.T) {
 		sql := "create global binding for " + c.origin + " using " + c.hint
 		tk.MustExec(sql)
 		res := tk.MustQuery(`show global bindings`).Rows()
-		require.Equal(t, len(res[0]), 11)
+		require.Equal(t, len(res[0]), 12)
 
 		parser4binding := parser.New()
 		originNode, err := parser4binding.ParseOneStmt(c.origin, "utf8mb4", "utf8mb4_general_ci")
 		require.NoError(t, err)
 		_, sqlDigestWithDB := parser.NormalizeDigestForBinding(utilparser.RestoreWithDefaultDB(originNode, "test", c.origin))
-		require.Equal(t, res[0][9], sqlDigestWithDB.String())
+		require.Equal(t, res[0][10], sqlDigestWithDB.String())
 	}
 }
 
