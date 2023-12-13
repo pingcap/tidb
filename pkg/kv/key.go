@@ -445,7 +445,7 @@ func (m *HandleMap) Get(h Handle) (v interface{}, ok bool) {
 
 func calcStrsMemUsage(strs map[string]strHandleVal) int64 {
 	res := int64(0)
-	for key, _ := range strs {
+	for key := range strs {
 		res += size.SizeOfString + int64(len(key)) + sizeofStrHandleVal
 	}
 	return res
@@ -457,7 +457,6 @@ func calcIntsMemUsage(ints map[int64]interface{}) int64 {
 
 // MemUsage gets the memory usage.
 func (m *HandleMap) MemUsage() int64 {
-
 	res := sizeofHandleMap
 	res += int64(len(m.partitionInts)) * (size.SizeOfInt64 + size.SizeOfMap)
 	for _, v := range m.partitionInts {
