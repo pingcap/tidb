@@ -301,7 +301,7 @@ func TestSlotManagerInManager(t *testing.T) {
 	{
 		// mock in manager
 		mockTaskTable.EXPECT().GetTasksInStates(m.ctx, proto.TaskStateRunning, proto.TaskStateReverting).
-			Return([]*proto.Task{task2, task1}, nil)
+			Return([]*proto.Task{task1, task2}, nil)
 		mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID1, proto.StepOne,
 			unfinishedSubtaskStates...).
 			Return(true, nil)

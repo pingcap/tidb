@@ -3,7 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "proto",
     srcs = [
-        "priority_queue.go",
         "task.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/disttask/framework/proto",
@@ -14,7 +13,6 @@ go_test(
     name = "proto_test",
     timeout = "short",
     srcs = [
-        "priority_queue_test.go",
         "task_test.go",
     ],
     embed = [":proto"],

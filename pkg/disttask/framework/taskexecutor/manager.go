@@ -15,7 +15,6 @@
 package taskexecutor
 
 import (
-	"container/heap"
 	"context"
 	"runtime"
 	"sync"
@@ -209,13 +208,7 @@ func (m *Manager) onRunnableTasks(tasks []*proto.Task) {
 	}
 	tasks = m.filterAlreadyHandlingTasks(tasks)
 
-	priorityQueue := make(proto.TaskPriorityQueue, 0)
-	heap.Init(&priorityQueue)
 	for _, task := range tasks {
-		heap.Push(&priorityQueue, proto.WrapPriorityQueue(task))
-	}
-	for priorityQueue.Len() > 0 {
-		task := heap.Pop(&priorityQueue).(*proto.TaskWrapper).Task
 		logutil.Logger(m.logCtx).Info("get new subtask", zap.Int64("task-id", task.ID))
 		exist, err := m.taskTable.HasSubtasksInStates(m.ctx, m.id, task.ID, task.Step,
 			proto.TaskStatePending, proto.TaskStateRevertPending,
