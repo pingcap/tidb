@@ -46,6 +46,9 @@ func TestMain(m *testing.M) {
 func TestTaskTable(t *testing.T) {
 	gm, ctx := testutil.InitTableTest(t)
 
+	_, err := gm.CreateTask(ctx, "key1", "test", 999, []byte("test"))
+	require.ErrorContains(t, err, "task concurrency(999) larger than cpu count")
+
 	timeBeforeCreate := time.Unix(time.Now().Unix(), 0)
 	id, err := gm.CreateTask(ctx, "key1", "test", 4, []byte("test"))
 	require.NoError(t, err)
@@ -547,7 +550,7 @@ func TestBothTaskAndSubTaskTable(t *testing.T) {
 }
 
 func TestDistFrameworkMeta(t *testing.T) {
-	// to avoid inserted nodes be cleaned by dispatcher
+	// to avoid inserted nodes be cleaned by scheduler
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask"))

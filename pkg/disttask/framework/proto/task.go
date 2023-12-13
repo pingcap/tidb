@@ -24,23 +24,19 @@ import (
 //		                            ┌────────┐
 //		                ┌───────────│resuming│◄────────┐
 //		                │           └────────┘         │
-//		                │           ┌───────┐       ┌──┴───┐
-//		                │ ┌────────►│pausing├──────►│paused│
-//		                │ │         └───────┘       └──────┘
-//		                ▼ │
-//		┌───────┐     ┌───┴───┐     ┌────────┐
+//		┌──────┐        │           ┌───────┐       ┌──┴───┐
+//		│failed│        │ ┌────────►│pausing├──────►│paused│
+//		└──────┘        │ │         └───────┘       └──────┘
+//		   ▲            ▼ │
+//		┌──┴────┐     ┌───┴───┐     ┌────────┐
 //		│pending├────►│running├────►│succeed │
-//		└──┬────┘     └───┬───┘     └────────┘
-//		   ▼              │         ┌──────────┐
-//		┌──────┐          ├────────►│cancelling│
-//		│failed│          │         └────┬─────┘
-//		└──────┘          │              ▼
-//		                  │         ┌─────────┐     ┌────────┐
-//		                  └────────►│reverting├────►│reverted│
-//		                            └────┬────┘     └────────┘
-//		                                 │          ┌─────────────┐
-//		                                 └─────────►│revert_failed│
-//		                                            └─────────────┘
+//		└──┬────┘     └──┬┬───┘     └────────┘
+//		   │             ││         ┌─────────┐     ┌────────┐
+//		   │             │└────────►│reverting├────►│reverted│
+//		   │             ▼          └────┬────┘     └────────┘
+//		   │          ┌──────────┐    ▲  │          ┌─────────────┐
+//		   └─────────►│cancelling├────┘  └─────────►│revert_failed│
+//		              └──────────┘                  └─────────────┘
 //	 1. succeed:		pending -> running -> succeed
 //	 2. failed:			pending -> running -> reverting -> reverted/revert_failed, pending -> failed
 //	 3. canceled:		pending -> running -> cancelling -> reverting -> reverted/revert_failed
@@ -141,14 +137,16 @@ type Task struct {
 	Step  Step
 	// Priority is the priority of task, the smaller value means the higher priority.
 	// valid range is [1, 1024], default is NormalPriority.
-	Priority    int
+	Priority int
+	// Concurrency controls the max resource usage of the task, i.e. the max number
+	// of slots the task can use on each node.
 	Concurrency int
 	CreateTime  time.Time
 
 	// depends on query, below fields might not be filled.
 
-	// DispatcherID is not used now.
-	DispatcherID    string
+	// SchedulerID is not used now.
+	SchedulerID     string
 	StartTime       time.Time
 	StateUpdateTime time.Time
 	Meta            []byte
@@ -176,7 +174,7 @@ func (t *Task) Compare(other *Task) int {
 }
 
 // Subtask represents the subtask of distribute framework.
-// Each task is divided into multiple subtasks by dispatcher.
+// Each task is divided into multiple subtasks by scheduler.
 type Subtask struct {
 	ID   int64
 	Step Step
