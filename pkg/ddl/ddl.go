@@ -356,12 +356,7 @@ type ddlCtx struct {
 	statsHandle  *handle.Handle
 	tableLockCkr util.DeadTableLockChecker
 	etcdCli      *clientv3.Client
-<<<<<<< HEAD
-	// backfillJobCh gets notification if any backfill jobs coming.
-	backfillJobCh chan struct{}
-=======
 	autoidCli    *autoid.ClientDiscover
->>>>>>> 8eb191303ac (*: fix grpc client leak bug for AUTO_ID_CACHE=1 tables (#48870))
 
 	*waitSchemaSyncedController
 	*schemaVersionManager

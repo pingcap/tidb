@@ -134,11 +134,6 @@ go_test(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
-<<<<<<< HEAD
-        "@io_etcd_go_etcd_client_v3//:client",
-=======
-        "@com_github_tikv_pd_client//http",
->>>>>>> 8eb191303ac (*: fix grpc client leak bug for AUTO_ID_CACHE=1 tables (#48870))
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
         "@org_uber_go_goleak//:goleak",
