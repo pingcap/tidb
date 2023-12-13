@@ -395,7 +395,7 @@ func TestDropPartitions(t *testing.T) {
 	partitionP1ID := pi.Definitions[1].ID
 	// Get it from stats_meat first.
 	rows := testKit.MustQuery(
-		"select version from mysql.stats_meta where table_id in (?, ?)",
+		"select version from mysql.stats_meta where table_id in (?, ?) order by table_id",
 		partitionP0ID, partitionP1ID,
 	).Rows()
 	require.Len(t, rows, 2)
@@ -421,7 +421,7 @@ func TestDropPartitions(t *testing.T) {
 
 	// Check the update versions are changed.
 	rows = testKit.MustQuery(
-		"select version from mysql.stats_meta where table_id in (?, ?)",
+		"select version from mysql.stats_meta where table_id in (?, ?) order by table_id",
 		partitionP0ID, partitionP1ID,
 	).Rows()
 	require.Len(t, rows, 2)
