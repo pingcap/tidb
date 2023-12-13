@@ -801,8 +801,8 @@ func TestDropBindBySQLDigest(t *testing.T) {
 		res := tk.MustQuery(`show global bindings`).Rows()
 
 		require.Equal(t, len(res), 1)
-		require.Equal(t, len(res[0]), 11)
-		drop := fmt.Sprintf("drop global binding for sql digest '%s'", res[0][9])
+		require.Equal(t, len(res[0]), 12)
+		drop := fmt.Sprintf("drop global binding for sql digest '%s'", res[0][10])
 		tk.MustExec(drop)
 		require.NoError(t, h.GCGlobalBinding())
 		h.ReloadGlobalBindings()
@@ -817,8 +817,8 @@ func TestDropBindBySQLDigest(t *testing.T) {
 		res := tk.MustQuery(`show bindings`).Rows()
 
 		require.Equal(t, len(res), 1)
-		require.Equal(t, len(res[0]), 11)
-		drop := fmt.Sprintf("drop binding for sql digest '%s'", res[0][9])
+		require.Equal(t, len(res[0]), 12)
+		drop := fmt.Sprintf("drop binding for sql digest '%s'", res[0][10])
 		tk.MustExec(drop)
 		require.NoError(t, h.GCGlobalBinding())
 		tk.MustQuery("show bindings").Check(testkit.Rows())
