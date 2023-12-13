@@ -24,7 +24,7 @@ import (
 func TestPlanErr(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 2)
 	defer ctrl.Finish()
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetPlanErrDispatcherExt(ctrl, testContext), testContext, nil)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetPlanErrSchedulerExt(ctrl, testContext), testContext, nil)
 	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key1", testContext, nil)
 	testContext.CallTime = 0
 	distContext.Close()
@@ -33,7 +33,7 @@ func TestPlanErr(t *testing.T) {
 func TestRevertPlanErr(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 2)
 	defer ctrl.Finish()
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetPlanErrDispatcherExt(ctrl, testContext), testContext, nil)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetPlanErrSchedulerExt(ctrl, testContext), testContext, nil)
 	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key1", testContext, nil)
 	testContext.CallTime = 0
 	distContext.Close()
@@ -43,7 +43,7 @@ func TestPlanNotRetryableErr(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 2)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetPlanNotRetryableErrDispatcherExt(ctrl), testContext, nil)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetPlanNotRetryableErrSchedulerExt(ctrl), testContext, nil)
 	testutil.DispatchTaskAndCheckState(ctx, t, "key1", testContext, proto.TaskStateFailed)
 	distContext.Close()
 }

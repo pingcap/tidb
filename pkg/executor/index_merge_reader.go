@@ -522,7 +522,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 				defer func() {
 					// To make sure SelectResult.Close() is called even got panic in fetchHandles().
 					if !tableReaderClosed {
-						terror.Call(worker.tableReader.Close)
+						terror.Log(exec.Close(worker.tableReader))
 					}
 				}()
 				for parTblIdx, tbl := range tbls {
@@ -555,7 +555,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					// release related resources
 					cancel()
 					tableReaderClosed = true
-					if err = worker.tableReader.Close(); err != nil {
+					if err = exec.Close(worker.tableReader); err != nil {
 						logutil.Logger(ctx).Error("close Select result failed:", zap.Error(err))
 					}
 					// this error is reported in fetchHandles(), so ignore it here.
@@ -1899,7 +1899,7 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *index
 		logutil.Logger(ctx).Error("build table reader failed", zap.Error(err))
 		return err
 	}
-	defer terror.Call(tableReader.Close)
+	defer func() { terror.Log(exec.Close(tableReader)) }()
 	task.memTracker = w.memTracker
 	memUsage := int64(cap(task.handles) * 8)
 	task.memUsage = memUsage

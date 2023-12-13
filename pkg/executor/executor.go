@@ -873,7 +873,7 @@ func (e *CheckTableExec) Close() error {
 	var firstErr error
 	close(e.exitCh)
 	for _, src := range e.srcs {
-		if err := src.Close(); err != nil && firstErr == nil {
+		if err := exec.Close(src); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -1473,7 +1473,7 @@ func init() {
 			return nil, e.err
 		}
 		err := exec.Open(ctx, executor)
-		defer terror.Call(executor.Close)
+		defer func() { terror.Log(exec.Close(executor)) }()
 		if err != nil {
 			return nil, err
 		}
@@ -1943,7 +1943,7 @@ func (e *UnionExec) Close() error {
 	// promised to exit when reaching here (e.childIDChan been closed).
 	var firstErr error
 	for i := 0; i <= e.mu.maxOpenedChildID; i++ {
-		if err := e.Children(i).Close(); err != nil && firstErr == nil {
+		if err := exec.Close(e.Children(i)); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}

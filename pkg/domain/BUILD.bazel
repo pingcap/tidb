@@ -29,7 +29,7 @@ go_library(
         "//pkg/ddl/placement",
         "//pkg/ddl/schematracker",
         "//pkg/ddl/util",
-        "//pkg/disttask/framework/dispatcher",
+        "//pkg/disttask/framework/scheduler",
         "//pkg/disttask/framework/storage",
         "//pkg/disttask/framework/taskexecutor",
         "//pkg/domain/globalconfigsync",
