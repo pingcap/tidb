@@ -319,14 +319,7 @@ func TestTruncateAPartition(t *testing.T) {
 
 	testKit.MustExec("alter table t truncate partition p0")
 	// Find the truncate partition event.
-	var truncatePartitionEvent *util.DDLEvent
-	for {
-		event := <-h.DDLEventCh()
-		if event.GetType() == model.ActionTruncateTablePartition {
-			truncatePartitionEvent = event
-			break
-		}
-	}
+	truncatePartitionEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTablePartition)
 	err = h.HandleDDLEvent(truncatePartitionEvent)
 	require.NoError(t, err)
 	// Check global stats meta.
@@ -396,14 +389,7 @@ func TestTruncatePartitions(t *testing.T) {
 	// Truncate two partitions.
 	testKit.MustExec("alter table t truncate partition p0, p1")
 	// Find the truncate partition event.
-	var truncatePartitionEvent *util.DDLEvent
-	for {
-		event := <-h.DDLEventCh()
-		if event.GetType() == model.ActionTruncateTablePartition {
-			truncatePartitionEvent = event
-			break
-		}
-	}
+	truncatePartitionEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTablePartition)
 	err = h.HandleDDLEvent(truncatePartitionEvent)
 	require.NoError(t, err)
 	// Check global stats meta.
