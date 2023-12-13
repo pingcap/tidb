@@ -42,6 +42,7 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -53,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/extsort"
+	"github.com/shirou/gopsutil/v3/mem"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -672,6 +674,13 @@ func (tr *TableImporter) preprocessEngine(
 		chunkCp     *checkpoints.ChunkCheckpoint
 	}
 
+	memInfo, err := mem.VirtualMemory()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// set the memory limit for lightning to 80% of the total memory
+	memLimiter := membuf.NewLimiter(int(memInfo.Total * 4 / 5))
+
 	// chunks that are finished writing, but checkpoints are not finished due to flush not finished.
 	var checkFlushLock sync.Mutex
 	flushPendingChunks := make([]chunkFlushStatus, 0, 16)
@@ -763,25 +772,30 @@ ChunkLoop:
 			setError(err)
 			break
 		}
+
+		var chunkSize int64
+		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
+			chunkSize, err = getChunkCompressedSizeForParquet(ctx, chunk, rc.store)
+			if err != nil {
+				setError(err)
+				break
+			}
+			memLimiter.Acquire(int(chunkSize * 2)) // parquet reader uses 2 as the concurrent reader number
+		}
+
 		cr, err := newChunkProcessor(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo.Core)
 		if err != nil {
 			setError(err)
 			break
 		}
-
-		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
-			// TODO: use the compressed size of the chunk to conduct memory control
-			if _, err = getChunkCompressedSizeForParquet(ctx, chunk, rc.store); err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
+		cr.memLimiter = memLimiter
 
 		restoreWorker := rc.regionWorkers.Apply()
 		wg.Add(1)
-		go func(w *worker.Worker, cr *chunkProcessor) {
+		go func(w *worker.Worker, cr *chunkProcessor, chunkSize int64) {
 			// Restore a chunk.
 			defer func() {
-				cr.close()
+				cr.close(int(chunkSize * 2))
 				wg.Done()
 				rc.regionWorkers.Recycle(w)
 			}()
@@ -820,7 +834,7 @@ ChunkLoop:
 				}
 				setError(err)
 			}
-		}(restoreWorker, cr)
+		}(restoreWorker, cr, chunkSize)
 	}
 
 	wg.Wait()
@@ -1180,6 +1194,9 @@ func (tr *TableImporter) postProcess(
 	return true, nil
 }
 
+// getChunkCompressedSizeForParquet calculate the chunk compressed size for parquet files
+// using the maximum row group size among all the row groups,
+// unit in bytes.
 func getChunkCompressedSizeForParquet(
 	ctx context.Context,
 	chunk *checkpoints.ChunkCheckpoint,
