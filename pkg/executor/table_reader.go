@@ -149,8 +149,8 @@ func (e *TableReaderExecutor) memUsage() int64 {
 		res += v.MemUsage()
 	}
 	res += kv.SizeofKeyRange * int64(cap(e.kvRanges))
-	for _, v := range e.kvRanges {
-		res += v.InnerMemUsage()
+	for _, m := range e.kvRanges {
+		res += int64(cap(m.StartKey)) + int64(cap(m.EndKey)) + int64(cap(m.XXXunrecognized))
 	}
 	res += int64(e.dagPB.Size())
 	// TODO: add more statistics
