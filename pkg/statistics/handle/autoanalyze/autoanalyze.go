@@ -48,6 +48,9 @@ import (
 	"go.uber.org/zap"
 )
 
+var enableAutoAnalyzePriorityQueue = true
+var refresher *Refresher
+
 // statsAnalyze implements util.StatsAnalyze.
 // statsAnalyze is used to handle auto-analyze and manage analyze jobs.
 type statsAnalyze struct {
@@ -239,10 +242,22 @@ func CleanupCorruptedAnalyzeJobsOnDeadInstances(
 // HandleAutoAnalyze analyzes the outdated tables. (The change percent of the table exceeds the threshold)
 // It also analyzes newly created tables and newly added indexes.
 func (sa *statsAnalyze) HandleAutoAnalyze() (analyzed bool) {
-	_ = statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		analyzed = HandleAutoAnalyze(sctx, sa.statsHandle, sa.sysProcTracker)
-		return nil
-	})
+	if enableAutoAnalyzePriorityQueue {
+		if refresher == nil {
+			r, err := NewRefresher(sa.statsHandle, sa.sysProcTracker)
+			if err != nil {
+				logutil.BgLogger().Error("new refresher failed", zap.Error(err))
+				return false
+			}
+			refresher = r
+		}
+		refresher.pickOneTableForAnalysisByPriority()
+	} else {
+		_ = statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+			analyzed = HandleAutoAnalyze(sctx, sa.statsHandle, sa.sysProcTracker)
+			return nil
+		})
+	}
 	return
 }
 
@@ -460,20 +475,6 @@ func RandomPickOneTableAndTryAutoAnalyze(
 	}
 
 	return false
-}
-
-func getPartitionStats(
-	statsHandle statstypes.StatsHandle,
-	tblInfo *model.TableInfo,
-	defs []model.PartitionDefinition,
-) map[int64]*statistics.Table {
-	partitionStats := make(map[int64]*statistics.Table, len(defs))
-
-	for _, def := range defs {
-		partitionStats[def.ID] = statsHandle.GetPartitionStats(tblInfo, def.ID)
-	}
-
-	return partitionStats
 }
 
 // AutoAnalyzeMinCnt means if the count of table is less than this value, we don't need to do auto analyze.

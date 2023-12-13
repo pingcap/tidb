@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "autoanalyze",
-    srcs = ["autoanalyze.go"],
+    srcs = [
+        "autoanalyze.go",
+        "refresher.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze",
     visibility = ["//visibility:public"],
     deps = [
@@ -14,6 +17,7 @@ go_library(
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
+        "//pkg/statistics/handle/autoanalyze/analyzequeue",
         "//pkg/statistics/handle/lockstats",
         "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/types",

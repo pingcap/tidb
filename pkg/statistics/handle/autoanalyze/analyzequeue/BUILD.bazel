@@ -1,0 +1,27 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "analyzequeue",
+    srcs = [
+        "calculator.go",
+        "interval.go",
+        "job.go",
+        "queue.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/analyzequeue",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/metrics",
+        "//pkg/parser/ast",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/statistics",
+        "//pkg/statistics/handle/logutil",
+        "//pkg/statistics/handle/types",
+        "//pkg/statistics/handle/util",
+        "//pkg/util/chunk",
+        "//pkg/util/sqlescape",
+        "//pkg/util/sqlexec",
+        "@org_uber_go_zap//:zap",
+    ],
+)
