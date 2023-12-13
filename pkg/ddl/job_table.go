@@ -50,13 +50,13 @@ import (
 
 var (
 	addingDDLJobConcurrent      = "/tidb/ddl/add_ddl_job_general"
-	scheduleLoopWaitingDuration = 1 * time.Second
+	dispatchLoopWaitingDuration = 1 * time.Second
 )
 
 func init() {
 	// In test the wait duration can be reduced to make test case run faster
 	if intest.InTest {
-		scheduleLoopWaitingDuration = 50 * time.Millisecond
+		dispatchLoopWaitingDuration = 50 * time.Millisecond
 	}
 }
 
@@ -279,7 +279,7 @@ func (d *ddl) startDispatchLoop() {
 	if err := d.checkAndUpdateClusterState(true); err != nil {
 		logutil.BgLogger().Fatal("schedule loop get cluster state failed, it should not happen, please try restart TiDB", zap.Error(err))
 	}
-	ticker := time.NewTicker(scheduleLoopWaitingDuration)
+	ticker := time.NewTicker(dispatchLoopWaitingDuration)
 	defer ticker.Stop()
 	isOnce := false
 	for {
@@ -289,7 +289,7 @@ func (d *ddl) startDispatchLoop() {
 		if !d.isOwner() {
 			isOnce = true
 			d.onceMap = make(map[int64]struct{}, jobOnceCapacity)
-			time.Sleep(scheduleLoopWaitingDuration)
+			time.Sleep(dispatchLoopWaitingDuration)
 			continue
 		}
 		select {
