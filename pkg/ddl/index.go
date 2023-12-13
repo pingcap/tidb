@@ -36,9 +36,9 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
-	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -2090,8 +2090,8 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 		}
 		g.Go(func() error {
 			defer close(done)
-			backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
-			err := handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logutil.BgLogger(),
+			backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
+			err := handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logutil.BgLogger(),
 				func(ctx context.Context) (bool, error) {
 					return true, handle.ResumeTask(w.ctx, taskKey)
 				},

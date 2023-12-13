@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
-	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -81,7 +81,7 @@ func TestGlobalSortBasic(t *testing.T) {
 
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/WaitCleanUpFinished", "return()"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", "return()"))
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
@@ -118,17 +118,17 @@ func TestGlobalSortBasic(t *testing.T) {
 	tk.MustExec("alter table t add index idx(a);")
 	dom.DDL().SetHook(origin)
 	tk.MustExec("admin check table t;")
-	<-dispatcher.WaitCleanUpFinished
+	<-scheduler.WaitCleanUpFinished
 	checkFileCleaned(t, jobID, cloudStorageURI)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()"))
 	tk.MustExec("alter table t add index idx1(a);")
 	dom.DDL().SetHook(origin)
 	tk.MustExec("admin check table t;")
-	<-dispatcher.WaitCleanUpFinished
+	<-scheduler.WaitCleanUpFinished
 
 	checkFileCleaned(t, jobID, cloudStorageURI)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/WaitCleanUpFinished"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort"))
 }
 
