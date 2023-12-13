@@ -353,6 +353,11 @@ TableOptimizerHintOpt:
 			HintData: model.NewCIStr($4),
 		}
 	}
+|   hintIdentifier '(' Identifier '=' Value ')'
+	{
+		parser.warnUnsupportedHint($1)
+		$$ = nil
+	}
 
 StorageOptimizerHintOpt:
 	"READ_FROM_STORAGE" '(' QueryBlockOpt HintStorageTypeAndTableList ')'
