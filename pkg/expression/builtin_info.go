@@ -280,7 +280,7 @@ func (b *builtinCurrentResourceGroupSig) evalString(ctx sessionctx.Context, row 
 	if data == nil {
 		return "", true, errors.Errorf("Missing session variable when eval builtin")
 	}
-	return data.ResourceGroupName, false, nil
+	return data.StmtCtx.ResourceGroupName, false, nil
 }
 
 type userFunctionClass struct {

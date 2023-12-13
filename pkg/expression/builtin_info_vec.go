@@ -131,7 +131,7 @@ func (b *builtinCurrentResourceGroupSig) vecEvalString(ctx sessionctx.Context, i
 	n := input.NumRows()
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
-		result.AppendString(data.ResourceGroupName)
+		result.AppendString(data.StmtCtx.ResourceGroupName)
 	}
 	return nil
 }

@@ -1512,7 +1512,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		IndexNames:            s.sessionVars.StmtCtx.IndexNames,
 		MaxExecutionTime:      maxExecutionTime,
 		RedactSQL:             s.sessionVars.EnableRedactLog,
-		ResourceGroupName:     s.sessionVars.ResourceGroupName,
+		ResourceGroupName:     s.sessionVars.StmtCtx.ResourceGroupName,
 		SessionAlias:          s.sessionVars.SessionAlias,
 	}
 	oldPi := s.ShowProcess()
