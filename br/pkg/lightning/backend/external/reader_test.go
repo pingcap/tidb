@@ -179,6 +179,5 @@ func TestReadAllOneFile(t *testing.T) {
 	slices.SortFunc(kvs, func(i, j common.KvPair) int {
 		return bytes.Compare(i.Key, j.Key)
 	})
-	// failed, need to figure out why.
 	testReadAndCompare(t, ctx, kvs, memStore, memSizeLimit)
 }
