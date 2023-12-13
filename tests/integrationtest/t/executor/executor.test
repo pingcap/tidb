@@ -1755,8 +1755,6 @@ explain format = 'brief' select * from t as t1 left join t as t2 on t1.c1 = t2.c
 --sorted_result
 select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 is not NULL;
 
-Test
-
 # TestSetOperation
 set tidb_cost_model_version=2;
 drop table if exists t1, t2, t3;
