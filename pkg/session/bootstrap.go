@@ -293,6 +293,7 @@ const (
 		source VARCHAR(10) NOT NULL DEFAULT 'unknown',
 		sql_digest varchar(64),
 		plan_digest varchar(64),
+		type varchar(64) NOT NULL DEFAULT '',
 		INDEX sql_index(original_sql(700),default_db(68)) COMMENT "accelerate the speed when add global binding query",
 		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
