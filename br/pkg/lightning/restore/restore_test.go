@@ -25,6 +25,7 @@ import (
 	"sort"
 	"strings"
 	"sync/atomic"
+	"testing"
 	"time"
 	"unicode/utf8"
 
@@ -65,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/table/tables"
 	tmock "github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/pd/server/api"
 )
 
@@ -2833,6 +2835,42 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid(c *C) {
 	})
 	c.Assert(err, IsNil)
 	c.Assert(msgs, HasLen, 0)
+}
+
+func TestGetChunkCompressedSizeForParquet(t *testing.T) {
+	dir := "./testdata/"
+	fileName := "000000_0.parquet"
+	store, err := storage.NewLocalStorage(dir)
+	require.NoError(t, err)
+
+	dataFiles := make([]mydump.FileInfo, 0)
+	dataFiles = append(dataFiles, mydump.FileInfo{
+		TableName: filter.Table{Schema: "db", Name: "table"},
+		FileMeta: mydump.SourceFileMeta{
+			Path:        fileName,
+			Type:        mydump.SourceTypeParquet,
+			Compression: mydump.CompressionNone,
+			SortKey:     "99",
+			FileSize:    192,
+		},
+	})
+
+	chunk := checkpoints.ChunkCheckpoint{
+		Key:      checkpoints.ChunkCheckpointKey{Path: dataFiles[0].FileMeta.Path, Offset: 0},
+		FileMeta: dataFiles[0].FileMeta,
+		Chunk: mydump.Chunk{
+			Offset:       0,
+			EndOffset:    192,
+			PrevRowIDMax: 0,
+			RowIDMax:     100,
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	compressedSize, err := getChunkCompressedSizeForParquet(ctx, &chunk, store)
+	require.NoError(t, err)
+	require.Equal(t, compressedSize, int64(192))
 }
 
 type testChecksumMgr struct {

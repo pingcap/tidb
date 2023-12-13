@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
@@ -518,6 +519,12 @@ func (tr *TableRestore) restoreEngine(
 			break
 		}
 
+		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
+			// TODO: use the compressed size of the chunk to conduct memory control
+			_, err = getChunkCompressedSizeForParquet(ctx, chunk, rc.store)
+			return nil, errors.Trace(err)
+		}
+
 		restoreWorker := rc.regionWorkers.Apply()
 		wg.Add(1)
 		go func(w *worker.Worker, cr *chunkRestore) {
@@ -846,6 +853,42 @@ func (tr *TableRestore) postProcess(
 	}
 
 	return true, nil
+}
+
+func getChunkCompressedSizeForParquet(
+	ctx context.Context,
+	chunk *checkpoints.ChunkCheckpoint,
+	store storage.ExternalStorage,
+) (int64, error) {
+	reader, err := mydump.OpenParquetReader(ctx, store, chunk.FileMeta.Path, chunk.FileMeta.FileSize)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	parser, err := mydump.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path)
+	if err != nil {
+		_ = reader.Close()
+		return 0, errors.Trace(err)
+	}
+	//nolint: errcheck
+	defer parser.Close()
+	err = parser.Reader.ReadFooter()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	rowGroups := parser.Reader.Footer.GetRowGroups()
+	var maxRowGroupSize int64
+	for _, rowGroup := range rowGroups {
+		var rowGroupSize int64
+		columnChunks := rowGroup.GetColumns()
+		for _, columnChunk := range columnChunks {
+			columnChunkSize := columnChunk.MetaData.GetTotalCompressedSize()
+			rowGroupSize += columnChunkSize
+		}
+		if rowGroupSize > maxRowGroupSize {
+			maxRowGroupSize = rowGroupSize
+		}
+	}
+	return maxRowGroupSize, nil
 }
 
 func parseColumnPermutations(tableInfo *model.TableInfo, columns []string, ignoreColumns map[string]struct{}) ([]int, error) {
