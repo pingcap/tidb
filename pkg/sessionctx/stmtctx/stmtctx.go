@@ -790,7 +790,7 @@ func (sc *StatementContext) SetSkipPlanCache(reason error) {
 	case SessionNonPrepared:
 		if sc.InExplainStmt && sc.ExplainFormat == "plan_cache" {
 			// use "plan_cache" rather than types.ExplainFormatPlanCache to avoid import cycle
-			sc.AppendWarning(errors.Errorf("skip non-prepared plan-cache: %s", reason.Error()))
+			sc.AppendWarning(errors.NewNoStackErrorf("skip non-prepared plan-cache: %s", reason.Error()))
 		}
 	}
 }
