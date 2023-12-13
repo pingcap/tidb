@@ -119,10 +119,6 @@ func RegisterRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, mockDispatc
 func DispatchTask(ctx context.Context, t *testing.T, taskKey string) *proto.Task {
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(1)"))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
-	})
 	_, err = mgr.CreateTask(ctx, taskKey, proto.TaskTypeExample, 1, nil)
 	require.NoError(t, err)
 	return WaitTaskExit(ctx, t, taskKey)
@@ -198,10 +194,6 @@ func DispatchMultiTasksAndOneFail(ctx context.Context, t *testing.T, num int, te
 	require.NoError(t, err)
 	tasks := make([]*proto.Task, num)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunErr", "1*return(true)"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(1)"))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
-	})
 	for i := 0; i < num; i++ {
 		_, err = mgr.CreateTask(ctx, fmt.Sprintf("key%d", i), proto.TaskTypeExample, 1, nil)
 		require.NoError(t, err)
