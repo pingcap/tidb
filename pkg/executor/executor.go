@@ -2174,6 +2174,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		if stmt.Tp == ast.ShowWarnings || stmt.Tp == ast.ShowErrors || stmt.Tp == ast.ShowSessionStates {
 			sc.InShowWarning = true
 			sc.SetWarnings(vars.StmtCtx.GetWarnings())
+			sc.SetFoundRows(vars.StmtCtx.FoundRows())
+			sc.OverrideFoundRows = vars.StmtCtx.OverrideFoundRows
 		}
 	case *ast.SplitRegionStmt:
 		sc.SetTypeFlags(sc.TypeFlags().

@@ -233,6 +233,11 @@ func TestFoundRows(t *testing.T) {
 	result = tk.MustQuery("select found_rows()")
 	result.Check(testkit.Rows("1"))
 
+	// show warnings should not override found_rows()
+	tk.MustQuery("select * from t")
+	tk.MustQuery("show warnings")
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("3"))
+
 	// with SQL_CALC_FOUND_ROWS
 	tk.MustQuery("select SQL_CALC_FOUND_ROWS * FROM t ORDER BY a LIMIT 1").Check(testkit.Rows("1"))
 	tk.MustQuery("select found_rows()").Check(testkit.Rows("3"))

@@ -839,6 +839,13 @@ func (sc *StatementContext) FoundRows() uint64 {
 	return sc.mu.foundRows
 }
 
+// SetFoundRows sets found rows.
+func (sc *StatementContext) SetFoundRows(rows uint64) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	sc.mu.foundRows = rows
+}
+
 // AddFoundRows adds found rows.
 func (sc *StatementContext) AddFoundRows(rows uint64) {
 	sc.mu.Lock()
