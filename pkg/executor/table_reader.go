@@ -112,7 +112,8 @@ type TableReaderExecutor struct {
 	byItems   []*util.ByItems
 	paging    bool
 	storeType kv.StoreType
-	// corColInFilter tells whether there's correlated column in filter.
+	// corColInFilter tells whether there's correlated column in filter (both conditions in PhysicalSelection and LateMaterializationFilterCondition in PhysicalTableScan)
+	// If true, we will need to revise the dagPB (fill correlated column value in filter) each time call Open().
 	corColInFilter bool
 	// corColInAccess tells whether there's correlated column in access conditions.
 	corColInAccess bool
@@ -156,6 +157,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 
 	var err error
 	if e.corColInFilter {
+		// If there's correlated column in filter, need to rewrite dagPB
 		if e.storeType == kv.TiFlash {
 			execs, err := builder.ConstructTreeBasedDistExec(e.Ctx(), e.tablePlan)
 			if err != nil {
