@@ -3113,6 +3113,14 @@ const (
 	SlowLogIsWriteCacheTable = "IsWriteCacheTable"
 	// SlowLogIsSyncStatsFailed is used to indicate whether any failure happen during sync stats
 	SlowLogIsSyncStatsFailed = "IsSyncStatsFailed"
+	// SlowLogResourceGroup is the resource group name that the current session bind.
+	SlowLogResourceGroup = "Resource_group"
+	// SlowLogRRU is the read request_unit(RU) cost
+	SlowLogRRU = "Request_unit_read"
+	// SlowLogWRU is the write request_unit(RU) cost
+	SlowLogWRU = "Request_unit_write"
+	// SlowLogWaitRUDuration is the total duration for kv requests to wait available request-units.
+	SlowLogWaitRUDuration = "Time_queued_by_rc"
 )
 
 // GenerateBinaryPlan decides whether we should record binary plan in slow log and stmt summary.
@@ -3168,6 +3176,10 @@ type SlowQueryLogItems struct {
 	UsedStats         map[int64]*stmtctx.UsedStatsInfoForTable
 	IsSyncStatsFailed bool
 	Warnings          []JSONSQLWarnForSlowLog
+	ResourceGroupName string
+	RRU               float64
+	WRU               float64
+	WaitRUDuration    time.Duration
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -3365,6 +3377,20 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if len(logItems.BinaryPlan) != 0 {
 		writeSlowLogItem(&buf, SlowLogBinaryPlan, logItems.BinaryPlan)
 	}
+
+	if logItems.ResourceGroupName != "" {
+		writeSlowLogItem(&buf, SlowLogResourceGroup, logItems.ResourceGroupName)
+	}
+	if logItems.RRU > 0.0 {
+		writeSlowLogItem(&buf, SlowLogRRU, strconv.FormatFloat(logItems.RRU, 'f', -1, 64))
+	}
+	if logItems.WRU > 0.0 {
+		writeSlowLogItem(&buf, SlowLogWRU, strconv.FormatFloat(logItems.WRU, 'f', -1, 64))
+	}
+	if logItems.WaitRUDuration > time.Duration(0) {
+		writeSlowLogItem(&buf, SlowLogWaitRUDuration, strconv.FormatFloat(logItems.WaitRUDuration.Seconds(), 'f', -1, 64))
+	}
+
 	if logItems.PrevStmt != "" {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
 	}

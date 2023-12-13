@@ -248,3 +248,16 @@ func TestGetLogRangeWithLogBackupDir(t *testing.T) {
 	require.Nil(t, err)
 	require.Equal(t, logInfo.logMinTS, startLogBackupTS)
 }
+
+func TestGetExternalStorageOptions(t *testing.T) {
+	cfg := Config{}
+	u, err := storage.ParseBackend("s3://bucket/path", nil)
+	require.NoError(t, err)
+	options := getExternalStorageOptions(&cfg, u)
+	require.NotNil(t, options.HTTPClient)
+
+	u, err = storage.ParseBackend("gs://bucket/path", nil)
+	require.NoError(t, err)
+	options = getExternalStorageOptions(&cfg, u)
+	require.Nil(t, options.HTTPClient)
+}

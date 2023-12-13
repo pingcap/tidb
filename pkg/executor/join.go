@@ -1319,7 +1319,7 @@ func (e *NestedLoopApplyExec) Close() error {
 		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", 0))
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), runtimeStats)
 	}
-	return e.outerExec.Close()
+	return exec.Close(e.outerExec)
 }
 
 // Open implements the Executor interface.
@@ -1426,7 +1426,7 @@ func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *ch
 // fetchAllInners reads all data from the inner table and stores them in a List.
 func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
 	err := exec.Open(ctx, e.innerExec)
-	defer terror.Call(e.innerExec.Close)
+	defer func() { terror.Log(exec.Close(e.innerExec)) }()
 	if err != nil {
 		return err
 	}

@@ -697,7 +697,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 	}
 	innerExec, err := iw.readerBuilder.buildExecutorForIndexJoin(ctx, lookUpContent, iw.indexRanges, iw.keyOff2IdxOff, iw.nextColCompareFilters, true, iw.memTracker, iw.lookup.finished)
 	if innerExec != nil {
-		defer terror.Call(innerExec.Close)
+		defer func() { terror.Log(exec.Close(innerExec)) }()
 	}
 	if err != nil {
 		return err

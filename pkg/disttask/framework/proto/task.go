@@ -21,24 +21,22 @@ import (
 
 // task state machine
 //
-//		                ┌──────────────────────────────┐
-//		                │           ┌───────┐       ┌──┴───┐
-//		                │ ┌────────►│pausing├──────►│paused│
-//		                │ │         └───────┘       └──────┘
-//		                ▼ │
-//		┌───────┐     ┌───┴───┐     ┌────────┐
+//		                            ┌────────┐
+//		                ┌───────────│resuming│◄────────┐
+//		                │           └────────┘         │
+//		┌──────┐        │           ┌───────┐       ┌──┴───┐
+//		│failed│        │ ┌────────►│pausing├──────►│paused│
+//		└──────┘        │ │         └───────┘       └──────┘
+//		   ▲            ▼ │
+//		┌──┴────┐     ┌───┴───┐     ┌────────┐
 //		│pending├────►│running├────►│succeed │
-//		└──┬────┘     └───┬───┘     └────────┘
-//		   ▼              │         ┌──────────┐
-//		┌──────┐          ├────────►│cancelling│
-//		│failed│          │         └────┬─────┘
-//		└──────┘          │              ▼
-//		                  │         ┌─────────┐     ┌────────┐
-//		                  └────────►│reverting├────►│reverted│
-//		                            └────┬────┘     └────────┘
-//		                                 │          ┌─────────────┐
-//		                                 └─────────►│revert_failed│
-//		                                            └─────────────┘
+//		└──┬────┘     └──┬┬───┘     └────────┘
+//		   │             ││         ┌─────────┐     ┌────────┐
+//		   │             │└────────►│reverting├────►│reverted│
+//		   │             ▼          └────┬────┘     └────────┘
+//		   │          ┌──────────┐    ▲  │          ┌─────────────┐
+//		   └─────────►│cancelling├────┘  └─────────►│revert_failed│
+//		              └──────────┘                  └─────────────┘
 //	 1. succeed:		pending -> running -> succeed
 //	 2. failed:			pending -> running -> reverting -> reverted/revert_failed, pending -> failed
 //	 3. canceled:		pending -> running -> cancelling -> reverting -> reverted/revert_failed
@@ -122,24 +120,33 @@ const (
 	// TaskIDLabelName is the label name of task id.
 	TaskIDLabelName = "task_id"
 	// NormalPriority represents the normal priority of task.
-	NormalPriority = 100
+	NormalPriority = 512
 )
 
+// MaxConcurrentTask is the max concurrency of task.
+// TODO: remove this limit later.
+var MaxConcurrentTask = 4
+
 // Task represents the task of distributed framework.
-// tasks are run in the order of: priority desc, create_time asc, id asc.
+// tasks are run in the order of: priority asc, create_time asc, id asc.
 type Task struct {
 	ID    int64
 	Key   string
 	Type  TaskType
 	State TaskState
 	Step  Step
-	// Priority is the priority of task, the larger value means the higher priority.
+	// Priority is the priority of task, the smaller value means the higher priority.
 	// valid range is [1, 1024], default is NormalPriority.
 	Priority int
-	// DispatcherID is not used now.
-	DispatcherID    string
-	Concurrency     uint64
-	CreateTime      time.Time
+	// Concurrency controls the max resource usage of the task, i.e. the max number
+	// of slots the task can use on each node.
+	Concurrency int
+	CreateTime  time.Time
+
+	// depends on query, below fields might not be filled.
+
+	// SchedulerID is not used now.
+	SchedulerID     string
 	StartTime       time.Time
 	StateUpdateTime time.Time
 	Meta            []byte
@@ -152,8 +159,22 @@ func (t *Task) IsDone() bool {
 		t.State == TaskStateFailed
 }
 
+// Compare compares two tasks by task order.
+func (t *Task) Compare(other *Task) int {
+	if t.Priority != other.Priority {
+		return t.Priority - other.Priority
+	}
+	if t.CreateTime != other.CreateTime {
+		if t.CreateTime.Before(other.CreateTime) {
+			return -1
+		}
+		return 1
+	}
+	return int(t.ID - other.ID)
+}
+
 // Subtask represents the subtask of distribute framework.
-// Each task is divided into multiple subtasks by dispatcher.
+// Each task is divided into multiple subtasks by scheduler.
 type Subtask struct {
 	ID   int64
 	Step Step

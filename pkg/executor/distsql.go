@@ -1457,7 +1457,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		logutil.Logger(ctx).Error("build table reader failed", zap.Error(err))
 		return err
 	}
-	defer terror.Call(tableReader.Close)
+	defer func() { terror.Log(exec.Close(tableReader)) }()
 
 	if w.checkIndexValue != nil {
 		return w.compareData(ctx, task, tableReader)

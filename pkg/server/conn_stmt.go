@@ -50,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/server/internal/dump"
 	"github.com/pingcap/tidb/pkg/server/internal/parse"
@@ -230,6 +229,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt interface{}, args []param.BinaryParam, useCursor bool) (err error) {
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
+	ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
 	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
 	if err != nil {
 		action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(ctx, sessiontxn.StmtErrAfterQuery, err)
@@ -304,7 +304,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	execStmt.SetText(charset.EncodingUTF8Impl, sql)
 	rs, err := (&cc.ctx).ExecuteStmt(ctx, execStmt)
 	if rs != nil {
-		defer terror.Call(rs.Close)
+		defer rs.Close()
 	}
 	if err != nil {
 		// If error is returned during the planner phase or the executor.Open
