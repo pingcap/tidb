@@ -339,7 +339,7 @@ func TestDropAPartition(t *testing.T) {
 
 	// Get partition p0's stats update version.
 	partitionID := pi.Definitions[0].ID
-	// Get it from stats_meat first.
+	// Get it from stats_meta first.
 	rows := testKit.MustQuery(
 		"select version from mysql.stats_meta where table_id = ?", partitionID,
 	).Rows()
