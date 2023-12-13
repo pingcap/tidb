@@ -325,20 +325,14 @@ func TestDropAPartition(t *testing.T) {
 
 	testKit.MustExec("alter table t drop partition p0")
 	// Find the drop partition event.
-	var dropPartitionEvent *util.DDLEvent
-	for {
-		event := <-h.DDLEventCh()
-		if event.GetType() == model.ActionDropTablePartition {
-			dropPartitionEvent = event
-			break
-		}
-	}
+	dropPartitionEvent := findEvent(h.DDLEventCh(), model.ActionDropTablePartition)
+
 	err = h.HandleDDLEvent(dropPartitionEvent)
 	require.NoError(t, err)
 	// Check the global stats meta.
 	// Because we have dropped a partition, the count should be 3 and the modify count should be 2.
 	testKit.MustQuery(
-		fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableInfo.ID),
+		"select count, modify_count from mysql.stats_meta where table_id = ?", tableInfo.ID,
 	).Check(
 		testkit.Rows("3 2"),
 	)
