@@ -29,6 +29,7 @@ import (
 	"github.com/go-resty/resty/v2"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"go.uber.org/zap"
 )
 
 const (
@@ -174,7 +175,6 @@ func (w *GCSWriter) Close() error {
 		for k, v := range w.workers[i].parts {
 			parts[k] = v
 		}
-		log.Info(fmt.Sprintf("worker %v uploaded %v parts for %v", i, len(w.workers[i].parts), w.objURI))
 	}
 
 	return w.completeMultipartUpload(parts)
@@ -300,7 +300,7 @@ func (uw *uploadWorker) uploadPartAsync() error {
 		if err != nil {
 			uw.err = err
 			uw.tryCnt++
-			log.Warn(fmt.Sprintf("upload worker %v failed to upload part %v for object %v, tryCnt: %v, err: %s", uw.index, uw.currentPartNumber, uw.uri, uw.tryCnt, err.Error()))
+			log.Warn("upload worker failed to upload part for object", zap.Int("worker", uw.index), zap.Int("part number", uw.currentPartNumber), zap.String("uri", uw.uri), zap.Int("retry count", uw.tryCnt), zap.Error(err))
 		} else {
 			// Upload succeeded. Reset
 			uw.offset = 0
@@ -316,7 +316,7 @@ func (uw *uploadWorker) uploadPartAsync() error {
 // UploadPart upload a part.
 func (uw *uploadWorker) uploadPart(partNumber int, data []byte) error {
 	if partNumber < 1 {
-		return fmt.Errorf("Invalid partNumber: %v", partNumber)
+		return fmt.Errorf("invalid partNumber: %v", partNumber)
 	}
 
 	opts := &storage.SignedURLOptions{
