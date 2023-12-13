@@ -29,8 +29,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 	"golang.org/x/exp/rand"
 )
 
@@ -93,6 +95,7 @@ func testReadAndCompare(
 			}
 			return false
 		})
+		logutil.BgLogger().Info("ywq test read", zap.Any("len", len(loaded.keys)))
 		for i, key := range loaded.keys {
 			require.EqualValues(t, kvs[kvIdx].Key, key)
 			require.EqualValues(t, kvs[kvIdx].Val, loaded.values[i])
