@@ -44,10 +44,10 @@ func (sm *slotManager) addTask(task *proto.Task) {
 	sm.executorSlotInfos[task.ID] = &slotInfo{
 		taskID:    int(task.ID),
 		priority:  task.Priority,
-		slotCount: int(task.Concurrency),
+		slotCount: task.Concurrency,
 	}
 
-	sm.available -= int(task.Concurrency)
+	sm.available -= task.Concurrency
 }
 
 func (sm *slotManager) removeTask(taskID int64) {
@@ -57,11 +57,11 @@ func (sm *slotManager) removeTask(taskID int64) {
 	slotInfo, ok := sm.executorSlotInfos[taskID]
 	if ok {
 		delete(sm.executorSlotInfos, taskID)
-		sm.available += int(slotInfo.slotCount)
+		sm.available += slotInfo.slotCount
 	}
 }
 
 // checkSlotAvailabilityForTask is used to check whether the instance has enough slots to run the task.
 func (sm *slotManager) checkSlotAvailabilityForTask(task *proto.Task) bool {
-	return sm.available >= int(task.Concurrency)
+	return sm.available >= task.Concurrency
 }
