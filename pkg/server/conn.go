@@ -358,17 +358,24 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 func (cc *clientConn) Close() error {
 	cc.server.rwlock.Lock()
 	delete(cc.server.clients, cc.connectionID)
-	connections := len(cc.server.clients)
+	connections := make(map[string]int, 0)
+	for _, conn := range cc.server.clients {
+		resourceGroup := conn.getCtx().GetSessionVars().ResourceGroupName
+		connections[resourceGroup]++
+	}
 	cc.server.rwlock.Unlock()
 	return closeConn(cc, connections)
 }
 
 // closeConn is idempotent and thread-safe.
 // It will be called on the same `clientConn` more than once to avoid connection leak.
-func closeConn(cc *clientConn, connections int) error {
+func closeConn(cc *clientConn, connections map[string]int) error {
 	var err error
 	cc.closeOnce.Do(func() {
-		metrics.ConnGauge.Set(float64(connections))
+		for name, count := range connections {
+			metrics.ConnGauge.WithLabelValues(name).Set(float64(count))
+		}
+
 		if cc.connectionID > 0 {
 			cc.server.dom.ReleaseConnID(cc.connectionID)
 			cc.connectionID = 0
@@ -392,7 +399,13 @@ func closeConn(cc *clientConn, connections int) error {
 
 func (cc *clientConn) closeWithoutLock() error {
 	delete(cc.server.clients, cc.connectionID)
-	return closeConn(cc, len(cc.server.clients))
+	connections := make(map[string]int, 0)
+	for _, conn := range cc.server.clients {
+		resourceGroup := conn.getCtx().GetSessionVars().ResourceGroupName
+		connections[resourceGroup]++
+	}
+
+	return closeConn(cc, connections)
 }
 
 // writeInitialHandshake sends server version, connection ID, server capability, collation, server status
@@ -1119,9 +1132,11 @@ func (cc *clientConn) Run(ctx context.Context) {
 			if ctx := cc.getCtx(); ctx != nil {
 				txnMode = ctx.GetSessionVars().GetReadableTxnMode()
 			}
-			for _, dbName := range session.GetDBNames(cc.getCtx().GetSessionVars()) {
-				metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err), dbName).Inc()
+			vars := cc.getCtx().GetSessionVars()
+			for _, dbName := range session.GetDBNames(vars) {
+				metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err), dbName, vars.ResourceGroupName).Inc()
 			}
+
 			if storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err) {
 				logutil.Logger(ctx).Debug("Expected error for FOR UPDATE NOWAIT", zap.Error(err))
 			} else {

@@ -594,7 +594,13 @@ func (s *Server) Close() {
 func (s *Server) registerConn(conn *clientConn) bool {
 	s.rwlock.Lock()
 	defer s.rwlock.Unlock()
-	connections := len(s.clients)
+	// connections := len(s.clients)
+
+	connections := make(map[string]int, 0)
+	for _, conn := range s.clients {
+		resourceGroup := conn.getCtx().GetSessionVars().ResourceGroupName
+		connections[resourceGroup]++
+	}
 
 	logger := logutil.BgLogger()
 	if s.inShutdownMode.Load() {
@@ -603,8 +609,15 @@ func (s *Server) registerConn(conn *clientConn) bool {
 		return false
 	}
 	s.clients[conn.connectionID] = conn
-	connections = len(s.clients)
-	metrics.ConnGauge.Set(float64(connections))
+	connectionMap := make(map[string]int, 0)
+	for _, conn := range s.clients {
+		resourceGroup := conn.getCtx().GetSessionVars().ResourceGroupName
+		connectionMap[resourceGroup]++
+	}
+
+	for name, count := range connectionMap {
+		metrics.ConnGauge.WithLabelValues(name).Set(float64(count))
+	}
 	return true
 }
 
