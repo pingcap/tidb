@@ -33,28 +33,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
-<<<<<<< HEAD:br/pkg/lightning/restore/table_restore.go
-	"github.com/pingcap/tidb/br/pkg/utils"
-	tidbkv "github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/util/mathutil"
-=======
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/br/pkg/version"
-	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/extsort"
->>>>>>> 7aba5245f1f (lightning: add function `getChunkCompressedSizeForParquet` for solving parquet oom issue (#49021)):br/pkg/lightning/importer/table_import.go
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -975,14 +961,12 @@ func (tr *TableRestore) postProcess(
 	return true, nil
 }
 
-<<<<<<< HEAD:br/pkg/lightning/restore/table_restore.go
-=======
 func getChunkCompressedSizeForParquet(
 	ctx context.Context,
 	chunk *checkpoints.ChunkCheckpoint,
 	store storage.ExternalStorage,
 ) (int64, error) {
-	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store, storage.DecompressConfig{})
+	reader, err := openReader(ctx, chunk.FileMeta, store)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -1011,37 +995,6 @@ func getChunkCompressedSizeForParquet(
 	return maxRowGroupSize, nil
 }
 
-func updateStatsMeta(ctx context.Context, db *sql.DB, tableID int64, count int) {
-	s := common.SQLWithRetry{
-		DB:     db,
-		Logger: log.FromContext(ctx).With(zap.Int64("tableID", tableID)),
-	}
-	err := s.Transact(ctx, "update stats_meta", func(ctx context.Context, tx *sql.Tx) error {
-		rs, err := tx.ExecContext(ctx, `
-update mysql.stats_meta
-	set modify_count = ?,
-		count = ?,
-		version = @@tidb_current_ts
-	where table_id = ?;
-`, count, count, tableID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		affected, err := rs.RowsAffected()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if affected == 0 {
-			return errors.Errorf("record with table_id %d not found", tableID)
-		}
-		return nil
-	})
-	if err != nil {
-		s.Logger.Warn("failed to update stats_meta", zap.Error(err))
-	}
-}
-
->>>>>>> 7aba5245f1f (lightning: add function `getChunkCompressedSizeForParquet` for solving parquet oom issue (#49021)):br/pkg/lightning/importer/table_import.go
 func parseColumnPermutations(
 	tableInfo *model.TableInfo,
 	columns []string,
