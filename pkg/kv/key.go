@@ -20,10 +20,12 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tidb/pkg/util/size"
 )
 
 // Key represents high-level Key type.
@@ -100,6 +102,12 @@ type KeyRange struct {
 	XXXNoUnkeyedLiteral struct{}
 	XXXunrecognized     []byte
 	XXXsizecache        int32
+}
+
+const SizeofKeyRange = int64(unsafe.Sizeof(*(*KeyRange)(nil)))
+
+func (m *KeyRange) InnerMemUsage() int64 {
+	return int64(cap(m.StartKey)) + int64(cap(m.EndKey)) + int64(cap(m.XXXunrecognized))
 }
 
 // IsPoint checks if the key range represents a point.
@@ -397,12 +405,16 @@ type HandleMap struct {
 	// The first int64 is for partitionID.
 	partitionInts map[int64]map[int64]interface{}
 	partitionStrs map[int64]map[string]strHandleVal
+	MemUsage      int64
 }
 
 type strHandleVal struct {
 	h   Handle
 	val interface{}
 }
+
+const sizeofHandleMap = int64(unsafe.Sizeof(*(*HandleMap)(nil)))
+const sizeofStrHandleVal = int64(unsafe.Sizeof(*(*strHandleVal)(nil)))
 
 // NewHandleMap creates a new map for handle.
 func NewHandleMap() *HandleMap {
@@ -412,6 +424,8 @@ func NewHandleMap() *HandleMap {
 
 		partitionInts: map[int64]map[int64]interface{}{},
 		partitionStrs: map[int64]map[string]strHandleVal{},
+
+		MemUsage: sizeofHandleMap,
 	}
 }
 
@@ -437,48 +451,62 @@ func (m *HandleMap) Get(h Handle) (v interface{}, ok bool) {
 }
 
 // Set sets a value with a Handle.
-func (m *HandleMap) Set(h Handle, val interface{}) {
+func (m *HandleMap) Set(h Handle, val interface{}) int64 {
+	delta := int64(0)
 	ints, strs := m.ints, m.strs
 	if ph, ok := h.(PartitionHandle); ok {
 		idx := ph.PartitionID
 		if h.IsInt() {
 			if m.partitionInts[idx] == nil {
 				m.partitionInts[idx] = make(map[int64]interface{})
+				delta += size.SizeOfInt64 + size.SizeOfMap
 			}
 			ints = m.partitionInts[idx]
 		} else {
 			if m.partitionStrs[idx] == nil {
 				m.partitionStrs[idx] = make(map[string]strHandleVal)
+				delta += size.SizeOfInt64 + size.SizeOfMap
 			}
 			strs = m.partitionStrs[idx]
 		}
 	}
 	if h.IsInt() {
 		ints[h.IntValue()] = val
+		delta += size.SizeOfInt64 + size.SizeOfInterface
 	} else {
-		strs[string(h.Encoded())] = strHandleVal{
+		key := string(h.Encoded())
+		strs[key] = strHandleVal{
 			h:   h,
 			val: val,
 		}
+		delta += size.SizeOfString + int64(len(key)) + sizeofStrHandleVal
 	}
+	m.MemUsage += delta
+	return delta
 }
 
 // Delete deletes a entry from the map.
-func (m *HandleMap) Delete(h Handle) {
+func (m *HandleMap) Delete(h Handle) int64 {
+	delta := int64(0)
 	ints, strs := m.ints, m.strs
 	if ph, ok := h.(PartitionHandle); ok {
 		idx := ph.PartitionID
 		if (h.IsInt() && m.partitionInts[idx] == nil) ||
 			(!h.IsInt() && m.partitionStrs[idx] == nil) {
-			return
+			return 0
 		}
 		ints, strs = m.partitionInts[idx], m.partitionStrs[idx]
 	}
 	if h.IsInt() {
 		delete(ints, h.IntValue())
+		delta += size.SizeOfInt64 + size.SizeOfInterface
 	} else {
-		delete(strs, string(h.Encoded()))
+		key := string(h.Encoded())
+		delete(strs, key)
+		delta += size.SizeOfString + int64(len(key)) + sizeofStrHandleVal
 	}
+	m.MemUsage -= delta
+	return delta
 }
 
 // Len returns the length of the map.

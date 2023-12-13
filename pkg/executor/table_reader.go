@@ -20,6 +20,7 @@ import (
 	"context"
 	"slices"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/distsql"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
@@ -129,6 +131,8 @@ type TableReaderExecutor struct {
 	dummy bool
 }
 
+const sizeofTableReaderExecutor = int64(unsafe.Sizeof(*(*TableReaderExecutor)(nil)))
+
 // Table implements the dataSourceExecutor interface.
 func (e *TableReaderExecutor) Table() table.Table {
 	return e.table
@@ -136,6 +140,21 @@ func (e *TableReaderExecutor) Table() table.Table {
 
 func (e *TableReaderExecutor) setDummy() {
 	e.dummy = true
+}
+
+func (e *TableReaderExecutor) memUsage() int64 {
+	res := sizeofTableReaderExecutor
+	res += size.SizeOfPointer * int64(cap(e.ranges))
+	for _, v := range e.ranges {
+		res += v.MemUsage()
+	}
+	res += kv.SizeofKeyRange * int64(cap(e.kvRanges))
+	for _, v := range e.kvRanges {
+		res += v.InnerMemUsage()
+	}
+	res += int64(e.dagPB.Size())
+	// TODO: add more statistics
+	return res
 }
 
 // Open initializes necessary variables for using this executor.

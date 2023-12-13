@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -1900,10 +1901,21 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *index
 		return err
 	}
 	defer terror.Call(tableReader.Close)
-	task.memTracker = w.memTracker
-	memUsage := int64(cap(task.handles) * 8)
-	task.memUsage = memUsage
-	task.memTracker.Consume(memUsage)
+	{
+		task.memTracker = w.memTracker
+		memUsage := int64(cap(task.handles)) * size.SizeOfInterface
+		for _, h := range task.handles {
+			memUsage += int64(h.MemUsage())
+		}
+		if task.indexOrder != nil {
+			memUsage += task.indexOrder.MemUsage
+		}
+		if task.duplicatedIndexOrder != nil {
+			memUsage += task.duplicatedIndexOrder.MemUsage
+		}
+		task.memUsage = memUsage
+		task.memTracker.Consume(memUsage)
+	}
 	handleCnt := len(task.handles)
 	task.rows = make([]chunk.Row, 0, handleCnt)
 	for {
@@ -1916,9 +1928,11 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *index
 		if chk.NumRows() == 0 {
 			break
 		}
-		memUsage = chk.MemoryUsage()
-		task.memUsage += memUsage
-		task.memTracker.Consume(memUsage)
+		{
+			memUsage := chk.MemoryUsage()
+			task.memUsage += memUsage
+			task.memTracker.Consume(memUsage)
+		}
 		iter := chunk.NewIterator4Chunk(chk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			task.rows = append(task.rows, row)
@@ -1951,9 +1965,11 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *index
 		sort.Sort(task)
 	}
 
-	memUsage = int64(cap(task.rows)) * int64(unsafe.Sizeof(chunk.Row{}))
-	task.memUsage += memUsage
-	task.memTracker.Consume(memUsage)
+	{
+		memUsage := int64(cap(task.rows)) * int64(unsafe.Sizeof(chunk.Row{}))
+		task.memUsage += memUsage
+		task.memTracker.Consume(memUsage)
+	}
 	if handleCnt != len(task.rows) && len(w.tblPlans) == 1 {
 		return errors.Errorf("handle count %d isn't equal to value count %d", handleCnt, len(task.rows))
 	}
