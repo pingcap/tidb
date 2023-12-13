@@ -1515,7 +1515,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 			task.rowIdx = append(task.rowIdx, rowIdx.(int))
 		}
 		{
-			memUsage := int64(cap(task.rowIdx) * 4)
+			memUsage := int64(cap(task.rowIdx) * int(size.SizeOfInt))
 			task.memUsage += memUsage
 			task.memTracker.Consume(memUsage)
 		}
