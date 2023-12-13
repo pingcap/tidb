@@ -119,7 +119,7 @@ func RegisterRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, mockSchedul
 func DispatchTask(ctx context.Context, t *testing.T, taskKey string) *proto.Task {
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
-	_, err = mgr.CreateTask(ctx, taskKey, proto.TaskTypeExample, 8, nil)
+	_, err = mgr.CreateTask(ctx, taskKey, proto.TaskTypeExample, 4, nil)
 	require.NoError(t, err)
 	return WaitTaskExit(ctx, t, taskKey)
 }
@@ -196,7 +196,7 @@ func DispatchMultiTasksAndOneFail(ctx context.Context, t *testing.T, num int, te
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunErr", "1*return(true)"))
 
 	for i := 0; i < num; i++ {
-		_, err = mgr.CreateTask(ctx, fmt.Sprintf("key%d", i), proto.TaskTypeExample, 8, nil)
+		_, err = mgr.CreateTask(ctx, fmt.Sprintf("key%d", i), proto.TaskTypeExample, 4, nil)
 		require.NoError(t, err)
 	}
 	for i := 0; i < num; i++ {
