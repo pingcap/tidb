@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -355,8 +356,7 @@ type ddlCtx struct {
 	statsHandle  *handle.Handle
 	tableLockCkr util.DeadTableLockChecker
 	etcdCli      *clientv3.Client
-	// backfillJobCh gets notification if any backfill jobs coming.
-	backfillJobCh chan struct{}
+	autoidCli    *autoid.ClientDiscover
 
 	*waitSchemaSyncedController
 	*schemaVersionManager
@@ -672,6 +672,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		infoCache:                  opt.InfoCache,
 		tableLockCkr:               deadLockCkr,
 		etcdCli:                    opt.EtcdCli,
+		autoidCli:                  opt.AutoIDClient,
 		schemaVersionManager:       newSchemaVersionManager(),
 		waitSchemaSyncedController: newWaitSchemaSyncedController(),
 		runningJobIDs:              make([]string, 0, jobRecordCapacity),
