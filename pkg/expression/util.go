@@ -1467,7 +1467,7 @@ func ContainCorrelatedColumn(exprs []Expression) bool {
 // 2. Whether the statement can be cached.
 // 3. Whether the expressions contain a lazy constant.
 // TODO: Do more careful check here.
-func MaybeOverOptimized4PlanCache(ctx sessionctx.Context, exprs []Expression) bool {
+func MaybeOverOptimized4PlanCache(ctx EvalContext, exprs []Expression) bool {
 	// If we do not enable plan cache, all the optimization can work correctly.
 	if !ctx.GetSessionVars().StmtCtx.UseCache {
 		return false
@@ -1476,7 +1476,7 @@ func MaybeOverOptimized4PlanCache(ctx sessionctx.Context, exprs []Expression) bo
 }
 
 // containMutableConst checks if the expressions contain a lazy constant.
-func containMutableConst(ctx sessionctx.Context, exprs []Expression) bool {
+func containMutableConst(ctx EvalContext, exprs []Expression) bool {
 	for _, expr := range exprs {
 		switch v := expr.(type) {
 		case *Constant:
@@ -1654,7 +1654,7 @@ func (r *SQLDigestTextRetriever) runMockQuery(data map[string]string, inValues [
 // of the given SQL digests, if `inValues` is given, or all these mappings otherwise. If `queryGlobal` is false, it
 // queries information_schema.statements_summary and information_schema.statements_summary_history; otherwise, it
 // queries the cluster version of these two tables.
-func (r *SQLDigestTextRetriever) runFetchDigestQuery(ctx context.Context, sctx sessionctx.Context, queryGlobal bool, inValues []interface{}) (map[string]string, error) {
+func (r *SQLDigestTextRetriever) runFetchDigestQuery(ctx context.Context, sctx EvalContext, queryGlobal bool, inValues []interface{}) (map[string]string, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	// If mock data is set, query the mock data instead of the real statements_summary tables.
 	if !queryGlobal && r.mockLocalData != nil {
@@ -1707,7 +1707,7 @@ func (r *SQLDigestTextRetriever) updateDigestInfo(queryResult map[string]string)
 }
 
 // RetrieveLocal tries to retrieve the SQL text of the SQL digests from local information.
-func (r *SQLDigestTextRetriever) RetrieveLocal(ctx context.Context, sctx sessionctx.Context) error {
+func (r *SQLDigestTextRetriever) RetrieveLocal(ctx context.Context, sctx EvalContext) error {
 	if len(r.SQLDigestsMap) == 0 {
 		return nil
 	}
@@ -1741,7 +1741,7 @@ func (r *SQLDigestTextRetriever) RetrieveLocal(ctx context.Context, sctx session
 }
 
 // RetrieveGlobal tries to retrieve the SQL text of the SQL digests from the information of the whole cluster.
-func (r *SQLDigestTextRetriever) RetrieveGlobal(ctx context.Context, sctx sessionctx.Context) error {
+func (r *SQLDigestTextRetriever) RetrieveGlobal(ctx context.Context, sctx EvalContext) error {
 	err := r.RetrieveLocal(ctx, sctx)
 	if err != nil {
 		return errors.Trace(err)

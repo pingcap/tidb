@@ -50,7 +50,6 @@ package expression
 
 import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -77,7 +76,7 @@ import (
 
 {{ range .Sigs }}
 {{ if .AllNull}}
-func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	{{ if .Output.Fixed }}
 	result.Resize{{ .Output.TypeNameInColumn }}(n, true)
@@ -88,7 +87,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx sessionctx.Context, inp
 	return nil
 }
 {{ else }}
-func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 {{ $reuse := (and (eq .TypeA.TypeName .Output.TypeName) .TypeA.Fixed) }}
 {{ if $reuse }}
@@ -379,7 +378,7 @@ var timeDiff = template.Must(template.New("").Parse(`
 {{ $reuseB := (eq .TypeB.TypeName "Duration") }}
 {{ $reuse  := (or $reuseA $reuseB ) }}
 {{ $noNull := (ne .SigName "builtinNullTimeDiffSig") }}
-func (b *{{.SigName}}) vecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *{{.SigName}}) vecEvalDuration(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	{{- if not $noNull }}
 	result.ResizeGoDuration(n, true)

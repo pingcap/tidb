@@ -82,7 +82,7 @@ func (e *SQLBindExec) dropSQLBind() error {
 		}
 	}
 	if !e.isGlobal {
-		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
 		err := handle.DropSessionBinding(e.normdOrigSQL, e.db, bindInfo)
 		return err
 	}
@@ -96,7 +96,7 @@ func (e *SQLBindExec) dropSQLBindByDigest() error {
 		return errors.New("sql digest is empty")
 	}
 	if !e.isGlobal {
-		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
 		err := handle.DropSessionBindingByDigest(e.sqlDigest)
 		return err
 	}
@@ -158,7 +158,7 @@ func (e *SQLBindExec) createSQLBind() error {
 		Bindings:    []bindinfo.Binding{bindInfo},
 	}
 	if !e.isGlobal {
-		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
 		return handle.CreateSessionBinding(e.Ctx(), record)
 	}
 	return domain.GetDomain(e.Ctx()).BindHandle().CreateGlobalBinding(e.Ctx(), record)

@@ -902,6 +902,30 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_schema_version_cache_limit").Check(testkit.Rows("2"))
 	tk.MustExec("set @@global.tidb_schema_version_cache_limit=64;")
 	tk.MustQuery("select @@global.tidb_schema_version_cache_limit").Check(testkit.Rows("64"))
+
+	// test tidb_idle_transaction_timeout
+	tk.MustQuery("select @@session.tidb_idle_transaction_timeout").Check(testkit.Rows("0"))
+	tk.MustExec("SET SESSION tidb_idle_transaction_timeout = 2")
+	tk.MustQuery("select @@session.tidb_idle_transaction_timeout").Check(testkit.Rows("2"))
+	tk.MustGetErrMsg("SET SESSION tidb_idle_transaction_timeout='x';", "[variable:1232]Incorrect argument type to variable 'tidb_idle_transaction_timeout'")
+	tk.MustExec("SET SESSION tidb_idle_transaction_timeout=31536001;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_idle_transaction_timeout value: '31536001'"))
+	tk.MustQuery("select @@session.tidb_idle_transaction_timeout").Check(testkit.Rows("31536000"))
+	tk.MustExec("SET SESSION tidb_idle_transaction_timeout = 0")
+	tk.MustQuery("select @@session.tidb_idle_transaction_timeout").Check(testkit.Rows("0"))
+	tk.MustExec("SET SESSION tidb_idle_transaction_timeout=31536000;")
+	tk.MustQuery("select @@session.tidb_idle_transaction_timeout").Check(testkit.Rows("31536000"))
+	tk.MustQuery("select @@global.tidb_idle_transaction_timeout").Check(testkit.Rows("0"))
+	tk.MustExec("SET GLOBAL tidb_idle_transaction_timeout = 1")
+	tk.MustQuery("select @@global.tidb_idle_transaction_timeout").Check(testkit.Rows("1"))
+	tk.MustGetErrMsg("SET GLOBAL tidb_idle_transaction_timeout='x';", "[variable:1232]Incorrect argument type to variable 'tidb_idle_transaction_timeout'")
+	tk.MustExec("SET GLOBAL tidb_idle_transaction_timeout=31536001;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_idle_transaction_timeout value: '31536001'"))
+	tk.MustQuery("select @@global.tidb_idle_transaction_timeout").Check(testkit.Rows("31536000"))
+	tk.MustExec("SET GLOBAL tidb_idle_transaction_timeout = 0")
+	tk.MustQuery("select @@global.tidb_idle_transaction_timeout").Check(testkit.Rows("0"))
+	tk.MustExec("SET GLOBAL tidb_idle_transaction_timeout=31536000;")
+	tk.MustQuery("select @@global.tidb_idle_transaction_timeout").Check(testkit.Rows("31536000"))
 }
 
 func TestSetCollationAndCharset(t *testing.T) {
@@ -952,7 +976,19 @@ func TestValidateSetVar(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
-	err := tk.ExecToErr("set global tidb_distsql_scan_concurrency='fff';")
+	err := tk.ExecToErr("set global tidb_analyze_distsql_scan_concurrency='fff';")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar), fmt.Sprintf("err %v", err))
+
+	tk.MustExec("set global tidb_analyze_distsql_scan_concurrency=-2;")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_analyze_distsql_scan_concurrency value: '-2'"))
+
+	err = tk.ExecToErr("set @@tidb_analyze_distsql_scan_concurrency='fff';")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar), fmt.Sprintf("err %v", err))
+
+	tk.MustExec("set @@tidb_analyze_distsql_scan_concurrency=-2;")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_analyze_distsql_scan_concurrency value: '-2'"))
+
+	err = tk.ExecToErr("set global tidb_distsql_scan_concurrency='fff';")
 	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar), fmt.Sprintf("err %v", err))
 
 	tk.MustExec("set global tidb_distsql_scan_concurrency=-2;")

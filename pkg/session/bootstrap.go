@@ -2025,7 +2025,7 @@ func upgradeToVer67(s sessiontypes.Session, ver int64) {
 		return
 	}
 	bindMap := make(map[string]bindInfo)
-	h := &bindinfo.BindHandle{}
+	h := bindinfo.NewGlobalBindingHandle(nil)
 	var err error
 	mustExecute(s, "BEGIN PESSIMISTIC")
 

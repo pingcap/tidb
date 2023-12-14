@@ -51,6 +51,7 @@ go_library(
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/chunk",
+        "//pkg/util/cpu",
         "//pkg/util/dbterror",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/etcd",

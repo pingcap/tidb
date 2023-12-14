@@ -669,6 +669,7 @@ import (
 	unicodeSym            "UNICODE"
 	unknown               "UNKNOWN"
 	user                  "USER"
+	universal             "UNIVERSAL"
 	validation            "VALIDATION"
 	value                 "VALUE"
 	variables             "VARIABLES"
@@ -1010,6 +1011,7 @@ import (
 	UnlockStatsStmt            "Unlock statistic statement"
 	LockTablesStmt             "Lock tables statement"
 	NonTransactionalDMLStmt    "Non-transactional DML statement"
+	OptimizeTableStmt          "OPTIMIZE statement"
 	PlanReplayerStmt           "Plan replayer statement"
 	PreparedStmt               "PreparedStmt"
 	ProcedureProcStmt          "The entrance of procedure statements which contains all kinds of statements in procedure"
@@ -1166,6 +1168,7 @@ import (
 	GetFormatSelector                      "{DATE|DATETIME|TIME|TIMESTAMP}"
 	GlobalScope                            "The scope of variable"
 	StatementScope                         "The scope of statement"
+	BindingType                            "The type of binding"
 	GroupByClause                          "GROUP BY clause"
 	HavingClause                           "HAVING clause"
 	AsOfClause                             "AS OF clause"
@@ -6823,6 +6826,7 @@ UnReservedKeyword:
 |	"DISCARD"
 |	"TABLE_CHECKSUM"
 |	"UNICODE"
+|	"UNIVERSAL"
 |	"AUTO_RANDOM"
 |	"AUTO_RANDOM_BASE"
 |	"SQL_TSI_DAY"
@@ -11785,6 +11789,15 @@ ShowLikeOrWhereOpt:
 		$$ = $2
 	}
 
+BindingType:
+	{
+		$$ = false
+	}
+|	"UNIVERSAL"
+	{
+		$$ = true
+	}
+
 GlobalScope:
 	{
 		$$ = false
@@ -12080,6 +12093,7 @@ Statement:
 |	RestartStmt
 |	HelpStmt
 |	NonTransactionalDMLStmt
+|	OptimizeTableStmt
 |	PauseLoadDataStmt
 |	ResumeLoadDataStmt
 |	CancelImportStmt
@@ -13802,44 +13816,47 @@ BindableStmt:
  *      CREATE GLOBAL BINDING FOR select Col1,Col2 from table USING select Col1,Col2 from table use index(Col1)
  *******************************************************************/
 CreateBindingStmt:
-	"CREATE" GlobalScope "BINDING" "FOR" BindableStmt "USING" BindableStmt
+	"CREATE" GlobalScope BindingType "BINDING" "FOR" BindableStmt "USING" BindableStmt
 	{
 		startOffset := parser.startOffset(&yyS[yypt-2])
 		endOffset := parser.startOffset(&yyS[yypt-1])
-		originStmt := $5
+		originStmt := $6
 		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
 
 		startOffset = parser.startOffset(&yyS[yypt])
-		hintedStmt := $7
+		hintedStmt := $8
 		hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.CreateBindingStmt{
 			OriginNode:  originStmt,
 			HintedNode:  hintedStmt,
 			GlobalScope: $2.(bool),
+			IsUniversal: $3.(bool),
 		}
 
 		$$ = x
 	}
-|	"CREATE" GlobalScope "BINDING" "USING" BindableStmt
+|	"CREATE" GlobalScope BindingType "BINDING" "USING" BindableStmt
 	{
 		startOffset := parser.startOffset(&yyS[yypt])
-		hintedStmt := $5
+		hintedStmt := $6
 		hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.CreateBindingStmt{
 			OriginNode:  hintedStmt,
 			HintedNode:  hintedStmt,
 			GlobalScope: $2.(bool),
+			IsUniversal: $3.(bool),
 		}
 
 		$$ = x
 	}
-|	"CREATE" GlobalScope "BINDING" "FROM" "HISTORY" "USING" "PLAN" "DIGEST" stringLit
+|	"CREATE" GlobalScope BindingType "BINDING" "FROM" "HISTORY" "USING" "PLAN" "DIGEST" stringLit
 	{
 		x := &ast.CreateBindingStmt{
 			GlobalScope: $2.(bool),
-			PlanDigest:  $9,
+			IsUniversal: $3.(bool),
+			PlanDigest:  $10,
 		}
 
 		$$ = x
@@ -14719,6 +14736,21 @@ OptionalShardColumn:
 |	"ON" ColumnName
 	{
 		$$ = $2.(*ast.ColumnName)
+	}
+
+/********************************************************************
+ * OptimizeTableStmt
+ *
+ * OPTIMIZE [NO_WRITE_TO_BINLOG | LOCAL]
+ *     TABLE tbl_name [, tbl_name] ...
+ *******************************************************************/
+OptimizeTableStmt:
+	"OPTIMIZE" NoWriteToBinLogAliasOpt TableOrTables TableNameList
+	{
+		$$ = &ast.OptimizeTableStmt{
+			Tables:          $4.([]*ast.TableName),
+			NoWriteToBinLog: $2.(bool),
+		}
 	}
 
 /********************************************************************

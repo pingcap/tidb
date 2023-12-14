@@ -200,7 +200,7 @@ func ExtendedStatsFromStorage(sctx sessionctx.Context, table *statistics.Table, 
 			colIDs := row.GetString(3)
 			err := json.Unmarshal([]byte(colIDs), &item.ColIDs)
 			if err != nil {
-				statslogutil.StatsLogger.Error("decode column IDs failed", zap.String("column_ids", colIDs), zap.Error(err))
+				statslogutil.StatsLogger().Error("decode column IDs failed", zap.String("column_ids", colIDs), zap.Error(err))
 				return nil, err
 			}
 			statsStr := row.GetString(4)
@@ -208,7 +208,7 @@ func ExtendedStatsFromStorage(sctx sessionctx.Context, table *statistics.Table, 
 				if statsStr != "" {
 					item.ScalarVals, err = strconv.ParseFloat(statsStr, 64)
 					if err != nil {
-						statslogutil.StatsLogger.Error("parse scalar stats failed", zap.String("stats", statsStr), zap.Error(err))
+						statslogutil.StatsLogger().Error("parse scalar stats failed", zap.String("stats", statsStr), zap.Error(err))
 						return nil, err
 					}
 				}

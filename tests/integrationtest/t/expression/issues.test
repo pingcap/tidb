@@ -1193,7 +1193,7 @@ select a from t1 order by a;
 # TestIssue32488
 drop table if exists t;
 create table t(a varchar(32)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-insert into t values('ʞ'), ('İ');
+insert into t values('ʞ'), ('İ'), ('ß');
 set @@tidb_enable_vectorized_expression = false;
 select binary upper(a), lower(a) from t order by upper(a);
 select distinct upper(a), lower(a) from t order by upper(a);

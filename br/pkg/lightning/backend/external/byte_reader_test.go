@@ -79,19 +79,18 @@ func TestByteReader(t *testing.T) {
 	// Test basic next() usage.
 	br, err := newByteReader(context.Background(), newRsc(), 3)
 	require.NoError(t, err)
-	x := br.next(1)
-	require.Equal(t, 1, len(x))
-	require.Equal(t, byte('a'), x[0])
-	x = br.next(2)
-	require.Equal(t, 2, len(x))
-	require.Equal(t, byte('b'), x[0])
-	require.Equal(t, byte('c'), x[1])
+	n, bs := br.next(1)
+	require.Equal(t, 1, n)
+	require.Equal(t, [][]byte{{'a'}}, bs)
+	n, bs = br.next(2)
+	require.Equal(t, 2, n)
+	require.Equal(t, [][]byte{{'b', 'c'}}, bs)
 	require.NoError(t, br.Close())
 
 	// Test basic readNBytes() usage.
 	br, err = newByteReader(context.Background(), newRsc(), 3)
 	require.NoError(t, err)
-	x, err = br.readNBytes(2)
+	x, err := br.readNBytes(2)
 	require.NoError(t, err)
 	require.Equal(t, 2, len(x))
 	require.Equal(t, byte('a'), x[0])
@@ -104,12 +103,14 @@ func TestByteReader(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 5, len(x))
 	require.Equal(t, byte('e'), x[4])
+	_, err = br.readNBytes(1) // EOF
+	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, br.Close())
 
 	br, err = newByteReader(context.Background(), newRsc(), 3)
 	require.NoError(t, err)
 	_, err = br.readNBytes(7) // EOF
-	require.Error(t, err)
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
 
 	err = st.WriteFile(context.Background(), "testfile", []byte("abcdef"))
 	require.NoError(t, err)

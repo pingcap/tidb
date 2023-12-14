@@ -131,11 +131,7 @@ func (cfg *StreamConfig) makeStorage(ctx context.Context) (storage.ExternalStora
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	opts := storage.ExternalStorageOptions{
-		NoCredentials:   cfg.NoCreds,
-		SendCredentials: cfg.SendCreds,
-		HTTPClient:      storage.GetDefaultHttpClient(cfg.MetadataDownloadBatchSize),
-	}
+	opts := getExternalStorageOptions(&cfg.Config, u)
 	storage, err := storage.New(ctx, u, &opts)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1470,11 +1466,7 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 		return nil, errors.Trace(err)
 	}
 
-	opts := storage.ExternalStorageOptions{
-		NoCredentials:   cfg.NoCreds,
-		SendCredentials: cfg.SendCreds,
-		HTTPClient:      storage.GetDefaultHttpClient(cfg.MetadataDownloadBatchSize),
-	}
+	opts := getExternalStorageOptions(&cfg.Config, u)
 	if err = client.SetStorage(ctx, u, &opts); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1496,6 +1488,18 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 	}
 
 	return client, nil
+}
+
+func getExternalStorageOptions(cfg *Config, u *backuppb.StorageBackend) storage.ExternalStorageOptions {
+	var httpClient *http.Client
+	if u.GetGcs() == nil {
+		httpClient = storage.GetDefaultHttpClient(cfg.MetadataDownloadBatchSize)
+	}
+	return storage.ExternalStorageOptions{
+		NoCredentials:   cfg.NoCreds,
+		SendCredentials: cfg.SendCreds,
+		HTTPClient:      httpClient,
+	}
 }
 
 func checkLogRange(restoreFrom, restoreTo, logMinTS, logMaxTS uint64) error {

@@ -20,6 +20,7 @@ go_library(
         "//pkg/parser/terror",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
+        "//pkg/statistics/handle/logutil",
         "//pkg/table",
         "//pkg/util/chunk",
         "//pkg/util/intest",
@@ -31,6 +32,7 @@ go_library(
         "@com_github_tiancaiamao_gp//:gp",
         "@com_github_tikv_client_go_v2//oracle",
         "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
     ],
 )
 

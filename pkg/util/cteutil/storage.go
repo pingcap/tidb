@@ -15,13 +15,12 @@
 package cteutil
 
 import (
-	"sync"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/syncutil"
 )
 
 var _ Storage = &StorageRC{}
@@ -99,7 +98,7 @@ type StorageRC struct {
 	refCnt  int
 	chkSize int
 	iter    int
-	mu      sync.Mutex
+	mu      syncutil.Mutex
 	done    bool
 }
 
