@@ -586,6 +586,43 @@ func TestSetSpeedLimit(t *testing.T) {
 	}
 }
 
+var deleteRangeQueryList = []*stream.PreDelRangeQuery{
+	{
+		Sql: "INSERT IGNORE INTO mysql.gc_delete_range VALUES (%?, %?, %?, %?, %?), (%?, %?, %?, %?, %?)",
+		ParamsList: []stream.DelRangeParams{
+			{
+				JobID:    1,
+				ElemID:   1,
+				StartKey: "a",
+				EndKey:   "b",
+			},
+			{
+				JobID:    1,
+				ElemID:   2,
+				StartKey: "b",
+				EndKey:   "c",
+			},
+		},
+	},
+	{
+		// When the last table id has no rewrite rule
+		Sql: "INSERT IGNORE INTO mysql.gc_delete_range VALUES (%?, %?, %?, %?, %?),",
+		ParamsList: []stream.DelRangeParams{
+			{
+				JobID:    2,
+				ElemID:   1,
+				StartKey: "a",
+				EndKey:   "b",
+			},
+		},
+	},
+	{
+		// When all the tables have no rewrite rule
+		Sql:        "INSERT IGNORE INTO mysql.gc_delete_range VALUES ",
+		ParamsList: nil,
+	},
+}
+
 func TestDeleteRangeQuery(t *testing.T) {
 	ctx := context.Background()
 	m := mc
@@ -619,40 +656,63 @@ func TestDeleteRangeQuery(t *testing.T) {
 
 	client.RunGCRowsLoader(ctx)
 
-	client.RecordDeleteRange(&stream.PreDelRangeQuery{
-		Sql: "INSERT IGNORE INTO mysql.gc_delete_range VALUES (%?, %?, %?, %?, %?), (%?, %?, %?, %?, %?)",
-		ParamsList: []stream.DelRangeParams{
-			{
-				JobID:    1,
-				ElemID:   1,
-				StartKey: "a",
-				EndKey:   "b",
-			},
-			{
-				JobID:    1,
-				ElemID:   2,
-				StartKey: "b",
-				EndKey:   "c",
+	for _, query := range deleteRangeQueryList {
+		client.RecordDeleteRange(query)
+	}
+	querys := client.GetGCRows()
+	require.Equal(t, len(querys), len(deleteRangeQueryList))
+	for i, query := range querys {
+		expected_query := deleteRangeQueryList[i]
+		require.Equal(t, expected_query.Sql, query.Sql)
+		require.Equal(t, len(expected_query.ParamsList), len(query.ParamsList))
+		for j := range expected_query.ParamsList {
+			require.Equal(t, expected_query.ParamsList[j], query.ParamsList[j])
+		}
+
+	}
+
+}
+
+func TestDeleteRangeQueryExec(t *testing.T) {
+	ctx := context.Background()
+	m := mc
+	mockStores := []*metapb.Store{
+		{
+			Id: 1,
+			Labels: []*metapb.StoreLabel{
+				{
+					Key:   "engine",
+					Value: "tiflash",
+				},
 			},
 		},
-	})
+		{
+			Id: 2,
+			Labels: []*metapb.StoreLabel{
+				{
+					Key:   "engine",
+					Value: "tiflash",
+				},
+			},
+		},
+	}
 
-	querys := client.GetGCRows()
-	require.Equal(t, len(querys), 1)
-	require.Equal(t, querys[0].Sql, "INSERT IGNORE INTO mysql.gc_delete_range VALUES (%?, %?, %?, %?, %?), (%?, %?, %?, %?, %?)")
-	require.Equal(t, len(querys[0].ParamsList), 2)
-	require.Equal(t, querys[0].ParamsList[0], stream.DelRangeParams{
-		JobID:    1,
-		ElemID:   1,
-		StartKey: "a",
-		EndKey:   "b",
-	})
-	require.Equal(t, querys[0].ParamsList[1], stream.DelRangeParams{
-		JobID:    1,
-		ElemID:   2,
-		StartKey: "b",
-		EndKey:   "c",
-	})
+	g := gluetidb.New()
+	retryCnt := 1
+	client := restore.NewRestoreClient(fakePDClient{
+		stores:     mockStores,
+		retryTimes: &retryCnt,
+	}, nil, defaultKeepaliveCfg, false)
+	err := client.Init(g, m.Storage)
+	require.NoError(t, err)
+
+	client.RunGCRowsLoader(ctx)
+
+	for _, query := range deleteRangeQueryList {
+		client.RecordDeleteRange(query)
+	}
+
+	require.NoError(t, client.InsertGCRows(ctx))
 }
 
 func MockEmptySchemasReplace() *stream.SchemasReplace {
