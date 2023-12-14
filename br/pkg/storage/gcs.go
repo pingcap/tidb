@@ -302,6 +302,9 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 		if gcs.CredentialsBlob == "" {
 			creds, err := google.FindDefaultCredentials(ctx, storage.ScopeReadWrite)
 			if err != nil {
+				if intest.InTest {
+					goto skipHandleCred
+				}
 				return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "%v Or you should provide '--gcs.credentials_file'", err)
 			}
 			if opts.SendCredentials {
@@ -318,23 +321,26 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 			clientOps = append(clientOps, option.WithCredentialsJSON([]byte(gcs.GetCredentialsBlob())))
 		}
 	}
+skipHandleCred:
 
 	if gcs.Endpoint != "" {
 		clientOps = append(clientOps, option.WithEndpoint(gcs.Endpoint))
 	}
 
 	if opts.HTTPClient != nil {
-		if !isMockGCS(gcs) {
-			// see https://github.com/pingcap/tidb/issues/47022#issuecomment-1722913455
-			// https://www.googleapis.com/auth/cloud-platform must be set to use service_account
-			// type of credential-file.
-			newTransport, err := htransport.NewTransport(ctx, opts.HTTPClient.Transport,
-				append(clientOps, option.WithScopes(storage.ScopeFullControl, "https://www.googleapis.com/auth/cloud-platform"))...)
-			if err != nil {
-				return nil, errors.Trace(err)
+		// see https://github.com/pingcap/tidb/issues/47022#issuecomment-1722913455
+		// https://www.googleapis.com/auth/cloud-platform must be set to use service_account
+		// type of credential-file.
+		newTransport, err := htransport.NewTransport(ctx, opts.HTTPClient.Transport,
+			append(clientOps, option.WithScopes(storage.ScopeFullControl, "https://www.googleapis.com/auth/cloud-platform"))...)
+		if err != nil {
+			if intest.InTest {
+				goto skipHandleTransport
 			}
-			opts.HTTPClient.Transport = newTransport
+			return nil, errors.Trace(err)
 		}
+		opts.HTTPClient.Transport = newTransport
+	skipHandleTransport:
 		clientOps = append(clientOps, option.WithHTTPClient(opts.HTTPClient))
 	}
 
@@ -495,9 +501,6 @@ func gcsHttpClientForThroughput() *http.Client {
 func isMockGCS(gcs *backuppb.GCS) bool {
 	if !intest.InTest {
 		return false
-	}
-	if gcs.Endpoint == "" {
-		return true
 	}
 	return strings.Contains(gcs.Endpoint, "127.0.0.1")
 }

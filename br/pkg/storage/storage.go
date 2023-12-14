@@ -192,9 +192,6 @@ func Create(ctx context.Context, backend *backuppb.StorageBackend, sendCreds boo
 func NewWithDefaultOpt(ctx context.Context, backend *backuppb.StorageBackend) (ExternalStorage, error) {
 	var opts ExternalStorageOptions
 	if gcs := backend.GetGcs(); gcs != nil {
-		if isMockGCS(gcs) {
-			opts.NoCredentials = true
-		}
 		opts.HTTPClient = gcsHttpClientForThroughput()
 	}
 	return New(ctx, backend, &opts)
