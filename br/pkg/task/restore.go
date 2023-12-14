@@ -1040,7 +1040,9 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	// So leave it out of the pipeline for easier implementation.
 	err = client.RestoreSystemSchemas(ctx, cfg.TableFilter)
 	// TODO print the error to the foreground
-	log.Warn("failed to restore system schemas, please check the error before next step", zap.Error(err))
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	schedulersRemovable = true
 

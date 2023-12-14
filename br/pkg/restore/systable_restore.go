@@ -27,13 +27,16 @@ const (
 )
 
 var statsTables = map[string]struct{}{
-	"stats_buckets":    {},
-	"stats_extended":   {},
-	"stats_feedback":   {},
-	"stats_fm_sketch":  {},
-	"stats_histograms": {},
-	"stats_meta":       {},
-	"stats_top_n":      {},
+	"stats_buckets":      {},
+	"stats_extended":     {},
+	"stats_feedback":     {},
+	"stats_fm_sketch":    {},
+	"stats_histograms":   {},
+	"stats_history":      {},
+	"stats_meta":         {},
+	"stats_meta_history": {},
+	"stats_table_locked": {},
+	"stats_top_n":        {},
 }
 
 var unRecoverableTable = map[string]struct{}{
@@ -149,11 +152,16 @@ func (rc *Client) ClearSystemUsers(ctx context.Context, resetUsers []string) err
 
 // RestoreSystemSchemas restores the system schema(i.e. the `mysql` schema).
 // Detail see https://github.com/pingcap/br/issues/679#issuecomment-762592254.
-func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) error {
+func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) (rerr error) {
 	sysDB := mysql.SystemDB
 
 	temporaryDB := utils.TemporaryDBName(sysDB)
-	defer rc.cleanTemporaryDatabase(ctx, sysDB)
+	defer func() {
+		// Don't clean the temporary database for next restore with checkpoint.
+		if rerr == nil {
+			rc.cleanTemporaryDatabase(ctx, sysDB)
+		}
+	}()
 
 	if !f.MatchSchema(sysDB) || !rc.withSysTable {
 		log.Debug("system database filtered out", zap.String("database", sysDB))
@@ -230,8 +238,7 @@ func (rc *Client) afterSystemTablesReplaced(ctx context.Context, tables []string
 				// to make it compatible with older version
 				// todo: should we allow restore system table in non-fresh cluster in later br version?
 				// if we don't, we can check it at first place.
-				err = multierr.Append(err, errors.Annotatef(berrors.ErrUnsupportedSystemTable,
-					"restored user info may not take effect, until you should execute `FLUSH PRIVILEGES` manually"))
+				log.Warn("restored user info may not take effect, until you should execute `FLUSH PRIVILEGES` manually")
 			}
 		} else if table == "bind_info" {
 			if serr := rc.db.se.Execute(ctx, bindinfo.StmtRemoveDuplicatedPseudoBinding); serr != nil {
@@ -277,12 +284,11 @@ func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model
 	//  1.5 ) (Optional) The UPDATE statement sometimes costs, the whole system tables restore step can be place into the restore pipeline.
 	//  2   ) Deprecate the origin interface for backing up statistics.
 	if isStatsTable(tableName) {
-		return berrors.ErrUnsupportedSystemTable.GenWithStack("restoring stats via `mysql` schema isn't support yet: " +
-			"the table ID is out-of-date and may corrupt existing statistics")
+		return nil
 	}
 
 	if isUnrecoverableTable(tableName) {
-		return berrors.ErrUnsupportedSystemTable.GenWithStack("restoring unsupported `mysql` schema table")
+		return nil
 	}
 
 	// Currently, we don't support restore resource group metadata, so we need to
