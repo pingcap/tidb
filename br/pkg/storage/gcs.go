@@ -283,16 +283,16 @@ func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) 
 	}
 	uri := s.objectName(name)
 	// 5 MB is the minimum part size for GCS.
-	partSize := 5 * 1024 * 1024
-	if int(wo.PartSize) > partSize {
-		partSize = int(wo.PartSize)
+	partSize := int64(5 * 1024 * 1024)
+	if wo.PartSize > partSize {
+		partSize = wo.PartSize
 	}
 	w, err := NewGCSWriter(ctx, s.cli, uri, partSize, wo.Concurrency, s.gcs.Bucket)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	fw := newFlushStorageWriter(w, &emptyFlusher{}, w)
-	bw := newBufferedWriter(fw, partSize, NoCompression)
+	bw := newBufferedWriter(fw, int(partSize), NoCompression)
 	return bw, nil
 }
 
