@@ -293,6 +293,9 @@ func (s *GCSStorage) Rename(ctx context.Context, oldFileName, newFileName string
 	return s.DeleteFile(ctx, oldFileName)
 }
 
+// used in tests
+var mustReportCredErr = false
+
 // NewGCSStorage creates a GCS external storage implementation.
 func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorageOptions) (*GCSStorage, error) {
 	var clientOps []option.ClientOption
@@ -302,7 +305,7 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 		if gcs.CredentialsBlob == "" {
 			creds, err := google.FindDefaultCredentials(ctx, storage.ScopeReadWrite)
 			if err != nil {
-				if intest.InTest {
+				if intest.InTest && !mustReportCredErr {
 					goto skipHandleCred
 				}
 				return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "%v Or you should provide '--gcs.credentials_file'", err)
@@ -334,7 +337,7 @@ skipHandleCred:
 		newTransport, err := htransport.NewTransport(ctx, opts.HTTPClient.Transport,
 			append(clientOps, option.WithScopes(storage.ScopeFullControl, "https://www.googleapis.com/auth/cloud-platform"))...)
 		if err != nil {
-			if intest.InTest {
+			if intest.InTest && !mustReportCredErr {
 				goto skipHandleTransport
 			}
 			return nil, errors.Trace(err)
