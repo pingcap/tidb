@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -324,74 +323,83 @@ func (w *HashAggFinalWorker) mergeResultsAndSend(ctx sessionctx.Context) (bool, 
 func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup) {
 	w.spilledDataChan = make(chan *aggfuncs.AggPartialResultMapper, 1)
 	start := time.Now()
-	defer func() {
-		if r := recover(); r != nil {
-			recoveryHashAgg(w.outputCh, r)
-		}
-		close(w.spilledDataChan)
-		if w.stats != nil {
-			w.stats.WorkerTime += int64(time.Since(start))
-		}
-		waitGroup.Done()
-	}()
+	defer w.cleanup(start, waitGroup)
 
-	enableIntest := false
 	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
 		if val.(bool) {
-			enableIntest = true
+			w.intestBeforeStart()
 		}
 	})
 
-	if intest.InTest && enableIntest {
-		num := rand.Intn(50)
-		if num == 0 {
-			panic("Intest panic: final worker is panicked before start")
-		} else if num == 1 {
-			time.Sleep(2 * time.Millisecond)
-		}
-	}
-
 	w.isSpilledTriggered = w.spillHelper.isSpillTriggered()
 	if w.isSpilledTriggered {
-		if w.spillHelper.checkError() {
-			return
-		}
-
-		for {
-			hasData, err := w.restoreOnePartition(ctx)
-			if err != nil {
-				w.outputCh <- &AfFinalResult{err: err}
-				return
-			}
-
-			if !hasData {
-				return
-			}
-
-			if intest.InTest && enableIntest {
-				num := rand.Intn(10000)
-				if num < 7 {
-					panic("Intest panic: final worker is panicked when running")
-				} else if num < 14 {
-					time.Sleep(2 * time.Millisecond)
-				} else if num < 21 {
-					w.memTracker.Consume(1000000)
-				} else if num < 28 {
-					w.outputCh <- &AfFinalResult{err: errors.Errorf("Random fail is triggered in final worker")}
-					return
-				}
-			}
-
-			var spillContinue bool
-			spillContinue, err = w.mergeResultsAndSend(ctx)
-			if err != nil || !spillContinue {
-				return
-			}
-		}
+		w.handleSpilledData(ctx)
 	} else {
 		_, err := w.mergeResultsAndSend(ctx)
 		if err != nil {
 			return
 		}
+	}
+}
+
+func (w *HashAggFinalWorker) cleanup(start time.Time, waitGroup *sync.WaitGroup) {
+	if r := recover(); r != nil {
+		recoveryHashAgg(w.outputCh, r)
+	}
+	close(w.spilledDataChan)
+	if w.stats != nil {
+		w.stats.WorkerTime += int64(time.Since(start))
+	}
+	waitGroup.Done()
+}
+
+func (w *HashAggFinalWorker) handleSpilledData(ctx sessionctx.Context) {
+	if w.spillHelper.checkError() {
+		return
+	}
+
+	for {
+		hasData, err := w.restoreOnePartition(ctx)
+		if err != nil {
+			w.outputCh <- &AfFinalResult{err: err}
+			return
+		}
+
+		if !hasData {
+			return
+		}
+
+		failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
+			if val.(bool) {
+				w.intestDuringRun()
+			}
+		})
+
+		spillContinue, err := w.mergeResultsAndSend(ctx)
+		if err != nil || !spillContinue {
+			return
+		}
+	}
+}
+
+func (w *HashAggFinalWorker) intestBeforeStart() {
+	num := rand.Intn(50)
+	if num == 0 {
+		panic("Intest panic: final worker is panicked before start")
+	} else if num == 1 {
+		time.Sleep(1 * time.Millisecond)
+	}
+}
+
+func (w *HashAggFinalWorker) intestDuringRun() {
+	num := rand.Intn(10000)
+	if num < 7 {
+		panic("Intest panic: final worker is panicked when running")
+	} else if num < 14 {
+		time.Sleep(1 * time.Millisecond)
+	} else if num < 21 {
+		w.memTracker.Consume(1000000)
+	} else if num < 28 {
+		w.outputCh <- &AfFinalResult{err: errors.Errorf("Random fail is triggered in final worker")}
 	}
 }
