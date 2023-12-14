@@ -15,6 +15,7 @@
 package issuetest_test
 
 import (
+	"bytes"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -606,4 +607,22 @@ func TestIssue42662(t *testing.T) {
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/issue42662_1"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/servermemorylimit/issue42662_2"))
+}
+
+func TestIssue49015(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table test.t (a varchar(10), b tinyint(1));")
+	tk.MustExec("insert into test.t values (\"abc\", 1)")
+	rows := tk.MustQuery("explain select * from test.t where (a, b) in (('a', 1), (null, 0))").Rows()
+	resBuff := bytes.NewBufferString("")
+	for _, row := range rows {
+		fmt.Fprintf(resBuff, "%s\n", row)
+	}
+	res := resBuff.String()
+	require.Contains(t, res, "eq")
+	require.NotContains(t, res, "cast")
 }

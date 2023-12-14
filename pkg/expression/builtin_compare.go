@@ -1286,9 +1286,29 @@ func getBaseCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.Ev
 
 // GetAccurateCmpType uses a more complex logic to decide the EvalType of the two args when compare with each other than
 // getBaseCmpType does.
+// Note: it may update lhs/rhs return type if it is null constant to avoid potential useless cast operation
+// https://github.com/pingcap/tidb/issues/49015
 func GetAccurateCmpType(lhs, rhs Expression) types.EvalType {
 	lhsFieldType, rhsFieldType := lhs.GetType(), rhs.GetType()
 	lhsEvalType, rhsEvalType := lhsFieldType.EvalType(), rhsFieldType.EvalType()
+
+	// Handle the situation for one of the expressions is null constant
+	var isNull = func(expr Expression) bool {
+		cons, ok := expr.(*Constant)
+		return ok && cons.Value.IsNull()
+	}
+	if lhsFieldType.GetType() != rhsFieldType.GetType() {
+		if isNull(lhs) {
+			*lhs.GetType() = *rhs.GetType()
+			lhs.GetType().DelFlag(mysql.NotNullFlag) // Remove NotNullFlag of NullConst
+			return rhsEvalType
+		} else if isNull(rhs) {
+			*rhs.GetType() = *lhs.GetType()
+			rhs.GetType().DelFlag(mysql.NotNullFlag) // Remove NotNullFlag of NullConst
+			return lhsEvalType
+		}
+	}
+
 	cmpType := getBaseCmpType(lhsEvalType, rhsEvalType, lhsFieldType, rhsFieldType)
 	if (lhsEvalType.IsStringKind() && lhsFieldType.GetType() == mysql.TypeJSON) || (rhsEvalType.IsStringKind() && rhsFieldType.GetType() == mysql.TypeJSON) {
 		cmpType = types.ETJson
