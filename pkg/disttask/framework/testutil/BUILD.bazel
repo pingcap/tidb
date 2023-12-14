@@ -13,6 +13,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/disttask/framework/testutil",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/disttask/framework/hook",
         "//pkg/disttask/framework/mock",
         "//pkg/disttask/framework/mock/execute",
         "//pkg/disttask/framework/proto",
@@ -23,6 +24,7 @@ go_library(
         "//pkg/domain/infosync",
         "//pkg/sessionctx",
         "//pkg/testkit",
+        "//pkg/util/logutil",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
