@@ -94,7 +94,7 @@ func TestBindingLastUpdateTimeWithInvalidBind(t *testing.T) {
 	require.Equal(t, updateTime0, "0000-00-00 00:00:00")
 
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t`', 'select * from `test` . `t` use index(`idx`)', 'test', 'enabled', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.Manual + "', '', '')")
+		bindinfo.Manual + "', '', '', '')")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
@@ -254,6 +254,51 @@ func TestSetBindingStatus(t *testing.T) {
 	require.Len(t, rows, 0)
 }
 
+// for testing, only returns Original_sql, Bind_sql, Default_db, Status, Source, Type, Sql_digest
+func showBinding(tk *testkit.TestKit, showStmt string) [][]interface{} {
+	rows := tk.MustQuery(showStmt).Sort().Rows()
+	result := make([][]interface{}, len(rows))
+	for i, r := range rows {
+		result[i] = append(result[i], r[:4]...)
+		result[i] = append(result[i], r[8:11]...)
+	}
+	return result
+}
+
+func TestCreateUniversalBinding(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int)`)
+
+	tk.MustExec(`create global universal binding using select * from t`)
+	require.Equal(t, showBinding(tk, "show global bindings"),
+		[][]interface{}{{"select * from `t`", "SELECT * FROM `t`", "", "enabled", "manual", "u", "e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7"}})
+	tk.MustExec(`create global binding using select * from t`)
+	require.Equal(t, showBinding(tk, "show global bindings"),
+		[][]interface{}{
+			{"select * from `t`", "SELECT * FROM `t`", "", "enabled", "manual", "u", "e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7"},
+			{"select * from `test` . `t`", "SELECT * FROM `test`.`t`", "test", "enabled", "manual", "", "8b193b00413fdb910d39073e0d494c96ebf24d1e30b131ecdd553883d0e29b42"}})
+	tk.MustExec(`drop global binding for sql digest 'e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7'`)
+	require.Equal(t, showBinding(tk, "show global bindings"),
+		[][]interface{}{
+			{"select * from `test` . `t`", "SELECT * FROM `test`.`t`", "test", "enabled", "manual", "", "8b193b00413fdb910d39073e0d494c96ebf24d1e30b131ecdd553883d0e29b42"}})
+
+	tk.MustExec(`create session universal binding using select * from t`)
+	require.Equal(t, showBinding(tk, "show session bindings"),
+		[][]interface{}{{"select * from `t`", "SELECT * FROM `t`", "", "enabled", "manual", "u", "e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7"}})
+	tk.MustExec(`create session binding using select * from t`)
+	require.Equal(t, showBinding(tk, "show session bindings"),
+		[][]interface{}{
+			{"select * from `t`", "SELECT * FROM `t`", "", "enabled", "manual", "u", "e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7"},
+			{"select * from `test` . `t`", "SELECT * FROM `test`.`t`", "test", "enabled", "manual", "", "8b193b00413fdb910d39073e0d494c96ebf24d1e30b131ecdd553883d0e29b42"}})
+	tk.MustExec(`drop session binding for sql digest 'e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7'`)
+	require.Equal(t, showBinding(tk, "show session bindings"),
+		[][]interface{}{
+			{"select * from `test` . `t`", "SELECT * FROM `test`.`t`", "test", "enabled", "manual", "", "8b193b00413fdb910d39073e0d494c96ebf24d1e30b131ecdd553883d0e29b42"}})
+}
+
 func TestSetBindingStatusWithoutBindingInCache(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
@@ -267,9 +312,9 @@ func TestSetBindingStatusWithoutBindingInCache(t *testing.T) {
 
 	// Simulate creating bindings on other machines
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT /*+ USE_INDEX(`t` `idx_a`)*/ * FROM `test`.`t` WHERE `a` > 10', 'test', 'deleted', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.Manual + "', '', '')")
+		bindinfo.Manual + "', '', '', '')")
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT /*+ USE_INDEX(`t` `idx_a`)*/ * FROM `test`.`t` WHERE `a` > 10', 'test', 'enabled', '2000-01-02 09:00:00', '2000-01-02 09:00:00', '', '','" +
-		bindinfo.Manual + "', '', '')")
+		bindinfo.Manual + "', '', '', '')")
 	dom.BindHandle().Clear()
 	tk.MustExec("set binding disabled for select * from t where a > 10")
 	tk.MustExec("admin reload bindings")
@@ -282,9 +327,9 @@ func TestSetBindingStatusWithoutBindingInCache(t *testing.T) {
 
 	// Simulate creating bindings on other machines
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT * FROM `test`.`t` WHERE `a` > 10', 'test', 'deleted', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.Manual + "', '', '')")
+		bindinfo.Manual + "', '', '', '')")
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT * FROM `test`.`t` WHERE `a` > 10', 'test', 'disabled', '2000-01-02 09:00:00', '2000-01-02 09:00:00', '', '','" +
-		bindinfo.Manual + "', '', '')")
+		bindinfo.Manual + "', '', '', '')")
 	dom.BindHandle().Clear()
 	tk.MustExec("set binding enabled for select * from t where a > 10")
 	tk.MustExec("admin reload bindings")

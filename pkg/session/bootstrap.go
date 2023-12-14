@@ -293,6 +293,7 @@ const (
 		source VARCHAR(10) NOT NULL DEFAULT 'unknown',
 		sql_digest varchar(64),
 		plan_digest varchar(64),
+		type varchar(64) NOT NULL DEFAULT '',
 		INDEX sql_index(original_sql(700),default_db(68)) COMMENT "accelerate the speed when add global binding query",
 		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
@@ -1038,11 +1039,15 @@ const (
 	//   add concurrency/create_time/end_time/digest to `mysql.tidb_background_subtask`/`mysql.tidb_background_subtask_history`
 	//   add idx_exec_id(exec_id), uk_digest to `mysql.tidb_background_subtask`
 	version180 = 180
+
+	// version 181
+	//   add a new `type` column on mysql.bind_info, which is for universal binding #48875.
+	version181
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version180
+var currentBootstrapVersion int64 = version181
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1198,6 +1203,7 @@ var (
 		upgradeToVer178,
 		upgradeToVer179,
 		upgradeToVer180,
+		upgradeToVer181,
 	}
 )
 
@@ -2934,6 +2940,13 @@ func upgradeToVer180(s sessiontypes.Session, ver int64) {
 
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD INDEX idx_exec_id(exec_id)", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD UNIQUE INDEX uk_task_key_step_ordinal(task_key, step, ordinal)", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer181(s sessiontypes.Session, ver int64) {
+	if ver >= version181 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN `type` VARCHAR(64) NOT NULL DEFAULT ''", infoschema.ErrColumnExists)
 }
 
 func writeOOMAction(s sessiontypes.Session) {
