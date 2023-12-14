@@ -70,7 +70,7 @@ func (b *builtinIlikeSig) Clone() builtinFunc {
 }
 
 // evalInt evals a builtinIlikeSig.
-func (b *builtinIlikeSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinIlikeSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	valStr, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err

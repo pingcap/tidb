@@ -68,25 +68,25 @@ type VecExpr interface {
 	Vectorized() bool
 
 	// VecEvalInt evaluates this expression in a vectorized manner.
-	VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	VecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 
 	// VecEvalReal evaluates this expression in a vectorized manner.
-	VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	VecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 
 	// VecEvalString evaluates this expression in a vectorized manner.
-	VecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	VecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 
 	// VecEvalDecimal evaluates this expression in a vectorized manner.
-	VecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	VecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 
 	// VecEvalTime evaluates this expression in a vectorized manner.
-	VecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	VecEvalTime(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 
 	// VecEvalDuration evaluates this expression in a vectorized manner.
-	VecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	VecEvalDuration(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 
 	// VecEvalJSON evaluates this expression in a vectorized manner.
-	VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 }
 
 // ReverseExpr contains all resersed evaluation methods.
@@ -114,28 +114,28 @@ type Expression interface {
 	Traverse(TraverseAction) Expression
 
 	// Eval evaluates an expression through a row.
-	Eval(ctx sessionctx.Context, row chunk.Row) (types.Datum, error)
+	Eval(ctx EvalContext, row chunk.Row) (types.Datum, error)
 
 	// EvalInt returns the int64 representation of expression.
-	EvalInt(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error)
+	EvalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error)
 
 	// EvalReal returns the float64 representation of expression.
-	EvalReal(ctx sessionctx.Context, row chunk.Row) (val float64, isNull bool, err error)
+	EvalReal(ctx EvalContext, row chunk.Row) (val float64, isNull bool, err error)
 
 	// EvalString returns the string representation of expression.
-	EvalString(ctx sessionctx.Context, row chunk.Row) (val string, isNull bool, err error)
+	EvalString(ctx EvalContext, row chunk.Row) (val string, isNull bool, err error)
 
 	// EvalDecimal returns the decimal representation of expression.
-	EvalDecimal(ctx sessionctx.Context, row chunk.Row) (val *types.MyDecimal, isNull bool, err error)
+	EvalDecimal(ctx EvalContext, row chunk.Row) (val *types.MyDecimal, isNull bool, err error)
 
 	// EvalTime returns the DATE/DATETIME/TIMESTAMP representation of expression.
-	EvalTime(ctx sessionctx.Context, row chunk.Row) (val types.Time, isNull bool, err error)
+	EvalTime(ctx EvalContext, row chunk.Row) (val types.Time, isNull bool, err error)
 
 	// EvalDuration returns the duration representation of expression.
-	EvalDuration(ctx sessionctx.Context, row chunk.Row) (val types.Duration, isNull bool, err error)
+	EvalDuration(ctx EvalContext, row chunk.Row) (val types.Duration, isNull bool, err error)
 
 	// EvalJSON returns the JSON representation of expression.
-	EvalJSON(ctx sessionctx.Context, row chunk.Row) (val types.BinaryJSON, isNull bool, err error)
+	EvalJSON(ctx EvalContext, row chunk.Row) (val types.BinaryJSON, isNull bool, err error)
 
 	// GetType gets the type that the expression returns.
 	GetType() *types.FieldType
@@ -144,7 +144,7 @@ type Expression interface {
 	Clone() Expression
 
 	// Equal checks whether two expressions are equal.
-	Equal(ctx sessionctx.Context, e Expression) bool
+	Equal(ctx EvalContext, e Expression) bool
 
 	// IsCorrelated checks if this expression has correlated key.
 	IsCorrelated() bool
@@ -169,16 +169,16 @@ type Expression interface {
 	resolveIndices(schema *Schema) error
 
 	// ResolveIndicesByVirtualExpr resolves indices by the given schema in terms of virual expression. It will copy the original expression and return the copied one.
-	ResolveIndicesByVirtualExpr(ctx sessionctx.Context, schema *Schema) (Expression, bool)
+	ResolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) (Expression, bool)
 
 	// resolveIndicesByVirtualExpr is called inside the `ResolveIndicesByVirtualExpr` It will perform on the expression itself.
-	resolveIndicesByVirtualExpr(ctx sessionctx.Context, schema *Schema) bool
+	resolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) bool
 
 	// RemapColumn remaps columns with provided mapping and returns new expression
 	RemapColumn(map[int64]*Column) (Expression, error)
 
 	// ExplainInfo returns operator information to be explained.
-	ExplainInfo(ctx sessionctx.Context) string
+	ExplainInfo(ctx EvalContext) string
 
 	// ExplainNormalizedInfo returns operator normalized information for generating digest.
 	ExplainNormalizedInfo() string
@@ -262,7 +262,7 @@ func HandleOverflowOnSelection(sc *stmtctx.StatementContext, val int64, err erro
 // indicates bool result of the expression list, the second returned value indicates
 // whether the result of the expression list is null, it can only be true when the
 // first returned values is false.
-func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, bool, error) {
+func EvalBool(ctx EvalContext, exprList CNFExprs, row chunk.Row) (bool, bool, error) {
 	hasNull := false
 	for _, expr := range exprList {
 		data, err := expr.Eval(ctx, row)
@@ -336,7 +336,7 @@ func deallocateZeroSlice(isZero []int8) {
 }
 
 // VecEvalBool does the same thing as EvalBool but it works in a vectorized manner.
-func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, selected, nulls []bool) ([]bool, []bool, error) {
+func VecEvalBool(ctx EvalContext, exprList CNFExprs, input *chunk.Chunk, selected, nulls []bool) ([]bool, []bool, error) {
 	// If input.Sel() != nil, we will call input.SetSel(nil) to clear the sel slice in input chunk.
 	// After the function finished, then we reset the input.Sel().
 	// The caller will handle the input.Sel() and selected slices.
@@ -550,7 +550,7 @@ func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalT
 	return nil
 }
 
-func implicitEvalReal(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
+func implicitEvalReal(ctx EvalContext, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
 	if expr.Vectorized() && ctx.GetSessionVars().EnableVectorizedExpression {
 		err = expr.VecEvalReal(ctx, input, result)
 	} else {
@@ -579,7 +579,7 @@ func implicitEvalReal(ctx sessionctx.Context, expr Expression, input *chunk.Chun
 // the environment variables and whether the expression can be vectorized.
 // Note: the input argument `evalType` is needed because of that when `expr` is
 // of the hybrid type(ENUM/SET/BIT), we need the invoker decide the actual EvalType.
-func EvalExpr(ctx sessionctx.Context, expr Expression, evalType types.EvalType, input *chunk.Chunk, result *chunk.Column) (err error) {
+func EvalExpr(ctx EvalContext, expr Expression, evalType types.EvalType, input *chunk.Chunk, result *chunk.Column) (err error) {
 	if expr.Vectorized() && ctx.GetSessionVars().EnableVectorizedExpression {
 		switch evalType {
 		case types.ETInt:
@@ -1077,9 +1077,10 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 
 		// string functions.
 		// ast.Bin, ast.Unhex, ast.Locate, ast.Ord, ast.Lpad, ast.Rpad,
-		// ast.Trim, ast.FromBase64, ast.ToBase64, ast.Upper, ast.Lower, ast.InsertFunc,
+		// ast.Trim, ast.FromBase64, ast.ToBase64, ast.InsertFunc,
 		// ast.MakeSet, ast.SubstringIndex, ast.Instr, ast.Quote, ast.Oct,
 		// ast.FindInSet, ast.Repeat,
+		ast.Upper, ast.Lower,
 		ast.Length, ast.BitLength, ast.Concat, ast.ConcatWS, ast.Replace, ast.ASCII, ast.Hex,
 		ast.Reverse, ast.LTrim, ast.RTrim, ast.Strcmp, ast.Space, ast.Elt, ast.Field,
 		InternalFuncFromBinary, InternalFuncToBinary, ast.Mid, ast.Substring, ast.Substr, ast.CharLength,
@@ -1456,7 +1457,7 @@ func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, ca
 }
 
 // PushDownExprsWithExtraInfo split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
-func PushDownExprsWithExtraInfo(ctx sessionctx.Context, exprs []Expression, client kv.Client, storeType kv.StoreType, canEnumPush bool) (pushed []Expression, remained []Expression) {
+func PushDownExprsWithExtraInfo(ctx EvalContext, exprs []Expression, client kv.Client, storeType kv.StoreType, canEnumPush bool) (pushed []Expression, remained []Expression) {
 	pc := PbConverter{ctx: ctx, client: client}
 	for _, expr := range exprs {
 		if canExprPushDown(expr, pc, storeType, canEnumPush) {
@@ -1469,18 +1470,18 @@ func PushDownExprsWithExtraInfo(ctx sessionctx.Context, exprs []Expression, clie
 }
 
 // PushDownExprs split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
-func PushDownExprs(ctx sessionctx.Context, exprs []Expression, client kv.Client, storeType kv.StoreType) (pushed []Expression, remained []Expression) {
+func PushDownExprs(ctx EvalContext, exprs []Expression, client kv.Client, storeType kv.StoreType) (pushed []Expression, remained []Expression) {
 	return PushDownExprsWithExtraInfo(ctx, exprs, client, storeType, false)
 }
 
 // CanExprsPushDownWithExtraInfo return true if all the expr in exprs can be pushed down
-func CanExprsPushDownWithExtraInfo(ctx sessionctx.Context, exprs []Expression, client kv.Client, storeType kv.StoreType, canEnumPush bool) bool {
+func CanExprsPushDownWithExtraInfo(ctx EvalContext, exprs []Expression, client kv.Client, storeType kv.StoreType, canEnumPush bool) bool {
 	_, remained := PushDownExprsWithExtraInfo(ctx, exprs, client, storeType, canEnumPush)
 	return len(remained) == 0
 }
 
 // CanExprsPushDown return true if all the expr in exprs can be pushed down
-func CanExprsPushDown(ctx sessionctx.Context, exprs []Expression, client kv.Client, storeType kv.StoreType) bool {
+func CanExprsPushDown(ctx EvalContext, exprs []Expression, client kv.Client, storeType kv.StoreType) bool {
 	return CanExprsPushDownWithExtraInfo(ctx, exprs, client, storeType, false)
 }
 

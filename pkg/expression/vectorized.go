@@ -16,12 +16,11 @@ package expression
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
-func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, targetType types.EvalType, input *chunk.Chunk, result *chunk.Column) error {
+func genVecFromConstExpr(ctx EvalContext, expr Expression, targetType types.EvalType, input *chunk.Chunk, result *chunk.Column) error {
 	n := 1
 	if input != nil {
 		n = input.NumRows()

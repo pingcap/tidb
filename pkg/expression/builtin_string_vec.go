@@ -27,14 +27,13 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 )
 
 //revive:disable:defer
-func (b *builtinLowerSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLowerSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	// if error is not nil return error, or builtinLowerSig is for binary strings (do nothing)
 	return b.args[0].VecEvalString(ctx, input, result)
 }
@@ -43,7 +42,7 @@ func (b *builtinLowerSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinLowerUTF8Sig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLowerUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -69,7 +68,7 @@ func (b *builtinLowerUTF8Sig) vectorized() bool {
 	return true
 }
 
-func (b *builtinRepeatSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinRepeatSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -128,7 +127,7 @@ func (b *builtinRepeatSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinStringIsNullSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinStringIsNullSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -155,7 +154,7 @@ func (b *builtinStringIsNullSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinUpperUTF8Sig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinUpperUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -181,7 +180,7 @@ func (b *builtinUpperUTF8Sig) vectorized() bool {
 	return true
 }
 
-func (b *builtinUpperSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinUpperSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return b.args[0].VecEvalString(ctx, input, result)
 }
 
@@ -189,7 +188,7 @@ func (b *builtinUpperSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinLeftUTF8Sig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLeftUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -234,7 +233,7 @@ func (b *builtinLeftUTF8Sig) vectorized() bool {
 	return true
 }
 
-func (b *builtinRightUTF8Sig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinRightUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -282,7 +281,7 @@ func (b *builtinRightUTF8Sig) vectorized() bool {
 
 // vecEvalString evals a builtinSpaceSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_space
-func (b *builtinSpaceSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinSpaceSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -327,7 +326,7 @@ func (b *builtinSpaceSig) vectorized() bool {
 
 // vecEvalString evals a REVERSE(str).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_reverse
-func (b *builtinReverseUTF8Sig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinReverseUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalString(ctx, input, result); err != nil {
 		return err
 	}
@@ -352,7 +351,7 @@ func (b *builtinConcatSig) vectorized() bool {
 
 // vecEvalString evals a CONCAT(str1,str2,...)
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat
-func (b *builtinConcatSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinConcatSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -404,7 +403,7 @@ func (b *builtinLocate3ArgsUTF8Sig) vectorized() bool {
 
 // vecEvalInt evals LOCATE(substr,str,pos).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
-func (b *builtinLocate3ArgsUTF8Sig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLocate3ArgsUTF8Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -470,7 +469,7 @@ func (b *builtinHexStrArgSig) vectorized() bool {
 
 // vecEvalString evals a builtinHexStrArgSig, corresponding to hex(str)
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_hex
-func (b *builtinHexStrArgSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinHexStrArgSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
@@ -497,7 +496,7 @@ func (b *builtinLTrimSig) vectorized() bool {
 
 // vecEvalString evals a builtinLTrimSig
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ltrim
-func (b *builtinLTrimSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLTrimSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -526,7 +525,7 @@ func (b *builtinQuoteSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinQuoteSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinQuoteSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -553,7 +552,7 @@ func (b *builtinInsertSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinInsertSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinInsertSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	str, err := b.bufAllocator.get()
 	if err != nil {
@@ -626,7 +625,7 @@ func (b *builtinConcatWSSig) vectorized() bool {
 
 // vecEvalString evals a CONCAT_WS(separator,str1,str2,...).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat-ws
-func (b *builtinConcatWSSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinConcatWSSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	argsLen := len(b.args)
 
@@ -703,7 +702,7 @@ func (b *builtinConvertSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinConvertSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinConvertSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	expr, err := b.bufAllocator.get()
 	if err != nil {
@@ -774,7 +773,7 @@ func (b *builtinSubstringIndexSig) vectorized() bool {
 
 // vecEvalString evals a builtinSubstringIndexSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substring-index
-func (b *builtinSubstringIndexSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinSubstringIndexSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -857,7 +856,7 @@ func (b *builtinUnHexSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinUnHexSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinUnHexSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -894,7 +893,7 @@ func (b *builtinExportSet3ArgSig) vectorized() bool {
 
 // vecEvalString evals EXPORT_SET(bits,on,off).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_export-set
-func (b *builtinExportSet3ArgSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinExportSet3ArgSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	bits, err := b.bufAllocator.get()
 	if err != nil {
@@ -939,7 +938,7 @@ func (b *builtinASCIISig) vectorized() bool {
 
 // vecEvalInt evals a builtinASCIISig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ascii
-func (b *builtinASCIISig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinASCIISig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -972,7 +971,7 @@ func (b *builtinLpadSig) vectorized() bool {
 
 // vecEvalString evals LPAD(str,len,padstr).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_lpad
-func (b *builtinLpadSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLpadSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	strBuf, err := b.bufAllocator.get()
 	if err != nil {
@@ -1044,7 +1043,7 @@ func (b *builtinLpadUTF8Sig) vectorized() bool {
 
 // vecEvalString evals LPAD(str,len,padstr).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_lpad
-func (b *builtinLpadUTF8Sig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLpadUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -1113,7 +1112,7 @@ func (b *builtinFindInSetSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinFindInSetSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinFindInSetSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	str, err := b.bufAllocator.get()
 	if err != nil {
@@ -1156,7 +1155,7 @@ func (b *builtinLeftSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinLeftSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLeftSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -1196,7 +1195,7 @@ func (b *builtinReverseSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinReverseSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinReverseSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalString(ctx, input, result); err != nil {
 		return err
 	}
@@ -1216,7 +1215,7 @@ func (b *builtinRTrimSig) vectorized() bool {
 
 // vecEvalString evals a builtinRTrimSig
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_rtrim
-func (b *builtinRTrimSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinRTrimSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -1245,7 +1244,7 @@ func (b *builtinStrcmpSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinStrcmpSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinStrcmpSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	leftBuf, err := b.bufAllocator.get()
 	if err != nil {
@@ -1280,7 +1279,7 @@ func (b *builtinLocate2ArgsSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinLocate2ArgsSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLocate2ArgsSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
@@ -1321,7 +1320,7 @@ func (b *builtinLocate3ArgsSig) vectorized() bool {
 
 // vecEvalInt evals LOCATE(substr,str,pos), case-sensitive.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
-func (b *builtinLocate3ArgsSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLocate3ArgsSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
@@ -1380,7 +1379,7 @@ func (b *builtinExportSet4ArgSig) vectorized() bool {
 
 // vecEvalString evals EXPORT_SET(bits,on,off,separator).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_export-set
-func (b *builtinExportSet4ArgSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinExportSet4ArgSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	bits, err := b.bufAllocator.get()
 	if err != nil {
@@ -1433,7 +1432,7 @@ func (b *builtinRpadSig) vectorized() bool {
 
 // vecEvalString evals RPAD(str,len,padstr).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_rpad
-func (b *builtinRpadSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinRpadSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	strBuf, err := b.bufAllocator.get()
 	if err != nil {
@@ -1503,7 +1502,7 @@ func (b *builtinFormatWithLocaleSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinFormatWithLocaleSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinFormatWithLocaleSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
 	dBuf, err := b.bufAllocator.get()
@@ -1560,7 +1559,7 @@ func (b *builtinSubstring2ArgsSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinSubstring2ArgsSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinSubstring2ArgsSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -1609,7 +1608,7 @@ func (b *builtinSubstring2ArgsUTF8Sig) vectorized() bool {
 
 // vecEvalString evals SUBSTR(str,pos), SUBSTR(str FROM pos), SUBSTR() is a synonym for SUBSTRING().
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substr
-func (b *builtinSubstring2ArgsUTF8Sig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinSubstring2ArgsUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -1662,7 +1661,7 @@ func (b *builtinTrim2ArgsSig) vectorized() bool {
 
 // vecEvalString evals a builtinTrim2ArgsSig, corresponding to trim(str, remstr)
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_trim
-func (b *builtinTrim2ArgsSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinTrim2ArgsSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -1700,7 +1699,7 @@ func (b *builtinInstrUTF8Sig) vectorized() bool {
 	return true
 }
 
-func (b *builtinInstrUTF8Sig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinInstrUTF8Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	str, err := b.bufAllocator.get()
 	if err != nil {
@@ -1749,7 +1748,7 @@ func (b *builtinOctStringSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinOctStringSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinOctStringSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -1798,7 +1797,7 @@ func (b *builtinEltSig) vectorized() bool {
 
 // vecEvalString evals a ELT(N,str1,str2,str3,...).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_elt
-func (b *builtinEltSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinEltSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
@@ -1848,7 +1847,7 @@ func (b *builtinInsertUTF8Sig) vectorized() bool {
 
 // vecEvalString evals INSERT(str,pos,len,newstr).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_insert
-func (b *builtinInsertUTF8Sig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinInsertUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -1928,7 +1927,7 @@ func (b *builtinExportSet5ArgSig) vectorized() bool {
 
 // vecEvalString evals EXPORT_SET(bits,on,off,separator,number_of_bits).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_export-set
-func (b *builtinExportSet5ArgSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinExportSet5ArgSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	bits, err := b.bufAllocator.get()
 	if err != nil {
@@ -1994,7 +1993,7 @@ func (b *builtinSubstring3ArgsUTF8Sig) vectorized() bool {
 
 // vecEvalString evals SUBSTR(str,pos,len), SUBSTR(str FROM pos FOR len), SUBSTR() is a synonym for SUBSTRING().
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substr
-func (b *builtinSubstring3ArgsUTF8Sig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinSubstring3ArgsUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -2063,7 +2062,7 @@ func (b *builtinTrim3ArgsSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinTrim3ArgsSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinTrim3ArgsSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
@@ -2115,7 +2114,7 @@ func (b *builtinOrdSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinOrdSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinOrdSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -2153,7 +2152,7 @@ func (b *builtinInstrSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinInstrSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinInstrSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	str, err := b.bufAllocator.get()
 	if err != nil {
@@ -2192,7 +2191,7 @@ func (b *builtinLengthSig) vectorized() bool {
 
 // vecEvalInt evaluates a builtinLengthSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html
-func (b *builtinLengthSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLengthSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -2222,7 +2221,7 @@ func (b *builtinLocate2ArgsUTF8Sig) vectorized() bool {
 
 // vecEvalInt evals LOCATE(substr,str).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
-func (b *builtinLocate2ArgsUTF8Sig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLocate2ArgsUTF8Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -2275,7 +2274,7 @@ func (b *builtinBitLengthSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinBitLengthSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinBitLengthSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -2303,7 +2302,7 @@ func (b *builtinCharSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinCharSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinCharSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	l := len(b.args)
 	buf := make([]*chunk.Column, l-1)
@@ -2360,7 +2359,7 @@ func (b *builtinReplaceSig) vectorized() bool {
 
 // vecEvalString evals a builtinReplaceSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_replace
-func (b *builtinReplaceSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinReplaceSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -2412,7 +2411,7 @@ func (b *builtinMakeSetSig) vectorized() bool {
 
 // vecEvalString evals MAKE_SET(bits,str1,str2,...).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_make-set
-func (b *builtinMakeSetSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinMakeSetSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	nr := input.NumRows()
 	bitsBuf, err := b.bufAllocator.get()
 	if err != nil {
@@ -2460,7 +2459,7 @@ func (b *builtinOctIntSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinOctIntSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinOctIntSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -2489,7 +2488,7 @@ func (b *builtinToBase64Sig) vectorized() bool {
 
 // vecEvalString evals a builtinToBase64Sig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_to-base64
-func (b *builtinToBase64Sig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinToBase64Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -2536,7 +2535,7 @@ func (b *builtinTrim1ArgSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinTrim1ArgSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinTrim1ArgSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -2567,7 +2566,7 @@ func (b *builtinRpadUTF8Sig) vectorized() bool {
 
 // vecEvalString evals RPAD(str,len,padstr).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_rpad
-func (b *builtinRpadUTF8Sig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinRpadUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -2636,7 +2635,7 @@ func (b *builtinCharLengthBinarySig) vectorized() bool {
 	return true
 }
 
-func (b *builtinCharLengthBinarySig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinCharLengthBinarySig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -2663,7 +2662,7 @@ func (b *builtinBinSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinBinSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinBinSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -2692,7 +2691,7 @@ func (b *builtinFormatSig) vectorized() bool {
 
 // vecEvalString evals FORMAT(X,D).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_format
-func (b *builtinFormatSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinFormatSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
 	dBuf, err := b.bufAllocator.get()
@@ -2740,7 +2739,7 @@ func (b *builtinRightSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinRightSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinRightSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -2783,7 +2782,7 @@ func (b *builtinSubstring3ArgsSig) vectorized() bool {
 
 // vecEvalString evals SUBSTR(str,pos,len), SUBSTR(str FROM pos FOR len), SUBSTR() is a synonym for SUBSTRING().
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substr
-func (b *builtinSubstring3ArgsSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinSubstring3ArgsSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -2852,7 +2851,7 @@ func (b *builtinHexIntArgSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinHexIntArgSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinHexIntArgSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -2880,7 +2879,7 @@ func (b *builtinFromBase64Sig) vectorized() bool {
 
 // vecEvalString evals FROM_BASE64(str).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_from-base64
-func (b *builtinFromBase64Sig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinFromBase64Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -2928,7 +2927,7 @@ func (b *builtinCharLengthUTF8Sig) vectorized() bool {
 	return true
 }
 
-func (b *builtinCharLengthUTF8Sig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinCharLengthUTF8Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -2952,7 +2951,7 @@ func (b *builtinCharLengthUTF8Sig) vecEvalInt(ctx sessionctx.Context, input *chu
 	return nil
 }
 
-func formatDecimal(sctx sessionctx.Context, xBuf *chunk.Column, dInt64s []int64, result *chunk.Column, localeBuf *chunk.Column) error {
+func formatDecimal(sctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result *chunk.Column, localeBuf *chunk.Column) error {
 	xDecimals := xBuf.Decimals()
 	for i := range xDecimals {
 		if xBuf.IsNull(i) {
@@ -2992,7 +2991,7 @@ func formatDecimal(sctx sessionctx.Context, xBuf *chunk.Column, dInt64s []int64,
 	return nil
 }
 
-func formatReal(sctx sessionctx.Context, xBuf *chunk.Column, dInt64s []int64, result *chunk.Column, localeBuf *chunk.Column) error {
+func formatReal(sctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result *chunk.Column, localeBuf *chunk.Column) error {
 	xFloat64s := xBuf.Float64s()
 	for i := range xFloat64s {
 		if xBuf.IsNull(i) {
@@ -3032,7 +3031,7 @@ func formatReal(sctx sessionctx.Context, xBuf *chunk.Column, dInt64s []int64, re
 	return nil
 }
 
-func (b *builtinTranslateBinarySig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinTranslateBinarySig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
@@ -3105,7 +3104,7 @@ func (b *builtinTranslateBinarySig) vectorized() bool {
 	return true
 }
 
-func (b *builtinTranslateUTF8Sig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinTranslateUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
