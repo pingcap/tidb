@@ -228,16 +228,10 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 	tsExec.KeepOrder = &keepOrder
 	tsExec.IsFastScan = &(ctx.GetSessionVars().TiFlashFastScan)
 
-<<<<<<< HEAD:planner/core/plan_to_pb.go
-	if len(p.lateMaterializationFilterCondition) > 0 {
+	if len(p.LateMaterializationFilterCondition) > 0 {
 		sc := ctx.GetSessionVars().StmtCtx
 		client := ctx.GetClient()
-		conditions, err := expression.ExpressionsToPBList(sc, p.lateMaterializationFilterCondition, client)
-=======
-	if len(p.LateMaterializationFilterCondition) > 0 {
-		client := ctx.GetClient()
-		conditions, err := expression.ExpressionsToPBList(ctx, p.LateMaterializationFilterCondition, client)
->>>>>>> 3fb6b98d1d0 (executor: fill correlated column value in late materialization filter conditions (#49244)):pkg/planner/core/plan_to_pb.go
+		conditions, err := expression.ExpressionsToPBList(sc, p.LateMaterializationFilterCondition, client)
 		if err != nil {
 			return nil, err
 		}
@@ -267,16 +261,10 @@ func (p *PhysicalTableScan) partitionTableScanToPBForFlash(ctx sessionctx.Contex
 		telemetry.CurrentTiflashTableScanWithFastScanCount.Inc()
 	}
 
-<<<<<<< HEAD:planner/core/plan_to_pb.go
-	if len(p.lateMaterializationFilterCondition) > 0 {
+	if len(p.LateMaterializationFilterCondition) > 0 {
 		sc := ctx.GetSessionVars().StmtCtx
 		client := ctx.GetClient()
-		conditions, err := expression.ExpressionsToPBList(sc, p.lateMaterializationFilterCondition, client)
-=======
-	if len(p.LateMaterializationFilterCondition) > 0 {
-		client := ctx.GetClient()
-		conditions, err := expression.ExpressionsToPBList(ctx, p.LateMaterializationFilterCondition, client)
->>>>>>> 3fb6b98d1d0 (executor: fill correlated column value in late materialization filter conditions (#49244)):pkg/planner/core/plan_to_pb.go
+		conditions, err := expression.ExpressionsToPBList(sc, p.LateMaterializationFilterCondition, client)
 		if err != nil {
 			return nil, err
 		}
