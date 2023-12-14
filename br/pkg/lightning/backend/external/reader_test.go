@@ -104,5 +104,6 @@ func TestReadAllOneFile(t *testing.T) {
 
 	datas, stats, err := GetAllFileNames(ctx, memStore, "")
 	require.NoError(t, err)
+
 	testReadAndCompare(ctx, t, kvs, memStore, datas, stats, kvs[0].Key, memSizeLimit)
 }
