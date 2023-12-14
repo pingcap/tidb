@@ -52,6 +52,9 @@ var unRecoverableTable = map[string]struct{}{
 
 	// schema_index_usage has table id need to be rewrite.
 	"schema_index_usage": {},
+
+	// replace into view is not supported now
+	"tidb_mdl_view": {},
 }
 
 // tables in this map is restored when fullClusterRestore=true
