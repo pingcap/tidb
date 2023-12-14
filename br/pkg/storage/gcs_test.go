@@ -24,7 +24,7 @@ func TestGCS(t *testing.T) {
 	}
 	server, err := fakestorage.NewServerWithOptions(opts)
 	require.NoError(t, err)
-	bucketName := MockGCSTestBucket
+	bucketName := mockGCSTestBucket
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: bucketName})
 
 	gcs := &backuppb.GCS{
@@ -265,7 +265,7 @@ func TestNewGCSStorage(t *testing.T) {
 	}
 	server, err := fakestorage.NewServerWithOptions(opts)
 	require.NoError(t, err)
-	bucketName := MockGCSTestBucket
+	bucketName := mockGCSTestBucket
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: bucketName})
 	testDir := t.TempDir()
 
@@ -427,7 +427,7 @@ func TestReadRange(t *testing.T) {
 	}
 	server, err := fakestorage.NewServerWithOptions(opts)
 	require.NoError(t, err)
-	bucketName := MockGCSTestBucket
+	bucketName := "testbucket"
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: bucketName})
 
 	gcs := &backuppb.GCS{

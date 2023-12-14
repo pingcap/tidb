@@ -310,7 +310,7 @@ func TestTruncateSafepointForGCS(t *testing.T) {
 	}
 	server, err := fakestorage.NewServerWithOptions(opts)
 	require.NoError(t, err)
-	bucketName := storage.MockGCSTestBucket
+	bucketName := "testbucket"
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: bucketName})
 
 	gcs := &backuppb.GCS{
