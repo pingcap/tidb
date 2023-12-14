@@ -136,7 +136,7 @@ func TestIssue48741(t *testing.T) {
 
 	waitingTunningFinishFn := func() {
 		for GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() {
-			time.Sleep(10*time.Millisecond)
+			time.Sleep(10 * time.Millisecond)
 		}
 	}
 
