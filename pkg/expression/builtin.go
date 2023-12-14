@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -364,27 +363,6 @@ func (*baseBuiltinFunc) vectorized() bool {
 	return false
 }
 
-func (*baseBuiltinFunc) supportReverseEval() bool {
-	return false
-}
-
-func (b *baseBuiltinFunc) isChildrenReversed() bool {
-	b.childrenReversedOnce.Do(func() {
-		b.childrenReversed = true
-		for _, arg := range b.args {
-			if !arg.SupportReverseEval() {
-				b.childrenReversed = false
-				break
-			}
-		}
-	})
-	return b.childrenReversed
-}
-
-func (*baseBuiltinFunc) reverseEval(*stmtctx.StatementContext, types.Datum, types.RoundingType) (types.Datum, error) {
-	return types.Datum{}, errors.Errorf("baseBuiltinFunc.reverseEvalInt() should never be called, please contact the TiDB team for help")
-}
-
 func (b *baseBuiltinFunc) isChildrenVectorized() bool {
 	b.childrenVectorizedOnce.Do(func() {
 		b.childrenVectorized = true
@@ -502,22 +480,9 @@ type vecBuiltinFunc interface {
 	vecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 }
 
-// reverseBuiltinFunc evaluates the exactly one column value in the function when given a result for expression.
-// For example, the builtinFunc is builtinArithmeticPlusRealSig(2.3, builtinArithmeticMinusRealSig(Column, 3.4))
-// when given the result like 1.0, then the ReverseEval should evaluate the column value 1.0 - 2.3 + 3.4 = 2.1
-type reverseBuiltinFunc interface {
-	// supportReverseEval checks whether the builtinFunc support reverse evaluation.
-	supportReverseEval() bool
-	// isChildrenReversed checks whether the builtinFunc's children support reverse evaluation.
-	isChildrenReversed() bool
-	// reverseEval evaluates the only one column value with given function result.
-	reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error)
-}
-
 // builtinFunc stands for a particular function signature.
 type builtinFunc interface {
 	vecBuiltinFunc
-	reverseBuiltinFunc
 
 	// evalInt evaluates int result of builtinFunc by given row.
 	evalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error)

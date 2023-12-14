@@ -98,21 +98,6 @@ func (sf *ScalarFunction) Vectorized() bool {
 	return sf.Function.vectorized() && sf.Function.isChildrenVectorized()
 }
 
-// SupportReverseEval returns if this expression supports reversed evaluation.
-func (sf *ScalarFunction) SupportReverseEval() bool {
-	switch sf.RetType.GetType() {
-	case mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong,
-		mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
-		return sf.Function.supportReverseEval() && sf.Function.isChildrenReversed()
-	}
-	return false
-}
-
-// ReverseEval evaluates the only one column value with given function result.
-func (sf *ScalarFunction) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
-	return sf.Function.reverseEval(sc, res, rType)
-}
-
 // String implements fmt.Stringer interface.
 func (sf *ScalarFunction) String() string {
 	var buffer bytes.Buffer
