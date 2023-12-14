@@ -1667,6 +1667,8 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 	failpoint.Inject("ReadyForImportEngine", func() {})
 
 	needSplit := len(ranges) > 1 || lfTotalSize > regionSplitSize || lfLength > regionSplitKeys
+	// we are going to do max backoff of 15 min 30 second
+	backOffTime := 30 * time.Second
 	for i := 0; i < maxRetryTimes; i++ {
 		err = local.SplitAndScatterRegionInBatches(ctx, ranges, lf.tableInfo, needSplit, regionSplitSize, maxBatchSplitRanges)
 		if err == nil || common.IsContextCanceledError(err) {
@@ -1675,6 +1677,12 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 
 		log.FromContext(ctx).Warn("split and scatter failed in retry", zap.Stringer("uuid", engineUUID),
 			log.ShortError(err), zap.Int("retry", i))
+		select {
+		case <-time.After(backOffTime):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		backOffTime *= 2
 	}
 	if err != nil {
 		log.FromContext(ctx).Error("split & scatter ranges failed", zap.Stringer("uuid", engineUUID), log.ShortError(err))
