@@ -38,7 +38,7 @@ type slotInfo struct {
 	slotCount int
 }
 
-func (sm *slotManager) addTask(task *proto.Task) {
+func (sm *slotManager) reserve(task *proto.Task) {
 	sm.Lock()
 	defer sm.Unlock()
 	sm.executorSlotInfos[task.ID] = &slotInfo{
@@ -50,7 +50,7 @@ func (sm *slotManager) addTask(task *proto.Task) {
 	sm.available -= task.Concurrency
 }
 
-func (sm *slotManager) removeTask(taskID int64) {
+func (sm *slotManager) unReserve(taskID int64) {
 	sm.Lock()
 	defer sm.Unlock()
 
@@ -61,7 +61,7 @@ func (sm *slotManager) removeTask(taskID int64) {
 	}
 }
 
-// checkSlotAvailabilityForTask is used to check whether the instance has enough slots to run the task.
-func (sm *slotManager) checkSlotAvailabilityForTask(task *proto.Task) bool {
+// canReserve is used to check whether the instance has enough slots to run the task.
+func (sm *slotManager) canReserve(task *proto.Task) bool {
 	return sm.available >= task.Concurrency
 }

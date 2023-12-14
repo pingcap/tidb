@@ -38,18 +38,18 @@ func TestSlotManager(t *testing.T) {
 		Priority:    1,
 		Concurrency: 1,
 	}
-	require.True(t, sm.checkSlotAvailabilityForTask(task))
-	sm.addTask(task)
+	require.True(t, sm.canReserve(task))
+	sm.reserve(task)
 	require.Equal(t, 1, sm.executorSlotInfos[taskID].priority)
 	require.Equal(t, 1, sm.executorSlotInfos[taskID].slotCount)
 	require.Equal(t, 9, sm.available)
 
-	require.False(t, sm.checkSlotAvailabilityForTask(&proto.Task{
+	require.False(t, sm.canReserve(&proto.Task{
 		ID:          taskID2,
 		Priority:    2,
 		Concurrency: 10,
 	}))
 
-	sm.removeTask(taskID)
+	sm.unReserve(taskID)
 	require.Nil(t, sm.executorSlotInfos[taskID])
 }

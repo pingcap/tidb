@@ -16,7 +16,6 @@ package taskexecutor
 
 import (
 	"context"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/spool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -95,7 +95,7 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 		newPool:   b.newPool,
 		slotManager: &slotManager{
 			executorSlotInfos: make(map[int64]*slotInfo, 0),
-			available:         runtime.NumCPU(),
+			available:         cpu.GetCPUCount(),
 		},
 	}
 	m.ctx, m.cancel = context.WithCancel(ctx)
@@ -162,7 +162,6 @@ func (m *Manager) fetchAndHandleRunnableTasksLoop() {
 				m.logErr(err)
 				continue
 			}
-			logutil.Logger(m.logCtx).Info("fetchAndHandleRunnableTasksLoop", zap.Any("tasks", tasks))
 			m.onRunnableTasks(tasks)
 		}
 	}
@@ -209,7 +208,6 @@ func (m *Manager) onRunnableTasks(tasks []*proto.Task) {
 	tasks = m.filterAlreadyHandlingTasks(tasks)
 
 	for _, task := range tasks {
-		logutil.Logger(m.logCtx).Info("get new subtask", zap.Int64("task-id", task.ID))
 		exist, err := m.taskTable.HasSubtasksInStates(m.ctx, m.id, task.ID, task.Step,
 			proto.TaskStatePending, proto.TaskStateRevertPending,
 			// for the case that the tidb is restarted when the subtask is running.
@@ -224,7 +222,7 @@ func (m *Manager) onRunnableTasks(tasks []*proto.Task) {
 		}
 		logutil.Logger(m.logCtx).Info("detect new subtask", zap.Int64("task-id", task.ID))
 
-		if !m.slotManager.checkSlotAvailabilityForTask(task) {
+		if !m.slotManager.canReserve(task) {
 			failpoint.Inject("taskTick", func() {
 				<-onRunnableTasksTick
 			})
@@ -233,14 +231,14 @@ func (m *Manager) onRunnableTasks(tasks []*proto.Task) {
 		m.addHandlingTask(task.ID)
 		t := task
 		err = m.executorPool.Run(func() {
-			m.slotManager.addTask(t)
-			defer m.slotManager.removeTask(t.ID)
+			m.slotManager.reserve(t)
+			defer m.slotManager.unReserve(t.ID)
 			m.onRunnableTask(t)
 			m.removeHandlingTask(t.ID)
 		})
 		// pool closed.
 		if err != nil {
-			m.slotManager.removeTask(t.ID)
+			m.slotManager.unReserve(t.ID)
 			m.removeHandlingTask(task.ID)
 			m.logErr(err)
 			return
