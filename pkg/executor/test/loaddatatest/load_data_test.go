@@ -17,7 +17,6 @@ package loaddatatest
 import (
 	"fmt"
 	"io"
-	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
@@ -45,20 +44,12 @@ func checkCases(
 	for _, tt := range tests {
 		var reader io.ReadCloser = mydump.NewStringReader(string(tt.data))
 		var readerBuilder executor.LoadDataReaderBuilder = func(_ string) (
-			r io.ReadCloser, drained *bool, wg *sync.WaitGroup, err error,
+			r io.ReadCloser, err error,
 		) {
-			return reader, new(bool), new(sync.WaitGroup), nil
-		}
-		var readerCloser executor.LoadDataReaderCloser = func(
-			r io.ReadCloser, drained *bool,
-			wg *sync.WaitGroup, err error,
-		) error {
-			r.Close()
-			return nil
+			return reader, nil
 		}
 
 		ctx.SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
-		ctx.SetValue(executor.LoadDataReaderCloseKey, readerCloser)
 		tk.MustExec(loadSQL)
 		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
 		for _, w := range warnings {
@@ -91,7 +82,7 @@ func TestLoadDataInitParam(t *testing.T) {
 
 	// null def values
 	testFunc := func(sql string, expectedNullDef []string, expectedNullOptEnclosed bool) {
-		require.NoError(t, tk.ExecToErr(sql))
+		require.ErrorContains(t, tk.ExecToErr(sql), "reader is nil")
 		defer ctx.SetValue(executor.LoadDataVarKey, nil)
 		ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
 		require.True(t, ok)
@@ -113,11 +104,26 @@ func TestLoadDataInitParam(t *testing.T) {
 		[]string{"NULL"}, false)
 
 	// positive case
-	require.NoError(t, tk.ExecToErr("load data local infile '/a' format 'sql file' into table load_data_test"))
+	require.ErrorContains(
+		t, tk.ExecToErr(
+			"load data local infile '/a' format 'sql file' into table"+
+				" load_data_test",
+		), "reader is nil",
+	)
 	ctx.SetValue(executor.LoadDataVarKey, nil)
-	require.NoError(t, tk.ExecToErr("load data local infile '/a' into table load_data_test fields terminated by 'a'"))
+	require.ErrorContains(
+		t, tk.ExecToErr(
+			"load data local infile '/a' into table load_data_test fields"+
+				" terminated by 'a'",
+		), "reader is nil",
+	)
 	ctx.SetValue(executor.LoadDataVarKey, nil)
-	require.NoError(t, tk.ExecToErr("load data local infile '/a' format 'delimited data' into table load_data_test fields terminated by 'a'"))
+	require.ErrorContains(
+		t, tk.ExecToErr(
+			"load data local infile '/a' format 'delimited data' into"+
+				" table load_data_test fields terminated by 'a'",
+		), "reader is nil",
+	)
 	ctx.SetValue(executor.LoadDataVarKey, nil)
 
 	// According to https://dev.mysql.com/doc/refman/8.0/en/load-data.html , fixed-row format should be used when fields

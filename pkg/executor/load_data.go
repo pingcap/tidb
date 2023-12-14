@@ -20,7 +20,6 @@ import (
 	"io"
 	"math"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -57,23 +56,14 @@ const LoadDataVarKey loadDataVarKeyType = 0
 // LoadDataReaderBuilderKey stores the reader channel that reads from the connection.
 const LoadDataReaderBuilderKey loadDataVarKeyType = 1
 
-// LoadDataReaderCloseKey stores the close function of the reader
-const LoadDataReaderCloseKey loadDataVarKeyType = 2
-
 var (
 	taskQueueSize = 16 // the maximum number of pending tasks to commit in queue
 )
 
 // LoadDataReaderBuilder is a function type that builds a reader from a file path.
 type LoadDataReaderBuilder func(filepath string) (
-	r io.ReadCloser, drained *bool, wg *sync.WaitGroup, err error,
+	r io.ReadCloser, err error,
 )
-
-// LoadDataReaderCloser is a function type that closes a reader.
-type LoadDataReaderCloser func(
-	r io.ReadCloser, drained *bool,
-	wg *sync.WaitGroup, err error,
-) error
 
 // LoadDataExec represents a load data executor.
 type LoadDataExec struct {
@@ -84,17 +74,13 @@ type LoadDataExec struct {
 
 	// fields for loading local file
 	infileReader io.ReadCloser
-	drained      *bool
-	wg           *sync.WaitGroup
-	readerCloser LoadDataReaderCloser
 }
 
 // Open implements the Executor interface.
 func (e *LoadDataExec) Open(_ context.Context) error {
 	if rb, ok := e.Ctx().Value(LoadDataReaderBuilderKey).(LoadDataReaderBuilder); ok {
-		e.readerCloser = e.Ctx().Value(LoadDataReaderCloseKey).(LoadDataReaderCloser)
 		var err error
-		e.infileReader, e.drained, e.wg, err = rb(e.loadDataWorker.GetInfilePath())
+		e.infileReader, err = rb(e.loadDataWorker.GetInfilePath())
 		if err != nil {
 			return err
 		}
@@ -108,12 +94,19 @@ func (e *LoadDataExec) Close() error {
 }
 
 func (e *LoadDataExec) closeLocalReader(originalErr error) error {
-	var err error
-	if e.readerCloser != nil {
-		err = e.readerCloser(e.infileReader, e.drained, e.wg, originalErr)
+	err := originalErr
+	if e.infileReader != nil {
+		if err2 := e.infileReader.Close(); err2 != nil {
+			logutil.BgLogger().Error(
+				"close local reader failed", zap.Error(err2),
+				zap.NamedError("original error", originalErr),
+			)
+			if err == nil {
+				err = err2
+			}
+		}
+		e.infileReader = nil
 	}
-	// don't close it twice
-	e.readerCloser = nil
 	return err
 }
 

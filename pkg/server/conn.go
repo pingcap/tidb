@@ -2001,114 +2001,81 @@ func (cc *clientConn) preprocessLoadDataLocal(ctx context.Context) error {
 	if cc.capability&mysql.ClientLocalFiles == 0 {
 		return servererr.ErrNotAllowedCommand
 	}
+
 	var readerBuilder executor.LoadDataReaderBuilder = func(filepath string) (
-		r io.ReadCloser, drained *bool, wg *sync.WaitGroup, err error,
+		io.ReadCloser, error,
 	) {
-		err = cc.writeReq(ctx, filepath)
+		err := cc.writeReq(ctx, filepath)
 		if err != nil {
-			return nil, drained, wg, err
+			return nil, err
 		}
-		drained = new(bool)
+
+		drained := false
 		r, w := io.Pipe()
-		wg = &sync.WaitGroup{}
-		wg.Add(1)
+
 		go func() {
-			defer wg.Done()
+			var errOccurred error
+
 			defer func() {
-				err := w.Close()
+				if errOccurred != nil {
+					// Continue reading packets to drain the connection
+					for !drained {
+						data, err := cc.readPacket()
+						if err != nil {
+							logutil.Logger(ctx).Error(
+								"drain connection failed in load data",
+								zap.Error(err),
+							)
+							break
+						}
+						if len(data) == 0 {
+							drained = true
+						}
+					}
+				}
+				err := w.CloseWithError(errOccurred)
 				if err != nil {
 					logutil.Logger(ctx).Error(
-						"close pipe meet error in load data",
+						"close pipe failed in `load data`",
 						zap.Error(err),
 					)
-					return
 				}
 			}()
 
-			var (
-				err2 error
-				data []byte
-			)
 			for {
-				if len(data) == 0 {
-					data, err2 = cc.readPacket()
-					if err2 != nil {
-						err4 := w.CloseWithError(err2)
-						if err4 != nil {
-							logutil.Logger(ctx).Error(
-								"close pipe meet error in load data",
-								zap.Error(err4),
-							)
-						}
-						return
-					}
-					// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_local_infile_request.html
-					if len(data) == 0 {
-						*drained = true
-						return
-					}
-				}
-
-				n, err3 := w.Write(data)
-				if err3 != nil {
-					logutil.Logger(ctx).Error(
-						"write data meet error in load data",
-						zap.Error(err3),
-					)
+				data, err := cc.readPacket()
+				if err != nil {
+					errOccurred = err
 					return
 				}
-				data = data[n:]
+
+				if len(data) == 0 {
+					drained = true
+					return
+				}
+
+				// Write all content in `data`
+				for len(data) > 0 {
+					n, err := w.Write(data)
+					if err != nil {
+						errOccurred = err
+						return
+					}
+					data = data[n:]
+				}
 			}
 		}()
-		return r, drained, wg, nil
+
+		return r, nil
 	}
-	var readerCloser executor.LoadDataReaderCloser = func(
-		r io.ReadCloser, drained *bool,
-		wg *sync.WaitGroup, err error,
-	) error {
-		_ = r.Close()
-		wg.Wait()
-		if err != nil {
-			if !*drained {
-				logutil.Logger(ctx).Info("not drained yet, try reading left data from client connection")
-			}
-			// drain the data from client conn util empty packet received, otherwise the connection will be reset
-			// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_local_infile_request.html
-			for !*drained {
-				// check kill flag again, let the draining loop could quit if empty packet could not be received
-				if atomic.CompareAndSwapUint32(
-					&cc.ctx.GetSessionVars().SQLKiller.Signal,
-					1,
-					0,
-				) {
-					logutil.Logger(ctx).Warn("receiving kill, stop draining data, connection may be reset")
-					return exeerrors.ErrQueryInterrupted
-				}
-				curData, err1 := cc.readPacket()
-				if err1 != nil {
-					logutil.Logger(ctx).Error(
-						"drain reading left data encounter errors",
-						zap.Error(err1),
-					)
-					break
-				}
-				if len(curData) == 0 {
-					*drained = true
-					logutil.Logger(ctx).Info("draining finished for error", zap.Error(err))
-					break
-				}
-			}
-		}
-		return err
-	}
+
 	cc.ctx.SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
-	cc.ctx.SetValue(executor.LoadDataReaderCloseKey, readerCloser)
+
 	return nil
 }
 
 func (cc *clientConn) postprocessLoadDataLocal() {
 	cc.ctx.ClearValue(executor.LoadDataReaderBuilderKey)
-	cc.ctx.ClearValue(executor.LoadDataReaderCloseKey)
 }
 
 func (cc *clientConn) handleFileTransInConn(ctx context.Context, status uint16) (bool, error) {
