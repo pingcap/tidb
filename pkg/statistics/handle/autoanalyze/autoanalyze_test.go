@@ -57,7 +57,17 @@ func TestDisableAutoAnalyze(t *testing.T) {
 	defer func() {
 		autoanalyze.AutoAnalyzeMinCnt = 1000
 	}()
+	// Even auto analyze ratio is set to 0, we still need to analyze the unanalyzed tables.
+	require.True(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
+	require.NoError(t, h.Update(is))
+
+	// Try again, it should not analyze the table again.
 	require.False(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
+
+	// Index analyze doesn't depend on auto analyze ratio. Only control by tidb_enable_auto_analyze.
+	// Even auto analyze ratio is set to 0, we still need to analyze the newly created index.
+	tk.MustExec("alter table t add index ia(a)")
+	require.True(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
 }
 
 func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
