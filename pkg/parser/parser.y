@@ -1051,6 +1051,7 @@ import (
 	UpdateStmtNoWith           "Update statement without CTE clause"
 	HelpStmt                   "HELP statement"
 	ShardableStmt              "Shardable statement that can be used in non-transactional DMLs"
+	CancelImportStmt "CANCEL IMPORT JOB statement"
 	ProcedureUnlabeledBlock    "The statement block without label in procedure"
 	ProcedureBlockContent      "The statement block in procedure expressed with 'Begin ... End'"
 	SimpleWhenThen             "Procedure case when then"
@@ -5851,6 +5852,15 @@ OptionLevel:
 |	"REQUIRED"
 	{
 		$$ = ast.BRIEOptionLevelRequired
+	}
+
+CancelImportStmt:
+	"CANCEL" "IMPORT" "JOB" Int64Num
+	{
+		$$ = &ast.ImportIntoActionStmt{
+			Tp:    ast.ImportIntoCancel,
+			JobID: $4.(int64),
+		}
 	}
 
 Expression:
@@ -12054,6 +12064,7 @@ Statement:
 |	HelpStmt
 |	NonTransactionalDMLStmt
 |	OptimizeTableStmt
+|	CancelImportStmt
 
 TraceableStmt:
 	DeleteFromStmt
