@@ -3,8 +3,8 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "mock",
     srcs = [
-        "dispatcher_mock.go",
         "plan_mock.go",
+        "scheduler_mock.go",
         "task_executor_mock.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/disttask/framework/mock",

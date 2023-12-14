@@ -327,7 +327,7 @@ func (e *InsertExec) Close() error {
 	defer e.memTracker.ReplaceBytesUsed(0)
 	e.setMessage()
 	if e.SelectExec != nil {
-		return e.SelectExec.Close()
+		return exec.Close(e.SelectExec)
 	}
 	return nil
 }

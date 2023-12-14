@@ -96,7 +96,7 @@ func TestHABasic(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 4)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestDispatcherExt(ctrl), testContext, nil)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestSchedulerExt(ctrl), testContext, nil)
 	registerHAHook()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager", "4*return()"))
 	testutil.DispatchTaskAndCheckSuccess(ctx, t, "😊", testContext, nil)
@@ -108,7 +108,7 @@ func TestHAManyNodes(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 30)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestDispatcherExt(ctrl), testContext, nil)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestSchedulerExt(ctrl), testContext, nil)
 	registerHAHook()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager", "30*return()"))
 	testutil.DispatchTaskAndCheckSuccess(ctx, t, "😊", testContext, nil)
@@ -120,7 +120,7 @@ func TestHAFailInDifferentStage(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 6)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestDispatcherExt(ctrl), testContext, nil)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestSchedulerExt(ctrl), testContext, nil)
 	registerMultiStageHAHook()
 	// stage1 : server num from 6 to 3.
 	// stage2 : server num from 3 to 2.
@@ -134,7 +134,7 @@ func TestHAFailInDifferentStageManyNodes(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 30)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestDispatcherExt(ctrl), testContext, nil)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestSchedulerExt(ctrl), testContext, nil)
 	registerMultiStageHAHook()
 	// stage1 : server num from 30 to 27.
 	// stage2 : server num from 27 to 26.
@@ -161,7 +161,7 @@ func TestHAReplacedButRunning(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 4)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestDispatcherExt(ctrl), testContext, nil)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestSchedulerExt(ctrl), testContext, nil)
 	registerReplaceButRunningHook()
 	testutil.DispatchTaskAndCheckSuccess(ctx, t, "😊", testContext, nil)
 	distContext.Close()
@@ -171,7 +171,7 @@ func TestHAReplacedButRunningManyNodes(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 30)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestDispatcherExt(ctrl), testContext, nil)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestSchedulerExt(ctrl), testContext, nil)
 	registerReplaceButRunningHook()
 	testutil.DispatchTaskAndCheckSuccess(ctx, t, "😊", testContext, nil)
 	distContext.Close()

@@ -161,9 +161,9 @@ type ExternalStorageOptions struct {
 	NoCredentials bool
 
 	// HTTPClient to use. The created storage may ignore this field if it is not
-	// directly using HTTP (e.g. the local storage) or use self-design HTTP client
-	// with credential (e.g. the gcs).
-	// NOTICE: the HTTPClient is only used by s3 storage and azure blob storage.
+	// directly using HTTP (e.g. the local storage).
+	// NOTICE: the HTTPClient is only used by s3/azure/gcs.
+	// For GCS, we will use this as base client to init a client with credentials.
 	HTTPClient *http.Client
 
 	// CheckPermissions check the given permission in New() function.
@@ -195,11 +195,14 @@ func NewWithDefaultOpt(ctx context.Context, backend *backuppb.StorageBackend) (E
 	if intest.InTest {
 		opts.NoCredentials = true
 	}
+	if backend.GetGcs() != nil {
+		opts.HTTPClient = gcsHttpClientForThroughput()
+	}
 	return New(ctx, backend, &opts)
 }
 
 // NewFromURL creates an ExternalStorage from URL.
-func NewFromURL(ctx context.Context, uri string, opts *ExternalStorageOptions) (ExternalStorage, error) {
+func NewFromURL(ctx context.Context, uri string) (ExternalStorage, error) {
 	if len(uri) == 0 {
 		return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "empty store is not allowed")
 	}
@@ -214,7 +217,7 @@ func NewFromURL(ctx context.Context, uri string, opts *ExternalStorageOptions) (
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return New(ctx, b, opts)
+	return NewWithDefaultOpt(ctx, b)
 }
 
 // New creates an ExternalStorage with options.
@@ -247,9 +250,6 @@ func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalSt
 		if backend.Gcs == nil {
 			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "GCS config not found")
 		}
-		// the HTTPClient should has credential, currently the HTTPClient only has the http.Transport.
-		// Issue: https: //github.com/pingcap/tidb/issues/47022
-		opts.HTTPClient = nil
 		return NewGCSStorage(ctx, backend.Gcs, opts)
 	case *backuppb.StorageBackend_AzureBlobStorage:
 		return newAzureBlobStorage(ctx, backend.AzureBlobStorage, opts)

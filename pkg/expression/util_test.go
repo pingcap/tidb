@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -499,70 +498,70 @@ type MockExpr struct {
 	i   interface{}
 }
 
-func (m *MockExpr) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (m *MockExpr) VecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return nil
 }
-func (m *MockExpr) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (m *MockExpr) VecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return nil
 }
-func (m *MockExpr) VecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (m *MockExpr) VecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return nil
 }
-func (m *MockExpr) VecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (m *MockExpr) VecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return nil
 }
-func (m *MockExpr) VecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (m *MockExpr) VecEvalTime(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return nil
 }
-func (m *MockExpr) VecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (m *MockExpr) VecEvalDuration(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return nil
 }
-func (m *MockExpr) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (m *MockExpr) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return nil
 }
 
 func (m *MockExpr) String() string               { return "" }
 func (m *MockExpr) MarshalJSON() ([]byte, error) { return nil, nil }
-func (m *MockExpr) Eval(ctx sessionctx.Context, row chunk.Row) (types.Datum, error) {
+func (m *MockExpr) Eval(ctx EvalContext, row chunk.Row) (types.Datum, error) {
 	return types.NewDatum(m.i), m.err
 }
-func (m *MockExpr) EvalInt(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error) {
+func (m *MockExpr) EvalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error) {
 	if x, ok := m.i.(int64); ok {
 		return x, false, m.err
 	}
 	return 0, m.i == nil, m.err
 }
-func (m *MockExpr) EvalReal(ctx sessionctx.Context, row chunk.Row) (val float64, isNull bool, err error) {
+func (m *MockExpr) EvalReal(ctx EvalContext, row chunk.Row) (val float64, isNull bool, err error) {
 	if x, ok := m.i.(float64); ok {
 		return x, false, m.err
 	}
 	return 0, m.i == nil, m.err
 }
-func (m *MockExpr) EvalString(ctx sessionctx.Context, row chunk.Row) (val string, isNull bool, err error) {
+func (m *MockExpr) EvalString(ctx EvalContext, row chunk.Row) (val string, isNull bool, err error) {
 	if x, ok := m.i.(string); ok {
 		return x, false, m.err
 	}
 	return "", m.i == nil, m.err
 }
-func (m *MockExpr) EvalDecimal(ctx sessionctx.Context, row chunk.Row) (val *types.MyDecimal, isNull bool, err error) {
+func (m *MockExpr) EvalDecimal(ctx EvalContext, row chunk.Row) (val *types.MyDecimal, isNull bool, err error) {
 	if x, ok := m.i.(*types.MyDecimal); ok {
 		return x, false, m.err
 	}
 	return nil, m.i == nil, m.err
 }
-func (m *MockExpr) EvalTime(ctx sessionctx.Context, row chunk.Row) (val types.Time, isNull bool, err error) {
+func (m *MockExpr) EvalTime(ctx EvalContext, row chunk.Row) (val types.Time, isNull bool, err error) {
 	if x, ok := m.i.(types.Time); ok {
 		return x, false, m.err
 	}
 	return types.ZeroTime, m.i == nil, m.err
 }
-func (m *MockExpr) EvalDuration(ctx sessionctx.Context, row chunk.Row) (val types.Duration, isNull bool, err error) {
+func (m *MockExpr) EvalDuration(ctx EvalContext, row chunk.Row) (val types.Duration, isNull bool, err error) {
 	if x, ok := m.i.(types.Duration); ok {
 		return x, false, m.err
 	}
 	return types.Duration{}, m.i == nil, m.err
 }
-func (m *MockExpr) EvalJSON(ctx sessionctx.Context, row chunk.Row) (val types.BinaryJSON, isNull bool, err error) {
+func (m *MockExpr) EvalJSON(ctx EvalContext, row chunk.Row) (val types.BinaryJSON, isNull bool, err error) {
 	if x, ok := m.i.(types.BinaryJSON); ok {
 		return x, false, m.err
 	}
@@ -573,20 +572,20 @@ func (m *MockExpr) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rT
 }
 func (m *MockExpr) GetType() *types.FieldType                         { return m.t }
 func (m *MockExpr) Clone() Expression                                 { return nil }
-func (m *MockExpr) Equal(ctx sessionctx.Context, e Expression) bool   { return false }
+func (m *MockExpr) Equal(ctx EvalContext, e Expression) bool          { return false }
 func (m *MockExpr) IsCorrelated() bool                                { return false }
 func (m *MockExpr) ConstItem(_ *stmtctx.StatementContext) bool        { return false }
 func (m *MockExpr) Decorrelate(schema *Schema) Expression             { return m }
 func (m *MockExpr) ResolveIndices(schema *Schema) (Expression, error) { return m, nil }
 func (m *MockExpr) resolveIndices(schema *Schema) error               { return nil }
-func (m *MockExpr) ResolveIndicesByVirtualExpr(ctx sessionctx.Context, schema *Schema) (Expression, bool) {
+func (m *MockExpr) ResolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) (Expression, bool) {
 	return m, true
 }
-func (m *MockExpr) resolveIndicesByVirtualExpr(ctx sessionctx.Context, schema *Schema) bool {
+func (m *MockExpr) resolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) bool {
 	return true
 }
 func (m *MockExpr) RemapColumn(_ map[int64]*Column) (Expression, error) { return m, nil }
-func (m *MockExpr) ExplainInfo(sessionctx.Context) string               { return "" }
+func (m *MockExpr) ExplainInfo(EvalContext) string                      { return "" }
 func (m *MockExpr) ExplainNormalizedInfo() string                       { return "" }
 func (m *MockExpr) ExplainNormalizedInfo4InList() string                { return "" }
 func (m *MockExpr) HashCode() []byte                                    { return nil }
