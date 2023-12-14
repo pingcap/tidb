@@ -427,5 +427,5 @@ func TestMonitorTheSystemTableIncremental(t *testing.T) {
 	s := createRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.mock.Storage)
 	ret := tk.MustQuery("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'mysql'")
-	ret.Equal([][]interface{}{[]interface{}{55}})
+	ret.Equal([][]interface{}{{55}})
 }

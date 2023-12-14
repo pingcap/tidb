@@ -233,7 +233,7 @@ func (rc *Client) afterSystemTablesReplaced(ctx context.Context, tables []string
 		if table == "user" {
 			if serr := rc.dom.NotifyUpdatePrivilege(); serr != nil {
 				log.Warn("failed to flush privileges, please manually execute `FLUSH PRIVILEGES`")
-				err = multierr.Append(err, rc.dom.NotifyUpdatePrivilege())
+				err = multierr.Append(err, berrors.ErrUnknown.Wrap(serr).GenWithStack("failed to flush privileges"))
 			} else {
 				log.Info("privilege system table restored, please reconnect to make it effective")
 			}
