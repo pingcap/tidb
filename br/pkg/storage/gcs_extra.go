@@ -33,8 +33,6 @@ import (
 	"cloud.google.com/go/storage"
 	"github.com/go-resty/resty/v2"
 	"go.uber.org/atomic"
-	"google.golang.org/api/option"
-	htransport "google.golang.org/api/transport/http"
 )
 
 // GCSWriter uses XML multipart upload API to upload a single file.
@@ -70,7 +68,6 @@ func NewGCSWriter(
 	partSize int64,
 	parallelCnt int,
 	bucketName string,
-	transportOpts []option.ClientOption,
 ) (*GCSWriter, error) {
 	if partSize < gcsMinimumChunkSize || partSize > gcsMaximumChunkSize {
 		return nil, fmt.Errorf(
@@ -87,7 +84,6 @@ func NewGCSWriter(
 			blob:            uri,
 			retry:           defaultRetry,
 			signedURLExpiry: defaultSignedURLExpiry,
-			transportOpts:   transportOpts,
 		},
 		chunkSize: partSize,
 		workers:   parallelCnt,
@@ -222,7 +218,6 @@ type uploadBase struct {
 	blob            string
 	retry           int
 	signedURLExpiry time.Duration
-	transportOpts   []option.ClientOption
 }
 
 const (
@@ -394,12 +389,8 @@ func (p *xmlMPUPart) upload() error {
 	}
 	req = req.WithContext(p.ctx)
 
-	tr, err := createTransport(p.ctx, p.transportOpts)
-	if err != nil {
-		return fmt.Errorf("failed to create transport: %s", err)
-	}
 	client := &http.Client{
-		Transport: tr,
+		Transport: createTransport(nil),
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -417,12 +408,15 @@ func (p *xmlMPUPart) upload() error {
 	return nil
 }
 
-func createTransport(ctx context.Context, opts []option.ClientOption) (http.RoundTripper, error) {
+func createTransport(localAddr net.Addr) *http.Transport {
 	dialer := &net.Dialer{
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,
 	}
-	ret := &http.Transport{
+	if localAddr != nil {
+		dialer.LocalAddr = localAddr
+	}
+	return &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
 		DialContext:           dialer.DialContext,
 		MaxIdleConns:          100,
@@ -431,5 +425,4 @@ func createTransport(ctx context.Context, opts []option.ClientOption) (http.Roun
 		ExpectContinueTimeout: 1 * time.Second,
 		MaxIdleConnsPerHost:   runtime.GOMAXPROCS(0) + 1,
 	}
-	return htransport.NewTransport(ctx, ret, opts...)
 }
