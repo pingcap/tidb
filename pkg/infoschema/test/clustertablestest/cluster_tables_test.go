@@ -1170,7 +1170,7 @@ func TestCreateBindingForPrepareFromHistory(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("create binding from history using plan digest '%s'", planDigest[0][0]))
 	showRes = tk.MustQuery("show bindings").Rows()
 	require.Equal(t, len(showRes), 1)
-	require.Equal(t, planDigest[0][0], showRes[0][10])
+	require.Equal(t, planDigest[0][0], showRes[0][11])
 	tk.MustExec("execute stmt using @a")
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 }
