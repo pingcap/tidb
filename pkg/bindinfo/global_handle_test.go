@@ -265,6 +265,79 @@ func showBinding(tk *testkit.TestKit, showStmt string) [][]interface{} {
 	return result
 }
 
+func TestUniversalBinding(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`set @@tidb_opt_enable_universal_binding=1`)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, c int, d int, e int, key(a), key(b), key(c), key(d), key(e))`)
+	tk.MustExec(`create database test1`)
+	tk.MustExec(`use test1`)
+	tk.MustExec(`create table t (a int, b int, c int, d int, e int, key(a), key(b), key(c), key(d), key(e))`)
+	tk.MustExec(`create database test2`)
+	tk.MustExec(`use test2`)
+	tk.MustExec(`create table t (a int, b int, c int, d int, e int, key(a), key(b), key(c), key(d), key(e))`)
+
+	for _, idx := range []string{"a", "b", "c", "d", "e"} {
+		tk.MustExec(fmt.Sprintf(`create global universal binding using select /*+ use_index(t, %v) */ * from t`, idx))
+		for _, db := range []string{"test", "test1", "test2"} {
+			tk.MustExec("use " + db)
+			tk.MustUseIndex(`select * from t`, idx)
+			tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+			tk.MustUseIndex(`select * from test.t`, idx)
+			tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+			tk.MustUseIndex(`select * from test1.t`, idx)
+			tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+			tk.MustUseIndex(`select * from test2.t`, idx)
+			tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+		}
+	}
+
+	for _, idx := range []string{"a", "b", "c", "d", "e"} {
+		tk.MustExec(fmt.Sprintf(`create universal binding using select /*+ use_index(t, %v) */ * from t`, idx))
+		for _, db := range []string{"test", "test1", "test2"} {
+			tk.MustExec("use " + db)
+			tk.MustUseIndex(`select * from t`, idx)
+			tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+			tk.MustUseIndex(`select * from test.t`, idx)
+			tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+			tk.MustUseIndex(`select * from test1.t`, idx)
+			tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+			tk.MustUseIndex(`select * from test2.t`, idx)
+			tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+		}
+	}
+}
+
+func TestUniversalBindingPriority(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`set @@tidb_opt_enable_universal_binding=1`)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, c int, d int, e int, key(a), key(b), key(c), key(d), key(e))`)
+
+	tk.MustExec(`create global universal binding using select /*+ use_index(t, a) */ * from t`)
+	tk.MustUseIndex(`select * from t`, "a")
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+
+	// global normal > global universal
+	tk.MustExec(`create global binding using select /*+ use_index(t, b) */ * from t`)
+	tk.MustUseIndex(`select * from t`, "b")
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+
+	// session universal > global normal
+	tk.MustExec(`create session universal binding using select /*+ use_index(t, c) */ * from t`)
+	tk.MustUseIndex(`select * from t`, "c")
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+
+	// session normal > session universal
+	tk.MustExec(`create session binding using select /*+ use_index(t, d) */ * from t`)
+	tk.MustUseIndex(`select * from t`, "d")
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+}
+
 func TestCreateUniversalBinding(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
