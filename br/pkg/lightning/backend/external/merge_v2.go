@@ -144,6 +144,7 @@ func MergeOverlappingFilesV2(
 	var stat MultipleFilesStat
 	stat.Filenames = append(stat.Filenames,
 		[2]string{writer.dataFile, writer.statFile})
+	// ywq todo what if no key readed... in read all data
 	stat.build([]tidbkv.Key{startKey}, []tidbkv.Key{curEnd})
 	if onClose != nil {
 		onClose(&WriterSummary{
