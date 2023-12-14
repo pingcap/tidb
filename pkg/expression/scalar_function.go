@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -350,13 +349,13 @@ func (sf *ScalarFunction) IsCorrelated() bool {
 }
 
 // ConstItem implements Expression interface.
-func (sf *ScalarFunction) ConstItem(sc *stmtctx.StatementContext) bool {
+func (sf *ScalarFunction) ConstItem(acrossCtx bool) bool {
 	// Note: some unfoldable functions are deterministic, we use unFoldableFunctions here for simplification.
 	if _, ok := unFoldableFunctions[sf.FuncName.L]; ok {
 		return false
 	}
 	for _, arg := range sf.GetArgs() {
-		if !arg.ConstItem(sc) {
+		if !arg.ConstItem(acrossCtx) {
 			return false
 		}
 	}
