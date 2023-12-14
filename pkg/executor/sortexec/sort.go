@@ -131,6 +131,8 @@ func (e *SortExec) Close() error {
 			e.Unparallel.spillAction.SetFinished()
 		}
 		e.Unparallel.spillAction = nil
+	} else {
+		
 	}
 	return e.Children(0).Close()
 }
@@ -160,12 +162,15 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.IsUnparallel {
 		return e.getChunkInUnparallelMode(req)
 	} else {
-		return e.getChunkInParallelMode(req)
+		e.getChunkInParallelMode(req)
 	}
+	return nil
 }
 
-func (e *SortExec) getChunkInParallelMode(req *chunk.Chunk) error {
-	return nil
+func (e *SortExec) getChunkInParallelMode(req *chunk.Chunk) {
+	for ; !req.IsFull() && e.Parallel.idx < e.Parallel.rowNum; e.Parallel.idx++ {
+		req.AppendRow(e.Parallel.result[e.Parallel.idx])
+	}
 }
 
 func (e *SortExec) getChunkInUnparallelMode(req *chunk.Chunk) error {
@@ -326,7 +331,7 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 	// Wait for the finish of all goroutines
 	waitGroup.Wait()
 
-	e.getResult(sharedSortedData)
+	e.getResult(&publicSpace)
 
 	return nil
 }
@@ -385,8 +390,8 @@ func (e *SortExec) processErrorForParallel(err error) {
 	e.Parallel.mpmcQueue.Close()
 }
 
-func (e *SortExec) getResult(sharedSortedData *mergeSortedDataContainer) {
-	partitionNum := len(sharedSortedData.sortedData)
+func (e *SortExec) getResult(publicSpace *publicMergeSpace) {
+	partitionNum := publicSpace.publicQueue.Len()
 	if partitionNum > 1 {
 		panic("Sort is not completed.")
 	}
@@ -395,8 +400,10 @@ func (e *SortExec) getResult(sharedSortedData *mergeSortedDataContainer) {
 		e.Parallel.rowNum = 0
 		return
 	}
-	e.Parallel.rowNum = int64(len(sharedSortedData.sortedData[0]))
-	e.Parallel.result = sharedSortedData.sortedData[0]
+
+	sortedData := popFromList(&publicSpace.publicQueue)
+	e.Parallel.rowNum = int64(len(sortedData))
+	e.Parallel.result = sortedData
 }
 
 func (e *SortExec) initCompareFuncs() {
