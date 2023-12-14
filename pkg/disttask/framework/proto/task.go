@@ -159,6 +159,11 @@ func (t *Task) IsDone() bool {
 		t.State == TaskStateFailed
 }
 
+var (
+	// EmptyMeta is the empty meta of subtask.
+	EmptyMeta = []byte("{}")
+)
+
 // Compare compares two tasks by task order.
 func (t *Task) Compare(other *Task) int {
 	if t.Priority != other.Priority {
@@ -197,8 +202,13 @@ type Subtask struct {
 	// it can be used as subtask end time if the subtask is finished.
 	// it's 0 if it hasn't started yet.
 	UpdateTime time.Time
-	Meta       []byte
-	Summary    string
+	// Meta is the metadata of subtask, should not be nil.
+	// meta of different subtasks of same step must be different too.
+	Meta    []byte
+	Summary string
+	// Ordinal is the ordinal of subtask, should be unique for some task and step.
+	// starts from 1, for reverting subtask, it's NULL in database.
+	Ordinal int
 }
 
 func (t *Subtask) String() string {
@@ -213,15 +223,17 @@ func (t *Subtask) IsFinished() bool {
 }
 
 // NewSubtask create a new subtask.
-func NewSubtask(step Step, taskID int64, tp TaskType, execID string, concurrency int, meta []byte) *Subtask {
-	return &Subtask{
+func NewSubtask(step Step, taskID int64, tp TaskType, execID string, concurrency int, meta []byte, ordinal int) *Subtask {
+	s := &Subtask{
 		Step:        step,
 		Type:        tp,
 		TaskID:      taskID,
 		ExecID:      execID,
 		Concurrency: concurrency,
 		Meta:        meta,
+		Ordinal:     ordinal,
 	}
+	return s
 }
 
 // MinimalTask is the minimal task of distribute framework.
