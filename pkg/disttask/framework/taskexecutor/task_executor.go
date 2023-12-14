@@ -572,8 +572,6 @@ func (s *BaseTaskExecutor) updateErrorToSubtask(ctx context.Context, taskID int6
 	return err1
 }
 
-// ****************************** hook for TaskExecutor ****************************************
-
 func (s *BaseTaskExecutor) onInitBefore(task *proto.Task) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

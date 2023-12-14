@@ -91,6 +91,21 @@ func registerMultiStageHAHook() {
 		return hk
 	})
 }
+
+func registerReplaceButRunningHook() {
+	hk := &hook.TestCallback{}
+	hk.OnSubtaskFinishedBeforeExported = func(subtask *proto.Subtask) error {
+		if subtask.ExecID == ":4000" || subtask.ExecID == ":4001" || subtask.ExecID == ":4002" {
+			_ = infosync.MockGlobalServerInfoManagerEntry.DeleteByID(subtask.ExecID)
+			time.Sleep(20 * time.Second)
+		}
+		return nil
+	}
+	taskexecutor.RegisterHook(proto.TaskTypeExample, func() hook.Callback {
+		return hk
+	})
+}
+
 func TestHABasic(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 4)
 	defer ctrl.Finish()
@@ -143,19 +158,6 @@ func TestHAFailInDifferentStageManyNodes(t *testing.T) {
 	distContext.Close()
 }
 
-func registerReplaceButRunningHook() {
-	hk := &hook.TestCallback{}
-	hk.OnSubtaskFinishedBeforeExported = func(subtask *proto.Subtask) error {
-		if subtask.ExecID == ":4000" || subtask.ExecID == ":4001" || subtask.ExecID == ":4002" {
-			_ = infosync.MockGlobalServerInfoManagerEntry.DeleteByID(subtask.ExecID)
-			time.Sleep(20 * time.Second)
-		}
-		return nil
-	}
-	taskexecutor.RegisterHook(proto.TaskTypeExample, func() hook.Callback {
-		return hk
-	})
-}
 func TestHAReplacedButRunning(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 4)
 	defer ctrl.Finish()
