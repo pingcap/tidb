@@ -492,13 +492,16 @@ func gcsHttpClientForThroughput() *http.Client {
 	return &http.Client{Transport: transport}
 }
 
-const mockGCSTestBucket = "testbucket"
+// MockGCSTestBucket is used to distinguish the test where the GCS server is
+// created by fakestorage package or we are running unit tests with a real GCS
+// server.
+const MockGCSTestBucket = "testbucket"
 
 func isMockGCS(gcs *backuppb.GCS) bool {
 	if !intest.InTest {
 		return false
 	}
-	if gcs.Bucket == mockGCSTestBucket {
+	if gcs.Bucket == MockGCSTestBucket {
 		return true
 	}
 	// for other tests, fakestorage will listen on 127.0.0.1
