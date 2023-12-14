@@ -18,98 +18,17 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"math"
 	"slices"
 	"testing"
 	"time"
 
-	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
 )
-
-func testReadAndCompare(
-	ctx context.Context,
-	t *testing.T,
-	kvs []common.KvPair,
-	store storage.ExternalStorage,
-	memSizeLimit int) {
-	datas, stats, err := GetAllFileNames(ctx, store, "")
-	require.NoError(t, err)
-
-	splitter, err := NewRangeSplitter(
-		ctx,
-		datas,
-		stats,
-		store,
-		int64(memSizeLimit), // make the group small for testing
-		math.MaxInt64,
-		4*1024*1024*1024,
-		math.MaxInt64,
-		true,
-	)
-	require.NoError(t, err)
-
-	bufPool := membuf.NewPool()
-	loaded := &memKVsAndBuffers{}
-	curStart := kvs[0].Key
-	kvIdx := 0
-
-	for {
-		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, err := splitter.SplitOneRangesGroup()
-		require.NoError(t, err)
-		curEnd := endKeyOfGroup
-		if len(endKeyOfGroup) == 0 {
-			curEnd = dbkv.Key(kvs[len(kvs)-1].Key).Next()
-		}
-
-		err = readAllData(
-			ctx,
-			store,
-			dataFilesOfGroup,
-			statFilesOfGroup,
-			curStart,
-			curEnd,
-			bufPool,
-			loaded,
-		)
-
-		require.NoError(t, err)
-		// check kvs sorted
-		sorty.MaxGor = uint64(8)
-		sorty.Sort(len(loaded.keys), func(i, k, r, s int) bool {
-			if bytes.Compare(loaded.keys[i], loaded.keys[k]) < 0 { // strict comparator like < or >
-				if r != s {
-					loaded.keys[r], loaded.keys[s] = loaded.keys[s], loaded.keys[r]
-					loaded.values[r], loaded.values[s] = loaded.values[s], loaded.values[r]
-				}
-				return true
-			}
-			return false
-		})
-		for i, key := range loaded.keys {
-			require.EqualValues(t, kvs[kvIdx].Key, key)
-			require.EqualValues(t, kvs[kvIdx].Val, loaded.values[i])
-			kvIdx++
-		}
-
-		// release
-		loaded.keys = nil
-		loaded.values = nil
-		loaded.memKVBuffers = nil
-		copy(curStart, curEnd)
-
-		if len(endKeyOfGroup) == 0 {
-			break
-		}
-	}
-}
 
 func TestReadAllDataBasic(t *testing.T) {
 	seed := time.Now().Unix()
@@ -144,7 +63,10 @@ func TestReadAllDataBasic(t *testing.T) {
 		return bytes.Compare(i.Key, j.Key)
 	})
 
-	testReadAndCompare(ctx, t, kvs, memStore, memSizeLimit)
+	datas, stats, err := GetAllFileNames(ctx, memStore, "")
+	require.NoError(t, err)
+
+	testReadAndCompare(ctx, t, kvs, memStore, datas, stats, kvs[0].Key, memSizeLimit)
 }
 
 func TestReadAllOneFile(t *testing.T) {
@@ -179,5 +101,9 @@ func TestReadAllOneFile(t *testing.T) {
 	slices.SortFunc(kvs, func(i, j common.KvPair) int {
 		return bytes.Compare(i.Key, j.Key)
 	})
-	testReadAndCompare(ctx, t, kvs, memStore, memSizeLimit)
+
+	datas, stats, err := GetAllFileNames(ctx, memStore, "")
+	require.NoError(t, err)
+
+	testReadAndCompare(ctx, t, kvs, memStore, datas, stats, kvs[0].Key, memSizeLimit)
 }
