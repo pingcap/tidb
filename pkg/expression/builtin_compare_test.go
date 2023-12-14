@@ -116,7 +116,7 @@ func TestCompare(t *testing.T) {
 		{durationVal, durationVal, ast.NE, mysql.TypeDuration, 0},
 		{durationVal, durationVal, ast.NullEQ, mysql.TypeDuration, 1},
 		{nil, nil, ast.NullEQ, mysql.TypeNull, 1},
-		{nil, intVal, ast.NullEQ, mysql.TypeDouble, 0},
+		{nil, intVal, ast.NullEQ, mysql.TypeLonglong, 0},
 		{uintVal, intVal, ast.NullEQ, mysql.TypeLonglong, 1},
 		{uintVal, intVal, ast.EQ, mysql.TypeLonglong, 1},
 		{intVal, uintVal, ast.NullEQ, mysql.TypeLonglong, 1},
