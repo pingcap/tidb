@@ -971,6 +971,11 @@ func (p *PdController) CreateOrUpdateRegionLabelRule(ctx context.Context, rule L
 		_, lastErr = pdRequest(ctx, addr, pdhttp.RegionLabelRule,
 			p.cli, http.MethodPost, reqData)
 		if lastErr == nil {
+			// Wait for the rule to take effect because the PD operator is processed asynchronously.
+			// To synchronize this, checking the operator status may not be enough. For details, see
+			// https://github.com/pingcap/tidb/issues/49477.
+			// Let's use the default value of `patrol-region-interval` from PD configuration.
+			<-time.After(10 * time.Millisecond)
 			return nil
 		}
 		if berrors.IsContextCanceled(lastErr) {
