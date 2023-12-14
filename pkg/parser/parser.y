@@ -1051,10 +1051,6 @@ import (
 	UpdateStmtNoWith           "Update statement without CTE clause"
 	HelpStmt                   "HELP statement"
 	ShardableStmt              "Shardable statement that can be used in non-transactional DMLs"
-	PauseLoadDataStmt          "PAUSE LOAD DATA JOB statement"
-	ResumeLoadDataStmt         "RESUME LOAD DATA JOB statement"
-	CancelImportStmt           "CANCEL IMPORT JOB statement"
-	DropLoadDataStmt           "DROP LOAD DATA JOB statement"
 	ProcedureUnlabeledBlock    "The statement block without label in procedure"
 	ProcedureBlockContent      "The statement block in procedure expressed with 'Begin ... End'"
 	SimpleWhenThen             "Procedure case when then"
@@ -5855,42 +5851,6 @@ OptionLevel:
 |	"REQUIRED"
 	{
 		$$ = ast.BRIEOptionLevelRequired
-	}
-
-PauseLoadDataStmt:
-	"PAUSE" "LOAD" "DATA" "JOB" Int64Num
-	{
-		$$ = &ast.LoadDataActionStmt{
-			Tp:    ast.LoadDataPause,
-			JobID: $5.(int64),
-		}
-	}
-
-ResumeLoadDataStmt:
-	"RESUME" "LOAD" "DATA" "JOB" Int64Num
-	{
-		$$ = &ast.LoadDataActionStmt{
-			Tp:    ast.LoadDataResume,
-			JobID: $5.(int64),
-		}
-	}
-
-CancelImportStmt:
-	"CANCEL" "IMPORT" "JOB" Int64Num
-	{
-		$$ = &ast.ImportIntoActionStmt{
-			Tp:    ast.ImportIntoCancel,
-			JobID: $4.(int64),
-		}
-	}
-
-DropLoadDataStmt:
-	"DROP" "LOAD" "DATA" "JOB" Int64Num
-	{
-		$$ = &ast.LoadDataActionStmt{
-			Tp:    ast.LoadDataDrop,
-			JobID: $5.(int64),
-		}
 	}
 
 Expression:
@@ -12094,10 +12054,6 @@ Statement:
 |	HelpStmt
 |	NonTransactionalDMLStmt
 |	OptimizeTableStmt
-|	PauseLoadDataStmt
-|	ResumeLoadDataStmt
-|	CancelImportStmt
-|	DropLoadDataStmt
 
 TraceableStmt:
 	DeleteFromStmt
