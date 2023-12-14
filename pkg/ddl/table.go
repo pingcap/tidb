@@ -65,6 +65,15 @@ func createTable(d *ddlCtx, t *meta.Meta, job *model.Job, fkCheck bool) (*model.
 		}
 		return tbInfo, errors.Trace(err)
 	}
+
+	err = checkConstraintNamesNotExists(t, schemaID, tbInfo.Constraints)
+	if err != nil {
+		if infoschema.ErrCheckConstraintDupName.Equal(err) {
+			job.State = model.JobStateCancelled
+		}
+		return tbInfo, errors.Trace(err)
+	}
+
 	retryable, err := checkTableForeignKeyValidInOwner(d, t, job, tbInfo, fkCheck)
 	if err != nil {
 		if !retryable {
@@ -1063,7 +1072,6 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 		return finishJobRenameTables(d, t, job, tableNames, tableIDs, newSchemaIDs)
 	}
 
-	var tblInfos = make([]*model.TableInfo, 0, len(tableNames))
 	var err error
 	fkh := newForeignKeyHelper()
 	for i, oldSchemaID := range oldSchemaIDs {
@@ -1081,7 +1089,6 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		tblInfos = append(tblInfos, tblInfo)
 	}
 
 	ver, err = updateSchemaVersion(d, t, job, fkh.getLoadedTables()...)
@@ -1115,23 +1122,23 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo
 		return ver, errors.Wrapf(err, "failed to get old label rules from PD")
 	}
 
+	if tblInfo.AutoIDSchemaID == 0 && newSchemaID != oldSchemaID {
+		// The auto id is referenced by a schema id + table id
+		// Table ID is not changed between renames, but schema id can change.
+		// To allow concurrent use of the auto id during rename, keep the auto id
+		// by always reference it with the schema id it was originally created in.
+		tblInfo.AutoIDSchemaID = oldSchemaID
+	}
+	if newSchemaID == tblInfo.AutoIDSchemaID {
+		// Back to the original schema id, no longer needed.
+		tblInfo.AutoIDSchemaID = 0
+	}
+
 	tblInfo.Name = *tableName
 	err = t.CreateTableOrView(newSchemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
-	}
-
-	if newSchemaID != oldSchemaID {
-		oldDBID := tblInfo.GetDBID(oldSchemaID)
-		err := meta.BackupAndRestoreAutoIDs(t, oldDBID, tblInfo.ID, newSchemaID, tblInfo.ID)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
-		// It's compatible with old version.
-		// TODO: Remove it.
-		tblInfo.OldSchemaID = 0
 	}
 
 	err = updateLabelRules(job, tblInfo, oldRules, tableRuleID, partRuleIDs, oldRuleIDs, tblInfo.ID)
@@ -1488,6 +1495,28 @@ func checkTableNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, tableName stri
 	return checkTableNotExistsFromStore(t, schemaID, tableName)
 }
 
+func checkConstraintNamesNotExists(t *meta.Meta, schemaID int64, constraints []*model.ConstraintInfo) error {
+	if len(constraints) == 0 {
+		return nil
+	}
+	tbInfos, err := t.ListTables(schemaID)
+	if err != nil {
+		return err
+	}
+
+	for _, tb := range tbInfos {
+		for _, constraint := range constraints {
+			if constraint.State != model.StateWriteOnly {
+				if constraintInfo := tb.FindConstraintInfoByName(constraint.Name.L); constraintInfo != nil {
+					return infoschema.ErrCheckConstraintDupName.GenWithStackByArgs(constraint.Name.L)
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
 func checkTableIDNotExists(t *meta.Meta, schemaID, tableID int64) error {
 	tbl, err := t.GetTable(schemaID, tableID)
 	if err != nil {
@@ -1516,7 +1545,7 @@ func checkTableNotExistsFromInfoSchema(is infoschema.InfoSchema, schemaID int64,
 
 func checkTableNotExistsFromStore(t *meta.Meta, schemaID int64, tableName string) error {
 	// Check this table's database.
-	tbls, err := t.ListTables(schemaID)
+	tbls, err := t.ListSimpleTables(schemaID)
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
 			return infoschema.ErrDatabaseNotExists.GenWithStackByArgs("")

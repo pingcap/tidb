@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -2314,7 +2313,7 @@ func hasCurrentDatetimeDefault(col *table.Column) bool {
 	return strings.ToLower(x) == ast.CurrentTimestamp
 }
 
-func decodeKeyFromString(ctx sessionctx.Context, s string) string {
+func decodeKeyFromString(ctx expression.EvalContext, s string) string {
 	sc := ctx.GetSessionVars().StmtCtx
 	key, err := hex.DecodeString(s)
 	if err != nil {
@@ -2331,13 +2330,9 @@ func decodeKeyFromString(ctx sessionctx.Context, s string) string {
 		sc.AppendWarning(errors.Errorf("invalid key: %X", key))
 		return s
 	}
-	dm := domain.GetDomain(ctx)
-	if dm == nil {
-		sc.AppendWarning(errors.Errorf("domain not found when decoding key: %X", key))
-		return s
-	}
-	is := dm.InfoSchema()
-	if is == nil {
+
+	is, ok := ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	if !ok {
 		sc.AppendWarning(errors.Errorf("infoschema not found when decoding key: %X", key))
 		return s
 	}

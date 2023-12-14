@@ -16,6 +16,7 @@ package proto
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -46,4 +47,30 @@ func TestTaskIsDone(t *testing.T) {
 	for _, c := range cases {
 		require.Equal(t, c.done, (&Task{State: c.state}).IsDone())
 	}
+}
+
+func TestTaskCompare(t *testing.T) {
+	taskA := Task{
+		ID:         100,
+		Priority:   NormalPriority,
+		CreateTime: time.Date(2023, time.December, 5, 15, 53, 30, 0, time.UTC),
+	}
+	taskB := taskA
+	require.Equal(t, 0, taskA.Compare(&taskB))
+	taskB.Priority = 100
+	require.Greater(t, taskA.Compare(&taskB), 0)
+	taskB.Priority = taskA.Priority + 100
+	require.Less(t, taskA.Compare(&taskB), 0)
+
+	taskB.Priority = taskA.Priority
+	taskB.CreateTime = time.Date(2023, time.December, 5, 15, 53, 10, 0, time.UTC)
+	require.Greater(t, taskA.Compare(&taskB), 0)
+	taskB.CreateTime = time.Date(2023, time.December, 5, 15, 53, 40, 0, time.UTC)
+	require.Less(t, taskA.Compare(&taskB), 0)
+
+	taskB.CreateTime = taskA.CreateTime
+	taskB.ID = taskA.ID - 10
+	require.Greater(t, taskA.Compare(&taskB), 0)
+	taskB.ID = taskA.ID + 10
+	require.Less(t, taskA.Compare(&taskB), 0)
 }

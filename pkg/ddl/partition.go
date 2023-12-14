@@ -2594,6 +2594,9 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	// exchange table meta id
 	pt.ExchangePartitionInfo = nil
+	// Used below to update the partitioned table's stats meta.
+	originalPartitionDef := partDef.Clone()
+	originalNt := nt.Clone()
 	partDef.ID, nt.ID = nt.ID, partDef.ID
 
 	err = t.UpdateTable(ptSchemaID, pt)
@@ -2697,6 +2700,12 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 
 	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, pt)
+	exchangePartitionEvent := statsutil.NewExchangePartitionEvent(
+		pt,
+		&model.PartitionInfo{Definitions: []model.PartitionDefinition{originalPartitionDef}},
+		originalNt,
+	)
+	asyncNotifyEvent(d, exchangePartitionEvent)
 	return ver, nil
 }
 

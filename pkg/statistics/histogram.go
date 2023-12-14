@@ -1093,17 +1093,6 @@ func (hg *Histogram) Copy() *Histogram {
 	return &newHist
 }
 
-// RemoveUpperBound removes the upper bound from histogram.
-// It is used when merge stats for incremental analyze.
-func (hg *Histogram) RemoveUpperBound() *Histogram {
-	hg.Buckets[hg.Len()-1].Count -= hg.Buckets[hg.Len()-1].Repeat
-	hg.Buckets[hg.Len()-1].Repeat = 0
-	if hg.NDV > 0 {
-		hg.NDV--
-	}
-	return hg
-}
-
 // TruncateHistogram truncates the histogram to `numBkt` buckets.
 func (hg *Histogram) TruncateHistogram(numBkt int) *Histogram {
 	hist := hg.Copy()
@@ -1272,7 +1261,7 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 	// illegal order.
 	if upperCompare < 0 {
 		err := errors.Errorf("illegal bucket order")
-		statslogutil.StatsLogger.Warn("fail to mergeBucketNDV", zap.Error(err))
+		statslogutil.StatsLogger().Warn("fail to mergeBucketNDV", zap.Error(err))
 		return nil, err
 	}
 	//  ___right_|
@@ -1288,7 +1277,7 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 		// illegal order.
 		if lowerCompare < 0 {
 			err := errors.Errorf("illegal bucket order")
-			statslogutil.StatsLogger.Warn("fail to mergeBucketNDV", zap.Error(err))
+			statslogutil.StatsLogger().Warn("fail to mergeBucketNDV", zap.Error(err))
 			return nil, err
 		}
 		// |___right___|
@@ -1485,7 +1474,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	tail := 0
 	for i := range buckets {
 		if buckets[i].Count != 0 {
-			buckets[tail] = buckets[i]
+			buckets[tail], buckets[i] = buckets[i], buckets[tail]
 			tail++
 		}
 	}

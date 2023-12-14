@@ -13,5 +13,6 @@ go_test(
     srcs = ["task_test.go"],
     embed = [":proto"],
     flaky = True,
+    shard_count = 3,
     deps = ["@com_github_stretchr_testify//require"],
 )

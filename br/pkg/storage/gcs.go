@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"net/http"
 	"os"
 	"path"
 	"strings"
@@ -15,11 +16,13 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
+	htransport "google.golang.org/api/transport/http"
 )
 
 const (
@@ -319,12 +322,22 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 	if gcs.Endpoint != "" {
 		clientOps = append(clientOps, option.WithEndpoint(gcs.Endpoint))
 	}
-	// the HTTPClient should has credential, currently the HTTPClient only has the http.Transport.
-	// So we remove the HTTPClient in the storage.New().
-	// Issue: https: //github.com/pingcap/tidb/issues/47022
+
 	if opts.HTTPClient != nil {
+		if !intest.InTest {
+			// see https://github.com/pingcap/tidb/issues/47022#issuecomment-1722913455
+			// https://www.googleapis.com/auth/cloud-platform must be set to use service_account
+			// type of credential-file.
+			newTransport, err := htransport.NewTransport(ctx, opts.HTTPClient.Transport,
+				append(clientOps, option.WithScopes(storage.ScopeFullControl, "https://www.googleapis.com/auth/cloud-platform"))...)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			opts.HTTPClient.Transport = newTransport
+		}
 		clientOps = append(clientOps, option.WithHTTPClient(opts.HTTPClient))
 	}
+
 	client, err := storage.NewClient(ctx, clientOps...)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -464,4 +477,17 @@ func (r *gcsObjectReader) Seek(offset int64, whence int) (int64, error) {
 
 func (r *gcsObjectReader) GetFileSize() (int64, error) {
 	return r.totalSize, nil
+}
+
+// gcsHttpClientForThroughput returns a base http client for GCS that is optimized
+// for throughput.
+func gcsHttpClientForThroughput() *http.Client {
+	// http2 will reuse the connection to read multiple files, which is
+	// very slow, the speed of reading multiple files concurrently is about the
+	// same speed as reading a single file.
+	// So we disable keepalive here to use multiple connections to read files.
+	// open a new connection takes about 20~50ms, which is acceptable.
+	transport, _ := CloneDefaultHttpTransport()
+	transport.DisableKeepAlives = true
+	return &http.Client{Transport: transport}
 }

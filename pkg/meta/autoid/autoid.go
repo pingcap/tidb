@@ -259,7 +259,7 @@ type allocator struct {
 	base  int64
 	end   int64
 	store kv.Storage
-	// dbID is current database's ID.
+	// dbID is database ID where it was created.
 	dbID          int64
 	tbID          int64
 	tbVersion     uint16
@@ -653,7 +653,7 @@ func NewSequenceAllocator(store kv.Storage, dbID, tbID int64, info *model.Sequen
 // NewAllocatorsFromTblInfo creates an array of allocators of different types with the information of model.TableInfo.
 func NewAllocatorsFromTblInfo(r Requirement, schemaID int64, tblInfo *model.TableInfo) Allocators {
 	var allocs []Allocator
-	dbID := tblInfo.GetDBID(schemaID)
+	dbID := tblInfo.GetAutoIDSchemaID(schemaID)
 	idCacheOpt := CustomAutoIncCacheOption(tblInfo.AutoIdCache)
 	tblVer := AllocOptionTableInfoVersion(tblInfo.Version)
 

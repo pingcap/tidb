@@ -575,7 +575,7 @@ const (
 		type VARCHAR(256) NOT NULL,
 		dispatcher_id VARCHAR(256),
 		state VARCHAR(64) NOT NULL,
-		priority INT NOT NULL,
+		priority INT DEFAULT 1,
 		create_time TIMESTAMP,
 		start_time TIMESTAMP,
 		state_update_time TIMESTAMP,
@@ -595,7 +595,7 @@ const (
 		type VARCHAR(256) NOT NULL,
 		dispatcher_id VARCHAR(256),
 		state VARCHAR(64) NOT NULL,
-		priority INT NOT NULL,
+		priority INT DEFAULT 1,
 		create_time TIMESTAMP,
 		start_time TIMESTAMP,
 		state_update_time TIMESTAMP,
@@ -1035,8 +1035,8 @@ const (
 
 	// version 180
 	//   add priority/create_time/end_time to `mysql.tidb_global_task`/`mysql.tidb_global_task_history`
-	//   add concurrency/priority/create_time/end_time to `mysql.tidb_background_subtask`/`mysql.tidb_background_subtask_history`
-	//   add idx_exec_id(exec_id) to `mysql.tidb_background_subtask`
+	//   add concurrency/create_time/end_time/digest to `mysql.tidb_background_subtask`/`mysql.tidb_background_subtask_history`
+	//   add idx_exec_id(exec_id), uk_digest to `mysql.tidb_background_subtask`
 	version180 = 180
 )
 
@@ -2021,7 +2021,7 @@ func upgradeToVer67(s sessiontypes.Session, ver int64) {
 		return
 	}
 	bindMap := make(map[string]bindInfo)
-	h := &bindinfo.BindHandle{}
+	h := bindinfo.NewGlobalBindingHandle(nil)
 	var err error
 	mustExecute(s, "BEGIN PESSIMISTIC")
 
@@ -2916,21 +2916,24 @@ func upgradeToVer180(s sessiontypes.Session, ver int64) {
 	if ver >= version180 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `priority` INT NOT NULL AFTER `state`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `priority` INT DEFAULT 1 AFTER `state`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `create_time` TIMESTAMP AFTER `priority`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `end_time` TIMESTAMP AFTER `state_update_time`", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN `priority` INT NOT NULL AFTER `state`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN `priority` INT DEFAULT 1 AFTER `state`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN `create_time` TIMESTAMP AFTER `priority`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN `end_time` TIMESTAMP AFTER `state_update_time`", infoschema.ErrColumnExists)
 
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `concurrency` INT AFTER `checkpoint`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `create_time` TIMESTAMP AFTER `concurrency`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `end_time` TIMESTAMP AFTER `state_update_time`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `ordinal` int AFTER `meta`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `concurrency` INT AFTER `checkpoint`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `create_time` TIMESTAMP AFTER `concurrency`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `end_time` TIMESTAMP AFTER `state_update_time`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `ordinal` int AFTER `meta`", infoschema.ErrColumnExists)
 
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD INDEX idx_exec_id(exec_id)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD UNIQUE INDEX uk_task_key_step_ordinal(task_key, step, ordinal)", dbterror.ErrDupKeyName)
 }
 
 func writeOOMAction(s sessiontypes.Session) {

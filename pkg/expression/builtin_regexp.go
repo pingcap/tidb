@@ -164,7 +164,7 @@ func (re *regexpBaseFuncSig) genRegexp(pat string, matchType string) (*regexp.Re
 //  2. pattern is const and there is no match type argument
 //
 // return true: need, false: needless
-func (re *regexpBaseFuncSig) canMemorize(ctx sessionctx.Context, matchTypeIdx int) bool {
+func (re *regexpBaseFuncSig) canMemorize(ctx EvalContext, matchTypeIdx int) bool {
 	return re.args[patternIdx].ConstItem(ctx.GetSessionVars().StmtCtx) && (len(re.args) <= matchTypeIdx || re.args[matchTypeIdx].ConstItem(ctx.GetSessionVars().StmtCtx))
 }
 
@@ -189,7 +189,7 @@ func (re *regexpBaseFuncSig) initMemoizedRegexp(params []*funcParam, matchTypeId
 // As multiple threads may memorize regexp and cause data race, only the first thread
 // who gets the lock is permitted to do the memorization and others should wait for him
 // until the memorization has been finished.
-func (re *regexpBaseFuncSig) tryToMemorize(ctx sessionctx.Context, params []*funcParam, matchTypeIdx int, n int) error {
+func (re *regexpBaseFuncSig) tryToMemorize(ctx EvalContext, params []*funcParam, matchTypeIdx int, n int) error {
 	// Check memorization
 	if n == 0 || !re.canMemorize(ctx, matchTypeIdx) {
 		return nil
@@ -254,7 +254,7 @@ func (re *builtinRegexpLikeFuncSig) vectorized() bool {
 	return true
 }
 
-func (re *builtinRegexpLikeFuncSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (re *builtinRegexpLikeFuncSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	expr, isNull, err := re.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return 0, true, err
@@ -308,7 +308,7 @@ func (re *builtinRegexpLikeFuncSig) evalInt(ctx sessionctx.Context, row chunk.Ro
 }
 
 // REGEXP_LIKE(expr, pat[, match_type])
-func (re *builtinRegexpLikeFuncSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (re *builtinRegexpLikeFuncSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	params := make([]*funcParam, 0, 3)
 	defer releaseBuffers(&re.baseBuiltinFunc, params)
@@ -433,7 +433,7 @@ func (re *builtinRegexpSubstrFuncSig) findBinString(reg *regexp.Regexp, bexpr []
 	return fmt.Sprintf("0x%s", strings.ToUpper(hex.EncodeToString(matches[occurrence-1]))), false, nil
 }
 
-func (re *builtinRegexpSubstrFuncSig) evalString(ctx sessionctx.Context, row chunk.Row) (string, bool, error) {
+func (re *builtinRegexpSubstrFuncSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
 	expr, isNull, err := re.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
@@ -540,7 +540,7 @@ func (re *builtinRegexpSubstrFuncSig) evalString(ctx sessionctx.Context, row chu
 }
 
 // REGEXP_SUBSTR(expr, pat[, pos[, occurrence[, match_type]]])
-func (re *builtinRegexpSubstrFuncSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (re *builtinRegexpSubstrFuncSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	params := make([]*funcParam, 0, 5)
 	defer releaseBuffers(&re.baseBuiltinFunc, params)
@@ -758,7 +758,7 @@ func (re *builtinRegexpInStrFuncSig) findIndex(reg *regexp.Regexp, expr string, 
 	return stringutil.ConvertPosInUtf8(&expr, int64(matches[occurrence-1][1])) + pos - 1, false, nil
 }
 
-func (re *builtinRegexpInStrFuncSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (re *builtinRegexpInStrFuncSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	expr, isNull, err := re.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return 0, true, err
@@ -880,7 +880,7 @@ func (re *builtinRegexpInStrFuncSig) evalInt(ctx sessionctx.Context, row chunk.R
 }
 
 // REGEXP_INSTR(expr, pat[, pos[, occurrence[, return_option[, match_type]]]])
-func (re *builtinRegexpInStrFuncSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (re *builtinRegexpInStrFuncSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	params := make([]*funcParam, 0, 5)
 	defer releaseBuffers(&re.baseBuiltinFunc, params)
@@ -1250,11 +1250,11 @@ func getInstructions(repl []byte) ([]Instruction, error) {
 	return instructions, nil
 }
 
-func (re *builtinRegexpReplaceFuncSig) canInstructionsMemorized(ctx sessionctx.Context) bool {
+func (re *builtinRegexpReplaceFuncSig) canInstructionsMemorized(ctx EvalContext) bool {
 	return re.args[replacementIdx].ConstItem(ctx.GetSessionVars().StmtCtx)
 }
 
-func (re *builtinRegexpReplaceFuncSig) evalString(ctx sessionctx.Context, row chunk.Row) (string, bool, error) {
+func (re *builtinRegexpReplaceFuncSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
 	expr, isNull, err := re.args[0].EvalString(ctx, row)
 	trimmedExpr := expr
 	if isNull || err != nil {
@@ -1393,7 +1393,7 @@ func (re *builtinRegexpReplaceFuncSig) evalString(ctx sessionctx.Context, row ch
 }
 
 // REGEXP_REPLACE(expr, pat, repl[, pos[, occurrence[, match_type]]])
-func (re *builtinRegexpReplaceFuncSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (re *builtinRegexpReplaceFuncSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	params := make([]*funcParam, 0, 6)
 	defer releaseBuffers(&re.baseBuiltinFunc, params)
