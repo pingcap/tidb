@@ -216,11 +216,11 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	}
 	if p.ctx.GetSessionVars().EnableLateMaterialization && len(p.filterCondition) > 0 && p.StoreType == kv.TiFlash {
 		buffer.WriteString("pushed down filter:")
-		if len(p.lateMaterializationFilterCondition) > 0 {
+		if len(p.LateMaterializationFilterCondition) > 0 {
 			if normalized {
-				buffer.Write(expression.SortedExplainNormalizedExpressionList(p.lateMaterializationFilterCondition))
+				buffer.Write(expression.SortedExplainNormalizedExpressionList(p.LateMaterializationFilterCondition))
 			} else {
-				buffer.Write(expression.SortedExplainExpressionList(p.lateMaterializationFilterCondition))
+				buffer.Write(expression.SortedExplainExpressionList(p.LateMaterializationFilterCondition))
 			}
 		} else {
 			buffer.WriteString("empty")
