@@ -177,7 +177,7 @@ func checkOneFileWriterStatWithDistance(t *testing.T, kvCnt int, keysDistance ui
 	require.NoError(t, statReader.Close())
 }
 
-func TestMergeOverlappingFilesV2(t *testing.T) {
+func TestMergeOverlappingFilesInternal(t *testing.T) {
 	// 1. Write to 5 files.
 	// 2. merge 5 files into one file.
 	// 3. read one file and check result.
@@ -203,7 +203,7 @@ func TestMergeOverlappingFilesV2(t *testing.T) {
 	err := writer.Close(ctx)
 	require.NoError(t, err)
 
-	err = mergeOverlappingFilesV2(
+	err = mergeOverlappingFilesInternal(
 		ctx,
 		[]string{"/test/0/0", "/test/0/1", "/test/0/2", "/test/0/3", "/test/0/4"},
 		memStore,
@@ -311,7 +311,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 	onClose := func(summary *WriterSummary) {
 		resSummary = summary
 	}
-	err = mergeOverlappingFilesV2(
+	err = mergeOverlappingFilesInternal(
 		ctx,
 		[]string{"/test/0/one-file"},
 		memStore,
