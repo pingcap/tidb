@@ -231,14 +231,11 @@ func (rc *Client) afterSystemTablesReplaced(ctx context.Context, tables []string
 	var err error
 	for _, table := range tables {
 		if table == "user" {
-			if rc.fullClusterRestore {
-				log.Info("privilege system table restored, please reconnect to make it effective")
+			if serr := rc.dom.NotifyUpdatePrivilege(); serr != nil {
+				log.Warn("failed to flush privileges, please manually execute `FLUSH PRIVILEGES`")
 				err = multierr.Append(err, rc.dom.NotifyUpdatePrivilege())
 			} else {
-				// to make it compatible with older version
-				// todo: should we allow restore system table in non-fresh cluster in later br version?
-				// if we don't, we can check it at first place.
-				log.Warn("restored user info may not take effect, until you should execute `FLUSH PRIVILEGES` manually")
+				log.Info("privilege system table restored, please reconnect to make it effective")
 			}
 		} else if table == "bind_info" {
 			if serr := rc.db.se.Execute(ctx, bindinfo.StmtRemoveDuplicatedPseudoBinding); serr != nil {
