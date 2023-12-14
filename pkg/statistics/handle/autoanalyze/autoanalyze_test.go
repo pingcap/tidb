@@ -61,7 +61,7 @@ func TestDisableAutoAnalyze(t *testing.T) {
 	require.True(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
 	require.NoError(t, h.Update(is))
 
-	// Try again, it should not analyze the table again.
+	// Try again, it should not analyze the table because it's already analyzed and auto analyze ratio is 0.
 	require.False(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
 
 	// Index analyze doesn't depend on auto analyze ratio. Only control by tidb_enable_auto_analyze.
