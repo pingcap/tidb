@@ -2799,3 +2799,31 @@ func (e *AdminShowBDRRoleExec) Next(ctx context.Context, req *chunk.Chunk) error
 		return nil
 	})
 }
+
+// HelpExec represents a server side help executor.
+type HelpExec struct {
+	exec.BaseExecutor
+
+	topic string
+	done  bool
+}
+
+// Next implements the Executor Next interface.
+func (e *HelpExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.GrowAndReset(e.MaxChunkSize())
+	if e.done {
+		return nil
+	}
+	e.done = true
+	exec := e.Ctx().(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(ctx, `SELECT name, description, example FROM mysql.help_topic WHERE name=%?`, e.topic)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rows, _, err := exec.ExecRestrictedStmt(ctx, stmt)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	req.AppendRows(rows)
+	return nil
+}
