@@ -17,16 +17,13 @@ package external
 import (
 	"bytes"
 	"context"
-	"math"
 	"slices"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -106,74 +103,7 @@ func TestGlobalSortLocalBasic(t *testing.T) {
 	require.NoError(t, err)
 
 	// 2. read and sort step
-	splitter, err := NewRangeSplitter(
-		ctx,
-		lastStepDatas,
-		lastStepStats,
-		memStore,
-		int64(memSizeLimit), // make the group small for testing
-		math.MaxInt64,
-		4*1024*1024*1024,
-		math.MaxInt64,
-		true,
-	)
-	require.NoError(t, err)
-
-	bufPool := membuf.NewPool()
-	loaded := &memKVsAndBuffers{}
-	kvIdx := 0
-
-	for {
-		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, err := splitter.SplitOneRangesGroup()
-		require.NoError(t, err)
-		curEnd := dbkv.Key(endKeyOfGroup).Clone()
-		if len(endKeyOfGroup) == 0 {
-			curEnd = dbkv.Key(kvs[len(kvs)-1].Key).Next().Clone()
-		}
-
-		err = readAllData(
-			ctx,
-			memStore,
-			dataFilesOfGroup,
-			statFilesOfGroup,
-			startKey,
-			curEnd,
-			bufPool,
-			loaded,
-		)
-
-		require.NoError(t, err)
-		// check kvs sorted
-		sorty.MaxGor = uint64(8)
-		sorty.Sort(len(loaded.keys), func(i, k, r, s int) bool {
-			if bytes.Compare(loaded.keys[i], loaded.keys[k]) < 0 { // strict comparator like < or >
-				if r != s {
-					loaded.keys[r], loaded.keys[s] = loaded.keys[s], loaded.keys[r]
-					loaded.values[r], loaded.values[s] = loaded.values[s], loaded.values[r]
-				}
-				return true
-			}
-			return false
-		})
-		for i, key := range loaded.keys {
-			require.EqualValues(t, kvs[kvIdx].Key, key)
-			require.EqualValues(t, kvs[kvIdx].Val, loaded.values[i])
-			kvIdx++
-		}
-
-		// release
-		loaded.keys = nil
-		loaded.values = nil
-		loaded.memKVBuffers = nil
-		startKey = curEnd.Clone()
-
-		if len(endKeyOfGroup) == 0 {
-			break
-		}
-	}
-
-	err = splitter.Close()
-	require.NoError(t, err)
+	testReadAndCompare(ctx, t, kvs, memStore, lastStepDatas, lastStepStats, startKey, memSizeLimit)
 }
 
 func TestGlobalSortLocalWithMerge(t *testing.T) {
@@ -255,72 +185,5 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	}
 
 	// 3. read and sort step
-	splitter, err := NewRangeSplitter(
-		ctx,
-		lastStepDatas,
-		lastStepStats,
-		memStore,
-		int64(memSizeLimit), // make the group small for testing
-		math.MaxInt64,
-		4*1024*1024*1024,
-		math.MaxInt64,
-		true,
-	)
-	require.NoError(t, err)
-
-	bufPool := membuf.NewPool()
-	loaded := &memKVsAndBuffers{}
-	kvIdx := 0
-
-	for {
-		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, err := splitter.SplitOneRangesGroup()
-		require.NoError(t, err)
-		curEnd := dbkv.Key(endKeyOfGroup).Clone()
-		if len(endKeyOfGroup) == 0 {
-			curEnd = dbkv.Key(kvs[len(kvs)-1].Key).Next().Clone()
-		}
-
-		err = readAllData(
-			ctx,
-			memStore,
-			dataFilesOfGroup,
-			statFilesOfGroup,
-			startKey,
-			curEnd,
-			bufPool,
-			loaded,
-		)
-
-		require.NoError(t, err)
-		// check kvs sorted
-		sorty.MaxGor = uint64(8)
-		sorty.Sort(len(loaded.keys), func(i, k, r, s int) bool {
-			if bytes.Compare(loaded.keys[i], loaded.keys[k]) < 0 { // strict comparator like < or >
-				if r != s {
-					loaded.keys[r], loaded.keys[s] = loaded.keys[s], loaded.keys[r]
-					loaded.values[r], loaded.values[s] = loaded.values[s], loaded.values[r]
-				}
-				return true
-			}
-			return false
-		})
-		for i, key := range loaded.keys {
-			require.EqualValues(t, kvs[kvIdx].Key, key)
-			require.EqualValues(t, kvs[kvIdx].Val, loaded.values[i])
-			kvIdx++
-		}
-
-		// release
-		loaded.keys = nil
-		loaded.values = nil
-		loaded.memKVBuffers = nil
-		startKey = curEnd.Clone()
-
-		if len(endKeyOfGroup) == 0 {
-			break
-		}
-	}
-
-	err = splitter.Close()
-	require.NoError(t, err)
+	testReadAndCompare(ctx, t, kvs, memStore, lastStepDatas, lastStepStats, startKey, memSizeLimit)
 }
