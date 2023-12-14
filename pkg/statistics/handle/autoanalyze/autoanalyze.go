@@ -15,15 +15,18 @@
 package autoanalyze
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"math/rand"
+	"net"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -74,6 +77,163 @@ func (sa *statsAnalyze) DeleteAnalyzeJobs(updateTime time.Time) error {
 		_, _, err := statsutil.ExecRows(sctx, "DELETE FROM mysql.analyze_jobs WHERE update_time < CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)", updateTime.UTC().Format(types.TimeFormat))
 		return err
 	})
+}
+
+// CleanupCorruptedAnalyzeJobsOnCurrentInstance cleans up the potentially corrupted analyze job.
+// It only cleans up the jobs that are associated with the current instance.
+func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobsOnCurrentInstance(currentRunningProcessIDs map[uint64]struct{}) error {
+	return statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		return CleanupCorruptedAnalyzeJobsOnCurrentInstance(sctx, currentRunningProcessIDs)
+	}, statsutil.FlagWrapTxn)
+}
+
+// CleanupCorruptedAnalyzeJobsOnDeadInstances removes analyze jobs that may have been corrupted.
+// Specifically, it removes jobs associated with instances that no longer exist in the cluster.
+func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobsOnDeadInstances() error {
+	return statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		return CleanupCorruptedAnalyzeJobsOnDeadInstances(sctx)
+	}, statsutil.FlagWrapTxn)
+}
+
+// SelectAnalyzeJobsOnCurrentInstanceSQL is the SQL to select the analyze jobs whose
+// state is `pending` or `running` and the update time is more than 10 minutes ago
+// and the instance is current instance.
+const SelectAnalyzeJobsOnCurrentInstanceSQL = `SELECT id, process_id
+		FROM mysql.analyze_jobs
+		WHERE instance = %?
+		AND state IN ('pending', 'running')
+		AND update_time < CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)`
+
+// SelectAnalyzeJobsSQL is the SQL to select the analyze jobs whose
+// state is `pending` or `running` and the update time is more than 10 minutes ago.
+const SelectAnalyzeJobsSQL = `SELECT id, instance
+		FROM mysql.analyze_jobs
+		WHERE state IN ('pending', 'running')
+		AND update_time < CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)`
+
+// BatchUpdateAnalyzeJobSQL is the SQL to update the analyze jobs to `failed` state.
+const BatchUpdateAnalyzeJobSQL = `UPDATE mysql.analyze_jobs
+            SET state = 'failed',
+            fail_reason = 'TiDB Server is down when running the analyze job',
+            process_id = NULL
+            WHERE id IN (%?)`
+
+func tenMinutesAgo() string {
+	return time.Now().Add(-10 * time.Minute).UTC().Format(types.TimeFormat)
+}
+
+// CleanupCorruptedAnalyzeJobsOnCurrentInstance cleans up the potentially corrupted analyze job from current instance.
+// Exported for testing.
+func CleanupCorruptedAnalyzeJobsOnCurrentInstance(
+	sctx sessionctx.Context,
+	currentRunningProcessIDs map[uint64]struct{},
+) error {
+	serverInfo, err := infosync.GetServerInfo()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	instance := net.JoinHostPort(serverInfo.IP, strconv.Itoa(int(serverInfo.Port)))
+	// Get all the analyze jobs whose state is `pending` or `running` and the update time is more than 10 minutes ago
+	// and the instance is current instance.
+	rows, _, err := statsutil.ExecRows(
+		sctx,
+		SelectAnalyzeJobsOnCurrentInstanceSQL,
+		instance,
+		tenMinutesAgo(),
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	jobIDs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		// The process ID is typically non-null for running or pending jobs.
+		// However, in rare cases(I don't which case), it may be null. Therefore, it's necessary to check its value.
+		if !row.IsNull(1) {
+			processID := row.GetUint64(1)
+			// If the process id is not in currentRunningProcessIDs, we need to clean up the job.
+			// They don't belong to current instance any more.
+			if _, ok := currentRunningProcessIDs[processID]; !ok {
+				jobID := row.GetUint64(0)
+				jobIDs = append(jobIDs, strconv.FormatUint(jobID, 10))
+			}
+		}
+	}
+
+	// Do a batch update to clean up the jobs.
+	if len(jobIDs) > 0 {
+		_, _, err = statsutil.ExecRows(
+			sctx,
+			BatchUpdateAnalyzeJobSQL,
+			strings.Join(jobIDs, ","),
+		)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		statslogutil.StatsLogger().Info(
+			"clean up the potentially corrupted analyze jobs from current instance",
+			zap.Strings("jobIDs", jobIDs),
+		)
+	}
+
+	return nil
+}
+
+// CleanupCorruptedAnalyzeJobsOnDeadInstances cleans up the potentially corrupted analyze job from dead instances.
+func CleanupCorruptedAnalyzeJobsOnDeadInstances(
+	sctx sessionctx.Context,
+) error {
+	rows, _, err := statsutil.ExecRows(
+		sctx,
+		SelectAnalyzeJobsSQL,
+		tenMinutesAgo(),
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+
+	// Get all the instances from etcd.
+	serverInfo, err := infosync.GetAllServerInfo(context.Background())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	instances := make(map[string]struct{}, len(serverInfo))
+	for _, info := range serverInfo {
+		instance := net.JoinHostPort(info.IP, strconv.Itoa(int(info.Port)))
+		instances[instance] = struct{}{}
+	}
+
+	jobIDs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		// If the instance is not in instances, we need to clean up the job.
+		// It means the instance is down or the instance is not in the cluster any more.
+		instance := row.GetString(1)
+		if _, ok := instances[instance]; !ok {
+			jobID := row.GetUint64(0)
+			jobIDs = append(jobIDs, strconv.FormatUint(jobID, 10))
+		}
+	}
+
+	// Do a batch update to clean up the jobs.
+	if len(jobIDs) > 0 {
+		_, _, err = statsutil.ExecRows(
+			sctx,
+			BatchUpdateAnalyzeJobSQL,
+			strings.Join(jobIDs, ","),
+		)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		statslogutil.StatsLogger().Info(
+			"clean up the potentially corrupted analyze jobs from dead instances",
+			zap.Strings("jobIDs", jobIDs),
+		)
+	}
+
+	return nil
 }
 
 // HandleAutoAnalyze analyzes the newly created table or index.
@@ -163,7 +323,7 @@ func HandleAutoAnalyze(
 ) (analyzed bool) {
 	defer func() {
 		if r := recover(); r != nil {
-			statslogutil.StatsLogger.Error(
+			statslogutil.StatsLogger().Error(
 				"HandleAutoAnalyze panicked",
 				zap.Any("recover", r),
 				zap.Stack("stack"),
@@ -179,7 +339,7 @@ func HandleAutoAnalyze(
 		parameters[variable.TiDBAutoAnalyzeEndTime],
 	)
 	if err != nil {
-		statslogutil.StatsLogger.Error(
+		statslogutil.StatsLogger().Error(
 			"parse auto analyze period failed",
 			zap.Error(err),
 		)
@@ -237,7 +397,7 @@ func randomPickOneTableAndTryAutoAnalyze(
 		tidsAndPids := getAllTidsAndPids(tbls)
 		lockedTables, err := statsHandle.GetLockedTables(tidsAndPids...)
 		if err != nil {
-			statslogutil.StatsLogger.Error(
+			statslogutil.StatsLogger().Error(
 				"check table lock failed",
 				zap.Error(err),
 			)
@@ -329,7 +489,7 @@ func tryAutoAnalyzeTable(
 		if err != nil {
 			return false
 		}
-		statslogutil.StatsLogger.Info(
+		statslogutil.StatsLogger().Info(
 			"auto analyze triggered",
 			zap.String("sql", escaped),
 			zap.String("reason", reason),
@@ -352,7 +512,7 @@ func tryAutoAnalyzeTable(
 				return false
 			}
 
-			statslogutil.StatsLogger.Info(
+			statslogutil.StatsLogger().Info(
 				"auto analyze for unanalyzed indexes",
 				zap.String("sql", escaped),
 			)
@@ -434,7 +594,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 			ratio,
 		); needAnalyze {
 			needAnalyzePartitionNames = append(needAnalyzePartitionNames, def.Name.O)
-			statslogutil.StatsLogger.Info(
+			statslogutil.StatsLogger().Info(
 				"need to auto analyze",
 				zap.String("database", db),
 				zap.String("table", tblInfo.Name.String()),
@@ -459,7 +619,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 	}
 
 	if len(needAnalyzePartitionNames) > 0 {
-		statslogutil.StatsLogger.Info("start to auto analyze",
+		statslogutil.StatsLogger().Info("start to auto analyze",
 			zap.String("database", db),
 			zap.String("table", tblInfo.Name.String()),
 			zap.Any("partitions", needAnalyzePartitionNames),
@@ -479,7 +639,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 			sql := getSQL("analyze table %n.%n partition", "", end-start)
 			params := append([]interface{}{db, tblInfo.Name.O}, needAnalyzePartitionNames[start:end]...)
 
-			statslogutil.StatsLogger.Info(
+			statslogutil.StatsLogger().Info(
 				"auto analyze triggered",
 				zap.String("database", db),
 				zap.String("table", tblInfo.Name.String()),
@@ -517,7 +677,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 				sql := getSQL("analyze table %n.%n partition", " index %n", end-start)
 				params := append([]interface{}{db, tblInfo.Name.O}, needAnalyzePartitionNames[start:end]...)
 				params = append(params, idx.Name.O)
-				statslogutil.StatsLogger.Info("auto analyze for unanalyzed",
+				statslogutil.StatsLogger().Info("auto analyze for unanalyzed",
 					zap.String("database", db),
 					zap.String("table", tblInfo.Name.String()),
 					zap.String("index", idx.Name.String()),
@@ -556,7 +716,7 @@ func execAutoAnalyze(
 		if err1 != nil {
 			escaped = ""
 		}
-		statslogutil.StatsLogger.Error(
+		statslogutil.StatsLogger().Error(
 			"auto analyze failed",
 			zap.String("sql", escaped),
 			zap.Duration("cost_time", dur),

@@ -383,7 +383,6 @@ func NewMergeKVIter(
 	memPool := membuf.NewPool(
 		membuf.WithBlockNum(1), // currently only one reader will become hotspot
 		membuf.WithBlockSize(largeBufSize),
-		membuf.WithLargeAllocThreshold(largeBufSize),
 	)
 
 	for i := range paths {

@@ -41,13 +41,17 @@ type MockDataSourceParameters struct {
 	Ndvs        []int
 	Orders      []bool
 	Rows        int
+
+	// Sometimes we may need to save chunks that have been outputted
+	SaveChunks bool
 }
 
 // MockDataSource mocks data source
 type MockDataSource struct {
-	P       MockDataSourceParameters
-	GenData []*chunk.Chunk
-	Chunks  []*chunk.Chunk
+	GenData     []*chunk.Chunk
+	Chunks      []*chunk.Chunk
+	SavedChunks []*chunk.Chunk
+	P           MockDataSourceParameters
 	exec.BaseExecutor
 	ChunkPtr int
 }
@@ -144,6 +148,9 @@ func (*MockDataSource) RandDatum(typ *types.FieldType) interface{} {
 
 // PrepareChunks prepares chunks
 func (mds *MockDataSource) PrepareChunks() {
+	if mds.P.SaveChunks {
+		mds.SavedChunks = make([]*chunk.Chunk, len(mds.GenData))
+	}
 	mds.Chunks = make([]*chunk.Chunk, len(mds.GenData))
 	for i := range mds.Chunks {
 		mds.Chunks[i] = mds.GenData[i].CopyConstruct()
@@ -159,6 +166,11 @@ func (mds *MockDataSource) Next(_ context.Context, req *chunk.Chunk) error {
 	}
 	dataChk := mds.Chunks[mds.ChunkPtr]
 	dataChk.SwapColumns(req)
+
+	if mds.P.SaveChunks {
+		mds.SavedChunks[mds.ChunkPtr] = req.CopyConstruct()
+	}
+
 	mds.ChunkPtr++
 	return nil
 }
@@ -230,7 +242,9 @@ func BuildMockDataSource(opt MockDataSourceParameters) *MockDataSource {
 		ChunkPtr:     0,
 		P:            opt,
 		GenData:      nil,
-		Chunks:       nil}
+		Chunks:       nil,
+		SavedChunks:  nil,
+	}
 	rTypes := exec.RetTypes(m)
 	colData := make([][]interface{}, len(rTypes))
 	for i := 0; i < len(rTypes); i++ {

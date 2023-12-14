@@ -17,18 +17,18 @@ package sortexec
 import (
 	"container/heap"
 	"context"
-	"errors"
 	"sync"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 )
 
 type sortedRows []chunk.Row
@@ -46,12 +46,13 @@ type SortExec struct {
 	// keyCmpFuncs is used to compare each ByItem.
 	keyCmpFuncs []chunk.CompareFunc
 
+	partition *sortPartition
+
+	// We can't spill if size of data is lower than the limit
+	spillLimit int64
+
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
-
-	// multiWayMerge uses multi-way merge for spill disk.
-	// The multi-way merge algorithm can refer to https://en.wikipedia.org/wiki/K-way_merge_algorithm
-	multiWayMerge *multiWayMerge
 
 	IsUnparallel bool
 
@@ -79,16 +80,30 @@ type SortExec struct {
 		errRWLock sync.RWMutex
 		err       error
 	}
+
+	// TODO move them into Unparallel
+	// sortPartitions is the chunks to store row values for partitions. Every partition is a sorted list.
+	sortPartitions []*sortPartition
+	cursors        []*dataCursor
+
+	// multiWayMerge uses multi-way merge for spill disk.
+	// The multi-way merge algorithm can refer to https://en.wikipedia.org/wiki/K-way_merge_algorithm
+	multiWayMerge *multiWayMerge
+	// spillAction save the Action for spill disk.
+	spillAction *sortPartitionSpillDiskAction
+
+	helper *spillHelper
 }
 
-// Open implements the Executor Open interface.
 func (e *SortExec) Open(ctx context.Context) error {
 	e.fetched = false
+	e.helper = newSpillHelper()
 
 	// To avoid duplicated initialization for TopNExec.
 	if e.memTracker == nil {
 		e.memTracker = memory.NewTracker(e.ID(), -1)
 		e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
+		e.spillLimit = e.Ctx().GetSessionVars().MemTracker.GetBytesLimit() / 10
 		e.diskTracker = memory.NewTracker(e.ID(), -1)
 		e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
 	}
@@ -104,14 +119,19 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.Parallel.err = nil
 	}
 
+	e.sortPartitions = e.sortPartitions[:0]
 	return exec.Open(ctx, e.Children(0))
 }
 
 // Close implements the Executor Close interface.
 func (e *SortExec) Close() error {
-	e.memTracker = nil
 	e.diskTracker = nil
 	e.multiWayMerge = nil
+	if e.spillAction != nil {
+		e.spillAction.SetFinished()
+	}
+	e.spillAction = nil
+	e.helper = nil
 
 	if e.IsUnparallel {
 		for _, container := range e.Unparallel.PartitionList {
@@ -137,6 +157,7 @@ func (e *SortExec) Close() error {
 		e.Parallel.workers = nil
 	}
 	e.memTracker.Consume(-e.memTracker.BytesConsumed())
+	e.memTracker = nil
 	return e.Children(0).Close()
 }
 
@@ -177,20 +198,80 @@ func (e *SortExec) getChunkInParallelMode(req *chunk.Chunk) {
 }
 
 func (e *SortExec) getChunkInUnparallelMode(req *chunk.Chunk) error {
-	if len(e.Unparallel.PartitionList) == 0 {
+	sortPartitionListLen := len(e.sortPartitions)
+	if sortPartitionListLen == 0 {
 		return nil
 	}
-	if len(e.Unparallel.PartitionList) > 1 {
-		if err := e.externalSorting(req); err != nil {
+
+	if sortPartitionListLen == 1 {
+		if err := e.nonExternalSorting(req); err != nil {
 			return err
 		}
 	} else {
-		for !req.IsFull() && e.Unparallel.Idx < e.Unparallel.PartitionList[0].NumRow() {
-			_, _, err := e.Unparallel.PartitionList[0].GetSortedRowAndAlwaysAppendToChunk(e.Unparallel.Idx, req)
-			if err != nil {
-				return err
+		if err := e.externalSorting(req); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e *SortExec) initExternalSorting() error {
+	err := e.initCursors()
+	if err != nil {
+		return err
+	}
+
+	e.multiWayMerge = &multiWayMerge{e.lessRow, e.compressRow, make([]partitionPointer, 0, len(e.cursors))}
+	for i := 0; i < len(e.cursors); i++ {
+		// We should always get row here
+		row := e.cursors[i].getSpilledRow()
+		e.cursors[i].advanceRow()
+		e.multiWayMerge.elements = append(e.multiWayMerge.elements, partitionPointer{row: *row, partitionID: i})
+	}
+	heap.Init(e.multiWayMerge)
+	return nil
+}
+
+func (e *SortExec) nonExternalSorting(req *chunk.Chunk) (err error) {
+	e.helper.syncLock.Lock()
+	defer e.helper.syncLock.Unlock()
+
+	if e.helper.spillError != nil {
+		return e.helper.spillError
+	}
+
+	if e.sortPartitions[0].isSpillTriggered() {
+		if len(e.cursors) == 0 {
+			e.initCursors()
+		}
+
+		// Maybe the spill is triggered by the last chunk, so there is only one partition.
+		cursor := e.cursors[0]
+		for !req.IsFull() {
+			row := cursor.getSpilledRow()
+			if row == nil {
+				success, err := e.reloadCursor(0)
+				if err != nil {
+					return err
+				}
+
+				if !success {
+					// All data have been completely consumed
+					return nil
+				}
+
+				// row shouldn't be nil here
+				row = cursor.getSpilledRow()
 			}
-			e.Unparallel.Idx++
+
+			cursor.advanceRow()
+			req.AppendRow(*row)
+		}
+	} else {
+		// Spill is not triggered and all data are in memory.
+		rowNum := e.sortPartitions[0].numRowInMemory()
+		for !req.IsFull() && e.sortPartitions[0].getIdx() < rowNum {
+			e.sortPartitions[0].getSortedRowFromMemoryAndAppendToChunk(req)
 		}
 	}
 	return nil
@@ -198,35 +279,36 @@ func (e *SortExec) getChunkInUnparallelMode(req *chunk.Chunk) error {
 
 func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 	if e.multiWayMerge == nil {
-		e.multiWayMerge = &multiWayMerge{e.lessRow, e.compressRow, make([]partitionPointer, 0, len(e.Unparallel.PartitionList))}
-		for i := 0; i < len(e.Unparallel.PartitionList); i++ {
-			chk := chunk.New(exec.RetTypes(e), 1, 1)
-
-			row, _, err := e.Unparallel.PartitionList[i].GetSortedRowAndAlwaysAppendToChunk(0, chk)
-			if err != nil {
-				return err
-			}
-			e.multiWayMerge.elements = append(e.multiWayMerge.elements, partitionPointer{chk: chk, row: row, partitionID: i, consumed: 0})
-		}
-		heap.Init(e.multiWayMerge)
-	}
-
-	for !req.IsFull() && e.multiWayMerge.Len() > 0 {
-		partitionPtr := e.multiWayMerge.elements[0]
-		req.AppendRow(partitionPtr.row)
-		partitionPtr.consumed++
-		partitionPtr.chk.Reset()
-		if partitionPtr.consumed >= e.Unparallel.PartitionList[partitionPtr.partitionID].NumRow() {
-			heap.Remove(e.multiWayMerge, 0)
-			continue
-		}
-
-		partitionPtr.row, _, err = e.Unparallel.PartitionList[partitionPtr.partitionID].
-			GetSortedRowAndAlwaysAppendToChunk(partitionPtr.consumed, partitionPtr.chk)
+		err := e.initExternalSorting()
 		if err != nil {
 			return err
 		}
-		e.multiWayMerge.elements[0] = partitionPtr
+	}
+
+	for !req.IsFull() && e.multiWayMerge.Len() > 0 {
+		// Get and insert data
+		element := e.multiWayMerge.elements[0]
+		req.AppendRow(element.row)
+
+		// Get a new row from that partition which inserted data belongs to
+		partitionID := element.partitionID
+		newRow := e.cursors[partitionID].getSpilledRow()
+		if newRow == nil {
+			success, err := e.reloadCursor(partitionID)
+			if err != nil {
+				return err
+			}
+			if !success {
+				// All data in this partition have been consumed
+				heap.Remove(e.multiWayMerge, 0)
+				continue
+			}
+			newRow = e.cursors[partitionID].getSpilledRow()
+		}
+
+		e.cursors[partitionID].advanceRow()
+
+		e.multiWayMerge.elements[0].row = *newRow
 		heap.Fix(e.multiWayMerge, 0)
 	}
 	return nil
@@ -239,74 +321,116 @@ func (e *SortExec) fetchChunks(ctx context.Context) error {
 	return e.fetchChunksParallel(ctx)
 }
 
+func (e *SortExec) switchToNewSortPartition(fields []*types.FieldType, byItemsDesc []bool) {
+	// Put the full partition into list
+	e.sortPartitions = append(e.sortPartitions, e.partition)
+
+	e.partition = newSortPartition(fields, e.MaxChunkSize(), byItemsDesc, e.keyColumns, e.keyCmpFuncs, e.helper, e.spillLimit)
+	e.partition.getMemTracker().AttachTo(e.memTracker)
+	e.partition.getMemTracker().SetLabel(memory.LabelForRowChunks)
+	e.partition.getDiskTracker().AttachTo(e.diskTracker)
+	e.partition.getDiskTracker().SetLabel(memory.LabelForRowChunks)
+	e.spillAction = e.partition.actionSpill(e.helper)
+	e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
+}
+
+func (e *SortExec) storeChunk(chk *chunk.Chunk, fields []*types.FieldType, byItemsDesc []bool) error {
+	err := e.helper.checkError()
+	if err != nil {
+		return err
+	}
+
+	if !e.partition.add(chk) {
+		e.switchToNewSortPartition(fields, byItemsDesc)
+		if !e.partition.add(chk) {
+			return errFailToAddChunk
+		}
+	}
+	return nil
+}
+
+func (e *SortExec) handleCurrentPartitionBeforeExit() error {
+	e.helper.syncLock.Lock()
+	defer e.helper.syncLock.Unlock()
+
+	err := e.helper.checkErrorNoLock()
+	if err != nil {
+		return err
+	}
+
+	if e.isSpillTriggered() {
+		// If e.partition haven't trigger the spill. We need to manually trigger it.
+		// As all data should be in disk when spill is triggered.
+		if !e.partition.isSpillTriggered() {
+			err := e.partition.spillToDisk()
+			if err != nil {
+				return err
+			}
+		}
+	} else {
+		err := e.partition.sort()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (e *SortExec) fetchChunksUnparallel(ctx context.Context) error {
 	fields := exec.RetTypes(e)
 	byItemsDesc := make([]bool, len(e.ByItems))
 	for i, byItem := range e.ByItems {
 		byItemsDesc[i] = byItem.Desc
 	}
-	e.Unparallel.rowChunks = chunk.NewSortedRowContainer(fields, e.MaxChunkSize(), byItemsDesc, e.keyColumns, e.keyCmpFuncs)
-	e.Unparallel.rowChunks.GetMemTracker().AttachTo(e.memTracker)
-	e.Unparallel.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
+
+	e.partition = newSortPartition(fields, e.MaxChunkSize(), byItemsDesc, e.keyColumns, e.keyCmpFuncs, e.helper, e.spillLimit)
+	e.partition.getMemTracker().AttachTo(e.memTracker)
+	e.partition.getMemTracker().SetLabel(memory.LabelForRowChunks)
+	e.spillAction = e.partition.actionSpill(e.helper)
+
 	if variable.EnableTmpStorageOnOOM.Load() {
-		e.Unparallel.spillAction = e.Unparallel.rowChunks.ActionSpill()
-		failpoint.Inject("testSortedRowContainerSpill", func(val failpoint.Value) {
-			if val.(bool) {
-				e.Unparallel.spillAction = e.Unparallel.rowChunks.ActionSpillForTest()
-				defer e.Unparallel.spillAction.WaitForTest()
-			}
-		})
-		e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.Unparallel.spillAction)
-		e.Unparallel.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
-		e.Unparallel.rowChunks.GetDiskTracker().SetLabel(memory.LabelForRowChunks)
+		e.partition.getDiskTracker().AttachTo(e.diskTracker)
+		e.partition.getDiskTracker().SetLabel(memory.LabelForRowChunks)
+		e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
 	}
+
 	for {
 		chk := exec.TryNewCacheChunk(e.Children(0))
 		err := exec.Next(ctx, e.Children(0), chk)
 		if err != nil {
 			return err
 		}
-		rowCount := chk.NumRows()
-		if rowCount == 0 {
+		if chk.NumRows() == 0 {
 			break
 		}
-		if err := e.Unparallel.rowChunks.Add(chk); err != nil {
-			if errors.Is(err, chunk.ErrCannotAddBecauseSorted) {
-				e.Unparallel.PartitionList = append(e.Unparallel.PartitionList, e.Unparallel.rowChunks)
-				e.Unparallel.rowChunks = chunk.NewSortedRowContainer(fields, e.MaxChunkSize(), byItemsDesc, e.keyColumns, e.keyCmpFuncs)
-				e.Unparallel.rowChunks.GetMemTracker().AttachTo(e.memTracker)
-				e.Unparallel.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
-				e.Unparallel.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
-				e.Unparallel.rowChunks.GetDiskTracker().SetLabel(memory.LabelForRowChunks)
-				e.Unparallel.spillAction = e.Unparallel.rowChunks.ActionSpill()
-				failpoint.Inject("testSortedRowContainerSpill", func(val failpoint.Value) {
-					if val.(bool) {
-						e.Unparallel.spillAction = e.Unparallel.rowChunks.ActionSpillForTest()
-						defer e.Unparallel.spillAction.WaitForTest()
-					}
-				})
-				e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.Unparallel.spillAction)
-				err = e.Unparallel.rowChunks.Add(chk)
-			}
-			if err != nil {
-				return err
-			}
-		}
-	}
-	failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
-		if val.(bool) {
-			if e.Ctx().GetSessionVars().ConnectionID == 123456 {
-				e.Ctx().GetSessionVars().MemTracker.Killer.SendKillSignal(sqlkiller.QueryMemoryExceeded)
-			}
-		}
-	})
-	if e.Unparallel.rowChunks.NumRow() > 0 {
-		err := e.Unparallel.rowChunks.Sort()
+
+		err = e.storeChunk(chk, fields, byItemsDesc)
 		if err != nil {
 			return err
 		}
-		e.Unparallel.PartitionList = append(e.Unparallel.PartitionList, e.Unparallel.rowChunks)
+
+		failpoint.Inject("unholdSyncLock", func(val failpoint.Value) {
+			if val.(bool) {
+				// Ensure that spill can get `syncLock`.
+				time.Sleep(100 * time.Microsecond)
+			}
+		})
 	}
+
+	err := e.handleCurrentPartitionBeforeExit()
+	if err != nil {
+		return err
+	}
+
+	failpoint.Inject("waitForSpill", func(val failpoint.Value) {
+		if val.(bool) {
+			// Ensure that spill is triggered before returning data.
+			time.Sleep(5 * time.Millisecond)
+		}
+	})
+
+	e.sortPartitions = append(e.sortPartitions, e.partition)
+	e.partition = nil
 	return nil
 }
 
@@ -408,12 +532,46 @@ func (e *SortExec) getResult(publicSpace *publicMergeSpace) {
 	e.Parallel.result = sortedData
 }
 
+func (e *SortExec) reloadCursor(partitionID int) (bool, error) {
+	partition := e.sortPartitions[partitionID]
+	cursor := e.cursors[partitionID]
+
+	spilledChkNum := partition.inDisk.NumChunks()
+	restoredChkID := cursor.getChkID() + 1
+	if restoredChkID >= spilledChkNum {
+		// All data has been consumed
+		return false, nil
+	}
+
+	restoredChk, err := partition.inDisk.GetChunk(restoredChkID)
+	if err != nil {
+		return false, err
+	}
+
+	cursor.setChunk(restoredChk, restoredChkID)
+	return true, nil
+}
+
 func (e *SortExec) initCompareFuncs() {
 	e.keyCmpFuncs = make([]chunk.CompareFunc, len(e.ByItems))
 	for i := range e.ByItems {
 		keyType := e.ByItems[i].Expr.GetType()
 		e.keyCmpFuncs[i] = chunk.GetCompareFunc(keyType)
 	}
+}
+
+func (e *SortExec) initCursors() error {
+	partitionNum := len(e.sortPartitions)
+	e.cursors = make([]*dataCursor, partitionNum)
+	for i := 0; i < partitionNum; i++ {
+		e.cursors[i] = NewDataCursor()
+		chk, err := e.sortPartitions[i].inDisk.GetChunk(0)
+		if err != nil {
+			return err
+		}
+		e.cursors[i].setChunk(chk, 0)
+	}
+	return nil
 }
 
 func (e *SortExec) buildKeyColumns() {
@@ -452,4 +610,41 @@ func (e *SortExec) compressRow(rowI, rowJ chunk.Row) int {
 		}
 	}
 	return 0
+}
+
+func (e *SortExec) isSpillTriggered() bool {
+	if len(e.sortPartitions) > 0 {
+		return e.sortPartitions[0].isSpillTriggered()
+	} else {
+		if e.partition != nil {
+			return e.partition.isSpillTriggered()
+		}
+		return false
+	}
+}
+
+func (e *SortExec) IsSpillTriggeredForTest() bool {
+	return e.isSpillTriggered()
+}
+
+func (e *SortExec) IsSpillTriggeredInOnePartitionForTest(idx int) bool {
+	return e.sortPartitions[idx].isSpillTriggered()
+}
+
+func (e *SortExec) GetRowNumInOnePartitionForTest(idx int) int64 {
+	return e.sortPartitions[idx].numRowForTest()
+}
+
+func (e *SortExec) GetSortPartitionListLenForTest() int {
+	return len(e.sortPartitions)
+}
+
+func (e *SortExec) GetSortMetaForTest() (keyColumns []int, keyCmpFuncs []chunk.CompareFunc, byItemsDesc []bool) {
+	keyColumns = e.keyColumns
+	keyCmpFuncs = e.keyCmpFuncs
+	byItemsDesc = make([]bool, len(e.ByItems))
+	for i, byItem := range e.ByItems {
+		byItemsDesc[i] = byItem.Desc
+	}
+	return
 }

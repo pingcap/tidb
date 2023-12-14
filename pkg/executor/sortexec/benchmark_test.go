@@ -33,6 +33,7 @@ func benchmarkSortExec(b *testing.B, cas *testutil.SortCase) {
 		Rows:       cas.Rows,
 		Ctx:        cas.Ctx,
 		Ndvs:       cas.Ndvs,
+		SaveChunks: false,
 	}
 	dataSource := testutil.BuildMockDataSource(opt)
 	executor := &sortexec.SortExec{

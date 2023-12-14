@@ -36,16 +36,16 @@ func TestFrameworkDynamicHA(t *testing.T) {
 	defer ctrl.Finish()
 
 	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockDynamicDispatchExt(ctrl), testContext, nil)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDynamicDispatchErr", "5*return()"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockDynamicDispatchErr", "5*return()"))
 	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key1", testContext, nil)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDynamicDispatchErr"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockDynamicDispatchErr"))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDynamicDispatchErr1", "5*return()"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockDynamicDispatchErr1", "5*return()"))
 	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key2", testContext, nil)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDynamicDispatchErr1"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockDynamicDispatchErr1"))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDynamicDispatchErr2", "5*return()"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockDynamicDispatchErr2", "5*return()"))
 	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key3", testContext, nil)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDynamicDispatchErr2"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockDynamicDispatchErr2"))
 	distContext.Close()
 }

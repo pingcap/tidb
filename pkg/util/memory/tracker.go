@@ -204,8 +204,8 @@ func (t *Tracker) CheckExceed() bool {
 // SetActionOnExceed sets the action when memory usage exceeds bytesHardLimit.
 func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {
 	t.actionMuForHardLimit.Lock()
+	defer t.actionMuForHardLimit.Unlock()
 	t.actionMuForHardLimit.actionOnExceed = a
-	t.actionMuForHardLimit.Unlock()
 }
 
 // FallbackOldAndSetNewAction sets the action when memory usage exceeds bytesHardLimit
@@ -390,6 +390,12 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 	t.mu.Unlock()
 
 	t.Consume(newConsumed)
+}
+
+// UnconsumeAll unconsumes all bytes in this tracker
+func (t *Tracker) UnconsumeAll() {
+	allConsumedBytes := t.BytesConsumed()
+	t.Consume(allConsumedBytes)
 }
 
 // Consume is used to consume a memory usage. "bytes" can be a negative value,
@@ -841,6 +847,8 @@ const (
 	LabelForCursorFetch int = -29
 	// LabelForChunkDataInDiskByChunks represents the label of the chunk list in disk
 	LabelForChunkDataInDiskByChunks int = -30
+	// LabelForSortPartition represents the label of the sort partition
+	LabelForSortPartition = -31
 )
 
 // MetricsTypes is used to get label for metrics
