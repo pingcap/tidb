@@ -138,7 +138,7 @@ func getCallerName() string {
 	if err != nil {
 		name = fmt.Sprintf("UNKNOWN-%d", rand.Int63())
 	}
-	return fmt.Sprintf("prepare_for_snapshot_backup@%s", name)
+	return fmt.Sprintf("prepare_for_snapshot_backup@%s@%d", name, time.Now().Unix())
 }
 
 func pauseImporting(cx *AdaptEnvForSnapshotBackupContext) error {
