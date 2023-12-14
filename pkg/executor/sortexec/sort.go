@@ -132,8 +132,11 @@ func (e *SortExec) Close() error {
 		}
 		e.Unparallel.spillAction = nil
 	} else {
-		
+		e.Parallel.result = nil
+		e.Parallel.mpmcQueue = nil
+		e.Parallel.workers = nil
 	}
+	e.memTracker.Consume(-e.memTracker.BytesConsumed())
 	return e.Children(0).Close()
 }
 
@@ -332,7 +335,6 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 	waitGroup.Wait()
 
 	e.getResult(&publicSpace)
-
 	return nil
 }
 
