@@ -275,7 +275,8 @@ func (s *GCSStorage) URI() string {
 // Create implements ExternalStorage interface.
 func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) (ExternalFileWriter, error) {
 	// NewGCSWriter requires real testing environment on Google Cloud.
-	if wo == nil || wo.Concurrency <= 1 || intest.InTest {
+	mockGCS := intest.InTest && strings.Contains(s.gcs.GetEndpoint(), "127.0.0.1")
+	if wo == nil || wo.Concurrency <= 1 || mockGCS {
 		object := s.objectName(name)
 		wc := s.bucket.Object(object).NewWriter(ctx)
 		wc.StorageClass = s.gcs.StorageClass
