@@ -235,7 +235,7 @@ func (e *IndexNestedLoopHashJoin) Next(ctx context.Context, req *chunk.Chunk) er
 func (e *IndexNestedLoopHashJoin) runInOrder(ctx context.Context, req *chunk.Chunk) error {
 	for {
 		if e.isDryUpTasks(ctx) {
-			return nil
+			return e.panicErr
 		}
 		if e.curTask.err != nil {
 			return e.curTask.err

@@ -17,6 +17,7 @@ package jointest
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -863,6 +864,10 @@ func TestIssue37932(t *testing.T) {
 }
 
 func TestIssue49033(t *testing.T) {
+	val := runtime.GOMAXPROCS(0)
+	defer func() {
+		runtime.GOMAXPROCS(val)
+	}()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
