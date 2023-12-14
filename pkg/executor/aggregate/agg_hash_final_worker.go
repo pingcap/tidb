@@ -214,7 +214,7 @@ func (w *HashAggFinalWorker) receiveFinalResultHolder() (*chunk.Chunk, bool) {
 }
 
 func (w *HashAggFinalWorker) processRow(context *processRowContext) (int64, error) {
-	memDelta := int64(0)
+	totalMemDelta := int64(0)
 	key := context.chunk.GetRow(context.rowPos).GetString(context.keyColPos)
 	prs, ok := (*context.restoreadData)[key]
 	if ok {
@@ -222,12 +222,12 @@ func (w *HashAggFinalWorker) processRow(context *processRowContext) (int64, erro
 		for aggPos := 0; aggPos < context.aggFuncNum; aggPos++ {
 			memDelta, err := w.aggFuncsForRestoring[aggPos].MergePartialResult(context.ctx, context.partialResultsRestored[aggPos][context.rowPos], prs[aggPos])
 			if err != nil {
-				return memDelta, err
+				return totalMemDelta, err
 			}
-			memDelta += memDelta
+			totalMemDelta += memDelta
 		}
 	} else {
-		memDelta += int64(len(key))
+		totalMemDelta += int64(len(key))
 
 		if len(*context.restoreadData)+1 > (1<<*context.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 			w.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << *context.bInMap))
@@ -241,7 +241,7 @@ func (w *HashAggFinalWorker) processRow(context *processRowContext) (int64, erro
 			results[aggPos] = context.partialResultsRestored[aggPos][context.rowPos]
 		}
 	}
-	return memDelta, nil
+	return totalMemDelta, nil
 }
 
 func (w *HashAggFinalWorker) restoreFromOneSpillFile(ctx sessionctx.Context, restoreadData *aggfuncs.AggPartialResultMapper, diskIO *chunk.DataInDiskByChunks, bInMap *int) (int64, error) {
@@ -281,7 +281,6 @@ func (w *HashAggFinalWorker) restoreFromOneSpillFile(ctx sessionctx.Context, res
 				return totalMemDelta, err
 			}
 			totalMemDelta += memDelta
-
 		}
 	}
 	return totalMemDelta, nil
@@ -327,7 +326,7 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 
 	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
 		if val.(bool) {
-			w.intestBeforeStart()
+			intestBeforeStart()
 		}
 	})
 
@@ -382,7 +381,7 @@ func (w *HashAggFinalWorker) handleSpilledData(ctx sessionctx.Context) {
 	}
 }
 
-func (w *HashAggFinalWorker) intestBeforeStart() {
+func intestBeforeStart() {
 	num := rand.Intn(50)
 	if num == 0 {
 		panic("Intest panic: final worker is panicked before start")
