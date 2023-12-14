@@ -274,7 +274,8 @@ func (s *GCSStorage) URI() string {
 
 // Create implements ExternalStorage interface.
 func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) (ExternalFileWriter, error) {
-	if wo == nil || wo.Concurrency <= 1 {
+	// NewGCSWriter requires real testing environment on Google Cloud.
+	if wo == nil || wo.Concurrency <= 1 || intest.InTest {
 		object := s.objectName(name)
 		wc := s.bucket.Object(object).NewWriter(ctx)
 		wc.StorageClass = s.gcs.StorageClass
@@ -283,7 +284,7 @@ func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) 
 	}
 	uri := s.objectName(name)
 	// 5 MB is the minimum part size for GCS.
-	partSize := int64(5 * 1024 * 1024)
+	partSize := int64(gcsMinimumChunkSize)
 	if wo.PartSize > partSize {
 		partSize = wo.PartSize
 	}

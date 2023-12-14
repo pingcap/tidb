@@ -36,10 +36,18 @@ import (
 )
 
 // GCSWriter uses XML multipart upload API to upload a single file.
+// https://cloud.google.com/storage/docs/multipart-uploads.
+// GCSWriter will attempt to cancel uploads that fail due to an exception.
+// If the upload fails in a way that precludes cancellation, such as a
+// hardware failure, process termination, or power outage, then the incomplete
+// upload may persist indefinitely. To mitigate this, set the
+// `AbortIncompleteMultipartUpload` with a nonzero `Age` in bucket lifecycle
+// rules, or refer to the XML API documentation linked above to learn more
+// about how to list and delete individual downloads.
 type GCSWriter struct {
-	UploadBase
+	uploadBase
 	mutex       sync.Mutex
-	XMLMPUParts []*XMLMPUPart
+	xmlMPUParts []*xmlMPUPart
 	wg          sync.WaitGroup
 	err         atomic.Error
 	chunkSize   int64
@@ -61,15 +69,15 @@ func NewGCSWriter(
 	parallelCnt int,
 	bucketName string,
 ) (*GCSWriter, error) {
-	if partSize < MinimumChunkSize || partSize > MaximumChunkSize {
+	if partSize < gcsMinimumChunkSize || partSize > gcsMaximumChunkSize {
 		return nil, fmt.Errorf(
 			"invalid chunk size: %d. Chunk size must be between %d and %d",
-			partSize, MinimumChunkSize, MaximumChunkSize,
+			partSize, gcsMinimumChunkSize, gcsMaximumChunkSize,
 		)
 	}
 
 	w := &GCSWriter{
-		UploadBase: UploadBase{
+		uploadBase: uploadBase{
 			ctx:             ctx,
 			cli:             cli,
 			bucket:          bucketName,
@@ -92,7 +100,7 @@ func (w *GCSWriter) init() error {
 		Scheme:          storage.SigningSchemeV4,
 		Method:          "POST",
 		Expires:         time.Now().Add(w.signedURLExpiry),
-		QueryParameters: url.Values{MPUInitiateQuery: []string{""}},
+		QueryParameters: url.Values{mpuInitiateQuery: []string{""}},
 	}
 	u, err := w.cli.Bucket(w.bucket).SignedURL(w.blob, opts)
 	if err != nil {
@@ -140,12 +148,12 @@ func (w *GCSWriter) readChunk(ch chan chunk) {
 			data.cleanup()
 			return
 		default:
-			part := &XMLMPUPart{
-				UploadBase: w.UploadBase,
-				UploadID:   w.uploadID,
+			part := &xmlMPUPart{
+				uploadBase: w.uploadBase,
+				uploadID:   w.uploadID,
 				buf:        data.buf,
-				PartNumber: data.num,
-				Checksum:   "",
+				partNumber: data.num,
+				checksum:   "",
 			}
 			if w.err.Load() == nil {
 				if err := part.Upload(); err != nil {
@@ -161,8 +169,8 @@ func (w *GCSWriter) readChunk(ch chan chunk) {
 // Write uploads given bytes as a part to Google Cloud Storage. Write is not
 // concurrent safe.
 func (w *GCSWriter) Write(p []byte) (n int, err error) {
-	if w.curPart > MaximumParts {
-		err = fmt.Errorf("exceed maximum parts %d", MaximumParts)
+	if w.curPart > gcsMaximumParts {
+		err = fmt.Errorf("exceed maximum parts %d", gcsMaximumParts)
 		if w.err.Load() == nil {
 			w.err.Store(err)
 		}
@@ -190,7 +198,7 @@ func (w *GCSWriter) Close() error {
 	if err == nil {
 		return nil
 	}
-	errC := w.Cancel()
+	errC := w.cancel()
 	if errC != nil {
 		return fmt.Errorf("failed to finalize multipart upload: %s, Failed to cancel multipart upload: %s", err, errC)
 	}
@@ -198,12 +206,12 @@ func (w *GCSWriter) Close() error {
 }
 
 const (
-	MPUInitiateQuery   = "uploads"
-	MPUPartNumberQuery = "partNumber"
-	MPUUploadIDQuery   = "uploadId"
+	mpuInitiateQuery   = "uploads"
+	mpuPartNumberQuery = "partNumber"
+	mpuUploadIDQuery   = "uploadId"
 )
 
-type UploadBase struct {
+type uploadBase struct {
 	cli             *storage.Client
 	ctx             context.Context
 	bucket          string
@@ -216,27 +224,10 @@ const (
 	defaultRetry           = 3
 	defaultSignedURLExpiry = 1 * time.Hour
 
-	MinimumChunkSize = 5 * 1024 * 1024        // 5 MB
-	MaximumChunkSize = 5 * 1024 * 1024 * 1024 // 5 GB
-	MaximumParts     = 10000
+	gcsMinimumChunkSize = 5 * 1024 * 1024        // 5 MB
+	gcsMaximumChunkSize = 5 * 1024 * 1024 * 1024 // 5 GB
+	gcsMaximumParts     = 10000
 )
-
-// NewXMLMPU uploads a single file in chunks, concurrently.
-// This function uses the XML MPU API to initialize an upload and upload a
-// file in chunks, concurrently with a worker pool.
-// https://cloud.google.com/storage/quotas#requests
-//
-// The XML MPU API is significantly different from other uploads; please review
-// the documentation at `https://cloud.google.com/storage/docs/multipart-uploads`
-// before using this feature.
-//
-// The library will attempt to cancel uploads that fail due to an exception.
-// If the upload fails in a way that precludes cancellation, such as a
-// hardware failure, process termination, or power outage, then the incomplete
-// upload may persist indefinitely. To mitigate this, set the
-// `AbortIncompleteMultipartUpload` with a nonzero `Age` in bucket lifecycle
-// rules, or refer to the XML API documentation linked above to learn more
-// about how to list and delete individual downloads.
 
 type InitiateMultipartUploadResult struct {
 	XMLName  xml.Name `xml:"InitiateMultipartUploadResult"`
@@ -259,26 +250,16 @@ type CompleteMultipartUpload struct {
 	Parts   []Part   `xml:"Part"`
 }
 
-type FinalizeXMLMPUResult struct {
-	XMLName  xml.Name `xml:"CompleteMultipartUploadResult" json:"-"`
-	Text     string   `xml:",chardata" json:"-"`
-	Xmlns    string   `xml:"xmlns,attr" json:"-"`
-	Location string   `xml:"Location"`
-	Bucket   string   `xml:"Bucket"`
-	Key      string   `xml:"Key"`
-	ETag     string   `xml:"ETag"`
-}
-
 func (w *GCSWriter) finalizeXMLMPU() error {
 	finalXMLRoot := CompleteMultipartUpload{
 		Parts: []Part{},
 	}
-	slices.SortFunc(w.XMLMPUParts, func(a, b *XMLMPUPart) int {
-		return a.PartNumber - b.PartNumber
+	slices.SortFunc(w.xmlMPUParts, func(a, b *xmlMPUPart) int {
+		return a.partNumber - b.partNumber
 	})
-	for _, part := range w.XMLMPUParts {
+	for _, part := range w.xmlMPUParts {
 		part := Part{
-			PartNumber: part.PartNumber,
+			PartNumber: part.partNumber,
 			ETag:       part.etag,
 		}
 		finalXMLRoot.Parts = append(finalXMLRoot.Parts, part)
@@ -286,14 +267,14 @@ func (w *GCSWriter) finalizeXMLMPU() error {
 
 	xmlBytes, err := xml.Marshal(finalXMLRoot)
 	if err != nil {
-		return fmt.Errorf("Failed to encode XML: %v\n", err)
+		return fmt.Errorf("failed to encode XML: %v", err)
 	}
 
 	opts := &storage.SignedURLOptions{
 		Scheme:          storage.SigningSchemeV4,
 		Method:          "POST",
 		Expires:         time.Now().Add(w.signedURLExpiry),
-		QueryParameters: url.Values{MPUUploadIDQuery: []string{w.uploadID}},
+		QueryParameters: url.Values{mpuUploadIDQuery: []string{w.uploadID}},
 	}
 	u, err := w.cli.Bucket(w.bucket).SignedURL(w.blob, opts)
 	if err != nil {
@@ -318,19 +299,19 @@ type chunk struct {
 	cleanup func()
 }
 
-func (w *GCSWriter) appendMPUPart(part *XMLMPUPart) {
+func (w *GCSWriter) appendMPUPart(part *xmlMPUPart) {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 
-	w.XMLMPUParts = append(w.XMLMPUParts, part)
+	w.xmlMPUParts = append(w.xmlMPUParts, part)
 }
 
-func (w *GCSWriter) Cancel() error {
+func (w *GCSWriter) cancel() error {
 	opts := &storage.SignedURLOptions{
 		Scheme:          storage.SigningSchemeV4,
 		Method:          "DELETE",
 		Expires:         time.Now().Add(w.signedURLExpiry),
-		QueryParameters: url.Values{MPUUploadIDQuery: []string{w.uploadID}},
+		QueryParameters: url.Values{mpuUploadIDQuery: []string{w.uploadID}},
 	}
 	u, err := w.cli.Bucket(w.bucket).SignedURL(w.blob, opts)
 	if err != nil {
@@ -350,27 +331,27 @@ func (w *GCSWriter) Cancel() error {
 	return nil
 }
 
-type XMLMPUPart struct {
-	UploadBase
+type xmlMPUPart struct {
+	uploadBase
 	buf        []byte
-	UploadID   string
-	PartNumber int
-	Checksum   string
+	uploadID   string
+	partNumber int
+	checksum   string
 	etag       string
 	finished   bool
 }
 
-func (p *XMLMPUPart) Clone() *XMLMPUPart {
-	return &XMLMPUPart{
-		UploadBase: p.UploadBase,
-		UploadID:   p.UploadID,
+func (p *xmlMPUPart) Clone() *xmlMPUPart {
+	return &xmlMPUPart{
+		uploadBase: p.uploadBase,
+		uploadID:   p.uploadID,
 		buf:        p.buf,
-		PartNumber: p.PartNumber,
-		Checksum:   p.Checksum,
+		partNumber: p.partNumber,
+		checksum:   p.checksum,
 	}
 }
 
-func (p *XMLMPUPart) Upload() error {
+func (p *xmlMPUPart) Upload() error {
 	err := p.upload()
 	if err == nil {
 		return nil
@@ -383,17 +364,17 @@ func (p *XMLMPUPart) Upload() error {
 		}
 	}
 
-	return fmt.Errorf("failed to upload part %d", p.PartNumber)
+	return fmt.Errorf("failed to upload part %d", p.partNumber)
 }
 
-func (p *XMLMPUPart) upload() error {
+func (p *xmlMPUPart) upload() error {
 	opts := &storage.SignedURLOptions{
 		Scheme:  storage.SigningSchemeV4,
 		Method:  "PUT",
 		Expires: time.Now().Add(p.signedURLExpiry),
 		QueryParameters: url.Values{
-			MPUUploadIDQuery:   []string{p.UploadID},
-			MPUPartNumberQuery: []string{strconv.Itoa(p.PartNumber)},
+			mpuUploadIDQuery:   []string{p.uploadID},
+			mpuPartNumberQuery: []string{strconv.Itoa(p.partNumber)},
 		},
 	}
 
