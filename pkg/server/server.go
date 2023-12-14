@@ -117,8 +117,9 @@ type Server struct {
 	socket            net.Listener
 	concurrentLimiter *TokenLimiter
 
-	rwlock  sync.RWMutex
-	clients map[uint64]*clientConn
+	rwlock           sync.RWMutex
+	clients          map[uint64]*clientConn
+	resourceGroupMap map[string]int
 
 	capability uint32
 	dom        *domain.Domain
@@ -240,6 +241,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		driver:            driver,
 		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
 		clients:           make(map[uint64]*clientConn),
+		resourceGroupMap:  make(map[string]int),
 		internalSessions:  make(map[interface{}]struct{}, 100),
 		health:            uatomic.NewBool(true),
 		inShutdownMode:    uatomic.NewBool(false),
@@ -609,13 +611,9 @@ func (s *Server) registerConn(conn *clientConn) bool {
 		return false
 	}
 	s.clients[conn.connectionID] = conn
-	connectionMap := make(map[string]int, 0)
-	for _, conn := range s.clients {
-		resourceGroup := conn.getCtx().GetSessionVars().ResourceGroupName
-		connectionMap[resourceGroup]++
-	}
+	s.resourceGroupMap[conn.getCtx().GetSessionVars().ResourceGroupName]++
 
-	for name, count := range connectionMap {
+	for name, count := range s.resourceGroupMap {
 		metrics.ConnGauge.WithLabelValues(name).Set(float64(count))
 	}
 	return true

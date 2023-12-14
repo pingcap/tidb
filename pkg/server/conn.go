@@ -358,13 +358,9 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 func (cc *clientConn) Close() error {
 	cc.server.rwlock.Lock()
 	delete(cc.server.clients, cc.connectionID)
-	connections := make(map[string]int, 0)
-	for _, conn := range cc.server.clients {
-		resourceGroup := conn.getCtx().GetSessionVars().ResourceGroupName
-		connections[resourceGroup]++
-	}
+	delete(cc.server.resourceGroupMap, cc.getCtx().GetSessionVars().ResourceGroupName)
 	cc.server.rwlock.Unlock()
-	return closeConn(cc, connections)
+	return closeConn(cc, cc.server.resourceGroupMap)
 }
 
 // closeConn is idempotent and thread-safe.
@@ -399,13 +395,8 @@ func closeConn(cc *clientConn, connections map[string]int) error {
 
 func (cc *clientConn) closeWithoutLock() error {
 	delete(cc.server.clients, cc.connectionID)
-	connections := make(map[string]int, 0)
-	for _, conn := range cc.server.clients {
-		resourceGroup := conn.getCtx().GetSessionVars().ResourceGroupName
-		connections[resourceGroup]++
-	}
-
-	return closeConn(cc, connections)
+	delete(cc.server.resourceGroupMap, cc.getCtx().GetSessionVars().ResourceGroupName)
+	return closeConn(cc, cc.server.resourceGroupMap)
 }
 
 // writeInitialHandshake sends server version, connection ID, server capability, collation, server status
