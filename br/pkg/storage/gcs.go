@@ -497,10 +497,3 @@ func gcsHttpClientForThroughput() *http.Client {
 	transport.DisableKeepAlives = true
 	return &http.Client{Transport: transport}
 }
-
-func isMockGCS(gcs *backuppb.GCS) bool {
-	if !intest.InTest {
-		return false
-	}
-	return strings.Contains(gcs.Endpoint, "127.0.0.1")
-}
