@@ -28,7 +28,6 @@ import (
 )
 
 func registerHAHook() {
-	// init hk.
 	hk := &hook.TestCallback{}
 	hk.OnSubtaskFinishedBeforeExported = func(subtask *proto.Subtask) error {
 		if subtask.ExecID == ":4000" || subtask.ExecID == ":4001" || subtask.ExecID == ":4002" {
