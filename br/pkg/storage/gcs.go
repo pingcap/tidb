@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"slices"
 	"strings"
 
 	"cloud.google.com/go/storage"
@@ -97,9 +98,10 @@ func (options *GCSBackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
 // GCSStorage defines some standard operations for BR/Lightning on the GCS storage.
 // It implements the `ExternalStorage` interface.
 type GCSStorage struct {
-	gcs    *backuppb.GCS
-	bucket *storage.BucketHandle
-	cli    *storage.Client
+	gcs          *backuppb.GCS
+	bucket       *storage.BucketHandle
+	cli          *storage.Client
+	transportOps []option.ClientOption
 }
 
 // GetBucketHandle gets the handle to the GCS API on the bucket.
@@ -272,11 +274,14 @@ func (s *GCSStorage) URI() string {
 	return "gcs://" + s.gcs.Bucket + "/" + s.gcs.Prefix
 }
 
+func isMockGCS(gcs *backuppb.GCS) bool {
+	return intest.InTest && strings.Contains(gcs.GetEndpoint(), "127.0.0.1")
+}
+
 // Create implements ExternalStorage interface.
 func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) (ExternalFileWriter, error) {
 	// NewGCSWriter requires real testing environment on Google Cloud.
-	mockGCS := intest.InTest && strings.Contains(s.gcs.GetEndpoint(), "127.0.0.1")
-	if wo == nil || wo.Concurrency <= 1 || mockGCS {
+	if wo == nil || wo.Concurrency <= 1 || isMockGCS(s.gcs) {
 		object := s.objectName(name)
 		wc := s.bucket.Object(object).NewWriter(ctx)
 		wc.StorageClass = s.gcs.StorageClass
@@ -284,12 +289,16 @@ func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) 
 		return newFlushStorageWriter(wc, &emptyFlusher{}, wc), nil
 	}
 	uri := s.objectName(name)
-	// 5 MB is the minimum part size for GCS.
-	partSize := int64(gcsMinimumChunkSize)
-	if wo.PartSize > partSize {
-		partSize = wo.PartSize
-	}
-	w, err := NewGCSWriter(ctx, s.cli, uri, partSize, wo.Concurrency, s.gcs.Bucket)
+	partSize := max(int64(gcsMinimumChunkSize), wo.PartSize)
+	w, err := NewGCSWriter(
+		ctx,
+		s.cli,
+		uri,
+		partSize,
+		wo.Concurrency,
+		s.gcs.Bucket,
+		s.transportOps,
+	)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -341,13 +350,15 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 		clientOps = append(clientOps, option.WithEndpoint(gcs.Endpoint))
 	}
 
+	transportOpts := slices.Clone(clientOps)
+
 	if opts.HTTPClient != nil {
-		if !intest.InTest {
+		if !isMockGCS(gcs) {
 			// see https://github.com/pingcap/tidb/issues/47022#issuecomment-1722913455
 			// https://www.googleapis.com/auth/cloud-platform must be set to use service_account
 			// type of credential-file.
-			newTransport, err := htransport.NewTransport(ctx, opts.HTTPClient.Transport,
-				append(clientOps, option.WithScopes(storage.ScopeFullControl, "https://www.googleapis.com/auth/cloud-platform"))...)
+			transportOpts = append(transportOpts, option.WithScopes(storage.ScopeFullControl, "https://www.googleapis.com/auth/cloud-platform"))
+			newTransport, err := htransport.NewTransport(ctx, opts.HTTPClient.Transport, transportOpts...)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -379,7 +390,12 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 		// so we need find sst in slash directory
 		gcs.Prefix += "//"
 	}
-	return &GCSStorage{gcs: gcs, bucket: bucket, cli: client}, nil
+	return &GCSStorage{
+		gcs:          gcs,
+		bucket:       bucket,
+		cli:          client,
+		transportOps: transportOpts,
+	}, nil
 }
 
 func hasSSTFiles(ctx context.Context, bucket *storage.BucketHandle, prefix string) bool {
