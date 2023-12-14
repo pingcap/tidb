@@ -134,13 +134,10 @@ func (e *SortExec) Close() error {
 	e.helper = nil
 
 	if e.IsUnparallel {
-		for _, container := range e.Unparallel.PartitionList {
-			err := container.Close()
-			if err != nil {
-				return err
-			}
+		for _, partition := range e.sortPartitions {
+			partition.close()
 		}
-		e.Unparallel.PartitionList = e.Unparallel.PartitionList[:0]
+		e.sortPartitions = e.sortPartitions[:0]
 
 		if e.Unparallel.rowChunks != nil {
 			e.memTracker.Consume(-e.Unparallel.rowChunks.GetMemTracker().BytesConsumed())
