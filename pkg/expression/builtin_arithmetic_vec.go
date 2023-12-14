@@ -620,7 +620,7 @@ func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(ctx EvalContext, input
 			err = sc.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c))
 		} else if err == types.ErrOverflow {
 			newErr := errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c)
-			err = sc.HandleOverflow(newErr, newErr)
+			err = sc.HandleError(newErr)
 		}
 		if err != nil {
 			return err
