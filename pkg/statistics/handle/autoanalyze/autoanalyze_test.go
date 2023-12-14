@@ -38,6 +38,28 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+func TestDisableAutoAnalyze(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values (1)")
+	h := dom.StatsHandle()
+	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	require.NoError(t, err)
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	is := dom.InfoSchema()
+	require.NoError(t, h.Update(is))
+
+	// Set auto analyze ratio to 0.
+	tk.MustExec("set @@global.tidb_auto_analyze_ratio = 0")
+	autoanalyze.AutoAnalyzeMinCnt = 0
+	defer func() {
+		autoanalyze.AutoAnalyzeMinCnt = 1000
+	}()
+	require.False(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
+}
+
 func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
