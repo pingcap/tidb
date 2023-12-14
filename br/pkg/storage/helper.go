@@ -6,7 +6,6 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 func init() {
@@ -19,13 +18,17 @@ func ValidateCloudStorageURI(ctx context.Context, uri string) error {
 	if err != nil {
 		return err
 	}
+	noCred := false
+	if gcs := b.GetGcs(); gcs != nil {
+		noCred = isMockGCS(gcs)
+	}
 	_, err = New(ctx, b, &ExternalStorageOptions{
 		CheckPermissions: []Permission{
 			ListObjects,
 			GetObject,
 			AccessBuckets,
 		},
-		NoCredentials: intest.InTest,
+		NoCredentials: noCred,
 	})
 	return err
 }

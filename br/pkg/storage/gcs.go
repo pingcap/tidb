@@ -324,7 +324,7 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 	}
 
 	if opts.HTTPClient != nil {
-		if !intest.InTest {
+		if !isMockGCS(gcs) {
 			// see https://github.com/pingcap/tidb/issues/47022#issuecomment-1722913455
 			// https://www.googleapis.com/auth/cloud-platform must be set to use service_account
 			// type of credential-file.
@@ -490,4 +490,14 @@ func gcsHttpClientForThroughput() *http.Client {
 	transport, _ := CloneDefaultHttpTransport()
 	transport.DisableKeepAlives = true
 	return &http.Client{Transport: transport}
+}
+
+func isMockGCS(gcs *backuppb.GCS) bool {
+	if !intest.InTest {
+		return false
+	}
+	if gcs.Endpoint == "" {
+		return true
+	}
+	return strings.Contains(gcs.Endpoint, "127.0.0.1")
 }

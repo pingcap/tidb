@@ -12,7 +12,6 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
@@ -192,10 +191,10 @@ func Create(ctx context.Context, backend *backuppb.StorageBackend, sendCreds boo
 // NewWithDefaultOpt creates ExternalStorage with default options.
 func NewWithDefaultOpt(ctx context.Context, backend *backuppb.StorageBackend) (ExternalStorage, error) {
 	var opts ExternalStorageOptions
-	if intest.InTest {
-		opts.NoCredentials = true
-	}
-	if backend.GetGcs() != nil {
+	if gcs := backend.GetGcs(); gcs != nil {
+		if isMockGCS(gcs) {
+			opts.NoCredentials = true
+		}
 		opts.HTTPClient = gcsHttpClientForThroughput()
 	}
 	return New(ctx, backend, &opts)
