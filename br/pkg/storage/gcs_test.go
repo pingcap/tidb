@@ -29,7 +29,6 @@ func TestGCS(t *testing.T) {
 
 	gcs := &backuppb.GCS{
 		Bucket:          bucketName,
-		Endpoint:        "127.0.0.1",
 		Prefix:          "a/b/",
 		StorageClass:    "NEARLINE",
 		PredefinedAcl:   "private",
@@ -111,7 +110,6 @@ func TestGCS(t *testing.T) {
 	{
 		gcs := &backuppb.GCS{
 			Bucket:          bucketName,
-			Endpoint:        "127.0.0.1",
 			Prefix:          "a/", // right prefix is /a/b/
 			StorageClass:    "NEARLINE",
 			PredefinedAcl:   "private",
@@ -130,7 +128,6 @@ func TestGCS(t *testing.T) {
 	{
 		gcs := &backuppb.GCS{
 			Bucket:          bucketName,
-			Endpoint:        "127.0.0.1",
 			Prefix:          "a/b", // right prefix is "a/b/"
 			StorageClass:    "NEARLINE",
 			PredefinedAcl:   "private",
@@ -148,7 +145,6 @@ func TestGCS(t *testing.T) {
 	{
 		gcs := &backuppb.GCS{
 			Bucket:          bucketName,
-			Endpoint:        "127.0.0.1",
 			Prefix:          "a", // right prefix is "a/b/"
 			StorageClass:    "NEARLINE",
 			PredefinedAcl:   "private",
@@ -276,7 +272,6 @@ func TestNewGCSStorage(t *testing.T) {
 	{
 		gcs := &backuppb.GCS{
 			Bucket:          bucketName,
-			Endpoint:        "127.0.0.1",
 			Prefix:          "a/b/",
 			StorageClass:    "NEARLINE",
 			PredefinedAcl:   "private",
@@ -294,7 +289,6 @@ func TestNewGCSStorage(t *testing.T) {
 	{
 		gcs := &backuppb.GCS{
 			Bucket:          bucketName,
-			Endpoint:        "127.0.0.1",
 			Prefix:          "a/b/",
 			StorageClass:    "NEARLINE",
 			PredefinedAcl:   "private",
@@ -326,7 +320,6 @@ func TestNewGCSStorage(t *testing.T) {
 
 		gcs := &backuppb.GCS{
 			Bucket:          bucketName,
-			Endpoint:        "127.0.0.1",
 			Prefix:          "a/b/",
 			StorageClass:    "NEARLINE",
 			PredefinedAcl:   "private",
@@ -358,7 +351,6 @@ func TestNewGCSStorage(t *testing.T) {
 
 		gcs := &backuppb.GCS{
 			Bucket:          bucketName,
-			Endpoint:        "127.0.0.1",
 			Prefix:          "a/b/",
 			StorageClass:    "NEARLINE",
 			PredefinedAcl:   "private",
@@ -378,7 +370,6 @@ func TestNewGCSStorage(t *testing.T) {
 		require.NoError(t, os.Unsetenv("GOOGLE_APPLICATION_CREDENTIALS"))
 		gcs := &backuppb.GCS{
 			Bucket:          bucketName,
-			Endpoint:        "127.0.0.1",
 			Prefix:          "a/b/",
 			StorageClass:    "NEARLINE",
 			PredefinedAcl:   "private",
@@ -395,7 +386,6 @@ func TestNewGCSStorage(t *testing.T) {
 	{
 		gcs := &backuppb.GCS{
 			Bucket:          bucketName,
-			Endpoint:        "127.0.0.1",
 			Prefix:          "a/b",
 			StorageClass:    "NEARLINE",
 			PredefinedAcl:   "private",
@@ -415,7 +405,6 @@ func TestNewGCSStorage(t *testing.T) {
 	{
 		gcs := &backuppb.GCS{
 			Bucket:          bucketName,
-			Endpoint:        "127.0.0.1",
 			Prefix:          "a/b",
 			StorageClass:    "NEARLINE",
 			PredefinedAcl:   "private",
@@ -443,7 +432,6 @@ func TestReadRange(t *testing.T) {
 
 	gcs := &backuppb.GCS{
 		Bucket:          bucketName,
-		Endpoint:        "127.0.0.1",
 		Prefix:          "a/b/",
 		StorageClass:    "NEARLINE",
 		PredefinedAcl:   "private",

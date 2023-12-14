@@ -496,5 +496,8 @@ func isMockGCS(gcs *backuppb.GCS) bool {
 	if !intest.InTest {
 		return false
 	}
+	if gcs.Endpoint == "" {
+		return true
+	}
 	return strings.Contains(gcs.Endpoint, "127.0.0.1")
 }
