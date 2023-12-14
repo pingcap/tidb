@@ -219,11 +219,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 			if normalized {
 				buffer.Write(expression.SortedExplainNormalizedExpressionList(p.LateMaterializationFilterCondition))
 			} else {
-<<<<<<< HEAD
-				buffer.Write(expression.SortedExplainExpressionList(p.lateMaterializationFilterCondition))
-=======
-				buffer.Write(expression.SortedExplainExpressionList(p.SCtx(), p.LateMaterializationFilterCondition))
->>>>>>> 3fb6b98d1d0 (executor: fill correlated column value in late materialization filter conditions (#49244))
+				buffer.Write(expression.SortedExplainExpressionList(p.LateMaterializationFilterCondition))
 			}
 		} else {
 			buffer.WriteString("empty")
