@@ -69,9 +69,9 @@ const (
 	flagStreamEndTS      = "end-ts"
 	flagGCSafePointTTS   = "gc-ttl"
 
+	truncateLockPath   = "truncating.lock"
 	hintOnTruncateLock = "There might be another truncate task running, or a truncate task that didn't exit properly. " +
-		"You may check the metadata and continue by wait other task finish or delete the lock file manually."
-	truncateLockPath = "br_stream_truncate.lock"
+		"You may check the metadata and continue by wait other task finish or manually delete the lock file " + truncateLockPath + " at the external storage."
 )
 
 var (
