@@ -1,0 +1,8 @@
+[
+  {
+    "name": "TestShowPlacementByFormat",
+    "cases": [
+      "show placement format = raw"
+    ]
+  }
+]

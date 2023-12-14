@@ -30,13 +30,16 @@ import (
 var testDataMap = make(testdata.BookKeeper)
 var prepareMergeSuiteData testdata.TestData
 var slowQuerySuiteData testdata.TestData
+var placementRuleRawData testdata.TestData
 
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	testDataMap.LoadTestSuiteData("testdata", "prepare_suite")
 	testDataMap.LoadTestSuiteData("testdata", "slow_query_suite")
+	testDataMap.LoadTestSuiteData("testdata", "placement_rule_raw")
 	prepareMergeSuiteData = testDataMap["prepare_suite"]
 	slowQuerySuiteData = testDataMap["slow_query_suite"]
+	placementRuleRawData = testDataMap["placement_rule_raw"]
 
 	autoid.SetStep(5000)
 	config.UpdateGlobal(func(conf *config.Config) {

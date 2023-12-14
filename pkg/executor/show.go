@@ -114,6 +114,8 @@ type ShowExec struct {
 	Extended    bool // Used for `show extended columns from ...`
 
 	ImportJobID *int64
+
+	PlacementPolicyFormat string
 }
 
 type showTableRegionRowItem struct {

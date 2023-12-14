@@ -555,6 +555,7 @@ import (
 	query                 "QUERY"
 	quick                 "QUICK"
 	rateLimit             "RATE_LIMIT"
+	raw                   "RAW"
 	rebuild               "REBUILD"
 	recover               "RECOVER"
 	redundant             "REDUNDANT"
@@ -1573,6 +1574,7 @@ import (
 	PolicyName                      "Placement Policy Name"
 	ResourceGroupName               "Resource Group Name"
 	ExplainFormatType               "explain format type"
+	PlacementPolicyFormatOpt        "Placement Policy Format Option"
 	FieldAsName                     "Field alias name"
 	FieldAsNameOpt                  "Field alias name opt"
 	FieldTerminator                 "Field terminator"
@@ -6928,6 +6930,7 @@ UnReservedKeyword:
 |	"OLTP_READ_ONLY"
 |	"OLTP_WRITE_ONLY"
 |	"TPCH_10"
+|	"RAW"
 
 TiDBKeyword:
 	"ADMIN"
@@ -11430,27 +11433,39 @@ ShowStmt:
 	}
 
 ShowPlacementTarget:
-	DatabaseSym DBName
+	DatabaseSym DBName PlacementPolicyFormatOpt
 	{
 		$$ = &ast.ShowStmt{
-			Tp:     ast.ShowPlacementForDatabase,
-			DBName: $2,
+			Tp:                    ast.ShowPlacementForDatabase,
+			DBName:                $2,
+			PlacementPolicyFormat: $3,
 		}
 	}
-|	"TABLE" TableName
+|	"TABLE" TableName PlacementPolicyFormatOpt
 	{
 		$$ = &ast.ShowStmt{
-			Tp:    ast.ShowPlacementForTable,
-			Table: $2.(*ast.TableName),
+			Tp:                    ast.ShowPlacementForTable,
+			Table:                 $2.(*ast.TableName),
+			PlacementPolicyFormat: $3,
 		}
 	}
-|	"TABLE" TableName "PARTITION" Identifier
+|	"TABLE" TableName "PARTITION" Identifier PlacementPolicyFormatOpt
 	{
 		$$ = &ast.ShowStmt{
-			Tp:        ast.ShowPlacementForPartition,
-			Table:     $2.(*ast.TableName),
-			Partition: model.NewCIStr($4),
+			Tp:                    ast.ShowPlacementForPartition,
+			Table:                 $2.(*ast.TableName),
+			Partition:             model.NewCIStr($4),
+			PlacementPolicyFormat: $5,
 		}
+	}
+
+PlacementPolicyFormatOpt:
+	{
+		$$ = ""
+	}
+|	"FORMAT" "=" "RAW"
+	{
+		$$ = "RAW"
 	}
 
 ShowProfileTypesOpt:
@@ -11759,9 +11774,9 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowRestores}
 	}
-|	"PLACEMENT"
+|	"PLACEMENT" PlacementPolicyFormatOpt
 	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowPlacement}
+		$$ = &ast.ShowStmt{Tp: ast.ShowPlacement, PlacementPolicyFormat: $2}
 	}
 |	"PLACEMENT" "LABELS"
 	{

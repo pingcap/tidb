@@ -15,6 +15,7 @@
 package placement
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -310,6 +311,18 @@ func (b *Bundle) String() string {
 		return ""
 	}
 	return string(t)
+}
+
+// JSONToString convert json to string.
+func (b *Bundle) JSONToString() string {
+	byteBuffer := bytes.NewBuffer([]byte{})
+	byteBuffer.WriteString("\n")
+	encoder := json.NewEncoder(byteBuffer)
+	// avoid wrongly embedding
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "    ")
+	_ = encoder.Encode(b)
+	return byteBuffer.String()
 }
 
 // Tidy will post optimize Rules, trying to generate rules that suits PD.

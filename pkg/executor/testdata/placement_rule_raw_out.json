@@ -1,0 +1,120 @@
+[
+  {
+    "Name": "TestShowPlacementByFormat",
+    "Cases" : [
+      {
+        "SQL": "show placement format = raw",
+        "Result": [
+          {
+            "Target": "POLICY follower3",
+            "Placement": {
+              "Policy": "FOLLOWERS=3"
+            },
+            "State": "NULL"
+          },
+          {
+            "Target": "POLICY follower5",
+            "Placement": {
+              "Policy": "FOLLOWERS=5"
+            },
+            "State": "NULL"
+          },
+          {
+            "Target": "Rule TiDB_DDL_104",
+            "Placement":{
+                "ID": "TiDB_DDL_104",
+                "Index": 40,
+                "Override": true,
+                "Rules": [
+                  {
+                    "GroupID": "TiDB_DDL_104",
+                    "ID": "table_rule_104_0",
+                    "Index": 40,
+                    "StartKey": "7480000000000000ff6800000000000000f8",
+                    "EndKey": "7480000000000000ff6900000000000000f8",
+                    "Role": "voter",
+                    "Count": 4,
+                    "Constraints": [
+                      {
+                        "Key": "engine",
+                        "Op": "notIn",
+                        "Values": [
+                          "tiflash"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "GroupID": "TiDB_DDL_104",
+                    "ID": "partition_rule_105_0",
+                    "Index": 80,
+                    "StartKey": "7480000000000000ff6900000000000000f8",
+                    "EndKey": "7480000000000000ff6a00000000000000f8",
+                    "Role": "voter",
+                    "Count": 4,
+                    "Constraints": [
+                      {
+                        "Key": "engine",
+                        "Op": "notIn",
+                        "Values": [
+                          "tiflash"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "GroupID": "TiDB_DDL_104",
+                    "ID": "partition_rule_106_0",
+                    "Index": 80,
+                    "StartKey": "7480000000000000ff6a00000000000000f8",
+                    "EndKey": "7480000000000000ff6b00000000000000f8",
+                    "Role": "voter",
+                    "Count": 4,
+                    "Constraints": [
+                      {
+                        "Key": "engine",
+                        "Op": "notIn",
+                        "Values": [
+                          "tiflash"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+            "State": "NULL"
+          },
+          {
+            "Target": "Rule TiDB_DDL_105",
+            "Placement": {
+              "ID": "TiDB_DDL_105",
+              "Index": 80,
+              "Override": true,
+              "Rules": [
+                {
+                  "GroupID": "TiDB_DDL_105",
+                  "ID": "partition_rule_105_0",
+                  "Index": 40,
+                  "StartKey": "7480000000000000ff6900000000000000f8",
+                  "EndKey": "7480000000000000ff6a00000000000000f8",
+                  "Role": "voter",
+                  "Count": 6,
+                  "Constraints": [
+                    {
+                      "Key": "engine",
+                      "Op": "notIn",
+                      "Values": [
+                        "tiflash"
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "State": "NULL"
+          }
+        ]
+      }
+    ]
+  }
+]

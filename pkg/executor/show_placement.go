@@ -149,6 +149,19 @@ func (e *ShowExec) fetchShowPlacementForDB(ctx context.Context) (err error) {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(e.DBName.O)
 	}
 
+	if strings.ToLower(e.PlacementPolicyFormat) == FormatRaw {
+		rule, err := infosync.GetRuleBundle(ctx, placement.GroupID(dbInfo.ID))
+		if err != nil {
+			return err
+		}
+		state, err := fetchDBScheduleState(ctx, nil, dbInfo)
+		if err != nil {
+			return err
+		}
+		e.appendRow([]interface{}{"DATABASE " + dbInfo.Name.String(), rule.JSONToString(), state.String()})
+		return nil
+	}
+
 	placement, err := e.getDBPlacement(dbInfo)
 	if err != nil {
 		return err
@@ -172,6 +185,20 @@ func (e *ShowExec) fetchShowPlacementForTable(ctx context.Context) (err error) {
 	}
 
 	tblInfo := tbl.Meta()
+	ident := ast.Ident{Schema: e.Table.DBInfo.Name, Name: tblInfo.Name}
+	if strings.ToLower(e.PlacementPolicyFormat) == FormatRaw {
+		rule, err := infosync.GetRuleBundle(ctx, placement.GroupID(tblInfo.ID))
+		if err != nil {
+			return err
+		}
+		state, err := fetchTableScheduleState(ctx, nil, tblInfo)
+		if err != nil {
+			return err
+		}
+		e.appendRow([]interface{}{"TABLE " + ident.String(), rule.JSONToString(), state.String()})
+		return nil
+	}
+
 	placement, err := e.getTablePlacement(tblInfo)
 	if err != nil {
 		return err
@@ -182,7 +209,6 @@ func (e *ShowExec) fetchShowPlacementForTable(ctx context.Context) (err error) {
 		if err != nil {
 			return err
 		}
-		ident := ast.Ident{Schema: e.Table.DBInfo.Name, Name: tblInfo.Name}
 		e.appendRow([]interface{}{"TABLE " + ident.String(), placement.String(), state.String()})
 	}
 
@@ -213,6 +239,33 @@ func (e *ShowExec) fetchShowPlacementForPartition(ctx context.Context) (err erro
 		return errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs(e.Partition.O, tblInfo.Name.O))
 	}
 
+	tableIndent := ast.Ident{Schema: e.Table.DBInfo.Name, Name: tblInfo.Name}
+	if strings.ToLower(e.PlacementPolicyFormat) == FormatRaw {
+		// get partition rule firstly.
+		rule, err := infosync.GetRuleBundle(ctx, placement.GroupID(partition.ID))
+		if err != nil {
+			return err
+		}
+		var state infosync.PlacementScheduleState
+		if rule == nil {
+			// if partition rule not exists, get table rule.
+			if rule, err = infosync.GetRuleBundle(ctx, placement.GroupID(tblInfo.ID)); err == nil {
+				state, err = fetchTableScheduleState(ctx, nil, tblInfo)
+			}
+		} else {
+			state, err = fetchPartitionScheduleState(ctx, nil, partition)
+		}
+		if err != nil {
+			return err
+		}
+		e.appendRow([]interface{}{
+			fmt.Sprintf("TABLE %s PARTITION %s", tableIndent.String(), partition.Name.String()),
+			rule.JSONToString(),
+			state.String(),
+		})
+		return nil
+	}
+
 	placement, err := e.getTablePlacement(tblInfo)
 	if err != nil {
 		return err
@@ -228,7 +281,6 @@ func (e *ShowExec) fetchShowPlacementForPartition(ctx context.Context) (err erro
 		if err != nil {
 			return err
 		}
-		tableIndent := ast.Ident{Schema: e.Table.DBInfo.Name, Name: tblInfo.Name}
 		e.appendRow([]interface{}{
 			fmt.Sprintf("TABLE %s PARTITION %s", tableIndent.String(), partition.Name.String()),
 			placement.String(),
@@ -242,6 +294,17 @@ func (e *ShowExec) fetchShowPlacementForPartition(ctx context.Context) (err erro
 func (e *ShowExec) fetchShowPlacement(ctx context.Context) error {
 	if err := e.fetchAllPlacementPolicies(); err != nil {
 		return err
+	}
+
+	if strings.ToLower(e.PlacementPolicyFormat) == FormatRaw {
+		rules, err := infosync.GetAllRuleBundles(ctx)
+		if err != nil {
+			return err
+		}
+		for _, r := range rules {
+			e.appendRow([]interface{}{"Rule " + r.ID, r.JSONToString(), "NULL"})
+		}
+		return nil
 	}
 
 	scheduled := make(map[int64]infosync.PlacementScheduleState)
@@ -520,3 +583,8 @@ func accumulateState(curr, news infosync.PlacementScheduleState) infosync.Placem
 	}
 	return curr
 }
+
+var (
+	// FormatRaw displays the information in raw format.
+	FormatRaw = "raw"
+)

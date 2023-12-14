@@ -3028,6 +3028,8 @@ type ShowStmt struct {
 	ShowProfileLimit *Limit // Used for `SHOW PROFILE` syntax
 
 	ImportJobID *int64 // Used for `SHOW IMPORT JOB <ID>` syntax
+
+	PlacementPolicyFormat string // Used for `SHOW placement rule` syntax
 }
 
 // Restore implements Node interface.
@@ -3226,10 +3228,18 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 	case ShowPlacementForDatabase:
 		ctx.WriteKeyWord("PLACEMENT FOR DATABASE ")
 		ctx.WriteName(n.DBName)
+		if n.PlacementPolicyFormat != "" {
+			ctx.WriteKeyWord(" FORMAT = ")
+			ctx.WritePlain(n.PlacementPolicyFormat)
+		}
 	case ShowPlacementForTable:
 		ctx.WriteKeyWord("PLACEMENT FOR TABLE ")
 		if err := n.Table.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore ShowStmt.Table")
+		}
+		if n.PlacementPolicyFormat != "" {
+			ctx.WriteKeyWord(" FORMAT = ")
+			ctx.WritePlain(n.PlacementPolicyFormat)
 		}
 	case ShowPlacementForPartition:
 		ctx.WriteKeyWord("PLACEMENT FOR TABLE ")
@@ -3238,6 +3248,10 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 		ctx.WriteKeyWord(" PARTITION ")
 		ctx.WriteName(n.Partition.String())
+		if n.PlacementPolicyFormat != "" {
+			ctx.WriteKeyWord(" FORMAT = ")
+			ctx.WritePlain(n.PlacementPolicyFormat)
+		}
 	case ShowImportJobs:
 		if n.ImportJobID != nil {
 			ctx.WriteKeyWord("IMPORT JOB ")
@@ -3356,6 +3370,10 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("IMPORTS")
 		case ShowPlacement:
 			ctx.WriteKeyWord("PLACEMENT")
+			if n.PlacementPolicyFormat != "" {
+				ctx.WriteKeyWord(" FORMAT = ")
+				ctx.WritePlain(n.PlacementPolicyFormat)
+			}
 		case ShowPlacementLabels:
 			ctx.WriteKeyWord("PLACEMENT LABELS")
 		case ShowSessionStates:
