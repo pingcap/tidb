@@ -974,8 +974,8 @@ func (p *PdController) CreateOrUpdateRegionLabelRule(ctx context.Context, rule L
 			// Wait for the rule to take effect because the PD operator is processed asynchronously.
 			// To synchronize this, checking the operator status may not be enough. For details, see
 			// https://github.com/pingcap/tidb/issues/49477.
-			// Let's use the default value of `patrol-region-interval` from PD configuration.
-			<-time.After(10 * time.Millisecond)
+			// Let's use two times default value of `patrol-region-interval` from PD configuration.
+			<-time.After(20 * time.Millisecond)
 			return nil
 		}
 		if berrors.IsContextCanceled(lastErr) {
