@@ -950,7 +950,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	pruningInfo := ds.getPruningInfo(candidates, prop)
 	defer func() {
 		if err == nil && t != nil && !t.invalid() && pruningInfo != "" {
-			warnErr := errors.New(pruningInfo)
+			warnErr := errors.NewNoStackError(pruningInfo)
 			if ds.ctx.GetSessionVars().StmtCtx.InVerboseExplain {
 				ds.ctx.GetSessionVars().StmtCtx.AppendNote(warnErr)
 			} else {

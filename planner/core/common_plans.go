@@ -860,12 +860,12 @@ func (e *Explain) RenderResult() error {
 				// output cost formula and factor costs through warning under model ver2 and true_card_cost mode for cost calibration.
 				cost, _ := pp.getPlanCostVer2(property.RootTaskType, NewDefaultPlanCostOption())
 				trace := cost.trace
-				pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("cost formula: %v", trace.formula))
+				pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("cost formula: %v", trace.formula))
 				data, err := json.Marshal(trace.factorCosts)
 				if err != nil {
-					pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("marshal factor costs error %v", err))
+					pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("marshal factor costs error %v", err))
 				}
-				pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("factor costs: %v", string(data)))
+				pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("factor costs: %v", string(data)))
 
 				// output cost factor weights for cost calibration
 				factors := defaultVer2Factors.tolist()
@@ -876,13 +876,13 @@ func (e *Explain) RenderResult() error {
 					}
 				}
 				if wstr, err := json.Marshal(weights); err != nil {
-					pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("marshal weights error %v", err))
+					pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("marshal weights error %v", err))
 				} else {
-					pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("factor weights: %v", string(wstr)))
+					pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("factor weights: %v", string(wstr)))
 				}
 			}
 		} else {
-			e.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("'explain format=true_card_cost' cannot support this plan"))
+			e.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("'explain format=true_card_cost' cannot support this plan"))
 		}
 	}
 

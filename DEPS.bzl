@@ -3392,8 +3392,19 @@ def go_deps():
         name = "com_github_pingcap_errors",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/errors",
+<<<<<<< HEAD
         sum = "h1:m5ZsBa5o/0CkzZXfXLaThzKuR85SnHHetqBCpzQ30h8=",
         version = "v0.11.5-0.20221009092201-b66cddb77c32",
+=======
+        sha256 = "b4db3d3c222d9039c84baacbbd9c46aa0346f3f04d2577a77475a64ecfefebf9",
+        strip_prefix = "github.com/pingcap/errors@v0.11.5-0.20231212100244-799fae176cfb",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/errors/com_github_pingcap_errors-v0.11.5-0.20231212100244-799fae176cfb.zip",
+            "http://ats.apps.svc/gomod/github.com/pingcap/errors/com_github_pingcap_errors-v0.11.5-0.20231212100244-799fae176cfb.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/pingcap/errors/com_github_pingcap_errors-v0.11.5-0.20231212100244-799fae176cfb.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/errors/com_github_pingcap_errors-v0.11.5-0.20231212100244-799fae176cfb.zip",
+        ],
+>>>>>>> 6aea95e223 (planner: refactor planner module's warning and note generation logic (get rid of unnecessary stack info) (#49390))
     )
     go_repository(
         name = "com_github_pingcap_failpoint",

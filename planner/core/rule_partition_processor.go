@@ -1659,7 +1659,7 @@ func (s *partitionProcessor) resolveOptimizeHint(ds *DataSource, partitionName m
 	}
 	if ds.preferStoreType&preferTiFlash != 0 && ds.preferStoreType&preferTiKV != 0 {
 		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(
-			errors.New("hint `read_from_storage` has conflict storage type for the partition " + partitionName.L))
+			errors.NewNoStackError("hint `read_from_storage` has conflict storage type for the partition " + partitionName.L))
 	}
 
 	return s.resolveAccessPaths(ds)

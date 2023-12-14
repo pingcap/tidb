@@ -741,7 +741,7 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 	}
 	if hasConflict {
 		errMsg := "Join hints are conflict, you can only specify one type of join"
-		warning := ErrInternal.GenWithStack(errMsg)
+		warning := ErrInternal.FastGen(errMsg)
 		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		p.preferJoinType = 0
 	}
@@ -811,7 +811,7 @@ func (p *LogicalJoin) setPreferredJoinType() {
 	p.preferJoinType = setPreferredJoinTypeFromOneSide(p.leftPreferJoinType, true) | setPreferredJoinTypeFromOneSide(p.rightPreferJoinType, false)
 	if containDifferentJoinTypes(p.preferJoinType) {
 		errMsg := "Join hints conflict after join reorder phase, you can only specify one type of join"
-		warning := ErrInternal.GenWithStack(errMsg)
+		warning := ErrInternal.FastGen(errMsg)
 		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		p.preferJoinType = 0
 	}
@@ -840,7 +840,7 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 			errMsg := fmt.Sprintf("No available path for table %s.%s with the store type %s of the hint /*+ read_from_storage */, "+
 				"please check the status of the table replica and variable value of tidb_isolation_read_engines(%v)",
 				ds.DBName.O, ds.table.Meta().Name.O, kv.TiKV.Name(), ds.ctx.GetSessionVars().GetIsolationReadEngines())
-			warning := ErrInternal.GenWithStack(errMsg)
+			warning := ErrInternal.FastGen(errMsg)
 			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		} else {
 			ds.ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because you have set a hint to read table `" + hintTbl.tblName.O + "` from TiKV.")
@@ -852,7 +852,7 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 		if ds.preferStoreType != 0 {
 			errMsg := fmt.Sprintf("Storage hints are conflict, you can only specify one storage type of table %s.%s",
 				alias.dbName.L, alias.tblName.L)
-			warning := ErrInternal.GenWithStack(errMsg)
+			warning := ErrInternal.FastGen(errMsg)
 			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 			ds.preferStoreType = 0
 			return
@@ -868,7 +868,7 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 			errMsg := fmt.Sprintf("No available path for table %s.%s with the store type %s of the hint /*+ read_from_storage */, "+
 				"please check the status of the table replica and variable value of tidb_isolation_read_engines(%v)",
 				ds.DBName.O, ds.table.Meta().Name.O, kv.TiFlash.Name(), ds.ctx.GetSessionVars().GetIsolationReadEngines())
-			warning := ErrInternal.GenWithStack(errMsg)
+			warning := ErrInternal.FastGen(errMsg)
 			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		}
 	}
@@ -3767,7 +3767,7 @@ func (b *PlanBuilder) pushHintWithoutTableWarning(hint *ast.TableOptimizerHint) 
 		return
 	}
 	errMsg := fmt.Sprintf("Hint %s is inapplicable. Please specify the table names in the arguments.", sb.String())
-	b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
+	b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(errMsg))
 }
 
 func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLevel int) {
@@ -3893,7 +3893,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 			limitHints.preferLimitToCop = true
 		case HintMerge:
 			if hint.Tables != nil {
-				b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("The MERGE hint is not used correctly, maybe it inputs a table name."))
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("The MERGE hint is not used correctly, maybe it inputs a table name."))
 				continue
 			}
 			MergeHints.preferMerge = true
@@ -3904,13 +3904,13 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 			leadingHintCnt++
 		case HintSemiJoinRewrite:
 			if b.subQueryCtx != handlingExistsSubquery {
-				b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("The SEMI_JOIN_REWRITE hint is not used correctly, maybe it's not in a subquery or the subquery is not EXISTS clause."))
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("The SEMI_JOIN_REWRITE hint is not used correctly, maybe it's not in a subquery or the subquery is not EXISTS clause."))
 				continue
 			}
 			b.subQueryHintFlags |= HintFlagSemiJoinRewrite
 		case HintNoDecorrelate:
 			if b.subQueryCtx == notHandlingSubquery {
-				b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("NO_DECORRELATE() is inapplicable because it's not in an IN subquery, an EXISTS subquery, an ANY/ALL/SOME subquery or a scalar subquery."))
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("NO_DECORRELATE() is inapplicable because it's not in an IN subquery, an EXISTS subquery, an ANY/ALL/SOME subquery or a scalar subquery."))
 				continue
 			}
 			b.subQueryHintFlags |= HintFlagNoDecorrelate
@@ -3922,9 +3922,9 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		// If there are more leading hints or the straight_join hint existes, all leading hints will be invalid.
 		leadingJoinOrder = leadingJoinOrder[:0]
 		if leadingHintCnt > 1 {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"))
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"))
 		} else if b.ctx.GetSessionVars().StmtCtx.StraightJoinOrder {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("We can only use the straight_join hint, when we use the leading hint and straight_join hint at the same time, all leading hints will be invalid"))
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("We can only use the straight_join hint, when we use the leading hint and straight_join hint at the same time, all leading hints will be invalid"))
 		}
 	}
 	b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
@@ -3990,7 +3990,7 @@ func (b *PlanBuilder) appendUnmatchedIndexHintWarning(indexHints []indexHintInfo
 				hint.dbName,
 				hint.tblName,
 			)
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(errMsg))
 		}
 	}
 }
@@ -6812,7 +6812,7 @@ func (b *PlanBuilder) handleDefaultFrame(spec *ast.WindowSpec, windowFuncName st
 		// For functions that operate on the entire partition, the frame clause will be ignored.
 		if spec.Frame != nil {
 			specName := spec.Name.O
-			b.ctx.GetSessionVars().StmtCtx.AppendNote(ErrWindowFunctionIgnoresFrame.GenWithStackByArgs(windowFuncName, getWindowName(specName)))
+			b.ctx.GetSessionVars().StmtCtx.AppendNote(ErrWindowFunctionIgnoresFrame.FastGenByArgs(windowFuncName, getWindowName(specName)))
 			newSpec.Frame = nil
 			updated = true
 		}
