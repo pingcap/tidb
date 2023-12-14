@@ -224,3 +224,14 @@ func (e *HashAggExec) ActionSpill() *AggSpillDiskAction {
 	}
 	return e.spillAction
 }
+
+type processRowContext struct {
+	ctx                    sessionctx.Context
+	chunk                  *chunk.Chunk
+	rowPos                 int
+	keyColPos              int
+	aggFuncNum             int
+	restoreadData          *aggfuncs.AggPartialResultMapper
+	partialResultsRestored [][]aggfuncs.PartialResult
+	bInMap                 *int
+}

@@ -374,13 +374,12 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	e.initPartialWorkers(partialConcurrency, finalConcurrency, ctx)
 	e.initFinalWorkers(finalConcurrency)
 
-	vars := e.Ctx().GetSessionVars()
 	isTrackerEnabled := e.Ctx().GetSessionVars().TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load()
 	if isTrackerEnabled {
 		e.diskTracker = disk.NewTracker(e.ID(), -1)
-		e.diskTracker.AttachTo(vars.StmtCtx.DiskTracker)
+		e.diskTracker.AttachTo(sessionVars.StmtCtx.DiskTracker)
 		e.spillHelper.diskTracker = e.diskTracker
-		vars.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())
+		sessionVars.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())
 	}
 	e.parallelExecValid = true
 }

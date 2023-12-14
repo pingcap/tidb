@@ -214,12 +214,51 @@ func (w *HashAggFinalWorker) receiveFinalResultHolder() (*chunk.Chunk, bool) {
 	}
 }
 
+func (w *HashAggFinalWorker) processRow(context *processRowContext) (int64, error) {
+	memDelta := int64(0)
+	key := context.chunk.GetRow(context.rowPos).GetString(context.keyColPos)
+	prs, ok := (*context.restoreadData)[key]
+	if ok {
+		// The key has appeared before, merge results.
+		for aggPos := 0; aggPos < context.aggFuncNum; aggPos++ {
+			memDelta, err := w.aggFuncsForRestoring[aggPos].MergePartialResult(context.ctx, context.partialResultsRestored[aggPos][context.rowPos], prs[aggPos])
+			if err != nil {
+				return memDelta, err
+			}
+			memDelta += memDelta
+		}
+	} else {
+		memDelta += int64(len(key))
+
+		if len(*context.restoreadData)+1 > (1<<*context.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+			w.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << *context.bInMap))
+			(*context.bInMap)++
+		}
+
+		results := make([]aggfuncs.PartialResult, context.aggFuncNum)
+		(*context.restoreadData)[key] = results
+
+		for aggPos := 0; aggPos < context.aggFuncNum; aggPos++ {
+			results[aggPos] = context.partialResultsRestored[aggPos][context.rowPos]
+		}
+	}
+	return memDelta, nil
+}
+
 func (w *HashAggFinalWorker) restoreFromOneSpillFile(ctx sessionctx.Context, restoreadData *aggfuncs.AggPartialResultMapper, diskIO *chunk.DataInDiskByChunks, bInMap *int) (int64, error) {
 	totalMemDelta := int64(0)
 	chunkNum := diskIO.NumChunks()
-	keyColPos := len(w.aggFuncsForRestoring)
 	aggFuncNum := len(w.aggFuncsForRestoring)
-	partialResultsRestored := make([][]aggfuncs.PartialResult, aggFuncNum)
+	processRowContext := &processRowContext{
+		ctx:                    ctx,
+		chunk:                  nil, // Will be set in the loop
+		rowPos:                 0,   // Will be set in the loop
+		keyColPos:              aggFuncNum,
+		aggFuncNum:             aggFuncNum,
+		restoreadData:          restoreadData,
+		partialResultsRestored: make([][]aggfuncs.PartialResult, aggFuncNum),
+		bInMap:                 bInMap,
+	}
 	for i := 0; i < chunkNum; i++ {
 		chunk, err := diskIO.GetChunk(i)
 		if err != nil {
@@ -229,39 +268,21 @@ func (w *HashAggFinalWorker) restoreFromOneSpillFile(ctx sessionctx.Context, res
 		// Deserialize bytes to agg function's meta data
 		for aggPos, aggFunc := range w.aggFuncsForRestoring {
 			partialResult, memDelta := aggFunc.DeserializePartialResult(chunk)
-			partialResultsRestored[aggPos] = partialResult
+			processRowContext.partialResultsRestored[aggPos] = partialResult
 			totalMemDelta += memDelta
 		}
 
 		// Merge or create results
 		rowNum := chunk.NumRows()
+		processRowContext.chunk = chunk
 		for rowPos := 0; rowPos < rowNum; rowPos++ {
-			key := chunk.GetRow(rowPos).GetString(keyColPos)
-			prs, ok := (*restoreadData)[key]
-			if ok {
-				// The key has appeared before, merge results.
-				for aggPos := 0; aggPos < aggFuncNum; aggPos++ {
-					memDelta, err := w.aggFuncsForRestoring[aggPos].MergePartialResult(ctx, partialResultsRestored[aggPos][rowPos], prs[aggPos])
-					if err != nil {
-						return totalMemDelta, err
-					}
-					totalMemDelta += memDelta
-				}
-			} else {
-				totalMemDelta += int64(len(key))
-
-				if len(*restoreadData)+1 > (1<<*bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
-					w.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << *bInMap))
-					(*bInMap)++
-				}
-
-				results := make([]aggfuncs.PartialResult, aggFuncNum)
-				(*restoreadData)[key] = results
-
-				for aggPos := 0; aggPos < aggFuncNum; aggPos++ {
-					results[aggPos] = partialResultsRestored[aggPos][rowPos]
-				}
+			processRowContext.rowPos = rowPos
+			memDelta, err := w.processRow(processRowContext)
+			if err != nil {
+				return totalMemDelta, err
 			}
+			totalMemDelta += memDelta
+
 		}
 	}
 	return totalMemDelta, nil
