@@ -864,7 +864,7 @@ func TestIssue37932(t *testing.T) {
 }
 
 func TestIssue49033(t *testing.T) {
-	val := runtime.GOMAXPROCS(0)
+	val := runtime.GOMAXPROCS(1)
 	defer func() {
 		runtime.GOMAXPROCS(val)
 	}()
