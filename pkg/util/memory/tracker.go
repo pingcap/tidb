@@ -392,6 +392,12 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 	t.Consume(newConsumed)
 }
 
+// UnconsumeAll unconsumes all bytes in this tracker
+func (t *Tracker) UnconsumeAll() {
+	allConsumedBytes := t.BytesConsumed()
+	t.Consume(allConsumedBytes)
+}
+
 // Consume is used to consume a memory usage. "bytes" can be a negative value,
 // which means this is a memory release operation. When memory usage of a tracker
 // exceeds its bytesSoftLimit/bytesHardLimit, the tracker calls its action, so does each of its ancestors.

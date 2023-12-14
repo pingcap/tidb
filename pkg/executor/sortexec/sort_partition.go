@@ -95,7 +95,6 @@ func newSortPartition(fieldTypes []*types.FieldType, chunkSize int, byItemsDesc 
 }
 
 func (s *sortPartition) close() error {
-	s.getMemTracker().Consume(-s.totalTrackedMemNum)
 	if s.inDisk != nil {
 		s.inDisk.Close()
 		s.inDisk = nil
@@ -104,6 +103,7 @@ func (s *sortPartition) close() error {
 	s.memTracker = nil
 	s.diskTracker = nil
 	s.helper = nil
+	s.getMemTracker().UnconsumeAll()
 	return nil
 }
 
