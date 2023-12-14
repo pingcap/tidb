@@ -56,5 +56,4 @@ func TestConflictLock(t *testing.T) {
 	err = storage.UnlockRemote(ctx, strg, "test.lock")
 	require.NoError(t, err)
 	requireFileNotExists(t, filepath.Join(pth, "test.lock"))
-
 }

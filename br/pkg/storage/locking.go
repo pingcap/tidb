@@ -13,20 +13,21 @@ import (
 	"go.uber.org/zap"
 )
 
-// LockMeta is the meta information of a lock.
-type LockMeta struct {
-	LockedAt time.Time `json:"locked_at"`
-	LockedBy string    `json:"locaked_by"`
-	Hint     string    `json:"hint"`
+// lockMeta is the meta information of a lock.
+type lockMeta struct {
+	LockedAt   time.Time `json:"locked_at"`
+	LockerHost string    `json:"locker_host"`
+	LockerPID  int       `json:"locker_pid"`
+	Hint       string    `json:"hint"`
 }
 
-func (l LockMeta) String() string {
-	return fmt.Sprintf("Locked(at: %s, by: %s, hint: %s)", l.LockedAt.Format(time.DateTime), l.LockedBy, l.Hint)
+func (l lockMeta) String() string {
+	return fmt.Sprintf("Locked(at: %s, host: %s, pid: %d, hint: %s)", l.LockedAt.Format(time.DateTime), l.LockerHost, l.LockerPID, l.Hint)
 }
 
 // ErrLocked is the error returned when the lock is held by others.
 type ErrLocked struct {
-	Meta LockMeta
+	Meta lockMeta
 }
 
 func (e ErrLocked) Error() string {
@@ -35,26 +36,27 @@ func (e ErrLocked) Error() string {
 
 // MakeLockMeta creates a LockMeta by the current node's metadata.
 // Including current time and hostname, etc..
-func MakeLockMeta(hint string) LockMeta {
+func MakeLockMeta(hint string) lockMeta {
 	hname, err := os.Hostname()
 	if err != nil {
-		hname = "UNKNOWN"
+		hname = fmt.Sprintf("UnknownHost(err=%s)", err)
 	}
 	now := time.Now()
-	meta := LockMeta{
-		LockedAt: now,
-		LockedBy: hname,
-		Hint:     hint,
+	meta := lockMeta{
+		LockedAt:   now,
+		LockerHost: hname,
+		Hint:       hint,
+		LockerPID:  os.Getpid(),
 	}
 	return meta
 }
 
-func readLockMeta(ctx context.Context, storage ExternalStorage, path string) (LockMeta, error) {
+func readLockMeta(ctx context.Context, storage ExternalStorage, path string) (lockMeta, error) {
 	file, err := storage.ReadFile(ctx, path)
 	if err != nil {
-		return LockMeta{}, errors.Annotatef(err, "failed to read existed lock file %s", path)
+		return lockMeta{}, errors.Annotatef(err, "failed to read existed lock file %s", path)
 	}
-	meta := LockMeta{}
+	meta := lockMeta{}
 	err = json.Unmarshal(file, &meta)
 	if err != nil {
 		return meta, errors.Annotatef(err, "failed to parse lock file %s", path)
@@ -63,7 +65,7 @@ func readLockMeta(ctx context.Context, storage ExternalStorage, path string) (Lo
 	return meta, nil
 }
 
-func putLockMeta(ctx context.Context, storage ExternalStorage, path string, meta LockMeta) error {
+func putLockMeta(ctx context.Context, storage ExternalStorage, path string, meta lockMeta) error {
 	file, err := json.Marshal(meta)
 	if err != nil {
 		return errors.Annotatef(err, "failed to marshal lock meta %s", path)

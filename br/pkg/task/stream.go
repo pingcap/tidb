@@ -68,6 +68,10 @@ const (
 	flagStreamStartTS    = "start-ts"
 	flagStreamEndTS      = "end-ts"
 	flagGCSafePointTTS   = "gc-ttl"
+
+	hintOnTruncateLock = "There might be another truncate task running, or a truncate task that didn't exit properly. " +
+		"You may check the metadata and continue by wait other task finish or delete the lock file manually."
+	truncateLockPath = "br_stream_truncate.lock"
 )
 
 var (
@@ -946,7 +950,7 @@ func RunStreamStatus(
 }
 
 // RunStreamTruncate truncates the log that belong to (0, until-ts)
-func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error {
+func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) (err error) {
 	console := glue.GetConsole(g)
 	em := color.New(color.Bold).SprintFunc()
 	warn := color.New(color.Bold, color.FgHiRed).SprintFunc()
@@ -960,12 +964,18 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
 
-	storage, err := cfg.makeStorage(ctx)
+	extStorage, err := cfg.makeStorage(ctx)
 	if err != nil {
 		return err
 	}
+	if err := storage.TryLockRemote(ctx, extStorage, truncateLockPath, hintOnTruncateLock); err != nil {
+		return err
+	}
+	defer utils.WithCleanUp(&err, 10*time.Second, func(ctx context.Context) error {
+		return storage.UnlockRemote(ctx, extStorage, truncateLockPath)
+	})
 
-	sp, err := restore.GetTSFromFile(ctx, storage, restore.TruncateSafePointFileName)
+	sp, err := restore.GetTSFromFile(ctx, extStorage, restore.TruncateSafePointFileName)
 	if err != nil {
 		return err
 	}
@@ -983,7 +993,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		Helper:                    stream.NewMetadataHelper(),
 		DryRun:                    cfg.DryRun,
 	}
-	shiftUntilTS, err := metas.LoadUntilAndCalculateShiftTS(ctx, storage, cfg.Until)
+	shiftUntilTS, err := metas.LoadUntilAndCalculateShiftTS(ctx, extStorage, cfg.Until)
 	if err != nil {
 		return err
 	}
@@ -1011,7 +1021,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 
 	if cfg.Until > sp && !cfg.DryRun {
 		if err := restore.SetTSToFile(
-			ctx, storage, cfg.Until, restore.TruncateSafePointFileName); err != nil {
+			ctx, extStorage, cfg.Until, restore.TruncateSafePointFileName); err != nil {
 			return err
 		}
 	}
@@ -1025,7 +1035,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	)
 	defer p.Close()
 
-	notDeleted, err := metas.RemoveDataFilesAndUpdateMetadataInBatch(ctx, shiftUntilTS, storage, p.IncBy)
+	notDeleted, err := metas.RemoveDataFilesAndUpdateMetadataInBatch(ctx, shiftUntilTS, extStorage, p.IncBy)
 	if err != nil {
 		return err
 	}
