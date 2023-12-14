@@ -48,7 +48,7 @@ func (ds *DataSource) generateIndexMergePath() error {
 	defer func() {
 		if len(ds.indexMergeHints) > 0 && warningMsg != "" {
 			ds.indexMergeHints = nil
-			stmtCtx.AppendWarning(errors.Errorf(warningMsg))
+			stmtCtx.AppendWarning(errors.NewNoStackError(warningMsg))
 			logutil.BgLogger().Debug(warningMsg)
 		}
 	}()
@@ -418,7 +418,7 @@ func (ds *DataSource) buildIndexMergeOrPath(
 	// Global index is not compatible with IndexMergeReaderExecutor.
 	for i := range partialPaths {
 		if partialPaths[i].Index != nil && partialPaths[i].Index.Global {
-			ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.New("global index is not compatible with index merge, so ignore it"))
+			ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("global index is not compatible with index merge, so ignore it"))
 			return nil
 		}
 	}

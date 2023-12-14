@@ -784,13 +784,13 @@ func (sc *StatementContext) SetSkipPlanCache(reason error) {
 	sc.UseCache = false
 	switch sc.CacheType {
 	case DefaultNoCache:
-		sc.AppendWarning(errors.New("unknown cache type"))
+		sc.AppendWarning(errors.NewNoStackError("unknown cache type"))
 	case SessionPrepared:
-		sc.AppendWarning(errors.Errorf("skip prepared plan-cache: %s", reason.Error()))
+		sc.AppendWarning(errors.NewNoStackErrorf("skip prepared plan-cache: %s", reason.Error()))
 	case SessionNonPrepared:
 		if sc.InExplainStmt && sc.ExplainFormat == "plan_cache" {
 			// use "plan_cache" rather than types.ExplainFormatPlanCache to avoid import cycle
-			sc.AppendWarning(errors.Errorf("skip non-prepared plan-cache: %s", reason.Error()))
+			sc.AppendWarning(errors.NewNoStackErrorf("skip non-prepared plan-cache: %s", reason.Error()))
 		}
 	}
 }
