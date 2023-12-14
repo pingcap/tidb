@@ -492,15 +492,9 @@ func gcsHttpClientForThroughput() *http.Client {
 	return &http.Client{Transport: transport}
 }
 
-const mockGCSTestBucket = "testbucket"
-
 func isMockGCS(gcs *backuppb.GCS) bool {
 	if !intest.InTest {
 		return false
 	}
-	if gcs.Bucket == mockGCSTestBucket {
-		return true
-	}
-	// for other tests, fakestorage will listen on 127.0.0.1
 	return strings.Contains(gcs.Endpoint, "127.0.0.1")
 }
