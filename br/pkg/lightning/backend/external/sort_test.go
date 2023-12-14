@@ -31,25 +31,6 @@ import (
 	"golang.org/x/exp/rand"
 )
 
-// like scheduler code for merge sort step in add index and import into.
-func splitDataAndStatFiles(datas []string, stats []string) ([][]string, [][]string) {
-	dataGroup := make([][]string, 0, 10)
-	statGroup := make([][]string, 0, 10)
-
-	start := 0
-	step := 10
-	for start < len(datas) {
-		end := start + step
-		if end > len(datas) {
-			end = len(datas)
-		}
-		dataGroup = append(dataGroup, datas[start:end])
-		statGroup = append(statGroup, stats[start:end])
-		start = end
-	}
-	return dataGroup, statGroup
-}
-
 func TestGlobalSortLocalBasic(t *testing.T) {
 	// 1. write data step
 	seed := time.Now().Unix()
