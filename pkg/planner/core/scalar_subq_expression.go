@@ -271,26 +271,6 @@ func (s *ScalarSubQueryExpr) MarshalJSON() ([]byte, error) {
 	return s.Constant.MarshalJSON()
 }
 
-// ReverseEval evaluates the only one column value with given function result.
-func (s *ScalarSubQueryExpr) ReverseEval(_ *stmtctx.StatementContext, _ types.Datum, _ types.RoundingType) (val types.Datum, err error) {
-	if s.evalErr != nil {
-		return s.Value, s.evalErr
-	}
-	if s.evaled {
-		return s.Value, nil
-	}
-	err = s.selfEvaluate()
-	if err != nil {
-		return s.Value, err
-	}
-	return s.Value, nil
-}
-
-// SupportReverseEval implements the Expression interface.
-func (*ScalarSubQueryExpr) SupportReverseEval() bool {
-	return true
-}
-
 // VecEvalInt evaluates this expression in a vectorized manner.
 func (*ScalarSubQueryExpr) VecEvalInt(_ expression.EvalContext, _ *chunk.Chunk, _ *chunk.Column) error {
 	return errors.Errorf("ScalarSubQueryExpr doesn't implement the vec eval yet")

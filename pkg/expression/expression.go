@@ -89,15 +89,6 @@ type VecExpr interface {
 	VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 }
 
-// ReverseExpr contains all resersed evaluation methods.
-type ReverseExpr interface {
-	// SupportReverseEval checks whether the builtinFunc support reverse evaluation.
-	SupportReverseEval() bool
-
-	// ReverseEval evaluates the only one column value with given function result.
-	ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error)
-}
-
 // TraverseAction define the interface for action when traversing down an expression.
 type TraverseAction interface {
 	Transform(Expression) Expression
@@ -108,7 +99,6 @@ type Expression interface {
 	fmt.Stringer
 	goJSON.Marshaler
 	VecExpr
-	ReverseExpr
 	CollationInfo
 
 	Traverse(TraverseAction) Expression

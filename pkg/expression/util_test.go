@@ -567,9 +567,6 @@ func (m *MockExpr) EvalJSON(ctx EvalContext, row chunk.Row) (val types.BinaryJSO
 	}
 	return types.BinaryJSON{}, m.i == nil, m.err
 }
-func (m *MockExpr) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
-	return types.Datum{}, m.err
-}
 func (m *MockExpr) GetType() *types.FieldType                         { return m.t }
 func (m *MockExpr) Clone() Expression                                 { return nil }
 func (m *MockExpr) Equal(ctx EvalContext, e Expression) bool          { return false }
@@ -591,7 +588,6 @@ func (m *MockExpr) ExplainNormalizedInfo4InList() string                { return
 func (m *MockExpr) HashCode() []byte                                    { return nil }
 func (m *MockExpr) CanonicalHashCode() []byte                           { return nil }
 func (m *MockExpr) Vectorized() bool                                    { return false }
-func (m *MockExpr) SupportReverseEval() bool                            { return false }
 func (m *MockExpr) HasCoercibility() bool                               { return false }
 func (m *MockExpr) Coercibility() Coercibility                          { return 0 }
 func (m *MockExpr) SetCoercibility(Coercibility)                        {}
