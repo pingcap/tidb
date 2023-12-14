@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -280,7 +281,20 @@ func (b *builtinCurrentResourceGroupSig) evalString(ctx sessionctx.Context, row 
 	if data == nil {
 		return "", true, errors.Errorf("Missing session variable when eval builtin")
 	}
-	return data.StmtCtx.ResourceGroupName, false, nil
+
+	return getHintResourceGroupName(data), false, nil
+}
+
+// get statement resource group name with hint in consideration
+// NOTE: because function `CURRENT_RESOURCE_GROUP()` maybe evaluated in optimizer
+// before we assign the hint value to StmtCtx.ResourceGroupName, so we have to
+// explicitly check the hint here.
+func getHintResourceGroupName(vars *variable.SessionVars) string {
+	groupName := vars.StmtCtx.ResourceGroupName
+	if vars.StmtCtx.HasResourceGroup {
+		groupName = vars.StmtCtx.StmtHints.ResourceGroup
+	}
+	return groupName
 }
 
 type userFunctionClass struct {

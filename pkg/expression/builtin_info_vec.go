@@ -130,8 +130,9 @@ func (b *builtinCurrentResourceGroupSig) vecEvalString(ctx sessionctx.Context, i
 	}
 	n := input.NumRows()
 	result.ReserveString(n)
+	groupName := getHintResourceGroupName(data)
 	for i := 0; i < n; i++ {
-		result.AppendString(data.StmtCtx.ResourceGroupName)
+		result.AppendString(groupName)
 	}
 	return nil
 }

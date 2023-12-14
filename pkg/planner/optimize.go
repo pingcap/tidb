@@ -187,6 +187,23 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		sessVars.StmtCtx.AppendWarning(warn)
 	}
 
+	defer func() {
+		// Override the resource group if the hint is set.
+		if retErr == nil && sessVars.StmtCtx.StmtHints.HasResourceGroup {
+			if variable.EnableResourceControl.Load() {
+				sessVars.StmtCtx.ResourceGroupName = sessVars.StmtCtx.StmtHints.ResourceGroup
+				// if we are in a txn, should update the txn resource name to let the txn
+				// commit with the hint resource group.
+				if txn, err := sctx.Txn(false); err == nil && txn != nil && txn.Valid() {
+					kv.SetTxnResourceGroup(txn, sessVars.ResourceGroupName)
+				}
+			} else {
+				err := infoschema.ErrResourceGroupSupportDisabled
+				sessVars.StmtCtx.AppendWarning(err)
+			}
+		}
+	}()
+
 	warns = warns[:0]
 	for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
 		oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
