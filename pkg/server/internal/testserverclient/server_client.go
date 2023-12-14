@@ -1093,6 +1093,7 @@ func (cli *TestServerClient) RunTestLoadDataInTransaction(t *testing.T) {
 			config.AllowAllFiles = true
 			config.Params["sql_mode"] = "''"
 		}, dbName, func(dbt *testkit.DBTestKit) {
+			dbt.MustExec("set @@global.tidb_txn_mode = 'pessimistic'")
 			dbt.MustExec("create table t (a int primary key)")
 			txn, err := dbt.GetDB().Begin()
 			require.NoError(t, err)
@@ -1137,6 +1138,36 @@ func (cli *TestServerClient) RunTestLoadDataInTransaction(t *testing.T) {
 
 			require.NoError(t, err)
 			rows = dbt.MustQuery("select * from t")
+			cli.CheckRows(t, rows, "1")
+		},
+	)
+
+	dbName = "LoadDataInExplicitTransaction"
+	cli.RunTestsOnNewDB(
+		t, func(config *mysql.Config) {
+			config.AllowAllFiles = true
+			config.Params["sql_mode"] = "''"
+		}, dbName, func(dbt *testkit.DBTestKit) {
+			// in optimistic txn, one should not block another
+			dbt.MustExec("set @@global.tidb_txn_mode = 'optimistic'")
+			dbt.MustExec("create table t (a int primary key)")
+			txn1, err := dbt.GetDB().Begin()
+			require.NoError(t, err)
+			txn2, err := dbt.GetDB().Begin()
+			require.NoError(t, err)
+			_, err = txn1.Exec(fmt.Sprintf("USE `%s`;", dbName))
+			require.NoError(t, err)
+			_, err = txn2.Exec(fmt.Sprintf("USE `%s`;", dbName))
+			require.NoError(t, err)
+			_, err = txn1.Exec(fmt.Sprintf("load data local infile %q into table t", path))
+			require.NoError(t, err)
+			_, err = txn2.Exec(fmt.Sprintf("load data local infile %q into table t", path))
+			require.NoError(t, err)
+			err = txn1.Commit()
+			require.NoError(t, err)
+			err = txn2.Commit()
+			require.ErrorContains(t, err, "Write conflict")
+			rows := dbt.MustQuery("select * from t")
 			cli.CheckRows(t, rows, "1")
 		},
 	)
