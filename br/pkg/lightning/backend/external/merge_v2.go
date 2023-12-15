@@ -10,10 +10,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/membuf"
-
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
-	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
@@ -159,7 +157,7 @@ func MergeOverlappingFilesV2(
 	stat.Filenames = append(stat.Filenames,
 		[2]string{writer.dataFile, writer.statFile})
 
-	stat.build([]tidbkv.Key{startKey}, []tidbkv.Key{curEnd})
+	stat.build([]kv.Key{startKey}, []kv.Key{curEnd})
 	if onClose != nil {
 		onClose(&WriterSummary{
 			WriterID:           writer.writerID,
