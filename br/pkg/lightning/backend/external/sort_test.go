@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 	"golang.org/x/exp/rand"
 )
 
@@ -210,7 +211,9 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 	t.Logf("seed: %d", seed)
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
-	memSizeLimit := (rand.Intn(10) + 1) * 400
+	// memSizeLimit := (rand.Intn(10) + 1) * 400
+	memSizeLimit := 400
+
 	multiStats := make([]MultipleFilesStat, 0, 100)
 	closeFn := func(s *WriterSummary) {
 		multiStats = append(multiStats, s.MultipleFilesStats...)
@@ -246,12 +249,27 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 	datas, stats, err := GetAllFileNames(ctx, memStore, "")
 	require.NoError(t, err)
 
+	// ywq todo check it.
 	dataGroup, statGroup, startKeys, endKeys := splitDataStatAndKeys(datas, stats, multiStats)
+
+	for _, stat := range multiStats {
+		logutil.BgLogger().Info("ywq test stat", zap.Binary("minKey", stat.MinKey), zap.Binary("maxKey", stat.MaxKey))
+	}
+
+	logutil.BgLogger().Info("ywq test actual min max", zap.Any("min", kvs[0].Key), zap.Any("max", kvs[len(kvs)-1].Key))
+
+	// startKeys "000a94e1-edc7-4583-893c-4598bee2cde4" "b4a5ed60-16f5-4981-9b9c-3c4b7a5a1232"
+	// endkeys "b49f03c6-4b0e-4788-808d-2e546e906fac\x00" "fff1a2c3-277e-444b-9a94-fa3d841fce21\x00"
+
+	// multistats
+	// min "000a94e1-edc7-4583-893c-4598bee2cde4" max "587ee8e5-7725-4353-91df-d8cbdd4672dc"
+	//     "58846994-849b-4844-bf9f-8578590a5cab"     "b49f03c6-4b0e-4788-808d-2e546e906fac"
+	//     "b4a5ed60-16f5-4981-9b9c-3c4b7a5a1232"     "fff1a2c3-277e-444b-9a94-fa3d841fce21"
 
 	lastStepDatas := make([]string, 0, 10)
 	lastStepStats := make([]string, 0, 10)
 	var startKey, endKey dbkv.Key
-
+	// prepare meta for last step.
 	closeFn1 := func(s *WriterSummary) {
 		for _, stat := range s.MultipleFilesStats {
 			for i := range stat.Filenames {
@@ -268,6 +286,7 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 		endKey = BytesMax(endKey, s.Max.Clone().Next())
 	}
 	logutil.BgLogger().Info("ywq test start merge step")
+	logutil.BgLogger().Info("ywq test see meta", zap.Any("startKeys", startKeys), zap.Any("endKeys", endKeys))
 
 	for i, group := range dataGroup {
 		MergeOverlappingFilesV2(

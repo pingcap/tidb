@@ -377,7 +377,9 @@ func (w *Writer) Close(ctx context.Context) error {
 		zap.String("writerID", w.writerID),
 		zap.Int("kv-cnt-cap", cap(w.kvLocations)),
 		zap.String("minKey", hex.EncodeToString(w.minKey)),
-		zap.String("maxKey", hex.EncodeToString(w.maxKey)))
+		zap.String("maxKey", hex.EncodeToString(w.maxKey)),
+		zap.Binary("minKey", w.minKey),
+		zap.Binary("maxKey", w.maxKey))
 
 	w.kvLocations = nil
 	w.onClose(&WriterSummary{
@@ -488,7 +490,6 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	w.recordMinMax(minKey, maxKey, uint64(w.kvSize))
 
 	// maintain 500-batch statistics
-
 	l := len(w.multiFileStats)
 	w.multiFileStats[l-1].Filenames = append(w.multiFileStats[l-1].Filenames,
 		[2]string{dataFile, statFile},
