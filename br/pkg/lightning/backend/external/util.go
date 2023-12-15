@@ -24,11 +24,13 @@ import (
 	"strings"
 
 	"github.com/docker/go-units"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 // seekPropsOffsets seeks the statistic files to find the largest offset of
@@ -42,10 +44,10 @@ func seekPropsOffsets(
 	checkHotSpot bool,
 ) (_ []uint64, err error) {
 	logger := logutil.Logger(ctx)
-	// task := log.BeginTask(logger, "seek props offsets")
-	// defer func() {
-	// 	task.End(zapcore.ErrorLevel, err)
-	// }()
+	task := log.BeginTask(logger, "seek props offsets")
+	defer func() {
+		task.End(zapcore.ErrorLevel, err)
+	}()
 	iter, err := NewMergePropIter(ctx, paths, exStorage, checkHotSpot)
 	if err != nil {
 		return nil, err

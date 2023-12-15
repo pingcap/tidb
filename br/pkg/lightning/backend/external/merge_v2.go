@@ -7,12 +7,15 @@ import (
 	"time"
 
 	"github.com/jfcg/sorty/v2"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 )
 
@@ -36,24 +39,24 @@ func MergeOverlappingFilesV2(
 	onClose OnCloseFunc,
 	concurrency int,
 	checkHotspot bool,
-) error {
-	logutil.Logger(ctx).Info("enter MergeOverlappingFiles",
+) (err error) {
+	task := log.BeginTask(logutil.Logger(ctx).With(
 		zap.Int("data-file-count", len(dataFiles)),
 		zap.Int("stat-file-count", len(statFiles)),
 		zap.Binary("start-key", startKey),
 		zap.Binary("end-key", endKey),
 		zap.String("new-file-prefix", newFilePrefix),
 		zap.Int("concurrency", concurrency),
-	)
+	), "merge overlapping files")
+	defer func() {
+		task.End(zap.ErrorLevel, err)
+	}()
 
-	// seed := time.Now().Unix()
-	// rand.Seed(uint64(seed))
-	// memSizeLimit := (rand.Intn(10) + 1) * 400
+	rangeGroupSize := 4 * size.GB
+	failpoint.Inject("mockRangeGroupSize", func(val failpoint.Value) {
+		rangeGroupSize = val.(uint64)
+	})
 
-	rangeGroupSize := 4 * 1024 * 1024 * 1024
-	// if intest.InTest {
-	// 	rangeGroupSize = memSizeLimit
-	// }
 	splitter, err := NewRangeSplitter(
 		ctx,
 		dataFiles,
@@ -79,7 +82,7 @@ func MergeOverlappingFilesV2(
 			store,
 			newFilePrefix,
 			writerID)
-	// ywq todo consider writer conc.
+
 	err = writer.Init(ctx, partSize)
 	if err != nil {
 		return nil
@@ -98,7 +101,6 @@ func MergeOverlappingFilesV2(
 		}
 		curEnd = kv.Key(endKeyOfGroup).Clone()
 		if len(endKeyOfGroup) == 0 {
-			logutil.BgLogger().Info("ywq test len endkeyofgroup = 0")
 			curEnd = kv.Key(endKey).Clone()
 		}
 		now := time.Now()
@@ -142,21 +144,17 @@ func MergeOverlappingFilesV2(
 		logutil.Logger(ctx).Info("writing in MergeOverlappingFiles",
 			zap.Duration("cost time", time.Since(now)),
 			zap.Any("key len", len(loaded.keys)))
-		// should release or not?
-		// ywq todo why?
 		maxKey = kv.Key(loaded.keys[len(loaded.keys)-1]).Clone()
-		// loaded.keys = nil
-		// loaded.values = nil
-		// loaded.memKVBuffers = nil
 		curStart = curEnd.Clone()
+		loaded.keys = nil
+		loaded.values = nil
+		loaded.memKVBuffers = nil
 
 		if len(endKeyOfGroup) == 0 {
-			logutil.BgLogger().Info("ywq test break the loop")
 			break
 		}
 	}
 
-	// ywq todo why loaded data len = 0.
 	var stat MultipleFilesStat
 	stat.Filenames = append(stat.Filenames,
 		[2]string{writer.dataFile, writer.statFile})

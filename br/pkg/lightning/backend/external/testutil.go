@@ -93,12 +93,12 @@ func testReadAndCompare(
 			require.EqualValues(t, kvs[kvIdx].Val, loaded.values[i])
 			kvIdx++
 		}
+		curStart = curEnd.Clone()
 
 		// release
 		loaded.keys = nil
 		loaded.values = nil
 		loaded.memKVBuffers = nil
-		curStart = curEnd.Clone()
 
 		if len(endKeyOfGroup) == 0 {
 			break
