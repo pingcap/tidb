@@ -171,40 +171,6 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	testReadAndCompare(ctx, t, kvs, memStore, lastStepDatas, lastStepStats, startKey, memSizeLimit)
 }
 
-// split subtasks for merge step.
-func splitDataStatAndKeys(datas []string, stats []string, multiStats []MultipleFilesStat) ([][]string, [][]string, []dbkv.Key, []dbkv.Key) {
-	startKeys := make([]dbkv.Key, 0, 10)
-	endKeys := make([]dbkv.Key, 0, 10)
-	i := 0
-	for ; i < len(multiStats)-1; i += 2 {
-		startKey := BytesMin(multiStats[i].MinKey, multiStats[i+1].MinKey)
-		endKey := BytesMax(multiStats[i].MaxKey, multiStats[i+1].MaxKey)
-		endKey = dbkv.Key(endKey).Next().Clone()
-		startKeys = append(startKeys, startKey)
-		endKeys = append(endKeys, endKey)
-	}
-	if i == len(multiStats)-1 {
-		startKeys = append(startKeys, multiStats[i].MinKey.Clone())
-		endKeys = append(endKeys, dbkv.Key(multiStats[i].MaxKey).Next().Clone())
-	}
-
-	dataGroup := make([][]string, 0, 10)
-	statGroup := make([][]string, 0, 10)
-
-	start := 0
-	step := 1000
-	for start < len(datas) {
-		end := start + step
-		if end > len(datas) {
-			end = len(datas)
-		}
-		dataGroup = append(dataGroup, datas[start:end])
-		statGroup = append(statGroup, stats[start:end])
-		start = end
-	}
-	return dataGroup, statGroup, startKeys, endKeys
-}
-
 func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 	// 1. write data step
 	seed := time.Now().Unix()
