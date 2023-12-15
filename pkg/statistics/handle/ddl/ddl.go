@@ -113,11 +113,8 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 			}
 		}
 	case model.ActionTruncateTablePartition:
-		globalTableInfo, addedPartInfo, _ := t.GetTruncatePartitionInfo()
-		for _, def := range addedPartInfo.Definitions {
-			if err := h.statsWriter.InsertTableStats2KV(globalTableInfo, def.ID); err != nil {
-				return err
-			}
+		if err := h.onTruncatePartitions(t); err != nil {
+			return err
 		}
 	case model.ActionDropTablePartition:
 		if err := h.onDropPartitions(t); err != nil {

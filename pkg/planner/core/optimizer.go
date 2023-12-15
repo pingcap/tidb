@@ -623,7 +623,7 @@ func tryEnableLateMaterialization(sctx sessionctx.Context, plan PhysicalPlan) {
 	}
 	if sctx.GetSessionVars().EnableLateMaterialization && sctx.GetSessionVars().TiFlashFastScan {
 		sc := sctx.GetSessionVars().StmtCtx
-		sc.AppendWarning(errors.New("FastScan is not compatible with late materialization, late materialization is disabled"))
+		sc.AppendWarning(errors.NewNoStackError("FastScan is not compatible with late materialization, late materialization is disabled"))
 	}
 }
 
@@ -1116,7 +1116,7 @@ func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPla
 		if noOrder && supportClone {
 			apply.Concurrency = sctx.GetSessionVars().ExecutorConcurrency
 		} else {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Some apply operators can not be executed in parallel"))
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("Some apply operators can not be executed in parallel"))
 		}
 
 		// because of the limitation 3, we cannot parallelize Apply operators in this Apply's inner size,
@@ -1234,7 +1234,7 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan Physi
 		return nil, 0, err
 	}
 	if *planCounter > 0 {
-		logic.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The parameter of nth_plan() is out of range"))
+		logic.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("The parameter of nth_plan() is out of range"))
 	}
 	if t.invalid() {
 		errMsg := "Can't find a proper physical plan for this query"

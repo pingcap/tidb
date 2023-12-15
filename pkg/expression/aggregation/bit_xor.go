@@ -15,7 +15,7 @@
 package aggregation
 
 import (
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -25,13 +25,13 @@ type bitXorFunction struct {
 	aggFunction
 }
 
-func (bf *bitXorFunction) CreateContext(ctx sessionctx.Context) *AggEvaluateContext {
+func (bf *bitXorFunction) CreateContext(ctx expression.EvalContext) *AggEvaluateContext {
 	evalCtx := bf.aggFunction.CreateContext(ctx)
 	evalCtx.Value.SetUint64(0)
 	return evalCtx
 }
 
-func (*bitXorFunction) ResetContext(ctx sessionctx.Context, evalCtx *AggEvaluateContext) {
+func (*bitXorFunction) ResetContext(ctx expression.EvalContext, evalCtx *AggEvaluateContext) {
 	evalCtx.Ctx = ctx
 	evalCtx.Value.SetUint64(0)
 }

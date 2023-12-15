@@ -79,7 +79,7 @@ require (
 	github.com/opentracing/opentracing-go v1.2.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
 	github.com/pingcap/badger v1.5.1-0.20230103063557-828f39b09b6d
-	github.com/pingcap/errors v0.11.5-0.20221009092201-b66cddb77c32
+	github.com/pingcap/errors v0.11.5-0.20231212100244-799fae176cfb
 	github.com/pingcap/failpoint v0.0.0-20220801062533-2eaa32854a6c
 	github.com/pingcap/fn v1.0.0
 	github.com/pingcap/kvproto v0.0.0-20231122054644-fb0f5c2a0a10
@@ -103,8 +103,8 @@ require (
 	github.com/stretchr/testify v1.8.4
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20231201024404-0ff16620f6c0
-	github.com/tikv/pd/client v0.0.0-20231130081618-862eee18738e
+	github.com/tikv/client-go/v2 v2.0.8-0.20231204074048-e80e9ca1fe66
+	github.com/tikv/pd/client v0.0.0-20231213112719-f51f9134558e
 	github.com/timakin/bodyclose v0.0.0-20230421092635-574207250966
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible

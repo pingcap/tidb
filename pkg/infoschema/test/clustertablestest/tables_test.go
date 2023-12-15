@@ -431,11 +431,16 @@ func TestSlowQuery(t *testing.T) {
 			"1",
 			"0",
 			"0",
+			"default",
+			"0",
+			"0",
+			"0",
 			"abcd",
 			"60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4",
 			"",
 			"update t set i = 2;",
-			"select * from t_slim;"},
+			"select * from t_slim;",
+		},
 		{"2021-09-08 14:39:54.506967",
 			"427578666238083075",
 			"root",
@@ -505,6 +510,10 @@ func TestSlowQuery(t *testing.T) {
 			"0",
 			"0",
 			"0",
+			"0",
+			"rg1",
+			"96.66703066666668",
+			"3182.424414062492",
 			"0",
 			"",
 			"",
@@ -1028,7 +1037,7 @@ func TestStmtSummaryInternalQuery(t *testing.T) {
 		"where digest_text like \"select `original_sql` , `bind_sql` , `default_db` , status%\""
 	tk.MustQuery(sql).Check(testkit.Rows(
 		"select `original_sql` , `bind_sql` , `default_db` , status , `create_time` , `update_time` , charset , " +
-			"collation , source , `sql_digest` , `plan_digest` from `mysql` . `bind_info` where `update_time` > ? order by `update_time` , `create_time`"))
+			"collation , source , `sql_digest` , `plan_digest` , type from `mysql` . `bind_info` where `update_time` > ? order by `update_time` , `create_time`"))
 
 	// Test for issue #21642.
 	tk.MustQuery(`select tidb_version()`)

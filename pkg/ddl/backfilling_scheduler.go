@@ -165,7 +165,6 @@ func initSessCtx(
 	}
 	sessCtx.GetSessionVars().StmtCtx.SetTimeZone(sessCtx.GetSessionVars().Location())
 	sessCtx.GetSessionVars().StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
-	sessCtx.GetSessionVars().StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = !sqlMode.HasStrictMode()
 
 	typeFlags := types.StrictFlags.
@@ -196,7 +195,6 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 		timezone = &tz
 	}
 	badNullAsWarn := sv.StmtCtx.BadNullAsWarning
-	overflowAsWarn := sv.StmtCtx.OverflowAsWarning
 	dividedZeroAsWarn := sv.StmtCtx.DividedByZeroAsWarning
 	typeFlags := sv.StmtCtx.TypeFlags()
 	resGroupName := sv.ResourceGroupName
@@ -206,7 +204,6 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 		uv.SQLMode = sqlMode
 		uv.TimeZone = timezone
 		uv.StmtCtx.BadNullAsWarning = badNullAsWarn
-		uv.StmtCtx.OverflowAsWarning = overflowAsWarn
 		uv.StmtCtx.DividedByZeroAsWarning = dividedZeroAsWarn
 		uv.StmtCtx.SetTypeFlags(typeFlags)
 		uv.ResourceGroupName = resGroupName

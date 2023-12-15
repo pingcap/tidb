@@ -185,7 +185,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	// update task/subtask, and finish subtask, so we can go to next stage
 	subtasks := make([]*proto.Subtask, 0, len(subtaskMetas))
 	for _, m := range subtaskMetas {
-		subtasks = append(subtasks, proto.NewSubtask(task.Step, task.ID, task.Type, "", 1, m))
+		subtasks = append(subtasks, proto.NewSubtask(task.Step, task.ID, task.Type, "", 1, m, 0))
 	}
 	_, err = mgr.UpdateTaskAndAddSubTasks(ctx, task, subtasks, proto.TaskStatePending)
 	require.NoError(t, err)
@@ -226,7 +226,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	// update meta, same as import into.
 	subtasks = make([]*proto.Subtask, 0, len(subtaskMetas))
 	for _, m := range subtaskMetas {
-		subtasks = append(subtasks, proto.NewSubtask(task.Step, task.ID, task.Type, "", 1, m))
+		subtasks = append(subtasks, proto.NewSubtask(task.Step, task.ID, task.Type, "", 1, m, 0))
 	}
 	_, err = mgr.UpdateTaskAndAddSubTasks(ctx, task, subtasks, proto.TaskStatePending)
 	require.NoError(t, err)
