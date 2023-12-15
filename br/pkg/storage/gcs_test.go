@@ -4,6 +4,7 @@ package storage
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -459,4 +460,37 @@ func TestReadRange(t *testing.T) {
 	n, err := r.Read(content)
 	require.NoError(t, err)
 	require.Equal(t, []byte("234"), content[:n])
+}
+
+var testingStorageURI = flag.String("testing-storage-uri", "", "the URI of the storage used for testing")
+
+func openTestingStorage(t *testing.T) ExternalStorage {
+	if *testingStorageURI == "" {
+		t.Skip("testingStorageURI is not set")
+	}
+	s, err := NewFromURL(context.Background(), *testingStorageURI)
+	require.NoError(t, err)
+	return s
+}
+
+func TestMultiPartUpload(t *testing.T) {
+	s := openTestingStorage(t)
+	if _, ok := s.(*GCSStorage); !ok {
+		t.Skipf("only test GCSStorage, got %T", s)
+	}
+	ctx := context.Background()
+
+	// just get some random content, use a fixed seed is enough
+	filename := "TestMultiPartUpload"
+	data := make([]byte, 100*1024*1024)
+	w, err := s.Create(ctx, filename, &WriterOption{Concurrency: 10})
+	require.NoError(t, err)
+	_, err = w.Write(ctx, data)
+	require.NoError(t, err)
+	err = w.Close(ctx)
+	require.NoError(t, err)
+
+	got, err := s.ReadFile(ctx, filename)
+	require.NoError(t, err)
+	require.Equal(t, data, got)
 }

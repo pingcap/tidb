@@ -180,6 +180,7 @@ func (w *GCSWriter) Write(p []byte) (n int, err error) {
 		cleanup: func() {},
 	}
 	w.curPart++
+	println(len(p))
 	return len(p), nil
 }
 
