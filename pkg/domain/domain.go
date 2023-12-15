@@ -1161,7 +1161,7 @@ func (do *Domain) Init(
 	sysFac := func() (pools.Resource, error) {
 		return sysExecutorFactory(do)
 	}
-	sysCtxPool := pools.NewResourcePool(sysFac, 128, 128, resourceIdleTimeout)
+	sysCtxPool := pools.NewResourcePool(sysFac, 64, 64, resourceIdleTimeout)
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	do.cancel = cancelFunc
 	var callback ddl.Callback
