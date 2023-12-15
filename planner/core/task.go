@@ -1228,14 +1228,21 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			copTsk.tablePlan = clonedTblScan
 			copTsk.indexPlanFinished = true
 			rootTask := copTsk.convertToRootTask(p.ctx)
-			_, ok := rootTask.p.(*PhysicalIndexMergeReader)
+			indexMerge, ok := rootTask.p.(*PhysicalIndexMergeReader)
 			if !ok {
 				// needExtraProj == true
-				_, ok = rootTask.p.Children()[0].(*PhysicalIndexMergeReader)
+				indexMerge, ok = rootTask.p.Children()[0].(*PhysicalIndexMergeReader)
 				if !ok {
 					return nil, false
 				}
 			}
+			indexMerge.PushedLimit = &PushedDownLimit{
+				Offset: p.Offset,
+				Count:  p.Count,
+			}
+			indexMerge.ByItems = p.ByItems
+			indexMerge.KeepOrder = true
+			return rootTask, true
 		}
 	}
 
