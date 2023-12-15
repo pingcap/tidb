@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -31,6 +32,10 @@ func InitTableTest(t *testing.T) (*storage.TaskManager, context.Context) {
 	pool := getResourcePool(t)
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "table_test")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
+	})
 	return getTaskManager(t, pool), ctx
 }
 
