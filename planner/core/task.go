@@ -1138,11 +1138,6 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			}
 			if plan, ok := finalScan.(*PhysicalTableScan); ok {
 				plan.ByItems = p.ByItems
-<<<<<<< HEAD
-			}
-			if plan, ok := finalScan.(*PhysicalIndexScan); ok {
-				plan.ByItems = p.ByItems
-=======
 				tblInfo := plan.Table
 				if tblInfo.GetPartitionInfo() != nil {
 					plan.Columns = append(plan.Columns, model.NewExtraPhysTblIDColInfo())
@@ -1164,7 +1159,6 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 						ID:       model.ExtraPhysTblID,
 					})
 				}
->>>>>>> 4b6f0ce4ee6 (planner: open fully order prop push down for partition table's table scan and single index scan (#42694))
 			}
 			partialScans = append(partialScans, finalScan)
 		}
@@ -1230,63 +1224,6 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 				indexMerge.KeepOrder = true
 				return rootTask, true
 			}
-<<<<<<< HEAD
-		} else {
-			// The normal index scan cases.(single read and double read)
-			propMatched := p.checkOrderPropForSubIndexScan(idxScan.IdxCols, idxScan.IdxColLens, idxScan.constColsByCond, colsProp)
-			if !propMatched {
-				return nil, false
-			}
-			idxScan.Desc = isDesc
-			idxScan.KeepOrder = true
-			idxScan.ByItems = p.ByItems
-			childProfile := copTsk.plan().statsInfo()
-			newCount := p.Offset + p.Count
-			stats := deriveLimitStats(childProfile, float64(newCount))
-			pushedLimit := PhysicalLimit{
-				Count: newCount,
-			}.Init(p.SCtx(), stats, p.SelectBlockOffset())
-			pushedLimit.SetSchema(copTsk.indexPlan.Schema())
-			copTsk = attachPlan2Task(pushedLimit, copTsk).(*copTask)
-
-			// A similar but simplified logic compared the ExpectedCnt handling logic in getOriginalPhysicalIndexScan.
-			child := pushedLimit.Children()[0]
-			// The row count of the direct child of Limit should be adjusted to be no larger than the Limit.Count.
-			child.SetStats(child.statsInfo().ScaleByExpectCnt(float64(newCount)))
-			// The Limit->Selection->IndexScan case:
-			// adjust the row count of IndexScan according to the selectivity of the Selection.
-			if selSelectivity > 0 && selSelectivity < 1 {
-				scaledRowCount := child.Stats().RowCount / selSelectivity
-				idxScan.SetStats(idxScan.Stats().ScaleByExpectCnt(scaledRowCount))
-			}
-
-			rootTask := copTsk.convertToRootTask(p.ctx)
-			// embedded limit in indexLookUp, no more limit needed.
-			if idxLookup, ok := rootTask.p.(*PhysicalIndexLookUpReader); ok {
-				idxLookup.PushedLimit = &PushedDownLimit{
-					Offset: p.Offset,
-					Count:  p.Count,
-				}
-				extraInfo, extraCol, hasExtraCol := tryGetPkExtraColumn(p.ctx.GetSessionVars(), tblInfo)
-				// TODO: sometimes it will add a duplicate `_tidb_rowid` column in ts.schema()
-				if hasExtraCol {
-					idxLookup.ExtraHandleCol = extraCol
-					ts := idxLookup.TablePlans[0].(*PhysicalTableScan)
-					ts.Columns = append(ts.Columns, extraInfo)
-					ts.schema.Append(extraCol)
-					ts.HandleIdx = []int{len(ts.Columns) - 1}
-				}
-				return rootTask, true
-			}
-			rootLimit := PhysicalLimit{
-				Count:       p.Count,
-				Offset:      p.Offset,
-				PartitionBy: newPartitionBy,
-			}.Init(p.SCtx(), stats, p.SelectBlockOffset())
-			rootLimit.SetSchema(rootTask.plan().Schema())
-			return attachPlan2Task(rootLimit, rootTask), true
-=======
->>>>>>> 4b6f0ce4ee6 (planner: open fully order prop push down for partition table's table scan and single index scan (#42694))
 		}
 	} else {
 		return nil, false
