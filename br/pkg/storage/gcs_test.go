@@ -4,6 +4,7 @@ package storage
 
 import (
 	"context"
+	"crypto/rand"
 	"flag"
 	"fmt"
 	"io"
@@ -480,9 +481,10 @@ func TestMultiPartUpload(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	// just get some random content, use a fixed seed is enough
 	filename := "TestMultiPartUpload"
+	// just get some random content, use any seed is enough
 	data := make([]byte, 100*1024*1024)
+	rand.Read(data)
 	w, err := s.Create(ctx, filename, &WriterOption{Concurrency: 10})
 	require.NoError(t, err)
 	_, err = w.Write(ctx, data)
