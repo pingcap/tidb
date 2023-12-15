@@ -164,8 +164,7 @@ func (w *GCSWriter) readChunk(ch chan chunk) {
 }
 
 // Write uploads given bytes as a part to Google Cloud Storage. Write is not
-// concurrent safe. Write will read the given bytes in background, please do not
-// change its content.
+// concurrent safe.
 func (w *GCSWriter) Write(p []byte) (n int, err error) {
 	if w.curPart > gcsMaximumParts {
 		err = fmt.Errorf("exceed maximum parts %d", gcsMaximumParts)
@@ -174,9 +173,8 @@ func (w *GCSWriter) Write(p []byte) (n int, err error) {
 		}
 		return 0, err
 	}
-	// TODO(lance6716): clone
 	w.chunkCh <- chunk{
-		buf:     p,
+		buf:     slices.Clone(p),
 		num:     w.curPart,
 		cleanup: func() {},
 	}
