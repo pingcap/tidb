@@ -53,11 +53,9 @@ type GCSWriter struct {
 	chunkSize   int64
 	workers     int
 	totalSize   int64
-	// only available for input reader which implements io.Seeker
-	readerPos int64
-	uploadID  string
-	chunkCh   chan chunk
-	curPart   int
+	uploadID    string
+	chunkCh     chan chunk
+	curPart     int
 }
 
 // NewGCSWriter returns a GCSWriter which uses GCS multipart upload API behind the scene.
@@ -153,7 +151,6 @@ func (w *GCSWriter) readChunk(ch chan chunk) {
 				uploadID:   w.uploadID,
 				buf:        data.buf,
 				partNumber: data.num,
-				checksum:   "",
 			}
 			if w.err.Load() == nil {
 				if err := part.Upload(); err != nil {
@@ -176,6 +173,7 @@ func (w *GCSWriter) Write(p []byte) (n int, err error) {
 		}
 		return 0, err
 	}
+	// TODO(lance6716): clone
 	w.chunkCh <- chunk{
 		buf:     p,
 		num:     w.curPart,
@@ -336,9 +334,7 @@ type xmlMPUPart struct {
 	buf        []byte
 	uploadID   string
 	partNumber int
-	checksum   string
 	etag       string
-	finished   bool
 }
 
 func (p *xmlMPUPart) Clone() *xmlMPUPart {
@@ -347,7 +343,6 @@ func (p *xmlMPUPart) Clone() *xmlMPUPart {
 		uploadID:   p.uploadID,
 		buf:        p.buf,
 		partNumber: p.partNumber,
-		checksum:   p.checksum,
 	}
 }
 
@@ -403,8 +398,6 @@ func (p *xmlMPUPart) upload() error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("PUT request returned non-OK status: %d", resp.StatusCode)
 	}
-	p.finished = true
-
 	return nil
 }
 
