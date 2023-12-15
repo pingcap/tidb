@@ -52,9 +52,9 @@ type HashAggFinalWorker struct {
 	finalResultHolderCh chan *chunk.Chunk
 	groupKeys           [][]byte
 
-	spillHelper        *parallelHashAggSpillHelper
-	isSpilledTriggered bool
-	spilledDataChan    chan *aggfuncs.AggPartialResultMapper
+	spillHelper             *parallelHashAggSpillHelper
+	isSpilledTriggered      bool
+	restoredAggResultMapper *aggfuncs.AggPartialResultMapper
 
 	// These agg functions are partial agg functions that are same with partial workers'.
 	// They only be used for restoring data that are spilled to disk in partial stage.
@@ -64,15 +64,9 @@ type HashAggFinalWorker struct {
 }
 
 func (w *HashAggFinalWorker) getInputFromDisk() (input *aggfuncs.AggPartialResultMapper, ok bool, spillContinue bool) {
-	select {
-	case <-w.finishCh:
-		return nil, false, false
-	case input, ok = <-w.spilledDataChan:
-		if !ok {
-			return nil, false, false
-		}
-		return input, ok, true
-	}
+	ret := w.restoredAggResultMapper
+	w.restoredAggResultMapper = nil
+	return ret, true, false
 }
 
 func (w *HashAggFinalWorker) getPartialInput() (input *aggfuncs.AggPartialResultMapper, ok bool) {
@@ -95,29 +89,76 @@ func (w *HashAggFinalWorker) initBInMap() {
 	}
 }
 
+func (w *HashAggFinalWorker) getInputData() (*aggfuncs.AggPartialResultMapper, bool, bool) {
+	waitStart := time.Now()
+	defer w.increaseWaitTime(waitStart)
+	if w.isSpilledTriggered {
+		// Only one partition is restored each time, so we should execute in this loop only once.
+		return w.getInputFromDisk()
+	}
+	input, ok := w.getPartialInput()
+	return input, ok, true
+}
+
+func (w *HashAggFinalWorker) handleFirstInput(input *aggfuncs.AggPartialResultMapper) {
+	w.isFirstInput = false
+	w.partialResultMap = *input
+	w.initBInMap()
+}
+
+func (w *HashAggFinalWorker) increaseWaitTime(waitStart time.Time) {
+	if w.stats != nil {
+		w.stats.WaitTime += int64(time.Since(waitStart))
+	}
+}
+
+func (w *HashAggFinalWorker) increaseExecTime(execStart time.Time) {
+	if w.stats != nil {
+		w.stats.ExecTime += int64(time.Since(execStart))
+		w.stats.TaskNum++
+	}
+}
+
+func (w *HashAggFinalWorker) mergeInputIntoResultMap(sctx sessionctx.Context, input *aggfuncs.AggPartialResultMapper) error {
+	execStart := time.Now()
+	allMemDelta := int64(0)
+	for key, value := range *input {
+		dstVal, ok := w.partialResultMap[key]
+		if !ok {
+			w.handleNewGroupKey(key, value)
+			continue
+		}
+
+		for j, af := range w.aggFuncs {
+			memDelta, err := af.MergePartialResult(sctx, value[j], dstVal[j])
+			if err != nil {
+				return err
+			}
+			allMemDelta += memDelta
+		}
+	}
+	w.memTracker.Consume(allMemDelta)
+	w.increaseExecTime(execStart)
+	return nil
+}
+
+func (w *HashAggFinalWorker) handleNewGroupKey(key string, value []aggfuncs.PartialResult) {
+	if len(w.partialResultMap)+1 > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+		w.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMap))
+		w.BInMap++
+	}
+	w.partialResultMap[key] = value
+}
+
 func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (spillContinue bool, err error) {
 	defer func() { w.isFirstInput = true }()
+
 	var input *aggfuncs.AggPartialResultMapper
 	var ok bool
-	loopJudge := true
-	for loopJudge {
-		waitStart := time.Now()
+	continueLoop := true
 
-		if w.isSpilledTriggered {
-			// Only one partition is restored each time, so we should execute in this loop only once.
-			loopJudge = false
-			var spillContinue bool
-			input, ok, spillContinue = w.getInputFromDisk()
-			if !spillContinue {
-				return false, nil
-			}
-		} else {
-			input, ok = w.getPartialInput()
-		}
-
-		if w.stats != nil {
-			w.stats.WaitTime += int64(time.Since(waitStart))
-		}
+	for continueLoop {
+		input, ok, continueLoop = w.getInputData()
 		if !ok {
 			return false, nil
 		}
@@ -125,41 +166,14 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (spillCo
 		// As the w.partialResultMap is empty when we get the first input.
 		// So it's better to directly assign the input to w.partialResultMap
 		if w.isFirstInput {
-			w.isFirstInput = false
-			w.partialResultMap = *input
-			w.initBInMap()
+			w.handleFirstInput(input)
 			continue
 		}
 
 		failpoint.Inject("ConsumeRandomPanic", nil)
 
-		execStart := time.Now()
-		allMemDelta := int64(0)
-		for key, value := range *input {
-			dstVal, ok := w.partialResultMap[key]
-			if !ok {
-				// Map will expand when count > bucketNum * loadFactor. The memory usage will double.
-				if len(w.partialResultMap)+1 > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
-					w.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMap))
-					w.BInMap++
-				}
-				w.partialResultMap[key] = value
-				continue
-			}
-
-			for j, af := range w.aggFuncs {
-				memDelta, err := af.MergePartialResult(sctx, value[j], dstVal[j])
-				if err != nil {
-					return false, err
-				}
-				allMemDelta += memDelta
-			}
-		}
-		w.memTracker.Consume(allMemDelta)
-
-		if w.stats != nil {
-			w.stats.ExecTime += int64(time.Since(execStart))
-			w.stats.TaskNum++
+		if err := w.mergeInputIntoResultMap(sctx, input); err != nil {
+			return false, err
 		}
 	}
 	return true, nil
@@ -304,7 +318,7 @@ func (w *HashAggFinalWorker) restoreOnePartition(ctx sessionctx.Context) (bool, 
 
 		w.memTracker.Consume(memDelta)
 	}
-	w.spilledDataChan <- &restoredData
+	w.restoredAggResultMapper = &restoredData
 	return true, nil
 }
 
@@ -320,7 +334,6 @@ func (w *HashAggFinalWorker) mergeResultsAndSend(ctx sessionctx.Context) (bool, 
 }
 
 func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup) {
-	w.spilledDataChan = make(chan *aggfuncs.AggPartialResultMapper, 1)
 	start := time.Now()
 	defer w.cleanup(start, waitGroup)
 
@@ -345,7 +358,6 @@ func (w *HashAggFinalWorker) cleanup(start time.Time, waitGroup *sync.WaitGroup)
 	if r := recover(); r != nil {
 		recoveryHashAgg(w.outputCh, r)
 	}
-	close(w.spilledDataChan)
 	if w.stats != nil {
 		w.stats.WorkerTime += int64(time.Since(start))
 	}
