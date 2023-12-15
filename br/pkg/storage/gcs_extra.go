@@ -183,7 +183,9 @@ func (w *GCSWriter) Write(p []byte) (n int, err error) {
 		buf: buf,
 		num: w.curPart,
 		cleanup: func() {
-			w.bytesPool.Put(buf)
+			// linter says it's better to use *[]byte because the type only has
+			// one pointer field, but 3 pointers (slice header) is not that bad
+			w.bytesPool.Put(buf) //nolint:staticcheck
 		},
 	}
 	w.curPart++
