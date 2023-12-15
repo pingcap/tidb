@@ -52,11 +52,8 @@ type baseBuiltinFunc struct {
 	pbCode       tipb.ScalarFuncSig
 	ctor         collate.Collator
 
-	childrenVectorized bool
-	childrenReversed   bool
-
+	childrenVectorized     bool
 	childrenVectorizedOnce *sync.Once
-	childrenReversedOnce   *sync.Once
 
 	collationInfo
 }
@@ -120,7 +117,6 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 	bf := baseBuiltinFunc{
 		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
-		childrenReversedOnce:   new(sync.Once),
 
 		args: args,
 		tp:   tp,
@@ -207,7 +203,6 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 	bf = baseBuiltinFunc{
 		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
-		childrenReversedOnce:   new(sync.Once),
 
 		args: args,
 		tp:   fieldType,
@@ -269,7 +264,6 @@ func newBaseBuiltinFuncWithFieldTypes(ctx sessionctx.Context, funcName string, a
 	bf = baseBuiltinFunc{
 		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
-		childrenReversedOnce:   new(sync.Once),
 
 		args: args,
 		tp:   fieldType,
@@ -289,7 +283,6 @@ func newBaseBuiltinFuncWithFieldType(tp *types.FieldType, args []Expression) (ba
 	bf := baseBuiltinFunc{
 		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
-		childrenReversedOnce:   new(sync.Once),
 
 		args: args,
 		tp:   tp,
@@ -414,7 +407,6 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	b.pbCode = from.pbCode
 	b.bufAllocator = newLocalColumnPool()
 	b.childrenVectorizedOnce = new(sync.Once)
-	b.childrenReversedOnce = new(sync.Once)
 	b.ctor = from.ctor
 }
 
@@ -1018,9 +1010,6 @@ func (b *baseBuiltinFunc) MemoryUsage() (sum int64) {
 		sum += b.tp.MemoryUsage()
 	}
 	if b.childrenVectorizedOnce != nil {
-		sum += onceSize
-	}
-	if b.childrenReversedOnce != nil {
 		sum += onceSize
 	}
 	for _, e := range b.args {

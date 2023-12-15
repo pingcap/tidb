@@ -165,7 +165,7 @@ func (re *regexpBaseFuncSig) genRegexp(pat string, matchType string) (*regexp.Re
 //
 // return true: need, false: needless
 func (re *regexpBaseFuncSig) canMemorize(ctx EvalContext, matchTypeIdx int) bool {
-	return re.args[patternIdx].ConstItem(ctx.GetSessionVars().StmtCtx) && (len(re.args) <= matchTypeIdx || re.args[matchTypeIdx].ConstItem(ctx.GetSessionVars().StmtCtx))
+	return re.args[patternIdx].ConstItem(ctx.GetSessionVars().StmtCtx.UseCache) && (len(re.args) <= matchTypeIdx || re.args[matchTypeIdx].ConstItem(ctx.GetSessionVars().StmtCtx.UseCache))
 }
 
 func (re *regexpBaseFuncSig) initMemoizedRegexp(params []*funcParam, matchTypeIdx int) error {
@@ -1251,7 +1251,7 @@ func getInstructions(repl []byte) ([]Instruction, error) {
 }
 
 func (re *builtinRegexpReplaceFuncSig) canInstructionsMemorized(ctx EvalContext) bool {
-	return re.args[replacementIdx].ConstItem(ctx.GetSessionVars().StmtCtx)
+	return re.args[replacementIdx].ConstItem(ctx.GetSessionVars().StmtCtx.UseCache)
 }
 
 func (re *builtinRegexpReplaceFuncSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
@@ -1473,7 +1473,7 @@ func (re *builtinRegexpReplaceFuncSig) vecEvalString(ctx EvalContext, input *chu
 	buffers := getBuffers(params)
 
 	instructions := make([]Instruction, 0)
-	isReplConst := re.baseBuiltinFunc.args[2].ConstItem(ctx.GetSessionVars().StmtCtx)
+	isReplConst := re.baseBuiltinFunc.args[2].ConstItem(ctx.GetSessionVars().StmtCtx.UseCache)
 	if isReplConst {
 		// repl is const
 		instructions, err = getInstructions([]byte(params[2].getStringVal(0)))
