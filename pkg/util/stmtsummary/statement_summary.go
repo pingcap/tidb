@@ -976,7 +976,7 @@ func convertEmptyToNil(str string) interface{} {
 	return str
 }
 
-// `StmtRUSummary` is the request-units summary for each type of statements.
+// StmtRUSummary is the request-units summary for each type of statements.
 type StmtRUSummary struct {
 	SumRRU            float64       `json:"sum_rru"`
 	SumWRU            float64       `json:"sum_wru"`
@@ -986,6 +986,7 @@ type StmtRUSummary struct {
 	MaxRUWaitDuration time.Duration `json:"max_ru_wait_duration"`
 }
 
+// Add add a new sample value to the ru summary record.
 func (s *StmtRUSummary) Add(info *util.RUDetails) {
 	if info != nil {
 		rru := info.RRU()
@@ -1006,6 +1007,7 @@ func (s *StmtRUSummary) Add(info *util.RUDetails) {
 	}
 }
 
+// Merge merges the value of 2 ru summary records.
 func (s *StmtRUSummary) Merge(other *StmtRUSummary) {
 	s.SumRRU += other.SumRRU
 	s.SumWRU += other.SumWRU
