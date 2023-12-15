@@ -99,11 +99,11 @@ func (s *sortPartition) close() error {
 		s.inDisk.Close()
 		s.inDisk = nil
 	}
+	s.getMemTracker().UnconsumeAll()
 	s.spillAction = nil
 	s.memTracker = nil
 	s.diskTracker = nil
 	s.helper = nil
-	s.getMemTracker().UnconsumeAll()
 	return nil
 }
 

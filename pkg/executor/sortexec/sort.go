@@ -19,6 +19,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -43,7 +44,7 @@ type SortExec struct {
 	// keyCmpFuncs is used to compare each ByItem.
 	keyCmpFuncs []chunk.CompareFunc
 
-	partition *sortPartition
+	curPartition *sortPartition
 
 	// We can't spill if size of data is lower than the limit
 	spillLimit int64
@@ -61,7 +62,8 @@ type SortExec struct {
 	// spillAction save the Action for spill disk.
 	spillAction *sortPartitionSpillDiskAction
 
-	helper *spillHelper
+	helper                *spillHelper
+	enableTmpStorageOnOOM bool
 }
 
 // Close implements the Executor Close interface.
@@ -89,6 +91,7 @@ func (e *SortExec) Close() error {
 func (e *SortExec) Open(ctx context.Context) error {
 	e.fetched = false
 	e.helper = newSpillHelper()
+	e.enableTmpStorageOnOOM = variable.EnableTmpStorageOnOOM.Load()
 
 	// To avoid duplicated initialization for TopNExec.
 	if e.memTracker == nil {
@@ -128,7 +131,7 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	if sortPartitionListLen == 1 {
-		if err := e.nonExternalSorting(req); err != nil {
+		if err := e.onePartitionSorting(req); err != nil {
 			return err
 		}
 	} else {
@@ -156,7 +159,7 @@ func (e *SortExec) initExternalSorting() error {
 	return nil
 }
 
-func (e *SortExec) nonExternalSorting(req *chunk.Chunk) (err error) {
+func (e *SortExec) onePartitionSorting(req *chunk.Chunk) (err error) {
 	e.helper.syncLock.Lock()
 	defer e.helper.syncLock.Unlock()
 
@@ -186,6 +189,9 @@ func (e *SortExec) nonExternalSorting(req *chunk.Chunk) (err error) {
 
 				// row shouldn't be nil here
 				row = cursor.getSpilledRow()
+				if row == nil {
+					return errors.New("Get a nil row")
+				}
 			}
 
 			cursor.advanceRow()
@@ -238,17 +244,21 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 	return nil
 }
 
-func (e *SortExec) switchToNewSortPartition(fields []*types.FieldType, byItemsDesc []bool) {
-	// Put the full partition into list
-	e.sortPartitions = append(e.sortPartitions, e.partition)
+func (e *SortExec) switchToNewSortPartition(fields []*types.FieldType, byItemsDesc []bool, appendPartition bool) {
+	if appendPartition {
+		// Put the full partition into list
+		e.sortPartitions = append(e.sortPartitions, e.curPartition)
+	}
 
-	e.partition = newSortPartition(fields, e.MaxChunkSize(), byItemsDesc, e.keyColumns, e.keyCmpFuncs, e.helper, e.spillLimit)
-	e.partition.getMemTracker().AttachTo(e.memTracker)
-	e.partition.getMemTracker().SetLabel(memory.LabelForRowChunks)
-	e.partition.getDiskTracker().AttachTo(e.diskTracker)
-	e.partition.getDiskTracker().SetLabel(memory.LabelForRowChunks)
-	e.spillAction = e.partition.actionSpill(e.helper)
-	e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
+	e.curPartition = newSortPartition(fields, e.MaxChunkSize(), byItemsDesc, e.keyColumns, e.keyCmpFuncs, e.helper, e.spillLimit)
+	e.curPartition.getMemTracker().AttachTo(e.memTracker)
+	e.curPartition.getMemTracker().SetLabel(memory.LabelForRowChunks)
+	e.spillAction = e.curPartition.actionSpill(e.helper)
+	if e.enableTmpStorageOnOOM {
+		e.curPartition.getDiskTracker().AttachTo(e.diskTracker)
+		e.curPartition.getDiskTracker().SetLabel(memory.LabelForRowChunks)
+		e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
+	}
 }
 
 func (e *SortExec) storeChunk(chk *chunk.Chunk, fields []*types.FieldType, byItemsDesc []bool) error {
@@ -257,9 +267,9 @@ func (e *SortExec) storeChunk(chk *chunk.Chunk, fields []*types.FieldType, byIte
 		return err
 	}
 
-	if !e.partition.add(chk) {
-		e.switchToNewSortPartition(fields, byItemsDesc)
-		if !e.partition.add(chk) {
+	if !e.curPartition.add(chk) {
+		e.switchToNewSortPartition(fields, byItemsDesc, true)
+		if !e.curPartition.add(chk) {
 			return errFailToAddChunk
 		}
 	}
@@ -278,14 +288,14 @@ func (e *SortExec) handleCurrentPartitionBeforeExit() error {
 	if e.isSpillTriggered() {
 		// If e.partition haven't trigger the spill. We need to manually trigger it.
 		// As all data should be in disk when spill is triggered.
-		if !e.partition.isSpillTriggered() {
-			err := e.partition.spillToDisk()
+		if !e.curPartition.isSpillTriggered() {
+			err := e.curPartition.spillToDisk()
 			if err != nil {
 				return err
 			}
 		}
 	} else {
-		err := e.partition.sort()
+		err := e.curPartition.sort()
 		if err != nil {
 			return err
 		}
@@ -300,16 +310,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		byItemsDesc[i] = byItem.Desc
 	}
 
-	e.partition = newSortPartition(fields, e.MaxChunkSize(), byItemsDesc, e.keyColumns, e.keyCmpFuncs, e.helper, e.spillLimit)
-	e.partition.getMemTracker().AttachTo(e.memTracker)
-	e.partition.getMemTracker().SetLabel(memory.LabelForRowChunks)
-	e.spillAction = e.partition.actionSpill(e.helper)
-
-	if variable.EnableTmpStorageOnOOM.Load() {
-		e.partition.getDiskTracker().AttachTo(e.diskTracker)
-		e.partition.getDiskTracker().SetLabel(memory.LabelForRowChunks)
-		e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
-	}
+	e.switchToNewSortPartition(fields, byItemsDesc, false)
 
 	for {
 		chk := exec.TryNewCacheChunk(e.Children(0))
@@ -346,8 +347,8 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		}
 	})
 
-	e.sortPartitions = append(e.sortPartitions, e.partition)
-	e.partition = nil
+	e.sortPartitions = append(e.sortPartitions, e.curPartition)
+	e.curPartition = nil
 	return nil
 }
 
@@ -435,8 +436,8 @@ func (e *SortExec) isSpillTriggered() bool {
 	if len(e.sortPartitions) > 0 {
 		return e.sortPartitions[0].isSpillTriggered()
 	} else {
-		if e.partition != nil {
-			return e.partition.isSpillTriggered()
+		if e.curPartition != nil {
+			return e.curPartition.isSpillTriggered()
 		}
 		return false
 	}
