@@ -56,7 +56,6 @@ type GCSWriter struct {
 	uploadID    string
 	chunkCh     chan chunk
 	curPart     int
-	bytesPool   sync.Pool
 }
 
 // NewGCSWriter returns a GCSWriter which uses GCS multipart upload API behind the scene.
@@ -86,9 +85,6 @@ func NewGCSWriter(
 		},
 		chunkSize: partSize,
 		workers:   parallelCnt,
-		bytesPool: sync.Pool{New: func() interface{} {
-			return make([]byte, partSize)
-		}},
 	}
 	if err := w.init(); err != nil {
 		return nil, fmt.Errorf("failed to initiate GCSWriter: %w", err)
@@ -177,16 +173,12 @@ func (w *GCSWriter) Write(p []byte) (n int, err error) {
 		}
 		return 0, err
 	}
-	buf := w.bytesPool.Get().([]byte)
-	buf = append(buf[:0], p...)
+	buf := make([]byte, len(p))
+	copy(buf, p)
 	w.chunkCh <- chunk{
-		buf: buf,
-		num: w.curPart,
-		cleanup: func() {
-			// linter says it's better to use *[]byte because the type only has
-			// one pointer field, but 3 pointers (slice header) is not that bad
-			w.bytesPool.Put(buf) //nolint:staticcheck
-		},
+		buf:     buf,
+		num:     w.curPart,
+		cleanup: func() {},
 	}
 	w.curPart++
 	return len(p), nil
