@@ -18,10 +18,13 @@ import (
 	"bytes"
 	"cmp"
 	"fmt"
+	"math/rand"
 	"slices"
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -33,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
 )
 
@@ -213,16 +217,24 @@ func (w *AggWorkerStat) Clone() *AggWorkerStat {
 	}
 }
 
-// ActionSpill returns a AggSpillDiskAction for spilling intermediate data for hashAgg.
-func (e *HashAggExec) ActionSpill() *AggSpillDiskAction {
-	if e.spillAction == nil {
-		e.spillAction = &AggSpillDiskAction{
-			e:            e,
-			spillHelper:  e.spillHelper,
-			isLogPrinted: false,
+// ActionSpill returns an action for spilling intermediate data for hashAgg.
+func (e *HashAggExec) ActionSpill() memory.ActionOnExceed {
+	if e.IsUnparallelExec {
+		if e.spillAction == nil {
+			e.spillAction = &AggSpillDiskAction{
+				e: e,
+			}
 		}
+		return e.spillAction
+	} else {
+		if e.parallelAggSpillAction == nil {
+			e.parallelAggSpillAction = &ParallelAggSpillDiskAction{
+				e:           e,
+				spillHelper: e.spillHelper,
+			}
+		}
+		return e.parallelAggSpillAction
 	}
-	return e.spillAction
 }
 
 type processRowContext struct {
@@ -234,4 +246,17 @@ type processRowContext struct {
 	restoreadData          *aggfuncs.AggPartialResultMapper
 	partialResultsRestored [][]aggfuncs.PartialResult
 	bInMap                 *int
+}
+
+func generateRandomError() error {
+	var err error = nil
+	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
+		if val.(bool) {
+			num := rand.Intn(1000)
+			if num < 3 {
+				err = errors.Errorf("Random fail is triggered in ParallelAggSpillDiskAction")
+			}
+		}
+	})
+	return err
 }

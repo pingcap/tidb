@@ -143,6 +143,8 @@ type HashAggExec struct {
 	tmpChkForSpill *chunk.Chunk
 	// spillAction save the Action for spilling.
 	spillAction *AggSpillDiskAction
+	// parallelAggSpillAction save the Action for spilling of parallel aggregation.
+	parallelAggSpillAction *ParallelAggSpillDiskAction
 	// spillHelper helps to carry out the spill action
 	spillHelper *parallelHashAggSpillHelper
 	// isChildDrained indicates whether the all data from child has been taken out.
@@ -196,6 +198,7 @@ func (e *HashAggExec) Close() error {
 			e.memTracker.ReplaceBytesUsed(0)
 		}
 		e.parallelExecValid = false
+		e.parallelAggSpillAction = nil
 		e.spillHelper.close()
 	}
 	return e.BaseExecutor.Close()
@@ -227,8 +230,7 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 		e.initForUnparallelExec()
 		return nil
 	}
-	e.initForParallelExec(e.Ctx())
-	return nil
+	return e.initForParallelExec(e.Ctx())
 }
 
 func (e *HashAggExec) initForUnparallelExec() {
@@ -349,10 +351,15 @@ func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {
 	}
 }
 
-func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
+func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) error {
 	sessionVars := e.Ctx().GetSessionVars()
-	finalConcurrency := sessionVars.HashAggFinalConcurrency()
 	partialConcurrency := sessionVars.HashAggPartialConcurrency()
+	finalConcurrency := sessionVars.HashAggFinalConcurrency()
+
+	if partialConcurrency == 0 || finalConcurrency == 0 {
+		return errors.New("partialConcurrency or finalConcurrency is 0.")
+	}
+
 	e.IsChildReturnEmpty = true
 	e.finalOutputCh = make(chan *AfFinalResult, finalConcurrency+partialConcurrency+1)
 	e.inputCh = make(chan *HashAggInput, partialConcurrency)
@@ -383,6 +390,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 		sessionVars.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())
 	}
 	e.parallelExecValid = true
+	return nil
 }
 
 // Next implements the Executor Next interface.

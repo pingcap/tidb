@@ -316,6 +316,14 @@ func (w *HashAggPartialWorker) prepareForSpill() {
 }
 
 func (w *HashAggPartialWorker) spillDataToDisk() error {
+	err := w.spillDataToDiskImpl()
+	if err == nil {
+		err = generateRandomError()
+	}
+	return err
+}
+
+func (w *HashAggPartialWorker) spillDataToDiskImpl() error {
 	defer func() {
 		if r := recover(); r != nil {
 			recoveryHashAgg(w.globalOutputCh, r)

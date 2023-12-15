@@ -15,15 +15,11 @@
 package aggregate
 
 import (
-	"math/rand"
 	"sync"
 	"sync/atomic"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
@@ -38,11 +34,17 @@ const (
 	partialStageFlag    = 4
 	spilledPartitionNum = 256
 	spillTasksDoneFlag  = -1
+
+	spillMode    = 0
+	notSpillMode = 1
+
+	spillLogInfo string = "memory exceeds quota, set aggregate mode to spill-mode"
 )
 
 type parallelHashAggSpillHelper struct {
 	lock struct {
-		sync.Mutex
+		mu                         *sync.Mutex
+		cond                       *sync.Cond
 		nextPartitionIdx           int
 		spilledChunksIO            [][]*chunk.DataInDiskByChunks
 		spillTriggered             int32
@@ -62,15 +64,19 @@ type parallelHashAggSpillHelper struct {
 }
 
 func newSpillHelper() *parallelHashAggSpillHelper {
+	mu := new(sync.Mutex)
 	return &parallelHashAggSpillHelper{
 		lock: struct {
-			sync.Mutex
+			mu                         *sync.Mutex
+			cond                       *sync.Cond
 			nextPartitionIdx           int
 			spilledChunksIO            [][]*chunk.DataInDiskByChunks
 			spillTriggered             int32
 			isSpilling                 int32
 			isAllPartialWorkerFinished bool
 		}{
+			mu:                         mu,
+			cond:                       sync.NewCond(mu),
 			spilledChunksIO:            make([][]*chunk.DataInDiskByChunks, spilledPartitionNum),
 			spillTriggered:             0,
 			isSpilling:                 0,
@@ -91,8 +97,8 @@ func (p *parallelHashAggSpillHelper) close() {
 }
 
 func (p *parallelHashAggSpillHelper) getNextPartition() (int, bool) {
-	p.lock.Lock()
-	defer p.lock.Unlock()
+	p.lock.mu.Lock()
+	defer p.lock.mu.Unlock()
 	partitionIdx := p.lock.nextPartitionIdx
 	if partitionIdx < 0 {
 		return -1, false
@@ -103,28 +109,32 @@ func (p *parallelHashAggSpillHelper) getNextPartition() (int, bool) {
 }
 
 func (p *parallelHashAggSpillHelper) addListInDisks(dataInDisk []*chunk.DataInDiskByChunks) {
-	p.lock.Lock()
-	defer p.lock.Unlock()
+	p.lock.mu.Lock()
+	defer p.lock.mu.Unlock()
 	for i, data := range dataInDisk {
 		p.lock.spilledChunksIO[i] = append(p.lock.spilledChunksIO[i], data)
 	}
 }
 
 func (p *parallelHashAggSpillHelper) getListInDisks(partitionNum int) []*chunk.DataInDiskByChunks {
-	p.lock.Lock()
-	defer p.lock.Unlock()
+	p.lock.mu.Lock()
+	defer p.lock.mu.Unlock()
 	return p.lock.spilledChunksIO[partitionNum]
 }
 
 func (p *parallelHashAggSpillHelper) isSpillTriggered() bool {
-	p.lock.Lock()
-	defer p.lock.Unlock()
+	p.lock.mu.Lock()
+	defer p.lock.mu.Unlock()
+	return p.lock.spillTriggered == spillFlag
+}
+
+func (p *parallelHashAggSpillHelper) isSpillTriggeredNoLock() bool {
 	return p.lock.spillTriggered == spillFlag
 }
 
 func (p *parallelHashAggSpillHelper) setSpillTriggered() {
-	p.lock.Lock()
-	defer p.lock.Unlock()
+	p.lock.mu.Lock()
+	defer p.lock.mu.Unlock()
 	p.lock.spillTriggered = spillFlag
 }
 
@@ -133,8 +143,8 @@ func (p *parallelHashAggSpillHelper) isInPartialStage() bool {
 }
 
 func (p *parallelHashAggSpillHelper) isInSpilling() bool {
-	p.lock.Lock()
-	defer p.lock.Unlock()
+	p.lock.mu.Lock()
+	defer p.lock.mu.Unlock()
 	return p.lock.isSpilling == isSpillingFlag
 }
 
@@ -142,25 +152,27 @@ func (p *parallelHashAggSpillHelper) isInSpillingNoLock() bool {
 	return p.lock.isSpilling == isSpillingFlag
 }
 
-func (p *parallelHashAggSpillHelper) setIsSpillingNoLock() {
+func (p *parallelHashAggSpillHelper) setIsSpilling() {
+	p.lock.mu.Lock()
+	defer p.lock.mu.Unlock()
 	p.lock.isSpilling = isSpillingFlag
 }
 
 func (p *parallelHashAggSpillHelper) resetIsSpilling() {
-	p.lock.Lock()
-	defer p.lock.Unlock()
+	p.lock.mu.Lock()
+	defer p.lock.mu.Unlock()
 	p.lock.isSpilling = isSpillingFlag + 1
 }
 
 func (p *parallelHashAggSpillHelper) setAllPartialWorkersFinished() {
-	p.lock.Lock()
-	defer p.lock.Unlock()
+	p.lock.mu.Lock()
+	defer p.lock.mu.Unlock()
 	p.lock.isAllPartialWorkerFinished = true
 }
 
 func (p *parallelHashAggSpillHelper) checkAllPartialWorkersFinished() bool {
-	p.lock.Lock()
-	defer p.lock.Unlock()
+	p.lock.mu.Lock()
+	defer p.lock.mu.Unlock()
 	return p.lock.isAllPartialWorkerFinished
 }
 
@@ -174,6 +186,15 @@ func (p *parallelHashAggSpillHelper) setError() {
 	atomic.StoreInt32(&p.hasError, hasErrorFlag)
 }
 
+func isInSpillMode(inSpillMode *uint32) bool {
+	return atomic.LoadUint32(inSpillMode) == spillMode
+}
+
+// Guarantee that processed data is at least 20% of the threshold, to avoid spilling too frequently.
+func hasEnoughDataToSpill(aggTracker *memory.Tracker, passedInTracker *memory.Tracker) bool {
+	return aggTracker.BytesConsumed() >= passedInTracker.GetBytesLimit()/5
+}
+
 // AggSpillDiskAction implements memory.ActionOnExceed for unparalleled HashAgg.
 // If the memory quota of a query is exceeded, AggSpillDiskAction.Action is
 // triggered.
@@ -181,42 +202,23 @@ type AggSpillDiskAction struct {
 	memory.BaseOOMAction
 	e          *HashAggExec
 	spillTimes uint32
-
-	spillHelper  *parallelHashAggSpillHelper
-	isLogPrinted bool
-}
-
-func (a *AggSpillDiskAction) triggerFallBackAction(t *memory.Tracker) {
-	if fallback := a.GetFallback(); fallback != nil {
-		fallback.Action(t)
-	}
 }
 
 // Action set HashAggExec spill mode.
 func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
-	// Guarantee that processed data is at least 20% of the threshold, to avoid spilling too frequently.
-	if atomic.LoadUint32(&a.e.inSpillMode) == 0 && a.spillTimes < maxSpillTimes && a.e.memTracker.BytesConsumed() >= t.GetBytesLimit()/5 {
-		if a.e.IsUnparallelExec {
-			a.spillTimes++
-			atomic.StoreUint32(&a.e.inSpillMode, 1)
-			memory.QueryForceDisk.Add(1)
-			logutil.BgLogger().Info("memory exceeds quota, set aggregate mode to spill-mode",
-				zap.Uint32("spillTimes", a.spillTimes),
-				zap.Int64("consumed", t.BytesConsumed()),
-				zap.Int64("quota", t.GetBytesLimit()))
-		} else if a.spillHelper.isInPartialStage() {
-			if len(a.e.partialWorkers) > 0 {
-				a.doActionForParallelHashAgg(t)
-			} else {
-				logutil.BgLogger().Error("0 length of partialWorkers in parallel hash aggregation is illegal")
-			}
-		} else {
-			a.triggerFallBackAction(t)
-			return
-		}
+	if isInSpillMode(&a.e.inSpillMode) && hasEnoughDataToSpill(a.e.memTracker, t) && a.spillTimes < maxSpillTimes {
+		a.spillTimes++
+		logutil.BgLogger().Info(spillLogInfo,
+			zap.Uint32("spillTimes", a.spillTimes),
+			zap.Int64("consumed", t.BytesConsumed()),
+			zap.Int64("quota", t.GetBytesLimit()))
+		atomic.StoreUint32(&a.e.inSpillMode, 1)
+		memory.QueryForceDisk.Add(1)
 		return
 	}
-	a.triggerFallBackAction(t)
+	if fallback := a.GetFallback(); fallback != nil {
+		fallback.Action(t)
+	}
 }
 
 // GetPriority get the priority of the Action
@@ -224,24 +226,71 @@ func (*AggSpillDiskAction) GetPriority() int64 {
 	return memory.DefSpillPriority
 }
 
-func (a *AggSpillDiskAction) doActionForParallelHashAgg(t *memory.Tracker) {
-	a.spillHelper.lock.Lock()
-	defer a.spillHelper.lock.Unlock()
-	if a.spillHelper.isInSpillingNoLock() {
-		// It means that another goroutine is in spill execution, we should return here.
+// ParallelAggSpillDiskAction implements memory.ActionOnExceed for parallel HashAgg.
+type ParallelAggSpillDiskAction struct {
+	memory.BaseOOMAction
+	e           *HashAggExec
+	spillHelper *parallelHashAggSpillHelper
+	once        sync.Once
+}
+
+// Action set HashAggExec spill mode.
+func (p *ParallelAggSpillDiskAction) Action(t *memory.Tracker) {
+	if !p.actionImpl(t) {
 		return
 	}
 
-	a.spillHelper.setIsSpillingNoLock()
-	go a.doActionForParallelHashAggImpl(t)
+	if t.CheckExceed() {
+		p.triggerFallBackAction(t)
+	}
 }
 
-func (a *AggSpillDiskAction) doActionForParallelHashAggImpl(t *memory.Tracker) {
-	a.spillHelper.syncLock.Lock()
-	defer a.spillHelper.syncLock.Unlock()
-	defer a.spillHelper.resetIsSpilling()
+// Return false if we should keep executing.
+func (p *ParallelAggSpillDiskAction) actionImpl(t *memory.Tracker) bool {
+	p.spillHelper.lock.mu.Lock()
+	defer p.spillHelper.lock.mu.Unlock()
 
-	if a.spillHelper.checkError() {
+	if !p.spillHelper.isInPartialStage() {
+		// The spill can be triggered only when we are in partial stage.
+		p.triggerFallBackAction(t)
+		return false
+	}
+
+	if !p.spillHelper.isSpillTriggeredNoLock() && hasEnoughDataToSpill(p.e.memTracker, t) {
+		p.once.Do(func() {
+			go func() {
+				p.doActionForParallelHashAgg(t)
+				p.spillHelper.lock.cond.Broadcast()
+			}()
+		})
+		return false
+	}
+
+	for p.spillHelper.isInSpillingNoLock() {
+		p.spillHelper.lock.cond.Wait()
+	}
+
+	return true
+}
+
+func (p *ParallelAggSpillDiskAction) triggerFallBackAction(t *memory.Tracker) {
+	if fallback := p.GetFallback(); fallback != nil {
+		fallback.Action(t)
+	}
+}
+
+// GetPriority get the priority of the Action
+func (*ParallelAggSpillDiskAction) GetPriority() int64 {
+	return memory.DefSpillPriority
+}
+
+// syncLock has been held outside of this function
+func (p *ParallelAggSpillDiskAction) doActionForParallelHashAgg(t *memory.Tracker) {
+	p.spillHelper.setIsSpilling()
+	p.spillHelper.syncLock.Lock()
+	defer p.spillHelper.syncLock.Unlock()
+	defer p.spillHelper.resetIsSpilling()
+	if p.spillHelper.checkError() {
 		return
 	}
 
@@ -250,45 +299,29 @@ func (a *AggSpillDiskAction) doActionForParallelHashAggImpl(t *memory.Tracker) {
 	// and partial workers will shuffle data to final workers by channels as spillTriggered
 	// flag tells them there is no spill triggered. It will cause unexpected behaviour
 	// if we still spill data when all data have been shuffled to final workers.
-	if a.spillHelper.checkAllPartialWorkersFinished() {
+	if p.spillHelper.checkAllPartialWorkersFinished() {
 		return
 	}
 
-	if !a.isLogPrinted {
-		logutil.BgLogger().Info("memory exceeds quota, hash aggregate is set to spill mode",
-			zap.Int64("consumed", t.BytesConsumed()),
-			zap.Int64("quota", t.GetBytesLimit()))
-		a.isLogPrinted = true
-	}
+	logutil.BgLogger().Info(spillLogInfo,
+		zap.Int64("consumed", t.BytesConsumed()),
+		zap.Int64("quota", t.GetBytesLimit()))
 
-	a.spillHelper.setSpillTriggered()
-	a.spill()
+	p.spillHelper.setSpillTriggered()
+	p.spill()
 }
 
-func (a *AggSpillDiskAction) spill() {
-	enableIntest := false
-	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
-		if val.(bool) {
-			enableIntest = true
-		}
-	})
-
+func (p *ParallelAggSpillDiskAction) spill() {
 	waiter := sync.WaitGroup{}
-	waiter.Add(len(a.e.partialWorkers))
-	for i := range a.e.partialWorkers {
+	waiter.Add(len(p.e.partialWorkers))
+	for i := range p.e.partialWorkers {
 		go func(worker *HashAggPartialWorker) {
 			err := worker.spillDataToDisk()
-			if intest.InTest && enableIntest {
-				num := rand.Intn(1000)
-				if num < 3 {
-					err = errors.Errorf("Random fail is triggered in AggSpillDiskAction")
-				}
-			}
 			if err != nil {
 				worker.processError(err)
 			}
 			waiter.Done()
-		}(&a.e.partialWorkers[i])
+		}(&p.e.partialWorkers[i])
 	}
 
 	// Wait for the finish of spill

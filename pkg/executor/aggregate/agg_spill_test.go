@@ -223,6 +223,12 @@ func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Execu
 	return aggExec
 }
 
+// TODO trigger fallback when:
+//  1. we have triggered before
+//  2. does has enough data to spill
+//  3. trigger at final stage
+//
+// TODO continous consume in another goroutine
 func TestGetCorrectResult(t *testing.T) {
 	hardLimitBytesNum := int64(1000000)
 
