@@ -1511,6 +1511,7 @@ func (cli *testServerClient) RunTestStmtCountLimit(t *C) {
 	}()
 
 	cli.runTests(t, nil, func(dbt *DBTest) {
+		dbt.mustExec("drop table if exists t")
 		dbt.mustExec("create table t (id int key);")
 		dbt.mustExec("set @@tidb_disable_txn_auto_retry=0;")
 		dbt.mustExec("set autocommit=0;")
