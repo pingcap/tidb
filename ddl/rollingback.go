@@ -16,8 +16,6 @@ package ddl
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -78,24 +76,21 @@ func convertAddIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, tblIn
 		return ver, errors.Trace(err1)
 	}
 	job.State = model.JobStateRollingback
-	if job.ReorgMeta != nil && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-		cleanupLocalIndexData(job.ID)
+	err = completeErr(err, indexInfo)
+	if ingest.LitBackCtxMgr != nil {
+		ingest.LitBackCtxMgr.Unregister(job.ID)
 	}
 	return ver, errors.Trace(err)
-}
-
-func cleanupLocalIndexData(jobID int64) {
-	sortPath := ingest.ConfigSortPath()
-	f := filepath.Join(sortPath, ingest.EncodeBackendTag(jobID))
-	err := os.RemoveAll(f)
-	if err != nil {
-		logutil.BgLogger().Error("[ddl-ingest] can not remove local index data", zap.Error(err))
-	}
 }
 
 // convertNotReorgAddIdxJob2RollbackJob converts the add index job that are not started workers to rollingbackJob,
 // to rollback add index operations. job.SnapshotVer == 0 indicates the workers are not started.
 func convertNotReorgAddIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, occuredErr error) (ver int64, err error) {
+	defer func() {
+		if ingest.LitBackCtxMgr != nil {
+			ingest.LitBackCtxMgr.Unregister(job.ID)
+		}
+	}()
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
@@ -130,7 +125,7 @@ func rollingbackModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job)
 	if needNotifyAndStopReorgWorker(job) {
 		// column type change workers are started. we have to ask them to exit.
 		logutil.Logger(w.logCtx).Info("[ddl] run the cancelling DDL job", zap.String("job", job.String()))
-		d.notifyReorgCancel(job)
+		d.notifyReorgWorkerJobStateChange(job)
 		// Give the this kind of ddl one more round to run, the dbterror.ErrCancelledDDLJob should be fetched from the bottom up.
 		return w.onModifyColumn(d, t, job)
 	}
@@ -246,7 +241,7 @@ func rollingbackAddIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, isP
 	if needNotifyAndStopReorgWorker(job) {
 		// add index workers are started. need to ask them to exit.
 		logutil.Logger(w.logCtx).Info("[ddl] run the cancelling DDL job", zap.String("job", job.String()))
-		d.notifyReorgCancel(job)
+		d.notifyReorgWorkerJobStateChange(job)
 		ver, err = w.onCreateIndex(d, t, job, isPK)
 	} else {
 		// add index's reorg workers are not running, remove the indexInfo in tableInfo.
@@ -266,6 +261,30 @@ func needNotifyAndStopReorgWorker(job *model.Job) bool {
 		return true
 	}
 	return false
+}
+
+// rollbackExchangeTablePartition will clear the non-partitioned
+// table's ExchangePartitionInfo state.
+func rollbackExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo) (int64, error) {
+	tblInfo.ExchangePartitionInfo = nil
+	job.State = model.JobStateRollbackDone
+	job.SchemaState = model.StatePublic
+	return updateVersionAndTableInfo(d, t, job, tblInfo, true)
+}
+
+func rollingbackExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	if job.SchemaState == model.StateNone {
+		// Nothing is changed
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrCancelledDDLJob
+	}
+	var nt *model.TableInfo
+	nt, err = GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	ver, err = rollbackExchangeTablePartition(d, t, job, nt)
+	return ver, errors.Trace(err)
 }
 
 func convertAddTablePartitionJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, otherwiseErr error, tblInfo *model.TableInfo) (ver int64, err error) {
@@ -382,7 +401,17 @@ func rollingbackReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	}
 
 	// addingDefinitions is also in tblInfo, here pass the tblInfo as parameter directly.
+	// TODO: Test this with reorganize partition p1 into (partition p1 ...)!
 	return convertAddTablePartitionJob2RollbackJob(d, t, job, dbterror.ErrCancelledDDLJob, tblInfo)
+}
+
+func pauseReorgWorkers(w *worker, d *ddlCtx, job *model.Job) (err error) {
+	if needNotifyAndStopReorgWorker(job) {
+		logutil.Logger(w.logCtx).Info("[DDL] pausing the DDL job", zap.String("job", job.String()))
+		d.notifyReorgWorkerJobStateChange(job)
+	}
+
+	return dbterror.ErrPausedDDLJob.GenWithStackByArgs(job.ID)
 }
 
 func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
@@ -405,6 +434,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		err = rollingbackDropTableOrView(t, job)
 	case model.ActionDropTablePartition:
 		ver, err = rollingbackDropTablePartition(t, job)
+	case model.ActionExchangeTablePartition:
+		ver, err = rollingbackExchangeTablePartition(d, t, job)
 	case model.ActionDropSchema:
 		err = rollingbackDropSchema(t, job)
 	case model.ActionRenameIndex:
@@ -420,8 +451,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
 		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable,
 		model.ActionModifyTableAutoIdCache, model.ActionAlterIndexVisibility,
-		model.ActionExchangeTablePartition, model.ActionModifySchemaDefaultPlacement,
-		model.ActionRecoverSchema:
+		model.ActionModifySchemaDefaultPlacement,
+		model.ActionRecoverSchema, model.ActionAlterCheckConstraint:
 		ver, err = cancelOnlyNotHandledJob(job, model.StateNone)
 	case model.ActionMultiSchemaChange:
 		err = rollingBackMultiSchemaChange(job)

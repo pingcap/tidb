@@ -17,6 +17,7 @@ go_library(
         "//resourcemanager/util",
         "//sessionctx/variable",
         "//util",
+        "//util/disttask",
         "//util/logutil",
         "//util/syncutil",
         "@com_github_pingcap_errors//:errors",
@@ -36,7 +37,7 @@ go_test(
     embed = [":dispatcher"],
     flaky = True,
     race = "on",
-    shard_count = 5,
+    shard_count = 7,
     deps = [
         "//disttask/framework/proto",
         "//disttask/framework/storage",

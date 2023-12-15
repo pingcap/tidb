@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	tidbutil "github.com/pingcap/tidb/util"
@@ -322,7 +323,38 @@ func getTaskPlanCost(t task, op *physicalOptimizeOp) (float64, bool, error) {
 	case *rootTask:
 		taskType = property.RootTaskType
 	case *copTask: // no need to know whether the task is single-read or double-read, so both CopSingleReadTaskType and CopDoubleReadTaskType are OK
+		cop := t.(*copTask)
+		if cop.indexPlan != nil && cop.tablePlan != nil { // handle IndexLookup specially
+			taskType = property.CopMultiReadTaskType
+			// keep compatible with the old cost interface, for CopMultiReadTask, the cost is idxCost + tblCost.
+			if !cop.indexPlanFinished { // only consider index cost in this case
+				idxCost, err := getPlanCost(cop.indexPlan, taskType, NewDefaultPlanCostOption().WithOptimizeTracer(op))
+				return idxCost, false, err
+			}
+			// consider both sides
+			idxCost, err := getPlanCost(cop.indexPlan, taskType, NewDefaultPlanCostOption().WithOptimizeTracer(op))
+			if err != nil {
+				return 0, false, err
+			}
+			tblCost, err := getPlanCost(cop.tablePlan, taskType, NewDefaultPlanCostOption().WithOptimizeTracer(op))
+			if err != nil {
+				return 0, false, err
+			}
+			return idxCost + tblCost, false, nil
+		}
+
 		taskType = property.CopSingleReadTaskType
+
+		// TiFlash can run cop task as well, check whether this cop task will run on TiKV or TiFlash.
+		if cop.tablePlan != nil {
+			leafNode := cop.tablePlan
+			for len(leafNode.Children()) > 0 {
+				leafNode = leafNode.Children()[0]
+			}
+			if tblScan, isScan := leafNode.(*PhysicalTableScan); isScan && tblScan.StoreType == kv.TiFlash {
+				taskType = property.MppTaskType
+			}
+		}
 	case *mppTask:
 		taskType = property.MppTaskType
 	default:
@@ -810,6 +842,14 @@ func (ds *DataSource) isPointGetConvertableSchema() bool {
 	return true
 }
 
+// exploreEnforcedPlan determines whether to explore enforced plans for this DataSource if it has already found an unenforced plan.
+// See #46177 for more information.
+func (ds *DataSource) exploreEnforcedPlan() bool {
+	// default value is false to keep it compatible with previous versions.
+	fixValue, ok := ds.ctx.GetSessionVars().GetOptimizerFixControlValue(variable.TiDBOptFixControl46177)
+	return ok && variable.TiDBOptOn(fixValue)
+}
+
 // findBestTask implements the PhysicalPlan interface.
 // It will enumerate all the available indices and choose a plan with least cost.
 func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (t task, cntPlan int64, err error) {
@@ -850,23 +890,25 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		return
 	}
 	var cnt int64
+	var unenforcedTask task
 	// If prop.CanAddEnforcer is true, the prop.SortItems need to be set nil for ds.findBestTask.
 	// Before function return, reset it for enforcing task prop and storing map<prop,task>.
 	oldProp := prop.CloneEssentialFields()
 	if prop.CanAddEnforcer {
 		// First, get the bestTask without enforced prop
 		prop.CanAddEnforcer = false
-		t, cnt, err = ds.findBestTask(prop, planCounter, opt)
+		unenforcedTask, cnt, err = ds.findBestTask(prop, planCounter, opt)
 		if err != nil {
 			return nil, 0, err
 		}
-		prop.CanAddEnforcer = true
-		if t != invalidTask {
-			ds.storeTask(prop, t)
-			cntPlan = cnt
-			return
+		if !unenforcedTask.invalid() && !ds.exploreEnforcedPlan() {
+			ds.storeTask(prop, unenforcedTask)
+			return unenforcedTask, cnt, nil
 		}
-		// Next, get the bestTask with enforced prop
+
+		// Then, explore the bestTask with enforced prop
+		prop.CanAddEnforcer = true
+		cntPlan += cnt
 		prop.SortItems = []property.SortItem{}
 		prop.MPPPartitionTp = property.AnyType
 	} else if prop.MPPPartitionTp != property.AnyType {
@@ -881,13 +923,20 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			t = enforceProperty(prop, t, ds.basePlan.ctx)
 			prop.CanAddEnforcer = true
 		}
-		ds.storeTask(prop, t)
-		if ds.SampleInfo != nil && !t.invalid() {
-			if _, ok := t.plan().(*PhysicalTableSample); !ok {
-				warning := expression.ErrInvalidTableSample.GenWithStackByArgs("plan not supported")
-				ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+
+		if unenforcedTask != nil && !unenforcedTask.invalid() {
+			curIsBest, cerr := compareTaskCost(ds.SCtx(), unenforcedTask, t, opt)
+			if cerr != nil {
+				err = cerr
+				return
+			}
+			if curIsBest {
+				t = unenforcedTask
 			}
 		}
+
+		ds.storeTask(prop, t)
+		err = validateTableSamplePlan(ds, t, err)
 	}()
 
 	t, err = ds.tryToGetDualTask()
@@ -1015,7 +1064,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 
 				// Batch/PointGet plans may be over-optimized, like `a>=1(?) and a<=1(?)` --> `a=1` --> PointGet(a=1).
 				// For safety, prevent these plans from the plan cache here.
-				if !pointGetTask.invalid() && expression.MaybeOverOptimized4PlanCache(ds.ctx, candidate.path.AccessConds) && !ds.isSafePointGetPlan4PlanCache(candidate.path) {
+				if !pointGetTask.invalid() && expression.MaybeOverOptimized4PlanCache(ds.ctx, candidate.path.AccessConds) && !isSafePointGetPath4PlanCache(ds.ctx, candidate.path) {
 					ds.ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("Batch/PointGet plans may be over-optimized"))
 				}
 
@@ -1096,26 +1145,6 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	}
 
 	return
-}
-
-func (ds *DataSource) isSafePointGetPlan4PlanCache(path *util.AccessPath) bool {
-	// PointGet might contain some over-optimized assumptions, like `a>=1 and a<=1` --> `a=1`, but
-	// these assumptions may be broken after parameters change.
-
-	// safe scenario 1: each column corresponds to a single EQ, `a=1 and b=2 and c=3` --> `[1, 2, 3]`
-	if len(path.Ranges) > 0 && path.Ranges[0].Width() == len(path.AccessConds) {
-		for _, accessCond := range path.AccessConds {
-			f, ok := accessCond.(*expression.ScalarFunction)
-			if !ok {
-				return false
-			}
-			if f.FuncName.L != ast.EQ {
-				return false
-			}
-		}
-		return true
-	}
-	return false
 }
 
 func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, candidate *candidatePath, _ *physicalOptimizeOp) (task task, err error) {
@@ -2158,10 +2187,8 @@ func (ds *DataSource) convertToSampleTable(prop *property.PhysicalProperty,
 		return invalidTask, nil
 	}
 	if candidate.isMatchProp {
-		// TableSample on partition table can't keep order.
-		if ds.tableInfo.GetPartitionInfo() != nil {
-			return invalidTask, nil
-		}
+		// Disable keep order property for sample table path.
+		return invalidTask, nil
 	}
 	p := PhysicalTableSample{
 		TableSampleInfo: ds.SampleInfo,
@@ -2532,4 +2559,16 @@ func pushDownNot(ctx sessionctx.Context, conds []expression.Expression) []expres
 		conds[i] = expression.PushDownNot(ctx, cond)
 	}
 	return conds
+}
+
+func validateTableSamplePlan(ds *DataSource, t task, err error) error {
+	if err != nil {
+		return err
+	}
+	if ds.SampleInfo != nil && !t.invalid() {
+		if _, ok := t.plan().(*PhysicalTableSample); !ok {
+			return expression.ErrInvalidTableSample.GenWithStackByArgs("plan not supported")
+		}
+	}
+	return nil
 }

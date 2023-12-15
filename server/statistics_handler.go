@@ -26,8 +26,11 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/zap"
 )
 
 // StatsHandler is the handler for dumping statistics.
@@ -128,21 +131,30 @@ func (sh StatsHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		return
 	}
 	snapshot := oracle.GoTimeToTS(t1)
-	is, err := sh.do.GetSnapshotInfoSchema(snapshot)
+	tbl, err := getSnapshotTableInfo(sh.do, snapshot, params[pDBName], params[pTableName])
 	if err != nil {
-		writeError(w, err)
-		return
+		logutil.BgLogger().Info("fail to get snapshot TableInfo in historical stats API, switch to use latest infoschema", zap.Error(err))
+		is := sh.do.InfoSchema()
+		tbl, err = is.TableByName(model.NewCIStr(params[pDBName]), model.NewCIStr(params[pTableName]))
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 	}
+
 	h := sh.do.StatsHandle()
-	tbl, err := is.TableByName(model.NewCIStr(params[pDBName]), model.NewCIStr(params[pTableName]))
-	if err != nil {
-		writeError(w, err)
-		return
-	}
 	js, err := h.DumpHistoricalStatsBySnapshot(params[pDBName], tbl.Meta(), snapshot)
 	if err != nil {
 		writeError(w, err)
 	} else {
 		writeData(w, js)
 	}
+}
+
+func getSnapshotTableInfo(dom *domain.Domain, snapshot uint64, dbName, tblName string) (table.Table, error) {
+	is, err := dom.GetSnapshotInfoSchema(snapshot)
+	if err != nil {
+		return nil, err
+	}
+	return is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
 }

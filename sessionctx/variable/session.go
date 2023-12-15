@@ -75,6 +75,10 @@ var (
 	enableAdaptiveReplicaRead uint32 = 1
 )
 
+// ConnStatusShutdown indicates that the connection status is closed by server.
+// This code is put here because of package imports, and this value is the original server.connStatusShutdown.
+const ConnStatusShutdown int32 = 2
+
 // SetEnableAdaptiveReplicaRead set `enableAdaptiveReplicaRead` with given value.
 // return true if the value is changed.
 func SetEnableAdaptiveReplicaRead(enabled bool) bool {
@@ -246,6 +250,12 @@ type TxnCtxNoNeedToRestore struct {
 	// fair locking mode, and it takes effect (which is determined according to whether lock-with-conflict
 	// has occurred during execution of any statement).
 	FairLockingEffective bool
+
+	// CurrentStmtPessimisticLockCache is the cache for pessimistic locked keys in the current statement.
+	// It is merged into `pessimisticLockCache` after a statement finishes.
+	// Read results cannot be directly written into pessimisticLockCache because failed statement need to rollback
+	// its pessimistic locks.
+	CurrentStmtPessimisticLockCache map[string][]byte
 }
 
 // SavepointRecord indicates a transaction's savepoint record.
@@ -317,22 +327,32 @@ func (tc *TransactionContext) UpdateDeltaForTable(physicalTableID int64, delta i
 
 // GetKeyInPessimisticLockCache gets a key in pessimistic lock cache.
 func (tc *TransactionContext) GetKeyInPessimisticLockCache(key kv.Key) (val []byte, ok bool) {
-	if tc.pessimisticLockCache == nil {
+	if tc.pessimisticLockCache == nil && tc.CurrentStmtPessimisticLockCache == nil {
 		return nil, false
 	}
-	val, ok = tc.pessimisticLockCache[string(key)]
-	if ok {
-		tc.PessimisticCacheHit++
+	if tc.CurrentStmtPessimisticLockCache != nil {
+		val, ok = tc.CurrentStmtPessimisticLockCache[string(key)]
+		if ok {
+			tc.PessimisticCacheHit++
+			return
+		}
+	}
+	if tc.pessimisticLockCache != nil {
+		val, ok = tc.pessimisticLockCache[string(key)]
+		if ok {
+			tc.PessimisticCacheHit++
+		}
 	}
 	return
 }
 
-// SetPessimisticLockCache sets a key value pair into pessimistic lock cache.
+// SetPessimisticLockCache sets a key value pair in pessimistic lock cache.
+// The value is buffered in the statement cache until the current statement finishes.
 func (tc *TransactionContext) SetPessimisticLockCache(key kv.Key, val []byte) {
-	if tc.pessimisticLockCache == nil {
-		tc.pessimisticLockCache = map[string][]byte{}
+	if tc.CurrentStmtPessimisticLockCache == nil {
+		tc.CurrentStmtPessimisticLockCache = make(map[string][]byte)
 	}
-	tc.pessimisticLockCache[string(key)] = val
+	tc.CurrentStmtPessimisticLockCache[string(key)] = val
 }
 
 // Cleanup clears up transaction info that no longer use.
@@ -345,6 +365,7 @@ func (tc *TransactionContext) Cleanup() {
 	tc.relatedTableForMDL = nil
 	tc.tdmLock.Unlock()
 	tc.pessimisticLockCache = nil
+	tc.CurrentStmtPessimisticLockCache = nil
 	tc.IsStaleness = false
 	tc.Savepoints = nil
 	tc.EnableMDL = false
@@ -380,6 +401,8 @@ func (tc *TransactionContext) GetCurrentSavepoint() TxnCtxNeedToRestore {
 	}
 	pessimisticLockCache := make(map[string][]byte, len(tc.pessimisticLockCache))
 	maps.Copy(pessimisticLockCache, tc.pessimisticLockCache)
+	CurrentStmtPessimisticLockCache := make(map[string][]byte, len(tc.CurrentStmtPessimisticLockCache))
+	maps.Copy(CurrentStmtPessimisticLockCache, tc.CurrentStmtPessimisticLockCache)
 	cachedTables := make(map[int64]interface{}, len(tc.CachedTables))
 	maps.Copy(cachedTables, tc.CachedTables)
 	return TxnCtxNeedToRestore{
@@ -446,6 +469,21 @@ func (tc *TransactionContext) RollbackToSavepoint(name string) *SavepointRecord 
 		}
 	}
 	return nil
+}
+
+// FlushStmtPessimisticLockCache merges the current statement pessimistic lock cache into transaction pessimistic lock
+// cache. The caller may need to clear the stmt cache itself.
+func (tc *TransactionContext) FlushStmtPessimisticLockCache() {
+	if tc.CurrentStmtPessimisticLockCache == nil {
+		return
+	}
+	if tc.pessimisticLockCache == nil {
+		tc.pessimisticLockCache = make(map[string][]byte)
+	}
+	for key, val := range tc.CurrentStmtPessimisticLockCache {
+		tc.pessimisticLockCache[key] = val
+	}
+	tc.CurrentStmtPessimisticLockCache = nil
 }
 
 // WriteStmtBufs can be used by insert/replace/delete/update statement.
@@ -1018,6 +1056,9 @@ type SessionVars struct {
 	// Killed is a flag to indicate that this query is killed.
 	Killed uint32
 
+	// ConnectionStatus indicates current connection status.
+	ConnectionStatus int32
+
 	// ConnectionInfo indicates current connection info used by current session.
 	ConnectionInfo *ConnectionInfo
 
@@ -1175,6 +1216,9 @@ type SessionVars struct {
 
 	// AnalyzeVersion indicates how TiDB collect and use analyzed statistics.
 	AnalyzeVersion int
+
+	// DisableHashJoin indicates whether to disable hash join.
+	DisableHashJoin bool
 
 	// EnableIndexMergeJoin indicates whether to enable index merge join.
 	EnableIndexMergeJoin bool
@@ -1415,6 +1459,9 @@ type SessionVars struct {
 	// Enable late materialization: push down some selection condition to tablescan.
 	EnableLateMaterialization bool
 
+	// EnableRowLevelChecksum indicates whether row level checksum is enabled.
+	EnableRowLevelChecksum bool
+
 	// TiFlashComputeDispatchPolicy indicates how to dipatch task to tiflash_compute nodes.
 	// Only for disaggregated-tiflash mode.
 	TiFlashComputeDispatchPolicy tiflashcompute.DispatchPolicy
@@ -1433,6 +1480,38 @@ type SessionVars struct {
 
 	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
 	OptimizerFixControl map[uint64]string
+
+	// Whether to lock duplicate keys in INSERT IGNORE and REPLACE statements,
+	// or unchanged unique keys in UPDATE statements, see PR #42210 and #42713
+	LockUnchangedKeys bool
+}
+
+var (
+	// variables below are for the optimizer fix control.
+
+	// TiDBOptFixControl44262 controls whether to allow to use dynamic-mode to access partitioning tables without global-stats (#44262).
+	TiDBOptFixControl44262 uint64 = 44262
+	// TiDBOptFixControl44389 controls whether to consider non-point ranges of some CNF item when building ranges.
+	TiDBOptFixControl44389 uint64 = 44389
+	// TiDBOptFixControl44830 controls whether to allow to cache Batch/PointGet from some complex scenarios.
+	// See #44830 for more details.
+	TiDBOptFixControl44830 uint64 = 44830
+	// TiDBOptFixControl44823 controls the maximum number of parameters for a query that can be cached in the Plan Cache.
+	TiDBOptFixControl44823 uint64 = 44823
+	// TiDBOptFixControl44855 controls whether to use a more accurate upper bound when estimating row count of index
+	// range scan under inner side of index join.
+	TiDBOptFixControl44855 uint64 = 44855
+	// TiDBOptFixControl46177 controls whether to explore enforced plans for DataSource if it has already found an unenforced plan.
+	TiDBOptFixControl46177 uint64 = 46177
+)
+
+// GetOptimizerFixControlValue returns the specified value of the optimizer fix control.
+func (s *SessionVars) GetOptimizerFixControlValue(key uint64) (value string, exist bool) {
+	if s.OptimizerFixControl == nil {
+		return "", false
+	}
+	value, exist = s.OptimizerFixControl[key]
+	return
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
@@ -1617,6 +1696,12 @@ func (s *SessionVars) IsDynamicPartitionPruneEnabled() bool {
 	return PartitionPruneMode(s.PartitionPruneMode.Load()) == Dynamic
 }
 
+// IsRowLevelChecksumEnabled indicates whether row level checksum is enabled for current session, that is
+// tidb_enable_row_level_checksum is on and tidb_row_format_version is 2 and it's not a internal session.
+func (s *SessionVars) IsRowLevelChecksumEnabled() bool {
+	return s.EnableRowLevelChecksum && s.RowEncoder.Enable && !s.InRestrictedSQL
+}
+
 // BuildParserConfig generate parser.ParserConfig for initial parser
 func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 	return parser.ParserConfig{
@@ -1751,7 +1836,7 @@ type ConnectionInfo struct {
 
 const (
 	// ConnTypeSocket indicates socket without TLS.
-	ConnTypeSocket string = "Socket"
+	ConnTypeSocket string = "TCP"
 	// ConnTypeUnixSocket indicates Unix Socket.
 	ConnTypeUnixSocket string = "UnixSocket"
 	// ConnTypeTLS indicates socket with TLS.
@@ -1866,7 +1951,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		Enable3StageDistinctAgg:       DefTiDB3StageDistinctAgg,
 		MaxAllowedPacket:              DefMaxAllowedPacket,
 		TiFlashFastScan:               DefTiFlashFastScan,
-		EnableTiFlashReadForWriteStmt: DefTiDBEnableTiFlashReadForWriteStmt,
+		EnableTiFlashReadForWriteStmt: true,
 		ForeignKeyChecks:              DefTiDBForeignKeyChecks,
 		HookContext:                   hctx,
 		EnableReuseCheck:              DefTiDBEnableReusechunk,
@@ -1931,6 +2016,9 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	}
 	if !EnableLocalTxn.Load() {
 		vars.TxnScope = kv.NewGlobalTxnScopeVar()
+	}
+	if EnableRowLevelChecksum.Load() {
+		vars.EnableRowLevelChecksum = true
 	}
 	vars.systems[CharacterSetConnection], vars.systems[CollationConnection] = charset.GetDefaultCharsetAndCollate()
 	return vars

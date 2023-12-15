@@ -228,21 +228,15 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	}
 
 	tidbCfg := config.GetGlobalConfig()
-	cfg := task.Config{
-		TLS: task.TLSConfig{
-			CA:   tidbCfg.Security.ClusterSSLCA,
-			Cert: tidbCfg.Security.ClusterSSLCert,
-			Key:  tidbCfg.Security.ClusterSSLKey,
-		},
-		PD:          strings.Split(tidbCfg.Path, ","),
-		Concurrency: 4,
-		Checksum:    true,
-		SendCreds:   true,
-		LogProgress: true,
-		CipherInfo: backuppb.CipherInfo{
-			CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
-		},
+	tlsCfg := task.TLSConfig{
+		CA:   tidbCfg.Security.ClusterSSLCA,
+		Cert: tidbCfg.Security.ClusterSSLCert,
+		Key:  tidbCfg.Security.ClusterSSLKey,
 	}
+	pds := strings.Split(tidbCfg.Path, ",")
+	cfg := task.DefaultConfig()
+	cfg.PD = pds
+	cfg.TLS = tlsCfg
 
 	storageURL, err := storage.ParseRawURL(s.Storage)
 	if err != nil {
@@ -310,7 +304,9 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 
 	switch s.Kind {
 	case ast.BRIEKindBackup:
-		e.backupCfg = &task.BackupConfig{Config: cfg}
+		bcfg := task.DefaultBackupConfig()
+		bcfg.Config = cfg
+		e.backupCfg = &bcfg
 
 		for _, opt := range s.Options {
 			switch opt.Tp {
@@ -338,7 +334,9 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		}
 
 	case ast.BRIEKindRestore:
-		e.restoreCfg = &task.RestoreConfig{Config: cfg}
+		rcfg := task.DefaultRestoreConfig()
+		rcfg.Config = cfg
+		e.restoreCfg = &rcfg
 		for _, opt := range s.Options {
 			switch opt.Tp {
 			case ast.BRIEOptionOnline:

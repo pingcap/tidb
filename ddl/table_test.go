@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -141,10 +143,10 @@ func testTruncateTable(t *testing.T, ctx sessionctx.Context, store kv.Storage, d
 	return job
 }
 
-func testGetTableWithError(store kv.Storage, schemaID, tableID int64) (table.Table, error) {
+func testGetTableWithError(r autoid.Requirement, schemaID, tableID int64) (table.Table, error) {
 	var tblInfo *model.TableInfo
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, r.Store(), false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
 		tblInfo, err1 = t.GetTable(schemaID, tableID)
@@ -159,7 +161,7 @@ func testGetTableWithError(store kv.Storage, schemaID, tableID int64) (table.Tab
 	if tblInfo == nil {
 		return nil, errors.New("table not found")
 	}
-	alloc := autoid.NewAllocator(store, schemaID, tblInfo.ID, false, autoid.RowIDAllocType)
+	alloc := autoid.NewAllocator(r, schemaID, tblInfo.ID, false, autoid.RowIDAllocType)
 	tbl, err := table.TableFromMeta(autoid.NewAllocators(false, alloc), tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -524,4 +526,55 @@ func TestAlterTTL(t *testing.T) {
 	historyJob, err = ddl.GetHistoryJobByID(testkit.NewTestKit(t, store).Session(), job.ID)
 	require.NoError(t, err)
 	require.Empty(t, historyJob.BinlogInfo.TableInfo.TTLInfo)
+}
+
+func TestRenameTableIntermediateState(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	originHook := dom.DDL().GetHook()
+	tk.MustExec("create database db1;")
+	tk.MustExec("create database db2;")
+	tk.MustExec("create table db1.t(a int);")
+
+	testCases := []struct {
+		renameSQL string
+		insertSQL string
+		errMsg    string
+		finalDB   string
+	}{
+		{"rename table db1.t to db1.t1;", "insert into db1.t values(1);", "[schema:1146]Table 'db1.t' doesn't exist", "db1.t1"},
+		{"rename table db1.t1 to db1.t;", "insert into db1.t values(1);", "", "db1.t"},
+		{"rename table db1.t to db2.t;", "insert into db1.t values(1);", "[schema:1146]Table 'db1.t' doesn't exist", "db2.t"},
+		{"rename table db2.t to db1.t;", "insert into db1.t values(1);", "", "db1.t"},
+	}
+
+	for _, tc := range testCases {
+		hook := &callback.TestDDLCallback{Do: dom}
+		runInsert := false
+		fn := func(job *model.Job) {
+			if job.Type == model.ActionRenameTable &&
+				job.SchemaState == model.StatePublic && !runInsert && !t.Failed() {
+				_, err := tk2.Exec(tc.insertSQL)
+				if len(tc.errMsg) > 0 {
+					assert.NotNil(t, err)
+					assert.Equal(t, tc.errMsg, err.Error())
+				} else {
+					assert.NoError(t, err)
+				}
+				runInsert = true
+			}
+		}
+		hook.OnJobUpdatedExported.Store(&fn)
+		dom.DDL().SetHook(hook)
+		tk.MustExec(tc.renameSQL)
+		result := tk.MustQuery(fmt.Sprintf("select * from %s;", tc.finalDB))
+		if len(tc.errMsg) > 0 {
+			result.Check(testkit.Rows())
+		} else {
+			result.Check(testkit.Rows("1"))
+		}
+		tk.MustExec(fmt.Sprintf("delete from %s;", tc.finalDB))
+	}
+	dom.DDL().SetHook(originHook)
 }

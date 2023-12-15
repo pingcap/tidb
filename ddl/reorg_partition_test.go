@@ -22,7 +22,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/ddl/internal/callback"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
@@ -633,11 +633,11 @@ func TestReorganizeListPartition(t *testing.T) {
 	tk.MustExec("drop table t")
 	tk.MustExec(`create table t (a int, b varchar(55), c int) partition by list (abs(a))
 		(partition p0 values in (-1,0,1),
-		partition p1 values in (12,23,51,14), 
+		partition p1 values in (12,23,51,14),
 		partition p2 values in (24,63),
 		partition p3 values in (45))`)
-	tk.MustExec(`insert into t values 
-	        (-1,"-1",11),(1,"1",11),(0,"0",0),(-12,"-12",21), 
+	tk.MustExec(`insert into t values
+	        (-1,"-1",11),(1,"1",11),(0,"0",0),(-12,"-12",21),
 			(-24,"-24",42),(51,"-51",15),(23,"23",32),(63,"63",36),(45,"45",54)`)
 	tk.MustExec(`alter table t reorganize partition p0, p1 into (partition p0 values in (0,1,2,12,51,13), partition p1 values in (23))`)
 	tk.MustExec(`admin check table t`)
@@ -717,7 +717,7 @@ func TestReorganizeListColumnsPartition(t *testing.T) {
 	tk.MustQuery(`SELECT * FROM t PARTITION(p00)`).Sort().Check(testkit.Rows("1 aaa 1"))
 	tk.MustQuery(`SELECT * FROM t PARTITION(p01)`).Sort().Check(testkit.Rows("3 ccc 3"))
 	tk.MustExec("ALTER TABLE t DROP INDEX b")
-	tk.MustExec(`ALTER TABLE t REORGANIZE PARTITION p00,p01,p1,p2 into (PARTITION pAll VALUES IN 
+	tk.MustExec(`ALTER TABLE t REORGANIZE PARTITION p00,p01,p1,p2 into (PARTITION pAll VALUES IN
 		((0,'uuu'),(1,'aaa'),(2,'bbb'),(3,'ccc'),(4,'ddd'),(5,'eee'),(6,'fff'),(16,'lll'),(17,'mmm'),(18,'lll')));`)
 	tk.MustExec(`ADMIN CHECK TABLE t`)
 	tk.MustQuery(`SELECT * FROM t PARTITION(pAll)`).Sort().Check(testkit.Rows("1 aaa 1", "16 lll 16", "3 ccc 3", "5 eee 5"))
@@ -761,7 +761,7 @@ func TestReorganizeListColumnsPartition(t *testing.T) {
 	tk.MustQuery(`SELECT * FROM t PARTITION(p00)`).Sort().Check(testkit.Rows("1 aaa 1"))
 	tk.MustQuery(`SELECT * FROM t PARTITION(p01)`).Sort().Check(testkit.Rows("3 ccc 3"))
 	tk.MustExec("ALTER TABLE t DROP INDEX c")
-	tk.MustExec(`ALTER TABLE t REORGANIZE PARTITION p00,p01,p1,p2 into (PARTITION pAll VALUES IN 
+	tk.MustExec(`ALTER TABLE t REORGANIZE PARTITION p00,p01,p1,p2 into (PARTITION pAll VALUES IN
 		(('uuu',-1),('aaa',1),('bbb',2),('ccc',3),('ccc',4),('ddd',4),('eee',5),('fff',6),('lll',16),('mmm',17),('lll',18)));`)
 	tk.MustExec(`ADMIN CHECK TABLE t`)
 	tk.MustQuery(`SELECT * FROM t PARTITION(pAll)`).Sort().Check(testkit.Rows("1 aaa 1", "16 lll 16", "3 ccc 3", "5 eee 5"))

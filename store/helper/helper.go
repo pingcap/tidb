@@ -95,25 +95,112 @@ func NewHelper(store Storage) *Helper {
 	}
 }
 
+// MaxBackoffTimeoutForMvccGet is a derived value from previous implementation possible experiencing value 5000ms.
+const MaxBackoffTimeoutForMvccGet = 5000
+
+// GetMvccByEncodedKeyWithTS get the MVCC value by the specific encoded key, if lock is encountered it would be resolved.
+func (h *Helper) GetMvccByEncodedKeyWithTS(encodedKey kv.Key, startTS uint64) (*kvrpcpb.MvccGetByKeyResponse, error) {
+	bo := tikv.NewBackofferWithVars(context.Background(), MaxBackoffTimeoutForMvccGet, nil)
+	tikvReq := tikvrpc.NewRequest(tikvrpc.CmdMvccGetByKey, &kvrpcpb.MvccGetByKeyRequest{Key: encodedKey})
+	for {
+		keyLocation, err := h.RegionCache.LocateKey(bo, encodedKey)
+		if err != nil {
+			return nil, derr.ToTiDBErr(err)
+		}
+		kvResp, err := h.Store.SendReq(bo, tikvReq, keyLocation.Region, time.Minute)
+		if err != nil {
+			logutil.BgLogger().Warn("get MVCC by encoded key failed",
+				zap.Stringer("encodeKey", encodedKey),
+				zap.Reflect("region", keyLocation.Region),
+				zap.Stringer("keyLocation", keyLocation),
+				zap.Reflect("kvResp", kvResp),
+				zap.Error(err))
+			return nil, errors.Trace(err)
+		}
+
+		regionErr, err := kvResp.GetRegionError()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if regionErr != nil {
+			if err = bo.Backoff(tikv.BoRegionMiss(), errors.New(regionErr.String())); err != nil {
+				return nil, err
+			}
+			continue
+		}
+
+		mvccResp := kvResp.Resp.(*kvrpcpb.MvccGetByKeyResponse)
+		if errMsg := mvccResp.GetError(); errMsg != "" {
+			logutil.BgLogger().Warn("get MVCC by encoded key failed",
+				zap.Stringer("encodeKey", encodedKey),
+				zap.Reflect("region", keyLocation.Region),
+				zap.Stringer("keyLocation", keyLocation),
+				zap.Reflect("kvResp", kvResp),
+				zap.String("error", errMsg))
+			return nil, errors.New(errMsg)
+		}
+		if mvccResp.Info == nil {
+			errMsg := "Invalid mvcc response result, the info field is nil"
+			logutil.BgLogger().Warn(errMsg,
+				zap.Stringer("encodeKey", encodedKey),
+				zap.Reflect("region", keyLocation.Region),
+				zap.Stringer("keyLocation", keyLocation),
+				zap.Reflect("kvResp", kvResp))
+			return nil, errors.New(errMsg)
+		}
+
+		// Try to resolve the lock and retry mvcc get again if the input startTS is a valid value.
+		if startTS > 0 && mvccResp.Info.GetLock() != nil {
+			latestTS, err := h.Store.GetOracle().GetLowResolutionTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+			if err != nil {
+				logutil.BgLogger().Warn("Failed to get latest ts", zap.Error(err))
+				return nil, err
+			}
+			if startTS > latestTS {
+				errMsg := fmt.Sprintf("Snapshot ts=%v is larger than latest allocated ts=%v, lock could not be resolved",
+					startTS, latestTS)
+				logutil.BgLogger().Warn(errMsg)
+				return nil, errors.New(errMsg)
+			}
+			lockInfo := mvccResp.Info.GetLock()
+			lock := &txnlock.Lock{
+				Key:             []byte(encodedKey),
+				Primary:         lockInfo.GetPrimary(),
+				TxnID:           lockInfo.GetStartTs(),
+				TTL:             lockInfo.GetTtl(),
+				TxnSize:         lockInfo.GetTxnSize(),
+				LockType:        lockInfo.GetType(),
+				UseAsyncCommit:  lockInfo.GetUseAsyncCommit(),
+				LockForUpdateTS: lockInfo.GetForUpdateTs(),
+			}
+			// Disable for read to avoid async resolve.
+			resolveLocksOpts := txnlock.ResolveLocksOptions{
+				CallerStartTS: startTS,
+				Locks:         []*txnlock.Lock{lock},
+				Lite:          true,
+				ForRead:       false,
+				Detail:        nil,
+			}
+			resolveLockRes, err := h.Store.GetLockResolver().ResolveLocksWithOpts(bo, resolveLocksOpts)
+			if err != nil {
+				return nil, err
+			}
+			msBeforeExpired := resolveLockRes.TTL
+			if msBeforeExpired > 0 {
+				if err = bo.BackoffWithCfgAndMaxSleep(tikv.BoTxnLock(), int(msBeforeExpired),
+					errors.Errorf("resolve lock fails lock: %v", lock)); err != nil {
+					return nil, err
+				}
+			}
+			continue
+		}
+		return mvccResp, nil
+	}
+}
+
 // GetMvccByEncodedKey get the MVCC value by the specific encoded key.
 func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyResponse, error) {
-	keyLocation, err := h.RegionCache.LocateKey(tikv.NewBackofferWithVars(context.Background(), 500, nil), encodedKey)
-	if err != nil {
-		return nil, derr.ToTiDBErr(err)
-	}
-
-	tikvReq := tikvrpc.NewRequest(tikvrpc.CmdMvccGetByKey, &kvrpcpb.MvccGetByKeyRequest{Key: encodedKey})
-	kvResp, err := h.Store.SendReq(tikv.NewBackofferWithVars(context.Background(), 500, nil), tikvReq, keyLocation.Region, time.Minute)
-	if err != nil {
-		logutil.BgLogger().Info("get MVCC by encoded key failed",
-			zap.Stringer("encodeKey", encodedKey),
-			zap.Reflect("region", keyLocation.Region),
-			zap.Stringer("keyLocation", keyLocation),
-			zap.Reflect("kvResp", kvResp),
-			zap.Error(err))
-		return nil, errors.Trace(err)
-	}
-	return kvResp.Resp.(*kvrpcpb.MvccGetByKeyResponse), nil
+	return h.GetMvccByEncodedKeyWithTS(encodedKey, 0)
 }
 
 // MvccKV wraps the key's mvcc info in tikv.
@@ -808,7 +895,7 @@ func (h *Helper) GetRegionInfoByID(regionID uint64) (*RegionInfo, error) {
 // GetRegionsInfoByRange scans region by key range
 func (h *Helper) GetRegionsInfoByRange(sk, ek []byte) (*RegionsInfo, error) {
 	var regionsInfo RegionsInfo
-	err := h.requestPD("GetRegionByRange", "GET", fmt.Sprintf("%v?key=%s&end_key=%s", pdapi.ScanRegions,
+	err := h.requestPD("GetRegionByRange", "GET", fmt.Sprintf("%v?key=%s&end_key=%s&limit=-1", pdapi.ScanRegions,
 		url.QueryEscape(string(sk)), url.QueryEscape(string(ek))), nil, &regionsInfo)
 	return &regionsInfo, err
 }

@@ -141,10 +141,11 @@ func NewTargetInfoGetter(db *sql.DB) backend.TargetInfoGetter {
 // TODO: refactor
 func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
 	var err error
-	tables := []*model.TableInfo{}
+	results := []*model.TableInfo{}
+	logger := log.FromContext(ctx)
 	s := common.SQLWithRetry{
 		DB:     b.db,
-		Logger: log.FromContext(ctx),
+		Logger: logger,
 	}
 
 	err = s.Transact(ctx, "fetch table columns", func(c context.Context, tx *sql.Tx) error {
@@ -170,6 +171,7 @@ func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaNam
 			curColOffset int
 			curTable     *model.TableInfo
 		)
+		tables := []*model.TableInfo{}
 		for rows.Next() {
 			var tableName, columnName, columnType, generationExpr, columnExtra string
 			if e := rows.Scan(&tableName, &columnName, &columnType, &generationExpr, &columnExtra); e != nil {
@@ -212,15 +214,24 @@ func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaNam
 		// shard_row_id/auto random is only available after tidb v4.0.0
 		// `show table next_row_id` is also not available before tidb v4.0.0
 		if serverInfo.ServerType != version.ServerTypeTiDB || serverInfo.ServerVersion.Major < 4 {
+			results = tables
 			return nil
 		}
+
+		failpoint.Inject(
+			"FetchRemoteTableModels_BeforeFetchTableAutoIDInfos",
+			func() {
+				fmt.Println("failpoint: FetchRemoteTableModels_BeforeFetchTableAutoIDInfos")
+			},
+		)
 
 		// init auto id column for each table
 		for _, tbl := range tables {
 			tblName := common.UniqueTable(schemaName, tbl.Name.O)
 			autoIDInfos, err := FetchTableAutoIDInfos(ctx, tx, tblName)
 			if err != nil {
-				return errors.Trace(err)
+				logger.Warn("fetch table auto ID infos error. Ignore this table and continue.", zap.String("table_name", tblName), zap.Error(err))
+				continue
 			}
 			for _, info := range autoIDInfos {
 				for _, col := range tbl.Columns {
@@ -237,10 +248,11 @@ func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaNam
 					}
 				}
 			}
+			results = append(results, tbl)
 		}
 		return nil
 	})
-	return tables, err
+	return results, err
 }
 
 // CheckRequirements performs the check whether the backend satisfies the version requirements.
@@ -770,7 +782,7 @@ func (*Writer) IsSynced() bool {
 // TableAutoIDInfo is the auto id information of a table.
 type TableAutoIDInfo struct {
 	Column string
-	NextID int64
+	NextID uint64
 	Type   string
 }
 
@@ -784,7 +796,7 @@ func FetchTableAutoIDInfos(ctx context.Context, exec utils.QueryExecutor, tableN
 	for rows.Next() {
 		var (
 			dbName, tblName, columnName, idType string
-			nextID                              int64
+			nextID                              uint64
 		)
 		columns, err := rows.Columns()
 		if err != nil {
@@ -797,7 +809,7 @@ func FetchTableAutoIDInfos(ctx context.Context, exec utils.QueryExecutor, tableN
 		//| testsysbench | t          | _tidb_rowid |                  1 | AUTO_INCREMENT |
 		//+--------------+------------+-------------+--------------------+----------------+
 
-		// if columns length is 4, it doesn't contains the last column `ID_TYPE`, and it will always be 'AUTO_INCREMENT'
+		// if columns length is 4, it doesn't contain the last column `ID_TYPE`, and it will always be 'AUTO_INCREMENT'
 		// for v4.0.0~v4.0.2 show table t next_row_id only returns 4 columns.
 		if len(columns) == 4 {
 			err = rows.Scan(&dbName, &tblName, &columnName, &nextID)

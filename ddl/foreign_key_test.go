@@ -23,7 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/internal/callback"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -134,7 +134,7 @@ func TestForeignKey(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		var t table.Table
-		t, err = testGetTableWithError(store, dbInfo.ID, tblInfo.ID)
+		t, err = testGetTableWithError(dom, dbInfo.ID, tblInfo.ID)
 		if err != nil {
 			hookErr = errors.Trace(err)
 			return
@@ -176,7 +176,7 @@ func TestForeignKey(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		var t table.Table
-		t, err = testGetTableWithError(store, dbInfo.ID, tblInfo.ID)
+		t, err = testGetTableWithError(dom, dbInfo.ID, tblInfo.ID)
 		if err != nil {
 			hookErr = errors.Trace(err)
 			return

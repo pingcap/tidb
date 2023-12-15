@@ -73,6 +73,63 @@ func TestBuildKvRangesForIndexJoinWithoutCwc(t *testing.T) {
 	}
 }
 
+func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
+	indexRanges := make([]*ranger.Range, 0, 6)
+	indexRanges = append(indexRanges, generateIndexRange(1, 1, 1, 1, 1))
+	indexRanges = append(indexRanges, generateIndexRange(1, 1, 2, 1, 1))
+	indexRanges = append(indexRanges, generateIndexRange(1, 1, 2, 1, 2))
+	indexRanges = append(indexRanges, generateIndexRange(1, 1, 3, 1, 1))
+	indexRanges = append(indexRanges, generateIndexRange(2, 1, 1, 1, 1))
+	indexRanges = append(indexRanges, generateIndexRange(2, 1, 2, 1, 1))
+
+	bytesConsumed1 := int64(0)
+	{
+		joinKeyRows := make([]*indexJoinLookUpContent, 0, 10)
+		for i := int64(0); i < 10; i++ {
+			joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(1, i)})
+		}
+
+		keyOff2IdxOff := []int{1, 3}
+		ctx := mock.NewContext()
+		memTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
+		kvRanges, err := buildKvRangesForIndexJoin(ctx, 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil)
+		require.NoError(t, err)
+		// Check the kvRanges is in order.
+		for i, kvRange := range kvRanges {
+			require.True(t, kvRange.StartKey.Cmp(kvRange.EndKey) < 0)
+			if i > 0 {
+				require.True(t, kvRange.StartKey.Cmp(kvRanges[i-1].EndKey) >= 0)
+			}
+		}
+		bytesConsumed1 = memTracker.BytesConsumed()
+	}
+
+	bytesConsumed2 := int64(0)
+	{
+		joinKeyRows := make([]*indexJoinLookUpContent, 0, 20)
+		for i := int64(0); i < 20; i++ {
+			joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(1, i)})
+		}
+
+		keyOff2IdxOff := []int{1, 3}
+		ctx := mock.NewContext()
+		memTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
+		kvRanges, err := buildKvRangesForIndexJoin(ctx, 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil)
+		require.NoError(t, err)
+		// Check the kvRanges is in order.
+		for i, kvRange := range kvRanges {
+			require.True(t, kvRange.StartKey.Cmp(kvRange.EndKey) < 0)
+			if i > 0 {
+				require.True(t, kvRange.StartKey.Cmp(kvRanges[i-1].EndKey) >= 0)
+			}
+		}
+		bytesConsumed2 = memTracker.BytesConsumed()
+	}
+
+	require.Equal(t, 2*bytesConsumed1, bytesConsumed2)
+	require.Equal(t, int64(20760), bytesConsumed1)
+}
+
 func generateIndexRange(vals ...int64) *ranger.Range {
 	lowDatums := generateDatumSlice(vals...)
 	highDatums := make([]types.Datum, len(vals))

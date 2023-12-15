@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//parser/auth",
         "//parser/mysql",
+        "//privilege/conn",
         "//sessionctx",
         "//sessionctx/variable",
         "//types",

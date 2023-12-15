@@ -405,7 +405,8 @@ const (
 		version bigint(64) NOT NULL comment 'stats version which corresponding to stats:version in EXPLAIN',
 		create_time datetime(6) NOT NULL,
 		UNIQUE KEY table_version_seq (table_id, version, seq_no),
-		KEY table_create_time (table_id, create_time, seq_no)
+		KEY table_create_time (table_id, create_time, seq_no),
+    	KEY idx_create_time (create_time)
 	);`
 	// CreateStatsMetaHistory stores the historical meta stats.
 	CreateStatsMetaHistory = `CREATE TABLE IF NOT EXISTS mysql.stats_meta_history (
@@ -416,7 +417,8 @@ const (
     	source varchar(40) NOT NULL,
 		create_time datetime(6) NOT NULL,
 		UNIQUE KEY table_version (table_id, version),
-		KEY table_create_time (table_id, create_time)
+		KEY table_create_time (table_id, create_time),
+    	KEY idx_create_time (create_time)
 	);`
 	// CreateAnalyzeJobs stores the analyze jobs.
 	CreateAnalyzeJobs = `CREATE TABLE IF NOT EXISTS mysql.analyze_jobs (
@@ -868,11 +870,15 @@ const (
 	// version 144 turn off `tidb_plan_cache_invalidation_on_fresh_stats`, which is introduced in 7.1-rc,
 	// if it's upgraded from an existing old version cluster.
 	version144 = 144
+	// version 145 to only add a version make we know when we support upgrade state.
+	version145 = 145
+	// version 146 add index for mysql.stats_meta_history and mysql.stats_history.
+	version146 = 146
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version144
+var currentBootstrapVersion int64 = version146
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1005,6 +1011,8 @@ var (
 		upgradeToVer142,
 		upgradeToVer143,
 		upgradeToVer144,
+		// We will only use upgradeToVer145 to differentiate versions, so it is skipped here.
+		upgradeToVer146,
 	}
 )
 
@@ -1071,6 +1079,7 @@ func upgrade(s Session) {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
 		return
 	}
+
 	// Only upgrade from under version92 and this TiDB is not owner set.
 	// The owner in older tidb does not support concurrent DDL, we should add the internal DDL to job queue.
 	if ver < version92 {
@@ -1093,6 +1102,9 @@ func upgrade(s Session) {
 	if isNull {
 		upgradeToVer99Before(s)
 	}
+
+	// It is only used in test.
+	addMockBootstrapVersionForTest(s)
 	for _, upgrade := range bootstrapVersion {
 		upgrade(s, ver)
 	}
@@ -2527,6 +2539,14 @@ func upgradeToVer144(s Session, ver int64) {
 
 	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBPlanCacheInvalidationOnFreshStats, variable.Off)
+}
+
+func upgradeToVer146(s Session, ver int64) {
+	if ver >= version146 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta_history ADD INDEX idx_create_time (create_time)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_history ADD INDEX idx_create_time (create_time)", dbterror.ErrDupKeyName)
 }
 
 func writeOOMAction(s Session) {

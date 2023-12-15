@@ -328,7 +328,7 @@ func TestFetchRemoteTableModels_4_0(t *testing.T) {
 			AddRow("t", "id", "bigint(20) unsigned", "", "auto_increment"))
 	s.mockDB.ExpectQuery("SHOW TABLE `test`.`t` NEXT_ROW_ID").
 		WillReturnRows(sqlmock.NewRows([]string{"DB_NAME", "TABLE_NAME", "COLUMN_NAME", "NEXT_GLOBAL_ROW_ID"}).
-			AddRow("test", "t", "id", int64(1)))
+			AddRow("test", "t", "id", "10942694589135710585"))
 	s.mockDB.ExpectCommit()
 
 	targetInfoGetter := tidb.NewTargetInfoGetter(s.dbHandle)
@@ -423,6 +423,54 @@ func TestFetchRemoteTableModels_4_x_auto_random(t *testing.T) {
 					State:               model.StatePublic,
 					FieldType:           ft,
 					GeneratedExprString: "1 + 2",
+				},
+			},
+		},
+	}, tableInfos)
+}
+
+func TestFetchRemoteTableModelsDropTableHalfway(t *testing.T) {
+	s := createMysqlSuite(t)
+	defer s.TearDownTest(t)
+	s.mockDB.ExpectBegin()
+	s.mockDB.ExpectQuery("SELECT tidb_version()").
+		WillReturnRows(sqlmock.NewRows([]string{"tidb_version()"}).AddRow(`Release Version: v99.0.0`)) // this is a fake version number
+	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, generation_expression, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
+		WithArgs("test").
+		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "generation_expression", "extra"}).
+			AddRow("tbl01", "id", "bigint(20)", "", "auto_increment").
+			AddRow("tbl01", "val", "varchar(255)", "", "").
+			AddRow("tbl02", "id", "bigint(20)", "", "auto_increment").
+			AddRow("tbl02", "val", "varchar(255)", "", ""))
+	s.mockDB.ExpectQuery("SHOW TABLE `test`.`tbl01` NEXT_ROW_ID").
+		WillReturnRows(sqlmock.NewRows([]string{"DB_NAME", "TABLE_NAME", "COLUMN_NAME", "NEXT_GLOBAL_ROW_ID", "ID_TYPE"}).
+			AddRow("test", "tbl01", "id", int64(1), "_TIDB_ROWID").
+			AddRow("test", "tbl01", "id", int64(1), "AUTO_INCREMENT"))
+	s.mockDB.ExpectQuery("SHOW TABLE `test`.`tbl02` NEXT_ROW_ID").
+		WillReturnError(mysql.NewErr(mysql.ErrNoSuchTable, "test", "tbl02"))
+	s.mockDB.ExpectCommit()
+
+	infoGetter := tidb.NewTargetInfoGetter(s.dbHandle)
+	tableInfos, err := infoGetter.FetchRemoteTableModels(context.Background(), "test")
+	require.NoError(t, err)
+	ft := types.FieldType{}
+	ft.SetFlag(mysql.AutoIncrementFlag)
+	require.Equal(t, []*model.TableInfo{
+		{
+			Name:       model.NewCIStr("tbl01"),
+			State:      model.StatePublic,
+			PKIsHandle: true,
+			Columns: []*model.ColumnInfo{
+				{
+					Name:      model.NewCIStr("id"),
+					Offset:    0,
+					State:     model.StatePublic,
+					FieldType: ft,
+				},
+				{
+					Name:   model.NewCIStr("val"),
+					Offset: 1,
+					State:  model.StatePublic,
 				},
 			},
 		},

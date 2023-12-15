@@ -306,6 +306,7 @@ loop:
 		err = idleWorker.Schedule(task.ttlScanTask)
 		if err != nil {
 			logger.Warn("fail to schedule task", zap.Error(err))
+			task.cancel()
 			continue
 		}
 
@@ -366,7 +367,7 @@ func (m *taskManager) lockScanTask(se session.Session, task *cache.TTLTask, now 
 		if err != nil {
 			return errors.Wrapf(err, "execute sql: %s", countRunningTasks)
 		}
-		if !m.meetTTLRunningTask(int(rows[0].GetInt64(0))) {
+		if !m.meetTTLRunningTask(int(rows[0].GetInt64(0)), task.Status) {
 			return errors.WithStack(errTooManyRunningTasks)
 		}
 
@@ -457,6 +458,8 @@ func (m *taskManager) checkFinishedTask(se session.Session, now time.Time) {
 			stillRunningTasks = append(stillRunningTasks, task)
 			continue
 		}
+		// we should cancel task to release inner context and avoid memory leak
+		task.cancel()
 		err := m.reportTaskFinished(se, now, task)
 		if err != nil {
 			logutil.Logger(m.ctx).Error("fail to report finished task", zap.Error(err))
@@ -544,7 +547,12 @@ func (m *taskManager) reportMetrics() {
 	metrics.DeletingTaskCnt.Set(float64(deletingTaskCnt))
 }
 
-func (m *taskManager) meetTTLRunningTask(count int) bool {
+func (m *taskManager) meetTTLRunningTask(count int, taskStatus cache.TaskStatus) bool {
+	if taskStatus == cache.TaskStatusRunning {
+		// always return true for already running task because it is already included in count
+		return true
+	}
+
 	ttlRunningTask := variable.TTLRunningTasks.Load()
 	// `-1` is the auto value, means we should calculate the limit according to the count of TiKV
 	if ttlRunningTask != -1 {
@@ -572,6 +580,11 @@ type runningScanTask struct {
 	*ttlScanTask
 	cancel func()
 	result *ttlScanTaskExecResult
+}
+
+// Context returns context for the task and is only used by test now
+func (t *runningScanTask) Context() context.Context {
+	return t.ctx
 }
 
 func (t *runningScanTask) finished() bool {

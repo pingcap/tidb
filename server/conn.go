@@ -72,6 +72,8 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/privilege/conn"
+	"github.com/pingcap/tidb/privilege/privileges/ldap"
 	server_metrics "github.com/pingcap/tidb/server/metrics"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -99,8 +101,8 @@ import (
 const (
 	connStatusDispatching int32 = iota
 	connStatusReading
-	connStatusShutdown     // Closed by server.
-	connStatusWaitShutdown // Notified by server to close.
+	connStatusShutdown     = variable.ConnStatusShutdown // Closed by server.
+	connStatusWaitShutdown = 3                           // Notified by server to close.
 )
 
 // newClientConn creates a *clientConn object.
@@ -150,6 +152,7 @@ type clientConn struct {
 	lastActive    time.Time         // last active time
 	authPlugin    string            // default authentication plugin
 	isUnixSocket  bool              // connection is Unix Socket file
+	closeOnce     sync.Once         // closeOnce is used to make sure clientConn closes only once
 	rsEncoder     *resultEncoder    // rsEncoder is used to encode the string result to different charsets.
 	inputDecoder  *inputDecoder     // inputDecoder is used to decode the different charsets of incoming strings to utf-8.
 	socketCredUID uint32            // UID from the other end of the Unix Socket
@@ -185,23 +188,50 @@ func (cc *clientConn) String() string {
 	)
 }
 
+func (cc *clientConn) setStatus(status int32) {
+	atomic.StoreInt32(&cc.status, status)
+	if ctx := cc.getCtx(); ctx != nil {
+		atomic.StoreInt32(&ctx.GetSessionVars().ConnectionStatus, status)
+	}
+}
+
+func (cc *clientConn) getStatus() int32 {
+	return atomic.LoadInt32(&cc.status)
+}
+
+func (cc *clientConn) CompareAndSwapStatus(oldStatus, newStatus int32) bool {
+	return atomic.CompareAndSwapInt32(&cc.status, oldStatus, newStatus)
+}
+
 // authSwitchRequest is used by the server to ask the client to switch to a different authentication
 // plugin. MySQL 8.0 libmysqlclient based clients by default always try `caching_sha2_password`, even
 // when the server advertises the its default to be `mysql_native_password`. In addition to this switching
 // may be needed on a per user basis as the authentication method is set per user.
-// https://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::AuthSwitchRequest
+// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_connection_phase_packets_protocol_auth_switch_request.html
 // https://bugs.mysql.com/bug.php?id=93044
 func (cc *clientConn) authSwitchRequest(ctx context.Context, plugin string) ([]byte, error) {
+	clientPlugin := plugin
+	if plugin == mysql.AuthLDAPSASL {
+		clientPlugin += "_client"
+	} else if plugin == mysql.AuthLDAPSimple {
+		clientPlugin = mysql.AuthMySQLClearPassword
+	}
 	failpoint.Inject("FakeAuthSwitch", func() {
-		failpoint.Return([]byte(plugin), nil)
+		failpoint.Return([]byte(clientPlugin), nil)
 	})
-	enclen := 1 + len(plugin) + 1 + len(cc.salt) + 1
+	enclen := 1 + len(clientPlugin) + 1 + len(cc.salt) + 1
 	data := cc.alloc.AllocWithLen(4, enclen)
 	data = append(data, mysql.AuthSwitchRequest) // switch request
-	data = append(data, []byte(plugin)...)
+	data = append(data, []byte(clientPlugin)...)
 	data = append(data, byte(0x00)) // requires null
-	data = append(data, cc.salt...)
-	data = append(data, 0)
+	if plugin == mysql.AuthLDAPSASL {
+		// append sasl auth method name
+		data = append(data, []byte(ldap.LDAPSASLAuthImpl.GetSASLAuthMethod())...)
+		data = append(data, byte(0x00))
+	} else {
+		data = append(data, cc.salt...)
+		data = append(data, 0)
+	}
 	err := cc.writePacket(data)
 	if err != nil {
 		logutil.Logger(ctx).Debug("write response to client failed", zap.Error(err))
@@ -291,21 +321,33 @@ func (cc *clientConn) Close() error {
 }
 
 func closeConn(cc *clientConn, connections int) error {
-	metrics.ConnGauge.Set(float64(connections))
-	if cc.bufReadConn != nil {
-		err := cc.bufReadConn.Close()
-		if err != nil {
-			// We need to expect connection might have already disconnected.
-			// This is because closeConn() might be called after a connection read-timeout.
-			logutil.Logger(context.Background()).Debug("could not close connection", zap.Error(err))
+	var err error
+	cc.closeOnce.Do(func() {
+		metrics.ConnGauge.Set(float64(connections))
+
+		if cc.bufReadConn != nil {
+			err = cc.bufReadConn.Close()
+			if err != nil {
+				// We need to expect connection might have already disconnected.
+				// This is because closeConn() might be called after a connection read-timeout.
+				logutil.Logger(context.Background()).Debug("could not close connection", zap.Error(err))
+			}
+			if cc.bufReadConn != nil {
+				err = cc.bufReadConn.Close()
+				if err != nil {
+					// We need to expect connection might have already disconnected.
+					// This is because closeConn() might be called after a connection read-timeout.
+					logutil.Logger(context.Background()).Debug("could not close connection", zap.Error(err))
+				}
+			}
+			// Close statements and session
+			// This will release advisory locks, row locks, etc.
+			if ctx := cc.getCtx(); ctx != nil {
+				err = ctx.Close()
+			}
 		}
-	}
-	// Close statements and session
-	// This will release advisory locks, row locks, etc.
-	if ctx := cc.getCtx(); ctx != nil {
-		return ctx.Close()
-	}
-	return nil
+	})
+	return err
 }
 
 func (cc *clientConn) closeWithoutLock() error {
@@ -647,6 +689,8 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	case mysql.AuthTiDBSessionToken:
 	case mysql.AuthTiDBAuthToken:
 	case mysql.AuthMySQLClearPassword:
+	case mysql.AuthLDAPSASL:
+	case mysql.AuthLDAPSimple:
 	default:
 		return errors.New("Unknown auth plugin")
 	}
@@ -676,6 +720,8 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeRespo
 		case mysql.AuthSocket:
 		case mysql.AuthTiDBSessionToken:
 		case mysql.AuthMySQLClearPassword:
+		case mysql.AuthLDAPSASL:
+		case mysql.AuthLDAPSimple:
 		default:
 			logutil.Logger(ctx).Warn("Unknown Auth Plugin", zap.String("plugin", resp.AuthPlugin))
 		}
@@ -814,7 +860,7 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) e
 	}
 
 	userIdentity := &auth.UserIdentity{Username: cc.user, Hostname: host, AuthPlugin: authPlugin}
-	if err = cc.ctx.Auth(userIdentity, authData, cc.salt); err != nil {
+	if err = cc.ctx.Auth(userIdentity, authData, cc.salt, cc); err != nil {
 		return err
 	}
 	cc.ctx.SetPort(port)
@@ -1045,7 +1091,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 			terror.Log(err)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
 		}
-		if atomic.LoadInt32(&cc.status) != connStatusShutdown {
+		if cc.getStatus() != connStatusShutdown {
 			err := cc.Close()
 			terror.Log(err)
 		}
@@ -1068,10 +1114,10 @@ func (cc *clientConn) Run(ctx context.Context) {
 			}
 		}
 
-		if !atomic.CompareAndSwapInt32(&cc.status, connStatusDispatching, connStatusReading) ||
+		if !cc.CompareAndSwapStatus(connStatusDispatching, connStatusReading) ||
 			// The judge below will not be hit by all means,
 			// But keep it stayed as a reminder and for the code reference for connStatusWaitShutdown.
-			atomic.LoadInt32(&cc.status) == connStatusWaitShutdown {
+			cc.getStatus() == connStatusWaitShutdown {
 			return
 		}
 
@@ -1085,7 +1131,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
 				if netErr, isNetErr := errors.Cause(err).(net.Error); isNetErr && netErr.Timeout() {
-					if atomic.LoadInt32(&cc.status) == connStatusWaitShutdown {
+					if cc.getStatus() == connStatusWaitShutdown {
 						logutil.Logger(ctx).Info("read packet timeout because of killed connection")
 					} else {
 						idleTime := time.Since(start)
@@ -1112,7 +1158,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 			return
 		}
 
-		if !atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusDispatching) {
+		if !cc.CompareAndSwapStatus(connStatusReading, connStatusDispatching) {
 			return
 		}
 
@@ -1415,7 +1461,7 @@ func (cc *clientConn) useDB(ctx context.Context, db string) (node ast.StmtNode, 
 	}
 	_, err = cc.ctx.ExecuteStmt(ctx, stmts[0])
 	if err != nil {
-		return nil, err
+		return stmts[0], err
 	}
 	cc.dbname = db
 	return stmts[0], err
@@ -2085,7 +2131,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	}
 
 	if rs != nil {
-		if connStatus := atomic.LoadInt32(&cc.status); connStatus == connStatusShutdown {
+		if cc.getStatus() == connStatusShutdown {
 			return false, exeerrors.ErrQueryInterrupted
 		}
 		if retryable, err := cc.writeResultSet(ctx, rs, false, status, 0); err != nil {
@@ -2210,7 +2256,12 @@ func (cc *clientConn) writeResultSet(ctx context.Context, rs ResultSet, binary b
 	cc.initResultEncoder(ctx)
 	defer cc.rsEncoder.clean()
 	if mysql.HasCursorExistsFlag(serverStatus) {
-		if err := cc.writeChunksWithFetchSize(ctx, rs, serverStatus, fetchSize); err != nil {
+		crs, ok := rs.(cursorResultSet)
+		if !ok {
+			// this branch is actually unreachable
+			return false, errors.New("this cursor is not a resultSet")
+		}
+		if err := cc.writeChunksWithFetchSize(ctx, crs, serverStatus, fetchSize); err != nil {
 			return false, err
 		}
 		return false, cc.flush(ctx)
@@ -2344,43 +2395,27 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 // binary specifies the way to dump data. It throws any error while dumping data.
 // serverStatus, a flag bit represents server information.
 // fetchSize, the desired number of rows to be fetched each time when client uses cursor.
-func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet, serverStatus uint16, fetchSize int) error {
-	fetchedRows := rs.GetFetchedRows()
-
-	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
-	// and close ResultSet.
-	if len(fetchedRows) == 0 {
-		serverStatus &^= mysql.ServerStatusCursorExists
-		serverStatus |= mysql.ServerStatusLastRowSend
-		return cc.writeEOF(ctx, serverStatus)
-	}
-
-	// construct the rows sent to the client according to fetchSize.
-	var curRows []chunk.Row
-	if fetchSize < len(fetchedRows) {
-		curRows = fetchedRows[:fetchSize]
-		fetchedRows = fetchedRows[fetchSize:]
-	} else {
-		curRows = fetchedRows
-		fetchedRows = fetchedRows[:0]
-	}
-	rs.StoreFetchedRows(fetchedRows)
-
+func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs cursorResultSet, serverStatus uint16, fetchSize int) error {
+	var (
+		stmtDetail *execdetails.StmtExecDetails
+		err        error
+		start      time.Time
+	)
 	data := cc.alloc.AllocWithLen(4, 1024)
-	var stmtDetail *execdetails.StmtExecDetails
 	stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey)
 	if stmtDetailRaw != nil {
 		//nolint:forcetypeassert
 		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
 	}
-	var (
-		err   error
-		start time.Time
-	)
 	if stmtDetail != nil {
 		start = time.Now()
 	}
-	for _, row := range curRows {
+
+	iter := rs.GetRowContainerReader()
+	// send the rows to the client according to fetchSize.
+	for i := 0; i < fetchSize && iter.Current() != iter.End(); i++ {
+		row := iter.Current()
+
 		data = data[0:4]
 		data, err = dumpBinaryRow(data, rs.Columns(), row, cc.rsEncoder)
 		if err != nil {
@@ -2389,16 +2424,30 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 		if err = cc.writePacket(data); err != nil {
 			return err
 		}
+
+		iter.Next()
 	}
+	if iter.Error() != nil {
+		return iter.Error()
+	}
+
+	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
+	// and close ResultSet.
+	if iter.Current() == iter.End() {
+		serverStatus &^= mysql.ServerStatusCursorExists
+		serverStatus |= mysql.ServerStatusLastRowSend
+	}
+
+	// don't include the time consumed by `cl.OnFetchReturned()` in the `WriteSQLRespDuration`
 	if stmtDetail != nil {
 		stmtDetail.WriteSQLRespDuration += time.Since(start)
 	}
+
 	if cl, ok := rs.(fetchNotifier); ok {
 		cl.OnFetchReturned()
 	}
-	if stmtDetail != nil {
-		start = time.Now()
-	}
+
+	start = time.Now()
 	err = cc.writeEOF(ctx, serverStatus)
 	if stmtDetail != nil {
 		stmtDetail.WriteSQLRespDuration += time.Since(start)
@@ -2607,4 +2656,23 @@ func (cc getLastStmtInConn) PProfLabel() string {
 	default:
 		return ""
 	}
+}
+
+var _ conn.AuthConn = &clientConn{}
+
+// WriteAuthMoreData implements `conn.AuthConn` interface
+func (cc *clientConn) WriteAuthMoreData(data []byte) error {
+	// See https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_connection_phase_packets_protocol_auth_more_data.html
+	// the `AuthMoreData` packet is just an arbitrary binary slice with a byte 0x1 as prefix.
+	return cc.writePacket(append([]byte{0, 0, 0, 0, 1}, data...))
+}
+
+// ReadPacket implements `conn.AuthConn` interface
+func (cc *clientConn) ReadPacket() ([]byte, error) {
+	return cc.readPacket()
+}
+
+// Flush implements `conn.AuthConn` interface
+func (cc *clientConn) Flush(ctx context.Context) error {
+	return cc.flush(ctx)
 }

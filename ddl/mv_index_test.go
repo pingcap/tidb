@@ -19,7 +19,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb/ddl/internal/callback"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
@@ -67,7 +67,7 @@ func TestMultiValuedIndexOnlineDDL(t *testing.T) {
 	tk.MustExec("insert into t values (3, '[3,4,5]');")
 	tk.MustExec("insert into t values (4, '[-4,5,6]');")
 	tk.MustGetErrCode("alter table t add unique index idx((cast(a as signed array)));", errno.ErrDupEntry)
-	tk.MustGetErrMsg("alter table t add index idx((cast(a as unsigned array)));", "[ddl:8202]Cannot decode index value, because [types:1690]constant -4 overflows bigint")
+	tk.MustGetErrMsg("alter table t add index idx((cast(a as unsigned array)));", "[types:1690]constant -4 overflows bigint")
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (pk int primary key, a json);")

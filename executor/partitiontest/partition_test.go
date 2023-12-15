@@ -447,3 +447,70 @@ func TestPartitionedTableDelete(t *testing.T) {
 	tk.CheckExecResult(1, 0)
 	tk.MustExec(`drop table t1;`)
 }
+
+func TestPartitionOnMissing(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create schema OnMissing")
+	tk.MustExec("use OnMissing")
+	tk.MustExec(`set global tidb_partition_prune_mode='dynamic'`)
+	tk.MustExec(`set session tidb_partition_prune_mode='dynamic'`)
+
+	tk.MustExec(`CREATE TABLE tt1 (
+		id INT NOT NULL,
+		listid INT,
+		name varchar(10),
+		primary key (listid) clustered
+	)
+	PARTITION BY LIST (listid) (
+		PARTITION p1 VALUES IN (1),
+		PARTITION p2 VALUES IN (2),
+		PARTITION p3 VALUES IN (3),
+		PARTITION p4 VALUES IN (4)
+	)`)
+
+	tk.MustExec(`CREATE TABLE tt2 (
+		id INT NOT NULL,
+		listid INT
+	)`)
+
+	tk.MustExec(`create index idx_listid on tt1(id,listid)`)
+	tk.MustExec(`create index idx_listid on tt2(listid)`)
+
+	tk.MustExec(`insert into tt1 values(1,1,1)`)
+	tk.MustExec(`insert into tt1 values(2,2,2)`)
+	tk.MustExec(`insert into tt1 values(3,3,3)`)
+	tk.MustExec(`insert into tt1 values(4,4,4)`)
+	tk.MustExec(`insert into tt2 values(1,1)`)
+	tk.MustExec(`insert into tt2 values(2,2)`)
+	tk.MustExec(`insert into tt2 values(3,3)`)
+	tk.MustExec(`insert into tt2 values(4,4)`)
+	tk.MustExec(`insert into tt2 values(5,5)`)
+
+	tk.MustExec(`analyze table tt1`)
+	tk.MustExec(`analyze table tt2`)
+
+	tk.MustQuery(`select /*+ inl_join(tt1)*/ count(*) from tt2
+		left join tt1 on tt1.listid=tt2.listid and tt1.id=tt2.id`).Check(testkit.Rows("5"))
+	tk.MustQuery(`select /*+ inl_join(tt1)*/ count(*) from tt2
+		left join tt1 on tt1.listid=tt2.listid`).Check(testkit.Rows("5"))
+	tk.MustQuery(`explain format = 'brief' select /*+ inl_join(tt1)*/ count(*) from tt2
+		left join tt1 on tt1.listid=tt2.listid`).Check(testkit.Rows(""+
+		"StreamAgg 1.00 root  funcs:count(1)->Column#7",
+		"└─IndexJoin 5.00 root  left outer join, inner:TableReader, outer key:onmissing.tt2.listid, inner key:onmissing.tt1.listid, equal cond:eq(onmissing.tt2.listid, onmissing.tt1.listid)",
+		"  ├─IndexReader(Build) 5.00 root  index:IndexFullScan",
+		"  │ └─IndexFullScan 5.00 cop[tikv] table:tt2, index:idx_listid(listid) keep order:false",
+		"  └─TableReader(Probe) 4.00 root partition:all data:TableRangeScan",
+		"    └─TableRangeScan 4.00 cop[tikv] table:tt1 range: decided by [onmissing.tt2.listid], keep order:false"))
+}
+
+func TestIssue45757(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id bigint, datecode bigint, c int, index idx(id, datecode)) partition by range(datecode) (partition p0 values less than (20230501), partition p1 values less than (20230601), partition p2 values less than (20230701))")
+	tk.MustExec("insert into t values (111111111111111, 20230403, 0), (111111111111111, 20230503, 1), (111111111111111, 20230603, 2)")
+	tk.MustExec("set tidb_partition_prune_mode='static'")
+	tk.MustQuery("select * from t use index (idx) where id = 111111111111111 and datecode between 20230420 and 20230620 order by datecode limit 2").Check(testkit.Rows("111111111111111 20230503 1", "111111111111111 20230603 2"))
+}

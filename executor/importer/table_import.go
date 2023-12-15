@@ -21,6 +21,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"time"
 
@@ -38,11 +39,15 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/keyspace"
 	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/etcd"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
@@ -51,7 +56,6 @@ func prepareSortDir(e *LoadDataController, jobID int64) (string, error) {
 	tidbCfg := tidb.GetGlobalConfig()
 	sortPathSuffix := "import-" + strconv.Itoa(int(tidbCfg.Port))
 	sortPath := filepath.Join(tidbCfg.TempDir, sortPathSuffix, strconv.FormatInt(jobID, 10))
-
 	if info, err := os.Stat(sortPath); err != nil {
 		if !os.IsNotExist(err) {
 			e.logger.Error("stat sort dir failed", zap.String("path", sortPath), zap.Error(err))
@@ -110,13 +114,14 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableIm
 	}
 
 	backendConfig := local.BackendConfig{
-		PDAddr:            tidbCfg.Path,
-		LocalStoreDir:     dir,
-		MaxConnPerStore:   config.DefaultRangeConcurrency,
-		ConnCompressType:  config.CompressionNone,
-		RangeConcurrency:  config.DefaultRangeConcurrency,
-		WorkerConcurrency: config.DefaultRangeConcurrency * 2,
-		KVWriteBatchSize:  config.KVWriteBatchSize,
+		PDAddr:                 tidbCfg.Path,
+		LocalStoreDir:          dir,
+		MaxConnPerStore:        config.DefaultRangeConcurrency,
+		ConnCompressType:       config.CompressionNone,
+		WorkerConcurrency:      config.DefaultRangeConcurrency * 2,
+		KVWriteBatchSize:       config.KVWriteBatchSize,
+		RegionSplitBatchSize:   config.DefaultRegionSplitBatchSize,
+		RegionSplitConcurrency: runtime.GOMAXPROCS(0),
 		// todo: local backend report error when the sort-dir already exists & checkpoint disabled.
 		// set to false when we fix it.
 		CheckpointEnabled:       true,
@@ -130,6 +135,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableIm
 		ShouldCheckWriteStall: true,
 		MaxOpenFiles:          int(util.GenRLimit()),
 		KeyspaceName:          keySpaceName,
+		PausePDSchedulerScope: config.PausePDSchedulerScopeTable,
 	}
 
 	tableMeta := &mydump.MDTableMeta{
@@ -306,7 +312,7 @@ func (ti *TableImporter) checksumTable(ctx context.Context) error {
 		}
 	}
 	ti.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
-	manager := local.NewTiKVChecksumManager(ti.kvStore.GetClient(), ti.backend.GetPDClient(), uint(ti.distSQLScanConcurrency))
+	manager := local.NewTiKVChecksumManager(ti.kvStore.GetClient(), ti.backend.GetPDClient(), uint(ti.distSQLScanConcurrency), local.DefaultBackoffWeight)
 	remoteChecksum, err := manager.Checksum(ctx, ti.tableInfo)
 	if err != nil {
 		return err
@@ -367,11 +373,34 @@ func (ti *TableImporter) PopulateChunks(ctx context.Context) (map[int32]*checkpo
 	}
 
 	if common.TableHasAutoID(ti.tableInfo.Core) {
-		// todo: the new base should be the max row id of the last Node if we support distributed import.
-		if err = common.RebaseGlobalAutoID(ctx, 0, ti.kvStore, ti.dbID, ti.tableInfo.Core); err != nil {
+		tidbCfg := tidb.GetGlobalConfig()
+		clusterSecurity := tidbCfg.Security.ClusterSecurity()
+		tlsConfig, err := clusterSecurity.ToTLSConfig()
+		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		newMinRowID, _, err := common.AllocGlobalAutoID(ctx, maxRowID, ti.kvStore, ti.dbID, ti.tableInfo.Core)
+		etcdCli, err := clientv3.New(clientv3.Config{
+			Endpoints:        []string{tidbCfg.Path},
+			AutoSyncInterval: 30 * time.Second,
+			TLS:              tlsConfig,
+		})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		etcd.SetEtcdCliByNamespace(etcdCli, keyspace.MakeKeyspaceEtcdNamespace(ti.kvStore.GetCodec()))
+		defer func() {
+			if err := etcdCli.Close(); err != nil {
+				ti.logger.Error("close etcd client error", zap.Error(err))
+			}
+		}()
+		autoidCli := autoid.NewClientDiscover(etcdCli)
+
+		r := &asAutoIDRequirement{ti.kvStore, autoidCli}
+		// todo: the new base should be the max row id of the last Node if we support distributed import.
+		if err = common.RebaseGlobalAutoID(ctx, 0, r, ti.dbID, ti.tableInfo.Core); err != nil {
+			return nil, errors.Trace(err)
+		}
+		newMinRowID, _, err := common.AllocGlobalAutoID(ctx, maxRowID, r, ti.dbID, ti.tableInfo.Core)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -381,6 +410,21 @@ func (ti *TableImporter) PopulateChunks(ctx context.Context) (map[int32]*checkpo
 	// Add index engine checkpoint
 	ti.tableCp.Engines[common.IndexEngineID] = &checkpoints.EngineCheckpoint{Status: checkpoints.CheckpointStatusLoaded}
 	return ti.tableCp.Engines, nil
+}
+
+type asAutoIDRequirement struct {
+	kvStore   tidbkv.Storage
+	autoidCli *autoid.ClientDiscover
+}
+
+var _ autoid.Requirement = &asAutoIDRequirement{}
+
+func (r *asAutoIDRequirement) Store() tidbkv.Storage {
+	return r.kvStore
+}
+
+func (r *asAutoIDRequirement) AutoIDClient() *autoid.ClientDiscover {
+	return r.autoidCli
 }
 
 func (ti *TableImporter) rebaseChunkRowID(rowIDBase int64) {

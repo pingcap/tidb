@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
@@ -74,9 +75,11 @@ type Checksum struct {
 // ProgressUnit represents the unit of progress.
 type ProgressUnit string
 
-// Maximum total sleep time(in ms) for kv/cop commands.
 const (
-	backupFineGrainedMaxBackoff = 80000
+	// backupFineGrainedMaxBackoff is 1 hour.
+	// given it begins the fine-grained backup, there must be some problems in the cluster.
+	// We need to be more patient.
+	backupFineGrainedMaxBackoff = 3600000
 	backupRetryTimes            = 5
 	// RangeUnit represents the progress updated counter when a range finished.
 	RangeUnit ProgressUnit = "range"
@@ -235,9 +238,9 @@ func (bc *Client) SetStorageAndCheckNotInUse(
 			"please specify a correct backup directory!", bc.storage.URI()+"/"+metautil.MetaFile)
 	}
 	// use checkpoint mode if checkpoint meta exists
-	exist, err = bc.storage.FileExists(ctx, checkpoint.CheckpointMetaPath)
+	exist, err = bc.storage.FileExists(ctx, checkpoint.CheckpointMetaPathForBackup)
 	if err != nil {
-		return errors.Annotatef(err, "error occurred when checking %s file", checkpoint.CheckpointMetaPath)
+		return errors.Annotatef(err, "error occurred when checking %s file", checkpoint.CheckpointMetaPathForBackup)
 	}
 
 	// if there is no checkpoint meta, then checkpoint mode is not used
@@ -247,7 +250,7 @@ func (bc *Client) SetStorageAndCheckNotInUse(
 		log.Info("load the checkpoint meta, so the existence of lockfile is allowed.")
 		bc.checkpointMeta, err = checkpoint.LoadCheckpointMetadata(ctx, bc.storage)
 		if err != nil {
-			return errors.Annotatef(err, "error occurred when loading %s file", checkpoint.CheckpointMetaPath)
+			return errors.Annotatef(err, "error occurred when loading %s file", checkpoint.CheckpointMetaPathForBackup)
 		}
 	} else {
 		err = CheckBackupStorageIsLocked(ctx, bc.storage)
@@ -316,9 +319,9 @@ func (bc *Client) StartCheckpointRunner(
 	return errors.Trace(err)
 }
 
-func (bc *Client) WaitForFinishCheckpoint(ctx context.Context) {
+func (bc *Client) WaitForFinishCheckpoint(ctx context.Context, flush bool) {
 	if bc.checkpointRunner != nil {
-		bc.checkpointRunner.WaitForFinish(ctx)
+		bc.checkpointRunner.WaitForFinish(ctx, flush)
 	}
 }
 
@@ -535,6 +538,15 @@ func BuildBackupRangeAndInitSchema(
 
 		hasTable := false
 		err = m.IterTables(dbInfo.ID, func(tableInfo *model.TableInfo) error {
+			if tableInfo.Version > version.CURRENT_BACKUP_SUPPORT_TABLE_INFO_VERSION {
+				// normally this shouldn't happen in a production env.
+				// because we had a unit test to avoid table info version update silencly.
+				// and had version check before run backup.
+				return errors.Errorf("backup doesn't not support table %s with version %d, maybe try a new version of br",
+					tableInfo.Name.String(),
+					tableInfo.Version,
+				)
+			}
 			if !tableFilter.MatchTable(dbInfo.Name.O, tableInfo.Name.O) {
 				// Skip tables other than the given table.
 				return nil
@@ -629,7 +641,25 @@ func BuildBackupSchemas(
 			case tableInfo.IsView() || !utils.NeedAutoID(tableInfo):
 				// no auto ID for views or table without either rowID nor auto_increment ID.
 			default:
-				globalAutoID, err = autoIDAccess.RowID().Get()
+				if tableInfo.SepAutoInc() {
+					globalAutoID, err = autoIDAccess.IncrementID(tableInfo.Version).Get()
+					// For a nonclustered table with auto_increment column, both auto_increment_id and _tidb_rowid are required.
+					// See also https://github.com/pingcap/tidb/issues/46093
+					if rowID, err1 := autoIDAccess.RowID().Get(); err1 == nil {
+						tableInfo.AutoIncIDExtra = rowID + 1
+					} else {
+						// It is possible that the rowid meta key does not exist (i.e. table have auto_increment_id but no _rowid),
+						// so err1 != nil might be expected.
+						if globalAutoID == 0 {
+							// When both auto_increment_id and _rowid are missing, it must be something wrong.
+							return errors.Trace(err1)
+						}
+						// Print a warning in other scenes, should it be a INFO log?
+						log.Warn("get rowid error", zap.Error(err1))
+					}
+				} else {
+					globalAutoID, err = autoIDAccess.RowID().Get()
+				}
 			}
 			if err != nil {
 				return errors.Trace(err)
@@ -989,13 +1019,13 @@ func (bc *Client) findTargetPeer(ctx context.Context, key []byte, isRawKv bool, 
 		// better backoff.
 		region, err := bc.mgr.GetPDClient().GetRegion(ctx, key)
 		if err != nil || region == nil {
-			log.Error("find region failed", zap.Error(err), zap.Reflect("region", region))
+			logutil.CL(ctx).Error("find region failed", zap.Error(err), zap.Reflect("region", region))
 			time.Sleep(time.Millisecond * time.Duration(100*i))
 			continue
 		}
 		if len(targetStoreIds) == 0 {
 			if region.Leader != nil {
-				log.Info("find leader",
+				logutil.CL(ctx).Info("find leader",
 					zap.Reflect("Leader", region.Leader), logutil.Key("key", key))
 				return region.Leader, nil
 			}
@@ -1008,17 +1038,17 @@ func (bc *Client) findTargetPeer(ctx context.Context, key []byte, isRawKv bool, 
 			}
 			if len(candidates) > 0 {
 				peer := candidates[rand.Intn(len(candidates))]
-				log.Info("find target peer for backup",
+				logutil.CL(ctx).Info("find target peer for backup",
 					zap.Reflect("Peer", peer), logutil.Key("key", key))
 				return peer, nil
 			}
 		}
 
-		log.Warn("fail to find a target peer", logutil.Key("key", key))
+		logutil.CL(ctx).Warn("fail to find a target peer", logutil.Key("key", key))
 		time.Sleep(time.Millisecond * time.Duration(1000*i))
 		continue
 	}
-	log.Error("can not find a valid target peer", logutil.Key("key", key))
+	logutil.CL(ctx).Error("can not find a valid target peer", logutil.Key("key", key))
 	if len(targetStoreIds) == 0 {
 		return nil, errors.Annotatef(berrors.ErrBackupNoLeader, "can not find a valid leader for key %s", key)
 	}
@@ -1053,7 +1083,7 @@ func (bc *Client) fineGrainedBackup(
 		}
 	})
 
-	bo := tikv.NewBackoffer(ctx, backupFineGrainedMaxBackoff)
+	bo := utils.AdaptTiKVBackoffer(ctx, backupFineGrainedMaxBackoff, berrors.ErrUnknown)
 	for {
 		// Step1, check whether there is any incomplete range
 		incomplete := pr.Res.GetIncompleteRange(req.StartKey, req.EndKey)
@@ -1066,14 +1096,10 @@ func (bc *Client) fineGrainedBackup(
 		errCh := make(chan error, 4)
 		retry := make(chan rtree.Range, 4)
 
-		max := &struct {
-			ms int
-			mu sync.Mutex
-		}{}
 		wg := new(sync.WaitGroup)
 		for i := 0; i < 4; i++ {
 			wg.Add(1)
-			fork, _ := bo.Fork()
+			fork, _ := bo.Inner().Fork()
 			go func(boFork *tikv.Backoffer) {
 				defer wg.Done()
 				for rg := range retry {
@@ -1085,11 +1111,7 @@ func (bc *Client) fineGrainedBackup(
 						return
 					}
 					if backoffMs != 0 {
-						max.mu.Lock()
-						if max.ms < backoffMs {
-							max.ms = backoffMs
-						}
-						max.mu.Unlock()
+						bo.RequestBackOff(backoffMs)
 					}
 				}
 			}(fork)
@@ -1146,15 +1168,11 @@ func (bc *Client) fineGrainedBackup(
 		}
 
 		// Step3. Backoff if needed, then repeat.
-		max.mu.Lock()
-		ms := max.ms
-		max.mu.Unlock()
-		if ms != 0 {
+		if ms := bo.NextSleepInMS(); ms != 0 {
 			log.Info("handle fine grained", zap.Int("backoffMs", ms))
-			// TODO: fill a meaningful error.
-			err := bo.BackoffWithMaxSleepTxnLockFast(ms, berrors.ErrUnknown)
+			err := bo.BackOff()
 			if err != nil {
-				return errors.Trace(err)
+				return errors.Annotatef(err, "at fine-grained backup, remained ranges = %d", pr.Res.Len())
 			}
 		}
 	}
@@ -1167,17 +1185,18 @@ func OnBackupResponse(
 	backupTS uint64,
 	lockResolver *txnlock.LockResolver,
 	resp *backuppb.BackupResponse,
+	errContext *utils.ErrorContext,
 ) (*backuppb.BackupResponse, int, error) {
 	log.Debug("OnBackupResponse", zap.Reflect("resp", resp))
 	if resp.Error == nil {
 		return resp, 0, nil
 	}
 	backoffMs := 0
-	switch v := resp.Error.Detail.(type) {
+
+	err := resp.Error
+	switch v := err.Detail.(type) {
 	case *backuppb.Error_KvError:
 		if lockErr := v.KvError.Locked; lockErr != nil {
-			// Try to resolve lock.
-			log.Warn("backup occur kv error", zap.Reflect("error", v))
 			msBeforeExpired, err1 := lockResolver.ResolveLocks(
 				bo, backupTS, []*txnlock.Lock{txnlock.NewLock(lockErr)})
 			if err1 != nil {
@@ -1188,44 +1207,16 @@ func OnBackupResponse(
 			}
 			return nil, backoffMs, nil
 		}
-		// Backup should not meet error other than KeyLocked.
-		log.Error("unexpect kv error", zap.Reflect("KvError", v.KvError))
-		return nil, backoffMs, errors.Annotatef(berrors.ErrKVUnknown, "storeID: %d OnBackupResponse error %v", storeID, v)
-
-	case *backuppb.Error_RegionError:
-		regionErr := v.RegionError
-		// Ignore following errors.
-		if !(regionErr.EpochNotMatch != nil ||
-			regionErr.NotLeader != nil ||
-			regionErr.RegionNotFound != nil ||
-			regionErr.ServerIsBusy != nil ||
-			regionErr.StaleCommand != nil ||
-			regionErr.StoreNotMatch != nil ||
-			regionErr.ReadIndexNotReady != nil ||
-			regionErr.ProposalInMergingMode != nil) {
-			log.Error("unexpect region error", zap.Reflect("RegionError", regionErr))
-			return nil, backoffMs, errors.Annotatef(berrors.ErrKVUnknown, "storeID: %d OnBackupResponse error %v", storeID, v)
-		}
-		log.Warn("backup occur region error",
-			zap.Reflect("RegionError", regionErr),
-			zap.Uint64("storeID", storeID))
-		// TODO: a better backoff.
-		backoffMs = 1000 /* 1s */
-		return nil, backoffMs, nil
-	case *backuppb.Error_ClusterIdError:
-		log.Error("backup occur cluster ID error", zap.Reflect("error", v), zap.Uint64("storeID", storeID))
-		return nil, 0, errors.Annotatef(berrors.ErrKVClusterIDMismatch, "%v on storeID: %d", resp.Error, storeID)
 	default:
-		// UNSAFE! TODO: use meaningful error code instead of unstructured message to find failed to write error.
-		if utils.MessageIsRetryableStorageError(resp.GetError().GetMsg()) {
-			log.Warn("backup occur storage error", zap.String("error", resp.GetError().GetMsg()))
-			// back off 3000ms, for S3 is 99.99% available (i.e. the max outage time would less than 52.56mins per year),
-			// this time would be probably enough for s3 to resume.
+		res := errContext.HandleError(resp.Error, storeID)
+		switch res.Strategy {
+		case utils.GiveUpStrategy:
+			return nil, 0, errors.Annotatef(berrors.ErrKVUnknown, "storeID: %d OnBackupResponse error %s", storeID, res.Reason)
+		case utils.RetryStrategy:
 			return nil, 3000, nil
 		}
-		log.Error("backup occur unknown error", zap.String("error", resp.Error.GetMsg()), zap.Uint64("storeID", storeID))
-		return nil, 0, errors.Annotatef(berrors.ErrKVUnknown, "%v on storeID: %d", resp.Error, storeID)
 	}
+	return nil, 3000, errors.Annotatef(berrors.ErrKVUnknown, "unreachable")
 }
 
 func (bc *Client) handleFineGrained(
@@ -1255,12 +1246,13 @@ func (bc *Client) handleFineGrained(
 	}
 	hasProgress := false
 	backoffMill := 0
+	errContext := utils.NewErrorContext("handleFineGrainedBackup", 10)
 	err = SendBackup(
 		ctx, storeID, client, req,
 		// Handle responses with the same backoffer.
 		func(resp *backuppb.BackupResponse) error {
 			response, shouldBackoff, err1 :=
-				OnBackupResponse(storeID, bo, req.EndVersion, lockResolver, resp)
+				OnBackupResponse(storeID, bo, req.EndVersion, lockResolver, resp, errContext)
 			if err1 != nil {
 				return err1
 			}

@@ -131,6 +131,7 @@ func TestParallelSchedule(t *testing.T) {
 	require.NoError(t, isc.Update(sessionFactory()))
 	now := time.Now()
 	scheduleWg := sync.WaitGroup{}
+	finishTasks := make([]func(), 0, 4)
 	for i := 0; i < 4; i++ {
 		workers := []ttlworker.Worker{}
 		for j := 0; j < 4; j++ {
@@ -139,7 +140,8 @@ func TestParallelSchedule(t *testing.T) {
 			workers = append(workers, scanWorker)
 		}
 
-		m := ttlworker.NewTaskManager(context.Background(), nil, isc, fmt.Sprintf("task-manager-%d", i), store)
+		managerID := fmt.Sprintf("task-manager-%d", i)
+		m := ttlworker.NewTaskManager(context.Background(), nil, isc, managerID, store)
 		m.SetScanWorkers4Test(workers)
 		scheduleWg.Add(1)
 		go func() {
@@ -147,12 +149,24 @@ func TestParallelSchedule(t *testing.T) {
 			m.RescheduleTasks(se, now)
 			scheduleWg.Done()
 		}()
+		finishTasks = append(finishTasks, func() {
+			se := sessionFactory()
+			for _, task := range m.GetRunningTasks() {
+				require.Nil(t, task.Context().Err(), fmt.Sprintf("%s %d", managerID, task.ScanID))
+				task.SetResult(nil)
+				m.CheckFinishedTask(se, time.Now())
+				require.NotNil(t, task.Context().Err(), fmt.Sprintf("%s %d", managerID, task.ScanID))
+			}
+		})
 	}
 	scheduleWg.Wait()
 	// all tasks should have been scheduled
 	tk.MustQuery("select count(1) from mysql.tidb_ttl_task where status = 'running'").Check(testkit.Rows("16"))
 	for i := 0; i < 4; i++ {
 		sql := fmt.Sprintf("select count(1) from mysql.tidb_ttl_task where status = 'running' AND owner_id = 'task-manager-%d'", i)
+		tk.MustQuery(sql).Check(testkit.Rows("4"))
+		finishTasks[i]()
+		sql = fmt.Sprintf("select count(1) from mysql.tidb_ttl_task where status = 'finished' AND owner_id = 'task-manager-%d'", i)
 		tk.MustQuery(sql).Check(testkit.Rows("4"))
 	}
 }
@@ -325,16 +339,19 @@ func TestMeetTTLRunningTasks(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	// -1, the default value, means the count of TiKV
-	require.True(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(2))
-	require.False(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(3))
+	require.True(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(2, cache.TaskStatusWaiting))
+	require.False(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(3, cache.TaskStatusWaiting))
+	require.True(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(2, cache.TaskStatusRunning))
 
 	// positive number means the limitation
 	tk.MustExec("set global tidb_ttl_running_tasks = 32")
-	require.False(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(32))
-	require.True(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(31))
+	require.False(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(32, cache.TaskStatusWaiting))
+	require.True(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(31, cache.TaskStatusWaiting))
+	require.True(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(32, cache.TaskStatusRunning))
 
 	// set it back to auto value
 	tk.MustExec("set global tidb_ttl_running_tasks = -1")
-	require.True(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(2))
-	require.False(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(3))
+	require.True(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(2, cache.TaskStatusWaiting))
+	require.False(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(3, cache.TaskStatusWaiting))
+	require.True(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(3, cache.TaskStatusRunning))
 }

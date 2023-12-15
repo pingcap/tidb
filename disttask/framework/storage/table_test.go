@@ -96,6 +96,19 @@ func TestGlobalTaskTable(t *testing.T) {
 	// test cannot insert task with dup key
 	_, err = gm.AddNewGlobalTask("key1", "test2", 4, []byte("test2"))
 	require.EqualError(t, err, "[kv:1062]Duplicate entry 'key1' for key 'tidb_global_task.task_key'")
+
+	// test cancel global task
+	id, err = gm.AddNewGlobalTask("key2", "test", 4, []byte("test"))
+	require.NoError(t, err)
+
+	cancelling, err := gm.IsGlobalTaskCancelling(id)
+	require.NoError(t, err)
+	require.False(t, cancelling)
+
+	require.NoError(t, gm.CancelGlobalTask(id))
+	cancelling, err = gm.IsGlobalTaskCancelling(id)
+	require.NoError(t, err)
+	require.True(t, cancelling)
 }
 
 func TestSubTaskTable(t *testing.T) {

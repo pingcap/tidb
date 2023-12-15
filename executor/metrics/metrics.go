@@ -43,6 +43,7 @@ var (
 	TotalQueryProcHistogramGeneral  prometheus.Observer
 	TotalCopProcHistogramGeneral    prometheus.Observer
 	TotalCopWaitHistogramGeneral    prometheus.Observer
+	CopMVCCRatioHistogramGeneral    prometheus.Observer
 	TotalQueryProcHistogramInternal prometheus.Observer
 	TotalCopProcHistogramInternal   prometheus.Observer
 	TotalCopWaitHistogramInternal   prometheus.Observer
@@ -137,6 +138,7 @@ func InitMetricsVars() {
 	TotalQueryProcHistogramGeneral = metrics.TotalQueryProcHistogram.WithLabelValues(metrics.LblGeneral)
 	TotalCopProcHistogramGeneral = metrics.TotalCopProcHistogram.WithLabelValues(metrics.LblGeneral)
 	TotalCopWaitHistogramGeneral = metrics.TotalCopWaitHistogram.WithLabelValues(metrics.LblGeneral)
+	CopMVCCRatioHistogramGeneral = metrics.CopMVCCRatioHistogram.WithLabelValues(metrics.LblGeneral)
 	TotalQueryProcHistogramInternal = metrics.TotalQueryProcHistogram.WithLabelValues(metrics.LblInternal)
 	TotalCopProcHistogramInternal = metrics.TotalCopProcHistogram.WithLabelValues(metrics.LblInternal)
 	TotalCopWaitHistogramInternal = metrics.TotalCopWaitHistogram.WithLabelValues(metrics.LblInternal)

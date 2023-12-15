@@ -28,10 +28,10 @@ func TestShardPoolMap(t *testing.T) {
 	pm := NewShardPoolMap()
 	for i := 0; i < rc; i++ {
 		id := strconv.FormatInt(int64(i), 10)
-		require.NoError(t, pm.Add(id, &PoolContainer{Pool: NewMockGPool(id), Component: DDL}))
+		require.NoError(t, pm.Add(id, &PoolContainer{Pool: NewMockGPool(id, 10), Component: DDL}))
 	}
 	if !intest.InTest {
-		require.Error(t, pm.Add("1", &PoolContainer{Pool: NewMockGPool("1"), Component: DDL}))
+		require.Error(t, pm.Add("1", &PoolContainer{Pool: NewMockGPool("1", 10), Component: DDL}))
 	}
 	var cnt atomic.Int32
 	pm.Iter(func(pool *PoolContainer) {

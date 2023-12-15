@@ -139,7 +139,7 @@ type baseExecutor struct {
 
 const (
 	// globalPanicStorageExceed represents the panic message when out of storage quota.
-	globalPanicStorageExceed string = "Out Of Global Storage Quota!"
+	globalPanicStorageExceed string = "Out Of Quota For Local Temporary Space!"
 	// globalPanicMemoryExceed represents the panic message when out of memory limit.
 	globalPanicMemoryExceed string = "Out Of Global Memory Limit!"
 	// globalPanicAnalyzeMemoryExceed represents the panic message when out of analyze memory limit.
@@ -335,29 +335,35 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	return err
 }
 
-// CancelDDLJobsExec represents a cancel DDL jobs executor.
-type CancelDDLJobsExec struct {
+// CommandDDLJobsExec is the general struct for Cancel/Pause/Resume commands on
+// DDL jobs. These command currently by admin have the very similar struct and
+// operations, it should be a better idea to have them in the same struct.
+type CommandDDLJobsExec struct {
 	baseExecutor
 
 	cursor int
 	jobIDs []int64
 	errs   []error
+
+	execute func(se sessionctx.Context, ids []int64) (errs []error, err error)
 }
 
-// Open implements the Executor Open interface.
-func (e *CancelDDLJobsExec) Open(ctx context.Context) error {
+// Open implements the Executor for all Cancel/Pause/Resume command on DDL jobs
+// just with different processes. And, it should not be called directly by the
+// Executor.
+func (e *CommandDDLJobsExec) Open(ctx context.Context) error {
 	// We want to use a global transaction to execute the admin command, so we don't use e.ctx here.
 	newSess, err := e.getSysSession()
 	if err != nil {
 		return err
 	}
-	e.errs, err = ddl.CancelJobs(newSess, e.jobIDs)
+	e.errs, err = e.execute(newSess, e.jobIDs)
 	e.releaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), newSess)
 	return err
 }
 
-// Next implements the Executor Next interface.
-func (e *CancelDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
+// Next implements the Executor Next interface for Cancel/Pause/Resume
+func (e *CommandDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
 	if e.cursor >= len(e.jobIDs) {
 		return nil
@@ -373,6 +379,21 @@ func (e *CancelDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	e.cursor += numCurBatch
 	return nil
+}
+
+// CancelDDLJobsExec represents a cancel DDL jobs executor.
+type CancelDDLJobsExec struct {
+	*CommandDDLJobsExec
+}
+
+// PauseDDLJobsExec indicates an Executor for Pause a DDL Job.
+type PauseDDLJobsExec struct {
+	*CommandDDLJobsExec
+}
+
+// ResumeDDLJobsExec indicates an Executor for Resume a DDL Job.
+type ResumeDDLJobsExec struct {
+	*CommandDDLJobsExec
 }
 
 // ShowNextRowIDExec represents a show the next row ID executor.
@@ -640,7 +661,7 @@ func ts2Time(timestamp uint64, loc *time.Location) types.Time {
 
 // ShowDDLJobQueriesExec represents a show DDL job queries executor.
 // The jobs id that is given by 'admin show ddl job queries' statement,
-// only be searched in the latest 10 history jobs
+// only be searched in the latest 10 history jobs.
 type ShowDDLJobQueriesExec struct {
 	baseExecutor
 
@@ -1542,6 +1563,11 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
+		if pi, ok := sctx.(processinfoSetter); ok {
+			// Before executing the sub-query, we need update the processinfo to make the progress bar more accurate.
+			// because the sub-query may take a long time.
+			pi.UpdateProcessInfo()
+		}
 		chk := tryNewCacheChunk(exec)
 		err = Next(ctx, exec, chk)
 		if err != nil {
@@ -2050,11 +2076,22 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.MemTracker.UnbindActions()
 	vars.MemTracker.SetBytesLimit(vars.MemQuotaQuery)
 	vars.MemTracker.ResetMaxConsumed()
+	vars.DiskTracker.Detach()
 	vars.DiskTracker.ResetMaxConsumed()
-	vars.MemTracker.SessionID = vars.ConnectionID
+	vars.MemTracker.SessionID.Store(vars.ConnectionID)
 	vars.StmtCtx.TableStats = make(map[int64]interface{})
 
-	if _, ok := s.(*ast.AnalyzeTableStmt); ok {
+	isAnalyze := false
+	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
+		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, vars)
+		if err != nil {
+			return err
+		}
+		_, isAnalyze = prepareStmt.PreparedAst.Stmt.(*ast.AnalyzeTableStmt)
+	} else if _, ok := s.(*ast.AnalyzeTableStmt); ok {
+		isAnalyze = true
+	}
+	if isAnalyze {
 		sc.InitMemTracker(memory.LabelForAnalyzeMemory, -1)
 		vars.MemTracker.SetBytesLimit(-1)
 		vars.MemTracker.AttachTo(GlobalAnalyzeMemoryTracker)
@@ -2074,12 +2111,15 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		action.SetLogHook(logOnQueryExceedMemQuota)
 		vars.MemTracker.SetActionOnExceed(action)
 	}
-	sc.MemTracker.SessionID = vars.ConnectionID
+	sc.MemTracker.SessionID.Store(vars.ConnectionID)
 	sc.MemTracker.AttachTo(vars.MemTracker)
 	sc.InitDiskTracker(memory.LabelForSQLText, -1)
 	globalConfig := config.GetGlobalConfig()
 	if variable.EnableTmpStorageOnOOM.Load() && sc.DiskTracker != nil {
 		sc.DiskTracker.AttachTo(vars.DiskTracker)
+		if GlobalDiskUsageTracker != nil {
+			vars.DiskTracker.AttachTo(GlobalDiskUsageTracker)
+		}
 	}
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
 		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, vars)
@@ -2137,6 +2177,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		// but should not make DupKeyAsWarning.
 		sc.DupKeyAsWarning = stmt.IgnoreErr
 		sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		// see https://dev.mysql.com/doc/refman/8.0/en/out-of-range-and-overflow.html
+		sc.OverflowAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.IgnoreNoPartition = stmt.IgnoreErr
 		sc.ErrAutoincReadFailedAsWarning = stmt.IgnoreErr
 		sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr

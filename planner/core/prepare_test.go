@@ -435,7 +435,7 @@ func TestPrepareCache(t *testing.T) {
 
 	// user u_tp
 	userSess := newSession(t, store, "test")
-	require.NoError(t, userSess.Auth(&auth.UserIdentity{Username: "u_tp", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, userSess.Auth(&auth.UserIdentity{Username: "u_tp", Hostname: "localhost"}, nil, nil, nil))
 	mustExec(t, userSess, `prepare ps_stp_r from 'select * from tp where c1 > ?'`)
 	mustExec(t, userSess, `set @p2 = 2`)
 	tk.SetSession(userSess)
@@ -1811,7 +1811,7 @@ func TestIssue18066(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk.RefreshConnectionID()
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -2805,4 +2805,29 @@ func TestIssue37901(t *testing.T) {
 	tk.MustExec(`set @t='2022-01-01 00:00:00.000000'`)
 	tk.MustExec(`execute st1 using @t`)
 	tk.MustQuery(`select count(*) from t4`).Check(testkit.Rows("2"))
+}
+
+func TestIssue42739(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t0`)
+	tk.MustExec(`CREATE TABLE t0 (c1 double, c2 double);`)
+	tk.MustExec(`select
+  exists (
+    select
+          subq_2.c0 as c8
+        from
+          (select
+                ref_153.c1 as c0
+              from
+                t0 as ref_153
+              group by ref_153.c1 having 0 <> (
+                  select 1
+                    from
+                      t0 as ref_173
+                    where count(ref_153.c2) = avg(ref_153.c2)
+                    order by c1 desc limit 1)) as subq_2
+     ) as c10;`)
 }

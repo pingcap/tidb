@@ -283,6 +283,25 @@ func alterTablePartitionBundles(t *meta.Meta, tblInfo *model.TableInfo, addingDe
 	return bundles, nil
 }
 
+// When drop/truncate a partition, we should still keep the dropped partition's placement settings to avoid unnecessary region schedules.
+// When a partition is not configured with a placement policy directly, its rule is in the table's placement group which will be deleted after
+// partition truncated/dropped. So it is necessary to create a standalone placement group with partition id after it.
+func droppedPartitionBundles(t *meta.Meta, tblInfo *model.TableInfo, dropPartitions []model.PartitionDefinition) ([]*placement.Bundle, error) {
+	partitions := make([]model.PartitionDefinition, 0, len(dropPartitions))
+	for _, def := range dropPartitions {
+		def = def.Clone()
+		if def.PlacementPolicyRef == nil {
+			def.PlacementPolicyRef = tblInfo.PlacementPolicyRef
+		}
+
+		if def.PlacementPolicyRef != nil {
+			partitions = append(partitions, def)
+		}
+	}
+
+	return placement.NewPartitionListBundles(t, partitions)
+}
+
 // updatePartitionInfo merge `addingDefinitions` into `Definitions` in the tableInfo.
 func updatePartitionInfo(tblInfo *model.TableInfo) {
 	parInfo := &model.PartitionInfo{}
@@ -692,11 +711,19 @@ func getPartitionIntervalFromTable(ctx sessionctx.Context, tbInfo *model.TableIn
 }
 
 // comparePartitionAstAndModel compares a generated *ast.PartitionOptions and a *model.PartitionInfo
-func comparePartitionAstAndModel(ctx sessionctx.Context, pAst *ast.PartitionOptions, pModel *model.PartitionInfo) error {
+func comparePartitionAstAndModel(ctx sessionctx.Context, pAst *ast.PartitionOptions, pModel *model.PartitionInfo, partCol *model.ColumnInfo) error {
 	a := pAst.Definitions
 	m := pModel.Definitions
 	if len(pAst.Definitions) != len(pModel.Definitions) {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning: number of partitions generated != partition defined (%d != %d)", len(a), len(m))
+	}
+
+	evalFn := func(expr ast.ExprNode) (types.Datum, error) {
+		val, err := expression.EvalAstExpr(ctx, ast.NewValueExpr(expr, "", ""))
+		if err != nil || partCol == nil {
+			return val, err
+		}
+		return val.ConvertTo(ctx.GetSessionVars().StmtCtx, &partCol.FieldType)
 	}
 	for i := range pAst.Definitions {
 		// Allow options to differ! (like Placement Rules)
@@ -720,16 +747,19 @@ func comparePartitionAstAndModel(ctx sessionctx.Context, pAst *ast.PartitionOpti
 		if len(lessThan) > 1 && lessThan[:1] == "'" && lessThan[len(lessThan)-1:] == "'" {
 			lessThan = driver.UnwrapFromSingleQuotes(lessThan)
 		}
-		cmpExpr := &ast.BinaryOperationExpr{
-			Op: opcode.EQ,
-			L:  ast.NewValueExpr(lessThan, "", ""),
-			R:  generatedExpr,
-		}
-		cmp, err := expression.EvalAstExpr(ctx, cmpExpr)
+		lessThanVal, err := evalFn(ast.NewValueExpr(lessThan, "", ""))
 		if err != nil {
 			return err
 		}
-		if cmp.GetInt64() != 1 {
+		generatedExprVal, err := evalFn(generatedExpr)
+		if err != nil {
+			return err
+		}
+		cmp, err := lessThanVal.Compare(ctx.GetSessionVars().StmtCtx, &generatedExprVal, collate.GetBinaryCollator())
+		if err != nil {
+			return err
+		}
+		if cmp != 0 {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("INTERVAL partitioning: LESS THAN for partition %s differs between generated and defined", m[i].Name.O))
 		}
 	}
@@ -904,7 +934,7 @@ func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, partOption
 		// Seems valid, so keep the defined so that the user defined names are kept etc.
 		partOptions.Definitions = definedPartDefs
 	} else if len(tbInfo.Partition.Definitions) > 0 {
-		err := comparePartitionAstAndModel(ctx, partOptions, tbInfo.Partition)
+		err := comparePartitionAstAndModel(ctx, partOptions, tbInfo.Partition, partCol)
 		if err != nil {
 			return err
 		}
@@ -978,6 +1008,12 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 	if err != nil {
 		return err
 	}
+	if partCol != nil {
+		lastVal, err = lastVal.ConvertTo(ctx.GetSessionVars().StmtCtx, &partCol.FieldType)
+		if err != nil {
+			return err
+		}
+	}
 	var partDefs []*ast.PartitionDefinition
 	if len(partitionOptions.Definitions) != 0 {
 		partDefs = partitionOptions.Definitions
@@ -1020,6 +1056,12 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 		currVal, err = expression.EvalAstExpr(ctx, currExpr)
 		if err != nil {
 			return err
+		}
+		if partCol != nil {
+			currVal, err = currVal.ConvertTo(ctx.GetSessionVars().StmtCtx, &partCol.FieldType)
+			if err != nil {
+				return err
+			}
 		}
 		cmp, err := currVal.Compare(ctx.GetSessionVars().StmtCtx, &lastVal, collate.GetBinaryCollator())
 		if err != nil {
@@ -1820,6 +1862,32 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			return ver, err
 		}
 
+		var bundles []*placement.Bundle
+		// create placement groups for each dropped partition to keep the data's placement before GC
+		// These placements groups will be deleted after GC
+		bundles, err = droppedPartitionBundles(t, tblInfo, tblInfo.Partition.DroppingDefinitions)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
+
+		var tableBundle *placement.Bundle
+		// Recompute table bundle to remove dropped partitions rules from its group
+		tableBundle, err = placement.NewTableBundle(t, tblInfo)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+
+		if tableBundle != nil {
+			bundles = append(bundles, tableBundle)
+		}
+
+		if err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
+
 		job.SchemaState = model.StateDeleteOnly
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != job.SchemaState)
 	case model.StateDeleteOnly:
@@ -1831,7 +1899,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 	case model.StateDeleteReorganization:
 		oldTblInfo := getTableInfoWithDroppingPartitions(tblInfo)
 		physicalTableIDs = getPartitionIDsFromDefinitions(tblInfo.Partition.DroppingDefinitions)
-		tbl, err := getTable(d.store, job.SchemaID, oldTblInfo)
+		tbl, err := getTable((*asAutoIDRequirement)(d), job.SchemaID, oldTblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -1873,6 +1941,10 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 					// if timeout, we should return, check for the owner and re-wait job done.
 					return ver, nil
 				}
+				if dbterror.ErrPausedDDLJob.Equal(err) {
+					// if ErrPausedDDLJob, we should return, check for the owner and re-wait job done.
+					return ver, nil
+				}
 				return ver, errors.Trace(err)
 			}
 		}
@@ -1911,11 +1983,13 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		return ver, errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
 
+	oldPartitions := make([]model.PartitionDefinition, 0, len(oldIDs))
 	newPartitions := make([]model.PartitionDefinition, 0, len(oldIDs))
 	for _, oldID := range oldIDs {
 		for i := 0; i < len(pi.Definitions); i++ {
 			def := &pi.Definitions[i]
 			if def.ID == oldID {
+				oldPartitions = append(oldPartitions, def.Clone())
 				pid, err1 := t.GenGlobalID()
 				if err1 != nil {
 					return ver, errors.Trace(err1)
@@ -1962,6 +2036,25 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+
+	tableBundle, err := placement.NewTableBundle(t, tblInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	if tableBundle != nil {
+		bundles = append(bundles, tableBundle)
+	}
+
+	// create placement groups for each dropped partition to keep the data's placement before GC
+	// These placements groups will be deleted after GC
+	keepDroppedBundles, err := droppedPartitionBundles(t, tblInfo, oldPartitions)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	bundles = append(bundles, keepDroppedBundles...)
 
 	err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
 	if err != nil {
@@ -2046,6 +2139,9 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
+	if job.IsRollingback() {
+		return rollbackExchangeTablePartition(d, t, job, nt)
+	}
 	pt, err := getTableInfo(t, ptID, ptSchemaID)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
@@ -2071,27 +2167,80 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
-	index, _, err := getPartitionDef(pt, partName)
+	index, partDef, err := getPartitionDef(pt, partName)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if nt.ExchangePartitionInfo == nil || !nt.ExchangePartitionInfo.ExchangePartitionFlag {
+	if job.SchemaState == model.StateNone {
+		if pt.State != model.StatePublic {
+			job.State = model.JobStateCancelled
+			return ver, dbterror.ErrInvalidDDLState.GenWithStack("table %s is not in public, but %s", pt.Name, pt.State)
+		}
+		err = checkExchangePartition(pt, nt)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+
+		err = checkTableDefCompatible(pt, nt)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+
+		err = checkExchangePartitionPlacementPolicy(t, nt.PlacementPolicyRef, pt.PlacementPolicyRef, partDef.PlacementPolicyRef)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+
+		if defID != partDef.ID {
+			logutil.BgLogger().Info("Exchange partition id changed, updating to actual id", zap.String("category", "ddl"),
+				zap.String("job", job.String()), zap.Int64("defID", defID), zap.Int64("partDef.ID", partDef.ID))
+			job.Args[0] = partDef.ID
+			defID = partDef.ID
+			err = updateDDLJob2Table(w.sess, job, true)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+		}
 		nt.ExchangePartitionInfo = &model.ExchangePartitionInfo{
-			ExchangePartitionFlag:  true,
 			ExchangePartitionID:    ptID,
 			ExchangePartitionDefID: defID,
 		}
+		// We need an interim schema version,
+		// so there are no non-matching rows inserted
+		// into the table using the schema version
+		// before the exchange is made.
+		job.SchemaState = model.StateWriteOnly
 		return updateVersionAndTableInfoWithCheck(d, t, job, nt, true)
 	}
+	// From now on, nt (the non-partitioned table) has
+	// ExchangePartitionInfo set, meaning it is restricted
+	// to only allow writes that would match the
+	// partition to be exchange with.
+	// So we need to rollback that change, instead of just cancelling.
 
 	if d.lease > 0 {
 		delayForAsyncCommit()
 	}
 
+	if defID != partDef.ID {
+		// Should never happen, should have been updated above, in previous state!
+		logutil.BgLogger().Error("Exchange partition id changed, updating to actual id", zap.String("category", "ddl"),
+			zap.String("job", job.String()), zap.Int64("defID", defID), zap.Int64("partDef.ID", partDef.ID))
+		job.Args[0] = partDef.ID
+		defID = partDef.ID
+		err = updateDDLJob2Table(w.sess, job, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+	}
+
 	if withValidation {
 		err = checkExchangePartitionRecordValidation(w, pt, index, ntDbInfo.Name, nt.Name)
 		if err != nil {
-			job.State = model.JobStateCancelled
+			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
 		}
 	}
@@ -2099,19 +2248,11 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	// partition table auto IDs.
 	ptAutoIDs, err := t.GetAutoIDAccessors(ptSchemaID, ptID).Get()
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	// non-partition table auto IDs.
 	ntAutoIDs, err := t.GetAutoIDAccessors(job.SchemaID, nt.ID).Get()
 	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
-	_, partDef, err := getPartitionDef(pt, partName)
-	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
@@ -2124,34 +2265,31 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		}
 	}
 
+	// Recreate non-partition table meta info,
+	// by first delete it with the old table id
+	err = t.DropTableOrView(job.SchemaID, nt.ID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
 	// exchange table meta id
 	partDef.ID, nt.ID = nt.ID, partDef.ID
 
 	err = t.UpdateTable(ptSchemaID, pt)
 	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
-	failpoint.Inject("exchangePartitionErr", func(val failpoint.Value) {
-		if val.(bool) {
-			job.State = model.JobStateCancelled
-			failpoint.Return(ver, errors.New("occur an error after updating partition id"))
-		}
-	})
-
-	// recreate non-partition table meta info
-	err = t.DropTableOrView(job.SchemaID, partDef.ID)
-	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
 	err = t.CreateTableOrView(job.SchemaID, nt)
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+
+	failpoint.Inject("exchangePartitionErr", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(ver, errors.New("occur an error after updating partition id"))
+		}
+	})
 
 	// Set both tables to the maximum auto IDs between normal table and partitioned table.
 	newAutoIDs := meta.AutoIDGroup{
@@ -2161,12 +2299,10 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 	err = t.GetAutoIDAccessors(ptSchemaID, pt.ID).Put(newAutoIDs)
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	err = t.GetAutoIDAccessors(job.SchemaID, nt.ID).Put(newAutoIDs)
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
@@ -2185,23 +2321,15 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		}
 	})
 
-	err = checkExchangePartitionPlacementPolicy(t, partDef.PlacementPolicyRef, nt.PlacementPolicyRef)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
 	// the follow code is a swap function for rules of two partitions
 	// though partitions has exchanged their ID, swap still take effect
 
-	bundles, err := bundlesForExchangeTablePartition(t, job, pt, partDef, nt)
+	bundles, err := bundlesForExchangeTablePartition(t, pt, partDef, nt)
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
 	if err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles); err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
@@ -2210,13 +2338,13 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	rules, err := infosync.GetLabelRules(context.TODO(), []string{ntrID, ptrID})
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return 0, errors.Wrapf(err, "failed to get PD the label rules")
 	}
 
 	ntr := rules[ntrID]
 	ptr := rules[ptrID]
 
+	// This must be a bug, nt cannot be partitioned!
 	partIDs := getPartitionIDs(nt)
 
 	var setRules []*label.Rule
@@ -2237,10 +2365,10 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	patch := label.NewRulePatch(setRules, deleteRules)
 	err = infosync.UpdateLabelRules(context.TODO(), patch)
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to notify PD the label rules")
 	}
 
+	job.SchemaState = model.StatePublic
 	nt.ExchangePartitionInfo = nil
 	ver, err = updateVersionAndTableInfoWithCheck(d, t, job, nt, true)
 	if err != nil {
@@ -2470,7 +2598,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != job.SchemaState)
 	case model.StateWriteReorganization:
 		physicalTableIDs := getPartitionIDsFromDefinitions(tblInfo.Partition.DroppingDefinitions)
-		tbl, err2 := getTable(d.store, job.SchemaID, tblInfo)
+		tbl, err2 := getTable((*asAutoIDRequirement)(d), job.SchemaID, tblInfo)
 		if err2 != nil {
 			return ver, errors.Trace(err2)
 		}
@@ -2579,6 +2707,10 @@ func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tb
 		return w.reorgPartitionDataAndIndex(tbl, reorgInfo)
 	})
 	if err != nil {
+		if dbterror.ErrPausedDDLJob.Equal(err) {
+			return false, ver, nil
+		}
+
 		if dbterror.ErrWaitReorgTimeout.Equal(err) {
 			// If timeout, we should return, check for the owner and re-wait job done.
 			return false, ver, nil
@@ -2885,7 +3017,7 @@ func (w *worker) reorgPartitionDataAndIndex(t table.Table, reorgInfo *reorgInfo)
 	return nil
 }
 
-func bundlesForExchangeTablePartition(t *meta.Meta, job *model.Job, pt *model.TableInfo, newPar *model.PartitionDefinition, nt *model.TableInfo) ([]*placement.Bundle, error) {
+func bundlesForExchangeTablePartition(t *meta.Meta, pt *model.TableInfo, newPar *model.PartitionDefinition, nt *model.TableInfo) ([]*placement.Bundle, error) {
 	bundles := make([]*placement.Bundle, 0, 3)
 
 	ptBundle, err := placement.NewTableBundle(t, pt)
@@ -2980,19 +3112,26 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 	if rowCount != 0 {
 		return errors.Trace(dbterror.ErrRowDoesNotMatchPartition)
 	}
+	// Check warnings!
+	// Is it possible to check how many rows where checked as well?
 	return nil
 }
 
-func checkExchangePartitionPlacementPolicy(t *meta.Meta, ntPlacementPolicyRef *model.PolicyRefInfo, ptPlacementPolicyRef *model.PolicyRefInfo) error {
-	if ntPlacementPolicyRef == nil && ptPlacementPolicyRef == nil {
+func checkExchangePartitionPlacementPolicy(t *meta.Meta, ntPPRef, ptPPRef, partPPRef *model.PolicyRefInfo) error {
+	partitionPPRef := partPPRef
+	if partitionPPRef == nil {
+		partitionPPRef = ptPPRef
+	}
+
+	if ntPPRef == nil && partitionPPRef == nil {
 		return nil
 	}
-	if ntPlacementPolicyRef == nil || ptPlacementPolicyRef == nil {
+	if ntPPRef == nil || partitionPPRef == nil {
 		return dbterror.ErrTablesDifferentMetadata
 	}
 
-	ptPlacementPolicyInfo, _ := getPolicyInfo(t, ptPlacementPolicyRef.ID)
-	ntPlacementPolicyInfo, _ := getPolicyInfo(t, ntPlacementPolicyRef.ID)
+	ptPlacementPolicyInfo, _ := getPolicyInfo(t, partitionPPRef.ID)
+	ntPlacementPolicyInfo, _ := getPolicyInfo(t, ntPPRef.ID)
 	if ntPlacementPolicyInfo == nil && ptPlacementPolicyInfo == nil {
 		return nil
 	}
@@ -3015,13 +3154,13 @@ func buildCheckSQLForRangeExprPartition(pi *model.PartitionInfo, index int, sche
 		buf.WriteString("select 1 from %n.%n where ")
 		buf.WriteString(pi.Expr)
 		buf.WriteString(" >= %? limit 1")
-		paramList = append(paramList, schemaName.L, tableName.L, trimQuotation(pi.Definitions[index].LessThan[0]))
+		paramList = append(paramList, schemaName.L, tableName.L, driver.UnwrapFromSingleQuotes(pi.Definitions[index].LessThan[0]))
 		return buf.String(), paramList
 	} else if index == len(pi.Definitions)-1 && strings.EqualFold(pi.Definitions[index].LessThan[0], partitionMaxValue) {
 		buf.WriteString("select 1 from %n.%n where ")
 		buf.WriteString(pi.Expr)
 		buf.WriteString(" < %? limit 1")
-		paramList = append(paramList, schemaName.L, tableName.L, trimQuotation(pi.Definitions[index-1].LessThan[0]))
+		paramList = append(paramList, schemaName.L, tableName.L, driver.UnwrapFromSingleQuotes(pi.Definitions[index-1].LessThan[0]))
 		return buf.String(), paramList
 	} else {
 		buf.WriteString("select 1 from %n.%n where ")
@@ -3029,26 +3168,22 @@ func buildCheckSQLForRangeExprPartition(pi *model.PartitionInfo, index int, sche
 		buf.WriteString(" < %? or ")
 		buf.WriteString(pi.Expr)
 		buf.WriteString(" >= %? limit 1")
-		paramList = append(paramList, schemaName.L, tableName.L, trimQuotation(pi.Definitions[index-1].LessThan[0]), trimQuotation(pi.Definitions[index].LessThan[0]))
+		paramList = append(paramList, schemaName.L, tableName.L, driver.UnwrapFromSingleQuotes(pi.Definitions[index-1].LessThan[0]), driver.UnwrapFromSingleQuotes(pi.Definitions[index].LessThan[0]))
 		return buf.String(), paramList
 	}
-}
-
-func trimQuotation(str string) string {
-	return strings.Trim(str, "'")
 }
 
 func buildCheckSQLForRangeColumnsPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) (string, []interface{}) {
 	paramList := make([]interface{}, 0, 6)
 	colName := pi.Columns[0].L
 	if index == 0 {
-		paramList = append(paramList, schemaName.L, tableName.L, colName, trimQuotation(pi.Definitions[index].LessThan[0]))
+		paramList = append(paramList, schemaName.L, tableName.L, colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index].LessThan[0]))
 		return "select 1 from %n.%n where %n >= %? limit 1", paramList
 	} else if index == len(pi.Definitions)-1 && strings.EqualFold(pi.Definitions[index].LessThan[0], partitionMaxValue) {
-		paramList = append(paramList, schemaName.L, tableName.L, colName, trimQuotation(pi.Definitions[index-1].LessThan[0]))
+		paramList = append(paramList, schemaName.L, tableName.L, colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index-1].LessThan[0]))
 		return "select 1 from %n.%n where %n < %? limit 1", paramList
 	} else {
-		paramList = append(paramList, schemaName.L, tableName.L, colName, trimQuotation(pi.Definitions[index-1].LessThan[0]), colName, trimQuotation(pi.Definitions[index].LessThan[0]))
+		paramList = append(paramList, schemaName.L, tableName.L, colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index-1].LessThan[0]), colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index].LessThan[0]))
 		return "select 1 from %n.%n where %n < %? or %n >= %? limit 1", paramList
 	}
 }
@@ -3056,32 +3191,57 @@ func buildCheckSQLForRangeColumnsPartition(pi *model.PartitionInfo, index int, s
 func buildCheckSQLForListPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) (string, []interface{}) {
 	var buf strings.Builder
 	buf.WriteString("select 1 from %n.%n where ")
-	buf.WriteString(pi.Expr)
-	buf.WriteString(" not in (%?) limit 1")
-	inValues := getInValues(pi, index)
-
-	paramList := make([]interface{}, 0, 3)
-	paramList = append(paramList, schemaName.L, tableName.L, inValues)
+	buf.WriteString(" not (")
+	for i, inValue := range pi.Definitions[index].InValues {
+		if i != 0 {
+			buf.WriteString(" OR ")
+		}
+		// AND has higher priority than OR, so no need for parentheses
+		for j, val := range inValue {
+			if j != 0 {
+				// Should never happen, since there should be no multi-columns, only a single expression :)
+				buf.WriteString(" AND ")
+			}
+			// null-safe compare '<=>'
+			buf.WriteString(fmt.Sprintf("(%s) <=> %s", pi.Expr, val))
+		}
+	}
+	buf.WriteString(") limit 1")
+	paramList := make([]interface{}, 0, 2)
+	paramList = append(paramList, schemaName.L, tableName.L)
 	return buf.String(), paramList
 }
 
 func buildCheckSQLForListColumnsPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) (string, []interface{}) {
-	colName := pi.Columns[0].L
 	var buf strings.Builder
-	buf.WriteString("select 1 from %n.%n where %n not in (%?) limit 1")
-	inValues := getInValues(pi, index)
-
-	paramList := make([]interface{}, 0, 4)
-	paramList = append(paramList, schemaName.L, tableName.L, colName, inValues)
-	return buf.String(), paramList
-}
-
-func getInValues(pi *model.PartitionInfo, index int) []string {
-	inValues := make([]string, 0, len(pi.Definitions[index].InValues))
-	for _, inValue := range pi.Definitions[index].InValues {
-		inValues = append(inValues, inValue...)
+	// How to find a match?
+	// (row <=> vals1) OR (row <=> vals2)
+	// How to find a non-matching row:
+	// NOT ( (row <=> vals1) OR (row <=> vals2) ... )
+	buf.WriteString("select 1 from %n.%n where not (")
+	colNames := make([]string, 0, len(pi.Columns))
+	for i := range pi.Columns {
+		// TODO: check if there are no proper quoting function for this?
+		n := "`" + strings.ReplaceAll(pi.Columns[i].O, "`", "``") + "`"
+		colNames = append(colNames, n)
 	}
-	return inValues
+	for i, colValues := range pi.Definitions[index].InValues {
+		if i != 0 {
+			buf.WriteString(" OR ")
+		}
+		// AND has higher priority than OR, so no need for parentheses
+		for j, val := range colValues {
+			if j != 0 {
+				buf.WriteString(" AND ")
+			}
+			// null-safe compare '<=>'
+			buf.WriteString(fmt.Sprintf("%s <=> %s", colNames[j], val))
+		}
+	}
+	buf.WriteString(") limit 1")
+	paramList := make([]interface{}, 0, 2)
+	paramList = append(paramList, schemaName.L, tableName.L)
+	return buf.String(), paramList
 }
 
 func checkAddPartitionTooManyPartitions(piDefs uint64) error {

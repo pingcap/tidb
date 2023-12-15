@@ -19,6 +19,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/backup"
+	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/checksum"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
 
@@ -90,11 +92,12 @@ type BackupConfig struct {
 	CompressionConfig
 
 	// for ebs-based backup
-	FullBackupType      FullBackupType `json:"full-backup-type" toml:"full-backup-type"`
-	VolumeFile          string         `json:"volume-file" toml:"volume-file"`
-	SkipAWS             bool           `json:"skip-aws" toml:"skip-aws"`
-	CloudAPIConcurrency uint           `json:"cloud-api-concurrency" toml:"cloud-api-concurrency"`
-	ProgressFile        string         `json:"progress-file" toml:"progress-file"`
+	FullBackupType          FullBackupType `json:"full-backup-type" toml:"full-backup-type"`
+	VolumeFile              string         `json:"volume-file" toml:"volume-file"`
+	SkipAWS                 bool           `json:"skip-aws" toml:"skip-aws"`
+	CloudAPIConcurrency     uint           `json:"cloud-api-concurrency" toml:"cloud-api-concurrency"`
+	ProgressFile            string         `json:"progress-file" toml:"progress-file"`
+	SkipPauseGCAndScheduler bool           `json:"skip-pause-gc-and-scheduler" toml:"skip-pause-gc-and-scheduler"`
 }
 
 // DefineBackupFlags defines common flags for the backup command.
@@ -184,11 +187,6 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		cfg.UseCheckpoint = false
 		log.Info("since incremental backup is used, turn off checkpoint mode")
 	}
-	if cfg.UseBackupMetaV2 {
-		// TODO: compatible with backup meta v2, maybe just clean the meta files
-		cfg.UseCheckpoint = false
-		log.Info("since backup meta v2 is used, turn off checkpoint mode")
-	}
 	gcTTL, err := flags.GetInt64(flagGCTTL)
 	if err != nil {
 		return errors.Trace(err)
@@ -244,6 +242,10 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 			return errors.Trace(err)
 		}
 		cfg.ProgressFile, err = flags.GetString(flagProgressFile)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cfg.SkipPauseGCAndScheduler, err = flags.GetBool(flagOperatorPausedGCAndSchedulers)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -317,13 +319,36 @@ func (cfg *BackupConfig) Adjust() {
 	}
 }
 
+type immutableBackupConfig struct {
+	LastBackupTS  uint64 `json:"last-backup-ts"`
+	IgnoreStats   bool   `json:"ignore-stats"`
+	UseCheckpoint bool   `json:"use-checkpoint"`
+
+	storage.BackendOptions
+	Storage      string              `json:"storage"`
+	PD           []string            `json:"pd"`
+	SendCreds    bool                `json:"send-credentials-to-tikv"`
+	NoCreds      bool                `json:"no-credentials"`
+	FilterStr    []string            `json:"filter-strings"`
+	CipherInfo   backuppb.CipherInfo `json:"cipher"`
+	KeyspaceName string              `json:"keyspace-name"`
+}
+
 // a rough hash for checkpoint checker
 func (cfg *BackupConfig) Hash() ([]byte, error) {
-	config := &BackupConfig{
+	config := &immutableBackupConfig{
 		LastBackupTS:  cfg.LastBackupTS,
 		IgnoreStats:   cfg.IgnoreStats,
 		UseCheckpoint: cfg.UseCheckpoint,
-		Config:        cfg.Config,
+
+		BackendOptions: cfg.BackendOptions,
+		Storage:        cfg.Storage,
+		PD:             cfg.PD,
+		SendCreds:      cfg.SendCreds,
+		NoCreds:        cfg.NoCreds,
+		FilterStr:      cfg.FilterStr,
+		CipherInfo:     cfg.CipherInfo,
+		KeyspaceName:   cfg.KeyspaceName,
 	}
 	data, err := json.Marshal(config)
 	if err != nil {
@@ -632,7 +657,15 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		defer func() {
 			if !gcSafePointKeeperRemovable {
 				log.Info("wait for flush checkpoint...")
-				client.WaitForFinishCheckpoint(ctx)
+				client.WaitForFinishCheckpoint(ctx, true)
+			} else {
+				log.Info("start to remove checkpoint data for backup")
+				client.WaitForFinishCheckpoint(ctx, false)
+				if removeErr := checkpoint.RemoveCheckpointDataForBackup(ctx, client.GetStorage()); removeErr != nil {
+					log.Warn("failed to remove checkpoint data for backup", zap.Error(removeErr))
+				} else {
+					log.Info("the checkpoint data for backup is removed.")
+				}
 			}
 		}()
 	}
@@ -739,6 +772,21 @@ func ParseTSString(ts string, tzCheck bool) (uint64, error) {
 		return 0, errors.Trace(err)
 	}
 	return oracle.GoTimeToTS(t1), nil
+}
+
+func DefaultBackupConfig() BackupConfig {
+	fs := pflag.NewFlagSet("dummy", pflag.ContinueOnError)
+	DefineCommonFlags(fs)
+	DefineBackupFlags(fs)
+	cfg := BackupConfig{}
+	err := multierr.Combine(
+		cfg.ParseFromFlags(fs),
+		cfg.Config.ParseFromFlags(fs),
+	)
+	if err != nil {
+		log.Panic("infallible operation failed.", zap.Error(err))
+	}
+	return cfg
 }
 
 func parseCompressionType(s string) (backuppb.CompressionType, error) {

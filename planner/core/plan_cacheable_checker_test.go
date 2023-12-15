@@ -15,6 +15,9 @@
 package core_test
 
 import (
+	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/expression"
@@ -30,6 +33,82 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
+
+func TestFixControl44823(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int)`)
+	var va []string
+	for i := 0; i < 201; i++ {
+		tk.MustExec(fmt.Sprintf(`set @a%v = %v`, i, i))
+		va = append(va, fmt.Sprintf("@a%v", i))
+	}
+
+	// prepared plan cache
+	tk.MustExec(fmt.Sprintf(`prepare st from 'select * from t where a in (%v?)'`, strings.Repeat("?,", 200)))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip prepared plan-cache: too many values in in-list`))
+	tk.MustExec(fmt.Sprintf(`execute st using %v`, strings.Join(va, ",")))
+	tk.MustExec(fmt.Sprintf(`execute st using %v`, strings.Join(va, ",")))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+
+	tk.MustExec(`set @@tidb_opt_fix_control = "44823:250"`)
+	tk.MustExec(fmt.Sprintf(`prepare st from 'select * from t where a in (%v?)'`, strings.Repeat("?,", 200)))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+	tk.MustExec(fmt.Sprintf(`execute st using %v`, strings.Join(va, ",")))
+	tk.MustExec(fmt.Sprintf(`execute st using %v`, strings.Join(va, ",")))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can hit
+
+	tk.MustExec(`set @@tidb_opt_fix_control = "44823:0"`)
+	tk.MustExec(fmt.Sprintf(`prepare st from 'select * from t where a in (%v?)'`, strings.Repeat("?,", 200)))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+	tk.MustExec(fmt.Sprintf(`execute st using %v`, strings.Join(va, ",")))
+	tk.MustExec(fmt.Sprintf(`execute st using %v`, strings.Join(va, ",")))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	// non prepared plan cache
+	values := make([]string, 0, 201)
+	for i := 0; i < 201; i++ {
+		values = append(values, fmt.Sprintf("%v", i))
+	}
+	query := fmt.Sprintf("select * from t where a in (%v)", strings.Join(values, ","))
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+
+	tk.MustExec(`set @@tidb_opt_fix_control = ""`)
+	tk.MustQuery(query).Check(testkit.Rows())
+	tk.MustQuery(query).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+
+	tk.MustExec(`set @@tidb_opt_fix_control = "44823:250"`)
+	tk.MustQuery(query).Check(testkit.Rows())
+	tk.MustQuery(query).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`set @@tidb_opt_fix_control = "44823:0"`)
+	tk.MustQuery(query).Check(testkit.Rows())
+	tk.MustQuery(query).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
+func TestIssue46760(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`prepare st from 'select * from t where a<?'`)
+	tk.MustExec(`set @a=1`)
+	tk.MustQuery(`execute st using @a`).Check(testkit.Rows())
+	tk.MustQuery(`execute st using @a`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	ctx := context.WithValue(context.Background(), core.PlanCacheKeyTestIssue46760, struct{}{})
+	tk.MustExecWithContext(ctx, `prepare st from 'select * from t where a<?'`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: find table test.t failed: mock error"))
+	tk.MustExec(`set @a=1`)
+	tk.MustQuery(`execute st using @a`).Check(testkit.Rows())
+	tk.MustQuery(`execute st using @a`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+}
 
 func TestCacheable(t *testing.T) {
 	store := testkit.CreateMockStore(t)

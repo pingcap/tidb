@@ -70,6 +70,8 @@ import (
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"github.com/tikv/client-go/v2/testutils"
+	pd "github.com/tikv/pd/client"
 )
 
 const (
@@ -209,7 +211,7 @@ func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
 func (s *tableRestoreSuiteBase) setupTest(t *testing.T) {
 	// Collect into the test TableImporter structure
 	var err error
-	s.tr, err = NewTableImporter("`db`.`table`", s.tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
+	s.tr, err = NewTableImporter("`db`.`table`", s.tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, nil, log.L())
 	require.NoError(t, err)
 
 	s.cfg = config.NewConfig()
@@ -514,7 +516,7 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 	cfg.Mydumper.StrictFormat = true
 	rc := &Controller{cfg: cfg, ioWorkers: worker.NewPool(context.Background(), 1, "io"), store: store}
 
-	tr, err := NewTableImporter("`db`.`table`", tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
+	tr, err := NewTableImporter("`db`.`table`", tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, nil, log.L())
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), tr.populateChunks(context.Background(), rc, cp))
 
@@ -765,7 +767,7 @@ func (s *tableRestoreSuite) TestInitializeColumnsGenerated() {
 		require.NoError(s.T(), err)
 		core.State = model.StatePublic
 		tableInfo := &checkpoints.TidbTableInfo{Name: "table", DB: "db", Core: core}
-		s.tr, err = NewTableImporter("`db`.`table`", s.tableMeta, s.dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
+		s.tr, err = NewTableImporter("`db`.`table`", s.tableMeta, s.dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, nil, log.L())
 		require.NoError(s.T(), err)
 		ccp := &checkpoints.ChunkCheckpoint{}
 
@@ -803,6 +805,7 @@ func (s *tableRestoreSuite) TestCompareChecksumSuccess() {
 		WithArgs("10m").
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	mock.ExpectClose()
+	mock.ExpectClose()
 
 	ctx := MockDoChecksumCtx(db)
 	remoteChecksum, err := DoChecksum(ctx, s.tr.tableInfo)
@@ -833,7 +836,7 @@ func (s *tableRestoreSuite) TestCompareChecksumFailure() {
 		WithArgs("10m").
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	mock.ExpectClose()
-
+	mock.ExpectClose()
 	ctx := MockDoChecksumCtx(db)
 	remoteChecksum, err := DoChecksum(ctx, s.tr.tableInfo)
 	require.NoError(s.T(), err)
@@ -1161,6 +1164,8 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 	require.NoError(s.T(), err)
 	mockStore, err := storage.NewLocalStorage(dir)
 	require.NoError(s.T(), err)
+	_, _, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(s.T(), err)
 	for _, ca := range cases {
 		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			var err error
@@ -1177,16 +1182,18 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 
 		url := strings.TrimPrefix(server.URL, "https://")
 		cfg := &config.Config{TiDB: config.DBStore{PdAddr: url}}
+		pdCli := &mockPDClient{Client: pdClient, leaderAddr: url}
 		targetInfoGetter := &TargetInfoGetterImpl{
-			cfg: cfg,
-			tls: tls,
+			cfg:   cfg,
+			tls:   tls,
+			pdCli: pdCli,
 		}
 		preInfoGetter := &PreImportInfoGetterImpl{
 			cfg:              cfg,
 			targetInfoGetter: targetInfoGetter,
 			srcStorage:       mockStore,
 		}
-		theCheckBuilder := NewPrecheckItemBuilder(cfg, []*mydump.MDDatabaseMeta{}, preInfoGetter, nil)
+		theCheckBuilder := NewPrecheckItemBuilder(cfg, []*mydump.MDDatabaseMeta{}, preInfoGetter, nil, nil)
 		rc := &Controller{
 			cfg:                 cfg,
 			tls:                 tls,
@@ -1194,6 +1201,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 			checkTemplate:       template,
 			preInfoGetter:       preInfoGetter,
 			precheckItemBuilder: theCheckBuilder,
+			pdCli:               pdCli,
 		}
 		var sourceSize int64
 		err = rc.store.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
@@ -1230,6 +1238,15 @@ func (mockTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(ta
 	return err
 }
 
+type mockPDClient struct {
+	pd.Client
+	leaderAddr string
+}
+
+func (m *mockPDClient) GetLeaderAddr() string {
+	return m.leaderAddr
+}
+
 func (s *tableRestoreSuite) TestCheckClusterRegion() {
 	type testCase struct {
 		stores         pdtypes.StoresInfo
@@ -1245,6 +1262,8 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 		}
 		return regions
 	}
+	_, _, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(s.T(), err)
 
 	testCases := []testCase{
 		{
@@ -1320,10 +1339,12 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 
 		url := strings.TrimPrefix(server.URL, "https://")
 		cfg := &config.Config{TiDB: config.DBStore{PdAddr: url}}
+		pdCli := &mockPDClient{Client: pdClient, leaderAddr: url}
 
 		targetInfoGetter := &TargetInfoGetterImpl{
-			cfg: cfg,
-			tls: tls,
+			cfg:   cfg,
+			tls:   tls,
+			pdCli: pdCli,
 		}
 		dbMetas := []*mydump.MDDatabaseMeta{}
 		preInfoGetter := &PreImportInfoGetterImpl{
@@ -1331,7 +1352,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 			targetInfoGetter: targetInfoGetter,
 			dbMetas:          dbMetas,
 		}
-		theCheckBuilder := NewPrecheckItemBuilder(cfg, dbMetas, preInfoGetter, checkpoints.NewNullCheckpointsDB())
+		theCheckBuilder := NewPrecheckItemBuilder(cfg, dbMetas, preInfoGetter, checkpoints.NewNullCheckpointsDB(), nil)
 		rc := &Controller{
 			cfg:                 cfg,
 			tls:                 tls,
@@ -1340,6 +1361,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 			preInfoGetter:       preInfoGetter,
 			dbInfos:             make(map[string]*checkpoints.TidbDBInfo),
 			precheckItemBuilder: theCheckBuilder,
+			pdCli:               pdCli,
 		}
 
 		preInfoGetter.dbInfosCache = rc.dbInfos
@@ -1426,7 +1448,7 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV() {
 	for _, ca := range cases {
 		template := NewSimpleTemplate()
 		cfg := &config.Config{Mydumper: config.MydumperRuntime{StrictFormat: ca.strictFormat}}
-		theCheckBuilder := NewPrecheckItemBuilder(cfg, ca.dbMetas, nil, nil)
+		theCheckBuilder := NewPrecheckItemBuilder(cfg, ca.dbMetas, nil, nil, nil)
 		rc := &Controller{
 			cfg:                 cfg,
 			checkTemplate:       template,

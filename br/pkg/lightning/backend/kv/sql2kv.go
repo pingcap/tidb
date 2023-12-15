@@ -114,7 +114,7 @@ func CollectGeneratedColumns(se *Session, meta *model.TableInfo, cols []*table.C
 	var genCols []GeneratedCol
 	for i, col := range cols {
 		if col.GeneratedExpr != nil {
-			expr, err := expression.RewriteAstExpr(se, col.GeneratedExpr, schema, names, true)
+			expr, err := expression.RewriteAstExpr(se, col.GeneratedExpr.Internal(), schema, names, true)
 			if err != nil {
 				return nil, err
 			}
@@ -181,6 +181,11 @@ func Row2KvPairs(row encode.Row) []common.KvPair {
 // `columnPermutation` parameter.
 func (kvcodec *tableKVEncoder) Encode(row []types.Datum,
 	rowID int64, columnPermutation []int, _ int64) (encode.Row, error) {
+	// we ignore warnings when encoding rows now, but warnings uses the same memory as parser, since the input
+	// row []types.Datum share the same underlying buf, and when doing CastValue, we're using hack.String/hack.Slice.
+	// when generating error such as mysql.ErrDataOutOfRange, the data will be part of the error, causing the buf
+	// unable to release. So we truncate the warnings here.
+	defer kvcodec.TruncateWarns()
 	var value types.Datum
 	var err error
 

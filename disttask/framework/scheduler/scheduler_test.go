@@ -167,7 +167,8 @@ func TestSchedulerRollback(t *testing.T) {
 	// 1. no scheduler constructor
 	schedulerRegisterErr := errors.Errorf("constructor of scheduler for type %s not found", tp)
 	scheduler := NewInternalScheduler(ctx, "id", 1, mockSubtaskTable, mockPool)
-	err := scheduler.Rollback(runCtx, &proto.Task{Type: tp})
+	mockSubtaskTable.On("GetSubtaskInStates", "id", int64(1), []interface{}{proto.TaskStatePending, proto.TaskStateRunning}).Return(nil, nil).Once()
+	err := scheduler.Rollback(runCtx, &proto.Task{ID: 1, Type: tp})
 	require.EqualError(t, err, schedulerRegisterErr.Error())
 
 	RegisterSchedulerConstructor(tp, func(task []byte, step int64) (Scheduler, error) {
@@ -177,17 +178,20 @@ func TestSchedulerRollback(t *testing.T) {
 	// 2. get subtask failed
 	getSubtaskErr := errors.New("get subtask error")
 	var taskID int64 = 1
+	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStatePending, proto.TaskStateRunning}).Return(nil, nil).Once()
 	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStateRevertPending}).Return(nil, getSubtaskErr).Once()
 	err = scheduler.Rollback(runCtx, &proto.Task{Type: tp, ID: taskID})
 	require.EqualError(t, err, getSubtaskErr.Error())
 
 	// 3. no subtask
+	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStatePending, proto.TaskStateRunning}).Return(nil, nil).Once()
 	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStateRevertPending}).Return(nil, nil).Once()
 	err = scheduler.Rollback(runCtx, &proto.Task{Type: tp, ID: taskID})
 	require.NoError(t, err)
 
 	// 4. update subtask error
 	updateSubtaskErr := errors.New("update subtask error")
+	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStatePending, proto.TaskStateRunning}).Return(nil, nil).Once()
 	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStateRevertPending}).Return(&proto.Subtask{ID: 1}, nil).Once()
 	mockSubtaskTable.On("UpdateSubtaskStateAndError", taskID, proto.TaskStateReverting).Return(updateSubtaskErr).Once()
 	err = scheduler.Rollback(runCtx, &proto.Task{Type: tp, ID: taskID})
@@ -195,6 +199,7 @@ func TestSchedulerRollback(t *testing.T) {
 
 	// rollback failed
 	rollbackErr := errors.New("rollback error")
+	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStatePending, proto.TaskStateRunning}).Return(nil, nil).Once()
 	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStateRevertPending}).Return(&proto.Subtask{ID: 1}, nil).Once()
 	mockSubtaskTable.On("UpdateSubtaskStateAndError", taskID, proto.TaskStateReverting).Return(nil).Once()
 	mockScheduler.On("Rollback", mock.Anything).Return(rollbackErr).Once()
@@ -203,10 +208,15 @@ func TestSchedulerRollback(t *testing.T) {
 	require.EqualError(t, err, rollbackErr.Error())
 
 	// rollback success
-	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStateRevertPending}).Return(&proto.Subtask{ID: 1}, nil).Once()
-	mockSubtaskTable.On("UpdateSubtaskStateAndError", taskID, proto.TaskStateReverting).Return(nil).Once()
+	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStatePending, proto.TaskStateRunning}).Return(&proto.Subtask{ID: 1}, nil).Once()
+	mockSubtaskTable.On("UpdateSubtaskStateAndError", int64(1), proto.TaskStateCanceled).Return(nil).Once()
+	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStatePending, proto.TaskStateRunning}).Return(&proto.Subtask{ID: 2}, nil).Once()
+	mockSubtaskTable.On("UpdateSubtaskStateAndError", int64(2), proto.TaskStateCanceled).Return(nil).Once()
+	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStatePending, proto.TaskStateRunning}).Return(nil, nil).Once()
+	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStateRevertPending}).Return(&proto.Subtask{ID: 3}, nil).Once()
+	mockSubtaskTable.On("UpdateSubtaskStateAndError", int64(3), proto.TaskStateReverting).Return(nil).Once()
 	mockScheduler.On("Rollback", mock.Anything).Return(nil).Once()
-	mockSubtaskTable.On("UpdateSubtaskStateAndError", taskID, proto.TaskStateReverted).Return(nil).Once()
+	mockSubtaskTable.On("UpdateSubtaskStateAndError", int64(3), proto.TaskStateReverted).Return(nil).Once()
 	err = scheduler.Rollback(runCtx, &proto.Task{Type: tp, ID: taskID})
 	require.NoError(t, err)
 
@@ -253,6 +263,7 @@ func TestScheduler(t *testing.T) {
 	require.EqualError(t, err, runSubtaskErr.Error())
 
 	// rollback success
+	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStatePending, proto.TaskStateRunning}).Return(nil, nil).Once()
 	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStateRevertPending}).Return(&proto.Subtask{ID: 1}, nil).Once()
 	mockSubtaskTable.On("UpdateSubtaskStateAndError", taskID, proto.TaskStateReverting).Return(nil).Once()
 	mockScheduler.On("Rollback", mock.Anything).Return(nil).Once()

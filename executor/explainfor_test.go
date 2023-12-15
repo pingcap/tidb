@@ -40,8 +40,8 @@ func TestExplainFor(t *testing.T) {
 	tkRoot.MustExec("create table t1(c1 int, c2 int)")
 	tkRoot.MustExec("create table t2(c1 int, c2 int)")
 	tkRoot.MustExec("create user tu@'%'")
-	tkRoot.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
-	tkUser.Session().Auth(&auth.UserIdentity{Username: "tu", Hostname: "localhost", CurrentUser: true, AuthUsername: "tu", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	tkRoot.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
+	tkUser.Session().Auth(&auth.UserIdentity{Username: "tu", Hostname: "localhost", CurrentUser: true, AuthUsername: "tu", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 
 	tkRoot.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tkRoot.MustQuery("select * from t1;")
@@ -441,7 +441,7 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 	tmp := testkit.NewTestKit(t, store)
 	tmp.MustExec("set tidb_enable_prepared_plan_cache=ON")
 	tk := testkit.NewTestKit(t, store)
-	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
@@ -462,12 +462,11 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
-		`Projection_9 1.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
-		`└─MergeJoin_10 1.00 root  inner join, left key:test.t2.a, right key:test.t1.a`,
-		`  ├─TableReader_41(Build) 10.00 root  data:TableRangeScan_40`,
-		`  │ └─TableRangeScan_40 10.00 cop[tikv] table:t1 range:[1,1], keep order:true, stats:pseudo`,
-		`  └─Selection_39(Probe) 0.80 root  not(isnull(test.t2.a))`,
-		`    └─Point_Get_38 1.00 root table:t2, index:idx_a(a) `))
+		`Projection_9 10.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
+		`└─HashJoin_11 10.00 root  CARTESIAN inner join`,
+		`  ├─Point_Get_12(Build) 1.00 root table:t2, index:idx_a(a) `, // use idx_a
+		`  └─TableReader_14(Probe) 10.00 root  data:TableRangeScan_13`,
+		`    └─TableRangeScan_13 10.00 cop[tikv] table:t1 range:[1,1], keep order:false, stats:pseudo`))
 
 	tk.MustExec("set @a=2")
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
@@ -477,12 +476,11 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
-		`Projection_9 1.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
-		`└─MergeJoin_10 1.00 root  inner join, left key:test.t2.a, right key:test.t1.a`,
-		`  ├─TableReader_41(Build) 10.00 root  data:TableRangeScan_40`,
-		`  │ └─TableRangeScan_40 10.00 cop[tikv] table:t1 range:[2,2], keep order:true, stats:pseudo`,
-		`  └─Selection_39(Probe) 0.80 root  not(isnull(test.t2.a))`,
-		`    └─Point_Get_38 1.00 root table:t2, index:idx_a(a) `))
+		`Projection_9 10.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
+		`└─HashJoin_11 10.00 root  CARTESIAN inner join`,
+		`  ├─Point_Get_12(Build) 1.00 root table:t2, index:idx_a(a) `,
+		`  └─TableReader_14(Probe) 10.00 root  data:TableRangeScan_13`,
+		`    └─TableRangeScan_13 10.00 cop[tikv] table:t1 range:[2,2], keep order:false, stats:pseudo`))
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
 		"2 4 2 2",
 	))
@@ -1237,9 +1235,9 @@ func TestCTE4PlanCache(t *testing.T) {
 	tk.MustExec("set @a=5, @b=4, @c=2, @d=1;")
 	tk.MustQuery("execute stmt using @d, @a").Check(testkit.Rows("1", "2", "3", "4", "5"))
 	tk.MustQuery("execute stmt using @d, @b").Check(testkit.Rows("1", "2", "3", "4"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 	tk.MustQuery("execute stmt using @c, @b").Check(testkit.Rows("2", "3", "4"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 
 	// Two seed parts.
 	tk.MustExec("prepare stmt from 'with recursive cte1 as (" +
@@ -1252,7 +1250,7 @@ func TestCTE4PlanCache(t *testing.T) {
 	tk.MustExec("set @a=10, @b=2;")
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1", "2", "2", "3", "3", "4", "4", "5", "5", "6", "6", "7", "7", "8", "8", "9", "9", "10", "10"))
 	tk.MustQuery("execute stmt using @b").Check(testkit.Rows("1", "2", "2"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 
 	// Two recursive parts.
 	tk.MustExec("prepare stmt from 'with recursive cte1 as (" +
@@ -1267,25 +1265,27 @@ func TestCTE4PlanCache(t *testing.T) {
 	tk.MustExec("set @a=1, @b=2, @c=3, @d=4, @e=5;")
 	tk.MustQuery("execute stmt using @c, @b, @e;").Check(testkit.Rows("1", "2", "2", "3", "3", "3", "4", "4", "5", "5", "5", "6", "6"))
 	tk.MustQuery("execute stmt using @b, @a, @d;").Check(testkit.Rows("1", "2", "2", "2", "3", "3", "3", "4", "4", "4"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(a int);")
 	tk.MustExec("insert into t1 values(1);")
 	tk.MustExec("insert into t1 values(2);")
 	tk.MustExec("prepare stmt from 'SELECT * FROM t1 dt WHERE EXISTS(WITH RECURSIVE qn AS (SELECT a*? AS b UNION ALL SELECT b+? FROM qn WHERE b=?) SELECT * FROM qn WHERE b=a);';")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: find table test.qn failed: [schema:1146]Table 'test.qn' doesn't exist"))
 	tk.MustExec("set @a=1, @b=2, @c=3, @d=4, @e=5, @f=0;")
 
 	tk.MustQuery("execute stmt using @f, @a, @f").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt using @a, @b, @a").Sort().Check(testkit.Rows("1", "2"))
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 	tk.MustQuery("execute stmt using @a, @b, @a").Sort().Check(testkit.Rows("1", "2"))
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: PhysicalApply plan is un-cacheable"))
+	//tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: PhysicalApply plan is un-cacheable"))
 
 	tk.MustExec("prepare stmt from 'with recursive c(p) as (select ?), cte(a, b) as (select 1, 1 union select a+?, 1 from cte, c where a < ?)  select * from cte order by 1, 2;';")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: find table test.cte failed: [schema:1146]Table 'test.cte' doesn't exist"))
 	tk.MustQuery("execute stmt using @a, @a, @e;").Check(testkit.Rows("1 1", "2 1", "3 1", "4 1", "5 1"))
 	tk.MustQuery("execute stmt using @b, @b, @c;").Check(testkit.Rows("1 1", "3 1"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 }
 
 func TestValidity4PlanCache(t *testing.T) {

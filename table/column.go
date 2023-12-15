@@ -46,9 +46,37 @@ import (
 type Column struct {
 	*model.ColumnInfo
 	// If this column is a generated column, the expression will be stored here.
-	GeneratedExpr ast.ExprNode
+	GeneratedExpr *ClonableExprNode
 	// If this column has default expr value, this expression will be stored here.
 	DefaultExpr ast.ExprNode
+}
+
+// ClonableExprNode is a wrapper for ast.ExprNode.
+type ClonableExprNode struct {
+	ctor     func() ast.ExprNode
+	internal ast.ExprNode
+}
+
+// NewClonableExprNode creates a ClonableExprNode.
+func NewClonableExprNode(ctor func() ast.ExprNode, internal ast.ExprNode) *ClonableExprNode {
+	return &ClonableExprNode{
+		ctor:     ctor,
+		internal: internal,
+	}
+}
+
+// Clone makes a "copy" of internal ast.ExprNode by reconstructing it.
+func (n *ClonableExprNode) Clone() ast.ExprNode {
+	if n.ctor == nil {
+		return n.internal
+	}
+	return n.ctor()
+}
+
+// Internal returns the reference of the internal ast.ExprNode.
+// Note: only use this method when you are sure that the internal ast.ExprNode is not modified concurrently.
+func (n *ClonableExprNode) Internal() ast.ExprNode {
+	return n.internal
 }
 
 // String implements fmt.Stringer interface.
@@ -485,16 +513,27 @@ func (c *Column) IsCommonHandleColumn(tbInfo *model.TableInfo) bool {
 	return mysql.HasPriKeyFlag(c.GetFlag()) && tbInfo.IsCommonHandle
 }
 
+type getColOriginDefaultValue struct {
+	StrictSQLMode bool
+}
+
 // GetColOriginDefaultValue gets default value of the column from original default value.
 func GetColOriginDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
-	return getColDefaultValue(ctx, col, col.GetOriginDefaultValue())
+	return getColDefaultValue(ctx, col, col.GetOriginDefaultValue(), nil)
+}
+
+// GetColOriginDefaultValueWithoutStrictSQLMode gets default value of the column from original default value with Strict SQL mode.
+func GetColOriginDefaultValueWithoutStrictSQLMode(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
+	return getColDefaultValue(ctx, col, col.GetOriginDefaultValue(), &getColOriginDefaultValue{
+		StrictSQLMode: false,
+	})
 }
 
 // GetColDefaultValue gets default value of the column.
 func GetColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
 	defaultValue := col.GetDefaultValue()
 	if !col.DefaultIsExpr {
-		return getColDefaultValue(ctx, col, defaultValue)
+		return getColDefaultValue(ctx, col, defaultValue, nil)
 	}
 	return getColDefaultExprValue(ctx, col, defaultValue.(string))
 }
@@ -532,9 +571,9 @@ func getColDefaultExprValue(ctx sessionctx.Context, col *model.ColumnInfo, defau
 	return value, nil
 }
 
-func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVal interface{}) (types.Datum, error) {
+func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVal interface{}, args *getColOriginDefaultValue) (types.Datum, error) {
 	if defaultVal == nil {
-		return getColDefaultValueFromNil(ctx, col)
+		return getColDefaultValueFromNil(ctx, col, args)
 	}
 
 	switch col.GetType() {
@@ -577,7 +616,7 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 	return value, nil
 }
 
-func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
+func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo, args *getColOriginDefaultValue) (types.Datum, error) {
 	if !mysql.HasNotNullFlag(col.GetFlag()) && !mysql.HasNoDefaultValueFlag(col.GetFlag()) {
 		return types.Datum{}, nil
 	}
@@ -599,7 +638,13 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (t
 	}
 	vars := ctx.GetSessionVars()
 	sc := vars.StmtCtx
-	if !vars.StrictSQLMode {
+	var strictSQLMode bool
+	if args != nil {
+		strictSQLMode = args.StrictSQLMode
+	} else {
+		strictSQLMode = vars.StrictSQLMode
+	}
+	if !strictSQLMode {
 		sc.AppendWarning(ErrNoDefaultValue.FastGenByArgs(col.Name))
 		if mysql.HasNotNullFlag(col.GetFlag()) {
 			return GetZeroValue(col), nil

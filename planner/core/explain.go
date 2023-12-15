@@ -183,10 +183,11 @@ func (p *PhysicalTableScan) ExplainNormalizedInfo() string {
 func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	var buffer strings.Builder
 	if len(p.rangeInfo) > 0 {
-		// TODO: deal with normalized case
-		buffer.WriteString("range: decided by ")
-		buffer.WriteString(p.rangeInfo)
-		buffer.WriteString(", ")
+		if !normalized {
+			buffer.WriteString("range: decided by ")
+			buffer.WriteString(p.rangeInfo)
+			buffer.WriteString(", ")
+		}
 	} else if p.haveCorCol() {
 		if normalized {
 			buffer.WriteString("range: decided by ")
@@ -215,11 +216,11 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	}
 	if p.ctx.GetSessionVars().EnableLateMaterialization && len(p.filterCondition) > 0 && p.StoreType == kv.TiFlash {
 		buffer.WriteString("pushed down filter:")
-		if len(p.lateMaterializationFilterCondition) > 0 {
+		if len(p.LateMaterializationFilterCondition) > 0 {
 			if normalized {
-				buffer.Write(expression.SortedExplainNormalizedExpressionList(p.lateMaterializationFilterCondition))
+				buffer.Write(expression.SortedExplainNormalizedExpressionList(p.LateMaterializationFilterCondition))
 			} else {
-				buffer.Write(expression.SortedExplainExpressionList(p.lateMaterializationFilterCondition))
+				buffer.Write(expression.SortedExplainExpressionList(p.LateMaterializationFilterCondition))
 			}
 		} else {
 			buffer.WriteString("empty")

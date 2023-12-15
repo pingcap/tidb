@@ -17,6 +17,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -108,6 +109,7 @@ type executorBuilder struct {
 type CTEStorages struct {
 	ResTbl    cteutil.Storage
 	IterInTbl cteutil.Storage
+	Producer  *cteProducer
 }
 
 func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo) *executorBuilder {
@@ -206,6 +208,10 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildSelectLock(v)
 	case *plannercore.CancelDDLJobs:
 		return b.buildCancelDDLJobs(v)
+	case *plannercore.PauseDDLJobs:
+		return b.buildPauseDDLJobs(v)
+	case *plannercore.ResumeDDLJobs:
+		return b.buildResumeDDLJobs(v)
 	case *plannercore.ShowNextRowID:
 		return b.buildShowNextRowID(v)
 	case *plannercore.ShowDDL:
@@ -310,8 +316,33 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 
 func (b *executorBuilder) buildCancelDDLJobs(v *plannercore.CancelDDLJobs) Executor {
 	e := &CancelDDLJobsExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		jobIDs:       v.JobIDs,
+		CommandDDLJobsExec: &CommandDDLJobsExec{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+			jobIDs:       v.JobIDs,
+			execute:      ddl.CancelJobs,
+		},
+	}
+	return e
+}
+
+func (b *executorBuilder) buildPauseDDLJobs(v *plannercore.PauseDDLJobs) Executor {
+	e := &PauseDDLJobsExec{
+		CommandDDLJobsExec: &CommandDDLJobsExec{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+			jobIDs:       v.JobIDs,
+			execute:      ddl.PauseJobs,
+		},
+	}
+	return e
+}
+
+func (b *executorBuilder) buildResumeDDLJobs(v *plannercore.ResumeDDLJobs) Executor {
+	e := &ResumeDDLJobsExec{
+		CommandDDLJobsExec: &CommandDDLJobsExec{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+			jobIDs:       v.JobIDs,
+			execute:      ddl.ResumeJobs,
+		},
 	}
 	return e
 }
@@ -724,7 +755,7 @@ func (b *executorBuilder) buildLimit(v *plannercore.PhysicalLimit) Executor {
 		end:          v.Offset + v.Count,
 	}
 
-	childUsedSchema := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema())[0]
+	childUsedSchema := markChildrenUsedCols(v.Schema().Columns, v.Children()[0].Schema())[0]
 	e.columnIdxsUsedByChild = make([]int, 0, len(childUsedSchema))
 	for i, used := range childUsedSchema {
 		if used {
@@ -1387,6 +1418,11 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 		}
 	}
 
+	colsFromChildren := v.Schema().Columns
+	if v.JoinType == plannercore.LeftOuterSemiJoin || v.JoinType == plannercore.AntiLeftOuterSemiJoin {
+		colsFromChildren = colsFromChildren[:len(colsFromChildren)-1]
+	}
+
 	e := &MergeJoinExec{
 		stmtCtx:      b.ctx.GetSessionVars().StmtCtx,
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), leftExec, rightExec),
@@ -1399,7 +1435,7 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 			v.OtherConditions,
 			retTypes(leftExec),
 			retTypes(rightExec),
-			markChildrenUsedCols(v.Schema(), v.Children()[0].Schema(), v.Children()[1].Schema()),
+			markChildrenUsedCols(colsFromChildren, v.Children()[0].Schema(), v.Children()[1].Schema()),
 			false,
 		),
 		isOuterJoin: v.JoinType.IsOuterJoin(),
@@ -1528,7 +1564,11 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		probeNAKeColIdx[i] = probeNAKeys[i].Index
 	}
 	isNAJoin := len(v.LeftNAJoinKeys) > 0
-	childrenUsedSchema := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema(), v.Children()[1].Schema())
+	colsFromChildren := v.Schema().Columns
+	if v.JoinType == plannercore.LeftOuterSemiJoin || v.JoinType == plannercore.AntiLeftOuterSemiJoin {
+		colsFromChildren = colsFromChildren[:len(colsFromChildren)-1]
+	}
+	childrenUsedSchema := markChildrenUsedCols(colsFromChildren, v.Children()[0].Schema(), v.Children()[1].Schema())
 	for i := uint(0); i < e.concurrency; i++ {
 		e.probeWorkers[i] = &probeWorker{
 			hashJoinCtx:      e.hashJoinCtx,
@@ -2560,32 +2600,36 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		modifyCount = int64(val.(int))
 	})
 	sampleRate := new(float64)
+	var sampleRateReason string
 	if opts[ast.AnalyzeOptNumSamples] == 0 {
 		*sampleRate = math.Float64frombits(opts[ast.AnalyzeOptSampleRate])
 		if *sampleRate < 0 {
-			*sampleRate = b.getAdjustedSampleRate(b.ctx, task)
+			*sampleRate, sampleRateReason = b.getAdjustedSampleRate(b.ctx, task)
 			if task.PartitionName != "" {
 				sc.AppendNote(errors.Errorf(
-					"Analyze use auto adjusted sample rate %f for table %s.%s's partition %s",
+					`Analyze use auto adjusted sample rate %f for table %s.%s's partition %s, reason to use this rate is "%s"`,
 					*sampleRate,
 					task.DBName,
 					task.TableName,
 					task.PartitionName,
+					sampleRateReason,
 				))
 			} else {
 				sc.AppendNote(errors.Errorf(
-					"Analyze use auto adjusted sample rate %f for table %s.%s",
+					`Analyze use auto adjusted sample rate %f for table %s.%s, reason to use this rate is "%s"`,
 					*sampleRate,
 					task.DBName,
 					task.TableName,
+					sampleRateReason,
 				))
 			}
 		}
 	}
 	job := &statistics.AnalyzeJob{
-		DBName:        task.DBName,
-		TableName:     task.TableName,
-		PartitionName: task.PartitionName,
+		DBName:           task.DBName,
+		TableName:        task.TableName,
+		PartitionName:    task.PartitionName,
+		SampleRateReason: sampleRateReason,
 	}
 
 	base := baseAnalyzeExec{
@@ -2642,11 +2686,11 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 // If we take n = 1e12, a 300*k sample still gives <= 0.66 bin size error with probability 0.99.
 // So if we don't consider the top-n values, we can keep the sample size at 300*256.
 // But we may take some top-n before building the histogram, so we increase the sample a little.
-func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, task plannercore.AnalyzeColumnsTask) float64 {
-	statsHandle := domain.GetDomain(sctx).StatsHandle()
+func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, task plannercore.AnalyzeColumnsTask) (sampleRate float64, reason string) {
+	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
 	defaultRate := 0.001
 	if statsHandle == nil {
-		return defaultRate
+		return defaultRate, fmt.Sprintf("statsHandler is nil, use the default-rate=%v", defaultRate)
 	}
 	var statsTbl *statistics.Table
 	tid := task.TableID.GetStatisticsID()
@@ -2658,11 +2702,11 @@ func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, task pl
 	approxiCount, hasPD := b.getApproximateTableCountFromStorage(sctx, tid, task)
 	// If there's no stats meta and no pd, return the default rate.
 	if statsTbl == nil && !hasPD {
-		return defaultRate
+		return defaultRate, fmt.Sprintf("TiDB cannot get the row count of the table, use the default-rate=%v", defaultRate)
 	}
 	// If the count in stats_meta is still 0 and there's no information from pd side, we scan all rows.
 	if statsTbl.RealtimeCount == 0 && !hasPD {
-		return 1
+		return 1, "TiDB assumes that the table is empty and cannot get row count from PD, use sample-rate=1"
 	}
 	// we have issue https://github.com/pingcap/tidb/issues/29216.
 	// To do a workaround for this issue, we check the approxiCount from the pd side to do a comparison.
@@ -2671,15 +2715,17 @@ func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, task pl
 	if float64(statsTbl.RealtimeCount*5) < approxiCount {
 		// Confirmed by TiKV side, the experience error rate of the approximate count is about 20%.
 		// So we increase the number to 150000 to reduce this error rate.
-		return math.Min(1, 150000/approxiCount)
+		sampleRate = math.Min(1, 150000/approxiCount)
+		return sampleRate, fmt.Sprintf("Row count in stats_meta is much smaller compared with the row count got by PD, use min(1, 15000/%v) as the sample-rate=%v", approxiCount, sampleRate)
 	}
 	// If we don't go into the above if branch and we still detect the count is zero. Return 1 to prevent the dividing zero.
 	if statsTbl.RealtimeCount == 0 {
-		return 1
+		return 1, "TiDB assumes that the table is empty, use sample-rate=1"
 	}
 	// We are expected to scan about 100000 rows or so.
 	// Since there's tiny error rate around the count from the stats meta, we use 110000 to get a little big result
-	return math.Min(1, config.DefRowsForSampleRate/float64(statsTbl.RealtimeCount))
+	sampleRate = math.Min(1, config.DefRowsForSampleRate/float64(statsTbl.RealtimeCount))
+	return sampleRate, fmt.Sprintf("use min(1, %v/%v) as the sample-rate=%v", config.DefRowsForSampleRate, statsTbl.RealtimeCount, sampleRate)
 }
 
 func (b *executorBuilder) getApproximateTableCountFromStorage(sctx sessionctx.Context, tid int64, task plannercore.AnalyzeColumnsTask) (float64, bool) {
@@ -3009,10 +3055,22 @@ func constructDistExec(sctx sessionctx.Context, plans []plannercore.PhysicalPlan
 
 // markChildrenUsedCols compares each child with the output schema, and mark
 // each column of the child is used by output or not.
-func markChildrenUsedCols(outputSchema *expression.Schema, childSchema ...*expression.Schema) (childrenUsed [][]bool) {
-	for _, child := range childSchema {
-		used := expression.GetUsedList(outputSchema.Columns, child)
+func markChildrenUsedCols(outputCols []*expression.Column, childSchemas ...*expression.Schema) (childrenUsed [][]bool) {
+	childrenUsed = make([][]bool, 0, len(childSchemas))
+	markedOffsets := make(map[int]struct{})
+	for _, col := range outputCols {
+		markedOffsets[col.Index] = struct{}{}
+	}
+	prefixLen := 0
+	for _, childSchema := range childSchemas {
+		used := make([]bool, len(childSchema.Columns))
+		for i := range childSchema.Columns {
+			if _, ok := markedOffsets[prefixLen+i]; ok {
+				used[i] = true
+			}
+		}
 		childrenUsed = append(childrenUsed, used)
+		prefixLen += childSchema.Len()
 	}
 	return
 }
@@ -3045,13 +3103,18 @@ func constructDAGReq(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, s
 
 func (b *executorBuilder) corColInDistPlan(plans []plannercore.PhysicalPlan) bool {
 	for _, p := range plans {
-		x, ok := p.(*plannercore.PhysicalSelection)
-		if !ok {
-			continue
-		}
-		for _, cond := range x.Conditions {
-			if len(expression.ExtractCorColumns(cond)) > 0 {
-				return true
+		switch x := p.(type) {
+		case *plannercore.PhysicalSelection:
+			for _, cond := range x.Conditions {
+				if len(expression.ExtractCorColumns(cond)) > 0 {
+					return true
+				}
+			}
+		case *plannercore.PhysicalTableScan:
+			for _, cond := range x.LateMaterializationFilterCondition {
+				if len(expression.ExtractCorColumns(cond)) > 0 {
+					return true
+				}
 			}
 		}
 	}
@@ -3190,7 +3253,11 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		lastColHelper: v.CompareFilters,
 		finished:      &atomic.Value{},
 	}
-	childrenUsedSchema := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema(), v.Children()[1].Schema())
+	colsFromChildren := v.Schema().Columns
+	if v.JoinType == plannercore.LeftOuterSemiJoin || v.JoinType == plannercore.AntiLeftOuterSemiJoin {
+		colsFromChildren = colsFromChildren[:len(colsFromChildren)-1]
+	}
+	childrenUsedSchema := markChildrenUsedCols(colsFromChildren, v.Children()[0].Schema(), v.Children()[1].Schema())
 	e.joiner = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes, childrenUsedSchema, false)
 	outerKeyCols := make([]int, len(v.OuterJoinKeys))
 	for i := 0; i < len(v.OuterJoinKeys); i++ {
@@ -3312,7 +3379,11 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 		keyOff2IdxOff: v.KeyOff2IdxOff,
 		lastColHelper: v.CompareFilters,
 	}
-	childrenUsedSchema := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema(), v.Children()[1].Schema())
+	colsFromChildren := v.Schema().Columns
+	if v.JoinType == plannercore.LeftOuterSemiJoin || v.JoinType == plannercore.AntiLeftOuterSemiJoin {
+		colsFromChildren = colsFromChildren[:len(colsFromChildren)-1]
+	}
+	childrenUsedSchema := markChildrenUsedCols(colsFromChildren, v.Children()[0].Schema(), v.Children()[1].Schema())
 	joiners := make([]joiner, e.ctx.GetSessionVars().IndexLookupJoinConcurrency())
 	for i := 0; i < len(joiners); i++ {
 		joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes, childrenUsedSchema, false)
@@ -3643,6 +3714,9 @@ func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table
 			locateKey[keyColOffsets[i]] = data
 		}
 		p, err := partitionTbl.GetPartitionByRow(builder.ctx, locateKey)
+		if table.ErrNoPartitionForGivenValue.Equal(err) {
+			continue
+		}
 		if err != nil {
 			return nil, false, nil, err
 		}
@@ -3811,20 +3885,24 @@ func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleL
 	}
 
 	indexReq.OutputOffsets = []uint32{}
-	if len(plans[0].(*plannercore.PhysicalIndexScan).ByItems) != 0 {
-		idxScan := plans[0].(*plannercore.PhysicalIndexScan)
-		tblInfo := idxScan.Table
+	idxScan := plans[0].(*plannercore.PhysicalIndexScan)
+	if len(idxScan.ByItems) != 0 {
+		schema := idxScan.Schema()
 		for _, item := range idxScan.ByItems {
 			c, ok := item.Expr.(*expression.Column)
 			if !ok {
 				return nil, errors.Errorf("Not support non-column in orderBy pushed down")
 			}
-			column := model.FindColumnInfoByID(tblInfo.Columns, c.ID)
-			for i, idxColumn := range columns {
-				if idxColumn.Name.L == column.Name.L {
+			find := false
+			for i, schemaColumn := range schema.Columns {
+				if schemaColumn.ID == c.ID {
 					indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(i))
+					find = true
 					break
 				}
+			}
+			if !find {
+				return nil, errors.Errorf("Not found order by related columns in indexScan.schema")
 			}
 		}
 	}
@@ -4278,6 +4356,9 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 					locateKey[keyColOffsets[i]] = data
 				}
 				p, err := pt.GetPartitionByRow(e.ctx, locateKey)
+				if table.ErrNoPartitionForGivenValue.Equal(err) {
+					continue
+				}
 				if err != nil {
 					return nil, err
 				}
@@ -4322,6 +4403,9 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 				locateKey[keyColOffsets[i]] = data
 			}
 			p, err := pt.GetPartitionByRow(e.ctx, locateKey)
+			if table.ErrNoPartitionForGivenValue.Equal(err) {
+				continue
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -4714,7 +4798,7 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 		memTracker.Consume(int64(2 * cap(kvRanges[0].StartKey) * len(kvRanges)))
 	}
 	if len(tmpDatumRanges) != 0 && memTracker != nil {
-		memTracker.Consume(2 * int64(len(tmpDatumRanges)) * types.EstimatedMemUsage(tmpDatumRanges[0].LowVal, len(tmpDatumRanges)))
+		memTracker.Consume(2 * types.EstimatedMemUsage(tmpDatumRanges[0].LowVal, len(tmpDatumRanges)))
 	}
 	if cwc == nil {
 		slices.SortFunc(kvRanges, func(i, j kv.KeyRange) bool {
@@ -5069,16 +5153,22 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		// `SELECT a FROM t WHERE a IN (1, 1, 2, 1, 2)` should not return duplicated rows
 		handles := make([]kv.Handle, 0, len(plan.Handles))
 		dedup := kv.NewHandleMap()
+		// Used for clear paritionIDs of duplicated rows.
+		dupPartPos := 0
 		if plan.IndexInfo == nil {
-			for _, handle := range plan.Handles {
+			for idx, handle := range plan.Handles {
 				if _, found := dedup.Get(handle); found {
 					continue
 				}
 				dedup.Set(handle, true)
 				handles = append(handles, handle)
+				if len(plan.PartitionIDs) > 0 {
+					e.planPhysIDs[dupPartPos] = e.planPhysIDs[idx]
+					dupPartPos++
+				}
 			}
 		} else {
-			for _, value := range plan.IndexValues {
+			for idx, value := range plan.IndexValues {
 				if datumsContainNull(value) {
 					continue
 				}
@@ -5100,9 +5190,16 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 				}
 				dedup.Set(handle, true)
 				handles = append(handles, handle)
+				if len(plan.PartitionIDs) > 0 {
+					e.planPhysIDs[dupPartPos] = e.planPhysIDs[idx]
+					dupPartPos++
+				}
 			}
 		}
 		e.handles = handles
+		if dupPartPos > 0 {
+			e.planPhysIDs = e.planPhysIDs[:dupPartPos]
+		}
 		capacity = len(e.handles)
 	}
 	e.base().initCap = capacity
@@ -5259,33 +5356,44 @@ func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *
 }
 
 func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
-	// 1. Build seedPlan.
 	if b.Ti != nil {
 		b.Ti.UseNonRecursive = true
 	}
-	seedExec := b.build(v.SeedPlan)
-	if b.err != nil {
-		return nil
+	if v.RecurPlan != nil && b.Ti != nil {
+		b.Ti.UseRecursive = true
 	}
-
-	// 2. Build tables to store intermediate results.
-	chkSize := b.ctx.GetSessionVars().MaxChunkSize
-	tps := seedExec.base().retFieldTypes
-	// iterOutTbl will be constructed in CTEExec.Open().
-	var resTbl cteutil.Storage
-	var iterInTbl cteutil.Storage
 
 	storageMap, ok := b.ctx.GetSessionVars().StmtCtx.CTEStorageMap.(map[int]*CTEStorages)
 	if !ok {
 		b.err = errors.New("type assertion for CTEStorageMap failed")
 		return nil
 	}
+
+	chkSize := b.ctx.GetSessionVars().MaxChunkSize
+	// iterOutTbl will be constructed in CTEExec.Open().
+	var resTbl cteutil.Storage
+	var iterInTbl cteutil.Storage
+	var producer *cteProducer
 	storages, ok := storageMap[v.CTE.IDForStorage]
 	if ok {
 		// Storage already setup.
 		resTbl = storages.ResTbl
 		iterInTbl = storages.IterInTbl
+		producer = storages.Producer
 	} else {
+		if v.SeedPlan == nil {
+			b.err = errors.New("cte.seedPlan cannot be nil")
+			return nil
+		}
+		// Build seed part.
+		corCols := plannercore.ExtractOuterApplyCorrelatedCols(v.SeedPlan)
+		seedExec := b.build(v.SeedPlan)
+		if b.err != nil {
+			return nil
+		}
+
+		// Setup storages.
+		tps := seedExec.base().retFieldTypes
 		resTbl = cteutil.NewStorageRowContainer(tps, chkSize)
 		if err := resTbl.OpenAndRef(); err != nil {
 			b.err = err
@@ -5297,38 +5405,50 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 			return nil
 		}
 		storageMap[v.CTE.IDForStorage] = &CTEStorages{ResTbl: resTbl, IterInTbl: iterInTbl}
-	}
 
-	// 3. Build recursive part.
-	if v.RecurPlan != nil && b.Ti != nil {
-		b.Ti.UseRecursive = true
-	}
-	recursiveExec := b.build(v.RecurPlan)
-	if b.err != nil {
-		return nil
-	}
-
-	var sel []int
-	if v.CTE.IsDistinct {
-		sel = make([]int, chkSize)
-		for i := 0; i < chkSize; i++ {
-			sel[i] = i
+		// Build recursive part.
+		var recursiveExec Executor
+		if v.RecurPlan != nil {
+			recursiveExec = b.build(v.RecurPlan)
+			if b.err != nil {
+				return nil
+			}
+			corCols = append(corCols, plannercore.ExtractOuterApplyCorrelatedCols(v.RecurPlan)...)
 		}
+
+		var sel []int
+		if v.CTE.IsDistinct {
+			sel = make([]int, chkSize)
+			for i := 0; i < chkSize; i++ {
+				sel[i] = i
+			}
+		}
+
+		var corColHashCodes [][]byte
+		for _, corCol := range corCols {
+			corColHashCodes = append(corColHashCodes, getCorColHashCode(corCol))
+		}
+
+		producer = &cteProducer{
+			ctx:             b.ctx,
+			seedExec:        seedExec,
+			recursiveExec:   recursiveExec,
+			resTbl:          resTbl,
+			iterInTbl:       iterInTbl,
+			isDistinct:      v.CTE.IsDistinct,
+			sel:             sel,
+			hasLimit:        v.CTE.HasLimit,
+			limitBeg:        v.CTE.LimitBeg,
+			limitEnd:        v.CTE.LimitEnd,
+			corCols:         corCols,
+			corColHashCodes: corColHashCodes,
+		}
+		storageMap[v.CTE.IDForStorage].Producer = producer
 	}
 
 	return &CTEExec{
-		baseExecutor:  newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		seedExec:      seedExec,
-		recursiveExec: recursiveExec,
-		resTbl:        resTbl,
-		iterInTbl:     iterInTbl,
-		chkIdx:        0,
-		isDistinct:    v.CTE.IsDistinct,
-		sel:           sel,
-		hasLimit:      v.CTE.HasLimit,
-		limitBeg:      v.CTE.LimitBeg,
-		limitEnd:      v.CTE.LimitEnd,
-		isInApply:     v.CTE.IsInApply,
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		producer:     producer,
 	}
 }
 

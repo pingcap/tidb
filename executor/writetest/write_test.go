@@ -3551,3 +3551,14 @@ func TestMutipleReplaceAndInsertInOneSession(t *testing.T) {
 
 	tk2.MustQuery("select * from t_securities").Sort().Check(testkit.Rows("1 1 2 7", "2 7 1 7", "3 8 1 7", "8 9 1 7"))
 }
+
+func TestHandleColumnWithOnUpdateCurrentTimestamp(t *testing.T) {
+	// Test https://github.com/pingcap/tidb/issues/44565
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a timestamp on update current_timestamp(0), b int, primary key (a) clustered, key idx (a))")
+	tk.MustExec("insert into t values ('2023-06-11 10:00:00', 1)")
+	tk.MustExec("update t force index(primary) set b = 10 where a = '2023-06-11 10:00:00'")
+	tk.MustExec("admin check table t")
+}

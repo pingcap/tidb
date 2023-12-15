@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"sync/atomic"
@@ -620,8 +621,8 @@ func checkSafePoint(w *worker, snapshotTS uint64) error {
 	return gcutil.ValidateSnapshot(ctx, snapshotTS)
 }
 
-func getTable(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
-	allocs := autoid.NewAllocatorsFromTblInfo(store, schemaID, tblInfo)
+func getTable(r autoid.Requirement, schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
+	allocs := autoid.NewAllocatorsFromTblInfo(r, schemaID, tblInfo)
 	tbl, err := table.TableFromMeta(allocs, tblInfo)
 	return tbl, errors.Trace(err)
 }
@@ -833,7 +834,7 @@ func onRebaseAutoRandomType(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64,
 	return onRebaseAutoID(d, d.store, t, job, autoid.AutoRandomType)
 }
 
-func onRebaseAutoID(d *ddlCtx, store kv.Storage, t *meta.Meta, job *model.Job, tp autoid.AllocatorType) (ver int64, _ error) {
+func onRebaseAutoID(d *ddlCtx, _ kv.Storage, t *meta.Meta, job *model.Job, tp autoid.AllocatorType) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	var (
 		newBase int64
@@ -856,7 +857,7 @@ func onRebaseAutoID(d *ddlCtx, store kv.Storage, t *meta.Meta, job *model.Job, t
 		return ver, errors.Trace(err)
 	}
 
-	tbl, err := getTable(store, schemaID, tblInfo)
+	tbl, err := getTable((*asAutoIDRequirement)(d), schemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -938,7 +939,7 @@ func (w *worker) onShardRowID(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int6
 	if shardRowIDBits < tblInfo.ShardRowIDBits {
 		tblInfo.ShardRowIDBits = shardRowIDBits
 	} else {
-		tbl, err := getTable(d.store, job.SchemaID, tblInfo)
+		tbl, err := getTable((*asAutoIDRequirement)(d), job.SchemaID, tblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -990,6 +991,9 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 
+	if job.SchemaState == model.StatePublic {
+		return finishJobRenameTable(d, t, job)
+	}
 	newSchemaID := job.SchemaID
 	err := checkTableNotExists(d, t, newSchemaID, tableName.L)
 	if err != nil {
@@ -1017,7 +1021,7 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	job.SchemaState = model.StatePublic
 	return ver, nil
 }
 
@@ -1031,6 +1035,10 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 	if err := job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &tableNames, &tableIDs, &oldSchemaNames, &oldTableNames); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
+	}
+
+	if job.SchemaState == model.StatePublic {
+		return finishJobRenameTables(d, t, job, tableNames, tableIDs, newSchemaIDs)
 	}
 
 	var tblInfos = make([]*model.TableInfo, 0, len(tableNames))
@@ -1058,7 +1066,7 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	job.FinishMultipleTableJob(model.JobStateDone, model.StatePublic, ver, tblInfos)
+	job.SchemaState = model.StatePublic
 	return ver, nil
 }
 
@@ -1153,6 +1161,75 @@ func adjustForeignKeyChildTableInfoAfterRenameTable(d *ddlCtx, t *meta.Meta, job
 		}
 	}
 	return nil
+}
+
+// We split the renaming table job into two steps:
+// 1. rename table and update the schema version.
+// 2. update the job state to JobStateDone.
+// This is the requirement from TiCDC because
+//   - it uses the job state to check whether the DDL is finished.
+//   - there is a gap between schema reloading and job state updating:
+//     when the job state is updated to JobStateDone, before the new schema reloaded,
+//     there may be DMLs that use the old schema.
+//   - TiCDC cannot handle the DMLs that use the old schema, because
+//     the commit TS of the DMLs are greater than the job state updating TS.
+func finishJobRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
+	tblInfo, err := getTableInfo(t, job.TableID, job.SchemaID)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(err)
+	}
+	// Before updating the schema version, we need to reset the old schema ID to new schema ID, so that
+	// the table info can be dropped normally in `ApplyDiff`. This is because renaming table requires two
+	// schema versions to complete.
+	oldRawArgs := job.RawArgs
+	job.Args[0] = job.SchemaID
+	job.RawArgs, err = json.Marshal(job.Args)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	ver, err := updateSchemaVersion(d, t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.RawArgs = oldRawArgs
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
+func finishJobRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job,
+	tableNames []*model.CIStr, tableIDs, newSchemaIDs []int64) (int64, error) {
+	tblSchemaIDs := make(map[int64]int64, len(tableIDs))
+	for i := range tableIDs {
+		tblSchemaIDs[tableIDs[i]] = newSchemaIDs[i]
+	}
+	tblInfos := make([]*model.TableInfo, 0, len(tableNames))
+	for i := range tableIDs {
+		tblID := tableIDs[i]
+		tblInfo, err := getTableInfo(t, tblID, tblSchemaIDs[tblID])
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return 0, errors.Trace(err)
+		}
+		tblInfos = append(tblInfos, tblInfo)
+	}
+	// Before updating the schema version, we need to reset the old schema ID to new schema ID, so that
+	// the table info can be dropped normally in `ApplyDiff`. This is because renaming table requires two
+	// schema versions to complete.
+	var err error
+	oldRawArgs := job.RawArgs
+	job.Args[0] = newSchemaIDs
+	job.RawArgs, err = json.Marshal(job.Args)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	ver, err := updateSchemaVersion(d, t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.RawArgs = oldRawArgs
+	job.FinishMultipleTableJob(model.JobStateDone, model.StatePublic, ver, tblInfos)
+	return ver, nil
 }
 
 func onModifyTableComment(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {

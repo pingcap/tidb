@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	alicred "github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials"
@@ -27,6 +28,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -911,11 +913,60 @@ func (rs *S3Storage) CreateUploader(ctx context.Context, name string) (ExternalF
 	}, nil
 }
 
-// Create creates multi upload request.
-func (rs *S3Storage) Create(ctx context.Context, name string) (ExternalFileWriter, error) {
-	uploader, err := rs.CreateUploader(ctx, name)
+type s3ObjectWriter struct {
+	wd  *io.PipeWriter
+	wg  *sync.WaitGroup
+	err error
+}
+
+// Write implement the io.Writer interface.
+func (s *s3ObjectWriter) Write(_ context.Context, p []byte) (int, error) {
+	return s.wd.Write(p)
+}
+
+// Close implement the io.Closer interface.
+func (s *s3ObjectWriter) Close(_ context.Context) error {
+	err := s.wd.Close()
 	if err != nil {
-		return nil, err
+		return err
+	}
+	s.wg.Wait()
+	return s.err
+}
+
+// Create creates multi upload request.
+func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOption) (ExternalFileWriter, error) {
+	var uploader ExternalFileWriter
+	var err error
+	if option == nil || option.Concurrency <= 1 {
+		uploader, err = rs.CreateUploader(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		up := s3manager.NewUploaderWithClient(rs.svc, func(u *s3manager.Uploader) {
+			u.Concurrency = option.Concurrency
+			u.BufferProvider = s3manager.NewBufferedReadSeekerWriteToPool(option.Concurrency * 8 * 1024 * 1024)
+		})
+		rd, wd := io.Pipe()
+		upParams := &s3manager.UploadInput{
+			Bucket: aws.String(rs.options.Bucket),
+			Key:    aws.String(rs.options.Prefix + name),
+			Body:   rd,
+		}
+		s3Writer := &s3ObjectWriter{wd: wd, wg: &sync.WaitGroup{}}
+		s3Writer.wg.Add(1)
+		go func() {
+			_, err := up.UploadWithContext(ctx, upParams)
+			// like a channel we only let sender close the pipe in happy path
+			if err != nil {
+				log.Warn("upload to s3 failed", zap.String("filename", name), zap.Error(err))
+				_ = rd.CloseWithError(err)
+			}
+			s3Writer.err = err
+			s3Writer.wg.Done()
+		}()
+		uploader = s3Writer
 	}
 	uploaderWriter := newBufferedWriter(uploader, hardcodedS3ChunkSize, NoCompression)
 	return uploaderWriter, nil
@@ -956,11 +1007,25 @@ func isDeadlineExceedError(err error) bool {
 	return strings.Contains(err.Error(), "context deadline exceeded")
 }
 
+func isConnectionResetError(err error) bool {
+	return strings.Contains(err.Error(), "read: connection reset")
+}
+
 func (rl retryerWithLog) ShouldRetry(r *request.Request) bool {
-	if isDeadlineExceedError(r.Error) && r.HTTPRequest.URL.Host == ec2MetaAddress {
+	// for unit test
+	failpoint.Inject("replace-error-to-connection-reset-by-peer", func(_ failpoint.Value) {
+		log.Info("original error", zap.Error(r.Error))
+		if r.Error != nil {
+			r.Error = errors.New("read tcp *.*.*.*:*->*.*.*.*:*: read: connection reset by peer")
+		}
+	})
+	if r.HTTPRequest.URL.Host == ec2MetaAddress && (isDeadlineExceedError(r.Error) || isConnectionResetError(r.Error)) {
 		// fast fail for unreachable linklocal address in EC2 containers.
 		log.Warn("failed to get EC2 metadata. skipping.", logutil.ShortError(r.Error))
 		return false
+	}
+	if isConnectionResetError(r.Error) {
+		return true
 	}
 	return rl.DefaultRetryer.ShouldRetry(r)
 }

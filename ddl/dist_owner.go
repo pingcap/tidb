@@ -16,10 +16,6 @@ package ddl
 
 import (
 	"time"
-
-	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 // CheckBackfillJobFinishInterval is export for test.
@@ -28,11 +24,3 @@ var CheckBackfillJobFinishInterval = 300 * time.Millisecond
 const (
 	distPhysicalTableConcurrency = 16
 )
-
-func initDistReorg(reorgMeta *model.DDLReorgMeta) {
-	isDistReorg := variable.EnableDistTask.Load()
-	reorgMeta.IsDistReorg = isDistReorg
-	if isDistReorg {
-		metrics.TelemetryDistReorgCnt.Inc()
-	}
-}

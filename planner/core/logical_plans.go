@@ -118,7 +118,12 @@ const (
 	preferHJBuild
 	preferHJProbe
 	preferHashJoin
+	preferNoHashJoin
 	preferMergeJoin
+	preferNoMergeJoin
+	preferNoIndexJoin
+	preferNoIndexHashJoin
+	preferNoIndexMergeJoin
 	preferBCJoin
 	preferShuffleJoin
 	preferRewriteSemiJoin
@@ -1210,7 +1215,8 @@ type DataSource struct {
 	// handleCol represents the handle column for the datasource, either the
 	// int primary key column or extra handle column.
 	// handleCol *expression.Column
-	handleCols HandleCols
+	handleCols          HandleCols
+	unMutableHandleCols HandleCols
 	// TblCols contains the original columns of table before being pruned, and it
 	// is used for estimating table scan cost.
 	TblCols []*expression.Column
@@ -1452,15 +1458,14 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 	path.CountAfterAccess = float64(ds.statisticTable.RealtimeCount)
 	path.TableFilters = conds
 	var pkCol *expression.Column
-	columnLen := len(ds.schema.Columns)
 	isUnsigned := false
 	if ds.tableInfo.PKIsHandle {
 		if pkColInfo := ds.tableInfo.GetPkColInfo(); pkColInfo != nil {
 			isUnsigned = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
 			pkCol = expression.ColInfo2Col(ds.schema.Columns, pkColInfo)
 		}
-	} else if columnLen > 0 && ds.schema.Columns[columnLen-1].ID == model.ExtraHandleID {
-		pkCol = ds.schema.Columns[columnLen-1]
+	} else {
+		pkCol = ds.schema.GetExtraHandleColumn()
 	}
 	if pkCol == nil {
 		path.Ranges = ranger.FullIntRange(isUnsigned)
@@ -2001,6 +2006,7 @@ type CTEClass struct {
 	// pushDownPredicates may be push-downed by different references.
 	pushDownPredicates []expression.Expression
 	ColumnMap          map[string]*expression.Column
+	isOuterMostCTE     bool
 }
 
 const emptyCTEClassSize = int64(unsafe.Sizeof(CTEClass{}))
@@ -2032,11 +2038,10 @@ func (cc *CTEClass) MemoryUsage() (sum int64) {
 type LogicalCTE struct {
 	logicalSchemaProducer
 
-	cte            *CTEClass
-	cteAsName      model.CIStr
-	cteName        model.CIStr
-	seedStat       *property.StatsInfo
-	isOuterMostCTE bool
+	cte       *CTEClass
+	cteAsName model.CIStr
+	cteName   model.CIStr
+	seedStat  *property.StatsInfo
 }
 
 // LogicalCTETable is for CTE table

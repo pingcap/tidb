@@ -104,7 +104,7 @@ func TestExtensionFuncCtx(t *testing.T) {
 	tk.MustExec("grant ALL ON test.* to u1@localhost")
 
 	tk1 := testkit.NewTestKit(t, store)
-	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil, nil))
 	tk1.MustExec("set role r1")
 	tk1.MustExec("use test")
 	tk1.Session().GetSessionVars().ConnectionInfo = &variable.ConnectionInfo{
@@ -344,35 +344,35 @@ func TestExtensionFuncPrivilege(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 
 	// root has all privileges by default
-	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	tk1.MustQuery("select custom_no_priv_func()").Check(testkit.Rows("zzz"))
 	tk1.MustQuery("select custom_only_dyn_priv_func()").Check(testkit.Rows("abc"))
 	tk1.MustQuery("select custom_only_sem_dyn_priv_func()").Check(testkit.Rows("def"))
 	tk1.MustQuery("select custom_both_dyn_priv_func()").Check(testkit.Rows("ghi"))
 
 	// u1 in non-sem
-	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil, nil))
 	tk1.MustQuery("select custom_no_priv_func()").Check(testkit.Rows("zzz"))
 	require.EqualError(t, tk1.ExecToErr("select custom_only_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the SUPER or CUSTOM_DYN_PRIV_1 privilege(s) for this operation")
 	tk1.MustQuery("select custom_only_sem_dyn_priv_func()").Check(testkit.Rows("def"))
 	require.EqualError(t, tk1.ExecToErr("select custom_both_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the SUPER or CUSTOM_DYN_PRIV_1 privilege(s) for this operation")
 
 	// u2 in non-sem
-	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil, nil))
 	tk1.MustQuery("select custom_no_priv_func()").Check(testkit.Rows("zzz"))
 	tk1.MustQuery("select custom_only_dyn_priv_func()").Check(testkit.Rows("abc"))
 	tk1.MustQuery("select custom_only_sem_dyn_priv_func()").Check(testkit.Rows("def"))
 	tk1.MustQuery("select custom_both_dyn_priv_func()").Check(testkit.Rows("ghi"))
 
 	// u3 in non-sem
-	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u3", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u3", Hostname: "localhost"}, nil, nil, nil))
 	tk1.MustQuery("select custom_no_priv_func()").Check(testkit.Rows("zzz"))
 	require.EqualError(t, tk1.ExecToErr("select custom_only_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the SUPER or CUSTOM_DYN_PRIV_1 privilege(s) for this operation")
 	tk1.MustQuery("select custom_only_sem_dyn_priv_func()").Check(testkit.Rows("def"))
 	require.EqualError(t, tk1.ExecToErr("select custom_both_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the SUPER or CUSTOM_DYN_PRIV_1 privilege(s) for this operation")
 
 	// u4 in non-sem
-	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil, nil))
 	tk1.MustQuery("select custom_no_priv_func()").Check(testkit.Rows("zzz"))
 	tk1.MustQuery("select custom_only_dyn_priv_func()").Check(testkit.Rows("abc"))
 	tk1.MustQuery("select custom_only_sem_dyn_priv_func()").Check(testkit.Rows("def"))
@@ -381,35 +381,35 @@ func TestExtensionFuncPrivilege(t *testing.T) {
 	sem.Enable()
 
 	// root in sem
-	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	tk1.MustQuery("select custom_no_priv_func()").Check(testkit.Rows("zzz"))
 	tk1.MustQuery("select custom_only_dyn_priv_func()").Check(testkit.Rows("abc"))
 	require.EqualError(t, tk1.ExecToErr("select custom_only_sem_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the RESTRICTED_CUSTOM_DYN_PRIV_2 privilege(s) for this operation")
 	require.EqualError(t, tk1.ExecToErr("select custom_both_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the RESTRICTED_CUSTOM_DYN_PRIV_2 privilege(s) for this operation")
 
 	// u1 in sem
-	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil, nil))
 	tk1.MustQuery("select custom_no_priv_func()").Check(testkit.Rows("zzz"))
 	require.EqualError(t, tk1.ExecToErr("select custom_only_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the CUSTOM_DYN_PRIV_1 privilege(s) for this operation")
 	require.EqualError(t, tk1.ExecToErr("select custom_only_sem_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the RESTRICTED_CUSTOM_DYN_PRIV_2 privilege(s) for this operation")
 	require.EqualError(t, tk1.ExecToErr("select custom_both_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the RESTRICTED_CUSTOM_DYN_PRIV_2 privilege(s) for this operation")
 
 	// u2 in sem
-	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil, nil))
 	tk1.MustQuery("select custom_no_priv_func()").Check(testkit.Rows("zzz"))
 	tk1.MustQuery("select custom_only_dyn_priv_func()").Check(testkit.Rows("abc"))
 	require.EqualError(t, tk1.ExecToErr("select custom_only_sem_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the RESTRICTED_CUSTOM_DYN_PRIV_2 privilege(s) for this operation")
 	require.EqualError(t, tk1.ExecToErr("select custom_both_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the RESTRICTED_CUSTOM_DYN_PRIV_2 privilege(s) for this operation")
 
 	// u3 in sem
-	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u3", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u3", Hostname: "localhost"}, nil, nil, nil))
 	tk1.MustQuery("select custom_no_priv_func()").Check(testkit.Rows("zzz"))
 	require.EqualError(t, tk1.ExecToErr("select custom_only_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the CUSTOM_DYN_PRIV_1 privilege(s) for this operation")
 	tk1.MustQuery("select custom_only_sem_dyn_priv_func()").Check(testkit.Rows("def"))
 	tk1.MustQuery("select custom_both_dyn_priv_func()").Check(testkit.Rows("ghi"))
 
 	// u4 in sem
-	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil, nil))
 	tk1.MustQuery("select custom_no_priv_func()").Check(testkit.Rows("zzz"))
 	tk1.MustQuery("select custom_only_dyn_priv_func()").Check(testkit.Rows("abc"))
 	tk1.MustQuery("select custom_only_sem_dyn_priv_func()").Check(testkit.Rows("def"))

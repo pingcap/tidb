@@ -106,7 +106,7 @@ func TrySetupGlobalResourceController(ctx context.Context, serverID uint64, s kv
 		return errors.New("cannot setup up resource controller, should use tikv storage")
 	}
 
-	control, err := rmclient.NewResourceGroupController(ctx, serverID, store.GetPDClient(), nil, rmclient.WithMaxWaitDuration(time.Second*30))
+	control, err := rmclient.NewResourceGroupController(ctx, serverID, store.GetPDClient(), nil)
 	if err != nil {
 		return err
 	}
@@ -235,7 +235,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		tikv.WithCodec(codec),
 	)
 
-	s, err = tikv.NewKVStore(uuid, pdClient, spkv, rpcClient)
+	s, err = tikv.NewKVStore(uuid, pdClient, spkv, rpcClient, tikv.WithPDHTTPClient(tlsConfig, etcdAddrs))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

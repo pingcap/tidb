@@ -27,6 +27,7 @@ header:
     - "**/*.example"
     - "**/*.patch"
     - "**/*.bzl"
+    - "**/.git/**"
     - ".codecov.yml"
     - "Jenkinsfile"
     - ".editorconfig"
@@ -45,4 +46,6 @@ header:
     - "**/*.zst"
     - ".bazelversion"
     - "build/image/.ci_bazel"
+    - "**/OWNERS"
+    - "OWNERS_ALIASES"
   comment: on-failure

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 )
@@ -259,7 +260,7 @@ func (a *aggregationPushDownSolver) tryToPushDownAgg(oldAgg *LogicalAggregation,
 	}
 	tmpSchema := expression.NewSchema(gbyCols...)
 	for _, key := range child.Schema().Keys {
-		if tmpSchema.ColumnsIndices(key) != nil {
+		if tmpSchema.ColumnsIndices(key) != nil { // gby item need to be covered by key.
 			return child, nil
 		}
 	}
@@ -510,9 +511,38 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 						resetNotNullFlag(join.schema, 0, lChild.Schema().Len())
 					}
 					buildKeyInfo(join)
+					// count(a) -> ifnull(col#x, 0, 1) in rewriteExpr of agg function, since col#x is already the final
+					// pushed-down aggregation's result, we don't need to take every row as count 1 when they don't have
+					// not-null flag in a.tryToEliminateAggregation(oldAgg, opt), which is not suitable here.
+					oldCheck := a.oldAggEliminationCheck
+					a.oldAggEliminationCheck = true
 					proj := a.tryToEliminateAggregation(agg, opt)
 					if proj != nil {
 						p = proj
+					}
+					a.oldAggEliminationCheck = oldCheck
+
+					// Combine the aggregation elimination logic below since new agg's child key info has changed.
+					// Notice that even if we eliminate new agg below if possible, the agg's schema is inherited by proj.
+					// Therefore, we don't need to set the join's schema again, just build the keyInfo again.
+					changed := false
+					if newAgg, ok1 := lChild.(*LogicalAggregation); ok1 {
+						proj := a.tryToEliminateAggregation(newAgg, opt)
+						if proj != nil {
+							lChild = proj
+							changed = true
+						}
+					}
+					if newAgg, ok2 := rChild.(*LogicalAggregation); ok2 {
+						proj := a.tryToEliminateAggregation(newAgg, opt)
+						if proj != nil {
+							rChild = proj
+							changed = true
+						}
+					}
+					if changed {
+						join.SetChildren(lChild, rChild)
+						buildKeyInfo(join)
 					}
 				}
 			} else if proj, ok1 := child.(*LogicalProjection); ok1 {
@@ -530,6 +560,8 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 				}
 				oldAggFuncsArgs := make([][]expression.Expression, 0, len(agg.AggFuncs))
 				newAggFuncsArgs := make([][]expression.Expression, 0, len(agg.AggFuncs))
+				oldAggOrderItems := make([][]*util.ByItems, 0, len(agg.AggFuncs))
+				newAggOrderItems := make([][]*util.ByItems, 0, len(agg.AggFuncs))
 				if noSideEffects {
 					for _, aggFunc := range agg.AggFuncs {
 						oldAggFuncsArgs = append(oldAggFuncsArgs, aggFunc.Args)
@@ -542,12 +574,55 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 							break
 						}
 						newAggFuncsArgs = append(newAggFuncsArgs, newArgs)
+						// for ordeByItems, treat it like agg func's args, if it can be substituted by underlying projection's expression recording them temporarily.
+						if len(aggFunc.OrderByItems) != 0 {
+							oldAggOrderItems = append(oldAggOrderItems, aggFunc.OrderByItems)
+							newOrderByItems := make([]expression.Expression, 0, len(aggFunc.OrderByItems))
+							for _, oby := range aggFunc.OrderByItems {
+								newOrderByItems = append(newOrderByItems, expression.ColumnSubstitute(oby.Expr, proj.schema, proj.Exprs))
+							}
+							if ExprsHasSideEffects(newOrderByItems) {
+								noSideEffects = false
+								break
+							}
+							oneAggOrderByItems := make([]*util.ByItems, 0, len(aggFunc.OrderByItems))
+							for i, obyExpr := range newOrderByItems {
+								oneAggOrderByItems = append(oneAggOrderByItems, &util.ByItems{Expr: obyExpr, Desc: aggFunc.OrderByItems[i].Desc})
+							}
+							newAggOrderItems = append(newAggOrderItems, oneAggOrderByItems)
+						} else {
+							// occupy the pos for convenience of subscript index
+							oldAggOrderItems = append(oldAggOrderItems, nil)
+							newAggOrderItems = append(newAggOrderItems, nil)
+						}
+					}
+				}
+				for i, funcsArgs := range oldAggFuncsArgs {
+					for j := range funcsArgs {
+						if oldAggFuncsArgs[i][j].GetType().EvalType() != newAggFuncsArgs[i][j].GetType().EvalType() {
+							noSideEffects = false
+							break
+						}
+					}
+					for j, item := range newAggOrderItems {
+						if item == nil {
+							continue
+						}
+						// substitution happened, check the eval type compatibility.
+						if oldAggOrderItems[i][j].Expr.GetType().EvalType() != newAggOrderItems[i][j].Expr.GetType().EvalType() {
+							noSideEffects = false
+							break
+						}
+					}
+					if !noSideEffects {
+						break
 					}
 				}
 				if noSideEffects {
 					agg.GroupByItems = newGbyItems
 					for i, aggFunc := range agg.AggFuncs {
 						aggFunc.Args = newAggFuncsArgs[i]
+						aggFunc.OrderByItems = newAggOrderItems[i]
 					}
 					projChild := proj.children[0]
 					agg.SetChildren(projChild)

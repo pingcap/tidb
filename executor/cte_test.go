@@ -27,6 +27,37 @@ import (
 	"golang.org/x/exp/slices"
 )
 
+func TestCTEIssue49096(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test;")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mock_cte_exec_panic_avoid_deadlock", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mock_cte_exec_panic_avoid_deadlock"))
+	}()
+	insertStr := "insert into t1 values(0)"
+	rowNum := 10
+	vals := make([]int, rowNum)
+	vals[0] = 0
+	for i := 1; i < rowNum; i++ {
+		v := rand.Intn(100)
+		vals[i] = v
+		insertStr += fmt.Sprintf(", (%d)", v)
+	}
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1(c1 int);")
+	tk.MustExec("create table t2(c1 int);")
+	tk.MustExec(insertStr)
+	// should be insert statement, otherwise it couldn't step int resetCTEStorageMap in handleNoDelay func.
+	sql := "insert into t2 with cte1 as ( " +
+		"select c1 from t1) " +
+		"select c1 from cte1 natural join (select * from cte1 where c1 > 0) cte2 order by c1;"
+	err := tk.ExecToErr(sql)
+	require.NotNil(t, err)
+	require.Equal(t, "Your query has been cancelled due to exceeding the allowed memory limit", err.Error())
+}
+
 func TestBasicCTE(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -448,4 +479,76 @@ func TestCTEsInView(t *testing.T) {
 	tk.MustQuery("select * from test.v;").Check(testkit.Rows("1"))
 	tk.MustExec("use test1;")
 	tk.MustQuery("select * from test.v;").Check(testkit.Rows("1"))
+}
+
+func TestCTEPanic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t1(c1 int)")
+	tk.MustExec("insert into t1 values(1), (2), (3)")
+
+	fpPathPrefix := "github.com/pingcap/tidb/executor/"
+	fp := "testCTESeedPanic"
+	require.NoError(t, failpoint.Enable(fpPathPrefix+fp, fmt.Sprintf(`panic("%s")`, fp)))
+	err := tk.QueryToErr("with recursive cte1 as (select c1 from t1 union all select c1 + 1 from cte1 where c1 < 5) select t_alias_1.c1 from cte1 as t_alias_1 inner join cte1 as t_alias_2 on t_alias_1.c1 = t_alias_2.c1 order by c1")
+	require.Contains(t, err.Error(), fp)
+	require.NoError(t, failpoint.Disable(fpPathPrefix+fp))
+
+	fp = "testCTERecursivePanic"
+	require.NoError(t, failpoint.Enable(fpPathPrefix+fp, fmt.Sprintf(`panic("%s")`, fp)))
+	err = tk.QueryToErr("with recursive cte1 as (select c1 from t1 union all select c1 + 1 from cte1 where c1 < 5) select t_alias_1.c1 from cte1 as t_alias_1 inner join cte1 as t_alias_2 on t_alias_1.c1 = t_alias_2.c1 order by c1")
+	require.Contains(t, err.Error(), fp)
+	require.NoError(t, failpoint.Disable(fpPathPrefix+fp))
+}
+
+func TestCTEDelSpillFile(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1(c1 int, c2 int);")
+	tk.MustExec("create table t2(c1 int);")
+	tk.MustExec("set @@cte_max_recursion_depth = 1000000;")
+	tk.MustExec("set global tidb_mem_oom_action = 'log';")
+	tk.MustExec("set @@tidb_mem_quota_query = 100;")
+	tk.MustExec("insert into t2 values(1);")
+	tk.MustExec("insert into t1 (c1, c2) with recursive cte1 as (select c1 from t2 union select cte1.c1 + 1 from cte1 where cte1.c1 < 100000) select cte1.c1, cte1.c1+1 from cte1;")
+	require.Nil(t, tk.Session().GetSessionVars().StmtCtx.CTEStorageMap)
+}
+
+func TestCTEShareCorColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1(c1 int, c2 varchar(100));")
+	tk.MustExec("insert into t1 values(1, '2020-10-10');")
+	tk.MustExec("create table t2(c1 int, c2 date);")
+	tk.MustExec("insert into t2 values(1, '2020-10-10');")
+	for i := 0; i < 100; i++ {
+		tk.MustQuery("with cte1 as (select t1.c1, (select t2.c2 from t2 where t2.c2 = str_to_date(t1.c2, '%Y-%m-%d')) from t1 inner join t2 on t1.c1 = t2.c1) select /*+ hash_join_build(alias1) */ * from cte1 alias1 inner join cte1 alias2 on alias1.c1 =   alias2.c1;").Check(testkit.Rows("1 2020-10-10 1 2020-10-10"))
+		tk.MustQuery("with cte1 as (select t1.c1, (select t2.c2 from t2 where t2.c2 = str_to_date(t1.c2, '%Y-%m-%d')) from t1 inner join t2 on t1.c1 = t2.c1) select /*+ hash_join_build(alias2) */ * from cte1 alias1 inner join cte1 alias2 on alias1.c1 =   alias2.c1;").Check(testkit.Rows("1 2020-10-10 1 2020-10-10"))
+	}
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(a int);")
+	tk.MustExec("insert into t1 values(1), (2);")
+	tk.MustQuery("SELECT * FROM t1 dt WHERE EXISTS( WITH RECURSIVE qn AS (SELECT a AS b UNION ALL SELECT b+1 FROM qn WHERE b=0 or b = 1) SELECT * FROM qn dtqn1 where exists (select /*+ NO_DECORRELATE() */ b from qn where dtqn1.b+1));").Check(testkit.Rows("1", "2"))
+}
+
+func TestCTESmallChunkSize(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(c1 int);")
+	insertStr := "insert into t1 values (0)"
+	for i := 1; i < 300; i++ {
+		insertStr += fmt.Sprintf(", (%d)", i)
+	}
+	tk.MustExec(insertStr)
+	tk.MustExec("set @@tidb_max_chunk_size = 32;")
+	tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 1 offset 100) select * from cte1;").Check(testkit.Rows("100"))
+	tk.MustExec("set @@tidb_max_chunk_size = default;")
 }

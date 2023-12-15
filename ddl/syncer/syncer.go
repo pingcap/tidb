@@ -238,12 +238,12 @@ func (s *schemaVersionSyncer) UpdateSelfVersion(ctx context.Context, jobID int64
 	var path string
 	if variable.EnableMDL.Load() {
 		path = fmt.Sprintf("%s/%d/%s", util.DDLAllSchemaVersionsByJob, jobID, s.ddlID)
+		err = util.PutKVToEtcd(ctx, s.etcdCli, keyOpDefaultRetryCnt, path, ver)
 	} else {
 		path = s.selfSchemaVerPath
+		err = util.PutKVToEtcd(ctx, s.etcdCli, putKeyNoRetry, path, ver,
+			clientv3.WithLease(s.loadSession().Lease()))
 	}
-
-	err = util.PutKVToEtcd(ctx, s.etcdCli, putKeyNoRetry, path, ver,
-		clientv3.WithLease(s.loadSession().Lease()))
 
 	metrics.UpdateSelfVersionHistogram.WithLabelValues(metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	return errors.Trace(err)
@@ -337,13 +337,15 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 		if variable.EnableMDL.Load() {
 			for _, kv := range resp.Kvs {
 				key := string(kv.Key)
+				tidbIDInResp := key[strings.LastIndex(key, "/")+1:]
 				ver, err := strconv.Atoi(string(kv.Value))
 				if err != nil {
 					logutil.BgLogger().Info("[ddl] syncer check all versions, convert value to int failed, continue checking.", zap.String("ddl", string(kv.Key)), zap.String("value", string(kv.Value)), zap.Error(err))
 					succ = false
 					break
 				}
-				if int64(ver) < latestVer {
+				// We need to check if the tidb ID is in the updatedMap, in case that deleting etcd is failed, and tidb server is down.
+				if int64(ver) < latestVer && updatedMap[tidbIDInResp] != "" {
 					if notMatchVerCnt%intervalCnt == 0 {
 						logutil.BgLogger().Info("[ddl] syncer check all versions, someone is not synced, continue checking",
 							zap.String("ddl", string(kv.Key)), zap.Int("currentVer", ver), zap.Int64("latestVer", latestVer))
@@ -352,7 +354,7 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 					notMatchVerCnt++
 					break
 				}
-				delete(updatedMap, key[strings.LastIndex(key, "/")+1:])
+				delete(updatedMap, tidbIDInResp)
 			}
 			if len(updatedMap) > 0 {
 				succ = false

@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -235,8 +236,8 @@ func TestAutoCommitRespectsReadOnly(t *testing.T) {
 	var wg sync.WaitGroup
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
-	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
-	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
 	tk1.MustExec("create table test.auto_commit_test (a int)")
 	wg.Add(1)
@@ -850,11 +851,11 @@ func TestSkipWithGrant(t *testing.T) {
 	save2 := privileges.SkipWithGrant
 
 	privileges.SkipWithGrant = false
-	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "user_not_exist"}, []byte("yyy"), []byte("zzz")))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "user_not_exist"}, []byte("yyy"), []byte("zzz"), nil))
 
 	privileges.SkipWithGrant = true
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "xxx", Hostname: `%`}, []byte("yyy"), []byte("zzz")))
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, []byte(""), []byte("")))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "xxx", Hostname: `%`}, []byte("yyy"), []byte("zzz"), nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, []byte(""), []byte(""), nil))
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int)")
 	tk.MustExec("create role r_1")
@@ -965,6 +966,16 @@ func TestBatchCommit(t *testing.T) {
 	tk.MustExec("insert into t values (6)")
 	tk1.MustQuery("select * from t").Check(testkit.Rows())
 	tk.MustExec("insert into t values (7)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7"))
+
+	tk.MustExec("delete from t")
+	tk.MustExec("commit")
+	tk.MustExec("begin")
+	tk.MustExec("explain analyze insert into t values (5)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("explain analyze insert into t values (6)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("explain analyze insert into t values (7)")
 	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7"))
 
 	// The session is still in transaction.
@@ -1716,14 +1727,14 @@ func TestGrantViewRelated(t *testing.T) {
 	tkRoot.MustExec("use test")
 	tkUser.MustExec("use test")
 
-	tkRoot.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	tkRoot.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 
 	tkRoot.MustExec("create table if not exists t (a int)")
 	tkRoot.MustExec("create view v_version29 as select * from t")
 	tkRoot.MustExec("create user 'u_version29'@'%'")
 	tkRoot.MustExec("grant select on t to u_version29@'%'")
 
-	tkUser.Session().Auth(&auth.UserIdentity{Username: "u_version29", Hostname: "localhost", CurrentUser: true, AuthUsername: "u_version29", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	tkUser.Session().Auth(&auth.UserIdentity{Username: "u_version29", Hostname: "localhost", CurrentUser: true, AuthUsername: "u_version29", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 
 	tkUser.MustQuery("select current_user();").Check(testkit.Rows("u_version29@%"))
 	require.Error(t, tkUser.ExecToErr("select * from test.v_version29;"))
@@ -1797,7 +1808,7 @@ func TestUpdatePrivilege(t *testing.T) {
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
-	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "xxx", Hostname: "localhost"}, []byte(""), []byte("")))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "xxx", Hostname: "localhost"}, []byte(""), []byte(""), nil))
 
 	tk1.MustMatchErrMsg("update t2 set id = 666 where id = 1;", "privilege check.*")
 
@@ -1811,7 +1822,7 @@ func TestUpdatePrivilege(t *testing.T) {
 	tk.MustExec("create table tb_wehub_server (id int, active_count int, used_count int)")
 	tk.MustExec("create user 'weperk'")
 	tk.MustExec("grant all privileges on weperk.* to 'weperk'@'%'")
-	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "weperk", Hostname: "%"}, []byte(""), []byte("")))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "weperk", Hostname: "%"}, []byte(""), []byte(""), nil))
 	tk1.MustExec("use weperk")
 	tk1.MustExec("update tb_wehub_server a set a.active_count=a.active_count+1,a.used_count=a.used_count+1 where id=1")
 
@@ -1847,7 +1858,7 @@ and s.b !='xx';`)
 	tk.MustExec("insert into tp.record (id,name,age) values (1,'john',18),(2,'lary',19),(3,'lily',18)")
 	tk.MustExec("create table ap.record( id int,name varchar(128),age int)")
 	tk.MustExec("insert into ap.record(id) values(1)")
-	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "xxx", Hostname: "localhost"}, []byte(""), []byte("")))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "xxx", Hostname: "localhost"}, []byte(""), []byte(""), nil))
 	tk1.MustExec("update ap.record t inner join tp.record tt on t.id=tt.id  set t.name=tt.name")
 }
 
@@ -3437,7 +3448,7 @@ func TestSessionAuth(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "Any not exist username with zero password!", Hostname: "anyhost"}, []byte(""), []byte("")))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "Any not exist username with zero password!", Hostname: "anyhost"}, []byte(""), []byte(""), nil))
 }
 
 func TestLastInsertID(t *testing.T) {
@@ -3552,4 +3563,120 @@ func TestHandleAssertionFailureForPartitionedTable(t *testing.T) {
 	_, err := tk.ExecWithContext(ctx, "insert into t values (1, 1, 1)")
 	require.ErrorContains(t, err, "assertion")
 	hook.CheckLogCount(t, 0)
+}
+
+func TestRandomBinary(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	allBytes := [][]byte{
+		{4, 0, 0, 0, 0, 0, 0, 4, '2'},
+		{4, 0, 0, 0, 0, 0, 0, 4, '.'},
+		{4, 0, 0, 0, 0, 0, 0, 4, '*'},
+		{4, 0, 0, 0, 0, 0, 0, 4, '('},
+		{4, 0, 0, 0, 0, 0, 0, 4, '\''},
+		{4, 0, 0, 0, 0, 0, 0, 4, '!'},
+		{4, 0, 0, 0, 0, 0, 0, 4, 29},
+		{4, 0, 0, 0, 0, 0, 0, 4, 28},
+		{4, 0, 0, 0, 0, 0, 0, 4, 23},
+		{4, 0, 0, 0, 0, 0, 0, 4, 16},
+	}
+	sql := "insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values "
+	var val string
+	for i, bytes := range allBytes {
+		if i == 0 {
+			val += sqlexec.MustEscapeSQL("(874, 0, 1, %?, 3)", bytes)
+		} else {
+			val += sqlexec.MustEscapeSQL(",(874, 0, 1, %?, 3)", bytes)
+		}
+	}
+	sql += val
+	tk.MustExec("set sql_mode = 'NO_BACKSLASH_ESCAPES';")
+	_, err := tk.Session().ExecuteInternal(ctx, sql)
+	require.NoError(t, err)
+}
+
+func TestSQLModeOp(t *testing.T) {
+	s := mysql.ModeNoBackslashEscapes | mysql.ModeOnlyFullGroupBy
+	d := mysql.DelSQLMode(s, mysql.ModeANSIQuotes)
+	require.Equal(t, s, d)
+
+	d = mysql.DelSQLMode(s, mysql.ModeNoBackslashEscapes)
+	require.Equal(t, mysql.ModeOnlyFullGroupBy, d)
+
+	s = mysql.ModeNoBackslashEscapes | mysql.ModeOnlyFullGroupBy
+	a := mysql.SetSQLMode(s, mysql.ModeOnlyFullGroupBy)
+	require.Equal(t, s, a)
+
+	a = mysql.SetSQLMode(s, mysql.ModeAllowInvalidDates)
+	require.Equal(t, mysql.ModeNoBackslashEscapes|mysql.ModeOnlyFullGroupBy|mysql.ModeAllowInvalidDates, a)
+}
+
+func TestPrepareExecuteWithSQLHints(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	se := tk.Session()
+	se.SetConnectionID(1)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key)")
+
+	type hintCheck struct {
+		hint  string
+		check func(*stmtctx.StmtHints)
+	}
+
+	hintChecks := []hintCheck{
+		{
+			hint: "MEMORY_QUOTA(1024 MB)",
+			check: func(stmtHint *stmtctx.StmtHints) {
+				require.True(t, stmtHint.HasMemQuotaHint)
+				require.Equal(t, int64(1024*1024*1024), stmtHint.MemQuotaQuery)
+			},
+		},
+		{
+			hint: "READ_CONSISTENT_REPLICA()",
+			check: func(stmtHint *stmtctx.StmtHints) {
+				require.True(t, stmtHint.HasReplicaReadHint)
+				require.Equal(t, byte(kv.ReplicaReadFollower), stmtHint.ReplicaRead)
+			},
+		},
+		{
+			hint: "MAX_EXECUTION_TIME(1000)",
+			check: func(stmtHint *stmtctx.StmtHints) {
+				require.True(t, stmtHint.HasMaxExecutionTime)
+				require.Equal(t, uint64(1000), stmtHint.MaxExecutionTime)
+			},
+		},
+		{
+			hint: "USE_TOJA(TRUE)",
+			check: func(stmtHint *stmtctx.StmtHints) {
+				require.True(t, stmtHint.HasAllowInSubqToJoinAndAggHint)
+				require.True(t, stmtHint.AllowInSubqToJoinAndAgg)
+			},
+		},
+		{
+			hint: "RESOURCE_GROUP(rg1)",
+			check: func(stmtHint *stmtctx.StmtHints) {
+				require.True(t, stmtHint.HasResourceGroup)
+				require.Equal(t, "rg1", stmtHint.ResourceGroup)
+			},
+		},
+	}
+
+	for i, check := range hintChecks {
+		// common path
+		tk.MustExec(fmt.Sprintf("prepare stmt%d from 'select /*+ %s */ * from t'", i, check.hint))
+		for j := 0; j < 10; j++ {
+			tk.MustQuery(fmt.Sprintf("execute stmt%d", i))
+			check.check(&tk.Session().GetSessionVars().StmtCtx.StmtHints)
+		}
+		// fast path
+		tk.MustExec(fmt.Sprintf("prepare fast%d from 'select /*+ %s */ * from t where a = 1'", i, check.hint))
+		for j := 0; j < 10; j++ {
+			tk.MustQuery(fmt.Sprintf("execute fast%d", i))
+			check.check(&tk.Session().GetSessionVars().StmtCtx.StmtHints)
+		}
+	}
 }

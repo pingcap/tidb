@@ -17,6 +17,7 @@ package local
 import (
 	"container/heap"
 	"context"
+	goerrors "errors"
 	"strings"
 	"sync"
 	"time"
@@ -159,7 +160,7 @@ func (j *regionJob) convertStageTo(stage jobStageTp) {
 // we don't need to do cleanup for the pairs written to tikv if encounters an error,
 // tikv will take the responsibility to do so.
 // TODO: let client-go provide a high-level write interface.
-func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
+func (local *Backend) writeToTiKV(pCtx context.Context, j *regionJob) (errRet error) {
 	if j.stage != regionScanned {
 		return nil
 	}
@@ -174,6 +175,19 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		}
 		failpoint.Return(err)
 	})
+
+	ctx, cancel := context.WithTimeout(pCtx, 15*time.Minute)
+	defer cancel()
+	defer func() {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			// should not happen
+			return
+		}
+		if goerrors.Is(errRet, context.DeadlineExceeded) && time.Now().After(deadline) {
+			errRet = common.ErrWriteTooSlow
+		}
+	}()
 
 	apiVersion := local.tikvCodec.GetAPIVersion()
 	clientFactory := local.importClientFactory
@@ -358,6 +372,11 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		}
 	}
 
+	failpoint.Inject("NoLeader", func() {
+		log.FromContext(ctx).Warn("enter failpoint NoLeader")
+		leaderPeerMetas = nil
+	})
+
 	// if there is not leader currently, we don't forward the stage to wrote and let caller
 	// handle the retry.
 	if len(leaderPeerMetas) == 0 {
@@ -365,15 +384,18 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 			logutil.Region(region), logutil.Leader(j.region.Leader),
 			zap.Uint64("leader_id", leaderID), logutil.SSTMeta(meta),
 			zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", totalSize))
-		return errors.Errorf("write to tikv with no leader returned, region '%d', leader: %d",
-			region.Id, leaderID)
+		return common.ErrNoLeader.GenWithStackByArgs(region.Id, leaderID)
 	}
 
+	takeTime := time.Since(begin)
 	log.FromContext(ctx).Debug("write to kv", zap.Reflect("region", j.region), zap.Uint64("leader", leaderID),
 		zap.Reflect("meta", meta), zap.Reflect("return metas", leaderPeerMetas),
 		zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", totalSize),
 		zap.Int64("buf_size", bytesBuf.TotalSize()),
-		zap.Stringer("takeTime", time.Since(begin)))
+		zap.Stringer("takeTime", takeTime))
+	if m, ok := metric.FromContext(ctx); ok {
+		m.SSTSecondsHistogram.WithLabelValues(metric.SSTProcessWrite).Observe(takeTime.Seconds())
+	}
 
 	j.writeResult = &tikvWriteResult{
 		sstMeta:           leaderPeerMetas,
@@ -390,7 +412,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 // set job to a proper stage with nil error returned.
 // if any underlying logic has error, ingest will return an error to let caller
 // handle it.
-func (local *Backend) ingest(ctx context.Context, j *regionJob) error {
+func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 	if j.stage != wrote {
 		return nil
 	}
@@ -405,6 +427,15 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) error {
 	if len(j.writeResult.sstMeta) == 0 {
 		j.convertStageTo(ingested)
 		return nil
+	}
+
+	if m, ok := metric.FromContext(ctx); ok {
+		begin := time.Now()
+		defer func() {
+			if err == nil {
+				m.SSTSecondsHistogram.WithLabelValues(metric.SSTProcessIngest).Observe(time.Since(begin).Seconds())
+			}
+		}()
 	}
 
 	for retry := 0; retry < maxRetryTimes; retry++ {

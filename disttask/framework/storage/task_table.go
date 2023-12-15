@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -73,15 +74,8 @@ func execSQL(ctx context.Context, se sessionctx.Context, sql string, args ...int
 		return nil, err
 	}
 	if rs != nil {
-		rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
-		if err != nil {
-			return nil, err
-		}
-		err = rs.Close()
-		if err != nil {
-			return nil, err
-		}
-		return rows, err
+		defer terror.Call(rs.Close)
+		return sqlexec.DrainRecordSet(ctx, rs, 1024)
 	}
 	return nil, nil
 }
@@ -398,4 +392,25 @@ func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtas
 
 		return nil
 	})
+}
+
+// CancelGlobalTask cancels global task
+func (stm *TaskManager) CancelGlobalTask(taskID int64) error {
+	_, err := stm.executeSQLWithNewSession(stm.ctx, "update mysql.tidb_global_task set state=%? where id=%? and state in (%?, %?)",
+		proto.TaskStateCancelling, taskID, proto.TaskStatePending, proto.TaskStateRunning,
+	)
+	return err
+}
+
+// IsGlobalTaskCancelling checks whether the task state is cancelling
+func (stm *TaskManager) IsGlobalTaskCancelling(taskID int64) (bool, error) {
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select 1 from mysql.tidb_global_task where id=%? and state = %?",
+		taskID, proto.TaskStateCancelling,
+	)
+
+	if err != nil {
+		return false, err
+	}
+
+	return len(rs) > 0, nil
 }

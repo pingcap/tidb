@@ -25,6 +25,7 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1630,13 +1631,13 @@ func TestAuthSessionTokenPlugin(t *testing.T) {
 	// create a token without TLS
 	tk1 := testkit.NewTestKitWithSession(t, store, tc.Session)
 	tc.Session.GetSessionVars().ConnectionInfo = cc.connectInfo()
-	tk1.Session().Auth(&auth.UserIdentity{Username: "auth_session_token", Hostname: "localhost"}, nil, nil)
+	tk1.Session().Auth(&auth.UserIdentity{Username: "auth_session_token", Hostname: "localhost"}, nil, nil, nil)
 	tk1.MustQuery("show session_states")
 
 	// create a token with TLS
-	cc.tlsConn = &tls.Conn{}
+	cc.tlsConn = tls.Client(nil, &tls.Config{})
 	tc.Session.GetSessionVars().ConnectionInfo = cc.connectInfo()
-	tk1.Session().Auth(&auth.UserIdentity{Username: "auth_session_token", Hostname: "localhost"}, nil, nil)
+	tk1.Session().Auth(&auth.UserIdentity{Username: "auth_session_token", Hostname: "localhost"}, nil, nil, nil)
 	tk1.MustQuery("show session_states")
 
 	// create a token with UnixSocket
@@ -1985,4 +1986,84 @@ func TestProcessInfoForExecuteCommand(t *testing.T) {
 		0x1, 0x8, 0x0,
 		0x0A, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}))
 	require.Equal(t, cc.ctx.Session.ShowProcess().Info, "select sum(col1) from t where col1 < ? and col1 > 100")
+}
+
+func TestLDAPAuthSwitch(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	cfg := newTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	drv := NewTiDBDriver(store)
+	srv, err := NewServer(cfg, drv)
+	require.NoError(t, err)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE USER test_simple_ldap IDENTIFIED WITH authentication_ldap_simple AS 'uid=test_simple_ldap,dc=example,dc=com'")
+
+	cc := &clientConn{
+		connectionID: 1,
+		alloc:        arena.NewAllocator(1024),
+		chunkAlloc:   chunk.NewAllocator(),
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+		server: srv,
+		user:   "test_simple_ldap",
+	}
+	se, _ := session.CreateSession4Test(store)
+	tc := &TiDBContext{
+		Session: se,
+		stmts:   make(map[int]*TiDBStatement),
+	}
+	cc.setCtx(tc)
+	cc.isUnixSocket = true
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
+	respAuthSwitch, err := cc.checkAuthPlugin(context.Background(), &handshakeResponse41{
+		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
+		User:       "test_simple_ldap",
+	})
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
+	require.NoError(t, err)
+	require.Equal(t, []byte(mysql.AuthMySQLClearPassword), respAuthSwitch)
+}
+
+func TestCloseConn(t *testing.T) {
+	var outBuffer bytes.Buffer
+
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	cfg := newTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	drv := NewTiDBDriver(store)
+	server, err := NewServer(cfg, drv)
+	require.NoError(t, err)
+
+	cc := &clientConn{
+		connectionID: 0,
+		salt: []byte{
+			0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A,
+			0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14,
+		},
+		server: server,
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(&outBuffer),
+		},
+		collation:  mysql.DefaultCollationID,
+		peerHost:   "localhost",
+		alloc:      arena.NewAllocator(512),
+		chunkAlloc: chunk.NewAllocator(),
+		capability: mysql.ClientProtocol41,
+	}
+
+	var wg sync.WaitGroup
+	const numGoroutines = 10
+	wg.Add(numGoroutines)
+	for i := 0; i < numGoroutines; i++ {
+		go func() {
+			defer wg.Done()
+			err := closeConn(cc, 1)
+			require.NoError(t, err)
+		}()
+	}
+	wg.Wait()
 }

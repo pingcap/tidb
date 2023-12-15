@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	core_metrics "github.com/pingcap/tidb/planner/core/metrics"
+	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -40,6 +41,13 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	utilpc "github.com/pingcap/tidb/util/plancache"
 	"github.com/pingcap/tidb/util/ranger"
+)
+
+var (
+	// PlanCacheKeyTestIssue43667 is for test.
+	PlanCacheKeyTestIssue43667 struct{}
+	// PlanCacheKeyTestIssue46760 is only for test.
+	PlanCacheKeyTestIssue46760 struct{}
 )
 
 // SetParameterValuesIntoSCtx sets these parameters into session context.
@@ -64,6 +72,14 @@ func SetParameterValuesIntoSCtx(sctx sessionctx.Context, isNonPrep bool, markers
 			param.InExecute = true
 		}
 		vars.PlanCacheParams.Append(val)
+	}
+	if vars.StmtCtx.EnableOptimizerDebugTrace && len(vars.PlanCacheParams.AllParamValues()) > 0 {
+		vals := vars.PlanCacheParams.AllParamValues()
+		valStrs := make([]string, len(vals))
+		for i, val := range vals {
+			valStrs[i] = val.String()
+		}
+		debugtrace.RecordAnyValuesWithNames(sctx, "Parameter datums for EXECUTE", valStrs)
 	}
 	vars.PlanCacheParams.SetForNonPrepCache(isNonPrep)
 	return nil
@@ -231,6 +247,9 @@ func getCachedPointPlan(stmt *ast.Prepared, sessVars *variable.SessionVars, stmt
 	}
 	sessVars.FoundInPlanCache = true
 	stmtCtx.PointExec = true
+	if pointGetPlan, ok := plan.(*PointGetPlan); ok && pointGetPlan != nil && pointGetPlan.stmtHints != nil {
+		sessVars.StmtCtx.StmtHints = *pointGetPlan.stmtHints
+	}
 	return plan, names, true, nil
 }
 
@@ -271,6 +290,7 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 		core_metrics.GetPlanCacheHitCounter(isNonPrepared).Inc()
 	}
 	stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
+	stmtCtx.StmtHints = *cachedVal.stmtHints
 	return cachedVal.Plan, cachedVal.OutPutNames, true, nil
 }
 
@@ -313,7 +333,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 			}
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}
-		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, matchOpts)
+		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, matchOpts, &stmtCtx.StmtHints)
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
@@ -333,7 +353,7 @@ func RebuildPlan4CachedPlan(p Plan) (ok bool) {
 	sc.InPreparedPlanBuilding = true
 	defer func() { sc.InPreparedPlanBuilding = false }()
 	if err := rebuildRange(p); err != nil {
-		// TODO: log or warn this error.
+		sc.AppendWarning(errors.Errorf("skip plan-cache: plan rebuild failed, %s", err.Error()))
 		return false // fail to rebuild ranges
 	}
 	if !sc.UseCache {
@@ -428,7 +448,7 @@ func rebuildRange(p Plan) error {
 				if err != nil {
 					return err
 				}
-				if !isSafeRange(x.AccessConditions, ranges, false, nil) {
+				if len(ranges.Ranges) != 1 || !isSafeRange(x.AccessConditions, ranges, false, nil) {
 					return errors.New("rebuild to get an unsafe range")
 				}
 				for i := range x.IndexValues {
@@ -450,7 +470,7 @@ func rebuildRange(p Plan) error {
 					if err != nil {
 						return err
 					}
-					if !isSafeRange(x.AccessConditions, &ranger.DetachRangeResult{
+					if len(ranges) != 1 || !isSafeRange(x.AccessConditions, &ranger.DetachRangeResult{
 						Ranges:        ranges,
 						AccessConds:   accessConds,
 						RemainedConds: remainingConds,
@@ -519,7 +539,7 @@ func rebuildRange(p Plan) error {
 					if err != nil {
 						return err
 					}
-					if len(ranges) != len(x.Handles) && !isSafeRange(x.AccessConditions, &ranger.DetachRangeResult{
+					if len(ranges) != len(x.Handles) || !isSafeRange(x.AccessConditions, &ranger.DetachRangeResult{
 						Ranges:        ranges,
 						AccessConds:   accessConds,
 						RemainedConds: remainingConds,
@@ -743,11 +763,14 @@ func tryCachePointPlan(_ context.Context, sctx sessionctx.Context,
 		names   types.NameSlice
 	)
 
-	if _, _ok := p.(*PointGetPlan); _ok {
+	if plan, _ok := p.(*PointGetPlan); _ok {
 		ok, err = IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, p)
 		names = p.OutputNames()
 		if err != nil {
 			return err
+		}
+		if ok {
+			plan.stmtHints = sctx.GetSessionVars().StmtCtx.StmtHints.Clone()
 		}
 	}
 

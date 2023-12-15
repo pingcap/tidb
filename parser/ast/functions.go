@@ -298,6 +298,7 @@ const (
 	BinToUUID       = "bin_to_uuid"
 	VitessHash      = "vitess_hash"
 	TiDBShard       = "tidb_shard"
+	TiDBRowChecksum = "tidb_row_checksum"
 	GetLock         = "get_lock"
 	ReleaseLock     = "release_lock"
 

@@ -25,8 +25,8 @@ import (
 
 // IngestIndexInfo records the information used to generate index drop/re-add SQL.
 type IngestIndexInfo struct {
-	SchemaName string
-	TableName  string
+	SchemaName model.CIStr
+	TableName  model.CIStr
 	ColumnList string
 	ColumnArgs []interface{}
 	IsPrimary  bool
@@ -69,13 +69,23 @@ func notAddIndexJob(job *model.Job) bool {
 		job.Type != model.ActionAddPrimaryKey
 }
 
-func notSynced(job *model.Job) bool {
-	return job.State != model.JobStateSynced
+// the final state of the sub jobs is done instead of synced.
+// +-----+-------------------------------------+--------------+-----+--------+
+// | ... | JOB_TYPE                            | SCHEMA_STATE | ... | STATE  |
+// +-----+-------------------------------------+--------------+-----+--------+
+// | ... | add index /* ingest */              | public       | ... | synced |
+// +-----+-------------------------------------+--------------+-----+--------+
+// | ... | alter table multi-schema change     | none         | ... | synced |
+// +-----+-------------------------------------+--------------+-----+--------+
+// | ... | add index /* subjob */ /* ingest */ | public       | ... | done   |
+// +-----+-------------------------------------+--------------+-----+--------+
+func notSynced(job *model.Job, isSubJob bool) bool {
+	return (job.State != model.JobStateSynced) && !(isSubJob && job.State == model.JobStateDone)
 }
 
 // AddJob firstly filters the ingest index add operation job, and records it into IngestRecorder.
-func (i *IngestRecorder) AddJob(job *model.Job) error {
-	if job == nil || notIngestJob(job) || notAddIndexJob(job) || notSynced(job) {
+func (i *IngestRecorder) AddJob(job *model.Job, isSubJob bool) error {
+	if job == nil || notIngestJob(job) || notAddIndexJob(job) || notSynced(job, isSubJob) {
 		return nil
 	}
 
@@ -159,8 +169,8 @@ func (i *IngestRecorder) UpdateIndexInfo(dbInfos []*model.DBInfo) {
 				index.ColumnList = columnListBuilder.String()
 				index.ColumnArgs = columnListArgs
 				index.IndexInfo = indexInfo
-				index.SchemaName = dbInfo.Name.O
-				index.TableName = tblInfo.Name.O
+				index.SchemaName = dbInfo.Name
+				index.TableName = tblInfo.Name
 				index.Updated = true
 			}
 		}

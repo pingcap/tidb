@@ -3,8 +3,8 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "callback",
     srcs = ["callback.go"],
-    importpath = "github.com/pingcap/tidb/ddl/internal/callback",
-    visibility = ["//ddl:__subpackages__"],
+    importpath = "github.com/pingcap/tidb/ddl/util/callback",
+    visibility = ["//visibility:public"],
     deps = [
         "//ddl",
         "//infoschema",

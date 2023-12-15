@@ -16,6 +16,7 @@ package checkpoint
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -28,10 +29,12 @@ type BackupKeyType = string
 type BackupValueType = RangeType
 
 const (
-	CheckpointMetaPath             = "checkpoint.meta"
-	CheckpointDataDirForBackup     = CheckpointDir + "/data"
-	CheckpointChecksumDirForBackup = CheckpointDir + "/checksum"
-	CheckpointLockPathForBackup    = CheckpointDir + "/checkpoint.lock"
+	CheckpointBackupDir = CheckpointDir + "/backup"
+
+	CheckpointDataDirForBackup     = CheckpointBackupDir + "/data"
+	CheckpointChecksumDirForBackup = CheckpointBackupDir + "/checksum"
+	CheckpointMetaPathForBackup    = CheckpointBackupDir + "/checkpoint.meta"
+	CheckpointLockPathForBackup    = CheckpointBackupDir + "/checkpoint.lock"
 )
 
 func flushPositionForBackup() flushPosition {
@@ -42,6 +45,10 @@ func flushPositionForBackup() flushPosition {
 	}
 }
 
+func valueMarshalerForBackup(group *RangeGroup[BackupKeyType, BackupValueType]) ([]byte, error) {
+	return json.Marshal(group)
+}
+
 // only for test
 func StartCheckpointBackupRunnerForTest(
 	ctx context.Context,
@@ -50,13 +57,14 @@ func StartCheckpointBackupRunnerForTest(
 	tick time.Duration,
 	timer GlobalTimer,
 ) (*CheckpointRunner[BackupKeyType, BackupValueType], error) {
-	runner := newCheckpointRunner[BackupKeyType, BackupValueType](ctx, storage, cipher, timer, flushPositionForBackup())
+	runner := newCheckpointRunner[BackupKeyType, BackupValueType](
+		ctx, storage, cipher, timer, flushPositionForBackup(), valueMarshalerForBackup)
 
 	err := runner.initialLock(ctx)
 	if err != nil {
 		return nil, errors.Annotate(err, "Failed to initialize checkpoint lock.")
 	}
-	runner.startCheckpointMainLoop(ctx, tick, tick)
+	runner.startCheckpointMainLoop(ctx, tick, tick, tick)
 	return runner, nil
 }
 
@@ -66,13 +74,19 @@ func StartCheckpointRunnerForBackup(
 	cipher *backuppb.CipherInfo,
 	timer GlobalTimer,
 ) (*CheckpointRunner[BackupKeyType, BackupValueType], error) {
-	runner := newCheckpointRunner[BackupKeyType, BackupValueType](ctx, storage, cipher, timer, flushPositionForBackup())
+	runner := newCheckpointRunner[BackupKeyType, BackupValueType](
+		ctx, storage, cipher, timer, flushPositionForBackup(), valueMarshalerForBackup)
 
 	err := runner.initialLock(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	runner.startCheckpointMainLoop(ctx, tickDurationForFlush, tickDurationForLock)
+	runner.startCheckpointMainLoop(
+		ctx,
+		defaultTickDurationForFlush,
+		defaultTckDurationForChecksum,
+		defaultTickDurationForLock,
+	)
 	return runner, nil
 }
 
@@ -122,7 +136,7 @@ type CheckpointMetadataForBackup struct {
 // load checkpoint metadata from the external storage
 func LoadCheckpointMetadata(ctx context.Context, s storage.ExternalStorage) (*CheckpointMetadataForBackup, error) {
 	m := &CheckpointMetadataForBackup{}
-	err := loadCheckpointMeta(ctx, s, CheckpointMetaPath, m)
+	err := loadCheckpointMeta(ctx, s, CheckpointMetaPathForBackup, m)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -132,5 +146,9 @@ func LoadCheckpointMetadata(ctx context.Context, s storage.ExternalStorage) (*Ch
 
 // save the checkpoint metadata into the external storage
 func SaveCheckpointMetadata(ctx context.Context, s storage.ExternalStorage, meta *CheckpointMetadataForBackup) error {
-	return saveCheckpointMetadata(ctx, s, meta, CheckpointMetaPath)
+	return saveCheckpointMetadata(ctx, s, meta, CheckpointMetaPathForBackup)
+}
+
+func RemoveCheckpointDataForBackup(ctx context.Context, s storage.ExternalStorage) error {
+	return removeCheckpointData(ctx, s, CheckpointBackupDir)
 }

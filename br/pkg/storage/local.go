@@ -121,7 +121,7 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *WalkOption, fn func(strin
 
 // URI returns the base path as an URI with a file:/// prefix.
 func (l *LocalStorage) URI() string {
-	return LocalURIPrefix + "/" + l.base
+	return LocalURIPrefix + l.base
 }
 
 // Open a Reader by file path, path is a relative path to base path.
@@ -131,7 +131,7 @@ func (l *LocalStorage) Open(_ context.Context, path string) (ExternalFileReader,
 }
 
 // Create implements ExternalStorage interface.
-func (l *LocalStorage) Create(_ context.Context, name string) (ExternalFileWriter, error) {
+func (l *LocalStorage) Create(_ context.Context, name string, _ *WriterOption) (ExternalFileWriter, error) {
 	file, err := os.Create(filepath.Join(l.base, name))
 	if err != nil {
 		return nil, errors.Trace(err)

@@ -28,6 +28,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/backup"
@@ -57,7 +58,6 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 	"golang.org/x/exp/slices"
 )
 
@@ -135,6 +135,7 @@ func (cfg *StreamConfig) makeStorage(ctx context.Context) (storage.ExternalStora
 	opts := storage.ExternalStorageOptions{
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
+		HTTPClient:      storage.GetDefaultHttpClient(cfg.MetadataDownloadBatchSize),
 	}
 	storage, err := storage.New(ctx, u, &opts)
 	if err != nil {
@@ -876,7 +877,7 @@ func RunStreamAdvancer(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	if err != nil {
 		return err
 	}
-	env := streamhelper.CliEnv(mgr.StoreManager, etcdCLI)
+	env := streamhelper.CliEnv(mgr.StoreManager, mgr.GetStore(), etcdCLI)
 	advancer := streamhelper.NewCheckpointAdvancer(env)
 	advancer.UpdateConfig(cfg.AdvancerCfg)
 	advancerd := daemon.New(advancer, streamhelper.OwnerManagerForLogBackup(ctx, etcdCLI), cfg.AdvancerCfg.TickDuration)
@@ -983,8 +984,9 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 
 	readMetaDone := console.ShowTask("Reading Metadata... ", glue.WithTimeCost())
 	metas := restore.StreamMetadataSet{
-		Helper: stream.NewMetadataHelper(),
-		DryRun: cfg.DryRun,
+		MetadataDownloadBatchSize: cfg.MetadataDownloadBatchSize,
+		Helper:                    stream.NewMetadataHelper(),
+		DryRun:                    cfg.DryRun,
 	}
 	shiftUntilTS, err := metas.LoadUntilAndCalculateShiftTS(ctx, storage, cfg.Until)
 	if err != nil {
@@ -1074,19 +1076,16 @@ func checkTaskExists(ctx context.Context, cfg *RestoreConfig, etcdCLI *clientv3.
 	}
 
 	// check cdc changefeed
-	nameSet, err := utils.GetCDCChangefeedNameSet(ctx, etcdCLI)
-	if err != nil {
-		return err
-	}
-	if !nameSet.Empty() {
-		return errors.Errorf("%splease stop changefeed(s) before restore", nameSet.MessageToUser())
+	if cfg.CheckRequirements {
+		nameSet, err := utils.GetCDCChangefeedNameSet(ctx, etcdCLI)
+		if err != nil {
+			return err
+		}
+		if !nameSet.Empty() {
+			return errors.Errorf("%splease stop changefeed(s) before restore", nameSet.MessageToUser())
+		}
 	}
 	return nil
-}
-
-// getStreamRestoreTaskName generates the taskName for checkpoint
-func getStreamRestoreTaskName(clusterID, startTS, restoreTs uint64) string {
-	return fmt.Sprintf("%d/%d.%d", clusterID, startTS, restoreTs)
 }
 
 // RunStreamRestore restores stream log.
@@ -1148,6 +1147,10 @@ func RunStreamRestore(
 		return errors.Trace(err)
 	}
 
+	failpoint.Inject("failed-before-full-restore", func(_ failpoint.Value) {
+		failpoint.Return(errors.New("failpoint: failed before full restore"))
+	})
+
 	recorder := tiflashrec.New()
 	cfg.tiflashRecorder = recorder
 	// restore full snapshot.
@@ -1159,9 +1162,18 @@ func RunStreamRestore(
 			return errors.Trace(err)
 		}
 		cfg.Config.Storage = logStorage
-	} else if curTaskInfo != nil && curTaskInfo.TiFlashItems != nil {
-		log.Info("load tiflash records from checkpoint")
-		cfg.tiflashRecorder.Load(curTaskInfo.TiFlashItems)
+	} else if len(cfg.FullBackupStorage) > 0 {
+		skipMsg := []byte(fmt.Sprintf("%s command is skipped due to checkpoint mode for restore\n", FullRestoreCmd))
+		if _, err := glue.GetConsole(g).Out().Write(skipMsg); err != nil {
+			return errors.Trace(err)
+		}
+		if curTaskInfo != nil && curTaskInfo.TiFlashItems != nil {
+			log.Info("load tiflash records of snapshot restore from checkpoint")
+			if err != nil {
+				return errors.Trace(err)
+			}
+			cfg.tiflashRecorder.Load(curTaskInfo.TiFlashItems)
+		}
 	}
 	// restore log.
 	cfg.adjustRestoreConfigForStreamRestore()
@@ -1180,10 +1192,12 @@ func restoreStream(
 	logMinTS, logMaxTS uint64,
 ) (err error) {
 	var (
-		totalKVCount uint64
-		totalSize    uint64
-		mu           sync.Mutex
-		startTime    = time.Now()
+		totalKVCount           uint64
+		totalSize              uint64
+		checkpointTotalKVCount uint64
+		checkpointTotalSize    uint64
+		mu                     sync.Mutex
+		startTime              = time.Now()
 	)
 	defer func() {
 		if err != nil {
@@ -1195,7 +1209,9 @@ func restoreStream(
 				zap.String("restore-from", stream.FormatDate(oracle.GetTimeFromTS(cfg.StartTS))),
 				zap.String("restore-to", stream.FormatDate(oracle.GetTimeFromTS(cfg.RestoreTS))),
 				zap.Uint64("total-kv-count", totalKVCount),
+				zap.Uint64("skipped-kv-count-by-checkpoint", checkpointTotalKVCount),
 				zap.String("total-size", units.HumanSize(float64(totalSize))),
+				zap.String("skipped-size-by-checkpoint", units.HumanSize(float64(checkpointTotalSize))),
 				zap.String("average-speed", units.HumanSize(float64(totalSize)/totalDureTime.Seconds())+"/s"),
 			)
 		}
@@ -1268,9 +1284,10 @@ func restoreStream(
 		log.Info("finish restoring gc")
 	}()
 
-	taskName := getStreamRestoreTaskName(client.GetClusterID(ctx), cfg.StartTS, cfg.RestoreTS)
+	var taskName string
 	var checkpointRunner *checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType]
 	if cfg.UseCheckpoint {
+		taskName = cfg.generateLogRestoreTaskName(client.GetClusterID(ctx), cfg.StartTS, cfg.RestoreTS)
 		oldRatioFromCheckpoint, err := client.InitCheckpointMetadataForLogRestore(ctx, taskName, oldRatio)
 		if err != nil {
 			return errors.Trace(err)
@@ -1283,32 +1300,32 @@ func restoreStream(
 		}
 		defer func() {
 			log.Info("wait for flush checkpoint...")
-			checkpointRunner.WaitForFinish(ctx)
+			checkpointRunner.WaitForFinish(ctx, !gcDisabledRestorable)
 		}()
 	}
 
-	err = client.InstallLogFileManager(ctx, cfg.StartTS, cfg.RestoreTS)
+	err = client.InstallLogFileManager(ctx, cfg.StartTS, cfg.RestoreTS, cfg.MetadataDownloadBatchSize)
 	if err != nil {
 		return err
 	}
 
-	// get full backup meta to generate rewrite rules.
-	fullBackupTables, err := initFullBackupTables(ctx, cfg)
+	// get full backup meta storage to generate rewrite rules.
+	fullBackupStorage, err := parseFullBackupTablesStorage(ctx, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
+	// load the id maps only when the checkpoint mode is used and not the first execution
 	newTask := true
 	if taskInfo != nil && taskInfo.Progress == checkpoint.InLogRestoreAndIdMapPersist {
 		newTask = false
 	}
 	// get the schemas ID replace information.
 	schemasReplace, err := client.InitSchemasReplaceForDDL(ctx, &restore.InitSchemaConfig{
-		IsNewTask:       newTask,
-		HasFullRestore:  len(cfg.FullBackupStorage) > 0,
-		TableFilter:     cfg.TableFilter,
-		TiFlashRecorder: cfg.tiflashRecorder,
-		Tables:          fullBackupTables,
+		IsNewTask:         newTask,
+		HasFullRestore:    len(cfg.FullBackupStorage) > 0,
+		TableFilter:       cfg.TableFilter,
+		TiFlashRecorder:   cfg.tiflashRecorder,
+		FullBackupStorage: fullBackupStorage,
 	})
 	if err != nil {
 		return errors.Trace(err)
@@ -1344,12 +1361,7 @@ func restoreStream(
 		return errors.Annotate(err, "failed to restore meta files")
 	}
 
-	// perform restore kv files
-	rewriteRules, err := initRewriteRules(client, fullBackupTables)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	updateRewriteRules(rewriteRules, schemasReplace)
+	rewriteRules := initRewriteRules(schemasReplace)
 
 	ingestRecorder := schemasReplace.GetIngestRecorder()
 	if err := client.RangeFilterFromIngestRecorder(ingestRecorder, rewriteRules); err != nil {
@@ -1372,7 +1384,15 @@ func restoreStream(
 	pd := g.StartProgress(ctx, "Restore KV Files", int64(dataFileCount), !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) error {
 		if cfg.UseCheckpoint {
-			logFilesIter, err = client.WrapLogFilesIterWithCheckpoint(ctx, logFilesIter, downstreamIdset, taskName, updateStats, p.Inc)
+			updateStatsWithCheckpoint := func(kvCount, size uint64) {
+				mu.Lock()
+				defer mu.Unlock()
+				totalKVCount += kvCount
+				totalSize += size
+				checkpointTotalKVCount += kvCount
+				checkpointTotalSize += size
+			}
+			logFilesIter, err = client.WrapLogFilesIterWithCheckpoint(ctx, logFilesIter, downstreamIdset, taskName, updateStatsWithCheckpoint, p.Inc)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1396,7 +1416,7 @@ func restoreStream(
 		return errors.Annotate(err, "failed to insert rows into gc_delete_range")
 	}
 
-	if err = client.RepairIngestIndex(ctx, ingestRecorder, g, mgr.GetStorage()); err != nil {
+	if err = client.RepairIngestIndex(ctx, ingestRecorder, g, mgr.GetStorage(), taskName); err != nil {
 		return errors.Annotate(err, "failed to repair ingest index")
 	}
 
@@ -1419,6 +1439,12 @@ func restoreStream(
 			return err
 		}
 	}
+
+	failpoint.Inject("do-checksum-with-rewrite-rules", func(_ failpoint.Value) {
+		if err := client.FailpointDoChecksumForLogRestore(ctx, mgr.GetStorage().GetClient(), mgr.GetPDClient(), idrules, rewriteRules); err != nil {
+			failpoint.Return(errors.Annotate(err, "failed to do checksum"))
+		}
+	})
 
 	gcDisabledRestorable = true
 
@@ -1448,6 +1474,7 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 	opts := storage.ExternalStorageOptions{
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
+		HTTPClient:      storage.GetDefaultHttpClient(cfg.MetadataDownloadBatchSize),
 	}
 	if err = client.SetStorage(ctx, u, &opts); err != nil {
 		return nil, errors.Trace(err)
@@ -1606,144 +1633,28 @@ func getFullBackupTS(
 	return backupmeta.GetEndVersion(), backupmeta.GetClusterId(), nil
 }
 
-func getGlobalResolvedTS(
-	ctx context.Context,
-	s storage.ExternalStorage,
-	helper *stream.MetadataHelper,
-) (uint64, error) {
-	storeMap := struct {
-		sync.Mutex
-		resolvedTSMap map[int64]uint64
-	}{}
-	storeMap.resolvedTSMap = make(map[int64]uint64)
-	err := stream.FastUnmarshalMetaData(ctx, s, func(path string, raw []byte) error {
-		m, err := helper.ParseToMetadata(raw)
-		if err != nil {
-			return err
-		}
-		storeMap.Lock()
-		if resolveTS, exist := storeMap.resolvedTSMap[m.StoreId]; !exist || resolveTS < m.ResolvedTs {
-			storeMap.resolvedTSMap[m.StoreId] = m.ResolvedTs
-		}
-		storeMap.Unlock()
-		return nil
-	})
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	var globalCheckpointTS uint64 = 0
-	// If V3 global-checkpoint advance, the maximum value in storeMap.resolvedTSMap as global-checkpoint-ts.
-	// If v2 global-checkpoint advance, it need the minimal value in storeMap.resolvedTSMap as global-checkpoint-ts.
-	// Because each of store maintains own checkpoint-ts only.
-	for _, resolveTS := range storeMap.resolvedTSMap {
-		if globalCheckpointTS < resolveTS {
-			globalCheckpointTS = resolveTS
-		}
-	}
-	return globalCheckpointTS, nil
-}
-
-func initFullBackupTables(
+func parseFullBackupTablesStorage(
 	ctx context.Context,
 	cfg *RestoreConfig,
-) (map[int64]*metautil.Table, error) {
-	var storage string
+) (*restore.FullBackupStorageConfig, error) {
+	var storageName string
 	if len(cfg.FullBackupStorage) > 0 {
-		storage = cfg.FullBackupStorage
+		storageName = cfg.FullBackupStorage
 	} else {
-		storage = cfg.Storage
+		storageName = cfg.Storage
 	}
-	_, s, err := GetStorage(ctx, storage, &cfg.Config)
+	u, err := storage.ParseBackend(storageName, &cfg.BackendOptions)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	backupMeta := &backuppb.BackupMeta{}
-	if err = backupMeta.Unmarshal(metaData); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	// read full backup databases to get map[table]table.Info
-	reader := metautil.NewMetaReader(backupMeta, s, nil)
-
-	databases, err := utils.LoadBackupTables(ctx, reader)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	tables := make(map[int64]*metautil.Table)
-	for _, db := range databases {
-		dbName := db.Info.Name.O
-		if name, ok := utils.GetSysDBName(db.Info.Name); utils.IsSysDB(name) && ok {
-			dbName = name
-		}
-
-		if !cfg.TableFilter.MatchSchema(dbName) {
-			continue
-		}
-
-		for _, table := range db.Tables {
-			// check this db is empty.
-			if table.Info == nil {
-				tables[db.Info.ID] = table
-				continue
-			}
-			if !cfg.TableFilter.MatchTable(dbName, table.Info.Name.O) {
-				continue
-			}
-			tables[table.Info.ID] = table
-		}
-	}
-
-	return tables, nil
+	return &restore.FullBackupStorageConfig{
+		Backend: u,
+		Opts:    storageOpts(&cfg.Config),
+	}, nil
 }
 
-func initRewriteRules(client *restore.Client, tables map[int64]*metautil.Table) (map[int64]*restore.RewriteRules, error) {
-	// compare table exists in cluster and map[table]table.Info to get rewrite rules.
+func initRewriteRules(schemasReplace *stream.SchemasReplace) map[int64]*restore.RewriteRules {
 	rules := make(map[int64]*restore.RewriteRules)
-	for _, t := range tables {
-		if name, ok := utils.GetSysDBName(t.DB.Name); utils.IsSysDB(name) && ok {
-			// skip system table for now
-			continue
-		}
-		if t.Info == nil {
-			continue
-		}
-
-		newTableInfo, err := client.GetTableSchema(client.GetDomain(), t.DB.Name, t.Info.Name)
-		if err != nil {
-			// If table not existed, skip it directly.
-			continue
-		}
-		// we don't handle index rule in pitr. since we only support pitr on non-exists table.
-		tableRules := restore.GetRewriteRulesMap(newTableInfo, t.Info, 0, false)
-		for tableID, tableRule := range tableRules {
-			rules[tableID] = tableRule
-		}
-
-		log.Info("Using rewrite rule for table.", zap.Stringer("table", t.Info.Name),
-			zap.Stringer("database", t.DB.Name),
-			zap.Int("old-id", int(t.Info.ID)),
-			zap.Array("rewrite-rules", zapcore.ArrayMarshalerFunc(func(ae zapcore.ArrayEncoder) error {
-				for _, r := range tableRules {
-					for _, rule := range r.Data {
-						if err := ae.AppendObject(logutil.RewriteRuleObject(rule)); err != nil {
-							return err
-						}
-					}
-				}
-				return nil
-			})),
-		)
-	}
-	return rules, nil
-}
-
-func updateRewriteRules(rules map[int64]*restore.RewriteRules, schemasReplace *stream.SchemasReplace) {
 	filter := schemasReplace.TableFilter
 
 	for _, dbReplace := range schemasReplace.DbMap {
@@ -1774,6 +1685,7 @@ func updateRewriteRules(rules map[int64]*restore.RewriteRules, schemasReplace *s
 			}
 		}
 	}
+	return rules
 }
 
 func newRawBatchClient(
@@ -1836,6 +1748,8 @@ func checkPiTRTaskInfo(
 		doFullRestore = (len(cfg.FullBackupStorage) > 0)
 
 		curTaskInfo *checkpoint.CheckpointTaskInfoForLogRestore
+
+		errTaskMsg string
 	)
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
 		cfg.CheckRequirements, true, conn.StreamVersionChecker)
@@ -1863,10 +1777,18 @@ func checkPiTRTaskInfo(
 			if curTaskInfo.StartTS == cfg.StartTS && curTaskInfo.RestoreTS == cfg.RestoreTS {
 				// the same task, check whether skip snapshot restore
 				doFullRestore = doFullRestore && (curTaskInfo.Progress == checkpoint.InSnapshotRestore)
+				// update the snapshot restore task name to clean up in final
+				if !doFullRestore && (len(cfg.FullBackupStorage) > 0) {
+					_ = cfg.generateSnapshotRestoreTaskName(clusterID)
+				}
 				log.Info("the same task", zap.Bool("skip-snapshot-restore", !doFullRestore))
 			} else {
 				// not the same task, so overwrite the taskInfo with a new task
 				log.Info("not the same task, start to restore from scratch")
+				errTaskMsg = fmt.Sprintf(
+					"a new task [start-ts=%d] [restored-ts=%d] while the last task info: [start-ts=%d] [restored-ts=%d] [skip-snapshot-restore=%t]",
+					cfg.StartTS, cfg.RestoreTS, curTaskInfo.StartTS, curTaskInfo.RestoreTS, curTaskInfo.Progress == checkpoint.InLogRestoreAndIdMapPersist)
+
 				curTaskInfo = nil
 			}
 		}
@@ -1879,6 +1801,12 @@ func checkPiTRTaskInfo(
 			// skip checking requirements.
 			log.Info("check pitr requirements for the first execution")
 			if err := checkPiTRRequirements(ctx, g, cfg, mgr); err != nil {
+				if len(errTaskMsg) > 0 {
+					err = errors.Annotatef(err, "The current restore task is regarded as %s. "+
+						"If you ensure that no changes have been made to the cluster since the last execution, "+
+						"you can adjust the `start-ts` or `restored-ts` to continue with the previous execution. "+
+						"Otherwise, if you want to restore from scratch, please clean the cluster at first", errTaskMsg)
+				}
 				return nil, false, errors.Trace(err)
 			}
 		}

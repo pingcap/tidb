@@ -939,18 +939,12 @@ func (coll *HistColl) ID2UniqueID(columns []*expression.Column) *HistColl {
 }
 
 // GenerateHistCollFromColumnInfo generates a new HistColl whose ColID2IdxIDs and IdxID2ColIDs is built from the given parameter.
-func (coll *HistColl) GenerateHistCollFromColumnInfo(infos []*model.ColumnInfo, columns []*expression.Column) *HistColl {
+func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, columns []*expression.Column) *HistColl {
 	newColHistMap := make(map[int64]*Column)
 	colInfoID2UniqueID := make(map[int64]int64, len(columns))
-	colNames2UniqueID := make(map[string]int64)
+	idxID2idxInfo := make(map[int64]*model.IndexInfo)
 	for _, col := range columns {
 		colInfoID2UniqueID[col.ID] = col.UniqueID
-	}
-	for _, colInfo := range infos {
-		uniqueID, ok := colInfoID2UniqueID[colInfo.ID]
-		if ok {
-			colNames2UniqueID[colInfo.Name.L] = uniqueID
-		}
 	}
 	for id, colHist := range coll.Columns {
 		uniqueID, ok := colInfoID2UniqueID[id]
@@ -959,13 +953,20 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(infos []*model.ColumnInfo, 
 			newColHistMap[uniqueID] = colHist
 		}
 	}
+	for _, idxInfo := range tblInfo.Indices {
+		idxID2idxInfo[idxInfo.ID] = idxInfo
+	}
 	newIdxHistMap := make(map[int64]*Index)
 	idx2Columns := make(map[int64][]int64)
 	colID2IdxIDs := make(map[int64][]int64)
-	for _, idxHist := range coll.Indices {
-		ids := make([]int64, 0, len(idxHist.Info.Columns))
-		for _, idxCol := range idxHist.Info.Columns {
-			uniqueID, ok := colNames2UniqueID[idxCol.Name.L]
+	for id, idxHist := range coll.Indices {
+		idxInfo := idxID2idxInfo[id]
+		if idxInfo == nil {
+			continue
+		}
+		ids := make([]int64, 0, len(idxInfo.Columns))
+		for _, idxCol := range idxInfo.Columns {
+			uniqueID, ok := colInfoID2UniqueID[tblInfo.Columns[idxCol.Offset].ID]
 			if !ok {
 				break
 			}

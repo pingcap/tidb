@@ -179,7 +179,7 @@ func TestBaselineDBLowerCase(t *testing.T) {
 	tk.MustExec("create database SPM")
 	tk.MustExec("use SPM")
 	tk.MustExec("create table t(a int, b int)")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("update t set a = a + 1")
 	tk.MustExec("update t set a = a + 1")
 	tk.MustExec("admin capture bindings")
@@ -269,7 +269,7 @@ func TestShowGlobalBindings(t *testing.T) {
 	tk.MustExec("use SPM")
 	tk.MustExec("create table t(a int, b int, key(a))")
 	tk.MustExec("create table t0(a int, b int, key(a))")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 0)
 	// Simulate existing bindings in the mysql.bind_info.

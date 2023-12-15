@@ -43,8 +43,8 @@ func BuildLockErr(key []byte, lock *mvcc.Lock) *ErrLocked {
 func (e *ErrLocked) Error() string {
 	lock := e.Lock
 	return fmt.Sprintf(
-		"key is locked, key: %q, Type: %v, primary: %q, startTS: %v, forUpdateTS: %v, useAsyncCommit: %v",
-		e.Key, lock.Op, lock.Primary, lock.StartTS, lock.ForUpdateTS, lock.UseAsyncCommit,
+		"key is locked, key: %v, lock: %v",
+		hex.EncodeToString(e.Key), lock.String(),
 	)
 }
 
@@ -147,4 +147,14 @@ type ErrAssertionFailed struct {
 func (e *ErrAssertionFailed) Error() string {
 	return fmt.Sprintf("AssertionFailed { StartTS: %v, Key: %v, Assertion: %v, ExistingStartTS: %v, ExistingCommitTS: %v }",
 		e.StartTS, hex.EncodeToString(e.Key), e.Assertion.String(), e.ExistingStartTS, e.ExistingCommitTS)
+}
+
+// ErrPrimaryMismatch is returned if CheckTxnStatus request is sent to a secondary lock.
+type ErrPrimaryMismatch struct {
+	Key  []byte
+	Lock *mvcc.Lock
+}
+
+func (e *ErrPrimaryMismatch) Error() string {
+	return fmt.Sprintf("primary mismatch, key: %v, lock: %v", hex.EncodeToString(e.Key), e.Lock.String())
 }

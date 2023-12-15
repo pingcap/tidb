@@ -152,8 +152,10 @@ func (e *InsertValues) initInsertColumns() error {
 		}
 		cols, missingColIdx = table.FindColumns(tableCols, columns, e.Table.Meta().PKIsHandle)
 		if missingColIdx >= 0 {
-			return errors.Errorf("INSERT INTO %s: unknown column %s",
-				e.Table.Meta().Name.O, e.Columns[missingColIdx].Name.O)
+			return errors.Errorf(
+				"INSERT INTO %s: unknown column %s",
+				e.Table.Meta().Name.O, e.Columns[missingColIdx].Name.O,
+			)
 		}
 	} else {
 		// If e.Columns are empty, use all columns instead.
@@ -389,7 +391,9 @@ func (e *InsertValues) evalRow(ctx context.Context, list []expression.Expression
 
 var emptyRow chunk.Row
 
-func (e *InsertValues) fastEvalRow(ctx context.Context, list []expression.Expression, rowIdx int) ([]types.Datum, error) {
+func (e *InsertValues) fastEvalRow(ctx context.Context, list []expression.Expression, rowIdx int) (
+	[]types.Datum, error,
+) {
 	rowLen := len(e.Table.Cols())
 	if e.hasExtraHandle {
 		rowLen++
@@ -648,7 +652,9 @@ func (e *InsertValues) fillColValue(
 // `insert|replace values` can guarantee consecutive autoID in a batch.
 // Other statements like `insert select from` don't guarantee consecutive autoID.
 // https://dev.mysql.com/doc/refman/8.0/en/innodb-auto-increment-handling.html
-func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue []bool, rowIdx int) ([]types.Datum, error) {
+func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue []bool, rowIdx int) (
+	[]types.Datum, error,
+) {
 	gCols := make([]*table.Column, 0)
 	tCols := e.Table.Cols()
 	if e.hasExtraHandle {
@@ -681,7 +687,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 	}
 	tbl := e.Table.Meta()
 	// Handle exchange partition
-	if tbl.ExchangePartitionInfo != nil && tbl.ExchangePartitionInfo.ExchangePartitionFlag {
+	if tbl.ExchangePartitionInfo != nil {
 		is := e.ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 		pt, tableFound := is.TableByID(tbl.ExchangePartitionInfo.ExchangePartitionID)
 		if !tableFound {
@@ -691,7 +697,12 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 		if !ok {
 			return nil, errors.Errorf("exchange partition process assert table partition failed")
 		}
-		err := p.CheckForExchangePartition(e.ctx, pt.Meta().Partition, row, tbl.ExchangePartitionInfo.ExchangePartitionDefID)
+		err := p.CheckForExchangePartition(
+			e.ctx,
+			pt.Meta().Partition,
+			row,
+			tbl.ExchangePartitionInfo.ExchangePartitionDefID,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -804,7 +815,9 @@ func setDatumAutoIDAndCast(ctx sessionctx.Context, d *types.Datum, id int64, col
 
 // lazyAdjustAutoIncrementDatum is quite similar to adjustAutoIncrementDatum
 // except it will cache auto increment datum previously for lazy batch allocation of autoID.
-func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows [][]types.Datum) ([][]types.Datum, error) {
+func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows [][]types.Datum) (
+	[][]types.Datum, error,
+) {
 	// Not in lazyFillAutoID mode means no need to fill.
 	if !e.lazyFillAutoID {
 		return rows, nil
@@ -896,7 +909,9 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 	return rows, nil
 }
 
-func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Datum, hasValue bool, c *table.Column) (types.Datum, error) {
+func (e *InsertValues) adjustAutoIncrementDatum(
+	ctx context.Context, d types.Datum, hasValue bool, c *table.Column,
+) (types.Datum, error) {
 	retryInfo := e.ctx.GetSessionVars().RetryInfo
 	if retryInfo.Retrying {
 		id, ok := retryInfo.GetCurrAutoIncrementID()
@@ -972,7 +987,9 @@ func getAutoRecordID(d types.Datum, target *types.FieldType, isInsert bool) (int
 	return recordID, nil
 }
 
-func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum, hasValue bool, c *table.Column) (types.Datum, error) {
+func (e *InsertValues) adjustAutoRandomDatum(
+	ctx context.Context, d types.Datum, hasValue bool, c *table.Column,
+) (types.Datum, error) {
 	retryInfo := e.ctx.GetSessionVars().RetryInfo
 	if retryInfo.Retrying {
 		autoRandomID, ok := retryInfo.GetCurrAutoRandomID()
@@ -1071,7 +1088,9 @@ func (e *InsertValues) rebaseAutoRandomID(ctx context.Context, recordID int64, f
 	return alloc.Rebase(ctx, autoRandomID, true)
 }
 
-func (e *InsertValues) adjustImplicitRowID(ctx context.Context, d types.Datum, hasValue bool, c *table.Column) (types.Datum, error) {
+func (e *InsertValues) adjustImplicitRowID(
+	ctx context.Context, d types.Datum, hasValue bool, c *table.Column,
+) (types.Datum, error) {
 	var err error
 	var recordID int64
 	if !hasValue {
@@ -1119,7 +1138,11 @@ func (e *InsertValues) rebaseImplicitRowID(ctx context.Context, recordID int64) 
 	alloc := e.Table.Allocators(e.ctx).Get(autoid.RowIDAllocType)
 	tableInfo := e.Table.Meta()
 
-	shardFmt := autoid.NewShardIDFormat(types.NewFieldType(mysql.TypeLonglong), tableInfo.ShardRowIDBits, autoid.RowIDBitLength)
+	shardFmt := autoid.NewShardIDFormat(
+		types.NewFieldType(mysql.TypeLonglong),
+		tableInfo.ShardRowIDBits,
+		autoid.RowIDBitLength,
+	)
 	newTiDBRowIDBase := shardFmt.IncrementalMask() & recordID
 
 	return alloc.Rebase(ctx, newTiDBRowIDBase, true)
@@ -1147,9 +1170,11 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 
 // batchCheckAndInsert checks rows with duplicate errors.
 // All duplicate rows will be ignored and appended as duplicate warnings.
-func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.Datum,
+func (e *InsertValues) batchCheckAndInsert(
+	ctx context.Context, rows [][]types.Datum,
 	addRecord func(ctx context.Context, row []types.Datum) error,
-	replace bool) error {
+	replace bool,
+) error {
 	// all the rows will be checked, so it is safe to set BatchCheck = true
 	e.ctx.GetSessionVars().StmtCtx.BatchCheck = true
 	defer tracing.StartRegion(ctx, "InsertValues.batchCheckAndInsert").End()
@@ -1218,7 +1243,8 @@ CheckAndInsert:
 					}
 				} else {
 					e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
-					if txnCtx := e.ctx.GetSessionVars().TxnCtx; txnCtx.IsPessimistic {
+					if txnCtx := e.ctx.GetSessionVars().TxnCtx; txnCtx.IsPessimistic &&
+						e.ctx.GetSessionVars().LockUnchangedKeys {
 						// lock duplicated row key on insert-ignore
 						txnCtx.AddUnchangedKeyForLock(r.handleKey.newKey)
 					}
@@ -1254,7 +1280,8 @@ CheckAndInsert:
 				} else {
 					// If duplicate keys were found in BatchGet, mark row = nil.
 					e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
-					if txnCtx := e.ctx.GetSessionVars().TxnCtx; txnCtx.IsPessimistic {
+					if txnCtx := e.ctx.GetSessionVars().TxnCtx; txnCtx.IsPessimistic &&
+						e.ctx.GetSessionVars().LockUnchangedKeys {
 						// lock duplicated unique key on insert-ignore
 						txnCtx.AddUnchangedKeyForLock(uk.newKey)
 					}
@@ -1293,9 +1320,11 @@ func (e *InsertValues) removeRow(
 	newRow := r.row
 	oldRow, err := getOldRow(ctx, e.ctx, txn, r.t, handle, e.GenExprs)
 	if err != nil {
-		logutil.BgLogger().Error("get old row failed when replace",
+		logutil.BgLogger().Error(
+			"get old row failed when replace",
 			zap.String("handle", handle.String()),
-			zap.String("toBeInsertedRow", types.DatumsToStrNoErr(r.row)))
+			zap.String("toBeInsertedRow", types.DatumsToStrNoErr(r.row)),
+		)
 		if kv.IsErrNotFound(err) {
 			err = errors.NotFoundf("can not be duplicated row, due to old row not found. handle %s", handle)
 		}
@@ -1310,7 +1339,11 @@ func (e *InsertValues) removeRow(
 		if inReplace {
 			e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 		}
-		if _, err := addUnchangedKeysForLockByRow(e.ctx, r.t, handle, oldRow, lockRowKey|lockUniqueKeys); err != nil {
+		keySet := lockRowKey
+		if e.ctx.GetSessionVars().LockUnchangedKeys {
+			keySet |= lockUniqueKeys
+		}
+		if _, err := addUnchangedKeysForLockByRow(e.ctx, r.t, handle, oldRow, keySet); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -1354,7 +1387,9 @@ func (e *InsertValues) addRecord(ctx context.Context, row []types.Datum) error {
 	return e.addRecordWithAutoIDHint(ctx, row, 0)
 }
 
-func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.Datum, reserveAutoIDCount int) (err error) {
+func (e *InsertValues) addRecordWithAutoIDHint(
+	ctx context.Context, row []types.Datum, reserveAutoIDCount int,
+) (err error) {
 	vars := e.ctx.GetSessionVars()
 	if !vars.ConstraintCheckInPlace {
 		vars.PresumeKeyNotExists = true

@@ -17,7 +17,9 @@ package core_test
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/stretchr/testify/require"
 )
 
@@ -67,6 +69,43 @@ func TestJoinOrderHintWithBinding(t *testing.T) {
 	require.Equal(t, res[0][0], "select * from ( `test` . `t1` join `test` . `t2` on `t1` . `a` = `t2` . `a` ) left join `test` . `t3` on `t2` . `b` = `t3` . `b`")
 
 	tk.MustExec("drop global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+}
+
+func TestAdditionOtherConditionsRemained4OuterJoin(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `queries_identifier` (\n   `id` int(11) NOT NULL AUTO_INCREMENT,\n   `name` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,\n   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;")
+	tk.MustExec("CREATE TABLE `queries_program` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `identifier_id` int(11) NOT NULL,\n  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n  UNIQUE KEY `identifier_id` (`identifier_id`),\n  CONSTRAINT `queries_program_identifier_id_70ff12a6_fk_queries_identifier_id` FOREIGN KEY (`identifier_id`) REFERENCES `test`.`queries_identifier` (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;")
+	tk.MustExec("CREATE TABLE `queries_channel` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `identifier_id` int(11) NOT NULL,\n  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n  UNIQUE KEY `identifier_id` (`identifier_id`),\n  CONSTRAINT `queries_channel_identifier_id_06ac3513_fk_queries_identifier_id` FOREIGN KEY (`identifier_id`) REFERENCES `test`.`queries_identifier` (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;")
+
+	tk.MustExec("INSERT  INTO queries_identifier(`id`, `name`) values(13, 'i1'), (14, 'i2'), (15, 'i3');")
+	tk.MustExec("INSERT  INTO queries_program(`id`, `identifier_id`) values(8, 13), (9, 14);")
+	tk.MustExec("INSERT  INTO queries_channel(`id`, `identifier_id`) values(5, 13);")
+
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("create table t2(a int, b int, c int)")
+	tk.MustExec("create table t3(a int, b int)")
+	tk.MustExec("create table t4(a int, b int)")
+
+	testData := core.GetJoinReorderData()
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Output []string
+		}
+	)
+	testData.LoadTestCases(t, &input, &output)
+	for i, sql := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Output = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+		})
+		tk.MustQuery(sql).Check(testkit.Rows(output[i].Output...))
+	}
 }
 
 func TestOuterJoinWIthEqCondCrossInnerJoin(t *testing.T) {

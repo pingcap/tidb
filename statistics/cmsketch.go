@@ -101,6 +101,18 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 	}
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].cnt > sorted[j].cnt })
 
+	failpoint.Inject("StabilizeV1AnalyzeTopN", func(val failpoint.Value) {
+		if val.(bool) {
+			// The earlier TopN entry will modify the CMSketch, therefore influence later TopN entry's row count.
+			// So we need to make the order here fully deterministic to make the stats from analyze ver1 stable.
+			// See (*SampleCollector).ExtractTopN(), which calls this function, for details
+			sort.SliceStable(sorted, func(i, j int) bool {
+				return sorted[i].cnt > sorted[j].cnt ||
+					(sorted[i].cnt == sorted[j].cnt && string(sorted[i].data) < string(sorted[j].data))
+			})
+		}
+	})
+
 	var (
 		sumTopN   uint64
 		sampleNDV = uint32(len(sorted))
@@ -787,17 +799,7 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 	if checkEmptyTopNs(topNs) {
 		return nil, nil, hists, nil
 	}
-
 	partNum := len(topNs)
-	topNsNum := make([]int, partNum)
-	removeVals := make([][]TopNMeta, partNum)
-	for i, topN := range topNs {
-		if topN == nil {
-			topNsNum[i] = 0
-			continue
-		}
-		topNsNum[i] = len(topN.TopN)
-	}
 	// Different TopN structures may hold the same value, we have to merge them.
 	counter := make(map[hack.MutableString]float64)
 	// datumMap is used to store the mapping from the string type to datum type.
@@ -822,6 +824,9 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 			// 1. Check the topN first.
 			// 2. If the topN doesn't contain the value corresponding to encodedVal. We should check the histogram.
 			for j := 0; j < partNum; j++ {
+				if atomic.LoadUint32(kiiled) == 1 {
+					return nil, nil, nil, errors.Trace(ErrQueryInterrupted)
+				}
 				if (j == i && version >= 2) || topNs[j].findTopN(val.Encoded) != -1 {
 					continue
 				}
@@ -856,20 +861,9 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 				if count != 0 {
 					counter[encodedVal] += count
 					// Remove the value corresponding to encodedVal from the histogram.
-					removeVals[j] = append(removeVals[j], TopNMeta{Encoded: datum.GetBytes(), Count: uint64(count)})
+					hists[j].BinarySearchRemoveVal(TopNMeta{Encoded: datum.GetBytes(), Count: uint64(count)})
 				}
 			}
-		}
-	}
-	// Remove the value from the Hists.
-	for i := 0; i < partNum; i++ {
-		if len(removeVals[i]) > 0 {
-			tmp := removeVals[i]
-			slices.SortFunc(tmp, func(i, j TopNMeta) bool {
-				cmpResult := bytes.Compare(i.Encoded, j.Encoded)
-				return cmpResult < 0
-			})
-			hists[i].RemoveVals(tmp)
 		}
 	}
 	numTop := len(counter)

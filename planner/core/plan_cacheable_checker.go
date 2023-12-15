@@ -15,7 +15,12 @@
 package core
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"math"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/pingcap/tidb/expression"
@@ -26,23 +31,32 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	core_metrics "github.com/pingcap/tidb/planner/core/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/filter"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
 // Cacheable checks whether the input ast(query) is cacheable with empty session context, which is mainly for testing.
+// TODO: only for test, remove this function later on.
 func Cacheable(node ast.Node, is infoschema.InfoSchema) bool {
-	c, _ := CacheableWithCtx(nil, node, is)
+	c, _ := IsASTCacheable(nil, nil, node, is)
 	return c
 }
 
 // CacheableWithCtx checks whether the input ast(query) is cacheable.
+// TODO: only for test, remove this function later on.
+func CacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (bool, string) {
+	return IsASTCacheable(nil, sctx, node, is)
+}
+
+// IsASTCacheable checks whether the input ast(query) is cacheable.
 // Handle "ignore_plan_cache()" hint
 // If there are multiple hints, only one will take effect
-func CacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (bool, string) {
+func IsASTCacheable(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (bool, string) {
 	_, isSelect := node.(*ast.SelectStmt)
 	_, isUpdate := node.(*ast.UpdateStmt)
 	_, isInsert := node.(*ast.InsertStmt)
@@ -52,10 +66,12 @@ func CacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.Info
 		return false, "not a SELECT/UPDATE/INSERT/DELETE/SET statement"
 	}
 	checker := cacheableChecker{
+		ctx:          ctx,
 		sctx:         sctx,
 		cacheable:    true,
 		schema:       is,
 		sumInListLen: 0,
+		maxNumParam:  getMaxParamLimit(sctx),
 	}
 	node.Accept(&checker)
 	return checker.cacheable, checker.reason
@@ -63,12 +79,14 @@ func CacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.Info
 
 // cacheableChecker checks whether a query can be cached:
 type cacheableChecker struct {
+	ctx       context.Context
 	sctx      sessionctx.Context
 	cacheable bool
 	schema    infoschema.InfoSchema
 	reason    string // reason why cannot use plan-cache
 
 	sumInListLen int // the accumulated number of elements in all in-lists
+	maxNumParam  int
 }
 
 // Enter implements Visitor interface.
@@ -105,9 +123,9 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 			if len(node.Lists) > 0 { // avoid index-out-of-range
 				nCols = len(node.Lists[0])
 			}
-			if nRows*nCols > 200 { // to save memory
+			if nRows*nCols > checker.maxNumParam { // to save memory
 				checker.cacheable = false
-				checker.reason = "too many values (more than 200) in the insert statement"
+				checker.reason = "too many values in the insert statement"
 				return in, true
 			}
 		}
@@ -120,9 +138,9 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		}
 	case *ast.PatternInExpr:
 		checker.sumInListLen += len(node.List)
-		if checker.sumInListLen > 100 { // to save memory
+		if checker.sumInListLen > checker.maxNumParam { // to save memory
 			checker.cacheable = false
-			checker.reason = "too many values in in-list (more than 100)"
+			checker.reason = "too many values in in-list"
 			return in, true
 		}
 	case *ast.VariableExpr:
@@ -181,26 +199,8 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		}
 	case *ast.TableName:
 		if checker.schema != nil {
-			if isPartitionTable(checker.schema, node) {
-				// Temporary disable prepared plan cache until https://github.com/pingcap/tidb/issues/33031
-				// is fixed and additional tests with dynamic partition prune mode has been added.
-				/*
-					if checker.sctx != nil && checker.sctx.GetSessionVars().UseDynamicPartitionPrune() {
-						return in, false // dynamic-mode for partition tables can use plan-cache
-					}
-				*/
-				checker.cacheable = false
-				checker.reason = "query accesses partitioned tables is un-cacheable"
-				return in, true
-			}
-			if hasGeneratedCol(checker.schema, node) {
-				checker.cacheable = false
-				checker.reason = "query accesses generated columns is un-cacheable"
-				return in, true
-			}
-			if isTempTable(checker.schema, node) {
-				checker.cacheable = false
-				checker.reason = "query accesses temporary tables is un-cacheable"
+			checker.cacheable, checker.reason = checkTableCacheable(checker.ctx, checker.sctx, checker.schema, node, false)
+			if !checker.cacheable {
 				return in, true
 			}
 		}
@@ -223,6 +223,7 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 		return false, "not a SELECT statement"
 	}
 
+	maxNumParam := getMaxParamLimit(sctx)
 	var tableNames []*ast.TableName
 	switch x := node.(type) {
 	case *ast.SelectStmt:
@@ -251,8 +252,8 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 			if len(x.Lists) > 0 { // avoid index-out-of-range
 				nCols = len(x.Lists[0])
 			}
-			if nRows*nCols > 200 { // to save memory
-				return false, "too many values (more than 200) in the insert statement"
+			if nRows*nCols > maxNumParam { // to save memory
+				return false, "too many values in the insert statement"
 			}
 			tableNames, ok, reason = extractTableNames(x.Table.TableRefs, tableNames)
 			if !ok {
@@ -289,7 +290,7 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 
 	// allocate and init the checker
 	checker := nonPrepCacheCheckerPool.Get().(*nonPreparedPlanCacheableChecker)
-	checker.reset(sctx, is, tableNames)
+	checker.reset(sctx, is, tableNames, maxNumParam)
 
 	node.Accept(checker)
 	cacheable, reason := checker.cacheable, checker.reason
@@ -382,9 +383,11 @@ type nonPreparedPlanCacheableChecker struct {
 
 	constCnt  int // the number of constants/parameters in this query
 	filterCnt int // the number of filters in the current node
+
+	maxNumberParam int // the maximum number of parameters for a query to be cached.
 }
 
-func (checker *nonPreparedPlanCacheableChecker) reset(sctx sessionctx.Context, schema infoschema.InfoSchema, tableNodes []*ast.TableName) {
+func (checker *nonPreparedPlanCacheableChecker) reset(sctx sessionctx.Context, schema infoschema.InfoSchema, tableNodes []*ast.TableName, maxNumberParam int) {
 	checker.sctx = sctx
 	checker.cacheable = true
 	checker.schema = schema
@@ -392,6 +395,7 @@ func (checker *nonPreparedPlanCacheableChecker) reset(sctx sessionctx.Context, s
 	checker.tableNodes = tableNodes
 	checker.constCnt = 0
 	checker.filterCnt = 0
+	checker.maxNumberParam = maxNumberParam
 }
 
 // Enter implements Visitor interface.
@@ -458,9 +462,9 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 			checker.reason = "query has null constants"
 		}
 		checker.constCnt++
-		if checker.constCnt > 200 { // just for safety and reduce memory cost
+		if checker.maxNumberParam > 0 && checker.constCnt > checker.maxNumberParam { // just for safety and reduce memory cost
 			checker.cacheable = false
-			checker.reason = "query has more than 200 constants"
+			checker.reason = "query has too many constants"
 		}
 		return in, !checker.cacheable
 	case *ast.GroupByClause:
@@ -488,39 +492,7 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 			return in, !checker.cacheable
 		}
 		if checker.schema != nil {
-			tb, err := checker.schema.TableByName(node.Schema, node.Name)
-			if err != nil {
-				checker.cacheable = false
-				checker.reason = "table cannot be found in schema"
-				return in, !checker.cacheable
-			}
-			if tb.Meta().GetPartitionInfo() != nil {
-				checker.cacheable = false
-				checker.reason = "queries that access partitioning table are not supported"
-				return in, !checker.cacheable
-			}
-			for _, col := range tb.Cols() {
-				if col.IsGenerated() {
-					checker.cacheable = false
-					checker.reason = "queries that have generated columns are not supported"
-					return in, !checker.cacheable
-				}
-			}
-			if tb.Meta().TempTableType != model.TempTableNone {
-				checker.cacheable = false
-				checker.reason = "queries that access temporary tables are not supported"
-				return in, !checker.cacheable
-			}
-			if tb.Meta().IsView() {
-				checker.cacheable = false
-				checker.reason = "queries that access views are not supported"
-				return in, !checker.cacheable
-			}
-			if !tb.Type().IsNormalTable() {
-				checker.cacheable = false
-				checker.reason = "queries that access in-memory tables"
-				return in, !checker.cacheable
-			}
+			checker.cacheable, checker.reason = checkTableCacheable(nil, checker.sctx, checker.schema, node, true)
 		}
 		return in, !checker.cacheable
 	}
@@ -546,20 +518,6 @@ func (checker *nonPreparedPlanCacheableChecker) isFilterNode(node ast.Node) bool
 	return false
 }
 
-func hasGeneratedCol(schema infoschema.InfoSchema, tn *ast.TableName) bool {
-	tb, err := schema.TableByName(tn.Schema, tn.Name)
-	if err != nil {
-		logutil.BgLogger().Error("Error occur in checking cacheable", zap.Error(err))
-		return false
-	}
-	for _, col := range tb.Cols() {
-		if col.IsGenerated() {
-			return true
-		}
-	}
-	return false
-}
-
 func getColType(schema infoschema.InfoSchema, tbl *ast.TableName, col *ast.ColumnName) (colType byte, found bool) {
 	if tbl == nil {
 		return 0, false
@@ -574,30 +532,6 @@ func getColType(schema infoschema.InfoSchema, tbl *ast.TableName, col *ast.Colum
 		}
 	}
 	return 0, false
-}
-
-func isTempTable(schema infoschema.InfoSchema, tn *ast.TableName) bool {
-	tb, err := schema.TableByName(tn.Schema, tn.Name)
-	if err != nil {
-		logutil.BgLogger().Error("Error occur in checking cacheable", zap.Error(err))
-		return false
-	}
-	if tb.Meta().TempTableType != model.TempTableNone {
-		return true
-	}
-	return false
-}
-
-func isPartitionTable(schema infoschema.InfoSchema, tn *ast.TableName) bool {
-	tb, err := schema.TableByName(tn.Schema, tn.Name)
-	if err != nil {
-		logutil.BgLogger().Error("Error occur in checking cacheable", zap.Error(err))
-		return false
-	}
-	if tb.Meta().GetPartitionInfo() != nil {
-		return true
-	}
-	return false
 }
 
 // isPlanCacheable returns whether this plan is cacheable and the reason if not.
@@ -670,5 +604,77 @@ func isPhysicalPlanCacheable(sctx sessionctx.Context, p PhysicalPlan, paramNum, 
 			return cacheable, reason
 		}
 	}
+	return true, ""
+}
+
+// getMaxParamLimit returns the maximum number of parameters for a query that can be cached in the Plan Cache.
+func getMaxParamLimit(sctx sessionctx.Context) int {
+	v := 200
+	if sctx == nil || sctx.GetSessionVars() == nil || sctx.GetSessionVars().OptimizerFixControl == nil {
+		return v
+	}
+	if sctx.GetSessionVars().OptimizerFixControl[variable.TiDBOptFixControl44823] != "" {
+		n, err := strconv.Atoi(sctx.GetSessionVars().OptimizerFixControl[variable.TiDBOptFixControl44823])
+		if err != nil {
+			return v
+		}
+		if n == 0 {
+			v = math.MaxInt32 // no limitation
+		} else if n > 0 {
+			v = n
+		}
+	}
+	return v
+}
+
+// checkTableCacheable checks whether a query accessing this table is cacheable.
+func checkTableCacheable(ctx context.Context, sctx sessionctx.Context, schema infoschema.InfoSchema, node *ast.TableName, isNonPrep bool) (cacheable bool, reason string) {
+	tableSchema := node.Schema
+	if tableSchema.L == "" {
+		tableSchema.O = sctx.GetSessionVars().CurrentDB
+		tableSchema.L = strings.ToLower(tableSchema.O)
+	}
+	tb, err := schema.TableByName(tableSchema, node.Name)
+	if intest.InTest && ctx != nil && ctx.Value(PlanCacheKeyTestIssue46760) != nil {
+		err = errors.New("mock error")
+	}
+	if err != nil {
+		sql := sctx.GetSessionVars().StmtCtx.OriginalSQL
+		if len(sql) > 256 {
+			sql = sql[:256]
+		}
+		logutil.BgLogger().Warn("find table failed", zap.Error(err), zap.String("sql", sql),
+			zap.String("table_schema", tableSchema.O), zap.String("table_name", node.Name.O))
+		return false, fmt.Sprintf("find table %s.%s failed: %s", tableSchema, node.Name, err.Error())
+	}
+
+	if tb.Meta().GetPartitionInfo() != nil {
+		// Temporary disable prepared plan cache until https://github.com/pingcap/tidb/issues/33031
+		// is fixed and additional tests with dynamic partition prune mode has been added.
+		/*
+			if checker.sctx != nil && checker.sctx.GetSessionVars().UseDynamicPartitionPrune() {
+				return in, false // dynamic-mode for partition tables can use plan-cache
+			}
+		*/
+		return false, "query accesses partitioned tables is un-cacheable"
+	}
+	for _, col := range tb.Cols() {
+		if col.IsGenerated() {
+			return false, "query accesses generated columns is un-cacheable"
+		}
+	}
+	if tb.Meta().TempTableType != model.TempTableNone {
+		return false, "query accesses temporary tables is un-cacheable"
+	}
+
+	if isNonPrep { // non-prep plan cache is stricter
+		if tb.Meta().IsView() {
+			return false, "queries that access views are not supported"
+		}
+		if !tb.Type().IsNormalTable() {
+			return false, "queries that access in-memory tables"
+		}
+	}
+
 	return true, ""
 }

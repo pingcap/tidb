@@ -5,8 +5,10 @@ go_library(
     srcs = [
         "advisory_locks.go",
         "bootstrap.go",
+        "mock_bootstrap.go",
         "nontransactional.go",
         "session.go",
+        "sync_upgrade.go",
         "testutil.go",  #keep
         "tidb.go",
         "txn.go",
@@ -20,6 +22,7 @@ go_library(
         "//ddl",
         "//ddl/placement",
         "//ddl/schematracker",
+        "//ddl/syncer",
         "//domain",
         "//domain/infosync",
         "//errno",
@@ -45,6 +48,7 @@ go_library(
         "//planner/core",
         "//plugin",
         "//privilege",
+        "//privilege/conn",
         "//privilege/privileges",
         "//session/metrics",
         "//session/txninfo",

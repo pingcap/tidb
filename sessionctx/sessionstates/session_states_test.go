@@ -16,6 +16,7 @@ package sessionstates_test
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"strconv"
@@ -940,9 +941,9 @@ func TestPreparedStatements(t *testing.T) {
 				require.NoError(t, conn.Dispatch(context.Background(), cmd))
 				cmd = getFetchBytes(1, 10)
 				require.NoError(t, conn.Dispatch(context.Background(), cmd))
-				// This COM_STMT_FETCH returns EOF.
+				// This COM_STMT_FETCH returns error, because the cursor has been automatically closed.
 				cmd = getFetchBytes(1, 10)
-				require.NoError(t, conn.Dispatch(context.Background(), cmd))
+				require.Error(t, conn.Dispatch(context.Background(), cmd))
 				return uint32(1)
 			},
 			checkFunc: func(tk *testkit.TestKit, conn server.MockConn, param any) {
@@ -1313,7 +1314,7 @@ func TestShowStateFail(t *testing.T) {
 			},
 		},
 		{
-			// fetched all the data but the EOF packet is not sent
+			// fetched all the data and `ServerStatusLastRowSend` is set, then the cursor should have been closed
 			setFunc: func(tk *testkit.TestKit, conn server.MockConn) {
 				tk.MustExec("create table test.t1(id int)")
 				tk.MustExec("insert test.t1 value(1), (2), (3)")
@@ -1323,26 +1324,8 @@ func TestShowStateFail(t *testing.T) {
 				require.NoError(t, conn.Dispatch(context.Background(), cmd))
 				cmd = getFetchBytes(1, 10)
 				require.NoError(t, conn.Dispatch(context.Background(), cmd))
-			},
-			showErr: errno.ErrCannotMigrateSession,
-			cleanFunc: func(tk *testkit.TestKit) {
-				tk.MustExec("drop table test.t1")
-			},
-		},
-		{
-			// EOF is sent
-			setFunc: func(tk *testkit.TestKit, conn server.MockConn) {
-				tk.MustExec("create table test.t1(id int)")
-				tk.MustExec("insert test.t1 value(1), (2), (3)")
-				cmd := append([]byte{mysql.ComStmtPrepare}, []byte("select * from test.t1")...)
-				require.NoError(t, conn.Dispatch(context.Background(), cmd))
-				cmd = getExecuteBytes(1, true, false)
-				require.NoError(t, conn.Dispatch(context.Background(), cmd))
-				cmd = getFetchBytes(1, 10)
-				require.NoError(t, conn.Dispatch(context.Background(), cmd))
-				// This COM_STMT_FETCH returns EOF.
-				cmd = getFetchBytes(1, 10)
-				require.NoError(t, conn.Dispatch(context.Background(), cmd))
+				// following FETCH command should fail because the cursor has been closed
+				require.Error(t, conn.Dispatch(context.Background(), getFetchBytes(1, 10)))
 			},
 			cleanFunc: func(tk *testkit.TestKit) {
 				tk.MustExec("drop table test.t1")
@@ -1501,4 +1484,16 @@ func getResetBytes(stmtID uint32) []byte {
 	pos++
 	binary.LittleEndian.PutUint32(buf[pos:], stmtID)
 	return buf
+}
+
+func TestIssue47665(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().GetSessionVars().TLSConnectionState = &tls.ConnectionState{} // unrelated mock for the test.
+	originSEM := config.GetGlobalConfig().Security.EnableSEM
+	config.GetGlobalConfig().Security.EnableSEM = true
+	tk.MustGetErrMsg("set @@global.require_secure_transport = on", "require_secure_transport can not be set to ON with SEM(security enhanced mode) enabled")
+	config.GetGlobalConfig().Security.EnableSEM = originSEM
+	tk.MustExec("set @@global.require_secure_transport = on")
+	tk.MustExec("set @@global.require_secure_transport = off") // recover to default value
 }

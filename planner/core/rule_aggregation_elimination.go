@@ -32,13 +32,23 @@ type aggregationEliminator struct {
 }
 
 type aggregationEliminateChecker struct {
+	// used for agg pushed down cases, for example:
+	// agg -> join -> datasource1
+	//             -> datasource2
+	// we just make a new agg upon datasource1 or datasource2, while the old agg is still existed and waiting for elimination.
+	// Note when the old agg is like below, and join is an outer join type, rewriting old agg in elimination logic has some problem.
+	// eg:
+	// count(a) -> ifnull(col#x, 0, 1) in rewriteExpr of agg function, since col#x is already the final pushed-down aggregation's
+	// result from new join schema, we don't need to take every row as count 1 when they don't have not-null flag in a.tryToEliminateAggregation(oldAgg, opt),
+	// which is not suitable here.
+	oldAggEliminationCheck bool
 }
 
 // tryToEliminateAggregation will eliminate aggregation grouped by unique key.
 // e.g. select min(b) from t group by a. If a is a unique key, then this sql is equal to `select b from t group by a`.
 // For count(expr), sum(expr), avg(expr), count(distinct expr, [expr...]) we may need to rewrite the expr. Details are shown below.
 // If we can eliminate agg successful, we return a projection. Else we return a nil pointer.
-func (*aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggregation, opt *logicalOptimizeOp) *LogicalProjection {
+func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggregation, opt *logicalOptimizeOp) *LogicalProjection {
 	for _, af := range agg.AggFuncs {
 		// TODO(issue #9968): Actually, we can rewrite GROUP_CONCAT when all the
 		// arguments it accepts are promised to be NOT-NULL.
@@ -64,6 +74,9 @@ func (*aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggreg
 		}
 	}
 	if coveredByUniqueKey {
+		if a.oldAggEliminationCheck && !CheckCanConvertAggToProj(agg) {
+			return nil
+		}
 		// GroupByCols has unique key, so this aggregation can be removed.
 		if ok, proj := ConvertAggToProj(agg, agg.schema); ok {
 			proj.SetChildren(agg.children[0])
@@ -136,6 +149,34 @@ func appendDistinctEliminateTraceStep(agg *LogicalAggregation, uniqueKey express
 		return fmt.Sprintf("%s(distinct ...) is simplified to %s(...)", af.Name, af.Name)
 	}
 	opt.appendStepToCurrent(agg.ID(), agg.TP(), reason, action)
+}
+
+// CheckCanConvertAggToProj check whether a special old aggregation (which has already been pushed down) to projection.
+// link: issue#44795
+func CheckCanConvertAggToProj(agg *LogicalAggregation) bool {
+	var mayNullSchema *expression.Schema
+	if join, ok := agg.Children()[0].(*LogicalJoin); ok {
+		if join.JoinType == LeftOuterJoin {
+			mayNullSchema = join.Children()[1].Schema()
+		}
+		if join.JoinType == RightOuterJoin {
+			mayNullSchema = join.Children()[0].Schema()
+		}
+		if mayNullSchema == nil {
+			return true
+		}
+		// once agg function args has intersection with mayNullSchema, return nil (means elimination fail)
+		for _, fun := range agg.AggFuncs {
+			mayNullCols := expression.ExtractColumnsFromExpressions(nil, fun.Args, func(column *expression.Column) bool {
+				// collect may-null cols.
+				return mayNullSchema.Contains(column)
+			})
+			if len(mayNullCols) != 0 {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // ConvertAggToProj convert aggregation to projection.

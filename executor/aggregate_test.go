@@ -1636,6 +1636,54 @@ func TestIssue27751(t *testing.T) {
 	tk.MustQuery("select group_concat(nname order by 1 desc separator '#' ) from t;").Check(testkit.Rows("33#2"))
 }
 
+func TestIssue44795(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`DROP TABLE IF EXISTS c`)
+
+	// case from tcph.
+	tk.MustExec("CREATE TABLE `customer` (" +
+		"  `C_CUSTKEY` bigint(20) NOT NULL," +
+		"  `C_NAME` varchar(25) NOT NULL," +
+		"  `C_ADDRESS` varchar(40) NOT NULL," +
+		"  `C_NATIONKEY` bigint(20) NOT NULL," +
+		"  `C_PHONE` char(15) NOT NULL," +
+		"  `C_ACCTBAL` decimal(15,2) NOT NULL," +
+		"  `C_MKTSEGMENT` char(10) NOT NULL," +
+		"  `C_COMMENT` varchar(117) NOT NULL," +
+		"  PRIMARY KEY (`C_CUSTKEY`) /*T![clustered_index] CLUSTERED */" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+
+	tk.MustExec("CREATE TABLE `orders` (" +
+		"  `O_ORDERKEY` bigint(20) NOT NULL," +
+		"  `O_CUSTKEY` bigint(20) NOT NULL," +
+		"  `O_ORDERSTATUS` char(1) NOT NULL," +
+		"  `O_TOTALPRICE` decimal(15,2) NOT NULL," +
+		"  `O_ORDERDATE` date NOT NULL," +
+		"  `O_ORDERPRIORITY` char(15) NOT NULL," +
+		"  `O_CLERK` char(15) NOT NULL," +
+		"  `O_SHIPPRIORITY` bigint(20) NOT NULL," +
+		"  `O_COMMENT` varchar(79) NOT NULL," +
+		"  PRIMARY KEY (`O_ORDERKEY`) /*T![clustered_index] CLUSTERED */" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+
+	tk.MustExec("set tidb_opt_agg_push_down=ON;")
+
+	tk.MustQuery("explain format='brief' SELECT  /*+ hash_join_build(customer) */ c_custkey, count(o_orderkey)  as  c_count  from customer " +
+		"left join orders on c_custkey = o_custkey and o_comment not like '%special%requests%'        group by c_custkey;").Check(testkit.Rows(
+		"Projection 8000.00 root  test.customer.c_custkey, Column#18",
+		"└─HashAgg 8000.00 root  group by:test.customer.c_custkey, funcs:count(Column#19)->Column#18, funcs:firstrow(test.customer.c_custkey)->test.customer.c_custkey",
+		"  └─HashJoin 10000.00 root  left outer join, equal:[eq(test.customer.c_custkey, test.orders.o_custkey)]",
+		"    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+		"    │ └─TableFullScan 10000.00 cop[tikv] table:customer keep order:false, stats:pseudo",
+		"    └─HashAgg(Probe) 6400.00 root  group by:test.orders.o_custkey, funcs:count(Column#20)->Column#19, funcs:firstrow(test.orders.o_custkey)->test.orders.o_custkey",
+		"      └─TableReader 6400.00 root  data:HashAgg",
+		"        └─HashAgg 6400.00 cop[tikv]  group by:test.orders.o_custkey, funcs:count(test.orders.o_orderkey)->Column#20",
+		"          └─Selection 8000.00 cop[tikv]  not(like(test.orders.o_comment, \"%special%requests%\", 92))",
+		"            └─TableFullScan 10000.00 cop[tikv] table:orders keep order:false, stats:pseudo"))
+}
+
 func TestIssue26885(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

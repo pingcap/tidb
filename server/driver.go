@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/extension"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -53,13 +54,13 @@ type PreparedStatement interface {
 	GetParamsType() []byte
 
 	// StoreResultSet stores ResultSet for subsequent stmt fetching
-	StoreResultSet(rs ResultSet)
+	StoreResultSet(rs cursorResultSet)
 
 	// GetResultSet gets ResultSet associated this statement
-	GetResultSet() ResultSet
+	GetResultSet() cursorResultSet
 
-	// Reset removes all bound parameters.
-	Reset()
+	// Reset removes all bound parameters and opened resultSet/rowContainer.
+	Reset() error
 
 	// Close closes the statement.
 	Close() error
@@ -69,6 +70,13 @@ type PreparedStatement interface {
 
 	// SetCursorActive sets whether the statement has active cursor
 	SetCursorActive(active bool)
+
+	// StoreRowContainer stores a row container into the prepared statement. The `rowContainer` is used to be closed at
+	// appropriate time. It's actually not used to read, because an iterator of it has been stored in the result set.
+	StoreRowContainer(container *chunk.RowContainer)
+
+	// GetRowContainer returns the row container of the statement
+	GetRowContainer() *chunk.RowContainer
 }
 
 // ResultSet is the result set of an query.
@@ -76,11 +84,18 @@ type ResultSet interface {
 	Columns() []*ColumnInfo
 	NewChunk(chunk.Allocator) *chunk.Chunk
 	Next(context.Context, *chunk.Chunk) error
-	StoreFetchedRows(rows []chunk.Row)
-	GetFetchedRows() []chunk.Row
 	Close() error
 	// IsClosed checks whether the result set is closed.
 	IsClosed() bool
+	FieldTypes() []*types.FieldType
+}
+
+// cursorResultSet extends the `ResultSet` to provide the ability to store an iterator
+type cursorResultSet interface {
+	ResultSet
+
+	StoreRowContainerReader(reader chunk.RowContainerReader)
+	GetRowContainerReader() chunk.RowContainerReader
 }
 
 // fetchNotifier represents notifier will be called in COM_FETCH.
@@ -88,4 +103,10 @@ type fetchNotifier interface {
 	// OnFetchReturned be called when COM_FETCH returns.
 	// it will be used in server-side cursor.
 	OnFetchReturned()
+}
+
+func wrapWithCursor(rs ResultSet) cursorResultSet {
+	return &tidbCursorResultSet{
+		rs, nil,
+	}
 }

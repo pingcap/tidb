@@ -16,8 +16,10 @@ package staleread
 
 import (
 	"context"
+	"strconv"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -29,7 +31,17 @@ import (
 )
 
 // CalculateAsOfTsExpr calculates the TsExpr of AsOfClause to get a StartTS.
-func CalculateAsOfTsExpr(sctx sessionctx.Context, tsExpr ast.ExprNode) (uint64, error) {
+// tsExpr could be an expression of TSO or a timestamp
+func CalculateAsOfTsExpr(ctx context.Context, sctx sessionctx.Context, tsExpr ast.ExprNode) (uint64, error) {
+	sctx.GetSessionVars().StmtCtx.SetStaleTSOProvider(func() (uint64, error) {
+		failpoint.Inject("mockStaleReadTSO", func(val failpoint.Value) (uint64, error) {
+			return uint64(val.(int)), nil
+		})
+		// this function accepts a context, but we don't need it when there is a valid cached ts.
+		// in most cases, the stale read ts can be calculated from `cached ts + time since cache - staleness`,
+		// this can be more accurate than `time.Now() - staleness`, because TiDB's local time can drift.
+		return sctx.GetStore().GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope, 0)
+	})
 	tsVal, err := expression.EvalAstExpr(sctx, tsExpr)
 	if err != nil {
 		return 0, err
@@ -37,6 +49,11 @@ func CalculateAsOfTsExpr(sctx sessionctx.Context, tsExpr ast.ExprNode) (uint64, 
 
 	if tsVal.IsNull() {
 		return 0, errAsOf.FastGenWithCause("as of timestamp cannot be NULL")
+	}
+
+	// if tsVal is TSO already, return it directly.
+	if tso, err := strconv.ParseUint(tsVal.GetString(), 10, 64); err == nil {
+		return tso, nil
 	}
 
 	toTypeTimestamp := types.NewFieldType(mysql.TypeTimestamp)

@@ -38,6 +38,7 @@ import (
 	tmock "github.com/pingcap/tidb/util/mock"
 	router "github.com/pingcap/tidb/util/table-router"
 	"github.com/stretchr/testify/require"
+	tikvconfig "github.com/tikv/client-go/v2/config"
 )
 
 func TestNewTableRestore(t *testing.T) {
@@ -71,7 +72,7 @@ func TestNewTableRestore(t *testing.T) {
 	for _, tc := range testCases {
 		tableInfo := dbInfo.Tables[tc.name]
 		tableName := common.UniqueTable("mockdb", tableInfo.Name)
-		tr, err := NewTableImporter(tableName, nil, dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
+		tr, err := NewTableImporter(tableName, nil, dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, nil, log.L())
 		require.NotNil(t, tr)
 		require.NoError(t, err)
 	}
@@ -88,7 +89,7 @@ func TestNewTableRestoreFailure(t *testing.T) {
 	}}
 	tableName := common.UniqueTable("mockdb", "failure")
 
-	_, err := NewTableImporter(tableName, nil, dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
+	_, err := NewTableImporter(tableName, nil, dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, nil, log.L())
 	require.Regexp(t, `failed to tables\.TableFromMeta.*`, err.Error())
 }
 
@@ -223,7 +224,7 @@ func TestPreCheckFailed(t *testing.T) {
 		dbMetas:          make([]*mydump.MDDatabaseMeta, 0),
 	}
 	cpdb := panicCheckpointDB{}
-	theCheckBuilder := NewPrecheckItemBuilder(cfg, make([]*mydump.MDDatabaseMeta, 0), preInfoGetter, cpdb)
+	theCheckBuilder := NewPrecheckItemBuilder(cfg, make([]*mydump.MDDatabaseMeta, 0), preInfoGetter, cpdb, nil)
 	ctl := &Controller{
 		cfg:                 cfg,
 		saveCpCh:            make(chan saveCp),
@@ -414,4 +415,30 @@ func TestFilterColumns(t *testing.T) {
 		require.Equal(t, tc.expectedFilteredColumns, filteredColumns)
 		require.Equal(t, expectedDatums, extendDatums)
 	}
+}
+
+func TestInitGlobalConfig(t *testing.T) {
+	require.Empty(t, tikvconfig.GetGlobalConfig().Security.ClusterSSLCA)
+	require.Empty(t, tikvconfig.GetGlobalConfig().Security.ClusterSSLCert)
+	require.Empty(t, tikvconfig.GetGlobalConfig().Security.ClusterSSLKey)
+	initGlobalConfig(tikvconfig.Security{})
+	require.Empty(t, tikvconfig.GetGlobalConfig().Security.ClusterSSLCA)
+	require.Empty(t, tikvconfig.GetGlobalConfig().Security.ClusterSSLCert)
+	require.Empty(t, tikvconfig.GetGlobalConfig().Security.ClusterSSLKey)
+
+	initGlobalConfig(tikvconfig.Security{
+		ClusterSSLCA: "ca",
+	})
+	require.NotEmpty(t, tikvconfig.GetGlobalConfig().Security.ClusterSSLCA)
+	require.Empty(t, tikvconfig.GetGlobalConfig().Security.ClusterSSLCert)
+	require.Empty(t, tikvconfig.GetGlobalConfig().Security.ClusterSSLKey)
+
+	initGlobalConfig(tikvconfig.Security{})
+	initGlobalConfig(tikvconfig.Security{
+		ClusterSSLCert: "cert",
+		ClusterSSLKey:  "key",
+	})
+	require.Empty(t, tikvconfig.GetGlobalConfig().Security.ClusterSSLCA)
+	require.NotEmpty(t, tikvconfig.GetGlobalConfig().Security.ClusterSSLCert)
+	require.NotEmpty(t, tikvconfig.GetGlobalConfig().Security.ClusterSSLKey)
 }

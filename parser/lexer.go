@@ -101,6 +101,7 @@ func (s *Scanner) reset(sql string) {
 	s.stmtStartPos = 0
 	s.inBangComment = false
 	s.lastKeyword = 0
+	s.identifierDot = false
 }
 
 func (s *Scanner) stmtText() string {
@@ -276,6 +277,15 @@ func (s *Scanner) Lex(v *yySymType) int {
 			s.lastScanOffset = pos.Offset
 			v.offset = pos.Offset
 			return toTimestamp
+		}
+
+		if tok1 == tsoType && tok2 == intLit {
+			_, pos, lit = s.scan()
+			v.ident = fmt.Sprintf("%s %s", v.ident, lit)
+			s.lastKeyword = toTSO
+			s.lastScanOffset = pos.Offset
+			v.offset = pos.Offset
+			return toTSO
 		}
 	}
 	// fix shift/reduce conflict with DEFINED NULL BY xxx OPTIONALLY ENCLOSED

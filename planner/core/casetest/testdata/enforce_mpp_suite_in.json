@@ -21,7 +21,8 @@
       "set @@tidb_enforce_mpp=1;",
       "explain format='verbose' select count(*) from t where a=1",
       "explain format='verbose' select /*+ read_from_storage(tikv[t]) */ count(*) from t where a=1",
-      "explain format='verbose' select /*+ read_from_storage(tiflash[t]) */ count(*) from t where a=1"
+      "explain format='verbose' select /*+ read_from_storage(tiflash[t]) */ count(*) from t where a=1",
+      "explain select  /*+ READ_FROM_STORAGE(TIFLASH[s]) */ a from s where a = 10 and b is null; -- index path huristic rule will prune tiflash path"
     ]
   },
   {
@@ -92,7 +93,8 @@
       "set @@tidb_allow_mpp=1;set @@tidb_enforce_mpp=1;set @@tidb_opt_agg_push_down=1;",
       "EXPLAIN select count(*) from c, o where c.c_id=o.c_id; -- 1. test agg push down, scalar aggregate",
       "EXPLAIN select o.o_id, count(*) from c, o where c.c_id=o.c_id group by o.o_id; -- 2. test agg push down, group by non-join column",
-      "EXPLAIN select o.c_id, count(*) from c, o where c.c_id=o.c_id group by o.c_id; -- 3. test agg push down, group by join column"
+      "EXPLAIN select o.c_id, count(*) from c, o where c.c_id=o.c_id group by o.c_id; -- 3. test agg push down, group by join column",
+      "EXPLAIN format='brief' select a, count(*) from (select a, b from t union all select a, b from t) t group by a order by a limit 10"
     ]
   },
   {

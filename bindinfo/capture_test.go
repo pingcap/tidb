@@ -64,7 +64,7 @@ func TestDMLCapturePlanBaseline(t *testing.T) {
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 0)
 
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("delete from t where b = 1 and c > 1")
 	tk.MustExec("delete from t where b = 1 and c > 1")
 	tk.MustExec("update t set a = 1 where b = 1 and c > 1")
@@ -81,13 +81,13 @@ func TestDMLCapturePlanBaseline(t *testing.T) {
 	rows = tk.MustQuery("show global bindings").Sort().Rows()
 	require.Len(t, rows, 4)
 	require.Equal(t, "delete from `test` . `t` where `b` = ? and `c` > ?", rows[0][0])
-	require.Equal(t, "DELETE /*+ use_index(@`del_1` `test`.`t` `idx_b`)*/ FROM `test`.`t` WHERE `b` = 1 AND `c` > 1", rows[0][1])
+	require.Equal(t, "DELETE /*+ use_index(@`del_1` `test`.`t` `idx_b`), no_order_index(@`del_1` `test`.`t` `idx_b`)*/ FROM `test`.`t` WHERE `b` = 1 AND `c` > 1", rows[0][1])
 	require.Equal(t, "insert into `test` . `t1` select * from `test` . `t` where `t` . `b` = ? and `t` . `c` > ?", rows[1][0])
-	require.Equal(t, "INSERT INTO `test`.`t1` SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_b`)*/ * FROM `test`.`t` WHERE `t`.`b` = 1 AND `t`.`c` > 1", rows[1][1])
+	require.Equal(t, "INSERT INTO `test`.`t1` SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_b`), no_order_index(@`sel_1` `test`.`t` `idx_b`)*/ * FROM `test`.`t` WHERE `t`.`b` = 1 AND `t`.`c` > 1", rows[1][1])
 	require.Equal(t, "replace into `test` . `t1` select * from `test` . `t` where `t` . `b` = ? and `t` . `c` > ?", rows[2][0])
-	require.Equal(t, "REPLACE INTO `test`.`t1` SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_b`)*/ * FROM `test`.`t` WHERE `t`.`b` = 1 AND `t`.`c` > 1", rows[2][1])
+	require.Equal(t, "REPLACE INTO `test`.`t1` SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_b`), no_order_index(@`sel_1` `test`.`t` `idx_b`)*/ * FROM `test`.`t` WHERE `t`.`b` = 1 AND `t`.`c` > 1", rows[2][1])
 	require.Equal(t, "update `test` . `t` set `a` = ? where `b` = ? and `c` > ?", rows[3][0])
-	require.Equal(t, "UPDATE /*+ use_index(@`upd_1` `test`.`t` `idx_b`)*/ `test`.`t` SET `a`=1 WHERE `b` = 1 AND `c` > 1", rows[3][1])
+	require.Equal(t, "UPDATE /*+ use_index(@`upd_1` `test`.`t` `idx_b`), no_order_index(@`upd_1` `test`.`t` `idx_b`)*/ `test`.`t` SET `a`=1 WHERE `b` = 1 AND `c` > 1", rows[3][1])
 }
 
 func TestCapturePlanBaseline(t *testing.T) {
@@ -111,7 +111,7 @@ func TestCapturePlanBaseline(t *testing.T) {
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 0)
 
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("select * from t where a > 10")
 	tk.MustExec("select * from t where a > 10")
 	tk.MustExec("admin capture bindings")
@@ -143,7 +143,7 @@ func TestCapturePlanBaseline4DisabledStatus(t *testing.T) {
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 0)
 
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("select * from t where a > 10")
 	tk.MustExec("select * from t where a > 10")
 	tk.MustExec("admin capture bindings")
@@ -191,7 +191,7 @@ func TestCaptureDBCaseSensitivity(t *testing.T) {
 	tk.MustExec("use SPM")
 	tk.MustExec("create table t(a int, b int, key(b))")
 	tk.MustExec("create global binding for select * from t using select /*+ use_index(t) */ * from t")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("select /*+ use_index(t,b) */ * from t")
 	tk.MustExec("select /*+ use_index(t,b) */ * from t")
 	tk.MustExec("admin capture bindings")
@@ -217,7 +217,7 @@ func TestCaptureBaselinesDefaultDB(t *testing.T) {
 	tk.MustExec("drop database if exists spm")
 	tk.MustExec("create database spm")
 	tk.MustExec("create table spm.t(a int, index idx_a(a))")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("select * from spm.t ignore index(idx_a) where a > 10")
 	tk.MustExec("select * from spm.t ignore index(idx_a) where a > 10")
 	tk.MustExec("admin capture bindings")
@@ -244,7 +244,7 @@ func TestCapturePreparedStmt(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	stmtsummary.StmtSummaryByDigestMap.Clear()
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, key idx_b(b), key idx_c(c))")
@@ -259,7 +259,7 @@ func TestCapturePreparedStmt(t *testing.T) {
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `test` . `t` where `b` = ? and `c` > ?", rows[0][0])
-	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `b` = ? AND `c` > ?", rows[0][1])
+	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), no_order_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `b` = ? AND `c` > ?", rows[0][1])
 
 	require.True(t, tk.MustUseIndex("select /*+ use_index(t,idx_b) */ * from t where b = 1 and c > 1", "idx_c(c)"))
 	tk.MustExec("admin flush bindings")
@@ -267,7 +267,7 @@ func TestCapturePreparedStmt(t *testing.T) {
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `test` . `t` where `b` = ? and `c` > ?", rows[0][0])
-	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `b` = ? AND `c` > ?", rows[0][1])
+	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), no_order_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `b` = ? AND `c` > ?", rows[0][1])
 }
 
 func TestCapturePlanBaselineIgnoreTiFlash(t *testing.T) {
@@ -279,7 +279,7 @@ func TestCapturePlanBaselineIgnoreTiFlash(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, key(a), key(b))")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("select * from t")
 	tk.MustExec("select * from t")
 	// Create virtual tiflash replica info.
@@ -354,7 +354,7 @@ func TestBindingSource(t *testing.T) {
 		tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = off")
 	}()
 	tk.MustExec("use test")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("select * from t ignore index(idx_a) where a < 10")
 	tk.MustExec("select * from t ignore index(idx_a) where a < 10")
 	tk.MustExec("admin capture bindings")
@@ -374,7 +374,7 @@ func TestCapturedBindingCharset(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	stmtsummary.StmtSummaryByDigestMap.Clear()
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("use test")
 	tk.MustExec("create table t(name varchar(25), index idx(name))")
 
@@ -386,7 +386,7 @@ func TestCapturedBindingCharset(t *testing.T) {
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "update `test` . `t` set `name` = ? where `name` <= ?", rows[0][0])
-	require.Equal(t, "UPDATE /*+ use_index(@`upd_1` `test`.`t` `idx`)*/ `test`.`t` SET `name`='hello' WHERE `name` <= 'abc'", rows[0][1])
+	require.Equal(t, "UPDATE /*+ use_index(@`upd_1` `test`.`t` `idx`), no_order_index(@`upd_1` `test`.`t` `idx`)*/ `test`.`t` SET `name`='hello' WHERE `name` <= 'abc'", rows[0][1])
 	require.Equal(t, "utf8mb4", rows[0][6])
 	require.Equal(t, "utf8mb4_bin", rows[0][7])
 }
@@ -407,7 +407,7 @@ func TestConcurrentCapture(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int)")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("select * from t")
 	tk.MustExec("select * from t")
 	tk.MustExec("admin capture bindings")
@@ -427,13 +427,13 @@ func TestUpdateSubqueryCapture(t *testing.T) {
 	tk.MustExec("create table t1(a int, b int, c int, key idx_b(b))")
 	tk.MustExec("create table t2(a int, b int)")
 	stmtsummary.StmtSummaryByDigestMap.Clear()
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("update t1 set b = 1 where b = 2 and (a in (select a from t2 where b = 1) or c in (select a from t2 where b = 1))")
 	tk.MustExec("update t1 set b = 1 where b = 2 and (a in (select a from t2 where b = 1) or c in (select a from t2 where b = 1))")
 	tk.MustExec("admin capture bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
-	bindSQL := "UPDATE /*+ hash_join(@`upd_1` `test`.`t1`), use_index(@`upd_1` `test`.`t1` `idx_b`), use_index(@`sel_1` `test`.`t2` ), use_index(@`sel_2` `test`.`t2` )*/ `test`.`t1` SET `b`=1 WHERE `b` = 2 AND (`a` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1) OR `c` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1))"
+	bindSQL := "UPDATE /*+ hash_join(@`upd_1` `test`.`t1`), use_index(@`upd_1` `test`.`t1` `idx_b`), no_order_index(@`upd_1` `test`.`t1` `idx_b`), use_index(@`sel_1` `test`.`t2` ), use_index(@`sel_2` `test`.`t2` )*/ `test`.`t1` SET `b`=1 WHERE `b` = 2 AND (`a` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1) OR `c` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1))"
 	originSQL := "UPDATE `test`.`t1` SET `b`=1 WHERE `b` = 2 AND (`a` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1) OR `c` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1))"
 	require.Equal(t, bindSQL, rows[0][1])
 	tk.MustExec(originSQL)
@@ -481,14 +481,14 @@ func TestIssue20417(t *testing.T) {
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")
 	dom.BindHandle().CaptureBaselines()
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("select * from t where b=2 and c=213124")
 	tk.MustExec("select * from t where b=2 and c=213124")
 	tk.MustExec("admin capture bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `test` . `t` where `b` = ? and `c` = ?", rows[0][0])
-	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxb`)*/ * FROM `test`.`t` WHERE `b` = 2 AND `c` = 213124", rows[0][1])
+	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxb`), no_order_index(@`sel_1` `test`.`t` `idxb`)*/ * FROM `test`.`t` WHERE `b` = 2 AND `c` = 213124", rows[0][1])
 	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = off")
 
 	// Test for evolve baseline
@@ -505,13 +505,13 @@ func TestIssue20417(t *testing.T) {
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 2)
 	require.Equal(t, "select * from `test` . `t` where `c` = ?", rows[0][0])
-	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `test`.`t` WHERE `c` = 3924541", rows[0][1])
+	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`), no_order_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `test`.`t` WHERE `c` = 3924541", rows[0][1])
 	require.Equal(t, "pending verify", rows[0][3])
 	tk.MustExec("admin evolve bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 2)
 	require.Equal(t, "select * from `test` . `t` where `c` = ?", rows[0][0])
-	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `test`.`t` WHERE `c` = 3924541", rows[0][1])
+	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`), no_order_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `test`.`t` WHERE `c` = 3924541", rows[0][1])
 	status := rows[0][3].(string)
 	require.True(t, status == bindinfo.Enabled || status == bindinfo.Rejected)
 	tk.MustExec("set @@tidb_evolve_plan_baselines=0")
@@ -526,7 +526,7 @@ func TestCaptureWithZeroSlowLogThreshold(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	stmtsummary.StmtSummaryByDigestMap.Clear()
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("set tidb_slow_log_threshold = 0")
 	tk.MustExec("select * from t")
 	tk.MustExec("select * from t")
@@ -552,11 +552,11 @@ func TestIssue25505(t *testing.T) {
 	tk.MustExec("create table t (a int(11) default null,b int(11) default null,key b (b),key ba (b))")
 	tk.MustExec("create table t1 (a int(11) default null,b int(11) default null,key idx_ab (a,b),key idx_a (a),key idx_b (b))")
 	tk.MustExec("create table t2 (a int(11) default null,b int(11) default null,key idx_ab (a,b),key idx_a (a),key idx_b (b))")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
 	spmMap := map[string]string{}
 	spmMap["with recursive `cte` ( `a` ) as ( select ? union select `a` + ? from `test` . `t1` where `a` < ? ) select * from `cte`"] =
-		"WITH RECURSIVE `cte` (`a`) AS (SELECT 2 UNION SELECT `a` + 1 FROM `test`.`t1` WHERE `a` < 5) SELECT /*+ hash_agg(@`sel_1`), use_index(@`sel_3` `test`.`t1` `idx_ab`)*/ * FROM `cte`"
+		"WITH RECURSIVE `cte` (`a`) AS (SELECT 2 UNION SELECT `a` + 1 FROM `test`.`t1` WHERE `a` < 5) SELECT /*+ hash_agg(@`sel_1`), use_index(@`sel_3` `test`.`t1` `idx_ab`), no_order_index(@`sel_3` `test`.`t1` `idx_ab`)*/ * FROM `cte`"
 	spmMap["with recursive `cte1` ( `a` , `b` ) as ( select * from `test` . `t` where `b` = ? union select `a` + ? , `b` + ? from `cte1` where `a` < ? ) select * from `test` . `t`"] =
 		"WITH RECURSIVE `cte1` (`a`, `b`) AS (SELECT * FROM `test`.`t` WHERE `b` = 1 UNION SELECT `a` + 1,`b` + 1 FROM `cte1` WHERE `a` < 2) SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t`"
 	spmMap["with `cte1` as ( select * from `test` . `t` ) , `cte2` as ( select ? ) select * from `test` . `t`"] =
@@ -564,11 +564,11 @@ func TestIssue25505(t *testing.T) {
 	spmMap["with `cte` as ( select * from `test` . `t` where `b` = ? ) select * from `test` . `t`"] =
 		"WITH `cte` AS (SELECT * FROM `test`.`t` WHERE `b` = 6) SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t`"
 	spmMap["with recursive `cte` ( `a` ) as ( select ? union select `a` + ? from `test` . `t1` where `a` > ? ) select * from `cte`"] =
-		"WITH RECURSIVE `cte` (`a`) AS (SELECT 2 UNION SELECT `a` + 1 FROM `test`.`t1` WHERE `a` > 5) SELECT /*+ hash_agg(@`sel_1`), use_index(@`sel_3` `test`.`t1` `idx_b`)*/ * FROM `cte`"
+		"WITH RECURSIVE `cte` (`a`) AS (SELECT 2 UNION SELECT `a` + 1 FROM `test`.`t1` WHERE `a` > 5) SELECT /*+ hash_agg(@`sel_1`), use_index(@`sel_3` `test`.`t1` `idx_b`), no_order_index(@`sel_3` `test`.`t1` `idx_b`)*/ * FROM `cte`"
 	spmMap["with `cte` as ( with `cte1` as ( select * from `test` . `t2` where `a` > ? and `b` > ? ) select * from `cte1` ) select * from `cte` join `test` . `t1` on `t1` . `a` = `cte` . `a`"] =
-		"WITH `cte` AS (WITH `cte1` AS (SELECT * FROM `test`.`t2` WHERE `a` > 1 AND `b` > 1) SELECT * FROM `cte1`) SELECT /*+ use_index(@`sel_3` `test`.`t2` `idx_ab`), use_index(@`sel_1` `test`.`t1` `idx_ab`)*/ * FROM `cte` JOIN `test`.`t1` ON `t1`.`a` = `cte`.`a`"
+		"WITH `cte` AS (WITH `cte1` AS (SELECT * FROM `test`.`t2` WHERE `a` > 1 AND `b` > 1) SELECT * FROM `cte1`) SELECT /*+ use_index(@`sel_3` `test`.`t2` `idx_ab`), order_index(@`sel_3` `test`.`t2` `idx_ab`), use_index(@`sel_1` `test`.`t1` `idx_ab`), order_index(@`sel_1` `test`.`t1` `idx_ab`)*/ * FROM `cte` JOIN `test`.`t1` ON `t1`.`a` = `cte`.`a`"
 	spmMap["with `cte` as ( with `cte1` as ( select * from `test` . `t2` where `a` = ? and `b` = ? ) select * from `cte1` ) select * from `cte` join `test` . `t1` on `t1` . `a` = `cte` . `a`"] =
-		"WITH `cte` AS (WITH `cte1` AS (SELECT * FROM `test`.`t2` WHERE `a` = 1 AND `b` = 1) SELECT * FROM `cte1`) SELECT /*+ use_index(@`sel_3` `test`.`t2` `idx_a`), use_index(@`sel_1` `test`.`t1` `idx_a`)*/ * FROM `cte` JOIN `test`.`t1` ON `t1`.`a` = `cte`.`a`"
+		"WITH `cte` AS (WITH `cte1` AS (SELECT * FROM `test`.`t2` WHERE `a` = 1 AND `b` = 1) SELECT * FROM `cte1`) SELECT /*+ use_index(@`sel_3` `test`.`t2` `idx_a`), no_order_index(@`sel_3` `test`.`t2` `idx_a`), use_index(@`sel_1` `test`.`t1` `idx_a`), no_order_index(@`sel_1` `test`.`t1` `idx_a`)*/ * FROM `cte` JOIN `test`.`t1` ON `t1`.`a` = `cte`.`a`"
 
 	tk.MustExec("with cte as (with cte1 as (select /*+use_index(t2 idx_a)*/ * from t2 where a = 1 and b = 1) select * from cte1) select /*+use_index(t1 idx_a)*/ * from cte join t1 on t1.a=cte.a;")
 	tk.MustExec("with cte as (with cte1 as (select /*+use_index(t2 idx_a)*/ * from t2 where a = 1 and b = 1) select * from cte1) select /*+use_index(t1 idx_a)*/ * from cte join t1 on t1.a=cte.a;")
@@ -619,7 +619,7 @@ func TestCaptureUserFilter(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("select * from t where a > 10")
 	tk.MustExec("select * from t where a > 10")
 	tk.MustExec("admin capture bindings")
@@ -642,7 +642,7 @@ func TestCaptureUserFilter(t *testing.T) {
 	tk.MustExec(`grant all on *.* to usr1 with grant option`)
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
-	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "usr1", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "usr1", Hostname: "%"}, nil, nil, nil))
 	tk2.MustExec("select * from t where a > 10")
 	tk2.MustExec("select * from t where a > 10")
 	tk2.MustExec("admin capture bindings")
@@ -707,7 +707,7 @@ func TestCaptureWildcardFilter(t *testing.T) {
 		tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = off")
 	}()
 
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	dbs := []string{"db11", "db12", "db2"}
 	tbls := []string{"t11", "t12", "t2"}
 	for _, db := range dbs {
@@ -813,7 +813,7 @@ func TestCaptureFilter(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("select * from t where a > 10")
 	tk.MustExec("select * from t where a > 10")
 	tk.MustExec("admin capture bindings")
@@ -965,7 +965,7 @@ func TestCaptureHints(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(pk int primary key, a int, b int, key(a), key(b))")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
 	captureCases := []struct {
 		query string
@@ -992,8 +992,8 @@ func TestCaptureHints(t *testing.T) {
 		{"select /*+ use_index_merge(t, a, b) */ a, b from t where a=1 or b=1", "use_index_merge(@`sel_1` `t` `a`, `b`)"},
 		{"select /*+ ignore_index(t, a) */ * from t where a=1", "ignore_index(`t` `a`)"},
 		// push-down hints
-		{"select /*+ limit_to_cop() */ * from t limit 10", "limit_to_cop()"},
-		{"select /*+ agg_to_cop() */ a, count(*) from t group by a", "agg_to_cop()"},
+		{"select /*+ limit_to_cop() */ * from t limit 10", "limit_to_cop(@`sel_1`)"},
+		{"select /*+ agg_to_cop() */ a, count(*) from t group by a", "agg_to_cop(@`sel_1`)"},
 		// index-merge hints
 		{"select /*+ no_index_merge() */ a, b from t where a>1 or b>1", "no_index_merge()"},
 		{"select /*+ use_index_merge(t, a, b) */ a, b from t where a>1 or b>1", "use_index_merge(@`sel_1` `t` `a`, `b`)"},
@@ -1012,8 +1012,8 @@ func TestCaptureHints(t *testing.T) {
 		tk.MustExec(capCase.query)
 		tk.MustExec("admin capture bindings")
 		res := tk.MustQuery(`show global bindings`).Rows()
-		require.Equal(t, len(res), 1)                                       // this query is captured, and
-		require.True(t, strings.Contains(res[0][1].(string), capCase.hint)) // the binding contains the expected hint
+		require.Equal(t, len(res), 1)                                                                                       // this query is captured, and
+		require.True(t, strings.Contains(res[0][1].(string), capCase.hint), fmt.Sprintf("%v:%v", capCase.query, res[0][1])) // the binding contains the expected hint
 		// test sql digest
 		parser4binding := parser.New()
 		originNode, err := parser4binding.ParseOneStmt(capCase.query, "utf8mb4", "utf8mb4_general_ci")

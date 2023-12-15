@@ -29,7 +29,7 @@ import (
 )
 
 const (
-	ttlCmdKeyLeaseSeconds   int64 = 60
+	ttlCmdKeyLeaseSeconds   int64 = 180
 	ttlCmdKeyRequestPrefix        = "/tidb/ttl/cmd/req/"
 	ttlCmdKeyResponsePrefix       = "/tidb/ttl/cmd/resp/"
 	ttlCmdTypeTriggerTTLJob       = "trigger_ttl_job"
@@ -161,13 +161,15 @@ func (c *etcdClient) waitCmdResponse(ctx context.Context, reqID string, obj inte
 
 	key := ttlCmdKeyResponsePrefix + reqID
 	ch := c.etcdCli.Watch(ctx, key)
-	ticker := time.NewTimer(time.Second)
+	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
 	var respData []byte
 loop:
 	for {
 		select {
+		case <-ctx.Done():
+			return ctx.Err()
 		case <-ticker.C:
 			response, err := c.etcdCli.Get(ctx, key)
 			if err != nil {
@@ -178,7 +180,15 @@ loop:
 				respData = response.Kvs[0].Value
 				break loop
 			}
-		case resp := <-ch:
+		case resp, ok := <-ch:
+			if !ok {
+				logutil.BgLogger().Info("watcher is closed")
+				// to make ch always block
+				ch = make(chan clientv3.WatchResponse)
+				time.Sleep(time.Second)
+				continue loop
+			}
+
 			for _, event := range resp.Events {
 				if event.Type == clientv3.EventTypePut {
 					respData = event.Kv.Value

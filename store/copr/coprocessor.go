@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net"
 	"strconv"
 	"strings"
 	"sync"
@@ -264,6 +265,9 @@ type copTask struct {
 	// we set this field to the target replica store ID and redirect the request to the replica.
 	redirect2Replica *uint64
 	busyThreshold    time.Duration
+	meetLockFallback bool
+	// firstReadType is used to indicate the type of first read when retrying.
+	firstReadType string
 }
 
 type batchedCopTask struct {
@@ -576,7 +580,7 @@ func buildTiDBMemCopTasks(ranges *KeyRanges, req *kv.Request) ([]*copTask, error
 			continue
 		}
 
-		addr := ser.IP + ":" + strconv.FormatUint(uint64(ser.StatusPort), 10)
+		addr := net.JoinHostPort(ser.IP, strconv.FormatUint(uint64(ser.StatusPort), 10))
 		tasks = append(tasks, &copTask{
 			ranges:       ranges,
 			respChan:     make(chan *copResponse, 2),
@@ -1154,12 +1158,16 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		RecordTimeStat: true,
 		RecordScanStat: true,
 		TaskId:         worker.req.TaskID,
-		RequestSource:  task.requestSource.GetRequestSource(),
 		ResourceControlContext: &kvrpcpb.ResourceControlContext{
 			ResourceGroupName: worker.req.ResourceGroupName,
 		},
 		BusyThresholdMs: uint32(task.busyThreshold.Milliseconds()),
 	})
+	req.InputRequestSource = task.requestSource.GetRequestSource()
+	if task.firstReadType != "" {
+		req.ReadType = task.firstReadType
+		req.IsRetryRequest = true
+	}
 	if worker.req.ResourceGroupTagger != nil {
 		worker.req.ResourceGroupTagger(req)
 	}
@@ -1171,7 +1179,9 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	// set ReadReplicaScope and TxnScope so that req.IsStaleRead will be true when it's a global scope stale read.
 	req.ReadReplicaScope = worker.req.ReadReplicaScope
 	req.TxnScope = worker.req.TxnScope
-	if worker.req.IsStaleness {
+	if task.meetLockFallback {
+		req.DisableStaleReadMeetLock()
+	} else if worker.req.IsStaleness {
 		req.EnableStaleRead()
 	}
 	staleRead := req.GetStaleRead()
@@ -1213,12 +1223,19 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		tidbmetrics.DistSQLCoprRespBodySize.WithLabelValues(storeAddr).Observe(float64(len(copResp.Data)))
 	}
 
+	var remains []*copTask
 	if worker.req.Paging.Enable {
-		return worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, ch, costTime)
+		remains, err = worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, ch, costTime)
+	} else {
+		// Handles the response for non-paging copTask.
+		remains, err = worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, ch, nil, costTime)
 	}
-
-	// Handles the response for non-paging copTask.
-	return worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, ch, nil, costTime)
+	if req.ReadType != "" {
+		for _, remain := range remains {
+			remain.firstReadType = req.ReadType
+		}
+	}
+	return remains, err
 }
 
 const (
@@ -1336,6 +1353,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		if err := worker.handleLockErr(bo, lockErr, task); err != nil {
 			return nil, err
 		}
+		task.meetLockFallback = true
 		return worker.handleBatchRemainsOnErr(bo, rpcCtx, []*copTask{task}, resp.pbResp, task, ch)
 	}
 	if otherErr := resp.pbResp.GetOtherError(); otherErr != "" {
@@ -1463,6 +1481,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			if err := worker.handleLockErr(bo, resp.pbResp.GetLocked(), task); err != nil {
 				return nil, err
 			}
+			task.meetLockFallback = true
 			appendRemainTasks(task)
 			continue
 		}
@@ -1618,7 +1637,14 @@ func (worker *copIteratorWorker) handleCopCache(task *copTask, resp *copResponse
 				resp.pbResp.Range = nil
 			}
 		}
-		resp.detail.CoprCacheHit = true
+		// `worker.enableCollectExecutionInfo` is loaded from the instance's config. Because it's not related to the request,
+		// the cache key can be same when `worker.enableCollectExecutionInfo` is true or false.
+		// When `worker.enableCollectExecutionInfo` is false, the `resp.detail` is nil, and hit cache is still possible.
+		// Check `resp.detail` to avoid panic.
+		// Details: https://github.com/pingcap/tidb/issues/48212
+		if resp.detail != nil {
+			resp.detail.CoprCacheHit = true
+		}
 		return nil
 	}
 	copr_metrics.CoprCacheCounterMiss.Add(1)

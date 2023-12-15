@@ -782,7 +782,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrInnodbImport:                                          mysql.Message("ALTER TABLE '%-.192s' IMPORT TABLESPACE failed with error %d : '%s'", nil),
 	ErrInnodbIndexCorrupt:                                    mysql.Message("Index corrupt: %s", nil),
 	ErrInvalidYearColumnLength:                               mysql.Message("Supports only YEAR or YEAR(4) column", nil),
-	ErrNotValidPassword:                                      mysql.Message("Your password does not satisfy the current policy requirements", nil),
+	ErrNotValidPassword:                                      mysql.Message("Your password does not satisfy the current policy requirements (%s)", nil),
 	ErrMustChangePassword:                                    mysql.Message("You must reset your password using ALTER USER statement before executing this statement", nil),
 	ErrFkNoIndexChild:                                        mysql.Message("Failed to add the foreign key constraint. Missing index for constraint '%s' in the foreign table '%s'", nil),
 	ErrForeignKeyNoIndexInParent:                             mysql.Message("Failed to add the foreign key constraint. Missing index for constraint '%s' in the referenced table '%s'", nil),
@@ -1044,7 +1044,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrLoadParquetFromLocal:             mysql.Message("Do not support loading parquet files from local. Please try to load the parquet files from the cloud storage", nil),
 	ErrLoadDataEmptyPath:                mysql.Message("The value of INFILE must not be empty when LOAD DATA from LOCAL", nil),
 	ErrLoadDataUnsupportedFormat:        mysql.Message("The FORMAT '%s' is not supported", nil),
-	ErrLoadDataInvalidURI:               mysql.Message("The URI of INFILE is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access_key_id={your_access_key_id ID}&secret_access_key={your_secret_access_key}&session_token={your_session_token}'", nil),
+	ErrLoadDataInvalidURI:               mysql.Message("The URI of INFILE is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access-key={your_access_key_id ID}&secret-access-key={your_secret_access_key}&session-token={your_session_token}'", nil),
 	ErrLoadDataCantAccess:               mysql.Message("Access to the source file has been denied. Reason: %s. Please check the URI, access key and secret access key are correct", nil),
 	ErrLoadDataCantRead:                 mysql.Message("Failed to read source files. Reason: %s. %s", nil),
 	ErrLoadDataWrongFormatConfig:        mysql.Message("", nil),
@@ -1104,6 +1104,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrPartitionColumnStatsMissing: mysql.Message("Build global-level stats failed due to missing partition-level column stats: %s, please run analyze table to refresh columns of all partitions", nil),
 	ErrDDLSetting:                  mysql.Message("Error happened when %s DDL: %s", nil),
 	ErrIngestFailed:                mysql.Message("Ingest failed: %s", nil),
+	ErrIngestCheckEnvFailed:        mysql.Message("Check ingest environment failed: %s", nil),
 	ErrNotSupportedWithSem:         mysql.Message("Feature '%s' is not supported when security enhanced mode is enabled", nil),
 
 	ErrPlacementPolicyCheck:            mysql.Message("Placement policy didn't meet the constraint, reason: %s", nil),
@@ -1138,4 +1139,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrPrometheusAddrIsNotSet:    mysql.Message("Prometheus address is not set in PD and etcd", nil),
 	ErrTiKVStaleCommand:          mysql.Message("TiKV server reports stale command", nil),
 	ErrTiKVMaxTimestampNotSynced: mysql.Message("TiKV max timestamp is not synced", nil),
+
+	ErrCannotPauseDDLJob:  mysql.Message("Job [%v] can't be paused: %s", nil),
+	ErrCannotResumeDDLJob: mysql.Message("Job [%v] can't be resumed: %s", nil),
+	ErrPausedDDLJob:       mysql.Message("Job [%v] has already been paused", nil),
 }

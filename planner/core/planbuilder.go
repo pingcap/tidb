@@ -89,10 +89,13 @@ type indexNestedLoopJoinTables struct {
 
 type tableHintInfo struct {
 	indexNestedLoopJoinTables
+	noIndexJoinTables   indexNestedLoopJoinTables
 	sortMergeJoinTables []hintTableInfo
 	broadcastJoinTables []hintTableInfo
 	shuffleJoinTables   []hintTableInfo
 	hashJoinTables      []hintTableInfo
+	noHashJoinTables    []hintTableInfo
+	noMergeJoinTables   []hintTableInfo
 	indexHintList       []indexHintInfo
 	tiflashTables       []hintTableInfo
 	tikvTables          []hintTableInfo
@@ -237,6 +240,14 @@ func (info *tableHintInfo) ifPreferHashJoin(tableNames ...*hintTableInfo) bool {
 	return info.matchTableName(tableNames, info.hashJoinTables)
 }
 
+func (info *tableHintInfo) ifPreferNoHashJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.noHashJoinTables)
+}
+
+func (info *tableHintInfo) ifPreferNoMergeJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.noMergeJoinTables)
+}
+
 func (info *tableHintInfo) ifPreferHJBuild(tableNames ...*hintTableInfo) bool {
 	return info.matchTableName(tableNames, info.hjBuildTables)
 }
@@ -255,6 +266,18 @@ func (info *tableHintInfo) ifPreferINLHJ(tableNames ...*hintTableInfo) bool {
 
 func (info *tableHintInfo) ifPreferINLMJ(tableNames ...*hintTableInfo) bool {
 	return info.matchTableName(tableNames, info.indexNestedLoopJoinTables.inlmjTables)
+}
+
+func (info *tableHintInfo) ifPreferNoIndexJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.noIndexJoinTables.inljTables)
+}
+
+func (info *tableHintInfo) ifPreferNoIndexHashJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.noIndexJoinTables.inlhjTables)
+}
+
+func (info *tableHintInfo) ifPreferNoIndexMergeJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.noIndexJoinTables.inlmjTables)
 }
 
 func (info *tableHintInfo) ifPreferTiFlash(tableName *hintTableInfo) *hintTableInfo {
@@ -330,6 +353,9 @@ func restore2TableHint(hintTables ...hintTableInfo) string {
 }
 
 func restore2JoinHint(hintType string, hintTables []hintTableInfo) string {
+	if len(hintTables) == 0 {
+		return strings.ToUpper(hintType)
+	}
 	buffer := bytes.NewBufferString("/*+ ")
 	buffer.WriteString(strings.ToUpper(hintType))
 	buffer.WriteString("(")
@@ -462,7 +488,14 @@ type cteInfo struct {
 	// The LogicalCTEs that reference the same table should share the same CteClass.
 	cteClass *CTEClass
 
+	// isInline will determine whether it can be inlined when **CTE is used**
 	isInline bool
+	// forceInlineByHintOrVar will be true when CTE is hint by merge() or session variable "tidb_opt_force_inline_cte=true"
+	forceInlineByHintOrVar bool
+	// If CTE contain aggregation or window function in query (Indirect references to other cte containing agg or window in the query are also counted.)
+	containAggOrWindow bool
+	// Compute in preprocess phase. Record how many consumers the current CTE has
+	consumerCount int
 }
 
 type subQueryCtx = uint64
@@ -730,7 +763,7 @@ func NewPlanBuilder(opts ...PlanBuilderOpt) *PlanBuilder {
 func (b *PlanBuilder) Init(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor) (*PlanBuilder, []ast.HintTable) {
 	savedBlockNames := sctx.GetSessionVars().PlannerSelectBlockAsName.Load()
 	if processor == nil {
-		sctx.GetSessionVars().PlannerSelectBlockAsName.Store(nil)
+		sctx.GetSessionVars().PlannerSelectBlockAsName.Store(&[]ast.HintTable{})
 	} else {
 		newPlannerSelectBlockAsName := make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
 		sctx.GetSessionVars().PlannerSelectBlockAsName.Store(&newPlannerSelectBlockAsName)
@@ -975,11 +1008,30 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (Plan, error
 				char, col := b.ctx.GetSessionVars().GetCharsetInfo()
 				vars.Value = ast.NewValueExpr(cn.Name.Name.O, char, col)
 			}
-			mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+			// The mocked plan need one output for the complex cases.
+			// See the following IF branch.
+			mockTablePlan := LogicalTableDual{RowCount: 1}.Init(b.ctx, b.getSelectOffset())
 			var err error
-			assign.Expr, _, err = b.rewrite(ctx, vars.Value, mockTablePlan, nil, true)
+			var possiblePlan LogicalPlan
+			assign.Expr, possiblePlan, err = b.rewrite(ctx, vars.Value, mockTablePlan, nil, true)
 			if err != nil {
 				return nil, err
+			}
+			// It's possible that the subquery of the SET_VAR is a complex one so we need to get the result by evaluating the plan.
+			if _, ok := possiblePlan.(*LogicalTableDual); !ok {
+				physicalPlan, _, err := DoOptimize(ctx, b.ctx, b.optFlag, possiblePlan)
+				if err != nil {
+					return nil, err
+				}
+				row, err := EvalSubqueryFirstRow(ctx, physicalPlan, b.is, b.ctx)
+				if err != nil {
+					return nil, err
+				}
+				constant := &expression.Constant{
+					Value:   row[0],
+					RetType: assign.Expr.GetType(),
+				}
+				assign.Expr = constant
 			}
 		} else {
 			assign.IsDefault = true
@@ -1637,6 +1689,14 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		p := &CancelDDLJobs{JobIDs: as.JobIDs}
 		p.setSchemaAndNames(buildCancelDDLJobsFields())
 		ret = p
+	case ast.AdminPauseDDLJobs:
+		p := &PauseDDLJobs{JobIDs: as.JobIDs}
+		p.setSchemaAndNames(buildPauseDDLJobsFields())
+		ret = p
+	case ast.AdminResumeDDLJobs:
+		p := &ResumeDDLJobs{JobIDs: as.JobIDs}
+		p.setSchemaAndNames(buildResumeDDLJobsFields())
+		ret = p
 	case ast.AdminCheckIndexRange:
 		schema, names, err := b.buildCheckIndexSchema(as.Tables[0], as.Index)
 		if err != nil {
@@ -2145,7 +2205,7 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *ast.TableName, cols *calcOnceM
 		}
 		virtualExprs := make([]expression.Expression, 0, len(tblInfo.Columns))
 		for _, idx := range tblInfo.Indices {
-			if idx.State != model.StatePublic {
+			if idx.State != model.StatePublic || idx.MVIndex {
 				continue
 			}
 			for _, idxCol := range idx.Columns {
@@ -2831,7 +2891,7 @@ var CMSketchSizeLimit = kv.TxnEntrySizeLimit / binary.MaxVarintLen32
 
 var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumBuckets:    1024,
-	ast.AnalyzeOptNumTopN:       1024,
+	ast.AnalyzeOptNumTopN:       16384,
 	ast.AnalyzeOptCMSketchWidth: CMSketchSizeLimit,
 	ast.AnalyzeOptCMSketchDepth: CMSketchSizeLimit,
 	ast.AnalyzeOptNumSamples:    500000,
@@ -3110,12 +3170,24 @@ func buildShowSlowSchema() (*expression.Schema, types.NameSlice) {
 	return schema.col2Schema(), schema.names
 }
 
-func buildCancelDDLJobsFields() (*expression.Schema, types.NameSlice) {
+func buildCommandOnDDLJobsFields() (*expression.Schema, types.NameSlice) {
 	schema := newColumnsWithNames(2)
 	schema.Append(buildColumnWithName("", "JOB_ID", mysql.TypeVarchar, 64))
 	schema.Append(buildColumnWithName("", "RESULT", mysql.TypeVarchar, 128))
 
 	return schema.col2Schema(), schema.names
+}
+
+func buildCancelDDLJobsFields() (*expression.Schema, types.NameSlice) {
+	return buildCommandOnDDLJobsFields()
+}
+
+func buildPauseDDLJobsFields() (*expression.Schema, types.NameSlice) {
+	return buildCommandOnDDLJobsFields()
+}
+
+func buildResumeDDLJobsFields() (*expression.Schema, types.NameSlice) {
+	return buildCommandOnDDLJobsFields()
 }
 
 func buildShowBackupMetaSchema() (*expression.Schema, types.NameSlice) {
@@ -3478,7 +3550,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 	case *ast.BeginStmt:
 		readTS := b.ctx.GetSessionVars().TxnReadTS.PeakTxnReadTS()
 		if raw.AsOf != nil {
-			startTS, err := staleread.CalculateAsOfTsExpr(b.ctx, raw.AsOf.TsExpr)
+			startTS, err := staleread.CalculateAsOfTsExpr(ctx, b.ctx, raw.AsOf.TsExpr)
 			if err != nil {
 				return nil, err
 			}
@@ -3679,7 +3751,7 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 
 		originalVal := b.allowBuildCastArray
 		b.allowBuildCastArray = true
-		expr, _, err := b.rewrite(ctx, column.GeneratedExpr, mockPlan, nil, true)
+		expr, _, err := b.rewrite(ctx, column.GeneratedExpr.Clone(), mockPlan, nil, true)
 		b.allowBuildCastArray = originalVal
 		if err != nil {
 			return igc, err
@@ -4334,7 +4406,7 @@ func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) 
 func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (Plan, error) {
 	tblInfo := node.Table.TableInfo
 	indexInfo := tblInfo.FindIndexByName(node.IndexName.L)
-	if indexInfo == nil {
+	if indexInfo == nil || indexInfo.Primary && tblInfo.IsCommonHandle {
 		return nil, ErrKeyDoesNotExist.GenWithStackByArgs(node.IndexName, tblInfo.Name)
 	}
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())

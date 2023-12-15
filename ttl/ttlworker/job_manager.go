@@ -68,8 +68,8 @@ func insertNewTableIntoStatusSQL(tableID int64, parentTableID int64) (string, []
 	return insertNewTableIntoStatusTemplate, []interface{}{tableID, parentTableID}
 }
 
-func setTableStatusOwnerSQL(uuid string, tableID int64, now time.Time, currentJobTTLExpire time.Time, id string) (string, []interface{}) {
-	return setTableStatusOwnerTemplate, []interface{}{uuid, id, now.Format(timeFormat), now.Format(timeFormat), currentJobTTLExpire.Format(timeFormat), now.Format(timeFormat), tableID}
+func setTableStatusOwnerSQL(uuid string, tableID int64, jobStart time.Time, now time.Time, currentJobTTLExpire time.Time, id string) (string, []interface{}) {
+	return setTableStatusOwnerTemplate, []interface{}{uuid, id, jobStart, now.Format(timeFormat), currentJobTTLExpire.Format(timeFormat), now.Format(timeFormat), tableID}
 }
 
 func updateHeartBeatSQL(tableID int64, now time.Time, id string) (string, []interface{}) {
@@ -589,19 +589,21 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 		}
 
 		jobID = uuid.New().String()
+		jobStart := now
 		jobExist := false
 		if len(tableStatus.CurrentJobID) > 0 {
 			// don't create new job if there is already one running
 			// so the running tasks don't need to be cancelled
 			jobID = tableStatus.CurrentJobID
 			expireTime = tableStatus.CurrentJobTTLExpire
+			jobStart = tableStatus.CurrentJobStartTime
 			jobExist = true
 		}
 		failpoint.Inject("set-job-uuid", func(val failpoint.Value) {
 			jobID = val.(string)
 		})
 
-		sql, args = setTableStatusOwnerSQL(jobID, table.ID, now, expireTime, m.id)
+		sql, args = setTableStatusOwnerSQL(jobID, table.ID, jobStart, now, expireTime, m.id)
 		_, err = se.ExecuteSQL(ctx, sql, args...)
 		if err != nil {
 			return errors.Wrapf(err, "execute sql: %s", sql)

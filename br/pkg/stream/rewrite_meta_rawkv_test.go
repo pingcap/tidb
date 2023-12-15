@@ -11,6 +11,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/stretchr/testify/require"
@@ -30,6 +31,7 @@ func MockEmptySchemasReplace(midr *mockInsertDeleteRange) *SchemasReplace {
 	}
 	return NewSchemasReplace(
 		dbMap,
+		true,
 		nil,
 		9527,
 		filter.All(),
@@ -78,7 +80,7 @@ func TestTidySchemaMaps(t *testing.T) {
 	drs[oldDBID] = dr
 
 	// create schemas replace and test TidySchemaMaps().
-	sr := NewSchemasReplace(drs, nil, 0, filter.All(), nil, nil, nil, nil)
+	sr := NewSchemasReplace(drs, true, nil, 0, filter.All(), nil, nil, nil, nil)
 	globalTableIdMap := sr.globalTableIdMap
 	require.Equal(t, len(globalTableIdMap), 3)
 	require.Equal(t, globalTableIdMap[oldTblID], newTblID)
@@ -207,49 +209,76 @@ func TestRewriteKeyForTable(t *testing.T) {
 		tableID int64  = 57
 		ts      uint64 = 400036290571534337
 	)
-	encodedKey := encodeTxnMetaKey(meta.DBkey(dbID), meta.TableKey(tableID), ts)
+	cases := []struct {
+		encodeTableFn func(int64) []byte
+		decodeTableFn func([]byte) (int64, error)
+	}{
+		{
+			meta.TableKey,
+			meta.ParseTableKey,
+		},
+		{
+			meta.AutoIncrementIDKey,
+			meta.ParseAutoIncrementIDKey,
+		},
+		{
+			meta.AutoTableIDKey,
+			meta.ParseAutoTableIDKey,
+		},
+		{
+			meta.AutoRandomTableIDKey,
+			meta.ParseAutoRandomTableIDKey,
+		},
+		{
+			meta.SequenceKey,
+			meta.ParseSequenceKey,
+		},
+	}
 
-	// create schemasReplace.
-	sr := MockEmptySchemasReplace(nil)
+	for _, ca := range cases {
+		encodedKey := encodeTxnMetaKey(meta.DBkey(dbID), ca.encodeTableFn(tableID), ts)
+		// create schemasReplace.
+		sr := MockEmptySchemasReplace(nil)
 
-	// set preConstruct status and construct map information.
-	sr.SetPreConstructMapStatus()
-	newKey, err := sr.rewriteKeyForTable(encodedKey, WriteCF, meta.ParseTableKey, meta.TableKey)
-	require.Nil(t, err)
-	require.Nil(t, newKey)
-	require.Equal(t, len(sr.DbMap), 1)
-	require.Equal(t, len(sr.DbMap[dbID].TableMap), 1)
-	downStreamDbID := sr.DbMap[dbID].DbID
-	downStreamTblID := sr.DbMap[dbID].TableMap[tableID].TableID
+		// set preConstruct status and construct map information.
+		sr.SetPreConstructMapStatus()
+		newKey, err := sr.rewriteKeyForTable(encodedKey, WriteCF, ca.decodeTableFn, ca.encodeTableFn)
+		require.Nil(t, err)
+		require.Nil(t, newKey)
+		require.Equal(t, len(sr.DbMap), 1)
+		require.Equal(t, len(sr.DbMap[dbID].TableMap), 1)
+		downStreamDbID := sr.DbMap[dbID].DbID
+		downStreamTblID := sr.DbMap[dbID].TableMap[tableID].TableID
 
-	// set restoreKV status and rewrite it.
-	sr.SetRestoreKVStatus()
-	newKey, err = sr.rewriteKeyForTable(encodedKey, DefaultCF, meta.ParseTableKey, meta.TableKey)
-	require.Nil(t, err)
-	decodedKey, err := ParseTxnMetaKeyFrom(newKey)
-	require.Nil(t, err)
-	require.Equal(t, decodedKey.Ts, ts)
+		// set restoreKV status and rewrite it.
+		sr.SetRestoreKVStatus()
+		newKey, err = sr.rewriteKeyForTable(encodedKey, DefaultCF, ca.decodeTableFn, ca.encodeTableFn)
+		require.Nil(t, err)
+		decodedKey, err := ParseTxnMetaKeyFrom(newKey)
+		require.Nil(t, err)
+		require.Equal(t, decodedKey.Ts, ts)
 
-	newDbID, err := meta.ParseDBKey(decodedKey.Key)
-	require.Nil(t, err)
-	require.Equal(t, newDbID, downStreamDbID)
-	newTblID, err := meta.ParseTableKey(decodedKey.Field)
-	require.Nil(t, err)
-	require.Equal(t, newTblID, downStreamTblID)
+		newDbID, err := meta.ParseDBKey(decodedKey.Key)
+		require.Nil(t, err)
+		require.Equal(t, newDbID, downStreamDbID)
+		newTblID, err := ca.decodeTableFn(decodedKey.Field)
+		require.Nil(t, err)
+		require.Equal(t, newTblID, downStreamTblID)
 
-	// rewrite it again, and get the same result.
-	newKey, err = sr.rewriteKeyForTable(encodedKey, WriteCF, meta.ParseTableKey, meta.TableKey)
-	require.Nil(t, err)
-	decodedKey, err = ParseTxnMetaKeyFrom(newKey)
-	require.Nil(t, err)
-	require.Equal(t, decodedKey.Ts, sr.RewriteTS)
+		// rewrite it again, and get the same result.
+		newKey, err = sr.rewriteKeyForTable(encodedKey, WriteCF, ca.decodeTableFn, ca.encodeTableFn)
+		require.Nil(t, err)
+		decodedKey, err = ParseTxnMetaKeyFrom(newKey)
+		require.Nil(t, err)
+		require.Equal(t, decodedKey.Ts, sr.RewriteTS)
 
-	newDbID, err = meta.ParseDBKey(decodedKey.Key)
-	require.Nil(t, err)
-	require.Equal(t, newDbID, downStreamDbID)
-	newTblID, err = meta.ParseTableKey(decodedKey.Field)
-	require.Nil(t, err)
-	require.Equal(t, newTblID, downStreamTblID)
+		newDbID, err = meta.ParseDBKey(decodedKey.Key)
+		require.Nil(t, err)
+		require.Equal(t, newDbID, downStreamDbID)
+		newTblID, err = ca.decodeTableFn(decodedKey.Field)
+		require.Nil(t, err)
+		require.Equal(t, newTblID, downStreamTblID)
+	}
 }
 
 func TestRewriteTableInfo(t *testing.T) {
@@ -461,6 +490,7 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 
 	sr := NewSchemasReplace(
 		dbMap,
+		true,
 		nil,
 		0,
 		filter.All(),
@@ -609,23 +639,22 @@ var (
 )
 
 var (
-	dropSchemaJob           = &model.Job{Type: model.ActionDropSchema, SchemaID: mDDLJobDBOldID, RawArgs: json.RawMessage(`[[71,72,73,74,75]]`)}
-	dropTable0Job           = &model.Job{Type: model.ActionDropTable, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`["",[72,73,74],[""]]`)}
-	dropTable1Job           = &model.Job{Type: model.ActionDropTable, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`["",[],[""]]`)}
-	dropTable0Partition1Job = &model.Job{Type: model.ActionDropTablePartition, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`[[73]]`)}
-	rollBackTable0IndexJob  = &model.Job{Type: model.ActionAddIndex, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`[2,false,[72,73,74]]`)}
-	rollBackTable1IndexJob  = &model.Job{Type: model.ActionAddIndex, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`[2,false,[]]`)}
-	dropTable0IndexJob      = &model.Job{Type: model.ActionDropIndex, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`["",false,2,[72,73,74]]`)}
-	dropTable1IndexJob      = &model.Job{Type: model.ActionDropIndex, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`["",false,2,[]]`)}
-	dropTable0IndexesJob    = &model.Job{Type: model.ActionDropIndexes, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`[[],[],[2,3],[72,73,74]]`)}
-	dropTable1IndexesJob    = &model.Job{Type: model.ActionDropIndexes, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`[[],[],[2,3],[]]`)}
-	dropTable0ColumnJob     = &model.Job{Type: model.ActionDropColumn, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`["",false,[2,3],[72,73,74]]`)}
-	dropTable1ColumnJob     = &model.Job{Type: model.ActionDropColumn, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`["",false,[2,3],[]]`)}
-	dropTable0ColumnsJob    = &model.Job{Type: model.ActionDropColumns, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`[[],[],[2,3],[72,73,74]]`)}
-	dropTable1ColumnsJob    = &model.Job{Type: model.ActionDropColumns, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`[[],[],[2,3],[]]`)}
-	modifyTable0ColumnJob   = &model.Job{Type: model.ActionModifyColumn, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`[[2,3],[72,73,74]]`)}
-	modifyTable1ColumnJob   = &model.Job{Type: model.ActionModifyColumn, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`[[2,3],[]]`)}
-	multiSchemaChangeJob0   = &model.Job{
+	dropSchemaJob                 = &model.Job{Type: model.ActionDropSchema, SchemaID: mDDLJobDBOldID, RawArgs: json.RawMessage(`[[71,72,73,74,75]]`)}
+	dropTable0Job                 = &model.Job{Type: model.ActionDropTable, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`["",[72,73,74],[""]]`)}
+	dropTable1Job                 = &model.Job{Type: model.ActionDropTable, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`["",[],[""]]`)}
+	dropTable0Partition1Job       = &model.Job{Type: model.ActionDropTablePartition, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`[[73]]`)}
+	reorganizeTable0Partition1Job = &model.Job{Type: model.ActionReorganizePartition, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`[[73]]`)}
+	rollBackTable0IndexJob        = &model.Job{Type: model.ActionAddIndex, State: model.JobStateRollbackDone, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`[2,false,[72,73,74]]`)}
+	rollBackTable1IndexJob        = &model.Job{Type: model.ActionAddIndex, State: model.JobStateRollbackDone, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`[2,false,[]]`)}
+	addTable0IndexJob             = &model.Job{Type: model.ActionAddIndex, State: model.JobStateSynced, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`[2,false,[72,73,74]]`)}
+	addTable1IndexJob             = &model.Job{Type: model.ActionAddIndex, State: model.JobStateSynced, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`[2,false,[]]`)}
+	dropTable0IndexJob            = &model.Job{Type: model.ActionDropIndex, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`["",false,2,[72,73,74]]`)}
+	dropTable1IndexJob            = &model.Job{Type: model.ActionDropIndex, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`["",false,2,[]]`)}
+	dropTable0ColumnJob           = &model.Job{Type: model.ActionDropColumn, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`["",false,[2,3],[72,73,74]]`)}
+	dropTable1ColumnJob           = &model.Job{Type: model.ActionDropColumn, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`["",false,[2,3],[]]`)}
+	modifyTable0ColumnJob         = &model.Job{Type: model.ActionModifyColumn, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`[[2,3],[72,73,74]]`)}
+	modifyTable1ColumnJob         = &model.Job{Type: model.ActionModifyColumn, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`[[2,3],[]]`)}
+	multiSchemaChangeJob0         = &model.Job{
 		Type:     model.ActionMultiSchemaChange,
 		SchemaID: mDDLJobDBOldID,
 		TableID:  mDDLJobTable0OldID,
@@ -738,9 +767,12 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	err = schemaReplace.deleteRange(dropTable0Job)
 	require.NoError(t, err)
 	targs = <-midr.tableCh
-	require.Equal(t, len(targs.tableIDs), len(mDDLJobALLNewPartitionIDSet))
+	require.Equal(t, len(targs.tableIDs), len(mDDLJobALLNewPartitionIDSet)+1)
 	for _, tableID := range targs.tableIDs {
 		_, exist := mDDLJobALLNewPartitionIDSet[tableID]
+		if !exist {
+			exist = tableID == mDDLJobTable0NewID
+		}
 		require.True(t, exist)
 	}
 
@@ -758,24 +790,52 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	require.Equal(t, len(targs.tableIDs), 1)
 	require.Equal(t, targs.tableIDs[0], mDDLJobPartition1NewID)
 
+	// reorganize table partition1
+	err = schemaReplace.deleteRange(reorganizeTable0Partition1Job)
+	require.NoError(t, err)
+	targs = <-midr.tableCh
+	require.Equal(t, len(targs.tableIDs), 1)
+	require.Equal(t, targs.tableIDs[0], mDDLJobPartition1NewID)
+
 	// roll back add index for table0
-	err = schemaReplace.deleteRange(rollBackTable0IndexJob)
+	err = schemaReplace.restoreFromHistory(rollBackTable0IndexJob, false)
+	require.NoError(t, err)
+	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
+		iargs = <-midr.indexCh
+		_, exist := mDDLJobALLNewPartitionIDSet[iargs.tableID]
+		require.True(t, exist)
+		require.Equal(t, len(iargs.indexIDs), 2)
+		require.Equal(t, iargs.indexIDs[0], int64(2))
+		require.Equal(t, iargs.indexIDs[1], int64(tablecodec.TempIndexPrefix|2))
+	}
+
+	// roll back add index for table1
+	err = schemaReplace.restoreFromHistory(rollBackTable1IndexJob, false)
+	require.NoError(t, err)
+	iargs = <-midr.indexCh
+	require.Equal(t, iargs.tableID, mDDLJobTable1NewID)
+	require.Equal(t, len(iargs.indexIDs), 2)
+	require.Equal(t, iargs.indexIDs[0], int64(2))
+	require.Equal(t, iargs.indexIDs[1], int64(tablecodec.TempIndexPrefix|2))
+
+	// add index for table 0
+	err = schemaReplace.restoreFromHistory(addTable0IndexJob, false)
 	require.NoError(t, err)
 	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
 		iargs = <-midr.indexCh
 		_, exist := mDDLJobALLNewPartitionIDSet[iargs.tableID]
 		require.True(t, exist)
 		require.Equal(t, len(iargs.indexIDs), 1)
-		require.Equal(t, iargs.indexIDs[0], int64(2))
+		require.Equal(t, iargs.indexIDs[0], int64(tablecodec.TempIndexPrefix|2))
 	}
 
-	// roll back add index for table1
-	err = schemaReplace.deleteRange(rollBackTable1IndexJob)
+	// add index for table 1
+	err = schemaReplace.restoreFromHistory(addTable1IndexJob, false)
 	require.NoError(t, err)
 	iargs = <-midr.indexCh
 	require.Equal(t, iargs.tableID, mDDLJobTable1NewID)
 	require.Equal(t, len(iargs.indexIDs), 1)
-	require.Equal(t, iargs.indexIDs[0], int64(2))
+	require.Equal(t, iargs.indexIDs[0], int64(tablecodec.TempIndexPrefix|2))
 
 	// drop index for table0
 	err = schemaReplace.deleteRange(dropTable0IndexJob)
@@ -795,31 +855,6 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	require.Equal(t, iargs.tableID, mDDLJobTable1NewID)
 	require.Equal(t, len(iargs.indexIDs), 1)
 	require.Equal(t, iargs.indexIDs[0], int64(2))
-
-	// drop indexes for table0
-	err = schemaReplace.deleteRange(dropTable0IndexesJob)
-	require.NoError(t, err)
-	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
-		iargs = <-midr.indexCh
-		_, exist := mDDLJobALLNewPartitionIDSet[iargs.tableID]
-		require.True(t, exist)
-		require.Equal(t, len(iargs.indexIDs), len(mDDLJobALLIndexesIDSet))
-		for _, indexID := range iargs.indexIDs {
-			_, exist := mDDLJobALLIndexesIDSet[indexID]
-			require.True(t, exist)
-		}
-	}
-
-	// drop indexes for table1
-	err = schemaReplace.deleteRange(dropTable1IndexesJob)
-	require.NoError(t, err)
-	iargs = <-midr.indexCh
-	require.Equal(t, iargs.tableID, mDDLJobTable1NewID)
-	require.Equal(t, len(iargs.indexIDs), len(mDDLJobALLIndexesIDSet))
-	for _, indexID := range iargs.indexIDs {
-		_, exist := mDDLJobALLIndexesIDSet[indexID]
-		require.True(t, exist)
-	}
 
 	// drop column for table0
 	err = schemaReplace.deleteRange(dropTable0ColumnJob)
@@ -846,32 +881,7 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 		require.True(t, exist)
 	}
 
-	// drop columns for table0
-	err = schemaReplace.deleteRange(dropTable0ColumnsJob)
-	require.NoError(t, err)
-	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
-		iargs = <-midr.indexCh
-		_, exist := mDDLJobALLNewPartitionIDSet[iargs.tableID]
-		require.True(t, exist)
-		require.Equal(t, len(iargs.indexIDs), len(mDDLJobALLIndexesIDSet))
-		for _, indexID := range iargs.indexIDs {
-			_, exist := mDDLJobALLIndexesIDSet[indexID]
-			require.True(t, exist)
-		}
-	}
-
-	// drop columns for table1
-	err = schemaReplace.deleteRange(dropTable1ColumnsJob)
-	require.NoError(t, err)
-	iargs = <-midr.indexCh
-	require.Equal(t, iargs.tableID, mDDLJobTable1NewID)
-	require.Equal(t, len(iargs.indexIDs), len(mDDLJobALLIndexesIDSet))
-	for _, indexID := range iargs.indexIDs {
-		_, exist := mDDLJobALLIndexesIDSet[indexID]
-		require.True(t, exist)
-	}
-
-	// drop columns for table0
+	// modify column for table0
 	err = schemaReplace.deleteRange(modifyTable0ColumnJob)
 	require.NoError(t, err)
 	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
@@ -885,7 +895,7 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 		}
 	}
 
-	// drop columns for table1
+	// modify column for table1
 	err = schemaReplace.deleteRange(modifyTable1ColumnJob)
 	require.NoError(t, err)
 	iargs = <-midr.indexCh
@@ -897,7 +907,7 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	}
 
 	// drop indexes(multi-schema-change) for table0
-	err = schemaReplace.restoreFromHistory(multiSchemaChangeJob0)
+	err = schemaReplace.restoreFromHistory(multiSchemaChangeJob0, false)
 	require.NoError(t, err)
 	for l := 0; l < 2; l++ {
 		for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
@@ -910,7 +920,7 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	}
 
 	// drop indexes(multi-schema-change) for table1
-	err = schemaReplace.restoreFromHistory(multiSchemaChangeJob1)
+	err = schemaReplace.restoreFromHistory(multiSchemaChangeJob1, false)
 	require.NoError(t, err)
 	for l := 0; l < 2; l++ {
 		iargs = <-midr.indexCh

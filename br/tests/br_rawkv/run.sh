@@ -52,8 +52,7 @@ test_full_rawkv() {
 
     checksum_full=$(checksum $check_range_start $check_range_end)
     # backup current state of key-values
-    # raw backup is not working with range [nil, nil]. TODO: fix it.
-    run_br --pd $PD_ADDR backup raw -s "local://$BACKUP_FULL" --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef" --start $check_range_start --format hex
+    run_br --pd $PD_ADDR backup raw -s "local://$BACKUP_FULL" --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef"
 
     clean $check_range_start $check_range_end
     # Ensure the data is deleted
@@ -63,7 +62,7 @@ test_full_rawkv() {
         fail_and_exit
     fi
 
-    run_br --pd $PD_ADDR restore raw -s "local://$BACKUP_FULL" --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef" --start $check_range_start --format hex
+    run_br --pd $PD_ADDR restore raw -s "local://$BACKUP_FULL" --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef"
     checksum_new=$(checksum $check_range_start $check_range_end)
     if [ "$checksum_new" != "$checksum_full" ];then
         echo "failed to restore"
@@ -185,5 +184,7 @@ run_test() {
 
 run_test ""
 
-# ingest "region error" to trigger fineGrainedBackup
+# ingest "region error" to trigger fineGrainedBackup, only one region error.
+run_test "github.com/pingcap/tidb/br/pkg/backup/tikv-region-error=1*return(\"region error\")"
+# all regions failed.
 run_test "github.com/pingcap/tidb/br/pkg/backup/tikv-region-error=return(\"region error\")"

@@ -65,8 +65,8 @@ func (m *taskManager) GetRunningTasks() []*runningScanTask {
 }
 
 // MeetTTLRunningTasks is an exported version of meetTTLRunningTask
-func (m *taskManager) MeetTTLRunningTasks(count int) bool {
-	return m.meetTTLRunningTask(count)
+func (m *taskManager) MeetTTLRunningTasks(count int, taskStatus cache.TaskStatus) bool {
+	return m.meetTTLRunningTask(count, taskStatus)
 }
 
 // ReportTaskFinished is an exported version of reportTaskFinished

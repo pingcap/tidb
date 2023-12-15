@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync"
 	"testing"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -20,6 +21,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/golang/mock/gomock"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	. "github.com/pingcap/tidb/br/pkg/storage"
@@ -480,6 +482,24 @@ func TestWriteNoError(t *testing.T) {
 
 	err := s.storage.WriteFile(ctx, "file", []byte("test"))
 	require.NoError(t, err)
+}
+
+func TestMultiUploadErrorNotOverwritten(t *testing.T) {
+	s := createS3Suite(t)
+	ctx := aws.BackgroundContext()
+
+	s.s3.EXPECT().
+		CreateMultipartUploadWithContext(ctx, gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("mock error"))
+
+	w, err := s.storage.Create(ctx, "file", &WriterOption{Concurrency: 2})
+	require.NoError(t, err)
+	// data should be larger than 5MB to trigger CreateMultipartUploadWithContext path
+	data := make([]byte, 5*1024*1024+6716)
+	n, err := w.Write(ctx, data)
+	require.NoError(t, err)
+	require.Equal(t, 5*1024*1024+6716, n)
+	require.ErrorContains(t, w.Close(ctx), "mock error")
 }
 
 // TestReadNoError ensures the ReadFile API issues a GetObject request and correctly
@@ -1291,4 +1311,50 @@ func TestS3StorageBucketRegion(t *testing.T) {
 			require.Equal(t, region, ss.GetOptions().Region)
 		}(ca.name, ca.expectRegion, ca.s3)
 	}
+}
+
+func TestRetryError(t *testing.T) {
+	var count int32 = 0
+	var errString string = "read tcp *.*.*.*:*->*.*.*.*:*: read: connection reset by peer"
+	var lock sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "PUT" {
+			var curCnt int32
+			t.Log(r.URL)
+			lock.Lock()
+			count += 1
+			curCnt = count
+			lock.Unlock()
+			if curCnt < 2 {
+				// write an cannot-retry error, but we modify the error to specific error, so client would retry.
+				w.WriteHeader(403)
+				return
+			}
+		}
+
+		w.WriteHeader(200)
+	}))
+
+	defer server.Close()
+	t.Log(server.URL)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/storage/replace-error-to-connection-reset-by-peer", "return(true)"))
+	defer func() {
+		failpoint.Disable("github.com/pingcap/tidb/br/pkg/storage/replace-error-to-connection-reset-by-peer")
+	}()
+
+	ctx := context.Background()
+	s, err := NewS3Storage(ctx, &backuppb.S3{
+		Endpoint:        server.URL,
+		Bucket:          "test",
+		Prefix:          "retry",
+		AccessKey:       "none",
+		SecretAccessKey: "none",
+		Provider:        "skip check region",
+		ForcePathStyle:  true,
+	}, &ExternalStorageOptions{})
+	require.NoError(t, err)
+	err = s.WriteFile(ctx, "reset", []byte(errString))
+	require.NoError(t, err)
+	require.Equal(t, count, int32(2))
 }

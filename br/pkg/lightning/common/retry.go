@@ -17,6 +17,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	goerrors "errors"
 	"io"
 	"net"
 	"os"
@@ -69,6 +70,7 @@ func IsRetryableError(err error) bool {
 var retryableErrorIDs = map[errors.ErrorID]struct{}{
 	ErrKVEpochNotMatch.ID():  {},
 	ErrKVNotLeader.ID():      {},
+	ErrNoLeader.ID():         {},
 	ErrKVRegionNotFound.ID(): {},
 	// common.ErrKVServerIsBusy is a little duplication with tmysql.ErrTiKVServerBusy
 	// it's because the response of sst.ingest gives us a sst.IngestResponse which doesn't contain error code,
@@ -86,13 +88,19 @@ var retryableErrorIDs = map[errors.ErrorID]struct{}{
 	drivererr.ErrUnknown.ID():           {},
 }
 
+// ErrWriteTooSlow is used to get rid of the gRPC blocking issue.
+// there are some strange blocking issues of gRPC like
+// https://github.com/pingcap/tidb/issues/48352
+// https://github.com/pingcap/tidb/issues/46321 and I don't know why 😭
+var ErrWriteTooSlow = errors.New("write too slow, maybe gRPC is blocked forever")
+
 func isSingleRetryableError(err error) bool {
 	err = errors.Cause(err)
 
 	switch err {
 	case nil, context.Canceled, context.DeadlineExceeded, io.EOF, sql.ErrNoRows:
 		return false
-	case mysql.ErrInvalidConn, driver.ErrBadConn:
+	case mysql.ErrInvalidConn, driver.ErrBadConn, ErrWriteTooSlow:
 		return true
 	}
 
@@ -101,11 +109,10 @@ func isSingleRetryableError(err error) bool {
 		if nerr.Timeout() {
 			return true
 		}
-		if cause, ok := nerr.(*net.OpError); ok {
-			syscallErr, ok := cause.Unwrap().(*os.SyscallError)
-			if ok {
-				return syscallErr.Err == syscall.ECONNREFUSED || syscallErr.Err == syscall.ECONNRESET
-			}
+		// the error might be nested, such as *url.Error -> *net.OpError -> *os.SyscallError
+		var syscallErr *os.SyscallError
+		if goerrors.As(nerr, &syscallErr) {
+			return syscallErr.Err == syscall.ECONNREFUSED || syscallErr.Err == syscall.ECONNRESET
 		}
 		return false
 	case *mysql.MySQLError:

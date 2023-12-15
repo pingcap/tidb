@@ -931,7 +931,7 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 		},
 	}
 
-	childrenUsedSchema := markChildrenUsedCols(e.Schema(), e.children[0].Schema(), e.children[1].Schema())
+	childrenUsedSchema := markChildrenUsedColsForTest(e.Schema(), e.children[0].Schema(), e.children[1].Schema())
 	defaultValues := make([]types.Datum, e.buildWorker.buildSideExec.Schema().Len())
 	lhsTypes, rhsTypes := retTypes(innerExec), retTypes(outerExec)
 	for i := uint(0); i < e.concurrency; i++ {
@@ -956,6 +956,31 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 	e.ctx.GetSessionVars().DiskTracker = t2
 	e.ctx.GetSessionVars().StmtCtx.DiskTracker.AttachTo(t2)
 	return e
+}
+
+// markChildrenUsedColsForTest compares each child with the output schema, and mark
+// each column of the child is used by output or not.
+func markChildrenUsedColsForTest(outputSchema *expression.Schema, childSchemas ...*expression.Schema) (childrenUsed [][]bool) {
+	childrenUsed = make([][]bool, 0, len(childSchemas))
+	markedOffsets := make(map[int]struct{})
+	for _, col := range outputSchema.Columns {
+		markedOffsets[col.Index] = struct{}{}
+	}
+	prefixLen := 0
+	for _, childSchema := range childSchemas {
+		used := make([]bool, len(childSchema.Columns))
+		for i := range childSchema.Columns {
+			if _, ok := markedOffsets[prefixLen+i]; ok {
+				used[i] = true
+			}
+		}
+		childrenUsed = append(childrenUsed, used)
+	}
+	for _, child := range childSchemas {
+		used := expression.GetUsedList(outputSchema.Columns, child)
+		childrenUsed = append(childrenUsed, used)
+	}
+	return
 }
 
 func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
@@ -1102,6 +1127,16 @@ func BenchmarkHashJoinExec(b *testing.B) {
 	})
 
 	cas.keyIdx = []int{0}
+	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+		benchmarkHashJoinExecWithCase(b, cas)
+	})
+
+	cols = []*types.FieldType{
+		types.NewFieldType(mysql.TypeLonglong),
+	}
+	cas = defaultHashJoinTestCase(cols, 0, false)
+	cas.keyIdx = []int{0}
+	cas.disk = true
 	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 		benchmarkHashJoinExecWithCase(b, cas)
 	})

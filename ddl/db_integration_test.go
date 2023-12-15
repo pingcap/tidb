@@ -28,8 +28,8 @@ import (
 	"github.com/pingcap/errors"
 	_ "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/ddl/schematracker"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
@@ -3176,7 +3176,7 @@ func TestAutoIncrementForceAutoIDCache(t *testing.T) {
 		"t CREATE TABLE `t` (\n" +
 			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n" +
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=1 */"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=201 /*T![auto_id_cache] AUTO_ID_CACHE=1 */"))
 	tk.MustExec("alter table t auto_increment=100;")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Can't reset AUTO_INCREMENT to 100 without FORCE option, using 201 instead"))
 	tk.MustExec("insert into t values ()")
@@ -3185,7 +3185,7 @@ func TestAutoIncrementForceAutoIDCache(t *testing.T) {
 		"t CREATE TABLE `t` (\n" +
 			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n" +
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=1 */"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=212 /*T![auto_id_cache] AUTO_ID_CACHE=1 */"))
 	tk.MustExec("drop table t")
 }
 
@@ -3583,7 +3583,7 @@ func TestAvoidCreateViewOnLocalTemporaryTable(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 	tk.MustExec("drop table if exists tt0")
 	tk.MustExec("drop table if exists tt1")
 	tk.MustExec("drop table if exists tt2")
