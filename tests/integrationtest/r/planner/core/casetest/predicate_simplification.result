@@ -1,0 +1,132 @@
+drop table if exists t;
+create table t(a int, f int);
+explain format = 'brief' select f from t use index() where f = 1 and f = 1 -- simple redundancy of exact condition;
+id	estRows	task	access object	operator info
+TableReader	10.00	root		data:Selection
+└─Selection	10.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t.f, 1)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select f from t use index() where f = 1 and f = 2 -- unsatisfiable condition;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+explain format = 'brief' select f from t use index() where f = 1 and f in (1,2,3)  -- intersection of in and =;
+id	estRows	task	access object	operator info
+TableReader	10.00	root		data:Selection
+└─Selection	10.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t.f, 1)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select f from t use index() where f = 1 and f <> 1  -- intersection of = and <>;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+explain format = 'brief' select f from t use index() where f not in (1,2,3) and f = 3 -- intersection of not in list and =;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+explain format = 'brief' select f from t use index() where f <> 3 and f <> 3 -- intersection of two not in values.;
+id	estRows	task	access object	operator info
+TableReader	6656.67	root		data:Selection
+└─Selection	6656.67	cop[tikv]		ne(planner__core__casetest__predicate_simplification.t.f, 3)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select t1.f /* merge_join(t1, t2) */ from t t1, t t2 where t1.a=t2.a and t1.a=t2.a -- exact redundancy in joins;
+id	estRows	task	access object	operator info
+HashJoin	12487.50	root		inner join, equal:[eq(planner__core__casetest__predicate_simplification.t.a, planner__core__casetest__predicate_simplification.t.a)]
+├─TableReader(Build)	9990.00	root		data:Selection
+│ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__predicate_simplification.t.a))
+│   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	9990.00	root		data:Selection
+  └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__predicate_simplification.t.a))
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'brief' select f from t use index() where f in (1,2,3) and f in (3,4,5) -- intersection of two in. Not done yet;
+id	estRows	task	access object	operator info
+TableReader	10.00	root		data:Selection
+└─Selection	10.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, 1, 2, 3), in(planner__core__casetest__predicate_simplification.t.f, 3, 4, 5)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select f from t use index() where f not in (1,2,3) and f not in (3,4,5) -- intersection of two not in. Not done yet;
+id	estRows	task	access object	operator info
+TableReader	3583.33	root		data:Selection
+└─Selection	3583.33	cop[tikv]		not(in(planner__core__casetest__predicate_simplification.t.f, 1, 2, 3)), not(in(planner__core__casetest__predicate_simplification.t.f, 3, 4, 5))
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select f from t use index() where f not in (1,2,3) and f in (1,2,3) -- intersection of in and not in. Not done yet;
+id	estRows	task	access object	operator info
+TableReader	0.00	root		data:Selection
+└─Selection	0.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, 1, 2, 3), not(in(planner__core__casetest__predicate_simplification.t.f, 1, 2, 3))
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t;
+create table t(a int, f int);
+drop table if exists ts;
+create table ts(a char(10), f char(10));
+explain format = 'brief' select f from t use index() where f <> 1 and f in (1,2,3) -- Simple case;
+id	estRows	task	access object	operator info
+TableReader	20.00	root		data:Selection
+└─Selection	20.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, 2, 3)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select f from t use index() where f <> 4 and f in (1,2,3) -- No intersection but <> is redundant;
+id	estRows	task	access object	operator info
+TableReader	30.00	root		data:Selection
+└─Selection	30.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, 1, 2, 3)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select f from t use index() where f in (1,2,3) and f <> 2 -- Simple case with different order. Test case for issue 39676;
+id	estRows	task	access object	operator info
+TableReader	20.00	root		data:Selection
+└─Selection	20.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, 1, 3)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select f from t use index() where f <> 3 and f in (1,2,3) and f <> 2 -- Multiple <> values. All are in inlist;
+id	estRows	task	access object	operator info
+TableReader	10.00	root		data:Selection
+└─Selection	10.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, 1)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select f from t use index() where f in (1,2,3) and f <> 2 and f <> 99 -- Multiple <> values. Some are in inlist;
+id	estRows	task	access object	operator info
+TableReader	20.00	root		data:Selection
+└─Selection	20.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, 1, 3)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select f from t use index() where f in (1,2,3) and f <> 5 and f <> 33  -- Multiple <> values. None are in inlist;
+id	estRows	task	access object	operator info
+TableReader	30.00	root		data:Selection
+└─Selection	30.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, 1, 2, 3)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select f from t use index() where f <> 3 and f in (1,2,3) and f <> 1 and f <> 2 -- Multiple <> values and cover whole inlist. We keep at least one in inlist;
+id	estRows	task	access object	operator info
+TableReader	0.00	root		data:Selection
+└─Selection	0.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, 2), ne(planner__core__casetest__predicate_simplification.t.f, 2)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select 1 from t A, t B where A.f <> 3 and B.f in (1,2,3) and A.f <> 1 and A.f <> 2 -- on different columns. No simplification should be done.;
+id	estRows	task	access object	operator info
+Projection	199700.00	root		1->Column#7
+└─HashJoin	199700.00	root		CARTESIAN inner join
+  ├─TableReader(Build)	30.00	root		data:Selection
+  │ └─Selection	30.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, 1, 2, 3)
+  │   └─TableFullScan	10000.00	cop[tikv]	table:B	keep order:false, stats:pseudo
+  └─TableReader(Probe)	6656.67	root		data:Selection
+    └─Selection	6656.67	cop[tikv]		ne(planner__core__casetest__predicate_simplification.t.f, 1), ne(planner__core__casetest__predicate_simplification.t.f, 2), ne(planner__core__casetest__predicate_simplification.t.f, 3)
+      └─TableFullScan	10000.00	cop[tikv]	table:A	keep order:false, stats:pseudo
+explain format = 'brief' select 1 from t A, t B where B.f <> 2 and A.f <> 3 and B.f in (1,2,3) and A.f in (3,1,4) and A.f <> 1 and A.f <> 2 -- simplification for two columns.;
+id	estRows	task	access object	operator info
+Projection	200.00	root		1->Column#7
+└─HashJoin	200.00	root		CARTESIAN inner join
+  ├─TableReader(Build)	10.00	root		data:Selection
+  │ └─Selection	10.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, 4)
+  │   └─TableFullScan	10000.00	cop[tikv]	table:A	keep order:false, stats:pseudo
+  └─TableReader(Probe)	20.00	root		data:Selection
+    └─Selection	20.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, 1, 3)
+      └─TableFullScan	10000.00	cop[tikv]	table:B	keep order:false, stats:pseudo
+explain format = 'brief' select f from ts use index() where f <> '1' and f in ('1','2','3') -- Simple case with string type;
+id	estRows	task	access object	operator info
+TableReader	20.00	root		data:Selection
+└─Selection	20.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.ts.f, "2", "3")
+  └─TableFullScan	10000.00	cop[tikv]	table:ts	keep order:false, stats:pseudo
+explain format = 'brief' select count(*) cnt from ts where f <> '1' and f in ('1','2','3') group by a having cnt > 100  -- aggregate  ;
+id	estRows	task	access object	operator info
+Selection	12.80	root		gt(Column#4, 100)
+└─HashAgg	16.00	root		group by:planner__core__casetest__predicate_simplification.ts.a, funcs:count(Column#5)->Column#4
+  └─TableReader	16.00	root		data:HashAgg
+    └─HashAgg	16.00	cop[tikv]		group by:planner__core__casetest__predicate_simplification.ts.a, funcs:count(1)->Column#5
+      └─Selection	20.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.ts.f, "2", "3")
+        └─TableFullScan	10000.00	cop[tikv]	table:ts	keep order:false, stats:pseudo
+explain format = 'brief' select f from t where f <> NULL  and f in (1,2,3) -- Special case of NULL with no simplification.;
+id	estRows	task	access object	operator info
+TableReader	0.00	root		data:Selection
+└─Selection	0.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, 1, 2, 3), ne(planner__core__casetest__predicate_simplification.t.f, NULL)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select f from t where f != NULL  and f in (NULL,2,3) -- Special case of NULL with no simplification.;
+id	estRows	task	access object	operator info
+TableReader	0.00	root		data:Selection
+└─Selection	0.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, NULL, 2, 3), ne(planner__core__casetest__predicate_simplification.t.f, NULL)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo

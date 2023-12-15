@@ -1,0 +1,326 @@
+[
+  {
+    "Name": "TestFlatPhysicalPlan",
+    "Cases": [
+      {
+        "SQL": "select * from t",
+        "Main": [
+          {
+            "Depth": 0,
+            "Label": 0,
+            "IsRoot": true,
+            "StoreType": 2,
+            "ReqType": 0,
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "",
+            "IsLastChild": true
+          },
+          {
+            "Depth": 1,
+            "Label": 0,
+            "IsRoot": false,
+            "StoreType": 0,
+            "ReqType": 0,
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "│ ",
+            "IsLastChild": true
+          }
+        ],
+        "CTEs": null
+      },
+      {
+        "SQL": "select sum(t.a) from t join t2",
+        "Main": [
+          {
+            "Depth": 0,
+            "Label": 0,
+            "IsRoot": true,
+            "StoreType": 2,
+            "ReqType": 0,
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "",
+            "IsLastChild": true
+          },
+          {
+            "Depth": 1,
+            "Label": 0,
+            "IsRoot": true,
+            "StoreType": 2,
+            "ReqType": 0,
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "│ ",
+            "IsLastChild": true
+          },
+          {
+            "Depth": 2,
+            "Label": 0,
+            "IsRoot": true,
+            "StoreType": 2,
+            "ReqType": 0,
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "  │ ",
+            "IsLastChild": true
+          },
+          {
+            "Depth": 3,
+            "Label": 2,
+            "IsRoot": true,
+            "StoreType": 2,
+            "ReqType": 0,
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "    │ ",
+            "IsLastChild": false
+          },
+          {
+            "Depth": 4,
+            "Label": 0,
+            "IsRoot": false,
+            "StoreType": 0,
+            "ReqType": 0,
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "    │ │ ",
+            "IsLastChild": true
+          },
+          {
+            "Depth": 3,
+            "Label": 1,
+            "IsRoot": true,
+            "StoreType": 2,
+            "ReqType": 0,
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "    │ ",
+            "IsLastChild": true
+          },
+          {
+            "Depth": 4,
+            "Label": 0,
+            "IsRoot": false,
+            "StoreType": 0,
+            "ReqType": 0,
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "      │ ",
+            "IsLastChild": true
+          }
+        ],
+        "CTEs": null
+      },
+      {
+        "SQL": "select a from t use index (f) where f > 100",
+        "Main": [
+          {
+            "Depth": 0,
+            "Label": 0,
+            "IsRoot": true,
+            "StoreType": 2,
+            "ReqType": 0,
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "",
+            "IsLastChild": true
+          },
+          {
+            "Depth": 1,
+            "Label": 0,
+            "IsRoot": true,
+            "StoreType": 2,
+            "ReqType": 0,
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "│ ",
+            "IsLastChild": true
+          },
+          {
+            "Depth": 2,
+            "Label": 0,
+            "IsRoot": false,
+            "StoreType": 0,
+            "ReqType": 0,
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "  │ ",
+            "IsLastChild": true
+          }
+        ],
+        "CTEs": null
+      },
+      {
+        "SQL": "select a from t use index () where f > 100",
+        "Main": [
+          {
+            "Depth": 0,
+            "Label": 0,
+            "IsRoot": true,
+            "StoreType": 2,
+            "ReqType": 0,
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "",
+            "IsLastChild": true
+          },
+          {
+            "Depth": 1,
+            "Label": 0,
+            "IsRoot": true,
+            "StoreType": 2,
+            "ReqType": 0,
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "│ ",
+            "IsLastChild": true
+          },
+          {
+            "Depth": 2,
+            "Label": 0,
+            "IsRoot": false,
+            "StoreType": 0,
+            "ReqType": 0,
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "  │ ",
+            "IsLastChild": true
+          },
+          {
+            "Depth": 3,
+            "Label": 0,
+            "IsRoot": false,
+            "StoreType": 0,
+            "ReqType": 0,
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "    │ ",
+            "IsLastChild": true
+          }
+        ],
+        "CTEs": null
+      },
+      {
+        "SQL": "with cte1 as (select a, b from t), cte2 as (select a, b from t2) select * from cte1 join cte2 on cte1.a = cte2.a",
+        "Main": [
+          {
+            "Depth": 0,
+            "Label": 0,
+            "IsRoot": true,
+            "StoreType": 2,
+            "ReqType": 0,
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "",
+            "IsLastChild": true
+          },
+          {
+            "Depth": 1,
+            "Label": 2,
+            "IsRoot": true,
+            "StoreType": 2,
+            "ReqType": 0,
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "│ ",
+            "IsLastChild": false
+          },
+          {
+            "Depth": 2,
+            "Label": 0,
+            "IsRoot": false,
+            "StoreType": 0,
+            "ReqType": 0,
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "│ │ ",
+            "IsLastChild": true
+          },
+          {
+            "Depth": 1,
+            "Label": 1,
+            "IsRoot": true,
+            "StoreType": 2,
+            "ReqType": 0,
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "│ ",
+            "IsLastChild": true
+          },
+          {
+            "Depth": 2,
+            "Label": 0,
+            "IsRoot": false,
+            "StoreType": 0,
+            "ReqType": 0,
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "  │ ",
+            "IsLastChild": true
+          }
+        ],
+        "CTEs": null
+      },
+      {
+        "SQL": "WITH RECURSIVE cte (n) AS(  SELECT 1  UNION ALL  SELECT n + 1 FROM cte WHERE n < 5)SELECT * FROM cte;",
+        "Main": [
+          {
+            "Depth": 0,
+            "Label": 0,
+            "IsRoot": true,
+            "StoreType": 2,
+            "ReqType": 0,
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "",
+            "IsLastChild": true
+          }
+        ],
+        "CTEs": [
+          [
+            {
+              "Depth": 0,
+              "Label": 0,
+              "IsRoot": true,
+              "StoreType": 2,
+              "ReqType": 0,
+              "IsPhysicalPlan": true,
+              "TextTreeIndent": "",
+              "IsLastChild": true
+            },
+            {
+              "Depth": 1,
+              "Label": 3,
+              "IsRoot": true,
+              "StoreType": 2,
+              "ReqType": 0,
+              "IsPhysicalPlan": true,
+              "TextTreeIndent": "│ ",
+              "IsLastChild": false
+            },
+            {
+              "Depth": 2,
+              "Label": 0,
+              "IsRoot": true,
+              "StoreType": 2,
+              "ReqType": 0,
+              "IsPhysicalPlan": true,
+              "TextTreeIndent": "│ │ ",
+              "IsLastChild": true
+            },
+            {
+              "Depth": 1,
+              "Label": 4,
+              "IsRoot": true,
+              "StoreType": 2,
+              "ReqType": 0,
+              "IsPhysicalPlan": true,
+              "TextTreeIndent": "│ ",
+              "IsLastChild": true
+            },
+            {
+              "Depth": 2,
+              "Label": 0,
+              "IsRoot": true,
+              "StoreType": 2,
+              "ReqType": 0,
+              "IsPhysicalPlan": true,
+              "TextTreeIndent": "  │ ",
+              "IsLastChild": true
+            },
+            {
+              "Depth": 3,
+              "Label": 0,
+              "IsRoot": true,
+              "StoreType": 2,
+              "ReqType": 0,
+              "IsPhysicalPlan": true,
+              "TextTreeIndent": "    │ ",
+              "IsLastChild": true
+            }
+          ]
+        ]
+      }
+    ]
+  }
+]

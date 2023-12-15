@@ -11,7 +11,6 @@ import (
 	"io"
 	"net/http"
 	"path"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,8 +28,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/store/pdtypes"
+	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	pd "github.com/tikv/pd/client"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -58,8 +58,10 @@ type SplitClient interface {
 	// BatchSplitRegions splits a region from a batch of keys.
 	// note: the keys should not be encoded
 	BatchSplitRegions(ctx context.Context, regionInfo *RegionInfo, keys [][]byte) ([]*RegionInfo, error)
-	// BatchSplitRegionsWithOrigin splits a region from a batch of keys and return the original region and split new regions
-	BatchSplitRegionsWithOrigin(ctx context.Context, regionInfo *RegionInfo, keys [][]byte) (*RegionInfo, []*RegionInfo, error)
+	// BatchSplitRegionsWithOrigin splits a region from a batch of keys
+	// and return the original region and split new regions
+	BatchSplitRegionsWithOrigin(ctx context.Context, regionInfo *RegionInfo,
+		keys [][]byte) (*RegionInfo, []*RegionInfo, error)
 	// ScatterRegion scatters a specified region.
 	ScatterRegion(ctx context.Context, regionInfo *RegionInfo) error
 	// ScatterRegions scatters regions in a batch.
@@ -111,7 +113,9 @@ func (c *pdClient) needScatter(ctx context.Context) bool {
 		var err error
 		c.needScatterVal, err = c.checkNeedScatter(ctx)
 		if err != nil {
-			log.Warn("failed to check whether need to scatter, use permissive strategy: always scatter", logutil.ShortError(err))
+			log.Warn(
+				"failed to check whether need to scatter, use permissive strategy: always scatter",
+				logutil.ShortError(err))
 			c.needScatterVal = true
 		}
 		if !c.needScatterVal {
@@ -132,12 +136,13 @@ func (c *pdClient) ScatterRegions(ctx context.Context, regionInfo []*RegionInfo)
 			logutil.Key("end", v.Region.EndKey),
 			zap.Uint64("id", v.Region.Id))
 	}
-	resp, err := c.client.ScatterRegions(ctx, regionsID)
+	resp, err := c.client.ScatterRegions(ctx, regionsID, pd.WithSkipStoreLimit())
 	if err != nil {
 		return err
 	}
 	if pbErr := resp.GetHeader().GetError(); pbErr.GetType() != pdpb.ErrorType_OK {
-		return errors.Annotatef(berrors.ErrPDInvalidResponse, "pd returns error during batch scattering: %s", pbErr)
+		return errors.Annotatef(berrors.ErrPDInvalidResponse,
+			"pd returns error during batch scattering: %s", pbErr)
 	}
 	return nil
 }
@@ -322,7 +327,8 @@ func (c *pdClient) sendSplitRegionRequest(
 	return nil, errors.Trace(splitErrors)
 }
 
-func sendSplitRegionRequest(ctx context.Context, c *pdClient, regionInfo *RegionInfo, keys [][]byte, splitErrors *error, retry int) (bool, *kvrpcpb.SplitRegionResponse, error) {
+func sendSplitRegionRequest(ctx context.Context, c *pdClient, regionInfo *RegionInfo,
+	keys [][]byte, splitErrors *error, retry int) (bool, *kvrpcpb.SplitRegionResponse, error) {
 	var peer *metapb.Peer
 	// scanRegions may return empty Leader in https://github.com/tikv/pd/blob/v4.0.8/server/grpc_service.go#L524
 	// so wee also need check Leader.Id != 0
@@ -331,7 +337,8 @@ func sendSplitRegionRequest(ctx context.Context, c *pdClient, regionInfo *Region
 	} else {
 		if len(regionInfo.Region.Peers) == 0 {
 			return false, nil,
-				errors.Annotatef(berrors.ErrRestoreNoPeer, "region[%d] doesn't have any peer", regionInfo.Region.GetId())
+				errors.Annotatef(berrors.ErrRestoreNoPeer, "region[%d] doesn't have any peer",
+					regionInfo.Region.GetId())
 		}
 		peer = regionInfo.Region.Peers[0]
 	}
@@ -456,8 +463,7 @@ func (c *pdClient) getStoreCount(ctx context.Context) (int, error) {
 
 func (c *pdClient) getMaxReplica(ctx context.Context) (int, error) {
 	api := c.getPDAPIAddr()
-	configAPI := api + "/pd/api/v1/config/replicate"
-	req, err := http.NewRequestWithContext(ctx, "GET", configAPI, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s%s", api, pdhttp.ReplicateConfig), nil)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -533,7 +539,8 @@ func (c *pdClient) GetPlacementRule(ctx context.Context, groupID, ruleID string)
 	if addr == "" {
 		return rule, errors.Annotate(berrors.ErrRestoreSplitFailed, "failed to add stores labels: no leader")
 	}
-	req, err := http.NewRequestWithContext(ctx, "GET", addr+path.Join("/pd/api/v1/config/rule", groupID, ruleID), nil)
+	req, err := http.NewRequestWithContext(ctx, "GET",
+		addr+path.Join(pdhttp.PlacementRule, groupID, ruleID), nil)
 	if err != nil {
 		return rule, errors.Trace(err)
 	}
@@ -563,7 +570,8 @@ func (c *pdClient) SetPlacementRule(ctx context.Context, rule pdtypes.Rule) erro
 		return errors.Annotate(berrors.ErrPDLeaderNotFound, "failed to add stores labels")
 	}
 	m, _ := json.Marshal(rule)
-	req, err := http.NewRequestWithContext(ctx, "POST", addr+path.Join("/pd/api/v1/config/rule"), bytes.NewReader(m))
+	req, err := http.NewRequestWithContext(ctx, "POST",
+		addr+path.Join(pdhttp.PlacementRule), bytes.NewReader(m))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -579,7 +587,7 @@ func (c *pdClient) DeletePlacementRule(ctx context.Context, groupID, ruleID stri
 	if addr == "" {
 		return errors.Annotate(berrors.ErrPDLeaderNotFound, "failed to add stores labels")
 	}
-	req, err := http.NewRequestWithContext(ctx, "DELETE", addr+path.Join("/pd/api/v1/config/rule", groupID, ruleID), nil)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", addr+path.Join(pdhttp.PlacementRule, groupID, ruleID), nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -602,7 +610,7 @@ func (c *pdClient) SetStoresLabel(
 	for _, id := range stores {
 		req, err := http.NewRequestWithContext(
 			ctx, "POST",
-			addr+path.Join("/pd/api/v1/store", strconv.FormatUint(id, 10), "label"),
+			addr+pdhttp.StoreLabelByID(id),
 			bytes.NewReader(b),
 		)
 		if err != nil {

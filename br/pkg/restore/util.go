@@ -24,9 +24,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -43,8 +43,8 @@ type AppliedFile interface {
 	GetEndKey() []byte
 }
 
-// getTableIDMap creates a map maping old tableID to new tableID.
-func getTableIDMap(newTable, oldTable *model.TableInfo) map[int64]int64 {
+// getPartitionIDMap creates a map maping old physical ID to new physical ID.
+func getPartitionIDMap(newTable, oldTable *model.TableInfo) map[int64]int64 {
 	tableIDMap := make(map[int64]int64)
 
 	if oldTable.Partition != nil && newTable.Partition != nil {
@@ -60,6 +60,12 @@ func getTableIDMap(newTable, oldTable *model.TableInfo) map[int64]int64 {
 		}
 	}
 
+	return tableIDMap
+}
+
+// getTableIDMap creates a map maping old tableID to new tableID.
+func getTableIDMap(newTable, oldTable *model.TableInfo) map[int64]int64 {
+	tableIDMap := getPartitionIDMap(newTable, oldTable)
 	tableIDMap[oldTable.ID] = newTable.ID
 	return tableIDMap
 }
@@ -807,4 +813,73 @@ func SelectRegionLeader(storeBalanceScore map[uint64]int, peers []*RecoverRegion
 		}
 	}
 	return leader
+}
+
+// each 64 items constitute a bitmap unit
+type bitMap map[int]uint64
+
+func newBitMap() bitMap {
+	return make(map[int]uint64)
+}
+
+func (m bitMap) pos(off int) (blockIndex int, bitOffset uint64) {
+	return off >> 6, uint64(1) << (off & 63)
+}
+
+func (m bitMap) Set(off int) {
+	blockIndex, bitOffset := m.pos(off)
+	m[blockIndex] |= bitOffset
+}
+
+func (m bitMap) Hit(off int) bool {
+	blockIndex, bitOffset := m.pos(off)
+	return (m[blockIndex] & bitOffset) > 0
+}
+
+type fileMap struct {
+	// group index -> bitmap of kv files
+	pos map[int]bitMap
+}
+
+func newFileMap() fileMap {
+	return fileMap{
+		pos: make(map[int]bitMap),
+	}
+}
+
+type LogFilesSkipMap struct {
+	// metadata group key -> group map
+	skipMap map[string]fileMap
+}
+
+func NewLogFilesSkipMap() *LogFilesSkipMap {
+	return &LogFilesSkipMap{
+		skipMap: make(map[string]fileMap),
+	}
+}
+
+func (m *LogFilesSkipMap) Insert(metaKey string, groupOff, fileOff int) {
+	mp, exists := m.skipMap[metaKey]
+	if !exists {
+		mp = newFileMap()
+		m.skipMap[metaKey] = mp
+	}
+	gp, exists := mp.pos[groupOff]
+	if !exists {
+		gp = newBitMap()
+		mp.pos[groupOff] = gp
+	}
+	gp.Set(fileOff)
+}
+
+func (m *LogFilesSkipMap) NeedSkip(metaKey string, groupOff, fileOff int) bool {
+	mp, exists := m.skipMap[metaKey]
+	if !exists {
+		return false
+	}
+	gp, exists := mp.pos[groupOff]
+	if !exists {
+		return false
+	}
+	return gp.Hit(fileOff)
 }

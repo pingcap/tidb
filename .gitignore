@@ -9,11 +9,11 @@ coverage.out
 *.test.bin
 tags
 profile.coverprofile
-explain_test
-cmd/explaintest/explain-test.out
-cmd/explaintest/explaintest_tidb-server
-cmd/explaintest/portgenerator
-cmd/explaintest/s/
+mysql_tester
+tests/integrationtest/integration-test.out
+tests/integrationtest/integrationtest_tidb-server
+tests/integrationtest/portgenerator
+tests/integrationtest/s/
 *.fail.go
 tools/bin/
 vendor
@@ -27,6 +27,7 @@ fix.sql
 export-20*/
 *-coverage.xml
 *-junit-report.xml
+compose-dev.yaml
 # Files generated when testing
 out
 /_bazel
@@ -36,3 +37,6 @@ bazel-testlogs
 bazel-tidb
 .ijwb/
 /oom_record/
+*.log.json
+genkeyword
+test_coverage

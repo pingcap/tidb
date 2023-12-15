@@ -33,24 +33,25 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
-	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	ropts "github.com/pingcap/tidb/br/pkg/lightning/importer/opts"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
-	_ "github.com/pingcap/tidb/planner/core" // to setup expression.EvalAstExpr. Otherwise we cannot parse the default value
-	"github.com/pingcap/tidb/store/pdtypes"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	_ "github.com/pingcap/tidb/pkg/planner/core" // to setup expression.EvalAstExpr. Otherwise we cannot parse the default value
+	"github.com/pingcap/tidb/pkg/store/pdtypes"
+	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/mock"
+	pd "github.com/tikv/pd/client"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 )
@@ -120,18 +121,19 @@ func WithPreInfoGetterDBMetas(ctx context.Context, dbMetas []*mydump.MDDatabaseM
 
 // TargetInfoGetterImpl implements the operations to get information from the target.
 type TargetInfoGetterImpl struct {
-	cfg          *config.Config
-	targetDBGlue glue.Glue
-	tls          *common.TLS
-	backend      backend.TargetInfoGetter
+	cfg     *config.Config
+	db      *sql.DB
+	tls     *common.TLS
+	backend backend.TargetInfoGetter
+	pdCli   pd.Client
 }
 
 // NewTargetInfoGetterImpl creates a TargetInfoGetterImpl object.
 func NewTargetInfoGetterImpl(
 	cfg *config.Config,
 	targetDB *sql.DB,
+	pdCli pd.Client,
 ) (*TargetInfoGetterImpl, error) {
-	targetDBGlue := glue.NewExternalTiDBGlue(targetDB, cfg.TiDB.SQLMode)
 	tls, err := cfg.ToTLS()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -141,24 +143,25 @@ func NewTargetInfoGetterImpl(
 	case config.BackendTiDB:
 		backendTargetInfoGetter = tidb.NewTargetInfoGetter(targetDB)
 	case config.BackendLocal:
-		backendTargetInfoGetter = local.NewTargetInfoGetter(tls, targetDBGlue, cfg.TiDB.PdAddr)
+		if pdCli == nil {
+			return nil, common.ErrUnknown.GenWithStack("pd client is required when using local backend")
+		}
+		backendTargetInfoGetter = local.NewTargetInfoGetter(tls, targetDB, pdCli)
 	default:
 		return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
 	}
 	return &TargetInfoGetterImpl{
-		cfg:          cfg,
-		targetDBGlue: targetDBGlue,
-		tls:          tls,
-		backend:      backendTargetInfoGetter,
+		cfg:     cfg,
+		tls:     tls,
+		db:      targetDB,
+		backend: backendTargetInfoGetter,
+		pdCli:   pdCli,
 	}, nil
 }
 
 // FetchRemoteTableModels fetches the table structures from the remote target.
 // It implements the TargetInfoGetter interface.
 func (g *TargetInfoGetterImpl) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
-	if !g.targetDBGlue.OwnsSQLExecutor() {
-		return g.targetDBGlue.GetTables(ctx, schemaName)
-	}
 	return g.backend.FetchRemoteTableModels(ctx, schemaName)
 }
 
@@ -186,16 +189,12 @@ func (g *TargetInfoGetterImpl) IsTableEmpty(ctx context.Context, schemaName stri
 	failpoint.Inject("CheckTableEmptyFailed", func() {
 		failpoint.Return(nil, errors.New("mock error"))
 	})
-	db, err := g.targetDBGlue.GetDB()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	exec := common.SQLWithRetry{
-		DB:     db,
+		DB:     g.db,
 		Logger: log.FromContext(ctx),
 	}
 	var dump int
-	err = exec.QueryRow(ctx, "check table empty",
+	err := exec.QueryRow(ctx, "check table empty",
 		// Here we use the `USE INDEX()` hint to skip fetch the record from index.
 		// In Lightning, if previous importing is halted half-way, it is possible that
 		// the data is partially imported, but the index data has not been imported.
@@ -227,7 +226,7 @@ func (g *TargetInfoGetterImpl) IsTableEmpty(ctx context.Context, schemaName stri
 // It implements the TargetInfoGetter interface.
 // It uses the SQL to fetch sys variables from the target.
 func (g *TargetInfoGetterImpl) GetTargetSysVariablesForImport(ctx context.Context, _ ...ropts.GetPreInfoOption) map[string]string {
-	sysVars := ObtainImportantVariables(ctx, g.targetDBGlue.GetSQLExecutor(), !isTiDBBackend(g.cfg))
+	sysVars := ObtainImportantVariables(ctx, g.db, !isTiDBBackend(g.cfg))
 	// override by manually set vars
 	maps.Copy(sysVars, g.cfg.TiDB.Vars)
 	return sysVars
@@ -238,7 +237,7 @@ func (g *TargetInfoGetterImpl) GetTargetSysVariablesForImport(ctx context.Contex
 // It uses the PD interface through TLS to get the information.
 func (g *TargetInfoGetterImpl) GetReplicationConfig(ctx context.Context) (*pdtypes.ReplicationConfig, error) {
 	result := new(pdtypes.ReplicationConfig)
-	if err := g.tls.WithHost(g.cfg.TiDB.PdAddr).GetJSON(ctx, pdReplicate, &result); err != nil {
+	if err := g.tls.WithHost(g.pdCli.GetLeaderAddr()).GetJSON(ctx, pdhttp.ReplicateConfig, &result); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return result, nil
@@ -249,7 +248,7 @@ func (g *TargetInfoGetterImpl) GetReplicationConfig(ctx context.Context) (*pdtyp
 // It uses the PD interface through TLS to get the information.
 func (g *TargetInfoGetterImpl) GetStorageInfo(ctx context.Context) (*pdtypes.StoresInfo, error) {
 	result := new(pdtypes.StoresInfo)
-	if err := g.tls.WithHost(g.cfg.TiDB.PdAddr).GetJSON(ctx, pdStores, result); err != nil {
+	if err := g.tls.WithHost(g.pdCli.GetLeaderAddr()).GetJSON(ctx, pdhttp.Stores, result); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return result, nil
@@ -260,7 +259,7 @@ func (g *TargetInfoGetterImpl) GetStorageInfo(ctx context.Context) (*pdtypes.Sto
 // It uses the PD interface through TLS to get the information.
 func (g *TargetInfoGetterImpl) GetEmptyRegionsInfo(ctx context.Context) (*pdtypes.RegionsInfo, error) {
 	result := new(pdtypes.RegionsInfo)
-	if err := g.tls.WithHost(g.cfg.TiDB.PdAddr).GetJSON(ctx, pdEmptyRegions, &result); err != nil {
+	if err := g.tls.WithHost(g.pdCli.GetLeaderAddr()).GetJSON(ctx, pdhttp.EmptyRegions, &result); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return result, nil
@@ -374,6 +373,19 @@ func (p *PreImportInfoGetterImpl) GetAllTableStructures(ctx context.Context, opt
 
 func (p *PreImportInfoGetterImpl) getTableStructuresByFileMeta(ctx context.Context, dbSrcFileMeta *mydump.MDDatabaseMeta, getPreInfoCfg *ropts.GetPreInfoConfig) ([]*model.TableInfo, error) {
 	dbName := dbSrcFileMeta.Name
+	failpoint.Inject(
+		"getTableStructuresByFileMeta_BeforeFetchRemoteTableModels",
+		func(v failpoint.Value) {
+			fmt.Println("failpoint: getTableStructuresByFileMeta_BeforeFetchRemoteTableModels")
+			const defaultMilliSeconds int = 5000
+			sleepMilliSeconds, ok := v.(int)
+			if !ok || sleepMilliSeconds <= 0 || sleepMilliSeconds > 30000 {
+				sleepMilliSeconds = defaultMilliSeconds
+			}
+			//nolint: errcheck
+			failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/tidb/FetchRemoteTableModels_BeforeFetchTableAutoIDInfos", fmt.Sprintf("sleep(%d)", sleepMilliSeconds))
+		},
+	)
 	currentTableInfosFromDB, err := p.targetInfoGetter.FetchRemoteTableModels(ctx, dbName)
 	if err != nil {
 		if getPreInfoCfg != nil && getPreInfoCfg.IgnoreDBNotExist {
@@ -457,7 +469,7 @@ func (p *PreImportInfoGetterImpl) ReadFirstNRowsByTableName(ctx context.Context,
 // ReadFirstNRowsByFileMeta reads the first N rows of an data file.
 // It implements the PreImportInfoGetter interface.
 func (p *PreImportInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, dataFileMeta mydump.SourceFileMeta, n int) ([]string, [][]types.Datum, error) {
-	reader, err := mydump.OpenReader(ctx, dataFileMeta, p.srcStorage)
+	reader, err := mydump.OpenReader(ctx, &dataFileMeta, p.srcStorage, storage.DecompressConfig{})
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -568,7 +580,7 @@ func (p *PreImportInfoGetterImpl) EstimateSourceDataSize(ctx context.Context, op
 				if tableInfo.Core.TiFlashReplica != nil && tableInfo.Core.TiFlashReplica.Available {
 					tiflashSize += tableSize * int64(tableInfo.Core.TiFlashReplica.Count)
 				}
-				tableCount += 1
+				tableCount++
 			}
 		}
 	}
@@ -606,7 +618,7 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 		return resultIndexRatio, isRowOrdered, nil
 	}
 	sampleFile := tableMeta.DataFiles[0].FileMeta
-	reader, err := mydump.OpenReader(ctx, sampleFile, p.srcStorage)
+	reader, err := mydump.OpenReader(ctx, &sampleFile, p.srcStorage, storage.DecompressConfig{})
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
 	}
@@ -665,8 +677,8 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 	initializedColumns := false
 	var (
 		columnPermutation []int
-		kvSize            uint64 = 0
-		rowSize           uint64 = 0
+		kvSize            uint64
+		rowSize           uint64
 		extendVals        []types.Datum
 	)
 	rowCount := 0

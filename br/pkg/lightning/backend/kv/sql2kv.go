@@ -17,25 +17,26 @@
 package kv
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"math"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql" //nolint: goimports
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
-	"golang.org/x/exp/slices"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql" //nolint: goimports
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
 )
 
 type tableKVEncoder struct {
@@ -114,7 +115,7 @@ func CollectGeneratedColumns(se *Session, meta *model.TableInfo, cols []*table.C
 	var genCols []GeneratedCol
 	for i, col := range cols {
 		if col.GeneratedExpr != nil {
-			expr, err := expression.RewriteAstExpr(se, col.GeneratedExpr, schema, names, true)
+			expr, err := expression.RewriteAstExpr(se, col.GeneratedExpr.Internal(), schema, names, true)
 			if err != nil {
 				return nil, err
 			}
@@ -126,8 +127,8 @@ func CollectGeneratedColumns(se *Session, meta *model.TableInfo, cols []*table.C
 	}
 
 	// order the result by column offset so they match the evaluation order.
-	slices.SortFunc(genCols, func(i, j GeneratedCol) bool {
-		return cols[i.Index].Offset < cols[j.Index].Offset
+	slices.SortFunc(genCols, func(i, j GeneratedCol) int {
+		return cmp.Compare(cols[i.Index].Offset, cols[j.Index].Offset)
 	})
 	return genCols, nil
 }
@@ -175,17 +176,30 @@ func Row2KvPairs(row encode.Row) []common.KvPair {
 	return row.(*Pairs).Pairs
 }
 
+// ClearRow recycles the memory used by the row.
+func ClearRow(row encode.Row) {
+	if pairs, ok := row.(*Pairs); ok {
+		pairs.Clear()
+	}
+}
+
 // Encode a row of data into KV pairs.
 //
 // See comments in `(*TableRestore).initializeColumns` for the meaning of the
 // `columnPermutation` parameter.
-func (kvcodec *tableKVEncoder) Encode(row []types.Datum, rowID int64, columnPermutation []int, offset int64) (encode.Row, error) {
+func (kvcodec *tableKVEncoder) Encode(row []types.Datum,
+	rowID int64, columnPermutation []int, _ int64) (encode.Row, error) {
+	// we ignore warnings when encoding rows now, but warnings uses the same memory as parser, since the input
+	// row []types.Datum share the same underlying buf, and when doing CastValue, we're using hack.String/hack.Slice.
+	// when generating error such as mysql.ErrDataOutOfRange, the data will be part of the error, causing the buf
+	// unable to release. So we truncate the warnings here.
+	defer kvcodec.TruncateWarns()
 	var value types.Datum
 	var err error
 
 	record := kvcodec.GetOrCreateRecord()
 	for i, col := range kvcodec.Columns {
-		var theDatum *types.Datum = nil
+		var theDatum *types.Datum
 		j := columnPermutation[i]
 		if j >= 0 && j < len(row) {
 			theDatum = &row[j]
@@ -202,7 +216,8 @@ func (kvcodec *tableKVEncoder) Encode(row []types.Datum, rowID int64, columnPerm
 		rowValue := rowID
 		j := columnPermutation[len(kvcodec.Columns)]
 		if j >= 0 && j < len(row) {
-			value, err = table.CastValue(kvcodec.SessionCtx, row[j], ExtraHandleColumnInfo, false, false)
+			value, err = table.CastValue(kvcodec.SessionCtx, row[j],
+				ExtraHandleColumnInfo, false, false)
 			rowValue = value.GetInt64()
 		} else {
 			rowID := kvcodec.AutoIDFn(rowID)
@@ -243,14 +258,17 @@ func GetEncoderSe(encoder encode.Encoder) *Session {
 }
 
 // GetActualDatum export getActualDatum function.
-func GetActualDatum(encoder encode.Encoder, col *table.Column, rowID int64, inputDatum *types.Datum) (types.Datum, error) {
+func GetActualDatum(encoder encode.Encoder, col *table.Column, rowID int64,
+	inputDatum *types.Datum) (types.Datum, error) {
 	return encoder.(*tableKVEncoder).getActualDatum(col, rowID, inputDatum)
 }
 
 // GetAutoRecordID returns the record ID for an auto-increment field.
 // get record value for auto-increment field
 //
-// See: https://github.com/pingcap/tidb/blob/47f0f15b14ed54fc2222f3e304e29df7b05e6805/executor/insert_common.go#L781-L852
+// See:
+//
+//	https://github.com/pingcap/tidb/blob/47f0f15b14ed54fc2222f3e304e29df7b05e6805/executor/insert_common.go#L781-L852
 func GetAutoRecordID(d types.Datum, target *types.FieldType) int64 {
 	switch target.GetType() {
 	case mysql.TypeFloat, mysql.TypeDouble:

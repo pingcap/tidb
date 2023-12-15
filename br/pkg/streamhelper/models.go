@@ -12,7 +12,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/kv"
 	"go.uber.org/zap"
 )
 
@@ -164,7 +164,8 @@ func (t *TaskInfo) Check() (*TaskInfo, error) {
 		return nil, errors.Annotate(berrors.ErrPiTRInvalidTaskInfo, "the storage backend is null")
 	}
 	if len(t.PBInfo.TableFilter) == 0 {
-		return nil, errors.Annotate(berrors.ErrPiTRInvalidTaskInfo, "the table filter is empty, maybe add '*.*' for including all tables")
+		return nil, errors.Annotate(berrors.ErrPiTRInvalidTaskInfo,
+			"the table filter is empty, maybe add '*.*' for including all tables")
 	}
 	// Maybe check StartTs > 0?
 	if !taskNameRe.MatchString(t.PBInfo.Name) {

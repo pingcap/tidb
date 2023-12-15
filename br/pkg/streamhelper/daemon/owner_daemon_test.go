@@ -10,7 +10,7 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
-	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/stretchr/testify/require"
 )
 
@@ -136,7 +136,7 @@ func TestDaemon(t *testing.T) {
 	defer cancel()
 	req := require.New(t)
 	app := newTestApp(t)
-	ow := owner.NewMockManager(ctx, "owner_daemon_test")
+	ow := owner.NewMockManager(ctx, "owner_daemon_test", nil, "owner_key")
 	d := daemon.New(app, ow, 100*time.Millisecond)
 
 	app.AssertService(req, false)
@@ -150,7 +150,9 @@ func TestDaemon(t *testing.T) {
 	req.False(ow.IsOwner())
 	app.AssertNotRunning(1 * time.Second)
 	ow.CampaignOwner()
-	req.True(ow.IsOwner())
+	req.Eventually(func() bool {
+		return ow.IsOwner()
+	}, 1*time.Second, 100*time.Millisecond)
 	app.AssertStart(1 * time.Second)
 	app.AssertTick(1 * time.Second)
 }

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -16,20 +17,22 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/kv"
 	"go.uber.org/zap"
-)
-
-const (
-	readMetaConcurrency = 128
-	readMetaBatchSize   = 512
 )
 
 // MetaIter is the type of iterator of metadata files' content.
 type MetaIter = iter.TryNextor[*backuppb.Metadata]
 
+type LogDataFileInfo struct {
+	*backuppb.DataFileInfo
+	MetaDataGroupName   string
+	OffsetInMetaGroup   int
+	OffsetInMergedGroup int
+}
+
 // LogIter is the type of iterator of each log files' meta information.
-type LogIter = iter.TryNextor[*backuppb.DataFileInfo]
+type LogIter = iter.TryNextor[*LogDataFileInfo]
 
 // MetaGroupIter is the iterator of flushes of metadata.
 type MetaGroupIter = iter.TryNextor[DDLMetaGroup]
@@ -56,6 +59,8 @@ type logFileManager struct {
 
 	storage storage.ExternalStorage
 	helper  *stream.MetadataHelper
+
+	metadataDownloadBatchSize uint
 }
 
 // LogFileManagerInit is the config needed for initializing the log file manager.
@@ -63,6 +68,8 @@ type LogFileManagerInit struct {
 	StartTS   uint64
 	RestoreTS uint64
 	Storage   storage.ExternalStorage
+
+	MetadataDownloadBatchSize uint
 }
 
 type DDLMetaGroup struct {
@@ -78,6 +85,8 @@ func CreateLogFileManager(ctx context.Context, init LogFileManagerInit) (*logFil
 		restoreTS: init.RestoreTS,
 		storage:   init.Storage,
 		helper:    stream.NewMetadataHelper(),
+
+		metadataDownloadBatchSize: init.MetadataDownloadBatchSize,
 	}
 	err := fm.loadShiftTS(ctx)
 	if err != nil {
@@ -96,7 +105,7 @@ func (rc *logFileManager) loadShiftTS(ctx context.Context) error {
 		value  uint64
 		exists bool
 	}{}
-	err := stream.FastUnmarshalMetaData(ctx, rc.storage, func(path string, raw []byte) error {
+	err := stream.FastUnmarshalMetaData(ctx, rc.storage, rc.metadataDownloadBatchSize, func(path string, raw []byte) error {
 		m, err := rc.helper.ParseToMetadata(raw)
 		if err != nil {
 			return err
@@ -165,21 +174,37 @@ func (rc *logFileManager) createMetaIterOver(ctx context.Context, s storage.Exte
 		}
 		return meta, nil
 	}
+	// TODO: maybe we need to be able to adjust the concurrency to download files,
+	// which currently is the same as the chunk size
 	reader := iter.Transform(namesIter, readMeta,
-		iter.WithChunkSize(readMetaBatchSize), iter.WithConcurrency(readMetaConcurrency))
+		iter.WithChunkSize(rc.metadataDownloadBatchSize), iter.WithConcurrency(rc.metadataDownloadBatchSize))
 	return reader, nil
 }
 
 func (rc *logFileManager) FilterDataFiles(ms MetaIter) LogIter {
 	return iter.FlatMap(ms, func(m *backuppb.Metadata) LogIter {
-		return iter.FlatMap(iter.FromSlice(m.FileGroups), func(g *backuppb.DataFileGroup) LogIter {
-			return iter.FilterOut(iter.FromSlice(g.DataFilesInfo), func(d *backuppb.DataFileInfo) bool {
-				// Modify the data internally, a little hacky.
-				if m.MetaVersion > backuppb.MetaVersion_V1 {
-					d.Path = g.Path
-				}
-				return d.IsMeta || rc.ShouldFilterOut(d)
-			})
+		return iter.FlatMap(iter.Enumerate(iter.FromSlice(m.FileGroups)), func(gi iter.Indexed[*backuppb.DataFileGroup]) LogIter {
+			return iter.Map(
+				iter.FilterOut(iter.Enumerate(iter.FromSlice(gi.Item.DataFilesInfo)), func(di iter.Indexed[*backuppb.DataFileInfo]) bool {
+					// Modify the data internally, a little hacky.
+					if m.MetaVersion > backuppb.MetaVersion_V1 {
+						di.Item.Path = gi.Item.Path
+					}
+					return di.Item.IsMeta || rc.ShouldFilterOut(di.Item)
+				}),
+				func(di iter.Indexed[*backuppb.DataFileInfo]) *LogDataFileInfo {
+					return &LogDataFileInfo{
+						DataFileInfo: di.Item,
+
+						// Since there is a `datafileinfo`, the length of `m.FileGroups`
+						// must be larger than 0. So we use the first group's name as
+						// metadata's unique key.
+						MetaDataGroupName:   m.FileGroups[0].Path,
+						OffsetInMetaGroup:   gi.Index,
+						OffsetInMergedGroup: di.Index,
+					}
+				},
+			)
 		})
 	})
 }
@@ -292,8 +317,8 @@ func (rc *logFileManager) ReadAllEntries(
 	}
 
 	if checksum := sha256.Sum256(buff); !bytes.Equal(checksum[:], file.GetSha256()) {
-		return nil, nil, errors.Annotatef(berrors.ErrInvalidMetaFile,
-			"checksum mismatch expect %x, got %x", file.GetSha256(), checksum[:])
+		return nil, nil, berrors.ErrInvalidMetaFile.GenWithStackByArgs(fmt.Sprintf(
+			"checksum mismatch expect %x, got %x", file.GetSha256(), checksum[:]))
 	}
 
 	iter := stream.NewEventIterator(buff)

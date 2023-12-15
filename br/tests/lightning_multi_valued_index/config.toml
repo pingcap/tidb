@@ -1,0 +1,8 @@
+[mydumper.csv]
+separator = ','
+delimiter = '"'
+header = false
+not-null = false
+null = '\N'
+backslash-escape = true
+trim-last-separator = false

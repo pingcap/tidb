@@ -1,0 +1,40 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "cpu",
+    srcs = ["cpu.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/cpu",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/metrics",
+        "//pkg/util/cgroup",
+        "//pkg/util/mathutil",
+        "@com_github_cloudfoundry_gosigar//:gosigar",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "cpu_test",
+    timeout = "short",
+    srcs = [
+        "cpu_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    race = "on",
+    shard_count = 2,
+    deps = [
+        ":cpu",
+        "//pkg/resourcemanager/scheduler",
+        "//pkg/resourcemanager/util",
+        "//pkg/testkit/testsetup",
+        "//pkg/util/cgroup",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

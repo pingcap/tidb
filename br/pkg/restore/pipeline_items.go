@@ -16,7 +16,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -153,11 +153,21 @@ type CreatedTable struct {
 	OldTable    *metautil.Table
 }
 
+func DefaultOutputTableChan() chan *CreatedTable {
+	return make(chan *CreatedTable, defaultChannelSize)
+}
+
 // TableWithRange is a CreatedTable that has been bind to some of key ranges.
 type TableWithRange struct {
 	CreatedTable
 
 	Range []rtree.Range
+}
+
+type TableIDWithFiles struct {
+	TableID int64
+
+	Files []*backuppb.File
 }
 
 // Exhaust drains all remaining errors in the channel, into a slice of errors.
@@ -198,7 +208,7 @@ type TiKVRestorer interface {
 		isRawKv bool) error
 	// RestoreSSTFiles import the files to the TiKV.
 	RestoreSSTFiles(ctx context.Context,
-		files []*backuppb.File,
+		tableIDWithFiles []TableIDWithFiles,
 		rewriteRules *RewriteRules,
 		updateCh glue.Progress) error
 }
@@ -381,7 +391,7 @@ func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan drainResul
 			eg.Go(func() error {
 				e := b.client.RestoreSSTFiles(ectx, files, r.result.RewriteRules, b.updateCh)
 				if e != nil {
-					log.Error("restore batch meet error", logutil.ShortError(e), logutil.Files(files))
+					log.Error("restore batch meet error", logutil.ShortError(e), zapTableIDWithFiles(files))
 					r.done()
 					return e
 				}

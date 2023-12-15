@@ -11,7 +11,4 @@ send-kv-pairs = 2
 
 [mydumper]
 batch-size = 50 # force splitting the data into 4 batches
-
-[[black-white-list.do-tables]]
-db-name = "cpeng"
-tbl-name = "a"
+filter = ['cpeng.a']

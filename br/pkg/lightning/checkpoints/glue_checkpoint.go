@@ -28,10 +28,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -358,7 +358,7 @@ func (g GlueCheckpointsDB) Get(ctx context.Context, tableName string) (*TableChe
 }
 
 // Close implements CheckpointsDB.Close.
-func (g GlueCheckpointsDB) Close() error {
+func (GlueCheckpointsDB) Close() error {
 	return nil
 }
 
@@ -769,17 +769,17 @@ func (g GlueCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tableName
 }
 
 // DumpTables implements CheckpointsDB.DumpTables.
-func (g GlueCheckpointsDB) DumpTables(ctx context.Context, csv io.Writer) error {
+func (GlueCheckpointsDB) DumpTables(_ context.Context, _ io.Writer) error {
 	return errors.Errorf("dumping glue checkpoint into CSV not unsupported")
 }
 
 // DumpEngines implements CheckpointsDB.DumpEngines.
-func (g GlueCheckpointsDB) DumpEngines(ctx context.Context, csv io.Writer) error {
+func (GlueCheckpointsDB) DumpEngines(_ context.Context, _ io.Writer) error {
 	return errors.Errorf("dumping glue checkpoint into CSV not unsupported")
 }
 
 // DumpChunks implements CheckpointsDB.DumpChunks.
-func (g GlueCheckpointsDB) DumpChunks(ctx context.Context, csv io.Writer) error {
+func (GlueCheckpointsDB) DumpChunks(_ context.Context, _ io.Writer) error {
 	return errors.Errorf("dumping glue checkpoint into CSV not unsupported")
 }
 

@@ -6,22 +6,24 @@ import (
 	"bytes"
 	"context"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetikv"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/session"
+	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -44,6 +46,7 @@ func New() Glue {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.SkipRegisterToDashboard = true
 		conf.Log.EnableSlowLog.Store(false)
+		conf.TiKVClient.CoprReqTimeout = 1800 * time.Second
 	})
 	return Glue{}
 }
@@ -56,11 +59,12 @@ type Glue struct {
 }
 
 type tidbSession struct {
-	se session.Session
+	se sessiontypes.Session
 }
 
 // GetDomain implements glue.Glue.
 func (Glue) GetDomain(store kv.Storage) (*domain.Domain, error) {
+	existDom, _ := session.GetDomain(nil)
 	initStatsSe, err := session.CreateSession(store)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -73,14 +77,16 @@ func (Glue) GetDomain(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = session.InitMDLVariable(store)
-	if err != nil {
-		return nil, err
-	}
-	// create stats handler for backup and restore.
-	err = dom.UpdateTableStatsLoop(se, initStatsSe)
-	if err != nil {
-		return nil, errors.Trace(err)
+	if existDom == nil {
+		err = session.InitMDLVariable(store)
+		if err != nil {
+			return nil, err
+		}
+		// create stats handler for backup and restore.
+		err = dom.UpdateTableStatsLoop(se, initStatsSe)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	return dom, nil
 }
@@ -176,8 +182,14 @@ func (gs *tidbSession) ExecuteInternal(ctx context.Context, sql string, args ...
 	if err != nil {
 		return errors.Trace(err)
 	}
+	defer func() {
+		vars := gs.se.GetSessionVars()
+		vars.TxnCtxMu.Lock()
+		vars.TxnCtx.InfoSchema = nil
+		vars.TxnCtxMu.Unlock()
+	}()
 	// Some of SQLs (like ADMIN RECOVER INDEX) may lazily take effect
-	// when we polling the result set.
+	// when we are polling the result set.
 	// At least call `next` once for triggering theirs side effect.
 	// (Maybe we'd better drain all returned rows?)
 	if rs != nil {
@@ -185,7 +197,8 @@ func (gs *tidbSession) ExecuteInternal(ctx context.Context, sql string, args ...
 		defer rs.Close()
 		c := rs.NewChunk(nil)
 		if err := rs.Next(ctx, c); err != nil {
-			log.Warn("Error during draining result of internal sql.", logutil.Redact(zap.String("sql", sql)), logutil.ShortError(err))
+			log.Warn("Error during draining result of internal sql.",
+				logutil.Redact(zap.String("sql", sql)), logutil.ShortError(err))
 			return nil
 		}
 	}
@@ -218,11 +231,12 @@ func (gs *tidbSession) CreatePlacementPolicy(ctx context.Context, policy *model.
 // SplitBatchCreateTable provide a way to split batch into small batch when batch size is large than 6 MB.
 // The raft entry has limit size of 6 MB, a batch of CreateTables may hit this limitation
 // TODO: shall query string be set for each split batch create, it looks does not matter if we set once for all.
-func (gs *tidbSession) SplitBatchCreateTable(schema model.CIStr, infos []*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+func (gs *tidbSession) SplitBatchCreateTable(schema model.CIStr,
+	infos []*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
 	var err error
 	d := domain.GetDomain(gs.se).DDL()
-
-	if err = d.BatchCreateTableWithInfo(gs.se, schema, infos, append(cs, ddl.OnExistIgnore)...); kv.ErrEntryTooLarge.Equal(err) {
+	err = d.BatchCreateTableWithInfo(gs.se, schema, infos, append(cs, ddl.OnExistIgnore)...)
+	if kv.ErrEntryTooLarge.Equal(err) {
 		log.Info("entry too large, split batch create table", zap.Int("num table", len(infos)))
 		if len(infos) == 1 {
 			return err
@@ -242,7 +256,8 @@ func (gs *tidbSession) SplitBatchCreateTable(schema model.CIStr, infos []*model.
 }
 
 // CreateTables implements glue.BatchCreateTableSession.
-func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+func (gs *tidbSession) CreateTables(_ context.Context,
+	tables map[string][]*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
 	var dbName model.CIStr
 
 	// Disable foreign key check when batch create tables.
@@ -283,7 +298,8 @@ func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*mo
 }
 
 // CreateTable implements glue.Session.
-func (gs *tidbSession) CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+func (gs *tidbSession) CreateTable(_ context.Context, dbName model.CIStr,
+	table *model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
 	d := domain.GetDomain(gs.se).DDL()
 	query, err := gs.showCreateTable(table)
 	if err != nil {
@@ -343,7 +359,7 @@ func (gs *tidbSession) showCreatePlacementPolicy(policy *model.PolicyInfo) strin
 
 // mockSession is used for test.
 type mockSession struct {
-	se         session.Session
+	se         sessiontypes.Session
 	globalVars map[string]string
 }
 
@@ -364,7 +380,7 @@ func (s *mockSession) ExecuteInternal(ctx context.Context, sql string, args ...i
 		return err
 	}
 	// Some of SQLs (like ADMIN RECOVER INDEX) may lazily take effect
-	// when we polling the result set.
+	// when we are polling the result set.
 	// At least call `next` once for triggering theirs side effect.
 	// (Maybe we'd better drain all returned rows?)
 	if rs != nil {
@@ -379,25 +395,27 @@ func (s *mockSession) ExecuteInternal(ctx context.Context, sql string, args ...i
 }
 
 // CreateDatabase implements glue.Session.
-func (s *mockSession) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
+func (*mockSession) CreateDatabase(_ context.Context, _ *model.DBInfo) error {
 	log.Fatal("unimplemented CreateDatabase for mock session")
 	return nil
 }
 
 // CreatePlacementPolicy implements glue.Session.
-func (s *mockSession) CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInfo) error {
+func (*mockSession) CreatePlacementPolicy(_ context.Context, _ *model.PolicyInfo) error {
 	log.Fatal("unimplemented CreateDatabase for mock session")
 	return nil
 }
 
 // CreateTables implements glue.BatchCreateTableSession.
-func (s *mockSession) CreateTables(ctx context.Context, tables map[string][]*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+func (*mockSession) CreateTables(_ context.Context, _ map[string][]*model.TableInfo,
+	_ ...ddl.CreateTableWithInfoConfigurier) error {
 	log.Fatal("unimplemented CreateDatabase for mock session")
 	return nil
 }
 
 // CreateTable implements glue.Session.
-func (s *mockSession) CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+func (*mockSession) CreateTable(_ context.Context, _ model.CIStr,
+	_ *model.TableInfo, _ ...ddl.CreateTableWithInfoConfigurier) error {
 	log.Fatal("unimplemented CreateDatabase for mock session")
 	return nil
 }
@@ -417,11 +435,11 @@ func (s *mockSession) GetGlobalVariable(name string) (string, error) {
 
 // MockGlue only used for test
 type MockGlue struct {
-	se         session.Session
+	se         sessiontypes.Session
 	GlobalVars map[string]string
 }
 
-func (m *MockGlue) SetSession(se session.Session) {
+func (m *MockGlue) SetSession(se sessiontypes.Session) {
 	m.se = se
 }
 

@@ -1,0 +1,1 @@
+insert into uuid (a) values (1), (10), (100), (1000);

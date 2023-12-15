@@ -123,7 +123,7 @@ func (c *KVChecksum) MarshalLogObject(encoder zapcore.ObjectEncoder) error {
 }
 
 // MarshalJSON implements the json.Marshaler interface.
-func (c KVChecksum) MarshalJSON() ([]byte, error) {
+func (c *KVChecksum) MarshalJSON() ([]byte, error) {
 	result := fmt.Sprintf(`{"checksum":%d,"size":%d,"kvs":%d}`, c.checksum, c.bytes, c.kvs)
 	return []byte(result), nil
 }

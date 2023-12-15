@@ -1,0 +1,78 @@
+set tidb_cost_model_version=1;
+drop table if exists t;
+create table t (a int);
+
+explain format = 'brief' select * from t where a < 1;
+
+insert into mysql.opt_rule_blacklist values('predicate_push_down');
+
+admin reload opt_rule_blacklist;
+
+explain format = 'brief' select * from t where a < 1;
+
+delete from mysql.opt_rule_blacklist where name='predicate_push_down';
+
+admin reload opt_rule_blacklist;
+
+explain format = 'brief' select * from t where a < 1;
+
+insert into mysql.expr_pushdown_blacklist values('<', 'tikv,tiflash,tidb', 'for test');
+
+admin reload expr_pushdown_blacklist;
+
+explain format = 'brief' select * from t where a < 1;
+
+delete from mysql.expr_pushdown_blacklist where name='<' and store_type = 'tikv,tiflash,tidb' and reason = 'for test';
+
+admin reload expr_pushdown_blacklist;
+
+explain format = 'brief' select * from t where a < 1;
+
+insert into mysql.expr_pushdown_blacklist values('lt', 'tikv,tiflash,tidb', 'for test');
+
+admin reload expr_pushdown_blacklist;
+
+explain format = 'brief' select * from t where a < 1;
+
+delete from mysql.expr_pushdown_blacklist where name='lt' and store_type = 'tikv,tiflash,tidb' and reason = 'for test';
+
+admin reload expr_pushdown_blacklist;
+
+explain format = 'brief' select * from t where a < 1;
+
+delete from mysql.expr_pushdown_blacklist;
+
+admin reload expr_pushdown_blacklist;
+
+# TestExprBlackListForEnum
+drop table if exists t;
+create table t(a enum('a','b','c'), b enum('a','b','c'), c int, index idx(b,a));
+insert into t values(1,1,1),(2,2,2),(3,3,3);
+insert into mysql.expr_pushdown_blacklist(name) values('enum');
+admin reload expr_pushdown_blacklist;
+desc format='brief' select /*+ HASH_AGG() */ max(a) from t;
+desc format='brief' select /*+ STREAM_AGG() */ max(a) from t;
+delete from mysql.expr_pushdown_blacklist;
+admin reload expr_pushdown_blacklist;
+desc format='brief' select /*+ HASH_AGG() */ max(a) from t;
+desc format='brief' select /*+ STREAM_AGG() */ max(a) from t;
+insert into mysql.expr_pushdown_blacklist(name) values('enum');
+admin reload expr_pushdown_blacklist;
+desc format='brief' select * from t where a + b;
+desc format='brief' select * from t where a + b;
+delete from mysql.expr_pushdown_blacklist;
+admin reload expr_pushdown_blacklist;
+desc format='brief' select * from t where a + b;
+desc format='brief' select * from t where a + b;
+insert into mysql.expr_pushdown_blacklist(name) values('enum');
+admin reload expr_pushdown_blacklist;
+desc format='brief' select * from t where b = 1;
+desc format='brief' select * from t where b = 'a';
+desc format='brief' select * from t where b > 1;
+desc format='brief' select * from t where b > 'a';
+delete from mysql.expr_pushdown_blacklist;
+admin reload expr_pushdown_blacklist;
+desc format='brief' select * from t where b = 1 and a = 1;
+desc format='brief' select * from t where b = 'a' and a = 'a';
+desc format='brief' select * from t where b = 1 and a > 1;
+desc format='brief' select * from t where b = 1 and a > 'a';

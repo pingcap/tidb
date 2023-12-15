@@ -1,0 +1,191 @@
+drop table if exists truncate_id;
+create table truncate_id (a int primary key auto_increment);
+insert truncate_id values (), (), (), (), (), (), (), (), (), ();
+truncate table truncate_id;
+insert truncate_id values (), (), (), (), (), (), (), (), (), ();
+select a from truncate_id where a > 11;
+a
+drop table if exists issue19127;
+create table issue19127 (c_int int, c_str varchar(40), primary key (c_int, c_str) ) partition by hash (c_int) partitions 4;
+insert into issue19127 values (9, 'angry williams'), (10, 'thirsty hugle');
+update issue19127 set c_int = c_int + 10, c_str = 'adoring stonebraker' where c_int in (10, 9);
+select * from issue19127;
+c_int	c_str
+19	adoring stonebraker
+20	adoring stonebraker
+select @@wait_timeout;
+@@wait_timeout
+28800
+drop user if exists 'abcddfjakldfjaldddds'@'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+CREATE USER 'abcddfjakldfjaldddds'@'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+CREATE USER 'abcddfjakldfjaldddds'@'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+Error 1470 (HY000): String 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' is too long for host name (should be no longer than 255)
+drop table if exists t;
+create table t (c int);
+insert into t values (1), (2), (3);
+delete from `t` where `c` = 1;
+delete from `t` where `c` = 2;
+select * from t;
+c
+3
+drop table if exists t;
+create table t (c1 char, index(c1(3)));
+Error 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
+create table t (c1 int, index(c1(3)));
+Error 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
+create table t (c1 bit(10), index(c1(3)));
+Error 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
+create table t (c1 char, c2 int, c3 bit(10));
+create index idx_c1 on t (c1(3));
+Error 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
+create index idx_c1 on t (c2(3));
+Error 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
+create index idx_c1 on t (c3(3));
+Error 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
+drop table if exists t;
+create table t (c1 int, c2 blob, c3 varchar(64), index(c2));
+Error 1170 (42000): BLOB/TEXT column 'c2' used in key specification without a key length
+create table t (c1 int, c2 blob, c3 varchar(64));
+create index idx_c1 on t (c2);
+Error 1170 (42000): BLOB/TEXT column 'c2' used in key specification without a key length
+create index idx_c1 on t (c2(555555));
+Error 1071 (42000): Specified key was too long (555555 bytes); max key length is 3072 bytes
+create index idx_c1 on t (c1(5));
+Error 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
+create index idx_c1 on t (c1);
+create index idx_c2 on t (c2(3));
+create unique index idx_c3 on t (c3(5));
+insert into t values (3, 'abc', 'def');
+select c2 from t where c2 = 'abc';
+c2
+abc
+insert into t values (4, 'abcd', 'xxx');
+insert into t values (4, 'abcf', 'yyy');
+select c2 from t where c2 = 'abcf';
+c2
+abcf
+select c2 from t where c2 = 'abcd';
+c2
+abcd
+insert into t values (4, 'ignore', 'abcdeXXX');
+insert into t values (5, 'ignore', 'abcdeYYY');
+Error 1062 (23000): Duplicate entry 'abcde' for key 't.idx_c3'
+select c3 from t where c3 = 'abcde';
+c3
+delete from t where c3 = 'abcdeXXX';
+delete from t where c2 = 'abc';
+select c2 from t where c2 > 'abcd';
+c2
+abcf
+select c2 from t where c2 < 'abcf';
+c2
+abcd
+select c2 from t where c2 >= 'abcd';
+c2
+abcd
+abcf
+select c2 from t where c2 <= 'abcf';
+c2
+abcd
+abcf
+select c2 from t where c2 != 'abc';
+c2
+abcd
+abcf
+select c2 from t where c2 != 'abcd';
+c2
+abcf
+drop table if exists t1;
+create table t1 (a int, b char(255), key(a, b(20)));
+insert into t1 values (0, '1');
+update t1 set b = b + 1 where a = 0;
+select b from t1 where a = 0;
+b
+2
+drop table if exists t;
+create table t (a text, b text, c int, index (a(3), b(3), c));
+insert into t values ('abc', 'abcd', 1);
+insert into t values ('abcx', 'abcf', 2);
+insert into t values ('abcy', 'abcf', 3);
+insert into t values ('bbc', 'abcd', 4);
+insert into t values ('bbcz', 'abcd', 5);
+insert into t values ('cbck', 'abd', 6);
+select c from t where a = 'abc' and b <= 'abc';
+c
+select c from t where a = 'abc' and b <= 'abd';
+c
+1
+select c from t where a < 'cbc' and b > 'abcd';
+c
+2
+3
+select c from t where a <= 'abd' and b > 'abc';
+c
+1
+2
+3
+select c from t where a < 'bbcc' and b = 'abcd';
+c
+1
+4
+select c from t where a > 'bbcf';
+c
+5
+6
+drop table if exists t;
+create table t (c1 int not null auto_increment, c2 int, PRIMARY KEY (c1));
+insert into t set c2 = 11;
+select last_insert_id();
+last_insert_id()
+1
+insert into t (c2) values (22), (33), (44);
+select last_insert_id();
+last_insert_id()
+2
+insert into t (c1, c2) values (10, 55);
+select last_insert_id();
+last_insert_id()
+2
+replace t (c2) values(66);
+select * from t;
+c1	c2
+1	11
+2	22
+3	33
+4	44
+10	55
+11	66
+select last_insert_id();
+last_insert_id()
+11
+update t set c1=last_insert_id(c1 + 100);
+select * from t;
+c1	c2
+101	11
+102	22
+103	33
+104	44
+110	55
+111	66
+select last_insert_id();
+last_insert_id()
+111
+insert into t (c2) values (77);
+select last_insert_id();
+last_insert_id()
+112
+drop table t;
+select last_insert_id();
+last_insert_id()
+112
+create table t (c2 int, c3 int, c1 int not null auto_increment, PRIMARY KEY (c1));
+insert into t set c2 = 30;
+prepare stmt1 from 'insert into t (c2) values (?)';
+set @v1=10;
+set @v2=20;
+execute stmt1 using @v1;
+execute stmt1 using @v2;
+deallocate prepare stmt1;
+select c1 from t where c2 = 20;
+c1
+3

@@ -16,9 +16,10 @@ package main
 
 import (
 	"os"
+	"strings"
 
 	"github.com/bazelbuild/buildtools/build"
-	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/pkg/util/set"
 )
 
 func write(path string, f *build.File) error {
@@ -37,4 +38,13 @@ func skipTazel(path string) bool {
 	var pmap = set.NewStringSet()
 	pmap.Insert("build/BUILD.bazel")
 	return pmap.Exist(path)
+}
+
+func skipShardCount(path string) bool {
+	return strings.HasPrefix(path, "tests") ||
+		(strings.HasPrefix(path, "pkg/util") &&
+			!strings.HasPrefix(path, "pkg/util/admin") &&
+			!strings.HasPrefix(path, "pkg/util/chunk") &&
+			!strings.HasPrefix(path, "pkg/util/topsql") &&
+			!strings.HasPrefix(path, "pkg/util/stmtsummary"))
 }

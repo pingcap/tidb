@@ -1,0 +1,64 @@
+# TestUpdateProjEliminate
+drop table if exists t;
+create table t(a int, b int);
+explain update t t1, (select distinct b from t) t2 set t1.b = t2.b;
+drop table if exists tb1, tb2;
+create table tb1(a int, b int, primary key(a));
+create table tb2 (a int, b int, c int, d datetime, primary key(c),key idx_u(a));
+update tb1 set tb1.b=(select tb2.b from tb2 where tb2.a=tb1.a order by c desc limit 1);
+
+# TestAppendIntPkToIndexTailForRangeBuilding
+create table t25219(a int primary key, col3 int, col1 int, index idx(col3));
+insert into t25219 values(1, 1, 1);
+analyze table t25219;
+select * from t25219 WHERE (col3 IS NULL OR col1 IS NOT NULL AND col3 <= 6659) AND col3 = 1;
+
+# TestIssue9805
+drop table if exists t1, t2;
+create table t1 (
+	id bigint primary key,
+	a bigint not null,
+	b varchar(100) not null,
+	c varchar(10) not null,
+	d bigint as (a % 30) not null,
+	key (d, b, c)
+);
+create table t2 (
+	id varchar(50) primary key,
+	a varchar(100) unique,
+	b datetime,
+	c varchar(45),
+	d int not null unique auto_increment
+);
+## Test when both tables are empty, EXPLAIN ANALYZE for IndexLookUp would not panic.
+--disable_result_log
+explain analyze select /*+ TIDB_INLJ(t2) */ t1.id, t2.a from t1 join t2 on t1.a = t2.d where t1.b = 't2' and t1.d = 4;
+--enable_result_log
+
+# TestExplainCostTrace
+drop table if exists t;
+create table t (a int);
+insert into t values (1);
+set tidb_cost_model_version=2;
+explain format='cost_trace' select * from t;
+--replace_column 8 <execution_info> 9 <operator_info> 10 <memory> 11 <disk>
+explain analyze format='cost_trace' select * from t;
+set tidb_cost_model_version=1;
+## cost trace on model ver1 is not supported
+explain format='cost_trace' select * from t;
+--replace_column 8 <execution_info> 9 <operator_info> 10 <memory> 11 <disk>
+explain analyze format='cost_trace' select * from t;
+set tidb_cost_model_version=default;
+
+# TestExplainAnalyze
+drop table if exists t1, t2;
+## disable only full group by
+set sql_mode='STRICT_TRANS_TABLES';
+create table t1(a int, b int, c int, key idx(a, b));
+create table t2(a int, b int);
+insert into t1 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);
+insert into t2 values (2, 22), (3, 33), (5, 55), (233, 2), (333, 3), (3434, 5);
+analyze table t1, t2;
+--replace_regex /:[ ]?[.0-9]+[nµms]*/:<num>/ /time.*loops.*cop_task.*/time.*loops.*cop_task.*/ /, scan_detail: {.*}// /[.0-9]+ ((KB)|(Bytes))/<num>/
+explain analyze select t1.a, t1.b, sum(t1.c) from t1 join t2 on t1.a = t2.b where t1.a > 1;
+set sql_mode=default;

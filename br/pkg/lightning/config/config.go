@@ -36,15 +36,16 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	tidbcfg "github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/util"
-	filter "github.com/pingcap/tidb/util/table-filter"
-	router "github.com/pingcap/tidb/util/table-router"
+	tidbcfg "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util"
+	filter "github.com/pingcap/tidb/pkg/util/table-filter"
+	router "github.com/pingcap/tidb/pkg/util/table-router"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
+// constants for config items
 const (
 	// ImportMode defines mode of import for tikv.
 	ImportMode = "import"
@@ -69,16 +70,24 @@ const (
 	// ErrorOnDup indicates using INSERT INTO to insert data, which would violate PK or UNIQUE constraint
 	ErrorOnDup = "error"
 
+	// KVWriteBatchSize batch size when write to TiKV.
+	// this is the default value of linux send buffer size(net.ipv4.tcp_wmem) too.
+	KVWriteBatchSize        = 16 * units.KiB
+	DefaultRangeConcurrency = 16
+
 	defaultDistSQLScanConcurrency     = 15
 	defaultBuildStatsConcurrency      = 20
 	defaultIndexSerialScanConcurrency = 20
 	defaultChecksumTableConcurrency   = 2
-	defaultTableConcurrency           = 6
+	DefaultTableConcurrency           = 6
 	defaultIndexConcurrency           = 2
+	DefaultRegionCheckBackoffLimit    = 1800
+	DefaultRegionSplitBatchSize       = 4096
 
 	// defaultMetaSchemaName is the default database name used to store lightning metadata
 	defaultMetaSchemaName     = "lightning_metadata"
 	defaultTaskInfoSchemaName = "lightning_task_info"
+	defaultMaxRecordRows      = 100
 
 	// autoDiskQuotaLocalReservedSpeed is the estimated size increase per
 	// millisecond per write thread the local backend may gain on all engines.
@@ -88,11 +97,14 @@ const (
 	// With cron.check-disk-quota = 1m, region-concurrency = 40, this should
 	// contribute 2.3 GiB to the reserved size.
 	// autoDiskQuotaLocalReservedSpeed uint64 = 1 * units.KiB
-	defaultEngineMemCacheSize      = 512 * units.MiB
-	defaultLocalWriterMemCacheSize = 128 * units.MiB
+
+	DefaultEngineMemCacheSize      = 512 * units.MiB
+	DefaultLocalWriterMemCacheSize = 128 * units.MiB
 
 	defaultCSVDataCharacterSet       = "binary"
 	defaultCSVDataInvalidCharReplace = utf8.RuneError
+
+	DefaultSwitchTiKVModeInterval = 5 * time.Minute
 )
 
 var (
@@ -135,10 +147,102 @@ type DBStore struct {
 	BuildStatsConcurrency      int               `toml:"build-stats-concurrency" json:"build-stats-concurrency"`
 	IndexSerialScanConcurrency int               `toml:"index-serial-scan-concurrency" json:"index-serial-scan-concurrency"`
 	ChecksumTableConcurrency   int               `toml:"checksum-table-concurrency" json:"checksum-table-concurrency"`
-	Vars                       map[string]string `toml:"-" json:"vars"`
+	Vars                       map[string]string `toml:"session-vars" json:"vars"`
 
 	IOTotalBytes *atomic.Uint64 `toml:"-" json:"-"`
 	UUID         string         `toml:"-" json:"-"`
+}
+
+// adjust assigns default values and check illegal values. The arguments must be
+// adjusted before calling this function.
+func (d *DBStore) adjust(
+	ctx context.Context,
+	i *TikvImporter,
+	s *Security,
+	tlsObj *common.TLS,
+) error {
+	if i.Backend == BackendLocal {
+		if d.BuildStatsConcurrency == 0 {
+			d.BuildStatsConcurrency = defaultBuildStatsConcurrency
+		}
+		if d.IndexSerialScanConcurrency == 0 {
+			d.IndexSerialScanConcurrency = defaultIndexSerialScanConcurrency
+		}
+		if d.ChecksumTableConcurrency == 0 {
+			d.ChecksumTableConcurrency = defaultChecksumTableConcurrency
+		}
+	}
+	var err error
+	d.SQLMode, err = mysql.GetSQLMode(d.StrSQLMode)
+	if err != nil {
+		return common.ErrInvalidConfig.Wrap(err).GenWithStack("`mydumper.tidb.sql_mode` must be a valid SQL_MODE")
+	}
+
+	if d.Security == nil {
+		d.Security = s
+	}
+
+	switch d.TLS {
+	case "skip-verify", "preferred":
+		if d.Security.TLSConfig == nil {
+			/* #nosec G402 */
+			d.Security.TLSConfig = &tls.Config{
+				MinVersion:         tls.VersionTLS10,
+				InsecureSkipVerify: true,
+				NextProtos:         []string{"h2", "http/1.1"}, // specify `h2` to let Go use HTTP/2.
+			}
+			d.Security.AllowFallbackToPlaintext = true
+		}
+	case "cluster":
+		if len(s.CAPath) == 0 {
+			return common.ErrInvalidConfig.GenWithStack("cannot set `tidb.tls` to 'cluster' without a [security] section")
+		}
+	case "", "false":
+		d.TLS = "false"
+	default:
+		return common.ErrInvalidConfig.GenWithStack("unsupported `tidb.tls` config %s", d.TLS)
+	}
+
+	mustHaveInternalConnections := i.Backend == BackendLocal
+	// automatically determine the TiDB port & PD address from TiDB settings
+	if mustHaveInternalConnections && (d.Port <= 0 || len(d.PdAddr) == 0) {
+		var settings tidbcfg.Config
+		err = tlsObj.GetJSON(ctx, "/settings", &settings)
+		if err != nil {
+			return common.ErrInvalidConfig.Wrap(err).GenWithStack("cannot fetch settings from TiDB, please manually fill in `tidb.port` and `tidb.pd-addr`")
+		}
+		if d.Port <= 0 {
+			d.Port = int(settings.Port)
+		}
+		if len(d.PdAddr) == 0 {
+			pdAddrs := strings.Split(settings.Path, ",")
+			d.PdAddr = pdAddrs[0] // FIXME support multiple PDs once importer can.
+		}
+	}
+
+	if d.Port <= 0 {
+		return common.ErrInvalidConfig.GenWithStack("invalid `tidb.port` setting")
+	}
+
+	if mustHaveInternalConnections && len(d.PdAddr) == 0 {
+		return common.ErrInvalidConfig.GenWithStack("invalid `tidb.pd-addr` setting")
+	}
+	return nil
+}
+
+// Routes is a alias of []*router.TableRule. It's used to attach method to []*router.TableRule.
+type Routes []*router.TableRule
+
+func (r *Routes) adjust(m *MydumperRuntime) error {
+	for _, rule := range *r {
+		if !m.CaseSensitive {
+			rule.ToLower()
+		}
+		if err := rule.Valid(); err != nil {
+			return common.ErrInvalidConfig.Wrap(err).GenWithStack("file route rule is invalid")
+		}
+	}
+	return nil
 }
 
 // Config is the configuration.
@@ -148,15 +252,14 @@ type Config struct {
 	App  Lightning `toml:"lightning" json:"lightning"`
 	TiDB DBStore   `toml:"tidb" json:"tidb"`
 
-	Checkpoint   Checkpoint          `toml:"checkpoint" json:"checkpoint"`
-	Mydumper     MydumperRuntime     `toml:"mydumper" json:"mydumper"`
-	TikvImporter TikvImporter        `toml:"tikv-importer" json:"tikv-importer"`
-	PostRestore  PostRestore         `toml:"post-restore" json:"post-restore"`
-	Cron         Cron                `toml:"cron" json:"cron"`
-	Routes       []*router.TableRule `toml:"routes" json:"routes"`
-	Security     Security            `toml:"security" json:"security"`
-
-	BWList filter.MySQLReplicationRules `toml:"black-white-list" json:"black-white-list"`
+	Checkpoint   Checkpoint      `toml:"checkpoint" json:"checkpoint"`
+	Mydumper     MydumperRuntime `toml:"mydumper" json:"mydumper"`
+	TikvImporter TikvImporter    `toml:"tikv-importer" json:"tikv-importer"`
+	PostRestore  PostRestore     `toml:"post-restore" json:"post-restore"`
+	Cron         Cron            `toml:"cron" json:"cron"`
+	Routes       Routes          `toml:"routes" json:"routes"`
+	Security     Security        `toml:"security" json:"security"`
+	Conflict     Conflict        `toml:"conflict" json:"conflict"`
 }
 
 // String implements fmt.Stringer interface.
@@ -191,8 +294,40 @@ type Lightning struct {
 	CheckRequirements bool   `toml:"check-requirements" json:"check-requirements"`
 	MetaSchemaName    string `toml:"meta-schema-name" json:"meta-schema-name"`
 
-	MaxError           MaxError `toml:"max-error" json:"max-error"`
-	TaskInfoSchemaName string   `toml:"task-info-schema-name" json:"task-info-schema-name"`
+	MaxError MaxError `toml:"max-error" json:"max-error"`
+	// deprecated, use Conflict.MaxRecordRows instead
+	MaxErrorRecords    int64  `toml:"max-error-records" json:"max-error-records"`
+	TaskInfoSchemaName string `toml:"task-info-schema-name" json:"task-info-schema-name"`
+}
+
+// adjust assigns default values and check illegal values. The input TikvImporter
+// must be adjusted before calling this function.
+func (l *Lightning) adjust(i *TikvImporter) {
+	switch i.Backend {
+	case BackendTiDB:
+		if l.TableConcurrency == 0 {
+			l.TableConcurrency = l.RegionConcurrency
+		}
+		if l.IndexConcurrency == 0 {
+			l.IndexConcurrency = l.RegionConcurrency
+		}
+	case BackendLocal:
+		if l.IndexConcurrency == 0 {
+			l.IndexConcurrency = defaultIndexConcurrency
+		}
+		if l.TableConcurrency == 0 {
+			l.TableConcurrency = DefaultTableConcurrency
+		}
+
+		if len(l.MetaSchemaName) == 0 {
+			l.MetaSchemaName = defaultMetaSchemaName
+		}
+		// RegionConcurrency > NumCPU is meaningless.
+		cpuCount := runtime.NumCPU()
+		if l.RegionConcurrency > cpuCount {
+			l.RegionConcurrency = cpuCount
+		}
+	}
 }
 
 // PostOpLevel represents the level of post-operation.
@@ -364,6 +499,7 @@ type MaxError struct {
 	// The default value is zero, which means that such errors are not tolerated.
 	Type atomic.Int64 `toml:"type" json:"type"`
 
+	// deprecated, use `conflict.threshold` instead.
 	// Conflict is the maximum number of unique key conflicts in local backend accepted.
 	// When tolerated, every pair of conflict adds 1 to the counter.
 	// Those pairs will NOT be deleted from the target. Conflict resolution is performed separately.
@@ -377,16 +513,14 @@ type MaxError struct {
 // UnmarshalTOML implements toml.Unmarshaler interface.
 func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
 	defaultValMap := map[string]int64{
-		"syntax":   0,
-		"charset":  math.MaxInt64,
-		"type":     0,
-		"conflict": math.MaxInt64,
+		"syntax":  0,
+		"charset": math.MaxInt64,
+		"type":    0,
 	}
 	// set default value first
 	cfg.Syntax.Store(defaultValMap["syntax"])
 	cfg.Charset.Store(defaultValMap["charset"])
 	cfg.Type.Store(defaultValMap["type"])
-	cfg.Conflict.Store(defaultValMap["conflict"])
 	switch val := v.(type) {
 	case int64:
 		// ignore val that is smaller than 0
@@ -409,11 +543,8 @@ func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
 			return iVal
 		}
 		for k, v := range val {
-			switch k {
-			case "type":
+			if k == "type" {
 				cfg.Type.Store(getVal(k, v))
-			case "conflict":
-				cfg.Conflict.Store(getVal(k, v))
 			}
 		}
 		return nil
@@ -422,6 +553,33 @@ func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
 	}
 }
 
+// PausePDSchedulerScope the scope when pausing pd schedulers.
+type PausePDSchedulerScope string
+
+// constants for PausePDSchedulerScope.
+const (
+	// PausePDSchedulerScopeTable pause scheduler by adding schedule=deny label to target key range of the table.
+	PausePDSchedulerScopeTable PausePDSchedulerScope = "table"
+	// PausePDSchedulerScopeGlobal pause scheduler by remove global schedulers.
+	// schedulers removed includes:
+	// 	- balance-leader-scheduler
+	// 	- balance-hot-region-scheduler
+	// 	- balance-region-scheduler
+	// 	- shuffle-leader-scheduler
+	// 	- shuffle-region-scheduler
+	// 	- shuffle-hot-region-scheduler
+	// and we also set configs below:
+	// 	- max-merge-region-keys = 0
+	// 	- max-merge-region-size = 0
+	// 	- leader-schedule-limit = min(40, <store-count> * <current value of leader-schedule-limit>)
+	// 	- region-schedule-limit = min(40, <store-count> * <current value of region-schedule-limit>)
+	// 	- max-snapshot-count = min(40, <store-count> * <current value of max-snapshot-count>)
+	// 	- enable-location-replacement = false
+	// 	- max-pending-peer-count = math.MaxInt32
+	// see br/pkg/pdutil/pd.go for more detail.
+	PausePDSchedulerScopeGlobal PausePDSchedulerScope = "global"
+)
+
 // DuplicateResolutionAlgorithm is the config type of how to resolve duplicates.
 type DuplicateResolutionAlgorithm int
 
@@ -429,12 +587,18 @@ const (
 	// DupeResAlgNone doesn't detect duplicate.
 	DupeResAlgNone DuplicateResolutionAlgorithm = iota
 
-	// DupeResAlgRecord only records duplicate records to `lightning_task_info.conflict_error_v1` table on the target TiDB.
+	// DupeResAlgRecord only records duplicate records to `lightning_task_info.conflict_error_v2` table on the target TiDB.
 	DupeResAlgRecord
 
 	// DupeResAlgRemove records all duplicate records like the 'record' algorithm and remove all information related to the
-	// duplicated rows. Users need to analyze the lightning_task_info.conflict_error_v1 table to add back the correct rows.
+	// duplicated rows. Users need to analyze the lightning_task_info.conflict_error_v2 table to add back the correct rows.
 	DupeResAlgRemove
+
+	// DupeResAlgReplace records all duplicate records like the 'record' algorithm, and remove some rows with conflict
+	// and reserve other rows that can be kept and not cause conflict anymore. Users need to analyze the
+	// lightning_task_info.conflict_error_v2 table to check whether the reserved data cater to their need and check whether
+	// they need to add back the correct rows.
+	DupeResAlgReplace
 
 	// DupeResAlgErr reports an error and stops the import process.
 	// Note: this value is only used for internal.
@@ -463,6 +627,8 @@ func (dra *DuplicateResolutionAlgorithm) FromStringValue(s string) error {
 		*dra = DupeResAlgNone
 	case "remove":
 		*dra = DupeResAlgRemove
+	case "replace":
+		*dra = DupeResAlgReplace
 	default:
 		return errors.Errorf("invalid duplicate-resolution '%s', please choose valid option between ['record', 'none', 'remove']", s)
 	}
@@ -488,6 +654,8 @@ func (dra DuplicateResolutionAlgorithm) String() string {
 		return "none"
 	case DupeResAlgRemove:
 		return "remove"
+	case DupeResAlgReplace:
+		return "replace"
 	default:
 		panic(fmt.Sprintf("invalid duplicate-resolution type '%d'", dra))
 	}
@@ -558,6 +726,19 @@ type PostRestore struct {
 	Level1Compact     bool        `toml:"level-1-compact" json:"level-1-compact"`
 	PostProcessAtLast bool        `toml:"post-process-at-last" json:"post-process-at-last"`
 	Compact           bool        `toml:"compact" json:"compact"`
+	ChecksumViaSQL    bool        `toml:"checksum-via-sql" json:"checksum-via-sql"`
+}
+
+// adjust assigns default values and check illegal values. The input TikvImporter
+// must be adjusted before calling this function.
+func (p *PostRestore) adjust(i *TikvImporter) {
+	if i.Backend != BackendTiDB {
+		return
+	}
+	p.Checksum = OpLevelOff
+	p.Analyze = OpLevelOff
+	p.Compact = false
+	p.ChecksumViaSQL = false
 }
 
 // StringOrStringSlice can unmarshal a TOML string as string slice with one element.
@@ -615,6 +796,44 @@ type CSVConfig struct {
 	UnescapedQuote bool `toml:"-" json:"-"`
 }
 
+func (csv *CSVConfig) adjust() error {
+	if len(csv.Separator) == 0 {
+		return common.ErrInvalidConfig.GenWithStack("`mydumper.csv.separator` must not be empty")
+	}
+
+	if len(csv.Delimiter) > 0 && (strings.HasPrefix(csv.Separator, csv.Delimiter) || strings.HasPrefix(csv.Delimiter, csv.Separator)) {
+		return common.ErrInvalidConfig.GenWithStack("`mydumper.csv.separator` and `mydumper.csv.delimiter` must not be prefix of each other")
+	}
+
+	if len(csv.EscapedBy) > 1 {
+		return common.ErrInvalidConfig.GenWithStack("`mydumper.csv.escaped-by` must be empty or a single character")
+	}
+	if csv.BackslashEscape && csv.EscapedBy == "" {
+		csv.EscapedBy = `\`
+	}
+	if !csv.BackslashEscape && csv.EscapedBy == `\` {
+		csv.EscapedBy = ""
+	}
+
+	// keep compatibility with old behaviour
+	if !csv.NotNull && len(csv.Null) == 0 {
+		csv.Null = []string{""}
+	}
+
+	if len(csv.EscapedBy) > 0 {
+		if csv.Separator == csv.EscapedBy {
+			return common.ErrInvalidConfig.GenWithStack("cannot use '%s' both as CSV separator and `mydumper.csv.escaped-by`", csv.EscapedBy)
+		}
+		if csv.Delimiter == csv.EscapedBy {
+			return common.ErrInvalidConfig.GenWithStack("cannot use '%s' both as CSV delimiter and `mydumper.csv.escaped-by`", csv.EscapedBy)
+		}
+		if csv.Terminator == csv.EscapedBy {
+			return common.ErrInvalidConfig.GenWithStack("cannot use '%s' both as CSV terminator and `mydumper.csv.escaped-by`", csv.EscapedBy)
+		}
+	}
+	return nil
+}
+
 // MydumperRuntime is the runtime config for mydumper.
 type MydumperRuntime struct {
 	ReadBlockSize    ByteSize         `toml:"read-block-size" json:"read-block-size"`
@@ -637,12 +856,128 @@ type MydumperRuntime struct {
 	//   - utf8mb4
 	//   - GB18030
 	//   - GBK: an extension of the GB2312 character set and is also known as Code Page 936.
+	//   - latin1: IANA Windows1252
 	//   - binary: no attempt to convert the encoding.
 	// Leave DataCharacterSet empty will make it use `binary` by default.
 	DataCharacterSet string `toml:"data-character-set" json:"data-character-set"`
 	// DataInvalidCharReplace is the replacement characters for non-compatible characters, which shouldn't duplicate with the separators or line breaks.
 	// Changing the default value will result in increased parsing time. Non-compatible characters do not cause an increase in error.
 	DataInvalidCharReplace string `toml:"data-invalid-char-replace" json:"data-invalid-char-replace"`
+}
+
+func (m *MydumperRuntime) adjust() error {
+	if err := m.CSV.adjust(); err != nil {
+		return err
+	}
+	for _, rule := range m.FileRouters {
+		if filepath.IsAbs(rule.Path) {
+			relPath, err := filepath.Rel(m.SourceDir, rule.Path)
+			if err != nil {
+				return common.ErrInvalidConfig.Wrap(err).
+					GenWithStack("cannot find relative path for file route path %s", rule.Path)
+			}
+			// ".." means that this path is not in source dir, so we should return an error
+			if strings.HasPrefix(relPath, "..") {
+				return common.ErrInvalidConfig.GenWithStack(
+					"file route path '%s' is not in source dir '%s'", rule.Path, m.SourceDir)
+			}
+			rule.Path = relPath
+		}
+	}
+
+	// enable default file route rule if no rules are set
+	if len(m.FileRouters) == 0 {
+		m.DefaultFileRules = true
+	}
+
+	if len(m.DataCharacterSet) == 0 {
+		m.DataCharacterSet = defaultCSVDataCharacterSet
+	}
+	charset, err1 := ParseCharset(m.DataCharacterSet)
+	if err1 != nil {
+		return common.ErrInvalidConfig.Wrap(err1).GenWithStack("invalid `mydumper.data-character-set`")
+	}
+	if charset == GBK || charset == GB18030 {
+		log.L().Warn(
+			"incompatible strings may be encountered during the transcoding process and will be replaced, please be aware of the risk of not being able to retain the original information",
+			zap.String("source-character-set", charset.String()),
+			zap.ByteString("invalid-char-replacement", []byte(m.DataInvalidCharReplace)))
+	}
+	if m.BatchImportRatio < 0.0 || m.BatchImportRatio >= 1.0 {
+		m.BatchImportRatio = DefaultBatchImportRatio
+	}
+	if m.ReadBlockSize <= 0 {
+		m.ReadBlockSize = ReadBlockSize
+	}
+	if len(m.CharacterSet) == 0 {
+		m.CharacterSet = "auto"
+	}
+
+	if len(m.IgnoreColumns) != 0 {
+		// Tolower columns cause we use Name.L to compare column in tidb.
+		for _, ig := range m.IgnoreColumns {
+			cols := make([]string, len(ig.Columns))
+			for i, col := range ig.Columns {
+				cols[i] = strings.ToLower(col)
+			}
+			ig.Columns = cols
+		}
+	}
+	return m.adjustFilePath()
+}
+
+// adjustFilePath checks and adjusts the file path.
+func (m *MydumperRuntime) adjustFilePath() error {
+	var u *url.URL
+
+	// An absolute Windows path like "C:\Users\XYZ" would be interpreted as
+	// an URL with scheme "C" and opaque data "\Users\XYZ".
+	// Therefore, we only perform URL parsing if we are sure the path is not
+	// an absolute Windows path.
+	// Here we use the `filepath.VolumeName` which can identify the "C:" part
+	// out of the path. On Linux this method always return an empty string.
+	// On Windows, the drive letter can only be single letters from "A:" to "Z:",
+	// so this won't mistake "S3:" as a Windows path.
+	if len(filepath.VolumeName(m.SourceDir)) == 0 {
+		var err error
+		u, err = url.Parse(m.SourceDir)
+		if err != nil {
+			return common.ErrInvalidConfig.Wrap(err).GenWithStack("cannot parse `mydumper.data-source-dir` %s", m.SourceDir)
+		}
+	} else {
+		u = &url.URL{}
+	}
+
+	// convert path and relative path to a valid file url
+	if u.Scheme == "" {
+		if m.SourceDir == "" {
+			return common.ErrInvalidConfig.GenWithStack("`mydumper.data-source-dir` is not set")
+		}
+		if !common.IsDirExists(m.SourceDir) {
+			return common.ErrInvalidConfig.GenWithStack("'%s': `mydumper.data-source-dir` does not exist", m.SourceDir)
+		}
+		absPath, err := filepath.Abs(m.SourceDir)
+		if err != nil {
+			return common.ErrInvalidConfig.Wrap(err).GenWithStack("covert data-source-dir '%s' to absolute path failed", m.SourceDir)
+		}
+		u.Path = filepath.ToSlash(absPath)
+		u.Scheme = "file"
+		m.SourceDir = u.String()
+	}
+
+	found := false
+	for _, t := range supportedStorageTypes {
+		if u.Scheme == t {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return common.ErrInvalidConfig.GenWithStack(
+			"unsupported data-source-dir url '%s', supported storage types are %s",
+			m.SourceDir, strings.Join(supportedStorageTypes, ","))
+	}
+	return nil
 }
 
 // AllIgnoreColumns is a slice of IgnoreColumns.
@@ -706,25 +1041,105 @@ type FileRouteRule struct {
 // TikvImporter is the config for tikv-importer.
 type TikvImporter struct {
 	// Deprecated: only used to keep the compatibility.
-	Addr                string                       `toml:"addr" json:"addr"`
-	Backend             string                       `toml:"backend" json:"backend"`
-	OnDuplicate         string                       `toml:"on-duplicate" json:"on-duplicate"`
-	MaxKVPairs          int                          `toml:"max-kv-pairs" json:"max-kv-pairs"`
-	SendKVPairs         int                          `toml:"send-kv-pairs" json:"send-kv-pairs"`
-	CompressKVPairs     CompressionType              `toml:"compress-kv-pairs" json:"compress-kv-pairs"`
-	RegionSplitSize     ByteSize                     `toml:"region-split-size" json:"region-split-size"`
-	RegionSplitKeys     int                          `toml:"region-split-keys" json:"region-split-keys"`
-	SortedKVDir         string                       `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
-	DiskQuota           ByteSize                     `toml:"disk-quota" json:"disk-quota"`
-	RangeConcurrency    int                          `toml:"range-concurrency" json:"range-concurrency"`
-	DuplicateResolution DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
-	IncrementalImport   bool                         `toml:"incremental-import" json:"incremental-import"`
-	KeyspaceName        string                       `toml:"keyspace-name" json:"keyspace-name"`
-	AddIndexBySQL       bool                         `toml:"add-index-by-sql" json:"add-index-by-sql"`
+	Addr    string `toml:"addr" json:"addr"`
+	Backend string `toml:"backend" json:"backend"`
+	// deprecated, use Conflict.Strategy instead.
+	OnDuplicate string `toml:"on-duplicate" json:"on-duplicate"`
+	MaxKVPairs  int    `toml:"max-kv-pairs" json:"max-kv-pairs"`
+	// deprecated
+	SendKVPairs             int                          `toml:"send-kv-pairs" json:"send-kv-pairs"`
+	SendKVSize              ByteSize                     `toml:"send-kv-size" json:"send-kv-size"`
+	CompressKVPairs         CompressionType              `toml:"compress-kv-pairs" json:"compress-kv-pairs"`
+	RegionSplitSize         ByteSize                     `toml:"region-split-size" json:"region-split-size"`
+	RegionSplitKeys         int                          `toml:"region-split-keys" json:"region-split-keys"`
+	RegionSplitBatchSize    int                          `toml:"region-split-batch-size" json:"region-split-batch-size"`
+	RegionSplitConcurrency  int                          `toml:"region-split-concurrency" json:"region-split-concurrency"`
+	RegionCheckBackoffLimit int                          `toml:"region-check-backoff-limit" json:"region-check-backoff-limit"`
+	SortedKVDir             string                       `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
+	DiskQuota               ByteSize                     `toml:"disk-quota" json:"disk-quota"`
+	RangeConcurrency        int                          `toml:"range-concurrency" json:"range-concurrency"`
+	DuplicateResolution     DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
+	// deprecated, use ParallelImport instead.
+	IncrementalImport bool   `toml:"incremental-import" json:"incremental-import"`
+	ParallelImport    bool   `toml:"parallel-import" json:"parallel-import"`
+	KeyspaceName      string `toml:"keyspace-name" json:"keyspace-name"`
+	AddIndexBySQL     bool   `toml:"add-index-by-sql" json:"add-index-by-sql"`
 
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
 	StoreWriteBWLimit       ByteSize `toml:"store-write-bwlimit" json:"store-write-bwlimit"`
+	// default is PausePDSchedulerScopeTable to compatible with previous version(>= 6.1)
+	PausePDSchedulerScope PausePDSchedulerScope `toml:"pause-pd-scheduler-scope" json:"pause-pd-scheduler-scope"`
+}
+
+func (t *TikvImporter) adjust() error {
+	if t.Backend == "" {
+		return common.ErrInvalidConfig.GenWithStack("tikv-importer.backend must not be empty!")
+	}
+	t.Backend = strings.ToLower(t.Backend)
+	// only need to assign t.IncrementalImport to t.ParallelImport when t.ParallelImport is false and t.IncrementalImport is true
+	if !t.ParallelImport && t.IncrementalImport {
+		t.ParallelImport = t.IncrementalImport
+	}
+	switch t.Backend {
+	case BackendTiDB:
+		t.DuplicateResolution = DupeResAlgNone
+	case BackendLocal:
+		if t.RegionSplitBatchSize <= 0 {
+			return common.ErrInvalidConfig.GenWithStack(
+				"`tikv-importer.region-split-batch-size` got %d, should be larger than 0",
+				t.RegionSplitBatchSize)
+		}
+		if t.RegionSplitConcurrency <= 0 {
+			return common.ErrInvalidConfig.GenWithStack(
+				"`tikv-importer.region-split-concurrency` got %d, should be larger than 0",
+				t.RegionSplitConcurrency)
+		}
+		if t.RangeConcurrency == 0 {
+			t.RangeConcurrency = DefaultRangeConcurrency
+		}
+		if t.EngineMemCacheSize == 0 {
+			t.EngineMemCacheSize = DefaultEngineMemCacheSize
+		}
+		if t.LocalWriterMemCacheSize == 0 {
+			t.LocalWriterMemCacheSize = DefaultLocalWriterMemCacheSize
+		}
+
+		if t.ParallelImport && t.AddIndexBySQL {
+			return common.ErrInvalidConfig.
+				GenWithStack("tikv-importer.add-index-using-ddl cannot be used with tikv-importer.parallel-import")
+		}
+
+		if len(t.SortedKVDir) == 0 {
+			return common.ErrInvalidConfig.GenWithStack("tikv-importer.sorted-kv-dir must not be empty!")
+		}
+
+		storageSizeDir := filepath.Clean(t.SortedKVDir)
+		sortedKVDirInfo, err := os.Stat(storageSizeDir)
+
+		switch {
+		case os.IsNotExist(err):
+		case err == nil:
+			if !sortedKVDirInfo.IsDir() {
+				return common.ErrInvalidConfig.
+					GenWithStack("tikv-importer.sorted-kv-dir ('%s') is not a directory", storageSizeDir)
+			}
+		default:
+			return common.ErrInvalidConfig.Wrap(err).GenWithStack("invalid tikv-importer.sorted-kv-dir")
+		}
+	default:
+		return common.ErrInvalidConfig.GenWithStack(
+			"unsupported `tikv-importer.backend` (%s)",
+			t.Backend)
+	}
+
+	t.PausePDSchedulerScope = PausePDSchedulerScope(strings.ToLower(string(t.PausePDSchedulerScope)))
+	switch t.PausePDSchedulerScope {
+	case PausePDSchedulerScopeTable, PausePDSchedulerScopeGlobal:
+	default:
+		return common.ErrInvalidConfig.GenWithStack("pause-pd-scheduler-scope is invalid, allowed value include: table, global")
+	}
+	return nil
 }
 
 // Checkpoint is the config for checkpoint.
@@ -735,6 +1150,43 @@ type Checkpoint struct {
 	Driver           string                    `toml:"driver" json:"driver"`
 	Enable           bool                      `toml:"enable" json:"enable"`
 	KeepAfterSuccess CheckpointKeepStrategy    `toml:"keep-after-success" json:"keep-after-success"`
+}
+
+// adjust assigns default values and check illegal values. The input DBStore
+// must be adjusted before calling this function.
+func (c *Checkpoint) adjust(t *DBStore) {
+	if len(c.Schema) == 0 {
+		c.Schema = "tidb_lightning_checkpoint"
+	}
+	if len(c.Driver) == 0 {
+		c.Driver = CheckpointDriverFile
+	}
+	if len(c.DSN) == 0 {
+		switch c.Driver {
+		case CheckpointDriverMySQL:
+			param := common.MySQLConnectParam{
+				Host:                     t.Host,
+				Port:                     t.Port,
+				User:                     t.User,
+				Password:                 t.Psw,
+				SQLMode:                  mysql.DefaultSQLMode,
+				MaxAllowedPacket:         defaultMaxAllowedPacket,
+				TLSConfig:                t.Security.TLSConfig,
+				AllowFallbackToPlaintext: t.Security.AllowFallbackToPlaintext,
+			}
+			c.MySQLParam = &param
+		case CheckpointDriverFile:
+			c.DSN = "/tmp/" + c.Schema + ".pb"
+		}
+	} else {
+		// try to remove allowAllFiles
+		mysqlCfg, err := gomysql.ParseDSN(c.DSN)
+		if err != nil {
+			return
+		}
+		mysqlCfg.AllowAllFiles = false
+		c.DSN = mysqlCfg.FormatDSN()
+	}
 }
 
 // Cron is the config for cron.
@@ -856,19 +1308,103 @@ func ParseCharset(dataCharacterSet string) (Charset, error) {
 	}
 }
 
+// Conflict is the config section for PK/UK conflict related configurations.
+type Conflict struct {
+	Strategy      string `toml:"strategy" json:"strategy"`
+	Threshold     int64  `toml:"threshold" json:"threshold"`
+	MaxRecordRows int64  `toml:"max-record-rows" json:"max-record-rows"`
+}
+
+// adjust assigns default values and check illegal values. The arguments must be
+// adjusted before calling this function.
+func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
+	strategyConfigFrom := "conflict.strategy"
+	if c.Strategy == "" {
+		if i.OnDuplicate == "" && i.Backend == BackendTiDB {
+			c.Strategy = ErrorOnDup
+		}
+		if i.OnDuplicate != "" {
+			strategyConfigFrom = "tikv-importer.on-duplicate"
+			c.Strategy = i.OnDuplicate
+		}
+	}
+	c.Strategy = strings.ToLower(c.Strategy)
+	switch c.Strategy {
+	case ReplaceOnDup, IgnoreOnDup, ErrorOnDup, "":
+	default:
+		return common.ErrInvalidConfig.GenWithStack(
+			"unsupported `%s` (%s)", strategyConfigFrom, c.Strategy)
+	}
+	if c.Strategy != "" {
+		if i.ParallelImport {
+			return common.ErrInvalidConfig.GenWithStack(
+				"%s cannot be used with tikv-importer.parallel-import",
+				strategyConfigFrom)
+		}
+		if i.DuplicateResolution != DupeResAlgNone {
+			return common.ErrInvalidConfig.GenWithStack(
+				"%s cannot be used with tikv-importer.duplicate-resolution",
+				strategyConfigFrom)
+		}
+	}
+
+	if c.Threshold < 0 {
+		switch c.Strategy {
+		case ErrorOnDup:
+			c.Threshold = 0
+		case IgnoreOnDup, ReplaceOnDup:
+			c.Threshold = math.MaxInt64
+		case "":
+			c.Threshold = 0
+			if i.DuplicateResolution != DupeResAlgNone {
+				c.Threshold = math.MaxInt64
+			}
+		}
+	}
+	if c.Threshold > 0 && c.Strategy == ErrorOnDup {
+		return common.ErrInvalidConfig.GenWithStack(
+			`conflict.threshold cannot be set when use conflict.strategy = "error"`)
+	}
+
+	if c.MaxRecordRows < 0 {
+		maxErr := l.MaxError
+		// Compatible with the old behavior that records all syntax,charset,type errors.
+		maxAccepted := max(maxErr.Syntax.Load(), maxErr.Charset.Load(), maxErr.Type.Load())
+		if maxAccepted < defaultMaxRecordRows {
+			maxAccepted = defaultMaxRecordRows
+		}
+		if maxAccepted > c.Threshold {
+			maxAccepted = c.Threshold
+		}
+		if c.Strategy == ReplaceOnDup && i.Backend == BackendTiDB {
+			// due to we use batch insert, we can't know which row is duplicated.
+			maxAccepted = 0
+		}
+		c.MaxRecordRows = maxAccepted
+	} else {
+		// only check it when it is set by user.
+		if c.MaxRecordRows > c.Threshold {
+			return common.ErrInvalidConfig.GenWithStack(
+				"conflict.max-record-rows (%d) cannot be larger than conflict.threshold (%d)",
+				c.MaxRecordRows, c.Threshold)
+		}
+		if c.Strategy == ReplaceOnDup && i.Backend == BackendTiDB {
+			return common.ErrInvalidConfig.GenWithStack(
+				`cannot record duplication (conflict.max-record-rows > 0) when use tikv-importer.backend = "tidb" and conflict.strategy = "replace"`)
+		}
+	}
+	return nil
+}
+
 // NewConfig creates a new Config.
 func NewConfig() *Config {
 	return &Config{
 		App: Lightning{
-			RegionConcurrency: runtime.NumCPU(),
-			TableConcurrency:  0,
-			IndexConcurrency:  0,
-			IOConcurrency:     5,
-			CheckRequirements: true,
-			MaxError: MaxError{
-				Charset:  *atomic.NewInt64(math.MaxInt64),
-				Conflict: *atomic.NewInt64(math.MaxInt64),
-			},
+			RegionConcurrency:  runtime.NumCPU(),
+			TableConcurrency:   0,
+			IndexConcurrency:   0,
+			IOConcurrency:      5,
+			CheckRequirements:  true,
 			TaskInfoSchemaName: defaultTaskInfoSchemaName,
 		},
 		Checkpoint: Checkpoint{
@@ -886,7 +1422,7 @@ func NewConfig() *Config {
 			ChecksumTableConcurrency:   defaultChecksumTableConcurrency,
 		},
 		Cron: Cron{
-			SwitchMode:     Duration{Duration: 5 * time.Minute},
+			SwitchMode:     Duration{Duration: DefaultSwitchTiKVModeInterval},
 			LogProgress:    Duration{Duration: 5 * time.Minute},
 			CheckDiskQuota: Duration{Duration: 1 * time.Minute},
 		},
@@ -910,18 +1446,28 @@ func NewConfig() *Config {
 			DataInvalidCharReplace: string(defaultCSVDataInvalidCharReplace),
 		},
 		TikvImporter: TikvImporter{
-			Backend:             "",
-			OnDuplicate:         ReplaceOnDup,
-			MaxKVPairs:          4096,
-			SendKVPairs:         32768,
-			RegionSplitSize:     0,
-			DiskQuota:           ByteSize(math.MaxInt64),
-			DuplicateResolution: DupeResAlgNone,
+			Backend:                 "",
+			MaxKVPairs:              4096,
+			SendKVPairs:             32768,
+			SendKVSize:              KVWriteBatchSize,
+			RegionSplitSize:         0,
+			RegionSplitBatchSize:    DefaultRegionSplitBatchSize,
+			RegionSplitConcurrency:  runtime.GOMAXPROCS(0),
+			RegionCheckBackoffLimit: DefaultRegionCheckBackoffLimit,
+			DiskQuota:               ByteSize(math.MaxInt64),
+			DuplicateResolution:     DupeResAlgNone,
+			PausePDSchedulerScope:   PausePDSchedulerScopeTable,
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,
 			Analyze:           OpLevelOptional,
 			PostProcessAtLast: true,
+			ChecksumViaSQL:    false,
+		},
+		Conflict: Conflict{
+			Strategy:      "",
+			Threshold:     -1,
+			MaxRecordRows: -1,
 		},
 	}
 }
@@ -1020,418 +1566,39 @@ iterateUnusedKeys:
 	return nil
 }
 
-// Adjust fixes the invalid or unspecified settings to reasonable valid values.
+// Adjust fixes the invalid or unspecified settings to reasonable valid values,
+// and checks for illegal configuration.
 func (cfg *Config) Adjust(ctx context.Context) error {
-	// Reject problematic CSV configurations.
-	csv := &cfg.Mydumper.CSV
-	if len(csv.Separator) == 0 {
-		return common.ErrInvalidConfig.GenWithStack("`mydumper.csv.separator` must not be empty")
-	}
+	// note that the argument of `adjust` should be `adjust`ed before using it.
 
-	if len(csv.Delimiter) > 0 && (strings.HasPrefix(csv.Separator, csv.Delimiter) || strings.HasPrefix(csv.Delimiter, csv.Separator)) {
-		return common.ErrInvalidConfig.GenWithStack("`mydumper.csv.separator` and `mydumper.csv.delimiter` must not be prefix of each other")
+	if err := cfg.TikvImporter.adjust(); err != nil {
+		return err
 	}
-
-	if len(csv.EscapedBy) > 1 {
-		return common.ErrInvalidConfig.GenWithStack("`mydumper.csv.escaped-by` must be empty or a single character")
+	cfg.App.adjust(&cfg.TikvImporter)
+	if err := cfg.Mydumper.adjust(); err != nil {
+		return err
 	}
-	if csv.BackslashEscape && csv.EscapedBy == "" {
-		csv.EscapedBy = `\`
-	}
-	if !csv.BackslashEscape && csv.EscapedBy == `\` {
-		csv.EscapedBy = ""
-	}
-
-	// keep compatibility with old behaviour
-	if !csv.NotNull && len(csv.Null) == 0 {
-		csv.Null = []string{""}
-	}
-
-	if len(csv.EscapedBy) > 0 {
-		if csv.Separator == csv.EscapedBy {
-			return common.ErrInvalidConfig.GenWithStack("cannot use '%s' both as CSV separator and `mydumper.csv.escaped-by`", csv.EscapedBy)
-		}
-		if csv.Delimiter == csv.EscapedBy {
-			return common.ErrInvalidConfig.GenWithStack("cannot use '%s' both as CSV delimiter and `mydumper.csv.escaped-by`", csv.EscapedBy)
-		}
-		if csv.Terminator == csv.EscapedBy {
-			return common.ErrInvalidConfig.GenWithStack("cannot use '%s' both as CSV terminator and `mydumper.csv.escaped-by`", csv.EscapedBy)
-		}
-	}
-
-	// adjust file routing
-	for _, rule := range cfg.Mydumper.FileRouters {
-		if filepath.IsAbs(rule.Path) {
-			relPath, err := filepath.Rel(cfg.Mydumper.SourceDir, rule.Path)
-			if err != nil {
-				return common.ErrInvalidConfig.Wrap(err).
-					GenWithStack("cannot find relative path for file route path %s", rule.Path)
-			}
-			// ".." means that this path is not in source dir, so we should return an error
-			if strings.HasPrefix(relPath, "..") {
-				return common.ErrInvalidConfig.GenWithStack(
-					"file route path '%s' is not in source dir '%s'", rule.Path, cfg.Mydumper.SourceDir)
-			}
-			rule.Path = relPath
-		}
-	}
-
-	// enable default file route rule if no rules are set
-	if len(cfg.Mydumper.FileRouters) == 0 {
-		cfg.Mydumper.DefaultFileRules = true
-	}
-
-	if len(cfg.Mydumper.DataCharacterSet) == 0 {
-		cfg.Mydumper.DataCharacterSet = defaultCSVDataCharacterSet
-	}
-	charset, err1 := ParseCharset(cfg.Mydumper.DataCharacterSet)
-	if err1 != nil {
-		return common.ErrInvalidConfig.Wrap(err1).GenWithStack("invalid `mydumper.data-character-set`")
-	}
-	if charset == GBK || charset == GB18030 {
-		log.L().Warn(
-			"incompatible strings may be encountered during the transcoding process and will be replaced, please be aware of the risk of not being able to retain the original information",
-			zap.String("source-character-set", charset.String()),
-			zap.ByteString("invalid-char-replacement", []byte(cfg.Mydumper.DataInvalidCharReplace)))
-	}
-
-	mustHaveInternalConnections, err := cfg.AdjustCommon()
+	cfg.PostRestore.adjust(&cfg.TikvImporter)
+	tlsObj, err := cfg.ToTLS()
 	if err != nil {
 		return err
 	}
-
-	// mydumper.filter and black-white-list cannot co-exist.
-	if cfg.HasLegacyBlackWhiteList() {
-		log.L().Warn("the config `black-white-list` has been deprecated, please replace with `mydumper.filter`")
-		if !common.StringSliceEqual(cfg.Mydumper.Filter, defaultFilter) {
-			return common.ErrInvalidConfig.GenWithStack("`mydumper.filter` and `black-white-list` cannot be simultaneously defined")
-		}
-	}
-
-	for _, rule := range cfg.Routes {
-		if !cfg.Mydumper.CaseSensitive {
-			rule.ToLower()
-		}
-		if err := rule.Valid(); err != nil {
-			return common.ErrInvalidConfig.Wrap(err).GenWithStack("file route rule is invalid")
-		}
-	}
-
-	if err := cfg.CheckAndAdjustTiDBPort(ctx, mustHaveInternalConnections); err != nil {
+	if err = cfg.TiDB.adjust(ctx, &cfg.TikvImporter, &cfg.Security, tlsObj); err != nil {
 		return err
 	}
-	cfg.AdjustMydumper()
-	cfg.AdjustCheckPoint()
-	return cfg.CheckAndAdjustFilePath()
+	cfg.Checkpoint.adjust(&cfg.TiDB)
+	if err = cfg.Routes.adjust(&cfg.Mydumper); err != nil {
+		return err
+	}
+	return cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App)
 }
 
-// AdjustCommon adjusts the common configurations.
-func (cfg *Config) AdjustCommon() (bool, error) {
-	if cfg.TikvImporter.Backend == "" {
-		return false, common.ErrInvalidConfig.GenWithStack("tikv-importer.backend must not be empty!")
+// AdjustForDDL acts like Adjust, but DDL will not use some functionalities so
+// those members are skipped in adjusting.
+func (cfg *Config) AdjustForDDL() error {
+	if err := cfg.TikvImporter.adjust(); err != nil {
+		return err
 	}
-	cfg.TikvImporter.Backend = strings.ToLower(cfg.TikvImporter.Backend)
-	mustHaveInternalConnections := true
-	switch cfg.TikvImporter.Backend {
-	case BackendTiDB:
-		cfg.DefaultVarsForTiDBBackend()
-		mustHaveInternalConnections = false
-		cfg.PostRestore.Checksum = OpLevelOff
-		cfg.PostRestore.Analyze = OpLevelOff
-		cfg.PostRestore.Compact = false
-	case BackendLocal:
-		// RegionConcurrency > NumCPU is meaningless.
-		cpuCount := runtime.NumCPU()
-		if cfg.App.RegionConcurrency > cpuCount {
-			cfg.App.RegionConcurrency = cpuCount
-		}
-		cfg.DefaultVarsForImporterAndLocalBackend()
-	default:
-		return mustHaveInternalConnections, common.ErrInvalidConfig.GenWithStack("unsupported `tikv-importer.backend` (%s)", cfg.TikvImporter.Backend)
-	}
-
-	// TODO calculate these from the machine's free memory.
-	if cfg.TikvImporter.EngineMemCacheSize == 0 {
-		cfg.TikvImporter.EngineMemCacheSize = defaultEngineMemCacheSize
-	}
-	if cfg.TikvImporter.LocalWriterMemCacheSize == 0 {
-		cfg.TikvImporter.LocalWriterMemCacheSize = defaultLocalWriterMemCacheSize
-	}
-
-	if cfg.TikvImporter.Backend == BackendLocal {
-		if err := cfg.CheckAndAdjustForLocalBackend(); err != nil {
-			return mustHaveInternalConnections, err
-		}
-	} else {
-		cfg.TikvImporter.DuplicateResolution = DupeResAlgNone
-	}
-
-	if cfg.TikvImporter.Backend == BackendTiDB {
-		cfg.TikvImporter.OnDuplicate = strings.ToLower(cfg.TikvImporter.OnDuplicate)
-		switch cfg.TikvImporter.OnDuplicate {
-		case ReplaceOnDup, IgnoreOnDup, ErrorOnDup:
-		default:
-			return mustHaveInternalConnections, common.ErrInvalidConfig.GenWithStack(
-				"unsupported `tikv-importer.on-duplicate` (%s)", cfg.TikvImporter.OnDuplicate)
-		}
-	}
-
-	var err error
-	cfg.TiDB.SQLMode, err = mysql.GetSQLMode(cfg.TiDB.StrSQLMode)
-	if err != nil {
-		return mustHaveInternalConnections, common.ErrInvalidConfig.Wrap(err).GenWithStack("`mydumper.tidb.sql_mode` must be a valid SQL_MODE")
-	}
-
-	if err := cfg.CheckAndAdjustSecurity(); err != nil {
-		return mustHaveInternalConnections, err
-	}
-	return mustHaveInternalConnections, err
-}
-
-// CheckAndAdjustForLocalBackend checks and adjusts the configurations for local backend.
-func (cfg *Config) CheckAndAdjustForLocalBackend() error {
-	if cfg.TikvImporter.IncrementalImport && cfg.TikvImporter.AddIndexBySQL {
-		return common.ErrInvalidConfig.
-			GenWithStack("tikv-importer.add-index-using-ddl cannot be used with tikv-importer.incremental-import")
-	}
-
-	if len(cfg.TikvImporter.SortedKVDir) == 0 {
-		return common.ErrInvalidConfig.GenWithStack("tikv-importer.sorted-kv-dir must not be empty!")
-	}
-
-	storageSizeDir := filepath.Clean(cfg.TikvImporter.SortedKVDir)
-	sortedKVDirInfo, err := os.Stat(storageSizeDir)
-
-	switch {
-	case os.IsNotExist(err):
-		return nil
-	case err == nil:
-		if !sortedKVDirInfo.IsDir() {
-			return common.ErrInvalidConfig.
-				GenWithStack("tikv-importer.sorted-kv-dir ('%s') is not a directory", storageSizeDir)
-		}
-	default:
-		return common.ErrInvalidConfig.Wrap(err).GenWithStack("invalid tikv-importer.sorted-kv-dir")
-	}
-
+	cfg.App.adjust(&cfg.TikvImporter)
 	return nil
-}
-
-// DefaultVarsForTiDBBackend sets the default values for TiDB backend.
-func (cfg *Config) DefaultVarsForTiDBBackend() {
-	if cfg.App.TableConcurrency == 0 {
-		cfg.App.TableConcurrency = cfg.App.RegionConcurrency
-	}
-	if cfg.App.IndexConcurrency == 0 {
-		cfg.App.IndexConcurrency = cfg.App.RegionConcurrency
-	}
-}
-
-// DefaultVarsForImporterAndLocalBackend sets the default values for importer and local backend.
-func (cfg *Config) DefaultVarsForImporterAndLocalBackend() {
-	if cfg.App.IndexConcurrency == 0 {
-		cfg.App.IndexConcurrency = defaultIndexConcurrency
-	}
-	if cfg.App.TableConcurrency == 0 {
-		cfg.App.TableConcurrency = defaultTableConcurrency
-	}
-
-	if len(cfg.App.MetaSchemaName) == 0 {
-		cfg.App.MetaSchemaName = defaultMetaSchemaName
-	}
-	if cfg.TikvImporter.RangeConcurrency == 0 {
-		cfg.TikvImporter.RangeConcurrency = 16
-	}
-	if cfg.TiDB.BuildStatsConcurrency == 0 {
-		cfg.TiDB.BuildStatsConcurrency = defaultBuildStatsConcurrency
-	}
-	if cfg.TiDB.IndexSerialScanConcurrency == 0 {
-		cfg.TiDB.IndexSerialScanConcurrency = defaultIndexSerialScanConcurrency
-	}
-	if cfg.TiDB.ChecksumTableConcurrency == 0 {
-		cfg.TiDB.ChecksumTableConcurrency = defaultChecksumTableConcurrency
-	}
-}
-
-// CheckAndAdjustTiDBPort checks and adjusts the TiDB port and PD address.
-func (cfg *Config) CheckAndAdjustTiDBPort(ctx context.Context, mustHaveInternalConnections bool) error {
-	// automatically determine the TiDB port & PD address from TiDB settings
-	if mustHaveInternalConnections && (cfg.TiDB.Port <= 0 || len(cfg.TiDB.PdAddr) == 0) {
-		tls, err := cfg.ToTLS()
-		if err != nil {
-			return err
-		}
-
-		var settings tidbcfg.Config
-		err = tls.GetJSON(ctx, "/settings", &settings)
-		if err != nil {
-			return common.ErrInvalidConfig.Wrap(err).GenWithStack("cannot fetch settings from TiDB, please manually fill in `tidb.port` and `tidb.pd-addr`")
-		}
-		if cfg.TiDB.Port <= 0 {
-			cfg.TiDB.Port = int(settings.Port)
-		}
-		if len(cfg.TiDB.PdAddr) == 0 {
-			pdAddrs := strings.Split(settings.Path, ",")
-			cfg.TiDB.PdAddr = pdAddrs[0] // FIXME support multiple PDs once importer can.
-		}
-	}
-
-	if cfg.TiDB.Port <= 0 {
-		return common.ErrInvalidConfig.GenWithStack("invalid `tidb.port` setting")
-	}
-
-	if mustHaveInternalConnections && len(cfg.TiDB.PdAddr) == 0 {
-		return common.ErrInvalidConfig.GenWithStack("invalid `tidb.pd-addr` setting")
-	}
-	return nil
-}
-
-// CheckAndAdjustFilePath checks and adjusts the file path.
-func (cfg *Config) CheckAndAdjustFilePath() error {
-	var u *url.URL
-
-	// An absolute Windows path like "C:\Users\XYZ" would be interpreted as
-	// an URL with scheme "C" and opaque data "\Users\XYZ".
-	// Therefore, we only perform URL parsing if we are sure the path is not
-	// an absolute Windows path.
-	// Here we use the `filepath.VolumeName` which can identify the "C:" part
-	// out of the path. On Linux this method always return an empty string.
-	// On Windows, the drive letter can only be single letters from "A:" to "Z:",
-	// so this won't mistake "S3:" as a Windows path.
-	if len(filepath.VolumeName(cfg.Mydumper.SourceDir)) == 0 {
-		var err error
-		u, err = url.Parse(cfg.Mydumper.SourceDir)
-		if err != nil {
-			return common.ErrInvalidConfig.Wrap(err).GenWithStack("cannot parse `mydumper.data-source-dir` %s", cfg.Mydumper.SourceDir)
-		}
-	} else {
-		u = &url.URL{}
-	}
-
-	// convert path and relative path to a valid file url
-	if u.Scheme == "" {
-		if cfg.Mydumper.SourceDir == "" {
-			return common.ErrInvalidConfig.GenWithStack("`mydumper.data-source-dir` is not set")
-		}
-		if !common.IsDirExists(cfg.Mydumper.SourceDir) {
-			return common.ErrInvalidConfig.GenWithStack("'%s': `mydumper.data-source-dir` does not exist", cfg.Mydumper.SourceDir)
-		}
-		absPath, err := filepath.Abs(cfg.Mydumper.SourceDir)
-		if err != nil {
-			return common.ErrInvalidConfig.Wrap(err).GenWithStack("covert data-source-dir '%s' to absolute path failed", cfg.Mydumper.SourceDir)
-		}
-		u.Path = filepath.ToSlash(absPath)
-		u.Scheme = "file"
-		cfg.Mydumper.SourceDir = u.String()
-	}
-
-	found := false
-	for _, t := range supportedStorageTypes {
-		if u.Scheme == t {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return common.ErrInvalidConfig.GenWithStack(
-			"unsupported data-source-dir url '%s', supported storage types are %s",
-			cfg.Mydumper.SourceDir, strings.Join(supportedStorageTypes, ","))
-	}
-	return nil
-}
-
-// AdjustCheckPoint adjusts the checkpoint.
-func (cfg *Config) AdjustCheckPoint() {
-	if len(cfg.Checkpoint.Schema) == 0 {
-		cfg.Checkpoint.Schema = "tidb_lightning_checkpoint"
-	}
-	if len(cfg.Checkpoint.Driver) == 0 {
-		cfg.Checkpoint.Driver = CheckpointDriverFile
-	}
-	if len(cfg.Checkpoint.DSN) == 0 {
-		switch cfg.Checkpoint.Driver {
-		case CheckpointDriverMySQL:
-			param := common.MySQLConnectParam{
-				Host:                     cfg.TiDB.Host,
-				Port:                     cfg.TiDB.Port,
-				User:                     cfg.TiDB.User,
-				Password:                 cfg.TiDB.Psw,
-				SQLMode:                  mysql.DefaultSQLMode,
-				MaxAllowedPacket:         defaultMaxAllowedPacket,
-				TLSConfig:                cfg.TiDB.Security.TLSConfig,
-				AllowFallbackToPlaintext: cfg.TiDB.Security.AllowFallbackToPlaintext,
-			}
-			cfg.Checkpoint.MySQLParam = &param
-		case CheckpointDriverFile:
-			cfg.Checkpoint.DSN = "/tmp/" + cfg.Checkpoint.Schema + ".pb"
-		}
-	} else {
-		// try to remove allowAllFiles
-		mysqlCfg, err := gomysql.ParseDSN(cfg.Checkpoint.DSN)
-		if err != nil {
-			return
-		}
-		mysqlCfg.AllowAllFiles = false
-		cfg.Checkpoint.DSN = mysqlCfg.FormatDSN()
-	}
-}
-
-// AdjustMydumper adjusts the mydumper config.
-func (cfg *Config) AdjustMydumper() {
-	if cfg.Mydumper.BatchImportRatio < 0.0 || cfg.Mydumper.BatchImportRatio >= 1.0 {
-		cfg.Mydumper.BatchImportRatio = 0.75
-	}
-	if cfg.Mydumper.ReadBlockSize <= 0 {
-		cfg.Mydumper.ReadBlockSize = ReadBlockSize
-	}
-	if len(cfg.Mydumper.CharacterSet) == 0 {
-		cfg.Mydumper.CharacterSet = "auto"
-	}
-
-	if len(cfg.Mydumper.IgnoreColumns) != 0 {
-		// Tolower columns cause we use Name.L to compare column in tidb.
-		for _, ig := range cfg.Mydumper.IgnoreColumns {
-			cols := make([]string, len(ig.Columns))
-			for i, col := range ig.Columns {
-				cols[i] = strings.ToLower(col)
-			}
-			ig.Columns = cols
-		}
-	}
-}
-
-// CheckAndAdjustSecurity checks and adjusts the security config.
-func (cfg *Config) CheckAndAdjustSecurity() error {
-	if cfg.TiDB.Security == nil {
-		cfg.TiDB.Security = &cfg.Security
-	}
-
-	switch cfg.TiDB.TLS {
-	case "skip-verify", "preferred":
-		if cfg.TiDB.Security.TLSConfig == nil {
-			/* #nosec G402 */
-			cfg.TiDB.Security.TLSConfig = &tls.Config{
-				MinVersion:         tls.VersionTLS10,
-				InsecureSkipVerify: true,
-				NextProtos:         []string{"h2", "http/1.1"}, // specify `h2` to let Go use HTTP/2.
-			}
-			cfg.TiDB.Security.AllowFallbackToPlaintext = true
-		}
-	case "cluster":
-		if len(cfg.Security.CAPath) == 0 {
-			return common.ErrInvalidConfig.GenWithStack("cannot set `tidb.tls` to 'cluster' without a [security] section")
-		}
-	case "", "false":
-		cfg.TiDB.TLS = "false"
-		return nil
-	default:
-		return common.ErrInvalidConfig.GenWithStack("unsupported `tidb.tls` config %s", cfg.TiDB.TLS)
-	}
-	return nil
-}
-
-// HasLegacyBlackWhiteList checks whether the deprecated [black-white-list] section
-// was defined.
-func (cfg *Config) HasLegacyBlackWhiteList() bool {
-	return len(cfg.BWList.DoTables) != 0 || len(cfg.BWList.DoDBs) != 0 || len(cfg.BWList.IgnoreTables) != 0 || len(cfg.BWList.IgnoreDBs) != 0
 }
