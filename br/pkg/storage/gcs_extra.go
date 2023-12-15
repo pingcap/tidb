@@ -164,7 +164,8 @@ func (w *GCSWriter) readChunk(ch chan chunk) {
 }
 
 // Write uploads given bytes as a part to Google Cloud Storage. Write is not
-// concurrent safe.
+// concurrent safe. Write will read the given bytes in background, please do not
+// change its content.
 func (w *GCSWriter) Write(p []byte) (n int, err error) {
 	if w.curPart > gcsMaximumParts {
 		err = fmt.Errorf("exceed maximum parts %d", gcsMaximumParts)
@@ -180,7 +181,6 @@ func (w *GCSWriter) Write(p []byte) (n int, err error) {
 		cleanup: func() {},
 	}
 	w.curPart++
-	println(len(p))
 	return len(p), nil
 }
 
@@ -251,7 +251,7 @@ type CompleteMultipartUpload struct {
 
 func (w *GCSWriter) finalizeXMLMPU() error {
 	finalXMLRoot := CompleteMultipartUpload{
-		Parts: []Part{},
+		Parts: make([]Part, 0, len(w.xmlMPUParts)),
 	}
 	slices.SortFunc(w.xmlMPUParts, func(a, b *xmlMPUPart) int {
 		return a.partNumber - b.partNumber
@@ -289,6 +289,7 @@ func (w *GCSWriter) finalizeXMLMPU() error {
 	if resp.StatusCode() != http.StatusOK {
 		return fmt.Errorf("POST request returned non-OK status: %d", resp.StatusCode())
 	}
+	println(string(resp.Body()))
 	return nil
 }
 
@@ -348,19 +349,15 @@ func (p *xmlMPUPart) Clone() *xmlMPUPart {
 }
 
 func (p *xmlMPUPart) Upload() error {
-	err := p.upload()
-	if err == nil {
-		return nil
-	}
-
+	var err error
 	for i := 0; i < p.retry; i++ {
-		err := p.upload()
+		err = p.upload()
 		if err == nil {
 			return nil
 		}
 	}
 
-	return fmt.Errorf("failed to upload part %d", p.partNumber)
+	return fmt.Errorf("failed to upload part %d: %w", p.partNumber, err)
 }
 
 func (p *xmlMPUPart) upload() error {

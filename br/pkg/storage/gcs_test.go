@@ -3,6 +3,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"flag"
@@ -494,5 +495,6 @@ func TestMultiPartUpload(t *testing.T) {
 
 	got, err := s.ReadFile(ctx, filename)
 	require.NoError(t, err)
-	require.Equal(t, data, got)
+	cmp := bytes.Compare(data, got)
+	require.Zero(t, cmp)
 }
