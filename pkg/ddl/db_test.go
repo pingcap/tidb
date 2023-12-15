@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -69,6 +70,8 @@ func TestGetTimeZone(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
+	systemTimeZone := timeutil.SystemLocation().String()
+
 	testCases := []struct {
 		tzSQL  string
 		tzStr  string
@@ -83,8 +86,8 @@ func TestGetTimeZone(t *testing.T) {
 		{"set time_zone = '-08:00'", "", "", -28800, ""},
 		{"set time_zone = '+08:00'", "", "", 28800, ""},
 		{"set time_zone = 'Asia/Shanghai'", "Asia/Shanghai", "Asia/Shanghai", 0, ""},
-		{"set time_zone = 'SYSTEM'", "Asia/Shanghai", "Asia/Shanghai", 0, ""},
-		{"set time_zone = DEFAULT", "Asia/Shanghai", "Asia/Shanghai", 0, ""},
+		{"set time_zone = 'SYSTEM'", systemTimeZone, systemTimeZone, 0, ""},
+		{"set time_zone = DEFAULT", systemTimeZone, systemTimeZone, 0, ""},
 		{"set time_zone = 'GMT'", "GMT", "GMT", 0, ""},
 		{"set time_zone = 'GMT+1'", "GMT", "GMT", 0, "[variable:1298]Unknown or incorrect time zone: 'GMT+1'"},
 		{"set time_zone = 'Etc/GMT+12'", "Etc/GMT+12", "Etc/GMT+12", 0, ""},

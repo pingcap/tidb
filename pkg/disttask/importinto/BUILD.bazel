@@ -41,7 +41,6 @@ go_library(
         "//pkg/disttask/operator",
         "//pkg/domain/infosync",
         "//pkg/errno",
-        "//pkg/executor/asyncloaddata",
         "//pkg/executor/importer",
         "//pkg/keyspace",
         "//pkg/kv",

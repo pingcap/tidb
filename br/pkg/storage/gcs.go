@@ -293,6 +293,9 @@ func (s *GCSStorage) Rename(ctx context.Context, oldFileName, newFileName string
 	return s.DeleteFile(ctx, oldFileName)
 }
 
+// used in tests
+var mustReportCredErr = false
+
 // NewGCSStorage creates a GCS external storage implementation.
 func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorageOptions) (*GCSStorage, error) {
 	var clientOps []option.ClientOption
@@ -302,6 +305,10 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 		if gcs.CredentialsBlob == "" {
 			creds, err := google.FindDefaultCredentials(ctx, storage.ScopeReadWrite)
 			if err != nil {
+				if intest.InTest && !mustReportCredErr {
+					clientOps = append(clientOps, option.WithoutAuthentication())
+					goto skipHandleCred
+				}
 				return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "%v Or you should provide '--gcs.credentials_file'", err)
 			}
 			if opts.SendCredentials {
@@ -318,23 +325,26 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 			clientOps = append(clientOps, option.WithCredentialsJSON([]byte(gcs.GetCredentialsBlob())))
 		}
 	}
+skipHandleCred:
 
 	if gcs.Endpoint != "" {
 		clientOps = append(clientOps, option.WithEndpoint(gcs.Endpoint))
 	}
 
 	if opts.HTTPClient != nil {
-		if !intest.InTest {
-			// see https://github.com/pingcap/tidb/issues/47022#issuecomment-1722913455
-			// https://www.googleapis.com/auth/cloud-platform must be set to use service_account
-			// type of credential-file.
-			newTransport, err := htransport.NewTransport(ctx, opts.HTTPClient.Transport,
-				append(clientOps, option.WithScopes(storage.ScopeFullControl, "https://www.googleapis.com/auth/cloud-platform"))...)
-			if err != nil {
-				return nil, errors.Trace(err)
+		// see https://github.com/pingcap/tidb/issues/47022#issuecomment-1722913455
+		// https://www.googleapis.com/auth/cloud-platform must be set to use service_account
+		// type of credential-file.
+		newTransport, err := htransport.NewTransport(ctx, opts.HTTPClient.Transport,
+			append(clientOps, option.WithScopes(storage.ScopeFullControl, "https://www.googleapis.com/auth/cloud-platform"))...)
+		if err != nil {
+			if intest.InTest && !mustReportCredErr {
+				goto skipHandleTransport
 			}
-			opts.HTTPClient.Transport = newTransport
+			return nil, errors.Trace(err)
 		}
+		opts.HTTPClient.Transport = newTransport
+	skipHandleTransport:
 		clientOps = append(clientOps, option.WithHTTPClient(opts.HTTPClient))
 	}
 

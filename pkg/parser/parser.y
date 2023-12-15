@@ -1051,10 +1051,7 @@ import (
 	UpdateStmtNoWith           "Update statement without CTE clause"
 	HelpStmt                   "HELP statement"
 	ShardableStmt              "Shardable statement that can be used in non-transactional DMLs"
-	PauseLoadDataStmt          "PAUSE LOAD DATA JOB statement"
-	ResumeLoadDataStmt         "RESUME LOAD DATA JOB statement"
 	CancelImportStmt           "CANCEL IMPORT JOB statement"
-	DropLoadDataStmt           "DROP LOAD DATA JOB statement"
 	ProcedureUnlabeledBlock    "The statement block without label in procedure"
 	ProcedureBlockContent      "The statement block in procedure expressed with 'Begin ... End'"
 	SimpleWhenThen             "Procedure case when then"
@@ -5863,39 +5860,12 @@ OptionLevel:
 		$$ = ast.BRIEOptionLevelRequired
 	}
 
-PauseLoadDataStmt:
-	"PAUSE" "LOAD" "DATA" "JOB" Int64Num
-	{
-		$$ = &ast.LoadDataActionStmt{
-			Tp:    ast.LoadDataPause,
-			JobID: $5.(int64),
-		}
-	}
-
-ResumeLoadDataStmt:
-	"RESUME" "LOAD" "DATA" "JOB" Int64Num
-	{
-		$$ = &ast.LoadDataActionStmt{
-			Tp:    ast.LoadDataResume,
-			JobID: $5.(int64),
-		}
-	}
-
 CancelImportStmt:
 	"CANCEL" "IMPORT" "JOB" Int64Num
 	{
 		$$ = &ast.ImportIntoActionStmt{
 			Tp:    ast.ImportIntoCancel,
 			JobID: $4.(int64),
-		}
-	}
-
-DropLoadDataStmt:
-	"DROP" "LOAD" "DATA" "JOB" Int64Num
-	{
-		$$ = &ast.LoadDataActionStmt{
-			Tp:    ast.LoadDataDrop,
-			JobID: $5.(int64),
 		}
 	}
 
@@ -10259,15 +10229,21 @@ SetOprStmtWoutLimitOrderBy:
 		}
 		var setOprList2 []ast.Node
 		var with2 *ast.WithClause
+		var limit2 *ast.Limit
+		var orderBy2 *ast.OrderByClause
 		switch x := $3.(*ast.SubqueryExpr).Query.(type) {
 		case *ast.SelectStmt:
 			setOprList2 = []ast.Node{x}
 			with2 = x.With
 		case *ast.SetOprStmt:
+		    // child setOprStmt's limit and order should also make sense
+		    // we should separate it out from other normal SetOprSelectList.
 			setOprList2 = x.SelectList.Selects
 			with2 = x.With
+			limit2 = x.Limit
+			orderBy2 = x.OrderBy
 		}
-		nextSetOprList := &ast.SetOprSelectList{Selects: setOprList2, With: with2}
+		nextSetOprList := &ast.SetOprSelectList{Selects: setOprList2, With: with2, Limit: limit2, OrderBy: orderBy2}
 		nextSetOprList.AfterSetOperator = $2.(*ast.SetOprType)
 		setOprList := append(setOprList1, nextSetOprList)
 		setOpr := &ast.SetOprStmt{SelectList: &ast.SetOprSelectList{Selects: setOprList}}
@@ -12100,10 +12076,7 @@ Statement:
 |	HelpStmt
 |	NonTransactionalDMLStmt
 |	OptimizeTableStmt
-|	PauseLoadDataStmt
-|	ResumeLoadDataStmt
 |	CancelImportStmt
-|	DropLoadDataStmt
 
 TraceableStmt:
 	DeleteFromStmt

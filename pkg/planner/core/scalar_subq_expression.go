@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/planner/core/internal/base"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -180,7 +179,7 @@ func (*ScalarSubQueryExpr) IsCorrelated() bool {
 }
 
 // ConstItem implements the Expression interface.
-func (*ScalarSubQueryExpr) ConstItem(_ *stmtctx.StatementContext) bool {
+func (*ScalarSubQueryExpr) ConstItem(_ bool) bool {
 	return true
 }
 
