@@ -10,7 +10,11 @@ go_test(
     data = glob(["testdata/**"]),
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 50,
+=======
+    shard_count = 31,
+>>>>>>> 423834132da (parser, planner: fix embedded setOprStmt will be seen as SetOprSelectList item and lost its orderBy and Limit (#49421))
     deps = [
         "//pkg/config",
         "//pkg/domain",
