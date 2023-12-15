@@ -92,6 +92,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/glue",
+        "//br/pkg/lightning/log",
         "//br/pkg/lightning/mydump",
         "//br/pkg/storage",
         "//br/pkg/task",
@@ -104,6 +105,7 @@ go_library(
         "//pkg/ddl/placement",
         "//pkg/ddl/schematracker",
         "//pkg/distsql",
+        "//pkg/disttask/framework/handle",
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/storage",
         "//pkg/disttask/importinto",
@@ -274,7 +276,6 @@ go_library(
         "@org_golang_google_grpc//credentials",
         "@org_golang_google_grpc//credentials/insecure",
         "@org_golang_google_grpc//status",
-        "@org_golang_x_exp//maps",
         "@org_golang_x_sync//errgroup",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",

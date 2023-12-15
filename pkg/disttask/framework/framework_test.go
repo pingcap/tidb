@@ -63,8 +63,8 @@ func (dsp *testDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatche
 	return nil, nil
 }
 
-func (*testDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
-	return nil, nil
+func (*testDispatcherExt) OnDone(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task) error {
+	return nil
 }
 
 func (dsp *testDispatcherExt) GetNextStep(task *proto.Task) proto.Step {
@@ -726,5 +726,20 @@ func TestFrameworkCleanUpRoutine(t *testing.T) {
 	tasks, err := mgr.GetGlobalTaskByKeyWithHistory(ctx, "key1")
 	require.NoError(t, err)
 	require.NotEmpty(t, tasks)
+	distContext.Close()
+}
+
+func TestTaskCancelledBeforeUpdateTask(t *testing.T) {
+	var m sync.Map
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
+	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
+	distContext := testkit.NewDistExecutionContext(t, 1)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/cancelBeforeUpdateTask", "1*return(true)"))
+	DispatchTaskAndCheckState(ctx, "key1", t, &m, proto.TaskStateReverted)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/cancelBeforeUpdateTask"))
 	distContext.Close()
 }

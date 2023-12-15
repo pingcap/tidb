@@ -55,8 +55,8 @@ func (*testDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.Ta
 	return nil, nil
 }
 
-func (*testDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
-	return nil, nil
+func (*testDispatcherExt) OnDone(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task) error {
+	return nil
 }
 
 var mockedAllServerInfos = []*infosync.ServerInfo{}
@@ -94,9 +94,9 @@ func (n *numberExampleDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ di
 	return metas, nil
 }
 
-func (n *numberExampleDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
+func (n *numberExampleDispatcherExt) OnDone(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task) error {
 	// Don't handle not.
-	return nil, nil
+	return nil
 }
 
 func (*numberExampleDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
@@ -512,4 +512,10 @@ func TestVerifyTaskStateTransform(t *testing.T) {
 	for _, tc := range testCases {
 		require.Equal(t, tc.expect, dispatcher.VerifyTaskStateTransform(tc.oldState, tc.newState))
 	}
+}
+
+func TestIsCancelledErr(t *testing.T) {
+	require.False(t, dispatcher.IsCancelledErr(errors.New("some err")))
+	require.False(t, dispatcher.IsCancelledErr(context.Canceled))
+	require.True(t, dispatcher.IsCancelledErr(errors.New("cancelled by user")))
 }
