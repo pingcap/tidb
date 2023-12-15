@@ -147,6 +147,9 @@ type StmtRecord struct {
 
 	KeyspaceName string `json:"keyspace_name,omitempty"`
 	KeyspaceID   uint32 `json:"keyspace_id,omitempty"`
+	// request units(RU)
+	ResourceGroupName string `json:"resource_group_name"`
+	stmtsummary.StmtRUSummary
 }
 
 // NewStmtRecord creates a new StmtRecord from StmtExecInfo.
@@ -201,19 +204,20 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.
 		PrevSQL: info.PrevSQL,
 		// SamplePlan needs to be decoded so it can't be truncated.
-		SamplePlan:       samplePlan,
-		SampleBinaryPlan: binPlan,
-		PlanHint:         planHint,
-		IndexNames:       info.StmtCtx.IndexNames,
-		MinLatency:       info.TotalLatency,
-		BackoffTypes:     make(map[string]int),
-		AuthUsers:        make(map[string]struct{}),
-		MinResultRows:    math.MaxInt64,
-		Prepared:         info.Prepared,
-		FirstSeen:        info.StartTime,
-		LastSeen:         info.StartTime,
-		KeyspaceName:     info.KeyspaceName,
-		KeyspaceID:       info.KeyspaceID,
+		SamplePlan:        samplePlan,
+		SampleBinaryPlan:  binPlan,
+		PlanHint:          planHint,
+		IndexNames:        info.StmtCtx.IndexNames,
+		MinLatency:        info.TotalLatency,
+		BackoffTypes:      make(map[string]int),
+		AuthUsers:         make(map[string]struct{}),
+		MinResultRows:     math.MaxInt64,
+		Prepared:          info.Prepared,
+		FirstSeen:         info.StartTime,
+		LastSeen:          info.StartTime,
+		KeyspaceName:      info.KeyspaceName,
+		KeyspaceID:        info.KeyspaceID,
+		ResourceGroupName: info.ResourceGroupName,
 	}
 }
 
@@ -405,6 +409,8 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	r.SumPDTotal += time.Duration(atomic.LoadInt64(&info.TiKVExecDetails.WaitPDRespDuration))
 	r.SumBackoffTotal += time.Duration(atomic.LoadInt64(&info.TiKVExecDetails.BackoffDuration))
 	r.SumWriteSQLRespTotal += info.StmtExecDetails.WriteSQLRespDuration
+	// RU
+	r.StmtRUSummary.Add(info.RUDetail)
 }
 
 // Merge merges the statistics of another StmtRecord to this StmtRecord.
@@ -559,6 +565,7 @@ func (r *StmtRecord) Merge(other *StmtRecord) {
 	r.SumBackoffTotal += other.SumBackoffTotal
 	r.SumWriteSQLRespTotal += other.SumWriteSQLRespTotal
 	r.SumErrors += other.SumErrors
+	r.StmtRUSummary.Merge(&other.StmtRUSummary)
 }
 
 // Truncate SQL to maxSQLLength.
@@ -659,13 +666,15 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 				CalleeAddress: "129",
 			},
 		},
-		StmtCtx:      sc,
-		MemMax:       10000,
-		DiskMax:      10000,
-		StartTime:    time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
-		Succeed:      true,
-		KeyspaceName: "keyspace_a",
-		KeyspaceID:   1,
+		StmtCtx:           sc,
+		MemMax:            10000,
+		DiskMax:           10000,
+		StartTime:         time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
+		Succeed:           true,
+		KeyspaceName:      "keyspace_a",
+		KeyspaceID:        1,
+		ResourceGroupName: "rg1",
+		RUDetail:          util.NewRUDetailsWith(1.2, 3.4, 2*time.Millisecond),
 	}
 	stmtExecInfo.StmtCtx.AddAffectedRows(10000)
 	return stmtExecInfo
