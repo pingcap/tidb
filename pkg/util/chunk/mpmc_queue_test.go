@@ -39,39 +39,81 @@ func checkChunkWithMemoryUsage(t *testing.T, expectChk *ChunkWithMemoryUsage, ch
 func TestMPMCQueue(t *testing.T) {
 	numChk := 10
 	numRow := 10
+	queueLimit := numChk * 2
 	chks, _ := initChunks(numChk, numRow)
 	chksWithMem := createChunkWithMemoryUsageSlice(chks)
-	queue := NewMPMCQueue(100)
 
-	i := 0
-	for ; i < numChk/2; i++ {
-		queue.Push(&chksWithMem[i])
+	{
+		// Push, pop, push, pop and we could get all chunks.
+		queue := NewMPMCQueue(queueLimit)
+		i := 0
+		for ; i < numChk/2; i++ {
+			queue.Push(&chksWithMem[i])
+		}
+
+		j := 0
+		for ; j < i; j++ {
+			chk, res := queue.Pop()
+			require.Equal(t, Result(OK), res)
+			checkChunkWithMemoryUsage(t, &chksWithMem[j], chk)
+		}
+
+		for ; i < numChk; i++ {
+			queue.Push(&chksWithMem[i])
+		}
+
+		for ; j < numChk; j++ {
+			chk, res := queue.Pop()
+			require.Equal(t, Result(OK), res)
+			checkChunkWithMemoryUsage(t, &chksWithMem[j], chk)
+		}
 	}
 
-	j := 0
-	for ; j < i; j++ {
+	{
+		// Push, push, close, push fail and get `Closed` return value
+		queue := NewMPMCQueue(queueLimit)
+		queue.Push(&chksWithMem[0])
+		queue.Push(&chksWithMem[1])
+		queue.Close()
+		res := queue.Push(&chksWithMem[1])
+		require.Equal(t, Result(Closed), res)
+	}
+
+	{
+		// Push, push, close, pop, pop, pop fail and get `Closed` return value
+		queue := NewMPMCQueue(queueLimit)
+		queue.Push(&chksWithMem[0])
+		queue.Push(&chksWithMem[1])
+		queue.Close()
 		chk, res := queue.Pop()
+		checkChunkWithMemoryUsage(t, &chksWithMem[0], chk)
 		require.Equal(t, Result(OK), res)
-		checkChunkWithMemoryUsage(t, &chksWithMem[j], chk)
+		chk, res = queue.Pop()
+		checkChunkWithMemoryUsage(t, &chksWithMem[1], chk)
+		require.Equal(t, Result(OK), res)
+		chk, res = queue.Pop()
+		require.Equal(t, (*ChunkWithMemoryUsage)(nil), chk)
+		require.Equal(t, Result(Closed), res)
 	}
 
-	for ; i < numChk; i++ {
-		queue.Push(&chksWithMem[i])
+	{
+		// Push, push, cancel, push fail and get `Cancelled` return value
+		queue := NewMPMCQueue(queueLimit)
+		queue.Push(&chksWithMem[0])
+		queue.Cancel()
+		res := queue.Push(&chksWithMem[1])
+		require.Equal(t, Result(Cancelled), res)
 	}
 
-	for ; j < numChk; j++ {
+	{
+		// Push, push, cancel, pop fail and get `Cancelled` return value
+		queue := NewMPMCQueue(queueLimit)
+		queue.Push(&chksWithMem[0])
+		queue.Cancel()
 		chk, res := queue.Pop()
-		require.Equal(t, Result(OK), res)
-		checkChunkWithMemoryUsage(t, &chksWithMem[j], chk)
+		require.Equal(t, (*ChunkWithMemoryUsage)(nil), chk)
+		require.Equal(t, Result(Cancelled), res)
 	}
-
-	// Close the queue
-	queue.Push(&chksWithMem[0])
-	queue.Push(&chksWithMem[1])
-	queue.Pop()
-	queue.Close()
-	_, res := queue.Pop()
-	require.Equal(t, Result(Closed), res)
 }
 
 func TestFullOrEmpty(t *testing.T) {
@@ -79,49 +121,92 @@ func TestFullOrEmpty(t *testing.T) {
 	numRow := 10
 	chks, _ := initChunks(numChk, numRow)
 	chksWithMem := createChunkWithMemoryUsageSlice(chks)
-	queue := NewMPMCQueue(100)
 
 	{
-		waitGroup := sync.WaitGroup{}
-		for i := 0; i < numChk; i++ {
+		// Pop from an empty queue, blocked at one goroutine and
+		// should be waked up by another goroutine with (push/close/cancel).
+		for i := 0; i < 3; i++ {
+			queue := NewMPMCQueue(1)
+			waitGroup := sync.WaitGroup{}
 			waitGroup.Add(1)
 			go func() {
 				queue.Pop()
 				waitGroup.Done()
 			}()
-		}
 
-		// Sleep for some time to ensure that push is after the pop
-		time.Sleep(300 * time.Millisecond)
-		for i := 0; i < numChk; i++ {
-			queue.Push(&chksWithMem[i])
+			// Sleep for some time to ensure that wake up action is after the pop.
+			time.Sleep(300 * time.Millisecond)
+			if i == 0 {
+				queue.Push(&chksWithMem[i])
+			} else if i == 1 {
+				queue.Close()
+			} else if i == 2 {
+				queue.Cancel()
+			}
+
+			waitGroup.Wait()
 		}
-		waitGroup.Wait()
 	}
 
 	{
-		waitGroup := sync.WaitGroup{}
-		for i := 0; i < numChk; i++ {
+		// Push chunks into full queue, blocked at one goroutine and
+		// should be waked up by another goroutine with (pop/close/cancel).
+		for i := 0; i < 3; i++ {
+			queue := NewMPMCQueue(1)
+			queue.Push(&chksWithMem[0])
+			waitGroup := sync.WaitGroup{}
 			waitGroup.Add(1)
 			go func() {
 				queue.Push(&chksWithMem[0])
 				waitGroup.Done()
 			}()
-		}
 
-		// Sleep for some time to ensure that pop is after the push
-		time.Sleep(300 * time.Millisecond)
-		for i := 0; i < numChk; i++ {
-			queue.Pop()
+			// Sleep for some time to ensure that wake up action is after the push.
+			time.Sleep(300 * time.Millisecond)
+			if i == 0 {
+				queue.Pop()
+			} else if i == 1 {
+				queue.Close()
+			} else if i == 2 {
+				queue.Cancel()
+			}
+			waitGroup.Wait()
 		}
-		waitGroup.Wait()
 	}
 
-	queue.Close()
-	queue.Pop() // Should not be blocked
+	{
+		// Pop an closed empty queue should get a `Closed` return value.
+		queue := NewMPMCQueue(1)
+		queue.Close()
+		chk, res := queue.Pop()
+		require.Equal(t, (*ChunkWithMemoryUsage)(nil), chk)
+		require.Equal(t, Result(Closed), res)
+	}
 
-	queue = NewMPMCQueue(1)
-	queue.Push(&chksWithMem[0])
-	queue.Close()
-	queue.Push(&chksWithMem[0]) // Should not be blocked
+	{
+		// Pop an cancelled empty queue should get a `Closed` return value.
+		queue := NewMPMCQueue(1)
+		queue.Cancel()
+		chk, res := queue.Pop()
+		require.Equal(t, (*ChunkWithMemoryUsage)(nil), chk)
+		require.Equal(t, Result(Cancelled), res)
+	}
+
+	{
+		// Push a closed full queue should get a `Closed` return value.
+		queue := NewMPMCQueue(1)
+		queue.Push(&chksWithMem[0])
+		queue.Close()
+		res := queue.Push(&chksWithMem[0])
+		require.Equal(t, Result(Closed), res)
+	}
+
+	{
+		// Push a closed full queue should get a `Cancelled` return value.
+		queue := NewMPMCQueue(1)
+		queue.Push(&chksWithMem[0])
+		queue.Cancel()
+		res := queue.Push(&chksWithMem[0])
+		require.Equal(t, Result(Cancelled), res)
+	}
 }

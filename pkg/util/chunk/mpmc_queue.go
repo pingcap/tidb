@@ -23,13 +23,19 @@ type Status int
 type Result int
 
 const (
-	// Open means the queue is normal.
-	Open = iota
-	// Closed means the queue has been closed
-	Closed
+	// StatusOpen means the queue is normal.
+	StatusOpen = iota
+	// StatusClosed means the queue has been closed
+	StatusClosed
+	// StatusCancelled means the queue has been cancelled
+	StatusCancelled
 
 	// OK means that Push or pop is successful
 	OK
+	// Closed means that Push or pop is failed because the queue has been closed
+	Closed
+	// Cancelled means that Push or pop is failed because the queue has been cancelled
+	Cancelled
 
 	DefaultMPMCQueueLimitNum = 100
 )
@@ -66,18 +72,7 @@ func NewMPMCQueue(limit int) *MPMCQueue {
 		cond:     sync.NewCond(&lock),
 		queue:    list.List{},
 		limitNum: limit,
-		status:   Open,
-	}
-}
-
-func (m *MPMCQueue) checkStatusNoLock() Result {
-	switch m.status {
-	case Open:
-		return Open
-	case Closed:
-		return Closed
-	default:
-		panic("Invalid status in MPMCQueue")
+		status:   StatusOpen,
 	}
 }
 
@@ -85,15 +80,18 @@ func (m *MPMCQueue) checkStatusNoLock() Result {
 func (m *MPMCQueue) Push(chk *ChunkWithMemoryUsage) Result {
 	m.lock.Lock()
 	defer m.lock.Unlock()
-	res := m.checkStatusNoLock()
 
-	for m.queue.Len() >= m.limitNum && res == Open {
+	for m.queue.Len() >= m.limitNum && m.status == StatusOpen {
 		m.cond.Wait()
-		res = m.checkStatusNoLock()
 	}
 
-	if res != Open {
-		return res
+	if m.status != StatusOpen {
+		if m.status == StatusClosed {
+			return Closed
+		} else if m.status == StatusCancelled {
+			return Cancelled
+		}
+		panic("Illegal MPMCQueue status")
 	}
 
 	m.queue.PushBack(chk)
@@ -105,33 +103,44 @@ func (m *MPMCQueue) Push(chk *ChunkWithMemoryUsage) Result {
 func (m *MPMCQueue) Pop() (*ChunkWithMemoryUsage, Result) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
-	res := m.checkStatusNoLock()
 
-	for m.queue.Len() == 0 && res == Open {
+	for m.queue.Len() == 0 && m.status == StatusOpen {
 		m.cond.Wait()
-		res = m.checkStatusNoLock()
 	}
 
-	if res != Open {
-		return nil, res
+	if m.status == StatusCancelled {
+		return nil, Cancelled
+	}
+
+	if m.status == StatusClosed && m.queue.Len() == 0 {
+		return nil, Closed
 	}
 
 	elem := m.queue.Front()
 	chk, ok := elem.Value.(*ChunkWithMemoryUsage)
 	if !ok {
-		panic("Data type in MPMCQueue is not *Chunk")
+		panic("Data type in MPMCQueue is not *ChunkWithMemoryUsage")
 	}
 	m.queue.Remove(elem)
 	m.cond.Broadcast()
 	return chk, OK
 }
 
-// ForceClose closes the queue.
+// Close closes the queue.
 func (m *MPMCQueue) Close() {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
-	m.status = Closed
+	m.status = StatusClosed
+	m.cond.Broadcast()
+}
+
+// Cancel closes the queue.
+func (m *MPMCQueue) Cancel() {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	m.status = StatusCancelled
 	m.cond.Broadcast()
 }
 
