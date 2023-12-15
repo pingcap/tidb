@@ -306,6 +306,7 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 			creds, err := google.FindDefaultCredentials(ctx, storage.ScopeReadWrite)
 			if err != nil {
 				if intest.InTest && !mustReportCredErr {
+					clientOps = append(clientOps, option.WithoutAuthentication())
 					goto skipHandleCred
 				}
 				return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "%v Or you should provide '--gcs.credentials_file'", err)
