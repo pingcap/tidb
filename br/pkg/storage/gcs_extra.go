@@ -56,6 +56,7 @@ type GCSWriter struct {
 	uploadID    string
 	chunkCh     chan chunk
 	curPart     int
+	bytesPool   sync.Pool
 }
 
 // NewGCSWriter returns a GCSWriter which uses GCS multipart upload API behind the scene.
@@ -85,6 +86,9 @@ func NewGCSWriter(
 		},
 		chunkSize: partSize,
 		workers:   parallelCnt,
+		bytesPool: sync.Pool{New: func() interface{} {
+			return make([]byte, partSize)
+		}},
 	}
 	if err := w.init(); err != nil {
 		return nil, fmt.Errorf("failed to initiate GCSWriter: %w", err)
@@ -173,10 +177,14 @@ func (w *GCSWriter) Write(p []byte) (n int, err error) {
 		}
 		return 0, err
 	}
+	buf := w.bytesPool.Get().([]byte)
+	buf = append(buf[:0], p...)
 	w.chunkCh <- chunk{
-		buf:     slices.Clone(p),
-		num:     w.curPart,
-		cleanup: func() {},
+		buf: buf,
+		num: w.curPart,
+		cleanup: func() {
+			w.bytesPool.Put(buf)
+		},
 	}
 	w.curPart++
 	return len(p), nil
@@ -287,7 +295,6 @@ func (w *GCSWriter) finalizeXMLMPU() error {
 	if resp.StatusCode() != http.StatusOK {
 		return fmt.Errorf("POST request returned non-OK status: %d", resp.StatusCode())
 	}
-	println(string(resp.Body()))
 	return nil
 }
 

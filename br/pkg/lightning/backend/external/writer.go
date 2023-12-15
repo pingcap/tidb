@@ -425,13 +425,6 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	defer func() {
 		w.currentSeq++
 		err1, err2 := dataWriter.Close(ctx), statWriter.Close(ctx)
-		// release the buffer only when the writer is closed so write will not access the buffer
-		w.kvLocations = w.kvLocations[:0]
-		w.kvSize = 0
-		w.kvBuffer.Reset()
-		w.rc.reset()
-		w.batchSize = 0
-
 		if err != nil {
 			return
 		}
@@ -510,6 +503,12 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		w.fileMinKeys = w.fileMinKeys[:0]
 		w.fileMaxKeys = w.fileMaxKeys[:0]
 	}
+
+	w.kvLocations = w.kvLocations[:0]
+	w.kvSize = 0
+	w.kvBuffer.Reset()
+	w.rc.reset()
+	w.batchSize = 0
 	return nil
 }
 
