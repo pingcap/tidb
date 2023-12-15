@@ -208,6 +208,9 @@ func (r *byteReader) readNBytes(n int) ([]byte, error) {
 		return bs[0], nil
 	}
 	// need to flatten bs
+	if n <= 0 {
+		return nil, errors.Errorf("illegal n (%d) when reading from external storage", n)
+	}
 	if n > int(size.GB) {
 		return nil, errors.Errorf("read %d bytes from external storage, exceed max limit %d", n, size.GB)
 	}
