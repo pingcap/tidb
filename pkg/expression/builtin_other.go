@@ -197,7 +197,7 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = make(map[int64]bool, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstItem(ctx.GetSessionVars().StmtCtx) {
+		if b.args[i].ConstItem(ctx.GetSessionVars().StmtCtx.UseCache) {
 			val, isNull, err := b.args[i].EvalInt(ctx, chunk.Row{})
 			if err != nil {
 				return err
@@ -290,7 +290,7 @@ func (b *builtinInStringSig) buildHashMapForConstArgs(ctx sessionctx.Context) er
 	b.hashSet = set.NewStringSet()
 	collator := collate.GetCollator(b.collation)
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstItem(ctx.GetSessionVars().StmtCtx) {
+		if b.args[i].ConstItem(ctx.GetSessionVars().StmtCtx.UseCache) {
 			val, isNull, err := b.args[i].EvalString(ctx, chunk.Row{})
 			if err != nil {
 				return err
@@ -363,7 +363,7 @@ func (b *builtinInRealSig) buildHashMapForConstArgs(ctx sessionctx.Context) erro
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = set.NewFloat64Set()
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstItem(ctx.GetSessionVars().StmtCtx) {
+		if b.args[i].ConstItem(ctx.GetSessionVars().StmtCtx.UseCache) {
 			val, isNull, err := b.args[i].EvalReal(ctx, chunk.Row{})
 			if err != nil {
 				return err
@@ -434,7 +434,7 @@ func (b *builtinInDecimalSig) buildHashMapForConstArgs(ctx sessionctx.Context) e
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = set.NewStringSet()
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstItem(ctx.GetSessionVars().StmtCtx) {
+		if b.args[i].ConstItem(ctx.GetSessionVars().StmtCtx.UseCache) {
 			val, isNull, err := b.args[i].EvalDecimal(ctx, chunk.Row{})
 			if err != nil {
 				return err
@@ -514,7 +514,7 @@ func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx sessionctx.Context) erro
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = make(map[types.CoreTime]struct{}, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstItem(ctx.GetSessionVars().StmtCtx) {
+		if b.args[i].ConstItem(ctx.GetSessionVars().StmtCtx.UseCache) {
 			val, isNull, err := b.args[i].EvalTime(ctx, chunk.Row{})
 			if err != nil {
 				return err
@@ -585,7 +585,7 @@ func (b *builtinInDurationSig) buildHashMapForConstArgs(ctx sessionctx.Context) 
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = make(map[time.Duration]struct{}, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstItem(ctx.GetSessionVars().StmtCtx) {
+		if b.args[i].ConstItem(ctx.GetSessionVars().StmtCtx.UseCache) {
 			val, isNull, err := b.args[i].EvalDuration(ctx, chunk.Row{})
 			if err != nil {
 				return err

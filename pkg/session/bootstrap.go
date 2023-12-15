@@ -1042,7 +1042,7 @@ const (
 
 	// version 181
 	//   add a new `type` column on mysql.bind_info, which is for universal binding #48875.
-	version181
+	version181 = 181
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
