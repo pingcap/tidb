@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
-	"github.com/pingcap/tidb/pkg/executor/asyncloaddata"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -81,8 +80,8 @@ func getTableImporter(ctx context.Context, taskID int64, taskMeta *TaskMeta) (*i
 
 	return importer.NewTableImporter(&importer.JobImportParam{
 		GroupCtx: ctx,
-		Progress: asyncloaddata.NewProgress(false),
-		Job:      &asyncloaddata.Job{},
+		Progress: importer.NewProgress(),
+		Job:      &importer.Job{},
 	}, controller, taskID)
 }
 
@@ -146,7 +145,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		TableImporter:    s.tableImporter,
 		DataEngine:       dataEngine,
 		IndexEngine:      indexEngine,
-		Progress:         asyncloaddata.NewProgress(false),
+		Progress:         importer.NewProgress(),
 		Checksum:         &verification.KVChecksum{},
 		SortedDataMeta:   &external.SortedKVMeta{},
 		SortedIndexMetas: make(map[int64]*external.SortedKVMeta),

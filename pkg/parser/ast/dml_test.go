@@ -534,27 +534,6 @@ func TestImportActions(t *testing.T) {
 	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
 }
 
-func TestLoadDataActions(t *testing.T) {
-	testCases := []NodeRestoreTestCase{
-		{
-			sourceSQL: "pause load data job 123",
-			expectSQL: "PAUSE LOAD DATA JOB 123",
-		},
-		{
-			sourceSQL: "resume load data job 123",
-			expectSQL: "RESUME LOAD DATA JOB 123",
-		},
-		{
-			sourceSQL: "drop   load data job 123",
-			expectSQL: "DROP LOAD DATA JOB 123",
-		},
-	}
-	extractNodeFunc := func(node Node) Node {
-		return node
-	}
-	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
-}
-
 func TestImportIntoRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{
