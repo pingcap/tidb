@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/spf13/cobra"
@@ -221,6 +222,10 @@ type RestoreConfig struct {
 	ProgressFile        string                `json:"progress-file" toml:"progress-file"`
 	TargetAZ            string                `json:"target-az" toml:"target-az"`
 	UseFSR              bool                  `json:"use-fsr" toml:"use-fsr"`
+
+	// duplicate restore
+	DBPrefix         string `json:"db-prefix" toml:"db-prefix"`
+	DuplicateDBCount uint   `json:"duplicate-db-count" toml:"duplicate-db-count"`
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
@@ -236,6 +241,8 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 
 	flags.Bool(FlagWaitTiFlashReady, false, "whether wait tiflash replica ready if tiflash exists")
 
+	flags.String("db-prefix", "", "duplicated db prefix")
+	flags.Uint("duplicate-db-count", 1, "duplicated db count")
 	DefineRestoreCommonFlags(flags)
 }
 
@@ -341,6 +348,16 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	cfg.WaitTiflashReady, err = flags.GetBool(FlagWaitTiFlashReady)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagWaitTiFlashReady)
+	}
+
+	cfg.DBPrefix, err = flags.GetString("db-prefix")
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag db-prefix")
+	}
+
+	cfg.DuplicateDBCount, err = flags.GetUint("duplicate-db-count")
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag duplicate-db-count")
 	}
 
 	if flags.Lookup(flagFullBackupType) != nil {
@@ -672,17 +689,6 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 	defer mgr.Close()
-	codec := mgr.GetStorage().GetCodec()
-
-	mergeRegionSize := cfg.MergeSmallRegionSizeBytes
-	mergeRegionCount := cfg.MergeSmallRegionKeyCount
-	if mergeRegionSize == conn.DefaultMergeRegionSizeBytes &&
-		mergeRegionCount == conn.DefaultMergeRegionKeyCount {
-		// according to https://github.com/pingcap/tidb/issues/34167.
-		// we should get the real config from tikv to adapt the dynamic region.
-		httpCli := httputil.NewClient(mgr.GetTLSConfig())
-		mergeRegionSize, mergeRegionCount = mgr.GetMergeRegionSizeAndCount(ctx, httpCli)
-	}
 
 	keepaliveCfg.PermitWithoutStream = true
 	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetTLSConfig(), keepaliveCfg, false)
@@ -736,7 +742,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 
-	if client.IsIncremental() {
+	if client.IsIncremental() || cfg.DuplicateDBCount > 1 {
 		// don't support checkpoint for the ddl restore
 		log.Info("the incremental snapshot restore doesn't support checkpoint mode, so unuse checkpoint.")
 		cfg.UseCheckpoint = false
@@ -884,8 +890,46 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return nil
 	}
 
+	if cfg.DuplicateDBCount <= 1 || len(cfg.DBPrefix) == 0 {
+		if err := restoreDB(ctx, g, cmdName, client, mgr, newTS, backupMeta, dbs, tables, files, checkpointSetWithTableID, cfg); err != nil {
+			return errors.Trace(err)
+		}
+		schedulersRemovable = true
+		return nil
+	}
+
+	if cmdName != DBRestoreCmd || len(dbs) != 1 {
+		return errors.Errorf("use ./br restore db instead")
+	}
+	for prefix := uint(0); prefix < cfg.DuplicateDBCount; prefix += 1 {
+		dbName := fmt.Sprintf("%s_%d", cfg.DBPrefix, prefix)
+		dbs[0].Info.Name = model.NewCIStr(dbName)
+		for _, table := range tables {
+			table.DB.Name = model.NewCIStr(dbName)
+		}
+		if err = restoreDB(ctx, g, cmdName, client, mgr, newTS, backupMeta, dbs, tables, files, checkpointSetWithTableID, cfg); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	schedulersRemovable = true
+	return nil
+}
+
+func restoreDB(
+	ctx context.Context,
+	g glue.Glue, cmdName string,
+	client *restore.Client,
+	mgr *conn.Mgr,
+	newTS uint64,
+	backupMeta *backuppb.BackupMeta,
+	dbs []*utils.Database,
+	tables []*metautil.Table,
+	files []*backuppb.File,
+	checkpointSetWithTableID map[int64]map[string]struct{},
+	cfg *RestoreConfig,
+) error {
 	for _, db := range dbs {
-		err = client.CreateDatabase(ctx, db.Info)
+		err := client.CreateDatabase(ctx, db.Info)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -895,7 +939,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	errCh := make(chan error, 32)
 
 	tableStream := client.GoCreateTables(ctx, mgr.GetDomain(), tables, newTS, errCh)
-
+	codec := mgr.GetStorage().GetCodec()
 	if len(files) == 0 {
 		log.Info("no files, empty databases and tables are restored")
 		summary.SetSuccessStatus(true)
@@ -939,6 +983,15 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	tableFileMap := restore.MapTableToFiles(files)
 	log.Debug("mapped table to files", zap.Any("result map", tableFileMap))
 
+	mergeRegionSize := cfg.MergeSmallRegionSizeBytes
+	mergeRegionCount := cfg.MergeSmallRegionKeyCount
+	if mergeRegionSize == conn.DefaultMergeRegionSizeBytes &&
+		mergeRegionCount == conn.DefaultMergeRegionKeyCount {
+		// according to https://github.com/pingcap/tidb/issues/34167.
+		// we should get the real config from tikv to adapt the dynamic region.
+		httpCli := httputil.NewClient(mgr.GetTLSConfig())
+		mergeRegionSize, mergeRegionCount = mgr.GetMergeRegionSizeAndCount(ctx, httpCli)
+	}
 	rangeStream := restore.GoValidateFileRanges(
 		ctx, tableStream, tableFileMap, mergeRegionSize, mergeRegionCount, errCh)
 
@@ -949,7 +1002,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	// Do not reset timestamp if we are doing incremental restore, because
 	// we are not allowed to decrease timestamp.
 	if !client.IsIncremental() {
-		if err = client.ResetTS(ctx, mgr.PdController); err != nil {
+		if err := client.ResetTS(ctx, mgr.PdController); err != nil {
 			log.Error("reset pd TS failed", zap.Error(err))
 			return errors.Trace(err)
 		}
@@ -1042,8 +1095,6 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	schedulersRemovable = true
 
 	// Set task summary to success status.
 	summary.SetSuccessStatus(true)
