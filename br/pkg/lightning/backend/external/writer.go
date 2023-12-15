@@ -377,9 +377,7 @@ func (w *Writer) Close(ctx context.Context) error {
 		zap.String("writerID", w.writerID),
 		zap.Int("kv-cnt-cap", cap(w.kvLocations)),
 		zap.String("minKey", hex.EncodeToString(w.minKey)),
-		zap.String("maxKey", hex.EncodeToString(w.maxKey)),
-		zap.Binary("minKey", w.minKey),
-		zap.Binary("maxKey", w.maxKey))
+		zap.String("maxKey", hex.EncodeToString(w.maxKey)))
 
 	w.kvLocations = nil
 	w.onClose(&WriterSummary{
