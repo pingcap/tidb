@@ -15,7 +15,6 @@
 package bootstrap
 
 import (
-	"fmt"
 	"go/ast"
 	"go/token"
 	"strconv"
@@ -108,25 +107,30 @@ func run(pass *analysis.Pass) (interface{}, error) {
 							continue
 						}
 
+						if valInName < maxVerVariable {
+							pass.Reportf(spec.Pos(), "version variable %q is not valid, we should have a increment list of version variables", name)
+							continue
+						}
+
+						maxVerVariable = valInName
+						maxVerVariablePos = v2.Names[0].Pos()
+
 						if len(v2.Values) != 1 {
-							panic(fmt.Sprintf("bootstrap.go: the value of version variable '%s' must be specified explicitly", name))
+							pass.Reportf(spec.Pos(), "the value of version variable %q must be specified explicitly", name)
+							continue
 						}
 
 						valStr := v2.Values[0].(*ast.BasicLit).Value
 						val, err := strconv.Atoi(valStr)
 						if err != nil {
-							panic(fmt.Sprintf("bootstrap.go: unexpected value of version variable '%s': '%s'", name, valStr))
+							pass.Reportf(spec.Pos(), "unexpected value of version variable %q: %q", name, valStr)
+							continue
 						}
 
 						if val != valInName {
-							panic(fmt.Sprintf("bootstrap.go: the value of version variable '%s' must be '%d'", name, valInName))
+							pass.Reportf(spec.Pos(), "the value of version variable %q must be '%d', but now is '%d'", name, valInName, val)
+							continue
 						}
-
-						if val <= maxVerVariable {
-							panic(fmt.Sprintf("bootstrap.go: '%s' is not valid, we should have a increment list of version variables", name))
-						}
-						maxVerVariable = val
-						maxVerVariablePos = v2.Names[0].Pos()
 					}
 				}
 			case *ast.FuncDecl:
