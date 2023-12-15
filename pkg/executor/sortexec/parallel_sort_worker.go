@@ -46,10 +46,11 @@ type parallelSortWorker struct {
 	memTracker *memory.Tracker
 
 	// Temporarily store rows that will be sorted.
-	rowBuffer []chunk.Row
+	rowBuffer sortedRows
 }
 
 func newParallelSortWorker(
+	lessRowFunc func(chunk.Row, chunk.Row) bool,
 	publicSpace *publicMergeSpace,
 	waitGroup *sync.WaitGroup,
 	result *sortedRows,
@@ -58,6 +59,7 @@ func newParallelSortWorker(
 	processError func(error),
 	memTracker *memory.Tracker) *parallelSortWorker {
 	return &parallelSortWorker{
+		lessRowFunc:       lessRowFunc,
 		publicSpace:       publicSpace,
 		waitGroup:         waitGroup,
 		result:            result,
@@ -91,7 +93,7 @@ func (p *parallelSortWorker) fetchFromMPMCQueueAndSort() bool {
 		p.totalMemoryUsage += chk.MemoryUsage
 
 		sortedRows := p.sortChunkAndGetSortedRows(chk.Chk)
-		p.sortedRowsQueue.PushBack(sortedRows)
+		pushIntoList(&p.sortedRowsQueue, sortedRows)
 	}
 }
 
@@ -112,14 +114,14 @@ func (p *parallelSortWorker) keyColumnsLess(i, j int) bool {
 	return p.lessRowFunc(p.rowBuffer[i], p.rowBuffer[j])
 }
 
-func (p *parallelSortWorker) sortChunkAndGetSortedRows(chk *chunk.Chunk) []chunk.Row {
+func (p *parallelSortWorker) sortChunkAndGetSortedRows(chk *chunk.Chunk) sortedRows {
 	rowNum := chk.NumRows()
-	p.rowBuffer = make([]chunk.Row, rowNum)
+	p.rowBuffer = make(sortedRows, rowNum)
 	for i := 0; i < rowNum; i++ {
 		p.rowBuffer[i] = chk.GetRow(i)
 	}
 	sort.Slice(p.rowBuffer, p.keyColumnsLess)
-	return nil
+	return p.rowBuffer
 }
 
 // Sort data that received by itself. At last, length of sortedRowsQueue should not be greater than 1.
@@ -134,7 +136,7 @@ func (p *parallelSortWorker) mergeSortLocalData() bool {
 		sortedRows1 := popFromList(&p.sortedRowsQueue)
 		sortedRows2 := popFromList(&p.sortedRowsQueue)
 		mergedSortedRows := p.mergeTwoSortedRows(sortedRows1, sortedRows2)
-		p.sortedRowsQueue.PushBack(mergedSortedRows)
+		pushIntoList(&p.sortedRowsQueue, mergedSortedRows)
 	}
 	return true
 }
@@ -155,7 +157,7 @@ func (p *parallelSortWorker) mergeSortPublicData() {
 		}
 
 		mergedSortedRows := p.mergeTwoSortedRows(localSortedRows, fetchedSortedRows)
-		p.sortedRowsQueue.PushBack(mergedSortedRows)
+		pushIntoList(&p.sortedRowsQueue, mergedSortedRows)
 	}
 }
 

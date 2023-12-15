@@ -74,6 +74,7 @@ type SortExec struct {
 		rowNum int64
 		idx    int64
 
+		// Queue should only be closed by `fetchChunksFromChild` function.
 		mpmcQueue *chunk.MPMCQueue
 		workers   []*parallelSortWorker
 
@@ -152,6 +153,9 @@ func (e *SortExec) Close() error {
 		e.Parallel.result = nil
 		e.Parallel.mpmcQueue = nil
 		e.Parallel.workers = nil
+		if e.Parallel.err != nil {
+			return e.Parallel.err
+		}
 	}
 	e.memTracker.Consume(-e.memTracker.BytesConsumed())
 	e.memTracker = nil
@@ -444,7 +448,7 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 
 	// Create workers
 	for i := range e.Parallel.workers {
-		e.Parallel.workers[i] = newParallelSortWorker(&publicSpace, &waitGroup, &e.Parallel.result, e.Parallel.mpmcQueue, e.checkErrorForParallel, e.processErrorForParallel, e.memTracker)
+		e.Parallel.workers[i] = newParallelSortWorker(e.lessRow, &publicSpace, &waitGroup, &e.Parallel.result, e.Parallel.mpmcQueue, e.checkErrorForParallel, e.processErrorForParallel, e.memTracker)
 	}
 
 	// Run workers
@@ -454,9 +458,9 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 
 	// Wait for the finish of all goroutines
 	waitGroup.Wait()
-
 	e.getResult(&publicSpace)
-	return nil
+	err := e.checkErrorForParallel()
+	return err
 }
 
 func (e *SortExec) fetchChunksFromChild(ctx context.Context, mpmcQueue *chunk.MPMCQueue, waitGroup *sync.WaitGroup) {
@@ -477,6 +481,11 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context, mpmcQueue *chunk.MP
 
 		rowCount := chk.NumRows()
 		if rowCount == 0 {
+			status := mpmcQueue.GetStatus()
+			// Queue may have been canceled at other place.
+			if status == chunk.StatusOpen {
+				mpmcQueue.Close()
+			}
 			break
 		}
 
@@ -485,13 +494,13 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context, mpmcQueue *chunk.MP
 			MemoryUsage: chk.MemoryUsage() + chunk.RowSize*int64(rowCount),
 		}
 
-		e.memTracker.Consume(chkWithMemoryUsage.MemoryUsage)
-
 		// Push chunk into mpmcQueue.
 		res := e.Parallel.mpmcQueue.Push(chkWithMemoryUsage)
 		if res != chunk.OK {
 			return
 		}
+
+		e.memTracker.Consume(chkWithMemoryUsage.MemoryUsage)
 
 		err = e.checkErrorForParallel()
 		if err != nil {
@@ -510,7 +519,7 @@ func (e *SortExec) processErrorForParallel(err error) {
 	e.Parallel.errRWLock.Lock()
 	defer e.Parallel.errRWLock.Unlock()
 	e.Parallel.err = err
-	e.Parallel.mpmcQueue.Close()
+	e.Parallel.mpmcQueue.Cancel()
 }
 
 func (e *SortExec) getResult(publicSpace *publicMergeSpace) {

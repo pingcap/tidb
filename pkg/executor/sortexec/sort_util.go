@@ -25,12 +25,8 @@ import (
 )
 
 type publicMergeSpace struct {
-	lock        *sync.Mutex
+	lock        sync.Mutex
 	publicQueue list.List // Type is sortedRows
-}
-
-func (p *publicMergeSpace) length() int {
-	return p.publicQueue.Len()
 }
 
 // If there is sortedRows in the queue, fetch them, or we should put the rows into queue.
@@ -39,7 +35,8 @@ func (p *publicMergeSpace) fetchOrPutSortedRows(rows sortedRows) sortedRows {
 	defer p.lock.Unlock()
 
 	if p.publicQueue.Len() > 0 {
-		return popFromList(&p.publicQueue)
+		r := popFromList(&p.publicQueue)
+		return r
 	} else {
 		p.publicQueue.PushBack(rows)
 		return nil
@@ -47,10 +44,8 @@ func (p *publicMergeSpace) fetchOrPutSortedRows(rows sortedRows) sortedRows {
 }
 
 type partitionPointer struct {
-	chk         *chunk.Chunk
 	row         chunk.Row
 	partitionID int
-	consumed    int
 }
 
 type multiWayMerge struct {
@@ -91,7 +86,15 @@ func processErrorAndLog(processError func(error), r interface{}) {
 // The type of Element.Value should always be `sortedRows`.
 func popFromList(l *list.List) sortedRows {
 	elem := l.Front()
+	if elem == nil {
+		return nil
+	}
 	res, _ := elem.Value.(sortedRows) // Should always success
 	l.Remove(elem)
 	return res
+}
+
+// Ensure the pushed data type is `sortedRows`.
+func pushIntoList(l *list.List, rows sortedRows) {
+	l.PushBack(rows)
 }
