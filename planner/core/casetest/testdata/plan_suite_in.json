@@ -1332,5 +1332,14 @@
       "select * from tcommon where (a = 1 and c = 2) or (b = 1) order by c limit 2",
       "select * from thash use index(idx_ac, idx_bc) where a = 1 or b = 1 order by c limit 2"
     ]
+  },
+  {
+    "name": "TestIssues49377Plan",
+    "cases": [
+      "select 1,1,1 union all ((select * from employee where dept_id = 1)  union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 );",
+      "select 1,1,1 union all ((select * from employee where dept_id = 1)  union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 limit 1);",
+      "select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id) union all ( select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id ) limit 1);",
+      "select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id) union all ( select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 limit 1);"
+    ]
   }
 ]
