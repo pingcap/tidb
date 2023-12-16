@@ -650,18 +650,10 @@ type storeWriteLimiter struct {
 }
 
 func newStoreWriteLimiter(limit int) *storeWriteLimiter {
-	var burst int
-	// Allow burst of at most 20% of the limit.
-	if limit <= math.MaxInt-limit/5 {
-		burst = limit + limit/5
-	} else {
-		// If overflowed, set burst to math.MaxInt.
-		burst = math.MaxInt
-	}
 	return &storeWriteLimiter{
 		limiters: make(map[uint64]*rate.Limiter),
 		limit:    limit,
-		burst:    burst,
+		burst:    limit,
 	}
 }
 
