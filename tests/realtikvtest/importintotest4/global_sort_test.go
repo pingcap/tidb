@@ -25,7 +25,7 @@ import (
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -61,7 +61,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	s.tk.MustExec(`create table t (a bigint primary key, b varchar(100), c varchar(100), d int,
 		key(a), key(c,d), key(d));`)
 	s.enableFailpoint("github.com/pingcap/tidb/pkg/parser/ast/forceRedactURL", "return(true)")
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/WaitCleanUpFinished", "return()")
+	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", "return()")
 
 	sortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s'
@@ -76,7 +76,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	))
 
 	// check all sorted data cleaned up
-	<-dispatcher.WaitCleanUpFinished
+	<-scheduler.WaitCleanUpFinished
 
 	_, files, err := s.server.ListObjectsWithOptions("sorted", fakestorage.ListOptions{Prefix: "import"})
 	s.NoError(err)
@@ -87,13 +87,13 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	redactedSortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=xxxxxx&secret-access-key=xxxxxx", gcsEndpoint)
 	urlEqual(s.T(), redactedSortStorageURI, jobInfo.Parameters.Options["cloud_storage_uri"].(string))
 	s.Equal(uint64(6), jobInfo.Summary.ImportedRows)
-	globalTaskManager, err := storage.GetTaskManager()
+	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
 	taskKey := importinto.TaskKey(int64(jobID))
-	globalTask, err2 := globalTaskManager.GetGlobalTaskByKeyWithHistory(ctx, taskKey)
+	task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 	s.NoError(err2)
 	taskMeta := importinto.TaskMeta{}
-	s.NoError(json.Unmarshal(globalTask.Meta, &taskMeta))
+	s.NoError(json.Unmarshal(task.Meta, &taskMeta))
 	urlEqual(s.T(), redactedSortStorageURI, taskMeta.Plan.CloudStorageURI)
 
 	// merge-sort data kv
@@ -105,7 +105,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 		"1 foo1 bar1 123", "2 foo2 bar2 456", "3 foo3 bar3 789",
 		"4 foo4 bar4 123", "5 foo5 bar5 223", "6 foo6 bar6 323",
 	))
-	<-dispatcher.WaitCleanUpFinished
+	<-scheduler.WaitCleanUpFinished
 
 	// failed task, should clean up all sorted data too.
 	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/failWhenDispatchWriteIngestSubtask", "return(true)")
@@ -115,12 +115,12 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	jobID, err = strconv.Atoi(result[0][0].(string))
 	s.NoError(err)
 	s.Eventually(func() bool {
-		globalTask, err2 = globalTaskManager.GetGlobalTaskByKeyWithHistory(ctx, importinto.TaskKey(int64(jobID)))
+		task, err2 = taskManager.GetTaskByKeyWithHistory(ctx, importinto.TaskKey(int64(jobID)))
 		s.NoError(err2)
-		return globalTask.State == "failed"
+		return task.State == "failed"
 	}, 30*time.Second, 300*time.Millisecond)
 	// check all sorted data cleaned up
-	<-dispatcher.WaitCleanUpFinished
+	<-scheduler.WaitCleanUpFinished
 
 	_, files, err = s.server.ListObjectsWithOptions("sorted", fakestorage.ListOptions{Prefix: "import"})
 	s.NoError(err)

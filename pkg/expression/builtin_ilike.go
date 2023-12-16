@@ -70,7 +70,7 @@ func (b *builtinIlikeSig) Clone() builtinFunc {
 }
 
 // evalInt evals a builtinIlikeSig.
-func (b *builtinIlikeSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinIlikeSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	valStr, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -102,7 +102,7 @@ func (b *builtinIlikeSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64,
 	memorization := func() {
 		if b.pattern == nil {
 			b.pattern = collate.ConvertAndGetBinCollation(b.collation).Pattern()
-			if b.args[1].ConstItem(ctx.GetSessionVars().StmtCtx) && b.args[2].ConstItem(ctx.GetSessionVars().StmtCtx) {
+			if b.args[1].ConstItem(ctx.GetSessionVars().StmtCtx.UseCache) && b.args[2].ConstItem(ctx.GetSessionVars().StmtCtx.UseCache) {
 				b.pattern.Compile(patternStr, byte(escape))
 				b.isMemorizedPattern = true
 			}

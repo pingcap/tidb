@@ -550,6 +550,11 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	// json_depth
+	function, err = NewFunction(mock.NewContext(), ast.JSONDepth, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	// lpad
 	function, err = NewFunction(mock.NewContext(), ast.Lpad, types.NewFieldType(mysql.TypeString), stringColumn, int32Column, stringColumn)
 	require.NoError(t, err)
@@ -992,10 +997,6 @@ func TestExprPushDownToFlash(t *testing.T) {
 
 	// Substring3Args: can not be pushed
 	function, err = NewFunction(mock.NewContext(), ast.Substr, types.NewFieldType(mysql.TypeString), binaryStringColumn, intColumn, intColumn)
-	require.NoError(t, err)
-	exprs = append(exprs, function)
-
-	function, err = NewFunction(mock.NewContext(), ast.JSONDepth, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
@@ -1568,6 +1569,16 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			functionName: ast.Mod,
 			retType:      types.NewFieldType(mysql.TypeInt24),
 			args:         []Expression{intColumn, intColumn},
+		},
+		{
+			functionName: ast.Upper,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn},
+		},
+		{
+			functionName: ast.Lower,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn},
 		},
 	}
 

@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/pkg/config"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -611,7 +610,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 
 	for _, index := range tbInfo.Indices {
 		if index.Unique && !checkUniqueKeyIncludePartKey(partCols, index.Columns) {
-			index.Global = config.GetGlobalConfig().EnableGlobalIndex
+			index.Global = ctx.GetSessionVars().EnableGlobalIndex
 		}
 	}
 	return nil
@@ -2595,6 +2594,9 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	// exchange table meta id
 	pt.ExchangePartitionInfo = nil
+	// Used below to update the partitioned table's stats meta.
+	originalPartitionDef := partDef.Clone()
+	originalNt := nt.Clone()
 	partDef.ID, nt.ID = nt.ID, partDef.ID
 
 	err = t.UpdateTable(ptSchemaID, pt)
@@ -2698,6 +2700,12 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 
 	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, pt)
+	exchangePartitionEvent := statsutil.NewExchangePartitionEvent(
+		pt,
+		&model.PartitionInfo{Definitions: []model.PartitionDefinition{originalPartitionDef}},
+		originalNt,
+	)
+	asyncNotifyEvent(d, exchangePartitionEvent)
 	return ver, nil
 }
 
@@ -3808,11 +3816,11 @@ func checkPartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTabl
 				if tblInfo.IsCommonHandle {
 					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("CLUSTERED INDEX")
 				}
-				if !config.GetGlobalConfig().EnableGlobalIndex {
+				if !sctx.GetSessionVars().EnableGlobalIndex {
 					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
 				}
 			}
-			if !config.GetGlobalConfig().EnableGlobalIndex {
+			if !sctx.GetSessionVars().EnableGlobalIndex {
 				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
 			}
 		}

@@ -1203,6 +1203,9 @@ type SessionVars struct {
 	// EnableClusteredIndex indicates whether to enable clustered index when creating a new table.
 	EnableClusteredIndex ClusteredIndexDefMode
 
+	// EnableGlobalIndex indicates whether we could create an global index on a partition table or not.
+	EnableGlobalIndex bool
+
 	// PresumeKeyNotExists indicates lazy existence checking is enabled.
 	PresumeKeyNotExists bool
 
@@ -2034,6 +2037,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		hashJoinConcurrency:               DefTiDBHashJoinConcurrency,
 		projectionConcurrency:             DefTiDBProjectionConcurrency,
 		distSQLScanConcurrency:            DefDistSQLScanConcurrency,
+		analyzeDistSQLScanConcurrency:     DefAnalyzeDistSQLScanConcurrency,
 		hashAggPartialConcurrency:         DefTiDBHashAggPartialConcurrency,
 		hashAggFinalConcurrency:           DefTiDBHashAggFinalConcurrency,
 		windowConcurrency:                 DefTiDBWindowConcurrency,
@@ -2737,6 +2741,9 @@ type Concurrency struct {
 	// distSQLScanConcurrency is the number of concurrent dist SQL scan worker.
 	distSQLScanConcurrency int
 
+	// analyzeDistSQLScanConcurrency is the number of concurrent dist SQL scan worker when to analyze.
+	analyzeDistSQLScanConcurrency int
+
 	// hashJoinConcurrency is the number of concurrent hash join outer worker.
 	// hashJoinConcurrency is deprecated, use ExecutorConcurrency instead.
 	hashJoinConcurrency int
@@ -2776,6 +2783,9 @@ type Concurrency struct {
 
 	// SourceAddr is the source address of request. Available in coprocessor ONLY.
 	SourceAddr net.TCPAddr
+
+	// IdleTransactionTimeout indicates the maximum time duration a transaction could be idle, unit is second.
+	IdleTransactionTimeout int
 }
 
 // SetIndexLookupConcurrency set the number of concurrent index lookup worker.
@@ -2791,6 +2801,11 @@ func (c *Concurrency) SetIndexLookupJoinConcurrency(n int) {
 // SetDistSQLScanConcurrency set the number of concurrent dist SQL scan worker.
 func (c *Concurrency) SetDistSQLScanConcurrency(n int) {
 	c.distSQLScanConcurrency = n
+}
+
+// SetAnalyzeDistSQLScanConcurrency set the number of concurrent dist SQL scan worker when to analyze.
+func (c *Concurrency) SetAnalyzeDistSQLScanConcurrency(n int) {
+	c.analyzeDistSQLScanConcurrency = n
 }
 
 // SetHashJoinConcurrency set the number of concurrent hash join outer worker.
@@ -2857,6 +2872,11 @@ func (c *Concurrency) IndexLookupJoinConcurrency() int {
 // DistSQLScanConcurrency return the number of concurrent dist SQL scan worker.
 func (c *Concurrency) DistSQLScanConcurrency() int {
 	return c.distSQLScanConcurrency
+}
+
+// AnalyzeDistSQLScanConcurrency return the number of concurrent dist SQL scan worker when to analyze.
+func (c *Concurrency) AnalyzeDistSQLScanConcurrency() int {
+	return c.analyzeDistSQLScanConcurrency
 }
 
 // HashJoinConcurrency return the number of concurrent hash join outer worker.
@@ -3093,6 +3113,14 @@ const (
 	SlowLogIsWriteCacheTable = "IsWriteCacheTable"
 	// SlowLogIsSyncStatsFailed is used to indicate whether any failure happen during sync stats
 	SlowLogIsSyncStatsFailed = "IsSyncStatsFailed"
+	// SlowLogResourceGroup is the resource group name that the current session bind.
+	SlowLogResourceGroup = "Resource_group"
+	// SlowLogRRU is the read request_unit(RU) cost
+	SlowLogRRU = "Request_unit_read"
+	// SlowLogWRU is the write request_unit(RU) cost
+	SlowLogWRU = "Request_unit_write"
+	// SlowLogWaitRUDuration is the total duration for kv requests to wait available request-units.
+	SlowLogWaitRUDuration = "Time_queued_by_rc"
 )
 
 // GenerateBinaryPlan decides whether we should record binary plan in slow log and stmt summary.
@@ -3148,6 +3176,10 @@ type SlowQueryLogItems struct {
 	UsedStats         map[int64]*stmtctx.UsedStatsInfoForTable
 	IsSyncStatsFailed bool
 	Warnings          []JSONSQLWarnForSlowLog
+	ResourceGroupName string
+	RRU               float64
+	WRU               float64
+	WaitRUDuration    time.Duration
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -3345,6 +3377,20 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if len(logItems.BinaryPlan) != 0 {
 		writeSlowLogItem(&buf, SlowLogBinaryPlan, logItems.BinaryPlan)
 	}
+
+	if logItems.ResourceGroupName != "" {
+		writeSlowLogItem(&buf, SlowLogResourceGroup, logItems.ResourceGroupName)
+	}
+	if logItems.RRU > 0.0 {
+		writeSlowLogItem(&buf, SlowLogRRU, strconv.FormatFloat(logItems.RRU, 'f', -1, 64))
+	}
+	if logItems.WRU > 0.0 {
+		writeSlowLogItem(&buf, SlowLogWRU, strconv.FormatFloat(logItems.WRU, 'f', -1, 64))
+	}
+	if logItems.WaitRUDuration > time.Duration(0) {
+		writeSlowLogItem(&buf, SlowLogWaitRUDuration, strconv.FormatFloat(logItems.WaitRUDuration.Seconds(), 'f', -1, 64))
+	}
+
 	if logItems.PrevStmt != "" {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
 	}

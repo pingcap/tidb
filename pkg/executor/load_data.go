@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/executor/asyncloaddata"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -44,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -774,33 +772,4 @@ type loadDataVarKeyType int
 // String defines a Stringer function for debugging and pretty printing.
 func (loadDataVarKeyType) String() string {
 	return "load_data_var"
-}
-
-var (
-	_ exec.Executor = (*LoadDataActionExec)(nil)
-)
-
-// LoadDataActionExec executes LoadDataActionStmt.
-// TODO: LoadDataActionExec and its corresponding syntax is not in use and should be deleted.
-type LoadDataActionExec struct {
-	exec.BaseExecutor
-
-	tp    ast.LoadDataActionTp
-	jobID int64
-}
-
-// Next implements the Executor Next interface.
-func (e *LoadDataActionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
-	sqlExec := e.Ctx().(sqlexec.SQLExecutor)
-	user := e.Ctx().GetSessionVars().User.String()
-	job := asyncloaddata.NewJob(e.jobID, sqlExec, user)
-
-	switch e.tp {
-	case ast.LoadDataCancel:
-		return job.CancelJob(ctx)
-	case ast.LoadDataDrop:
-		return job.DropJob(ctx)
-	default:
-		return errors.Errorf("not implemented LOAD DATA action %v", e.tp)
-	}
 }

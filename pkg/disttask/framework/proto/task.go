@@ -21,24 +21,22 @@ import (
 
 // task state machine
 //
-//		                ┌──────────────────────────────┐
-//		                │           ┌───────┐       ┌──┴───┐
-//		                │ ┌────────►│pausing├──────►│paused│
-//		                │ │         └───────┘       └──────┘
-//		                ▼ │
-//		┌───────┐     ┌───┴───┐     ┌────────┐
+//		                            ┌────────┐
+//		                ┌───────────│resuming│◄────────┐
+//		                │           └────────┘         │
+//		┌──────┐        │           ┌───────┐       ┌──┴───┐
+//		│failed│        │ ┌────────►│pausing├──────►│paused│
+//		└──────┘        │ │         └───────┘       └──────┘
+//		   ▲            ▼ │
+//		┌──┴────┐     ┌───┴───┐     ┌────────┐
 //		│pending├────►│running├────►│succeed │
-//		└──┬────┘     └───┬───┘     └────────┘
-//		   ▼              │         ┌──────────┐
-//		┌──────┐          ├────────►│cancelling│
-//		│failed│          │         └────┬─────┘
-//		└──────┘          │              ▼
-//		                  │         ┌─────────┐     ┌────────┐
-//		                  └────────►│reverting├────►│reverted│
-//		                            └────┬────┘     └────────┘
-//		                                 │          ┌─────────────┐
-//		                                 └─────────►│revert_failed│
-//		                                            └─────────────┘
+//		└──┬────┘     └──┬┬───┘     └────────┘
+//		   │             ││         ┌─────────┐     ┌────────┐
+//		   │             │└────────►│reverting├────►│reverted│
+//		   │             ▼          └────┬────┘     └────────┘
+//		   │          ┌──────────┐    ▲  │          ┌─────────────┐
+//		   └─────────►│cancelling├────┘  └─────────►│revert_failed│
+//		              └──────────┘                  └─────────────┘
 //	 1. succeed:		pending -> running -> succeed
 //	 2. failed:			pending -> running -> reverting -> reverted/revert_failed, pending -> failed
 //	 3. canceled:		pending -> running -> cancelling -> reverting -> reverted/revert_failed
@@ -118,19 +116,37 @@ const (
 	StepThree Step = 3
 )
 
-// TaskIDLabelName is the label name of task id.
-const TaskIDLabelName = "task_id"
+const (
+	// TaskIDLabelName is the label name of task id.
+	TaskIDLabelName = "task_id"
+	// NormalPriority represents the normal priority of task.
+	NormalPriority = 512
+)
+
+// MaxConcurrentTask is the max concurrency of task.
+// TODO: remove this limit later.
+var MaxConcurrentTask = 4
 
 // Task represents the task of distributed framework.
+// tasks are run in the order of: priority asc, create_time asc, id asc.
 type Task struct {
 	ID    int64
 	Key   string
 	Type  TaskType
 	State TaskState
 	Step  Step
-	// DispatcherID is not used now.
-	DispatcherID    string
-	Concurrency     uint64
+	// Priority is the priority of task, the smaller value means the higher priority.
+	// valid range is [1, 1024], default is NormalPriority.
+	Priority int
+	// Concurrency controls the max resource usage of the task, i.e. the max number
+	// of slots the task can use on each node.
+	Concurrency int
+	CreateTime  time.Time
+
+	// depends on query, below fields might not be filled.
+
+	// SchedulerID is not used now.
+	SchedulerID     string
 	StartTime       time.Time
 	StateUpdateTime time.Time
 	Meta            []byte
@@ -143,8 +159,27 @@ func (t *Task) IsDone() bool {
 		t.State == TaskStateFailed
 }
 
+var (
+	// EmptyMeta is the empty meta of subtask.
+	EmptyMeta = []byte("{}")
+)
+
+// Compare compares two tasks by task order.
+func (t *Task) Compare(other *Task) int {
+	if t.Priority != other.Priority {
+		return t.Priority - other.Priority
+	}
+	if t.CreateTime != other.CreateTime {
+		if t.CreateTime.Before(other.CreateTime) {
+			return -1
+		}
+		return 1
+	}
+	return int(t.ID - other.ID)
+}
+
 // Subtask represents the subtask of distribute framework.
-// Each task is divided into multiple subtasks by dispatcher.
+// Each task is divided into multiple subtasks by scheduler.
 type Subtask struct {
 	ID   int64
 	Step Step
@@ -152,9 +187,14 @@ type Subtask struct {
 	// taken from task_key of the subtask table
 	TaskID int64
 	State  TaskState
-	// SchedulerID is the ID of scheduler, right now it's the same as instance_id, exec_id.
+	// Concurrency is the concurrency of the subtask, should <= task's concurrency.
+	// some subtasks like post-process of import into, don't consume too many resources,
+	// can lower this value.
+	Concurrency int
+	// ExecID is the ID of target executor, right now it's the same as instance_id,
 	// its value is IP:PORT, see GenerateExecID
-	SchedulerID string
+	ExecID     string
+	CreateTime time.Time
 	// StartTime is the time when the subtask is started.
 	// it's 0 if it hasn't started yet.
 	StartTime time.Time
@@ -162,8 +202,18 @@ type Subtask struct {
 	// it can be used as subtask end time if the subtask is finished.
 	// it's 0 if it hasn't started yet.
 	UpdateTime time.Time
-	Meta       []byte
-	Summary    string
+	// Meta is the metadata of subtask, should not be nil.
+	// meta of different subtasks of same step must be different too.
+	Meta    []byte
+	Summary string
+	// Ordinal is the ordinal of subtask, should be unique for some task and step.
+	// starts from 1, for reverting subtask, it's NULL in database.
+	Ordinal int
+}
+
+func (t *Subtask) String() string {
+	return fmt.Sprintf("Subtask[ID=%d, Step=%d, Type=%s, TaskID=%d, State=%s, ExecID=%s]",
+		t.ID, t.Step, t.Type, t.TaskID, t.State, t.ExecID)
 }
 
 // IsFinished checks if the subtask is finished.
@@ -173,18 +223,21 @@ func (t *Subtask) IsFinished() bool {
 }
 
 // NewSubtask create a new subtask.
-func NewSubtask(step Step, taskID int64, tp TaskType, schedulerID string, meta []byte) *Subtask {
-	return &Subtask{
+func NewSubtask(step Step, taskID int64, tp TaskType, execID string, concurrency int, meta []byte, ordinal int) *Subtask {
+	s := &Subtask{
 		Step:        step,
 		Type:        tp,
 		TaskID:      taskID,
-		SchedulerID: schedulerID,
+		ExecID:      execID,
+		Concurrency: concurrency,
 		Meta:        meta,
+		Ordinal:     ordinal,
 	}
+	return s
 }
 
 // MinimalTask is the minimal task of distribute framework.
-// Each subtask is divided into multiple minimal tasks by scheduler.
+// Each subtask is divided into multiple minimal tasks by TaskExecutor.
 type MinimalTask interface {
 	// IsMinimalTask is a marker to check if it is a minimal task for compiler.
 	IsMinimalTask()

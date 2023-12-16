@@ -21,9 +21,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -552,48 +550,4 @@ func TestPessimisticDeleteYourWrites(t *testing.T) {
 	wg.Wait()
 	session2.MustExec("commit;")
 	session2.MustQuery("select * from x").Check(testkit.Rows("1 2"))
-}
-
-func TestListColumnsPartitionWithGlobalIndex(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
-	// Test generated column with global index
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-	tableDefs := []string{
-		// Test for virtual generated column with global index
-		`create table t (a varchar(10), b varchar(1) GENERATED ALWAYS AS (substr(a,1,1)) VIRTUAL) partition by list columns(b) (partition p0 values in ('a','c'), partition p1 values in ('b','d'));`,
-		// Test for stored generated column with global index
-		`create table t (a varchar(10), b varchar(1) GENERATED ALWAYS AS (substr(a,1,1)) STORED) partition by list columns(b) (partition p0 values in ('a','c'), partition p1 values in ('b','d'));`,
-	}
-	for _, tbl := range tableDefs {
-		tk.MustExec("drop table if exists t")
-		tk.MustExec(tbl)
-		tk.MustExec("alter table t add unique index (a)")
-		tk.MustExec("insert into t (a) values  ('aaa'),('abc'),('acd')")
-		tk.MustQuery("select a from t partition (p0) order by a").Check(testkit.Rows("aaa", "abc", "acd"))
-		tk.MustQuery("select * from t where a = 'abc' order by a").Check(testkit.Rows("abc a"))
-		tk.MustExec("update t set a='bbb' where a = 'aaa'")
-		tk.MustExec("admin check table t")
-		tk.MustQuery("select a from t order by a").Check(testkit.Rows("abc", "acd", "bbb"))
-		tk.MustQuery("select a from t partition (p0) order by a").Check(testkit.Rows("abc", "acd"))
-		tk.MustQuery("select a from t partition (p1) order by a").Check(testkit.Rows("bbb"))
-		tk.MustQuery("select * from t where a = 'bbb' order by a").Check(testkit.Rows("bbb b"))
-		// Test insert meet duplicate error.
-		err := tk.ExecToErr("insert into t (a) values  ('abc')")
-		require.Error(t, err)
-		// Test insert on duplicate update
-		tk.MustExec("insert into t (a) values ('abc') on duplicate key update a='bbc'")
-		tk.MustQuery("select a from t order by a").Check(testkit.Rows("acd", "bbb", "bbc"))
-		tk.MustQuery("select * from t where a = 'bbc'").Check(testkit.Rows("bbc b"))
-		tk.MustQuery("select a from t partition (p0) order by a").Check(testkit.Rows("acd"))
-		tk.MustQuery("select a from t partition (p1) order by a").Check(testkit.Rows("bbb", "bbc"))
-	}
 }

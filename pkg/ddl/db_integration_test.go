@@ -2314,10 +2314,7 @@ func TestDuplicateErrorMessage(t *testing.T) {
 	for _, newCollate := range []bool{false, true} {
 		collate.SetNewCollationEnabledForTest(newCollate)
 		for _, globalIndex := range []bool{false, true} {
-			restoreConfig := config.RestoreFunc()
-			config.UpdateGlobal(func(conf *config.Config) {
-				conf.EnableGlobalIndex = globalIndex
-			})
+			tk.MustExec(fmt.Sprintf("set tidb_enable_global_index=%t", globalIndex))
 			for _, clusteredIndex := range []variable.ClusteredIndexDefMode{variable.ClusteredIndexDefModeOn, variable.ClusteredIndexDefModeOff, variable.ClusteredIndexDefModeIntOnly} {
 				tk.Session().GetSessionVars().EnableClusteredIndex = clusteredIndex
 				for _, t := range tests {
@@ -2344,7 +2341,7 @@ func TestDuplicateErrorMessage(t *testing.T) {
 						fmt.Sprintf("[kv:1062]Duplicate entry '1-%s' for key 't.t_idx'", strings.Join(fields, "-")))
 				}
 			}
-			restoreConfig()
+			tk.MustExec("set tidb_enable_global_index=default")
 		}
 	}
 }
@@ -2957,4 +2954,10 @@ func TestDefaultCollationForUTF8MB4(t *testing.T) {
 	tk.MustExec("ALTER DATABASE dby CHARACTER SET = 'utf8mb4'")
 	tk.MustQuery("show create database dby").Check(testkit.Rows(
 		"dby CREATE DATABASE `dby` /*!40100 DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci */"))
+}
+
+func TestOptimizeTable(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+	tk := testkit.NewTestKit(t, store)
+	tk.MustGetErrMsg("optimize table t", "[ddl:8200]OPTIMIZE TABLE is not supported")
 }

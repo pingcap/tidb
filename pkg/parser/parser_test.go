@@ -5476,6 +5476,13 @@ func TestBinding(t *testing.T) {
 		{"create session binding for select 1 union select 2 intersect select 3 using select 1 union select 2 intersect select 3", true, "CREATE SESSION BINDING FOR SELECT 1 UNION SELECT 2 INTERSECT SELECT 3 USING SELECT 1 UNION SELECT 2 INTERSECT SELECT 3"},
 		{"drop session binding for select 1 union select 2 intersect select 3 using select 1 union select 2 intersect select 3", true, "DROP SESSION BINDING FOR SELECT 1 UNION SELECT 2 INTERSECT SELECT 3 USING SELECT 1 UNION SELECT 2 INTERSECT SELECT 3"},
 		{"drop session binding for select 1 union select 2 intersect select 3", true, "DROP SESSION BINDING FOR SELECT 1 UNION SELECT 2 INTERSECT SELECT 3"},
+		// Universal bindings
+		{"create global universal binding for select * from t using select * from t", true, "CREATE GLOBAL UNIVERSAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t`"},
+		{"create session universal binding for select * from t using select * from t", true, "CREATE SESSION UNIVERSAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t`"},
+		{"create universal binding for select * from t using select * from t", true, "CREATE SESSION UNIVERSAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t`"},
+		{"create global universal binding using select * from t", true, "CREATE GLOBAL UNIVERSAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t`"},
+		{"create session universal binding using select * from t", true, "CREATE SESSION UNIVERSAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t`"},
+		{"create universal binding using select * from t", true, "CREATE SESSION UNIVERSAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t`"},
 		// Update cases.
 		{"CREATE GLOBAL BINDING FOR UPDATE `t` SET `a`=1 WHERE `b`=1 USING UPDATE /*+ USE_INDEX(`t` `b`)*/ `t` SET `a`=1 WHERE `b`=1", true, "CREATE GLOBAL BINDING FOR UPDATE `t` SET `a`=1 WHERE `b`=1 USING UPDATE /*+ USE_INDEX(`t` `b`)*/ `t` SET `a`=1 WHERE `b`=1"},
 		{"CREATE SESSION BINDING FOR UPDATE `t` SET `a`=1 WHERE `b`=1 USING UPDATE /*+ USE_INDEX(`t` `b`)*/ `t` SET `a`=1 WHERE `b`=1", true, "CREATE SESSION BINDING FOR UPDATE `t` SET `a`=1 WHERE `b`=1 USING UPDATE /*+ USE_INDEX(`t` `b`)*/ `t` SET `a`=1 WHERE `b`=1"},
