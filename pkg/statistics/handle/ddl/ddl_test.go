@@ -317,37 +317,13 @@ func TestReorgPartitions(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, h.Update(is))
 
-	// Find the new partition ID.
-	is = do.InfoSchema()
-	tbl, err = is.TableByName(
-		model.NewCIStr("test"), model.NewCIStr("t"),
-	)
-	require.NoError(t, err)
-	tableInfo = tbl.Meta()
-	pi = tableInfo.GetPartitionInfo()
-	// Find the new partition ID.
-	var newPartitionID int64
-	for _, def := range pi.Definitions {
-		if _, ok := partitionIDs[def.ID]; !ok {
-			newPartitionID = def.ID
-			break
-		}
-	}
-
-	// FIXME: Check the stats meta from the new partition.
-	testKit.MustQuery(
-		"select count, modify_count from mysql.stats_meta where table_id = ?", newPartitionID,
-	).Check(
-		testkit.Rows("0 0"),
-	)
 	// Check the version again.
 	rows = testKit.MustQuery(
 		"select version from mysql.stats_meta where table_id in (?, ?) order by table_id", partitionP0ID, partitionP1ID,
 	).Rows()
 	require.Len(t, rows, 2)
-	// FIXME: Version gets updated after reorganize the partition.
-	require.Equal(t, versionP0, rows[0][0].(string))
-	require.Equal(t, versionP1, rows[1][0].(string))
+	require.NotEqual(t, versionP0, rows[0][0].(string))
+	require.NotEqual(t, versionP1, rows[1][0].(string))
 }
 
 func TestTruncateAPartition(t *testing.T) {

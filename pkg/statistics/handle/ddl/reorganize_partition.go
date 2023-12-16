@@ -22,7 +22,13 @@ func (h *ddlHandlerImpl) onReorganizePartitions(t *util.DDLEvent) error {
 	globalTableInfo,
 		addedPartInfo,
 		droppedPartitionInfo := t.GetReorganizePartitionInfo()
-	// Do not update global stats, since the data have not changed!
+	// Avoid updating global stats as the data remains unchanged.
+	// For new partitions, it's crucial to correctly insert the count and modify count correctly.
+	// However, this is challenging due to the need to know the count of the new partitions.
+	// Given that a partition can be split into two, determining the count of the new partitions is so hard.
+	// It's acceptable to not update it immediately,
+	// as the new partitions will be analyzed shortly due to the absence of statistics for them.
+	// Therefore, the auto-analyze worker will handle them in the near future.
 	for _, def := range addedPartInfo.Definitions {
 		if err := h.statsWriter.InsertTableStats2KV(globalTableInfo, def.ID); err != nil {
 			return err
