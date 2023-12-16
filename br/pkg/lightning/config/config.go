@@ -215,10 +215,7 @@ func (d *DBStore) adjust(
 		if d.Port <= 0 {
 			d.Port = int(settings.Port)
 		}
-		if len(d.PdAddr) == 0 {
-			pdAddrs := strings.Split(settings.Path, ",")
-			d.PdAddr = pdAddrs[0] // FIXME support multiple PDs once importer can.
-		}
+		d.PdAddr = settings.Path
 	}
 
 	if d.Port <= 0 {
