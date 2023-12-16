@@ -1349,7 +1349,7 @@ func (w *Writer) addSST(ctx context.Context, meta *sstMeta) error {
 
 func (w *Writer) createSSTWriter() (*sstWriter, error) {
 	path := filepath.Join(w.engine.sstDir, uuid.New().String()+".sst")
-	writer, err := newSSTWriter(path)
+	writer, err := newSSTWriter(path, w.engine.config.BlockSize)
 	if err != nil {
 		return nil, err
 	}
@@ -1365,7 +1365,7 @@ type sstWriter struct {
 	logger log.Logger
 }
 
-func newSSTWriter(path string) (*sstable.Writer, error) {
+func newSSTWriter(path string, blockSize int) (*sstable.Writer, error) {
 	f, err := os.Create(path)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1374,7 +1374,7 @@ func newSSTWriter(path string) (*sstable.Writer, error) {
 		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
 			newRangePropertiesCollector,
 		},
-		BlockSize: 16 * 1024,
+		BlockSize: blockSize,
 	})
 	return writer, nil
 }
@@ -1561,7 +1561,7 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error)
 	heap.Init(mergeIter)
 
 	name := filepath.Join(dir, fmt.Sprintf("%s.sst", uuid.New()))
-	writer, err := newSSTWriter(name)
+	writer, err := newSSTWriter(name, 16*1024)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
