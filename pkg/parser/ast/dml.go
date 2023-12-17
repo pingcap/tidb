@@ -694,7 +694,7 @@ type SelectField struct {
 	// Offset is used to get original text.
 	Offset int
 	// WildCard is not nil, Expr will be nil.
-	WildCard *WildCardField
+	WildCard Node
 	// Expr is not nil, WildCard will be nil.
 	Expr ExprNode
 	// AsName is alias name for Expr.
@@ -739,6 +739,12 @@ func (n *SelectField) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.Expr = node.(ExprNode)
+	} else if n.WildCard != nil {
+		node, ok := n.WildCard.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.WildCard = node.(Node)
 	}
 	return v.Leave(n)
 }

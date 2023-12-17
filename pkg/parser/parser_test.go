@@ -276,7 +276,7 @@ func TestSimple(t *testing.T) {
 	require.NoError(t, err)
 	sel, ok = st.(*ast.SelectStmt)
 	require.True(t, ok)
-	require.Equal(t, "t", sel.Fields.Fields[0].WildCard.Table.O)
+	require.Equal(t, "t", sel.Fields.Fields[0].WildCard.(*ast.WildCardField).Table.O)
 	varExpr, ok := sel.Fields.Fields[1].Expr.(*ast.VariableExpr)
 	require.True(t, ok)
 	require.Equal(t, "c3", varExpr.Name)
