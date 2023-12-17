@@ -15,6 +15,8 @@ package ast_test
 
 import (
 	"fmt"
+	"reflect"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
@@ -23,55 +25,327 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type dmlVisitorTrackerEntry struct {
+	enterCnt int32
+	leaveCnt int32
+}
+type dmlVisitorTracker struct {
+	counts map[string]*dmlVisitorTrackerEntry
+}
+
+func (d *dmlVisitorTracker) ensureEntry(n Node) *dmlVisitorTrackerEntry {
+	implType := reflect.TypeOf(n).Elem().Name()
+	existing, found := d.counts[implType]
+	if !found {
+		existing = &dmlVisitorTrackerEntry{}
+		d.counts[implType] = existing
+	}
+
+	return existing
+}
+
+func (d *dmlVisitorTracker) reset() {
+	d.counts = map[string]*dmlVisitorTrackerEntry{}
+}
+
+func (d *dmlVisitorTracker) Enter(n Node) (node Node, skipChildren bool) {
+	entry := d.ensureEntry(n)
+	atomic.AddInt32(&entry.enterCnt, 1)
+	return n, false
+}
+
+func (d *dmlVisitorTracker) Leave(n Node) (node Node, ok bool) {
+	entry := d.ensureEntry(n)
+	atomic.AddInt32(&entry.leaveCnt, 1)
+	return n, true
+}
+
 func TestDMLVisitorCover(t *testing.T) {
 	ce := &checkExpr{}
 
 	tableRefsClause := &TableRefsClause{TableRefs: &Join{Left: &TableSource{Source: &TableName{}}, On: &OnCondition{Expr: ce}}}
 
 	stmts := []struct {
-		node             Node
-		expectedEnterCnt int
-		expectedLeaveCnt int
+		name           string
+		node           Node
+		expectedCounts map[string]*dmlVisitorTrackerEntry
 	}{
-		{&DeleteStmt{TableRefs: tableRefsClause, Tables: &DeleteTableList{}, Where: ce,
-			Order: &OrderByClause{}, Limit: &Limit{Count: ce, Offset: ce}}, 4, 4},
-		{&ShowStmt{Table: &TableName{}, Column: &ColumnName{}, Pattern: &PatternLikeOrIlikeExpr{Expr: ce, Pattern: ce}, Where: ce}, 3, 3},
-		{&LoadDataStmt{Table: &TableName{}, Columns: []*ColumnName{{}}, FieldsInfo: &FieldsClause{}, LinesInfo: &LinesClause{}}, 0, 0},
-		{&ImportIntoStmt{Table: &TableName{}}, 0, 0},
-		{&Assignment{Column: &ColumnName{}, Expr: ce}, 1, 1},
-		{&ByItem{Expr: ce}, 1, 1},
-		{&GroupByClause{Items: []*ByItem{{Expr: ce}, {Expr: ce}}}, 2, 2},
-		{&HavingClause{Expr: ce}, 1, 1},
-		{&Join{Left: &TableSource{Source: &TableName{}}}, 0, 0},
-		{&Limit{Count: ce, Offset: ce}, 2, 2},
-		{&OnCondition{Expr: ce}, 1, 1},
-		{&OrderByClause{Items: []*ByItem{{Expr: ce}, {Expr: ce}}}, 2, 2},
-		{&SelectField{Expr: ce, WildCard: nil}, 1, 1},
-		{&SelectField{Expr: nil, WildCard: ce}, 1, 1},
-		{&TableName{}, 0, 0},
-		{tableRefsClause, 1, 1},
-		{&TableSource{Source: &TableName{}}, 0, 0},
-		{&WildCardField{}, 0, 0},
+		{"DeleteStmt",
+			&DeleteStmt{TableRefs: tableRefsClause, Tables: &DeleteTableList{}, Where: ce, Order: &OrderByClause{}, Limit: &Limit{Count: ce, Offset: ce}},
+			map[string]*dmlVisitorTrackerEntry{
+				"DeleteStmt":      {1, 1},
+				"DeleteTableList": {1, 1},
+				"OrderByClause":   {1, 1},
+				"Limit":           {1, 1},
+				"TableRefsClause": {1, 1},
+				"Join":            {1, 1},
+				"TableSource":     {1, 1},
+				"TableName":       {1, 1},
+				"OnCondition":     {1, 1},
+				"checkExpr":       {4, 4},
+			},
+		},
+		{"ShowStmt",
+			&ShowStmt{Table: &TableName{}, Column: &ColumnName{}, Pattern: &PatternLikeOrIlikeExpr{Expr: ce, Pattern: ce}, Where: ce},
+			map[string]*dmlVisitorTrackerEntry{
+				"ShowStmt":               {1, 1},
+				"TableName":              {1, 1},
+				"PatternLikeOrIlikeExpr": {1, 1},
+				"ColumnName":             {1, 1},
+				"checkExpr":              {3, 3},
+			},
+		},
+		{"LoadDataStmt",
+			&LoadDataStmt{Table: &TableName{}, Columns: []*ColumnName{{}}, FieldsInfo: &FieldsClause{}, LinesInfo: &LinesClause{}},
+			map[string]*dmlVisitorTrackerEntry{
+				"LoadDataStmt": {1, 1},
+				"TableName":    {1, 1},
+				"ColumnName":   {1, 1},
+			},
+		},
+		{"ImportIntoStmt",
+			&ImportIntoStmt{Table: &TableName{}},
+			map[string]*dmlVisitorTrackerEntry{
+				"ImportIntoStmt": {1, 1},
+				"TableName":      {1, 1},
+			},
+		},
+		{"Assignment",
+			&Assignment{Column: &ColumnName{}, Expr: ce},
+			map[string]*dmlVisitorTrackerEntry{
+				"Assignment": {1, 1},
+				"ColumnName": {1, 1},
+				"checkExpr":  {1, 1},
+			},
+		},
+		{"ByItem",
+			&ByItem{Expr: ce},
+			map[string]*dmlVisitorTrackerEntry{
+				"ByItem":    {1, 1},
+				"checkExpr": {1, 1},
+			},
+		},
+		{"GroupByClause",
+			&GroupByClause{Items: []*ByItem{{Expr: ce}, {Expr: ce}}},
+			map[string]*dmlVisitorTrackerEntry{
+				"GroupByClause": {1, 1},
+				"ByItem":        {2, 2},
+				"checkExpr":     {2, 2},
+			},
+		},
+		{"HavingClause",
+			&HavingClause{Expr: ce},
+			map[string]*dmlVisitorTrackerEntry{
+				"HavingClause": {1, 1},
+				"checkExpr":    {1, 1},
+			},
+		},
+		{"Join",
+			&Join{Left: &TableSource{Source: &TableName{}}},
+			map[string]*dmlVisitorTrackerEntry{
+				"Join":        {1, 1},
+				"TableSource": {1, 1},
+				"TableName":   {1, 1},
+			},
+		},
+		{"Limit",
+			&Limit{Count: ce, Offset: ce},
+			map[string]*dmlVisitorTrackerEntry{
+				"Limit":     {1, 1},
+				"checkExpr": {2, 2},
+			},
+		},
+		{"OnCondition",
+			&OnCondition{Expr: ce},
+			map[string]*dmlVisitorTrackerEntry{
+				"OnCondition": {1, 1},
+				"checkExpr":   {1, 1},
+			},
+		},
+		{"OrderByClause",
+			&OrderByClause{Items: []*ByItem{{Expr: ce}, {Expr: ce}}},
+			map[string]*dmlVisitorTrackerEntry{
+				"OrderByClause": {1, 1},
+				"ByItem":        {2, 2},
+				"checkExpr":     {2, 2},
+			},
+		},
+		{"SelectField (Expr)",
+			&SelectField{Expr: ce, WildCard: nil},
+			map[string]*dmlVisitorTrackerEntry{
+				"SelectField": {1, 1},
+				"checkExpr":   {1, 1},
+			},
+		},
+		{"SelectField (Wildcard)",
+			&SelectField{Expr: nil, WildCard: &WildCardField{}},
+			map[string]*dmlVisitorTrackerEntry{
+				"SelectField":   {1, 1},
+				"WildCardField": {1, 1},
+			},
+		},
+		{"TableName",
+			&TableName{},
+			map[string]*dmlVisitorTrackerEntry{
+				"TableName": {1, 1},
+			},
+		},
+		{"TableRefsClause",
+			tableRefsClause,
+			map[string]*dmlVisitorTrackerEntry{
+				"TableRefsClause": {1, 1},
+				"Join":            {1, 1},
+				"TableSource":     {1, 1},
+				"TableName":       {1, 1},
+				"OnCondition":     {1, 1},
+				"checkExpr":       {1, 1},
+			},
+		},
+		{"TableSource",
+			&TableSource{Source: &TableName{}},
+			map[string]*dmlVisitorTrackerEntry{
+				"TableSource": {1, 1},
+				"TableName":   {1, 1},
+			},
+		},
+		{"WildCardField",
+			&WildCardField{},
+			map[string]*dmlVisitorTrackerEntry{
+				"WildCardField": {1, 1},
+			},
+		},
+		{"InsertStmt",
+			&InsertStmt{Table: tableRefsClause},
+			map[string]*dmlVisitorTrackerEntry{
+				"InsertStmt":      {1, 1},
+				"TableRefsClause": {1, 1},
+				"Join":            {1, 1},
+				"TableSource":     {1, 1},
+				"TableName":       {1, 1},
+				"OnCondition":     {1, 1},
+				"checkExpr":       {1, 1},
+			},
+		},
+		{"SetOprStmt",
+			&SetOprStmt{OrderBy: &OrderByClause{Items: []*ByItem{{Expr: ce}, {Expr: ce}}}, Limit: &Limit{Count: ce, Offset: ce}, With: &WithClause{}},
+			map[string]*dmlVisitorTrackerEntry{
+				"SetOprStmt":    {1, 1},
+				"OrderByClause": {1, 1},
+				"ByItem":        {2, 2},
+				"Limit":         {1, 1},
+				"WithClause":    {1, 1},
+				"checkExpr":     {4, 4},
+			},
+		},
+		{"UpdateStmt",
+			&UpdateStmt{TableRefs: tableRefsClause},
+			map[string]*dmlVisitorTrackerEntry{
+				"UpdateStmt":      {1, 1},
+				"TableRefsClause": {1, 1},
+				"Join":            {1, 1},
+				"TableSource":     {1, 1},
+				"TableName":       {1, 1},
+				"OnCondition":     {1, 1},
+				"checkExpr":       {1, 1},
+			},
+		},
+		{"SelectStmt",
+			&SelectStmt{
+				From:    tableRefsClause,
+				Where:   ce,
+				Fields:  &FieldList{Fields: []*SelectField{{Expr: nil, WildCard: &WildCardField{}}, {Expr: ce, WildCard: nil}}},
+				GroupBy: &GroupByClause{Items: []*ByItem{{Expr: ce}, {Expr: ce}}},
+				Having:  &HavingClause{Expr: ce},
+				OrderBy: &OrderByClause{Items: []*ByItem{{Expr: ce}, {Expr: ce}}},
+				Limit:   &Limit{Count: ce, Offset: ce},
+			},
+			map[string]*dmlVisitorTrackerEntry{
+				"SelectStmt":      {1, 1},
+				"TableRefsClause": {1, 1},
+				"Join":            {1, 1},
+				"TableSource":     {1, 1},
+				"TableName":       {1, 1},
+				"OnCondition":     {1, 1},
+				"FieldList":       {1, 1},
+				"SelectField":     {2, 2},
+				"WildCardField":   {1, 1},
+				"GroupByClause":   {1, 1},
+				"ByItem":          {4, 4},
+				"HavingClause":    {1, 1},
+				"OrderByClause":   {1, 1},
+				"Limit":           {1, 1},
+				"checkExpr":       {10, 10},
+			},
+		},
+		{"FieldList",
+			&FieldList{Fields: []*SelectField{{Expr: nil, WildCard: &WildCardField{}}, {Expr: ce, WildCard: nil}}},
+			map[string]*dmlVisitorTrackerEntry{
+				"FieldList":     {1, 1},
+				"SelectField":   {2, 2},
+				"WildCardField": {1, 1},
+				"checkExpr":     {1, 1},
+			},
+		},
+		{"SetOprSelectList",
+			&SetOprSelectList{
+				With:    &WithClause{},
+				Selects: []Node{ce},
 
-		// TODO: cover childrens
-		{&InsertStmt{Table: tableRefsClause}, 1, 1},
-		{&SetOprStmt{}, 0, 0},
-		{&UpdateStmt{TableRefs: tableRefsClause}, 1, 1},
-		{&SelectStmt{}, 0, 0},
-		{&FieldList{}, 0, 0},
-		{&SetOprSelectList{}, 0, 0},
-		{&WindowSpec{}, 0, 0},
-		{&PartitionByClause{}, 0, 0},
-		{&FrameClause{}, 0, 0},
-		{&FrameBound{}, 0, 0},
+				//introduced in commit 42383413; don't know on how to handle OrderBy and Limit
+				//refs :
+				// - https://github.com/pingcap/tidb/pull/49421
+				// - https://github.com/pingcap/tidb/pull/49377
+				//OrderBy: &OrderByClause{Items: []*ByItem{{Expr: ce}, {Expr: ce}}},
+				//Limit:   &Limit{Count: ce, Offset: ce},
+			},
+			map[string]*dmlVisitorTrackerEntry{
+				"SetOprSelectList": {1, 1},
+				"WithClause":       {1, 1},
+				"checkExpr":        {1, 1},
+			},
+		},
+		{"WindowSpec",
+			&WindowSpec{
+				OrderBy: &OrderByClause{Items: []*ByItem{{Expr: ce}, {Expr: ce}}},
+			},
+			map[string]*dmlVisitorTrackerEntry{
+				"WindowSpec":    {1, 1},
+				"OrderByClause": {1, 1},
+				"ByItem":        {2, 2},
+				"checkExpr":     {2, 2},
+			},
+		},
+		{"PartitionByClause",
+			&PartitionByClause{Items: []*ByItem{{Expr: ce}, {Expr: ce}}},
+			map[string]*dmlVisitorTrackerEntry{
+				"PartitionByClause": {1, 1},
+				"ByItem":            {2, 2},
+				"checkExpr":         {2, 2},
+			},
+		},
+		{"FrameClause",
+			&FrameClause{},
+			map[string]*dmlVisitorTrackerEntry{
+				"FrameClause": {1, 1},
+				"FrameBound":  {2, 2},
+			},
+		},
+		{"FrameBound",
+			&FrameBound{},
+			map[string]*dmlVisitorTrackerEntry{
+				"FrameBound": {1, 1},
+			},
+		},
 	}
 
+	visitor := dmlVisitorTracker{}
+
 	for _, v := range stmts {
-		ce.reset()
-		v.node.Accept(checkVisitor{})
-		require.Equal(t, v.expectedEnterCnt, ce.enterCnt)
-		require.Equal(t, v.expectedLeaveCnt, ce.leaveCnt)
-		v.node.Accept(visitor1{})
+		t.Run(v.name, func(t *testing.T) {
+			visitor.reset()
+			v.node.Accept(&visitor)
+			require.Equal(t, v.expectedCounts, visitor.counts)
+		})
 	}
 }
 
