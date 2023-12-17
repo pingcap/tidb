@@ -7939,3 +7939,14 @@ func TestIfFunctionWithNull(t *testing.T) {
 	tk.MustQuery("select min(if(apply_to_now_days <= 30,loan,null)) as min, max(if(apply_to_now_days <= 720,loan,null)) as max from (select loan, datediff(from_unixtime(unix_timestamp('2023-05-18 18:43:43') + 18000), from_unixtime(apply_time/1000 + 18000)) as apply_to_now_days from orders) t1;").Sort().Check(
 		testkit.Rows("20000 35100"))
 }
+
+func TestIssue49526(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	rows := tk.MustQuery("explain select null as a union all select 'a' as a;").Rows()
+	for _, r := range rows {
+		require.NotContains(t, r[4], "from_binary")
+	}
+	tk.MustQuery("select null as a union all select 'a' as a;").Sort().Check(testkit.Rows("<nil>", "a"))
+}
