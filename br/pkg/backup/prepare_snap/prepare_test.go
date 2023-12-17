@@ -112,6 +112,17 @@ func newTestEnv(pdc pd.Client) *mockStores {
 	return ms
 }
 
+func (m *mockStores) GetAllLiveStores(ctx context.Context) ([]*metapb.Store, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	res := []*metapb.Store{}
+	for id := range m.stores {
+		res = append(res, &metapb.Store{Id: id})
+	}
+	return res, nil
+}
+
 func (m *mockStores) ConnectToStore(ctx context.Context, storeID uint64) (PrepareClient, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

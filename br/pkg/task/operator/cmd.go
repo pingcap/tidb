@@ -122,8 +122,9 @@ func pauseAdminAndWaitApply(cx *AdaptEnvForSnapshotBackupContext) error {
 		Cache: tikv.NewRegionCache(cx.pdMgr.GetPDClient()),
 		Mgr:   cx.kvMgr,
 	}
+	retryEnv := preparesnap.RetryEnv{Env: env}
 	begin := time.Now()
-	prep := preparesnap.New(env)
+	prep := preparesnap.New(retryEnv)
 
 	defer cx.cleanUpWith(func(ctx context.Context) {
 		if err := prep.Finalize(ctx); err != nil {
