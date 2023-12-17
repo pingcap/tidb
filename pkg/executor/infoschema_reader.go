@@ -264,15 +264,20 @@ func (e *memtableRetriever) setDataForVariablesInfo(ctx sessionctx.Context) erro
 		if sv.IsNoop {
 			isNoop = "YES"
 		}
+		// DEFAULT_VALUE
+		defVal := sv.Value
+		if sv.HasGlobalScope() {
+			defVal = variable.GlobalSyetemVariableInitalValue(sv.Name, defVal)
+		}
 		row := types.MakeDatums(
 			sv.Name,           // VARIABLE_NAME
 			sv.Scope.String(), // VARIABLE_SCOPE
-			sv.Value,          // DEFAULT_VALUE
-			currentVal,        // CURRENT_VALUE
-			sv.MinValue,       // MIN_VALUE
-			sv.MaxValue,       // MAX_VALUE
-			nil,               // POSSIBLE_VALUES
-			isNoop,            // IS_NOOP
+			defVal,
+			currentVal,  // CURRENT_VALUE
+			sv.MinValue, // MIN_VALUE
+			sv.MaxValue, // MAX_VALUE
+			nil,         // POSSIBLE_VALUES
+			isNoop,      // IS_NOOP
 		)
 		// min and max value is only supported for numeric types
 		if !(sv.Type == variable.TypeUnsigned || sv.Type == variable.TypeInt || sv.Type == variable.TypeFloat) {

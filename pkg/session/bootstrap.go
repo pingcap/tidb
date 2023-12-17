@@ -3152,37 +3152,7 @@ func doDMLWorks(s sessiontypes.Session) {
 		if !v.HasGlobalScope() {
 			continue
 		}
-		vVal := v.Value
-		switch v.Name {
-		case variable.TiDBTxnMode:
-			if config.GetGlobalConfig().Store == "tikv" || config.GetGlobalConfig().Store == "unistore" {
-				vVal = "pessimistic"
-			}
-		case variable.TiDBEnableAsyncCommit, variable.TiDBEnable1PC:
-			if config.GetGlobalConfig().Store == "tikv" {
-				vVal = variable.On
-			}
-		case variable.TiDBMemOOMAction:
-			if intest.InTest {
-				vVal = variable.OOMActionLog
-			}
-		case variable.TiDBEnableAutoAnalyze:
-			if intest.InTest {
-				vVal = variable.Off
-			}
-		// For the following sysvars, we change the default
-		// FOR NEW INSTALLS ONLY. In most cases you don't want to do this.
-		// It is better to change the value in the Sysvar struct, so that
-		// all installs will have the same value.
-		case variable.TiDBRowFormatVersion:
-			vVal = strconv.Itoa(variable.DefTiDBRowFormatV2)
-		case variable.TiDBTxnAssertionLevel:
-			vVal = variable.AssertionFastStr
-		case variable.TiDBEnableMutationChecker:
-			vVal = variable.On
-		case variable.TiDBPessimisticTransactionFairLocking:
-			vVal = variable.On
-		}
+		vVal := variable.GlobalSyetemVariableInitalValue(v.Name, v.Value)
 
 		// sanitize k and vVal
 		value := fmt.Sprintf(`("%s", "%s")`, sqlescape.EscapeString(k), sqlescape.EscapeString(vVal))

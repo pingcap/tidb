@@ -239,3 +239,6 @@ SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'"
 
 connection default;
 disconnect conn1;
+
+# test information_schema.VARIABLES_INFO DEFAULT_VALUE
+select VARIABLE_NAME from information_schema.VARIABLES_INFO where DEFAULT_VALUE = CURRENT_VALUE and variable_name in ('tidb_txn_mode', 'tidb_enable_async_commit','tidb_enable_1pc', 'tidb_mem_oom_action', 'tidb_enable_auto_analyze', 'tidb_row_format_version', 'tidb_txn_assertion_level', 'tidb_enable_mutation_checker', 'tidb_pessimistic_txn_fair_locking') order by VARIABLE_NAME
