@@ -138,7 +138,7 @@ vet:
 	$(GO) vet -all $(PACKAGES) 2>&1 | $(FAIL_ON_STDOUT)
 
 staticcheck:
-	$(GO) get honnef.co/go/tools/cmd/staticcheck
+	$(GO) get honnef.co/go/tools/cmd/staticcheck@2021.1
 	$(STATICCHECK) ./...
 
 tidy:
@@ -274,7 +274,7 @@ checkdep:
 
 tools/bin/megacheck: tools/check/go.mod
 	cd tools/check; \
-	$(GO) build -o ../bin/megacheck honnef.co/go/tools/cmd/megacheck
+	$(GO) build -o ../bin/megacheck honnef.co/go/tools/cmd/megacheck@2021.1
 
 tools/bin/revive: tools/check/go.mod
 	cd tools/check; \
