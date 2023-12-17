@@ -25,6 +25,9 @@ var (
 	QueryTotalCountOk  []prometheus.Counter
 	QueryTotalCountErr []prometheus.Counter
 
+	QueryTotalCountSQLTypeBreakdownOk  map[string]prometheus.Counter
+	QueryTotalCountSQLTypeBreakdownErr map[string]prometheus.Counter
+
 	DisconnectNormal            prometheus.Counter
 	DisconnectByClientWithError prometheus.Counter
 	DisconnectErrorUndetermined prometheus.Counter
@@ -48,34 +51,50 @@ func init() {
 // InitMetricsVars init server metrics vars.
 func InitMetricsVars() {
 	QueryTotalCountOk = []prometheus.Counter{
-		mysql.ComSleep:            metrics.QueryTotalCounter.WithLabelValues("Sleep", "OK"),
-		mysql.ComQuit:             metrics.QueryTotalCounter.WithLabelValues("Quit", "OK"),
-		mysql.ComInitDB:           metrics.QueryTotalCounter.WithLabelValues("InitDB", "OK"),
-		mysql.ComQuery:            metrics.QueryTotalCounter.WithLabelValues("Query", "OK"),
-		mysql.ComPing:             metrics.QueryTotalCounter.WithLabelValues("Ping", "OK"),
-		mysql.ComFieldList:        metrics.QueryTotalCounter.WithLabelValues("FieldList", "OK"),
-		mysql.ComStmtPrepare:      metrics.QueryTotalCounter.WithLabelValues("StmtPrepare", "OK"),
-		mysql.ComStmtExecute:      metrics.QueryTotalCounter.WithLabelValues("StmtExecute", "OK"),
-		mysql.ComStmtFetch:        metrics.QueryTotalCounter.WithLabelValues("StmtFetch", "OK"),
-		mysql.ComStmtClose:        metrics.QueryTotalCounter.WithLabelValues("StmtClose", "OK"),
-		mysql.ComStmtSendLongData: metrics.QueryTotalCounter.WithLabelValues("StmtSendLongData", "OK"),
-		mysql.ComStmtReset:        metrics.QueryTotalCounter.WithLabelValues("StmtReset", "OK"),
-		mysql.ComSetOption:        metrics.QueryTotalCounter.WithLabelValues("SetOption", "OK"),
+		mysql.ComSleep:            metrics.QueryTotalCounter.WithLabelValues("Sleep", "OK", "Other"),
+		mysql.ComQuit:             metrics.QueryTotalCounter.WithLabelValues("Quit", "OK", "Other"),
+		mysql.ComInitDB:           metrics.QueryTotalCounter.WithLabelValues("InitDB", "OK", "Other"),
+		mysql.ComQuery:            metrics.QueryTotalCounter.WithLabelValues("Query", "OK", "Other"),
+		mysql.ComPing:             metrics.QueryTotalCounter.WithLabelValues("Ping", "OK", "Other"),
+		mysql.ComFieldList:        metrics.QueryTotalCounter.WithLabelValues("FieldList", "OK", "Other"),
+		mysql.ComStmtPrepare:      metrics.QueryTotalCounter.WithLabelValues("StmtPrepare", "OK", "Other"),
+		mysql.ComStmtExecute:      metrics.QueryTotalCounter.WithLabelValues("StmtExecute", "OK", "Other"),
+		mysql.ComStmtFetch:        metrics.QueryTotalCounter.WithLabelValues("StmtFetch", "OK", "Other"),
+		mysql.ComStmtClose:        metrics.QueryTotalCounter.WithLabelValues("StmtClose", "OK", "Other"),
+		mysql.ComStmtSendLongData: metrics.QueryTotalCounter.WithLabelValues("StmtSendLongData", "OK", "Other"),
+		mysql.ComStmtReset:        metrics.QueryTotalCounter.WithLabelValues("StmtReset", "OK", "Other"),
+		mysql.ComSetOption:        metrics.QueryTotalCounter.WithLabelValues("SetOption", "OK", "Other"),
 	}
 	QueryTotalCountErr = []prometheus.Counter{
-		mysql.ComSleep:            metrics.QueryTotalCounter.WithLabelValues("Sleep", "Error"),
-		mysql.ComQuit:             metrics.QueryTotalCounter.WithLabelValues("Quit", "Error"),
-		mysql.ComInitDB:           metrics.QueryTotalCounter.WithLabelValues("InitDB", "Error"),
-		mysql.ComQuery:            metrics.QueryTotalCounter.WithLabelValues("Query", "Error"),
-		mysql.ComPing:             metrics.QueryTotalCounter.WithLabelValues("Ping", "Error"),
-		mysql.ComFieldList:        metrics.QueryTotalCounter.WithLabelValues("FieldList", "Error"),
-		mysql.ComStmtPrepare:      metrics.QueryTotalCounter.WithLabelValues("StmtPrepare", "Error"),
-		mysql.ComStmtExecute:      metrics.QueryTotalCounter.WithLabelValues("StmtExecute", "Error"),
-		mysql.ComStmtFetch:        metrics.QueryTotalCounter.WithLabelValues("StmtFetch", "Error"),
-		mysql.ComStmtClose:        metrics.QueryTotalCounter.WithLabelValues("StmtClose", "Error"),
-		mysql.ComStmtSendLongData: metrics.QueryTotalCounter.WithLabelValues("StmtSendLongData", "Error"),
-		mysql.ComStmtReset:        metrics.QueryTotalCounter.WithLabelValues("StmtReset", "Error"),
-		mysql.ComSetOption:        metrics.QueryTotalCounter.WithLabelValues("SetOption", "Error"),
+		mysql.ComSleep:            metrics.QueryTotalCounter.WithLabelValues("Sleep", "Error", "Other"),
+		mysql.ComQuit:             metrics.QueryTotalCounter.WithLabelValues("Quit", "Error", "Other"),
+		mysql.ComInitDB:           metrics.QueryTotalCounter.WithLabelValues("InitDB", "Error", "Other"),
+		mysql.ComQuery:            metrics.QueryTotalCounter.WithLabelValues("Query", "Error", "Other"),
+		mysql.ComPing:             metrics.QueryTotalCounter.WithLabelValues("Ping", "Error", "Other"),
+		mysql.ComFieldList:        metrics.QueryTotalCounter.WithLabelValues("FieldList", "Error", "Other"),
+		mysql.ComStmtPrepare:      metrics.QueryTotalCounter.WithLabelValues("StmtPrepare", "Error", "Other"),
+		mysql.ComStmtExecute:      metrics.QueryTotalCounter.WithLabelValues("StmtExecute", "Error", "Other"),
+		mysql.ComStmtFetch:        metrics.QueryTotalCounter.WithLabelValues("StmtFetch", "Error", "Other"),
+		mysql.ComStmtClose:        metrics.QueryTotalCounter.WithLabelValues("StmtClose", "Error", "Other"),
+		mysql.ComStmtSendLongData: metrics.QueryTotalCounter.WithLabelValues("StmtSendLongData", "Error", "Other"),
+		mysql.ComStmtReset:        metrics.QueryTotalCounter.WithLabelValues("StmtReset", "Error", "Other"),
+		mysql.ComSetOption:        metrics.QueryTotalCounter.WithLabelValues("SetOption", "Error", "Other"),
+	}
+
+	QueryTotalCountSQLTypeBreakdownOk = map[string]prometheus.Counter{
+		"Insert":  metrics.QueryTotalCounter.WithLabelValues("Query", "OK", "Insert"),
+		"Replace": metrics.QueryTotalCounter.WithLabelValues("Query", "OK", "Replace"),
+		"Delete":  metrics.QueryTotalCounter.WithLabelValues("Query", "OK", "Delete"),
+		"Update":  metrics.QueryTotalCounter.WithLabelValues("Query", "OK", "Update"),
+		"Select":  metrics.QueryTotalCounter.WithLabelValues("Query", "OK", "Select"),
+	}
+
+	QueryTotalCountSQLTypeBreakdownErr = map[string]prometheus.Counter{
+		"Insert":  metrics.QueryTotalCounter.WithLabelValues("Query", "Error", "Insert"),
+		"Replace": metrics.QueryTotalCounter.WithLabelValues("Query", "Error", "Replace"),
+		"Delete":  metrics.QueryTotalCounter.WithLabelValues("Query", "Error", "Delete"),
+		"Update":  metrics.QueryTotalCounter.WithLabelValues("Query", "Error", "Update"),
+		"Select":  metrics.QueryTotalCounter.WithLabelValues("Query", "Error", "Select"),
 	}
 
 	DisconnectNormal = metrics.DisconnectionCounter.WithLabelValues(metrics.LblOK)
