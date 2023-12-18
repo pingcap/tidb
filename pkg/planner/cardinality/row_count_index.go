@@ -63,7 +63,6 @@ func GetRowCountByIndexRanges(sctx sessionctx.Context, coll *statistics.HistColl
 	recordUsedItemStatsStatus(sctx, idx, coll.PhysicalID, idxID)
 	// For the mv index case, now we have supported collecting stats and async loading stats, but sync loading and
 	// estimation is not well-supported, so we keep mv index using pseudo estimation for this period of time.
-	//if !ok || isMVIndex {
 	if !ok || idx.IsInvalid(sctx, coll.Pseudo) || isMVIndex {
 		colsLen := -1
 		if idx != nil && idx.Info.Unique {
@@ -226,7 +225,6 @@ func getIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, 
 	}
 	totalCount := float64(0)
 	isSingleCol := len(idx.Info.Columns) == 1
-	//outofRange := false
 	for _, indexRange := range indexRanges {
 		var count float64
 		lb, err := codec.EncodeKey(sc.TimeZone(), nil, indexRange.LowVal...)
@@ -338,7 +336,6 @@ func getIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, 
 		// handling the out-of-range part
 		if (outOfRangeOnIndex(idx, l) && !(isSingleCol && lowIsNull)) || outOfRangeOnIndex(idx, r) {
 			count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, modifyCount, histNDV)
-			//outofRange = true
 		}
 
 		if debugTrace {
@@ -346,10 +343,6 @@ func getIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, 
 		}
 		totalCount += count
 	}
-	//idxFullCount := float64(realtimeRowCount) / float64(max(1, idx.NDV))
-	//if !outofRange && totalCount < idxFullCount {
-	//	totalCount = idxFullCount
-	//}
 	totalCount = mathutil.Clamp(totalCount, 0, float64(realtimeRowCount))
 	return totalCount, nil
 }
