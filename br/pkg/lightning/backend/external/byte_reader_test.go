@@ -29,6 +29,7 @@ import (
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -207,56 +208,62 @@ func TestEmptyContent(t *testing.T) {
 }
 
 func TestSwitchMode(t *testing.T) {
-	st := storage.NewMemStorage()
-	// Prepare
-	fileSize := 1024 * 1024 * 40
-	err := st.WriteFile(context.Background(), "/testfile", make([]byte, fileSize))
-	require.NoError(t, err)
-
-	newRsc := func() storage.ExternalFileReader {
-		rsc, err := st.Open(context.Background(), "/testfile", nil)
-		require.NoError(t, err)
-		return rsc
-	}
-	pool := membuf.NewPool()
-	// ConcurrentReaderBufferSizePerConc = rand.Intn(300) + 1
 	seed := time.Now().Unix()
 	rand.Seed(uint64(seed))
 	t.Logf("seed: %d", seed)
-	br, err := newByteReader(context.Background(), newRsc(), 64*1024)
-	require.NoError(t, err)
-	br.enableConcurrentRead(st, "/testfile", 100, ConcurrentReaderBufferSizePerConc, pool.NewBuffer())
+	st := storage.NewMemStorage()
+	// Prepare
+	ctx := context.Background()
+	writer := NewWriterBuilder().
+		SetPropSizeDistance(100).
+		SetPropKeysDistance(2).
+		BuildOneFile(st, "/test", "0")
 
-	totalCnt := 0
+	err := writer.Init(ctx, 5*1024*1024)
+	require.NoError(t, err)
+
+	kvCnt := 1000000
+	kvs := make([]common.KvPair, kvCnt)
+	for i := 0; i < kvCnt; i++ {
+		randLen := rand.Intn(10) + 1
+		kvs[i].Key = make([]byte, randLen)
+		_, err := rand.Read(kvs[i].Key)
+		require.NoError(t, err)
+		randLen = rand.Intn(10) + 1
+		kvs[i].Val = make([]byte, randLen)
+		_, err = rand.Read(kvs[i].Val)
+		require.NoError(t, err)
+	}
+
+	for _, item := range kvs {
+		err := writer.WriteRow(ctx, item.Key, item.Val)
+		require.NoError(t, err)
+	}
+
+	err = writer.Close(ctx)
+	require.NoError(t, err)
+	pool := membuf.NewPool()
+	ConcurrentReaderBufferSizePerConc = rand.Intn(300) + 1
+	kvReader, err := newKVReader(context.Background(), "/test/0/one-file", st, 0, 64*1024)
+	require.NoError(t, err)
+	kvReader.byteReader.enableConcurrentRead(st, "/test/0/one-file", 100, ConcurrentReaderBufferSizePerConc, pool.NewBuffer())
 	modeUseCon := false
-	for totalCnt < fileSize {
-		if rand.Intn(5) == 0 {
+	for {
+		if rand.Intn(2) == 0 {
 			if modeUseCon {
-				br.switchConcurrentMode(false)
+				kvReader.byteReader.switchConcurrentMode(false)
 				modeUseCon = false
 			} else {
-				br.switchConcurrentMode(true)
+				kvReader.byteReader.switchConcurrentMode(true)
 				modeUseCon = true
 			}
 		}
-		n := rand.Intn(300)
-		if n == 0 {
-			n = 1
-		}
-		if totalCnt+n > fileSize {
-			n = fileSize - totalCnt
-		}
-		if n == 0 {
-			break
-		}
-		y, err := br.readNBytes(n)
+		_, _, err := kvReader.nextKV()
 		if err == io.EOF {
 			break
 		}
 		require.NoError(t, err)
-		totalCnt += len(y)
 	}
-	require.Equal(t, fileSize, totalCnt)
 }
 
 // NewS3WithBucketAndPrefix creates a new S3Storage for testing.
