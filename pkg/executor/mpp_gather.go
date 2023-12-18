@@ -153,7 +153,7 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 		return err
 	}
 	// todo: sys var: hold_row_num, enable_hold_mpp_res
-	e.mppErrRecovery = mpperr.NewMPPErrRecovery(config.GetGlobalConfig().UseAutoScaler, 2048, e.dummy)
+	e.mppErrRecovery = mpperr.NewMPPErrRecovery(config.GetGlobalConfig().UseAutoScaler, 2048, !e.dummy)
 	return nil
 }
 
@@ -185,7 +185,7 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 				return mppErr
 			}
 
-			// mppErr recovery succeed, start to dispatch MPPTask again.
+			logutil.BgLogger().Info("recovery mpp error succeed, begin next retry", zap.Any("mppErr", mppErr))
 			e.setupRespIter(ctx, true)
 			e.mppErrRecovery.ResetHolder()
 			continue
