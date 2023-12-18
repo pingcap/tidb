@@ -3008,6 +3008,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 			// Overloading the NewTableID here with the oldTblID instead,
 			// for keeping the old global statistics
 			statisticsPartInfo.NewTableID = oldTblID
+			droppedPartInfo.NewTableID = oldTblID
 			// TODO: Handle bundles?
 			// TODO: Add concurrent test!
 			// TODO: Will this result in big gaps?
@@ -3107,7 +3108,7 @@ func newStatsDDLEventForJob(
 	case model.ActionRemovePartitioning:
 		event = statsutil.NewRemovePartitioningEvent(
 			tblInfo,
-			addedPartInfo,
+			droppedPartInfo,
 		)
 	default:
 		return nil, errors.Errorf("unknown job type: %s", jobType.String())

@@ -783,11 +783,10 @@ func TestRemovePartitioning(t *testing.T) {
 		partitionP0ID, partitionP1ID, partitionP2ID, partitionP3ID,
 	).Rows()
 	require.Len(t, rows, 4)
-	// FIXME: The version should be changed after we remove partitioning.
-	require.Equal(t, versionP0, rows[0][0].(string))
-	require.Equal(t, versionP1, rows[1][0].(string))
-	require.Equal(t, versionP2, rows[2][0].(string))
-	require.Equal(t, versionP3, rows[3][0].(string))
+	require.NotEqual(t, versionP0, rows[0][0].(string))
+	require.NotEqual(t, versionP1, rows[1][0].(string))
+	require.NotEqual(t, versionP2, rows[2][0].(string))
+	require.NotEqual(t, versionP3, rows[3][0].(string))
 }
 
 func TestAddPartitioning(t *testing.T) {

@@ -152,12 +152,24 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 		// (see onReorganizePartition)
 		return h.statsWriter.ChangeGlobalStatsID(addedPartInfo.NewTableID, globalTableInfo.ID)
 	case model.ActionRemovePartitioning:
-		// Change id for global stats, since the data has not changed!
-		// Note that newSingleTableInfo is the new table info
-		// and droppedPartInfo.NewTableID is actually the old table ID!
-		// (see onReorganizePartition)
+		// Update id for global stats due to new table creation.
+		// It's important to insert and modify count accurately
+		// as data distribution differs even if total count remains the same.
+		// However, we can omit updating count and modify count here,
+		// as the new table will be analyzed soon due to lack of existing statistics.
+		// Note: newSingleTableInfo refers to the new table info,
+		// and droppedPartInfo.NewTableID refers to the old table ID (see onReorganizePartition).
 		newSingleTableInfo, droppedPartInfo := t.GetRemovePartitioningInfo()
-		return h.statsWriter.ChangeGlobalStatsID(droppedPartInfo.NewTableID, newSingleTableInfo.ID)
+		if err := h.statsWriter.ChangeGlobalStatsID(droppedPartInfo.NewTableID, newSingleTableInfo.ID); err != nil {
+			return err
+		}
+
+		// Remove partition stats.
+		for _, def := range droppedPartInfo.Definitions {
+			if err := h.statsWriter.ResetTableStats2KVForDrop(def.ID); err != nil {
+				return err
+			}
+		}
 	case model.ActionFlashbackCluster:
 		return h.statsWriter.UpdateStatsVersion()
 	}
