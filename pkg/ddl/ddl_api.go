@@ -7380,9 +7380,15 @@ func newReorgMetaFromVariables(d *ddl, job *model.Job, sctx sessionctx.Context) 
 		}
 		reorgMeta.IsDistReorg = false
 		reorgMeta.IsFastReorg = false
+		failpoint.Inject("reorgMetaRecordFastReorgDisabled", func(_ failpoint.Value) {
+			LastReorgMetaFastReorgDisabled = true
+		})
 	}
 	return reorgMeta, nil
 }
+
+// LastReorgMetaFastReorgDisabled is used for test.
+var LastReorgMetaFastReorgDisabled bool
 
 func buildFKInfo(fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *ast.ReferenceDef, cols []*table.Column) (*model.FKInfo, error) {
 	if len(keys) != len(refer.IndexPartSpecifications) {
