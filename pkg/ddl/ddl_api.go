@@ -7081,7 +7081,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption, sqlMode, nil, global},
 		Priority:   ctx.GetSessionVars().DDLReorgPriority,
 	}
-	reorgMeta, err := newReorgMetaFromVariables(d, job, ctx)
+	reorgMeta, err := newReorgMetaFromVariables(job, ctx)
 	if err != nil {
 		return err
 	}
@@ -7338,7 +7338,7 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		Charset:    chs,
 		Collate:    coll,
 	}
-	reorgMeta, err := newReorgMetaFromVariables(d, job, ctx)
+	reorgMeta, err := newReorgMetaFromVariables(job, ctx)
 	if err != nil {
 		return err
 	}
@@ -7354,7 +7354,7 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	return errors.Trace(err)
 }
 
-func newReorgMetaFromVariables(d *ddl, job *model.Job, sctx sessionctx.Context) (*model.DDLReorgMeta, error) {
+func newReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) (*model.DDLReorgMeta, error) {
 	reorgMeta := NewDDLReorgMeta(sctx)
 	reorgMeta.IsDistReorg = variable.EnableDistTask.Load()
 	reorgMeta.IsFastReorg = variable.EnableFastReorg.Load()
