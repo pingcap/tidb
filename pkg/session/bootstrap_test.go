@@ -1594,10 +1594,6 @@ func TestTiDBUpgradeToVer136(t *testing.T) {
 	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/reorgMetaRecordFastReorgDisabled"))
 	})
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockUpgradingState", `return(true)`))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockUpgradingState"))
-	})
 	MustExec(t, seV135, "set global tidb_ddl_enable_fast_reorg = 1")
 	dom, err = BootstrapSession(store)
 	require.NoError(t, err)

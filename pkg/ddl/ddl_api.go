@@ -7372,10 +7372,9 @@ func newReorgMetaFromVariables(d *ddl, job *model.Job, sctx sessionctx.Context) 
 	if reorgMeta.IsDistReorg && !reorgMeta.IsFastReorg {
 		return nil, dbterror.ErrUnsupportedDistTask
 	}
-	isUpgradingSysDB := d.stateSyncer.IsUpgradingState() && hasSysDB(job)
-	if isUpgradingSysDB {
+	if hasSysDB(job) {
 		if reorgMeta.IsDistReorg {
-			logutil.BgLogger().Info("cannot use distributed task execution because the job on system DB is in upgrade state",
+			logutil.BgLogger().Info("cannot use distributed task execution on system DB",
 				zap.String("category", "ddl"), zap.Stringer("job", job))
 		}
 		reorgMeta.IsDistReorg = false
