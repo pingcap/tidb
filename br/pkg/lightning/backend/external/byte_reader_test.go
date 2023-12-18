@@ -209,7 +209,6 @@ func TestEmptyContent(t *testing.T) {
 
 func TestSwitchMode(t *testing.T) {
 	seed := time.Now().Unix()
-	// seed := 1702880814
 	rand.Seed(uint64(seed))
 	t.Logf("seed: %d", seed)
 	st := storage.NewMemStorage()
