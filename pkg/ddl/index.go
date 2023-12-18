@@ -637,7 +637,7 @@ SwitchIndexState:
 	case model.StateNone:
 		// none -> delete only
 		var reorgTp model.ReorgType
-		reorgTp, err = pickBackfillType(w.ctx, job, allIndexInfos[0].Unique, d)
+		reorgTp, err = pickBackfillType(w.ctx, job)
 		if err != nil {
 			if !errorIsRetryable(err, job) {
 				job.State = model.JobStateCancelled
@@ -749,13 +749,13 @@ SwitchIndexState:
 }
 
 // pickBackfillType determines which backfill process will be used.
-func pickBackfillType(ctx context.Context, job *model.Job, unique bool, d *ddlCtx) (model.ReorgType, error) {
+func pickBackfillType(ctx context.Context, job *model.Job) (model.ReorgType, error) {
 	if job.ReorgMeta.ReorgTp != model.ReorgTypeNone {
 		// The backfill task has been started.
 		// Don't change the backfill type.
 		return job.ReorgMeta.ReorgTp, nil
 	}
-	if !IsEnableFastReorg() {
+	if !job.ReorgMeta.IsFastReorg {
 		job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
 		return model.ReorgTypeTxn, nil
 	}
@@ -770,29 +770,7 @@ func pickBackfillType(ctx context.Context, job *model.Job, unique bool, d *ddlCt
 			if err != nil {
 				return model.ReorgTypeNone, err
 			}
-			var pdLeaderAddr string
-			var isUpgradingSysDB bool
-			if d != nil {
-				//nolint:forcetypeassert
-				pdLeaderAddr = d.store.(tikv.Storage).GetRegionCache().PDClient().GetLeaderAddr()
-				isUpgradingSysDB = d.stateSyncer.IsUpgradingState() && hasSysDB(job)
-			}
-			useDistReorg := false
-			if variable.EnableDistTask.Load() && !isUpgradingSysDB {
-				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, d.etcdCli, pdLeaderAddr, job.ReorgMeta.ResourceGroupName)
-				useDistReorg = true
-			} else {
-				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, nil, pdLeaderAddr, job.ReorgMeta.ResourceGroupName)
-				if isUpgradingSysDB {
-					logutil.BgLogger().Info("pick backfill type, cannot be a dist task because the job on the system DB in the upgrade state",
-						zap.String("category", "ddl"), zap.Stringer("job", job))
-				}
-			}
-			if err != nil {
-				return model.ReorgTypeNone, err
-			}
 			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
-			job.ReorgMeta.IsDistReorg = useDistReorg
 			return model.ReorgTypeLitMerge, nil
 		}
 	}
@@ -897,7 +875,7 @@ func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, jo
 func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
 	var reorgTp model.ReorgType
-	reorgTp, err = pickBackfillType(w.ctx, job, allIndexInfos[0].Unique, d)
+	reorgTp, err = pickBackfillType(w.ctx, job)
 	if err != nil {
 		return false, ver, err
 	}

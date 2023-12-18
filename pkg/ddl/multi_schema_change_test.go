@@ -648,6 +648,7 @@ func TestMultiSchemaChangeAdminShowDDLJobs(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 1;")
 	originHook := dom.DDL().GetHook()
 	hook := &callback.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
@@ -656,16 +657,16 @@ func TestMultiSchemaChangeAdminShowDDLJobs(t *testing.T) {
 			newTk := testkit.NewTestKit(t, store)
 			rows := newTk.MustQuery("admin show ddl jobs 1").Rows()
 			// 1 history job and 1 running job with 1 subjobs
-			assert.Equal(t, len(rows), 3)
-			assert.Equal(t, rows[1][1], "test")
-			assert.Equal(t, rows[1][2], "t")
-			assert.Equal(t, rows[1][3], "add index /* subjob */ /* txn-merge */")
-			assert.Equal(t, rows[1][4], "delete only")
-			assert.Equal(t, rows[1][len(rows[1])-1], "running")
+			assert.Equal(t, 3, len(rows))
+			assert.Equal(t, "test", rows[1][1])
+			assert.Equal(t, "t", rows[1][2])
+			assert.Equal(t, "add index /* subjob */ /* txn-merge */", rows[1][3])
+			assert.Equal(t, "delete only", rows[1][4])
+			assert.Equal(t, "running", rows[1][len(rows[1])-1])
 			assert.True(t, len(rows[1][8].(string)) > 0)
 			assert.True(t, len(rows[1][9].(string)) > 0)
 			assert.True(t, len(rows[1][10].(string)) > 0)
-			assert.Equal(t, rows[2][3], "create table")
+			assert.Equal(t, "create table", rows[2][3])
 		}
 	}
 
