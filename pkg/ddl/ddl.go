@@ -687,6 +687,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	variable.EnableDDL = d.EnableDDL
 	variable.DisableDDL = d.DisableDDL
 	variable.SwitchMDL = d.SwitchMDL
+	variable.SwitchDDLVersion = d.SwitchDDLVersion
 
 	return d
 }
@@ -1282,6 +1283,36 @@ func (d *ddl) SwitchMDL(enable bool) error {
 		return err
 	}
 	logutil.BgLogger().Info("switch metadata lock feature", zap.String("category", "ddl"), zap.Bool("enable", enable))
+	return nil
+}
+
+// SwitchDDLVersion enables MDL or disable MDL.
+func (d *ddl) SwitchDDLVersion(version int64) error {
+	oldVersion := variable.DDLVersion.Load()
+	if oldVersion == version {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
+	defer cancel()
+
+	// Check if there is any DDL running.
+	// This check can not cover every corner cases, so users need to guarantee that there is no DDL running by themselves.
+	sessCtx, err := d.sessPool.Get()
+	if err != nil {
+		return err
+	}
+	defer d.sessPool.Put(sessCtx)
+	se := sess.NewSession(sessCtx)
+	rows, err := se.Execute(ctx, "select 1 from mysql.tidb_ddl_job", "check job")
+	if err != nil {
+		return err
+	}
+	if len(rows) != 0 {
+		return errors.New("please wait for all jobs done")
+	}
+
+	variable.DDLVersion.Store(version)
+	logutil.BgLogger().Info("switch ddl version", zap.String("category", "ddl"), zap.Int64("version", version))
 	return nil
 }
 

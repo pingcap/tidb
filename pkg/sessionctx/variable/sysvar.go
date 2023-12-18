@@ -1281,6 +1281,18 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(EnableDistTask.Load()), nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBDDLVersion, Value: strconv.Itoa(DefTiDBDDLV1), Type: TypeEnum, PossibleValues: []string{strconv.Itoa(DefTiDBDDLV1), strconv.Itoa(DefTiDBDDLV2)}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		v := TidbOptInt64(val, DefTiDBDDLV1)
+		if DDLVersion.Load() != v {
+			err := SwitchDDLVersion(v)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return strconv.FormatInt(DDLVersion.Load(), 10), nil
+	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableNoopVariables, Value: BoolToOnOff(DefTiDBEnableNoopVariables), Type: TypeEnum, PossibleValues: []string{Off, On}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		EnableNoopVariables.Store(TiDBOptOn(val))
 		return nil
