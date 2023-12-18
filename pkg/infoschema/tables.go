@@ -1669,7 +1669,7 @@ var tableKeywords = []columnInfo{
 var tableTiDBParamsCols = []columnInfo{
 	{name: "COMPONENT", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 	{name: "TYPE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
-	{name: "NAME", tp: mysql.TypeVarchar, size: 256, flag: mysql.NotNullFlag},
+	{name: "PARAM_NAME", tp: mysql.TypeVarchar, size: 256, flag: mysql.NotNullFlag},
 	{name: "INSTANCE", tp: mysql.TypeVarchar, size: 64},
 	{name: "SCOPE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 	{name: "VALUE", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
