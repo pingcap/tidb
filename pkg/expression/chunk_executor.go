@@ -183,7 +183,11 @@ func evalOneVec(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, out
 				} else {
 					enum, err := types.ParseEnumName(ft.GetElems(), result.GetString(i), ft.GetCollate())
 					if err != nil {
-						logutil.BgLogger().Debug("Wrong enum value parsed during evaluation", zap.Error(err))
+						logutil.BgLogger().Debug("Wrong enum name parsed during evaluation",
+							zap.String("The name to be parsed in the ENUM", result.GetString(i)),
+							zap.Strings("The valid names in the ENUM", ft.GetElems()),
+							zap.Error(err),
+						)
 					}
 					buf.AppendEnum(enum)
 				}
@@ -199,7 +203,11 @@ func evalOneVec(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, out
 				} else {
 					set, err := types.ParseSetName(ft.GetElems(), result.GetString(i), ft.GetCollate())
 					if err != nil {
-						logutil.BgLogger().Debug("Wrong set value parsed during evaluation", zap.Error(err))
+						logutil.BgLogger().Debug("Wrong set name parsed during evaluation",
+							zap.String("The name to be parsed in the SET", result.GetString(i)),
+							zap.Strings("The valid names in the SET", ft.GetElems()),
+							zap.Error(err),
+						)
 					}
 					buf.AppendSet(set)
 				}
