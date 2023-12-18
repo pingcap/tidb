@@ -16,13 +16,13 @@ package bindinfo_test
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/pkg/bindinfo"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/bindinfo"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
 
