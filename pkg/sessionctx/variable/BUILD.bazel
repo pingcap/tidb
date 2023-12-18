@@ -49,6 +49,7 @@ go_library(
         "//pkg/util/distrole",
         "//pkg/util/execdetails",
         "//pkg/util/gctuner",
+        "//pkg/util/intest",
         "//pkg/util/kvcache",
         "//pkg/util/logutil",
         "//pkg/util/mathutil",

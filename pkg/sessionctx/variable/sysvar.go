@@ -2966,7 +2966,7 @@ var defaultSysVars = []*SysVar{
 		}},
 }
 
-func GlobalSyetemVariableInitalValue(varName, varVal string) string {
+func GlobalSyetemVariableInitialValue(varName, varVal string) string {
 	switch varName {
 	case TiDBTxnMode:
 		if config.GetGlobalConfig().Store == "tikv" || config.GetGlobalConfig().Store == "unistore" {

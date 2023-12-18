@@ -267,7 +267,7 @@ func (e *memtableRetriever) setDataForVariablesInfo(ctx sessionctx.Context) erro
 		// DEFAULT_VALUE
 		defVal := sv.Value
 		if sv.HasGlobalScope() {
-			defVal = variable.GlobalSyetemVariableInitalValue(sv.Name, defVal)
+			defVal = variable.GlobalSyetemVariableInitialValue(sv.Name, defVal)
 		}
 		row := types.MakeDatums(
 			sv.Name,           // VARIABLE_NAME

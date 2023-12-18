@@ -3152,7 +3152,7 @@ func doDMLWorks(s sessiontypes.Session) {
 		if !v.HasGlobalScope() {
 			continue
 		}
-		vVal := variable.GlobalSyetemVariableInitalValue(v.Name, v.Value)
+		vVal := variable.GlobalSyetemVariableInitialValue(v.Name, v.Value)
 
 		// sanitize k and vVal
 		value := fmt.Sprintf(`("%s", "%s")`, sqlescape.EscapeString(k), sqlescape.EscapeString(vVal))
