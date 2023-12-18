@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -395,12 +394,10 @@ func randomPickOneTableAndTryAutoAnalyze(
 		})
 
 		// We need to check every partition of every table to see if it needs to be analyzed.
-		for idx, tbl := range tbls {
-			if idx%10 == 0 || intest.InTest {
-				if !timeutil.WithinDayTimePeriod(start, end, time.Now()) {
-					statslogutil.StatsLogger().Info("auto analyze stopped", zap.String("reason", "not in the available time period"))
-					return false
-				}
+		for _, tbl := range tbls {
+			if !timeutil.WithinDayTimePeriod(start, end, time.Now()) {
+				statslogutil.StatsLogger().Info("auto analyze stopped", zap.String("reason", "not in the available time period"))
+				return false
 			}
 			// If table locked, skip analyze all partitions of the table.
 			// FIXME: This check is not accurate, because other nodes may change the table lock status at any time.
