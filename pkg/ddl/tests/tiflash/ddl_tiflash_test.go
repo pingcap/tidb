@@ -472,7 +472,7 @@ func TestTiFlashFlashbackCluster(t *testing.T) {
 	}()
 
 	errorMsg := fmt.Sprintf("[ddl:-1]Detected unsupported DDL job type(%s) during [%s, now), can't do flashback",
-		model.ActionSetTiFlashReplica.String(), oracle.GetTimeFromTS(ts).String())
+		model.ActionSetTiFlashReplica.String(), oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat))
 	tk.MustGetErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)), errorMsg)
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest"))
