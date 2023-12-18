@@ -124,7 +124,7 @@ func (w *GCSWriter) init() error {
 
 	uploadID := result.UploadId
 	w.uploadID = uploadID
-	w.chunkCh = make(chan chunk, w.workers)
+	w.chunkCh = make(chan chunk)
 	for i := 0; i < w.workers; i++ {
 		w.wg.Add(1)
 		go w.readChunk(w.chunkCh)
