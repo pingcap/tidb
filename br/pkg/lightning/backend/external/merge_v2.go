@@ -52,7 +52,7 @@ func MergeOverlappingFilesV2(
 
 	rangeGroupSize := 4 * size.GB
 	failpoint.Inject("mockRangeGroupSize", func(val failpoint.Value) {
-		rangeGroupSize = val.(uint64)
+		rangeGroupSize = uint64(val.(int))
 	})
 
 	splitter, err := NewRangeSplitter(
