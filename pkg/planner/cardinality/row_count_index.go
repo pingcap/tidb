@@ -63,6 +63,7 @@ func GetRowCountByIndexRanges(sctx sessionctx.Context, coll *statistics.HistColl
 	recordUsedItemStatsStatus(sctx, idx, coll.PhysicalID, idxID)
 	// For the mv index case, now we have supported collecting stats and async loading stats, but sync loading and
 	// estimation is not well-supported, so we keep mv index using pseudo estimation for this period of time.
+	//if !ok || isMVIndex {
 	if !ok || idx.IsInvalid(sctx, coll.Pseudo) || isMVIndex {
 		colsLen := -1
 		if idx != nil && idx.Info.Unique {
@@ -225,6 +226,7 @@ func getIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, 
 	}
 	totalCount := float64(0)
 	isSingleCol := len(idx.Info.Columns) == 1
+	//outofRange := false
 	for _, indexRange := range indexRanges {
 		var count float64
 		lb, err := codec.EncodeKey(sc.TimeZone(), nil, indexRange.LowVal...)
@@ -336,6 +338,7 @@ func getIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, 
 		// handling the out-of-range part
 		if (outOfRangeOnIndex(idx, l) && !(isSingleCol && lowIsNull)) || outOfRangeOnIndex(idx, r) {
 			count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, modifyCount, histNDV)
+			//outofRange = true
 		}
 
 		if debugTrace {
@@ -343,6 +346,10 @@ func getIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, 
 		}
 		totalCount += count
 	}
+	//idxFullCount := float64(realtimeRowCount) / float64(max(1, idx.NDV))
+	//if !outofRange && totalCount < idxFullCount {
+	//	totalCount = idxFullCount
+	//}
 	totalCount = mathutil.Clamp(totalCount, 0, float64(realtimeRowCount))
 	return totalCount, nil
 }
@@ -476,14 +483,29 @@ func expBackoffEstimation(sctx sessionctx.Context, idx *statistics.Index, coll *
 	})
 	if l == 1 {
 		return singleColumnEstResults[0], true, nil
-	} else if l == 2 {
-		return singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1]), true, nil
-	} else if l == 3 {
-		return singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1]) * math.Sqrt(math.Sqrt(singleColumnEstResults[2])), true, nil
 	} else if l == 0 {
 		return 0, false, nil
 	}
-	return singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1]) * math.Sqrt(math.Sqrt(singleColumnEstResults[2])) * math.Sqrt(math.Sqrt(math.Sqrt(singleColumnEstResults[3]))), true, nil
+	// Do not allow the exponential backoff to go below the available index bound. If the number of predicates
+	// is less than the number of index columns - use 90% of the bound to differentiate a subset from full index match.
+	// If there is an individual column selectivity that goes below this bound, use that selectivity only.
+	idxLowBound := max(1/float64(idx.NDV), 1/float64(coll.RealtimeCount))
+	if l < len(idx.Info.Columns) {
+		idxLowBound /= 0.9
+	}
+	minTwoCol := min(singleColumnEstResults[0], min(singleColumnEstResults[1], idxLowBound))
+	multTwoCol := singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1])
+	if l == 2 {
+		return max(minTwoCol, multTwoCol), true, nil
+	}
+	minThreeCol := min(minTwoCol, singleColumnEstResults[2])
+	multThreeCol := multTwoCol * math.Sqrt(math.Sqrt(singleColumnEstResults[2]))
+	if l == 3 {
+		return max(minThreeCol, multThreeCol), true, nil
+	}
+	minFourCol := min(minThreeCol, singleColumnEstResults[3])
+	multFourCol := multThreeCol * math.Sqrt(math.Sqrt(math.Sqrt(singleColumnEstResults[3])))
+	return max(minFourCol, multFourCol), true, nil
 }
 
 // outOfRangeOnIndex checks if the datum is out of the range.

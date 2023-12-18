@@ -92,6 +92,13 @@ func AdjustRowCountForIndexScanByLimit(sctx sessionctx.Context,
 		correlationFactor := math.Pow(1-abs, float64(sctx.GetSessionVars().CorrelationExpFactor))
 		selectivity := dsStatsInfo.RowCount / rowCount
 		rowCount = min(expectedCnt/selectivity/correlationFactor, rowCount)
+		// If there is filtering that is applied outside of the index matching filtering, then an ordering index
+		// scan may read additional rows to satisfy that filtering. orderRatio determines the percentage of that
+		// range where it is estimated that all rows qualify to satisfy the limit value.
+		orderRatio := sctx.GetSessionVars().OptOrderingIdxSelRatio
+		if dsStatsInfo.RowCount < path.CountAfterAccess && orderRatio > 0 {
+			rowCount += max(rowCount*orderRatio, (path.CountAfterAccess-dsStatsInfo.RowCount-rowCount)*orderRatio)
+		}
 	}
 	return rowCount
 }
